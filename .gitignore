@@ -1,0 +1,17 @@
+# skillrepo: generated runtime/cache ignores
+__pycache__/
+.DS_Store
+.venv/
+*.py[cod]
+*.skillrepo-backup-*
+*.skillrepo-tmp-*
+*.tmp
+*.log
+apm_modules/
+
+# Runtime records may contain names, contact details, application data, or
+# locally collected literature. Keep them outside version control.
+教授研究/
+套磁邮件/
+info.json
+boshu_analysis.json

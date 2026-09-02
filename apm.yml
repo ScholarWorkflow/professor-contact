@@ -1,0 +1,12 @@
+name: professor-contact
+version: 0.1.0
+description: Professor-contact candidate, idea, and email workflows.
+targets: [opencode]
+includes: auto
+dependencies:
+  apm:
+    - ScholarWorkflow/zotero-tools
+    - ScholarWorkflow/knowledge-tools
+    - ScholarWorkflow/paper-analysis
+    - ScholarWorkflow/pdf-processing-core
+    - ScholarWorkflow/professor-research
