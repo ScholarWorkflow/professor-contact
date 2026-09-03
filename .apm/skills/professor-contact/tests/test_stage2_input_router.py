@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "stage2_input_router.py"
+AGENT = ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md"
 SPEC = importlib.util.spec_from_file_location("stage2_input_router", SCRIPT)
 router = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = router
@@ -80,6 +81,16 @@ class Stage2InputRouterTests(unittest.TestCase):
         second = router.route_batch([{"item_key":"A","pdf_path":str(self.pdf)}], self.out, str(self.exporter))[0]
         self.assertEqual(second.level, "fulltext")
         self.assertEqual(second.carrier, "pdf")
+
+    def test_agent_execution_contract_uses_router_and_forbids_raw_item_key_fallback(self):
+        text = AGENT.read_text(encoding="utf-8")
+        self.assertIn("stage2_input_router.py", text)
+        self.assertIn("--papers /tmp/<教授名>_<collection_key>_paper_routes.json", text)
+        self.assertIn("gap_only_allowed=false", text)
+        self.assertIn("normalized abstract JSON absolute path", text)
+        self.assertIn("绝不把 raw Zotero `item_key` 当作 `paper`", text)
+        self.assertNotIn("③Zotero item_key（无 PDF/无 OCR 时）", text)
+        self.assertNotIn("仅 item_key/摘要 → `abstract`", text)
 
 
 if __name__ == "__main__":
