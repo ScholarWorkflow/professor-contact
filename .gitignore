@@ -1,17 +1,33 @@
-# skillrepo: generated runtime/cache ignores
-__pycache__/
+# OS / editor
 .DS_Store
-.venv/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
 *.py[cod]
-*.skillrepo-backup-*
-*.skillrepo-tmp-*
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# Build / package artifacts
+dist/
+build/
+*.egg-info/
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+
+# Temporary / runtime files
 *.tmp
 *.log
-apm_modules/
-
-# Runtime records may contain names, contact details, application data, or
-# locally collected literature. Keep them outside version control.
-教授研究/
-套磁邮件/
-info.json
-boshu_analysis.json
+.coverage
+htmlcov/
