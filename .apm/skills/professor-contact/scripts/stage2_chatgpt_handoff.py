@@ -151,10 +151,13 @@ def _capture_local_baseline(professor_dir: Path, item_key: str, analysis_relpath
     may replace it. Any local change after bundle creation makes the result stale.
     """
     analysis = _resolve_under(professor_dir, analysis_relpath)
+    sidecar = Path(str(analysis) + ".future_work.json")
     entry = _read_index_entry(professor_dir, item_key)
     return {
         "analysis_exists": analysis.is_file(),
         "analysis_sha256": _sha256_file(analysis) if analysis.is_file() else None,
+        "sidecar_exists": sidecar.is_file(),
+        "sidecar_sha256": _sha256_file(sidecar) if sidecar.is_file() else None,
         "index_entry_exists": entry is not None,
         "index_entry_sha256": _sha256_json(entry) if entry is not None else None,
         "index_level": entry.get("level") if entry is not None else None,
@@ -167,6 +170,33 @@ def _baseline_matches(professor_dir: Path, job: dict[str, Any]) -> bool:
         return False
     current = _capture_local_baseline(professor_dir, job["item_key"], job["analysis_relpath"])
     return current == expected
+
+
+def _latest_matches(professor_dir: Path, manifest: dict[str, Any]) -> bool:
+    latest_path = professor_dir / "论文分析" / "_chatgpt_handoff" / "_latest.json"
+    if not latest_path.exists():
+        return True
+    latest = _load_json(latest_path)
+    return (
+        isinstance(latest, dict)
+        and latest.get("handoff_id") == manifest.get("handoff_id")
+        and latest.get("source_fingerprint") == manifest.get("source_fingerprint")
+    )
+
+
+def _verify_bundled_input(bundle_root: Path, job: dict[str, Any]) -> Path:
+    """Bind manifest input_sha256 to the actual bytes extracted from the ZIP."""
+    try:
+        rel = _portable_relpath(str(job.get("input_path") or ""), "input_path")
+    except ValueError as error:
+        raise ValueError("external_result_hash_mismatch") from error
+    path = bundle_root / Path(*PurePosixPath(rel).parts)
+    expected = job.get("input_sha256")
+    if not isinstance(expected, str) or not expected or not path.is_file():
+        raise ValueError("external_result_hash_mismatch")
+    if _sha256_file(path) != expected:
+        raise ValueError("external_result_hash_mismatch")
+    return path
 
 
 def _validate_future_work_inputs(result: dict[str, Any]) -> None:
@@ -390,16 +420,20 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         local = bundle_dir / Path(*PurePosixPath(entry["input_path"]).parts)
         local.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(job["input_path_local"], local)
+        if _sha256_file(local) != entry["input_sha256"]:
+            raise ValueError("external_result_hash_mismatch: packaged carrier differs from captured source hash")
         _atomic_json(local.parent / "job.json", entry)
         if entry.get("future_work"):
             fw = entry["future_work"]
-            for src_field, rel in (
-                ("future_work_prepare_local", fw["prepare_path"]),
-                ("future_work_candidates_local", fw["candidates_path"]),
+            for src_field, rel, hash_field in (
+                ("future_work_prepare_local", fw["prepare_path"], "prepare_sha256"),
+                ("future_work_candidates_local", fw["candidates_path"], "candidates_sha256"),
             ):
                 dest = bundle_dir / Path(*PurePosixPath(rel).parts)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(str(job[src_field]), dest)
+                if _sha256_file(dest) != fw[hash_field]:
+                    raise ValueError("external_future_work_invalid: packaged future-work input hash mismatch")
 
     _atomic_json(root / "_latest.json", {
         "schema": 1,
@@ -569,10 +603,18 @@ def _install_job(
     analysis_target = _resolve_under(professor_dir, job["analysis_relpath"])
     sidecar_target = Path(str(analysis_target) + ".future_work.json")
     index_target = professor_dir / "论文分析" / "_index.json"
+
+    # Expensive local finalization may have taken long enough for another Stage-2
+    # run to update this item or build a newer handoff. Re-check both guards at
+    # the install boundary rather than trusting the earlier import-time check.
+    if not _latest_matches(professor_dir, manifest) or not _baseline_matches(professor_dir, job):
+        raise ValueError("handoff_stale")
     new_index = _index_with_job(
         professor_dir, manifest, job, analysis_target,
         sidecar_target if staged_sidecar else None,
     )
+    if not _latest_matches(professor_dir, manifest) or not _baseline_matches(professor_dir, job):
+        raise ValueError("handoff_stale")
 
     old_analysis = analysis_target.read_bytes() if analysis_target.is_file() else None
     old_sidecar = sidecar_target.read_bytes() if sidecar_target.is_file() else None
@@ -683,14 +725,8 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
         _extract_checked(args.result.expanduser().resolve(), result_root)
         manifest = _validate_manifest(_load_json(bundle_root / "manifest.json"), BUNDLE_KIND)
 
-        latest_path = professor_dir / "论文分析" / "_chatgpt_handoff" / "_latest.json"
-        if latest_path.exists():
-            latest = _load_json(latest_path)
-            if (
-                latest.get("handoff_id") != manifest.get("handoff_id")
-                or latest.get("source_fingerprint") != manifest.get("source_fingerprint")
-            ):
-                return {"status": "error", "reason_code": "handoff_stale", "imported": [], "missing": []}
+        if not _latest_matches(professor_dir, manifest):
+            return {"status": "error", "reason_code": "handoff_stale", "imported": [], "missing": []}
 
         result_manifest = _validate_manifest(_load_json(result_root / "result_manifest.json"), RESULT_KIND)
         if result_manifest.get("handoff_id") != manifest.get("handoff_id"):
@@ -720,6 +756,11 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
         invalid: list[dict[str, str]] = []
         for jid, row in result_map.items():
             job = job_map[jid]
+            try:
+                _verify_bundled_input(bundle_root, job)
+            except (OSError, ValueError):
+                invalid.append({"job_id": jid, "reason_code": "external_result_hash_mismatch"})
+                continue
             if row.get("item_key") != job.get("item_key") or row.get("input_sha256") != job.get("input_sha256"):
                 invalid.append({"job_id": jid, "reason_code": "external_result_hash_mismatch"})
                 continue
