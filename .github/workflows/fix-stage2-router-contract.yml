@@ -1,0 +1,30 @@
+name: Fix Stage 2 router contract
+
+on:
+  push:
+    branches: [issue-3-chatgpt-stage2-handoff]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-3-chatgpt-stage2-handoff
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python .github/scripts/fix_stage2_router_contract.py
+      - shell: bash
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .apm/agents/professor-contact-analyzer.agent.md
+          git commit -m "fix: preserve Stage 2 input router contract"
+          git push origin HEAD:issue-3-chatgpt-stage2-handoff
