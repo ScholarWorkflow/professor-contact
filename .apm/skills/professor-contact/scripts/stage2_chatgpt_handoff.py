@@ -385,7 +385,7 @@ This ZIP contains only the exact Stage-2 per-paper analysis jobs selected by the
 For each `manifest.json.jobs[]` entry:
 1. Analyze only the bundled `input_path`; do not use Zotero/MCP or invent missing local context.
 2. Preserve `job_id`, `item_key`, `input_sha256`, direction IDs, and target identity exactly.
-3. Write the ordinary paper-analysis Markdown template to `results/<safe-job>/analysis.md`.
+3. Write the ordinary paper-analysis Markdown template to `results/<safe-job>/analysis.md`, where `<safe-job>` is the deterministic safe form of that exact `job_id`; do not add or override a `result_dir` field in the result row.
 4. For every job with `expected.future_work=true` (PDF fulltext only), return `future_work_items.json` selected/translated only from the bundled exact candidates. If `future_work.ocr_required_pages` is non-empty, OCR exactly those pages and return `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`.
 5. Bind completed rows in `result_manifest.json` with schema/kind/handoff/source/job/item/input hash and `status=ok|partial|error`.
 
@@ -402,6 +402,9 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     normalized = [_validate_job_spec(job, professor_dir) for job in payload["jobs"]]
     if len({job["item_key"] for job in normalized}) != len(normalized):
         raise ValueError("duplicate item_key in jobs")
+    # A handoff is a content-addressed logical set, not an ordered queue. Zotero
+    # enumeration/caller ordering must therefore not affect manifest/fingerprint/ZIP bytes.
+    normalized.sort(key=lambda job: job["item_key"])
     manifest = _build_manifest(professor, normalized)
 
     root = professor_dir / "论文分析" / "_chatgpt_handoff"
@@ -770,14 +773,13 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
             if not _baseline_matches(professor_dir, job):
                 invalid.append({"job_id": jid, "reason_code": "handoff_stale"})
                 continue
-
-            safe_job = str(row.get("result_dir") or _safe_component(jid))
-            try:
-                safe_job = _portable_relpath(safe_job, "result_dir")
-            except ValueError:
-                invalid.append({"job_id": jid, "reason_code": "unsafe_zip_entry"})
+            # Result artifacts are bound to the job by a fixed directory derived
+            # only from job_id. Never honor an external row-level path override.
+            if "result_dir" in row:
+                invalid.append({"job_id": jid, "reason_code": "external_result_hash_mismatch"})
                 continue
-            source_dir = result_root / "results" / Path(*PurePosixPath(safe_job).parts)
+            safe_job = _safe_component(jid)
+            source_dir = result_root / "results" / safe_job
             analysis_source = source_dir / "analysis.md"
             try:
                 _validate_analysis(analysis_source)
