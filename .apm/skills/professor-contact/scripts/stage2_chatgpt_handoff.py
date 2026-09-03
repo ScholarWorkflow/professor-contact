@@ -170,12 +170,22 @@ def _baseline_matches(professor_dir: Path, job: dict[str, Any]) -> bool:
 
 
 def _validate_future_work_inputs(result: dict[str, Any]) -> None:
-    """Fulltext handoff is only complete when local deterministic evidence exists."""
-    level = result["evidence_level"]
+    """Require the existing PDF-grounded future-work contract exactly where usable.
+
+    `future_work.py prepare` is PDF-only. PDF carriers therefore require the
+    deterministic prepare/candidates pair. OCR-only fulltext carriers remain
+    valid analysis jobs, but they must not smuggle an ungrounded future-work
+    payload into the importer; their Markdown future-work section is sanitized
+    and no authoritative sidecar is fabricated.
+    """
+    carrier = result["carrier"]
     prepare_raw = result["future_work_prepare_local"]
     candidates_raw = result["future_work_candidates_local"]
-    if level == "fulltext" and not (prepare_raw and candidates_raw):
-        raise ValueError("fulltext handoff requires future_work_prepare and future_work_candidates")
+
+    if carrier == "pdf" and not (prepare_raw and candidates_raw):
+        raise ValueError("pdf fulltext handoff requires future_work_prepare and future_work_candidates")
+    if carrier != "pdf" and (prepare_raw or candidates_raw):
+        raise ValueError("future_work_prepare and future_work_candidates are only valid for pdf carriers")
     if not (prepare_raw or candidates_raw):
         return
     if not (prepare_raw and candidates_raw):
@@ -194,7 +204,7 @@ def _validate_future_work_inputs(result: dict[str, Any]) -> None:
     if not isinstance(candidates_payload, (dict, list)):
         raise ValueError("future_work_candidates must be a candidates JSON object/list")
     pdf_sha = prepare_payload.get("pdf_sha256")
-    if result["carrier"] == "pdf" and pdf_sha != result["input_sha256"]:
+    if pdf_sha != result["input_sha256"]:
         raise ValueError("future_work_prepare pdf_sha256 must match the bundled PDF")
     result["future_work_prepare_sha256"] = _sha256_file(prepare)
     result["future_work_candidates_sha256"] = _sha256_file(candidates)
@@ -276,7 +286,7 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
             "future_work_candidates_sha256": job.get("future_work_candidates_sha256"),
         }
         job_fp = _sha256_json(fp_payload)
-        expected_future_work = job["evidence_level"] == "fulltext"
+        expected_future_work = job["carrier"] == "pdf"
         entry: dict[str, Any] = {
             "job_id": f"paper-analysis:{job['item_key']}:{job_fp[:16]}",
             "item_key": job["item_key"],
@@ -346,10 +356,10 @@ For each `manifest.json.jobs[]` entry:
 1. Analyze only the bundled `input_path`; do not use Zotero/MCP or invent missing local context.
 2. Preserve `job_id`, `item_key`, `input_sha256`, direction IDs, and target identity exactly.
 3. Write the ordinary paper-analysis Markdown template to `results/<safe-job>/analysis.md`.
-4. For every fulltext job (`expected.future_work=true`), return `future_work_items.json` selected/translated only from the bundled exact candidates. If `future_work.ocr_required_pages` is non-empty, OCR exactly those pages and return `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`.
+4. For every job with `expected.future_work=true` (PDF fulltext only), return `future_work_items.json` selected/translated only from the bundled exact candidates. If `future_work.ocr_required_pages` is non-empty, OCR exactly those pages and return `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`.
 5. Bind completed rows in `result_manifest.json` with schema/kind/handoff/source/job/item/input hash and `status=ok|partial|error`.
 
-A fulltext job is not complete without its future-work payload. Do not return `_index.json`, `套磁候选输入.json`, or a ready-made `.future_work.json` as authoritative state. The local importer independently validates/finalizes future-work evidence and installs accepted results into the ordinary Stage-2 artifacts.
+PDF fulltext jobs are not complete without their future-work payload. OCR-only and abstract-only jobs do not have a PDF-grounded future-work contract: any external Future Work prose in their Markdown is discarded locally and cannot become a gap source. Do not return `_index.json`, `套磁候选输入.json`, or a ready-made `.future_work.json` as authoritative state. The local importer independently validates/finalizes PDF future-work evidence and installs accepted results into the ordinary Stage-2 artifacts.
 """
 
 
@@ -474,17 +484,14 @@ def _validate_analysis(path: Path) -> None:
         raise ValueError("external_analysis_invalid: template headings out of order")
 
 
-def _sanitize_abstract_future_work(path: Path) -> None:
+def _sanitize_unvalidated_future_work(path: Path, reason: str) -> None:
     """Never let unvalidated external Markdown become a legacy future-work source."""
     text = path.read_text(encoding="utf-8")
     left = text.find(FUTURE_HEADING)
     right = text.find(HELP_HEADING, left + len(FUTURE_HEADING))
     if left < 0 or right < 0:
         raise ValueError("external_analysis_invalid: missing future-work anchors")
-    section = (
-        FUTURE_HEADING
-        + "\n—（abstract-only handoff 无页码级可验证 future-work 证据；不得作为 gap 来源）\n"
-    )
+    section = FUTURE_HEADING + f"\n—（{reason}；不得作为 gap 来源）\n"
     _atomic_write(path, (text[:left] + section + text[right:]).encode("utf-8"))
 
 
@@ -520,6 +527,9 @@ def _index_with_job(
     if sidecar_path:
         future_state = "valid"
         future_error = None
+    elif job.get("carrier") == "ocr":
+        future_state = "failed"
+        future_error = "future_work_unavailable_without_pdf_handoff"
     else:
         future_state = "failed"
         future_error = "future_work_unavailable_abstract_handoff"
@@ -583,7 +593,8 @@ def _install_job(
 
 
 def _run_future_work(script: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([str(script), *arguments], text=True, capture_output=True, check=False)
+    """Run the installed PEP-723 helper through the paper-analysis uv contract."""
+    return subprocess.run(["uv", "run", str(script), *arguments], text=True, capture_output=True, check=False)
 
 
 def _bundle_future_paths(bundle_root: Path, job: dict[str, Any]) -> tuple[Path, Path, dict[str, Any]]:
@@ -752,7 +763,11 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
                     continue
             else:
                 try:
-                    _sanitize_abstract_future_work(staged_analysis)
+                    if job.get("carrier") == "ocr":
+                        reason = "OCR-only handoff 无原 PDF，无法建立页码级 future-work 证据"
+                    else:
+                        reason = "abstract-only handoff 无页码级可验证 future-work 证据"
+                    _sanitize_unvalidated_future_work(staged_analysis, reason)
                 except (OSError, UnicodeError, ValueError):
                     invalid.append({"job_id": jid, "reason_code": "external_analysis_invalid"})
                     continue
