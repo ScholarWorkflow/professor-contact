@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Deterministic Stage-2 ChatGPT handoff bundle builder/importer.
 
-This helper is deliberately network/model free.  The analyzer supplies the exact
-post-cost-gate, post-idempotency paper-analysis jobs.  The helper packages only
-those jobs and later validates/materializes external results into the ordinary
-paper-analysis artifacts consumed by Stage 2.
+The helper is intentionally network/model free. The Stage-2 analyzer supplies
+only the exact post-cost-gate, post-idempotency jobs. This helper packages those
+jobs and later validates/materializes external results into the ordinary local
+paper-analysis artifacts consumed by the existing Stage-2 pipeline.
 """
 
 from __future__ import annotations
@@ -42,6 +42,10 @@ def _json_bytes(value: Any) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
 
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -51,7 +55,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _sha256_json(value: Any) -> str:
-    return hashlib.sha256(_json_bytes(value)).hexdigest()
+    return _sha256_bytes(_json_bytes(value))
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -81,8 +85,14 @@ def _safe_component(value: str) -> str:
 
 
 def _portable_relpath(raw: str, field: str) -> str:
-    path = PurePosixPath(raw.replace("\\", "/"))
-    if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
+    normalized = raw.replace("\\", "/")
+    path = PurePosixPath(normalized)
+    if (
+        path.is_absolute()
+        or not path.parts
+        or any(part in {"", ".", ".."} for part in path.parts)
+        or ":" in path.parts[0]
+    ):
         raise ValueError(f"{field} must be a safe relative path")
     return path.as_posix()
 
@@ -102,6 +112,46 @@ def _load_json(path: Path) -> Any:
         return json.load(handle)
 
 
+def _read_index_entry(professor_dir: Path, item_key: str) -> dict[str, Any] | None:
+    index_path = professor_dir / "论文分析" / "_index.json"
+    if not index_path.is_file():
+        return None
+    index = _load_json(index_path)
+    if not isinstance(index, dict):
+        raise ValueError("existing _index.json must be an object")
+    papers = index.get("papers")
+    if not isinstance(papers, dict):
+        return None
+    entry = papers.get(item_key)
+    return dict(entry) if isinstance(entry, dict) else None
+
+
+def _capture_local_baseline(professor_dir: Path, item_key: str, analysis_relpath: str) -> dict[str, Any]:
+    """Capture local state needed to prevent overwriting post-bundle work.
+
+    An existing stale/abstract analysis is allowed: if it remains byte-for-byte
+    and index-entry-for-index-entry identical to this captured baseline, import
+    may replace it. Any local change after bundle creation makes the result stale.
+    """
+    analysis = _resolve_under(professor_dir, analysis_relpath)
+    entry = _read_index_entry(professor_dir, item_key)
+    return {
+        "analysis_exists": analysis.is_file(),
+        "analysis_sha256": _sha256_file(analysis) if analysis.is_file() else None,
+        "index_entry_exists": entry is not None,
+        "index_entry_sha256": _sha256_json(entry) if entry is not None else None,
+        "index_level": entry.get("level") if entry is not None else None,
+    }
+
+
+def _baseline_matches(professor_dir: Path, job: dict[str, Any]) -> bool:
+    expected = job.get("local_baseline")
+    if not isinstance(expected, dict):
+        return False
+    current = _capture_local_baseline(professor_dir, job["item_key"], job["analysis_relpath"])
+    return current == expected
+
+
 def _validate_job_spec(raw: dict[str, Any], professor_dir: Path) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("each job must be an object")
@@ -118,6 +168,7 @@ def _validate_job_spec(raw: dict[str, Any], professor_dir: Path) -> dict[str, An
         raise ValueError("abstract_json must use level=abstract")
     if carrier in {"pdf", "ocr"} and level != "fulltext":
         raise ValueError("pdf/ocr must use level=fulltext")
+
     input_path = Path(str(raw.get("input_path") or "")).expanduser()
     if not input_path.is_absolute() or not input_path.is_file():
         raise ValueError(f"input_path for {item_key} must be an existing absolute file")
@@ -125,6 +176,7 @@ def _validate_job_spec(raw: dict[str, Any], professor_dir: Path) -> dict[str, An
     if not analysis_relpath.endswith(".md"):
         raise ValueError("analysis_relpath must end in .md")
     _resolve_under(professor_dir, analysis_relpath)
+
     direction = raw.get("research_direction") or {}
     if not isinstance(direction, dict):
         raise ValueError("research_direction must be an object")
@@ -134,6 +186,7 @@ def _validate_job_spec(raw: dict[str, Any], professor_dir: Path) -> dict[str, An
         "name_zh": str(direction.get("name_zh") or ""),
         "user_note": str(direction.get("user_note") or ""),
     }
+
     result = {
         "item_key": item_key,
         "carrier": carrier,
@@ -149,6 +202,7 @@ def _validate_job_spec(raw: dict[str, Any], professor_dir: Path) -> dict[str, An
         "ocr_file": str(raw.get("ocr_file") or "") or None,
         "future_work_prepare_local": str(raw.get("future_work_prepare") or "") or None,
         "future_work_candidates_local": str(raw.get("future_work_candidates") or "") or None,
+        "local_baseline": _capture_local_baseline(professor_dir, item_key, analysis_relpath),
     }
     if result["future_work_prepare_local"] or result["future_work_candidates_local"]:
         if not (result["future_work_prepare_local"] and result["future_work_candidates_local"]):
@@ -161,16 +215,12 @@ def _validate_job_spec(raw: dict[str, Any], professor_dir: Path) -> dict[str, An
 
 
 def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> dict[str, Any]:
-    jobs = []
-    fingerprint_rows = []
+    jobs: list[dict[str, Any]] = []
+    fingerprint_rows: list[dict[str, Any]] = []
     for job in normalized_jobs:
         safe_key = _safe_component(job["item_key"])
-        if job["carrier"] == "pdf":
-            input_rel = f"papers/{safe_key}/paper.pdf"
-        elif job["carrier"] == "ocr":
-            input_rel = f"papers/{safe_key}/paper.txt"
-        else:
-            input_rel = f"papers/{safe_key}/paper-analysis-input.json"
+        suffix = {"pdf": "paper.pdf", "ocr": "paper.txt", "abstract_json": "paper-analysis-input.json"}[job["carrier"]]
+        input_rel = f"papers/{safe_key}/{suffix}"
         fp_payload = {
             "item_key": job["item_key"],
             "carrier": job["carrier"],
@@ -179,11 +229,11 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
             "analysis_relpath": job["analysis_relpath"],
             "research_direction": job["research_direction"],
             "research_direction_fp": job["research_direction_fp"],
+            "local_baseline": job["local_baseline"],
         }
         job_fp = _sha256_json(fp_payload)
-        job_id = f"paper-analysis:{job['item_key']}:{job_fp[:16]}"
-        entry = {
-            "job_id": job_id,
+        entry: dict[str, Any] = {
+            "job_id": f"paper-analysis:{job['item_key']}:{job_fp[:16]}",
             "item_key": job["item_key"],
             "carrier": job["carrier"],
             "evidence_level": job["evidence_level"],
@@ -192,10 +242,8 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
             "analysis_relpath": job["analysis_relpath"],
             "research_direction": job["research_direction"],
             "research_direction_fp": job["research_direction_fp"],
-            "expected": {
-                "analysis": True,
-                "future_work": bool(job["future_work_prepare_local"]),
-            },
+            "local_baseline": job["local_baseline"],
+            "expected": {"analysis": True, "future_work": bool(job["future_work_prepare_local"])},
             "index_metadata": {
                 "authorship": job["authorship"],
                 "authorship_note": job["authorship_note"],
@@ -204,18 +252,25 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
             },
         }
         if job["future_work_prepare_local"]:
+            prepare_payload = _load_json(Path(str(job["future_work_prepare_local"])))
             entry["future_work"] = {
                 "prepare_path": f"papers/{safe_key}/future_work/prepare.json",
                 "candidates_path": f"papers/{safe_key}/future_work/candidates.json",
+                "ocr_required_pages": list(prepare_payload.get("ocr_required_pages") or []),
             }
         jobs.append(entry)
-        fingerprint_rows.append({k: entry[k] for k in ("job_id", "item_key", "input_sha256", "evidence_level", "analysis_relpath", "research_direction_fp")})
+        fingerprint_rows.append({
+            key: entry[key]
+            for key in (
+                "job_id", "item_key", "input_sha256", "evidence_level",
+                "analysis_relpath", "research_direction_fp", "local_baseline",
+            )
+        })
     source_fingerprint = _sha256_json({"professor": professor, "jobs": fingerprint_rows})
-    handoff_id = source_fingerprint[:20]
     return {
         "schema": BUNDLE_SCHEMA,
         "kind": BUNDLE_KIND,
-        "handoff_id": handoff_id,
+        "handoff_id": source_fingerprint[:20],
         "source_fingerprint": source_fingerprint,
         "professor": professor,
         "jobs": jobs,
@@ -233,6 +288,22 @@ def _zip_add_file(zf: zipfile.ZipFile, rel: str, source: Path) -> None:
     _zip_add_bytes(zf, rel, source.read_bytes())
 
 
+def _instructions() -> str:
+    return """# Stage 2 ChatGPT handoff
+
+This ZIP contains only the exact Stage-2 per-paper analysis jobs selected by the local workflow.
+
+For each `manifest.json.jobs[]` entry:
+1. Analyze only the bundled `input_path`; do not use Zotero/MCP or invent missing local context.
+2. Preserve `job_id`, `item_key`, `input_sha256`, direction IDs, and target identity exactly.
+3. Write the ordinary paper-analysis Markdown template to `results/<safe-job>/analysis.md`.
+4. If `expected.future_work=true`, select/translate only exact candidates from the bundled future-work files. Return `future_work_items.json`. If `future_work.ocr_required_pages` is non-empty, OCR exactly those pages and return `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`.
+5. Bind completed rows in `result_manifest.json` with schema/kind/handoff/source/job/item/input hash and `status=ok|partial|error`.
+
+Do not return `_index.json`, `套磁候选输入.json`, or a ready-made `.future_work.json` as authoritative state. The local importer independently validates/finalizes future-work evidence and installs accepted results into the ordinary Stage-2 artifacts.
+"""
+
+
 def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     professor_dir = args.professor_dir.expanduser().resolve()
     payload = _load_json(args.jobs)
@@ -243,19 +314,16 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     if len({job["item_key"] for job in normalized}) != len(normalized):
         raise ValueError("duplicate item_key in jobs")
     manifest = _build_manifest(professor, normalized)
+
     root = professor_dir / "论文分析" / "_chatgpt_handoff"
     bundle_dir = root / f"stage2-{manifest['handoff_id']}"
     zip_path = root / f"stage2-{manifest['handoff_id']}.zip"
-    bundle_dir.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
+    if bundle_dir.exists():
+        shutil.rmtree(bundle_dir)
+    bundle_dir.mkdir(parents=True)
     _atomic_json(bundle_dir / "manifest.json", manifest)
-    instructions = (
-        "# Stage 2 ChatGPT handoff\n\n"
-        "For every manifest job, analyze only the bundled carrier. Do not invent or change job_id, item_key, hashes, direction IDs, or target paths.\n"
-        "Return result_manifest.json plus one results/<safe-job>/ directory per completed job. analysis.md must follow the ordinary paper-analysis template.\n"
-        "When future_work is expected, select/translate only exact prepared candidates; if OCR is required, return future_work_ocr.json using the {\"pages\":{\"N\":\"text\"}} shape.\n"
-        "Never return _index.json, 套磁候选输入.json, or a ready-made .future_work.json as authoritative state.\n"
-    )
-    _atomic_write(bundle_dir / "instructions.md", instructions.encode("utf-8"))
+    _atomic_write(bundle_dir / "instructions.md", _instructions().encode("utf-8"))
 
     by_item = {job["item_key"]: job for job in normalized}
     for entry in manifest["jobs"]:
@@ -263,8 +331,7 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         local = bundle_dir / Path(*PurePosixPath(entry["input_path"]).parts)
         local.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(job["input_path_local"], local)
-        job_dir = local.parent
-        _atomic_json(job_dir / "job.json", entry)
+        _atomic_json(local.parent / "job.json", entry)
         if entry.get("future_work"):
             fw = entry["future_work"]
             for src_field, rel in (
@@ -275,13 +342,20 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(str(job[src_field]), dest)
 
-    root.mkdir(parents=True, exist_ok=True)
-    _atomic_json(root / "_latest.json", {"schema": 1, "handoff_id": manifest["handoff_id"], "source_fingerprint": manifest["source_fingerprint"]})
+    _atomic_json(root / "_latest.json", {
+        "schema": 1,
+        "handoff_id": manifest["handoff_id"],
+        "source_fingerprint": manifest["source_fingerprint"],
+    })
     fd, temp_zip = tempfile.mkstemp(prefix=f".{zip_path.name}.", dir=root)
     os.close(fd)
     try:
         with zipfile.ZipFile(temp_zip, "w") as zf:
-            for path in sorted((p for p in bundle_dir.rglob("*") if p.is_file()), key=lambda p: p.relative_to(bundle_dir).as_posix()):
+            files = sorted(
+                (p for p in bundle_dir.rglob("*") if p.is_file()),
+                key=lambda p: p.relative_to(bundle_dir).as_posix(),
+            )
+            for path in files:
                 _zip_add_file(zf, path.relative_to(bundle_dir).as_posix(), path)
         os.replace(temp_zip, zip_path)
     except BaseException:
@@ -308,9 +382,10 @@ def _check_zip(zf: zipfile.ZipFile) -> None:
         if name in seen:
             raise ValueError("unsafe_zip_entry: duplicate entry")
         seen.add(name)
-        path = PurePosixPath(name)
-        if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
-            raise ValueError("unsafe_zip_entry: path traversal")
+        try:
+            _portable_relpath(name.rstrip("/"), "zip entry")
+        except ValueError as error:
+            raise ValueError("unsafe_zip_entry: path traversal") from error
         mode = (info.external_attr >> 16) & 0xFFFF
         if mode and stat.S_ISLNK(mode):
             raise ValueError("unsafe_zip_entry: symlink")
@@ -320,7 +395,8 @@ def _extract_checked(zip_path: Path, dest: Path) -> None:
     with zipfile.ZipFile(zip_path) as zf:
         _check_zip(zf)
         for info in zf.infolist():
-            target = dest / Path(*PurePosixPath(info.filename).parts)
+            parts = PurePosixPath(info.filename.rstrip("/")).parts
+            target = dest / Path(*parts)
             target.parent.mkdir(parents=True, exist_ok=True)
             if info.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
@@ -339,7 +415,7 @@ def _validate_analysis(path: Path) -> None:
     if not path.is_file():
         raise ValueError("external_analysis_invalid: missing analysis.md")
     text = path.read_text(encoding="utf-8")
-    positions = []
+    positions: list[int] = []
     for heading in REQUIRED_ANALYSIS_HEADINGS:
         pos = text.find(heading)
         if pos < 0:
@@ -349,7 +425,13 @@ def _validate_analysis(path: Path) -> None:
         raise ValueError("external_analysis_invalid: template headings out of order")
 
 
-def _update_index(professor_dir: Path, manifest: dict[str, Any], job: dict[str, Any], analysis_path: Path, sidecar_path: Path | None) -> None:
+def _index_with_job(
+    professor_dir: Path,
+    manifest: dict[str, Any],
+    job: dict[str, Any],
+    analysis_path: Path,
+    sidecar_path: Path | None,
+) -> dict[str, Any]:
     index_path = professor_dir / "论文分析" / "_index.json"
     if index_path.exists():
         index = _load_json(index_path)
@@ -373,13 +455,55 @@ def _update_index(professor_dir: Path, manifest: dict[str, Any], job: dict[str, 
         "authorship_note": metadata.get("authorship_note"),
         "relevance_reason": metadata.get("relevance_reason", prior.get("relevance_reason", "")),
         "future_work_sidecar": str(sidecar_path) if sidecar_path else None,
-        "future_work_state": "valid" if sidecar_path else prior.get("future_work_state", "none"),
+        "future_work_state": "valid" if sidecar_path else "none",
         "future_work_error": None,
         "analysis_executor": "chatgpt_handoff",
         "handoff_id": manifest["handoff_id"],
+        "source_fingerprint": manifest["source_fingerprint"],
+        "input_sha256": job["input_sha256"],
     })
     papers[job["item_key"]] = entry
-    _atomic_json(index_path, index)
+    return index
+
+
+def _restore(path: Path, previous: bytes | None) -> None:
+    if previous is None:
+        path.unlink(missing_ok=True)
+    else:
+        _atomic_write(path, previous)
+
+
+def _install_job(
+    professor_dir: Path,
+    manifest: dict[str, Any],
+    job: dict[str, Any],
+    staged_analysis: Path,
+    staged_sidecar: Path | None,
+) -> tuple[Path, Path | None]:
+    analysis_target = _resolve_under(professor_dir, job["analysis_relpath"])
+    sidecar_target = Path(str(analysis_target) + ".future_work.json") if staged_sidecar else None
+    index_target = professor_dir / "论文分析" / "_index.json"
+    new_index = _index_with_job(professor_dir, manifest, job, analysis_target, sidecar_target)
+
+    old_analysis = analysis_target.read_bytes() if analysis_target.is_file() else None
+    old_sidecar = sidecar_target.read_bytes() if sidecar_target and sidecar_target.is_file() else None
+    old_index = index_target.read_bytes() if index_target.is_file() else None
+    try:
+        _atomic_write(analysis_target, staged_analysis.read_bytes())
+        if sidecar_target and staged_sidecar:
+            _atomic_write(sidecar_target, staged_sidecar.read_bytes())
+        _atomic_json(index_target, new_index)
+    except BaseException:
+        _restore(analysis_target, old_analysis)
+        if sidecar_target:
+            _restore(sidecar_target, old_sidecar)
+        _restore(index_target, old_index)
+        raise
+    return analysis_target, sidecar_target
+
+
+def _run_future_work(script: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([str(script), *arguments], text=True, capture_output=True, check=False)
 
 
 def import_result(args: argparse.Namespace) -> dict[str, Any]:
@@ -391,21 +515,27 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
         _extract_checked(args.bundle.expanduser().resolve(), bundle_root)
         _extract_checked(args.result.expanduser().resolve(), result_root)
         manifest = _validate_manifest(_load_json(bundle_root / "manifest.json"), BUNDLE_KIND)
+
         latest_path = professor_dir / "论文分析" / "_chatgpt_handoff" / "_latest.json"
         if latest_path.exists():
             latest = _load_json(latest_path)
-            if latest.get("handoff_id") != manifest.get("handoff_id") or latest.get("source_fingerprint") != manifest.get("source_fingerprint"):
+            if (
+                latest.get("handoff_id") != manifest.get("handoff_id")
+                or latest.get("source_fingerprint") != manifest.get("source_fingerprint")
+            ):
                 return {"status": "error", "reason_code": "handoff_stale", "imported": [], "missing": []}
+
         result_manifest = _validate_manifest(_load_json(result_root / "result_manifest.json"), RESULT_KIND)
         if result_manifest.get("handoff_id") != manifest.get("handoff_id"):
             return {"status": "error", "reason_code": "handoff_id_mismatch", "imported": [], "missing": []}
         if result_manifest.get("source_fingerprint") != manifest.get("source_fingerprint"):
             return {"status": "error", "reason_code": "source_fingerprint_mismatch", "imported": [], "missing": []}
+
         jobs = manifest.get("jobs")
         results = result_manifest.get("results")
         if not isinstance(jobs, list) or not isinstance(results, list):
             raise ValueError("manifest jobs/results must be arrays")
-        job_map = {job["job_id"]: job for job in jobs}
+        job_map = {job["job_id"]: job for job in jobs if isinstance(job, dict) and job.get("job_id")}
         if len(job_map) != len(jobs):
             raise ValueError("external_result_duplicate_job")
         result_map: dict[str, dict[str, Any]] = {}
@@ -429,6 +559,10 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
             if row.get("status") not in {"ok", "partial"}:
                 invalid.append({"job_id": jid, "reason_code": "external_result_incomplete"})
                 continue
+            if not _baseline_matches(professor_dir, job):
+                invalid.append({"job_id": jid, "reason_code": "handoff_stale"})
+                continue
+
             safe_job = str(row.get("result_dir") or _safe_component(jid))
             try:
                 safe_job = _portable_relpath(safe_job, "result_dir")
@@ -439,60 +573,63 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
             analysis_source = source_dir / "analysis.md"
             try:
                 _validate_analysis(analysis_source)
-            except ValueError:
+            except (OSError, UnicodeError, ValueError):
                 invalid.append({"job_id": jid, "reason_code": "external_analysis_invalid"})
                 continue
+
             analysis_target = _resolve_under(professor_dir, job["analysis_relpath"])
-            if analysis_target.exists():
-                index_path = professor_dir / "论文分析" / "_index.json"
-                current = _load_json(index_path) if index_path.exists() else {}
-                current_entry = ((current.get("papers") or {}).get(job["item_key"]) or {}) if isinstance(current, dict) else {}
-                if current_entry.get("handoff_id") != manifest["handoff_id"]:
-                    invalid.append({"job_id": jid, "reason_code": "handoff_stale"})
-                    continue
-            staged_analysis = temp_root / "staged" / _safe_component(jid) / "analysis.md"
-            staged_analysis.parent.mkdir(parents=True, exist_ok=True)
+            staged_dir = temp_root / "staged" / _safe_component(jid)
+            staged_dir.mkdir(parents=True, exist_ok=True)
+            staged_analysis = staged_dir / analysis_target.name
             shutil.copyfile(analysis_source, staged_analysis)
-            sidecar_target: Path | None = None
+            staged_sidecar: Path | None = None
+
             if (job.get("expected") or {}).get("future_work"):
                 fw = job.get("future_work") or {}
-                prepared = bundle_root / Path(*PurePosixPath(fw["prepare_path"]).parts)
-                candidates = bundle_root / Path(*PurePosixPath(fw["candidates_path"]).parts)
+                try:
+                    prepared = bundle_root / Path(*PurePosixPath(_portable_relpath(fw["prepare_path"], "prepare_path")).parts)
+                    candidates = bundle_root / Path(*PurePosixPath(_portable_relpath(fw["candidates_path"], "candidates_path")).parts)
+                except (KeyError, ValueError):
+                    invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
+                    continue
                 working_prepared = prepared
                 ocr = source_dir / "future_work_ocr.json"
                 if ocr.exists():
-                    merged = temp_root / "staged" / _safe_component(jid) / "merged_prepare.json"
-                    proc = subprocess.run([str(args.future_work_script), "merge-ocr", "--prepared", str(prepared), "--ocr", str(ocr)], text=True, capture_output=True, check=False)
+                    proc = _run_future_work(args.future_work_script, "merge-ocr", "--prepared", str(prepared), "--ocr", str(ocr))
                     if proc.returncode != 0:
                         invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
                         continue
-                    merged_payload = json.loads(proc.stdout.splitlines()[-1])
-                    _atomic_json(merged, merged_payload)
-                    cand_payload = {"candidates": merged_payload.get("candidates", [])}
-                    merged_candidates = merged.with_name("merged_candidates.json")
-                    _atomic_json(merged_candidates, cand_payload)
-                    working_prepared = merged
-                    candidates = merged_candidates
+                    try:
+                        merged_payload = json.loads(proc.stdout.splitlines()[-1])
+                    except (IndexError, json.JSONDecodeError):
+                        invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
+                        continue
+                    working_prepared = staged_dir / "merged_prepare.json"
+                    candidates = staged_dir / "merged_candidates.json"
+                    _atomic_json(working_prepared, merged_payload)
+                    _atomic_json(candidates, {"candidates": merged_payload.get("candidates", [])})
                 else:
                     prepared_payload = _load_json(prepared)
                     if prepared_payload.get("ocr_required_pages"):
                         invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
                         continue
+
                 items = source_dir / "future_work_items.json"
                 if not items.is_file():
                     invalid.append({"job_id": jid, "reason_code": "external_result_incomplete"})
                     continue
-                proc = subprocess.run([str(args.future_work_script), "validate", "--items", str(items), "--candidates", str(candidates)], text=True, capture_output=True, check=False)
+                proc = _run_future_work(args.future_work_script, "validate", "--items", str(items), "--candidates", str(candidates))
                 if proc.returncode != 0:
                     invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
                     continue
                 prep_payload = _load_json(working_prepared)
-                proc = subprocess.run([
-                    str(args.future_work_script), "finalize", "--analysis", str(staged_analysis),
+                proc = _run_future_work(
+                    args.future_work_script,
+                    "finalize", "--analysis", str(staged_analysis),
                     "--items", str(items), "--candidates", str(candidates), "--patch",
                     "--pdf-sha256", str(prep_payload.get("pdf_sha256") or ""),
                     "--evidence-level", "fulltext",
-                ], text=True, capture_output=True, check=False)
+                )
                 if proc.returncode != 0:
                     invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
                     continue
@@ -500,11 +637,20 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
                 if not staged_sidecar.is_file():
                     invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
                     continue
-                sidecar_target = Path(str(analysis_target) + ".future_work.json")
-            _atomic_write(analysis_target, staged_analysis.read_bytes())
-            if sidecar_target:
-                _atomic_write(sidecar_target, Path(str(staged_analysis) + ".future_work.json").read_bytes())
-            _update_index(professor_dir, manifest, job, analysis_target, sidecar_target)
+                try:
+                    sidecar = _load_json(staged_sidecar)
+                except (OSError, json.JSONDecodeError):
+                    invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
+                    continue
+                if sidecar.get("status") != "ok" or sidecar.get("analysis") != analysis_target.name:
+                    invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
+                    continue
+
+            try:
+                _install_job(professor_dir, manifest, job, staged_analysis, staged_sidecar)
+            except (OSError, ValueError):
+                invalid.append({"job_id": jid, "reason_code": "handoff_stale"})
+                continue
             imported.append(jid)
 
         missing = [job["job_id"] for job in jobs if job["job_id"] not in imported]
@@ -549,16 +695,29 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main() -> int:
     args = _parser().parse_args()
     try:
-        output = build_bundle(args) if args.command == "build" else import_result(args)
-    except (OSError, ValueError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
-        message = str(exc)
-        reason = "unsafe_zip_entry" if message.startswith("unsafe_zip_entry") else "error"
-        output = {"status": "error", "reason_code": reason, "message": message[:400]}
+        if args.command == "build":
+            output = build_bundle(args)
+        else:
+            output = import_result(args)
+    except (OSError, ValueError, zipfile.BadZipFile, json.JSONDecodeError) as error:
+        message = str(error)
+        known = (
+            "unsafe_zip_entry", "handoff_stale", "handoff_id_mismatch",
+            "source_fingerprint_mismatch", "external_result_incomplete",
+            "external_result_unknown_job", "external_result_duplicate_job",
+            "external_result_hash_mismatch", "external_analysis_invalid",
+            "external_future_work_invalid",
+        )
+        reason = next((code for code in known if code in message), "invalid_handoff_input")
+        output = {"status": "error", "reason_code": reason, "error": message[:300]}
+        print(json.dumps(output, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        return 2
     print(json.dumps(output, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
