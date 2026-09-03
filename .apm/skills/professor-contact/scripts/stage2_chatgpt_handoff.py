@@ -293,7 +293,15 @@ def build_bundle(args: Any) -> dict[str, Any]:
         return _ORIG_BUILD_BUNDLE(args)
 
 
+def _sync_runtime_hooks() -> None:
+    """Keep the public module's supported monkeypatch/test hooks effective."""
+    hook = globals().get("_run_future_work")
+    if callable(hook):
+        _impl._run_future_work = hook
+
+
 def import_result(args: Any) -> dict[str, Any]:
+    _sync_runtime_hooks()
     try:
         return _ORIG_IMPORT_RESULT(args)
     except ValueError as error:
