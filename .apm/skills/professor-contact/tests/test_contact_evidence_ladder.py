@@ -33,6 +33,11 @@ def stale_ts():
             ).isoformat(timespec="seconds")
 
 
+def zulu_ts():
+    """Timestamp format the verify-cache TTL parser accepts (...Z)."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 class TestContactEvidenceLadder(BaseEnv):
     prepare = TestStage5.prepare
     raw_result = TestStage5.raw_result
@@ -295,6 +300,8 @@ class TestContactEvidenceLadder(BaseEnv):
                       (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8"))
 
     def test_finalize_records_stale_escalation_for_audit(self):
+        # A ladder/legacy-verified cache (no contact_evidence sources) keeps
+        # its own TTL and generation proceeds; the escalation is recorded.
         g1 = self.prepare()
         self.write_artifact(artifact_overrides={"generated_at": stale_ts()})
         self.compile_pack()
@@ -307,6 +314,63 @@ class TestContactEvidenceLadder(BaseEnv):
         self.assertEqual(recorded["reason_code"], "contact_evidence_stale")
         self.assertTrue(recorded["web_lookup_required"])
         self.assertIsNone(recorded["evidence_email"])
+
+    EVIDENCE_SEED_SOURCES = [{"level": "contact_evidence",
+                              "note": "confirmed_cross_source｜官方+近期高置信论文通讯一致"}]
+    LADDER_SOURCES = [{"level": 3, "url": "https://example.test/faculty",
+                       "note": "官方教员主页"}]
+
+    def seed_verify_email(self, sources):
+        verify_path = self.prof_dir / "_contact_verify.json"
+        verify = json.loads(verify_path.read_text(encoding="utf-8"))
+        verify["verified_at"] = zulu_ts()
+        verify["items"]["email"]["sources"] = sources
+        verify_path.write_text(json.dumps(verify, ensure_ascii=False, indent=1),
+                               encoding="utf-8")
+
+    def test_fresh_evidence_seeded_cache_is_accepted(self):
+        g1 = self.prepare()
+        self.write_artifact()
+        self.compile_pack()
+        self.seed_verify_email(self.EVIDENCE_SEED_SOURCES)
+        out = self.run_finalize_flow(g1, "seed-fresh")
+        self.assertEqual(out["status"], "ok", out)
+        state = json.loads((self.prof_dir / "套磁邮件状态.json")
+                           .read_text(encoding="utf-8"))
+        recorded = state["emails"][self.choices()["email_id"]]["contact_evidence"]
+        self.assertEqual(recorded["status"], "confirmed_cross_source")
+        self.assertEqual(recorded["chosen_email"], "faculty@example.test")
+
+    def test_stale_evidence_invalidates_seeded_cache_until_reverified(self):
+        g1 = self.prepare()
+        self.write_artifact()
+        self.compile_pack()
+        self.seed_verify_email(self.EVIDENCE_SEED_SOURCES)
+        self.write_artifact(artifact_overrides={"generated_at": stale_ts()})
+        plan = self.plan_jobs()
+        self.assertEqual(self.decision(plan)["reason_code"], "contact_evidence_stale")
+        self.assertEqual(plan["verify"]["試験 教授"],
+                         "needs_recheck:contact_evidence_escalated")
+        self.assertIn("試験 教授", plan["needs_recheck_professors"])
+        out = self.run_finalize_flow(g1, "seed-stale")
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertEqual(out["reason_code"], "verify_contact_evidence_escalated")
+        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+
+    def test_ladder_reverification_after_escalation_unblocks_finalize(self):
+        g1 = self.prepare()
+        self.write_artifact(artifact_overrides={"generated_at": stale_ts()})
+        self.compile_pack()
+        self.seed_verify_email(self.LADDER_SOURCES)
+        out = self.run_finalize_flow(g1, "seed-reverified")
+        self.assertEqual(out["status"], "ok", out)
+        state = json.loads((self.prof_dir / "套磁邮件状态.json")
+                           .read_text(encoding="utf-8"))
+        recorded = state["emails"][self.choices()["email_id"]]["contact_evidence"]
+        self.assertEqual(recorded["status"], "escalate")
+        self.assertEqual(recorded["reason_code"], "contact_evidence_stale")
+        self.assertEqual(recorded["chosen_email"], "faculty@example.test")
+        self.assertTrue(recorded["web_lookup_required"])
 
     def test_finalize_rejects_override_of_confirmed_evidence(self):
         g1 = self.prepare()

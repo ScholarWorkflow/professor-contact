@@ -2761,7 +2761,15 @@ def contact_evidence_decisions(emails: list[dict], artifact: dict | None,
     return decisions
 
 
-def verify_state(professor_dir: Path, sources: dict) -> dict:
+def email_item_is_evidence_seeded(items: dict) -> bool:
+    """True when the cached recipient email was seeded from the artifact."""
+    sources = (items.get("email") or {}).get("sources") or []
+    return bool(sources) and all(
+        isinstance(source, dict) and source.get("level") == "contact_evidence"
+        for source in sources)
+
+
+def verify_state(professor_dir: Path, sources: dict, decision: dict | None = None) -> dict:
     path = professor_dir / VERIFY_FILE
     data, error = read_json_file(path)
     if error:
@@ -2779,6 +2787,14 @@ def verify_state(professor_dir: Path, sources: dict) -> dict:
             return {"ok": False, "reason": "invalid_cache", "path": str(path), "data": data}
         if not isinstance(item.get("sources", []), list):
             return {"ok": False, "reason": "invalid_cache", "path": str(path), "data": data}
+    # Issue-#10 linkage: an escalation voids exactly the trust chain that
+    # broke, so a recipient email seeded from the contact-evidence artifact
+    # can never outlive the decision that produced it. Ladder/user-verified
+    # entries keep their own 30-day TTL.
+    if decision is not None and decision.get("status") == "escalate" and \
+            email_item_is_evidence_seeded(items):
+        return {"ok": False, "reason": "contact_evidence_escalated",
+                "path": str(path), "data": data}
     warnings = items.get("warnings")
     if not isinstance(warnings, list):
         return {"ok": False, "reason": "invalid_cache", "path": str(path), "data": data}
@@ -2847,12 +2863,15 @@ def cmd_stage5_plan(args) -> None:
         if not emails:
             fail("invalid_params", f"email_id not found: {args.email_id}")
     sources = load_header_sources(program_root)
+    evidence_artifact, evidence_error = load_contact_evidence(program_root)
+    decisions = contact_evidence_decisions(emails, evidence_artifact, evidence_error)
     verify_checks = {}
     for email in emails:
         professor_dir = Path(email.get("professor_dir") or program_root)
         key = email.get("professor")
         if key not in verify_checks:
-            verify_checks[key] = verify_state(professor_dir, sources)
+            verify_checks[key] = verify_state(professor_dir, sources,
+                                              decisions.get(key))
     needs_recheck = [p for p, v in verify_checks.items() if not v["ok"]]
     template_path = None
     profile_path = args.profile
@@ -2901,15 +2920,13 @@ def cmd_stage5_plan(args) -> None:
                         "future_aspiration": "宽泛方向表述+背景技能，禁具体技术栈，不用其他方向原句",
                         "learning": "2-3 个名词短语候选，贴近 profile 真实知识储备，交用户挑选",
                         "source_map": "每句必须给来源；③只能用 gap:<id>；④只能 template；所有 source_ids ⊆ allowed_sources"}}})
-        evidence_artifact, evidence_error = load_contact_evidence(program_root)
         emit({
             "status": "ok", "email_pack": str(pack_path),
             "emails": [e.get("email_id") for e in emails],
             "verify": {p: ("ok" if v["ok"] else f"needs_recheck:{v['reason']}")
                        for p, v in verify_checks.items()},
             "needs_recheck_professors": needs_recheck,
-            "contact_evidence": contact_evidence_decisions(
-                emails, evidence_artifact, evidence_error),
+            "contact_evidence": decisions,
             "template": template_path or "embedded",
             "output_mode": mode,
             "followup_template": (find_followup_template_path(
@@ -3367,7 +3384,8 @@ def cmd_stage5_finalize(args) -> None:
         if mode in ("both", "followup"):
             require_followup_choices(email_id, choices)
         professor_dir = Path(email.get("professor_dir") or program_root)
-        verify_check = verify_state(professor_dir, sources)
+        verify_check = verify_state(professor_dir, sources,
+                                    decisions.get(email.get("professor")))
         if not verify_check["ok"]:
             soft_exit("needs_refresh", f"verify_{verify_check['reason']}",
                       professor=email.get("professor"),
