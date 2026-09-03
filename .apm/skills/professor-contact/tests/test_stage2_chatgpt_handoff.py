@@ -55,6 +55,13 @@ class HandoffTests(unittest.TestCase):
             json.dumps({"schema": 1, "kind": "paper-analysis-input", "level": "abstract", "abstract": "secret"}),
             encoding="utf-8",
         )
+        self.ocr = self.prof / "论文分析/_ocr/T.txt"
+        self.ocr.parent.mkdir(parents=True)
+        self.ocr.write_text("existing OCR", encoding="utf-8")
+        self.prepared = self.root / "prepare.json"
+        self.candidates = self.root / "candidates.json"
+        self._write_future_inputs()
+
         self.future = self.root / "future-work"
         self.future.write_text(
             "#!/usr/bin/env python3\n"
@@ -73,6 +80,18 @@ class HandoffTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def _write_future_inputs(self, *, ocr_required_pages=None):
+        self.prepared.write_text(
+            json.dumps({
+                "schema": 1,
+                "pdf_sha256": handoff._sha256_file(self.pdf),
+                "ocr_required_pages": list(ocr_required_pages or []),
+                "candidates": [],
+            }),
+            encoding="utf-8",
+        )
+        self.candidates.write_text(json.dumps({"candidates": []}), encoding="utf-8")
+
     def _build(self, jobs):
         jobs_file = self.root / "jobs.json"
         jobs_file.write_text(json.dumps({"schema": 1, "professor": "Professor", "jobs": jobs}), encoding="utf-8")
@@ -86,9 +105,10 @@ class HandoffTests(unittest.TestCase):
         with zipfile.ZipFile(bundle["bundle_path"]) as zf:
             return json.loads(zf.read("manifest.json"))
 
-    def _result_zip(self, bundle, rows, extra=None):
+    def _result_zip(self, bundle, rows, extra=None, *, include_future_work=True, analysis_text=ANALYSIS):
         manifest = self._manifest(bundle)
         result = self.root / f"result-{manifest['handoff_id']}.zip"
+        jobs = {job["job_id"]: job for job in manifest["jobs"]}
         with zipfile.ZipFile(result, "w") as zf:
             zf.writestr(
                 "result_manifest.json",
@@ -100,12 +120,14 @@ class HandoffTests(unittest.TestCase):
                     "results": rows,
                 }),
             )
-            known = {job["job_id"] for job in manifest["jobs"]}
             for row in rows:
-                if row["job_id"] not in known:
+                job = jobs.get(row["job_id"])
+                if not job:
                     continue
                 safe = handoff._safe_component(row["job_id"])
-                zf.writestr(f"results/{safe}/analysis.md", ANALYSIS)
+                zf.writestr(f"results/{safe}/analysis.md", analysis_text)
+                if include_future_work and (job.get("expected") or {}).get("future_work"):
+                    zf.writestr(f"results/{safe}/future_work_items.json", json.dumps({"items": []}))
                 if extra:
                     for name, data in extra.items():
                         zf.writestr(f"results/{safe}/{name}", data)
@@ -119,7 +141,7 @@ class HandoffTests(unittest.TestCase):
         args.future_work_script = self.future
         return handoff.import_result(args)
 
-    def _pdf_job(self, key="ABC", rel="论文分析/A/T.md", **extra):
+    def _pdf_job(self, key="ABC", rel="论文分析/A/T.md", with_future_work=True, **extra):
         job = {
             "item_key": key,
             "carrier": "pdf",
@@ -128,12 +150,18 @@ class HandoffTests(unittest.TestCase):
             "analysis_relpath": rel,
             "research_direction": {},
         }
+        if with_future_work:
+            job.update({
+                "future_work_prepare": str(self.prepared.resolve()),
+                "future_work_candidates": str(self.candidates.resolve()),
+            })
         job.update(extra)
         return job
 
     def test_pdf_bundle_is_deterministic_and_portable(self):
         job = self._pdf_job(
-            research_direction={"collection_key": "C", "name_ja": "ja", "name_zh": "zh", "user_note": "note"}
+            research_direction={"collection_key": "C", "name_ja": "ja", "name_zh": "zh", "user_note": "note"},
+            ocr_file=str(self.ocr.resolve()),
         )
         first = self._build([job])
         second = self._build([job])
@@ -142,8 +170,18 @@ class HandoffTests(unittest.TestCase):
             names = zf.namelist()
             manifest = json.loads(zf.read("manifest.json"))
         self.assertIn("papers/ABC/paper.pdf", names)
-        self.assertFalse(any(str(self.root) in name for name in names))
         self.assertEqual(manifest["jobs"][0]["input_sha256"], handoff._sha256_file(self.pdf))
+        metadata = manifest["jobs"][0]["index_metadata"]
+        self.assertNotIn("ocr_file", metadata)
+        self.assertEqual(metadata["ocr_relpath"], "论文分析/_ocr/T.txt")
+        serialized = json.dumps(manifest, ensure_ascii=False)
+        self.assertNotIn(str(self.root), serialized)
+        self.assertNotIn(str(self.prof), serialized)
+        self.assertFalse(any(str(self.root) in name for name in names))
+
+    def test_fulltext_bundle_requires_future_work_contract(self):
+        with self.assertRaisesRegex(ValueError, "fulltext handoff requires future_work_prepare"):
+            self._build([self._pdf_job(with_future_work=False)])
 
     def test_abstract_bundle_has_no_fake_pdf(self):
         bundle = self._build([{
@@ -156,10 +194,12 @@ class HandoffTests(unittest.TestCase):
         }])
         with zipfile.ZipFile(bundle["bundle_path"]) as zf:
             names = zf.namelist()
+            manifest = json.loads(zf.read("manifest.json"))
         self.assertIn("papers/ABS/paper-analysis-input.json", names)
         self.assertFalse(any(name.endswith("paper.pdf") for name in names))
+        self.assertFalse(manifest["jobs"][0]["expected"]["future_work"])
 
-    def test_valid_result_installs_analysis_and_index(self):
+    def test_valid_result_installs_analysis_sidecar_and_index(self):
         bundle = self._build([self._pdf_job(authorship="corresponding", relevance_reason="relevant")])
         job = self._manifest(bundle)["jobs"][0]
         result = self._result_zip(bundle, [{
@@ -171,29 +211,58 @@ class HandoffTests(unittest.TestCase):
         entry = index["papers"]["ABC"]
         self.assertEqual(entry["analysis_executor"], "chatgpt_handoff")
         self.assertEqual(entry["level"], "fulltext")
+        self.assertEqual(entry["future_work_state"], "valid")
+        self.assertTrue(Path(entry["future_work_sidecar"]).is_file())
 
     def test_future_work_selection_is_finalized_locally(self):
-        prepared = self.root / "prepare.json"
-        candidates = self.root / "candidates.json"
-        prepared.write_text(json.dumps({"pdf_sha256": "abc", "ocr_required_pages": [], "candidates": []}), encoding="utf-8")
-        candidates.write_text(json.dumps({"candidates": []}), encoding="utf-8")
-        bundle = self._build([self._pdf_job(
-            key="FW",
-            rel="论文分析/A/FW.md",
-            future_work_prepare=str(prepared.resolve()),
-            future_work_candidates=str(candidates.resolve()),
-        )])
+        bundle = self._build([self._pdf_job(key="FW", rel="论文分析/A/FW.md")])
         job = self._manifest(bundle)["jobs"][0]
         result = self._result_zip(
             bundle,
             [{"job_id": job["job_id"], "item_key": "FW", "input_sha256": job["input_sha256"], "status": "ok"}],
-            {"future_work_items.json": json.dumps({"items": []})},
         )
         out = self._import(bundle, result)
         self.assertEqual(out["status"], "imported")
         sidecar = Path(str(self.prof / "论文分析/A/FW.md") + ".future_work.json")
         self.assertTrue(sidecar.is_file())
         self.assertEqual(json.loads(sidecar.read_text())["analysis"], "FW.md")
+
+    def test_wait_pdf_missing_future_work_payload_is_not_fully_imported(self):
+        bundle = self._build([self._pdf_job()])
+        job = self._manifest(bundle)["jobs"][0]
+        result = self._result_zip(
+            bundle,
+            [{"job_id": job["job_id"], "item_key": "ABC", "input_sha256": job["input_sha256"], "status": "ok"}],
+            include_future_work=False,
+        )
+        out = self._import(bundle, result)
+        self.assertEqual(out["status"], "needs_external_result")
+        self.assertEqual(out["reason_code"], "external_result_incomplete")
+        self.assertIn(job["job_id"], out["missing"])
+        self.assertFalse((self.prof / "论文分析/A/T.md").exists())
+        self.assertFalse((self.prof / "论文分析/_index.json").exists())
+
+    def test_abstract_import_neutralizes_unvalidated_future_work(self):
+        bundle = self._build([{
+            "item_key": "ABS",
+            "carrier": "abstract_json",
+            "level": "abstract",
+            "input_path": str(self.abstract.resolve()),
+            "analysis_relpath": "论文分析/A/Abs.md",
+            "research_direction": {},
+        }])
+        job = self._manifest(bundle)["jobs"][0]
+        malicious = ANALYSIS.replace("—（论文未明示 future work）", "外部声称：下一步一定做 SECRET FUTURE WORK")
+        result = self._result_zip(bundle, [{
+            "job_id": job["job_id"], "item_key": "ABS", "input_sha256": job["input_sha256"], "status": "ok"
+        }], analysis_text=malicious)
+        out = self._import(bundle, result)
+        self.assertEqual(out["status"], "imported")
+        target = self.prof / "论文分析/A/Abs.md"
+        self.assertNotIn("SECRET FUTURE WORK", target.read_text())
+        index = json.loads((self.prof / "论文分析/_index.json").read_text())
+        self.assertEqual(index["papers"]["ABS"]["future_work_state"], "failed")
+        self.assertIsNone(index["papers"]["ABS"]["future_work_sidecar"])
 
     def test_unknown_job_rejected(self):
         bundle = self._build([self._pdf_job()])
@@ -228,6 +297,7 @@ class HandoffTests(unittest.TestCase):
             "job_id": old_job["job_id"], "item_key": "ABC", "input_sha256": old_job["input_sha256"], "status": "ok"
         }])
         self.pdf.write_bytes(b"%PDF-1.4\nchanged-body")
+        self._write_future_inputs()
         new = self._build([job])
         self.assertNotEqual(old["handoff_id"], new["handoff_id"])
         self.assertEqual(self._import(old, result)["reason_code"], "handoff_stale")
@@ -255,6 +325,7 @@ class HandoffTests(unittest.TestCase):
         self.assertIn("## 总结", target.read_text())
         upgraded = json.loads((self.prof / "论文分析/_index.json").read_text())
         self.assertEqual(upgraded["papers"]["ABC"]["level"], "fulltext")
+        self.assertEqual(upgraded["papers"]["ABC"]["future_work_state"], "valid")
 
     def test_newer_local_analysis_after_bundle_is_rejected(self):
         target = self.prof / "论文分析/A/T.md"
