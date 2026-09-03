@@ -371,6 +371,132 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(payload["missing_item_keys"], ["P2", "P3", "P5", "P8"])
         self.assertTrue(snapshot_path(self.root).is_file())
 
+    def test_unresolved_candidates_block_the_noop_verdict(self):
+        # Everything resolvable is downloaded; one provisional candidate (P9) is
+        # absent from papers.json. "Every candidate has usable full text" is false,
+        # so the action must not be noop.
+        preview = preview_payload()
+        preview["directions"][0]["members"].append({"item_key": "P9", "preview_confidence": "high"})
+        write_json(self.preview_path, preview)
+        targets.select_target(
+            self.root,
+            self.preview_path,
+            {"direction_ids": ["dir_A", "dir_B"], "notes": {}},
+            selected_at="2026-09-04T00:00:03Z",
+        )
+        data = read_json(self.papers_path)
+        for p in data["papers"]:
+            p["pdf_status"] = "downloaded"
+        write_json(self.papers_path, data)
+        result, _ = build(self.root)
+        self.assertEqual(result["action"], "needs_resolution")
+        self.assertEqual(result["missing_item_keys"], [])
+        self.assertEqual(result["unresolved_item_keys"], ["P9"])
+        snap = read_json(snapshot_path(self.root))
+        self.assertEqual(snap["professors"][0]["action"], "needs_resolution")
+
+    def test_named_input_does_not_change_the_input_fingerprint(self):
+        _, _ = build(self.root)
+        plain = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
+        build(self.root, named={"directions": {"dir_B": ["P5"]}})
+        with_named = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
+        self.assertEqual(plain, with_named)
+        # The named paper still lands in the candidate set and reasons.
+        by_dir = {d["direction_id"]: d for d in read_json(snapshot_path(self.root))["professors"][0]["directions"]}
+        self.assertIn("P5", by_dir["dir_B"]["candidate_keys"])
+        self.assertIn("user_named", by_dir["dir_B"]["expansion_reasons"]["P5"])
+
+    def test_verify_accepts_a_fresh_snapshot_without_writing(self):
+        build(self.root)
+        before = snapshot_path(self.root).read_bytes()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            result = stage1.verify_command(self.root, None)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["professors"], ["教授A"])
+        self.assertEqual(snapshot_path(self.root).read_bytes(), before)
+
+    def test_verify_reports_missing_snapshot_and_stale_states(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                stage1.verify_command(self.root, None)
+        self.assertEqual(ctx.exception.code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["reason_code"], "missing_stage1_snapshot")
+
+        build(self.root)
+        data = read_json(self.papers_path)
+        for p in data["papers"]:
+            if p["item_key"] == "P2":
+                p["pdf_status"] = "downloaded"
+        write_json(self.papers_path, data)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                stage1.verify_command(self.root, None)
+        self.assertEqual(ctx.exception.code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["reason_code"], "stale_stage1_snapshot")
+        self.assertEqual(
+            payload["stale_professors"],
+            [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
+        )
+
+    def test_verify_forwards_preview_refresh_and_missing_professor(self):
+        build(self.root)
+        write_json(self.preview_path, preview_payload(fp="fp-new"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                stage1.verify_command(self.root, None)
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(json.loads(out.getvalue())["reason_code"], "preview_changed")
+
+        write_json(self.preview_path, preview_payload())
+        preview_b_path = self.root / "教授研究" / "lab" / "教授B" / "方向预筛.json"
+        write_json(preview_b_path, preview_payload(professor="教授B", fp="fp-b"))
+        papers_b_path = self.root / "教授研究" / "lab" / "教授B" / "papers.json"
+        payload_b = papers_payload()
+        payload_b["professor"] = {"name": "教授B"}
+        write_json(papers_b_path, payload_b)
+        targets.select_target(
+            self.root,
+            preview_b_path,
+            {"direction_ids": ["dir_B"], "notes": {}},
+            selected_at="2026-09-04T00:00:04Z",
+        )
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                stage1.verify_command(self.root, None)
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(json.loads(out.getvalue())["reason_code"], "professor_missing_from_snapshot")
+
+    def test_fill_then_rebuild_then_verify_chain(self):
+        # Simulates the Stage 1 → collector → snapshot refresh → Stage 2 verify chain:
+        # build reports the missing keys, the fill flips papers.json, the rebuild
+        # persists the post-fill readiness, and verify accepts the fresh snapshot.
+        result, _ = build(self.root)
+        self.assertEqual(result["action"], "pdf_fill_needed")
+        self.assertEqual(result["missing_item_keys"], ["P2", "P3", "P5", "P8"])
+
+        data = read_json(self.papers_path)
+        for p in data["papers"]:
+            if p["item_key"] in {"P2", "P3", "P5", "P8"}:
+                p["pdf_status"] = "downloaded"
+        write_json(self.papers_path, data)
+        result, _ = build(self.root)
+        self.assertEqual(result["action"], "noop")
+        snap = read_json(snapshot_path(self.root))
+        self.assertEqual(snap["professors"][0]["action"], "noop")
+        self.assertEqual(snap["professors"][0]["missing_item_keys"], [])
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            verified = stage1.verify_command(self.root, None)
+        self.assertEqual(verified["status"], "ok")
+
     def test_agent_contract_delegates_only_item_scoped_fast_path(self):
         agent = (ROOT.parents[1] / "agents" / "professor-contact-downloader.agent.md").read_text(
             encoding="utf-8"
@@ -385,6 +511,12 @@ class Stage1CandidateTests(unittest.TestCase):
         # The old professor-level keep-list download call must be gone; the item-scoped
         # fast path is the only collector invocation Stage 1 may make.
         self.assertNotIn("professors: <comma-separated selected professor names>", agent)
+        # Review fix: unresolved candidate keys must never yield a clean no-op.
+        self.assertIn("needs_resolution", agent)
+        self.assertIn("Never report a clean `ok` while unresolved keys remain", agent)
+        # Review fix: the snapshot must be refreshed after the collector returns.
+        self.assertIn("Refresh the snapshot after the collector returns", agent)
+        self.assertIn("post-fill", agent)
 
 
 if __name__ == "__main__":

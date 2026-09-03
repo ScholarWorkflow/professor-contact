@@ -228,11 +228,13 @@ def papers_digest(papers: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-def input_fingerprint(
-    target: dict[str, Any],
-    papers: dict[str, dict[str, Any]],
-    named_by_direction: dict[str, list[str]],
-) -> str:
+def input_fingerprint(target: dict[str, Any], papers: dict[str, dict[str, Any]]) -> str:
+    """Fingerprint of the candidate-build inputs (target selection + papers state).
+
+    User-named papers are deliberately excluded: they extend the candidate set but
+    not the readiness state, so ``verify`` can recompute this fingerprint without
+    the named-papers file.
+    """
     return sha256_obj({
         "version": 1,
         "preview_fingerprint": target.get("preview_fingerprint"),
@@ -247,7 +249,6 @@ def input_fingerprint(
             for direction in target.get("directions", [])
         ],
         "papers": papers_digest(papers),
-        "named": {key: sorted(values) for key, values in sorted(named_by_direction.items())},
     })
 
 
@@ -384,7 +385,7 @@ def build_professor_entry(
         missing.update(missing_keys)
         unresolved.update(unresolved_keys)
 
-    action = "pdf_fill_needed" if missing else "noop"
+    action = "pdf_fill_needed" if missing else "needs_resolution" if unresolved else "noop"
     built_at = now_utc()
     professor_entry = {
         "professor": target.get("professor"),
@@ -394,7 +395,7 @@ def build_professor_entry(
         "preview_fingerprint_version": target.get("preview_fingerprint_version"),
         "direction_id_version": target.get("direction_id_version"),
         "membership_claim": MEMBERSHIP_CLAIM,
-        "input_fingerprint": input_fingerprint(target, papers, named_resolved),
+        "input_fingerprint": input_fingerprint(target, papers),
         "built_at": built_at,
         "action": action,
         "directions": direction_entries,
@@ -476,7 +477,12 @@ def build_command(program_root: Path, professors: list[str] | None, named_file: 
 
     missing_union = sorted({key for item in summaries for key in item["missing_item_keys"]})
     unresolved_union = sorted({key for item in summaries for key in item["unresolved_item_keys"]})
-    action = "pdf_fill_needed" if missing_union else "noop"
+    if missing_union:
+        action = "pdf_fill_needed"
+    elif unresolved_union:
+        action = "needs_resolution"
+    else:
+        action = "noop"
     return {
         "status": "ok",
         "action": action,
@@ -497,6 +503,69 @@ def build_command(program_root: Path, professors: list[str] | None, named_file: 
     }
 
 
+def verify_command(program_root: Path, professors: list[str] | None) -> dict[str, Any]:
+    """Read-only consistency check between the snapshot and the current inputs.
+
+    Stage 2 consumes the snapshot's candidate sets, so it must verify (not trust)
+    that the snapshot exists, covers every selected direction, and was built from
+    the current target selection and papers state. Never writes.
+    """
+    program_root = program_root.resolve()
+    resolution = contact_targets.resolve_targets(program_root, professors)
+    if resolution.get("status") != "ok":
+        emit(resolution)
+        raise SystemExit(2)
+    snapshot_path = program_root / SNAPSHOT_FILE
+    if not snapshot_path.is_file():
+        emit({"status": "needs_input", "reason_code": "missing_stage1_snapshot",
+              "snapshot_path": str(snapshot_path), "notes": "run Stage 1 (contact_stage1.py build) first"})
+        raise SystemExit(2)
+    snapshot = load_snapshot(snapshot_path)
+    entries = {item.get("professor"): item for item in snapshot["professors"] if isinstance(item, dict)}
+    stale: list[dict[str, Any]] = []
+    checked: list[str] = []
+    for target in resolution.get("targets", []):
+        name = target.get("professor")
+        entry = entries.get(name)
+        if entry is None:
+            emit({"status": "needs_input", "reason_code": "professor_missing_from_snapshot",
+                  "snapshot_path": str(snapshot_path), "professor": name,
+                  "notes": "run Stage 1 (contact_stage1.py build) first"})
+            raise SystemExit(2)
+        problems: list[str] = []
+        if entry.get("preview_fingerprint") != target.get("preview_fingerprint") or \
+                entry.get("preview_fingerprint_version") != target.get("preview_fingerprint_version"):
+            problems.append("preview_fingerprint_mismatch")
+        snapshot_directions = {d.get("direction_id"): d for d in entry.get("directions", [])
+                               if isinstance(d, dict)}
+        for direction in target.get("directions", []):
+            snapshot_direction = snapshot_directions.get(direction.get("direction_id"))
+            if snapshot_direction is None:
+                problems.append(f"missing_direction:{direction.get('direction_id')}")
+                continue
+            provisional = sorted({m["item_key"] for m in direction.get("members", [])})
+            if not set(provisional) <= set(snapshot_direction.get("candidate_keys") or []):
+                problems.append(f"candidate_keys_incomplete:{direction.get('direction_id')}")
+        professor_dir = program_root / str(target.get("professor_dir") or "")
+        papers_path = professor_dir / "papers.json"
+        if not papers_path.is_file():
+            problems.append("missing_papers_json")
+        else:
+            current_fingerprint = input_fingerprint(target, load_papers(papers_path))
+            if entry.get("input_fingerprint") != current_fingerprint:
+                problems.append("input_fingerprint_mismatch")
+        if problems:
+            stale.append({"professor": name, "problems": sorted(set(problems))})
+        else:
+            checked.append(name)
+    if stale:
+        emit({"status": "needs_input", "reason_code": "stale_stage1_snapshot",
+              "snapshot_path": str(snapshot_path), "stale_professors": stale,
+              "notes": "re-run Stage 1 (contact_stage1.py build) before Stage 2"})
+        raise SystemExit(2)
+    return {"status": "ok", "snapshot_path": str(snapshot_path), "professors": checked}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="professor-contact Stage 1 candidate builder")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -504,11 +573,19 @@ def main() -> int:
     build.add_argument("--program-root", required=True, type=Path)
     build.add_argument("--professors", default="")
     build.add_argument("--named-file", default=None, type=Path)
+    verify = sub.add_parser("verify")
+    verify.add_argument("--program-root", required=True, type=Path)
+    verify.add_argument("--professors", default="")
     args = parser.parse_args()
     try:
         if args.command == "build":
             professors = [part.strip() for part in args.professors.split(",") if part.strip()]
             payload = build_command(args.program_root, professors or None, args.named_file)
+            emit(payload)
+            return 0
+        if args.command == "verify":
+            professors = [part.strip() for part in args.professors.split(",") if part.strip()]
+            payload = verify_command(args.program_root, professors or None)
             emit(payload)
             return 0
     except (OSError, ValueError, json.JSONDecodeError) as exc:

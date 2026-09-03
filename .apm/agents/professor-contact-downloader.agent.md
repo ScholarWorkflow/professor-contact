@@ -73,6 +73,8 @@ Interpret results strictly:
 
 If `action == "noop"`, Stage 1 is done: return `ok` with `collector_result: null` and **do not spawn the collector**.
 
+If `action == "needs_resolution"`, some candidate keys exist in the target/preview but not in the professor's `papers.json`, so the fast path cannot fill them. Do not spawn the collector: return `partial` with the unresolved keys in `notes` (suggest re-running the collection pipeline or checking the selection). Never report a clean `ok` while unresolved keys remain.
+
 ### 5. Fill only the missing candidate keys (item-scoped fast path)
 
 Spawn the collector exactly once:
@@ -88,7 +90,26 @@ task(subagent_type: "professor-collector",
 - Already-downloaded candidates are skipped idempotently by the collector; you must not send them.
 - If the collector returns an empty runtime result, retry once with the exact same prompt.
 
-### 6. Return
+### 6. Refresh the snapshot after the collector returns (mandatory)
+
+The collector updates `papers.json`, which instantly makes the pre-fill snapshot stale. Re-run the deterministic build so the persisted snapshot reflects the **post-fill** readiness:
+
+```bash
+skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_stage1.py \
+  build --program-root "<program_root>" \
+  [--professors "<comma-separated names>"] \
+  [--named-file "<named_papers_file absolute path>"]
+```
+
+The refreshed snapshot is the final Stage 1 state and the one Stage 2 will verify. Interpret the post-fill `action`:
+
+- `noop` — every candidate now has a usable PDF; Stage 1 is complete.
+- `pdf_fill_needed` — some keys could not be filled (network/paid-wall failures); return `partial` with the still-missing keys in `notes` (they stay eligible for the next run).
+- `needs_resolution` — candidate keys absent from `papers.json`; return `partial` as described in Step 4.
+
+You may optionally run `contact_stage1.py verify --program-root ...` as a self-check that the persisted snapshot is consistent before returning.
+
+### 7. Return
 
 Return only compact JSON:
 
@@ -108,7 +129,7 @@ Return only compact JSON:
 }
 ```
 
-`candidate_count` = total expanded candidate keys across selected directions (union/deduplicated). `action` mirrors the snapshot build. `ok` — build succeeded and the collector finished (including its `partial`, reported honestly); `partial` — the collector could not fill some missing keys (they stay eligible for the next run).
+`candidate_count` = total expanded candidate keys across selected directions (union/deduplicated). `action` is the **post-fill** (or build-time, when no fill was needed) snapshot action. `ok` — build succeeded and every candidate has usable full text (or the collector finished and the refreshed snapshot is `noop`); `partial` — the collector could not fill some missing keys or unresolved keys remain (they stay eligible/diagnosed for the next run).
 
 ## Hard rules
 
@@ -117,6 +138,7 @@ Return only compact JSON:
 - Never pass `professors` with the `item_keys` fast path; keep-list screening is never re-run here.
 - Never modify `套磁目标.json`, `方向预筛.json`, or `papers.json` yourself.
 - Never download PDFs yourself and never call Zotero write APIs yourself.
+- Always refresh the snapshot after the collector returns; never leave `套磁阶段1候选.json` describing pre-fill state, and never return `ok` while missing or unresolved candidate keys remain (`partial` + notes instead).
 - Stage 1 never claims final direction membership: candidate sets are input to Stage 2, not a verdict.
 - Re-running after a network change just repeats this flow — missing eligible keys are recomputed from `papers.json` and retried through the same fast path.
 - A stale preview fingerprint blocks Stage 1 until Stage 0 selection is revised.
