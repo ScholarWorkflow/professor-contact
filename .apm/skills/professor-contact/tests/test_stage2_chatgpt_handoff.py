@@ -277,6 +277,27 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(entry["future_work_state"], "valid")
         self.assertTrue(Path(entry["future_work_sidecar"]).is_file())
 
+    def test_tampered_bundled_carrier_is_rejected_by_actual_byte_hash(self):
+        bundle = self._build([self._pdf_job()])
+        job = self._manifest(bundle)["jobs"][0]
+        result = self._result_zip(bundle, [{
+            "job_id": job["job_id"], "item_key": "ABC", "input_sha256": job["input_sha256"], "status": "ok"
+        }])
+        tampered = self.root / "tampered-bundle.zip"
+        with zipfile.ZipFile(bundle["bundle_path"]) as source, zipfile.ZipFile(tampered, "w") as sink:
+            for info in source.infolist():
+                data = source.read(info.filename)
+                if info.filename == "papers/ABC/paper.pdf":
+                    data = b"%PDF-1.4\ntampered-after-manifest"
+                sink.writestr(info, data)
+        tampered_bundle = dict(bundle)
+        tampered_bundle["bundle_path"] = str(tampered)
+        out = self._import(tampered_bundle, result)
+        self.assertEqual(out["status"], "needs_external_result")
+        self.assertEqual(out["reason_code"], "external_result_hash_mismatch")
+        self.assertFalse((self.prof / "论文分析/A/T.md").exists())
+        self.assertFalse((self.prof / "论文分析/_index.json").exists())
+
     def test_future_work_selection_is_finalized_locally_via_uv_run(self):
         self.assertFalse(self.future.stat().st_mode & stat.S_IXUSR)
         bundle = self._build([self._pdf_job(key="FW", rel="论文分析/A/FW.md")])
@@ -416,6 +437,51 @@ class HandoffTests(unittest.TestCase):
         out = self._import(bundle, result)
         self.assertEqual(out["reason_code"], "handoff_stale")
         self.assertEqual(target.read_text(), "newer local fulltext analysis")
+
+    def test_local_change_during_future_work_finalize_is_rejected_at_install_boundary(self):
+        target = self.prof / "论文分析/A/T.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("old abstract analysis", encoding="utf-8")
+        index_path = self.prof / "论文分析/_index.json"
+        index = {
+            "schema": 2,
+            "future_work_schema": 1,
+            "professor": "Professor",
+            "papers": {"ABC": {"file": str(target), "level": "abstract", "generated_at": "old"}},
+        }
+        index_path.write_text(json.dumps(index), encoding="utf-8")
+        bundle = self._build([self._pdf_job()])
+        job = self._manifest(bundle)["jobs"][0]
+        result = self._result_zip(bundle, [{
+            "job_id": job["job_id"], "item_key": "ABC", "input_sha256": job["input_sha256"], "status": "ok"
+        }])
+
+        original_run = handoff._run_future_work
+        changed = {"done": False}
+
+        def racing_run(script, *arguments):
+            proc = original_run(script, *arguments)
+            if arguments and arguments[0] == "validate" and not changed["done"]:
+                target.write_text("newer local during finalize", encoding="utf-8")
+                newer = json.loads(index_path.read_text(encoding="utf-8"))
+                newer["papers"]["ABC"]["level"] = "fulltext"
+                newer["papers"]["ABC"]["generated_at"] = "newer-during-finalize"
+                index_path.write_text(json.dumps(newer), encoding="utf-8")
+                changed["done"] = True
+            return proc
+
+        handoff._run_future_work = racing_run
+        try:
+            out = self._import(bundle, result)
+        finally:
+            handoff._run_future_work = original_run
+
+        self.assertTrue(changed["done"])
+        self.assertEqual(out["status"], "needs_external_result")
+        self.assertEqual(out["reason_code"], "handoff_stale")
+        self.assertEqual(target.read_text(encoding="utf-8"), "newer local during finalize")
+        preserved = json.loads(index_path.read_text(encoding="utf-8"))
+        self.assertEqual(preserved["papers"]["ABC"]["generated_at"], "newer-during-finalize")
 
     def test_workflow_contract_wires_continue_wait_and_resume(self):
         skill = SKILL.read_text(encoding="utf-8")
