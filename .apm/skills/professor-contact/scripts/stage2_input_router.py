@@ -40,6 +40,7 @@ def _absolute_existing(path: str | None) -> str | None:
 
 
 def route_existing(item_key: str, ocr_path: str | None, pdf_path: str | None) -> PaperInput | None:
+    """Route current local carriers without considering whether full analysis is needed."""
     ocr = _absolute_existing(ocr_path)
     if ocr:
         return PaperInput(item_key, ocr, "fulltext", "ocr", "ok")
@@ -55,12 +56,34 @@ def export_missing(item_keys: Iterable[str], output_dir: Path, executable: str =
         return {}
     output_dir = output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    command = [executable, *keys, "--output-dir", str(output_dir)]
+
+    # The exporter atomically overwrites successful keys but intentionally does
+    # not delete an older file when a later export fails. Remove every expected
+    # output before this invocation so an accepted file is necessarily fresh.
+    clean_keys: list[str] = []
+    routed: dict[str, PaperInput] = {}
+    for key in keys:
+        path = output_dir / f"{key}.json"
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            routed[key] = PaperInput(
+                key, None, None, None, "error",
+                f"cannot clear stale export: {exc.__class__.__name__}",
+            )
+        else:
+            clean_keys.append(key)
+
+    if not clean_keys:
+        return routed
+
+    command = [executable, *clean_keys, "--output-dir", str(output_dir)]
     try:
         result = subprocess.run(command, text=True, capture_output=True, check=False)
     except OSError as exc:
         reason = f"exporter unavailable: {exc.__class__.__name__}"
-        return {key: PaperInput(key, None, None, None, "error", reason) for key in keys}
+        routed.update({key: PaperInput(key, None, None, None, "error", reason) for key in clean_keys})
+        return routed
 
     payload = None
     for line in reversed(result.stdout.splitlines()):
@@ -78,8 +101,7 @@ def export_missing(item_keys: Iterable[str], output_dir: Path, executable: str =
             if isinstance(error, dict) and error.get("item_key"):
                 errors[str(error["item_key"])] = str(error.get("reason") or "export failed")[:200]
 
-    routed: dict[str, PaperInput] = {}
-    for key in keys:
+    for key in clean_keys:
         path = output_dir / f"{key}.json"
         if path.is_file():
             routed[key] = PaperInput(key, str(path.resolve()), "abstract", "abstract_json", "ok")
