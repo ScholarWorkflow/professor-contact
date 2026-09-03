@@ -35,6 +35,10 @@ EMAIL_OVERVIEW = "套磁邮件总览.md"
 SELECTION_FILE = "套磁选择.json"
 PROJECTIONS_FILE = "_contact_projections.json"
 VERIFY_FILE = "_contact_verify.json"
+CONTACT_EVIDENCE_FILE = "_联系方式证据.json"
+CONTACT_EVIDENCE_KIND = "professor-contact-evidence"
+CONTACT_EVIDENCE_VERDICTS = ("confirmed_cross_source", "official_only",
+                             "paper_only", "conflict", "insufficient")
 GAP_SCOPES = ("relevant", "selected_direction", "all")
 FRESHNESS_SCOPES = ("shortlist", "full")
 REFRESH_SCOPES = ("flagged", "selected", "all")
@@ -2227,7 +2231,8 @@ def cmd_stage3_finalize(args) -> None:
 
 def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
                         idea: dict, note: str, program_root: Path,
-                        profile_fp: str | None, papers_override: list[str] | None = None) -> dict:
+                        profile_fp: str | None, papers_override: list[str] | None = None,
+                        contact_evidence: dict | None = None) -> dict:
     gap_records = {}
     for gap in pack_direction.get("gap_shortlist", []) + pack_direction.get("gaps_excluded", []):
         gap_records[(gap["item_key"], gap["gap_id"])] = gap
@@ -2321,6 +2326,7 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
                          "profile": profile_fp,
                          "candidate_state": idea.get("_state_fingerprint")},
         "user_supplement": note or "",
+        "contact_evidence": contact_evidence,
     }
     entry["source_hash"] = sha256_obj({k: entry[k] for k in (
         "email_id", "idea", "papers", "gaps", "red_lines", "allowed_sources")})
@@ -2433,6 +2439,8 @@ def cmd_stage4_finalize(args) -> None:
             if perr is None and isinstance(pack, dict):
                 pack_cache[str(professor_dir)] = pack
     validate_stage4_selections(all_selects, state_cache, pack_cache)
+    evidence_artifact, evidence_error = load_contact_evidence(program_root)
+    evidence_snapshots = {}
     for select in all_selects:
         professor = select.get("professor")
         professor_dir = Path(select.get("professor_dir") or "")
@@ -2480,10 +2488,13 @@ def cmd_stage4_finalize(args) -> None:
             papers_override = validate_papers_override(
                 idea, idea_input.get("papers_override"),
                 f"{professor}::{ckey}::{idea_id}")
+            if professor not in evidence_snapshots:
+                evidence_snapshots[professor] = contact_evidence_snapshot(
+                    evidence_artifact, evidence_error, professor)
             entry = compile_email_entry(
                 pack, state_direction, pack_direction, idea_full,
                 idea_input.get("note") or "", program_root, current_profile_fp,
-                papers_override)
+                papers_override, evidence_snapshots[professor])
             email_entries.append(entry)
             selected_ideas.append(idea_input)
         if not selected_ideas:
@@ -2576,6 +2587,146 @@ def header_values(sources: dict, email: dict) -> dict:
 def subject_line(values: dict) -> str:
     return (f"【入学希望】{values['入学年度']}年{values['入学月']}期 "
             f"{values['学位']}{values['入試批次']}入学に関するご相談")
+
+
+def compact_name(value: Any) -> str:
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or "")))
+
+
+def load_contact_evidence(program_root: Path) -> tuple[dict | None, str | None]:
+    """Read the upstream reconciled artifact; absence is absence of evidence."""
+    path = program_root / "教授研究" / CONTACT_EVIDENCE_FILE
+    data, error = read_json_file(path)
+    if error == "not_found":
+        return None, None
+    if error:
+        return None, "unreadable"
+    if (not isinstance(data, dict) or data.get("schema") != 1 or
+            data.get("kind") != CONTACT_EVIDENCE_KIND or
+            not isinstance(data.get("professors"), list)):
+        return None, "invalid_artifact"
+    return data, None
+
+
+def contact_evidence_record(artifact: dict, professor: str) -> dict | None:
+    key = compact_name(professor)
+    if not key:
+        return None
+    for record in artifact.get("professors", []):
+        if not isinstance(record, dict):
+            continue
+        name = (record.get("professor") or {}).get("name")
+        if name and compact_name(name) == key:
+            return record
+    return None
+
+
+def contact_evidence_snapshot(artifact: dict | None, artifact_error: str | None,
+                              professor: str) -> dict | None:
+    """Stage-4 copy of the professor's reconciled record into the email pack."""
+    if artifact_error or not isinstance(artifact, dict):
+        return None
+    record = contact_evidence_record(artifact, professor)
+    if record is None:
+        return None
+    return {"generated_at": artifact.get("generated_at"),
+            "degraded": bool(artifact.get("degraded")),
+            "source_errors": artifact.get("source_errors") or [],
+            "recent_paper_years": artifact.get("recent_paper_years"),
+            "current_year": artifact.get("current_year"),
+            "record_fingerprint": sha256_obj(record),
+            "record": record}
+
+
+def evidence_provenance(record: dict, recipient: str) -> dict:
+    return {
+        "verdict": record.get("verdict"),
+        "current_email": record.get("current_email"),
+        "official_provenance": [row for row in record.get("official_emails", [])
+                                if isinstance(row, dict) and row.get("email") == recipient],
+        "paper_evidence": [row for row in record.get("paper_correspondence", [])
+                           if isinstance(row, dict) and row.get("email") == recipient],
+        "conflicting_paper_emails": record.get("conflicting_paper_emails") or [],
+    }
+
+
+def evaluate_contact_evidence(professor: str, snapshot: Any,
+                              artifact: dict | None,
+                              artifact_error: str | None) -> dict:
+    """Issue-#10 decision ladder: upstream contact-evidence artifact first.
+
+    Accepts the artifact's current email only for confirmed_cross_source or a
+    single official_only address; everything else (paper-only, conflict,
+    ambiguous, insufficient, missing/degraded/unreadable artifact) escalates to
+    the existing official faculty/lab web verification ladder.
+    """
+    def escalate(reason_code: str) -> dict:
+        return {"status": "escalate", "reason_code": reason_code,
+                "recipient_email": None, "single_source": None,
+                "web_lookup_required": True, "source": None,
+                "snapshot_stale": None, "provenance": {}}
+
+    def accept(status: str, record: dict, recipient: str, source: str,
+               stale: bool | None, single_source: bool) -> dict:
+        return {"status": status, "reason_code": None,
+                "recipient_email": recipient, "single_source": single_source,
+                "web_lookup_required": False, "source": source,
+                "snapshot_stale": stale,
+                "provenance": evidence_provenance(record, recipient)}
+
+    if artifact_error:
+        return escalate("contact_evidence_artifact_unreadable")
+    source = "artifact"
+    stale = None
+    record = None
+    if artifact is not None:
+        if bool(artifact.get("degraded")):
+            return escalate("contact_evidence_artifact_degraded")
+        record = contact_evidence_record(artifact, professor)
+        if record is None:
+            return escalate("contact_evidence_professor_not_found")
+        if isinstance(snapshot, dict) and isinstance(snapshot.get("record_fingerprint"), str):
+            stale = snapshot["record_fingerprint"] != sha256_obj(record)
+    elif isinstance(snapshot, dict) and isinstance(snapshot.get("record"), dict):
+        # The pack-embedded snapshot stays valid self-contained evidence when
+        # the artifact file is absent; its freshness just cannot be re-confirmed.
+        if bool(snapshot.get("degraded")):
+            return escalate("contact_evidence_artifact_degraded")
+        record = snapshot["record"]
+        source = "pack_snapshot"
+    else:
+        return escalate("contact_evidence_missing")
+    if not isinstance(record, dict) or record.get("verdict") not in CONTACT_EVIDENCE_VERDICTS:
+        return escalate("contact_evidence_invalid_record")
+    verdict = record.get("verdict")
+    recipient = record.get("current_email")
+    if verdict == "confirmed_cross_source":
+        confirmed = record.get("confirmed_emails")
+        if recipient and isinstance(confirmed, list) and len(confirmed) == 1:
+            return accept("confirmed_cross_source", record, recipient, source, stale, False)
+        return escalate("contact_evidence_ambiguous")
+    if verdict == "official_only":
+        if recipient:
+            return accept("official_only", record, recipient, source, stale, True)
+        return escalate("contact_evidence_ambiguous")
+    if verdict == "conflict":
+        return escalate("contact_evidence_conflict")
+    if verdict == "paper_only":
+        # Paper correspondence is never a current outreach address on its own.
+        return escalate("contact_evidence_paper_only")
+    return escalate("contact_evidence_insufficient")
+
+
+def contact_evidence_decisions(emails: list[dict], artifact: dict | None,
+                               artifact_error: str | None) -> dict:
+    decisions = {}
+    for email in emails:
+        professor = email.get("professor")
+        if professor in decisions:
+            continue
+        decisions[professor] = evaluate_contact_evidence(
+            professor, email.get("contact_evidence"), artifact, artifact_error)
+    return decisions
 
 
 def verify_state(professor_dir: Path, sources: dict) -> dict:
@@ -2718,12 +2869,15 @@ def cmd_stage5_plan(args) -> None:
                         "future_aspiration": "宽泛方向表述+背景技能，禁具体技术栈，不用其他方向原句",
                         "learning": "2-3 个名词短语候选，贴近 profile 真实知识储备，交用户挑选",
                         "source_map": "每句必须给来源；③只能用 gap:<id>；④只能 template；所有 source_ids ⊆ allowed_sources"}}})
+        evidence_artifact, evidence_error = load_contact_evidence(program_root)
         emit({
             "status": "ok", "email_pack": str(pack_path),
             "emails": [e.get("email_id") for e in emails],
             "verify": {p: ("ok" if v["ok"] else f"needs_recheck:{v['reason']}")
                        for p, v in verify_checks.items()},
             "needs_recheck_professors": needs_recheck,
+            "contact_evidence": contact_evidence_decisions(
+                emails, evidence_artifact, evidence_error),
             "template": template_path or "embedded",
             "output_mode": mode,
             "followup_template": (find_followup_template_path(
@@ -3130,6 +3284,8 @@ def cmd_stage5_finalize(args) -> None:
         if not emails:
             fail("invalid_params", f"email_id not found: {args.email_id}")
     sources = load_header_sources(program_root)
+    evidence_artifact, evidence_error = load_contact_evidence(program_root)
+    decisions = contact_evidence_decisions(emails, evidence_artifact, evidence_error)
     result_path = Path(args.result)
     raw_by_id = load_id_map(result_path, {e.get("email_id") for e in emails}, "email result",
                             exact=not bool(args.email_id))
@@ -3186,6 +3342,16 @@ def cmd_stage5_finalize(args) -> None:
                       message=f"送信前核验缓存不可用（{verify_check['reason']}）：先完成 Step 2.5 核验。未写盘。")
         verify = verify_check["data"]
         warnings = (verify.get("items") or {}).get("warnings") or []
+        decision = decisions.get(email.get("professor"))
+        cache_email_value = str(((verify.get("items") or {}).get("email") or {})
+                                .get("value") or "").strip()
+        if decision and decision["status"] != "escalate":
+            recipient = str(decision["recipient_email"] or "").strip()
+            if not cache_email_value or cache_email_value.casefold() != recipient.casefold():
+                fail("contact_evidence_mismatch",
+                     f"{email_id}: 本地联系方式证据判定 {decision['status']}，收件邮箱应为 "
+                     f"{recipient}；核对表邮箱为「{cache_email_value or '空'}」。"
+                     "请按证据填写 _contact_verify.json，或重建 _联系方式证据.json 后重跑阶段 4。")
         roster_verdict = ((verify.get("items") or {}).get("roster") or {}).get("verdict")
         email_verdict = ((verify.get("items") or {}).get("email") or {}).get("verdict")
         banner_needed = bool(warnings) or roster_verdict == "not_found" or email_verdict == "unverified"
@@ -3214,6 +3380,14 @@ def cmd_stage5_finalize(args) -> None:
                 else {"schema": SCHEMA, "managed_by": MANAGED_BY, "emails": {}})
         email_state = state_updates[str(professor_dir)]
         root_entry = email_state.setdefault("emails", {}).setdefault(email_id, {})
+        if decision:
+            root_entry["contact_evidence"] = {
+                "status": decision["status"], "reason_code": decision["reason_code"],
+                "chosen_email": cache_email_value or None,
+                "evidence_email": decision["recipient_email"],
+                "web_lookup_required": decision["web_lookup_required"],
+                "source": decision["source"], "snapshot_stale": decision["snapshot_stale"],
+                "provenance": decision["provenance"], "recorded_at": now_utc()}
         for kind, draft, protected, banned, heading, template_name, source_rows in variants:
             output_id = stage5_output_id(email_id, kind)
             humanized = humanized_by_id[output_id].read_text(encoding="utf-8")

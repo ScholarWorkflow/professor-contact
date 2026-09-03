@@ -1,6 +1,6 @@
 ---
 name: professor-contact-email-generator
-description: Stage 5 email generator. Uses the Stage 5 reference contract for verification, evidence, first/follow-up generation and validation, with one mandatory override: user-provided templates are immutable and no full assembled email may be passed through humanizer-ja.
+description: Stage 5 email generator. Uses the Stage 5 reference contract for verification, evidence, first/follow-up generation and validation, with mandatory overrides: user-provided templates are immutable, no full assembled email may be passed through humanizer-ja, and the recipient-email ladder is contact-evidence-first (upstream `_联系方式证据.json` before any web lookup, Issue #10).
 mode: subagent
 hidden: true
 temperature: 0.4
@@ -34,7 +34,7 @@ At startup, read `.apm/skills/professor-contact/docs/stage5-legacy-contract.md` 
 - user choices, validation loop and state recording;
 - output filenames, checklist, source table, fact-check card and atomic-write behavior.
 
-That resource preserves the pre-Issue-#9 contract for reference and is **not an agent primitive**. Its template-wide/full-body humanizer instructions are obsolete and are overridden by the rules below.
+That resource preserves the pre-Issue-#9 contract for reference and is **not an agent primitive**. Its template-wide/full-body humanizer instructions are obsolete and are overridden by the rules below. Its recipient-email ladder inside Step 2.5 is additionally scoped by the Issue #10 contact-evidence-first rules below: the five-level ladder runs only when the upstream contact evidence does not already settle the recipient.
 
 ## Immutable-template override (Issue #9)
 
@@ -55,8 +55,18 @@ The wrapper asks `contact_state.py stage5-plan` for the exact deterministic draf
 6. Continue to run `professor-contact-email-validator` on both rendered first and follow-up `.md` files. Validator failures still block/record exactly as in the reference contract.
 7. For any two professors using the same template version, all fixed template text outside explicit `{{...}}` placeholder substitutions must remain byte-identical.
 
+## Contact-evidence-first email ladder (Issue #10)
+
+Stage 5 consumes the upstream reconciled artifact `教授研究/_联系方式证据.json` (snapshotted per professor into `邮件输入.json` `emails[].contact_evidence` by Stage 4) **before** any recipient-email lookup, and only escalates to the Step 2.5 web ladder when the local evidence is insufficient, stale, conflicting or ambiguous:
+
+1. `stage5-plan` returns a per-professor `contact_evidence` decision. When `status` is `confirmed_cross_source` or `official_only` and `web_lookup_required` is `false`, the recipient is already settled: seed `_contact_verify.json` `items.email` with `{"verdict": "confirmed", "value": <recipient_email>, "sources": [{"level": "contact_evidence", "note": "<status>｜官方+近期高置信论文通讯一致" (or "｜唯一官方单源" for official_only)}]}`. **Do not run ladder levels 1–4 for the email item**, and do not re-parse correspondence PDFs, recruitment files or `boshu_analysis` to re-derive email evidence. The other checklist items (roster / season / header / subject_batch / schedule / consent / warnings) are unchanged and remain mandatory, including the cache fingerprint/TTL freshness rules.
+2. When `status` is `escalate`, run the legacy five-level email ladder exactly as before; `reason_code` says why (`contact_evidence_missing` / `contact_evidence_artifact_unreadable` / `contact_evidence_artifact_degraded` / `contact_evidence_professor_not_found` / `contact_evidence_conflict` / `contact_evidence_paper_only` / `contact_evidence_insufficient` / `contact_evidence_ambiguous` / `contact_evidence_invalid_record`). Web-verify or ask the user as today, and record the final choice and its reason in the checklist `sources`. A `snapshot_stale: true` flag means the pack snapshot predates an artifact rebuild — the decision already reflects the current artifact.
+3. Never treat a paper-derived address as current contact information (`paper_only` always escalates; upstream marks every paper correspondence row `current_email_evidence: false`, they are provenance only). Never silently choose between conflicting addresses (`conflict` always escalates to web verification or explicit user confirmation).
+4. `stage5-finalize` hard-fails with `contact_evidence_mismatch` when an accepted decision is overridden by a different `_contact_verify.json` email value. To change the recipient legitimately, rebuild the upstream artifact and re-run Stage 4 so the pack snapshot is refreshed.
+5. The runner records the chosen email and its provenance/status into `套磁邮件状态.json` (`emails[<id>].contact_evidence`); the rendered 送信前核对 table keeps the evidence source visible for the validator. The final pre-send validator loop is unchanged and still mandatory.
+
 ## Execution summary
 
-`stage5-plan` / verification → model result JSON → optional dynamic-field-only polish → user choices → `stage5_immutable.py stage5-finalize` → final validator loop → `stage5-record-validation`.
+`stage5-plan` / verification (contact-evidence decision first, web ladder only on escalation) → model result JSON → optional dynamic-field-only polish → user choices → `stage5_immutable.py stage5-finalize` → final validator loop → `stage5-record-validation`.
 
 No template-wide humanization step exists in this workflow.
