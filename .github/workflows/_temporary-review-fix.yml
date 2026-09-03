@@ -1,0 +1,241 @@
+name: Temporary review fix
+
+on:
+  push:
+    branches:
+      - issue-3-chatgpt-stage2-handoff
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-3-chatgpt-stage2-handoff
+          fetch-depth: 0
+      - name: Patch exact handoff lease binding
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          script_path = Path('.apm/skills/professor-contact/scripts/stage2_chatgpt_handoff.py')
+          text = script_path.read_text(encoding='utf-8')
+
+          old = '''def _verify_current_local_plan_unlocked(professor_dir: Path) -> dict[str, Any]:
+    """Abort a local continue plan if any post-build artifact/index baseline changed."""
+    manifest = _current_handoff_manifest_unlocked(professor_dir)
+    jobs = manifest.get("jobs") or []
+    if not isinstance(jobs, list):
+        raise ValueError("stage2_plan_stale")
+    for job in jobs:
+        if not isinstance(job, dict) or not _impl._baseline_matches(professor_dir, job):
+            raise ValueError("stage2_plan_stale")
+    return manifest
+'''
+          new = '''def _verify_current_local_plan_unlocked(
+    professor_dir: Path,
+    *,
+    expected_handoff_id: str | None = None,
+    expected_source_fingerprint: str | None = None,
+) -> dict[str, Any]:
+    """Validate the caller's exact post-build plan, then recheck every baseline."""
+    manifest = _current_handoff_manifest_unlocked(professor_dir)
+    if expected_handoff_id is not None or expected_source_fingerprint is not None:
+        if (
+            not isinstance(expected_handoff_id, str)
+            or re.fullmatch(r"[0-9a-f]{20}", expected_handoff_id) is None
+            or not _is_sha256(expected_source_fingerprint)
+            or manifest.get("handoff_id") != expected_handoff_id
+            or manifest.get("source_fingerprint") != expected_source_fingerprint
+        ):
+            raise ValueError("stage2_plan_stale")
+    jobs = manifest.get("jobs") or []
+    if not isinstance(jobs, list):
+        raise ValueError("stage2_plan_stale")
+    for job in jobs:
+        if not isinstance(job, dict) or not _impl._baseline_matches(professor_dir, job):
+            raise ValueError("stage2_plan_stale")
+    return manifest
+'''
+          if text.count(old) != 1:
+              raise SystemExit('verify-plan block not found exactly once')
+          text = text.replace(old, new)
+
+          old = '''def acquire_local_lease(
+    professor_dir: Path,
+    token: str,
+    *,
+    ttl_seconds: int = _LOCAL_LEASE_TTL_SECONDS,
+    verify_plan: bool = False,
+) -> dict[str, Any]:
+    professor_dir = professor_dir.expanduser().resolve()
+    token = token.strip()
+    if not token:
+        raise ValueError("local lease token is required")
+    if ttl_seconds < 60:
+        raise ValueError("local lease ttl must be at least 60 seconds")
+    with _professor_lock(professor_dir):
+        current = _active_local_lease_unlocked(professor_dir)
+        if current and current.get("token") != token:
+            raise ValueError("stage2_writer_busy")
+        now = time.time()
+        created_here = current is None
+        payload = {
+            "schema": 1,
+            "token": token,
+            "acquired_at": current.get("acquired_at", now) if current else now,
+            "expires_at": now + ttl_seconds,
+        }
+        _impl._atomic_json(_local_lease_path(professor_dir), payload)
+        try:
+            manifest = _verify_current_local_plan_unlocked(professor_dir) if verify_plan else None
+        except BaseException:
+            if created_here:
+                _local_lease_path(professor_dir).unlink(missing_ok=True)
+            raise
+        output = {"status": "acquired", "reason_code": None, "token": token}
+        if manifest is not None:
+            output["handoff_id"] = manifest["handoff_id"]
+            output["source_fingerprint"] = manifest["source_fingerprint"]
+        return output
+'''
+          new = '''def acquire_local_lease(
+    professor_dir: Path,
+    token: str,
+    *,
+    ttl_seconds: int = _LOCAL_LEASE_TTL_SECONDS,
+    verify_plan: bool = False,
+    expected_handoff_id: str | None = None,
+    expected_source_fingerprint: str | None = None,
+) -> dict[str, Any]:
+    professor_dir = professor_dir.expanduser().resolve()
+    token = token.strip()
+    if not token:
+        raise ValueError("local lease token is required")
+    if ttl_seconds < 60:
+        raise ValueError("local lease ttl must be at least 60 seconds")
+    if verify_plan and (
+        not isinstance(expected_handoff_id, str)
+        or re.fullmatch(r"[0-9a-f]{20}", expected_handoff_id) is None
+        or not _is_sha256(expected_source_fingerprint)
+    ):
+        raise ValueError("stage2_plan_stale")
+    with _professor_lock(professor_dir):
+        current = _active_local_lease_unlocked(professor_dir)
+        if current and current.get("token") != token:
+            raise ValueError("stage2_writer_busy")
+        manifest = (
+            _verify_current_local_plan_unlocked(
+                professor_dir,
+                expected_handoff_id=expected_handoff_id,
+                expected_source_fingerprint=expected_source_fingerprint,
+            )
+            if verify_plan
+            else None
+        )
+        now = time.time()
+        payload = {
+            "schema": 1,
+            "token": token,
+            "acquired_at": current.get("acquired_at", now) if current else now,
+            "expires_at": now + ttl_seconds,
+        }
+        if manifest is not None:
+            payload["handoff_id"] = manifest["handoff_id"]
+            payload["source_fingerprint"] = manifest["source_fingerprint"]
+        _impl._atomic_json(_local_lease_path(professor_dir), payload)
+        output = {"status": "acquired", "reason_code": None, "token": token}
+        if manifest is not None:
+            output["handoff_id"] = manifest["handoff_id"]
+            output["source_fingerprint"] = manifest["source_fingerprint"]
+        return output
+'''
+          if text.count(old) != 1:
+              raise SystemExit('acquire block not found exactly once')
+          text = text.replace(old, new)
+
+          old = '''    if command == "local-lease-acquire":
+        parser.add_argument("--ttl-seconds", type=int, default=_LOCAL_LEASE_TTL_SECONDS)
+    args = parser.parse_args(sys.argv[2:])
+    try:
+        if command == "local-lease-acquire":
+            output = acquire_local_lease(
+                args.professor_dir,
+                args.token,
+                ttl_seconds=args.ttl_seconds,
+                verify_plan=True,
+            )
+'''
+          new = '''    if command == "local-lease-acquire":
+        parser.add_argument("--ttl-seconds", type=int, default=_LOCAL_LEASE_TTL_SECONDS)
+        parser.add_argument("--handoff-id", required=True)
+        parser.add_argument("--source-fingerprint", required=True)
+    args = parser.parse_args(sys.argv[2:])
+    try:
+        if command == "local-lease-acquire":
+            output = acquire_local_lease(
+                args.professor_dir,
+                args.token,
+                ttl_seconds=args.ttl_seconds,
+                verify_plan=True,
+                expected_handoff_id=args.handoff_id,
+                expected_source_fingerprint=args.source_fingerprint,
+            )
+'''
+          if text.count(old) != 1:
+              raise SystemExit('lease CLI block not found exactly once')
+          text = text.replace(old, new)
+          script_path.write_text(text, encoding='utf-8')
+
+          agent_path = Path('.apm/agents/professor-contact-analyzer.agent.md')
+          text = agent_path.read_text(encoding='utf-8')
+
+          old = '''   只解析 compact JSON 的 `handoff_id/source_fingerprint/bundle_path/jobs`。bundle 固定落在 `<教授目录>/论文分析/_chatgpt_handoff/`；同输入得到同 logical id，changed PDF/abstract/note/scope/local baseline 得到新 id。**bundle build 不得把 PDF/abstract 正文读入本 agent context。**
+'''
+          new = '''   只解析 compact JSON 的 `handoff_id/source_fingerprint/bundle_path/jobs`。把**本轮这次 build 返回的** `handoff_id` 与 `source_fingerprint` 保存为该 local continue plan 的精确绑定，后面的 `local-lease-acquire` 必须原样传回；**禁止在 acquire 时用当时的 `_latest` 代替本轮 build 结果**。bundle 固定落在 `<教授目录>/论文分析/_chatgpt_handoff/`；同输入得到同 logical id，changed PDF/abstract/note/scope/local baseline 得到新 id。**bundle build 不得把 PDF/abstract 正文读入本 agent context。**
+'''
+          if text.count(old) != 1:
+              raise SystemExit('agent build binding paragraph not found exactly once')
+          text = text.replace(old, new)
+
+          old = '''     skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage2_chatgpt_handoff.py local-lease-acquire \\
+       --professor-dir "<教授目录>" --token "$STAGE2_WRITER_TOKEN"
+     ```
+   - `stage2_writer_busy` → **禁止任何本地 artifact/index write**，该教授返回 `partial, reason_code=stage2_writer_busy`；不要“等一下再覆盖”，让 caller 后续重跑。
+'''
+          new = '''     skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage2_chatgpt_handoff.py local-lease-acquire \\
+       --professor-dir "<教授目录>" --token "$STAGE2_WRITER_TOKEN" \\
+       --handoff-id "<本轮 build handoff_id>" --source-fingerprint "<本轮 build source_fingerprint>"
+     ```
+   - acquire 只校验**上述本轮 build 的 exact plan**：在同一 professor lock 内先要求当前 `_latest` 仍等于这对 `handoff_id/source_fingerprint`，再复核该 manifest 的所有 local baselines，最后才落 lease。另一进程在 build→acquire 间完成 import 或 build 了 H2 时，本轮 H1 必须得到 `stage2_plan_stale`，绝不能拿 H2 通过校验后继续执行 H1。
+   - `stage2_plan_stale` → **本轮 pre-lease plan 全部作废，且此时没有 lease、不得写任何教授目录产物**。重新从该教授的幂等/planning pass 开始，重新 build；不要拿旧 job 列表继续，也不要把 `_latest` 的新 ID 偷换成本轮 ID。
+   - `stage2_writer_busy` → **禁止任何本地 artifact/index write**，该教授返回 `partial, reason_code=stage2_writer_busy`；不要“等一下再覆盖”，让 caller 后续重跑。
+'''
+          if text.count(old) != 1:
+              raise SystemExit('agent lease command block not found exactly once')
+          text = text.replace(old, new)
+
+          old = '''- **Stage-2 single-writer lease 不可绕过**：handoff `import` 必须发生在 local lease acquire **之前**；一旦本轮要进入任何教授目录本地写路径，就必须先 `local-lease-acquire`，覆盖 legacy `paper-analysis`、OCR、sidecar、`_index.json` 与 runner 写入的整个教授 scope，并在 **finally** 中 `local-lease-release`。`stage2_writer_busy` 时禁止写。这个 lease 是 importer 与“不主动拿 OS lock 的旧 writer”之间的共同协调边界。
+'''
+          new = '''- **Stage-2 single-writer lease 不可绕过**：handoff `import` 必须发生在 local lease acquire **之前**；一旦本轮要进入任何教授目录本地写路径，就必须先 `local-lease-acquire`，并把**本轮 build 返回的 exact `handoff_id/source_fingerprint`**原样传入，覆盖 legacy `paper-analysis`、OCR、sidecar、`_index.json` 与 runner 写入的整个教授 scope，并在 **finally** 中 `local-lease-release`。`stage2_plan_stale` 或 `stage2_writer_busy` 时禁止写。这个 lease 是 importer 与“不主动拿 OS lock 的旧 writer”之间的共同协调边界，也是 build→acquire 间 stale-plan 的最终闸门。
+'''
+          if text.count(old) != 1:
+              raise SystemExit('agent hard-rule lease paragraph not found exactly once')
+          text = text.replace(old, new)
+          agent_path.write_text(text, encoding='utf-8')
+          PY
+      - name: Run focused handoff tests
+        run: python3 -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_stage2_chatgpt_handoff*.py'
+      - name: Commit fix and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/_temporary-review-fix.yml
+          git add .apm/skills/professor-contact/scripts/stage2_chatgpt_handoff.py .apm/agents/professor-contact-analyzer.agent.md
+          git commit -m 'fix: bind local lease to exact handoff plan'
+          git push origin HEAD:issue-3-chatgpt-stage2-handoff
