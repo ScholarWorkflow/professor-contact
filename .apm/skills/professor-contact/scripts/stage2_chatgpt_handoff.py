@@ -9,6 +9,9 @@ build/import path:
 2. final artifact/index installation is serialized by a professor-scoped lock;
 3. legacy/local Stage-2 writers register a professor-scoped lease before any
    direct analysis/OCR/index writes, so imports never race a non-locking writer;
+   CLI lease acquisition also rechecks the current handoff baseline while the
+   same professor lock is still held, preventing a stale post-build local plan
+   from overwriting an import that completed just before lease acquisition;
 4. OCR-required future-work selections are rebound locally to the exact
    candidates produced by `future_work.py merge-ocr`, while readable-page exact
    selections remain eligible in the same job;
@@ -26,6 +29,7 @@ import re
 import sys
 import time
 import unicodedata
+import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -369,11 +373,65 @@ def _active_local_lease_unlocked(professor_dir: Path) -> dict[str, Any] | None:
     return payload
 
 
+def _current_handoff_manifest_unlocked(professor_dir: Path) -> dict[str, Any]:
+    """Load the exact current bundle named by _latest.json without releasing the lock."""
+    root = professor_dir / "论文分析" / "_chatgpt_handoff"
+    latest_path = root / "_latest.json"
+    try:
+        latest = _impl._load_json(latest_path)
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("stage2_plan_stale") from error
+    if not isinstance(latest, dict):
+        raise ValueError("stage2_plan_stale")
+    handoff_id = latest.get("handoff_id")
+    source = latest.get("source_fingerprint")
+    if (
+        not isinstance(handoff_id, str)
+        or re.fullmatch(r"[0-9a-f]{20}", handoff_id) is None
+        or not _is_sha256(source)
+    ):
+        raise ValueError("stage2_plan_stale")
+    bundle = root / f"stage2-{handoff_id}.zip"
+    if not bundle.is_file():
+        raise ValueError("stage2_plan_stale")
+    try:
+        with zipfile.ZipFile(bundle) as archive:
+            manifests = [info for info in archive.infolist() if info.filename == "manifest.json"]
+            if len(manifests) != 1 or manifests[0].file_size > 10 * 1024 * 1024:
+                raise ValueError("stage2_plan_stale")
+            payload = json.loads(archive.read(manifests[0]).decode("utf-8"))
+        manifest = _validate_manifest(payload, _impl.BUNDLE_KIND)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, zipfile.BadZipFile, ValueError) as error:
+        if isinstance(error, ValueError) and str(error) == "stage2_plan_stale":
+            raise
+        raise ValueError("stage2_plan_stale") from error
+    if (
+        manifest.get("handoff_id") != handoff_id
+        or manifest.get("source_fingerprint") != source
+        or not _impl._latest_matches(professor_dir, manifest)
+    ):
+        raise ValueError("stage2_plan_stale")
+    return manifest
+
+
+def _verify_current_local_plan_unlocked(professor_dir: Path) -> dict[str, Any]:
+    """Abort a local continue plan if any post-build artifact/index baseline changed."""
+    manifest = _current_handoff_manifest_unlocked(professor_dir)
+    jobs = manifest.get("jobs") or []
+    if not isinstance(jobs, list):
+        raise ValueError("stage2_plan_stale")
+    for job in jobs:
+        if not isinstance(job, dict) or not _impl._baseline_matches(professor_dir, job):
+            raise ValueError("stage2_plan_stale")
+    return manifest
+
+
 def acquire_local_lease(
     professor_dir: Path,
     token: str,
     *,
     ttl_seconds: int = _LOCAL_LEASE_TTL_SECONDS,
+    verify_plan: bool = False,
 ) -> dict[str, Any]:
     professor_dir = professor_dir.expanduser().resolve()
     token = token.strip()
@@ -386,6 +444,7 @@ def acquire_local_lease(
         if current and current.get("token") != token:
             raise ValueError("stage2_writer_busy")
         now = time.time()
+        created_here = current is None
         payload = {
             "schema": 1,
             "token": token,
@@ -393,7 +452,17 @@ def acquire_local_lease(
             "expires_at": now + ttl_seconds,
         }
         _impl._atomic_json(_local_lease_path(professor_dir), payload)
-        return {"status": "acquired", "reason_code": None, "token": token}
+        try:
+            manifest = _verify_current_local_plan_unlocked(professor_dir) if verify_plan else None
+        except BaseException:
+            if created_here:
+                _local_lease_path(professor_dir).unlink(missing_ok=True)
+            raise
+        output = {"status": "acquired", "reason_code": None, "token": token}
+        if manifest is not None:
+            output["handoff_id"] = manifest["handoff_id"]
+            output["source_fingerprint"] = manifest["source_fingerprint"]
+        return output
 
 
 def release_local_lease(professor_dir: Path, token: str) -> dict[str, Any]:
@@ -688,13 +757,16 @@ def _lease_cli(command: str) -> int:
     try:
         if command == "local-lease-acquire":
             output = acquire_local_lease(
-                args.professor_dir, args.token, ttl_seconds=args.ttl_seconds
+                args.professor_dir,
+                args.token,
+                ttl_seconds=args.ttl_seconds,
+                verify_plan=True,
             )
         else:
             output = release_local_lease(args.professor_dir, args.token)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         message = str(error)
-        known = ("stage2_writer_busy", "stage2_lease_token_mismatch")
+        known = ("stage2_writer_busy", "stage2_plan_stale", "stage2_lease_token_mismatch")
         reason = next((code for code in known if code in message), "invalid_handoff_input")
         print(json.dumps(
             {"status": "error", "reason_code": reason, "error": message[:300]},
@@ -724,6 +796,8 @@ globals().update({
     "_validate_future_work_inputs": _validate_future_work_inputs,
     "_professor_lock": _professor_lock,
     "_active_local_lease_unlocked": _active_local_lease_unlocked,
+    "_current_handoff_manifest_unlocked": _current_handoff_manifest_unlocked,
+    "_verify_current_local_plan_unlocked": _verify_current_local_plan_unlocked,
     "acquire_local_lease": acquire_local_lease,
     "release_local_lease": release_local_lease,
     "_bind_ocr_selections": _bind_ocr_selections,
