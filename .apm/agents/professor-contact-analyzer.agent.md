@@ -208,6 +208,14 @@ For each flagged direction:
    - `wait` 路径永远不能到这里，除非 caller 后来明确改为 `continue`。
 
 6. **本地 route → `paper-analysis full`（只处理 execution pass 剩余 jobs，批量并发 ≤3）**：
+   - route 调用契约保持原样，继续一次批量调用：
+     ```bash
+     skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage2_input_router.py \
+       --papers /tmp/<教授名>_<collection_key>_paper_routes.json \
+       --output-dir /tmp/professor-contact-paper-inputs/<教授名>/<collection_key>
+     ```
+   - router stdout 仍只按三类消费：`carrier=ocr|pdf → level=fulltext, gap_only_allowed=true`；`carrier=abstract_json → level=abstract, gap_only_allowed=false`，且 `paper` 必须是 **normalized abstract JSON absolute path**；`status=error` 不 spawn 分析。
+   - **绝不把 raw Zotero `item_key` 当作 `paper`**，也绝不把 abstract body 嵌进 task prompt；normalized exporter/router 失败就显式 partial/error，不恢复旧 raw-key fallback。
    - 仍按现有 `stage2_input_router.py`：`OCR absolute path → usable PDF absolute path → normalized abstract JSON absolute path`。一次写 route JSON，只含 `item_key/ocr_path/pdf_path`；stdout 只解析 compact routes，不读 normalized abstract body。
    - `status=error` 仍明确 partial/error，不回退 raw Zotero key、不伪造分析。
    - `status=ok` 的 prompt 仍只传 `routes[].paper` + `/tmp/<教授名>_<collection_key>_研究方向.md` + `save:<教授目录>`；绝不嵌正文。
