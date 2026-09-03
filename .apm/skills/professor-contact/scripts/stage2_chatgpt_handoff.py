@@ -10,8 +10,10 @@ build/import path:
 3. legacy/local Stage-2 writers register a professor-scoped lease before any
    direct analysis/OCR/index writes, so imports never race a non-locking writer;
 4. OCR-required future-work selections are rebound locally to the exact
-   candidates produced by `future_work.py merge-ocr`, so the external executor
-   never has to invent or reproduce candidate IDs.
+   candidates produced by `future_work.py merge-ocr`, while readable-page exact
+   selections remain eligible in the same job;
+5. bundled prepare/candidates inputs are verified as one consistent candidate
+   set before a content-addressed handoff may be built.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ import sys
 import time
 import unicodedata
 from contextlib import contextmanager
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Iterator
 
 _IMPL_PATH = Path(__file__).with_name("_stage2_chatgpt_handoff_impl.py")
@@ -42,6 +44,7 @@ for _name in dir(_impl):
 
 _ORIG_VALIDATE_MANIFEST = _impl._validate_manifest
 _ORIG_VERIFY_BUNDLED_INPUT = _impl._verify_bundled_input
+_ORIG_VALIDATE_FUTURE_WORK_INPUTS = _impl._validate_future_work_inputs
 _ORIG_INSTALL_JOB = _impl._install_job
 _ORIG_BUILD_BUNDLE = _impl.build_bundle
 _ORIG_IMPORT_RESULT = _impl.import_result
@@ -88,6 +91,63 @@ def _is_sha256(value: Any) -> bool:
     if not isinstance(value, str) or len(value) != 64:
         return False
     return all(ch in "0123456789abcdef" for ch in value)
+
+
+def _normalized_excerpt(value: str) -> str:
+    return _SPACE_RE.sub(" ", unicodedata.normalize("NFKC", value).strip())
+
+
+def _candidate_signature(payload: Any) -> list[tuple[int, str, str]]:
+    """Canonicalize a prepare/candidates payload for cross-file consistency checks."""
+    candidates = payload.get("candidates") if isinstance(payload, dict) else payload
+    if not isinstance(candidates, list):
+        raise ValueError("future_work candidates must be a list")
+    rows: list[tuple[int, str, str]] = []
+    for number, candidate in enumerate(candidates, start=1):
+        if not isinstance(candidate, dict):
+            raise ValueError(f"future_work candidate[{number}] must be an object")
+        page = candidate.get("page")
+        quote = candidate.get("quote")
+        identifier = candidate.get("id")
+        if (
+            not isinstance(page, int)
+            or isinstance(page, bool)
+            or page < 1
+            or not isinstance(quote, str)
+            or not _normalized_excerpt(quote)
+            or (identifier is not None and not isinstance(identifier, str))
+        ):
+            raise ValueError(f"future_work candidate[{number}] is invalid")
+        rows.append((page, _normalized_excerpt(quote), str(identifier or "")))
+    return sorted(rows)
+
+
+def _validate_future_work_inputs(result: dict[str, Any]) -> None:
+    """Extend the base PDF checks by binding prepare.json to candidates.json."""
+    _ORIG_VALIDATE_FUTURE_WORK_INPUTS(result)
+    if result.get("carrier") != "pdf":
+        return
+    prepare = Path(str(result.get("future_work_prepare_local") or ""))
+    candidates = Path(str(result.get("future_work_candidates_local") or ""))
+    try:
+        prepare_payload = _impl._load_json(prepare)
+        candidates_payload = _impl._load_json(candidates)
+        if not isinstance(prepare_payload, dict):
+            raise ValueError("future_work_prepare must be an object")
+        if _candidate_signature(prepare_payload) != _candidate_signature(candidates_payload):
+            raise ValueError("future_work prepare/candidates candidate sets differ")
+        required_pages = prepare_payload.get("ocr_required_pages") or []
+        if (
+            not isinstance(required_pages, list)
+            or any(
+                not isinstance(page, int) or isinstance(page, bool) or page < 1
+                for page in required_pages
+            )
+            or len(set(required_pages)) != len(required_pages)
+        ):
+            raise ValueError("future_work_prepare has invalid ocr_required_pages")
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError(f"external_future_work_invalid: {error}") from error
 
 
 def _verify_manifest_integrity(manifest: dict[str, Any]) -> None:
@@ -171,7 +231,6 @@ def _verify_manifest_integrity(manifest: dict[str, Any]) -> None:
             raise ValueError("external_result_hash_mismatch")
         safe_keys.add(safe)
 
-    # The logical job set is canonicalized by item_key before fingerprinting.
     if item_keys != sorted(item_keys) or len(set(item_keys)) != len(item_keys):
         raise ValueError("external_result_hash_mismatch")
 
@@ -294,14 +353,12 @@ def _local_lease_path(professor_dir: Path) -> Path:
 
 
 def _active_local_lease_unlocked(professor_dir: Path) -> dict[str, Any] | None:
-    """Read an active local-writer lease while the caller holds `_professor_lock`."""
     path = _local_lease_path(professor_dir)
     if not path.is_file():
         return None
     try:
         payload = _impl._load_json(path)
     except (OSError, json.JSONDecodeError):
-        # A malformed marker is treated as active rather than risk an overwrite.
         return {"malformed": True}
     if not isinstance(payload, dict):
         return {"malformed": True}
@@ -318,13 +375,6 @@ def acquire_local_lease(
     *,
     ttl_seconds: int = _LOCAL_LEASE_TTL_SECONDS,
 ) -> dict[str, Any]:
-    """Register the legacy/local Stage-2 writer without requiring it to hold a lock.
-
-    Registration itself is serialized by `_professor_lock`. Once registered,
-    importer installation checks the marker while holding the same lock. Thus a
-    local writer may continue to use its historical direct file writes, yet it
-    cannot overlap an importer transaction.
-    """
     professor_dir = professor_dir.expanduser().resolve()
     token = token.strip()
     if not token:
@@ -361,23 +411,12 @@ def release_local_lease(professor_dir: Path, token: str) -> dict[str, Any]:
         return {"status": "released", "reason_code": None, "released": True}
 
 
-def _normalized_excerpt(value: str) -> str:
-    return _SPACE_RE.sub(" ", unicodedata.normalize("NFKC", value).strip())
-
-
 def _bind_ocr_selections(
     selections_path: Path,
     candidates: list[dict[str, Any]],
     required_pages: list[int],
 ) -> dict[str, Any]:
-    """Resolve external page+excerpt selections to exact post-OCR candidates.
-
-    The external executor never supplies a candidate id. It supplies a page and
-    a verbatim excerpt from the sentence it selected. After local `merge-ocr`,
-    exactly one candidate on that page must contain the normalized excerpt. The
-    importer then writes the complete exact candidate quote for the existing
-    `future_work.py validate/finalize` contract.
-    """
+    """Resolve OCR-page page+excerpt selections to exact post-merge candidates."""
     payload = _impl._load_json(selections_path)
     items = payload.get("items") if isinstance(payload, dict) else payload
     if not isinstance(items, list):
@@ -425,6 +464,50 @@ def _bind_ocr_selections(
     return {"items": canonical}
 
 
+def _read_readable_exact_items(path: Path, required_pages: list[int]) -> list[dict[str, Any]]:
+    """Accept exact selections only from bundled pages that did not require OCR."""
+    if not path.is_file():
+        return []
+    payload = _impl._load_json(path)
+    items = payload.get("items") if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        raise ValueError("external_future_work_invalid")
+    required = {int(page) for page in required_pages}
+    allowed = {"id", "quote", "translation_zh", "source", "page"}
+    exact: list[dict[str, Any]] = []
+    for raw in items:
+        if not isinstance(raw, dict) or set(raw) - allowed:
+            raise ValueError("external_future_work_invalid")
+        page = raw.get("page")
+        quote = raw.get("quote")
+        translation = raw.get("translation_zh")
+        source = raw.get("source")
+        if (
+            not isinstance(page, int)
+            or isinstance(page, bool)
+            or page < 1
+            or page in required
+            or not isinstance(quote, str)
+            or not quote.strip()
+            or not isinstance(translation, str)
+            or not translation.strip()
+            or not isinstance(source, str)
+            or not source.strip()
+            or ("id" in raw and not isinstance(raw.get("id"), str))
+        ):
+            raise ValueError("external_future_work_invalid")
+        item = {
+            "quote": quote,
+            "translation_zh": translation.strip(),
+            "source": source.strip(),
+            "page": page,
+        }
+        if "id" in raw:
+            item["id"] = raw["id"]
+        exact.append(item)
+    return exact
+
+
 def _finalize_future_work(
     args: argparse.Namespace,
     bundle_root: Path,
@@ -469,10 +552,15 @@ def _finalize_future_work(
         _impl._atomic_json(candidates, {"candidates": merged_candidates})
         items = staged_dir / "future_work_items.json"
         try:
-            canonical = _bind_ocr_selections(selections, merged_candidates, required_pages)
+            readable_items = _read_readable_exact_items(
+                source_dir / "future_work_items.json", required_pages
+            )
+            ocr_items = _bind_ocr_selections(
+                selections, merged_candidates, required_pages
+            )["items"]
         except (OSError, json.JSONDecodeError, ValueError) as error:
             raise ValueError("external_future_work_invalid") from error
-        _impl._atomic_json(items, canonical)
+        _impl._atomic_json(items, {"items": readable_items + ocr_items})
     else:
         if selection_contract != "exact-items-v1":
             raise ValueError("external_future_work_invalid")
@@ -516,7 +604,7 @@ For each `manifest.json.jobs[]` entry:
 3. Write the ordinary paper-analysis Markdown template to `results/<safe-job>/analysis.md`, where `<safe-job>` is the deterministic safe form of that exact `job_id`; do not add or override a `result_dir` field in the result row.
 4. For every PDF job with `expected.future_work=true`, follow `future_work.selection_contract` exactly:
    - `exact-items-v1`: return `future_work_items.json` selected/translated only from the bundled exact candidates. `id` may be omitted; the local helper derives/verifies it.
-   - `ocr-excerpt-v1`: OCR every page in `future_work.ocr_required_pages` into `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`. Do NOT guess candidate ids and do NOT precompute `future_work_items.json`. Instead return `future_work_selections.json` as `{\"items\":[{\"page\":N,\"quote_excerpt\":\"a verbatim distinctive excerpt from the selected OCR sentence\",\"translation_zh\":\"...\",\"source\":\"...\"}]}`. The local importer runs `merge-ocr`, uniquely binds each page+excerpt to the exact regenerated candidate, then runs `validate` and `finalize`.
+   - `ocr-excerpt-v1`: OCR every page in `future_work.ocr_required_pages` into `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`. Return `future_work_selections.json` for selections whose page IS in `ocr_required_pages`, using only `{page,quote_excerpt,translation_zh,source}`; the list may be empty, but the file must be present. Do NOT guess candidate ids for OCR pages. If you also select any bundled exact candidate from a readable page whose page is NOT in `ocr_required_pages`, return those readable-page selections in `future_work_items.json` using the ordinary exact-item fields. The local importer runs `merge-ocr`, keeps the readable-page candidates, uniquely binds OCR page+excerpt selections to regenerated candidates, combines both selection sets, then runs `validate` and `finalize`.
 5. Bind completed rows in `result_manifest.json` with schema/kind/handoff/source/job/item/input hash and `status=ok|partial|error`.
 
 PDF fulltext jobs are not complete without their future-work payload. OCR-only and abstract-only jobs do not have a PDF-grounded future-work contract: any external Future Work prose in their Markdown is discarded locally and cannot become a gap source. Do not return `_index.json`, `套磁候选输入.json`, or a ready-made `.future_work.json` as authoritative state. The local importer independently validates/finalizes PDF future-work evidence and installs accepted results into the ordinary Stage-2 artifacts.
@@ -530,9 +618,6 @@ def _install_job(
     staged_analysis: Path,
     staged_sidecar: Path | None,
 ) -> tuple[Path, Path | None]:
-    # The legacy installer already does final stale checks, a fresh whole-index
-    # read/merge, and rollback-on-error. The OS lock closes importer/importer
-    # TOCTOU, while the local-writer lease closes importer/legacy-writer races.
     with _professor_lock(professor_dir):
         if _active_local_lease_unlocked(professor_dir) is not None:
             raise ValueError("stage2_writer_busy")
@@ -542,8 +627,6 @@ def _install_job(
 
 
 def build_bundle(args: Any) -> dict[str, Any]:
-    # Serialize baseline capture + latest-handoff replacement with imports and
-    # reject a second Stage-2 planner while a local execution lease is active.
     professor_dir = args.professor_dir.expanduser().resolve()
     with _professor_lock(professor_dir):
         if _active_local_lease_unlocked(professor_dir) is not None:
@@ -552,7 +635,6 @@ def build_bundle(args: Any) -> dict[str, Any]:
 
 
 def _sync_runtime_hooks() -> None:
-    """Keep the public module's supported monkeypatch/test hooks effective."""
     hook = globals().get("_run_future_work")
     if callable(hook):
         _impl._run_future_work = hook
@@ -580,9 +662,6 @@ def import_result(args: Any) -> dict[str, Any]:
                 "missing": [],
             }
         raise
-    # A local writer can acquire its lease after the pre-check but before one
-    # of the per-job install transactions. The hardened installer blocks that
-    # write; remap the legacy catch-all stale code to the precise busy reason.
     if isinstance(output, dict) and output.get("reason_code") == "handoff_stale":
         with _professor_lock(professor_dir):
             if _active_local_lease_unlocked(professor_dir) is not None:
@@ -626,28 +705,29 @@ def _lease_cli(command: str) -> int:
     return 0
 
 
-# Patch the implementation module globals because its existing functions resolve
-# helpers through their own module namespace at call time.
+# Patch implementation globals used by its existing call graph.
 _impl._build_manifest = _build_manifest
 _impl._validate_manifest = _validate_manifest
 _impl._verify_bundled_input = _verify_bundled_input
+_impl._validate_future_work_inputs = _validate_future_work_inputs
 _impl._finalize_future_work = _finalize_future_work
 _impl._instructions = _instructions
 _impl._install_job = _install_job
 _impl.build_bundle = build_bundle
 _impl.import_result = import_result
 
-# Re-export hardened replacements for callers/tests importing this entrypoint.
 globals().update({
     "_build_manifest": _build_manifest,
     "_verify_manifest_integrity": _verify_manifest_integrity,
     "_validate_manifest": _validate_manifest,
     "_verify_bundled_input": _verify_bundled_input,
+    "_validate_future_work_inputs": _validate_future_work_inputs,
     "_professor_lock": _professor_lock,
     "_active_local_lease_unlocked": _active_local_lease_unlocked,
     "acquire_local_lease": acquire_local_lease,
     "release_local_lease": release_local_lease,
     "_bind_ocr_selections": _bind_ocr_selections,
+    "_read_readable_exact_items": _read_readable_exact_items,
     "_finalize_future_work": _finalize_future_work,
     "_instructions": _instructions,
     "_install_job": _install_job,
