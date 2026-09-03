@@ -175,8 +175,8 @@ For each flagged direction:
    - **PDF fulltext 的 future-work 契约是强制项**：对 `carrier=pdf` 必须先运行 `uv run "<paper-analysis future_work.py absolute path>" prepare "<pdf>" --debug-dir "<tmp>"`。这是确定性 helper，不做 OCR/模型；必须把该 debug 目录里的 `prepare.json` + `candidates.json` 绝对路径写入 job。builder 会拒绝缺 prepare/candidates 的 PDF fulltext job，避免 wait 导入后再落回 legacy/gap-only。
    - **future-work portable selection contract 必须按 manifest 执行，ChatGPT 不得猜 candidate id**：
      - `ocr_required_pages` 为空时，manifest 写 `future_work.selection_contract=exact-items-v1`；外部只从 bundled exact candidates 选择，返回 `future_work_items.json`。`id` 可以省略，由本地 `future_work.py` 推导并校验。
-     - `ocr_required_pages` 非空时，manifest 写 `future_work.selection_contract=ocr-excerpt-v1`；此时**绝不本地 vision OCR**，外部必须返回 `future_work_ocr.json`（恰好覆盖所有 required pages）以及 `future_work_selections.json`。后者只允许 `{page,quote_excerpt,translation_zh,source}`；`quote_excerpt` 必须是所选 OCR 句子的逐字、足够区分的片段。外部**不得**在 merge 前预造 `future_work_items.json`，也不得猜/回传 candidate id。
-     - importer 本地先 `merge-ocr` 生成真正的 post-OCR candidates，再用 `page + quote_excerpt` 在对应页**唯一绑定** exact candidate，生成 canonical items，然后才 `validate` → `finalize`。0 个或多个候选命中都记 `external_future_work_invalid`；缺 OCR/selection 文件记 `external_result_incomplete`。这样所有 authoritative `id/quote/page` 都由本地确定性候选集绑定。
+     - `ocr_required_pages` 非空时，manifest 写 `future_work.selection_contract=ocr-excerpt-v1`；此时**绝不本地 vision OCR**，外部必须返回 `future_work_ocr.json`（恰好覆盖所有 required pages）以及 `future_work_selections.json`。后者只允许 `{page,quote_excerpt,translation_zh,source}`；`quote_excerpt` 必须是所选 OCR 句子的逐字、足够区分的片段。外部**不得为 OCR-required page 在 merge 前预造 candidate id/quote**；但若 bundled exact candidates 中另有 page **不在** `ocr_required_pages` 的可读候选，可额外用普通 exact-item 字段放进 `future_work_items.json`。
+     - importer 本地先 `merge-ocr` 生成真正的 post-OCR candidates，保留 readable/non-required 页原 candidates，再用 `page + quote_excerpt` 在 OCR-required 页**唯一绑定** exact candidate；然后把 readable exact items + OCR-bound items 合并为 canonical items，才 `validate` → `finalize`。0 个或多个 OCR 候选命中都记 `external_future_work_invalid`；缺 OCR/selection 文件记 `external_result_incomplete`。这样所有 OCR 页 authoritative `id/quote/page` 都由本地确定性候选集绑定，同时不会因另一页需要 OCR 而丢失可读页 future-work 证据。
    - **OCR-only fulltext 没有 PDF-grounded future-work 契约**：`carrier=ocr` 且原 PDF 不存在时，现有 `future_work.py prepare` 无法合法运行，**不得伪造 PDF/hash/page，也不得给 job 塞 prepare/candidates**。bundle 对这种 job 固定 `expected.future_work=false`：外部仍可完成普通全文分析，但 importer 会把外部 Markdown 的 Future Work 节替换成不可锚定占位，并在 `_index.json` 记 `future_work_state=failed, future_work_error=future_work_unavailable_without_pdf_handoff`，绝不伪造 authoritative sidecar。这个状态表示“分析可用，但缺 PDF 页码级 future-work 证据”，不是“作者没有 future work”。
    - abstract-only 同理不接受外部 Future Work 作为 gap；importer 会清洗该节并记 `future_work_unavailable_abstract_handoff`。
    - 写 `/tmp/<教授名>_stage2_handoff_jobs.json`：`{"schema":1,"professor":"...","jobs":[...]}`。job 至少含 `item_key/carrier/level/input_path/analysis_relpath/research_direction/research_direction_fp/authorship/authorship_note/relevance_reason`；PDF job 还必须带 `future_work_prepare/future_work_candidates`；可带 `ocr_file`。不得嵌正文、不得放绝对路径到最终 portable manifest（helper 会复制/规范为相对路径）。
@@ -186,7 +186,7 @@ For each flagged direction:
    skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage2_chatgpt_handoff.py build \
      --professor-dir "<教授目录>" --jobs "/tmp/<教授名>_stage2_handoff_jobs.json" --professor "<教授名>"
    ```
-   只解析 compact JSON 的 `handoff_id/source_fingerprint/bundle_path/jobs`。bundle 固定落在 `<教授目录>/论文分析/_chatgpt_handoff/`；同输入得到同 logical id，changed PDF/abstract/note/scope/local baseline 得到新 id。**bundle build 不得把 PDF/abstract 正文读入本 agent context。**
+   只解析 compact JSON 的 `handoff_id/source_fingerprint/bundle_path/jobs`。把**本轮这次 build 返回的** `handoff_id` 与 `source_fingerprint` 保存为该 local continue plan 的精确绑定，后面的 `local-lease-acquire` 必须原样传回；**禁止在 acquire 时用当时的 `_latest` 代替本轮 build 结果**。bundle 固定落在 `<教授目录>/论文分析/_chatgpt_handoff/`；同输入得到同 logical id，changed PDF/abstract/note/scope/local baseline 得到新 id。**bundle build 不得把 PDF/abstract 正文读入本 agent context。**
 
    **C. resume import（仅 `chatgpt_result` 提供时）**
    - 必须使用**本轮刚 build 的 current `bundle_path`**去验 result，而不是盲信用户上次给出的旧 bundle；这一步让当前 PDF/abstract/note/scope 的改变先体现在 handoff id/source fingerprint 中。
@@ -211,13 +211,16 @@ For each flagged direction:
    **E. single-writer lease（任何本地写路径的硬边界）**
    - **顺序不可反转：先 build/import，后 acquire。** import 自己要占 importer transaction lock；如果先拿 local lease 会把自己的 import 挡住。
    - 只有本轮将继续执行任何会写教授目录的步骤时才 acquire：包括新 OCR、`paper-analysis full|gap-only`、migrate/finalize sidecar、直接 `_index.json` 更新、KB 写回、`contact_state.py stage2-finalize/refine-finalize/record-validation` 等。纯 `wait` 软停止不 acquire。
-   - 每位教授生成本轮唯一 token，例如 `STAGE2_WRITER_TOKEN="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"`，然后：
+   - 每位教授生成本轮唯一 token，例如 `STAGE2_WRITER_TOKEN="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"`，然后把 **B 步本轮 build 返回的 exact IDs** 原样传回：
      ```bash
      skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage2_chatgpt_handoff.py local-lease-acquire \
-       --professor-dir "<教授目录>" --token "$STAGE2_WRITER_TOKEN"
+       --professor-dir "<教授目录>" --token "$STAGE2_WRITER_TOKEN" \
+       --handoff-id "<本轮 build handoff_id>" --source-fingerprint "<本轮 build source_fingerprint>"
      ```
+   - acquire 只校验**上述本轮 build 的 exact plan**：在同一 professor lock 内先要求当前 `_latest` 仍等于这对 `handoff_id/source_fingerprint`，再复核该 manifest 的所有 local baselines，最后才落 lease。另一进程在 build→acquire 间完成 import 或 build 了 H2 时，本轮 H1 必须得到 `stage2_plan_stale`，绝不能拿 H2 通过校验后继续执行 H1。
+   - `stage2_plan_stale` → **本轮 pre-lease plan 全部作废，且 acquire 失败时没有新 lease、不得写任何教授目录产物**。重新从该教授的幂等/planning pass 开始，重新 build；不要拿旧 job 列表继续，也不要把 `_latest` 的新 ID 偷换成本轮 ID。
    - `stage2_writer_busy` → **禁止任何本地 artifact/index write**，该教授返回 `partial, reason_code=stage2_writer_busy`；不要“等一下再覆盖”，让 caller 后续重跑。
-   - acquire 成功后，把该教授后续所有本地写步骤视为一个 `try/finally` writer scope。无论成功、partial、runner error、用户决策提前结束还是异常，**finally** 都必须执行：
+   - acquire 成功后，stdout 返回的 `handoff_id/source_fingerprint` 必须与 B 步保存的 exact IDs 完全一致；否则按 `stage2_plan_stale` 处理，不进入任何本地写步骤。把该教授后续所有本地写步骤视为一个 `try/finally` writer scope。无论成功、partial、runner error、用户决策提前结束还是异常，**finally** 都必须执行：
      ```bash
      skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage2_chatgpt_handoff.py local-lease-release \
        --professor-dir "<教授目录>" --token "$STAGE2_WRITER_TOKEN"
@@ -393,7 +396,7 @@ Return ONLY this JSON, no surrounding prose:
 {
   "result": "ok|partial|needs_input|needs_external_result|error",
   "program_root": "<abs>",
-  "reason_code": "<chatgpt_result_required|stage2_writer_busy|...|null>",
+  "reason_code": "<chatgpt_result_required|stage2_plan_stale|stage2_writer_busy|...|null>",
   "handoffs": [{"professor":"", "handoff_id":"", "bundle_path":"", "jobs":0, "missing":[]}],
   "analyses": [
     {"professor": "", "collection_key": "", "name_ja": "", "name_zh": "",
@@ -409,7 +412,7 @@ Return ONLY this JSON, no surrounding prose:
   "notes": ""
 }
 ```
-- `ok` — 全部被标记方向完成；`needs_external_result` — `wait` 已生成 bundle 或外部结果仍缺/非法，是可恢复软停止，必须返回 `chatgpt_result_required` 或 importer reason_code + handoff/missing；`partial` — 其它方向级失败/降级，包括本地 continuation 的 `stage2_writer_busy`；`error` — Zotero/路径/runner 等不可继续错误。**wait 的 external 不完整绝不能降级为本地高耗执行。**
+- `ok` — 全部被标记方向完成；`needs_external_result` — `wait` 已生成 bundle 或外部结果仍缺/非法，是可恢复软停止，必须返回 `chatgpt_result_required` 或 importer reason_code + handoff/missing；`partial` — 其它方向级失败/降级，包括本地 continuation 的 `stage2_plan_stale` / `stage2_writer_busy`；`error` — Zotero/路径/runner 等不可继续错误。**wait 的 external 不完整绝不能降级为本地高耗执行。**
 - **不回传** gap 原文全文、论文全文、逐条大推理——人读细节在渲染后的 md 与输入包里。
 
 ## Errors
@@ -421,8 +424,8 @@ when: no `folder_path`; program root unresolvable; user aborted at the Zotero pr
 
 ## Hard rules
 - **handoff barrier 不可绕过**：post-cost-gate/post-idempotency jobs 必须先 build ZIP；`wait` 在任何新 vision OCR/`paper-analysis full|gap-only` 前停止。resume 必须先按当前输入 rebuild current bundle，再 import external result；不匹配即 stale/mismatch，绝不‘尽量用’。
-- **Stage-2 single-writer lease 不可绕过**：handoff `import` 必须发生在 local lease acquire **之前**；一旦本轮要进入任何教授目录本地写路径，就必须先 `local-lease-acquire`，覆盖 legacy `paper-analysis`、OCR、sidecar、`_index.json` 与 runner 写入的整个教授 scope，并在 **finally** 中 `local-lease-release`。`stage2_writer_busy` 时禁止写。这个 lease 是 importer 与“不主动拿 OS lock 的旧 writer”之间的共同协调边界。
-- **PDF / OCR-only 的证据边界不可混淆**：PDF handoff 必须先通过 `uv run future_work.py prepare` 生成 prepare+candidates；无 OCR-required page 时走 `exact-items-v1`，有 OCR-required page 时走 `ocr-excerpt-v1`，外部只返回 `future_work_ocr.json` + `future_work_selections.json` 的 `page/quote_excerpt/translation_zh/source`，本地 `merge-ocr` 后唯一绑定 exact candidate 再 `validate/finalize`。**ChatGPT 永不猜 candidate id。**无原 PDF 的 OCR-only handoff 不得伪造 prepare/page/hash/sidecar，必须清洗外部 Future Work 并以 `future_work_unavailable_without_pdf_handoff` 明确标记，6.5 不得 migrate/gap-only 偷偷补成本。
+- **Stage-2 single-writer lease 不可绕过**：handoff `import` 必须发生在 local lease acquire **之前**；一旦本轮要进入任何教授目录本地写路径，就必须先 `local-lease-acquire`，并把**本轮 build 返回的 exact `handoff_id/source_fingerprint`**原样传入，覆盖 legacy `paper-analysis`、OCR、sidecar、`_index.json` 与 runner 写入的整个教授 scope，并在 **finally** 中 `local-lease-release`。`stage2_plan_stale` 或 `stage2_writer_busy` 时禁止写。这个 lease 是 importer 与“不主动拿 OS lock 的旧 writer”之间的共同协调边界，也是 build→acquire 间 stale-plan 的最终闸门。
+- **PDF / OCR-only 的证据边界不可混淆**：PDF handoff 必须先通过 `uv run future_work.py prepare` 生成 prepare+candidates；无 OCR-required page 时走 `exact-items-v1`；有 OCR-required page 时走 hybrid `ocr-excerpt-v1`：外部必须返回 OCR-required 页的 `future_work_ocr.json` + `future_work_selections.json`（`page/quote_excerpt/translation_zh/source`），并可为非-required 可读页额外返回 exact `future_work_items.json`。本地 `merge-ocr` 后保留可读页 candidates、唯一绑定 OCR exact candidate，再合并后 `validate/finalize`。**ChatGPT 永不猜 OCR candidate id。**无原 PDF 的 OCR-only handoff 不得伪造 prepare/page/hash/sidecar，必须清洗外部 Future Work 并以 `future_work_unavailable_without_pdf_handoff` 明确标记，6.5 不得 migrate/gap-only 偷偷补成本。
 - **PEP-723 helper 只能经 uv 执行**：`future_work.py` 视为 0644 普通脚本；无论 agent 直接 prepare 还是 handoff importer 的 merge/validate/finalize，都固定 `uv run "<absolute script>" ...`，禁止依赖 executable bit 或宿主已装 `pdf-processing-core`。
 - **handoff 不是事实源**：外部只能执行 manifest 给定 job；不能提供权威 `_index.json`、`.future_work.json`、`套磁候选输入.json`、gap_id/direction ID。import 后仍只走普通 sidecar/facts/contact_state 路径，Stage 3 仍只读 `套磁候选输入.json`。
 - **只 spawn 两类 subagent**：`paper-analysis`（每篇一个；批量并发 ≤3）与 `professor-contact-style-validator`（Step 6.5，白话校验）；**NEVER write to Zotero**（只读）；**NEVER download PDFs**（分析用已有附件）；**runner 不胜任时不兜底**——contact_state 失败按 reason_code 返回，不手写产物、不调模型补写 Markdown。
