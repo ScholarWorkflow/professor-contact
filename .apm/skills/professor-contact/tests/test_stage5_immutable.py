@@ -58,6 +58,20 @@ class TestStage5ImmutableTemplates(BaseEnv):
                        "FIXED-FUTURE", "FIXED-LEARNING", "FIXED-END"]:
             self.assertIn(marker, txt)
         self.assertNotIn("{{", txt)
+        md = (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8")
+        self.assertIn("过稿: none", md)
+        self.assertNotIn("过稿: humanizer-ja(business)", md)
+
+    def test_dynamic_field_polish_provenance_is_explicit(self):
+        g1 = self.prepare()
+        raw, choice = self.write_inputs(g1)
+        out = parse(run_wrapper("stage5-finalize", "--program-root", self.root,
+                                "--result", raw, "--choices", choice,
+                                "--polish-mode", "dynamic-fields-only"))
+        self.assertEqual(out["status"], "ok", out)
+        md = (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8")
+        self.assertIn("过稿: humanizer-ja(dynamic-fields-only)", md)
+        self.assertNotIn("过稿: humanizer-ja(business)", md)
 
     def test_full_body_humanized_argument_is_ignored(self):
         g1 = self.prepare()
@@ -86,3 +100,5 @@ class TestStage5ImmutableTemplates(BaseEnv):
         self.assertIn("FOLLOWUP-FIXED-BEGIN", followup)
         self.assertIn("FOLLOWUP-FIXED-END", followup)
         self.assertIn("2026年9月1日", followup)
+        followup_md = (self.prof_dir / "套磁跟进邮件.md").read_text(encoding="utf-8")
+        self.assertIn("过稿: none", followup_md)

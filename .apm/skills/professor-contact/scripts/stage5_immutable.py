@@ -2,11 +2,15 @@
 """Stage 5 compatibility runner that keeps user templates immutable.
 
 The existing contact_state.py still owns validation, state updates and rendering.
-This wrapper removes the workflow's full-body humanizer boundary: for
-stage5-finalize it first asks contact_state.py for the deterministic draft,
-then feeds that exact draft back through the legacy --humanized-map input.
-Therefore no model/humanizer can rewrite fixed template text. Optional prose
-polish must happen earlier by editing only model-generated result JSON fields.
+For stage5-finalize this wrapper first asks contact_state.py for the deterministic
+draft, then feeds that exact draft through the legacy finalize compatibility
+boundary. Full-body humanized inputs are ignored. Optional humanizer use is
+limited to model-generated dynamic fields before this wrapper is called.
+
+The legacy runner hard-codes a full-body humanizer provenance label. Rather than
+forking the large state runner, immutable finalization executes a temporary copy
+whose only source change is that audit label. The caller declares whether no
+polish happened or dynamic fields alone were polished.
 """
 from __future__ import annotations
 
@@ -23,7 +27,9 @@ _PLAN_OPTIONS = {
     "--program-root", "--email-pack", "--email-id", "--profile", "--template",
     "--followup-template", "--mode", "--result", "--choices",
 }
-_VALUE_OPTIONS = _PLAN_OPTIONS | {"--decision-file", "--humanized", "--humanized-map"}
+_VALUE_OPTIONS = _PLAN_OPTIONS | {"--decision-file"}
+_POLISH_MODES = {"none", "dynamic-fields-only"}
+_PROVENANCE_NEEDLE = " ｜ 过稿: humanizer-ja(business)"
 
 
 def _delegate(args: list[str]) -> int:
@@ -31,16 +37,34 @@ def _delegate(args: list[str]) -> int:
     return proc.returncode
 
 
-def _strip_legacy_humanized(args: list[str]) -> list[str]:
+def _wrapper_options(args: list[str]) -> tuple[str, list[str]]:
+    """Remove wrapper/legacy-only options and return the declared polish mode."""
     out: list[str] = []
+    polish_mode = "none"
+    seen_polish = False
     i = 0
     while i < len(args):
-        if args[i] in {"--humanized", "--humanized-map"}:
+        arg = args[i]
+        if arg in {"--humanized", "--humanized-map"}:
+            if i + 1 >= len(args):
+                raise SystemExit(f"missing value for {arg}")
             i += 2
             continue
-        out.append(args[i])
+        if arg == "--polish-mode":
+            if i + 1 >= len(args):
+                raise SystemExit("missing value for --polish-mode")
+            if seen_polish:
+                raise SystemExit("--polish-mode may be supplied only once")
+            polish_mode = args[i + 1]
+            if polish_mode not in _POLISH_MODES:
+                raise SystemExit(
+                    "--polish-mode must be one of: none, dynamic-fields-only")
+            seen_polish = True
+            i += 2
+            continue
+        out.append(arg)
         i += 1
-    return out
+    return polish_mode, out
 
 
 def _plan_args(finalize_args: list[str]) -> list[str]:
@@ -59,8 +83,29 @@ def _plan_args(finalize_args: list[str]) -> list[str]:
     return out
 
 
+def _provenance_label(polish_mode: str) -> str:
+    if polish_mode == "none":
+        return "none"
+    return "humanizer-ja(dynamic-fields-only)"
+
+
+def _runner_with_provenance(root: Path, polish_mode: str) -> Path:
+    source = RUNNER.read_text(encoding="utf-8")
+    if source.count(_PROVENANCE_NEEDLE) != 1:
+        raise RuntimeError(
+            "contact_state.py provenance marker changed; refusing an unverified patch")
+    source = source.replace(
+        _PROVENANCE_NEEDLE,
+        f" ｜ 过稿: {_provenance_label(polish_mode)}",
+        1,
+    )
+    path = root / "contact_state_stage5_immutable.py"
+    path.write_text(source, encoding="utf-8")
+    return path
+
+
 def _immutable_finalize(args: list[str]) -> int:
-    clean = _strip_legacy_humanized(args)
+    polish_mode, clean = _wrapper_options(args)
     plan = subprocess.run(
         [sys.executable, str(RUNNER), *_plan_args(clean)],
         text=True, capture_output=True, check=False,
@@ -97,8 +142,17 @@ def _immutable_finalize(args: list[str]) -> int:
             mapping[output_id] = str(path.resolve())
         map_path = root / "immutable-map.json"
         map_path.write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
+        try:
+            finalize_runner = _runner_with_provenance(root, polish_mode)
+        except RuntimeError as exc:
+            print(json.dumps({
+                "status": "error", "reason_code": "stage5_provenance_patch_failed",
+                "message": str(exc),
+            }, ensure_ascii=False))
+            return 1
         proc = subprocess.run(
-            [sys.executable, str(RUNNER), *clean, "--humanized-map", str(map_path.resolve())],
+            [sys.executable, str(finalize_runner), *clean,
+             "--humanized-map", str(map_path.resolve())],
             text=True, capture_output=True, check=False,
         )
         sys.stdout.write(proc.stdout)

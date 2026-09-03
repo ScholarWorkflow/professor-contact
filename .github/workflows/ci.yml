@@ -13,7 +13,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Run contact_state regression suite
-        run: python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_contact_state.py' -v
-      - name: Run Stage 2 input-routing contract tests
-        run: python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_stage2_input_router.py' -v
+      - name: Run professor-contact regression suite
+        run: python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_*.py' -v
