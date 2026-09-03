@@ -9,9 +9,9 @@ build/import path:
 2. final artifact/index installation is serialized by a professor-scoped lock;
 3. legacy/local Stage-2 writers register a professor-scoped lease before any
    direct analysis/OCR/index writes, so imports never race a non-locking writer;
-   CLI lease acquisition also rechecks the current handoff baseline while the
-   same professor lock is still held, preventing a stale post-build local plan
-   from overwriting an import that completed just before lease acquisition;
+   CLI lease acquisition also rechecks the caller's exact build identity and
+   current handoff baseline while the same professor lock is still held,
+   preventing a stale post-build local plan from validating a competing build;
 4. OCR-required future-work selections are rebound locally to the exact
    candidates produced by `future_work.py merge-ocr`, while readable-page exact
    selections remain eligible in the same job;
@@ -414,9 +414,23 @@ def _current_handoff_manifest_unlocked(professor_dir: Path) -> dict[str, Any]:
     return manifest
 
 
-def _verify_current_local_plan_unlocked(professor_dir: Path) -> dict[str, Any]:
-    """Abort a local continue plan if any post-build artifact/index baseline changed."""
+def _verify_current_local_plan_unlocked(
+    professor_dir: Path,
+    *,
+    expected_handoff_id: str | None = None,
+    expected_source_fingerprint: str | None = None,
+) -> dict[str, Any]:
+    """Validate the caller's exact post-build plan, then recheck every baseline."""
     manifest = _current_handoff_manifest_unlocked(professor_dir)
+    if expected_handoff_id is not None or expected_source_fingerprint is not None:
+        if (
+            not isinstance(expected_handoff_id, str)
+            or re.fullmatch(r"[0-9a-f]{20}", expected_handoff_id) is None
+            or not _is_sha256(expected_source_fingerprint)
+            or manifest.get("handoff_id") != expected_handoff_id
+            or manifest.get("source_fingerprint") != expected_source_fingerprint
+        ):
+            raise ValueError("stage2_plan_stale")
     jobs = manifest.get("jobs") or []
     if not isinstance(jobs, list):
         raise ValueError("stage2_plan_stale")
@@ -432,6 +446,8 @@ def acquire_local_lease(
     *,
     ttl_seconds: int = _LOCAL_LEASE_TTL_SECONDS,
     verify_plan: bool = False,
+    expected_handoff_id: str | None = None,
+    expected_source_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     professor_dir = professor_dir.expanduser().resolve()
     token = token.strip()
@@ -439,25 +455,36 @@ def acquire_local_lease(
         raise ValueError("local lease token is required")
     if ttl_seconds < 60:
         raise ValueError("local lease ttl must be at least 60 seconds")
+    if verify_plan and (
+        not isinstance(expected_handoff_id, str)
+        or re.fullmatch(r"[0-9a-f]{20}", expected_handoff_id) is None
+        or not _is_sha256(expected_source_fingerprint)
+    ):
+        raise ValueError("stage2_plan_stale")
     with _professor_lock(professor_dir):
         current = _active_local_lease_unlocked(professor_dir)
         if current and current.get("token") != token:
             raise ValueError("stage2_writer_busy")
+        manifest = (
+            _verify_current_local_plan_unlocked(
+                professor_dir,
+                expected_handoff_id=expected_handoff_id,
+                expected_source_fingerprint=expected_source_fingerprint,
+            )
+            if verify_plan
+            else None
+        )
         now = time.time()
-        created_here = current is None
         payload = {
             "schema": 1,
             "token": token,
             "acquired_at": current.get("acquired_at", now) if current else now,
             "expires_at": now + ttl_seconds,
         }
+        if manifest is not None:
+            payload["handoff_id"] = manifest["handoff_id"]
+            payload["source_fingerprint"] = manifest["source_fingerprint"]
         _impl._atomic_json(_local_lease_path(professor_dir), payload)
-        try:
-            manifest = _verify_current_local_plan_unlocked(professor_dir) if verify_plan else None
-        except BaseException:
-            if created_here:
-                _local_lease_path(professor_dir).unlink(missing_ok=True)
-            raise
         output = {"status": "acquired", "reason_code": None, "token": token}
         if manifest is not None:
             output["handoff_id"] = manifest["handoff_id"]
@@ -753,6 +780,8 @@ def _lease_cli(command: str) -> int:
     parser.add_argument("--token", required=True)
     if command == "local-lease-acquire":
         parser.add_argument("--ttl-seconds", type=int, default=_LOCAL_LEASE_TTL_SECONDS)
+        parser.add_argument("--handoff-id", required=True)
+        parser.add_argument("--source-fingerprint", required=True)
     args = parser.parse_args(sys.argv[2:])
     try:
         if command == "local-lease-acquire":
@@ -761,6 +790,8 @@ def _lease_cli(command: str) -> int:
                 args.token,
                 ttl_seconds=args.ttl_seconds,
                 verify_plan=True,
+                expected_handoff_id=args.handoff_id,
+                expected_source_fingerprint=args.source_fingerprint,
             )
         else:
             output = release_local_lease(args.professor_dir, args.token)
