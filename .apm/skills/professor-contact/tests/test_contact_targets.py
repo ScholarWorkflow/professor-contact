@@ -134,6 +134,24 @@ class ContactTargetsTests(unittest.TestCase):
         self.assertEqual(len(a["selection_history"]), 1)
         self.assertEqual(a["selection_history"][0]["selected_direction_ids"], ["dir_A", "dir_B"])
 
+    def test_revision_empty_string_note_clears_but_omitted_key_keeps_old_note(self):
+        mod.select_target(
+            self.root,
+            self.preview_path,
+            {"direction_ids": ["dir_A", "dir_B"], "notes": {"dir_A": "old A", "dir_B": "old B"}},
+            selected_at="2026-09-03T12:00:00Z",
+        )
+        mod.select_target(
+            self.root,
+            self.preview_path,
+            {"direction_ids": ["dir_A", "dir_B"], "notes": {"dir_A": ""}},
+            selected_at="2026-09-03T12:01:00Z",
+        )
+        state = json.loads((self.root / "教授研究" / "套磁目标.json").read_text(encoding="utf-8"))
+        notes = {d["direction_id"]: d["user_note"] for d in state["targets"][0]["directions"]}
+        self.assertEqual(notes["dir_A"], "")
+        self.assertEqual(notes["dir_B"], "old B")
+
     def test_resolve_rejects_changed_preview_fingerprint(self):
         mod.select_target(
             self.root,

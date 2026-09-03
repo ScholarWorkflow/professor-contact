@@ -39,7 +39,7 @@ If `folder_path` missing → return the error JSON.
 3. Never use `glob` to check whether a known file exists on synchronized paths — use `read` on the exact path (success ⇒ exists, error ⇒ missing).
 
 ## Tools
-1. `read` — `教授研究/<分类>/<教授名>/套磁候选状态.json`（每方向候选：id/title/one_liner/research_question/fit/fit_note/gap_ids/papers）与 `教授研究/套磁候选总览.md`（仅作展示索引，不作事实源）。
+1. `read` — `教授研究/<分类>/<教授名>/套磁候选状态.json`（每方向候选：id/title/one_liner/research_question/fit/fit_note/gap_ids/papers）。旧 `教授研究/套磁候选总览.md` 已随 Stage 0 改版退役，Stage 0 不再产出：属历史遗留文件，缺失是预期状态，跳过即可，绝不作为输入或展示索引。
 2. `question` — 交互挑选（未给 `selection` 时）.
 3. bash — invoke the repo-relative `contact_state.py` runner from this Skill（stage4-finalize）；`python3` for JSON write（`ensure_ascii=False, indent=1`）.
 4. `write` — 仅写 `/tmp` selection-input JSON。

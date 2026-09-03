@@ -70,7 +70,7 @@ Display labels such as A/B/C are UI sugar only. Machine identity is always `dire
 
 Use `question` so the user can select one or multiple directions. Preserve selections separately. Never merge A+B into a synthetic direction.
 
-Then optionally ask for a short note **per selected direction**: why interested, an existing research idea, or constraints. Blank is valid.
+Then optionally ask for a short note **per selected direction**: why interested, an existing research idea, or constraints. Blank is valid. On a revision re-run, only directions the user actively re-answers carry a note; a still-selected direction the user leaves blank must have its key **omitted** from `notes` so the previous note is kept (see the semantics below `notes` in step 4).
 
 The same `item_key` may appear in multiple selected directions. This is expected and must remain duplicated as membership edges in each direction state; downstream paper analysis may deduplicate work by `item_key`.
 
@@ -82,11 +82,16 @@ Create a temporary selection JSON:
 {
   "direction_ids": ["dir_...", "dir_..."],
   "notes": {
-    "dir_...": "optional note",
-    "dir_...": ""
+    "dir_...": "optional note"
   }
 }
 ```
+
+`notes` key semantics (revision-safe, enforced by `contact_targets.py`):
+
+- Key **omitted** for a still-selected direction → the previously saved note is kept as-is.
+- Key **present** with a value → that value replaces the old note.
+- Key present with `""` → **explicit clear**: the stored note is set to empty. Never write `""` merely because the user left the note blank on a revision — omit the key instead.
 
 Then run:
 
@@ -98,7 +103,7 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_t
   --selection-file "<selection.json>"
 ```
 
-Re-running Stage 0 is a revision, not a destructive reset: the helper preserves other professors, retains notes for directions that remain selected unless explicitly replaced, and appends a compact selection history for the revised professor.
+Re-running Stage 0 is a revision, not a destructive reset: the helper preserves other professors, retains notes for directions that remain selected whose key is omitted from `notes` (any present value — including `""` — replaces; `""` clears), and appends a compact selection history for the revised professor.
 
 ### 5. Return
 
