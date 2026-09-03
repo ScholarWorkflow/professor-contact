@@ -1,7 +1,7 @@
 import importlib.util
 import json
-import os
 import stat
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +10,7 @@ ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "stage2_input_router.py"
 SPEC = importlib.util.spec_from_file_location("stage2_input_router", SCRIPT)
 router = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = router
 assert SPEC.loader is not None
 SPEC.loader.exec_module(router)
 
