@@ -75,12 +75,37 @@ class Stage2InputRouterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             router.build_task_prompt(route, "/tmp/direction.md", "/tmp/save")
 
+    def test_stale_success_file_cannot_mask_later_export_failure(self):
+        first = router.route_batch([{"item_key":"A"}], self.out, str(self.exporter))[0]
+        self.assertEqual(first.status, "ok")
+        stale_path = Path(first.paper)
+        self.assertTrue(stale_path.is_file())
+
+        failed = self.root / "failed-exporter"
+        failed.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        failed.chmod(failed.stat().st_mode | stat.S_IEXEC)
+        second = router.route_batch([{"item_key":"A"}], self.out, str(failed))[0]
+
+        self.assertEqual(second.status, "error")
+        self.assertIsNone(second.paper)
+        self.assertFalse(stale_path.exists())
+        with self.assertRaises(ValueError):
+            router.build_task_prompt(second, "/tmp/direction.md", "/tmp/save")
+
     def test_later_pdf_upgrades_abstract_route_to_fulltext(self):
         first = router.route_batch([{"item_key":"A"}], self.out, str(self.exporter))[0]
         self.assertEqual(first.level, "abstract")
         second = router.route_batch([{"item_key":"A","pdf_path":str(self.pdf)}], self.out, str(self.exporter))[0]
         self.assertEqual(second.level, "fulltext")
         self.assertEqual(second.carrier, "pdf")
+
+    def test_reused_analysis_with_current_pdf_remains_gap_only_eligible(self):
+        # Full-analysis idempotence is a caller concern. Carrier eligibility must
+        # be derived independently from the paper's current OCR/PDF state.
+        route = router.route_existing("A", None, str(self.pdf))
+        self.assertIsNotNone(route)
+        self.assertEqual(route.carrier, "pdf")
+        self.assertTrue(route.gap_only_allowed)
 
     def test_agent_execution_contract_uses_router_and_forbids_raw_item_key_fallback(self):
         text = AGENT.read_text(encoding="utf-8")
@@ -89,6 +114,10 @@ class Stage2InputRouterTests(unittest.TestCase):
         self.assertIn("gap_only_allowed=false", text)
         self.assertIn("normalized abstract JSON absolute path", text)
         self.assertIn("绝不把 raw Zotero `item_key` 当作 `paper`", text)
+        self.assertIn("全部相关论文", text)
+        self.assertIn("仅本轮确实需要 full-analysis 的论文", text)
+        self.assertIn("当前 PDF/OCR carrier", text)
+        self.assertNotIn("该篇最近一次 route 的 `gap_only_allowed=true`", text)
         self.assertNotIn("③Zotero item_key（无 PDF/无 OCR 时）", text)
         self.assertNotIn("仅 item_key/摘要 → `abstract`", text)
 
