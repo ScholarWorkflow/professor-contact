@@ -2650,15 +2650,40 @@ def evidence_provenance(record: dict, recipient: str) -> dict:
     }
 
 
+def contact_evidence_freshness_reason(timestamp: Any) -> str | None:
+    """Issue-#10 freshness gate for contact-evidence timestamps.
+
+    Returns a stable escalate reason when the timestamp is absent, unparseable,
+    or older than the same VERIFY_TTL_DAYS window the pre-send verify cache
+    uses; None when the evidence is fresh enough to act on.
+    """
+    if not isinstance(timestamp, str) or not timestamp.strip():
+        return "contact_evidence_timestamp_invalid"
+    raw = timestamp.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        moment = datetime.fromisoformat(raw)
+    except ValueError:
+        return "contact_evidence_timestamp_invalid"
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) - moment > timedelta(days=VERIFY_TTL_DAYS):
+        return "contact_evidence_stale"
+    return None
+
+
 def evaluate_contact_evidence(professor: str, snapshot: Any,
                               artifact: dict | None,
                               artifact_error: str | None) -> dict:
     """Issue-#10 decision ladder: upstream contact-evidence artifact first.
 
     Accepts the artifact's current email only for confirmed_cross_source or a
-    single official_only address; everything else (paper-only, conflict,
-    ambiguous, insufficient, missing/degraded/unreadable artifact) escalates to
-    the existing official faculty/lab web verification ladder.
+    single official_only address, and only while the evidence itself is fresh
+    (generated_at within VERIFY_TTL_DAYS); everything else (paper-only,
+    conflict, ambiguous, insufficient, stale, missing/degraded/unreadable
+    artifact, unverifiable timestamp) escalates to the existing official
+    faculty/lab web verification ladder.
     """
     def escalate(reason_code: str) -> dict:
         return {"status": "escalate", "reason_code": reason_code,
@@ -2682,16 +2707,23 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
     if artifact is not None:
         if bool(artifact.get("degraded")):
             return escalate("contact_evidence_artifact_degraded")
+        stale_reason = contact_evidence_freshness_reason(artifact.get("generated_at"))
+        if stale_reason:
+            return escalate(stale_reason)
         record = contact_evidence_record(artifact, professor)
         if record is None:
             return escalate("contact_evidence_professor_not_found")
         if isinstance(snapshot, dict) and isinstance(snapshot.get("record_fingerprint"), str):
             stale = snapshot["record_fingerprint"] != sha256_obj(record)
     elif isinstance(snapshot, dict) and isinstance(snapshot.get("record"), dict):
-        # The pack-embedded snapshot stays valid self-contained evidence when
-        # the artifact file is absent; its freshness just cannot be re-confirmed.
+        # Without the artifact file the pack snapshot is the last known
+        # evidence; its embedded generated_at still gates freshness so an old
+        # snapshot can never be seeded into the verify cache as confirmed.
         if bool(snapshot.get("degraded")):
             return escalate("contact_evidence_artifact_degraded")
+        stale_reason = contact_evidence_freshness_reason(snapshot.get("generated_at"))
+        if stale_reason:
+            return escalate(stale_reason)
         record = snapshot["record"]
         source = "pack_snapshot"
     else:

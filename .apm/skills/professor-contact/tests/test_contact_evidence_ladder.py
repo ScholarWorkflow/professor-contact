@@ -2,6 +2,7 @@ import importlib.util
 import json
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -18,6 +19,18 @@ parse = helpers.parse
 run_cli = helpers.run_cli
 
 EVIDENCE_FILE = "教授研究/_联系方式证据.json"
+# Same freshness window the runner applies (contact_state.VERIFY_TTL_DAYS);
+# +1 day keeps the fixture unambiguously stale.
+VERIFY_TTL_DAYS = 30
+
+
+def fresh_ts():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def stale_ts():
+    return (datetime.now(timezone.utc) - timedelta(days=VERIFY_TTL_DAYS + 1)
+            ).isoformat(timespec="seconds")
 
 
 class TestContactEvidenceLadder(BaseEnv):
@@ -49,7 +62,7 @@ class TestContactEvidenceLadder(BaseEnv):
         record.update(record_overrides or {})
         artifact = {
             "schema": 1, "kind": "professor-contact-evidence",
-            "generated_at": "2026-09-01T00:00:00+00:00",
+            "generated_at": fresh_ts(),
             "recent_paper_years": 5, "current_year": 2026,
             "scope": "workflow_evidence_not_send_time_authority",
             "sources": {}, "degraded": False, "source_errors": [],
@@ -203,6 +216,36 @@ class TestContactEvidenceLadder(BaseEnv):
         self.assertEqual(decision["status"], "escalate")
         self.assertEqual(decision["reason_code"], "contact_evidence_missing")
 
+    def test_plan_escalates_when_artifact_is_stale(self):
+        self.prepare()
+        self.write_artifact(artifact_overrides={"generated_at": stale_ts()})
+        self.compile_pack()
+        decision = self.decision(self.plan_jobs())
+        self.assertEqual(decision["status"], "escalate")
+        self.assertEqual(decision["reason_code"], "contact_evidence_stale")
+        self.assertTrue(decision["web_lookup_required"])
+        self.assertIsNone(decision["recipient_email"])
+
+    def test_plan_escalates_when_pack_snapshot_is_stale_and_artifact_absent(self):
+        self.prepare()
+        self.write_artifact(artifact_overrides={"generated_at": stale_ts()})
+        self.compile_pack()
+        (self.root / EVIDENCE_FILE).unlink()
+        decision = self.decision(self.plan_jobs())
+        self.assertEqual(decision["status"], "escalate")
+        self.assertEqual(decision["reason_code"], "contact_evidence_stale")
+        self.assertTrue(decision["web_lookup_required"])
+
+    def test_plan_escalates_when_freshness_cannot_be_confirmed(self):
+        self.prepare()
+        for bad_timestamp in (None, "", "not-a-date"):
+            self.write_artifact(artifact_overrides={"generated_at": bad_timestamp})
+            decision = self.decision(self.plan_jobs())
+            self.assertEqual(decision["status"], "escalate", bad_timestamp)
+            self.assertEqual(decision["reason_code"],
+                             "contact_evidence_timestamp_invalid", bad_timestamp)
+            self.assertTrue(decision["web_lookup_required"])
+
     def test_plan_uses_pack_snapshot_when_artifact_file_absent(self):
         self.prepare()
         self.write_artifact()
@@ -250,6 +293,20 @@ class TestContactEvidenceLadder(BaseEnv):
         self.assertTrue(recorded["provenance"]["paper_evidence"])
         self.assertIn("faculty@example.test",
                       (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8"))
+
+    def test_finalize_records_stale_escalation_for_audit(self):
+        g1 = self.prepare()
+        self.write_artifact(artifact_overrides={"generated_at": stale_ts()})
+        self.compile_pack()
+        out = self.run_finalize_flow(g1, "stale-audit")
+        self.assertEqual(out["status"], "ok", out)
+        state = json.loads((self.prof_dir / "套磁邮件状态.json")
+                           .read_text(encoding="utf-8"))
+        recorded = state["emails"][self.choices()["email_id"]]["contact_evidence"]
+        self.assertEqual(recorded["status"], "escalate")
+        self.assertEqual(recorded["reason_code"], "contact_evidence_stale")
+        self.assertTrue(recorded["web_lookup_required"])
+        self.assertIsNone(recorded["evidence_email"])
 
     def test_finalize_rejects_override_of_confirmed_evidence(self):
         g1 = self.prepare()
