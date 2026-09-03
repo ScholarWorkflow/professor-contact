@@ -58,22 +58,33 @@ class PostBuildLeaseGuardTests(unittest.TestCase):
             }),
             encoding="utf-8",
         )
+        self.abstract_other = self.root / "paper-analysis-input-other.json"
+        self.abstract_other.write_text(
+            json.dumps({
+                "schema": 1,
+                "kind": "paper-analysis-input",
+                "level": "abstract",
+                "title": "Other Paper",
+                "abstract": "other body",
+            }),
+            encoding="utf-8",
+        )
 
     def tearDown(self):
         self.temp.cleanup()
 
-    def _build(self):
-        jobs = self.root / "jobs.json"
+    def _build(self, *, item_key="ABS", analysis_relpath="论文分析/A/Abs.md", input_path=None):
+        jobs = self.root / f"jobs-{item_key}.json"
         jobs.write_text(
             json.dumps({
                 "schema": 1,
                 "professor": "Professor",
                 "jobs": [{
-                    "item_key": "ABS",
+                    "item_key": item_key,
                     "carrier": "abstract_json",
                     "level": "abstract",
-                    "input_path": str(self.abstract.resolve()),
-                    "analysis_relpath": "论文分析/A/Abs.md",
+                    "input_path": str((input_path or self.abstract).resolve()),
+                    "analysis_relpath": analysis_relpath,
                     "research_direction": {},
                 }],
             }),
@@ -92,7 +103,7 @@ class PostBuildLeaseGuardTests(unittest.TestCase):
     def _result_zip(self, bundle):
         manifest = self._manifest(bundle)
         job = manifest["jobs"][0]
-        result = self.root / "result.zip"
+        result = self.root / f"result-{job['item_key']}.zip"
         safe = handoff._safe_component(job["job_id"])
         with zipfile.ZipFile(result, "w") as archive:
             archive.writestr(
@@ -121,17 +132,27 @@ class PostBuildLeaseGuardTests(unittest.TestCase):
         args.future_work_script = self.root / "unused-future-work.py"
         return handoff.import_result(args)
 
-    def _lease_cli(self, command, token):
+    def _lease_cli(self, command, token, *, bundle=None):
+        argv = [
+            sys.executable,
+            str(SCRIPT),
+            command,
+            "--professor-dir",
+            str(self.prof),
+            "--token",
+            token,
+        ]
+        if command == "local-lease-acquire":
+            if bundle is None:
+                raise AssertionError("bundle is required for guarded lease acquisition")
+            argv.extend([
+                "--handoff-id",
+                bundle["handoff_id"],
+                "--source-fingerprint",
+                bundle["source_fingerprint"],
+            ])
         return subprocess.run(
-            [
-                sys.executable,
-                str(SCRIPT),
-                command,
-                "--professor-dir",
-                str(self.prof),
-                "--token",
-                token,
-            ],
+            argv,
             check=False,
             text=True,
             capture_output=True,
@@ -146,7 +167,7 @@ class PostBuildLeaseGuardTests(unittest.TestCase):
         self.assertEqual(imported["status"], "imported")
         imported_bytes = target.read_bytes()
 
-        acquire = self._lease_cli("local-lease-acquire", "run-a")
+        acquire = self._lease_cli("local-lease-acquire", "run-a", bundle=bundle)
         self.assertEqual(acquire.returncode, 2, acquire.stdout + acquire.stderr)
         payload = json.loads(acquire.stdout)
         self.assertEqual(payload["reason_code"], "stage2_plan_stale")
@@ -157,16 +178,52 @@ class PostBuildLeaseGuardTests(unittest.TestCase):
         bundle = self._build()
         manifest = self._manifest(bundle)
 
-        acquire = self._lease_cli("local-lease-acquire", "run-b")
+        acquire = self._lease_cli("local-lease-acquire", "run-b", bundle=bundle)
         self.assertEqual(acquire.returncode, 0, acquire.stdout + acquire.stderr)
         payload = json.loads(acquire.stdout)
         self.assertEqual(payload["status"], "acquired")
         self.assertEqual(payload["handoff_id"], manifest["handoff_id"])
-        self.assertTrue((self.prof / "论文分析/.stage2-local-writer.json").exists())
+        self.assertEqual(payload["source_fingerprint"], manifest["source_fingerprint"])
+        lease_payload = json.loads(
+            (self.prof / "论文分析/.stage2-local-writer.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(lease_payload["handoff_id"], manifest["handoff_id"])
+        self.assertEqual(lease_payload["source_fingerprint"], manifest["source_fingerprint"])
 
         release = self._lease_cli("local-lease-release", "run-b")
         self.assertEqual(release.returncode, 0, release.stdout + release.stderr)
         self.assertFalse((self.prof / "论文分析/.stage2-local-writer.json").exists())
+
+    def test_competing_build_cannot_make_stale_run_validate_wrong_latest_plan(self):
+        h1 = self._build()
+        h1_target = self.prof / "论文分析/A/Abs.md"
+
+        imported = self._import(h1, self._result_zip(h1))
+        self.assertEqual(imported["status"], "imported")
+        imported_bytes = h1_target.read_bytes()
+
+        h2 = self._build(
+            item_key="OTHER",
+            analysis_relpath="论文分析/B/Other.md",
+            input_path=self.abstract_other,
+        )
+        self.assertNotEqual(h1["handoff_id"], h2["handoff_id"])
+        self.assertNotEqual(h1["source_fingerprint"], h2["source_fingerprint"])
+
+        stale_acquire = self._lease_cli("local-lease-acquire", "run-h1", bundle=h1)
+        self.assertEqual(stale_acquire.returncode, 2, stale_acquire.stdout + stale_acquire.stderr)
+        stale_payload = json.loads(stale_acquire.stdout)
+        self.assertEqual(stale_payload["reason_code"], "stage2_plan_stale")
+        self.assertFalse((self.prof / "论文分析/.stage2-local-writer.json").exists())
+        self.assertEqual(h1_target.read_bytes(), imported_bytes)
+
+        current_acquire = self._lease_cli("local-lease-acquire", "run-h2", bundle=h2)
+        self.assertEqual(current_acquire.returncode, 0, current_acquire.stdout + current_acquire.stderr)
+        current_payload = json.loads(current_acquire.stdout)
+        self.assertEqual(current_payload["handoff_id"], h2["handoff_id"])
+        self.assertEqual(current_payload["source_fingerprint"], h2["source_fingerprint"])
+        release = self._lease_cli("local-lease-release", "run-h2")
+        self.assertEqual(release.returncode, 0, release.stdout + release.stderr)
 
 
 if __name__ == "__main__":
