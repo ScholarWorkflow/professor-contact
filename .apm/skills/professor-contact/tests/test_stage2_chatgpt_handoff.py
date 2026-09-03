@@ -8,6 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "stage2_chatgpt_handoff.py"
+SKILL = ROOT / "SKILL.md"
+AGENT = ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md"
 SPEC = importlib.util.spec_from_file_location("stage2_chatgpt_handoff", SCRIPT)
 handoff = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -218,6 +220,18 @@ class HandoffTests(unittest.TestCase):
         self._build([changed])
         self.assertEqual(self._import(old, result)["reason_code"], "handoff_stale")
 
+    def test_changed_pdf_creates_new_handoff_and_rejects_old_result(self):
+        job = self._pdf_job()
+        old = self._build([job])
+        old_job = self._manifest(old)["jobs"][0]
+        result = self._result_zip(old, [{
+            "job_id": old_job["job_id"], "item_key": "ABC", "input_sha256": old_job["input_sha256"], "status": "ok"
+        }])
+        self.pdf.write_bytes(b"%PDF-1.4\nchanged-body")
+        new = self._build([job])
+        self.assertNotEqual(old["handoff_id"], new["handoff_id"])
+        self.assertEqual(self._import(old, result)["reason_code"], "handoff_stale")
+
     def test_existing_abstract_analysis_can_be_upgraded_when_baseline_unchanged(self):
         target = self.prof / "论文分析/A/T.md"
         target.parent.mkdir(parents=True)
@@ -264,6 +278,21 @@ class HandoffTests(unittest.TestCase):
         out = self._import(bundle, result)
         self.assertEqual(out["reason_code"], "handoff_stale")
         self.assertEqual(target.read_text(), "newer local fulltext analysis")
+
+    def test_workflow_contract_wires_continue_wait_and_resume(self):
+        skill = SKILL.read_text(encoding="utf-8")
+        agent = AGENT.read_text(encoding="utf-8")
+        self.assertIn("chatgpt_handoff=continue", skill)
+        self.assertIn("chatgpt_handoff=wait", skill)
+        self.assertIn("非交互/旧自动化没有该字段时固定按 `continue`", skill)
+        self.assertIn("chatgpt_result", skill)
+        self.assertIn("stage2_chatgpt_handoff.py build", agent)
+        self.assertIn("stage2_chatgpt_handoff.py import", agent)
+        self.assertIn("本轮刚 build 的 current `bundle_path`", agent)
+        self.assertIn("needs_external_result", agent)
+        self.assertIn("任何新 vision OCR/`paper-analysis full|gap-only` 前停止", agent)
+        self.assertIn("字段缺失按非交互/向后兼容语义固定为 `continue`", agent)
+        self.assertIn("Stage 3 仍只读 `套磁候选输入.json`", agent)
 
 
 if __name__ == "__main__":
