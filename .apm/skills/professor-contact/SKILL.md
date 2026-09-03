@@ -34,10 +34,36 @@ After the screening pipeline (professor-collector `skip_pdf` → professor-topic
 |---|---|---|---|
 | 0 | `professor-contact` | 扫描全部标记 → 汇总 | `教授研究/套磁候选总览.md` |
 | 1 | `professor-contact-downloader` | 对被标记方向的教授跑 `professor-collector(pdf_only, professors=<标记教授>, include_deferred 隐含)` | PDF 附件补下 |
-| 2 | `professor-contact-analyzer` | 判定相关论文、署名、主线，跑 `paper-analysis`（sidecar-first 链不变：有效 sidecar → 迁移相关论文 legacy → 只对未解决目标 `gap-only`）。随后**组装 facts 交给 runner**：`stage2-plan` 生成 freshness/narrative 模型 job（gap 池只来自有效 sidecar，`gap_scope` 选择范围；shortlist 稳定排序 5–10 条），模型 job 结果经 `stage2-finalize` 校验后原子写**输入包**并确定性渲染报告；`done_by_self` 进黑名单；白话校验结果另由 `stage2-record-validation` 写入独立字段 | `<教授名>/套磁候选输入.json`（阶段 3 唯一事实源）+ `<教授名>/套磁候选分析.md`（runner 渲染，含折叠 freshness 卡）+ `<教授名>/论文分析/_freshness_cache.json` + `_index.json`/sidecar/`_ocr`（同 v1）+（可选）KB 条目 |
+| 2 | `professor-contact-analyzer` | 判定相关论文、署名、主线与 post-cost-gate 分析 scope 后，**总是先生成确定性的 ChatGPT handoff ZIP**。`chatgpt_handoff=continue` 时 ZIP 只是低成本 side effect，随后旧的本地 OCR/`paper-analysis` 路径语义不变；`wait` 时在任何新 OCR/`paper-analysis` 前软停止。提供匹配 result ZIP 后先严格本地导入成普通 analysis/sidecar，再继续既有 `stage2-plan → stage2-finalize`。gap/runner/状态机仍完全本地 | `<教授名>/论文分析/_chatgpt_handoff/stage2-<id>.zip`（传输层）+ 原有 `<教授名>/套磁候选输入.json`（Stage 3 唯一事实源）/分析报告/_freshness_cache/index/sidecar |
 | 3 | `professor-contact-idea-generator` | **只读输入包 + profile**（不读任何 Markdown/_index/sidecar）：`stage3-plan` 按 `refresh_scope` 生成逐方向候选 job → 模型写结构化候选 JSON（精确 gap 锚、done_by_self 只能【我的延伸】+差异点）→ `stage3-finalize` 校验后写状态并渲染候选文件；profile 改动只失效阶段 3/4，不失效阶段 2；白话校验结果另由 `stage3-record-validation` 写入独立字段 | `<教授名>/套磁候选状态.json` + `<教授名>/套磁想法候选.md` + `套磁想法候选总览.md`（后两者 runner 渲染） |
 | 4 | `professor-contact-selection` | 用户从**候选状态**（非 Markdown）挑选 → `stage4-finalize` 校验指纹（过期 `needs_refresh` 不落盘）→ 写选择并**编译程序级邮件输入包**（精确 `item_key+gap_id` join；done_by_self 只作 extension_context_only） | `教授研究/套磁选择.json` + `教授研究/邮件输入.json`（阶段 5 唯一事实源，自包含短证据） |
 | 5 | `professor-contact-email-generator` | **只读邮件输入包**（+profile/模板/info/boshu/`_contact_verify.json`）：默认生成首封和无回复跟进两种输出；`stage5-plan --mode both`（模型 job + 核验缓存检查）→ 送信前核验（5.9 不变）→ 模型只回首封的 4 句兴趣段+source_map+未来志向+学習中候选 → 用户补初次发送日期 → runner 同时拼装首封/跟进 → `humanizer-ja` 分别过稿；用 `--humanized-map` 一一对应，runner 先全量预校验再写盘 → `stage5-finalize --mode both`（保护串校验+渲染）→ validator 循环（validator 也只读 md+邮件包）并记录 `stage5-record-validation` | 每封选中邮件独立的 `套磁邮件.md`/`.txt` 与 `套磁跟进邮件.md`/`.txt`（单封用固定名，多封按方向与想法 ID 加后缀）+ `<教授名>/套磁邮件状态.json` + `套磁邮件总览.md` + `_contact_verify.json` |
+
+
+## Stage 2 ChatGPT handoff（只替换逐论文高耗分析）
+
+Stage 2 的 handoff 是**可选执行通道，不是第二套工作流**。`套磁候选输入.json` 仍是 Stage 3 唯一事实源，`contact_state.py stage2-plan/stage2-finalize`、gap/item/fingerprint 校验、Stage 3–5 全部保持本地权威。
+
+### 启动时只问一次
+
+- 完整 workflow **交互式**启动且调用方没有显式给 `chatgpt_handoff` 时，caller 必须在进入 Stage 2 前只问一次：
+  1. `继续本地执行（仍生成 ChatGPT ZIP）` → `chatgpt_handoff=continue`
+  2. `生成 ZIP 后暂停，等待 ChatGPT 结果` → `chatgpt_handoff=wait`
+- 一旦选定，把该值原样传给 `professor-contact-analyzer`；**handoff 点不得再次提问**。
+- 非交互/旧自动化没有该字段时固定按 `continue`，绝不因为升级后突然等待。
+- 两种模式生成完全相同的逻辑 bundle；`continue` 不改变普通 Stage 2 结果语义，`wait` 不允许偷偷本地 OCR/`paper-analysis` 补齐。
+
+### wait / resume
+
+`wait` 在 analyzer 已完成方向可信度、署名、相关论文选择、成本门、幂等过滤与确定性 carrier/future-work prepare 后生成：
+
+`<教授目录>/论文分析/_chatgpt_handoff/stage2-<handoff_id>.zip`
+
+若确有待分析 jobs，analyzer 返回 `result=needs_external_result`、`reason_code=chatgpt_result_required`、`handoff_id`、`bundle_path`，这是软停止而非错误。零 jobs 时无需等待，继续普通 Stage 2。
+
+用户把该 ZIP 交给 ChatGPT/外部处理并拿回 `stage2-<handoff_id>-result.zip` 后，重新调用同一教授的 Stage 2，并传 `chatgpt_handoff: wait` + `chatgpt_result: <result.zip绝对路径>`。analyzer **先按当前本地输入重新确定性构建 current bundle，再用 current bundle 校验 result**：因此 PDF/abstract/note/scope/local baseline 任一变化都会改变 handoff/source fingerprint，使旧 result 自动拒绝。匹配结果只会被安装到普通 `论文分析/...md`、本地 finalize 的 `.future_work.json` 与 `_index.json`；随后继续 sidecar/facts/`stage2-plan`/`stage2-finalize`，下游不因执行者来自 handoff 而分叉。
+
+外部 ZIP 永远不能直接提供权威 `_index.json`、`.future_work.json`、`套磁候选输入.json`、gap_id 或其它 Stage 3 状态。多教授等待时每教授各有 bundle；恢复时用 `professors=<单个教授>` 逐个提交对应 result，避免错配。
 
 ## 标记语义
 
@@ -199,8 +225,8 @@ task(subagent_type: "professor-contact", prompt: "folder_path: <program-root or 
 # 阶段 1：补下 PDF（默认只使用合法来源；额外来源必须由调用方显式配置）
 task(subagent_type: "professor-contact-downloader", prompt: "folder_path: <...>")
 
-# 阶段 2：分析（不读 profile；契合判断在阶段 3）
-task(subagent_type: "professor-contact-analyzer", prompt: "folder_path: <...>\npaper_analysis: relevant|all（可选，缺省 relevant）\ngap_scope: relevant|selected_direction|all（可选，缺省 selected_direction）\nfreshness_scope: shortlist|full（可选，缺省 shortlist）\nkb_import: true|false（可选，缺省 false）")
+# 阶段 2：分析（交互式 caller 已在此之前把 handoff 模式问好；非交互缺省 continue）
+task(subagent_type: "professor-contact-analyzer", prompt: "folder_path: <...>\nchatgpt_handoff: continue|wait（非交互缺省 continue）\nchatgpt_result: <匹配 result ZIP 绝对路径，可选，仅 resume>\npaper_analysis: relevant|all（可选，缺省 relevant）\ngap_scope: relevant|selected_direction|all（可选，缺省 selected_direction）\nfreshness_scope: shortlist|full（可选，缺省 shortlist）\nkb_import: true|false（可选，缺省 false）")
 
 # 阶段 3：生成想法候选（refresh_scope 缺省 flagged=当前 active 方向）
 task(subagent_type: "professor-contact-idea-generator", prompt: "folder_path: <...>\nprofile_path: <绝对路径，可选>\nrefresh_scope: flagged|selected|all（可选，缺省 flagged）\ncollection_key: <精确方向 key，可选>")
@@ -225,6 +251,8 @@ task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <
 | `paper_analysis` | no | 仅阶段 2：`relevant`（只跑相关论文——user_note 点名 ∪ 术语/语义匹配，缺省）或 `all`（方向全部成员论文，强制全量）。相关集 >10 篇时 analyzer 会先问确认。 |
 | `gap_scope` | no | 仅阶段 2：gap 候选池范围（`selected_direction` 缺省）。只从已有有效 sidecar 的论文里选，绝不触发额外提取。 |
 | `freshness_scope` | no | 仅阶段 2：`shortlist`（稳定排序 5–10 条，缺省）/ `full`（候选池全部）。 |
+| `chatgpt_handoff` | no | 仅阶段 2：`continue` / `wait`。交互式完整 workflow 由 caller 在 Stage 2 前问一次；非交互省略固定等价 `continue`。两者都生成同一 bundle。 |
+| `chatgpt_result` | no | 仅阶段 2 resume：外部 result ZIP 的绝对路径。必须与本轮按当前输入重新生成的 current bundle 的 handoff/source/job/hash 完全匹配；`wait` 下不完整结果绝不本地补算。 |
 | `refresh_scope` | no | 仅阶段 3：`flagged`（缺省）/ `selected`（`套磁选择.json` 已选方向）/ `all`。 |
 | `collection_key` | no | 仅阶段 3：精确限定一个方向；传入后 plan/finalize 只处理该方向，不为其他方向生成模型 job。 |
 | `kb_import` | no | 仅阶段 2：`true` 时把每篇相关论文的分析做成 KB 条目入库（tag 含 `zotero://…/<item_key>`，source=分析文件，重跑走 `updateKnowledge` 原地更新）；缺省 `false`。相关论文全量入库为后续项。 |
@@ -241,6 +269,7 @@ task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <
 - `<教授名>/套磁候选分析.md` — 阶段 2（v2 模板）：每方向四节——「方向定位」（可信度一句+署名线一句+分要点时间线，论文小总结只在此讲一遍）、「论文一览」（唯一表格：论文｜年份｜署名｜分析）、「与我的契合」（note 逐字+评估-only）、「可延伸方向」（【作者 future work】四件套=原文摘录/中译/大白话解释/gap_status；【我的延伸】带差异点；done_by_self 单列「已被本人实现」小节）。人读文本零 item key：首现全称+zotero+[分析] 链接，此后《固定缩写》（年份）挂同一链接。重跑=全量重写，无「本轮新增」式追加。
 - `<教授名>/论文分析/_index.json` + `<作者>/<标题>.md` + `<作者>/<标题>.md.future_work.json` — 阶段 2：完整分析的 future-work sidecar 优先；旧分析只迁移当前相关论文，仍缺才只跑该篇 `gap-only`。`_index.json` 由阶段 2 独占写入，根为 `schema: 2`、`future_work_schema: 1`；每篇 `gaps[]` 只存 `gap_id`、`status`、`evidence`，原文/翻译/出处只在 sidecar。旧 `gap`/`gap_zh`/`gap_source`/`gap_status` 字段暂保留兼容。
 - `<教授名>/论文分析/_ocr/<标题>.txt` — 阶段 2：扫描版 PDF 的 LLM OCR 产物（含元数据头 + 逐页文本 + 图描述；复用 vision-tools glance 链；不入库、无 `llm_ocr` 标记；重跑复用）。
+- `<教授名>/论文分析/_chatgpt_handoff/stage2-<handoff_id>/` + `.zip` — Stage 2 portable execution handoff；只含 post-cost-gate/post-idempotency 待分析 jobs、最小方向上下文与确定性 future-work 候选。`_latest.json` 只做 stale guard；这些文件是瞬时执行输入，**不是后续阶段事实源**。
 - `<教授名>/套磁候选输入.json` — 阶段 2：按方向组织的最小事实包（支撑论文、gap shortlist 全证据、排除清单+原因、`completed_gap_blacklist`、版本关系、红线、user_note、narrative、`input_fingerprint`）。阶段 3 **唯一**事实源；不含 profile。
 - `<教授名>/论文分析/_freshness_cache.json` — 阶段 2：逐 gap freshness 缓存（status/model_evidence/candidate_paper_ids/gap_fingerprint/candidate_fingerprint/evaluated_at/confidence/completed_part/remaining_gap；无 TTL，指纹任一变化只失效受影响 gap）。
 - `<教授名>/套磁候选状态.json` — 阶段 3：规范化候选状态（candidate_meta 的 gap_ids 在此，不在 Markdown）；profile/输入包指纹在此。
@@ -264,6 +293,7 @@ task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <
 
 ## Behavior notes for callers
 
+- **handoff barrier 是 Stage 2 的固定副作用**：每次有待分析 job 都先生成 ZIP；`continue` 随后按旧路径本地执行，`wait` 在任何新 OCR/逐论文模型调用前返回 `needs_external_result`。resume 先重建 current bundle 再验 result，防止旧 PDF/note/scope 结果被误装。
 - **每阶段独立跑、可中断**：PDF 下载（阶段 1，最慢）可单独丢后台；分析（2）/想法（3）可重复跑（改 profile 后重新生成想法不需要重下 PDF，也**不需要重跑阶段 2**——profile 已移出阶段 2；重跑阶段 2 靠输入包指纹 + `_index.json` 幂等——输入包指纹未变的方向直接复用，`_ocr/` 产物复用，freshness 缓存命中不重判）。阶段 2 只跑**相关论文**（默认 `relevant`，相关集 >10 篇会先问确认），扫描版论文会走逐页 OCR（较久）后再做 paper-analysis。旧产物迁移见「确定性 runner」节 `migrate-v3`。
 - **Zotero 必须在线**：所有阶段读标记走 zotero-read；阶段 1 还需写 PDF。离线时 agent 会提示打开 Zotero。
 - **排序依赖**：标记只能在正式聚类（方向子分类已建）之后做；阶段 2 依赖阶段 1 的 PDF 尽量全（有 PDF 的论文走全文深度分析；扫描版才触发 OCR；摘要缺失时仍可用 abstractNote 分析，PDF 只是增强）。
