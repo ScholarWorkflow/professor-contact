@@ -25,6 +25,8 @@ BUNDLE_SCHEMA = 1
 BUNDLE_KIND = "professor-contact-stage2-chatgpt-handoff"
 RESULT_KIND = "professor-contact-stage2-chatgpt-result"
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
+FUTURE_HEADING = "## 作者明说的未来工作（Future Work）"
+HELP_HEADING = "## 对自身研究的帮助评估"
 REQUIRED_ANALYSIS_HEADINGS = (
     "## 总结",
     "## 问题是什么",
@@ -33,8 +35,8 @@ REQUIRED_ANALYSIS_HEADINGS = (
     "## 研究方法是什么",
     "## 贡献是什么",
     "## 局限性与批判性评价",
-    "## 作者明说的未来工作（Future Work）",
-    "## 对自身研究的帮助评估",
+    FUTURE_HEADING,
+    HELP_HEADING,
 )
 
 
@@ -107,6 +109,21 @@ def _resolve_under(root: Path, rel: str) -> Path:
     return target
 
 
+def _local_file_relpath(raw: str | None, professor_dir: Path, field: str) -> str | None:
+    """Convert local index metadata to a portable professor-relative path."""
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_absolute() or not path.is_file():
+        raise ValueError(f"{field} must be an existing absolute file")
+    resolved = path.resolve()
+    try:
+        relative = resolved.relative_to(professor_dir.resolve())
+    except ValueError as error:
+        raise ValueError(f"{field} must stay under professor_dir") from error
+    return _portable_relpath(relative.as_posix(), field)
+
+
 def _load_json(path: Path) -> Any:
     with path.open(encoding="utf-8") as handle:
         return json.load(handle)
@@ -152,6 +169,37 @@ def _baseline_matches(professor_dir: Path, job: dict[str, Any]) -> bool:
     return current == expected
 
 
+def _validate_future_work_inputs(result: dict[str, Any]) -> None:
+    """Fulltext handoff is only complete when local deterministic evidence exists."""
+    level = result["evidence_level"]
+    prepare_raw = result["future_work_prepare_local"]
+    candidates_raw = result["future_work_candidates_local"]
+    if level == "fulltext" and not (prepare_raw and candidates_raw):
+        raise ValueError("fulltext handoff requires future_work_prepare and future_work_candidates")
+    if not (prepare_raw or candidates_raw):
+        return
+    if not (prepare_raw and candidates_raw):
+        raise ValueError("future_work_prepare and future_work_candidates must be supplied together")
+
+    prepare = Path(str(prepare_raw))
+    candidates = Path(str(candidates_raw))
+    for field, path in (("future_work_prepare", prepare), ("future_work_candidates", candidates)):
+        if not path.is_absolute() or not path.is_file():
+            raise ValueError(f"{field} must be an existing absolute file")
+
+    prepare_payload = _load_json(prepare)
+    candidates_payload = _load_json(candidates)
+    if not isinstance(prepare_payload, dict) or not isinstance(prepare_payload.get("ocr_required_pages", []), list):
+        raise ValueError("future_work_prepare must be a prepare JSON object")
+    if not isinstance(candidates_payload, (dict, list)):
+        raise ValueError("future_work_candidates must be a candidates JSON object/list")
+    pdf_sha = prepare_payload.get("pdf_sha256")
+    if result["carrier"] == "pdf" and pdf_sha != result["input_sha256"]:
+        raise ValueError("future_work_prepare pdf_sha256 must match the bundled PDF")
+    result["future_work_prepare_sha256"] = _sha256_file(prepare)
+    result["future_work_candidates_sha256"] = _sha256_file(candidates)
+
+
 def _validate_job_spec(raw: dict[str, Any], professor_dir: Path) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("each job must be an object")
@@ -187,7 +235,7 @@ def _validate_job_spec(raw: dict[str, Any], professor_dir: Path) -> dict[str, An
         "user_note": str(direction.get("user_note") or ""),
     }
 
-    result = {
+    result: dict[str, Any] = {
         "item_key": item_key,
         "carrier": carrier,
         "evidence_level": level,
@@ -199,18 +247,12 @@ def _validate_job_spec(raw: dict[str, Any], professor_dir: Path) -> dict[str, An
         "authorship": str(raw.get("authorship") or "pending"),
         "authorship_note": raw.get("authorship_note"),
         "relevance_reason": str(raw.get("relevance_reason") or ""),
-        "ocr_file": str(raw.get("ocr_file") or "") or None,
+        "ocr_relpath": _local_file_relpath(raw.get("ocr_file"), professor_dir, "ocr_file"),
         "future_work_prepare_local": str(raw.get("future_work_prepare") or "") or None,
         "future_work_candidates_local": str(raw.get("future_work_candidates") or "") or None,
         "local_baseline": _capture_local_baseline(professor_dir, item_key, analysis_relpath),
     }
-    if result["future_work_prepare_local"] or result["future_work_candidates_local"]:
-        if not (result["future_work_prepare_local"] and result["future_work_candidates_local"]):
-            raise ValueError("future_work_prepare and future_work_candidates must be supplied together")
-        for field in ("future_work_prepare_local", "future_work_candidates_local"):
-            path = Path(str(result[field]))
-            if not path.is_absolute() or not path.is_file():
-                raise ValueError(f"{field} must be an existing absolute file")
+    _validate_future_work_inputs(result)
     return result
 
 
@@ -230,8 +272,11 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
             "research_direction": job["research_direction"],
             "research_direction_fp": job["research_direction_fp"],
             "local_baseline": job["local_baseline"],
+            "future_work_prepare_sha256": job.get("future_work_prepare_sha256"),
+            "future_work_candidates_sha256": job.get("future_work_candidates_sha256"),
         }
         job_fp = _sha256_json(fp_payload)
+        expected_future_work = job["evidence_level"] == "fulltext"
         entry: dict[str, Any] = {
             "job_id": f"paper-analysis:{job['item_key']}:{job_fp[:16]}",
             "item_key": job["item_key"],
@@ -243,19 +288,21 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
             "research_direction": job["research_direction"],
             "research_direction_fp": job["research_direction_fp"],
             "local_baseline": job["local_baseline"],
-            "expected": {"analysis": True, "future_work": bool(job["future_work_prepare_local"])},
+            "expected": {"analysis": True, "future_work": expected_future_work},
             "index_metadata": {
                 "authorship": job["authorship"],
                 "authorship_note": job["authorship_note"],
                 "relevance_reason": job["relevance_reason"],
-                "ocr_file": job["ocr_file"],
+                "ocr_relpath": job["ocr_relpath"],
             },
         }
-        if job["future_work_prepare_local"]:
+        if expected_future_work:
             prepare_payload = _load_json(Path(str(job["future_work_prepare_local"])))
             entry["future_work"] = {
                 "prepare_path": f"papers/{safe_key}/future_work/prepare.json",
                 "candidates_path": f"papers/{safe_key}/future_work/candidates.json",
+                "prepare_sha256": job["future_work_prepare_sha256"],
+                "candidates_sha256": job["future_work_candidates_sha256"],
                 "ocr_required_pages": list(prepare_payload.get("ocr_required_pages") or []),
             }
         jobs.append(entry)
@@ -266,6 +313,8 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
                 "analysis_relpath", "research_direction_fp", "local_baseline",
             )
         })
+        if expected_future_work:
+            fingerprint_rows[-1]["future_work"] = entry["future_work"]
     source_fingerprint = _sha256_json({"professor": professor, "jobs": fingerprint_rows})
     return {
         "schema": BUNDLE_SCHEMA,
@@ -297,10 +346,10 @@ For each `manifest.json.jobs[]` entry:
 1. Analyze only the bundled `input_path`; do not use Zotero/MCP or invent missing local context.
 2. Preserve `job_id`, `item_key`, `input_sha256`, direction IDs, and target identity exactly.
 3. Write the ordinary paper-analysis Markdown template to `results/<safe-job>/analysis.md`.
-4. If `expected.future_work=true`, select/translate only exact candidates from the bundled future-work files. Return `future_work_items.json`. If `future_work.ocr_required_pages` is non-empty, OCR exactly those pages and return `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`.
+4. For every fulltext job (`expected.future_work=true`), return `future_work_items.json` selected/translated only from the bundled exact candidates. If `future_work.ocr_required_pages` is non-empty, OCR exactly those pages and return `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`.
 5. Bind completed rows in `result_manifest.json` with schema/kind/handoff/source/job/item/input hash and `status=ok|partial|error`.
 
-Do not return `_index.json`, `套磁候选输入.json`, or a ready-made `.future_work.json` as authoritative state. The local importer independently validates/finalizes future-work evidence and installs accepted results into the ordinary Stage-2 artifacts.
+A fulltext job is not complete without its future-work payload. Do not return `_index.json`, `套磁候选输入.json`, or a ready-made `.future_work.json` as authoritative state. The local importer independently validates/finalizes future-work evidence and installs accepted results into the ordinary Stage-2 artifacts.
 """
 
 
@@ -425,6 +474,27 @@ def _validate_analysis(path: Path) -> None:
         raise ValueError("external_analysis_invalid: template headings out of order")
 
 
+def _sanitize_abstract_future_work(path: Path) -> None:
+    """Never let unvalidated external Markdown become a legacy future-work source."""
+    text = path.read_text(encoding="utf-8")
+    left = text.find(FUTURE_HEADING)
+    right = text.find(HELP_HEADING, left + len(FUTURE_HEADING))
+    if left < 0 or right < 0:
+        raise ValueError("external_analysis_invalid: missing future-work anchors")
+    section = (
+        FUTURE_HEADING
+        + "\n—（abstract-only handoff 无页码级可验证 future-work 证据；不得作为 gap 来源）\n"
+    )
+    _atomic_write(path, (text[:left] + section + text[right:]).encode("utf-8"))
+
+
+def _resolved_ocr_file(professor_dir: Path, metadata: dict[str, Any]) -> str | None:
+    rel = metadata.get("ocr_relpath")
+    if not rel:
+        return None
+    return str(_resolve_under(professor_dir, str(rel)))
+
+
 def _index_with_job(
     professor_dir: Path,
     manifest: dict[str, Any],
@@ -447,16 +517,22 @@ def _index_with_job(
     prior = papers.get(job["item_key"], {}) if isinstance(papers.get(job["item_key"]), dict) else {}
     metadata = job.get("index_metadata") or {}
     entry = dict(prior)
+    if sidecar_path:
+        future_state = "valid"
+        future_error = None
+    else:
+        future_state = "failed"
+        future_error = "future_work_unavailable_abstract_handoff"
     entry.update({
         "file": str(analysis_path),
         "level": job["evidence_level"],
-        "ocr_file": metadata.get("ocr_file"),
+        "ocr_file": _resolved_ocr_file(professor_dir, metadata),
         "authorship": metadata.get("authorship", prior.get("authorship", "pending")),
         "authorship_note": metadata.get("authorship_note"),
         "relevance_reason": metadata.get("relevance_reason", prior.get("relevance_reason", "")),
         "future_work_sidecar": str(sidecar_path) if sidecar_path else None,
-        "future_work_state": "valid" if sidecar_path else "none",
-        "future_work_error": None,
+        "future_work_state": future_state,
+        "future_work_error": future_error,
         "analysis_executor": "chatgpt_handoff",
         "handoff_id": manifest["handoff_id"],
         "source_fingerprint": manifest["source_fingerprint"],
@@ -481,29 +557,109 @@ def _install_job(
     staged_sidecar: Path | None,
 ) -> tuple[Path, Path | None]:
     analysis_target = _resolve_under(professor_dir, job["analysis_relpath"])
-    sidecar_target = Path(str(analysis_target) + ".future_work.json") if staged_sidecar else None
+    sidecar_target = Path(str(analysis_target) + ".future_work.json")
     index_target = professor_dir / "论文分析" / "_index.json"
-    new_index = _index_with_job(professor_dir, manifest, job, analysis_target, sidecar_target)
+    new_index = _index_with_job(
+        professor_dir, manifest, job, analysis_target,
+        sidecar_target if staged_sidecar else None,
+    )
 
     old_analysis = analysis_target.read_bytes() if analysis_target.is_file() else None
-    old_sidecar = sidecar_target.read_bytes() if sidecar_target and sidecar_target.is_file() else None
+    old_sidecar = sidecar_target.read_bytes() if sidecar_target.is_file() else None
     old_index = index_target.read_bytes() if index_target.is_file() else None
     try:
         _atomic_write(analysis_target, staged_analysis.read_bytes())
-        if sidecar_target and staged_sidecar:
+        if staged_sidecar:
             _atomic_write(sidecar_target, staged_sidecar.read_bytes())
+        else:
+            sidecar_target.unlink(missing_ok=True)
         _atomic_json(index_target, new_index)
     except BaseException:
         _restore(analysis_target, old_analysis)
-        if sidecar_target:
-            _restore(sidecar_target, old_sidecar)
+        _restore(sidecar_target, old_sidecar)
         _restore(index_target, old_index)
         raise
-    return analysis_target, sidecar_target
+    return analysis_target, sidecar_target if staged_sidecar else None
 
 
 def _run_future_work(script: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run([str(script), *arguments], text=True, capture_output=True, check=False)
+
+
+def _bundle_future_paths(bundle_root: Path, job: dict[str, Any]) -> tuple[Path, Path, dict[str, Any]]:
+    fw = job.get("future_work")
+    if not isinstance(fw, dict):
+        raise ValueError("external_future_work_invalid")
+    try:
+        prepare_rel = _portable_relpath(str(fw["prepare_path"]), "prepare_path")
+        candidates_rel = _portable_relpath(str(fw["candidates_path"]), "candidates_path")
+    except (KeyError, ValueError) as error:
+        raise ValueError("external_future_work_invalid") from error
+    prepared = bundle_root / Path(*PurePosixPath(prepare_rel).parts)
+    candidates = bundle_root / Path(*PurePosixPath(candidates_rel).parts)
+    if not prepared.is_file() or not candidates.is_file():
+        raise ValueError("external_future_work_invalid")
+    if fw.get("prepare_sha256") != _sha256_file(prepared) or fw.get("candidates_sha256") != _sha256_file(candidates):
+        raise ValueError("external_future_work_invalid")
+    return prepared, candidates, fw
+
+
+def _finalize_future_work(
+    args: argparse.Namespace,
+    bundle_root: Path,
+    source_dir: Path,
+    staged_dir: Path,
+    staged_analysis: Path,
+    analysis_target: Path,
+    job: dict[str, Any],
+) -> Path:
+    try:
+        prepared, candidates, _ = _bundle_future_paths(bundle_root, job)
+    except (OSError, ValueError):
+        raise ValueError("external_future_work_invalid")
+
+    working_prepared = prepared
+    ocr = source_dir / "future_work_ocr.json"
+    prepared_payload = _load_json(prepared)
+    required_pages = prepared_payload.get("ocr_required_pages") or []
+    if required_pages:
+        if not ocr.is_file():
+            raise ValueError("external_result_incomplete")
+        proc = _run_future_work(args.future_work_script, "merge-ocr", "--prepared", str(prepared), "--ocr", str(ocr))
+        if proc.returncode != 0:
+            raise ValueError("external_future_work_invalid")
+        try:
+            merged_payload = json.loads(proc.stdout.splitlines()[-1])
+        except (IndexError, json.JSONDecodeError) as error:
+            raise ValueError("external_future_work_invalid") from error
+        working_prepared = staged_dir / "merged_prepare.json"
+        candidates = staged_dir / "merged_candidates.json"
+        _atomic_json(working_prepared, merged_payload)
+        _atomic_json(candidates, {"candidates": merged_payload.get("candidates", [])})
+
+    items = source_dir / "future_work_items.json"
+    if not items.is_file():
+        raise ValueError("external_result_incomplete")
+    proc = _run_future_work(args.future_work_script, "validate", "--items", str(items), "--candidates", str(candidates))
+    if proc.returncode != 0:
+        raise ValueError("external_future_work_invalid")
+    prep_payload = _load_json(working_prepared)
+    proc = _run_future_work(
+        args.future_work_script,
+        "finalize", "--analysis", str(staged_analysis),
+        "--items", str(items), "--candidates", str(candidates), "--patch",
+        "--pdf-sha256", str(prep_payload.get("pdf_sha256") or ""),
+        "--evidence-level", "fulltext",
+    )
+    if proc.returncode != 0:
+        raise ValueError("external_future_work_invalid")
+    staged_sidecar = Path(str(staged_analysis) + ".future_work.json")
+    if not staged_sidecar.is_file():
+        raise ValueError("external_future_work_invalid")
+    sidecar = _load_json(staged_sidecar)
+    if sidecar.get("status") != "ok" or sidecar.get("analysis") != analysis_target.name:
+        raise ValueError("external_future_work_invalid")
+    return staged_sidecar
 
 
 def import_result(args: argparse.Namespace) -> dict[str, Any]:
@@ -556,7 +712,7 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
             if row.get("item_key") != job.get("item_key") or row.get("input_sha256") != job.get("input_sha256"):
                 invalid.append({"job_id": jid, "reason_code": "external_result_hash_mismatch"})
                 continue
-            if row.get("status") not in {"ok", "partial"}:
+            if row.get("status") != "ok":
                 invalid.append({"job_id": jid, "reason_code": "external_result_incomplete"})
                 continue
             if not _baseline_matches(professor_dir, job):
@@ -585,65 +741,20 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
             staged_sidecar: Path | None = None
 
             if (job.get("expected") or {}).get("future_work"):
-                fw = job.get("future_work") or {}
                 try:
-                    prepared = bundle_root / Path(*PurePosixPath(_portable_relpath(fw["prepare_path"], "prepare_path")).parts)
-                    candidates = bundle_root / Path(*PurePosixPath(_portable_relpath(fw["candidates_path"], "candidates_path")).parts)
-                except (KeyError, ValueError):
-                    invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
+                    staged_sidecar = _finalize_future_work(
+                        args, bundle_root, source_dir, staged_dir,
+                        staged_analysis, analysis_target, job,
+                    )
+                except (OSError, ValueError, json.JSONDecodeError) as error:
+                    reason = "external_result_incomplete" if "external_result_incomplete" in str(error) else "external_future_work_invalid"
+                    invalid.append({"job_id": jid, "reason_code": reason})
                     continue
-                working_prepared = prepared
-                ocr = source_dir / "future_work_ocr.json"
-                if ocr.exists():
-                    proc = _run_future_work(args.future_work_script, "merge-ocr", "--prepared", str(prepared), "--ocr", str(ocr))
-                    if proc.returncode != 0:
-                        invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
-                        continue
-                    try:
-                        merged_payload = json.loads(proc.stdout.splitlines()[-1])
-                    except (IndexError, json.JSONDecodeError):
-                        invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
-                        continue
-                    working_prepared = staged_dir / "merged_prepare.json"
-                    candidates = staged_dir / "merged_candidates.json"
-                    _atomic_json(working_prepared, merged_payload)
-                    _atomic_json(candidates, {"candidates": merged_payload.get("candidates", [])})
-                else:
-                    prepared_payload = _load_json(prepared)
-                    if prepared_payload.get("ocr_required_pages"):
-                        invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
-                        continue
-
-                items = source_dir / "future_work_items.json"
-                if not items.is_file():
-                    invalid.append({"job_id": jid, "reason_code": "external_result_incomplete"})
-                    continue
-                proc = _run_future_work(args.future_work_script, "validate", "--items", str(items), "--candidates", str(candidates))
-                if proc.returncode != 0:
-                    invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
-                    continue
-                prep_payload = _load_json(working_prepared)
-                proc = _run_future_work(
-                    args.future_work_script,
-                    "finalize", "--analysis", str(staged_analysis),
-                    "--items", str(items), "--candidates", str(candidates), "--patch",
-                    "--pdf-sha256", str(prep_payload.get("pdf_sha256") or ""),
-                    "--evidence-level", "fulltext",
-                )
-                if proc.returncode != 0:
-                    invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
-                    continue
-                staged_sidecar = Path(str(staged_analysis) + ".future_work.json")
-                if not staged_sidecar.is_file():
-                    invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
-                    continue
+            else:
                 try:
-                    sidecar = _load_json(staged_sidecar)
-                except (OSError, json.JSONDecodeError):
-                    invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
-                    continue
-                if sidecar.get("status") != "ok" or sidecar.get("analysis") != analysis_target.name:
-                    invalid.append({"job_id": jid, "reason_code": "external_future_work_invalid"})
+                    _sanitize_abstract_future_work(staged_analysis)
+                except (OSError, UnicodeError, ValueError):
+                    invalid.append({"job_id": jid, "reason_code": "external_analysis_invalid"})
                     continue
 
             try:
