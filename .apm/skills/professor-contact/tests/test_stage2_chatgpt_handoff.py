@@ -80,35 +80,59 @@ class HandoffTests(unittest.TestCase):
         args.professor = None
         return handoff.build_bundle(args)
 
-    def _result_zip(self, bundle, rows, analyses=True):
-        bundle_path = Path(bundle["bundle_path"])
-        with zipfile.ZipFile(bundle_path) as zf:
-            manifest = json.loads(zf.read("manifest.json"))
-        result = self.root / "result.zip"
-        with zipfile.ZipFile(result, "w") as zf:
-            result_manifest = {
-                "schema": 1,
-                "kind": handoff.RESULT_KIND,
-                "handoff_id": manifest["handoff_id"],
-                "source_fingerprint": manifest["source_fingerprint"],
-                "results": rows,
-            }
-            zf.writestr("result_manifest.json", json.dumps(result_manifest))
-            if analyses:
-                for row in rows:
-                    safe = handoff._safe_component(row["job_id"])
-                    zf.writestr(f"results/{safe}/analysis.md", ANALYSIS)
-        return result, manifest
+    def _manifest(self, bundle):
+        with zipfile.ZipFile(bundle["bundle_path"]) as zf:
+            return json.loads(zf.read("manifest.json"))
 
-    def test_pdf_bundle_is_deterministic_and_portable(self):
+    def _result_zip(self, bundle, rows, extra=None):
+        manifest = self._manifest(bundle)
+        result = self.root / f"result-{manifest['handoff_id']}.zip"
+        with zipfile.ZipFile(result, "w") as zf:
+            zf.writestr(
+                "result_manifest.json",
+                json.dumps({
+                    "schema": 1,
+                    "kind": handoff.RESULT_KIND,
+                    "handoff_id": manifest["handoff_id"],
+                    "source_fingerprint": manifest["source_fingerprint"],
+                    "results": rows,
+                }),
+            )
+            known = {job["job_id"] for job in manifest["jobs"]}
+            for row in rows:
+                if row["job_id"] not in known:
+                    continue
+                safe = handoff._safe_component(row["job_id"])
+                zf.writestr(f"results/{safe}/analysis.md", ANALYSIS)
+                if extra:
+                    for name, data in extra.items():
+                        zf.writestr(f"results/{safe}/{name}", data)
+        return result
+
+    def _import(self, bundle, result):
+        args = Args()
+        args.professor_dir = self.prof
+        args.bundle = Path(bundle["bundle_path"])
+        args.result = result
+        args.future_work_script = self.future
+        return handoff.import_result(args)
+
+    def _pdf_job(self, key="ABC", rel="论文分析/A/T.md", **extra):
         job = {
-            "item_key": "ABC",
+            "item_key": key,
             "carrier": "pdf",
             "level": "fulltext",
             "input_path": str(self.pdf.resolve()),
-            "analysis_relpath": "论文分析/A/T.md",
-            "research_direction": {"collection_key": "C", "name_ja": "ja", "name_zh": "zh", "user_note": "note"},
+            "analysis_relpath": rel,
+            "research_direction": {},
         }
+        job.update(extra)
+        return job
+
+    def test_pdf_bundle_is_deterministic_and_portable(self):
+        job = self._pdf_job(
+            research_direction={"collection_key": "C", "name_ja": "ja", "name_zh": "zh", "user_note": "note"}
+        )
         first = self._build([job])
         second = self._build([job])
         self.assertEqual(first["handoff_id"], second["handoff_id"])
@@ -120,116 +144,60 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(manifest["jobs"][0]["input_sha256"], handoff._sha256_file(self.pdf))
 
     def test_abstract_bundle_has_no_fake_pdf(self):
-        job = {
+        bundle = self._build([{
             "item_key": "ABS",
             "carrier": "abstract_json",
             "level": "abstract",
             "input_path": str(self.abstract.resolve()),
             "analysis_relpath": "论文分析/A/Abs.md",
             "research_direction": {},
-        }
-        bundle = self._build([job])
+        }])
         with zipfile.ZipFile(bundle["bundle_path"]) as zf:
             names = zf.namelist()
         self.assertIn("papers/ABS/paper-analysis-input.json", names)
         self.assertFalse(any(name.endswith("paper.pdf") for name in names))
 
     def test_valid_result_installs_analysis_and_index(self):
-        job = {
-            "item_key": "ABC",
-            "carrier": "pdf",
-            "level": "fulltext",
-            "input_path": str(self.pdf.resolve()),
-            "analysis_relpath": "论文分析/A/T.md",
-            "research_direction": {},
-            "authorship": "corresponding",
-            "relevance_reason": "relevant",
-        }
-        bundle = self._build([job])
-        with zipfile.ZipFile(bundle["bundle_path"]) as zf:
-            manifest = json.loads(zf.read("manifest.json"))
-        mjob = manifest["jobs"][0]
-        row = {"job_id": mjob["job_id"], "item_key": "ABC", "input_sha256": mjob["input_sha256"], "status": "ok"}
-        result, _ = self._result_zip(bundle, [row])
-        args = Args()
-        args.professor_dir = self.prof
-        args.bundle = Path(bundle["bundle_path"])
-        args.result = result
-        args.future_work_script = self.future
-        out = handoff.import_result(args)
+        bundle = self._build([self._pdf_job(authorship="corresponding", relevance_reason="relevant")])
+        job = self._manifest(bundle)["jobs"][0]
+        result = self._result_zip(bundle, [{
+            "job_id": job["job_id"], "item_key": "ABC", "input_sha256": job["input_sha256"], "status": "ok"
+        }])
+        out = self._import(bundle, result)
         self.assertEqual(out["status"], "imported")
-        target = self.prof / "论文分析/A/T.md"
-        self.assertTrue(target.is_file())
         index = json.loads((self.prof / "论文分析/_index.json").read_text())
-        self.assertEqual(index["papers"]["ABC"]["analysis_executor"], "chatgpt_handoff")
-        self.assertEqual(index["papers"]["ABC"]["level"], "fulltext")
+        entry = index["papers"]["ABC"]
+        self.assertEqual(entry["analysis_executor"], "chatgpt_handoff")
+        self.assertEqual(entry["level"], "fulltext")
 
     def test_future_work_selection_is_finalized_locally(self):
         prepared = self.root / "prepare.json"
         candidates = self.root / "candidates.json"
         prepared.write_text(json.dumps({"pdf_sha256": "abc", "ocr_required_pages": [], "candidates": []}), encoding="utf-8")
         candidates.write_text(json.dumps({"candidates": []}), encoding="utf-8")
-        job = {
-            "item_key": "FW",
-            "carrier": "pdf",
-            "level": "fulltext",
-            "input_path": str(self.pdf.resolve()),
-            "analysis_relpath": "论文分析/A/FW.md",
-            "research_direction": {},
-            "future_work_prepare": str(prepared.resolve()),
-            "future_work_candidates": str(candidates.resolve()),
-        }
-        bundle = self._build([job])
-        with zipfile.ZipFile(bundle["bundle_path"]) as zf:
-            manifest = json.loads(zf.read("manifest.json"))
-        mjob = manifest["jobs"][0]
-        row = {"job_id": mjob["job_id"], "item_key": "FW", "input_sha256": mjob["input_sha256"], "status": "ok"}
-        result = self.root / "fw-result.zip"
-        safe = handoff._safe_component(mjob["job_id"])
-        with zipfile.ZipFile(result, "w") as zf:
-            zf.writestr(
-                "result_manifest.json",
-                json.dumps({
-                    "schema": 1,
-                    "kind": handoff.RESULT_KIND,
-                    "handoff_id": manifest["handoff_id"],
-                    "source_fingerprint": manifest["source_fingerprint"],
-                    "results": [row],
-                }),
-            )
-            zf.writestr(f"results/{safe}/analysis.md", ANALYSIS)
-            zf.writestr(f"results/{safe}/future_work_items.json", json.dumps({"items": []}))
-        args = Args()
-        args.professor_dir = self.prof
-        args.bundle = Path(bundle["bundle_path"])
-        args.result = result
-        args.future_work_script = self.future
-        out = handoff.import_result(args)
+        bundle = self._build([self._pdf_job(
+            key="FW",
+            rel="论文分析/A/FW.md",
+            future_work_prepare=str(prepared.resolve()),
+            future_work_candidates=str(candidates.resolve()),
+        )])
+        job = self._manifest(bundle)["jobs"][0]
+        result = self._result_zip(
+            bundle,
+            [{"job_id": job["job_id"], "item_key": "FW", "input_sha256": job["input_sha256"], "status": "ok"}],
+            {"future_work_items.json": json.dumps({"items": []})},
+        )
+        out = self._import(bundle, result)
         self.assertEqual(out["status"], "imported")
-        side = Path(str(self.prof / "论文分析/A/FW.md") + ".future_work.json")
-        self.assertTrue(side.is_file())
-        index = json.loads((self.prof / "论文分析/_index.json").read_text())
-        self.assertEqual(index["papers"]["FW"]["future_work_state"], "valid")
+        sidecar = Path(str(self.prof / "论文分析/A/FW.md") + ".future_work.json")
+        self.assertTrue(sidecar.is_file())
+        self.assertEqual(json.loads(sidecar.read_text())["analysis"], "FW.md")
 
     def test_unknown_job_rejected(self):
-        job = {
-            "item_key": "ABC",
-            "carrier": "pdf",
-            "level": "fulltext",
-            "input_path": str(self.pdf.resolve()),
-            "analysis_relpath": "论文分析/A/T.md",
-            "research_direction": {},
-        }
-        bundle = self._build([job])
-        row = {"job_id": "unknown", "item_key": "ABC", "input_sha256": "x", "status": "ok"}
-        result, _ = self._result_zip(bundle, [row], analyses=False)
-        args = Args()
-        args.professor_dir = self.prof
-        args.bundle = Path(bundle["bundle_path"])
-        args.result = result
-        args.future_work_script = self.future
+        bundle = self._build([self._pdf_job()])
+        result = self._result_zip(bundle, [{"job_id": "unknown", "item_key": "ABC", "input_sha256": "x", "status": "ok"}])
         with self.assertRaisesRegex(ValueError, "external_result_unknown_job"):
-            handoff.import_result(args)
+            self._import(bundle, result)
 
     def test_unsafe_zip_path_rejected(self):
         bad = self.root / "bad.zip"
@@ -239,30 +207,63 @@ class HandoffTests(unittest.TestCase):
             handoff._extract_checked(bad, self.root / "extract")
 
     def test_newer_bundle_makes_old_bundle_stale(self):
-        base = {
-            "item_key": "ABC",
-            "carrier": "pdf",
-            "level": "fulltext",
-            "input_path": str(self.pdf.resolve()),
-            "analysis_relpath": "论文分析/A/T.md",
-            "research_direction": {"user_note": "one"},
-        }
+        base = self._pdf_job(research_direction={"user_note": "one"})
         old = self._build([base])
-        with zipfile.ZipFile(old["bundle_path"]) as zf:
-            old_manifest = json.loads(zf.read("manifest.json"))
-        oldjob = old_manifest["jobs"][0]
-        row = {"job_id": oldjob["job_id"], "item_key": "ABC", "input_sha256": oldjob["input_sha256"], "status": "ok"}
-        result, _ = self._result_zip(old, [row])
+        job = self._manifest(old)["jobs"][0]
+        result = self._result_zip(old, [{
+            "job_id": job["job_id"], "item_key": "ABC", "input_sha256": job["input_sha256"], "status": "ok"
+        }])
         changed = dict(base)
         changed["research_direction"] = {"user_note": "two"}
         self._build([changed])
-        args = Args()
-        args.professor_dir = self.prof
-        args.bundle = Path(old["bundle_path"])
-        args.result = result
-        args.future_work_script = self.future
-        out = handoff.import_result(args)
+        self.assertEqual(self._import(old, result)["reason_code"], "handoff_stale")
+
+    def test_existing_abstract_analysis_can_be_upgraded_when_baseline_unchanged(self):
+        target = self.prof / "论文分析/A/T.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("old abstract analysis", encoding="utf-8")
+        index = {
+            "schema": 2,
+            "future_work_schema": 1,
+            "professor": "Professor",
+            "papers": {"ABC": {"file": str(target), "level": "abstract", "generated_at": "old"}},
+        }
+        (self.prof / "论文分析/_index.json").write_text(json.dumps(index), encoding="utf-8")
+        bundle = self._build([self._pdf_job()])
+        job = self._manifest(bundle)["jobs"][0]
+        self.assertTrue(job["local_baseline"]["analysis_exists"])
+        self.assertEqual(job["local_baseline"]["index_level"], "abstract")
+        result = self._result_zip(bundle, [{
+            "job_id": job["job_id"], "item_key": "ABC", "input_sha256": job["input_sha256"], "status": "ok"
+        }])
+        out = self._import(bundle, result)
+        self.assertEqual(out["status"], "imported")
+        self.assertIn("## 总结", target.read_text())
+        upgraded = json.loads((self.prof / "论文分析/_index.json").read_text())
+        self.assertEqual(upgraded["papers"]["ABC"]["level"], "fulltext")
+
+    def test_newer_local_analysis_after_bundle_is_rejected(self):
+        target = self.prof / "论文分析/A/T.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("old abstract analysis", encoding="utf-8")
+        index = {
+            "schema": 2,
+            "future_work_schema": 1,
+            "professor": "Professor",
+            "papers": {"ABC": {"file": str(target), "level": "abstract"}},
+        }
+        (self.prof / "论文分析/_index.json").write_text(json.dumps(index), encoding="utf-8")
+        bundle = self._build([self._pdf_job()])
+        job = self._manifest(bundle)["jobs"][0]
+        result = self._result_zip(bundle, [{
+            "job_id": job["job_id"], "item_key": "ABC", "input_sha256": job["input_sha256"], "status": "ok"
+        }])
+        target.write_text("newer local fulltext analysis", encoding="utf-8")
+        index["papers"]["ABC"]["level"] = "fulltext"
+        (self.prof / "论文分析/_index.json").write_text(json.dumps(index), encoding="utf-8")
+        out = self._import(bundle, result)
         self.assertEqual(out["reason_code"], "handoff_stale")
+        self.assertEqual(target.read_text(), "newer local fulltext analysis")
 
 
 if __name__ == "__main__":
