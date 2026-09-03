@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import stat
 import tempfile
 import unittest
@@ -62,6 +63,9 @@ class HandoffTests(unittest.TestCase):
         self.candidates = self.root / "candidates.json"
         self._write_future_inputs()
 
+        # The real paper-analysis helper is a 0644 PEP-723 script that must be
+        # invoked as `uv run <script> ...`. Keep the fake helper non-executable
+        # and put a tiny fake uv in PATH so unit tests exercise that contract.
         self.future = self.root / "future-work"
         self.future.write_text(
             "#!/usr/bin/env python3\n"
@@ -75,9 +79,32 @@ class HandoffTests(unittest.TestCase):
             " a=arg('--analysis'); side=pathlib.Path(str(a)+'.future_work.json'); side.write_text(json.dumps({'schema':1,'status':'ok','analysis':a.name,'items':[]}),encoding='utf-8'); print(json.dumps({'result':'ok'}))\n",
             encoding="utf-8",
         )
-        self.future.chmod(self.future.stat().st_mode | stat.S_IEXEC)
+        self.future.chmod(0o644)
+
+        self.old_path = os.environ.get("PATH", "")
+        self.old_uv_test_log = os.environ.get("UV_TEST_LOG")
+        self.uv_log = self.root / "uv.log"
+        fake_bin = self.root / "bin"
+        fake_bin.mkdir()
+        fake_uv = fake_bin / "uv"
+        fake_uv.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' \"$*\" >> \"$UV_TEST_LOG\"\n"
+            "[ \"$1\" = \"run\" ] || exit 2\n"
+            "shift\n"
+            "exec python3 \"$@\"\n",
+            encoding="utf-8",
+        )
+        fake_uv.chmod(fake_uv.stat().st_mode | stat.S_IEXEC)
+        os.environ["PATH"] = str(fake_bin) + os.pathsep + self.old_path
+        os.environ["UV_TEST_LOG"] = str(self.uv_log)
 
     def tearDown(self):
+        os.environ["PATH"] = self.old_path
+        if self.old_uv_test_log is None:
+            os.environ.pop("UV_TEST_LOG", None)
+        else:
+            os.environ["UV_TEST_LOG"] = self.old_uv_test_log
         self.temp.cleanup()
 
     def _write_future_inputs(self, *, ocr_required_pages=None):
@@ -179,9 +206,45 @@ class HandoffTests(unittest.TestCase):
         self.assertNotIn(str(self.prof), serialized)
         self.assertFalse(any(str(self.root) in name for name in names))
 
-    def test_fulltext_bundle_requires_future_work_contract(self):
-        with self.assertRaisesRegex(ValueError, "fulltext handoff requires future_work_prepare"):
+    def test_pdf_fulltext_bundle_requires_future_work_contract(self):
+        with self.assertRaisesRegex(ValueError, "pdf fulltext handoff requires future_work_prepare"):
             self._build([self._pdf_job(with_future_work=False)])
+
+    def test_ocr_only_fulltext_build_and_import_without_pdf(self):
+        bundle = self._build([{
+            "item_key": "OCR",
+            "carrier": "ocr",
+            "level": "fulltext",
+            "input_path": str(self.ocr.resolve()),
+            "analysis_relpath": "论文分析/A/OCR.md",
+            "research_direction": {},
+            "ocr_file": str(self.ocr.resolve()),
+        }])
+        with zipfile.ZipFile(bundle["bundle_path"]) as zf:
+            names = zf.namelist()
+            manifest = json.loads(zf.read("manifest.json"))
+        job = manifest["jobs"][0]
+        self.assertIn("papers/OCR/paper.txt", names)
+        self.assertEqual(job["carrier"], "ocr")
+        self.assertEqual(job["evidence_level"], "fulltext")
+        self.assertFalse(job["expected"]["future_work"])
+        self.assertNotIn("future_work", job)
+
+        malicious = ANALYSIS.replace("—（论文未明示 future work）", "外部声称：OCR SECRET FUTURE WORK")
+        result = self._result_zip(bundle, [{
+            "job_id": job["job_id"], "item_key": "OCR", "input_sha256": job["input_sha256"], "status": "ok"
+        }], analysis_text=malicious)
+        out = self._import(bundle, result)
+        self.assertEqual(out["status"], "imported")
+        target = self.prof / "论文分析/A/OCR.md"
+        self.assertNotIn("OCR SECRET FUTURE WORK", target.read_text())
+        index = json.loads((self.prof / "论文分析/_index.json").read_text())
+        entry = index["papers"]["OCR"]
+        self.assertEqual(entry["level"], "fulltext")
+        self.assertEqual(entry["future_work_state"], "failed")
+        self.assertEqual(entry["future_work_error"], "future_work_unavailable_without_pdf_handoff")
+        self.assertIsNone(entry["future_work_sidecar"])
+        self.assertEqual(entry["ocr_file"], str(self.ocr.resolve()))
 
     def test_abstract_bundle_has_no_fake_pdf(self):
         bundle = self._build([{
@@ -214,7 +277,8 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(entry["future_work_state"], "valid")
         self.assertTrue(Path(entry["future_work_sidecar"]).is_file())
 
-    def test_future_work_selection_is_finalized_locally(self):
+    def test_future_work_selection_is_finalized_locally_via_uv_run(self):
+        self.assertFalse(self.future.stat().st_mode & stat.S_IXUSR)
         bundle = self._build([self._pdf_job(key="FW", rel="论文分析/A/FW.md")])
         job = self._manifest(bundle)["jobs"][0]
         result = self._result_zip(
@@ -226,6 +290,9 @@ class HandoffTests(unittest.TestCase):
         sidecar = Path(str(self.prof / "论文分析/A/FW.md") + ".future_work.json")
         self.assertTrue(sidecar.is_file())
         self.assertEqual(json.loads(sidecar.read_text())["analysis"], "FW.md")
+        uv_calls = self.uv_log.read_text(encoding="utf-8")
+        self.assertIn(f"run {self.future} validate", uv_calls)
+        self.assertIn(f"run {self.future} finalize", uv_calls)
 
     def test_wait_pdf_missing_future_work_payload_is_not_fully_imported(self):
         bundle = self._build([self._pdf_job()])
@@ -364,6 +431,8 @@ class HandoffTests(unittest.TestCase):
         self.assertIn("任何新 vision OCR/`paper-analysis full|gap-only` 前停止", agent)
         self.assertIn("字段缺失按非交互/向后兼容语义固定为 `continue`", agent)
         self.assertIn("Stage 3 仍只读 `套磁候选输入.json`", agent)
+        self.assertIn("future_work_unavailable_without_pdf_handoff", agent)
+        self.assertIn("uv run", agent)
 
 
 if __name__ == "__main__":
