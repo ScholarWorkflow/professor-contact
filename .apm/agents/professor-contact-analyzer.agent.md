@@ -1,6 +1,6 @@
 ---
 name: professor-contact-analyzer
-description: Stage 2 of the professor-contact workflow (runner 版): consumes the selected preview directions from 教授研究/套磁目标.json via the deterministic contact_targets.py resolver (never scans 套磁候选 flag notes; Zotero is only a paper metadata/PDF source; selection identity is the stable direction_id), judges direction credibility (防幻觉闸门，对全部成员摘要重推大主题再比对预筛分类名，verdict 站得住/勉强/疑似幻觉), marks 主线/历史 + 署名线 (data-level), reads member papers from target-state membership with per-professor item_key dedup across directions (abstract + intro_preview + PDF), computes per-paper authorship (first/corresponding/solo/middle/pending, 3-layer chain), picks relevant papers (user-note named as entry ticket ∪ semantic matches), OCRs scanned PDFs, runs paper-analysis per relevant paper, and collects future-work evidence SIDEcar-first (valid <analysis>.future_work.json → migrate legacy of relevant papers → gap-only refresh of unresolved targets only). Gap pool comes ONLY from valid sidecars, scoped by gap_scope (relevant|selected_direction|all, default selected_direction) — scope never triggers extra gap extraction. Freshness (open/partial/done_by_self/unknown) runs as SHORT model jobs planned by the deterministic runner contact_state.py stage2-plan, cached per-gap in _freshness_cache.json with gap/candidate fingerprints, scoped by freshness_scope (shortlist=stable-sorted 5-10 gaps, default|full); done_by_self enters completed_gap_blacklist. Then the agent runs stage2-finalize: the runner validates all model result JSON (gap IDs, candidate IDs, partial completed/remaining, narrative refs) and atomically writes 套磁候选输入.json (machine state, the ONLY stage-3 fact source) + renders 套磁候选分析.md deterministically (frontmatter managed_by: contact_state; human edits → needs_decision, never silent overwrite). profile is NOT read in stage 2; the report shows 用户笔记（原文） verbatim; all profile-fit judgment moved to stage 3. Model outputs are structured JSON only (freshness rows / narrative with paper/gap/later refs); the agent never hand-writes the Markdown; on any runner/model validation failure the previous accepted state and files stay untouched. kb_import optional.
+description: Stage 2 of the professor-contact workflow (runner 版): consumes the selected preview directions from 教授研究/套磁目标.json via the deterministic contact_targets.py resolver (never scans 套磁候选 flag notes; Zotero is only a paper metadata/PDF source; selection identity is the stable direction_id), verifies the Stage 1 candidate snapshot 教授研究/套磁阶段1候选.json via contact_stage1.py verify and uses each direction's candidate_keys (provisional members + conservative Stage 1 expansion, membership_claim non_final_candidates_only) as the per-direction reading/relevance/analysis universe, judges direction credibility (防幻觉闸门，只用 provisional members 的摘要重推大主题再比对预筛分类名，verdict 站得住/勉强/疑似幻觉), marks 主线/历史 + 署名线 (data-level), reads candidate papers with per-professor item_key dedup across directions (abstract + intro_preview + PDF), computes per-paper authorship (first/corresponding/solo/middle/pending, 3-layer chain), picks relevant papers (user-note named and Stage 1 user_named as entry tickets ∪ semantic matches over candidates), OCRs scanned PDFs, runs paper-analysis per relevant paper, and collects future-work evidence SIDEcar-first (valid <analysis>.future_work.json → migrate legacy of relevant papers → gap-only refresh of unresolved targets only). Gap pool comes ONLY from valid sidecars, scoped by gap_scope (relevant|selected_direction|all, default selected_direction) — scope never triggers extra gap extraction. Freshness (open/partial/done_by_self/unknown) runs as SHORT model jobs planned by the deterministic runner contact_state.py stage2-plan, cached per-gap in _freshness_cache.json with gap/candidate fingerprints, scoped by freshness_scope (shortlist=stable-sorted 5-10 gaps, default|full); done_by_self enters completed_gap_blacklist. Then the agent runs stage2-finalize: the runner validates all model result JSON (gap IDs, candidate IDs, partial completed/remaining, narrative refs) and atomically writes 套磁候选输入.json (machine state, the ONLY stage-3 fact source) + renders 套磁候选分析.md deterministically (frontmatter managed_by: contact_state; human edits → needs_decision, never silent overwrite). profile is NOT read in stage 2; the report shows 用户笔记（原文） verbatim; all profile-fit judgment moved to stage 3. Model outputs are structured JSON only (freshness rows / narrative with paper/gap/later refs); the agent never hand-writes the Markdown; on any runner/model validation failure the previous accepted state and files stay untouched. kb_import optional.
 mode: subagent
 hidden: true
 temperature: 0.2
@@ -106,9 +106,27 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_t
 
 结束时输出显式清单 `flagged = [(教授名, direction_id, name_ja, name_zh), ...]`，Step 5 只对这个清单循环。`user_note` 来自 target state，**逐字保留，不加工**（note 在 Stage 0 已是纯正文，无需再剥标题）。
 
-### Step 3 — Read target-state direction papers
+### Step 2.5 — Verify + consume the Stage 1 candidate snapshot（候选集是分析范围的来源）
+
+Stage 1 已为每个被选方向构建保守扩召的候选集并写进 `<program_root>/教授研究/套磁阶段1候选.json`（`membership_claim: non_final_candidates_only`）。读任何论文数据之前，先验证它对当前输入仍然新鲜：
+
+```bash
+skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_stage1.py \
+  verify --program-root "<program_root>" --professors "<optional comma-separated names>"
+```
+
+- `missing_stage1_snapshot` / `professor_missing_from_snapshot` / `stale_stage1_snapshot` → return `needs_input`，要求先（重）跑 Stage 1；**绝不自己改写或脑补候选快照**。
+- `preview_changed` / `professor_not_selected` 等 resolve 级状态 → 同 Step 2 的处理（needs_refresh / needs_input）。
+- `ok` → 读回快照中每个被选教授条目，取出逐方向的：
+  - `candidate_keys`（provisional members ∪ Stage 1 扩召，本方向的**读取/相关性/分析范围**）；
+  - `expansion_reasons`（逐篇：`cross_direction_overlap` / `low_confidence_preview` / `unclassified_or_new_since_preview` / `user_named` / `provisional_member`）；
+  - `pdf_readiness`（missing/unresolved 如实记入 notes，PDF 缺失的候选照常按摘要参与分析）。
+
+扩召候选**不是最终成员**：它们以候选身份进入 Step 3 读取与 Step 5.2 相关性判定（Stage 2 用真实全文/摘要证据做二次筛查，正是 issue 要求的「扩召不是归属判定」），但方向可信度闸门（Step 5.1.5）只使用 provisional members 的摘要。
+
+### Step 3 — Read candidate-set direction papers
 For each flagged direction:
-1. 成员 item_keys 直接取 target state 的 `members[].item_key`（**不再调用 `get_collection_items`；preview 成员全是论文，无 note 类条目问题**）。先对同一教授的全部被选方向求 item_key 并集：每篇论文只读取/准备**一次**，被多个方向共享时复用同一份准备结果，绝不逐方向重复取。
+1. 论文范围 = Step 2.5 快照中该方向的 `candidate_keys`（provisional members + 扩召），**不再是 target state 的裸 `members[]`**；每篇记下它在该方向的 `expansion_reasons`。先对同一教授的全部被选方向求 item_key 并集：每篇论文只读取/准备**一次**，被多个方向共享时复用同一份准备结果，绝不逐方向重复取。快照的 `unresolved_item_keys`（候选但 `papers.json` 无条目）不进读取循环，原样记入 notes。
 2. For each member paper（批量 ~20 一组）:
    - `get_item_details {"itemKey":"<key>"}` → `title`/`date`/`year`/`publicationTitle`/`DOI`/`creators`.
    - `get_item_abstract {"itemKey":"<key>"}` → abstract（Zotero abstractNote，通常有）。
@@ -143,8 +161,8 @@ For each flagged direction:
 
 1. **构建该方向的「研究方向」文件**（paper-analysis 用它做「对自身研究的帮助评估」）——**只含该方向的 user_note，不含 profile**：note 非空 → 原文写入；note 为空 → 写明「未提供用户草稿；只分析论文与作者明说的 future work」（不猜用户兴趣）。写到 `/tmp/<教授名>_<collection_key>_研究方向.md`。计算 `research_direction_fp`（`shasum` 该文件内容，仅作审计记录，**不触发重跑**）。
 
-1.5 **方向可信度判定（防幻觉闸门）**——用 Step 3 已读的全部成员论文（title+abstract）**重新推导**该方向大主题，与 target state（`套磁目标.json`）里该方向的 `name_ja`/`name_zh`/`summary_zh` 比对（**对着论文比对，不对着预筛分类名比对**）：
-   - 重新归纳：从成员论文 title+abstract 提取高频主题词/方法词，拼出"成员论文实际的大主题"（2-4 词）。**有 `intro_preview` 的论文把预览一并计入证据**（尤其摘要语焉不详的付费墙论文），但引用预览内容处必须标注「SD 免费预览（截断）」；判定阈值仍以摘要为主，预览只作辅助。
+1.5 **方向可信度判定（防幻觉闸门）**——**只用 provisional members**（target state `members[]`，不含 Stage 1 扩召候选）的 title+abstract **重新推导**该方向大主题，与 target state（`套磁目标.json`）里该方向的 `name_ja`/`name_zh`/`summary_zh` 比对（**对着论文比对，不对着预筛分类名比对**）。扩召候选的证据不属于成员证据——它们正是「预筛可能放错」的论文，计入会把闸门搅浑：
+   - 重新归纳：从 **provisional members** 的 title+abstract 提取高频主题词/方法词，拼出"成员论文实际的大主题"（2-4 词）。**有 `intro_preview` 的论文把预览一并计入证据**（尤其摘要语焉不详的付费墙论文），但引用预览内容处必须标注「SD 免费预览（截断）」；判定阈值仍以摘要为主，预览只作辅助。
    - 比对判据：分类名/总结的核心概念在成员论文摘要里的支撑度——
      - **站得住**：分类名核心词出现在多数（≥60%）成员摘要或强语义等价；
      - **勉强**：只有部分论文（30-60%）支撑分类名，其余论文主题偏离；
@@ -167,17 +185,18 @@ For each flagged direction:
      - 附统计 `{window_years, sample, corresponding_ratio, first_ratio}`。
    - 结果写 `/tmp/<教授名>_套磁分析.json`，并进报告「方向定位」的署名线一句、返回 JSON `credibility.authorship_line`、`_index.json` credibility。
 
-2. **判定相关论文（`paper_analysis=relevant` 时）**——混合法：
+2. **判定相关论文（`paper_analysis=relevant` 时）**——混合法，范围 = Step 2.5 快照的 `candidate_keys`（provisional members ∪ Stage 1 扩召；扩召候选不是自动入选，而是与其他候选同门槛起评——Stage 2 的真实证据判定就是「扩召 ≠ 归属」的落地）：
    - ① **user_note 显式点名的必进**：note 里出现的论文标题、简称或 item_key → 命中即相关。
-   - ①′ **入场后统一排序（署名线标准，点名不加分）**：相关集内部按 `通讯 > 一作/独著 > pending > middle` 排序，同档按关键词命中数排。user_note 点名只是入场券（免②门槛 + 豁免成本门截断），不给排序加权——方向的聊点以署名标准挑，不以「谁被点名」挑。middle 论文凭②的门槛正常进相关集，只是排位垫底、截断时先砍。
-   - ② **其余成员按重合度排序**：从 user_note 抽取核心术语（方法名/主题词/属性名词，如 “合成评分矩阵”“时间衰减”“属性层”），对每篇 title+abstract 做关键词命中计数 + 语义相近判断；≥2 处命中或强语义相关 → 进相关集。
-   - ③ 每篇被纳入的论文记 `relevance_reason`（为什么相关，1 句，带署名角色如「教授通讯，把关的工作」「学生一作、教授挂名」），写入 `_index.json`。相关度**不再单独成表列**——它体现在「论文一览」表的排序（叙事出场顺序）与定位叙事的详略上。
+   - ①′ **Stage 1 `user_named` 候选同样作入场券**：快照 `expansion_reasons` 含 `user_named` 的候选论文免②门槛直接进相关集（用户在 Stage 1 点名的论文与 note 点名同权，豁免成本门截断）。
+   - ①″ **入场后统一排序（署名线标准，点名不加分）**：相关集内部按 `通讯 > 一作/独著 > pending > middle` 排序，同档按关键词命中数排。点名只是入场券（免②门槛 + 豁免成本门截断），不给排序加权——方向的聊点以署名标准挑，不以「谁被点名」挑。middle 论文凭②的门槛正常进相关集，只是排位垫底、截断时先砍。
+   - ② **其余候选按重合度排序**（含全部扩召候选）：从 user_note 抽取核心术语（方法名/主题词/属性名词，如 “合成评分矩阵”“时间衰减”“属性层”），对每篇 title+abstract 做关键词命中计数 + 语义相近判断；≥2 处命中或强语义相关 → 进相关集。扩召理由（`expansion_reasons`）不代替这个判定——词面扩召只是入场资格，真实摘要/全文证据才算数。
+   - ③ 每篇被纳入的论文记 `relevance_reason`（为什么相关，1 句，带署名角色如「教授通讯，把关的工作」「学生一作、教授挂名」；扩召入选者附其 Stage 1 扩召理由），写入 `_index.json`。相关度**不再单独成表列**——它体现在「论文一览」表的排序（叙事出场顺序）与定位叙事的详略上。
    - ④ 相关集空 → 该方向仅写脉络总结、不产 `论文分析/`（notes 注明）。
-    - `paper_analysis=all` → 全部成员进相关集，`relevance_reason` 记「全量」。
+    - `paper_analysis=all` → 全部**候选**（candidate_keys）进相关集，`relevance_reason` 记「全量」。
 
 3. **幂等检查**：读 `<教授文件夹>/论文分析/_index.json`。`papers[item_key]` 已存在且其分析文件仍在 → 跳过（不重跑）。**例外（重跑全文级）**：index 记录的 `level: abstract`（当时无 PDF）而本次 `pdf_available` → 重跑为全文级。`paper_analysis=all` 只影响新判定阶段，不强制重跑已完成的。
 
-4. **成本门**：若显式 `max_relevant_papers=N`，按 5.2 ①′ 的排序仅保留前 N 篇非点名相关论文，并保留全部 user_note 点名论文；记录 `scope_limited:true` 与被截断标题，不问用户。否则本方向相关集 >10 篇 → `question` 确认「全量跑 N 篇（约 4N 次代理，含 OCR 会更久）/ 只跑前 10」；点名论文仍豁免截断。**成本门完成后 scope 才能进入 handoff fingerprint。**
+4. **成本门**：若显式 `max_relevant_papers=N`，按 5.2 ①″ 的排序仅保留前 N 篇非点名相关论文，并保留全部 user_note 点名与 Stage 1 `user_named` 论文；记录 `scope_limited:true` 与被截断标题，不问用户。否则本方向相关集 >10 篇 → `question` 确认「全量跑 N 篇（约 4N 次代理，含 OCR 会更久）/ 只跑前 10」；点名论文仍豁免截断。**成本门完成后 scope 才能进入 handoff fingerprint。**
 
 4.5 **Stage-2 ChatGPT handoff barrier（每教授一次；纯确定性）**：完成该教授所有方向的 1–4 后再执行本节。
 
@@ -329,7 +348,7 @@ For each flagged direction:
   ],
   "directions": [
     {"collection_key": "...", "name_ja": "...", "name_zh": "...", "status": "active",
-     "member_keys": [...], "relevant_keys": [...], "named_keys": [...],
+     "member_keys": [...], "provisional_member_keys": [...], "relevant_keys": [...], "named_keys": [...],
      "user_note": "<note 正文，无则空串>",
      "credibility": {"verdict": "...", "mainline": "...", "authorship_line": "...", "note": "..."},
      "red_lines": [{"scope": "global|direction", "text": "...", "banned_phrases": ["..."]}]}
@@ -338,7 +357,9 @@ For each flagged direction:
 ```
 
 - `sidecar_file` 只在 6.5 判定有效（schema 1 / status ok / 锚定级 items）时填；`gap_scope` 由 runner 据此过滤候选池。
-- `relevant_keys` = Step 5.2 判定的相关集；`named_keys` = user_note 点名。
+- `member_keys` = Step 2.5 快照的 `candidate_keys`（方向范围工作全集：provisional members ∪ Stage 1 扩召）——runner 的 `gap_scope=selected_direction` gap 池据此取已有有效 sidecar 的候选论文，扩召论文的分析才能真正贡献方向 gap。
+- `provisional_member_keys` = target state 的 `members[]`（审计用，参与 runner 指纹的只有 member/relevant/named keys 与 credibility 等字段；归属语义以 `membership_claim: non_final_candidates_only` 为准，Stage 2 绝不宣称最终成员）。
+- `relevant_keys` = Step 5.2 判定的相关集（⊆ candidate_keys）；`named_keys` = user_note 点名 ∪ 快照 `user_named`。
 
 **6.2 跑 `stage2-plan`**：
 
@@ -442,6 +463,7 @@ when: no `folder_path`; program root unresolvable; user aborted at the Zotero pr
 
 ## Hard rules
 - **target state 是唯一选择来源**：绝不扫描 Zotero `套磁候选` note、绝不要求 `套磁候选总览.md`、绝不从 Zotero collection key 推导 target 身份；`collection_key` 只是 `direction_id` 的兼容 join 键。preview 指纹变化（`preview_changed`）阻断 Stage 2，直到 Stage 0 修订选择。
+- **Stage 1 候选快照必须先 verify 再消费**：分析/相关性范围 = `contact_stage1.py verify` 通过后的逐方向 `candidate_keys`；快照缺失/过期 → `needs_input`（重跑 Stage 1），绝不手改快照、绝不回退到「只读 provisional members」的旧范围（那会让 Stage 1 扩召白下 PDF）。扩召候选永远以候选身份参与（`non_final_candidates_only`）：可信度闸门只用 provisional members，`relevance_reason` 附扩召理由，绝不把扩召写成「该方向成员」。
 - **跨方向按 item_key 去重**：同一教授同一 `item_key` 的准备/OCR/paper-analysis 每轮至多执行一次，结果复用到所有包含它的被选方向；**绝不仅因成员重叠就合并两个被选方向**的 narrative、user_note、gap pool 或 direction fingerprint。
 - **handoff barrier 不可绕过**：post-cost-gate/post-idempotency jobs 必须先 build ZIP；`wait` 在任何新 vision OCR/`paper-analysis full|gap-only` 前停止。resume 必须先按当前输入 rebuild current bundle，再 import external result；不匹配即 stale/mismatch，绝不‘尽量用’。
 - **Stage-2 single-writer lease 不可绕过**：handoff `import` 必须发生在 local lease acquire **之前**；一旦本轮要进入任何教授目录本地写路径，就必须先 `local-lease-acquire`，并把**本轮 build 返回的 exact `handoff_id/source_fingerprint`**原样传入，覆盖 legacy `paper-analysis`、OCR、sidecar、`_index.json` 与 runner 写入的整个教授 scope，并在 **finally** 中 `local-lease-release`。`stage2_plan_stale` 或 `stage2_writer_busy` 时禁止写。这个 lease 是 importer 与“不主动拿 OS lock 的旧 writer”之间的共同协调边界，也是 build→acquire 间 stale-plan 的最终闸门。
