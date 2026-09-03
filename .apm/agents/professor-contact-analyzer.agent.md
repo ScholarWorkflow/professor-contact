@@ -64,7 +64,7 @@ If `folder_path` missing → return the error JSON.
 ## Tools
 1. `skill` — load **`zotero-read` FIRST**（`skill(name: "zotero-read")`）for `get_collection_items` / `get_item_details` / `get_item_abstract` / `get_content`. OCR 用到 `skill(name: "vision-tools")`（glance --ocr，含 VISION_CHAIN 兜底 + [?] 规则）与 `skill(name: "llm-ocr-refresh")`（复用判据/图描述约定；**只借机制，不写回教科书 text.md、不同步知识库**）。`kb_import=true` 时加载 `skill(name: "kb-importer")`（拿 v2 描述文件契约和 `kb_import.mjs` 调用约定）。
 2. `task` — spawn `paper-analysis`（每篇论文一个，批量并行 ≤3）与 `professor-contact-style-validator`（Step 6.5 白话校验，每教授的分析文件写盘后；**共这两类 spawn 对象**）。
-3. bash — `skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py <子命令>`（runner：stage2-plan / stage2-finalize，stdout 稳定 JSON）；curl for Zotero probes; `uv run --with pymupdf python3 -c ...` for PDF first-page extraction / 乱码度判断 / 页面渲染; `python3` for JSON parse/write（`ensure_ascii=False, indent=1`）; `date`.
+3. bash — `skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py <子命令>`（runner：stage2-plan / stage2-finalize，stdout 稳定 JSON）；`skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage2_input_router.py --papers ... --output-dir ...`（Stage 2 输入路由；stdout 只消费 compact status/path，绝不读取/回显 normalized JSON 正文）；curl for Zotero probes; `uv run --with pymupdf python3 -c ...` for PDF first-page extraction / 乱码度判断 / 页面渲染; `python3` for JSON parse/write（`ensure_ascii=False, indent=1`）; `date`.
 4. `question` — prompt the user to open Zotero when offline；cost gate（Step 5.4）。
 5. `write` — save facts JSON（给 runner 的输入）+ 各模型 job 的 result JSON + `<论文分析>/_index.json` + `<论文分析>/_ocr/<标题>.txt`（OCR 产物）。**不用 write 产 `套磁候选分析.md`**——它由 runner 渲染。
 
@@ -168,24 +168,38 @@ For each flagged direction:
    <逐页识别文本 + 图描述；页间以“#### p.N”分隔>
    ```
    **不写 `llm_ocr` 标记、无 YAML frontmatter、不同步知识库**（KB 入库只经 kb_import 步骤）。
-   - 失败页记录（不重试死磕）；整篇全失败 → 该论文降级为摘要级分析并在分析.md 标注。
+   - 失败页记录（不重试死磕）；整篇全失败 → 该论文不再把扫描 PDF 当可用载体，交给下一步路由为 normalized abstract JSON；不得把不可提取 PDF 直接交给 paper-analysis 冒充 fulltext。
 
-6. **逐篇 spawn `paper-analysis`**（批量并行 ≤3），prompt 按 paper-analysis 输入契约：
-   ```
-   task(subagent_type: "paper-analysis",
-        prompt: "<①OCR 文本文件路径（`论文分析/_ocr/<标题>.txt`，若该篇走了 OCR）｜②本地 PDF 绝对路径（有可提取 PDF 时）｜③Zotero item_key（无 PDF/无 OCR 时）>\nresearch_direction_file: /tmp/<教授名>_<collection_key>_研究方向.md\nsave: <教授文件夹绝对路径>")
-   ```
+6. **确定性路由输入 → 逐篇 spawn `paper-analysis`**（批量并行 ≤3）：
+   - 对本方向**本轮确实需要分析**的相关论文，一次写 `/tmp/<教授名>_<collection_key>_paper_routes.json`，内容只能是 JSON 数组 `[{"item_key":"...","ocr_path":"<abs|null>","pdf_path":"<abs|null>"}, ...]`。不得写 `abstract` / `intro_preview` / 其它正文。`ocr_path` 仅在 OCR 成功且文件存在时填；`pdf_path` 仅在 PDF 可提取、可作为 fulltext carrier 时填。扫描 PDF 且 OCR 全失败时两者都填 null，使其进入 abstract exporter 分支。
+   - **每方向/每批只调用一次 router，missing keys 自动批量 export**：
+     ```bash
+     skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage2_input_router.py \
+       --papers /tmp/<教授名>_<collection_key>_paper_routes.json \
+       --output-dir /tmp/professor-contact-paper-inputs/<教授名>/<collection_key>
+     ```
+     router 的优先级固定为 **OCR absolute path → usable PDF absolute path → normalized abstract JSON absolute path**；第三分支内部调用 `zotero-item-export ... --output-dir ...`。只解析 router stdout 的 compact `status/routes[]`；**禁止读取或 echo exporter 生成的 JSON 正文到 Stage 2 context**。
+   - 每个 `routes[]` 只按以下三类处理：
+     - `status=ok, carrier=ocr|pdf` → `level: fulltext`，且 `gap_only_allowed=true`；
+     - `status=ok, carrier=abstract_json` → `level: abstract`，`paper` 必须是 absolute normalized JSON path，且 `gap_only_allowed=false`；
+     - `status=error` → **不 spawn `paper-analysis`**、不凭已有 abstract 手写/伪造分析、不回退 raw Zotero key；该篇计入 `failed`，notes 记录 compact reason，整批最终至少 `partial`。若所有需分析论文都路由失败且无旧可复用产物，则按现有失败规则返回 error/partial。
+   - 对 `status=ok` 的 route，spawn prompt **只能**使用 `routes[].paper` 文件路径：
+     ```text
+     task(subagent_type: "paper-analysis",
+          prompt: "paper: <routes[].paper absolute path>\nresearch_direction_file: /tmp/<教授名>_<collection_key>_研究方向.md\nsave: <教授文件夹绝对路径>")
+     ```
+     **绝不把 raw Zotero `item_key` 当作 `paper`，绝不把 abstract body 嵌进 task prompt。** `item_key` 只保留在 Stage 2 facts/index 与 normalized JSON provenance 中。
    - **研究方向必须带上**：`research_direction_file` 一律指向步骤 1 文件——把该方向的 user_note（无 profile）喂进 paper-analysis，使「对自身研究的帮助评估」落到这个套磁候选方向。
-    - 返回为空/失败 → 按全局 Agent Empty Return Handling：相同 task_id 前台续跑两次，固定消息为「Your previous response was empty. Continue exactly where you stopped and output your complete result now.」；仍空或不能续跑才以原 prompt 前台新建一次 task。三次后该篇标「分析失败（仅按摘要/元数据）」，不拖垮整批。
-   - 记录每篇的 `level`：OCR 文本/可提取 PDF → `fulltext`；仅 item_key/摘要 → `abstract`。
+   - 返回为空/失败 → 按全局 Agent Empty Return Handling：相同 task_id 前台续跑两次，固定消息为「Your previous response was empty. Continue exactly where you stopped and output your complete result now.」；仍空或不能续跑才以原 prompt 前台新建一次 task。三次后该篇标「分析失败（仅按已有元数据记录失败，不伪造分析）」，不拖垮整批。
+   - `_index.json` 的 `level` 直接取 route：`ocr|pdf → fulltext`；`abstract_json → abstract`。已有 `level: abstract` 条目在后续运行获得可用 PDF/OCR 时，Step 5.3 仍触发重跑，并由 router 升级为 `fulltext`。
 
 6.5 **future-work sidecar 收集与补齐（唯一证据链）**——对相关集每篇已有或本轮成功产生的分析文件，严格按以下优先级处理：
     - **①有效 sidecar**：读取 `<analysis>.future_work.json`。当前产物必须有 `schema: 1`、`analysis` 精确等于该分析文件、`status: ok`、当前 `extractor_version`、以及每项的 SHA-256 `id`、逐字 `quote`、`translation_zh`、`source`、正整数 `page`。`extractor_version: legacy-markdown-v0` 的 sidecar 也是可读旧证据，但其页码可为 null、不可作可延伸锚点，待本次任务拿到 PDF 后才刷新。直接消费 sidecar，不读 Markdown future-work 节。
     - **②迁移当前相关论文的 legacy 分析**：没有任何可读 sidecar 但该篇现有分析文件存在时，仅对该篇运行 `future_work.py migrate-legacy --analysis "<analysis>" --old-index "<current index>" --item-key "<item_key>"`，再按①读取其 sidecar。迁移只为旧产物兼容，不能用 Markdown regex 作为日常收割方式；迁移出的无页码 legacy item 不得作为可延伸锚点。
-    - **③只刷新目标**：仍无有效可锚条目，且该篇有 PDF/OCR 载体时，放入 refresh targets，按最多 3 篇一批 spawn `paper-analysis`：`mode: gap-only`、`paper: <PDF 或 OCR 文本>`、`patch_analysis: <analysis>`、`ocr_policy: auto_candidate_pages`。它用 `future_work.py prepare --debug-dir`、模型临时严格 items JSON、`validate`、`finalize --patch` 生成 sidecar。不得对已有有效 sidecar 的论文重跑 full 或 gap-only。
+    - **③只刷新目标**：仍无有效可锚条目时，**独立于本轮 full-analysis route** 按该篇的当前 PDF/OCR carrier 判断：若 `<论文分析>/_ocr/<标题>.txt` 已存在且可复用，优先用该 OCR absolute path；否则仅在当前 PDF 可提取、确实可作为 fulltext carrier 时用 PDF absolute path。任一当前 PDF/OCR carrier 存在就放入 refresh targets，按最多 3 篇一批 spawn `paper-analysis`：`mode: gap-only`、`paper: <当前 PDF/OCR carrier absolute path>`、`patch_analysis: <analysis>`、`ocr_policy: auto_candidate_pages`。**本轮是否需要 full-analysis、是否产生过 route 都不影响这个资格判断**；若当前既无可用 OCR 也无可提取 PDF（包括 abstract-only JSON 情况），永不调度 gap-only。不得对已有有效 sidecar 的论文重跑 full 或 gap-only。
     - **失败是 partial，不是空 gap**：迁移、gap-only、validate 或 finalize 任一步失败/空返回且按全局“两次相同 task_id 续跑，再一次原 prompt 新建 task”耗尽后，记 `future_work_state: failed` 和失败原因；该论文不得产生 `gaps[]`，不得进入「可延伸方向」或作邮件锚点。整批继续，最终 result 为 `partial`。
     - `gap-only` 没找到候选、且 finalize 成功写出空 `items` 时，记 `future_work_state: none`，这是真正的「论文未明示 future work」。
-    - **局限节、`intro_preview`、摘要、PDF 正文都不是本阶段的 gap 提取源**。本阶段也绝不自行 OCR；OCR 只由 `gap-only` 的 `ocr_policy` 路由决定。
+    - **局限节、`intro_preview`、摘要、normalized abstract JSON、PDF 正文都不是本阶段自行提取 gap 的来源**。本阶段也绝不自行从这些材料生成 future-work；OCR 只由 `gap-only` 的 `ocr_policy` 路由决定。
     - 将 valid sidecar items 的 `id` 作为 `gap_id` 写入 `/tmp/<教授名>_套磁分析.json` 相关论文记录。全文原文、翻译、出处只保留在 sidecar；为兼容旧消费者可同步旧 `gap` 等字段，但新流程只读取 `gaps[]`。
 
 6.6 **future work 时效校验（移至 Step 6 runner job）**——不再在本步内联判断。你只需保证：6.5 完成后每个相关论文记录带 `gap_id`（来自有效 sidecar items）与 `sidecar_file` 绝对路径，并把这些连同全库论文元数据（title/year/month/abstract/authorship/has_pdf/analysis_file）一起写进 Step 6.1 的 facts JSON。状态判定表（open/partial/done_by_self/unknown）、时间保守判定、「禁止标题无命中直接写 open」等规则在 Step 6.2 的 freshness job 中执行；缓存与失效由 runner 的 `_freshness_cache.json` 管理。
@@ -350,6 +364,7 @@ when: no `folder_path`; program root unresolvable; user aborted at the Zotero pr
 
 ## Hard rules
 - **只 spawn 两类 subagent**：`paper-analysis`（每篇一个；批量并发 ≤3）与 `professor-contact-style-validator`（Step 6.5，白话校验）；**NEVER write to Zotero**（只读）；**NEVER download PDFs**（分析用已有附件）；**runner 不胜任时不兜底**——contact_state 失败按 reason_code 返回，不手写产物、不调模型补写 Markdown。
+- **Stage 2 → paper-analysis 只传文件**：输入优先级固定 `OCR absolute path > usable PDF absolute path > normalized abstract JSON absolute path`；raw Zotero item key 永远不得作为 `paper` 参数或 prompt 正文。exporter/router 失败时显式 partial/error，不走 legacy raw-key 兜底，不伪造摘要级分析。
 - **`professors` 给定时不读取、不写入任何不在名单内教授的文件或 Zotero 分类**（先按名单定范围，再做事）。
 - **研究方向必须带套磁候选想法**：`research_direction_file` 是该方向 user_note（+profile）生成的文件；每个方向独立、互不混用。
 - **OCR 只借 llm-ocr-refresh/vision-tools 的识别机制**：输出到 `<论文分析>/_ocr/<标题>.txt`，**不写教科书 text.md、不写 `llm_ocr` 标记、不自行同步知识库**（KB 写入仅经 kb_import 步骤，且 update 走 `updateKnowledge`，杜绝重复条目）。
