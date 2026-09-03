@@ -1,39 +1,61 @@
 ---
 name: professor-contact
-description: 处理日本大学院程序的「套磁候选」（runner 版）。阶段 2--5 由本地确定性 runner `contact_state.py` 分担缓存、范围选择与输入包：阶段 2 产出 `套磁候选输入.json`（阶段 3 唯一事实源；gap 池只来自有效 sidecar，`gap_scope`/`freshness_scope` 控制，freshness 逐 gap 缓存于 `_freshness_cache.json`）；阶段 3 产出 `套磁候选状态.json`（`refresh_scope` 控制，只读输入包不读 Markdown）；阶段 4 由 runner 校验指纹后写 `套磁选择.json` + 编译程序级 `邮件输入.json`（精确 item_key+gap_id join，阶段 5 唯一事实源）；阶段 5 由 runner 拼装渲染邮件（送信前核对表/来源表/事实核对卡/humanizer 保护串）。受管 Markdown 带 `managed_by: contact_state` frontmatter，人手改动返回 `needs_decision`。future-work 证据仍 sidecar-first（paper-analysis gap-only 链不变），不降低任何事实核验/时效/人工确认要求。
+description: 处理日本大学院程序的「套磁」工作流（runner 版）。Stage 0 从 professor-topic-clustering 的 normalized 方向预筛.json 交互选择方向并写 `教授研究/套磁目标.json`（不再使用 Zotero 固定标题「套磁候选」note，无 Stage 0 Markdown）；Stage 1/2 只消费该机器状态。阶段 2--5 由本地确定性 runner `contact_state.py` 分担缓存、范围选择与输入包：阶段 2 产出 `套磁候选输入.json`（阶段 3 唯一事实源；gap 池只来自有效 sidecar，`gap_scope`/`freshness_scope` 控制，freshness 逐 gap 缓存于 `_freshness_cache.json`）；阶段 3 产出 `套磁候选状态.json`（`refresh_scope` 控制，只读输入包不读 Markdown）；阶段 4 由 runner 校验指纹后写 `套磁选择.json` + 编译程序级 `邮件输入.json`（精确 item_key+gap_id join，阶段 5 唯一事实源）；阶段 5 由 runner 拼装渲染邮件（送信前核对表/来源表/事实核对卡/humanizer 保护串）。受管 Markdown 带 `managed_by: contact_state` frontmatter，人手改动返回 `needs_decision`。future-work 证据仍 sidecar-first（paper-analysis gap-only 链不变），不降低任何事实核验/时效/人工确认要求。
 metadata:
-  version: 2.0.0
+  version: 2.1.0
 ---
 
 # professor-contact (skill — caller convention)
 
-This skill is the **caller convention** for the 套磁候选 workflow (套磁 = contacting a Japanese professor before/around applying). The skill itself does NOT scan Zotero, download PDFs, or analyze papers — it tells you how to spawn the subagents that do.
+This skill is the **caller convention** for the 套磁 workflow (套磁 = contacting a Japanese professor before/around applying). The skill itself does NOT scan Zotero, download PDFs, or analyze papers — it tells you how to spawn the subagents that do.
 
 > **skill = how to call (this file). subagent = the isolated execution unit (where it runs).**
 
 ## What this is for
 
-After the screening pipeline (professor-collector `skip_pdf` → professor-topic-clustering `preview` → user picks keep-list → `pdf_only` → full clustering), the user may decide that **a specific direction of a specific professor** is worth contacting (套磁). They mark this in Zotero GUI with a **flag note**. This skill's stages read those flags and turn them into 套磁 materials.
+After the screening pipeline (professor-collector `skip_pdf` → professor-topic-clustering `preview` → user picks keep-list → `pdf_only` → full clustering), the user may decide that **a specific direction of a specific professor** is worth contacting (套磁). Stage 0 presents the normalized preview directions（`方向预筛.json`）interactively, the user selects one or more directions (with optional per-direction user notes), and the selection is persisted to `教授研究/套磁目标.json`. The workflow no longer uses a fixed-title Zotero note as its selection UI. This skill's stages consume that machine state and turn it into 套磁 materials:
+
+```text
+professor-topic-clustering(preview:true)
+    -> normalized 方向预筛.json
+    -> Stage 0 interactive selection
+    -> 教授研究/套磁目标.json
+    -> Stage 1 PDF preparation
+    -> Stage 2 evidence analysis
+    -> Stage 3 ideas
+    -> Stage 4 user selection
+    -> Stage 5 email
+```
+
+`套磁目标.json` is machine state. There is **no Stage 0 human-facing Markdown output**.
 
 ## Prerequisite
 
-1. Program folder in the boshu_output style with `教授研究/`, professors' `papers.json` **含 `topic_clusters[]`**（即已跑过 professor-topic-clustering 正式聚类，方向子分类已建）.
-2. **Zotero running**（所有阶段都要读标记；阶段 1 还需 Zotero 写 PDF 附件）.
-3. User has created the flag in Zotero GUI（见「标记约定」）.
+For every professor the user may contact, run `professor-topic-clustering(preview:true)` using the current normalized preview contract. Each `方向预筛.json` must contain:
 
-## 标记约定（用户在 Zotero GUI 里手动创建）
+- `preview_fingerprint` + `preview_fingerprint_version`;
+- stable `direction_id` per direction;
+- complete `members[]` with `item_key` and preview confidence;
+- `representatives[]` as a human-facing subset;
+- names/summary and evidence coverage metadata;
+- `membership_mode: overlap_allowed`.
 
-- **位置**：在要套磁的**方向子分类**（`<教授主分类>/<方向 name_ja>`）里新建一个 note。方向子分类和「研究方向总结」分类是**同级**，都是教授主分类的直接子分类。
-- **标题（固定常量，写错就检测不到）**：note 首行必须是 `套磁候选`。
-- **正文约定**：自由文本，两个用途都写在这里——**理由**（为什么值得套磁）+ **你的想法草稿/方向说明**（「我本来就想做 xxx」的 xxx，你自己先写，阶段 3 会读它做修正）。写的越多，阶段 3 的修正越贴合你的真实想法；不写则退回纯模型生成候选。
-- opencode 检测规则：读 `papers.json` 的 `topic_clusters[].collection_key` → 对每个方向子分类 `get_collection_items` → 找 `itemType=="note"` 且内容首行精确等于 `套磁候选` → 命中即标记；理由/想法 = 首行之后的内容；教授 = 父链（方向子分类 → 教授主分类）。
+Stage 0 does not require Zotero to be open. Later stages may still use Zotero as a paper metadata/PDF store, but never as contact-target state.
+
+## Stage 0 selection contract（替代旧「标记约定」）
+
+- **选择入口**：不再在 Zotero GUI 里建任何 note。用户在 Stage 0 的交互提问里选定方向（可多选），并可对每个方向写一段可选 `user_note`——理由 + 你的想法草稿/方向说明（「我本来就想做 xxx」的 xxx，你自己先写，阶段 3 会读它做修正）。写的越多，阶段 3 的修正越贴合你的真实想法；不写则退回纯模型生成候选。
+- **机器 ID**：交互界面里的 A/B/C 展示标签不是身份；机器身份是稳定 `direction_id`。
+- **多方向独立**：两个被选方向即使共享论文也保持独立（各自 `direction_id`/`members[]`/`member_fingerprint`/names/summary/user_note）；Stage 2 会按教授、按 `item_key` 去重昂贵工作并复用结果，但**绝不因此合并方向**。
+- **修订**：对同一教授重跑 Stage 0 = 修订该教授的选择，不影响其他教授；仍被选方向的 note 保留，除非显式替换；先前的选择快照存 `selection_history`。
+- **preview 变更**：`方向预筛.json` 变化导致 `preview_fingerprint` 与已存 target state 不一致 → Stage 1/2 以 `needs_refresh` 停止；必须回 Stage 0 展示新 preview 并修订选择。
 
 ## 阶段总览（每阶段 = 一个 subagent，可独立调用）
 
 | 阶段 | subagent | 做什么 | 产物 |
 |---|---|---|---|
-| 0 | `professor-contact` | 扫描全部标记 → 汇总 | `教授研究/套磁候选总览.md` |
-| 1 | `professor-contact-downloader` | 对被标记方向的教授跑 `professor-collector(pdf_only, professors=<标记教授>, include_deferred 隐含)` | PDF 附件补下 |
+| 0 | `professor-contact` | 读 normalized `方向预筛.json` → 交互选定方向（可多选 + per-direction user note） | `教授研究/套磁目标.json`（机器状态；无 Stage 0 Markdown） |
+| 1 | `professor-contact-downloader` | 先 `contact_targets.py resolve`，再对被选教授跑 `professor-collector(pdf_only, professors=<被选教授>)` | PDF 附件补下 |
 | 2 | `professor-contact-analyzer` | 判定相关论文、署名、主线与 post-cost-gate 分析 scope 后，**总是先生成确定性的 ChatGPT handoff ZIP**。`chatgpt_handoff=continue` 时 ZIP 只是低成本 side effect，随后旧的本地 OCR/`paper-analysis` 路径语义不变；`wait` 时在任何新 OCR/`paper-analysis` 前软停止。提供匹配 result ZIP 后先严格本地导入成普通 analysis/sidecar，再继续既有 `stage2-plan → stage2-finalize`。gap/runner/状态机仍完全本地 | `<教授名>/论文分析/_chatgpt_handoff/stage2-<id>.zip`（传输层）+ 原有 `<教授名>/套磁候选输入.json`（Stage 3 唯一事实源）/分析报告/_freshness_cache/index/sidecar |
 | 3 | `professor-contact-idea-generator` | **只读输入包 + profile**（不读任何 Markdown/_index/sidecar）：`stage3-plan` 按 `refresh_scope` 生成逐方向候选 job → 模型写结构化候选 JSON（精确 gap 锚、done_by_self 只能【我的延伸】+差异点）→ `stage3-finalize` 校验后写状态并渲染候选文件；profile 改动只失效阶段 3/4，不失效阶段 2；白话校验结果另由 `stage3-record-validation` 写入独立字段 | `<教授名>/套磁候选状态.json` + `<教授名>/套磁想法候选.md` + `套磁想法候选总览.md`（后两者 runner 渲染） |
 | 4 | `professor-contact-selection` | 用户从**候选状态**（非 Markdown）挑选 → `stage4-finalize` 校验指纹（过期 `needs_refresh` 不落盘）→ 写选择并**编译程序级邮件输入包**（精确 `item_key+gap_id` join；done_by_self 只作 extension_context_only） | `教授研究/套磁选择.json` + `教授研究/邮件输入.json`（阶段 5 唯一事实源，自包含短证据） |
@@ -65,10 +87,31 @@ Stage 2 的 handoff 是**可选执行通道，不是第二套工作流**。`套�
 
 外部 ZIP 永远不能直接提供权威 `_index.json`、`.future_work.json`、`套磁候选输入.json`、gap_id 或其它 Stage 3 状态。多教授等待时每教授各有 bundle；恢复时用 `professors=<单个教授>` 逐个提交对应 result，避免错配。
 
-## 标记语义
+## 目标状态语义（替代旧「标记语义」）
 
-- **标记 = 隐含保留**：处理该方向时自动清掉教授 `screened:"out"`，其 `deferred` 论文恢复可补下。
-- **阶段 1 下载范围**：被标记教授的全部可下论文（`pdf_only` 语义，包含被标记方向的全部论文）。
+- **被选教授名单 = keep-list 信号**：Stage 1/2 先用 `contact_targets.py resolve` 解析被选目标，再把名单显式传给下游；`professor-collector` 自己拥有 Zotero/PDF 写入、访问模式询问、`include_deferred` 与实际下载（显式教授名单会隐含激活 deferred 补下、清 `screened:"out"`）。
+- **阶段 1 下载范围**：被选教授的全部可下论文（`pdf_only` 语义，包含被选方向的全部论文）。
+
+### Canonical target state
+
+`<program_root>/教授研究/套磁目标.json` 为 schema 1 / kind `professor-contact-targets`，每个被选教授一个 target 对象，至少携带：
+
+- professor identity 与教授目录；
+- preview 路径、指纹与指纹版本；
+- direction-ID 版本 / membership mode；
+- 被选 `direction_id` 列表；
+- 逐方向 provisional members 与 member fingerprint；
+- 逐方向 representatives 与展示摘要；
+- 逐方向 user note；
+- 选择时间戳/历史（`selection_history`）。
+
+**禁止手改此状态**，一律经 helper：
+
+```bash
+skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_targets.py preview ...
+skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_targets.py select ...
+skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_targets.py resolve ...
+```
 
 ## 确定性 runner 与状态文件
 
@@ -92,7 +135,7 @@ Stage 2 的 handoff 是**可选执行通道，不是第二套工作流**。`套�
 |---|---|---|---|---|
 | `gap_scope` | 2 | `relevant` / `selected_direction` / `all` | `selected_direction` | 只决定从哪些**已有有效 sidecar** 的论文选 gap；绝不触发额外 gap 提取 |
 | `freshness_scope` | 2 | `shortlist` / `full` | `shortlist` | `shortlist` 只判断稳定排序的 5–10 条 gap；`full` 判断候选池全部。独立于 gap_scope 可单独扩大 |
-| `refresh_scope` | 3 | `flagged` / `selected` / `all` | `flagged` | 只决定哪些方向（重新）生成候选；不调用阶段 2，不读 Zotero/sidecar/`_index.json`/Markdown |
+| `refresh_scope` | 3 | `flagged` / `selected` / `all` | `flagged` | 只决定哪些方向（重新）生成候选；`flagged` 在 preview 工作流中=当前 Stage 2 输入包内的被选方向（旧参数名保留为兼容）；不调用阶段 2，不读 Zotero/sidecar/`_index.json`/Markdown |
 
 ### 缓存失效（稳定 reason_code）
 
@@ -100,7 +143,7 @@ Stage 2 的 handoff 是**可选执行通道，不是第二套工作流**。`套�
 
 阶段 2、3 白话校验结果分别用 `stage2-record-validation`、`stage3-record-validation` 写回各自状态文件的独立 `validator` 字段；不能覆盖阶段数据状态。阶段 5 使用 `stage5-record-validation`，其每条 `issues` 必须是列表，并保留原邮件的模型结果、用户选择、文件路径和 render SHA。
 
-阶段 2 输入包失效条件（仅这些）：标记移除、note 正文变化、方向成员集合变化、相关论文元数据/sidecar/freshness/版本关系/署名线变化、`force=true`。未变化直接复用包（不读论文全文、不重判 gap、不重写叙事）。freshness 缓存逐 gap 失效：任一相关后续论文的元数据/摘要/PDF/分析变化只影响受影响 gap。profile 改动只失效阶段 3 候选与阶段 4 选择/邮件包。
+阶段 2 输入包失效条件（仅这些）：Stage 0 选择修订（方向被取消选择/换方向）、user_note 正文变化、方向成员集合变化、preview 指纹变化（`needs_refresh` 阻断）、相关论文元数据/sidecar/freshness/版本关系/署名线变化、`force=true`。未变化直接复用包（不读论文全文、不重判 gap、不重写叙事）。freshness 缓存逐 gap 失效：任一相关后续论文的元数据/摘要/PDF/分析变化只影响受影响 gap。profile 改动只失效阶段 3 候选与阶段 4 选择/邮件包。
 
 阶段 2 白话校验失败时，不能直接改受管 Markdown，也不能把普通 `stage2-finalize` 当作修订入口，因为相同输入指纹会命中旧叙事。原 facts 文件存在时，调用 `stage2-refine-plan --facts <facts.json> --validation-file <validation.json>`；原 facts 已过期或不存在时，调用 `stage2-refine-plan --professor-dir <教授目录> --validation-file <validation.json>`，runner 从已接受输入包做 pack-only 修订。两种路径都生成每个失败方向的短修订 job；模型只改 `narrative.positioning/gap_notes`，然后用对应的 `stage2-refine-finalize` 校验并重渲染。runner 只替换结构化叙事，freshness、gap、用户笔记和论文事实不变；成功后清除旧 validator 状态，需重新校验并最终调用 `stage2-record-validation`。全局红线中的 item key 由 runner 渲染为论文标题或“相关论文”，不进入人读正文。
 
@@ -219,17 +262,17 @@ python3 scripts/contact_state.py migrate-v3 --apply <plan.json> --program-root <
 Spawn the subagent via the Task tool (all are `hidden`, so the Task tool is the ONLY way):
 
 ```
-# 阶段 0：列出套磁候选
-task(subagent_type: "professor-contact", prompt: "folder_path: <program-root or per-専攻 subfolder>")
+# 阶段 0：交互选定套磁方向（读 方向预筛.json，写 套磁目标.json）
+task(subagent_type: "professor-contact", prompt: "folder_path: <program-root or per-専攻 subfolder>\nprofessors: <可选，逗号分隔精确教授名>")
 
 # 阶段 1：补下 PDF（默认只使用合法来源；额外来源必须由调用方显式配置）
-task(subagent_type: "professor-contact-downloader", prompt: "folder_path: <...>")
+task(subagent_type: "professor-contact-downloader", prompt: "folder_path: <...>\nprofessors: <可选，逗号分隔精确教授名>")
 
 # 阶段 2：分析（交互式 caller 已在此之前把 handoff 模式问好；非交互缺省 continue）
-task(subagent_type: "professor-contact-analyzer", prompt: "folder_path: <...>\nchatgpt_handoff: continue|wait（非交互缺省 continue）\nchatgpt_result: <匹配 result ZIP 绝对路径，可选，仅 resume>\npaper_analysis: relevant|all（可选，缺省 relevant）\ngap_scope: relevant|selected_direction|all（可选，缺省 selected_direction）\nfreshness_scope: shortlist|full（可选，缺省 shortlist）\nkb_import: true|false（可选，缺省 false）")
+task(subagent_type: "professor-contact-analyzer", prompt: "folder_path: <...>\nprofessors: <可选，逗号分隔精确教授名>\nchatgpt_handoff: continue|wait（非交互缺省 continue）\nchatgpt_result: <匹配 result ZIP 绝对路径，可选，仅 resume>\npaper_analysis: relevant|all（可选，缺省 relevant）\ngap_scope: relevant|selected_direction|all（可选，缺省 selected_direction）\nfreshness_scope: shortlist|full（可选，缺省 shortlist）\nkb_import: true|false（可选，缺省 false）")
 
-# 阶段 3：生成想法候选（refresh_scope 缺省 flagged=当前 active 方向）
-task(subagent_type: "professor-contact-idea-generator", prompt: "folder_path: <...>\nprofile_path: <绝对路径，可选>\nrefresh_scope: flagged|selected|all（可选，缺省 flagged）\ncollection_key: <精确方向 key，可选>")
+# 阶段 3：生成想法候选（refresh_scope 缺省 flagged=当前 Stage 2 输入包内被选方向）
+task(subagent_type: "professor-contact-idea-generator", prompt: "folder_path: <...>\nprofile_path: <绝对路径，可选>\nrefresh_scope: flagged|selected|all（可选，缺省 flagged）\ncollection_key: <精确方向 key（=direction_id 兼容键），可选>")
 
 # 阶段 4：记录选择
 task(subagent_type: "professor-contact-selection", prompt: "folder_path: <...>\nselection: <可选，直接给选择，跳过交互>")
@@ -247,14 +290,14 @@ task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <
 |---|---|---|
 | `folder_path` | yes | 程序根（含 info.json）或 per-専攻 子文件夹。 |
 | `profile_path` | no | profile 文件绝对路径；缺省自动向上搜 `套磁邮件/套磁信息.md`。 |
-| `professors` | no | 限定只处理这些教授（逗号分隔 kanji 名）；缺省=处理全部带标记的。 |
+| `professors` | no | 限定只处理这些教授（逗号分隔 kanji 名）；缺省=处理 `套磁目标.json` 中全部被选目标。名单中的教授未被 Stage 0 选入 → resolver 返回 `professor_not_selected`（needs_input）。 |
 | `paper_analysis` | no | 仅阶段 2：`relevant`（只跑相关论文——user_note 点名 ∪ 术语/语义匹配，缺省）或 `all`（方向全部成员论文，强制全量）。相关集 >10 篇时 analyzer 会先问确认。 |
 | `gap_scope` | no | 仅阶段 2：gap 候选池范围（`selected_direction` 缺省）。只从已有有效 sidecar 的论文里选，绝不触发额外提取。 |
 | `freshness_scope` | no | 仅阶段 2：`shortlist`（稳定排序 5–10 条，缺省）/ `full`（候选池全部）。 |
 | `chatgpt_handoff` | no | 仅阶段 2：`continue` / `wait`。交互式完整 workflow 由 caller 在 Stage 2 前问一次；非交互省略固定等价 `continue`。两者都生成同一 bundle。 |
 | `chatgpt_result` | no | 仅阶段 2 resume：外部 result ZIP 的绝对路径。必须与本轮按当前输入重新生成的 current bundle 的 handoff/source/job/hash 完全匹配；`wait` 下不完整结果绝不本地补算。 |
 | `refresh_scope` | no | 仅阶段 3：`flagged`（缺省）/ `selected`（`套磁选择.json` 已选方向）/ `all`。 |
-| `collection_key` | no | 仅阶段 3：精确限定一个方向；传入后 plan/finalize 只处理该方向，不为其他方向生成模型 job。 |
+| `collection_key` | no | 仅阶段 3：精确限定一个方向（现役 runner 字段名保留，取值=该方向的 `direction_id` 兼容键）；传入后 plan/finalize 只处理该方向，不为其他方向生成模型 job。 |
 | `kb_import` | no | 仅阶段 2：`true` 时把每篇相关论文的分析做成 KB 条目入库（tag 含 `zotero://…/<item_key>`，source=分析文件，重跑走 `updateKnowledge` 原地更新）；缺省 `false`。相关论文全量入库为后续项。 |
 | `selection` | no | 仅阶段 4：直接传选择内容（见该 agent 说明），跳过交互提问。 |
 | `mode` | no | 仅阶段 5：`first`、`both`、`followup`；generator 缺省按 `both` 调用，runner CLI 为兼容旧脚本缺省 `first`。 |
@@ -265,7 +308,7 @@ task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <
 
 ## Persisted output — 教授研究/ folder
 
-- `教授研究/套磁候选总览.md` — 阶段 0 聚合：被标记方向表（教授/方向 ja·zh/论文数/理由）+ 中文总结。
+- `教授研究/套磁目标.json` — Stage 0 机器状态：每个被选教授的 target（稳定 `direction_id`、provisional `members[]`、`member_fingerprint`、representatives、user_note、preview 路径/指纹、`selection_history`）。**无 Stage 0 Markdown 产物**（旧 `套磁候选总览.md` 已退役）；禁止手改，经 `contact_targets.py` 维护。
 - `<教授名>/套磁候选分析.md` — 阶段 2（v2 模板）：每方向四节——「方向定位」（可信度一句+署名线一句+分要点时间线，论文小总结只在此讲一遍）、「论文一览」（唯一表格：论文｜年份｜署名｜分析）、「与我的契合」（note 逐字+评估-only）、「可延伸方向」（【作者 future work】四件套=原文摘录/中译/大白话解释/gap_status；【我的延伸】带差异点；done_by_self 单列「已被本人实现」小节）。人读文本零 item key：首现全称+zotero+[分析] 链接，此后《固定缩写》（年份）挂同一链接。重跑=全量重写，无「本轮新增」式追加。
 - `<教授名>/论文分析/_index.json` + `<作者>/<标题>.md` + `<作者>/<标题>.md.future_work.json` — 阶段 2：完整分析的 future-work sidecar 优先；旧分析只迁移当前相关论文，仍缺才只跑该篇 `gap-only`。`_index.json` 由阶段 2 独占写入，根为 `schema: 2`、`future_work_schema: 1`；每篇 `gaps[]` 只存 `gap_id`、`status`、`evidence`，原文/翻译/出处只在 sidecar。旧 `gap`/`gap_zh`/`gap_source`/`gap_status` 字段暂保留兼容。
 - `<教授名>/论文分析/_ocr/<标题>.txt` — 阶段 2：扫描版 PDF 的 LLM OCR 产物（含元数据头 + 逐页文本 + 图描述；复用 vision-tools glance 链；不入库、无 `llm_ocr` 标记；重跑复用）。
@@ -295,18 +338,27 @@ task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <
 
 - **handoff barrier 是 Stage 2 的固定副作用**：每次有待分析 job 都先生成 ZIP；`continue` 随后按旧路径本地执行，`wait` 在任何新 OCR/逐论文模型调用前返回 `needs_external_result`。resume 先重建 current bundle 再验 result，防止旧 PDF/note/scope 结果被误装。
 - **每阶段独立跑、可中断**：PDF 下载（阶段 1，最慢）可单独丢后台；分析（2）/想法（3）可重复跑（改 profile 后重新生成想法不需要重下 PDF，也**不需要重跑阶段 2**——profile 已移出阶段 2；重跑阶段 2 靠输入包指纹 + `_index.json` 幂等——输入包指纹未变的方向直接复用，`_ocr/` 产物复用，freshness 缓存命中不重判）。阶段 2 只跑**相关论文**（默认 `relevant`，相关集 >10 篇会先问确认），扫描版论文会走逐页 OCR（较久）后再做 paper-analysis。旧产物迁移见「确定性 runner」节 `migrate-v3`。
-- **Zotero 必须在线**：所有阶段读标记走 zotero-read；阶段 1 还需写 PDF。离线时 agent 会提示打开 Zotero。
-- **排序依赖**：标记只能在正式聚类（方向子分类已建）之后做；阶段 2 依赖阶段 1 的 PDF 尽量全（有 PDF 的论文走全文深度分析；扫描版才触发 OCR；摘要缺失时仍可用 abstractNote 分析，PDF 只是增强）。
+- **Zotero 在线要求按阶段区分**：Stage 0 全本地（读 `方向预筛.json` + 写 `套磁目标.json`），不需要 Zotero；阶段 1 仍需 Zotero 写 PDF；阶段 2 用 Zotero 读论文元数据/摘要/附件（按 `item_key`），但绝不做方向成员扫描或目标推断。相应阶段离线时 agent 会提示打开 Zotero。
+- **排序依赖**：Stage 0 只能在 professor-topic-clustering(`preview:true`) 产出 normalized `方向预筛.json` 之后跑；`方向预筛.json` 变化（preview 指纹不匹配）→ 阶段 1/2 以 `needs_refresh` 停止，须回 Stage 0 修订选择。阶段 2 依赖阶段 1 的 PDF 尽量全（有 PDF 的论文走全文深度分析；扫描版才触发 OCR；摘要缺失时仍可用 abstractNote 分析，PDF 只是增强）。
 - **诚实**：分析/想法严格基于论文实际内容与 profile；想法候选是「贴合论文方向的候选」，是否真实符合你想法由你在阶段 4 挑选决定（平衡原则）；阶段 5 邮件绝不编造 profile 之外的信息。
 - **阶段 5 只产兴趣段**：详见「阶段 5 — 套磁邮件」专节（只产兴趣段 / 模板占位符 / Subject 构造 / 红线硬约束 / 志望默认非第一 / humanizer-ja 过稿 / 校验循环）。
+
+## Retired behavior
+
+以下行为已退出本 workflow 契约（磁盘上的历史文件可以保留，但任何阶段都不得把它们当 target state 消费）：
+
+- Zotero 固定标题 `套磁候选` note 作为必需输入；
+- `教授研究/套磁候选总览.md` 作为 Stage 0 输出；
+- Stage 1/2 重新扫描 Zotero 来「发现」被选方向；
+- 用 Zotero 方向 `collection_key` 充当套磁方向身份（`collection_key` 现在只是 `direction_id` 的兼容 join 键）。
 
 ## Synergy — pipeline
 ```
 1. professor-collector (skip_pdf)            → Phase A 条目/元数据
 2. professor-topic-clustering (preview)      → 方向预筛总览（用户定保留名单）
 3. professor-collector (pdf_only, 保留名单)   → 保留教授下 PDF
-4. professor-topic-clustering (增量, 保留名单) → 正式聚类建方向子分类
-   ── 用户在 Zotero 给方向子分类加「套磁候选」note ──
-5. professor-contact (阶段 0-4)              → 套磁候选总览 / 补 PDF / 分析 / 想法候选 / 选择记录
+4. professor-topic-clustering (增量, 保留名单) → 正式聚类 + preview:true 产出 normalized 方向预筛.json
+   ── professor-contact Stage 0：交互选定方向（可写 per-direction user note）→ 写 教授研究/套磁目标.json ──
+5. professor-contact (Stage 1-4)             → 补 PDF / 分析 / 想法候选 / 选择记录
 6. professor-contact-email-generator（阶段 5）→ 套磁邮件（兴趣段 + 模板拼装 + humanizer-ja 过稿 + validator，见「阶段 5 — 套磁邮件」节）
 ```
