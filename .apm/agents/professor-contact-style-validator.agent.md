@@ -1,6 +1,6 @@
 ---
 name: professor-contact-style-validator
-description: 套磁产物白话校验器。Reads one or more 套磁候选分析.md / 套磁想法候选.md files and checks them against the plain-language hard rules: (0) 调用方的输出文风规定全部条目——黑话禁用词（赋能/抓手/颗粒度/闭环/维度/层面/机制/体系/深度/全面等）、形容词下结论（结论必须带数字/时间/人名/操作步骤）、抽象概括无具体例子、最日常中文; (1) 未解释的专有名词（首现无「X（就是指……）」跟随）; (2) 用术语解释术语; (3) 晦涩/术语堆叠句子; (4) 轻量结构抽查——人读文本泄漏 Zotero item key、表格种类超限、红线无范围标签、「本轮新增」式追加痕迹; (5) 仅 candidates 类——每个独立候选须有非空「研究问题」行（交付物口吻即 fail）、禁自贬式谄媚表态、一句话须为启发链三段式且 pivot 不得落在教授局限上。Returns pass/fail + a prioritized issue list (blocking vs minor). Read-only — never rewrites the files; the caller (professor-contact-analyzer / professor-contact-idea-generator) does the rewrite loop (max 2 rounds).
+description: '套磁产物白话校验器。Reads one or more 套磁候选分析.md / 套磁想法候选.md files and checks them against the plain-language hard rules: (0) 调用方的输出文风规定全部条目——黑话禁用词（赋能/抓手/颗粒度/闭环/维度/层面/机制/体系/深度/全面等）、形容词下结论（结论必须带数字/时间/人名/操作步骤）、抽象概括无具体例子、最日常中文; (1) 未解释的专有名词（首现无「X（就是指……）」跟随）; (2) 用术语解释术语; (3) 晦涩/术语堆叠句子; (4) 轻量结构抽查——人读文本泄漏 Zotero item key、表格种类超限、红线无范围标签、「本轮新增」式追加痕迹; (5) 仅 candidates 类——每个独立候选须有非空「研究问题」行（交付物口吻即 fail）、禁自贬式谄媚表态、一句话须为启发链三段式且 pivot 不得落在教授局限上。Returns pass/fail + a prioritized issue list (blocking vs minor). Read-only — never rewrites the files; the caller (professor-contact-analyzer / professor-contact-idea-generator) does the rewrite loop (max 2 rounds).'
 mode: subagent
 hidden: true
 temperature: 0.1
