@@ -109,6 +109,53 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
             "split target lost the candidate that full-text resolution rescued outside relevant_keys",
         )
 
+    def test_reused_split_preserves_materialized_child_membership(self):
+        """An unchanged rerun must not rebuild an accepted split child from an already-pruned source."""
+        papers = [
+            self.make_paper("P1", "Adaptive Signal Processing", ["信号", "処理"],
+                            ["Future work A."]),
+            self.make_paper("P2", "Robust Control", ["制御", "ロバスト"],
+                            ["Future work B."]),
+        ]
+        facts_path = self.write_facts(
+            papers, [self.make_direction("dir_A", ["P1", "P2"],
+                                         name_ja="信号処理", name_zh="信号处理",
+                                         summary="信号处理与控制")])
+        split = {
+            "resolved_direction_id": "dir_A",
+            "provisional_direction_id": "dir_A",
+            "name_ja": "信号処理",
+            "name_zh": "信号处理",
+            "resolution_type": "split_from",
+            "papers_to_add": ["P2"],
+            "papers_to_remove": [],
+            "paper_justifications": {"P2": "distinct robust-control cluster"},
+            "split_target": "dir_A__control",
+            "merge_target": None,
+            "user_note": "",
+        }
+
+        self.run_resolve(facts_path, {"dir_A": split})
+        first = self.run_stage2_finalize(facts_path)
+        self.assertEqual(first["status"], "ok")
+        first_by_key = {d["collection_key"]: d for d in self.load_pack()["directions"]}
+        self.assertEqual(
+            {p["item_key"] for p in first_by_key["dir_A__control"]["supporting_papers"]}, {"P2"})
+
+        # Same facts: resolve-plan should reuse the accepted sidecar with no new
+        # resolve job, and Stage 2 should preserve the already-materialized child.
+        reuse_plan, reuse_finalize = self.run_resolve(facts_path, {})
+        self.assertEqual(reuse_plan["jobs"], [])
+        self.assertFalse(reuse_finalize["needs_user_choice"])
+        second = self.run_stage2_finalize(facts_path)
+        self.assertEqual(second["status"], "ok")
+        second_by_key = {d["collection_key"]: d for d in self.load_pack()["directions"]}
+        self.assertEqual(
+            {p["item_key"] for p in second_by_key["dir_A__control"]["supporting_papers"]},
+            {"P2"},
+            "reused split child was rebuilt from the pruned source and lost its papers",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
