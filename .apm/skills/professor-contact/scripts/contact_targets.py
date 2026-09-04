@@ -312,6 +312,16 @@ def select_target(program_root: Path, preview_path: Path, selection: dict[str, A
     }
 
 
+def _member_keys(direction: dict[str, Any]) -> list[str]:
+    """Membership identity: sorted item_keys. Upstream derives direction_id from
+    these, while member_fingerprint also hashes preview_confidence, so only the
+    key set is material for target validity."""
+    return sorted(
+        str(member.get("item_key") or "")
+        for member in (direction.get("members") or [])
+    )
+
+
 def _selected_projection(direction: dict[str, Any]) -> dict[str, Any]:
     """Projection of a preview direction into target state; mirrors select_target fields."""
     return {
@@ -370,13 +380,16 @@ def resolve_targets(program_root: Path, professors: list[str] | None = None) -> 
                     "direction_id": direction_id,
                     "reason": "selected_direction_removed",
                     "stored_member_fingerprint": stored.get("member_fingerprint"),
+                    "stored_member_keys": _member_keys(stored),
                 })
-            elif current.get("member_fingerprint") != stored.get("member_fingerprint"):
+            elif _member_keys(current) != _member_keys(stored):
                 stale_directions.append({
                     "direction_id": direction_id,
                     "reason": "selected_direction_changed",
                     "stored_member_fingerprint": stored.get("member_fingerprint"),
                     "current_member_fingerprint": current.get("member_fingerprint"),
+                    "stored_member_keys": _member_keys(stored),
+                    "current_member_keys": _member_keys(current),
                 })
             elif _projection_differs(stored, current):
                 projection_updates.append((stored, _selected_projection(current)))

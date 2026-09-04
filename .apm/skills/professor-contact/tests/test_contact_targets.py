@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -16,7 +17,50 @@ def write_json(path: Path, payload):
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def member_fingerprint(members, schema_version="1"):
+    """Mirror professor-research's preview_contract._member_fingerprint: the
+    normalized members[] (item_key + preview_confidence) are hashed whole, so
+    confidence-only changes move the fingerprint while membership does not."""
+    return hashlib.sha256(
+        json.dumps({"version": schema_version, "members": members}, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
 def preview(professor="教授A", fp="fp-a"):
+    directions = [
+        {
+            "direction_id": "dir_A",
+            "name_ja": "方向A",
+            "name_zh": "方向甲",
+            "summary_zh": "甲方向简介",
+            "members": [
+                {"item_key": "P1", "preview_confidence": "high"},
+                {"item_key": "P2", "preview_confidence": "low"},
+            ],
+            "low_confidence_count": 1,
+            "coverage_share": 0.4,
+            "representatives": [
+                {"item_key": "P1", "title": "Paper One", "title_zh": "论文一", "year": 2025}
+            ],
+        },
+        {
+            "direction_id": "dir_B",
+            "name_ja": "方向B",
+            "name_zh": "方向乙",
+            "summary_zh": "乙方向简介",
+            "members": [
+                {"item_key": "P2", "preview_confidence": "high"},
+                {"item_key": "P3", "preview_confidence": "high"},
+            ],
+            "low_confidence_count": 0,
+            "coverage_share": 0.6,
+            "representatives": [
+                {"item_key": "P3", "title": "Paper Three", "year": 2026}
+            ],
+        },
+    ]
+    for direction in directions:
+        direction["member_fingerprint"] = member_fingerprint(direction["members"])
     return {
         "schema_version": 1,
         "professor": professor,
@@ -33,40 +77,7 @@ def preview(professor="教授A", fp="fp-a"):
         "preview_fingerprint_version": "preview-v1",
         "coverage": 0.5,
         "data_confidence": "medium",
-        "directions": [
-            {
-                "direction_id": "dir_A",
-                "name_ja": "方向A",
-                "name_zh": "方向甲",
-                "summary_zh": "甲方向简介",
-                "member_fingerprint": "mf-a",
-                "members": [
-                    {"item_key": "P1", "preview_confidence": "high"},
-                    {"item_key": "P2", "preview_confidence": "low"},
-                ],
-                "low_confidence_count": 1,
-                "coverage_share": 0.4,
-                "representatives": [
-                    {"item_key": "P1", "title": "Paper One", "title_zh": "论文一", "year": 2025}
-                ],
-            },
-            {
-                "direction_id": "dir_B",
-                "name_ja": "方向B",
-                "name_zh": "方向乙",
-                "summary_zh": "乙方向简介",
-                "member_fingerprint": "mf-b",
-                "members": [
-                    {"item_key": "P2", "preview_confidence": "high"},
-                    {"item_key": "P3", "preview_confidence": "high"},
-                ],
-                "low_confidence_count": 0,
-                "coverage_share": 0.6,
-                "representatives": [
-                    {"item_key": "P3", "title": "Paper Three", "year": 2026}
-                ],
-            },
-        ],
+        "directions": directions,
     }
 
 
@@ -170,25 +181,28 @@ class ContactTargetsTests(unittest.TestCase):
         self.assertEqual(target["directions"][0]["user_note"], "note A")
 
     def test_resolve_ignores_unselected_direction_changes(self):
+        base = preview()
         mod.select_target(
             self.root,
             self.preview_path,
             {"direction_ids": ["dir_A"], "notes": {"dir_A": "note A"}},
             selected_at="2026-09-03T12:00:00Z",
         )
-        data = copy.deepcopy(preview(fp="fp-unrelated"))
+        data = copy.deepcopy(base)
+        data["preview_fingerprint"] = "fp-unrelated"
         data["directions"][1]["name_ja"] = "方向B改"
         data["directions"][1]["name_zh"] = "方向乙改"
-        data["directions"][1]["member_fingerprint"] = "mf-b2"
         data["directions"][1]["members"] = [{"item_key": "P4", "preview_confidence": "high"}]
+        data["directions"][1]["member_fingerprint"] = member_fingerprint(data["directions"][1]["members"])
         data["directions"][1]["representatives"] = [{"item_key": "P4", "title_zh": "论文四"}]
+        dir_c_members = [{"item_key": "P5", "preview_confidence": "high"}]
         data["directions"].append({
             "direction_id": "dir_C",
             "name_ja": "方向C",
             "name_zh": "方向丙",
             "summary_zh": "丙方向简介",
-            "member_fingerprint": "mf-c",
-            "members": [{"item_key": "P5", "preview_confidence": "high"}],
+            "member_fingerprint": member_fingerprint(dir_c_members),
+            "members": dir_c_members,
             "low_confidence_count": 0,
             "coverage_share": 0.2,
             "representatives": [],
@@ -200,18 +214,19 @@ class ContactTargetsTests(unittest.TestCase):
         target = state["targets"][0]
         self.assertEqual(target["preview_fingerprint"], "fp-a")
         self.assertEqual(target["directions"][0]["user_note"], "note A")
-        self.assertEqual(target["directions"][0]["member_fingerprint"], "mf-a")
+        self.assertEqual(target["directions"][0]["member_fingerprint"], base["directions"][0]["member_fingerprint"])
 
     def test_resolve_flags_only_materially_changed_selected_directions(self):
+        base = preview()
         mod.select_target(
             self.root,
             self.preview_path,
             {"direction_ids": ["dir_A", "dir_B"], "notes": {"dir_A": "note A", "dir_B": "note B"}},
             selected_at="2026-09-03T12:00:00Z",
         )
-        data = copy.deepcopy(preview(fp="fp-reclustered"))
-        data["directions"][0]["member_fingerprint"] = "mf-a2"
+        data = copy.deepcopy(base)
         data["directions"][0]["members"].append({"item_key": "P9", "preview_confidence": "low"})
+        data["directions"][0]["member_fingerprint"] = member_fingerprint(data["directions"][0]["members"])
         write_json(self.preview_path, data)
         result = mod.resolve_targets(self.root)
         self.assertEqual(result["status"], "needs_refresh")
@@ -222,21 +237,24 @@ class ContactTargetsTests(unittest.TestCase):
         self.assertEqual(stale[0]["direction_ids"], ["dir_A"])
         entry = stale[0]["directions"][0]
         self.assertEqual(entry["reason"], "selected_direction_changed")
-        self.assertEqual(entry["stored_member_fingerprint"], "mf-a")
-        self.assertEqual(entry["current_member_fingerprint"], "mf-a2")
+        self.assertEqual(entry["stored_member_fingerprint"], base["directions"][0]["member_fingerprint"])
+        self.assertEqual(entry["current_member_fingerprint"], data["directions"][0]["member_fingerprint"])
+        self.assertEqual(entry["stored_member_keys"], ["P1", "P2"])
+        self.assertEqual(entry["current_member_keys"], ["P1", "P2", "P9"])
         state = json.loads((self.root / "教授研究" / "套磁目标.json").read_text(encoding="utf-8"))
         target = state["targets"][0]
         self.assertEqual(target["directions"][0]["user_note"], "note A")
-        self.assertEqual(target["directions"][0]["member_fingerprint"], "mf-a")
+        self.assertEqual(target["directions"][0]["member_fingerprint"], base["directions"][0]["member_fingerprint"])
 
     def test_resolve_flags_removed_selected_direction(self):
+        base = preview()
         mod.select_target(
             self.root,
             self.preview_path,
             {"direction_ids": ["dir_A", "dir_B"], "notes": {}},
             selected_at="2026-09-03T12:00:00Z",
         )
-        data = copy.deepcopy(preview(fp="fp-removed"))
+        data = copy.deepcopy(base)
         data["directions"] = [data["directions"][0]]
         write_json(self.preview_path, data)
         result = mod.resolve_targets(self.root)
@@ -246,7 +264,8 @@ class ContactTargetsTests(unittest.TestCase):
         self.assertEqual(stale[0]["direction_ids"], ["dir_B"])
         entry = stale[0]["directions"][0]
         self.assertEqual(entry["reason"], "selected_direction_removed")
-        self.assertEqual(entry["stored_member_fingerprint"], "mf-b")
+        self.assertEqual(entry["stored_member_fingerprint"], base["directions"][1]["member_fingerprint"])
+        self.assertEqual(entry["stored_member_keys"], ["P2", "P3"])
 
     def test_resolve_refreshes_display_only_selected_direction_changes(self):
         mod.select_target(
@@ -261,7 +280,10 @@ class ContactTargetsTests(unittest.TestCase):
         direction["name_zh"] = "方向甲改"
         direction["summary_zh"] = "甲方向新简介"
         direction["representatives"] = [{"item_key": "P2", "title_zh": "论文二"}]
+        # Confidence-only drift moves the real upstream member_fingerprint while
+        # the item_key membership (and therefore direction_id) stays the same.
         direction["members"][1]["preview_confidence"] = "high"
+        direction["member_fingerprint"] = member_fingerprint(direction["members"])
         write_json(self.preview_path, data)
         result = mod.resolve_targets(self.root)
         self.assertEqual(result["status"], "ok")
@@ -279,7 +301,7 @@ class ContactTargetsTests(unittest.TestCase):
         self.assertEqual(refreshed["summary_zh"], "甲方向新简介")
         self.assertEqual(refreshed["representatives"], [{"item_key": "P2", "title_zh": "论文二"}])
         self.assertEqual(refreshed["members"][1]["preview_confidence"], "high")
-        self.assertEqual(refreshed["member_fingerprint"], "mf-a")
+        self.assertEqual(refreshed["member_fingerprint"], direction["member_fingerprint"])
         self.assertEqual(refreshed["user_note"], "note A")
 
     def test_resolve_filters_selected_professor(self):
