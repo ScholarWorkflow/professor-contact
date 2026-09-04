@@ -1686,6 +1686,17 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
             if key not in candidate_set:
                 fail("invalid_result_json",
                      f"{result_path}: cannot add paper {key} not in candidate set")
+        # Full-text evidence gate: only a CURRENTLY VALID full-text facts
+        # sidecar may justify changing authoritative membership. The model
+        # prompt alone is not this boundary — abstract-only / legacy / broken
+        # evidence chains can never add, remove, or move a paper (split moves
+        # ride papers_to_add, so they are covered by the same check).
+        for key in sorted(set(papers_to_add) | set(papers_to_remove)):
+            _facts_record, facts_state, _facts_error = ctx.facts_for(key)
+            if facts_state != "valid":
+                fail("invalid_result_json",
+                     f"{result_path}: membership change for {key} requires a currently "
+                     f"valid full-text facts sidecar (got facts_state={facts_state!r})")
         # Validate split / merge structure
         split_target = r.get("split_target")
         merge_target = r.get("merge_target")
@@ -2560,9 +2571,40 @@ def cmd_stage2_finalize(args) -> None:
         # Keep the provisional fingerprints around: the public
         # `input_fingerprint` is recomputed below to the resolved-aware
         # downstream value, but Stage-2's own freshness gate still needs the
-        # pre-resolution value to judge reuse on the next run.
-        provisional_fingerprints = {d["collection_key"]: d.get("input_fingerprint")
-                                    for d in pack_directions}
+        # pre-resolution value to judge reuse on the next run. A reused pack
+        # entry already carries the resolved-aware value in
+        # `input_fingerprint`, so the provisional value MUST come from
+        # `provisional_input_fingerprint` when present — overwriting it with
+        # the downstream hash would silently break the next Stage-2 reuse.
+        provisional_fingerprints = {
+            d["collection_key"]: d.get("provisional_input_fingerprint") or d.get("input_fingerprint")
+            for d in pack_directions}
+        reused_ckeys = {p["ckey"] for p in ctx.direction_plans if p["reuse"]}
+
+        # Carry forward accepted derived directions (split children created by
+        # a previous finalize). They have no provisional plan entry because the
+        # facts only know the source direction, so without this a reuse
+        # finalize would silently drop the child — and the split pass would
+        # then rebuild it from the already-pruned source with empty membership.
+        # A child is kept only while the current resolution still declares the
+        # same split; otherwise the new resolution is authoritative and the
+        # stale child disappears.
+        plan_ckeys = {p["ckey"] for p in ctx.direction_plans}
+        for old_entry in (ctx.pack or {}).get("directions", []):
+            child_key = old_entry.get("collection_key") if isinstance(old_entry, dict) else None
+            if not child_key or child_key in plan_ckeys:
+                continue
+            if any(d.get("collection_key") == child_key for d in pack_directions):
+                continue
+            source_rd = resolved_directions.get(old_entry.get("resolved_direction", {})
+                                                .get("provisional_direction_id")) or {}
+            if source_rd.get("resolution_type") != "split_from" \
+                    or source_rd.get("split_target") != child_key:
+                continue
+            pack_directions.append(old_entry)
+            provisional_fingerprints[child_key] = (
+                old_entry.get("provisional_input_fingerprint")
+                or old_entry.get("input_fingerprint"))
 
         def _find_pack_direction(ckey: str):
             for d in pack_directions:
@@ -2583,6 +2625,35 @@ def cmd_stage2_finalize(args) -> None:
                 "merge_target": rd.get("merge_target"),
             }
 
+        def _resolved_paper_entry(key: str, justification: str) -> dict | None:
+            """Build a supporting-papers entry straight from library + facts.
+
+            Used when authoritative membership admits a paper the relevance
+            gate never placed in the direction's supporting_papers (e.g. a
+            full-text rescue that only lives in the candidate union). The
+            resolve finalizer already validated facts_state == valid for every
+            membership-changing key, so this never fabricates evidence.
+            """
+            paper = ctx.papers.get(key)
+            if not paper:
+                return None
+            facts_record, facts_state, facts_error = ctx.facts_for(key)
+            return {
+                "item_key": key,
+                "title": paper.get("title"),
+                "year": paper.get("year"),
+                "authorship": paper.get("authorship"),
+                "named_by_user": False,
+                "has_analysis": bool(paper.get("analysis_file")),
+                "analysis_file": paper.get("analysis_file"),
+                "pdf_available": bool(paper.get("has_pdf")),
+                "facts_state": facts_state,
+                "facts_error": facts_error,
+                "paper_facts": facts_record,
+                "resolved_addition": True,
+                "addition_justification": justification,
+            }
+
         def _apply_membership(d: dict, rd: dict) -> None:
             remove_set = set(rd.get("papers_to_remove") or [])
             if remove_set:
@@ -2592,29 +2663,16 @@ def cmd_stage2_finalize(args) -> None:
             for add_key in rd.get("papers_to_add") or []:
                 if any(p.get("item_key") == add_key for p in d.get("supporting_papers", [])):
                     continue
-                paper = ctx.papers.get(add_key)
-                if not paper:
-                    continue
-                facts_record, facts_state, facts_error = ctx.facts_for(add_key)
-                d.setdefault("supporting_papers", []).append({
-                    "item_key": add_key,
-                    "title": paper.get("title"),
-                    "year": paper.get("year"),
-                    "authorship": paper.get("authorship"),
-                    "named_by_user": False,
-                    "has_analysis": bool(paper.get("analysis_file")),
-                    "analysis_file": paper.get("analysis_file"),
-                    "pdf_available": bool(paper.get("has_pdf")),
-                    "facts_state": facts_state,
-                    "facts_error": facts_error,
-                    "paper_facts": facts_record,
-                    "resolved_addition": True,
-                    "addition_justification": (rd.get("paper_justifications") or {}).get(add_key, ""),
-                })
+                entry = _resolved_paper_entry(
+                    add_key, (rd.get("paper_justifications") or {}).get(add_key, ""))
+                if entry is not None:
+                    d.setdefault("supporting_papers", []).append(entry)
 
         # Pass 1: stamp the subfield everywhere + apply rename/refined edits.
         for d in pack_directions:
-            rd = resolved_directions[d["collection_key"]]
+            rd = resolved_directions.get(d["collection_key"])
+            if rd is None:
+                continue  # carried-forward split child keeps its own subfield
             _stamp_subfield(d, rd)
             rtype = rd.get("resolution_type") or "unchanged"
             if rtype in ("renamed", "refined"):
@@ -2627,11 +2685,12 @@ def cmd_stage2_finalize(args) -> None:
         # the source keeps its identity minus the split-out papers/gaps.
         for d in list(pack_directions):
             ckey = d["collection_key"]
-            rd = resolved_directions[ckey]
-            if rd.get("resolution_type") != "split_from":
+            rd = resolved_directions.get(ckey)
+            if rd is None or rd.get("resolution_type") != "split_from":
                 continue
             split_id = rd.get("split_target")
             split_set = set(rd.get("papers_to_add") or [])
+            # Prune the source first: idempotent on an already-pruned reuse entry.
             moved_papers = [p for p in d.get("supporting_papers", []) if p.get("item_key") in split_set]
             d["supporting_papers"] = [p for p in d.get("supporting_papers", [])
                                       if p.get("item_key") not in split_set]
@@ -2648,6 +2707,27 @@ def cmd_stage2_finalize(args) -> None:
             d["named_keys"] = [k for k in d.get("named_keys", []) if k not in split_set]
             provisional_fingerprints[split_id] = provisional_fingerprints.get(ckey) \
                 or d.get("input_fingerprint")
+            existing_child = _find_pack_direction(split_id)
+            if existing_child is not None and ckey in reused_ckeys:
+                # The child was materialized by an earlier finalize and the
+                # source hit Stage-2 reuse: keep the accepted child membership
+                # exactly as-is. Rebuilding it from the reuse (already-pruned)
+                # source would silently empty it.
+                continue
+            if existing_child is not None:
+                # Source was reprocessed (facts changed and resolve re-ran with
+                # the same split target): rebuild the child from the freshly
+                # built source so papers/gap references stay current.
+                pack_directions.remove(existing_child)
+            # A full-text rescue can put a candidate-union paper into the split
+            # even though the abstract relevance gate never put it into the
+            # source's supporting_papers; materialize those from the library.
+            present = {p.get("item_key") for p in moved_papers}
+            for key in sorted(split_set - present):
+                entry = _resolved_paper_entry(
+                    key, (rd.get("paper_justifications") or {}).get(key, ""))
+                if entry is not None:
+                    moved_papers.append(entry)
             pack_directions.append({
                 "collection_key": split_id,
                 "name_ja": rd.get("name_ja") or d.get("name_ja"),

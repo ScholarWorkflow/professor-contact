@@ -970,6 +970,92 @@ class CandidateUnionEvidenceTests(ResolvedPipelineMixin, unittest.TestCase):
                          "the resolved state (candidate-union evidence scope)")
 
 
+class Stage2SplitReuseChainTests(ResolvedPipelineMixin, unittest.TestCase):
+    """Full chain: first split finalize, unchanged reuse finalize, then Stage 3.
+
+    Locks the reuse path for a materialized split: the second finalize must
+    keep the accepted child (paper membership, gaps, both stable resolved IDs)
+    and Stage 3 must still generate jobs for both directions."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.prof_dir = self.root / "教授研究" / "X分野" / "試験 教授"
+        (self.prof_dir / "论文分析").mkdir(parents=True)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_split_first_apply_then_reuse_then_stage3_jobs(self):
+        papers = [
+            self.make_paper("P1", "Adaptive Signal Processing", ["信号", "処理"],
+                            ["Signal future work A."]),
+            self.make_paper("P2", "Signal Estimation Theory", ["信号", "推定"],
+                            ["Signal future work B."]),
+            self.make_paper("P3", "Greenhouse Control", ["制御", "温室"],
+                            ["Control future work A."]),
+            self.make_paper("P4", "Robot Arm Control", ["制御", "口ボット"],
+                            ["Control future work B."]),
+        ]
+        facts_path = self.write_facts(papers, [
+            self.make_direction("dir_A", ["P1", "P2", "P3", "P4"],
+                                name_ja="信号と制御", name_zh="信号与控制",
+                                summary="信号处理与控制系统"),
+        ])
+        split = {
+            "resolved_direction_id": "dir_A",
+            "provisional_direction_id": "dir_A",
+            "name_ja": "信号処理",
+            "name_zh": "信号处理",
+            "resolution_type": "split_from",
+            "papers_to_add": ["P3", "P4"],
+            "papers_to_remove": [],
+            "paper_justifications": {"P3": "control cluster", "P4": "control cluster"},
+            "split_target": "dir_A__control",
+            "merge_target": None,
+            "user_note": "",
+        }
+
+        self.run_resolve(facts_path, {"dir_A": split})
+        first = self.run_stage2_finalize(facts_path)
+        self.assertEqual(first["status"], "ok", msg=json.dumps(first, ensure_ascii=False))
+        first_by_key = {d["collection_key"]: d for d in self.load_pack()["directions"]}
+        self.assertEqual(set(first_by_key), {"dir_A", "dir_A__control"})
+        self.assertEqual(
+            sorted(p["item_key"] for p in first_by_key["dir_A"]["supporting_papers"]),
+            ["P1", "P2"])
+        self.assertEqual(
+            sorted(p["item_key"] for p in first_by_key["dir_A__control"]["supporting_papers"]),
+            ["P3", "P4"])
+        child_before = first_by_key["dir_A__control"]
+
+        # Unchanged rerun: resolve reuses (no jobs), finalize must keep the child.
+        reuse_plan, reuse_finalize = self.run_resolve(facts_path, {})
+        self.assertEqual(reuse_plan["jobs"], [])
+        self.assertFalse(reuse_finalize["needs_user_choice"])
+        second = self.run_stage2_finalize(facts_path)
+        self.assertEqual(second["status"], "ok", msg=json.dumps(second, ensure_ascii=False))
+        second_by_key = {d["collection_key"]: d for d in self.load_pack()["directions"]}
+        self.assertEqual(set(second_by_key), {"dir_A", "dir_A__control"})
+        self.assertEqual(
+            sorted(p["item_key"] for p in second_by_key["dir_A"]["supporting_papers"]),
+            ["P1", "P2"])
+        self.assertEqual(
+            sorted(p["item_key"] for p in second_by_key["dir_A__control"]["supporting_papers"]),
+            ["P3", "P4"])
+        self.assertEqual(
+            [g["gap_id"] for g in second_by_key["dir_A__control"]["gap_shortlist"]],
+            [g["gap_id"] for g in child_before["gap_shortlist"]])
+
+        # Stage 3 still generates jobs for both authoritative directions.
+        stage3_payload = parse(run_cli("stage3-plan", "--professor-dir", str(self.prof_dir),
+                                       "--program-root", str(self.root)))
+        self.assertEqual(stage3_payload["status"], "ok",
+                         msg=json.dumps(stage3_payload, ensure_ascii=False))
+        stage3_ckeys = {job["collection_key"] for job in stage3_payload["jobs"]}
+        self.assertEqual(stage3_ckeys, {"dir_A", "dir_A__control"})
+
+
 class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
     """Issue #7 acceptance #5: unchanged resolved directions reuse cached state
     and never re-run the resolve job; stale ones re-resolve."""

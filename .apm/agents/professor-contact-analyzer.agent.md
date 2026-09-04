@@ -404,7 +404,7 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
 
 判定规则：
 - 每篇候选 = provisional member + Stage 1 扩召；含全文级 facts 即可判定归属。
-- 含 facts 论文按 `topic_terms` 与方向画像（name_ja/name_zh/summary_zh）的词面/语义重叠判定归属；不含 facts 的论文**保留** provisional 归属（没全文证据不下放）。
+- 含 facts 论文按 `topic_terms` 与方向画像（name_ja/name_zh/summary_zh）的词面/语义重叠判定归属；不含 facts 的论文**保留** provisional 归属（没全文证据不下放）。**这不是提示词约定而是 runner 强制约束**：`stage2-resolve-finalize` 对任何 membership 变更（`papers_to_add`/`papers_to_remove`，含 split 移动的论文）逐一校验 `facts_state=valid`，abstract-only/legacy/证据链断裂的论文一律 `invalid_result_json` 拒绝——模型输出不能成为这条安全边界。
 - **移除**：仅当 facts 明确显示该论文不属于本方向（topic 完全不沾、gap 也不来）。**绝不**因为论文是 abstract-only 就移除。
 - **新增**：仅当 facts 明确显示该论文 support 本方向而非其 provisional 方向。**绝不**因为 abstract-level 词面重叠就新增。
 - **重命名**：方向名（如 language/concept）与全文证据明显冲突时。
