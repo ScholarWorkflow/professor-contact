@@ -48,6 +48,37 @@ class Stage1Stage2ContractTests(unittest.TestCase):
         self.assertIn("candidate_keys", skill)
         self.assertIn("non_final_candidates_only", skill)
 
+    def test_analyzer_contract_invokes_resolve_pipeline(self):
+        """Issue #7: Stage 2 must resolve provisional directions against full-text
+        evidence and emit authoritative resolved_direction state."""
+        agent = (ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md").read_text(
+            encoding="utf-8"
+        )
+        # The resolve subcommand must be invoked by the analyzer.
+        self.assertIn("stage2-resolve-plan", agent)
+        self.assertIn("stage2-resolve-finalize", agent)
+        self.assertIn("--resolved-directions", agent)
+        # resolved_direction state must be propagated downstream.
+        self.assertIn("resolved_direction", agent)
+        self.assertIn("_resolved_directions.json", agent)
+        # Material changes must trigger user confirmation.
+        self.assertIn("needs_user_choice", agent)
+        self.assertIn("material_changes", agent)
+        # The five resolution types must be documented.
+        for rtype in ("unchanged", "renamed", "split_from", "merged_into", "refined"):
+            self.assertIn(rtype, agent)
+        # Correction operations (add/remove) must be available.
+        for op in ("papers_to_add", "papers_to_remove"):
+            self.assertIn(op, agent)
+
+    def test_skill_contract_documents_resolved_direction(self):
+        """SKILL.md must document the resolved_direction contract."""
+        skill = (ROOT / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        # resolved_direction must be referenced as the authoritative Stage 2 output.
+        self.assertIn("resolved_direction", skill)
+
 
 if __name__ == "__main__":
     unittest.main()

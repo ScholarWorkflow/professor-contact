@@ -23,6 +23,7 @@ from typing import Any
 
 SCHEMA = 1
 MANAGED_BY = "contact_state"
+RESOLVED_DIRECTION_SCHEMA = 1
 INPUT_PACK = "套磁候选输入.json"
 CANDIDATE_STATE = "套磁候选状态.json"
 EMAIL_PACK = "邮件输入.json"
@@ -1024,6 +1025,565 @@ class Stage2PackRefineContext:
         return self.narrative_later_keys_for(direction)
 
 
+def _compute_paper_direction_affinity(ctx: Stage2Context) -> dict[str, dict[str, float]]:
+    """Compute per-paper affinity scores to each provisional direction using full-text facts.
+
+    Returns {item_key: {ckey: score}} where score is derived from:
+    - paper_facts.topic_terms overlap with direction profile (name_ja/name_zh/summary_zh)
+    - authorship weight (first/corresponding/solo > pending > middle)
+    - whether the paper contributes gaps to the direction
+    """
+    import re as _re
+    import unicodedata as _ud
+
+    def _tokens(text: str) -> set:
+        toks = set()
+        for w in _re.findall(r"[A-Za-z0-9]+", text or ""):
+            if len(w) >= 3:
+                toks.add(w.lower())
+        for run in _re.findall(r"[\u4e00-\u9fff\u3040-\u30ff]+", text or ""):
+            for i in range(len(run) - 1):
+                toks.add(run[i:i + 2])
+        return toks
+
+    direction_profiles: dict[str, set] = {}
+    for plan in ctx.direction_plans:
+        direction = plan["direction"]
+        parts = []
+        for field in ("name_ja", "name_zh", "summary_zh"):
+            val = direction.get(field)
+            if isinstance(val, str) and val.strip():
+                parts.append(val)
+        direction_profiles[plan["ckey"]] = _tokens(" ".join(parts))
+
+    affinity: dict[str, dict[str, float]] = {}
+    for plan in ctx.direction_plans:
+        ckey = plan["ckey"]
+        profile_toks = direction_profiles[ckey]
+        gap_item_keys = {g["item_key"] for g in plan["pool"]}
+        for key in direction_relevant_keys(plan["direction"]):
+            paper = ctx.papers.get(key)
+            if not paper:
+                continue
+            score = 0.0
+            # Base affinity from provisional membership
+            if key in (plan["direction"].get("provisional_member_keys") or []):
+                score += 2.0
+            # Authorship weight
+            auth = paper.get("authorship", "pending")
+            score += AUTHORSHIP_RANK.get(auth, 0) / 5.0
+            # Gap contribution: paper contributes future-work to this direction
+            if key in gap_item_keys:
+                score += 1.5
+            # Topic overlap from full-text facts
+            facts_record, _, _ = ctx.facts_for(key)
+            if facts_record:
+                topic_terms = facts_record.get("topic_terms") or []
+                paper_toks = _tokens(" ".join(str(t) for t in topic_terms))
+                if profile_toks and paper_toks:
+                    overlap = len(paper_toks & profile_toks)
+                    score += overlap * 0.3
+            # Title overlap as fallback when no facts
+            elif paper.get("title"):
+                title_toks = _tokens(paper["title"])
+                if profile_toks and title_toks:
+                    overlap = len(title_toks & profile_toks)
+                    score += overlap * 0.2
+            affinity.setdefault(key, {})[ckey] = round(score, 3)
+    return affinity
+
+
+def _detect_candidates_for_addition(ctx: Stage2Context, affinity: dict[str, dict[str, float]]) -> list[dict]:
+    """Detect papers that may belong to a direction despite provisional placement elsewhere.
+
+    A candidate for addition when:
+    - paper has full-text facts (not abstract-only)
+    - paper's top affinity direction is NOT its provisional direction
+    - affinity gap between top and provisional direction is significant
+    """
+    additions = []
+    for plan in ctx.direction_plans:
+        ckey = plan["ckey"]
+        for key in direction_relevant_keys(plan["direction"]):
+            if key in (plan["direction"].get("provisional_member_keys") or []):
+                continue  # already a provisional member
+            paper_aff = affinity.get(key, {})
+            if not paper_aff:
+                continue
+            # Check if this paper has stronger affinity to another direction
+            sorted_dirs = sorted(paper_aff.items(), key=lambda x: x[1], reverse=True)
+            if sorted_dirs and sorted_dirs[0][0] != ckey:
+                top_ckey, top_score = sorted_dirs[0]
+                this_score = paper_aff.get(ckey, 0)
+                if top_score > this_score + 1.0:
+                    additions.append({
+                        "item_key": key,
+                        "target_direction": ckey,
+                        "current_top_direction": top_ckey,
+                        "target_score": this_score,
+                        "current_score": top_score,
+                        "reason": f"paper affinity stronger elsewhere ({top_ckey}={top_score} vs {ckey}={this_score})",
+                    })
+    return additions
+
+
+def _detect_candidates_for_removal(ctx: Stage2Context, affinity: dict[str, dict[str, float]]) -> list[dict]:
+    """Detect provisional members that full-text evidence suggests don't belong.
+
+    A candidate for removal when:
+    - paper is a provisional member
+    - paper has full-text facts with topic_terms that don't overlap direction profile
+
+    Note: gap contribution does NOT prevent removal — a paper can contribute a
+    relevant gap to a direction without being a member of that direction.
+    Removal only affects membership, not gap provenance.
+    """
+    import re as _re
+    removals = []
+    for plan in ctx.direction_plans:
+        ckey = plan["ckey"]
+        direction = plan["direction"]
+        profile_parts = []
+        for field in ("name_ja", "name_zh", "summary_zh"):
+            val = direction.get(field)
+            if isinstance(val, str) and val.strip():
+                profile_parts.append(val)
+        profile_text = " ".join(profile_parts).lower()
+        # Also build a set of profile tokens for more flexible matching
+        profile_toks = set()
+        for w in _re.findall(r"[A-Za-z0-9]+", profile_text):
+            if len(w) >= 3:
+                profile_toks.add(w.lower())
+        for run in _re.findall(r"[\u4e00-\u9fff\u3040-\u30ff]+", profile_text):
+            for i in range(len(run) - 1):
+                profile_toks.add(run[i:i + 2])
+        for key in direction.get("provisional_member_keys") or []:
+            paper = ctx.papers.get(key)
+            if not paper:
+                continue
+            facts_record, facts_state, _ = ctx.facts_for(key)
+            if facts_state != "valid":
+                continue  # can't judge without full-text facts
+            topic_terms = (facts_record or {}).get("topic_terms") or []
+            title = (paper.get("title") or "").lower()
+            # Check if any topic term or title token overlaps with direction profile
+            has_overlap = False
+            for term in topic_terms:
+                term_lower = str(term).lower()
+                if term_lower in profile_text:
+                    has_overlap = True
+                    break
+                # Check token-level overlap for multi-word terms
+                for tok in _re.findall(r"[A-Za-z0-9]+", term_lower):
+                    if len(tok) >= 3 and tok in profile_toks:
+                        has_overlap = True
+                        break
+                if has_overlap:
+                    break
+            if not has_overlap:
+                # Check title tokens against profile tokens
+                title_toks = set()
+                for w in _re.findall(r"[A-Za-z0-9]+", title):
+                    if len(w) >= 3:
+                        title_toks.add(w.lower())
+                for run in _re.findall(r"[\u4e00-\u9fff\u3040-\u30ff]+", title):
+                    for i in range(len(run) - 1):
+                        title_toks.add(run[i:i + 2])
+                if title_toks and profile_toks and title_toks & profile_toks:
+                    has_overlap = True
+            if not has_overlap:
+                removals.append({
+                    "item_key": key,
+                    "direction": ckey,
+                    "title": paper.get("title"),
+                    "topic_terms": topic_terms[:5],
+                    "reason": "full-text topic terms do not overlap direction profile",
+                })
+    return removals
+
+
+def _detect_split_candidates(ctx: Stage2Context) -> list[dict]:
+    """Detect directions that may need splitting based on distinct topic clusters.
+
+    A direction is a split candidate when:
+    - It has ≥4 papers with full-text facts
+    - Topic terms cluster into ≥2 distinct groups with low inter-group overlap
+    """
+    import re as _re
+    splits = []
+    for plan in ctx.direction_plans:
+        ckey = plan["ckey"]
+        direction = plan["direction"]
+        papers_with_facts = []
+        for key in direction_relevant_keys(direction):
+            paper = ctx.papers.get(key)
+            if not paper:
+                continue
+            facts_record, facts_state, _ = ctx.facts_for(key)
+            if facts_state == "valid" and facts_record:
+                papers_with_facts.append({
+                    "item_key": key,
+                    "title": paper.get("title"),
+                    "topic_terms": facts_record.get("topic_terms") or [],
+                })
+        if len(papers_with_facts) < 4:
+            continue
+        # Simple clustering: group papers by shared topic terms
+        clusters: list[list[dict]] = []
+        for paper in papers_with_facts:
+            terms = set(str(t).lower() for t in paper["topic_terms"])
+            matched = False
+            for cluster in clusters:
+                cluster_terms = set()
+                for cp in cluster:
+                    cluster_terms.update(str(t).lower() for t in cp["topic_terms"])
+                if terms and cluster_terms and len(terms & cluster_terms) / max(len(terms), 1) >= 0.3:
+                    cluster.append(paper)
+                    matched = True
+                    break
+            if not matched:
+                clusters.append([paper])
+        # Filter: only suggest split if we have ≥2 substantial clusters (≥2 papers each)
+        substantial = [c for c in clusters if len(c) >= 2]
+        if len(substantial) >= 2:
+            splits.append({
+                "direction": ckey,
+                "name_ja": direction.get("name_ja"),
+                "name_zh": direction.get("name_zh"),
+                "clusters": [
+                    {
+                        "papers": [p["item_key"] for p in cluster],
+                        "titles": [p["title"] for p in cluster],
+                        "common_terms": sorted(set.intersection(*[
+                            set(str(t).lower() for t in p["topic_terms"]) for p in cluster
+                        ])) if cluster else [],
+                    }
+                    for cluster in substantial
+                ],
+                "reason": f"direction splits into {len(substantial)} distinct topic clusters",
+            })
+    return splits
+
+
+def _detect_merge_candidates(ctx: Stage2Context) -> list[dict]:
+    """Detect pairs of directions that may be the same line based on shared evidence.
+
+    A merge candidate when:
+    - Two directions share ≥2 papers (cross-direction overlap)
+    - Their topic profiles (from facts) overlap significantly
+    """
+    import re as _re
+    merges = []
+    plans = ctx.direction_plans
+    for i, plan_a in enumerate(plans):
+        for plan_b in plans[i + 1:]:
+            ckey_a, ckey_b = plan_a["ckey"], plan_b["ckey"]
+            # Check shared papers
+            keys_a = set(direction_relevant_keys(plan_a["direction"]))
+            keys_b = set(direction_relevant_keys(plan_b["direction"]))
+            shared = keys_a & keys_b
+            if len(shared) < 1:
+                continue
+            # Check topic overlap from direction profiles
+            parts_a = []
+            parts_b = []
+            for field in ("name_ja", "name_zh", "summary_zh"):
+                val = plan_a["direction"].get(field)
+                if isinstance(val, str) and val.strip():
+                    parts_a.append(val)
+                val = plan_b["direction"].get(field)
+                if isinstance(val, str) and val.strip():
+                    parts_b.append(val)
+            toks_a = set()
+            toks_b = set()
+            for w in _re.findall(r"[A-Za-z0-9]+", " ".join(parts_a)):
+                if len(w) >= 3:
+                    toks_a.add(w.lower())
+            for run in _re.findall(r"[\u4e00-\u9fff\u3040-\u30ff]+", " ".join(parts_a)):
+                for idx in range(len(run) - 1):
+                    toks_a.add(run[idx:idx + 2])
+            for w in _re.findall(r"[A-Za-z0-9]+", " ".join(parts_b)):
+                if len(w) >= 3:
+                    toks_b.add(w.lower())
+            for run in _re.findall(r"[\u4e00-\u9fff\u3040-\u30ff]+", " ".join(parts_b)):
+                for idx in range(len(run) - 1):
+                    toks_b.add(run[idx:idx + 2])
+            if toks_a and toks_b:
+                overlap = len(toks_a & toks_b) / min(len(toks_a), len(toks_b))
+                if overlap >= 0.5:
+                    merges.append({
+                        "direction_a": ckey_a,
+                        "direction_b": ckey_b,
+                        "name_a": plan_a["direction"].get("name_ja"),
+                        "name_b": plan_b["direction"].get("name_ja"),
+                        "shared_papers": sorted(shared),
+                        "overlap_ratio": round(overlap, 2),
+                        "reason": f"directions share {len(shared)} papers and {round(overlap * 100)}% profile overlap",
+                    })
+    return merges
+
+
+def cmd_stage2_resolve_plan(args) -> None:
+    """Plan the direction resolution step: detect splits/merges/additions/removals.
+
+    This is a deterministic pre-flight that uses full-text facts to suggest
+    corrections to provisional directions. The actual resolution is performed
+    by the model in the resolve job, which has access to the full context.
+    """
+    ctx = Stage2Context(Path(args.facts))
+    affinity = _compute_paper_direction_affinity(ctx)
+    additions = _detect_candidates_for_addition(ctx, affinity)
+    removals = _detect_candidates_for_removal(ctx, affinity)
+    splits = _detect_split_candidates(ctx)
+    merges = _detect_merge_candidates(ctx)
+
+    # Determine if any material change is detected
+    has_material_changes = bool(additions or removals or splits or merges)
+
+    # Build per-direction resolution jobs
+    resolve_jobs = []
+    for plan in ctx.direction_plans:
+        ckey = plan["ckey"]
+        direction = plan["direction"]
+        # Collect per-paper evidence
+        paper_evidence = []
+        for key in direction_relevant_keys(direction):
+            paper = ctx.papers.get(key)
+            if not paper:
+                continue
+            facts_record, facts_state, facts_error = ctx.facts_for(key)
+            paper_evidence.append({
+                "item_key": key,
+                "title": paper.get("title"),
+                "year": paper.get("year"),
+                "authorship": paper.get("authorship"),
+                "is_provisional_member": key in (direction.get("provisional_member_keys") or []),
+                "facts_state": facts_state,
+                "facts_error": facts_error,
+                "topic_terms": (facts_record or {}).get("topic_terms") if facts_record else [],
+                "affinity_scores": affinity.get(key, {}),
+            })
+        # Collect gap evidence
+        gap_evidence = []
+        for gap in plan["pool"]:
+            gap_evidence.append({
+                "gap_id": gap["gap_id"],
+                "item_key": gap["item_key"],
+                "paper_title": gap.get("paper_title"),
+                "quote_trunc": truncate(gap.get("quote"), 120),
+                "translation_zh": truncate(gap.get("translation_zh"), 80),
+            })
+        # Collect removal candidates for this direction
+        dir_removals = [r for r in removals if r["direction"] == ckey]
+        resolve_jobs.append({
+            "job_id": f"resolve:{ctx.professor}:{ckey}",
+            "kind": "resolve",
+            "collection_key": ckey,
+            "result_file": f"resolve-{ckey}.json",
+            "result_schema": {
+                "schema": 1,
+                "kind": "resolve",
+                "collection_key": ckey,
+                "resolved": {
+                    "resolved_direction_id": "<stable ID, same as collection_key unless split>",
+                    "provisional_direction_id": ckey,
+                    "name_ja": "<confirmed or renamed>",
+                    "name_zh": "<confirmed or renamed>",
+                    "resolution_type": "unchanged|renamed|split_from|merged_into|refined",
+                    "papers_to_add": ["<item_key>"],
+                    "papers_to_remove": ["<item_key>"],
+                    "paper_justifications": {"<item_key>": "<1 sentence reason>"},
+                    "split_target": "<if split: new direction_id>",
+                    "merge_target": "<if merged: target direction_id>",
+                    "user_note": "<preserved from provisional>",
+                },
+            },
+            "model_input": {
+                "collection_key": ckey,
+                "provisional_direction": {
+                    "name_ja": direction.get("name_ja"),
+                    "name_zh": direction.get("name_zh"),
+                    "summary_zh": direction.get("summary_zh"),
+                    "user_note": direction.get("user_note") or "",
+                    "provisional_member_keys": direction.get("provisional_member_keys") or [],
+                    "credibility": direction.get("credibility") or {},
+                },
+                "paper_evidence": paper_evidence,
+                "gap_evidence": gap_evidence,
+                "removal_candidates": dir_removals,
+                "split_candidates": [s for s in splits if s["direction"] == ckey],
+                "merge_candidates": [m for m in merges if m["direction_a"] == ckey or m["direction_b"] == ckey],
+                "addition_candidates": [a for a in additions if a["target_direction"] == ckey],
+                "rules": (
+                    "Resolve this provisional direction against full-text evidence.\n"
+                    "1. Each paper in paper_evidence has full-text facts (facts_state=valid) or not.\n"
+                    "2. Papers with valid full-text facts: judge membership by topic_terms overlap with direction profile.\n"
+                    "3. Papers without full-text facts: keep provisional membership (can't downgrade without evidence).\n"
+                    "4. A paper can support multiple directions (shared papers are allowed).\n"
+                    "5. Removal: only when full-text facts clearly show the paper doesn't belong.\n"
+                    "6. Addition: only when full-text facts clearly support this direction over the provisional one.\n"
+                    "7. Split: only when papers cluster into ≥2 distinct topic groups.\n"
+                    "8. Merge: only when another direction shares the same line of work.\n"
+                    "9. Keyword/grep matches alone are NOT sufficient for final membership.\n"
+                    "10. If no material change, set resolution_type='unchanged' and empty add/remove lists."
+                ),
+            },
+        })
+
+    emit({
+        "status": "ok",
+        "professor": ctx.professor,
+        "professor_dir": str(ctx.professor_dir),
+        "has_material_changes": has_material_changes,
+        "summary": {
+            "directions": len(ctx.direction_plans),
+            "addition_candidates": len(additions),
+            "removal_candidates": len(removals),
+            "split_candidates": len(splits),
+            "merge_candidates": len(merges),
+        },
+        "candidates": {
+            "additions": additions,
+            "removals": removals,
+            "splits": splits,
+            "merges": merges,
+        },
+        "jobs": resolve_jobs,
+        "write_needed": bool(resolve_jobs),
+    })
+
+
+def validate_resolve_results(ctx: Stage2Context, results_dir: Path) -> dict[str, dict]:
+    """Validate resolve result JSON files. Returns ckey -> resolved direction."""
+    resolved = {}
+    for plan in ctx.direction_plans:
+        ckey = plan["ckey"]
+        result_path = results_dir / f"resolve-{ckey}.json"
+        if not result_path.is_file():
+            # No result = unchanged resolution
+            direction = plan["direction"]
+            resolved[ckey] = {
+                "resolved_direction_id": ckey,
+                "provisional_direction_id": ckey,
+                "name_ja": direction.get("name_ja") or "",
+                "name_zh": direction.get("name_zh") or "",
+                "resolution_type": "unchanged",
+                "papers_to_add": [],
+                "papers_to_remove": [],
+                "paper_justifications": {},
+                "split_target": None,
+                "merge_target": None,
+                "user_note": direction.get("user_note") or "",
+            }
+            continue
+        data, error = read_json_file(result_path)
+        if error:
+            fail("result_missing", f"{result_path}: {error}")
+        if not isinstance(data, dict) or data.get("schema") != 1 or data.get("kind") != "resolve":
+            fail("invalid_result_json", f"{result_path}: schema/kind must be 1/resolve")
+        r = data.get("resolved")
+        if not isinstance(r, dict):
+            fail("invalid_result_json", f"{result_path}: resolved must be an object")
+        # Validate required fields
+        resolved_direction_id = r.get("resolved_direction_id")
+        if not isinstance(resolved_direction_id, str):
+            fail("invalid_result_json", f"{result_path}: resolved_direction_id must be a string")
+        resolution_type = r.get("resolution_type")
+        if resolution_type not in ("unchanged", "renamed", "split_from", "merged_into", "refined"):
+            fail("invalid_result_json", f"{result_path}: invalid resolution_type: {resolution_type}")
+        papers_to_add = r.get("papers_to_add") or []
+        papers_to_remove = r.get("papers_to_remove") or []
+        if not isinstance(papers_to_add, list) or not all(isinstance(k, str) for k in papers_to_add):
+            fail("invalid_result_json", f"{result_path}: papers_to_add must be a string list")
+        if not isinstance(papers_to_remove, list) or not all(isinstance(k, str) for k in papers_to_remove):
+            fail("invalid_result_json", f"{result_path}: papers_to_remove must be a string list")
+        # Validate that removed papers were provisional members
+        provisional = set(plan["direction"].get("provisional_member_keys") or [])
+        for key in papers_to_remove:
+            if key not in provisional:
+                fail("invalid_result_json",
+                     f"{result_path}: cannot remove non-provisional paper {key}")
+        # Validate that added papers exist in candidate set
+        candidate_set = set(plan["direction"].get("member_keys") or [])
+        for key in papers_to_add:
+            if key not in candidate_set:
+                fail("invalid_result_json",
+                     f"{result_path}: cannot add paper {key} not in candidate set")
+        resolved[ckey] = {
+            "resolved_direction_id": resolved_direction_id,
+            "provisional_direction_id": ckey,
+            "name_ja": r.get("name_ja") or plan["direction"].get("name_ja") or "",
+            "name_zh": r.get("name_zh") or plan["direction"].get("name_zh") or "",
+            "resolution_type": resolution_type,
+            "papers_to_add": papers_to_add,
+            "papers_to_remove": papers_to_remove,
+            "paper_justifications": r.get("paper_justifications") or {},
+            "split_target": r.get("split_target"),
+            "merge_target": r.get("merge_target"),
+            "user_note": r.get("user_note") or plan["direction"].get("user_note") or "",
+        }
+    return resolved
+
+
+def cmd_stage2_resolve_finalize(args) -> None:
+    """Validate resolve results and write resolved_direction state to a sidecar file.
+
+    The resolved direction state is written to `<professor_dir>/论文分析/_resolved_directions.json`
+    as an intermediate artifact consumed by stage2-finalize.
+    """
+    ctx = Stage2Context(Path(args.facts))
+    results_dir = Path(args.results)
+    resolved = validate_resolve_results(ctx, results_dir)
+
+    # Check for material changes that require user confirmation
+    material_changes = []
+    for ckey, r in resolved.items():
+        if r["resolution_type"] != "unchanged":
+            material_changes.append({
+                "provisional_direction_id": ckey,
+                "resolved_direction_id": r["resolved_direction_id"],
+                "resolution_type": r["resolution_type"],
+                "name_ja": r["name_ja"],
+                "name_zh": r["name_zh"],
+                "papers_to_add": r["papers_to_add"],
+                "papers_to_remove": r["papers_to_remove"],
+                "split_target": r["split_target"],
+                "merge_target": r["merge_target"],
+            })
+
+    # Write resolved directions state
+    resolved_path = ctx.professor_dir / "论文分析" / "_resolved_directions.json"
+    resolved_payload = {
+        "schema": RESOLVED_DIRECTION_SCHEMA,
+        "kind": "professor-contact-resolved-directions",
+        "professor": ctx.professor,
+        "generated_at": now_utc(),
+        "directions": list(resolved.values()),
+        "has_material_changes": bool(material_changes),
+    }
+    atomic_json(resolved_path, resolved_payload)
+
+    emit({
+        "status": "ok",
+        "professor": ctx.professor,
+        "resolved_directions_path": str(resolved_path),
+        "directions": [
+            {
+                "provisional_direction_id": ckey,
+                "resolved_direction_id": r["resolved_direction_id"],
+                "resolution_type": r["resolution_type"],
+                "name_ja": r["name_ja"],
+                "name_zh": r["name_zh"],
+                "papers_to_add": r["papers_to_add"],
+                "papers_to_remove": r["papers_to_remove"],
+            }
+            for ckey, r in resolved.items()
+        ],
+        "material_changes": material_changes,
+        "needs_user_choice": bool(material_changes),
+    })
+
+
 def cmd_stage2_plan(args) -> None:
     ctx = Stage2Context(Path(args.facts))
     jobs, reuse_list, process_list = [], [], []
@@ -1474,6 +2034,23 @@ def render_analysis_md(ctx: Stage2Context, pack_directions: list,
         span = f"{min(years)}–{max(years)}" if years else "年份不明"
         lines.append(f"## 方向 {index}：{d['name_ja']}（{d.get('name_zh') or ''}）")
         lines.append("")
+        # Show resolution info if available
+        rd = d.get("resolved_direction")
+        if rd and rd.get("resolution_type") and rd["resolution_type"] != "unchanged":
+            res_type_label = {
+                "renamed": "重命名",
+                "split_from": "拆分",
+                "merged_into": "合并",
+                "refined": "修正",
+            }.get(rd["resolution_type"], rd["resolution_type"])
+            lines.append(f"> 方向解析：{res_type_label}（provisional → resolved）")
+            if rd.get("papers_to_remove"):
+                removed_titles = [ctx.papers.get(k, {}).get("title", k) for k in rd["papers_to_remove"]]
+                lines.append(f"> - 移除论文：{'、'.join(removed_titles)}")
+            if rd.get("papers_to_add"):
+                added_titles = [ctx.papers.get(k, {}).get("title", k) for k in rd["papers_to_add"]]
+                lines.append(f"> + 新增论文：{'、'.join(added_titles)}")
+            lines.append("")
         lines.append("### 方向定位")
         lines.append("")
         lines.append(f"<可信度一句：{verdict} ｜ {mainline} ｜ 相关 {len(d['supporting_papers'])} 篇（{span}）。>")
@@ -1507,13 +2084,19 @@ def render_analysis_md(ctx: Stage2Context, pack_directions: list,
         lines.append("")
         lines.append("### 论文一览")
         lines.append("")
-        lines.append("| 论文 | 年份 | 署名 | 分析 |")
-        lines.append("|---|---|---|---|")
+        lines.append("| 论文 | 年份 | 署名 | 分析 | 来源 |")
+        lines.append("|---|---|---|---|---|")
         for p in d["supporting_papers"]:
             analysis_cell = "—"
             if p.get("analysis_file"):
                 analysis_cell = f"[分析]({rel_path(Path(p['analysis_file']), ctx.professor_dir)})"
-            lines.append(f"| [{p['title']}](zotero://select/library/items/{p['item_key']}) | {p.get('year') or '—'} | {p.get('authorship') or 'pending'} | {analysis_cell} |")
+            if p.get("resolved_addition"):
+                source_cell = "全文验证新增"
+            elif p.get("named_by_user"):
+                source_cell = "用户指定"
+            else:
+                source_cell = "provisional"
+            lines.append(f"| [{p['title']}](zotero://select/library/items/{p['item_key']}) | {p.get('year') or '—'} | {p.get('authorship') or 'pending'} | {analysis_cell} | {source_cell} |")
         lines.append("")
         lines.append("### 用户笔记（原文）")
         lines.append("")
@@ -1581,6 +2164,19 @@ def cmd_stage2_finalize(args) -> None:
         decision_data, error = read_json_file(Path(args.decision_file))
         if error is None and isinstance(decision_data, dict):
             decision = decision_data.get("decision")
+
+    # Load resolved directions if provided
+    resolved_directions = None
+    resolved_directions_path = getattr(args, "resolved_directions", None)
+    if resolved_directions_path:
+        rd_data, rd_error = read_json_file(Path(resolved_directions_path))
+        if rd_error is None and isinstance(rd_data, dict) and rd_data.get("kind") == "professor-contact-resolved-directions":
+            resolved_directions = {
+                d["provisional_direction_id"]: d
+                for d in rd_data.get("directions", [])
+                if isinstance(d, dict) and "provisional_direction_id" in d
+            }
+
     required_freshness, needed_keys = {}, []
     for plan in ctx.direction_plans:
         if plan["reuse"]:
@@ -1600,6 +2196,56 @@ def cmd_stage2_finalize(args) -> None:
             pack_directions.append(build_direction_pack(
                 ctx, plan, statuses_by_direction.get(plan["ckey"], {}),
                 narratives[plan["ckey"]]))
+
+    # Apply resolved directions to pack_directions
+    if resolved_directions:
+        for d in pack_directions:
+            ckey = d.get("collection_key")
+            rd = resolved_directions.get(ckey)
+            if rd and rd.get("resolution_type") != "unchanged":
+                # Apply resolution: update names, add/remove papers
+                d["name_ja"] = rd.get("name_ja") or d.get("name_ja")
+                d["name_zh"] = rd.get("name_zh") or d.get("name_zh")
+                d["resolved_direction"] = {
+                    "resolved_direction_id": rd.get("resolved_direction_id"),
+                    "provisional_direction_id": rd.get("provisional_direction_id"),
+                    "resolution_type": rd.get("resolution_type"),
+                    "papers_to_add": rd.get("papers_to_add", []),
+                    "papers_to_remove": rd.get("papers_to_remove", []),
+                    "paper_justifications": rd.get("paper_justifications", {}),
+                    "split_target": rd.get("split_target"),
+                    "merge_target": rd.get("merge_target"),
+                }
+                # Apply paper removals
+                remove_set = set(rd.get("papers_to_remove", []))
+                if remove_set:
+                    d["supporting_papers"] = [
+                        p for p in d.get("supporting_papers", [])
+                        if p.get("item_key") not in remove_set
+                    ]
+                # Apply paper additions (mark as resolved-addition)
+                for add_key in rd.get("papers_to_add", []):
+                    # Check if already in supporting_papers
+                    if not any(p.get("item_key") == add_key for p in d.get("supporting_papers", [])):
+                        paper = ctx.papers.get(add_key)
+                        if paper:
+                            facts_record, facts_state, facts_error = ctx.facts_for(add_key)
+                            d.setdefault("supporting_papers", []).append({
+                                "item_key": add_key,
+                                "title": paper.get("title"),
+                                "year": paper.get("year"),
+                                "authorship": paper.get("authorship"),
+                                "named_by_user": False,
+                                "has_analysis": bool(paper.get("analysis_file")),
+                                "analysis_file": paper.get("analysis_file"),
+                                "pdf_available": bool(paper.get("has_pdf")),
+                                "facts_state": facts_state,
+                                "facts_error": facts_error,
+                                "paper_facts": facts_record,
+                                "resolved_addition": True,
+                                "addition_justification": rd.get("paper_justifications", {}).get(add_key, ""),
+                            })
+
     fingerprints = {d["collection_key"]: d["input_fingerprint"] for d in pack_directions}
     state_fingerprint = sha256_obj({"professor": ctx.professor, "directions": fingerprints})
     cache_entries = dict(ctx.cache)
@@ -1626,6 +2272,19 @@ def cmd_stage2_finalize(args) -> None:
         "directions": pack_directions,
         "cache": {"render": {ANALYSIS_MD: {"sha256": (md_result or {}).get("sha256") or old_render.get(ANALYSIS_MD, {}).get("sha256")}}},
     }
+    if resolved_directions:
+        pack["resolved_directions"] = {
+            "schema": RESOLVED_DIRECTION_SCHEMA,
+            "applied_at": now_utc(),
+            "directions": [
+                {
+                    "provisional_direction_id": ckey,
+                    "resolved_direction_id": rd.get("resolved_direction_id"),
+                    "resolution_type": rd.get("resolution_type"),
+                }
+                for ckey, rd in resolved_directions.items()
+            ],
+        }
     if ctx.pack and not needed_keys and ctx.pack.get("validator"):
         pack["validator"] = ctx.pack["validator"]
     atomic_json(ctx.pack_path, pack)
@@ -1641,10 +2300,13 @@ def cmd_stage2_finalize(args) -> None:
         "directions": [{"collection_key": d["collection_key"],
                         "shortlist": len(d.get("gap_shortlist", [])),
                         "blacklist": len(d.get("completed_gap_blacklist", [])),
-                        "excluded": len(d.get("gaps_excluded", []))}
+                        "excluded": len(d.get("gaps_excluded", [])),
+                        "resolved": bool(resolved_directions and d["collection_key"] in resolved_directions
+                                         and resolved_directions[d["collection_key"]].get("resolution_type") != "unchanged")}
                        for d in pack_directions],
         "freshness_judged": judged, "freshness_cache_total": len(cache_entries),
         "md_sha256": (md_result or {}).get("sha256"),
+        "resolved_directions_applied": bool(resolved_directions),
     })
 
 
@@ -4049,6 +4711,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="professor-contact deterministic state runner")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p = sub.add_parser("stage2-resolve-plan")
+    p.add_argument("--facts", required=True)
+    p.set_defaults(func=lambda a: cmd_stage2_resolve_plan(a))
+
+    p = sub.add_parser("stage2-resolve-finalize")
+    p.add_argument("--facts", required=True)
+    p.add_argument("--results", required=True)
+    p.set_defaults(func=lambda a: cmd_stage2_resolve_finalize(a))
+
     p = sub.add_parser("stage2-plan")
     p.add_argument("--facts", required=True)
     p.set_defaults(func=lambda a: cmd_stage2_plan(a))
@@ -4057,6 +4728,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--facts", required=True)
     p.add_argument("--results", required=True)
     p.add_argument("--decision-file")
+    p.add_argument("--resolved-directions")
     p.set_defaults(func=cmd_stage2_finalize)
 
     p = sub.add_parser("stage2-refine-plan")

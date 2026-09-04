@@ -372,13 +372,66 @@ For each flagged direction:
 - `provisional_member_keys` = target state 的 `members[]`（审计用，参与 runner 指纹的只有 member/relevant/named keys 与 credibility 等字段；归属语义以 `membership_claim: non_final_candidates_only` 为准，Stage 2 绝不宣称最终成员）。
 - `relevant_keys` = Step 5.2 判定的相关集（⊆ candidate_keys）；`named_keys` = user_note 点名 ∪ 快照 `user_named`。
 
-**6.2 跑 `stage2-plan`**：
+**6.1.5 解析方向（resolved_direction）——权威性方向归属**
 
+本步是 issue #7 要求的 Stage 2 权威性方向归属：基于全文级 facts 验证每个被选方向的成员清单、命名与聚类是否成立，并把结果写进 `套磁候选输入.json` 的 `resolved_direction` 字段，下游（阶段 3–5）只消费 `resolved_direction` 不再回读 provisional 身份。
+
+**A. 跑 `stage2-resolve-plan`**（纯确定性，零模型）：
+```bash
+skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py \
+  stage2-resolve-plan --facts /tmp/<教授名>_套磁_facts.json
+```
+
+返回 `candidates.{additions,removals,splits,merges}` 列表与每个方向一个 `resolve:<教授>:<方向>` job；job 的 `model_input` 含该方向逐篇的 `paper_evidence`（含 `facts_state`/`topic_terms`/`affinity_scores`）、`gap_evidence`、自动检测到的 `removal/addition/split/merge` 候选，以及规则。**注意**：方向是**逐个独立 resolve**的——同一篇论文可在多个被选方向被同时分析，runner 不因共享论文合并方向。
+
+**B. 写每个方向的 resolve result**（一个 `resolve-<方向>.json`）：
+```json
+{"schema": 1, "kind": "resolve", "collection_key": "...",
+ "resolved": {
+   "resolved_direction_id": "<稳定 ID，provisional 即 collection_key；split 改 <collection_key>__<suffix>>",
+   "provisional_direction_id": "...",
+   "name_ja": "<确认或重命名>", "name_zh": "<确认或重命名>",
+   "resolution_type": "unchanged|renamed|split_from|merged_into|refined",
+   "papers_to_add": ["<item_key>"], "papers_to_remove": ["<item_key>"],
+   "paper_justifications": {"<item_key>": "<1 句理由>"},
+   "split_target": "<若 split：被分出的子方向 ID>", "merge_target": "<若 merged_into：目标方向 ID>",
+   "user_note": "<从 provisional 保留>"
+ }}
+```
+
+判定规则：
+- 每篇候选 = provisional member + Stage 1 扩召；含全文级 facts 即可判定归属。
+- 含 facts 论文按 `topic_terms` 与方向画像（name_ja/name_zh/summary_zh）的词面/语义重叠判定归属；不含 facts 的论文**保留** provisional 归属（没全文证据不下放）。
+- **移除**：仅当 facts 明确显示该论文不属于本方向（topic 完全不沾、gap 也不来）。**绝不**因为论文是 abstract-only 就移除。
+- **新增**：仅当 facts 明确显示该论文 support 本方向而非其 provisional 方向。**绝不**因为 abstract-level 词面重叠就新增。
+- **重命名**：方向名（如 language/concept）与全文证据明显冲突时。
+- **拆分**：≥4 篇有 facts 的论文明显聚成 ≥2 个不同 topic cluster 时；`split_target` 给出被分出子方向 ID（建议 `<原 ckey>__<新主题 token>`），新增的子方向在 6.2 阶段 3 计划里会按新 direction 处理。
+- **合并**：与另一方向共享多篇论文 + 画像高度重叠时；`merge_target` 给目标方向 ID，`resolution_type=merged_into`；runner 校验时会拒绝合并到一个本 professor 不存在的方向。
+- **keyword/grep 单独命中不构成 membership 证据**——必须 facts 全文证据。
+
+**C. 跑 `stage2-resolve-finalize`**（纯确定性，校验结果并写 `<教授目录>/论文分析/_resolved_directions.json`）：
+```bash
+skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py \
+  stage2-resolve-finalize --facts /tmp/<教授名>_套磁_facts.json \
+  --results /tmp/<教授名>_stage2_resolve_results
+```
+
+runner 校验：result schema/kind 正确、`resolution_type` 合法、`papers_to_remove` 全是 provisional member、`papers_to_add` 全在 candidate 集；写 `_resolved_directions.json`，返回 `needs_user_choice=true` 当有 `material_changes`（任何 direction 的 `resolution_type != "unchanged"`）。
+
+**D. 拆分/合并改用户选择时问一次**：如果 `needs_user_choice=true` 且其中有 split/merge/refined（即新增或移除 ≥2 篇、或方向名/结构变了），用 `question` 问用户：
+- **「采纳 refined 方向作为新选择，继续跑 Stage 2 finalize」** — 默认推荐；runner 在 finalize 时直接应用 resolved state。
+- **「先回 Stage 0 重选方向，再重跑 Stage 2」** — 视作 revised selection；本轮返回 `needs_refresh`。
+- **「沿用 provisional 身份忽略 resolved 提示」** — `stage2-finalize --resolved-directions <path>` 仍可传，但 runner 会把 `papers_to_add/remove/split/merge` 视为零（fallback provisional）；这一步要求用户在 `套磁候选分析.md` 显式标注"本轮按 provisional 归属"。
+
+未选择 → 保留上一份已接受输入包 + 返回 `needs_input`（不写新事实）。
+
+**E. facts JSON 已变（论文 PDF/facts sidecar/扩召）但 resolved_directions 未变时**：直接复用——如果 `_resolved_directions.json` 的 `input_fingerprint` 与本轮 facts 仍匹配，runner 跳过 resolve 阶段直接进入 6.2；新论文（不在 resolved 范围）走普通 Stage 2 增量 analysis，方向归属保持原 resolved state。
+
+**F. 跑 `stage2-plan`**（纯确定性）：
 ```bash
 skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage2-plan --facts /tmp/<教授名>_套磁_facts.json
 ```
 
-返回 JSON：每个方向 `action: reuse|process`（输入指纹未变且 freshness 缓存全命中 → `reuse`，直接复用输入包，不读论文全文、不重判 gap、不重写叙事）；`process` 方向给出两类模型 job：
 
 - `freshness:<教授>:<方向>`：每条待判 gap 附候选材料（runner 已按「已确认版本关系 → 通讯/一作/独著 → 近三年 pending/middle → 其余主题线索」分级，标注 `later_total` 与 `unverifiable_count`）。你逐条判断并写 `results/freshness-<方向>.json`：
   ```json
@@ -402,10 +455,12 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
 **6.3 跑 `stage2-finalize`**：
 
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage2-finalize --facts <facts> --results <results 目录>
+skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py \
+  stage2-finalize --facts <facts> --results <results 目录> \
+  --resolved-directions <教授目录>/论文分析/_resolved_directions.json
 ```
 
-runner 校验全部 result JSON（gap ID ∈ 待判集、candidate_paper_ids ⊆ 候选清单、partial 缺 completed_part/remaining_gap 自动降级 unknown 并标记 `downgraded`、narrative refs 与占位符一致），然后原子写：
+runner 校验全部 result JSON（gap ID ∈ 待判集、candidate_paper_ids ⊆ 候选清单、partial 缺 completed_part/remaining_gap 自动降级 unknown 并标记 `downgraded`、narrative refs 与占位符一致），应用 `_resolved_directions.json` 的方向归属修正（移除/新增/重命名），然后原子写：
 
 - `<教授文件夹>/套磁候选输入.json` — 阶段 3 唯一事实源（按方向的支撑论文、shortlist 5–10 条 gap 全量证据、排除清单+原因、done_by_self 黑名单、版本关系、红线、user_note、narrative、输入指纹）。
 - `<教授文件夹>/论文分析/_freshness_cache.json` — 逐 gap 缓存（gap_fingerprint + candidate_fingerprint；后续论文元数据/摘要/PDF/分析、sidecar、gap 原文、版本关系、署名线任一变化只使受影响 gap 失效；无 TTL；force=true 全失效）。
@@ -498,5 +553,7 @@ when: no `folder_path`; program root unresolvable; user aborted at the Zotero pr
 - **profile 隔离**：本阶段不读 profile、不把 profile 写进 facts/输入包/研究方向文件；「与我的契合」已由「用户笔记（原文）」取代——契合评估是阶段 3 的活。
 - **zotero:// 链接**：论文一览与叙事引用的每篇论文带 `zotero://select/library/items/<item_key>`（key 取 Zotero 实际 item key，不以 papers.json 为准——不一致时以 Zotero 为准并记入 notes）。
 - **幂等**：`<论文分析>/_index.json` 命中即跳过；摘要级→新 PDF→重跑全文级；OCR 产物 `<论文分析>/_ocr/<标题>.txt` 存在即复用。强制重分析 = 删 index 对应条目或整个 `论文分析/`。
-- Write 分工：你只写 `/tmp` 中间文件（facts、job results、每方向 `_研究方向.md`）+ `<论文分析>/_index.json` + `<论文分析>/_ocr/<标题>.txt`；`套磁候选输入.json`、`_freshness_cache.json`、`套磁候选分析.md` 只由 runner 写。`论文分析/<作者>/<标题>.md`、其 `.future_work.json`/`.facts.json` sidecar 及 `_future_work_debug/` 只由 paper-analysis（或 handoff importer 经确定性 helper）写入；Stage 2 是 `_index.json` 唯一 writer。不改 papers.json、不动其它产物。**绝不手写或手改 `套磁候选分析.md`**。所有这些教授目录写入都受同一个 local-writer lease scope 保护。
+- **resolved_direction 是方向归属的权威源**：Stage 2 6.1.5 跑 resolve 流水线后，`<教授目录>/套磁候选输入.json` 的 `resolved_directions` 字段与每个 direction 的 `resolved_direction` 子字段是阶段 3–5 的唯一方向身份；provisional（target state 的 `members[]`）只作审计元数据。移除的论文在 supporting_papers 不再出现；新增的论文以 `resolved_addition=true` 标记；重命名同步进 `name_ja/name_zh`；split/merge 的子方向各自一个 direction entry。下游不再回读 Stage 1 候选快照 / target state `members[]` / Zotero 分类作方向归属。
+- **resolved_directions 复用与失效**：当 facts/papers/扩召未变、且 `_resolved_directions.json` 内每个方向的 `input_fingerprint` 与本次 facts 仍匹配时，runner 直接复用 resolved 状态，不重跑 6.1.5 模型 job；任何 resolved 方向的 relevant 论文 metadata/sidecar/facts 变化 → resolved 失效（仍走 6.1.5 重判）。**绝不**因为 Stage 1 重新 build 而抹掉 resolved 状态——Stage 1 的目标仍是 provisional，resolved 是它的 superset。
+- Write 分工：你只写 `/tmp` 中间文件（facts、job results、每方向 `_研究方向.md`、resolve results）+ `<论文分析>/_index.json` + `<论文分析>/_ocr/<标题>.txt` + `<论文分析>/_resolved_directions.json`；`套磁候选输入.json`、`_freshness_cache.json`、`套磁候选分析.md` 只由 runner 写。`论文分析/<作者>/<标题>.md`、其 `.future_work.json`/`.facts.json` sidecar 及 `_future_work_debug/` 只由 paper-analysis（或 handoff importer 经确定性 helper）写入；Stage 2 是 `_index.json` 与 `_resolved_directions.json` 唯一 writer。不改 papers.json、不动其它产物。**绝不手写或手改 `套磁候选分析.md`**。所有这些教授目录写入都受同一个 local-writer lease scope 保护。
 - Be economical: reuse the SID; batch curl calls; PDF 首页提取只对「摘要缺失」的论文做；OCR 只在相关集内、且仅扫描乱码页；paper-analysis 只跑相关集（`paper_analysis=all` 例外）。

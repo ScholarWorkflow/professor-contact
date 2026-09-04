@@ -56,7 +56,7 @@ Stage 0 does not require Zotero to be open. Later stages may still use Zotero as
 |---|---|---|---|
 | 0 | `professor-contact` | 读 normalized `方向预筛.json` → 交互选定方向（可多选 + per-direction user note） | `教授研究/套磁目标.json`（机器状态；无 Stage 0 Markdown） |
 | 1 | `professor-contact-downloader` | 先 `contact_targets.py resolve`，再 `contact_stage1.py build` 构建逐方向候选快照（保守扩召 + 就绪检查），仅对缺失候选跑 `professor-collector(pdf_only, item_keys=<缺失 keys>)` 定向补下；全部就绪则 no-op | `教授研究/套磁阶段1候选.json`（机器状态）+ PDF 附件补下 |
-| 2 | `professor-contact-analyzer` | 先 `contact_stage1.py verify` 校验 Stage 1 候选快照，以逐方向 `candidate_keys` 为读取/相关性/分析范围（可信度闸门只用 provisional members）→ 判定相关论文、署名、主线与 post-cost-gate 分析 scope 后，**总是先生成确定性的 ChatGPT handoff ZIP**。`chatgpt_handoff=continue` 时 ZIP 只是低成本 side effect，随后旧的本地 OCR/`paper-analysis` 路径语义不变；`wait` 时在任何新 OCR/`paper-analysis` 前软停止。提供匹配 result ZIP 后先严格本地导入成普通 analysis/sidecar，再继续既有 `stage2-plan → stage2-finalize`。gap/runner/状态机仍完全本地 | `<教授名>/论文分析/_chatgpt_handoff/stage2-<id>.zip`（传输层）+ 原有 `<教授名>/套磁候选输入.json`（Stage 3 唯一事实源）/分析报告/_freshness_cache/index/sidecar |
+| 2 | `professor-contact-analyzer` | 先 `contact_stage1.py verify` 校验 Stage 1 候选快照，以逐方向 `candidate_keys` 为读取/相关性/分析范围（可信度闸门只用 provisional members）→ 判定相关论文、署名、主线与 post-cost-gate 分析 scope 后，**总是先生成确定性的 ChatGPT handoff ZIP**。`chatgpt_handoff=continue` 时 ZIP 只是低成本 side effect，随后旧的本地 OCR/`paper-analysis` 路径语义不变；`wait` 时在任何新 OCR/`paper-analysis` 前软停止。提供匹配 result ZIP 后先严格本地导入成普通 analysis/sidecar，再继续既有 `stage2-resolve-plan → stage2-resolve-finalize → stage2-plan → stage2-finalize`（resolve 流水线对每个被选方向做权威性归属判定：移除误归类、新增他向支持、重命名、拆分/合并、写 `resolved_direction` 状态）。gap/runner/状态机仍完全本地 | `<教授名>/论文分析/_chatgpt_handoff/stage2-<id>.zip`（传输层）+ `<教授名>/论文分析/_resolved_directions.json`（方向权威归属）+ 原有 `<教授名>/套磁候选输入.json`（带 `resolved_directions` 字段，Stage 3 唯一事实源）/分析报告/_freshness_cache/index/sidecar |
 | 3 | `professor-contact-idea-generator` | **只读输入包 + profile**（不读任何 Markdown/_index/sidecar）：`stage3-plan` 按 `refresh_scope` 生成逐方向候选 job → 模型写结构化候选 JSON（精确 gap 锚、done_by_self 只能【我的延伸】+差异点）→ `stage3-finalize` 校验后写状态并渲染候选文件；profile 改动只失效阶段 3/4，不失效阶段 2；白话校验结果另由 `stage3-record-validation` 写入独立字段 | `<教授名>/套磁候选状态.json` + `<教授名>/套磁想法候选.md` + `套磁想法候选总览.md`（后两者 runner 渲染） |
 | 4 | `professor-contact-selection` | 用户从**候选状态**（非 Markdown）挑选 → `stage4-finalize` 校验指纹（过期 `needs_refresh` 不落盘）→ 写选择并**编译程序级邮件输入包**（精确 `item_key+gap_id` join；done_by_self 只作 extension_context_only） | `教授研究/套磁选择.json` + `教授研究/邮件输入.json`（阶段 5 唯一事实源，自包含短证据） |
 | 5 | `professor-contact-email-generator` | **只读邮件输入包**（+profile/模板/info/boshu/`_contact_verify.json`）：默认生成首封和无回复跟进两种输出；`stage5-plan --mode both`（模型 job + 核验缓存检查）→ 送信前核验（5.9 不变）→ 模型只回首封的 4 句兴趣段+source_map+未来志向+学習中候选 → 用户补初次发送日期 → runner 同时拼装首封/跟进 → `humanizer-ja` 分别过稿；用 `--humanized-map` 一一对应，runner 先全量预校验再写盘 → `stage5-finalize --mode both`（保护串校验+渲染）→ validator 循环（validator 也只读 md+邮件包）并记录 `stage5-record-validation` | 每封选中邮件独立的 `套磁邮件.md`/`.txt` 与 `套磁跟进邮件.md`/`.txt`（单封用固定名，多封按方向与想法 ID 加后缀）+ `<教授名>/套磁邮件状态.json` + `套磁邮件总览.md` + `_contact_verify.json` |
@@ -141,9 +141,10 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_t
 
 | 阶段 | 状态文件 | 位置 |
 |---|---|---|
-| 2 | `套磁候选输入.json`（方向事实包：支撑论文/gap shortlist 全证据/黑名单/版本关系/红线/user_note/narrative/输入指纹；可含独立 `validator` 结果） | `<教授名>/` |
+| 2 | `套磁候选输入.json`（方向事实包：支撑论文/gap shortlist 全证据/黑名单/版本关系/红线/user_note/narrative/输入指纹；含 `resolved_directions` 字段与每个 direction 的 `resolved_direction` 子字段；可含独立 `validator` 结果） | `<教授名>/` |
 | 1 | `套磁阶段1候选.json`（逐方向候选集：provisional members/expanded candidates/逐篇 expansion reasons/preview+input 指纹/PDF readiness；`membership_claim: non_final_candidates_only`） | `教授研究/` |
 | 2 | `_freshness_cache.json`（逐 gap：status + gap_fingerprint + candidate_fingerprint，无 TTL） | `<教授名>/论文分析/` |
+| 2 | `_resolved_directions.json`（方向权威归属：resolved_direction_id/provisional_direction_id/name_ja/name_zh/resolution_type/papers_to_add/papers_to_remove/paper_justifications；`membership_claim: authoritative_fulltext_verified`） | `<教授名>/论文分析/` |
 | 3 | `套磁候选状态.json`（候选 + profile 指纹 + 输入指纹；可含独立 `validator` 结果） | `<教授名>/` |
 | 4 | `套磁选择.json` + `邮件输入.json`（自包含短证据，阶段 5 唯一事实源） | `教授研究/` |
 | 5 | `套磁邮件状态.json`（逐 email：model_result/choices/render sha/validation；`issues` 必须为列表） | `<教授名>/` |
@@ -171,6 +172,25 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_t
 ### 版本关系（阶段 2 输入包内临时计算）
 
 runner 在输入包内计算临时 `version_family/version_role/supersedes`：会议版/期刊扩展版仅在作者核心集合、题名/摘要主题、时间顺序、明确扩展证据（后续摘要正则命中 extend/journal version 等）都成立时合并（期刊扩展版为主证据，重复 gap 标 `suppressed_by`）；证据不足只写 `possible_family` 人工提示，不合并不压制不影响 freshness。
+
+### Resolved directions（权威性方向归属，阶段 2 → 阶段 3–5 唯一方向身份）
+
+preview 聚类以**摘要**为证据，可能把论文误放进 / 漏出某个方向；阶段 2 拿到全文级 paper-analysis facts 后，必须对每个被选方向做一次权威性归属判定，把结果写进 `<教授名>/论文分析/_resolved_directions.json` 与 `套磁候选输入.json` 的 `resolved_directions` 字段，阶段 3–5 只读这个状态，不再回读 provisional 身份或 Zotero 分类作方向归属。
+
+流水线（在 `stage2-plan/finalize` 之前必须完成）：
+
+1. `contact_state.py stage2-resolve-plan --facts <facts>` —— 纯确定性零模型，给出 `candidates.{additions,removals,splits,merges}` 列表与每个方向一个 `resolve:<教授>:<方向>` job。
+2. 模型按 job 写 `results/resolve-<方向>.json`：每方向 `resolved.{resolved_direction_id,provisional_direction_id,name_ja,name_zh,resolution_type,papers_to_add,papers_to_remove,paper_justifications,split_target,merge_target,user_note}`，resolution_type ∈ {`unchanged`/`renamed`/`split_from`/`merged_into`/`refined`}。
+3. `contact_state.py stage2-resolve-finalize --facts <facts> --results <results>` —— 校验 schema/合法性（`papers_to_remove` 必须是 provisional member、`papers_to_add` 必须在 candidate 集），写 `_resolved_directions.json`，返回 `needs_user_choice=true` 当任何方向 `resolution_type != "unchanged"`。
+4. **有 material change 时**问用户采纳 refined / 回 Stage 0 重选 / 沿用 provisional 忽略 resolved；不选 → 保留旧产物 + `needs_input`。
+5. `stage2-finalize --resolved-directions <path>` —— 应用 resolved 状态：移除/新增论文、刷新 `name_ja/name_zh`、把 `resolved_direction` 子字段写进每个 direction，并在输入包顶层加 `resolved_directions` 索引。
+
+复用与失效：
+
+- resolved 状态不是 paper-analysis 的二级缓存，而是独立的方向归属机器事实。复用条件 = facts/papers/扩召未变 + `_resolved_directions.json` 的 `input_fingerprint` 与本轮 facts 仍匹配；任一 resolved 方向的 relevant 论文 metadata/sidecar/facts 变化 → 该方向 resolved 失效。
+- 一篇论文可支撑多个 resolved 方向（共享 membership 仍然合法）；同一论文 analysis 仍按 `item_key` 去重执行一次。
+- keyword/grep 单独命中不构成 resolved membership 证据——必须全文 facts 支撑。
+- 下游（阶段 3 / 4 / 5）不再回读 Stage 1 候选快照 / target state `members[]` / Zotero 分类作方向归属；如需重置，必须清掉 `_resolved_directions.json` 并重跑 resolve 流水线。
 
 ### 迁移（migrate-v3）
 
