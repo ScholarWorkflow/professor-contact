@@ -5,6 +5,9 @@ Only local deterministic work: JSON/schema validation, fingerprinting, cache
 invalidation, scope selection, stable ordering, version-family heuristics,
 state updates, atomic writes, model-job assembly and deterministic Markdown
 projection.  Never starts subagents, models, browsers, Zotero or the network.
+The single child process it may run is professor-research's local
+deterministic `contact_evidence.py` freshness check/rebuild (local sources
+only, no web/PDF/Zotero/model work on its side either).
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unicodedata
@@ -37,8 +41,15 @@ PROJECTIONS_FILE = "_contact_projections.json"
 VERIFY_FILE = "_contact_verify.json"
 CONTACT_EVIDENCE_FILE = "_联系方式证据.json"
 CONTACT_EVIDENCE_KIND = "professor-contact-evidence"
+CONTACT_EVIDENCE_SCHEMAS = (1, 2)
+CONTACT_EVIDENCE_SCHEMA_LIVE = 2
 CONTACT_EVIDENCE_VERDICTS = ("confirmed_cross_source", "official_only",
                              "paper_only", "conflict", "insufficient")
+# professor-research schema-2 freshness interface (local-only): the stable
+# per-professor `--check` report and the idempotent deterministic rebuild.
+UPSTREAM_CHECK_SCRIPT = (Path(".apm") / "skills" / "professor-collector" /
+                         "scripts" / "contact_evidence.py")
+UPSTREAM_CHECK_TIMEOUT_SECONDS = 60
 GAP_SCOPES = ("relevant", "selected_direction", "all")
 FRESHNESS_SCOPES = ("shortlist", "full")
 REFRESH_SCOPES = ("flagged", "selected", "all")
@@ -2594,18 +2605,131 @@ def compact_name(value: Any) -> str:
 
 
 def load_contact_evidence(program_root: Path) -> tuple[dict | None, str | None]:
-    """Read the upstream reconciled artifact; absence is absence of evidence."""
+    """Read the upstream reconciled artifact; absence is absence of evidence.
+
+    The transitional reader accepts the legacy schema-1 layout alongside the
+    schema-2 fingerprint contract (review comment 5537970288); whether a
+    schema-2 artifact is *fresh* is decided by the upstream `--check`
+    interface, never by this reader.
+    """
     path = program_root / "教授研究" / CONTACT_EVIDENCE_FILE
     data, error = read_json_file(path)
     if error == "not_found":
         return None, None
     if error:
         return None, "unreadable"
-    if (not isinstance(data, dict) or data.get("schema") != 1 or
+    if (not isinstance(data, dict) or
+            data.get("schema") not in CONTACT_EVIDENCE_SCHEMAS or
             data.get("kind") != CONTACT_EVIDENCE_KIND or
             not isinstance(data.get("professors"), list)):
         return None, "invalid_artifact"
     return data, None
+
+
+def upstream_check_script(program_root: Path) -> Path:
+    return program_root / UPSTREAM_CHECK_SCRIPT
+
+
+def run_contact_evidence_check(program_root: Path) -> tuple[dict | None, str | None]:
+    """professor-research's stable local freshness interface:
+    `contact_evidence.py <program_root> --check` reports per-professor
+    fresh/stale/unavailable from the persisted artifact's source
+    fingerprints. Returns (report, None) on a valid report, or
+    (None, "script_missing" | "script_failed") when live source-state
+    freshness cannot be confirmed at all."""
+    script = upstream_check_script(program_root)
+    if not script.is_file():
+        return None, "script_missing"
+    return run_upstream_check_argv([sys.executable, str(script), str(program_root), "--check"])
+
+
+def run_contact_evidence_rebuild(program_root: Path) -> bool:
+    """The same deterministic local rebuild the upstream contract documents
+    for stale artifacts: rewrite the derived artifact from local sources
+    (idempotent, local-only), then the caller re-checks."""
+    script = upstream_check_script(program_root)
+    if not script.is_file():
+        return False
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), str(program_root)],
+            capture_output=True, text=True, timeout=UPSTREAM_CHECK_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0:
+        return False
+    try:
+        parsed = json.loads(proc.stdout)
+    except ValueError:
+        return False
+    return isinstance(parsed, dict) and parsed.get("result") == "ok"
+
+
+def run_upstream_check_argv(argv: list[str]) -> tuple[dict | None, str | None]:
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True,
+                              timeout=UPSTREAM_CHECK_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        return None, "script_failed"
+    if proc.returncode != 0:
+        return None, "script_failed"
+    try:
+        parsed = json.loads(proc.stdout)
+    except ValueError:
+        return None, "script_failed"
+    if (not isinstance(parsed, dict) or
+            parsed.get("result") not in ("fresh", "stale", "unavailable")):
+        return None, "script_failed"
+    return parsed, None
+
+
+def professor_source_state(report: dict | None, professor: str) -> dict | None:
+    """The target professor's own freshness entry from the --check report —
+    never the top-level aggregate. Absence means the report attributes no
+    per-professor state to them (structural artifact problem, or the
+    professor has no record upstream)."""
+    if not isinstance(report, dict):
+        return None
+    key = compact_name(professor)
+    for entry in report.get("professors") or []:
+        if (isinstance(entry, dict) and compact_name(entry.get("name")) == key
+                and entry.get("result") in ("fresh", "stale", "unavailable")):
+            return {"result": entry["result"],
+                    "reasons": [r for r in entry.get("reasons") or []
+                                if isinstance(r, str)]}
+    return None
+
+
+def source_state_needs_rebuild(state: dict | None) -> bool:
+    """Rebuild-first: a stale derived artifact — or a report that cannot
+    attribute any state to the professor (missing/legacy/invalid artifact) —
+    is resolved by the deterministic local rebuild whenever it can be
+    resolved there. An existing per-professor `unavailable` entry is a
+    universal source blocker (e.g. unreadable candidates/papers.json) that
+    only an upstream repair can fix, so rebuilding is pointless."""
+    if state is None:
+        return True
+    return state["result"] == "stale"
+
+
+def resolve_contact_evidence(program_root: Path, professors: list[str]) -> dict:
+    """Live artifact + per-professor source-state, with the rebuild-first
+    contract applied once per run: while any target professor's source-state
+    is not confirmably fresh and a local rebuild could resolve it, rebuild
+    and re-check before any decision is made. Never a web operation."""
+    artifact, artifact_error = load_contact_evidence(program_root)
+    report, checker_error = run_contact_evidence_check(program_root)
+    rebuild_ran = False
+    if checker_error is None and professors:
+        needs = any(source_state_needs_rebuild(professor_source_state(report, p))
+                    for p in professors)
+        if needs and run_contact_evidence_rebuild(program_root):
+            artifact, artifact_error = load_contact_evidence(program_root)
+            report, checker_error = run_contact_evidence_check(program_root)
+            rebuild_ran = True
+    return {"artifact": artifact, "artifact_error": artifact_error,
+            "report": report, "checker_error": checker_error,
+            "rebuild_ran": rebuild_ran}
 
 
 def contact_evidence_record(artifact: dict, professor: str) -> dict | None:
@@ -2709,18 +2833,32 @@ def contact_evidence_freshness_reason(timestamp: Any) -> str | None:
 
 def evaluate_contact_evidence(professor: str, snapshot: Any,
                               artifact: dict | None,
-                              artifact_error: str | None) -> dict:
-    """Issue-#10 decision ladder: upstream contact-evidence artifact first.
+                              artifact_error: str | None,
+                              state: dict | None = None,
+                              checker_error: str | None = None,
+                              rebuild_ran: bool = False) -> dict:
+    """Issue-#10 decision ladder under the schema-2 source-state contract
+    (final cross-repo acceptance criteria, PR #14 comment 5540723034).
 
-    Accepts the artifact's current email only for confirmed_cross_source or a
-    single official_only address, and only while the evidence itself is fresh
-    (generated_at within VERIFY_TTL_DAYS); everything else (paper-only,
-    conflict, ambiguous, insufficient, stale, unreadable artifact, a blocked
-    current-email decision for this record, unverifiable timestamp) escalates
-    to the existing official faculty/lab web verification ladder.
-    Degradation is judged per record via current_email_blocked_by (Issue #14):
-    source failures that only affect other professors — or family failures
-    that left this record's decision intact — escalate nobody.
+    The primary gate is live source-state freshness from professor-research's
+    local `--check` interface, judged per target professor:
+
+    - `fresh`: the live artifact record is consumable when its own decision is
+      unblocked (current_email_blocked_by empty); artifact-level
+      degraded/global_degraded flags alone never force web. The verdict ladder
+      (confirmed_cross_source, single official_only) then applies unchanged.
+    - `stale`: never accepted on a fresh timestamp and never resolved from the
+      pack snapshot — the deterministic local rebuild ran and the re-check
+      still could not confirm fresh evidence (rebuild_failed).
+    - `unavailable`: a universal source blocker only an upstream repair can
+      fix; pack snapshots and previously seeded verify caches are not
+      substitutes for it.
+
+    The generated_at/VERIFY_TTL_DAYS window remains only as the send-time age
+    policy on top of source-state freshness. Without the upstream checker
+    installed, legacy schema-1 artifacts keep the transitional age-policy
+    gate; schema-2 artifacts fail closed because their freshness cannot be
+    confirmed live.
     """
     def escalate(reason_code: str) -> dict:
         return {"status": "escalate", "reason_code": reason_code,
@@ -2736,42 +2874,62 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
                 "snapshot_stale": stale,
                 "provenance": evidence_provenance(record, recipient)}
 
+    if checker_error == "script_failed":
+        # The checker exists but live source-state freshness is unconfirmable.
+        return escalate("contact_evidence_check_unavailable")
+    if checker_error == "script_missing":
+        # Transitional install without professor-research's checker: legacy
+        # schema-1 artifacts keep the age-policy gate; schema-2 artifacts
+        # fail closed because their freshness cannot be confirmed live.
+        if artifact_error:
+            return escalate("contact_evidence_artifact_unreadable")
+        if artifact is None:
+            return escalate("contact_evidence_missing")
+        if artifact.get("schema") == CONTACT_EVIDENCE_SCHEMA_LIVE:
+            return escalate("contact_evidence_check_unavailable")
+        return _evaluate_record_ladder(professor, snapshot, artifact,
+                                       escalate, accept)
+    if state is None:
+        # The checker ran but attributes no state to this professor, so the
+        # rebuild-first pass already ran: either the rebuild itself failed, or
+        # it succeeded and the professor genuinely has no upstream record.
+        if not rebuild_ran:
+            return escalate("contact_evidence_rebuild_failed")
+        if artifact_error:
+            return escalate("contact_evidence_artifact_unreadable")
+        return escalate("contact_evidence_professor_not_found")
+    if state["result"] == "unavailable":
+        return escalate("contact_evidence_source_unavailable")
+    if state["result"] == "stale":
+        # Stale source-state after the rebuild-first pass: the local rebuild
+        # cannot resolve this, so it never becomes a timestamp/age question.
+        return escalate("contact_evidence_rebuild_failed")
     if artifact_error:
         return escalate("contact_evidence_artifact_unreadable")
-    source = "artifact"
+    return _evaluate_record_ladder(professor, snapshot, artifact,
+                                   escalate, accept)
+
+
+def _evaluate_record_ladder(professor: str, snapshot: Any, artifact: dict,
+                            escalate, accept) -> dict:
+    """Verdict ladder on the live artifact record. The generated_at TTL gate
+    here is the send-time age policy only — source-state freshness is judged
+    upstream (or, transitionally for legacy artifacts, not at all)."""
+    stale_reason = contact_evidence_freshness_reason(artifact.get("generated_at"))
+    if stale_reason:
+        return escalate(stale_reason)
+    record = contact_evidence_record(artifact, professor)
+    if record is None:
+        return escalate("contact_evidence_professor_not_found")
+    if contact_evidence_record_degraded(record):
+        # Scoped degradation (Issue #14): escalate only when this record's
+        # current-email decision was actually blocked upstream — raw
+        # family-unavailable flags are not enough, since upstream keeps a
+        # record usable when its decision rests only on readable families.
+        return escalate("contact_evidence_artifact_degraded")
     stale = None
-    record = None
-    if artifact is not None:
-        stale_reason = contact_evidence_freshness_reason(artifact.get("generated_at"))
-        if stale_reason:
-            return escalate(stale_reason)
-        record = contact_evidence_record(artifact, professor)
-        if record is None:
-            return escalate("contact_evidence_professor_not_found")
-        if contact_evidence_record_degraded(record):
-            # Scoped degradation (Issue #14): escalate only when this record's
-            # current-email decision was actually blocked upstream — raw
-            # family-unavailable flags are not enough, since upstream keeps a
-            # record usable when its decision rests only on readable families.
-            return escalate("contact_evidence_artifact_degraded")
-        if isinstance(snapshot, dict) and isinstance(snapshot.get("record_fingerprint"), str):
-            stale = snapshot["record_fingerprint"] != sha256_obj(record)
-    elif isinstance(snapshot, dict) and isinstance(snapshot.get("record"), dict):
-        # Without the artifact file the pack snapshot is the last known
-        # evidence; its embedded generated_at still gates freshness so an old
-        # snapshot can never be seeded into the verify cache as confirmed.
-        # snapshot.degraded is decision-scoped (current_email_blocked_by) for
-        # packs built after the Issue-#14 contract and artifact-scoped
-        # (maximally conservative) for older packs.
-        if bool(snapshot.get("degraded")):
-            return escalate("contact_evidence_artifact_degraded")
-        stale_reason = contact_evidence_freshness_reason(snapshot.get("generated_at"))
-        if stale_reason:
-            return escalate(stale_reason)
-        record = snapshot["record"]
-        source = "pack_snapshot"
-    else:
-        return escalate("contact_evidence_missing")
+    if isinstance(snapshot, dict) and isinstance(snapshot.get("record_fingerprint"), str):
+        stale = snapshot["record_fingerprint"] != sha256_obj(record)
     if not isinstance(record, dict) or record.get("verdict") not in CONTACT_EVIDENCE_VERDICTS:
         return escalate("contact_evidence_invalid_record")
     verdict = record.get("verdict")
@@ -2779,11 +2937,12 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
     if verdict == "confirmed_cross_source":
         confirmed = record.get("confirmed_emails")
         if recipient and isinstance(confirmed, list) and len(confirmed) == 1:
-            return accept("confirmed_cross_source", record, recipient, source, stale, False)
+            return accept("confirmed_cross_source", record, recipient,
+                          "artifact", stale, False)
         return escalate("contact_evidence_ambiguous")
     if verdict == "official_only":
         if recipient:
-            return accept("official_only", record, recipient, source, stale, True)
+            return accept("official_only", record, recipient, "artifact", stale, True)
         return escalate("contact_evidence_ambiguous")
     if verdict == "conflict":
         return escalate("contact_evidence_conflict")
@@ -2793,15 +2952,17 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
     return escalate("contact_evidence_insufficient")
 
 
-def contact_evidence_decisions(emails: list[dict], artifact: dict | None,
-                               artifact_error: str | None) -> dict:
+def contact_evidence_decisions(emails: list[dict], resolved: dict) -> dict:
     decisions = {}
     for email in emails:
         professor = email.get("professor")
         if professor in decisions:
             continue
         decisions[professor] = evaluate_contact_evidence(
-            professor, email.get("contact_evidence"), artifact, artifact_error)
+            professor, email.get("contact_evidence"), resolved["artifact"],
+            resolved["artifact_error"],
+            professor_source_state(resolved["report"], professor),
+            resolved["checker_error"], resolved["rebuild_ran"])
     return decisions
 
 
@@ -2907,8 +3068,10 @@ def cmd_stage5_plan(args) -> None:
         if not emails:
             fail("invalid_params", f"email_id not found: {args.email_id}")
     sources = load_header_sources(program_root)
-    evidence_artifact, evidence_error = load_contact_evidence(program_root)
-    decisions = contact_evidence_decisions(emails, evidence_artifact, evidence_error)
+    resolved_evidence = resolve_contact_evidence(
+        program_root, list(dict.fromkeys(
+            e.get("professor") for e in emails if e.get("professor"))))
+    decisions = contact_evidence_decisions(emails, resolved_evidence)
     verify_checks = {}
     for email in emails:
         professor_dir = Path(email.get("professor_dir") or program_root)
@@ -3377,8 +3540,10 @@ def cmd_stage5_finalize(args) -> None:
         if not emails:
             fail("invalid_params", f"email_id not found: {args.email_id}")
     sources = load_header_sources(program_root)
-    evidence_artifact, evidence_error = load_contact_evidence(program_root)
-    decisions = contact_evidence_decisions(emails, evidence_artifact, evidence_error)
+    resolved_evidence = resolve_contact_evidence(
+        program_root, list(dict.fromkeys(
+            e.get("professor") for e in emails if e.get("professor"))))
+    decisions = contact_evidence_decisions(emails, resolved_evidence)
     result_path = Path(args.result)
     raw_by_id = load_id_map(result_path, {e.get("email_id") for e in emails}, "email result",
                             exact=not bool(args.email_id))
