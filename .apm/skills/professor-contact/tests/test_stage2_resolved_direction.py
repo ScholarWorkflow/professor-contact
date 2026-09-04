@@ -921,6 +921,55 @@ class Stage2SplitEndToEndTests(ResolvedPipelineMixin, unittest.TestCase):
         self.assertIn("merge chain", payload["message"])
 
 
+class CandidateUnionEvidenceTests(ResolvedPipelineMixin, unittest.TestCase):
+    """Issue #7 required flow #2: resolution evidence covers the full candidate
+    union, not just the abstract-level relevant set."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.prof_dir = self.root / "教授研究" / "X分野" / "試験 教授"
+        (self.prof_dir / "论文分析").mkdir(parents=True)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_fingerprint_sensitive_to_candidate_outside_relevant_set(self):
+        """A candidate paper outside the relevant set still invalidates the
+        resolved fingerprint when its full-text facts change."""
+        papers = [
+            self.make_paper("P1", "Adaptive Signal Processing", ["信号", "処理"],
+                            ["Future work."]),
+            # P2 is in the candidate union but NOT in the relevant set.
+            self.make_paper("P2", "Signal Processing Networks", ["信号", "処理"],
+                            ["Future work B."]),
+        ]
+        direction = self.make_direction("dir_A", ["P1", "P2"], provisional_keys=["P1"])
+        direction["relevant_keys"] = ["P1"]  # abstract gate dropped P2
+        facts_path = self.write_facts(papers, [direction])
+
+        before = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        self.assertEqual(before["directions"][0]["action"], "process")
+        # Evidence must cover BOTH candidates even though only P1 is relevant.
+        evidence_keys = {p["item_key"] for p in before["jobs"][0]["model_input"]["paper_evidence"]}
+        self.assertEqual(evidence_keys, {"P1", "P2"})
+
+        self.run_resolve(facts_path, {})
+        after = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        self.assertEqual(after["directions"][0]["action"], "reuse")
+
+        # Change the non-relevant candidate's facts sidecar: the resolution
+        # must be re-evaluated because full-text evidence about ANY candidate
+        # can flip membership.
+        analysis = self.prof_dir / "论文分析" / "P2.md"
+        make_facts_sidecar(analysis, self.root / "P2.pdf", ["Future work B."],
+                           topic_terms=["制御", "ロボット"])
+        third = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        self.assertEqual(third["directions"][0]["action"], "process",
+                         "a facts change on a non-relevant candidate must invalidate "
+                         "the resolved state (candidate-union evidence scope)")
+
+
 class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
     """Issue #7 acceptance #5: unchanged resolved directions reuse cached state
     and never re-run the resolve job; stale ones re-resolve."""

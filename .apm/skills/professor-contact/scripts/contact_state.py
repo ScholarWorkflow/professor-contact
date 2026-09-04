@@ -309,6 +309,21 @@ def direction_relevant_keys(direction: dict) -> list:
     return list(direction.get("member_keys") or [])
 
 
+def direction_candidate_keys(direction: dict) -> list:
+    """The full per-direction candidate universe from the Stage 1 snapshot.
+
+    Issue #7 requires every unique candidate paper to get one full
+    paper-analysis pass and to be resolvable into/out of the authoritative
+    direction from full-text evidence. Relevant keys are the post-relevance
+    gap/narrative scope and must NOT bound the resolution evidence — otherwise
+    a paper the abstract-level gate dropped can never earn its way back in.
+    """
+    members = direction.get("member_keys")
+    if members:
+        return list(members)
+    return direction_relevant_keys(direction)
+
+
 def direction_fingerprint(direction: dict, papers: dict, gap_ids: list, families: dict) -> str:
     relevant = direction_relevant_keys(direction)
     return sha256_obj({
@@ -855,7 +870,14 @@ class Stage2Context:
                 all(isinstance(b.get(field), str) and b[field].strip()
                     for field in ("concrete_object", "input_example", "output_example"))
                 for b in old_blocks)
-            reuse = bool(old and old.get("input_fingerprint") == fingerprint and narrative_has_examples)
+            # Stage-2 internal freshness is judged against the PROVISIONAL
+            # fingerprint. Once a resolution has been applied, the pack keeps it
+            # in `provisional_input_fingerprint` because the public
+            # `input_fingerprint` is recomputed to the resolved-aware downstream
+            # value that Stage 3's reuse gate consumes.
+            old_provisional_fp = (old or {}).get("provisional_input_fingerprint",
+                                                 (old or {}).get("input_fingerprint"))
+            reuse = bool(old and old_provisional_fp == fingerprint and narrative_has_examples)
             plan_entry = {
                 "direction": direction, "ckey": ckey, "pool": pool, "ranked": ranked,
                 "fingerprint": fingerprint, "old": old, "reuse": reuse,
@@ -1061,7 +1083,10 @@ def _compute_paper_direction_affinity(ctx: Stage2Context) -> dict[str, dict[str,
         ckey = plan["ckey"]
         profile_toks = direction_profiles[ckey]
         gap_item_keys = {g["item_key"] for g in plan["pool"]}
-        for key in direction_relevant_keys(plan["direction"]):
+        # Affinity is resolution evidence: it must cover the full candidate
+        # universe so a paper the abstract relevance gate dropped can still be
+        # scored against every direction from full-text facts.
+        for key in direction_candidate_keys(plan["direction"]):
             paper = ctx.papers.get(key)
             if not paper:
                 continue
@@ -1248,7 +1273,7 @@ def _detect_split_candidates(ctx: Stage2Context) -> list[dict]:
         ckey = plan["ckey"]
         direction = plan["direction"]
         papers_with_facts = []
-        for key in direction_relevant_keys(direction):
+        for key in direction_candidate_keys(direction):
             paper = ctx.papers.get(key)
             if not paper:
                 continue
@@ -1315,8 +1340,8 @@ def _detect_merge_candidates(ctx: Stage2Context) -> list[dict]:
         for plan_b in plans[i + 1:]:
             ckey_a, ckey_b = plan_a["ckey"], plan_b["ckey"]
             # Check shared papers in candidate unions
-            keys_a = set(direction_relevant_keys(plan_a["direction"]))
-            keys_b = set(direction_relevant_keys(plan_b["direction"]))
+            keys_a = set(direction_candidate_keys(plan_a["direction"]))
+            keys_b = set(direction_candidate_keys(plan_b["direction"]))
             shared = keys_a & keys_b
             if len(shared) < MERGE_MIN_SHARED:
                 continue
@@ -1400,9 +1425,12 @@ def cmd_stage2_resolve_plan(args) -> None:
             reuse_list.append(ckey)
             continue  # resolved state is fresh; no new job
         direction = plan["direction"]
-        # Collect per-paper evidence
+        # Collect per-paper evidence over the FULL candidate universe: issue #7
+        # requires the resolution to judge every unique candidate paper from
+        # full-text facts, including candidates the abstract relevance gate
+        # dropped from the gap/narrative relevant set.
         paper_evidence = []
-        for key in direction_relevant_keys(direction):
+        for key in direction_candidate_keys(direction):
             paper = ctx.papers.get(key)
             if not paper:
                 continue
@@ -1522,14 +1550,17 @@ def _per_direction_fingerprint(direction: dict, papers: dict) -> str:
     """Per-direction fingerprint of the inputs that affect resolved_direction.
 
     Captures only fields that should invalidate a cached resolved state:
-    relevant paper metadata (item_key + title + year + abstract_sha) + facts_sha
-    + sidecar_sha + direction profile fields. The fingerprint stays narrow so
-    that display-only changes (e.g. preview_coverage_share) do NOT bust the
-    resolved state.
+    candidate-universe paper metadata (item_key + title + year + abstract_sha)
+    + analysis/sidecar/facts SHAs + direction profile fields. The fingerprint
+    stays narrow so that display-only changes (e.g. preview_coverage_share) do
+    NOT bust the resolved state, but ANY candidate paper's full-text evidence
+    (new facts sidecar, changed analysis) invalidates it — the resolution must
+    be able to react to evidence about every unique candidate paper, not just
+    the ones the relevance gate let through.
     """
-    relevant = sorted(set(direction.get("relevant_keys") or []))
+    candidate_keys = sorted(set(direction_candidate_keys(direction)))
     paper_rows = []
-    for key in relevant:
+    for key in candidate_keys:
         paper = papers.get(key, {})
         paper_rows.append({
             "item_key": key,
@@ -1586,18 +1617,10 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
     for plan in ctx.direction_plans:
         ckey = plan["ckey"]
         current_fingerprint = _per_direction_fingerprint(plan["direction"], ctx.papers)
-        result_path = results_dir / f"resolve-{ckey}.json"
-        if not result_path.is_file():
-            # No new result: keep the reused entry, else default to unchanged.
-            prior = reused.get(ckey)
-            if prior:
-                entry = dict(prior)
-                entry["input_fingerprint"] = current_fingerprint
-                entry["reused"] = True
-                resolved[ckey] = entry
-                continue
+
+        def _unchanged_default() -> dict:
             direction = plan["direction"]
-            resolved[ckey] = {
+            return {
                 "resolved_direction_id": ckey,
                 "provisional_direction_id": ckey,
                 "name_ja": direction.get("name_ja") or "",
@@ -1612,6 +1635,23 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
                 "input_fingerprint": current_fingerprint,
                 "reused": False,
             }
+
+        prior = reused.get(ckey)
+        if prior:
+            # This direction was validated as reuse in the current resolve plan
+            # (no job emitted). Analyzer result dirs are typically fixed /tmp
+            # paths, so a stale `resolve-<ckey>.json` from a previous run may
+            # still sit there — it must NEVER be re-consumed for a direction
+            # that got no job this round. The cached entry wins unconditionally.
+            entry = dict(prior)
+            entry["input_fingerprint"] = current_fingerprint
+            entry["reused"] = True
+            resolved[ckey] = entry
+            continue
+        result_path = results_dir / f"resolve-{ckey}.json"
+        if not result_path.is_file():
+            # No new result: default to unchanged.
+            resolved[ckey] = _unchanged_default()
             continue
         data, error = read_json_file(result_path)
         if error:
@@ -2517,6 +2557,13 @@ def cmd_stage2_finalize(args) -> None:
     # stages consume the authoritative resolved ID and never implicitly fall
     # back to the provisional collection_key.
     if resolved_directions:
+        # Keep the provisional fingerprints around: the public
+        # `input_fingerprint` is recomputed below to the resolved-aware
+        # downstream value, but Stage-2's own freshness gate still needs the
+        # pre-resolution value to judge reuse on the next run.
+        provisional_fingerprints = {d["collection_key"]: d.get("input_fingerprint")
+                                    for d in pack_directions}
+
         def _find_pack_direction(ckey: str):
             for d in pack_directions:
                 if d.get("collection_key") == ckey:
@@ -2599,6 +2646,8 @@ def cmd_stage2_finalize(args) -> None:
                                             if b.get("item_key") not in split_set]
             split_named = [k for k in d.get("named_keys", []) if k in split_set]
             d["named_keys"] = [k for k in d.get("named_keys", []) if k not in split_set]
+            provisional_fingerprints[split_id] = provisional_fingerprints.get(ckey) \
+                or d.get("input_fingerprint")
             pack_directions.append({
                 "collection_key": split_id,
                 "name_ja": rd.get("name_ja") or d.get("name_ja"),
@@ -2673,6 +2722,34 @@ def cmd_stage2_finalize(args) -> None:
         if merged_sources:
             dropped = set(merged_sources)
             pack_directions = [d for d in pack_directions if d.get("collection_key") not in dropped]
+
+        # Recompute the downstream `input_fingerprint` AFTER the resolution has
+        # been materialized. Stage 3's reuse gate compares this field, so it
+        # must reflect the authoritative identity (resolved ID, final names)
+        # and the FINAL membership/gap set — otherwise a refined/split/merged
+        # direction would let Stage 3 silently reuse candidates that reference
+        # papers or gaps the resolution just moved or removed. Split entries
+        # get an independent fingerprint computed from their own final content.
+        for d in pack_directions:
+            rd = d.get("resolved_direction") or {}
+            d["provisional_input_fingerprint"] = provisional_fingerprints.get(
+                d.get("collection_key"), d.get("input_fingerprint"))
+            d["input_fingerprint"] = sha256_obj({
+                "downstream_version": 2,
+                "provisional_fingerprint": d["provisional_input_fingerprint"],
+                "resolved_identity": {
+                    "resolved_direction_id": rd.get("resolved_direction_id") or d.get("collection_key"),
+                    "provisional_direction_id": rd.get("provisional_direction_id") or d.get("collection_key"),
+                    "resolution_type": rd.get("resolution_type") or "unchanged",
+                    "name_ja": d.get("name_ja"),
+                    "name_zh": d.get("name_zh"),
+                    "merged_from": rd.get("merged_from") or [],
+                },
+                "final_supporting_keys": sorted(
+                    p.get("item_key") for p in d.get("supporting_papers", []) if p.get("item_key")),
+                "final_gap_ids": sorted(
+                    g.get("gap_id") for g in d.get("gap_shortlist", []) if g.get("gap_id")),
+            })
 
     fingerprints = {d["collection_key"]: d["input_fingerprint"] for d in pack_directions}
     state_fingerprint = sha256_obj({"professor": ctx.professor, "directions": fingerprints})
