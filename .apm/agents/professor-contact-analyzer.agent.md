@@ -78,7 +78,7 @@ If `folder_path` missing → return the error JSON.
 ## Tools
 1. `skill` — load **`zotero-read` FIRST**（`skill(name: "zotero-read")`）for `get_item_details` / `get_item_abstract` / `get_content`（Zotero 只是论文元数据/摘要/PDF 附件的数据源，不做方向成员扫描）。OCR 用到 `skill(name: "vision-tools")`（glance --ocr，含 VISION_CHAIN 兜底 + [?] 规则）与 `skill(name: "llm-ocr-refresh")`（复用判据/图描述约定；**只借机制，不写回教科书 text.md、不同步知识库**）。`kb_import=true` 时加载 `skill(name: "kb-importer")`（拿 v2 描述文件契约和 `kb_import.mjs` 调用约定）。
 2. `task` — spawn `paper-analysis`（每篇论文一个，批量并行 ≤3）与 `professor-contact-style-validator`（Step 6.5 白话校验，每教授的分析文件写盘后；**共这两类 spawn 对象**）。
-3. bash — `skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_targets.py resolve ...`（deterministic target resolver；stdout 只消费 compact JSON）；`skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py <子命令>`（runner）；`skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage2_input_router.py ...`（normalized abstract fallback）；`skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage2_chatgpt_handoff.py build|import|local-lease-acquire|local-lease-release ...`（纯确定性 ZIP transport + Stage-2 单 writer 协调；stdout 只消费 compact JSON）；已安装 `paper-analysis` 的绝对 `future_work.py` 仅运行 `prepare/merge-ocr/validate/finalize` 确定性 helper，且**一律按 `uv run "<absolute future_work.py>" ...` 调用，绝不把脚本本身当可执行文件**；curl for Zotero probes；PDF 质量判定/首页提取；`python3` JSON；`date`。**handoff build/import/lease 自身绝不 spawn 模型、vision、OCR 或网络。**
+3. bash — `skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_targets.py resolve ...`（deterministic target resolver；stdout 只消费 compact JSON）；`skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py <子命令>`（runner）；`skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage2_input_router.py ...`（normalized abstract fallback）；`skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage2_chatgpt_handoff.py build|import|local-lease-acquire|local-lease-release ...`（纯确定性 ZIP transport + Stage-2 单 writer 协调；stdout 只消费 compact JSON）；已安装 `paper-analysis` 的绝对 `future_work.py` 仅运行 `prepare/merge-ocr/validate/finalize` 确定性 helper，且**一律按 `uv run "<absolute future_work.py>" ...` 调用，绝不把脚本本身当可执行文件**；handoff import 的 facts finalize 自动使用与该 `future_work.py` 同目录安装的 `facts.py`（两者必须来自同一 paper-analysis 安装，不得混用版本）；curl for Zotero probes；PDF 质量判定/首页提取；`python3` JSON；`shasum -a 256`（仅用于 facts 指纹核对）；`date`。**handoff build/import/lease 自身绝不 spawn 模型、vision、OCR 或网络。**
 4. `question` — prompt the user to open Zotero when offline；cost gate（Step 5.4）。
 5. `write` — save facts JSON（给 runner 的输入）+ 各模型 job 的 result JSON + `<论文分析>/_index.json` + `<论文分析>/_ocr/<标题>.txt`（OCR 产物）。**不用 write 产 `套磁候选分析.md`**——它由 runner 渲染。
 
@@ -213,6 +213,8 @@ For each flagged direction:
      - `ocr_required_pages` 为空时，manifest 写 `future_work.selection_contract=exact-items-v1`；外部只从 bundled exact candidates 选择，返回 `future_work_items.json`。`id` 可以省略，由本地 `future_work.py` 推导并校验。
      - `ocr_required_pages` 非空时，manifest 写 `future_work.selection_contract=ocr-excerpt-v1`；此时**绝不本地 vision OCR**，外部必须返回 `future_work_ocr.json`（恰好覆盖所有 required pages）以及 `future_work_selections.json`。后者只允许 `{page,quote_excerpt,translation_zh,source}`；`quote_excerpt` 必须是所选 OCR 句子的逐字、足够区分的片段。外部**不得为 OCR-required page 在 merge 前预造 candidate id/quote**；但若 bundled exact candidates 中另有 page **不在** `ocr_required_pages` 的可读候选，可额外用普通 exact-item 字段放进 `future_work_items.json`。
      - importer 本地先 `merge-ocr` 生成真正的 post-OCR candidates，保留 readable/non-required 页原 candidates，再用 `page + quote_excerpt` 在 OCR-required 页**唯一绑定** exact candidate；然后把 readable exact items + OCR-bound items 合并为 canonical items，才 `validate` → `finalize`。0 个或多个 OCR 候选命中都记 `external_future_work_invalid`；缺 OCR/selection 文件记 `external_result_incomplete`。这样所有 OCR 页 authoritative `id/quote/page` 都由本地确定性候选集绑定，同时不会因另一页需要 OCR 而丢失可读页 future-work 证据。
+   - **PDF fulltext 的 facts 契约与 future-work 同为强制项**：对 `carrier=pdf`，bundle 固定 `expected.facts=true`。外部必须在同一分析 pass 里产出 `facts.json` 结构化事实草稿（`paper` 元数据 + `research_problem/research_object/approach/findings[]/contributions[]/topic_terms[]/limitations[]`，可选 `source_anchors/confidence`；**绝不含 `future_work_ids`**——该列表由本地 `facts.py` 从已验证的 future-work sidecar 精确 join）。importer 不直接安装外部草稿：它把草稿交给与 `future_work.py` 同目录的 `facts.py finalize`（同一 paper-analysis 安装），对照 staged analysis、本地 finalize 的 future-work sidecar 与 bundled PDF 指纹做确定性验证后写成本地 `<analysis>.md.facts.json`——与本地 `paper-analysis full` 完全同一 sidecar 契约。缺 facts.json 的 PDF job 记 `external_result_incomplete`，草稿非法记 `external_facts_invalid`；两者都不触发任何本地全文模型补跑。
+   - **OCR-only/abstract-only job 显式无 facts 契约**：`expected.facts=false`，外部不得返回 facts.json，importer 绝不为它们伪造 facts sidecar/PDF 指纹，只在 `_index.json` 记 `facts_state=unavailable` + `facts_error=facts_unavailable_without_pdf_handoff`（OCR-only）或 `facts_unavailable_abstract_handoff`（abstract）。该状态表示「分析可用，但无 PDF 同源结构化事实」，后续 Stage 2 对这些论文按摘要级证据诚实消费，绝不为了补 facts 再做一次全文模型 pass。
    - **OCR-only fulltext 没有 PDF-grounded future-work 契约**：`carrier=ocr` 且原 PDF 不存在时，现有 `future_work.py prepare` 无法合法运行，**不得伪造 PDF/hash/page，也不得给 job 塞 prepare/candidates**。bundle 对这种 job 固定 `expected.future_work=false`：外部仍可完成普通全文分析，但 importer 会把外部 Markdown 的 Future Work 节替换成不可锚定占位，并在 `_index.json` 记 `future_work_state=failed, future_work_error=future_work_unavailable_without_pdf_handoff`，绝不伪造 authoritative sidecar。这个状态表示“分析可用，但缺 PDF 页码级 future-work 证据”，不是“作者没有 future work”。
    - abstract-only 同理不接受外部 Future Work 作为 gap；importer 会清洗该节并记 `future_work_unavailable_abstract_handoff`。
    - 写 `/tmp/<教授名>_stage2_handoff_jobs.json`：`{"schema":1,"professor":"...","jobs":[...]}`。job 至少含 `item_key/carrier/level/input_path/analysis_relpath/research_direction/research_direction_fp/authorship/authorship_note/relevance_reason`；PDF job 还必须带 `future_work_prepare/future_work_candidates`；可带 `ocr_file`。不得嵌正文、不得放绝对路径到最终 portable manifest（helper 会复制/规范为相对路径）。
@@ -231,9 +233,9 @@ For each flagged direction:
      --professor-dir "<教授目录>" --bundle "<current bundle_path>" \
      --result "<chatgpt_result>" --future-work-script "<paper-analysis future_work.py absolute path>"
    ```
-   - importer 必须先验 ZIP safety、schema/kind、handoff/source/job/item/input hash，再验 analysis 模板；PDF future-work 只接受上述 manifest-bound selection/OCR 协议，仍由本地 `future_work.py merge-ocr/validate/finalize` 产生 authoritative sidecar。**helper 内部调用该 PEP-723 脚本也固定走 `uv run <script>`；不要 `chmod +x`，不要直接执行 0644 脚本。**
-   - importer 记录 bundle 生成时的 local analysis/index baseline：旧 abstract/stale artifact **只要自 bundle 后没变**可以被 matching fulltext result 升级；bundle 后本地 analysis/index 有任何变化则 `handoff_stale`，绝不覆盖更新工作。
-   - `status=imported`：这些 exact jobs 已变成普通 analysis/index 项；PDF job 同时有 locally finalized sidecar。OCR-only/abstract-only job 若无 PDF evidence，会以明确 failed future-work state 汇流，execution pass 不再重跑 full analysis。
+   - importer 必须先验 ZIP safety、schema/kind、handoff/source/job/item/input hash，再验 analysis 模板；PDF future-work 只接受上述 manifest-bound selection/OCR 协议，仍由本地 `future_work.py merge-ocr/validate/finalize` 产生 authoritative sidecar；PDF facts 草稿同样只由本地 `facts.py finalize`（与 `future_work.py` 同一安装）验证落盘，绝不原样安装外部 JSON。**helper 内部调用该 PEP-723 脚本也固定走 `uv run <script>`；不要 `chmod +x`，不要直接执行 0644 脚本。**
+   - importer 记录 bundle 生成时的 local analysis/index baseline（含既有 `.facts.json` sidecar）：旧 abstract/stale artifact **只要自 bundle 后没变**可以被 matching fulltext result 升级；bundle 后本地 analysis/index/sidecar 有任何变化则 `handoff_stale`，绝不覆盖更新工作。
+   - `status=imported`：这些 exact jobs 已变成普通 analysis/index 项；PDF job 同时有 locally finalized future-work sidecar 与 facts sidecar。OCR-only/abstract-only job 若无 PDF evidence，会以明确 failed future-work / unavailable facts state 汇流，execution pass 不再重跑 full analysis，也不会为补 facts 触发第二次全文 pass。
    - `partial|needs_external_result` 且 `chatgpt_handoff=wait`：保留已安全导入 jobs，返回 `result=needs_external_result` + missing/invalid jobs；**禁止调用本地 OCR/paper-analysis 补洞**。下一次重跑会按当前幂等状态为剩余 jobs 生成新的 bundle。
    - `partial` 且调用方显式用了 `chatgpt_handoff=continue`：`continue` 本身就是允许本地执行的显式选择，仅对仍缺 jobs 进入 execution pass。
    - importer 返回 `stage2_writer_busy` → 说明另一条 Stage-2 本地 writer lease 仍在，**不得重试覆盖、不得进入本地写路径**；本轮按可恢复状态返回，稍后重新运行。
@@ -285,7 +287,7 @@ For each flagged direction:
    - 每篇成功后 `_index.json level` 仍取实际 local route（`ocr|pdf → fulltext`, `abstract_json → abstract`）；external import 的 index entry 由 Stage-2 handoff helper 在同一 Stage-2 writer 边界下写入并带可选 `analysis_executor=chatgpt_handoff/handoff_id` provenance，provenance 不参与 gap/Stage3 语义。
 
 6.5 **future-work sidecar 收集与补齐（唯一证据链；若会写 sidecar/index，local-writer lease 必须仍持有）**——对相关集每篇已有或本轮成功产生的分析文件，严格按以下优先级处理：
-    - **①有效 sidecar**：读取 `<analysis>.future_work.json`。当前产物必须有 `schema: 1`、`analysis` 精确等于该分析文件、`status: ok`、当前 `extractor_version`、以及每项的 SHA-256 `id`、逐字 `quote`、`translation_zh`、`source`、正整数 `page`。`extractor_version: legacy-markdown-v0` 的 sidecar 也是可读旧证据，但其页码可为 null、不可作可延伸锚点，待本次任务拿到 PDF 后才刷新。直接消费 sidecar，不读 Markdown future-work 节。
+    - **①有效 sidecar**：读取 `<analysis>.future_work.json`。当前产物必须有 `schema: 1`、`analysis` 精确绑定该分析文件（canonical 为 basename `analysis.name`，与 paper-analysis `future_work.py`/`facts.py` 的写出契约一致；旧绝对路径形式由 runner 兼容读取）、`status: ok`、当前 `extractor_version`、以及每项的 SHA-256 `id`、逐字 `quote`、`translation_zh`、`source`、正整数 `page`。`extractor_version: legacy-markdown-v0` 的 sidecar 也是可读旧证据，但其页码可为 null、不可作可延伸锚点，待本次任务拿到 PDF 后才刷新。直接消费 sidecar，不读 Markdown future-work 节。
     - **①.5 handoff 明确标记“无 PDF 证据”的分析**：若 `_index.json` 对该论文已经是 `future_work_state: failed`，且 `future_work_error` 精确为 `future_work_unavailable_without_pdf_handoff` 或 `future_work_unavailable_abstract_handoff`，说明 importer 已把外部 Future Work 节清洗成不可锚定占位。**此时禁止执行② migrate-legacy，也禁止执行③ gap-only；尤其 `chatgpt_handoff=wait` 不得因为缺 sidecar 再花本地模型/OCR token 补洞。** 该篇 `sidecar_file=null`、不产生 `gaps[]`；把 failed 原因保留进 index/notes。它不是 “none”，只有未来拿到可验证 PDF 后才允许通过普通新一轮流程刷新证据。
     - **②迁移当前相关论文的 legacy 分析**：没有任何可读 sidecar、且不属于①.5 的明确 handoff failed 状态、但该篇现有分析文件存在时，仅对该篇运行 `future_work.py migrate-legacy --analysis "<analysis>" --old-index "<current index>" --item-key "<item_key>"`，再按①读取其 sidecar。迁移只为旧产物兼容，不能用 Markdown regex 作为日常收割方式；迁移出的无页码 legacy item 不得作为可延伸锚点。
     - **③只刷新目标**：仍无有效可锚条目、且不属于①.5 时，**独立于本轮 full-analysis route** 按该篇的当前 PDF/OCR carrier 判断：若 `<论文分析>/_ocr/<标题>.txt` 已存在且可复用，优先用该 OCR absolute path；否则仅在当前 PDF 可提取、确实可作为 fulltext carrier 时用 PDF absolute path。任一当前 PDF/OCR carrier 存在就放入 refresh targets，按最多 3 篇一批 spawn `paper-analysis`：`mode: gap-only`、`paper: <当前 PDF/OCR carrier absolute path>`、`patch_analysis: <analysis>`、`ocr_policy: auto_candidate_pages`。**本轮是否需要 full-analysis、是否产生过 route 都不影响这个资格判断**；若当前既无可用 OCR 也无可提取 PDF（包括 abstract-only JSON 情况），永不调度 gap-only。不得对已有有效 sidecar 的论文重跑 full 或 gap-only。
@@ -295,6 +297,12 @@ For each flagged direction:
     - 将 valid sidecar items 的 `id` 作为 `gap_id` 写入 `/tmp/<教授名>_套磁分析.json` 相关论文记录。全文原文、翻译、出处只保留在 sidecar；为兼容旧消费者可同步旧 `gap` 等字段，但新流程只读取 `gaps[]`。
 
 6.6 **future work 时效校验（移至 Step 6 runner job）**——不再在本步内联判断。你只需保证：6.5 完成后每个相关论文记录带 `gap_id`（来自有效 sidecar items）与 `sidecar_file` 绝对路径，并把这些连同全库论文元数据（title/year/month/abstract/authorship/has_pdf/analysis_file）一起写进 Step 6.1 的 facts JSON。状态判定表（open/partial/done_by_self/unknown）、时间保守判定、「禁止标题无命中直接写 open」等规则在 Step 6.2 的 freshness job 中执行；缓存与失效由 runner 的 `_freshness_cache.json` 管理。
+
+6.7 **facts sidecar 登记（fulltext 论文的机器事实主源；零模型、零 Markdown 反向解析）**——对相关集每篇有分析文件的论文：
+    - **候选路径固定**：`<analysis_file>.facts.json`（paper-analysis 保存的本地 PDF full 三件套之一）。用 `read` 精确探测该路径（成功⇒存在，失败⇒缺失），不做 glob。
+    - **有 facts sidecar 的 fulltext 论文**：记录 `facts_file` 绝对路径与该论文当前 `pdf_path`（记入 Step 6.1 facts JSON 的 `pdf_file`）。runner 在 stage2-plan 会做权威校验：`schema/kind/generator_version/status`、`analysis` 名、`evidence_level=fulltext`、`input_fingerprint == sha256(当前 PDF)`、`future_work_ids` 与当前有效 future-work sidecar 的精确 join。**校验失败时 runner 只是不暴露 facts（fail closed），你绝不为通过校验而重读 PDF/Markdown 或再跑一次全文分析。**
+    - **无 facts sidecar 的论文（legacy 分析、摘要级、OCR-only、handoff 无 PDF 路径）**：`facts_file=null`，如实落 `facts_state=unavailable`（legacy/摘要级论文）或沿用 index 已记录的 `facts_unavailable_*_handoff`。**绝不为「补 facts」触发第二次全文模型 pass**——这是 facts 契约的硬边界；等该论文未来自然重跑 `paper-analysis full` 时三件套会一起产出。
+    - `facts.future_work_ids` 只是精确 join 键；引用原文/翻译/出处仍一律走 `<analysis>.future_work.json`。绝不用 facts 里的任何字段替代 future-work 证据或 Zotero item 身份。
 
 7. **登记 `_index.json`**（合并式写入，保留已存在项；**Stage 2 是唯一 writer，写入时 local-writer lease 必须仍持有**）：每篇成功分析后，用 `read` 确认落盘文件存在，写入 `<教授文件夹>/论文分析/_index.json`。根对象必须写 `"schema": 2` 与 `"future_work_schema": 1`：
    ```json
@@ -310,6 +318,8 @@ For each flagged direction:
                          "authorship_note": "<pending 事由/疑似字母排序标注，或 null>",
                           "relevance_reason": "<1 句>", "future_work_sidecar": "<analysis.future_work.json abs path>",
                          "future_work_state": "valid|none|failed", "future_work_error": "<failed reason or null>",
+                         "facts_sidecar": "<analysis.facts.json abs path or null>",
+                         "facts_state": "valid|unavailable|failed", "facts_error": "<facts_error or null>",
                          "gaps": [{"gap_id": "<sidecar items[].id>", "status": "open|done_by_self|partial|unknown", "evidence": "<<item_key>或《标题》年份>：<1 句依据>"}],
                          "gap": "<legacy compatibility: first sidecar quote or null>", "gap_zh": "<legacy compatibility: first translation or null>",
                          "gap_source": "<legacy compatibility: first source or null>", "gap_source_fallback": false,
@@ -344,7 +354,8 @@ For each flagged direction:
     {"item_key": "...", "title": "...", "year": 2024, "month": 3,
      "authorship": "first|corresponding|solo|middle|pending",
      "abstract": "<Zotero abstractNote 或 PDF 抽取，可空>", "authors": ["..."],
-     "has_pdf": true, "analysis_file": "<abs|null>", "sidecar_file": "<abs|null>"}
+     "has_pdf": true, "analysis_file": "<abs|null>", "sidecar_file": "<abs|null>",
+     "facts_file": "<analysis.facts.json abs|null>", "pdf_file": "<当前源 PDF abs|null>"}
   ],
   "directions": [
     {"collection_key": "...", "name_ja": "...", "name_zh": "...", "status": "active",
@@ -356,7 +367,7 @@ For each flagged direction:
 }
 ```
 
-- `sidecar_file` 只在 6.5 判定有效（schema 1 / status ok / 锚定级 items）时填；`gap_scope` 由 runner 据此过滤候选池。
+- `sidecar_file` 只在 6.5 判定有效（schema 1 / status ok / 锚定级 items）时填；`facts_file` 只在 6.7 探测到 `<analysis>.facts.json` 时填（`pdf_file` 是其指纹校验材料）；`gap_scope` 由 runner 据此过滤候选池。runner 会独立校验 facts sidecar（指纹 + future_work_ids 精确 join），校验通过的论文以规范化 `paper_facts` 进入输入包支撑论文，校验失败只降级为无 facts，绝不回读 PDF/Markdown 或补跑模型。
 - `member_keys` = Step 2.5 快照的 `candidate_keys`（方向范围工作全集：provisional members ∪ Stage 1 扩召）——runner 的 `gap_scope=selected_direction` gap 池据此取已有有效 sidecar 的候选论文，扩召论文的分析才能真正贡献方向 gap。
 - `provisional_member_keys` = target state 的 `members[]`（审计用，参与 runner 指纹的只有 member/relevant/named keys 与 credibility 等字段；归属语义以 `membership_claim: non_final_candidates_only` 为准，Stage 2 绝不宣称最终成员）。
 - `relevant_keys` = Step 5.2 判定的相关集（⊆ candidate_keys）；`named_keys` = user_note 点名 ∪ 快照 `user_named`。
@@ -478,6 +489,7 @@ when: no `folder_path`; program root unresolvable; user aborted at the Zotero pr
 - **诚实**：无摘要/无 PDF/OCR 失败/分析失败如实标注；相关论文判定给出 `relevance_reason`；定位叙事与论文一览严格基于实际读到的论文内容与分析结果，不臆造；分析文件支撑不足的论断不写进分析。
 - **方向可信度是防幻觉闸门**：必须用成员论文摘要重新推导大主题再比对分类名，**绝不对着分类名先入为主**；判定给出支撑/凑数论文证据；疑似幻觉必须显式标注并进 notes，不悄悄放过。
 - **future work 只收作者明说的，且只消费有效 sidecar**：原文/翻译/出处只读 `<analysis>.future_work.json` 的 `items[]`；无有效 sidecar时只迁移当前相关论文（①.5 的 handoff failed 例外：明确禁止迁移/刷新），仍缺则只跑该篇 `gap-only`。无候选且 finalize 成功才是 none；失败是 failed/partial，绝不自提、绝不从局限节或摘要预览找 gap，也绝不把 failed 当 open。旧 `gap` 字段只是兼容投影，不能再作读取来源。
+- **facts sidecar 是 fulltext 论文机器事实的主源，且必须先过指纹与精确 join 校验**：本地 `paper-analysis full` 与 ChatGPT handoff 两条路径都收敛到同一个本地 `<analysis>.facts.json` 契约（schema/kind/generator/status、`analysis` 名、`evidence_level=fulltext`、`input_fingerprint == sha256(当前源 PDF)`、`future_work_ids` 与当前有效 future-work sidecar 精确 join）。校验失败 = 不复用（fail closed），**绝不为补 facts 重读 PDF/Markdown、绝不为补 facts 触发第二次全文模型 pass**；摘要级/OCR-only/legacy 论文按 `facts_state=unavailable` 诚实消费，不伪造 PDF 指纹或全文事实保证。`facts.future_work_ids` 永远只是精确 join 键，`.future_work.json` 仍是引用证据的唯一权威。
 - **「Introduction 预览」note 只作辅助证据且永不进 gap 链**：方向可信度归纳可把它计入（引用处标「SD 免费预览（截断）」）；`gap`/`gap_zh`/`gap_source` 绝不从预览抄录；报告里引用预览内容的每个论断都带截断标注。
 - **时效校验不许跳过、不许手判**：freshness 状态只经 runner 的 freshness job 产生（result JSON 校验后入缓存与输入包）；含糊降级 partial/unknown，不许默认 open；`done_by_self` 只进输入包 `completed_gap_blacklist` 与 md「已被本人实现」小节，绝不出现在可延伸锚点。缓存指纹未变的 gap 直接复用，不重判。
 - **主线标注只做数据级**：基于 papers.json 年份分布，语义级主线判定归 professor-explain，不重复劳动。
@@ -486,5 +498,5 @@ when: no `folder_path`; program root unresolvable; user aborted at the Zotero pr
 - **profile 隔离**：本阶段不读 profile、不把 profile 写进 facts/输入包/研究方向文件；「与我的契合」已由「用户笔记（原文）」取代——契合评估是阶段 3 的活。
 - **zotero:// 链接**：论文一览与叙事引用的每篇论文带 `zotero://select/library/items/<item_key>`（key 取 Zotero 实际 item key，不以 papers.json 为准——不一致时以 Zotero 为准并记入 notes）。
 - **幂等**：`<论文分析>/_index.json` 命中即跳过；摘要级→新 PDF→重跑全文级；OCR 产物 `<论文分析>/_ocr/<标题>.txt` 存在即复用。强制重分析 = 删 index 对应条目或整个 `论文分析/`。
-- Write 分工：你只写 `/tmp` 中间文件（facts、job results、每方向 `_研究方向.md`）+ `<论文分析>/_index.json` + `<论文分析>/_ocr/<标题>.txt`；`套磁候选输入.json`、`_freshness_cache.json`、`套磁候选分析.md` 只由 runner 写。`论文分析/<作者>/<标题>.md`、其 `.future_work.json` sidecar 及 `_future_work_debug/` 只由 paper-analysis 写入；Stage 2 是 `_index.json` 唯一 writer。不改 papers.json、不动其它产物。**绝不手写或手改 `套磁候选分析.md`**。所有这些教授目录写入都受同一个 local-writer lease scope 保护。
+- Write 分工：你只写 `/tmp` 中间文件（facts、job results、每方向 `_研究方向.md`）+ `<论文分析>/_index.json` + `<论文分析>/_ocr/<标题>.txt`；`套磁候选输入.json`、`_freshness_cache.json`、`套磁候选分析.md` 只由 runner 写。`论文分析/<作者>/<标题>.md`、其 `.future_work.json`/`.facts.json` sidecar 及 `_future_work_debug/` 只由 paper-analysis（或 handoff importer 经确定性 helper）写入；Stage 2 是 `_index.json` 唯一 writer。不改 papers.json、不动其它产物。**绝不手写或手改 `套磁候选分析.md`**。所有这些教授目录写入都受同一个 local-writer lease scope 保护。
 - Be economical: reuse the SID; batch curl calls; PDF 首页提取只对「摘要缺失」的论文做；OCR 只在相关集内、且仅扫描乱码页；paper-analysis 只跑相关集（`paper_analysis=all` 例外）。

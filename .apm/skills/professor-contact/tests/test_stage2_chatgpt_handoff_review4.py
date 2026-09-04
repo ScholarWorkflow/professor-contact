@@ -36,6 +36,37 @@ l
 h
 """
 
+FACTS_DRAFT = {
+    "paper": {"title": "Paper", "authors": ["Author A"], "year": 2024, "venue": "Venue", "doi": None},
+    "research_problem": "problem",
+    "research_object": "object",
+    "approach": "approach",
+    "findings": ["finding"],
+    "contributions": ["contribution"],
+    "topic_terms": ["topic"],
+    "limitations": ["limitation"],
+    "confidence": 0.8,
+}
+
+FAKE_FACTS_SCRIPT = (
+    "#!/usr/bin/env python3\n"
+    "import hashlib,json,pathlib,sys\n"
+    "cmd=sys.argv[1]\n"
+    "def arg(n): return pathlib.Path(sys.argv[sys.argv.index(n)+1])\n"
+    "if cmd=='validate':\n"
+    " d=json.loads(arg('--draft').read_text()); print(json.dumps({'ok':True,'facts':d}))\n"
+    "elif cmd=='finalize':\n"
+    " a=arg('--analysis'); draft=json.loads(arg('--draft').read_text());\n"
+    " side=json.loads(arg('--future-work').read_text());\n"
+    " assert side.get('status')=='ok' and side.get('analysis')==a.name, 'sidecar mismatch';\n"
+    " fp='sha256:'+hashlib.sha256(arg('--input').read_bytes()).hexdigest();\n"
+    " ids=[i.get('id') for i in side.get('items',[]) if i.get('id')];\n"
+    " out={'schema':1,'kind':'paper-analysis-facts','generator_version':'facts-v1','analysis':a.name,'input_fingerprint':fp,'evidence_level':'fulltext','status':'ok'};\n"
+    " out.update(draft); out['future_work_ids']=ids;\n"
+    " pathlib.Path(str(a)+'.facts.json').write_text(json.dumps(out),encoding='utf-8');\n"
+    " print(json.dumps({'ok':True}))\n"
+)
+
 
 class Args:
     pass
@@ -74,6 +105,9 @@ class Review4RegressionTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.future.chmod(0o644)
+        self.facts_script = self.root / "facts.py"
+        self.facts_script.write_text(FAKE_FACTS_SCRIPT, encoding="utf-8")
+        self.facts_script.chmod(0o644)
 
         self.old_path = os.environ.get("PATH", "")
         self.old_uv_test_log = os.environ.get("UV_TEST_LOG")
@@ -180,6 +214,7 @@ class Review4RegressionTests(unittest.TestCase):
                     "source": "Conclusion",
                 }]}),
             )
+            zf.writestr(f"results/{safe}/facts.json", json.dumps(FACTS_DRAFT))
         return result
 
     def _import(self, bundle, result):
