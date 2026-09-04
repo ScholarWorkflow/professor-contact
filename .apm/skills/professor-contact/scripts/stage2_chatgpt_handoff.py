@@ -16,7 +16,11 @@ build/import path:
    candidates produced by `future_work.py merge-ocr`, while readable-page exact
    selections remain eligible in the same job;
 5. bundled prepare/candidates inputs are verified as one consistent candidate
-   set before a content-addressed handoff may be built.
+   set before a content-addressed handoff may be built;
+6. external facts drafts are never installed as-is: PDF jobs are finalized into
+   the local `<analysis>.facts.json` sidecar contract by the `facts.py` helper
+   from the same paper-analysis install, and non-PDF jobs are recorded honestly
+   as lacking any facts contract instead of triggering a second full-text pass.
 """
 
 from __future__ import annotations
@@ -203,7 +207,12 @@ def _verify_manifest_integrity(manifest: dict[str, Any]) -> None:
             raise ValueError("external_result_hash_mismatch")
 
         expected_future_work = carrier == "pdf"
-        if job.get("expected") != {"analysis": True, "future_work": expected_future_work}:
+        expected_facts = carrier == "pdf"
+        if job.get("expected") != {
+            "analysis": True,
+            "future_work": expected_future_work,
+            "facts": expected_facts,
+        }:
             raise ValueError("external_result_hash_mismatch")
         future_work = job.get("future_work")
         if expected_future_work:
@@ -252,6 +261,7 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
     jobs: list[dict[str, Any]] = []
     for job in normalized_jobs:
         expected_future_work = job["carrier"] == "pdf"
+        expected_facts = job["carrier"] == "pdf"
         entry: dict[str, Any] = {
             "item_key": job["item_key"],
             "carrier": job["carrier"],
@@ -262,7 +272,11 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
             "research_direction": job["research_direction"],
             "research_direction_fp": job["research_direction_fp"],
             "local_baseline": job["local_baseline"],
-            "expected": {"analysis": True, "future_work": expected_future_work},
+            "expected": {
+                "analysis": True,
+                "future_work": expected_future_work,
+                "facts": expected_facts,
+            },
             "index_metadata": {
                 "authorship": job["authorship"],
                 "authorship_note": job["authorship_note"],
@@ -701,9 +715,10 @@ For each `manifest.json.jobs[]` entry:
 4. For every PDF job with `expected.future_work=true`, follow `future_work.selection_contract` exactly:
    - `exact-items-v1`: return `future_work_items.json` selected/translated only from the bundled exact candidates. `id` may be omitted; the local helper derives/verifies it.
    - `ocr-excerpt-v1`: OCR every page in `future_work.ocr_required_pages` into `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`. Return `future_work_selections.json` for selections whose page IS in `ocr_required_pages`, using only `{page,quote_excerpt,translation_zh,source}`; the list may be empty, but the file must be present. Do NOT guess candidate ids for OCR pages. If you also select any bundled exact candidate from a readable page whose page is NOT in `ocr_required_pages`, return those readable-page selections in `future_work_items.json` using the ordinary exact-item fields. The local importer runs `merge-ocr`, keeps the readable-page candidates, uniquely binds OCR page+excerpt selections to regenerated candidates, combines both selection sets, then runs `validate` and `finalize`.
-5. Bind completed rows in `result_manifest.json` with schema/kind/handoff/source/job/item/input hash and `status=ok|partial|error`.
+5. For every PDF job with `expected.facts=true`, also return `facts.json`: the compact structured-facts draft already established during the same analysis pass — `paper` (title/authors/year/venue/doi), `research_problem`, `research_object`, `approach`, `findings[]`, `contributions[]`, `topic_terms[]`, `limitations[]`, optional `source_anchors` and `confidence`. Never include `future_work_ids`; the local importer joins them from the validated future-work sidecar. Never re-read the paper a second time just to build the draft.
+6. Bind completed rows in `result_manifest.json` with schema/kind/handoff/source/job/item/input hash and `status=ok|partial|error`.
 
-PDF fulltext jobs are not complete without their future-work payload. OCR-only and abstract-only jobs do not have a PDF-grounded future-work contract: any external Future Work prose in their Markdown is discarded locally and cannot become a gap source. Do not return `_index.json`, `套磁候选输入.json`, or a ready-made `.future_work.json` as authoritative state. The local importer independently validates/finalizes PDF future-work evidence and installs accepted results into the ordinary Stage-2 artifacts.
+PDF fulltext jobs are not complete without their future-work payload and their facts draft. OCR-only and abstract-only jobs do not have a PDF-grounded future-work or facts contract (`expected.facts=false`): any external Future Work prose in their Markdown is discarded locally and cannot become a gap source, and no facts sidecar is fabricated for them. Do not return `_index.json`, `套磁候选输入.json`, or a ready-made `.future_work.json`/`.facts.json` as authoritative state. The local importer independently validates/finalizes PDF future-work evidence and facts drafts through the deterministic paper-analysis helpers and installs accepted results into the ordinary Stage-2 artifacts.
 """
 
 
@@ -713,12 +728,13 @@ def _install_job(
     job: dict[str, Any],
     staged_analysis: Path,
     staged_sidecar: Path | None,
+    staged_facts: Path | None = None,
 ) -> tuple[Path, Path | None]:
     with _professor_lock(professor_dir):
         if _active_local_lease_unlocked(professor_dir) is not None:
             raise ValueError("stage2_writer_busy")
         return _ORIG_INSTALL_JOB(
-            professor_dir, manifest, job, staged_analysis, staged_sidecar
+            professor_dir, manifest, job, staged_analysis, staged_sidecar, staged_facts
         )
 
 
