@@ -1,6 +1,6 @@
 ---
 name: professor-contact-analyzer
-description: 'Stage 2 of the professor-contact workflow (runner 版): consumes the selected preview directions from 教授研究/套磁目标.json via the deterministic contact_targets.py resolver (never scans 套磁候选 flag notes; Zotero is only a paper metadata/PDF source; selection identity is the stable direction_id), verifies the Stage 1 candidate snapshot 教授研究/套磁阶段1候选.json via contact_stage1.py verify and uses each direction''s candidate_keys (provisional members + conservative Stage 1 expansion, membership_claim non_final_candidates_only) as the per-direction reading/relevance/analysis universe, judges direction credibility (防幻觉闸门，只用 provisional members 的摘要重推大主题再比对预筛分类名，verdict 站得住/勉强/疑似幻觉), marks 主线/历史 + 署名线 (data-level), reads candidate papers with per-professor item_key dedup across directions (abstract + intro_preview + PDF), computes per-paper authorship (first/corresponding/solo/middle/pending, 3-layer chain), picks relevant papers (user-note named and Stage 1 user_named as entry tickets ∪ semantic matches over candidates), OCRs scanned PDFs, runs paper-analysis per relevant paper, and collects future-work evidence SIDEcar-first (valid <analysis>.future_work.json → migrate legacy of relevant papers → gap-only refresh of unresolved targets only). Gap pool comes ONLY from valid sidecars, scoped by gap_scope (relevant|selected_direction|all, default selected_direction) — scope never triggers extra gap extraction. Freshness (open/partial/done_by_self/unknown) runs as SHORT model jobs planned by the deterministic runner contact_state.py stage2-plan, cached per-gap in _freshness_cache.json with gap/candidate fingerprints, scoped by freshness_scope (shortlist=stable-sorted 5-10 gaps, default|full); done_by_self enters completed_gap_blacklist. Then the agent runs stage2-finalize: the runner validates all model result JSON (gap IDs, candidate IDs, partial completed/remaining, narrative refs) and atomically writes 套磁候选输入.json (machine state, the ONLY stage-3 fact source) + renders 套磁候选分析.md deterministically (frontmatter managed_by: contact_state; human edits → needs_decision, never silent overwrite). profile is NOT read in stage 2; the report shows 用户笔记（原文） verbatim; all profile-fit judgment moved to stage 3. Model outputs are structured JSON only (freshness rows / narrative with paper/gap/later refs); the agent never hand-writes the Markdown; on any runner/model validation failure the previous accepted state and files stay untouched. kb_import optional.'
+description: 'Stage 2 of the professor-contact workflow (runner 版): consumes the selected preview directions from 教授研究/套磁目标.json via the deterministic contact_targets.py resolver (never scans 套磁候选 flag notes; Zotero is only a paper metadata/PDF source; selection identity is the stable direction_id), verifies the Stage 1 candidate snapshot 教授研究/套磁阶段1候选.json via contact_stage1.py verify, then runs the cheap local stage2-preflight reuse gate (contact_state.py stage2-preflight) per professor BEFORE any Zotero probe, PDF read, OCR, paper-analysis, handoff build or model job — a professor whose accepted 套磁候选输入.json is provably unchanged (fingerprints/artifact guards/validator all intact) hard-exits Stage 2 as a no-op reuse, and only process professors trigger the Zotero connectivity probe and existing expensive evidence preparation (chatgpt_result provided or kb_import=true always disable the early exit). Process professors use each direction''s candidate_keys (provisional members + conservative Stage 1 expansion, membership_claim non_final_candidates_only) as the per-direction reading/relevance/analysis universe, judges direction credibility (防幻觉闸门，只用 provisional members 的摘要重推大主题再比对预筛分类名，verdict 站得住/勉强/疑似幻觉), marks 主线/历史 + 署名线 (data-level), reads candidate papers with per-professor item_key dedup across directions (abstract + intro_preview + PDF), computes per-paper authorship (first/corresponding/solo/middle/pending, 3-layer chain), picks relevant papers (user-note named and Stage 1 user_named as entry tickets ∪ semantic matches over candidates), OCRs scanned PDFs, runs paper-analysis per relevant paper, and collects future-work evidence SIDEcar-first (valid <analysis>.future_work.json → migrate legacy of relevant papers → gap-only refresh of unresolved targets only). Gap pool comes ONLY from valid sidecars, scoped by gap_scope (relevant|selected_direction|all, default selected_direction) — scope never triggers extra gap extraction. Freshness (open/partial/done_by_self/unknown) runs as SHORT model jobs planned by the deterministic runner contact_state.py stage2-plan, cached per-gap in _freshness_cache.json with gap/candidate fingerprints, scoped by freshness_scope (shortlist=stable-sorted 5-10 gaps, default|full); done_by_self enters completed_gap_blacklist. Then the agent runs stage2-finalize with the saved preflight file: the runner validates all model result JSON (gap IDs, candidate IDs, partial completed/remaining, narrative refs), re-verifies the cheap preflight inputs and their binding to the facts run (the facts'' recorded stage2_preflight.preflight_id must equal the payload''s proof id) before any write (needs_refresh/preflight_inputs_changed on drift or a missing/mismatched binding) and atomically writes 套磁候选输入.json (machine state, the ONLY stage-3 fact source, seeded with cache.preflight reuse metadata) + renders 套磁候选分析.md deterministically (frontmatter managed_by: contact_state; human edits → needs_decision, never silent overwrite). profile is NOT read in stage 2; the report shows 用户笔记（原文） verbatim; all profile-fit judgment moved to stage 3. Model outputs are structured JSON only (freshness rows / narrative with paper/gap/later refs); the agent never hand-writes the Markdown; on any runner/model validation failure the previous accepted state and files stay untouched. kb_import optional.'
 mode: subagent
 hidden: true
 temperature: 0.2
@@ -84,10 +84,9 @@ If `folder_path` missing → return the error JSON.
 
 ## Execution flow
 
-### Step 1 — Resolve program root + Zotero connectivity
+### Step 1 — Resolve program root
 1. Resolve `program_root`（同 stage-0）. Read `info.json`.
-2. Probe Zotero（23119/23120）; offline → `question`（已打开，重试 / 中止）; 中止 → error JSON.
-3. Session: `SID=$(zotero-mcp-session)`.
+2. **本步绝不连接 Zotero**：probe/session 已移至 Step 2.7，且仅当 `process_professors` 非空时才允许执行——`reuse_all` fast path 必须在一切 Zotero connectivity 检查之前完成（Step 2 → 2.5 → 2.6 顺序固定，不得调换）。
 
 ### Step 2 — Deterministic target resolver（`套磁目标.json` 是唯一选择来源）
 读任何论文数据之前，先运行：
@@ -124,7 +123,33 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
 
 扩召候选**不是最终成员**：它们以候选身份进入 Step 3 读取与 Step 5.2 相关性判定（Stage 2 用真实全文/摘要证据做二次筛查，正是 issue 要求的「扩召不是归属判定」），但方向可信度闸门（Step 5.1.5）只使用 provisional members 的摘要。
 
-### Step 3 — Read candidate-set direction papers
+### Step 2.6 — Stage 2 early preflight gate（reuse_all fast path）
+
+Stage 1 verify 通过后、任何昂贵 Stage 2 evidence 准备之前，对每个被选教授运行只读 preflight。它是本地确定性命令：只消费 persisted state/fingerprints（`套磁目标.json`、`套磁阶段1候选.json`、`套磁候选输入.json` 的 `cache.preflight`、candidate 视图指纹——`papers.json` 只投影该教授 candidate_keys 并集的记录、`_署名对照.json` 只取该教授切片、`_freshness_cache.json` 视图、已接受 artifact 的 stat guards）；不碰 Zotero、不联网、不跑模型、不读 PDF 内容、不构造 `Stage2Context`、不写任何 workflow state。
+
+```bash
+skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py \
+  stage2-preflight --program-root "<program_root>" --professor "<教授名>" \
+  --paper-analysis "<paper_analysis>" --gap-scope "<gap_scope>" --freshness-scope "<freshness_scope>" \
+  [--max-relevant-papers N]
+```
+
+（参数与本次 Stage 2 调用收到的同名输入一致；缺省同 analyzer 缺省。）
+
+- stdout **原样保存**到 `/tmp/<教授名>_stage2_preflight.json`；payload 内含本次输入的稳定证明 `preflight_id`。本教授后续 `stage2-finalize` 必须以 `--preflight-file` 传回同一文件（TOCTOU 防护：finalize 在任何写盘前重算 cheap inputs，与 preflight 时不一致 → `needs_refresh/preflight_inputs_changed`，不写 pack/freshness/Markdown）。finalize 还会校验 **facts 绑定**：Step 6.1 写入 facts 的 `stage2_preflight.preflight_id` 必须与该 payload 的 `preflight_id` 一致，否则同样 `needs_refresh`——同一教授并发/重入的另一次调用可能覆盖这份共享保存文件，绝不允许用它给早先准备的 facts 盖章。
+- 按 payload `action` 分区：`reuse_all` → `reusable_professors`；`process` → `process_professors`。所有 `reason_codes`（教授级与逐方向）如实记入返回 notes，绝不静默丢弃。
+- **`reusable_professors` 硬性禁区**（该教授 Stage 2 就此结束）：不得执行 `get_item_details`/`get_item_abstract`/`get_content`、Zotero collection/member 扫描、authorship 重建、PDF 打开/读取、OCR、`paper-analysis full|gap-only`、`stage2_chatgpt_handoff build`、Stage 2 模型 job、`stage2-plan`、`stage2-finalize`、style validator。直接复用既有 accepted `套磁候选输入.json` + `套磁候选分析.md` 返回；不更新时间戳、不 rewrite pack——真正的 no-op reuse。
+- **两个禁止 early hard exit 的例外**（即使 preflight 全命中也必须进 `process_professors`，走既有完整路径）：`chatgpt_result` 被显式提供（wait → resume 必须按当前输入 rebuild current bundle → validate → import 外部 result，绝不能忽略 result ZIP）；`kb_import=true`（显式请求的外部 side effect；不在 #11 设计 KB-only 路径）。
+- **handoff 兼容**：`reuse_all` 且未提供 `chatgpt_result` 且 `kb_import=false` 时本轮没有任何待分析 job——不生成新 handoff ZIP，`chatgpt_handoff=wait` 也无需暂停（与现有 zero-jobs 不等待语义一致）。preflight miss 的教授，handoff barrier/lease/import 语义原样保留。
+- **partial miss**：某教授部分方向 process → 教授整体进慢路径，**绝不由 preflight 自己把 reuse 方向拼回结果**；慢路径 `stage2-plan` 会再次逐方向判定 reuse，只为 process 方向生成模型 job；unchanged 方向不产生 freshness/narrative job，未受影响论文不重跑 OCR/paper-analysis。
+
+### Step 2.7 — Zotero connectivity（仅 process professors）
+1. **仅当 `process_professors` 非空**才执行本步；全部教授 reusable 且无 Step 2.6 例外时，跳过 probe/session 直接按 Step 7 返回 reuse 结果。
+2. Probe Zotero（23119/23120）; offline → `question`（已打开，重试 / 中止）; 中止 → error JSON。
+3. Session: `SID=$(zotero-mcp-session)`。
+
+### Step 3 — Read candidate-set direction papers（仅 process professors）
+**只对 `process_professors` 中的教授执行本步及之后的一切读取/准备/分析**；`reusable_professors` 的论文、文件、Zotero 条目一律不读、不请求。
 For each flagged direction:
 1. 论文范围 = Step 2.5 快照中该方向的 `candidate_keys`（provisional members + 扩召），**不再是 target state 的裸 `members[]`**；每篇记下它在该方向的 `expansion_reasons`。先对同一教授的全部被选方向求 item_key 并集：每篇论文只读取/准备**一次**，被多个方向共享时复用同一份准备结果，绝不逐方向重复取。快照的 `unresolved_item_keys`（候选但 `papers.json` 无条目）不进读取循环，原样记入 notes。
 2. For each member paper（批量 ~20 一组）:
@@ -350,6 +375,7 @@ For each flagged direction:
   "program_root": "<abs>", "professor_dir": "<教授文件夹 abs>", "professor": "<kanji>",
   "current_year": <当年>,
   "params": {"gap_scope": "relevant|selected_direction|all", "freshness_scope": "shortlist|full"},
+  "stage2_preflight": {"preflight_id": "<Step 2.6 保存 payload 的 preflight_id，原样复制>"},
   "papers": [
     {"item_key": "...", "title": "...", "year": 2024, "month": 3,
      "authorship": "first|corresponding|solo|middle|pending",
@@ -368,6 +394,7 @@ For each flagged direction:
 ```
 
 - `sidecar_file` 只在 6.5 判定有效（schema 1 / status ok / 锚定级 items）时填；`facts_file` 只在 6.7 探测到 `<analysis>.facts.json` 时填（`pdf_file` 是其指纹校验材料）；`gap_scope` 由 runner 据此过滤候选池。runner 会独立校验 facts sidecar（指纹 + future_work_ids 精确 join），校验通过的论文以规范化 `paper_facts` 进入输入包支撑论文，校验失败只降级为无 facts，绝不回读 PDF/Markdown 或补跑模型。
+- `stage2_preflight.preflight_id` 从 Step 2.6 保存的 `/tmp/<教授名>_stage2_preflight.json` 原样复制：它是本轮 evidence 准备所依赖的那次 preflight 决定的证明。`stage2-finalize` 会核对 facts 与 `--preflight-file` 的绑定，缺失或不一致 → `needs_refresh/preflight_inputs_changed`（本轮白跑，绝不盖章）。
 - `member_keys` = Step 2.5 快照的 `candidate_keys`（方向范围工作全集：provisional members ∪ Stage 1 扩召）——runner 的 `gap_scope=selected_direction` gap 池据此取已有有效 sidecar 的候选论文，扩召论文的分析才能真正贡献方向 gap。
 - `provisional_member_keys` = target state 的 `members[]`（审计用，参与 runner 指纹的只有 member/relevant/named keys 与 credibility 等字段；归属语义以 `membership_claim: non_final_candidates_only` 为准，Stage 2 绝不宣称最终成员）。
 - `relevant_keys` = Step 5.2 判定的相关集（⊆ candidate_keys）；`named_keys` = user_note 点名 ∪ 快照 `user_named`。
@@ -402,8 +429,10 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
 **6.3 跑 `stage2-finalize`**：
 
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage2-finalize --facts <facts> --results <results 目录>
+skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage2-finalize --facts <facts> --results <results 目录> --preflight-file /tmp/<教授名>_stage2_preflight.json
 ```
+
+`--preflight-file` 是 Step 2.6 保存的同一份 preflight stdout，必须原样传回。finalize 在**任何写盘之前**重算 cheap structural inputs 并与 preflight 时比对：不一致 → `needs_refresh/preflight_inputs_changed`（不写 pack/freshness cache/Markdown；本轮按可恢复 partial 返回，稍后从 Step 2 重新开始）。finalize 还会重算 payload 的 `preflight_id`，并要求与 facts 的 `stage2_preflight.preflight_id`（Step 6.1 写入）一致：payload 被同一教授的另一次调用覆盖、facts 缺失绑定或 id 不一致 → 同样 `needs_refresh/preflight_inputs_changed`（drift 记 `preflight_proof_id`/`preflight_proof_binding`），不写任何文件。比对全部通过时，finalize 把本轮 accepted state 的 preflight metadata 种进 `套磁候选输入.json` 的 `cache.preflight`（含 pack integrity sha、逐方向 target/candidate/accepted/freshness 指纹与 artifact stat guards），供下一次 Stage 2 的 Step 2.6 early reuse 判定。`stage2-refine-finalize` 会清除 `cache.preflight` 与 validator（保守失效：修订后的 pack 下次必须重新证明，重跑通过后再次 seed）。
 
 runner 校验全部 result JSON（gap ID ∈ 待判集、candidate_paper_ids ⊆ 候选清单、partial 缺 completed_part/remaining_gap 自动降级 unknown 并标记 `downgraded`、narrative refs 与占位符一致），然后原子写：
 
@@ -447,9 +476,11 @@ Return ONLY this JSON, no surrounding prose:
   "program_root": "<abs>",
   "target_state": "<program_root>/教授研究/套磁目标.json",
   "reason_code": "<chatgpt_result_required|stage2_plan_stale|stage2_writer_busy|...|null>",
+  "reused_professors": ["<Step 2.6 reuse_all no-op 复用的教授名>"],
   "handoffs": [{"professor":"", "handoff_id":"", "bundle_path":"", "jobs":0, "missing":[]}],
   "analyses": [
     {"professor": "", "collection_key": "", "direction_id": "", "name_ja": "", "name_zh": "",
+     "reused": false,
      "paper_count": 0, "relevant": 0, "abstracted": 0, "pdf_available": 0,
      "analysis_dir": "<教授文件夹>/论文分析 abs path>",
      "credibility": {"verdict": "站得住|勉强|疑似幻觉", "mainline": "主线|历史", "authorship_line": "corresponding_dominant|mixed|first_author_present|insufficient", "note": "<1 句>"},
@@ -463,6 +494,7 @@ Return ONLY this JSON, no surrounding prose:
 }
 ```
 - `ok` — 全部被标记方向完成；`needs_external_result` — `wait` 已生成 bundle 或外部结果仍缺/非法，是可恢复软停止，必须返回 `chatgpt_result_required` 或 importer reason_code + handoff/missing；`partial` — 其它方向级失败/降级，包括本地 continuation 的 `stage2_plan_stale` / `stage2_writer_busy`；`error` — Zotero/路径/runner 等不可继续错误。**wait 的 external 不完整绝不能降级为本地高耗执行。**
+- `reused_professors` 列出 Step 2.6 判定 `reuse_all` 的教授；其 `analyses[]` 条目 `reused: true`，`pack`/`md` 指向既有 accepted 产物（未 rewrite、时间戳未变），无 credibility/计数更新。
 - **不回传** gap 原文全文、论文全文、逐条大推理——人读细节在渲染后的 md 与输入包里。
 
 ## Errors
@@ -475,6 +507,7 @@ when: no `folder_path`; program root unresolvable; user aborted at the Zotero pr
 ## Hard rules
 - **target state 是唯一选择来源**：绝不扫描 Zotero `套磁候选` note、绝不要求 `套磁候选总览.md`、绝不从 Zotero collection key 推导 target 身份；`collection_key` 只是 `direction_id` 的兼容 join 键。被选方向成员身份变化（成员 `item_key` 集合变化或方向消失，`preview_changed`，stale 条目精确到 `direction_id`）阻断 Stage 2，直到 Stage 0 修订选择；未选方向、display 或置信度变化不阻断。
 - **Stage 1 候选快照必须先 verify 再消费**：分析/相关性范围 = `contact_stage1.py verify` 通过后的逐方向 `candidate_keys`；快照缺失/过期 → `needs_input`（重跑 Stage 1），绝不手改快照、绝不回退到「只读 provisional members」的旧范围（那会让 Stage 1 扩召白下 PDF）。扩召候选永远以候选身份参与（`non_final_candidates_only`）：可信度闸门只用 provisional members，`relevance_reason` 附扩召理由，绝不把扩召写成「该方向成员」。
+- **Stage 2 初始化顺序固定且 preflight gate 不可绕过**：resolve → `contact_targets.py resolve` → `contact_stage1.py verify` → 逐教授 `contact_state.py stage2-preflight` → 分区 → **仅当存在 process professor**才 Zotero probe/session → 候选论文读取。`reuse_all` 教授必须在任何 Zotero connectivity 检查/PDF 读取/模型 job 之前以 no-op 复用结束；`chatgpt_result` 显式提供或 `kb_import=true` 时禁止 early hard exit。preflight 是 correctness-preserving 优化，不是弱化缓存：任何无法证明安全的状态（legacy pack、malformed cache 容器、版本/参数变化、指纹或 artifact guard 不一致、validator 未验收）一律 fallback 到原 Stage 2 correctness path；preflight 绝不生成新的科学事实，`cache.preflight` 只是 cache metadata。保存的 preflight payload 与 facts 的绑定同样不可绕过：Step 6.1 必须把 payload 的 `preflight_id` 写进 facts，finalize 只承认由准备该 facts 的同一次调用保存的 proof。
 - **跨方向按 item_key 去重**：同一教授同一 `item_key` 的准备/OCR/paper-analysis 每轮至多执行一次，结果复用到所有包含它的被选方向；**绝不仅因成员重叠就合并两个被选方向**的 narrative、user_note、gap pool 或 direction fingerprint。
 - **handoff barrier 不可绕过**：post-cost-gate/post-idempotency jobs 必须先 build ZIP；`wait` 在任何新 vision OCR/`paper-analysis full|gap-only` 前停止。resume 必须先按当前输入 rebuild current bundle，再 import external result；不匹配即 stale/mismatch，绝不‘尽量用’。
 - **Stage-2 single-writer lease 不可绕过**：handoff `import` 必须发生在 local lease acquire **之前**；一旦本轮要进入任何教授目录本地写路径，就必须先 `local-lease-acquire`，并把**本轮 build 返回的 exact `handoff_id/source_fingerprint`**原样传入，覆盖 legacy `paper-analysis`、OCR、sidecar、`_index.json` 与 runner 写入的整个教授 scope，并在 **finally** 中 `local-lease-release`。`stage2_plan_stale` 或 `stage2_writer_busy` 时禁止写。这个 lease 是 importer 与“不主动拿 OS lock 的旧 writer”之间的共同协调边界，也是 build→acquire 间 stale-plan 的最终闸门。

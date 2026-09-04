@@ -65,6 +65,14 @@ SIDECAR_EXTRACTOR_VERSIONS = ("future-work-v1", "legacy-markdown-v0")
 FACTS_SCHEMA = 1
 FACTS_KIND = "paper-analysis-facts"
 FACTS_GENERATOR_VERSIONS = ("facts-v1",)
+STAGE2_PREFLIGHT_VERSION = "stage2-preflight-v1"
+STAGE2_RESOLUTION_SEMANTICS_VERSION = 1
+STAGE2_TARGET_FILE = Path("教授研究") / "套磁目标.json"
+STAGE1_SNAPSHOT_FILE = Path("教授研究") / "套磁阶段1候选.json"
+AUTHORSHIP_LEDGER_FILE = Path("教授研究") / "_署名对照.json"
+PAPER_ANALYSIS_SCOPES = ("relevant", "all")
+STAGE2_GUARD_KINDS = (("analysis", "analysis_file"), ("future_work", "sidecar_file"),
+                      ("facts", "facts_file"), ("pdf", "pdf_file"))
 FACTS_TEXT_FIELDS = ("research_problem", "research_object", "approach")
 FACTS_LIST_FIELDS = ("findings", "contributions", "topic_terms", "limitations")
 SHORTLIST_MAX = 10
@@ -742,7 +750,11 @@ def load_freshness_cache(professor_dir: Path) -> dict:
     data, error = read_json_file(professor_dir / FRESHNESS_CACHE)
     if error or not isinstance(data, dict):
         return {}
-    return data.get("entries") or {}
+    entries = data.get("entries")
+    # A malformed truthy `entries` container degrades to an empty view so the
+    # freshness-view fingerprint mismatches the accepted one (fail closed to
+    # `freshness_cache_changed`) instead of crashing on a non-dict .get().
+    return entries if isinstance(entries, dict) else {}
 
 
 def save_freshness_cache(professor_dir: Path, entries: dict) -> None:
@@ -1042,6 +1054,501 @@ class Stage2PackRefineContext:
         direction = next((d for d in self.pack.get("directions", [])
                           if d.get("collection_key") == plan["ckey"]), {})
         return self.narrative_later_keys_for(direction)
+
+
+def stage2_preflight_versions() -> dict:
+    """Semantic identity of the Stage 2 resolution implementation.
+
+    Any change that can make identical inputs produce different Stage 2 output
+    must bump STAGE2_RESOLUTION_SEMANTICS_VERSION so older accepted packs are
+    never silently reused by newer code.
+    """
+    return {
+        "preflight_version": STAGE2_PREFLIGHT_VERSION,
+        "resolution_semantics_version": STAGE2_RESOLUTION_SEMANTICS_VERSION,
+        "sidecar_extractor_versions": list(SIDECAR_EXTRACTOR_VERSIONS),
+        "facts_generator_versions": list(FACTS_GENERATOR_VERSIONS),
+    }
+
+
+def stage2_preflight_params(paper_analysis: str, gap_scope: str, freshness_scope: str,
+                            max_relevant_papers: int | None) -> dict:
+    return {"paper_analysis": paper_analysis, "gap_scope": gap_scope,
+            "freshness_scope": freshness_scope,
+            "max_relevant_papers": max_relevant_papers}
+
+
+def stage2_target_fingerprint(direction: dict) -> str:
+    """Hash only the target fields Stage 2 actually consumes for one direction.
+
+    Deliberately excludes the whole-preview fingerprint, selection history and
+    other professors: display-only projection churn must never invalidate a
+    selected direction's Stage 2 state.
+    """
+    members = sorted(
+        ({"item_key": member.get("item_key"),
+          "preview_confidence": member.get("preview_confidence")}
+         for member in direction.get("members") or []),
+        key=lambda member: json.dumps(member, ensure_ascii=False, sort_keys=True))
+    return sha256_obj({
+        "direction_id": direction.get("direction_id"),
+        "name_ja": direction.get("name_ja"),
+        "name_zh": direction.get("name_zh"),
+        "summary_zh": direction.get("summary_zh"),
+        "members": members,
+        "user_note": direction.get("user_note") or "",
+    })
+
+
+def stage2_candidate_fingerprint(snapshot_direction: dict | None) -> str | None:
+    """Hash the Stage 1 candidate-set view one direction consumes.
+
+    Consumes the already-verified snapshot entry as-is; Stage 1 stays the
+    candidate authority and preflight never re-runs candidate expansion.
+    """
+    if not isinstance(snapshot_direction, dict):
+        return None
+    readiness = snapshot_direction.get("pdf_readiness") or {}
+    return sha256_obj({
+        "direction_id": snapshot_direction.get("direction_id"),
+        "provisional_member_keys": sorted(snapshot_direction.get("provisional_member_keys") or []),
+        "candidate_keys": sorted(snapshot_direction.get("candidate_keys") or []),
+        "expansion_reasons": {key: sorted(values or []) for key, values
+                              in sorted((snapshot_direction.get("expansion_reasons") or {}).items())},
+        "expansion_evidence": {key: snapshot_direction["expansion_evidence"][key] for key
+                               in sorted(snapshot_direction.get("expansion_evidence") or {})},
+        "pdf_readiness": {
+            "usable_item_keys": sorted(readiness.get("usable_item_keys") or []),
+            "missing_item_keys": sorted(readiness.get("missing_item_keys") or []),
+            "unresolved_item_keys": sorted(readiness.get("unresolved_item_keys") or []),
+            "status_counts": dict(sorted((readiness.get("status_counts") or {}).items())),
+        },
+    })
+
+
+def stage2_candidate_universe(target: dict | None, snapshot_entry: dict | None) -> set:
+    """Union of Stage 1 candidate_keys over the professor's selected directions.
+
+    This is the only catalog slice whose changes can invalidate accepted
+    Stage 2 state; catalog/ledger churn outside it must never force the slow
+    path.
+    """
+    snapshot_directions = {entry.get("direction_id"): entry
+                           for entry in (snapshot_entry or {}).get("directions") or []
+                           if isinstance(entry, dict)}
+    keys: set = set()
+    for direction_id in (target or {}).get("selected_direction_ids") or []:
+        entry = snapshot_directions.get(direction_id)
+        if not isinstance(entry, dict):
+            continue
+        candidate_keys = entry.get("candidate_keys")
+        if isinstance(candidate_keys, list):
+            keys.update(key for key in candidate_keys if isinstance(key, str))
+    return keys
+
+
+def stage2_papers_catalog_view_fingerprint(professor_dir: Path,
+                                           candidate_keys: set) -> str:
+    """Hash only the candidate papers' catalog records, not the whole file.
+
+    A sentinel (never a hex digest) means the catalog cannot prove the
+    candidate view; recorded fingerprints can never match a sentinel, so any
+    such state fails closed to the slow path.
+    """
+    path = professor_dir / "papers.json"
+    if not path.is_file():
+        return "missing"
+    data, error = read_json_file(path)
+    if error or not isinstance(data, dict) or not isinstance(data.get("papers"), list):
+        return "malformed"
+    records = {}
+    absent = []
+    for key in sorted(candidate_keys):
+        record = next((paper for paper in data["papers"]
+                       if isinstance(paper, dict) and paper.get("item_key") == key), None)
+        if record is None:
+            absent.append(key)
+        else:
+            records[key] = record
+    return sha256_obj({"records": records, "absent": absent})
+
+
+def stage2_authorship_ledger_view_fingerprint(program_root: Path, professor: str) -> str:
+    """Hash only this professor's slice of the shared authorship ledger.
+
+    The tagger ledger is a per-professor name-variant book plus per-professor
+    human overrides; other professors' entries and the file-level rebuild
+    timestamp never feed this professor's Stage 2 authorship work, so they
+    stay out of the cache key. Malformed containers fail closed via the same
+    sentinel convention as the catalog view.
+    """
+    path = program_root / AUTHORSHIP_LEDGER_FILE
+    if not path.is_file():
+        return "missing"
+    data, error = read_json_file(path)
+    if error or not isinstance(data, dict):
+        return "malformed"
+    professors = data.get("professors")
+    overrides = data.get("overrides")
+    if professors is not None and not isinstance(professors, dict):
+        return "malformed"
+    if overrides is not None and not isinstance(overrides, dict):
+        return "malformed"
+    return sha256_obj({
+        "sigbook": professors.get(professor) if isinstance(professors, dict) else None,
+        "overrides": overrides.get(professor) if isinstance(overrides, dict) else None,
+    })
+
+
+def stage2_program_inputs(program_root: Path, professor_dir: Path, professor: str,
+                          target: dict | None, snapshot_entry: dict | None) -> dict:
+    """Professor-wide cheap inputs: Stage 1 epoch + candidate-view fingerprints."""
+    candidate_keys = stage2_candidate_universe(target, snapshot_entry)
+    return {
+        "stage1_professor_input_fingerprint": (snapshot_entry or {}).get("input_fingerprint"),
+        "papers_catalog_view_sha256":
+            stage2_papers_catalog_view_fingerprint(professor_dir, candidate_keys),
+        "authorship_ledger_view_sha256":
+            stage2_authorship_ledger_view_fingerprint(program_root, professor),
+    }
+
+
+def read_stage2_target(program_root: Path, professor: str) -> dict | None:
+    data, error = read_json_file(program_root / STAGE2_TARGET_FILE)
+    if error or not isinstance(data, dict) or not isinstance(data.get("targets"), list):
+        return None
+    for target in data["targets"]:
+        if isinstance(target, dict) and target.get("professor") == professor:
+            return target
+    return None
+
+
+def read_stage1_professor_entry(program_root: Path, professor: str) -> dict | None:
+    data, error = read_json_file(program_root / STAGE1_SNAPSHOT_FILE)
+    if error or not isinstance(data, dict) or not isinstance(data.get("professors"), list):
+        return None
+    for entry in data["professors"]:
+        if isinstance(entry, dict) and entry.get("professor") == professor:
+            return entry
+    return None
+
+
+def stage2_preflight_cheap_inputs(program_root: Path, professor_dir: Path, professor: str,
+                                  target: dict | None, snapshot_entry: dict | None,
+                                  params: dict, current_year: int) -> dict:
+    """The structural inputs both preflight and finalize can recompute cheaply.
+
+    This block is the TOCTOU comparison basis: it never touches analysis
+    artifacts, PDFs, Zotero or the network — only persisted state fingerprints.
+    """
+    snapshot_directions = {entry.get("direction_id"): entry
+                           for entry in ((snapshot_entry or {}).get("directions") or [])
+                           if isinstance(entry, dict)}
+    directions = {}
+    for direction in (target or {}).get("directions") or []:
+        direction_id = str(direction.get("direction_id"))
+        directions[direction_id] = {
+            "target_fingerprint": stage2_target_fingerprint(direction),
+            "candidate_fingerprint": stage2_candidate_fingerprint(
+                snapshot_directions.get(direction.get("direction_id"))),
+        }
+    return {
+        "versions": stage2_preflight_versions(),
+        "params": params,
+        "current_year": current_year,
+        "program_inputs": stage2_program_inputs(program_root, professor_dir, professor,
+                                                target, snapshot_entry),
+        "selected_direction_ids": sorted((target or {}).get("selected_direction_ids") or []),
+        "directions": directions,
+    }
+
+
+def stage2_artifact_guard(path: Path, accepted_digest: str | None) -> dict:
+    stat = path.stat()
+    return {"path": str(path), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+            "ctime_ns": stat.st_ctime_ns, "accepted_digest": accepted_digest}
+
+
+def stage2_artifact_guard_reason(recorded: dict) -> str | None:
+    """Filesystem-only guard: stat the accepted artifact, never re-read bytes.
+
+    Cryptographic source identity stays with the normal Stage 2 facts
+    validation; this only detects that the recorded file itself changed since
+    the accepted run.
+    """
+    path = Path(str(recorded.get("path") or ""))
+    try:
+        if not path.is_file():
+            return "artifact_missing"
+        stat = path.stat()
+    except OSError:
+        return "artifact_missing"
+    if (stat.st_size != recorded.get("size")
+            or stat.st_mtime_ns != recorded.get("mtime_ns")
+            or stat.st_ctime_ns != recorded.get("ctime_ns")):
+        return "artifact_changed"
+    return None
+
+
+def stage2_direction_artifact_guards(ctx: Stage2Context, direction: dict) -> dict:
+    """Record accepted stat guards for artifacts that feed one direction's output.
+
+    Guard keys are the direction's relevant papers plus its gap-scope papers
+    (the sidecar sources of the direction gap pool). Digests reuse SHAs already
+    computed by Stage2Context; PDF bytes are never re-read just for metadata.
+    """
+    guard_keys = set(direction_relevant_keys(direction))
+    guard_keys.update(gap_scope_keys(ctx.facts, direction))
+    guards = {}
+    for key in sorted(guard_keys):
+        paper = ctx.papers.get(key)
+        if not paper:
+            continue
+        entries = {}
+        for kind, field in STAGE2_GUARD_KINDS:
+            value = paper.get(field)
+            if not value:
+                continue
+            path = Path(value)
+            if not path.is_file():
+                continue
+            digest = None
+            if kind == "future_work":
+                cached = ctx.sidecar_cache.get(value)
+                if cached is not None:
+                    digest = cached[3]
+            elif kind == "pdf":
+                record = ctx.facts_cache.get(key)
+                if record and record[1] == "valid" and record[0]:
+                    digest = record[0].get("input_fingerprint")
+            else:
+                digest = sha256_bytes(path.read_bytes())
+            entries[kind] = stage2_artifact_guard(path, digest)
+        if entries:
+            guards[key] = entries
+    return guards
+
+
+def stage2_freshness_view_fingerprint(pack_direction: dict, cache_entries: dict) -> str:
+    """Hash the freshness-cache view over one accepted direction's gaps.
+
+    Covers every gap the accepted pack surfaced (shortlist, excluded,
+    done_by_self blacklist). Entries for unrelated gaps are irrelevant; a
+    missing/invalid cache file yields null entries and misses.
+    """
+    gap_ids = set()
+    for section in ("gap_shortlist", "gaps_excluded", "completed_gap_blacklist"):
+        for gap in pack_direction.get(section) or []:
+            gap_id = gap.get("gap_id") if isinstance(gap, dict) else None
+            if gap_id:
+                gap_ids.add(gap_id)
+    view = {gap_id: cache_entries.get(gap_id) for gap_id in sorted(gap_ids)}
+    return sha256_obj(view)
+
+
+def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: dict,
+                              snapshot_entry: dict | None, pack_directions: list,
+                              params: dict, current_year: int, ctx: Stage2Context,
+                              cache_entries: dict) -> dict:
+    """Build the cache.preflight block seeded into an accepted input pack.
+
+    Written only by stage2-finalize; consumers (stage3+) must keep treating it
+    as opaque cache metadata, never as stage facts.
+    """
+    snapshot_directions = {entry.get("direction_id"): entry
+                           for entry in (snapshot_entry or {}).get("directions") or []
+                           if isinstance(entry, dict)}
+    accepted_by_key = {entry.get("collection_key"): entry for entry in pack_directions}
+    facts_directions = {entry.get("collection_key"): entry
+                        for entry in ctx.facts.get("directions") or []}
+    directions = {}
+    for direction in target.get("directions") or []:
+        direction_id = str(direction.get("direction_id"))
+        accepted = accepted_by_key.get(direction_id)
+        if not accepted:
+            continue
+        facts_direction = facts_directions.get(direction_id) or {}
+        directions[direction_id] = {
+            "target_fingerprint": stage2_target_fingerprint(direction),
+            "candidate_fingerprint": stage2_candidate_fingerprint(
+                snapshot_directions.get(direction.get("direction_id"))),
+            "accepted_input_fingerprint": accepted.get("input_fingerprint"),
+            "freshness_view_fingerprint": stage2_freshness_view_fingerprint(
+                accepted, cache_entries),
+            "artifact_guards": stage2_direction_artifact_guards(ctx, facts_direction),
+        }
+    return {
+        "schema": 1,
+        "version": STAGE2_PREFLIGHT_VERSION,
+        "resolution_semantics_version": STAGE2_RESOLUTION_SEMANTICS_VERSION,
+        "sidecar_extractor_versions": list(SIDECAR_EXTRACTOR_VERSIONS),
+        "facts_generator_versions": list(FACTS_GENERATOR_VERSIONS),
+        "accepted_directions_sha256": sha256_obj(pack_directions),
+        "current_year": current_year,
+        "params": params,
+        "program_inputs": stage2_program_inputs(program_root, professor_dir, ctx.professor,
+                                                target, snapshot_entry),
+        "directions": directions,
+    }
+
+
+def stage2_validator_accepts(pack: dict | None, direction_ids: list) -> str | None:
+    """Return a validator-not-accepted reason, or None when reuse may proceed.
+
+    Keeps the existing validator contract: only recorded terminal results
+    (`pass`/`skipped`) count as accepted; missing results, malformed state and
+    `fail_after_2_rounds` force the slow path without redefining policy here.
+    """
+    validator = (pack or {}).get("validator")
+    results = validator.get("results") if isinstance(validator, dict) else None
+    if not isinstance(results, dict):
+        return "validator_not_accepted"
+    for direction_id in direction_ids:
+        row = results.get(direction_id)
+        if not isinstance(row, dict) or row.get("result") not in ("pass", "skipped"):
+            return "validator_not_accepted"
+    return None
+
+
+def cmd_stage2_preflight(args) -> None:
+    professor = args.professor
+    if args.paper_analysis not in PAPER_ANALYSIS_SCOPES:
+        fail("invalid_params", f"paper_analysis must be one of {PAPER_ANALYSIS_SCOPES}")
+    if args.gap_scope not in GAP_SCOPES:
+        fail("invalid_params", f"gap_scope must be one of {GAP_SCOPES}")
+    if args.freshness_scope not in FRESHNESS_SCOPES:
+        fail("invalid_params", f"freshness_scope must be one of {FRESHNESS_SCOPES}")
+    if args.max_relevant_papers is not None and (isinstance(args.max_relevant_papers, bool)
+                                                 or args.max_relevant_papers < 1):
+        fail("invalid_params", "max_relevant_papers must be a positive integer when given")
+    program_root = Path(args.program_root)
+    params = stage2_preflight_params(args.paper_analysis, args.gap_scope,
+                                     args.freshness_scope, args.max_relevant_papers)
+    current_year = datetime.now().year
+    target = read_stage2_target(program_root, professor)
+    if target is None:
+        fail("invalid_params",
+             f"professor has no selected target state; run contact_targets.py resolve first: {professor}")
+    professor_dir = program_root / str(target.get("professor_dir") or "")
+    snapshot_entry = read_stage1_professor_entry(program_root, professor)
+    pack_path = professor_dir / INPUT_PACK
+    pack, _error = read_json_file(pack_path)
+    if not isinstance(pack, dict):
+        pack = None
+    cache_block = (pack or {}).get("cache")
+    meta = cache_block.get("preflight") if isinstance(cache_block, dict) else None
+
+    professor_reasons: list = []
+    if pack is None:
+        professor_reasons.append("missing_input_pack")
+    elif cache_block is not None and not isinstance(cache_block, dict):
+        # Corrupted / half-written containers must fail closed to the slow path
+        # with a stable reason; they may never crash the gate itself.
+        professor_reasons.append("preflight_cache_malformed")
+    elif not isinstance(meta, dict):
+        professor_reasons.append(
+            "preflight_cache_malformed" if meta is not None else "legacy_pack_no_preflight")
+        meta = None
+    else:
+        if meta.get("version") != STAGE2_PREFLIGHT_VERSION:
+            professor_reasons.append("preflight_version_changed")
+        if (meta.get("resolution_semantics_version") != STAGE2_RESOLUTION_SEMANTICS_VERSION
+                or meta.get("sidecar_extractor_versions") != list(SIDECAR_EXTRACTOR_VERSIONS)
+                or meta.get("facts_generator_versions") != list(FACTS_GENERATOR_VERSIONS)):
+            professor_reasons.append("resolution_semantics_changed")
+        if meta.get("accepted_directions_sha256") != sha256_obj(pack.get("directions") or []):
+            professor_reasons.append("pack_integrity_mismatch")
+        if meta.get("params") != params or meta.get("current_year") != current_year:
+            professor_reasons.append("params_changed")
+        current_program_inputs = stage2_program_inputs(program_root, professor_dir,
+                                                       professor, target, snapshot_entry)
+        recorded_program_inputs = meta.get("program_inputs")
+        if not isinstance(recorded_program_inputs, dict):
+            professor_reasons.append("preflight_cache_malformed")
+            recorded_program_inputs = {}
+        if recorded_program_inputs.get("stage1_professor_input_fingerprint") != \
+                current_program_inputs["stage1_professor_input_fingerprint"]:
+            professor_reasons.append("stage1_professor_changed")
+        if recorded_program_inputs.get("papers_catalog_view_sha256") != \
+                current_program_inputs["papers_catalog_view_sha256"]:
+            professor_reasons.append("papers_catalog_changed")
+        if recorded_program_inputs.get("authorship_ledger_view_sha256") != \
+                current_program_inputs["authorship_ledger_view_sha256"]:
+            professor_reasons.append("authorship_ledger_changed")
+
+    cache_entries = load_freshness_cache(professor_dir) if pack else {}
+    pack_directions = {entry.get("collection_key"): entry
+                       for entry in (pack or {}).get("directions") or []
+                       if isinstance(entry, dict)}
+    recorded_directions = (meta or {}).get("directions")
+    if not isinstance(recorded_directions, dict):
+        if recorded_directions is not None:
+            professor_reasons.append("preflight_cache_malformed")
+        recorded_directions = {}
+    snapshot_directions = {entry.get("direction_id"): entry
+                           for entry in (snapshot_entry or {}).get("directions") or []
+                           if isinstance(entry, dict)}
+    target_directions = [entry for entry in target.get("directions") or []
+                         if isinstance(entry, dict)]
+    direction_results = []
+    all_reuse = bool(target_directions) and not professor_reasons
+    for direction in target_directions:
+        direction_id = str(direction.get("direction_id"))
+        reasons = []
+        recorded = recorded_directions.get(direction_id)
+        accepted = pack_directions.get(direction_id)
+        if recorded is None or not isinstance(recorded, dict):
+            reasons.append("preflight_record_missing")
+        else:
+            if recorded.get("target_fingerprint") != stage2_target_fingerprint(direction):
+                reasons.append("target_changed")
+            if recorded.get("candidate_fingerprint") != stage2_candidate_fingerprint(
+                    snapshot_directions.get(direction.get("direction_id"))):
+                reasons.append("candidate_set_changed")
+            if accepted is None or recorded.get("accepted_input_fingerprint") != \
+                    accepted.get("input_fingerprint"):
+                reasons.append("pack_integrity_mismatch")
+            elif recorded.get("freshness_view_fingerprint") != \
+                    stage2_freshness_view_fingerprint(accepted, cache_entries):
+                reasons.append("freshness_cache_changed")
+            guards = recorded.get("artifact_guards")
+            if not isinstance(guards, dict):
+                # An unusable guards container cannot prove artifact freshness.
+                if guards is not None:
+                    reasons.append("preflight_record_missing")
+                guards = {}
+            for item_key in sorted(guards):
+                kinds = guards[item_key]
+                if not isinstance(kinds, dict):
+                    reasons.append("preflight_record_missing")
+                    continue
+                for kind in sorted(kinds):
+                    guard = kinds[kind]
+                    reason = stage2_artifact_guard_reason(guard if isinstance(guard, dict) else {})
+                    if reason:
+                        reasons.append(reason)
+        validator_reason = stage2_validator_accepts(pack, [direction_id])
+        if validator_reason:
+            reasons.append(validator_reason)
+        reasons = sorted(set(reasons))
+        direction_results.append({
+            "collection_key": direction_id, "action": "reuse" if not reasons else "process",
+            "reason_codes": reasons})
+        if reasons:
+            all_reuse = False
+    preflight_inputs = stage2_preflight_cheap_inputs(
+        program_root, professor_dir, professor, target, snapshot_entry, params, current_year)
+    emit({
+        "status": "ok",
+        "professor": professor,
+        "preflight_id": sha256_obj({"professor": professor,
+                                    "preflight_inputs": preflight_inputs}),
+        "action": "reuse_all" if all_reuse else "process",
+        "reason_codes": sorted(set(professor_reasons)),
+        "pack_path": str(pack_path),
+        "preflight_inputs": preflight_inputs,
+        "directions": direction_results,
+    })
 
 
 def cmd_stage2_plan(args) -> None:
@@ -1593,8 +2100,90 @@ def render_analysis_md(ctx: Stage2Context, pack_directions: list,
     return "\n".join(lines).rstrip() + "\n"
 
 
+def stage2_preflight_plan_drift(plan_inputs: dict, current: dict) -> list:
+    """Field-level drift between the saved preflight plan and current inputs."""
+    drift = []
+    if plan_inputs.get("versions") != current["versions"]:
+        drift.append("versions")
+    if plan_inputs.get("current_year") != current["current_year"]:
+        drift.append("current_year")
+    if plan_inputs.get("program_inputs") != current["program_inputs"]:
+        drift.append("program_inputs")
+    if plan_inputs.get("selected_direction_ids") != current["selected_direction_ids"]:
+        drift.append("selected_direction_ids")
+    recorded_directions = plan_inputs.get("directions")
+    if not isinstance(recorded_directions, dict):
+        drift.append("directions")
+    else:
+        if set(recorded_directions) != set(current["directions"]):
+            drift.append("directions")
+        else:
+            for direction_id, entry in current["directions"].items():
+                if recorded_directions.get(direction_id) != entry:
+                    drift.append(f"directions:{direction_id}")
+    return sorted(set(drift))
+
+
+def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
+    """Load --preflight-file and re-verify its cheap inputs before any write.
+
+    Stage 2 may run for a long time after the preflight decided to prepare
+    evidence. Stage 0/1 state or papers.json can change underneath; finalize
+    must never stamp results derived from a stale candidate universe as
+    current. Returns (plan, target, snapshot_entry); plan is None when the
+    caller did not pass a preflight file (legacy direct callers).
+
+    The payload is also bound to the facts run it produced: ``preflight_id``
+    must be the payload's self-consistent proof id and must equal the id the
+    analyzer recorded into the facts file (``facts.stage2_preflight``) when
+    that run observed the preflight decision. Without this, a later invocation
+    for the same professor could overwrite the shared saved payload and its
+    (matching) fingerprints would wrongly certify facts prepared from an
+    earlier target state.
+    """
+    if not getattr(args, "preflight_file", None):
+        return None, None, None
+    plan, error = read_json_file(Path(args.preflight_file))
+    if (error or not isinstance(plan, dict) or plan.get("status") != "ok"
+            or not isinstance(plan.get("preflight_inputs"), dict)):
+        fail("invalid_params", f"preflight file unreadable or not a preflight payload: "
+                               f"{args.preflight_file}")
+    if plan.get("professor") != ctx.professor:
+        fail("invalid_params", "preflight file professor mismatch: "
+                               f"{plan.get('professor')!r} != {ctx.professor!r}")
+    plan_inputs = plan["preflight_inputs"]
+    params = plan_inputs.get("params")
+    if not isinstance(params, dict) or params.get("gap_scope") != ctx.gap_scope or \
+            params.get("freshness_scope") != ctx.freshness_scope:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=["params"])
+    target = read_stage2_target(ctx.program_root, ctx.professor)
+    snapshot_entry = read_stage1_professor_entry(ctx.program_root, ctx.professor)
+    if target is None or snapshot_entry is None:
+        soft_exit("needs_refresh", "preflight_inputs_changed",
+                  drift=["target_or_snapshot_missing"])
+    current = stage2_preflight_cheap_inputs(
+        ctx.program_root, ctx.professor_dir, ctx.professor, target, snapshot_entry, params,
+        ctx.current_year)
+    drift = stage2_preflight_plan_drift(plan_inputs, current)
+    if drift:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=drift)
+    preflight_id = sha256_obj({"professor": plan["professor"],
+                               "preflight_inputs": plan_inputs})
+    if plan.get("preflight_id") != preflight_id:
+        soft_exit("needs_refresh", "preflight_inputs_changed",
+                  drift=["preflight_proof_id"])
+    binding = ctx.facts.get("stage2_preflight")
+    if (not isinstance(binding, dict)
+            or binding.get("preflight_id") != preflight_id):
+        soft_exit("needs_refresh", "preflight_inputs_changed",
+                  drift=["preflight_proof_binding"])
+    return plan, target, snapshot_entry
+
+
 def cmd_stage2_finalize(args) -> None:
     ctx = Stage2Context(Path(args.facts))
+    preflight_plan, preflight_target, preflight_snapshot = \
+        stage2_finalize_preflight_plan(args, ctx)
     results_dir = Path(args.results)
     decision = None
     if getattr(args, "decision_file", None):
@@ -1648,6 +2237,13 @@ def cmd_stage2_finalize(args) -> None:
     }
     if ctx.pack and not needed_keys and ctx.pack.get("validator"):
         pack["validator"] = ctx.pack["validator"]
+    if preflight_plan is not None:
+        pack["cache"]["preflight"] = stage2_preflight_metadata(
+            program_root=ctx.program_root, professor_dir=ctx.professor_dir,
+            target=preflight_target, snapshot_entry=preflight_snapshot,
+            pack_directions=pack_directions,
+            params=preflight_plan["preflight_inputs"]["params"],
+            current_year=ctx.current_year, ctx=ctx, cache_entries=cache_entries)
     atomic_json(ctx.pack_path, pack)
     save_freshness_cache(ctx.professor_dir, cache_entries)
     judged = sum(1 for statuses in statuses_by_direction.values()
@@ -4594,10 +5190,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--facts", required=True)
     p.set_defaults(func=lambda a: cmd_stage2_plan(a))
 
+    p = sub.add_parser("stage2-preflight")
+    p.add_argument("--program-root", required=True)
+    p.add_argument("--professor", required=True)
+    p.add_argument("--paper-analysis", default="relevant")
+    p.add_argument("--gap-scope", default="selected_direction")
+    p.add_argument("--freshness-scope", default="shortlist")
+    p.add_argument("--max-relevant-papers", type=int, default=None)
+    p.set_defaults(func=cmd_stage2_preflight)
+
     p = sub.add_parser("stage2-finalize")
     p.add_argument("--facts", required=True)
     p.add_argument("--results", required=True)
     p.add_argument("--decision-file")
+    p.add_argument("--preflight-file",
+                   help="saved stage2-preflight stdout; re-verifies cheap inputs "
+                        "before any write and seeds cache.preflight")
     p.set_defaults(func=cmd_stage2_finalize)
 
     p = sub.add_parser("stage2-refine-plan")
