@@ -312,6 +312,36 @@ def select_target(program_root: Path, preview_path: Path, selection: dict[str, A
     }
 
 
+def _member_keys(direction: dict[str, Any]) -> list[str]:
+    """Membership identity: sorted item_keys. Upstream derives direction_id from
+    these, while member_fingerprint also hashes preview_confidence, so only the
+    key set is material for target validity."""
+    return sorted(
+        str(member.get("item_key") or "")
+        for member in (direction.get("members") or [])
+    )
+
+
+def _selected_projection(direction: dict[str, Any]) -> dict[str, Any]:
+    """Projection of a preview direction into target state; mirrors select_target fields."""
+    return {
+        "name_ja": direction.get("name_ja") or "",
+        "name_zh": direction.get("name_zh") or "",
+        "summary_zh": direction.get("summary_zh") or "",
+        "member_fingerprint": direction.get("member_fingerprint"),
+        "members": deepcopy(direction.get("members") or []),
+        "representatives": deepcopy(direction.get("representatives") or []),
+        "paper_count": len(direction.get("members") or []),
+        "low_confidence_count": int(direction.get("low_confidence_count") or 0),
+        "coverage_share": direction.get("coverage_share"),
+    }
+
+
+def _projection_differs(stored: dict[str, Any], current: dict[str, Any]) -> bool:
+    expected = _selected_projection(current)
+    return any(stored.get(key) != value for key, value in expected.items())
+
+
 def resolve_targets(program_root: Path, professors: list[str] | None = None) -> dict[str, Any]:
     program_root = program_root.resolve()
     state_path = program_root / TARGET_FILE
@@ -327,27 +357,74 @@ def resolve_targets(program_root: Path, professors: list[str] | None = None) -> 
             return {"status": "needs_input", "reason_code": "professor_not_selected", "missing_professors": missing, "state_path": str(state_path), "targets": targets}
 
     stale = []
+    refreshed = []
     for target in targets:
         preview_path = program_root / str(target.get("preview_path") or "")
         try:
             _relative_under(preview_path, program_root, "preview_path")
             preview = validate_preview(preview_path)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            stale.append({"professor": target.get("professor"), "reason": f"preview_unreadable: {exc}"})
+            stale.append({"professor": target.get("professor"), "reason": "preview_unreadable", "detail": str(exc)})
             continue
         if preview.get("professor") != target.get("professor"):
             stale.append({"professor": target.get("professor"), "reason": "professor_changed"})
             continue
-        if preview.get("preview_fingerprint") != target.get("preview_fingerprint") or preview.get("preview_fingerprint_version") != target.get("preview_fingerprint_version"):
+        current_by_id = {direction["direction_id"]: direction for direction in preview["directions"]}
+        stale_directions = []
+        projection_updates = []
+        for stored in target.get("directions", []):
+            direction_id = stored.get("direction_id")
+            current = current_by_id.get(direction_id)
+            if current is None:
+                stale_directions.append({
+                    "direction_id": direction_id,
+                    "reason": "selected_direction_removed",
+                    "stored_member_fingerprint": stored.get("member_fingerprint"),
+                    "stored_member_keys": _member_keys(stored),
+                })
+            elif _member_keys(current) != _member_keys(stored):
+                stale_directions.append({
+                    "direction_id": direction_id,
+                    "reason": "selected_direction_changed",
+                    "stored_member_fingerprint": stored.get("member_fingerprint"),
+                    "current_member_fingerprint": current.get("member_fingerprint"),
+                    "stored_member_keys": _member_keys(stored),
+                    "current_member_keys": _member_keys(current),
+                })
+            elif _projection_differs(stored, current):
+                projection_updates.append((stored, _selected_projection(current)))
+        if stale_directions:
             stale.append({
                 "professor": target.get("professor"),
-                "reason": "preview_changed",
+                "reason": "selected_directions_stale",
+                "direction_ids": [entry["direction_id"] for entry in stale_directions],
+                "directions": stale_directions,
                 "stored_preview_fingerprint": target.get("preview_fingerprint"),
                 "current_preview_fingerprint": preview.get("preview_fingerprint"),
             })
+            continue
+        if projection_updates:
+            for stored, expected in projection_updates:
+                stored.update(expected)
+            target["preview_fingerprint"] = preview["preview_fingerprint"]
+            target["preview_fingerprint_version"] = preview["preview_fingerprint_version"]
+            target["direction_id_version"] = preview.get("direction_id_version")
+            target["projection_refreshed_at"] = now_utc()
+            refreshed.append({
+                "professor": target.get("professor"),
+                "direction_ids": [stored.get("direction_id") for stored, _ in projection_updates],
+            })
+    if refreshed:
+        refreshed_by_professor = {target.get("professor"): target for target in targets}
+        state["targets"] = [refreshed_by_professor.get(target.get("professor"), target) for target in state["targets"]]
+        state["updated_at"] = now_utc()
+        atomic_json(state_path, state)
     if stale:
         return {"status": "needs_refresh", "reason_code": "preview_changed", "state_path": str(state_path), "stale_targets": stale, "targets": targets}
-    return {"status": "ok", "state_path": str(state_path), "targets": targets, "professors": [target.get("professor") for target in targets]}
+    result = {"status": "ok", "state_path": str(state_path), "targets": targets, "professors": [target.get("professor") for target in targets]}
+    if refreshed:
+        result["projection_refreshed"] = refreshed
+    return result
 
 
 def _parser() -> argparse.ArgumentParser:

@@ -318,8 +318,10 @@ class Stage1CandidateTests(unittest.TestCase):
         snap3 = read_json(snapshot_path(self.root))
         self.assertNotEqual(snap3["professors"][0]["input_fingerprint"], fingerprint)
 
-    def test_stale_preview_fingerprint_blocks_stage1(self):
-        write_json(self.preview_path, preview_payload(fp="fp-new"))
+    def test_selected_membership_change_blocks_stage1(self):
+        preview = preview_payload(fp="fp-new")
+        preview["directions"][0]["members"].append({"item_key": "P9", "preview_confidence": "low"})
+        write_json(self.preview_path, preview)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             with self.assertRaises(SystemExit) as ctx:
@@ -328,6 +330,19 @@ class Stage1CandidateTests(unittest.TestCase):
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["status"], "needs_refresh")
         self.assertEqual(payload["reason_code"], "preview_changed")
+
+    def test_display_only_preview_change_does_not_block_stage1(self):
+        # Under the freshness contract a fingerprint/display-only preview change is
+        # not a membership change: resolve refreshes projections in place and Stage 1
+        # proceeds against the same selected membership.
+        write_json(self.preview_path, preview_payload(fp="fp-new"))
+        # The test itself rewrites the preview; guard against further build-time edits.
+        self.guarded_before[self.preview_path] = self.preview_path.read_bytes()
+        result, payload = build(self.root)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(result["action"], "pdf_fill_needed")
+        self.assertEqual(result["missing_item_keys"], ["P2", "P3", "P5", "P8"])
+        self.assert_guards_untouched()
 
     def test_snapshot_marks_membership_non_final_and_preserves_other_professors(self):
         preview_b_path = self.root / "教授研究" / "lab" / "教授B" / "方向预筛.json"
@@ -445,7 +460,9 @@ class Stage1CandidateTests(unittest.TestCase):
 
     def test_verify_forwards_preview_refresh_and_missing_professor(self):
         build(self.root)
-        write_json(self.preview_path, preview_payload(fp="fp-new"))
+        preview = preview_payload(fp="fp-new")
+        preview["directions"][0]["members"].append({"item_key": "P9", "preview_confidence": "low"})
+        write_json(self.preview_path, preview)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             with self.assertRaises(SystemExit) as ctx:

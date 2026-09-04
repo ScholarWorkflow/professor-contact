@@ -129,5 +129,5 @@ Return only compact JSON:
 - Never write `套磁候选总览.md` or any other Stage 0 human-facing artifact.
 - Never use direction names, collection keys, or A/B/C labels as machine identity; use normalized `direction_id`.
 - Never collapse multiple selected directions because they share papers.
-- If the preview fingerprint changes, selection must be revised against the new preview before downstream stages continue.
+- If a selected direction's membership changes (member `item_key` set differs; upstream derives `direction_id` from membership) or the direction disappears from the preview, selection must be revised against the new preview before downstream stages continue. Unselected-direction changes and display-only or confidence-only changes (names/summary/representatives/confidence with unchanged membership) do not invalidate the selection; `resolve` refreshes projection metadata in place.
 - Never spawn subagents.

@@ -45,9 +45,11 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_t
   resolve --program-root "<program_root>" --professors "<optional comma-separated names>"
 ```
 
-- `status: ok` → continue with the returned `professors`.
+Interpret results strictly:
+
+- `status: ok` → continue with the returned `professors`. Unselected-direction changes, confidence drift and display-only changes never block: `resolve` refreshes projection metadata in place and returns `ok`.
 - `missing_target_state` / `professor_not_selected` → return `needs_input`; instruct the caller to run Stage 0.
-- `preview_changed` → return `needs_refresh`; Stage 0 must revise the selection against the new preview before any download.
+- `preview_changed` → return `needs_refresh`; only a selected direction's membership changed (member `item_key` set differs / direction removed — see `stale_targets[].direction_ids`). Stage 0 must revise the selection against the new preview before any download.
 
 Never scan for a Zotero note named `套磁候选`, even as fallback.
 
@@ -64,7 +66,7 @@ The builder reads `套磁目标.json`, the professor's `方向预筛.json`, and 
 
 Interpret results strictly:
 
-- `status: ok` → continue. `action` is `pdf_fill_needed` or `noop`.
+- `status: ok` → continue. `action` is `pdf_fill_needed`, `needs_resolution`, or `noop`.
 - `status: needs_input` / `needs_refresh` → propagate (same handling as Step 2).
 - `status: error` → return `error` with the emitted reason.
 - `unresolved_item_keys` / `unmatched_named_entries` non-empty → list them in your `notes`; do not guess keys.
@@ -120,7 +122,7 @@ Return only compact JSON:
   "target_state": "<program_root>/教授研究/套磁目标.json",
   "stage1_snapshot": "<program_root>/教授研究/套磁阶段1候选.json",
   "professors": ["教授A"],
-  "action": "pdf_fill_needed|noop",
+  "action": "pdf_fill_needed|needs_resolution|noop",
   "candidate_count": 0,
   "papers_pdf_downloaded": 0,
   "papers_no_env": 0,
@@ -136,9 +138,10 @@ Return only compact JSON:
 - Never scan Zotero flag notes; never use `套磁候选总览.md` as input.
 - Never run a professor-level download: `pdf_only` + explicit `professors` is NOT part of Stage 1 anymore.
 - Never pass `professors` with the `item_keys` fast path; keep-list screening is never re-run here.
+- Never infer selected directions/professors from formal Zotero direction collections.
 - Never modify `套磁目标.json`, `方向预筛.json`, or `papers.json` yourself.
 - Never download PDFs yourself and never call Zotero write APIs yourself.
 - Always refresh the snapshot after the collector returns; never leave `套磁阶段1候选.json` describing pre-fill state, and never return `ok` while missing or unresolved candidate keys remain (`partial` + notes instead).
 - Stage 1 never claims final direction membership: candidate sets are input to Stage 2, not a verdict.
 - Re-running after a network change just repeats this flow — missing eligible keys are recomputed from `papers.json` and retried through the same fast path.
-- A stale preview fingerprint blocks Stage 1 until Stage 0 selection is revised.
+- A selected direction whose membership changed (member `item_key` set differs; upstream `direction_id` is membership-derived) or that disappeared blocks Stage 1 until Stage 0 selection is revised; unselected, display-only or confidence-only changes do not block.
