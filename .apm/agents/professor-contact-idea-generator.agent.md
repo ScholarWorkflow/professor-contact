@@ -1,6 +1,6 @@
 ---
 name: professor-contact-idea-generator
-description: 'Stage 3 of the professor-contact workflow (runner 版): per flagged direction, either REFINES the user''s own idea draft (from the 套磁候选 note原文 carried in the stage-2 input pack 套磁候选输入.json — preserving core intent, calibrating wording to the professor''s actual papers, anchoring on an author-stated future-work gap with exact (item_key,gap_id) from the pack''s shortlist, naturalness check, mismatches[] for user decision, basic direction first) or GENERATES 3-5 candidates when no note exists. Reads ONLY the per-professor 套磁候选输入.json (machine state: supporting papers, gap shortlist with quote/translation/page/status/evidence/confidence, completed_gap_blacklist, red lines, credibility) + the user profile + its own 套磁候选状态.json — NEVER the stage-2 Markdown, 论文分析/_index.json, sidecars or Zotero. refresh_scope (flagged|selected|all, default flagged) decides which directions regenerate; optional collection_key restricts the run to one exact direction. profile changes invalidate stage-3/4 packs only, never the stage-2 input pack. Loop: stage3-plan (runner: scope selection, fingerprint checks, per-direction model job slices) → the model writes candidates-<方向>.json (structured candidates: research_question required; gap_ids exact-join the pack; done_by_self only as 【我的延伸】with difference_point; partial anchors must carry remaining_focus; unknown anchors must carry unverified; papers[] are item_key-only, runner fills titles/authorship) → stage3-finalize (runner validates everything — unknown gap/paper IDs, blacklisted anchors, missing research_question all reject without writing — then atomically writes 套磁候选状态.json and deterministically renders 套磁想法候选.md + 套磁想法候选总览.md with managed_by frontmatter; manual edits → needs_decision). Only the style-validator subagent is spawned (on the rendered md, max 2 rounds). No profile → still runs, marked 未按个人资料校准; no note → paper-driven candidates, never fabricating author future-work anchors.'
+description: 'Stage 3 of the professor-contact workflow (runner 版): per RESOLVED direction (issue #8 — the authoritative resolved_direction identity stamped by Stage 2; ideas are grouped per resolved direction, keep exact direction_id/item_key/gap_id references, shared papers keep one item_key identity, and re-running unchanged Stage 2 input reuses per-direction idea state), either REFINES the user''s own idea draft (from the 套磁候选 note原文 carried in the stage-2 input pack 套磁候选输入.json — preserving core intent, calibrating wording to the professor''s actual papers, anchoring on an author-stated future-work gap with exact (item_key,gap_id) from the pack''s shortlist, naturalness check, mismatches[] for user decision, basic direction first) or GENERATES 3-5 candidates when no note exists. Cross-direction ideas are allowed ONLY explicitly: a separate cross_direction_candidates[] block citing direction_ids with ALL participating resolved direction IDs — never an implicit merge of direction pools. Reads ONLY the per-professor 套磁候选输入.json (machine state: resolved_directions + per-direction resolved_direction subfield, supporting papers, gap shortlist with quote/translation/page/status/evidence/confidence, completed_gap_blacklist, red lines, credibility) + the user profile + its own 套磁候选状态.json — NEVER the stage-2 Markdown, 论文分析/_index.json, sidecars or Zotero. refresh_scope (flagged|selected|all, default flagged) decides which directions regenerate; optional collection_key restricts the run to one exact direction. profile changes invalidate stage-3/4 packs only, never the stage-2 input pack. Loop: stage3-plan (runner: scope selection, fingerprint checks, per-direction model job slices) → the model writes candidates-<方向>.json (structured candidates: research_question required; gap_ids exact-join the pack; done_by_self only as 【我的延伸】with difference_point; partial anchors must carry remaining_focus; unknown anchors must carry unverified; papers[] are item_key-only, runner fills titles/authorship) → stage3-finalize (runner validates everything — unknown gap/paper IDs, blacklisted anchors, missing research_question, implicit cross-direction merges all reject without writing — then atomically writes 套磁候选状态.json and deterministically renders 套磁想法候选.md + 套磁想法候选总览.md with managed_by frontmatter; manual edits → needs_decision). Only the style-validator subagent is spawned (on the rendered md, max 2 rounds). No profile → still runs, marked 未按个人资料校准; no note → paper-driven candidates, never fabricating author future-work anchors.'
 mode: subagent
 hidden: true
 temperature: 0.4
@@ -72,7 +72,7 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
   --professor-dir <教授文件夹 abs> --profile <profile abs> --refresh-scope flagged \
   --collection-key <方向 key> --program-root <program_root abs>
 ```
-4. plan 返回：每方向 `action: reuse|process|skipped`（输入包指纹与 profile 指纹都没变且已有候选 → `reuse`，直接复用状态，零模型调用）+ 逐方向模型 job。job 的 `model_input` 只含：`mode`（refined/generated，由有无 user_note 决定）、user_note 原文、credibility、红线、支撑论文元数据、gap shortlist（quote ≤300 字/中译/状态/证据/completed_part/remaining_gap/confidence）、done_by_self 黑名单（供【我的延伸】差异点）、profile 文本（≤2000 字）、候选契约规则。
+4. plan 返回：每方向 `action: reuse|process|skipped`（输入包指纹与 profile 指纹都没变、已有候选、且该方向名下的跨方向想法引用的参与方向指纹全部未变 → `reuse`，直接复用状态，零模型调用；任一参与方向变化 → 该方向本轮重新生成，跨方向想法一并刷新）+ 逐方向模型 job。方向身份 = 输入包 `resolved_direction` 子字段里的权威 `direction_id`（issue #8；每方向独立、绝不因共享论文合并）。job 的 `model_input` 只含：`direction_id`（本方向权威 ID）、`known_directions`（全部方向的 direction_id/名称，供跨方向引用）、`mode`（refined/generated，由有无 user_note 决定）、user_note 原文、credibility、红线、支撑论文元数据、gap shortlist（quote ≤300 字/中译/状态/证据/completed_part/remaining_gap/confidence）、done_by_self 黑名单（供【我的延伸】差异点）、profile 文本（≤2000 字）、候选契约规则。
 
 ### Step 2 — 逐方向模型 job：写 candidates-<collection_key>.json
 对每个 `process` 方向，把 plan 给的 job 变成一份结构化候选 JSON（写到 `/tmp/<教授名>_候选_results/candidates-<collection_key>.json`）：
@@ -92,8 +92,17 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
     "fit": "high|partial|weak|null", "fit_note": "...",
     "red_lines": ["仅本候选红线"], "why_recommended": "教授视角 2-4 句（兴趣契合作主推，能力匹配仅说明）",
     "tension_points": ["诚实风险；必须含一条研究问题成色评估"]}],
+ "cross_direction_candidates": [{
+    "id": "<方向>_X<n>", "title": "...", "one_liner": "...", "research_question": "...",
+    "points": ["..."], "gap_ids": [{"item_key": "...", "gap_id": "..."}],
+    "anchor_notes": {}, "papers": [{"item_key": "...", "role": "共同基座", "fit_note": "..."}],
+    "fit": "high|partial|weak|null", "fit_note": "...", "red_lines": [],
+    "why_recommended": "...", "tension_points": [],
+    "direction_ids": ["<本方向 direction_id>", "<其他参与方向 direction_id>", "..."]}],
  "priority": "主推X→并推Y→备用Z（2-3 行文字）"}
 ```
+
+**跨方向想法（可选，绝不隐式）**：真正的洞察确实横跨多个 resolved 方向时才写 `cross_direction_candidates[]`——它不占用 `candidates[]` 的 3-5 个名额，也不能反过来用跨方向想法凑数。每条必须：`direction_ids` 列出**全部**参与方向的权威 `direction_id`（≥2 个、含本方向、取自 `model_input.known_directions`）；论文/gap 只能引用所列方向切片内的精确 `item_key`/`gap_id`（共享论文用同一个 item_key，绝不发明第二身份）；没有真正的跨方向洞察就留空数组。把本方向内容混写进其他方向的论文/gap（不加 `direction_ids`）= 隐式合并，finalize 以 `unknown_paper_id`/`unknown_reference_id` 拒绝。
 
 **硬契约（finalize 会逐条校验，违反即整份拒绝、不写盘）**：
 - `mode=generated` 至少 3 个候选；`mode=refined` 必须有非空 `refined.idea_zh`。
@@ -102,6 +111,7 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
 - `partial` 锚必须 `remaining_focus` 非空；`unknown` 锚必须 `unverified: true`。
 - `papers[].item_key` 必须在输入包支撑论文或 gap 论文内——**只给 item_key + role/fit_note**，标题/年份/署名由 runner 从输入包回填（防标题幻觉）。
 - 每个候选 `research_question` 非空（求知式）。
+- `candidates[]` 是**本方向专属池**：绝不引用其他方向切片的论文/gap（跨方向内容只能走 `cross_direction_candidates[]` + `direction_ids`，≥2 个、含本方向、全部取自 `known_directions`，否则 `invalid_result_json`；跨方向想法不占 3-5 名额）。
 - 修正路径的 craft 规则不变：保真（保留用户核心意图）、校准（说 A 论文实际是 B 的差异点进 `calibration`/`mismatches`）、自然度把关（教授视角「真心想读 vs AI 群发」）、先出基本方向文字润色延后。无 profile 不阻断，但 plan 会注明「未按个人资料校准」。
 - 想法之间要有区分度（不同切入点/所挂 gap），别互相重复。
 
@@ -114,8 +124,8 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
 ```
 
 runner 逐条校验（契约见 Step 2）后原子写：
-- `<教授文件夹>/套磁候选状态.json` — 候选机器状态（含每方向 `input_fingerprint`、profile 指纹、规范化候选：gap_ids/anchor_type（runner 依引用自动推导 author_future_work / my_extension / none）/回填后的支撑论文）。
-- `<教授文件夹>/套磁想法候选.md` — runner 确定性渲染：frontmatter（managed_by/contact_state + 指纹）、方向节指路行（脉络/论文一览/用户笔记 → 见《套磁候选分析.md》）、方向级共享红线一次、refined 块（保真/校准/基本方向/变体）、候选块（`candidate_meta` 机器注释含 gap_ids、一句话、研究问题、展开、五列支撑论文表——「分析」列由 runner 从输入包 analysis_file 派生相对链接、贴合度（middle 主支撑自动加「⚠️ 此论文教授为中间作者」）、红线、为何值得推、张力点）、推荐优先级。
+- `<教授文件夹>/套磁候选状态.json` — 候选机器状态（每方向带权威 `direction_id` 与 `input_fingerprint`、profile 指纹、规范化候选：gap_ids/anchor_type（runner 依引用自动推导 author_future_work / my_extension / none）/回填后的支撑论文；显式跨方向想法存独立 `cross_direction` 列表，含 `direction_ids`/`owner_*`/`direction_fingerprints` 参与方向指纹）。
+- `<教授文件夹>/套磁想法候选.md` — runner 确定性渲染：frontmatter（managed_by/contact_state + 指纹）、按 resolved 方向分节（方向节开头带 `方向 ID：<direction_id>` 指路行：脉络/论文一览/用户笔记 → 见《套磁候选分析.md》）、方向级共享红线一次、refined 块（保真/校准/基本方向/变体）、候选块（`candidate_meta` 机器注释含 direction_id 与 gap_ids、一句话、研究问题、展开、五列支撑论文表——「分析」列由 runner 从输入包 analysis_file 派生相对链接、贴合度（middle 主支撑自动加「⚠️ 此论文教授为中间作者」）、红线、为何值得推、张力点）、推荐优先级；显式跨方向想法单列「跨方向想法（显式标注）」末节（每条带 `**参与方向**` 行与 cross_direction meta）。
 - `<program_root>/教授研究/套磁想法候选总览.md` — 每教授一行聚合（教授｜方向｜候选数｜推荐顺序｜文件链接）。
 
 **失败处理**：返回 `error + reason_code`（`result_missing` / `invalid_result_json` / `unknown_reference_id` / `blacklisted_gap_anchor` / `missing_input_pack` / `needs_decision(manual_markdown_changed)`）→ 上一份已验收状态与 Markdown 原样保留，按需重写候选 JSON 后重跑 finalize；**绝不手写 Markdown 兜底**。人手改过受管 md → `needs_decision`：问用户（overwrite / keep_manual / promote 到状态后再渲染）。
@@ -166,6 +176,7 @@ when: no `folder_path`; program root unresolvable; 缺 套磁候选输入.json�
 - 给定 `collection_key` 时，plan、模型 result 和 finalize 都只处理该精确方向，不为其他方向生成 job 或候选。
 - **只读输入包（硬边界）**：不读 `套磁候选分析.md`、`套磁想法候选.md` 旧版、`论文分析/_index.json`、sidecar、论文全文；阶段 3 不调用阶段 2，不做 gap 提取，不做 freshness 判断（状态以输入包为准）。
 - **方向契合是硬约束**：想法必须基于输入包方向切片的实际研究内容；不臆造方向之外的课题；贴合度诚实标注（weak 就 weak）。
+- **按 resolved 方向分组是硬边界（issue #8）**：方向身份只认输入包 `resolved_direction` 的权威 `direction_id`；每个方向独立的候选池与状态（共享论文保持同一 item_key 身份，绝不复制论文身份，也绝不把多个方向静默合成一个想法池）；跨方向想法只能显式进 `cross_direction_candidates[]` 并列出全部参与方向 ID——不标注的跨方向引用一律被 finalize 拒绝。
 - **修士定位与研究问题成色是硬约束**：候选叙事 = 「教授的研究启发了我对 xx 的思考」，工程活只作手段；每个独立候选 `research_question` 必填（求知式），写不出就并入主候选作「配套承诺：」，判断与理由写进返回 `notes`。「贴合度」与推荐排序以兴趣契合作主推依据，能力匹配仅说明性；禁自贬式谄媚表态。
 - **future work 挂接是硬约束**：每个候选必须挂输入包 shortlist/排除清单内的精确 `(item_key, gap_id)`，杜绝纯复述；无锚可用时候选可生成为贴合式复述但 `gap_ids: []` 且一句话注明「本方向无可锚 future work」，绝不伪造作者 future-work 锚。
 - **时效与黑名单是硬约束**：`done_by_self` 只能【我的延伸】+`difference_point`；`partial` 表述落 `remaining_focus`；`unknown` 带 `unverified` 标注。这些由 finalize 强制，违反即拒绝。

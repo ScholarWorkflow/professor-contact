@@ -4149,6 +4149,50 @@ def load_profile_text(profile_path: str | None, limit: int = PROFILE_INPUT_CHARS
     return truncate(path.read_text(encoding="utf-8"), limit)
 
 
+def _stage3_direction_id(direction: dict) -> str:
+    """Issue #8: Stage 3 groups ideas per authoritative resolved direction.
+
+    The pack direction's stamped `resolved_direction` subfield is the single
+    downstream identity (issue #7); legacy packs without the subfield keep the
+    provisional collection_key as their direction identity.
+    """
+    rd = direction.get("resolved_direction")
+    if isinstance(rd, dict) and isinstance(rd.get("resolved_direction_id"), str) \
+            and rd["resolved_direction_id"].strip():
+        return rd["resolved_direction_id"]
+    return direction.get("collection_key")
+
+
+def _direction_slices(direction: dict) -> tuple[dict, dict, dict]:
+    """Exact-join indexes for one pack direction slice: gaps, blacklist, papers."""
+    gap_index = {}
+    for gap in direction.get("gap_shortlist", []) + [
+            dict(g, status=g.get("status")) for g in direction.get("gaps_excluded", [])]:
+        gap_index[(gap["item_key"], gap["gap_id"])] = gap
+    blacklist = {(b["item_key"], b["gap_id"]): b
+                 for b in direction.get("completed_gap_blacklist", [])}
+    paper_index = {p["item_key"]: p for p in direction.get("supporting_papers", [])}
+    for gap in direction.get("gap_shortlist", []) + direction.get("gaps_excluded", []):
+        paper_index.setdefault(gap["item_key"], {
+            "item_key": gap["item_key"], "title": gap.get("paper_title"),
+            "year": gap.get("paper_year"), "authorship": gap.get("authorship")})
+    return gap_index, blacklist, paper_index
+
+
+def _owned_cross_entries(state: dict | None, owner_ckey: str) -> list[dict]:
+    return [entry for entry in (state or {}).get("cross_direction") or []
+            if isinstance(entry, dict) and entry.get("owner_collection_key") == owner_ckey]
+
+
+def _cross_entry_fresh(entry: dict, pack_fps: dict) -> bool:
+    """A cross-direction idea survives only while EVERY participating direction's
+    pack fingerprint is unchanged; unknown participants never count as fresh."""
+    recorded = entry.get("direction_fingerprints")
+    if not isinstance(recorded, dict) or not recorded:
+        return False
+    return all(pack_fps.get(pid) == fingerprint for pid, fingerprint in recorded.items())
+
+
 def cmd_stage3_plan(args) -> None:
     professor_dir = Path(args.professor_dir)
     program_root = Path(args.program_root) if args.program_root else professor_dir.parent.parent
@@ -4184,8 +4228,15 @@ def cmd_stage3_plan(args) -> None:
                 selected_keys.add(sel.get("collection_key"))
     jobs, reuse = [], []
     input_fps = (state or {}).get("input_fingerprints", {})
+    pack_fps = {_stage3_direction_id(d): d.get("input_fingerprint")
+                for d in pack_directions}
+    known_directions = [{"direction_id": _stage3_direction_id(d),
+                         "collection_key": d.get("collection_key"),
+                         "name_ja": d.get("name_ja"), "name_zh": d.get("name_zh")}
+                        for d in pack_directions]
     for direction in pack_directions:
         ckey = direction.get("collection_key")
+        direction_id = _stage3_direction_id(direction)
         if collection_key and ckey != collection_key:
             continue
         if refresh_scope == "flagged" and direction.get("status") != "active":
@@ -4194,9 +4245,16 @@ def cmd_stage3_plan(args) -> None:
             continue
         fp_match = input_fps.get(ckey) == direction.get("input_fingerprint")
         if fp_match and not profile_changed:
+            # A direction whose owned cross-direction idea cites a changed
+            # participant must regenerate: per-direction reuse never keeps a
+            # cross idea whose evidence base moved (issue #8 acceptance #4).
+            owned_cross = _owned_cross_entries(state, ckey)
+            cross_fresh = all(_cross_entry_fresh(entry, pack_fps)
+                              for entry in owned_cross)
             old_direction = next((d for d in (state or {}).get("directions", [])
                                   if d.get("collection_key") == ckey), None)
-            if old_direction and old_direction.get("candidates") is not None:
+            if old_direction and cross_fresh \
+                    and old_direction.get("candidates") is not None:
                 reuse.append(ckey)
                 continue
         gap_lines = []
@@ -4221,8 +4279,11 @@ def cmd_stage3_plan(args) -> None:
         jobs.append({
             "job_id": f"candidates:{pack.get('professor')}:{ckey}",
             "kind": "candidates", "collection_key": ckey,
+            "direction_id": direction_id,
             "result_file": f"candidates-{ckey}.json",
             "model_input": {
+                "direction_id": direction_id,
+                "known_directions": known_directions,
                 "mode": mode,
                 "user_note": direction.get("user_note") or "",
                 "credibility": direction.get("credibility"),
@@ -4239,7 +4300,8 @@ def cmd_stage3_plan(args) -> None:
                     "gap_anchor": "gap_ids 只能引用 model_input.gaps / completed_gap_blacklist 里的精确 (item_key,gap_id)；done_by_self 只能以【我的延伸】+difference_point 差异点方式出现；partial 候选必须写 remaining_gap 关注点；unknown 候选必须带 unverified:true",
                     "papers": "候选 papers[] 只给 {item_key, role, fit_note}；标题/年份/署名由 runner 从输入包回填，禁止自写标题",
                     "count": "generated 模式 3-5 个候选；refined 模式给 refined 块 + 0-3 个补充候选",
-                    "diversity": "候选之间切入点/所挂 gap 不重复"}}})
+                    "diversity": "候选之间切入点/所挂 gap 不重复",
+                    "cross_direction": "跨方向想法只能写入结果 JSON 的 cross_direction_candidates[]（绝不混入 candidates[]）：每条必须带 direction_ids（≥2 个 known_directions 里的方向 ID、含本方向 direction_id），论文/gap 只能引用所列方向切片内的精确 item_key/gap_id；没有真正的跨方向洞察就留空数组"}}})
     emit({
         "status": "ok",
         "professor": pack.get("professor"),
@@ -4249,6 +4311,7 @@ def cmd_stage3_plan(args) -> None:
         "profile_fingerprint": current_profile_fp,
         "profile_changed_reason": "profile_changed" if profile_changed else None,
         "directions": [{"collection_key": d.get("collection_key"),
+                        "direction_id": _stage3_direction_id(d),
                         "action": ("reuse" if d.get("collection_key") in reuse else
                                    ("skipped" if d.get("collection_key") not in
                                      [j["collection_key"] for j in jobs] else "process"))}
@@ -4259,7 +4322,114 @@ def cmd_stage3_plan(args) -> None:
     })
 
 
-def validate_candidate_result(pack_direction: dict, data: Any, path: Path) -> dict:
+def _validate_single_candidate(candidate: Any, path: Path,
+                               gap_index: dict, blacklist: dict,
+                               paper_index: dict) -> dict:
+    """Validate one idea against exact (item_key, gap_id) join indexes and
+    return the normalized candidate record (runner-filled paper metadata)."""
+    if not isinstance(candidate, dict):
+        fail("invalid_result_json", f"{path}: candidates[] must be objects")
+    if candidate.get("id") is not None and not isinstance(candidate.get("id"), str):
+        fail("invalid_result_json", f"{path}: candidate id must be a string")
+    cid = (candidate.get("id") or "").strip()
+    if not cid:
+        fail("invalid_result_json", f"{path}: candidate id required: {cid!r}")
+    for field in ("title", "one_liner", "research_question", "fit_note", "why_recommended"):
+        if candidate.get(field) is not None and not isinstance(candidate.get(field), str):
+            fail("invalid_result_json", f"{path}: candidate {cid} field {field} must be a string")
+    if not (candidate.get("research_question") or "").strip():
+        fail("invalid_result_json",
+             f"{path}: candidate {cid} 缺非空研究问题（求知式）；纯交付物候选应并入主候选而非单列")
+    anchor_notes = candidate.get("anchor_notes") or {}
+    if not isinstance(anchor_notes, dict):
+        fail("invalid_result_json", f"{path}: candidate {cid} anchor_notes must be an object")
+    for note_key in ("remaining_focus", "difference_point"):
+        if note_key in anchor_notes and not isinstance(anchor_notes[note_key], str):
+            fail("invalid_result_json", f"{path}: candidate {cid} anchor_notes.{note_key} must be a string")
+    if "unverified" in anchor_notes and not isinstance(anchor_notes["unverified"], bool):
+        fail("invalid_result_json", f"{path}: candidate {cid} anchor_notes.unverified must be boolean")
+    for field in ("points", "red_lines", "tension_points"):
+        value = candidate.get(field) or []
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            fail("invalid_result_json", f"{path}: candidate {cid} field {field} must be a string list")
+    raw_gap_ids = candidate.get("gap_ids") or []
+    if not isinstance(raw_gap_ids, list) or not all(isinstance(pair, dict) for pair in raw_gap_ids):
+        fail("invalid_result_json", f"{path}: candidate {cid} gap_ids must be an object list")
+    gap_pairs = []
+    seen_gap_pairs = set()
+    for pair in raw_gap_ids:
+        key = (pair.get("item_key"), pair.get("gap_id"))
+        if key in seen_gap_pairs:
+            fail("invalid_result_json", f"{path}: candidate {cid} contains duplicate gap {key}")
+        seen_gap_pairs.add(key)
+        in_pool = key in gap_index
+        in_blacklist = key in blacklist
+        if not in_pool and not in_blacklist:
+            fail("unknown_reference_id", f"{path}: candidate {cid} gap {key} outside package")
+        if in_pool:
+            status = gap_index[key].get("status")
+            if status not in ANCHORABLE:
+                fail("blacklisted_gap_anchor",
+                     f"{path}: candidate {cid} anchors {key} status={status}")
+            if status == "partial" and not (anchor_notes.get("remaining_focus") or "").strip():
+                fail("invalid_result_json",
+                     f"{path}: candidate {cid} partial anchor needs anchor_notes.remaining_focus")
+            if status == "unknown" and not anchor_notes.get("unverified"):
+                fail("invalid_result_json",
+                     f"{path}: candidate {cid} unknown anchor needs anchor_notes.unverified=true")
+        else:
+            if not (anchor_notes.get("difference_point") or "").strip():
+                fail("blacklisted_gap_anchor",
+                     f"{path}: candidate {cid} uses done_by_self gap {key} without my_extension difference_point")
+        gap_pairs.append({"item_key": key[0], "gap_id": key[1],
+                          "done_by_self": in_blacklist})
+    raw_papers = candidate.get("papers") or []
+    if not isinstance(raw_papers, list) or not all(isinstance(paper, dict) for paper in raw_papers):
+        fail("invalid_result_json", f"{path}: candidate {cid} papers must be an object list")
+    papers = []
+    seen_papers = set()
+    for paper in raw_papers:
+        item_key = paper.get("item_key")
+        source = paper_index.get(item_key)
+        if not source:
+            fail("unknown_paper_id", f"{path}: candidate {cid} paper {item_key} outside package")
+        if item_key in seen_papers:
+            fail("invalid_result_json", f"{path}: candidate {cid} contains duplicate paper {item_key}")
+        seen_papers.add(item_key)
+        papers.append({"item_key": item_key, "title": source.get("title"),
+                       "year": source.get("year"), "authorship": source.get("authorship"),
+                       "role": (paper.get("role") or "").strip(),
+                       "fit_note": (paper.get("fit_note") or "").strip()})
+    has_author_gap = any(not g["done_by_self"] for g in gap_pairs)
+    anchor_type = "author_future_work" if gap_pairs and has_author_gap else (
+        "my_extension" if gap_pairs else "none")
+    return {
+        "id": cid,
+        "title": (candidate.get("title") or "").strip(),
+        "one_liner": (candidate.get("one_liner") or "").strip(),
+        "research_question": candidate.get("research_question").strip(),
+        "points": [str(x) for x in (candidate.get("points") or [])],
+        "gap_ids": gap_pairs,
+        "anchor_type": anchor_type,
+        "anchor_notes": anchor_notes,
+        "papers": papers,
+        "fit": candidate.get("fit") if candidate.get("fit") in ("high", "partial", "weak", "null") else "null",
+        "fit_note": (candidate.get("fit_note") or "").strip(),
+        "red_lines": [str(x) for x in (candidate.get("red_lines") or [])],
+        "why_recommended": (candidate.get("why_recommended") or "").strip(),
+        "tension_points": [str(x) for x in (candidate.get("tension_points") or [])]}
+
+
+def validate_candidate_result(pack_direction: dict, data: Any, path: Path,
+                              pack_directions: list | None = None) -> dict:
+    """Validate one direction's stage-3 result against the input pack.
+
+    `pack_directions` (the full professor pack) enables explicit cross-direction
+    ideas (issue #8): every entry in `cross_direction_candidates` must cite all
+    participating resolved direction IDs and may only join evidence from those
+    directions' slices — per-direction `candidates[]` stays restricted to the
+    job's own direction, so an implicit merge is always rejected.
+    """
     if not isinstance(data, dict) or data.get("schema") != 1 or data.get("kind") != "candidates":
         fail("invalid_result_json", f"{path}: schema/kind must be 1/candidates")
     ckey = data.get("collection_key")
@@ -4270,17 +4440,7 @@ def validate_candidate_result(pack_direction: dict, data: Any, path: Path) -> di
         fail("invalid_result_json", f"{path}: mode must be refined|generated")
     if mode == "refined" and not (pack_direction.get("user_note") or "").strip():
         fail("invalid_result_json", f"{path}: refined mode without user note")
-    gap_index = {}
-    for gap in pack_direction.get("gap_shortlist", []) + [
-            dict(g, status=g.get("status")) for g in pack_direction.get("gaps_excluded", [])]:
-        gap_index[(gap["item_key"], gap["gap_id"])] = gap
-    blacklist = {(b["item_key"], b["gap_id"]): b
-                 for b in pack_direction.get("completed_gap_blacklist", [])}
-    paper_index = {p["item_key"]: p for p in pack_direction.get("supporting_papers", [])}
-    for gap in pack_direction.get("gap_shortlist", []) + pack_direction.get("gaps_excluded", []):
-        paper_index.setdefault(gap["item_key"], {
-            "item_key": gap["item_key"], "title": gap.get("paper_title"),
-            "year": gap.get("paper_year"), "authorship": gap.get("authorship")})
+    gap_index, blacklist, paper_index = _direction_slices(pack_direction)
     refined = data.get("refined")
     if mode == "refined":
         if not isinstance(refined, dict):
@@ -4308,98 +4468,60 @@ def validate_candidate_result(pack_direction: dict, data: Any, path: Path) -> di
     checked = []
     seen_ids = set()
     for candidate in candidates:
-        if not isinstance(candidate, dict):
-            fail("invalid_result_json", f"{path}: candidates[] must be objects")
-        if candidate.get("id") is not None and not isinstance(candidate.get("id"), str):
-            fail("invalid_result_json", f"{path}: candidate id must be a string")
-        cid = (candidate.get("id") or "").strip()
-        if not cid or cid in seen_ids:
+        single = _validate_single_candidate(candidate, path, gap_index, blacklist, paper_index)
+        cid = single["id"]
+        if cid in seen_ids:
             fail("invalid_result_json", f"{path}: candidate id required and unique: {cid!r}")
         seen_ids.add(cid)
-        for field in ("title", "one_liner", "research_question", "fit_note", "why_recommended"):
-            if candidate.get(field) is not None and not isinstance(candidate.get(field), str):
-                fail("invalid_result_json", f"{path}: candidate {cid} field {field} must be a string")
-        if not (candidate.get("research_question") or "").strip():
+        checked.append(single)
+    raw_cross = data.get("cross_direction_candidates") or []
+    if not isinstance(raw_cross, list):
+        fail("invalid_result_json", f"{path}: cross_direction_candidates must be a list")
+    cross_checked = []
+    if raw_cross:
+        if not pack_directions:
             fail("invalid_result_json",
-                 f"{path}: candidate {cid} 缺非空研究问题（求知式）；纯交付物候选应并入主候选而非单列")
-        anchor_notes = candidate.get("anchor_notes") or {}
-        if not isinstance(anchor_notes, dict):
-            fail("invalid_result_json", f"{path}: candidate {cid} anchor_notes must be an object")
-        for note_key in ("remaining_focus", "difference_point"):
-            if note_key in anchor_notes and not isinstance(anchor_notes[note_key], str):
-                fail("invalid_result_json", f"{path}: candidate {cid} anchor_notes.{note_key} must be a string")
-        if "unverified" in anchor_notes and not isinstance(anchor_notes["unverified"], bool):
-            fail("invalid_result_json", f"{path}: candidate {cid} anchor_notes.unverified must be boolean")
-        for field in ("points", "red_lines", "tension_points"):
-            value = candidate.get(field) or []
-            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-                fail("invalid_result_json", f"{path}: candidate {cid} field {field} must be a string list")
-        raw_gap_ids = candidate.get("gap_ids") or []
-        if not isinstance(raw_gap_ids, list) or not all(isinstance(pair, dict) for pair in raw_gap_ids):
-            fail("invalid_result_json", f"{path}: candidate {cid} gap_ids must be an object list")
-        gap_pairs = []
-        seen_gap_pairs = set()
-        for pair in raw_gap_ids:
-            key = (pair.get("item_key"), pair.get("gap_id"))
-            if key in seen_gap_pairs:
-                fail("invalid_result_json", f"{path}: candidate {cid} contains duplicate gap {key}")
-            seen_gap_pairs.add(key)
-            in_pool = key in gap_index
-            in_blacklist = key in blacklist
-            if not in_pool and not in_blacklist:
-                fail("unknown_reference_id", f"{path}: candidate {cid} gap {key} outside package")
-            if in_pool:
-                status = gap_index[key].get("status")
-                if status not in ANCHORABLE:
-                    fail("blacklisted_gap_anchor",
-                         f"{path}: candidate {cid} anchors {key} status={status}")
-                if status == "partial" and not (anchor_notes.get("remaining_focus") or "").strip():
-                    fail("invalid_result_json",
-                         f"{path}: candidate {cid} partial anchor needs anchor_notes.remaining_focus")
-                if status == "unknown" and not anchor_notes.get("unverified"):
-                    fail("invalid_result_json",
-                         f"{path}: candidate {cid} unknown anchor needs anchor_notes.unverified=true")
-            else:
-                if not (anchor_notes.get("difference_point") or "").strip():
-                    fail("blacklisted_gap_anchor",
-                         f"{path}: candidate {cid} uses done_by_self gap {key} without my_extension difference_point")
-            gap_pairs.append({"item_key": key[0], "gap_id": key[1],
-                              "done_by_self": in_blacklist})
-        raw_papers = candidate.get("papers") or []
-        if not isinstance(raw_papers, list) or not all(isinstance(paper, dict) for paper in raw_papers):
-            fail("invalid_result_json", f"{path}: candidate {cid} papers must be an object list")
-        papers = []
-        seen_papers = set()
-        for paper in raw_papers:
-            item_key = paper.get("item_key")
-            source = paper_index.get(item_key)
-            if not source:
-                fail("unknown_paper_id", f"{path}: candidate {cid} paper {item_key} outside package")
-            if item_key in seen_papers:
-                fail("invalid_result_json", f"{path}: candidate {cid} contains duplicate paper {item_key}")
-            seen_papers.add(item_key)
-            papers.append({"item_key": item_key, "title": source.get("title"),
-                           "year": source.get("year"), "authorship": source.get("authorship"),
-                           "role": (paper.get("role") or "").strip(),
-                           "fit_note": (paper.get("fit_note") or "").strip()})
-        has_author_gap = any(not g["done_by_self"] for g in gap_pairs)
-        anchor_type = "author_future_work" if gap_pairs and has_author_gap else (
-            "my_extension" if gap_pairs else "none")
-        checked.append({
-            "id": cid,
-            "title": (candidate.get("title") or "").strip(),
-            "one_liner": (candidate.get("one_liner") or "").strip(),
-            "research_question": candidate.get("research_question").strip(),
-            "points": [str(x) for x in (candidate.get("points") or [])],
-            "gap_ids": gap_pairs,
-            "anchor_type": anchor_type,
-            "anchor_notes": anchor_notes,
-            "papers": papers,
-            "fit": candidate.get("fit") if candidate.get("fit") in ("high", "partial", "weak", "null") else "null",
-            "fit_note": (candidate.get("fit_note") or "").strip(),
-            "red_lines": [str(x) for x in (candidate.get("red_lines") or [])],
-            "why_recommended": (candidate.get("why_recommended") or "").strip(),
-            "tension_points": [str(x) for x in (candidate.get("tension_points") or [])]})
+                 f"{path}: cross_direction_candidates require the full input pack")
+        id_to_direction = {_stage3_direction_id(d): d for d in pack_directions}
+        own_id = _stage3_direction_id(pack_direction)
+        for candidate in raw_cross:
+            if not isinstance(candidate, dict):
+                fail("invalid_result_json", f"{path}: cross_direction_candidates[] must be objects")
+            raw_ids = candidate.get("direction_ids")
+            if not isinstance(raw_ids, list) or len(raw_ids) < 2:
+                fail("invalid_result_json",
+                     f"{path}: cross-direction candidate needs direction_ids citing >=2 resolved direction IDs")
+            if any(not isinstance(x, str) or not x.strip() for x in raw_ids):
+                fail("invalid_result_json",
+                     f"{path}: cross-direction candidate direction_ids must be non-empty strings")
+            ids = [x.strip() for x in raw_ids]
+            if len(set(ids)) != len(ids):
+                fail("invalid_result_json",
+                     f"{path}: cross-direction candidate repeats a direction id: {ids}")
+            unknown = [x for x in ids if x not in id_to_direction]
+            if unknown:
+                fail("invalid_result_json",
+                     f"{path}: cross-direction candidate direction_ids outside input pack: {unknown}")
+            if own_id not in ids:
+                fail("invalid_result_json",
+                     f"{path}: cross-direction candidate must cite its own direction {own_id!r}")
+            union_gap: dict = {}
+            union_blacklist: dict = {}
+            union_papers: dict = {}
+            for participant_id in ids:
+                p_gaps, p_blacklist, p_papers = _direction_slices(id_to_direction[participant_id])
+                union_gap.update(p_gaps)
+                union_blacklist.update(p_blacklist)
+                union_papers.update(p_papers)
+            single = _validate_single_candidate(candidate, path,
+                                                union_gap, union_blacklist, union_papers)
+            cid = single["id"]
+            if cid in seen_ids:
+                fail("invalid_result_json",
+                     f"{path}: candidate id required and unique: {cid!r}")
+            seen_ids.add(cid)
+            single["direction_ids"] = ids
+            cross_checked.append(single)
     if mode == "refined":
         refined_checked = {
             "core_intent": (refined.get("core_intent") or "").strip(),
@@ -4416,12 +4538,79 @@ def validate_candidate_result(pack_direction: dict, data: Any, path: Path) -> di
     if not isinstance(priority, str):
         fail("invalid_result_json", f"{path}: priority must be a string")
     return {"collection_key": ckey, "mode": mode, "refined": refined_checked,
-            "candidates": checked, "priority": priority.strip()}
+            "candidates": checked, "cross_direction_candidates": cross_checked,
+            "priority": priority.strip()}
+
+
+def _render_idea_block(lines: list, number: int, heading_label: str,
+                       candidate: dict, paper_index: dict,
+                       direction_id: str | None = None) -> None:
+    """Render one idea (per-direction candidate or explicit cross-direction
+    idea) with its machine meta comment and full body."""
+    meta = {"id": candidate["id"],
+            "gap_ids": [{"item_key": g["item_key"], "gap_id": g["gap_id"]}
+                        for g in candidate["gap_ids"]]}
+    if candidate.get("direction_ids"):
+        meta["cross_direction"] = True
+        meta["direction_ids"] = list(candidate["direction_ids"])
+        if candidate.get("owner_direction_id"):
+            meta["owner_direction_id"] = candidate["owner_direction_id"]
+    else:
+        meta["direction_id"] = direction_id
+    lines.append(f"### {heading_label} {number}：{candidate.get('title') or candidate['id']}（{candidate['id']}）")
+    lines.append("")
+    lines.append(f"<!-- candidate_meta: {json.dumps(meta, ensure_ascii=False)} -->")
+    lines.append("")
+    if candidate.get("direction_ids"):
+        participants = candidate.get("_participants") or []
+        label = "＋".join(f"{p.get('name_ja') or p.get('direction_id')}（{p.get('direction_id')}）"
+                          for p in participants)
+        lines.append(f"**参与方向**：{label}")
+        lines.append("")
+    lines.append(f"**一句话**：{candidate.get('one_liner') or '—'}")
+    lines.append("")
+    lines.append(f"**研究问题**：{candidate['research_question']}")
+    lines.append("")
+    lines.append("**展开**：")
+    for point in candidate.get("points", []):
+        lines.append(f"- {point}")
+    lines.append("")
+    lines.append("**支撑论文**")
+    lines.append("")
+    lines.append("| 论文 | 年份 | 署名 | 作用 | 分析 |")
+    lines.append("|---|---|---|---|---|")
+    for paper in candidate.get("papers", []):
+        key = paper["item_key"]
+        meta_paper = paper_index.get(key) or {}
+        analysis_rel = meta_paper.get("_analysis_rel")
+        analysis_cell = f"[分析]({analysis_rel})" if analysis_rel else "—"
+        lines.append(f"| [{paper['title']}](zotero://select/library/items/{key}) | {paper.get('year') or '—'} | {paper.get('authorship') or 'pending'} | {paper.get('role') or '—'} | {analysis_cell} |")
+        if paper.get("authorship") == "middle" and (paper.get("role") or "").find("主支撑") >= 0:
+            pass
+    lines.append("")
+    fit_note = candidate.get("fit_note") or ""
+    middle_flags = [p for p in candidate.get("papers", []) if p.get("authorship") == "middle"]
+    if middle_flags:
+        fit_note = (fit_note + " " if fit_note else "") + "⚠️ 此论文教授为中间作者"
+    lines.append(f"**贴合度**：{candidate.get('fit')} — {fit_note or '—'}")
+    lines.append("")
+    if candidate.get("red_lines"):
+        lines.append(f"**红线**：{'；'.join(candidate['red_lines'])}")
+        lines.append("")
+    lines.append(f"**为何值得推**：{candidate.get('why_recommended') or '—'}")
+    if candidate.get("tension_points"):
+        lines.append("")
+        lines.append(f"**张力点**：{'；'.join(candidate['tension_points'])}")
+    for gap in candidate["gap_ids"]:
+        if gap.get("done_by_self"):
+            lines.append("")
+            lines.append(f"> 注：该候选踩着已完成 future work（{gap['gap_id'][:12]}…）作【我的延伸】，差异点见 anchor_notes。")
+    lines.append("")
 
 
 def render_candidates_md(professor: str, category: str, direction_entries: list,
                          profile_fp: str | None, state_fingerprint: str,
-                         professor_dir: Path) -> str:
+                         professor_dir: Path, cross_entries: list | None = None) -> str:
     lines = [
         f"# 套磁想法候选 — {professor}（{category}）",
         "",
@@ -4435,7 +4624,8 @@ def render_candidates_md(professor: str, category: str, direction_entries: list,
         verdict = credibility.get("verdict") or "未判定"
         lines.append(f"## {entry['name_ja']}（{entry.get('name_zh') or ''}）")
         lines.append("")
-        lines.append(f"> 脉络、论文一览、用户笔记 → 见《套磁候选分析.md》。")
+        direction_id = entry.get("direction_id") or entry.get("collection_key")
+        lines.append(f"> 方向 ID：{direction_id} ｜ 脉络、论文一览、用户笔记 → 见《套磁候选分析.md》。")
         red_lines = [r for r in entry.get("red_lines", []) if r.get("scope") != "global"]
         if red_lines:
             rendered = "；".join(f"【方向】{r.get('text', '').strip()}" for r in red_lines)
@@ -4460,57 +4650,23 @@ def render_candidates_md(professor: str, category: str, direction_entries: list,
         for d in (entry.get("_pack_papers") or []):
             paper_index[d["item_key"]] = d
         for number, candidate in enumerate(candidates, start=1):
-            meta = {"id": candidate["id"],
-                    "gap_ids": [{"item_key": g["item_key"], "gap_id": g["gap_id"]}
-                                for g in candidate["gap_ids"]]}
-            lines.append(f"### 候选 {number}：{candidate.get('title') or candidate['id']}（{candidate['id']}）")
-            lines.append("")
-            lines.append(f"<!-- candidate_meta: {json.dumps(meta, ensure_ascii=False)} -->")
-            lines.append("")
-            lines.append(f"**一句话**：{candidate.get('one_liner') or '—'}")
-            lines.append("")
-            lines.append(f"**研究问题**：{candidate['research_question']}")
-            lines.append("")
-            lines.append("**展开**：")
-            for point in candidate.get("points", []):
-                lines.append(f"- {point}")
-            lines.append("")
-            lines.append("**支撑论文**")
-            lines.append("")
-            lines.append("| 论文 | 年份 | 署名 | 作用 | 分析 |")
-            lines.append("|---|---|---|---|---|")
-            for paper in candidate.get("papers", []):
-                key = paper["item_key"]
-                meta_paper = paper_index.get(key) or {}
-                analysis_rel = meta_paper.get("_analysis_rel")
-                analysis_cell = f"[分析]({analysis_rel})" if analysis_rel else "—"
-                lines.append(f"| [{paper['title']}](zotero://select/library/items/{key}) | {paper.get('year') or '—'} | {paper.get('authorship') or 'pending'} | {paper.get('role') or '—'} | {analysis_cell} |")
-                if paper.get("authorship") == "middle" and (paper.get("role") or "").find("主支撑") >= 0:
-                    pass
-            lines.append("")
-            fit_note = candidate.get("fit_note") or ""
-            middle_flags = [p for p in candidate.get("papers", []) if p.get("authorship") == "middle"]
-            if middle_flags:
-                fit_note = (fit_note + " " if fit_note else "") + "⚠️ 此论文教授为中间作者"
-            lines.append(f"**贴合度**：{candidate.get('fit')} — {fit_note or '—'}")
-            lines.append("")
-            if candidate.get("red_lines"):
-                lines.append(f"**红线**：{'；'.join(candidate['red_lines'])}")
-                lines.append("")
-            lines.append(f"**为何值得推**：{candidate.get('why_recommended') or '—'}")
-            if candidate.get("tension_points"):
-                lines.append("")
-                lines.append(f"**张力点**：{'；'.join(candidate['tension_points'])}")
-            for gap in candidate["gap_ids"]:
-                if gap.get("done_by_self"):
-                    lines.append("")
-                    lines.append(f"> 注：该候选踩着已完成 future work（{gap['gap_id'][:12]}…）作【我的延伸】，差异点见 anchor_notes。")
-            lines.append("")
+            _render_idea_block(lines, number, "候选", candidate, paper_index,
+                               direction_id=direction_id)
         if entry.get("priority"):
             lines.append("## 推荐优先级")
             lines.append("")
             lines.append(entry["priority"])
             lines.append("")
+    for number, entry in enumerate(cross_entries or [], start=1):
+        if number == 1:
+            lines.append("## 跨方向想法（显式标注）")
+            lines.append("")
+            lines.append("> 以下候选显式跨越多个已解析方向（绝不隐式合并方向池）；每条列出全部参与方向的 resolved 方向 ID。")
+            lines.append("")
+        paper_index = {}
+        for d in (entry.get("_pack_papers") or []):
+            paper_index[d["item_key"]] = d
+        _render_idea_block(lines, number, "跨方向候选", entry, paper_index)
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -4575,8 +4731,15 @@ def cmd_stage3_finalize(args) -> None:
     processed_keys = set()
     processed_any = False
     analysis_papers = {}
+    id_to_direction = {_stage3_direction_id(d): d for d in pack_directions}
+    pack_fps = {_stage3_direction_id(d): d.get("input_fingerprint")
+                for d in pack_directions}
+    old_cross = [entry for entry in (old_state or {}).get("cross_direction") or []
+                 if isinstance(entry, dict)]
+    new_cross_by_owner: dict = {}
     for direction in pack_directions:
         ckey = direction.get("collection_key")
+        direction_id = _stage3_direction_id(direction)
         analysis_papers[ckey] = direction.get("supporting_papers", [])
         in_scope = True
         if collection_key and ckey != collection_key:
@@ -4588,14 +4751,24 @@ def cmd_stage3_finalize(args) -> None:
         if not in_scope:
             old = old_directions.get(ckey)
             if old:
+                old["direction_id"] = direction_id
                 out_of_scope.append(old)
                 # A scoped refresh replaces only selected directions. Keep the
                 # other accepted directions in the machine state and render.
                 updated_directions.append(old)
             continue
         fp_match = old_fps.get(ckey) == direction.get("input_fingerprint")
+        # Same gate as stage3-plan: an owned cross-direction idea whose
+        # participating direction changed forces the owner through the process
+        # path, so plan's jobs and finalize's expected results always agree.
+        cross_fresh = True
+        if fp_match and not profile_changed:
+            cross_fresh = all(_cross_entry_fresh(entry, pack_fps)
+                              for entry in _owned_cross_entries(old_state, ckey))
         old_direction = old_directions.get(ckey)
-        if fp_match and not profile_changed and old_direction and old_direction.get("candidates") is not None:
+        if fp_match and not profile_changed and cross_fresh \
+                and old_direction and old_direction.get("candidates") is not None:
+            old_direction["direction_id"] = direction_id
             reused.append(ckey)
             updated_directions.append(old_direction)
             continue
@@ -4605,16 +4778,47 @@ def cmd_stage3_finalize(args) -> None:
         data, rerror = read_json_file(result_path)
         if rerror:
             fail("result_missing", f"{result_path}: {rerror}")
-        checked = validate_candidate_result(direction, data, result_path)
+        checked = validate_candidate_result(direction, data, result_path, pack_directions)
         checked["name_ja"] = direction.get("name_ja")
         checked["name_zh"] = direction.get("name_zh")
         checked["credibility"] = direction.get("credibility")
         checked["red_lines"] = direction.get("red_lines") or []
         checked["status"] = direction.get("status")
         checked["user_note_present"] = bool(direction.get("user_note"))
+        checked["direction_id"] = direction_id
+        # The fresh result is authoritative for every cross-direction idea this
+        # direction owns: previous owned entries are replaced, never merged.
+        new_cross = checked.pop("cross_direction_candidates") or []
+        new_cross_by_owner[ckey] = [
+            {**cross,
+             "owner_collection_key": ckey,
+             "owner_direction_id": direction_id,
+             "direction_fingerprints": {pid: pack_fps.get(pid)
+                                        for pid in cross["direction_ids"]}}
+            for cross in new_cross]
         updated_directions.append(checked)
     if not updated_directions and not reused:
         fail("validation_failed", "no in-scope directions to write")
+    # Issue #8: cross-direction ideas stay per-owner state. Entries whose owner
+    # vanished from the pack (merged away) are dropped and reported; entries of
+    # processed owners are replaced by the fresh result above; entries of
+    # reused/out-of-scope owners were proven fresh by the reuse gate or are
+    # deliberately out of this run's scope.
+    pack_ckeyes = {d.get("collection_key") for d in pack_directions}
+    final_cross, dropped_cross = [], []
+    for entry in old_cross:
+        owner = entry.get("owner_collection_key")
+        if owner not in pack_ckeyes:
+            dropped_cross.append(entry.get("id"))
+            continue
+        if owner in processed_keys:
+            continue
+        final_cross.append(entry)
+    for direction in pack_directions:
+        final_cross.extend(new_cross_by_owner.get(direction.get("collection_key"), []))
+    cross_ids = [entry.get("id") for entry in final_cross]
+    if len(set(cross_ids)) != len(cross_ids):
+        fail("duplicate_idea_id", f"cross-direction idea ids not unique: {cross_ids}")
     for entry in updated_directions:
         papers = {p["item_key"]: p for p in analysis_papers.get(entry.get("collection_key"), [])}
         for candidate in entry.get("candidates", []):
@@ -4632,6 +4836,26 @@ def cmd_stage3_finalize(args) -> None:
                 item["_analysis_rel"] = rel_path(Path(item["analysis_file"]), professor_dir)
             clone["_pack_papers"].append(item)
         md_entries.append(clone)
+    cross_md_entries = []
+    for entry in final_cross:
+        clone = dict(entry)
+        clone["_pack_papers"] = []
+        seen_keys = set()
+        participants = []
+        for pid in entry.get("direction_ids") or []:
+            participant = id_to_direction.get(pid) or {}
+            participants.append({"direction_id": pid,
+                                 "name_ja": participant.get("name_ja") or pid})
+            for p in analysis_papers.get(participant.get("collection_key"), []):
+                if p["item_key"] in seen_keys:
+                    continue
+                seen_keys.add(p["item_key"])
+                item = dict(p)
+                if item.get("analysis_file"):
+                    item["_analysis_rel"] = rel_path(Path(item["analysis_file"]), professor_dir)
+                clone["_pack_papers"].append(item)
+        clone["_participants"] = participants
+        cross_md_entries.append(clone)
     input_fps = {}
     for direction in pack_directions:
         input_fps[direction.get("collection_key")] = direction.get("input_fingerprint")
@@ -4640,7 +4864,8 @@ def cmd_stage3_finalize(args) -> None:
     md_path = professor_dir / CANDIDATES_MD
     old_render = ((old_state or {}).get("cache") or {}).get("render", {})
     body = render_candidates_md(professor, category, md_entries,
-                                current_profile_fp, state_fingerprint, professor_dir)
+                                current_profile_fp, state_fingerprint, professor_dir,
+                                cross_entries=cross_md_entries)
     projections = load_projections(program_root)
     overview_entries = []
     for d in updated_directions:
@@ -4680,6 +4905,7 @@ def cmd_stage3_finalize(args) -> None:
         "profile_path": args.profile,
         "input_fingerprints": input_fps,
         "directions": updated_directions,
+        "cross_direction": final_cross,
         "cache": {"render": {CANDIDATES_MD: {"sha256": md_result.get("sha256")}}},
     }
     if old_state and old_state.get("validator"):
@@ -4701,9 +4927,16 @@ def cmd_stage3_finalize(args) -> None:
         "candidates_md": str(md_path),
         "overview_md": str(program_root / "教授研究" / CANDIDATES_OVERVIEW),
         "directions": [{"collection_key": d.get("collection_key"),
+                        "direction_id": d.get("direction_id"),
                         "mode": d.get("mode"),
                         "candidates": len(d.get("candidates") or [])}
                        for d in updated_directions],
+        "cross_direction": [{"id": entry.get("id"),
+                             "owner_collection_key": entry.get("owner_collection_key"),
+                             "owner_direction_id": entry.get("owner_direction_id"),
+                             "direction_ids": entry.get("direction_ids")}
+                            for entry in final_cross],
+        "dropped_cross_direction": dropped_cross,
         "reused": reused, "md_sha256": md_result.get("sha256"),
     })
 
