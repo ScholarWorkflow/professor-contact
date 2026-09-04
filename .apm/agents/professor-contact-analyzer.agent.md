@@ -402,11 +402,14 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
  }}
 ```
 
+**Result 与方向身份强绑定（runner 强制）**：`collection_key` 与 `resolved.provisional_direction_id` 都必须等于该 result 对应 job 的方向 ID，`resolution_type != split_from` 时 `resolved_direction_id` 也必须等于它——runner 对任何不符一律 `invalid_result_json` 拒绝（Stage 3 按 `collection_key` 生成 job，两个"权威 ID"并存会让 fingerprint/audit 全部漂移）。唯一允许引入新 ID 的地方是 `split_target`。
+
 判定规则：
 - 每篇候选 = provisional member + Stage 1 扩召；含全文级 facts 即可判定归属。
+- **归属证据范围是教授级被选方向 candidate union**（全教授被选方向 candidate_keys 的去重并集）：各方向 Stage 1 的 candidate 集可能不相交，但 paper_evidence、affinity 与 `papers_to_add` 校验都覆盖 union——P2 provisional 在 dir_B、Stage 1 没把 P2 扩召进 dir_A，只要全文 facts 显示 P2 最支持 dir_A，dir_A 的 resolve job 就能看到并新增它（acceptance #2 的跨 preview 误聚类修正不依赖 Stage 1 恰好扩召过）。
 - 含 facts 论文按 `topic_terms` 与方向画像（name_ja/name_zh/summary_zh）的词面/语义重叠判定归属；不含 facts 的论文**保留** provisional 归属（没全文证据不下放）。**这不是提示词约定而是 runner 强制约束**：`stage2-resolve-finalize` 对任何 membership 变更（`papers_to_add`/`papers_to_remove`，含 split 移动的论文）逐一校验 `facts_state=valid`，abstract-only/legacy/证据链断裂的论文一律 `invalid_result_json` 拒绝——模型输出不能成为这条安全边界。
 - **移除**：仅当 facts 明确显示该论文不属于本方向（topic 完全不沾、gap 也不来）。**绝不**因为论文是 abstract-only 就移除。
-- **新增**：仅当 facts 明确显示该论文 support 本方向而非其 provisional 方向。**绝不**因为 abstract-level 词面重叠就新增。
+- **新增**：仅当 facts 明确显示该论文 support 本方向而非其 provisional 方向。**绝不**因为 abstract-level 词面重叠就新增。addition 候选由 runner 按**全文证据分量**（topic overlap）排序——provisional 成员、gap 贡献、authorship 都是摘要级先验，不参与"全文指向哪个方向"的比较。
 - **重命名**：方向名（如 language/concept）与全文证据明显冲突时。
 - **拆分**：≥4 篇有 facts 的论文明显聚成 ≥2 个不同 topic cluster 时：`split_target` = **全新**子方向 ID（建议 `<原 ckey>__<新主题 token>`，runner 会拒绝与现有方向冲突的 ID）；`papers_to_add` = **移入新子方向**的论文（源方向必须至少保留 1 篇，`papers_to_remove` 留空）。finalize 时 runner 会在输入包里创建真正的第二个权威方向条目（collection_key = split_target），split 论文与其 gap 引用一起迁移——Stage 3 会对两个方向分别生成 job。
 - **合并**：与另一方向共享 ≥2 篇论文 + 画像高度重叠时；`merge_target` = 本教授现有目标方向 ID，`resolution_type=merged_into`，`papers_to_add/papers_to_remove` 留空（整个方向并入目标）。runner 校验会拒绝：目标不存在、目标是自己、目标本身也是 merged_into（禁止链式合并）；多个方向合并进同一目标是合法的。finalize 时源方向条目从输入包移除，其论文/gap 引用完整移植到目标（`merged_from` 记录来源），输入包根部 `resolved_directions` 索引永久保留 源→目标 映射供引用回溯。
@@ -419,16 +422,16 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
   --results /tmp/<教授名>_stage2_resolve_results
 ```
 
-runner 校验：result schema/kind 正确、`resolution_type` 合法、`papers_to_remove` 全是 provisional member、`papers_to_add` 全在 candidate 集、split/merge 结构约束（见 B）；每个条目写逐方向 `input_fingerprint`（relevant 论文元数据 + facts/sidecar/analysis 文件 SHA + 方向画像），返回 `material_changes` 清单与 `needs_user_choice=true` 仅当本轮出现**新的** material change（已应用过的 resolution 重跑不再重复提示）。`write_needed=false`（全部方向 reuse）时可直接跳过 B/C，把现有 `_resolved_directions.json` 原样传给 stage2-finalize。
+runner 校验：result schema/kind 正确、**`collection_key`/`provisional_direction_id` 与 job 方向一致、非 split 的 `resolved_direction_id` == collection_key（identity 绑定，见 B）**、`resolution_type` 合法、`papers_to_remove` 全是 provisional member、`papers_to_add` 全在教授级 candidate union、membership 变更论文 `facts_state=valid`、split/merge 结构约束（见 B）；每个条目写逐方向 `input_fingerprint`（relevant 论文元数据 + facts/sidecar/analysis 文件 SHA + 方向画像）。**acceptance 生命周期**：条目带 `acceptance` 字段——`unchanged` 直接 `accepted`；material change（renamed/split_from/merged_into/refined）写为 `proposed`，在用户做出 Stage-2 选择**之前**只是提案：`stage2-resolve-plan` 对 proposed 方向总是 `action=process`（重新 resolve、再次提示），resolve-finalize 无新 result 时原样保留提案并继续报 `needs_user_choice`——未接受的提案**绝不**被当成已接受缓存。返回 `material_changes` 清单与 `needs_user_choice=true` 仅当存在未接受的 material change（已 accepted 的 resolution 重跑不再重复提示）。`write_needed=false`（全部方向 reuse）时可直接跳过 B/C，把现有 `_resolved_directions.json` 原样传给 stage2-finalize。
 
 **D. 拆分/合并改用户选择时问一次**：如果 `needs_user_choice=true` 且其中有 split/merge/refined（即新增或移除 ≥2 篇、或方向名/结构变了），用 `question` 问用户：
-- **「采纳 refined 方向作为新选择，继续跑 Stage 2 finalize」** — 默认推荐；runner 在 finalize 时直接应用 resolved state（split 创建新方向条目 / merge 移除源方向并移植引用）。
+- **「采纳 refined 方向作为新选择，继续跑 Stage 2 finalize」** — 默认推荐；带 `--resolved-directions` 跑 `stage2-finalize`，runner 应用 resolved state（split 创建新方向条目 / merge 移除源方向并移植引用）。**应用成功即用户接受**：runner 会把 sidecar 中相应条目标记 `acceptance=accepted`，之后重跑不再提示。
 - **「先回 Stage 0 重选方向，再重跑 Stage 2」** — 视作 revised selection；本轮返回 `needs_refresh`。
-- **「沿用 provisional 身份忽略 resolved 提示」** — 本轮**不传** `--resolved-directions`（resolved 状态只在显式传入时应用）；要求用户在 notes 显式记录"本轮按 provisional 归属"，且下一次 finalize 仍会重新提示。
+- **「沿用 provisional 身份忽略 resolved 提示」** — 本轮**不传** `--resolved-directions`（sidecar 条目保持 `proposed`）；下一轮 `stage2-resolve-plan` 对该方向仍 `action=process` 并再次提示，直到用户明确采纳或事实变化使提案过期。
 
 未选择 → 保留上一份已接受输入包 + 返回 `needs_input`（不写新事实）。
 
-**E. resolved 状态复用（acceptance #5）**：`stage2-resolve-plan` 每次都会读现有 `_resolved_directions.json`——某方向的逐方向 `input_fingerprint`（relevant 论文元数据/facts/sidecar/analysis SHA + 方向画像）与当前 facts 仍匹配 → 该方向 `action=reuse`，**不发** resolve job；只有 fingerprint 变化或从未 resolve 过的方向重新 resolve。任何相关论文的 metadata/PDF/分析/sidecar/facts 变化只失效受影响方向。`stage2-finalize --resolved-directions` 对 sidecar fail closed：schema/kind 不对、professor 不匹配、或任一方向 fingerprint 与当前 facts 不符（`resolved_directions_stale` / `resolved_directions_professor_mismatch`）→ 直接 error，绝不静默应用旧文件或别的教授的文件。
+**E. resolved 状态复用（acceptance #5）**：`stage2-resolve-plan` 每次都会读现有 `_resolved_directions.json`——某方向的逐方向 `input_fingerprint`（relevant 论文元数据/facts/sidecar/analysis SHA + 方向画像）与当前 facts 仍匹配**且条目 `acceptance=accepted`** → 该方向 `action=reuse`，**不发** resolve job；只有 fingerprint 变化、从未 resolve 过、或提案仍 pending（`proposed`）的方向重新 resolve。任何相关论文的 metadata/PDF/分析/sidecar/facts 变化只失效受影响方向。`stage2-finalize --resolved-directions` 对 sidecar fail closed：schema/kind 不对、professor 不匹配、或任一方向 fingerprint 与当前 facts 不符（`resolved_directions_stale` / `resolved_directions_professor_mismatch`）→ 直接 error，绝不静默应用旧文件或别的教授的文件。
 
 **F. 跑 `stage2-plan`**（纯确定性）：
 ```bash
