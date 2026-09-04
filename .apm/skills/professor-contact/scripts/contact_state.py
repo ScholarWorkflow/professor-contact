@@ -5,6 +5,9 @@ Only local deterministic work: JSON/schema validation, fingerprinting, cache
 invalidation, scope selection, stable ordering, version-family heuristics,
 state updates, atomic writes, model-job assembly and deterministic Markdown
 projection.  Never starts subagents, models, browsers, Zotero or the network.
+The single child process it may run is professor-research's local
+deterministic `contact_evidence.py` freshness check/rebuild (local sources
+only, no web/PDF/Zotero/model work on its side either).
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unicodedata
@@ -44,6 +48,22 @@ EMAIL_OVERVIEW = "套磁邮件总览.md"
 SELECTION_FILE = "套磁选择.json"
 PROJECTIONS_FILE = "_contact_projections.json"
 VERIFY_FILE = "_contact_verify.json"
+CONTACT_EVIDENCE_FILE = "_联系方式证据.json"
+CONTACT_EVIDENCE_KIND = "professor-contact-evidence"
+CONTACT_EVIDENCE_SCHEMAS = (1, 2)
+CONTACT_EVIDENCE_SCHEMA_LIVE = 2
+CONTACT_EVIDENCE_VERDICTS = ("confirmed_cross_source", "official_only",
+                             "paper_only", "conflict", "insufficient")
+# professor-research schema-2 freshness interface (local-only): the stable
+# per-professor `--check` report and the idempotent deterministic rebuild.
+# The script lives in the professor-research SKILL installation — never in a
+# program root, which holds only user data (info.json / 教授研究/).
+UPSTREAM_REPO_ID = "professor-research"
+UPSTREAM_SKILL_ID = "professor-collector"
+UPSTREAM_CHECK_RESOURCE = Path(".apm") / "skills" / "professor-collector" / \
+    "scripts" / "contact_evidence.py"
+UPSTREAM_SCRIPT_ENV = "PROFESSOR_CONTACT_EVIDENCE_SCRIPT"
+UPSTREAM_CHECK_TIMEOUT_SECONDS = 60
 GAP_SCOPES = ("relevant", "selected_direction", "all")
 FRESHNESS_SCOPES = ("shortlist", "full")
 REFRESH_SCOPES = ("flagged", "selected", "all")
@@ -54,6 +74,14 @@ SIDECAR_EXTRACTOR_VERSIONS = ("future-work-v1", "legacy-markdown-v0")
 FACTS_SCHEMA = 1
 FACTS_KIND = "paper-analysis-facts"
 FACTS_GENERATOR_VERSIONS = ("facts-v1",)
+STAGE2_PREFLIGHT_VERSION = "stage2-preflight-v1"
+STAGE2_RESOLUTION_SEMANTICS_VERSION = 1
+STAGE2_TARGET_FILE = Path("教授研究") / "套磁目标.json"
+STAGE1_SNAPSHOT_FILE = Path("教授研究") / "套磁阶段1候选.json"
+AUTHORSHIP_LEDGER_FILE = Path("教授研究") / "_署名对照.json"
+PAPER_ANALYSIS_SCOPES = ("relevant", "all")
+STAGE2_GUARD_KINDS = (("analysis", "analysis_file"), ("future_work", "sidecar_file"),
+                      ("facts", "facts_file"), ("pdf", "pdf_file"))
 FACTS_TEXT_FIELDS = ("research_problem", "research_object", "approach")
 FACTS_LIST_FIELDS = ("findings", "contributions", "topic_terms", "limitations")
 SHORTLIST_MAX = 10
@@ -766,7 +794,11 @@ def load_freshness_cache(professor_dir: Path) -> dict:
     data, error = read_json_file(professor_dir / FRESHNESS_CACHE)
     if error or not isinstance(data, dict):
         return {}
-    return data.get("entries") or {}
+    entries = data.get("entries")
+    # A malformed truthy `entries` container degrades to an empty view so the
+    # freshness-view fingerprint mismatches the accepted one (fail closed to
+    # `freshness_cache_changed`) instead of crashing on a non-dict .get().
+    return entries if isinstance(entries, dict) else {}
 
 
 def save_freshness_cache(professor_dir: Path, entries: dict) -> None:
@@ -2296,6 +2328,501 @@ def cmd_stage2_resolve_accept(args) -> None:
     })
 
 
+def stage2_preflight_versions() -> dict:
+    """Semantic identity of the Stage 2 resolution implementation.
+
+    Any change that can make identical inputs produce different Stage 2 output
+    must bump STAGE2_RESOLUTION_SEMANTICS_VERSION so older accepted packs are
+    never silently reused by newer code.
+    """
+    return {
+        "preflight_version": STAGE2_PREFLIGHT_VERSION,
+        "resolution_semantics_version": STAGE2_RESOLUTION_SEMANTICS_VERSION,
+        "sidecar_extractor_versions": list(SIDECAR_EXTRACTOR_VERSIONS),
+        "facts_generator_versions": list(FACTS_GENERATOR_VERSIONS),
+    }
+
+
+def stage2_preflight_params(paper_analysis: str, gap_scope: str, freshness_scope: str,
+                            max_relevant_papers: int | None) -> dict:
+    return {"paper_analysis": paper_analysis, "gap_scope": gap_scope,
+            "freshness_scope": freshness_scope,
+            "max_relevant_papers": max_relevant_papers}
+
+
+def stage2_target_fingerprint(direction: dict) -> str:
+    """Hash only the target fields Stage 2 actually consumes for one direction.
+
+    Deliberately excludes the whole-preview fingerprint, selection history and
+    other professors: display-only projection churn must never invalidate a
+    selected direction's Stage 2 state.
+    """
+    members = sorted(
+        ({"item_key": member.get("item_key"),
+          "preview_confidence": member.get("preview_confidence")}
+         for member in direction.get("members") or []),
+        key=lambda member: json.dumps(member, ensure_ascii=False, sort_keys=True))
+    return sha256_obj({
+        "direction_id": direction.get("direction_id"),
+        "name_ja": direction.get("name_ja"),
+        "name_zh": direction.get("name_zh"),
+        "summary_zh": direction.get("summary_zh"),
+        "members": members,
+        "user_note": direction.get("user_note") or "",
+    })
+
+
+def stage2_candidate_fingerprint(snapshot_direction: dict | None) -> str | None:
+    """Hash the Stage 1 candidate-set view one direction consumes.
+
+    Consumes the already-verified snapshot entry as-is; Stage 1 stays the
+    candidate authority and preflight never re-runs candidate expansion.
+    """
+    if not isinstance(snapshot_direction, dict):
+        return None
+    readiness = snapshot_direction.get("pdf_readiness") or {}
+    return sha256_obj({
+        "direction_id": snapshot_direction.get("direction_id"),
+        "provisional_member_keys": sorted(snapshot_direction.get("provisional_member_keys") or []),
+        "candidate_keys": sorted(snapshot_direction.get("candidate_keys") or []),
+        "expansion_reasons": {key: sorted(values or []) for key, values
+                              in sorted((snapshot_direction.get("expansion_reasons") or {}).items())},
+        "expansion_evidence": {key: snapshot_direction["expansion_evidence"][key] for key
+                               in sorted(snapshot_direction.get("expansion_evidence") or {})},
+        "pdf_readiness": {
+            "usable_item_keys": sorted(readiness.get("usable_item_keys") or []),
+            "missing_item_keys": sorted(readiness.get("missing_item_keys") or []),
+            "unresolved_item_keys": sorted(readiness.get("unresolved_item_keys") or []),
+            "status_counts": dict(sorted((readiness.get("status_counts") or {}).items())),
+        },
+    })
+
+
+def stage2_candidate_universe(target: dict | None, snapshot_entry: dict | None) -> set:
+    """Union of Stage 1 candidate_keys over the professor's selected directions.
+
+    This is the only catalog slice whose changes can invalidate accepted
+    Stage 2 state; catalog/ledger churn outside it must never force the slow
+    path.
+    """
+    snapshot_directions = {entry.get("direction_id"): entry
+                           for entry in (snapshot_entry or {}).get("directions") or []
+                           if isinstance(entry, dict)}
+    keys: set = set()
+    for direction_id in (target or {}).get("selected_direction_ids") or []:
+        entry = snapshot_directions.get(direction_id)
+        if not isinstance(entry, dict):
+            continue
+        candidate_keys = entry.get("candidate_keys")
+        if isinstance(candidate_keys, list):
+            keys.update(key for key in candidate_keys if isinstance(key, str))
+    return keys
+
+
+def stage2_papers_catalog_view_fingerprint(professor_dir: Path,
+                                           candidate_keys: set) -> str:
+    """Hash only the candidate papers' catalog records, not the whole file.
+
+    A sentinel (never a hex digest) means the catalog cannot prove the
+    candidate view; recorded fingerprints can never match a sentinel, so any
+    such state fails closed to the slow path.
+    """
+    path = professor_dir / "papers.json"
+    if not path.is_file():
+        return "missing"
+    data, error = read_json_file(path)
+    if error or not isinstance(data, dict) or not isinstance(data.get("papers"), list):
+        return "malformed"
+    records = {}
+    absent = []
+    for key in sorted(candidate_keys):
+        record = next((paper for paper in data["papers"]
+                       if isinstance(paper, dict) and paper.get("item_key") == key), None)
+        if record is None:
+            absent.append(key)
+        else:
+            records[key] = record
+    return sha256_obj({"records": records, "absent": absent})
+
+
+def stage2_authorship_ledger_view_fingerprint(program_root: Path, professor: str) -> str:
+    """Hash only this professor's slice of the shared authorship ledger.
+
+    The tagger ledger is a per-professor name-variant book plus per-professor
+    human overrides; other professors' entries and the file-level rebuild
+    timestamp never feed this professor's Stage 2 authorship work, so they
+    stay out of the cache key. Malformed containers fail closed via the same
+    sentinel convention as the catalog view.
+    """
+    path = program_root / AUTHORSHIP_LEDGER_FILE
+    if not path.is_file():
+        return "missing"
+    data, error = read_json_file(path)
+    if error or not isinstance(data, dict):
+        return "malformed"
+    professors = data.get("professors")
+    overrides = data.get("overrides")
+    if professors is not None and not isinstance(professors, dict):
+        return "malformed"
+    if overrides is not None and not isinstance(overrides, dict):
+        return "malformed"
+    return sha256_obj({
+        "sigbook": professors.get(professor) if isinstance(professors, dict) else None,
+        "overrides": overrides.get(professor) if isinstance(overrides, dict) else None,
+    })
+
+
+def stage2_program_inputs(program_root: Path, professor_dir: Path, professor: str,
+                          target: dict | None, snapshot_entry: dict | None) -> dict:
+    """Professor-wide cheap inputs: Stage 1 epoch + candidate-view fingerprints."""
+    candidate_keys = stage2_candidate_universe(target, snapshot_entry)
+    return {
+        "stage1_professor_input_fingerprint": (snapshot_entry or {}).get("input_fingerprint"),
+        "papers_catalog_view_sha256":
+            stage2_papers_catalog_view_fingerprint(professor_dir, candidate_keys),
+        "authorship_ledger_view_sha256":
+            stage2_authorship_ledger_view_fingerprint(program_root, professor),
+    }
+
+
+def read_stage2_target(program_root: Path, professor: str) -> dict | None:
+    data, error = read_json_file(program_root / STAGE2_TARGET_FILE)
+    if error or not isinstance(data, dict) or not isinstance(data.get("targets"), list):
+        return None
+    for target in data["targets"]:
+        if isinstance(target, dict) and target.get("professor") == professor:
+            return target
+    return None
+
+
+def read_stage1_professor_entry(program_root: Path, professor: str) -> dict | None:
+    data, error = read_json_file(program_root / STAGE1_SNAPSHOT_FILE)
+    if error or not isinstance(data, dict) or not isinstance(data.get("professors"), list):
+        return None
+    for entry in data["professors"]:
+        if isinstance(entry, dict) and entry.get("professor") == professor:
+            return entry
+    return None
+
+
+def stage2_preflight_cheap_inputs(program_root: Path, professor_dir: Path, professor: str,
+                                  target: dict | None, snapshot_entry: dict | None,
+                                  params: dict, current_year: int) -> dict:
+    """The structural inputs both preflight and finalize can recompute cheaply.
+
+    This block is the TOCTOU comparison basis: it never touches analysis
+    artifacts, PDFs, Zotero or the network — only persisted state fingerprints.
+    """
+    snapshot_directions = {entry.get("direction_id"): entry
+                           for entry in ((snapshot_entry or {}).get("directions") or [])
+                           if isinstance(entry, dict)}
+    directions = {}
+    for direction in (target or {}).get("directions") or []:
+        direction_id = str(direction.get("direction_id"))
+        directions[direction_id] = {
+            "target_fingerprint": stage2_target_fingerprint(direction),
+            "candidate_fingerprint": stage2_candidate_fingerprint(
+                snapshot_directions.get(direction.get("direction_id"))),
+        }
+    return {
+        "versions": stage2_preflight_versions(),
+        "params": params,
+        "current_year": current_year,
+        "program_inputs": stage2_program_inputs(program_root, professor_dir, professor,
+                                                target, snapshot_entry),
+        "selected_direction_ids": sorted((target or {}).get("selected_direction_ids") or []),
+        "directions": directions,
+    }
+
+
+def stage2_artifact_guard(path: Path, accepted_digest: str | None) -> dict:
+    stat = path.stat()
+    return {"path": str(path), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+            "ctime_ns": stat.st_ctime_ns, "accepted_digest": accepted_digest}
+
+
+def stage2_artifact_guard_reason(recorded: dict) -> str | None:
+    """Filesystem-only guard: stat the accepted artifact, never re-read bytes.
+
+    Cryptographic source identity stays with the normal Stage 2 facts
+    validation; this only detects that the recorded file itself changed since
+    the accepted run.
+    """
+    path = Path(str(recorded.get("path") or ""))
+    try:
+        if not path.is_file():
+            return "artifact_missing"
+        stat = path.stat()
+    except OSError:
+        return "artifact_missing"
+    if (stat.st_size != recorded.get("size")
+            or stat.st_mtime_ns != recorded.get("mtime_ns")
+            or stat.st_ctime_ns != recorded.get("ctime_ns")):
+        return "artifact_changed"
+    return None
+
+
+def stage2_direction_artifact_guards(ctx: Stage2Context, direction: dict) -> dict:
+    """Record accepted stat guards for artifacts that feed one direction's output.
+
+    Guard keys are the direction's relevant papers plus its gap-scope papers
+    (the sidecar sources of the direction gap pool). Digests reuse SHAs already
+    computed by Stage2Context; PDF bytes are never re-read just for metadata.
+    """
+    guard_keys = set(direction_relevant_keys(direction))
+    guard_keys.update(gap_scope_keys(ctx.facts, direction))
+    guards = {}
+    for key in sorted(guard_keys):
+        paper = ctx.papers.get(key)
+        if not paper:
+            continue
+        entries = {}
+        for kind, field in STAGE2_GUARD_KINDS:
+            value = paper.get(field)
+            if not value:
+                continue
+            path = Path(value)
+            if not path.is_file():
+                continue
+            digest = None
+            if kind == "future_work":
+                cached = ctx.sidecar_cache.get(value)
+                if cached is not None:
+                    digest = cached[3]
+            elif kind == "pdf":
+                record = ctx.facts_cache.get(key)
+                if record and record[1] == "valid" and record[0]:
+                    digest = record[0].get("input_fingerprint")
+            else:
+                digest = sha256_bytes(path.read_bytes())
+            entries[kind] = stage2_artifact_guard(path, digest)
+        if entries:
+            guards[key] = entries
+    return guards
+
+
+def stage2_freshness_view_fingerprint(pack_direction: dict, cache_entries: dict) -> str:
+    """Hash the freshness-cache view over one accepted direction's gaps.
+
+    Covers every gap the accepted pack surfaced (shortlist, excluded,
+    done_by_self blacklist). Entries for unrelated gaps are irrelevant; a
+    missing/invalid cache file yields null entries and misses.
+    """
+    gap_ids = set()
+    for section in ("gap_shortlist", "gaps_excluded", "completed_gap_blacklist"):
+        for gap in pack_direction.get(section) or []:
+            gap_id = gap.get("gap_id") if isinstance(gap, dict) else None
+            if gap_id:
+                gap_ids.add(gap_id)
+    view = {gap_id: cache_entries.get(gap_id) for gap_id in sorted(gap_ids)}
+    return sha256_obj(view)
+
+
+def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: dict,
+                              snapshot_entry: dict | None, pack_directions: list,
+                              params: dict, current_year: int, ctx: Stage2Context,
+                              cache_entries: dict) -> dict:
+    """Build the cache.preflight block seeded into an accepted input pack.
+
+    Written only by stage2-finalize; consumers (stage3+) must keep treating it
+    as opaque cache metadata, never as stage facts.
+    """
+    snapshot_directions = {entry.get("direction_id"): entry
+                           for entry in (snapshot_entry or {}).get("directions") or []
+                           if isinstance(entry, dict)}
+    accepted_by_key = {entry.get("collection_key"): entry for entry in pack_directions}
+    facts_directions = {entry.get("collection_key"): entry
+                        for entry in ctx.facts.get("directions") or []}
+    directions = {}
+    for direction in target.get("directions") or []:
+        direction_id = str(direction.get("direction_id"))
+        accepted = accepted_by_key.get(direction_id)
+        if not accepted:
+            continue
+        facts_direction = facts_directions.get(direction_id) or {}
+        directions[direction_id] = {
+            "target_fingerprint": stage2_target_fingerprint(direction),
+            "candidate_fingerprint": stage2_candidate_fingerprint(
+                snapshot_directions.get(direction.get("direction_id"))),
+            "accepted_input_fingerprint": accepted.get("input_fingerprint"),
+            "freshness_view_fingerprint": stage2_freshness_view_fingerprint(
+                accepted, cache_entries),
+            "artifact_guards": stage2_direction_artifact_guards(ctx, facts_direction),
+        }
+    return {
+        "schema": 1,
+        "version": STAGE2_PREFLIGHT_VERSION,
+        "resolution_semantics_version": STAGE2_RESOLUTION_SEMANTICS_VERSION,
+        "sidecar_extractor_versions": list(SIDECAR_EXTRACTOR_VERSIONS),
+        "facts_generator_versions": list(FACTS_GENERATOR_VERSIONS),
+        "accepted_directions_sha256": sha256_obj(pack_directions),
+        "current_year": current_year,
+        "params": params,
+        "program_inputs": stage2_program_inputs(program_root, professor_dir, ctx.professor,
+                                                target, snapshot_entry),
+        "directions": directions,
+    }
+
+
+def stage2_validator_accepts(pack: dict | None, direction_ids: list) -> str | None:
+    """Return a validator-not-accepted reason, or None when reuse may proceed.
+
+    Keeps the existing validator contract: only recorded terminal results
+    (`pass`/`skipped`) count as accepted; missing results, malformed state and
+    `fail_after_2_rounds` force the slow path without redefining policy here.
+    """
+    validator = (pack or {}).get("validator")
+    results = validator.get("results") if isinstance(validator, dict) else None
+    if not isinstance(results, dict):
+        return "validator_not_accepted"
+    for direction_id in direction_ids:
+        row = results.get(direction_id)
+        if not isinstance(row, dict) or row.get("result") not in ("pass", "skipped"):
+            return "validator_not_accepted"
+    return None
+
+
+def cmd_stage2_preflight(args) -> None:
+    professor = args.professor
+    if args.paper_analysis not in PAPER_ANALYSIS_SCOPES:
+        fail("invalid_params", f"paper_analysis must be one of {PAPER_ANALYSIS_SCOPES}")
+    if args.gap_scope not in GAP_SCOPES:
+        fail("invalid_params", f"gap_scope must be one of {GAP_SCOPES}")
+    if args.freshness_scope not in FRESHNESS_SCOPES:
+        fail("invalid_params", f"freshness_scope must be one of {FRESHNESS_SCOPES}")
+    if args.max_relevant_papers is not None and (isinstance(args.max_relevant_papers, bool)
+                                                 or args.max_relevant_papers < 1):
+        fail("invalid_params", "max_relevant_papers must be a positive integer when given")
+    program_root = Path(args.program_root)
+    params = stage2_preflight_params(args.paper_analysis, args.gap_scope,
+                                     args.freshness_scope, args.max_relevant_papers)
+    current_year = datetime.now().year
+    target = read_stage2_target(program_root, professor)
+    if target is None:
+        fail("invalid_params",
+             f"professor has no selected target state; run contact_targets.py resolve first: {professor}")
+    professor_dir = program_root / str(target.get("professor_dir") or "")
+    snapshot_entry = read_stage1_professor_entry(program_root, professor)
+    pack_path = professor_dir / INPUT_PACK
+    pack, _error = read_json_file(pack_path)
+    if not isinstance(pack, dict):
+        pack = None
+    cache_block = (pack or {}).get("cache")
+    meta = cache_block.get("preflight") if isinstance(cache_block, dict) else None
+
+    professor_reasons: list = []
+    if pack is None:
+        professor_reasons.append("missing_input_pack")
+    elif cache_block is not None and not isinstance(cache_block, dict):
+        # Corrupted / half-written containers must fail closed to the slow path
+        # with a stable reason; they may never crash the gate itself.
+        professor_reasons.append("preflight_cache_malformed")
+    elif not isinstance(meta, dict):
+        professor_reasons.append(
+            "preflight_cache_malformed" if meta is not None else "legacy_pack_no_preflight")
+        meta = None
+    else:
+        if meta.get("version") != STAGE2_PREFLIGHT_VERSION:
+            professor_reasons.append("preflight_version_changed")
+        if (meta.get("resolution_semantics_version") != STAGE2_RESOLUTION_SEMANTICS_VERSION
+                or meta.get("sidecar_extractor_versions") != list(SIDECAR_EXTRACTOR_VERSIONS)
+                or meta.get("facts_generator_versions") != list(FACTS_GENERATOR_VERSIONS)):
+            professor_reasons.append("resolution_semantics_changed")
+        if meta.get("accepted_directions_sha256") != sha256_obj(pack.get("directions") or []):
+            professor_reasons.append("pack_integrity_mismatch")
+        if meta.get("params") != params or meta.get("current_year") != current_year:
+            professor_reasons.append("params_changed")
+        current_program_inputs = stage2_program_inputs(program_root, professor_dir,
+                                                       professor, target, snapshot_entry)
+        recorded_program_inputs = meta.get("program_inputs")
+        if not isinstance(recorded_program_inputs, dict):
+            professor_reasons.append("preflight_cache_malformed")
+            recorded_program_inputs = {}
+        if recorded_program_inputs.get("stage1_professor_input_fingerprint") != \
+                current_program_inputs["stage1_professor_input_fingerprint"]:
+            professor_reasons.append("stage1_professor_changed")
+        if recorded_program_inputs.get("papers_catalog_view_sha256") != \
+                current_program_inputs["papers_catalog_view_sha256"]:
+            professor_reasons.append("papers_catalog_changed")
+        if recorded_program_inputs.get("authorship_ledger_view_sha256") != \
+                current_program_inputs["authorship_ledger_view_sha256"]:
+            professor_reasons.append("authorship_ledger_changed")
+
+    cache_entries = load_freshness_cache(professor_dir) if pack else {}
+    pack_directions = {entry.get("collection_key"): entry
+                       for entry in (pack or {}).get("directions") or []
+                       if isinstance(entry, dict)}
+    recorded_directions = (meta or {}).get("directions")
+    if not isinstance(recorded_directions, dict):
+        if recorded_directions is not None:
+            professor_reasons.append("preflight_cache_malformed")
+        recorded_directions = {}
+    snapshot_directions = {entry.get("direction_id"): entry
+                           for entry in (snapshot_entry or {}).get("directions") or []
+                           if isinstance(entry, dict)}
+    target_directions = [entry for entry in target.get("directions") or []
+                         if isinstance(entry, dict)]
+    direction_results = []
+    all_reuse = bool(target_directions) and not professor_reasons
+    for direction in target_directions:
+        direction_id = str(direction.get("direction_id"))
+        reasons = []
+        recorded = recorded_directions.get(direction_id)
+        accepted = pack_directions.get(direction_id)
+        if recorded is None or not isinstance(recorded, dict):
+            reasons.append("preflight_record_missing")
+        else:
+            if recorded.get("target_fingerprint") != stage2_target_fingerprint(direction):
+                reasons.append("target_changed")
+            if recorded.get("candidate_fingerprint") != stage2_candidate_fingerprint(
+                    snapshot_directions.get(direction.get("direction_id"))):
+                reasons.append("candidate_set_changed")
+            if accepted is None or recorded.get("accepted_input_fingerprint") != \
+                    accepted.get("input_fingerprint"):
+                reasons.append("pack_integrity_mismatch")
+            elif recorded.get("freshness_view_fingerprint") != \
+                    stage2_freshness_view_fingerprint(accepted, cache_entries):
+                reasons.append("freshness_cache_changed")
+            guards = recorded.get("artifact_guards")
+            if not isinstance(guards, dict):
+                # An unusable guards container cannot prove artifact freshness.
+                if guards is not None:
+                    reasons.append("preflight_record_missing")
+                guards = {}
+            for item_key in sorted(guards):
+                kinds = guards[item_key]
+                if not isinstance(kinds, dict):
+                    reasons.append("preflight_record_missing")
+                    continue
+                for kind in sorted(kinds):
+                    guard = kinds[kind]
+                    reason = stage2_artifact_guard_reason(guard if isinstance(guard, dict) else {})
+                    if reason:
+                        reasons.append(reason)
+        validator_reason = stage2_validator_accepts(pack, [direction_id])
+        if validator_reason:
+            reasons.append(validator_reason)
+        reasons = sorted(set(reasons))
+        direction_results.append({
+            "collection_key": direction_id, "action": "reuse" if not reasons else "process",
+            "reason_codes": reasons})
+        if reasons:
+            all_reuse = False
+    preflight_inputs = stage2_preflight_cheap_inputs(
+        program_root, professor_dir, professor, target, snapshot_entry, params, current_year)
+    emit({
+        "status": "ok",
+        "professor": professor,
+        "preflight_id": sha256_obj({"professor": professor,
+                                    "preflight_inputs": preflight_inputs}),
+        "action": "reuse_all" if all_reuse else "process",
+        "reason_codes": sorted(set(professor_reasons)),
+        "pack_path": str(pack_path),
+        "preflight_inputs": preflight_inputs,
+        "directions": direction_results,
+    })
+
+
 def cmd_stage2_plan(args) -> None:
     ctx = Stage2Context(Path(args.facts))
     jobs, reuse_list, process_list = [], [], []
@@ -2868,8 +3395,90 @@ def render_analysis_md(ctx: Stage2Context, pack_directions: list,
     return "\n".join(lines).rstrip() + "\n"
 
 
+def stage2_preflight_plan_drift(plan_inputs: dict, current: dict) -> list:
+    """Field-level drift between the saved preflight plan and current inputs."""
+    drift = []
+    if plan_inputs.get("versions") != current["versions"]:
+        drift.append("versions")
+    if plan_inputs.get("current_year") != current["current_year"]:
+        drift.append("current_year")
+    if plan_inputs.get("program_inputs") != current["program_inputs"]:
+        drift.append("program_inputs")
+    if plan_inputs.get("selected_direction_ids") != current["selected_direction_ids"]:
+        drift.append("selected_direction_ids")
+    recorded_directions = plan_inputs.get("directions")
+    if not isinstance(recorded_directions, dict):
+        drift.append("directions")
+    else:
+        if set(recorded_directions) != set(current["directions"]):
+            drift.append("directions")
+        else:
+            for direction_id, entry in current["directions"].items():
+                if recorded_directions.get(direction_id) != entry:
+                    drift.append(f"directions:{direction_id}")
+    return sorted(set(drift))
+
+
+def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
+    """Load --preflight-file and re-verify its cheap inputs before any write.
+
+    Stage 2 may run for a long time after the preflight decided to prepare
+    evidence. Stage 0/1 state or papers.json can change underneath; finalize
+    must never stamp results derived from a stale candidate universe as
+    current. Returns (plan, target, snapshot_entry); plan is None when the
+    caller did not pass a preflight file (legacy direct callers).
+
+    The payload is also bound to the facts run it produced: ``preflight_id``
+    must be the payload's self-consistent proof id and must equal the id the
+    analyzer recorded into the facts file (``facts.stage2_preflight``) when
+    that run observed the preflight decision. Without this, a later invocation
+    for the same professor could overwrite the shared saved payload and its
+    (matching) fingerprints would wrongly certify facts prepared from an
+    earlier target state.
+    """
+    if not getattr(args, "preflight_file", None):
+        return None, None, None
+    plan, error = read_json_file(Path(args.preflight_file))
+    if (error or not isinstance(plan, dict) or plan.get("status") != "ok"
+            or not isinstance(plan.get("preflight_inputs"), dict)):
+        fail("invalid_params", f"preflight file unreadable or not a preflight payload: "
+                               f"{args.preflight_file}")
+    if plan.get("professor") != ctx.professor:
+        fail("invalid_params", "preflight file professor mismatch: "
+                               f"{plan.get('professor')!r} != {ctx.professor!r}")
+    plan_inputs = plan["preflight_inputs"]
+    params = plan_inputs.get("params")
+    if not isinstance(params, dict) or params.get("gap_scope") != ctx.gap_scope or \
+            params.get("freshness_scope") != ctx.freshness_scope:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=["params"])
+    target = read_stage2_target(ctx.program_root, ctx.professor)
+    snapshot_entry = read_stage1_professor_entry(ctx.program_root, ctx.professor)
+    if target is None or snapshot_entry is None:
+        soft_exit("needs_refresh", "preflight_inputs_changed",
+                  drift=["target_or_snapshot_missing"])
+    current = stage2_preflight_cheap_inputs(
+        ctx.program_root, ctx.professor_dir, ctx.professor, target, snapshot_entry, params,
+        ctx.current_year)
+    drift = stage2_preflight_plan_drift(plan_inputs, current)
+    if drift:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=drift)
+    preflight_id = sha256_obj({"professor": plan["professor"],
+                               "preflight_inputs": plan_inputs})
+    if plan.get("preflight_id") != preflight_id:
+        soft_exit("needs_refresh", "preflight_inputs_changed",
+                  drift=["preflight_proof_id"])
+    binding = ctx.facts.get("stage2_preflight")
+    if (not isinstance(binding, dict)
+            or binding.get("preflight_id") != preflight_id):
+        soft_exit("needs_refresh", "preflight_inputs_changed",
+                  drift=["preflight_proof_binding"])
+    return plan, target, snapshot_entry
+
+
 def cmd_stage2_finalize(args) -> None:
     ctx = Stage2Context(Path(args.facts))
+    preflight_plan, preflight_target, preflight_snapshot = \
+        stage2_finalize_preflight_plan(args, ctx)
     results_dir = Path(args.results)
     decision = None
     if getattr(args, "decision_file", None):
@@ -3265,6 +3874,13 @@ def cmd_stage2_finalize(args) -> None:
         }
     if ctx.pack and not needed_keys and ctx.pack.get("validator"):
         pack["validator"] = ctx.pack["validator"]
+    if preflight_plan is not None:
+        pack["cache"]["preflight"] = stage2_preflight_metadata(
+            program_root=ctx.program_root, professor_dir=ctx.professor_dir,
+            target=preflight_target, snapshot_entry=preflight_snapshot,
+            pack_directions=pack_directions,
+            params=preflight_plan["preflight_inputs"]["params"],
+            current_year=ctx.current_year, ctx=ctx, cache_entries=cache_entries)
     atomic_json(ctx.pack_path, pack)
     save_freshness_cache(ctx.professor_dir, cache_entries)
     # NOTE: stage2-finalize deliberately does NOT touch the sidecar's
@@ -3871,7 +4487,8 @@ def cmd_stage3_finalize(args) -> None:
 
 def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
                         idea: dict, note: str, program_root: Path,
-                        profile_fp: str | None, papers_override: list[str] | None = None) -> dict:
+                        profile_fp: str | None, papers_override: list[str] | None = None,
+                        contact_evidence: dict | None = None) -> dict:
     gap_records = {}
     for gap in pack_direction.get("gap_shortlist", []) + pack_direction.get("gaps_excluded", []):
         gap_records[(gap["item_key"], gap["gap_id"])] = gap
@@ -3965,9 +4582,14 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
                          "profile": profile_fp,
                          "candidate_state": idea.get("_state_fingerprint")},
         "user_supplement": note or "",
+        "contact_evidence": contact_evidence,
     }
+    # contact_evidence is a fact field (the frozen recipient snapshot), so it
+    # belongs in the pack integrity hash: a refrozen snapshot always yields a
+    # new source_hash, never a silent in-place substitution.
     entry["source_hash"] = sha256_obj({k: entry[k] for k in (
-        "email_id", "idea", "papers", "gaps", "red_lines", "allowed_sources")})
+        "email_id", "idea", "papers", "gaps", "red_lines", "allowed_sources",
+        "contact_evidence")})
     return entry
 
 
@@ -4077,6 +4699,8 @@ def cmd_stage4_finalize(args) -> None:
             if perr is None and isinstance(pack, dict):
                 pack_cache[str(professor_dir)] = pack
     validate_stage4_selections(all_selects, state_cache, pack_cache)
+    evidence_artifact, evidence_error = load_contact_evidence(program_root)
+    evidence_snapshots = {}
     for select in all_selects:
         professor = select.get("professor")
         professor_dir = Path(select.get("professor_dir") or "")
@@ -4124,10 +4748,13 @@ def cmd_stage4_finalize(args) -> None:
             papers_override = validate_papers_override(
                 idea, idea_input.get("papers_override"),
                 f"{professor}::{ckey}::{idea_id}")
+            if professor not in evidence_snapshots:
+                evidence_snapshots[professor] = contact_evidence_snapshot(
+                    evidence_artifact, evidence_error, professor)
             entry = compile_email_entry(
                 pack, state_direction, pack_direction, idea_full,
                 idea_input.get("note") or "", program_root, current_profile_fp,
-                papers_override)
+                papers_override, evidence_snapshots[professor])
             email_entries.append(entry)
             selected_ideas.append(idea_input)
         if not selected_ideas:
@@ -4222,7 +4849,444 @@ def subject_line(values: dict) -> str:
             f"{values['学位']}{values['入試批次']}入学に関するご相談")
 
 
-def verify_state(professor_dir: Path, sources: dict) -> dict:
+def compact_name(value: Any) -> str:
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or "")))
+
+
+def load_contact_evidence(program_root: Path) -> tuple[dict | None, str | None]:
+    """Read the upstream reconciled artifact; absence is absence of evidence.
+
+    The transitional reader accepts the legacy schema-1 layout alongside the
+    schema-2 fingerprint contract (review comment 5537970288); whether a
+    schema-2 artifact is *fresh* is decided by the upstream `--check`
+    interface, never by this reader.
+    """
+    path = program_root / "教授研究" / CONTACT_EVIDENCE_FILE
+    data, error = read_json_file(path)
+    if error == "not_found":
+        return None, None
+    if error:
+        return None, "unreadable"
+    if (not isinstance(data, dict) or
+            data.get("schema") not in CONTACT_EVIDENCE_SCHEMAS or
+            data.get("kind") != CONTACT_EVIDENCE_KIND or
+            not isinstance(data.get("professors"), list)):
+        return None, "invalid_artifact"
+    return data, None
+
+
+def upstream_check_script() -> Path | None:
+    """Locate professor-research's contact_evidence.py via the installed-skill
+    layout — never derived from program_root (user data directory).
+
+    Resolution order:
+    1. explicit runtime locator injection via UPSTREAM_SCRIPT_ENV (an
+       absolute path wins authoritatively; a missing file fails closed);
+    2. the shared skills root next to this runner's own skill installation
+       (checkout `.apm/skills/…` composition, or the installed OpenCode
+       skill directory) holding `professor-collector/scripts/…`;
+    3. a registered professor-research checkout that is a sibling of one of
+       this runner's own ancestors (skillrepo canonical layout: registered
+       repos sit side by side, including under a shared worktrees/ dir) —
+       probed with fixed-path existence checks only, no directory scans.
+    """
+    injected = os.environ.get(UPSTREAM_SCRIPT_ENV, "").strip()
+    if injected:
+        script = Path(injected)
+        return script if script.is_file() else None
+    here = Path(__file__).resolve()
+    parents = here.parents
+    if len(parents) > 1:                                        # …/professor-contact
+        candidate = (parents[1].parent / UPSTREAM_SKILL_ID /
+                     "scripts" / "contact_evidence.py")
+        if candidate.is_file():
+            return candidate
+    resource = UPSTREAM_REPO_ID / UPSTREAM_CHECK_RESOURCE
+    for ancestor in list(parents)[:8]:                          # …/<checkout>/… roots
+        candidate = ancestor.parent / resource
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def run_contact_evidence_check(program_root: Path) -> tuple[dict | None, str | None]:
+    """professor-research's stable local freshness interface:
+    `contact_evidence.py <program_root> --check` reports per-professor
+    fresh/stale/unavailable from the persisted artifact's source
+    fingerprints. Returns (report, None) on a valid report, or
+    (None, "script_missing" | "script_failed") when live source-state
+    freshness cannot be confirmed at all."""
+    script = upstream_check_script()
+    if script is None:
+        return None, "script_missing"
+    return run_upstream_check_argv([sys.executable, str(script), str(program_root), "--check"])
+
+
+def run_contact_evidence_rebuild(program_root: Path) -> bool:
+    """The same deterministic local rebuild the upstream contract documents
+    for stale artifacts: rewrite the derived artifact from local sources
+    (idempotent, local-only), then the caller re-checks."""
+    script = upstream_check_script()
+    if script is None:
+        return False
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), str(program_root)],
+            capture_output=True, text=True, timeout=UPSTREAM_CHECK_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0:
+        return False
+    try:
+        parsed = json.loads(proc.stdout)
+    except ValueError:
+        return False
+    return isinstance(parsed, dict) and parsed.get("result") == "ok"
+
+
+def run_upstream_check_argv(argv: list[str]) -> tuple[dict | None, str | None]:
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True,
+                              timeout=UPSTREAM_CHECK_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        return None, "script_failed"
+    if proc.returncode != 0:
+        return None, "script_failed"
+    try:
+        parsed = json.loads(proc.stdout)
+    except ValueError:
+        return None, "script_failed"
+    if (not isinstance(parsed, dict) or
+            parsed.get("result") not in ("fresh", "stale", "unavailable")):
+        return None, "script_failed"
+    return parsed, None
+
+
+def professor_source_state(report: dict | None, professor: str) -> dict | None:
+    """The target professor's own freshness entry from the --check report —
+    never the top-level aggregate. Absence means the report attributes no
+    per-professor state to them (structural artifact problem, or the
+    professor has no record upstream)."""
+    if not isinstance(report, dict):
+        return None
+    key = compact_name(professor)
+    for entry in report.get("professors") or []:
+        if (isinstance(entry, dict) and compact_name(entry.get("name")) == key
+                and entry.get("result") in ("fresh", "stale", "unavailable")):
+            return {"result": entry["result"],
+                    "reasons": [r for r in entry.get("reasons") or []
+                                if isinstance(r, str)]}
+    return None
+
+
+def source_state_needs_rebuild(state: dict | None) -> bool:
+    """Rebuild-first: a stale derived artifact — or a report that cannot
+    attribute any state to the professor (missing/legacy/invalid artifact) —
+    is resolved by the deterministic local rebuild whenever it can be
+    resolved there. An existing per-professor `unavailable` entry is a
+    universal source blocker (e.g. unreadable candidates/papers.json) that
+    only an upstream repair can fix, so rebuilding is pointless."""
+    if state is None:
+        return True
+    return state["result"] == "stale"
+
+
+def resolve_contact_evidence(program_root: Path, professors: list[str]) -> dict:
+    """Live artifact + per-professor source-state, with the rebuild-first
+    contract applied once per run: while any target professor's source-state
+    is not confirmably fresh and a local rebuild could resolve it, rebuild
+    and re-check before any decision is made. Never a web operation."""
+    artifact, artifact_error = load_contact_evidence(program_root)
+    report, checker_error = run_contact_evidence_check(program_root)
+    rebuild_ran = False
+    if checker_error is None and professors:
+        needs = any(source_state_needs_rebuild(professor_source_state(report, p))
+                    for p in professors)
+        if needs and run_contact_evidence_rebuild(program_root):
+            artifact, artifact_error = load_contact_evidence(program_root)
+            report, checker_error = run_contact_evidence_check(program_root)
+            rebuild_ran = True
+    return {"artifact": artifact, "artifact_error": artifact_error,
+            "report": report, "checker_error": checker_error,
+            "rebuild_ran": rebuild_ran}
+
+
+def contact_evidence_record(artifact: dict, professor: str) -> dict | None:
+    key = compact_name(professor)
+    if not key:
+        return None
+    for record in artifact.get("professors", []):
+        if not isinstance(record, dict):
+            continue
+        name = (record.get("professor") or {}).get("name")
+        if name and compact_name(name) == key:
+            return record
+    return None
+
+
+def contact_evidence_record_degraded(record: dict) -> bool:
+    """Issue-#14 family-scoped degradation: was THIS record's current-email
+    decision actually blocked upstream?
+
+    Upstream keeps a record usable when its current_email rests only on
+    evidence families that read successfully: an unreadable correspondence
+    cache leaves a single official address usable (paper confirmation flagged
+    unavailable), and an unreadable signature book only blocks promotion when
+    verified contacts remained unresolved by direct identity. Gating on any()
+    over the raw availability flags would re-globalize those family-scoped
+    failures, so escalate on a non-empty current_email_blocked_by — upstream
+    names exactly the families whose failure blocked the promotion decision.
+    Artifacts from before that contract carry no evidence_status and count as
+    clean here; that stays fail-closed because their producers already nulled
+    current_email for every record whenever anything failed, so no degraded
+    old record can pass the recipient checks in evaluate_contact_evidence.
+    """
+    status = record.get("evidence_status")
+    if not isinstance(status, dict):
+        return False
+    blocked = status.get("current_email_blocked_by")
+    return isinstance(blocked, list) and any(
+        isinstance(family, str) and family for family in blocked)
+
+
+def contact_evidence_snapshot(artifact: dict | None, artifact_error: str | None,
+                              professor: str) -> dict | None:
+    """Stage-4 copy of the professor's reconciled record into the email pack."""
+    if artifact_error or not isinstance(artifact, dict):
+        return None
+    record = contact_evidence_record(artifact, professor)
+    if record is None:
+        return None
+    # degraded is decision-scoped (Issue #14): the snapshot answers "was this
+    # professor's current-email decision blocked upstream", not "did anything
+    # anywhere fail" — family failures that left the decision intact (e.g. an
+    # unreadable correspondence cache next to a single official address) don't
+    # count. Packs built before the scoped contract still carry the
+    # artifact-level flag and stay maximally conservative in
+    # evaluate_contact_evidence.
+    status = record.get("evidence_status")
+    return {"generated_at": artifact.get("generated_at"),
+            "degraded": contact_evidence_record_degraded(record),
+            "evidence_status": status if isinstance(status, dict) else None,
+            "source_errors": artifact.get("source_errors") or [],
+            "recent_paper_years": artifact.get("recent_paper_years"),
+            "current_year": artifact.get("current_year"),
+            "record_fingerprint": sha256_obj(record),
+            "record": record}
+
+
+def evidence_provenance(record: dict, recipient: str) -> dict:
+    return {
+        "verdict": record.get("verdict"),
+        "current_email": record.get("current_email"),
+        "official_provenance": [row for row in record.get("official_emails", [])
+                                if isinstance(row, dict) and row.get("email") == recipient],
+        "paper_evidence": [row for row in record.get("paper_correspondence", [])
+                           if isinstance(row, dict) and row.get("email") == recipient],
+        "conflicting_paper_emails": record.get("conflicting_paper_emails") or [],
+    }
+
+
+def contact_evidence_freshness_reason(timestamp: Any) -> str | None:
+    """Issue-#10 freshness gate for contact-evidence timestamps.
+
+    Returns a stable escalate reason when the timestamp is absent, unparseable,
+    or older than the same VERIFY_TTL_DAYS window the pre-send verify cache
+    uses; None when the evidence is fresh enough to act on.
+    """
+    if not isinstance(timestamp, str) or not timestamp.strip():
+        return "contact_evidence_timestamp_invalid"
+    raw = timestamp.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        moment = datetime.fromisoformat(raw)
+    except ValueError:
+        return "contact_evidence_timestamp_invalid"
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) - moment > timedelta(days=VERIFY_TTL_DAYS):
+        return "contact_evidence_stale"
+    return None
+
+
+def evaluate_contact_evidence(professor: str, snapshot: Any,
+                              artifact: dict | None,
+                              artifact_error: str | None,
+                              state: dict | None = None,
+                              checker_error: str | None = None,
+                              rebuild_ran: bool = False) -> dict:
+    """Issue-#10 decision ladder under the schema-2 source-state contract
+    (final cross-repo acceptance criteria, PR #14 comment 5540723034), with
+    the frozen-pack fact-source boundary from the final review round.
+
+    邮件输入.json is Stage 5's single fact source: the recipient is read from
+    the Stage-4 snapshot frozen inside the email pack, and the live artifact
+    (plus any deterministic Stage-5 rebuild of it) only certifies freshness —
+    the live record fingerprint must stay byte-identical to the frozen one.
+
+    The primary gate is live source-state freshness from professor-research's
+    local `--check` interface, judged per target professor:
+
+    - `fresh`: the frozen snapshot is consumable when the live record still
+      matches its fingerprint and its own decision is unblocked
+      (current_email_blocked_by empty); artifact-level degraded/global_degraded
+      flags alone never force web. The verdict ladder
+      (confirmed_cross_source, single official_only) then applies unchanged.
+    - fingerprint mismatch (including after a rebuild changed the record):
+      status `needs_refresh` — a Stage-4 re-run must refreeze the pack; the
+      live record is never accepted directly.
+    - `stale`: never accepted on a fresh timestamp and never resolved from the
+      pack snapshot — the deterministic local rebuild ran and the re-check
+      still could not confirm fresh evidence (rebuild_failed).
+    - `unavailable`: a universal source blocker only an upstream repair can
+      fix; pack snapshots and previously seeded verify caches are not
+      substitutes for it.
+
+    The generated_at/VERIFY_TTL_DAYS window remains only as the send-time age
+    policy on top of source-state freshness. Without the upstream checker
+    installed, legacy schema-1 artifacts keep the transitional age-policy
+    gate; schema-2 artifacts fail closed because their freshness cannot be
+    confirmed live.
+    """
+    def escalate(reason_code: str) -> dict:
+        return {"status": "escalate", "reason_code": reason_code,
+                "recipient_email": None, "single_source": None,
+                "web_lookup_required": True, "source": None,
+                "snapshot_stale": None, "provenance": {}}
+
+    def needs_refresh(reason_code: str, stale: bool) -> dict:
+        # The pack is out of sync with upstream contact facts (or predates
+        # the frozen snapshot entirely). The fix is a Stage-4 refresh, not a
+        # web lookup — web verification cannot repair the pack, and Stage 5
+        # must never accept a live record its own pack cannot replay.
+        return {"status": "needs_refresh", "reason_code": reason_code,
+                "recipient_email": None, "single_source": None,
+                "web_lookup_required": False, "source": None,
+                "snapshot_stale": stale, "provenance": {}}
+
+    def accept(status: str, record: dict, recipient: str, source: str,
+               single_source: bool) -> dict:
+        return {"status": status, "reason_code": None,
+                "recipient_email": recipient, "single_source": single_source,
+                "web_lookup_required": False, "source": source,
+                "snapshot_stale": False,
+                "provenance": evidence_provenance(record, recipient)}
+
+    if checker_error == "script_failed":
+        # The checker exists but live source-state freshness is unconfirmable.
+        return escalate("contact_evidence_check_unavailable")
+    if checker_error == "script_missing":
+        # Transitional install without professor-research's checker: legacy
+        # schema-1 artifacts keep the age-policy gate; schema-2 artifacts
+        # fail closed because their freshness cannot be confirmed live.
+        if artifact_error:
+            return escalate("contact_evidence_artifact_unreadable")
+        if artifact is None:
+            return escalate("contact_evidence_missing")
+        if artifact.get("schema") == CONTACT_EVIDENCE_SCHEMA_LIVE:
+            return escalate("contact_evidence_check_unavailable")
+        return _evaluate_record_ladder(professor, snapshot, artifact,
+                                       escalate, accept, needs_refresh)
+    if state is None:
+        # The checker ran but attributes no state to this professor, so the
+        # rebuild-first pass already ran: either the rebuild itself failed, or
+        # it succeeded and the professor genuinely has no upstream record.
+        if not rebuild_ran:
+            return escalate("contact_evidence_rebuild_failed")
+        if artifact_error:
+            return escalate("contact_evidence_artifact_unreadable")
+        return escalate("contact_evidence_professor_not_found")
+    if state["result"] == "unavailable":
+        return escalate("contact_evidence_source_unavailable")
+    if state["result"] == "stale":
+        # Stale source-state after the rebuild-first pass: the local rebuild
+        # cannot resolve this, so it never becomes a timestamp/age question.
+        return escalate("contact_evidence_rebuild_failed")
+    if artifact_error:
+        return escalate("contact_evidence_artifact_unreadable")
+    return _evaluate_record_ladder(professor, snapshot, artifact,
+                                   escalate, accept, needs_refresh)
+
+
+def _evaluate_record_ladder(professor: str, snapshot: Any, artifact: dict,
+                            escalate, accept, needs_refresh) -> dict:
+    """Verdict ladder over the Stage-4 frozen pack snapshot, freshness-
+    certified live. The recipient fact comes from the snapshot embedded in
+    邮件输入.json; the live record must still match the frozen fingerprint
+    byte-for-byte or the decision demands a Stage-4 refresh — so a Stage-5
+    rebuild that changed upstream facts can never inject a recipient the
+    input pack cannot replay. The generated_at TTL gate here is the send-time
+    age policy only; source-state freshness is judged upstream (or,
+    transitionally for legacy artifacts, not at all)."""
+    stale_reason = contact_evidence_freshness_reason(artifact.get("generated_at"))
+    if stale_reason:
+        return escalate(stale_reason)
+    record = contact_evidence_record(artifact, professor)
+    if record is None:
+        return escalate("contact_evidence_professor_not_found")
+    if not isinstance(snapshot, dict) or \
+            not isinstance(snapshot.get("record_fingerprint"), str):
+        return needs_refresh("contact_evidence_snapshot_missing", False)
+    if snapshot["record_fingerprint"] != sha256_obj(record):
+        return needs_refresh("contact_evidence_snapshot_stale", True)
+    # Fingerprints match, so the frozen record is byte-identical to the live
+    # one; reading the facts from the pack keeps the contract explicit.
+    frozen = snapshot.get("record")
+    if isinstance(frozen, dict):
+        record = frozen
+    if contact_evidence_record_degraded(record):
+        # Scoped degradation (Issue #14): escalate only when this record's
+        # current-email decision was actually blocked upstream — raw
+        # family-unavailable flags are not enough, since upstream keeps a
+        # record usable when its decision rests only on readable families.
+        return escalate("contact_evidence_artifact_degraded")
+    if record.get("verdict") not in CONTACT_EVIDENCE_VERDICTS:
+        return escalate("contact_evidence_invalid_record")
+    verdict = record.get("verdict")
+    recipient = record.get("current_email")
+    if verdict == "confirmed_cross_source":
+        confirmed = record.get("confirmed_emails")
+        if recipient and isinstance(confirmed, list) and len(confirmed) == 1:
+            return accept("confirmed_cross_source", record, recipient,
+                          "pack_snapshot", False)
+        return escalate("contact_evidence_ambiguous")
+    if verdict == "official_only":
+        if recipient:
+            return accept("official_only", record, recipient,
+                          "pack_snapshot", True)
+        return escalate("contact_evidence_ambiguous")
+    if verdict == "conflict":
+        return escalate("contact_evidence_conflict")
+    if verdict == "paper_only":
+        # Paper correspondence is never a current outreach address on its own.
+        return escalate("contact_evidence_paper_only")
+    return escalate("contact_evidence_insufficient")
+
+
+def contact_evidence_decisions(emails: list[dict], resolved: dict) -> dict:
+    decisions = {}
+    for email in emails:
+        professor = email.get("professor")
+        if professor in decisions:
+            continue
+        decisions[professor] = evaluate_contact_evidence(
+            professor, email.get("contact_evidence"), resolved["artifact"],
+            resolved["artifact_error"],
+            professor_source_state(resolved["report"], professor),
+            resolved["checker_error"], resolved["rebuild_ran"])
+    return decisions
+
+
+def email_item_is_evidence_seeded(items: dict) -> bool:
+    """True when the cached recipient email was seeded from the artifact."""
+    sources = (items.get("email") or {}).get("sources") or []
+    return bool(sources) and all(
+        isinstance(source, dict) and source.get("level") == "contact_evidence"
+        for source in sources)
+
+
+def verify_state(professor_dir: Path, sources: dict, decision: dict | None = None) -> dict:
     path = professor_dir / VERIFY_FILE
     data, error = read_json_file(path)
     if error:
@@ -4240,6 +5304,29 @@ def verify_state(professor_dir: Path, sources: dict) -> dict:
             return {"ok": False, "reason": "invalid_cache", "path": str(path), "data": data}
         if not isinstance(item.get("sources", []), list):
             return {"ok": False, "reason": "invalid_cache", "path": str(path), "data": data}
+    # Issue-#10 linkage: an escalation voids exactly the trust chain that
+    # broke, so a recipient email seeded from the contact-evidence artifact
+    # can never outlive the decision that produced it. A needs_refresh
+    # decision (frozen snapshot out of sync with upstream) breaks the same
+    # chain. Ladder/user-verified entries keep their own 30-day TTL.
+    if decision is not None and decision.get("status") in ("escalate", "needs_refresh") and \
+            email_item_is_evidence_seeded(items):
+        return {"ok": False, "reason": "contact_evidence_escalated",
+                "path": str(path), "data": data}
+    # Issue-#10 conflict gate: the upstream artifact scopes itself as
+    # workflow evidence, NOT the send-time authority — the verify cache is.
+    # While an accepted decision stands, a still-usable cache entry holding
+    # a DIFFERENT address is a real evidence conflict regardless of
+    # provenance: it must be resolved explicitly before generation instead
+    # of being silently reseeded (or discovered only at finalize's mismatch
+    # guard). Same address in any provenance reuses the cache freely.
+    if decision is not None and decision.get("status") not in ("escalate", "needs_refresh") and \
+            decision.get("recipient_email"):
+        cache_value = str(items["email"].get("value") or "").strip()
+        recipient = str(decision["recipient_email"]).strip()
+        if cache_value and cache_value.casefold() != recipient.casefold():
+            return {"ok": False, "reason": "contact_evidence_verify_conflict",
+                    "path": str(path), "data": data}
     warnings = items.get("warnings")
     if not isinstance(warnings, list):
         return {"ok": False, "reason": "invalid_cache", "path": str(path), "data": data}
@@ -4308,12 +5395,28 @@ def cmd_stage5_plan(args) -> None:
         if not emails:
             fail("invalid_params", f"email_id not found: {args.email_id}")
     sources = load_header_sources(program_root)
+    resolved_evidence = resolve_contact_evidence(
+        program_root, list(dict.fromkeys(
+            e.get("professor") for e in emails if e.get("professor"))))
+    decisions = contact_evidence_decisions(emails, resolved_evidence)
     verify_checks = {}
     for email in emails:
         professor_dir = Path(email.get("professor_dir") or program_root)
         key = email.get("professor")
-        if key not in verify_checks:
-            verify_checks[key] = verify_state(professor_dir, sources)
+        if key in verify_checks:
+            continue
+        check = verify_state(professor_dir, sources, decisions.get(key))
+        decision = decisions.get(key)
+        if check["ok"] and decision is not None and \
+                decision.get("status") == "needs_refresh":
+            # A frozen-snapshot mismatch makes this professor's pack entry
+            # stale for the whole run regardless of cache usability: plan
+            # must demand the Stage-4 refresh deterministically, never leave
+            # it to the agent reading the decision object alone.
+            check = {"ok": False,
+                     "reason": decision.get("reason_code") or "contact_evidence_snapshot_stale",
+                     "path": None, "data": None}
+        verify_checks[key] = check
     needs_recheck = [p for p, v in verify_checks.items() if not v["ok"]]
     template_path = None
     profile_path = args.profile
@@ -4368,6 +5471,7 @@ def cmd_stage5_plan(args) -> None:
             "verify": {p: ("ok" if v["ok"] else f"needs_recheck:{v['reason']}")
                        for p, v in verify_checks.items()},
             "needs_recheck_professors": needs_recheck,
+            "contact_evidence": decisions,
             "template": template_path or "embedded",
             "output_mode": mode,
             "followup_template": (find_followup_template_path(
@@ -4774,6 +5878,10 @@ def cmd_stage5_finalize(args) -> None:
         if not emails:
             fail("invalid_params", f"email_id not found: {args.email_id}")
     sources = load_header_sources(program_root)
+    resolved_evidence = resolve_contact_evidence(
+        program_root, list(dict.fromkeys(
+            e.get("professor") for e in emails if e.get("professor"))))
+    decisions = contact_evidence_decisions(emails, resolved_evidence)
     result_path = Path(args.result)
     raw_by_id = load_id_map(result_path, {e.get("email_id") for e in emails}, "email result",
                             exact=not bool(args.email_id))
@@ -4823,13 +5931,34 @@ def cmd_stage5_finalize(args) -> None:
         if mode in ("both", "followup"):
             require_followup_choices(email_id, choices)
         professor_dir = Path(email.get("professor_dir") or program_root)
-        verify_check = verify_state(professor_dir, sources)
+        verify_check = verify_state(professor_dir, sources,
+                                    decisions.get(email.get("professor")))
         if not verify_check["ok"]:
             soft_exit("needs_refresh", f"verify_{verify_check['reason']}",
                       professor=email.get("professor"),
                       message=f"送信前核验缓存不可用（{verify_check['reason']}）：先完成 Step 2.5 核验。未写盘。")
         verify = verify_check["data"]
         warnings = (verify.get("items") or {}).get("warnings") or []
+        decision = decisions.get(email.get("professor"))
+        if decision and decision.get("status") == "needs_refresh":
+            # Frozen-pack contract: 邮件输入.json is out of sync with the
+            # live contact facts (or predates the snapshot). Nothing may be
+            # generated from a pack Stage 5 cannot replay — the deterministic
+            # fix is a Stage-4 refresh, not a web lookup.
+            soft_exit("needs_refresh", decision.get("reason_code") or
+                      "contact_evidence_snapshot_stale",
+                      professor=email.get("professor"),
+                      message="联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 "
+                              "邮件输入.json，再重跑阶段 5。未写盘。")
+        cache_email_value = str(((verify.get("items") or {}).get("email") or {})
+                                .get("value") or "").strip()
+        if decision and decision["status"] not in ("escalate", "needs_refresh"):
+            recipient = str(decision["recipient_email"] or "").strip()
+            if not cache_email_value or cache_email_value.casefold() != recipient.casefold():
+                fail("contact_evidence_mismatch",
+                     f"{email_id}: 本地联系方式证据判定 {decision['status']}，收件邮箱应为 "
+                     f"{recipient}；核对表邮箱为「{cache_email_value or '空'}」。"
+                     "请按证据填写 _contact_verify.json，或重建 _联系方式证据.json 后重跑阶段 4。")
         roster_verdict = ((verify.get("items") or {}).get("roster") or {}).get("verdict")
         email_verdict = ((verify.get("items") or {}).get("email") or {}).get("verdict")
         banner_needed = bool(warnings) or roster_verdict == "not_found" or email_verdict == "unverified"
@@ -4858,6 +5987,14 @@ def cmd_stage5_finalize(args) -> None:
                 else {"schema": SCHEMA, "managed_by": MANAGED_BY, "emails": {}})
         email_state = state_updates[str(professor_dir)]
         root_entry = email_state.setdefault("emails", {}).setdefault(email_id, {})
+        if decision:
+            root_entry["contact_evidence"] = {
+                "status": decision["status"], "reason_code": decision["reason_code"],
+                "chosen_email": cache_email_value or None,
+                "evidence_email": decision["recipient_email"],
+                "web_lookup_required": decision["web_lookup_required"],
+                "source": decision["source"], "snapshot_stale": decision["snapshot_stale"],
+                "provenance": decision["provenance"], "recorded_at": now_utc()}
         for kind, draft, protected, banned, heading, template_name, source_rows in variants:
             output_id = stage5_output_id(email_id, kind)
             humanized = humanized_by_id[output_id].read_text(encoding="utf-8")
@@ -5717,11 +6854,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--facts", required=True)
     p.set_defaults(func=lambda a: cmd_stage2_plan(a))
 
+    p = sub.add_parser("stage2-preflight")
+    p.add_argument("--program-root", required=True)
+    p.add_argument("--professor", required=True)
+    p.add_argument("--paper-analysis", default="relevant")
+    p.add_argument("--gap-scope", default="selected_direction")
+    p.add_argument("--freshness-scope", default="shortlist")
+    p.add_argument("--max-relevant-papers", type=int, default=None)
+    p.set_defaults(func=cmd_stage2_preflight)
+
     p = sub.add_parser("stage2-finalize")
     p.add_argument("--facts", required=True)
     p.add_argument("--results", required=True)
     p.add_argument("--decision-file")
     p.add_argument("--resolved-directions")
+    p.add_argument("--preflight-file",
+                   help="saved stage2-preflight stdout; re-verifies cheap inputs "
+                        "before any write and seeds cache.preflight")
     p.set_defaults(func=cmd_stage2_finalize)
 
     p = sub.add_parser("stage2-refine-plan")
