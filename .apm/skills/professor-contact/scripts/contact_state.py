@@ -1126,19 +1126,90 @@ def stage2_candidate_fingerprint(snapshot_direction: dict | None) -> str | None:
     })
 
 
-def sha256_file_or_missing(path: Path) -> str:
+def stage2_candidate_universe(target: dict | None, snapshot_entry: dict | None) -> set:
+    """Union of Stage 1 candidate_keys over the professor's selected directions.
+
+    This is the only catalog slice whose changes can invalidate accepted
+    Stage 2 state; catalog/ledger churn outside it must never force the slow
+    path.
+    """
+    snapshot_directions = {entry.get("direction_id"): entry
+                           for entry in (snapshot_entry or {}).get("directions") or []
+                           if isinstance(entry, dict)}
+    keys: set = set()
+    for direction_id in (target or {}).get("selected_direction_ids") or []:
+        entry = snapshot_directions.get(direction_id)
+        if not isinstance(entry, dict):
+            continue
+        candidate_keys = entry.get("candidate_keys")
+        if isinstance(candidate_keys, list):
+            keys.update(key for key in candidate_keys if isinstance(key, str))
+    return keys
+
+
+def stage2_papers_catalog_view_fingerprint(professor_dir: Path,
+                                           candidate_keys: set) -> str:
+    """Hash only the candidate papers' catalog records, not the whole file.
+
+    A sentinel (never a hex digest) means the catalog cannot prove the
+    candidate view; recorded fingerprints can never match a sentinel, so any
+    such state fails closed to the slow path.
+    """
+    path = professor_dir / "papers.json"
     if not path.is_file():
         return "missing"
-    return sha256_bytes(path.read_bytes())
+    data, error = read_json_file(path)
+    if error or not isinstance(data, dict) or not isinstance(data.get("papers"), list):
+        return "malformed"
+    records = {}
+    absent = []
+    for key in sorted(candidate_keys):
+        record = next((paper for paper in data["papers"]
+                       if isinstance(paper, dict) and paper.get("item_key") == key), None)
+        if record is None:
+            absent.append(key)
+        else:
+            records[key] = record
+    return sha256_obj({"records": records, "absent": absent})
 
 
-def stage2_program_inputs(program_root: Path, professor_dir: Path,
-                          snapshot_entry: dict | None) -> dict:
-    """Professor-wide cheap inputs: Stage 1 epoch + local catalog/ledger hashes."""
+def stage2_authorship_ledger_view_fingerprint(program_root: Path, professor: str) -> str:
+    """Hash only this professor's slice of the shared authorship ledger.
+
+    The tagger ledger is a per-professor name-variant book plus per-professor
+    human overrides; other professors' entries and the file-level rebuild
+    timestamp never feed this professor's Stage 2 authorship work, so they
+    stay out of the cache key. Malformed containers fail closed via the same
+    sentinel convention as the catalog view.
+    """
+    path = program_root / AUTHORSHIP_LEDGER_FILE
+    if not path.is_file():
+        return "missing"
+    data, error = read_json_file(path)
+    if error or not isinstance(data, dict):
+        return "malformed"
+    professors = data.get("professors")
+    overrides = data.get("overrides")
+    if professors is not None and not isinstance(professors, dict):
+        return "malformed"
+    if overrides is not None and not isinstance(overrides, dict):
+        return "malformed"
+    return sha256_obj({
+        "sigbook": professors.get(professor) if isinstance(professors, dict) else None,
+        "overrides": overrides.get(professor) if isinstance(overrides, dict) else None,
+    })
+
+
+def stage2_program_inputs(program_root: Path, professor_dir: Path, professor: str,
+                          target: dict | None, snapshot_entry: dict | None) -> dict:
+    """Professor-wide cheap inputs: Stage 1 epoch + candidate-view fingerprints."""
+    candidate_keys = stage2_candidate_universe(target, snapshot_entry)
     return {
         "stage1_professor_input_fingerprint": (snapshot_entry or {}).get("input_fingerprint"),
-        "papers_json_sha256": sha256_file_or_missing(professor_dir / "papers.json"),
-        "authorship_ledger_sha256": sha256_file_or_missing(program_root / AUTHORSHIP_LEDGER_FILE),
+        "papers_catalog_view_sha256":
+            stage2_papers_catalog_view_fingerprint(professor_dir, candidate_keys),
+        "authorship_ledger_view_sha256":
+            stage2_authorship_ledger_view_fingerprint(program_root, professor),
     }
 
 
@@ -1162,7 +1233,7 @@ def read_stage1_professor_entry(program_root: Path, professor: str) -> dict | No
     return None
 
 
-def stage2_preflight_cheap_inputs(program_root: Path, professor_dir: Path,
+def stage2_preflight_cheap_inputs(program_root: Path, professor_dir: Path, professor: str,
                                   target: dict | None, snapshot_entry: dict | None,
                                   params: dict, current_year: int) -> dict:
     """The structural inputs both preflight and finalize can recompute cheaply.
@@ -1185,7 +1256,8 @@ def stage2_preflight_cheap_inputs(program_root: Path, professor_dir: Path,
         "versions": stage2_preflight_versions(),
         "params": params,
         "current_year": current_year,
-        "program_inputs": stage2_program_inputs(program_root, professor_dir, snapshot_entry),
+        "program_inputs": stage2_program_inputs(program_root, professor_dir, professor,
+                                                target, snapshot_entry),
         "selected_direction_ids": sorted((target or {}).get("selected_direction_ids") or []),
         "directions": directions,
     }
@@ -1314,7 +1386,8 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
         "accepted_directions_sha256": sha256_obj(pack_directions),
         "current_year": current_year,
         "params": params,
-        "program_inputs": stage2_program_inputs(program_root, professor_dir, snapshot_entry),
+        "program_inputs": stage2_program_inputs(program_root, professor_dir, ctx.professor,
+                                                target, snapshot_entry),
         "directions": directions,
     }
 
@@ -1387,7 +1460,8 @@ def cmd_stage2_preflight(args) -> None:
             professor_reasons.append("pack_integrity_mismatch")
         if meta.get("params") != params or meta.get("current_year") != current_year:
             professor_reasons.append("params_changed")
-        current_program_inputs = stage2_program_inputs(program_root, professor_dir, snapshot_entry)
+        current_program_inputs = stage2_program_inputs(program_root, professor_dir,
+                                                       professor, target, snapshot_entry)
         recorded_program_inputs = meta.get("program_inputs")
         if not isinstance(recorded_program_inputs, dict):
             professor_reasons.append("preflight_cache_malformed")
@@ -1395,11 +1469,11 @@ def cmd_stage2_preflight(args) -> None:
         if recorded_program_inputs.get("stage1_professor_input_fingerprint") != \
                 current_program_inputs["stage1_professor_input_fingerprint"]:
             professor_reasons.append("stage1_professor_changed")
-        if recorded_program_inputs.get("papers_json_sha256") != \
-                current_program_inputs["papers_json_sha256"]:
+        if recorded_program_inputs.get("papers_catalog_view_sha256") != \
+                current_program_inputs["papers_catalog_view_sha256"]:
             professor_reasons.append("papers_catalog_changed")
-        if recorded_program_inputs.get("authorship_ledger_sha256") != \
-                current_program_inputs["authorship_ledger_sha256"]:
+        if recorded_program_inputs.get("authorship_ledger_view_sha256") != \
+                current_program_inputs["authorship_ledger_view_sha256"]:
             professor_reasons.append("authorship_ledger_changed")
 
     cache_entries = load_freshness_cache(professor_dir) if pack else {}
@@ -1463,7 +1537,7 @@ def cmd_stage2_preflight(args) -> None:
         if reasons:
             all_reuse = False
     preflight_inputs = stage2_preflight_cheap_inputs(
-        program_root, professor_dir, target, snapshot_entry, params, current_year)
+        program_root, professor_dir, professor, target, snapshot_entry, params, current_year)
     emit({
         "status": "ok",
         "professor": professor,
@@ -2088,7 +2162,7 @@ def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
         soft_exit("needs_refresh", "preflight_inputs_changed",
                   drift=["target_or_snapshot_missing"])
     current = stage2_preflight_cheap_inputs(
-        ctx.program_root, ctx.professor_dir, target, snapshot_entry, params,
+        ctx.program_root, ctx.professor_dir, ctx.professor, target, snapshot_entry, params,
         ctx.current_year)
     drift = stage2_preflight_plan_drift(plan_inputs, current)
     if drift:

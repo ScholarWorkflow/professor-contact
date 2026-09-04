@@ -125,7 +125,7 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
 
 ### Step 2.6 — Stage 2 early preflight gate（reuse_all fast path）
 
-Stage 1 verify 通过后、任何昂贵 Stage 2 evidence 准备之前，对每个被选教授运行只读 preflight。它是本地确定性命令：只消费 persisted state/fingerprints（`套磁目标.json`、`套磁阶段1候选.json`、`套磁候选输入.json` 的 `cache.preflight`、`papers.json` sha、`_署名对照.json` sha、`_freshness_cache.json` 视图、已接受 artifact 的 stat guards）；不碰 Zotero、不联网、不跑模型、不读 PDF 内容、不构造 `Stage2Context`、不写任何 workflow state。
+Stage 1 verify 通过后、任何昂贵 Stage 2 evidence 准备之前，对每个被选教授运行只读 preflight。它是本地确定性命令：只消费 persisted state/fingerprints（`套磁目标.json`、`套磁阶段1候选.json`、`套磁候选输入.json` 的 `cache.preflight`、candidate 视图指纹——`papers.json` 只投影该教授 candidate_keys 并集的记录、`_署名对照.json` 只取该教授切片、`_freshness_cache.json` 视图、已接受 artifact 的 stat guards）；不碰 Zotero、不联网、不跑模型、不读 PDF 内容、不构造 `Stage2Context`、不写任何 workflow state。
 
 ```bash
 skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py \

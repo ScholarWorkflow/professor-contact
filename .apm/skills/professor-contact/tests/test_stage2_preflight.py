@@ -171,8 +171,22 @@ class PreflightBase(unittest.TestCase):
                                    "status_counts": {"downloaded": 1}}},
             ]}
         self._write_snapshot()
+        # Real zotero-paper-tagger ledger shape: per-professor name-variant
+        # books plus per-professor human overrides under a shared file.
+        self.ledger = {
+            "updated_at": "2026-01-01T00:00:00Z", "overrides": {},
+            "professors": {
+                PROFESSOR: {"books": [{"prof_name_tokens": ["試験", "教授"],
+                                       "seed_count": 3, "auto": [], "conflicted": [],
+                                       "offenders": [], "typos": [], "mashes": []}],
+                            "seed_count": 3},
+                "別の教授": {"books": [{"prof_name_tokens": ["別", "教授"],
+                                        "seed_count": 2, "auto": [], "conflicted": [],
+                                        "offenders": [], "typos": [], "mashes": []}],
+                             "seed_count": 2},
+            }}
         ledger = self.root / "教授研究" / "_署名对照.json"
-        ledger.write_text(json.dumps({"entries": {}}, ensure_ascii=False), encoding="utf-8")
+        ledger.write_text(json.dumps(self.ledger, ensure_ascii=False), encoding="utf-8")
 
     def tearDown(self):
         self.temp.cleanup()
@@ -428,6 +442,86 @@ class TestPreflightDecision(PreflightBase):
         ledger.unlink()
         payload = self.preflight()
         self.assertIn("authorship_ledger_changed", payload["reason_codes"])
+
+    def _write_catalog(self):
+        (self.prof_dir / "papers.json").write_text(
+            json.dumps({"papers": self.catalog_papers}, ensure_ascii=False), encoding="utf-8")
+
+    def _write_ledger(self):
+        (self.root / "教授研究" / "_署名对照.json").write_text(
+            json.dumps(self.ledger, ensure_ascii=False), encoding="utf-8")
+
+    def test_i2_noncandidate_catalog_addition_keeps_reuse_all(self):
+        self.build_accepted_state()
+        catalog = json.loads((self.prof_dir / "papers.json").read_text(encoding="utf-8"))
+        catalog["papers"].append({"item_key": "DDDD4444", "title": "unrelated paper",
+                                  "year": 2026, "pdf_status": "downloaded"})
+        (self.prof_dir / "papers.json").write_text(
+            json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
+        payload = self.preflight()
+        self.assertEqual(payload["action"], "reuse_all", payload)
+        self.assertNotIn("papers_catalog_changed", payload["reason_codes"])
+
+    def test_i3_other_professors_ledger_and_rebuild_timestamp_keep_reuse_all(self):
+        self.build_accepted_state()
+        self.ledger["professors"]["別の教授"]["seed_count"] = 99
+        self.ledger["updated_at"] = "2026-08-01T00:00:00Z"
+        self._write_ledger()
+        payload = self.preflight()
+        self.assertEqual(payload["action"], "reuse_all", payload)
+        self.assertNotIn("authorship_ledger_changed", payload["reason_codes"])
+
+    def test_i4_current_professor_ledger_change_blocks_reuse_all(self):
+        self.build_accepted_state()
+        self.ledger["professors"][PROFESSOR]["conflicted"] = [
+            {"kind": "abbr", "example": "S. A.", "count": 1, "reason": "ambiguous"}]
+        self._write_ledger()
+        payload = self.preflight()
+        self.assertEqual(payload["action"], "process")
+        self.assertIn("authorship_ledger_changed", payload["reason_codes"])
+
+    def test_i5_malformed_catalog_or_ledger_fails_closed(self):
+        self.build_accepted_state()
+        catalog_path = self.prof_dir / "papers.json"
+        for broken in ('{"papers": "garbage"}', "{not json at all"):
+            catalog_path.write_text(broken, encoding="utf-8")
+            payload = self.preflight()
+            self.assertEqual(payload["action"], "process", broken)
+            self.assertIn("papers_catalog_changed", payload["reason_codes"])
+        catalog_path.unlink()
+        payload = self.preflight()
+        self.assertIn("papers_catalog_changed", payload["reason_codes"])
+        self._write_catalog()
+        ledger_path = self.root / "教授研究" / "_署名对照.json"
+        for broken in ('{"professors": ["not", "a", "dict"]}',
+                       '{"overrides": "garbage", "professors": {}}', "{broken"):
+            ledger_path.write_text(broken, encoding="utf-8")
+            payload = self.preflight()
+            self.assertEqual(payload["action"], "process", broken)
+            self.assertIn("authorship_ledger_changed", payload["reason_codes"])
+        ledger_path.unlink()
+        payload = self.preflight()
+        self.assertIn("authorship_ledger_changed", payload["reason_codes"])
+
+    def test_i6_noncandidate_catalog_change_does_not_break_finalize_seeding(self):
+        self.build_accepted_state()
+        catalog = json.loads((self.prof_dir / "papers.json").read_text(encoding="utf-8"))
+        catalog["papers"].append({"item_key": "EEEE5555", "title": "later unrelated paper",
+                                  "year": 2026, "pdf_status": "unknown"})
+        (self.prof_dir / "papers.json").write_text(
+            json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
+        plan_payload = self.preflight()
+        self.assertEqual(plan_payload["action"], "reuse_all")
+        plan = self.root / "preflight.json"
+        plan.write_text(json.dumps(plan_payload, ensure_ascii=False), encoding="utf-8")
+        self.bind_facts_to_plan(plan)
+        out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
+                            "--results", self.write_stage2_results(),
+                            "--preflight-file", plan))
+        self.assertEqual(out["status"], "ok", out)
+        # finalize seeds the same candidate-view fingerprint preflight computed
+        self.assertEqual(self._read_meta()["program_inputs"],
+                         plan_payload["preflight_inputs"]["program_inputs"])
 
     def test_j_deleted_artifact_prevents_reuse(self):
         self.build_accepted_state()
