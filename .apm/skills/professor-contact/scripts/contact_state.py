@@ -1480,9 +1480,11 @@ def cmd_stage2_resolve_plan(args) -> None:
 
     Reuse: an existing `_resolved_directions.json` entry whose per-direction
     `input_fingerprint` still matches the current facts is reused as-is and
-    gets NO new resolve job — only directions whose relevant paper metadata,
-    sidecars, facts files, or profile inputs changed (or that were never
-    resolved) are re-resolved.
+    gets NO new resolve job — only directions whose union-wide paper metadata,
+    facts files, this direction's gap-evidence sidecars, or profile inputs
+    changed (or that were never resolved) are re-resolved. Editorial-only
+    analysis Markdown edits do not affect the resolve model_input and keep
+    accepted state reusable.
     """
     ctx = Stage2Context(Path(args.facts))
     # The resolution evidence universe is the professor-level candidate union:
@@ -1511,7 +1513,8 @@ def cmd_stage2_resolve_plan(args) -> None:
         ckey = plan["ckey"]
         prior = existing_by_ckey.get(ckey)
         current_fingerprint = _per_direction_fingerprint(
-            plan["direction"], ctx.papers, resolve_evidence_keys)
+            plan["direction"], ctx.papers, resolve_evidence_keys,
+                gap_item_keys={g["item_key"] for g in plan.get("pool") or ()})
         # Only ACCEPTED resolved state is reusable. A material change is written
         # as "proposed" before the user picks (adopt / provisional / re-select);
         # re-resolving it until the choice is made keeps the promised re-prompt
@@ -1634,7 +1637,8 @@ def cmd_stage2_resolve_plan(args) -> None:
             "collection_key": plan["ckey"],
             "action": "reuse" if plan["ckey"] in reuse_list else "process",
             "input_fingerprint": _per_direction_fingerprint(
-                plan["direction"], ctx.papers, resolve_evidence_keys),
+                plan["direction"], ctx.papers, resolve_evidence_keys,
+                gap_item_keys={g["item_key"] for g in plan.get("pool") or ()}),
         } for plan in ctx.direction_plans],
         "candidates": {
             "additions": additions,
@@ -1647,46 +1651,57 @@ def cmd_stage2_resolve_plan(args) -> None:
     })
 
 
-def _per_direction_fingerprint(direction: dict, papers: dict, evidence_keys: list) -> str:
+def _per_direction_fingerprint(direction: dict, papers: dict, evidence_keys: list,
+                               gap_item_keys=()) -> str:
     """Per-direction fingerprint of the inputs that affect resolved_direction.
 
     `evidence_keys` must be the professor-level selected candidate union (the
     same universe the resolve job scores), not the direction's own candidate
     set: full-text evidence about ANY unique candidate can flip this
     direction's membership even when the paper entered the union through
-    another provisional direction. Version 2 hashes union-wide paper metadata
-    (item_key + title + year + abstract_sha) + analysis/sidecar/facts SHAs +
-    per-direction profile fields. The fingerprint stays narrow so that
-    display-only changes (e.g. preview_coverage_share) do NOT bust the
-    resolved state.
+    another provisional direction.
+
+    Version 3 hashes exactly what the resolve model_input consumes:
+    - union-wide paper metadata (item_key/title/year/authorship) + facts SHA
+      (topic_terms / facts_state evidence);
+    - this direction's gap evidence: sidecar SHAs of the papers whose
+      future-work items feed `gap_evidence` and the affinity gap contribution
+      (`gap_item_keys` = the direction's plan pool). A future-work sidecar
+      edit in ANOTHER direction's pool does not change this direction's
+      resolve input and must not invalidate it;
+    - per-direction profile fields (including credibility, which is passed to
+      the model). Deliberately NOT hashed: analysis Markdown bodies (never
+      part of the resolve model_input), abstract/month/has_pdf (abstract
+      preview data that full-text resolution exists to correct), and other
+      directions' sidecars. Editorial-only edits therefore keep accepted
+      state reusable instead of burning a resolve job.
     """
-    candidate_keys = sorted(set(evidence_keys))
+    gap_keys = set(gap_item_keys or ())
     paper_rows = []
-    for key in candidate_keys:
+    for key in sorted(set(evidence_keys)):
         paper = papers.get(key, {})
-        paper_rows.append({
+        row = {
             "item_key": key,
             "title": paper.get("title"),
             "year": paper.get("year"),
-            "month": paper.get("month"),
             "authorship": paper.get("authorship"),
-            "abstract_sha": sha256_text(paper.get("abstract") or "") if paper.get("abstract") else None,
-            "has_pdf": bool(paper.get("has_pdf")),
-            "analysis_sha": sha256_bytes(Path(paper.get("analysis_file")).read_bytes())
-                if paper.get("analysis_file") and Path(paper.get("analysis_file")).is_file() else None,
-            "sidecar_sha": sha256_bytes(Path(paper.get("sidecar_file")).read_bytes())
-                if paper.get("sidecar_file") and Path(paper.get("sidecar_file")).is_file() else None,
             "facts_sha": sha256_bytes(Path(paper.get("facts_file")).read_bytes())
                 if paper.get("facts_file") and Path(paper.get("facts_file")).is_file() else None,
-        })
+        }
+        if key in gap_keys:
+            row["gap_sidecar_sha"] = (
+                sha256_bytes(Path(paper.get("sidecar_file")).read_bytes())
+                if paper.get("sidecar_file") and Path(paper.get("sidecar_file")).is_file() else None)
+        paper_rows.append(row)
     return sha256_obj({
-        "version": 2,
+        "version": 3,
         "provisional_direction_id": direction.get("collection_key"),
         "name_ja": direction.get("name_ja"),
         "name_zh": direction.get("name_zh"),
         "summary_zh": direction.get("summary_zh"),
         "status": direction.get("status"),
         "user_note_sha": sha256_text(direction.get("user_note") or ""),
+        "credibility": direction.get("credibility"),
         "provisional_member_keys": sorted(direction.get("provisional_member_keys") or []),
         "named_keys": sorted(direction.get("named_keys") or []),
         "paper_rows": paper_rows,
@@ -1732,7 +1747,8 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
     for plan in ctx.direction_plans:
         ckey = plan["ckey"]
         current_fingerprint = _per_direction_fingerprint(
-            plan["direction"], ctx.papers, resolve_evidence_keys)
+            plan["direction"], ctx.papers, resolve_evidence_keys,
+                gap_item_keys={g["item_key"] for g in plan.get("pool") or ()})
 
         def _unchanged_default() -> dict:
             direction = plan["direction"]
@@ -1969,7 +1985,8 @@ def cmd_stage2_resolve_finalize(args) -> None:
     existing = _load_existing_resolved(ctx.professor_dir, ctx.professor, None)
     resolve_evidence_keys = selected_candidate_union(ctx)
     plan_fingerprints = {plan["ckey"]: _per_direction_fingerprint(
-        plan["direction"], ctx.papers, resolve_evidence_keys)
+        plan["direction"], ctx.papers, resolve_evidence_keys,
+                gap_item_keys={g["item_key"] for g in plan.get("pool") or ()})
         for plan in ctx.direction_plans}
     existing_by_ckey: dict[str, dict] = {}
     if existing:
@@ -2012,7 +2029,8 @@ def cmd_stage2_resolve_finalize(args) -> None:
         "directions": [
             {"collection_key": plan["ckey"],
              "fingerprint": _per_direction_fingerprint(
-                 plan["direction"], ctx.papers, resolve_evidence_keys)}
+                 plan["direction"], ctx.papers, resolve_evidence_keys,
+                gap_item_keys={g["item_key"] for g in plan.get("pool") or ()})}
             for plan in ctx.direction_plans
         ],
     }
@@ -2694,7 +2712,8 @@ def cmd_stage2_finalize(args) -> None:
             if entry is None:
                 stale.append({"direction": plan["ckey"], "problem": "missing_from_resolved_file"})
             elif entry.get("input_fingerprint") != _per_direction_fingerprint(
-                    plan["direction"], ctx.papers, resolve_evidence_keys):
+                    plan["direction"], ctx.papers, resolve_evidence_keys,
+                gap_item_keys={g["item_key"] for g in plan.get("pool") or ()}):
                 stale.append({"direction": plan["ckey"], "problem": "input_fingerprint_mismatch"})
         if stale:
             fail("resolved_directions_stale",
