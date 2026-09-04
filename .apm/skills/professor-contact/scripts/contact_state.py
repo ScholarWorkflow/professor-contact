@@ -2771,10 +2771,15 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
     for direction in target.get("directions") or []:
         direction_id = str(direction.get("direction_id"))
         accepted = accepted_by_key.get(direction_id)
-        if not accepted:
+        slot = grouping.get(direction_id) or {"resolved": [], "merged_into": None}
+        if not accepted and not slot["merged_into"]:
+            # No accepted output at all: the direction was never finalized
+            # into this pack (a freshly selected direction). Everything else
+            # — including a merged-away source, which owns no entry but keeps
+            # its provenance mapping — must still be recorded so the early
+            # gate can prove the full resolved set.
             continue
         facts_direction = facts_directions.get(direction_id) or {}
-        slot = grouping.get(direction_id) or {"resolved": [], "merged_into": None}
         resolved_entries = {}
         for resolved_id in sorted(slot["resolved"]):
             entry = accepted_by_key.get(resolved_id)
@@ -2789,9 +2794,9 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
             "target_fingerprint": stage2_target_fingerprint(direction),
             "candidate_fingerprint": stage2_candidate_fingerprint(
                 snapshot_directions.get(direction.get("direction_id"))),
-            "accepted_input_fingerprint": accepted.get("input_fingerprint"),
+            "accepted_input_fingerprint": accepted.get("input_fingerprint") if accepted else None,
             "freshness_view_fingerprint": stage2_freshness_view_fingerprint(
-                accepted, cache_entries),
+                accepted, cache_entries) if accepted else None,
             "artifact_guards": stage2_direction_artifact_guards(ctx, facts_direction),
             "resolved_direction_ids": sorted(slot["resolved"]),
             "merged_into": slot["merged_into"],
