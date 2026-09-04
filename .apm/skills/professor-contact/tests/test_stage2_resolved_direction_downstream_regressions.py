@@ -1,9 +1,10 @@
 """Downstream invalidation regressions for authoritative Stage 2 resolutions."""
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from test_stage2_resolved_direction import ResolvedPipelineMixin, parse, run_cli
+from test_stage2_resolved_direction import ResolvedPipelineMixin, parse, run_cli, write_json
 
 
 class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest.TestCase):
@@ -177,6 +178,47 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
             third_plan["directions"][0]["action"], "reuse",
             "second finalize corrupted provisional_input_fingerprint and broke Stage-2 reuse",
         )
+
+    def test_membership_resolution_requires_valid_fulltext_facts(self):
+        """The deterministic finalizer must reject add/remove membership changes without full-text facts."""
+        p1 = self.make_paper("P1", "Provisional Paper", ["信号"], ["Future work A."])
+        p2 = self.make_paper("P2", "Expanded Candidate", ["制御"], ["Future work B."])
+        for paper in (p1, p2):
+            Path(paper["facts_file"]).unlink()
+            paper["facts_file"] = None
+        direction = self.make_direction(
+            "dir_A", ["P1", "P2"], name_ja="信号処理", name_zh="信号处理",
+            summary="信号处理", provisional_keys=["P1"])
+        facts_path = self.write_facts([p1, p2], [direction])
+        results_dir = self.root / "no_facts_results"
+        results_dir.mkdir()
+        write_json(results_dir / "resolve-dir_A.json", {
+            "schema": 1,
+            "kind": "resolve",
+            "collection_key": "dir_A",
+            "resolved": {
+                "resolved_direction_id": "dir_A",
+                "provisional_direction_id": "dir_A",
+                "name_ja": "信号処理",
+                "name_zh": "信号处理",
+                "resolution_type": "refined",
+                "papers_to_add": ["P2"],
+                "papers_to_remove": ["P1"],
+                "paper_justifications": {
+                    "P1": "model claimed mismatch without full-text facts",
+                    "P2": "model claimed support without full-text facts",
+                },
+                "split_target": None,
+                "merge_target": None,
+                "user_note": "",
+            },
+        })
+
+        result = run_cli("stage2-resolve-finalize", "--facts", str(facts_path),
+                         "--results", str(results_dir))
+        payload = parse(result)
+        self.assertEqual(payload["status"], "error", msg=json.dumps(payload, ensure_ascii=False))
+        self.assertEqual(payload["reason_code"], "invalid_result_json")
 
 
 if __name__ == "__main__":
