@@ -41,6 +41,43 @@ class TestPreflightMalformedState(PreflightBase):
         payload = self.preflight()
         self.assertEqual(payload["status"], "ok", payload)
         self.assertEqual(payload["action"], "process", payload)
+        self.assertIn("freshness_cache_changed",
+                      self.direction(payload, "DIR00001")["reason_codes"])
+
+    def test_truthy_non_dict_preflight_meta_falls_back_to_process(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        pack["cache"]["preflight"] = "manually edited"
+        self._write_pack(pack)
+
+        payload = self.preflight()
+        self.assertEqual(payload["status"], "ok", payload)
+        self.assertEqual(payload["action"], "process", payload)
+        self.assertIn("preflight_cache_malformed", payload["reason_codes"])
+
+    def test_truthy_non_dict_program_inputs_falls_back_to_process(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        pack["cache"]["preflight"]["program_inputs"] = ["malformed"]
+        self._write_pack(pack)
+
+        payload = self.preflight()
+        self.assertEqual(payload["status"], "ok", payload)
+        self.assertEqual(payload["action"], "process", payload)
+        self.assertIn("preflight_cache_malformed", payload["reason_codes"])
+        self.assertIn("stage1_professor_changed", payload["reason_codes"])
+
+    def test_truthy_non_dict_artifact_guards_fail_closed(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        pack["cache"]["preflight"]["directions"]["DIR00001"]["artifact_guards"] = ["malformed"]
+        self._write_pack(pack)
+
+        payload = self.preflight()
+        self.assertEqual(payload["status"], "ok", payload)
+        self.assertEqual(payload["action"], "process", payload)
+        self.assertIn("preflight_record_missing",
+                      self.direction(payload, "DIR00001")["reason_codes"])
 
 
 if __name__ == "__main__":

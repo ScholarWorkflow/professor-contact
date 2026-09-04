@@ -730,7 +730,11 @@ def load_freshness_cache(professor_dir: Path) -> dict:
     data, error = read_json_file(professor_dir / FRESHNESS_CACHE)
     if error or not isinstance(data, dict):
         return {}
-    return data.get("entries") or {}
+    entries = data.get("entries")
+    # A malformed truthy `entries` container degrades to an empty view so the
+    # freshness-view fingerprint mismatches the accepted one (fail closed to
+    # `freshness_cache_changed`) instead of crashing on a non-dict .get().
+    return entries if isinstance(entries, dict) else {}
 
 
 def save_freshness_cache(professor_dir: Path, entries: dict) -> None:
@@ -1338,15 +1342,20 @@ def cmd_stage2_preflight(args) -> None:
     pack, _error = read_json_file(pack_path)
     if not isinstance(pack, dict):
         pack = None
-    meta = ((pack or {}).get("cache") or {}).get("preflight")
-    if not isinstance(meta, dict):
-        meta = None
+    cache_block = (pack or {}).get("cache")
+    meta = cache_block.get("preflight") if isinstance(cache_block, dict) else None
 
     professor_reasons: list = []
     if pack is None:
         professor_reasons.append("missing_input_pack")
-    elif meta is None:
-        professor_reasons.append("legacy_pack_no_preflight")
+    elif cache_block is not None and not isinstance(cache_block, dict):
+        # Corrupted / half-written containers must fail closed to the slow path
+        # with a stable reason; they may never crash the gate itself.
+        professor_reasons.append("preflight_cache_malformed")
+    elif not isinstance(meta, dict):
+        professor_reasons.append(
+            "preflight_cache_malformed" if meta is not None else "legacy_pack_no_preflight")
+        meta = None
     else:
         if meta.get("version") != STAGE2_PREFLIGHT_VERSION:
             professor_reasons.append("preflight_version_changed")
@@ -1359,7 +1368,10 @@ def cmd_stage2_preflight(args) -> None:
         if meta.get("params") != params or meta.get("current_year") != current_year:
             professor_reasons.append("params_changed")
         current_program_inputs = stage2_program_inputs(program_root, professor_dir, snapshot_entry)
-        recorded_program_inputs = meta.get("program_inputs") or {}
+        recorded_program_inputs = meta.get("program_inputs")
+        if not isinstance(recorded_program_inputs, dict):
+            professor_reasons.append("preflight_cache_malformed")
+            recorded_program_inputs = {}
         if recorded_program_inputs.get("stage1_professor_input_fingerprint") != \
                 current_program_inputs["stage1_professor_input_fingerprint"]:
             professor_reasons.append("stage1_professor_changed")
@@ -1374,7 +1386,11 @@ def cmd_stage2_preflight(args) -> None:
     pack_directions = {entry.get("collection_key"): entry
                        for entry in (pack or {}).get("directions") or []
                        if isinstance(entry, dict)}
-    recorded_directions = (meta or {}).get("directions") or {}
+    recorded_directions = (meta or {}).get("directions")
+    if not isinstance(recorded_directions, dict):
+        if recorded_directions is not None:
+            professor_reasons.append("preflight_cache_malformed")
+        recorded_directions = {}
     snapshot_directions = {entry.get("direction_id"): entry
                            for entry in (snapshot_entry or {}).get("directions") or []
                            if isinstance(entry, dict)}
@@ -1401,9 +1417,19 @@ def cmd_stage2_preflight(args) -> None:
             elif recorded.get("freshness_view_fingerprint") != \
                     stage2_freshness_view_fingerprint(accepted, cache_entries):
                 reasons.append("freshness_cache_changed")
-            for item_key in sorted(recorded.get("artifact_guards") or {}):
-                for kind in sorted(recorded["artifact_guards"][item_key] or {}):
-                    guard = recorded["artifact_guards"][item_key][kind]
+            guards = recorded.get("artifact_guards")
+            if not isinstance(guards, dict):
+                # An unusable guards container cannot prove artifact freshness.
+                if guards is not None:
+                    reasons.append("preflight_record_missing")
+                guards = {}
+            for item_key in sorted(guards):
+                kinds = guards[item_key]
+                if not isinstance(kinds, dict):
+                    reasons.append("preflight_record_missing")
+                    continue
+                for kind in sorted(kinds):
+                    guard = kinds[kind]
                     reason = stage2_artifact_guard_reason(guard if isinstance(guard, dict) else {})
                     if reason:
                         reasons.append(reason)
@@ -1416,14 +1442,17 @@ def cmd_stage2_preflight(args) -> None:
             "reason_codes": reasons})
         if reasons:
             all_reuse = False
+    preflight_inputs = stage2_preflight_cheap_inputs(
+        program_root, professor_dir, target, snapshot_entry, params, current_year)
     emit({
         "status": "ok",
         "professor": professor,
+        "preflight_id": sha256_obj({"professor": professor,
+                                    "preflight_inputs": preflight_inputs}),
         "action": "reuse_all" if all_reuse else "process",
         "reason_codes": sorted(set(professor_reasons)),
         "pack_path": str(pack_path),
-        "preflight_inputs": stage2_preflight_cheap_inputs(
-            program_root, professor_dir, target, snapshot_entry, params, current_year),
+        "preflight_inputs": preflight_inputs,
         "directions": direction_results,
     })
 
@@ -1988,13 +2017,16 @@ def stage2_preflight_plan_drift(plan_inputs: dict, current: dict) -> list:
         drift.append("program_inputs")
     if plan_inputs.get("selected_direction_ids") != current["selected_direction_ids"]:
         drift.append("selected_direction_ids")
-    recorded_directions = plan_inputs.get("directions") or {}
-    if set(recorded_directions) != set(current["directions"]):
+    recorded_directions = plan_inputs.get("directions")
+    if not isinstance(recorded_directions, dict):
         drift.append("directions")
     else:
-        for direction_id, entry in current["directions"].items():
-            if recorded_directions.get(direction_id) != entry:
-                drift.append(f"directions:{direction_id}")
+        if set(recorded_directions) != set(current["directions"]):
+            drift.append("directions")
+        else:
+            for direction_id, entry in current["directions"].items():
+                if recorded_directions.get(direction_id) != entry:
+                    drift.append(f"directions:{direction_id}")
     return sorted(set(drift))
 
 
@@ -2006,6 +2038,14 @@ def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
     must never stamp results derived from a stale candidate universe as
     current. Returns (plan, target, snapshot_entry); plan is None when the
     caller did not pass a preflight file (legacy direct callers).
+
+    The payload is also bound to the facts run it produced: ``preflight_id``
+    must be the payload's self-consistent proof id and must equal the id the
+    analyzer recorded into the facts file (``facts.stage2_preflight``) when
+    that run observed the preflight decision. Without this, a later invocation
+    for the same professor could overwrite the shared saved payload and its
+    (matching) fingerprints would wrongly certify facts prepared from an
+    earlier target state.
     """
     if not getattr(args, "preflight_file", None):
         return None, None, None
@@ -2033,6 +2073,16 @@ def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
     drift = stage2_preflight_plan_drift(plan_inputs, current)
     if drift:
         soft_exit("needs_refresh", "preflight_inputs_changed", drift=drift)
+    preflight_id = sha256_obj({"professor": plan["professor"],
+                               "preflight_inputs": plan_inputs})
+    if plan.get("preflight_id") != preflight_id:
+        soft_exit("needs_refresh", "preflight_inputs_changed",
+                  drift=["preflight_proof_id"])
+    binding = ctx.facts.get("stage2_preflight")
+    if (not isinstance(binding, dict)
+            or binding.get("preflight_id") != preflight_id):
+        soft_exit("needs_refresh", "preflight_inputs_changed",
+                  drift=["preflight_proof_binding"])
     return plan, target, snapshot_entry
 
 

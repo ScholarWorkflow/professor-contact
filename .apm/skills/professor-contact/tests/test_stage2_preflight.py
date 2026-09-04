@@ -273,6 +273,13 @@ class PreflightBase(unittest.TestCase):
         self._write_pack(pack)
         return meta
 
+    def bind_facts_to_plan(self, plan_path):
+        """Record the preflight proof id in facts the way analyzer Step 6.1 does."""
+        plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+        self.facts["stage2_preflight"] = {"preflight_id": plan.get("preflight_id")}
+        self.facts_path.write_text(json.dumps(self.facts, ensure_ascii=False, indent=1),
+                                   encoding="utf-8")
+
     def build_accepted_state(self):
         self.stage2_finalize()
         self.record_validation()
@@ -585,6 +592,7 @@ class TestFinalizePreflightWiring(PreflightBase):
         self.record_validation()
         self.assertIn("legacy_pack_no_preflight", self.preflight()["reason_codes"])
         plan = self.save_preflight_file()
+        self.bind_facts_to_plan(plan)
         out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
                             "--results", self.root / "results",
                             "--preflight-file", plan))
