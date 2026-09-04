@@ -75,7 +75,12 @@ FACTS_SCHEMA = 1
 FACTS_KIND = "paper-analysis-facts"
 FACTS_GENERATOR_VERSIONS = ("facts-v1",)
 STAGE2_PREFLIGHT_VERSION = "stage2-preflight-v1"
-STAGE2_RESOLUTION_SEMANTICS_VERSION = 1
+# v2: issue #7 resolved directions become part of the Stage-2 contract the
+# preflight must prove — provisional→resolved set mapping in cache.preflight,
+# resolution-evidence (candidate-union) artifact guards, and the
+# _resolved_directions.json binding to the facts' preflight proof. Packs
+# accepted under v1 semantics must re-prove through the slow path.
+STAGE2_RESOLUTION_SEMANTICS_VERSION = 2
 STAGE2_TARGET_FILE = Path("教授研究") / "套磁目标.json"
 STAGE1_SNAPSHOT_FILE = Path("教授研究") / "套磁阶段1候选.json"
 AUTHORSHIP_LEDGER_FILE = Path("教授研究") / "_署名对照.json"
@@ -1660,6 +1665,9 @@ def cmd_stage2_resolve_plan(args) -> None:
         "professor": ctx.professor,
         "professor_dir": str(ctx.professor_dir),
         "has_material_changes": has_material_changes,
+        # Traceability: the preflight proof this resolve round is bound to
+        # (issue #11 binding, extended to the resolve pipeline in issue #7).
+        "stage2_preflight_id": _facts_preflight_proof(ctx.facts)[0],
         "summary": {
             "directions": len(ctx.direction_plans),
             "reused_resolved": len(reuse_list),
@@ -2096,6 +2104,58 @@ def _load_existing_resolved(professor_dir: Path, professor: str,
     return data
 
 
+def _facts_preflight_proof(facts: dict) -> tuple[str | None, str | None]:
+    """The preflight proof id the current facts run was prepared under.
+
+    Returns (proof_id, error). `stage2-preflight` issues the id; the analyzer
+    records it into the facts file (`facts.stage2_preflight.preflight_id`)
+    when preparing evidence under that decision (issue #11). A malformed
+    binding proves nothing and fails closed everywhere it is consumed.
+    """
+    binding = facts.get("stage2_preflight")
+    if binding is None:
+        return None, None
+    if not isinstance(binding, dict):
+        return None, "malformed_stage2_preflight_binding"
+    proof = binding.get("preflight_id")
+    if not isinstance(proof, str) or not proof:
+        return None, "malformed_stage2_preflight_binding"
+    return proof, None
+
+
+def _sidecar_preflight_proof(payload: dict) -> str | None:
+    """The proof id recorded inside a resolved-directions sidecar (None = legacy)."""
+    binding = payload.get("stage2_preflight")
+    if isinstance(binding, dict):
+        proof = binding.get("preflight_id")
+        if isinstance(proof, str):
+            return proof
+    return None
+
+
+def _check_resolved_proof_binding(facts_proof: str | None, facts_error: str | None,
+                                  sidecar_payload: dict, path: Path) -> None:
+    """Refuse a resolved sidecar from another facts/preflight generation.
+
+    Issue #11 binds facts to their preflight proof; issue #7 extends that
+    binding to `_resolved_directions.json`: the sidecar may only be consumed
+    (accepted, kept-provisional, or applied by stage2-finalize) under the
+    exact proof id its generating facts run recorded — otherwise run A's
+    proposals could sneak in as run B's authoritative resolution.
+    """
+    if facts_error:
+        fail("resolved_directions_proof_mismatch",
+             f"facts carry an unusable stage2_preflight binding: {facts_error}",
+             path=str(path))
+    recorded = _sidecar_preflight_proof(sidecar_payload)
+    if recorded != facts_proof:
+        fail("resolved_directions_proof_mismatch",
+             "resolved directions were produced under a different facts/preflight "
+             "generation; re-run the resolve pipeline for the current preflight proof "
+             f"(sidecar proof {recorded!r} != facts proof {facts_proof!r})",
+             sidecar_preflight_id=recorded, facts_preflight_id=facts_proof, path=str(path))
+
+
 def cmd_stage2_resolve_finalize(args) -> None:
     """Validate resolve results and write resolved_direction state to a sidecar file.
 
@@ -2117,6 +2177,13 @@ def cmd_stage2_resolve_finalize(args) -> None:
     """
     ctx = Stage2Context(Path(args.facts))
     results_dir = Path(args.results)
+    # The sidecar is stamped with the facts run's preflight proof (issue #7 ×
+    # #11): stage2-finalize / stage2-resolve-accept later refuse sidecars from
+    # another generation, so the write must carry the CURRENT proof id.
+    facts_proof, facts_proof_error = _facts_preflight_proof(ctx.facts)
+    if facts_proof_error:
+        fail("resolved_directions_proof_mismatch",
+             f"facts carry an unusable stage2_preflight binding: {facts_proof_error}")
     keep_provisional = [k.strip() for k in (args.keep_provisional or "").split(",") if k.strip()]
     plans_by_ckey = {plan["ckey"]: plan for plan in ctx.direction_plans}
     unknown = [k for k in keep_provisional if k not in plans_by_ckey]
@@ -2207,6 +2274,7 @@ def cmd_stage2_resolve_finalize(args) -> None:
         "professor": ctx.professor,
         "professor_dir": str(ctx.professor_dir),
         "facts_fingerprint": facts_fingerprint,
+        "stage2_preflight": {"preflight_id": facts_proof},
         "generated_at": now_utc(),
         "directions": list(resolved.values()),
         "has_material_changes": bool(material_changes),
@@ -2239,6 +2307,7 @@ def cmd_stage2_resolve_finalize(args) -> None:
         "professor": ctx.professor,
         "resolved_directions_path": str(resolved_path),
         "facts_fingerprint": facts_fingerprint,
+        "stage2_preflight_id": facts_proof,
         "directions": [
             {
                 "provisional_direction_id": ckey,
@@ -2311,6 +2380,11 @@ def cmd_stage2_resolve_accept(args) -> None:
         fail("resolved_directions_stale",
              "proposed resolutions no longer match current facts; re-run stage2-resolve before accepting",
              stale_directions=stale, path=str(resolved_path))
+    # The user choice is bound to the current facts/preflight generation
+    # (issue #7 × #11): accepting must never launder a proposal written under
+    # an earlier preflight proof into the current generation.
+    facts_proof, facts_proof_error = _facts_preflight_proof(ctx.facts)
+    _check_resolved_proof_binding(facts_proof, facts_proof_error, data, resolved_path)
     accepted = []
     for k in ckeys:
         if entries[k].get("acceptance") != "accepted":
@@ -2562,15 +2636,12 @@ def stage2_artifact_guard_reason(recorded: dict) -> str | None:
     return None
 
 
-def stage2_direction_artifact_guards(ctx: Stage2Context, direction: dict) -> dict:
-    """Record accepted stat guards for artifacts that feed one direction's output.
+def _artifact_guards_for_keys(ctx: Stage2Context, guard_keys: set) -> dict:
+    """Record accepted stat guards for a set of papers.
 
-    Guard keys are the direction's relevant papers plus its gap-scope papers
-    (the sidecar sources of the direction gap pool). Digests reuse SHAs already
-    computed by Stage2Context; PDF bytes are never re-read just for metadata.
+    Digests reuse SHAs already computed by Stage2Context; PDF bytes are never
+    re-read just for metadata.
     """
-    guard_keys = set(direction_relevant_keys(direction))
-    guard_keys.update(gap_scope_keys(ctx.facts, direction))
     guards = {}
     for key in sorted(guard_keys):
         paper = ctx.papers.get(key)
@@ -2601,6 +2672,60 @@ def stage2_direction_artifact_guards(ctx: Stage2Context, direction: dict) -> dic
     return guards
 
 
+def stage2_direction_artifact_guards(ctx: Stage2Context, direction: dict) -> dict:
+    """Record accepted stat guards for artifacts that feed one direction's output.
+
+    Guard keys are the direction's relevant papers plus its gap-scope papers
+    (the sidecar sources of the direction gap pool).
+    """
+    guard_keys = set(direction_relevant_keys(direction))
+    guard_keys.update(gap_scope_keys(ctx.facts, direction))
+    return _artifact_guards_for_keys(ctx, guard_keys)
+
+
+def stage2_resolution_evidence_guards(ctx: Stage2Context) -> dict:
+    """Stat guards over the FULL resolution evidence universe (issue #7).
+
+    Resolved membership / rename / split / merge judgments read the
+    professor-level selected candidate union — including candidates outside
+    every direction's relevant/gap scope that full text could rescue back.
+    Every union paper's artifacts therefore join the resolution reuse
+    identity: a changed sidecar/PDF/analysis for ANY candidate must miss the
+    early preflight so the resolve pipeline re-judges it.
+    """
+    return _artifact_guards_for_keys(ctx, set(_resolve_evidence(ctx)["evidence_keys"]))
+
+
+def _pack_resolved_grouping(pack_directions: list) -> dict[str, dict]:
+    """Map each provisional direction to the authoritative entries it produced.
+
+    Derived purely from the accepted pack's stamped `resolved_direction`
+    subfields (issue #7 finalize always writes them; packs finalized without
+    resolved state group each entry under its own collection_key):
+
+    - split: the source provisional lists the materialized child too
+      (`resolved` = [source, child, ...]);
+    - merge: the source provisional no longer owns an entry — it maps to the
+      target via `merged_into` (recorded from the target's `merged_from`).
+
+    Returns {provisional_id: {"resolved": [collection_keys],
+    "merged_into": target_id | None}}.
+    """
+    grouping: dict[str, dict] = {}
+    for entry in pack_directions:
+        if not isinstance(entry, dict):
+            continue
+        ckey = entry.get("collection_key")
+        rd = entry.get("resolved_direction") if isinstance(entry.get("resolved_direction"), dict) else {}
+        pid = rd.get("provisional_direction_id") or ckey
+        slot = grouping.setdefault(pid, {"resolved": [], "merged_into": None})
+        slot["resolved"].append(ckey)
+        for source in rd.get("merged_from") or []:
+            source_slot = grouping.setdefault(source, {"resolved": [], "merged_into": None})
+            source_slot["merged_into"] = ckey
+    return grouping
+
+
 def stage2_freshness_view_fingerprint(pack_direction: dict, cache_entries: dict) -> str:
     """Hash the freshness-cache view over one accepted direction's gaps.
 
@@ -2626,6 +2751,14 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
 
     Written only by stage2-finalize; consumers (stage3+) must keep treating it
     as opaque cache metadata, never as stage facts.
+
+    Each selected PROVISIONAL direction records its full accepted resolved
+    output set (issue #7): `resolved_direction_ids` are the pack entries the
+    resolution produced for it (a split child appears next to its source; a
+    merged source maps to the surviving target via `merged_into`), and
+    `resolved_entries` carries per-entry accepted/freshness fingerprints.
+    Early reuse must prove the whole resolved set, not just that the old
+    provisional collection_key still exists.
     """
     snapshot_directions = {entry.get("direction_id"): entry
                            for entry in (snapshot_entry or {}).get("directions") or []
@@ -2633,6 +2766,7 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
     accepted_by_key = {entry.get("collection_key"): entry for entry in pack_directions}
     facts_directions = {entry.get("collection_key"): entry
                         for entry in ctx.facts.get("directions") or []}
+    grouping = _pack_resolved_grouping(pack_directions)
     directions = {}
     for direction in target.get("directions") or []:
         direction_id = str(direction.get("direction_id"))
@@ -2640,6 +2774,17 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
         if not accepted:
             continue
         facts_direction = facts_directions.get(direction_id) or {}
+        slot = grouping.get(direction_id) or {"resolved": [], "merged_into": None}
+        resolved_entries = {}
+        for resolved_id in sorted(slot["resolved"]):
+            entry = accepted_by_key.get(resolved_id)
+            if not isinstance(entry, dict):
+                continue
+            resolved_entries[resolved_id] = {
+                "accepted_input_fingerprint": entry.get("input_fingerprint"),
+                "freshness_view_fingerprint": stage2_freshness_view_fingerprint(
+                    entry, cache_entries),
+            }
         directions[direction_id] = {
             "target_fingerprint": stage2_target_fingerprint(direction),
             "candidate_fingerprint": stage2_candidate_fingerprint(
@@ -2648,6 +2793,9 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
             "freshness_view_fingerprint": stage2_freshness_view_fingerprint(
                 accepted, cache_entries),
             "artifact_guards": stage2_direction_artifact_guards(ctx, facts_direction),
+            "resolved_direction_ids": sorted(slot["resolved"]),
+            "merged_into": slot["merged_into"],
+            "resolved_entries": resolved_entries,
         }
     return {
         "schema": 1,
@@ -2660,6 +2808,10 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
         "params": params,
         "program_inputs": stage2_program_inputs(program_root, professor_dir, ctx.professor,
                                                 target, snapshot_entry),
+        # Resolution reuse identity (issue #7): the resolve evidence universe
+        # is the professor-level candidate union, wider than any single
+        # direction's relevant/gap scope — guard it as one block.
+        "resolution_evidence_guards": stage2_resolution_evidence_guards(ctx),
         "directions": directions,
     }
 
@@ -2747,6 +2899,26 @@ def cmd_stage2_preflight(args) -> None:
         if recorded_program_inputs.get("authorship_ledger_view_sha256") != \
                 current_program_inputs["authorship_ledger_view_sha256"]:
             professor_reasons.append("authorship_ledger_changed")
+        # Resolution evidence universe (issue #7): the candidate-union guards
+        # recorded at finalize cover every candidate whose full-text facts can
+        # enter a resolved membership/rename/split/merge judgment — including
+        # candidates outside all directions' relevant/gap scope. Any guard
+        # flip must miss the early gate so the resolve pipeline re-judges.
+        union_guards = meta.get("resolution_evidence_guards")
+        if not isinstance(union_guards, dict):
+            if union_guards is not None:
+                professor_reasons.append("preflight_cache_malformed")
+        else:
+            for item_key in sorted(union_guards):
+                kinds = union_guards[item_key]
+                if not isinstance(kinds, dict):
+                    professor_reasons.append("preflight_cache_malformed")
+                    continue
+                for kind in sorted(kinds):
+                    guard = kinds[kind]
+                    reason = stage2_artifact_guard_reason(guard if isinstance(guard, dict) else {})
+                    if reason:
+                        professor_reasons.append(reason)
 
     cache_entries = load_freshness_cache(professor_dir) if pack else {}
     pack_directions = {entry.get("collection_key"): entry
@@ -2760,6 +2932,7 @@ def cmd_stage2_preflight(args) -> None:
     snapshot_directions = {entry.get("direction_id"): entry
                            for entry in (snapshot_entry or {}).get("directions") or []
                            if isinstance(entry, dict)}
+    pack_grouping = _pack_resolved_grouping(list(pack_directions.values()))
     target_directions = [entry for entry in target.get("directions") or []
                          if isinstance(entry, dict)]
     direction_results = []
@@ -2767,8 +2940,8 @@ def cmd_stage2_preflight(args) -> None:
     for direction in target_directions:
         direction_id = str(direction.get("direction_id"))
         reasons = []
+        validator_ids = [direction_id]
         recorded = recorded_directions.get(direction_id)
-        accepted = pack_directions.get(direction_id)
         if recorded is None or not isinstance(recorded, dict):
             reasons.append("preflight_record_missing")
         else:
@@ -2777,12 +2950,44 @@ def cmd_stage2_preflight(args) -> None:
             if recorded.get("candidate_fingerprint") != stage2_candidate_fingerprint(
                     snapshot_directions.get(direction.get("direction_id"))):
                 reasons.append("candidate_set_changed")
-            if accepted is None or recorded.get("accepted_input_fingerprint") != \
-                    accepted.get("input_fingerprint"):
-                reasons.append("pack_integrity_mismatch")
-            elif recorded.get("freshness_view_fingerprint") != \
-                    stage2_freshness_view_fingerprint(accepted, cache_entries):
-                reasons.append("freshness_cache_changed")
+            # Authoritative resolved output set (issue #7): reuse must prove
+            # the recorded provisional→resolved mapping still describes this
+            # pack exactly — a split child keeps its own early reuse via its
+            # stable resolved ID, and a merged source keeps proving its
+            # target mapping — plus every resolved entry still being the
+            # accepted one with an intact freshness view.
+            recorded_ids = recorded.get("resolved_direction_ids")
+            recorded_entries = recorded.get("resolved_entries")
+            recorded_merged_into = recorded.get("merged_into")
+            if not isinstance(recorded_ids, list) or not isinstance(recorded_entries, dict):
+                # v1-semantics records are already rejected above by the
+                # version gate; an unusable container still fails closed.
+                if recorded_ids is not None or recorded_entries is not None:
+                    reasons.append("preflight_record_missing")
+                recorded_ids, recorded_entries = [], {}
+            resolved_ids = sorted(str(x) for x in recorded_ids if isinstance(x, str))
+            if resolved_ids:
+                validator_ids = resolved_ids
+            elif isinstance(recorded_merged_into, str) and recorded_merged_into:
+                # Merged-away source: it owns no pack entry, so its validator
+                # proof is the surviving target's row.
+                validator_ids = [recorded_merged_into]
+            now_slot = pack_grouping.get(direction_id) or {"resolved": [], "merged_into": None}
+            if resolved_ids != sorted(now_slot["resolved"]):
+                reasons.append("resolved_set_changed")
+            if recorded_merged_into != now_slot["merged_into"]:
+                reasons.append("resolved_set_changed")
+            for resolved_id in resolved_ids:
+                entry = pack_directions.get(resolved_id)
+                rec = recorded_entries.get(resolved_id)
+                if entry is None or not isinstance(rec, dict):
+                    reasons.append("preflight_record_missing")
+                    continue
+                if rec.get("accepted_input_fingerprint") != entry.get("input_fingerprint"):
+                    reasons.append("pack_integrity_mismatch")
+                elif rec.get("freshness_view_fingerprint") != \
+                        stage2_freshness_view_fingerprint(entry, cache_entries):
+                    reasons.append("freshness_cache_changed")
             guards = recorded.get("artifact_guards")
             if not isinstance(guards, dict):
                 # An unusable guards container cannot prove artifact freshness.
@@ -2799,7 +3004,7 @@ def cmd_stage2_preflight(args) -> None:
                     reason = stage2_artifact_guard_reason(guard if isinstance(guard, dict) else {})
                     if reason:
                         reasons.append(reason)
-        validator_reason = stage2_validator_accepts(pack, [direction_id])
+        validator_reason = stage2_validator_accepts(pack, validator_ids)
         if validator_reason:
             reasons.append(validator_reason)
         reasons = sorted(set(reasons))
@@ -3541,6 +3746,19 @@ def cmd_stage2_finalize(args) -> None:
                  "first (stage2-resolve-accept --ckeys <dir,...> to adopt, or stage2-resolve-finalize "
                  "--keep-provisional <dir,...> to keep provisional) before stage2-finalize may apply them",
                  not_accepted_directions=not_accepted, path=str(resolved_directions_path))
+        # Proof binding (issue #7 × #11): the sidecar must come from the same
+        # facts/preflight generation as the facts run it is applied to. This
+        # runs BEFORE any pack/freshness/Markdown write, so a mismatch keeps
+        # zero-write semantics; it is recoverable like the other preflight
+        # binding drifts (restart Stage 2 from the current preflight).
+        facts_proof, facts_proof_error = _facts_preflight_proof(ctx.facts)
+        if facts_proof_error or _sidecar_preflight_proof(rd_data) != facts_proof:
+            soft_exit("needs_refresh", "resolved_directions_proof_mismatch",
+                      drift=["resolved_directions_proof_binding"],
+                      sidecar_preflight_id=_sidecar_preflight_proof(rd_data),
+                      facts_preflight_id=facts_proof,
+                      facts_binding_error=facts_proof_error,
+                      path=str(resolved_directions_path))
 
     required_freshness, needed_keys = {}, []
     for plan in ctx.direction_plans:
