@@ -215,19 +215,77 @@ def preview_member_index(preview: dict[str, Any]) -> dict[str, list[dict[str, An
     return index
 
 
-def stage1_preview_digest(preview: dict[str, Any]) -> str:
-    """Digest of exactly what candidate building consumes from the preview.
+def stage1_papers_digest(papers: dict[str, dict[str, Any]],
+                         candidate_keys: set[str] | None = None) -> list[dict[str, Any]]:
+    """Exactly the paper fields Stage 1 reads, scoped by what each field affects.
 
-    ``preview_member_index`` feeds every expansion decision (cross-direction gates,
-    low-confidence reasons, unplaced detection) from ALL preview directions, while
-    target freshness deliberately tolerates unselected-direction and confidence-only
-    changes. Persisting this digest lets ``verify`` catch precisely those preview
-    drifts that would change the candidate sets, without resurrecting the old
-    "any preview change blocks Stage 0" behavior.
+    title/title_zh feed paper_tokens() and can bring ANY paper into the candidate
+    set via expansion, so they are always fingerprinted across all papers.
+    pdf_status only affects readiness AFTER candidate_keys are determined, so it
+    is fingerprinted only for the actual candidate union (or all papers when the
+    caller has not yet computed candidates). A non-candidate paper flipping
+    pdf_status cannot change candidate membership, work_queue_item_keys, missing/
+    usable readiness, or any Stage-2 input, so it must not invalidate the snapshot.
     """
-    directions = []
+    rows = []
+    for item_key in sorted(papers):
+        paper = papers[item_key]
+        row: dict[str, Any] = {
+            "item_key": item_key,
+            "title": paper.get("title"),
+            "title_zh": paper.get("title_zh"),
+        }
+        if candidate_keys is None or item_key in candidate_keys:
+            row["pdf_status"] = paper.get("pdf_status")
+        rows.append(row)
+    return rows
+
+
+def input_fingerprint(target: dict[str, Any], preview: dict[str, Any],
+                      papers: dict[str, dict[str, Any]],
+                      candidate_keys: set[str] | None = None) -> str:
+    """Exact fingerprint of everything candidate building consumes — no wider, no narrower.
+
+    - selected direction identities + provisional member item keys (candidate base set);
+    - selected-direction lexical profile inputs read by direction_profile_tokens()
+      (name_ja/name_zh/summary_zh + representative title/title_zh);
+    - membership placement and preview_confidence of ALL preview directions, because
+      the cross-direction gates / low-confidence reasons / unplaced detection all
+      derive from the full preview member index;
+    - paper fields read by Stage 1: title/title_zh across all papers (expansion
+      inputs), pdf_status scoped to the candidate union (readiness only matters for
+      candidates — a non-candidate pdf_status change cannot affect any Stage-2 input).
+
+    The whole-preview preview_fingerprint is deliberately NOT a validity input here
+    (it stays in the snapshot as provenance only): resolve legitimately rewrites the
+    target's stored fingerprint for display-only projection changes (e.g.
+    coverage_share) and whole-preview churn that Stage 1 never reads.
+
+    User-named papers are deliberately excluded: they extend the candidate set but
+    not the readiness state, so ``verify`` can recompute this fingerprint without
+    the named-papers file.
+    """
+    selected = []
+    for direction in target.get("directions", []):
+        representatives = [
+            {"item_key": rep.get("item_key"),
+             "title": rep.get("title"),
+             "title_zh": rep.get("title_zh")}
+            for rep in sorted(direction.get("representatives") or [],
+                              key=lambda r: str(r.get("item_key")))
+        ]
+        selected.append({
+            "direction_id": direction.get("direction_id"),
+            "member_item_keys": sorted({m["item_key"] for m in direction.get("members", [])}),
+            "name_ja": direction.get("name_ja"),
+            "name_zh": direction.get("name_zh"),
+            "summary_zh": direction.get("summary_zh"),
+            "representatives": representatives,
+        })
+    selected.sort(key=lambda d: str(d["direction_id"]))
+    membership = []
     for direction in preview.get("directions", []):
-        directions.append({
+        membership.append({
             "direction_id": direction.get("direction_id"),
             "members": [
                 {"item_key": member.get("item_key"),
@@ -236,44 +294,13 @@ def stage1_preview_digest(preview: dict[str, Any]) -> str:
                                      key=lambda m: str(m.get("item_key")))
             ],
         })
-    directions.sort(key=lambda d: str(d["direction_id"]))
-    return sha256_obj({"version": 1, "directions": directions})
-
-
-def papers_digest(papers: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    rows = []
-    for item_key in sorted(papers):
-        paper = papers[item_key]
-        rows.append({
-            "item_key": item_key,
-            "title": paper.get("title"),
-            "year": paper.get("year"),
-            "pdf_status": paper.get("pdf_status"),
-        })
-    return rows
-
-
-def input_fingerprint(target: dict[str, Any], papers: dict[str, dict[str, Any]]) -> str:
-    """Fingerprint of the candidate-build inputs (target selection + papers state).
-
-    User-named papers are deliberately excluded: they extend the candidate set but
-    not the readiness state, so ``verify`` can recompute this fingerprint without
-    the named-papers file.
-    """
+    membership.sort(key=lambda d: str(d["direction_id"]))
     return sha256_obj({
-        "version": 1,
-        "preview_fingerprint": target.get("preview_fingerprint"),
-        "preview_fingerprint_version": target.get("preview_fingerprint_version"),
+        "version": 2,
         "selected_direction_ids": target.get("selected_direction_ids"),
-        "directions": [
-            {
-                "direction_id": direction.get("direction_id"),
-                "member_fingerprint": direction.get("member_fingerprint"),
-                "members": direction.get("members"),
-            }
-            for direction in target.get("directions", [])
-        ],
-        "papers": papers_digest(papers),
+        "selected_directions": selected,
+        "preview_membership": membership,
+        "papers": stage1_papers_digest(papers, candidate_keys),
     })
 
 
@@ -416,12 +443,11 @@ def build_professor_entry(
         "professor": target.get("professor"),
         "professor_dir": target.get("professor_dir"),
         "preview_path": target.get("preview_path"),
-        "preview_fingerprint": target.get("preview_fingerprint"),
-        "preview_fingerprint_version": target.get("preview_fingerprint_version"),
-        "preview_digest": stage1_preview_digest(preview),
+        "preview_fingerprint": preview.get("preview_fingerprint"),
+        "preview_fingerprint_version": preview.get("preview_fingerprint_version"),
         "direction_id_version": target.get("direction_id_version"),
         "membership_claim": MEMBERSHIP_CLAIM,
-        "input_fingerprint": input_fingerprint(target, papers),
+        "input_fingerprint": input_fingerprint(target, preview, papers, work_queue),
         "built_at": built_at,
         "action": action,
         "directions": direction_entries,
@@ -559,9 +585,6 @@ def verify_command(program_root: Path, professors: list[str] | None) -> dict[str
                   "notes": "run Stage 1 (contact_stage1.py build) first"})
             raise SystemExit(2)
         problems: list[str] = []
-        if entry.get("preview_fingerprint") != target.get("preview_fingerprint") or \
-                entry.get("preview_fingerprint_version") != target.get("preview_fingerprint_version"):
-            problems.append("preview_fingerprint_mismatch")
         snapshot_directions = {d.get("direction_id"): d for d in entry.get("directions", [])
                                if isinstance(d, dict)}
         for direction in target.get("directions", []):
@@ -576,19 +599,27 @@ def verify_command(program_root: Path, professors: list[str] | None) -> dict[str
         papers_path = professor_dir / "papers.json"
         if not papers_path.is_file():
             problems.append("missing_papers_json")
-        else:
-            current_fingerprint = input_fingerprint(target, load_papers(papers_path))
-            if entry.get("input_fingerprint") != current_fingerprint:
-                problems.append("input_fingerprint_mismatch")
+        preview_path = program_root / str(target.get("preview_path") or "")
         try:
-            current_preview = contact_targets.validate_preview(
-                program_root / str(target.get("preview_path") or "")
-            )
+            current_preview = contact_targets.validate_preview(preview_path)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             problems.append(f"preview_unreadable:{exc}")
-        else:
-            if entry.get("preview_digest") != stage1_preview_digest(current_preview):
-                problems.append("preview_digest_mismatch")
+            current_preview = None
+        if papers_path.is_file() and current_preview is not None:
+            # Scope pdf_status to the snapshot's candidate union: a non-candidate
+            # paper flipping pdf_status cannot change any Stage-2 input, so it
+            # must not invalidate the snapshot. Preview-driven candidate changes
+            # are caught by the preview_membership component above.
+            snapshot_candidate_keys = {
+                key for direction in entry.get("directions", [])
+                for key in (direction or {}).get("candidate_keys", [])
+            }
+            current_fingerprint = input_fingerprint(
+                target, current_preview, load_papers(papers_path),
+                snapshot_candidate_keys or None,
+            )
+            if entry.get("input_fingerprint") != current_fingerprint:
+                problems.append("input_fingerprint_mismatch")
         if problems:
             stale.append({"professor": name, "problems": sorted(set(problems))})
         else:
