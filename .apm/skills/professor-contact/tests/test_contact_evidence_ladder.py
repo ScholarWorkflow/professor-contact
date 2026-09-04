@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -44,8 +45,10 @@ def zulu_ts():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-CHECKER_DIR = ".apm/skills/professor-collector/scripts"
 CHECKER_SCRIPT = "contact_evidence.py"
+# Runtime skill-locator injection: the upstream checker is resolved OUTSIDE
+# program_root (program roots hold user data only — never .apm/skills).
+CHECKER_ENV = "PROFESSOR_CONTACT_EVIDENCE_SCRIPT"
 # Deterministic stand-in for professor-research's local contact_evidence.py:
 # `--check` prints the fixture's per-professor freshness report; the rebuild
 # form rewrites the artifact from the fixture and swaps in the post-rebuild
@@ -82,6 +85,22 @@ class TestContactEvidenceLadder(BaseEnv):
     prepare = TestStage5.prepare
     raw_result = TestStage5.raw_result
     choices = TestStage5.choices
+
+    def setUp(self):
+        super().setUp()
+        # Pin the checker locator to a missing path so tests are hermetic:
+        # the real sibling/installed-skill layout of the machine running the
+        # tests must never leak into expectations. write_checker() re-points
+        # it at a stub kept OUTSIDE the program root.
+        self._saved_checker_env = os.environ.get(CHECKER_ENV)
+        os.environ[CHECKER_ENV] = str(self.root / "missing-checker.py")
+
+    def tearDown(self):
+        if self._saved_checker_env is None:
+            os.environ.pop(CHECKER_ENV, None)
+        else:
+            os.environ[CHECKER_ENV] = self._saved_checker_env
+        super().tearDown()
 
     def write_artifact(self, record_overrides=None, artifact_overrides=None):
         record = {
@@ -158,10 +177,15 @@ class TestContactEvidenceLadder(BaseEnv):
 
     def write_checker(self, check, rebuild_artifact=None, post_rebuild_check=None,
                       rebuild_error=False, check_error=False):
-        """Install the deterministic upstream checker stub + its fixture."""
-        script_dir = self.root / CHECKER_DIR
+        """Install the deterministic upstream checker stub via the runtime
+        skill locator. The stub lives OUTSIDE the program root: a real
+        program root holds only user data (info.json / 教授研究/), never the
+        installed skill tree."""
+        self.checker_root = Path(str(self.temp.name) + "-checker")
+        script_dir = self.checker_root / "skills" / "professor-collector" / "scripts"
         script_dir.mkdir(parents=True, exist_ok=True)
         (script_dir / CHECKER_SCRIPT).write_text(CHECKER_STUB, encoding="utf-8")
+        os.environ[CHECKER_ENV] = str(script_dir / CHECKER_SCRIPT)
         fixture = {"check": check, "rebuild_artifact": rebuild_artifact,
                    "post_rebuild_check": post_rebuild_check,
                    "rebuild_error": rebuild_error, "check_error": check_error}
@@ -598,11 +622,13 @@ class TestContactEvidenceLadder(BaseEnv):
     LADDER_SOURCES = [{"level": 3, "url": "https://example.test/faculty",
                        "note": "官方教员主页"}]
 
-    def seed_verify_email(self, sources):
+    def seed_verify_email(self, sources, value=None):
         verify_path = self.prof_dir / "_contact_verify.json"
         verify = json.loads(verify_path.read_text(encoding="utf-8"))
         verify["verified_at"] = zulu_ts()
         verify["items"]["email"]["sources"] = sources
+        if value is not None:
+            verify["items"]["email"]["value"] = value
         verify_path.write_text(json.dumps(verify, ensure_ascii=False, indent=1),
                                encoding="utf-8")
 
@@ -651,6 +677,10 @@ class TestContactEvidenceLadder(BaseEnv):
         self.assertTrue(recorded["web_lookup_required"])
 
     def test_finalize_rejects_override_of_confirmed_evidence(self):
+        # A hand-edited cache address conflicting with an accepted evidence
+        # decision is surfaced deterministically at plan/finalize time (the
+        # generic verify conflict), never discovered only at the last
+        # mismatch guard — and nothing is written before it is resolved.
         g1 = self.prepare()
         self.write_artifact()
         self.compile_pack()
@@ -659,9 +689,82 @@ class TestContactEvidenceLadder(BaseEnv):
         verify["items"]["email"]["value"] = "user-overridden@example.test"
         verify_path.write_text(json.dumps(verify, ensure_ascii=False, indent=1),
                                encoding="utf-8")
+        plan = self.plan_jobs()
+        self.assertEqual(plan["verify"]["試験 教授"],
+                         "needs_recheck:contact_evidence_verify_conflict")
         out = self.run_finalize_flow(g1, "mismatch")
-        self.assertEqual(out["status"], "error", out)
-        self.assertEqual(out["reason_code"], "contact_evidence_mismatch")
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertEqual(out["reason_code"], "verify_contact_evidence_verify_conflict")
+        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+
+    def test_fresh_independent_verify_cache_conflict_is_detected_before_generation(self):
+        # Review blocker (PR #14 re-review): a fresh independent ladder/user
+        # verification is the send-time authority; when fresh accepted
+        # contact evidence names a DIFFERENT address, stage5-plan must expose
+        # the conflict deterministically before any generation — verify must
+        # not be ok + accepted evidence, and the agent must never silently
+        # reseed over the independent verification.
+        g1 = self.prepare()
+        self.write_schema2_artifact()
+        self.compile_pack()
+        self.seed_verify_email(self.LADDER_SOURCES, value="faculty-b@example.test")
+        self.write_checker(self.check_report("fresh"))
+        plan = self.plan_jobs()
+        decision = self.decision(plan)
+        self.assertEqual(decision["status"], "confirmed_cross_source")
+        self.assertEqual(decision["recipient_email"], "faculty@example.test")
+        self.assertEqual(plan["verify"]["試験 教授"],
+                         "needs_recheck:contact_evidence_verify_conflict")
+        self.assertIn("試験 教授", plan["needs_recheck_professors"])
+        out = self.run_finalize_flow(g1, "independent-conflict")
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertEqual(out["reason_code"], "verify_contact_evidence_verify_conflict")
+        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+
+    def test_same_address_independent_verify_cache_is_reused_without_recheck(self):
+        # Same address: an independent web/user verification in its own TTL
+        # is directly reusable — no forced re-web, no conflict.
+        g1 = self.prepare()
+        self.write_schema2_artifact()
+        self.compile_pack()
+        self.seed_verify_email(self.LADDER_SOURCES, value="faculty@example.test")
+        self.write_checker(self.check_report("fresh"))
+        plan = self.plan_jobs()
+        self.assertEqual(plan["verify"]["試験 教授"], "ok")
+        self.assertNotIn("試験 教授", plan["needs_recheck_professors"])
+        out = self.run_finalize_flow(g1, "independent-same")
+        self.assertEqual(out["status"], "ok", out)
+
+    def test_schema2_checker_is_resolved_outside_program_root(self):
+        # Review blocker (PR #14 re-review): a real program root holds only
+        # user data (info.json / 教授研究/) and NEVER the installed skill
+        # tree; the upstream checker must be resolved via the skill locator
+        # relative to this runner's own install instead. A schema-2 artifact
+        # must be consumed through that locator, not degraded to
+        # contact_evidence_check_unavailable.
+        self.prepare()
+        self.write_schema2_artifact()
+        self.compile_pack()
+        self.write_checker(self.check_report("fresh"))
+        self.assertFalse((self.root / ".apm").exists(),
+                         "program root must not contain the skill tree")
+        decision = self.decision(self.plan_jobs())
+        self.assertEqual(decision["status"], "confirmed_cross_source")
+        self.assertIsNone(decision["reason_code"])
+        self.assertFalse(decision["web_lookup_required"])
+        self.assertEqual(decision["recipient_email"], "faculty@example.test")
+
+    def test_missing_injected_checker_fails_closed(self):
+        # An explicit locator injection pointing at a missing file is
+        # authoritative — fail closed instead of silently falling back to
+        # machine-layout guessing.
+        self.prepare()
+        self.write_schema2_artifact()
+        self.compile_pack()
+        decision = self.decision(self.plan_jobs())
+        self.assertEqual(decision["status"], "escalate")
+        self.assertEqual(decision["reason_code"],
+                         "contact_evidence_check_unavailable")
 
     # --- live source-state freshness (professor-research schema-2 contract,
     #     final cross-repo acceptance criteria in PR #14 comment 5540723034) ---

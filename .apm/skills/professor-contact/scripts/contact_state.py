@@ -47,8 +47,13 @@ CONTACT_EVIDENCE_VERDICTS = ("confirmed_cross_source", "official_only",
                              "paper_only", "conflict", "insufficient")
 # professor-research schema-2 freshness interface (local-only): the stable
 # per-professor `--check` report and the idempotent deterministic rebuild.
-UPSTREAM_CHECK_SCRIPT = (Path(".apm") / "skills" / "professor-collector" /
-                         "scripts" / "contact_evidence.py")
+# The script lives in the professor-research SKILL installation — never in a
+# program root, which holds only user data (info.json / 教授研究/).
+UPSTREAM_REPO_ID = "professor-research"
+UPSTREAM_SKILL_ID = "professor-collector"
+UPSTREAM_CHECK_RESOURCE = Path(".apm") / "skills" / "professor-collector" / \
+    "scripts" / "contact_evidence.py"
+UPSTREAM_SCRIPT_ENV = "PROFESSOR_CONTACT_EVIDENCE_SCRIPT"
 UPSTREAM_CHECK_TIMEOUT_SECONDS = 60
 GAP_SCOPES = ("relevant", "selected_direction", "all")
 FRESHNESS_SCOPES = ("shortlist", "full")
@@ -2626,8 +2631,38 @@ def load_contact_evidence(program_root: Path) -> tuple[dict | None, str | None]:
     return data, None
 
 
-def upstream_check_script(program_root: Path) -> Path:
-    return program_root / UPSTREAM_CHECK_SCRIPT
+def upstream_check_script() -> Path | None:
+    """Locate professor-research's contact_evidence.py via the installed-skill
+    layout — never derived from program_root (user data directory).
+
+    Resolution order:
+    1. explicit runtime locator injection via UPSTREAM_SCRIPT_ENV (an
+       absolute path wins authoritatively; a missing file fails closed);
+    2. the shared skills root next to this runner's own skill installation
+       (checkout `.apm/skills/…` composition, or the installed OpenCode
+       skill directory) holding `professor-collector/scripts/…`;
+    3. a registered professor-research checkout that is a sibling of one of
+       this runner's own ancestors (skillrepo canonical layout: registered
+       repos sit side by side, including under a shared worktrees/ dir) —
+       probed with fixed-path existence checks only, no directory scans.
+    """
+    injected = os.environ.get(UPSTREAM_SCRIPT_ENV, "").strip()
+    if injected:
+        script = Path(injected)
+        return script if script.is_file() else None
+    here = Path(__file__).resolve()
+    parents = here.parents
+    if len(parents) > 1:                                        # …/professor-contact
+        candidate = (parents[1].parent / UPSTREAM_SKILL_ID /
+                     "scripts" / "contact_evidence.py")
+        if candidate.is_file():
+            return candidate
+    resource = UPSTREAM_REPO_ID / UPSTREAM_CHECK_RESOURCE
+    for ancestor in list(parents)[:8]:                          # …/<checkout>/… roots
+        candidate = ancestor.parent / resource
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def run_contact_evidence_check(program_root: Path) -> tuple[dict | None, str | None]:
@@ -2637,8 +2672,8 @@ def run_contact_evidence_check(program_root: Path) -> tuple[dict | None, str | N
     fingerprints. Returns (report, None) on a valid report, or
     (None, "script_missing" | "script_failed") when live source-state
     freshness cannot be confirmed at all."""
-    script = upstream_check_script(program_root)
-    if not script.is_file():
+    script = upstream_check_script()
+    if script is None:
         return None, "script_missing"
     return run_upstream_check_argv([sys.executable, str(script), str(program_root), "--check"])
 
@@ -2647,8 +2682,8 @@ def run_contact_evidence_rebuild(program_root: Path) -> bool:
     """The same deterministic local rebuild the upstream contract documents
     for stale artifacts: rewrite the derived artifact from local sources
     (idempotent, local-only), then the caller re-checks."""
-    script = upstream_check_script(program_root)
-    if not script.is_file():
+    script = upstream_check_script()
+    if script is None:
         return False
     try:
         proc = subprocess.run(
@@ -3000,6 +3035,20 @@ def verify_state(professor_dir: Path, sources: dict, decision: dict | None = Non
             email_item_is_evidence_seeded(items):
         return {"ok": False, "reason": "contact_evidence_escalated",
                 "path": str(path), "data": data}
+    # Issue-#10 conflict gate: the upstream artifact scopes itself as
+    # workflow evidence, NOT the send-time authority — the verify cache is.
+    # While an accepted decision stands, a still-usable cache entry holding
+    # a DIFFERENT address is a real evidence conflict regardless of
+    # provenance: it must be resolved explicitly before generation instead
+    # of being silently reseeded (or discovered only at finalize's mismatch
+    # guard). Same address in any provenance reuses the cache freely.
+    if decision is not None and decision.get("status") != "escalate" and \
+            decision.get("recipient_email"):
+        cache_value = str(items["email"].get("value") or "").strip()
+        recipient = str(decision["recipient_email"]).strip()
+        if cache_value and cache_value.casefold() != recipient.casefold():
+            return {"ok": False, "reason": "contact_evidence_verify_conflict",
+                    "path": str(path), "data": data}
     warnings = items.get("warnings")
     if not isinstance(warnings, list):
         return {"ok": False, "reason": "invalid_cache", "path": str(path), "data": data}
