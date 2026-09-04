@@ -514,6 +514,69 @@ class Stage1CandidateTests(unittest.TestCase):
             verified = stage1.verify_command(self.root, None)
         self.assertEqual(verified["status"], "ok")
 
+    def test_unselected_direction_change_stales_the_candidate_snapshot(self):
+        # Stage 1 expansion consumes ALL preview directions (cross-direction gates,
+        # low-confidence reasons, unplaced detection), while target freshness
+        # deliberately tolerates unselected-direction changes. The snapshot's
+        # preview_digest must catch exactly that drift: resolve stays ok, verify
+        # must demand a rebuild, and the rebuilt candidate set must reflect the
+        # new preview reality.
+        targets.select_target(
+            self.root,
+            self.preview_path,
+            {"direction_ids": ["dir_A"], "notes": {}},
+            selected_at="2026-09-04T00:05:00Z",
+        )
+        # P7 "Robust Sensor Array Calibration Networks": tokens {robust, sensor,
+        # array, calibration, networks} → 2 matched vs dir_A, coverage 0.4 → passes
+        # the relaxed unplaced gate but fails the strict cross-direction gate.
+        data = read_json(self.papers_path)
+        data["papers"].append(paper("P7", "Robust Sensor Array Calibration Networks", "pending"))
+        write_json(self.papers_path, data)
+        self.guarded_before[self.papers_path] = self.papers_path.read_bytes()
+
+        build(self.root)
+        snap = read_json(snapshot_path(self.root))
+        self.assertIn("preview_digest", snap["professors"][0])
+        by_dir = {d["direction_id"]: d for d in snap["professors"][0]["directions"]}
+        self.assertIn("P7", by_dir["dir_A"]["candidate_keys"])
+        self.assertEqual(
+            by_dir["dir_A"]["expansion_reasons"]["P7"],
+            ["unclassified_or_new_since_preview"],
+        )
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+
+        # P7 joins UNSELECTED dir_B as a high-confidence member: for dir_A it is now
+        # placed elsewhere and must clear the strict gate, which 0.4 coverage fails.
+        preview = preview_payload()
+        preview["directions"][1]["members"].append({"item_key": "P7", "preview_confidence": "high"})
+        write_json(self.preview_path, preview)
+
+        resolution = targets.resolve_targets(self.root)
+        self.assertEqual(resolution["status"], "ok")  # target freshness intentionally passes
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                stage1.verify_command(self.root, None)
+        self.assertEqual(ctx.exception.code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["reason_code"], "stale_stage1_snapshot")
+        self.assertEqual(
+            payload["stale_professors"],
+            [{"professor": "教授A", "problems": ["preview_digest_mismatch"]}],
+        )
+
+        build(self.root)
+        snap = read_json(snapshot_path(self.root))
+        by_dir = {d["direction_id"]: d for d in snap["professors"][0]["directions"]}
+        self.assertNotIn("P7", by_dir["dir_A"]["candidate_keys"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+
     def test_agent_contract_delegates_only_item_scoped_fast_path(self):
         agent = (ROOT.parents[1] / "agents" / "professor-contact-downloader.agent.md").read_text(
             encoding="utf-8"

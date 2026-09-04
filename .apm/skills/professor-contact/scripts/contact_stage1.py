@@ -215,6 +215,31 @@ def preview_member_index(preview: dict[str, Any]) -> dict[str, list[dict[str, An
     return index
 
 
+def stage1_preview_digest(preview: dict[str, Any]) -> str:
+    """Digest of exactly what candidate building consumes from the preview.
+
+    ``preview_member_index`` feeds every expansion decision (cross-direction gates,
+    low-confidence reasons, unplaced detection) from ALL preview directions, while
+    target freshness deliberately tolerates unselected-direction and confidence-only
+    changes. Persisting this digest lets ``verify`` catch precisely those preview
+    drifts that would change the candidate sets, without resurrecting the old
+    "any preview change blocks Stage 0" behavior.
+    """
+    directions = []
+    for direction in preview.get("directions", []):
+        directions.append({
+            "direction_id": direction.get("direction_id"),
+            "members": [
+                {"item_key": member.get("item_key"),
+                 "preview_confidence": member.get("preview_confidence")}
+                for member in sorted(direction.get("members", []),
+                                     key=lambda m: str(m.get("item_key")))
+            ],
+        })
+    directions.sort(key=lambda d: str(d["direction_id"]))
+    return sha256_obj({"version": 1, "directions": directions})
+
+
 def papers_digest(papers: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     rows = []
     for item_key in sorted(papers):
@@ -393,6 +418,7 @@ def build_professor_entry(
         "preview_path": target.get("preview_path"),
         "preview_fingerprint": target.get("preview_fingerprint"),
         "preview_fingerprint_version": target.get("preview_fingerprint_version"),
+        "preview_digest": stage1_preview_digest(preview),
         "direction_id_version": target.get("direction_id_version"),
         "membership_claim": MEMBERSHIP_CLAIM,
         "input_fingerprint": input_fingerprint(target, papers),
@@ -554,6 +580,15 @@ def verify_command(program_root: Path, professors: list[str] | None) -> dict[str
             current_fingerprint = input_fingerprint(target, load_papers(papers_path))
             if entry.get("input_fingerprint") != current_fingerprint:
                 problems.append("input_fingerprint_mismatch")
+        try:
+            current_preview = contact_targets.validate_preview(
+                program_root / str(target.get("preview_path") or "")
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            problems.append(f"preview_unreadable:{exc}")
+        else:
+            if entry.get("preview_digest") != stage1_preview_digest(current_preview):
+                problems.append("preview_digest_mismatch")
         if problems:
             stale.append({"professor": name, "problems": sorted(set(problems))})
         else:
