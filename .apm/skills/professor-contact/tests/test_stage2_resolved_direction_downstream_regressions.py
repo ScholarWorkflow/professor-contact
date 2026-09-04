@@ -67,6 +67,48 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
             "authoritative membership changed but Stage-3 reuse fingerprint stayed identical",
         )
 
+    def test_split_materializes_candidate_outside_relevant_set(self):
+        """A full-text candidate rescued after the abstract gate must survive a split."""
+        papers = [
+            self.make_paper("P1", "Adaptive Signal Processing", ["信号", "処理"],
+                            ["Future work A."]),
+            self.make_paper("P2", "Robust Control from Full Text", ["制御", "ロバスト"],
+                            ["Future work B."]),
+        ]
+        direction = self.make_direction(
+            "dir_A", ["P1", "P2"], name_ja="信号処理", name_zh="信号处理",
+            summary="信号处理与控制", provisional_keys=["P1"])
+        # P2 is in the Stage-1 candidate universe but the abstract relevance gate
+        # dropped it. Issue #7 now intentionally gives it full-text facts anyway.
+        direction["relevant_keys"] = ["P1"]
+        facts_path = self.write_facts(papers, [direction])
+
+        self.run_resolve(facts_path, {
+            "dir_A": {
+                "resolved_direction_id": "dir_A",
+                "provisional_direction_id": "dir_A",
+                "name_ja": "信号処理",
+                "name_zh": "信号处理",
+                "resolution_type": "split_from",
+                "papers_to_add": ["P2"],
+                "papers_to_remove": [],
+                "paper_justifications": {"P2": "full text shows a distinct robust-control line"},
+                "split_target": "dir_A__control",
+                "merge_target": None,
+                "user_note": "",
+            },
+        })
+        payload = self.run_stage2_finalize(facts_path)
+        self.assertEqual(payload["status"], "ok")
+
+        by_key = {d["collection_key"]: d for d in self.load_pack()["directions"]}
+        self.assertEqual(set(by_key), {"dir_A", "dir_A__control"})
+        self.assertEqual(
+            {p["item_key"] for p in by_key["dir_A__control"]["supporting_papers"]},
+            {"P2"},
+            "split target lost the candidate that full-text resolution rescued outside relevant_keys",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
