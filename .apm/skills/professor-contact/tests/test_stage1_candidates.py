@@ -537,7 +537,8 @@ class Stage1CandidateTests(unittest.TestCase):
 
         build(self.root)
         snap = read_json(snapshot_path(self.root))
-        self.assertIn("preview_digest", snap["professors"][0])
+        self.assertIn("input_fingerprint", snap["professors"][0])
+        self.assertNotIn("preview_digest", snap["professors"][0])
         by_dir = {d["direction_id"]: d for d in snap["professors"][0]["directions"]}
         self.assertIn("P7", by_dir["dir_A"]["candidate_keys"])
         self.assertEqual(
@@ -566,7 +567,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(payload["reason_code"], "stale_stage1_snapshot")
         self.assertEqual(
             payload["stale_professors"],
-            [{"professor": "教授A", "problems": ["preview_digest_mismatch"]}],
+            [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
         )
 
         build(self.root)
@@ -576,6 +577,140 @@ class Stage1CandidateTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+
+    # --- Exact dependency fingerprint regression tests (issue #6 follow-up) ---
+
+    def _build_selected_a(self):
+        targets.select_target(
+            self.root,
+            self.preview_path,
+            {"direction_ids": ["dir_A"], "notes": {}},
+            selected_at="2026-09-04T00:06:00Z",
+        )
+        build(self.root)
+
+    def test_unselected_display_only_change_keeps_snapshot_valid(self):
+        # Review scenario 1: an unselected direction rename/summary/representative-only
+        # change that does NOT feed the selected direction's profile must keep verify ok.
+        self._build_selected_a()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+        before = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
+
+        preview = preview_payload()
+        # dir_B is unselected: change its display-only fields (name/summary/representative title).
+        preview["directions"][1]["name_zh"] = "方向乙（已改名）"
+        preview["directions"][1]["summary_zh"] = "乙方向简介（已改摘要）"
+        for rep in preview["directions"][1].get("representatives", []):
+            rep["title"] = rep.get("title", "") + " (renamed)"
+        write_json(self.preview_path, preview)
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+        # Exact dependency fingerprint is unchanged → no rebuild needed.
+        self.assertEqual(
+            read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
+            before,
+        )
+
+    def test_unselected_membership_change_stales_snapshot(self):
+        # Review scenario 2: unselected direction membership/confidence change that
+        # affects Stage-1 placement/expansion inputs must invalidate.
+        self._build_selected_a()
+        preview = preview_payload()
+        # Move P5 into unselected dir_B as a high-confidence member: for dir_A it is now
+        # placed elsewhere and must clear the strict cross-direction gate.
+        preview["directions"][1]["members"].append({"item_key": "P5", "preview_confidence": "high"})
+        write_json(self.preview_path, preview)
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                stage1.verify_command(self.root, None)
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(
+            json.loads(out.getvalue())["stale_professors"],
+            [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
+        )
+
+    def test_selected_lexical_profile_change_stales_snapshot(self):
+        # Review scenario 3: selected direction name/summary/representative title change
+        # that can change overlap decisions must invalidate.
+        self._build_selected_a()
+        preview = preview_payload()
+        preview["directions"][0]["summary_zh"] = "自适应信号处理与传感网络研究（已改）"
+        write_json(self.preview_path, preview)
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                stage1.verify_command(self.root, None)
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(
+            json.loads(out.getvalue())["stale_professors"],
+            [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
+        )
+
+    def test_paper_title_zh_change_stales_snapshot(self):
+        # Review scenario 4: paper title_zh change must invalidate when it can change
+        # paper_tokens() (title_zh is consumed by Stage 1).
+        self._build_selected_a()
+        data = read_json(self.papers_path)
+        for p in data["papers"]:
+            if p["item_key"] == "P5":
+                p["title_zh"] = "水下传感器阵列信号处理（已改）"
+        write_json(self.papers_path, data)
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                stage1.verify_command(self.root, None)
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(
+            json.loads(out.getvalue())["stale_professors"],
+            [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
+        )
+
+    def test_whole_preview_fingerprint_change_without_dependency_drift_keeps_valid(self):
+        # Review scenario 5: whole preview_fingerprint changes for unrelated
+        # provenance/global fields (e.g. coverage) while exact Stage-1 dependencies are
+        # unchanged → verify stays ok. This is the core improvement over the old
+        # whole-preview gate.
+        self._build_selected_a()
+        before = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
+        preview = preview_payload()
+        # coverage is part of upstream preview_fingerprint but NOT consumed by Stage 1.
+        preview["coverage"] = 0.12
+        write_json(self.preview_path, preview)
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+        self.assertEqual(
+            read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
+            before,
+        )
+
+    def test_pdf_readiness_change_still_invalidates(self):
+        # Review scenario 6: existing PDF readiness change still invalidates/rebuilds.
+        self._build_selected_a()
+        data = read_json(self.papers_path)
+        for p in data["papers"]:
+            if p["item_key"] == "P2":
+                p["pdf_status"] = "downloaded"
+        write_json(self.papers_path, data)
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                stage1.verify_command(self.root, None)
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(
+            json.loads(out.getvalue())["stale_professors"],
+            [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
+        )
 
     def test_agent_contract_delegates_only_item_scoped_fast_path(self):
         agent = (ROOT.parents[1] / "agents" / "professor-contact-downloader.agent.md").read_text(
