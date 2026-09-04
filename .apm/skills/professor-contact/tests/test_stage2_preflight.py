@@ -571,5 +571,132 @@ class TestPreflightGuardrails(PreflightBase):
             self.assertFalse(path.endswith(".pdf"), path)
 
 
+class TestFinalizePreflightWiring(PreflightBase):
+    """stage2-finalize seeding + --preflight-file TOCTOU guard (issue §17/§19)."""
+
+    def save_preflight_file(self, name="preflight.json", **overrides) -> Path:
+        payload = self.preflight(**overrides)
+        path = self.root / name
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    def test_legacy_slow_path_seeds_metadata_for_next_run(self):
+        self.stage2_finalize()
+        self.record_validation()
+        self.assertIn("legacy_pack_no_preflight", self.preflight()["reason_codes"])
+        plan = self.save_preflight_file()
+        out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
+                            "--results", self.root / "results",
+                            "--preflight-file", plan))
+        self.assertEqual(out["status"], "ok", out)
+        pack = self._read_pack()
+        self.assertIn("preflight", pack["cache"])
+        self.assertEqual(pack["cache"]["preflight"]["accepted_directions_sha256"],
+                         contact_state.sha256_obj(pack["directions"]))
+        self.assertIn("validator", pack)
+        payload = self.preflight()
+        self.assertEqual(payload["action"], "reuse_all", payload)
+
+    def test_finalize_without_preflight_file_stays_legacy(self):
+        self.stage2_finalize()
+        out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
+                            "--results", self.root / "results"))
+        self.assertEqual(out["status"], "ok", out)
+        self.assertNotIn("preflight", self._read_pack().get("cache", {}))
+
+    def test_finalize_race_on_target_change_writes_nothing(self):
+        self.build_accepted_state()
+        plan = self.save_preflight_file()
+        pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
+        md_before = (self.prof_dir / "套磁候选分析.md").read_bytes()
+        cache_before = (self.prof_dir / "论文分析" / "_freshness_cache.json").read_bytes()
+        self.target["targets"][0]["directions"][0]["user_note"] = "preflight 之后的修改。"
+        self._write_target()
+        out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
+                            "--results", self.root / "results",
+                            "--preflight-file", plan))
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertEqual(out["reason_code"], "preflight_inputs_changed")
+        self.assertEqual((self.prof_dir / "套磁候选输入.json").read_bytes(), pack_before)
+        self.assertEqual((self.prof_dir / "套磁候选分析.md").read_bytes(), md_before)
+        self.assertEqual((self.prof_dir / "论文分析" / "_freshness_cache.json").read_bytes(),
+                         cache_before)
+
+    def test_finalize_race_on_stage1_and_papers_changes_writes_nothing(self):
+        self.build_accepted_state()
+        changed_catalog = json.loads(
+            (self.prof_dir / "papers.json").read_text(encoding="utf-8"))
+        changed_catalog["papers"][0]["title"] = "Late title edit"
+        for mutate in (
+                lambda: (self.snapshot_entry.update(
+                    {"input_fingerprint": "late-stage1-fp"}), self._write_snapshot()),
+                lambda: (self.prof_dir / "papers.json").write_text(
+                    json.dumps(changed_catalog, ensure_ascii=False), encoding="utf-8")):
+            plan = self.save_preflight_file()
+            pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
+            mutate()
+            out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
+                                "--results", self.root / "results",
+                                "--preflight-file", plan))
+            self.assertEqual(out["status"], "needs_refresh", out)
+            self.assertEqual(out["reason_code"], "preflight_inputs_changed")
+            self.assertEqual((self.prof_dir / "套磁候选输入.json").read_bytes(), pack_before)
+
+    def test_finalize_race_on_selection_change_writes_nothing(self):
+        self.build_accepted_state()
+        plan = self.save_preflight_file()
+        pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
+        self.target["targets"][0]["selected_direction_ids"].pop()
+        self._write_target()
+        out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
+                            "--results", self.root / "results",
+                            "--preflight-file", plan))
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertIn("selected_direction_ids", out["drift"])
+        self.assertEqual((self.prof_dir / "套磁候选输入.json").read_bytes(), pack_before)
+
+    def test_finalize_preflight_file_must_match_professor(self):
+        self.stage2_finalize()
+        plan_path = self.root / "preflight.json"
+        plan_path.write_text(json.dumps(
+            {"status": "ok", "professor": "別の教授", "preflight_inputs": {}},
+            ensure_ascii=False), encoding="utf-8")
+        out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
+                            "--results", self.root / "results",
+                            "--preflight-file", plan_path))
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "invalid_params")
+
+    def test_finalize_preflight_file_must_be_a_preflight_payload(self):
+        self.stage2_finalize()
+        plan_path = self.root / "preflight.json"
+        plan_path.write_text(json.dumps({"unrelated": True}), encoding="utf-8")
+        out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
+                            "--results", self.root / "results",
+                            "--preflight-file", plan_path))
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "invalid_params")
+
+    def test_stage3_plan_consumes_pack_with_preflight_cache(self):
+        self.build_accepted_state()
+        fps = {d["collection_key"]: d["input_fingerprint"]
+               for d in self._read_pack()["directions"]}
+        out = parse(run_cli("stage3-plan", "--professor-dir", self.prof_dir,
+                            "--program-root", self.root))
+        self.assertEqual(out["status"], "ok", out)
+        self.assertTrue(out["write_needed"])
+        self.assertEqual({d["collection_key"]: d["input_fingerprint"]
+                          for d in self._read_pack()["directions"]}, fps)
+
+    def test_record_validation_preserves_preflight_cache(self):
+        self.build_accepted_state()
+        self.record_validation()
+        pack = self._read_pack()
+        self.assertIn("preflight", pack["cache"])
+        self.assertIn("validator", pack)
+        payload = self.preflight()
+        self.assertEqual(payload["action"], "reuse_all", payload)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1977,8 +1977,69 @@ def render_analysis_md(ctx: Stage2Context, pack_directions: list,
     return "\n".join(lines).rstrip() + "\n"
 
 
+def stage2_preflight_plan_drift(plan_inputs: dict, current: dict) -> list:
+    """Field-level drift between the saved preflight plan and current inputs."""
+    drift = []
+    if plan_inputs.get("versions") != current["versions"]:
+        drift.append("versions")
+    if plan_inputs.get("current_year") != current["current_year"]:
+        drift.append("current_year")
+    if plan_inputs.get("program_inputs") != current["program_inputs"]:
+        drift.append("program_inputs")
+    if plan_inputs.get("selected_direction_ids") != current["selected_direction_ids"]:
+        drift.append("selected_direction_ids")
+    recorded_directions = plan_inputs.get("directions") or {}
+    if set(recorded_directions) != set(current["directions"]):
+        drift.append("directions")
+    else:
+        for direction_id, entry in current["directions"].items():
+            if recorded_directions.get(direction_id) != entry:
+                drift.append(f"directions:{direction_id}")
+    return sorted(set(drift))
+
+
+def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
+    """Load --preflight-file and re-verify its cheap inputs before any write.
+
+    Stage 2 may run for a long time after the preflight decided to prepare
+    evidence. Stage 0/1 state or papers.json can change underneath; finalize
+    must never stamp results derived from a stale candidate universe as
+    current. Returns (plan, target, snapshot_entry); plan is None when the
+    caller did not pass a preflight file (legacy direct callers).
+    """
+    if not getattr(args, "preflight_file", None):
+        return None, None, None
+    plan, error = read_json_file(Path(args.preflight_file))
+    if (error or not isinstance(plan, dict) or plan.get("status") != "ok"
+            or not isinstance(plan.get("preflight_inputs"), dict)):
+        fail("invalid_params", f"preflight file unreadable or not a preflight payload: "
+                               f"{args.preflight_file}")
+    if plan.get("professor") != ctx.professor:
+        fail("invalid_params", "preflight file professor mismatch: "
+                               f"{plan.get('professor')!r} != {ctx.professor!r}")
+    plan_inputs = plan["preflight_inputs"]
+    params = plan_inputs.get("params")
+    if not isinstance(params, dict) or params.get("gap_scope") != ctx.gap_scope or \
+            params.get("freshness_scope") != ctx.freshness_scope:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=["params"])
+    target = read_stage2_target(ctx.program_root, ctx.professor)
+    snapshot_entry = read_stage1_professor_entry(ctx.program_root, ctx.professor)
+    if target is None or snapshot_entry is None:
+        soft_exit("needs_refresh", "preflight_inputs_changed",
+                  drift=["target_or_snapshot_missing"])
+    current = stage2_preflight_cheap_inputs(
+        ctx.program_root, ctx.professor_dir, target, snapshot_entry, params,
+        ctx.current_year)
+    drift = stage2_preflight_plan_drift(plan_inputs, current)
+    if drift:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=drift)
+    return plan, target, snapshot_entry
+
+
 def cmd_stage2_finalize(args) -> None:
     ctx = Stage2Context(Path(args.facts))
+    preflight_plan, preflight_target, preflight_snapshot = \
+        stage2_finalize_preflight_plan(args, ctx)
     results_dir = Path(args.results)
     decision = None
     if getattr(args, "decision_file", None):
@@ -2032,6 +2093,13 @@ def cmd_stage2_finalize(args) -> None:
     }
     if ctx.pack and not needed_keys and ctx.pack.get("validator"):
         pack["validator"] = ctx.pack["validator"]
+    if preflight_plan is not None:
+        pack["cache"]["preflight"] = stage2_preflight_metadata(
+            program_root=ctx.program_root, professor_dir=ctx.professor_dir,
+            target=preflight_target, snapshot_entry=preflight_snapshot,
+            pack_directions=pack_directions,
+            params=preflight_plan["preflight_inputs"]["params"],
+            current_year=ctx.current_year, ctx=ctx, cache_entries=cache_entries)
     atomic_json(ctx.pack_path, pack)
     save_freshness_cache(ctx.professor_dir, cache_entries)
     judged = sum(1 for statuses in statuses_by_direction.values()
@@ -4470,6 +4538,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--facts", required=True)
     p.add_argument("--results", required=True)
     p.add_argument("--decision-file")
+    p.add_argument("--preflight-file",
+                   help="saved stage2-preflight stdout; re-verifies cheap inputs "
+                        "before any write and seeds cache.preflight")
     p.set_defaults(func=cmd_stage2_finalize)
 
     p = sub.add_parser("stage2-refine-plan")
