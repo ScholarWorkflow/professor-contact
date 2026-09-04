@@ -70,6 +70,20 @@ class Stage1Stage2ContractTests(unittest.TestCase):
         # Correction operations (add/remove) must be available.
         for op in ("papers_to_add", "papers_to_remove"):
             self.assertIn(op, agent)
+        # Proposal lifecycle: a material change is proposed BEFORE the user
+        # chooses, only the successful stage2-finalize application accepts it,
+        # and reuse gates consume accepted entries only.
+        self.assertIn("acceptance", agent)
+        self.assertIn("proposed", agent)
+        self.assertIn("accepted", agent)
+        # Results are bound to the exact direction identity; only split_from
+        # may introduce a new ID via split_target.
+        self.assertIn("resolved_direction_id", agent)
+        self.assertIn("split_target", agent)
+        self.assertIn("invalid_result_json", agent)
+        # Resolution evidence covers the professor-level candidate union, so a
+        # cross-preview-cluster paper can be added from full text alone.
+        self.assertIn("candidate union", agent)
 
     def test_skill_contract_documents_resolved_direction(self):
         """SKILL.md must document the resolved_direction contract."""
@@ -78,6 +92,10 @@ class Stage1Stage2ContractTests(unittest.TestCase):
         )
         # resolved_direction must be referenced as the authoritative Stage 2 output.
         self.assertIn("resolved_direction", skill)
+        # The proposal→acceptance lifecycle and the union evidence scope.
+        self.assertIn("acceptance", skill)
+        self.assertIn("proposed", skill)
+        self.assertIn("candidate union", skill)
 
 
 if __name__ == "__main__":

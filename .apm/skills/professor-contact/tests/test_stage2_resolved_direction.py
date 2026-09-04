@@ -1108,7 +1108,10 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
 
     def test_resolve_finalize_preserves_reused_entries_without_results(self):
         """Re-running resolve-finalize without new results keeps the resolved
-        state (and does not re-raise needs_user_choice for already-applied changes)."""
+        state. Acceptance decides re-prompting: while the refinement is only
+        proposed (the user has not been through stage2-finalize yet), the
+        pending proposal keeps reporting needs_user_choice; once applied, it
+        is accepted and never re-prompted."""
         papers = [
             self.make_paper("P1", "Adaptive Signal Processing", ["信号", "処理"],
                             ["Future work."]),
@@ -1129,18 +1132,37 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
         })
         self.assertTrue(first["needs_user_choice"])
 
-        # Second run with an empty results dir: the entry is reused as-is.
+        # Second run with an empty results dir BEFORE the user chose: the
+        # entry is still only a proposal and keeps asking for the choice.
         results_dir = self.root / "resolve_results"
         for stale in results_dir.glob("resolve-*.json"):
             stale.unlink()
-        second = parse(run_cli("stage2-resolve-finalize",
-                               "--facts", str(facts_path), "--results", str(results_dir)))
-        self.assertEqual(second["status"], "ok",
-                         msg=json.dumps(second, ensure_ascii=False))
-        entry = next(d for d in second["directions"] if d["provisional_direction_id"] == "dir_A")
-        self.assertEqual(entry["resolution_type"], "refined")
-        self.assertFalse(second["needs_user_choice"],
-                         "an already-applied refinement must not re-prompt the user")
+        pending_rerun = parse(run_cli("stage2-resolve-finalize",
+                                      "--facts", str(facts_path), "--results", str(results_dir)))
+        self.assertEqual(pending_rerun["status"], "ok",
+                         msg=json.dumps(pending_rerun, ensure_ascii=False))
+        pending_entry = next(d for d in pending_rerun["directions"]
+                             if d["provisional_direction_id"] == "dir_A")
+        self.assertEqual(pending_entry["resolution_type"], "refined",
+                         "an unanswered proposal must be carried as-is, not reset")
+        self.assertTrue(pending_rerun["needs_user_choice"],
+                        "a still-proposed refinement must keep prompting the user")
+
+        # The user adopts the resolved state (stage2-finalize applies it, which
+        # marks the sidecar accepted): afterwards a re-run must NOT re-prompt.
+        self.run_stage2_finalize(facts_path)
+        sidecar = json.loads((self.prof_dir / "论文分析" / "_resolved_directions.json")
+                             .read_text(encoding="utf-8"))
+        self.assertEqual(sidecar["directions"][0].get("acceptance"), "accepted")
+        accepted_rerun = parse(run_cli("stage2-resolve-finalize",
+                                       "--facts", str(facts_path), "--results", str(results_dir)))
+        self.assertEqual(accepted_rerun["status"], "ok",
+                         msg=json.dumps(accepted_rerun, ensure_ascii=False))
+        accepted_entry = next(d for d in accepted_rerun["directions"]
+                              if d["provisional_direction_id"] == "dir_A")
+        self.assertEqual(accepted_entry["resolution_type"], "refined")
+        self.assertFalse(accepted_rerun["needs_user_choice"],
+                         "an accepted refinement must not re-prompt the user")
 
 
 if __name__ == "__main__":
