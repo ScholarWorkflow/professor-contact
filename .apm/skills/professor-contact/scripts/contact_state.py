@@ -428,8 +428,9 @@ def sidecar_analysis_matches(recorded: Any, expected_analysis: str) -> bool:
 
     Canonical paper-analysis sidecars record the basename (`analysis.name` in
     both `future_work.py` and `facts.py`); legacy sidecars recorded the absolute
-    analysis path. Both forms bind the sidecar to its exact sibling analysis —
-    anything else (relative paths with separators, foreign names) does not.
+    analysis path. This binds only the recorded field: the physical sidecar
+    location is bound separately by the sibling-path check in the loaders, which
+    is what keeps same-basename analyses in different directories apart.
     """
     if not isinstance(recorded, str) or not recorded.strip():
         return False
@@ -442,8 +443,28 @@ def sidecar_analysis_matches(recorded: Any, expected_analysis: str) -> bool:
     return len(path.parts) == 1 and path.name == Path(expected_analysis).name
 
 
+def sidecar_path_matches(path: Path, expected_analysis: str, suffix: str) -> bool:
+    """Require the sidecar file to be the analysis's exact sibling on disk.
+
+    `<analysis>.future_work.json` / `<analysis>.facts.json` are written next to
+    their analysis by every paper-analysis writer. Accepting any other location
+    would let a mis-assembled sidecar reference lend one analysis's evidence to
+    another with the same basename.
+    """
+    expected_sibling = Path(str(expected_analysis) + suffix)
+    try:
+        return path.resolve() == expected_sibling.resolve()
+    except OSError:
+        return False
+
+
 def load_sidecar(path: str | None, expected_analysis: str | None = None) -> tuple[list, list, str | None]:
-    """Return (anchorable_items, legacy_items, error)."""
+    """Return (anchorable_items, legacy_items, error).
+
+    With `expected_analysis`, the sidecar must be that analysis's exact
+    `<analysis>.future_work.json` sibling and its recorded `analysis` field must
+    bind to the same analysis.
+    """
     if not path:
         return [], [], None
     sidecar_path = Path(path)
@@ -458,6 +479,8 @@ def load_sidecar(path: str | None, expected_analysis: str | None = None) -> tupl
     if extractor_version not in SIDECAR_EXTRACTOR_VERSIONS:
         return [], [], "invalid"
     if expected_analysis:
+        if not sidecar_path_matches(sidecar_path, expected_analysis, ".future_work.json"):
+            return [], [], "invalid"
         if not sidecar_analysis_matches(data.get("analysis"), expected_analysis):
             return [], [], "invalid"
     elif not isinstance(data.get("analysis"), str) or not data["analysis"].strip():
@@ -511,8 +534,9 @@ def load_facts_sidecar(
     """Validate a paper-analysis `<analysis>.facts.json` sidecar for reuse.
 
     Returns (normalized_facts, facts_state, facts_error). The sidecar is only
-    reusable when its schema/generator are known, it names the current analysis,
-    its `input_fingerprint` matches the sha256 of the current source PDF, and its
+    reusable when it is the analysis's exact `.facts.json` sibling, its
+    schema/generator are known, it names the current analysis, its
+    `input_fingerprint` matches the sha256 of the current source PDF, and its
     `future_work_ids` are exact joins into the current valid future-work sidecar
     (which stays the authoritative quoted evidence). Any mismatch fails closed:
     no normalized facts are exposed and the caller must not re-derive them with
@@ -530,6 +554,8 @@ def load_facts_sidecar(
             or data.get("status") != "ok"
             or data.get("generator_version") not in FACTS_GENERATOR_VERSIONS
             or data.get("evidence_level") != "fulltext"):
+        return None, "failed", "invalid_facts_sidecar"
+    if expected_analysis and not sidecar_path_matches(path, expected_analysis, ".facts.json"):
         return None, "failed", "invalid_facts_sidecar"
     recorded_analysis = data.get("analysis")
     if not isinstance(recorded_analysis, str) or not recorded_analysis.strip():

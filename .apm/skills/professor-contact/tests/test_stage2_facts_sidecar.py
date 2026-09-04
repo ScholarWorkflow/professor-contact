@@ -98,6 +98,7 @@ class FactsSidecarTests(unittest.TestCase):
         (self.prof_dir / "论文分析").mkdir(parents=True)
         self.pdf = self.root / "paper-AAAA.pdf"
         self.pdf.write_bytes(b"%PDF-1.4\nsynthetic full body")
+        self.gap_quotes = dict(GAP_QUOTES)
         self.papers = [
             {"item_key": "AAAA1111", "title": "Synthetic comparison of input patterns",
              "year": 2023, "month": 5, "authorship": "corresponding",
@@ -108,7 +109,7 @@ class FactsSidecarTests(unittest.TestCase):
              "abstract": "A synthetic system for comparing two processing paths.",
              "has_pdf": False, "authors": ["Example Professor"]},
         ]
-        for key, quote in GAP_QUOTES.items():
+        for key, quote in self.gap_quotes.items():
             analysis = self.prof_dir / "论文分析" / f"{key}.md"
             analysis.write_text("# analysis\n", encoding="utf-8")
             sidecar = make_sidecar(analysis, [quote])
@@ -151,7 +152,7 @@ class FactsSidecarTests(unittest.TestCase):
     def write_stage2_results(self, results: Path):
         results.mkdir(parents=True, exist_ok=True)
         rows = []
-        for key, quote in GAP_QUOTES.items():
+        for key, quote in self.gap_quotes.items():
             rows.append({"gap_id": quote_id(quote), "status": "open",
                          "candidate_paper_ids": [], "evidence": f"无更晚论文实现该点（{key}）",
                          "confidence": "high"})
@@ -241,6 +242,82 @@ class FactsSidecarTests(unittest.TestCase):
         self.assertEqual(row["facts_state"], "failed")
         self.assertEqual(row["facts_error"], "invalid_facts_sidecar")
         self.assertIsNone(row["paper_facts"])
+
+    def _same_basename_setup(self, *, misdirect_sidecar_for=None, misdirect_facts_for=None):
+        """Two same-basename analyses in different author directories.
+
+        Both canonical sidecars legitimately record `analysis: "T.md"`, so only
+        the physical sibling location tells them apart.
+        """
+        quote_a = GAP_QUOTES["AAAA1111"]
+        quote_b = GAP_QUOTES["BBBB2222"]
+        analysis_a = self.prof_dir / "论文分析" / "A" / "T.md"
+        analysis_b = self.prof_dir / "论文分析" / "B" / "T.md"
+        for analysis in (analysis_a, analysis_b):
+            analysis.parent.mkdir(parents=True, exist_ok=True)
+            analysis.write_text("# analysis\n", encoding="utf-8")
+        sidecar_a = make_sidecar(analysis_a, [quote_a])
+        sidecar_b = make_sidecar(analysis_b, [quote_b])
+        pdf_a = self.root / "paper-A.pdf"
+        pdf_a.write_bytes(b"%PDF-1.4\npaper A")
+        pdf_b = self.root / "paper-B.pdf"
+        pdf_b.write_bytes(b"%PDF-1.4\npaper B")
+        facts_a = make_facts_sidecar(analysis_a, pdf_a, [quote_a])
+        facts_b = make_facts_sidecar(analysis_b, pdf_b, [quote_b])
+        # With a misdirected sidecar the victim loses its gap, so only the
+        # healthy paper's gap is judged in the stage2 results.
+        if misdirect_sidecar_for:
+            self.gap_quotes = {"AAAA1111": quote_a}
+        else:
+            self.gap_quotes = {"AAAA1111": quote_a, "BBBB2222": quote_b}
+        self.papers = [
+            {"item_key": "AAAA1111", "title": "Same synthetic title",
+             "year": 2023, "month": 5, "authorship": "corresponding",
+             "abstract": "Abstract A.", "has_pdf": True,
+             "authors": ["Example Professor"],
+             "analysis_file": str(analysis_a),
+             "sidecar_file": str(sidecar_a),
+             "facts_file": str(facts_b if misdirect_facts_for == "AAAA1111" else facts_a),
+             "pdf_file": str(pdf_a)},
+            {"item_key": "BBBB2222", "title": "Same synthetic title",
+             "year": 2024, "month": 3, "authorship": "first",
+             "abstract": "Abstract B.", "has_pdf": True,
+             "authors": ["Example Professor"],
+             "analysis_file": str(analysis_b),
+             "sidecar_file": str(sidecar_a if misdirect_sidecar_for == "BBBB2222" else sidecar_b),
+             "facts_file": str(facts_b),
+             "pdf_file": str(pdf_b)},
+        ]
+
+    def test_same_basename_sidecar_from_wrong_directory_is_rejected(self):
+        # B's sidecar_file is mis-assembled to point at A's sidecar; both
+        # canonical sidecars say analysis="T.md", so only the exact sibling
+        # binding can keep A's future-work evidence from leaking into B.
+        self._same_basename_setup(misdirect_sidecar_for="BBBB2222")
+        pack = self.stage2_run()
+        shortlist = pack["directions"][0]["gap_shortlist"]
+        self.assertEqual(len(shortlist), 1)
+        self.assertEqual(shortlist[0]["item_key"], "AAAA1111")
+        self.assertEqual(shortlist[0]["gap_id"], quote_id(GAP_QUOTES["AAAA1111"]))
+        row_b = self.supporting(pack, "BBBB2222")
+        self.assertEqual(row_b["facts_state"], "failed")
+        self.assertEqual(row_b["facts_error"], "facts_future_work_join_mismatch")
+        self.assertIsNone(row_b["paper_facts"])
+        row_a = self.supporting(pack, "AAAA1111")
+        self.assertEqual(row_a["facts_state"], "valid")
+
+    def test_facts_sidecar_from_wrong_directory_is_rejected(self):
+        # A's facts_file points at B's facts sidecar: same basename, valid JSON,
+        # but the wrong physical sibling — the facts record must fail closed.
+        self._same_basename_setup(misdirect_facts_for="AAAA1111")
+        pack = self.stage2_run()
+        row_a = self.supporting(pack, "AAAA1111")
+        self.assertEqual(row_a["facts_state"], "failed")
+        self.assertEqual(row_a["facts_error"], "invalid_facts_sidecar")
+        self.assertIsNone(row_a["paper_facts"])
+        row_b = self.supporting(pack, "BBBB2222")
+        self.assertEqual(row_b["facts_state"], "valid")
+        self.assertIsNotNone(row_b["paper_facts"])
 
     def test_source_fingerprint_mismatch_fails_closed(self):
         stale = make_facts_sidecar(
