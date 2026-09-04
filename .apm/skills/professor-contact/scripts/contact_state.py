@@ -24,9 +24,13 @@ from typing import Any
 SCHEMA = 1
 MANAGED_BY = "contact_state"
 # v2 adds per-entry `acceptance` ("proposed"|"accepted"): a material change is
-# written as proposed BEFORE the user makes the Stage-2 choice, and only the
-# successful stage2-finalize application (i.e. the user adopting it) marks it
-# accepted. Reuse gates only ever consume accepted entries.
+# written as proposed BEFORE the user makes the Stage-2 choice. Acceptance is
+# a machine-enforced boundary, not a side effect: an entry becomes accepted
+# ONLY via `stage2-resolve-accept --ckeys` (the user adopting the proposal) or
+# `stage2-resolve-finalize --keep-provisional` (the user explicitly keeping the
+# provisional identity). stage2-finalize fails closed on any sidecar that
+# still contains proposed entries and never flips acceptance itself. Reuse
+# gates only ever consume accepted entries.
 RESOLVED_DIRECTION_SCHEMA = 2
 INPUT_PACK = "套磁候选输入.json"
 CANDIDATE_STATE = "套磁候选状态.json"
@@ -2225,6 +2229,73 @@ def cmd_stage2_resolve_finalize(args) -> None:
     })
 
 
+def cmd_stage2_resolve_accept(args) -> None:
+    """Record the user's explicit adoption of proposed resolved directions.
+
+    This command IS the user-choice machine boundary (issue #7 required flow
+    #5): the ONLY deterministic ways an entry flips proposed -> accepted are
+    this command (adopt the proposal) and `stage2-resolve-finalize
+    --keep-provisional` (keep the provisional identity instead).
+    stage2-finalize refuses to apply any sidecar that still carries proposed
+    entries, so adoption can never be bypassed by passing the sidecar file
+    around. Acceptance is per-direction: the adopted ckeys must be named
+    explicitly, and each named entry's input_fingerprint must still match the
+    current facts (a stale proposal fails closed and must be re-resolved).
+    """
+    ctx = Stage2Context(Path(args.facts))
+    ckeys = [k.strip() for k in (args.ckeys or "").split(",") if k.strip()]
+    if not ckeys:
+        fail("invalid_accept_keys",
+             "--ckeys must name at least one direction to accept (comma-separated collection keys)")
+    resolved_path = ctx.professor_dir / "论文分析" / "_resolved_directions.json"
+    data, error = read_json_file(resolved_path)
+    if error is not None or not isinstance(data, dict):
+        fail("missing_resolved_directions",
+             f"no readable resolved directions file to accept: {resolved_path}")
+    if data.get("schema") != RESOLVED_DIRECTION_SCHEMA or \
+            data.get("kind") != "professor-contact-resolved-directions":
+        fail("invalid_resolved_directions",
+             f"resolved directions schema/kind mismatch: {resolved_path}")
+    if data.get("professor") != ctx.professor:
+        fail("resolved_directions_professor_mismatch",
+             f"resolved directions file belongs to professor {data.get('professor')!r}, "
+             f"not {ctx.professor!r}", path=str(resolved_path))
+    entries = {d["provisional_direction_id"]: d
+               for d in data.get("directions", [])
+               if isinstance(d, dict) and isinstance(d.get("provisional_direction_id"), str)}
+    unknown = [k for k in ckeys if k not in entries]
+    if unknown:
+        fail("invalid_accept_keys",
+             f"--ckeys name directions missing from the resolved directions file: {unknown}")
+    evidence = _resolve_evidence(ctx)
+    stale = []
+    for plan in ctx.direction_plans:
+        if plan["ckey"] not in ckeys:
+            continue
+        if entries[plan["ckey"]].get("input_fingerprint") != \
+                _current_resolve_fingerprint(ctx, plan, evidence):
+            stale.append({"direction": plan["ckey"], "problem": "input_fingerprint_mismatch"})
+    if stale:
+        fail("resolved_directions_stale",
+             "proposed resolutions no longer match current facts; re-run stage2-resolve before accepting",
+             stale_directions=stale, path=str(resolved_path))
+    accepted = []
+    for k in ckeys:
+        if entries[k].get("acceptance") != "accepted":
+            entries[k]["acceptance"] = "accepted"
+            accepted.append(k)
+    atomic_json(resolved_path, data)
+    emit({
+        "status": "ok",
+        "professor": ctx.professor,
+        "resolved_directions_path": str(resolved_path),
+        "accepted": accepted,
+        "already_accepted": [k for k in ckeys if k not in accepted],
+        "still_proposed": sorted(pid for pid, d in entries.items()
+                                 if d.get("acceptance") != "accepted"),
+    })
+
+
 def cmd_stage2_plan(args) -> None:
     ctx = Stage2Context(Path(args.facts))
     jobs, reuse_list, process_list = [], [], []
@@ -2846,6 +2917,21 @@ def cmd_stage2_finalize(args) -> None:
             fail("resolved_directions_stale",
                  "resolved directions do not match current facts; re-run stage2-resolve",
                  stale_directions=stale, path=str(resolved_directions_path))
+        # Acceptance is the user-choice machine boundary (issue #7 required flow
+        # #5): a material change stays "proposed" until the user explicitly
+        # adopts it (stage2-resolve-accept) or keeps provisional
+        # (--keep-provisional). A sidecar carrying any proposed entry must
+        # NEVER be applied — the choice cannot be bypassed by passing the
+        # sidecar file directly.
+        not_accepted = sorted(
+            plan["ckey"] for plan in ctx.direction_plans
+            if (resolved_directions.get(plan["ckey"]) or {}).get("acceptance") != "accepted")
+        if not_accepted:
+            fail("resolved_directions_not_accepted",
+                 "resolved directions still contain unaccepted proposals; the user must choose "
+                 "first (stage2-resolve-accept --ckeys <dir,...> to adopt, or stage2-resolve-finalize "
+                 "--keep-provisional <dir,...> to keep provisional) before stage2-finalize may apply them",
+                 not_accepted_directions=not_accepted, path=str(resolved_directions_path))
 
     required_freshness, needed_keys = {}, []
     for plan in ctx.direction_plans:
@@ -3181,16 +3267,10 @@ def cmd_stage2_finalize(args) -> None:
         pack["validator"] = ctx.pack["validator"]
     atomic_json(ctx.pack_path, pack)
     save_freshness_cache(ctx.professor_dir, cache_entries)
-    if resolved_directions:
-        # A successful application IS the user's acceptance of the resolved
-        # state: the analyzer only passes --resolved-directions after the user
-        # chose "adopt" (falling back to provisional skips this command). Mark
-        # every sidecar entry accepted so the next resolve plan can reuse it
-        # instead of re-prompting an already-adopted proposal.
-        for entry in rd_data.get("directions", []):
-            if isinstance(entry, dict):
-                entry["acceptance"] = "accepted"
-        atomic_json(Path(resolved_directions_path), rd_data)
+    # NOTE: stage2-finalize deliberately does NOT touch the sidecar's
+    # acceptance flags. Only stage2-resolve-accept / --keep-provisional may
+    # flip proposed -> accepted; application and acceptance are separate
+    # machine steps so an unconfirmed proposal can never enter the pack.
     judged = sum(1 for statuses in statuses_by_direction.values()
                  for record in statuses.values()
                  if isinstance(record, dict) and not record.get("cache_hit"))
@@ -5625,6 +5705,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "provisional; persisted as accepted resolved state (decision="
                         "user_kept_provisional) instead of leaving a pending proposal")
     p.set_defaults(func=lambda a: cmd_stage2_resolve_finalize(a))
+
+    p = sub.add_parser("stage2-resolve-accept")
+    p.add_argument("--facts", required=True)
+    p.add_argument("--ckeys", required=True,
+                   help="comma-separated collection keys the user adopted; flips their "
+                        "proposed resolved entries to accepted so stage2-finalize may apply them")
+    p.set_defaults(func=lambda a: cmd_stage2_resolve_accept(a))
 
     p = sub.add_parser("stage2-plan")
     p.add_argument("--facts", required=True)

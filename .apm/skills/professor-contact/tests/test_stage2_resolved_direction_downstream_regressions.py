@@ -51,6 +51,8 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
                 "user_note": "",
             },
         })
+        accepted = self.accept_resolved(facts_path, ["dir_A"])
+        self.assertEqual(accepted["status"], "ok", msg=json.dumps(accepted, ensure_ascii=False))
         second_finalize = self.run_stage2_finalize(facts_path)
         self.assertEqual(second_finalize["status"], "ok")
         direction = self.load_pack()["directions"][0]
@@ -92,6 +94,8 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
                 "user_note": "",
             },
         })
+        accepted = self.accept_resolved(facts_path, ["dir_A"])
+        self.assertEqual(accepted["status"], "ok", msg=json.dumps(accepted, ensure_ascii=False))
         payload = self.run_stage2_finalize(facts_path)
         self.assertEqual(payload["status"], "ok")
 
@@ -130,6 +134,8 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
         }
 
         self.run_resolve(facts_path, {"dir_A": split})
+        accepted = self.accept_resolved(facts_path, ["dir_A"])
+        self.assertEqual(accepted["status"], "ok", msg=json.dumps(accepted, ensure_ascii=False))
         first = self.run_stage2_finalize(facts_path)
         self.assertEqual(first["status"], "ok")
         first_by_key = {d["collection_key"]: d for d in self.load_pack()["directions"]}

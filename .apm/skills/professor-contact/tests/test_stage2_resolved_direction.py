@@ -480,6 +480,11 @@ class ResolvedPipelineMixin:
                          msg=json.dumps(finalize_payload, ensure_ascii=False))
         return plan_payload, finalize_payload
 
+    def accept_resolved(self, facts_path, ckeys):
+        """stage2-resolve-accept: the user adopts the named proposals."""
+        return parse(run_cli("stage2-resolve-accept", "--facts", str(facts_path),
+                             "--ckeys", ",".join(ckeys)))
+
     def run_stage2_finalize(self, facts_path):
         """stage2-plan → freshness/narrative results → stage2-finalize with the sidecar."""
         plan_payload = parse(run_cli("stage2-plan", "--facts", str(facts_path)))
@@ -556,6 +561,12 @@ class Stage2FinalizeWithResolvedTests(ResolvedPipelineMixin, unittest.TestCase):
             },
         })
         self.assertTrue(resolve_payload["needs_user_choice"])
+
+        # The user adopts the refinement: the proposal must be accepted
+        # explicitly BEFORE stage2-finalize may apply it.
+        accepted = self.accept_resolved(facts_path, ["dir_A"])
+        self.assertEqual(accepted["status"], "ok", msg=json.dumps(accepted, ensure_ascii=False))
+        self.assertEqual(accepted["accepted"], ["dir_A"])
 
         payload = self.run_stage2_finalize(facts_path)
         self.assertEqual(payload["status"], "ok",
@@ -779,6 +790,9 @@ class Stage2SplitEndToEndTests(ResolvedPipelineMixin, unittest.TestCase):
         self.assertTrue(resolve_payload["needs_user_choice"])
         self.assertEqual(resolve_payload["new_splits"][0]["new_resolved_id"], "dir_A__control")
 
+        accepted = self.accept_resolved(facts_path, ["dir_A"])
+        self.assertEqual(accepted["status"], "ok", msg=json.dumps(accepted, ensure_ascii=False))
+
         payload = self.run_stage2_finalize(facts_path)
         self.assertEqual(payload["status"], "ok",
                          msg=json.dumps(payload, ensure_ascii=False))
@@ -850,6 +864,9 @@ class Stage2SplitEndToEndTests(ResolvedPipelineMixin, unittest.TestCase):
             },
         })
         self.assertTrue(resolve_payload["needs_user_choice"])
+
+        accepted = self.accept_resolved(facts_path, ["dir_B"])
+        self.assertEqual(accepted["status"], "ok", msg=json.dumps(accepted, ensure_ascii=False))
 
         payload = self.run_stage2_finalize(facts_path)
         self.assertEqual(payload["status"], "ok",
@@ -1021,6 +1038,8 @@ class Stage2SplitReuseChainTests(ResolvedPipelineMixin, unittest.TestCase):
         }
 
         self.run_resolve(facts_path, {"dir_A": split})
+        accepted = self.accept_resolved(facts_path, ["dir_A"])
+        self.assertEqual(accepted["status"], "ok", msg=json.dumps(accepted, ensure_ascii=False))
         first = self.run_stage2_finalize(facts_path)
         self.assertEqual(first["status"], "ok", msg=json.dumps(first, ensure_ascii=False))
         first_by_key = {d["collection_key"]: d for d in self.load_pack()["directions"]}
@@ -1113,9 +1132,9 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
     def test_resolve_finalize_preserves_reused_entries_without_results(self):
         """Re-running resolve-finalize without new results keeps the resolved
         state. Acceptance decides re-prompting: while the refinement is only
-        proposed (the user has not been through stage2-finalize yet), the
-        pending proposal keeps reporting needs_user_choice; once applied, it
-        is accepted and never re-prompted."""
+        proposed, the pending proposal keeps reporting needs_user_choice and
+        stage2-finalize refuses to apply it; only the explicit accept command
+        flips it, after which it is never re-prompted."""
         papers = [
             self.make_paper("P1", "Adaptive Signal Processing", ["信号", "処理"],
                             ["Future work."]),
@@ -1152,9 +1171,17 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
         self.assertTrue(pending_rerun["needs_user_choice"],
                         "a still-proposed refinement must keep prompting the user")
 
-        # The user adopts the resolved state (stage2-finalize applies it, which
-        # marks the sidecar accepted): afterwards a re-run must NOT re-prompt.
-        self.run_stage2_finalize(facts_path)
+        # A proposal must NEVER be applied by stage2-finalize on its own:
+        # passing the sidecar while the choice is pending fails closed.
+        rejected = self.run_stage2_finalize(facts_path)
+        self.assertEqual(rejected["status"], "error")
+        self.assertEqual(rejected["reason_code"], "resolved_directions_not_accepted")
+        self.assertEqual(rejected["not_accepted_directions"], ["dir_A"])
+
+        # The user adopts via the explicit accept command; afterwards a
+        # resolve-finalize re-run must NOT re-prompt, and finalize applies.
+        accepted = self.accept_resolved(facts_path, ["dir_A"])
+        self.assertEqual(accepted["status"], "ok", msg=json.dumps(accepted, ensure_ascii=False))
         sidecar = json.loads((self.prof_dir / "论文分析" / "_resolved_directions.json")
                              .read_text(encoding="utf-8"))
         self.assertEqual(sidecar["directions"][0].get("acceptance"), "accepted")
@@ -1167,6 +1194,14 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
         self.assertEqual(accepted_entry["resolution_type"], "refined")
         self.assertFalse(accepted_rerun["needs_user_choice"],
                          "an accepted refinement must not re-prompt the user")
+
+        payload = self.run_stage2_finalize(facts_path)
+        self.assertEqual(payload["status"], "ok",
+                         msg=json.dumps(payload, ensure_ascii=False))
+        self.assertTrue(payload["resolved_directions_applied"])
+        pack = self.load_pack()
+        supporting = {p["item_key"] for p in pack["directions"][0]["supporting_papers"]}
+        self.assertEqual(supporting, {"P1"})
 
 
 class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
@@ -1383,6 +1418,181 @@ class StructuralResolutionEvidenceGateTests(ResolvedPipelineMixin, unittest.Test
         self.assertEqual(payload["status"], "error", msg=json.dumps(payload, ensure_ascii=False))
         self.assertEqual(payload["reason_code"], "invalid_result_json")
         self.assertIn("full-text", payload["message"])
+
+
+class ResolveAcceptanceBoundaryTests(ResolvedPipelineMixin, unittest.TestCase):
+    """Acceptance is a machine-enforced user-choice boundary (issue #7 flow #5).
+
+    stage2-finalize must refuse to apply a sidecar that still carries proposed
+    material changes: neither passing the sidecar file directly nor keeping
+    provisional for only SOME directions may smuggle an unconfirmed proposal
+    into the pack, and finalize itself must never flip acceptance flags.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.prof_dir = self.root / "教授研究" / "X分野" / "試験 教授"
+        (self.prof_dir / "论文分析").mkdir(parents=True)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _two_direction_facts(self):
+        papers = [
+            self.make_paper("P1", "Adaptive Signal Processing", ["signal", "processing"],
+                            ["Future work A."]),
+            self.make_paper("P2", "Catalytic Chemistry", ["catalytic", "chemistry"],
+                            ["Future work B."]),
+            self.make_paper("P3", "Electro Chemical Sensors", ["electro", "sensors"],
+                            ["Future work C."]),
+        ]
+        directions = [
+            self.make_direction("dir_A", ["P1"], name_ja="信号処理", name_zh="信号处理",
+                                summary="signal processing"),
+            self.make_direction("dir_B", ["P2", "P3"], name_ja="触媒化学", name_zh="催化化学",
+                                summary="catalytic chemistry"),
+        ]
+        return self.write_facts(papers, directions)
+
+    @staticmethod
+    def _rename_proposal():
+        return {
+            "resolved_direction_id": "dir_A",
+            "provisional_direction_id": "dir_A",
+            "name_ja": "適応信号処理",
+            "name_zh": "自适应信号处理",
+            "resolution_type": "renamed",
+            "papers_to_add": [],
+            "papers_to_remove": [],
+            "paper_justifications": {"P1": "rename follows full-text evidence"},
+            "split_target": None,
+            "merge_target": None,
+            "user_note": "",
+        }
+
+    @staticmethod
+    def _refine_out_proposal():
+        return {
+            "resolved_direction_id": "dir_B",
+            "provisional_direction_id": "dir_B",
+            "name_ja": "触媒化学",
+            "name_zh": "催化化学",
+            "resolution_type": "refined",
+            "papers_to_add": [],
+            "papers_to_remove": ["P3"],
+            "paper_justifications": {"P3": "electro-sensor line is off the catalysis mainline"},
+            "split_target": None,
+            "merge_target": None,
+            "user_note": "",
+        }
+
+    def _sidecar_entries(self):
+        sidecar = json.loads((self.prof_dir / "论文分析" / "_resolved_directions.json")
+                             .read_text(encoding="utf-8"))
+        return {d["provisional_direction_id"]: d for d in sidecar["directions"]}
+
+    def test_finalize_rejects_sidecar_with_unaccepted_material_proposal(self):
+        """A material proposal passed directly to stage2-finalize fails closed
+        and the previously accepted pack stays byte-identical."""
+        facts_path = self._two_direction_facts()
+
+        # Baseline: unchanged resolution → finalize builds the first pack.
+        self.run_resolve(facts_path, {})
+        baseline = self.run_stage2_finalize(facts_path)
+        self.assertEqual(baseline["status"], "ok", msg=json.dumps(baseline, ensure_ascii=False))
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        pack_before = pack_path.read_text(encoding="utf-8")
+
+        # A facts change re-opens dir_A and produces a material rename proposal.
+        make_facts_sidecar(self.prof_dir / "论文分析" / "P1.md", self.root / "P1.pdf",
+                           ["Future work A."], topic_terms=["適応", "信号処理"])
+        _, proposal = self.run_resolve(facts_path, {"dir_A": self._rename_proposal()})
+        self.assertTrue(proposal["needs_user_choice"])
+        self.assertEqual(self._sidecar_entries()["dir_A"]["acceptance"], "proposed")
+
+        # Passing the sidecar WITHOUT the user's choice must fail closed and
+        # leave the old pack exactly as it was.
+        rejected = self.run_stage2_finalize(facts_path)
+        self.assertEqual(rejected["status"], "error")
+        self.assertEqual(rejected["reason_code"], "resolved_directions_not_accepted")
+        self.assertEqual(rejected["not_accepted_directions"], ["dir_A"])
+        self.assertEqual(pack_path.read_text(encoding="utf-8"), pack_before,
+                         "a rejected finalize must not touch the existing pack")
+
+    def test_finalize_rejects_partially_kept_provisional_sidecar(self):
+        """--keep-provisional for only SOME directions: the still-proposed
+        remainder blocks stage2-finalize instead of being silently applied
+        or marked accepted."""
+        facts_path = self._two_direction_facts()
+        _, proposal = self.run_resolve(facts_path, {
+            "dir_A": self._rename_proposal(),
+            "dir_B": self._refine_out_proposal(),
+        })
+        self.assertTrue(proposal["needs_user_choice"])
+
+        results_dir = self.root / "resolve_results"
+        kept = parse(run_cli("stage2-resolve-finalize", "--facts", str(facts_path),
+                             "--results", str(results_dir), "--keep-provisional", "dir_A"))
+        self.assertEqual(kept["status"], "ok", msg=json.dumps(kept, ensure_ascii=False))
+        entries = self._sidecar_entries()
+        self.assertEqual(entries["dir_A"]["acceptance"], "accepted")
+        self.assertEqual(entries["dir_A"]["decision"], "user_kept_provisional")
+        self.assertEqual(entries["dir_B"]["acceptance"], "proposed",
+                         "keep-provisional must stay scoped to the named directions")
+
+        rejected = self.run_stage2_finalize(facts_path)
+        self.assertEqual(rejected["status"], "error")
+        self.assertEqual(rejected["reason_code"], "resolved_directions_not_accepted")
+        self.assertEqual(rejected["not_accepted_directions"], ["dir_B"])
+        # finalize must not have flipped the remaining proposal either.
+        self.assertEqual(self._sidecar_entries()["dir_B"]["acceptance"], "proposed")
+        self.assertFalse((self.prof_dir / "套磁候选输入.json").exists(),
+                         "a rejected finalize must not write an input pack")
+
+    def test_resolve_accept_command_validates_keys_and_staleness(self):
+        """stage2-resolve-accept is the only adopt path: it rejects unknown
+        keys and stale proposals, is idempotent, and unblocks finalize."""
+        facts_path = self._two_direction_facts()
+
+        # No sidecar yet → nothing to accept.
+        missing = parse(run_cli("stage2-resolve-accept", "--facts", str(facts_path),
+                                "--ckeys", "dir_A"))
+        self.assertEqual(missing["status"], "error")
+        self.assertEqual(missing["reason_code"], "missing_resolved_directions")
+
+        self.run_resolve(facts_path, {})
+        unknown = parse(run_cli("stage2-resolve-accept", "--facts", str(facts_path),
+                                "--ckeys", "dir_A__ghost"))
+        self.assertEqual(unknown["status"], "error")
+        self.assertEqual(unknown["reason_code"], "invalid_accept_keys")
+
+        # A facts change re-opens both directions, then the model proposes two
+        # material changes; adopt dir_A only.
+        make_facts_sidecar(self.prof_dir / "论文分析" / "P1.md", self.root / "P1.pdf",
+                           ["Future work A."], topic_terms=["適応", "信号処理"])
+        _, proposal = self.run_resolve(facts_path, {
+            "dir_A": self._rename_proposal(),
+            "dir_B": self._refine_out_proposal(),
+        })
+        self.assertTrue(proposal["needs_user_choice"])
+        first = self.accept_resolved(facts_path, ["dir_A"])
+        self.assertEqual(first["status"], "ok", msg=json.dumps(first, ensure_ascii=False))
+        self.assertEqual(first["accepted"], ["dir_A"])
+        self.assertEqual(first["still_proposed"], ["dir_B"])
+        # Accepting an already-accepted direction is an idempotent no-op.
+        again = self.accept_resolved(facts_path, ["dir_A"])
+        self.assertEqual(again["accepted"], [])
+        self.assertEqual(again["already_accepted"], ["dir_A"])
+
+        # A proposal whose fingerprint no longer matches the facts is stale:
+        # accepting it must fail closed instead of blessing outdated evidence.
+        make_facts_sidecar(self.prof_dir / "论文分析" / "P3.md", self.root / "P3.pdf",
+                           ["Future work C."], topic_terms=["電気", "化学"])
+        stale = self.accept_resolved(facts_path, ["dir_B"])
+        self.assertEqual(stale["status"], "error")
+        self.assertEqual(stale["reason_code"], "resolved_directions_stale")
+        self.assertEqual(self._sidecar_entries()["dir_B"]["acceptance"], "proposed")
 
 
 if __name__ == "__main__":
