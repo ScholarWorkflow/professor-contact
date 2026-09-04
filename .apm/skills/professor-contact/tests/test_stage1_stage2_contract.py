@@ -138,6 +138,26 @@ class Stage2PreflightContractTests(unittest.TestCase):
         # Stage 3 stays the only consumer of directions[]; preflight is cache.
         self.assertIn("仅 cache，Stage 3 不读取", skill)
 
+    def test_analyzer_contract_binds_facts_to_the_preflight_proof(self):
+        agent = (ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md").read_text(
+            encoding="utf-8"
+        )
+        # Step 6.1 carries the saved proof id into the facts JSON...
+        self.assertIn('"stage2_preflight": {"preflight_id"', agent)
+        facts_section = agent[agent.index("6.1 采集 facts JSON"):
+                              agent.index("6.3 跑 `stage2-finalize`")]
+        self.assertIn("preflight_id", facts_section)
+        # ...and finalize verifies the binding before any write.
+        finalize_section = agent[agent.index("6.3 跑 `stage2-finalize`"):]
+        self.assertIn("preflight_proof_id", finalize_section)
+        self.assertIn("preflight_proof_binding", finalize_section)
+        self.assertIn("任何写盘之前", finalize_section)
+        # The gate documents fail-closed handling for malformed cache shapes.
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("preflight_cache_malformed", skill)
+        self.assertIn("preflight_record_missing", skill)
+        self.assertIn("stage2_preflight.preflight_id", skill)
+
 
 if __name__ == "__main__":
     unittest.main()
