@@ -179,15 +179,15 @@ preview 聚类以**摘要**为证据，可能把论文误放进 / 漏出某个�
 
 流水线（在 `stage2-plan/finalize` 之前必须完成）：
 
-1. `contact_state.py stage2-resolve-plan --facts <facts>` —— 纯确定性零模型，给出 `candidates.{additions,removals,splits,merges}` 列表与每个方向一个 `resolve:<教授>:<方向>` job。
-2. 模型按 job 写 `results/resolve-<方向>.json`：每方向 `resolved.{resolved_direction_id,provisional_direction_id,name_ja,name_zh,resolution_type,papers_to_add,papers_to_remove,paper_justifications,split_target,merge_target,user_note}`，resolution_type ∈ {`unchanged`/`renamed`/`split_from`/`merged_into`/`refined`}。
-3. `contact_state.py stage2-resolve-finalize --facts <facts> --results <results>` —— 校验 schema/合法性（`papers_to_remove` 必须是 provisional member、`papers_to_add` 必须在 candidate 集），写 `_resolved_directions.json`，返回 `needs_user_choice=true` 当任何方向 `resolution_type != "unchanged"`。
-4. **有 material change 时**问用户采纳 refined / 回 Stage 0 重选 / 沿用 provisional 忽略 resolved；不选 → 保留旧产物 + `needs_input`。
-5. `stage2-finalize --resolved-directions <path>` —— 应用 resolved 状态：移除/新增论文、刷新 `name_ja/name_zh`、把 `resolved_direction` 子字段写进每个 direction，并在输入包顶层加 `resolved_directions` 索引。
+1. `contact_state.py stage2-resolve-plan --facts <facts>` —— 纯确定性零模型，读取现有 `_resolved_directions.json`：逐方向 `input_fingerprint` 仍匹配 → `action=reuse` 不发 job；其余方向给出 `candidates.{additions,removals,splits,merges}` 列表与一个 `resolve:<教授>:<方向>` job。
+2. 模型按 job 写 `results/resolve-<方向>.json`：每方向 `resolved.{resolved_direction_id,provisional_direction_id,name_ja,name_zh,resolution_type,papers_to_add,papers_to_remove,paper_justifications,split_target,merge_target,user_note}`，resolution_type ∈ {`unchanged`/`renamed`/`split_from`/`merged_into`/`refined`}。**split_from**：`split_target` = 全新子方向 ID（不得与现有方向冲突），`papers_to_add` = 移入新子方向的论文（源方向至少留 1 篇）；**merged_into**：`merge_target` = 本教授现有目标方向 ID，add/remove 必须为空。
+3. `contact_state.py stage2-resolve-finalize --facts <facts> --results <results>` —— 校验 schema/合法性（`papers_to_remove` ⊆ provisional member、`papers_to_add` ⊆ candidate 集、split/merge 结构约束、禁止 merge 链），逐方向写 `input_fingerprint` 落 `_resolved_directions.json`，`needs_user_choice=true` 仅当本轮出现**新的** material change（已应用的 resolution 重跑不重复提示）。全部方向 reuse 时可跳过 2–3 直接进 5。
+4. **有 material change 时**问用户采纳 refined / 回 Stage 0 重选 / 沿用 provisional 忽略 resolved（本轮不传 resolved 文件）；不选 → 保留旧产物 + `needs_input`。
+5. `stage2-finalize --resolved-directions <path>` —— 对 sidecar **fail closed**（schema/kind/professor 不符或任一方向 fingerprint 过期 → `resolved_directions_stale` / `resolved_directions_professor_mismatch`，绝不静默应用）。校验通过后应用 resolved 状态：移除/新增论文、刷新 `name_ja/name_zh`；**split_from 在输入包创建真正的第二个权威方向条目**（split 论文与 gap 引用迁移，Stage 3 对两个方向分别生成 job）；**merged_into 把源方向条目从输入包移除**（论文/gap 引用完整移植到目标并记 `merged_from`，根部索引永久保留 源→目标 映射）；**每个方向（含 unchanged）都写入 `resolved_direction` 子字段**（权威 resolved ID）。
 
 复用与失效：
 
-- resolved 状态不是 paper-analysis 的二级缓存，而是独立的方向归属机器事实。复用条件 = facts/papers/扩召未变 + `_resolved_directions.json` 的 `input_fingerprint` 与本轮 facts 仍匹配；任一 resolved 方向的 relevant 论文 metadata/sidecar/facts 变化 → 该方向 resolved 失效。
+- resolved 状态不是 paper-analysis 的二级缓存，而是独立的方向归属机器事实。复用条件 = 逐方向 `input_fingerprint`（relevant 论文元数据/title/year/abstract SHA + analysis/sidecar/facts 文件 SHA + 方向画像与 provisional 成员）与本轮 facts 仍匹配；任一相关论文变化只失效受影响方向，其余方向继续 reuse。
 - 一篇论文可支撑多个 resolved 方向（共享 membership 仍然合法）；同一论文 analysis 仍按 `item_key` 去重执行一次。
 - keyword/grep 单独命中不构成 resolved membership 证据——必须全文 facts 支撑。
 - 下游（阶段 3 / 4 / 5）不再回读 Stage 1 候选快照 / target state `members[]` / Zotero 分类作方向归属；如需重置，必须清掉 `_resolved_directions.json` 并重跑 resolve 流水线。

@@ -1094,36 +1094,69 @@ def _compute_paper_direction_affinity(ctx: Stage2Context) -> dict[str, dict[str,
 
 
 def _detect_candidates_for_addition(ctx: Stage2Context, affinity: dict[str, dict[str, float]]) -> list[dict]:
-    """Detect papers that may belong to a direction despite provisional placement elsewhere.
+    """Detect papers whose full-text evidence points to a different direction than their provisional one.
 
-    A candidate for addition when:
-    - paper has full-text facts (not abstract-only)
-    - paper's top affinity direction is NOT its provisional direction
-    - affinity gap between top and provisional direction is significant
+    Paper-centric: for every paper, if the strongest-affinity direction is NOT
+    the paper's current provisional direction, the paper is a cross-cluster
+    candidate that the strongest direction should add. The target direction is
+    the strongest full-text direction (not the iteration variable), so the
+    addition always points where the evidence actually points.
+
+    A candidate is emitted when:
+    - paper has a non-zero affinity score to at least one direction
+    - the strongest-affinity direction is different from the paper's provisional direction
+      (resolved from any selected direction the paper belongs to)
+    - the affinity gap between top and provisional is significant (>= 1.0)
+    - the paper is reachable in the candidate union (member_keys) of the target
     """
-    additions = []
+    # Build map of paper -> provisional directions (any selected direction whose
+    # provisional_member_keys contain the paper).
+    paper_provisional: dict[str, list[str]] = {}
+    candidate_unions: dict[str, set[str]] = {}
     for plan in ctx.direction_plans:
         ckey = plan["ckey"]
-        for key in direction_relevant_keys(plan["direction"]):
-            if key in (plan["direction"].get("provisional_member_keys") or []):
-                continue  # already a provisional member
-            paper_aff = affinity.get(key, {})
-            if not paper_aff:
-                continue
-            # Check if this paper has stronger affinity to another direction
-            sorted_dirs = sorted(paper_aff.items(), key=lambda x: x[1], reverse=True)
-            if sorted_dirs and sorted_dirs[0][0] != ckey:
-                top_ckey, top_score = sorted_dirs[0]
-                this_score = paper_aff.get(ckey, 0)
-                if top_score > this_score + 1.0:
-                    additions.append({
-                        "item_key": key,
-                        "target_direction": ckey,
-                        "current_top_direction": top_ckey,
-                        "target_score": this_score,
-                        "current_score": top_score,
-                        "reason": f"paper affinity stronger elsewhere ({top_ckey}={top_score} vs {ckey}={this_score})",
-                    })
+        candidate_unions[ckey] = set(plan["direction"].get("member_keys") or [])
+        for key in plan["direction"].get("provisional_member_keys") or []:
+            paper_provisional.setdefault(key, []).append(ckey)
+
+    additions = []
+    seen: set[tuple[str, str]] = set()
+    for key, paper_aff in affinity.items():
+        if not paper_aff:
+            continue
+        sorted_dirs = sorted(paper_aff.items(), key=lambda x: x[1], reverse=True)
+        if not sorted_dirs:
+            continue
+        top_ckey, top_score = sorted_dirs[0]
+        provisional_dirs = paper_provisional.get(key, [])
+        # If the strongest direction IS the paper's provisional direction, no
+        # cross-cluster addition is needed.
+        if top_ckey in provisional_dirs:
+            continue
+        # Find this paper's current (weaker) provisional direction score, if any.
+        provisional_scores = [paper_aff.get(d, 0) for d in provisional_dirs]
+        max_provisional = max(provisional_scores) if provisional_scores else 0
+        if top_score <= max_provisional + 1.0:
+            continue
+        # The paper must be reachable from the strongest direction's candidate union
+        # (or it has no provisional place, which is the new-direction case).
+        if top_ckey not in candidate_unions and provisional_dirs:
+            continue
+        # Avoid duplicate (paper, target) entries when iterating multi-direction plans.
+        if (key, top_ckey) in seen:
+            continue
+        seen.add((key, top_ckey))
+        additions.append({
+            "item_key": key,
+            "target_direction": top_ckey,
+            "current_provisional_direction": provisional_dirs[0] if provisional_dirs else None,
+            "target_score": top_score,
+            "provisional_score": max_provisional,
+            "reason": (
+                f"paper full-text affinity strongest in {top_ckey}={top_score} "
+                f"vs provisional={max_provisional} ({provisional_dirs[0] if provisional_dirs else 'none'})"
+            ),
+        })
     return additions
 
 
@@ -1269,20 +1302,23 @@ def _detect_merge_candidates(ctx: Stage2Context) -> list[dict]:
     """Detect pairs of directions that may be the same line based on shared evidence.
 
     A merge candidate when:
-    - Two directions share ≥2 papers (cross-direction overlap)
-    - Their topic profiles (from facts) overlap significantly
+    - Two directions share ≥2 papers in their candidate union (cross-direction
+      overlap). A single shared paper is not enough under the documented merge
+      contract — it can be a chance co-incidence rather than a "same line" signal.
+    - Their topic profiles (from name_ja/name_zh/summary_zh) overlap significantly
     """
     import re as _re
+    MERGE_MIN_SHARED = 2
     merges = []
     plans = ctx.direction_plans
     for i, plan_a in enumerate(plans):
         for plan_b in plans[i + 1:]:
             ckey_a, ckey_b = plan_a["ckey"], plan_b["ckey"]
-            # Check shared papers
+            # Check shared papers in candidate unions
             keys_a = set(direction_relevant_keys(plan_a["direction"]))
             keys_b = set(direction_relevant_keys(plan_b["direction"]))
             shared = keys_a & keys_b
-            if len(shared) < 1:
+            if len(shared) < MERGE_MIN_SHARED:
                 continue
             # Check topic overlap from direction profiles
             parts_a = []
@@ -1329,6 +1365,12 @@ def cmd_stage2_resolve_plan(args) -> None:
     This is a deterministic pre-flight that uses full-text facts to suggest
     corrections to provisional directions. The actual resolution is performed
     by the model in the resolve job, which has access to the full context.
+
+    Reuse: an existing `_resolved_directions.json` entry whose per-direction
+    `input_fingerprint` still matches the current facts is reused as-is and
+    gets NO new resolve job — only directions whose relevant paper metadata,
+    sidecars, facts files, or profile inputs changed (or that were never
+    resolved) are re-resolved.
     """
     ctx = Stage2Context(Path(args.facts))
     affinity = _compute_paper_direction_affinity(ctx)
@@ -1340,10 +1382,23 @@ def cmd_stage2_resolve_plan(args) -> None:
     # Determine if any material change is detected
     has_material_changes = bool(additions or removals or splits or merges)
 
+    existing = _load_existing_resolved(ctx.professor_dir, ctx.professor, None)
+    existing_by_ckey: dict[str, dict] = {}
+    if existing:
+        for entry in existing.get("directions") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("provisional_direction_id"), str):
+                existing_by_ckey[entry["provisional_direction_id"]] = entry
+
     # Build per-direction resolution jobs
     resolve_jobs = []
+    reuse_list = []
     for plan in ctx.direction_plans:
         ckey = plan["ckey"]
+        prior = existing_by_ckey.get(ckey)
+        current_fingerprint = _per_direction_fingerprint(plan["direction"], ctx.papers)
+        if prior and prior.get("input_fingerprint") == current_fingerprint:
+            reuse_list.append(ckey)
+            continue  # resolved state is fresh; no new job
         direction = plan["direction"]
         # Collect per-paper evidence
         paper_evidence = []
@@ -1390,11 +1445,11 @@ def cmd_stage2_resolve_plan(args) -> None:
                     "name_ja": "<confirmed or renamed>",
                     "name_zh": "<confirmed or renamed>",
                     "resolution_type": "unchanged|renamed|split_from|merged_into|refined",
-                    "papers_to_add": ["<item_key>"],
-                    "papers_to_remove": ["<item_key>"],
+                    "papers_to_add": ["<item_key>; for split_from: papers moved INTO the new direction"],
+                    "papers_to_remove": ["<item_key>; must be empty for split_from/merged_into>"],
                     "paper_justifications": {"<item_key>": "<1 sentence reason>"},
-                    "split_target": "<if split: new direction_id>",
-                    "merge_target": "<if merged: target direction_id>",
+                    "split_target": "<split_from only: NEW direction ID, must not collide with any existing direction>",
+                    "merge_target": "<merged_into only: existing target direction ID>",
                     "user_note": "<preserved from provisional>",
                 },
             },
@@ -1422,8 +1477,12 @@ def cmd_stage2_resolve_plan(args) -> None:
                     "4. A paper can support multiple directions (shared papers are allowed).\n"
                     "5. Removal: only when full-text facts clearly show the paper doesn't belong.\n"
                     "6. Addition: only when full-text facts clearly support this direction over the provisional one.\n"
-                    "7. Split: only when papers cluster into ≥2 distinct topic groups.\n"
-                    "8. Merge: only when another direction shares the same line of work.\n"
+                    "7. Split: only when papers cluster into ≥2 distinct topic groups; set split_target to a NEW "
+                    "direction ID and put the papers that move INTO the new direction in papers_to_add "
+                    "(the source keeps the rest; papers_to_remove must be empty).\n"
+                    "8. Merge: only when another direction shares ≥2 papers and the same line of work; set "
+                    "merge_target to that direction ID (papers_to_add/papers_to_remove must be empty — the whole "
+                    "direction folds into the target).\n"
                     "9. Keyword/grep matches alone are NOT sufficient for final membership.\n"
                     "10. If no material change, set resolution_type='unchanged' and empty add/remove lists."
                 ),
@@ -1437,11 +1496,17 @@ def cmd_stage2_resolve_plan(args) -> None:
         "has_material_changes": has_material_changes,
         "summary": {
             "directions": len(ctx.direction_plans),
+            "reused_resolved": len(reuse_list),
             "addition_candidates": len(additions),
             "removal_candidates": len(removals),
             "split_candidates": len(splits),
             "merge_candidates": len(merges),
         },
+        "directions": [{
+            "collection_key": plan["ckey"],
+            "action": "reuse" if plan["ckey"] in reuse_list else "process",
+            "input_fingerprint": _per_direction_fingerprint(plan["direction"], ctx.papers),
+        } for plan in ctx.direction_plans],
         "candidates": {
             "additions": additions,
             "removals": removals,
@@ -1453,14 +1518,84 @@ def cmd_stage2_resolve_plan(args) -> None:
     })
 
 
-def validate_resolve_results(ctx: Stage2Context, results_dir: Path) -> dict[str, dict]:
-    """Validate resolve result JSON files. Returns ckey -> resolved direction."""
+def _per_direction_fingerprint(direction: dict, papers: dict) -> str:
+    """Per-direction fingerprint of the inputs that affect resolved_direction.
+
+    Captures only fields that should invalidate a cached resolved state:
+    relevant paper metadata (item_key + title + year + abstract_sha) + facts_sha
+    + sidecar_sha + direction profile fields. The fingerprint stays narrow so
+    that display-only changes (e.g. preview_coverage_share) do NOT bust the
+    resolved state.
+    """
+    relevant = sorted(set(direction.get("relevant_keys") or []))
+    paper_rows = []
+    for key in relevant:
+        paper = papers.get(key, {})
+        paper_rows.append({
+            "item_key": key,
+            "title": paper.get("title"),
+            "year": paper.get("year"),
+            "month": paper.get("month"),
+            "authorship": paper.get("authorship"),
+            "abstract_sha": sha256_text(paper.get("abstract") or "") if paper.get("abstract") else None,
+            "has_pdf": bool(paper.get("has_pdf")),
+            "analysis_sha": sha256_bytes(Path(paper.get("analysis_file")).read_bytes())
+                if paper.get("analysis_file") and Path(paper.get("analysis_file")).is_file() else None,
+            "sidecar_sha": sha256_bytes(Path(paper.get("sidecar_file")).read_bytes())
+                if paper.get("sidecar_file") and Path(paper.get("sidecar_file")).is_file() else None,
+            "facts_sha": sha256_bytes(Path(paper.get("facts_file")).read_bytes())
+                if paper.get("facts_file") and Path(paper.get("facts_file")).is_file() else None,
+        })
+    return sha256_obj({
+        "version": 1,
+        "provisional_direction_id": direction.get("collection_key"),
+        "name_ja": direction.get("name_ja"),
+        "name_zh": direction.get("name_zh"),
+        "summary_zh": direction.get("summary_zh"),
+        "status": direction.get("status"),
+        "user_note_sha": sha256_text(direction.get("user_note") or ""),
+        "provisional_member_keys": sorted(direction.get("provisional_member_keys") or []),
+        "named_keys": sorted(direction.get("named_keys") or []),
+        "paper_rows": paper_rows,
+    })
+
+
+def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
+                             reused: dict[str, dict] | None = None) -> dict[str, dict]:
+    """Validate resolve result JSON files. Returns ckey -> resolved direction.
+
+    `reused` carries previously accepted sidecar entries whose per-direction
+    input_fingerprint still matches the current facts; when a direction has no
+    new result file its reused entry is kept as-is instead of being reset to
+    "unchanged" (a resolve re-run must never silently wipe an applied
+    resolution).
+
+    Enforces:
+    - schema/kind correctness
+    - resolution_type ∈ {unchanged, renamed, split_from, merged_into, refined}
+    - split_from requires a NEW split_target ID and moves papers via
+      papers_to_add (⊆ relevant keys, source keeps ≥1 paper)
+    - merged_into requires merge_target pointing at another direction in this
+      professor's plans; merge chains (target is itself merged_into) fail
+    - papers_to_remove ⊆ provisional_member_keys
+    - papers_to_add ⊆ candidate member_keys
+    """
+    reused = reused or {}
     resolved = {}
+    direction_lookup = {plan["ckey"]: plan for plan in ctx.direction_plans}
     for plan in ctx.direction_plans:
         ckey = plan["ckey"]
+        current_fingerprint = _per_direction_fingerprint(plan["direction"], ctx.papers)
         result_path = results_dir / f"resolve-{ckey}.json"
         if not result_path.is_file():
-            # No result = unchanged resolution
+            # No new result: keep the reused entry, else default to unchanged.
+            prior = reused.get(ckey)
+            if prior:
+                entry = dict(prior)
+                entry["input_fingerprint"] = current_fingerprint
+                entry["reused"] = True
+                resolved[ckey] = entry
+                continue
             direction = plan["direction"]
             resolved[ckey] = {
                 "resolved_direction_id": ckey,
@@ -1474,6 +1609,8 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path) -> dict[str,
                 "split_target": None,
                 "merge_target": None,
                 "user_note": direction.get("user_note") or "",
+                "input_fingerprint": current_fingerprint,
+                "reused": False,
             }
             continue
         data, error = read_json_file(result_path)
@@ -1486,8 +1623,8 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path) -> dict[str,
             fail("invalid_result_json", f"{result_path}: resolved must be an object")
         # Validate required fields
         resolved_direction_id = r.get("resolved_direction_id")
-        if not isinstance(resolved_direction_id, str):
-            fail("invalid_result_json", f"{result_path}: resolved_direction_id must be a string")
+        if not isinstance(resolved_direction_id, str) or not resolved_direction_id.strip():
+            fail("invalid_result_json", f"{result_path}: resolved_direction_id must be a non-empty string")
         resolution_type = r.get("resolution_type")
         if resolution_type not in ("unchanged", "renamed", "split_from", "merged_into", "refined"):
             fail("invalid_result_json", f"{result_path}: invalid resolution_type: {resolution_type}")
@@ -1509,6 +1646,46 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path) -> dict[str,
             if key not in candidate_set:
                 fail("invalid_result_json",
                      f"{result_path}: cannot add paper {key} not in candidate set")
+        # Validate split / merge structure
+        split_target = r.get("split_target")
+        merge_target = r.get("merge_target")
+        if resolution_type == "split_from":
+            if not isinstance(split_target, str) or not split_target.strip():
+                fail("invalid_result_json",
+                     f"{result_path}: split_from requires split_target (new direction ID)")
+            if papers_to_remove:
+                fail("invalid_result_json",
+                     f"{result_path}: split_from expresses paper assignment via papers_to_add "
+                     "(papers moved to the new direction); papers_to_remove must be empty")
+            if not papers_to_add:
+                fail("invalid_result_json",
+                     f"{result_path}: split_from requires papers_to_add (papers moved to the new direction)")
+            relevant = set(direction_relevant_keys(plan["direction"]))
+            if not (relevant - set(papers_to_add)):
+                fail("invalid_result_json",
+                     f"{result_path}: split_from would leave the source direction {ckey} with no papers")
+        else:
+            if split_target is not None:
+                fail("invalid_result_json",
+                     f"{result_path}: split_target only valid for split_from resolution")
+        if resolution_type == "merged_into":
+            if not isinstance(merge_target, str) or not merge_target.strip():
+                fail("invalid_result_json",
+                     f"{result_path}: merged_into requires merge_target (target direction ID)")
+            if merge_target == ckey:
+                fail("invalid_result_json",
+                     f"{result_path}: merge_target cannot be the same direction {ckey}")
+            if merge_target not in direction_lookup:
+                fail("invalid_result_json",
+                     f"{result_path}: merge_target {merge_target} not in selected directions for this professor")
+            if papers_to_add or papers_to_remove:
+                fail("invalid_result_json",
+                     f"{result_path}: merged_into folds the whole direction into its target; "
+                     "papers_to_add/papers_to_remove must be empty")
+        else:
+            if merge_target is not None:
+                fail("invalid_result_json",
+                     f"{result_path}: merge_target only valid for merged_into resolution")
         resolved[ckey] = {
             "resolved_direction_id": resolved_direction_id,
             "provisional_direction_id": ckey,
@@ -1518,11 +1695,67 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path) -> dict[str,
             "papers_to_add": papers_to_add,
             "papers_to_remove": papers_to_remove,
             "paper_justifications": r.get("paper_justifications") or {},
-            "split_target": r.get("split_target"),
-            "merge_target": r.get("merge_target"),
+            "split_target": split_target,
+            "merge_target": merge_target,
             "user_note": r.get("user_note") or plan["direction"].get("user_note") or "",
+            "input_fingerprint": current_fingerprint,
+            "reused": False,
         }
+    # Global structural checks across all resolved entries.
+    merge_sources = {ckey for ckey, r in resolved.items()
+                     if r["resolution_type"] == "merged_into"}
+    for ckey in merge_sources:
+        target = resolved[ckey]["merge_target"]
+        if target in merge_sources:
+            fail("invalid_result_json",
+                 f"merge chain detected: {ckey} -> {target}, but {target} is itself merged_into another direction")
+    # Every split target must be a brand-new ID: never an existing provisional
+    # direction and never another split's target or resolved ID.
+    all_ids: list[str] = []
+    for ckey, r in resolved.items():
+        all_ids.append(r["resolved_direction_id"])
+        if r["resolution_type"] == "split_from":
+            target = r["split_target"]
+            if target in direction_lookup:
+                fail("invalid_result_json",
+                     f"split_target {target} from {ckey} collides with existing provisional direction")
+            all_ids.append(target)
+    duplicates = sorted({i for i in all_ids if all_ids.count(i) > 1})
+    if duplicates:
+        fail("invalid_result_json",
+             f"resolved_direction_id/split_target must be globally unique, duplicates: {duplicates}")
     return resolved
+
+
+def _load_existing_resolved(professor_dir: Path, professor: str,
+                            expected_facts_sha: str | None) -> dict | None:
+    """Load `_resolved_directions.json` if it matches this professor and facts fingerprint.
+
+    Returns None on any mismatch (stale, cross-professor, schema invalid) so the
+    caller can fail closed and re-run resolve. Cross-professor and stale files
+    are NEVER silently applied — that's a safety boundary for resolved state.
+    """
+    path = professor_dir / "论文分析" / "_resolved_directions.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("schema") != RESOLVED_DIRECTION_SCHEMA:
+        return None
+    if data.get("kind") != "professor-contact-resolved-directions":
+        return None
+    if data.get("professor") != professor:
+        return None
+    # Compare facts fingerprint if provided
+    if expected_facts_sha is not None:
+        stored = data.get("facts_fingerprint")
+        if stored and stored != expected_facts_sha:
+            return None
+    return data
 
 
 def cmd_stage2_resolve_finalize(args) -> None:
@@ -1530,15 +1763,31 @@ def cmd_stage2_resolve_finalize(args) -> None:
 
     The resolved direction state is written to `<professor_dir>/论文分析/_resolved_directions.json`
     as an intermediate artifact consumed by stage2-finalize.
+
+    Always emits one entry per direction (even unchanged) so downstream consumers
+    have a single resolved_direction_id for every direction. Cross-professor and
+    schema-invalid existing sidecars are NOT silently overwritten — the runner
+    always validates and re-writes from the current resolve results.
     """
     ctx = Stage2Context(Path(args.facts))
     results_dir = Path(args.results)
-    resolved = validate_resolve_results(ctx, results_dir)
+    existing = _load_existing_resolved(ctx.professor_dir, ctx.professor, None)
+    plan_fingerprints = {plan["ckey"]: _per_direction_fingerprint(plan["direction"], ctx.papers)
+                         for plan in ctx.direction_plans}
+    existing_by_ckey: dict[str, dict] = {}
+    if existing:
+        for entry in existing.get("directions") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("provisional_direction_id"), str):
+                existing_by_ckey[entry["provisional_direction_id"]] = entry
+    reused = {ckey: entry for ckey, entry in existing_by_ckey.items()
+              if plan_fingerprints.get(ckey) == entry.get("input_fingerprint")}
+    resolved = validate_resolve_results(ctx, results_dir, reused)
 
-    # Check for material changes that require user confirmation
+    # Check for material changes that require user confirmation. Already-applied
+    # (reused) resolutions must NOT re-prompt the user on every re-run.
     material_changes = []
     for ckey, r in resolved.items():
-        if r["resolution_type"] != "unchanged":
+        if r["resolution_type"] != "unchanged" and not r.get("reused"):
             material_changes.append({
                 "provisional_direction_id": ckey,
                 "resolved_direction_id": r["resolved_direction_id"],
@@ -1551,22 +1800,58 @@ def cmd_stage2_resolve_finalize(args) -> None:
                 "merge_target": r["merge_target"],
             })
 
-    # Write resolved directions state
+    # Compute facts fingerprint for cross-professor safety
+    facts_payload = {
+        "professor": ctx.professor,
+        "professor_dir": str(ctx.professor_dir),
+        "directions": [
+            {"collection_key": plan["ckey"],
+             "fingerprint": _per_direction_fingerprint(plan["direction"], ctx.papers)}
+            for plan in ctx.direction_plans
+        ],
+    }
+    facts_fingerprint = sha256_obj(facts_payload)
+
+    # Write resolved directions state — always one entry per direction
     resolved_path = ctx.professor_dir / "论文分析" / "_resolved_directions.json"
     resolved_payload = {
         "schema": RESOLVED_DIRECTION_SCHEMA,
         "kind": "professor-contact-resolved-directions",
         "professor": ctx.professor,
+        "professor_dir": str(ctx.professor_dir),
+        "facts_fingerprint": facts_fingerprint,
         "generated_at": now_utc(),
         "directions": list(resolved.values()),
         "has_material_changes": bool(material_changes),
     }
     atomic_json(resolved_path, resolved_payload)
 
+    # Collect new split directions (targets that don't match any provisional ckey).
+    # These are the "new authoritative direction entries" the split resolved.
+    existing_ckeys = {plan["ckey"] for plan in ctx.direction_plans}
+    new_splits = []
+    for ckey, r in resolved.items():
+        if r["resolution_type"] == "split_from" and r["split_target"] not in existing_ckeys:
+            # Find the source plan to copy the structure
+            source_plan = next((p for p in ctx.direction_plans if p["ckey"] == ckey), None)
+            if source_plan:
+                new_splits.append({
+                    "source_provisional_id": ckey,
+                    "new_resolved_id": r["split_target"],
+                    "name_ja": r["name_ja"],
+                    "name_zh": r["name_zh"],
+                    "papers_to_add": r["papers_to_add"],
+                    "papers_to_remove": r["papers_to_remove"],
+                    "paper_justifications": r["paper_justifications"],
+                    "user_note": r["user_note"],
+                    "input_fingerprint": r["input_fingerprint"],
+                })
+
     emit({
         "status": "ok",
         "professor": ctx.professor,
         "resolved_directions_path": str(resolved_path),
+        "facts_fingerprint": facts_fingerprint,
         "directions": [
             {
                 "provisional_direction_id": ckey,
@@ -1576,9 +1861,12 @@ def cmd_stage2_resolve_finalize(args) -> None:
                 "name_zh": r["name_zh"],
                 "papers_to_add": r["papers_to_add"],
                 "papers_to_remove": r["papers_to_remove"],
+                "split_target": r["split_target"],
+                "merge_target": r["merge_target"],
             }
             for ckey, r in resolved.items()
         ],
+        "new_splits": new_splits,
         "material_changes": material_changes,
         "needs_user_choice": bool(material_changes),
     })
@@ -2165,17 +2453,44 @@ def cmd_stage2_finalize(args) -> None:
         if error is None and isinstance(decision_data, dict):
             decision = decision_data.get("decision")
 
-    # Load resolved directions if provided
+    # Load resolved directions if provided. Fail closed on any identity or
+    # freshness problem: a sidecar from another professor, with a broken
+    # schema, or built from different facts must NEVER be silently applied.
     resolved_directions = None
     resolved_directions_path = getattr(args, "resolved_directions", None)
     if resolved_directions_path:
         rd_data, rd_error = read_json_file(Path(resolved_directions_path))
-        if rd_error is None and isinstance(rd_data, dict) and rd_data.get("kind") == "professor-contact-resolved-directions":
-            resolved_directions = {
-                d["provisional_direction_id"]: d
-                for d in rd_data.get("directions", [])
-                if isinstance(d, dict) and "provisional_direction_id" in d
-            }
+        if rd_error is not None or not isinstance(rd_data, dict):
+            fail("invalid_resolved_directions",
+                 f"resolved directions file unreadable: {resolved_directions_path}")
+        if rd_data.get("schema") != RESOLVED_DIRECTION_SCHEMA or \
+                rd_data.get("kind") != "professor-contact-resolved-directions":
+            fail("invalid_resolved_directions",
+                 f"resolved directions schema/kind mismatch: {resolved_directions_path}")
+        if rd_data.get("professor") != ctx.professor:
+            fail("resolved_directions_professor_mismatch",
+                 f"resolved directions file belongs to professor {rd_data.get('professor')!r}, "
+                 f"not {ctx.professor!r}", path=str(resolved_directions_path))
+        resolved_directions = {
+            d["provisional_direction_id"]: d
+            for d in rd_data.get("directions", [])
+            if isinstance(d, dict) and isinstance(d.get("provisional_direction_id"), str)
+        }
+        # Per-direction freshness: every current direction must be covered by an
+        # entry whose input_fingerprint matches the current facts. Stale or
+        # missing entries fail closed so a half-updated resolved file can never
+        # leak into the pack.
+        stale = []
+        for plan in ctx.direction_plans:
+            entry = resolved_directions.get(plan["ckey"])
+            if entry is None:
+                stale.append({"direction": plan["ckey"], "problem": "missing_from_resolved_file"})
+            elif entry.get("input_fingerprint") != _per_direction_fingerprint(plan["direction"], ctx.papers):
+                stale.append({"direction": plan["ckey"], "problem": "input_fingerprint_mismatch"})
+        if stale:
+            fail("resolved_directions_stale",
+                 "resolved directions do not match current facts; re-run stage2-resolve",
+                 stale_directions=stale, path=str(resolved_directions_path))
 
     required_freshness, needed_keys = {}, []
     for plan in ctx.direction_plans:
@@ -2197,54 +2512,167 @@ def cmd_stage2_finalize(args) -> None:
                 ctx, plan, statuses_by_direction.get(plan["ckey"], {}),
                 narratives[plan["ckey"]]))
 
-    # Apply resolved directions to pack_directions
+    # Apply resolved directions to pack_directions. Every direction (including
+    # unchanged) gets an explicit resolved_direction subfield so downstream
+    # stages consume the authoritative resolved ID and never implicitly fall
+    # back to the provisional collection_key.
     if resolved_directions:
+        def _find_pack_direction(ckey: str):
+            for d in pack_directions:
+                if d.get("collection_key") == ckey:
+                    return d
+            return None
+
+        def _stamp_subfield(d: dict, rd: dict) -> None:
+            d["resolved_direction"] = {
+                "resolved_direction_id": rd.get("resolved_direction_id") or d.get("collection_key"),
+                "provisional_direction_id": rd.get("provisional_direction_id") or d.get("collection_key"),
+                "resolution_type": rd.get("resolution_type") or "unchanged",
+                "input_fingerprint": rd.get("input_fingerprint"),
+                "papers_to_add": list(rd.get("papers_to_add") or []),
+                "papers_to_remove": list(rd.get("papers_to_remove") or []),
+                "paper_justifications": dict(rd.get("paper_justifications") or {}),
+                "split_target": rd.get("split_target"),
+                "merge_target": rd.get("merge_target"),
+            }
+
+        def _apply_membership(d: dict, rd: dict) -> None:
+            remove_set = set(rd.get("papers_to_remove") or [])
+            if remove_set:
+                d["supporting_papers"] = [
+                    p for p in d.get("supporting_papers", [])
+                    if p.get("item_key") not in remove_set]
+            for add_key in rd.get("papers_to_add") or []:
+                if any(p.get("item_key") == add_key for p in d.get("supporting_papers", [])):
+                    continue
+                paper = ctx.papers.get(add_key)
+                if not paper:
+                    continue
+                facts_record, facts_state, facts_error = ctx.facts_for(add_key)
+                d.setdefault("supporting_papers", []).append({
+                    "item_key": add_key,
+                    "title": paper.get("title"),
+                    "year": paper.get("year"),
+                    "authorship": paper.get("authorship"),
+                    "named_by_user": False,
+                    "has_analysis": bool(paper.get("analysis_file")),
+                    "analysis_file": paper.get("analysis_file"),
+                    "pdf_available": bool(paper.get("has_pdf")),
+                    "facts_state": facts_state,
+                    "facts_error": facts_error,
+                    "paper_facts": facts_record,
+                    "resolved_addition": True,
+                    "addition_justification": (rd.get("paper_justifications") or {}).get(add_key, ""),
+                })
+
+        # Pass 1: stamp the subfield everywhere + apply rename/refined edits.
         for d in pack_directions:
-            ckey = d.get("collection_key")
-            rd = resolved_directions.get(ckey)
-            if rd and rd.get("resolution_type") != "unchanged":
-                # Apply resolution: update names, add/remove papers
+            rd = resolved_directions[d["collection_key"]]
+            _stamp_subfield(d, rd)
+            rtype = rd.get("resolution_type") or "unchanged"
+            if rtype in ("renamed", "refined"):
                 d["name_ja"] = rd.get("name_ja") or d.get("name_ja")
                 d["name_zh"] = rd.get("name_zh") or d.get("name_zh")
-                d["resolved_direction"] = {
-                    "resolved_direction_id": rd.get("resolved_direction_id"),
-                    "provisional_direction_id": rd.get("provisional_direction_id"),
-                    "resolution_type": rd.get("resolution_type"),
-                    "papers_to_add": rd.get("papers_to_add", []),
-                    "papers_to_remove": rd.get("papers_to_remove", []),
-                    "paper_justifications": rd.get("paper_justifications", {}),
-                    "split_target": rd.get("split_target"),
-                    "merge_target": rd.get("merge_target"),
-                }
-                # Apply paper removals
-                remove_set = set(rd.get("papers_to_remove", []))
-                if remove_set:
-                    d["supporting_papers"] = [
-                        p for p in d.get("supporting_papers", [])
-                        if p.get("item_key") not in remove_set
-                    ]
-                # Apply paper additions (mark as resolved-addition)
-                for add_key in rd.get("papers_to_add", []):
-                    # Check if already in supporting_papers
-                    if not any(p.get("item_key") == add_key for p in d.get("supporting_papers", [])):
-                        paper = ctx.papers.get(add_key)
-                        if paper:
-                            facts_record, facts_state, facts_error = ctx.facts_for(add_key)
-                            d.setdefault("supporting_papers", []).append({
-                                "item_key": add_key,
-                                "title": paper.get("title"),
-                                "year": paper.get("year"),
-                                "authorship": paper.get("authorship"),
-                                "named_by_user": False,
-                                "has_analysis": bool(paper.get("analysis_file")),
-                                "analysis_file": paper.get("analysis_file"),
-                                "pdf_available": bool(paper.get("has_pdf")),
-                                "facts_state": facts_state,
-                                "facts_error": facts_error,
-                                "paper_facts": facts_record,
-                                "resolved_addition": True,
-                                "addition_justification": rd.get("paper_justifications", {}).get(add_key, ""),
-                            })
+            if rtype == "refined":
+                _apply_membership(d, rd)
+
+        # Pass 2: split_from creates a REAL new authoritative direction entry;
+        # the source keeps its identity minus the split-out papers/gaps.
+        for d in list(pack_directions):
+            ckey = d["collection_key"]
+            rd = resolved_directions[ckey]
+            if rd.get("resolution_type") != "split_from":
+                continue
+            split_id = rd.get("split_target")
+            split_set = set(rd.get("papers_to_add") or [])
+            moved_papers = [p for p in d.get("supporting_papers", []) if p.get("item_key") in split_set]
+            d["supporting_papers"] = [p for p in d.get("supporting_papers", [])
+                                      if p.get("item_key") not in split_set]
+            moved_shortlist = [g for g in d.get("gap_shortlist", []) if g.get("item_key") in split_set]
+            kept_shortlist = [g for g in d.get("gap_shortlist", []) if g.get("item_key") not in split_set]
+            d["gap_shortlist"] = [dict(g, no=index + 1) for index, g in enumerate(kept_shortlist)]
+            moved_excluded = [g for g in d.get("gaps_excluded", []) if g.get("item_key") in split_set]
+            d["gaps_excluded"] = [g for g in d.get("gaps_excluded", [])
+                                  if g.get("item_key") not in split_set]
+            moved_blacklist = [b for b in d.get("completed_gap_blacklist", []) if b.get("item_key") in split_set]
+            d["completed_gap_blacklist"] = [b for b in d.get("completed_gap_blacklist", [])
+                                            if b.get("item_key") not in split_set]
+            split_named = [k for k in d.get("named_keys", []) if k in split_set]
+            d["named_keys"] = [k for k in d.get("named_keys", []) if k not in split_set]
+            pack_directions.append({
+                "collection_key": split_id,
+                "name_ja": rd.get("name_ja") or d.get("name_ja"),
+                "name_zh": rd.get("name_zh") or "",
+                "status": "active",
+                "input_fingerprint": d.get("input_fingerprint"),
+                "user_note": rd.get("user_note") or "",
+                "credibility": d.get("credibility") or {},
+                "red_lines": [r for r in d.get("red_lines", []) if r.get("scope") != "global"],
+                "named_keys": split_named,
+                "supporting_papers": moved_papers,
+                "gap_pool_count": len(moved_shortlist) + len(moved_excluded),
+                "gap_shortlist": [dict(g, no=index + 1) for index, g in enumerate(moved_shortlist)],
+                "gaps_excluded": moved_excluded,
+                "completed_gap_blacklist": moved_blacklist,
+                "version_families": d.get("version_families"),
+                "authorship_line": d.get("authorship_line"),
+                "narrative": {},
+                "resolved_direction": {
+                    "resolved_direction_id": split_id,
+                    "provisional_direction_id": ckey,
+                    "resolution_type": "split_from",
+                    "input_fingerprint": rd.get("input_fingerprint"),
+                    "papers_to_add": sorted(split_set),
+                    "papers_to_remove": [],
+                    "paper_justifications": dict(rd.get("paper_justifications") or {}),
+                    "split_target": split_id,
+                    "merge_target": None,
+                },
+            })
+
+        # Pass 3: merged_into folds the source into the target and DROPS the
+        # source direction entry, transplanting papers/gaps so references and
+        # evidence survive; the pack-root index keeps the source→target mapping.
+        merged_sources = []
+        for d in list(pack_directions):
+            ckey = d["collection_key"]
+            rd = resolved_directions.get(ckey)
+            if rd is None:
+                continue  # split target created in pass 2; not a merge source
+            if rd.get("resolution_type") != "merged_into":
+                continue
+            target = _find_pack_direction(rd.get("merge_target"))
+            if target is None:
+                fail("invalid_resolved_directions",
+                     f"merge target {rd.get('merge_target')} not present in pack")
+            for p in d.get("supporting_papers", []):
+                key = p.get("item_key")
+                if any(q.get("item_key") == key for q in target.get("supporting_papers", [])):
+                    continue
+                merged_paper = dict(p)
+                merged_paper["resolved_addition"] = True
+                merged_paper["addition_justification"] = f"merged_from {ckey}"
+                target.setdefault("supporting_papers", []).append(merged_paper)
+            offset = len(target.get("gap_shortlist", []))
+            for index, g in enumerate(d.get("gap_shortlist", [])):
+                if any(q.get("gap_id") == g.get("gap_id") for q in target.get("gap_shortlist", [])):
+                    continue
+                target.setdefault("gap_shortlist", []).append(dict(g, no=offset + index + 1))
+            for g in d.get("gaps_excluded", []):
+                if not any(q.get("gap_id") == g.get("gap_id") for q in target.get("gaps_excluded", [])):
+                    target.setdefault("gaps_excluded", []).append(dict(g))
+            for b in d.get("completed_gap_blacklist", []):
+                if not any(q.get("gap_id") == b.get("gap_id") for q in target.get("completed_gap_blacklist", [])):
+                    target.setdefault("completed_gap_blacklist", []).append(dict(b))
+            target_rd = target.get("resolved_direction") or {}
+            merged_from = list(target_rd.get("merged_from") or [])
+            merged_from.append(ckey)
+            target_rd["merged_from"] = merged_from
+            target["resolved_direction"] = target_rd
+            merged_sources.append(ckey)
+        if merged_sources:
+            dropped = set(merged_sources)
+            pack_directions = [d for d in pack_directions if d.get("collection_key") not in dropped]
 
     fingerprints = {d["collection_key"]: d["input_fingerprint"] for d in pack_directions}
     state_fingerprint = sha256_obj({"professor": ctx.professor, "directions": fingerprints})
@@ -2281,6 +2709,9 @@ def cmd_stage2_finalize(args) -> None:
                     "provisional_direction_id": ckey,
                     "resolved_direction_id": rd.get("resolved_direction_id"),
                     "resolution_type": rd.get("resolution_type"),
+                    "split_target": rd.get("split_target"),
+                    "merge_target": rd.get("merge_target"),
+                    "input_fingerprint": rd.get("input_fingerprint"),
                 }
                 for ckey, rd in resolved_directions.items()
             ],
