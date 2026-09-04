@@ -1445,6 +1445,9 @@ def cmd_stage2_resolve_plan(args) -> None:
     resolved) are re-resolved.
     """
     ctx = Stage2Context(Path(args.facts))
+    # The resolution evidence universe is the professor-level candidate union:
+    # reuse fingerprints must hash the same universe the resolve jobs score.
+    resolve_evidence_keys = selected_candidate_union(ctx)
     affinity = _compute_paper_direction_affinity(ctx)
     additions = _detect_candidates_for_addition(ctx, affinity)
     removals = _detect_candidates_for_removal(ctx, affinity)
@@ -1467,7 +1470,8 @@ def cmd_stage2_resolve_plan(args) -> None:
     for plan in ctx.direction_plans:
         ckey = plan["ckey"]
         prior = existing_by_ckey.get(ckey)
-        current_fingerprint = _per_direction_fingerprint(plan["direction"], ctx.papers)
+        current_fingerprint = _per_direction_fingerprint(
+            plan["direction"], ctx.papers, resolve_evidence_keys)
         # Only ACCEPTED resolved state is reusable. A material change is written
         # as "proposed" before the user picks (adopt / provisional / re-select);
         # re-resolving it until the choice is made keeps the promised re-prompt
@@ -1586,7 +1590,8 @@ def cmd_stage2_resolve_plan(args) -> None:
         "directions": [{
             "collection_key": plan["ckey"],
             "action": "reuse" if plan["ckey"] in reuse_list else "process",
-            "input_fingerprint": _per_direction_fingerprint(plan["direction"], ctx.papers),
+            "input_fingerprint": _per_direction_fingerprint(
+                plan["direction"], ctx.papers, resolve_evidence_keys),
         } for plan in ctx.direction_plans],
         "candidates": {
             "additions": additions,
@@ -1599,19 +1604,20 @@ def cmd_stage2_resolve_plan(args) -> None:
     })
 
 
-def _per_direction_fingerprint(direction: dict, papers: dict) -> str:
+def _per_direction_fingerprint(direction: dict, papers: dict, evidence_keys: list) -> str:
     """Per-direction fingerprint of the inputs that affect resolved_direction.
 
-    Captures only fields that should invalidate a cached resolved state:
-    candidate-universe paper metadata (item_key + title + year + abstract_sha)
-    + analysis/sidecar/facts SHAs + direction profile fields. The fingerprint
-    stays narrow so that display-only changes (e.g. preview_coverage_share) do
-    NOT bust the resolved state, but ANY candidate paper's full-text evidence
-    (new facts sidecar, changed analysis) invalidates it — the resolution must
-    be able to react to evidence about every unique candidate paper, not just
-    the ones the relevance gate let through.
+    `evidence_keys` must be the professor-level selected candidate union (the
+    same universe the resolve job scores), not the direction's own candidate
+    set: full-text evidence about ANY unique candidate can flip this
+    direction's membership even when the paper entered the union through
+    another provisional direction. Version 2 hashes union-wide paper metadata
+    (item_key + title + year + abstract_sha) + analysis/sidecar/facts SHAs +
+    per-direction profile fields. The fingerprint stays narrow so that
+    display-only changes (e.g. preview_coverage_share) do NOT bust the
+    resolved state.
     """
-    candidate_keys = sorted(set(direction_candidate_keys(direction)))
+    candidate_keys = sorted(set(evidence_keys))
     paper_rows = []
     for key in candidate_keys:
         paper = papers.get(key, {})
@@ -1631,7 +1637,7 @@ def _per_direction_fingerprint(direction: dict, papers: dict) -> str:
                 if paper.get("facts_file") and Path(paper.get("facts_file")).is_file() else None,
         })
     return sha256_obj({
-        "version": 1,
+        "version": 2,
         "provisional_direction_id": direction.get("collection_key"),
         "name_ja": direction.get("name_ja"),
         "name_zh": direction.get("name_zh"),
@@ -1675,11 +1681,15 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
     direction_lookup = {plan["ckey"]: plan for plan in ctx.direction_plans}
     # papers_to_add may come from anywhere in the professor-level candidate
     # union (acceptance #2: full text can pull in a paper from another preview
-    # cluster even when Stage 1 never expanded it into this direction).
-    professor_candidate_set = set(selected_candidate_union(ctx))
+    # cluster even when Stage 1 never expanded it into this direction). The
+    # same union is the fingerprint evidence universe, so cached-entry reuse
+    # and result validation judge freshness over identical inputs.
+    resolve_evidence_keys = selected_candidate_union(ctx)
+    professor_candidate_set = set(resolve_evidence_keys)
     for plan in ctx.direction_plans:
         ckey = plan["ckey"]
-        current_fingerprint = _per_direction_fingerprint(plan["direction"], ctx.papers)
+        current_fingerprint = _per_direction_fingerprint(
+            plan["direction"], ctx.papers, resolve_evidence_keys)
 
         def _unchanged_default() -> dict:
             direction = plan["direction"]
@@ -1914,8 +1924,10 @@ def cmd_stage2_resolve_finalize(args) -> None:
     ctx = Stage2Context(Path(args.facts))
     results_dir = Path(args.results)
     existing = _load_existing_resolved(ctx.professor_dir, ctx.professor, None)
-    plan_fingerprints = {plan["ckey"]: _per_direction_fingerprint(plan["direction"], ctx.papers)
-                         for plan in ctx.direction_plans}
+    resolve_evidence_keys = selected_candidate_union(ctx)
+    plan_fingerprints = {plan["ckey"]: _per_direction_fingerprint(
+        plan["direction"], ctx.papers, resolve_evidence_keys)
+        for plan in ctx.direction_plans}
     existing_by_ckey: dict[str, dict] = {}
     if existing:
         for entry in existing.get("directions") or []:
@@ -1956,7 +1968,8 @@ def cmd_stage2_resolve_finalize(args) -> None:
         "professor_dir": str(ctx.professor_dir),
         "directions": [
             {"collection_key": plan["ckey"],
-             "fingerprint": _per_direction_fingerprint(plan["direction"], ctx.papers)}
+             "fingerprint": _per_direction_fingerprint(
+                 plan["direction"], ctx.papers, resolve_evidence_keys)}
             for plan in ctx.direction_plans
         ],
     }
@@ -2629,13 +2642,16 @@ def cmd_stage2_finalize(args) -> None:
         # Per-direction freshness: every current direction must be covered by an
         # entry whose input_fingerprint matches the current facts. Stale or
         # missing entries fail closed so a half-updated resolved file can never
-        # leak into the pack.
+        # leak into the pack. Fingerprints hash the professor-level candidate
+        # union — the same evidence universe the resolve plan/finalize wrote.
+        resolve_evidence_keys = selected_candidate_union(ctx)
         stale = []
         for plan in ctx.direction_plans:
             entry = resolved_directions.get(plan["ckey"])
             if entry is None:
                 stale.append({"direction": plan["ckey"], "problem": "missing_from_resolved_file"})
-            elif entry.get("input_fingerprint") != _per_direction_fingerprint(plan["direction"], ctx.papers):
+            elif entry.get("input_fingerprint") != _per_direction_fingerprint(
+                    plan["direction"], ctx.papers, resolve_evidence_keys):
                 stale.append({"direction": plan["ckey"], "problem": "input_fingerprint_mismatch"})
         if stale:
             fail("resolved_directions_stale",

@@ -189,7 +189,7 @@ preview 聚类以**摘要**为证据，可能把论文误放进 / 漏出某个�
 
 复用与失效：
 
-- resolved 状态不是 paper-analysis 的二级缓存，而是独立的方向归属机器事实。复用条件 = 逐方向 `input_fingerprint`（relevant 论文元数据/title/year/abstract SHA + analysis/sidecar/facts 文件 SHA + 方向画像与 provisional 成员）与本轮 facts 仍匹配**且 `acceptance=accepted`**；任一相关论文变化只失效受影响方向，其余方向继续 reuse。
+- resolved 状态不是 paper-analysis 的二级缓存，而是独立的方向归属机器事实。复用条件 = 逐方向 `input_fingerprint`（**教授级 selected candidate union** 内全部论文的元数据/title/year/abstract SHA + analysis/sidecar/facts 文件 SHA + 方向画像与 provisional 成员）与本轮 facts 仍匹配**且 `acceptance=accepted`**；resolve job 对 union 内每篇论文评分，fingerprint 就必须覆盖同一证据域——任一候选论文（含经其他 preview cluster 进入 union 的）全文变化都会失效各方向的缓存并触发 re-resolve，仅 display 字段变化不失效。
 - 一篇论文可支撑多个 resolved 方向（共享 membership 仍然合法）；同一论文 analysis 仍按 `item_key` 去重执行一次。
 - keyword/grep 单独命中不构成 resolved membership 证据——必须全文 facts 支撑。
 - 下游（阶段 3 / 4 / 5）不再回读 Stage 1 候选快照 / target state `members[]` / Zotero 分类作方向归属；如需重置，必须清掉 `_resolved_directions.json` 并重跑 resolve 流水线。

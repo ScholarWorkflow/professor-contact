@@ -103,7 +103,8 @@ class ResolvedDirectionRegressionTests(unittest.TestCase):
             }
         }
         ctx = DummyContext([{"ckey": "dir_A", "direction": direction}], papers)
-        fingerprint = contact_state._per_direction_fingerprint(direction, papers)
+        fingerprint = contact_state._per_direction_fingerprint(
+            direction, papers, contact_state.selected_candidate_union(ctx))
         prior = {
             "resolved_direction_id": "dir_A",
             "provisional_direction_id": "dir_A",
