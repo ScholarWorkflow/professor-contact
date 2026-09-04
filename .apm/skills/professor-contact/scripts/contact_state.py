@@ -1370,64 +1370,104 @@ def _detect_split_candidates(ctx: Stage2Context) -> list[dict]:
     return splits
 
 
-def _detect_merge_candidates(ctx: Stage2Context) -> list[dict]:
-    """Detect pairs of directions that may be the same line based on shared evidence.
-
-    A merge candidate when:
-    - Two directions share ≥2 papers in their candidate union (cross-direction
-      overlap). A single shared paper is not enough under the documented merge
-      contract — it can be a chance co-incidence rather than a "same line" signal.
-    - Their topic profiles (from name_ja/name_zh/summary_zh) overlap significantly
-    """
+def _profile_topic_tokens(direction: dict) -> set:
+    """Tokenize name_ja/name_zh/summary_zh into a comparable topic-profile set."""
     import re as _re
+    parts = []
+    for field in ("name_ja", "name_zh", "summary_zh"):
+        val = direction.get(field)
+        if isinstance(val, str) and val.strip():
+            parts.append(val)
+    toks: set = set()
+    for w in _re.findall(r"[A-Za-z0-9]+", " ".join(parts)):
+        if len(w) >= 3:
+            toks.add(w.lower())
+    for run in _re.findall(r"[\u4e00-\u9fff\u3040-\u30ff]+", " ".join(parts)):
+        for idx in range(len(run) - 1):
+            toks.add(run[idx:idx + 2])
+    return toks
+
+
+def _detect_merge_candidates(ctx: Stage2Context) -> list[dict]:
+    """Detect pairs of directions that may be the same research line.
+
+    Preview clusters are provisional, so issue #7 makes full-text evidence —
+    not provisional overlap — the merge signal. A merge candidate when either:
+    - The two candidate unions share ≥2 papers AND their topic profiles overlap
+      significantly (a single shared paper can be a chance co-incidence), or
+    - Both directions have ≥2 papers with valid full-text facts whose topic
+      terms converge: disjoint preview clusters describing the same line must
+      still be mergeable even with zero shared paper IDs.
+    """
     MERGE_MIN_SHARED = 2
+    MERGE_MIN_FACTS_PAPERS = 2
+    MERGE_MIN_SHARED_TERMS = 3
+    MERGE_TOPIC_OVERLAP = 0.5
+    facts_for = getattr(ctx, "facts_for", None)
     merges = []
     plans = ctx.direction_plans
+    # Full-text evidence per direction: count of facts-valid candidate papers
+    # and the union of their topic terms.
+    evidence: dict[str, tuple[int, set]] = {}
+    for plan in plans:
+        count = 0
+        terms: set = set()
+        if facts_for is not None:
+            for key in direction_candidate_keys(plan["direction"]):
+                if not ctx.papers.get(key):
+                    continue
+                facts_record, facts_state, _ = facts_for(key)
+                if facts_state == "valid" and facts_record:
+                    count += 1
+                    terms.update(str(t).lower() for t in (facts_record.get("topic_terms") or []))
+        evidence[plan["ckey"]] = (count, terms)
     for i, plan_a in enumerate(plans):
         for plan_b in plans[i + 1:]:
             ckey_a, ckey_b = plan_a["ckey"], plan_b["ckey"]
-            # Check shared papers in candidate unions
-            keys_a = set(direction_candidate_keys(plan_a["direction"]))
-            keys_b = set(direction_candidate_keys(plan_b["direction"]))
+            dir_a, dir_b = plan_a["direction"], plan_b["direction"]
+            keys_a = set(direction_candidate_keys(dir_a))
+            keys_b = set(direction_candidate_keys(dir_b))
             shared = keys_a & keys_b
-            if len(shared) < MERGE_MIN_SHARED:
-                continue
-            # Check topic overlap from direction profiles
-            parts_a = []
-            parts_b = []
-            for field in ("name_ja", "name_zh", "summary_zh"):
-                val = plan_a["direction"].get(field)
-                if isinstance(val, str) and val.strip():
-                    parts_a.append(val)
-                val = plan_b["direction"].get(field)
-                if isinstance(val, str) and val.strip():
-                    parts_b.append(val)
-            toks_a = set()
-            toks_b = set()
-            for w in _re.findall(r"[A-Za-z0-9]+", " ".join(parts_a)):
-                if len(w) >= 3:
-                    toks_a.add(w.lower())
-            for run in _re.findall(r"[\u4e00-\u9fff\u3040-\u30ff]+", " ".join(parts_a)):
-                for idx in range(len(run) - 1):
-                    toks_a.add(run[idx:idx + 2])
-            for w in _re.findall(r"[A-Za-z0-9]+", " ".join(parts_b)):
-                if len(w) >= 3:
-                    toks_b.add(w.lower())
-            for run in _re.findall(r"[\u4e00-\u9fff\u3040-\u30ff]+", " ".join(parts_b)):
-                for idx in range(len(run) - 1):
-                    toks_b.add(run[idx:idx + 2])
-            if toks_a and toks_b:
-                overlap = len(toks_a & toks_b) / min(len(toks_a), len(toks_b))
-                if overlap >= 0.5:
-                    merges.append({
+            toks_a = _profile_topic_tokens(dir_a)
+            toks_b = _profile_topic_tokens(dir_b)
+            profile_overlap = (
+                len(toks_a & toks_b) / min(len(toks_a), len(toks_b))
+                if toks_a and toks_b else 0.0)
+            row = None
+            if len(shared) >= MERGE_MIN_SHARED and profile_overlap >= 0.5:
+                row = {
+                    "direction_a": ckey_a,
+                    "direction_b": ckey_b,
+                    "name_a": dir_a.get("name_ja"),
+                    "name_b": dir_b.get("name_ja"),
+                    "merge_basis": "shared_papers",
+                    "shared_papers": sorted(shared),
+                    "overlap_ratio": round(profile_overlap, 2),
+                    "reason": f"directions share {len(shared)} papers and {round(profile_overlap * 100)}% profile overlap",
+                }
+            else:
+                count_a, terms_a = evidence[ckey_a]
+                count_b, terms_b = evidence[ckey_b]
+                shared_terms = terms_a & terms_b
+                smaller = min(len(terms_a), len(terms_b))
+                if (count_a >= MERGE_MIN_FACTS_PAPERS
+                        and count_b >= MERGE_MIN_FACTS_PAPERS
+                        and len(shared_terms) >= MERGE_MIN_SHARED_TERMS
+                        and len(shared_terms) / smaller >= MERGE_TOPIC_OVERLAP):
+                    row = {
                         "direction_a": ckey_a,
                         "direction_b": ckey_b,
-                        "name_a": plan_a["direction"].get("name_ja"),
-                        "name_b": plan_b["direction"].get("name_ja"),
+                        "name_a": dir_a.get("name_ja"),
+                        "name_b": dir_b.get("name_ja"),
+                        "merge_basis": "fulltext_convergence",
                         "shared_papers": sorted(shared),
-                        "overlap_ratio": round(overlap, 2),
-                        "reason": f"directions share {len(shared)} papers and {round(overlap * 100)}% profile overlap",
-                    })
+                        "shared_topic_terms": sorted(shared_terms),
+                        "overlap_ratio": round(len(shared_terms) / smaller, 2),
+                        "reason": (f"full-text topic terms converge on {len(shared_terms)} shared terms "
+                                   f"across {count_a}+{count_b} facts-backed papers"),
+                    }
+            if row:
+                merges.append(row)
     return merges
 
 
@@ -1565,7 +1605,10 @@ def cmd_stage2_resolve_plan(args) -> None:
                     "7. Split: only when papers cluster into ≥2 distinct topic groups; set split_target to a NEW "
                     "direction ID and put the papers that move INTO the new direction in papers_to_add "
                     "(the source keeps the rest; papers_to_remove must be empty).\n"
-                    "8. Merge: only when another direction shares ≥2 papers and the same line of work; set "
+                    "8. Merge: only when full-text evidence shows another direction is the same line of "
+                    "work — either shared papers with matching profile (merge_basis=shared_papers) or "
+                    "converging topic terms across both directions' facts-backed papers, including "
+                    "disjoint preview clusters (merge_basis=fulltext_convergence). Set "
                     "merge_target to that direction ID (papers_to_add/papers_to_remove must be empty — the whole "
                     "direction folds into the target).\n"
                     "9. Keyword/grep matches alone are NOT sufficient for final membership.\n"

@@ -412,7 +412,7 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
 - **新增**：仅当 facts 明确显示该论文 support 本方向而非其 provisional 方向。**绝不**因为 abstract-level 词面重叠就新增。addition 候选由 runner 按**全文证据分量**（topic overlap）排序——provisional 成员、gap 贡献、authorship 都是摘要级先验，不参与"全文指向哪个方向"的比较。
 - **重命名**：方向名（如 language/concept）与全文证据明显冲突时。
 - **拆分**：≥4 篇有 facts 的论文明显聚成 ≥2 个不同 topic cluster 时：`split_target` = **全新**子方向 ID（建议 `<原 ckey>__<新主题 token>`，runner 会拒绝与现有方向冲突的 ID）；`papers_to_add` = **移入新子方向**的论文（源方向必须至少保留 1 篇，`papers_to_remove` 留空）。finalize 时 runner 会在输入包里创建真正的第二个权威方向条目（collection_key = split_target），split 论文与其 gap 引用一起迁移——Stage 3 会对两个方向分别生成 job。
-- **合并**：与另一方向共享 ≥2 篇论文 + 画像高度重叠时；`merge_target` = 本教授现有目标方向 ID，`resolution_type=merged_into`，`papers_to_add/papers_to_remove` 留空（整个方向并入目标）。runner 校验会拒绝：目标不存在、目标是自己、目标本身也是 merged_into（禁止链式合并）；多个方向合并进同一目标是合法的。finalize 时源方向条目从输入包移除，其论文/gap 引用完整移植到目标（`merged_from` 记录来源），输入包根部 `resolved_directions` 索引永久保留 源→目标 映射供引用回溯。
+- **合并**：全文证据显示两条方向是同一研究线时，满足任一即可：(a) 与另一方向共享 ≥2 篇论文 + 画像高度重叠；(b) 两方向各有 ≥2 篇含有效 facts 的论文、全文 topic terms 高度收敛——**preview cluster 完全不共享论文也可以合并**（preview 聚类本是摘要级，被误拆的同一条线往往不共享论文 ID，runner 的 merge 候选检测对这种情况输出 `merge_basis=fulltext_convergence`）。`merge_target` = 本教授现有目标方向 ID，`resolution_type=merged_into`，`papers_to_add/papers_to_remove` 留空（整个方向并入目标）。runner 校验会拒绝：目标不存在、目标是自己、目标本身也是 merged_into（禁止链式合并）；多个方向合并进同一目标是合法的。finalize 时源方向条目从输入包移除，其论文/gap 引用完整移植到目标（`merged_from` 记录来源），输入包根部 `resolved_directions` 索引永久保留 源→目标 映射供引用回溯。
 - **keyword/grep 单独命中不构成 membership 证据**——必须 facts 全文证据。
 
 **C. 跑 `stage2-resolve-finalize`**（纯确定性，校验结果并写 `<教授目录>/论文分析/_resolved_directions.json`）：
