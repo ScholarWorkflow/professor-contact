@@ -1479,22 +1479,22 @@ def cmd_stage2_resolve_plan(args) -> None:
     by the model in the resolve job, which has access to the full context.
 
     Reuse: an existing `_resolved_directions.json` entry whose per-direction
-    `input_fingerprint` still matches the current facts is reused as-is and
-    gets NO new resolve job — only directions whose union-wide paper metadata,
-    facts files, this direction's gap-evidence sidecars, or profile inputs
-    changed (or that were never resolved) are re-resolved. Editorial-only
-    analysis Markdown edits do not affect the resolve model_input and keep
-    accepted state reusable.
+    `input_fingerprint` (the SHA of the direction's canonical resolve
+    model_input) still matches is reused as-is and gets NO new resolve job —
+    only directions whose job input changed (union paper metadata, effective
+    facts state, any direction's profile, cross-direction candidate evidence,
+    this direction's gap evidence) or that were never resolved/accepted are
+    re-resolved. Editorial-only analysis Markdown edits do not affect the
+    resolve model_input and keep accepted state reusable.
     """
     ctx = Stage2Context(Path(args.facts))
     # The resolution evidence universe is the professor-level candidate union:
     # reuse fingerprints must hash the same universe the resolve jobs score.
-    resolve_evidence_keys = selected_candidate_union(ctx)
-    affinity = _compute_paper_direction_affinity(ctx)
-    additions = _detect_candidates_for_addition(ctx, affinity)
-    removals = _detect_candidates_for_removal(ctx, affinity)
-    splits = _detect_split_candidates(ctx)
-    merges = _detect_merge_candidates(ctx)
+    evidence = _resolve_evidence(ctx)
+    additions = evidence["additions"]
+    removals = evidence["removals"]
+    splits = evidence["splits"]
+    merges = evidence["merges"]
 
     # Determine if any material change is detected
     has_material_changes = bool(additions or removals or splits or merges)
@@ -1509,12 +1509,12 @@ def cmd_stage2_resolve_plan(args) -> None:
     # Build per-direction resolution jobs
     resolve_jobs = []
     reuse_list = []
+    fingerprints: dict[str, str] = {}
     for plan in ctx.direction_plans:
         ckey = plan["ckey"]
         prior = existing_by_ckey.get(ckey)
-        current_fingerprint = _per_direction_fingerprint(
-            plan["direction"], ctx.papers, resolve_evidence_keys,
-                gap_item_keys={g["item_key"] for g in plan.get("pool") or ()})
+        current_fingerprint = _current_resolve_fingerprint(ctx, plan, evidence)
+        fingerprints[ckey] = current_fingerprint
         # Only ACCEPTED resolved state is reusable. A material change is written
         # as "proposed" before the user picks (adopt / provisional / re-select);
         # re-resolving it until the choice is made keeps the promised re-prompt
@@ -1523,41 +1523,6 @@ def cmd_stage2_resolve_plan(args) -> None:
                 and prior.get("acceptance") == "accepted":
             reuse_list.append(ckey)
             continue  # resolved state is fresh and accepted; no new job
-        direction = plan["direction"]
-        # Collect per-paper evidence over the professor-level candidate union:
-        # issue #7 requires the resolution to judge every unique candidate
-        # paper from full-text facts, including candidates that entered the
-        # union through ANOTHER direction (disjoint per-direction candidate
-        # sets must not hide a cross-preview miscluster from this job).
-        paper_evidence = []
-        for key in selected_candidate_union(ctx):
-            paper = ctx.papers.get(key)
-            if not paper:
-                continue
-            facts_record, facts_state, facts_error = ctx.facts_for(key)
-            paper_evidence.append({
-                "item_key": key,
-                "title": paper.get("title"),
-                "year": paper.get("year"),
-                "authorship": paper.get("authorship"),
-                "is_provisional_member": key in (direction.get("provisional_member_keys") or []),
-                "facts_state": facts_state,
-                "facts_error": facts_error,
-                "topic_terms": (facts_record or {}).get("topic_terms") if facts_record else [],
-                "affinity_scores": affinity.get(key, {}),
-            })
-        # Collect gap evidence
-        gap_evidence = []
-        for gap in plan["pool"]:
-            gap_evidence.append({
-                "gap_id": gap["gap_id"],
-                "item_key": gap["item_key"],
-                "paper_title": gap.get("paper_title"),
-                "quote_trunc": truncate(gap.get("quote"), 120),
-                "translation_zh": truncate(gap.get("translation_zh"), 80),
-            })
-        # Collect removal candidates for this direction
-        dir_removals = [r for r in removals if r["direction"] == ckey]
         resolve_jobs.append({
             "job_id": f"resolve:{ctx.professor}:{ckey}",
             "kind": "resolve",
@@ -1581,43 +1546,9 @@ def cmd_stage2_resolve_plan(args) -> None:
                     "user_note": "<preserved from provisional>",
                 },
             },
-            "model_input": {
-                "collection_key": ckey,
-                "provisional_direction": {
-                    "name_ja": direction.get("name_ja"),
-                    "name_zh": direction.get("name_zh"),
-                    "summary_zh": direction.get("summary_zh"),
-                    "user_note": direction.get("user_note") or "",
-                    "provisional_member_keys": direction.get("provisional_member_keys") or [],
-                    "credibility": direction.get("credibility") or {},
-                },
-                "paper_evidence": paper_evidence,
-                "gap_evidence": gap_evidence,
-                "removal_candidates": dir_removals,
-                "split_candidates": [s for s in splits if s["direction"] == ckey],
-                "merge_candidates": [m for m in merges if m["direction_a"] == ckey or m["direction_b"] == ckey],
-                "addition_candidates": [a for a in additions if a["target_direction"] == ckey],
-                "rules": (
-                    "Resolve this provisional direction against full-text evidence.\n"
-                    "1. Each paper in paper_evidence has full-text facts (facts_state=valid) or not.\n"
-                    "2. Papers with valid full-text facts: judge membership by topic_terms overlap with direction profile.\n"
-                    "3. Papers without full-text facts: keep provisional membership (can't downgrade without evidence).\n"
-                    "4. A paper can support multiple directions (shared papers are allowed).\n"
-                    "5. Removal: only when full-text facts clearly show the paper doesn't belong.\n"
-                    "6. Addition: only when full-text facts clearly support this direction over the provisional one.\n"
-                    "7. Split: only when papers cluster into ≥2 distinct topic groups; set split_target to a NEW "
-                    "direction ID and put the papers that move INTO the new direction in papers_to_add "
-                    "(the source keeps the rest; papers_to_remove must be empty).\n"
-                    "8. Merge: only when full-text evidence shows another direction is the same line of "
-                    "work — either shared papers with matching profile (merge_basis=shared_papers) or "
-                    "converging topic terms across both directions' facts-backed papers, including "
-                    "disjoint preview clusters (merge_basis=fulltext_convergence). Set "
-                    "merge_target to that direction ID (papers_to_add/papers_to_remove must be empty — the whole "
-                    "direction folds into the target).\n"
-                    "9. Keyword/grep matches alone are NOT sufficient for final membership.\n"
-                    "10. If no material change, set resolution_type='unchanged' and empty add/remove lists."
-                ),
-            },
+            # Built by the same function the reuse fingerprint hashes, so the
+            # cached state can never drift from what the job would receive.
+            "model_input": _build_resolve_model_input(ctx, plan, evidence),
         })
 
     emit({
@@ -1636,9 +1567,7 @@ def cmd_stage2_resolve_plan(args) -> None:
         "directions": [{
             "collection_key": plan["ckey"],
             "action": "reuse" if plan["ckey"] in reuse_list else "process",
-            "input_fingerprint": _per_direction_fingerprint(
-                plan["direction"], ctx.papers, resolve_evidence_keys,
-                gap_item_keys={g["item_key"] for g in plan.get("pool") or ()}),
+            "input_fingerprint": fingerprints[plan["ckey"]],
         } for plan in ctx.direction_plans],
         "candidates": {
             "additions": additions,
@@ -1651,60 +1580,130 @@ def cmd_stage2_resolve_plan(args) -> None:
     })
 
 
-def _per_direction_fingerprint(direction: dict, papers: dict, evidence_keys: list,
-                               gap_item_keys=()) -> str:
-    """Per-direction fingerprint of the inputs that affect resolved_direction.
+def _resolve_evidence(ctx: Stage2Context) -> dict:
+    """Deterministic inputs shared by every per-direction resolve job.
 
-    `evidence_keys` must be the professor-level selected candidate union (the
-    same universe the resolve job scores), not the direction's own candidate
-    set: full-text evidence about ANY unique candidate can flip this
-    direction's membership even when the paper entered the union through
-    another provisional direction.
-
-    Version 3 hashes exactly what the resolve model_input consumes:
-    - union-wide paper metadata (item_key/title/year/authorship) + facts SHA
-      (topic_terms / facts_state evidence);
-    - this direction's gap evidence: sidecar SHAs of the papers whose
-      future-work items feed `gap_evidence` and the affinity gap contribution
-      (`gap_item_keys` = the direction's plan pool). A future-work sidecar
-      edit in ANOTHER direction's pool does not change this direction's
-      resolve input and must not invalidate it;
-    - per-direction profile fields (including credibility, which is passed to
-      the model). Deliberately NOT hashed: analysis Markdown bodies (never
-      part of the resolve model_input), abstract/month/has_pdf (abstract
-      preview data that full-text resolution exists to correct), and other
-      directions' sidecars. Editorial-only edits therefore keep accepted
-      state reusable instead of burning a resolve job.
+    The evidence universe is the professor-level selected candidate union (a
+    paper that entered the union through ANOTHER direction is still scored
+    here), and affinity plus the four candidate detections are derived from
+    it. Resolve reuse fingerprints hash these rendered per direction, so
+    plan, finalize and the finalize-time staleness check can never disagree
+    about what a resolve job would receive.
     """
-    gap_keys = set(gap_item_keys or ())
-    paper_rows = []
-    for key in sorted(set(evidence_keys)):
-        paper = papers.get(key, {})
-        row = {
+    evidence_keys = selected_candidate_union(ctx)
+    affinity = _compute_paper_direction_affinity(ctx)
+    return {
+        "evidence_keys": evidence_keys,
+        "affinity": affinity,
+        "additions": _detect_candidates_for_addition(ctx, affinity),
+        "removals": _detect_candidates_for_removal(ctx, affinity),
+        "splits": _detect_split_candidates(ctx),
+        "merges": _detect_merge_candidates(ctx),
+    }
+
+
+def _build_resolve_model_input(ctx: Stage2Context, plan: dict, evidence: dict) -> dict:
+    """The exact deterministic model_input a resolve job for `plan` receives.
+
+    Single source of truth shared by job emission and the reuse fingerprint:
+    any state change that alters this dict invalidates the direction's cached
+    resolution, and anything NOT in it (analysis Markdown prose, abstract
+    preview fields) must not. The dict covers:
+    - the direction's own profile, provenance and credibility;
+    - union-wide paper evidence with the EFFECTIVE facts_state/facts_error/
+      topic_terms from `facts_for` — the future-work sidecar join is part of
+      the evidence chain, so a sidecar edit that breaks the join changes every
+      direction that would see the paper;
+    - per-paper affinity scores to ALL selected directions and the
+      cross-direction removal/split/merge/addition candidate detections,
+      which depend on other directions' profiles, membership and gaps;
+    - this direction's own gap evidence (its pool's sidecar-rendered rows).
+    """
+    direction = plan["direction"]
+    ckey = plan["ckey"]
+    paper_evidence = []
+    for key in evidence["evidence_keys"]:
+        paper = ctx.papers.get(key)
+        if not paper:
+            continue
+        facts_record, facts_state, facts_error = ctx.facts_for(key)
+        paper_evidence.append({
             "item_key": key,
             "title": paper.get("title"),
             "year": paper.get("year"),
             "authorship": paper.get("authorship"),
-            "facts_sha": sha256_bytes(Path(paper.get("facts_file")).read_bytes())
-                if paper.get("facts_file") and Path(paper.get("facts_file")).is_file() else None,
-        }
-        if key in gap_keys:
-            row["gap_sidecar_sha"] = (
-                sha256_bytes(Path(paper.get("sidecar_file")).read_bytes())
-                if paper.get("sidecar_file") and Path(paper.get("sidecar_file")).is_file() else None)
-        paper_rows.append(row)
+            "is_provisional_member": key in (direction.get("provisional_member_keys") or []),
+            "facts_state": facts_state,
+            "facts_error": facts_error,
+            "topic_terms": (facts_record or {}).get("topic_terms") if facts_record else [],
+            "affinity_scores": evidence["affinity"].get(key, {}),
+        })
+    gap_evidence = []
+    for gap in plan.get("pool") or []:
+        gap_evidence.append({
+            "gap_id": gap["gap_id"],
+            "item_key": gap["item_key"],
+            "paper_title": gap.get("paper_title"),
+            "quote_trunc": truncate(gap.get("quote"), 120),
+            "translation_zh": truncate(gap.get("translation_zh"), 80),
+        })
+    return {
+        "collection_key": ckey,
+        "provisional_direction": {
+            "name_ja": direction.get("name_ja"),
+            "name_zh": direction.get("name_zh"),
+            "summary_zh": direction.get("summary_zh"),
+            "user_note": direction.get("user_note") or "",
+            "provisional_member_keys": direction.get("provisional_member_keys") or [],
+            "credibility": direction.get("credibility") or {},
+        },
+        "paper_evidence": paper_evidence,
+        "gap_evidence": gap_evidence,
+        "removal_candidates": [r for r in evidence["removals"] if r["direction"] == ckey],
+        "split_candidates": [s for s in evidence["splits"] if s["direction"] == ckey],
+        "merge_candidates": [m for m in evidence["merges"]
+                             if m["direction_a"] == ckey or m["direction_b"] == ckey],
+        "addition_candidates": [a for a in evidence["additions"]
+                                if a["target_direction"] == ckey],
+        "rules": (
+            "Resolve this provisional direction against full-text evidence.\n"
+            "1. Each paper in paper_evidence has full-text facts (facts_state=valid) or not.\n"
+            "2. Papers with valid full-text facts: judge membership by topic_terms overlap with direction profile.\n"
+            "3. Papers without full-text facts: keep provisional membership (can't downgrade without evidence).\n"
+            "4. A paper can support multiple directions (shared papers are allowed).\n"
+            "5. Removal: only when full-text facts clearly show the paper doesn't belong.\n"
+            "6. Addition: only when full-text facts clearly support this direction over the provisional one.\n"
+            "7. Split: only when papers cluster into ≥2 distinct topic groups; set split_target to a NEW "
+            "direction ID and put the papers that move INTO the new direction in papers_to_add "
+            "(the source keeps the rest; papers_to_remove must be empty).\n"
+            "8. Merge: only when full-text evidence shows another direction is the same line of "
+            "work — either shared papers with matching profile (merge_basis=shared_papers) or "
+            "converging topic terms across both directions' facts-backed papers, including "
+            "disjoint preview clusters (merge_basis=fulltext_convergence). Set "
+            "merge_target to that direction ID (papers_to_add/papers_to_remove must be empty — the whole "
+            "direction folds into the target).\n"
+            "9. Keyword/grep matches alone are NOT sufficient for final membership.\n"
+            "10. If no material change, set resolution_type='unchanged' and empty add/remove lists."
+        ),
+    }
+
+
+RESOLVE_INPUT_FINGERPRINT_VERSION = 4
+
+
+def _current_resolve_fingerprint(ctx: Stage2Context, plan: dict, evidence: dict) -> str:
+    """Per-direction fingerprint of the exact resolve model_input.
+
+    Hashes the canonical job input the direction would receive right now, so
+    reuse is stale-proof by construction: another direction's profile or
+    facts-validity change, a broken future-work sidecar join, a metadata edit
+    or a rules-text change all alter the hash, while editorial analysis
+    Markdown edits (never part of the job input) keep accepted state
+    reusable.
+    """
     return sha256_obj({
-        "version": 3,
-        "provisional_direction_id": direction.get("collection_key"),
-        "name_ja": direction.get("name_ja"),
-        "name_zh": direction.get("name_zh"),
-        "summary_zh": direction.get("summary_zh"),
-        "status": direction.get("status"),
-        "user_note_sha": sha256_text(direction.get("user_note") or ""),
-        "credibility": direction.get("credibility"),
-        "provisional_member_keys": sorted(direction.get("provisional_member_keys") or []),
-        "named_keys": sorted(direction.get("named_keys") or []),
-        "paper_rows": paper_rows,
+        "version": RESOLVE_INPUT_FINGERPRINT_VERSION,
+        "resolve_model_input": _build_resolve_model_input(ctx, plan, evidence),
     })
 
 
@@ -1742,13 +1741,11 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
     # cluster even when Stage 1 never expanded it into this direction). The
     # same union is the fingerprint evidence universe, so cached-entry reuse
     # and result validation judge freshness over identical inputs.
-    resolve_evidence_keys = selected_candidate_union(ctx)
-    professor_candidate_set = set(resolve_evidence_keys)
+    evidence = _resolve_evidence(ctx)
+    professor_candidate_set = set(evidence["evidence_keys"])
     for plan in ctx.direction_plans:
         ckey = plan["ckey"]
-        current_fingerprint = _per_direction_fingerprint(
-            plan["direction"], ctx.papers, resolve_evidence_keys,
-                gap_item_keys={g["item_key"] for g in plan.get("pool") or ()})
+        current_fingerprint = _current_resolve_fingerprint(ctx, plan, evidence)
 
         def _unchanged_default() -> dict:
             direction = plan["direction"]
@@ -1983,11 +1980,9 @@ def cmd_stage2_resolve_finalize(args) -> None:
     ctx = Stage2Context(Path(args.facts))
     results_dir = Path(args.results)
     existing = _load_existing_resolved(ctx.professor_dir, ctx.professor, None)
-    resolve_evidence_keys = selected_candidate_union(ctx)
-    plan_fingerprints = {plan["ckey"]: _per_direction_fingerprint(
-        plan["direction"], ctx.papers, resolve_evidence_keys,
-                gap_item_keys={g["item_key"] for g in plan.get("pool") or ()})
-        for plan in ctx.direction_plans}
+    evidence = _resolve_evidence(ctx)
+    plan_fingerprints = {plan["ckey"]: _current_resolve_fingerprint(ctx, plan, evidence)
+                         for plan in ctx.direction_plans}
     existing_by_ckey: dict[str, dict] = {}
     if existing:
         for entry in existing.get("directions") or []:
@@ -2028,9 +2023,7 @@ def cmd_stage2_resolve_finalize(args) -> None:
         "professor_dir": str(ctx.professor_dir),
         "directions": [
             {"collection_key": plan["ckey"],
-             "fingerprint": _per_direction_fingerprint(
-                 plan["direction"], ctx.papers, resolve_evidence_keys,
-                gap_item_keys={g["item_key"] for g in plan.get("pool") or ()})}
+             "fingerprint": plan_fingerprints[plan["ckey"]]}
             for plan in ctx.direction_plans
         ],
     }
@@ -2703,17 +2696,15 @@ def cmd_stage2_finalize(args) -> None:
         # Per-direction freshness: every current direction must be covered by an
         # entry whose input_fingerprint matches the current facts. Stale or
         # missing entries fail closed so a half-updated resolved file can never
-        # leak into the pack. Fingerprints hash the professor-level candidate
-        # union — the same evidence universe the resolve plan/finalize wrote.
-        resolve_evidence_keys = selected_candidate_union(ctx)
+        # leak into the pack. Fingerprints hash the exact resolve model_input —
+        # the same evidence universe the resolve plan/finalize wrote.
+        evidence = _resolve_evidence(ctx)
         stale = []
         for plan in ctx.direction_plans:
             entry = resolved_directions.get(plan["ckey"])
             if entry is None:
                 stale.append({"direction": plan["ckey"], "problem": "missing_from_resolved_file"})
-            elif entry.get("input_fingerprint") != _per_direction_fingerprint(
-                    plan["direction"], ctx.papers, resolve_evidence_keys,
-                gap_item_keys={g["item_key"] for g in plan.get("pool") or ()}):
+            elif entry.get("input_fingerprint") != _current_resolve_fingerprint(ctx, plan, evidence):
                 stale.append({"direction": plan["ckey"], "problem": "input_fingerprint_mismatch"})
         if stale:
             fail("resolved_directions_stale",

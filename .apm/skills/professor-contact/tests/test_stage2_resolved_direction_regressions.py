@@ -18,6 +18,10 @@ class DummyContext:
         self.direction_plans = direction_plans
         self.papers = papers or {}
 
+    def facts_for(self, key):
+        # Minimal stand-in: no full-text facts available for any paper.
+        return None, "unavailable", "missing_facts_sidecar"
+
 
 class ResolvedDirectionRegressionTests(unittest.TestCase):
     def test_addition_candidate_targets_strongest_non_provisional_direction(self):
@@ -102,9 +106,10 @@ class ResolvedDirectionRegressionTests(unittest.TestCase):
                 "has_pdf": False,
             }
         }
-        ctx = DummyContext([{"ckey": "dir_A", "direction": direction}], papers)
-        fingerprint = contact_state._per_direction_fingerprint(
-            direction, papers, contact_state.selected_candidate_union(ctx))
+        ctx = DummyContext([{"ckey": "dir_A", "direction": direction, "pool": []}], papers)
+        evidence = contact_state._resolve_evidence(ctx)
+        fingerprint = contact_state._current_resolve_fingerprint(
+            ctx, {"ckey": "dir_A", "direction": direction, "pool": []}, evidence)
         prior = {
             "resolved_direction_id": "dir_A",
             "provisional_direction_id": "dir_A",
