@@ -2621,6 +2621,28 @@ def contact_evidence_record(artifact: dict, professor: str) -> dict | None:
     return None
 
 
+CONTACT_EVIDENCE_UNAVAILABLE_KEYS = (
+    "official_candidates_unavailable",
+    "professor_papers_unavailable",
+    "paper_correspondence_unavailable",
+    "signature_aliases_unavailable",
+)
+
+
+def contact_evidence_record_degraded(record: dict) -> bool:
+    """Issue-#14 scoped degradation: whether THIS record's evidence was dropped.
+
+    Upstream flags only the families that were present but unreadable for this
+    professor, so another professor's broken source never degrades this record.
+    Artifacts from before that contract carry no evidence_status and count as
+    clean here; their own fail-closed rules (current_email null) still apply.
+    """
+    status = record.get("evidence_status")
+    if not isinstance(status, dict):
+        return False
+    return any(bool(status.get(key)) for key in CONTACT_EVIDENCE_UNAVAILABLE_KEYS)
+
+
 def contact_evidence_snapshot(artifact: dict | None, artifact_error: str | None,
                               professor: str) -> dict | None:
     """Stage-4 copy of the professor's reconciled record into the email pack."""
@@ -2629,8 +2651,14 @@ def contact_evidence_snapshot(artifact: dict | None, artifact_error: str | None,
     record = contact_evidence_record(artifact, professor)
     if record is None:
         return None
+    # degraded is record-scoped (Issue #14): the snapshot answers "was this
+    # professor's evidence dropped", not "did anything anywhere fail". Packs
+    # built before the scoped contract still carry the artifact-level flag and
+    # stay maximally conservative in evaluate_contact_evidence.
+    status = record.get("evidence_status")
     return {"generated_at": artifact.get("generated_at"),
-            "degraded": bool(artifact.get("degraded")),
+            "degraded": contact_evidence_record_degraded(record),
+            "evidence_status": status if isinstance(status, dict) else None,
             "source_errors": artifact.get("source_errors") or [],
             "recent_paper_years": artifact.get("recent_paper_years"),
             "current_year": artifact.get("current_year"),
@@ -2681,9 +2709,11 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
     Accepts the artifact's current email only for confirmed_cross_source or a
     single official_only address, and only while the evidence itself is fresh
     (generated_at within VERIFY_TTL_DAYS); everything else (paper-only,
-    conflict, ambiguous, insufficient, stale, missing/degraded/unreadable
-    artifact, unverifiable timestamp) escalates to the existing official
-    faculty/lab web verification ladder.
+    conflict, ambiguous, insufficient, stale, unreadable artifact, this
+    record's own unreadable evidence families, unverifiable timestamp)
+    escalates to the existing official faculty/lab web verification ladder.
+    Degradation is judged per record (Issue #14): source failures that only
+    affect other professors escalate nobody else.
     """
     def escalate(reason_code: str) -> dict:
         return {"status": "escalate", "reason_code": reason_code,
@@ -2705,20 +2735,24 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
     stale = None
     record = None
     if artifact is not None:
-        if bool(artifact.get("degraded")):
-            return escalate("contact_evidence_artifact_degraded")
         stale_reason = contact_evidence_freshness_reason(artifact.get("generated_at"))
         if stale_reason:
             return escalate(stale_reason)
         record = contact_evidence_record(artifact, professor)
         if record is None:
             return escalate("contact_evidence_professor_not_found")
+        if contact_evidence_record_degraded(record):
+            # Scoped degradation (Issue #14): escalate only when this record's
+            # own evidence families were unreadable upstream.
+            return escalate("contact_evidence_artifact_degraded")
         if isinstance(snapshot, dict) and isinstance(snapshot.get("record_fingerprint"), str):
             stale = snapshot["record_fingerprint"] != sha256_obj(record)
     elif isinstance(snapshot, dict) and isinstance(snapshot.get("record"), dict):
         # Without the artifact file the pack snapshot is the last known
         # evidence; its embedded generated_at still gates freshness so an old
         # snapshot can never be seeded into the verify cache as confirmed.
+        # snapshot.degraded is record-scoped for packs built after the Issue-#14
+        # contract and artifact-scoped (maximally conservative) for older packs.
         if bool(snapshot.get("degraded")):
             return escalate("contact_evidence_artifact_degraded")
         stale_reason = contact_evidence_freshness_reason(snapshot.get("generated_at"))

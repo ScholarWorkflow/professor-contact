@@ -13,6 +13,12 @@ helpers = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = helpers
 spec.loader.exec_module(helpers)
 
+spec_state = importlib.util.spec_from_file_location(
+    "contact_state_module", HERE.parent / "scripts" / "contact_state.py")
+contact_state = importlib.util.module_from_spec(spec_state)
+sys.modules[spec_state.name] = contact_state
+spec_state.loader.exec_module(contact_state)
+
 BaseEnv = helpers.BaseEnv
 TestStage5 = helpers.TestStage5
 parse = helpers.parse
@@ -197,16 +203,77 @@ class TestContactEvidenceLadder(BaseEnv):
         self.assertEqual(decision["recipient_email"], "faculty@example.test")
         self.assertTrue(decision["single_source"])
 
-    def test_plan_escalates_on_degraded_artifact(self):
+    def test_plan_escalates_when_this_record_evidence_is_unavailable(self):
         self.prepare()
-        self.write_artifact(artifact_overrides={
-            "degraded": True,
-            "source_errors": [{"source": "paper_correspondence",
-                               "path": "_corresp_cache.json", "error": "invalid"}]})
+        self.write_artifact(record_overrides={
+            "verdict": "official_only", "confirmed_emails": [],
+            "paper_correspondence": [], "current_email": None,
+            "evidence_status": {
+                "official_candidates_unavailable": False,
+                "professor_papers_unavailable": True,
+                "paper_correspondence_unavailable": False,
+                "signature_aliases_unavailable": False,
+                "current_email_blocked_by": ["professor_papers_unavailable"]}},
+            artifact_overrides={
+                "degraded": True,
+                "source_errors": [{"source": "papers_json", "scope": "professor",
+                                   "path": "研究領域A/試験 教授/papers.json",
+                                   "error": "malformed JSON"}]})
+        self.compile_pack()
         decision = self.decision(self.plan_jobs())
         self.assertEqual(decision["status"], "escalate")
         self.assertEqual(decision["reason_code"], "contact_evidence_artifact_degraded")
         self.assertTrue(decision["web_lookup_required"])
+        self.assertIsNone(decision["recipient_email"])
+
+    def test_plan_scopes_degradation_to_the_affected_record(self):
+        # Issue-#14 acceptance: professor B's malformed papers.json degrades only
+        # B's record; professor A stays usable without web escalation.
+        self.prepare()
+        good_status = {"official_candidates_unavailable": False,
+                       "professor_papers_unavailable": False,
+                       "paper_correspondence_unavailable": False,
+                       "signature_aliases_unavailable": False,
+                       "current_email_blocked_by": []}
+        record = self.write_artifact(record_overrides={
+            "evidence_status": dict(good_status)})
+        broken = dict(record)
+        broken["professor"] = {"name": "佐藤 花子", "name_romaji": None}
+        broken["verdict"] = "official_only"
+        broken["confirmed_emails"] = []
+        broken["current_email"] = None
+        broken["evidence_status"] = {
+            "official_candidates_unavailable": False,
+            "professor_papers_unavailable": True,
+            "paper_correspondence_unavailable": False,
+            "signature_aliases_unavailable": False,
+            "current_email_blocked_by": ["professor_papers_unavailable"]}
+        self.write_artifact(record_overrides={"evidence_status": dict(good_status)},
+                            artifact_overrides={
+                                "degraded": True,
+                                "source_errors": [{
+                                    "source": "papers_json", "scope": "professor",
+                                    "path": "研究領域B/佐藤花子/papers.json",
+                                    "error": "malformed JSON"}],
+                                "professors": [record, broken]})
+        entry = self.compile_pack()
+        snapshot = entry["contact_evidence"]
+        self.assertIsNotNone(snapshot)
+        self.assertFalse(snapshot["degraded"])
+        self.assertEqual(snapshot["evidence_status"], good_status)
+        decision = self.decision(self.plan_jobs())
+        self.assertEqual(decision["status"], "confirmed_cross_source")
+        self.assertIsNone(decision["reason_code"])
+        self.assertFalse(decision["web_lookup_required"])
+        self.assertEqual(decision["recipient_email"], "faculty@example.test")
+        # The same artifact still escalates the professor it actually concerns.
+        artifact = json.loads((self.root / EVIDENCE_FILE).read_text(encoding="utf-8"))
+        broken_decision = contact_state.evaluate_contact_evidence(
+            "佐藤 花子", None, artifact, None)
+        self.assertEqual(broken_decision["status"], "escalate")
+        self.assertEqual(broken_decision["reason_code"],
+                         "contact_evidence_artifact_degraded")
+        self.assertTrue(broken_decision["web_lookup_required"])
 
     def test_plan_escalates_on_unreadable_artifact(self):
         self.prepare()
