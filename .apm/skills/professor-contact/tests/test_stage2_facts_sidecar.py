@@ -29,13 +29,20 @@ def parse(result):
         raise AssertionError(f"stdout not JSON: {result.stdout!r}\nstderr: {result.stderr!r}")
 
 
-def make_sidecar(analysis: Path, quotes: list, page: int = 8) -> Path:
+def make_sidecar(analysis: Path, quotes: list, page: int = 8, *,
+                 analysis_binding: str | None = None) -> Path:
+    """Write a future-work sidecar in the canonical paper-analysis form.
+
+    Real `future_work.py finalize` records `"analysis": analysis.name`
+    (basename). `analysis_binding` overrides it for legacy/compat cases.
+    """
     items = [{"id": quote_id(q), "quote": q, "translation_zh": f"中译：{q[:24]}",
               "source": "Conclusion", "page": page} for q in quotes]
     sidecar = Path(str(analysis) + ".future_work.json")
     sidecar.write_text(json.dumps({
         "schema": 1, "extractor_version": "future-work-v1",
-        "analysis": str(analysis), "status": "ok", "items": items},
+        "analysis": analysis_binding if analysis_binding is not None else analysis.name,
+        "status": "ok", "items": items},
         ensure_ascii=False, indent=1), encoding="utf-8")
     return sidecar
 
@@ -181,6 +188,9 @@ class FactsSidecarTests(unittest.TestCase):
                     for p in d["supporting_papers"] if p["item_key"] == item_key)
 
     def test_valid_facts_sidecar_is_normalized_into_the_pack(self):
+        # Integration regression: both sidecars use the canonical paper-analysis
+        # basename `analysis` binding and the full stage2-plan → stage2-finalize
+        # path must reuse the facts sidecar (facts_state == valid).
         pack = self.stage2_run()
         row = self.supporting(pack, "AAAA1111")
         self.assertEqual(row["facts_state"], "valid")
@@ -200,6 +210,37 @@ class FactsSidecarTests(unittest.TestCase):
         self.assertEqual(other["facts_state"], "unavailable")
         self.assertEqual(other["facts_error"], "missing_facts_sidecar")
         self.assertIsNone(other["paper_facts"])
+
+    def test_legacy_absolute_path_sidecar_still_accepted(self):
+        analysis = self.prof_dir / "论文分析" / "AAAA1111.md"
+        make_sidecar(analysis, [GAP_QUOTES["AAAA1111"]], analysis_binding=str(analysis))
+        pack = self.stage2_run()
+        row = self.supporting(pack, "AAAA1111")
+        self.assertEqual(row["facts_state"], "valid")
+        self.assertIsNotNone(row["paper_facts"])
+
+    def test_sidecar_bound_to_different_analysis_is_rejected(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("contact_state_facts_unit2", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        make_sidecar(self.prof_dir / "论文分析" / "AAAA1111.md",
+                     [GAP_QUOTES["AAAA1111"]], analysis_binding="BBBB2222.md")
+        ctx = module.Stage2Context(self.write_facts())
+        record = ctx.facts_for("AAAA1111")
+        self.assertEqual(record, (None, "failed", "facts_future_work_join_mismatch"))
+
+    def test_facts_sidecar_bound_to_different_analysis_is_rejected(self):
+        payload = json.loads(self.facts_sidecar.read_text(encoding="utf-8"))
+        payload["analysis"] = "OTHER.md"
+        self.facts_sidecar.write_text(json.dumps(payload, ensure_ascii=False, indent=1),
+                                      encoding="utf-8")
+        pack = self.stage2_run()
+        row = self.supporting(pack, "AAAA1111")
+        self.assertEqual(row["facts_state"], "failed")
+        self.assertEqual(row["facts_error"], "invalid_facts_sidecar")
+        self.assertIsNone(row["paper_facts"])
 
     def test_source_fingerprint_mismatch_fails_closed(self):
         stale = make_facts_sidecar(

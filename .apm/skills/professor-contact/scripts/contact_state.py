@@ -423,6 +423,25 @@ def save_projections(program_root: Path, projections: dict) -> None:
     atomic_json(program_root / "教授研究" / PROJECTIONS_FILE, projections)
 
 
+def sidecar_analysis_matches(recorded: Any, expected_analysis: str) -> bool:
+    """Bind a sidecar's `analysis` field to the analysis it belongs to.
+
+    Canonical paper-analysis sidecars record the basename (`analysis.name` in
+    both `future_work.py` and `facts.py`); legacy sidecars recorded the absolute
+    analysis path. Both forms bind the sidecar to its exact sibling analysis —
+    anything else (relative paths with separators, foreign names) does not.
+    """
+    if not isinstance(recorded, str) or not recorded.strip():
+        return False
+    path = Path(recorded.strip())
+    if path.is_absolute():
+        try:
+            return path.resolve() == Path(expected_analysis).resolve()
+        except OSError:
+            return False
+    return len(path.parts) == 1 and path.name == Path(expected_analysis).name
+
+
 def load_sidecar(path: str | None, expected_analysis: str | None = None) -> tuple[list, list, str | None]:
     """Return (anchorable_items, legacy_items, error)."""
     if not path:
@@ -439,13 +458,7 @@ def load_sidecar(path: str | None, expected_analysis: str | None = None) -> tupl
     if extractor_version not in SIDECAR_EXTRACTOR_VERSIONS:
         return [], [], "invalid"
     if expected_analysis:
-        recorded_analysis = data.get("analysis")
-        if not isinstance(recorded_analysis, str) or not Path(recorded_analysis).is_absolute():
-            return [], [], "invalid"
-        try:
-            if Path(recorded_analysis).resolve() != Path(expected_analysis).resolve():
-                return [], [], "invalid"
-        except OSError:
+        if not sidecar_analysis_matches(data.get("analysis"), expected_analysis):
             return [], [], "invalid"
     elif not isinstance(data.get("analysis"), str) or not data["analysis"].strip():
         return [], [], "invalid"
@@ -521,7 +534,7 @@ def load_facts_sidecar(
     recorded_analysis = data.get("analysis")
     if not isinstance(recorded_analysis, str) or not recorded_analysis.strip():
         return None, "failed", "invalid_facts_sidecar"
-    if expected_analysis and Path(recorded_analysis).name != Path(expected_analysis).name:
+    if expected_analysis and not sidecar_analysis_matches(recorded_analysis, expected_analysis):
         return None, "failed", "invalid_facts_sidecar"
     for field in FACTS_TEXT_FIELDS:
         value = data.get(field)
