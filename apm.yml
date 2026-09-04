@@ -1,7 +1,7 @@
 name: professor-contact
 version: 0.1.0
 description: Professor-contact candidate, idea, and email workflows.
-targets: [opencode]
+targets: [opencode, codex]
 includes: auto
 dependencies:
   apm:

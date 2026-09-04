@@ -1,6 +1,6 @@
 ---
 name: professor-contact-downloader
-description: Stage 1 of professor-contact. Direction-scoped candidate builder + targeted PDF assurance: resolves selected professors from 教授研究/套磁目标.json, builds per-direction high-recall candidate sets with contact_stage1.py, and fills only missing candidate PDFs via the item-scoped professor-collector fast path (pdf_only:true + item_keys). Never runs a broad professor-level download and never scans Zotero flag notes.
+description: 'Stage 1 of professor-contact. Direction-scoped candidate builder + targeted PDF assurance: resolves selected professors from 教授研究/套磁目标.json, builds per-direction high-recall candidate sets with contact_stage1.py, and fills only missing candidate PDFs via the item-scoped professor-collector fast path (pdf_only:true + item_keys). Never runs a broad professor-level download and never scans Zotero flag notes.'
 mode: subagent
 hidden: true
 model: opencode/mimo-v2.5-free
