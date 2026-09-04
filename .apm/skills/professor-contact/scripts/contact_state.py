@@ -2344,8 +2344,12 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
         "user_supplement": note or "",
         "contact_evidence": contact_evidence,
     }
+    # contact_evidence is a fact field (the frozen recipient snapshot), so it
+    # belongs in the pack integrity hash: a refrozen snapshot always yields a
+    # new source_hash, never a silent in-place substitution.
     entry["source_hash"] = sha256_obj({k: entry[k] for k in (
-        "email_id", "idea", "papers", "gaps", "red_lines", "allowed_sources")})
+        "email_id", "idea", "papers", "gaps", "red_lines", "allowed_sources",
+        "contact_evidence")})
     return entry
 
 
@@ -2873,15 +2877,25 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
                               checker_error: str | None = None,
                               rebuild_ran: bool = False) -> dict:
     """Issue-#10 decision ladder under the schema-2 source-state contract
-    (final cross-repo acceptance criteria, PR #14 comment 5540723034).
+    (final cross-repo acceptance criteria, PR #14 comment 5540723034), with
+    the frozen-pack fact-source boundary from the final review round.
+
+    邮件输入.json is Stage 5's single fact source: the recipient is read from
+    the Stage-4 snapshot frozen inside the email pack, and the live artifact
+    (plus any deterministic Stage-5 rebuild of it) only certifies freshness —
+    the live record fingerprint must stay byte-identical to the frozen one.
 
     The primary gate is live source-state freshness from professor-research's
     local `--check` interface, judged per target professor:
 
-    - `fresh`: the live artifact record is consumable when its own decision is
-      unblocked (current_email_blocked_by empty); artifact-level
-      degraded/global_degraded flags alone never force web. The verdict ladder
+    - `fresh`: the frozen snapshot is consumable when the live record still
+      matches its fingerprint and its own decision is unblocked
+      (current_email_blocked_by empty); artifact-level degraded/global_degraded
+      flags alone never force web. The verdict ladder
       (confirmed_cross_source, single official_only) then applies unchanged.
+    - fingerprint mismatch (including after a rebuild changed the record):
+      status `needs_refresh` — a Stage-4 re-run must refreeze the pack; the
+      live record is never accepted directly.
     - `stale`: never accepted on a fresh timestamp and never resolved from the
       pack snapshot — the deterministic local rebuild ran and the re-check
       still could not confirm fresh evidence (rebuild_failed).
@@ -2901,12 +2915,22 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
                 "web_lookup_required": True, "source": None,
                 "snapshot_stale": None, "provenance": {}}
 
+    def needs_refresh(reason_code: str, stale: bool) -> dict:
+        # The pack is out of sync with upstream contact facts (or predates
+        # the frozen snapshot entirely). The fix is a Stage-4 refresh, not a
+        # web lookup — web verification cannot repair the pack, and Stage 5
+        # must never accept a live record its own pack cannot replay.
+        return {"status": "needs_refresh", "reason_code": reason_code,
+                "recipient_email": None, "single_source": None,
+                "web_lookup_required": False, "source": None,
+                "snapshot_stale": stale, "provenance": {}}
+
     def accept(status: str, record: dict, recipient: str, source: str,
-               stale: bool | None, single_source: bool) -> dict:
+               single_source: bool) -> dict:
         return {"status": status, "reason_code": None,
                 "recipient_email": recipient, "single_source": single_source,
                 "web_lookup_required": False, "source": source,
-                "snapshot_stale": stale,
+                "snapshot_stale": False,
                 "provenance": evidence_provenance(record, recipient)}
 
     if checker_error == "script_failed":
@@ -2923,7 +2947,7 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
         if artifact.get("schema") == CONTACT_EVIDENCE_SCHEMA_LIVE:
             return escalate("contact_evidence_check_unavailable")
         return _evaluate_record_ladder(professor, snapshot, artifact,
-                                       escalate, accept)
+                                       escalate, accept, needs_refresh)
     if state is None:
         # The checker ran but attributes no state to this professor, so the
         # rebuild-first pass already ran: either the rebuild itself failed, or
@@ -2942,30 +2966,42 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
     if artifact_error:
         return escalate("contact_evidence_artifact_unreadable")
     return _evaluate_record_ladder(professor, snapshot, artifact,
-                                   escalate, accept)
+                                   escalate, accept, needs_refresh)
 
 
 def _evaluate_record_ladder(professor: str, snapshot: Any, artifact: dict,
-                            escalate, accept) -> dict:
-    """Verdict ladder on the live artifact record. The generated_at TTL gate
-    here is the send-time age policy only — source-state freshness is judged
-    upstream (or, transitionally for legacy artifacts, not at all)."""
+                            escalate, accept, needs_refresh) -> dict:
+    """Verdict ladder over the Stage-4 frozen pack snapshot, freshness-
+    certified live. The recipient fact comes from the snapshot embedded in
+    邮件输入.json; the live record must still match the frozen fingerprint
+    byte-for-byte or the decision demands a Stage-4 refresh — so a Stage-5
+    rebuild that changed upstream facts can never inject a recipient the
+    input pack cannot replay. The generated_at TTL gate here is the send-time
+    age policy only; source-state freshness is judged upstream (or,
+    transitionally for legacy artifacts, not at all)."""
     stale_reason = contact_evidence_freshness_reason(artifact.get("generated_at"))
     if stale_reason:
         return escalate(stale_reason)
     record = contact_evidence_record(artifact, professor)
     if record is None:
         return escalate("contact_evidence_professor_not_found")
+    if not isinstance(snapshot, dict) or \
+            not isinstance(snapshot.get("record_fingerprint"), str):
+        return needs_refresh("contact_evidence_snapshot_missing", False)
+    if snapshot["record_fingerprint"] != sha256_obj(record):
+        return needs_refresh("contact_evidence_snapshot_stale", True)
+    # Fingerprints match, so the frozen record is byte-identical to the live
+    # one; reading the facts from the pack keeps the contract explicit.
+    frozen = snapshot.get("record")
+    if isinstance(frozen, dict):
+        record = frozen
     if contact_evidence_record_degraded(record):
         # Scoped degradation (Issue #14): escalate only when this record's
         # current-email decision was actually blocked upstream — raw
         # family-unavailable flags are not enough, since upstream keeps a
         # record usable when its decision rests only on readable families.
         return escalate("contact_evidence_artifact_degraded")
-    stale = None
-    if isinstance(snapshot, dict) and isinstance(snapshot.get("record_fingerprint"), str):
-        stale = snapshot["record_fingerprint"] != sha256_obj(record)
-    if not isinstance(record, dict) or record.get("verdict") not in CONTACT_EVIDENCE_VERDICTS:
+    if record.get("verdict") not in CONTACT_EVIDENCE_VERDICTS:
         return escalate("contact_evidence_invalid_record")
     verdict = record.get("verdict")
     recipient = record.get("current_email")
@@ -2973,11 +3009,12 @@ def _evaluate_record_ladder(professor: str, snapshot: Any, artifact: dict,
         confirmed = record.get("confirmed_emails")
         if recipient and isinstance(confirmed, list) and len(confirmed) == 1:
             return accept("confirmed_cross_source", record, recipient,
-                          "artifact", stale, False)
+                          "pack_snapshot", False)
         return escalate("contact_evidence_ambiguous")
     if verdict == "official_only":
         if recipient:
-            return accept("official_only", record, recipient, "artifact", stale, True)
+            return accept("official_only", record, recipient,
+                          "pack_snapshot", True)
         return escalate("contact_evidence_ambiguous")
     if verdict == "conflict":
         return escalate("contact_evidence_conflict")
@@ -3029,9 +3066,10 @@ def verify_state(professor_dir: Path, sources: dict, decision: dict | None = Non
             return {"ok": False, "reason": "invalid_cache", "path": str(path), "data": data}
     # Issue-#10 linkage: an escalation voids exactly the trust chain that
     # broke, so a recipient email seeded from the contact-evidence artifact
-    # can never outlive the decision that produced it. Ladder/user-verified
-    # entries keep their own 30-day TTL.
-    if decision is not None and decision.get("status") == "escalate" and \
+    # can never outlive the decision that produced it. A needs_refresh
+    # decision (frozen snapshot out of sync with upstream) breaks the same
+    # chain. Ladder/user-verified entries keep their own 30-day TTL.
+    if decision is not None and decision.get("status") in ("escalate", "needs_refresh") and \
             email_item_is_evidence_seeded(items):
         return {"ok": False, "reason": "contact_evidence_escalated",
                 "path": str(path), "data": data}
@@ -3042,7 +3080,7 @@ def verify_state(professor_dir: Path, sources: dict, decision: dict | None = Non
     # provenance: it must be resolved explicitly before generation instead
     # of being silently reseeded (or discovered only at finalize's mismatch
     # guard). Same address in any provenance reuses the cache freely.
-    if decision is not None and decision.get("status") != "escalate" and \
+    if decision is not None and decision.get("status") not in ("escalate", "needs_refresh") and \
             decision.get("recipient_email"):
         cache_value = str(items["email"].get("value") or "").strip()
         recipient = str(decision["recipient_email"]).strip()
@@ -3125,9 +3163,20 @@ def cmd_stage5_plan(args) -> None:
     for email in emails:
         professor_dir = Path(email.get("professor_dir") or program_root)
         key = email.get("professor")
-        if key not in verify_checks:
-            verify_checks[key] = verify_state(professor_dir, sources,
-                                              decisions.get(key))
+        if key in verify_checks:
+            continue
+        check = verify_state(professor_dir, sources, decisions.get(key))
+        decision = decisions.get(key)
+        if check["ok"] and decision is not None and \
+                decision.get("status") == "needs_refresh":
+            # A frozen-snapshot mismatch makes this professor's pack entry
+            # stale for the whole run regardless of cache usability: plan
+            # must demand the Stage-4 refresh deterministically, never leave
+            # it to the agent reading the decision object alone.
+            check = {"ok": False,
+                     "reason": decision.get("reason_code") or "contact_evidence_snapshot_stale",
+                     "path": None, "data": None}
+        verify_checks[key] = check
     needs_recheck = [p for p, v in verify_checks.items() if not v["ok"]]
     template_path = None
     profile_path = args.profile
@@ -3651,9 +3700,19 @@ def cmd_stage5_finalize(args) -> None:
         verify = verify_check["data"]
         warnings = (verify.get("items") or {}).get("warnings") or []
         decision = decisions.get(email.get("professor"))
+        if decision and decision.get("status") == "needs_refresh":
+            # Frozen-pack contract: 邮件输入.json is out of sync with the
+            # live contact facts (or predates the snapshot). Nothing may be
+            # generated from a pack Stage 5 cannot replay — the deterministic
+            # fix is a Stage-4 refresh, not a web lookup.
+            soft_exit("needs_refresh", decision.get("reason_code") or
+                      "contact_evidence_snapshot_stale",
+                      professor=email.get("professor"),
+                      message="联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 "
+                              "邮件输入.json，再重跑阶段 5。未写盘。")
         cache_email_value = str(((verify.get("items") or {}).get("email") or {})
                                 .get("value") or "").strip()
-        if decision and decision["status"] != "escalate":
+        if decision and decision["status"] not in ("escalate", "needs_refresh"):
             recipient = str(decision["recipient_email"] or "").strip()
             if not cache_email_value or cache_email_value.casefold() != recipient.casefold():
                 fail("contact_evidence_mismatch",

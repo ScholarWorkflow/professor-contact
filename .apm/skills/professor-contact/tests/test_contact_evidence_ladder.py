@@ -300,7 +300,7 @@ class TestContactEvidenceLadder(BaseEnv):
         self.assertFalse(decision["web_lookup_required"])
         self.assertEqual(decision["recipient_email"], "faculty@example.test")
         self.assertFalse(decision["single_source"])
-        self.assertEqual(decision["source"], "artifact")
+        self.assertEqual(decision["source"], "pack_snapshot")
         self.assertFalse(decision["snapshot_stale"])
         self.assertTrue(decision["provenance"]["official_provenance"])
         self.assertTrue(decision["provenance"]["paper_evidence"])
@@ -424,8 +424,11 @@ class TestContactEvidenceLadder(BaseEnv):
         self.assertEqual(decision["recipient_email"], "faculty@example.test")
         # The same artifact still escalates the professor it actually concerns.
         artifact = json.loads((self.root / EVIDENCE_FILE).read_text(encoding="utf-8"))
+        broken_snapshot = contact_state.contact_evidence_snapshot(
+            artifact, None, "佐藤 花子")
         broken_decision = contact_state.evaluate_contact_evidence(
-            "佐藤 花子", None, artifact, None, checker_error="script_missing")
+            "佐藤 花子", broken_snapshot, artifact, None,
+            checker_error="script_missing")
         self.assertEqual(broken_decision["status"], "escalate")
         self.assertEqual(broken_decision["reason_code"],
                          "contact_evidence_artifact_degraded")
@@ -564,23 +567,30 @@ class TestContactEvidenceLadder(BaseEnv):
         self.assertTrue(decision["web_lookup_required"])
         self.assertIsNone(decision["recipient_email"])
 
-    def test_plan_flags_stale_snapshot_but_uses_current_artifact(self):
+    def test_pack_without_frozen_snapshot_requires_stage4_refresh(self):
+        # Frozen-pack contract (final PR #14 review): 邮件输入.json is Stage
+        # 5's single fact source. The live artifact only certifies freshness;
+        # a pack entry with no frozen snapshot can never be satisfied by the
+        # live record directly — Stage 4 must refresh the pack first, and
+        # after that refresh the same record is accepted without web.
         self.prepare()
+        entry = self.compile_pack()
+        self.assertIsNone(entry["contact_evidence"])
         self.write_artifact()
-        self.compile_pack()
-        stale_record = self.write_artifact(record_overrides={
-            "paper_correspondence": [{
-                "email": "faculty@example.test", "name": "試験 教授",
-                "item_key": "AAAA1111", "doi": None, "paper_year": 2024,
-                "channel": "correspondence", "confidence": "high",
-                "identity_match": "direct", "recent": True,
-                "current_email_evidence": False}]})
+        decision = self.decision(self.plan_jobs())
+        self.assertEqual(decision["status"], "needs_refresh")
+        self.assertEqual(decision["reason_code"],
+                         "contact_evidence_snapshot_missing")
+        self.assertFalse(decision["web_lookup_required"])
+        self.assertIsNone(decision["recipient_email"])
+        entry = self.compile_pack()
+        self.assertIsNotNone(entry["contact_evidence"])
         decision = self.decision(self.plan_jobs())
         self.assertEqual(decision["status"], "confirmed_cross_source")
-        self.assertTrue(decision["snapshot_stale"])
-        self.assertEqual(decision["source"], "artifact")
-        self.assertEqual(decision["recipient_email"],
-                         stale_record["current_email"])
+        self.assertIsNone(decision["reason_code"])
+        self.assertFalse(decision["web_lookup_required"])
+        self.assertEqual(decision["recipient_email"], "faculty@example.test")
+        self.assertEqual(decision["source"], "pack_snapshot")
 
     def test_finalize_records_chosen_email_and_provenance(self):
         g1 = self.prepare()
@@ -844,10 +854,56 @@ class TestContactEvidenceLadder(BaseEnv):
         self.assertIsNone(decision["recipient_email"])
 
     def test_stale_source_state_rebuilds_instead_of_trusting_fresh_timestamp(self):
-        # Regression 2: live source fingerprints stale while generated_at is
-        # still inside the 30-day window — Stage 5 must run the deterministic
-        # local rebuild/re-check and consume the rebuilt record, never accept
-        # the timestamp-fresh old snapshot or the pre-rebuild artifact.
+        # Regression (final PR #14 review): stale live source fingerprints
+        # make Stage 5 run the deterministic local rebuild/re-check — but the
+        # rebuilt record is a live fact that never entered 邮件输入.json.
+        # Stage 5 must never accept it as the recipient: it demands a Stage-4
+        # refresh of the frozen pack snapshot instead, plan flags the
+        # professor deterministically, and finalize writes nothing.
+        g1 = self.prepare()
+        self.write_schema2_artifact()
+        self.compile_pack()
+        rebuilt_record = self.schema2_record({
+            "verdict": "official_only", "confirmed_emails": [],
+            "paper_correspondence": [], "current_email": "office@example.test",
+            "official_emails": [{
+                "email": "office@example.test", "current_source": True,
+                "provenance": [{"source_type": "official_professor_candidate",
+                                "source": "recruitment-faculty-list"}]}]})
+        rebuilt_artifact = {
+            "schema": 2, "kind": "professor-contact-evidence",
+            "generated_at": fresh_ts(),
+            "recent_paper_years": 5, "current_year": 2026,
+            "scope": "workflow_evidence_not_send_time_authority",
+            "sources": {}, "degraded": False, "global_degraded": False,
+            "source_errors": [],
+            "source_fingerprints": {"algorithm": "sha256", "files": []},
+            "professors": [rebuilt_record]}
+        self.write_checker(
+            self.check_report(
+                "stale", reasons=["source_changed:papers_json:教授研究/X分野/試験 教授/papers.json"]),
+            rebuild_artifact=rebuilt_artifact,
+            post_rebuild_check=self.check_report("fresh"))
+        plan = self.plan_jobs()
+        decision = self.decision(plan)
+        self.assertEqual(decision["status"], "needs_refresh")
+        self.assertEqual(decision["reason_code"], "contact_evidence_snapshot_stale")
+        self.assertFalse(decision["web_lookup_required"])
+        self.assertIsNone(decision["recipient_email"])
+        self.assertTrue(decision["snapshot_stale"])
+        self.assertEqual(plan["verify"]["試験 教授"],
+                         "needs_recheck:contact_evidence_snapshot_stale")
+        self.assertIn("試験 教授", plan["needs_recheck_professors"])
+        out = self.run_finalize_flow(g1, "rebuild-changed")
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertEqual(out["reason_code"], "contact_evidence_snapshot_stale")
+        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+
+    def test_stage4_refresh_of_changed_record_restores_web_free_acceptance(self):
+        # Regression (final PR #14 review, second half): after Stage 4 re-runs
+        # and refreezes the rebuilt record into 邮件输入.json, the same fresh
+        # record is accepted without web — the Stage-4 refresh loop, never a
+        # direct live-artifact consumption, restores web-free sending.
         self.prepare()
         self.write_schema2_artifact()
         self.compile_pack()
@@ -873,27 +929,29 @@ class TestContactEvidenceLadder(BaseEnv):
             rebuild_artifact=rebuilt_artifact,
             post_rebuild_check=self.check_report("fresh"))
         decision = self.decision(self.plan_jobs())
+        self.assertEqual(decision["status"], "needs_refresh")
+        self.assertEqual(decision["reason_code"], "contact_evidence_snapshot_stale")
+        entry = self.compile_pack()
+        self.assertEqual(entry["contact_evidence"]["record"]["current_email"],
+                         "office@example.test")
+        decision = self.decision(self.plan_jobs())
         self.assertEqual(decision["status"], "official_only")
         self.assertIsNone(decision["reason_code"])
         self.assertFalse(decision["web_lookup_required"])
         self.assertEqual(decision["recipient_email"], "office@example.test")
-        self.assertTrue(decision["snapshot_stale"])
+        self.assertEqual(decision["source"], "pack_snapshot")
+        self.assertFalse(decision["snapshot_stale"])
 
-    def test_unreadable_correspondence_rebuild_resolves_official_only(self):
-        # Regression 3 + professor-research #19 rebuild-first scenario: a newly
-        # unreadable _corresp_cache.json reports stale, the local rebuild keeps
-        # the single official address usable (artifact degraded), and Stage 5
-        # must accept it instead of entering the web ladder.
+    def test_converged_rebuild_matching_frozen_record_is_accepted_without_web(self):
+        # Regression 3 + professor-research #19 rebuild-first convergence: a
+        # newly unreadable _corresp_cache.json reports stale, the local
+        # rebuild re-establishes fresh source-state, and when the rebuilt
+        # record is byte-identical to the Stage-4 frozen snapshot (the
+        # family-scoped decision never changed) Stage 5 accepts it without
+        # web — artifact-level degraded flags still never re-globalize.
         self.prepare()
         self.write_schema2_artifact()
         self.compile_pack()
-        rebuilt_record = self.schema2_record({
-            "verdict": "official_only", "confirmed_emails": [],
-            "paper_correspondence": [], "current_email": "office@example.test",
-            "official_emails": [{
-                "email": "office@example.test", "current_source": True,
-                "provenance": [{"source_type": "official_professor_candidate",
-                                "source": "recruitment-faculty-list"}]}]})
         rebuilt_artifact = {
             "schema": 2, "kind": "professor-contact-evidence",
             "generated_at": fresh_ts(),
@@ -904,21 +962,24 @@ class TestContactEvidenceLadder(BaseEnv):
             "source_errors": [{"source": "paper_correspondence", "scope": "global",
                                "path": "_corresp_cache.json", "error": "malformed JSON"}],
             "source_fingerprints": {"algorithm": "sha256", "files": []},
-            "professors": [rebuilt_record]}
+            "professors": [self.schema2_record()]}
         self.write_checker(
             self.check_report(
                 "stale", reasons=["source_unreadable:paper_correspondence:_corresp_cache.json"]),
             rebuild_artifact=rebuilt_artifact,
             post_rebuild_check=self.check_report("fresh"))
         decision = self.decision(self.plan_jobs())
-        self.assertEqual(decision["status"], "official_only")
+        self.assertEqual(decision["status"], "confirmed_cross_source")
         self.assertIsNone(decision["reason_code"])
         self.assertFalse(decision["web_lookup_required"])
-        self.assertEqual(decision["recipient_email"], "office@example.test")
+        self.assertEqual(decision["recipient_email"], "faculty@example.test")
+        self.assertEqual(decision["source"], "pack_snapshot")
 
     def test_stale_rebuild_still_conflict_escalates_to_web(self):
-        # Regression 4: only when the rebuilt + rechecked evidence is still
-        # conflict does the web ladder enter the picture.
+        # Regression 4: a rebuilt record that still conflicts never reaches
+        # Stage 5's verdict ladder directly — the changed record first demands
+        # a Stage-4 refresh; only after that refresh refreezes the conflict
+        # does the web ladder enter the picture.
         self.prepare()
         self.write_schema2_artifact()
         self.compile_pack()
@@ -947,6 +1008,10 @@ class TestContactEvidenceLadder(BaseEnv):
             rebuild_artifact=rebuilt_artifact,
             post_rebuild_check=self.check_report("fresh"))
         decision = self.decision(self.plan_jobs())
+        self.assertEqual(decision["status"], "needs_refresh")
+        self.assertEqual(decision["reason_code"], "contact_evidence_snapshot_stale")
+        self.compile_pack()
+        decision = self.decision(self.plan_jobs())
         self.assertEqual(decision["status"], "escalate")
         self.assertEqual(decision["reason_code"], "contact_evidence_conflict")
         self.assertTrue(decision["web_lookup_required"])
@@ -957,7 +1022,6 @@ class TestContactEvidenceLadder(BaseEnv):
         # (universal blocker) must not degrade the fresh target professor A,
         # and the aggregated top-level result is never consulted directly.
         self.prepare()
-        self.compile_pack_two_professors()
         fresh_record = self.schema2_record()
         blocked_record = self.schema2_record({
             "professor": {"name": "佐藤 花子", "name_romaji": None},
@@ -970,6 +1034,7 @@ class TestContactEvidenceLadder(BaseEnv):
                 "signature_aliases_unavailable": False,
                 "current_email_blocked_by": ["professor_papers_unavailable"]}})
         self.write_schema2_artifact(professors=[fresh_record, blocked_record])
+        self.compile_pack_two_professors()
         self.write_checker(self.check_report(
             "unavailable",
             professors=[
@@ -1022,17 +1087,22 @@ class TestContactEvidenceLadder(BaseEnv):
             {"result": "unavailable", "reasons": ["artifact_missing"]},
             rebuild_artifact=rebuilt_artifact,
             post_rebuild_check=self.check_report("fresh"))
+        # The rebuild re-establishes live evidence, but the rebuilt record is
+        # a new fact that never entered the frozen pack: it can only demand a
+        # Stage-4 refresh, never carry the recipient decision itself.
         decision = self.decision(self.plan_jobs())
-        self.assertEqual(decision["status"], "official_only")
-        self.assertIsNone(decision["reason_code"])
+        self.assertEqual(decision["status"], "needs_refresh")
+        self.assertEqual(decision["reason_code"], "contact_evidence_snapshot_stale")
         self.assertFalse(decision["web_lookup_required"])
-        self.assertEqual(decision["recipient_email"], "office@example.test")
-        self.assertTrue(decision["snapshot_stale"])
+        self.assertIsNone(decision["recipient_email"])
 
     def test_legacy_schema_artifact_migrates_through_deterministic_rebuild(self):
         # Transitional reader keeps accepting schema-1, but once the upstream
-        # checker is installed a legacy artifact has no fingerprint contract —
-        # the rebuild migrates it to schema-2 and the live record is consumed.
+        # checker is installed a legacy artifact has no fingerprint contract:
+        # the rebuild migrates it to schema-2, and because the migrated record
+        # (with evidence_status) differs from the schema-1 frozen snapshot,
+        # Stage 5 first demands a Stage-4 refresh — only after the pack
+        # refreezes the migrated record is it accepted without web.
         self.prepare()
         self.write_artifact()
         self.compile_pack()
@@ -1051,9 +1121,15 @@ class TestContactEvidenceLadder(BaseEnv):
             rebuild_artifact=rebuilt_artifact,
             post_rebuild_check=self.check_report("fresh"))
         decision = self.decision(self.plan_jobs())
+        self.assertEqual(decision["status"], "needs_refresh")
+        self.assertEqual(decision["reason_code"], "contact_evidence_snapshot_stale")
+        self.assertFalse(decision["web_lookup_required"])
+        self.compile_pack()
+        decision = self.decision(self.plan_jobs())
         self.assertEqual(decision["status"], "confirmed_cross_source")
         self.assertFalse(decision["web_lookup_required"])
         self.assertEqual(decision["recipient_email"], "faculty@example.test")
+        self.assertEqual(decision["source"], "pack_snapshot")
 
     def test_failed_rebuild_keeps_web_escalation(self):
         # Rebuild-first is only an alternative to web when it actually runs:
