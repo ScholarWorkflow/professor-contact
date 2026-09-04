@@ -1388,6 +1388,97 @@ def _profile_topic_tokens(direction: dict) -> set:
     return toks
 
 
+MERGE_MIN_SHARED = 2
+MERGE_MIN_FACTS_PAPERS = 2
+MERGE_MIN_SHARED_TERMS = 3
+MERGE_TOPIC_OVERLAP = 0.5
+# Authoritative-merge validation floor: deliberately weaker than the detector
+# hint thresholds above. The model, not the detector, judges merges from
+# full-text evidence — the validator only refuses merges with no full-text
+# grounding at all, it does not re-run hint detection.
+MERGE_VALIDATION_MIN_FACTS_PAPERS = 1
+MERGE_VALIDATION_MIN_SHARED_TERMS = 2
+
+
+def _direction_fulltext_terms(ctx: Stage2Context, direction: dict) -> tuple[int, set]:
+    """Count of currently facts-valid candidate papers + their topic-term union."""
+    count = 0
+    terms: set = set()
+    for key in direction_candidate_keys(direction):
+        if not ctx.papers.get(key):
+            continue
+        facts_record, facts_state, _ = ctx.facts_for(key)
+        if facts_state == "valid" and facts_record:
+            count += 1
+            terms.update(str(t).lower() for t in (facts_record.get("topic_terms") or []))
+    return count, terms
+
+
+def _merge_fulltext_basis(ctx: Stage2Context, source_direction: dict,
+                          target_direction: dict) -> dict | None:
+    """Full-text convergence between two directions at DETECTOR hint strength.
+
+    Both directions hold ≥MERGE_MIN_FACTS_PAPERS currently facts-valid
+    candidate papers whose topic terms converge (≥MERGE_MIN_SHARED_TERMS
+    shared terms, ≥MERGE_TOPIC_OVERLAP of the smaller term set). Used to
+    propose merge candidates to the resolve model — never as the
+    authoritative-result gate (see `_authoritative_merge_basis`).
+    """
+    count_a, terms_a = _direction_fulltext_terms(ctx, source_direction)
+    count_b, terms_b = _direction_fulltext_terms(ctx, target_direction)
+    shared_terms = terms_a & terms_b
+    smaller = min(len(terms_a), len(terms_b))
+    if (count_a >= MERGE_MIN_FACTS_PAPERS
+            and count_b >= MERGE_MIN_FACTS_PAPERS
+            and len(shared_terms) >= MERGE_MIN_SHARED_TERMS
+            and len(shared_terms) / smaller >= MERGE_TOPIC_OVERLAP):
+        return {
+            "merge_basis": "fulltext_convergence",
+            "shared_topic_terms": sorted(shared_terms),
+            "overlap_ratio": round(len(shared_terms) / smaller, 2),
+            "facts_papers": {"source": count_a, "target": count_b},
+        }
+    return None
+
+
+def _authoritative_merge_basis(ctx: Stage2Context, source_direction: dict,
+                               target_direction: dict) -> dict | None:
+    """Deterministic evidence floor for AUTHORITATIVE merged_into results.
+
+    Both directions must hold at least one currently facts-valid candidate
+    paper and their full-text topic terms must converge (≥2 shared terms,
+    ≥MERGE_TOPIC_OVERLAP of the smaller term set). This is a floor, not a
+    re-detection: shared candidate papers plus profile overlap is
+    provisional-level evidence and never satisfies it on its own.
+    """
+    count_a, terms_a = _direction_fulltext_terms(ctx, source_direction)
+    count_b, terms_b = _direction_fulltext_terms(ctx, target_direction)
+    shared_terms = terms_a & terms_b
+    smaller = min(len(terms_a), len(terms_b))
+    if (count_a >= MERGE_VALIDATION_MIN_FACTS_PAPERS
+            and count_b >= MERGE_VALIDATION_MIN_FACTS_PAPERS
+            and len(shared_terms) >= MERGE_VALIDATION_MIN_SHARED_TERMS
+            and len(shared_terms) / smaller >= MERGE_TOPIC_OVERLAP):
+        return {
+            "merge_basis": "fulltext_convergence",
+            "shared_topic_terms": sorted(shared_terms),
+            "overlap_ratio": round(len(shared_terms) / smaller, 2),
+            "facts_papers": {"source": count_a, "target": count_b},
+        }
+    return None
+
+
+def _direction_has_valid_fulltext(ctx: Stage2Context, direction: dict) -> bool:
+    """True when at least one candidate paper currently has valid full-text facts."""
+    for key in direction_candidate_keys(direction):
+        if not ctx.papers.get(key):
+            continue
+        _record, state, _error = ctx.facts_for(key)
+        if state == "valid":
+            return True
+    return False
+
+
 def _detect_merge_candidates(ctx: Stage2Context) -> list[dict]:
     """Detect pairs of directions that may be the same research line.
 
@@ -1395,32 +1486,13 @@ def _detect_merge_candidates(ctx: Stage2Context) -> list[dict]:
     not provisional overlap — the merge signal. A merge candidate when either:
     - The two candidate unions share ≥2 papers AND their topic profiles overlap
       significantly (a single shared paper can be a chance co-incidence), or
-    - Both directions have ≥2 papers with valid full-text facts whose topic
-      terms converge: disjoint preview clusters describing the same line must
-      still be mergeable even with zero shared paper IDs.
+    - `_merge_fulltext_basis` converges: both directions have ≥2 papers with
+      valid full-text facts whose topic terms overlap — disjoint preview
+      clusters describing the same line must still be mergeable even with
+      zero shared paper IDs.
     """
-    MERGE_MIN_SHARED = 2
-    MERGE_MIN_FACTS_PAPERS = 2
-    MERGE_MIN_SHARED_TERMS = 3
-    MERGE_TOPIC_OVERLAP = 0.5
-    facts_for = getattr(ctx, "facts_for", None)
     merges = []
     plans = ctx.direction_plans
-    # Full-text evidence per direction: count of facts-valid candidate papers
-    # and the union of their topic terms.
-    evidence: dict[str, tuple[int, set]] = {}
-    for plan in plans:
-        count = 0
-        terms: set = set()
-        if facts_for is not None:
-            for key in direction_candidate_keys(plan["direction"]):
-                if not ctx.papers.get(key):
-                    continue
-                facts_record, facts_state, _ = facts_for(key)
-                if facts_state == "valid" and facts_record:
-                    count += 1
-                    terms.update(str(t).lower() for t in (facts_record.get("topic_terms") or []))
-        evidence[plan["ckey"]] = (count, terms)
     for i, plan_a in enumerate(plans):
         for plan_b in plans[i + 1:]:
             ckey_a, ckey_b = plan_a["ckey"], plan_b["ckey"]
@@ -1434,7 +1506,7 @@ def _detect_merge_candidates(ctx: Stage2Context) -> list[dict]:
                 len(toks_a & toks_b) / min(len(toks_a), len(toks_b))
                 if toks_a and toks_b else 0.0)
             row = None
-            if len(shared) >= MERGE_MIN_SHARED and profile_overlap >= 0.5:
+            if len(shared) >= MERGE_MIN_SHARED and profile_overlap >= MERGE_TOPIC_OVERLAP:
                 row = {
                     "direction_a": ckey_a,
                     "direction_b": ckey_b,
@@ -1446,14 +1518,10 @@ def _detect_merge_candidates(ctx: Stage2Context) -> list[dict]:
                     "reason": f"directions share {len(shared)} papers and {round(profile_overlap * 100)}% profile overlap",
                 }
             else:
-                count_a, terms_a = evidence[ckey_a]
-                count_b, terms_b = evidence[ckey_b]
-                shared_terms = terms_a & terms_b
-                smaller = min(len(terms_a), len(terms_b))
-                if (count_a >= MERGE_MIN_FACTS_PAPERS
-                        and count_b >= MERGE_MIN_FACTS_PAPERS
-                        and len(shared_terms) >= MERGE_MIN_SHARED_TERMS
-                        and len(shared_terms) / smaller >= MERGE_TOPIC_OVERLAP):
+                basis = _merge_fulltext_basis(ctx, dir_a, dir_b)
+                if basis:
+                    count_a = basis["facts_papers"]["source"]
+                    count_b = basis["facts_papers"]["target"]
                     row = {
                         "direction_a": ckey_a,
                         "direction_b": ckey_b,
@@ -1461,9 +1529,9 @@ def _detect_merge_candidates(ctx: Stage2Context) -> list[dict]:
                         "name_b": dir_b.get("name_ja"),
                         "merge_basis": "fulltext_convergence",
                         "shared_papers": sorted(shared),
-                        "shared_topic_terms": sorted(shared_terms),
-                        "overlap_ratio": round(len(shared_terms) / smaller, 2),
-                        "reason": (f"full-text topic terms converge on {len(shared_terms)} shared terms "
+                        "shared_topic_terms": basis["shared_topic_terms"],
+                        "overlap_ratio": basis["overlap_ratio"],
+                        "reason": (f"full-text topic terms converge on {len(basis['shared_topic_terms'])} shared terms "
                                    f"across {count_a}+{count_b} facts-backed papers"),
                     }
             if row:
@@ -1676,12 +1744,12 @@ def _build_resolve_model_input(ctx: Stage2Context, plan: dict, evidence: dict) -
             "7. Split: only when papers cluster into ≥2 distinct topic groups; set split_target to a NEW "
             "direction ID and put the papers that move INTO the new direction in papers_to_add "
             "(the source keeps the rest; papers_to_remove must be empty).\n"
-            "8. Merge: only when full-text evidence shows another direction is the same line of "
-            "work — either shared papers with matching profile (merge_basis=shared_papers) or "
-            "converging topic terms across both directions' facts-backed papers, including "
-            "disjoint preview clusters (merge_basis=fulltext_convergence). Set "
-            "merge_target to that direction ID (papers_to_add/papers_to_remove must be empty — the whole "
-            "direction folds into the target).\n"
+                    "8. Merge: only when full-text evidence shows another direction is the same line of "
+                    "work. The runner only accepts merges backed by converging topic terms across BOTH "
+                    "directions' currently valid facts papers — shared candidate papers with similar "
+                    "profiles (merge_basis=shared_papers) are a hint but never sufficient on their own. "
+                    "Set merge_target to that direction ID (papers_to_add/papers_to_remove must be empty "
+                    "— the whole direction folds into the target).\n"
             "9. Keyword/grep matches alone are NOT sufficient for final membership.\n"
             "10. If no material change, set resolution_type='unchanged' and empty add/remove lists."
         ),
@@ -1731,6 +1799,14 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
       professor's plans; merge chains (target is itself merged_into) fail
     - papers_to_remove ⊆ provisional_member_keys
     - papers_to_add ⊆ candidate member_keys
+    - every membership change (add/remove and split moves) names papers with
+      currently VALID full-text facts
+    - merged_into is backed by deterministic full-text convergence
+      (`_authoritative_merge_basis`: facts-valid papers in both directions
+      with converging topic terms); renamed and name-only refined have at
+      least one currently valid full-text facts paper in the direction —
+      structural reshaping of the authoritative identity without full-text
+      evidence fails closed (unchanged/provisional needs no evidence)
     """
     reused = reused or {}
     pending = pending or {}
@@ -1889,10 +1965,28 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
                 fail("invalid_result_json",
                      f"{result_path}: merged_into folds the whole direction into its target; "
                      "papers_to_add/papers_to_remove must be empty")
+            # Authoritative restructuring needs current full-text evidence: with
+            # no facts-valid papers converging across source and target, the
+            # merge is a provisional-level judgment and fails closed.
+            if _authoritative_merge_basis(ctx, plan["direction"],
+                                          direction_lookup[merge_target]["direction"]) is None:
+                fail("invalid_result_json",
+                     f"{result_path}: merged_into {merge_target} is not backed by current full-text "
+                     "evidence (needs facts-valid papers in BOTH directions with converging topic "
+                     "terms); keep provisional instead")
         else:
             if merge_target is not None:
                 fail("invalid_result_json",
                      f"{result_path}: merge_target only valid for merged_into resolution")
+            # Renames and name-only refinements reshape the authoritative
+            # identity; without any currently valid full-text facts in the
+            # direction they are provisional-level guesses → fail closed
+            # (no-facts directions must stay unchanged/provisional).
+            if resolution_type in ("renamed", "refined") and not papers_to_add and not papers_to_remove:
+                if not _direction_has_valid_fulltext(ctx, plan["direction"]):
+                    fail("invalid_result_json",
+                         f"{result_path}: {resolution_type} without membership change requires currently "
+                         "valid full-text facts evidence in the direction; keep provisional instead")
         resolved[ckey] = {
             "resolved_direction_id": resolved_direction_id,
             "provisional_direction_id": ckey,
@@ -1976,9 +2070,23 @@ def cmd_stage2_resolve_finalize(args) -> None:
     have a single resolved_direction_id for every direction. Cross-professor and
     schema-invalid existing sidecars are NOT silently overwritten — the runner
     always validates and re-writes from the current resolve results.
+
+    `--keep-provisional <ckey,...>` records the user's explicit Stage-2 decision
+    to KEEP a direction provisional: the entry is persisted as an ACCEPTED
+    resolved state with `decision=user_kept_provisional` (identity, name and
+    membership = provisional), superseding any proposal for that direction.
+    Downstream then consumes one uniform authoritative state — the choice is
+    never expressed by omitting `--resolved-directions` — and the direction is
+    reused without re-prompting until its resolve fingerprint actually changes.
     """
     ctx = Stage2Context(Path(args.facts))
     results_dir = Path(args.results)
+    keep_provisional = [k.strip() for k in (args.keep_provisional or "").split(",") if k.strip()]
+    plans_by_ckey = {plan["ckey"]: plan for plan in ctx.direction_plans}
+    unknown = [k for k in keep_provisional if k not in plans_by_ckey]
+    if unknown:
+        fail("invalid_keep_provisional",
+             f"--keep-provisional names directions that are not selected for this professor: {unknown}")
     existing = _load_existing_resolved(ctx.professor_dir, ctx.professor, None)
     evidence = _resolve_evidence(ctx)
     plan_fingerprints = {plan["ckey"]: _current_resolve_fingerprint(ctx, plan, evidence)
@@ -1999,6 +2107,32 @@ def cmd_stage2_resolve_finalize(args) -> None:
                if plan_fingerprints.get(ckey) == entry.get("input_fingerprint")
                and entry.get("acceptance") == "proposed"}
     resolved = validate_resolve_results(ctx, results_dir, reused, pending)
+
+    # Apply the user's explicit keep-provisional decisions LAST so they
+    # supersede any model proposal for those directions: identity, name and
+    # membership stay provisional, and the entry is ACCEPTED — it reuses
+    # without re-prompting until its resolve fingerprint changes. This keeps
+    # one authoritative state per direction instead of the legacy "omit
+    # --resolved-directions and keep a pending proposal forever" fallback.
+    for ckey in keep_provisional:
+        direction = plans_by_ckey[ckey]["direction"]
+        resolved[ckey] = {
+            "resolved_direction_id": ckey,
+            "provisional_direction_id": ckey,
+            "name_ja": direction.get("name_ja") or "",
+            "name_zh": direction.get("name_zh") or "",
+            "resolution_type": "unchanged",
+            "papers_to_add": [],
+            "papers_to_remove": [],
+            "paper_justifications": {},
+            "split_target": None,
+            "merge_target": None,
+            "user_note": direction.get("user_note") or "",
+            "decision": "user_kept_provisional",
+            "input_fingerprint": plan_fingerprints[ckey],
+            "acceptance": "accepted",
+            "reused": False,
+        }
 
     # Check for material changes that require user confirmation. Already-applied
     # (reused) resolutions must NOT re-prompt the user on every re-run.
@@ -2080,9 +2214,11 @@ def cmd_stage2_resolve_finalize(args) -> None:
                 "papers_to_remove": r["papers_to_remove"],
                 "split_target": r["split_target"],
                 "merge_target": r["merge_target"],
+                "decision": r.get("decision"),
             }
             for ckey, r in resolved.items()
         ],
+        "kept_provisional": keep_provisional,
         "new_splits": new_splits,
         "material_changes": material_changes,
         "needs_user_choice": bool(material_changes),
@@ -5484,6 +5620,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("stage2-resolve-finalize")
     p.add_argument("--facts", required=True)
     p.add_argument("--results", required=True)
+    p.add_argument("--keep-provisional",
+                   help="comma-separated collection keys the user explicitly decided to keep "
+                        "provisional; persisted as accepted resolved state (decision="
+                        "user_kept_provisional) instead of leaving a pending proposal")
     p.set_defaults(func=lambda a: cmd_stage2_resolve_finalize(a))
 
     p = sub.add_parser("stage2-plan")

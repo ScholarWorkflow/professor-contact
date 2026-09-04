@@ -882,11 +882,15 @@ class Stage2SplitEndToEndTests(ResolvedPipelineMixin, unittest.TestCase):
         self.assertEqual(stage3_ckeys, {"dir_A"})
 
     def test_merge_chain_is_rejected(self):
-        """merged_into a direction that is itself merged_into is invalid."""
+        """merged_into a direction that is itself merged_into is invalid.
+
+        Both merge pairs carry convergent full-text topic evidence so the
+        rejection is decided by the chain rule, not the evidence floor.
+        """
         papers = [
-            self.make_paper("P1", "Paper One", ["主题", "一"], ["Gap one."]),
-            self.make_paper("P2", "Paper Two", ["主题", "二"], ["Gap two."]),
-            self.make_paper("P3", "Paper Three", ["主题", "三"], ["Gap three."]),
+            self.make_paper("P1", "Paper One", ["共通", "テーマ", "一"], ["Gap one."]),
+            self.make_paper("P2", "Paper Two", ["共通", "テーマ", "二"], ["Gap two."]),
+            self.make_paper("P3", "Paper Three", ["共通", "テーマ", "三"], ["Gap three."]),
         ]
         facts_path = self.write_facts(papers, [
             self.make_direction("dir_A", ["P1"]),
@@ -1163,6 +1167,222 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
         self.assertEqual(accepted_entry["resolution_type"], "refined")
         self.assertFalse(accepted_rerun["needs_user_choice"],
                          "an accepted refinement must not re-prompt the user")
+
+
+class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
+    """Choosing "keep provisional" is itself an authoritative Stage-2 decision.
+
+    The decision must be persisted as explicit accepted resolved state (never
+    by omitting --resolved-directions), so the pack always carries an explicit
+    resolved_direction per direction and the decision is reused — without
+    re-prompting or re-burning resolve jobs — until the resolve input changes.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.prof_dir = self.root / "教授研究" / "X分野" / "試験 教授"
+        (self.prof_dir / "论文分析").mkdir(parents=True)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _material_proposal_setup(self):
+        """dir_A gets a rename proposal; dir_B stays unchanged. Returns facts_path."""
+        papers = [
+            self.make_paper("P1", "Adaptive Signal Processing", ["signal", "processing"],
+                            ["Future work A."]),
+            self.make_paper("P2", "Catalytic Chemistry", ["catalytic", "chemistry"],
+                            ["Future work B."]),
+        ]
+        directions = [
+            self.make_direction("dir_A", ["P1"], name_ja="信号処理", name_zh="信号处理",
+                                summary="signal processing"),
+            self.make_direction("dir_B", ["P2"], name_ja="触媒化学", name_zh="催化化学",
+                                summary="catalytic chemistry"),
+        ]
+        facts_path = self.write_facts(papers, directions)
+        self.run_resolve(facts_path, {
+            "dir_A": {
+                "resolved_direction_id": "dir_A",
+                "provisional_direction_id": "dir_A",
+                "name_ja": "適応信号処理",
+                "name_zh": "自适应信号处理",
+                "resolution_type": "renamed",
+                "papers_to_add": [],
+                "papers_to_remove": [],
+                "paper_justifications": {"P1": "rename follows full-text evidence"},
+                "split_target": None,
+                "merge_target": None,
+                "user_note": "",
+            },
+        })
+        return facts_path, papers
+
+    def _keep_provisional(self, facts_path, ckey):
+        results_dir = self.root / "resolve_results"
+        return parse(run_cli("stage2-resolve-finalize",
+                             "--facts", str(facts_path),
+                             "--results", str(results_dir),
+                             "--keep-provisional", ckey))
+
+    def test_user_kept_provisional_still_writes_explicit_resolved_direction(self):
+        facts_path, _papers = self._material_proposal_setup()
+        sidecar = json.loads((self.prof_dir / "论文分析" / "_resolved_directions.json")
+                             .read_text(encoding="utf-8"))
+        entry = next(d for d in sidecar["directions"]
+                     if d["provisional_direction_id"] == "dir_A")
+        self.assertEqual(entry["acceptance"], "proposed")
+
+        kept = self._keep_provisional(facts_path, "dir_A")
+        self.assertEqual(kept["status"], "ok", msg=json.dumps(kept, ensure_ascii=False))
+        self.assertEqual(kept["kept_provisional"], ["dir_A"])
+        kept_entry = next(d for d in kept["directions"]
+                          if d["provisional_direction_id"] == "dir_A")
+        self.assertEqual(kept_entry["decision"], "user_kept_provisional")
+        self.assertEqual(kept_entry["resolution_type"], "unchanged")
+        self.assertFalse(kept["needs_user_choice"],
+                         "the user's keep-provisional decision resolves the prompt")
+
+        sidecar = json.loads((self.prof_dir / "论文分析" / "_resolved_directions.json")
+                             .read_text(encoding="utf-8"))
+        kept_entry = next(d for d in sidecar["directions"]
+                          if d["provisional_direction_id"] == "dir_A")
+        self.assertEqual(kept_entry["acceptance"], "accepted")
+        self.assertEqual(kept_entry["decision"], "user_kept_provisional")
+        self.assertEqual(kept_entry["name_ja"], "信号処理",
+                         "kept provisional keeps the provisional name")
+
+        payload = self.run_stage2_finalize(facts_path)
+        self.assertEqual(payload["status"], "ok", msg=json.dumps(payload, ensure_ascii=False))
+        pack = self.load_pack()
+        for direction in pack["directions"]:
+            rd = direction.get("resolved_direction")
+            self.assertIsNotNone(
+                rd, f"{direction['collection_key']} must carry an explicit resolved_direction")
+            self.assertEqual(rd["resolved_direction_id"], direction["collection_key"])
+
+    def test_user_kept_provisional_is_reused_until_resolve_input_changes(self):
+        facts_path, papers = self._material_proposal_setup()
+        self._keep_provisional(facts_path, "dir_A")
+
+        plan = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        self.assertEqual(plan["status"], "ok", msg=json.dumps(plan, ensure_ascii=False))
+        actions = {row["collection_key"]: row["action"] for row in plan["directions"]}
+        self.assertEqual(
+            actions, {"dir_A": "reuse", "dir_B": "reuse"},
+            "an accepted keep-provisional decision must not re-emit resolve jobs "
+            "while the resolve input is unchanged")
+
+        make_facts_sidecar(Path(papers[1]["analysis_file"]), self.root / "P2.pdf",
+                           ["Future work B."], topic_terms=["electro", "catalysis"])
+        changed = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        self.assertEqual(changed["status"], "ok", msg=json.dumps(changed, ensure_ascii=False))
+        actions = {row["collection_key"]: row["action"] for row in changed["directions"]}
+        self.assertEqual(
+            actions["dir_A"], "process",
+            "only a changed resolve fingerprint may re-open the kept-provisional decision")
+
+
+class StructuralResolutionEvidenceGateTests(ResolvedPipelineMixin, unittest.TestCase):
+    """Authoritative restructuring without full-text evidence fails closed.
+
+    The membership gate only sees papers_to_add/papers_to_remove; merged_into
+    requires empty lists and renamed/name-only refined may have none, so the
+    runner must deterministically demand full-text evidence for those too.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.prof_dir = self.root / "教授研究" / "X分野" / "試験 教授"
+        (self.prof_dir / "论文分析").mkdir(parents=True)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    @staticmethod
+    def _break_facts_join(paper):
+        sidecar = Path(paper["sidecar_file"])
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        payload["items"] = []
+        sidecar.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n",
+                           encoding="utf-8")
+
+    def test_merge_resolution_rejected_when_both_directions_lack_valid_fulltext_facts(self):
+        papers = [
+            self.make_paper("P1", "Adaptive Signal Processing", ["signal", "processing"],
+                            ["Future work A."]),
+            self.make_paper("P2", "Signal Processing Applications", ["signal", "processing"],
+                            ["Future work B."]),
+        ]
+        directions = [
+            self.make_direction("dir_A", ["P1"], name_ja="信号処理", name_zh="信号处理",
+                                summary="signal processing"),
+            self.make_direction("dir_B", ["P2"], name_ja="信号処理応用", name_zh="信号处理应用",
+                                summary="applied signal processing"),
+        ]
+        facts_path = self.write_facts(papers, directions)
+        for paper in papers:
+            self._break_facts_join(paper)
+
+        results_dir = self.root / "resolve_results"
+        results_dir.mkdir()
+        write_json(results_dir / "resolve-dir_A.json", {
+            "schema": 1, "kind": "resolve", "collection_key": "dir_A",
+            "resolved": {
+                "resolved_direction_id": "dir_A",
+                "provisional_direction_id": "dir_A",
+                "name_ja": "信号処理",
+                "name_zh": "信号处理",
+                "resolution_type": "merged_into",
+                "papers_to_add": [],
+                "papers_to_remove": [],
+                "paper_justifications": {},
+                "split_target": None,
+                "merge_target": "dir_B",
+                "user_note": "",
+            },
+        })
+        payload = parse(run_cli("stage2-resolve-finalize",
+                                "--facts", str(facts_path),
+                                "--results", str(results_dir)))
+        self.assertEqual(payload["status"], "error", msg=json.dumps(payload, ensure_ascii=False))
+        self.assertEqual(payload["reason_code"], "invalid_result_json")
+        self.assertIn("full-text", payload["message"])
+
+    def test_rename_resolution_rejected_without_valid_fulltext_facts(self):
+        paper = self.make_paper("P1", "Adaptive Signal Processing", ["signal", "processing"],
+                                ["Future work A."])
+        facts_path = self.write_facts(
+            [paper], [self.make_direction("dir_A", ["P1"], name_ja="信号処理",
+                                           name_zh="信号处理", summary="signal processing")])
+        self._break_facts_join(paper)
+
+        results_dir = self.root / "resolve_results"
+        results_dir.mkdir()
+        write_json(results_dir / "resolve-dir_A.json", {
+            "schema": 1, "kind": "resolve", "collection_key": "dir_A",
+            "resolved": {
+                "resolved_direction_id": "dir_A",
+                "provisional_direction_id": "dir_A",
+                "name_ja": "適応信号処理",
+                "name_zh": "自适应信号处理",
+                "resolution_type": "renamed",
+                "papers_to_add": [],
+                "papers_to_remove": [],
+                "paper_justifications": {},
+                "split_target": None,
+                "merge_target": None,
+                "user_note": "",
+            },
+        })
+        payload = parse(run_cli("stage2-resolve-finalize",
+                                "--facts", str(facts_path),
+                                "--results", str(results_dir)))
+        self.assertEqual(payload["status"], "error", msg=json.dumps(payload, ensure_ascii=False))
+        self.assertEqual(payload["reason_code"], "invalid_result_json")
+        self.assertIn("full-text", payload["message"])
 
 
 if __name__ == "__main__":
