@@ -7,6 +7,7 @@ labeled with all participating resolved direction IDs, and per-direction
 reuse of unchanged idea state.
 """
 import copy
+import hashlib
 import json
 import re
 import tempfile
@@ -133,6 +134,29 @@ class Stage3DirectionGroupBase(ResolvedPipelineMixin, unittest.TestCase):
             if direction["collection_key"] == ckey:
                 direction["input_fingerprint"] = fingerprint
         pack_path.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
+
+    def stage4_finalize(self, selections, name="sel-input.json"):
+        sel_input = self.root / name
+        sel_input.write_text(json.dumps({"selections": selections},
+                                        ensure_ascii=False), encoding="utf-8")
+        return parse(run_cli("stage4-finalize", "--program-root", self.root,
+                             "--selection-input", sel_input))
+
+    def selection_doc(self):
+        return json.loads((self.root / "教授研究" / "套磁选择.json")
+                          .read_text(encoding="utf-8"))
+
+    def email_pack(self):
+        return json.loads((self.root / "教授研究" / "邮件输入.json")
+                          .read_text(encoding="utf-8"))
+
+    @staticmethod
+    def source_hash(entry):
+        payload = {key: entry[key] for key in (
+            "email_id", "idea", "papers", "gaps", "red_lines", "allowed_sources",
+            "contact_evidence", "cross_direction")}
+        return hashlib.sha256(json.dumps(
+            payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
@@ -349,8 +373,160 @@ class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
 
         out = self.stage3_finalize(results, "--collection-key", "dir_B")
         self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
-        self.assertEqual(out["dropped_cross_direction"], ["dir_A_X1"])
+        self.assertEqual(out["dropped_cross_direction"],
+                         [{"id": "dir_A_X1", "owner_collection_key": "dir_A",
+                           "reason": "owner_direction_removed"}])
         self.assertEqual(self.load_state()["cross_direction"], [])
+
+    def test_scoped_refresh_drops_stale_cross_of_out_of_scope_owner(self):
+        """A scoped refresh must not silently keep a stale cross idea owned by
+        an out-of-scope direction (review issue: scoped path bypassed the gate)."""
+        cross = [self.cross_candidate("dir_A_X1", ["dir_A", "dir_B"], "P3",
+                                      ["P1", "P3"])]
+        results = self.write_results("s3", {
+            "dir_A": self.generated_doc("dir_A", ["P1", "P2", None], cross=cross),
+            "dir_B": self.generated_doc("dir_B", ["P1", "P3", None])})
+        first = self.stage3_finalize(results)
+        self.assertEqual(first["status"], "ok")
+        candidates_before = next(d["candidates"] for d in self.load_state()["directions"]
+                                 if d["collection_key"] == "dir_A")
+
+        self.rewrite_pack_fingerprint("dir_B", "mutated-dir-b-fingerprint")
+
+        # Scoped plan reports the out-of-scope owner's stale cross idea and
+        # never schedules an extra model job for dir_A.
+        plan = self.stage3_plan("--collection-key", "dir_B")
+        self.assertEqual(plan["status"], "ok")
+        self.assertEqual([j["collection_key"] for j in plan["jobs"]], ["dir_B"])
+        self.assertEqual(plan["stale_cross_direction"],
+                         [{"id": "dir_A_X1", "owner_collection_key": "dir_A",
+                           "reason": "participant_changed_out_of_scope"}])
+
+        # Scoped finalize deterministically drops the stale entry from state and
+        # Markdown while dir_A's own candidates stay untouched.
+        out = self.stage3_finalize(results, "--collection-key", "dir_B")
+        self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
+        self.assertEqual(out["dropped_cross_direction"],
+                         [{"id": "dir_A_X1", "owner_collection_key": "dir_A",
+                           "reason": "participant_changed_out_of_scope"}])
+        state = self.load_state()
+        self.assertEqual(state["cross_direction"], [])
+        self.assertEqual(next(d["candidates"] for d in state["directions"]
+                              if d["collection_key"] == "dir_A"), candidates_before)
+        self.assertNotIn("## 跨方向想法（显式标注）", self.load_md())
+
+        # dir_A regenerates the cross idea once it re-enters scope through its
+        # own refresh, and the recovered state converges to full reuse.
+        self.rewrite_pack_fingerprint("dir_A", "mutated-dir-a-fingerprint")
+        out_a = self.stage3_finalize(results, "--collection-key", "dir_A")
+        self.assertEqual(out_a["status"], "ok", msg=json.dumps(out_a, ensure_ascii=False))
+        entry = self.load_state()["cross_direction"][0]
+        self.assertEqual(entry["direction_fingerprints"],
+                         {"dir_A": "mutated-dir-a-fingerprint",
+                          "dir_B": "mutated-dir-b-fingerprint"})
+        plan_again = self.stage3_plan()
+        self.assertEqual({d["collection_key"]: d["action"]
+                          for d in plan_again["directions"]},
+                         {"dir_A": "reuse", "dir_B": "reuse"})
+
+    def _cross_state_ready(self):
+        cross = [self.cross_candidate("dir_A_X1", ["dir_A", "dir_B"], "P3",
+                                      ["P1", "P3"])]
+        results = self.write_results("s3", {
+            "dir_A": self.generated_doc("dir_A", ["P1", "P2", None], cross=cross),
+            "dir_B": self.generated_doc("dir_B", ["P1", "P3", None])})
+        out = self.stage3_finalize(results)
+        self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
+        return results
+
+    def _cross_idea_citing_both_slices(self):
+        """A cross candidate whose evidence spans BOTH participants' slices."""
+        idea = self.make_candidate("dir_A_X1", "P2")
+        idea["direction_ids"] = ["dir_A", "dir_B"]
+        idea["papers"] = [{"item_key": key, "role": "共同基座", "fit_note": "共享论文"}
+                          for key in ("P1", "P2", "P3")]
+        idea["gap_ids"] = [{"item_key": "P2", "gap_id": self.gap_ids["P2"]},
+                           {"item_key": "P3", "gap_id": self.gap_ids["P3"]}]
+        return idea
+
+    def test_stage4_selects_cross_idea_and_compiles_union_email_pack(self):
+        """Selecting a cross idea must compile one email entry from the
+        participants' slice union — shared paper P1 keeps its single identity."""
+        cross_doc = self.generated_doc("dir_A", ["P1", "P2", None],
+                                       cross=[self._cross_idea_citing_both_slices()])
+        results = self.write_results("s3-cross", {
+            "dir_A": cross_doc,
+            "dir_B": self.generated_doc("dir_B", ["P1", "P3", None])})
+        out = self.stage3_finalize(results, "--collection-key", "dir_A")
+        self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
+
+        sel = {"professor": PROFESSOR, "professor_dir": str(self.prof_dir),
+               "collection_key": "dir_A",
+               "ideas": [{"id": "dir_A_1", "note": "主推"}, {"id": "dir_A_X1"}]}
+        out4 = self.stage4_finalize([sel])
+        self.assertEqual(out4["status"], "ok", msg=json.dumps(out4, ensure_ascii=False))
+        self.assertEqual(out4["emails_compiled"], 2)
+        self.assertEqual(out4["skipped"], [])
+
+        selection = self.selection_doc()
+        self.assertEqual([s["collection_key"] for s in selection["selections"]], ["dir_A"])
+        self.assertEqual({i["id"] for i in selection["selections"][0]["ideas"]},
+                         {"dir_A_1", "dir_A_X1"})
+
+        emails = {e["email_id"]: e for e in self.email_pack()["emails"]}
+        cross_email = emails[f"{PROFESSOR}::dir_A::dir_A_X1"]
+        # Owner attribution keeps dir_A for naming; participation is explicit.
+        self.assertEqual(cross_email["collection_key"], "dir_A")
+        pack_fps = {d["resolved_direction"]["resolved_direction_id"]: d["input_fingerprint"]
+                    for d in self.pack_directions.values()}
+        self.assertEqual(cross_email["cross_direction"],
+                         {"owner_direction_id": "dir_A",
+                          "direction_ids": ["dir_A", "dir_B"],
+                          "direction_fingerprints": pack_fps})
+        # Union of participant slices, deduplicated by item_key: the shared
+        # paper P1 appears exactly once with its single identity.
+        self.assertEqual([p["item_key"] for p in cross_email["papers"]],
+                         ["P1", "P2", "P3"])
+        self.assertEqual([p["title"] for p in cross_email["papers"]],
+                         ["Shared Method Paper", "Signal Robustness Paper",
+                          "Campus Sensor Paper"])
+        # Exact (item_key, gap_id) join across both directions' slices.
+        self.assertEqual({(g["item_key"], g["gap_id"]) for g in cross_email["gaps"]},
+                         {("P2", self.gap_ids["P2"]), ("P3", self.gap_ids["P3"])})
+        self.assertEqual(cross_email["source_hash"], self.source_hash(cross_email))
+
+        normal_email = emails[f"{PROFESSOR}::dir_A::dir_A_1"]
+        self.assertIsNone(normal_email["cross_direction"])
+        self.assertEqual([p["item_key"] for p in normal_email["papers"]], ["P1"])
+        self.assertEqual(normal_email["source_hash"], self.source_hash(normal_email))
+
+    def test_stage4_stale_cross_participant_needs_refresh_before_write(self):
+        """A changed participant fingerprint must fail the WHOLE stage-4 batch
+        before any selection/email file is written — even when a normal idea of
+        the same batch is still valid."""
+        self._cross_state_ready()
+        self.rewrite_pack_fingerprint("dir_B", "mutated-dir-b-fingerprint")
+        sel = {"professor": PROFESSOR, "professor_dir": str(self.prof_dir),
+               "collection_key": "dir_A",
+               "ideas": [{"id": "dir_A_1"}, {"id": "dir_A_X1"}]}
+        out = self.stage4_finalize([sel])
+        self.assertEqual(out["status"], "needs_refresh", msg=json.dumps(out, ensure_ascii=False))
+        self.assertEqual(out["reason_code"], "cross_participant_changed")
+        self.assertFalse((self.root / "教授研究" / "套磁选择.json").exists())
+        self.assertFalse((self.root / "教授研究" / "邮件输入.json").exists())
+
+    def test_stage4_unknown_cross_idea_fails_closed_for_whole_batch(self):
+        """An unknown idea id next to a valid one must fail the whole batch
+        instead of silently writing only the valid selection."""
+        self._cross_state_ready()
+        sel = {"professor": PROFESSOR, "professor_dir": str(self.prof_dir),
+               "collection_key": "dir_A",
+               "ideas": [{"id": "dir_A_1"}, {"id": "no_such_cross"}]}
+        out = self.stage4_finalize([sel])
+        self.assertEqual(out["status"], "error", msg=json.dumps(out, ensure_ascii=False))
+        self.assertEqual(out["reason_code"], "unknown_idea_id")
+        self.assertFalse((self.root / "教授研究" / "套磁选择.json").exists())
+        self.assertFalse((self.root / "教授研究" / "邮件输入.json").exists())
 
 
 if __name__ == "__main__":

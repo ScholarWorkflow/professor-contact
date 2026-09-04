@@ -72,7 +72,7 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
   --professor-dir <教授文件夹 abs> --profile <profile abs> --refresh-scope flagged \
   --collection-key <方向 key> --program-root <program_root abs>
 ```
-4. plan 返回：每方向 `action: reuse|process|skipped`（输入包指纹与 profile 指纹都没变、已有候选、且该方向名下的跨方向想法引用的参与方向指纹全部未变 → `reuse`，直接复用状态，零模型调用；任一参与方向变化 → 该方向本轮重新生成，跨方向想法一并刷新）+ 逐方向模型 job。方向身份 = 输入包 `resolved_direction` 子字段里的权威 `direction_id`（issue #8；每方向独立、绝不因共享论文合并）。job 的 `model_input` 只含：`direction_id`（本方向权威 ID）、`known_directions`（全部方向的 direction_id/名称，供跨方向引用）、`mode`（refined/generated，由有无 user_note 决定）、user_note 原文、credibility、红线、支撑论文元数据、gap shortlist（quote ≤300 字/中译/状态/证据/completed_part/remaining_gap/confidence）、done_by_self 黑名单（供【我的延伸】差异点）、profile 文本（≤2000 字）、候选契约规则。
+4. plan 返回：每方向 `action: reuse|process|skipped`（输入包指纹与 profile 指纹都没变、已有候选、且该方向名下的跨方向想法引用的参与方向指纹全部未变 → `reuse`，直接复用状态，零模型调用；任一参与方向变化 → 该方向本轮重新生成，跨方向想法一并刷新）+ 逐方向模型 job；另返回 `stale_cross_direction`：scoped 刷新（`--collection-key` 圈外）时其他方向名下已过期的跨方向想法列表（`participant_changed_out_of_scope`），它们将由 finalize 确定性删除、不由本轮重跑。方向身份 = 输入包 `resolved_direction` 子字段里的权威 `direction_id`（issue #8；每方向独立、绝不因共享论文合并）。job 的 `model_input` 只含：`direction_id`（本方向权威 ID）、`known_directions`（全部方向的 direction_id/名称，供跨方向引用）、`mode`（refined/generated，由有无 user_note 决定）、user_note 原文、credibility、红线、支撑论文元数据、gap shortlist（quote ≤300 字/中译/状态/证据/completed_part/remaining_gap/confidence）、done_by_self 黑名单（供【我的延伸】差异点）、profile 文本（≤2000 字）、候选契约规则。
 
 ### Step 2 — 逐方向模型 job：写 candidates-<collection_key>.json
 对每个 `process` 方向，把 plan 给的 job 变成一份结构化候选 JSON（写到 `/tmp/<教授名>_候选_results/candidates-<collection_key>.json`）：
@@ -124,7 +124,7 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
 ```
 
 runner 逐条校验（契约见 Step 2）后原子写：
-- `<教授文件夹>/套磁候选状态.json` — 候选机器状态（每方向带权威 `direction_id` 与 `input_fingerprint`、profile 指纹、规范化候选：gap_ids/anchor_type（runner 依引用自动推导 author_future_work / my_extension / none）/回填后的支撑论文；显式跨方向想法存独立 `cross_direction` 列表，含 `direction_ids`/`owner_*`/`direction_fingerprints` 参与方向指纹）。
+- `<教授文件夹>/套磁候选状态.json` — 候选机器状态（每方向带权威 `direction_id` 与 `input_fingerprint`、profile 指纹、规范化候选：gap_ids/anchor_type（runner 依引用自动推导 author_future_work / my_extension / none）/回填后的支撑论文；显式跨方向想法存独立 `cross_direction` 列表，含 `direction_ids`/`owner_*`/`direction_fingerprints` 参与方向指纹）。返回值 `dropped_cross_direction` 报告被丢弃的跨方向想法及稳定 reason：`owner_direction_removed`（owner 从输入包消失）或 `participant_changed_out_of_scope`（scoped 刷新圈外 owner 的条目因参与方向变化被删）。
 - `<教授文件夹>/套磁想法候选.md` — runner 确定性渲染：frontmatter（managed_by/contact_state + 指纹）、按 resolved 方向分节（方向节开头带 `方向 ID：<direction_id>` 指路行：脉络/论文一览/用户笔记 → 见《套磁候选分析.md》）、方向级共享红线一次、refined 块（保真/校准/基本方向/变体）、候选块（`candidate_meta` 机器注释含 direction_id 与 gap_ids、一句话、研究问题、展开、五列支撑论文表——「分析」列由 runner 从输入包 analysis_file 派生相对链接、贴合度（middle 主支撑自动加「⚠️ 此论文教授为中间作者」）、红线、为何值得推、张力点）、推荐优先级；显式跨方向想法单列「跨方向想法（显式标注）」末节（每条带 `**参与方向**` 行与 cross_direction meta）。
 - `<program_root>/教授研究/套磁想法候选总览.md` — 每教授一行聚合（教授｜方向｜候选数｜推荐顺序｜文件链接）。
 

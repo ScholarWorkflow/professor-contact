@@ -4230,6 +4230,28 @@ def cmd_stage3_plan(args) -> None:
     input_fps = (state or {}).get("input_fingerprints", {})
     pack_fps = {_stage3_direction_id(d): d.get("input_fingerprint")
                 for d in pack_directions}
+    scoped_keys = set()
+    for direction in pack_directions:
+        scoped_ckey = direction.get("collection_key")
+        if collection_key and scoped_ckey != collection_key:
+            continue
+        if refresh_scope == "flagged" and direction.get("status") != "active":
+            continue
+        if refresh_scope == "selected" and scoped_ckey not in (selected_keys or set()):
+            continue
+        scoped_keys.add(scoped_ckey)
+    # Cross freshness is evaluated against the WHOLE state regardless of this
+    # run's scope: an out-of-scope owner's stale cross idea is reported here and
+    # deterministically dropped by stage3-finalize — never silently kept.
+    pack_ckeyes = {d.get("collection_key") for d in pack_directions}
+    stale_cross_direction = [
+        {"id": entry.get("id"), "owner_collection_key": entry.get("owner_collection_key"),
+         "reason": "participant_changed_out_of_scope"}
+        for entry in (state or {}).get("cross_direction") or []
+        if isinstance(entry, dict)
+        and entry.get("owner_collection_key") in pack_ckeyes
+        and entry.get("owner_collection_key") not in scoped_keys
+        and not _cross_entry_fresh(entry, pack_fps)]
     known_directions = [{"direction_id": _stage3_direction_id(d),
                          "collection_key": d.get("collection_key"),
                          "name_ja": d.get("name_ja"), "name_zh": d.get("name_zh")}
@@ -4237,11 +4259,7 @@ def cmd_stage3_plan(args) -> None:
     for direction in pack_directions:
         ckey = direction.get("collection_key")
         direction_id = _stage3_direction_id(direction)
-        if collection_key and ckey != collection_key:
-            continue
-        if refresh_scope == "flagged" and direction.get("status") != "active":
-            continue
-        if refresh_scope == "selected" and ckey not in (selected_keys or set()):
+        if ckey not in scoped_keys:
             continue
         fp_match = input_fps.get(ckey) == direction.get("input_fingerprint")
         if fp_match and not profile_changed:
@@ -4318,6 +4336,7 @@ def cmd_stage3_plan(args) -> None:
                         for d in pack_directions
                         if not collection_key or d.get("collection_key") == collection_key],
         "jobs": jobs,
+        "stale_cross_direction": stale_cross_direction,
         "write_needed": bool(jobs),
     })
 
@@ -4736,19 +4755,22 @@ def cmd_stage3_finalize(args) -> None:
                 for d in pack_directions}
     old_cross = [entry for entry in (old_state or {}).get("cross_direction") or []
                  if isinstance(entry, dict)]
+    scoped_keys = set()
+    for direction in pack_directions:
+        scoped_ckey = direction.get("collection_key")
+        if collection_key and scoped_ckey != collection_key:
+            continue
+        if refresh_scope == "flagged" and direction.get("status") != "active":
+            continue
+        if refresh_scope == "selected" and scoped_ckey not in (selected_keys or set()):
+            continue
+        scoped_keys.add(scoped_ckey)
     new_cross_by_owner: dict = {}
     for direction in pack_directions:
         ckey = direction.get("collection_key")
         direction_id = _stage3_direction_id(direction)
         analysis_papers[ckey] = direction.get("supporting_papers", [])
-        in_scope = True
-        if collection_key and ckey != collection_key:
-            in_scope = False
-        if refresh_scope == "flagged" and direction.get("status") != "active":
-            in_scope = False
-        if refresh_scope == "selected" and ckey not in (selected_keys or set()):
-            in_scope = False
-        if not in_scope:
+        if ckey not in scoped_keys:
             old = old_directions.get(ckey)
             if old:
                 old["direction_id"] = direction_id
@@ -4802,16 +4824,26 @@ def cmd_stage3_finalize(args) -> None:
     # Issue #8: cross-direction ideas stay per-owner state. Entries whose owner
     # vanished from the pack (merged away) are dropped and reported; entries of
     # processed owners are replaced by the fresh result above; entries of
-    # reused/out-of-scope owners were proven fresh by the reuse gate or are
-    # deliberately out of this run's scope.
+    # reused owners were proven fresh by the reuse gate. An OUT-OF-SCOPE owner
+    # whose cross idea went stale (a participant's fingerprint changed) must
+    # never keep the stale entry either: finalize drops it deterministically
+    # (no model rerun) and reports it; the owner regenerates cross ideas the
+    # next time it reprocesses.
     pack_ckeyes = {d.get("collection_key") for d in pack_directions}
     final_cross, dropped_cross = [], []
     for entry in old_cross:
         owner = entry.get("owner_collection_key")
         if owner not in pack_ckeyes:
-            dropped_cross.append(entry.get("id"))
+            dropped_cross.append({"id": entry.get("id"),
+                                  "owner_collection_key": owner,
+                                  "reason": "owner_direction_removed"})
             continue
         if owner in processed_keys:
+            continue
+        if owner not in scoped_keys and not _cross_entry_fresh(entry, pack_fps):
+            dropped_cross.append({"id": entry.get("id"),
+                                  "owner_collection_key": owner,
+                                  "reason": "participant_changed_out_of_scope"})
             continue
         final_cross.append(entry)
     for direction in pack_directions:
@@ -4941,20 +4973,55 @@ def cmd_stage3_finalize(args) -> None:
     })
 
 
+def _stage4_cross_participants(pack: dict, cross_entry: dict) -> list[dict] | None:
+    """Resolve a cross-direction idea's participants against the CURRENT pack.
+
+    Returns the participant pack directions in the idea's recorded
+    direction_ids order, or None when anything fails to exact-join (unknown
+    direction id, changed fingerprint, malformed bookkeeping) — the caller
+    fails closed with needs_refresh instead of compiling a stale email."""
+    direction_ids = cross_entry.get("direction_ids")
+    recorded = cross_entry.get("direction_fingerprints")
+    if not isinstance(direction_ids, list) or len(set(direction_ids)) < 2 \
+            or not isinstance(recorded, dict) or not recorded:
+        return None
+    by_id = {_stage3_direction_id(d): d for d in pack.get("directions") or []}
+    participants = []
+    for direction_id in direction_ids:
+        pack_direction = by_id.get(direction_id)
+        if pack_direction is None \
+                or recorded.get(direction_id) != pack_direction.get("input_fingerprint"):
+            return None
+        participants.append(pack_direction)
+    return participants
+
+
 def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
                         idea: dict, note: str, program_root: Path,
                         profile_fp: str | None, papers_override: list[str] | None = None,
-                        contact_evidence: dict | None = None) -> dict:
-    gap_records = {}
-    for gap in pack_direction.get("gap_shortlist", []) + pack_direction.get("gaps_excluded", []):
-        gap_records[(gap["item_key"], gap["gap_id"])] = gap
-    blacklist = {(b["item_key"], b["gap_id"]): b
-                 for b in pack_direction.get("completed_gap_blacklist", [])}
-    paper_meta = {p["item_key"]: p for p in pack_direction.get("supporting_papers", [])}
-    for gap in pack_direction.get("gap_shortlist", []) + pack_direction.get("gaps_excluded", []):
-        paper_meta.setdefault(gap["item_key"], {
-            "item_key": gap["item_key"], "title": gap.get("paper_title"),
-            "year": gap.get("paper_year"), "authorship": gap.get("authorship")})
+                        contact_evidence: dict | None = None,
+                        cross_entry: dict | None = None,
+                        participant_directions: list[dict] | None = None) -> dict:
+    # A cross-direction idea joins evidence against the UNION of its
+    # participants' slices (owner included); per-direction ideas keep the
+    # single-slice indexes. Duplicate (item_key, gap_id) identities resolve to
+    # their first occurrence in direction_ids order — never re-invented.
+    slice_directions = participant_directions or [pack_direction]
+    gap_records: dict = {}
+    blacklist: dict = {}
+    paper_meta: dict = {}
+    for slice_direction in slice_directions:
+        for gap in slice_direction.get("gap_shortlist", []) + slice_direction.get("gaps_excluded", []):
+            gap_records.setdefault((gap["item_key"], gap["gap_id"]), gap)
+        for banned in slice_direction.get("completed_gap_blacklist", []):
+            blacklist.setdefault((banned["item_key"], banned["gap_id"]), banned)
+        for paper in slice_direction.get("supporting_papers", []):
+            paper_meta.setdefault(paper["item_key"], paper)
+    for slice_direction in slice_directions:
+        for gap in slice_direction.get("gap_shortlist", []) + slice_direction.get("gaps_excluded", []):
+            paper_meta.setdefault(gap["item_key"], {
+                "item_key": gap["item_key"], "title": gap.get("paper_title"),
+                "year": gap.get("paper_year"), "authorship": gap.get("authorship")})
     papers_out = []
     candidate_papers = idea.get("papers") or []
     if papers_override:
@@ -5039,13 +5106,19 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
                          "candidate_state": idea.get("_state_fingerprint")},
         "user_supplement": note or "",
         "contact_evidence": contact_evidence,
+        "cross_direction": (
+            {"owner_direction_id": state_direction.get("direction_id"),
+             "direction_ids": list(cross_entry.get("direction_ids") or []),
+             "direction_fingerprints": dict(cross_entry.get("direction_fingerprints") or {})}
+            if cross_entry else None),
     }
     # contact_evidence is a fact field (the frozen recipient snapshot), so it
     # belongs in the pack integrity hash: a refrozen snapshot always yields a
-    # new source_hash, never a silent in-place substitution.
+    # new source_hash, never a silent in-place substitution. cross_direction
+    # joins it so a re-participated idea re-hashes too.
     entry["source_hash"] = sha256_obj({k: entry[k] for k in (
         "email_id", "idea", "papers", "gaps", "red_lines", "allowed_sources",
-        "contact_evidence")})
+        "contact_evidence", "cross_direction")})
     return entry
 
 
@@ -5095,6 +5168,13 @@ def validate_stage4_selections(selects: Any, states: dict, packs: dict) -> None:
         if not state_direction or not pack_direction:
             continue
         candidates = {idea.get("id"): idea for idea in state_direction.get("candidates", [])}
+        # Cross-direction ideas (issue #8) are selected under their owner's
+        # collection_key: look the id up in the owner's candidates first, then
+        # in the cross entries that owner owns.
+        cross_by_id = {entry.get("id"): entry
+                       for entry in (state or {}).get("cross_direction") or []
+                       if isinstance(entry, dict)
+                       and entry.get("owner_collection_key") == ckey}
         ideas = select.get("ideas")
         if not isinstance(ideas, list):
             fail("invalid_selection", f"{professor}::{ckey}: ideas must be a list")
@@ -5107,8 +5187,13 @@ def validate_stage4_selections(selects: Any, states: dict, packs: dict) -> None:
                 fail("duplicate_idea_id", f"duplicate idea id in {professor}::{ckey}: {idea_id}")
             seen_ideas.add(idea_id)
             idea = candidates.get(idea_id)
+            if idea is None and idea_id in cross_by_id:
+                idea = cross_by_id[idea_id]
             if idea is None:
-                continue
+                # An explicit selection that matches nothing must fail the whole
+                # batch up front: silently skipping it would write the remaining
+                # ideas while the user believes this one was selected too.
+                fail("unknown_idea_id", f"{professor}::{ckey}: unknown idea id: {idea_id}")
             override = validate_papers_override(
                 idea, idea_input.get("papers_override"),
                 f"{professor}::{ckey}::{idea_id}")
@@ -5195,10 +5280,28 @@ def cmd_stage4_finalize(args) -> None:
             idea_id = idea_input.get("id")
             idea = next((c for c in state_direction.get("candidates", [])
                          if c.get("id") == idea_id), None)
+            cross_entry = None
+            if idea is None:
+                cross_entry = next(
+                    (entry for entry in state.get("cross_direction") or []
+                     if isinstance(entry, dict)
+                     and entry.get("owner_collection_key") == ckey
+                     and entry.get("id") == idea_id), None)
+                idea = cross_entry
             if idea is None:
                 skipped.append({"professor": professor, "collection_key": ckey,
                                 "idea": idea_id, "reason": "unknown_idea_id"})
                 continue
+            participants = None
+            if cross_entry is not None:
+                # Every participant must exact-join the current pack with the
+                # fingerprint recorded at stage 3; any drift fails the whole
+                # batch before a single file is written.
+                participants = _stage4_cross_participants(pack, cross_entry)
+                if participants is None:
+                    soft_exit("needs_refresh", "cross_participant_changed",
+                              professor=professor, collection_key=ckey, idea=idea_id,
+                              message="跨方向想法引用的参与方向已变化或指纹过期：先重跑阶段 3 刷新候选，再重新选择。未写入任何选择/邮件包。")
             idea_full = dict(idea)
             idea_full["red_lines"] = idea.get("red_lines") or []
             papers_override = validate_papers_override(
@@ -5210,7 +5313,8 @@ def cmd_stage4_finalize(args) -> None:
             entry = compile_email_entry(
                 pack, state_direction, pack_direction, idea_full,
                 idea_input.get("note") or "", program_root, current_profile_fp,
-                papers_override, evidence_snapshots[professor])
+                papers_override, evidence_snapshots[professor],
+                cross_entry=cross_entry, participant_directions=participants)
             email_entries.append(entry)
             selected_ideas.append(idea_input)
         if not selected_ideas:
