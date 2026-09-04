@@ -51,7 +51,7 @@ Interpret results strictly:
 - `status: ok` → use only returned `professors`.
 - `missing_target_state` → return `needs_input`; instruct caller to run Stage 0.
 - `professor_not_selected` → return `needs_input`; do not infer intent from Zotero.
-- `preview_changed` → return `needs_refresh`; Stage 0 must revise selection against the new preview before any download.
+- `preview_changed` → return `needs_refresh`; only a selected direction's material identity changed (`member_fingerprint` mismatch / direction removed — see `stale_targets[].direction_ids`). Stage 0 must revise selection before any download. Unselected-direction changes and display-only changes never trigger this: `resolve` refreshes projection metadata in place and returns `ok`.
 
 Never scan for a Zotero note named `套磁候选`, even as fallback.
 
@@ -96,4 +96,4 @@ Return only compact JSON:
 - Never infer selected directions/professors from formal Zotero direction collections.
 - Never download PDFs yourself.
 - Never call Zotero write APIs yourself.
-- A stale preview fingerprint blocks Stage 1 until Stage 0 selection is revised.
+- A selected direction whose membership changed (`member_fingerprint` mismatch) or that disappeared blocks Stage 1 until Stage 0 selection is revised; unselected or display-only changes do not block.

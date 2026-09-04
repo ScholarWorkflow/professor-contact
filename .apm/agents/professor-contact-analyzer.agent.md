@@ -99,8 +99,8 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_t
 
 - `missing_target_state` → return `needs_input`；Stage 0 必须先运行。
 - `professor_not_selected` → return `needs_input`；不得在别处替用户推断选择。
-- `preview_changed` → return `needs_refresh`；Stage 0 必须先修订选择，Stage 2 才能继续。
-- `ok` → 只允许分析返回的 `targets[]`。
+- `preview_changed` → return `needs_refresh`；仅当被选方向成员身份变化（`member_fingerprint` 不匹配/方向消失，`stale_targets[].direction_ids` 精确列出受影响方向）时出现，Stage 0 必须先修订选择，Stage 2 才能继续。未选方向或 display-only 变化不会触发：`resolve` 就地刷新投影元数据并返回 `ok`。
+- `ok` → 只允许分析返回的 `targets[]`；若 payload 含 `projection_refreshed`，说明部分方向的展示元数据已被刷新，直接使用 `targets[]` 中的当前值即可。
 
 每个 target direction 提供：稳定 `direction_id`、name_ja/name_zh/summary_zh、preview `members[]`、representative papers、member fingerprint、可选 `user_note`。**成员清单以 target state 为准，不以 Zotero 分类成员为准。**
 
@@ -438,10 +438,10 @@ Return:
 ```json
 { "result": "error", "program_root": "<or null>", "analyses": [], "notes": "<concise reason>" }
 ```
-when: no `folder_path`; program root unresolvable; user aborted at the Zotero prompt.（target state 缺失/未选教授属 `needs_input`、preview 指纹变更属 `needs_refresh`，都是可恢复状态，不算 error。）
+when: no `folder_path`; program root unresolvable; user aborted at the Zotero prompt.（target state 缺失/未选教授属 `needs_input`、被选方向成员身份变化属 `needs_refresh`，都是可恢复状态，不算 error。）
 
 ## Hard rules
-- **target state 是唯一选择来源**：绝不扫描 Zotero `套磁候选` note、绝不要求 `套磁候选总览.md`、绝不从 Zotero collection key 推导 target 身份；`collection_key` 只是 `direction_id` 的兼容 join 键。preview 指纹变化（`preview_changed`）阻断 Stage 2，直到 Stage 0 修订选择。
+- **target state 是唯一选择来源**：绝不扫描 Zotero `套磁候选` note、绝不要求 `套磁候选总览.md`、绝不从 Zotero collection key 推导 target 身份；`collection_key` 只是 `direction_id` 的兼容 join 键。被选方向成员身份变化（`preview_changed`，stale 条目精确到 `direction_id`）阻断 Stage 2，直到 Stage 0 修订选择；仅未选方向或 display-only 变化不阻断。
 - **跨方向按 item_key 去重**：同一教授同一 `item_key` 的准备/OCR/paper-analysis 每轮至多执行一次，结果复用到所有包含它的被选方向；**绝不仅因成员重叠就合并两个被选方向**的 narrative、user_note、gap pool 或 direction fingerprint。
 - **handoff barrier 不可绕过**：post-cost-gate/post-idempotency jobs 必须先 build ZIP；`wait` 在任何新 vision OCR/`paper-analysis full|gap-only` 前停止。resume 必须先按当前输入 rebuild current bundle，再 import external result；不匹配即 stale/mismatch，绝不‘尽量用’。
 - **Stage-2 single-writer lease 不可绕过**：handoff `import` 必须发生在 local lease acquire **之前**；一旦本轮要进入任何教授目录本地写路径，就必须先 `local-lease-acquire`，并把**本轮 build 返回的 exact `handoff_id/source_fingerprint`**原样传入，覆盖 legacy `paper-analysis`、OCR、sidecar、`_index.json` 与 runner 写入的整个教授 scope，并在 **finally** 中 `local-lease-release`。`stage2_plan_stale` 或 `stage2_writer_busy` 时禁止写。这个 lease 是 importer 与“不主动拿 OS lock 的旧 writer”之间的共同协调边界，也是 build→acquire 间 stale-plan 的最终闸门。
