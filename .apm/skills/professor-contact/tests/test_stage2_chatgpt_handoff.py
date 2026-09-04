@@ -38,6 +38,41 @@ l
 h
 """
 
+FACTS_DRAFT = {
+    "paper": {"title": "Paper", "authors": ["Author A"], "year": 2024, "venue": "Venue", "doi": None},
+    "research_problem": "problem",
+    "research_object": "object",
+    "approach": "approach",
+    "findings": ["finding"],
+    "contributions": ["contribution"],
+    "topic_terms": ["topic"],
+    "limitations": ["limitation"],
+    "source_anchors": {"approach": ["§3 Method"]},
+    "confidence": 0.8,
+}
+
+# Fake facts.py must stay a sibling of the fake future-work helper: the
+# importer derives it from the future-work script directory so both helpers
+# always come from one paper-analysis install.
+FAKE_FACTS_SCRIPT = (
+    "#!/usr/bin/env python3\n"
+    "import hashlib,json,pathlib,sys\n"
+    "cmd=sys.argv[1]\n"
+    "def arg(n): return pathlib.Path(sys.argv[sys.argv.index(n)+1])\n"
+    "if cmd=='validate':\n"
+    " d=json.loads(arg('--draft').read_text()); print(json.dumps({'ok':True,'facts':d}))\n"
+    "elif cmd=='finalize':\n"
+    " a=arg('--analysis'); draft=json.loads(arg('--draft').read_text());\n"
+    " side=json.loads(arg('--future-work').read_text());\n"
+    " assert side.get('status')=='ok' and side.get('analysis')==a.name, 'sidecar mismatch';\n"
+    " fp='sha256:'+hashlib.sha256(arg('--input').read_bytes()).hexdigest();\n"
+    " ids=[i.get('id') for i in side.get('items',[]) if i.get('id')];\n"
+    " out={'schema':1,'kind':'paper-analysis-facts','generator_version':'facts-v1','analysis':a.name,'input_fingerprint':fp,'evidence_level':'fulltext','status':'ok'};\n"
+    " out.update(draft); out['future_work_ids']=ids;\n"
+    " pathlib.Path(str(a)+'.facts.json').write_text(json.dumps(out),encoding='utf-8');\n"
+    " print(json.dumps({'ok':True}))\n"
+)
+
 
 class Args:
     pass
@@ -80,6 +115,9 @@ class HandoffTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.future.chmod(0o644)
+        self.facts_script = self.root / "facts.py"
+        self.facts_script.write_text(FAKE_FACTS_SCRIPT, encoding="utf-8")
+        self.facts_script.chmod(0o644)
 
         self.old_path = os.environ.get("PATH", "")
         self.old_uv_test_log = os.environ.get("UV_TEST_LOG")
@@ -132,7 +170,8 @@ class HandoffTests(unittest.TestCase):
         with zipfile.ZipFile(bundle["bundle_path"]) as zf:
             return json.loads(zf.read("manifest.json"))
 
-    def _result_zip(self, bundle, rows, extra=None, *, include_future_work=True, analysis_text=ANALYSIS):
+    def _result_zip(self, bundle, rows, extra=None, *, include_future_work=True,
+                    include_facts=True, facts_draft=None, analysis_text=ANALYSIS):
         manifest = self._manifest(bundle)
         result = self.root / f"result-{manifest['handoff_id']}.zip"
         jobs = {job["job_id"]: job for job in manifest["jobs"]}
@@ -155,6 +194,8 @@ class HandoffTests(unittest.TestCase):
                 zf.writestr(f"results/{safe}/analysis.md", analysis_text)
                 if include_future_work and (job.get("expected") or {}).get("future_work"):
                     zf.writestr(f"results/{safe}/future_work_items.json", json.dumps({"items": []}))
+                if include_facts and (job.get("expected") or {}).get("facts"):
+                    zf.writestr(f"results/{safe}/facts.json", json.dumps(facts_draft or FACTS_DRAFT))
                 if extra:
                     for name, data in extra.items():
                         zf.writestr(f"results/{safe}/{name}", data)
@@ -244,6 +285,10 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(entry["future_work_state"], "failed")
         self.assertEqual(entry["future_work_error"], "future_work_unavailable_without_pdf_handoff")
         self.assertIsNone(entry["future_work_sidecar"])
+        self.assertEqual(entry["facts_state"], "unavailable")
+        self.assertEqual(entry["facts_error"], "facts_unavailable_without_pdf_handoff")
+        self.assertIsNone(entry["facts_sidecar"])
+        self.assertFalse(Path(str(target) + ".facts.json").exists())
         self.assertEqual(entry["ocr_file"], str(self.ocr.resolve()))
 
     def test_abstract_bundle_has_no_fake_pdf(self):
@@ -262,6 +307,34 @@ class HandoffTests(unittest.TestCase):
         self.assertFalse(any(name.endswith("paper.pdf") for name in names))
         self.assertFalse(manifest["jobs"][0]["expected"]["future_work"])
 
+    def test_pdf_bundle_declares_facts_contract(self):
+        pdf_bundle = self._build([self._pdf_job()])
+        ocr_bundle = self._build([{
+            "item_key": "OCR",
+            "carrier": "ocr",
+            "level": "fulltext",
+            "input_path": str(self.ocr.resolve()),
+            "analysis_relpath": "论文分析/A/OCR.md",
+            "research_direction": {},
+            "ocr_file": str(self.ocr.resolve()),
+        }])
+        abstract_bundle = self._build([{
+            "item_key": "ABS",
+            "carrier": "abstract_json",
+            "level": "abstract",
+            "input_path": str(self.abstract.resolve()),
+            "analysis_relpath": "论文分析/A/Abs.md",
+            "research_direction": {},
+        }])
+        with zipfile.ZipFile(pdf_bundle["bundle_path"]) as zf:
+            self.assertIn("expected.facts", zf.read("instructions.md").decode("utf-8"))
+        self.assertEqual(self._manifest(pdf_bundle)["jobs"][0]["expected"],
+                         {"analysis": True, "future_work": True, "facts": True})
+        self.assertEqual(self._manifest(ocr_bundle)["jobs"][0]["expected"],
+                         {"analysis": True, "future_work": False, "facts": False})
+        self.assertEqual(self._manifest(abstract_bundle)["jobs"][0]["expected"],
+                         {"analysis": True, "future_work": False, "facts": False})
+
     def test_valid_result_installs_analysis_sidecar_and_index(self):
         bundle = self._build([self._pdf_job(authorship="corresponding", relevance_reason="relevant")])
         job = self._manifest(bundle)["jobs"][0]
@@ -276,6 +349,13 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(entry["level"], "fulltext")
         self.assertEqual(entry["future_work_state"], "valid")
         self.assertTrue(Path(entry["future_work_sidecar"]).is_file())
+        self.assertEqual(entry["facts_state"], "valid")
+        self.assertIsNone(entry["facts_error"])
+        facts = json.loads(Path(entry["facts_sidecar"]).read_text())
+        self.assertEqual(facts["kind"], "paper-analysis-facts")
+        self.assertEqual(facts["analysis"], "T.md")
+        self.assertEqual(facts["input_fingerprint"], f"sha256:{job['input_sha256']}")
+        self.assertEqual(facts["research_problem"], "problem")
 
     def test_tampered_bundled_carrier_is_rejected_by_actual_byte_hash(self):
         bundle = self._build([self._pdf_job()])
@@ -311,9 +391,12 @@ class HandoffTests(unittest.TestCase):
         sidecar = Path(str(self.prof / "论文分析/A/FW.md") + ".future_work.json")
         self.assertTrue(sidecar.is_file())
         self.assertEqual(json.loads(sidecar.read_text())["analysis"], "FW.md")
+        facts_sidecar = Path(str(self.prof / "论文分析/A/FW.md") + ".facts.json")
+        self.assertTrue(facts_sidecar.is_file())
         uv_calls = self.uv_log.read_text(encoding="utf-8")
         self.assertIn(f"run {self.future} validate", uv_calls)
         self.assertIn(f"run {self.future} finalize", uv_calls)
+        self.assertIn(f"run {self.facts_script} finalize", uv_calls)
 
     def test_wait_pdf_missing_future_work_payload_is_not_fully_imported(self):
         bundle = self._build([self._pdf_job()])
@@ -329,6 +412,64 @@ class HandoffTests(unittest.TestCase):
         self.assertIn(job["job_id"], out["missing"])
         self.assertFalse((self.prof / "论文分析/A/T.md").exists())
         self.assertFalse((self.prof / "论文分析/_index.json").exists())
+
+    def test_wait_pdf_missing_facts_payload_is_not_fully_imported(self):
+        bundle = self._build([self._pdf_job()])
+        job = self._manifest(bundle)["jobs"][0]
+        result = self._result_zip(
+            bundle,
+            [{"job_id": job["job_id"], "item_key": "ABC", "input_sha256": job["input_sha256"], "status": "ok"}],
+            include_facts=False,
+        )
+        out = self._import(bundle, result)
+        self.assertEqual(out["status"], "needs_external_result")
+        self.assertEqual(out["reason_code"], "external_result_incomplete")
+        self.assertIn(job["job_id"], out["missing"])
+        self.assertFalse((self.prof / "论文分析/A/T.md").exists())
+        self.assertFalse((self.prof / "论文分析/_index.json").exists())
+        self.assertFalse(Path(str(self.prof / "论文分析/A/T.md") + ".facts.json").exists())
+
+    def test_facts_sidecar_rejected_when_fingerprint_does_not_bind_bundled_pdf(self):
+        bundle = self._build([self._pdf_job()])
+        job = self._manifest(bundle)["jobs"][0]
+        lying_facts = self.root / "facts.py"
+        lying_facts.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json,pathlib,sys\n"
+            "cmd=sys.argv[1]\n"
+            "def arg(n): return pathlib.Path(sys.argv[sys.argv.index(n)+1])\n"
+            "if cmd=='finalize':\n"
+            " a=arg('--analysis'); draft=json.loads(arg('--draft').read_text());\n"
+            " out={'schema':1,'kind':'paper-analysis-facts','generator_version':'facts-v1','analysis':a.name,'input_fingerprint':'sha256:'+'0'*64,'evidence_level':'fulltext','status':'ok'};\n"
+            " out.update(draft); out['future_work_ids']=[];\n"
+            " pathlib.Path(str(a)+'.facts.json').write_text(json.dumps(out),encoding='utf-8');\n"
+            " print(json.dumps({'ok':True}))\n",
+            encoding="utf-8",
+        )
+        result = self._result_zip(bundle, [{
+            "job_id": job["job_id"], "item_key": "ABC", "input_sha256": job["input_sha256"], "status": "ok"
+        }])
+        out = self._import(bundle, result)
+        self.assertEqual(out["status"], "needs_external_result")
+        self.assertEqual(out["reason_code"], "external_facts_invalid")
+        self.assertFalse((self.prof / "论文分析/A/T.md").exists())
+        self.assertFalse((self.prof / "论文分析/_index.json").exists())
+
+    def test_facts_sidecar_change_after_bundle_makes_import_stale(self):
+        bundle = self._build([self._pdf_job()])
+        job = self._manifest(bundle)["jobs"][0]
+        result = self._result_zip(bundle, [{
+            "job_id": job["job_id"], "item_key": "ABC", "input_sha256": job["input_sha256"], "status": "ok"
+        }])
+        target = self.prof / "论文分析/A/T.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("stale local analysis", encoding="utf-8")
+        Path(str(target) + ".facts.json").write_text('{"stale": true}', encoding="utf-8")
+        out = self._import(bundle, result)
+        self.assertEqual(out["status"], "needs_external_result")
+        self.assertEqual(out["reason_code"], "handoff_stale")
+        self.assertEqual(target.read_text(), "stale local analysis")
+        self.assertEqual(Path(str(target) + ".facts.json").read_text(), '{"stale": true}')
 
     def test_abstract_import_neutralizes_unvalidated_future_work(self):
         bundle = self._build([{
@@ -351,6 +492,9 @@ class HandoffTests(unittest.TestCase):
         index = json.loads((self.prof / "论文分析/_index.json").read_text())
         self.assertEqual(index["papers"]["ABS"]["future_work_state"], "failed")
         self.assertIsNone(index["papers"]["ABS"]["future_work_sidecar"])
+        self.assertEqual(index["papers"]["ABS"]["facts_state"], "unavailable")
+        self.assertEqual(index["papers"]["ABS"]["facts_error"], "facts_unavailable_abstract_handoff")
+        self.assertIsNone(index["papers"]["ABS"]["facts_sidecar"])
 
     def test_unknown_job_rejected(self):
         bundle = self._build([self._pdf_job()])
@@ -498,7 +642,12 @@ class HandoffTests(unittest.TestCase):
         self.assertIn("字段缺失按非交互/向后兼容语义固定为 `continue`", agent)
         self.assertIn("Stage 3 仍只读 `套磁候选输入.json`", agent)
         self.assertIn("future_work_unavailable_without_pdf_handoff", agent)
+        self.assertIn("facts_unavailable_without_pdf_handoff", agent)
+        self.assertIn("facts.json", agent)
+        self.assertIn("paper_facts", agent)
         self.assertIn("uv run", agent)
+        self.assertIn(".facts.json", skill)
+        self.assertIn("paper_facts", skill)
 
 
 if __name__ == "__main__":

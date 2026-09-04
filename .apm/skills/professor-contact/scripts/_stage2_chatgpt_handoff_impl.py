@@ -152,12 +152,15 @@ def _capture_local_baseline(professor_dir: Path, item_key: str, analysis_relpath
     """
     analysis = _resolve_under(professor_dir, analysis_relpath)
     sidecar = Path(str(analysis) + ".future_work.json")
+    facts_sidecar = Path(str(analysis) + ".facts.json")
     entry = _read_index_entry(professor_dir, item_key)
     return {
         "analysis_exists": analysis.is_file(),
         "analysis_sha256": _sha256_file(analysis) if analysis.is_file() else None,
         "sidecar_exists": sidecar.is_file(),
         "sidecar_sha256": _sha256_file(sidecar) if sidecar.is_file() else None,
+        "facts_sidecar_exists": facts_sidecar.is_file(),
+        "facts_sidecar_sha256": _sha256_file(facts_sidecar) if facts_sidecar.is_file() else None,
         "index_entry_exists": entry is not None,
         "index_entry_sha256": _sha256_json(entry) if entry is not None else None,
         "index_level": entry.get("level") if entry is not None else None,
@@ -317,6 +320,7 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
         }
         job_fp = _sha256_json(fp_payload)
         expected_future_work = job["carrier"] == "pdf"
+        expected_facts = job["carrier"] == "pdf"
         entry: dict[str, Any] = {
             "job_id": f"paper-analysis:{job['item_key']}:{job_fp[:16]}",
             "item_key": job["item_key"],
@@ -328,7 +332,11 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
             "research_direction": job["research_direction"],
             "research_direction_fp": job["research_direction_fp"],
             "local_baseline": job["local_baseline"],
-            "expected": {"analysis": True, "future_work": expected_future_work},
+            "expected": {
+                "analysis": True,
+                "future_work": expected_future_work,
+                "facts": expected_facts,
+            },
             "index_metadata": {
                 "authorship": job["authorship"],
                 "authorship_note": job["authorship_note"],
@@ -387,9 +395,10 @@ For each `manifest.json.jobs[]` entry:
 2. Preserve `job_id`, `item_key`, `input_sha256`, direction IDs, and target identity exactly.
 3. Write the ordinary paper-analysis Markdown template to `results/<safe-job>/analysis.md`, where `<safe-job>` is the deterministic safe form of that exact `job_id`; do not add or override a `result_dir` field in the result row.
 4. For every job with `expected.future_work=true` (PDF fulltext only), return `future_work_items.json` selected/translated only from the bundled exact candidates. If `future_work.ocr_required_pages` is non-empty, OCR exactly those pages and return `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`.
-5. Bind completed rows in `result_manifest.json` with schema/kind/handoff/source/job/item/input hash and `status=ok|partial|error`.
+5. For every PDF job with `expected.facts=true`, also return `facts.json`: the compact structured-facts draft already established during the same analysis pass — `paper` (title/authors/year/venue/doi), `research_problem`, `research_object`, `approach`, `findings[]`, `contributions[]`, `topic_terms[]`, `limitations[]`, optional `source_anchors` and `confidence`. Never include `future_work_ids`; the local importer joins them from the validated future-work sidecar. Never re-read the paper a second time just to build the draft.
+6. Bind completed rows in `result_manifest.json` with schema/kind/handoff/source/job/item/input hash and `status=ok|partial|error`.
 
-PDF fulltext jobs are not complete without their future-work payload. OCR-only and abstract-only jobs do not have a PDF-grounded future-work contract: any external Future Work prose in their Markdown is discarded locally and cannot become a gap source. Do not return `_index.json`, `套磁候选输入.json`, or a ready-made `.future_work.json` as authoritative state. The local importer independently validates/finalizes PDF future-work evidence and installs accepted results into the ordinary Stage-2 artifacts.
+PDF fulltext jobs are not complete without their future-work payload and their facts draft. OCR-only and abstract-only jobs do not have a PDF-grounded future-work or facts contract (`expected.facts=false`): any external Future Work prose in their Markdown is discarded locally and cannot become a gap source, and no facts sidecar is fabricated for them. Do not return `_index.json`, `套磁候选输入.json`, or a ready-made `.future_work.json`/`.facts.json` as authoritative state. The local importer independently validates/finalizes PDF future-work evidence and facts drafts through the deterministic paper-analysis helpers and installs accepted results into the ordinary Stage-2 artifacts.
 """
 
 
@@ -545,6 +554,7 @@ def _index_with_job(
     job: dict[str, Any],
     analysis_path: Path,
     sidecar_path: Path | None,
+    facts_path: Path | None,
 ) -> dict[str, Any]:
     index_path = professor_dir / "论文分析" / "_index.json"
     if index_path.exists():
@@ -570,6 +580,15 @@ def _index_with_job(
     else:
         future_state = "failed"
         future_error = "future_work_unavailable_abstract_handoff"
+    if facts_path:
+        facts_state = "valid"
+        facts_error = None
+    elif job.get("carrier") == "ocr":
+        facts_state = "unavailable"
+        facts_error = "facts_unavailable_without_pdf_handoff"
+    else:
+        facts_state = "unavailable"
+        facts_error = "facts_unavailable_abstract_handoff"
     entry.update({
         "file": str(analysis_path),
         "level": job["evidence_level"],
@@ -580,6 +599,9 @@ def _index_with_job(
         "future_work_sidecar": str(sidecar_path) if sidecar_path else None,
         "future_work_state": future_state,
         "future_work_error": future_error,
+        "facts_sidecar": str(facts_path) if facts_path else None,
+        "facts_state": facts_state,
+        "facts_error": facts_error,
         "analysis_executor": "chatgpt_handoff",
         "handoff_id": manifest["handoff_id"],
         "source_fingerprint": manifest["source_fingerprint"],
@@ -602,9 +624,11 @@ def _install_job(
     job: dict[str, Any],
     staged_analysis: Path,
     staged_sidecar: Path | None,
+    staged_facts: Path | None = None,
 ) -> tuple[Path, Path | None]:
     analysis_target = _resolve_under(professor_dir, job["analysis_relpath"])
     sidecar_target = Path(str(analysis_target) + ".future_work.json")
+    facts_target = Path(str(analysis_target) + ".facts.json")
     index_target = professor_dir / "论文分析" / "_index.json"
 
     # Expensive local finalization may have taken long enough for another Stage-2
@@ -615,12 +639,14 @@ def _install_job(
     new_index = _index_with_job(
         professor_dir, manifest, job, analysis_target,
         sidecar_target if staged_sidecar else None,
+        facts_target if staged_facts else None,
     )
     if not _latest_matches(professor_dir, manifest) or not _baseline_matches(professor_dir, job):
         raise ValueError("handoff_stale")
 
     old_analysis = analysis_target.read_bytes() if analysis_target.is_file() else None
     old_sidecar = sidecar_target.read_bytes() if sidecar_target.is_file() else None
+    old_facts = facts_target.read_bytes() if facts_target.is_file() else None
     old_index = index_target.read_bytes() if index_target.is_file() else None
     try:
         _atomic_write(analysis_target, staged_analysis.read_bytes())
@@ -628,10 +654,15 @@ def _install_job(
             _atomic_write(sidecar_target, staged_sidecar.read_bytes())
         else:
             sidecar_target.unlink(missing_ok=True)
+        if staged_facts:
+            _atomic_write(facts_target, staged_facts.read_bytes())
+        else:
+            facts_target.unlink(missing_ok=True)
         _atomic_json(index_target, new_index)
     except BaseException:
         _restore(analysis_target, old_analysis)
         _restore(sidecar_target, old_sidecar)
+        _restore(facts_target, old_facts)
         _restore(index_target, old_index)
         raise
     return analysis_target, sidecar_target if staged_sidecar else None
@@ -718,6 +749,68 @@ def _finalize_future_work(
     return staged_sidecar
 
 
+def _facts_script_path(args: argparse.Namespace) -> Path:
+    """paper-analysis ships facts.py next to future_work.py in the same install.
+
+    Reusing the sibling keeps the two deterministic helpers on one version, so a
+    handoff result can never be finalized by mismatched helper generations. The
+    path is absolutized but not symlink-resolved, matching how the caller passed
+    the future-work script in.
+    """
+    return Path(str(args.future_work_script)).expanduser().absolute().with_name("facts.py")
+
+
+def _finalize_facts(
+    args: argparse.Namespace,
+    source_dir: Path,
+    staged_analysis: Path,
+    staged_sidecar: Path,
+    analysis_target: Path,
+    job: dict[str, Any],
+    bundled_input: Path,
+) -> Path:
+    """Finalize the external facts draft into the local sidecar contract.
+
+    The draft from the external result is never installed as-is: the deterministic
+    paper-analysis `facts.py` helper validates it against the staged analysis, the
+    locally finalized future-work sidecar, and the exact bundled PDF, and only the
+    helper writes `<analysis>.facts.json`. This is the same contract a local
+    `paper-analysis full` pass satisfies, so both execution paths converge on one
+    normalized paper-facts representation.
+    """
+    draft = source_dir / "facts.json"
+    if not draft.is_file():
+        raise ValueError("external_result_incomplete")
+    facts_script = _facts_script_path(args)
+    if not facts_script.is_file():
+        raise ValueError("external_facts_invalid")
+    staged_facts = Path(str(staged_analysis) + ".facts.json")
+    staged_facts.unlink(missing_ok=True)
+    proc = _run_future_work(
+        facts_script,
+        "finalize",
+        "--analysis", str(staged_analysis),
+        "--draft", str(draft),
+        "--future-work", str(staged_sidecar),
+        "--input", str(bundled_input),
+        "--evidence-level", "fulltext",
+    )
+    if proc.returncode != 0:
+        raise ValueError("external_facts_invalid")
+    if not staged_facts.is_file():
+        raise ValueError("external_facts_invalid")
+    payload = _load_json(staged_facts)
+    if (
+        not isinstance(payload, dict)
+        or payload.get("status") != "ok"
+        or payload.get("analysis") != analysis_target.name
+        or payload.get("evidence_level") != "fulltext"
+        or payload.get("input_fingerprint") != f"sha256:{job['input_sha256']}"
+    ):
+        raise ValueError("external_facts_invalid")
+    return staged_facts
+
+
 def import_result(args: argparse.Namespace) -> dict[str, Any]:
     professor_dir = args.professor_dir.expanduser().resolve()
     with tempfile.TemporaryDirectory(prefix="stage2-handoff-import-") as temp:
@@ -760,7 +853,7 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
         for jid, row in result_map.items():
             job = job_map[jid]
             try:
-                _verify_bundled_input(bundle_root, job)
+                bundled_input = _verify_bundled_input(bundle_root, job)
             except (OSError, ValueError):
                 invalid.append({"job_id": jid, "reason_code": "external_result_hash_mismatch"})
                 continue
@@ -793,6 +886,7 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
             staged_analysis = staged_dir / analysis_target.name
             shutil.copyfile(analysis_source, staged_analysis)
             staged_sidecar: Path | None = None
+            staged_facts: Path | None = None
 
             if (job.get("expected") or {}).get("future_work"):
                 try:
@@ -804,6 +898,16 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
                     reason = "external_result_incomplete" if "external_result_incomplete" in str(error) else "external_future_work_invalid"
                     invalid.append({"job_id": jid, "reason_code": reason})
                     continue
+                if (job.get("expected") or {}).get("facts"):
+                    try:
+                        staged_facts = _finalize_facts(
+                            args, source_dir, staged_analysis, staged_sidecar,
+                            analysis_target, job, bundled_input,
+                        )
+                    except (OSError, ValueError, json.JSONDecodeError) as error:
+                        reason = "external_result_incomplete" if "external_result_incomplete" in str(error) else "external_facts_invalid"
+                        invalid.append({"job_id": jid, "reason_code": reason})
+                        continue
             else:
                 try:
                     if job.get("carrier") == "ocr":
@@ -816,7 +920,7 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
                     continue
 
             try:
-                _install_job(professor_dir, manifest, job, staged_analysis, staged_sidecar)
+                _install_job(professor_dir, manifest, job, staged_analysis, staged_sidecar, staged_facts)
             except (OSError, ValueError):
                 invalid.append({"job_id": jid, "reason_code": "handoff_stale"})
                 continue
@@ -878,7 +982,7 @@ def main() -> int:
             "source_fingerprint_mismatch", "external_result_incomplete",
             "external_result_unknown_job", "external_result_duplicate_job",
             "external_result_hash_mismatch", "external_analysis_invalid",
-            "external_future_work_invalid",
+            "external_future_work_invalid", "external_facts_invalid",
         )
         reason = next((code for code in known if code in message), "invalid_handoff_input")
         output = {"status": "error", "reason_code": reason, "error": message[:300]}

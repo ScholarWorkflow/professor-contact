@@ -42,6 +42,11 @@ GAP_STATUSES = ("open", "partial", "done_by_self", "unknown")
 ANCHORABLE = ("open", "partial", "unknown")
 AUTHORSHIP_RANK = {"corresponding": 15, "solo": 15, "first": 12, "pending": 5}
 SIDECAR_EXTRACTOR_VERSIONS = ("future-work-v1", "legacy-markdown-v0")
+FACTS_SCHEMA = 1
+FACTS_KIND = "paper-analysis-facts"
+FACTS_GENERATOR_VERSIONS = ("facts-v1",)
+FACTS_TEXT_FIELDS = ("research_problem", "research_object", "approach")
+FACTS_LIST_FIELDS = ("findings", "contributions", "topic_terms", "limitations")
 SHORTLIST_MAX = 10
 SHORTLIST_FLOOR = 5
 QUOTE_INPUT_CHARS = 300
@@ -260,6 +265,7 @@ def stage5_output_id(email_id: str, kind: str) -> str:
 def paper_digest(paper: dict) -> str:
     analysis_file = paper.get("analysis_file")
     sidecar_file = paper.get("sidecar_file")
+    facts_file = paper.get("facts_file")
     payload = {
         "item_key": paper.get("item_key"),
         "title": paper.get("title"),
@@ -270,6 +276,7 @@ def paper_digest(paper: dict) -> str:
         "has_pdf": bool(paper.get("has_pdf")),
         "analysis_sha": sha256_bytes(Path(analysis_file).read_bytes()) if analysis_file and Path(analysis_file).is_file() else None,
         "sidecar_sha": sha256_bytes(Path(sidecar_file).read_bytes()) if sidecar_file and Path(sidecar_file).is_file() else None,
+        "facts_sha": sha256_bytes(Path(facts_file).read_bytes()) if facts_file and Path(facts_file).is_file() else None,
     }
     return sha256_obj(payload)
 
@@ -416,8 +423,48 @@ def save_projections(program_root: Path, projections: dict) -> None:
     atomic_json(program_root / "教授研究" / PROJECTIONS_FILE, projections)
 
 
+def sidecar_analysis_matches(recorded: Any, expected_analysis: str) -> bool:
+    """Bind a sidecar's `analysis` field to the analysis it belongs to.
+
+    Canonical paper-analysis sidecars record the basename (`analysis.name` in
+    both `future_work.py` and `facts.py`); legacy sidecars recorded the absolute
+    analysis path. This binds only the recorded field: the physical sidecar
+    location is bound separately by the sibling-path check in the loaders, which
+    is what keeps same-basename analyses in different directories apart.
+    """
+    if not isinstance(recorded, str) or not recorded.strip():
+        return False
+    path = Path(recorded.strip())
+    if path.is_absolute():
+        try:
+            return path.resolve() == Path(expected_analysis).resolve()
+        except OSError:
+            return False
+    return len(path.parts) == 1 and path.name == Path(expected_analysis).name
+
+
+def sidecar_path_matches(path: Path, expected_analysis: str, suffix: str) -> bool:
+    """Require the sidecar file to be the analysis's exact sibling on disk.
+
+    `<analysis>.future_work.json` / `<analysis>.facts.json` are written next to
+    their analysis by every paper-analysis writer. Accepting any other location
+    would let a mis-assembled sidecar reference lend one analysis's evidence to
+    another with the same basename.
+    """
+    expected_sibling = Path(str(expected_analysis) + suffix)
+    try:
+        return path.resolve() == expected_sibling.resolve()
+    except OSError:
+        return False
+
+
 def load_sidecar(path: str | None, expected_analysis: str | None = None) -> tuple[list, list, str | None]:
-    """Return (anchorable_items, legacy_items, error)."""
+    """Return (anchorable_items, legacy_items, error).
+
+    With `expected_analysis`, the sidecar must be that analysis's exact
+    `<analysis>.future_work.json` sibling and its recorded `analysis` field must
+    bind to the same analysis.
+    """
     if not path:
         return [], [], None
     sidecar_path = Path(path)
@@ -432,13 +479,9 @@ def load_sidecar(path: str | None, expected_analysis: str | None = None) -> tupl
     if extractor_version not in SIDECAR_EXTRACTOR_VERSIONS:
         return [], [], "invalid"
     if expected_analysis:
-        recorded_analysis = data.get("analysis")
-        if not isinstance(recorded_analysis, str) or not Path(recorded_analysis).is_absolute():
+        if not sidecar_path_matches(sidecar_path, expected_analysis, ".future_work.json"):
             return [], [], "invalid"
-        try:
-            if Path(recorded_analysis).resolve() != Path(expected_analysis).resolve():
-                return [], [], "invalid"
-        except OSError:
+        if not sidecar_analysis_matches(data.get("analysis"), expected_analysis):
             return [], [], "invalid"
     elif not isinstance(data.get("analysis"), str) or not data["analysis"].strip():
         return [], [], "invalid"
@@ -480,6 +523,91 @@ def load_sidecar(path: str | None, expected_analysis: str | None = None) -> tupl
         else:
             legacy.append(record)
     return anchorable, legacy, None
+
+
+def load_facts_sidecar(
+    facts_file: str | None,
+    expected_analysis: str | None,
+    pdf_file: str | None,
+    valid_gap_ids: set | None,
+) -> tuple[dict | None, str, str | None]:
+    """Validate a paper-analysis `<analysis>.facts.json` sidecar for reuse.
+
+    Returns (normalized_facts, facts_state, facts_error). The sidecar is only
+    reusable when it is the analysis's exact `.facts.json` sibling, its
+    schema/generator are known, it names the current analysis, its
+    `input_fingerprint` matches the sha256 of the current source PDF, and its
+    `future_work_ids` are exact joins into the current valid future-work sidecar
+    (which stays the authoritative quoted evidence). Any mismatch fails closed:
+    no normalized facts are exposed and the caller must not re-derive them with
+    another model pass.
+    """
+    if not facts_file:
+        return None, "unavailable", "missing_facts_sidecar"
+    path = Path(facts_file)
+    if not path.is_file():
+        return None, "unavailable", "missing_facts_sidecar"
+    data, error = read_json_file(path)
+    if error or not isinstance(data, dict):
+        return None, "failed", "invalid_facts_sidecar"
+    if (data.get("schema") != FACTS_SCHEMA or data.get("kind") != FACTS_KIND
+            or data.get("status") != "ok"
+            or data.get("generator_version") not in FACTS_GENERATOR_VERSIONS
+            or data.get("evidence_level") != "fulltext"):
+        return None, "failed", "invalid_facts_sidecar"
+    if expected_analysis and not sidecar_path_matches(path, expected_analysis, ".facts.json"):
+        return None, "failed", "invalid_facts_sidecar"
+    recorded_analysis = data.get("analysis")
+    if not isinstance(recorded_analysis, str) or not recorded_analysis.strip():
+        return None, "failed", "invalid_facts_sidecar"
+    if expected_analysis and not sidecar_analysis_matches(recorded_analysis, expected_analysis):
+        return None, "failed", "invalid_facts_sidecar"
+    for field in FACTS_TEXT_FIELDS:
+        value = data.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return None, "failed", "invalid_facts_sidecar"
+    for field in FACTS_LIST_FIELDS:
+        value = data.get(field)
+        if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+            return None, "failed", "invalid_facts_sidecar"
+    anchors = data.get("source_anchors")
+    if anchors is not None and not isinstance(anchors, dict):
+        return None, "failed", "invalid_facts_sidecar"
+    confidence = data.get("confidence")
+    if confidence is not None and (not isinstance(confidence, (int, float))
+                                   or isinstance(confidence, bool) or not 0 <= confidence <= 1):
+        return None, "failed", "invalid_facts_sidecar"
+    fingerprint = data.get("input_fingerprint")
+    if not isinstance(fingerprint, str) or not fingerprint.startswith("sha256:"):
+        return None, "failed", "invalid_facts_sidecar"
+    if not pdf_file or not Path(pdf_file).is_file():
+        return None, "failed", "facts_source_fingerprint_mismatch"
+    current = "sha256:" + sha256_bytes(Path(pdf_file).read_bytes())
+    if fingerprint != current:
+        return None, "failed", "facts_source_fingerprint_mismatch"
+    joined_ids = data.get("future_work_ids")
+    if (not isinstance(joined_ids, list)
+            or any(not isinstance(gap_id, str) or not re.fullmatch(r"[0-9a-f]{64}", gap_id) for gap_id in joined_ids)
+            or len(set(joined_ids)) != len(joined_ids)):
+        return None, "failed", "invalid_facts_sidecar"
+    if valid_gap_ids is None or not set(joined_ids).issubset(valid_gap_ids):
+        return None, "failed", "facts_future_work_join_mismatch"
+    normalized = {
+        "facts_file": str(path),
+        "evidence_level": "fulltext",
+        "input_fingerprint": fingerprint,
+        "research_problem": data["research_problem"].strip(),
+        "research_object": data["research_object"].strip(),
+        "approach": data["approach"].strip(),
+        "findings": [item.strip() for item in data["findings"]],
+        "contributions": [item.strip() for item in data["contributions"]],
+        "topic_terms": [item.strip() for item in data["topic_terms"]],
+        "limitations": [item.strip() for item in data["limitations"]],
+        "source_anchors": anchors or {},
+        "confidence": float(confidence) if confidence is not None else None,
+        "future_work_ids": list(joined_ids),
+    }
+    return normalized, "valid", None
 
 
 def compute_version_families(papers: dict) -> dict:
@@ -697,6 +825,7 @@ class Stage2Context:
             fail("invalid_params", f"freshness_scope must be one of {FRESHNESS_SCOPES}")
         self.papers = load_papers_with_digests(self.facts)
         self.sidecar_cache = {}
+        self.facts_cache = {}
         self.families = compute_version_families(self.papers)
         self.pools, self.family_members = build_gap_pool(self.facts, self.papers, self.families, self.sidecar_cache)
         self.pack_path = self.professor_dir / INPUT_PACK
@@ -740,6 +869,43 @@ class Stage2Context:
             if not item.get("cached"):
                 return True
         return False
+
+    def facts_for(self, key: str) -> tuple[dict | None, str, str | None]:
+        """Validated normalized paper facts for one paper (memoized).
+
+        Reuse requires the current valid future-work sidecar: its item ids stay
+        the authoritative quoted evidence and `facts.future_work_ids` may only
+        exact-join into them. A paper without a facts sidecar is honestly
+        "unavailable"; a facts sidecar whose evidence chain (valid sidecar,
+        fingerprint, joins) is broken fails closed.
+        """
+        paper = self.papers.get(key)
+        if not paper:
+            return None, "unavailable", "missing_facts_sidecar"
+        cached = self.facts_cache.get(key)
+        if cached is not None:
+            return cached
+        if not paper.get("facts_file"):
+            record = (None, "unavailable", "missing_facts_sidecar")
+        else:
+            sidecar_file = paper.get("sidecar_file")
+            valid_ids: set | None = None
+            if sidecar_file:
+                if sidecar_file not in self.sidecar_cache:
+                    sha = sidecar_sha(sidecar_file)
+                    items, legacy_items, error = load_sidecar(sidecar_file, paper.get("analysis_file"))
+                    self.sidecar_cache[sidecar_file] = (items, legacy_items, error, sha)
+                items, legacy_items, error, _sha = self.sidecar_cache[sidecar_file]
+                if not error:
+                    valid_ids = {item["gap_id"] for item in items} | {item["gap_id"] for item in legacy_items}
+            if valid_ids is None:
+                record = (None, "failed", "facts_future_work_join_mismatch")
+            else:
+                record = load_facts_sidecar(
+                    paper.get("facts_file"), paper.get("analysis_file"),
+                    paper.get("pdf_file"), valid_ids)
+        self.facts_cache[key] = record
+        return record
 
     def freshness_entry(self, plan: dict, gap: dict):
         source = self.papers.get(gap["item_key"], {})
@@ -1238,13 +1404,18 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
         paper = ctx.papers.get(key)
         if not paper:
             continue
+        facts_record, facts_state, facts_error = ctx.facts_for(key)
         supporting.append({
             "item_key": key, "title": paper.get("title"), "year": paper.get("year"),
             "authorship": paper.get("authorship"),
             "named_by_user": key in (direction.get("named_keys") or []),
             "has_analysis": bool(paper.get("analysis_file")),
             "analysis_file": paper.get("analysis_file"),
-            "pdf_available": bool(paper.get("has_pdf"))})
+            "pdf_available": bool(paper.get("has_pdf")),
+            "facts_state": facts_state,
+            "facts_error": facts_error,
+            "paper_facts": facts_record,
+        })
     note = direction.get("user_note") or ""
     return {
         "collection_key": plan["ckey"],
