@@ -20,7 +20,7 @@ class FreshResolvedDirectionReviewRegressions(ResolvedPipelineMixin, unittest.Te
     def test_cross_cluster_addition_can_cross_disjoint_candidate_sets(self):
         """Acceptance #2: a paper provisionally in B can be added to A from full text.
 
-        Stage 1 candidate sets are per-direction and may be disjoint.  Once issue #7
+        Stage 1 candidate sets are per-direction and may be disjoint. Once issue #7
         requires every unique candidate paper to have full facts, resolving A must be
         able to consider a paper that entered the selected-professor candidate union
         through B; otherwise a preview-cluster mistake can never be corrected unless
@@ -138,6 +138,51 @@ class FreshResolvedDirectionReviewRegressions(ResolvedPipelineMixin, unittest.Te
             "--results", str(results_dir)))
         self.assertEqual(payload["status"], "error", msg=json.dumps(payload, ensure_ascii=False))
         self.assertEqual(payload["reason_code"], "invalid_result_json")
+
+    def test_new_material_resolution_is_not_reused_before_user_acceptance(self):
+        """A pending material change must not become accepted merely by being written.
+
+        stage2-resolve-finalize currently writes the authoritative sidecar before the
+        analyzer asks the user whether to adopt the refined direction. A later plan
+        must therefore distinguish pending from accepted state; otherwise a crash,
+        deferred answer, or explicit provisional fallback turns the unaccepted
+        proposal into a cache hit and suppresses the promised re-prompt.
+        """
+        papers = [
+            self.make_paper("P1", "Adaptive Signal Processing", ["signal", "processing"],
+                            ["Future work A."]),
+            self.make_paper("P2", "Kitchen Chemistry", ["chemistry", "kitchen"],
+                            ["Future work B."]),
+        ]
+        facts_path = self.write_facts(
+            papers,
+            [self.make_direction("dir_A", ["P1", "P2"], name_ja="信号処理",
+                                 name_zh="信号处理", summary="signal processing")],
+        )
+        _, first_finalize = self.run_resolve(facts_path, {
+            "dir_A": {
+                "resolved_direction_id": "dir_A",
+                "provisional_direction_id": "dir_A",
+                "name_ja": "信号処理",
+                "name_zh": "信号处理",
+                "resolution_type": "refined",
+                "papers_to_add": [],
+                "papers_to_remove": ["P2"],
+                "paper_justifications": {"P2": "full-text topic mismatch"},
+                "split_target": None,
+                "merge_target": None,
+                "user_note": "",
+            },
+        })
+        self.assertTrue(first_finalize["needs_user_choice"])
+
+        rerun_plan = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        self.assertEqual(rerun_plan["status"], "ok")
+        self.assertNotEqual(
+            rerun_plan["directions"][0]["action"], "reuse",
+            "a just-proposed material resolution was cached as accepted before the "
+            "user made the required Stage-2 choice",
+        )
 
 
 if __name__ == "__main__":
