@@ -215,27 +215,35 @@ def preview_member_index(preview: dict[str, Any]) -> dict[str, list[dict[str, An
     return index
 
 
-def stage1_papers_digest(papers: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    """Exactly the paper fields Stage 1 reads.
+def stage1_papers_digest(papers: dict[str, dict[str, Any]],
+                         candidate_keys: set[str] | None = None) -> list[dict[str, Any]]:
+    """Exactly the paper fields Stage 1 reads, scoped by what each field affects.
 
-    title/title_zh feed paper_tokens(); pdf_status feeds readiness. Anything else
-    (year, doi, urls, ...) is upstream metadata churn Stage 1 never consumes and
-    must not invalidate the snapshot for.
+    title/title_zh feed paper_tokens() and can bring ANY paper into the candidate
+    set via expansion, so they are always fingerprinted across all papers.
+    pdf_status only affects readiness AFTER candidate_keys are determined, so it
+    is fingerprinted only for the actual candidate union (or all papers when the
+    caller has not yet computed candidates). A non-candidate paper flipping
+    pdf_status cannot change candidate membership, work_queue_item_keys, missing/
+    usable readiness, or any Stage-2 input, so it must not invalidate the snapshot.
     """
     rows = []
     for item_key in sorted(papers):
         paper = papers[item_key]
-        rows.append({
+        row: dict[str, Any] = {
             "item_key": item_key,
             "title": paper.get("title"),
             "title_zh": paper.get("title_zh"),
-            "pdf_status": paper.get("pdf_status"),
-        })
+        }
+        if candidate_keys is None or item_key in candidate_keys:
+            row["pdf_status"] = paper.get("pdf_status")
+        rows.append(row)
     return rows
 
 
 def input_fingerprint(target: dict[str, Any], preview: dict[str, Any],
-                      papers: dict[str, dict[str, Any]]) -> str:
+                      papers: dict[str, dict[str, Any]],
+                      candidate_keys: set[str] | None = None) -> str:
     """Exact fingerprint of everything candidate building consumes — no wider, no narrower.
 
     - selected direction identities + provisional member item keys (candidate base set);
@@ -244,7 +252,9 @@ def input_fingerprint(target: dict[str, Any], preview: dict[str, Any],
     - membership placement and preview_confidence of ALL preview directions, because
       the cross-direction gates / low-confidence reasons / unplaced detection all
       derive from the full preview member index;
-    - paper fields read by Stage 1 (item_key/title/title_zh/pdf_status).
+    - paper fields read by Stage 1: title/title_zh across all papers (expansion
+      inputs), pdf_status scoped to the candidate union (readiness only matters for
+      candidates — a non-candidate pdf_status change cannot affect any Stage-2 input).
 
     The whole-preview preview_fingerprint is deliberately NOT a validity input here
     (it stays in the snapshot as provenance only): resolve legitimately rewrites the
@@ -290,7 +300,7 @@ def input_fingerprint(target: dict[str, Any], preview: dict[str, Any],
         "selected_direction_ids": target.get("selected_direction_ids"),
         "selected_directions": selected,
         "preview_membership": membership,
-        "papers": stage1_papers_digest(papers),
+        "papers": stage1_papers_digest(papers, candidate_keys),
     })
 
 
@@ -433,11 +443,11 @@ def build_professor_entry(
         "professor": target.get("professor"),
         "professor_dir": target.get("professor_dir"),
         "preview_path": target.get("preview_path"),
-        "preview_fingerprint": target.get("preview_fingerprint"),
-        "preview_fingerprint_version": target.get("preview_fingerprint_version"),
+        "preview_fingerprint": preview.get("preview_fingerprint"),
+        "preview_fingerprint_version": preview.get("preview_fingerprint_version"),
         "direction_id_version": target.get("direction_id_version"),
         "membership_claim": MEMBERSHIP_CLAIM,
-        "input_fingerprint": input_fingerprint(target, preview, papers),
+        "input_fingerprint": input_fingerprint(target, preview, papers, work_queue),
         "built_at": built_at,
         "action": action,
         "directions": direction_entries,
@@ -596,7 +606,18 @@ def verify_command(program_root: Path, professors: list[str] | None) -> dict[str
             problems.append(f"preview_unreadable:{exc}")
             current_preview = None
         if papers_path.is_file() and current_preview is not None:
-            current_fingerprint = input_fingerprint(target, current_preview, load_papers(papers_path))
+            # Scope pdf_status to the snapshot's candidate union: a non-candidate
+            # paper flipping pdf_status cannot change any Stage-2 input, so it
+            # must not invalidate the snapshot. Preview-driven candidate changes
+            # are caught by the preview_membership component above.
+            snapshot_candidate_keys = {
+                key for direction in entry.get("directions", [])
+                for key in (direction or {}).get("candidate_keys", [])
+            }
+            current_fingerprint = input_fingerprint(
+                target, current_preview, load_papers(papers_path),
+                snapshot_candidate_keys or None,
+            )
             if entry.get("input_fingerprint") != current_fingerprint:
                 problems.append("input_fingerprint_mismatch")
         if problems:

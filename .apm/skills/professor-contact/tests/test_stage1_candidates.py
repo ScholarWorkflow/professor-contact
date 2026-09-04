@@ -673,17 +673,55 @@ class Stage1CandidateTests(unittest.TestCase):
             [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
         )
 
+    def test_non_candidate_pdf_status_change_keeps_snapshot_valid(self):
+        # Review follow-up 1: pdf_status is only fingerprinted for the candidate
+        # union. P6 is unrelated to selected dir_A and never enters the candidate
+        # set, so flipping only P6 pdf_status cannot change candidate membership,
+        # work_queue_item_keys, missing/usable readiness, or any Stage-2 input.
+        self._build_selected_a()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+        before = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
+
+        data = read_json(self.papers_path)
+        for p in data["papers"]:
+            if p["item_key"] == "P6":
+                p["pdf_status"] = "downloaded"
+        write_json(self.papers_path, data)
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+        self.assertEqual(
+            read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
+            before,
+        )
+
     def test_whole_preview_fingerprint_change_without_dependency_drift_keeps_valid(self):
-        # Review scenario 5: whole preview_fingerprint changes for unrelated
-        # provenance/global fields (e.g. coverage) while exact Stage-1 dependencies are
-        # unchanged → verify stays ok. This is the core improvement over the old
-        # whole-preview gate.
+        # Review follow-up 2 (corrected): the old gate became harmful when
+        # contact_targets.resolve_targets() refreshed the selected target projection
+        # (e.g. selected direction coverage_share) and therefore rewrote
+        # target.preview_fingerprint, even though Stage 1 does not consume that
+        # display-only field. This test exercises that exact regression: change a
+        # selected direction's non-Stage-1 projection field (coverage_share) AND the
+        # top-level preview_fingerprint, assert resolve refreshes the projection, then
+        # assert Stage-1 verify still stays ok.
         self._build_selected_a()
         before = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
-        preview = preview_payload()
-        # coverage is part of upstream preview_fingerprint but NOT consumed by Stage 1.
-        preview["coverage"] = 0.12
+        preview = preview_payload(fp="fp-new")
+        # coverage_share is part of the selected-direction projection that resolve
+        # refreshes in place; it is NOT consumed by Stage 1.
+        preview["directions"][0]["coverage_share"] = 0.99
         write_json(self.preview_path, preview)
+
+        resolution = targets.resolve_targets(self.root)
+        self.assertEqual(resolution["status"], "ok")
+        # resolve refreshed the projection in place (target preview_fingerprint updated).
+        self.assertEqual(
+            read_json(self.root / "教授研究" / "套磁目标.json")["targets"][0]["preview_fingerprint"],
+            "fp-new",
+        )
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
