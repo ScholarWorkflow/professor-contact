@@ -275,6 +275,92 @@ class TestContactEvidenceLadder(BaseEnv):
                          "contact_evidence_artifact_degraded")
         self.assertTrue(broken_decision["web_lookup_required"])
 
+    def test_plan_keeps_official_only_usable_when_correspondence_unavailable(self):
+        # Issue-#14 family scoping: an unreadable correspondence cache removes
+        # paper-side confirmation but not a single valid official address, so
+        # upstream keeps current_email with current_email_blocked_by empty and
+        # the record must be accepted instead of forced to web lookup.
+        self.prepare()
+        self.write_artifact({
+            "verdict": "official_only", "confirmed_emails": [],
+            "paper_correspondence": [],
+            "evidence_status": {
+                "official_candidates_unavailable": False,
+                "professor_papers_unavailable": False,
+                "paper_correspondence_unavailable": True,
+                "signature_aliases_unavailable": False,
+                "current_email_blocked_by": []}},
+            artifact_overrides={
+                "degraded": True, "global_degraded": True,
+                "source_errors": [{"source": "paper_correspondence",
+                                   "scope": "global",
+                                   "path": "_corresp_cache.json",
+                                   "error": "malformed JSON"}]})
+        entry = self.compile_pack()
+        self.assertFalse(entry["contact_evidence"]["degraded"])
+        decision = self.decision(self.plan_jobs())
+        self.assertEqual(decision["status"], "official_only")
+        self.assertIsNone(decision["reason_code"])
+        self.assertFalse(decision["web_lookup_required"])
+        self.assertEqual(decision["recipient_email"], "faculty@example.test")
+        self.assertTrue(decision["single_source"])
+
+    def test_plan_keeps_direct_evidence_usable_when_signature_book_unavailable(self):
+        # Issue-#14 family scoping: an unreadable signature book only removes
+        # alias matching; verified contacts that resolved directly (and a
+        # decision not blocked upstream) keep the record usable.
+        self.prepare()
+        self.write_artifact({
+            "evidence_status": {
+                "official_candidates_unavailable": False,
+                "professor_papers_unavailable": False,
+                "paper_correspondence_unavailable": False,
+                "signature_aliases_unavailable": True,
+                "current_email_blocked_by": []}},
+            artifact_overrides={
+                "degraded": True, "global_degraded": True,
+                "source_errors": [{"source": "signature_book", "scope": "global",
+                                   "path": "_署名对照.json",
+                                   "error": "malformed JSON"}]})
+        self.compile_pack()
+        decision = self.decision(self.plan_jobs())
+        self.assertEqual(decision["status"], "confirmed_cross_source")
+        self.assertIsNone(decision["reason_code"])
+        self.assertFalse(decision["web_lookup_required"])
+        self.assertEqual(decision["recipient_email"], "faculty@example.test")
+
+    def test_plan_escalates_when_signature_aliases_block_promotion(self):
+        # An unreadable signature book with unresolved verified contacts blocks
+        # promotion upstream (a readable alias book could have matched the
+        # contact at a conflicting address); the non-empty
+        # current_email_blocked_by is what escalates here.
+        self.prepare()
+        self.write_artifact({
+            "verdict": "official_only", "confirmed_emails": [],
+            "paper_correspondence": [], "current_email": None,
+            "identity": {"matched_verified_contacts": 0,
+                         "unmatched_verified_contacts": [
+                             {"email": "other@example.test"}],
+                         "ambiguous_unpaired_records_ignored": 0},
+            "evidence_status": {
+                "official_candidates_unavailable": False,
+                "professor_papers_unavailable": False,
+                "paper_correspondence_unavailable": False,
+                "signature_aliases_unavailable": True,
+                "current_email_blocked_by": ["signature_aliases_unavailable"]}},
+            artifact_overrides={
+                "degraded": True, "global_degraded": True,
+                "source_errors": [{"source": "signature_book", "scope": "global",
+                                   "path": "_署名对照.json",
+                                   "error": "malformed JSON"}]})
+        self.compile_pack()
+        decision = self.decision(self.plan_jobs())
+        self.assertEqual(decision["status"], "escalate")
+        self.assertEqual(decision["reason_code"],
+                         "contact_evidence_artifact_degraded")
+        self.assertTrue(decision["web_lookup_required"])
+        self.assertIsNone(decision["recipient_email"])
+
     def test_plan_escalates_on_unreadable_artifact(self):
         self.prepare()
         (self.root / EVIDENCE_FILE).write_text("{not json", encoding="utf-8")

@@ -2621,26 +2621,29 @@ def contact_evidence_record(artifact: dict, professor: str) -> dict | None:
     return None
 
 
-CONTACT_EVIDENCE_UNAVAILABLE_KEYS = (
-    "official_candidates_unavailable",
-    "professor_papers_unavailable",
-    "paper_correspondence_unavailable",
-    "signature_aliases_unavailable",
-)
-
-
 def contact_evidence_record_degraded(record: dict) -> bool:
-    """Issue-#14 scoped degradation: whether THIS record's evidence was dropped.
+    """Issue-#14 family-scoped degradation: was THIS record's current-email
+    decision actually blocked upstream?
 
-    Upstream flags only the families that were present but unreadable for this
-    professor, so another professor's broken source never degrades this record.
+    Upstream keeps a record usable when its current_email rests only on
+    evidence families that read successfully: an unreadable correspondence
+    cache leaves a single official address usable (paper confirmation flagged
+    unavailable), and an unreadable signature book only blocks promotion when
+    verified contacts remained unresolved by direct identity. Gating on any()
+    over the raw availability flags would re-globalize those family-scoped
+    failures, so escalate on a non-empty current_email_blocked_by — upstream
+    names exactly the families whose failure blocked the promotion decision.
     Artifacts from before that contract carry no evidence_status and count as
-    clean here; their own fail-closed rules (current_email null) still apply.
+    clean here; that stays fail-closed because their producers already nulled
+    current_email for every record whenever anything failed, so no degraded
+    old record can pass the recipient checks in evaluate_contact_evidence.
     """
     status = record.get("evidence_status")
     if not isinstance(status, dict):
         return False
-    return any(bool(status.get(key)) for key in CONTACT_EVIDENCE_UNAVAILABLE_KEYS)
+    blocked = status.get("current_email_blocked_by")
+    return isinstance(blocked, list) and any(
+        isinstance(family, str) and family for family in blocked)
 
 
 def contact_evidence_snapshot(artifact: dict | None, artifact_error: str | None,
@@ -2651,10 +2654,13 @@ def contact_evidence_snapshot(artifact: dict | None, artifact_error: str | None,
     record = contact_evidence_record(artifact, professor)
     if record is None:
         return None
-    # degraded is record-scoped (Issue #14): the snapshot answers "was this
-    # professor's evidence dropped", not "did anything anywhere fail". Packs
-    # built before the scoped contract still carry the artifact-level flag and
-    # stay maximally conservative in evaluate_contact_evidence.
+    # degraded is decision-scoped (Issue #14): the snapshot answers "was this
+    # professor's current-email decision blocked upstream", not "did anything
+    # anywhere fail" — family failures that left the decision intact (e.g. an
+    # unreadable correspondence cache next to a single official address) don't
+    # count. Packs built before the scoped contract still carry the
+    # artifact-level flag and stay maximally conservative in
+    # evaluate_contact_evidence.
     status = record.get("evidence_status")
     return {"generated_at": artifact.get("generated_at"),
             "degraded": contact_evidence_record_degraded(record),
@@ -2709,11 +2715,12 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
     Accepts the artifact's current email only for confirmed_cross_source or a
     single official_only address, and only while the evidence itself is fresh
     (generated_at within VERIFY_TTL_DAYS); everything else (paper-only,
-    conflict, ambiguous, insufficient, stale, unreadable artifact, this
-    record's own unreadable evidence families, unverifiable timestamp)
-    escalates to the existing official faculty/lab web verification ladder.
-    Degradation is judged per record (Issue #14): source failures that only
-    affect other professors escalate nobody else.
+    conflict, ambiguous, insufficient, stale, unreadable artifact, a blocked
+    current-email decision for this record, unverifiable timestamp) escalates
+    to the existing official faculty/lab web verification ladder.
+    Degradation is judged per record via current_email_blocked_by (Issue #14):
+    source failures that only affect other professors — or family failures
+    that left this record's decision intact — escalate nobody.
     """
     def escalate(reason_code: str) -> dict:
         return {"status": "escalate", "reason_code": reason_code,
@@ -2743,7 +2750,9 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
             return escalate("contact_evidence_professor_not_found")
         if contact_evidence_record_degraded(record):
             # Scoped degradation (Issue #14): escalate only when this record's
-            # own evidence families were unreadable upstream.
+            # current-email decision was actually blocked upstream — raw
+            # family-unavailable flags are not enough, since upstream keeps a
+            # record usable when its decision rests only on readable families.
             return escalate("contact_evidence_artifact_degraded")
         if isinstance(snapshot, dict) and isinstance(snapshot.get("record_fingerprint"), str):
             stale = snapshot["record_fingerprint"] != sha256_obj(record)
@@ -2751,8 +2760,9 @@ def evaluate_contact_evidence(professor: str, snapshot: Any,
         # Without the artifact file the pack snapshot is the last known
         # evidence; its embedded generated_at still gates freshness so an old
         # snapshot can never be seeded into the verify cache as confirmed.
-        # snapshot.degraded is record-scoped for packs built after the Issue-#14
-        # contract and artifact-scoped (maximally conservative) for older packs.
+        # snapshot.degraded is decision-scoped (current_email_blocked_by) for
+        # packs built after the Issue-#14 contract and artifact-scoped
+        # (maximally conservative) for older packs.
         if bool(snapshot.get("degraded")):
             return escalate("contact_evidence_artifact_degraded")
         stale_reason = contact_evidence_freshness_reason(snapshot.get("generated_at"))
