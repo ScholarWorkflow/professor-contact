@@ -36,6 +36,10 @@ At startup, read `.apm/skills/professor-contact/docs/stage5-legacy-contract.md` 
 
 That resource preserves the pre-Issue-#9 contract for reference and is **not an agent primitive**. Its template-wide/full-body humanizer instructions are obsolete and are overridden by the rules below. Its recipient-email ladder inside Step 2.5 is additionally scoped by the Issue #10 contact-evidence-first rules below: the five-level ladder runs only when the upstream contact evidence does not already settle the recipient.
 
+## Direction provenance (issue #8 email-pack v2)
+
+`邮件输入.json` is schema 2: every `emails[]` entry carries `direction_ids` (sorted canonical IDs) and `directions[]` (per-direction display names) — for cross-direction ideas both list ALL participants, and `email_id` is built from the canonical direction scope (`professor::A+B::idea`, A+B == B+A). The runner passes this provenance into the model input; never guess which evidence belongs to which direction, and never reconstruct direction identity from names or a legacy `collection_key`. For a multi-direction follow-up email the topic line uses the selected idea title, not one singular direction name.
+
 ## Immutable-template override (Issue #9)
 
 1. `套磁模板.md` and `套磁跟进模板.md` are **user-owned immutable inputs**. The user is responsible for preparing, editing or humanizing them before this workflow runs.
