@@ -28,7 +28,7 @@ class ResolvedDirectionRegressionTests(unittest.TestCase):
         """A cross-cluster addition must point at the direction full-text evidence favors."""
         ctx = DummyContext([
             {
-                "ckey": "dir_A",
+                "did": "dir_A",
                 "direction": {
                     "member_keys": ["P1"],
                     "relevant_keys": ["P1"],
@@ -36,7 +36,7 @@ class ResolvedDirectionRegressionTests(unittest.TestCase):
                 },
             },
             {
-                "ckey": "dir_B",
+                "did": "dir_B",
                 "direction": {
                     "member_keys": ["P1"],
                     "relevant_keys": ["P1"],
@@ -56,7 +56,7 @@ class ResolvedDirectionRegressionTests(unittest.TestCase):
         """One shared paper is insufficient under the documented merge contract."""
         ctx = DummyContext([
             {
-                "ckey": "dir_A",
+                "did": "dir_A",
                 "direction": {
                     "name_ja": "信号処理",
                     "name_zh": "信号处理",
@@ -66,7 +66,7 @@ class ResolvedDirectionRegressionTests(unittest.TestCase):
                 },
             },
             {
-                "ckey": "dir_B",
+                "did": "dir_B",
                 "direction": {
                     "name_ja": "信号処理研究",
                     "name_zh": "信号处理研究",
@@ -106,10 +106,10 @@ class ResolvedDirectionRegressionTests(unittest.TestCase):
                 "has_pdf": False,
             }
         }
-        ctx = DummyContext([{"ckey": "dir_A", "direction": direction, "pool": []}], papers)
+        ctx = DummyContext([{"did": "dir_A", "direction": direction, "pool": []}], papers)
         evidence = contact_state._resolve_evidence(ctx)
         fingerprint = contact_state._current_resolve_fingerprint(
-            ctx, {"ckey": "dir_A", "direction": direction, "pool": []}, evidence)
+            ctx, {"did": "dir_A", "direction": direction, "pool": []}, evidence)
         prior = {
             "resolved_direction_id": "dir_A",
             "provisional_direction_id": "dir_A",

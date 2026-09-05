@@ -57,7 +57,7 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
         self.assertEqual(second_finalize["status"], "ok")
         direction = self.load_pack()["directions"][0]
         after = direction["input_fingerprint"]
-        supporting = {p["item_key"] for p in direction["supporting_papers"]}
+        supporting = set(direction["supporting_item_keys"])
 
         self.assertEqual(supporting, {"P1"})
         self.assertNotEqual(
@@ -99,10 +99,10 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
         payload = self.run_stage2_finalize(facts_path)
         self.assertEqual(payload["status"], "ok")
 
-        by_key = {d["collection_key"]: d for d in self.load_pack()["directions"]}
+        by_key = {d["direction_id"]: d for d in self.load_pack()["directions"]}
         self.assertEqual(set(by_key), {"dir_A", "dir_A__control"})
         self.assertEqual(
-            {p["item_key"] for p in by_key["dir_A__control"]["supporting_papers"]},
+            set(by_key["dir_A__control"]["supporting_item_keys"]),
             {"P2"},
             "split target lost the candidate that full-text resolution rescued outside relevant_keys",
         )
@@ -138,18 +138,18 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
         self.assertEqual(accepted["status"], "ok", msg=json.dumps(accepted, ensure_ascii=False))
         first = self.run_stage2_finalize(facts_path)
         self.assertEqual(first["status"], "ok")
-        first_by_key = {d["collection_key"]: d for d in self.load_pack()["directions"]}
+        first_by_key = {d["direction_id"]: d for d in self.load_pack()["directions"]}
         self.assertEqual(
-            {p["item_key"] for p in first_by_key["dir_A__control"]["supporting_papers"]}, {"P2"})
+            set(first_by_key["dir_A__control"]["supporting_item_keys"]), {"P2"})
 
         reuse_plan, reuse_finalize = self.run_resolve(facts_path, {})
         self.assertEqual(reuse_plan["jobs"], [])
         self.assertFalse(reuse_finalize["needs_user_choice"])
         second = self.run_stage2_finalize(facts_path)
         self.assertEqual(second["status"], "ok")
-        second_by_key = {d["collection_key"]: d for d in self.load_pack()["directions"]}
+        second_by_key = {d["direction_id"]: d for d in self.load_pack()["directions"]}
         self.assertEqual(
-            {p["item_key"] for p in second_by_key["dir_A__control"]["supporting_papers"]},
+            set(second_by_key["dir_A__control"]["supporting_item_keys"]),
             {"P2"},
             "reused split child was rebuilt from the pruned source and lost its papers",
         )

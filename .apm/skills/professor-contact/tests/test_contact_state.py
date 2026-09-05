@@ -10,8 +10,19 @@ import unicodedata
 import unittest
 from pathlib import Path
 
+import importlib.util
+
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "contact_state.py"
+
+_spec = importlib.util.spec_from_file_location("contact_state", SCRIPT)
+contact_state = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(contact_state)
+
+
+def result_file(kind: str, identity: str) -> str:
+    """Mirror the runner's deterministic result-file naming (issue #8)."""
+    return contact_state.safe_result_file(kind, identity)
 
 
 def quote_id(quote: str) -> str:
@@ -162,25 +173,36 @@ class BaseEnv(unittest.TestCase):
         s3 = self.root / "s3results"
         s3.mkdir(parents=True, exist_ok=True)
         g1 = quote_id(self.gap_quotes["AAAA1111"])
-        candidate = {
-            "id": "DIR00001_1", "title": "第二种输入模式的合成比较",
-            "one_liner": "教授的合成比较启发我扩展输入模式",
-            "research_question": "第二种输入模式能否在相同约束下保持比较结果",
-            "points": ["挂在缺口①"], "gap_ids": [{"item_key": "AAAA1111", "gap_id": g1}],
-            "anchor_notes": {}, "papers": [{"item_key": "AAAA1111", "role": "基座",
-                                            "fit_note": "教授通讯"}],
-            "fit": "high", "fit_note": "", "red_lines": [],
-            "why_recommended": "兴趣契合", "tension_points": []}
+        def make_candidate(cid, origin):
+            candidate = {
+                "id": cid, "kind": "direction", "direction_ids": ["DIR00001"],
+                "origin": origin,
+                "title": "第二种输入模式的合成比较",
+                "one_liner": "教授的合成比较启发我扩展输入模式",
+                "research_question": "第二种输入模式能否在相同约束下保持比较结果",
+                "points": ["挂在缺口①"],
+                "gap_refs": [{"direction_id": "DIR00001", "item_key": "AAAA1111",
+                              "gap_id": g1}],
+                "anchor_notes": {},
+                "papers": [{"item_key": "AAAA1111", "direction_ids": ["DIR00001"],
+                            "role": "基座", "fit_note": "教授通讯"}],
+                "fit": "high", "fit_note": "", "red_lines": [],
+                "why_recommended": "兴趣契合", "tension_points": []}
+            return candidate
+
+        candidate = make_candidate("DIR00001_1", "user_refined")
         if candidate_extra:
             candidate_extra(candidate)
-        doc = {"schema": 1, "kind": "candidates", "collection_key": "DIR00001",
+        doc = {"schema": 2, "kind": "candidates", "direction_id": "DIR00001",
                "mode": "refined",
                 "refined": {"core_intent": "合成输入比较",
                             "calibration": [], "idea_zh": "把比较推进到第二种输入模式",
                            "variants": [], "mismatches": [],
                            "gap_ids": [{"item_key": "AAAA1111", "gap_id": g1}]},
-               "candidates": [candidate], "priority": "主推 候选1"}
-        (s3 / "candidates-DIR00001.json").write_text(
+               "candidates": [candidate, make_candidate("DIR00001_2", "generated"),
+                              make_candidate("DIR00001_3", "generated")],
+               "priority": "主推 候选1"}
+        (s3 / result_file("candidates", "DIR00001")).write_text(
             json.dumps(doc, ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("stage3-finalize", "--professor-dir", self.prof_dir,
                             "--results", s3, "--program-root", self.root,
@@ -192,6 +214,7 @@ class BaseEnv(unittest.TestCase):
         pack = json.loads(pack_path.read_text(encoding="utf-8"))
         second = copy.deepcopy(pack["directions"][0])
         second["collection_key"] = "DIR00002"
+        second["direction_id"] = "DIR00002"
         second["name_ja"] = "第二方向"
         second["name_zh"] = "第二方向"
         second["input_fingerprint"] = "second-direction-fingerprint"
@@ -199,19 +222,26 @@ class BaseEnv(unittest.TestCase):
         pack_path.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
 
         original = json.loads(
-            (self.root / "s3results" / "candidates-DIR00001.json").read_text(encoding="utf-8"))
-        original["collection_key"] = "DIR00002"
+            (self.root / "s3results" / result_file("candidates", "DIR00001"))
+            .read_text(encoding="utf-8"))
+        original["direction_id"] = "DIR00002"
         original["mode"] = "generated"
         candidates = []
         for number in range(1, 4):
             candidate = copy.deepcopy(original["candidates"][0])
             candidate["id"] = f"DIR00002_{number}"
             candidate["title"] = f"第二方向候选{number}"
+            candidate["direction_ids"] = ["DIR00002"]
+            candidate["origin"] = "generated"
+            for ref in candidate["gap_refs"]:
+                ref["direction_id"] = "DIR00002"
+            for paper in candidate["papers"]:
+                paper["direction_ids"] = ["DIR00002"]
             candidates.append(candidate)
         original["candidates"] = candidates
         results = self.root / "second-s3results"
         results.mkdir(parents=True, exist_ok=True)
-        (results / "candidates-DIR00002.json").write_text(
+        (results / result_file("candidates", "DIR00002")).write_text(
             json.dumps(original, ensure_ascii=False), encoding="utf-8")
         return results
 
@@ -330,21 +360,26 @@ class TestRunnerBasics(BaseEnv):
         self.assertEqual(len(black), 1)
         s3 = self.root / "s3results"
         g2 = quote_id(self.gap_quotes["BBBB2222"])
-        doc = {"schema": 1, "kind": "candidates", "collection_key": "DIR00001",
+        doc = {"schema": 2, "kind": "candidates", "direction_id": "DIR00001",
                "mode": "generated",
                "candidates": [{
-                   "id": "X1", "title": "t", "one_liner": "o",
+                   "id": "X1", "kind": "direction", "direction_ids": ["DIR00001"],
+                   "title": "t", "one_liner": "o",
                    "research_question": "rq?",
-                   "points": [], "gap_ids": [{"item_key": "BBBB2222", "gap_id": g2}],
+                   "points": [],
+                   "gap_refs": [{"direction_id": "DIR00001", "item_key": "BBBB2222",
+                                 "gap_id": g2}],
                    "papers": [], "fit": "null", "red_lines": []},
-                   {"id": "X2", "title": "t", "one_liner": "o",
-                    "research_question": "rq?", "points": [], "gap_ids": [],
+                   {"id": "X2", "kind": "direction", "direction_ids": ["DIR00001"],
+                    "title": "t", "one_liner": "o",
+                    "research_question": "rq?", "points": [], "gap_refs": [],
                     "papers": [], "fit": "null", "red_lines": []},
-                   {"id": "X3", "title": "t", "one_liner": "o",
-                    "research_question": "rq?", "points": [], "gap_ids": [],
+                   {"id": "X3", "kind": "direction", "direction_ids": ["DIR00001"],
+                    "title": "t", "one_liner": "o",
+                    "research_question": "rq?", "points": [], "gap_refs": [],
                     "papers": [], "fit": "null", "red_lines": []}]}
         s3.mkdir(parents=True, exist_ok=True)
-        (s3 / "candidates-DIR00001.json").write_text(
+        (s3 / result_file("candidates", "DIR00001")).write_text(
             json.dumps(doc, ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("stage3-finalize", "--professor-dir", self.prof_dir,
                             "--results", s3, "--program-root", self.root))
@@ -402,6 +437,7 @@ class TestRunnerBasics(BaseEnv):
         pack = json.loads(pack_path.read_text(encoding="utf-8"))
         other = json.loads(json.dumps(pack["directions"][0]))
         other["collection_key"] = "OTHER01"
+        other["direction_id"] = "OTHER01"
         other["name_ja"] = "別方向"
         other["name_zh"] = "另一个方向"
         other["input_fingerprint"] = "other-fingerprint"
@@ -417,8 +453,8 @@ class TestRunnerBasics(BaseEnv):
             "stage3-plan", "--professor-dir", self.prof_dir,
             "--program-root", self.root, "--collection-key", "DIR00001"))
         self.assertEqual(plan["status"], "ok")
-        self.assertEqual([d["collection_key"] for d in plan["directions"]], ["DIR00001"])
-        self.assertTrue(all(j["collection_key"] == "DIR00001" for j in plan["jobs"]))
+        self.assertEqual([d["direction_id"] for d in plan["directions"]], ["DIR00001"])
+        self.assertTrue(all(j["direction_id"] == "DIR00001" for j in plan["jobs"]))
 
         results = self.root / "s3results"
         out = parse(run_cli(
@@ -427,7 +463,7 @@ class TestRunnerBasics(BaseEnv):
             "--collection-key", "DIR00001"))
         self.assertEqual(out["status"], "ok", out)
         state = json.loads((self.prof_dir / "套磁候选状态.json").read_text(encoding="utf-8"))
-        self.assertEqual([d["collection_key"] for d in state["directions"]], ["DIR00001"])
+        self.assertEqual([d["direction_id"] for d in state["directions"]], ["DIR00001"])
 
     def test_05c_scoped_stage3_refresh_preserves_other_state(self):
         self.stage3_run()
@@ -438,7 +474,7 @@ class TestRunnerBasics(BaseEnv):
             "--collection-key", "DIR00002"))
         self.assertEqual(out["status"], "ok", out)
         state = json.loads((self.prof_dir / "套磁候选状态.json").read_text(encoding="utf-8"))
-        self.assertEqual([d["collection_key"] for d in state["directions"]],
+        self.assertEqual([d["direction_id"] for d in state["directions"]],
                          ["DIR00001", "DIR00002"])
 
     def test_05d_scoped_stage3_rejects_six_generated_candidates(self):
@@ -447,13 +483,15 @@ class TestRunnerBasics(BaseEnv):
         results.mkdir(parents=True, exist_ok=True)
         g1 = quote_id(self.gap_quotes["AAAA1111"])
         candidate = {
-            "id": "X", "title": "候选", "one_liner": "一句话",
+            "id": "X", "kind": "direction", "direction_ids": ["DIR00001"],
+            "title": "候选", "one_liner": "一句话",
             "research_question": "能否回答一个新的问题", "points": [],
-            "gap_ids": [{"item_key": "AAAA1111", "gap_id": g1}],
+            "gap_refs": [{"direction_id": "DIR00001", "item_key": "AAAA1111",
+                          "gap_id": g1}],
             "anchor_notes": {}, "papers": [], "fit": "null", "red_lines": []}
-        doc = {"schema": 1, "kind": "candidates", "collection_key": "DIR00001",
+        doc = {"schema": 2, "kind": "candidates", "direction_id": "DIR00001",
                "mode": "generated", "candidates": [dict(candidate, id=f"X{i}") for i in range(6)]}
-        (results / "candidates-DIR00001.json").write_text(
+        (results / result_file("candidates", "DIR00001")).write_text(
             json.dumps(doc, ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli(
             "stage3-finalize", "--professor-dir", self.prof_dir,
@@ -474,9 +512,9 @@ class TestRunnerBasics(BaseEnv):
         results = self.root / "rerender-results"
         self.write_stage2_results(results)
         # Reuse the valid candidate result generated by stage3_run.
-        (results / "candidates-DIR00001.json").write_text(
-            (self.root / "s3results" / "candidates-DIR00001.json").read_text(encoding="utf-8"),
-            encoding="utf-8")
+        (results / result_file("candidates", "DIR00001")).write_text(
+            (self.root / "s3results" / result_file("candidates", "DIR00001"))
+            .read_text(encoding="utf-8"), encoding="utf-8")
         out = parse(run_cli(
             "stage3-finalize", "--professor-dir", self.prof_dir,
             "--results", results, "--program-root", self.root,
@@ -696,7 +734,7 @@ class TestRunnerBasics(BaseEnv):
         pack_path = self.prof_dir / "套磁候选输入.json"
         validation_path = self.root / "stage2-validation.json"
         validation_path.write_text(json.dumps({"results": [{
-            "collection_key": "DIR00001", "result": "fail_after_2_rounds",
+            "direction_id": "DIR00001", "result": "fail_after_2_rounds",
             "rounds": 2, "issues": [{"rule": "A1"}]}]}, ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("stage2-record-validation", "--professor-dir", self.prof_dir,
                             "--validation-file", validation_path))
@@ -718,7 +756,7 @@ class TestRunnerBasics(BaseEnv):
         state_path = self.prof_dir / "套磁候选状态.json"
         validation_path = self.root / "stage3-validation.json"
         validation_path.write_text(json.dumps({"results": [{
-            "collection_key": "DIR00001", "result": "pass", "rounds": 1, "issues": []
+            "direction_id": "DIR00001", "result": "pass", "rounds": 1, "issues": []
         }]}, ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("stage3-record-validation", "--professor-dir", self.prof_dir,
                             "--validation-file", validation_path))
@@ -738,7 +776,7 @@ class TestRunnerBasics(BaseEnv):
         self.stage2_run()
         validation_path = self.root / "stage2-rewrite-validation.json"
         validation_path.write_text(json.dumps({"results": [{
-            "collection_key": "DIR00001", "result": "fail_after_2_rounds",
+            "direction_id": "DIR00001", "result": "fail_after_2_rounds",
             "rounds": 2, "issues": [{"rule": "B5", "quote": "术语"}]
         }]}, ensure_ascii=False), encoding="utf-8")
         self.assertEqual(parse(run_cli(
@@ -804,7 +842,7 @@ class TestRunnerBasics(BaseEnv):
         self.stage2_run()
         validation_path = self.root / "pack-only-validation.json"
         validation_path.write_text(json.dumps({"results": [{
-            "collection_key": "DIR00001", "result": "fail_after_2_rounds",
+            "direction_id": "DIR00001", "result": "fail_after_2_rounds",
             "rounds": 2, "issues": [{"rule": "B5"}]
         }]}, ensure_ascii=False), encoding="utf-8")
         plan = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
@@ -1132,21 +1170,26 @@ class TestStage5(BaseEnv):
         g1 = quote_id(self.gap_quotes["AAAA1111"])
         s3 = self.root / "s3results"
         s3.mkdir(parents=True, exist_ok=True)
-        doc = {"schema": 1, "kind": "candidates", "collection_key": "DIR00001",
+        doc = {"schema": 2, "kind": "candidates", "direction_id": "DIR00001",
                "mode": "generated",
                "candidates": [{
-                   "id": "X1", "title": "踩已完成点的延伸", "one_liner": "o",
+                   "id": "X1", "kind": "direction", "direction_ids": ["DIR00001"],
+                   "title": "踩已完成点的延伸", "one_liner": "o",
                    "research_question": "rq?",
-                   "points": [], "gap_ids": [{"item_key": "AAAA1111", "gap_id": g1}],
+                   "points": [],
+                   "gap_refs": [{"direction_id": "DIR00001", "item_key": "AAAA1111",
+                                 "gap_id": g1}],
                     "anchor_notes": {"difference_point": "用第二种合成输入而非第一种输入"},
                    "papers": [], "fit": "null", "red_lines": []},
-                   {"id": "X2", "title": "t", "one_liner": "o",
-                    "research_question": "rq?", "points": [], "gap_ids": [],
+                   {"id": "X2", "kind": "direction", "direction_ids": ["DIR00001"],
+                    "title": "t", "one_liner": "o",
+                    "research_question": "rq?", "points": [], "gap_refs": [],
                     "papers": [], "fit": "null", "red_lines": []},
-                   {"id": "X3", "title": "t", "one_liner": "o",
-                    "research_question": "rq?", "points": [], "gap_ids": [],
+                   {"id": "X3", "kind": "direction", "direction_ids": ["DIR00001"],
+                    "title": "t", "one_liner": "o",
+                    "research_question": "rq?", "points": [], "gap_refs": [],
                     "papers": [], "fit": "null", "red_lines": []}]}
-        (s3 / "candidates-DIR00001.json").write_text(
+        (s3 / result_file("candidates", "DIR00001")).write_text(
             json.dumps(doc, ensure_ascii=False), encoding="utf-8")
         out3 = parse(run_cli("stage3-finalize", "--professor-dir", self.prof_dir,
                              "--results", s3, "--program-root", self.root))

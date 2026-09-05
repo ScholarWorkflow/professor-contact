@@ -259,7 +259,7 @@ class PreflightBase(unittest.TestCase):
         return out
 
     def record_validation(self, result="pass", rounds=1, keys=("DIR00001", "DIR00002")):
-        validation = {"results": [{"collection_key": key, "result": result,
+        validation = {"results": [{"direction_id": key, "result": result,
                                    "rounds": rounds, "issues": []} for key in keys]}
         path = self.root / "validation.json"
         path.write_text(json.dumps(validation, ensure_ascii=False), encoding="utf-8")
@@ -327,7 +327,7 @@ class PreflightBase(unittest.TestCase):
 
     def direction(self, payload, ckey):
         return next(entry for entry in payload["directions"]
-                    if entry["collection_key"] == ckey)
+                    if entry["direction_id"] == ckey)
 
 
 class TestPreflightDecision(PreflightBase):
@@ -636,7 +636,7 @@ class TestPreflightDecision(PreflightBase):
         self.assertIn("candidate_set_changed", changed["reason_codes"])
         plan = parse(run_cli("stage2-plan", "--facts", self.facts_path))
         self.assertEqual(plan["status"], "ok")
-        by_key = {entry["collection_key"]: entry for entry in plan["directions"]}
+        by_key = {entry["direction_id"]: entry for entry in plan["directions"]}
         self.assertEqual(by_key["DIR00001"]["action"], "reuse")
         self.assertEqual(by_key["DIR00002"]["action"], "reuse")
 
@@ -781,13 +781,13 @@ class TestFinalizePreflightWiring(PreflightBase):
 
     def test_stage3_plan_consumes_pack_with_preflight_cache(self):
         self.build_accepted_state()
-        fps = {d["collection_key"]: d["input_fingerprint"]
+        fps = {d["direction_id"]: d["input_fingerprint"]
                for d in self._read_pack()["directions"]}
         out = parse(run_cli("stage3-plan", "--professor-dir", self.prof_dir,
                             "--program-root", self.root))
         self.assertEqual(out["status"], "ok", out)
         self.assertTrue(out["write_needed"])
-        self.assertEqual({d["collection_key"]: d["input_fingerprint"]
+        self.assertEqual({d["direction_id"]: d["input_fingerprint"]
                           for d in self._read_pack()["directions"]}, fps)
 
     def test_record_validation_preserves_preflight_cache(self):

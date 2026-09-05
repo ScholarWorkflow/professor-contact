@@ -185,8 +185,8 @@ class FactsSidecarTests(unittest.TestCase):
             (self.prof_dir / "套磁候选输入.json").read_text(encoding="utf-8"))
 
     def supporting(self, pack, item_key):
-        return next(p for d in pack["directions"]
-                    for p in d["supporting_papers"] if p["item_key"] == item_key)
+        """v2: the canonical professor-level paper record (issue #8 §3.3)."""
+        return pack["papers"][item_key]
 
     def test_valid_facts_sidecar_is_normalized_into_the_pack(self):
         # Integration regression: both sidecars use the canonical paper-analysis

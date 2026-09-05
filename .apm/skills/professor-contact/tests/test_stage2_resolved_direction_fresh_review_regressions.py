@@ -130,7 +130,7 @@ class FreshResolvedDirectionReviewRegressions(ResolvedPipelineMixin, unittest.Te
 
         rerun = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
         self.assertEqual(rerun["status"], "ok", msg=json.dumps(rerun, ensure_ascii=False))
-        actions = {row["collection_key"]: row["action"] for row in rerun["directions"]}
+        actions = {row["direction_id"]: row["action"] for row in rerun["directions"]}
         self.assertEqual(
             actions["dir_A"], "process",
             "dir_A resolution was reused even though a cross-direction candidate's "

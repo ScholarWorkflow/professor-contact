@@ -27,6 +27,23 @@ from typing import Any
 
 SCHEMA = 1
 MANAGED_BY = "contact_state"
+# Issue #8 identity contract (direction-id-v1): the machine identity of a
+# direction is the canonical `direction_id`; `collection_key` is legacy
+# Zotero-projection metadata only and must never route cache/state/results.
+# Files below carry their own schema + identity discriminators; SCHEMA=1 stays
+# only for structures this migration does not touch (freshness cache, email
+# state, migrate ledger).
+INPUT_PACK_SCHEMA = 2
+CANDIDATE_STATE_SCHEMA = 2
+SELECTION_SCHEMA = 2
+EMAIL_PACK_SCHEMA = 2
+DIRECTION_IDENTITY_VERSION = "direction-id-v1"
+STAGE3_GENERATOR_CONTRACT_VERSION = "stage3-ideas-v2"
+STAGE3_CROSS_CONTRACT_VERSION = "stage3-cross-v1"
+INPUT_PACK_KIND = "professor-contact-stage2-input"
+CANDIDATE_STATE_KIND = "professor-contact-stage3-state"
+SELECTION_KIND = "professor-contact-selection"
+EMAIL_PACK_KIND = "professor-contact-email-input"
 # v2 adds per-entry `acceptance` ("proposed"|"accepted"): a material change is
 # written as proposed BEFORE the user makes the Stage-2 choice. Acceptance is
 # a machine-enforced boundary, not a side effect: an entry becomes accepted
@@ -281,6 +298,402 @@ def filename_component(value: Any) -> str:
     return cleaned[:80] or sha256_text(raw)[:12]
 
 
+def safe_result_file(kind: str, identity: str) -> str:
+    """Deterministic result filename that never embeds an arbitrary machine ID raw."""
+    return f"{kind}-{filename_component(identity)}-{sha256_text(identity)[:8]}.json"
+
+
+def direction_machine_id(direction: dict) -> str:
+    """Canonical direction identity (issue #8 direction-id-v1).
+
+    v2 pack directions carry `direction_id` directly. Legacy v1 packs are
+    normalized in memory (see normalize_input_pack) using the exact 1:1
+    machine relations the pack itself records — the authoritative resolved id
+    when present, else the provisional collection_key. Display names, array
+    positions and Zotero collection NAMES are never consulted.
+    """
+    did = direction.get("direction_id")
+    if isinstance(did, str) and did.strip():
+        return did.strip()
+    rd = direction.get("resolved_direction")
+    if isinstance(rd, dict):
+        rid = rd.get("resolved_direction_id")
+        if isinstance(rid, str) and rid.strip():
+            return rid.strip()
+    ckey = direction.get("collection_key")
+    if isinstance(ckey, str) and ckey.strip():
+        return ckey.strip()
+    fail("invalid_input_pack", "pack direction has no machine direction identity")
+
+
+def facts_direction_id(direction: dict) -> str:
+    """Direction identity while reading Stage-2 facts (pre-pack).
+
+    v2 facts carry the selected `direction_id` from 套磁目标.json unchanged.
+    Legacy facts without it map collection_key 1:1 — the explicit machine
+    mapping §9 allows; nothing is inferred from names or array positions.
+    """
+    did = direction.get("direction_id")
+    if isinstance(did, str) and did.strip():
+        return did.strip()
+    ckey = direction.get("collection_key")
+    if isinstance(ckey, str) and ckey.strip():
+        return ckey.strip()
+    fail("invalid_facts", "facts direction needs direction_id (or legacy collection_key)")
+
+
+def cross_group_id(direction_ids: list[str]) -> str:
+    """Stable cross-direction group identity: cross:<hash of sorted IDs>."""
+    return "cross:" + sha256_text("\x1f".join(sorted(direction_ids)))[:12]
+
+
+def pack_paper_index(pack: dict) -> dict:
+    papers = (pack or {}).get("papers")
+    return papers if isinstance(papers, dict) else {}
+
+
+def direction_papers(pack: dict, direction: dict) -> list[dict]:
+    """Project the professor-level canonical paper records for one direction.
+
+    The canonical record lives once in `pack["papers"][item_key]`; per-direction
+    display flags (named_by_user, resolved addition provenance) are projected
+    here and never stored per direction copy.
+    """
+    papers = pack_paper_index(pack)
+    named = set(direction.get("named_keys") or [])
+    added = set(direction.get("resolved_addition_keys") or [])
+    out = []
+    for key in direction.get("supporting_item_keys") or []:
+        record = papers.get(key)
+        if not isinstance(record, dict):
+            continue
+        out.append({**record, "named_by_user": key in named,
+                    "resolved_addition": key in added})
+    return out
+
+
+# Authoritative paper fields: two direction-local snapshots of the same paper
+# must agree exactly on these during v1 normalization or the pack is ambiguous.
+_CANONICAL_PAPER_FIELDS = ("title", "year", "authorship", "analysis_file",
+                           "pdf_available", "facts_state", "facts_error",
+                           "paper_facts")
+
+
+def _canonical_paper_record(entry: dict) -> dict:
+    record = {"item_key": entry.get("item_key")}
+    for field in _CANONICAL_PAPER_FIELDS:
+        record[field] = entry.get(field)
+    record["pdf_available"] = bool(record["pdf_available"])
+    return record
+
+
+def _merge_canonical_paper(papers: dict, owners: dict, entry: dict, owner: str) -> dict:
+    """Merge one direction-local paper snapshot into the professor-level map.
+
+    Same item_key from two directions must be the SAME machine paper: records
+    agree exactly, or the pack fails closed (shared_paper_conflict) instead of
+    silently picking one copy.
+    """
+    record = _canonical_paper_record(entry)
+    key = record["item_key"]
+    if not isinstance(key, str) or not key.strip():
+        fail("invalid_input_pack", f"direction {owner!r} has a paper without item_key")
+    existing = papers.get(key)
+    if existing is None:
+        papers[key] = record
+        owners[key] = [owner]
+        return record
+    conflicts = [field for field in _CANONICAL_PAPER_FIELDS
+                 if existing.get(field) != record.get(field)]
+    if conflicts:
+        soft_exit("needs_refresh", "shared_paper_conflict",
+                  item_key=key, conflict_fields=sorted(conflicts),
+                  directions=sorted(set(owners.get(key) or []) | {owner}),
+                  message="同一 item_key 在多个方向里带有冲突的权威字段：输入包不可信，"
+                          "重跑阶段 2 重建规范 papers 后再继续。未修改任何文件。")
+    if owner not in owners.setdefault(key, []):
+        owners[key].append(owner)
+    return existing
+
+
+def normalize_input_pack(raw: Any) -> dict | None:
+    """Return the canonical v2 view of an input pack (never mutates the file).
+
+    v2 packs are validated; v1 packs migrate in memory via exact machine
+    mappings only: direction_id from the stamped resolved subfield (or 1:1
+    collection_key), and direction-local paper snapshots canonicalized into one
+    professor-level `papers` map with exact-field conflict detection.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        soft_exit("needs_refresh", "invalid_input_pack",
+                  message="套磁候选输入.json 不是对象；重跑阶段 2 重建。")
+    schema = raw.get("schema")
+    directions_raw = raw.get("directions")
+    if not isinstance(directions_raw, list):
+        soft_exit("needs_refresh", "invalid_input_pack",
+                  message="套磁候选输入.json 缺 directions 列表；重跑阶段 2 重建。")
+    pack = dict(raw)
+    if schema == INPUT_PACK_SCHEMA:
+        if raw.get("kind") != INPUT_PACK_KIND or \
+                raw.get("identity_version") != DIRECTION_IDENTITY_VERSION:
+            soft_exit("needs_refresh", "invalid_input_pack",
+                      schema=schema, kind=raw.get("kind"),
+                      identity_version=raw.get("identity_version"),
+                      message="输入包 schema/kind/identity_version 不匹配；重跑阶段 2 重建。")
+        papers = raw.get("papers")
+        if not isinstance(papers, dict):
+            soft_exit("needs_refresh", "invalid_input_pack",
+                      message="v2 输入包缺 professor 级 papers 映射；重跑阶段 2 重建。")
+    else:
+        # v1 → v2 in-memory migration (exact machine mappings only).
+        papers = {}
+        owners: dict = {}
+        directions = []
+        seen_ids = {}
+        for entry in directions_raw:
+            if not isinstance(entry, dict):
+                soft_exit("needs_refresh", "invalid_input_pack",
+                          message="输入包 directions[] 含非对象条目；重跑阶段 2 重建。")
+            did = direction_machine_id(entry)
+            if did in seen_ids:
+                soft_exit("needs_refresh", "legacy_direction_identity",
+                          direction_id=did,
+                          message=f"两个方向的机器身份都解析为 {did!r}：无法唯一映射，"
+                                  "重跑阶段 2/3 重建身份后再继续。未修改任何文件。")
+            seen_ids[did] = True
+            local = entry.get("supporting_papers")
+            keys = []
+            if isinstance(local, list):
+                for paper in local:
+                    if not isinstance(paper, dict):
+                        continue
+                    _merge_canonical_paper(papers, owners, paper, did)
+                    if paper.get("item_key") not in keys:
+                        keys.append(paper.get("item_key"))
+            added = sorted({p.get("item_key") for p in (local or []) if isinstance(p, dict)
+                            and p.get("resolved_addition") and p.get("item_key")}
+                           | set(entry.get("resolved_addition_keys") or []))
+            new_entry = dict(entry)
+            new_entry["direction_id"] = did
+            new_entry["supporting_item_keys"] = keys
+            new_entry["resolved_addition_keys"] = added
+            new_entry.pop("supporting_papers", None)
+            directions.append(new_entry)
+        pack["papers"] = papers
+        pack["directions"] = directions
+    missing = []
+    for entry in pack["directions"]:
+        for key in entry.get("supporting_item_keys") or []:
+            if key not in pack["papers"]:
+                missing.append({"direction_id": direction_machine_id(entry), "item_key": key})
+    if missing:
+        soft_exit("needs_refresh", "invalid_input_pack",
+                  missing=missing,
+                  message="supporting_item_keys 引用了 papers 映射里不存在的论文；重跑阶段 2 重建。")
+    return pack
+
+
+def load_input_pack(professor_dir: Path) -> tuple[dict | None, str | None]:
+    """Read + normalize the input pack; (None, reason) when absent/unreadable."""
+    raw, error = read_json_file(Path(professor_dir) / INPUT_PACK)
+    if error or not isinstance(raw, dict):
+        return None, error or "invalid_input_pack"
+    return normalize_input_pack(raw), None
+
+
+def _migrate_v1_candidate(candidate: dict, did: str) -> dict:
+    """Exact v1→v2 candidate record migration: pair gap refs gain the owning
+    direction_id (v1 candidates only ever cite their own direction's gaps), and
+    paper entries gain the same single-member provenance."""
+    record = dict(candidate)
+    record["kind"] = "direction"
+    record["direction_ids"] = [did]
+    record["gap_refs"] = [
+        {"direction_id": did, "item_key": pair.get("item_key"), "gap_id": pair.get("gap_id"),
+         "done_by_self": bool(pair.get("done_by_self"))}
+        for pair in candidate.get("gap_ids") or []]
+    record.pop("gap_ids", None)
+    record["papers"] = [
+        {**paper, "direction_ids": [did]} for paper in candidate.get("papers") or []]
+    return record
+
+
+def _slice_gap_directions(pack: dict, direction_ids: list[str]) -> tuple[dict, dict]:
+    """Exact-join indexes over the UNION of the given directions' slices.
+
+    Returns (gap_owner, paper_owner) mapping each (item_key, gap_id) /
+    item_key to the sorted list of participant direction IDs whose slice
+    contains it — the machine data needed to attribute v1 cross records.
+    """
+    by_id = {direction_machine_id(d): d for d in (pack or {}).get("directions") or []}
+    gap_owner: dict = {}
+    paper_owner: dict = {}
+    for did in direction_ids:
+        direction = by_id.get(did)
+        if direction is None:
+            continue
+        for gap in direction.get("gap_shortlist", []) + direction.get("gaps_excluded", []):
+            gap_owner.setdefault((gap.get("item_key"), gap.get("gap_id")), set()).add(did)
+        for banned in direction.get("completed_gap_blacklist", []):
+            gap_owner.setdefault((banned.get("item_key"), banned.get("gap_id")),
+                                 set()).add(did)
+        for key in direction.get("supporting_item_keys") or []:
+            paper_owner.setdefault(key, set()).add(did)
+        for gap in direction.get("gap_shortlist", []) + direction.get("gaps_excluded", []):
+            paper_owner.setdefault(gap.get("item_key"), set()).add(did)
+    return gap_owner, paper_owner
+
+
+def _migrate_v1_cross_group(entry: dict, ids: list[str], pack: dict | None) -> dict:
+    """Migrate one owner-scoped v1 cross entry to a standalone v2 group.
+
+    Attribution uses the pack's exact slices: a gap pair owned by exactly one
+    participant gains that direction_id; an ambiguous pair (present in several
+    participants) can NOT be mapped exactly, so the whole group's candidates
+    are dropped and its fingerprints nulled — the group reprocesses instead of
+    keeping evidence with guessed provenance.
+    """
+    gap_owner, paper_owner = _slice_gap_directions(pack, ids)
+    candidates = []
+    for candidate in entry.get("candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        record = dict(candidate)
+        attributable = True
+        gap_refs = []
+        for pair in candidate.get("gap_ids") or []:
+            owners = gap_owner.get((pair.get("item_key"), pair.get("gap_id"))) or set()
+            if len(owners) != 1:
+                attributable = False
+                break
+            gap_refs.append({"direction_id": next(iter(owners)),
+                             "item_key": pair.get("item_key"),
+                             "gap_id": pair.get("gap_id"),
+                             "done_by_self": bool(pair.get("done_by_self"))})
+        papers = []
+        for paper in candidate.get("papers") or []:
+            owners = sorted(paper_owner.get(paper.get("item_key")) or set() & set(ids))
+            papers.append({**paper, "direction_ids": owners or list(ids)})
+        if not attributable:
+            candidates = []
+            break
+        record["gap_refs"] = gap_refs
+        record.pop("gap_ids", None)
+        record["papers"] = papers
+        record["kind"] = "cross_direction"
+        record["direction_ids"] = list(ids)
+        candidates.append(record)
+    fingerprints = {}
+    for pid, fp in (entry.get("direction_fingerprints") or {}).items():
+        if pid in ids:
+            fingerprints[pid] = fp
+    if not candidates:
+        fingerprints = {pid: None for pid in ids}
+    return {"group_id": cross_group_id(ids), "direction_ids": list(ids),
+            "direction_fingerprints": fingerprints, "candidates": candidates}
+
+
+def normalize_candidate_state(raw: Any, pack: dict | None) -> tuple[dict | None, str | None]:
+    """Return the canonical v2 view of 套磁候选状态.json (never mutates the file).
+
+    v1 state migrates only through explicit 1:1 machine mappings recorded by
+    the pack (collection_key → direction_id). Anything ambiguous fails closed
+    with legacy_direction_identity and leaves accepted files untouched.
+    """
+    if raw is None:
+        return None, None
+    if not isinstance(raw, dict):
+        return None, "invalid_candidate_state"
+    schema = raw.get("schema")
+    if schema == CANDIDATE_STATE_SCHEMA:
+        if raw.get("kind") != CANDIDATE_STATE_KIND or \
+                raw.get("identity_version") != DIRECTION_IDENTITY_VERSION:
+            return None, "invalid_candidate_state"
+        return raw, None
+    # v1 → v2 exact migration.
+    key_to_did: dict[str, str] = {}
+    ambiguous = set()
+    for entry in (pack or {}).get("directions") or []:
+        did = direction_machine_id(entry)
+        ckey = entry.get("collection_key")
+        if isinstance(ckey, str) and ckey.strip():
+            if ckey in key_to_did and key_to_did[ckey] != did:
+                ambiguous.add(ckey)
+            key_to_did[ckey] = did
+    directions = []
+    fingerprints = {}
+    for entry in raw.get("directions") or []:
+        if not isinstance(entry, dict):
+            return None, "invalid_candidate_state"
+        did = entry.get("direction_id")
+        if not (isinstance(did, str) and did.strip()):
+            ckey = entry.get("collection_key")
+            did = key_to_did.get(ckey) if isinstance(ckey, str) else None
+        if not did:
+            return None, "legacy_direction_identity"
+        new_entry = dict(entry)
+        new_entry["direction_id"] = did
+        new_entry["candidates"] = [_migrate_v1_candidate(c, did)
+                                   for c in entry.get("candidates") or []
+                                   if isinstance(c, dict)]
+        new_entry["stage3_status"] = "ready" if new_entry["candidates"] else "empty"
+        new_entry["generator_contract_version"] = STAGE3_GENERATOR_CONTRACT_VERSION
+        directions.append(new_entry)
+        old_fps = raw.get("input_fingerprints") or {}
+        fp = old_fps.get(did) or old_fps.get(entry.get("collection_key"))
+        if fp:
+            fingerprints[did] = fp
+    if raw.get("input_fingerprints") and not fingerprints:
+        return None, "legacy_direction_identity"
+    # v1 cross_direction entries were owner-scoped bookkeeping; v2 groups are
+    # standalone identities keyed by sorted participant IDs. Candidates whose
+    # provenance cannot be attributed exactly from the pack are dropped and
+    # the group reprocesses (fingerprints nulled) instead of keeping guesses.
+    grouped: dict[tuple, dict] = {}
+    for entry in raw.get("cross_direction") or []:
+        if not isinstance(entry, dict):
+            continue
+        ids = sorted({i for i in entry.get("direction_ids") or [] if isinstance(i, str)})
+        if len(ids) < 2:
+            continue
+        key = tuple(ids)
+        group = _migrate_v1_cross_group(entry, ids, pack)
+        if key in grouped:
+            merged = grouped[key]
+            known = {c.get("id") for c in merged["candidates"]}
+            merged["candidates"].extend(
+                c for c in group["candidates"] if c.get("id") not in known)
+            if not merged["candidates"]:
+                merged["direction_fingerprints"] = {pid: None for pid in ids}
+        else:
+            grouped[key] = group
+    state = dict(raw)
+    state["schema"] = CANDIDATE_STATE_SCHEMA
+    state["kind"] = CANDIDATE_STATE_KIND
+    state["identity_version"] = DIRECTION_IDENTITY_VERSION
+    state["generator_contract_version"] = STAGE3_GENERATOR_CONTRACT_VERSION
+    state["directions"] = directions
+    state["input_fingerprints"] = fingerprints
+    state["cross_direction_groups"] = list(grouped.values())
+    state.pop("cross_direction", None)
+    return state, None
+
+
+def load_candidate_state(professor_dir: Path, pack: dict | None) -> tuple[dict | None, str | None]:
+    """Read + normalize the candidate state against the given (normalized) pack.
+
+    Returns (None, None) when the file does not exist yet; (None, reason) when
+    it exists but cannot be exactly migrated."""
+    raw, error = read_json_file(Path(professor_dir) / CANDIDATE_STATE)
+    if error == "not_found":
+        return None, None
+    if error or not isinstance(raw, dict):
+        return None, error or "invalid_candidate_state"
+    return normalize_candidate_state(raw, pack)
+
+
 def stage5_output_paths(email: dict, emails: list[dict], professor_dir: Path,
                         kind: str = "initial") -> tuple[Path, Path]:
     target_dir = professor_dir.resolve()
@@ -294,7 +707,10 @@ def stage5_output_paths(email: dict, emails: list[dict], professor_dir: Path,
         return professor_dir / f"{prefix}.md", professor_dir / f"{prefix}.txt"
     email_id = str(email.get("email_id") or "email")
     idea_id = (email.get("idea") or {}).get("id") or "email"
-    suffix = "_".join((filename_component(email.get("collection_key")),
+    # Issue #8 §8.2: the filename suffix derives from the canonical direction
+    # scope + email id hash — a v2 entry may not have a collection_key at all.
+    scope = "+".join(sorted(email.get("direction_ids") or [idea_id]))
+    suffix = "_".join((filename_component(scope),
                          filename_component(idea_id), sha256_text(email_id)[:8]))
     return (professor_dir / f"{prefix}_{suffix}.md",
             professor_dir / f"{prefix}_{suffix}.txt")
@@ -386,12 +802,17 @@ def selected_candidate_union(ctx: "Stage2Context") -> list:
 
 
 def direction_fingerprint(direction: dict, papers: dict, gap_ids: list, families: dict) -> str:
+    """Model-relevant Stage-2 direction fingerprint, keyed by direction_id.
+
+    Issue #8 §3.2: only evidence that can change Stage-3 meaning belongs here.
+    collection_key and display names (name_ja/name_zh) are projection/display
+    metadata — a projection-only rename or a display-only rename must never
+    invalidate model work; downstream rendering handles those deterministically.
+    """
     relevant = direction_relevant_keys(direction)
     return sha256_obj({
-        "collection_key": direction.get("collection_key"),
-        "name_ja": direction.get("name_ja"),
-        "name_zh": direction.get("name_zh"),
-        "status": direction.get("status"),
+        "identity_version": DIRECTION_IDENTITY_VERSION,
+        "direction_id": facts_direction_id(direction),
         "user_note_sha": sha256_text(direction.get("user_note") or ""),
         "member_keys": sorted(direction.get("member_keys") or []),
         "relevant_keys": sorted(relevant),
@@ -880,7 +1301,7 @@ def build_gap_pool(facts: dict, papers: dict, families: dict,
                 for loser in group_sorted[1:]:
                     loser["suppressed_by"] = group_sorted[0]["item_key"]
                     suppressed.add(id(loser))
-        pools[direction["collection_key"]] = [g for g in gaps if id(g) not in suppressed]
+        pools[facts_direction_id(direction)] = [g for g in gaps if id(g) not in suppressed]
     return pools, confirmed_members
 
 
@@ -910,9 +1331,7 @@ class Stage2Context:
         self.families = compute_version_families(self.papers)
         self.pools, self.family_members = build_gap_pool(self.facts, self.papers, self.families, self.sidecar_cache)
         self.pack_path = self.professor_dir / INPUT_PACK
-        self.pack, _ = read_json_file(self.pack_path)
-        if not isinstance(self.pack, dict):
-            self.pack = None
+        self.pack, _ = load_input_pack(self.professor_dir)
         self.cache = load_freshness_cache(self.professor_dir)
         self.direction_plans = []
         self._prepare_directions()
@@ -921,14 +1340,16 @@ class Stage2Context:
         old_directions = {}
         if self.pack:
             for entry in self.pack.get("directions", []):
-                old_directions[entry.get("collection_key")] = entry
+                old_directions[direction_machine_id(entry)] = entry
         for direction in self.facts.get("directions", []):
-            ckey = direction.get("collection_key") or fail("invalid_facts", "direction.collection_key missing")
-            pool = self.pools.get(ckey, [])
+            # `did` is the machine identity routed through every Stage-2 map;
+            # `legacy_collection_key` is projection metadata only (issue #8).
+            did = facts_direction_id(direction)
+            pool = self.pools.get(did, [])
             ranked = rank_gaps([dict(g) for g in pool], self.current_year)
             fingerprint = direction_fingerprint(
                 direction, self.papers, [g["gap_id"] for g in pool], self.families)
-            old = old_directions.get(ckey)
+            old = old_directions.get(did)
             old_narrative = (old or {}).get("narrative") or {}
             old_blocks = [b for b in old_narrative.get("positioning", []) if isinstance(b, dict)]
             narrative_has_examples = bool(old_blocks) and all(
@@ -944,7 +1365,7 @@ class Stage2Context:
                                                  (old or {}).get("input_fingerprint"))
             reuse = bool(old and old_provisional_fp == fingerprint and narrative_has_examples)
             plan_entry = {
-                "direction": direction, "ckey": ckey, "pool": pool, "ranked": ranked,
+                "direction": direction, "did": did, "pool": pool, "ranked": ranked,
                 "fingerprint": fingerprint, "old": old, "reuse": reuse,
             }
             if reuse and self.freshness_stale(plan_entry):
@@ -1060,18 +1481,16 @@ class Stage2PackRefineContext:
     def __init__(self, professor_dir: Path):
         self.professor_dir = professor_dir
         self.pack_path = professor_dir / INPUT_PACK
-        self.pack, error = read_json_file(self.pack_path)
-        if error or not isinstance(self.pack, dict):
+        self.pack, error = load_input_pack(self.pack_path.parent)
+        if error or self.pack is None:
             fail("missing_input_pack", f"input pack unreadable: {self.pack_path}")
         self.professor = self.pack.get("professor") or fail("invalid_facts", "input pack.professor missing")
         self.current_year = datetime.now().year
         self.papers = {}
         self.direction_plans = []
         for direction in self.pack.get("directions", []):
-            ckey = direction.get("collection_key")
-            if not ckey:
-                fail("invalid_facts", "input pack direction.collection_key missing")
-            for paper in direction.get("supporting_papers", []):
+            did = direction_machine_id(direction)
+            for paper in direction_papers(self.pack, direction):
                 key = paper.get("item_key")
                 if key:
                     self.papers.setdefault(key, {
@@ -1088,13 +1507,23 @@ class Stage2PackRefineContext:
                 self.papers.setdefault(key, {"item_key": key, "title": "后续论文"})
             gaps = [dict(gap) for gap in direction.get("gap_shortlist", [])]
             gaps.extend(dict(gap) for gap in direction.get("gaps_excluded", []))
+            supporting_keys = list(direction.get("supporting_item_keys") or [])
             self.direction_plans.append({
-                "ckey": ckey,
-                "direction": {"relevant_keys": [p.get("item_key") for p in direction.get("supporting_papers", [])],
-                               "member_keys": [p.get("item_key") for p in direction.get("supporting_papers", [])],
-                               "named_keys": []},
+                "did": did,
+                "direction": {"relevant_keys": supporting_keys,
+                               "member_keys": supporting_keys,
+                               "named_keys": list(direction.get("named_keys") or [])},
                 "ranked": [gap for gap in gaps if gap.get("gap_id")],
             })
+
+    @staticmethod
+    def narrative_later_keys_for(direction: dict) -> list[str]:
+        keys = set()
+        narrative = direction.get("narrative") or {}
+        for block in narrative.get("positioning", []):
+            for kind, value in PLACEHOLDER_RE.findall(block.get("text") or ""):
+                if kind == "L":
+                    keys.add(value)
 
     @staticmethod
     def narrative_later_keys_for(direction: dict) -> list[str]:
@@ -1108,7 +1537,7 @@ class Stage2PackRefineContext:
 
     def narrative_later_keys(self, plan: dict) -> list[str]:
         direction = next((d for d in self.pack.get("directions", [])
-                          if d.get("collection_key") == plan["ckey"]), {})
+                          if direction_machine_id(d) == plan["did"]), {})
         return self.narrative_later_keys_for(direction)
 
 
@@ -1147,12 +1576,12 @@ def _compute_paper_direction_affinity(ctx: Stage2Context) -> dict[str, dict[str,
             val = direction.get(field)
             if isinstance(val, str) and val.strip():
                 parts.append(val)
-        direction_profiles[plan["ckey"]] = _tokens(" ".join(parts))
+        direction_profiles[plan["did"]] = _tokens(" ".join(parts))
 
     affinity: dict[str, dict[str, dict]] = {}
     union_keys = selected_candidate_union(ctx)
     for plan in ctx.direction_plans:
-        ckey = plan["ckey"]
+        ckey = plan["did"]
         profile_toks = direction_profiles[ckey]
         gap_item_keys = {g["item_key"] for g in plan["pool"]}
         # Affinity is resolution evidence: it must cover the full candidate
@@ -1224,7 +1653,7 @@ def _detect_candidates_for_addition(ctx: Stage2Context, affinity: dict[str, dict
     paper_provisional: dict[str, list[str]] = {}
     for plan in ctx.direction_plans:
         for key in plan["direction"].get("provisional_member_keys") or []:
-            paper_provisional.setdefault(key, []).append(plan["ckey"])
+            paper_provisional.setdefault(key, []).append(plan["did"])
 
     additions = []
     seen: set[tuple[str, str]] = set()
@@ -1287,7 +1716,7 @@ def _detect_candidates_for_removal(ctx: Stage2Context, affinity: dict[str, dict[
     import re as _re
     removals = []
     for plan in ctx.direction_plans:
-        ckey = plan["ckey"]
+        ckey = plan["did"]
         direction = plan["direction"]
         profile_parts = []
         for field in ("name_ja", "name_zh", "summary_zh"):
@@ -1358,7 +1787,7 @@ def _detect_split_candidates(ctx: Stage2Context) -> list[dict]:
     import re as _re
     splits = []
     for plan in ctx.direction_plans:
-        ckey = plan["ckey"]
+        ckey = plan["did"]
         direction = plan["direction"]
         papers_with_facts = []
         for key in direction_candidate_keys(direction):
@@ -1536,7 +1965,7 @@ def _detect_merge_candidates(ctx: Stage2Context) -> list[dict]:
     plans = ctx.direction_plans
     for i, plan_a in enumerate(plans):
         for plan_b in plans[i + 1:]:
-            ckey_a, ckey_b = plan_a["ckey"], plan_b["ckey"]
+            ckey_a, ckey_b = plan_a["did"], plan_b["did"]
             dir_a, dir_b = plan_a["direction"], plan_b["direction"]
             keys_a = set(direction_candidate_keys(dir_a))
             keys_b = set(direction_candidate_keys(dir_b))
@@ -1620,7 +2049,7 @@ def cmd_stage2_resolve_plan(args) -> None:
     reuse_list = []
     fingerprints: dict[str, str] = {}
     for plan in ctx.direction_plans:
-        ckey = plan["ckey"]
+        ckey = plan["did"]
         prior = existing_by_ckey.get(ckey)
         current_fingerprint = _current_resolve_fingerprint(ctx, plan, evidence)
         fingerprints[ckey] = current_fingerprint
@@ -1635,14 +2064,14 @@ def cmd_stage2_resolve_plan(args) -> None:
         resolve_jobs.append({
             "job_id": f"resolve:{ctx.professor}:{ckey}",
             "kind": "resolve",
-            "collection_key": ckey,
-            "result_file": f"resolve-{ckey}.json",
+            "direction_id": ckey,
+            "result_file": f"resolve-{filename_component(ckey)}.json",
             "result_schema": {
                 "schema": 1,
                 "kind": "resolve",
-                "collection_key": ckey,
+                "direction_id": ckey,
                 "resolved": {
-                    "resolved_direction_id": "<stable ID, same as collection_key unless split>",
+                    "resolved_direction_id": "<stable ID, same as direction_id unless split>",
                     "provisional_direction_id": ckey,
                     "name_ja": "<confirmed or renamed>",
                     "name_zh": "<confirmed or renamed>",
@@ -1677,9 +2106,9 @@ def cmd_stage2_resolve_plan(args) -> None:
             "merge_candidates": len(merges),
         },
         "directions": [{
-            "collection_key": plan["ckey"],
-            "action": "reuse" if plan["ckey"] in reuse_list else "process",
-            "input_fingerprint": fingerprints[plan["ckey"]],
+            "direction_id": plan["did"],
+            "action": "reuse" if plan["did"] in reuse_list else "process",
+            "input_fingerprint": fingerprints[plan["did"]],
         } for plan in ctx.direction_plans],
         "candidates": {
             "additions": additions,
@@ -1732,7 +2161,7 @@ def _build_resolve_model_input(ctx: Stage2Context, plan: dict, evidence: dict) -
     - this direction's own gap evidence (its pool's sidecar-rendered rows).
     """
     direction = plan["direction"]
-    ckey = plan["ckey"]
+    ckey = plan["did"]
     paper_evidence = []
     for key in evidence["evidence_keys"]:
         paper = ctx.papers.get(key)
@@ -1855,7 +2284,7 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
     reused = reused or {}
     pending = pending or {}
     resolved = {}
-    direction_lookup = {plan["ckey"]: plan for plan in ctx.direction_plans}
+    direction_lookup = {plan["did"]: plan for plan in ctx.direction_plans}
     # papers_to_add may come from anywhere in the professor-level candidate
     # union (acceptance #2: full text can pull in a paper from another preview
     # cluster even when Stage 1 never expanded it into this direction). The
@@ -1864,7 +2293,7 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
     evidence = _resolve_evidence(ctx)
     professor_candidate_set = set(evidence["evidence_keys"])
     for plan in ctx.direction_plans:
-        ckey = plan["ckey"]
+        ckey = plan["did"]
         current_fingerprint = _current_resolve_fingerprint(ctx, plan, evidence)
 
         def _unchanged_default() -> dict:
@@ -1898,7 +2327,7 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
             entry["reused"] = True
             resolved[ckey] = entry
             continue
-        result_path = results_dir / f"resolve-{ckey}.json"
+        result_path = results_dir / f"resolve-{filename_component(ckey)}.json"
         if not result_path.is_file():
             # No new result: an accepted resolution stays cached, a pending
             # proposal stays pending (and keeps reporting needs_user_choice).
@@ -1914,13 +2343,13 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
             fail("invalid_result_json", f"{result_path}: schema/kind must be 1/resolve")
         # A result file is bound to the exact job identity: the file may only
         # speak for the direction the job was emitted for (top-level
-        # collection_key AND resolved.provisional_direction_id). Otherwise a
+        # direction_id AND resolved.provisional_direction_id). Otherwise a
         # misplaced or hallucinated result could silently rewrite another
         # direction's authoritative state.
-        data_collection_key = data.get("collection_key")
-        if data_collection_key != ckey:
+        data_direction_id = data.get("direction_id") or data.get("collection_key")
+        if data_direction_id != ckey:
             fail("invalid_result_json",
-                 f"{result_path}: collection_key {data_collection_key!r} does not match "
+                 f"{result_path}: direction_id {data_direction_id!r} does not match "
                  f"the job direction {ckey!r}")
         r = data.get("resolved")
         if not isinstance(r, dict):
@@ -1934,7 +2363,7 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
         resolved_direction_id = r.get("resolved_direction_id")
         if not isinstance(resolved_direction_id, str) or not resolved_direction_id.strip():
             fail("invalid_result_json", f"{result_path}: resolved_direction_id must be a non-empty string")
-        # Stage 3 emits jobs per collection_key, so a resolution that keeps the
+        # Stage 3 routes jobs per direction_id, so a resolution that keeps the
         # direction as a pack entry must keep the authoritative ID identical to
         # it — only split_from introduces a new ID, and that one is the
         # split_target, never a drifted resolved_direction_id.
@@ -1942,7 +2371,7 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
         if resolution_type != "split_from" and resolved_direction_id != ckey:
             fail("invalid_result_json",
                  f"{result_path}: resolved_direction_id {resolved_direction_id!r} must equal the "
-                 f"direction collection_key {ckey!r} (only split_from introduces a new ID, via split_target)")
+                 f"direction identity {ckey!r} (only split_from introduces a new ID, via split_target)")
         if resolution_type not in ("unchanged", "renamed", "split_from", "merged_into", "refined"):
             fail("invalid_result_json", f"{result_path}: invalid resolution_type: {resolution_type}")
         papers_to_add = r.get("papers_to_add") or []
@@ -2185,14 +2614,14 @@ def cmd_stage2_resolve_finalize(args) -> None:
         fail("resolved_directions_proof_mismatch",
              f"facts carry an unusable stage2_preflight binding: {facts_proof_error}")
     keep_provisional = [k.strip() for k in (args.keep_provisional or "").split(",") if k.strip()]
-    plans_by_ckey = {plan["ckey"]: plan for plan in ctx.direction_plans}
+    plans_by_ckey = {plan["did"]: plan for plan in ctx.direction_plans}
     unknown = [k for k in keep_provisional if k not in plans_by_ckey]
     if unknown:
         fail("invalid_keep_provisional",
              f"--keep-provisional names directions that are not selected for this professor: {unknown}")
     existing = _load_existing_resolved(ctx.professor_dir, ctx.professor, None)
     evidence = _resolve_evidence(ctx)
-    plan_fingerprints = {plan["ckey"]: _current_resolve_fingerprint(ctx, plan, evidence)
+    plan_fingerprints = {plan["did"]: _current_resolve_fingerprint(ctx, plan, evidence)
                          for plan in ctx.direction_plans}
     existing_by_ckey: dict[str, dict] = {}
     if existing:
@@ -2259,8 +2688,8 @@ def cmd_stage2_resolve_finalize(args) -> None:
         "professor": ctx.professor,
         "professor_dir": str(ctx.professor_dir),
         "directions": [
-            {"collection_key": plan["ckey"],
-             "fingerprint": plan_fingerprints[plan["ckey"]]}
+            {"direction_id": plan["did"],
+             "fingerprint": plan_fingerprints[plan["did"]]}
             for plan in ctx.direction_plans
         ],
     }
@@ -2283,12 +2712,12 @@ def cmd_stage2_resolve_finalize(args) -> None:
 
     # Collect new split directions (targets that don't match any provisional ckey).
     # These are the "new authoritative direction entries" the split resolved.
-    existing_ckeys = {plan["ckey"] for plan in ctx.direction_plans}
+    existing_ckeys = {plan["did"] for plan in ctx.direction_plans}
     new_splits = []
     for ckey, r in resolved.items():
         if r["resolution_type"] == "split_from" and r["split_target"] not in existing_ckeys:
             # Find the source plan to copy the structure
-            source_plan = next((p for p in ctx.direction_plans if p["ckey"] == ckey), None)
+            source_plan = next((p for p in ctx.direction_plans if p["did"] == ckey), None)
             if source_plan:
                 new_splits.append({
                     "source_provisional_id": ckey,
@@ -2371,11 +2800,11 @@ def cmd_stage2_resolve_accept(args) -> None:
     evidence = _resolve_evidence(ctx)
     stale = []
     for plan in ctx.direction_plans:
-        if plan["ckey"] not in ckeys:
+        if plan["did"] not in ckeys:
             continue
-        if entries[plan["ckey"]].get("input_fingerprint") != \
+        if entries[plan["did"]].get("input_fingerprint") != \
                 _current_resolve_fingerprint(ctx, plan, evidence):
-            stale.append({"direction": plan["ckey"], "problem": "input_fingerprint_mismatch"})
+            stale.append({"direction": plan["did"], "problem": "input_fingerprint_mismatch"})
     if stale:
         fail("resolved_directions_stale",
              "proposed resolutions no longer match current facts; re-run stage2-resolve before accepting",
@@ -2708,21 +3137,21 @@ def _pack_resolved_grouping(pack_directions: list) -> dict[str, dict]:
     - merge: the source provisional no longer owns an entry — it maps to the
       target via `merged_into` (recorded from the target's `merged_from`).
 
-    Returns {provisional_id: {"resolved": [collection_keys],
-    "merged_into": target_id | None}}.
+    Returns {provisional_id: {"resolved": [direction_ids],
+    "merged_into": target_id | None}} keyed by canonical direction identity.
     """
     grouping: dict[str, dict] = {}
     for entry in pack_directions:
         if not isinstance(entry, dict):
             continue
-        ckey = entry.get("collection_key")
+        did = direction_machine_id(entry)
         rd = entry.get("resolved_direction") if isinstance(entry.get("resolved_direction"), dict) else {}
-        pid = rd.get("provisional_direction_id") or ckey
+        pid = rd.get("provisional_direction_id") or did
         slot = grouping.setdefault(pid, {"resolved": [], "merged_into": None})
-        slot["resolved"].append(ckey)
+        slot["resolved"].append(did)
         for source in rd.get("merged_from") or []:
             source_slot = grouping.setdefault(source, {"resolved": [], "merged_into": None})
-            source_slot["merged_into"] = ckey
+            source_slot["merged_into"] = did
     return grouping
 
 
@@ -2763,8 +3192,8 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
     snapshot_directions = {entry.get("direction_id"): entry
                            for entry in (snapshot_entry or {}).get("directions") or []
                            if isinstance(entry, dict)}
-    accepted_by_key = {entry.get("collection_key"): entry for entry in pack_directions}
-    facts_directions = {entry.get("collection_key"): entry
+    accepted_by_key = {direction_machine_id(entry): entry for entry in pack_directions}
+    facts_directions = {facts_direction_id(entry): entry
                         for entry in ctx.facts.get("directions") or []}
     grouping = _pack_resolved_grouping(pack_directions)
     directions = {}
@@ -2861,9 +3290,7 @@ def cmd_stage2_preflight(args) -> None:
     professor_dir = program_root / str(target.get("professor_dir") or "")
     snapshot_entry = read_stage1_professor_entry(program_root, professor)
     pack_path = professor_dir / INPUT_PACK
-    pack, _error = read_json_file(pack_path)
-    if not isinstance(pack, dict):
-        pack = None
+    pack, _error = load_input_pack(professor_dir)
     cache_block = (pack or {}).get("cache")
     meta = cache_block.get("preflight") if isinstance(cache_block, dict) else None
 
@@ -2926,7 +3353,7 @@ def cmd_stage2_preflight(args) -> None:
                         professor_reasons.append(reason)
 
     cache_entries = load_freshness_cache(professor_dir) if pack else {}
-    pack_directions = {entry.get("collection_key"): entry
+    pack_directions = {direction_machine_id(entry): entry
                        for entry in (pack or {}).get("directions") or []
                        if isinstance(entry, dict)}
     recorded_directions = (meta or {}).get("directions")
@@ -3014,7 +3441,7 @@ def cmd_stage2_preflight(args) -> None:
             reasons.append(validator_reason)
         reasons = sorted(set(reasons))
         direction_results.append({
-            "collection_key": direction_id, "action": "reuse" if not reasons else "process",
+            "direction_id": direction_id, "action": "reuse" if not reasons else "process",
             "reason_codes": reasons})
         if reasons:
             all_reuse = False
@@ -3037,7 +3464,7 @@ def cmd_stage2_plan(args) -> None:
     ctx = Stage2Context(Path(args.facts))
     jobs, reuse_list, process_list = [], [], []
     for plan in ctx.direction_plans:
-        ckey = plan["ckey"]
+        ckey = plan["did"]
         if plan["reuse"]:
             reuse_list.append(ckey)
             continue
@@ -3067,9 +3494,9 @@ def cmd_stage2_plan(args) -> None:
                     "note": "禁止「标题无命中直接写 open」；candidates 为空且 later_total>0 → unknown（unverifiable_count 条无法核对）；candidates 为空且 later_total=0 → open 并说明"})
             jobs.append({
                 "job_id": f"freshness:{ctx.professor}:{ckey}", "kind": "freshness",
-                "collection_key": ckey,
-                "result_file": f"freshness-{ckey}.json",
-                "result_schema": {"schema": 1, "kind": "freshness", "collection_key": ckey,
+                "direction_id": ckey,
+                "result_file": f"freshness-{filename_component(ckey)}.json",
+                "result_schema": {"schema": 1, "kind": "freshness", "direction_id": ckey,
                                   "results": [{"gap_id": "", "status": "open|partial|done_by_self|unknown",
                                                "candidate_paper_ids": [], "evidence": "",
                                                "completed_part": "", "remaining_gap": "",
@@ -3077,14 +3504,14 @@ def cmd_stage2_plan(args) -> None:
                 "model_input": {"gaps": job_gaps}})
         jobs.append({
             "job_id": f"narrative:{ctx.professor}:{ckey}", "kind": "narrative",
-            "collection_key": ckey,
+            "direction_id": ckey,
             "result_file": "narrative.json",
             "result_schema": {"schema": 1, "kind": "narrative", "directions": [
-                {"collection_key": ckey, "positioning": [
+                {"direction_id": ckey, "positioning": [
                     {"kind": "para|bullet", "text": "…{{P:ITEMKEY}}…{{G:GAPID}}…", "refs": ["paper:ITEMKEY"]}],
                  "gap_notes": [{"gap_id": "", "summary": "一句话概括", "explanation": "大白话≤3句"}]}]},
             "model_input": {
-                "collection_key": ckey,
+                "direction_id": ckey,
                 "user_note": plan["direction"].get("user_note") or "",
                 "credibility": plan["direction"].get("credibility"),
                 "papers": [{"item_key": key, "title": ctx.papers[key].get("title"),
@@ -3109,7 +3536,7 @@ def cmd_stage2_plan(args) -> None:
         "pack_path": str(ctx.pack_path),
         "params": {"gap_scope": ctx.gap_scope, "freshness_scope": ctx.freshness_scope},
         "directions": [{
-            "collection_key": p["ckey"], "action": "reuse" if p["reuse"] else "process",
+            "direction_id": p["did"], "action": "reuse" if p["reuse"] else "process",
             "gap_pool": len(p["pool"]),
             "judge_count": len(ctx.judge_set(p)) if not p["reuse"] else 0,
             "reason_code": ("shortlist_over_limit" if len(p["ranked"]) > SHORTLIST_MAX and
@@ -3129,12 +3556,16 @@ def validate_freshness_results(ctx: Stage2Context, results_dir: Path,
         if not pending:
             accepted[ckey] = {item["gap"]["gap_id"]: item["status"] for item in items}
             continue
-        result_path = results_dir / f"freshness-{ckey}.json"
+        result_path = results_dir / f"freshness-{filename_component(ckey)}.json"
         data, error = read_json_file(result_path)
         if error:
             fail("result_missing", f"{result_path}: {error}")
         if not isinstance(data, dict) or data.get("schema") != 1 or data.get("kind") != "freshness":
             fail("invalid_result_json", f"{result_path}: schema/kind must be 1/freshness")
+        data_direction_id = data.get("direction_id") or data.get("collection_key")
+        if data_direction_id != ckey:
+            fail("invalid_result_json",
+                 f"{result_path}: direction_id {data_direction_id!r} does not match the job direction {ckey!r}")
         rows = data.get("results")
         if not isinstance(rows, list):
             fail("invalid_result_json", f"{result_path}: results must be a list")
@@ -3209,7 +3640,7 @@ def validate_freshness_results(ctx: Stage2Context, results_dir: Path,
 
 def narrative_scope(ctx: Stage2Context, ckey: str) -> dict:
     for plan in ctx.direction_plans:
-        if plan["ckey"] == ckey:
+        if plan["did"] == ckey:
             return {
                 "papers": {key for key in direction_relevant_keys(plan["direction"])
                             if key in ctx.papers},
@@ -3220,20 +3651,20 @@ def narrative_scope(ctx: Stage2Context, ckey: str) -> dict:
 
 
 def validate_narrative_entry(ctx: Stage2Context, path: Path, entry: dict,
-                             expected_ckey: str | None = None) -> tuple[str, dict]:
+                             expected_did: str | None = None) -> tuple[str, dict]:
     if not isinstance(entry, dict):
         fail("invalid_result_json", f"{path}: narrative entry must be an object")
-    ckey = entry.get("collection_key")
-    if expected_ckey is not None and ckey != expected_ckey:
-        fail("invalid_result_json", f"{path}: expected direction {expected_ckey}, got {ckey}")
-    if not isinstance(ckey, str):
-        fail("invalid_result_json", f"{path}: collection_key must be a string")
-    scope = narrative_scope(ctx, ckey)
-    if not any(plan["ckey"] == ckey for plan in ctx.direction_plans):
-        fail("invalid_result_json", f"{path}: unexpected direction {ckey}")
+    did = entry.get("direction_id") or entry.get("collection_key")
+    if expected_did is not None and did != expected_did:
+        fail("invalid_result_json", f"{path}: expected direction {expected_did}, got {did}")
+    if not isinstance(did, str) or not did.strip():
+        fail("invalid_result_json", f"{path}: direction_id must be a non-empty string")
+    scope = narrative_scope(ctx, did)
+    if not any(plan["did"] == did for plan in ctx.direction_plans):
+        fail("invalid_result_json", f"{path}: unexpected direction {did}")
     positioning = entry.get("positioning")
     if not isinstance(positioning, list) or not positioning:
-        fail("invalid_result_json", f"{path}: {ckey} positioning must be a non-empty list")
+        fail("invalid_result_json", f"{path}: {did} positioning must be a non-empty list")
     checked = []
     for block in positioning:
         if not isinstance(block, dict) or not isinstance(block.get("text"), str):
@@ -3255,10 +3686,10 @@ def validate_narrative_entry(ctx: Stage2Context, path: Path, entry: dict,
                 placeholders.add(f"gap:{value}")
         raw_refs = block.get("refs")
         if not isinstance(raw_refs, list) or not all(isinstance(ref, str) for ref in raw_refs):
-            fail("invalid_result_json", f"{path}: {ckey} refs must be a string list")
+            fail("invalid_result_json", f"{path}: {did} refs must be a string list")
         refs = set(raw_refs)
         if len(raw_refs) != len(refs):
-            fail("invalid_result_json", f"{path}: {ckey} refs contain duplicates")
+            fail("invalid_result_json", f"{path}: {did} refs contain duplicates")
         for ref in refs:
             ref_kind, _, ref_id = ref.partition(":")
             pool = (scope["papers"] if ref_kind == "paper" else
@@ -3267,7 +3698,7 @@ def validate_narrative_entry(ctx: Stage2Context, path: Path, entry: dict,
                 fail("unknown_reference_id", f"{path}: ref {ref} outside package")
         if placeholders != refs:
             fail("invalid_result_json",
-                 f"{path}: {ckey} placeholders {sorted(placeholders)} != refs {sorted(refs)}")
+                 f"{path}: {did} placeholders {sorted(placeholders)} != refs {sorted(refs)}")
         checked.append({"kind": block.get("kind") if block.get("kind") in ("para", "bullet") else "bullet",
                         "text": block["text"],
                         "refs": list(raw_refs),
@@ -3276,11 +3707,11 @@ def validate_narrative_entry(ctx: Stage2Context, path: Path, entry: dict,
                         "output_example": block["output_example"].strip()})
     raw_gap_notes = entry.get("gap_notes") or []
     if not isinstance(raw_gap_notes, list):
-        fail("invalid_result_json", f"{path}: {ckey} gap_notes must be a list")
+        fail("invalid_result_json", f"{path}: {did} gap_notes must be a list")
     gap_notes = {}
     for note in raw_gap_notes:
         if not isinstance(note, dict):
-            fail("invalid_result_json", f"{path}: {ckey} gap_notes[] must be objects")
+            fail("invalid_result_json", f"{path}: {did} gap_notes[] must be objects")
         gap_id = note.get("gap_id")
         if gap_id not in scope["gaps"]:
             fail("unknown_reference_id", f"{path}: gap note outside package: {gap_id}")
@@ -3291,7 +3722,7 @@ def validate_narrative_entry(ctx: Stage2Context, path: Path, entry: dict,
         gap_notes[gap_id] = {
             "summary": truncate(note.get("summary"), 120),
             "explanation": truncate(note.get("explanation"), 300)}
-    return ckey, {"positioning": checked, "gap_notes": gap_notes}
+    return did, {"positioning": checked, "gap_notes": gap_notes}
 
 
 def validate_narrative(ctx: Stage2Context, results_dir: Path, needed_keys: list) -> dict:
@@ -3341,7 +3772,13 @@ def redact_item_keys(text: str, papers: dict) -> str:
 
 
 def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
-                         narrative: dict) -> dict:
+                         narrative: dict) -> tuple[dict, dict]:
+    """Build one v2 pack direction plus its canonical paper records.
+
+    Returns (direction, papers) — the caller merges `papers` into the
+    professor-level canonical map (issue #8 §3.3): a shared paper keeps ONE
+    machine record regardless of how many directions reference it.
+    """
     direction = plan["direction"]
     judge, ranked = [], plan["ranked"]
     judge = ctx.judge_set(plan)
@@ -3403,7 +3840,8 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
             "candidate_paper_ids": gap.get("candidate_paper_ids") or [],
             "quote_trunc": truncate(gap["quote"], 80),
             "reason": "low_rank（本轮未选，不代表不重要）"})
-    supporting = []
+    supporting_keys = []
+    papers = {}
     direction = plan["direction"]
     relevant_keys = direction_relevant_keys(direction)
     ordered = sorted(relevant_keys, key=lambda k: (
@@ -3414,20 +3852,20 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
         if not paper:
             continue
         facts_record, facts_state, facts_error = ctx.facts_for(key)
-        supporting.append({
+        papers[key] = {
             "item_key": key, "title": paper.get("title"), "year": paper.get("year"),
             "authorship": paper.get("authorship"),
-            "named_by_user": key in (direction.get("named_keys") or []),
-            "has_analysis": bool(paper.get("analysis_file")),
             "analysis_file": paper.get("analysis_file"),
             "pdf_available": bool(paper.get("has_pdf")),
             "facts_state": facts_state,
             "facts_error": facts_error,
             "paper_facts": facts_record,
-        })
+        }
+        supporting_keys.append(key)
     note = direction.get("user_note") or ""
-    return {
-        "collection_key": plan["ckey"],
+    pack_direction = {
+        "direction_id": plan["did"],
+        "collection_key": direction.get("collection_key"),
         "name_ja": direction.get("name_ja"), "name_zh": direction.get("name_zh"),
         "status": direction.get("status") or "active",
         "input_fingerprint": plan["fingerprint"],
@@ -3435,7 +3873,8 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
         "credibility": direction.get("credibility") or {},
         "red_lines": direction.get("red_lines") or [],
         "named_keys": list(direction.get("named_keys") or []),
-        "supporting_papers": supporting,
+        "supporting_item_keys": supporting_keys,
+        "resolved_addition_keys": [],
         "gap_pool_count": len(plan["pool"]),
         "gap_shortlist": [
             dict(g, no=index + 1) for index, g in enumerate(shortlist)],
@@ -3445,13 +3884,18 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
         "authorship_line": (direction.get("credibility") or {}).get("authorship_line"),
         "narrative": narrative,
     }
+    return pack_direction, papers
 
 
-def render_analysis_md(ctx: Stage2Context, pack_directions: list,
+def render_analysis_md(ctx: Stage2Context, pack: dict,
                        state_fingerprint: str) -> str:
     professor = ctx.professor
-    full = sum(1 for d in pack_directions for p in d["supporting_papers"] if p.get("has_analysis") or p.get("pdf_available"))
-    abstracted = sum(1 for d in pack_directions for p in d["supporting_papers"]) - full
+    pack_directions = pack.get("directions") or []
+    projected = {direction_machine_id(d): direction_papers(pack, d)
+                 for d in pack_directions}
+    full = sum(1 for papers in projected.values() for p in papers
+               if p.get("analysis_file") or p.get("pdf_available"))
+    abstracted = sum(len(papers) for papers in projected.values()) - full
     lines = [
         f"# 套磁候选分析 — {professor}",
         "",
@@ -3479,7 +3923,7 @@ def render_analysis_md(ctx: Stage2Context, pack_directions: list,
         verdict = credibility.get("verdict") or "未判定"
         mainline = credibility.get("mainline") or "未判定"
         authorship_line = credibility.get("authorship_line") or "insufficient"
-        years = [p.get("year") for p in d["supporting_papers"] if p.get("year")]
+        years = [p.get("year") for p in projected[direction_machine_id(d)] if p.get("year")]
         span = f"{min(years)}–{max(years)}" if years else "年份不明"
         lines.append(f"## 方向 {index}：{d['name_ja']}（{d.get('name_zh') or ''}）")
         lines.append("")
@@ -3502,13 +3946,13 @@ def render_analysis_md(ctx: Stage2Context, pack_directions: list,
             lines.append("")
         lines.append("### 方向定位")
         lines.append("")
-        lines.append(f"<可信度一句：{verdict} ｜ {mainline} ｜ 相关 {len(d['supporting_papers'])} 篇（{span}）。>")
+        lines.append(f"<可信度一句：{verdict} ｜ {mainline} ｜ 相关 {len(projected[direction_machine_id(d)])} 篇（{span}）。>")
         lines.append("")
         lines.append(f"<署名线：{authorship_line}。>")
         lines.append("")
         seen = {}
         narrative = d.get("narrative") or {}
-        paper_lookup = {p["item_key"]: p for p in d["supporting_papers"]}
+        paper_lookup = {p["item_key"]: p for p in projected[direction_machine_id(d)]}
         gap_no = {g["gap_id"]: g["no"] for g in d.get("gap_shortlist", [])}
         for block in narrative.get("positioning", []):
             text = block["text"]
@@ -3535,7 +3979,7 @@ def render_analysis_md(ctx: Stage2Context, pack_directions: list,
         lines.append("")
         lines.append("| 论文 | 年份 | 署名 | 分析 | 来源 |")
         lines.append("|---|---|---|---|---|")
-        for p in d["supporting_papers"]:
+        for p in projected[direction_machine_id(d)]:
             analysis_cell = "—"
             if p.get("analysis_file"):
                 analysis_cell = f"[分析]({rel_path(Path(p['analysis_file']), ctx.professor_dir)})"
@@ -3727,11 +4171,11 @@ def cmd_stage2_finalize(args) -> None:
         evidence = _resolve_evidence(ctx)
         stale = []
         for plan in ctx.direction_plans:
-            entry = resolved_directions.get(plan["ckey"])
+            entry = resolved_directions.get(plan["did"])
             if entry is None:
-                stale.append({"direction": plan["ckey"], "problem": "missing_from_resolved_file"})
+                stale.append({"direction": plan["did"], "problem": "missing_from_resolved_file"})
             elif entry.get("input_fingerprint") != _current_resolve_fingerprint(ctx, plan, evidence):
-                stale.append({"direction": plan["ckey"], "problem": "input_fingerprint_mismatch"})
+                stale.append({"direction": plan["did"], "problem": "input_fingerprint_mismatch"})
         if stale:
             fail("resolved_directions_stale",
                  "resolved directions do not match current facts; re-run stage2-resolve",
@@ -3743,8 +4187,8 @@ def cmd_stage2_finalize(args) -> None:
         # NEVER be applied — the choice cannot be bypassed by passing the
         # sidecar file directly.
         not_accepted = sorted(
-            plan["ckey"] for plan in ctx.direction_plans
-            if (resolved_directions.get(plan["ckey"]) or {}).get("acceptance") != "accepted")
+            plan["did"] for plan in ctx.direction_plans
+            if (resolved_directions.get(plan["did"]) or {}).get("acceptance") != "accepted")
         if not_accepted:
             fail("resolved_directions_not_accepted",
                  "resolved directions still contain unaccepted proposals; the user must choose "
@@ -3769,26 +4213,62 @@ def cmd_stage2_finalize(args) -> None:
     for plan in ctx.direction_plans:
         if plan["reuse"]:
             continue
-        needed_keys.append(plan["ckey"])
+        needed_keys.append(plan["did"])
         judge, hits = ctx.freshness_job_items(plan)
-        required_freshness[plan["ckey"]] = judge
+        required_freshness[plan["did"]] = judge
     statuses_by_direction = validate_freshness_results(ctx, results_dir, required_freshness)
     narratives = validate_narrative(ctx, results_dir, needed_keys) if needed_keys else {}
-    old_directions = {e.get("collection_key"): e for e in (ctx.pack or {}).get("directions", [])}
+    old_directions = {direction_machine_id(e): e
+                      for e in (ctx.pack or {}).get("directions", [])}
     old_render = ((ctx.pack or {}).get("cache") or {}).get("render", {})
     pack_directions = []
+    fresh_papers: dict = {}
     for plan in ctx.direction_plans:
         if plan["reuse"]:
-            pack_directions.append(old_directions[plan["ckey"]])
+            reused_entry = old_directions[plan["did"]]
+            # collection_key is projection metadata: refresh it from the facts
+            # so a projection-only rename carries without touching fingerprints.
+            reused_entry["collection_key"] = plan["direction"].get("collection_key")
+            pack_directions.append(reused_entry)
         else:
-            pack_directions.append(build_direction_pack(
-                ctx, plan, statuses_by_direction.get(plan["ckey"], {}),
-                narratives[plan["ckey"]]))
+            built, papers = build_direction_pack(
+                ctx, plan, statuses_by_direction.get(plan["did"], {}),
+                narratives[plan["did"]])
+            pack_directions.append(built)
+            fresh_papers.update(papers)
+
+    def _canonical_record(key: str) -> dict | None:
+        """Canonical paper record from the freshest available machine source.
+
+        Order: freshly built records (current facts) → the normalized old
+        pack's canonical map → library + facts. Used when authoritative
+        membership admits a paper the relevance gate never placed in the
+        direction's supporting set (e.g. a full-text rescue that only lives in
+        the candidate union). The resolve finalizer already validated
+        facts_state == valid for every membership-changing key, so this never
+        fabricates evidence.
+        """
+        record = fresh_papers.get(key) or pack_paper_index(ctx.pack or {}).get(key)
+        if isinstance(record, dict):
+            return dict(record)
+        paper = ctx.papers.get(key)
+        if not paper:
+            return None
+        facts_record, facts_state, facts_error = ctx.facts_for(key)
+        return {
+            "item_key": key, "title": paper.get("title"), "year": paper.get("year"),
+            "authorship": paper.get("authorship"),
+            "analysis_file": paper.get("analysis_file"),
+            "pdf_available": bool(paper.get("has_pdf")),
+            "facts_state": facts_state, "facts_error": facts_error,
+            "paper_facts": facts_record,
+        }
 
     # Apply resolved directions to pack_directions. Every direction (including
     # unchanged) gets an explicit resolved_direction subfield so downstream
     # stages consume the authoritative resolved ID and never implicitly fall
     # back to the provisional collection_key.
+    resolved_papers: dict = {}
     if resolved_directions:
         # Keep the provisional fingerprints around: the public
         # `input_fingerprint` is recomputed below to the resolved-aware
@@ -3799,9 +4279,13 @@ def cmd_stage2_finalize(args) -> None:
         # `provisional_input_fingerprint` when present — overwriting it with
         # the downstream hash would silently break the next Stage-2 reuse.
         provisional_fingerprints = {
-            d["collection_key"]: d.get("provisional_input_fingerprint") or d.get("input_fingerprint")
+            direction_machine_id(d): d.get("provisional_input_fingerprint")
+            or d.get("input_fingerprint")
             for d in pack_directions}
-        reused_ckeys = {p["ckey"] for p in ctx.direction_plans if p["reuse"]}
+        reused_ckeys = {p["did"] for p in ctx.direction_plans if p["reuse"]}
+        # Papers admitted by the resolution (additions / splits / merges) may
+        # reference records outside the freshly built set; they join the same
+        # professor-level canonical map instead of per-direction copies.
 
         # Carry forward accepted derived directions (split children created by
         # a previous finalize). They have no provisional plan entry because the
@@ -3811,33 +4295,34 @@ def cmd_stage2_finalize(args) -> None:
         # A child is kept only while the current resolution still declares the
         # same split; otherwise the new resolution is authoritative and the
         # stale child disappears.
-        plan_ckeys = {p["ckey"] for p in ctx.direction_plans}
+        plan_ckeys = {p["did"] for p in ctx.direction_plans}
         for old_entry in (ctx.pack or {}).get("directions", []):
-            child_key = old_entry.get("collection_key") if isinstance(old_entry, dict) else None
-            if not child_key or child_key in plan_ckeys:
+            child_id = direction_machine_id(old_entry)
+            if child_id in plan_ckeys:
                 continue
-            if any(d.get("collection_key") == child_key for d in pack_directions):
+            if any(direction_machine_id(d) == child_id for d in pack_directions):
                 continue
             source_rd = resolved_directions.get(old_entry.get("resolved_direction", {})
                                                 .get("provisional_direction_id")) or {}
             if source_rd.get("resolution_type") != "split_from" \
-                    or source_rd.get("split_target") != child_key:
+                    or source_rd.get("split_target") != child_id:
                 continue
             pack_directions.append(old_entry)
-            provisional_fingerprints[child_key] = (
+            provisional_fingerprints[child_id] = (
                 old_entry.get("provisional_input_fingerprint")
                 or old_entry.get("input_fingerprint"))
 
-        def _find_pack_direction(ckey: str):
+        def _find_pack_direction(did: str):
             for d in pack_directions:
-                if d.get("collection_key") == ckey:
+                if direction_machine_id(d) == did:
                     return d
             return None
 
         def _stamp_subfield(d: dict, rd: dict) -> None:
+            did = direction_machine_id(d)
             d["resolved_direction"] = {
-                "resolved_direction_id": rd.get("resolved_direction_id") or d.get("collection_key"),
-                "provisional_direction_id": rd.get("provisional_direction_id") or d.get("collection_key"),
+                "resolved_direction_id": rd.get("resolved_direction_id") or did,
+                "provisional_direction_id": rd.get("provisional_direction_id") or did,
                 "resolution_type": rd.get("resolution_type") or "unchanged",
                 "input_fingerprint": rd.get("input_fingerprint"),
                 "papers_to_add": list(rd.get("papers_to_add") or []),
@@ -3847,52 +4332,28 @@ def cmd_stage2_finalize(args) -> None:
                 "merge_target": rd.get("merge_target"),
             }
 
-        def _resolved_paper_entry(key: str, justification: str) -> dict | None:
-            """Build a supporting-papers entry straight from library + facts.
-
-            Used when authoritative membership admits a paper the relevance
-            gate never placed in the direction's supporting_papers (e.g. a
-            full-text rescue that only lives in the candidate union). The
-            resolve finalizer already validated facts_state == valid for every
-            membership-changing key, so this never fabricates evidence.
-            """
-            paper = ctx.papers.get(key)
-            if not paper:
-                return None
-            facts_record, facts_state, facts_error = ctx.facts_for(key)
-            return {
-                "item_key": key,
-                "title": paper.get("title"),
-                "year": paper.get("year"),
-                "authorship": paper.get("authorship"),
-                "named_by_user": False,
-                "has_analysis": bool(paper.get("analysis_file")),
-                "analysis_file": paper.get("analysis_file"),
-                "pdf_available": bool(paper.get("has_pdf")),
-                "facts_state": facts_state,
-                "facts_error": facts_error,
-                "paper_facts": facts_record,
-                "resolved_addition": True,
-                "addition_justification": justification,
-            }
+        def _membership_keys(d: dict) -> list:
+            return d.setdefault("supporting_item_keys", [])
 
         def _apply_membership(d: dict, rd: dict) -> None:
             remove_set = set(rd.get("papers_to_remove") or [])
             if remove_set:
-                d["supporting_papers"] = [
-                    p for p in d.get("supporting_papers", [])
-                    if p.get("item_key") not in remove_set]
+                d["supporting_item_keys"] = [
+                    key for key in _membership_keys(d) if key not in remove_set]
             for add_key in rd.get("papers_to_add") or []:
-                if any(p.get("item_key") == add_key for p in d.get("supporting_papers", [])):
+                if add_key in _membership_keys(d):
                     continue
-                entry = _resolved_paper_entry(
-                    add_key, (rd.get("paper_justifications") or {}).get(add_key, ""))
-                if entry is not None:
-                    d.setdefault("supporting_papers", []).append(entry)
+                record = _canonical_record(add_key)
+                if record is not None:
+                    resolved_papers[add_key] = record
+                    _membership_keys(d).append(add_key)
+                    added = set(d.get("resolved_addition_keys") or [])
+                    added.add(add_key)
+                    d["resolved_addition_keys"] = sorted(added)
 
         # Pass 1: stamp the subfield everywhere + apply rename/refined edits.
         for d in pack_directions:
-            rd = resolved_directions.get(d["collection_key"])
+            rd = resolved_directions.get(direction_machine_id(d))
             if rd is None:
                 continue  # carried-forward split child keeps its own subfield
             _stamp_subfield(d, rd)
@@ -3906,16 +4367,16 @@ def cmd_stage2_finalize(args) -> None:
         # Pass 2: split_from creates a REAL new authoritative direction entry;
         # the source keeps its identity minus the split-out papers/gaps.
         for d in list(pack_directions):
-            ckey = d["collection_key"]
-            rd = resolved_directions.get(ckey)
+            did = direction_machine_id(d)
+            rd = resolved_directions.get(did)
             if rd is None or rd.get("resolution_type") != "split_from":
                 continue
             split_id = rd.get("split_target")
             split_set = set(rd.get("papers_to_add") or [])
             # Prune the source first: idempotent on an already-pruned reuse entry.
-            moved_papers = [p for p in d.get("supporting_papers", []) if p.get("item_key") in split_set]
-            d["supporting_papers"] = [p for p in d.get("supporting_papers", [])
-                                      if p.get("item_key") not in split_set]
+            moved_keys = [key for key in _membership_keys(d) if key in split_set]
+            d["supporting_item_keys"] = [
+                key for key in _membership_keys(d) if key not in split_set]
             moved_shortlist = [g for g in d.get("gap_shortlist", []) if g.get("item_key") in split_set]
             kept_shortlist = [g for g in d.get("gap_shortlist", []) if g.get("item_key") not in split_set]
             d["gap_shortlist"] = [dict(g, no=index + 1) for index, g in enumerate(kept_shortlist)]
@@ -3927,10 +4388,10 @@ def cmd_stage2_finalize(args) -> None:
                                             if b.get("item_key") not in split_set]
             split_named = [k for k in d.get("named_keys", []) if k in split_set]
             d["named_keys"] = [k for k in d.get("named_keys", []) if k not in split_set]
-            provisional_fingerprints[split_id] = provisional_fingerprints.get(ckey) \
+            provisional_fingerprints[split_id] = provisional_fingerprints.get(did) \
                 or d.get("input_fingerprint")
             existing_child = _find_pack_direction(split_id)
-            if existing_child is not None and ckey in reused_ckeys:
+            if existing_child is not None and did in reused_ckeys:
                 # The child was materialized by an earlier finalize and the
                 # source hit Stage-2 reuse: keep the accepted child membership
                 # exactly as-is. Rebuilding it from the reuse (already-pruned)
@@ -3942,16 +4403,16 @@ def cmd_stage2_finalize(args) -> None:
                 # built source so papers/gap references stay current.
                 pack_directions.remove(existing_child)
             # A full-text rescue can put a candidate-union paper into the split
-            # even though the abstract relevance gate never put it into the
-            # source's supporting_papers; materialize those from the library.
-            present = {p.get("item_key") for p in moved_papers}
-            for key in sorted(split_set - present):
-                entry = _resolved_paper_entry(
-                    key, (rd.get("paper_justifications") or {}).get(key, ""))
-                if entry is not None:
-                    moved_papers.append(entry)
+            # even though the abstract relevance gate never placed it in the
+            # source's supporting set; materialize those from the library.
+            for key in sorted(set(split_set) - set(moved_keys)):
+                record = _canonical_record(key)
+                if record is not None:
+                    resolved_papers[key] = record
+                    moved_keys.append(key)
             pack_directions.append({
-                "collection_key": split_id,
+                "direction_id": split_id,
+                "collection_key": None,
                 "name_ja": rd.get("name_ja") or d.get("name_ja"),
                 "name_zh": rd.get("name_zh") or "",
                 "status": "active",
@@ -3960,7 +4421,8 @@ def cmd_stage2_finalize(args) -> None:
                 "credibility": d.get("credibility") or {},
                 "red_lines": [r for r in d.get("red_lines", []) if r.get("scope") != "global"],
                 "named_keys": split_named,
-                "supporting_papers": moved_papers,
+                "supporting_item_keys": moved_keys,
+                "resolved_addition_keys": sorted(split_set),
                 "gap_pool_count": len(moved_shortlist) + len(moved_excluded),
                 "gap_shortlist": [dict(g, no=index + 1) for index, g in enumerate(moved_shortlist)],
                 "gaps_excluded": moved_excluded,
@@ -3970,7 +4432,7 @@ def cmd_stage2_finalize(args) -> None:
                 "narrative": {},
                 "resolved_direction": {
                     "resolved_direction_id": split_id,
-                    "provisional_direction_id": ckey,
+                    "provisional_direction_id": did,
                     "resolution_type": "split_from",
                     "input_fingerprint": rd.get("input_fingerprint"),
                     "papers_to_add": sorted(split_set),
@@ -3986,8 +4448,8 @@ def cmd_stage2_finalize(args) -> None:
         # evidence survive; the pack-root index keeps the source→target mapping.
         merged_sources = []
         for d in list(pack_directions):
-            ckey = d["collection_key"]
-            rd = resolved_directions.get(ckey)
+            did = direction_machine_id(d)
+            rd = resolved_directions.get(did)
             if rd is None:
                 continue  # split target created in pass 2; not a merge source
             if rd.get("resolution_type") != "merged_into":
@@ -3996,14 +4458,16 @@ def cmd_stage2_finalize(args) -> None:
             if target is None:
                 fail("invalid_resolved_directions",
                      f"merge target {rd.get('merge_target')} not present in pack")
-            for p in d.get("supporting_papers", []):
-                key = p.get("item_key")
-                if any(q.get("item_key") == key for q in target.get("supporting_papers", [])):
+            for key in list(_membership_keys(d)):
+                if key in _membership_keys(target):
                     continue
-                merged_paper = dict(p)
-                merged_paper["resolved_addition"] = True
-                merged_paper["addition_justification"] = f"merged_from {ckey}"
-                target.setdefault("supporting_papers", []).append(merged_paper)
+                record = _canonical_record(key)
+                if record is not None:
+                    resolved_papers[key] = record
+                _membership_keys(target).append(key)
+                added = set(target.get("resolved_addition_keys") or [])
+                added.add(key)
+                target["resolved_addition_keys"] = sorted(added)
             offset = len(target.get("gap_shortlist", []))
             for index, g in enumerate(d.get("gap_shortlist", [])):
                 if any(q.get("gap_id") == g.get("gap_id") for q in target.get("gap_shortlist", [])):
@@ -4017,53 +4481,79 @@ def cmd_stage2_finalize(args) -> None:
                     target.setdefault("completed_gap_blacklist", []).append(dict(b))
             target_rd = target.get("resolved_direction") or {}
             merged_from = list(target_rd.get("merged_from") or [])
-            merged_from.append(ckey)
+            merged_from.append(did)
             target_rd["merged_from"] = merged_from
             target["resolved_direction"] = target_rd
-            merged_sources.append(ckey)
+            merged_sources.append(did)
         if merged_sources:
             dropped = set(merged_sources)
-            pack_directions = [d for d in pack_directions if d.get("collection_key") not in dropped]
+            pack_directions = [d for d in pack_directions
+                               if direction_machine_id(d) not in dropped]
 
         # Recompute the downstream `input_fingerprint` AFTER the resolution has
         # been materialized. Stage 3's reuse gate compares this field, so it
-        # must reflect the authoritative identity (resolved ID, final names)
-        # and the FINAL membership/gap set — otherwise a refined/split/merged
-        # direction would let Stage 3 silently reuse candidates that reference
-        # papers or gaps the resolution just moved or removed. Split entries
-        # get an independent fingerprint computed from their own final content.
+        # must reflect the authoritative identity (resolved ID) and the FINAL
+        # membership/gap set — otherwise a refined/split/merged direction would
+        # let Stage 3 silently reuse candidates that reference papers or gaps
+        # the resolution just moved or removed. Split entries get an
+        # independent fingerprint computed from their own final content.
+        # Issue #8: display names are projection metadata and stay OUT of the
+        # hash — a rename re-renders deterministically without model work.
         for d in pack_directions:
             rd = d.get("resolved_direction") or {}
+            did = direction_machine_id(d)
             d["provisional_input_fingerprint"] = provisional_fingerprints.get(
-                d.get("collection_key"), d.get("input_fingerprint"))
+                did, d.get("input_fingerprint"))
             d["input_fingerprint"] = sha256_obj({
-                "downstream_version": 2,
+                "downstream_version": 3,
+                "identity_version": DIRECTION_IDENTITY_VERSION,
+                "direction_id": did,
                 "provisional_fingerprint": d["provisional_input_fingerprint"],
                 "resolved_identity": {
-                    "resolved_direction_id": rd.get("resolved_direction_id") or d.get("collection_key"),
-                    "provisional_direction_id": rd.get("provisional_direction_id") or d.get("collection_key"),
+                    "resolved_direction_id": rd.get("resolved_direction_id") or did,
+                    "provisional_direction_id": rd.get("provisional_direction_id") or did,
                     "resolution_type": rd.get("resolution_type") or "unchanged",
-                    "name_ja": d.get("name_ja"),
-                    "name_zh": d.get("name_zh"),
                     "merged_from": rd.get("merged_from") or [],
                 },
-                "final_supporting_keys": sorted(
-                    p.get("item_key") for p in d.get("supporting_papers", []) if p.get("item_key")),
+                "final_supporting_keys": sorted(set(d.get("supporting_item_keys") or [])),
                 "final_gap_ids": sorted(
                     g.get("gap_id") for g in d.get("gap_shortlist", []) if g.get("gap_id")),
             })
 
-    fingerprints = {d["collection_key"]: d["input_fingerprint"] for d in pack_directions}
+    fingerprints = {direction_machine_id(d): d["input_fingerprint"] for d in pack_directions}
     state_fingerprint = sha256_obj({"professor": ctx.professor, "directions": fingerprints})
+    # Professor-level canonical papers (issue #8 §3.3): one record per item_key,
+    # resolved from fresh builds > resolution-admitted records > old snapshots.
+    old_papers = pack_paper_index(ctx.pack or {})
+    papers_map: dict = {}
+    for d in pack_directions:
+        for key in d.get("supporting_item_keys") or []:
+            if key in papers_map:
+                continue
+            record = fresh_papers.get(key) or resolved_papers.get(key) \
+                or old_papers.get(key)
+            if record is None:
+                record = _canonical_record(key)
+            if isinstance(record, dict):
+                papers_map[key] = record
     cache_entries = dict(ctx.cache)
     for ckey, statuses in statuses_by_direction.items():
         for gap_id, record in statuses.items():
             if isinstance(record, dict) and not record.get("cache_hit"):
                 cache_entries[gap_id] = {k: v for k, v in record.items() if k != "cache_hit"}
+    # A display-only rename must re-render the analysis Markdown with the new
+    # names WITHOUT triggering Stage-2 model work (the fingerprint excludes
+    # display names on purpose).
+    display_changed = any(
+        (old := old_directions.get(direction_machine_id(d))) is not None
+        and (old.get("name_ja") != d.get("name_ja")
+             or old.get("name_zh") != d.get("name_zh"))
+        for d in pack_directions)
     md_path = ctx.professor_dir / ANALYSIS_MD
     md_result = None
-    if needed_keys or not ctx.pack:
-        body = render_analysis_md(ctx, pack_directions, state_fingerprint)
+    if needed_keys or not ctx.pack or display_changed:
+        body = render_analysis_md(ctx, {"papers": papers_map, "directions": pack_directions},
+                                  state_fingerprint)
         md_result = managed_write(md_path, body, state_fingerprint,
                                   old_render.get(ANALYSIS_MD, {}).get("sha256"), decision)
         if md_result.get("needs_decision"):
@@ -4074,8 +4564,11 @@ def cmd_stage2_finalize(args) -> None:
                       options=["overwrite（覆盖为状态版本）", "keep_manual（保留手改，不作为流程输入）",
                                "promote（把要保留的内容经 selection.note 或 profile 写进状态后再渲染）"])
     pack = {
-        "schema": SCHEMA, "managed_by": MANAGED_BY, "generated_at": now_utc(),
+        "schema": INPUT_PACK_SCHEMA, "kind": INPUT_PACK_KIND,
+        "identity_version": DIRECTION_IDENTITY_VERSION,
+        "managed_by": MANAGED_BY, "generated_at": now_utc(),
         "professor": ctx.professor, "professor_dir": str(ctx.professor_dir),
+        "papers": papers_map,
         "directions": pack_directions,
         "cache": {"render": {ANALYSIS_MD: {"sha256": (md_result or {}).get("sha256") or old_render.get(ANALYSIS_MD, {}).get("sha256")}}},
     }
@@ -4118,12 +4611,13 @@ def cmd_stage2_finalize(args) -> None:
         "professor": ctx.professor,
         "pack_path": str(ctx.pack_path),
         "analysis_md": str(md_path),
-        "directions": [{"collection_key": d["collection_key"],
+        "directions": [{"direction_id": direction_machine_id(d),
+                        "collection_key": d.get("collection_key"),
                         "shortlist": len(d.get("gap_shortlist", [])),
                         "blacklist": len(d.get("completed_gap_blacklist", [])),
                         "excluded": len(d.get("gaps_excluded", [])),
-                        "resolved": bool(resolved_directions and d["collection_key"] in resolved_directions
-                                         and resolved_directions[d["collection_key"]].get("resolution_type") != "unchanged")}
+                        "resolved": bool(resolved_directions and direction_machine_id(d) in resolved_directions
+                                         and resolved_directions[direction_machine_id(d)].get("resolution_type") != "unchanged")}
                        for d in pack_directions],
         "freshness_judged": judged, "freshness_cache_total": len(cache_entries),
         "md_sha256": (md_result or {}).get("sha256"),
@@ -4149,29 +4643,24 @@ def load_profile_text(profile_path: str | None, limit: int = PROFILE_INPUT_CHARS
     return truncate(path.read_text(encoding="utf-8"), limit)
 
 
-def _stage3_direction_id(direction: dict) -> str:
-    """Issue #8: Stage 3 groups ideas per authoritative resolved direction.
+def _direction_slices(pack: dict, direction: dict) -> tuple[dict, dict, dict]:
+    """Exact-join indexes for one pack direction slice (issue #8 §5).
 
-    The pack direction's stamped `resolved_direction` subfield is the single
-    downstream identity (issue #7); legacy packs without the subfield keep the
-    provisional collection_key as their direction identity.
+    gap/blacklist indexes are keyed by the exact provenance triple
+    (direction_id, item_key, gap_id): a valid (item_key, gap_id) that exists in
+    ANOTHER direction can never join through the wrong direction_id. The paper
+    index is keyed by item_key over the direction's canonical universe
+    (supporting_item_keys ∪ gap item keys) resolved from the professor-level
+    papers map.
     """
-    rd = direction.get("resolved_direction")
-    if isinstance(rd, dict) and isinstance(rd.get("resolved_direction_id"), str) \
-            and rd["resolved_direction_id"].strip():
-        return rd["resolved_direction_id"]
-    return direction.get("collection_key")
-
-
-def _direction_slices(direction: dict) -> tuple[dict, dict, dict]:
-    """Exact-join indexes for one pack direction slice: gaps, blacklist, papers."""
+    did = direction_machine_id(direction)
     gap_index = {}
     for gap in direction.get("gap_shortlist", []) + [
             dict(g, status=g.get("status")) for g in direction.get("gaps_excluded", [])]:
-        gap_index[(gap["item_key"], gap["gap_id"])] = gap
-    blacklist = {(b["item_key"], b["gap_id"]): b
+        gap_index[(did, gap["item_key"], gap["gap_id"])] = gap
+    blacklist = {(did, b["item_key"], b["gap_id"]): b
                  for b in direction.get("completed_gap_blacklist", [])}
-    paper_index = {p["item_key"]: p for p in direction.get("supporting_papers", [])}
+    paper_index = {p["item_key"]: p for p in direction_papers(pack, direction)}
     for gap in direction.get("gap_shortlist", []) + direction.get("gaps_excluded", []):
         paper_index.setdefault(gap["item_key"], {
             "item_key": gap["item_key"], "title": gap.get("paper_title"),
@@ -4179,43 +4668,122 @@ def _direction_slices(direction: dict) -> tuple[dict, dict, dict]:
     return gap_index, blacklist, paper_index
 
 
-def _owned_cross_entries(state: dict | None, owner_ckey: str) -> list[dict]:
-    return [entry for entry in (state or {}).get("cross_direction") or []
-            if isinstance(entry, dict) and entry.get("owner_collection_key") == owner_ckey]
-
-
-def _cross_entry_fresh(entry: dict, pack_fps: dict) -> bool:
-    """A cross-direction idea survives only while EVERY participating direction's
-    pack fingerprint is unchanged; unknown participants never count as fresh."""
-    recorded = entry.get("direction_fingerprints")
+def _cross_group_fresh(group: dict, pack_fps: dict,
+                       current_profile_fp: str | None) -> bool:
+    """A cross-direction group survives only while EVERY participant's pack
+    fingerprint and the profile are unchanged; unknown participants never
+    count as fresh."""
+    recorded = group.get("direction_fingerprints")
     if not isinstance(recorded, dict) or not recorded:
         return False
-    return all(pack_fps.get(pid) == fingerprint for pid, fingerprint in recorded.items())
+    if group.get("profile_fingerprint") != current_profile_fp:
+        return False
+    return all(pack_fps.get(pid) == fingerprint
+               for pid, fingerprint in recorded.items())
+
+
+def _parse_direction_id_list(raw: str | None, param: str) -> list[str]:
+    values = [v.strip() for v in (raw or "").split(",") if v.strip()]
+    seen, out = set(), []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
+def _parse_cross_groups(raw: Any, pack_directions: list) -> list[dict]:
+    """Validate + normalize explicit cross_direction_groups input.
+
+    Default (absent/empty) means NO cross work at all. Each group needs >=2
+    distinct existing direction IDs; IDs are sorted/deduped for stable
+    identity and duplicate groups are collapsed deterministically.
+    """
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            fail("invalid_params", f"cross_direction_groups must be JSON: {exc}")
+    if not isinstance(raw, list):
+        fail("invalid_params", "cross_direction_groups must be a list of ID lists")
+    known = {direction_machine_id(d) for d in pack_directions}
+    groups: dict[tuple, list[str]] = {}
+    for index, group in enumerate(raw):
+        if not isinstance(group, list) or any(not isinstance(x, str) or not x.strip()
+                                              for x in group):
+            fail("invalid_params",
+                 f"cross_direction_groups[{index}] must be a list of direction ID strings")
+        ids = sorted({x.strip() for x in group})
+        if len(ids) < 2:
+            fail("invalid_params",
+                 f"cross_direction_groups[{index}] needs >=2 distinct direction IDs")
+        unknown = [x for x in ids if x not in known]
+        if unknown:
+            fail("invalid_params",
+                 f"cross_direction_groups[{index}] cites unknown direction IDs: {unknown}")
+        groups[tuple(ids)] = ids
+    return [{"group_id": cross_group_id(ids), "direction_ids": list(ids)}
+            for ids in groups.values()]
 
 
 def cmd_stage3_plan(args) -> None:
     professor_dir = Path(args.professor_dir)
     program_root = Path(args.program_root) if args.program_root else professor_dir.parent.parent
     require_professor_dir_under_program(professor_dir, program_root)
-    pack_path = professor_dir / INPUT_PACK
-    pack, error = read_json_file(pack_path)
-    if error:
+    pack, pack_error = load_input_pack(professor_dir)
+    if pack is None:
         soft_exit("needs_refresh", "missing_input_pack",
-                  pack_path=str(pack_path),
+                  pack_path=str(professor_dir / INPUT_PACK),
                   message="缺 套磁候选输入.json：先跑阶段 2（professor-contact-analyzer）生成输入包；不回读任何 Markdown。")
     refresh_scope = args.refresh_scope or "flagged"
     if refresh_scope not in REFRESH_SCOPES:
         fail("invalid_params", f"refresh_scope must be one of {REFRESH_SCOPES}")
-    collection_key = getattr(args, "collection_key", None)
     pack_directions = pack.get("directions") or []
-    if collection_key and not any(d.get("collection_key") == collection_key
-                                  for d in pack_directions):
-        fail("invalid_params", f"collection_key not found in input pack: {collection_key}")
-    state, _ = read_json_file(professor_dir / CANDIDATE_STATE)
-    state = state if isinstance(state, dict) else None
+    by_did = {direction_machine_id(d): d for d in pack_directions}
+    by_ckey = {}
+    for d in pack_directions:
+        ckey = d.get("collection_key")
+        if isinstance(ckey, str) and ckey.strip() and ckey not in by_ckey:
+            by_ckey[ckey] = d
+        elif isinstance(ckey, str) and ckey.strip():
+            by_ckey[ckey] = None  # ambiguous projection name
+    direction_id_arg = getattr(args, "direction_id", None)
+    collection_key_arg = getattr(args, "collection_key", None)
+    if collection_key_arg and not direction_id_arg:
+        # Deprecated v1 compatibility path: resolve through the pack's exact
+        # machine mapping; never treat the projection key as identity itself.
+        resolved = by_ckey.get(collection_key_arg)
+        if resolved is None:
+            fail("invalid_params",
+                 f"collection_key not found (or ambiguous) in input pack: {collection_key_arg}")
+        direction_id_arg = direction_machine_id(resolved)
+    if direction_id_arg and direction_id_arg not in by_did:
+        fail("invalid_params", f"direction_id not found in input pack: {direction_id_arg}")
+    if collection_key_arg and direction_id_arg:
+        resolved = by_ckey.get(collection_key_arg)
+        if resolved is None or direction_machine_id(resolved) != direction_id_arg:
+            fail("invalid_params",
+                 f"collection_key {collection_key_arg!r} and direction_id {direction_id_arg!r} "
+                 "resolve to different directions")
+    skip_ids = _parse_direction_id_list(getattr(args, "skip_direction_ids", None),
+                                        "skip_direction_ids")
+    unknown_skip = [d for d in skip_ids if d not in by_did]
+    if unknown_skip:
+        fail("invalid_params", f"skip_direction_ids outside input pack: {unknown_skip}")
+    cross_groups = _parse_cross_groups(getattr(args, "cross_direction_groups", None),
+                                       pack_directions)
+    state, state_error = load_candidate_state(professor_dir, pack)
+    if state_error:
+        soft_exit("needs_refresh", state_error,
+                  message="候选状态无法按机器身份精确迁移：重跑阶段 3（必要时连同阶段 2）重建 v2 状态。"
+                          "未修改任何文件。")
     current_profile_fp = profile_fingerprint(args.profile)
     old_profile_fp = (state or {}).get("profile_fingerprint")
     profile_changed = bool(state) and current_profile_fp != old_profile_fp
+    contract_changed = bool(state) and \
+        (state or {}).get("generator_contract_version") != STAGE3_GENERATOR_CONTRACT_VERSION
     selected_keys = None
     if refresh_scope == "selected":
         selection_path = args.selection or (Path(args.program_root) / "教授研究" / SELECTION_FILE)
@@ -4224,57 +4792,56 @@ def cmd_stage3_plan(args) -> None:
             fail("invalid_params", f"selection file unreadable: {selection_path}")
         selected_keys = set()
         for sel in selection_data.get("selections", []):
-            if sel.get("professor") == pack.get("professor"):
-                selected_keys.add(sel.get("collection_key"))
-    jobs, reuse = [], []
-    input_fps = (state or {}).get("input_fingerprints", {})
-    pack_fps = {_stage3_direction_id(d): d.get("input_fingerprint")
-                for d in pack_directions}
-    scoped_keys = set()
+            if sel.get("professor") != pack.get("professor"):
+                continue
+            sel_did = sel.get("direction_id")
+            if not sel_did:
+                legacy = by_ckey.get(sel.get("collection_key"))
+                sel_did = direction_machine_id(legacy) if legacy is not None else None
+            if sel_did:
+                selected_keys.add(sel_did)
+    scoped_dids = set()
     for direction in pack_directions:
-        scoped_ckey = direction.get("collection_key")
-        if collection_key and scoped_ckey != collection_key:
+        did = direction_machine_id(direction)
+        if direction_id_arg and did != direction_id_arg:
             continue
         if refresh_scope == "flagged" and direction.get("status") != "active":
             continue
-        if refresh_scope == "selected" and scoped_ckey not in (selected_keys or set()):
+        if refresh_scope == "selected" and did not in (selected_keys or set()):
             continue
-        scoped_keys.add(scoped_ckey)
-    # Cross freshness is evaluated against the WHOLE state regardless of this
-    # run's scope: an out-of-scope owner's stale cross idea is reported here and
-    # deterministically dropped by stage3-finalize — never silently kept.
-    pack_ckeyes = {d.get("collection_key") for d in pack_directions}
-    stale_cross_direction = [
-        {"id": entry.get("id"), "owner_collection_key": entry.get("owner_collection_key"),
-         "reason": "participant_changed_out_of_scope"}
-        for entry in (state or {}).get("cross_direction") or []
-        if isinstance(entry, dict)
-        and entry.get("owner_collection_key") in pack_ckeyes
-        and entry.get("owner_collection_key") not in scoped_keys
-        and not _cross_entry_fresh(entry, pack_fps)]
-    known_directions = [{"direction_id": _stage3_direction_id(d),
-                         "collection_key": d.get("collection_key"),
-                         "name_ja": d.get("name_ja"), "name_zh": d.get("name_zh")}
-                        for d in pack_directions]
+        scoped_dids.add(did)
+    pack_fps = {direction_machine_id(d): d.get("input_fingerprint")
+                for d in pack_directions}
+    input_fps = (state or {}).get("input_fingerprints", {})
+    state_directions = {d.get("direction_id"): d
+                        for d in (state or {}).get("directions", [])
+                        if isinstance(d, dict)}
+    state_groups = {(g.get("group_id") if isinstance(g, dict) else None): g
+                    for g in (state or {}).get("cross_direction_groups", [])
+                    if isinstance(g, dict)}
+
+    def _direction_reusable(did: str) -> bool:
+        if contract_changed:
+            return False
+        old = state_directions.get(did)
+        return bool(
+            input_fps.get(did) == pack_fps.get(did)
+            and not profile_changed
+            and old
+            and old.get("stage3_status") == "ready"
+            and old.get("candidates"))
+
+    jobs, reuse, skipped = [], [], []
     for direction in pack_directions:
-        ckey = direction.get("collection_key")
-        direction_id = _stage3_direction_id(direction)
-        if ckey not in scoped_keys:
+        did = direction_machine_id(direction)
+        if did not in scoped_dids:
             continue
-        fp_match = input_fps.get(ckey) == direction.get("input_fingerprint")
-        if fp_match and not profile_changed:
-            # A direction whose owned cross-direction idea cites a changed
-            # participant must regenerate: per-direction reuse never keeps a
-            # cross idea whose evidence base moved (issue #8 acceptance #4).
-            owned_cross = _owned_cross_entries(state, ckey)
-            cross_fresh = all(_cross_entry_fresh(entry, pack_fps)
-                              for entry in owned_cross)
-            old_direction = next((d for d in (state or {}).get("directions", [])
-                                  if d.get("collection_key") == ckey), None)
-            if old_direction and cross_fresh \
-                    and old_direction.get("candidates") is not None:
-                reuse.append(ckey)
-                continue
+        if did in skip_ids:
+            skipped.append(did)
+            continue
+        if _direction_reusable(did):
+            reuse.append(did)
+            continue
         gap_lines = []
         for gap in direction.get("gap_shortlist", []) + direction.get("gaps_excluded", []):
             gap_lines.append({
@@ -4295,57 +4862,150 @@ def cmd_stage3_plan(args) -> None:
                      for b in direction.get("completed_gap_blacklist", [])]
         mode = "refined" if direction.get("user_note") else "generated"
         jobs.append({
-            "job_id": f"candidates:{pack.get('professor')}:{ckey}",
-            "kind": "candidates", "collection_key": ckey,
-            "direction_id": direction_id,
-            "result_file": f"candidates-{ckey}.json",
+            "job_id": f"candidates:{pack.get('professor')}:{did}",
+            "kind": "candidates",
+            "direction_id": did,
+            "result_file": safe_result_file("candidates", did),
+            "result_schema": {"schema": 2, "kind": "candidates", "direction_id": did,
+                              "candidates": [{"id": "", "kind": "direction",
+                                              "direction_ids": [did],
+                                              "gap_refs": [{"direction_id": did,
+                                                            "item_key": "", "gap_id": ""}],
+                                              "papers": [{"item_key": "",
+                                                          "direction_ids": [did],
+                                                          "role": "", "fit_note": ""}],
+                                              "origin": "generated|user_refined"}]},
             "model_input": {
-                "direction_id": direction_id,
-                "known_directions": known_directions,
+                "direction_id": did,
                 "mode": mode,
                 "user_note": direction.get("user_note") or "",
                 "credibility": direction.get("credibility"),
                 "red_lines": direction.get("red_lines") or [],
-                "supporting_papers": [{"item_key": p["item_key"], "title": p.get("title"),
-                                       "year": p.get("year"), "authorship": p.get("authorship"),
-                                       "named_by_user": p.get("named_by_user")}
-                                      for p in direction.get("supporting_papers", [])],
+                "supporting_papers": [
+                    {"item_key": p["item_key"], "title": p.get("title"),
+                     "year": p.get("year"), "authorship": p.get("authorship"),
+                     "named_by_user": bool(p.get("named_by_user"))}
+                    for p in direction_papers(pack, direction)],
                 "gaps": gap_lines,
                 "completed_gap_blacklist": blacklist,
                 "profile_text": load_profile_text(args.profile),
                 "rules": {
                     "research_question": "每个候选必须非空研究问题（求知式表述）；写不出 → 不列该候选，把要点并入主候选展开末尾（前缀「配套承诺：」）",
-                    "gap_anchor": "gap_ids 只能引用 model_input.gaps / completed_gap_blacklist 里的精确 (item_key,gap_id)；done_by_self 只能以【我的延伸】+difference_point 差异点方式出现；partial 候选必须写 remaining_gap 关注点；unknown 候选必须带 unverified:true",
-                    "papers": "候选 papers[] 只给 {item_key, role, fit_note}；标题/年份/署名由 runner 从输入包回填，禁止自写标题",
-                    "count": "generated 模式 3-5 个候选；refined 模式给 refined 块 + 0-3 个补充候选",
+                    "provenance": "每条候选必须带 kind:'direction' 和 direction_ids:[本方向 direction_id]；gap_refs 每条必须是 {direction_id, item_key, gap_id} 精确三元组，且 direction_id 就是本方向；papers[] 每篇 {item_key, direction_ids:[本方向], role, fit_note}，同一论文不得重复出现",
+                    "gap_anchor": "gap_refs 只能引用 model_input.gaps / completed_gap_blacklist 里的精确 (item_key,gap_id)；done_by_self 只能以【我的延伸】+difference_point 差异点方式出现；partial 候选必须写 remaining_gap 关注点；unknown 候选必须带 unverified:true",
+                    "papers": "候选 papers[] 只给 {item_key, direction_ids, role, fit_note}；标题/年份/署名由 runner 从输入包回填，禁止自写标题",
+                    "count": "generated 与 refined 模式都必须给 3-5 个可选候选；有用户笔记时其中恰好 1 条 origin='user_refined'（校准后的用户想法本身成为可选候选），其余为真正不同的备选",
                     "diversity": "候选之间切入点/所挂 gap 不重复",
-                    "cross_direction": "跨方向想法只能写入结果 JSON 的 cross_direction_candidates[]（绝不混入 candidates[]）：每条必须带 direction_ids（≥2 个 known_directions 里的方向 ID、含本方向 direction_id），论文/gap 只能引用所列方向切片内的精确 item_key/gap_id；没有真正的跨方向洞察就留空数组"}}})
+                    "scope": "本任务只属于 direction_id 指向的这一个方向；跨方向组合不在本任务内，绝不混入 candidates[]"}}})
+    # Cross-direction jobs: explicit opt-in only (issue #8 §6). No requested
+    # group ⇒ no cross job, no cross model call, no cross section.
+    cross_jobs = []
+    for group in cross_groups:
+        stale = True
+        old_group = state_groups.get(group["group_id"])
+        if old_group and not contract_changed \
+                and _cross_group_fresh(old_group, pack_fps, current_profile_fp) \
+                and old_group.get("candidates"):
+            continue
+        gap_union: dict = {}
+        paper_union: dict = {}
+        for pid in group["direction_ids"]:
+            p_gaps, p_blacklist, p_papers = _direction_slices(pack, by_did[pid])
+            for (owner, item_key, gap_id), gap in p_gaps.items():
+                row = gap_union.setdefault((item_key, gap_id),
+                                           {**gap, "direction_ids": []})
+                row["direction_ids"].append(pid)
+            for (owner, item_key, gap_id), banned in p_blacklist.items():
+                row = gap_union.setdefault((item_key, gap_id),
+                                           {**banned, "status": "done_by_self",
+                                            "direction_ids": []})
+                row["direction_ids"].append(pid)
+            for item_key, paper in p_papers.items():
+                row = paper_union.setdefault(item_key, {**paper, "direction_ids": []})
+                if pid not in row["direction_ids"]:
+                    row["direction_ids"].append(pid)
+        cross_jobs.append({
+            "job_id": f"cross:{pack.get('professor')}:{group['group_id']}",
+            "kind": "cross_direction",
+            "group_id": group["group_id"],
+            "direction_ids": group["direction_ids"],
+            "result_file": safe_result_file("candidates", group["group_id"]),
+            "result_schema": {"schema": 2, "kind": "cross_candidates",
+                              "group_id": group["group_id"],
+                              "direction_ids": group["direction_ids"],
+                              "candidates": [{"id": "", "kind": "cross_direction",
+                                              "direction_ids": group["direction_ids"],
+                                              "gap_refs": [{"direction_id": "", "item_key": "",
+                                                            "gap_id": ""}],
+                                              "papers": [{"item_key": "",
+                                                          "direction_ids": group["direction_ids"],
+                                                          "role": "", "fit_note": ""}]}]},
+            "model_input": {
+                "group_id": group["group_id"],
+                "direction_ids": group["direction_ids"],
+                "directions": [{"direction_id": pid, "name_ja": by_did[pid].get("name_ja"),
+                                "name_zh": by_did[pid].get("name_zh")}
+                               for pid in group["direction_ids"]],
+                "papers": [{"item_key": p["item_key"], "title": p.get("title"),
+                            "year": p.get("year"), "authorship": p.get("authorship"),
+                            "direction_ids": p.get("direction_ids") or []}
+                           for p in paper_union.values()],
+                "gaps": [{"gap_id": g["gap_id"], "item_key": g["item_key"],
+                          "paper_title": g.get("paper_title"),
+                          "paper_year": g.get("paper_year"),
+                          "quote": truncate(g.get("quote"), QUOTE_INPUT_CHARS),
+                          "translation_zh": truncate(g.get("translation_zh"), TRANSLATION_INPUT_CHARS),
+                          "status": g.get("status"), "evidence": g.get("evidence"),
+                          "completed_part": g.get("completed_part"),
+                          "remaining_gap": g.get("remaining_gap"),
+                          "confidence": g.get("confidence"),
+                          "direction_ids": g.get("direction_ids") or []}
+                         for g in gap_union.values()],
+                "profile_text": load_profile_text(args.profile),
+                "rules": {
+                    "provenance": "每条候选 kind:'cross_direction'、direction_ids 必须等于本组全部参与方向（排序后）；gap_refs 每条 {direction_id, item_key, gap_id} 三元组只能引用该 direction_id 自己切片里的精确 gap；papers[] 每篇 {item_key, direction_ids, role, fit_note}，direction_ids 是真实支撑该论文的方向子集，同一论文只出现一次",
+                    "grounding": "每个参与方向都必须贡献至少一条真实证据（挂它的 gap 或支撑它的论文）；只引用单方向证据的伪跨方向候选会被拒绝",
+                    "count": "给 1-3 个跨方向候选；没有真正的跨方向洞察就输出更少；3-5 的常规名额只属于普通方向任务"}}})
     emit({
         "status": "ok",
         "professor": pack.get("professor"),
         "professor_dir": str(professor_dir),
         "refresh_scope": refresh_scope,
-        "collection_key": collection_key,
+        "direction_id": direction_id_arg,
         "profile_fingerprint": current_profile_fp,
         "profile_changed_reason": "profile_changed" if profile_changed else None,
-        "directions": [{"collection_key": d.get("collection_key"),
-                        "direction_id": _stage3_direction_id(d),
-                        "action": ("reuse" if d.get("collection_key") in reuse else
-                                   ("skipped" if d.get("collection_key") not in
-                                     [j["collection_key"] for j in jobs] else "process"))}
-                        for d in pack_directions
-                        if not collection_key or d.get("collection_key") == collection_key],
-        "jobs": jobs,
-        "stale_cross_direction": stale_cross_direction,
-        "write_needed": bool(jobs),
+        "generator_contract_version": STAGE3_GENERATOR_CONTRACT_VERSION,
+        "skipped_direction_ids": skipped,
+        "directions": [{"direction_id": direction_machine_id(d),
+                        "collection_key": d.get("collection_key"),
+                        "action": ("reuse" if direction_machine_id(d) in reuse else
+                                   ("skipped" if direction_machine_id(d) in skipped
+                                    else "process"))}
+                       for d in pack_directions
+                       if not direction_id_arg or direction_machine_id(d) == direction_id_arg],
+        "cross_direction_groups": [{"group_id": g["group_id"],
+                                     "direction_ids": g["direction_ids"],
+                                     "action": "process"}
+                                    for g in cross_groups],
+        "jobs": jobs + cross_jobs,
+        "write_needed": bool(jobs + cross_jobs),
     })
 
 
-def _validate_single_candidate(candidate: Any, path: Path,
-                               gap_index: dict, blacklist: dict,
-                               paper_index: dict) -> dict:
-    """Validate one idea against exact (item_key, gap_id) join indexes and
-    return the normalized candidate record (runner-filled paper metadata)."""
+def _validate_candidate_core(candidate: Any, path: Path,
+                             gap_index: dict, blacklist: dict,
+                             paper_index: dict, direction_ids: list[str],
+                             kind: str,
+                             paper_slices: dict | None = None) -> dict:
+    """Validate one idea against exact (direction_id, item_key, gap_id) join
+    indexes and return the normalized candidate record (issue #8 §5).
+
+    `direction_ids` is the ONLY provenance the candidate may claim: an ordinary
+    candidate gets exactly its own direction, a cross candidate gets the sorted
+    participant group. Gap refs join through the full triple, so a valid
+    (item_key, gap_id) from another direction is rejected when paired with the
+    wrong direction_id.
+    """
     if not isinstance(candidate, dict):
         fail("invalid_result_json", f"{path}: candidates[] must be objects")
     if candidate.get("id") is not None and not isinstance(candidate.get("id"), str):
@@ -4359,6 +5019,17 @@ def _validate_single_candidate(candidate: Any, path: Path,
     if not (candidate.get("research_question") or "").strip():
         fail("invalid_result_json",
              f"{path}: candidate {cid} 缺非空研究问题（求知式）；纯交付物候选应并入主候选而非单列")
+    raw_ids = candidate.get("direction_ids")
+    if not isinstance(raw_ids, list) or [x.strip() if isinstance(x, str) else None
+                                         for x in raw_ids] != direction_ids:
+        fail("invalid_result_json",
+             f"{path}: candidate {cid} direction_ids must be exactly {direction_ids} "
+             f"(got {raw_ids!r})")
+    origin = candidate.get("origin")
+    if origin is not None and (not isinstance(origin, str) or origin.strip()
+                               not in ("generated", "user_refined")):
+        fail("invalid_result_json",
+             f"{path}: candidate {cid} origin must be 'generated' or 'user_refined'")
     anchor_notes = candidate.get("anchor_notes") or {}
     if not isinstance(anchor_notes, dict):
         fail("invalid_result_json", f"{path}: candidate {cid} anchor_notes must be an object")
@@ -4371,20 +5042,27 @@ def _validate_single_candidate(candidate: Any, path: Path,
         value = candidate.get(field) or []
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
             fail("invalid_result_json", f"{path}: candidate {cid} field {field} must be a string list")
-    raw_gap_ids = candidate.get("gap_ids") or []
-    if not isinstance(raw_gap_ids, list) or not all(isinstance(pair, dict) for pair in raw_gap_ids):
-        fail("invalid_result_json", f"{path}: candidate {cid} gap_ids must be an object list")
-    gap_pairs = []
-    seen_gap_pairs = set()
-    for pair in raw_gap_ids:
-        key = (pair.get("item_key"), pair.get("gap_id"))
-        if key in seen_gap_pairs:
+    raw_refs = candidate.get("gap_refs") or []
+    if not isinstance(raw_refs, list) or not all(isinstance(pair, dict) for pair in raw_refs):
+        fail("invalid_result_json", f"{path}: candidate {cid} gap_refs must be an object list "
+                                    "of {direction_id, item_key, gap_id} triples")
+    gap_refs = []
+    seen_triples = set()
+    for pair in raw_refs:
+        did = pair.get("direction_id")
+        key = (did, pair.get("item_key"), pair.get("gap_id"))
+        if key in seen_triples:
             fail("invalid_result_json", f"{path}: candidate {cid} contains duplicate gap {key}")
-        seen_gap_pairs.add(key)
+        seen_triples.add(key)
+        if did not in direction_ids:
+            fail("unknown_reference_id",
+                 f"{path}: candidate {cid} gap {key} cites a direction outside its provenance")
         in_pool = key in gap_index
         in_blacklist = key in blacklist
         if not in_pool and not in_blacklist:
-            fail("unknown_reference_id", f"{path}: candidate {cid} gap {key} outside package")
+            fail("unknown_reference_id",
+                 f"{path}: candidate {cid} gap {key} is not an exact (direction_id, item_key, "
+                 "gap_id) join into the cited direction's slice")
         if in_pool:
             status = gap_index[key].get("status")
             if status not in ANCHORABLE:
@@ -4399,9 +5077,10 @@ def _validate_single_candidate(candidate: Any, path: Path,
         else:
             if not (anchor_notes.get("difference_point") or "").strip():
                 fail("blacklisted_gap_anchor",
-                     f"{path}: candidate {cid} uses done_by_self gap {key} without my_extension difference_point")
-        gap_pairs.append({"item_key": key[0], "gap_id": key[1],
-                          "done_by_self": in_blacklist})
+                     f"{path}: candidate {cid} uses done_by_self gap {key} without "
+                     "my_extension difference_point")
+        gap_refs.append({"direction_id": did, "item_key": key[1], "gap_id": key[2],
+                         "done_by_self": in_blacklist})
     raw_papers = candidate.get("papers") or []
     if not isinstance(raw_papers, list) or not all(isinstance(paper, dict) for paper in raw_papers):
         fail("invalid_result_json", f"{path}: candidate {cid} papers must be an object list")
@@ -4415,20 +5094,42 @@ def _validate_single_candidate(candidate: Any, path: Path,
         if item_key in seen_papers:
             fail("invalid_result_json", f"{path}: candidate {cid} contains duplicate paper {item_key}")
         seen_papers.add(item_key)
-        papers.append({"item_key": item_key, "title": source.get("title"),
-                       "year": source.get("year"), "authorship": source.get("authorship"),
+        paper_ids = paper.get("direction_ids")
+        if paper_ids is None:
+            paper_ids = list(direction_ids)
+        else:
+            if not isinstance(paper_ids, list) or not paper_ids \
+                    or any(not isinstance(x, str) or x.strip() not in direction_ids
+                           for x in paper_ids):
+                fail("invalid_result_json",
+                     f"{path}: candidate {cid} paper {item_key} direction_ids must be a non-empty "
+                     f"subset of {direction_ids}")
+            paper_ids = sorted({x.strip() for x in paper_ids})
+            # Each cited direction must actually ALLOW the paper: the item_key
+            # has to live in that direction's own slice (issue #8 §5).
+            for cited in paper_ids:
+                if paper_slices is not None and item_key not in paper_slices.get(cited, ()):
+                    fail("unknown_paper_id",
+                         f"{path}: candidate {cid} paper {item_key} is not part of direction "
+                         f"{cited!r}'s slice, so it cannot carry {cited!r} provenance")
+        papers.append({"item_key": item_key, "direction_ids": paper_ids,
+                       "title": source.get("title"), "year": source.get("year"),
+                       "authorship": source.get("authorship"),
                        "role": (paper.get("role") or "").strip(),
                        "fit_note": (paper.get("fit_note") or "").strip()})
-    has_author_gap = any(not g["done_by_self"] for g in gap_pairs)
-    anchor_type = "author_future_work" if gap_pairs and has_author_gap else (
-        "my_extension" if gap_pairs else "none")
+    has_author_gap = any(not g["done_by_self"] for g in gap_refs)
+    anchor_type = "author_future_work" if gap_refs and has_author_gap else (
+        "my_extension" if gap_refs else "none")
     return {
         "id": cid,
+        "kind": kind,
+        "direction_ids": list(direction_ids),
+        "origin": (origin or "generated").strip(),
         "title": (candidate.get("title") or "").strip(),
         "one_liner": (candidate.get("one_liner") or "").strip(),
         "research_question": candidate.get("research_question").strip(),
         "points": [str(x) for x in (candidate.get("points") or [])],
-        "gap_ids": gap_pairs,
+        "gap_refs": gap_refs,
         "anchor_type": anchor_type,
         "anchor_notes": anchor_notes,
         "papers": papers,
@@ -4439,27 +5140,26 @@ def _validate_single_candidate(candidate: Any, path: Path,
         "tension_points": [str(x) for x in (candidate.get("tension_points") or [])]}
 
 
-def validate_candidate_result(pack_direction: dict, data: Any, path: Path,
-                              pack_directions: list | None = None) -> dict:
-    """Validate one direction's stage-3 result against the input pack.
+def validate_candidate_result(pack: dict, pack_direction: dict, data: Any, path: Path) -> dict:
+    """Validate one direction's stage-3 result against the input pack (v2).
 
-    `pack_directions` (the full professor pack) enables explicit cross-direction
-    ideas (issue #8): every entry in `cross_direction_candidates` must cite all
-    participating resolved direction IDs and may only join evidence from those
-    directions' slices — per-direction `candidates[]` stays restricted to the
-    job's own direction, so an implicit merge is always rejected.
+    The result must carry the job's direction_id, and every candidate must
+    claim exactly that direction's provenance with exact-triple gap refs. The
+    optional 3-5 quota now ALSO applies to refined mode: the calibrated user
+    idea itself becomes one selectable candidate (origin=user_refined).
     """
-    if not isinstance(data, dict) or data.get("schema") != 1 or data.get("kind") != "candidates":
-        fail("invalid_result_json", f"{path}: schema/kind must be 1/candidates")
-    ckey = data.get("collection_key")
-    if ckey != pack_direction.get("collection_key"):
-        fail("invalid_result_json", f"{path}: collection_key mismatch")
+    if not isinstance(data, dict) or data.get("schema") != 2 or data.get("kind") != "candidates":
+        fail("invalid_result_json", f"{path}: schema/kind must be 2/candidates")
+    did = direction_machine_id(pack_direction)
+    if data.get("direction_id") != did:
+        fail("invalid_result_json",
+             f"{path}: direction_id {data.get('direction_id')!r} does not match the job direction {did!r}")
     mode = data.get("mode")
     if mode not in ("refined", "generated"):
         fail("invalid_result_json", f"{path}: mode must be refined|generated")
     if mode == "refined" and not (pack_direction.get("user_note") or "").strip():
         fail("invalid_result_json", f"{path}: refined mode without user note")
-    gap_index, blacklist, paper_index = _direction_slices(pack_direction)
+    gap_index, blacklist, paper_index = _direction_slices(pack, pack_direction)
     refined = data.get("refined")
     if mode == "refined":
         if not isinstance(refined, dict):
@@ -4475,72 +5175,31 @@ def validate_candidate_result(pack_direction: dict, data: Any, path: Path,
             fail("invalid_result_json", f"{path}: refined.gap_ids must be an object list")
         for pair in refined_gap_ids:
             key = (pair.get("item_key"), pair.get("gap_id"))
-            if key not in gap_index and key not in blacklist:
+            if key not in {(i, g) for (d, i, g) in gap_index} \
+                    and key not in {(i, g) for (d, i, g) in blacklist}:
                 fail("unknown_reference_id", f"{path}: refined gap {key} outside package")
     candidates = data.get("candidates")
     if not isinstance(candidates, list):
         fail("invalid_result_json", f"{path}: candidates must be a list")
-    if mode == "generated" and not 3 <= len(candidates) <= 5:
-        fail("invalid_result_json", f"{path}: generated mode needs 3-5 candidates")
-    if mode == "refined" and len(candidates) > 3:
-        fail("invalid_result_json", f"{path}: refined mode allows at most 3 supplementary candidates")
+    if not 3 <= len(candidates) <= 5:
+        fail("invalid_result_json", f"{path}: {mode} mode needs 3-5 selectable candidates")
     checked = []
     seen_ids = set()
+    user_refined_count = 0
     for candidate in candidates:
-        single = _validate_single_candidate(candidate, path, gap_index, blacklist, paper_index)
+        single = _validate_candidate_core(candidate, path, gap_index, blacklist,
+                                          paper_index, [did], "direction")
         cid = single["id"]
         if cid in seen_ids:
             fail("invalid_result_json", f"{path}: candidate id required and unique: {cid!r}")
         seen_ids.add(cid)
+        if single["origin"] == "user_refined":
+            user_refined_count += 1
         checked.append(single)
-    raw_cross = data.get("cross_direction_candidates") or []
-    if not isinstance(raw_cross, list):
-        fail("invalid_result_json", f"{path}: cross_direction_candidates must be a list")
-    cross_checked = []
-    if raw_cross:
-        if not pack_directions:
-            fail("invalid_result_json",
-                 f"{path}: cross_direction_candidates require the full input pack")
-        id_to_direction = {_stage3_direction_id(d): d for d in pack_directions}
-        own_id = _stage3_direction_id(pack_direction)
-        for candidate in raw_cross:
-            if not isinstance(candidate, dict):
-                fail("invalid_result_json", f"{path}: cross_direction_candidates[] must be objects")
-            raw_ids = candidate.get("direction_ids")
-            if not isinstance(raw_ids, list) or len(raw_ids) < 2:
-                fail("invalid_result_json",
-                     f"{path}: cross-direction candidate needs direction_ids citing >=2 resolved direction IDs")
-            if any(not isinstance(x, str) or not x.strip() for x in raw_ids):
-                fail("invalid_result_json",
-                     f"{path}: cross-direction candidate direction_ids must be non-empty strings")
-            ids = [x.strip() for x in raw_ids]
-            if len(set(ids)) != len(ids):
-                fail("invalid_result_json",
-                     f"{path}: cross-direction candidate repeats a direction id: {ids}")
-            unknown = [x for x in ids if x not in id_to_direction]
-            if unknown:
-                fail("invalid_result_json",
-                     f"{path}: cross-direction candidate direction_ids outside input pack: {unknown}")
-            if own_id not in ids:
-                fail("invalid_result_json",
-                     f"{path}: cross-direction candidate must cite its own direction {own_id!r}")
-            union_gap: dict = {}
-            union_blacklist: dict = {}
-            union_papers: dict = {}
-            for participant_id in ids:
-                p_gaps, p_blacklist, p_papers = _direction_slices(id_to_direction[participant_id])
-                union_gap.update(p_gaps)
-                union_blacklist.update(p_blacklist)
-                union_papers.update(p_papers)
-            single = _validate_single_candidate(candidate, path,
-                                                union_gap, union_blacklist, union_papers)
-            cid = single["id"]
-            if cid in seen_ids:
-                fail("invalid_result_json",
-                     f"{path}: candidate id required and unique: {cid!r}")
-            seen_ids.add(cid)
-            single["direction_ids"] = ids
-            cross_checked.append(single)
+    if mode == "refined" and user_refined_count != 1:
+        fail("invalid_result_json",
+             f"{path}: refined mode needs exactly one origin='user_refined' candidate "
+             f"(found {user_refined_count})")
     if mode == "refined":
         refined_checked = {
             "core_intent": (refined.get("core_intent") or "").strip(),
@@ -4556,31 +5215,83 @@ def validate_candidate_result(pack_direction: dict, data: Any, path: Path,
     priority = data.get("priority") or ""
     if not isinstance(priority, str):
         fail("invalid_result_json", f"{path}: priority must be a string")
-    return {"collection_key": ckey, "mode": mode, "refined": refined_checked,
-            "candidates": checked, "cross_direction_candidates": cross_checked,
-            "priority": priority.strip()}
+    return {"direction_id": did, "mode": mode, "refined": refined_checked,
+            "candidates": checked, "priority": priority.strip()}
+
+
+def validate_cross_result(pack: dict, group: dict, data: Any, path: Path) -> dict:
+    """Validate one explicit cross-direction group's result (issue #8 §6).
+
+    Every candidate must cite the exact sorted participant group, join gaps
+    through the full triple against each cited direction's own slice, key
+    papers once by item_key, and be GROUNDED in every participant: a candidate
+    labeled A+B but carrying only A evidence is rejected.
+    """
+    if not isinstance(data, dict) or data.get("schema") != 2 \
+            or data.get("kind") != "cross_candidates":
+        fail("invalid_result_json", f"{path}: schema/kind must be 2/cross_candidates")
+    ids = group["direction_ids"]
+    if data.get("group_id") != group["group_id"] or data.get("direction_ids") != ids:
+        fail("invalid_result_json",
+             f"{path}: group identity mismatch (expected {group['group_id']} / {ids})")
+    candidates = data.get("candidates")
+    if not isinstance(candidates, list):
+        fail("invalid_result_json", f"{path}: candidates must be a list")
+    if not 1 <= len(candidates) <= 3:
+        fail("invalid_result_json", f"{path}: cross-direction groups need 1-3 candidates")
+    by_id = {direction_machine_id(d): d for d in (pack or {}).get("directions") or []}
+    union_gap: dict = {}
+    union_blacklist: dict = {}
+    union_papers: dict = {}
+    paper_slices: dict = {}
+    for pid in ids:
+        p_gaps, p_blacklist, p_papers = _direction_slices(pack, by_id[pid])
+        union_gap.update(p_gaps)
+        union_blacklist.update(p_blacklist)
+        union_papers.update(p_papers)
+        paper_slices[pid] = set(p_papers)
+    checked = []
+    seen_ids = set()
+    for candidate in candidates:
+        single = _validate_candidate_core(candidate, path, union_gap, union_blacklist,
+                                          union_papers, ids, "cross_direction",
+                                          paper_slices=paper_slices)
+        cid = single["id"]
+        if cid in seen_ids:
+            fail("invalid_result_json", f"{path}: candidate id required and unique: {cid!r}")
+        seen_ids.add(cid)
+        grounded = {ref["direction_id"] for ref in single["gap_refs"]}
+        grounded |= {pid for paper in single["papers"]
+                     for pid in paper.get("direction_ids") or []}
+        missing = [pid for pid in ids if pid not in grounded]
+        if missing:
+            fail("unknown_reference_id",
+                 f"{path}: cross-direction candidate {cid} has no grounded evidence "
+                 f"from participant(s) {missing}")
+        checked.append(single)
+    return {"group_id": group["group_id"], "direction_ids": list(ids),
+            "candidates": checked}
 
 
 def _render_idea_block(lines: list, number: int, heading_label: str,
                        candidate: dict, paper_index: dict,
-                       direction_id: str | None = None) -> None:
+                       group_id: str | None = None) -> None:
     """Render one idea (per-direction candidate or explicit cross-direction
-    idea) with its machine meta comment and full body."""
-    meta = {"id": candidate["id"],
-            "gap_ids": [{"item_key": g["item_key"], "gap_id": g["gap_id"]}
-                        for g in candidate["gap_ids"]]}
-    if candidate.get("direction_ids"):
+    idea) with its machine meta comment and full body (issue #8 §7.2: meta
+    carries direction_ids provenance and exact gap_refs triples)."""
+    meta = {"id": candidate["id"], "kind": candidate.get("kind") or "direction",
+            "direction_ids": list(candidate.get("direction_ids") or []),
+            "gap_refs": [{"direction_id": g["direction_id"], "item_key": g["item_key"],
+                          "gap_id": g["gap_id"]} for g in candidate.get("gap_refs", [])]}
+    if candidate.get("kind") == "cross_direction":
         meta["cross_direction"] = True
-        meta["direction_ids"] = list(candidate["direction_ids"])
-        if candidate.get("owner_direction_id"):
-            meta["owner_direction_id"] = candidate["owner_direction_id"]
-    else:
-        meta["direction_id"] = direction_id
+        if group_id:
+            meta["group_id"] = group_id
     lines.append(f"### {heading_label} {number}：{candidate.get('title') or candidate['id']}（{candidate['id']}）")
     lines.append("")
     lines.append(f"<!-- candidate_meta: {json.dumps(meta, ensure_ascii=False)} -->")
     lines.append("")
-    if candidate.get("direction_ids"):
+    if candidate.get("kind") == "cross_direction":
         participants = candidate.get("_participants") or []
         label = "＋".join(f"{p.get('name_ja') or p.get('direction_id')}（{p.get('direction_id')}）"
                           for p in participants)
@@ -4604,8 +5315,6 @@ def _render_idea_block(lines: list, number: int, heading_label: str,
         analysis_rel = meta_paper.get("_analysis_rel")
         analysis_cell = f"[分析]({analysis_rel})" if analysis_rel else "—"
         lines.append(f"| [{paper['title']}](zotero://select/library/items/{key}) | {paper.get('year') or '—'} | {paper.get('authorship') or 'pending'} | {paper.get('role') or '—'} | {analysis_cell} |")
-        if paper.get("authorship") == "middle" and (paper.get("role") or "").find("主支撑") >= 0:
-            pass
     lines.append("")
     fit_note = candidate.get("fit_note") or ""
     middle_flags = [p for p in candidate.get("papers", []) if p.get("authorship") == "middle"]
@@ -4620,7 +5329,7 @@ def _render_idea_block(lines: list, number: int, heading_label: str,
     if candidate.get("tension_points"):
         lines.append("")
         lines.append(f"**张力点**：{'；'.join(candidate['tension_points'])}")
-    for gap in candidate["gap_ids"]:
+    for gap in candidate.get("gap_refs", []):
         if gap.get("done_by_self"):
             lines.append("")
             lines.append(f"> 注：该候选踩着已完成 future work（{gap['gap_id'][:12]}…）作【我的延伸】，差异点见 anchor_notes。")
@@ -4629,7 +5338,7 @@ def _render_idea_block(lines: list, number: int, heading_label: str,
 
 def render_candidates_md(professor: str, category: str, direction_entries: list,
                          profile_fp: str | None, state_fingerprint: str,
-                         professor_dir: Path, cross_entries: list | None = None) -> str:
+                         professor_dir: Path, cross_groups: list | None = None) -> str:
     lines = [
         f"# 套磁想法候选 — {professor}（{category}）",
         "",
@@ -4654,7 +5363,7 @@ def render_candidates_md(professor: str, category: str, direction_entries: list,
         lines.append("")
         refined = entry.get("refined")
         if refined:
-            lines.append("### 你的草稿修正版（基本方向，非终稿）")
+            lines.append("### 你的草稿修正版（基本方向，非终稿；校准后的用户想法已作为可选候选列出）")
             lines.append("")
             lines.append(f"- **保真**：{refined.get('core_intent') or '—'}")
             calibration = refined.get("calibration") or []
@@ -4669,27 +5378,31 @@ def render_candidates_md(professor: str, category: str, direction_entries: list,
         for d in (entry.get("_pack_papers") or []):
             paper_index[d["item_key"]] = d
         for number, candidate in enumerate(candidates, start=1):
-            _render_idea_block(lines, number, "候选", candidate, paper_index,
-                               direction_id=direction_id)
+            _render_idea_block(lines, number, "候选", candidate, paper_index)
         if entry.get("priority"):
             lines.append("## 推荐优先级")
             lines.append("")
             lines.append(entry["priority"])
             lines.append("")
-    for number, entry in enumerate(cross_entries or [], start=1):
-        if number == 1:
-            lines.append("## 跨方向想法（显式标注）")
-            lines.append("")
-            lines.append("> 以下候选显式跨越多个已解析方向（绝不隐式合并方向池）；每条列出全部参与方向的 resolved 方向 ID。")
-            lines.append("")
+    for group in cross_groups or []:
+        entries = group.get("candidates") or []
+        if not entries:
+            continue
+        lines.append("## 跨方向想法（显式标注）")
+        lines.append("")
+        lines.append("> 以下候选显式跨越多个已解析方向（绝不隐式合并方向池）；每条列出全部参与方向的 resolved 方向 ID。")
+        lines.append("")
         paper_index = {}
-        for d in (entry.get("_pack_papers") or []):
+        for d in (group.get("_pack_papers") or []):
             paper_index[d["item_key"]] = d
-        _render_idea_block(lines, number, "跨方向候选", entry, paper_index)
+        for number, candidate in enumerate(entries, start=1):
+            _render_idea_block(lines, number, "跨方向候选", candidate, paper_index,
+                               group_id=group.get("group_id"))
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_candidates_overview(entries: list, program_root: Path) -> str:
+def render_candidates_overview(entries: list, program_root: Path,
+                               cross_groups: list | None = None) -> str:
     lines = [
         "# 套磁想法候选总览",
         "",
@@ -4703,6 +5416,10 @@ def render_candidates_overview(entries: list, program_root: Path) -> str:
         priority = (entry.get("priority") or "").replace("\n", " ")[:40] or "—"
         md = entry.get("_candidates_md_rel") or "—"
         lines.append(f"| {entry['professor']} | {entry['name_ja']} | {count} | {priority} | [{CANDIDATES_MD}]({md}) |")
+    for group in cross_groups or []:
+        label = "＋".join(group.get("direction_ids") or [])
+        count = len(group.get("candidates") or [])
+        lines.append(f"| {group.get('professor')} | 跨方向：{label} | {count} | 显式跨方向组（group_id {group.get('group_id')}） | [{CANDIDATES_MD}]({group.get('_candidates_md_rel') or '—'}) |")
     lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -4711,31 +5428,71 @@ def cmd_stage3_finalize(args) -> None:
     professor_dir = Path(args.professor_dir)
     program_root = Path(args.program_root) if args.program_root else professor_dir.parent.parent
     require_professor_dir_under_program(professor_dir, program_root)
-    pack_path = professor_dir / INPUT_PACK
-    pack, error = read_json_file(pack_path)
-    if error:
-        soft_exit("needs_refresh", "missing_input_pack", pack_path=str(pack_path))
-    collection_key = getattr(args, "collection_key", None)
+    pack, pack_error = load_input_pack(professor_dir)
+    if pack is None:
+        soft_exit("needs_refresh", "missing_input_pack", pack_path=str(professor_dir / INPUT_PACK))
     pack_directions = pack.get("directions") or []
-    if collection_key and not any(d.get("collection_key") == collection_key
-                                  for d in pack_directions):
-        fail("invalid_params", f"collection_key not found in input pack: {collection_key}")
+    by_did = {direction_machine_id(d): d for d in pack_directions}
+    by_ckey = {}
+    for d in pack_directions:
+        ckey = d.get("collection_key")
+        if isinstance(ckey, str) and ckey.strip() and ckey not in by_ckey:
+            by_ckey[ckey] = d
+        elif isinstance(ckey, str) and ckey.strip():
+            by_ckey[ckey] = None
+    direction_id_arg = getattr(args, "direction_id", None)
+    collection_key_arg = getattr(args, "collection_key", None)
+    if collection_key_arg and not direction_id_arg:
+        resolved = by_ckey.get(collection_key_arg)
+        if resolved is None:
+            fail("invalid_params",
+                 f"collection_key not found (or ambiguous) in input pack: {collection_key_arg}")
+        direction_id_arg = direction_machine_id(resolved)
+    if direction_id_arg and direction_id_arg not in by_did:
+        fail("invalid_params", f"direction_id not found in input pack: {direction_id_arg}")
+    if collection_key_arg and direction_id_arg:
+        resolved = by_ckey.get(collection_key_arg)
+        if resolved is None or direction_machine_id(resolved) != direction_id_arg:
+            fail("invalid_params",
+                 f"collection_key {collection_key_arg!r} and direction_id {direction_id_arg!r} "
+                 "resolve to different directions")
+    skip_ids = _parse_direction_id_list(getattr(args, "skip_direction_ids", None),
+                                        "skip_direction_ids")
+    unknown_skip = [d for d in skip_ids if d not in by_did]
+    if unknown_skip:
+        fail("invalid_params", f"skip_direction_ids outside input pack: {unknown_skip}")
+    cross_groups = _parse_cross_groups(getattr(args, "cross_direction_groups", None),
+                                       pack_directions)
     refresh_scope = args.refresh_scope or "flagged"
-    state, _ = read_json_file(professor_dir / CANDIDATE_STATE)
-    old_state = state if isinstance(state, dict) else None
+    state, state_error = load_candidate_state(professor_dir, pack)
+    if state_error:
+        soft_exit("needs_refresh", state_error,
+                  message="候选状态无法按机器身份精确迁移：重跑阶段 3（必要时连同阶段 2）重建 v2 状态。"
+                          "未修改任何文件。")
     current_profile_fp = profile_fingerprint(args.profile)
-    old_profile_fp = (old_state or {}).get("profile_fingerprint")
-    profile_changed = bool(old_state) and current_profile_fp != old_profile_fp
-    old_directions = {d.get("collection_key"): d for d in (old_state or {}).get("directions", [])}
-    old_fps = (old_state or {}).get("input_fingerprints", {})
+    old_profile_fp = (state or {}).get("profile_fingerprint")
+    profile_changed = bool(state) and current_profile_fp != old_profile_fp
+    contract_changed = bool(state) and \
+        (state or {}).get("generator_contract_version") != STAGE3_GENERATOR_CONTRACT_VERSION
+    old_directions = {d.get("direction_id"): d
+                      for d in (state or {}).get("directions", []) if isinstance(d, dict)}
+    old_fps = (state or {}).get("input_fingerprints", {})
     selected_keys = None
     if refresh_scope == "selected":
         selection_path = args.selection or (Path(args.program_root) / "教授研究" / SELECTION_FILE)
         selection_data, sel_error = read_json_file(Path(selection_path))
         if sel_error:
             fail("invalid_params", f"selection file unreadable: {selection_path}")
-        selected_keys = {sel.get("collection_key") for sel in selection_data.get("selections", [])
-                         if sel.get("professor") == pack.get("professor")}
+        selected_keys = set()
+        for sel in selection_data.get("selections", []):
+            if sel.get("professor") != pack.get("professor"):
+                continue
+            sel_did = sel.get("direction_id")
+            if not sel_did:
+                legacy = by_ckey.get(sel.get("collection_key"))
+                sel_did = direction_machine_id(legacy) if legacy is not None else None
+            if sel_did:
+                selected_keys.add(sel_did)
     results_dir = Path(args.results)
     decision = None
     if getattr(args, "decision_file", None):
@@ -4744,160 +5501,159 @@ def cmd_stage3_finalize(args) -> None:
             decision = decision_data.get("decision")
     professor = pack.get("professor")
     category = professor_dir.parent.name
-    program_root = Path(args.program_root) if args.program_root else professor_dir.parent.parent
-    professor_name = professor
-    updated_directions, reused, out_of_scope = [], [], []
-    processed_keys = set()
-    processed_any = False
-    analysis_papers = {}
-    id_to_direction = {_stage3_direction_id(d): d for d in pack_directions}
-    pack_fps = {_stage3_direction_id(d): d.get("input_fingerprint")
+    pack_fps = {direction_machine_id(d): d.get("input_fingerprint")
                 for d in pack_directions}
-    old_cross = [entry for entry in (old_state or {}).get("cross_direction") or []
-                 if isinstance(entry, dict)]
-    scoped_keys = set()
+    scoped_dids = set()
     for direction in pack_directions:
-        scoped_ckey = direction.get("collection_key")
-        if collection_key and scoped_ckey != collection_key:
+        did = direction_machine_id(direction)
+        if direction_id_arg and did != direction_id_arg:
             continue
         if refresh_scope == "flagged" and direction.get("status") != "active":
             continue
-        if refresh_scope == "selected" and scoped_ckey not in (selected_keys or set()):
+        if refresh_scope == "selected" and did not in (selected_keys or set()):
             continue
-        scoped_keys.add(scoped_ckey)
-    new_cross_by_owner: dict = {}
+        scoped_dids.add(did)
+    updated_directions, reused, skipped_out = [], [], []
+    processed_dids = set()
     for direction in pack_directions:
-        ckey = direction.get("collection_key")
-        direction_id = _stage3_direction_id(direction)
-        analysis_papers[ckey] = direction.get("supporting_papers", [])
-        if ckey not in scoped_keys:
-            old = old_directions.get(ckey)
+        did = direction_machine_id(direction)
+        if did not in scoped_dids:
+            old = old_directions.get(did)
             if old:
-                old["direction_id"] = direction_id
-                out_of_scope.append(old)
-                # A scoped refresh replaces only selected directions. Keep the
-                # other accepted directions in the machine state and render.
+                # A scoped refresh replaces only the selected directions; the
+                # other accepted directions stay in the machine state + render.
                 updated_directions.append(old)
             continue
-        fp_match = old_fps.get(ckey) == direction.get("input_fingerprint")
-        # Same gate as stage3-plan: an owned cross-direction idea whose
-        # participating direction changed forces the owner through the process
-        # path, so plan's jobs and finalize's expected results always agree.
-        cross_fresh = True
-        if fp_match and not profile_changed:
-            cross_fresh = all(_cross_entry_fresh(entry, pack_fps)
-                              for entry in _owned_cross_entries(old_state, ckey))
-        old_direction = old_directions.get(ckey)
-        if fp_match and not profile_changed and cross_fresh \
-                and old_direction and old_direction.get("candidates") is not None:
-            old_direction["direction_id"] = direction_id
-            reused.append(ckey)
+        old_direction = old_directions.get(did)
+        if did in skip_ids:
+            # Explicit skip is persisted state (issue #8 §4.2): visible,
+            # candidate-less, and distinct from "never processed". A later run
+            # without the skip processes the direction normally (empty
+            # candidates never satisfy the reuse gate).
+            skipped_out.append(did)
+            updated_directions.append({
+                "direction_id": did,
+                "name_ja": direction.get("name_ja"),
+                "name_zh": direction.get("name_zh"),
+                "status": direction.get("status"),
+                "stage3_status": "skipped",
+                "candidates": [], "mode": None, "refined": None, "priority": "",
+                "credibility": direction.get("credibility"),
+                "red_lines": direction.get("red_lines") or [],
+                "user_note_present": bool(direction.get("user_note")),
+            })
+            continue
+        if old_direction and not contract_changed and not profile_changed \
+                and old_fps.get(did) == pack_fps.get(did) \
+                and old_direction.get("stage3_status") == "ready" \
+                and old_direction.get("candidates"):
+            reused.append(did)
+            # Display names/status are pack projections, not cached evidence:
+            # sync them so a display-only rename re-renders deterministically
+            # without any idea model call (issue #8 §4.4).
+            for field in ("name_ja", "name_zh", "status"):
+                old_direction[field] = direction.get(field)
             updated_directions.append(old_direction)
             continue
-        result_path = results_dir / f"candidates-{ckey}.json"
-        processed_any = True
-        processed_keys.add(ckey)
+        result_path = results_dir / safe_result_file("candidates", did)
+        processed_dids.add(did)
         data, rerror = read_json_file(result_path)
         if rerror:
             fail("result_missing", f"{result_path}: {rerror}")
-        checked = validate_candidate_result(direction, data, result_path, pack_directions)
+        checked = validate_candidate_result(pack, direction, data, result_path)
         checked["name_ja"] = direction.get("name_ja")
         checked["name_zh"] = direction.get("name_zh")
         checked["credibility"] = direction.get("credibility")
         checked["red_lines"] = direction.get("red_lines") or []
         checked["status"] = direction.get("status")
         checked["user_note_present"] = bool(direction.get("user_note"))
-        checked["direction_id"] = direction_id
-        # The fresh result is authoritative for every cross-direction idea this
-        # direction owns: previous owned entries are replaced, never merged.
-        new_cross = checked.pop("cross_direction_candidates") or []
-        new_cross_by_owner[ckey] = [
-            {**cross,
-             "owner_collection_key": ckey,
-             "owner_direction_id": direction_id,
-             "direction_fingerprints": {pid: pack_fps.get(pid)
-                                        for pid in cross["direction_ids"]}}
-            for cross in new_cross]
+        checked["stage3_status"] = "ready"
         updated_directions.append(checked)
-    if not updated_directions and not reused:
-        fail("validation_failed", "no in-scope directions to write")
-    # Issue #8: cross-direction ideas stay per-owner state. Entries whose owner
-    # vanished from the pack (merged away) are dropped and reported; entries of
-    # processed owners are replaced by the fresh result above; entries of
-    # reused owners were proven fresh by the reuse gate. An OUT-OF-SCOPE owner
-    # whose cross idea went stale (a participant's fingerprint changed) must
-    # never keep the stale entry either: finalize drops it deterministically
-    # (no model rerun) and reports it; the owner regenerates cross ideas the
-    # next time it reprocesses.
-    pack_ckeyes = {d.get("collection_key") for d in pack_directions}
-    final_cross, dropped_cross = [], []
-    for entry in old_cross:
-        owner = entry.get("owner_collection_key")
-        if owner not in pack_ckeyes:
-            dropped_cross.append({"id": entry.get("id"),
-                                  "owner_collection_key": owner,
-                                  "reason": "owner_direction_removed"})
+    # Cross-direction groups: only EXPLICITLY requested groups exist (issue #8
+    # §6). A group survives when its recorded participant fingerprints + profile
+    # still match; otherwise it needs the result file its plan job pointed at.
+    # Groups from earlier runs that are no longer requested are dropped and
+    # reported — never silently kept.
+    old_groups = {(g.get("group_id") if isinstance(g, dict) else None): g
+                  for g in (state or {}).get("cross_direction_groups", [])
+                  if isinstance(g, dict)}
+    final_groups, dropped_groups = [], []
+    for group in cross_groups:
+        old_group = old_groups.get(group["group_id"])
+        if old_group and not contract_changed \
+                and _cross_group_fresh(old_group, pack_fps, current_profile_fp) \
+                and old_group.get("candidates"):
+            final_groups.append(old_group)
             continue
-        if owner in processed_keys:
+        result_path = results_dir / safe_result_file("candidates", group["group_id"])
+        data, rerror = read_json_file(result_path)
+        if rerror:
+            fail("result_missing", f"{result_path}: {rerror}")
+        checked = validate_cross_result(pack, group, data, result_path)
+        final_groups.append({
+            "group_id": group["group_id"],
+            "direction_ids": list(group["direction_ids"]),
+            "direction_fingerprints": {pid: pack_fps.get(pid)
+                                       for pid in group["direction_ids"]},
+            "profile_fingerprint": current_profile_fp,
+            "candidates": checked["candidates"],
+        })
+    requested_ids = {g["group_id"] for g in cross_groups}
+    for group_id, group in old_groups.items():
+        if group_id in requested_ids:
             continue
-        if owner not in scoped_keys and not _cross_entry_fresh(entry, pack_fps):
-            dropped_cross.append({"id": entry.get("id"),
-                                  "owner_collection_key": owner,
-                                  "reason": "participant_changed_out_of_scope"})
-            continue
-        final_cross.append(entry)
-    for direction in pack_directions:
-        final_cross.extend(new_cross_by_owner.get(direction.get("collection_key"), []))
-    cross_ids = [entry.get("id") for entry in final_cross]
+        dropped_groups.append({"group_id": group_id,
+                               "direction_ids": group.get("direction_ids") or [],
+                               "reason": "group_not_requested"})
+    all_group_candidates = [c for g in final_groups for c in g.get("candidates") or []]
+    cross_ids = [c.get("id") for c in all_group_candidates]
     if len(set(cross_ids)) != len(cross_ids):
         fail("duplicate_idea_id", f"cross-direction idea ids not unique: {cross_ids}")
-    for entry in updated_directions:
-        papers = {p["item_key"]: p for p in analysis_papers.get(entry.get("collection_key"), [])}
-        for candidate in entry.get("candidates", []):
-            for paper in candidate.get("papers", []):
-                source = papers.get(paper["item_key"])
-                if source and source.get("analysis_file"):
-                    paper["_analysis_file"] = source["analysis_file"]
+    if not updated_directions and not reused and not final_groups:
+        fail("validation_failed", "no in-scope directions or groups to write")
     md_entries = []
     for entry in updated_directions:
         clone = dict(entry)
         clone["_pack_papers"] = []
-        for p in analysis_papers.get(entry.get("collection_key"), []):
-            item = dict(p)
-            if item.get("analysis_file"):
-                item["_analysis_rel"] = rel_path(Path(item["analysis_file"]), professor_dir)
-            clone["_pack_papers"].append(item)
+        pack_direction = by_did.get(entry.get("direction_id"))
+        if pack_direction is not None:
+            for paper in direction_papers(pack, pack_direction):
+                item = dict(paper)
+                if item.get("analysis_file"):
+                    item["_analysis_rel"] = rel_path(Path(item["analysis_file"]), professor_dir)
+                clone["_pack_papers"].append(item)
         md_entries.append(clone)
-    cross_md_entries = []
-    for entry in final_cross:
-        clone = dict(entry)
+    cross_md_groups = []
+    for group in final_groups:
+        clone = dict(group)
         clone["_pack_papers"] = []
         seen_keys = set()
         participants = []
-        for pid in entry.get("direction_ids") or []:
-            participant = id_to_direction.get(pid) or {}
+        for pid in group.get("direction_ids") or []:
+            pack_direction = by_did.get(pid) or {}
             participants.append({"direction_id": pid,
-                                 "name_ja": participant.get("name_ja") or pid})
-            for p in analysis_papers.get(participant.get("collection_key"), []):
-                if p["item_key"] in seen_keys:
+                                 "name_ja": pack_direction.get("name_ja") or pid})
+            for paper in direction_papers(pack, pack_direction):
+                if paper["item_key"] in seen_keys:
                     continue
-                seen_keys.add(p["item_key"])
-                item = dict(p)
+                seen_keys.add(paper["item_key"])
+                item = dict(paper)
                 if item.get("analysis_file"):
                     item["_analysis_rel"] = rel_path(Path(item["analysis_file"]), professor_dir)
                 clone["_pack_papers"].append(item)
         clone["_participants"] = participants
-        cross_md_entries.append(clone)
-    input_fps = {}
-    for direction in pack_directions:
-        input_fps[direction.get("collection_key")] = direction.get("input_fingerprint")
+        # The 参与方向 label is rendered per candidate from the group's roster.
+        clone["candidates"] = [dict(c, _participants=participants)
+                               for c in clone.get("candidates") or []]
+        cross_md_groups.append(clone)
+    input_fps = dict(pack_fps)
     state_fingerprint = sha256_obj({"professor": professor, "directions": input_fps,
                                     "profile": current_profile_fp})
     md_path = professor_dir / CANDIDATES_MD
-    old_render = ((old_state or {}).get("cache") or {}).get("render", {})
+    old_render = ((state or {}).get("cache") or {}).get("render", {})
     body = render_candidates_md(professor, category, md_entries,
                                 current_profile_fp, state_fingerprint, professor_dir,
-                                cross_entries=cross_md_entries)
+                                cross_groups=cross_md_groups)
     projections = load_projections(program_root)
     overview_entries = []
     for d in updated_directions:
@@ -4906,7 +5662,13 @@ def cmd_stage3_finalize(args) -> None:
             "candidates": d.get("candidates") or [],
             "priority": d.get("priority"),
             "_candidates_md_rel": rel_path(md_path, program_root / "教授研究")})
-    overview_body = render_candidates_overview(overview_entries, program_root)
+    overview_cross = [{"professor": professor, "group_id": g["group_id"],
+                       "direction_ids": g["direction_ids"],
+                       "candidates": g.get("candidates") or [],
+                       "_candidates_md_rel": rel_path(md_path, program_root / "教授研究")}
+                      for g in cross_md_groups]
+    overview_body = render_candidates_overview(overview_entries, program_root,
+                                               cross_groups=overview_cross)
     overview_path = program_root / "教授研究" / CANDIDATES_OVERVIEW
     md_conflict = managed_conflict(
         md_path, body, old_render.get(CANDIDATES_MD, {}).get("sha256"), decision)
@@ -4926,26 +5688,30 @@ def cmd_stage3_finalize(args) -> None:
     overview_result = projection_write(overview_path, overview_body, projections,
                                        CANDIDATES_OVERVIEW)
     if overview_result.get("needs_decision"):
-        soft_exit("needs_decision", overview_result["reason_code"], target=overview_result.get("target"))
+        soft_exit("needs_decision", overview_result.get("reason_code"),
+                  target=overview_result.get("target"))
     projections.setdefault("render", {})[CANDIDATES_OVERVIEW] = {
         "sha256": overview_result.get("sha256")}
     save_projections(program_root, projections)
     new_state = {
-        "schema": SCHEMA, "managed_by": MANAGED_BY, "generated_at": now_utc(),
+        "schema": CANDIDATE_STATE_SCHEMA, "kind": CANDIDATE_STATE_KIND,
+        "identity_version": DIRECTION_IDENTITY_VERSION,
+        "generator_contract_version": STAGE3_GENERATOR_CONTRACT_VERSION,
+        "managed_by": MANAGED_BY, "generated_at": now_utc(),
         "professor": professor,
         "profile_fingerprint": current_profile_fp,
         "profile_path": args.profile,
         "input_fingerprints": input_fps,
         "directions": updated_directions,
-        "cross_direction": final_cross,
+        "cross_direction_groups": final_groups,
         "cache": {"render": {CANDIDATES_MD: {"sha256": md_result.get("sha256")}}},
     }
-    if old_state and old_state.get("validator"):
-        old_validator = old_state["validator"]
+    if state and state.get("validator"):
+        old_validator = state["validator"]
         old_results = old_validator.get("results") if isinstance(old_validator, dict) else None
         if isinstance(old_results, dict):
             retained = {key: value for key, value in old_results.items()
-                        if key not in processed_keys}
+                        if key not in processed_dids}
             # A processed direction has a new rendered body, so its old
             # validator result is not carried forward; untouched directions are.
             if retained:
@@ -4958,34 +5724,34 @@ def cmd_stage3_finalize(args) -> None:
         "state_path": str(professor_dir / CANDIDATE_STATE),
         "candidates_md": str(md_path),
         "overview_md": str(program_root / "教授研究" / CANDIDATES_OVERVIEW),
-        "directions": [{"collection_key": d.get("collection_key"),
-                        "direction_id": d.get("direction_id"),
+        "directions": [{"direction_id": d.get("direction_id"),
+                        "stage3_status": d.get("stage3_status"),
                         "mode": d.get("mode"),
                         "candidates": len(d.get("candidates") or [])}
                        for d in updated_directions],
-        "cross_direction": [{"id": entry.get("id"),
-                             "owner_collection_key": entry.get("owner_collection_key"),
-                             "owner_direction_id": entry.get("owner_direction_id"),
-                             "direction_ids": entry.get("direction_ids")}
-                            for entry in final_cross],
-        "dropped_cross_direction": dropped_cross,
+        "skipped_direction_ids": skipped_out,
+        "cross_direction_groups": [{"group_id": g["group_id"],
+                                     "direction_ids": g["direction_ids"],
+                                     "candidates": len(g.get("candidates") or [])}
+                                    for g in final_groups],
+        "dropped_cross_direction": dropped_groups,
         "reused": reused, "md_sha256": md_result.get("sha256"),
     })
 
 
-def _stage4_cross_participants(pack: dict, cross_entry: dict) -> list[dict] | None:
-    """Resolve a cross-direction idea's participants against the CURRENT pack.
+def _stage4_cross_group(pack: dict, group_entry: dict) -> list[dict] | None:
+    """Resolve a cross-direction group's participants against the CURRENT pack.
 
-    Returns the participant pack directions in the idea's recorded
+    Returns the participant pack directions in the group's recorded
     direction_ids order, or None when anything fails to exact-join (unknown
     direction id, changed fingerprint, malformed bookkeeping) — the caller
     fails closed with needs_refresh instead of compiling a stale email."""
-    direction_ids = cross_entry.get("direction_ids")
-    recorded = cross_entry.get("direction_fingerprints")
+    direction_ids = group_entry.get("direction_ids")
+    recorded = group_entry.get("direction_fingerprints")
     if not isinstance(direction_ids, list) or len(set(direction_ids)) < 2 \
             or not isinstance(recorded, dict) or not recorded:
         return None
-    by_id = {_stage3_direction_id(d): d for d in pack.get("directions") or []}
+    by_id = {direction_machine_id(d): d for d in pack.get("directions") or []}
     participants = []
     for direction_id in direction_ids:
         pack_direction = by_id.get(direction_id)
@@ -5000,13 +5766,23 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
                         idea: dict, note: str, program_root: Path,
                         profile_fp: str | None, papers_override: list[str] | None = None,
                         contact_evidence: dict | None = None,
-                        cross_entry: dict | None = None,
+                        group_entry: dict | None = None,
                         participant_directions: list[dict] | None = None) -> dict:
+    """Compile one v2 email entry (issue #8 §8.2).
+
+    Identity: direction_ids provenance (sorted, so A+B == B+A) and an email_id
+    built from the canonical direction scope + idea id — never the
+    collection_key. A cross-direction idea joins evidence against the UNION of
+    its participants' slices; every gap row keeps the direction_ids union that
+    actually contains it, and shared papers appear once by item_key."""
     # A cross-direction idea joins evidence against the UNION of its
     # participants' slices (owner included); per-direction ideas keep the
     # single-slice indexes. Duplicate (item_key, gap_id) identities resolve to
     # their first occurrence in direction_ids order — never re-invented.
     slice_directions = participant_directions or [pack_direction]
+    direction_ids = sorted(idea.get("direction_ids")
+                           or [pack_direction.get("direction_id")
+                               or direction_machine_id(pack_direction)])
     gap_records: dict = {}
     blacklist: dict = {}
     paper_meta: dict = {}
@@ -5015,7 +5791,7 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
             gap_records.setdefault((gap["item_key"], gap["gap_id"]), gap)
         for banned in slice_direction.get("completed_gap_blacklist", []):
             blacklist.setdefault((banned["item_key"], banned["gap_id"]), banned)
-        for paper in slice_direction.get("supporting_papers", []):
+        for paper in direction_papers(pack, slice_direction):
             paper_meta.setdefault(paper["item_key"], paper)
     for slice_direction in slice_directions:
         for gap in slice_direction.get("gap_shortlist", []) + slice_direction.get("gaps_excluded", []):
@@ -5031,12 +5807,16 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
         meta = paper_meta.get(paper.get("item_key"))
         if not meta:
             fail("unknown_paper_id", f"candidate paper outside input pack: {paper.get('item_key')}")
-        papers_out.append({"item_key": meta["item_key"], "title": meta.get("title"),
+        papers_out.append({"item_key": meta["item_key"],
+                           "direction_ids": sorted(paper.get("direction_ids")
+                                                   or [pack_direction.get("direction_id")
+                                                       or direction_machine_id(pack_direction)]),
+                           "title": meta.get("title"),
                            "year": meta.get("year"), "authorship": meta.get("authorship"),
                            "fit_note": paper.get("fit_note") or ""})
     gaps_out = []
-    for pair in idea.get("gap_ids") or []:
-        key = (pair.get("item_key"), pair.get("gap_id"))
+    for ref in idea.get("gap_refs") or []:
+        key = (ref.get("item_key"), ref.get("gap_id"))
         gap = gap_records.get(key)
         if gap:
             status = gap.get("status")
@@ -5044,6 +5824,7 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
                          "anchor_with_caveat" if status == "unknown" else "anchor")
             gaps_out.append({
                 "item_key": gap["item_key"], "gap_id": gap["gap_id"],
+                "direction_id": ref.get("direction_id"),
                 "paper_title": gap.get("paper_title"), "paper_year": gap.get("paper_year"),
                 "quote": gap.get("quote"), "translation_zh": gap.get("translation_zh"),
                 "source": gap.get("source"), "page": gap.get("page"),
@@ -5058,6 +5839,7 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
         if done:
             gaps_out.append({
                 "item_key": done["item_key"], "gap_id": done["gap_id"],
+                "direction_id": ref.get("direction_id"),
                 "paper_title": done.get("paper_title"), "paper_year": done.get("paper_year"),
                 "quote": done.get("quote_trunc"), "translation_zh": done.get("translation_zh"),
                 "source": None, "page": None,
@@ -5068,13 +5850,30 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
                  "zotero_key": done["item_key"]})
             continue
         fail("unknown_reference_id", f"candidate gap outside input pack: {key}")
-    red_lines = list(pack_direction.get("red_lines") or [])
+    if group_entry:
+        red_lines = []
+        seen_red = set()
+        for slice_direction in slice_directions:
+            for red in slice_direction.get("red_lines") or []:
+                marker = (red.get("scope"), red.get("text"))
+                if marker not in seen_red:
+                    seen_red.add(marker)
+                    red_lines.append(red)
+    else:
+        red_lines = list(pack_direction.get("red_lines") or [])
     candidate_red = idea.get("red_lines") or []
     for text in candidate_red:
         red_lines.append({"scope": "candidate", "text": text,
                           "banned_phrases": idea.get("banned_phrases") or []})
-    narrative = pack_direction.get("narrative") or {}
+    primary = slice_directions[0]
+    narrative = primary.get("narrative") or {}
     positioning = [block.get("text", "") for block in narrative.get("positioning", [])]
+    for slice_direction in slice_directions[1:]:
+        narrative_other = slice_direction.get("narrative") or {}
+        for block in narrative_other.get("positioning", []):
+            text = block.get("text", "")
+            if text and text not in positioning:
+                positioning.append(text)
     allowed = {"user_note", f"idea:{idea.get('id')}", "profile.interest", "template"}
     for paper in papers_out:
         allowed.add(f"paper:{paper['item_key']}")
@@ -5083,21 +5882,25 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
         allowed.add(f"later:{gap['item_key']}")
     idea_block = {"id": idea.get("id"), "title": idea.get("title"),
                   "idea_zh": idea.get("idea_zh") or ""}
-    email_id = f"{pack.get('professor')}::{pack_direction.get('collection_key')}::{idea.get('id')}"
+    email_id = f"{pack.get('professor')}::{'+'.join(direction_ids)}::{idea.get('id')}"
     anchorable_gaps = [g for g in gaps_out if g["email_use"] in ("anchor", "remaining_only", "anchor_with_caveat")]
     entry = {
         "email_id": email_id,
         "professor": pack.get("professor"),
         "professor_dir": pack.get("professor_dir"),
-        "name_ja": pack_direction.get("name_ja"), "name_zh": pack_direction.get("name_zh"),
-        "collection_key": pack_direction.get("collection_key"),
+        "direction_ids": direction_ids,
+        "directions": [{"direction_id": direction_machine_id(d),
+                        "name_ja": d.get("name_ja"), "name_zh": d.get("name_zh")}
+                       for d in slice_directions],
+        "name_ja": primary.get("name_ja"), "name_zh": primary.get("name_zh"),
+        "collection_key": primary.get("collection_key"),
         "idea": idea_block,
-        "user_note": pack_direction.get("user_note") or "",
+        "user_note": primary.get("user_note") or "",
         "papers": papers_out,
         "gaps": gaps_out,
         "anchorable_gaps": [g["gap_id"] for g in anchorable_gaps],
         "red_lines": red_lines,
-        "soft_materials": {"credibility": pack_direction.get("credibility"),
+        "soft_materials": {"credibility": primary.get("credibility"),
                            "positioning": positioning},
         "profile": {"fingerprint": profile_fp, "fields": idea.get("_profile_fields") or {}},
         "allowed_sources": sorted(allowed),
@@ -5107,18 +5910,18 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
         "user_supplement": note or "",
         "contact_evidence": contact_evidence,
         "cross_direction": (
-            {"owner_direction_id": state_direction.get("direction_id"),
-             "direction_ids": list(cross_entry.get("direction_ids") or []),
-             "direction_fingerprints": dict(cross_entry.get("direction_fingerprints") or {})}
-            if cross_entry else None),
+            {"group_id": group_entry.get("group_id"),
+             "direction_ids": list(group_entry.get("direction_ids") or []),
+             "direction_fingerprints": dict(group_entry.get("direction_fingerprints") or {})}
+            if group_entry else None),
     }
     # contact_evidence is a fact field (the frozen recipient snapshot), so it
     # belongs in the pack integrity hash: a refrozen snapshot always yields a
     # new source_hash, never a silent in-place substitution. cross_direction
     # joins it so a re-participated idea re-hashes too.
     entry["source_hash"] = sha256_obj({k: entry[k] for k in (
-        "email_id", "idea", "papers", "gaps", "red_lines", "allowed_sources",
-        "contact_evidence", "cross_direction")})
+        "email_id", "direction_ids", "directions", "idea", "papers", "gaps",
+        "red_lines", "allowed_sources", "contact_evidence", "cross_direction")})
     return entry
 
 
@@ -5141,50 +5944,87 @@ def validate_papers_override(idea: dict, override: Any, context: str) -> list[st
     return list(override)
 
 
+def _selection_direction_ids(select: dict, packs: dict) -> tuple[list[str] | None, str | None]:
+    """Resolve a selection entry's canonical direction_ids (issue #8 §8.1).
+
+    v2 entries carry direction_id/direction_ids directly. The deprecated
+    collection_key path resolves ONLY through the pack's exact machine mapping
+    (unique collection_key → direction_id); ambiguous or missing mappings fail
+    closed with legacy_direction_identity instead of guessing."""
+    professor_dir = str(select.get("professor_dir") or "")
+    pack = packs.get(professor_dir)
+    explicit = select.get("direction_ids") or (
+        [select.get("direction_id")] if select.get("direction_id") else None)
+    if explicit:
+        ids = sorted({str(x).strip() for x in explicit if str(x).strip()})
+        return (ids or None), None
+    ckey = select.get("collection_key")
+    if not ckey or pack is None:
+        return None, "legacy_direction_identity"
+    matches = [direction_machine_id(d) for d in pack.get("directions") or []
+               if d.get("collection_key") == ckey]
+    unique = sorted(set(matches))
+    if len(unique) != 1:
+        return None, "legacy_direction_identity"
+    return unique, None
+
+
 def validate_stage4_selections(selects: Any, states: dict, packs: dict) -> None:
     """Validate the complete selection batch before any formal file is written."""
     if not isinstance(selects, list) or not selects:
         fail("invalid_params", "selection input has no selections")
-    seen_directions = set()
+    seen_scopes = set()
     seen_email_ids = set()
     for index, select in enumerate(selects):
         if not isinstance(select, dict):
             fail("invalid_selection", f"selection[{index}] must be an object")
         professor = select.get("professor")
-        ckey = select.get("collection_key")
         professor_dir = Path(select.get("professor_dir") or "")
-        if not isinstance(professor, str) or not professor.strip() or not professor_dir.is_dir() or not ckey:
-            fail("invalid_selection", f"selection[{index}] is missing professor, professor_dir, or collection_key")
-        direction_key = (professor, ckey)
-        if direction_key in seen_directions:
-            fail("duplicate_selection", f"duplicate professor+direction selection: {professor}::{ckey}")
-        seen_directions.add(direction_key)
+        if not isinstance(professor, str) or not professor.strip() or not professor_dir.is_dir():
+            fail("invalid_selection", f"selection[{index}] is missing professor or professor_dir")
+        direction_ids, identity_error = _selection_direction_ids(select, packs)
+        if identity_error or not direction_ids:
+            fail("legacy_direction_identity",
+                 f"selection[{index}] ({professor}) cannot be mapped to canonical direction_ids "
+                 "through an exact machine relation; re-run stage 3 for this professor")
+        scope_key = (professor, tuple(direction_ids))
+        if scope_key in seen_scopes:
+            fail("duplicate_selection",
+                 f"duplicate professor+direction-scope selection: {professor}::{'+'.join(direction_ids)}")
+        seen_scopes.add(scope_key)
         state = states.get(str(professor_dir))
         pack = packs.get(str(professor_dir))
         state_direction = next((d for d in (state or {}).get("directions", [])
-                                if d.get("collection_key") == ckey), None)
+                                if d.get("direction_id") in direction_ids), None) \
+            if len(direction_ids) == 1 else None
         pack_direction = next((d for d in (pack or {}).get("directions", [])
-                               if d.get("collection_key") == ckey), None)
-        if not state_direction or not pack_direction:
+                               if direction_machine_id(d) in direction_ids), None) \
+            if len(direction_ids) == 1 else None
+        if len(direction_ids) == 1 and not (state_direction and pack_direction):
             continue
-        candidates = {idea.get("id"): idea for idea in state_direction.get("candidates", [])}
-        # Cross-direction ideas (issue #8) are selected under their owner's
-        # collection_key: look the id up in the owner's candidates first, then
-        # in the cross entries that owner owns.
-        cross_by_id = {entry.get("id"): entry
-                       for entry in (state or {}).get("cross_direction") or []
-                       if isinstance(entry, dict)
-                       and entry.get("owner_collection_key") == ckey}
+        candidates = {idea.get("id"): idea for idea in (state_direction or {}).get("candidates", [])}
+        # Explicit cross-direction ideas live in their own groups: look the id
+        # up in the group whose sorted direction_ids match this selection scope.
+        cross_by_id = {}
+        if len(direction_ids) >= 2:
+            for group in (state or {}).get("cross_direction_groups") or []:
+                if isinstance(group, dict) \
+                        and sorted(group.get("direction_ids") or []) == direction_ids:
+                    cross_by_id = {entry.get("id"): entry
+                                   for entry in group.get("candidates") or []}
         ideas = select.get("ideas")
         if not isinstance(ideas, list):
-            fail("invalid_selection", f"{professor}::{ckey}: ideas must be a list")
+            fail("invalid_selection",
+                 f"{professor}::{'+'.join(direction_ids)}: ideas must be a list")
         seen_ideas = set()
         for idea_index, idea_input in enumerate(ideas):
             if not isinstance(idea_input, dict):
-                fail("invalid_selection", f"{professor}::{ckey}: ideas[{idea_index}] must be an object")
+                fail("invalid_selection",
+                     f"{professor}::{'+'.join(direction_ids)}: ideas[{idea_index}] must be an object")
             idea_id = idea_input.get("id")
             if idea_id in seen_ideas:
-                fail("duplicate_idea_id", f"duplicate idea id in {professor}::{ckey}: {idea_id}")
+                fail("duplicate_idea_id",
+                     f"duplicate idea id in {professor}::{'+'.join(direction_ids)}: {idea_id}")
             seen_ideas.add(idea_id)
             idea = candidates.get(idea_id)
             if idea is None and idea_id in cross_by_id:
@@ -5193,11 +6033,12 @@ def validate_stage4_selections(selects: Any, states: dict, packs: dict) -> None:
                 # An explicit selection that matches nothing must fail the whole
                 # batch up front: silently skipping it would write the remaining
                 # ideas while the user believes this one was selected too.
-                fail("unknown_idea_id", f"{professor}::{ckey}: unknown idea id: {idea_id}")
+                fail("unknown_idea_id",
+                     f"{professor}::{'+'.join(direction_ids)}: unknown idea id: {idea_id}")
             override = validate_papers_override(
                 idea, idea_input.get("papers_override"),
-                f"{professor}::{ckey}::{idea_id}")
-            email_id = f"{professor}::{ckey}::{idea_id}"
+                f"{professor}::{'+'.join(direction_ids)}::{idea_id}")
+            email_id = f"{professor}::{'+'.join(direction_ids)}::{idea_id}"
             if email_id in seen_email_ids:
                 fail("duplicate_email_id", f"duplicate email id: {email_id}")
             seen_email_ids.add(email_id)
@@ -5221,92 +6062,148 @@ def cmd_stage4_finalize(args) -> None:
     old_selections = (old_selection or {}).get("selections", [])
     if not isinstance(old_selections, list):
         fail("invalid_selection", f"existing selection.selections must be a list: {selection_path}")
-    current_keys = {(s.get("professor"), s.get("collection_key"))
-                    for s in selects if isinstance(s, dict)}
-    preserved = [s for s in old_selections
-                 if isinstance(s, dict) and (s.get("professor"), s.get("collection_key")) not in current_keys]
-    all_selects = preserved + selects
+    pack_cache, state_cache = {}, {}
+    for select in selects:
+        professor_dir = Path(select.get("professor_dir") or "") if isinstance(select, dict) else Path("")
+        if professor_dir.is_dir():
+            state, serr = load_candidate_state(professor_dir, None)
+            pack, perr = load_input_pack(professor_dir)
+            if state is None and serr:
+                soft_exit("needs_refresh", serr,
+                          professor=select.get("professor"),
+                          message="候选状态无法按机器身份精确迁移：重跑阶段 3 重建 v2 状态。未写入任何文件。")
+            if state is not None:
+                state_cache[str(professor_dir)] = state
+            if pack is not None:
+                pack_cache[str(professor_dir)] = pack
+    # Resolve every selection entry's canonical direction_ids up front: the
+    # deprecated collection_key path goes through the pack's exact machine
+    # mapping, and anything ambiguous fails closed before any write.
+    resolved_selects = []
+    for select in selects:
+        ids, identity_error = _selection_direction_ids(select, pack_cache)
+        if identity_error or not ids:
+            fail("legacy_direction_identity",
+                 f"selection for {select.get('professor')} cannot be mapped to canonical "
+                 "direction_ids through an exact machine relation; re-run stage 3 for this "
+                 "professor. No selection/email file was written.")
+        resolved_selects.append({**select, "direction_ids": ids})
+    current_scope = {(s.get("professor"), tuple(s.get("direction_ids") or []))
+                     for s in resolved_selects}
+    # Preserved (not re-selected) entries migrate in memory through the same
+    # exact machine mapping; anything ambiguous fails closed BEFORE any write.
+    preserved = []
+    for old in old_selections:
+        if not isinstance(old, dict):
+            continue
+        professor_dir = Path(old.get("professor_dir") or "")
+        pack = pack_cache.get(str(professor_dir))
+        if pack is None and professor_dir.is_dir():
+            pack, _ = load_input_pack(professor_dir)
+            if pack is not None:
+                pack_cache[str(professor_dir)] = pack
+        ids, identity_error = _selection_direction_ids(old, pack_cache)
+        if ids and (old.get("professor"), tuple(ids)) in current_scope:
+            continue
+        if identity_error or not ids:
+            fail("legacy_direction_identity",
+                 f"existing selection entry for {old.get('professor')} cannot be mapped to "
+                 "canonical direction_ids through an exact machine relation; re-run stage 3 "
+                 "for this professor. No selection/email file was written.",
+                 selection_file=str(selection_path))
+        preserved.append({**old, "direction_ids": ids})
+    all_selects = preserved + resolved_selects
+    validate_stage4_selections(all_selects, state_cache, pack_cache)
     written_selections = []
     email_entries = []
     skipped = []
-    pack_cache, state_cache = {}, {}
-    for select in all_selects:
-        professor_dir = Path(select.get("professor_dir") or "") if isinstance(select, dict) else Path("")
-        if professor_dir.is_dir():
-            state, serr = read_json_file(professor_dir / CANDIDATE_STATE)
-            pack, perr = read_json_file(professor_dir / INPUT_PACK)
-            if serr is None and isinstance(state, dict):
-                state_cache[str(professor_dir)] = state
-            if perr is None and isinstance(pack, dict):
-                pack_cache[str(professor_dir)] = pack
-    validate_stage4_selections(all_selects, state_cache, pack_cache)
     evidence_artifact, evidence_error = load_contact_evidence(program_root)
     evidence_snapshots = {}
     for select in all_selects:
         professor = select.get("professor")
         professor_dir = Path(select.get("professor_dir") or "")
-        ckey = select.get("collection_key")
-        if not professor_dir.is_dir() or not ckey:
+        direction_ids = select.get("direction_ids") or []
+        scope = "+".join(direction_ids)
+        if not professor_dir.is_dir() or not direction_ids:
             skipped.append({"professor": professor, "reason": "invalid_selection_input"})
             continue
-        state, serr = read_json_file(professor_dir / CANDIDATE_STATE)
-        if serr:
-            skipped.append({"professor": professor, "collection_key": ckey,
+        state = state_cache.get(str(professor_dir))
+        pack = pack_cache.get(str(professor_dir))
+        if state is None:
+            skipped.append({"professor": professor, "direction_ids": direction_ids,
                             "reason": "needs_stage3", "detail": "缺 套磁候选状态.json"})
             continue
-        pack, perr = read_json_file(professor_dir / INPUT_PACK)
-        if perr:
-            skipped.append({"professor": professor, "collection_key": ckey,
+        if pack is None:
+            skipped.append({"professor": professor, "direction_ids": direction_ids,
                             "reason": "needs_refresh", "detail": "missing_input_pack"})
             continue
-        pack_direction = next((d for d in pack.get("directions", [])
-                               if d.get("collection_key") == ckey), None)
-        state_direction = next((d for d in state.get("directions", [])
-                                if d.get("collection_key") == ckey), None)
-        if not pack_direction or not state_direction:
-            skipped.append({"professor": professor, "collection_key": ckey,
-                            "reason": "needs_refresh", "detail": "direction not in state/pack"})
-            continue
-        if state.get("input_fingerprints", {}).get(ckey) != pack_direction.get("input_fingerprint"):
-            soft_exit("needs_refresh", "source_fingerprint_changed",
-                      professor=professor, collection_key=ckey,
-                      message="输入包已变化：先重跑阶段 3 刷新候选，再重新选择。未写入任何选择/邮件包。")
-        if state.get("profile_fingerprint") != current_profile_fp:
-            soft_exit("needs_refresh", "profile_changed",
-                      professor=professor, collection_key=ckey,
-                      message="profile 已变化：重跑阶段 3 后再选择。未写入任何选择/邮件包。")
+        if len(direction_ids) == 1:
+            pack_direction = next((d for d in pack.get("directions", [])
+                                   if direction_machine_id(d) == direction_ids[0]), None)
+            state_direction = next((d for d in state.get("directions", [])
+                                    if d.get("direction_id") == direction_ids[0]), None)
+            if not pack_direction or not state_direction:
+                skipped.append({"professor": professor, "direction_ids": direction_ids,
+                                "reason": "needs_refresh", "detail": "direction not in state/pack"})
+                continue
+            if state.get("input_fingerprints", {}).get(direction_ids[0]) != \
+                    pack_direction.get("input_fingerprint"):
+                soft_exit("needs_refresh", "source_fingerprint_changed",
+                          professor=professor, direction_id=direction_ids[0],
+                          message="输入包已变化：先重跑阶段 3 刷新候选，再重新选择。未写入任何选择/邮件包。")
+            if state.get("profile_fingerprint") != current_profile_fp:
+                soft_exit("needs_refresh", "profile_changed",
+                          professor=professor, direction_id=direction_ids[0],
+                          message="profile 已变化：重跑阶段 3 后再选择。未写入任何选择/邮件包。")
+        else:
+            pack_direction = next((d for d in pack.get("directions", [])
+                                   if direction_machine_id(d) == direction_ids[0]), None)
+            state_direction = None
+            if pack_direction is None:
+                skipped.append({"professor": professor, "direction_ids": direction_ids,
+                                "reason": "needs_refresh", "detail": "direction not in pack"})
+                continue
+            if state.get("profile_fingerprint") != current_profile_fp:
+                soft_exit("needs_refresh", "profile_changed",
+                          professor=professor, direction_ids=direction_ids,
+                          message="profile 已变化：重跑阶段 3 后再选择。未写入任何选择/邮件包。")
         selected_ideas = []
         for idea_input in select.get("ideas", []):
             idea_id = idea_input.get("id")
-            idea = next((c for c in state_direction.get("candidates", [])
-                         if c.get("id") == idea_id), None)
-            cross_entry = None
+            idea = None
+            group_entry = None
+            if len(direction_ids) == 1:
+                idea = next((c for c in state_direction.get("candidates", [])
+                             if c.get("id") == idea_id), None)
             if idea is None:
-                cross_entry = next(
-                    (entry for entry in state.get("cross_direction") or []
-                     if isinstance(entry, dict)
-                     and entry.get("owner_collection_key") == ckey
-                     and entry.get("id") == idea_id), None)
-                idea = cross_entry
+                group_entry = next(
+                    (group for group in state.get("cross_direction_groups") or []
+                     if isinstance(group, dict)
+                     and sorted(group.get("direction_ids") or []) == direction_ids
+                     and any(c.get("id") == idea_id for c in group.get("candidates") or [])),
+                    None)
+                if group_entry is not None:
+                    idea = next(c for c in group_entry.get("candidates") or []
+                                if c.get("id") == idea_id)
             if idea is None:
-                skipped.append({"professor": professor, "collection_key": ckey,
+                skipped.append({"professor": professor, "direction_ids": direction_ids,
                                 "idea": idea_id, "reason": "unknown_idea_id"})
                 continue
             participants = None
-            if cross_entry is not None:
+            if len(direction_ids) >= 2:
                 # Every participant must exact-join the current pack with the
                 # fingerprint recorded at stage 3; any drift fails the whole
                 # batch before a single file is written.
-                participants = _stage4_cross_participants(pack, cross_entry)
+                participants = _stage4_cross_group(pack, group_entry or {})
                 if participants is None:
                     soft_exit("needs_refresh", "cross_participant_changed",
-                              professor=professor, collection_key=ckey, idea=idea_id,
+                              professor=professor, direction_ids=direction_ids, idea=idea_id,
                               message="跨方向想法引用的参与方向已变化或指纹过期：先重跑阶段 3 刷新候选，再重新选择。未写入任何选择/邮件包。")
             idea_full = dict(idea)
             idea_full["red_lines"] = idea.get("red_lines") or []
             papers_override = validate_papers_override(
                 idea, idea_input.get("papers_override"),
-                f"{professor}::{ckey}::{idea_id}")
+                f"{professor}::{scope}::{idea_id}")
             if professor not in evidence_snapshots:
                 evidence_snapshots[professor] = contact_evidence_snapshot(
                     evidence_artifact, evidence_error, professor)
@@ -5314,18 +6211,23 @@ def cmd_stage4_finalize(args) -> None:
                 pack, state_direction, pack_direction, idea_full,
                 idea_input.get("note") or "", program_root, current_profile_fp,
                 papers_override, evidence_snapshots[professor],
-                cross_entry=cross_entry, participant_directions=participants)
+                group_entry=group_entry if len(direction_ids) >= 2 else None,
+                participant_directions=participants)
             email_entries.append(entry)
             selected_ideas.append(idea_input)
         if not selected_ideas:
             continue
-        select = dict(select, ideas=selected_ideas)
+        select = dict(select, ideas=selected_ideas, direction_ids=direction_ids)
+        primary = next((d for d in pack.get("directions", [])
+                        if direction_machine_id(d) == direction_ids[0]), {})
         written_selections.append({
             "professor": professor,
             "professor_dir": str(professor_dir),
-            "zotero_collection": state_direction.get("zotero_collection") or select.get("zotero_collection"),
-            "name_ja": pack_direction.get("name_ja"), "name_zh": pack_direction.get("name_zh"),
-            "collection_key": ckey,
+            "direction_ids": direction_ids,
+            "zotero_collection": (state_direction or {}).get("zotero_collection")
+            or select.get("zotero_collection"),
+            "name_ja": primary.get("name_ja"), "name_zh": primary.get("name_zh"),
+            "collection_key": primary.get("collection_key"),
             "reason": select.get("reason"),
             "ideas": [{"id": i.get("id"), "note": i.get("note") or "",
                        "papers_override": i.get("papers_override") or None}
@@ -5333,13 +6235,17 @@ def cmd_stage4_finalize(args) -> None:
     if not written_selections:
         fail("validation_failed", "no valid selections")
     selection_doc = {
+        "schema": SELECTION_SCHEMA, "kind": SELECTION_KIND,
+        "identity_version": DIRECTION_IDENTITY_VERSION,
         "program_root": str(program_root), "generated_at": now_utc(),
         "managed_by": MANAGED_BY,
         "profile_fingerprint": current_profile_fp,
         "selections": written_selections}
     email_pack_path = program_root / "教授研究" / EMAIL_PACK
     email_pack = {
-        "schema": SCHEMA, "managed_by": MANAGED_BY, "generated_at": now_utc(),
+        "schema": EMAIL_PACK_SCHEMA, "kind": EMAIL_PACK_KIND,
+        "identity_version": DIRECTION_IDENTITY_VERSION,
+        "managed_by": MANAGED_BY, "generated_at": now_utc(),
         "program_root": str(program_root),
         "profile_fingerprint": current_profile_fp,
         "emails": email_entries}
@@ -5348,7 +6254,9 @@ def cmd_stage4_finalize(args) -> None:
         "status": "ok",
         "selection_file": str(selection_path),
         "email_pack": str(email_pack_path),
-        "selected_directions": [f"{s['professor']} · {s.get('name_ja')}" for s in written_selections],
+        "selected_directions": [
+            f"{s['professor']} · {'+'.join(s.get('direction_ids') or [])}"
+            for s in written_selections],
         "emails_compiled": len(email_entries),
         "skipped": skipped,
     })
@@ -6011,6 +6919,8 @@ def cmd_stage5_plan(args) -> None:
                                    {"output": "future", "source_ids": [f"idea:{email['idea']['id']}"]}]},
                 "model_input": {
                     "idea": email.get("idea"),
+                    "direction_ids": email.get("direction_ids") or [],
+                    "directions": email.get("directions") or [],
                     "user_note": truncate(email.get("user_note"), 800),
                     "papers": email.get("papers"),
                     "gaps": [gap_job_block(g) for g in email.get("gaps", [])],
@@ -6277,8 +7187,14 @@ def assemble_followup_draft(email: dict, choices: dict, sources: dict,
     values["出身校"] = choices.get("alma_mater") or "総合大学出身"
     values["氏名"] = choices.get("signature_name") or ""
     values["初回送信日"] = choices.get("initial_sent_date") or ""
-    values["研究主题"] = (email.get("name_ja") or
-                           (email.get("idea") or {}).get("title") or "関連分野")
+    # Issue #8 §8.3: a multi-direction (cross) email must not guess ONE
+    # direction name — prefer the selected idea title as the follow-up topic.
+    if len(email.get("direction_ids") or []) > 1:
+        values["研究主题"] = ((email.get("idea") or {}).get("title")
+                               or email.get("name_ja") or "関連分野")
+    else:
+        values["研究主题"] = (email.get("name_ja") or
+                               (email.get("idea") or {}).get("title") or "関連分野")
     verify_items = (verify or {}).get("items") or {}
     values["メールアドレス"] = (choices.get("email_address") or
                               (verify_items.get("email") or {}).get("value") or "")
@@ -6374,7 +7290,10 @@ def render_source_table(email: dict, raw: dict) -> list:
 
 
 def render_followup_source_table(email: dict) -> list:
-    direction = email.get("name_zh") or email.get("name_ja") or "相关方向"
+    if len(email.get("direction_ids") or []) > 1:
+        direction = (email.get("idea") or {}).get("title") or "跨方向想法"
+    else:
+        direction = email.get("name_zh") or email.get("name_ja") or "相关方向"
     return [
         "| 项目 | 来源 |", "|---|---|",
         "| 首封邮件中的学校、研究科、入学信息 | [邮件包] 同一 email 记录 |",
@@ -6816,12 +7735,12 @@ def stage2_pack_matches_facts(ctx: Stage2Context) -> None:
     """Do not apply a validator rewrite to facts newer than the accepted pack."""
     if not ctx.pack:
         fail("missing_input_pack", f"input pack unreadable: {ctx.pack_path}")
-    accepted = {d.get("collection_key"): d for d in ctx.pack.get("directions", [])}
+    accepted = {direction_machine_id(d): d for d in ctx.pack.get("directions", [])}
     for plan in ctx.direction_plans:
-        old = accepted.get(plan["ckey"])
+        old = accepted.get(plan["did"])
         if not old or old.get("input_fingerprint") != plan["fingerprint"]:
             soft_exit("needs_refresh", "source_fingerprint_changed",
-                      direction=plan["ckey"], pack_path=str(ctx.pack_path))
+                      direction=plan["did"], pack_path=str(ctx.pack_path))
 
 
 def stage2_validation_material(ctx: Stage2Context, plan: dict, direction: dict) -> dict:
@@ -6858,30 +7777,39 @@ def stage2_refine_context(args):
 
 def cmd_stage2_refine_plan(args) -> None:
     ctx = stage2_refine_context(args)
-    allowed = {d.get("collection_key") for d in ctx.pack.get("directions", [])}
-    validation = load_validator_results(Path(args.validation_file), allowed, "collection_key")
+    dids = [direction_machine_id(d) for d in ctx.pack.get("directions", [])]
+    allowed = set(dids)
+    validation = load_validator_results(Path(args.validation_file), allowed, "direction_id")
     failed = {key: value for key, value in validation.items()
               if value["result"] == "fail_after_2_rounds"}
-    if args.collection_key:
-        if args.collection_key not in allowed:
-            fail("invalid_params", f"collection_key not found in input pack: {args.collection_key}")
-        failed = {key: value for key, value in failed.items() if key == args.collection_key}
+    scope_did = getattr(args, "direction_id", None)
+    if getattr(args, "collection_key", None) and not scope_did:
+        matches = [d for d in ctx.pack.get("directions", [])
+                   if d.get("collection_key") == args.collection_key]
+        if len(matches) != 1:
+            fail("invalid_params",
+                 f"collection_key not found (or ambiguous) in input pack: {args.collection_key}")
+        scope_did = direction_machine_id(matches[0])
+    if scope_did:
+        if scope_did not in allowed:
+            fail("invalid_params", f"direction_id not found in input pack: {scope_did}")
+        failed = {key: value for key, value in failed.items() if key == scope_did}
 
-    old_directions = {d.get("collection_key"): d for d in ctx.pack.get("directions", [])}
-    plans = {plan["ckey"]: plan for plan in ctx.direction_plans}
+    old_directions = {direction_machine_id(d): d for d in ctx.pack.get("directions", [])}
+    plans = {plan["did"]: plan for plan in ctx.direction_plans}
     jobs = []
-    for ckey in sorted(failed):
-        direction = old_directions.get(ckey)
-        plan = plans.get(ckey)
+    for did in sorted(failed):
+        direction = old_directions.get(did)
+        plan = plans.get(did)
         if not direction or not plan or not isinstance(direction.get("narrative"), dict):
-            fail("invalid_result_json", f"input pack has no reusable narrative for {ckey}")
+            fail("invalid_result_json", f"input pack has no reusable narrative for {did}")
         jobs.append({
-            "job_id": f"narrative-rewrite:{ctx.professor}:{ckey}",
+            "job_id": f"narrative-rewrite:{ctx.professor}:{did}",
             "kind": "narrative-rewrite",
-            "collection_key": ckey,
-            "result_file": f"narrative-rewrite-{filename_component(ckey)}.json",
+            "direction_id": did,
+            "result_file": f"narrative-rewrite-{filename_component(did)}.json",
             "result_schema": {"schema": 1, "kind": "narrative-rewrite",
-                              "collection_key": ckey,
+                              "direction_id": did,
                               "positioning": [{"kind": "para|bullet", "text": "…",
                                                 "refs": ["paper:ITEMKEY"],
                                                 "concrete_object": "具体对象",
@@ -6890,9 +7818,9 @@ def cmd_stage2_refine_plan(args) -> None:
                               "gap_notes": [{"gap_id": "", "summary": "一句话",
                                               "explanation": "大白话"}]},
             "model_input": {
-                "collection_key": ckey,
+                "direction_id": did,
                 "current_narrative": direction["narrative"],
-                "issues": failed[ckey]["issues"],
+                "issues": failed[did]["issues"],
                 "allowed_material": stage2_validation_material(ctx, plan, direction),
                 "rules": "返回完整的当前方向 narrative，未命中的 block 和 gap_notes 原样保留，只重写 validator 指出的文字。保留且只使用允许的 paper/later/gap 引用。不得修改 freshness 状态、用户笔记、论文事实或红线。每个 positioning block 必须有 concrete_object、input_example、output_example；text 中占位符集合必须与 refs 完全相等。用最日常中文解释术语，不能把 item_key 写进 text。"},
         })
@@ -6904,14 +7832,23 @@ def cmd_stage2_refine_plan(args) -> None:
 
 def cmd_stage2_refine_finalize(args) -> None:
     ctx = stage2_refine_context(args)
-    allowed = {d.get("collection_key") for d in ctx.pack.get("directions", [])}
-    validation = load_validator_results(Path(args.validation_file), allowed, "collection_key")
+    dids = [direction_machine_id(d) for d in ctx.pack.get("directions", [])]
+    allowed = set(dids)
+    validation = load_validator_results(Path(args.validation_file), allowed, "direction_id")
     failed = {key for key, value in validation.items()
               if value["result"] == "fail_after_2_rounds"}
-    if args.collection_key:
-        if args.collection_key not in allowed:
-            fail("invalid_params", f"collection_key not found in input pack: {args.collection_key}")
-        failed &= {args.collection_key}
+    scope_did = getattr(args, "direction_id", None)
+    if getattr(args, "collection_key", None) and not scope_did:
+        matches = [d for d in ctx.pack.get("directions", [])
+                   if d.get("collection_key") == args.collection_key]
+        if len(matches) != 1:
+            fail("invalid_params",
+                 f"collection_key not found (or ambiguous) in input pack: {args.collection_key}")
+        scope_did = direction_machine_id(matches[0])
+    if scope_did:
+        if scope_did not in allowed:
+            fail("invalid_params", f"direction_id not found in input pack: {scope_did}")
+        failed &= {scope_did}
     if not failed:
         emit({"status": "ok", "rewritten": [], "write_needed": False,
               "reason_code": "no_failed_directions"})
@@ -6919,27 +7856,30 @@ def cmd_stage2_refine_finalize(args) -> None:
 
     results_dir = Path(args.results)
     rewrites = {}
-    for ckey in sorted(failed):
-        path = results_dir / f"narrative-rewrite-{filename_component(ckey)}.json"
+    for did in sorted(failed):
+        path = results_dir / f"narrative-rewrite-{filename_component(did)}.json"
         data, error = read_json_file(path)
         if error:
             fail("result_missing", f"{path}: {error}")
         if not isinstance(data, dict) or data.get("schema") != 1 or data.get("kind") != "narrative-rewrite":
             fail("invalid_result_json", f"{path}: schema/kind must be 1/narrative-rewrite")
-        if data.get("collection_key") != ckey:
-            fail("invalid_result_json", f"{path}: unexpected direction {data.get('collection_key')}")
-        _, rewrites[ckey] = validate_narrative_entry(ctx, path, data, expected_ckey=ckey)
+        data_did = data.get("direction_id") or data.get("collection_key")
+        if data_did != did:
+            fail("invalid_result_json", f"{path}: unexpected direction {data_did}")
+        _, rewrites[did] = validate_narrative_entry(ctx, path, data, expected_did=did)
 
     pack_directions = []
     for direction in ctx.pack.get("directions", []):
         updated = dict(direction)
-        if direction.get("collection_key") in rewrites:
-            updated["narrative"] = rewrites[direction["collection_key"]]
+        if direction_machine_id(direction) in rewrites:
+            updated["narrative"] = rewrites[direction_machine_id(direction)]
         pack_directions.append(updated)
     state_fingerprint = sha256_obj({
         "professor": ctx.professor,
-        "directions": {d["collection_key"]: d.get("input_fingerprint") for d in pack_directions}})
-    body = render_analysis_md(ctx, pack_directions, state_fingerprint)
+        "directions": {direction_machine_id(d): d.get("input_fingerprint")
+                       for d in pack_directions}})
+    body = render_analysis_md(ctx, {**ctx.pack, "directions": pack_directions},
+                              state_fingerprint)
     old_render = ((ctx.pack or {}).get("cache") or {}).get("render", {})
     decision = None
     if getattr(args, "decision_file", None):
@@ -6970,30 +7910,33 @@ def cmd_stage2_refine_finalize(args) -> None:
 
 def cmd_stage2_record_validation(args) -> None:
     professor_dir = Path(args.professor_dir)
-    path = professor_dir / INPUT_PACK
-    pack, error = read_json_file(path)
-    if error or not isinstance(pack, dict):
-        fail("missing_input_pack", f"input pack unreadable: {path}")
-    allowed = {d.get("collection_key") for d in pack.get("directions", [])}
-    results = load_validator_results(Path(args.validation_file), allowed, "collection_key")
+    pack, error = load_input_pack(professor_dir)
+    if error or pack is None:
+        fail("missing_input_pack", f"input pack unreadable: {professor_dir / INPUT_PACK}")
+    allowed = {direction_machine_id(d) for d in pack.get("directions", [])}
+    results = load_validator_results(Path(args.validation_file), allowed, "direction_id")
     updated = dict(pack)
     updated["validator"] = {"results": results, "updated_at": now_utc()}
-    atomic_json(path, updated)
-    emit({"status": "ok", "pack_path": str(path), "updated": sorted(results)})
+    atomic_json(professor_dir / INPUT_PACK, updated)
+    emit({"status": "ok", "pack_path": str(professor_dir / INPUT_PACK),
+          "updated": sorted(results)})
 
 
 def cmd_stage3_record_validation(args) -> None:
     professor_dir = Path(args.professor_dir)
-    path = professor_dir / CANDIDATE_STATE
-    state, error = read_json_file(path)
-    if error or not isinstance(state, dict):
-        fail("missing_candidate_state", f"candidate state unreadable: {path}")
-    allowed = {d.get("collection_key") for d in state.get("directions", [])}
-    results = load_validator_results(Path(args.validation_file), allowed, "collection_key")
+    pack, _ = load_input_pack(professor_dir)
+    state, state_error = load_candidate_state(professor_dir, pack)
+    if state_error or state is None:
+        fail("missing_candidate_state",
+             f"candidate state unreadable: {professor_dir / CANDIDATE_STATE}")
+    allowed = {d.get("direction_id") for d in state.get("directions", [])
+               if isinstance(d, dict)}
+    results = load_validator_results(Path(args.validation_file), allowed, "direction_id")
     updated = dict(state)
     updated["validator"] = {"results": results, "updated_at": now_utc()}
-    atomic_json(path, updated)
-    emit({"status": "ok", "state_path": str(path), "updated": sorted(results)})
+    atomic_json(professor_dir / CANDIDATE_STATE, updated)
+    emit({"status": "ok", "state_path": str(professor_dir / CANDIDATE_STATE),
+          "updated": sorted(results)})
 
 
 def read_legacy_index(index_path: Path) -> tuple[dict | None, str | None]:
@@ -7297,6 +8240,7 @@ def apply_ready_entry(program_root: Path, entry: dict, plan: dict) -> dict:
     finally:
         facts_path.unlink(missing_ok=True)
     pack_directions = []
+    papers_map = {}
     cache_entries = {}
     for plan_entry in ctx.direction_plans:
         statuses = {}
@@ -7327,13 +8271,18 @@ def apply_ready_entry(program_root: Path, entry: dict, plan: dict) -> dict:
                 "completed_part": None, "remaining_gap": None, "migrated": True}
             statuses[gap["gap_id"]] = record
             cache_entries[gap["gap_id"]] = record
-        pack_directions.append(build_direction_pack(ctx, plan_entry, statuses, None))
-        pack_directions[-1]["migrated"] = True
-        pack_directions[-1]["narrative"] = None
+        built, built_papers = build_direction_pack(ctx, plan_entry, statuses, None)
+        built["migrated"] = True
+        built["narrative"] = None
+        pack_directions.append(built)
+        papers_map.update(built_papers)
     pack = {
-        "schema": SCHEMA, "managed_by": MANAGED_BY, "generated_at": now_utc(),
+        "schema": INPUT_PACK_SCHEMA, "kind": INPUT_PACK_KIND,
+        "identity_version": DIRECTION_IDENTITY_VERSION,
+        "managed_by": MANAGED_BY, "generated_at": now_utc(),
         "professor": entry["professor"], "professor_dir": str(professor_dir),
         "migrated": True,
+        "papers": papers_map,
         "directions": pack_directions,
         "cache": {"render": {}}}
     atomic_json(professor_dir / INPUT_PACK, pack)
@@ -7438,7 +8387,8 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--facts", help="原阶段 2 facts；存在时校验其 fingerprint")
     group.add_argument("--professor-dir", help="facts 已过期时，从已接受输入包读取修订材料")
     p.add_argument("--validation-file", required=True)
-    p.add_argument("--collection-key", help="只为一个失败方向生成修订 job")
+    p.add_argument("--direction-id", help="只为一个失败方向（机器身份）生成修订 job")
+    p.add_argument("--collection-key", help="deprecated v1 兼容：经输入包精确映射解析为 direction_id")
     p.set_defaults(func=cmd_stage2_refine_plan)
 
     p = sub.add_parser("stage2-refine-finalize")
@@ -7447,7 +8397,8 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--professor-dir", help="facts 已过期时，从已接受输入包读取修订材料")
     p.add_argument("--results", required=True)
     p.add_argument("--validation-file", required=True)
-    p.add_argument("--collection-key", help="只应用一个失败方向的修订结果")
+    p.add_argument("--direction-id", help="只应用一个失败方向（机器身份）的修订结果")
+    p.add_argument("--collection-key", help="deprecated v1 兼容：经输入包精确映射解析为 direction_id")
     p.add_argument("--decision-file")
     p.set_defaults(func=cmd_stage2_refine_finalize)
 
@@ -7455,7 +8406,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--professor-dir", required=True)
     p.add_argument("--profile")
     p.add_argument("--refresh-scope", choices=REFRESH_SCOPES)
-    p.add_argument("--collection-key", help="只处理输入包中的一个方向")
+    p.add_argument("--direction-id", help="只处理输入包中的一个方向（canonical 机器身份）")
+    p.add_argument("--collection-key", help="deprecated v1 兼容：经输入包精确映射解析为 direction_id")
+    p.add_argument("--skip-direction-ids",
+                   help="comma-separated direction IDs the user explicitly skipped; "
+                        "persisted as stage3_status=skipped, never as silent omission")
+    p.add_argument("--cross-direction-groups",
+                   help="JSON list of direction-ID lists, e.g. '[\"dir_A\",\"dir_B\"]'. "
+                        "Explicit opt-in ONLY: each group gets one separate cross job; "
+                        "absent/empty means no cross-direction work at all")
     p.add_argument("--selection")
     p.add_argument("--program-root")
     p.set_defaults(func=cmd_stage3_plan)
@@ -7465,7 +8424,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--results", required=True)
     p.add_argument("--profile")
     p.add_argument("--refresh-scope", choices=REFRESH_SCOPES)
-    p.add_argument("--collection-key", help="只处理输入包中的一个方向")
+    p.add_argument("--direction-id", help="只处理输入包中的一个方向（canonical 机器身份）")
+    p.add_argument("--collection-key", help="deprecated v1 兼容：经输入包精确映射解析为 direction_id")
+    p.add_argument("--skip-direction-ids",
+                   help="comma-separated direction IDs the user explicitly skipped")
+    p.add_argument("--cross-direction-groups",
+                   help="JSON list of direction-ID lists；必须与 stage3-plan 的请求一致")
     p.add_argument("--selection")
     p.add_argument("--program-root")
     p.add_argument("--decision-file")
