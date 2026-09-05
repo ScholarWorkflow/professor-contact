@@ -148,7 +148,7 @@ class ResolvedPreflightBase(PreflightBase):
         out = parse(run_cli("stage3-plan", "--professor-dir", self.prof_dir,
                             "--program-root", self.root))
         self.assertEqual(out["status"], "ok", out)
-        return sorted(job["collection_key"] for job in out["jobs"])
+        return sorted(job["direction_id"] for job in out["jobs"])
 
 
 class TestSemanticsVersionBump(ResolvedPreflightBase):
@@ -197,9 +197,9 @@ class TestResolvedSetReuse(ResolvedPreflightBase):
     def test_accepted_split_reuses_all_with_identical_stage3_visibility(self):
         self._accept_split()
         pack = self._read_pack()
-        self.assertEqual(sorted(d["collection_key"] for d in pack["directions"]),
+        self.assertEqual(sorted(d["direction_id"] for d in pack["directions"]),
                          ["DIR00001", "DIR00001__sub", "DIR00002"])
-        child = next(d for d in pack["directions"] if d["collection_key"] == "DIR00001__sub")
+        child = next(d for d in pack["directions"] if d["direction_id"] == "DIR00001__sub")
         self.assertEqual(child["resolved_direction"]["provisional_direction_id"], "DIR00001")
         self.record_validation(keys=("DIR00001", "DIR00001__sub", "DIR00002"))
         stage3_first = self.stage3_direction_keys()
@@ -216,7 +216,7 @@ class TestResolvedSetReuse(ResolvedPreflightBase):
         self.record_validation(keys=("DIR00001", "DIR00001__sub", "DIR00002"))
         pack = self._read_pack()
         pack["directions"] = [d for d in pack["directions"]
-                              if d["collection_key"] != "DIR00001__sub"]
+                              if d["direction_id"] != "DIR00001__sub"]
         self._write_pack(pack)
         payload = self.preflight()
         self.assertEqual(payload["action"], "process", payload)
@@ -238,7 +238,7 @@ class TestResolvedSetReuse(ResolvedPreflightBase):
         self.finalize(plan_path)
 
         pack = self._read_pack()
-        self.assertEqual([d["collection_key"] for d in pack["directions"]], ["DIR00001"])
+        self.assertEqual([d["direction_id"] for d in pack["directions"]], ["DIR00001"])
         target = pack["directions"][0]
         self.assertEqual(target["resolved_direction"]["merged_from"], ["DIR00002"])
         # The merged-away source keeps its provenance mapping for freshness.
@@ -279,7 +279,7 @@ class TestResolutionEvidenceUniverse(ResolvedPreflightBase):
         out = parse(run_cli("stage2-resolve-plan", "--facts", self.facts_path))
         self.assertEqual(out["status"], "ok", out)
         self.assertTrue(out["write_needed"], out)
-        actions = {d["collection_key"]: d["action"] for d in out["directions"]}
+        actions = {d["direction_id"]: d["action"] for d in out["directions"]}
         self.assertEqual(actions["DIR00001"], "process", out)
 
     def test_analysis_markdown_edit_does_not_re_burn_accepted_resolve_jobs(self):
@@ -391,7 +391,7 @@ class TestResolvedProofBinding(ResolvedPreflightBase):
         out = self.finalize(plan_path)
         self.assertTrue(out["resolved_directions_applied"], out)
         pack = self._read_pack()
-        self.assertEqual(sorted(d["collection_key"] for d in pack["directions"]),
+        self.assertEqual(sorted(d["direction_id"] for d in pack["directions"]),
                          ["DIR00001", "DIR00001__sub", "DIR00002"])
 
 

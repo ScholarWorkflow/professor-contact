@@ -136,7 +136,7 @@ class ResolvedDirectionPlanTests(unittest.TestCase):
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(len(payload["jobs"]), 1)
         self.assertEqual(payload["jobs"][0]["kind"], "resolve")
-        self.assertEqual(payload["jobs"][0]["collection_key"], "dir_A")
+        self.assertEqual(payload["jobs"][0]["direction_id"], "dir_A")
 
     def test_resolve_plan_detects_removal_candidates(self):
         """stage2-resolve-plan should detect papers that don't belong."""
@@ -451,8 +451,8 @@ class ResolvedPipelineMixin:
             "red_lines": [],
         }
 
-    def write_facts(self, papers, directions):
-        facts_path = self.root / "facts.json"
+    def write_facts(self, papers, directions, name="facts.json"):
+        facts_path = self.root / name
         write_json(facts_path, {
             "program_root": str(self.root),
             "professor_dir": str(self.prof_dir),
@@ -494,19 +494,21 @@ class ResolvedPipelineMixin:
         for job in plan_payload["jobs"]:
             if job["kind"] != "freshness":
                 continue
-            ckey = job["collection_key"]
+            did = job["direction_id"]
             freshness_rows = [{
                 "gap_id": gap["gap_id"], "status": "open", "candidate_paper_ids": [],
                 "evidence": "No later papers found", "confidence": "high",
             } for gap in job["model_input"]["gaps"]]
-            write_json(results_dir / f"freshness-{ckey}.json", {
-                "schema": 1, "kind": "freshness", "collection_key": ckey,
+            write_json(results_dir / f"freshness-{did}.json", {
+                "schema": 1, "kind": "freshness", "direction_id": did,
                 "results": freshness_rows})
-        for direction_entry in plan_payload["directions"]:
-            ckey = direction_entry["collection_key"]
+        for job in plan_payload["jobs"]:
+            if job["kind"] != "narrative":
+                continue
+            did = job["direction_id"]
             narrative_directions.append({
-                "collection_key": ckey,
-                "positioning": [{"kind": "para", "text": f"Positioning for {ckey}",
+                "direction_id": did,
+                "positioning": [{"kind": "para", "text": f"Positioning for {did}",
                                  "refs": [], "concrete_object": "o", "input_example": "i",
                                  "output_example": "x"}],
                 "gap_notes": [],
@@ -574,7 +576,7 @@ class Stage2FinalizeWithResolvedTests(ResolvedPipelineMixin, unittest.TestCase):
         self.assertTrue(payload["resolved_directions_applied"])
         pack = self.load_pack()
         self.assertEqual(len(pack["directions"]), 1)
-        supporting_keys = [p["item_key"] for p in pack["directions"][0]["supporting_papers"]]
+        supporting_keys = list(pack["directions"][0]["supporting_item_keys"])
         self.assertNotIn("P2", supporting_keys)
         self.assertIn("P1", supporting_keys)
         rd = pack["directions"][0]["resolved_direction"]
@@ -799,19 +801,16 @@ class Stage2SplitEndToEndTests(ResolvedPipelineMixin, unittest.TestCase):
         pack = self.load_pack()
 
         # Two authoritative direction entries with two stable resolved IDs.
-        by_ckey = {d["collection_key"]: d for d in pack["directions"]}
+        by_ckey = {d["direction_id"]: d for d in pack["directions"]}
         self.assertEqual(set(by_ckey), {"dir_A", "dir_A__control"})
         self.assertEqual(
             {d["resolved_direction"]["resolved_direction_id"] for d in pack["directions"]},
             {"dir_A", "dir_A__control"})
         # Source kept the signal papers and lost the control ones; the split
         # entry carries exactly the control papers and their gaps.
-        self.assertEqual(
-            sorted(p["item_key"] for p in by_ckey["dir_A"]["supporting_papers"]),
-            ["P1", "P2"])
-        self.assertEqual(
-            sorted(p["item_key"] for p in by_ckey["dir_A__control"]["supporting_papers"]),
-            ["P3", "P4"])
+        self.assertEqual(sorted(by_ckey["dir_A"]["supporting_item_keys"]), ["P1", "P2"])
+        self.assertEqual(sorted(by_ckey["dir_A__control"]["supporting_item_keys"]),
+                         ["P3", "P4"])
         self.assertEqual(by_ckey["dir_A__control"]["resolved_direction"]["provisional_direction_id"],
                          "dir_A")
         for gap in by_ckey["dir_A"]["gap_shortlist"]:
@@ -824,7 +823,7 @@ class Stage2SplitEndToEndTests(ResolvedPipelineMixin, unittest.TestCase):
                                        "--program-root", str(self.root)))
         self.assertEqual(stage3_payload["status"], "ok",
                          msg=json.dumps(stage3_payload, ensure_ascii=False))
-        stage3_ckeys = {job["collection_key"] for job in stage3_payload["jobs"]}
+        stage3_ckeys = {job["direction_id"] for job in stage3_payload["jobs"]}
         self.assertEqual(stage3_ckeys, {"dir_A", "dir_A__control"})
 
     def test_merge_keeps_only_target_direction_and_stage3_job(self):
@@ -874,15 +873,14 @@ class Stage2SplitEndToEndTests(ResolvedPipelineMixin, unittest.TestCase):
         pack = self.load_pack()
 
         # Only the authoritative target direction survives.
-        self.assertEqual([d["collection_key"] for d in pack["directions"]], ["dir_A"])
+        self.assertEqual([d["direction_id"] for d in pack["directions"]], ["dir_A"])
         target = pack["directions"][0]
-        self.assertEqual(
-            sorted(p["item_key"] for p in target["supporting_papers"]), ["P1", "P2"])
+        self.assertEqual(sorted(target["supporting_item_keys"]), ["P1", "P2"])
         self.assertEqual(target["resolved_direction"]["merged_from"], ["dir_B"])
         # Paper identity is preserved: P2 keeps its exact item_key and metadata.
-        p2 = next(p for p in target["supporting_papers"] if p["item_key"] == "P2")
+        p2 = pack["papers"]["P2"]
         self.assertEqual(p2["title"], "Signal Processing Networks")
-        self.assertTrue(p2["resolved_addition"])
+        self.assertIn("P2", target["resolved_addition_keys"])
 
         # The pack-root index keeps the source→target mapping for references.
         index = {d["provisional_direction_id"]: d
@@ -895,7 +893,7 @@ class Stage2SplitEndToEndTests(ResolvedPipelineMixin, unittest.TestCase):
                                        "--program-root", str(self.root)))
         self.assertEqual(stage3_payload["status"], "ok",
                          msg=json.dumps(stage3_payload, ensure_ascii=False))
-        stage3_ckeys = {job["collection_key"] for job in stage3_payload["jobs"]}
+        stage3_ckeys = {job["direction_id"] for job in stage3_payload["jobs"]}
         self.assertEqual(stage3_ckeys, {"dir_A"})
 
     def test_merge_chain_is_rejected(self):
@@ -1042,14 +1040,11 @@ class Stage2SplitReuseChainTests(ResolvedPipelineMixin, unittest.TestCase):
         self.assertEqual(accepted["status"], "ok", msg=json.dumps(accepted, ensure_ascii=False))
         first = self.run_stage2_finalize(facts_path)
         self.assertEqual(first["status"], "ok", msg=json.dumps(first, ensure_ascii=False))
-        first_by_key = {d["collection_key"]: d for d in self.load_pack()["directions"]}
+        first_by_key = {d["direction_id"]: d for d in self.load_pack()["directions"]}
         self.assertEqual(set(first_by_key), {"dir_A", "dir_A__control"})
-        self.assertEqual(
-            sorted(p["item_key"] for p in first_by_key["dir_A"]["supporting_papers"]),
-            ["P1", "P2"])
-        self.assertEqual(
-            sorted(p["item_key"] for p in first_by_key["dir_A__control"]["supporting_papers"]),
-            ["P3", "P4"])
+        self.assertEqual(sorted(first_by_key["dir_A"]["supporting_item_keys"]), ["P1", "P2"])
+        self.assertEqual(sorted(first_by_key["dir_A__control"]["supporting_item_keys"]),
+                         ["P3", "P4"])
         child_before = first_by_key["dir_A__control"]
 
         # Unchanged rerun: resolve reuses (no jobs), finalize must keep the child.
@@ -1058,14 +1053,12 @@ class Stage2SplitReuseChainTests(ResolvedPipelineMixin, unittest.TestCase):
         self.assertFalse(reuse_finalize["needs_user_choice"])
         second = self.run_stage2_finalize(facts_path)
         self.assertEqual(second["status"], "ok", msg=json.dumps(second, ensure_ascii=False))
-        second_by_key = {d["collection_key"]: d for d in self.load_pack()["directions"]}
+        second_by_key = {d["direction_id"]: d for d in self.load_pack()["directions"]}
         self.assertEqual(set(second_by_key), {"dir_A", "dir_A__control"})
-        self.assertEqual(
-            sorted(p["item_key"] for p in second_by_key["dir_A"]["supporting_papers"]),
-            ["P1", "P2"])
-        self.assertEqual(
-            sorted(p["item_key"] for p in second_by_key["dir_A__control"]["supporting_papers"]),
-            ["P3", "P4"])
+        self.assertEqual(sorted(second_by_key["dir_A"]["supporting_item_keys"]),
+                         ["P1", "P2"])
+        self.assertEqual(sorted(second_by_key["dir_A__control"]["supporting_item_keys"]),
+                         ["P3", "P4"])
         self.assertEqual(
             [g["gap_id"] for g in second_by_key["dir_A__control"]["gap_shortlist"]],
             [g["gap_id"] for g in child_before["gap_shortlist"]])
@@ -1075,7 +1068,7 @@ class Stage2SplitReuseChainTests(ResolvedPipelineMixin, unittest.TestCase):
                                        "--program-root", str(self.root)))
         self.assertEqual(stage3_payload["status"], "ok",
                          msg=json.dumps(stage3_payload, ensure_ascii=False))
-        stage3_ckeys = {job["collection_key"] for job in stage3_payload["jobs"]}
+        stage3_ckeys = {job["direction_id"] for job in stage3_payload["jobs"]}
         self.assertEqual(stage3_ckeys, {"dir_A", "dir_A__control"})
 
 
@@ -1200,7 +1193,7 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
                          msg=json.dumps(payload, ensure_ascii=False))
         self.assertTrue(payload["resolved_directions_applied"])
         pack = self.load_pack()
-        supporting = {p["item_key"] for p in pack["directions"][0]["supporting_papers"]}
+        supporting = set(pack["directions"][0]["supporting_item_keys"])
         self.assertEqual(supporting, {"P1"})
 
 
@@ -1294,8 +1287,8 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
         for direction in pack["directions"]:
             rd = direction.get("resolved_direction")
             self.assertIsNotNone(
-                rd, f"{direction['collection_key']} must carry an explicit resolved_direction")
-            self.assertEqual(rd["resolved_direction_id"], direction["collection_key"])
+                rd, f"{direction['direction_id']} must carry an explicit resolved_direction")
+            self.assertEqual(rd["resolved_direction_id"], direction["direction_id"])
 
     def test_user_kept_provisional_is_reused_until_resolve_input_changes(self):
         facts_path, papers = self._material_proposal_setup()
@@ -1303,7 +1296,7 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
 
         plan = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
         self.assertEqual(plan["status"], "ok", msg=json.dumps(plan, ensure_ascii=False))
-        actions = {row["collection_key"]: row["action"] for row in plan["directions"]}
+        actions = {row["direction_id"]: row["action"] for row in plan["directions"]}
         self.assertEqual(
             actions, {"dir_A": "reuse", "dir_B": "reuse"},
             "an accepted keep-provisional decision must not re-emit resolve jobs "
@@ -1313,7 +1306,7 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
                            ["Future work B."], topic_terms=["electro", "catalysis"])
         changed = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
         self.assertEqual(changed["status"], "ok", msg=json.dumps(changed, ensure_ascii=False))
-        actions = {row["collection_key"]: row["action"] for row in changed["directions"]}
+        actions = {row["direction_id"]: row["action"] for row in changed["directions"]}
         self.assertEqual(
             actions["dir_A"], "process",
             "only a changed resolve fingerprint may re-open the kept-provisional decision")

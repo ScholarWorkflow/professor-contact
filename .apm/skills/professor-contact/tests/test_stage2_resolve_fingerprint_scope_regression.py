@@ -51,7 +51,7 @@ class ResolveFingerprintScopeRegression(ResolvedPipelineMixin, unittest.TestCase
 
         rerun = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
         self.assertEqual(rerun["status"], "ok", msg=json.dumps(rerun, ensure_ascii=False))
-        actions = {row["collection_key"]: row["action"] for row in rerun["directions"]}
+        actions = {row["direction_id"]: row["action"] for row in rerun["directions"]}
         self.assertEqual(
             actions,
             {"dir_A": "reuse", "dir_B": "reuse"},
@@ -103,7 +103,7 @@ class ResolveFingerprintScopeRegression(ResolvedPipelineMixin, unittest.TestCase
 
         rerun = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
         self.assertEqual(rerun["status"], "ok", msg=json.dumps(rerun, ensure_ascii=False))
-        actions = {row["collection_key"]: row["action"] for row in rerun["directions"]}
+        actions = {row["direction_id"]: row["action"] for row in rerun["directions"]}
         self.assertEqual(
             actions["dir_A"],
             "process",
@@ -153,7 +153,7 @@ class ResolveFingerprintScopeRegression(ResolvedPipelineMixin, unittest.TestCase
 
         rerun = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
         self.assertEqual(rerun["status"], "ok", msg=json.dumps(rerun, ensure_ascii=False))
-        actions = {row["collection_key"]: row["action"] for row in rerun["directions"]}
+        actions = {row["direction_id"]: row["action"] for row in rerun["directions"]}
         self.assertEqual(
             actions["dir_A"],
             "process",

@@ -58,15 +58,9 @@ You are **professor-contact-analyzer**, the stage-2 subagent that produces per-d
 - `kb_import` (optional) — `true` 时把每篇相关论文的分析做成 KB 条目入库（via `extraction-to-knowledge`）；缺省 `false`。相关论文全量入库为后续项（可后续扩为默认开）。
 - **本阶段不读 profile**：`profile_path` 不是本阶段输入。每个方向的 `user_note` 来自 `套磁目标.json` 并**逐字保留**：有 note 时仅把 note 作为该方向的「研究方向」最小背景传给完整 paper-analysis；无 note 时传明确说明「未提供用户草稿；只分析论文与作者明说的 future work」。profile 改动不失效阶段 2。
 
-## Identity compatibility with contact_state.py
+## Identity contract with contact_state.py（issue #8 direction-id-v1）
 
-现役确定性 Stage 2 runner 仍把 opaque direction key 命名为 `collection_key`（schema 迁移前的兼容字段）。在后续 schema 迁移改名之前，构建 facts/handoff/`_index.json` 时一律：
-
-```text
-collection_key = direction_id
-```
-
-并在 facts schema 允许处同时显式携带 `direction_id`。**绝不用 Zotero collection key 冒充**——下游 join 因此对展示名变化与正式聚类解耦，保持稳定。
+v2 输入包（`套磁候选输入.json` schema 2）以 `direction_id` 为唯一机器身份，`collection_key` 只作投影元数据。构建 Stage 2 facts 时**必须把 `套磁目标.json` 里被选方向的 `direction_id` 原样带进每个 facts direction**（字段名 `direction_id`）；`collection_key` 可作为可选投影元数据一并携带（通常等于 direction_id 的历史兼容值）。**绝不用 Zotero collection key/展示名/数组位置推断方向身份**——共享论文证据按教授、按 `item_key` 规范化（professor 级单一 `papers[item_key]` 记录 + 各方向 `supporting_item_keys` 引用），下游对投影改名与显示名变化完全解耦。
 
 If `folder_path` missing → return the error JSON.
 
