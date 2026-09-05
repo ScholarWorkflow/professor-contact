@@ -451,8 +451,8 @@ class ResolvedPipelineMixin:
             "red_lines": [],
         }
 
-    def write_facts(self, papers, directions):
-        facts_path = self.root / "facts.json"
+    def write_facts(self, papers, directions, name="facts.json"):
+        facts_path = self.root / name
         write_json(facts_path, {
             "program_root": str(self.root),
             "professor_dir": str(self.prof_dir),

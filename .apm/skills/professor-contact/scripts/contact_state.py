@@ -6044,6 +6044,37 @@ def validate_stage4_selections(selects: Any, states: dict, packs: dict) -> None:
             seen_email_ids.add(email_id)
 
 
+def _prime_stage4_sources(entries: list, pack_cache: dict, state_cache: dict,
+                          primed: set) -> None:
+    """Load every involved professor's pack FIRST, then the candidate state
+    against that exact pack.
+
+    Order matters: normalize_candidate_state migrates v1 state through the
+    pack's collection_key → direction_id machine mapping, so a state read
+    without the pack would force a needless stage-3 rerun on exactly the
+    states that are machine-resolvable. The helper also serves the preserved
+    (not re-selected) entries of a partial rerun — without it their state
+    never enters state_cache and the compile loop would silently drop them
+    from the formal files."""
+    for select in entries:
+        professor_dir = Path(select.get("professor_dir") or "") \
+            if isinstance(select, dict) else Path("")
+        key = str(professor_dir)
+        if key in primed or not professor_dir.is_dir():
+            continue
+        primed.add(key)
+        pack, _pack_error = load_input_pack(professor_dir)
+        if pack is not None:
+            pack_cache[key] = pack
+        state, state_error = load_candidate_state(professor_dir, pack)
+        if state is None and state_error:
+            soft_exit("needs_refresh", state_error,
+                      professor=select.get("professor"),
+                      message="候选状态无法按机器身份精确迁移：重跑阶段 3 重建 v2 状态。未写入任何文件。")
+        if state is not None:
+            state_cache[key] = state
+
+
 def cmd_stage4_finalize(args) -> None:
     program_root = Path(args.program_root)
     selection_input, error = read_json_file(Path(args.selection_input))
@@ -6063,19 +6094,8 @@ def cmd_stage4_finalize(args) -> None:
     if not isinstance(old_selections, list):
         fail("invalid_selection", f"existing selection.selections must be a list: {selection_path}")
     pack_cache, state_cache = {}, {}
-    for select in selects:
-        professor_dir = Path(select.get("professor_dir") or "") if isinstance(select, dict) else Path("")
-        if professor_dir.is_dir():
-            state, serr = load_candidate_state(professor_dir, None)
-            pack, perr = load_input_pack(professor_dir)
-            if state is None and serr:
-                soft_exit("needs_refresh", serr,
-                          professor=select.get("professor"),
-                          message="候选状态无法按机器身份精确迁移：重跑阶段 3 重建 v2 状态。未写入任何文件。")
-            if state is not None:
-                state_cache[str(professor_dir)] = state
-            if pack is not None:
-                pack_cache[str(professor_dir)] = pack
+    primed = set()
+    _prime_stage4_sources(selects, pack_cache, state_cache, primed)
     # Resolve every selection entry's canonical direction_ids up front: the
     # deprecated collection_key path goes through the pack's exact machine
     # mapping, and anything ambiguous fails closed before any write.
@@ -6096,12 +6116,7 @@ def cmd_stage4_finalize(args) -> None:
     for old in old_selections:
         if not isinstance(old, dict):
             continue
-        professor_dir = Path(old.get("professor_dir") or "")
-        pack = pack_cache.get(str(professor_dir))
-        if pack is None and professor_dir.is_dir():
-            pack, _ = load_input_pack(professor_dir)
-            if pack is not None:
-                pack_cache[str(professor_dir)] = pack
+        _prime_stage4_sources([old], pack_cache, state_cache, primed)
         ids, identity_error = _selection_direction_ids(old, pack_cache)
         if ids and (old.get("professor"), tuple(ids)) in current_scope:
             continue
@@ -6112,7 +6127,31 @@ def cmd_stage4_finalize(args) -> None:
                  "for this professor. No selection/email file was written.",
                  selection_file=str(selection_path))
         preserved.append({**old, "direction_ids": ids})
+    # A preserved entry keeps its place in the formal files only if its source
+    # state still exists: silently recompiling the batch without it would drop
+    # an accepted selection the user never touched.
+    for entry in preserved:
+        if state_cache.get(str(Path(entry.get("professor_dir") or ""))) is None:
+            soft_exit("needs_refresh", "candidate_state_missing",
+                      professor=entry.get("professor"),
+                      direction_ids=entry.get("direction_ids"),
+                      message="既有选择对应的候选状态缺失：先重跑阶段 3，再重新选择。未写入任何选择/邮件包。")
     all_selects = preserved + resolved_selects
+    preserved_keys = {(p.get("professor"), tuple(p.get("direction_ids") or []))
+                      for p in preserved}
+
+    def record_skip(select_obj: dict, entry: dict) -> None:
+        # Backstop for preserved entries hitting any other uncompilable
+        # condition (unreadable pack, direction gone from state/pack): they
+        # must fail the batch instead of vanishing via skipped[].
+        if (select_obj.get("professor"),
+                tuple(select_obj.get("direction_ids") or [])) in preserved_keys:
+            soft_exit("needs_refresh", "preserved_selection_uncompilable",
+                      professor=select_obj.get("professor"),
+                      direction_ids=select_obj.get("direction_ids"),
+                      message="既有选择无法按当前候选状态/输入包重编译：先重跑阶段 3，再重新选择。未写入任何选择/邮件包。")
+        skipped.append(entry)
+
     validate_stage4_selections(all_selects, state_cache, pack_cache)
     written_selections = []
     email_entries = []
@@ -6125,17 +6164,17 @@ def cmd_stage4_finalize(args) -> None:
         direction_ids = select.get("direction_ids") or []
         scope = "+".join(direction_ids)
         if not professor_dir.is_dir() or not direction_ids:
-            skipped.append({"professor": professor, "reason": "invalid_selection_input"})
+            record_skip(select, {"professor": professor, "reason": "invalid_selection_input"})
             continue
         state = state_cache.get(str(professor_dir))
         pack = pack_cache.get(str(professor_dir))
         if state is None:
-            skipped.append({"professor": professor, "direction_ids": direction_ids,
-                            "reason": "needs_stage3", "detail": "缺 套磁候选状态.json"})
+            record_skip(select, {"professor": professor, "direction_ids": direction_ids,
+                                 "reason": "needs_stage3", "detail": "缺 套磁候选状态.json"})
             continue
         if pack is None:
-            skipped.append({"professor": professor, "direction_ids": direction_ids,
-                            "reason": "needs_refresh", "detail": "missing_input_pack"})
+            record_skip(select, {"professor": professor, "direction_ids": direction_ids,
+                                 "reason": "needs_refresh", "detail": "missing_input_pack"})
             continue
         if len(direction_ids) == 1:
             pack_direction = next((d for d in pack.get("directions", [])
@@ -6143,8 +6182,9 @@ def cmd_stage4_finalize(args) -> None:
             state_direction = next((d for d in state.get("directions", [])
                                     if d.get("direction_id") == direction_ids[0]), None)
             if not pack_direction or not state_direction:
-                skipped.append({"professor": professor, "direction_ids": direction_ids,
-                                "reason": "needs_refresh", "detail": "direction not in state/pack"})
+                record_skip(select, {"professor": professor, "direction_ids": direction_ids,
+                                     "reason": "needs_refresh",
+                                     "detail": "direction not in state/pack"})
                 continue
             if state.get("input_fingerprints", {}).get(direction_ids[0]) != \
                     pack_direction.get("input_fingerprint"):
@@ -6160,8 +6200,8 @@ def cmd_stage4_finalize(args) -> None:
                                    if direction_machine_id(d) == direction_ids[0]), None)
             state_direction = None
             if pack_direction is None:
-                skipped.append({"professor": professor, "direction_ids": direction_ids,
-                                "reason": "needs_refresh", "detail": "direction not in pack"})
+                record_skip(select, {"professor": professor, "direction_ids": direction_ids,
+                                     "reason": "needs_refresh", "detail": "direction not in pack"})
                 continue
             if state.get("profile_fingerprint") != current_profile_fp:
                 soft_exit("needs_refresh", "profile_changed",

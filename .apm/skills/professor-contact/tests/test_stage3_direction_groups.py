@@ -30,11 +30,14 @@ def result_file(kind: str, identity: str) -> str:
 
 
 PROFESSOR = "試験 教授"
+SECOND_PROFESSOR = "対照 教授"
 
 QUOTES = {
     "P1": "Future work will extend the shared method to streaming inputs.",
     "P2": "Future work plans a robustness benchmark for the signal pipeline.",
     "P3": "Future work will deploy the sensor network at campus scale.",
+    "Q1": "Future work will benchmark the contrast field at scale.",
+    "Q2": "Future work will harden the second contrast pipeline.",
 }
 
 
@@ -192,6 +195,79 @@ class Stage3DirectionGroupBase(ResolvedPipelineMixin, unittest.TestCase):
             "red_lines", "allowed_sources", "contact_evidence", "cross_direction")}
         return hashlib.sha256(json.dumps(
             payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+    def build_second_professor(self):
+        """Run the full stage 1→2→3 pipeline for a second professor in the
+        same program root (distinct item keys avoid artifact collisions)."""
+        saved_dir, saved_professor = self.prof_dir, self.professor
+        prof_b = self.root / "教授研究" / "Y分野" / SECOND_PROFESSOR
+        (prof_b / "论文分析").mkdir(parents=True)
+        self.prof_dir, self.professor = prof_b, SECOND_PROFESSOR
+        try:
+            papers = [
+                self.make_paper("Q1", "Contrast Field Paper",
+                                ["contrast", "field"], [QUOTES["Q1"]]),
+                self.make_paper("Q2", "Second Contrast Paper",
+                                ["second", "contrast"], [QUOTES["Q2"]]),
+            ]
+            directions = [self.make_direction("dir_C", ["Q1", "Q2"],
+                                              name_ja="対照", name_zh="对照",
+                                              summary="对照方向")]
+            facts_path = self.write_facts(papers, directions, name="facts-b.json")
+            self.run_resolve(facts_path, {})
+            payload = self.run_stage2_finalize(facts_path)
+            self.assertEqual(payload["status"], "ok",
+                             msg=json.dumps(payload, ensure_ascii=False))
+            self.gap_ids["Q1"] = quote_id(QUOTES["Q1"])
+            self.gap_ids["Q2"] = quote_id(QUOTES["Q2"])
+            results = self.root / "s3-b"
+            results.mkdir(parents=True, exist_ok=True)
+            write_json(results / result_file("candidates", "dir_C"),
+                       self.generated_doc("dir_C", ["Q1", "Q2", None]))
+            out = parse(run_cli("stage3-finalize", "--professor-dir", prof_b,
+                                "--results", str(results),
+                                "--program-root", self.root))
+            self.assertEqual(out["status"], "ok",
+                             msg=json.dumps(out, ensure_ascii=False))
+        finally:
+            self.prof_dir, self.professor = saved_dir, saved_professor
+        return prof_b
+
+    def downgrade_state_to_v1(self, state, pack):
+        """Rebuild a faithful v1 state file: schema 1, collection_key routing,
+        pair gap_ids — exactly the shape the v1→v2 migration must consume."""
+        ckey_of = {d["direction_id"]: d.get("collection_key")
+                   for d in pack.get("directions", [])}
+        v1 = {key: value for key, value in state.items() if key not in (
+            "kind", "identity_version", "generator_contract_version",
+            "cross_direction_groups")}
+        v1["schema"] = 1
+        directions = []
+        fingerprints = {}
+        for entry in state.get("directions", []):
+            did = entry["direction_id"]
+            v1_entry = {key: value for key, value in entry.items()
+                        if key not in ("direction_id", "stage3_status",
+                                       "generator_contract_version")}
+            v1_entry["collection_key"] = ckey_of[did]
+            candidates = []
+            for candidate in entry.get("candidates", []):
+                v1c = {key: value for key, value in candidate.items()
+                       if key not in ("kind", "direction_ids", "gap_refs")}
+                v1c["gap_ids"] = [{"item_key": ref["item_key"],
+                                   "gap_id": ref["gap_id"],
+                                   "done_by_self": bool(ref.get("done_by_self"))}
+                                  for ref in candidate.get("gap_refs", [])]
+                v1c["papers"] = [{key: value for key, value in paper.items()
+                                  if key != "direction_ids"}
+                                 for paper in candidate.get("papers", [])]
+                candidates.append(v1c)
+            v1_entry["candidates"] = candidates
+            directions.append(v1_entry)
+            fingerprints[ckey_of[did]] = state["input_fingerprints"][did]
+        v1["directions"] = directions
+        v1["input_fingerprints"] = fingerprints
+        return v1
 
 
 class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
@@ -627,6 +703,107 @@ class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
         self.assertEqual([e["email_id"] for e in emails],
                          [f"{PROFESSOR}::dir_B::dir_B_1"])
         self.assertEqual(emails[0]["direction_ids"], ["dir_B"])
+
+    def _select_a(self, name="sel-a.json"):
+        """Run professor A's stage-3 finalize, then select dir_A_1."""
+        results = self.write_results("s3", {
+            "dir_A": self.generated_doc("dir_A", ["P1", "P2", None]),
+            "dir_B": self.generated_doc("dir_B", ["P1", "P3", None])})
+        self.assertEqual(self.stage3_finalize(results)["status"], "ok")
+        sel_a = {"professor": PROFESSOR, "professor_dir": str(self.prof_dir),
+                 "direction_id": "dir_A", "ideas": [{"id": "dir_A_1"}]}
+        out = self.stage4_finalize([sel_a], name=name)
+        self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
+        return sel_a
+
+    def _select_b(self, prof_b, name):
+        sel_b = {"professor": SECOND_PROFESSOR, "professor_dir": str(prof_b),
+                 "direction_id": "dir_C", "ideas": [{"id": "dir_C_1"}]}
+        return self.stage4_finalize([sel_b], name=name)
+
+    def test_stage4_exactly_migrates_v1_candidate_state_with_pack_mapping_without_stage3_rerun(self):
+        """A v1 candidate state must migrate through the pack's exact machine
+        mapping at stage-4 read time: no legacy_direction_identity, no forced
+        stage-3 rerun for a machine-resolvable state (stage-4 source priming)."""
+        results = self.write_results("s3", {
+            "dir_A": self.generated_doc("dir_A", ["P1", "P2", None]),
+            "dir_B": self.generated_doc("dir_B", ["P1", "P3", None])})
+        self.assertEqual(self.stage3_finalize(results)["status"], "ok")
+        v1_state = self.downgrade_state_to_v1(self.load_state(), self.load_pack())
+        state_path = self.prof_dir / "套磁候选状态.json"
+        state_path.write_text(json.dumps(v1_state, ensure_ascii=False),
+                              encoding="utf-8")
+        sel_a = {"professor": PROFESSOR, "professor_dir": str(self.prof_dir),
+                 "direction_id": "dir_A", "ideas": [{"id": "dir_A_1"}]}
+        out = self.stage4_finalize([sel_a])
+        self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
+        self.assertEqual(out["emails_compiled"], 1)
+        self.assertEqual(out["skipped"], [])
+        self.assertEqual([e["email_id"] for e in self.email_pack()["emails"]],
+                         [f"{PROFESSOR}::dir_A::dir_A_1"])
+
+    def test_stage4_partial_other_professor_rerun_preserves_existing_selection_and_email(self):
+        """Re-selecting only professor B must preserve professor A's accepted
+        selection and email entry — never silently drop it as needs_stage3."""
+        prof_b = self.build_second_professor()
+        self._select_a()
+        out = self._select_b(prof_b, "sel-b.json")
+        self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
+        self.assertEqual(out["skipped"], [])
+        self.assertEqual(
+            {s["professor"] for s in self.selection_doc()["selections"]},
+            {PROFESSOR, SECOND_PROFESSOR})
+        self.assertEqual(
+            {e["email_id"] for e in self.email_pack()["emails"]},
+            {f"{PROFESSOR}::dir_A::dir_A_1", f"{SECOND_PROFESSOR}::dir_C::dir_C_1"})
+        preserved = next(s for s in self.selection_doc()["selections"]
+                         if s["professor"] == PROFESSOR)
+        self.assertEqual(preserved["direction_ids"], ["dir_A"])
+        self.assertEqual([i["id"] for i in preserved["ideas"]], ["dir_A_1"])
+
+    def test_stage4_preserved_entry_missing_or_unmigratable_state_is_zero_write(self):
+        """A preserved entry whose state is missing / un-migratable / without a
+        readable input pack must fail the batch before ANY write — the old
+        selection and email files stay byte-for-byte identical."""
+        prof_b = self.build_second_professor()
+        self._select_a()
+        selection_path = self.root / "教授研究" / "套磁选择.json"
+        email_path = self.root / "教授研究" / "邮件输入.json"
+        before = (selection_path.read_bytes(), email_path.read_bytes())
+        state_path = self.prof_dir / "套磁候选状态.json"
+        original_state = state_path.read_bytes()
+        pack_path = self.prof_dir / "套磁候选输入.json"
+
+        # Phase 1: the preserved professor's candidate state is gone entirely.
+        state_path.unlink()
+        out = self._select_b(prof_b, "sel-b1.json")
+        self.assertEqual(out["status"], "needs_refresh",
+                         msg=json.dumps(out, ensure_ascii=False))
+        self.assertEqual(out["reason_code"], "candidate_state_missing")
+        self.assertEqual((selection_path.read_bytes(), email_path.read_bytes()), before)
+
+        # Phase 2: the state exists but cannot be exactly migrated.
+        state_path.write_bytes(original_state)
+        state_path.write_text(json.dumps(
+            {"schema": 1,
+             "directions": [{"collection_key": "ghost_key", "candidates": []}],
+             "input_fingerprints": {"ghost_key": "stale"}},
+            ensure_ascii=False), encoding="utf-8")
+        out2 = self._select_b(prof_b, "sel-b2.json")
+        self.assertEqual(out2["status"], "needs_refresh",
+                         msg=json.dumps(out2, ensure_ascii=False))
+        self.assertEqual(out2["reason_code"], "legacy_direction_identity")
+        self.assertEqual((selection_path.read_bytes(), email_path.read_bytes()), before)
+
+        # Phase 3: state is fine but the input pack is unreadable — the
+        # preserved email entry cannot be recompiled, so the batch fails.
+        state_path.write_bytes(original_state)
+        pack_path.unlink()
+        out3 = self._select_b(prof_b, "sel-b3.json")
+        self.assertEqual(out3["status"], "needs_refresh",
+                         msg=json.dumps(out3, ensure_ascii=False))
+        self.assertEqual(out3["reason_code"], "preserved_selection_uncompilable")
+        self.assertEqual((selection_path.read_bytes(), email_path.read_bytes()), before)
 
 
 if __name__ == "__main__":
