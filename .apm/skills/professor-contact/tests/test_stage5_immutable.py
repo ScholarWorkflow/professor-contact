@@ -14,7 +14,6 @@ sys.modules[spec.name] = helpers
 spec.loader.exec_module(helpers)
 
 BaseEnv = helpers.BaseEnv
-TestStage5 = helpers.TestStage5
 parse = helpers.parse
 
 
@@ -36,9 +35,9 @@ def run_wrapper(*arguments):
 
 
 class TestStage5ImmutableTemplates(BaseEnv):
-    prepare = TestStage5.prepare
-    raw_result = TestStage5.raw_result
-    choices = TestStage5.choices
+    prepare = helpers.TestStage5.prepare
+    raw_result = helpers.TestStage5.raw_result
+    choices = helpers.TestStage5.choices
 
     def write_inputs(self, g1, choices=None):
         raw = self.root / "raw.json"

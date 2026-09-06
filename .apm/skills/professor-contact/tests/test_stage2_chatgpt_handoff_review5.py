@@ -7,6 +7,8 @@ import unittest
 import zipfile
 from pathlib import Path
 
+import _stage2_handoff_test_support as support
+
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "stage2_chatgpt_handoff.py"
 SPEC = importlib.util.spec_from_file_location("stage2_chatgpt_handoff_review5", SCRIPT)
@@ -14,31 +16,7 @@ handoff = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(handoff)
 
-ANALYSIS = """# Paper
-
-## 总结
-summary
-## 问题是什么
-q
-## 挑战是什么
-c
-## Solution 是什么
-s
-## 研究方法是什么
-m
-## 贡献是什么
-x
-## 局限性与批判性评价
-l
-## 作者明说的未来工作（Future Work）
-—（论文未明示 future work）
-## 对自身研究的帮助评估
-h
-"""
-
-
-class Args:
-    pass
+ANALYSIS = support.ANALYSIS
 
 
 class PostBuildLeaseGuardTests(unittest.TestCase):
@@ -90,7 +68,7 @@ class PostBuildLeaseGuardTests(unittest.TestCase):
             }),
             encoding="utf-8",
         )
-        args = Args()
+        args = support.Args()
         args.professor_dir = self.prof
         args.jobs = jobs
         args.professor = None
@@ -125,7 +103,7 @@ class PostBuildLeaseGuardTests(unittest.TestCase):
         return result
 
     def _import(self, bundle, result):
-        args = Args()
+        args = support.Args()
         args.professor_dir = self.prof
         args.bundle = Path(bundle["bundle_path"])
         args.result = result
