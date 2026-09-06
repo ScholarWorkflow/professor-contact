@@ -21,7 +21,6 @@ sys.modules[spec_state.name] = contact_state
 spec_state.loader.exec_module(contact_state)
 
 BaseEnv = helpers.BaseEnv
-TestStage5 = helpers.TestStage5
 parse = helpers.parse
 run_cli = helpers.run_cli
 
@@ -82,9 +81,9 @@ else:
 
 
 class TestContactEvidenceLadder(BaseEnv):
-    prepare = TestStage5.prepare
-    raw_result = TestStage5.raw_result
-    choices = TestStage5.choices
+    prepare = helpers.TestStage5.prepare
+    raw_result = helpers.TestStage5.raw_result
+    choices = helpers.TestStage5.choices
 
     def setUp(self):
         super().setUp()

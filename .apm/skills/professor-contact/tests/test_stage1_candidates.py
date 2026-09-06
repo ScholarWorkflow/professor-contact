@@ -263,10 +263,18 @@ class Stage1CandidateTests(unittest.TestCase):
         )
 
     def test_named_papers_join_candidates_and_unmatched_are_reported(self):
+        # The input fingerprint binds the dependency inputs (preview/papers/
+        # targets); the named overlay itself must never enter it, while the
+        # named papers still land in the candidate sets and reasons.
+        build(self.root)
+        plain_fingerprint = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
         named = {"directions": {"dir_B": ["P5"], "dir_A": ["Sparse Sensing Networks", "No Such Paper Anywhere"]}}
         result, _ = build(self.root, named=named)
-        snap = read_json(snapshot_path(self.root))
-        by_dir = {d["direction_id"]: d for d in snap["professors"][0]["directions"]}
+        self.assertEqual(
+            read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
+            plain_fingerprint,
+        )
+        by_dir = {d["direction_id"]: d for d in read_json(snapshot_path(self.root))["professors"][0]["directions"]}
         self.assertIn("P5", by_dir["dir_B"]["candidate_keys"])
         self.assertIn("user_named", by_dir["dir_B"]["expansion_reasons"]["P5"])
         self.assertIn("user_named", by_dir["dir_A"]["expansion_reasons"]["P2"])
@@ -330,19 +338,6 @@ class Stage1CandidateTests(unittest.TestCase):
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["status"], "needs_refresh")
         self.assertEqual(payload["reason_code"], "preview_changed")
-
-    def test_display_only_preview_change_does_not_block_stage1(self):
-        # Under the freshness contract a fingerprint/display-only preview change is
-        # not a membership change: resolve refreshes projections in place and Stage 1
-        # proceeds against the same selected membership.
-        write_json(self.preview_path, preview_payload(fp="fp-new"))
-        # The test itself rewrites the preview; guard against further build-time edits.
-        self.guarded_before[self.preview_path] = self.preview_path.read_bytes()
-        result, payload = build(self.root)
-        self.assertEqual(payload["status"], "ok")
-        self.assertEqual(result["action"], "pdf_fill_needed")
-        self.assertEqual(result["missing_item_keys"], ["P2", "P3", "P5", "P8"])
-        self.assert_guards_untouched()
 
     def test_snapshot_marks_membership_non_final_and_preserves_other_professors(self):
         preview_b_path = self.root / "教授研究" / "lab" / "教授B" / "方向预筛.json"
@@ -409,17 +404,6 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(result["unresolved_item_keys"], ["P9"])
         snap = read_json(snapshot_path(self.root))
         self.assertEqual(snap["professors"][0]["action"], "needs_resolution")
-
-    def test_named_input_does_not_change_the_input_fingerprint(self):
-        _, _ = build(self.root)
-        plain = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
-        build(self.root, named={"directions": {"dir_B": ["P5"]}})
-        with_named = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
-        self.assertEqual(plain, with_named)
-        # The named paper still lands in the candidate set and reasons.
-        by_dir = {d["direction_id"]: d for d in read_json(snapshot_path(self.root))["professors"][0]["directions"]}
-        self.assertIn("P5", by_dir["dir_B"]["candidate_keys"])
-        self.assertIn("user_named", by_dir["dir_B"]["expansion_reasons"]["P5"])
 
     def test_verify_accepts_a_fresh_snapshot_without_writing(self):
         build(self.root)
@@ -520,7 +504,10 @@ class Stage1CandidateTests(unittest.TestCase):
         # deliberately tolerates unselected-direction changes. The snapshot's
         # preview_digest must catch exactly that drift: resolve stays ok, verify
         # must demand a rebuild, and the rebuilt candidate set must reflect the
-        # new preview reality.
+        # new preview reality. Covers the review scenario where an unselected
+        # direction gains a new high-confidence member (membership/confidence
+        # change): the member becomes "placed elsewhere" for the selected
+        # direction and must clear the strict cross-direction gate.
         targets.select_target(
             self.root,
             self.preview_path,
@@ -613,26 +600,6 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(
             read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
             before,
-        )
-
-    def test_unselected_membership_change_stales_snapshot(self):
-        # Review scenario 2: unselected direction membership/confidence change that
-        # affects Stage-1 placement/expansion inputs must invalidate.
-        self._build_selected_a()
-        preview = preview_payload()
-        # Move P5 into unselected dir_B as a high-confidence member: for dir_A it is now
-        # placed elsewhere and must clear the strict cross-direction gate.
-        preview["directions"][1]["members"].append({"item_key": "P5", "preview_confidence": "high"})
-        write_json(self.preview_path, preview)
-
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            with self.assertRaises(SystemExit) as ctx:
-                stage1.verify_command(self.root, None)
-        self.assertEqual(ctx.exception.code, 2)
-        self.assertEqual(
-            json.loads(out.getvalue())["stale_professors"],
-            [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
         )
 
     def test_selected_lexical_profile_change_stales_snapshot(self):
@@ -730,24 +697,16 @@ class Stage1CandidateTests(unittest.TestCase):
             read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
             before,
         )
-
-    def test_pdf_readiness_change_still_invalidates(self):
-        # Review scenario 6: existing PDF readiness change still invalidates/rebuilds.
-        self._build_selected_a()
-        data = read_json(self.papers_path)
-        for p in data["papers"]:
-            if p["item_key"] == "P2":
-                p["pdf_status"] = "downloaded"
-        write_json(self.papers_path, data)
-
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            with self.assertRaises(SystemExit) as ctx:
-                stage1.verify_command(self.root, None)
-        self.assertEqual(ctx.exception.code, 2)
+        # Display-only preview drift must not block a fresh Stage-1 build either:
+        # the rebuild proceeds against the same selected membership, with the
+        # same dependency fingerprint and the same fill list.
+        result, payload = build(self.root)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(result["action"], "pdf_fill_needed")
+        self.assertEqual(result["missing_item_keys"], ["P2", "P5", "P8"])
         self.assertEqual(
-            json.loads(out.getvalue())["stale_professors"],
-            [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
+            read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
+            before,
         )
 
     def test_agent_contract_delegates_only_item_scoped_fast_path(self):

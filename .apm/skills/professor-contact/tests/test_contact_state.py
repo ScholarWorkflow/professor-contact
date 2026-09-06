@@ -538,11 +538,6 @@ class TestRunnerBasics(BaseEnv):
         email = pack["emails"][0]
         self.assertEqual([g["gap_id"] for g in email["gaps"]], [g1])
         self.assertEqual(email["gaps"][0]["status"], "open")
-        doc = {"selections": [{
-            "professor": "試験 教授", "professor_dir": str(self.prof_dir),
-            "collection_key": "DIR00001",
-            "ideas": [{"id": "DIR00001_1",
-                       "gap_id_override": {"item_key": "AAAA1111", "gap_id": "f" * 64}}]}]}
         (sel_input).write_text(json.dumps(
             {"selections": [{
                 "professor": "試験 教授", "professor_dir": str(self.prof_dir),
@@ -955,7 +950,7 @@ class TestStage5(BaseEnv):
         self.assertIn("## 事实核对卡（发送前人工确认）", md)
         self.assertIn("<details>", md)
         self.assertIn("作者原话", md)
-        self.assertIn(f"gap:{g1}" if False else "zotero://select/library/items/AAAA1111", md)
+        self.assertIn("zotero://select/library/items/AAAA1111", md)
         txt = (self.prof_dir / "套磁邮件.txt").read_text(encoding="utf-8")
         self.assertTrue(txt.startswith("Subject: "))
         self.assertNotIn("managed_by", txt)
@@ -1056,8 +1051,7 @@ class TestStage5(BaseEnv):
         humanized_one = self.root / "humanized-one.txt"
         humanized_two = self.root / "humanized-two.txt"
         humanized_one.write_text(draft["drafts"][0]["draft"], encoding="utf-8")
-        humanized_two.write_text(draft["drafts"][1]["draft"].replace(
-            "第二个候选", "第二个候选"), encoding="utf-8")
+        humanized_two.write_text(draft["drafts"][1]["draft"], encoding="utf-8")
         humanized_map = self.root / "humanized-map.json"
         humanized_map.write_text(json.dumps({
             self.choices()["email_id"]: str(humanized_one),

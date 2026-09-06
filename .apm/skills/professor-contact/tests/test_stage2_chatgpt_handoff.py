@@ -1,11 +1,12 @@
 import importlib.util
 import json
-import os
 import stat
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+
+import _stage2_handoff_test_support as support
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "stage2_chatgpt_handoff.py"
@@ -16,66 +17,11 @@ handoff = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(handoff)
 
-ANALYSIS = """# Paper
+ANALYSIS = support.ANALYSIS
 
-## 总结
-summary
-## 问题是什么
-q
-## 挑战是什么
-c
-## Solution 是什么
-s
-## 研究方法是什么
-m
-## 贡献是什么
-x
-## 局限性与批判性评价
-l
-## 作者明说的未来工作（Future Work）
-—（论文未明示 future work）
-## 对自身研究的帮助评估
-h
-"""
-
-FACTS_DRAFT = {
-    "paper": {"title": "Paper", "authors": ["Author A"], "year": 2024, "venue": "Venue", "doi": None},
-    "research_problem": "problem",
-    "research_object": "object",
-    "approach": "approach",
-    "findings": ["finding"],
-    "contributions": ["contribution"],
-    "topic_terms": ["topic"],
-    "limitations": ["limitation"],
-    "source_anchors": {"approach": ["§3 Method"]},
-    "confidence": 0.8,
-}
-
-# Fake facts.py must stay a sibling of the fake future-work helper: the
-# importer derives it from the future-work script directory so both helpers
-# always come from one paper-analysis install.
-FAKE_FACTS_SCRIPT = (
-    "#!/usr/bin/env python3\n"
-    "import hashlib,json,pathlib,sys\n"
-    "cmd=sys.argv[1]\n"
-    "def arg(n): return pathlib.Path(sys.argv[sys.argv.index(n)+1])\n"
-    "if cmd=='validate':\n"
-    " d=json.loads(arg('--draft').read_text()); print(json.dumps({'ok':True,'facts':d}))\n"
-    "elif cmd=='finalize':\n"
-    " a=arg('--analysis'); draft=json.loads(arg('--draft').read_text());\n"
-    " side=json.loads(arg('--future-work').read_text());\n"
-    " assert side.get('status')=='ok' and side.get('analysis')==a.name, 'sidecar mismatch';\n"
-    " fp='sha256:'+hashlib.sha256(arg('--input').read_bytes()).hexdigest();\n"
-    " ids=[i.get('id') for i in side.get('items',[]) if i.get('id')];\n"
-    " out={'schema':1,'kind':'paper-analysis-facts','generator_version':'facts-v1','analysis':a.name,'input_fingerprint':fp,'evidence_level':'fulltext','status':'ok'};\n"
-    " out.update(draft); out['future_work_ids']=ids;\n"
-    " pathlib.Path(str(a)+'.facts.json').write_text(json.dumps(out),encoding='utf-8');\n"
-    " print(json.dumps({'ok':True}))\n"
-)
-
-
-class Args:
-    pass
+# This file's facts draft carries an extra source_anchors field; the shared
+# base fixture is extended locally instead of unifying different semantics.
+FACTS_DRAFT = {**support.FACTS_DRAFT, "source_anchors": {"approach": ["§3 Method"]}}
 
 
 class HandoffTests(unittest.TestCase):
@@ -115,34 +61,14 @@ class HandoffTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.future.chmod(0o644)
-        self.facts_script = self.root / "facts.py"
-        self.facts_script.write_text(FAKE_FACTS_SCRIPT, encoding="utf-8")
-        self.facts_script.chmod(0o644)
+        self.facts_script = support.write_fake_facts_script(self.root)
 
-        self.old_path = os.environ.get("PATH", "")
-        self.old_uv_test_log = os.environ.get("UV_TEST_LOG")
-        self.uv_log = self.root / "uv.log"
-        fake_bin = self.root / "bin"
-        fake_bin.mkdir()
-        fake_uv = fake_bin / "uv"
-        fake_uv.write_text(
-            "#!/bin/sh\n"
-            "printf '%s\\n' \"$*\" >> \"$UV_TEST_LOG\"\n"
-            "[ \"$1\" = \"run\" ] || exit 2\n"
-            "shift\n"
-            "exec python3 \"$@\"\n",
-            encoding="utf-8",
-        )
-        fake_uv.chmod(fake_uv.stat().st_mode | stat.S_IEXEC)
-        os.environ["PATH"] = str(fake_bin) + os.pathsep + self.old_path
-        os.environ["UV_TEST_LOG"] = str(self.uv_log)
+        self.uv_env = support.FakeUvEnvironment(self.root)
+        self.uv_env.install()
+        self.uv_log = self.uv_env.uv_log
 
     def tearDown(self):
-        os.environ["PATH"] = self.old_path
-        if self.old_uv_test_log is None:
-            os.environ.pop("UV_TEST_LOG", None)
-        else:
-            os.environ["UV_TEST_LOG"] = self.old_uv_test_log
+        self.uv_env.restore()
         self.temp.cleanup()
 
     def _write_future_inputs(self, *, ocr_required_pages=None):
@@ -160,7 +86,7 @@ class HandoffTests(unittest.TestCase):
     def _build(self, jobs):
         jobs_file = self.root / "jobs.json"
         jobs_file.write_text(json.dumps({"schema": 1, "professor": "Professor", "jobs": jobs}), encoding="utf-8")
-        args = Args()
+        args = support.Args()
         args.professor_dir = self.prof
         args.jobs = jobs_file
         args.professor = None
@@ -202,7 +128,7 @@ class HandoffTests(unittest.TestCase):
         return result
 
     def _import(self, bundle, result):
-        args = Args()
+        args = support.Args()
         args.professor_dir = self.prof
         args.bundle = Path(bundle["bundle_path"])
         args.result = result

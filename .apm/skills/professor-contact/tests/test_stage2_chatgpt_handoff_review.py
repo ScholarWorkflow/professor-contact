@@ -5,6 +5,8 @@ import unittest
 import zipfile
 from pathlib import Path
 
+import _stage2_handoff_test_support as support
+
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "stage2_chatgpt_handoff.py"
 SPEC = importlib.util.spec_from_file_location("stage2_chatgpt_handoff_review", SCRIPT)
@@ -68,7 +70,7 @@ class ReviewRegressionTests(unittest.TestCase):
     def _build(self, jobs: list[dict]) -> dict:
         jobs_path = self.root / "jobs.json"
         jobs_path.write_text(json.dumps({"schema": 1, "professor": "Professor", "jobs": jobs}), encoding="utf-8")
-        args = Args()
+        args = support.Args()
         args.professor_dir = self.prof
         args.jobs = jobs_path
         args.professor = None
@@ -79,7 +81,7 @@ class ReviewRegressionTests(unittest.TestCase):
             return json.loads(zf.read("manifest.json"))
 
     def _import(self, bundle: dict, result: Path) -> dict:
-        args = Args()
+        args = support.Args()
         args.professor_dir = self.prof
         args.bundle = Path(bundle["bundle_path"])
         args.result = result
