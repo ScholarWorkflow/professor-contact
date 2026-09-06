@@ -39,10 +39,6 @@ h
 ANALYSIS_B = ANALYSIS_A.replace("# Paper A", "# Paper B").replace("A summary", "B summary").replace("external text A", "external text B")
 
 
-class Args:
-    pass
-
-
 class ReviewRegressionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

@@ -700,6 +700,10 @@ class Stage1CandidateTests(unittest.TestCase):
         # Display-only preview drift must not block a fresh Stage-1 build either:
         # the rebuild proceeds against the same selected membership, with the
         # same dependency fingerprint and the same fill list.
+        # The test itself rewrote the preview and resolve refreshed the target
+        # projection, so re-baseline the guards here; the post-build check
+        # below asserts build() never rewrites the upstream inputs itself.
+        self.guarded_before = {p: p.read_bytes() for p in self.guarded}
         result, payload = build(self.root)
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(result["action"], "pdf_fill_needed")
@@ -708,6 +712,7 @@ class Stage1CandidateTests(unittest.TestCase):
             read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
             before,
         )
+        self.assert_guards_untouched()
 
     def test_agent_contract_delegates_only_item_scoped_fast_path(self):
         agent = (ROOT.parents[1] / "agents" / "professor-contact-downloader.agent.md").read_text(
