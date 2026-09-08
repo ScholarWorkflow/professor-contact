@@ -10,3 +10,4 @@ dependencies:
     - ScholarWorkflow/paper-analysis
     - ScholarWorkflow/pdf-processing-core
     - ScholarWorkflow/professor-research
+    - ScholarWorkflow/base-skills
