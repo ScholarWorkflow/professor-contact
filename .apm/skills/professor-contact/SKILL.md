@@ -389,11 +389,24 @@ Codex 的 non-interactive 执行（`codex exec`）没有「暂停一个嵌套子
 #### Codex 下的 Stage 1：委派 exact named custom agent `professor-collector`
 
 缺 PDF 补齐时，Codex 侧委派 installed named custom agent `professor-collector` 并**等待其结果**再继续；输入保持收窄为 `folder_path` + `pdf_only:true` + `item_keys=<缺失 item keys>`，绝不同时传 `professors`，也绝不扩大下载范围。OpenCode 的 Task 委派写法只属于 OpenCode 分支；Codex 分支不复制 collector 的 agent body、不由父代理 inline 模拟 collector，也不直接调 `pdf_fill.py`/worker 绕过 collector。`noop`/`needs_resolution` 仍不调用 collector，collector 返回后无条件重跑 `contact_stage1.py build`，empty runtime result 仍只允许一次相同输入重试。
+### Stage 3/4 编排边界（业务规则一份，runtime 调用方式分开）
+
+Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委派 validator / 怎样跨用户回合拿到真实选择」按 runtime 分开。以下说明是 caller contract 的一部分。
+
+**Stage 3 validator 校验循环**（两 runtime 共同遵守：validator 只报告不改写；fail 后只修正被指出的候选并重新 finalize；**最多 2 轮**；顺序依赖——validator 必须在 finalize 完成后运行，修正 finalize 完成后才能跑下一轮 validator；最终真实 result/rounds/issues 都经 `stage3-record-validation` 写入状态；绝不允许任何人自称「validator 已通过」代替真实委派与真实记录）：
+
+- **OpenCode（OpenCode-only 嵌套路径）**：`professor-contact-idea-generator` 在 `stage3-finalize` 后自己通过 OpenCode 原生 Task 委派启动 `professor-contact-style-validator` 白话校验循环（完整调用示例见上方「OpenCode 分支」与该 agent 的 Step 3.6；嵌套 Task 语法是 OpenCode 专属 API，不得写成跨 runtime 通用调用），fail → 修正 → 重新 finalize → 再校验，最多 2 轮，由 idea-generator 运行 `stage3-record-validation`。
+- **Codex（调用线程 sibling 编排）**：调用线程先委派 named `professor-contact-idea-generator` 并**等待生成 + `stage3-finalize` 完成**，再委派 named `professor-contact-style-validator`（输入 = 渲染后的 `套磁想法候选.md` 绝对路径 + `artifact: candidates`）；fail 且未到第 2 轮时，调用线程把 validator 真实 findings 原样交回新一轮 idea-generator——该轮只修正被指出的候选、重新 finalize，绝不重读 Stage 2、绝不扩展方向事实——然后再次委派 style-validator；第 2 轮后无论 pass / fail_after_2_rounds，都由调用线程用 `stage3-record-validation` 记录真实结果。两个 agent 都必须是 #27 已安装的 exact named custom agent，不把 OpenCode `task(...)` 翻译成任何 Codex 私有调用签名。
+
+**Stage 4 用户选择边界**（两 runtime 共同遵守：候选机器事实源只有 `套磁候选状态.json`；没有用户真实选择就绝不 finalize、绝不默认/推荐/第一项自动选择；`套磁选择.json` 与 `邮件输入.json` 只由 `stage4-finalize` 写）：
+
+- **OpenCode（OpenCode-only 交互路径）**：未传 `selection` 时 `professor-contact-selection` 用官方 `question` 工具（`multiple: true`；普通候选与跨方向候选分开标注；支持自填 note）；用户没有选择时不 finalize。
+- **Codex（主线程用户回合边界）**：未传 `selection` 时 selection agent 读取当前 `套磁候选状态.json`，返回 `result: needs_input` + 仅用于展示的 `pending_selection`（逐字段来自本轮读取的候选状态，含 `kind: direction|cross_direction` 标注），**缺 `selection` 时不得调用 `stage4-finalize`**，`套磁选择.json`/`邮件输入.json` 零写入；调用线程把真实候选展示给用户并结束本轮。用户下一条消息给出真实选择后，调用线程**重新委派 `professor-contact-selection` 并显式传入 `selection`**——新调用重新读取当前机器状态、由 runner 重新校验指纹（stale → `needs_refresh` 零写入），绝不依赖上一轮子代理的模型记忆，也不把任何 CLI 会话恢复/续传能力当作 Stage 4 状态协议。
 
 ### 需要用户输入的 Stage（公共原则，跨 harness）
 
 - 任何需要用户选择的环节（Stage 0 方向选择、Stage 2 相关集 >10 确认、Stage 4 想法挑选、Stage 5 学習中候选/交互补齐等）都**不得自动替用户做选择**——包括“按推荐顺序选第一项”，也不得把缺省值伪装成用户决定；缺输入时按该 Stage 既有契约停住（`needs_input` / 保留旧产物），绝不写入看似经用户确认的选择状态。
-- OpenCode 的后续 Stage 继续使用其官方 `question` 能力交互；Codex 的 Stage 0 用业务级两步输入（缺 `selection` → `needs_input` + `selection_request` 且零写入；真实用户回答后带显式 `selection` 重新委派，见 Codex 分支），Stage 2 在 Codex 非交互运行（`codex exec`）下的用户选择按上节「Stage 2 在 Codex 下的委派链与用户选择」执行——停点 + 新一轮 fresh root 运行凭同一 program root 的磁盘状态在显式用户选择下继续，`question` 不是 `codex exec` 的交互控件；其余 Stage 的 Codex 交互式适配仍由对应 Stage 的 issue 按当时官方文档决定——本 skill 不定义任何跨 harness 的自定义交互、续传或 resume 协议。
+- OpenCode 的后续 Stage 继续使用其官方 `question` 能力交互（OpenCode-only）；Codex 的 Stage 0 用业务级两步输入（缺 `selection` → `needs_input` + `selection_request` 且零写入；真实用户回答后带显式 `selection` 重新委派，见 Codex 分支），Stage 2 在 Codex 非交互运行（`codex exec`）下的用户选择按上节「Stage 2 在 Codex 下的委派链与用户选择」执行——停点 + 新一轮 fresh root 运行凭同一 program root 的磁盘状态在显式用户选择下继续，`question` 不是 `codex exec` 的交互控件；Stage 3/4 的 Codex 交互边界按上一节执行（Stage 3 调用线程 sibling 编排 validator，Stage 4 缺 `selection` 返回 `needs_input + pending_selection`、下一轮重新委派 selection agent）；其余 Stage 的 Codex 交互式适配仍由对应 Stage 的 issue 按当时官方文档决定——本 skill 不定义任何跨 harness 的自定义交互、续传或 resume 协议。
 - non-interactive / 自动化调用（含 smoke fixture）：成功路径必须显式提供确定性输入（如 `selection`、`chatgpt_handoff: continue`）；缺输入的负向路径必须证明系统停住且没有产生伪选择状态。
 
 ### Input contract（公共字段）
