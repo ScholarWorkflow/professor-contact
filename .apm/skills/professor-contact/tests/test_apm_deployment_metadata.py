@@ -104,7 +104,7 @@ def _target_branch(text: str, heading: str, next_heading: str | None = None) -> 
     if next_heading is not None:
         end = text.index(next_heading, start + len(heading))
     else:
-        match = re.search(r"(?m)^###\s+", text[start + len(heading) :])
+        match = re.search(r"(?m)^#{1,3}\s+", text[start + len(heading) :])
         end = len(text) if match is None else start + len(heading) + match.start()
     return text[start:end]
 
