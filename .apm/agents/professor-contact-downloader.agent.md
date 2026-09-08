@@ -75,22 +75,32 @@ Interpret results strictly:
 
 If `action == "noop"`, Stage 1 is done: return `ok` with `collector_result: null` and **do not spawn the collector**.
 
-If `action == "needs_resolution"`, some candidate keys exist in the target/preview but not in the professor's `papers.json`, so the fast path cannot fill them. Do not spawn the collector: return `partial` with the unresolved keys in `notes` (suggest re-running the collection pipeline or checking the selection). Never report a clean `ok` while unresolved keys remain.
+If `action == "needs_resolution"`, some candidate keys exist in the target/preview but not in the professor's `papers.json`, so the fast path cannot fill them: return `partial` with the unresolved keys in `notes` (suggest re-running the collection pipeline or checking the selection), and do not spawn the collector. Never report a clean `ok` while unresolved keys remain.
 
 ### 5. Fill only the missing candidate keys (item-scoped fast path)
 
-Spawn the collector exactly once:
+The collector invocation is target-aware, but the business input is identical on every harness and stays narrowed to the missing keys. Invoke the collector exactly once with:
+
+```text
+folder_path: <program_root>
+pdf_only: true
+item_keys: <comma-separated missing_item_keys>
+```
+
+**OpenCode (native Task/subagent delegation)** — call the exact subagent name with the OpenCode Task tool:
 
 ```text
 task(subagent_type: "professor-collector",
      prompt: "folder_path: <program_root>\npdf_only: true\nitem_keys: <comma-separated missing_item_keys>")
 ```
 
+**Codex (non-interactive)** — delegate the fill to the installed named custom agent `professor-collector` (for example: “Delegate the PDF fill to the installed custom agent `professor-collector` with the input above, and wait for its result before continuing”), and wait for that child's result before continuing. Do not inline-simulate `professor-collector` in this parent agent, do not copy its agent body into your own instructions, and do not rely on any undocumented spawn API or event field.
+
 - This is the **item-scoped PDF fill fast path**: the collector maps the keys back to existing `papers.json` entries, reactivates only in-scope `deferred` papers, and downloads only these items. It skips professor-list parsing, keep-list rewriting, collection preparation, and program-root-wide tagging by contract.
 - **Never pass `professors` together with `item_keys`** — professor keep-list semantics belong to Stage 0 and the earlier pipeline runs, not to Stage 1 PDF assurance.
 - The collector asks the network access question itself (the network may have changed since the last run); pass the user's answer through if it forwards one.
 - Already-downloaded candidates are skipped idempotently by the collector; you must not send them.
-- If the collector returns an empty runtime result, retry once with the exact same prompt.
+- If the collector returns an empty runtime result, retry once with the exact same prompt (same target, same input, one retry only).
 
 ### 6. Refresh the snapshot after the collector returns (mandatory)
 
@@ -141,6 +151,7 @@ Return only compact JSON:
 - Never infer selected directions/professors from formal Zotero direction collections.
 - Never modify `套磁目标.json`, `方向预筛.json`, or `papers.json` yourself.
 - Never download PDFs yourself and never call Zotero write APIs yourself.
+- The collector is always the exact business role `professor-collector`: OpenCode reaches it through native Task delegation, Codex through delegate-and-wait of the installed named custom agent — never this parent agent simulating it inline.
 - Always refresh the snapshot after the collector returns; never leave `套磁阶段1候选.json` describing pre-fill state, and never return `ok` while missing or unresolved candidate keys remain (`partial` + notes instead).
 - Stage 1 never claims final direction membership: candidate sets are input to Stage 2, not a verdict.
 - Re-running after a network change just repeats this flow — missing eligible keys are recomputed from `papers.json` and retried through the same fast path.
