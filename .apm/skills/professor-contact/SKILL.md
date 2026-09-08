@@ -363,10 +363,16 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 - **不**把子代理的 instructions 复制进父对话里自己执行，也**不**让父代理自称目标角色来冒充“已调用指定代理”；
 - **不**假设任何 Codex 官方文档未公开的 spawn API、调用参数或事件字段。
 
+#### Stage 2 在 Codex 下的委派链与用户选择
+
+- Stage 2 按安装后的机器名逐级真实委派：caller → `professor-contact-analyzer` → analyzer 再委派已安装的 `paper-analysis`（每篇论文一个）与 `professor-contact-style-validator`；每一级显式等待结果后再继续。不复制 `paper-analysis` 的内部论文分析 prompt 由 analyzer 自己模拟，不新增包装代理层，`paper-analysis` 的叶子仍是叶子。若当前 Codex runtime 无法完成这条嵌套链，保存完整证据并记为 Codex runtime/feature blocker，不降级伪装成功。
+- “同批最多 3 个 `paper-analysis`” 是本项目业务上限，在 Codex 下照常适用；Codex 配置的 `agents.max_concurrent_threads_per_session` 只是全局并发线程上限，与该业务上限不等价，不能互相替代。
+- 需要用户确认 material resolution（resolved-direction proposal）时按两阶段执行：第一轮停在可恢复的 `needs_input` / `needs_user_choice`——不自动采纳提案、不自动 keep provisional、不写任何未接受的新 Stage 2 事实——并从 `codex exec --json` 事件流的 `thread.started` 记录 session/thread id；第二轮用官方 `codex exec resume <SESSION_ID>` 恢复**主 Codex 会话**并显式提供用户选择，恢复后 runner 重新校验 fingerprint / preflight proof，再 accept / finalize。恢复依据 = 主 Codex 会话 + 已持久化的确定性 Stage 2 状态（facts / `_resolved_directions.json` / 指纹），不要求恢复 analyzer 子代理线程，也不新建复述旧 prompt 的“假 analyzer”。
+
 ### 需要用户输入的 Stage（公共原则，跨 harness）
 
 - 任何需要用户选择的环节（Stage 0 方向选择、Stage 2 相关集 >10 确认、Stage 4 想法挑选、Stage 5 学習中候选/交互补齐等）都**不得自动替用户做选择**——包括“按推荐顺序选第一项”，也不得把缺省值伪装成用户决定；缺输入时按该 Stage 既有契约停住（`needs_input` / 保留旧产物），绝不写入看似经用户确认的选择状态。
-- OpenCode 的后续 Stage 继续使用其官方 `question` 能力交互；Codex 的交互式适配由对应 Stage 的 issue 按当时官方文档决定——本 skill 不定义任何跨 harness 的自定义交互、续传或 resume 协议。
+- OpenCode 的后续 Stage 继续使用其官方 `question` 能力交互；Stage 2 在 Codex 非交互运行（`codex exec`）下的用户选择按上节「Stage 2 在 Codex 下的委派链与用户选择」执行——停点 + 官方 `codex exec resume <SESSION_ID>` 恢复主会话，`question` 不是 `codex exec` 的交互控件；其余 Stage 的 Codex 交互式适配仍由对应 Stage 的 issue 按当时官方文档决定——本 skill 不定义任何跨 harness 的自定义交互协议。
 - non-interactive / 自动化调用（含 smoke fixture）：成功路径必须显式提供确定性输入（如 `selection`、`chatgpt_handoff: continue`）；缺输入的负向路径必须证明系统停住且没有产生伪选择状态。
 
 ### Input contract（公共字段）
