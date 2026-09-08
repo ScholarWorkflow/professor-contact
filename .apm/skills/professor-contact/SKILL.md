@@ -308,9 +308,28 @@ python3 scripts/contact_state.py migrate-v3 --apply <plan.json> --program-root <
 
 没写 profile → 阶段 3 只按论文内容生成想法、不做与用户真实兴趣的契合评估（并在报告注明）；阶段 5 缺字段（如姓名）交互补齐。
 
-## How to call
+## How to call（target-aware caller convention）
 
-Spawn the subagent via the Task tool (all are `hidden`, so the Task tool is the ONLY way):
+8 个 subagent 的公共调用约定按安装目标（harness）分开。APM 安装时把 `.apm/agents/*.agent.md` 投影为：OpenCode 的 `.opencode/agents/<name>.md`（保留 `mode: subagent`/`hidden`/`permission` 等原生 frontmatter），Codex 的 `.codex/agents/<name>.toml`（`name`/`description`/`developer_instructions`）。两个 harness 之间不存在统一的跨目标调用 API——先确认当前运行环境，再按对应分支调用。
+
+### 共享调用表（Stage → exact agent name）
+
+无论哪个 harness，都按 **exact agent name** 调用对应代理，并把 Input contract 原样传给它：
+
+| Stage | exact agent name | 输入契约 |
+|---|---|---|
+| 0 | `professor-contact` | `folder_path`、可选 `professors`（见 Input contract） |
+| 1 | `professor-contact-downloader` | 见 Input contract |
+| 2 | `professor-contact-analyzer` | 见 Input contract |
+| 3 | `professor-contact-idea-generator` | 见 Input contract |
+| 4 | `professor-contact-selection` | 见 Input contract |
+| 5 | `professor-contact-email-generator` | 见 Input contract |
+
+`professor-contact-email-validator` / `professor-contact-style-validator` 不由 caller 直接驱动：它们由对应 Stage 的 agent 按既有 validator loop 调用（本约定不改变该归属）。
+
+### OpenCode 分支
+
+`mode: subagent` 与 `hidden: true` 是 **OpenCode 原生语义**：hidden 只表示该代理不出现在 OpenCode 的可见 agent 列表，须经 Task 委派触达；`permission`（含 `permission.task`）是 OpenCode 对工具/Task 委派的权限控制。这些字段与 Codex 无关。在 OpenCode 中用 Task 工具按 exact name 调用：
 
 ```
 # 阶段 0：交互选定套磁方向（读 方向预筛.json，写 套磁目标.json）
@@ -334,6 +353,21 @@ task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <
 # 只生成首封或单独补生成跟进
 task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <...>\nmode: first|followup")
 ```
+
+### Codex 分支
+
+Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>.toml`，Codex 按 `name` 识别）。调用语义只使用 Codex 官方文档支持的委派方式：
+
+- 在 prompt 中显式要求 Codex **delegate to / use** 指定的 exact named custom agent（例如 “Delegate this task to the installed custom agent `professor-contact-downloader` and wait for its result before continuing”），并把该 Stage 的 Input contract 字段原样写进委派 prompt；
+- 等待该子代理完成并返回结果后，才把结果用于后续 Stage；
+- **不**把子代理的 instructions 复制进父对话里自己执行，也**不**让父代理自称目标角色来冒充“已调用指定代理”；
+- **不**假设任何 Codex 官方文档未公开的 spawn API、调用参数或事件字段。
+
+### 需要用户输入的 Stage（公共原则，跨 harness）
+
+- 任何需要用户选择的环节（Stage 0 方向选择、Stage 2 相关集 >10 确认、Stage 4 想法挑选、Stage 5 学習中候选/交互补齐等）都**不得自动替用户做选择**——包括“按推荐顺序选第一项”，也不得把缺省值伪装成用户决定；缺输入时按该 Stage 既有契约停住（`needs_input` / 保留旧产物），绝不写入看似经用户确认的选择状态。
+- OpenCode 的后续 Stage 继续使用其官方 `question` 能力交互；Codex 的交互式适配由对应 Stage 的 issue 按当时官方文档决定——本 skill 不定义任何跨 harness 的自定义交互、续传或 resume 协议。
+- non-interactive / 自动化调用（含 smoke fixture）：成功路径必须显式提供确定性输入（如 `selection`、`chatgpt_handoff: continue`）；缺输入的负向路径必须证明系统停住且没有产生伪选择状态。
 
 ### Input contract（公共字段）
 
