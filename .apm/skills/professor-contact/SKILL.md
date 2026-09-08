@@ -59,7 +59,7 @@ Stage 0 does not require Zotero to be open. Later stages may still use Zotero as
 | 2 | `professor-contact-analyzer` | 先 `contact_stage1.py verify` 校验 Stage 1 候选快照，再对每位教授跑 `contact_state.py stage2-preflight`：`reuse_all` 教授在 Zotero probe、PDF 读取、OCR、paper-analysis、handoff、模型 job 之前以 no-op 复用既有 `套磁候选输入.json` + `套磁候选分析.md` 结束（`chatgpt_result` 提供或 `kb_import=true` 时禁止 early exit）；仅对 process 教授以逐方向 `candidate_keys` 为读取/相关性/分析范围（可信度闸门只用 provisional members）；**full `paper-analysis` 覆盖候选集去重并集——每个 unique candidate 复用未变的有效 full analysis，否则跑一次 full pass（摘要级相关集与成本门只截断 gap/叙事，绝不截断 full analysis，issue #7 required flow #2）**→ 判定相关论文、署名、主线与 post-cost-gate 分析 scope 后，**总是先生成确定性的 ChatGPT handoff ZIP**。`chatgpt_handoff=continue` 时 ZIP 只是低成本 side effect，随后旧的本地 OCR/`paper-analysis` 路径语义不变；`wait` 时在任何新 OCR/`paper-analysis` 前软停止。提供匹配 result ZIP 后先严格本地导入成普通 analysis/sidecar，再继续既有 `stage2-resolve-plan → stage2-resolve-finalize → stage2-plan → stage2-finalize --preflight-file`（resolve 流水线对每个被选方向做权威性归属判定：移除误归类、新增他向支持、重命名、拆分/合并、写 `resolved_direction` 状态）。gap/runner/状态机仍完全本地 | `<教授名>/论文分析/_chatgpt_handoff/stage2-<id>.zip`（传输层）+ `<教授名>/论文分析/_resolved_directions.json`（方向权威归属）+ 原有 `<教授名>/套磁候选输入.json`（带 `resolved_directions` 字段与 `cache.preflight` 复用元数据，Stage 3 唯一事实源）/分析报告/_freshness_cache/index/sidecar |
 | 3 | `professor-contact-idea-generator` | **只读输入包 + profile**（不读任何 Markdown/_index/sidecar；输入包为 v2：professor 级 `papers[item_key]` 单一规范论文记录 + 各方向 `supporting_item_keys` 引用）：`stage3-plan --direction-id`（canonical 机器身份；`--collection-key` 仅为 v1 兼容并经输入包精确映射解析）按 `refresh_scope` 生成逐 resolved 方向独立 job（结果文件由 runner 返回安全名 `candidates-<id>-<hash>.json`；模型输入只含本方向切片，绝不发全方向并集），每方向 3-5 条可选候选（除非 `--skip-direction-ids` 显式跳过→持久化 `stage3_status:"skipped"`；refined 模式同样 3-5 条且恰好 1 条 `origin:"user_refined"` 的校准后用户想法）；候选为 v2 精确溯源：`kind:"direction"` + `direction_ids:[本方向]` + `gap_refs` 精确 `(direction_id,item_key,gap_id)` 三元组（在另一方向合法的 gap 配错 direction_id 一律拒绝）；**跨方向为显式 opt-in**：只有调用方传 `--cross-direction-groups '[["DIR_A","DIR_B"]]'`（≥2 个既有 direction ID、排序去重）才生成独立 `kind:"cross_direction"` job（组身份 `cross:<hash>`，缓存=参与方向指纹+profile+契约版本），默认无任何 cross job/模型调用/Markdown 节 → `stage3-finalize` 校验后写 v2 状态并渲染候选文件（按方向分节 + 仅显式组才有的「跨方向想法（显式标注）」节；未再请求的组确定性删除并报告 `group_not_requested`）；复用逐 direction_id 判定（指纹不含 collection_key/显示名：纯投影改名只重渲染）；profile 改动只失效阶段 3/4；白话校验结果另由 `stage3-record-validation` 写入独立字段 | `<教授名>/套磁候选状态.json`（schema 2：逐方向 `direction_id` + `cross_direction_groups`） + `<教授名>/套磁想法候选.md` + `套磁想法候选总览.md`（后两者 runner 渲染） |
 | 4 | `professor-contact-selection` | 用户从**候选状态**（非 Markdown）挑选：selection 条目以 `direction_ids`（canonical，排序规范化）圈定作用域——普通方向 `[DIR]`、跨方向想法 `[DIR_A,DIR_B]`（与组的排序 ID 完全一致）；`stage4-finalize` 按 direction_id + 精确三元组 join（候选 id 只在其 direction 作用域内解析，跨作用域引用整批 fail closed）并校验指纹（过期 `needs_refresh` 不落盘；组选取逐参与方向指纹校验，漂移 `cross_participant_changed`；v1 选择条目仅在有唯一 collection_key→direction_id 机器映射时可迁移，歧义 `legacy_direction_identity` 零写入；部分复选（只重选部分教授/方向）保留未涉及条目并整体重编译进两个正式文件——被保留条目的候选状态缺失/无法精确迁移/输入包不可读 → `candidate_state_missing`/`legacy_direction_identity`/`preserved_selection_uncompilable`，任何写盘前零写入，绝不静默挤出既有选择）→ 写 `套磁选择.json`（schema 2，保留候选的 `direction_ids`/精确溯源）并**编译程序级邮件输入包**（`邮件输入.json` schema 2：每条 email 携带 `direction_ids` + `directions[]` 显示名 provenance，`email_id = 教授::'+'.join(sorted(direction_ids))::想法ID`（A+B==B+A）；跨方向按参与方向切片并集编译——论文按 `item_key` 去重且各带 `direction_ids` 归属、gap 每行携带 `direction_id`；`cross_direction` 组信息与 `contact_evidence` 一起参与 `source_hash`；done_by_self 只作 extension_context_only；上游 `_联系方式证据.json` 记录连同 `record_fingerprint` 冻结进每条 email——阶段 5 的收件事实源） | `教授研究/套磁选择.json` + `教授研究/邮件输入.json`（阶段 5 唯一事实源，自包含短证据＋冻结联系方式快照） |
-| 5 | `professor-contact-email-generator` | **只读邮件输入包**（+profile/模板/info/boshu/`_contact_verify.json`）：默认生成首封和无回复跟进两种输出；`stage5-plan --mode both`（模型 job + 核验缓存检查 + 联系方式证据优先判定）→ 送信前核验（5.9 不变；邮箱证据已确认时免网页查找）→ 模型只回首封的 4 句兴趣段+source_map+未来志向+学習中候选 → 用户补初次发送日期 → runner 同时拼装首封/跟进 → `humanizer-ja` 分别过稿；用 `--humanized-map` 一一对应，runner 先全量预校验再写盘 → `stage5-finalize --mode both`（保护串校验+渲染）→ validator 循环（validator 也只读 md+邮件包）并记录 `stage5-record-validation` | 每封选中邮件独立的 `套磁邮件.md`/`.txt` 与 `套磁跟进邮件.md`/`.txt`（单封用固定名，多封按方向与想法 ID 加后缀）+ `<教授名>/套磁邮件状态.json` + `套磁邮件总览.md` + `_contact_verify.json` |
+| 5 | `professor-contact-email-generator` | **只读邮件输入包**（+profile/模板/info/boshu/`_contact_verify.json`）：默认生成首封和无回复跟进两种输出；`stage5-plan --mode both`（模型 job + 核验缓存检查 + 联系方式证据优先判定）→ 送信前核验（5.9 不变；邮箱证据已确认时免网页查找）→ 模型只回首封的 4 句兴趣段+source_map+未来志向+学習中候选 →（可选）`humanizer-ja` 只润色模型动态字段（拼装前，5.6）→ 用户 choices（含初次发送日期；缺决定即停在既有 `needs_input` 边界，不代选、不编日期）→ `stage5_immutable.py stage5-finalize --mode both`（确定性模板拼装+保护串校验+渲染；仅在动态字段确被润色时传 `--polish-mode dynamic-fields-only`；整封成品与模板固定文字从不进入 humanizer）→ 首封和跟进各自过 validator 循环（validator 也只读 md+邮件包）并记录 `stage5-record-validation` | 每封选中邮件独立的 `套磁邮件.md`/`.txt` 与 `套磁跟进邮件.md`/`.txt`（单封用固定名，多封按方向与想法 ID 加后缀）+ `<教授名>/套磁邮件状态.json` + `套磁邮件总览.md` + `_contact_verify.json` |
 
 
 ## Stage 2 ChatGPT handoff（只替换逐论文高耗分析）
@@ -251,21 +251,22 @@ python3 scripts/contact_state.py migrate-v3 --apply <plan.json> --program-root <
 - **身份表述以黄金邮件为基准**（具体经历以用户 profile 为准），profile 额外信息按需提，不加不必要细节（避免臃肿）。
 - **志望默认非第一**：`{{志望}}` 默认「先生の研究室を志望として出願させていただきたく存じます」；只有确认该教授是唯一第一志愿（`first_choice` 或交互确认）才改「第一志望として」。
 
-### 5.6 humanizer-ja 过稿（正文出稿前）
+### 5.6 humanizer-ja 动态字段润色（可选，模板拼装前）
 
-`professor-contact-email-generator` 在整封首信/跟进信拼装完成、交互字段（志望/署名/学習中候选/初次发送日期）回填后、写盘之前，加载 `skill(name: "humanizer-ja")`（模式固定 **business**）分别对两封邮件正文（Subject + 正文）过一遍：
+`professor-contact-email-generator` 在模型 result JSON 写完之后、模板拼装之前，可对**模型创作的动态字段**（`interest_sentences_ja` 四句、`future_aspiration_ja`、`learning_candidates`）做一次可选的 `humanizer-ja` 润色（模式固定 **business**）。这是 Stage 5 唯一允许的 humanizer 触点：
 
-- **目标范围**：首封重点处理模型创作的兴趣段/未来志向句；跟进重点处理模板中的重复、过度道歉和不自然连接——run-on 长段拆句拆段、文末「〜と考えております」等重复收束、抽象名词化、机械接续词堆叠。**同时巡查模板拼装造成的冗余**并合并——humanize 是唯一允许动模板拼装冗余的地方，合并处来源标注记 `[模板] 经 humanizer 合并`。
-- **兴趣段①④不特殊保护**：四动作结构收尾各异（考えてきました / 気づかされました / といったことです / 感じております），天然不触发「重复收束」规则；若个别句真被识别为 AI 味则照常打磨，不做模板级保护。
-- **硬边界**：不改事实/红线——首封论文标题、年份、TOEIC/N1/工作经历，以及跟进初次发送日期、学校、研究科、入学信息、研究方向、署名、附件说明一律原样；不补 profile 之外的新信息；不就 humanize 改动生成时的红线记录（红线在生成时已消费）。
-- **用户选定项不动**：Step 交互回填的学習中候选、志望表述、署名等用户选择短语保持原样。
-- **次序**：拼装+交互 → **过稿** → 写盘（产物）→ validator 校验（**校验对象 = humanizer 过稿后的最终文本**，validator 是最终关卡）。
+- **只润色动态字段**：Subject、固定寒暄、固定请求、签名等模板固定文字，以及拼装后的首封/跟进整封成品，一律不进入 `humanizer-ja`（跟进邮件正文不做 humanize）。润色后的字符串回写 result JSON，`schema`/`kind`/`email_id`/`source_map`、事实和四句结构不变，然后才进入 `stage5_immutable.py stage5-finalize`（确有润色时传 `--polish-mode dynamic-fields-only`，否则缺省 `none`；旧 `--humanized`/`--humanized-map` 整封输入会被 wrapper 忽略并按旧路径退役）。
+- **显式给定上下文**：调用前显式给定 `business` 目标和完整动态字段上下文，不让 `humanizer-ja` 自己的澄清问题充当 Stage 5 的用户输入协议；润色所需事实或选择缺失时，先按 Stage 5 用户输入规则阻塞（`needs_input`），不让 humanizer 猜。
+- **硬边界**：不改事实/红线——论文标题、年份、TOEIC/N1、工作经历、初次发送日期、学校、研究科、入学信息、署名一律原样；不补 profile 之外的新信息。
+- **用户选定项不动**：choices 回填的学習中、志望表述、署名等用户选择短语不是模型动态字段，本就不参与润色。
+- **次序**：模型 result →（可选）动态字段润色 → 用户 choices → `stage5-finalize` 确定性拼装+渲染 → validator 校验最终文本（validator 是最终关卡）。
+- **跨 harness 调用**：OpenCode 用原生 `skill` 能力加载 `humanizer-ja`；Codex 使用安装后可发现的 `humanizer-ja` Skill（不写 OpenCode 函数签名）。详见 generator agent 的双目标调用说明；缺失决定时两端都停在既有 `needs_input` 边界，不代选。
 
 ### 5.7 校验循环
 
 `professor-contact-email-validator` 只报告不重写，generator 循环最多 2 轮，仍 fail 保留第 2 轮产物记 problems。**输入契约：validator 只读 最终 `套磁邮件.md` + `邮件输入.json`（+md 内嵌核对表），不读候选/分析 Markdown、`_index.json`、sidecar、Zotero、网络**。校验项：
 - blocking：首封兴趣段/未来志向句每句可回溯（**六类来源**：user_note / idea_zh / fit_note / 方向定位与研究脉络 / future work 与教授假设 / 论文标题原文；④软收束句为模板固定句免回溯）、无六类之外的新断言、论文标题与 selection papers[].title 一致、敬语/称呼正确（です/ます/先生）、学習中句来自候选集/用户自填（不擅自发明新领域）、无残留 `{{}}`、无未经标记的「第一志望」、**③锚定的 future work 非 done_by_self**（validator 规则 10）。跟进邮件另查首封关联、初次发送日期、主题一致、无新研究断言；跟进不要求重复四句兴趣段。
-- **humanizer 例外**：5.6 过稿造成的措辞变化（run-on 拆句、文末重复收束、模板拼装冗余合并）不视为「模板被擅自改写」；validator 只盯事实是否被改（论文标题/年份/TOEIC/N1/工作经历等），纯润色不作 minor。
+- **humanizer 例外**：动态字段润色（5.6）造成的措辞变化（run-on 拆句、文末重复收束等）不视为「模板被擅自改写」；validator 只盯事实是否被改（论文标题/年份/TOEIC/N1/工作经历等），纯润色不作 minor。
 - 红线本身不自动校验（人话难形式化），生成时已消费。
 
 ### 5.8 产物
@@ -432,7 +433,7 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 - **Zotero 在线要求按阶段区分**：Stage 0 与 Stage 1 的候选构建全本地（读 `方向预筛.json`/`套磁目标.json`/`papers.json`，写 `套磁阶段1候选.json`），不需要 Zotero；阶段 1 的定向补下与阶段 2 的读元数据/摘要/附件才需要 Zotero 在线，离线时 agent 会提示打开 Zotero。阶段 2 的 preflight `reuse_all` 教授完全不需要 Zotero 在线——accepted state 完整且本地指纹未变时，即使 Zotero 未打开也可安全复用并继续阶段 3。
 - **排序依赖**：Stage 0 只能在 professor-topic-clustering(`preview:true`) 产出 normalized `方向预筛.json` 之后跑；被选方向成员身份变化（成员 `item_key` 集合变化或方向消失）→ 阶段 1/2 以 `needs_refresh` 停止，须回 Stage 0 修订选择；未选方向、display 元数据或置信度变化不阻断。阶段 2 前置顺序 = Stage 1 快照存在且 `contact_stage1.py verify` 通过（快照缺失/过期 → `needs_input` 重跑 Stage 1）→ 逐教授 `stage2-preflight`（`reuse_all` 教授在 Zotero probe 之前 no-op 结束），分析范围取逐方向 `candidate_keys`。阶段 2 依赖阶段 1 候选集的 PDF 尽量全（有 PDF 的论文走全文深度分析；扫描版才触发 OCR；摘要缺失时仍可用 abstractNote 分析，PDF 只是增强）；候选集中暂时 `no_env`/`failed` 的论文按摘要参与分析，换网络后重跑 Stage 1 只补缺失候选。
 - **诚实**：分析/想法严格基于论文实际内容与 profile；想法候选是「贴合论文方向的候选」，是否真实符合你想法由你在阶段 4 挑选决定（平衡原则）；阶段 5 邮件绝不编造 profile 之外的信息。
-- **阶段 5 只产兴趣段**：详见「阶段 5 — 套磁邮件」专节（只产兴趣段 / 模板占位符 / Subject 构造 / 红线硬约束 / 志望默认非第一 / humanizer-ja 过稿 / 校验循环）。
+- **阶段 5 只产兴趣段**：详见「阶段 5 — 套磁邮件」专节（只产兴趣段 / 模板占位符 / Subject 构造 / 红线硬约束 / 志望默认非第一 / humanizer-ja 动态字段润色 / 校验循环）。
 
 ## Retired behavior
 
@@ -451,5 +452,5 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 4. professor-topic-clustering (增量, 保留名单) → 正式聚类 + preview:true 产出 normalized 方向预筛.json
    ── professor-contact Stage 0：交互选定方向（可写 per-direction user note）→ 写 教授研究/套磁目标.json ──
 5. professor-contact (Stage 1-4)             → 逐方向候选快照+定向补 PDF / 分析 / 想法候选 / 选择记录
-6. professor-contact-email-generator（阶段 5）→ 套磁邮件（兴趣段 + 模板拼装 + humanizer-ja 过稿 + validator，见「阶段 5 — 套磁邮件」节）
+6. professor-contact-email-generator（阶段 5）→ 套磁邮件（兴趣段 + 动态字段润色 + 模板拼装 + validator，见「阶段 5 — 套磁邮件」节）
 ```

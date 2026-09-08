@@ -34,7 +34,7 @@ At startup, read `.apm/skills/professor-contact/docs/stage5-legacy-contract.md` 
 - user choices, validation loop and state recording;
 - output filenames, checklist, source table, fact-check card and atomic-write behavior.
 
-That resource preserves the pre-Issue-#9 contract for reference and is **not an agent primitive**. Its template-wide/full-body humanizer instructions are obsolete and are overridden by the rules below. Its recipient-email ladder inside Step 2.5 is additionally scoped by the Issue #10 contact-evidence-first rules below: the five-level ladder runs only when the upstream contact evidence does not already settle the recipient.
+That resource preserves the pre-Issue-#9 contract for reference and is **not an agent primitive**. Its template-wide/full-body humanizer instructions are obsolete and are overridden by the rules below. Where it shows OpenCode-native tool calling or the retired full-body humanizer pass, that syntax is an OpenCode-branch illustration, not a cross-target API — call harness tools per the dual-target rules below instead. Its recipient-email ladder inside Step 2.5 is additionally scoped by the Issue #10 contact-evidence-first rules below: the five-level ladder runs only when the upstream contact evidence does not already settle the recipient.
 
 ## Direction provenance (issue #8 email-pack v2)
 
@@ -56,8 +56,31 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage5_im
 ```
 
 The wrapper asks `contact_state.py stage5-plan` for the exact deterministic drafts and feeds those exact drafts into the finalize compatibility boundary. It also runs finalize through a temporary copy of the deterministic runner whose audit label is changed only from the legacy full-body-humanizer provenance to the declared immutable-path polish mode. Fixed template segments therefore cannot be replaced by model/humanizer output, while render hashes/state remain owned by the same finalize logic. **Do not pass `--humanized` or `--humanized-map`; the wrapper ignores those legacy full-body inputs.**
-6. Continue to run `professor-contact-email-validator` on both rendered first and follow-up `.md` files. Validator failures still block/record exactly as in the reference contract.
+6. Run `professor-contact-email-validator` on both rendered first and follow-up `.md` files, delegating per the dual-target rules below. Validator failures still block/record exactly as in the reference contract.
 7. For any two professors using the same template version, all fixed template text outside explicit `{{...}}` placeholder substitutions must remain byte-identical.
+
+## Dual-target harness calling (Codex / OpenCode)
+
+Stage 5 runs on both install targets with identical business rules; only the harness calling surfaces differ. Never present one harness's tool syntax as the other's API, and never let the model's self-description ("I called the validator/humanizer") replace real delegation.
+
+### OpenCode branch (native tools)
+
+- Delegate validator rounds to the hidden validator subagent with OpenCode's native Task tool, e.g. `task(subagent_type: "professor-contact-email-validator", prompt: "files: …\nemail_pack: …")`, and consume its structured JSON verdict.
+- Load `humanizer-ja` through the native skill capability (`skill(name: "humanizer-ja")`).
+- Ask the user for required decisions with the native `question` tool.
+- Web verification (escalated email-ladder levels 3/4) uses the native `websearch` / `webfetch` tools.
+
+### Codex branch (installed named agents + official surfaces)
+
+- Top-level callers delegate Stage 5 to the installed named custom agent `professor-contact-email-generator`; inside Stage 5, delegate validator rounds to the installed named custom agent `professor-contact-email-validator`, wait for its result, and consume it before continuing. Do not copy its instructions into the parent dialogue, do not claim its role as your own, and do not assume spawn APIs, parameters or event fields that Codex documentation does not expose.
+- Use the installed, discoverable `humanizer-ja` Skill. Do not write OpenCode's native skill/Task/question tool-call syntax into Codex flows.
+- Web verification uses Codex's official web search surface. Shell HTTP (`curl`, Python requests) may only reach the eval service, never substitute for the harness web capability.
+- When a required user decision (conflicting-address choice, `initial_sent_date`, first-choice/learning/signature, email confirmation) was not supplied by the caller, stop at the existing `needs_input`/unfinished boundary: never auto-pick the first option, never fabricate a date, learning field, signature or "confirmed" state, and never write the final email. Do not invent a continuation/resume protocol; hand the missing decision back to the caller/user explicitly.
+
+### humanizer-ja stage-5 constraints (both targets)
+
+- Before calling, state the `business` goal explicitly and attach the full dynamic-field context, so the humanizer's own clarifying questions are never treated as Stage 5's implicit user-input protocol. If a fact or choice needed for polishing is missing, block first under Stage 5's user-input rules — the humanizer never guesses.
+- Only the contract-allowed dynamic fields (`interest_sentences_ja`, `future_aspiration_ja`, `learning_candidates`) may be polished, before template assembly. After polishing, write the strings back into the result JSON and re-check before finalize: `schema`/`kind`/`email_id`/`source_map`, the facts and the four-sentence structure are unchanged; template fixed text stays byte-stable and never enters the humanizer. Only then run `stage5_immutable.py stage5-finalize` (with `--polish-mode dynamic-fields-only` when polish actually happened).
 
 ## Contact-evidence-first email ladder (Issue #10)
 

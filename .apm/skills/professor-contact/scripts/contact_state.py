@@ -6391,8 +6391,9 @@ def upstream_check_script() -> Path | None:
     1. explicit runtime locator injection via UPSTREAM_SCRIPT_ENV (an
        absolute path wins authoritatively; a missing file fails closed);
     2. the shared skills root next to this runner's own skill installation
-       (checkout `.apm/skills/…` composition, or the installed OpenCode
-       skill directory) holding `professor-collector/scripts/…`;
+       (checkout `.apm/skills/…` composition, or the APM shared project-scope
+       install `.agents/skills/…` used for both Codex and OpenCode targets)
+       holding `professor-collector/scripts/…`;
     3. a registered professor-research checkout that is a sibling of one of
        this runner's own ancestors (skillrepo canonical layout: registered
        repos sit side by side, including under a shared worktrees/ dir) —
