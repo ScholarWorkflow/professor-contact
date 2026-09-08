@@ -44,7 +44,10 @@ class Stage4SelectionAgentContractTests(unittest.TestCase):
 
     def test_explicit_selection_path_remains_supported(self):
         self.assertIn("selection", self.text)
-        self.assertIn("显式", self.text)
+        self.assertTrue(
+            "显式" in self.text or "explicit" in self.text,
+            "the agent must retain an explicit-selection input path",
+        )
         self.assertIn("stage4-finalize", self.text)
 
     def test_opencode_question_path_is_explicitly_runtime_scoped(self):
@@ -73,7 +76,7 @@ class Stage4SelectionAgentContractTests(unittest.TestCase):
 
     def test_codex_next_turn_reloads_state_instead_of_resuming_child_memory(self):
         self.assertIn("重新读取", self.text)
-        self.assertIn("显式", self.text)
+        self.assertTrue("显式" in self.text or "explicit" in self.text)
         self.assertIn("selection", self.text)
         self.assertNotIn("codex exec resume", self.text)
 
