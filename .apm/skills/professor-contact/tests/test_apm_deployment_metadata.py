@@ -246,19 +246,42 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
         self.assertNotIn("agent_role", codex)
         self.assertNotIn("agent_path", codex)
 
-    def test_stage2_codex_noninteractive_choice_uses_resume_contract(self):
+    def test_stage2_codex_noninteractive_choice_uses_fresh_root_and_persisted_state(self):
         _, analyzer = _frontmatter_and_body(ANALYZER_PATH)
         skill = SKILL_PATH.read_text(encoding="utf-8")
         stage2_docs = f"{skill}\n{analyzer}"
 
-        self.assertIn(
+        # The Codex eval harness runs one fresh root thread per invocation and
+        # does not support session resume; Stage 2 user-choice continuity must
+        # therefore never be documented as session resume.
+        self.assertNotIn(
             "codex exec resume",
             stage2_docs,
-            "Codex non-interactive Stage 2 must document the official session-resume path for user choice",
+            "session resume must not be the documented Stage 2 Codex user-choice continuation path",
         )
         self.assertTrue(
             "needs_input" in stage2_docs or "needs_user_choice" in stage2_docs,
             "the first non-interactive pass must stop at an explicit needs-input state rather than auto-accepting",
+        )
+        self.assertIn(
+            "fresh root",
+            stage2_docs,
+            "Stage 2 Codex continuation must be described as fresh-root runs",
+        )
+        self.assertRegex(
+            stage2_docs,
+            r"(?s)fresh root.{0,600}(facts|指纹|proof)",
+            "the fresh-root second pass must rely on persisted deterministic Stage 2 state",
+        )
+        self.assertRegex(
+            stage2_docs,
+            r"(?s)fresh root.{0,400}同一 program root",
+            "the fresh-root second pass must re-read the same program root",
+        )
+        self.assertRegex(
+            stage2_docs,
+            r"显式(提供)?用户选择",
+            "the fresh-root second pass must be driven by an explicit user selection",
         )
 
     def test_stage2_analyzer_keeps_business_concurrency_limit_separate_from_codex_thread_limit(self):

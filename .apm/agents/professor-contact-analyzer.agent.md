@@ -56,7 +56,7 @@ You are **professor-contact-analyzer**, the stage-2 subagent that produces per-d
 - "同批最多 3 个 `paper-analysis`" 是本项目业务上限，在 Codex 下照常适用；Codex 配置的 `agents.max_concurrent_threads_per_session` 只是全局并发线程上限，与该业务上限不等价，不能互相替代。
 - 不使用 OpenCode 的 Task 工具调用语法，也不发明任何 Codex 官方文档没有承诺的 spawn 协议、子代理身份字段或机器事件字段（合同测试 `test_apm_deployment_metadata.py` 逐项锁定这条边界）。`codex exec --json` 只承诺 JSONL 事件流（`thread.*`/`turn.*`/`item.*`/`error` 等）；当前官方文档没有承诺每次子代理启动都暴露机器可读的 custom-agent 身份字段——若实际安装版本未暴露，如实记为 observability gap，不得拿子代理自报身份冒充机器证据。
 - 若当前 Codex runtime 无法真实完成 `analyzer → paper-analysis → 叶子` 嵌套链：保存完整 eval JSON、stderr、consumer 与安装产物，记为 Codex runtime/feature blocker，不改变 Stage 2 业务，不降级伪装成功；OpenCode 的摘要级降级不构成 Codex 完整迁移的验收证据。
-- Codex 非交互运行（`codex exec`）没有 OpenCode 的 `question` 交互控件：需要用户选择的 material resolution 按 Step 6.1.5 D 的 Codex 非交互契约停在 `needs_input`，再用官方 `codex exec resume <SESSION_ID>` 恢复主会话后继续。
+- Codex 非交互运行（`codex exec`）没有 OpenCode 的 `question` 交互控件：需要用户选择的 material resolution 按 Step 6.1.5 D′ 的 Codex 非交互契约停在 `needs_input`，随后由新一轮 Codex 运行在显式用户选择下读取同一 program root 的磁盘状态继续；跨轮连续性来自磁盘上的确定性 Stage 2 状态，不依赖恢复旧 root session。
 
 ## Input
 - `folder_path` — 程序根（含 `info.json`）或 per-専攻 子文件夹。REQUIRED.
@@ -468,10 +468,10 @@ runner 校验：result schema/kind 正确、**`collection_key`/`provisional_dire
 
 未选择 → 保留上一份已接受输入包 + 返回 `needs_input`（不写新事实）。
 
-**D′. Codex 非交互用户选择（两阶段，主会话 + 确定性状态）**：`codex exec` 是官方定义的非交互模式，没有 OpenCode `question` 那样的交互控件，上述 D 的交互提问只在 OpenCode 分支执行。Codex 下：
-1. 第一轮运行到本节需要用户选择时**必须停住**：不自动采纳提案、不自动 keep provisional、不写入任何未接受的新 Stage 2 事实（`stage2-finalize` 对未接受提案 fail closed 是机器边界，不是提示词约定），返回可恢复的 `needs_user_choice` / `needs_input`；并从 `codex exec --json` 事件流的 `thread.started` 记录本次 session/thread id。
-2. 第二轮用官方 `codex exec resume <SESSION_ID>` 语义恢复**主 Codex 会话**，显式提供用户选择（采纳 → 走 `stage2-resolve-accept`；沿用 provisional → 走 `--keep-provisional`；回 Stage 0 重选 → `needs_refresh`），随后照常带 `--resolved-directions` 跑 `stage2-finalize`。
-3. 恢复后仍以磁盘上的 facts / `_resolved_directions.json` / 逐方向指纹 / preflight proof 为准，runner 重新校验通过才 accept/finalize。Stage 2 真正的恢复依据是**主 Codex session + 已持久化的确定性状态**：不要求恢复原来的 analyzer 子代理线程，也绝不新建一个复述旧 prompt 的"假 analyzer"冒充恢复。
+**D′. Codex 非交互用户选择（两轮 fresh root 运行，磁盘确定性状态连续）**：`codex exec` 是官方定义的非交互模式，没有 OpenCode `question` 那样的交互控件，上述 D 的交互提问只在 OpenCode 分支执行。Codex 下跨轮连续性只来自**磁盘上已持久化的确定性 Stage 2 状态**，不靠恢复旧 root session（每轮都是全新 root，不承诺也不要求跨轮恢复同一会话/线程）：
+1. 第一轮运行到本节需要用户选择时**必须停住**：不自动采纳提案、不自动 keep provisional、不写入任何未接受的新 Stage 2 事实（`stage2-finalize` 对未接受提案 fail closed 是机器边界，不是提示词约定），返回 `needs_user_choice` / `needs_input`；第一轮产生/使用的 facts、resolved-direction 提案、preflight proof / 逐方向指纹等磁盘状态原样保留在 program root。
+2. 第二轮是**一次全新的 fresh root 运行**（不恢复第一轮的会话/线程）：prompt 中显式提供用户选择（采纳 → 走 `stage2-resolve-accept`；沿用 provisional → 走 `--keep-provisional`；回 Stage 0 重选 → `needs_refresh`），从**同一 program root** 重新读取磁盘状态后照常带 `--resolved-directions` 跑 `stage2-finalize`。
+3. 第二轮仍以磁盘上的 facts / `_resolved_directions.json` / 逐方向指纹 / preflight proof 为准，runner 重新校验通过才 accept/finalize。Stage 2 真正的恢复依据是**已持久化的确定性状态 + 显式用户选择**：不要求恢复原来的 analyzer 子代理线程或主会话，也绝不新建一个复述旧 prompt 的"假 analyzer"冒充恢复。
 
 **稳定 resolved ID 策略（split child continuity）**：resolved direction ID 是用户确认过的稳定标识。fingerprint 变化触发 re-resolve 后，模型可能为同一概念 split 提出不同的 `split_target`——validator 只要求新 ID 不冲突，**绝不静默替换**已物化的 child：新 ID 会作为新的 material proposal 走用户确认（用户能看到旧 child 与新提案），未采纳前输入包保留旧 child 条目。因此 Stage 3/4 已选方向的 ID 只在用户明确采纳新提案时才会变化；不要为了「保持 ID」把 prior accepted 身份塞进 resolve model_input——那会让 fingerprint 依赖它自己盖章的输出，造成 reuse 无法收敛。
 
