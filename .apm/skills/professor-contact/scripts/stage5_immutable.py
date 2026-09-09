@@ -14,7 +14,9 @@ polish happened or dynamic fields alone were polished.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -22,6 +24,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 RUNNER = HERE / "contact_state.py"
+UPSTREAM_SCRIPT_ENV = "PROFESSOR_CONTACT_EVIDENCE_SCRIPT"
 
 _PLAN_OPTIONS = {
     "--program-root", "--email-pack", "--email-id", "--profile", "--template",
@@ -104,6 +107,24 @@ def _runner_with_provenance(root: Path, polish_mode: str) -> Path:
     return path
 
 
+def _child_env_with_checker() -> dict[str, str] | None:
+    """Env for the temporary finalize-runner copy. The copy's __file__ lives
+    in a scratch directory, so the installed-layout checker locator cannot
+    resolve from there; pin the checker resolved from the real runner's own
+    location via the documented injection point. Returns None (no change)
+    when an explicit locator is already set or none can be resolved."""
+    if os.environ.get(UPSTREAM_SCRIPT_ENV, "").strip():
+        return None
+    spec = importlib.util.spec_from_file_location(
+        "contact_state_locator_for_stage5_wrapper", RUNNER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    checker = module.upstream_check_script()
+    if checker is None:
+        return None
+    return {**os.environ, UPSTREAM_SCRIPT_ENV: str(checker)}
+
+
 def _immutable_finalize(args: list[str]) -> int:
     polish_mode, clean = _wrapper_options(args)
     plan = subprocess.run(
@@ -154,6 +175,7 @@ def _immutable_finalize(args: list[str]) -> int:
             [sys.executable, str(finalize_runner), *clean,
              "--humanized-map", str(map_path.resolve())],
             text=True, capture_output=True, check=False,
+            env=_child_env_with_checker() or os.environ,
         )
         sys.stdout.write(proc.stdout)
         sys.stderr.write(proc.stderr)
