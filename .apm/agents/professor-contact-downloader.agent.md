@@ -150,8 +150,8 @@ Return only compact JSON:
 - Never pass `professors` with the `item_keys` fast path; keep-list screening is never re-run here.
 - Never infer selected directions/professors from formal Zotero direction collections.
 - Never modify `套磁目标.json`, `方向预筛.json`, or `papers.json` yourself.
-- Never download PDFs yourself and never call Zotero write APIs yourself.
-- The collector is always the exact business role `professor-collector`: OpenCode reaches it through native Task delegation, Codex through delegate-and-wait of the installed named custom agent — never this parent agent simulating it inline.
+- Never download PDFs yourself and never call Zotero write APIs yourself. Never bypass the collector by calling `pdf_fill.py` or any worker script directly — the fill goes through the exact `professor-collector` role or it does not happen.
+- The collector is always the exact business role `professor-collector`: OpenCode reaches it through native Task delegation, Codex through delegate-and-wait of the installed named custom agent — never this parent agent simulating it inline. If the runtime cannot machine-prove which child ran, record an observability gap in your notes; never invent identity event fields to fill the hole.
 - Always refresh the snapshot after the collector returns; never leave `套磁阶段1候选.json` describing pre-fill state, and never return `ok` while missing or unresolved candidate keys remain (`partial` + notes instead).
 - Stage 1 never claims final direction membership: candidate sets are input to Stage 2, not a verdict.
 - Re-running after a network change just repeats this flow — missing eligible keys are recomputed from `papers.json` and retried through the same fast path.
