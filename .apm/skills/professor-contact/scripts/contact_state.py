@@ -7258,6 +7258,24 @@ def assemble_followup_draft(email: dict, choices: dict, sources: dict,
     return draft, [p for p in protected if p], banned
 
 
+def body_salutation_line(body: str, values: dict) -> str | None:
+    """The template's fixed salutation line, matched verbatim from the
+    assembled body. The 「抬头逐字」 checklist row must show exactly the text
+    the recipient sees — the user template may format the header differently
+    from the synthesized 大学／研究科／先生名： form (e.g. without the trailing
+    full-width colon), and a mismatching row reads as a self-contradicting
+    checklist. Returns None when the professor name does not appear, leaving
+    the caller's fallback in place."""
+    name = values.get("先生名") or ""
+    if not name:
+        return None
+    for line in body.splitlines():
+        text = line.strip()
+        if text and name in text:
+            return text
+    return None
+
+
 def render_checklist_table(verify: dict, header_text: str | None = None) -> list:
     items = verify.get("items") or {}
     def cell(key, default="—"):
@@ -7483,6 +7501,10 @@ def cmd_stage5_finalize(args) -> None:
         email_verdict = ((verify.get("items") or {}).get("email") or {}).get("verdict")
         banner_needed = bool(warnings) or roster_verdict == "not_found" or email_verdict == "unverified"
         values = header_values(sources, email)
+        # Fallback only: the 「抬头逐字」 row must show the assembled body's own
+        # salutation verbatim (the user template's fixed text may format the
+        # header differently, e.g. without a trailing 「：」), so the per-variant
+        # header is derived from the draft body below.
         checklist_header = (f"{values['大学']}／{values['研究科']}／"
                             f"{values['先生名']}先生：")
         variants = []
@@ -7550,7 +7572,8 @@ def cmd_stage5_finalize(args) -> None:
                 lines.append("")
             lines.append(f"## 送信前核对（发信前最后过目；数据源 _contact_verify.json @ {verify.get('verified_at')}）")
             lines.append("")
-            lines.extend(render_checklist_table(verify, checklist_header))
+            lines.extend(render_checklist_table(
+                verify, body_salutation_line(body_text, values) or checklist_header))
             lines.append("")
             lines.append("## 邮件正文")
             lines.append("")
