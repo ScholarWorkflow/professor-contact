@@ -23,6 +23,7 @@ TESTS_DIR = Path(__file__).resolve().parent
 RUNTIME_DIR = TESTS_DIR / "runtime"
 BUILDER_PATH = RUNTIME_DIR / "build_issue29_stage2_fixture.py"
 CONTACT_STATE = TESTS_DIR.parent / "scripts" / "contact_state.py"
+CONTACT_STAGE1 = TESTS_DIR.parent / "scripts" / "contact_stage1.py"
 
 _spec = importlib.util.spec_from_file_location("build_issue29_stage2_fixture", BUILDER_PATH)
 builder = importlib.util.module_from_spec(_spec)
@@ -75,6 +76,26 @@ def _normalized_tree(root: Path) -> dict:
 def _run_runner(*arguments):
     return subprocess.run([sys.executable, str(CONTACT_STATE), *map(str, arguments)],
                           text=True, capture_output=True, check=False, timeout=300)
+
+
+def _run_stage1(*arguments):
+    return subprocess.run([sys.executable, str(CONTACT_STAGE1), *map(str, arguments)],
+                          text=True, capture_output=True, check=False, timeout=300)
+
+
+def assert_stage1_verify_ok(testcase: unittest.TestCase, root: Path):
+    """The Stage 2 caller contract runs ``contact_stage1.py verify`` first.
+
+    A runtime fixture whose snapshot was not produced by the product's own
+    Stage 1 build fails this gate with ``stale_stage1_snapshot``, so every
+    analyzer-enterable mode must verify clean against the persisted tree.
+    """
+    result = _run_stage1("verify", "--program-root", root, "--professors", PROFESSOR)
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        testcase.fail(f"verify stdout not JSON: {result.stdout!r}\n{result.stderr!r}")
+    testcase.assertEqual(payload.get("status"), "ok", payload)
 
 
 def _runner_json(result):
@@ -154,6 +175,13 @@ class BuildIssue29Stage2FixtureTests(unittest.TestCase):
         self.assertEqual(payload["action"], "process", payload)
         self.assertIn("missing_input_pack", payload["reason_codes"])
 
+        assert_stage1_verify_ok(self, root)
+        snapshot = json.loads((root / "教授研究" / "套磁阶段1候选.json").read_text(
+            encoding="utf-8"))
+        entry = snapshot["professors"][0]
+        self.assertEqual(entry["action"], "noop")
+        self.assertEqual(entry["directions"][0]["candidate_keys"], ["AAAA1111"])
+
         pdf_bytes = (analysis_dir / "AAAA1111.pdf").read_bytes()
         assert_minimal_pdf_structure(self, pdf_bytes, paper["title"])
 
@@ -175,6 +203,9 @@ class BuildIssue29Stage2FixtureTests(unittest.TestCase):
         # keeps being re-planned until the explicit user decision lands.
         self.assertEqual(payload["directions"][0]["action"], "process", payload)
         self.assertEqual(payload["directions"][0]["direction_id"], "dir_A")
+
+        self.assertTrue((prof_dir / "papers.json").is_file())
+        assert_stage1_verify_ok(self, root)
 
     # -- builder obligations ---------------------------------------------------
 
