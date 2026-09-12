@@ -43,22 +43,75 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
                     "Codex custom-agent orchestration must stay at the documented named-agent level",
                 )
 
-    def test_codex_delegation_uses_documented_named_agent_semantics(self):
-        self.assertIn(
-            "已安装", self.text,
-            "the Codex branch must delegate via the documented product "
-            "semantics: use the installed named custom agent and wait for the "
-            "needed child to finish; the runtime owns spawn/wait orchestration",
+    def _stage34_orchestration_section(self):
+        """Return the Stage 3/4 orchestration-boundary section of SKILL.md.
+
+        The Codex delegation contract lives in this section only; asserting on
+        the whole document would stay green after the section is deleted or
+        broken, because unrelated stages mention words like 等待 elsewhere.
+        """
+        marker = "### Stage 3/4 编排边界"
+        start = self.text.find(marker)
+        self.assertGreaterEqual(
+            start, 0,
+            "the Stage 3/4 orchestration-boundary section must exist in SKILL.md",
         )
-        self.assertIn("等待", self.text)
+        next_heading = self.text.find("\n### ", start + len(marker))
+        if next_heading == -1:
+            return self.text[start:]
+        return self.text[start:next_heading]
+
+    def test_stage34_section_names_all_three_custom_agents(self):
+        section = self._stage34_orchestration_section()
+        for required in (
+            "professor-contact-idea-generator",
+            "professor-contact-style-validator",
+            "professor-contact-selection",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(
+                    required, section,
+                    "the Stage 3/4 orchestration-boundary section must name "
+                    "the exact installed custom agents",
+                )
+
+    def test_stage34_section_locks_codex_named_agent_delegation(self):
+        section = self._stage34_orchestration_section()
+        self.assertRegex(
+            section, r"委派|delegate|use",
+            "the Codex branch must delegate via the documented product "
+            "semantics: use the installed named custom agent; the runtime "
+            "owns spawn/wait orchestration",
+        )
+        self.assertRegex(
+            section, r"等待.{0,80}完成",
+            "the caller must wait for the needed child to finish before "
+            "continuing",
+        )
+
+    def test_stage34_section_requires_stage4_redelegation_on_next_user_turn(self):
+        section = self._stage34_orchestration_section()
+        self.assertRegex(
+            section, r"重新委派.{0,20}professor-contact-selection",
+            "the next user turn must re-delegate the selection agent with an "
+            "explicit selection instead of depending on child memory",
+        )
+
+    def test_stage34_section_rejects_private_or_wrong_runtime_protocols(self):
+        section = self._stage34_orchestration_section()
+        for forbidden in (
+            "spawnAgent", "spawn_agent(", "agent_type=", "agent_role=",
+            "codex exec resume",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(
+                    forbidden, section,
+                    "the Stage 3/4 section must not encode private runtime "
+                    "protocols or wrong-runtime tools",
+                )
 
     def test_caller_does_not_make_resume_a_stage4_state_protocol(self):
         self.assertNotIn("codex exec resume", self.text)
-        self.assertRegex(
-            self.text,
-            r"(?:重新|再次).{0,40}professor-contact-selection",
-            "the next user turn must call selection again instead of depending on child memory",
-        )
 
 
 if __name__ == "__main__":
