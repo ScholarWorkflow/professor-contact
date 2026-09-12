@@ -87,6 +87,20 @@ class Stage4SelectionAgentContractTests(unittest.TestCase):
             "the agent must not substitute its own recommendation for user choice",
         )
 
+    def test_stage4_finalize_command_sources_profile_from_state(self):
+        self.assertRegex(
+            self.text,
+            r"--profile\s*<[^>]*profile_path[^>]*>",
+            "stage4-finalize must receive --profile taken from the candidate state's "
+            "top-level profile_path; the runner recomputes the profile fingerprint "
+            "from it and fail-closes with profile_changed otherwise",
+        )
+        self.assertNotIn(
+            "或省略", self.text,
+            "omitting --profile is not a valid variant: with it absent the runner's "
+            "current profile fingerprint is None and never matches a recorded one",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -51,7 +51,7 @@ If `folder_path` missing → return the error JSON.
 
 ### Step 1 — Resolve program root + locate candidate states
 1. Resolve `program_root`.
-2. 找状态：`find 教授研究 -name "套磁候选状态.json"`。缺失 → error `"先跑 professor-contact-idea-generator（阶段 3）生成 套磁候选状态.json"`。读每个状态的方向/候选清单供挑选展示（候选摘要字段够用：id/title/one_liner/research_question/fit；不给 gap 原文全文）。
+2. 找状态：`find 教授研究 -name "套磁候选状态.json"`。缺失 → error `"先跑 professor-contact-idea-generator（阶段 3）生成 套磁候选状态.json"`。读每个状态的方向/候选清单供挑选展示（候选摘要字段够用：id/title/one_liner/research_question/fit；不给 gap 原文全文），并**记录状态顶层 `profile_path` 的绝对路径**——Step 3 的 `stage4-finalize` 必须把它原样传给 `--profile`。
 
 ### Step 2 — Get the user's selection（按 runtime 分支）
 
@@ -100,8 +100,9 @@ If `folder_path` missing → return the error JSON.
 然后：
 ```bash
 skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage4-finalize \
-  --program-root <program_root abs> --selection-input /tmp/套磁选择输入.json --profile <profile abs 或省略>
+  --program-root <program_root abs> --selection-input /tmp/套磁选择输入.json --profile <该状态顶层 profile_path 的绝对路径>
 ```
+`--profile` **必传**，取值就是本 Step 所读状态顶层的 `profile_path`（caller 显式给出同一文件的绝对路径时以 caller 为准，二者必须指向同一文件）：runner 用它重算 profile 指纹并与状态中记录的指纹比对；省略 `--profile` 时 runner 的 current 指纹为 `None`，与任何已记录指纹必然失配 → `profile_changed` fail-closed 零写入。
 
 runner 行为（你只消费其返回 JSON）：
 - 指纹过期（输入包变化 / profile 变化）→ `needs_refresh + reason_code`（`source_fingerprint_changed` / `profile_changed`），**不写任何文件**——按提示先重跑阶段 3 再来。

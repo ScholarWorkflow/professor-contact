@@ -43,6 +43,14 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
                     "Codex custom-agent orchestration must stay at the documented named-agent level",
                 )
 
+    def test_codex_delegation_names_native_spawn_tool(self):
+        self.assertIn(
+            "spawnAgent", self.text,
+            "the Codex branch must point the caller at the runtime's native "
+            "spawn/wait collaboration tools; models fail to discover delegation "
+            "when the doc stays at the unnamed 'delegate' level",
+        )
+
     def test_caller_does_not_make_resume_a_stage4_state_protocol(self):
         self.assertNotIn("codex exec resume", self.text)
         self.assertRegex(
