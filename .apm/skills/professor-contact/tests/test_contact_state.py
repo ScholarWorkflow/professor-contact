@@ -946,7 +946,7 @@ class TestStage5(BaseEnv):
         self.assertEqual(out["status"], "ok", out)
         md = (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8")
         self.assertIn("## 送信前核对", md)
-        self.assertIn("| 抬头逐字 | 試験大学／試験研究科／試験 教授先生： | confirmed |", md)
+        self.assertIn("| 抬头逐字 | 試験大学／試験研究科／試験 教授先生 | confirmed |", md)
         self.assertIn("## 事实核对卡（发送前人工确认）", md)
         self.assertIn("<details>", md)
         self.assertIn("作者原话", md)
@@ -966,6 +966,33 @@ class TestStage5(BaseEnv):
         self.assertEqual(validation["status"], "ok", validation)
         state = json.loads((self.prof_dir / "套磁邮件状态.json").read_text(encoding="utf-8"))
         self.assertEqual(state["emails"][self.choices()["email_id"]]["validation"]["result"], "pass")
+
+    def test_stage5_checklist_header_row_matches_body_salutation(self):
+        # The 「抬头逐字」 checklist row must show the assembled body's own
+        # salutation line verbatim; a synthesized header variant (e.g. one
+        # that appends 「：」 the user template never had) diverges from the
+        # body and the rendered file contradicts itself.
+        g1 = self.prepare()
+        raw_path = self.root / "email_raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "choices.json"
+        choices_path.write_text(json.dumps(self.choices(), ensure_ascii=False), encoding="utf-8")
+        draft = parse(run_cli("stage5-plan", "--program-root", self.root,
+                              "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(draft["status"], "ok", draft)
+        humanized_path = self.root / "humanized.txt"
+        humanized_path.write_text(draft["drafts"][0]["draft"], encoding="utf-8")
+        out = parse(run_cli("stage5-finalize", "--program-root", self.root,
+                            "--result", raw_path, "--humanized", humanized_path,
+                            "--choices", choices_path))
+        self.assertEqual(out["status"], "ok", out)
+        md = (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8")
+        row = next(line for line in md.splitlines() if line.startswith("| 抬头逐字 |"))
+        header_cell = row.split("|")[2].strip()
+        body_section = md.split("## 邮件正文", 1)[1]
+        salutation = next(line.strip() for line in body_section.splitlines()
+                          if "試験 教授" in line)
+        self.assertEqual(header_cell, salutation)
 
     def test_stage5_both_outputs_followup_reuses_facts_and_date(self):
         g1 = self.prepare()
