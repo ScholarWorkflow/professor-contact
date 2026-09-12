@@ -34,6 +34,8 @@ You do NOT run a broad professor-level downloader. Stage 0 already persisted the
 
 ## Flow
 
+`<professor-contact-skill-dir>` is the directory of **this skill's installed copy in the current workspace** — the directory that contains this skill's `SKILL.md` and its `scripts/` (a consumer install keeps it at `.agents/skills/professor-contact/`). Resolve every helper invocation below against that directory: the consumer must always execute the scripts installed with this skill, never scripts reached through a user-global registry wrapper (`skillrepo exec`), a development checkout, or any path outside the current workspace.
+
 ### 1. Resolve program root
 
 Resolve `<program_root>` from `info.json`. Do not probe Zotero yourself.
@@ -41,7 +43,7 @@ Resolve `<program_root>` from `info.json`. Do not probe Zotero yourself.
 ### 2. Resolve selected targets from machine state
 
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_targets.py \
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
   resolve --program-root "<program_root>" --professors "<optional comma-separated names>"
 ```
 
@@ -56,7 +58,7 @@ Never scan for a Zotero note named `套磁候选`, even as fallback.
 ### 3. Build the Stage 1 candidate snapshot (deterministic, local)
 
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_stage1.py \
+python3 <professor-contact-skill-dir>/scripts/contact_stage1.py \
   build --program-root "<program_root>" \
   [--professors "<comma-separated names>"] \
   [--named-file "<named_papers_file absolute path>"]
@@ -107,7 +109,7 @@ task(subagent_type: "professor-collector",
 The collector updates `papers.json`, which instantly makes the pre-fill snapshot stale. Re-run the deterministic build so the persisted snapshot reflects the **post-fill** readiness:
 
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_stage1.py \
+python3 <professor-contact-skill-dir>/scripts/contact_stage1.py \
   build --program-root "<program_root>" \
   [--professors "<comma-separated names>"] \
   [--named-file "<named_papers_file absolute path>"]

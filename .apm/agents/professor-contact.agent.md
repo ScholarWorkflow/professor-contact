@@ -53,10 +53,12 @@ Your job is to turn an upstream normalized `方向预筛.json` into the canonica
 
 ## Deterministic helper
 
+`<professor-contact-skill-dir>` is the directory of **this skill's installed copy in the current workspace** — the directory that contains this skill's `SKILL.md` and its `scripts/` (a consumer install keeps it at `.agents/skills/professor-contact/`). Resolve every helper invocation against that directory: the consumer must always execute the scripts installed with this skill, never scripts reached through a user-global registry wrapper (`skillrepo exec`), a development checkout, or any path outside the current workspace.
+
 Use:
 
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_targets.py ...
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py ...
 ```
 
 The helper owns preview validation, stable IDs, target-state persistence, history, preview-fingerprint checks, and atomic writes. Do not hand-edit `套磁目标.json`.
@@ -72,7 +74,7 @@ Resolve the program root by `info.json`. Under `<program_root>/教授研究/`, l
 For each chosen professor, run:
 
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_targets.py \
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
   preview --preview "<教授目录>/方向预筛.json"
 ```
 
@@ -127,7 +129,7 @@ Whether the answers came from the interactive `question` round or from an explic
 Then run:
 
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_targets.py \
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
   select \
   --program-root "<program_root>" \
   --preview "<教授目录>/方向预筛.json" \

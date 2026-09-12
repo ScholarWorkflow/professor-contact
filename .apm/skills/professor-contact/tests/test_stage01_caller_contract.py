@@ -40,6 +40,46 @@ class Stage01CallerContractTests(unittest.TestCase):
         self.assertIn("selection_request", text)
         self.assertRegex(text, r"contact_targets\.py[\s\S]*?\bselect\b")
 
+    @staticmethod
+    def _command_blocks(text: str) -> str:
+        blocks = re.findall(r"```(?:bash|shell|sh)\n(.*?)```", text, flags=re.DOTALL)
+        return "\n".join(blocks)
+
+    def test_stage01_helper_invocations_execute_the_installed_skill_scripts(self):
+        """Clean-consumer source provenance: delivered Stage 0-1 call sites must
+        execute the scripts installed with this skill in the current workspace.
+
+        `skillrepo exec <repo> <resource>` resolves by host-global
+        registration, which is outside the consumer; the 2026-09-12 clean
+        consumer run machine-observed it running repo-owned scripts from a
+        development checkout instead of the consumer installation. The caller
+        convention therefore anchors every helper invocation to this skill's
+        own installed directory, the same self-anchored pattern the
+        professor-collector agent definition uses. Prose may name the banned
+        wrapper; no command block may use it.
+        """
+        placeholder = "<professor-contact-skill-dir>"
+        expected_helpers = {
+            STAGE0_AGENT: ("contact_targets.py",),
+            STAGE1_AGENT: ("contact_targets.py", "contact_stage1.py"),
+            SKILL_PATH: ("contact_targets.py",),
+        }
+        for path, helpers in expected_helpers.items():
+            text = _read(path)
+            commands = self._command_blocks(text)
+            self.assertNotIn("skillrepo exec", commands)
+            self.assertNotIn(".apm/skills/", commands)
+            for helper in helpers:
+                self.assertIn(
+                    f"python3 {placeholder}/scripts/{helper}",
+                    commands,
+                    f"{path.name}: {helper} must be invoked from this skill's installed directory",
+                )
+            # The placeholder is defined as this skill's own installed copy in
+            # the current workspace, with the consumer install location named.
+            self.assertIn(placeholder, text)
+            self.assertIn(".agents/skills/professor-contact", text)
+
     def test_stage0_and_stage1_do_not_depend_on_invented_codex_event_fields(self):
         text = "\n".join((_read(STAGE0_AGENT), _read(STAGE1_AGENT), _read(SKILL_PATH)))
 
