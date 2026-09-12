@@ -35,7 +35,7 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
         self.assertIn("stage4-finalize", self.text)
 
     def test_caller_contract_does_not_encode_undocumented_codex_spawn_api(self):
-        for forbidden in ("spawn_agent(", "agent_type=", "agent_role="):
+        for forbidden in ("spawn_agent(", "agent_type=", "agent_role=", "spawnAgent"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(
                     forbidden,
@@ -43,13 +43,14 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
                     "Codex custom-agent orchestration must stay at the documented named-agent level",
                 )
 
-    def test_codex_delegation_names_native_spawn_tool(self):
+    def test_codex_delegation_uses_documented_named_agent_semantics(self):
         self.assertIn(
-            "spawnAgent", self.text,
-            "the Codex branch must point the caller at the runtime's native "
-            "spawn/wait collaboration tools; models fail to discover delegation "
-            "when the doc stays at the unnamed 'delegate' level",
+            "已安装", self.text,
+            "the Codex branch must delegate via the documented product "
+            "semantics: use the installed named custom agent and wait for the "
+            "needed child to finish; the runtime owns spawn/wait orchestration",
         )
+        self.assertIn("等待", self.text)
 
     def test_caller_does_not_make_resume_a_stage4_state_protocol(self):
         self.assertNotIn("codex exec resume", self.text)
