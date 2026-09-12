@@ -198,7 +198,9 @@ class BuildIssue29Stage2FixtureTests(unittest.TestCase):
         self.assertEqual(manifest["direction_ids"], ["DIR00001"])
         self.assertEqual(manifest["item_keys"], ["AAAA1111"])
         protected = {row["path"]: row["sha256"] for row in manifest["protected_files"]}
-        for relative in ("facts.json", "教授研究/X分野/試験 教授/papers.json",
+        for relative in ("facts.json", "info.json", "教授研究/套磁目标.json",
+                         "教授研究/X分野/試験 教授/方向预筛.json",
+                         "教授研究/X分野/試験 教授/papers.json",
                          "教授研究/X分野/試験 教授/论文分析/AAAA1111.pdf"):
             self.assertIn(relative, protected)
         for relative, digest in protected.items():

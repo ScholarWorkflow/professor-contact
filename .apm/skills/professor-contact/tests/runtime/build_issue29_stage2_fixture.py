@@ -36,11 +36,11 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from contextlib import contextmanager
-from datetime import datetime
 from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parents[1]
@@ -58,6 +58,125 @@ PROFESSOR = preflight_templates.PROFESSOR
 
 class FixtureBuildError(RuntimeError):
     """Raised when the fixture cannot be built or fails its runner checks."""
+
+
+def _write_stage0_state(root: Path, prof_dir: Path, *, direction_id: str,
+                        direction: dict, catalog: list, seed_count: int) -> None:
+    """Write the Stage 0/1 program state the analyzer gate requires.
+
+    Single-direction canonical shapes mirroring ``PreflightBase``: target
+    state, Stage 1 snapshot, authorship ledger, preview file, program
+    ``info.json``. ``contact_targets.py resolve`` then runs at the final
+    location so the stored projection is runner-stamped, never hand-forged.
+    """
+    professor = PROFESSOR
+    preview_relative = Path("教授研究") / "X分野" / professor / "方向预筛.json"
+    preview = {
+        "professor": professor,
+        "preview_fingerprint": "pv-1",
+        "preview_fingerprint_version": "v1",
+        "direction_id_version": "v1",
+        "membership_mode": "overlap_allowed",
+        "directions": [{
+            "direction_id": direction_id,
+            "member_fingerprint": f"{direction_id}-mf-1",
+            "name_ja": direction["name_ja"],
+            "name_zh": direction["name_zh"],
+            "summary_zh": direction["summary_zh"],
+            "user_note": direction["user_note"],
+            "members": [{"item_key": key, "preview_confidence": "high"}
+                        for key in direction["member_keys"]],
+            "representatives": [{"item_key": direction["member_keys"][0]}],
+        }],
+    }
+    (root / preview_relative).write_text(
+        json.dumps(preview, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+    target = {
+        "schema_version": 1, "kind": "professor-contact-targets",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "targets": [{
+            "professor": professor,
+            "professor_dir": str(Path("教授研究") / "X分野" / professor),
+            "preview_path": str(preview_relative),
+            "preview_fingerprint": "pv-1", "preview_fingerprint_version": "v1",
+            "direction_id_version": "v1",
+            "selected_direction_ids": [direction_id],
+            "directions": [{
+                "direction_id": direction_id,
+                "name_ja": direction["name_ja"], "name_zh": direction["name_zh"],
+                "summary_zh": direction["summary_zh"],
+                "members": [{"item_key": key, "preview_confidence": "high"}
+                            for key in direction["member_keys"]],
+                "user_note": direction["user_note"],
+            }],
+        }],
+    }
+    (root / "教授研究" / "套磁目标.json").write_text(
+        json.dumps(target, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+    snapshot = {
+        "schema_version": 1, "kind": "professor-contact-stage1",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "professors": [{
+            "professor": professor,
+            "professor_dir": str(Path("教授研究") / "X分野" / professor),
+            "preview_fingerprint": "pv-1",
+            "input_fingerprint": "stage1-fp-1",
+            "built_at": "2026-01-01T00:00:00Z", "action": "noop",
+            "directions": [{
+                "direction_id": direction_id,
+                "provisional_member_keys": list(direction["member_keys"]),
+                "candidate_keys": list(direction["member_keys"]),
+                "expansion_reasons": {key: ["provisional_member"]
+                                      for key in direction["member_keys"]},
+                "expansion_evidence": {},
+                "pdf_readiness": {
+                    "usable_item_keys": [row["item_key"] for row in catalog
+                                         if row["pdf_status"] == "downloaded"],
+                    "missing_item_keys": [], "unresolved_item_keys": [],
+                    "status_counts": {"downloaded": len(catalog)}},
+            }],
+        }],
+    }
+    (root / "教授研究" / "套磁阶段1候选.json").write_text(
+        json.dumps(snapshot, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+    ledger = {
+        "updated_at": "2026-01-01T00:00:00Z", "overrides": {},
+        "professors": {
+            professor: {"books": [{"prof_name_tokens": ["試験", "教授"],
+                                   "seed_count": seed_count, "auto": [],
+                                   "conflicted": [], "offenders": [],
+                                   "typos": [], "mashes": []}],
+                        "seed_count": seed_count},
+        }}
+    (root / "教授研究" / "_署名对照.json").write_text(
+        json.dumps(ledger, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+    (root / "info.json").write_text(json.dumps({
+        "program": "issue29-runtime-fixture",
+        "notes": "synthetic Stage 2 smoke program root",
+    }, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
+def _resolve_targets(root: Path) -> dict:
+    """Run the deterministic target resolver at the final location."""
+    script = TESTS_DIR.parent / "scripts" / "contact_targets.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "resolve", "--program-root", str(root)],
+        text=True, capture_output=True, check=False, timeout=300)
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise FixtureBuildError(
+            f"contact_targets resolve did not return JSON: {result.stdout!r} {result.stderr!r}"
+        ) from exc
+    if payload.get("status") != "ok":
+        raise FixtureBuildError(
+            "contact_targets resolve rejected the Stage 0 state: "
+            + json.dumps(payload, ensure_ascii=False))
+    return payload
 
 
 @contextmanager
@@ -164,6 +283,15 @@ class SinglePaperBuilder(preflight_templates.PreflightBase):
         with _pinned_temporary_directory(self._final_root):
             super().setUp()
         self._reduce_to_single_candidate()
+        _write_stage0_state(
+            self.root, self.prof_dir, direction_id="DIR00001",
+            direction={"name_ja": "合成输入比较", "name_zh": "合成输入比较",
+                       "summary_zh": "比较合成输入",
+                       "user_note": "我想比较两种合成输入的处理结果。",
+                       "member_keys": [self.ITEM_KEY]},
+            catalog=[{"item_key": self.ITEM_KEY, "pdf_status": "downloaded"}],
+            seed_count=1)
+        _resolve_targets(self.root)
         self._write_parseable_pdf()
 
     def _reduce_to_single_candidate(self):
@@ -184,25 +312,6 @@ class SinglePaperBuilder(preflight_templates.PreflightBase):
         (self.prof_dir / "papers.json").write_text(json.dumps(
             {"papers": [{"item_key": key, "title": self.TITLE, "title_zh": None,
                          "pdf_status": "downloaded"}]}, ensure_ascii=False), encoding="utf-8")
-
-        target_direction = next(d for d in self.target["targets"][0]["directions"]
-                                if d["direction_id"] == "DIR00001")
-        target_direction["members"] = [{"item_key": key, "preview_confidence": "high"}]
-        self.target["targets"][0]["directions"] = [target_direction]
-        self.target["targets"][0]["selected_direction_ids"] = ["DIR00001"]
-        self._write_target()
-
-        snapshot_direction = next(d for d in self.snapshot_entry["directions"]
-                                  if d["direction_id"] == "DIR00001")
-        snapshot_direction["provisional_member_keys"] = [key]
-        snapshot_direction["candidate_keys"] = [key]
-        snapshot_direction["expansion_reasons"] = {key: ["provisional_member"]}
-        snapshot_direction["expansion_evidence"] = {}
-        snapshot_direction["pdf_readiness"] = {
-            "usable_item_keys": [key], "missing_item_keys": [],
-            "unresolved_item_keys": [], "status_counts": {"downloaded": 1}}
-        self.snapshot_entry["directions"] = [snapshot_direction]
-        self._write_snapshot()
 
         analysis_dir = self.prof_dir / "论文分析"
         for stale in list(analysis_dir.glob("*.md")) + \
@@ -274,6 +383,15 @@ class MaterialPendingBuilder(ResolvedPipelineMixin, unittest.TestCase):
             raise FixtureBuildError(
                 "material_pending sidecar must stay proposed: "
                 + json.dumps(sidecar, ensure_ascii=False))
+        _write_stage0_state(
+            self.root, self.prof_dir, direction_id="dir_A",
+            direction={"name_ja": "Signal Processing", "name_zh": "信号处理",
+                       "summary_zh": "signal processing", "user_note": "",
+                       "member_keys": ["P1", "P2"]},
+            catalog=[{"item_key": "P1", "pdf_status": "downloaded"},
+                     {"item_key": "P2", "pdf_status": "downloaded"}],
+            seed_count=2)
+        _resolve_targets(self.root)
         if (self.prof_dir / "套磁候选输入.json").exists():
             raise FixtureBuildError("material_pending fixture must not contain an accepted pack")
 
