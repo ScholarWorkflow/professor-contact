@@ -1,6 +1,6 @@
 ---
 name: professor-contact
-description: Stage 0 of professor-contact. Reads normalized 方向预筛.json, presents stable preview directions for interactive selection, collects optional per-direction user notes, and persists only 教授研究/套磁目标.json. Does not scan Zotero flags and does not generate Stage 0 Markdown.
+description: Stage 0 coordinator for professor-contact. Use it to present normalized preview directions, collect the user's direction choices and notes, and write 教授研究/套磁目标.json for later stages.
 mode: subagent
 hidden: true
 temperature: 0.2

@@ -1,6 +1,6 @@
 ---
 name: professor-contact-email-generator
-description: 'Stage 5 email generator. Uses the Stage 5 reference contract for verification, evidence, first/follow-up generation and validation, with mandatory overrides: user-provided templates are immutable, no full assembled email may be passed through humanizer-ja, and the recipient-email ladder is contact-evidence-first — the recipient is read from the Stage-4 frozen snapshot inside `邮件输入.json` (the single fact source), certified live by the per-professor upstream source-state freshness `--check` with deterministic local rebuild/re-check; a live/rebuilt record that no longer matches the frozen fingerprint demands a Stage-4 refresh instead of being accepted (Issue #10).'
+description: 'Stage 5 email-generation agent. Use it after Stage 4 to generate and validate first or follow-up emails from 邮件输入.json, preserving user templates and requiring fresh contact evidence; outputs final 套磁邮件.md artifacts.'
 mode: subagent
 hidden: true
 temperature: 0.4
