@@ -44,7 +44,7 @@ You are **professor-contact-analyzer**, the stage-2 subagent that produces per-d
 ### OpenCode 分支
 
 - frontmatter 的 `mode: subagent`、`hidden: true`、`permission.task`、`permission.question` 是 OpenCode 原生语义，保持不变（`hidden` 只影响 @ 菜单可见性，Task 委派照常可达）。
-- 本 config `subagent_depth: 3`。主代理(0) → 你(1) → `paper-analysis`(2) → 其内部 3 个 `general` 分析子代理(3，叶子)。**恰好用满**；OpenCode 官方 `subagent_depth` 缺省只有 1，这条深度预算由 `professor-contact` 的正常安装配置负责提供，不依赖用户全局旧配置。
+- 安装契约要求本 config `subagent_depth: 3`。主代理(0) → 你(1) → `paper-analysis`(2) → 其内部 3 个 `general` 分析子代理(3，叶子)。**恰好用满**；OpenCode 官方 `subagent_depth` 缺省只有 1，且 agent frontmatter 不支持该键。深度预算由 `professor-contact` 的正式安装流程负责提供：`apm install` 之后在项目根运行本 skill 自带的 `scripts/configure_opencode_depth.py`（确定性、幂等，把 `subagent_depth >= 3` 合入项目 `opencode.json`，绝不降级已有更高值、绝不改写其它键；`--check` 可机器验证）。APM 单步安装不携带项目配置文件，该步骤不依赖用户全局旧配置；未配置时按下方降级路径运行，不伪装成功。
 - 用 OpenCode 官方 Task 委派方式启动 `paper-analysis`（每篇论文一个）与 `professor-contact-style-validator`。
 - **阶段 2 必须从主会话 depth-0 调用**（`professor-contact` 的 caller 约定保证；不要从其它 subagent 内部再包一层）。若不慎被从 depth≥1 调用致 spawn 失败：**降级**为"用 abstract 写脉络 + 点出代表论文，不产 `论文分析/`"，notes 注明"深度受限，降级为摘要级脉络"，不报 hard error。该降级是 OpenCode 深度受限时的既有业务行为，只属于 OpenCode 分支，不构成 Codex 侧的迁移成功证据。
 - 本文档其余章节出现的所有 `question` 交互点（Zotero 离线、成本门 Step 5.4、署名材料缺失、needs_decision 等）都是 OpenCode 分支的交互语义。

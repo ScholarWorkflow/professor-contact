@@ -329,7 +329,11 @@ python3 scripts/contact_state.py migrate-v3 --apply <plan.json> --program-root <
 
 ### OpenCode 分支
 
-`mode: subagent` 与 `hidden: true` 是 **OpenCode 原生语义**：hidden 只表示该代理不出现在 OpenCode 的可见 agent 列表，须经 Task 委派触达；`permission`（含 `permission.task`）是 OpenCode 对工具/Task 委派的权限控制。这些字段与 Codex 无关。在 OpenCode 中用 Task 工具按 exact name 调用：
+`mode: subagent` 与 `hidden: true` 是 **OpenCode 原生语义**：hidden 只表示该代理不出现在 OpenCode 的可见 agent 列表，须经 Task 委派触达；`permission`（含 `permission.task`）是 OpenCode 对工具/Task 委派的权限控制。这些字段与 Codex 无关。
+
+**安装前提（depth 预算）**：三层 Task 委派（主代理 → `professor-contact-analyzer` → `paper-analysis` → 叶子）要求项目 `subagent_depth >= 3`（OpenCode 官方缺省 1，agent frontmatter 不支持该键）。正式安装 = `apm install` 之后在项目根运行 skill 自带的 `scripts/configure_opencode_depth.py`（确定性、幂等，把 `subagent_depth >= 3` 合入项目 `opencode.json`，`--check` 可机器验证）；未配置时按各代理文档的深度受限降级路径运行。
+
+在 OpenCode 中用 Task 工具按 exact name 调用：
 
 ```
 # 阶段 0：交互选定套磁方向（读 方向预筛.json，写 套磁目标.json）
