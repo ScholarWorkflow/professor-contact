@@ -6,6 +6,7 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[4]
 AGENTS_DIR = REPO_ROOT / ".apm" / "agents"
 SKILL_PATH = REPO_ROOT / ".apm" / "skills" / "professor-contact" / "SKILL.md"
+ANALYZER_PATH = AGENTS_DIR / "professor-contact-analyzer.agent.md"
 MANIFEST_PATH = REPO_ROOT / "apm.yml"
 
 # Machine identities of the 8 source agents; install projections (Codex TOML /
@@ -98,6 +99,16 @@ def _assert_yaml_safe_description(testcase: unittest.TestCase, path: Path, value
     testcase.assertNotIn(" #", value, f"{path}: description containing ' #' must be quoted")
 
 
+def _target_branch(text: str, heading: str, next_heading: str | None = None) -> str:
+    start = text.index(heading)
+    if next_heading is not None:
+        end = text.index(next_heading, start + len(heading))
+    else:
+        match = re.search(r"(?m)^#{1,3}\s+", text[start + len(heading) :])
+        end = len(text) if match is None else start + len(heading) + match.start()
+    return text[start:end]
+
+
 class ApmDeploymentMetadataTests(unittest.TestCase):
     def test_manifest_keeps_opencode_and_codex_targets(self):
         manifest = (REPO_ROOT / "apm.yml").read_text(encoding="utf-8")
@@ -150,6 +161,20 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
                 self.assertEqual(fields.get("mode"), "subagent", f"{path}: mode")
                 self.assertEqual(fields.get("hidden"), "true", f"{path}: hidden")
 
+    def test_stage2_analyzer_preserves_opencode_task_and_question_permissions(self):
+        frontmatter, _ = _frontmatter_and_body(ANALYZER_PATH)
+        frontmatter_text = "\n".join(frontmatter)
+        self.assertRegex(
+            frontmatter_text,
+            r"(?ms)^permission:\s*$.*?^\s+task:\s*allow\s*$",
+            "Stage 2 analyzer must remain callable through OpenCode's documented Task permission",
+        )
+        self.assertRegex(
+            frontmatter_text,
+            r"(?ms)^permission:\s*$.*?^\s+question:\s*allow\s*$",
+            "OpenCode's existing interactive user-choice capability must not be removed by the Codex migration",
+        )
+
     def test_skill_caller_convention_is_target_aware(self):
         skill = SKILL_PATH.read_text(encoding="utf-8")
 
@@ -187,6 +212,92 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
                 match.start(),
                 codex_branch,
                 "task(subagent_type: ...) examples must not leak into the Codex branch",
+            )
+
+    def test_stage2_analyzer_has_explicit_target_specific_delegation_contract(self):
+        _, analyzer = _frontmatter_and_body(ANALYZER_PATH)
+        self.assertIn("### OpenCode 分支", analyzer, "Stage 2 analyzer must explain its OpenCode delegation path")
+        self.assertIn("### Codex 分支", analyzer, "Stage 2 analyzer must explain its Codex delegation path")
+
+        opencode = _target_branch(analyzer, "### OpenCode 分支", "### Codex 分支")
+        codex = _target_branch(analyzer, "### Codex 分支")
+
+        for delegated_name in ("paper-analysis", "professor-contact-style-validator"):
+            self.assertIn(delegated_name, opencode, f"OpenCode branch must retain delegation to {delegated_name}")
+            self.assertIn(delegated_name, codex, f"Codex branch must delegate to installed custom agent {delegated_name}")
+
+        self.assertIn(
+            "subagent_depth",
+            opencode,
+            "OpenCode branch must retain the documented nested-subagent depth budget needed by Stage 2",
+        )
+        self.assertTrue(
+            "name" in codex.lower() or "机器名" in codex,
+            "Codex branch must identify installed custom agents by their configured name",
+        )
+
+        # These are OpenCode/runtime-local concepts or invented observability
+        # fields. Codex's documented contract is named custom agents plus the
+        # normal subagent workflow; do not present these as Codex APIs.
+        self.assertNotIn("subagent_depth", codex)
+        self.assertNotRegex(codex, r"task\s*\(")
+        self.assertNotRegex(codex, r"question\s*\(")
+        self.assertNotRegex(codex, r"spawn_agent\s*\(")
+        self.assertNotIn("agent_role", codex)
+        self.assertNotIn("agent_path", codex)
+
+    def test_stage2_codex_noninteractive_choice_uses_fresh_root_and_persisted_state(self):
+        _, analyzer = _frontmatter_and_body(ANALYZER_PATH)
+        skill = SKILL_PATH.read_text(encoding="utf-8")
+        stage2_docs = f"{skill}\n{analyzer}"
+
+        # The Codex eval harness runs one fresh root thread per invocation and
+        # does not support session resume; Stage 2 user-choice continuity must
+        # therefore never be documented as session resume.
+        self.assertNotIn(
+            "codex exec resume",
+            stage2_docs,
+            "session resume must not be the documented Stage 2 Codex user-choice continuation path",
+        )
+        self.assertTrue(
+            "needs_input" in stage2_docs or "needs_user_choice" in stage2_docs,
+            "the first non-interactive pass must stop at an explicit needs-input state rather than auto-accepting",
+        )
+        self.assertIn(
+            "fresh root",
+            stage2_docs,
+            "Stage 2 Codex continuation must be described as fresh-root runs",
+        )
+        self.assertRegex(
+            stage2_docs,
+            r"(?s)fresh root.{0,600}(facts|指纹|proof)",
+            "the fresh-root second pass must rely on persisted deterministic Stage 2 state",
+        )
+        self.assertRegex(
+            stage2_docs,
+            r"(?s)fresh root.{0,400}同一 program root",
+            "the fresh-root second pass must re-read the same program root",
+        )
+        self.assertRegex(
+            stage2_docs,
+            r"显式(提供)?用户选择",
+            "the fresh-root second pass must be driven by an explicit user selection",
+        )
+
+    def test_stage2_analyzer_keeps_business_concurrency_limit_separate_from_codex_thread_limit(self):
+        _, analyzer = _frontmatter_and_body(ANALYZER_PATH)
+        self.assertRegex(
+            analyzer,
+            r"(?:同时|同批)[^\n]{0,80}最多[^\n]{0,40}(?:\*\*)?3(?:\*\*)?[^\n]{0,80}paper-analysis",
+            "Stage 2 must retain its business rule of at most three concurrent paper-analysis jobs",
+        )
+
+        codex = _target_branch(analyzer, "### Codex 分支")
+        if "max_concurrent_threads_per_session" in codex:
+            self.assertRegex(
+                codex,
+                r"(?s)max_concurrent_threads_per_session.{0,240}(?:不等价|not equivalent|不是)",
+                "Codex's global thread limit must not be described as the Stage 2 paper-analysis concurrency rule",
             )
 
     def test_no_scholarflow_codex_dependency_is_introduced(self):

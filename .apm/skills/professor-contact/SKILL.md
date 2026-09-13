@@ -330,7 +330,11 @@ python3 scripts/contact_state.py migrate-v3 --apply <plan.json> --program-root <
 
 ### OpenCode 分支
 
-`mode: subagent` 与 `hidden: true` 是 **OpenCode 原生语义**：hidden 只表示该代理不出现在 OpenCode 的可见 agent 列表，须经 Task 委派触达；`permission`（含 `permission.task`）是 OpenCode 对工具/Task 委派的权限控制。这些字段与 Codex 无关。在 OpenCode 中用 Task 工具按 exact name 调用：
+`mode: subagent` 与 `hidden: true` 是 **OpenCode 原生语义**：hidden 只表示该代理不出现在 OpenCode 的可见 agent 列表，须经 Task 委派触达；`permission`（含 `permission.task`）是 OpenCode 对工具/Task 委派的权限控制。这些字段与 Codex 无关。
+
+**安装前提（depth 预算）**：三层 Task 委派（主代理 → `professor-contact-analyzer` → `paper-analysis` → 叶子）要求项目 `subagent_depth >= 3`（OpenCode 官方缺省 1，agent frontmatter 不支持该键）。正式安装 = `apm install` 之后在项目根运行 skill 自带的 `scripts/configure_opencode_depth.py`（确定性、幂等，把 `subagent_depth >= 3` 合入项目 `opencode.json`，`--check` 可机器验证）；未配置时按各代理文档的深度受限降级路径运行。
+
+在 OpenCode 中用 Task 工具按 exact name 调用：
 
 ```
 # 阶段 0：交互选定套磁方向（读 方向预筛.json，写 套磁目标.json）
@@ -364,10 +368,16 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 - **不**把子代理的 instructions 复制进父对话里自己执行，也**不**让父代理自称目标角色来冒充“已调用指定代理”；
 - **不**假设任何 Codex 官方文档未公开的 spawn API、调用参数或事件字段。
 
+#### Stage 2 在 Codex 下的委派链与用户选择
+
+- Stage 2 按安装后的机器名逐级真实委派：caller → `professor-contact-analyzer` → analyzer 再委派已安装的 `paper-analysis`（每篇论文一个）与 `professor-contact-style-validator`；每一级显式等待结果后再继续。不复制 `paper-analysis` 的内部论文分析 prompt 由 analyzer 自己模拟，不新增包装代理层，`paper-analysis` 的叶子仍是叶子。若当前 Codex runtime 无法完成这条嵌套链，保存完整证据并记为 Codex runtime/feature blocker，不降级伪装成功。
+- “同批最多 3 个 `paper-analysis`” 是本项目业务上限，在 Codex 下照常适用；Codex 配置的 `agents.max_concurrent_threads_per_session` 只是全局并发线程上限，与该业务上限不等价，不能互相替代。
+- 需要用户确认 material resolution（resolved-direction proposal）时按两轮 fresh root 运行执行：第一轮停在 `needs_input` / `needs_user_choice`——不自动采纳提案、不自动 keep provisional、不写任何未接受的新 Stage 2 事实——第一轮产生/使用的 facts、提案、preflight proof / 逐方向指纹等磁盘状态原样保留在 program root；第二轮是一次全新的 fresh root 运行（不恢复第一轮的会话/线程），prompt 中显式提供用户选择，从同一 program root 重新读取磁盘状态，runner 重新校验 fingerprint / preflight proof 通过后才 accept / finalize。跨轮连续性 = 已持久化的确定性 Stage 2 状态（facts / `_resolved_directions.json` / 指纹 / proof）+ 显式用户选择，不依赖恢复旧 root session，不要求恢复 analyzer 子代理线程，也不新建复述旧 prompt 的“假 analyzer”。
+
 ### 需要用户输入的 Stage（公共原则，跨 harness）
 
 - 任何需要用户选择的环节（Stage 0 方向选择、Stage 2 相关集 >10 确认、Stage 4 想法挑选、Stage 5 学習中候选/交互补齐等）都**不得自动替用户做选择**——包括“按推荐顺序选第一项”，也不得把缺省值伪装成用户决定；缺输入时按该 Stage 既有契约停住（`needs_input` / 保留旧产物），绝不写入看似经用户确认的选择状态。
-- OpenCode 的后续 Stage 继续使用其官方 `question` 能力交互；Codex 的交互式适配由对应 Stage 的 issue 按当时官方文档决定——本 skill 不定义任何跨 harness 的自定义交互、续传或 resume 协议。
+- OpenCode 的后续 Stage 继续使用其官方 `question` 能力交互；Stage 2 在 Codex 非交互运行（`codex exec`）下的用户选择按上节「Stage 2 在 Codex 下的委派链与用户选择」执行——停点 + 新一轮 fresh root 运行凭同一 program root 的磁盘状态在显式用户选择下继续，`question` 不是 `codex exec` 的交互控件；其余 Stage 的 Codex 交互式适配仍由对应 Stage 的 issue 按当时官方文档决定——本 skill 不定义任何跨 harness 的自定义交互协议。
 - non-interactive / 自动化调用（含 smoke fixture）：成功路径必须显式提供确定性输入（如 `selection`、`chatgpt_handoff: continue`）；缺输入的负向路径必须证明系统停住且没有产生伪选择状态。
 
 ### Input contract（公共字段）
