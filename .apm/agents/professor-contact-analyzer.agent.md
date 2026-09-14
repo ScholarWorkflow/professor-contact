@@ -152,8 +152,21 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
 
 ### Step 2.7 — Zotero connectivity（仅 process professors）
 1. **仅当 `process_professors` 非空**才执行本步；全部教授 reusable 且无 Step 2.6 例外时，跳过 probe/session 直接按 Step 7 返回 reuse 结果。
-2. Probe Zotero（23119/23120）; offline → `question`（已打开，重试 / 中止）; 中止 → error JSON。
-3. Session: `SID=$(zotero-mcp-session)`。
+2. **解析本轮唯一的 Stage 2 Zotero endpoint contract**（语义与 `zotero-read` 的正式 contract 一致；本轮 probe、`zotero-mcp-session`、署名线 REST 分页以及其它 Stage 2 直接 Zotero HTTP/MCP 访问只消费这组 resolved 值，不得各自另写端口）：
+
+```bash
+ZOTERO_HTTP_URL="${ZOTERO_HTTP_URL:-http://127.0.0.1:23119}"
+ZOTERO_HTTP_URL="${ZOTERO_HTTP_URL%/}"
+
+ZOTERO_MCP_URL="${ZOTERO_MCP_URL:-http://127.0.0.1:23120/mcp}"
+ZOTERO_MCP_URL="${ZOTERO_MCP_URL%/}"
+```
+
+   - `ZOTERO_HTTP_URL` 是 **base URL**：未设置或为空时回退生产默认值；已设置则使用传入值；解析后去掉末尾 `/`；后续再拼 `/connector/ping`、`/api/users/0/...` 等路径。
+   - `ZOTERO_MCP_URL` 是**完整 MCP endpoint，已经包含 `/mcp`**：未设置或为空时回退生产默认值；已设置则使用传入值；解析后去掉末尾 `/`；**不得对 resolved `ZOTERO_MCP_URL` 再追加 `/mcp`**（否则形成 `.../mcp/mcp`）。
+   - 生产默认值只作统一 fallback；runtime override 一旦存在，本轮所有 Stage 2 Zotero 访问绝不混回生产默认端口。
+3. Probe Zotero：`GET "$ZOTERO_HTTP_URL/connector/ping"` 加 resolved `ZOTERO_MCP_URL` 做连通性检查; offline → `question`（已打开，重试 / 中止）; 中止 → error JSON。
+4. Session: `SID=$(zotero-mcp-session)`；该调用沿用 `zotero-read/scripts/new-session.sh` 的既有 owner surface，只要求其子进程环境继承 resolved `ZOTERO_MCP_URL`，不在本仓重新实现 MCP session helper。
 
 ### Step 3 — Read candidate-set direction papers（仅 process professors）
 **只对 `process_professors` 中的教授执行本步及之后的一切读取/准备/分析**；`reusable_professors` 的论文、文件、Zotero 条目一律不读、不请求。
@@ -209,7 +222,7 @@ For each flagged direction:
    - **语义级主线判定归 professor-explain 导读，不重复**；本步只做零重读的年份统计（python 处理 papers.json）。
 
 1.7 **署名线判定（数据级；每教授一次，不随方向重复算）**——对每位被标记教授：
-   - **口径**：23119 REST 分页拉该教授主分类全部条目（`GET /api/users/0/collections/<key>/items?format=json&limit=100&start=N`，按 Total-Results 头翻页；多 lab 同名分类取并集、按 item key 去重；滤 note/attachment 类）。**不含「关联文献」分类**——那不是他个人的署名画像。一般 1–2 页请求。首个被标记方向时算好缓存进 `/tmp/<教授名>_套磁分析.json`，后续方向复用。
+   - **口径**：用 resolved `ZOTERO_HTTP_URL`（Step 2.7 的 endpoint contract）REST 分页拉该教授主分类全部条目（`GET "$ZOTERO_HTTP_URL/api/users/0/collections/<key>/items?format=json&limit=100&start=N"`，按 Total-Results 头翻页；多 lab 同名分类取并集、按 item key 去重；滤 note/attachment 类）。**不含「关联文献」分类**——那不是他个人的署名画像。一般 1–2 页请求。首个被标记方向时算好缓存进 `/tmp/<教授名>_套磁分析.json`，后续方向复用。
    - **窗口与阈值**：取有 date 的条目看近 3 年；<3 篇 → 扩到近 5 年；仍 <3 篇 → `authorship_line = insufficient`（不启用任何按线的特殊处理）。样本足够时按 Step 3 的 `authorship` 统计：
      - corresponding 占比 ≥70% → `corresponding_dominant`（聊点以通讯线为主）；
      - 一作/独著占比 ≥50% → `first_author_present`（亲自动笔为主，新 AP 型，可聊一作线）；
@@ -584,6 +597,7 @@ when: no `folder_path`; program root unresolvable; user aborted at the Zotero pr
 - **target state 是唯一选择来源**：绝不扫描 Zotero `套磁候选` note、绝不要求 `套磁候选总览.md`、绝不从 Zotero collection key 推导 target 身份；`collection_key` 只是 `direction_id` 的兼容 join 键。被选方向成员身份变化（成员 `item_key` 集合变化或方向消失，`preview_changed`，stale 条目精确到 `direction_id`）阻断 Stage 2，直到 Stage 0 修订选择；未选方向、display 或置信度变化不阻断。
 - **Stage 1 候选快照必须先 verify 再消费**：分析/相关性范围 = `contact_stage1.py verify` 通过后的逐方向 `candidate_keys`；快照缺失/过期 → `needs_input`（重跑 Stage 1），绝不手改快照、绝不回退到「只读 provisional members」的旧范围（那会让 Stage 1 扩召白下 PDF）。扩召候选永远以候选身份参与（`non_final_candidates_only`）：可信度闸门只用 provisional members，`relevance_reason` 附扩召理由，绝不把扩召写成「该方向成员」。
 - **Stage 2 初始化顺序固定且 preflight gate 不可绕过**：resolve → `contact_targets.py resolve` → `contact_stage1.py verify` → 逐教授 `contact_state.py stage2-preflight` → 分区 → **仅当存在 process professor**才 Zotero probe/session → 候选论文读取。`reuse_all` 教授必须在任何 Zotero connectivity 检查/PDF 读取/模型 job 之前以 no-op 复用结束；`chatgpt_result` 显式提供或 `kb_import=true` 时禁止 early hard exit。preflight 是 correctness-preserving 优化，不是弱化缓存：任何无法证明安全的状态（legacy pack、malformed cache 容器、版本/参数变化、指纹或 artifact guard 不一致、validator 未验收）一律 fallback 到原 Stage 2 correctness path；preflight 绝不生成新的科学事实，`cache.preflight` 只是 cache metadata。保存的 preflight payload 与 facts 的绑定同样不可绕过：Step 6.1 必须把 payload 的 `preflight_id` 写进 facts，finalize 只承认由准备该 facts 的同一次调用保存的 proof。
+- **Stage 2 Zotero 访问统一消费 resolved endpoint**：connectivity probe、`zotero-mcp-session`、署名线 REST 分页与其它 Stage 2 直接 Zotero HTTP/MCP 访问都只使用 Step 2.7 解析出的 `ZOTERO_HTTP_URL` / `ZOTERO_MCP_URL`；同一轮内不得出现两组不同的 resolved endpoint，literal 端口只作 fallback 说明，绝不形成独立执行路径。
 - **跨方向按 item_key 去重**：同一教授同一 `item_key` 的准备/OCR/paper-analysis 每轮至多执行一次，结果复用到所有包含它的被选方向；**绝不仅因成员重叠就合并两个被选方向**的 narrative、user_note、gap pool 或 direction fingerprint。
 - **handoff barrier 不可绕过**：post-cost-gate/post-idempotency jobs 必须先 build ZIP；`wait` 在任何新 vision OCR/`paper-analysis full|gap-only` 前停止。resume 必须先按当前输入 rebuild current bundle，再 import external result；不匹配即 stale/mismatch，绝不‘尽量用’。
 - **Stage-2 single-writer lease 不可绕过**：handoff `import` 必须发生在 local lease acquire **之前**；一旦本轮要进入任何教授目录本地写路径，就必须先 `local-lease-acquire`，并把**本轮 build 返回的 exact `handoff_id/source_fingerprint`**原样传入，覆盖 legacy `paper-analysis`、OCR、sidecar、`_index.json` 与 runner 写入的整个教授 scope，并在 **finally** 中 `local-lease-release`。`stage2_plan_stale` 或 `stage2_writer_busy` 时禁止写。这个 lease 是 importer 与“不主动拿 OS lock 的旧 writer”之间的共同协调边界，也是 build→acquire 间 stale-plan 的最终闸门。
