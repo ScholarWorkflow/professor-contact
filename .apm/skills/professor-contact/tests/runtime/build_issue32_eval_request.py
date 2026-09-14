@@ -91,6 +91,9 @@ def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
         f"model_reasoning_effort={_toml_string(reasoning)}",
         f"shell_environment_policy.set.ZOTERO_HTTP_URL={_toml_string(zotero_http_url)}",
         f"shell_environment_policy.set.ZOTERO_MCP_URL={_toml_string(zotero_mcp_url)}",
+        # `--sandbox workspace-write` alone does not grant network access; the
+        # Zotero fixture endpoints stay unreachable without this override.
+        "sandbox_workspace_write.network_access=true",
         f"shell_environment_policy.set.NPM_CONFIG_CACHE={_toml_string(npm_cache)}",
         f"mcp_servers.{server_key}.env.CHROME_PROFILE_DIR={_toml_string(chrome_profile_dir)}",
         f"mcp_servers.{server_key}.env.CHROME_CDP_PORT={_toml_string(chrome_cdp_port)}",
