@@ -667,7 +667,7 @@ CHECKPOINTS = {
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint", choices=tuple(CHECKPOINTS))
-    parser.add_argument("--program-root", type=Path, required=True)
+    parser.add_argument("--program-root", type=Path)
     parser.add_argument("--consumer-root", type=Path)
     parser.add_argument("--eval-response", type=Path)
     parser.add_argument("--adapter-output", type=Path)
@@ -681,6 +681,8 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.checkpoint != "install" and args.program_root is None:
+            raise ValueError("--program-root is required for this checkpoint")
         if args.checkpoint == "make-stage4-selection" and args.output is None:
             raise ValueError("--output is required for make-stage4-selection")
         payload = CHECKPOINTS[args.checkpoint](args)

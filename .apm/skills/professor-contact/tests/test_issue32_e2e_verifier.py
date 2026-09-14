@@ -77,6 +77,12 @@ class Issue32VerifierTests(unittest.TestCase):
             consumer_root=consumer, producer_sha=producer_sha))
         self.assertEqual(payload["status"], "pass", payload)
 
+    def test_install_cli_does_not_require_program_root(self):
+        args = verifier._parser().parse_args([
+            "install", "--consumer-root", "/tmp/consumer",
+        ])
+        self.assertIsNone(args.program_root)
+
     def test_stage0_needs_input_requires_structured_selection_request(self):
         response = Path(self.holder.name) / "stage0.json"
         response.write_text(json.dumps({
