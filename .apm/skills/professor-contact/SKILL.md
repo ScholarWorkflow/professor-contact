@@ -125,12 +125,12 @@ Stage 2 的 handoff 是**可选执行通道，不是第二套工作流**。`套�
 - 逐方向 user note；
 - 选择时间戳/历史（`selection_history`）。
 
-**禁止手改此状态**，一律经 helper：
+**禁止手改此状态**，一律经 helper。`<professor-contact-skill-dir>` 指本 skill 在当前 workspace 中的安装目录（即本 `SKILL.md` 与其 `scripts/` 所在目录；consumer 安装投影为 `.agents/skills/professor-contact/`），调用一律解析到该目录，**绝不**经 user-global registry wrapper（`skillrepo exec`）、开发 checkout 或 workspace 外路径执行：
 
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_targets.py preview ...
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_targets.py select ...
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_targets.py resolve ...
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py preview ...
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py select ...
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py resolve ...
 ```
 
 ## 确定性 runner 与状态文件
@@ -319,7 +319,7 @@ python3 scripts/contact_state.py migrate-v3 --apply <plan.json> --program-root <
 
 | Stage | exact agent name | 输入契约 |
 |---|---|---|
-| 0 | `professor-contact` | `folder_path`、可选 `professors`（见 Input contract） |
+| 0 | `professor-contact` | `folder_path`、可选 `professors`、可选 `selection`（显式结构化选择；见 Input contract 与 Stage 0 说明） |
 | 1 | `professor-contact-downloader` | 见 Input contract |
 | 2 | `professor-contact-analyzer` | 见 Input contract |
 | 3 | `professor-contact-idea-generator` | 见 Input contract |
@@ -338,7 +338,8 @@ python3 scripts/contact_state.py migrate-v3 --apply <plan.json> --program-root <
 
 ```
 # 阶段 0：交互选定套磁方向（读 方向预筛.json，写 套磁目标.json）
-task(subagent_type: "professor-contact", prompt: "folder_path: <program-root or per-専攻 subfolder>\nprofessors: <可选，逗号分隔精确教授名>")
+# 缺省用 OpenCode 原生 question 交互；显式给 selection（结构化 direction_ids + notes）时跳过提问直接保存，用于自动化/smoke
+task(subagent_type: "professor-contact", prompt: "folder_path: <program-root or per-専攻 subfolder>\nprofessors: <可选，逗号分隔精确教授名>\nselection: <可选，显式结构化选择，形状见 Input contract>")
 
 # 阶段 1：方向候选集 + 定向补 PDF（全部候选已有 PDF 时自动 no-op；默认只使用合法来源）
 task(subagent_type: "professor-contact-downloader", prompt: "folder_path: <...>\nprofessors: <可选，逗号分隔精确教授名>\nnamed_papers_file: <可选，用户点名论文 JSON 绝对路径>")
@@ -366,7 +367,7 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 - 在 prompt 中显式要求 Codex **delegate to / use** 指定的 exact named custom agent（例如 “Delegate this task to the installed custom agent `professor-contact-downloader` and wait for its result before continuing”），并把该 Stage 的 Input contract 字段原样写进委派 prompt；
 - 等待该子代理完成并返回结果后，才把结果用于后续 Stage；
 - **不**把子代理的 instructions 复制进父对话里自己执行，也**不**让父代理自称目标角色来冒充“已调用指定代理”；
-- **不**假设任何 Codex 官方文档未公开的 spawn API、调用参数或事件字段。
+- **不**假设任何 Codex 官方文档未公开的 spawn API、调用参数或事件字段；runtime 无法用机器字段证明 child/agent 身份时，在证据里如实记录 observability gap，不发明字段补洞。
 
 #### Stage 2 在 Codex 下的委派链与用户选择
 
@@ -374,10 +375,25 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 - “同批最多 3 个 `paper-analysis`” 是本项目业务上限，在 Codex 下照常适用；Codex 配置的 `agents.max_concurrent_threads_per_session` 只是全局并发线程上限，与该业务上限不等价，不能互相替代。
 - 需要用户确认 material resolution（resolved-direction proposal）时按两轮 fresh root 运行执行：第一轮停在 `needs_input` / `needs_user_choice`——不自动采纳提案、不自动 keep provisional、不写任何未接受的新 Stage 2 事实——第一轮产生/使用的 facts、提案、preflight proof / 逐方向指纹等磁盘状态原样保留在 program root；第二轮是一次全新的 fresh root 运行（不恢复第一轮的会话/线程），prompt 中显式提供用户选择，从同一 program root 重新读取磁盘状态，runner 重新校验 fingerprint / preflight proof 通过后才 accept / finalize。跨轮连续性 = 已持久化的确定性 Stage 2 状态（facts / `_resolved_directions.json` / 指纹 / proof）+ 显式用户选择，不依赖恢复旧 root session，不要求恢复 analyzer 子代理线程，也不新建复述旧 prompt 的“假 analyzer”。
 
+#### Codex 下的 Stage 0：业务级两步输入
+
+Codex 的 non-interactive 执行（`codex exec`）没有「暂停一个嵌套子代理 → 用户回答 → 恢复同一个 child」的交互，因此 Stage 0 方向选择用业务级两步输入完成，不发明 runtime 续传协议：
+
+1. 调用方**没有**显式给 `selection` 时，委派 `professor-contact` 会返回 `needs_input` + `selection_request`（逐教授列出每个方向的 `direction_id`/日中名/`summary_zh`/representatives/论文数/evidence warnings），**不写、不改 `套磁目标.json`**，绝不自动替用户选（不选第一项、不按方向名或 A/B/C 标签猜）；
+2. 顶层调用者把 `selection_request` 展示给真实用户；
+3. 用户回答后，顶层调用者在后续顶层 turn **重新委派** installed named custom agent `professor-contact`，把用户答案作为显式结构化 `selection` 传入——professor key 精确匹配；`direction_id` 必须来自该教授当前 `contact_targets.py preview`（机器身份，方向名/A-B-C 标签无效）；多方向逐 `direction_id` 独立保存；`notes` 省略 key=保留旧备注、非空=替换、`""`=显式清空；invalid/stale `direction_id` 一律 fail closed、零写入并要求重新取得用户选择；
+4. 新 invocation 延续的是同一 Stage 0 **业务语义**——它是一次新的委派，不是对原 nested child/thread 的 resume；也不把 App Server 实验性 user-input 接口混进 eval 调用链。
+
+`selection` 只是调用输入，不是第二份长期状态；长期机器状态仍然只有 `教授研究/套磁目标.json`。
+
+#### Codex 下的 Stage 1：委派 exact named custom agent `professor-collector`
+
+缺 PDF 补齐时，Codex 侧委派 installed named custom agent `professor-collector` 并**等待其结果**再继续；输入保持收窄为 `folder_path` + `pdf_only:true` + `item_keys=<缺失 item keys>`，绝不同时传 `professors`，也绝不扩大下载范围。OpenCode 的 Task 委派写法只属于 OpenCode 分支；Codex 分支不复制 collector 的 agent body、不由父代理 inline 模拟 collector，也不直接调 `pdf_fill.py`/worker 绕过 collector。`noop`/`needs_resolution` 仍不调用 collector，collector 返回后无条件重跑 `contact_stage1.py build`，empty runtime result 仍只允许一次相同输入重试。
+
 ### 需要用户输入的 Stage（公共原则，跨 harness）
 
 - 任何需要用户选择的环节（Stage 0 方向选择、Stage 2 相关集 >10 确认、Stage 4 想法挑选、Stage 5 学習中候选/交互补齐等）都**不得自动替用户做选择**——包括“按推荐顺序选第一项”，也不得把缺省值伪装成用户决定；缺输入时按该 Stage 既有契约停住（`needs_input` / 保留旧产物），绝不写入看似经用户确认的选择状态。
-- OpenCode 的后续 Stage 继续使用其官方 `question` 能力交互；Stage 2 在 Codex 非交互运行（`codex exec`）下的用户选择按上节「Stage 2 在 Codex 下的委派链与用户选择」执行——停点 + 新一轮 fresh root 运行凭同一 program root 的磁盘状态在显式用户选择下继续，`question` 不是 `codex exec` 的交互控件；其余 Stage 的 Codex 交互式适配仍由对应 Stage 的 issue 按当时官方文档决定——本 skill 不定义任何跨 harness 的自定义交互协议。
+- OpenCode 的后续 Stage 继续使用其官方 `question` 能力交互；Codex 的 Stage 0 用业务级两步输入（缺 `selection` → `needs_input` + `selection_request` 且零写入；真实用户回答后带显式 `selection` 重新委派，见 Codex 分支），Stage 2 在 Codex 非交互运行（`codex exec`）下的用户选择按上节「Stage 2 在 Codex 下的委派链与用户选择」执行——停点 + 新一轮 fresh root 运行凭同一 program root 的磁盘状态在显式用户选择下继续，`question` 不是 `codex exec` 的交互控件；其余 Stage 的 Codex 交互式适配仍由对应 Stage 的 issue 按当时官方文档决定——本 skill 不定义任何跨 harness 的自定义交互、续传或 resume 协议。
 - non-interactive / 自动化调用（含 smoke fixture）：成功路径必须显式提供确定性输入（如 `selection`、`chatgpt_handoff: continue`）；缺输入的负向路径必须证明系统停住且没有产生伪选择状态。
 
 ### Input contract（公共字段）
@@ -399,7 +415,7 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 | `skip_direction_ids` | no | 仅阶段 3：逗号分隔的显式跳过方向；持久化 `stage3_status:"skipped"`，取消跳过后正常处理。 |
 | `cross_direction_groups` | no | 仅阶段 3：JSON 方向 ID 组列表（每组 ≥2 个既有 direction ID）；显式 opt-in，缺省零跨方向 job/模型调用/Markdown 节。 |
 | `kb_import` | no | 仅阶段 2：`true` 时把每篇相关论文的分析做成 KB 条目入库（tag 含 `zotero://…/<item_key>`，source=分析文件，重跑走 `updateKnowledge` 原地更新）；缺省 `false`。相关论文全量入库为后续项。 |
-| `selection` | no | 仅阶段 4：直接传选择内容（见该 agent 说明），跳过交互提问。 |
+| `selection` | no | 阶段 0 与阶段 4：显式结构化选择，跳过交互提问。阶段 0 形状 `{"教授A": {"direction_ids": [...], "notes": {"dir_...": "..."}}}`——professor key 精确匹配、`direction_id` 必须来自当前 preview、多方向逐 ID 独立保存、`notes` 省略 key=保留旧备注/非空=替换/`""`=显式清空、invalid/stale ID fail closed 零写入；缺省（未传）时 Stage 0 在 OpenCode 用 `question` 交互、在 Codex 返回 `needs_input`+`selection_request`。阶段 4 形状见该 agent 说明。 |
 | `mode` | no | 仅阶段 5：`first`、`both`、`followup`；generator 缺省按 `both` 调用，runner CLI 为兼容旧脚本缺省 `first`。 |
 | `followup_template` | no | 仅阶段 5：跟进模板绝对路径；缺省查找 `套磁邮件/套磁跟进模板.md`。 |
 | `skip_validation` | no | 仅阶段 5：true 时跳过 validator 循环（调试用）。 |
