@@ -80,13 +80,30 @@ def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
                   model: str = "gpt-5.6-luna", reasoning: str = "low",
                   zotero_http_url: str = "", zotero_mcp_url: str = "",
                   chrome_profile_dir: str = "", chrome_cdp_port: str = "",
-                  npm_cache: str = "", timeout: int = 1800) -> dict[str, object]:
+                  npm_cache: str = "", timeout: int = 1800,
+                  enable_chrome: bool = False) -> dict[str, object]:
     consumer_root = Path(consumer_root).resolve()
     prompt = Path(prompt_file).read_text(encoding="utf-8")
     if not consumer_root.is_dir():
         raise RequestBuildError(f"consumer root does not exist: {consumer_root}")
-    server_id = discover_chrome_server_id(consumer_root)
-    server_key = _toml_key_segment(server_id)
+    chrome_options = (chrome_profile_dir, chrome_cdp_port, npm_cache)
+    if enable_chrome:
+        if any(not value for value in chrome_options):
+            raise RequestBuildError(
+                "--enable-chrome requires non-empty chrome profile dir, CDP port and npm cache")
+        # Chrome/npm injection is opt-in (issue #40 §5.2): the MCP server id is
+        # discovered only when a request actually enables Chrome.
+        server_key = _toml_key_segment(discover_chrome_server_id(consumer_root))
+        chrome_config = [
+            f"shell_environment_policy.set.NPM_CONFIG_CACHE={_toml_string(npm_cache)}",
+            f"mcp_servers.{server_key}.env.CHROME_PROFILE_DIR={_toml_string(chrome_profile_dir)}",
+            f"mcp_servers.{server_key}.env.CHROME_CDP_PORT={_toml_string(chrome_cdp_port)}",
+        ]
+    else:
+        if any(value for value in chrome_options):
+            raise RequestBuildError(
+                "chrome options require the explicit --enable-chrome opt-in")
+        chrome_config = []
     config_values = [
         f"model_reasoning_effort={_toml_string(reasoning)}",
         f"shell_environment_policy.set.ZOTERO_HTTP_URL={_toml_string(zotero_http_url)}",
@@ -94,9 +111,7 @@ def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
         # `--sandbox workspace-write` alone does not grant network access; the
         # Zotero fixture endpoints stay unreachable without this override.
         "sandbox_workspace_write.network_access=true",
-        f"shell_environment_policy.set.NPM_CONFIG_CACHE={_toml_string(npm_cache)}",
-        f"mcp_servers.{server_key}.env.CHROME_PROFILE_DIR={_toml_string(chrome_profile_dir)}",
-        f"mcp_servers.{server_key}.env.CHROME_CDP_PORT={_toml_string(chrome_cdp_port)}",
+        *chrome_config,
     ]
     # eval-server prepends ``codex exec``.  Its request contract therefore
     # accepts only the arguments that follow that executable pair.
@@ -130,6 +145,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--chrome-profile-dir", default="")
     parser.add_argument("--chrome-cdp-port", default="")
     parser.add_argument("--npm-cache", default="")
+    parser.add_argument("--enable-chrome", action="store_true",
+                        help="opt-in Chrome discovery/injection; R1–R4 canonical requests omit it")
     parser.add_argument("--timeout", type=int, default=1800)
     return parser
 
@@ -141,7 +158,8 @@ def main(argv: list[str] | None = None) -> int:
             consumer_root=args.consumer_root, prompt_file=args.prompt_file, output=args.output,
             model=args.model, reasoning=args.reasoning, zotero_http_url=args.zotero_http_url,
             zotero_mcp_url=args.zotero_mcp_url, chrome_profile_dir=args.chrome_profile_dir,
-            chrome_cdp_port=args.chrome_cdp_port, npm_cache=args.npm_cache, timeout=args.timeout)
+            chrome_cdp_port=args.chrome_cdp_port, npm_cache=args.npm_cache, timeout=args.timeout,
+            enable_chrome=args.enable_chrome)
     except Exception as exc:
         print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False))
         return 1

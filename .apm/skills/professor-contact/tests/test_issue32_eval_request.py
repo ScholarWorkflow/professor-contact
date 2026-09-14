@@ -13,8 +13,52 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
+def assignments_of(argv):
+    return [argv[index + 1] for index, value in enumerate(argv[:-1])
+            if value == "--config"]
+
+
 class Issue32EvalRequestTests(unittest.TestCase):
-    def test_discovers_actual_chrome_server_and_builds_quoted_command(self):
+    def test_default_request_needs_no_chrome_and_keeps_official_network_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            # No TOML at all in the consumer: Chrome discovery must not run.
+            root = Path(directory) / "consumer"
+            root.mkdir()
+            prompt = Path(directory) / "prompt.md"
+            prompt.write_text("Run R1", encoding="utf-8")
+            output = Path(directory) / "request.json"
+            request = module.build_request(
+                consumer_root=root, prompt_file=prompt, output=output,
+                zotero_http_url="http://127.0.0.1:9000",
+                zotero_mcp_url="http://127.0.0.1:9001/mcp")
+            self.assertEqual(request["timeout"], 1800)
+            command = request["command"]
+            argv = shlex.split(command)
+            self.assertEqual(argv[:2], ["--json", "--ephemeral"])
+            self.assertNotIn("codex", argv[:2])
+            self.assertNotIn("exec", argv[:2])
+            self.assertNotIn("--enable-chrome", argv)
+            self.assertNotIn("CHROME_PROFILE_DIR", command)
+            self.assertNotIn("CHROME_CDP_PORT", command)
+            self.assertNotIn("NPM_CONFIG_CACHE", command)
+            self.assertNotIn("mcp_servers", command)
+            # R1–R4 canonical config set (issue #40 §5.1) as TOML assignments.
+            assignments = assignments_of(argv)
+            self.assertEqual(len(assignments), 4)
+            parsed = [tomllib.loads(f"{assignment}\n") for assignment in assignments]
+            self.assertEqual(parsed[0]["model_reasoning_effort"], "low")
+            self.assertEqual(parsed[1]["shell_environment_policy"]["set"]["ZOTERO_HTTP_URL"],
+                             "http://127.0.0.1:9000")
+            self.assertIs(type(parsed[1]["shell_environment_policy"]["set"]["ZOTERO_HTTP_URL"]), str)
+            self.assertEqual(parsed[2]["shell_environment_policy"]["set"]["ZOTERO_MCP_URL"],
+                             "http://127.0.0.1:9001/mcp")
+            self.assertIs(type(parsed[2]["shell_environment_policy"]["set"]["ZOTERO_MCP_URL"]), str)
+            network_access = parsed[3]["sandbox_workspace_write"]["network_access"]
+            self.assertIs(type(network_access), bool)
+            self.assertIs(network_access, True)
+            self.assertEqual(json.loads(output.read_text())["command"], command)
+
+    def test_enable_chrome_discovers_server_and_requires_chrome_parameters(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "consumer"
             (root / ".codex").mkdir(parents=True)
@@ -29,38 +73,42 @@ class Issue32EvalRequestTests(unittest.TestCase):
             output = Path(directory) / "request.json"
             request = module.build_request(
                 consumer_root=root, prompt_file=prompt, output=output,
-                zotero_http_url="http://127.0.0.1:9000", zotero_mcp_url="http://127.0.0.1:9001",
+                zotero_http_url="http://127.0.0.1:9000",
+                zotero_mcp_url="http://127.0.0.1:9001",
                 chrome_profile_dir='/tmp/chrome "profile"', chrome_cdp_port="9333",
-                npm_cache='/tmp/npm "cache"')
-            self.assertEqual(request["timeout"], 1800)
-            command = request["command"]
-            argv = shlex.split(command)
-            self.assertEqual(argv[:2], ["--json", "--ephemeral"])
-            self.assertNotIn("codex", argv[:2])
-            self.assertNotIn("exec", argv[:2])
-            assignments = [argv[index + 1] for index, value in enumerate(argv[:-1])
-                           if value == "--config"]
+                npm_cache='/tmp/npm "cache"', enable_chrome=True)
+            argv = shlex.split(request["command"])
+            assignments = assignments_of(argv)
             self.assertEqual(len(assignments), 7)
             parsed = [tomllib.loads(f"{assignment}\n") for assignment in assignments]
-            self.assertEqual(parsed[0]["model_reasoning_effort"], "low")
-            self.assertEqual(parsed[1]["shell_environment_policy"]["set"]["ZOTERO_HTTP_URL"],
-                             "http://127.0.0.1:9000")
-            self.assertIs(type(parsed[1]["shell_environment_policy"]["set"]["ZOTERO_HTTP_URL"]), str)
-            self.assertEqual(parsed[2]["shell_environment_policy"]["set"]["ZOTERO_MCP_URL"],
-                             "http://127.0.0.1:9001")
-            self.assertIs(type(parsed[2]["shell_environment_policy"]["set"]["ZOTERO_MCP_URL"]), str)
-            # `--sandbox workspace-write` needs the explicit network override
-            # encoded as a TOML boolean, not a quoted string.
-            network_access = parsed[3]["sandbox_workspace_write"]["network_access"]
-            self.assertIs(type(network_access), bool)
-            self.assertIs(network_access, True)
             self.assertEqual(parsed[4]["shell_environment_policy"]["set"]["NPM_CONFIG_CACHE"],
                              '/tmp/npm "cache"')
             self.assertEqual(parsed[5]["mcp_servers"]["actual.browser.server"]["env"]["CHROME_PROFILE_DIR"],
                              '/tmp/chrome "profile"')
             self.assertIs(type(parsed[6]["mcp_servers"]["actual.browser.server"]["env"]["CHROME_CDP_PORT"]), str)
             self.assertEqual(parsed[6]["mcp_servers"]["actual.browser.server"]["env"]["CHROME_CDP_PORT"], "9333")
-            self.assertEqual(json.loads(output.read_text())["command"], command)
+            self.assertEqual(json.loads(output.read_text())["command"], request["command"])
+
+    def test_enable_chrome_requires_non_empty_chrome_parameters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "consumer"
+            root.mkdir()
+            prompt = Path(directory) / "prompt.md"
+            prompt.write_text("Run", encoding="utf-8")
+            with self.assertRaises(module.RequestBuildError):
+                module.build_request(consumer_root=root, prompt_file=prompt,
+                                     output=Path(directory) / "r.json", enable_chrome=True)
+
+    def test_chrome_parameters_without_opt_in_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "consumer"
+            root.mkdir()
+            prompt = Path(directory) / "prompt.md"
+            prompt.write_text("Run", encoding="utf-8")
+            with self.assertRaises(module.RequestBuildError):
+                module.build_request(consumer_root=root, prompt_file=prompt,
+                                     output=Path(directory) / "r.json",
+                                     chrome_profile_dir="/tmp/profile", chrome_cdp_port="9333")
 
     def test_ambiguous_chrome_configuration_is_blocked(self):
         with tempfile.TemporaryDirectory() as directory:
