@@ -1,9 +1,8 @@
 """Static contract regressions for the stage-3 idea-generator agent document.
 
-The agent prompt is executable contract, not prose: a duplicate frontmatter key
-changes parser behavior across YAML implementations, and a stale result-file
-routing instruction makes real agents assemble filenames the runner never
-reads, resurfacing ``result_missing`` after the direction-id-v1 migration.
+The agent prompt is executable contract, not prose.  These tests deliberately
+cover only documented/runtime-neutral instructions; real Codex/OpenCode agent
+invocation remains a clean-consumer smoke-test responsibility.
 """
 from pathlib import Path
 import unittest
@@ -67,6 +66,35 @@ class Stage3IdeaGeneratorAgentContractTests(unittest.TestCase):
             "绝不自拼", self.text,
             "the agent must forbid self-assembling result filenames",
         )
+
+    def test_runtime_specific_validator_orchestration_is_explicit(self):
+        self.assertIn(
+            "OpenCode-only", self.text,
+            "Task-based nested validation must be explicitly scoped to OpenCode",
+        )
+        self.assertIn("Codex", self.text)
+        self.assertIn(
+            "调用线程", self.text,
+            "Codex must describe caller-owned sibling orchestration rather than an invented API",
+        )
+        self.assertIn("professor-contact-style-validator", self.text)
+
+    def test_validation_result_is_runner_recorded_and_bounded(self):
+        self.assertIn("stage3-record-validation", self.text)
+        self.assertRegex(
+            self.text,
+            r"(?:最多|max)\s*2\s*(?:轮|round)",
+            "the style correction loop must remain capped at two rounds",
+        )
+
+    def test_contract_does_not_invent_codex_spawn_signatures(self):
+        for forbidden in ("spawn_agent(", "agent_type=", "agent_role="):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(
+                    forbidden,
+                    self.text,
+                    "do not encode undocumented Codex custom-agent call signatures",
+                )
 
 
 if __name__ == "__main__":
