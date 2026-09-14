@@ -27,6 +27,11 @@ class Issue32FixtureBuilderTests(unittest.TestCase):
             self.assertTrue((root / "教授研究/X分野/Example Professor/论文分析/AAAA1111.pdf").is_file())
             self.assertFalse((root / "教授研究/套磁目标.json").exists())
             self.assertFalse((root / "教授研究/套磁阶段1候选.json").exists())
+            forbidden = {Path(path) for path in manifest["forbidden_product_outputs"]}
+            self.assertIn(Path("教授研究/X分野/Example Professor/套磁候选输入.json"), forbidden)
+            self.assertIn(Path("教授研究/X分野/Example Professor/套磁候选状态.json"), forbidden)
+            self.assertIn(Path("教授研究/X分野/Example Professor/套磁选择.json"), forbidden)
+            self.assertIn(Path("教授研究/X分野/Example Professor/邮件输入.json"), forbidden)
             self.assertFalse(list((root / "教授研究/X分野/Example Professor/论文分析").glob("*.md")))
             self.assertFalse(list((root / "教授研究/X分野/Example Professor/论文分析").glob("*.future_work.json")))
             self.assertTrue((profile / "套磁邮件/套磁信息.md").is_file())

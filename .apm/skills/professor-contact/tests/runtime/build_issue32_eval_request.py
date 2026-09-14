@@ -21,6 +21,16 @@ class RequestBuildError(RuntimeError):
     pass
 
 
+def _toml_string(value: str) -> str:
+    """Encode a TOML basic string without allowing numeric env coercion."""
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _toml_key_segment(value: str) -> str:
+    """Quote a dynamic dotted-key segment, such as an MCP server id."""
+    return json.dumps(str(value), ensure_ascii=False)
+
+
 def _toml_files(root: Path) -> list[Path]:
     return [path for path in root.rglob("*.toml") if path.is_file() and ".git" not in path.parts]
 
@@ -67,15 +77,18 @@ def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
     if not consumer_root.is_dir():
         raise RequestBuildError(f"consumer root does not exist: {consumer_root}")
     server_id = discover_chrome_server_id(consumer_root)
+    server_key = _toml_key_segment(server_id)
     config_values = [
-        f"model_reasoning_effort={reasoning}",
-        f"shell_environment_policy.set.ZOTERO_HTTP_URL={zotero_http_url}",
-        f"shell_environment_policy.set.ZOTERO_MCP_URL={zotero_mcp_url}",
-        f"shell_environment_policy.set.NPM_CONFIG_CACHE={npm_cache}",
-        f"mcp_servers.{server_id}.env.CHROME_PROFILE_DIR={chrome_profile_dir}",
-        f"mcp_servers.{server_id}.env.CHROME_CDP_PORT={chrome_cdp_port}",
+        f"model_reasoning_effort={_toml_string(reasoning)}",
+        f"shell_environment_policy.set.ZOTERO_HTTP_URL={_toml_string(zotero_http_url)}",
+        f"shell_environment_policy.set.ZOTERO_MCP_URL={_toml_string(zotero_mcp_url)}",
+        f"shell_environment_policy.set.NPM_CONFIG_CACHE={_toml_string(npm_cache)}",
+        f"mcp_servers.{server_key}.env.CHROME_PROFILE_DIR={_toml_string(chrome_profile_dir)}",
+        f"mcp_servers.{server_key}.env.CHROME_CDP_PORT={_toml_string(chrome_cdp_port)}",
     ]
-    argv = ["codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check",
+    # eval-server prepends ``codex exec``.  Its request contract therefore
+    # accepts only the arguments that follow that executable pair.
+    argv = ["--json", "--ephemeral", "--skip-git-repo-check",
             "--sandbox", "workspace-write", "--cd", str(consumer_root),
             "--model", model]
     for value in config_values:

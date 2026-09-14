@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import shlex
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -17,9 +19,9 @@ class Issue32EvalRequestTests(unittest.TestCase):
             root = Path(directory) / "consumer"
             (root / ".codex").mkdir(parents=True)
             (root / ".codex/config.toml").write_text(
-                '[mcp_servers."actual-browser-server"]\n'
+                '[mcp_servers."actual.browser.server"]\n'
                 'command = "npx"\n'
-                '[mcp_servers."actual-browser-server".env]\n'
+                '[mcp_servers."actual.browser.server".env]\n'
                 'CHROME_PROFILE_DIR = "/tmp/profile"\n'
                 'CHROME_CDP_PORT = "9222"\n', encoding="utf-8")
             prompt = Path(directory) / "prompt.md"
@@ -28,14 +30,29 @@ class Issue32EvalRequestTests(unittest.TestCase):
             request = module.build_request(
                 consumer_root=root, prompt_file=prompt, output=output,
                 zotero_http_url="http://127.0.0.1:9000", zotero_mcp_url="http://127.0.0.1:9001",
-                chrome_profile_dir="/tmp/chrome profile", chrome_cdp_port="9333",
-                npm_cache="/tmp/npm cache")
+                chrome_profile_dir='/tmp/chrome "profile"', chrome_cdp_port="9333",
+                npm_cache='/tmp/npm "cache"')
             self.assertEqual(request["timeout"], 1800)
             command = request["command"]
-            self.assertIn("codex exec --json --ephemeral --skip-git-repo-check", command)
-            self.assertIn("mcp_servers.actual-browser-server.env.CHROME_CDP_PORT=9333", command)
-            self.assertIn("shell_environment_policy.set.ZOTERO_HTTP_URL=http://127.0.0.1:9000", command)
-            self.assertIn("--cd", command)
+            argv = shlex.split(command)
+            self.assertEqual(argv[:2], ["--json", "--ephemeral"])
+            self.assertNotIn("codex", argv[:2])
+            self.assertNotIn("exec", argv[:2])
+            assignments = [argv[index + 1] for index, value in enumerate(argv[:-1])
+                           if value == "--config"]
+            self.assertEqual(len(assignments), 6)
+            parsed = [tomllib.loads(f"{assignment}\n") for assignment in assignments]
+            self.assertEqual(parsed[0]["model_reasoning_effort"], "low")
+            self.assertEqual(parsed[1]["shell_environment_policy"]["set"]["ZOTERO_HTTP_URL"],
+                             "http://127.0.0.1:9000")
+            self.assertEqual(parsed[2]["shell_environment_policy"]["set"]["ZOTERO_MCP_URL"],
+                             "http://127.0.0.1:9001")
+            self.assertEqual(parsed[3]["shell_environment_policy"]["set"]["NPM_CONFIG_CACHE"],
+                             '/tmp/npm "cache"')
+            self.assertEqual(parsed[4]["mcp_servers"]["actual.browser.server"]["env"]["CHROME_PROFILE_DIR"],
+                             '/tmp/chrome "profile"')
+            self.assertIs(type(parsed[5]["mcp_servers"]["actual.browser.server"]["env"]["CHROME_CDP_PORT"]), str)
+            self.assertEqual(parsed[5]["mcp_servers"]["actual.browser.server"]["env"]["CHROME_CDP_PORT"], "9333")
             self.assertEqual(json.loads(output.read_text())["command"], command)
 
     def test_ambiguous_chrome_configuration_is_blocked(self):

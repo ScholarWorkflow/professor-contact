@@ -48,6 +48,35 @@ class Issue32VerifierTests(unittest.TestCase):
         self.assertEqual(payload["status"], "pass", payload)
         self.assertFalse((self.root / "教授研究/套磁目标.json").exists())
 
+    def test_install_reads_exact_professor_contact_commit_from_structured_lock(self):
+        consumer = Path(self.holder.name) / "consumer"
+        (consumer / ".agents/skills/professor-contact").mkdir(parents=True)
+        (consumer / ".agents/skills/professor-contact/SKILL.md").write_text("installed", encoding="utf-8")
+        (consumer / ".codex/agents").mkdir(parents=True)
+        (consumer / ".codex/agents/professor-contact.toml").write_text("name='professor-contact'", encoding="utf-8")
+        producer_sha = "a" * 40
+        (consumer / "apm.lock.yaml").write_text(
+            "dependencies:\n"
+            "  - name: professor-research\n"
+            f"    resolved_commit: {producer_sha}\n"
+            "  - name: professor-contact\n"
+            "    resolved_commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
+            encoding="utf-8")
+        payload = verifier._checkpoint_install(self.args(
+            consumer_root=consumer, producer_sha=producer_sha))
+        self.assertEqual(payload["status"], "fail", payload)
+
+        (consumer / "apm.lock.yaml").write_text(
+            "dependencies:\n"
+            "  - name: professor-research\n"
+            f"    resolved_commit: {producer_sha}\n"
+            "  - name: professor-contact\n"
+            f"    resolved_commit: {producer_sha}\n",
+            encoding="utf-8")
+        payload = verifier._checkpoint_install(self.args(
+            consumer_root=consumer, producer_sha=producer_sha))
+        self.assertEqual(payload["status"], "pass", payload)
+
     def test_stage0_needs_input_requires_structured_selection_request(self):
         response = Path(self.holder.name) / "stage0.json"
         response.write_text(json.dumps({
@@ -75,20 +104,164 @@ class Issue32VerifierTests(unittest.TestCase):
         after = sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob("*"))
         self.assertEqual(before, after)
 
+    def test_stage2_requires_machine_contract_and_allows_new_bbbb_analysis(self):
+        prof = self.root / "教授研究/X分野/Example Professor"
+        pack = {
+            "schema": 2,
+            "kind": "professor-contact-stage2-input",
+            "identity_version": "direction-id-v1",
+            "managed_by": "contact_state",
+            "professor": "Example Professor",
+            "professor_dir": str(prof),
+            "papers": {"AAAA1111": {"item_key": "AAAA1111"}},
+            "directions": [{
+                "direction_id": "DIR00001",
+                "input_fingerprint": "direction-fingerprint",
+                "supporting_item_keys": ["AAAA1111"],
+            }],
+        }
+        (prof / "套磁候选输入.json").write_text(json.dumps(pack), encoding="utf-8")
+        (prof / "论文分析/AAAA1111.md").write_text("analysis", encoding="utf-8")
+        (prof / "论文分析/AAAA1111.future_work.json").write_text("{}", encoding="utf-8")
+        (prof / "论文分析/BBBB2222.md").write_text("analysis created in Stage 2", encoding="utf-8")
+        payload = verifier._checkpoint_stage2_final(self.args())
+        self.assertEqual(payload["status"], "pass", payload)
+
+        pack["directions"][0]["direction_id"] = "OTHER"
+        pack["notes"] = "DIR00001 appears only in unrelated text"
+        (prof / "套磁候选输入.json").write_text(json.dumps(pack), encoding="utf-8")
+        payload = verifier._checkpoint_stage2_final(self.args())
+        self.assertEqual(payload["status"], "fail", payload)
+
+    def test_stage3_requires_current_v2_state_and_real_validation(self):
+        prof = self.root / "教授研究/X分野/Example Professor"
+        candidates = [
+            {"id": f"idea-{index}", "direction_ids": ["DIR00001"]}
+            for index in range(3)
+        ]
+        state = {
+            "schema": 2,
+            "kind": "professor-contact-stage3-state",
+            "identity_version": "direction-id-v1",
+            "generator_contract_version": "stage3-ideas-v2",
+            "directions": [{"direction_id": "DIR00001", "candidates": candidates}],
+            "validator": {"results": {"DIR00001": {
+                "result": "pass", "rounds": 1, "issues": []
+            }}},
+        }
+        path = prof / "套磁候选状态.json"
+        path.write_text(json.dumps(state), encoding="utf-8")
+        payload = verifier._checkpoint_stage3_final(self.args())
+        self.assertEqual(payload["status"], "pass", payload)
+
+        state["kind"] = "wrong-kind"
+        path.write_text(json.dumps(state), encoding="utf-8")
+        payload = verifier._checkpoint_stage3_final(self.args())
+        self.assertEqual(payload["status"], "fail", payload)
+
+    def test_stage5_requires_structured_pass_for_both_outputs_and_frozen_pack(self):
+        prof = self.root / "教授研究/X分野/Example Professor"
+        for name in ("套磁邮件.md", "套磁跟进邮件.md", "套磁邮件.txt", "套磁跟进邮件.txt"):
+            (prof / name).write_text("send checklist; pass 通过", encoding="utf-8")
+        email_id = "Example Professor::DIR00001::idea-1"
+        email_pack = {
+            "schema": 2,
+            "kind": "professor-contact-email-input",
+            "identity_version": "direction-id-v1",
+            "emails": [{
+                "email_id": email_id,
+                "direction_ids": ["DIR00001"],
+                "source_hash": "source-fingerprint",
+                "contact_evidence": {
+                    "record_fingerprint": "record-fingerprint",
+                    "record": {"email": "faculty@example.edu"},
+                },
+            }],
+        }
+        (prof / "邮件输入.json").write_text(json.dumps(email_pack), encoding="utf-8")
+        email_state = {
+            "schema": 1,
+            "emails": {email_id: {
+                "input_fingerprint": "source-fingerprint",
+                "validation": {"result": "fail_after_2_rounds", "rounds": 2, "issues": ["bad"]},
+                "followup": {"validation": {"result": "fail_after_2_rounds", "rounds": 2, "issues": ["bad"]}},
+            }},
+        }
+        state_path = prof / "套磁邮件状态.json"
+        state_path.write_text(json.dumps(email_state), encoding="utf-8")
+        payload = verifier._checkpoint_stage5_final(self.args())
+        self.assertEqual(payload["status"], "fail", payload)
+
+        for validation in (
+            email_state["emails"][email_id]["validation"],
+            email_state["emails"][email_id]["followup"]["validation"],
+        ):
+            validation.update(result="pass", rounds=1, issues=[])
+        state_path.write_text(json.dumps(email_state), encoding="utf-8")
+        payload = verifier._checkpoint_stage5_final(self.args())
+        self.assertEqual(payload["status"], "pass", payload)
+
     def test_runtime_graph_rejects_identity_only_and_accepts_formal_events(self):
         identity = Path(self.holder.name) / "identity.json"
         identity.write_text(json.dumps({"loaded_agents": ["professor-contact", "downloader"]}), encoding="utf-8")
         payload = verifier._checkpoint_runtime_graph(self.args(adapter_output=identity))
         self.assertEqual(payload["status"], "fail", payload)
 
-        events = Path(self.holder.name) / "events.json"
-        events.write_text(json.dumps({"app_server_events": [
-            {"event_type": "spawn_agent", "parent_id": "contact", "child_id": "downloader"},
-            {"event_type": "spawn_agent", "parent_id": "downloader", "child_id": "analyzer"},
-        ]}), encoding="utf-8")
+        events = Path(self.holder.name) / "adapter.json"
+        events.write_text(json.dumps({
+            "delegation": {
+                "state": "confirmed",
+                "basis": ["formal_spawn_relation"],
+                "formal_child_count": 2,
+                "child_thread_ids": ["downloader", "analyzer"],
+            },
+            "dispatch": {"thread_relations": [
+                {"tool": "spawnAgent", "status": "completed",
+                 "parent_thread_id": "contact", "receiver_thread_ids": ["downloader"]},
+                {"tool": "spawnAgent", "status": "completed",
+                 "parent_thread_id": "downloader", "receiver_thread_ids": ["analyzer"]},
+                {"tool": "wait", "status": "completed",
+                 "parent_thread_id": "contact", "receiver_thread_ids": ["analyzer"]},
+            ]},
+        }), encoding="utf-8")
+        raw_response = Path(self.holder.name) / "response.json"
+        raw_response.write_text(json.dumps({
+            "output": {"app_server_events": [{"type": "spawnAgent"}]},
+        }), encoding="utf-8")
         payload = verifier._checkpoint_runtime_graph(
-            self.args(adapter_output=events, min_edges=2, required_depth=2))
+            self.args(adapter_output=events, eval_response=raw_response,
+                      min_edges=2, required_depth=2))
         self.assertEqual(payload["status"], "pass", payload)
+
+        misplaced_raw = Path(self.holder.name) / "misplaced-response.json"
+        misplaced_raw.write_text(json.dumps({"app_server_events": []}), encoding="utf-8")
+        payload = verifier._checkpoint_runtime_graph(
+            self.args(adapter_output=events, eval_response=misplaced_raw,
+                      min_edges=2, required_depth=2))
+        self.assertEqual(payload["status"], "fail", payload)
+
+        disconnected = Path(self.holder.name) / "disconnected.json"
+        disconnected.write_text(json.dumps({
+            "delegation": {"state": "confirmed", "basis": ["formal_spawn_relation"],
+                            "child_thread_ids": ["c1", "c2"]},
+            "dispatch": {"thread_relations": [
+                {"tool": "spawnAgent", "status": "completed",
+                 "parent_thread_id": "p1", "receiver_thread_ids": ["c1"]},
+                {"tool": "spawnAgent", "status": "completed",
+                 "parent_thread_id": "p2", "receiver_thread_ids": ["c2"]},
+            ]},
+        }), encoding="utf-8")
+        payload = verifier._checkpoint_runtime_graph(
+            self.args(adapter_output=disconnected, min_edges=2, required_depth=2))
+        self.assertEqual(payload["status"], "fail", payload)
+
+        unobservable = Path(self.holder.name) / "unobservable.json"
+        unobservable.write_text(json.dumps({
+            "delegation": {"state": "unobservable", "basis": [], "child_thread_ids": []},
+            "dispatch": {"thread_relations": []},
+        }), encoding="utf-8")
+        payload = verifier._checkpoint_runtime_graph(self.args(adapter_output=unobservable))
+        self.assertEqual(payload["status"], "fail", payload)
 
 
 if __name__ == "__main__":
