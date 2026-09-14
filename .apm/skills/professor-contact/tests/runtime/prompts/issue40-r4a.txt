@@ -1,0 +1,1 @@
+继续 ${PROGRAM_ROOT} 的 Stage 4。用户显式选择已经写入 ${SELECTION_FILE}；只按该文件中的固定 test-user selection 完成 Stage 4，不自行更换候选，不进入 Stage 5。完成后正常结束。

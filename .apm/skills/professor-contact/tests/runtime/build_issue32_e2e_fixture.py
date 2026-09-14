@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Build the producer-owned raw fixture for issue #32's Stage 0–5 E2E.
+"""Build the producer-owned raw fixture for issue #32/#40 runtime evaluation.
 
 This builder deliberately stops before the first product-generated state.  It
-creates synthetic upstream inputs, a legal direction preview, one ready PDF,
-one missing PDF, and the fixed email/profile inputs.  The installed
+creates synthetic upstream inputs, a legal direction preview, deterministic
+synthetic PDFs, and the fixed email/profile inputs.  The installed
 professor-contact runner must create every target, snapshot, analysis,
-candidate, selection, evidence, and email artifact during the E2E run.
+candidate, selection, evidence, and email artifact during the runtime run.
+
+Issue #40 contract: the builder no longer owns fixed Zotero keys.  Callers
+(the issue #40 runtime setup helper) pass the real disposable-Zotero item and
+attachment keys via a versioned items config; the historical ``AAAA1111`` /
+``BBBB2222`` constants are rejected wherever they appear so fake keys can
+never masquerade as real library keys.
 """
 from __future__ import annotations
 
@@ -18,9 +24,18 @@ from pathlib import Path
 
 MANIFEST_NAME = "fixture-manifest.json"
 MANIFEST_ID = "tests/runtime/build_issue32_e2e_fixture.py"
+ITEMS_CONFIG_SCHEMA_VERSION = 1
 PROFESSOR = "Example Professor"
 DIRECTION_ID = "DIR00001"
-ITEM_KEYS = ("AAAA1111", "BBBB2222")
+# Forbidden as item/attachment keys: these literals were the pre-#40 hardcoded
+# fixture keys.  They are never real Zotero keys and are rejected so a stale
+# config cannot fake provenance.
+LEGACY_ITEM_KEYS = ("AAAA1111", "BBBB2222")
+# The fill target must sit in the product's formal retryable pre-download
+# state (the ``pending -> downloaded`` collector state machine); anything else
+# is not accepted as fill-target input.
+RETRYABLE_FILL_STATUSES = ("pending",)
+READY_PDF_STATUS = "downloaded"
 FIXED_NOTE = "I want to study adaptive and nonlinear extensions of this processing framework."
 FORBIDDEN_STAGE_OUTPUTS = (
     Path("教授研究/套磁目标.json"),
@@ -76,8 +91,121 @@ def render_text_pdf(lines: list[str]) -> bytes:
     return bytes(body)
 
 
-def _producer_repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+def paper_metadata(role: str) -> dict:
+    """Deterministic synthetic paper metadata for one fixture role.
+
+    ``role`` is ``"ready"`` for an already-downloaded paper and ``"fill"``
+    for the fill target whose PDF the runtime must collect.
+    """
+    catalog = {
+        "ready": {
+            "title": "Adaptive Processing in Synthetic Systems",
+            "title_zh": "合成系统中的自适应处理",
+            "year": 2024,
+            "authors": [PROFESSOR, "Synthetic Researcher"],
+            "abstract": "A deterministic synthetic paper about adaptive and nonlinear processing.",
+        },
+        "fill": {
+            "title": "Nonlinear Extensions of Synthetic Processing",
+            "title_zh": "合成处理的非线性扩展",
+            "year": 2023,
+            "authors": [PROFESSOR, "Synthetic Collaborator"],
+            "abstract": "A synthetic paper whose PDF must be collected during Stage 1.",
+        },
+    }
+    if role not in catalog:
+        raise FixtureBuildError(f"unknown fixture paper role: {role!r}")
+    return catalog[role]
+
+
+def paper_pdf_bytes(item_key: str, role: str) -> bytes:
+    """Deterministic PDF bytes for an item, shared by local inputs and the
+    attachment imported into the disposable Zotero fixture."""
+    meta = paper_metadata(role)
+    return render_text_pdf([
+        f"Synthetic paper: {meta['title']} ({item_key})",
+        f"Abstract: {meta['abstract'][0].lower()}{meta['abstract'][1:]}",
+        "Future work: extend the framework to nonlinear and adaptive settings.",
+        "This deterministic PDF is producer-owned input, not a completed analysis.",
+    ])
+
+
+def load_items_config(source: Path | str | dict) -> dict:
+    """Load and validate the dynamic Zotero items config (issue #40)."""
+    if isinstance(source, dict):
+        config = json.loads(json.dumps(source))
+    else:
+        path = Path(source)
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise FixtureBuildError(f"cannot read zotero items config: {path}") from exc
+        except json.JSONDecodeError as exc:
+            raise FixtureBuildError(f"zotero items config is not valid JSON: {path}: {exc}") from exc
+    if not isinstance(config, dict):
+        raise FixtureBuildError("zotero items config must be a JSON object")
+    if config.get("schema_version") != ITEMS_CONFIG_SCHEMA_VERSION:
+        raise FixtureBuildError(
+            f"zotero items config schema_version must be {ITEMS_CONFIG_SCHEMA_VERSION}")
+
+    def _string_list(name: str) -> list[str]:
+        value = config.get(name)
+        if not isinstance(value, list) or not value or \
+                not all(isinstance(row, str) and row.strip() for row in value):
+            raise FixtureBuildError(f"zotero items config.{name} must be a non-empty string list")
+        return list(value)
+
+    item_keys = _string_list("item_keys")
+    ready_item_keys = _string_list("ready_item_keys")
+    fill_target = config.get("fill_target_item_key")
+    if not isinstance(fill_target, str) or not fill_target.strip():
+        raise FixtureBuildError("zotero items config.fill_target_item_key must be a non-empty string")
+    run_id = config.get("fixture_run_id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise FixtureBuildError("zotero items config.fixture_run_id must be a non-empty string")
+    if len(set(item_keys)) != len(item_keys):
+        raise FixtureBuildError("zotero items config.item_keys contains duplicates")
+    legacy = sorted(set(item_keys) & set(LEGACY_ITEM_KEYS))
+    if legacy:
+        raise FixtureBuildError(
+            f"zotero items config reuses forbidden hardcoded fixture keys: {legacy}")
+    unknown_ready = sorted(set(ready_item_keys) - set(item_keys))
+    if unknown_ready:
+        raise FixtureBuildError(f"ready_item_keys outside item_keys: {unknown_ready}")
+    if fill_target not in item_keys:
+        raise FixtureBuildError(f"fill_target_item_key {fill_target!r} is not in item_keys")
+    if fill_target in ready_item_keys:
+        raise FixtureBuildError("fill_target_item_key must not also be a ready item key")
+    if len(item_keys) < 2 or not ready_item_keys:
+        raise FixtureBuildError(
+            "runtime fixture requires at least one ready item and one distinct fill target")
+    status = config.get("fill_target_pdf_status")
+    if status not in RETRYABLE_FILL_STATUSES:
+        raise FixtureBuildError(
+            f"fill_target_pdf_status must be one of {list(RETRYABLE_FILL_STATUSES)}, got {status!r}")
+    attachment_keys = config.get("attachment_keys")
+    if not isinstance(attachment_keys, dict) or not attachment_keys:
+        raise FixtureBuildError(
+            "zotero items config.attachment_keys must map every item key to a real attachment key")
+    for key, attachment in attachment_keys.items():
+        if key not in item_keys:
+            raise FixtureBuildError(f"attachment_keys references unknown item key: {key}")
+        if not isinstance(attachment, str) or not attachment.strip():
+            raise FixtureBuildError(f"attachment key for {key} must be a non-empty string")
+        if attachment in LEGACY_ITEM_KEYS:
+            raise FixtureBuildError(f"attachment key for {key} reuses a forbidden fixture key")
+    missing_attachments = sorted(set(item_keys) - set(attachment_keys))
+    if missing_attachments:
+        raise FixtureBuildError(f"attachment_keys missing entries for: {missing_attachments}")
+    return {
+        "schema_version": ITEMS_CONFIG_SCHEMA_VERSION,
+        "fixture_run_id": run_id,
+        "item_keys": item_keys,
+        "ready_item_keys": ready_item_keys,
+        "fill_target_item_key": fill_target,
+        "fill_target_pdf_status": status,
+        "attachment_keys": dict(attachment_keys),
+    }
 
 
 def _prepare_output(root: Path) -> None:
@@ -105,7 +233,11 @@ def _tree_hashes(root: Path, *, exclude: set[str] | None = None) -> dict[str, st
     }
 
 
-def _write_inputs(program_root: Path, profile_root: Path) -> dict[str, str]:
+def _write_inputs(program_root: Path, profile_root: Path, items: dict) -> dict[str, str]:
+    item_keys = items["item_keys"]
+    ready_keys = set(items["ready_item_keys"])
+    fill_target = items["fill_target_item_key"]
+    fill_status = items["fill_target_pdf_status"]
     professor_dir = program_root / "教授研究" / "X分野" / PROFESSOR
     analysis_dir = professor_dir / "论文分析"
     analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -124,44 +256,32 @@ def _write_inputs(program_root: Path, profile_root: Path) -> dict[str, str]:
             "name_zh": "自适应与非线性处理",
             "summary_zh": "Synthetic direction for the issue #32 runtime contract.",
             "user_note": FIXED_NOTE,
-            "members": [
-                {"item_key": "AAAA1111", "preview_confidence": "high"},
-                {"item_key": "BBBB2222", "preview_confidence": "high"},
-            ],
-            "representatives": [{"item_key": "AAAA1111"}],
+            "members": [{"item_key": key, "preview_confidence": "high"} for key in item_keys],
+            "representatives": [{"item_key": item_keys[0]}],
         }],
     }
     _write_json(program_root / preview_relative, preview)
-    papers = {
-        "papers": [
-            {
-                "item_key": "AAAA1111",
-                "title": "Adaptive Processing in Synthetic Systems",
-                "title_zh": "合成系统中的自适应处理",
-                "year": 2024,
-                "authors": [PROFESSOR, "Synthetic Researcher"],
-                "abstract": "A deterministic synthetic paper about adaptive and nonlinear processing.",
-                "pdf_status": "downloaded",
-                "pdf_path": "论文分析/AAAA1111.pdf",
-            },
-            {
-                "item_key": "BBBB2222",
-                "title": "Nonlinear Extensions of Synthetic Processing",
-                "title_zh": "合成处理的非线性扩展",
-                "year": 2023,
-                "authors": [PROFESSOR, "Synthetic Collaborator"],
-                "abstract": "A synthetic paper whose PDF must be collected during Stage 1.",
-                "pdf_status": "missing",
-            },
-        ]
-    }
-    _write_json(professor_dir / "papers.json", papers)
-    (analysis_dir / "AAAA1111.pdf").write_bytes(render_text_pdf([
-        "Synthetic paper: Adaptive Processing in Synthetic Systems",
-        "Abstract: adaptive and nonlinear processing is evaluated.",
-        "Future work: extend the framework to nonlinear and adaptive settings.",
-        "This deterministic PDF is producer-owned input, not a completed analysis.",
-    ]))
+    papers = []
+    for key in item_keys:
+        role = "ready" if key in ready_keys else "fill"
+        meta = paper_metadata(role)
+        row = {
+            "item_key": key,
+            "title": meta["title"],
+            "title_zh": meta["title_zh"],
+            "year": meta["year"],
+            "authors": meta["authors"],
+            "abstract": meta["abstract"],
+        }
+        if role == "ready":
+            row["pdf_status"] = READY_PDF_STATUS
+            row["pdf_path"] = f"论文分析/{key}.pdf"
+        else:
+            row["pdf_status"] = fill_status
+        papers.append(row)
+    _write_json(professor_dir / "papers.json", {"papers": papers})
+    for key in sorted(ready_keys):
+        (analysis_dir / f"{key}.pdf").write_bytes(paper_pdf_bytes(key, "ready"))
     _write_json(program_root / "info.json", {
         "schema_version": 1,
         "program": "issue32-stage0-5-runtime-fixture",
@@ -222,26 +342,40 @@ def _write_inputs(program_root: Path, profile_root: Path) -> dict[str, str]:
     return _tree_hashes(program_root)
 
 
-def build_fixture(program_root: Path, profile_root: Path, *, consumer_root: Path | None = None,
-                  professor_research_sha: str = "", zotero_http_url: str = "",
-                  zotero_mcp_url: str = "") -> dict:
+def build_fixture(program_root: Path, profile_root: Path, zotero_items_config=None, *,
+                  consumer_root: Path | None = None, professor_research_sha: str = "",
+                  zotero_http_url: str = "", zotero_mcp_url: str = "") -> dict:
+    """Build raw fixture inputs bound to real disposable-Zotero keys.
+
+    ``zotero_items_config`` (path or dict) carries the dynamic item /
+    attachment keys returned by the issue #40 setup helper; it is required so
+    the builder can never fall back to fabricated keys.
+    """
+    if zotero_items_config is None:
+        raise FixtureBuildError(
+            "zotero_items_config is required: the builder no longer owns Zotero keys")
+    items = load_items_config(zotero_items_config)
     program_root = Path(program_root).resolve()
     profile_root = Path(profile_root).resolve()
     _prepare_output(program_root)
-    program_hashes = _write_inputs(program_root, profile_root)
+    program_hashes = _write_inputs(program_root, profile_root, items)
     manifest = {
         "schema_version": 1,
         "builder": MANIFEST_ID,
         "builder_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "fixture_mode": "initial_raw_inputs",
+        "fixture_run_id": items["fixture_run_id"],
         "program_root": str(program_root),
         "profile_root": str(profile_root),
         "consumer_root": str(Path(consumer_root).resolve()) if consumer_root else None,
         "professor": PROFESSOR,
         "direction_ids": [DIRECTION_ID],
-        "item_keys": list(ITEM_KEYS),
-        "ready_item_keys": ["AAAA1111"],
-        "missing_item_keys": ["BBBB2222"],
+        "item_keys": items["item_keys"],
+        "ready_item_keys": items["ready_item_keys"],
+        "fill_target_item_key": items["fill_target_item_key"],
+        "fill_target_pdf_status": items["fill_target_pdf_status"],
+        "missing_item_keys": [items["fill_target_item_key"]],
+        "attachment_keys": items["attachment_keys"],
         "professor_research_sha": professor_research_sha,
         "zotero_http_url": zotero_http_url,
         "zotero_mcp_url": zotero_mcp_url,
@@ -257,6 +391,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--program-root", type=Path, required=True)
     parser.add_argument("--profile-root", type=Path, required=True)
+    parser.add_argument("--zotero-items-config", type=Path, required=True,
+                        help="JSON file with the real disposable-Zotero item/attachment keys")
     parser.add_argument("--consumer-root", type=Path)
     parser.add_argument("--professor-research-sha", default="")
     parser.add_argument("--zotero-http-url", default="")
@@ -268,7 +404,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         manifest = build_fixture(
-            args.program_root, args.profile_root, consumer_root=args.consumer_root,
+            args.program_root, args.profile_root,
+            zotero_items_config=args.zotero_items_config,
+            consumer_root=args.consumer_root,
             professor_research_sha=args.professor_research_sha,
             zotero_http_url=args.zotero_http_url, zotero_mcp_url=args.zotero_mcp_url)
     except Exception as exc:  # CLI callers need machine-readable failure.

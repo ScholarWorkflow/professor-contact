@@ -1,0 +1,1 @@
+进入 ${PROGRAM_ROOT} 的 Stage 4，但本轮用户没有提供 selection。不要替用户选择任何候选，不要生成 program-level selection 或 email pack；按正式 non-interactive boundary 正常结束。

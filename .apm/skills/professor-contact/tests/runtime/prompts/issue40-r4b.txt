@@ -1,0 +1,1 @@
+继续 ${PROGRAM_ROOT} 的正式 professor-contact 工作流，只执行 Stage 5。直接消费 Stage 4 已冻结的 canonical email pack，遵守正式 delegation/validation workflow，生成初回邮件与 follow-up canonical artifacts。完成后正常结束。
