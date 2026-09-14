@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
-"""Read-only checkpoints for issue #32's Stage 0–5 runtime evaluation.
+"""Runtime checkpoints for issue #32's R1–R4 Codex evaluation (issue #40).
 
-The verifier observes product state and adapter-provided structured evidence.
-It never repairs product files.  The sole intentional write is the
-``make-stage4-selection`` helper, which models an explicit user selection and
-writes only the requested output path.
+The verifier proves only two things:
+
+A. runtime-specific machine evidence — the common eval gate plus adapter @9
+   formal ``spawnAgent`` delegation topology (anonymous thread ownership);
+B. minimum continuity sanity — a canonical artifact was produced and the next
+   stage's formal plan/input loader can actually consume it.
+
+Named-role identity (``requested_role`` / ``loaded_identity``) is recorded as
+an observed diagnostic and never gates a verdict.  ``delegation=unobservable``
+is an observability gap reported as ``not_tested`` (exit code 2), never a
+producer FAIL and never a retry signal.  Malformed or mutually inconsistent
+evidence still fails closed as a harness/evidence error.
+
+The verifier observes product state; it never repairs product files.  The
+sole intentional write is the ``make-stage4-selection`` helper, which models
+an explicit user selection and writes only the requested output path.
 """
 from __future__ import annotations
 
@@ -20,18 +32,23 @@ from typing import Any
 MANIFEST_NAME = "fixture-manifest.json"
 PROFESSOR = "Example Professor"
 DIRECTION_ID = "DIR00001"
-ITEM_KEYS = ("AAAA1111", "BBBB2222")
 PROGRAM_STAGE_OUTPUTS = (
     Path("教授研究/套磁目标.json"), Path("教授研究/套磁阶段1候选.json"),
 )
 PROFESSOR_STAGE_OUTPUTS = (
     Path("套磁候选输入.json"), Path("套磁候选状态.json"),
-    Path("套磁选择.json"), Path("邮件输入.json"),
 )
-INPUT_PACK_KIND = "professor-contact-stage2-input"
-CANDIDATE_STATE_KIND = "professor-contact-stage3-state"
-DIRECTION_IDENTITY_VERSION = "direction-id-v1"
-STAGE3_GENERATOR_CONTRACT_VERSION = "stage3-ideas-v2"
+# Stage 4/5 canonical files are program-level only; professor-dir same-name
+# files never count (issue #40 §6).
+PROGRAM_SELECTION_FILE = Path("教授研究/套磁选择.json")
+PROGRAM_EMAIL_PACK_FILE = Path("教授研究/邮件输入.json")
+SNAPSHOT_FILE = Path("教授研究/套磁阶段1候选.json")
+INPUT_PACK_NAME = "套磁候选输入.json"
+CANDIDATE_STATE_NAME = "套磁候选状态.json"
+RAW_CONTACT_SOURCES = ("_professor_candidates.json", "_corresp_cache.json", "_署名对照.json")
+CONSUMER_SCRIPTS = Path(".agents/skills/professor-contact/scripts")
+INITIAL_EMAIL_MARKER = "套磁邮件"
+FOLLOWUP_EMAIL_MARKER = "跟进"
 
 
 def _load(path: Path) -> Any:
@@ -54,40 +71,8 @@ def _finish(checks: list[dict[str, Any]], **observed: Any) -> dict[str, Any]:
                    checks, **observed)
 
 
-def _manifest(root: Path) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    checks: list[dict[str, Any]] = []
-    path = root / MANIFEST_NAME
-    try:
-        manifest = _load(path)
-    except (OSError, json.JSONDecodeError) as exc:
-        _check(checks, "fixture_manifest_readable", False, str(exc))
-        return None, checks
-    _check(checks, "fixture_builder", manifest.get("builder") == "tests/runtime/build_issue32_e2e_fixture.py",
-           manifest.get("builder"))
-    _check(checks, "fixture_mode", manifest.get("fixture_mode") == "initial_raw_inputs",
-           manifest.get("fixture_mode"))
-    _check(checks, "program_root_matches", Path(manifest.get("program_root", "")).resolve() == root.resolve())
-    _check(checks, "direction_ids", manifest.get("direction_ids") == [DIRECTION_ID], manifest.get("direction_ids"))
-    _check(checks, "item_keys", manifest.get("item_keys") == ["AAAA1111", "BBBB2222"], manifest.get("item_keys"))
-    return manifest, checks
-
-
 def _professor_dir(root: Path) -> Path:
     return root / "教授研究" / "X分野" / PROFESSOR
-
-
-def _direction(root: Path) -> dict[str, Any] | None:
-    path = _professor_dir(root) / "方向预筛.json"
-    try:
-        payload = _load(path)
-    except (OSError, json.JSONDecodeError):
-        return None
-    return next((row for row in payload.get("directions", [])
-                 if isinstance(row, dict) and row.get("direction_id") == DIRECTION_ID), None)
-
-
-def _json_files(root: Path) -> list[Path]:
-    return [path for path in root.rglob("*.json") if path.is_file()]
 
 
 def _sha256(path: Path) -> str:
@@ -137,41 +122,6 @@ def _resolved_professor_contact_commit(consumer: Path) -> tuple[str | None, str]
     return commit, f"{path.name}: professor-contact.resolved_commit"
 
 
-def _has_structured_key(value: Any, keys: set[str]) -> bool:
-    if isinstance(value, dict):
-        if any(key in value for key in keys):
-            return True
-        return any(_has_structured_key(child, keys) for child in value.values())
-    if isinstance(value, list):
-        return any(_has_structured_key(child, keys) for child in value)
-    return False
-
-
-def _structured_values(value: Any, keys: set[str]) -> list[Any]:
-    found: list[Any] = []
-    if isinstance(value, dict):
-        for key, child in value.items():
-            if key in keys:
-                found.append(child)
-            found.extend(_structured_values(child, keys))
-    elif isinstance(value, list):
-        for child in value:
-            found.extend(_structured_values(child, keys))
-    return found
-
-
-def _contains_direction(value: Any) -> bool:
-    if isinstance(value, dict):
-        for key in ("direction_id", "direction_ids", "selected_direction_ids", "collection_key"):
-            child = value.get(key)
-            if child == DIRECTION_ID or (isinstance(child, list) and DIRECTION_ID in child):
-                return True
-        return any(_contains_direction(child) for child in value.values())
-    if isinstance(value, list):
-        return any(_contains_direction(child) for child in value)
-    return False
-
-
 def _checkpoint_install(args: argparse.Namespace) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     consumer = Path(args.consumer_root or "").resolve()
@@ -187,6 +137,30 @@ def _checkpoint_install(args: argparse.Namespace) -> dict[str, Any]:
         _check(checks, "producer_sha_pinned", resolved_commit == args.producer_sha,
                {"expected": args.producer_sha, "observed": resolved_commit, "source": detail})
     return _finish(checks, consumer_root=str(consumer))
+
+
+def _manifest(root: Path) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    checks: list[dict[str, Any]] = []
+    path = root / MANIFEST_NAME
+    try:
+        manifest = _load(path)
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "fixture_manifest_readable", False, str(exc))
+        return None, checks
+    _check(checks, "fixture_builder", manifest.get("builder") == "tests/runtime/build_issue32_e2e_fixture.py",
+           manifest.get("builder"))
+    _check(checks, "fixture_mode", manifest.get("fixture_mode") == "initial_raw_inputs",
+           manifest.get("fixture_mode"))
+    _check(checks, "program_root_matches", Path(manifest.get("program_root", "")).resolve() == root.resolve())
+    _check(checks, "direction_ids", manifest.get("direction_ids") == [DIRECTION_ID], manifest.get("direction_ids"))
+    _check(checks, "dynamic_item_keys", isinstance(manifest.get("item_keys"), list)
+           and bool(manifest.get("item_keys"))
+           and isinstance(manifest.get("ready_item_keys"), list)
+           and isinstance(manifest.get("fill_target_item_key"), str)
+           and bool(manifest.get("fill_target_item_key")),
+           {key: manifest.get(key) for key in
+            ("item_keys", "ready_item_keys", "fill_target_item_key")})
+    return manifest, checks
 
 
 def _checkpoint_initial(args: argparse.Namespace) -> dict[str, Any]:
@@ -210,26 +184,42 @@ def _checkpoint_initial(args: argparse.Namespace) -> dict[str, Any]:
     _check(checks, "profile_file_hashes", profile_ok)
     prof = _professor_dir(root)
     _check(checks, "preview_exists", (prof / "方向预筛.json").is_file())
-    direction = _direction(root)
-    _check(checks, "legal_direction_preview", direction is not None)
+    item_keys = [str(key) for key in manifest.get("item_keys", [])]
+    ready_keys = [str(key) for key in manifest.get("ready_item_keys", [])]
+    fill_key = str(manifest.get("fill_target_item_key", ""))
     try:
         papers = _load(prof / "papers.json").get("papers", [])
     except (OSError, json.JSONDecodeError, AttributeError):
         papers = []
     by_key = {row.get("item_key"): row for row in papers if isinstance(row, dict)}
-    _check(checks, "catalog_keys", set(by_key) == {"AAAA1111", "BBBB2222"}, list(by_key))
-    _check(checks, "ready_and_missing", by_key.get("AAAA1111", {}).get("pdf_status") == "downloaded"
-           and by_key.get("BBBB2222", {}).get("pdf_status") == "missing", by_key)
-    pdf = prof / "论文分析/AAAA1111.pdf"
-    pdf_bytes = pdf.read_bytes() if pdf.is_file() else b""
+    _check(checks, "catalog_keys_match_manifest", set(by_key) == set(item_keys), sorted(by_key))
+    ready_rows_ok = all(by_key.get(key, {}).get("pdf_status") == "downloaded"
+                        and bool(by_key.get(key, {}).get("pdf_path"))
+                        and (prof / f"论文分析/{key}.pdf").is_file()
+                        for key in ready_keys)
+    _check(checks, "ready_papers_have_deterministic_pdfs", ready_rows_ok, ready_keys)
+    fill_row = by_key.get(fill_key, {})
+    _check(checks, "fill_target_uses_retry_state", fill_row
+           and fill_row.get("pdf_status") == manifest.get("fill_target_pdf_status")
+           and not fill_row.get("pdf_path"), fill_row)
+    pdf_bytes = b""
+    if ready_keys:
+        ready_pdf = prof / f"论文分析/{ready_keys[0]}.pdf"
+        pdf_bytes = ready_pdf.read_bytes() if ready_pdf.is_file() else b""
     _check(checks, "deterministic_text_pdf", pdf_bytes.startswith(b"%PDF-1.4")
            and b"/Type /Page" in pdf_bytes and b"/Contents" in pdf_bytes and b"%%EOF" in pdf_bytes)
     _check(checks, "profile_inputs", all((Path(manifest["profile_root"]) / name).is_file() for name in
-                                          ("套磁邮件/套磁信息.md", "套磁邮件/套磁模板.md", "套磁邮件/套磁跟进模板.md")))
+                                          ("套磁信息.md", "套磁模板.md", "套磁跟进模板.md")))
     _check(checks, "legal_application_inputs", (root / "info.json").is_file()
            and (root / "boshu_analysis.json").is_file())
-    _check(checks, "raw_contact_prerequisite", (root / "教授研究/contact-evidence-fixture-input.json").is_file()
-           and not (root / "教授研究/_联系方式证据.json").exists())
+    professors_root = root / "教授研究"
+    _check(checks, "owner_consumable_raw_sources", all(
+        (professors_root / name).is_file() for name in RAW_CONTACT_SOURCES),
+        [name for name in RAW_CONTACT_SOURCES])
+    _check(checks, "no_ownerless_contact_input",
+           not (professors_root / "contact-evidence-fixture-input.json").exists())
+    _check(checks, "no_prebuilt_contact_evidence",
+           not (professors_root / "_联系方式证据.json").exists())
     for relative in PROGRAM_STAGE_OUTPUTS:
         _check(checks, f"product_output_absent:{relative.as_posix()}", not (root / relative).exists())
     for relative in PROFESSOR_STAGE_OUTPUTS:
@@ -238,213 +228,167 @@ def _checkpoint_initial(args: argparse.Namespace) -> dict[str, Any]:
     _check(checks, "no_prebuilt_analysis", not list((prof / "论文分析").glob("*.md"))
            and not list((prof / "论文分析").glob("*.future_work.json")))
     return _finish(checks, professor=PROFESSOR, direction_id=DIRECTION_ID,
-                   item_keys=sorted(by_key), pdf=str(pdf))
+                   item_keys=sorted(by_key))
 
 
-def _response(args: argparse.Namespace) -> Any:
+def _common_eval_gate(args: argparse.Namespace, checks: list[dict[str, Any]]) -> None:
+    """The common eval gate: this run's response shows a normally terminated run."""
     if not args.eval_response:
-        return None
-    return _load(Path(args.eval_response))
-
-
-def _checkpoint_stage0_needs_input(args: argparse.Namespace) -> dict[str, Any]:
-    root = Path(args.program_root).resolve()
-    checks: list[dict[str, Any]] = []
-    response = None
+        checks.append({"name": "common_eval_gate", "status": "pass",
+                       "detail": "eval response not supplied; gate enforced by the recipe"})
+        return
     try:
-        response = _response(args)
+        response = _load(Path(args.eval_response))
     except (OSError, json.JSONDecodeError) as exc:
-        _check(checks, "eval_response_readable", False, str(exc))
-    _check(checks, "target_not_written", not (root / PROGRAM_STAGE_OUTPUTS[0]).exists())
-    _check(checks, "selection_request_structured", isinstance(response, (dict, list))
-           and _has_structured_key(response, {"selection_request", "pending_selection", "needs_input"}))
-    _check(checks, "selection_direction", _contains_direction(response))
-    return _finish(checks)
+        _check(checks, "common_eval_gate", False, f"eval response unreadable: {exc}")
+        return
+    output = response.get("output") if isinstance(response, dict) else None
+    termination = output.get("termination_reason") if isinstance(output, dict) else None
+    _check(checks, "common_eval_gate",
+           isinstance(termination, str) and bool(termination),
+           {"termination_reason": termination})
 
 
-def _checkpoint_stage0_final(args: argparse.Namespace) -> dict[str, Any]:
-    root = Path(args.program_root).resolve()
-    checks: list[dict[str, Any]] = []
-    path = root / "教授研究/套磁目标.json"
+def _run_formal_loader(args: argparse.Namespace, checks: list[dict[str, Any]], name: str,
+                       script: str, cli_args: list[str]) -> None:
+    """Run the next stage's formal plan/input loader and require it to accept."""
+    consumer = Path(args.consumer_root or "").resolve() if args.consumer_root else None
+    if not consumer or not consumer.is_dir():
+        _check(checks, name, False, "consumer root with installed runner is required")
+        return
+    script_path = consumer / CONSUMER_SCRIPTS / script
+    if not script_path.is_file():
+        _check(checks, name, False, f"installed runner missing: {script_path}")
+        return
     try:
-        payload = _load(path)
-        targets = payload.get("targets", [])
-        target = next(row for row in targets if row.get("professor") == PROFESSOR)
-    except (OSError, json.JSONDecodeError, StopIteration, AttributeError) as exc:
-        _check(checks, "target_readable", False, str(exc))
-        return _finish(checks)
-    selected = target.get("selected_direction_ids", [])
-    _check(checks, "selected_direction", selected == [DIRECTION_ID], selected)
-    _check(checks, "target_note", any(row.get("user_note") ==
-           "I want to study adaptive and nonlinear extensions of this processing framework."
-           for row in target.get("directions", []) if isinstance(row, dict)))
-    _check(checks, "no_legacy_stage0_output", not (root / "教授研究/套磁候选.md").exists())
-    return _finish(checks, target_file=str(path))
+        completed = subprocess.run(
+            ["python3", str(script_path), *cli_args],
+            capture_output=True, text=True, check=False, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _check(checks, name, False, str(exc))
+        return
+    detail: Any = {"returncode": completed.returncode}
+    ok = completed.returncode == 0
+    if ok:
+        try:
+            payload = json.loads(completed.stdout)
+            status = payload.get("status") if isinstance(payload, dict) else None
+            ok = status is None or status == "ok"
+            detail["status"] = status
+        except json.JSONDecodeError:
+            ok = False
+            detail["stdout"] = "not a JSON payload"
+    _check(checks, name, ok, detail)
+
+
+def _stage1_snapshot_entry(root: Path, manifest: dict[str, Any],
+                           checks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    try:
+        snapshot = _load(root / SNAPSHOT_FILE)
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "stage1_snapshot_readable", False, str(exc))
+        return None
+    professor_rows = [row for row in snapshot.get("professors", [])
+                      if isinstance(row, dict) and row.get("professor") == PROFESSOR]
+    _check(checks, "stage1_snapshot_professor", len(professor_rows) == 1, len(professor_rows))
+    direction = None
+    if professor_rows:
+        direction = next((row for row in professor_rows[0].get("directions", [])
+                          if isinstance(row, dict) and row.get("direction_id") == DIRECTION_ID), None)
+        _check(checks, "stage1_snapshot_direction", direction is not None)
+    if direction:
+        candidate_keys = direction.get("candidate_keys", [])
+        _check(checks, "stage1_snapshot_covers_manifest_keys",
+               set(candidate_keys) >= set(manifest.get("item_keys", [])),
+               {"candidate_keys": candidate_keys, "item_keys": manifest.get("item_keys")})
+    return direction
 
 
 def _checkpoint_stage1_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
-    prof = _professor_dir(root)
-    snapshot_path = root / "教授研究/套磁阶段1候选.json"
-    try:
-        snapshot = _load(snapshot_path)
-        papers = _load(prof / "papers.json").get("papers", [])
-    except (OSError, json.JSONDecodeError, AttributeError) as exc:
-        _check(checks, "stage1_files_readable", False, str(exc))
+    manifest, manifest_checks = _manifest(root)
+    checks.extend(manifest_checks)
+    if manifest is None:
         return _finish(checks)
-    _check(checks, "snapshot_schema", snapshot.get("schema_version") == 1
-           and snapshot.get("kind") == "professor-contact-stage1")
-    professor_row = next((row for row in snapshot.get("professors", [])
-                          if isinstance(row, dict) and row.get("professor") == PROFESSOR), None)
-    _check(checks, "snapshot_professor", professor_row is not None)
-    direction = next((row for row in (professor_row or {}).get("directions", [])
-                      if isinstance(row, dict) and row.get("direction_id") == DIRECTION_ID), None)
-    _check(checks, "snapshot_direction", direction is not None)
-    if direction:
-        _check(checks, "snapshot_members", set(direction.get("candidate_keys", [])) == set(ITEM_KEYS), direction.get("candidate_keys"))
-        readiness = direction.get("pdf_readiness", {})
-        _check(checks, "pdf_readiness", set(readiness.get("usable_item_keys", [])) == set(ITEM_KEYS)
-               and readiness.get("missing_item_keys", []) == [], readiness)
-    by_key = {row.get("item_key"): row for row in papers if isinstance(row, dict)}
-    _check(checks, "collector_completed", by_key.get("BBBB2222", {}).get("pdf_status") == "downloaded")
-    if args.eval_response:
-        try:
-            response = _response(args)
-            payloads = _structured_values(response, {"collector_payload", "collector_request", "tool_payload"})
-            if isinstance(response, dict):
-                payloads.append(response)
-            exact = any(isinstance(row, dict) and row.get("folder_path") and row.get("pdf_only") is True
-                        and row.get("item_keys") == ["BBBB2222"] and "professors" not in row
-                        for row in payloads)
-            _check(checks, "collector_payload_contract", exact)
-        except (OSError, json.JSONDecodeError) as exc:
-            _check(checks, "eval_response_readable", False, str(exc))
-    return _finish(checks, snapshot_file=str(snapshot_path), papers=sorted(by_key))
+    _common_eval_gate(args, checks)
+    _stage1_snapshot_entry(root, manifest, checks)
+    # R1 continuity: the Stage 2 formal precondition loader must actually
+    # consume the snapshot, not a schema grep.
+    _run_formal_loader(args, checks, "stage2_precondition_loader_consumes_snapshot",
+                       "contact_stage1.py", ["verify", "--program-root", str(root)])
+    return _finish(checks, snapshot_file=str(root / SNAPSHOT_FILE))
 
 
 def _checkpoint_stage2_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
+    manifest, manifest_checks = _manifest(root)
+    checks.extend(manifest_checks)
+    if manifest is None:
+        return _finish(checks)
+    _common_eval_gate(args, checks)
     prof = _professor_dir(root)
+    pack_path = prof / INPUT_PACK_NAME
     try:
-        pack = _load(prof / "套磁候选输入.json")
+        pack = _load(pack_path)
     except (OSError, json.JSONDecodeError) as exc:
         _check(checks, "candidate_input_readable", False, str(exc))
         return _finish(checks)
-    if not isinstance(pack, dict):
-        _check(checks, "candidate_input_object", False, type(pack).__name__)
-        return _finish(checks)
-    _check(checks, "candidate_input_schema", pack.get("schema") == 2
-           and pack.get("kind") == INPUT_PACK_KIND
-           and pack.get("identity_version") == DIRECTION_IDENTITY_VERSION
-           and pack.get("managed_by") == "contact_state")
-    _check(checks, "candidate_input_runner_contract",
-           pack.get("professor") == PROFESSOR
-           and isinstance(pack.get("professor_dir"), str)
-           and isinstance(pack.get("papers"), dict))
-    directions = pack.get("directions")
-    direction = next((row for row in directions if isinstance(row, dict)
-                      and row.get("direction_id") == DIRECTION_ID), None) \
-        if isinstance(directions, list) else None
-    _check(checks, "candidate_input_direction", direction is not None)
-    _check(checks, "candidate_input_fingerprint",
-           isinstance(direction, dict)
-           and isinstance(direction.get("input_fingerprint"), str)
-           and bool(direction.get("input_fingerprint"))
-           and isinstance(direction.get("supporting_item_keys"), list))
-    _check(checks, "analysis_for_ready_paper", bool(list((prof / "论文分析").glob("AAAA1111*.md"))))
-    _check(checks, "future_work_sidecar", bool(list((prof / "论文分析").glob("AAAA1111*.future_work.json"))))
-    return _finish(checks, candidate_input=str(prof / "套磁候选输入.json"))
+    directions = pack.get("directions") if isinstance(pack, dict) else None
+    direction_present = isinstance(directions, list) and any(
+        isinstance(row, dict) and row.get("direction_id") == DIRECTION_ID for row in directions)
+    _check(checks, "candidate_input_has_machine_direction", direction_present)
+    # R2 continuity: the Stage 3 formal plan loader must actually consume the pack.
+    _run_formal_loader(args, checks, "stage3_plan_loader_consumes_input_pack",
+                       "contact_state.py", ["stage3-plan", "--professor-dir", str(prof)])
+    return _finish(checks, candidate_input=str(pack_path))
 
 
 def _checkpoint_stage3_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
-    path = _professor_dir(root) / "套磁候选状态.json"
+    _common_eval_gate(args, checks)
+    state_path = _professor_dir(root) / CANDIDATE_STATE_NAME
     try:
-        state = _load(path)
+        state = _load(state_path)
     except (OSError, json.JSONDecodeError) as exc:
         _check(checks, "candidate_state_readable", False, str(exc))
         return _finish(checks)
-    if not isinstance(state, dict):
-        _check(checks, "candidate_state_object", False, type(state).__name__)
-        return _finish(checks)
-    candidates = _candidate_rows(state)
-    _check(checks, "state_schema", state.get("schema") == 2
-           and state.get("kind") == CANDIDATE_STATE_KIND
-           and state.get("identity_version") == DIRECTION_IDENTITY_VERSION
-           and state.get("generator_contract_version") == STAGE3_GENERATOR_CONTRACT_VERSION)
-    _check(checks, "candidate_count", 3 <= len(candidates) <= 5, len(candidates))
-    _check(checks, "candidate_ids_stable", all(
-        isinstance(row, dict) and isinstance(row.get("id"), str) and row.get("id")
-        and row.get("direction_ids") == [DIRECTION_ID] for row in candidates))
-    directions = state.get("directions")
+    directions = state.get("directions") if isinstance(state, dict) else None
     direction = next((row for row in directions if isinstance(row, dict)
                       and row.get("direction_id") == DIRECTION_ID), None) \
         if isinstance(directions, list) else None
-    _check(checks, "direction_present", direction is not None)
-    validator = state.get("validator")
-    results = validator.get("results") if isinstance(validator, dict) else None
-    result = results.get(DIRECTION_ID) if isinstance(results, dict) else None
-    _check(checks, "validation_present", _valid_validation_record(result), result)
-    return _finish(checks, candidate_state=str(path), candidate_ids=[row.get("id") for row in candidates if isinstance(row, dict)])
-
-
-def _valid_validation_record(value: Any) -> bool:
-    if not isinstance(value, dict) or value.get("result") not in (
-            "pass", "fail_after_2_rounds", "skipped"):
-        return False
-    rounds = value.get("rounds")
-    if isinstance(rounds, bool) or not isinstance(rounds, int) or rounds < 0:
-        return False
-    result = value["result"]
-    if result == "pass" and rounds not in (1, 2):
-        return False
-    if result == "fail_after_2_rounds" and rounds != 2:
-        return False
-    if result == "skipped" and rounds > 2:
-        return False
-    return isinstance(value.get("issues"), list)
+    _check(checks, "candidate_state_has_machine_direction", direction is not None)
+    candidates = (direction or {}).get("candidates", [])
+    _check(checks, "candidate_state_offers_candidates",
+           isinstance(candidates, list) and bool(candidates), len(candidates))
+    return _finish(checks, candidate_state=str(state_path))
 
 
 def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
-    response = None
-    try:
-        response = _response(args)
-    except (OSError, json.JSONDecodeError) as exc:
-        _check(checks, "eval_response_readable", False, str(exc))
-    _check(checks, "selection_file_absent", not (root / "教授研究/套磁选择.json").exists())
-    _check(checks, "email_input_absent", not (root / "教授研究/邮件输入.json").exists())
-    _check(checks, "selection_request_structured", isinstance(response, (dict, list))
-           and _has_structured_key(response, {"pending_selection", "selection_request", "needs_input"}))
+    _common_eval_gate(args, checks)
+    # The run must end without auto-selecting: program-level canonical files
+    # stay absent.  Professor-dir same-name files are never consulted.
+    _check(checks, "selection_file_absent", not (root / PROGRAM_SELECTION_FILE).exists(),
+           str(root / PROGRAM_SELECTION_FILE))
+    _check(checks, "email_input_absent", not (root / PROGRAM_EMAIL_PACK_FILE).exists(),
+           str(root / PROGRAM_EMAIL_PACK_FILE))
     return _finish(checks)
-
-
-def _candidate_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
-    candidates = state.get("candidates", [])
-    if isinstance(candidates, dict):
-        candidates = candidates.get(DIRECTION_ID, candidates.get("items", []))
-    if not candidates:
-        directions = state.get("directions")
-        direction = next((row for row in directions if isinstance(row, dict)
-                          and row.get("direction_id") == DIRECTION_ID), None) \
-            if isinstance(directions, list) else None
-        candidates = (direction or {}).get("candidates", [])
-    return [row for row in candidates if isinstance(row, dict) and row.get("id")]
 
 
 def _checkpoint_make_stage4_selection(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
-    state_path = _professor_dir(root) / "套磁候选状态.json"
+    state_path = _professor_dir(root) / CANDIDATE_STATE_NAME
     try:
-        rows = sorted(_candidate_rows(_load(state_path)), key=lambda row: str(row["id"]))
-    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        state = _load(state_path)
+    except (OSError, json.JSONDecodeError) as exc:
         _check(checks, "candidate_state_readable", False, str(exc))
         return _finish(checks)
+    rows = sorted(_candidate_rows(state), key=lambda row: str(row["id"]))
     _check(checks, "candidate_available", bool(rows))
     if not rows:
         return _finish(checks)
@@ -463,107 +407,66 @@ def _checkpoint_make_stage4_selection(args: argparse.Namespace) -> dict[str, Any
     return _finish(checks, selected_id=selected["id"], output=str(output), payload=payload)
 
 
+def _candidate_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = state.get("candidates", [])
+    if isinstance(candidates, dict):
+        candidates = candidates.get(DIRECTION_ID, candidates.get("items", []))
+    if not candidates:
+        directions = state.get("directions")
+        direction = next((row for row in directions if isinstance(row, dict)
+                          and row.get("direction_id") == DIRECTION_ID), None) \
+            if isinstance(directions, list) else None
+        candidates = (direction or {}).get("candidates", [])
+    return [row for row in candidates if isinstance(row, dict) and row.get("id")]
+
+
 def _checkpoint_stage4_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
-    prof = _professor_dir(root)
+    _common_eval_gate(args, checks)
     try:
-        selection = _load(prof / "套磁选择.json")
-        email_input = _load(prof / "邮件输入.json")
+        selection = _load(root / PROGRAM_SELECTION_FILE)
+        email_input = _load(root / PROGRAM_EMAIL_PACK_FILE)
     except (OSError, json.JSONDecodeError) as exc:
-        _check(checks, "stage4_outputs_readable", False, str(exc))
+        _check(checks, "program_level_stage4_outputs_readable", False, str(exc))
         return _finish(checks)
-    _check(checks, "selection_has_direction", _contains_direction(selection))
-    emails = email_input.get("emails", email_input.get("messages", []))
-    if isinstance(emails, dict):
-        emails = list(emails.values())
-    _check(checks, "email_pack_nonempty", bool(emails), len(emails) if isinstance(emails, list) else type(emails).__name__)
-    evidence = [row.get("contact_evidence") for row in emails if isinstance(row, dict)] if isinstance(emails, list) else []
-    _check(checks, "contact_evidence_frozen", bool(evidence) and all(
-        isinstance(item, dict) and bool(item.get("record_fingerprint")) and isinstance(item.get("record"), dict)
-        for item in evidence), evidence)
-    return _finish(checks, selection_file=str(prof / "套磁选择.json"), email_count=len(emails) if isinstance(emails, list) else 0)
+    _check(checks, "selection_is_object", isinstance(selection, dict), type(selection).__name__)
+    emails = email_input.get("emails", []) if isinstance(email_input, dict) else []
+    _check(checks, "email_pack_nonempty", bool(emails), len(emails) if isinstance(emails, list) else "invalid")
+    # R4 continuity: the Stage 5 formal plan loader must actually consume the pack.
+    _run_formal_loader(args, checks, "stage5_plan_loader_consumes_email_pack",
+                       "contact_state.py", ["stage5-plan", "--program-root", str(root)])
+    return _finish(checks, selection_file=str(root / PROGRAM_SELECTION_FILE),
+                   email_pack=str(root / PROGRAM_EMAIL_PACK_FILE))
 
 
 def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
+    _common_eval_gate(args, checks)
     prof = _professor_dir(root)
-    # The installed runner writes final outputs directly in the professor
-    # directory (``套磁邮件.md`` / ``套磁跟进邮件.md``); accept the nested
-    # directory form too because profile inputs use ``套磁邮件/``.
     md_files = sorted(path for path in prof.glob("套磁*.md") if path.is_file())
-    md_files.extend(sorted(path for path in (prof / "套磁邮件").glob("套磁*.md") if path.is_file()))
-    txt_files = sorted(path for path in prof.glob("套磁*.txt") if path.is_file())
-    txt_files.extend(sorted(path for path in (prof / "套磁邮件").glob("套磁*.txt") if path.is_file()))
-    all_files = md_files + txt_files
-    initial_md = [path for path in md_files if "套磁邮件" in path.name and "跟进" not in path.name]
-    followup_md = [path for path in md_files if "跟进" in path.name or "follow" in path.name.lower()]
-    initial_txt = [path for path in txt_files if "套磁邮件" in path.name and "跟进" not in path.name]
-    followup_txt = [path for path in txt_files if "跟进" in path.name or "follow" in path.name.lower()]
-    _check(checks, "initial_email_output", bool(initial_md) and bool(initial_txt), [path.name for path in all_files])
-    _check(checks, "followup_email_output", bool(followup_md) and bool(followup_txt), [path.name for path in all_files])
-    text = "\n".join(path.read_text(encoding="utf-8", errors="replace") for path in all_files)
-    _check(checks, "no_unresolved_placeholders", "{{" not in text and "}}" not in text)
-    _check(checks, "pre_send_checklist", "送信前核对" in text or "send" in text.lower())
-    email_pack_path = prof / "邮件输入.json"
-    state_path = prof / "套磁邮件状态.json"
+    initial = [path for path in md_files
+               if INITIAL_EMAIL_MARKER in path.name and FOLLOWUP_EMAIL_MARKER not in path.name]
+    followup = [path for path in md_files if FOLLOWUP_EMAIL_MARKER in path.name]
+    _check(checks, "initial_email_artifact_exists", bool(initial), [path.name for path in md_files])
+    if args.require_followup:
+        _check(checks, "followup_email_artifact_exists", bool(followup),
+               [path.name for path in md_files])
     try:
-        email_pack = _load(email_pack_path)
-        email_state = _load(state_path)
+        email_pack = _load(root / PROGRAM_EMAIL_PACK_FILE)
     except (OSError, json.JSONDecodeError) as exc:
-        _check(checks, "email_state_and_pack_readable", False, str(exc))
-        return _finish(checks, email_files=[path.name for path in all_files],
-                       email_state=str(state_path))
-    _check(checks, "email_pack_object", isinstance(email_pack, dict), type(email_pack).__name__)
-    _check(checks, "email_state_object", isinstance(email_state, dict), type(email_state).__name__)
-    if not isinstance(email_pack, dict) or not isinstance(email_state, dict):
-        return _finish(checks, email_files=[path.name for path in all_files],
-                       email_state=str(state_path))
-    _check(checks, "email_pack_schema", email_pack.get("schema") == 2
-           and email_pack.get("kind") == "professor-contact-email-input"
-           and email_pack.get("identity_version") == DIRECTION_IDENTITY_VERSION)
-    _check(checks, "email_state_schema", email_state.get("schema") == 1
-           and isinstance(email_state.get("emails"), dict))
-    pack_emails = email_pack.get("emails", [])
-    if isinstance(pack_emails, dict):
-        pack_emails = list(pack_emails.values())
-    state_emails = email_state.get("emails", {}) if isinstance(email_state, dict) else {}
-    frozen_and_valid = True
-    invalid_details: list[Any] = []
-    for email in pack_emails if isinstance(pack_emails, list) else []:
-        if not isinstance(email, dict):
-            frozen_and_valid = False
-            invalid_details.append("email entry is not an object")
-            continue
-        email_id = email.get("email_id")
-        evidence = email.get("contact_evidence")
-        entry = state_emails.get(email_id) if isinstance(state_emails, dict) else None
-        initial_validation = entry.get("validation") if isinstance(entry, dict) else None
-        followup = entry.get("followup") if isinstance(entry, dict) else None
-        followup_validation = followup.get("validation") if isinstance(followup, dict) else None
-        valid_evidence = (isinstance(evidence, dict)
-                          and isinstance(evidence.get("record"), dict)
-                          and isinstance(evidence.get("record_fingerprint"), str)
-                          and bool(evidence.get("record_fingerprint")))
-        valid_source = (isinstance(email_id, str) and isinstance(email.get("source_hash"), str)
-                        and bool(email.get("source_hash")) and isinstance(entry, dict)
-                        and entry.get("input_fingerprint") == email.get("source_hash"))
-        valid_validation = (_valid_validation_record(initial_validation)
-                            and initial_validation.get("result") == "pass"
-                            and _valid_validation_record(followup_validation)
-                            and followup_validation.get("result") == "pass")
-        if not (valid_evidence and valid_source and valid_validation):
-            frozen_and_valid = False
-            invalid_details.append({"email_id": email_id, "evidence": valid_evidence,
-                                    "source": valid_source, "validation": valid_validation})
-    _check(checks, "email_entries_frozen_and_valid", bool(pack_emails) and frozen_and_valid,
-           invalid_details)
-    return _finish(checks, email_files=[path.name for path in all_files], email_state=str(state_path))
+        _check(checks, "frozen_email_pack_readable", False, str(exc))
+        return _finish(checks)
+    emails = email_pack.get("emails", []) if isinstance(email_pack, dict) else []
+    _check(checks, "frozen_email_pack_nonempty", bool(emails),
+           len(emails) if isinstance(emails, list) else "invalid")
+    return _finish(checks, email_files=[path.name for path in md_files],
+                   email_pack=str(root / PROGRAM_EMAIL_PACK_FILE))
 
 
 def _relation_rows(payload: Any) -> list[dict[str, Any]]:
-    """Extract formal spawn relations from adapter @9's normalized graph."""
+    """Extract formal spawnAgent relations from the adapter's normalized graph."""
     rows: list[dict[str, Any]] = []
     if not isinstance(payload, dict):
         return rows
@@ -602,6 +505,13 @@ def _graph_depth(edges: list[dict[str, Any]]) -> int:
     return max((longest_from(node, {node}) for node in adjacency), default=0)
 
 
+def _max_siblings(edges: list[dict[str, Any]]) -> int:
+    degree: dict[str, int] = {}
+    for edge in edges:
+        degree[edge["parent"]] = degree.get(edge["parent"], 0) + 1
+    return max(degree.values(), default=0)
+
+
 def _checkpoint_runtime_graph(args: argparse.Namespace) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     adapter = None
@@ -610,49 +520,74 @@ def _checkpoint_runtime_graph(args: argparse.Namespace) -> dict[str, Any]:
             adapter = _load(Path(args.adapter_output))
         except (OSError, json.JSONDecodeError) as exc:
             _check(checks, "adapter_evidence_readable", False, str(exc))
+            return _result("fail", checks)
     else:
         _check(checks, "adapter_evidence_supplied", False)
-    if args.eval_response:
-        try:
-            response = _load(Path(args.eval_response))
-            output = response.get("output") if isinstance(response, dict) else None
-            _check(checks, "raw_app_server_events_readable",
-                   isinstance(output, dict) and isinstance(output.get("app_server_events"), list))
-        except (OSError, json.JSONDecodeError) as exc:
-            _check(checks, "raw_evidence_readable", False, str(exc))
+        return _result("fail", checks)
+    fixture_status = adapter.get("fixture_status") if isinstance(adapter, dict) else None
+    if fixture_status == "INVALID_EVIDENCE":
+        return _result("fail", [{"name": "adapter_evidence_valid", "status": "fail",
+                                 "detail": "INVALID_EVIDENCE is corrupted machine evidence"}],
+                       classification="invalid_evidence")
+    if fixture_status == "BLOCKED_DEPENDENCY":
+        return _result("not_tested",
+                       [{"name": "adapter_evidence_valid", "status": "pass",
+                         "detail": "harness dependency unavailable; never a producer FAIL"}],
+                       classification="blocked_dependency")
+    _common_eval_gate(args, checks)
     delegation = adapter.get("delegation") if isinstance(adapter, dict) else None
-    basis = delegation.get("basis") if isinstance(delegation, dict) else None
-    children = delegation.get("child_thread_ids") if isinstance(delegation, dict) else None
-    delegation_ok = (isinstance(delegation, dict)
-                     and delegation.get("state") == "confirmed"
-                     and isinstance(basis, list)
-                     and "formal_spawn_relation" in basis
-                     and isinstance(children, list)
-                     and bool(children))
-    _check(checks, "adapter_delegation_confirmed", delegation_ok,
-           {"state": delegation.get("state") if isinstance(delegation, dict) else None,
-            "basis": basis, "child_thread_ids": children})
+    state = delegation.get("state") if isinstance(delegation, dict) else None
+    if state == "unobservable":
+        # Observation gap on this evidence surface: never a producer FAIL,
+        # never a retry signal (adapter @9 / issue #40 §2.4).
+        return _result("not_tested",
+                       [{"name": "formal_delegation_observed", "status": "pass",
+                         "detail": "delegation=unobservable is an observation state"}],
+                       classification="observability_gap",
+                       reason_code=(delegation or {}).get("reason_code"))
+    if state != "confirmed":
+        return _result("fail", [{"name": "adapter_delegation_dimension", "status": "fail",
+                                 "detail": f"delegation state {state!r} is not a supported value"}],
+                       classification="invalid_evidence")
     rows = _relation_rows(adapter)
-    formal = []
+    senders_by_child: dict[str, set[str]] = {}
     for row in rows:
-        parent = row.get("parent") or row.get("parent_id") or row.get("from") or row.get("caller")
-        child = row.get("child") or row.get("child_id") or row.get("to") or row.get("callee")
-        if parent and child:
-            formal.append({"parent": str(parent), "child": str(child), "kind": "spawnAgent"})
-    formal = list({(row["parent"], row["child"]): row for row in formal}.values())
-    _check(checks, "formal_delegation_edges", delegation_ok and len(formal) >= args.min_edges,
-           {"observed": len(formal), "required": args.min_edges})
-    depth = _graph_depth(formal)
-    _check(checks, "nested_depth", delegation_ok and depth >= args.required_depth,
+        child = row["child"]
+        for relation in adapter.get("dispatch", {}).get("thread_relations", []) \
+                if isinstance(adapter.get("dispatch"), dict) else []:
+            if (isinstance(relation, dict) and relation.get("tool") == "spawnAgent"
+                    and relation.get("status") == "completed"
+                    and isinstance(relation.get("receiver_thread_ids"), list)
+                    and child in relation["receiver_thread_ids"]):
+                sender = relation.get("sender_thread_id")
+                if isinstance(sender, str) and sender:
+                    senders_by_child.setdefault(child, set()).add(sender)
+    conflicted = sorted(child for child, senders in senders_by_child.items() if len(senders) > 1)
+    if conflicted:
+        return _result("fail", [{"name": "formal_ownership_consistent", "status": "fail",
+                                 "detail": f"conflicting formal ownership for children: {conflicted}"}],
+                       classification="invalid_evidence")
+    _check(checks, "formal_delegation_edges", len(rows) >= args.min_edges,
+           {"observed": len(rows), "required": args.min_edges})
+    depth = _graph_depth(rows)
+    _check(checks, "nested_depth", depth >= args.required_depth,
            {"observed": depth, "required": args.required_depth})
-    return _finish(checks, formal_relations=formal)
+    siblings = _max_siblings(rows)
+    _check(checks, "minimum_siblings", siblings >= args.min_siblings,
+           {"observed": siblings, "required": args.min_siblings})
+    payload = _finish(checks, formal_relations=rows, formal_depth=depth, formal_edges=len(rows),
+                      classification="formal_delegation_confirmed")
+    # Identity diagnostics are recorded verbatim and never participate in the
+    # verdict (issue #40 §2.3).
+    dispatch = adapter.get("dispatch") if isinstance(adapter, dict) else None
+    identity = dispatch.get("agent_identity") if isinstance(dispatch, dict) else None
+    payload["observed"]["identity_diagnostics"] = identity
+    return payload
 
 
 CHECKPOINTS = {
     "install": _checkpoint_install,
     "initial": _checkpoint_initial,
-    "stage0-needs-input": _checkpoint_stage0_needs_input,
-    "stage0-final": _checkpoint_stage0_final,
     "stage1-final": _checkpoint_stage1_final,
     "stage2-final": _checkpoint_stage2_final,
     "stage3-final": _checkpoint_stage3_final,
@@ -662,6 +597,8 @@ CHECKPOINTS = {
     "stage5-final": _checkpoint_stage5_final,
     "runtime-graph": _checkpoint_runtime_graph,
 }
+
+EXIT_CODES = {"pass": 0, "fail": 1, "not_tested": 2}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -675,6 +612,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--min-edges", type=int, default=1)
     parser.add_argument("--required-depth", type=int, default=1)
+    parser.add_argument("--min-siblings", type=int, default=1)
+    parser.add_argument("--require-followup", action="store_true")
     return parser
 
 
@@ -689,7 +628,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         payload = _result("fail", [{"name": "verifier_exception", "status": "fail", "detail": str(exc)}])
     print(json.dumps(payload, ensure_ascii=False, indent=1))
-    return 0 if payload.get("status") == "pass" else 1
+    return EXIT_CODES.get(payload.get("status"), 1)
 
 
 if __name__ == "__main__":
