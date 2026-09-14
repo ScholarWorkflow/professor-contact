@@ -66,6 +66,19 @@ class Issue32EvalRequestTests(unittest.TestCase):
             with self.assertRaises(module.RequestBuildError):
                 module.discover_chrome_server_id(root)
 
+    def test_selects_page_scoped_server_from_generated_chrome_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "consumer"
+            root.mkdir()
+            (root / "config.toml").write_text(
+                '[mcp_servers."chrome-devtools"]\n'
+                'args = ["--scan"]\n'
+                '[mcp_servers."pdf-chrome"]\n'
+                'args = ["--page-id"]\n'
+                '[mcp_servers."sd-chrome"]\n'
+                'args = ["--output-mode=compact"]\n', encoding="utf-8")
+            self.assertEqual(module.discover_chrome_server_id(root), "pdf-chrome")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,8 +36,8 @@ def _toml_files(root: Path) -> list[Path]:
 
 
 def discover_chrome_server_id(consumer_root: Path) -> str:
-    """Return the unique generated MCP server id carrying Chrome settings."""
-    matches: list[str] = []
+    """Return the generated MCP server id used for page-scoped Chrome work."""
+    matches: list[tuple[str, dict[str, object]]] = []
     for path in _toml_files(consumer_root):
         try:
             payload = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -58,13 +58,22 @@ def discover_chrome_server_id(consumer_root: Path) -> str:
                 "chrome" in name or
                 any("chrome" in key or "cdp" in key or "profile" in key for key in env_names)
             )
-            if chrome_signal and str(server_id) not in matches:
-                matches.append(str(server_id))
-    if len(matches) != 1:
+            if chrome_signal and all(str(server_id) != item[0] for item in matches):
+                matches.append((str(server_id), config))
+    if len(matches) == 1:
+        return matches[0][0]
+    page_id_matches = [
+        server_id for server_id, config in matches
+        if isinstance(config.get("args"), list) and "--page-id" in config["args"]
+    ]
+    if len(page_id_matches) == 1:
+        return page_id_matches[0]
+    ids = [server_id for server_id, _ in matches]
+    if len(ids) != 1:
         raise RequestBuildError(
-            "expected exactly one Chrome MCP server in clean consumer config; "
-            f"found {matches!r}")
-    return matches[0]
+            "could not uniquely identify the page-scoped Chrome MCP server; "
+            f"found {ids!r}, page-id matches={page_id_matches!r}")
+    return ids[0]
 
 
 def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
