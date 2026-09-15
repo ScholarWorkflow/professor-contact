@@ -8,6 +8,7 @@ AGENTS_DIR = REPO_ROOT / ".apm" / "agents"
 SKILL_PATH = REPO_ROOT / ".apm" / "skills" / "professor-contact" / "SKILL.md"
 STAGE0_AGENT = AGENTS_DIR / "professor-contact.agent.md"
 STAGE1_AGENT = AGENTS_DIR / "professor-contact-downloader.agent.md"
+STAGE2_AGENT = AGENTS_DIR / "professor-contact-analyzer.agent.md"
 
 
 def _read(path: Path) -> str:
@@ -79,6 +80,32 @@ class Stage01CallerContractTests(unittest.TestCase):
             # the current workspace, with the consumer install location named.
             self.assertIn(placeholder, text)
             self.assertIn(".agents/skills/professor-contact", text)
+
+    def test_stage2_analyzer_helper_invocations_execute_the_installed_skill_scripts(self):
+        """Stage 2 shares the clean-consumer source provenance contract.
+
+        The 2026-09-15 issue #39 PC39-R1 runtime run machine-observed the same
+        failure already fixed for Stage 0-1: the analyzer's delivered command
+        blocks invoked `skillrepo exec professor-contact .apm/skills/...`,
+        which resolved outside the consumer (EACCES) and drove the model to
+        run deterministic runners from a development checkout. Stage 2's
+        deterministic helpers must execute from this skill's installed
+        directory like every other stage.
+        """
+        placeholder = "<professor-contact-skill-dir>"
+        text = _read(STAGE2_AGENT)
+        commands = self._command_blocks(text)
+        self.assertNotIn("skillrepo exec", commands)
+        self.assertNotIn(".apm/skills/", commands)
+        for helper in ("contact_targets.py", "contact_stage1.py", "contact_state.py",
+                       "stage2_input_router.py", "stage2_chatgpt_handoff.py"):
+            self.assertIn(
+                f"python3 {placeholder}/scripts/{helper}",
+                commands,
+                f"analyzer: {helper} must be invoked from this skill's installed directory",
+            )
+        self.assertIn(placeholder, text)
+        self.assertIn(".agents/skills/professor-contact", text)
 
     def test_stage0_and_stage1_do_not_depend_on_invented_codex_event_fields(self):
         text = "\n".join((_read(STAGE0_AGENT), _read(STAGE1_AGENT), _read(SKILL_PATH)))

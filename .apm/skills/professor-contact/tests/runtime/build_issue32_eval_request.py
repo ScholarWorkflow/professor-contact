@@ -27,8 +27,14 @@ def _toml_string(value: str) -> str:
 
 
 def _toml_key_segment(value: str) -> str:
-    """Quote a dynamic dotted-key segment, such as an MCP server id."""
-    return json.dumps(str(value), ensure_ascii=False)
+    """Return a Codex CLI-compatible bare-key MCP server id."""
+    value = str(value)
+    if not value or any(char not in "abcdefghijklmnopqrstuvwxyz"
+                        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for char in value):
+        raise RequestBuildError(
+            "MCP server id cannot be represented safely in a dotted Codex config override: "
+            f"{value!r}")
+    return value
 
 
 def _toml_files(root: Path) -> list[Path]:
@@ -87,10 +93,22 @@ def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
         raise RequestBuildError(f"consumer root does not exist: {consumer_root}")
     server_id = discover_chrome_server_id(consumer_root)
     server_key = _toml_key_segment(server_id)
+    # The eval-server passes this as a per-run config override.  Without an
+    # explicit trust entry, Codex does not load the clean consumer's
+    # `.codex/config.toml`, so the MCP env leaves below become an env-only
+    # table and fail configuration parsing.
+    project_trust = (
+        "projects=" + "{" + _toml_string(str(consumer_root)) +
+        '={trust_level="trusted"}}'
+    )
     config_values = [
         f"model_reasoning_effort={_toml_string(reasoning)}",
+        project_trust,
         f"shell_environment_policy.set.ZOTERO_HTTP_URL={_toml_string(zotero_http_url)}",
         f"shell_environment_policy.set.ZOTERO_MCP_URL={_toml_string(zotero_mcp_url)}",
+        # `--sandbox workspace-write` alone does not grant network access; the
+        # Zotero fixture endpoints stay unreachable without this override.
+        "sandbox_workspace_write.network_access=true",
         f"shell_environment_policy.set.NPM_CONFIG_CACHE={_toml_string(npm_cache)}",
         f"mcp_servers.{server_key}.env.CHROME_PROFILE_DIR={_toml_string(chrome_profile_dir)}",
         f"mcp_servers.{server_key}.env.CHROME_CDP_PORT={_toml_string(chrome_cdp_port)}",

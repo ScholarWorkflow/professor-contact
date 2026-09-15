@@ -14,14 +14,14 @@ spec.loader.exec_module(module)
 
 
 class Issue32EvalRequestTests(unittest.TestCase):
-    def test_discovers_actual_chrome_server_and_builds_quoted_command(self):
+    def test_discovers_actual_chrome_server_and_builds_bare_key_command(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "consumer"
             (root / ".codex").mkdir(parents=True)
             (root / ".codex/config.toml").write_text(
-                '[mcp_servers."actual.browser.server"]\n'
+                '[mcp_servers."actual-browser-server"]\n'
                 'command = "npx"\n'
-                '[mcp_servers."actual.browser.server".env]\n'
+                '[mcp_servers."actual-browser-server".env]\n'
                 'CHROME_PROFILE_DIR = "/tmp/profile"\n'
                 'CHROME_CDP_PORT = "9222"\n', encoding="utf-8")
             prompt = Path(directory) / "prompt.md"
@@ -40,19 +40,28 @@ class Issue32EvalRequestTests(unittest.TestCase):
             self.assertNotIn("exec", argv[:2])
             assignments = [argv[index + 1] for index, value in enumerate(argv[:-1])
                            if value == "--config"]
-            self.assertEqual(len(assignments), 6)
+            self.assertEqual(len(assignments), 8)
             parsed = [tomllib.loads(f"{assignment}\n") for assignment in assignments]
             self.assertEqual(parsed[0]["model_reasoning_effort"], "low")
-            self.assertEqual(parsed[1]["shell_environment_policy"]["set"]["ZOTERO_HTTP_URL"],
+            project_trust = parsed[1]["projects"][str(root.resolve())]
+            self.assertEqual(project_trust["trust_level"], "trusted")
+            self.assertEqual(parsed[2]["shell_environment_policy"]["set"]["ZOTERO_HTTP_URL"],
                              "http://127.0.0.1:9000")
-            self.assertEqual(parsed[2]["shell_environment_policy"]["set"]["ZOTERO_MCP_URL"],
+            self.assertIs(type(parsed[2]["shell_environment_policy"]["set"]["ZOTERO_HTTP_URL"]), str)
+            self.assertEqual(parsed[3]["shell_environment_policy"]["set"]["ZOTERO_MCP_URL"],
                              "http://127.0.0.1:9001")
-            self.assertEqual(parsed[3]["shell_environment_policy"]["set"]["NPM_CONFIG_CACHE"],
+            self.assertIs(type(parsed[3]["shell_environment_policy"]["set"]["ZOTERO_MCP_URL"]), str)
+            # `--sandbox workspace-write` needs the explicit network override
+            # encoded as a TOML boolean, not a quoted string.
+            network_access = parsed[4]["sandbox_workspace_write"]["network_access"]
+            self.assertIs(type(network_access), bool)
+            self.assertIs(network_access, True)
+            self.assertEqual(parsed[5]["shell_environment_policy"]["set"]["NPM_CONFIG_CACHE"],
                              '/tmp/npm "cache"')
-            self.assertEqual(parsed[4]["mcp_servers"]["actual.browser.server"]["env"]["CHROME_PROFILE_DIR"],
+            self.assertEqual(parsed[6]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_PROFILE_DIR"],
                              '/tmp/chrome "profile"')
-            self.assertIs(type(parsed[5]["mcp_servers"]["actual.browser.server"]["env"]["CHROME_CDP_PORT"]), str)
-            self.assertEqual(parsed[5]["mcp_servers"]["actual.browser.server"]["env"]["CHROME_CDP_PORT"], "9333")
+            self.assertIs(type(parsed[7]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_CDP_PORT"]), str)
+            self.assertEqual(parsed[7]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_CDP_PORT"], "9333")
             self.assertEqual(json.loads(output.read_text())["command"], command)
 
     def test_ambiguous_chrome_configuration_is_blocked(self):
