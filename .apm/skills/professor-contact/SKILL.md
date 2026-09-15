@@ -346,7 +346,9 @@ task(subagent_type: "professor-contact", prompt: "folder_path: <program-root or 
 
 # 阶段 1：方向候选集 + 定向补 PDF（全部候选已有 PDF 时自动 no-op；默认只使用合法来源）
 # 有本轮显式网络访问决定时，追加同值的 access_mode 行；缺省时不要写该行
-task(subagent_type: "professor-contact-downloader", prompt: "folder_path: <...>\nprofessors: <可选，逗号分隔精确教授名>\nnamed_papers_file: <可选，用户点名论文 JSON 绝对路径>\naccess_mode: <oa_only|allow_non_oa>")
+task(subagent_type: "professor-contact-downloader", prompt: "folder_path: <...>\nprofessors: <可选，逗号分隔精确教授名>\nnamed_papers_file: <可选，用户点名论文 JSON 绝对路径>")
+# 仅当 caller 显式提供合法值时，向该 prompt 追加这一行；缺省时不要追加：
+# access_mode: <oa_only|allow_non_oa>
 
 # 阶段 2：分析（交互式 caller 已在此之前把 handoff 模式问好；非交互缺省 continue）
 task(subagent_type: "professor-contact-analyzer", prompt: "folder_path: <...>\nprofessors: <可选，逗号分隔精确教授名>\nchatgpt_handoff: continue|wait（非交互缺省 continue）\nchatgpt_result: <匹配 result ZIP 绝对路径，可选，仅 resume>\npaper_analysis: relevant|all（可选，缺省 relevant）\ngap_scope: relevant|selected_direction|all（可选，缺省 selected_direction）\nfreshness_scope: shortlist|full（可选，缺省 shortlist）\nkb_import: true|false（可选，缺省 false）")

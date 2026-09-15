@@ -111,14 +111,17 @@ Only when `action == "pdf_fill_needed"` may the downloader consume or validate
 
 ```text
 task(subagent_type: "professor-collector",
-     prompt: "folder_path: <program_root>\npdf_only: true\nitem_keys: <comma-separated missing_item_keys>\naccess_mode: <oa_only|allow_non_oa>")
+     prompt: "folder_path: <program_root>\npdf_only: true\nitem_keys: <comma-separated missing_item_keys>")
+# If the caller explicitly supplied a legal access_mode, append this exact line
+# to the prompt; when omitted, do not add the line:
+# access_mode: <oa_only|allow_non_oa>
 ```
 
 The `access_mode` line above is included only when the caller explicitly
 provided a legal value, and is copied verbatim; when omitted, the line is
 absent from the Task prompt.
 
-**Codex (non-interactive)** — delegate the fill to the installed named custom agent `professor-collector` with the exact business input above, including the caller-provided legal `access_mode` line when present and omitting it when absent (for example: “Delegate the PDF fill to the installed custom agent `professor-collector` with the input above, and wait for its result before continuing”). A non-interactive success path receives the explicit caller decision; wait for that child's result before continuing. Do not inline-simulate `professor-collector` in this parent agent, do not copy its agent body into your own instructions, and do not rely on any undocumented spawn API or event field.
+**Codex (non-interactive)** — delegate the fill to the installed named custom agent `professor-collector` with the exact item-scoped business input (`folder_path`, `pdf_only: true`, and `item_keys`) above, appending the caller-provided legal `access_mode` line when present and omitting it when absent (for example: “Delegate the PDF fill to the installed custom agent `professor-collector` with the input above, and wait for its result before continuing”). A non-interactive success path receives the explicit caller decision; wait for that child's result before continuing. Do not inline-simulate `professor-collector` in this parent agent, do not copy its agent body into your own instructions, and do not rely on any undocumented spawn API or event field.
 
 - This is the **item-scoped PDF fill fast path**: the collector maps the keys back to existing `papers.json` entries, reactivates only in-scope `deferred` papers, and downloads only these items. It skips professor-list parsing, keep-list rewriting, collection preparation, and program-root-wide tagging by contract.
 - **Never pass `professors` together with `item_keys`** — professor keep-list semantics belong to Stage 0 and the earlier pipeline runs, not to Stage 1 PDF assurance.
