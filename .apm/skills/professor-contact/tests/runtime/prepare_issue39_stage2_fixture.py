@@ -2,11 +2,11 @@
 """Prepare the producer-owned prerequisite for issue #39 PC39-R1.
 
 The runtime smoke must start Stage 2 from a valid product state without
-running the Stage 1 downloader/collector LLM chain.  The disposable Zotero
-fixture setup supplies real item and attachment keys in a small JSON config;
-this helper binds those keys to synthetic program inputs, runs the product's
-Stage 0 and Stage 1 deterministic runners at the final path, and records the
-resulting provenance.
+running the Stage 1 downloader/collector LLM chain.  The seed helper supplies
+real dynamically created Zotero item keys in a small JSON config; this helper
+binds those keys to synthetic program inputs, runs the product's Stage 0 and
+Stage 1 deterministic runners from the exact final SHA installed in the clean
+consumer, and records the resulting provenance.
 
 This helper does not start Zotero, create MCP data, proxy production ports, or
 write any Stage 2 product output.  The fixture setup owns the external Zotero
@@ -26,7 +26,7 @@ from urllib.parse import urlsplit
 
 
 HELPER_ID = "tests/runtime/prepare_issue39_stage2_fixture.py"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ITEM_CONFIG_SCHEMA_VERSION = 1
 FIXTURE_REPOSITORY = "skills-test-fixtures"
 FIXTURE_REVISION = "f412b79fde390dfcaa73fa7c4bc9bd10bd1f8972"
@@ -37,6 +37,7 @@ LEGACY_ITEM_KEYS = {"AAAA1111", "BBBB2222"}
 PRODUCTION_ZOTERO_PORTS = {23119, 23120}
 ITEM_COUNT = 2
 FILL_STATUS = "pending"
+RUNNER_SCRIPTS = ("scripts/contact_targets.py", "scripts/contact_stage1.py")
 STAGE2_OUTPUTS = (
     Path("教授研究/X分野/Example Professor/套磁候选输入.json"),
     Path("教授研究/X分野/Example Professor/套磁候选状态.json"),
@@ -127,7 +128,7 @@ def validate_runtime_endpoints(zotero_http_url: str, zotero_mcp_url: str) -> Non
 
 
 def validate_items_config(source: Path | str | dict) -> dict:
-    """Validate the dynamic item/attachment provenance from the fixture."""
+    """Validate the dynamic item provenance recorded by the seed helper."""
     config = read_json(source)
     if not isinstance(config, dict):
         raise SetupError("zotero items config must be a JSON object")
@@ -140,6 +141,10 @@ def validate_items_config(source: Path | str | dict) -> dict:
         raise SetupError(
             "fixture_revision must remain pinned to "
             f"{FIXTURE_REPOSITORY}@{FIXTURE_REVISION}")
+    if "attachment_keys" in config:
+        raise SetupError(
+            "attachment_keys must not appear in a PC39 config; issue #39 does "
+            "not use Zotero attachments")
 
     def string_list(field: str) -> list[str]:
         value = config.get(field)
@@ -168,16 +173,6 @@ def validate_items_config(source: Path | str | dict) -> dict:
     run_id = config.get("fixture_run_id")
     if not isinstance(run_id, str) or not run_id.strip():
         raise SetupError("fixture_run_id must be a non-empty string")
-    attachments = config.get("attachment_keys")
-    if not isinstance(attachments, dict):
-        raise SetupError("attachment_keys must be an object mapping every item key")
-    if set(attachments) != set(item_keys):
-        raise SetupError("attachment_keys must cover exactly every item key")
-    for item_key, attachment_key in attachments.items():
-        if not isinstance(attachment_key, str) or not attachment_key.strip():
-            raise SetupError(f"attachment key for {item_key} must be a non-empty string")
-        if attachment_key in LEGACY_ITEM_KEYS:
-            raise SetupError("attachment_keys contains a legacy fake key")
     return {
         "schema_version": ITEM_CONFIG_SCHEMA_VERSION,
         "fixture_repository": FIXTURE_REPOSITORY,
@@ -187,8 +182,26 @@ def validate_items_config(source: Path | str | dict) -> dict:
         "ready_item_keys": ready_item_keys,
         "fill_target_item_key": fill_target,
         "fill_target_pdf_status": FILL_STATUS,
-        "attachment_keys": dict(attachments),
     }
+
+
+def validate_installed_skill_dir(skill_dir: Path | str) -> dict:
+    """Resolve the clean-consumer installed skill dir and hash its runners.
+
+    The deterministic Stage 0/1 runners must execute from the exact final SHA
+    installed inside the clean consumer — never from the producer checkout the
+    helper itself happens to live in.
+    """
+    resolved = Path(skill_dir).resolve()
+    if not resolved.is_dir():
+        raise SetupError(f"professor-contact skill dir does not exist: {resolved}")
+    runner_records = []
+    for relative in RUNNER_SCRIPTS:
+        script = resolved / relative
+        if not script.is_file():
+            raise SetupError(f"installed skill dir is missing runner: {script}")
+        runner_records.append({"path": relative, "sha256": _sha256_file(script)})
+    return {"path": str(resolved), "runner_scripts": runner_records}
 
 
 def _render_text_pdf(lines: list[str]) -> bytes:
@@ -344,9 +357,8 @@ def _write_raw_inputs(root: Path, items: dict) -> list[dict[str, str]]:
     ]
 
 
-def _run_stage0(root: Path) -> dict:
-    runtime_dir = Path(__file__).resolve().parent
-    script = runtime_dir.parent.parent / "scripts" / "contact_targets.py"
+def _run_stage0(root: Path, skill_dir: Path) -> dict:
+    script = skill_dir / "scripts" / "contact_targets.py"
     preview = root / "教授研究" / "X分野" / PROFESSOR / "方向预筛.json"
     selection = {"direction_ids": [DIRECTION_ID], "notes": {DIRECTION_ID: FIXED_NOTE}}
     with tempfile.TemporaryDirectory(prefix="pc39-stage0-") as directory:
@@ -362,9 +374,8 @@ def _run_stage0(root: Path) -> dict:
     return {"status": result.get("status"), "result": result, "target_file": str(target)}
 
 
-def _run_stage1(root: Path) -> dict:
-    runtime_dir = Path(__file__).resolve().parent
-    script = runtime_dir.parent.parent / "scripts" / "contact_stage1.py"
+def _run_stage1(root: Path, skill_dir: Path) -> dict:
+    script = skill_dir / "scripts" / "contact_stage1.py"
     built = _run_json(script, [
         "build", "--program-root", root, "--professors", PROFESSOR,
     ])
@@ -380,20 +391,22 @@ def _run_stage1(root: Path) -> dict:
 
 
 def prepare_stage2_prerequisite(*, program_root: Path,
+                                professor_contact_skill_dir: Path | str,
                                 zotero_items_config: Path | str | dict,
                                 zotero_http_url: str,
                                 zotero_mcp_url: str,
-                                output: Path,
-                                professor_research_sha: str = "") -> dict:
+                                output: Path) -> dict:
     """Build and verify the complete producer-owned PC39-R1 local input."""
     validate_runtime_endpoints(zotero_http_url, zotero_mcp_url)
+    installed_skill = validate_installed_skill_dir(professor_contact_skill_dir)
     items = validate_items_config(zotero_items_config)
     root = _prepare_program_root(program_root)
     raw_hashes = _write_raw_inputs(root, items)
-    stage0 = _run_stage0(root)
+    skill_dir = Path(installed_skill["path"])
+    stage0 = _run_stage0(root, skill_dir)
     if stage0.get("status") != "ok":
         raise SetupError(f"Stage 0 setup failed: {stage0}")
-    stage1 = _run_stage1(root)
+    stage1 = _run_stage1(root, skill_dir)
     stage2_paths = [str(root / relative) for relative in STAGE2_OUTPUTS]
     if any(Path(path).exists() for path in stage2_paths):
         raise SetupError("Stage 2 prerequisite unexpectedly contains a product output")
@@ -410,11 +423,10 @@ def prepare_stage2_prerequisite(*, program_root: Path,
         "fixture_run_id": items["fixture_run_id"],
         "zotero_http_url": zotero_http_url,
         "zotero_mcp_url": zotero_mcp_url,
-        "professor_research_sha": professor_research_sha,
+        "installed_skill": installed_skill,
         "item_keys": items["item_keys"],
         "ready_item_keys": items["ready_item_keys"],
         "fill_target_item_key": items["fill_target_item_key"],
-        "attachment_keys": items["attachment_keys"],
         "raw_input_hashes": raw_hashes,
         "stage0": stage0,
         "stage1": stage1,
@@ -431,10 +443,11 @@ def prepare_stage2_prerequisite(*, program_root: Path,
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Prepare the issue #39 Stage 2 smoke prerequisite")
     parser.add_argument("--program-root", type=Path, required=True)
+    parser.add_argument("--professor-contact-skill-dir", type=Path, required=True,
+                        help="installed skill dir inside the clean consumer")
     parser.add_argument("--zotero-items-config", type=Path, required=True)
     parser.add_argument("--zotero-http-url", required=True)
     parser.add_argument("--zotero-mcp-url", required=True)
-    parser.add_argument("--professor-research-sha", default="")
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -444,10 +457,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         evidence = prepare_stage2_prerequisite(
             program_root=args.program_root,
+            professor_contact_skill_dir=args.professor_contact_skill_dir,
             zotero_items_config=args.zotero_items_config,
             zotero_http_url=args.zotero_http_url,
             zotero_mcp_url=args.zotero_mcp_url,
-            professor_research_sha=args.professor_research_sha,
             output=args.output,
         )
     except Exception as exc:

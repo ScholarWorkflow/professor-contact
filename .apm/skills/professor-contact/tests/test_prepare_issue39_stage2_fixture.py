@@ -3,9 +3,14 @@
 The runtime case must enter the installed analyzer with a product-built Stage 0
 target and Stage 1 snapshot.  This test keeps that setup separate from the
 Stage 1 LLM download/collector chain and binds the program to dynamic Zotero
-fixture keys instead of the old fake keys.
+fixture keys instead of the old fake keys.  The deterministic Stage 0/1 runners
+must execute from the exact final SHA installed inside the clean consumer, and
+the setup must not depend on caller-supplied dependency SHAs or Zotero
+attachments.
 """
+import hashlib
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,6 +21,8 @@ HELPER_PATH = TESTS_DIR / "runtime" / "prepare_issue39_stage2_fixture.py"
 spec = importlib.util.spec_from_file_location("prepare_issue39_stage2_fixture", HELPER_PATH)
 helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
+
+SKILL_DIR = TESTS_DIR.parent
 
 
 def items_config(run_id="fixture-run-39"):
@@ -28,10 +35,6 @@ def items_config(run_id="fixture-run-39"):
         "ready_item_keys": ["ZK9QA2XA"],
         "fill_target_item_key": "ZK8PB4YB",
         "fill_target_pdf_status": "pending",
-        "attachment_keys": {
-            "ZK9QA2XA": "ATT-ZK9QA2XA",
-            "ZK8PB4YB": "ATT-ZK8PB4YB",
-        },
     }
 
 
@@ -42,10 +45,10 @@ class PrepareIssue39Stage2FixtureTests(unittest.TestCase):
             evidence_path = Path(directory) / "output" / "setup.json"
             evidence = helper.prepare_stage2_prerequisite(
                 program_root=root,
+                professor_contact_skill_dir=SKILL_DIR,
                 zotero_items_config=items_config(),
                 zotero_http_url="http://127.0.0.1:24119",
-                zotero_mcp_url="http://127.0.0.1:24120/mcp",
-                professor_research_sha="producer-sha-for-test",
+                zotero_mcp_url="http://127.0.0.1:24122/mcp",
                 output=evidence_path,
             )
 
@@ -62,7 +65,16 @@ class PrepareIssue39Stage2FixtureTests(unittest.TestCase):
             self.assertEqual(evidence["stage0"]["status"], "ok")
             self.assertEqual(evidence["stage1"]["build"]["status"], "ok")
             self.assertEqual(evidence["stage1"]["verify"]["status"], "ok")
-            self.assertEqual(evidence["professor_research_sha"], "producer-sha-for-test")
+            self.assertNotIn("professor_research_sha", evidence)
+            self.assertNotIn("attachment_keys", evidence)
+
+            installed = evidence["installed_skill"]
+            self.assertEqual(installed["path"], str(SKILL_DIR.resolve()))
+            recorded = {row["path"]: row["sha256"] for row in installed["runner_scripts"]}
+            for name in ("scripts/contact_targets.py", "scripts/contact_stage1.py"):
+                actual = hashlib.sha256(
+                    (SKILL_DIR / name).read_bytes()).hexdigest()
+                self.assertEqual(recorded[name], actual)
             self.assertTrue(evidence_path.is_file())
 
             program = root / "教授研究" / "X分野" / "Example Professor"
@@ -87,9 +99,6 @@ class PrepareIssue39Stage2FixtureTests(unittest.TestCase):
         config = items_config()
         config["item_keys"] = ["AAAA1111", "ZK8PB4YB"]
         config["ready_item_keys"] = ["AAAA1111"]
-        config["attachment_keys"] = {
-            "AAAA1111": "ATT-AAAA1111", "ZK8PB4YB": "ATT-ZK8PB4YB",
-        }
         with self.assertRaises(helper.SetupError):
             helper.validate_items_config(config)
 
@@ -98,6 +107,35 @@ class PrepareIssue39Stage2FixtureTests(unittest.TestCase):
         config["fixture_revision"] = "main"
         with self.assertRaises(helper.SetupError):
             helper.validate_items_config(config)
+
+    def test_rejects_attachment_keys_requirements(self):
+        config = items_config()
+        config["attachment_keys"] = {"ZK9QA2XA": "ATT-ZK9QA2XA",
+                                     "ZK8PB4YB": "ATT-ZK8PB4YB"}
+        with self.assertRaises(helper.SetupError):
+            helper.validate_items_config(config)
+
+    def test_requires_an_existing_installed_skill_dir_with_runners(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(helper.SetupError):
+                helper.prepare_stage2_prerequisite(
+                    program_root=Path(directory) / "program",
+                    professor_contact_skill_dir=Path(directory) / "absent",
+                    zotero_items_config=items_config(),
+                    zotero_http_url="http://127.0.0.1:24119",
+                    zotero_mcp_url="http://127.0.0.1:24122/mcp",
+                    output=Path(directory) / "setup.json")
+        with tempfile.TemporaryDirectory() as directory:
+            empty_skill = Path(directory) / "skill"
+            (empty_skill / "scripts").mkdir(parents=True)
+            with self.assertRaises(helper.SetupError):
+                helper.prepare_stage2_prerequisite(
+                    program_root=Path(directory) / "program",
+                    professor_contact_skill_dir=empty_skill,
+                    zotero_items_config=items_config(),
+                    zotero_http_url="http://127.0.0.1:24119",
+                    zotero_mcp_url="http://127.0.0.1:24122/mcp",
+                    output=Path(directory) / "setup.json")
 
 
 if __name__ == "__main__":
