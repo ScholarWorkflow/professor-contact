@@ -93,8 +93,17 @@ def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
         raise RequestBuildError(f"consumer root does not exist: {consumer_root}")
     server_id = discover_chrome_server_id(consumer_root)
     server_key = _toml_key_segment(server_id)
+    # The eval-server passes this as a per-run config override.  Without an
+    # explicit trust entry, Codex does not load the clean consumer's
+    # `.codex/config.toml`, so the MCP env leaves below become an env-only
+    # table and fail configuration parsing.
+    project_trust = (
+        "projects=" + "{" + _toml_string(str(consumer_root)) +
+        '={trust_level="trusted"}}'
+    )
     config_values = [
         f"model_reasoning_effort={_toml_string(reasoning)}",
+        project_trust,
         f"shell_environment_policy.set.ZOTERO_HTTP_URL={_toml_string(zotero_http_url)}",
         f"shell_environment_policy.set.ZOTERO_MCP_URL={_toml_string(zotero_mcp_url)}",
         # `--sandbox workspace-write` alone does not grant network access; the
