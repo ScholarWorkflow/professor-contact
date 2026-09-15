@@ -42,6 +42,8 @@ STAGE5_CHOICES_SENTINELS = {
     "learning": "I am studying reproducible research workflows.",
     "initial_sent_date": "2026-09-15",
 }
+STAGE5_FIRST_CHOICE_PHRASE = "先生の研究室を第一志望として出願させていただきたく存じます"
+STAGE5_NON_FIRST_CHOICE_PHRASE = "先生の研究室を志望として出願させていただきたく存じます"
 
 
 def _load(path: Path) -> Any:
@@ -687,33 +689,40 @@ def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
         choice_rows = [row for row in (choices, followup_choices) if isinstance(row, dict)]
         choice_email_id_ok = choice_email_id_ok and len(choice_rows) == 2 \
             and all(row.get("email_id") == email_id for row in choice_rows)
-        signature = choices.get("signature_name") if isinstance(choices, dict) else None
-        learning = choices.get("learning") if isinstance(choices, dict) else None
-        sent_date = followup_choices.get("initial_sent_date") \
-            if isinstance(followup_choices, dict) else None
-        first_choice = choices.get("first_choice") if isinstance(choices, dict) else None
-        first_phrase = "先生の研究室を第一志望として出願させていただきたく存じます"
-        non_first_phrase = "先生の研究室を志望として出願させていただきたく存じます"
-        expected_phrase = first_phrase if first_choice is True else non_first_phrase
-        opposite_phrase = non_first_phrase if first_choice is True else first_phrase
-        choice_signature_ok = choice_signature_ok and isinstance(signature, str) \
-            and bool(signature) and signature in initial_text
-        choice_learning_ok = choice_learning_ok and isinstance(learning, str) \
-            and bool(learning) and learning in initial_text
+        # Issue #43 pins the caller's fixed sentinels as the independent
+        # expected: a state whose values were swapped together with the output
+        # must fail here, so expected values never come from product state.
+        choice_signature_ok = choice_signature_ok and isinstance(choices, dict) \
+            and choices.get("signature_name") == STAGE5_CHOICES_SENTINELS["signature_name"] \
+            and STAGE5_CHOICES_SENTINELS["signature_name"] in initial_text
+        choice_learning_ok = choice_learning_ok and isinstance(choices, dict) \
+            and choices.get("learning") == STAGE5_CHOICES_SENTINELS["learning"] \
+            and STAGE5_CHOICES_SENTINELS["learning"] in initial_text
         choice_initial_sent_date_ok = choice_initial_sent_date_ok \
-            and isinstance(sent_date, str) and bool(sent_date) and sent_date in followup_text
-        choice_branch_ok = choice_branch_ok and expected_phrase in initial_text \
-            and opposite_phrase not in initial_text
+            and isinstance(followup_choices, dict) \
+            and followup_choices.get("initial_sent_date") \
+            == STAGE5_CHOICES_SENTINELS["initial_sent_date"] \
+            and STAGE5_CHOICES_SENTINELS["initial_sent_date"] in followup_text
+        choice_branch_ok = choice_branch_ok and isinstance(choices, dict) \
+            and choices.get("first_choice") is False \
+            and STAGE5_NON_FIRST_CHOICE_PHRASE in initial_text \
+            and STAGE5_FIRST_CHOICE_PHRASE not in initial_text
     _check(checks, "choice_email_id_matches_pack", choice_email_id_ok)
     _check(checks, "choice_signature_rendered", choice_signature_ok)
     _check(checks, "choice_learning_rendered", choice_learning_ok)
     _check(checks, "choice_initial_sent_date_rendered", choice_initial_sent_date_ok)
     _check(checks, "choice_non_first_choice_branch_rendered", choice_branch_ok)
+    # Issue #43 keeps frozen contact evidence and the pack/source fingerprint
+    # as its machine invariants, while the unchanged downstream email
+    # validator's copy quality stays separate evidence that never decides the
+    # issue-43 feature verdict.
     frozen_and_valid = True
+    validator_pass = True
     invalid_details: list[Any] = []
     for email in pack_emails if isinstance(pack_emails, list) else []:
         if not isinstance(email, dict):
             frozen_and_valid = False
+            validator_pass = False
             invalid_details.append("email entry is not an object")
             continue
         email_id = email.get("email_id")
@@ -733,11 +742,16 @@ def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
                             and initial_validation.get("result") == "pass"
                             and _valid_validation_record(followup_validation)
                             and followup_validation.get("result") == "pass")
-        if not (valid_evidence and valid_source and valid_validation):
+        if not (valid_evidence and valid_source):
             frozen_and_valid = False
+        if not valid_validation:
+            validator_pass = False
+        if not (valid_evidence and valid_source and valid_validation):
             invalid_details.append({"email_id": email_id, "evidence": valid_evidence,
                                     "source": valid_source, "validation": valid_validation})
     _check(checks, "email_entries_frozen_and_valid", bool(pack_emails) and frozen_and_valid,
+           invalid_details)
+    _check(checks, "email_validator_result_pass", bool(pack_emails) and validator_pass,
            invalid_details)
     return _finish(checks, email_files=[path.name for path in all_files], email_state=str(state_path))
 

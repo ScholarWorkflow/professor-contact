@@ -244,7 +244,8 @@ class Issue32VerifierTests(unittest.TestCase):
         after = sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob("*"))
         self.assertEqual(after, sorted(before + [key]))
 
-    def test_stage5_final_exposes_fixed_choice_wiring_checks(self):
+    def _seed_stage5_final_outputs(self):
+        """Seed the canonical issue-43 Stage 5 outputs and matching state."""
         stage4_root = self.root / "教授研究"
         prof = stage4_root / "X分野/Example Professor"
         email_id = "Example Professor::DIR00001::idea-1"
@@ -291,6 +292,10 @@ class Issue32VerifierTests(unittest.TestCase):
             "Master of ScienceのFixture Applicantです。Fixture University B出身で、"
             "2026-09-15に初回連絡しました。\n",
             encoding="utf-8")
+        return email_id
+
+    def test_stage5_final_exposes_fixed_choice_wiring_checks(self):
+        self._seed_stage5_final_outputs()
 
         payload = verifier._checkpoint_stage5_final(self.args())
 
@@ -300,9 +305,43 @@ class Issue32VerifierTests(unittest.TestCase):
             "choice_email_id_matches_pack", "choice_signature_rendered",
             "choice_learning_rendered", "choice_initial_sent_date_rendered",
             "choice_non_first_choice_branch_rendered", "final_initial_exists",
-            "final_followup_exists",
+            "final_followup_exists", "email_entries_frozen_and_valid",
+            "email_validator_result_pass",
         ):
             self.assertEqual(names.get(name), "pass", names)
+
+    def test_stage5_final_rejects_state_and_output_tampered_together(self):
+        """Self-consistent state/output tampering must not read as a pass."""
+        prof = self.root / "教授研究/X分野/Example Professor"
+        self._seed_stage5_final_outputs()
+        state = json.loads((prof / "套磁邮件状态.json").read_text(encoding="utf-8"))
+        entry = next(iter(state["emails"].values()))
+        entry["choices"]["first_choice"] = True
+        entry["choices"]["signature_name"] = "Tampered Applicant"
+        entry["choices"]["learning"] = "I am studying something else."
+        entry["followup"]["choices"]["first_choice"] = True
+        entry["followup"]["choices"]["initial_sent_date"] = "2026-01-01"
+        (prof / "套磁邮件状态.json").write_text(json.dumps(state), encoding="utf-8")
+        (prof / "套磁邮件.txt").write_text(
+            "Fixture University B出身のTampered Applicant（2026年4月、"
+            "Adaptive and nonlinear processing、Master of Science）です。\n"
+            "I am studying something else. "
+            "先生の研究室を第一志望として出願させていただきたく存じます\n",
+            encoding="utf-8")
+        (prof / "套磁跟进邮件.txt").write_text(
+            "Master of ScienceのTampered Applicantです。Fixture University B出身で、"
+            "2026-01-01に初回連絡しました。\n",
+            encoding="utf-8")
+
+        payload = verifier._checkpoint_stage5_final(self.args())
+
+        self.assertEqual(payload["status"], "fail", payload)
+        names = {row["name"]: row["status"] for row in payload["checks"]}
+        for name in ("choice_signature_rendered", "choice_learning_rendered",
+                     "choice_initial_sent_date_rendered",
+                     "choice_non_first_choice_branch_rendered"):
+            self.assertEqual(names.get(name), "fail", names)
+        self.assertEqual(names.get("choice_email_id_matches_pack"), "pass", names)
 
     def test_stage2_requires_machine_contract_and_allows_new_bbbb_analysis(self):
         prof = self.root / "教授研究/X分野/Example Professor"
@@ -408,6 +447,16 @@ class Issue32VerifierTests(unittest.TestCase):
         state_path.write_text(json.dumps(email_state), encoding="utf-8")
         payload = verifier._checkpoint_stage5_final(self.args())
         self.assertEqual(payload["status"], "fail", payload)
+        # The unchanged downstream validator's copy quality stays separate
+        # evidence: it fails here, while the frozen/source invariant and every
+        # issue-43 choices check still pass so the #43 verdict stays decidable.
+        names = {row["name"]: row["status"] for row in payload["checks"]}
+        self.assertEqual(names.get("email_validator_result_pass"), "fail", names)
+        self.assertEqual(names.get("email_entries_frozen_and_valid"), "pass", names)
+        for name in ("choice_email_id_matches_pack", "choice_signature_rendered",
+                     "choice_learning_rendered", "choice_initial_sent_date_rendered",
+                     "choice_non_first_choice_branch_rendered"):
+            self.assertEqual(names.get(name), "pass", names)
 
         for validation in (
             email_state["emails"][email_id]["validation"],
