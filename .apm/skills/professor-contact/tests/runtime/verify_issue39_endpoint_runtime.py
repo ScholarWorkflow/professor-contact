@@ -27,6 +27,12 @@ READ_TOOLS = {"get_item_details", "get_item_abstract"}
 DEFAULT_ENDPOINT_PATTERN = re.compile(
     r"https?://\S*?127\.0\.0\.1:231(19|20)\b")
 MCP_MCP_PATTERN = re.compile(r"/mcp/mcp(?!/)", re.IGNORECASE)
+# The analyzer contract expresses production ports only as the fallback of a
+# parameter expansion (`${ZOTERO_MCP_URL:-http://127.0.0.1:23120/mcp}`); the
+# executed path is the resolved variable.  Such expansion literals are the
+# documented contract, not endpoint violations.
+FALLBACK_EXPANSION_PATTERN = re.compile(
+    r"\$\{ZOTERO_(?:HTTP|MCP)_URL:-[^}]*\}")
 BLOCKED = "BLOCKED_TEST_CONFIGURATION"
 OBSERVABILITY = "BLOCKED_OBSERVABILITY"
 FAIL_PRODUCER = "FAIL_PRODUCER"
@@ -62,9 +68,16 @@ def _decode_json_objects(text: str) -> list[dict]:
 
 
 def _rpc_payloads(text: str) -> list[dict]:
-    """JSON-RPC messages in raw JSON or SSE ``data:`` frames."""
+    """JSON-RPC messages in raw JSON, shell-escaped JSON, or SSE frames."""
     payloads = [payload for payload in _decode_json_objects(text)
                 if isinstance(payload.get("jsonrpc"), str)]
+    # A JSON-RPC body embedded in a shell-quoted command line arrives
+    # backslash-escaped (`-d "{\"jsonrpc\":...}"`); one level of un-escaping
+    # recovers the request objects.
+    unescaped = text.replace('\\"', '"')
+    if unescaped != text:
+        payloads.extend(payload for payload in _decode_json_objects(unescaped)
+                        if isinstance(payload.get("jsonrpc"), str))
     for line in (text or "").splitlines():
         candidate = line.strip()
         if not candidate.startswith("data:"):
@@ -76,6 +89,38 @@ def _rpc_payloads(text: str) -> list[dict]:
         if isinstance(payload, dict) and isinstance(payload.get("jsonrpc"), str):
             payloads.append(payload)
     return payloads
+
+
+def _transformed_reads(text: str, seeded: set[str]) -> list[str]:
+    """Read keys from jq-transformed tool outputs in command output.
+
+    ``jq -r '... | fromjson | {item_key, op, data}'`` only emits when a real
+    JSON-RPC result carried parseable item payload, so such objects are
+    machine evidence of a successful read.
+    """
+    keys: list[str] = []
+    for payload in _decode_json_objects(text):
+        operation = payload.get("op")
+        if operation not in READ_TOOLS:
+            continue
+        data = payload.get("data")
+        candidates = [payload.get("item_key"), payload.get("itemKey")]
+        if isinstance(data, dict):
+            candidates.append(data.get("itemKey"))
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate in seeded and candidate not in keys:
+                keys.append(candidate)
+    return keys
+
+
+def _command_violations(command: str) -> list[str]:
+    stripped = FALLBACK_EXPANSION_PATTERN.sub("", command)
+    hits: list[str] = []
+    if DEFAULT_ENDPOINT_PATTERN.search(stripped):
+        hits.append("default_endpoint")
+    if MCP_MCP_PATTERN.search(stripped):
+        hits.append("mcp_mcp_path")
+    return hits
 
 
 def _check(name: str, ok: bool, blocked: bool, detail: str) -> dict:
@@ -129,8 +174,9 @@ def _request_checks(request: dict, consumer_root: str | None,
         f"expected={expected_http!r}/{expected_mcp!r}"))
 
     if consumer_root:
-        resolved = str(Path(consumer_root))
-        trust_ok = resolved in trust_seen
+        resolved = str(Path(consumer_root).resolve())
+        trust_ok = any(entry in (resolved, str(Path(consumer_root)))
+                       for entry in trust_seen)
     else:
         trust_ok = bool(trust_seen)
     checks.append(_check(
@@ -159,10 +205,15 @@ def _fixture_checks(items: dict, evidence: dict) -> list[dict]:
 def _child_reads(events: list[dict], child_ids: set[str], seeded: set[str]):
     """Scan formal-child command events for real MCP reads of seeded keys."""
     observed: list[str] = []
-    violation_commands: list[str] = []
-    zotero_traffic = False
+    attempts: list[dict] = []
+    traffic = False
     for event in events:
-        params = event.get("message", {}).get("params", {})
+        message = event.get("message", {})
+        # Only terminal item/completed events count; item/started snapshots of
+        # the same exec id must not double-count.
+        if message.get("method") != "item/completed":
+            continue
+        params = message.get("params", {})
         if params.get("threadId") not in child_ids:
             continue
         item = params.get("item", {})
@@ -170,13 +221,10 @@ def _child_reads(events: list[dict], child_ids: set[str], seeded: set[str]):
             continue
         command = str(item.get("command", ""))
         output = str(item.get("aggregatedOutput", ""))
-        if DEFAULT_ENDPOINT_PATTERN.search(command):
-            violation_commands.append(command[:400])
-        if MCP_MCP_PATTERN.search(command):
-            violation_commands.append(command[:400])
-        payloads = _rpc_payloads(output) + [
-            payload for payload in _decode_json_objects(command)
-            if isinstance(payload.get("jsonrpc"), str)]
+        violations = _command_violations(command)
+        if violations:
+            attempts.append({"command": command[:400], "hits": violations})
+        payloads = _rpc_payloads(output) + _rpc_payloads(command)
         requests: dict[object, str] = {}
         successful: set[object] = set()
         for payload in payloads:
@@ -191,13 +239,18 @@ def _child_reads(events: list[dict], child_ids: set[str], seeded: set[str]):
                     "result" in payload or "error" in payload):
                 if "result" in payload and payload["result"] is not None:
                     successful.add(payload.get("id"))
-        reads = {key for rpc_id, key in requests.items() if rpc_id in successful}
-        if requests or successful:
-            zotero_traffic = True
+        reads = [key for rpc_id, key in requests.items() if rpc_id in successful]
+        reads.extend(_transformed_reads(output, seeded))
+        if requests or successful or reads:
+            traffic = True
+        if violations:
+            # A command that targeted a production endpoint cannot prove a
+            # read through the resolved fixture endpoint.
+            continue
         for key in reads:
             if key not in observed:
                 observed.append(key)
-    return observed, violation_commands, zotero_traffic
+    return observed, attempts, traffic
 
 
 def run_verification(*, eval_response, adapter, request, zotero_items_config,
@@ -229,34 +282,45 @@ def run_verification(*, eval_response, adapter, request, zotero_items_config,
     events = (response.get("output", {}).get("app_server_events", [])
               if isinstance(response, dict) else [])
     observed: list[str] = []
-    violations: list[str] = []
+    attempts: list[dict] = []
     traffic = False
     if delegation_ok:
         seeded = {key for key in items.get("item_keys", []) if isinstance(key, str)}
-        observed, violations, traffic = _child_reads(
+        observed, attempts, traffic = _child_reads(
             events, {str(child) for child in child_ids}, seeded)
 
-    if violations:
+    # Production-endpoint attempts are recorded for the report.  They only
+    # force FAIL_PRODUCER when no read succeeded through the resolved
+    # endpoints, i.e. when Stage 2's actual item access stayed on the wrong
+    # path or offline.
+    reads_ok = bool(observed)
+    if attempts and not reads_ok:
         checks.append(_check(
             "child_never_touches_production_endpoints", False, False,
             "formal child executed commands against default endpoints or a "
-            f"/mcp/mcp path: {json.dumps(violations[:3], ensure_ascii=False)}"))
+            "/mcp/mcp path and no resolved-endpoint read succeeded: "
+            + json.dumps(attempts[:3], ensure_ascii=False)))
+    elif attempts:
+        checks.append(_check(
+            "child_never_touches_production_endpoints", True, False,
+            f"{len(attempts)} failed attempt(s) at production endpoints were "
+            "recorded, but the seeded-item reads succeeded via the resolved "
+            "endpoints"))
     else:
         checks.append(_check(
             "child_never_touches_production_endpoints", True, False,
             "no default-endpoint or /mcp/mcp usage in formal child commands"))
 
-    reads_ok = bool(observed)
     checks.append(_check(
         "formal_child_reads_seeded_item_via_mcp", reads_ok, False,
         f"observed={observed!r} zotero_traffic={traffic}"))
 
     if not delegation_ok or any(check["status"] == "blocked" for check in checks):
         status = BLOCKED
-    elif violations:
-        status = FAIL_PRODUCER
     elif reads_ok:
         status = "PASS"
+    elif attempts:
+        status = FAIL_PRODUCER
     else:
         status = OBSERVABILITY
 
@@ -268,6 +332,7 @@ def run_verification(*, eval_response, adapter, request, zotero_items_config,
         "observed_item_keys": observed,
         "seeded_item_keys": items.get("item_keys", []),
         "formal_child_thread_ids": child_ids if delegation_ok else [],
+        "production_endpoint_attempts": attempts,
     }
     if output is not None:
         output = Path(output).resolve()

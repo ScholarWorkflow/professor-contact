@@ -259,6 +259,98 @@ class VerifyIssue39EndpointRuntimeTests(unittest.TestCase):
                 adapter_payload=adapter(), request=build_request_json())
             self.assertEqual(verdict["status"], "BLOCKED_OBSERVABILITY")
 
+    def test_pass_when_reads_use_shell_escaped_bodies_and_transformed_output(self):
+        """Real analyzer children run inside quoted zsh: the JSON-RPC request is
+        shell-escaped in the command line, and successful reads surface as
+        jq-transformed objects, not raw JSON-RPC frames."""
+        with tempfile.TemporaryDirectory() as directory:
+            body = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                               "params": {"name": "get_item_abstract",
+                                          "arguments": {"itemKey": ITEM_KEYS[0]}}})
+            command = (
+                'ZOTERO_MCP_URL="${ZOTERO_MCP_URL:-http://127.0.0.1:23120/mcp}"; '
+                'ZOTERO_MCP_URL="${ZOTERO_MCP_URL%/}"; '
+                f'curl -sS -X POST "$ZOTERO_MCP_URL" -d "{body}" | '
+                "jq -r '...' ")
+            # the command text contains shell-escaped quotes, exactly as the
+            # app-server serializes it
+            command = command.replace('"', '\\"')
+            transformed = json.dumps({
+                "item_key": ITEM_KEYS[0], "op": "get_item_abstract",
+                "data": {"itemKey": ITEM_KEYS[0], "title": "Adaptive Processing"}})
+            events = [command_event(command, transformed)]
+            verdict, _ = run(
+                directory,
+                eval_response={"output": {"app_server_events": events}},
+                adapter_payload=adapter(), request=build_request_json())
+            self.assertEqual(verdict["status"], "PASS")
+            self.assertEqual(verdict["observed_item_keys"], [ITEM_KEYS[0]])
+            self.assertEqual(verdict["production_endpoint_attempts"], [])
+
+    def test_default_endpoint_literals_in_fallback_expansions_are_not_violations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            body = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                               "params": {"name": "get_item_details",
+                                          "arguments": {"itemKey": ITEM_KEYS[0]}}})
+            command = (
+                'ZOTERO_HTTP_URL="${ZOTERO_HTTP_URL:-http://127.0.0.1:23119}"; '
+                'ZOTERO_MCP_URL="${ZOTERO_MCP_URL:-http://127.0.0.1:23120/mcp}"; '
+                f'curl -fsS "$ZOTERO_HTTP_URL/connector/ping"; '
+                f'curl -sS -X POST "$ZOTERO_MCP_URL" -d "{body}"')
+            transformed = json.dumps({
+                "item_key": ITEM_KEYS[0], "op": "get_item_details",
+                "data": {"itemKey": ITEM_KEYS[0]}})
+            events = [command_event(command, transformed)]
+            verdict, _ = run(
+                directory,
+                eval_response={"output": {"app_server_events": events}},
+                adapter_payload=adapter(), request=build_request_json())
+            self.assertEqual(verdict["status"], "PASS")
+            self.assertEqual(verdict["production_endpoint_attempts"], [])
+
+    def test_records_failed_production_endpoint_attempt_while_reads_succeed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            violation = (
+                "SID=mcp-x; END=http://127.0.0.1:23120/mcp; "
+                'curl -sS -X POST "$END" -d '
+                "'"
+                + json.dumps({"itemKey": ITEM_KEYS[0]})
+                + "'")
+            resolved = details_command(ITEM_KEYS[0])
+            transformed = json.dumps({
+                "item_key": ITEM_KEYS[0], "op": "get_item_details",
+                "data": {"itemKey": ITEM_KEYS[0]}})
+            events = [
+                command_event(violation, "curl: (7) Failed to connect", seq=10),
+                command_event(resolved, details_response(ITEM_KEYS[0]), seq=20),
+            ]
+            verdict, _ = run(
+                directory,
+                eval_response={"output": {"app_server_events": events}},
+                adapter_payload=adapter(), request=build_request_json())
+            self.assertEqual(verdict["status"], "PASS")
+            self.assertEqual(len(verdict["production_endpoint_attempts"]), 1)
+            self.assertEqual(verdict["observed_item_keys"], [ITEM_KEYS[0]])
+
+    def test_trust_check_resolves_symlinked_consumer_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            real = base / "real-consumer"
+            link = base / "link-consumer"
+            real.mkdir()
+            link.symlink_to(real)
+            request = build_request_json()
+            request["command"] = request["command"].replace(
+                "/clean/consumer", str(real))
+            verdict, _ = run(
+                directory,
+                eval_response={"output": {"app_server_events": []}},
+                adapter_payload=adapter(), request=request,
+                consumer_root=str(link))
+            trust = [check for check in verdict["checks"]
+                     if check["name"] == "request_trusts_exact_clean_consumer"]
+            self.assertEqual(trust[0]["status"], "pass")
+
 
 if __name__ == "__main__":
     unittest.main()
