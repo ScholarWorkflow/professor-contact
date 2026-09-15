@@ -24,6 +24,8 @@ FIXTURE_REVISION = "f412b79fde390dfcaa73fa7c4bc9bd10bd1f8972"
 DEFAULT_HTTP_URL = "http://127.0.0.1:23119"
 DEFAULT_MCP_URL = "http://127.0.0.1:23120/mcp"
 READ_TOOLS = {"get_item_details", "get_item_abstract"}
+READ_TOOL_KEY_PATTERN = re.compile(
+    r"\b(get_item_details|get_item_abstract)[\"' =:]+([A-Za-z0-9]{4,12})\b")
 DEFAULT_ENDPOINT_PATTERN = re.compile(
     r"https?://\S*?127\.0\.0\.1:231(19|20)\b")
 MCP_MCP_PATTERN = re.compile(r"/mcp/mcp(?!/)", re.IGNORECASE)
@@ -202,11 +204,44 @@ def _fixture_checks(items: dict, evidence: dict) -> list[dict]:
                    run_ok and revision_ok and clean_ok and keys_ok, True, detail)]
 
 
+def _result_item_keys(payloads: list[dict], seeded: set[str]) -> list[str]:
+    """Seeded keys carried by successful JSON-RPC result payloads."""
+    keys: list[str] = []
+    for payload in payloads:
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            continue
+        content = result.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or "text" not in block:
+                continue
+            try:
+                inner = json.loads(block["text"])
+            except (json.JSONDecodeError, TypeError):
+                inner = None
+            candidates = [inner]
+            if isinstance(inner, dict):
+                candidates.extend(inner.values())
+            for candidate in candidates:
+                key = candidate.get("itemKey") if isinstance(candidate, dict) else None
+                if isinstance(key, str) and key in seeded and key not in keys:
+                    keys.append(key)
+    return keys
+
+
 def _child_reads(events: list[dict], child_ids: set[str], seeded: set[str]):
     """Scan formal-child command events for real MCP reads of seeded keys."""
     observed: list[str] = []
     attempts: list[dict] = []
     traffic = False
+    # Thread-level read attribution: when the child's own commands pair a read
+    # tool with a seeded key (e.g. a scripted loop "get_item_details BNMWJJDG")
+    # and any of its command outputs carries a successful JSON-RPC result
+    # embedding that key, the key counts as read through this child.
+    tool_key_pairs: set[str] = set()
+    thread_result_keys: list[str] = []
     for event in events:
         message = event.get("message", {})
         # Only terminal item/completed events count; item/started snapshots of
@@ -224,7 +259,12 @@ def _child_reads(events: list[dict], child_ids: set[str], seeded: set[str]):
         violations = _command_violations(command)
         if violations:
             attempts.append({"command": command[:400], "hits": violations})
+        for match in READ_TOOL_KEY_PATTERN.finditer(command):
+            if match.group(2) in seeded:
+                tool_key_pairs.add(match.group(2))
         payloads = _rpc_payloads(output) + _rpc_payloads(command)
+        thread_result_keys.extend(_result_item_keys([p for p in payloads
+                                                     if "result" in p], seeded))
         requests: dict[object, str] = {}
         successful: set[object] = set()
         for payload in payloads:
@@ -249,6 +289,11 @@ def _child_reads(events: list[dict], child_ids: set[str], seeded: set[str]):
             continue
         for key in reads:
             if key not in observed:
+                observed.append(key)
+    if tool_key_pairs:
+        traffic = True
+        for key in thread_result_keys:
+            if key in tool_key_pairs and key not in observed:
                 observed.append(key)
     return observed, attempts, traffic
 

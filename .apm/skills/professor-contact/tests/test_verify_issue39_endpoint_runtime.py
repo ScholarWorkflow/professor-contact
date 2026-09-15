@@ -332,6 +332,52 @@ class VerifyIssue39EndpointRuntimeTests(unittest.TestCase):
             self.assertEqual(len(verdict["production_endpoint_attempts"]), 1)
             self.assertEqual(verdict["observed_item_keys"], [ITEM_KEYS[0]])
 
+    def test_scripted_reads_pair_tool_key_lists_with_result_frames(self):
+        """Real children sometimes move the JSON-RPC bodies into a helper
+        script: the command only names tool+key pairs and the output carries
+        the raw result frames."""
+        with tempfile.TemporaryDirectory() as directory:
+            planner = (
+                'SID=$(bash new-session.sh); for spec in '
+                "'get_item_details " + ITEM_KEYS[0] + "'"
+                " 'get_item_abstract " + ITEM_KEYS[1] + "'; do "
+                'curl -sS -X POST "$ZOTERO_MCP_URL" -d "$(jq -nc ...)" ; done')
+            runner = "sh /tmp/pc_mcp.sh"
+
+            def result_frame(key):
+                inner = json.dumps({"itemKey": key, "title": "T"})
+                return json.dumps({"jsonrpc": "2.0", "id": 2,
+                                   "result": {"content": [
+                                       {"type": "text", "text": inner}]}})
+
+            output = "\n".join(result_frame(key) for key in ITEM_KEYS)
+            events = [
+                command_event(planner, "session ok", seq=10),
+                command_event(runner, output, seq=20),
+            ]
+            verdict, _ = run(
+                directory,
+                eval_response={"output": {"app_server_events": events}},
+                adapter_payload=adapter(), request=build_request_json())
+            self.assertEqual(verdict["status"], "PASS")
+            self.assertEqual(sorted(verdict["observed_item_keys"]),
+                             sorted(ITEM_KEYS))
+
+    def test_result_frames_without_read_tool_reference_stay_unobserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            command, _ = details_command(ITEM_KEYS[0]), 11
+            frames = "\n".join(
+                json.dumps({"jsonrpc": "2.0", "id": 2,
+                            "result": {"content": [{"type": "text",
+                                                    "text": json.dumps({"itemKey": key})}]}})
+                for key in ITEM_KEYS)
+            events = [command_event("bash helper.sh", frames)]
+            verdict, _ = run(
+                directory,
+                eval_response={"output": {"app_server_events": events}},
+                adapter_payload=adapter(), request=build_request_json())
+            self.assertEqual(verdict["status"], "BLOCKED_OBSERVABILITY")
+
     def test_trust_check_resolves_symlinked_consumer_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory).resolve()
