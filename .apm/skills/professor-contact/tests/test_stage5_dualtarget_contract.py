@@ -120,6 +120,31 @@ class Stage5DualTargetContractTests(unittest.TestCase):
         self.assertIn("never write the final email", codex)
         self.assertIn("continuation/resume", codex)
 
+    def test_stage5_choices_are_a_shared_business_input_not_a_runtime_api(self):
+        body = self.generator_body
+        self.assertIn("optional `choices`", body)
+        for needle in ("canonical JSON", "email_id", "first_choice", "signature_name",
+                       "initial_sent_date", "temporary", "not persisted"):
+            self.assertIn(needle, body)
+
+        opencode = self._section(body, "### OpenCode branch", "### Codex branch")
+        codex = self._section(body, "### Codex branch",
+                              "### humanizer-ja stage-5 constraints")
+        self.assertIn("question", opencode)
+        self.assertIn("choices", opencode)
+        self.assertIn("--choices", codex)
+        self.assertIn("原样", codex)
+        self.assertNotIn("question", codex)
+        self.assertNotRegex(codex, r"typed\s+spawn|spawn\s+parameter")
+
+        self.assertIn("Stage 4 selection 与 Stage 5 choices 分开", self.skill_text)
+        self.assertIn("choices", self.skill_text)
+        self.assertIn("not persisted", body)
+        legacy = LEGACY_CONTRACT.read_text(encoding="utf-8")
+        for needle in ("optional", "choices", "canonical JSON", "first_choice",
+                       "initial_sent_date"):
+            self.assertIn(needle, legacy)
+
     def test_validator_requires_both_first_and_followup_validation(self):
         body = self.generator_body
         self.assertIn(

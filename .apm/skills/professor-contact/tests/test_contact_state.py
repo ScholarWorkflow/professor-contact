@@ -1185,6 +1185,71 @@ class TestStage5(BaseEnv):
         self.assertEqual(out["reason_code"], "missing_user_choice")
         self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
 
+    def test_stage5_rejects_non_boolean_first_choice(self):
+        g1 = self.prepare()
+        raw_path = self.root / "non-boolean-choice-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "non-boolean-choice.json"
+        choices = dict(self.choices(), first_choice="false")
+        choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+
+        out = parse(run_cli("stage5-plan", "--program-root", self.root,
+                            "--result", raw_path, "--choices", choices_path))
+
+        self.assertEqual(out["status"], "error")
+        self.assertEqual(out["reason_code"], "missing_user_choice")
+        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+
+    def test_stage5_rejects_blank_signature_and_learning(self):
+        g1 = self.prepare()
+        raw_path = self.root / "blank-choice-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "blank-choice.json"
+
+        for field in ("signature_name", "learning"):
+            choices = dict(self.choices(), **{field: "   "})
+            choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+            out = parse(run_cli("stage5-plan", "--program-root", self.root,
+                                "--result", raw_path, "--choices", choices_path))
+            self.assertEqual(out["status"], "error", field)
+            self.assertEqual(out["reason_code"], "missing_user_choice", field)
+
+    def test_stage5_followup_requires_non_placeholder_initial_sent_date(self):
+        g1 = self.prepare()
+        raw_path = self.root / "followup-choice-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "followup-choice.json"
+
+        for sent_date in (None, "{{初回送信日}}"):
+            choices = dict(self.choices())
+            if sent_date is None:
+                choices.pop("initial_sent_date", None)
+            else:
+                choices["initial_sent_date"] = sent_date
+            choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+            out = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "both",
+                                "--result", raw_path, "--choices", choices_path))
+            self.assertEqual(out["status"], "error", sent_date)
+            self.assertEqual(out["reason_code"], "missing_user_choice", sent_date)
+
+    def test_stage5_choices_id_mapping_rejects_unknown_and_duplicate_rows(self):
+        g1 = self.prepare()
+        raw_path = self.root / "id-mapping-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "id-mapping-choice.json"
+
+        unknown = dict(self.choices(), email_id="unknown-email-id")
+        choices_path.write_text(json.dumps(unknown, ensure_ascii=False), encoding="utf-8")
+        out = parse(run_cli("stage5-plan", "--program-root", self.root,
+                            "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(out["reason_code"], "invalid_result_json")
+
+        duplicate = [self.choices(), dict(self.choices())]
+        choices_path.write_text(json.dumps(duplicate, ensure_ascii=False), encoding="utf-8")
+        out = parse(run_cli("stage5-plan", "--program-root", self.root,
+                            "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(out["reason_code"], "invalid_result_json")
+
     def test_done_by_self_gap_banned_in_source_map(self):
         self.stage2_run(gap_overrides={
             "AAAA1111": {"status": "done_by_self", "evidence": "已由教授后续论文接住"}})

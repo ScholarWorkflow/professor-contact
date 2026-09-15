@@ -209,6 +209,27 @@ python3 scripts/contact_state.py migrate-v3 --apply <plan.json> --program-root <
 
 阶段 5 把阶段 4 选定的想法变成一封首封日语套磁邮件，并可同时生成一封数日后无回复时使用的跟进邮件。以下约定是 caller 与 `professor-contact-email-generator` 共同遵守的设计共识。
 
+### 5.0 Stage 5 caller choices contract
+
+Stage 5 的 `choices` 是 ScholarWorkflow 的业务级 caller contract，不是
+Codex 自带的 typed spawn 参数。它是可选的 canonical JSON 输入，且不是
+新的长期状态文件：
+
+- 单封邮件传 object，多封邮件传 list；每条都必须用当前
+  `邮件输入.json` 中真实、非空的 `email_id` 显式映射。
+- 每条必须包含 `first_choice`（显式 boolean）、非空
+  `signature_name`、非空 `learning`。
+- `mode: both|followup` 另需非空且非 `{{...}}` 占位的
+  `initial_sent_date`；`mode: first` 不要求该字段。
+- 只保留既有可选字段 `followup_subject` 与 `email_address`；不把
+  runner 内部 key 顺手公开为 caller API。
+
+Caller 必须把 canonical JSON 原样写入一次性的临时 choices 文件并传给
+既有 runner 的 `--choices`。runner 继续负责类型、缺失、重复/未知/id 集合、
+contact-evidence 和最终写盘校验；caller 不补默认值、不按数组位置或教授名
+重映射。缺少 choices 时，OpenCode 继续走 `question`；Codex 的
+non-interactive 调用返回既有 `needs_input` 边界，不代选、不最终写盘。
+
 ### 5.1 只产兴趣段 + 未来志向句 + 学習中候选
 
 整封邮件里**由模型创作的内容 = 核心兴趣段（4 句强制四动作） + 未来志向句（1 句） + 学習中候选（2-3 个供挑）**。其余全部是模板固定文本 + 占位符填充。模型不得改写模板固定段落（寒暄/自我介绍/资历框架/请求/收尾）。
@@ -354,10 +375,10 @@ task(subagent_type: "professor-contact-idea-generator", prompt: "folder_path: <.
 task(subagent_type: "professor-contact-selection", prompt: "folder_path: <...>\nselection: <可选，直接给选择，跳过交互>")
 
 # 阶段 5：默认同时生成首封邮件和无回复跟进邮件
-task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <...>")
+task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <...>\nmode: both\nchoices: <可选 canonical JSON；缺省由 question 取得>")
 
 # 只生成首封或单独补生成跟进
-task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <...>\nmode: first|followup")
+task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <...>\nmode: first|followup\nchoices: <可选 canonical JSON>")
 ```
 
 ### Codex 分支
@@ -389,6 +410,11 @@ Codex 的 non-interactive 执行（`codex exec`）没有「暂停一个嵌套子
 #### Codex 下的 Stage 1：委派 exact named custom agent `professor-collector`
 
 缺 PDF 补齐时，Codex 侧委派 installed named custom agent `professor-collector` 并**等待其结果**再继续；输入保持收窄为 `folder_path` + `pdf_only:true` + `item_keys=<缺失 item keys>`，绝不同时传 `professors`，也绝不扩大下载范围。OpenCode 的 Task 委派写法只属于 OpenCode 分支；Codex 分支不复制 collector 的 agent body、不由父代理 inline 模拟 collector，也不直接调 `pdf_fill.py`/worker 绕过 collector。`noop`/`needs_resolution` 仍不调用 collector，collector 返回后无条件重跑 `contact_stage1.py build`，empty runtime result 仍只允许一次相同输入重试。
+
+#### Codex 下的 Stage 5：caller choices 作为业务输入
+
+调用方可以把完整的 canonical JSON `choices` 作为 Stage 5 业务输入交给 `professor-contact-email-generator`。它不是 Codex runtime 的委派参数，也不是新的长期状态文件：调用方只在本轮把 JSON 原样写入临时文件，随后通过现有 runner 的 `--choices <临时文件>` 传入；不得默认、翻译、按位置重排或重新映射字段。每行必须带真实的非空 `email_id`、布尔 `first_choice`、非空 `signature_name` 与 `learning`；`both`/`followup` 还必须带真实的 `initial_sent_date`，`first` 不要求该日期。缺少完整 `choices` 时返回 `needs_input` 且不写最终邮件；有 choices 时仍由 runner 负责 contact-evidence、冲突与验证门禁。
+
 ### Stage 3/4 编排边界（业务规则一份，runtime 调用方式分开）
 
 Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委派 validator / 怎样跨用户回合拿到真实选择」按 runtime 分开。以下说明是 caller contract 的一部分。
@@ -400,6 +426,8 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 
 **Stage 4 用户选择边界**（两 runtime 共同遵守：候选机器事实源只有 `套磁候选状态.json`；没有用户真实选择就绝不 finalize、绝不默认/推荐/第一项自动选择；`套磁选择.json` 与 `邮件输入.json` 只由 `stage4-finalize` 写）：
 
+**Stage 4 selection 与 Stage 5 choices 分开**：Stage 4 只记录候选想法选择；Stage 5 的 `choices` 只记录邮件生成所需的收件人与署名/学习中信息，不能把 Stage 5 字段塞进 Stage 4 `selection`。
+
 - **OpenCode（OpenCode-only 交互路径）**：未传 `selection` 时 `professor-contact-selection` 用官方 `question` 工具（`multiple: true`；普通候选与跨方向候选分开标注；支持自填 note）；用户没有选择时不 finalize。
 - **Codex（主线程用户回合边界）**：未传 `selection` 时 selection agent 读取当前 `套磁候选状态.json`，返回 `result: needs_input` + 仅用于展示的 `pending_selection`（逐字段来自本轮读取的候选状态，含 `kind: direction|cross_direction` 标注），**缺 `selection` 时不得调用 `stage4-finalize`**，`套磁选择.json`/`邮件输入.json` 零写入；调用线程把真实候选展示给用户并结束本轮。用户下一条消息给出真实选择后，调用线程**重新委派 `professor-contact-selection` 并显式传入 `selection`**——新调用重新读取当前机器状态、由 runner 重新校验指纹（stale → `needs_refresh` 零写入），绝不依赖上一轮子代理的模型记忆，也不把任何 CLI 会话恢复/续传能力当作 Stage 4 状态协议。
 
@@ -407,7 +435,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 
 - 任何需要用户选择的环节（Stage 0 方向选择、Stage 2 相关集 >10 确认、Stage 4 想法挑选、Stage 5 学習中候选/交互补齐等）都**不得自动替用户做选择**——包括“按推荐顺序选第一项”，也不得把缺省值伪装成用户决定；缺输入时按该 Stage 既有契约停住（`needs_input` / 保留旧产物），绝不写入看似经用户确认的选择状态。
 - OpenCode 的后续 Stage 继续使用其官方 `question` 能力交互（OpenCode-only）；Codex 的 Stage 0 用业务级两步输入（缺 `selection` → `needs_input` + `selection_request` 且零写入；真实用户回答后带显式 `selection` 重新委派，见 Codex 分支），Stage 2 在 Codex 非交互运行（`codex exec`）下的用户选择按上节「Stage 2 在 Codex 下的委派链与用户选择」执行——停点 + 新一轮 fresh root 运行凭同一 program root 的磁盘状态在显式用户选择下继续，`question` 不是 `codex exec` 的交互控件；Stage 3/4 的 Codex 交互边界按上一节执行（Stage 3 调用线程 sibling 编排 validator，Stage 4 缺 `selection` 返回 `needs_input + pending_selection`、下一轮重新委派 selection agent）；其余 Stage 的 Codex 交互式适配仍由对应 Stage 的 issue 按当时官方文档决定——本 skill 不定义任何跨 harness 的自定义交互、续传或 resume 协议。
-- non-interactive / 自动化调用（含 smoke fixture）：成功路径必须显式提供确定性输入（如 `selection`、`chatgpt_handoff: continue`）；缺输入的负向路径必须证明系统停住且没有产生伪选择状态。
+- non-interactive / 自动化调用（含 smoke fixture）：成功路径必须显式提供确定性输入（如 `selection`、Stage 5 `choices`、`chatgpt_handoff: continue`）；缺输入的负向路径必须证明系统停住且没有产生伪选择状态。
 
 ### Input contract（公共字段）
 
@@ -432,6 +460,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 | `mode` | no | 仅阶段 5：`first`、`both`、`followup`；generator 缺省按 `both` 调用，runner CLI 为兼容旧脚本缺省 `first`。 |
 | `followup_template` | no | 仅阶段 5：跟进模板绝对路径；缺省查找 `套磁邮件/套磁跟进模板.md`。 |
 | `skip_validation` | no | 仅阶段 5：true 时跳过 validator 循环（调试用）。 |
+| `choices` | no | 仅阶段 5：canonical JSON 对象或对象列表；每行是带真实 `email_id` 的 `first_choice`/`signature_name`/`learning`，`both`/`followup` 还需 `initial_sent_date`。缺省时按 runtime 的交互边界停在 `needs_input` 或取得 `question` 答案；不写入长期状态。 |
 
 **Do NOT** load this skill's body into the subagent prompt — just pass the inputs; the subagent loads its own instructions.
 

@@ -37,6 +37,7 @@ class Issue32VerifierTests(unittest.TestCase):
             "adapter_output": None,
             "producer_sha": "",
             "output": None,
+            "choices_file": None,
             "min_edges": 1,
             "required_depth": 1,
         }
@@ -109,6 +110,89 @@ class Issue32VerifierTests(unittest.TestCase):
         self.assertEqual(selected["selection"][0]["ideas"][0]["id"], "alpha")
         after = sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob("*"))
         self.assertEqual(before, after)
+
+    def test_stage5_pristine_requires_stage4_outputs_and_no_final_state(self):
+        prof = self.root / "教授研究/X分野/Example Professor"
+        email_id = "Example Professor::DIR00001::idea-1"
+        (prof / "套磁选择.json").write_text(json.dumps({
+            "selection": [{"professor": "Example Professor",
+                           "direction_ids": ["DIR00001"], "ideas": [{"id": "idea-1"}]}]
+        }), encoding="utf-8")
+        (prof / "邮件输入.json").write_text(json.dumps({
+            "schema": 2, "kind": "professor-contact-email-input",
+            "identity_version": "direction-id-v1",
+            "emails": [{"email_id": email_id}]
+        }), encoding="utf-8")
+
+        payload = verifier._checkpoint_stage5_pristine(self.args())
+        self.assertEqual(payload["status"], "pass", payload)
+
+        (prof / "套磁邮件状态.json").write_text("{}", encoding="utf-8")
+        payload = verifier._checkpoint_stage5_pristine(self.args())
+        self.assertEqual(payload["status"], "fail", payload)
+
+    def test_make_stage5_choices_reads_the_real_email_id_and_writes_only_requested_file(self):
+        prof = self.root / "教授研究/X分野/Example Professor"
+        email_id = "Example Professor::DIR00001::idea-1"
+        (prof / "邮件输入.json").write_text(json.dumps({
+            "schema": 2, "kind": "professor-contact-email-input",
+            "emails": [{"email_id": email_id}]
+        }), encoding="utf-8")
+        output = Path(self.holder.name) / "stage5-choices.json"
+        before = sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob("*"))
+
+        payload = verifier._checkpoint_make_stage5_choices(self.args(output=output))
+
+        self.assertEqual(payload["status"], "pass", payload)
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), {
+            "email_id": email_id,
+            "first_choice": False,
+            "signature_name": "Fixture Applicant",
+            "learning": "I am studying reproducible research workflows.",
+            "initial_sent_date": "2026-09-15",
+        })
+        after = sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob("*"))
+        self.assertEqual(before, after)
+
+    def test_stage5_choices_final_checks_structural_sentinels_without_validator_gate(self):
+        prof = self.root / "教授研究/X分野/Example Professor"
+        email_id = "Example Professor::DIR00001::idea-1"
+        (prof / "邮件输入.json").write_text(json.dumps({
+            "schema": 2, "kind": "professor-contact-email-input",
+            "identity_version": "direction-id-v1",
+            "emails": [{"email_id": email_id, "source_hash": "pack-source"}]
+        }), encoding="utf-8")
+        (prof / "套磁邮件状态.json").write_text(json.dumps({
+            "schema": 1, "emails": {email_id: {"input_fingerprint": "pack-source"}}
+        }), encoding="utf-8")
+        (prof / "套磁邮件.md").write_text("rendered initial", encoding="utf-8")
+        (prof / "套磁邮件.txt").write_text(
+            "Subject: Synthetic subject\n\n"
+            "Fixture University A／Synthetic Systems／Example Professor先生\n\n"
+            "Fixture University B出身のFixture Applicant（2026年4月、Adaptive and nonlinear processing、Master of Science）です。\n"
+            "兴趣动态 未来志向 I am studying reproducible research workflows. "
+            "先生の研究室を志望として出願させていただきたく存じます\n",
+            encoding="utf-8")
+        (prof / "套磁跟进邮件.md").write_text("rendered follow-up", encoding="utf-8")
+        (prof / "套磁跟进邮件.txt").write_text(
+            "Subject: Re: Synthetic subject\n\n"
+            "Example Professor先生（Fixture University A／Synthetic Systems）\n\n"
+            "Master of ScienceのFixture Applicantです。Fixture University B出身で、2026-09-15に初回連絡しました。\n",
+            encoding="utf-8")
+        choices = {
+            "email_id": email_id,
+            "first_choice": False,
+            "signature_name": "Fixture Applicant",
+            "learning": "I am studying reproducible research workflows.",
+            "initial_sent_date": "2026-09-15",
+        }
+        choices_path = Path(self.holder.name) / "stage5-choices.json"
+        choices_path.write_text(json.dumps(choices), encoding="utf-8")
+
+        payload = verifier._checkpoint_stage5_choices_final(
+            self.args(choices_file=choices_path))
+
+        self.assertEqual(payload["status"], "pass", payload)
 
     def test_stage2_requires_machine_contract_and_allows_new_bbbb_analysis(self):
         prof = self.root / "教授研究/X分野/Example Professor"

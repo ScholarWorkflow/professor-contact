@@ -36,6 +36,29 @@ At startup, read `.apm/skills/professor-contact/docs/stage5-legacy-contract.md` 
 
 That resource preserves the pre-Issue-#9 contract for reference and is **not an agent primitive**. Its template-wide/full-body humanizer instructions are obsolete and are overridden by the rules below. Where it shows OpenCode-native tool calling or the retired full-body humanizer pass, that syntax is an OpenCode-branch illustration, not a cross-target API — call harness tools per the dual-target rules below instead. Its recipient-email ladder inside Step 2.5 is additionally scoped by the Issue #10 contact-evidence-first rules below: the five-level ladder runs only when the upstream contact evidence does not already settle the recipient.
 
+## Stage 5 caller Input contract
+
+The caller may provide an optional `choices` canonical JSON value. This is a
+ScholarWorkflow business input shared by both install targets; it is not a
+Codex-specific runtime calling convention and is not persisted.
+
+- For one selected email, `choices` is one object. For multiple selected
+  emails, it is a list with one object per email.
+- Every row must carry the exact `email_id`, an explicit boolean
+  `first_choice`, a non-empty `signature_name`, and a non-empty `learning`.
+- `mode: both|followup` additionally requires a non-empty,
+  non-`{{...}}` `initial_sent_date`; `mode: first` does not.
+- The only other caller-facing optional row fields are the existing
+  `followup_subject` and `email_address` fields. Do not publish runner
+  internals as new caller fields.
+
+When `choices` is supplied, preserve the object/list and every value exactly:
+write the canonical JSON to a temporary choices file and pass that file to the
+existing runner with `--choices`. Do not add defaults, translate fields, or
+map an email by position, professor name, or “first email”. The runner remains
+the sole authority for schema, type, ID-set, contact-evidence, and finalization
+validation.
+
 ## Direction provenance (issue #8 email-pack v2)
 
 `邮件输入.json` is schema 2: every `emails[]` entry carries `direction_ids` (sorted canonical IDs) and `directions[]` (per-direction display names) — for cross-direction ideas both list ALL participants, and `email_id` is built from the canonical direction scope (`professor::A+B::idea`, A+B == B+A). The runner passes this provenance into the model input; never guess which evidence belongs to which direction, and never reconstruct direction identity from names or a legacy `collection_key`. For a multi-direction follow-up email the topic line uses the selected idea title, not one singular direction name.
@@ -67,15 +90,19 @@ Stage 5 runs on both install targets with identical business rules; only the har
 
 - Delegate validator rounds to the hidden validator subagent with OpenCode's native Task tool, e.g. `task(subagent_type: "professor-contact-email-validator", prompt: "files: …\nemail_pack: …")`, and consume its structured JSON verdict.
 - Load `humanizer-ja` through the native skill capability (`skill(name: "humanizer-ja")`).
-- Ask the user for required decisions with the native `question` tool.
+- If the caller did not provide `choices`, ask for the required decisions with
+  the native `question` tool and write the resulting canonical object/list to
+  the temporary choices file. If the caller did provide `choices`, preserve it
+  and pass it to the runner without asking a second question.
 - Web verification (escalated email-ladder levels 3/4) uses the native `websearch` / `webfetch` tools.
 
 ### Codex branch (installed named agents + official surfaces)
 
 - Top-level callers delegate Stage 5 to the installed named custom agent `professor-contact-email-generator`; inside Stage 5, delegate validator rounds to the installed named custom agent `professor-contact-email-validator`, wait for its result, and consume it before continuing. Do not copy its instructions into the parent dialogue, do not claim its role as your own, and do not assume spawn APIs, parameters or event fields that Codex documentation does not expose.
-- Use the installed, discoverable `humanizer-ja` Skill. Do not write OpenCode's native skill/Task/question tool-call syntax into Codex flows.
+- Use the installed, discoverable `humanizer-ja` Skill. Do not write OpenCode's native skill/Task input syntax into Codex flows.
 - Web verification uses Codex's official web search surface. Shell HTTP (`curl`, Python requests) may only reach the eval service, never substitute for the harness web capability.
 - When a required user decision (conflicting-address choice, `initial_sent_date`, first-choice/learning/signature, email confirmation) was not supplied by the caller, stop at the existing `needs_input`/unfinished boundary: never auto-pick the first option, never fabricate a date, learning field, signature or "confirmed" state, and never write the final email. Do not invent a continuation/resume protocol; hand the missing decision back to the caller/user explicitly.
+- When the caller supplies complete `choices`, write that canonical JSON value unchanged（原样）to a temporary file and pass it to `stage5-plan` and `stage5-finalize` through `--choices`. Do not restate the values as separate prompt fields or describe them as Codex runtime parameters.
 
 ### humanizer-ja stage-5 constraints (both targets)
 
