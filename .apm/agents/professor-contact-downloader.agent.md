@@ -31,6 +31,7 @@ You do NOT run a broad professor-level downloader. Stage 0 already persisted the
 - `folder_path` — program root containing `info.json`, or a per-専攻 folder resolvable to it. REQUIRED.
 - `professors` (optional) — comma-separated professor names; if omitted, process all professors currently selected in `套磁目标.json`.
 - `named_papers_file` (optional) — absolute path to a JSON file mapping `direction_id` → array of user-named papers (Zotero item keys or exact paper titles). Use it when the user explicitly names papers that must be in a direction's candidates.
+- `access_mode` (optional): `"oa_only" | "allow_non_oa"` (exact values: `oa_only` and `allow_non_oa`) — the caller's current network-access decision for this run. If supplied, it must be exactly one of those values; the downloader does not infer, translate, cache, or otherwise reinterpret it.
 
 ## Flow
 
@@ -75,9 +76,9 @@ Interpret results strictly:
 
 ### 4. No-op when every candidate already has a usable PDF
 
-If `action == "noop"`, Stage 1 is done: return `ok` with `collector_result: null` and **do not spawn the collector**.
+If `action == "noop"`, Stage 1 is done: return `ok` with `collector_result: null`. Whether `access_mode` is present, omitted, or invalid is irrelevant here: do not consume or validate it and **do not spawn the collector**.
 
-If `action == "needs_resolution"`, some candidate keys exist in the target/preview but not in the professor's `papers.json`, so the fast path cannot fill them: return `partial` with the unresolved keys in `notes` (suggest re-running the collection pipeline or checking the selection), and do not spawn the collector. Never report a clean `ok` while unresolved keys remain.
+If `action == "needs_resolution"`, some candidate keys exist in the target/preview but not in the professor's `papers.json`, so the fast path cannot fill them: return `partial` with the unresolved keys in `notes` (suggest re-running the collection pipeline or checking the selection). Whether `access_mode` is present, omitted, or invalid is irrelevant here: do not consume or validate it and do not spawn the collector. Never report a clean `ok` while unresolved keys remain.
 
 ### 5. Fill only the missing candidate keys (item-scoped fast path)
 
@@ -87,22 +88,43 @@ The collector invocation is target-aware, but the business input is identical on
 folder_path: <program_root>
 pdf_only: true
 item_keys: <comma-separated missing_item_keys>
+access_mode: <oa_only|allow_non_oa>  # only when explicitly supplied and legal
 ```
+
+Only when `action == "pdf_fill_needed"` may the downloader consume or validate
+`access_mode`:
+
+- An explicitly supplied legal value is added to the collector business
+  payload verbatim, with the same value and field name. It is never translated,
+  guessed, or cached.
+- When `access_mode` is omitted, omit the `access_mode` line entirely. Do not
+  create a default, convert omission into downloader `needs_input`, or invent a
+  child continuation/resume protocol. A runtime with interaction may leave the
+  collector's existing `question` behavior available; a Codex non-interactive
+  success path must receive an explicit legal value from its caller.
+- When an explicit value is illegal (for example `campus`, `""`,
+  `open_access`, or a natural-language synonym), before spawning or calling the
+  collector return the existing structured `error`. Do not spawn the collector,
+  map the value to a legal one, or add a `needs_input` continuation.
 
 **OpenCode (native Task/subagent delegation)** — call the exact subagent name with the OpenCode Task tool:
 
 ```text
 task(subagent_type: "professor-collector",
-     prompt: "folder_path: <program_root>\npdf_only: true\nitem_keys: <comma-separated missing_item_keys>")
+     prompt: "folder_path: <program_root>\npdf_only: true\nitem_keys: <comma-separated missing_item_keys>\naccess_mode: <oa_only|allow_non_oa>")
 ```
 
-**Codex (non-interactive)** — delegate the fill to the installed named custom agent `professor-collector` (for example: “Delegate the PDF fill to the installed custom agent `professor-collector` with the input above, and wait for its result before continuing”), and wait for that child's result before continuing. Do not inline-simulate `professor-collector` in this parent agent, do not copy its agent body into your own instructions, and do not rely on any undocumented spawn API or event field.
+The `access_mode` line above is included only when the caller explicitly
+provided a legal value, and is copied verbatim; when omitted, the line is
+absent from the Task prompt.
+
+**Codex (non-interactive)** — delegate the fill to the installed named custom agent `professor-collector` with the exact business input above, including the caller-provided legal `access_mode` line when present and omitting it when absent (for example: “Delegate the PDF fill to the installed custom agent `professor-collector` with the input above, and wait for its result before continuing”). A non-interactive success path receives the explicit caller decision; wait for that child's result before continuing. Do not inline-simulate `professor-collector` in this parent agent, do not copy its agent body into your own instructions, and do not rely on any undocumented spawn API or event field.
 
 - This is the **item-scoped PDF fill fast path**: the collector maps the keys back to existing `papers.json` entries, reactivates only in-scope `deferred` papers, and downloads only these items. It skips professor-list parsing, keep-list rewriting, collection preparation, and program-root-wide tagging by contract.
 - **Never pass `professors` together with `item_keys`** — professor keep-list semantics belong to Stage 0 and the earlier pipeline runs, not to Stage 1 PDF assurance.
-- The collector asks the network access question itself (the network may have changed since the last run); pass the user's answer through if it forwards one.
+- If `access_mode` is omitted, a runtime with interaction may preserve the collector's existing network-access `question` behavior. If it is present, pass the exact legal value through unchanged.
 - Already-downloaded candidates are skipped idempotently by the collector; you must not send them.
-- If the collector returns an empty runtime result, retry once with the exact same prompt (same target, same input, one retry only).
+- If the collector returns an empty runtime result, retry once with the exact same prompt (same target, same input, and the same `access_mode` line or omission, one retry only).
 
 ### 6. Refresh the snapshot after the collector returns (mandatory)
 

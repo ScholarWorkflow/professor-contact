@@ -16,7 +16,7 @@ def _read(path: Path) -> str:
 
 
 class Stage01CallerContractTests(unittest.TestCase):
-    """Lock only the target/caller contracts introduced by issue #28.
+    """Lock only the target/caller contracts introduced by issues #28 and #42.
 
     Runtime behavior is intentionally not mocked here. Codex/OpenCode runtime
     acceptance belongs to the clean-consumer smoke procedure in
@@ -149,6 +149,72 @@ class Stage01CallerContractTests(unittest.TestCase):
         self.assertRegex(
             text,
             r"(?is)action\s*==\s*[\"']needs_resolution[\"'][\s\S]{0,800}(?:partial)[\s\S]{0,500}(?:do not spawn|不得调用|不调用)",
+        )
+
+    def test_stage1_declares_the_optional_access_mode_enum(self):
+        agent_text = _read(STAGE1_AGENT)
+        skill_text = _read(SKILL_PATH)
+
+        self.assertRegex(
+            agent_text,
+            r"(?im)^- `access_mode` \(optional\).*`oa_only`.*`allow_non_oa`",
+        )
+        self.assertRegex(
+            skill_text,
+            r'(?im)^\| `access_mode` \| no \|.*(?:"oa_only".*"allow_non_oa"|`oa_only`.*`allow_non_oa`)',
+        )
+
+    def test_stage1_access_mode_has_explicit_legal_omitted_and_illegal_routes(self):
+        agent_text = _read(STAGE1_AGENT)
+        skill_text = _read(SKILL_PATH)
+        text = f"{agent_text}\n{skill_text}"
+
+        # The value is a caller-owned, current decision and legal values are
+        # forwarded verbatim rather than translated or guessed.
+        self.assertIn("access_mode: <oa_only|allow_non_oa>", agent_text)
+        self.assertRegex(
+            text,
+            r"(?is)legal.*access_mode[\s\S]{0,500}(?:same|原样|verbatim)[\s\S]{0,500}(?:collector|payload)",
+        )
+        self.assertRegex(
+            text,
+            r"(?is)(?:omitted|未提供|省略)[\s\S]{0,500}(?:omit|省略)[\s\S]{0,500}access_mode",
+        )
+        self.assertRegex(
+            text,
+            r"(?is)(?:illegal|非法)[\s\S]{0,700}(?:before|前)[\s\S]{0,300}(?:spawn|调用|collector)[\s\S]{0,500}(?:error|错误)",
+        )
+        self.assertRegex(
+            text,
+            r"(?is)(?:illegal|非法)[\s\S]{0,900}(?:no|不|不得)[\s\S]{0,200}(?:needs_input|continuation|续传)",
+        )
+
+    def test_stage1_access_mode_does_not_change_noop_or_resolution_routing(self):
+        text = _read(STAGE1_AGENT)
+
+        self.assertRegex(
+            text,
+            r"(?is)action\s*==\s*[\"']noop[\"'][\s\S]{0,700}(?:access_mode)[\s\S]{0,300}(?:do not|不得|不)[\s\S]{0,200}(?:validate|校验|consume|消费)",
+        )
+        self.assertRegex(
+            text,
+            r"(?is)action\s*==\s*[\"']needs_resolution[\"'][\s\S]{0,1000}(?:access_mode)[\s\S]{0,300}(?:do not|不得|不)[\s\S]{0,200}(?:validate|校验|consume|消费)",
+        )
+
+    def test_stage1_access_mode_is_shared_by_opencode_and_codex_callers(self):
+        text = _read(SKILL_PATH)
+
+        self.assertRegex(
+            text,
+            r"(?is)OpenCode[\s\S]{0,700}access_mode[\s\S]{0,700}(?:same|原样|省略)",
+        )
+        self.assertRegex(
+            text,
+            r"(?is)Codex[\s\S]{0,1200}access_mode[\s\S]{0,700}(?:same|原样|省略)",
+        )
+        self.assertRegex(
+            text,
+            r"(?is)non-interactive[\s\S]{0,700}(?:explicit|显式)[\s\S]{0,300}access_mode",
         )
 
 
