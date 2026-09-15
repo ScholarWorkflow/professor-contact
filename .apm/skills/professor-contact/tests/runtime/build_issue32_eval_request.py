@@ -27,8 +27,14 @@ def _toml_string(value: str) -> str:
 
 
 def _toml_key_segment(value: str) -> str:
-    """Quote a dynamic dotted-key segment, such as an MCP server id."""
-    return json.dumps(str(value), ensure_ascii=False)
+    """Return a Codex CLI-compatible bare-key MCP server id."""
+    value = str(value)
+    if not value or any(char not in "abcdefghijklmnopqrstuvwxyz"
+                        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for char in value):
+        raise RequestBuildError(
+            "MCP server id cannot be represented safely in a dotted Codex config override: "
+            f"{value!r}")
+    return value
 
 
 def _toml_files(root: Path) -> list[Path]:

@@ -14,14 +14,14 @@ spec.loader.exec_module(module)
 
 
 class Issue32EvalRequestTests(unittest.TestCase):
-    def test_discovers_actual_chrome_server_and_builds_quoted_command(self):
+    def test_discovers_actual_chrome_server_and_builds_bare_key_command(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "consumer"
             (root / ".codex").mkdir(parents=True)
             (root / ".codex/config.toml").write_text(
-                '[mcp_servers."actual.browser.server"]\n'
+                '[mcp_servers."actual-browser-server"]\n'
                 'command = "npx"\n'
-                '[mcp_servers."actual.browser.server".env]\n'
+                '[mcp_servers."actual-browser-server".env]\n'
                 'CHROME_PROFILE_DIR = "/tmp/profile"\n'
                 'CHROME_CDP_PORT = "9222"\n', encoding="utf-8")
             prompt = Path(directory) / "prompt.md"
@@ -56,10 +56,10 @@ class Issue32EvalRequestTests(unittest.TestCase):
             self.assertIs(network_access, True)
             self.assertEqual(parsed[4]["shell_environment_policy"]["set"]["NPM_CONFIG_CACHE"],
                              '/tmp/npm "cache"')
-            self.assertEqual(parsed[5]["mcp_servers"]["actual.browser.server"]["env"]["CHROME_PROFILE_DIR"],
+            self.assertEqual(parsed[5]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_PROFILE_DIR"],
                              '/tmp/chrome "profile"')
-            self.assertIs(type(parsed[6]["mcp_servers"]["actual.browser.server"]["env"]["CHROME_CDP_PORT"]), str)
-            self.assertEqual(parsed[6]["mcp_servers"]["actual.browser.server"]["env"]["CHROME_CDP_PORT"], "9333")
+            self.assertIs(type(parsed[6]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_CDP_PORT"]), str)
+            self.assertEqual(parsed[6]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_CDP_PORT"], "9333")
             self.assertEqual(json.loads(output.read_text())["command"], command)
 
     def test_ambiguous_chrome_configuration_is_blocked(self):
