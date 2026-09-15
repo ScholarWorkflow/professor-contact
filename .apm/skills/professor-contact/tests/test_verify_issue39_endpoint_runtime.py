@@ -378,6 +378,45 @@ class VerifyIssue39EndpointRuntimeTests(unittest.TestCase):
                 adapter_payload=adapter(), request=build_request_json())
             self.assertEqual(verdict["status"], "BLOCKED_OBSERVABILITY")
 
+    def test_templated_loop_reads_count_when_payloads_print(self):
+        """A real child loops seeded keys over a case-templated JSON-RPC body
+        (itemKey bound to a shell variable) and prints pretty item payloads."""
+        with tempfile.TemporaryDirectory() as directory:
+            command = (
+                "set -e\n"
+                "MCP='http://127.0.0.1:24122/mcp'\n"
+                f"for K in {ITEM_KEYS[0]} {ITEM_KEYS[1]}; do\n"
+                '  case "$pair" in details) body=\'{"jsonrpc":"2.0","id":1,'
+                '"method":"tools/call","params":{"name":"get_item_details",'
+                '"arguments":{"itemKey":"$K"}}}\';; esac\n'
+                '  curl -sS -X POST "$MCP" -d "$body" | jq .\n'
+                "done")
+            payload = json.dumps({
+                "key": ITEM_KEYS[0], "itemType": "journalArticle",
+                "title": "Adaptive Processing in Synthetic Systems",
+                "abstractNote": "A deterministic synthetic paper.",
+            }, indent=1)
+            events = [command_event(command, payload)]
+            verdict, _ = run(
+                directory,
+                eval_response={"output": {"app_server_events": events}},
+                adapter_payload=adapter(), request=build_request_json())
+            self.assertEqual(verdict["status"], "PASS")
+            self.assertIn(ITEM_KEYS[0], verdict["observed_item_keys"])
+
+    def test_item_payload_without_read_tool_reference_stays_unobserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload = json.dumps({
+                "key": ITEM_KEYS[0], "itemType": "journalArticle",
+                "title": "Adaptive Processing in Synthetic Systems",
+            })
+            events = [command_event("jq . papers.json", payload)]
+            verdict, _ = run(
+                directory,
+                eval_response={"output": {"app_server_events": events}},
+                adapter_payload=adapter(), request=build_request_json())
+            self.assertEqual(verdict["status"], "BLOCKED_OBSERVABILITY")
+
     def test_trust_check_resolves_symlinked_consumer_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory).resolve()

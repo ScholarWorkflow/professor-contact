@@ -231,6 +231,29 @@ def _result_item_keys(payloads: list[dict], seeded: set[str]) -> list[str]:
     return keys
 
 
+def _item_payload_keys(text: str, seeded: set[str]) -> list[str]:
+    """Seeded keys inside Zotero item payloads printed in command output.
+
+    A payload is an object with ``itemKey``/``key`` plus an item signature
+    (``itemType``, or ``title`` with an abstract field) — the shape Zotero MCP
+    read results print after any jq transformation.
+    """
+    keys: list[str] = []
+    for payload in _decode_json_objects(text):
+        if not isinstance(payload, dict):
+            continue
+        key = payload.get("itemKey", payload.get("key"))
+        if not isinstance(key, str) or key not in seeded or key in keys:
+            continue
+        has_signature = (
+            isinstance(payload.get("itemType"), str)
+            or (isinstance(payload.get("title"), str)
+                and isinstance(payload.get("abstractNote", payload.get("abstract")), str)))
+        if has_signature:
+            keys.append(key)
+    return keys
+
+
 def _child_reads(events: list[dict], child_ids: set[str], seeded: set[str]):
     """Scan formal-child command events for real MCP reads of seeded keys."""
     observed: list[str] = []
@@ -287,6 +310,14 @@ def _child_reads(events: list[dict], child_ids: set[str], seeded: set[str]):
             # A command that targeted a production endpoint cannot prove a
             # read through the resolved fixture endpoint.
             continue
+        # Templated loops bind itemKey to a shell variable, so the JSON-RPC
+        # request never contains the literal key.  When the same command
+        # references a read tool, enumerates the seeded key, and prints an
+        # item payload for it, that payload is machine proof of the read.
+        if any(tool in command for tool in READ_TOOLS):
+            for key in _item_payload_keys(output, seeded):
+                if re.search(rf"\b{re.escape(key)}\b", command) and key not in reads:
+                    reads.append(key)
         for key in reads:
             if key not in observed:
                 observed.append(key)
