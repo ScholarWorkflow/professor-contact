@@ -343,6 +343,45 @@ class Issue32VerifierTests(unittest.TestCase):
             self.assertEqual(names.get(name), "fail", names)
         self.assertEqual(names.get("choice_email_id_matches_pack"), "pass", names)
 
+    def test_stage5_final_rejects_sentinel_at_wrong_template_slot(self):
+        """A sentinel still present but off its §6.4 slot must fail its check."""
+        prof = self.root / "教授研究/X分野/Example Professor"
+        scenarios = [
+            ("套磁邮件.txt",
+             "Fixture University B出身の（2026年4月、Adaptive and nonlinear processing、"
+             "Master of Science）です。\n"
+             "I am studying reproducible research workflows. "
+             "先生の研究室を志望として出願させていただきたく存じます Fixture Applicant\n",
+             "choice_signature_rendered"),
+            ("套磁邮件.txt",
+             "Fixture University B出身のFixture Applicant（2026年4月、"
+             "Adaptive and nonlinear processing、Master of Science）です。 "
+             "I am studying reproducible research workflows.\n"
+             "先生の研究室を志望として出願させていただきたく存じます\n",
+             "choice_learning_rendered"),
+            ("套磁跟进邮件.txt",
+             "Master of ScienceのFixture Applicantです。Fixture University B出身で、"
+             "初回連絡しました（2026-09-15）。\n",
+             "choice_initial_sent_date_rendered"),
+        ]
+        render_checks = ("choice_signature_rendered", "choice_learning_rendered",
+                         "choice_initial_sent_date_rendered")
+        for filename, text, expected_fail in scenarios:
+            with self.subTest(check=expected_fail):
+                self._seed_stage5_final_outputs()
+                (prof / filename).write_text(text, encoding="utf-8")
+
+                payload = verifier._checkpoint_stage5_final(self.args())
+
+                self.assertEqual(payload["status"], "fail", payload)
+                names = {row["name"]: row["status"] for row in payload["checks"]}
+                for name in render_checks:
+                    expected = "fail" if name == expected_fail else "pass"
+                    self.assertEqual(names.get(name), expected, names)
+                self.assertEqual(names.get("choice_email_id_matches_pack"), "pass", names)
+                self.assertEqual(
+                    names.get("choice_non_first_choice_branch_rendered"), "pass", names)
+
     def test_stage2_requires_machine_contract_and_allows_new_bbbb_analysis(self):
         prof = self.root / "教授研究/X分野/Example Professor"
         pack = {

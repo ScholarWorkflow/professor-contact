@@ -44,6 +44,13 @@ STAGE5_CHOICES_SENTINELS = {
 }
 STAGE5_FIRST_CHOICE_PHRASE = "先生の研究室を第一志望として出願させていただきたく存じます"
 STAGE5_NON_FIRST_CHOICE_PHRASE = "先生の研究室を志望として出願させていただきたく存じます"
+# Issue #43 §6.4 requires the sentinels at the deterministic template slots:
+# the signature inside ``出身の{{氏名}}（`` on the identity line, learning
+# directly before the aspiration value on the same template line, and the
+# follow-up date inside ``{{初回送信日}}に初回連絡しました。``.
+STAGE5_SIGNATURE_SLOT = "出身の{name}（"
+STAGE5_LEARNING_SLOT_TAIL = " 先生の研究室を"
+STAGE5_SENT_DATE_SLOT = "{date}に初回連絡しました。"
 
 
 def _load(path: Path) -> Any:
@@ -675,6 +682,10 @@ def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
                               for path in initial_md + initial_txt)
     followup_text = "\n".join(path.read_text(encoding="utf-8", errors="replace")
                                for path in followup_md + followup_txt)
+    initial_txt_text = "\n".join(path.read_text(encoding="utf-8", errors="replace")
+                                 for path in initial_txt)
+    followup_txt_text = "\n".join(path.read_text(encoding="utf-8", errors="replace")
+                                  for path in followup_txt)
     choice_email_id_ok = bool(pack_emails)
     choice_signature_ok = bool(pack_emails)
     choice_learning_ok = bool(pack_emails)
@@ -690,19 +701,24 @@ def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
         choice_email_id_ok = choice_email_id_ok and len(choice_rows) == 2 \
             and all(row.get("email_id") == email_id for row in choice_rows)
         # Issue #43 pins the caller's fixed sentinels as the independent
-        # expected: a state whose values were swapped together with the output
-        # must fail here, so expected values never come from product state.
+        # expected, rendered at the deterministic template slots from §6.4:
+        # expected values never come from product state, and only the slot
+        # occurrence in the canonical .txt -- not presence anywhere in the
+        # merged output -- decides the render checks.
         choice_signature_ok = choice_signature_ok and isinstance(choices, dict) \
             and choices.get("signature_name") == STAGE5_CHOICES_SENTINELS["signature_name"] \
-            and STAGE5_CHOICES_SENTINELS["signature_name"] in initial_text
+            and STAGE5_SIGNATURE_SLOT.format(
+                name=STAGE5_CHOICES_SENTINELS["signature_name"]) in initial_txt_text
         choice_learning_ok = choice_learning_ok and isinstance(choices, dict) \
             and choices.get("learning") == STAGE5_CHOICES_SENTINELS["learning"] \
-            and STAGE5_CHOICES_SENTINELS["learning"] in initial_text
+            and STAGE5_CHOICES_SENTINELS["learning"] + STAGE5_LEARNING_SLOT_TAIL \
+            in initial_txt_text
         choice_initial_sent_date_ok = choice_initial_sent_date_ok \
             and isinstance(followup_choices, dict) \
             and followup_choices.get("initial_sent_date") \
             == STAGE5_CHOICES_SENTINELS["initial_sent_date"] \
-            and STAGE5_CHOICES_SENTINELS["initial_sent_date"] in followup_text
+            and STAGE5_SENT_DATE_SLOT.format(
+                date=STAGE5_CHOICES_SENTINELS["initial_sent_date"]) in followup_txt_text
         choice_branch_ok = choice_branch_ok and isinstance(choices, dict) \
             and choices.get("first_choice") is False \
             and STAGE5_NON_FIRST_CHOICE_PHRASE in initial_text \
