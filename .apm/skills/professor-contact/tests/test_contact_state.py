@@ -1185,6 +1185,29 @@ class TestStage5(BaseEnv):
         self.assertEqual(out["reason_code"], "missing_user_choice")
         self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
 
+    def test_stage5_first_allows_missing_sent_date_but_choice_ids_fail_closed(self):
+        g1 = self.prepare()
+        raw_path = self.root / "first-without-date-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "first-without-date-choices.json"
+        choices = dict(self.choices())
+        choices.pop("initial_sent_date", None)
+        choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+
+        out = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "first",
+                            "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(out["status"], "ok", out)
+
+        for invalid_choices in (
+            {key: value for key, value in choices.items() if key != "email_id"},
+            dict(choices, email_id="not-selected-email"),
+        ):
+            choices_path.write_text(json.dumps(invalid_choices, ensure_ascii=False), encoding="utf-8")
+            out = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "first",
+                                "--result", raw_path, "--choices", choices_path))
+            self.assertEqual(out["status"], "error", invalid_choices)
+            self.assertEqual(out["reason_code"], "invalid_result_json", invalid_choices)
+
     def test_stage5_rejects_non_boolean_first_choice(self):
         g1 = self.prepare()
         raw_path = self.root / "non-boolean-choice-raw.json"

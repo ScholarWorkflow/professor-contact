@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +24,10 @@ DIRECTION_ID = "DIR00001"
 ITEM_KEYS = ("AAAA1111", "BBBB2222")
 PROGRAM_STAGE_OUTPUTS = (
     Path("教授研究/套磁目标.json"), Path("教授研究/套磁阶段1候选.json"),
+    Path("教授研究/套磁选择.json"), Path("教授研究/邮件输入.json"),
 )
 PROFESSOR_STAGE_OUTPUTS = (
     Path("套磁候选输入.json"), Path("套磁候选状态.json"),
-    Path("套磁选择.json"), Path("邮件输入.json"),
 )
 INPUT_PACK_KIND = "professor-contact-stage2-input"
 CANDIDATE_STATE_KIND = "professor-contact-stage3-state"
@@ -186,11 +187,40 @@ def _checkpoint_install(args: argparse.Namespace) -> dict[str, Any]:
     consumer = Path(args.consumer_root or "").resolve()
     _check(checks, "consumer_root_exists", bool(args.consumer_root) and consumer.is_dir(), str(consumer))
     expected = [consumer / ".agents/skills/professor-contact/SKILL.md",
-                consumer / ".codex/agents/professor-contact.toml"]
+                consumer / ".codex/agents/professor-contact.toml",
+                consumer / ".codex/agents/professor-contact-email-generator.toml"]
     for path in expected:
         _check(checks, f"installed:{path.relative_to(consumer)}", path.is_file(), str(path))
         if path.exists():
             _check(checks, f"contained:{path.name}", path.resolve().is_relative_to(consumer), str(path.resolve()))
+    generator_path = consumer / ".codex/agents/professor-contact-email-generator.toml"
+    if generator_path.is_file():
+        try:
+            generator = tomllib.loads(generator_path.read_text(encoding="utf-8"))
+            instructions = generator.get("developer_instructions")
+            _check(checks, "generated_generator_name",
+                   generator.get("name") == "professor-contact-email-generator")
+            _check(checks, "generated_choices_contract",
+                   isinstance(instructions, str)
+                   and all(token in instructions for token in (
+                       "Stage 5", "choices", "email_id", "first_choice",
+                       "signature_name", "learning", "initial_sent_date", "--choices")))
+            if isinstance(instructions, str):
+                branch_start = instructions.find("### Codex branch")
+                branch_end = instructions.find("### humanizer-ja stage-5 constraints", branch_start + 1)
+                codex_branch = instructions[branch_start:branch_end] \
+                    if branch_start >= 0 and branch_end > branch_start else ""
+                _check(checks, "generated_codex_branch_present", bool(codex_branch))
+                _check(checks, "generated_codex_no_opencode_question",
+                       bool(codex_branch) and "question(" not in codex_branch)
+                _check(checks, "generated_codex_no_opencode_task",
+                       bool(codex_branch) and "task(subagent_type" not in codex_branch)
+            else:
+                _check(checks, "generated_codex_branch_present", False)
+                _check(checks, "generated_codex_no_opencode_question", False)
+                _check(checks, "generated_codex_no_opencode_task", False)
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            _check(checks, "generated_projection_readable", False, str(exc))
     if args.producer_sha:
         resolved_commit, detail = _resolved_professor_contact_commit(consumer)
         _check(checks, "producer_sha_pinned", resolved_commit == args.producer_sha,
@@ -448,6 +478,13 @@ def _candidate_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
 def _checkpoint_make_stage4_selection(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
+    direction_id = getattr(args, "direction_id", DIRECTION_ID)
+    selection_policy = getattr(args, "selection_policy", "lexicographic-first-candidate-id")
+    _check(checks, "stage4_direction_id", direction_id == DIRECTION_ID, direction_id)
+    _check(checks, "stage4_selection_policy",
+           selection_policy == "lexicographic-first-candidate-id", selection_policy)
+    if any(row["status"] == "fail" for row in checks):
+        return _finish(checks)
     state_path = _professor_dir(root) / "套磁候选状态.json"
     try:
         rows = sorted(_candidate_rows(_load(state_path)), key=lambda row: str(row["id"]))
@@ -475,10 +512,10 @@ def _checkpoint_make_stage4_selection(args: argparse.Namespace) -> dict[str, Any
 def _checkpoint_stage4_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
-    prof = _professor_dir(root)
+    stage4_root = root / "教授研究"
     try:
-        selection = _load(prof / "套磁选择.json")
-        email_input = _load(prof / "邮件输入.json")
+        selection = _load(stage4_root / "套磁选择.json")
+        email_input = _load(stage4_root / "邮件输入.json")
     except (OSError, json.JSONDecodeError) as exc:
         _check(checks, "stage4_outputs_readable", False, str(exc))
         return _finish(checks)
@@ -491,20 +528,42 @@ def _checkpoint_stage4_final(args: argparse.Namespace) -> dict[str, Any]:
     _check(checks, "contact_evidence_frozen", bool(evidence) and all(
         isinstance(item, dict) and bool(item.get("record_fingerprint")) and isinstance(item.get("record"), dict)
         for item in evidence), evidence)
-    return _finish(checks, selection_file=str(prof / "套磁选择.json"), email_count=len(emails) if isinstance(emails, list) else 0)
+    return _finish(checks, selection_file=str(stage4_root / "套磁选择.json"),
+                   email_count=len(emails) if isinstance(emails, list) else 0)
 
 
 def _stage5_candidate_paths(professor_dir: Path, name: str) -> tuple[Path, ...]:
     return (professor_dir / name, professor_dir / "套磁邮件" / name)
 
 
+def _checkpoint_stage5_snapshot(args: argparse.Namespace) -> dict[str, Any]:
+    """Capture the issue-43 Stage 5 artifact state without changing it."""
+    root = Path(args.program_root).resolve()
+    relative_paths = (
+        Path("教授研究/X分野/Example Professor/套磁邮件.md"),
+        Path("教授研究/X分野/Example Professor/套磁邮件.txt"),
+        Path("教授研究/X分野/Example Professor/套磁跟进邮件.md"),
+        Path("教授研究/X分野/Example Professor/套磁跟进邮件.txt"),
+        Path("教授研究/X分野/Example Professor/套磁邮件状态.json"),
+    )
+    artifacts: dict[str, dict[str, Any]] = {}
+    for relative in relative_paths:
+        path = root / relative
+        artifacts[relative.as_posix()] = {
+            "exists": path.exists(),
+            "sha256": _sha256(path) if path.is_file() else None,
+        }
+    return {"status": "pass", "observed": {"artifacts": artifacts}}
+
+
 def _checkpoint_stage5_pristine(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
     prof = _professor_dir(root)
+    stage4_root = root / "教授研究"
     try:
-        selection = _load(prof / "套磁选择.json")
-        email_pack = _load(prof / "邮件输入.json")
+        selection = _load(stage4_root / "套磁选择.json")
+        email_pack = _load(stage4_root / "邮件输入.json")
     except (OSError, json.JSONDecodeError) as exc:
         _check(checks, "stage4_outputs_readable", False, str(exc))
         return _finish(checks)
@@ -532,9 +591,9 @@ def _checkpoint_stage5_pristine(args: argparse.Namespace) -> dict[str, Any]:
 def _checkpoint_make_stage5_choices(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
-    prof = _professor_dir(root)
+    stage4_root = root / "教授研究"
     try:
-        email_pack = _load(prof / "邮件输入.json")
+        email_pack = _load(stage4_root / "邮件输入.json")
     except (OSError, json.JSONDecodeError) as exc:
         _check(checks, "email_pack_readable", False, str(exc))
         return _finish(checks)
@@ -562,67 +621,6 @@ def _checkpoint_make_stage5_choices(args: argparse.Namespace) -> dict[str, Any]:
     return _finish(checks, email_id=valid_rows[0]["email_id"], output=str(output), payload=payload)
 
 
-def _checkpoint_stage5_choices_final(args: argparse.Namespace) -> dict[str, Any]:
-    root = Path(args.program_root).resolve()
-    checks: list[dict[str, Any]] = []
-    prof = _professor_dir(root)
-    try:
-        choices = _load(Path(args.choices_file))
-        email_pack = _load(prof / "邮件输入.json")
-        email_state = _load(prof / "套磁邮件状态.json")
-    except (OSError, json.JSONDecodeError) as exc:
-        _check(checks, "choices_and_state_readable", False, str(exc))
-        return _finish(checks)
-
-    emails = email_pack.get("emails", email_pack.get("messages", [])) \
-        if isinstance(email_pack, dict) else []
-    if isinstance(emails, dict):
-        emails = list(emails.values())
-    ids = [row.get("email_id") for row in emails if isinstance(row, dict)]
-    _check(checks, "single_email_pack_id", len(ids) == 1 and isinstance(ids[0], str) and bool(ids[0]), ids)
-    _check(checks, "choices_object", isinstance(choices, dict), type(choices).__name__)
-    if not isinstance(choices, dict) or len(ids) != 1:
-        return _finish(checks)
-    email_id = ids[0]
-    for key, expected in STAGE5_CHOICES_SENTINELS.items():
-        _check(checks, f"choices_{key}", choices.get(key) == expected, choices.get(key))
-    _check(checks, "choices_email_id_matches_pack", choices.get("email_id") == email_id,
-           choices.get("email_id"))
-
-    state_emails = email_state.get("emails", {}) if isinstance(email_state, dict) else {}
-    state_entry = state_emails.get(email_id) if isinstance(state_emails, dict) else None
-    pack_row = emails[0] if emails and isinstance(emails[0], dict) else {}
-    _check(checks, "current_email_pack_fingerprint", isinstance(pack_row.get("source_hash"), str)
-           and bool(pack_row.get("source_hash")) and isinstance(state_entry, dict)
-           and state_entry.get("input_fingerprint") == pack_row.get("source_hash"),
-           state_entry.get("input_fingerprint") if isinstance(state_entry, dict) else None)
-
-    paths: dict[str, Path] = {}
-    for name in STAGE5_FINAL_NAMES:
-        candidates = [path for path in _stage5_candidate_paths(prof, name) if path.is_file()]
-        _check(checks, f"{name}_exists", len(candidates) == 1, [str(path) for path in candidates])
-        if candidates:
-            paths[name] = candidates[0]
-    if len(paths) != len(STAGE5_FINAL_NAMES):
-        return _finish(checks, email_id=email_id)
-
-    initial_txt = paths["套磁邮件.txt"].read_text(encoding="utf-8")
-    followup_txt = paths["套磁跟进邮件.txt"].read_text(encoding="utf-8")
-    signature_line = "Fixture University B出身のFixture Applicant（2026年4月、Adaptive and nonlinear processing、Master of Science）です。"
-    learning_tail = ("I am studying reproducible research workflows. "
-                     "先生の研究室を志望として出願させていただきたく存じます")
-    followup_line = ("Master of ScienceのFixture Applicantです。Fixture University B出身で、"
-                     "2026-09-15に初回連絡しました。")
-    _check(checks, "signature_at_initial_template_position", signature_line in initial_txt)
-    _check(checks, "learning_at_initial_template_position", learning_tail in initial_txt)
-    _check(checks, "non_first_choice_template_branch",
-           "先生の研究室を志望として出願させていただきたく存じます" in initial_txt
-           and "先生の研究室を第一志望として出願させていただきたく存じます" not in initial_txt)
-    _check(checks, "initial_sent_date_at_followup_template_position", followup_line in followup_txt)
-    return _finish(checks, email_id=email_id,
-                   final_files={name: str(path) for name, path in paths.items()})
-
-
 def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
@@ -641,10 +639,14 @@ def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
     followup_txt = [path for path in txt_files if "跟进" in path.name or "follow" in path.name.lower()]
     _check(checks, "initial_email_output", bool(initial_md) and bool(initial_txt), [path.name for path in all_files])
     _check(checks, "followup_email_output", bool(followup_md) and bool(followup_txt), [path.name for path in all_files])
+    _check(checks, "final_initial_exists", bool(initial_md) and bool(initial_txt),
+           [str(path) for path in initial_md + initial_txt])
+    _check(checks, "final_followup_exists", bool(followup_md) and bool(followup_txt),
+           [str(path) for path in followup_md + followup_txt])
     text = "\n".join(path.read_text(encoding="utf-8", errors="replace") for path in all_files)
     _check(checks, "no_unresolved_placeholders", "{{" not in text and "}}" not in text)
     _check(checks, "pre_send_checklist", "送信前核对" in text or "send" in text.lower())
-    email_pack_path = prof / "邮件输入.json"
+    email_pack_path = root / "教授研究/邮件输入.json"
     state_path = prof / "套磁邮件状态.json"
     try:
         email_pack = _load(email_pack_path)
@@ -667,6 +669,46 @@ def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
     if isinstance(pack_emails, dict):
         pack_emails = list(pack_emails.values())
     state_emails = email_state.get("emails", {}) if isinstance(email_state, dict) else {}
+    initial_text = "\n".join(path.read_text(encoding="utf-8", errors="replace")
+                              for path in initial_md + initial_txt)
+    followup_text = "\n".join(path.read_text(encoding="utf-8", errors="replace")
+                               for path in followup_md + followup_txt)
+    choice_email_id_ok = bool(pack_emails)
+    choice_signature_ok = bool(pack_emails)
+    choice_learning_ok = bool(pack_emails)
+    choice_initial_sent_date_ok = bool(pack_emails)
+    choice_branch_ok = bool(pack_emails)
+    for email in pack_emails if isinstance(pack_emails, list) else []:
+        email_id = email.get("email_id") if isinstance(email, dict) else None
+        entry = state_emails.get(email_id) if isinstance(state_emails, dict) else None
+        choices = entry.get("choices") if isinstance(entry, dict) else None
+        followup_choices = entry.get("followup", {}).get("choices") \
+            if isinstance(entry, dict) and isinstance(entry.get("followup"), dict) else None
+        choice_rows = [row for row in (choices, followup_choices) if isinstance(row, dict)]
+        choice_email_id_ok = choice_email_id_ok and len(choice_rows) == 2 \
+            and all(row.get("email_id") == email_id for row in choice_rows)
+        signature = choices.get("signature_name") if isinstance(choices, dict) else None
+        learning = choices.get("learning") if isinstance(choices, dict) else None
+        sent_date = followup_choices.get("initial_sent_date") \
+            if isinstance(followup_choices, dict) else None
+        first_choice = choices.get("first_choice") if isinstance(choices, dict) else None
+        first_phrase = "先生の研究室を第一志望として出願させていただきたく存じます"
+        non_first_phrase = "先生の研究室を志望として出願させていただきたく存じます"
+        expected_phrase = first_phrase if first_choice is True else non_first_phrase
+        opposite_phrase = non_first_phrase if first_choice is True else first_phrase
+        choice_signature_ok = choice_signature_ok and isinstance(signature, str) \
+            and bool(signature) and signature in initial_text
+        choice_learning_ok = choice_learning_ok and isinstance(learning, str) \
+            and bool(learning) and learning in initial_text
+        choice_initial_sent_date_ok = choice_initial_sent_date_ok \
+            and isinstance(sent_date, str) and bool(sent_date) and sent_date in followup_text
+        choice_branch_ok = choice_branch_ok and expected_phrase in initial_text \
+            and opposite_phrase not in initial_text
+    _check(checks, "choice_email_id_matches_pack", choice_email_id_ok)
+    _check(checks, "choice_signature_rendered", choice_signature_ok)
+    _check(checks, "choice_learning_rendered", choice_learning_ok)
+    _check(checks, "choice_initial_sent_date_rendered", choice_initial_sent_date_ok)
+    _check(checks, "choice_non_first_choice_branch_rendered", choice_branch_ok)
     frozen_and_valid = True
     invalid_details: list[Any] = []
     for email in pack_emails if isinstance(pack_emails, list) else []:
@@ -797,9 +839,9 @@ CHECKPOINTS = {
     "stage4-needs-input": _checkpoint_stage4_needs_input,
     "make-stage4-selection": _checkpoint_make_stage4_selection,
     "stage4-final": _checkpoint_stage4_final,
+    "stage5-snapshot": _checkpoint_stage5_snapshot,
     "stage5-pristine": _checkpoint_stage5_pristine,
     "make-stage5-choices": _checkpoint_make_stage5_choices,
-    "stage5-choices-final": _checkpoint_stage5_choices_final,
     "stage5-final": _checkpoint_stage5_final,
     "runtime-graph": _checkpoint_runtime_graph,
 }
@@ -807,14 +849,16 @@ CHECKPOINTS = {
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("checkpoint", choices=tuple(CHECKPOINTS))
+    parser.add_argument("checkpoint", nargs="?", choices=tuple(CHECKPOINTS))
+    parser.add_argument("--make-stage4-selection", action="store_true")
+    parser.add_argument("--direction-id", default=DIRECTION_ID)
+    parser.add_argument("--selection-policy", default="lexicographic-first-candidate-id")
     parser.add_argument("--program-root", type=Path)
     parser.add_argument("--consumer-root", type=Path)
     parser.add_argument("--eval-response", type=Path)
     parser.add_argument("--adapter-output", type=Path)
     parser.add_argument("--producer-sha", default="")
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--choices-file", type=Path)
     parser.add_argument("--min-edges", type=int, default=1)
     parser.add_argument("--required-depth", type=int, default=1)
     return parser
@@ -823,12 +867,16 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.make_stage4_selection:
+            if args.checkpoint and args.checkpoint != "make-stage4-selection":
+                raise ValueError("--make-stage4-selection cannot be combined with another checkpoint")
+            args.checkpoint = "make-stage4-selection"
+        if args.checkpoint is None:
+            raise ValueError("checkpoint is required")
         if args.checkpoint != "install" and args.program_root is None:
             raise ValueError("--program-root is required for this checkpoint")
         if args.checkpoint in {"make-stage4-selection", "make-stage5-choices"} and args.output is None:
             raise ValueError(f"--output is required for {args.checkpoint}")
-        if args.checkpoint == "stage5-choices-final" and args.choices_file is None:
-            raise ValueError("--choices-file is required for stage5-choices-final")
         payload = CHECKPOINTS[args.checkpoint](args)
     except Exception as exc:
         payload = _result("fail", [{"name": "verifier_exception", "status": "fail", "detail": str(exc)}])
