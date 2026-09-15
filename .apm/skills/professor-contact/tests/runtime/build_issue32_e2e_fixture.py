@@ -105,7 +105,9 @@ def _tree_hashes(root: Path, *, exclude: set[str] | None = None) -> dict[str, st
     }
 
 
-def _write_inputs(program_root: Path, profile_root: Path) -> dict[str, str]:
+def _write_inputs(program_root: Path, profile_root: Path,
+                  item_keys: tuple[str, str] = ITEM_KEYS) -> dict[str, str]:
+    ready_key, fill_key = item_keys
     professor_dir = program_root / "教授研究" / "X分野" / PROFESSOR
     analysis_dir = professor_dir / "论文分析"
     analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -125,27 +127,27 @@ def _write_inputs(program_root: Path, profile_root: Path) -> dict[str, str]:
             "summary_zh": "Synthetic direction for the issue #32 runtime contract.",
             "user_note": FIXED_NOTE,
             "members": [
-                {"item_key": "AAAA1111", "preview_confidence": "high"},
-                {"item_key": "BBBB2222", "preview_confidence": "high"},
+                {"item_key": ready_key, "preview_confidence": "high"},
+                {"item_key": fill_key, "preview_confidence": "high"},
             ],
-            "representatives": [{"item_key": "AAAA1111"}],
+            "representatives": [{"item_key": ready_key}],
         }],
     }
     _write_json(program_root / preview_relative, preview)
     papers = {
         "papers": [
             {
-                "item_key": "AAAA1111",
+                "item_key": ready_key,
                 "title": "Adaptive Processing in Synthetic Systems",
                 "title_zh": "合成系统中的自适应处理",
                 "year": 2024,
                 "authors": [PROFESSOR, "Synthetic Researcher"],
                 "abstract": "A deterministic synthetic paper about adaptive and nonlinear processing.",
                 "pdf_status": "downloaded",
-                "pdf_path": "论文分析/AAAA1111.pdf",
+                "pdf_path": f"论文分析/{ready_key}.pdf",
             },
             {
-                "item_key": "BBBB2222",
+                "item_key": fill_key,
                 "title": "Nonlinear Extensions of Synthetic Processing",
                 "title_zh": "合成处理的非线性扩展",
                 "year": 2023,
@@ -156,7 +158,7 @@ def _write_inputs(program_root: Path, profile_root: Path) -> dict[str, str]:
         ]
     }
     _write_json(professor_dir / "papers.json", papers)
-    (analysis_dir / "AAAA1111.pdf").write_bytes(render_text_pdf([
+    (analysis_dir / f"{ready_key}.pdf").write_bytes(render_text_pdf([
         "Synthetic paper: Adaptive Processing in Synthetic Systems",
         "Abstract: adaptive and nonlinear processing is evaluated.",
         "Future work: extend the framework to nonlinear and adaptive settings.",
@@ -224,11 +226,27 @@ def _write_inputs(program_root: Path, profile_root: Path) -> dict[str, str]:
 
 def build_fixture(program_root: Path, profile_root: Path, *, consumer_root: Path | None = None,
                   professor_research_sha: str = "", zotero_http_url: str = "",
-                  zotero_mcp_url: str = "") -> dict:
+                  zotero_mcp_url: str = "",
+                  item_keys: tuple[str, str] | None = None,
+                  fixture_run_id: str = "") -> dict:
+    """Build the raw fixture; ``item_keys`` injects runtime-returned Zotero keys.
+
+    The default ``item_keys`` keeps the deterministic E2E fixture byte-stable;
+    the issue #40 runtime setup helper passes the real keys it received from
+    the disposable Zotero so no fake key ever enters ``papers.json``/preview.
+    """
+    keys = tuple(item_keys) if item_keys is not None else ITEM_KEYS
+    if len(keys) != 2 or len(set(keys)) != 2 or not all(
+            isinstance(key, str) and key.strip() for key in keys):
+        raise FixtureBuildError(f"item_keys must be two distinct non-empty strings: {keys!r}")
+    if keys == ITEM_KEYS and fixture_run_id:
+        raise FixtureBuildError(
+            "fixture_run_id requires runtime item_keys; the deterministic "
+            "fixture must stay decoupled from fixture runs")
     program_root = Path(program_root).resolve()
     profile_root = Path(profile_root).resolve()
     _prepare_output(program_root)
-    program_hashes = _write_inputs(program_root, profile_root)
+    program_hashes = _write_inputs(program_root, profile_root, keys)
     manifest = {
         "schema_version": 1,
         "builder": MANIFEST_ID,
@@ -239,9 +257,9 @@ def build_fixture(program_root: Path, profile_root: Path, *, consumer_root: Path
         "consumer_root": str(Path(consumer_root).resolve()) if consumer_root else None,
         "professor": PROFESSOR,
         "direction_ids": [DIRECTION_ID],
-        "item_keys": list(ITEM_KEYS),
-        "ready_item_keys": ["AAAA1111"],
-        "missing_item_keys": ["BBBB2222"],
+        "item_keys": list(keys),
+        "ready_item_keys": [keys[0]],
+        "missing_item_keys": [keys[1]],
         "professor_research_sha": professor_research_sha,
         "zotero_http_url": zotero_http_url,
         "zotero_mcp_url": zotero_mcp_url,
@@ -249,6 +267,8 @@ def build_fixture(program_root: Path, profile_root: Path, *, consumer_root: Path
         "profile_files": _tree_hashes(profile_root),
         "forbidden_product_outputs": [path.as_posix() for path in FORBIDDEN_STAGE_OUTPUTS],
     }
+    if fixture_run_id:
+        manifest["fixture_run_id"] = fixture_run_id
     _write_json(program_root / MANIFEST_NAME, manifest)
     return manifest
 
