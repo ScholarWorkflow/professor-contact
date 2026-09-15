@@ -404,6 +404,27 @@ class VerifyIssue39EndpointRuntimeTests(unittest.TestCase):
             self.assertEqual(verdict["status"], "PASS")
             self.assertIn(ITEM_KEYS[0], verdict["observed_item_keys"])
 
+    def test_saved_response_files_with_underscore_names_are_attributed(self):
+        """A child that saves raw JSON-RPC responses to files named
+        ``<KEY>_get_item_details.json`` and later prints their payloads must
+        still be credited with the reads."""
+        with tempfile.TemporaryDirectory() as directory:
+            payload = json.dumps({
+                "key": ITEM_KEYS[0], "itemType": "journalArticle",
+                "title": "Adaptive Processing in Synthetic Systems",
+                "abstractNote": "A deterministic synthetic paper.",
+            }, indent=1)
+            command = (f"for f in /tmp/{ITEM_KEYS[0]}_get_item_details.json "
+                       f"/tmp/{ITEM_KEYS[1]}_get_item_abstract.json; do "
+                       'echo "$f"; jq -r \'.result.content[]?.text\' "$f"; done')
+            events = [command_event(command, payload)]
+            verdict, _ = run(
+                directory,
+                eval_response={"output": {"app_server_events": events}},
+                adapter_payload=adapter(), request=build_request_json())
+            self.assertEqual(verdict["status"], "PASS")
+            self.assertEqual(verdict["observed_item_keys"], [ITEM_KEYS[0]])
+
     def test_item_payload_without_read_tool_reference_stays_unobserved(self):
         with tempfile.TemporaryDirectory() as directory:
             payload = json.dumps({

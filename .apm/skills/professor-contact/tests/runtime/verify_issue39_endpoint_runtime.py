@@ -314,9 +314,12 @@ def _child_reads(events: list[dict], child_ids: set[str], seeded: set[str]):
         # request never contains the literal key.  When the same command
         # references a read tool, enumerates the seeded key, and prints an
         # item payload for it, that payload is machine proof of the read.
+        # Zotero keys are alphanumeric; underscore adjacency (as in file names
+        # like 65KGVNY4_get_item_details.json) must not break the token match.
         if any(tool in command for tool in READ_TOOLS):
             for key in _item_payload_keys(output, seeded):
-                if re.search(rf"\b{re.escape(key)}\b", command) and key not in reads:
+                if re.search(rf"(?<![A-Za-z0-9]){re.escape(key)}(?![A-Za-z0-9])",
+                             command) and key not in reads:
                     reads.append(key)
         for key in reads:
             if key not in observed:
