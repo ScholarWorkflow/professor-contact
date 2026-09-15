@@ -55,7 +55,7 @@ Stage 0 does not require Zotero to be open. Later stages may still use Zotero as
 | 阶段 | subagent | 做什么 | 产物 |
 |---|---|---|---|
 | 0 | `professor-contact` | 读 normalized `方向预筛.json` → 交互选定方向（可多选 + per-direction user note） | `教授研究/套磁目标.json`（机器状态；无 Stage 0 Markdown） |
-| 1 | `professor-contact-downloader` | 先 `contact_targets.py resolve`，再 `contact_stage1.py build` 构建逐方向候选快照（保守扩召 + 就绪检查），仅对缺失候选跑 `professor-collector(pdf_only, item_keys=<缺失 keys>)` 定向补下；全部就绪则 no-op | `教授研究/套磁阶段1候选.json`（机器状态）+ PDF 附件补下 |
+| 1 | `professor-contact-downloader` | 先 `contact_targets.py resolve`，再 `contact_stage1.py build` 构建逐方向候选快照（保守扩召 + 就绪检查），仅对缺失候选跑 `professor-collector(pdf_only, item_keys=<缺失 keys>[, access_mode=<oa_only|allow_non_oa>])` 定向补下；全部就绪则 no-op | `教授研究/套磁阶段1候选.json`（机器状态）+ PDF 附件补下 |
 | 2 | `professor-contact-analyzer` | 先 `contact_stage1.py verify` 校验 Stage 1 候选快照，再对每位教授跑 `contact_state.py stage2-preflight`：`reuse_all` 教授在 Zotero probe、PDF 读取、OCR、paper-analysis、handoff、模型 job 之前以 no-op 复用既有 `套磁候选输入.json` + `套磁候选分析.md` 结束（`chatgpt_result` 提供或 `kb_import=true` 时禁止 early exit）；仅对 process 教授以逐方向 `candidate_keys` 为读取/相关性/分析范围（可信度闸门只用 provisional members）；**full `paper-analysis` 覆盖候选集去重并集——每个 unique candidate 复用未变的有效 full analysis，否则跑一次 full pass（摘要级相关集与成本门只截断 gap/叙事，绝不截断 full analysis，issue #7 required flow #2）**→ 判定相关论文、署名、主线与 post-cost-gate 分析 scope 后，**总是先生成确定性的 ChatGPT handoff ZIP**。`chatgpt_handoff=continue` 时 ZIP 只是低成本 side effect，随后旧的本地 OCR/`paper-analysis` 路径语义不变；`wait` 时在任何新 OCR/`paper-analysis` 前软停止。提供匹配 result ZIP 后先严格本地导入成普通 analysis/sidecar，再继续既有 `stage2-resolve-plan → stage2-resolve-finalize → stage2-plan → stage2-finalize --preflight-file`（resolve 流水线对每个被选方向做权威性归属判定：移除误归类、新增他向支持、重命名、拆分/合并、写 `resolved_direction` 状态）。gap/runner/状态机仍完全本地 | `<教授名>/论文分析/_chatgpt_handoff/stage2-<id>.zip`（传输层）+ `<教授名>/论文分析/_resolved_directions.json`（方向权威归属）+ 原有 `<教授名>/套磁候选输入.json`（带 `resolved_directions` 字段与 `cache.preflight` 复用元数据，Stage 3 唯一事实源）/分析报告/_freshness_cache/index/sidecar |
 | 3 | `professor-contact-idea-generator` | **只读输入包 + profile**（不读任何 Markdown/_index/sidecar；输入包为 v2：professor 级 `papers[item_key]` 单一规范论文记录 + 各方向 `supporting_item_keys` 引用）：`stage3-plan --direction-id`（canonical 机器身份；`--collection-key` 仅为 v1 兼容并经输入包精确映射解析）按 `refresh_scope` 生成逐 resolved 方向独立 job（结果文件由 runner 返回安全名 `candidates-<id>-<hash>.json`；模型输入只含本方向切片，绝不发全方向并集），每方向 3-5 条可选候选（除非 `--skip-direction-ids` 显式跳过→持久化 `stage3_status:"skipped"`；refined 模式同样 3-5 条且恰好 1 条 `origin:"user_refined"` 的校准后用户想法）；候选为 v2 精确溯源：`kind:"direction"` + `direction_ids:[本方向]` + `gap_refs` 精确 `(direction_id,item_key,gap_id)` 三元组（在另一方向合法的 gap 配错 direction_id 一律拒绝）；**跨方向为显式 opt-in**：只有调用方传 `--cross-direction-groups '[["DIR_A","DIR_B"]]'`（≥2 个既有 direction ID、排序去重）才生成独立 `kind:"cross_direction"` job（组身份 `cross:<hash>`，缓存=参与方向指纹+profile+契约版本），默认无任何 cross job/模型调用/Markdown 节 → `stage3-finalize` 校验后写 v2 状态并渲染候选文件（按方向分节 + 仅显式组才有的「跨方向想法（显式标注）」节；未再请求的组确定性删除并报告 `group_not_requested`）；复用逐 direction_id 判定（指纹不含 collection_key/显示名：纯投影改名只重渲染）；profile 改动只失效阶段 3/4；白话校验结果另由 `stage3-record-validation` 写入独立字段 | `<教授名>/套磁候选状态.json`（schema 2：逐方向 `direction_id` + `cross_direction_groups`） + `<教授名>/套磁想法候选.md` + `套磁想法候选总览.md`（后两者 runner 渲染） |
 | 4 | `professor-contact-selection` | 用户从**候选状态**（非 Markdown）挑选：selection 条目以 `direction_ids`（canonical，排序规范化）圈定作用域——普通方向 `[DIR]`、跨方向想法 `[DIR_A,DIR_B]`（与组的排序 ID 完全一致）；`stage4-finalize` 按 direction_id + 精确三元组 join（候选 id 只在其 direction 作用域内解析，跨作用域引用整批 fail closed）并校验指纹（过期 `needs_refresh` 不落盘；组选取逐参与方向指纹校验，漂移 `cross_participant_changed`；v1 选择条目仅在有唯一 collection_key→direction_id 机器映射时可迁移，歧义 `legacy_direction_identity` 零写入；部分复选（只重选部分教授/方向）保留未涉及条目并整体重编译进两个正式文件——被保留条目的候选状态缺失/无法精确迁移/输入包不可读 → `candidate_state_missing`/`legacy_direction_identity`/`preserved_selection_uncompilable`，任何写盘前零写入，绝不静默挤出既有选择）→ 写 `套磁选择.json`（schema 2，保留候选的 `direction_ids`/精确溯源）并**编译程序级邮件输入包**（`邮件输入.json` schema 2：每条 email 携带 `direction_ids` + `directions[]` 显示名 provenance，`email_id = 教授::'+'.join(sorted(direction_ids))::想法ID`（A+B==B+A）；跨方向按参与方向切片并集编译——论文按 `item_key` 去重且各带 `direction_ids` 归属、gap 每行携带 `direction_id`；`cross_direction` 组信息与 `contact_evidence` 一起参与 `source_hash`；done_by_self 只作 extension_context_only；上游 `_联系方式证据.json` 记录连同 `record_fingerprint` 冻结进每条 email——阶段 5 的收件事实源） | `教授研究/套磁选择.json` + `教授研究/邮件输入.json`（阶段 5 唯一事实源，自包含短证据＋冻结联系方式快照） |
@@ -104,7 +104,10 @@ Stage 2 的 handoff 是**可选执行通道，不是第二套工作流**。`套�
    - 用户显式点名的论文（`user_named`，经 `--named-file` 传入，item key 或精确标题）。
 3. **工作队列**：仅对「物理下载 + paper-analysis 补齐」把各方向候选 keys 并集去重；方向候选集本身保持分离。
 4. **就绪检查**：按 `papers.json` 的 `pdf_status` 判定（`downloaded` = usable），已下载候选绝不重下。
-5. **定向补下**：只把缺失的候选 item key 传给 item-scoped fast path：`professor-collector(pdf_only:true, item_keys=<缺失 keys>)`——不解析教授列表、不改 keep-list、不触发程序根级 collection 准备/打标。**绝不与 `professors` 同时传**。全部候选已就绪 → Stage 1 为 no-op，不 spawn collector。
+5. **定向补下**：只把缺失的候选 item key 传给 item-scoped fast path：`professor-collector(pdf_only:true, item_keys=<缺失 keys>[, access_mode=<oa_only|allow_non_oa>])`——不解析教授列表、不改 keep-list、不触发程序根级 collection 准备/打标。**绝不与 `professors` 同时传**。全部候选已就绪 → Stage 1 为 no-op，不 spawn collector。
+   - `access_mode` 是 caller 从真实用户取得的本轮网络访问决定；显式值严格只能是 `oa_only` 或 `allow_non_oa`，并以同名同值原样加入 collector payload。
+   - 未提供时完全省略 `access_mode`，不生成默认值、不变成 downloader 的 `needs_input`、不发明 child continuation/resume；有交互能力的下游仍可按既有 `question` 规则询问，Codex non-interactive 成功路径必须由 caller 显式提供合法值。
+   - 非法值只在 `action=pdf_fill_needed` 时校验，并在 collector spawn 前返回结构化 `error`；不自动映射、不 spawn、不新增 `needs_input` continuation。`noop` / `needs_resolution` 不消费也不校验本轮无用的 `access_mode`。
 6. **重跑幂等**：换网络后重跑同一流程，`papers.json` 状态未变的缺失候选自然重新入选重试。
 7. **补下后刷新快照（强制）**：collector 会改 `papers.json`，downloader 在 collector 返回后必须重跑 `contact_stage1.py build`，以 post-fill 就绪状态作为最终快照与返回值——绝不留下描述补下前状态的 `套磁阶段1候选.json`（Stage 2 要 verify 消费它）。
 8. **action 语义**：`noop` = 每个候选都已有 usable full text（missing 与 unresolved 皆空）；`pdf_fill_needed` = 有缺失可补候选；`needs_resolution` = 候选存在于 target/preview 但 `papers.json` 无条目（fast path 无法补）——返回 `partial` 并附诊断，绝不判成 `noop`。
@@ -363,7 +366,10 @@ non-interactive 调用返回既有 `needs_input` 边界，不代选、不最终�
 task(subagent_type: "professor-contact", prompt: "folder_path: <program-root or per-専攻 subfolder>\nprofessors: <可选，逗号分隔精确教授名>\nselection: <可选，显式结构化选择，形状见 Input contract>")
 
 # 阶段 1：方向候选集 + 定向补 PDF（全部候选已有 PDF 时自动 no-op；默认只使用合法来源）
+# 有本轮显式网络访问决定时，追加同值的 access_mode 行；缺省时不要写该行
 task(subagent_type: "professor-contact-downloader", prompt: "folder_path: <...>\nprofessors: <可选，逗号分隔精确教授名>\nnamed_papers_file: <可选，用户点名论文 JSON 绝对路径>")
+# 仅当 caller 显式提供合法值时，向该 prompt 追加这一行；缺省时不要追加：
+# access_mode: <oa_only|allow_non_oa>
 
 # 阶段 2：分析（交互式 caller 已在此之前把 handoff 模式问好；非交互缺省 continue）
 task(subagent_type: "professor-contact-analyzer", prompt: "folder_path: <...>\nprofessors: <可选，逗号分隔精确教授名>\nchatgpt_handoff: continue|wait（非交互缺省 continue）\nchatgpt_result: <匹配 result ZIP 绝对路径，可选，仅 resume>\npaper_analysis: relevant|all（可选，缺省 relevant）\ngap_scope: relevant|selected_direction|all（可选，缺省 selected_direction）\nfreshness_scope: shortlist|full（可选，缺省 shortlist）\nkb_import: true|false（可选，缺省 false）")
@@ -409,7 +415,7 @@ Codex 的 non-interactive 执行（`codex exec`）没有「暂停一个嵌套子
 
 #### Codex 下的 Stage 1：委派 exact named custom agent `professor-collector`
 
-缺 PDF 补齐时，Codex 侧委派 installed named custom agent `professor-collector` 并**等待其结果**再继续；输入保持收窄为 `folder_path` + `pdf_only:true` + `item_keys=<缺失 item keys>`，绝不同时传 `professors`，也绝不扩大下载范围。OpenCode 的 Task 委派写法只属于 OpenCode 分支；Codex 分支不复制 collector 的 agent body、不由父代理 inline 模拟 collector，也不直接调 `pdf_fill.py`/worker 绕过 collector。`noop`/`needs_resolution` 仍不调用 collector，collector 返回后无条件重跑 `contact_stage1.py build`，empty runtime result 仍只允许一次相同输入重试。
+缺 PDF 补齐时，Codex 侧委派 installed named custom agent `professor-collector` 并**等待其结果**再继续；输入保持收窄为 `folder_path` + `pdf_only:true` + `item_keys=<缺失 item keys>`，以及仅在 caller 显式提供合法值时追加同值 `access_mode=<oa_only|allow_non_oa>`。缺省时完全省略该字段；Codex non-interactive 成功路径必须显式接收真实用户决定。非法值只在 `pdf_fill_needed` 时于 collector spawn 前返回结构化 `error`；`noop`/`needs_resolution` 不消费或校验它。绝不同时传 `professors`，也绝不扩大下载范围。OpenCode 的 Task 委派写法只属于 OpenCode 分支；Codex 分支不复制 collector 的 agent body、不由父代理 inline 模拟 collector，也不直接调 `pdf_fill.py`/worker 绕过 collector。collector 返回后无条件重跑 `contact_stage1.py build`，empty runtime result 仍只允许一次相同输入重试，且 retry 保持 `access_mode` 同值或同样省略。
 
 #### Codex 下的 Stage 5：caller choices 作为业务输入
 
@@ -435,7 +441,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 
 - 任何需要用户选择的环节（Stage 0 方向选择、Stage 2 相关集 >10 确认、Stage 4 想法挑选、Stage 5 学習中候选/交互补齐等）都**不得自动替用户做选择**——包括“按推荐顺序选第一项”，也不得把缺省值伪装成用户决定；缺输入时按该 Stage 既有契约停住（`needs_input` / 保留旧产物），绝不写入看似经用户确认的选择状态。
 - OpenCode 的后续 Stage 继续使用其官方 `question` 能力交互（OpenCode-only）；Codex 的 Stage 0 用业务级两步输入（缺 `selection` → `needs_input` + `selection_request` 且零写入；真实用户回答后带显式 `selection` 重新委派，见 Codex 分支），Stage 2 在 Codex 非交互运行（`codex exec`）下的用户选择按上节「Stage 2 在 Codex 下的委派链与用户选择」执行——停点 + 新一轮 fresh root 运行凭同一 program root 的磁盘状态在显式用户选择下继续，`question` 不是 `codex exec` 的交互控件；Stage 3/4 的 Codex 交互边界按上一节执行（Stage 3 调用线程 sibling 编排 validator，Stage 4 缺 `selection` 返回 `needs_input + pending_selection`、下一轮重新委派 selection agent）；其余 Stage 的 Codex 交互式适配仍由对应 Stage 的 issue 按当时官方文档决定——本 skill 不定义任何跨 harness 的自定义交互、续传或 resume 协议。
-- non-interactive / 自动化调用（含 smoke fixture）：成功路径必须显式提供确定性输入（如 `selection`、Stage 5 `choices`、`chatgpt_handoff: continue`）；缺输入的负向路径必须证明系统停住且没有产生伪选择状态。
+- non-interactive / 自动化调用（含 smoke fixture）：成功路径必须显式提供确定性输入（如 `selection`、Stage 5 `choices`、`chatgpt_handoff: continue`）；Stage 1 的 PDF fill 成功路径还必须显式提供真实决定 `access_mode: oa_only|allow_non_oa`。缺输入的负向路径必须证明系统停住且没有产生伪选择状态。
 
 ### Input contract（公共字段）
 
@@ -445,6 +451,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 | `profile_path` | no | profile 文件绝对路径；缺省自动向上搜 `套磁邮件/套磁信息.md`。 |
 | `professors` | no | 限定只处理这些教授（逗号分隔 kanji 名）；缺省=处理 `套磁目标.json` 中全部被选目标。名单中的教授未被 Stage 0 选入 → resolver 返回 `professor_not_selected`（needs_input）。 |
 | `named_papers_file` | no | 仅阶段 1：JSON 文件绝对路径，`{"directions": {"<direction_id>": ["<item_key 或精确标题>", ...]}}`，把用户显式点名的论文并入对应方向候选集（`user_named` 理由）。 |
+| `access_mode` | no | 仅阶段 1：caller 从真实用户取得的本轮网络访问决定；显式值严格为 `"oa_only" | "allow_non_oa"`，在 `pdf_fill_needed` 时以同名同值原样转发，缺省则完全省略。`noop` / `needs_resolution` 不消费或校验；非法值在 collector spawn 前结构化 fail closed。 |
 | `paper_analysis` | no | 仅阶段 2：`relevant`（只跑相关论文——user_note 点名 ∪ 术语/语义匹配，缺省）或 `all`（方向全部成员论文，强制全量）。相关集 >10 篇时 analyzer 会先问确认。 |
 | `gap_scope` | no | 仅阶段 2：gap 候选池范围（`selected_direction` 缺省）。只从已有有效 sidecar 的论文里选，绝不触发额外提取。 |
 | `freshness_scope` | no | 仅阶段 2：`shortlist`（稳定排序 5–10 条，缺省）/ `full`（候选池全部）。 |
