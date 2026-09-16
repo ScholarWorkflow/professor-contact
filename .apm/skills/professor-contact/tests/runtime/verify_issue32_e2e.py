@@ -87,7 +87,11 @@ def _manifest(root: Path) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
            manifest.get("fixture_mode"))
     _check(checks, "program_root_matches", Path(manifest.get("program_root", "")).resolve() == root.resolve())
     _check(checks, "direction_ids", manifest.get("direction_ids") == [DIRECTION_ID], manifest.get("direction_ids"))
-    _check(checks, "item_keys", manifest.get("item_keys") == ["AAAA1111", "BBBB2222"], manifest.get("item_keys"))
+    item_keys = manifest.get("item_keys")
+    valid_item_keys = (isinstance(item_keys, list) and len(item_keys) == 2
+                       and all(isinstance(key, str) and key for key in item_keys)
+                       and len(set(item_keys)) == 2)
+    _check(checks, "item_keys", valid_item_keys, item_keys)
     return manifest, checks
 
 
@@ -111,6 +115,34 @@ def _json_files(root: Path) -> list[Path]:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _runtime_item_roles(root: Path) -> tuple[tuple[str, str], tuple[str, str]]:
+    """Return the fixture's item keys and its ready/fill roles.
+
+    The deterministic fixture keeps the historical ``ITEM_KEYS`` constants,
+    while the runtime recipe replaces them with keys returned by Zotero.  The
+    manifest is the provenance source for those runtime keys, so checkpoints
+    must derive their expectations from it instead of inventing literals.
+    """
+    try:
+        manifest = _load(root / MANIFEST_NAME)
+    except (OSError, json.JSONDecodeError):
+        return ITEM_KEYS, ITEM_KEYS
+    keys = manifest.get("item_keys")
+    ready = manifest.get("ready_item_keys")
+    missing = manifest.get("missing_item_keys")
+    valid_keys = (isinstance(keys, list) and len(keys) == 2
+                  and all(isinstance(key, str) and key for key in keys)
+                  and len(set(keys)) == 2)
+    valid_roles = (isinstance(ready, list) and len(ready) == 1
+                   and isinstance(missing, list) and len(missing) == 1
+                   and ready[0] in keys and missing[0] in keys
+                   and ready[0] != missing[0]) if valid_keys else False
+    if not valid_keys:
+        return ITEM_KEYS, ITEM_KEYS
+    item_keys = (keys[0], keys[1])
+    return item_keys, (ready[0], missing[0]) if valid_roles else item_keys
 
 
 def _load_yaml(path: Path) -> tuple[Any | None, str | None]:
@@ -257,6 +289,7 @@ def _checkpoint_initial(args: argparse.Namespace) -> dict[str, Any]:
         for relative, expected in profile_hashes.items())
     _check(checks, "profile_file_hashes", profile_ok)
     prof = _professor_dir(root)
+    item_keys, (ready_key, fill_key) = _runtime_item_roles(root)
     _check(checks, "preview_exists", (prof / "方向预筛.json").is_file())
     direction = _direction(root)
     _check(checks, "legal_direction_preview", direction is not None)
@@ -265,10 +298,10 @@ def _checkpoint_initial(args: argparse.Namespace) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError, AttributeError):
         papers = []
     by_key = {row.get("item_key"): row for row in papers if isinstance(row, dict)}
-    _check(checks, "catalog_keys", set(by_key) == {"AAAA1111", "BBBB2222"}, list(by_key))
-    _check(checks, "ready_and_missing", by_key.get("AAAA1111", {}).get("pdf_status") == "downloaded"
-           and by_key.get("BBBB2222", {}).get("pdf_status") == "missing", by_key)
-    pdf = prof / "论文分析/AAAA1111.pdf"
+    _check(checks, "catalog_keys", set(by_key) == set(item_keys), list(by_key))
+    _check(checks, "ready_and_missing", by_key.get(ready_key, {}).get("pdf_status") == "downloaded"
+           and by_key.get(fill_key, {}).get("pdf_status") == "missing", by_key)
+    pdf = prof / f"论文分析/{ready_key}.pdf"
     pdf_bytes = pdf.read_bytes() if pdf.is_file() else b""
     _check(checks, "deterministic_text_pdf", pdf_bytes.startswith(b"%PDF-1.4")
            and b"/Type /Page" in pdf_bytes and b"/Contents" in pdf_bytes and b"%%EOF" in pdf_bytes)
@@ -334,6 +367,7 @@ def _checkpoint_stage1_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
     prof = _professor_dir(root)
+    item_keys, (_, fill_key) = _runtime_item_roles(root)
     snapshot_path = root / "教授研究/套磁阶段1候选.json"
     try:
         snapshot = _load(snapshot_path)
@@ -350,12 +384,12 @@ def _checkpoint_stage1_final(args: argparse.Namespace) -> dict[str, Any]:
                       if isinstance(row, dict) and row.get("direction_id") == DIRECTION_ID), None)
     _check(checks, "snapshot_direction", direction is not None)
     if direction:
-        _check(checks, "snapshot_members", set(direction.get("candidate_keys", [])) == set(ITEM_KEYS), direction.get("candidate_keys"))
+        _check(checks, "snapshot_members", set(direction.get("candidate_keys", [])) == set(item_keys), direction.get("candidate_keys"))
         readiness = direction.get("pdf_readiness", {})
-        _check(checks, "pdf_readiness", set(readiness.get("usable_item_keys", [])) == set(ITEM_KEYS)
+        _check(checks, "pdf_readiness", set(readiness.get("usable_item_keys", [])) == set(item_keys)
                and readiness.get("missing_item_keys", []) == [], readiness)
     by_key = {row.get("item_key"): row for row in papers if isinstance(row, dict)}
-    _check(checks, "collector_completed", by_key.get("BBBB2222", {}).get("pdf_status") == "downloaded")
+    _check(checks, "collector_completed", by_key.get(fill_key, {}).get("pdf_status") == "downloaded")
     if args.eval_response:
         try:
             response = _response(args)
@@ -363,7 +397,7 @@ def _checkpoint_stage1_final(args: argparse.Namespace) -> dict[str, Any]:
             if isinstance(response, dict):
                 payloads.append(response)
             exact = any(isinstance(row, dict) and row.get("folder_path") and row.get("pdf_only") is True
-                        and row.get("item_keys") == ["BBBB2222"] and "professors" not in row
+                        and row.get("item_keys") == [fill_key] and "professors" not in row
                         for row in payloads)
             _check(checks, "collector_payload_contract", exact)
         except (OSError, json.JSONDecodeError) as exc:
@@ -375,6 +409,7 @@ def _checkpoint_stage2_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
     prof = _professor_dir(root)
+    _, (ready_key, _) = _runtime_item_roles(root)
     try:
         pack = _load(prof / "套磁候选输入.json")
     except (OSError, json.JSONDecodeError) as exc:
@@ -401,8 +436,8 @@ def _checkpoint_stage2_final(args: argparse.Namespace) -> dict[str, Any]:
            and isinstance(direction.get("input_fingerprint"), str)
            and bool(direction.get("input_fingerprint"))
            and isinstance(direction.get("supporting_item_keys"), list))
-    _check(checks, "analysis_for_ready_paper", bool(list((prof / "论文分析").glob("AAAA1111*.md"))))
-    _check(checks, "future_work_sidecar", bool(list((prof / "论文分析").glob("AAAA1111*.future_work.json"))))
+    _check(checks, "analysis_for_ready_paper", bool(list((prof / "论文分析").glob(f"{ready_key}*.md"))))
+    _check(checks, "future_work_sidecar", bool(list((prof / "论文分析").glob(f"{ready_key}*.future_work.json"))))
     return _finish(checks, candidate_input=str(prof / "套磁候选输入.json"))
 
 
