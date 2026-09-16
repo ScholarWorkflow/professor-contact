@@ -57,13 +57,33 @@ flowchart LR
 
 因此不要再维护“paper-analysis 自己打开 Zotero / MCP”的新代码。教授联系 Stage 2 的 Zotero 读取和 normalized input 准备属于 caller/analyzer 侧职责。
 
-### `browser-pdf-tools` 已把 Chrome MCP 注册写入 APM manifest
+### `browser-pdf-tools` 已把 Chrome MCP 注册写入 producer manifest
 
-当前 `browser-pdf-tools/apm.yml` 除了同时支持 OpenCode/Codex，还声明了 `chrome-devtools`、`pdf-chrome`、`sd-chrome` 三个 stdio MCP entry，并通过安装后的 `browser-pdf-core/chrome-mcp-wrapper.sh` 解析 consumer-local runtime 路径。
+当前 `browser-pdf-tools/apm.yml` 除了同时支持 OpenCode/Codex，还声明了 `chrome-devtools`、`pdf-chrome`、`sd-chrome` 三个 stdio MCP entry，并通过安装后的 `browser-pdf-core/chrome-mcp-wrapper.sh` 解析 consumer-local runtime 路径。该 producer 变更在 2026-09-08 合入。
 
-所以“APM manifest 完全没有描述 Chrome MCP”已经不是现状。Chrome 本体、浏览器会话、登录/VPN/cookie 等仍是宿主环境条件；manifest 解决的是 MCP 注册与 wrapper 路由，不是把浏览器环境本身打包进 repo。
+所以“最新 producer manifest 完全没有描述 Chrome MCP”已经不是现状。Chrome 本体、浏览器会话、登录/VPN/cookie 等仍是宿主环境条件；manifest 解决的是 MCP 注册与 wrapper 路由，不是把浏览器环境本身打包进 repo。
 
-## 3. 当前仍属于宿主环境的条件
+## 3. Producer main 与 consumer 锁定快照必须分开判断
+
+`scholarflow-codex` 是 consumer workspace，它的 `apm.lock.yaml` 是**安装快照的权威**，不能用 producer `main` 的最新内容替代。当前可见 lock 生成于 2026-09-05，而 `browser-pdf-tools` 的 producer-local native MCP 注册是在 2026-09-08 才合入；因此：
+
+```mermaid
+flowchart LR
+    PM["producer main<br/>持续前进"]
+    PIN["consumer apm.yml pin"]
+    LOCK["apm.lock.yaml<br/>resolved_commit 权威"]
+    INST["consumer installed projection"]
+
+    PM -.->|"只有更新 pin / lock 后才进入"| PIN --> LOCK --> INST
+```
+
+- 评审 **producer repo** 时，判断当前 `main` 的 contract；
+- 评审 **scholarflow-codex consumer** 时，判断 lock 中的 `resolved_commit` 与实际生成物；
+- “producer 已修复”不等于“当前 consumer 已安装该修复”；反过来，consumer override/normalizer 也不应被误写成 producer 自身能力。
+
+如果某个 producer 修复要进入 consumer，必须经过既有 pin/lock 更新与 consumer acceptance 流程；不要直接手改 `.agents/skills` / `.codex/agents` / `.opencode/skill` 生成物来伪装升级。
+
+## 4. 当前仍属于宿主环境的条件
 
 ```mermaid
 flowchart TD
@@ -89,7 +109,16 @@ flowchart TD
 - **网络**：preview 摘要补全、PDF 获取和 Stage 5 必要时的官方网页核验都可能使用网络，但 deterministic runner、fingerprint、状态 join 与大多数重跑缓存逻辑是本地的。
 - **知识库**：`kb_import` 是 Stage 2 可选增强。不开启时不应把 KB runtime 当成 contact 主链的阻塞前置。
 
-## 4. program-root 是业务状态边界，不是 skill 安装目录
+### 工作流起点仍假设已有 program root
+
+`professor-research` 的 collector caller contract 仍以 boshu-output 风格程序目录（含 `info.json` / 招生材料）作为主要输入边界。当前 contact/research package closure 的职责从这个 program root 开始；“从一个学校招生网页零状态生成完整 program root”不是 `professor-contact` 自己应补做的职责。
+
+因此在评估“工作流是否自包含”时，应明确评估口径：
+
+- **已有合格 program root**：进入 professor-research/contact 主链；
+- **只有原始招生网页/URL**：还需要上游招生资料收集能力，不能把该缺口归到 contact Stage 0–5 内修补。
+
+## 5. program-root 是业务状态边界，不是 skill 安装目录
 
 不要从 `program_root` 反推 skill checkout、MCP wrapper 或脚本安装位置。程序根只存用户/程序数据；skill/agent/helper 必须从 consumer 安装投影或 producer checkout 的明确 locator 解析。
 
@@ -99,12 +128,13 @@ flowchart TD
 - Stage 2/Stage 1 deterministic helper 应从已安装 `professor-contact` skill dir 执行；
 - `browser-pdf-tools` MCP wrapper 从 consumer cwd 向上找安装后的 `.agents/skills/browser-pdf-core/...`，不是从用户数据目录猜源码路径。
 
-## 5. 开发判断规则
+## 6. 开发判断规则
 
-遇到“缺依赖”时先区分三层：
+遇到“缺依赖”时先区分四层：
 
-1. **package edge 缺失**：需要修改 `apm.yml` / package dependency；
-2. **consumer 安装/投影不可达**：依赖已声明，但当前 Codex/OpenCode 安装没有正确部署；
-3. **宿主环境不可用**：Zotero、Chrome、网络、登录态等服务未就绪。
+1. **package edge 缺失**：需要修改 producer `apm.yml` / package dependency；
+2. **producer 已修、consumer 未升级**：需要更新 consumer pin/lock 并跑其 acceptance，而不是再改 producer；
+3. **consumer 安装/投影不可达**：依赖已在当前 lock 内，但 Codex/OpenCode 生成物没有正确部署；
+4. **宿主环境不可用**：Zotero、Chrome、网络、登录态等服务未就绪。
 
-不要把第 2/3 类问题重新伪装成业务状态机默认值，也不要为了让 non-interactive eval 通过而在生产 contract 中自动选择网络访问、用户选择或外部服务状态。
+不要把第 2–4 类问题重新伪装成业务状态机默认值，也不要为了让 non-interactive eval 通过而在生产 contract 中自动选择网络访问、用户选择或外部服务状态。
