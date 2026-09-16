@@ -128,6 +128,17 @@ def main() -> int:
         check("codex_no_opencode_task_api_contract", "task(" not in codex_body, None),
         check("codex_no_opencode_question_api_contract", "question(" not in codex_body, None),
         check(
+            "codex_zotero_traffic_routed_through_stage2_transport_helper",
+            "stage2_zotero_rpc.py" in codex_body
+            and "Transport boundary" in codex_body
+            and re.search(r"--(url|port|endpoint|base-url)\b", codex_body) is None,
+            {
+                "has_helper": "stage2_zotero_rpc.py" in codex_body,
+                "has_transport_boundary": "Transport boundary" in codex_body,
+                "override_flags": re.findall(r"--(?:url|port|endpoint|base-url)\b", codex_body),
+            },
+        ),
+        check(
             "opencode_professor_contact_primitives_present",
             opencode_path.is_file() and root_skill.is_file(),
             {"agent": str(opencode_path), "shared_skill": str(root_skill)},
