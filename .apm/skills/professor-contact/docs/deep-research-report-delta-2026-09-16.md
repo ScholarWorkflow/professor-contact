@@ -22,6 +22,8 @@ flowchart LR
 
 | 旧报告中的结论 | 当前状态 | 当前应如何理解 |
 |---|---|---|
+| 当时可见的套磁相关仓库可概括为 7 个 | **不再是当前完整架构清单** | 当前至少还需要把 `ScholarWorkflow/base-skills` 与 `ScholarWorkflow/scholarflow-codex` 纳入架构判断；前者承载 shared runtime skills，后者承载 consumer pin/lock/projection/acceptance |
+| 主仓库缺少传统顶层 README，入口主要藏在 `.apm` | **已改善** | `professor-contact`、`professor-research` 与 `scholarflow-codex` 现在都有顶层 README，并用 Mermaid 指向当前权威文档；精确 contract 仍在 `.apm` 内 |
 | Stage 0 依赖 Zotero 固定标题 `套磁候选` note | **已退役** | Stage 0 直接消费 normalized `方向预筛.json`，用户选择稳定 `direction_id`，写 `教授研究/套磁目标.json`；无 Stage 0 Markdown |
 | preview 后用户先定 professor keep-list，再 professor-wide `pdf_only` 补全文 | **不再是 contact canonical path** | Stage 1 先构建 selected-direction candidate snapshot，只把缺失候选 `item_keys` 交给 `professor-collector(pdf_only:true, item_keys=...)` |
 | formal topic clustering 是 contact 前置 | **已退役为前置条件** | `preview:false` 是可选 Zotero 组织投影；Stage 2 accepted full-text resolved direction 才是 outreach 权威 |
