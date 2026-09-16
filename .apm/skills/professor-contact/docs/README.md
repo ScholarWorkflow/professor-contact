@@ -4,10 +4,10 @@
 
 ## 当前开发参考
 
-- [`workflow-reference.md`](./workflow-reference.md) — 当前 Stage 0–5 业务状态机、机器事实源、跨仓库职责、OpenCode/Codex 共用业务边界。流程图统一使用 Mermaid。
+- [`workflow-reference.md`](./workflow-reference.md) — 当前 Stage 0–5 **跨阶段业务拓扑**、机器事实源、跨仓库职责、OpenCode/Codex 共用业务边界。流程图统一使用 Mermaid；判断“哪一步是否前置、谁是唯一事实源、formal clustering 是否必需、Stage 1 下载范围”时优先读这里。
 - [`dependency-runtime-boundaries.md`](./dependency-runtime-boundaries.md) — 当前 APM/repo 依赖、`base-skills` / browser MCP 已解决的旧依赖结论，以及仍需宿主提供的 Zotero / Chrome / 网络 / KB runtime 边界。
 - [`deep-research-report-delta-2026-09-16.md`](./deep-research-report-delta-2026-09-16.md) — 2026-09-03 深度审计报告与当前 producer main 的差异表；用于识别已经退役/已解决/仍成立的历史结论。
-- [`../SKILL.md`](../SKILL.md) — caller contract、精确参数、runner reason code 与阶段执行细节。若精确 schema/CLI 与概览冲突，以当前 runner/agent contract 为准。
+- [`../SKILL.md`](../SKILL.md) — caller contract、**逐 Stage 精确参数**、runner reason code 与执行细节。精确字段/schema/CLI 以当前 runner/agent/Stage contract 为准；不要从其中的背景性 screening / `Synergy` 示例反推跨阶段 mandatory topology，跨阶段拓扑由 `workflow-reference.md` 统一说明。
 
 ## 历史参考
 
@@ -19,17 +19,22 @@
 ```mermaid
 flowchart TD
     RUNNER["当前 deterministic runner / schema"]
-    AGENT["当前 .apm/agents contract"]
-    SKILL["当前 SKILL.md caller contract"]
-    REF["workflow-reference.md<br/>跨阶段开发参考"]
+    AGENT["当前 .apm/agents Stage contract"]
+    STAGE["SKILL.md<br/>逐 Stage 参数 / 调用细节"]
+    REF["workflow-reference.md<br/>跨 Stage topology / authority"]
     DEP["dependency-runtime-boundaries.md<br/>依赖与宿主边界"]
     DELTA["deep-research-report delta<br/>历史报告校正"]
     LEGACY["stage5-legacy-contract.md<br/>历史解释材料"]
 
-    RUNNER --> AGENT --> SKILL --> REF
-    SKILL --> DEP
+    RUNNER --> AGENT
+    AGENT --> STAGE
+    AGENT --> REF
+    STAGE --> DEP
+    REF --> DEP
     DELTA -.->|"校正历史审计结论"| REF
     LEGACY -.->|"只用于历史追溯，不覆盖当前 contract"| REF
 ```
+
+同一层发生冲突时按“机器校验 > 当前 agent Stage contract > 对应职责文档”处理：字段/schema/CLI 看 runner/agent；跨阶段前后关系和事实权威看 `workflow-reference.md`；依赖是否属于 package / consumer / 宿主环境看 `dependency-runtime-boundaries.md`。
 
 修改状态机、唯一事实源、stable ID、fingerprint、跨仓库 owner 或 runtime 边界时，应在同一变更中同步检查 `workflow-reference.md`；修改 package/runtime 依赖时同步检查 `dependency-runtime-boundaries.md`。
