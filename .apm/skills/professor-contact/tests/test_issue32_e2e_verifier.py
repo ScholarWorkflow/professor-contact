@@ -92,6 +92,46 @@ class Issue32VerifierTests(unittest.TestCase):
             self.args(program_root=root, eval_response=response))
         self.assertEqual(payload["status"], "pass", payload)
 
+    def test_stage1_final_accepts_noop_without_collector_payload_when_all_pdfs_ready(self):
+        root = Path(self.holder.name) / "noop-program"
+        profile = Path(self.holder.name) / "noop-profile"
+        ready_key, fill_key = "READY1234", "FILL5678"
+        builder.build_fixture(root, profile, item_keys=(ready_key, fill_key))
+
+        prof = root / "教授研究/X分野/Example Professor"
+        papers_path = prof / "papers.json"
+        papers = json.loads(papers_path.read_text(encoding="utf-8"))
+        for paper in papers["papers"]:
+            paper["pdf_status"] = "downloaded"
+        papers_path.write_text(json.dumps(papers), encoding="utf-8")
+
+        (root / "教授研究/套磁阶段1候选.json").write_text(json.dumps({
+            "schema_version": 1,
+            "kind": "professor-contact-stage1",
+            "professors": [{
+                "professor": "Example Professor",
+                "directions": [{
+                    "direction_id": "DIR00001",
+                    "candidate_keys": [ready_key, fill_key],
+                    "pdf_readiness": {
+                        "usable_item_keys": [ready_key, fill_key],
+                        "missing_item_keys": [],
+                    },
+                }],
+            }],
+        }), encoding="utf-8")
+        response = Path(self.holder.name) / "noop-r1-response.json"
+        response.write_text(json.dumps({
+            "stage1_result": {
+                "action": "noop",
+                "papers_pdf_downloaded": 2,
+            },
+        }), encoding="utf-8")
+
+        payload = verifier._checkpoint_stage1_final(
+            self.args(program_root=root, eval_response=response))
+        self.assertEqual(payload["status"], "pass", payload)
+
     def test_install_reads_exact_professor_contact_commit_from_structured_lock(self):
         consumer = Path(self.holder.name) / "consumer"
         (consumer / ".agents/skills/professor-contact").mkdir(parents=True)

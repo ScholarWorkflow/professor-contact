@@ -383,9 +383,11 @@ def _checkpoint_stage1_final(args: argparse.Namespace) -> dict[str, Any]:
     direction = next((row for row in (professor_row or {}).get("directions", [])
                       if isinstance(row, dict) and row.get("direction_id") == DIRECTION_ID), None)
     _check(checks, "snapshot_direction", direction is not None)
+    missing_item_keys = None
     if direction:
         _check(checks, "snapshot_members", set(direction.get("candidate_keys", [])) == set(item_keys), direction.get("candidate_keys"))
         readiness = direction.get("pdf_readiness", {})
+        missing_item_keys = readiness.get("missing_item_keys")
         _check(checks, "pdf_readiness", set(readiness.get("usable_item_keys", [])) == set(item_keys)
                and readiness.get("missing_item_keys", []) == [], readiness)
     by_key = {row.get("item_key"): row for row in papers if isinstance(row, dict)}
@@ -393,13 +395,19 @@ def _checkpoint_stage1_final(args: argparse.Namespace) -> dict[str, Any]:
     if args.eval_response:
         try:
             response = _response(args)
-            payloads = _structured_values(response, {"collector_payload", "collector_request", "tool_payload"})
+            collector_payloads = _structured_values(response, {"collector_payload", "collector_request", "tool_payload"})
+            payloads = list(collector_payloads)
             if isinstance(response, dict):
                 payloads.append(response)
             exact = any(isinstance(row, dict) and row.get("folder_path") and row.get("pdf_only") is True
                         and row.get("item_keys") == [fill_key] and "professors" not in row
                         for row in payloads)
-            _check(checks, "collector_payload_contract", exact)
+            noop = (missing_item_keys == []
+                    and not collector_payloads
+                    and all(by_key.get(item_key, {}).get("pdf_status") == "downloaded"
+                            for item_key in item_keys))
+            _check(checks, "collector_payload_contract", noop or exact,
+                   "stage1 action=noop: all candidate PDFs are downloaded" if noop else None)
         except (OSError, json.JSONDecodeError) as exc:
             _check(checks, "eval_response_readable", False, str(exc))
     return _finish(checks, snapshot_file=str(snapshot_path), papers=sorted(by_key))
