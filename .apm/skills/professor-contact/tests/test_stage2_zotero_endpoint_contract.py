@@ -11,7 +11,14 @@ import re
 import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-ANALYZER_PATH = REPO_ROOT / ".apm" / "agents" / "professor-contact-analyzer.agent.md"
+ANALYZER_PATH = (
+    REPO_ROOT
+    / "packages"
+    / "professor-contact-opencode"
+    / ".apm"
+    / "agents"
+    / "professor-contact-analyzer.agent.md"
+)
 
 HTTP_FALLBACK = "http://127.0.0.1:23119"
 MCP_FALLBACK = "http://127.0.0.1:23120/mcp"

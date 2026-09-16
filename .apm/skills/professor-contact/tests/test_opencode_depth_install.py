@@ -19,7 +19,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SKILL_DIR = REPO_ROOT / ".apm" / "skills" / "professor-contact"
 INSTALLER_PATH = SKILL_DIR / "scripts" / "configure_opencode_depth.py"
-ANALYZER_PATH = REPO_ROOT / ".apm" / "agents" / "professor-contact-analyzer.agent.md"
+ANALYZER_PATH = (
+    REPO_ROOT
+    / "packages"
+    / "professor-contact-opencode"
+    / ".apm"
+    / "agents"
+    / "professor-contact-analyzer.agent.md"
+)
 SKILL_PATH = SKILL_DIR / "SKILL.md"
 
 SCHEMA = "https://opencode.ai/config.json"

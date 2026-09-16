@@ -1,0 +1,5 @@
+name: professor-contact-codex
+version: 0.1.0
+description: Codex agent projection for professor-contact.
+targets: [codex]
+includes: auto

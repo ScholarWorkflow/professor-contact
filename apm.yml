@@ -5,6 +5,8 @@ targets: [opencode, codex]
 includes: auto
 dependencies:
   apm:
+    - ./packages/professor-contact-opencode
+    - ./packages/professor-contact-codex
     - ScholarWorkflow/zotero-tools
     - ScholarWorkflow/knowledge-tools
     - ScholarWorkflow/paper-analysis

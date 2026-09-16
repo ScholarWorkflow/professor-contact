@@ -6,7 +6,9 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[4]
 AGENTS_DIR = REPO_ROOT / ".apm" / "agents"
 SKILL_PATH = REPO_ROOT / ".apm" / "skills" / "professor-contact" / "SKILL.md"
-ANALYZER_PATH = AGENTS_DIR / "professor-contact-analyzer.agent.md"
+OPENCode_AGENT_DIR = REPO_ROOT / "packages" / "professor-contact-opencode" / ".apm" / "agents"
+CODEX_AGENT_DIR = REPO_ROOT / "packages" / "professor-contact-codex" / ".apm" / "agents"
+ANALYZER_PATH = OPENCode_AGENT_DIR / "professor-contact-analyzer.agent.md"
 MANIFEST_PATH = REPO_ROOT / "apm.yml"
 
 # Machine identities of the 8 source agents; install projections (Codex TOML /
@@ -21,6 +23,25 @@ EXPECTED_AGENT_NAMES = (
     "professor-contact-email-validator",
     "professor-contact-style-validator",
 )
+
+
+def _source_agent_paths():
+    return sorted(AGENTS_DIR.glob("*.agent.md")) + [
+        OPENCode_AGENT_DIR / "professor-contact-analyzer.agent.md",
+        CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md",
+    ]
+
+
+def _source_agent_by_name():
+    paths = {}
+    for path in sorted(AGENTS_DIR.glob("*.agent.md")) + [ANALYZER_PATH]:
+        frontmatter, _ = _frontmatter_and_body(path)
+        fields = _top_level_fields(frontmatter)
+        name = fields.get("name", "")
+        if name in paths:
+            raise AssertionError(f"duplicate source agent machine name {name!r}")
+        paths[name] = path
+    return paths
 
 # Caller-facing stage agents (the two validators are invoked by their owning
 # stage agents, not by the caller).
@@ -118,7 +139,7 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
         self.assertEqual(targets, ["opencode", "codex"])
 
     def test_all_agent_frontmatter_descriptions_are_yaml_safe(self):
-        agent_paths = sorted(AGENTS_DIR.glob("*.agent.md"))
+        agent_paths = _source_agent_paths()
         self.assertTrue(agent_paths, "expected at least one .apm/agents/*.agent.md file")
 
         for path in agent_paths:
@@ -140,18 +161,26 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
                 self.fail(f"{path}: duplicate agent machine name {name!r} (already in {names[name]})")
             names[name] = path.name
 
-        for expected in EXPECTED_AGENT_NAMES:
-            self.assertIn(expected, names, f"missing source agent {expected!r}")
         self.assertEqual(
-            set(names),
-            set(EXPECTED_AGENT_NAMES),
-            "the .apm/agents source set must be exactly the 8 professor-contact agents",
+            set(names), set(EXPECTED_AGENT_NAMES) - {"professor-contact-analyzer"},
+            "the root source set must contain the 7 shared agents; analyzer projections are target-scoped",
         )
+        for package_dir in (OPENCode_AGENT_DIR, CODEX_AGENT_DIR):
+            path = package_dir / "professor-contact-analyzer.agent.md"
+            self.assertTrue(path.exists(), f"missing target-scoped analyzer {path}")
+            frontmatter, _ = _frontmatter_and_body(path)
+            fields = _top_level_fields(frontmatter)
+            self.assertEqual(fields.get("name"), "professor-contact-analyzer")
+
+        for expected in EXPECTED_AGENT_NAMES:
+            if expected == "professor-contact-analyzer":
+                continue
+            self.assertIn(expected, names, f"missing source agent {expected!r}")
 
     def test_opencode_native_frontmatter_is_preserved(self):
         for name in EXPECTED_AGENT_NAMES:
             with self.subTest(agent=name):
-                path = AGENTS_DIR / f"{name}.agent.md"
+                path = _source_agent_by_name()[name]
                 self.assertTrue(path.exists(), f"{path}: source agent must exist")
                 frontmatter, _ = _frontmatter_and_body(path)
                 fields = _top_level_fields(frontmatter)
@@ -304,7 +333,7 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
         manifest = MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertNotIn("scholarflow-codex", manifest.lower())
         self.assertNotIn("scholarflow-codex", SKILL_PATH.read_text(encoding="utf-8").lower())
-        for path in sorted(AGENTS_DIR.glob("*.agent.md")):
+        for path in _source_agent_paths():
             self.assertNotIn(
                 "scholarflow-codex",
                 path.read_text(encoding="utf-8").lower(),

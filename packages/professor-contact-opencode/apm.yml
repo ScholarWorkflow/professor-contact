@@ -1,0 +1,5 @@
+name: professor-contact-opencode
+version: 0.1.0
+description: OpenCode agent projection for professor-contact.
+targets: [opencode]
+includes: auto
