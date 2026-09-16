@@ -329,6 +329,68 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
                 "Codex's global thread limit must not be described as the Stage 2 paper-analysis concurrency rule",
             )
 
+    def _codex_analyzer_branch(self):
+        _, analyzer = _frontmatter_and_body(
+            CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md"
+        )
+        return _target_branch(analyzer, "### Codex 分支")
+
+    def test_codex_analyzer_requires_runtime_subagent_delegation(self):
+        codex = self._codex_analyzer_branch()
+        self.assertRegex(
+            codex,
+            r"(?s)当前 Codex session.{0,240}subagent delegation capability",
+            "Codex Stage 2 must require the delegation capability actually provided by the current session",
+        )
+
+    def test_codex_analyzer_does_not_equate_missing_opencode_task_with_no_delegation(self):
+        codex = self._codex_analyzer_branch()
+        self.assertRegex(
+            codex,
+            r"(?s)OpenCode.*task.{0,180}(?:无关|not related|不等于)",
+            "the Codex branch must say that OpenCode task syntax is unrelated to Codex delegation availability",
+        )
+
+    def test_codex_analyzer_requires_machine_failure_before_runtime_blocker(self):
+        codex = self._codex_analyzer_branch()
+        self.assertRegex(
+            codex,
+            r"(?s)实际尝试.{0,220}(?:机器级失败|machine-level failure).{0,180}(?:blocker|阻塞)",
+            "a runtime blocker requires an attempted delegation and a machine-level failure",
+        )
+
+    def test_codex_analyzer_keeps_exact_paper_analysis_role(self):
+        codex = self._codex_analyzer_branch()
+        self.assertRegex(
+            codex,
+            r"exact installed name [`']?paper-analysis[`']?",
+            "Codex must delegate to the exact installed paper-analysis role",
+        )
+
+    def test_codex_analyzer_does_not_inline_paper_analysis(self):
+        codex = self._codex_analyzer_branch()
+        self.assertRegex(
+            codex,
+            r"(?s)(?:不得|不).*?(?:inline|模拟执行).*?paper-analysis",
+            "Codex analyzer must not inline or simulate paper-analysis",
+        )
+
+    def test_codex_analyzer_does_not_hardcode_internal_spawn_api(self):
+        codex = self._codex_analyzer_branch()
+        for forbidden in (
+            "multi_agent_v1__spawn_agent",
+            "spawnAgent",
+            "spawn_agent",
+            "collabAgentToolCall",
+            "receiverThreadIds",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(
+                    forbidden,
+                    codex,
+                    "the Codex product contract must not hard-code internal runtime APIs",
+                )
+
     def test_no_scholarflow_codex_dependency_is_introduced(self):
         manifest = MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertNotIn("scholarflow-codex", manifest.lower())
