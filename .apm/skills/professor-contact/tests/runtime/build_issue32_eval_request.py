@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Build a machine-readable Codex eval request for issue #32.
 
-This module only constructs the request.  It never invokes Codex, the eval
-server, or a browser.  Chrome's MCP server id is discovered from the clean
-consumer's generated TOML configuration so the request cannot silently bind
-to a guessed server name.
+This module only constructs the request. It never invokes Codex, the eval
+server, or a browser. The canonical R1-R4 runtime matrix does not require
+Chrome, so browser-specific MCP/env wiring is opt-in via ``enable_chrome``.
+When that opt-in is used, the page-scoped Chrome MCP server id is discovered
+from the clean consumer's generated TOML configuration rather than guessed.
 """
 from __future__ import annotations
 
@@ -85,18 +86,17 @@ def discover_chrome_server_id(consumer_root: Path) -> str:
 def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
                   model: str = "gpt-5.6-luna", reasoning: str = "low",
                   zotero_http_url: str = "", zotero_mcp_url: str = "",
+                  enable_chrome: bool = False,
                   chrome_profile_dir: str = "", chrome_cdp_port: str = "",
                   npm_cache: str = "", timeout: int = 1800) -> dict[str, object]:
     consumer_root = Path(consumer_root).resolve()
     prompt = Path(prompt_file).read_text(encoding="utf-8")
     if not consumer_root.is_dir():
         raise RequestBuildError(f"consumer root does not exist: {consumer_root}")
-    server_id = discover_chrome_server_id(consumer_root)
-    server_key = _toml_key_segment(server_id)
-    # The eval-server passes this as a per-run config override.  Without an
-    # explicit trust entry, Codex does not load the clean consumer's
-    # `.codex/config.toml`, so the MCP env leaves below become an env-only
-    # table and fail configuration parsing.
+
+    # The eval-server passes this as a per-run config override. Without an
+    # explicit trust entry, Codex does not load the clean consumer's generated
+    # project configuration.
     project_trust = (
         "projects=" + "{" + _toml_string(str(consumer_root)) +
         '={trust_level="trusted"}}'
@@ -109,11 +109,21 @@ def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
         # `--sandbox workspace-write` alone does not grant network access; the
         # Zotero fixture endpoints stay unreachable without this override.
         "sandbox_workspace_write.network_access=true",
-        f"shell_environment_policy.set.NPM_CONFIG_CACHE={_toml_string(npm_cache)}",
-        f"mcp_servers.{server_key}.env.CHROME_PROFILE_DIR={_toml_string(chrome_profile_dir)}",
-        f"mcp_servers.{server_key}.env.CHROME_CDP_PORT={_toml_string(chrome_cdp_port)}",
     ]
-    # eval-server prepends ``codex exec``.  Its request contract therefore
+
+    # Issue #40 R1-R4 deliberately do not discover or inject Chrome/NPM state.
+    # Preserve the old browser wiring only for a separately declared
+    # browser-specific recipe that opts in explicitly.
+    if enable_chrome:
+        server_id = discover_chrome_server_id(consumer_root)
+        server_key = _toml_key_segment(server_id)
+        config_values.extend([
+            f"shell_environment_policy.set.NPM_CONFIG_CACHE={_toml_string(npm_cache)}",
+            f"mcp_servers.{server_key}.env.CHROME_PROFILE_DIR={_toml_string(chrome_profile_dir)}",
+            f"mcp_servers.{server_key}.env.CHROME_CDP_PORT={_toml_string(chrome_cdp_port)}",
+        ])
+
+    # eval-server prepends ``codex exec``. Its request contract therefore
     # accepts only the arguments that follow that executable pair.
     argv = ["--json", "--ephemeral", "--skip-git-repo-check",
             "--sandbox", "workspace-write", "--cd", str(consumer_root),
@@ -142,6 +152,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--reasoning", default="low")
     parser.add_argument("--zotero-http-url", default="")
     parser.add_argument("--zotero-mcp-url", default="")
+    parser.add_argument("--enable-chrome", action="store_true")
     parser.add_argument("--chrome-profile-dir", default="")
     parser.add_argument("--chrome-cdp-port", default="")
     parser.add_argument("--npm-cache", default="")
@@ -155,8 +166,9 @@ def main(argv: list[str] | None = None) -> int:
         request = build_request(
             consumer_root=args.consumer_root, prompt_file=args.prompt_file, output=args.output,
             model=args.model, reasoning=args.reasoning, zotero_http_url=args.zotero_http_url,
-            zotero_mcp_url=args.zotero_mcp_url, chrome_profile_dir=args.chrome_profile_dir,
-            chrome_cdp_port=args.chrome_cdp_port, npm_cache=args.npm_cache, timeout=args.timeout)
+            zotero_mcp_url=args.zotero_mcp_url, enable_chrome=args.enable_chrome,
+            chrome_profile_dir=args.chrome_profile_dir, chrome_cdp_port=args.chrome_cdp_port,
+            npm_cache=args.npm_cache, timeout=args.timeout)
     except Exception as exc:
         print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False))
         return 1
