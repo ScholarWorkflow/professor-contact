@@ -9,6 +9,7 @@ from pathlib import Path
 TESTS_DIR = Path(__file__).resolve().parent
 MODULE_PATH = TESTS_DIR / "runtime/build_issue32_eval_request.py"
 R1_PROMPT = TESTS_DIR / "runtime/prompts/issue40-r1.txt"
+R2_PROMPT = TESTS_DIR / "runtime/prompts/issue40-r2.txt"
 spec = importlib.util.spec_from_file_location("issue32_eval_request", MODULE_PATH)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -135,6 +136,25 @@ class Issue32EvalRequestTests(unittest.TestCase):
         self.assertIn("不要内联执行 Stage 1", text)
         self.assertIn("child 按其已安装正式 contract 继续下游委派", text)
         self.assertNotIn("按已安装 professor-contact 的正式 Codex 工作流执行 Stage 1", text)
+
+    def test_r2_prompt_forces_single_root_dispatch_to_analyzer(self):
+        """R2 must enter the analyzer before measuring deeper nested delegation."""
+        text = R2_PROMPT.read_text(encoding="utf-8")
+        self.assertIn("仅一次直接委派", text)
+        self.assertIn("`professor-contact-analyzer`", text)
+        self.assertIn("不要再次委派 `professor-contact-analyzer`", text)
+        self.assertIn("folder_path: ${PROGRAM_ROOT}", text)
+        self.assertIn("paper_analysis: all", text)
+        self.assertIn("不要在 root 内联执行 Stage 2", text)
+        for forbidden_root_call in (
+            "`contact_targets.py`",
+            "`contact_stage1.py`",
+            "`contact_state.py`",
+            "`paper-analysis`",
+        ):
+            self.assertIn(forbidden_root_call, text)
+        self.assertIn("child 按其已安装正式 contract 继续下游委派", text)
+        self.assertNotIn("继续 ${PROGRAM_ROOT} 的正式 professor-contact 工作流，只执行 Stage 2", text)
 
 
 if __name__ == "__main__":
