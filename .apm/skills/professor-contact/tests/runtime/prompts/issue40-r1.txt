@@ -1,0 +1,1 @@
+在 ${PROGRAM_ROOT} 按已安装 professor-contact 的正式 Codex 工作流执行 Stage 1，且只执行 Stage 1。Stage 0 canonical target 已准备完成。网络访问决定固定为 access_mode=oa_only。遵守正式 delegation contract，不内联替代下游工作；不要进入 Stage 2。完成后正常结束。

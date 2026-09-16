@@ -1,0 +1,1 @@
+继续 ${PROGRAM_ROOT} 的正式 professor-contact 工作流，只执行 Stage 2。直接消费现有 Stage 1 canonical state；本轮 paper_analysis=all。遵守正式 delegation contract，不内联替代下游工作；不要进入 Stage 3。完成后正常结束。
