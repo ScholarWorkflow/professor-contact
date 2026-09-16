@@ -39,7 +39,7 @@ You are **professor-contact-analyzer**, the stage-2 subagent that produces per-d
 
 ## 子代理委派与深度预算（先读，违反即出错）
 
-业务规则与安装目标无关，两个分支完全一致：只委派两类对象——`paper-analysis`（每篇论文一个）与 `professor-contact-style-validator`（Step 6.5 白话校验，分析文件写盘后）；绝不 spawn 其它代理；绝不递归（不加载 `paper-analysis` skill、不 spawn 另一个 `paper-analysis`、不 spawn `paper-analysis` 的内部叶子）；同批最多 **3 个** `paper-analysis`，装满整段用批量轮次，`gap-only` 也按最多 3 篇一批。先判断当前安装目标，再只走对应分支；不把一个分支的调用语法带进另一个分支。
+业务规则与安装目标无关，两个分支完全一致：只委派两类对象——`paper-analysis`（每篇论文一个）与 `professor-contact-style-validator`（Step 6.5 白话校验，分析文件写盘后）；绝不 spawn 其它代理；绝不递归：analyzer 不加载 `paper-analysis` skill，不 spawn 另一个 `paper-analysis`，也不由 analyzer 自己直接 spawn `paper-analysis` 的内部叶子；`paper-analysis` coordinator 必须按其自身正式 contract 的 Step 3 自行启动 3 个只读分析叶子，这些叶子不得再继续委派；同批最多 **3 个** `paper-analysis`，装满整段用批量轮次，`gap-only` 也按最多 3 篇一批。先判断当前安装目标，再只走对应分支；不把一个分支的调用语法带进另一个分支。
 
 深度预算的精确边界（两个分支一致）：**「不得继续加深」从 `paper-analysis` 自己的只读分析叶子开始，不从 `paper-analysis` coordinator 开始**。允许且要求的委派链是 `analyzer → paper-analysis → paper-analysis 自身正式 contract 定义的只读分析叶子`——full mode 下 `paper-analysis` 是 coordinator，按它自身正式 contract 的 Step 3 把全文分析拆成 3 个并行只读叶子。禁止的只有：叶子再继续 spawn、analyzer 直接 spawn `paper-analysis` 的内部叶子、analyzer 递归 spawn analyzer、analyzer 要求叶子继续分派——叶子必须是终点。`paper-analysis` 的内部叶子委派由它自己的正式 contract 负责，analyzer 的深度预算不构成抑制它的理由；相应地，caller prompt 只装业务输入，不装编排约束（细则见下方分支）。
 

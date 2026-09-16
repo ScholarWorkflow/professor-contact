@@ -425,6 +425,53 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
                     "leaves must be documented as the terminal delegation level",
                 )
 
+    def test_top_level_recursion_clause_subjects_analyzer_not_the_chain(self):
+        recursion_lines = []
+        for path, body in self._analyzer_projections():
+            with self.subTest(projection=path.parents[2].name):
+                line = next(
+                    (text for text in body.splitlines() if "绝不递归" in text),
+                    None,
+                )
+                self.assertIsNotNone(
+                    line,
+                    "the top-level recursion clause must exist in each projection",
+                )
+                # The former parenthetical disjunct banned leaf spawning with no
+                # subject, so the whole chain could be misread as unable to spawn
+                # the leaves; the ban must name analyzer as the only spawner.
+                self.assertNotIn(
+                    "、不 spawn `paper-analysis` 的内部叶子",
+                    line,
+                    "the leaf-spawn ban must not stand without an explicit analyzer subject",
+                )
+                self.assertIn(
+                    "绝不递归：analyzer 不加载 `paper-analysis` skill",
+                    line,
+                    "the recursion clause must name analyzer as the subject of the skill ban",
+                )
+                self.assertIn(
+                    "也不由 analyzer 自己直接 spawn `paper-analysis` 的内部叶子",
+                    line,
+                    "the leaf-spawn ban must name analyzer itself as the only forbidden spawner",
+                )
+                self.assertIn(
+                    "`paper-analysis` coordinator 必须按其自身正式 contract 的 Step 3 自行启动 3 个只读分析叶子",
+                    line,
+                    "the recursion clause must keep paper-analysis's coordinator duty explicit",
+                )
+                self.assertIn(
+                    "这些叶子不得再继续委派",
+                    line,
+                    "leaves must stay terminal in the same sentence that lifts the coordinator ban",
+                )
+                recursion_lines.append(line)
+        self.assertEqual(
+            recursion_lines[0],
+            recursion_lines[1],
+            "the recursion clause is shared text and must stay byte-identical across projections",
+        )
+
     def test_analyzer_requires_paper_analysis_full_mode_leaf_delegation(self):
         for path, body in self._analyzer_projections():
             with self.subTest(projection=path.parents[2].name):
