@@ -77,7 +77,11 @@ def lock_packages(root: Path) -> list[str]:
 
 def suite_passed(path: Path) -> bool:
     text = path.read_text(encoding="utf-8")
-    return bool(re.search(r"Ran\s+\d+\s+tests", text)) and "\nOK\n" in text and "FAILED" not in text
+    return (
+        bool(re.search(r"Ran\s+\d+\s+tests", text))
+        and bool(re.search(r"(?m)^OK(?:\s+\([^\n]*\))?$", text))
+        and "FAILED" not in text
+    )
 
 
 def check(name: str, passed: bool, details: object) -> dict[str, object]:
