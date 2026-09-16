@@ -391,6 +391,152 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
                     "the Codex product contract must not hard-code internal runtime APIs",
                 )
 
+    # Phrases that suppress paper-analysis's contract-required internal leaf
+    # delegation. They may appear in an analyzer contract only inside the rule
+    # that forbids writing them into a caller prompt.
+    DELEGATION_SUPPRESSING_PHRASES = (
+        "不要委派更深层代理",
+        "不要启动子代理",
+        "禁止继续 spawn",
+    )
+
+    def _analyzer_projections(self):
+        for package_dir in (OPENCode_AGENT_DIR, CODEX_AGENT_DIR):
+            path = package_dir / "professor-contact-analyzer.agent.md"
+            _, body = _frontmatter_and_body(path)
+            yield path, body
+
+    def test_analyzer_depth_boundary_starts_at_paper_analysis_leaves(self):
+        for path, body in self._analyzer_projections():
+            with self.subTest(projection=path.parents[2].name):
+                self.assertIn(
+                    "从 `paper-analysis` 自己的只读分析叶子开始",
+                    body,
+                    "the depth budget must place the no-deeper boundary at paper-analysis's leaves",
+                )
+                self.assertIn(
+                    "不从 `paper-analysis` coordinator 开始",
+                    body,
+                    "the depth budget must not stop paper-analysis's own coordination",
+                )
+                self.assertIn(
+                    "叶子必须是终点",
+                    body,
+                    "leaves must be documented as the terminal delegation level",
+                )
+
+    def test_analyzer_requires_paper_analysis_full_mode_leaf_delegation(self):
+        for path, body in self._analyzer_projections():
+            with self.subTest(projection=path.parents[2].name):
+                self.assertIn(
+                    "允许且要求的委派链",
+                    body,
+                    "the contract must allow and require analyzer -> paper-analysis -> leaves",
+                )
+                self.assertRegex(
+                    body,
+                    r"full mode 下 `paper-analysis` 是 coordinator",
+                    "full-mode paper-analysis must be documented as the coordinator of its own leaves",
+                )
+                self.assertRegex(
+                    body,
+                    r"按它自身正式 contract 的 Step 3",
+                    "leaf delegation must stay owned by paper-analysis's own contract",
+                )
+
+    def test_analyzer_contract_confines_suppression_phrases_to_the_prohibition_rule(self):
+        for path, body in self._analyzer_projections():
+            with self.subTest(projection=path.parents[2].name):
+                hits = [
+                    line
+                    for line in body.splitlines()
+                    if any(phrase in line for phrase in self.DELEGATION_SUPPRESSING_PHRASES)
+                ]
+                self.assertTrue(
+                    hits,
+                    "the contract must explicitly enumerate the suppression semantics it forbids",
+                )
+                for line in hits:
+                    self.assertIn(
+                        "绝不写入",
+                        line,
+                        "suppression phrases are only allowed inside the forbid-writing rule",
+                    )
+                    self.assertIn("阻止", line)
+                    self.assertIn("paper-analysis", line)
+
+    def test_analyzer_caller_prompt_carries_business_inputs_only(self):
+        for path, body in self._analyzer_projections():
+            with self.subTest(projection=path.parents[2].name):
+                self.assertRegex(
+                    body,
+                    r"(?:Task/)?委派 prompt 只装业务输入，不装编排约束",
+                    "caller prompts must carry business inputs only, not orchestration constraints",
+                )
+                self.assertRegex(
+                    body,
+                    r"research_direction_file",
+                    "the business-input enumeration must keep the existing Input contract parameters",
+                )
+                self.assertIn(
+                    "绝不重写、裁剪或覆盖 `paper-analysis` 自身的内部 orchestration 规则",
+                    body,
+                    "caller prompts must not rewrite or override paper-analysis's internal orchestration",
+                )
+
+    def test_depth_guard_targets_leaves_not_the_coordinator(self):
+        codex = self._codex_analyzer_branch()
+        self.assertRegex(
+            codex,
+            r"analyzer 不递归 spawn analyzer",
+            "the depth guard must forbid analyzer self-recursion",
+        )
+        self.assertRegex(
+            codex,
+            r"analyzer 不 spawn `paper-analysis` 的内部叶子",
+            "the depth guard must forbid analyzer spawning paper-analysis's leaves",
+        )
+        self.assertRegex(
+            codex,
+            r"analyzer 不要求叶子再继续分派",
+            "the depth guard must forbid analyzer demanding further dispatch from leaves",
+        )
+        self.assertRegex(
+            codex,
+            r"`paper-analysis` coordinator 仍按自己的正式 contract 负责启动其 3 个只读叶子",
+            "the depth guard must keep paper-analysis's own coordinator duty intact",
+        )
+
+    def test_spawn_api_names_stay_out_of_both_analyzer_projections(self):
+        for path, body in self._analyzer_projections():
+            with self.subTest(projection=path.parents[2].name):
+                for forbidden in (
+                    "multi_agent_v1__spawn_agent",
+                    "spawnAgent",
+                    "spawn_agent",
+                    "collabAgentToolCall",
+                    "receiverThreadIds",
+                ):
+                    self.assertNotIn(
+                        forbidden,
+                        body,
+                        "Codex internal spawn tool/event names must not enter either projection",
+                    )
+
+    def test_opencode_task_delegation_branch_survives_the_depth_boundary_fix(self):
+        _, body = _frontmatter_and_body(ANALYZER_PATH)
+        opencode = _target_branch(body, "### OpenCode 分支", "### Codex 分支")
+        self.assertIn(
+            "用 OpenCode 官方 Task 委派方式启动 `paper-analysis`",
+            opencode,
+            "the OpenCode Task delegation path must remain the documented mechanism",
+        )
+        self.assertIn(
+            "subagent_depth",
+            opencode,
+            "the OpenCode depth budget documentation must remain",
+        )
+
     def test_no_scholarflow_codex_dependency_is_introduced(self):
         manifest = MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertNotIn("scholarflow-codex", manifest.lower())

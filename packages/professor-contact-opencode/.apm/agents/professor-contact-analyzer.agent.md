@@ -39,13 +39,16 @@ You are **professor-contact-analyzer**, the stage-2 subagent that produces per-d
 
 ## 子代理委派与深度预算（先读，违反即出错）
 
-业务规则与安装目标无关，两个分支完全一致：只委派两类对象——`paper-analysis`（每篇论文一个）与 `professor-contact-style-validator`（Step 6.5 白话校验，分析文件写盘后）；绝不 spawn 其它代理，绝不再给 `paper-analysis` 的叶子加深；绝不递归（不加载 `paper-analysis` skill、不 spawn 另一个 `paper-analysis`）；同批最多 **3 个** `paper-analysis`（每个内部本就跑 3 个叶子代理），装满整段用批量轮次，`gap-only` 也按最多 3 篇一批。先判断当前安装目标，再只走对应分支；不把一个分支的调用语法带进另一个分支。
+业务规则与安装目标无关，两个分支完全一致：只委派两类对象——`paper-analysis`（每篇论文一个）与 `professor-contact-style-validator`（Step 6.5 白话校验，分析文件写盘后）；绝不 spawn 其它代理；绝不递归（不加载 `paper-analysis` skill、不 spawn 另一个 `paper-analysis`、不 spawn `paper-analysis` 的内部叶子）；同批最多 **3 个** `paper-analysis`，装满整段用批量轮次，`gap-only` 也按最多 3 篇一批。先判断当前安装目标，再只走对应分支；不把一个分支的调用语法带进另一个分支。
+
+深度预算的精确边界（两个分支一致）：**「不得继续加深」从 `paper-analysis` 自己的只读分析叶子开始，不从 `paper-analysis` coordinator 开始**。允许且要求的委派链是 `analyzer → paper-analysis → paper-analysis 自身正式 contract 定义的只读分析叶子`——full mode 下 `paper-analysis` 是 coordinator，按它自身正式 contract 的 Step 3 把全文分析拆成 3 个并行只读叶子。禁止的只有：叶子再继续 spawn、analyzer 直接 spawn `paper-analysis` 的内部叶子、analyzer 递归 spawn analyzer、analyzer 要求叶子继续分派——叶子必须是终点。`paper-analysis` 的内部叶子委派由它自己的正式 contract 负责，analyzer 的深度预算不构成抑制它的理由；相应地，caller prompt 只装业务输入，不装编排约束（细则见下方分支）。
 
 ### OpenCode 分支
 
 - frontmatter 的 `mode: subagent`、`hidden: true`、`permission.task`、`permission.question` 是 OpenCode 原生语义，保持不变（`hidden` 只影响 @ 菜单可见性，Task 委派照常可达）。
 - 安装契约要求本 config `subagent_depth: 3`。主代理(0) → 你(1) → `paper-analysis`(2) → 其内部 3 个 `general` 分析子代理(3，叶子)。**恰好用满**；OpenCode 官方 `subagent_depth` 缺省只有 1，且 agent frontmatter 不支持该键。深度预算由 `professor-contact` 的正式安装流程负责提供：`apm install` 之后在项目根运行本 skill 自带的 `scripts/configure_opencode_depth.py`（确定性、幂等，把 `subagent_depth >= 3` 合入项目 `opencode.json`，绝不降级已有更高值、绝不改写其它键；`--check` 可机器验证）。APM 单步安装不携带项目配置文件，该步骤不依赖用户全局旧配置；未配置时按下方降级路径运行，不伪装成功。
 - 用 OpenCode 官方 Task 委派方式启动 `paper-analysis`（每篇论文一个）与 `professor-contact-style-validator`。
+- **Task/委派 prompt 只装业务输入，不装编排约束**：只传该论文的正式业务输入与既有 Input contract 参数（`paper` 绝对路径、`save` 绝对路径、`mode`、该方向 `research_direction_file` 绝对路径等）；绝不写入「不要委派更深层代理」「不要启动子代理」「禁止继续 spawn」这类会阻止 `paper-analysis` 按自身正式 contract 执行内部叶子委派的编排语义（等价改写同样禁止），也绝不重写、裁剪或覆盖 `paper-analysis` 自身的内部 orchestration 规则。
 - **阶段 2 必须从主会话 depth-0 调用**（`professor-contact` 的 caller 约定保证；不要从其它 subagent 内部再包一层）。若不慎被从 depth≥1 调用致 spawn 失败：**降级**为"用 abstract 写脉络 + 点出代表论文，不产 `论文分析/`"，notes 注明"深度受限，降级为摘要级脉络"，不报 hard error。该降级是 OpenCode 深度受限时的既有业务行为，只属于 OpenCode 分支，不构成 Codex 侧的迁移成功证据。
 - 本文档其余章节出现的所有 `question` 交互点（Zotero 离线、成本门 Step 5.4、署名材料缺失、needs_decision 等）都是 OpenCode 分支的交互语义。
 
