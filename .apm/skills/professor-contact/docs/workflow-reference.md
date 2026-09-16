@@ -147,14 +147,14 @@ flowchart TD
     DEC{"preflight result"}
     REUSE["reuse_all<br/>复用已有 input pack / projection"]
     U["selected directions 的 candidate union"]
-    PA["paper-analysis full<br/>按 item_key 去重与复用"]
-    FW[".future_work.json<br/>作者明说 future work"]
-    FACT[".facts.json<br/>normalized full-text facts"]
     H["确定性 ChatGPT handoff bundle<br/>执行通道，不是事实源"]
     HM{"chatgpt_handoff"}
     LOCAL["continue：本地继续 OCR / paper-analysis"]
     WAIT["wait：在新 OCR / paper-analysis 前软停止"]
     IMPORT["匹配 result ZIP<br/>本地严格校验并安装规范产物"]
+    PA["paper-analysis full<br/>按 item_key 去重与复用"]
+    FW[".future_work.json<br/>作者明说 future work"]
+    FACT[".facts.json<br/>normalized full-text facts"]
     RP["stage2-resolve-plan"]
     RM["resolution model job"]
     RF["stage2-resolve-finalize"]
@@ -167,15 +167,12 @@ flowchart TD
 
     C --> PF --> DEC
     DEC -->|"reuse_all"| REUSE --> OUT
-    DEC -->|"process"| U --> PA
-    PA --> FW
-    PA --> FACT
-    U --> H --> HM
-    HM -->|"continue"| LOCAL --> RP
+    DEC -->|"process"| U --> H --> HM
+    HM -->|"continue"| LOCAL --> PA
     HM -->|"wait"| WAIT
     WAIT -->|"提供匹配 result ZIP"| IMPORT --> RP
-    FW --> RP
-    FACT --> RP
+    PA --> FW --> RP
+    PA --> FACT --> RP
     RP --> RM --> RF --> UC
     UC -->|"无 material change"| RD
     UC -->|"有"| ACCEPT --> RD
