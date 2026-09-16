@@ -30,9 +30,10 @@ Stage 0 不再使用 Zotero 固定标题 `套磁候选` note；Stage 1 的 canon
 ## 开发参考
 
 - [当前 Stage 0–5 工作流参考](.apm/skills/professor-contact/docs/workflow-reference.md)
+- [当前依赖与运行时边界](.apm/skills/professor-contact/docs/dependency-runtime-boundaries.md)
 - [reference index：current / legacy 阅读顺序](.apm/skills/professor-contact/docs/README.md)
 - [caller contract](.apm/skills/professor-contact/SKILL.md)
 
 `stage5-legacy-contract.md` 是冻结的历史参考，不是当前 Stage 5 contract。涉及 preview 边界时，同时参照 `professor-research/.apm/skills/professor-topic-clustering/references/preview-downstream-contract.md`。
 
-如果修改状态机、stable ID、fingerprint、唯一事实源、跨仓库 owner 或 runtime 适配边界，应同步更新当前工作流参考；涉及测试与 merge gate 时以 Project Consensus 为准。
+如果修改状态机、stable ID、fingerprint、唯一事实源、跨仓库 owner 或 runtime 适配边界，应同步更新当前工作流参考；修改 package/runtime 依赖时同步更新依赖边界文档；涉及测试与 merge gate 时以 Project Consensus 为准。
