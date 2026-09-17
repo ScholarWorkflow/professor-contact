@@ -1,5 +1,7 @@
 from pathlib import Path
+import json
 import re
+import tomllib
 import unittest
 
 
@@ -128,6 +130,46 @@ def _target_branch(text: str, heading: str, next_heading: str | None = None) -> 
         match = re.search(r"(?m)^#{1,3}\s+", text[start + len(heading) :])
         end = len(text) if match is None else start + len(heading) + match.start()
     return text[start:end]
+
+
+# Delegation-discovery hard gate (PC47-R2-DELEGATION-DISCOVERY-01): the Codex
+# analyzer observed in R2 judged delegation unavailable with zero delegation
+# attempts. The production contract must force it to discover the runtime's
+# native multi-agent delegation surface first, delegate the exact installed
+# names after discovery, and fail closed only on a machine-level failure.
+CODEX_DISCOVERY_GATE_MARKERS = (
+    "在判定 delegation unavailable 之前",
+    "Code Mode / programmatic tool-calling discovery surface",
+    "发现当前 session 实际可调用的原生 multi-agent delegation capability",
+    "不得硬编码版本私有的 spawn JSON schema、固定 namespace 名或私有工具名",
+    "必须按既有业务 contract 用 **exact installed name** 真正发起委派并等待结果",
+    "Code Mode `exec` 作为 programmatic tool caller 是允许的",
+    "`exec` shell 子进程、`curl`、另起 eval 会话都不是 native delegation 的替代路径",
+)
+
+# The fail-closed reason code may only be emitted after discovery plus an
+# actual native delegation attempt returned a machine-level failure; the
+# model's own "no interface" impression is never machine evidence.
+CODEX_DELEGATION_REASON_CODE = "codex_runtime_delegation_unavailable"
+
+
+def _assert_codex_discovery_gate(codex: str):
+    for marker in CODEX_DISCOVERY_GATE_MARKERS:
+        assert marker in codex, f"missing discovery-gate marker: {marker}"
+
+    reason_lines = [
+        line for line in codex.splitlines() if CODEX_DELEGATION_REASON_CODE in line
+    ]
+    assert reason_lines, "the fail-closed reason code must be named in the Codex branch"
+    for line in reason_lines:
+        assert "discovery" in line, f"reason code line lacks discovery semantics: {line}"
+        assert "实际尝试" in line, f"reason code line lacks actual-attempt semantics: {line}"
+        assert (
+            "machine-level failure" in line or "机器级失败" in line
+        ), f"reason code line lacks machine-level-failure semantics: {line}"
+        assert "没看到接口" in line, (
+            f"reason code line must name the forbidden 'no interface' shortcut: {line}"
+        )
 
 
 class ApmDeploymentMetadataTests(unittest.TestCase):
@@ -359,6 +401,62 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
             "a runtime blocker requires an attempted delegation and a machine-level failure",
         )
 
+    def test_codex_analyzer_requires_discovery_before_delegation_unavailable(self):
+        _assert_codex_discovery_gate(self._codex_analyzer_branch())
+
+    def test_codex_discovery_gate_markers_are_load_bearing(self):
+        codex = self._codex_analyzer_branch()
+        for marker in CODEX_DISCOVERY_GATE_MARKERS:
+            with self.subTest(marker=marker):
+                mutated = codex.replace(marker, "")
+                with self.assertRaises(AssertionError):
+                    _assert_codex_discovery_gate(mutated)
+
+    def test_codex_reason_code_semantics_are_load_bearing(self):
+        codex = self._codex_analyzer_branch()
+        reason_line = next(
+            line for line in codex.splitlines() if CODEX_DELEGATION_REASON_CODE in line
+        )
+        for drop in ("discovery", "实际尝试", "machine-level failure", "没看到接口"):
+            with self.subTest(dropped=drop):
+                mutated_line = reason_line.replace(drop, "")
+                mutated = codex.replace(reason_line, mutated_line)
+                with self.assertRaises(AssertionError):
+                    _assert_codex_discovery_gate(mutated)
+
+    def test_codex_delegation_discovery_gate_survives_install_toml_projection(self):
+        """The clean-install writes the Codex projection body into the
+        generated ``.codex/agents/professor-contact-analyzer.toml``
+        ``developer_instructions`` (frontmatter stripped, edge newlines
+        normalized, TOML basic-string escaped). Gate the discovery markers on
+        that payload shape, not only on the source Markdown."""
+        path = CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md"
+        frontmatter, body = _frontmatter_and_body(path)
+        fields = _top_level_fields(frontmatter)
+        instructions = body.strip("\n")
+
+        # JSON basic-string escaping is TOML basic-string escaping for the
+        # escapes json.dumps emits (\b\t\n\f\r\"\\\uXXXX), so the rendered
+        # document below is exactly the TOML the installer writes.
+        toml_text = (
+            f"name = {json.dumps(fields['name'])}\n"
+            f"description = {json.dumps(fields['description'])}\n"
+            f"developer_instructions = {json.dumps(instructions)}\n"
+        )
+        parsed = tomllib.loads(toml_text)
+        self.assertEqual(parsed["name"], "professor-contact-analyzer")
+        self.assertEqual(parsed["developer_instructions"], instructions)
+        _assert_codex_discovery_gate(parsed["developer_instructions"])
+
+    def test_codex_discovery_gate_stays_out_of_the_opencode_projection(self):
+        _, body = _frontmatter_and_body(ANALYZER_PATH)
+        self.assertNotIn(
+            "Code Mode / programmatic tool-calling discovery surface",
+            body,
+            "the delegation-discovery gate is Codex-branch contract; the OpenCode "
+            "projection keeps its native Task/question/permission contract",
+        )
+
     def test_codex_analyzer_keeps_exact_paper_analysis_role(self):
         codex = self._codex_analyzer_branch()
         self.assertRegex(
@@ -378,6 +476,8 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
     def test_codex_analyzer_does_not_hardcode_internal_spawn_api(self):
         codex = self._codex_analyzer_branch()
         for forbidden in (
+            "multi_agent_v1__",
+            "ALL_TOOLS",
             "multi_agent_v1__spawn_agent",
             "spawnAgent",
             "spawn_agent",
@@ -558,6 +658,8 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
         for path, body in self._analyzer_projections():
             with self.subTest(projection=path.parents[2].name):
                 for forbidden in (
+                    "multi_agent_v1__",
+                    "ALL_TOOLS",
                     "multi_agent_v1__spawn_agent",
                     "spawnAgent",
                     "spawn_agent",
