@@ -87,13 +87,18 @@ class Stage3IdeaGeneratorAgentContractTests(unittest.TestCase):
             "the style correction loop must remain capped at two rounds",
         )
 
-    def test_contract_does_not_invent_codex_spawn_signatures(self):
+    def test_contract_does_not_bind_to_a_specific_spawn_tool_envelope(self):
+        # `spawn_agent` itself is a documented, stable Codex multi-agent tool
+        # name (issue #51): the ban exists so the agent contract never binds
+        # to one concrete tool envelope or request schema, not because the
+        # name were private. `agent_type=`/`agent_role=` are undocumented
+        # request-side shapes.
         for forbidden in ("spawn_agent(", "agent_type=", "agent_role="):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(
                     forbidden,
                     self.text,
-                    "do not encode undocumented Codex custom-agent call signatures",
+                    "keep the contract at the documented named-custom-agent level",
                 )
 
 

@@ -35,6 +35,10 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
         self.assertIn("stage4-finalize", self.text)
 
     def test_caller_contract_does_not_encode_undocumented_codex_spawn_api(self):
+        # `spawn_agent`/`spawnAgent` are documented Codex multi-agent tool
+        # names; they stay out of the caller convention so the contract never
+        # binds to one concrete tool envelope (issue #51), not because the
+        # names were private.
         for forbidden in ("spawn_agent(", "agent_type=", "agent_role=", "spawnAgent"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(
@@ -97,8 +101,11 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
             "explicit selection instead of depending on child memory",
         )
 
-    def test_stage34_section_rejects_private_or_wrong_runtime_protocols(self):
+    def test_stage34_section_rejects_envelope_binding_or_wrong_runtime_protocols(self):
         section = self._stage34_orchestration_section()
+        # The tool names below are documented Codex surfaces; the ban keeps
+        # the business contract from binding to their concrete envelope and
+        # from re-importing wrong-runtime tools (issue #51).
         for forbidden in (
             "spawnAgent", "spawn_agent(", "agent_type=", "agent_role=",
             "codex exec resume",
@@ -106,8 +113,8 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(
                     forbidden, section,
-                    "the Stage 3/4 section must not encode private runtime "
-                    "protocols or wrong-runtime tools",
+                    "the Stage 3/4 section must stay at the documented "
+                    "named-agent level and keep wrong-runtime tools out",
                 )
 
     def test_caller_does_not_make_resume_a_stage4_state_protocol(self):
