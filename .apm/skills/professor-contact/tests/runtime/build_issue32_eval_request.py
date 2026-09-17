@@ -22,6 +22,18 @@ class RequestBuildError(RuntimeError):
     pass
 
 
+# #40's Stage 2 contract allows one analyzer to run up to three full-mode
+# paper-analysis coordinators in one batch. Each coordinator may own exactly
+# three analysis leaves, and Stage 2 may run up to two style-validator rounds.
+# With Codex V1 semantics, completed-but-open spawned agents still count toward
+# the session concurrency ceiling, so the legal single-batch topology can need
+# 1 analyzer + 3 coordinators + 9 leaves + 2 validators = 15 open spawned
+# threads before lifecycle cleanup. Use one slot of headroom for the acceptance
+# harness. This is a test runtime prerequisite, not a production default and
+# not a substitute for a separate lifecycle-management issue.
+DEFAULT_MAX_CONCURRENT_AGENT_THREADS = 16
+
+
 def _toml_string(value: str) -> str:
     """Encode a TOML basic string without allowing numeric env coercion."""
     return json.dumps(str(value), ensure_ascii=False)
@@ -86,6 +98,7 @@ def discover_chrome_server_id(consumer_root: Path) -> str:
 def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
                   model: str = "gpt-5.6-luna", reasoning: str = "low",
                   zotero_http_url: str = "", zotero_mcp_url: str = "",
+                  max_agent_threads: int = DEFAULT_MAX_CONCURRENT_AGENT_THREADS,
                   enable_chrome: bool = False,
                   chrome_profile_dir: str = "", chrome_cdp_port: str = "",
                   npm_cache: str = "", timeout: int = 1800) -> dict[str, object]:
@@ -93,6 +106,10 @@ def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
     prompt = Path(prompt_file).read_text(encoding="utf-8")
     if not consumer_root.is_dir():
         raise RequestBuildError(f"consumer root does not exist: {consumer_root}")
+    if isinstance(max_agent_threads, bool) or not isinstance(max_agent_threads, int):
+        raise RequestBuildError("max_agent_threads must be an integer")
+    if max_agent_threads < 1:
+        raise RequestBuildError("max_agent_threads must be >= 1")
 
     # The eval-server passes this as a per-run config override. Without an
     # explicit trust entry, Codex does not load the clean consumer's generated
@@ -106,6 +123,11 @@ def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
         project_trust,
         f"shell_environment_policy.set.ZOTERO_HTTP_URL={_toml_string(zotero_http_url)}",
         f"shell_environment_policy.set.ZOTERO_MCP_URL={_toml_string(zotero_mcp_url)}",
+        # Canonical #40 R1-R4 acceptance must not inherit Codex V1's default
+        # six-thread ceiling because that ceiling cannot represent the legal
+        # Stage 2 single-batch topology. Keep this as an explicit, recorded
+        # runtime override rather than mutating the generated consumer config.
+        f"agents.max_concurrent_threads_per_session={max_agent_threads}",
         # `--sandbox workspace-write` alone does not grant network access; the
         # Zotero fixture endpoints stay unreachable without this override.
         "sandbox_workspace_write.network_access=true",
@@ -152,6 +174,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--reasoning", default="low")
     parser.add_argument("--zotero-http-url", default="")
     parser.add_argument("--zotero-mcp-url", default="")
+    parser.add_argument("--max-agent-threads", type=int,
+                        default=DEFAULT_MAX_CONCURRENT_AGENT_THREADS)
     parser.add_argument("--enable-chrome", action="store_true")
     parser.add_argument("--chrome-profile-dir", default="")
     parser.add_argument("--chrome-cdp-port", default="")
@@ -166,14 +190,16 @@ def main(argv: list[str] | None = None) -> int:
         request = build_request(
             consumer_root=args.consumer_root, prompt_file=args.prompt_file, output=args.output,
             model=args.model, reasoning=args.reasoning, zotero_http_url=args.zotero_http_url,
-            zotero_mcp_url=args.zotero_mcp_url, enable_chrome=args.enable_chrome,
-            chrome_profile_dir=args.chrome_profile_dir, chrome_cdp_port=args.chrome_cdp_port,
-            npm_cache=args.npm_cache, timeout=args.timeout)
+            zotero_mcp_url=args.zotero_mcp_url, max_agent_threads=args.max_agent_threads,
+            enable_chrome=args.enable_chrome, chrome_profile_dir=args.chrome_profile_dir,
+            chrome_cdp_port=args.chrome_cdp_port, npm_cache=args.npm_cache,
+            timeout=args.timeout)
     except Exception as exc:
         print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False))
         return 1
     print(json.dumps({"status": "ok", "output": str(args.output.resolve()),
-                      "timeout": request["timeout"]}, ensure_ascii=False))
+                      "timeout": request["timeout"],
+                      "max_agent_threads": args.max_agent_threads}, ensure_ascii=False))
     return 0
 
 
