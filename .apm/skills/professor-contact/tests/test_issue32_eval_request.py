@@ -44,7 +44,7 @@ class Issue32EvalRequestTests(unittest.TestCase):
             self.assertNotIn("exec", argv[:2])
             assignments = [argv[index + 1] for index, value in enumerate(argv[:-1])
                            if value == "--config"]
-            self.assertEqual(len(assignments), 5)
+            self.assertEqual(len(assignments), 6)
             parsed = [tomllib.loads(f"{assignment}\n") for assignment in assignments]
             self.assertEqual(parsed[0]["model_reasoning_effort"], "low")
             project_trust = parsed[1]["projects"][str(root.resolve())]
@@ -55,7 +55,11 @@ class Issue32EvalRequestTests(unittest.TestCase):
             self.assertEqual(parsed[3]["shell_environment_policy"]["set"]["ZOTERO_MCP_URL"],
                              "http://127.0.0.1:9001")
             self.assertIs(type(parsed[3]["shell_environment_policy"]["set"]["ZOTERO_MCP_URL"]), str)
-            network_access = parsed[4]["sandbox_workspace_write"]["network_access"]
+            max_threads = parsed[4]["agents"]["max_concurrent_threads_per_session"]
+            self.assertIs(type(max_threads), int)
+            self.assertEqual(max_threads, module.DEFAULT_MAX_CONCURRENT_AGENT_THREADS)
+            self.assertEqual(max_threads, 16)
+            network_access = parsed[5]["sandbox_workspace_write"]["network_access"]
             self.assertIs(type(network_access), bool)
             self.assertIs(network_access, True)
             self.assertFalse(any("NPM_CONFIG_CACHE" in value for value in assignments))
@@ -63,6 +67,40 @@ class Issue32EvalRequestTests(unittest.TestCase):
             self.assertFalse(any("CHROME_CDP_PORT" in value for value in assignments))
             self.assertFalse(any("mcp_servers." in value for value in assignments))
             self.assertEqual(json.loads(output.read_text())["command"], command)
+
+    def test_explicit_agent_thread_override_is_recorded_as_integer_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "consumer"
+            root.mkdir()
+            prompt = Path(directory) / "prompt.md"
+            prompt.write_text("Run Stage 2", encoding="utf-8")
+            output = Path(directory) / "request.json"
+            request = module.build_request(
+                consumer_root=root,
+                prompt_file=prompt,
+                output=output,
+                max_agent_threads=20,
+            )
+            argv = shlex.split(request["command"])
+            assignments = [argv[index + 1] for index, value in enumerate(argv[:-1])
+                           if value == "--config"]
+            parsed = [tomllib.loads(f"{assignment}\n") for assignment in assignments]
+            self.assertEqual(
+                parsed[4]["agents"]["max_concurrent_threads_per_session"], 20)
+
+    def test_nonpositive_agent_thread_override_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "consumer"
+            root.mkdir()
+            prompt = Path(directory) / "prompt.md"
+            prompt.write_text("Run Stage 2", encoding="utf-8")
+            with self.assertRaises(module.RequestBuildError):
+                module.build_request(
+                    consumer_root=root,
+                    prompt_file=prompt,
+                    output=Path(directory) / "request.json",
+                    max_agent_threads=0,
+                )
 
     def test_enable_chrome_discovers_actual_server_and_injects_browser_wiring(self):
         """A separate browser-specific recipe may opt into the legacy wiring."""
@@ -92,14 +130,14 @@ class Issue32EvalRequestTests(unittest.TestCase):
             argv = shlex.split(request["command"])
             assignments = [argv[index + 1] for index, value in enumerate(argv[:-1])
                            if value == "--config"]
-            self.assertEqual(len(assignments), 8)
+            self.assertEqual(len(assignments), 9)
             parsed = [tomllib.loads(f"{assignment}\n") for assignment in assignments]
-            self.assertEqual(parsed[5]["shell_environment_policy"]["set"]["NPM_CONFIG_CACHE"],
+            self.assertEqual(parsed[6]["shell_environment_policy"]["set"]["NPM_CONFIG_CACHE"],
                              '/tmp/npm "cache"')
-            self.assertEqual(parsed[6]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_PROFILE_DIR"],
+            self.assertEqual(parsed[7]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_PROFILE_DIR"],
                              '/tmp/chrome "profile"')
-            self.assertIs(type(parsed[7]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_CDP_PORT"]), str)
-            self.assertEqual(parsed[7]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_CDP_PORT"], "9333")
+            self.assertIs(type(parsed[8]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_CDP_PORT"]), str)
+            self.assertEqual(parsed[8]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_CDP_PORT"], "9333")
 
     def test_ambiguous_chrome_configuration_is_blocked(self):
         with tempfile.TemporaryDirectory() as directory:
