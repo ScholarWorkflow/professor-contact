@@ -153,6 +153,25 @@ class Issue51VerifierBlockerTests(unittest.TestCase):
         verdict = verifier.evaluate(payload, "r2")
         self.assertEqual(verdict["status"], "pass", verdict)
 
+    def test_harness_dispatch_mismatch_is_identity_diagnostic_only(self):
+        payload = chained_adapter(2)
+        payload["fixture_status"] = "HARNESS_DISPATCH_MISMATCH"
+        payload["dispatch"]["agent_identity"] = {
+            "diagnostic-role": {
+                "requested_role": {
+                    "state": "contradicted",
+                    "value": "another-role",
+                },
+                "loaded_identity": {
+                    "state": "unobservable",
+                },
+            },
+        }
+        verdict = verifier.evaluate(payload, "r2")
+        self.assertEqual(verdict["status"], "pass", verdict)
+        self.assertEqual(verdict["max_depth"], 2)
+        self.assertEqual(verdict["nested_edge_count"], 1)
+
 
 class Issue51VerifierInvalidEvidenceTests(unittest.TestCase):
     def test_adapter_invalid_evidence_status_fails_closed(self):
