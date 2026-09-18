@@ -8,8 +8,9 @@ formal nested delegation topology ``root -> child -> nested-child``:
 * machine basis is the adapter's formal ``spawnAgent`` relation graph and its
   independent ``delegation`` summary — never assistant prose, prompt text or
   child self-reported role;
-* named child identity is explicitly out of scope here (the deterministic
-  suite owns exact names/ownership); this verifier only proves topology;
+* named-role identity is explicitly out of scope: requested_role /
+  loaded_identity, including mismatch or unobservable states, are optional
+  diagnostics and never decide PASS/FAIL; this verifier only proves topology;
 * ``pass`` requires at least one nested formal spawn edge and graph depth
   ``>= 2``; everything else is ``blocked`` / ``not_tested`` /
   ``invalid_evidence`` and never counts as acceptance.
@@ -117,7 +118,13 @@ def evaluate(adapter: Any, case: str) -> dict[str, Any]:
     if fixture_status == "BLOCKED_DEPENDENCY":
         return _verdict("blocked", case, [], "adapter_blocked_dependency",
                         problems=problems)
-    if fixture_status not in ("FIXTURE_READY", "HARNESS_DISPATCH_UNCONFIRMED"):
+    # fixtures@9 makes named-role identity optional diagnostics.  Both
+    # UNCONFIRMED and MISMATCH may coexist with delegation=confirmed and must
+    # not downgrade a topology-confirmed run.
+    if fixture_status not in (
+        "FIXTURE_READY", "HARNESS_DISPATCH_UNCONFIRMED",
+        "HARNESS_DISPATCH_MISMATCH",
+    ):
         return _malformed(case, "adapter_unknown_fixture_status",
                           observed=fixture_status, problems=problems)
 
