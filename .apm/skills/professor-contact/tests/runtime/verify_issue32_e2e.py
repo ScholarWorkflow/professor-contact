@@ -607,7 +607,9 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
         relation_status = relation.get("status") or relation.get("event") or relation.get("relation")
         if isinstance(relation.get("item"), dict):
             relation_status = relation["item"].get("status", relation_status)
-        if relation_status not in {"started", "completed", "item/started", "item/completed"}:
+        if relation_status not in {
+            "started", "inProgress", "completed", "item/started", "item/completed",
+        }:
             continue
         parent = relation.get("parent_thread_id")
         children = relation.get("receiver_thread_ids")

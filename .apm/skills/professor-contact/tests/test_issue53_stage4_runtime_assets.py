@@ -215,6 +215,15 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
         self.assertEqual(payload["classification"], "PASS")
         self.assertEqual(payload["target_child_id"], "child-1")
 
+    def test_verifier_accepts_adapter9_in_progress_spawn_relation(self):
+        payload = self._run_verifier(
+            {"result": "needs_input", "pending_selection": self._pending()},
+            status="inProgress",
+        )
+        self.assertEqual(payload["status"], "pass", payload)
+        self.assertEqual(payload["classification"], "PASS")
+        self.assertEqual(payload["target_child_id"], "child-1")
+
     def test_verifier_classifies_product_and_observability_outcomes(self):
         wrong = self._run_verifier({"result": "ok", "pending_selection": self._pending()})
         self.assertEqual(wrong["classification"], "FAIL_PRODUCT", wrong)
