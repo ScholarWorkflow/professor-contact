@@ -416,8 +416,9 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 
 **Stage 4 用户选择边界**（两 runtime 共同遵守：候选机器事实源只有 `套磁候选状态.json`；没有用户真实选择就绝不 finalize、绝不默认/推荐/第一项自动选择；`套磁选择.json` 与 `邮件输入.json` 只由 `stage4-finalize` 写）：
 
-- **OpenCode（OpenCode-only 交互路径）**：未传 `selection` 时 `professor-contact-selection` 用官方 `question` 工具（`multiple: true`；普通候选与跨方向候选分开标注；支持自填 note）；用户没有选择时不 finalize。
-- **Codex（主线程用户回合边界）**：未传 `selection` 时 selection agent 读取当前 `套磁候选状态.json`，返回 `result: needs_input` + 仅用于展示的 `pending_selection`（逐字段来自本轮读取的候选状态，含 `kind: direction|cross_direction` 标注），**缺 `selection` 时不得调用 `stage4-finalize`**，`套磁选择.json`/`邮件输入.json` 零写入；调用线程把真实候选展示给用户并结束本轮。用户下一条消息给出真实选择后，调用线程**重新委派 `professor-contact-selection` 并显式传入 `selection`**——新调用重新读取当前机器状态、由 runner 重新校验指纹（stale → `needs_refresh` 零写入），绝不依赖上一轮子代理的模型记忆，也不把任何 CLI 会话恢复/续传能力当作 Stage 4 状态协议。
+- **共同 caller routing gate**：一旦 caller 被要求执行 Stage 4，**无论 `selection` 是否存在，caller 都必须先委派 installed named `professor-contact-selection` 并等待其结果**。`selection omitted` 不是 caller 提前结束或 early return 条件，而是该子代理的正式输入分支。委派前 caller 禁止提前返回 prose、自行读取候选状态后自行构造候选、模拟 pending_selection、默认/推荐/自动选第一项、直接调用 stage4-finalize，也禁止 inline 执行 selection agent；caller 只能消费真实 child result。
+- **OpenCode（OpenCode-only 交互路径）**：caller 先按上面的 gate 委派 `professor-contact-selection`；在 child 内，未传 `selection` 时用官方 `question` 工具（`multiple: true`；普通候选与跨方向候选分开标注；支持自填 note），用户没有选择时不 finalize。`question` 不属于 Codex caller contract。
+- **Codex（主线程用户回合边界）**：caller 先委派并等待 `professor-contact-selection`。child 在缺 `selection` 时读取当前 `套磁候选状态.json`，返回 `result: needs_input` + 仅用于展示的 `pending_selection`（逐字段来自本轮读取的候选状态，含 `kind: direction|cross_direction` 标注），**不得调用 `stage4-finalize`**，`套磁选择.json`/`邮件输入.json` 零写入；caller 消费 child result，把真实候选展示给用户并结束本轮。用户下一条消息给出真实选择后，caller **重新委派 `professor-contact-selection` 并显式传入 `selection`**——这是 fresh delegation；新调用重新读取当前机器状态、由 runner 重新校验指纹（stale → `needs_refresh` 零写入），绝不依赖上一轮子代理的模型记忆，也不把任何 CLI 会话恢复/续传能力当作 Stage 4 状态协议。
 
 ### 需要用户输入的 Stage（公共原则，跨 harness）
 

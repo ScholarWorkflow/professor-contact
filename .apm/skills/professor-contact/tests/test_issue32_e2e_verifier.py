@@ -95,6 +95,16 @@ class Issue32VerifierTests(unittest.TestCase):
         payload = verifier._checkpoint_stage0_needs_input(self.args(eval_response=response))
         self.assertEqual(payload["status"], "fail", payload)
 
+    def test_stage4_snapshot_reports_program_level_zero_write_artifacts(self):
+        payload = verifier._checkpoint_stage4_snapshot(self.args())
+        self.assertEqual(
+            payload["artifacts"],
+            {
+                "套磁选择.json": {"exists": False, "sha256": None},
+                "邮件输入.json": {"exists": False, "sha256": None},
+            },
+        )
+
     def test_make_stage4_selection_sorts_candidates_and_writes_only_requested_file(self):
         prof = self.root / "教授研究/X分野/Example Professor"
         state = {"schema_version": 2, "directions": [{"direction_id": "DIR00001"}],

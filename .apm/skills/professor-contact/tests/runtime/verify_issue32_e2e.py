@@ -32,6 +32,31 @@ INPUT_PACK_KIND = "professor-contact-stage2-input"
 CANDIDATE_STATE_KIND = "professor-contact-stage3-state"
 DIRECTION_IDENTITY_VERSION = "direction-id-v1"
 STAGE3_GENERATOR_CONTRACT_VERSION = "stage3-ideas-v2"
+STAGE4_PROGRAM_OUTPUTS = {
+    "套磁选择.json": Path("教授研究/套磁选择.json"),
+    "邮件输入.json": Path("教授研究/邮件输入.json"),
+}
+ISSUE53_PENDING_SELECTION = [{
+    "professor": "Example Professor",
+    "kind": "direction",
+    "direction_ids": ["DIR00001"],
+    "candidates": [
+        {
+            "id": "idea-001",
+            "title": "Adaptive extension",
+            "one_liner": "Explore an adaptive extension of the synthetic processing setting.",
+            "research_question": "How can the synthetic setting adapt to changing conditions?",
+            "fit": "high",
+        },
+        {
+            "id": "idea-002",
+            "title": "Robust extension",
+            "one_liner": "Explore robustness under changing synthetic conditions.",
+            "research_question": "How robust is the synthetic setting under change?",
+            "fit": "medium",
+        },
+    ],
+}]
 
 
 def _load(path: Path) -> Any:
@@ -408,19 +433,269 @@ def _valid_validation_record(value: Any) -> bool:
     return isinstance(value.get("issues"), list)
 
 
-def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
+def _stage4_artifacts(root: Path) -> dict[str, dict[str, Any]]:
+    artifacts: dict[str, dict[str, Any]] = {}
+    for name, relative in STAGE4_PROGRAM_OUTPUTS.items():
+        path = root / relative
+        exists = path.is_file()
+        artifacts[name] = {
+            "exists": exists,
+            "sha256": _sha256(path) if exists else None,
+        }
+    return artifacts
+
+
+def _checkpoint_stage4_snapshot(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
+    artifacts = _stage4_artifacts(root)
     checks: list[dict[str, Any]] = []
-    response = None
+    _check(checks, "program_root_exists", root.is_dir(), str(root))
+    for name, artifact in artifacts.items():
+        _check(checks, f"snapshot:{name}", set(artifact) == {"exists", "sha256"}, artifact)
+        _check(checks, f"snapshot_hash_shape:{name}",
+               (not artifact["exists"] and artifact["sha256"] is None)
+               or (artifact["exists"] and isinstance(artifact["sha256"], str)
+                   and len(artifact["sha256"]) == 64), artifact)
+    return {
+        "status": "pass" if all(row["status"] == "pass" for row in checks) else "fail",
+        "checks": checks,
+        "artifacts": artifacts,
+    }
+
+
+def _load_stage4_snapshot(path: Path) -> dict[str, dict[str, Any]]:
+    payload = _load(path)
+    if isinstance(payload, dict) and isinstance(payload.get("artifacts"), dict):
+        payload = payload["artifacts"]
+    if not isinstance(payload, dict):
+        raise ValueError("stage4 snapshot must be an object")
+    expected = set(STAGE4_PROGRAM_OUTPUTS)
+    if set(payload) != expected:
+        raise ValueError(f"stage4 snapshot artifact names differ: {set(payload)!r}")
+    result: dict[str, dict[str, Any]] = {}
+    for name in expected:
+        row = payload[name]
+        if not isinstance(row, dict) or set(row) != {"exists", "sha256"}:
+            raise ValueError(f"invalid stage4 snapshot row: {name}")
+        if not isinstance(row["exists"], bool):
+            raise ValueError(f"invalid exists flag: {name}")
+        if row["exists"] and not isinstance(row["sha256"], str):
+            raise ValueError(f"missing sha256 for existing artifact: {name}")
+        if not row["exists"] and row["sha256"] is not None:
+            raise ValueError(f"absent artifact has a sha256: {name}")
+        result[name] = row
+    return result
+
+
+def _issue53_pending_projection(value: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(value, list):
+        return None
+    projected: list[dict[str, Any]] = []
+    for row in value:
+        if not isinstance(row, dict):
+            return None
+        professor = row.get("professor")
+        kind = row.get("kind")
+        direction_ids = row.get("direction_ids")
+        candidates = row.get("candidates")
+        if not isinstance(professor, str) or not isinstance(kind, str):
+            return None
+        if not isinstance(direction_ids, list) or not all(isinstance(item, str) for item in direction_ids):
+            return None
+        if not isinstance(candidates, list):
+            return None
+        projected_candidates: list[dict[str, Any]] = []
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                return None
+            fields = ("id", "title", "one_liner", "research_question", "fit")
+            if any(field not in candidate for field in fields):
+                return None
+            projected_candidates.append({field: candidate[field] for field in fields})
+        projected.append({
+            "professor": professor,
+            "kind": kind,
+            "direction_ids": direction_ids,
+            "candidates": projected_candidates,
+        })
+    return projected
+
+
+def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
+    """Verify the PC53 child-attributed Stage-4 Path-C evidence."""
+    checks: list[dict[str, Any]] = []
+    root = Path(args.program_root).resolve()
+    target_child_id: str | None = None
+    business_result: dict[str, Any] | None = None
+
+    def machine(status: str, classification: str) -> dict[str, Any]:
+        return {
+            "status": status,
+            "classification": classification,
+            "target_child_id": target_child_id,
+            "business_result": business_result,
+            "checks": checks,
+        }
+
+    pre_path = getattr(args, "pre_snapshot", None)
+    post_path = getattr(args, "post_snapshot", None)
+    if not pre_path or not post_path:
+        _check(checks, "snapshots_supplied", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
     try:
-        response = _response(args)
+        pre = _load_stage4_snapshot(Path(pre_path))
+        post = _load_stage4_snapshot(Path(post_path))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        _check(checks, "snapshots_readable", False, str(exc))
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    expected_absent = {
+        name: {"exists": False, "sha256": None}
+        for name in STAGE4_PROGRAM_OUTPUTS
+    }
+    _check(checks, "pre_zero_write_snapshot", pre == expected_absent, pre)
+    _check(checks, "post_zero_write_snapshot", post == expected_absent, post)
+    current = _stage4_artifacts(root)
+    zero_write = current == expected_absent
+    _check(checks, "current_zero_write", zero_write, current)
+    if not (pre == expected_absent and post == expected_absent and zero_write):
+        return machine("fail", "FAIL_PRODUCT")
+
+    try:
+        adapter = _load(Path(args.adapter_output)) if args.adapter_output else None
+        response = _load(Path(args.eval_response)) if args.eval_response else None
     except (OSError, json.JSONDecodeError) as exc:
-        _check(checks, "eval_response_readable", False, str(exc))
-    _check(checks, "selection_file_absent", not (root / "教授研究/套磁选择.json").exists())
-    _check(checks, "email_input_absent", not (root / "教授研究/邮件输入.json").exists())
-    _check(checks, "selection_request_structured", isinstance(response, (dict, list))
-           and _has_structured_key(response, {"pending_selection", "selection_request", "needs_input"}))
-    return _finish(checks)
+        _check(checks, "evidence_readable", False, str(exc))
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    if not isinstance(adapter, dict) or not isinstance(response, dict):
+        _check(checks, "evidence_objects", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    output = response.get("output")
+    root_thread_id = output.get("thread_id") if isinstance(output, dict) else None
+    events = output.get("app_server_events") if isinstance(output, dict) else None
+    if not isinstance(root_thread_id, str) or not root_thread_id.strip() or not isinstance(events, list):
+        _check(checks, "raw_eval_surface", False, {
+            "thread_id": root_thread_id, "events": type(events).__name__,
+        })
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    delegation = adapter.get("delegation")
+    if not isinstance(delegation, dict):
+        _check(checks, "adapter_delegation_object", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    delegation_state = delegation.get("state")
+    if delegation_state == "unobservable":
+        _check(checks, "delegation_observable", False, delegation)
+        return machine("blocked", "BLOCKED_OBSERVABILITY")
+    if delegation_state != "confirmed":
+        _check(checks, "delegation_confirmed", False, delegation)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    basis = delegation.get("basis")
+    if not isinstance(basis, list) or "formal_spawn_relation" not in basis:
+        _check(checks, "adapter_formal_basis", False, basis)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    dispatch = adapter.get("dispatch")
+    relations = dispatch.get("thread_relations") if isinstance(dispatch, dict) else None
+    if not isinstance(relations, list):
+        _check(checks, "adapter_relations", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    owners: dict[str, set[str]] = {}
+    direct_children: set[str] = set()
+    for relation in relations:
+        if not isinstance(relation, dict) or relation.get("tool") != "spawnAgent":
+            continue
+        relation_status = relation.get("status") or relation.get("event") or relation.get("relation")
+        if isinstance(relation.get("item"), dict):
+            relation_status = relation["item"].get("status", relation_status)
+        if relation_status not in {"started", "completed", "item/started", "item/completed"}:
+            continue
+        parent = relation.get("parent_thread_id")
+        children = relation.get("receiver_thread_ids")
+        if children is None:
+            children = relation.get("child_thread_ids")
+        if not isinstance(parent, str) or not parent or not isinstance(children, list):
+            _check(checks, "adapter_relation_shape", False, relation)
+            return machine("invalid", "INVALID_TEST_EXECUTION")
+        for child in children:
+            if not isinstance(child, str) or not child:
+                _check(checks, "adapter_child_id_shape", False, relation)
+                return machine("invalid", "INVALID_TEST_EXECUTION")
+            owners.setdefault(child, set()).add(parent)
+            if parent == root_thread_id:
+                direct_children.add(child)
+    ownership_conflicts = {child: sorted(parents) for child, parents in owners.items() if len(parents) != 1}
+    if ownership_conflicts:
+        _check(checks, "formal_ownership", False, ownership_conflicts)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    _check(checks, "formal_root_children", bool(direct_children), sorted(direct_children))
+    if not direct_children:
+        return machine("blocked", "BLOCKED_OBSERVABILITY")
+
+    def child_result(child_id: str) -> tuple[str, dict[str, Any] | None]:
+        texts: list[str] = []
+        for event in events:
+            message = event.get("message") if isinstance(event, dict) else None
+            if not isinstance(message, dict):
+                continue
+            if message.get("method") != "rawResponseItem/completed":
+                continue
+            params = message.get("params")
+            if not isinstance(params, dict) or params.get("threadId") != child_id:
+                continue
+            item = params.get("item")
+            if not isinstance(item, dict) or item.get("type") != "message" or item.get("role") != "assistant":
+                return "malformed", None
+            content = item.get("content")
+            if not isinstance(content, list):
+                return "malformed", None
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "output_text":
+                    text = part.get("text")
+                    if not isinstance(text, str):
+                        return "malformed", None
+                    texts.append(text)
+        if not texts:
+            return "absent", None
+        try:
+            parsed = json.loads("".join(texts))
+        except (TypeError, json.JSONDecodeError):
+            return "not_json", None
+        return ("object", parsed) if isinstance(parsed, dict) else ("not_json", None)
+
+    observed: dict[str, tuple[str, dict[str, Any] | None]] = {
+        child: child_result(child) for child in sorted(direct_children)
+    }
+    _check(checks, "child_message_surface", any(state != "absent" for state, _ in observed.values()), observed)
+    if all(state == "absent" for state, _ in observed.values()):
+        return machine("blocked", "BLOCKED_OBSERVABILITY")
+    if any(state in {"malformed", "not_json"} for state, _ in observed.values()):
+        return machine("fail", "FAIL_PRODUCT")
+
+    path_c_children = [
+        child for child, (state, result) in observed.items()
+        if state == "object" and isinstance(result, dict)
+        and result.get("result") == "needs_input"
+    ]
+    if len(path_c_children) != 1:
+        object_children = [child for child, (state, _) in observed.items() if state == "object"]
+        if len(object_children) == 1:
+            target_child_id = object_children[0]
+            business_result = observed[target_child_id][1]
+        _check(checks, "exactly_one_path_c_child", False, path_c_children)
+        return machine("fail", "FAIL_PRODUCT")
+    target_child_id = path_c_children[0]
+    business_result = observed[target_child_id][1]
+    pending = business_result.get("pending_selection") if isinstance(business_result, dict) else None
+    _check(checks, "pending_selection_nonempty", isinstance(pending, list) and bool(pending), pending)
+    if not isinstance(pending, list) or not pending:
+        return machine("fail", "FAIL_PRODUCT")
+    projection = _issue53_pending_projection(pending)
+    _check(checks, "pending_selection_exact_fixture", projection == ISSUE53_PENDING_SELECTION,
+           {"expected": ISSUE53_PENDING_SELECTION, "observed": projection})
+    if projection != ISSUE53_PENDING_SELECTION:
+        return machine("fail", "FAIL_PRODUCT")
+    _check(checks, "no_root_prose_gate", True)
+    return machine("pass", "PASS")
 
 
 def _candidate_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -656,6 +931,7 @@ CHECKPOINTS = {
     "stage1-final": _checkpoint_stage1_final,
     "stage2-final": _checkpoint_stage2_final,
     "stage3-final": _checkpoint_stage3_final,
+    "stage4-snapshot": _checkpoint_stage4_snapshot,
     "stage4-needs-input": _checkpoint_stage4_needs_input,
     "make-stage4-selection": _checkpoint_make_stage4_selection,
     "stage4-final": _checkpoint_stage4_final,
@@ -671,6 +947,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--consumer-root", type=Path)
     parser.add_argument("--eval-response", type=Path)
     parser.add_argument("--adapter-output", type=Path)
+    parser.add_argument("--pre-snapshot", type=Path)
+    parser.add_argument("--post-snapshot", type=Path)
     parser.add_argument("--producer-sha", default="")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--min-edges", type=int, default=1)
