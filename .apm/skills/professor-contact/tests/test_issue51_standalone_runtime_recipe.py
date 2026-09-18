@@ -7,8 +7,9 @@ from producer-owned assets already on main (the #39 seed/prepare/request
 helpers) plus this branch's fixed prompt and verifier.  These tests lock the
 recipe pieces:
 
-* the fixed first-hop prompt may name the analyzer (the routing entry under
-  test) but must never hint the nested child, depth, or any discovery surface;
+* the fixed first-hop prompt may carry a route token as case input, but that
+  token is never runtime identity evidence or a PASS/FAIL assertion; the
+  prompt must never hint the nested child, depth, or discovery surface;
 * the reused #39 helpers accept an explicit ``--expected-fixture-revision``
   so the #51 recipe can pin ``88d2056…`` without touching the fixture repo;
 * the #39 default pin stays exactly where #39 left it, so the old contract
@@ -92,10 +93,9 @@ def items_config(revision=ISSUE51_FIXTURE_REVISION):
 
 
 class Issue51FixedPromptTests(unittest.TestCase):
-    def test_prompt_carries_exactly_the_first_hop_routing(self):
+    def test_prompt_carries_fixed_stage2_business_input(self):
         text = PROMPT_PATH.read_text(encoding="utf-8")
         self.assertTrue(text.strip())
-        self.assertIn("professor-contact-analyzer", text)
         self.assertIn("folder_path=${PROGRAM_ROOT}", text)
         self.assertIn("paper_analysis=all", text)
         self.assertIn("仅一次", text)
@@ -215,7 +215,6 @@ class Issue51EvalRequestTests(unittest.TestCase):
                 zotero_http_url="http://127.0.0.1:24121",
                 zotero_mcp_url="http://127.0.0.1:24122/mcp")
         self.assertIn("--sandbox workspace-write", request["command"])
-        self.assertIn("professor-contact-analyzer", request["command"])
         self.assertIn("paper_analysis=all", request["command"])
         self.assertIn("folder_path=${PROGRAM_ROOT}", request["command"])
 
