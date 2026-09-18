@@ -49,7 +49,9 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
         self.assertEqual(manifest["fixture_kind"], "stage4-only")
         state_path = self.program / "教授研究/X分野/Example Professor/套磁候选状态.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        self.assertEqual(state["profile_path"], str(self.profile.resolve()))
+        profile_path = self.profile / "套磁邮件/套磁信息.md"
+        self.assertEqual(state["profile_path"], str(profile_path.resolve()))
+        self.assertTrue(Path(state["profile_path"]).is_file())
         self.assertEqual(state["directions"][0]["candidates"][0]["id"], "idea-001")
         self.assertFalse((self.program / "教授研究/套磁选择.json").exists())
         self.assertFalse((self.program / "教授研究/邮件输入.json").exists())
