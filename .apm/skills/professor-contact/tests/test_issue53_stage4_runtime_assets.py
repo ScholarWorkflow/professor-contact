@@ -152,6 +152,17 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
                 "method": "rawResponseItem/completed",
                 "params": {
                     "threadId": child_id,
+                    "item": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "progress note"}],
+                    },
+                },
+            }})
+            events.append({"message": {
+                "method": "rawResponseItem/completed",
+                "params": {
+                    "threadId": child_id,
                     "item": {"type": "message", "role": "assistant", "content": contents},
                 },
             }})

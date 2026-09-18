@@ -632,7 +632,7 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
         return machine("blocked", "BLOCKED_OBSERVABILITY")
 
     def child_result(child_id: str) -> tuple[str, dict[str, Any] | None]:
-        texts: list[str] = []
+        assistant_messages: list[str] = []
         for event in events:
             message = event.get("message") if isinstance(event, dict) else None
             if not isinstance(message, dict):
@@ -651,16 +651,19 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
             content = item.get("content")
             if not isinstance(content, list):
                 return "malformed", None
+            texts: list[str] = []
             for part in content:
                 if isinstance(part, dict) and part.get("type") == "output_text":
                     text = part.get("text")
                     if not isinstance(text, str):
                         return "malformed", None
                     texts.append(text)
-        if not texts:
+            if texts:
+                assistant_messages.append("".join(texts))
+        if not assistant_messages:
             return "absent", None
         try:
-            parsed = json.loads("".join(texts))
+            parsed = json.loads(assistant_messages[-1])
         except (TypeError, json.JSONDecodeError):
             return "not_json", None
         return ("object", parsed) if isinstance(parsed, dict) else ("not_json", None)
