@@ -5,11 +5,15 @@ The helper creates two fixed synthetic journal articles in the current run's
 disposable Zotero library via ``write_item(action=create)`` and records the
 runtime-returned ``itemKey`` values.  It never touches the production Zotero
 ports, never edits the Zotero database directly, and never invents keys.
+
+``--expected-fixture-revision`` lets a follow-up recipe (issue #51) pin a
+newer fixture sha explicitly; the default stays on the original #39 pin.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -53,9 +57,20 @@ class SeedError(RuntimeError):
     """Raised when the fixture seed cannot be created safely."""
 
 
-def _read_json(source: Path | str) -> object:
+def _read_json(source: Path | str | dict) -> object:
+    if isinstance(source, dict):
+        return json.loads(json.dumps(source, ensure_ascii=False))
     with Path(source).open(encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _validate_expected_revision(expected_revision: str) -> None:
+    """Fail closed unless the expected fixture revision is a 40-hex git sha."""
+    if not isinstance(expected_revision, str) \
+            or not re.fullmatch(r"[0-9a-f]{40}", expected_revision):
+        raise SeedError(
+            "expected fixture revision must be a 40-char hex git sha, got "
+            f"{expected_revision!r}")
 
 
 def validate_mcp_url(zotero_mcp_url: str) -> None:
@@ -76,15 +91,17 @@ def validate_mcp_url(zotero_mcp_url: str) -> None:
         raise SeedError("zotero_mcp_url must be the complete endpoint ending in /mcp")
 
 
-def validate_fixture_evidence(source: Path | str) -> dict:
+def validate_fixture_evidence(source: Path | str | dict,
+                              expected_revision: str = FIXTURE_REVISION) -> dict:
     """Fail closed unless the evidence belongs to the pinned clean fixture."""
+    _validate_expected_revision(expected_revision)
     evidence = _read_json(source)
     if not isinstance(evidence, dict):
         raise SeedError("fixture evidence must be a JSON object")
-    if evidence.get("fixture_repo_sha") != FIXTURE_REVISION:
+    if evidence.get("fixture_repo_sha") != expected_revision:
         raise SeedError(
             "fixture evidence fixture_repo_sha does not match the pinned "
-            f"{FIXTURE_REPOSITORY}@{FIXTURE_REVISION}")
+            f"{FIXTURE_REPOSITORY}@{expected_revision}")
     if evidence.get("fixture_repo_dirty") != "no":
         raise SeedError("fixture evidence must record fixture_repo_dirty=no")
     if evidence.get("manual_patch") != "no":
@@ -92,7 +109,7 @@ def validate_fixture_evidence(source: Path | str) -> dict:
     run_id = evidence.get("fixture_run_id")
     if not isinstance(run_id, str) or not run_id.strip():
         raise SeedError("fixture evidence fixture_run_id must be a non-empty string")
-    return {"revision": FIXTURE_REVISION, "run_id": run_id}
+    return {"revision": expected_revision, "run_id": run_id}
 
 
 def _http_post(url: str, payload_bytes: bytes, headers: dict[str, str]):
@@ -197,10 +214,12 @@ def _extract_item_key(result: object) -> str:
     raise SeedError("write_item returned no itemKey; refusing to invent one")
 
 
-def seed_zotero_items(*, zotero_mcp_url: str, fixture_evidence: Path | str,
-                      output: Path, http_post=_http_post) -> dict:
+def seed_zotero_items(*, zotero_mcp_url: str, fixture_evidence: Path | str | dict,
+                      output: Path, http_post=_http_post,
+                      expected_revision: str = FIXTURE_REVISION) -> dict:
     validate_mcp_url(zotero_mcp_url)
-    evidence = validate_fixture_evidence(fixture_evidence)
+    evidence = validate_fixture_evidence(
+        fixture_evidence, expected_revision=expected_revision)
     session = _open_session(http_post, zotero_mcp_url)
     item_keys: list[str] = []
     for index, item in enumerate(FIXED_ITEMS):
@@ -247,6 +266,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--zotero-mcp-url", required=True)
     parser.add_argument("--fixture-evidence", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--expected-fixture-revision", default=FIXTURE_REVISION,
+        help="expected skills-test-fixtures git sha "
+             f"(default: the #39 pin {FIXTURE_REVISION})")
     return parser
 
 
@@ -256,7 +279,8 @@ def main(argv: list[str] | None = None) -> int:
         status = seed_zotero_items(
             zotero_mcp_url=args.zotero_mcp_url,
             fixture_evidence=args.fixture_evidence,
-            output=args.output)
+            output=args.output,
+            expected_revision=args.expected_fixture_revision)
     except Exception as exc:
         print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False))
         return 1

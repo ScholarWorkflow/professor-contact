@@ -193,6 +193,10 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
         # presented as the unified truth) must be gone.
         self.assertNotIn("the ONLY way", skill)
         self.assertNotIn("the Task tool is the ONLY way", skill)
+        # `spawn_agent` is a documented, stable Codex multi-agent tool name;
+        # the caller convention stays off it so the business contract never
+        # binds to one specific tool envelope (issue #51), not because the
+        # name were private.
         self.assertNotRegex(skill, r"spawn_agent\s*\(")
         self.assertNotIn("agent_role", skill)
         self.assertNotIn("agent_path", skill)
@@ -236,9 +240,11 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
             "Codex branch must identify installed custom agents by their configured name",
         )
 
-        # These are OpenCode/runtime-local concepts or invented observability
-        # fields. Codex's documented contract is named custom agents plus the
-        # normal subagent workflow; do not present these as Codex APIs.
+        # `subagent_depth`, Task and question are OpenCode/runtime-local
+        # concepts; `agent_role`/`agent_path` are invented observability
+        # fields. `spawn_agent` is a documented Codex multi-agent tool, but
+        # the business branch must not bind to its concrete envelope — the
+        # documented named-custom-agent contract is the whole API (issue #51).
         self.assertNotIn("subagent_depth", codex)
         self.assertNotRegex(codex, r"task\s*\(")
         self.assertNotRegex(codex, r"question\s*\(")
