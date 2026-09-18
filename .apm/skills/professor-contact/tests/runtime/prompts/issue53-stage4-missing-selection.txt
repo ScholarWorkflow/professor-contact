@@ -1,0 +1,2 @@
+进入 <PROGRAM_ROOT> 的正式 professor-contact Stage 4。本轮用户没有提供 selection。
+不要替用户选择任何候选，不要进入 Stage 5；按已安装的 Stage 4 caller contract 正常处理并结束本轮。
