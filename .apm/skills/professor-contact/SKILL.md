@@ -13,18 +13,26 @@ This skill is the **caller convention** for the 套磁 workflow (套磁 = contac
 
 ## What this is for
 
-After the screening pipeline (professor-collector `skip_pdf` → professor-topic-clustering `preview` → user picks keep-list → `pdf_only` → full clustering), the user may decide that **a specific direction of a specific professor** is worth contacting (套磁). Stage 0 presents the normalized preview directions（`方向预筛.json`）interactively, the user selects one or more directions (with optional per-direction user notes), and the selection is persisted to `教授研究/套磁目标.json`. The workflow no longer uses a fixed-title Zotero note as its selection UI. This skill's stages consume that machine state and turn it into 套磁 materials:
+After `professor-collector(skip_pdf)` and `professor-topic-clustering(preview:true)` have produced a normalized `方向预筛.json`, the user may decide that **a specific direction of a specific professor** is worth contacting (套磁). **Stage 0 is the contact-workflow entry at that point.** Professor-level `pdf_only + professors=<keep-list>` and formal `professor-topic-clustering(preview:false)` remain valid independent library/organization operations, but neither is a prerequisite for Stage 0 or the canonical Stage 1 download scope. Stage 0 presents the normalized preview directions interactively, the user selects one or more directions (with optional per-direction user notes), and the selection is persisted to `教授研究/套磁目标.json`. The workflow no longer uses a fixed-title Zotero note as its selection UI. This skill's stages consume that machine state and turn it into 套磁 materials:
 
-```text
-professor-topic-clustering(preview:true)
-    -> normalized 方向预筛.json
-    -> Stage 0 interactive selection
-    -> 教授研究/套磁目标.json
-    -> Stage 1 direction-scoped candidate snapshot + targeted PDF fill
-    -> Stage 2 evidence analysis
-    -> Stage 3 ideas
-    -> Stage 4 user selection
-    -> Stage 5 email
+```mermaid
+flowchart TD
+    C["professor-collector<br/>skip_pdf"]
+    P["professor-topic-clustering<br/>preview:true"]
+    J["normalized 方向预筛.json<br/>stable direction_id + complete members"]
+    S0["Stage 0<br/>interactive direction selection"]
+    T["教授研究/套磁目标.json"]
+    S1["Stage 1<br/>direction-scoped candidate snapshot"]
+    F["professor-collector<br/>pdf_only:true + item_keys<br/>missing candidates only"]
+    S2["Stage 2<br/>evidence analysis + accepted resolution"]
+    S3["Stage 3<br/>ideas"]
+    S4["Stage 4<br/>user selection"]
+    S5["Stage 5<br/>email"]
+    FORMAL["professor-topic-clustering<br/>preview:false<br/>optional Zotero organization"]
+
+    C --> P --> J --> S0 --> T --> S1 --> S2 --> S3 --> S4 --> S5
+    S1 -->|"missing candidate item_keys"| F -->|"post-fill rebuild"| S1
+    P -.->|"optional, independent"| FORMAL
 ```
 
 `套磁目标.json` is machine state. There is **no Stage 0 human-facing Markdown output**.
@@ -89,7 +97,7 @@ Stage 2 的 handoff 是**可选执行通道，不是第二套工作流**。`套�
 
 ## 目标状态语义（替代旧「标记语义」）
 
-- **被选教授名单 = keep-list 信号**：Stage 1/2 先用 `contact_targets.py resolve` 解析被选目标，再把名单显式传给下游；Stage 1 的 PDF 补下走 item 级 fast path（见下），professor 级 keep-list 语义（清 `screened:"out"`、`include_deferred`）属于 Stage 0 之前的 pipeline 步骤，Stage 1 绝不重跑。
+- **套磁处理教授名单来自 `套磁目标.json`**：Stage 1/2 先用 `contact_targets.py resolve` 解析当前被选目标，再把名单显式传给下游；这只是 contact workflow 的 target scope。Professor-level collector keep-list（`pdf_only + professors=<keep-list>`、`screened:"out"`/`include_deferred`）可以作为独立的库维护状态存在，但**不是 Stage 0/1 的前置事实源，也不由 Stage 1 重跑或改写**；Stage 1 的 PDF 补下只走 item-scoped fast path。
 - **阶段 1 下载范围 = 方向候选集**：不再是「被选教授的全部可下论文」。Stage 1 先为每个被选方向构建保守高召回的候选集，再只对缺 PDF 的候选 item key 定向补下。
 
 ### Stage 1 方向候选集与定向补 PDF
@@ -188,7 +196,7 @@ preview 聚类以**摘要**为证据，可能把论文误放进 / 漏出某个�
 
 1. `contact_state.py stage2-resolve-plan --facts <facts>` —— 纯确定性零模型，读取现有 `_resolved_directions.json`：逐方向 `input_fingerprint` 仍匹配**且条目已 accepted** → `action=reuse` 不发 job；其余方向（含仍 pending 的提案）给出 `candidates.{additions,removals,splits,merges}` 列表与一个 `resolve:<教授>:<方向>` job。归属证据范围 = 全教授被选方向 candidate_keys 的去重并集（各方向 Stage 1 candidate 集可能不相交，跨 preview 误聚类的论文仍可被全文证据新增回来）；addition 候选按**全文证据分量**排序，provisional 成员/gap/authorship 先验不参与比较。
 2. 模型按 job 写 `results/resolve-<方向>.json`：每方向 `resolved.{resolved_direction_id,provisional_direction_id,name_ja,name_zh,resolution_type,papers_to_add,papers_to_remove,paper_justifications,split_target,merge_target,user_note}`，resolution_type ∈ {`unchanged`/`renamed`/`split_from`/`merged_into`/`refined`}。result 与方向身份强绑定：`direction_id`（v2；兼容旧 `collection_key` 回显）/`provisional_direction_id` 必须等于 job 方向，非 split 的 `resolved_direction_id` 也必须相等（runner 拒绝任何漂移）。**split_from**：`split_target` = 全新子方向 ID（不得与现有方向冲突），`papers_to_add` = 移入新子方向的论文（源方向至少留 1 篇）；**merged_into**：`merge_target` = 本教授现有目标方向 ID，add/remove 必须为空。
-3. `contact_state.py stage2-resolve-finalize --facts <facts> --results <results>` —— 校验 schema/合法性（identity 绑定、`papers_to_remove` ⊆ provisional member、`papers_to_add` ⊆ 教授级 candidate union、split/merge 结构约束、禁止 merge 链），并对任何 membership 变更（add/remove 及 split 移动的论文）逐篇校验当前 `facts_state=valid` —— abstract-only/legacy/证据链断裂的论文无法成为归属变更依据，违者 `invalid_result_json` fail closed；**结构性 material change 另有全文证据 gate**：`merged_into` 需通过 `_authoritative_merge_basis`（双方都有 facts-valid 论文且 topic terms 收敛；共享论文+画像重叠只是 detector hint，单独不构成权威 merge 依据），`renamed` 与无 membership 变更的 `refined` 要求方向内至少一篇当前 `facts_state=valid` 的论文——零全文证据时的 authoritative 身份/结构重构一律 fail closed（unchanged/provisional 不需要证据）；逐方向写 `input_fingerprint` 落 `_resolved_directions.json`。**acceptance 生命周期**：条目带 `acceptance` 字段，`unchanged` 直接 `accepted`；material change 写为 `proposed`——在用户选择之前只是提案：proposed 方向下一轮 plan 总是重新 process，resolve-finalize 无新 result 时原样保留提案并继续报 `needs_user_choice`，绝不把未接受的提案当已接受缓存。把条目变为 accepted 只能走步骤 4 的两条 deterministic 路径（`stage2-resolve-accept` / `--keep-provisional`）；`stage2-finalize` 只应用全部条目已 accepted 的 sidecar 且自己不翻转 acceptance。`needs_user_choice=true` 当且仅当存在未接受的 material change（已 accepted 的 resolution 重跑不重复提示）。全部方向 reuse 时可跳过 2–3 直接进 5。
+3. `contact_state.py stage2-resolve-finalize --facts <facts> --results <results>` —— 校验 schema/合法性（identity 绑定、`papers_to_remove` ⊆ provisional member、`papers_to_add` ⊆ 教授级 candidate union、split/merge 结构约束、禁止 merge 链），并对任何 membership 变更（add/remove 及 split 移动的论文）逐篇校验当前 `facts_state=valid` —— abstract-only/legacy/证据链断裂的论文无法成为归属变更依据，违者 `invalid_result_json` fail closed；**结构性 material change 另有全文证据 gate**：`merged_into` 需通过 `_authoritative_merge_basis`（双方都有 facts-valid 论文且 topic terms 收敛；共享论文+画像重叠只是 detector hint，单独不构成权威 merge 依据），`renamed` 与无 membership 变更的 `refined` 要求方向内至少一篇当前 `facts_state=valid` 的论文——零全文证据时的 authoritative 身份/结构重构一律 fail closed（unchanged/provisional 不需要证据）；逐方向写 `input_fingerprint` 落 `_resolved_directions.json`。**acceptance 生命周期**：条目带 `acceptance` 字段，`unchanged` 直接 `accepted`；material change 写为 `proposed`——在用户选择之前只是提案：proposed 方向下一轮 plan 总是重新 process，resolve-finalize 无新 result 时原样保留提案并继续报 `needs_user_choice`，绝不把未接受的提案当已接受缓存。把条目变为 accepted 只能走步骤 4 的两条 deterministic 路径（`stage2-resolve-accept` / `--keep-provisional`）；`stage2-finalize` 只应用全部条目已 accepted 的 sidecar且自己不翻转 acceptance。`needs_user_choice=true` 当且仅当存在未接受的 material change（已 accepted 的 resolution 重跑不重复提示）。全部方向 reuse 时可跳过 2–3 直接进 5。
 4. **有 material change 时**问用户采纳 refined / 回 Stage 0 重选 / **沿用 provisional**。**acceptance 是 runner 强制的机器边界**：material 提案保持 `proposed`，把条目变为 accepted 只有两条 deterministic 路径——用户采纳的方向跑 `stage2-resolve-accept --facts <facts> --ckeys <dir,...>`（零模型；逐方向 `proposed → accepted`，逐方向校验 `input_fingerprint` 仍匹配当前 facts，提案过期 fail closed 要求重跑 resolve），或对沿用 provisional 的方向重跑 `stage2-resolve-finalize --keep-provisional <ckey1,ckey2>`（零模型；条目改写为 `acceptance=accepted`、`decision=user_kept_provisional`、resolution_type=unchanged、名字/成员 = provisional，取代该方向旧提案；只作用于点名的方向，其余仍 proposed 的方向会继续挡住 finalize）。两条路径之后都照常带 `--resolved-directions` 跑 stage2-finalize——每个方向仍都有显式 `resolved_direction`（下游无需 provisional fallback），且决定被复用：facts/profile/candidate union 不变时不再重发 resolve job、不再重复提问，只有 v4 fingerprint 变化才重新提示。不选 → 保留旧产物 + `needs_input`（绝不能靠直接传 sidecar 绕过提问）。**稳定 resolved ID 策略**：resolved ID 是用户确认过的稳定标识；fingerprint 变化后 re-resolve 若为同一概念 split 提出不同 `split_target`，新 ID 只是新的 material proposal 走用户确认（validator 只要求不冲突，绝不静默替换已物化 child），未采纳前输入包保留旧 child——不要把 prior accepted 身份塞进 resolve model_input 换取「ID 延续」，那会让 fingerprint 依赖自己盖章的输出导致 reuse 无法收敛。
 5. `stage2-finalize --resolved-directions <path>` —— 对 sidecar **fail closed**（schema/kind/professor 不符 → `resolved_directions_stale` / `resolved_directions_professor_mismatch`；任一方向 fingerprint 过期 → `resolved_directions_stale`；**任一条目仍 `proposed` → `resolved_directions_not_accepted`**——绝不静默应用，也**绝不自己翻转 acceptance**，翻转只发生在步骤 4 的两条路径）。校验通过后应用 resolved 状态：移除/新增论文、刷新 `name_ja/name_zh`；**split_from 在输入包创建真正的第二个权威方向条目**（split 论文与 gap 引用迁移；全文救回但不在 `relevant_keys` 的 candidate 由 runner 直接从库+facts 物化进子方向，Stage 3 对两个方向分别生成 job）；**merged_into 把源方向条目从输入包移除**（论文/gap 引用完整移植到目标并记 `merged_from`，根部索引永久保留 源→目标 映射）；**每个方向（含 unchanged）都写入 `resolved_direction` 子字段**（权威 resolved ID）。已物化的 split 子方向在后续无变化 reuse finalize 时原样保留（不被已裁剪的源方向重建为空）；源方向因 facts 变化重新构建时子方向随新 resolve 结果重建。
 
@@ -391,6 +399,8 @@ task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <
 
 Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>.toml`，Codex 按 `name` 识别）。调用语义只使用 Codex 官方文档支持的委派方式：
 
+- **使用 Codex 官方文档所定义的原生委派能力**：需要 child 时，必须使用 Codex 官方文档所定义的原生委派能力（native subagent/custom-agent delegation）完成委派——按 exact installed name 委派已安装的 named custom agent 并等待其结果；不得 inline 或模拟 child 的业务，也不得把 `exec_command` shell、`curl`、另起 Codex/OpenCode/eval 会话当作委派的替代路径。只有真实的机器级/运行时委派错误才能记为 Codex runtime/feature blocker。任何未公开或未确认的运行时特性、固定工具目录/namespace、私有 spawn schema 或内部事件/工具名，都不是普通 Codex 委派的前提；不得由父代理自行模拟 child 完成业务；
+- **委派 payload 只带本阶段业务输入**：委派 payload 只携带该 Stage 的 Input contract 业务输入字段，不把调用者自己收到的路由指令原文转发给 child；任何 coordinator 不得把任务委派给与自身机器名相同的 named custom agent，同一委派链里同一个机器名只允许出现一层。runtime 里观察到过的失效形态：child 收到写给调用者的「交给已安装的 `professor-contact-analyzer`」这类路由指令后照做，又委派了一个同名 agent，于是每跳多出一层包装，嵌套叶子被推到 runtime 已无法 settlement 的深度；
 - 在 prompt 中显式要求 Codex **delegate to / use** 指定的 exact named custom agent（例如 “Delegate this task to the installed custom agent `professor-contact-downloader` and wait for its result before continuing”），并把该 Stage 的 Input contract 字段原样写进委派 prompt；
 - 等待该子代理完成并返回结果后，才把结果用于后续 Stage；
 - **不**把子代理的 instructions 复制进父对话里自己执行，也**不**让父代理自称目标角色来冒充“已调用指定代理”；
@@ -415,7 +425,7 @@ Codex 的 non-interactive 执行（`codex exec`）没有「暂停一个嵌套子
 
 #### Codex 下的 Stage 1：委派 exact named custom agent `professor-collector`
 
-缺 PDF 补齐时，Codex 侧委派 installed named custom agent `professor-collector` 并**等待其结果**再继续；输入保持收窄为 `folder_path` + `pdf_only:true` + `item_keys=<缺失 item keys>`，以及仅在 caller 显式提供合法值时追加同值 `access_mode=<oa_only|allow_non_oa>`。缺省时完全省略该字段；Codex non-interactive 成功路径必须显式接收真实用户决定。非法值只在 `pdf_fill_needed` 时于 collector spawn 前返回结构化 `error`；`noop`/`needs_resolution` 不消费或校验它。绝不同时传 `professors`，也绝不扩大下载范围。OpenCode 的 Task 委派写法只属于 OpenCode 分支；Codex 分支不复制 collector 的 agent body、不由父代理 inline 模拟 collector，也不直接调 `pdf_fill.py`/worker 绕过 collector。collector 返回后无条件重跑 `contact_stage1.py build`，empty runtime result 仍只允许一次相同输入重试，且 retry 保持 `access_mode` 同值或同样省略。
+缺 PDF 补齐时，Codex 侧使用 Codex 官方文档所定义的原生委派能力委派 installed named custom agent `professor-collector` 并**等待其结果**再继续；若原生委派在机器/运行时层面失败，记为 Codex runtime/feature blocker，绝不由本父代理自行补下 PDF。输入保持收窄为 `folder_path` + `pdf_only:true` + `item_keys=<缺失 item keys>`，以及仅在 caller 显式提供合法值时追加同值 `access_mode=<oa_only|allow_non_oa>`。缺省时完全省略该字段；Codex non-interactive 成功路径必须显式接收真实用户决定。非法值只在 `pdf_fill_needed` 时于 collector spawn 前返回结构化 `error`；`noop`/`needs_resolution` 不消费或校验它。绝不同时传 `professors`，也绝不扩大下载范围。OpenCode 的 Task 委派写法只属于 OpenCode 分支；Codex 分支不复制 collector 的 agent body、不由父代理 inline 模拟 collector，也不直接调 `pdf_fill.py`/worker 绕过 collector。collector 返回后无条件重跑 `contact_stage1.py build`，empty runtime result 仍只允许一次相同输入重试，且 retry 保持 `access_mode` 同值或同样省略。
 
 #### Codex 下的 Stage 5：caller choices 作为业务输入
 
@@ -428,7 +438,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 **Stage 3 validator 校验循环**（两 runtime 共同遵守：validator 只报告不改写；fail 后只修正被指出的候选并重新 finalize；**最多 2 轮**；顺序依赖——validator 必须在 finalize 完成后运行，修正 finalize 完成后才能跑下一轮 validator；最终真实 result/rounds/issues 都经 `stage3-record-validation` 写入状态；绝不允许任何人自称「validator 已通过」代替真实委派与真实记录）：
 
 - **OpenCode（OpenCode-only 嵌套路径）**：`professor-contact-idea-generator` 在 `stage3-finalize` 后自己通过 OpenCode 原生 Task 委派启动 `professor-contact-style-validator` 白话校验循环（完整调用示例见上方「OpenCode 分支」与该 agent 的 Step 3.6；嵌套 Task 语法是 OpenCode 专属 API，不得写成跨 runtime 通用调用），fail → 修正 → 重新 finalize → 再校验，最多 2 轮，由 idea-generator 运行 `stage3-record-validation`。
-- **Codex（调用线程 sibling 编排）**：调用线程先委派 named `professor-contact-idea-generator` 并**等待生成 + `stage3-finalize` 完成**，再委派 named `professor-contact-style-validator`（输入 = 渲染后的 `套磁想法候选.md` 绝对路径 + `artifact: candidates`）；fail 且未到第 2 轮时，调用线程把 validator 真实 findings 原样交回新一轮 idea-generator——该轮只修正被指出的候选、重新 finalize，绝不重读 Stage 2、绝不扩展方向事实——然后再次委派 style-validator；第 2 轮后无论 pass / fail_after_2_rounds，都由调用线程用 `stage3-record-validation` 记录真实结果。两个 agent 都必须是 #27 已安装的 exact named custom agent，不把 OpenCode `task(...)` 翻译成任何 Codex 私有调用签名。**委派手段**：按 Codex 官方文档的用户语义，要求 Codex 使用已安装的 named custom agent 执行该 Stage（delegate to / use，附上 Input contract 字段），并等待需要的 child 完成后再继续；spawn/wait 编排由 Codex 运行时自己负责，内部工具/事件名、私有函数签名或 request-side 字段形状都不属于产品 contract，不得写进本文件或委派 prompt——不得 inline 模拟 named agent、不得经 shell 嵌套其它 CLI、不得发明新的调用签名。
+- **Codex（调用线程 sibling 编排）**：调用线程先委派 named `professor-contact-idea-generator` 并**等待生成 + `stage3-finalize` 完成**，再委派 named `professor-contact-style-validator`（输入 = 渲染后的 `套磁想法候选.md` 绝对路径 + `artifact: candidates`）；fail 且未到第 2 轮时，调用线程把 validator 真实 findings 原样交回新一轮 idea-generator——该轮只修正被指出的候选、重新 finalize，绝不重读 Stage 2、绝不扩展方向事实——然后再次委派 style-validator；第 2 轮后无论 pass / fail_after_2_rounds，都由调用线程用 `stage3-record-validation` 记录真实结果。两个 agent 都必须是 #27 已安装的 exact named custom agent，不把 OpenCode `task(...)` 翻译成任何 Codex 私有调用签名。**委派手段**：按上方 Codex 分支所定义的原生委派能力（native subagent/custom-agent delegation），按 exact installed name 要求 Codex 委派已安装的 named custom agent 执行该 Stage 并等待其结果（附上 Input contract 字段），并等待需要的 child 完成后再继续；spawn/wait 编排由 Codex 运行时自己负责，内部工具/事件名、私有函数签名或 request-side 字段形状都不属于产品 contract，不得写进本文件或委派 prompt——不得 inline 模拟 named agent、不得经 shell 嵌套其它 CLI、不得发明新的调用签名。
 
 **Stage 4 用户选择边界**（两 runtime 共同遵守：候选机器事实源只有 `套磁候选状态.json`；没有用户真实选择就绝不 finalize、绝不默认/推荐/第一项自动选择；`套磁选择.json` 与 `邮件输入.json` 只由 `stage4-finalize` 写）：
 
@@ -519,13 +529,29 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 - Stage 1/2 重新扫描 Zotero 来「发现」被选方向；
 - 用 Zotero 方向 `collection_key` 充当套磁方向身份（`collection_key` 现在只是 `direction_id` 的兼容 join 键）。
 
-## Synergy — pipeline
+## Synergy — current pipeline
+
+```mermaid
+flowchart TD
+    C["professor-collector<br/>skip_pdf"]
+    P["professor-topic-clustering<br/>preview:true"]
+    J["normalized 方向预筛.json"]
+    S0["Stage 0<br/>选择 direction_id + user_note"]
+    T["教授研究/套磁目标.json"]
+    S1["Stage 1<br/>方向候选快照"]
+    F["professor-collector<br/>pdf_only:true + item_keys<br/>仅缺失候选 PDF"]
+    S2["Stage 2<br/>全文证据 + accepted resolved direction"]
+    I["套磁候选输入.json"]
+    S3["Stage 3<br/>想法候选"]
+    S4["Stage 4<br/>用户选择 + 邮件输入包"]
+    S5["Stage 5<br/>核验 + 首封 / 跟进邮件"]
+    FORMAL["professor-topic-clustering<br/>preview:false<br/>可选 Zotero 组织投影"]
+    KEEP["professor-collector<br/>pdf_only + professors<br/>可选 professor-level 库维护"]
+
+    C --> P --> J --> S0 --> T --> S1 --> S2 --> I --> S3 --> S4 --> S5
+    S1 -->|"missing candidate item_keys"| F -->|"post-fill rebuild"| S1
+    P -.->|"optional, independent"| FORMAL
+    P -.->|"optional, independent"| KEEP
 ```
-1. professor-collector (skip_pdf)            → Phase A 条目/元数据
-2. professor-topic-clustering (preview)      → 方向预筛总览（用户定保留名单）
-3. professor-collector (pdf_only, 保留名单)   → 保留教授下 PDF
-4. professor-topic-clustering (增量, 保留名单) → 正式聚类 + preview:true 产出 normalized 方向预筛.json
-   ── professor-contact Stage 0：交互选定方向（可写 per-direction user note）→ 写 教授研究/套磁目标.json ──
-5. professor-contact (Stage 1-4)             → 逐方向候选快照+定向补 PDF / 分析 / 想法候选 / 选择记录
-6. professor-contact-email-generator（阶段 5）→ 套磁邮件（兴趣段 + 动态字段润色 + 模板拼装 + validator，见「阶段 5 — 套磁邮件」节）
-```
+
+Canonical professor-contact 路径在 normalized preview 后直接进入 Stage 0；Stage 1 的下载范围由方向候选 `item_keys` 决定。Professor-level keep-list PDF fill 与 formal Zotero clustering 可以独立运行，但都不能替代 `套磁目标.json`、Stage 1 candidate snapshot 或 Stage 2 accepted full-text resolution。

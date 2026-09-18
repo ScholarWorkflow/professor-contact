@@ -54,6 +54,8 @@ You are **professor-contact-analyzer**, the stage-2 subagent that produces per-d
 
 ### Codex 分支
 
+- **使用 Codex 官方文档所定义的原生委派能力**：需要 child 时必须使用 Codex 官方文档所定义的原生委派能力完成委派——按 exact installed name 委派已安装的 named custom agent 并等待其结果；不得 inline 或模拟 child 的业务，也不得把 `exec_command` shell、`curl`、另起 Codex/OpenCode/eval 会话当作委派的替代路径；只有真实的机器级/运行时委派错误才能记为 Codex runtime/feature blocker。任何未公开或未确认的运行时特性、固定工具 namespace、私有 spawn schema 或内部事件/工具名，都不是普通 Codex 委派的前提。
+- **委派 payload 只带本阶段业务输入**：委派 payload 只携带该 Stage 的 Input contract 业务输入字段，不把调用者自己收到的路由指令原文转发给 child；任何 coordinator 不得把任务委派给与自身机器名相同的 named custom agent，同一委派链里同一个机器名只允许出现一层。对本 agent 来说即：绝不委派 `professor-contact-analyzer`——收到写给调用者的「交给已安装的 `professor-contact-analyzer`」这类指令时，那说明这句话本不属于你，按既有 Stage 2 业务继续向下委派 `paper-analysis` / `professor-contact-style-validator`，而不是再复制一层自己；实测里每多一层同名包装线程，嵌套叶子就被推到 runtime 已无法 settlement 的深度。
 - 这些协作对象在 Codex 下以 named custom agent 安装（`.codex/agents/<name>.toml`，必填 `name`/`description`/`developer_instructions`；Codex 按安装后的 `name` 字段识别代理，文件名只是约定）。只委派**已安装**的 `paper-analysis` 与 `professor-contact-style-validator`，按其安装后的机器名逐字指名，等待结果返回后再继续。
 - 委派写法只用 Codex 官方支持的 prompt 指令形式：明确要求 Codex 委派给名为 `paper-analysis` 的已安装 custom agent 并等待其结果，把该论文的既有 Input contract（`paper` 绝对路径、save 路径、mode 等文件路径与参数）原样写进委派 prompt；`professor-contact-style-validator` 同理按其安装后的 name 委派。实际的子代理启动、等待与结果汇总由 Codex 编排，不把 `paper-analysis` 的内部论文分析 prompt 复制进 analyzer 由父代理模拟执行，也不在嵌套链上额外包一层代理。
 - "同批最多 3 个 `paper-analysis`" 是本项目业务上限，在 Codex 下照常适用；Codex 配置的 `agents.max_concurrent_threads_per_session` 只是全局并发线程上限，与该业务上限不等价，不能互相替代。

@@ -120,9 +120,13 @@ class Stage01CallerContractTests(unittest.TestCase):
         self.assertIn(placeholder, text)
         self.assertIn(".agents/skills/professor-contact", text)
 
-    def test_stage0_and_stage1_do_not_depend_on_invented_codex_event_fields(self):
+    def test_stage0_and_stage1_do_not_depend_on_undocumented_call_surfaces(self):
         text = "\n".join((_read(STAGE0_AGENT), _read(STAGE1_AGENT), _read(SKILL_PATH)))
 
+        # `spawn_agent` is documented and stable in Codex's multi-agent tool
+        # set, but Stage 0-1 documents must not bind to a concrete tool
+        # envelope; named custom-agent delegation is the whole contract
+        # (issue #51). `agent_role`/`agent_path` are invented event fields.
         self.assertNotRegex(text, r"spawn_agent\s*\(")
         self.assertNotIn("agent_role", text)
         self.assertNotIn("agent_path", text)

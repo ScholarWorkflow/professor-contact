@@ -132,38 +132,50 @@ def _target_branch(text: str, heading: str, next_heading: str | None = None) -> 
     return text[start:end]
 
 
-# Delegation-discovery hard gate (PC47-R2-DELEGATION-DISCOVERY-01): the Codex
-# analyzer observed in R2 judged delegation unavailable with zero delegation
-# attempts. The production contract must force it to discover the runtime's
-# native multi-agent delegation surface first, delegate the exact installed
-# names after discovery, and fail closed only on a machine-level failure.
-CODEX_DISCOVERY_GATE_MARKERS = (
-    "在判定 delegation unavailable 之前",
-    "Code Mode / programmatic tool-calling discovery surface",
-    "发现当前 session 实际可调用的原生 multi-agent delegation capability",
-    "不得硬编码版本私有的 spawn JSON schema、固定 namespace 名或私有工具名",
-    "必须按既有业务 contract 用 **exact installed name** 真正发起委派并等待结果",
-    "Code Mode `exec` 作为 programmatic tool caller 是允许的",
-    "`exec` shell 子进程、`curl`、另起 eval 会话都不是 native delegation 的替代路径",
+# Documented-native-delegation gate (issue #47 Phase 4): the obsolete Code Mode /
+# programmatic tool-calling discovery prerequisite is removed, because that
+# feature is under development / default-off and must never gate an ordinary
+# Codex child. The reconciled production contract requires Codex's documented
+# native subagent/custom-agent delegation: delegate to the exact installed name
+# and wait, never skip just because another runtime's syntax is missing, and
+# fail closed only on a real machine-level delegation failure.
+CODEX_NATIVE_DELEGATION_GATE_MARKERS = (
+    "使用 Codex 官方文档所定义的原生委派能力",
+    "按 exact installed name 委派已安装的 named custom agent 并等待其结果",
+    "不能因为缺少另一运行时的调用语法就跳过委派",
+    "任何未公开或未确认的运行时特性、固定工具 namespace、私有 spawn schema "
+    "或内部事件/工具名都不是普通 Codex 委派的前提",
 )
 
-# The fail-closed reason code may only be emitted after discovery plus an
-# actual native delegation attempt returned a machine-level failure; the
-# model's own "no interface" impression is never machine evidence.
+# Wording of the removed Code Mode prerequisite; it must not reappear in any
+# production Codex contract.
+CODEX_OBSOLETE_DISCOVERY_LITERALS = (
+    "Code Mode",
+    "programmatic tool-calling",
+)
+
+# The fail-closed reason code may only be emitted after an actual native
+# delegation attempt returned a machine-level failure; the model's own "no
+# interface" impression is never machine evidence.
 CODEX_DELEGATION_REASON_CODE = "codex_runtime_delegation_unavailable"
 
 
-def _assert_codex_discovery_gate(codex: str):
-    for marker in CODEX_DISCOVERY_GATE_MARKERS:
-        assert marker in codex, f"missing discovery-gate marker: {marker}"
+def _assert_codex_native_delegation_gate(codex: str):
+    for marker in CODEX_NATIVE_DELEGATION_GATE_MARKERS:
+        assert marker in codex, f"missing native-delegation gate marker: {marker}"
+    for obsolete in CODEX_OBSOLETE_DISCOVERY_LITERALS:
+        assert obsolete not in codex, (
+            f"obsolete Code Mode prerequisite reappeared: {obsolete}"
+        )
 
     reason_lines = [
         line for line in codex.splitlines() if CODEX_DELEGATION_REASON_CODE in line
     ]
     assert reason_lines, "the fail-closed reason code must be named in the Codex branch"
     for line in reason_lines:
-        assert "discovery" in line, f"reason code line lacks discovery semantics: {line}"
-        assert "实际尝试" in line, f"reason code line lacks actual-attempt semantics: {line}"
+        assert "实际尝试" in line, (
+            f"reason code line lacks actual-attempt semantics: {line}"
+        )
         assert (
             "machine-level failure" in line or "机器级失败" in line
         ), f"reason code line lacks machine-level-failure semantics: {line}"
@@ -264,6 +276,10 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
         # presented as the unified truth) must be gone.
         self.assertNotIn("the ONLY way", skill)
         self.assertNotIn("the Task tool is the ONLY way", skill)
+        # `spawn_agent` is a documented, stable Codex multi-agent tool name;
+        # the caller convention stays off it so the business contract never
+        # binds to one specific tool envelope (issue #51), not because the
+        # name were private.
         self.assertNotRegex(skill, r"spawn_agent\s*\(")
         self.assertNotIn("agent_role", skill)
         self.assertNotIn("agent_path", skill)
@@ -307,9 +323,11 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
             "Codex branch must identify installed custom agents by their configured name",
         )
 
-        # These are OpenCode/runtime-local concepts or invented observability
-        # fields. Codex's documented contract is named custom agents plus the
-        # normal subagent workflow; do not present these as Codex APIs.
+        # `subagent_depth`, Task and question are OpenCode/runtime-local
+        # concepts; `agent_role`/`agent_path` are invented observability
+        # fields. `spawn_agent` is a documented Codex multi-agent tool, but
+        # the business branch must not bind to its concrete envelope — the
+        # documented named-custom-agent contract is the whole API (issue #51).
         self.assertNotIn("subagent_depth", codex)
         self.assertNotRegex(codex, r"task\s*\(")
         self.assertNotRegex(codex, r"question\s*\(")
@@ -401,35 +419,35 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
             "a runtime blocker requires an attempted delegation and a machine-level failure",
         )
 
-    def test_codex_analyzer_requires_discovery_before_delegation_unavailable(self):
-        _assert_codex_discovery_gate(self._codex_analyzer_branch())
+    def test_codex_analyzer_requires_native_delegation_before_delegation_unavailable(self):
+        _assert_codex_native_delegation_gate(self._codex_analyzer_branch())
 
-    def test_codex_discovery_gate_markers_are_load_bearing(self):
+    def test_codex_native_delegation_gate_markers_are_load_bearing(self):
         codex = self._codex_analyzer_branch()
-        for marker in CODEX_DISCOVERY_GATE_MARKERS:
+        for marker in CODEX_NATIVE_DELEGATION_GATE_MARKERS:
             with self.subTest(marker=marker):
                 mutated = codex.replace(marker, "")
                 with self.assertRaises(AssertionError):
-                    _assert_codex_discovery_gate(mutated)
+                    _assert_codex_native_delegation_gate(mutated)
 
     def test_codex_reason_code_semantics_are_load_bearing(self):
         codex = self._codex_analyzer_branch()
         reason_line = next(
             line for line in codex.splitlines() if CODEX_DELEGATION_REASON_CODE in line
         )
-        for drop in ("discovery", "实际尝试", "machine-level failure", "没看到接口"):
+        for drop in ("实际尝试", "machine-level failure", "没看到接口"):
             with self.subTest(dropped=drop):
                 mutated_line = reason_line.replace(drop, "")
                 mutated = codex.replace(reason_line, mutated_line)
                 with self.assertRaises(AssertionError):
-                    _assert_codex_discovery_gate(mutated)
+                    _assert_codex_native_delegation_gate(mutated)
 
-    def test_codex_delegation_discovery_gate_survives_install_toml_projection(self):
+    def test_codex_native_delegation_gate_survives_install_toml_projection(self):
         """The clean-install writes the Codex projection body into the
         generated ``.codex/agents/professor-contact-analyzer.toml``
         ``developer_instructions`` (frontmatter stripped, edge newlines
-        normalized, TOML basic-string escaped). Gate the discovery markers on
-        that payload shape, not only on the source Markdown."""
+        normalized, TOML basic-string escaped). Gate the native-delegation
+        markers on that payload shape, not only on the source Markdown."""
         path = CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md"
         frontmatter, body = _frontmatter_and_body(path)
         fields = _top_level_fields(frontmatter)
@@ -446,16 +464,26 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
         parsed = tomllib.loads(toml_text)
         self.assertEqual(parsed["name"], "professor-contact-analyzer")
         self.assertEqual(parsed["developer_instructions"], instructions)
-        _assert_codex_discovery_gate(parsed["developer_instructions"])
+        _assert_codex_native_delegation_gate(parsed["developer_instructions"])
 
-    def test_codex_discovery_gate_stays_out_of_the_opencode_projection(self):
-        _, body = _frontmatter_and_body(ANALYZER_PATH)
-        self.assertNotIn(
-            "Code Mode / programmatic tool-calling discovery surface",
-            body,
-            "the delegation-discovery gate is Codex-branch contract; the OpenCode "
-            "projection keeps its native Task/question/permission contract",
-        )
+    def test_code_mode_discovery_is_absent_from_both_analyzer_projections(self):
+        """Issue #47 Phase 4 removed the Code Mode / programmatic tool-calling
+        discovery prerequisite from production. The OpenCode file keeps its own
+        Task/question/permission branch, so isolation is proven by the obsolete
+        Code Mode wording appearing in neither projection."""
+        for path in (
+            ANALYZER_PATH,
+            CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md",
+        ):
+            with self.subTest(path=path):
+                _, body = _frontmatter_and_body(path)
+                for obsolete in CODEX_OBSOLETE_DISCOVERY_LITERALS:
+                    self.assertNotIn(
+                        obsolete,
+                        body,
+                        "the removed Code Mode prerequisite must not reappear in "
+                        "any analyzer projection",
+                    )
 
     def test_codex_analyzer_keeps_exact_paper_analysis_role(self):
         codex = self._codex_analyzer_branch()
