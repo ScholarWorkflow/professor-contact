@@ -10,7 +10,9 @@ coordinator must discover the callable native multi-agent delegation
 capability through the runtime's own Code Mode / programmatic tool-calling
 surface (issue #51 §4 B, on the closed paper-analysis#14 precedent), delegate
 and wait, never inline or simulate the child, fail closed on machine-level
-delegation failure, keep Codex/OpenCode syntax isolated, and keep
+delegation failure, keep Codex/OpenCode syntax isolated, keep the delegation
+chain non-recursive (the payload carries only this stage's business fields and
+no coordinator delegates to its own machine name), and keep
 characterization-only tool envelopes out of production text.
 """
 from pathlib import Path
@@ -86,6 +88,30 @@ CODEX_DISCOVERY_INVARIANTS = {
 }
 
 
+# Runtime evidence for issue #51 showed a second, distinct failure shape: a
+# coordinator received the caller-facing routing sentence verbatim and
+# delegated the task to a named custom agent with *its own* machine name, so
+# the chain grew one analyzer layer per hop and the nested leaves were pushed
+# past the point where the pinned runtime settles them.  The guard therefore
+# belongs to production source, not to the fixed runtime prompt.
+CODEX_RECURSION_INVARIANTS = {
+    "business-input-only-payload": (
+        "委派 payload 只携带该 Stage 的 Input contract 业务输入字段，"
+        "不把调用者自己收到的路由指令原文转发给 child",
+        "the delegation payload carries only that stage's Input contract "
+        "business fields, and never forwards the caller's own received routing "
+        "instruction verbatim to the child",
+    ),
+    "no-self-delegation": (
+        "任何 coordinator 不得把任务委派给与自身机器名相同的 named custom agent，"
+        "同一委派链里同一个机器名只允许出现一层",
+        "no coordinator may delegate to a named custom agent that has its own "
+        "machine name; the same machine name may appear only once in a "
+        "delegation chain",
+    ),
+}
+
+
 def _first_position(text: str, literals) -> int:
     positions = [text.index(literal) for literal in literals if literal in text]
     if not positions:
@@ -104,6 +130,12 @@ NO_INLINE_PATTERN = re.compile(
     r"不由父代理模拟|不把.*内部论文分析 prompt 复制|不.*inline)"
 )
 HTML_COMMENT_PATTERN = re.compile(r"(?s)<!--.*?-->")
+# Each coordinator document states its own wait step; this is the boundary the
+# recursion guard must sit in front of.
+RECURSION_BOUNDARY_PATTERN = re.compile(
+    r"(?:等待该子代理完成并返回结果|等待结果返回后再继续|"
+    r"wait for (?:that child's|its) result)"
+)
 
 
 def _codex_branch(name: str) -> str:
@@ -337,6 +369,83 @@ class CodexDiscoveryBeforeDelegationTests(unittest.TestCase):
             self.assertNotRegex(text, r"(?i)tool[- ]catalog")
             self.assertNotRegex(text, r"枚举 tool catalog")
             self.assertNotRegex(text, r"必须先枚举[\s\S]{0,40}(?:才|方)允许")
+
+
+class CodexRecursionGuardTests(unittest.TestCase):
+    """Issue #51 retry evidence: same-name re-delegation deepens the chain."""
+
+    @classmethod
+    def setUpClass(cls):
+        skill = read(SKILL_PATH)
+        cls.branches = {
+            "SKILL.md Codex caller": segment(
+                skill, SKILL_CODEX_REGION[0], SKILL_CODEX_REGION[1]),
+        }
+        for owner in CODEX_NESTED_DELEGATOR_AGENTS:
+            cls.branches[owner] = _codex_branch(owner)
+
+    def _has(self, text: str, invariant: str) -> bool:
+        return any(literal in text
+                   for literal in CODEX_RECURSION_INVARIANTS[invariant])
+
+    def test_every_codex_coordinator_states_the_recursion_guard(self):
+        for label, branch in self.branches.items():
+            for invariant in CODEX_RECURSION_INVARIANTS:
+                with self.subTest(doc=label, invariant=invariant):
+                    self.assertTrue(
+                        self._has(branch, invariant),
+                        f"{label}: production source omits {invariant}",
+                    )
+
+    def test_recursion_guard_is_stated_before_awaiting_the_child(self):
+        """The payload/self-name guard is only useful while the coordinator is
+        still composing the delegation, so it must precede the wait step."""
+        for label, branch in self.branches.items():
+            with self.subTest(doc=label):
+                wait = RECURSION_BOUNDARY_PATTERN.search(branch)
+                self.assertIsNotNone(wait, f"{label}: no wait-for-child step found")
+                for invariant in CODEX_RECURSION_INVARIANTS:
+                    position = _first_position(branch,
+                                               CODEX_RECURSION_INVARIANTS[invariant])
+                    self.assertLess(
+                        position, wait.start(),
+                        f"{label}: {invariant} must be stated before awaiting the child",
+                    )
+
+    def test_generated_codex_projection_keeps_the_recursion_guard(self):
+        for name in CODEX_NESTED_DELEGATOR_AGENTS:
+            frontmatter, body = frontmatter_and_body(agent_path(name))
+            projected = HTML_COMMENT_PATTERN.sub("", body)
+            for invariant in CODEX_RECURSION_INVARIANTS:
+                with self.subTest(agent=name, invariant=invariant):
+                    self.assertTrue(self._has(projected, invariant),
+                                    f"{name}: projection loses {invariant}")
+                    self.assertFalse(
+                        self._has("\n".join(frontmatter), invariant),
+                        f"{name}: frontmatter is not projected into Codex instructions",
+                    )
+
+    def test_opencode_branches_stay_free_of_the_codex_recursion_wording(self):
+        for owner in CODEX_NESTED_DELEGATOR_AGENTS:
+            branch = _opencode_branch(owner)
+            for invariant in CODEX_RECURSION_INVARIANTS:
+                with self.subTest(owner=owner, invariant=invariant):
+                    for literal in CODEX_RECURSION_INVARIANTS[invariant]:
+                        self.assertNotIn(literal, branch)
+
+    def test_leaf_sources_do_not_gain_the_codex_recursion_guard(self):
+        for leaf in CODEX_NON_DELEGATORS:
+            text = read(agent_path(leaf))
+            for invariant in CODEX_RECURSION_INVARIANTS:
+                with self.subTest(leaf=leaf, invariant=invariant):
+                    self.assertFalse(self._has(text, invariant))
+
+    def test_recursion_guard_stays_a_source_contract_not_an_identity_gate(self):
+        for label, branch in self.branches.items():
+            for forbidden in ("requested_role", "loaded_identity",
+                              "agent_identity", "receiverThreadIds"):
+                with self.subTest(doc=label, forbidden=forbidden):
+                    self.assertNotIn(forbidden, branch)
 
 
 class AnalyzerNativeDelegationSemanticsTests(unittest.TestCase):

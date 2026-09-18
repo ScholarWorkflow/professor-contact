@@ -379,6 +379,7 @@ task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <
 Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>.toml`，Codex 按 `name` 识别）。调用语义只使用 Codex 官方文档支持的委派方式：
 
 - **委派前先发现 delegation capability（硬前置）**：在执行任何 child 业务内容前，必须先通过当前 Codex 运行时的 Code Mode / programmatic tool-calling surface 发现实际可调用的原生 multi-agent delegation 能力；discovery 只使用运行时自身提供的工具目录/搜索 surface，不硬编码版本私有的工具名、固定 namespace 或 spawn request schema。Code Mode `exec` 作为 programmatic tool caller 是允许的；`exec_command` shell、`codex exec`、`opencode run`、curl、另起 `/eval` 都不是 delegation fallback。discovery 失败或该能力不可调用时，明确记为 Codex runtime/feature blocker，不得由 parent inline 模拟或代替 child 完成业务；
+- **委派 payload 只带本阶段业务输入**：委派 payload 只携带该 Stage 的 Input contract 业务输入字段，不把调用者自己收到的路由指令原文转发给 child；任何 coordinator 不得把任务委派给与自身机器名相同的 named custom agent，同一委派链里同一个机器名只允许出现一层。runtime 里观察到过的失效形态：child 收到写给调用者的「交给已安装的 `professor-contact-analyzer`」这类路由指令后照做，又委派了一个同名 agent，于是每跳多出一层包装，嵌套叶子被推到 runtime 已无法 settlement 的深度；
 - 在 prompt 中显式要求 Codex **delegate to / use** 指定的 exact named custom agent（例如 “Delegate this task to the installed custom agent `professor-contact-downloader` and wait for its result before continuing”），并把该 Stage 的 Input contract 字段原样写进委派 prompt；
 - 等待该子代理完成并返回结果后，才把结果用于后续 Stage；
 - **不**把子代理的 instructions 复制进父对话里自己执行，也**不**让父代理自称目标角色来冒充“已调用指定代理”；

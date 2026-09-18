@@ -120,7 +120,8 @@ class Issue51FixedPromptTests(unittest.TestCase):
         for literal in ("Code Mode", "ALL_TOOLS", "tool catalog",
                         "discovery surface", "spawn_agent", "agent_type",
                         "agent_role", "max_depth", "nested", "嵌套", "深度",
-                        "两层", "profile_path"):
+                        "两层", "profile_path", "递归", "self-delegation",
+                        "自身机器名", "同一委派链"):
             self.assertNotIn(literal, text)
 
 
