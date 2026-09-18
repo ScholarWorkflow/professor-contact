@@ -96,11 +96,20 @@ class Issue51FixedPromptTests(unittest.TestCase):
     def test_prompt_carries_fixed_stage2_business_input(self):
         text = PROMPT_PATH.read_text(encoding="utf-8")
         self.assertTrue(text.strip())
-        self.assertIn("folder_path=${PROGRAM_ROOT}", text)
-        self.assertIn("paper_analysis=all", text)
-        self.assertIn("仅一次", text)
-        self.assertIn("不得内联执行", text)
+        self.assertIn("`folder_path: ${PROGRAM_ROOT}`", text)
+        self.assertIn("`paper_analysis: all`", text)
+        self.assertIn("只负责一次 Stage 2 入口", text)
+        self.assertIn("不得自己执行 Stage 2", text)
         self.assertIn("不要进入 Stage 3", text)
+
+    def test_prompt_defers_the_delegation_mechanism_to_production_source(self):
+        """Issue #51 §F: a stronger prompt must never stand in for the product
+        fix, so the prompt states the entry only and names production
+        instructions as the single source of how delegation is discovered."""
+        text = PROMPT_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            "内部如何发现并调用 native delegation capability，必须完全来自安装后的",
+            text)
 
     def test_prompt_does_not_hint_children_depth_or_discovery(self):
         text = PROMPT_PATH.read_text(encoding="utf-8")
@@ -215,8 +224,8 @@ class Issue51EvalRequestTests(unittest.TestCase):
                 zotero_http_url="http://127.0.0.1:24121",
                 zotero_mcp_url="http://127.0.0.1:24122/mcp")
         self.assertIn("--sandbox workspace-write", request["command"])
-        self.assertIn("paper_analysis=all", request["command"])
-        self.assertIn("folder_path=${PROGRAM_ROOT}", request["command"])
+        self.assertIn("`paper_analysis: all`", request["command"])
+        self.assertIn("`folder_path: ${PROGRAM_ROOT}`", request["command"])
 
 
 if __name__ == "__main__":
