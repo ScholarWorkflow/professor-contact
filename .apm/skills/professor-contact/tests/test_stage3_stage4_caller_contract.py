@@ -101,6 +101,59 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
             "explicit selection instead of depending on child memory",
         )
 
+    def _stage4_user_boundary(self):
+        section = self._stage34_orchestration_section()
+        marker = "**Stage 4 用户选择边界"
+        start = section.find(marker)
+        self.assertGreaterEqual(
+            start, 0,
+            "the Stage 4 user boundary must stay inside the Stage 3/4 section",
+        )
+        return section[start:]
+
+    def test_stage4_always_delegates_before_handling_either_selection_state(self):
+        stage4 = self._stage4_user_boundary()
+        self.assertRegex(
+            stage4,
+            r"无论.{0,30}selection.{0,50}必须先委派.{0,80}professor-contact-selection",
+            "Stage 4 must route both present and omitted selection through the named child",
+        )
+        self.assertRegex(
+            stage4,
+            r"professor-contact-selection.{0,100}等待",
+            "the caller must wait for the Stage 4 child before consuming its result",
+        )
+        self.assertRegex(
+            stage4,
+            r"selection omitted.{0,80}不是.{0,40}(提前|caller).{0,20}(结束|return)",
+            "missing selection must be a child input path, not a caller early return",
+        )
+
+    def test_stage4_forbids_caller_side_simulation_and_default_selection(self):
+        stage4 = self._stage4_user_boundary()
+        for required in (
+            "提前返回 prose",
+            "自行构造候选",
+            "模拟 pending_selection",
+            "默认/推荐/自动选第一项",
+            "直接调用 stage4-finalize",
+            "inline 执行 selection agent",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(
+                    required,
+                    stage4,
+                    "the Stage 4 caller contract must name this bypass explicitly",
+                )
+
+    def test_stage4_keeps_opencode_question_separate_from_codex_redelegation(self):
+        stage4 = self._stage4_user_boundary()
+        self.assertIn("OpenCode", stage4)
+        self.assertIn("question", stage4)
+        self.assertIn("multiple: true", stage4)
+        self.assertIn("Codex", stage4)
+        self.assertIn("重新委派", stage4)
+
     def test_stage34_section_rejects_envelope_binding_or_wrong_runtime_protocols(self):
         section = self._stage34_orchestration_section()
         # The tool names below are documented Codex surfaces; the ban keeps

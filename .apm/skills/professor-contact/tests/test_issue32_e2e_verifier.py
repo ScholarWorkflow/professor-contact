@@ -1,3 +1,5 @@
+import contextlib
+import io
 import importlib.util
 import json
 import tempfile
@@ -94,6 +96,30 @@ class Issue32VerifierTests(unittest.TestCase):
         response.write_text("The model says it needs a selection.", encoding="utf-8")
         payload = verifier._checkpoint_stage0_needs_input(self.args(eval_response=response))
         self.assertEqual(payload["status"], "fail", payload)
+
+    def test_stage4_snapshot_reports_program_level_zero_write_artifacts(self):
+        payload = verifier._checkpoint_stage4_snapshot(self.args())
+        self.assertEqual(
+            payload["artifacts"],
+            {
+                "套磁选择.json": {"exists": False, "sha256": None},
+                "邮件输入.json": {"exists": False, "sha256": None},
+            },
+        )
+
+    def test_stage4_snapshot_cli_persists_requested_output(self):
+        output = Path(self.holder.name) / "stage4-snapshot.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            exit_code = verifier.main([
+                "stage4-snapshot",
+                "--program-root", str(self.root),
+                "--output", str(output),
+            ])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            json.loads(output.read_text(encoding="utf-8"))["artifacts"]["套磁选择.json"],
+            {"exists": False, "sha256": None},
+        )
 
     def test_make_stage4_selection_sorts_candidates_and_writes_only_requested_file(self):
         prof = self.root / "教授研究/X分野/Example Professor"
