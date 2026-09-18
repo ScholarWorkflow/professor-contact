@@ -966,6 +966,12 @@ def main(argv: list[str] | None = None) -> int:
         payload = CHECKPOINTS[args.checkpoint](args)
     except Exception as exc:
         payload = _result("fail", [{"name": "verifier_exception", "status": "fail", "detail": str(exc)}])
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=1) + "\n",
+            encoding="utf-8",
+        )
     print(json.dumps(payload, ensure_ascii=False, indent=1))
     return 0 if payload.get("status") == "pass" else 1
 
