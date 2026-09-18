@@ -1,0 +1,6 @@
+在 ${PROGRAM_ROOT} 只执行 Stage 2。现有 Stage 1 canonical state 已准备完成。
+根调用者必须仅一次直接委派已安装的 named custom agent professor-contact-analyzer，
+只传 Stage 2 既有业务输入（folder_path=${PROGRAM_ROOT}, paper_analysis=all）并等待结果。
+根调用者不得内联执行 Stage 2，也不得替 analyzer 调用其下游 child。
+analyzer 按安装后的正式 contract 自行完成需要的下游 delegation。
+不要进入 Stage 3。完成后正常结束。

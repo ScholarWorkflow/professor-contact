@@ -11,12 +11,16 @@ consumer, and records the resulting provenance.
 This helper does not start Zotero, create MCP data, proxy production ports, or
 write any Stage 2 product output.  The fixture setup owns the external Zotero
 items; the helper owns only the local program prerequisite.
+
+``--expected-fixture-revision`` lets a follow-up recipe (issue #51) pin a
+newer fixture sha explicitly; the default stays on the original #39 pin.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -49,6 +53,15 @@ STAGE2_OUTPUTS = (
 
 class SetupError(RuntimeError):
     """Raised when the PC39 prerequisite cannot be built safely."""
+
+
+def _validate_expected_revision(expected_revision: str) -> None:
+    """Fail closed unless the expected fixture revision is a 40-hex git sha."""
+    if not isinstance(expected_revision, str) \
+            or not re.fullmatch(r"[0-9a-f]{40}", expected_revision):
+        raise SetupError(
+            "expected fixture revision must be a 40-char hex git sha, got "
+            f"{expected_revision!r}")
 
 
 def read_json(source: Path | str | dict) -> object:
@@ -127,8 +140,10 @@ def validate_runtime_endpoints(zotero_http_url: str, zotero_mcp_url: str) -> Non
         raise SetupError("zotero_mcp_url must be the complete endpoint ending in /mcp")
 
 
-def validate_items_config(source: Path | str | dict) -> dict:
+def validate_items_config(source: Path | str | dict,
+                          expected_revision: str = FIXTURE_REVISION) -> dict:
     """Validate the dynamic item provenance recorded by the seed helper."""
+    _validate_expected_revision(expected_revision)
     config = read_json(source)
     if not isinstance(config, dict):
         raise SetupError("zotero items config must be a JSON object")
@@ -137,10 +152,10 @@ def validate_items_config(source: Path | str | dict) -> dict:
             f"zotero items config schema_version must be {ITEM_CONFIG_SCHEMA_VERSION}")
     if config.get("fixture_repository") != FIXTURE_REPOSITORY:
         raise SetupError(f"fixture_repository must be {FIXTURE_REPOSITORY!r}")
-    if config.get("fixture_revision") != FIXTURE_REVISION:
+    if config.get("fixture_revision") != expected_revision:
         raise SetupError(
             "fixture_revision must remain pinned to "
-            f"{FIXTURE_REPOSITORY}@{FIXTURE_REVISION}")
+            f"{FIXTURE_REPOSITORY}@{expected_revision}")
     if "attachment_keys" in config:
         raise SetupError(
             "attachment_keys must not appear in a PC39 config; issue #39 does "
@@ -176,7 +191,7 @@ def validate_items_config(source: Path | str | dict) -> dict:
     return {
         "schema_version": ITEM_CONFIG_SCHEMA_VERSION,
         "fixture_repository": FIXTURE_REPOSITORY,
-        "fixture_revision": FIXTURE_REVISION,
+        "fixture_revision": expected_revision,
         "fixture_run_id": run_id,
         "item_keys": item_keys,
         "ready_item_keys": ready_item_keys,
@@ -395,11 +410,13 @@ def prepare_stage2_prerequisite(*, program_root: Path,
                                 zotero_items_config: Path | str | dict,
                                 zotero_http_url: str,
                                 zotero_mcp_url: str,
-                                output: Path) -> dict:
+                                output: Path,
+                                expected_revision: str = FIXTURE_REVISION) -> dict:
     """Build and verify the complete producer-owned PC39-R1 local input."""
     validate_runtime_endpoints(zotero_http_url, zotero_mcp_url)
     installed_skill = validate_installed_skill_dir(professor_contact_skill_dir)
-    items = validate_items_config(zotero_items_config)
+    items = validate_items_config(
+        zotero_items_config, expected_revision=expected_revision)
     root = _prepare_program_root(program_root)
     raw_hashes = _write_raw_inputs(root, items)
     skill_dir = Path(installed_skill["path"])
@@ -449,6 +466,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--zotero-http-url", required=True)
     parser.add_argument("--zotero-mcp-url", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--expected-fixture-revision", default=FIXTURE_REVISION,
+        help="expected skills-test-fixtures git sha "
+             f"(default: the #39 pin {FIXTURE_REVISION})")
     return parser
 
 
@@ -462,6 +483,7 @@ def main(argv: list[str] | None = None) -> int:
             zotero_http_url=args.zotero_http_url,
             zotero_mcp_url=args.zotero_mcp_url,
             output=args.output,
+            expected_revision=args.expected_fixture_revision,
         )
     except Exception as exc:
         print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False))

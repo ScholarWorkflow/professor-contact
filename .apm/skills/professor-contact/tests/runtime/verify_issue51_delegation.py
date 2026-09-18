@@ -16,6 +16,13 @@ formal nested delegation topology ``root -> child -> nested-child``:
 
 Topology helpers are reused from ``verify_issue32_e2e.py`` so both verifiers
 share one adapter schema interpretation.
+
+The #52 acceptance recipe runs this verifier standalone on the Stage 2
+direct-delegation case (``--case r2``): the fixed prompt
+``prompts/issue51-r2.txt`` routes the root caller to the analyzer once, and
+the analyzer's own documented downstream delegation — proved only by the
+formal adapter relations — must produce ``max_depth >= 2`` and at least one
+nested edge.
 """
 from __future__ import annotations
 
