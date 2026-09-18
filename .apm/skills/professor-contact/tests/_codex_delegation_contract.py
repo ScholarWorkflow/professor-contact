@@ -1,15 +1,14 @@
-"""Producer-owned expected contract for Codex native delegation (issue #51).
+"""Producer-owned source inventory for Codex delegation invariants (issue #51).
 
-The rows below are the deterministic tests' own expectation of which installed
-custom agents delegate nested children under Codex and which are leaves.  They
-are deliberately literal: tests read each agent document's target branch and
-compare it against these rows mechanically — no NLP inference, no role-name
-guessing.  When the producer's source contract changes on purpose, update the
-rows in the same PR; never add a child to make a failing test pass.
+This helper deliberately does *not* encode expected child identities.  The
+pinned fixtures@9 contract makes named-role identity an optional diagnostic:
+requested_role / loaded_identity, including mismatch or unobservable states,
+must never become a merge gate for a delegation-confirmed run.
 
-Caller-level stage edges are intentionally kept out of the nested mapping:
-`professor-contact-style-validator` after Stage 3 is delegated by the caller
-thread as a sibling, not spawned by `professor-contact-idea-generator`.
+The deterministic tests therefore identify only which repo-owned source
+documents are coordinators versus leaves, then verify generic orchestration
+invariants (native delegation, wait, no-inline, fail-closed, target isolation).
+They do not assert which named child was requested or loaded.
 """
 from pathlib import Path
 
@@ -17,8 +16,6 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 AGENTS_DIR = REPO_ROOT / ".apm" / "agents"
 SKILL_PATH = REPO_ROOT / ".apm" / "skills" / "professor-contact" / "SKILL.md"
 
-# The 8 source agents; install projections (Codex TOML / OpenCode md) are
-# keyed by these exact names.
 ALL_AGENT_NAMES = (
     "professor-contact",
     "professor-contact-downloader",
@@ -30,22 +27,15 @@ ALL_AGENT_NAMES = (
     "professor-contact-style-validator",
 )
 
-# Agents whose Codex branch must delegate nested children via Codex's
-# documented native custom-agent semantics (exact installed `name`, wait,
-# no-inline, machine-failure blocker).  Children are exact installed custom
-# agent names (repo-owned or upstream like professor-collector/paper-analysis).
-CODEX_NESTED_DELEGATORS = {
-    "professor-contact-downloader": ("professor-collector",),
-    "professor-contact-analyzer": (
-        "paper-analysis",
-        "professor-contact-style-validator",
-    ),
-    "professor-contact-email-generator": (
-        "professor-contact-email-validator",
-    ),
-}
+# Source documents that own nested orchestration.  This is a source-file
+# inventory only; it intentionally carries no expected child name/identity.
+CODEX_NESTED_DELEGATOR_AGENTS = (
+    "professor-contact-downloader",
+    "professor-contact-analyzer",
+    "professor-contact-email-generator",
+)
 
-# Agents that must not gain a nested delegation contract on Codex.
+# Source documents that must not gain a nested delegation contract on Codex.
 CODEX_NON_DELEGATORS = (
     "professor-contact",
     "professor-contact-idea-generator",
@@ -54,25 +44,7 @@ CODEX_NON_DELEGATORS = (
     "professor-contact-style-validator",
 )
 
-# Caller-level edges owned by SKILL.md's shared call table (Stage -> exact
-# agent name), identical on both targets.
-CODEX_CALLER_STAGE_EDGES = (
-    (0, "professor-contact"),
-    (1, "professor-contact-downloader"),
-    (2, "professor-contact-analyzer"),
-    (3, "professor-contact-idea-generator"),
-    (4, "professor-contact-selection"),
-    (5, "professor-contact-email-generator"),
-)
-
-# Caller-thread sibling edge: after the Stage 3 agent finalizes, the caller
-# thread (never the idea-generator itself, on Codex) delegates the validator.
-CODEX_CALLER_SIBLING_EDGES = (
-    ("professor-contact-idea-generator", "professor-contact-style-validator"),
-)
-
-# Target-branch markers per agent document: (section start, section end).
-# The end marker may be None, meaning "until the next same-level heading".
+# Target-branch markers per coordinator source document.
 CODEX_BRANCH_MARKERS = {
     "professor-contact-downloader": (
         "**Codex (non-interactive)**",
@@ -97,8 +69,6 @@ OPENCODE_BRANCH_MARKERS = {
     ),
 }
 
-# SKILL.md caller-level Codex region (starts at the caller branch heading,
-# runs through the Stage 3/4 and user-input boundary sections).
 SKILL_CODEX_REGION = ("### Codex 分支", "### Input contract")
 
 
