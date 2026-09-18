@@ -3,6 +3,8 @@
 import importlib.util
 import json
 import shlex
+import subprocess
+import sys
 import tempfile
 import unittest
 from argparse import Namespace
@@ -11,6 +13,10 @@ from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parent
 RUNTIME_DIR = TESTS_DIR / "runtime"
+FIXTURE_SCRIPT = RUNTIME_DIR / "prepare_issue55_stage3_fixture.py"
+REQUEST_SCRIPT = RUNTIME_DIR / "build_issue55_eval_request.py"
+VERIFIER_SCRIPT = RUNTIME_DIR / "verify_issue32_e2e.py"
+PRODUCTION_STATE_SCRIPT = TESTS_DIR.parent / "scripts/contact_state.py"
 
 
 def load_module(name, path):
@@ -82,6 +88,14 @@ class Issue55Stage3RuntimeAssetTests(unittest.TestCase):
         self.assertEqual(pack["kind"], "professor-contact-stage2-input")
         self.assertEqual(pack["directions"][0]["direction_id"], "DIR00001")
         self.assertEqual(pack["directions"][0]["gap_shortlist"][0]["gap_id"], "GAP0001")
+        paper = pack["papers"]["PAPER0001"]
+        self.assertEqual(
+            set(paper),
+            {"item_key", "title", "year", "authorship", "analysis_file",
+             "pdf_available", "facts_state", "facts_error", "paper_facts"},
+        )
+        self.assertEqual(paper["facts_state"], "valid")
+        self.assertIsInstance(paper["paper_facts"], dict)
         profile = self.program / "套磁邮件/套磁信息.md"
         self.assertEqual(
             profile.read_text(encoding="utf-8"),
@@ -95,6 +109,39 @@ class Issue55Stage3RuntimeAssetTests(unittest.TestCase):
         self.assertEqual(
             manifest["input_hashes"]["info.json"],
             fixture.sha256(self.program / "info.json"),
+        )
+
+    def test_fixture_passes_real_stage3_plan_compatibility_check(self):
+        result = subprocess.run(
+            [
+                sys.executable, "-B", str(PRODUCTION_STATE_SCRIPT), "stage3-plan",
+                "--program-root", str(self.program),
+                "--professor-dir", str(self.program / "教授研究/X分野/Example Professor"),
+                "--profile", str(self.program / "套磁邮件/套磁信息.md"),
+                "--refresh-scope", "flagged",
+                "--direction-id", "DIR00001",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "ok", payload)
+        self.assertTrue(payload["write_needed"], payload)
+        self.assertEqual(payload["skipped_direction_ids"], [], payload)
+        self.assertEqual(
+            [row for row in payload["directions"]
+             if row.get("direction_id") == "DIR00001" and row.get("action") == "process"],
+            [{"direction_id": "DIR00001", "collection_key": None, "action": "process"}],
+        )
+        candidate_jobs = [job for job in payload["jobs"]
+                          if job.get("kind") == "candidates"
+                          and job.get("direction_id") == "DIR00001"]
+        self.assertEqual(len(candidate_jobs), 1, payload)
+        self.assertEqual(
+            candidate_jobs,
+            [job for job in payload["jobs"] if job.get("kind") == "candidates"],
         )
 
     def test_fixture_refuses_nonempty_and_producer_owned_roots(self):
@@ -154,24 +201,31 @@ class Issue55Stage3RuntimeAssetTests(unittest.TestCase):
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return payload
 
-    def _write_state(self, *, validation="pass"):
+    def _write_state(self, *, validation="pass", direction_candidates=None,
+                     top_level_candidates=None, duplicate_direction=False):
         candidates = [
             {"id": f"idea-{index}", "direction_ids": ["DIR00001"]}
             for index in range(1, 4)
         ]
+        if direction_candidates is None:
+            direction_candidates = candidates
+        directions = [{"direction_id": "DIR00001", "candidates": direction_candidates}]
+        if duplicate_direction:
+            directions.append({"direction_id": "DIR00001", "candidates": direction_candidates})
         state = {
             "schema": 2,
             "kind": "professor-contact-stage3-state",
             "identity_version": "direction-id-v1",
             "generator_contract_version": "stage3-ideas-v2",
-            "directions": [{"direction_id": "DIR00001", "candidates": candidates}],
-            "candidates": candidates,
+            "directions": directions,
             "validator": {"results": {"DIR00001": {
                 "result": validation,
                 "rounds": 2 if validation == "fail_after_2_rounds" else 1,
                 "issues": [] if validation == "pass" else ["candidate issue"],
             }}},
         }
+        if top_level_candidates is not None:
+            state["candidates"] = top_level_candidates
         path = self.program / "教授研究/X分野/Example Professor/套磁候选状态.json"
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
@@ -210,14 +264,34 @@ class Issue55Stage3RuntimeAssetTests(unittest.TestCase):
         }), encoding="utf-8")
         return adapter_path, response_path
 
-    def _run(self, *, validation="pass", **evidence):
+    def _run(self, *, validation="pass", direction_candidates=None,
+             top_level_candidates=None, dirty_pre=False, stale_post=False,
+             duplicate_direction=False,
+             **evidence):
         state_path = self.program / "教授研究/X分野/Example Professor/套磁候选状态.json"
         state_path.unlink(missing_ok=True)
         pre = self.output / "stage3-pre.json"
+        if dirty_pre:
+            self._write_state(
+                validation=validation,
+                direction_candidates=direction_candidates,
+                top_level_candidates=top_level_candidates,
+                duplicate_direction=duplicate_direction,
+            )
         self._write_snapshot(pre)
-        self._write_state(validation=validation)
+        if not dirty_pre:
+            self._write_state(
+                validation=validation,
+                direction_candidates=direction_candidates,
+                top_level_candidates=top_level_candidates,
+                duplicate_direction=duplicate_direction,
+            )
         post = self.output / "stage3-post.json"
         self._write_snapshot(post)
+        if stale_post:
+            state_path.write_text(
+                state_path.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+            )
         adapter, response = self._write_evidence(**evidence)
         return verifier._checkpoint_stage3_routing(self.args(
             pre_snapshot=pre, post_snapshot=post,
@@ -237,6 +311,31 @@ class Issue55Stage3RuntimeAssetTests(unittest.TestCase):
         payload = self._run(sender_field=False)
         self.assertEqual(payload["status"], "invalid", payload)
         self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
+
+    def test_stage3_routing_uses_only_direction_owned_candidates(self):
+        fake_top_level = [
+            {"id": f"fake-{index}", "direction_ids": ["DIR00001"]}
+            for index in range(1, 4)
+        ]
+        payload = self._run(
+            direction_candidates=[], top_level_candidates=fake_top_level,
+        )
+        self.assertEqual(payload["status"], "fail", payload)
+        self.assertEqual(payload["classification"], "FAIL_PRODUCT")
+
+    def test_stage3_routing_rejects_duplicate_direction_rows(self):
+        payload = self._run(duplicate_direction=True)
+        self.assertEqual(payload["status"], "fail", payload)
+        self.assertEqual(payload["classification"], "FAIL_PRODUCT")
+
+    def test_stage3_routing_invalidates_dirty_pre_and_stale_post_snapshots(self):
+        dirty_pre = self._run(dirty_pre=True)
+        self.assertEqual(dirty_pre["status"], "invalid", dirty_pre)
+        self.assertEqual(dirty_pre["classification"], "INVALID_TEST_EXECUTION")
+
+        stale_post = self._run(stale_post=True)
+        self.assertEqual(stale_post["status"], "invalid", stale_post)
+        self.assertEqual(stale_post["classification"], "INVALID_TEST_EXECUTION")
 
     def test_stage3_routing_classifies_unobservable_and_insufficient_children(self):
         blocked = self._run(delegation_state="unobservable")
@@ -290,6 +389,97 @@ class Issue55Stage3RuntimeAssetTests(unittest.TestCase):
         ))
         self.assertEqual(payload["status"], "fail", payload)
         self.assertEqual(payload["classification"], "FAIL_PRODUCT")
+
+    def test_runtime_assets_have_cli_success_and_failure_smoke_paths(self):
+        cli_program = self.root / "cli-program"
+        cli_setup = self.output / "cli-runtime-setup.json"
+        fixture_result = subprocess.run(
+            [sys.executable, "-B", str(FIXTURE_SCRIPT),
+             "--program-root", str(cli_program), "--output", str(cli_setup)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(fixture_result.returncode, 0, fixture_result.stderr)
+        self.assertEqual(json.loads(fixture_result.stdout)["status"], "ok")
+
+        foreign = self.root / "foreign-cli"
+        foreign.mkdir()
+        (foreign / "keep.txt").write_text("keep", encoding="utf-8")
+        fixture_failure = subprocess.run(
+            [sys.executable, "-B", str(FIXTURE_SCRIPT),
+             "--program-root", str(foreign),
+             "--output", str(self.output / "foreign-cli.json")],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(fixture_failure.returncode, 0)
+        self.assertEqual(json.loads(fixture_failure.stdout)["status"], "error")
+
+        rendered = self.output / "cli-prompt.txt"
+        request_output = self.output / "cli-request.json"
+        request_result = subprocess.run(
+            [sys.executable, "-B", str(REQUEST_SCRIPT),
+             "--consumer-root", str(self.consumer), "--program-root", str(self.program),
+             "--prompt-template", str(RUNTIME_DIR / "prompts/issue55-stage3-routing.txt"),
+             "--rendered-prompt", str(rendered), "--output", str(request_output)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(request_result.returncode, 0, request_result.stderr)
+        self.assertEqual(json.loads(request_result.stdout)["status"], "ok")
+
+        request_failure = subprocess.run(
+            [sys.executable, "-B", str(REQUEST_SCRIPT),
+             "--consumer-root", str(self.consumer), "--program-root", str(self.program),
+             "--prompt-template", str(RUNTIME_DIR / "prompts/issue55-stage3-routing.txt"),
+             "--rendered-prompt", str(rendered), "--model", "gpt-5.5",
+             "--output", str(request_output)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(request_failure.returncode, 0)
+        self.assertEqual(json.loads(request_failure.stdout)["status"], "error")
+
+        snapshot_output = self.output / "cli-snapshot.json"
+        snapshot_result = subprocess.run(
+            [sys.executable, "-B", str(VERIFIER_SCRIPT), "stage3-snapshot",
+             "--program-root", str(self.program), "--output", str(snapshot_output)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(snapshot_result.returncode, 0, snapshot_result.stderr)
+        self.assertEqual(json.loads(snapshot_result.stdout)["status"], "pass")
+
+        missing_snapshot = subprocess.run(
+            [sys.executable, "-B", str(VERIFIER_SCRIPT), "stage3-snapshot",
+             "--program-root", str(self.root / "missing-program")],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(missing_snapshot.returncode, 0)
+        self.assertEqual(json.loads(missing_snapshot.stdout)["status"], "fail")
+
+        self._write_state()
+        post = self.output / "cli-post.json"
+        self._write_snapshot(post)
+        adapter, response = self._write_evidence()
+        routing_output = self.output / "cli-routing.json"
+        routing_result = subprocess.run(
+            [sys.executable, "-B", str(VERIFIER_SCRIPT), "stage3-routing",
+             "--program-root", str(self.program), "--eval-response", str(response),
+             "--adapter-output", str(adapter), "--pre-snapshot", str(snapshot_output),
+             "--post-snapshot", str(post), "--output", str(routing_output)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(routing_result.returncode, 0, routing_result.stderr)
+        self.assertEqual(json.loads(routing_result.stdout)["classification"], "PASS")
+
+        self._write_state(direction_candidates=[])
+        bad_post = self.output / "cli-bad-post.json"
+        self._write_snapshot(bad_post)
+        bad_routing = subprocess.run(
+            [sys.executable, "-B", str(VERIFIER_SCRIPT), "stage3-routing",
+             "--program-root", str(self.program), "--eval-response", str(response),
+             "--adapter-output", str(adapter), "--pre-snapshot", str(snapshot_output),
+             "--post-snapshot", str(bad_post)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(bad_routing.returncode, 0)
+        self.assertEqual(json.loads(bad_routing.stdout)["classification"], "FAIL_PRODUCT")
 
 
 if __name__ == "__main__":

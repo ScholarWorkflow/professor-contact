@@ -32,6 +32,14 @@ INPUT_PACK_KIND = "professor-contact-stage2-input"
 CANDIDATE_STATE_KIND = "professor-contact-stage3-state"
 DIRECTION_IDENTITY_VERSION = "direction-id-v1"
 STAGE3_GENERATOR_CONTRACT_VERSION = "stage3-ideas-v2"
+INSTALL_REQUIRED_FILES = (
+    ".agents/skills/professor-contact/SKILL.md",
+    ".codex/agents/professor-contact.toml",
+    ".agents/skills/professor-contact/tests/runtime/prepare_issue55_stage3_fixture.py",
+    ".agents/skills/professor-contact/tests/runtime/build_issue55_eval_request.py",
+    ".agents/skills/professor-contact/tests/runtime/verify_issue32_e2e.py",
+    ".agents/skills/professor-contact/tests/runtime/prompts/issue55-stage3-routing.txt",
+)
 STAGE4_PROGRAM_OUTPUTS = {
     "套磁选择.json": Path("教授研究/套磁选择.json"),
     "邮件输入.json": Path("教授研究/邮件输入.json"),
@@ -207,12 +215,11 @@ def _checkpoint_install(args: argparse.Namespace) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     consumer = Path(args.consumer_root or "").resolve()
     _check(checks, "consumer_root_exists", bool(args.consumer_root) and consumer.is_dir(), str(consumer))
-    expected = [consumer / ".agents/skills/professor-contact/SKILL.md",
-                consumer / ".codex/agents/professor-contact.toml"]
+    expected = [consumer / relative for relative in INSTALL_REQUIRED_FILES]
     for path in expected:
         _check(checks, f"installed:{path.relative_to(consumer)}", path.is_file(), str(path))
-        if path.exists():
-            _check(checks, f"contained:{path.name}", path.resolve().is_relative_to(consumer), str(path.resolve()))
+        _check(checks, f"contained:{path.relative_to(consumer)}",
+               path.resolve().is_relative_to(consumer), str(path.resolve()))
     if args.producer_sha:
         resolved_commit, detail = _resolved_professor_contact_commit(consumer)
         _check(checks, "producer_sha_pinned", resolved_commit == args.producer_sha,
@@ -547,7 +554,7 @@ def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
     _check(checks, "post_matches_current", post == current,
            {"post": post, "current": current})
     if pre != expected_pre or post != current:
-        return machine("fail", "FAIL_PRODUCT")
+        return machine("invalid", "INVALID_TEST_EXECUTION")
 
     try:
         adapter = _load(Path(args.adapter_output)) if args.adapter_output else None
@@ -642,16 +649,22 @@ def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
            and state.get("kind") == CANDIDATE_STATE_KIND
            and state.get("identity_version") == DIRECTION_IDENTITY_VERSION
            and state.get("generator_contract_version") == STAGE3_GENERATOR_CONTRACT_VERSION)
-    candidates = _candidate_rows(state)
+    directions = state.get("directions")
+    direction_rows = [row for row in directions if isinstance(row, dict)
+                      and row.get("direction_id") == DIRECTION_ID] \
+        if isinstance(directions, list) else []
+    direction = direction_rows[0] if len(direction_rows) == 1 else None
+    _check(checks, "direction_row_unique", len(direction_rows) == 1,
+           {"observed": len(direction_rows), "required": 1})
+    candidates = direction.get("candidates") if isinstance(direction, dict) else None
+    if not isinstance(candidates, list):
+        candidates = []
+    candidates = [row for row in candidates if isinstance(row, dict)]
     _check(checks, "candidate_count", 3 <= len(candidates) <= 5, len(candidates))
     _check(checks, "candidate_ids_stable", all(
         isinstance(row.get("id"), str) and bool(row.get("id"))
         and row.get("direction_ids") == [DIRECTION_ID]
         for row in candidates))
-    directions = state.get("directions")
-    direction = next((row for row in directions if isinstance(row, dict)
-                      and row.get("direction_id") == DIRECTION_ID), None) \
-        if isinstance(directions, list) else None
     _check(checks, "direction_present", direction is not None)
     validator = state.get("validator")
     results = validator.get("results") if isinstance(validator, dict) else None
@@ -664,7 +677,11 @@ def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
     stage4_current = {name: current[name] for name in STAGE4_PROGRAM_OUTPUTS}
     stage4_absent = all(not row["exists"] for row in stage4_current.values())
     _check(checks, "stage4_outputs_absent", stage4_absent, stage4_current)
-    product_checks = checks[-7:]
+    product_checks = [row for row in checks if row["name"] in {
+        "state_schema", "direction_row_unique", "candidate_count",
+        "candidate_ids_stable", "direction_present", "validator_result_keys",
+        "validation_present", "stage4_outputs_absent",
+    }]
     if not stage4_absent or not all(row["status"] == "pass" for row in product_checks):
         return machine("fail", "FAIL_PRODUCT")
     return machine("pass", "PASS")

@@ -57,11 +57,12 @@ def _prepare_root(root: Path) -> Path:
 
 
 def _stage2_input(professor_dir: Path) -> dict[str, Any]:
+    quote = "Future work will investigate adaptation under changing conditions."
     gap = {
         "gap_id": GAP_ID,
         "item_key": ITEM_KEY,
         "status": "open",
-        "quote": "Future work will investigate adaptation under changing conditions.",
+        "quote": quote,
         "translation_zh": "未来工作将研究变化条件下的自适应。",
         "remaining_gap": "adaptation under changing conditions",
         "confidence": "high",
@@ -82,14 +83,25 @@ def _stage2_input(professor_dir: Path) -> dict[str, Any]:
                 "title": "Adaptive Signal Processing in Synthetic Environments",
                 "year": 2025,
                 "authorship": "corresponding",
-                "research_problem": "adaptation under distribution shift",
-                "approach": "online adaptive filtering",
-                "finding": "adaptive updating improves stability under synthetic shift",
-                "topic_terms": ["adaptive filtering", "distribution shift"],
-                "limitation": "evaluation uses a synthetic environment",
-                "analysis_file": None,
-                "pdf_available": False,
-                "facts_state": "not_required_for_issue55_fixture",
+                "analysis_file": str(professor_dir / "论文分析/PAPER0001.md"),
+                "pdf_available": True,
+                "facts_state": "valid",
+                "facts_error": None,
+                "paper_facts": {
+                    "facts_file": str(professor_dir / "论文分析/PAPER0001.md.facts.json"),
+                    "evidence_level": "fulltext",
+                    "input_fingerprint": "sha256:" + "0" * 64,
+                    "research_problem": "adaptation under distribution shift",
+                    "research_object": "online adaptive filtering under synthetic shift",
+                    "approach": "online adaptive filtering",
+                    "findings": ["adaptive updating improves stability under synthetic shift"],
+                    "contributions": ["a synthetic benchmark for adaptive filtering"],
+                    "topic_terms": ["adaptive filtering", "distribution shift"],
+                    "limitations": ["evaluation uses a synthetic environment"],
+                    "source_anchors": {"approach": ["Synthetic fixture"]},
+                    "confidence": 0.8,
+                    "future_work_ids": [hashlib.sha256(quote.encode("utf-8")).hexdigest()],
+                },
             },
         },
         "directions": [{

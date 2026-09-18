@@ -307,8 +307,11 @@ class CodexStageRoutingContractTests(unittest.TestCase):
         branches.update({name: _codex_branch(name)
                          for name in CODEX_NESTED_DELEGATOR_AGENTS})
         forbidden = re.compile(
-            r"(?i)(?:Code Mode|programmatic tool-calling|discovery surface|"
-            r"discovery precedes delegation|discovery-before-child-work)"
+            r"(?i)(?:before child business work first discover delegation capability|"
+            r"Code Mode / programmatic tool-calling surface discovery is a hard prerequisite|"
+            r"tool directory/search surface must be queried before delegation|"
+            r"discovery failure itself is a runtime blocker|"
+            r"Code Mode exec is the required/approved discovery step)"
         )
         for name, branch in branches.items():
             with self.subTest(source=name):

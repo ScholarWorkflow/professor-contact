@@ -54,10 +54,10 @@ class Issue32VerifierTests(unittest.TestCase):
 
     def test_install_reads_exact_professor_contact_commit_from_structured_lock(self):
         consumer = Path(self.holder.name) / "consumer"
-        (consumer / ".agents/skills/professor-contact").mkdir(parents=True)
-        (consumer / ".agents/skills/professor-contact/SKILL.md").write_text("installed", encoding="utf-8")
-        (consumer / ".codex/agents").mkdir(parents=True)
-        (consumer / ".codex/agents/professor-contact.toml").write_text("name='professor-contact'", encoding="utf-8")
+        for relative in verifier.INSTALL_REQUIRED_FILES:
+            path = consumer / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("installed", encoding="utf-8")
         producer_sha = "a" * 40
         (consumer / "apm.lock.yaml").write_text(
             "dependencies:\n"
@@ -80,6 +80,34 @@ class Issue32VerifierTests(unittest.TestCase):
         payload = verifier._checkpoint_install(self.args(
             consumer_root=consumer, producer_sha=producer_sha))
         self.assertEqual(payload["status"], "pass", payload)
+
+    def test_install_requires_every_pc55_runtime_asset(self):
+        consumer = Path(self.holder.name) / "consumer-assets"
+        for relative in verifier.INSTALL_REQUIRED_FILES:
+            path = consumer / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("installed", encoding="utf-8")
+        producer_sha = "c" * 40
+        (consumer / "apm.lock.yaml").write_text(
+            "dependencies:\n"
+            "  - name: professor-contact\n"
+            f"    resolved_commit: {producer_sha}\n",
+            encoding="utf-8",
+        )
+        payload = verifier._checkpoint_install(self.args(
+            consumer_root=consumer, producer_sha=producer_sha))
+        self.assertEqual(payload["status"], "pass", payload)
+
+        missing = consumer / ".agents/skills/professor-contact/tests/runtime/build_issue55_eval_request.py"
+        missing.unlink()
+        payload = verifier._checkpoint_install(self.args(
+            consumer_root=consumer, producer_sha=producer_sha))
+        self.assertEqual(payload["status"], "fail", payload)
+        self.assertTrue(any(
+            row["name"].endswith("build_issue55_eval_request.py")
+            and row["status"] == "fail"
+            for row in payload["checks"]
+        ))
 
     def test_install_cli_does_not_require_program_root(self):
         args = verifier._parser().parse_args([
