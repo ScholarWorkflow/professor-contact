@@ -140,7 +140,13 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
             "type": "output_text",
             "text": json.dumps(result, ensure_ascii=False),
         }]
-        events = []
+        events = [{"message": {
+            "method": "rawResponseItem/completed",
+            "params": {
+                "threadId": child_ids[0],
+                "item": {"type": "message", "role": "developer", "content": []},
+            },
+        }}]
         for child_id in child_ids:
             events.append({"message": {
                 "method": "rawResponseItem/completed",

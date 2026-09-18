@@ -644,7 +644,10 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
                 continue
             item = params.get("item")
             if not isinstance(item, dict) or item.get("type") != "message" or item.get("role") != "assistant":
-                return "malformed", None
+                # A child thread emits developer, user, reasoning, and tool
+                # items as well.  The contract pins business-result parsing to
+                # assistant output_text messages only.
+                continue
             content = item.get("content")
             if not isinstance(content, list):
                 return "malformed", None
