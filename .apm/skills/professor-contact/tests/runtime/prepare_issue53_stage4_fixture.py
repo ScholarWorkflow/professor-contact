@@ -50,13 +50,13 @@ def _prepare_root(root: Path) -> None:
     root.mkdir()
 
 
-def _candidate_state(profile_root: Path) -> dict[str, Any]:
+def _candidate_state(profile_path: Path) -> dict[str, Any]:
     return {
         "schema": 2,
         "kind": "professor-contact-stage3-state",
         "identity_version": "direction-id-v1",
         "generator_contract_version": "stage3-ideas-v2",
-        "profile_path": str(profile_root.resolve()),
+        "profile_path": str(profile_path.resolve()),
         "directions": [{
             "direction_id": DIRECTION_ID,
             "name_ja": "適応信号処理",
@@ -109,8 +109,8 @@ def build_fixture(program_root: Path, profile_root: Path, *, output: Path) -> di
         "program": "Synthetic Systems",
     })
     state_path = program_root / "教授研究/X分野/Example Professor/套磁候选状态.json"
-    _write_json(state_path, _candidate_state(profile_root))
     profile_path = profile_root / "套磁邮件/套磁信息.md"
+    _write_json(state_path, _candidate_state(profile_path))
     profile_path.parent.mkdir(parents=True, exist_ok=True)
     profile_path.write_text(
         "# Synthetic applicant profile\n\n"
