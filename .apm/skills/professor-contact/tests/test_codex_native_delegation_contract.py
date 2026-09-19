@@ -1,19 +1,17 @@
-"""Deterministic Codex orchestration contract for issue #51.
+"""Deterministic Codex orchestration contract for issue #55.
 
 The merge gate is intentionally identity-agnostic.  fixtures@9 treats
 requested_role / loaded_identity as optional diagnostics, so this suite must
 not turn exact child names or named-role matches into PASS/FAIL conditions.
 
 These tests cover only producer-owned orchestration invariants that are
-mechanically provable from source: before any child business work a
-coordinator must discover the callable native multi-agent delegation
-capability through the runtime's own Code Mode / programmatic tool-calling
-surface (issue #51 §4 B, on the closed paper-analysis#14 precedent), delegate
-and wait, never inline or simulate the child, fail closed on machine-level
-delegation failure, keep Codex/OpenCode syntax isolated, keep the delegation
-chain non-recursive (the payload carries only this stage's business fields and
-no coordinator delegates to its own machine name), and keep
-characterization-only tool envelopes out of production text.
+mechanically provable from source: delegate and wait when a child is required,
+never inline or simulate the child, fail closed on machine-level delegation
+failure, keep Codex/OpenCode syntax isolated, keep the delegation chain
+non-recursive (the payload carries only this stage's business fields and no
+coordinator delegates to its own machine name), and keep characterization-only
+tool envelopes out of production text.  They also lock the top-level Stage 1–5
+routing matrix and the Stage 3/5 ownership boundaries.
 """
 from pathlib import Path
 import re
@@ -37,11 +35,11 @@ from _codex_delegation_contract import (  # noqa: E402
     segment,
 )
 
-# Issue #51 §2 keeps the *discovery* requirement in production and bans only
-# version-private envelopes: a measured tool-search namespace, the raw spawn
-# request shape, or a fixed catalog command from one characterization run.
-# `spawn_agent` itself is a documented Codex tool name, so only its call form
-# stays out of production instructions.
+# The product contract stays at the named-agent level and bans version-private
+# envelopes: a measured tool-search namespace, the raw spawn request shape, or
+# a fixed catalog command from one characterization run.  `spawn_agent` itself
+# is a documented Codex tool name, so only its call form stays out of
+# production instructions.
 FORBIDDEN_PRIVATE_LITERALS = (
     "ALL_TOOLS",
     "multi_agent_v1__",
@@ -52,42 +50,6 @@ FORBIDDEN_PRIVATE_LITERALS = (
 
 # Each coordinator source document may state the invariant in its own
 # language; every invariant needs at least one of its literals, verbatim.
-CODEX_DISCOVERY_INVARIANTS = {
-    "discovery-before-child-work": (
-        "在执行任何 child 业务内容前，必须先通过当前 Codex 运行时的 Code Mode "
-        "/ programmatic tool-calling surface 发现实际可调用的原生 multi-agent "
-        "delegation 能力",
-        "Before any child business work, first discover the callable native "
-        "multi-agent delegation capability through the current Codex runtime's "
-        "Code Mode / programmatic tool-calling surface",
-    ),
-    "runtime-provided-surface-only": (
-        "discovery 只使用运行时自身提供的工具目录/搜索 surface，不硬编码版本私有的"
-        "工具名、固定 namespace 或 spawn request schema",
-        "discovery uses only the tool directory/search surface the runtime "
-        "itself provides, and never hardcodes version-private tool names, a "
-        "fixed namespace, or a spawn request schema",
-    ),
-    "programmatic-exec-is-allowed": (
-        "Code Mode `exec` 作为 programmatic tool caller 是允许的",
-        "Code Mode `exec` as a programmatic tool caller is allowed",
-    ),
-    "no-shell-cli-curl-eval-fallback": (
-        "`exec_command` shell、`codex exec`、`opencode run`、curl、另起 `/eval` "
-        "都不是 delegation fallback",
-        "`exec_command` shell, `codex exec`, `opencode run`, curl, and spawning "
-        "another `/eval` are not delegation fallbacks",
-    ),
-    "discovery-failure-explicit-blocker": (
-        "discovery 失败或该能力不可调用时，明确记为 Codex runtime/feature blocker，"
-        "不得由 parent inline 模拟或代替 child 完成业务",
-        "When discovery fails or the capability is not callable, record an "
-        "explicit Codex runtime/feature blocker; the parent must not inline or "
-        "simulate the child's work",
-    ),
-}
-
-
 # Runtime evidence for issue #51 showed a second, distinct failure shape: a
 # coordinator received the caller-facing routing sentence verbatim and
 # delegated the task to a named custom agent with *its own* machine name, so
@@ -269,9 +231,42 @@ class CodexCallerSkillContractTests(unittest.TestCase):
 
     def test_codex_caller_region_delegates_and_waits(self):
         region = self._skill_codex_region()
-        self.assertRegex(region, r"(?is)delegate to / use[\s\S]{0,200}(?:wait|等待)")
+        self.assertIn("用户要求执行某个 Stage 本身已经触发该 Stage 的 routing gate", region)
+        self.assertIn("当前 Codex root 必须在本轮使用 Codex 原生 subagent workflow", region)
         self.assertRegex(region, r"(?is)等待该子代理完成并返回结果")
         self.assertRegex(region, r"(?is)不\*\*把子代理的 instructions 复制进父对话里自己执行")
+
+    def test_codex_routing_does_not_require_outer_prompt_delegation_words(self):
+        region = self._skill_codex_region()
+        self.assertIn("不要求用户在外层请求中补写 agent 名或 delegate to / use 句式", region)
+        historical_chinese_prompt_routing_rules = (
+            "在 prompt 中显式要求 Codex **delegate to / use** 指定的 exact named custom agent",
+            "caller 自己的请求中必须明确 **delegate to / use** 指定的 exact named custom agent",
+        )
+        for old_rule in historical_chinese_prompt_routing_rules:
+            with self.subTest(old_rule=old_rule):
+                self.assertNotIn(old_rule, region)
+        self.assertNotIn("Delegate this task to the installed custom agent", region)
+
+    def test_active_host_selects_runtime_branch_without_cli_discovery(self):
+        region = self._skill_codex_region()
+        self.assertIn("运行分支只由当前执行器/host 决定", region)
+        self.assertIn("不得用 `command -v`", region)
+        self.assertRegex(region, r"不得用 shell 调用 `(?:opencode run|codex exec)`")
+
+    def test_caller_separates_delegation_target_from_child_business_payload(self):
+        region = self._skill_codex_region()
+        self.assertIn("delegation target 与 child message 分开", region)
+        self.assertRegex(
+            region,
+            r"child message.*只能包含该 Stage 的 Input contract 字段和任务约束",
+        )
+        self.assertRegex(region, r"不得在 child payload 中写[\s\S]{0,120}路由元指令")
+        self.assertIn("不得用 shell 调用 `opencode run` 或其它 CLI 冒充 Codex 委派", region)
+        self.assertNotIn(
+            "Delegate this task to the installed custom agent `professor-contact-downloader`",
+            region,
+        )
 
     def test_codex_caller_region_has_no_opencode_syntax(self):
         self.assertNotRegex(self._skill_codex_region(), r"task\(subagent_type")
@@ -288,76 +283,82 @@ class CodexCallerSkillContractTests(unittest.TestCase):
         self.assertRegex(region, r"重新委派[\s\S]{0,200}`selection`")
 
 
-class CodexDiscoveryBeforeDelegationTests(unittest.TestCase):
-    """Issue #51 §4 B/C: discovery precedes delegation in production source."""
+class CodexStageRoutingContractTests(unittest.TestCase):
+    """Issue #55 top-level routing and ownership gates."""
 
     @classmethod
     def setUpClass(cls):
-        skill = read(SKILL_PATH)
-        cls.branches = {
-            "SKILL.md Codex caller": segment(
-                skill, SKILL_CODEX_REGION[0], SKILL_CODEX_REGION[1]),
+        cls.skill = read(SKILL_PATH)
+        cls.region = segment(cls.skill, SKILL_CODEX_REGION[0], SKILL_CODEX_REGION[1])
+
+    def test_stage_one_to_five_matrix_names_exact_owner_and_wait_gate(self):
+        expected = {
+            "1": "professor-contact-downloader",
+            "2": "professor-contact-analyzer",
+            "3": "professor-contact-idea-generator",
+            "4": "professor-contact-selection",
+            "5": "professor-contact-email-generator",
         }
-        for owner in CODEX_NESTED_DELEGATOR_AGENTS:
-            cls.branches[owner] = _codex_branch(owner)
+        for stage, owner in expected.items():
+            with self.subTest(stage=stage):
+                self.assertIn(f"| {stage} | `{owner}` | 是 |", self.region)
+        self.assertIn("用户要求执行某个 Stage 本身就是 routing gate", self.region)
+        self.assertIn("必须先把该 Stage 委派", self.region)
+        self.assertIn("并等待结果后再继续", self.region)
 
-    def _has(self, text: str, invariant: str) -> bool:
-        return any(literal in text
-                   for literal in CODEX_DISCOVERY_INVARIANTS[invariant])
+    def test_stage3_root_owns_only_validation_record_after_sibling_loop(self):
+        start = self.region.index("**Stage 3 validator 校验循环")
+        end = self.region.index("**Stage 4 用户选择边界", start)
+        section = self.region[start:end]
+        codex = section[section.index("- **Codex") :]
+        self.assertLess(
+            codex.index("professor-contact-idea-generator"),
+            codex.index("等待生成 + `stage3-finalize` 完成"),
+        )
+        self.assertLess(
+            codex.index("等待生成 + `stage3-finalize` 完成"),
+            codex.index("professor-contact-style-validator"),
+        )
+        self.assertIn("最多 2 轮", section)
+        self.assertIn("stage3-record-validation", section)
+        for forbidden in (
+            "stage3-plan", "candidate model generation", "candidate result file",
+            "stage3-finalize", "自称「validator 已通过" ,
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertIn(forbidden, section)
 
-    def test_every_codex_coordinator_states_the_discovery_invariants(self):
-        for label, branch in self.branches.items():
-            for invariant in CODEX_DISCOVERY_INVARIANTS:
-                with self.subTest(doc=label, invariant=invariant):
-                    self.assertTrue(
-                        self._has(branch, invariant),
-                        f"{label}: production source omits {invariant}",
-                    )
+    def test_stage5_top_level_does_not_own_email_validator(self):
+        row = next(line for line in self.region.splitlines()
+                   if line.startswith("| 5 |"))
+        self.assertIn("professor-contact-email-generator", row)
+        self.assertIn("email-validator", row)
+        self.assertIn("email-validator loop 仍归 email-generator 所有", self.region)
 
-    def test_discovery_reads_as_a_precondition_to_waiting_on_children(self):
-        for label, branch in self.branches.items():
-            with self.subTest(doc=label):
-                discovery = _first_position(
-                    branch, CODEX_DISCOVERY_INVARIANTS["discovery-before-child-work"])
-                wait = WAIT_PATTERN.search(branch)
-                self.assertIsNotNone(wait, f"{label}: no wait-for-child-result step")
-                self.assertLess(
-                    discovery, wait.start(),
-                    "discovery must be stated before the delegated child is awaited",
-                )
+    def test_codex_sources_drop_obsolete_discovery_prerequisite(self):
+        branches = {"SKILL.md": self.region}
+        branches.update({name: _codex_branch(name)
+                         for name in CODEX_NESTED_DELEGATOR_AGENTS})
+        forbidden = re.compile(
+            r"(?i)(?:before child business work first discover delegation capability|"
+            r"Code Mode / programmatic tool-calling surface discovery is a hard prerequisite|"
+            r"tool directory/search surface must be queried before delegation|"
+            r"discovery failure itself is a runtime blocker|"
+            r"Code Mode exec is the required/approved discovery step|"
+            r"委派前先发现 delegation capability（硬前置）|"
+            r"在执行任何 child 业务内容前，必须先通过当前 Codex 运行时的 Code Mode / "
+            r"programmatic tool-calling surface|"
+            r"discovery 失败或该能力不可调用时，明确记为 Codex runtime/feature blocker)"
+        )
+        for name, branch in branches.items():
+            with self.subTest(source=name):
+                self.assertNotRegex(branch, forbidden)
 
-    def test_generated_codex_projection_keeps_the_discovery_invariant(self):
-        """`apm install` embeds each agent body verbatim as
-        `developer_instructions` and copies SKILL.md itself, so the invariant
-        must survive in exactly that projected segment."""
-        for name in CODEX_NESTED_DELEGATOR_AGENTS:
-            frontmatter, body = frontmatter_and_body(agent_path(name))
-            projected = HTML_COMMENT_PATTERN.sub("", body)
-            with self.subTest(agent=name):
-                self.assertTrue(self._has(projected, "discovery-before-child-work"),
-                                f"{name}: projection loses the discovery gate")
-                self.assertFalse(
-                    self._has("\n".join(frontmatter), "discovery-before-child-work"),
-                    f"{name}: frontmatter is not projected into Codex instructions",
-                )
-        self.assertTrue(self._has(read(SKILL_PATH), "discovery-before-child-work"))
-
-    def test_opencode_branches_stay_free_of_the_codex_discovery_wording(self):
+    def test_opencode_sources_keep_native_task_contract(self):
         for owner in CODEX_NESTED_DELEGATOR_AGENTS:
             with self.subTest(owner=owner):
                 branch = _opencode_branch(owner)
-                self.assertNotIn("Code Mode", branch)
-                self.assertRegex(
-                    branch, r"(?is)(?:task\s*\(|Task 委派|native Task)",
-                    "OpenCode projection keeps its own Task delegation path",
-                )
-
-    def test_leaf_sources_do_not_gain_a_delegation_discovery_contract(self):
-        for leaf in CODEX_NON_DELEGATORS:
-            text = read(agent_path(leaf))
-            for invariant in CODEX_DISCOVERY_INVARIANTS:
-                with self.subTest(leaf=leaf, invariant=invariant):
-                    self.assertFalse(self._has(text, invariant))
+                self.assertRegex(branch, r"(?is)(?:task\s*\(|Task 委派|native Task)")
 
     def test_no_version_private_tool_envelope_reaches_production_contracts(self):
         docs = [SKILL_PATH] + [agent_path(name) for name in ALL_AGENT_NAMES]

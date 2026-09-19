@@ -26,6 +26,34 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
         self.assertIn("Codex", self.text)
         self.assertIn("stage3-record-validation", self.text)
 
+    def test_stage3_codex_root_routes_generator_wait_validator_wait(self):
+        section = self._stage34_orchestration_section()
+        codex_start = section.index("- **Codex（root caller")
+        stage3 = section[codex_start:]
+        generator = stage3.index("professor-contact-idea-generator")
+        generator_wait = stage3.index("等待生成 + `stage3-finalize` 完成")
+        validator = stage3.index("professor-contact-style-validator")
+        validator_wait = stage3.index("并等待需要的 child 完成后再继续")
+        self.assertLess(generator, generator_wait)
+        self.assertLess(generator_wait, validator)
+        self.assertLess(validator, validator_wait)
+        self.assertIn("root caller", stage3)
+
+    def test_stage3_retry_and_root_inline_forbidden_list_are_load_bearing(self):
+        section = self._stage34_orchestration_section()
+        for required in (
+            "最多 2 轮",
+            "stage3-record-validation",
+            "stage3-plan",
+            "candidate model generation",
+            "candidate result file",
+            "stage3-finalize",
+            "不重读 Stage 2",
+            "不扩展方向事实",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, section)
+
     def test_stage4_has_codex_user_boundary_and_opencode_question_boundary(self):
         self.assertIn("professor-contact-selection", self.text)
         self.assertIn("question", self.text)

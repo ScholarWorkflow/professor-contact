@@ -41,6 +41,8 @@ class Issue32VerifierTests(unittest.TestCase):
             "output": None,
             "min_edges": 1,
             "required_depth": 1,
+            "pre_snapshot": None,
+            "post_snapshot": None,
         }
         values.update(overrides)
         return Namespace(**values)
@@ -52,10 +54,10 @@ class Issue32VerifierTests(unittest.TestCase):
 
     def test_install_reads_exact_professor_contact_commit_from_structured_lock(self):
         consumer = Path(self.holder.name) / "consumer"
-        (consumer / ".agents/skills/professor-contact").mkdir(parents=True)
-        (consumer / ".agents/skills/professor-contact/SKILL.md").write_text("installed", encoding="utf-8")
-        (consumer / ".codex/agents").mkdir(parents=True)
-        (consumer / ".codex/agents/professor-contact.toml").write_text("name='professor-contact'", encoding="utf-8")
+        for relative in verifier.INSTALL_REQUIRED_FILES:
+            path = consumer / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("installed", encoding="utf-8")
         producer_sha = "a" * 40
         (consumer / "apm.lock.yaml").write_text(
             "dependencies:\n"
@@ -78,6 +80,40 @@ class Issue32VerifierTests(unittest.TestCase):
         payload = verifier._checkpoint_install(self.args(
             consumer_root=consumer, producer_sha=producer_sha))
         self.assertEqual(payload["status"], "pass", payload)
+
+    def test_install_requires_every_pc55_runtime_asset(self):
+        required_surfaces = {
+            ".agents/skills/professor-contact/scripts/contact_state.py",
+            ".codex/agents/professor-contact-idea-generator.toml",
+            ".codex/agents/professor-contact-style-validator.toml",
+        }
+        self.assertTrue(required_surfaces.issubset(set(verifier.INSTALL_REQUIRED_FILES)))
+        consumer = Path(self.holder.name) / "consumer-assets"
+        for relative in verifier.INSTALL_REQUIRED_FILES:
+            path = consumer / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("installed", encoding="utf-8")
+        producer_sha = "c" * 40
+        (consumer / "apm.lock.yaml").write_text(
+            "dependencies:\n"
+            "  - name: professor-contact\n"
+            f"    resolved_commit: {producer_sha}\n",
+            encoding="utf-8",
+        )
+        payload = verifier._checkpoint_install(self.args(
+            consumer_root=consumer, producer_sha=producer_sha))
+        self.assertEqual(payload["status"], "pass", payload)
+
+        missing = consumer / ".agents/skills/professor-contact/tests/runtime/build_issue55_eval_request.py"
+        missing.unlink()
+        payload = verifier._checkpoint_install(self.args(
+            consumer_root=consumer, producer_sha=producer_sha))
+        self.assertEqual(payload["status"], "fail", payload)
+        self.assertTrue(any(
+            row["name"].endswith("build_issue55_eval_request.py")
+            and row["status"] == "fail"
+            for row in payload["checks"]
+        ))
 
     def test_install_cli_does_not_require_program_root(self):
         args = verifier._parser().parse_args([
@@ -120,6 +156,24 @@ class Issue32VerifierTests(unittest.TestCase):
             json.loads(output.read_text(encoding="utf-8"))["artifacts"]["套磁选择.json"],
             {"exists": False, "sha256": None},
         )
+
+    def test_stage3_snapshot_covers_stage3_and_stage4_program_outputs(self):
+        payload = verifier._checkpoint_stage3_snapshot(self.args())
+        self.assertEqual(payload["status"], "pass", payload)
+        self.assertTrue(payload["artifacts"]["套磁候选状态.json"]["sha256"] is None)
+        self.assertEqual(
+            set(payload["artifacts"]),
+            {
+                "套磁候选状态.json", "套磁想法候选.md", "套磁想法候选总览.md",
+                "套磁选择.json", "邮件输入.json",
+            },
+        )
+        stage4 = self.root / "教授研究/套磁选择.json"
+        stage4.parent.mkdir(parents=True, exist_ok=True)
+        stage4.write_text("{}", encoding="utf-8")
+        payload = verifier._checkpoint_stage3_snapshot(self.args())
+        self.assertEqual(payload["status"], "pass", payload)
+        self.assertTrue(payload["artifacts"]["套磁选择.json"]["exists"])
 
     def test_make_stage4_selection_sorts_candidates_and_writes_only_requested_file(self):
         prof = self.root / "教授研究/X分野/Example Professor"
