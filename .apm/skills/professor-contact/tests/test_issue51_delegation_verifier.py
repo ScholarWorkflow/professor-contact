@@ -3,10 +3,11 @@
 The verifier only consumes fixtures ``codex-eval-adapter@9`` output.  These
 tests pin its mechanical mapping between adapter machine evidence and the
 issue's verdict families (``pass`` / ``blocked`` / ``not_tested`` /
-``invalid_evidence``): topology is judged from formal ``spawnAgent`` relations
-only (the raw ``item.status`` projection never gates an edge), prose and
-identity diagnostics never create a PASS, and corrupted evidence fails closed
-instead of passing or blaming the producer.
+``invalid_evidence``): topology is judged from *completed* formal
+``spawnAgent`` relations — the frozen #51/#52 acceptance boundary, distinct
+from the #57 attempt semantics that never require child completion — prose
+and identity diagnostics never create a PASS, and corrupted evidence fails
+closed instead of passing or blaming the producer.
 """
 import contextlib
 import importlib.util
@@ -109,30 +110,79 @@ class Issue51VerifierTopologyTests(unittest.TestCase):
         self.assertEqual(payload["max_depth"], 1)
         self.assertEqual(payload["formal_spawn_relation_count"], 1)
 
-    def test_formal_topology_follows_relations_not_the_status_projection(self):
-        # adapter@9 freezes a formal relation on tool/sender/receivers only;
-        # the raw item.status projection has no frozen enum and never gates
-        # an edge, so an in-progress relation with concrete receivers still
-        # counts and the flat topology stays NOT TESTED.
+    def test_in_progress_relations_do_not_prove_completed_topology(self):
+        # Frozen #51/#52 boundary: the standalone verifier judges completed
+        # formal spawn topology. An in-progress relation with concrete
+        # receivers stays non-evidence here (the #57 attempt gate lives in
+        # the #57 checkpoints), so confirmed ownership without any completed
+        # relation is NOT TESTED, never a topology proof.
         relations = [relation(ROOT, L1, status="in-progress")]
         payload = verifier.evaluate(
             adapter(relations=relations, delegation_payload=delegation(children=(L1,))),
             "r1")
         self.assertEqual(payload["status"], "not_tested", payload)
         self.assertEqual(
-            payload["reason_code"], "nested_formal_delegation_not_observed")
-        self.assertEqual(payload["formal_spawn_relation_count"], 1)
+            payload["reason_code"],
+            "confirmed_delegation_without_completed_formal_relation")
+        self.assertEqual(payload["formal_spawn_relation_count"], 0)
 
-    def test_confirmed_summary_without_any_formal_relation_contradicts(self):
-        # A confirmed summary aggregates formal relations' concrete children;
-        # with no formal relation observable the two evidence surfaces
-        # contradict and fail closed.
+    def test_confirmed_summary_without_completed_relation_is_not_tested(self):
+        # A confirmed summary without any completed formal relation proves
+        # nothing about topology; the frozen gate records NOT TESTED.
         payload = verifier.evaluate(
             adapter(relations=[], delegation_payload=delegation(children=(L1,))),
             "r1")
-        self.assertEqual(payload["status"], "invalid_evidence", payload)
+        self.assertEqual(payload["status"], "not_tested", payload)
         self.assertEqual(
-            payload["reason_code"], "delegation_summary_contradicts_relations")
+            payload["reason_code"],
+            "confirmed_delegation_without_completed_formal_relation")
+
+    def test_relation_rows_ownership_follows_sender_not_attribution(self):
+        # Pinned sender_rule for the shared topology extraction: the formal
+        # owner is sender_thread_id; parent_thread_id is app-server event
+        # attribution and never decides an edge.
+        shadow_sender = relation("thread-shadow", L1)
+        shadow_sender["parent_thread_id"] = ROOT
+        root_sender = relation(ROOT, L2)
+        root_sender["parent_thread_id"] = "thread-unrelated-9"
+        rows = verifier.relation_rows(
+            adapter(relations=[shadow_sender, root_sender],
+                    delegation_payload=delegation(children=(L1, L2))))
+        self.assertEqual(
+            sorted((row["parent"], row["child"]) for row in rows),
+            [(ROOT, L2), ("thread-shadow", L1)])
+
+    def test_topology_follows_sender_chain_not_attribution_chain(self):
+        # Broken sender chain under a nested attribution chain: if
+        # parent_thread_id still decided topology this would pass; sender
+        # authority keeps it NOT TESTED.
+        first = relation("sender-a", "thread-mid")
+        first["parent_thread_id"] = "attrib-a"
+        second = relation("sender-b", "thread-deep")
+        second["parent_thread_id"] = "thread-mid"
+        payload = verifier.evaluate(
+            adapter(relations=[first, second],
+                    delegation_payload=delegation(
+                        children=("thread-mid", "thread-deep"))),
+            "r1")
+        self.assertEqual(payload["status"], "not_tested", payload)
+        self.assertEqual(
+            payload["reason_code"], "nested_formal_delegation_not_observed")
+
+        # The reverse: nested sender chain with unrelated attribution edges —
+        # sender authority proves the topology the attribution chain hides.
+        third = relation("thread-root-x", "thread-mid2")
+        third["parent_thread_id"] = "unrelated-1"
+        fourth = relation("thread-mid2", "thread-deep2")
+        fourth["parent_thread_id"] = "unrelated-2"
+        payload = verifier.evaluate(
+            adapter(relations=[third, fourth],
+                    delegation_payload=delegation(
+                        children=("thread-mid2", "thread-deep2"))),
+            "r1")
+        self.assertEqual(payload["status"], "pass", payload)
+        self.assertEqual(payload["max_depth"], 2)
+        self.assertEqual(payload["nested_edge_count"], 1)
 
     def test_assistant_prose_never_creates_delegation_evidence(self):
         noisy = adapter(relations=[], delegation_payload=delegation(
@@ -205,6 +255,19 @@ class Issue51VerifierInvalidEvidenceTests(unittest.TestCase):
         self.assertEqual(payload["status"], "invalid_evidence", payload)
         self.assertEqual(
             payload["reason_code"], "completed_spawn_without_concrete_receivers")
+
+    def test_spawn_without_formal_owner_is_invalid_evidence(self):
+        # The pinned parser fails closed on a formal spawn relation without
+        # its issuing senderThreadId whatever the raw status; the verifier's
+        # self-defensive re-check mirrors that rule.
+        orphan = {"tool": "spawnAgent", "status": "completed",
+                  "receiver_thread_ids": [L1]}
+        payload = verifier.evaluate(
+            adapter(relations=[orphan], delegation_payload=delegation(children=(L1,))),
+            "r1")
+        self.assertEqual(payload["status"], "invalid_evidence", payload)
+        self.assertEqual(
+            payload["reason_code"], "formal_spawn_without_concrete_owner")
 
     def test_conflicting_formal_ownership_is_invalid_evidence(self):
         relations = [

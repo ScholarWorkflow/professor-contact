@@ -5,15 +5,21 @@ Consumes only the fixtures ``codex-eval-adapter@9`` output for one eval
 phase (``--case r1|r2``) and decides whether the machine evidence proves the
 formal nested delegation topology ``root -> child -> nested-child``:
 
-* machine basis is the adapter's formal ``spawnAgent`` relation graph and its
-  independent ``delegation`` summary — never assistant prose, prompt text or
-  child self-reported role;
+* machine basis is the adapter's completed formal ``spawnAgent`` relation
+  graph and its independent ``delegation`` summary — never assistant prose,
+  prompt text or child self-reported role;
 * named-role identity is explicitly out of scope: requested_role /
   loaded_identity, including mismatch or unobservable states, are optional
   diagnostics and never decide PASS/FAIL; this verifier only proves topology;
-* ``pass`` requires at least one nested formal spawn edge and graph depth
-  ``>= 2``; everything else is ``blocked`` / ``not_tested`` /
+* ``pass`` requires at least one nested completed formal spawn edge and graph
+  depth ``>= 2``; everything else is ``blocked`` / ``not_tested`` /
   ``invalid_evidence`` and never counts as acceptance.
+
+The frozen #51/#52 acceptance boundary is *completed* formal topology.  The
+#57 Stage-2 attempt semantics (which never require child completion) stay in
+the #57 checkpoints; only the field authority/shape rules — senderThreadId as
+the formal owner per the pinned sender_rule — are shared through
+``_relation_rows``.
 
 Topology helpers are reused from ``verify_issue32_e2e.py`` so both verifiers
 share one adapter schema interpretation.
@@ -83,22 +89,23 @@ def _corrupted_relations(adapter: dict[str, Any]) -> str | None:
     relations = dispatch.get("thread_relations") if isinstance(dispatch, dict) else None
     if not isinstance(relations, list):
         return None
+    owners: dict[str, set[str]] = {}
     for relation in relations:
         if not isinstance(relation, dict) or relation.get("tool") != "spawnAgent":
             continue
-        if relation.get("status") != "completed":
-            continue
+        sender = relation.get("sender_thread_id")
+        if not isinstance(sender, str) or not sender:
+            # The pinned sender_rule fails closed on a formal spawn relation
+            # without its issuing thread, whatever the raw status says.
+            return "formal_spawn_without_concrete_owner"
         receivers = relation.get("receiver_thread_ids")
-        parent = relation.get("parent_thread_id")
-        if not isinstance(parent, str) or not parent:
-            return "completed_spawn_without_concrete_parent"
-        if receivers in (None, [],) or not isinstance(receivers, list) or not all(
-            isinstance(child, str) and child for child in receivers
-        ):
+        if relation.get("status") == "completed" and (
+                receivers in (None, [],) or not isinstance(receivers, list)
+                or not all(isinstance(child, str) and child for child in receivers)):
             return "completed_spawn_without_concrete_receivers"
-    owners: dict[str, set[str]] = {}
-    for edge in relation_rows(adapter):
-        owners.setdefault(edge["child"], set()).add(edge["parent"])
+        for child in receivers if isinstance(receivers, list) else []:
+            if isinstance(child, str) and child:
+                owners.setdefault(child, set()).add(sender)
     if any(len(senders) > 1 for senders in owners.values()):
         return "conflicting_formal_ownership"
     return None
@@ -168,12 +175,12 @@ def evaluate(adapter: Any, case: str) -> dict[str, Any]:
 
     edge_children = {str(edge["child"]) for edge in edges}
     if not edge_children:
-        # A confirmed summary aggregates the concrete children of formal
-        # relations, and the raw status projection never empties this set;
-        # a confirmed summary with no formal relation at all is contradictory
-        # machine evidence, the mirror of unobservable-with-relations.
-        return _verdict("invalid_evidence", case, [],
-                        "delegation_summary_contradicts_relations",
+        # Frozen #51/#52 acceptance: the standalone verifier judges completed
+        # formal spawn topology. Confirmed ownership without a single
+        # completed formal relation is NOT TESTED — the #57 attempt
+        # semantics never auto-promote it to a topology proof.
+        return _verdict("not_tested", case, [],
+                        "confirmed_delegation_without_completed_formal_relation",
                         problems=problems)
     summary_children = {str(child) for child in children if isinstance(child, str)}
     missing = sorted(child for child in edge_children if child not in summary_children)

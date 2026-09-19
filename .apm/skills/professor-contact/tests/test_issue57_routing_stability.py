@@ -74,13 +74,20 @@ def _delegation_summary(relations) -> dict:
     """Build adapter@9's delegation summary from a relation graph.
 
     The pinned parser derives the summary from every formal ``spawnAgent``
-    relation of the response: ``child_thread_ids`` is the sorted distinct
-    concrete child set, so a synthetic fixture must never hand-write a
-    summary that disagrees with its own ``thread_relations``.
+    relation of the response under the same frozen ``confirmed_rule``
+    conditions: the exact ``spawnAgent`` tool, a non-empty
+    ``sender_thread_id`` owner, and concrete ``receiver_thread_ids``.
+    ``child_thread_ids`` is the sorted distinct concrete child set, so a
+    synthetic fixture must never hand-write a summary that disagrees with
+    its own ``thread_relations``, and a relation the parser would fail
+    closed on (a missing owner) yields ``unobservable`` here, never
+    ``confirmed``.
     """
     children = sorted({
         child for relation in relations
         if isinstance(relation, dict) and relation.get("tool") == "spawnAgent"
+        and isinstance(relation.get("sender_thread_id"), str)
+        and relation["sender_thread_id"]
         for child in (relation.get("receiver_thread_ids") or [])
         if isinstance(child, str) and child
     })
@@ -354,6 +361,10 @@ class Stage2RoutingVerifierTests(unittest.TestCase):
         self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
 
     def test_unobservable_and_missing_formal_surface_block(self):
+        # The unobservable override below is deliberately contradictory
+        # normalized evidence — the parser never emits unobservable while
+        # formal relations are present. It pins the checkpoint's
+        # conservative BLOCKED_OBSERVABILITY for that impossible input.
         unobservable = self._run(
             self._nested_relations(),
             extra_adapter={"delegation": {"state": "unobservable", "basis": [],
@@ -417,10 +428,25 @@ class Stage2RoutingVerifierTests(unittest.TestCase):
         self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
 
     def test_malformed_relation_shape_is_invalid(self):
-        payload = self._run([
-            {"tool": "spawnAgent", "status": "completed",
-             "parent_thread_id": "root-1", "receiver_thread_ids": ["coordinator-1"]},
-        ])
+        # Deliberately impossible adapter output: the pinned parser fails
+        # closed on a spawnAgent relation without its senderThreadId before
+        # any normalized FIXTURE_READY payload exists, so the confirmed
+        # summary below is hand-written (never helper-derived). This input
+        # isolates the checkpoint's own relation-shape classification as
+        # defense in depth.
+        relations = [{
+            "tool": "spawnAgent", "status": "completed",
+            "parent_thread_id": "root-1", "receiver_thread_ids": ["coordinator-1"],
+        }]
+        adapter, response = self._write_evidence(
+            relations,
+            extra_adapter={"delegation": {
+                "state": "confirmed", "formal_child_count": 1,
+                "child_thread_ids": ["coordinator-1"],
+                "basis": ["formal_spawn_relation"], "reason_code": None,
+            }})
+        payload = verifier._checkpoint_stage2_routing(self.args(
+            eval_response=response, adapter_output=adapter))
         self.assertEqual(payload["status"], "invalid", payload)
         self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
 

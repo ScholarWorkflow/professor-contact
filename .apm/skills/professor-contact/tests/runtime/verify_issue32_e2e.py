@@ -1418,11 +1418,17 @@ def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _relation_rows(payload: Any) -> list[dict[str, Any]]:
-    """Extract formal spawn relations from adapter @9's normalized graph.
+    """Extract completed formal spawn edges from adapter @9's normalized graph.
 
-    Like ``_formal_spawn_relations``, topology follows the pinned contract's
-    three frozen conditions only; the unfrozen raw ``relation.status``
-    projection stays diagnostics and never drops an edge.
+    Field authority and shape follow the same pinned sender_rule as
+    ``_formal_spawn_relations``: the formal owner is ``sender_thread_id`` and
+    ``parent_thread_id`` is app-server event attribution that is never read.
+    The completion boundary is issue-specific and stays frozen: the #32
+    runtime-graph checkpoint and the #51/#52 standalone verifier judge
+    completed formal ``spawnAgent`` topology, so only ``status ==
+    "completed"`` relations build edges here; the #57 attempt-style
+    extraction that never requires completion lives in
+    ``_formal_spawn_relations``.
     """
     rows: list[dict[str, Any]] = []
     if not isinstance(payload, dict):
@@ -1434,13 +1440,15 @@ def _relation_rows(payload: Any) -> list[dict[str, Any]]:
     for relation in relations:
         if not isinstance(relation, dict) or relation.get("tool") != "spawnAgent":
             continue
-        parent = relation.get("parent_thread_id")
+        if relation.get("status") != "completed":
+            continue
+        sender = relation.get("sender_thread_id")
         children = relation.get("receiver_thread_ids")
-        if not isinstance(parent, str) or not parent or not isinstance(children, list):
+        if not isinstance(sender, str) or not sender or not isinstance(children, list):
             continue
         for child in children:
             if isinstance(child, str) and child:
-                rows.append({"parent": parent, "child": child, "kind": "spawnAgent"})
+                rows.append({"parent": sender, "child": child, "kind": "spawnAgent"})
     return rows
 
 
