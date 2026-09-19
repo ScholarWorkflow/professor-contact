@@ -665,11 +665,12 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
         payload = verifier._checkpoint_stage4_snapshot(self.args(program_root))
         path.write_text(json.dumps(payload), encoding="utf-8")
 
-    def _run_stage4(self, program_root, pending, *, child_id="child-sel",
-                    sender="root-1", parent="root-1",
-                    fixture_status="FIXTURE_READY",
-                    delegation_override=None):
-        adapter_path = self.root / f"adapter-{abs(hash(program_root)) % 9999}.json"
+    def _evidence(self, program_root, pending, *, child_id="child-sel",
+                  sender="root-1", parent="root-1",
+                  fixture_status="FIXTURE_READY",
+                  delegation_override=None, child_texts=None):
+        suffix = abs(hash(program_root)) % 9999
+        adapter_path = self.root / f"adapter-{suffix}.json"
         relations = [{
             "tool": "spawnAgent", "status": "completed",
             "sender_thread_id": sender, "parent_thread_id": parent,
@@ -683,37 +684,49 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
             "delegation": delegation,
             "dispatch": {"thread_relations": relations},
         }), encoding="utf-8")
-        contents = [{
-            "type": "output_text",
-            "text": json.dumps({"result": "needs_input",
-                                "pending_selection": pending}, ensure_ascii=False),
-        }]
+        business_text = json.dumps({"result": "needs_input",
+                                    "pending_selection": pending},
+                                   ensure_ascii=False)
+        texts = [business_text] if child_texts is None else child_texts
         events = [{"message": {
             "method": "rawResponseItem/completed",
             "params": {
                 "threadId": "root-1",
                 "item": {"type": "message", "role": "developer", "content": []},
             },
-        }}, {"message": {
-            "method": "rawResponseItem/completed",
-            "params": {
-                "threadId": child_id,
-                "item": {"type": "message", "role": "assistant", "content": contents},
-            },
         }}]
-        response_path = self.root / f"response-{abs(hash(program_root)) % 9999}.json"
+        for text in texts:
+            events.append({"message": {
+                "method": "rawResponseItem/completed",
+                "params": {
+                    "threadId": child_id,
+                    "item": {"type": "message", "role": "assistant",
+                             "content": [{"type": "output_text", "text": text}]},
+                },
+            }})
+        response_path = self.root / f"response-{suffix}.json"
         response_path.write_text(json.dumps({
             "output": {"thread_id": "root-1", "app_server_events": events},
         }), encoding="utf-8")
-        pre = self.root / f"pre-{abs(hash(program_root)) % 9999}.json"
-        post = self.root / f"post-{abs(hash(program_root)) % 9999}.json"
-        self._write_snapshot(program_root, pre)
-        self._write_snapshot(program_root, post)
+        return adapter_path, response_path
+
+    def _stage4_verdict(self, program_root, pending, *, pre, post, **kwargs):
+        adapter_path, response_path = self._evidence(program_root, pending,
+                                                     **kwargs)
         return verifier._checkpoint_stage4_needs_input(self.args(
             program_root,
             eval_response=response_path, adapter_output=adapter_path,
             pre_snapshot=pre, post_snapshot=post,
         ))
+
+    def _run_stage4(self, program_root, pending, **kwargs):
+        suffix = abs(hash(program_root)) % 9999
+        pre = self.root / f"pre-{suffix}.json"
+        post = self.root / f"post-{suffix}.json"
+        self._write_snapshot(program_root, pre)
+        self._write_snapshot(program_root, post)
+        return self._stage4_verdict(program_root, pending, pre=pre, post=post,
+                                    **kwargs)
 
     def test_dynamic_projection_reproduces_pc53_regression_and_issue57_sentinel(self):
         program53 = self.root / "program53"
@@ -964,6 +977,146 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
                 self.assertEqual(payload["status"], "invalid", payload)
                 self.assertEqual(payload["classification"],
                                  "INVALID_TEST_EXECUTION")
+
+    def test_snapshot_evidence_is_classified_by_attribution(self):
+        # Frozen #57 verdict table: only a write positively attributed to
+        # this run is a product failure.  A preexisting Stage-4 output is
+        # precondition pollution (INVALID), a post snapshot that drifted
+        # from the current artifacts is stale or tampered evidence
+        # (INVALID), and only consistent evidence showing the output
+        # after a clean pre state proves the omitted-selection path wrote
+        # it (FAIL_PRODUCT).
+        program = self.root / "program-preexisting"
+        issue57_fixture.build_fixture(program, self.root / "profile-preexisting",
+                                      output=self.root / "setup-preexisting.json")
+        expected = verifier._expected_pending_projection(program)
+        self.assertIsNotNone(expected)
+        output_path = program / "教授研究/套磁选择.json"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("{}", encoding="utf-8")
+        payload = self._run_stage4(program, expected, child_id="child-pre")
+        self.assertEqual(payload["status"], "invalid", payload)
+        self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION",
+                         "a preexisting output can never be attributed to "
+                         "this run")
+
+        program = self.root / "program-drift"
+        issue57_fixture.build_fixture(program, self.root / "profile-drift",
+                                      output=self.root / "setup-drift.json")
+        expected = verifier._expected_pending_projection(program)
+        pre = self.root / "pre-drift.json"
+        post = self.root / "post-drift.json"
+        self._write_snapshot(program, pre)
+        output_path = program / "教授研究/套磁选择.json"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("{}", encoding="utf-8")
+        self._write_snapshot(program, post)
+        output_path.unlink()
+        payload = self._stage4_verdict(program, expected, pre=pre, post=post)
+        self.assertEqual(payload["status"], "invalid", payload)
+        self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION",
+                         "a post snapshot that disagrees with the current "
+                         "artifacts is stale or tampered evidence")
+
+        output_path.write_text("{}", encoding="utf-8")
+        self._write_snapshot(program, post)
+        payload = self._stage4_verdict(program, expected, pre=pre, post=post)
+        self.assertEqual(payload["status"], "fail", payload)
+        self.assertEqual(payload["classification"], "FAIL_PRODUCT",
+                         "consistent evidence of a Stage-4 output after a "
+                         "clean pre state is this run's write")
+
+    def test_every_business_message_is_load_bearing(self):
+        # The frozen verdict counts business JSONs, not children, and
+        # never lets a later message mask an earlier one: a duplicate
+        # Path-C result, a wrong-result object, or a non-JSON assistant
+        # message is already a violation even when a valid Path-C result
+        # follows it.
+        program = self.root / "program-multi"
+        issue57_fixture.build_fixture(program, self.root / "profile-multi",
+                                      output=self.root / "setup-multi.json")
+        expected = verifier._expected_pending_projection(program)
+        self.assertIsNotNone(expected)
+        business = json.dumps({"result": "needs_input",
+                               "pending_selection": expected}, ensure_ascii=False)
+        cases = {
+            "duplicate path-c results": [business, business],
+            "wrong result then path-c": [
+                json.dumps({"result": "selected",
+                            "pending_selection": expected}, ensure_ascii=False),
+                business,
+            ],
+            "non-json then path-c": ["阶段说明：正在汇总候选。", business],
+        }
+        for label, texts in cases.items():
+            with self.subTest(case=label):
+                payload = self._run_stage4(program, expected,
+                                           child_id="child-multi",
+                                           child_texts=texts)
+                self.assertEqual(payload["status"], "fail", payload)
+                self.assertEqual(payload["classification"], "FAIL_PRODUCT")
+
+    def test_cross_child_wrong_and_duplicate_results_fail(self):
+        # The exactly-one rule spans all direct root children: an
+        # observable wrong-result object on another child is a violation
+        # in its own right, and two children each emitting a Path-C
+        # result is a duplicate — neither may be collapsed into the
+        # surviving result.
+        program = self.root / "program-cross-children"
+        issue57_fixture.build_fixture(program, self.root / "profile-cross-children",
+                                      output=self.root / "setup-cross-children.json")
+        expected = verifier._expected_pending_projection(program)
+        self.assertIsNotNone(expected)
+        suffix = abs(hash(program)) % 9999
+        pre = self.root / f"pre-{suffix}.json"
+        post = self.root / f"post-{suffix}.json"
+        self._write_snapshot(program, pre)
+        self._write_snapshot(program, post)
+        relations = [{
+            "tool": "spawnAgent", "status": "completed",
+            "sender_thread_id": "root-1", "parent_thread_id": "root-1",
+            "receiver_thread_ids": ["child-a", "child-b"],
+        }]
+
+        def message(child, text):
+            return {"message": {
+                "method": "rawResponseItem/completed",
+                "params": {"threadId": child, "item": {
+                    "type": "message", "role": "assistant",
+                    "content": [{"type": "output_text", "text": text}]}}}}
+
+        business = json.dumps({"result": "needs_input",
+                               "pending_selection": expected}, ensure_ascii=False)
+        cases = {
+            "wrong result on other child": [
+                message("child-a", json.dumps({"result": "selected"},
+                                              ensure_ascii=False)),
+                message("child-b", business),
+            ],
+            "duplicate across children": [
+                message("child-a", business),
+                message("child-b", business),
+            ],
+        }
+        for label, child_events in cases.items():
+            with self.subTest(case=label):
+                adapter_path = self.root / f"adapter-cross-{suffix}.json"
+                adapter_path.write_text(json.dumps({
+                    "fixture_status": "FIXTURE_READY",
+                    "delegation": _delegation_summary(relations),
+                    "dispatch": {"thread_relations": relations},
+                }), encoding="utf-8")
+                response_path = self.root / f"response-cross-{suffix}.json"
+                response_path.write_text(json.dumps({
+                    "output": {"thread_id": "root-1",
+                               "app_server_events": child_events},
+                }), encoding="utf-8")
+                payload = verifier._checkpoint_stage4_needs_input(self.args(
+                    program,
+                    eval_response=response_path, adapter_output=adapter_path,
+                    pre_snapshot=pre, post_snapshot=post))
+                self.assertEqual(payload["status"], "fail", payload)
+                self.assertEqual(payload["classification"], "FAIL_PRODUCT")
 
     def test_stage4_adapter_prerequisite_blocked_dependency_is_not_invalid(self):
         program = self.root / "program-dep"

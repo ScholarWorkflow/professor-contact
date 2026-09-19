@@ -1150,7 +1150,17 @@ def _expected_pending_projection(program_root: Path) -> list[dict[str, Any]] | N
 
 
 def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
-    """Verify the PC53 child-attributed Stage-4 Path-C evidence."""
+    """Verify the PC53 child-attributed Stage-4 Path-C evidence.
+
+    Snapshot evidence is classified by attribution, per the frozen #57
+    verdict table: a pre snapshot that is not all-absent is precondition
+    pollution that can never be blamed on this run
+    (``INVALID_TEST_EXECUTION``), a post snapshot that disagrees with the
+    current artifacts is stale or tampered evidence
+    (``INVALID_TEST_EXECUTION``), and only consistent evidence showing
+    Stage-4 outputs after a clean pre state proves the omitted-selection
+    path wrote them (``FAIL_PRODUCT``).
+    """
     checks: list[dict[str, Any]] = []
     root = Path(args.program_root).resolve()
     target_child_id: str | None = None
@@ -1180,12 +1190,32 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
         name: {"exists": False, "sha256": None}
         for name in STAGE4_PROGRAM_OUTPUTS
     }
-    _check(checks, "pre_zero_write_snapshot", pre == expected_absent, pre)
-    _check(checks, "post_zero_write_snapshot", post == expected_absent, post)
     current = _stage4_artifacts(root)
+
+    # Step 1: the pre snapshot must prove a clean initial state.  Outputs
+    # that already existed before this run are stale/polluted fixture
+    # state, so the write cannot be attributed to the omitted-selection
+    # path and is never a producer FAIL.
+    pre_absent = pre == expected_absent
+    _check(checks, "pre_zero_write_snapshot", pre_absent, pre)
+    if not pre_absent:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # Step 2: the post snapshot must still match the current filesystem —
+    # same existence and same content hashes.  Any drift means the
+    # snapshot evidence is stale or was tampered with after the run.
+    post_consistent = post == current
+    _check(checks, "post_snapshot_matches_current", post_consistent,
+           {"post": post, "current": current})
+    if not post_consistent:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # Step 3: with valid pre/post/current evidence, outputs present after
+    # the run are positively attributed to this run's omitted-selection
+    # path.
     zero_write = current == expected_absent
     _check(checks, "current_zero_write", zero_write, current)
-    if not (pre == expected_absent and post == expected_absent and zero_write):
+    if not zero_write:
         return machine("fail", "FAIL_PRODUCT")
 
     try:
@@ -1256,8 +1286,42 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
     if not direct_children:
         return machine("blocked", "BLOCKED_OBSERVABILITY")
 
-    def child_result(child_id: str) -> tuple[str, dict[str, Any] | None]:
-        assistant_messages: list[str] = []
+    def business_message_row(item: Any) -> tuple[str, dict[str, Any] | None] | None:
+        """One ``(state, parsed)`` row for a completed assistant message
+        item, or ``None`` for items outside the pinned business surface."""
+        if not isinstance(item, dict) or item.get("type") != "message" or item.get("role") != "assistant":
+            # A child thread emits developer, user, reasoning, and tool
+            # items as well.  The contract pins business-result parsing to
+            # assistant output_text messages only.
+            return None
+        content = item.get("content")
+        if not isinstance(content, list):
+            return ("malformed", None)
+        texts: list[str] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "output_text":
+                text = part.get("text")
+                if not isinstance(text, str):
+                    return ("malformed", None)
+                texts.append(text)
+        if not texts:
+            return None
+        try:
+            parsed = json.loads("".join(texts))
+        except (TypeError, json.JSONDecodeError):
+            return ("not_json", None)
+        return ("object", parsed) if isinstance(parsed, dict) else ("not_json", None)
+
+    def child_messages(child_id: str) -> list[tuple[str, dict[str, Any] | None]]:
+        """Every supported business message of one child thread, in
+        arrival order.
+
+        The frozen PC57 verdict counts business JSONs, not children, and
+        makes each observable business message load-bearing: no later
+        message may repair or mask an earlier malformed or wrong one, so
+        the rows are never collapsed into a last-wins parse.
+        """
+        rows: list[tuple[str, dict[str, Any] | None]] = []
         for event in events:
             message = event.get("message") if isinstance(event, dict) else None
             if not isinstance(message, dict):
@@ -1267,55 +1331,38 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
             params = message.get("params")
             if not isinstance(params, dict) or params.get("threadId") != child_id:
                 continue
-            item = params.get("item")
-            if not isinstance(item, dict) or item.get("type") != "message" or item.get("role") != "assistant":
-                # A child thread emits developer, user, reasoning, and tool
-                # items as well.  The contract pins business-result parsing to
-                # assistant output_text messages only.
-                continue
-            content = item.get("content")
-            if not isinstance(content, list):
-                return "malformed", None
-            texts: list[str] = []
-            for part in content:
-                if isinstance(part, dict) and part.get("type") == "output_text":
-                    text = part.get("text")
-                    if not isinstance(text, str):
-                        return "malformed", None
-                    texts.append(text)
-            if texts:
-                assistant_messages.append("".join(texts))
-        if not assistant_messages:
-            return "absent", None
-        try:
-            parsed = json.loads(assistant_messages[-1])
-        except (TypeError, json.JSONDecodeError):
-            return "not_json", None
-        return ("object", parsed) if isinstance(parsed, dict) else ("not_json", None)
+            row = business_message_row(params.get("item"))
+            if row is not None:
+                rows.append(row)
+        return rows
 
-    observed: dict[str, tuple[str, dict[str, Any] | None]] = {
-        child: child_result(child) for child in sorted(direct_children)
+    observed: dict[str, list[tuple[str, dict[str, Any] | None]]] = {
+        child: child_messages(child) for child in sorted(direct_children)
     }
-    _check(checks, "child_message_surface", any(state != "absent" for state, _ in observed.values()), observed)
-    if all(state == "absent" for state, _ in observed.values()):
+    _check(checks, "child_message_surface",
+           any(rows for rows in observed.values()), observed)
+    if all(not rows for rows in observed.values()):
         return machine("blocked", "BLOCKED_OBSERVABILITY")
-    if any(state in {"malformed", "not_json"} for state, _ in observed.values()):
-        return machine("fail", "FAIL_PRODUCT")
 
-    path_c_children = [
-        child for child, (state, result) in observed.items()
-        if state == "object" and isinstance(result, dict)
-        and result.get("result") == "needs_input"
-    ]
-    if len(path_c_children) != 1:
-        object_children = [child for child, (state, _) in observed.items() if state == "object"]
-        if len(object_children) == 1:
-            target_child_id = object_children[0]
-            business_result = observed[target_child_id][1]
-        _check(checks, "exactly_one_path_c_child", False, path_c_children)
+    # Every observed business message is a product statement in its own
+    # right: a malformed message, a non-JSON message, or a wrong-result
+    # object is already a violation, and more than one Path-C result —
+    # repeated in one child or spread over children — is a duplicate.
+    path_c_results: list[tuple[str, dict[str, Any]]] = []
+    for child, rows in observed.items():
+        for state, parsed in rows:
+            if state == "object" and isinstance(parsed, dict) \
+                    and parsed.get("result") == "needs_input":
+                path_c_results.append((child, parsed))
+                continue
+            _check(checks, "child_business_results_supported", False,
+                   {"child_thread_id": child, "observed": parsed if state == "object" else state})
+            return machine("fail", "FAIL_PRODUCT")
+    if len(path_c_results) != 1:
+        _check(checks, "exactly_one_path_c_result", False,
+               [child for child, _ in path_c_results])
         return machine("fail", "FAIL_PRODUCT")
-    target_child_id = path_c_children[0]
-    business_result = observed[target_child_id][1]
+    target_child_id, business_result = path_c_results[0]
     pending = business_result.get("pending_selection") if isinstance(business_result, dict) else None
     _check(checks, "pending_selection_nonempty", isinstance(pending, list) and bool(pending), pending)
     if not isinstance(pending, list) or not pending:

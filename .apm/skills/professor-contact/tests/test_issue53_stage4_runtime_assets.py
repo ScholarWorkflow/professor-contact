@@ -154,13 +154,15 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
             },
         }}]
         for child_id in child_ids:
+            # A non-assistant child item: outside the pinned business
+            # surface, so it must never be parsed as a business result.
             events.append({"message": {
                 "method": "rawResponseItem/completed",
                 "params": {
                     "threadId": child_id,
                     "item": {
                         "type": "message",
-                        "role": "assistant",
+                        "role": "developer",
                         "content": [{"type": "output_text", "text": "progress note"}],
                     },
                 },
