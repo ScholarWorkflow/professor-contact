@@ -273,24 +273,22 @@ class Issue57RequestBuilderTests(unittest.TestCase):
     def test_request_surface_is_exactly_the_frozen_pc57_command(self):
         request = self._build()
         argv = shlex.split(request["command"])
-        self.assertEqual(argv[:7], [
+        # The whole surface is asserted with exact equality so a future
+        # config token that is not on the frozen list can never slip through.
+        self.assertEqual(argv, [
             "--json", "--ephemeral", "--skip-git-repo-check",
             "--sandbox", "workspace-write", "--cd", str(self.consumer.resolve()),
+            "--model", "gpt-5.6-luna",
+            "--config", 'model_reasoning_effort="low"',
+            "--config", f'projects."{self.consumer.resolve()}".trust_level="trusted"',
+            "--config", "agents.max_concurrent_threads_per_session=16",
+            "--config", "sandbox_workspace_write.network_access=true",
+            "--config", f'shell_environment_policy.set.ZOTERO_HTTP_URL="{DISPOSABLE_HTTP}"',
+            "--config", f'shell_environment_policy.set.ZOTERO_MCP_URL="{DISPOSABLE_MCP}"',
+            "--", (self.root / "prompt.txt").read_text(encoding="utf-8"),
         ])
-        self.assertEqual(argv[7:12], [
-            "--model", "gpt-5.6-luna", "--config",
-            'model_reasoning_effort="low"', "--config",
-        ])
-        self.assertIn(f'projects."{self.consumer.resolve()}".trust_level="trusted"', argv)
-        self.assertIn("agents.max_concurrent_threads_per_session=16", argv)
-        self.assertIn("sandbox_workspace_write.network_access=true", argv)
-        self.assertIn(f'shell_environment_policy.set.ZOTERO_HTTP_URL="{DISPOSABLE_HTTP}"',
-                      argv)
-        self.assertIn(f'shell_environment_policy.set.ZOTERO_MCP_URL="{DISPOSABLE_MCP}"',
-                      argv)
-        self.assertEqual(argv[-2], "--")
+        self.assertEqual(request["timeout"], 900)
         rendered = (self.root / "prompt.txt").read_text(encoding="utf-8")
-        self.assertEqual(argv[-1], rendered)
         self.assertNotIn("<PROGRAM_ROOT>", rendered)
         self.assertEqual(
             rendered,
@@ -388,11 +386,15 @@ class Issue57InstallSurfaceTests(unittest.TestCase):
         return consumer
 
     def test_install_requires_every_issue57_runtime_asset(self):
+        # PC57-R2 reuses the #53 Stage-4 request builder and prompt, so the
+        # clean-consumer gate must lock those reused assets too.
         required = {
             ".agents/skills/professor-contact/tests/runtime/prepare_issue57_stage2_fixture.py",
             ".agents/skills/professor-contact/tests/runtime/build_issue57_stage2_eval_request.py",
             ".agents/skills/professor-contact/tests/runtime/prepare_issue57_stage4_fixture.py",
             ".agents/skills/professor-contact/tests/runtime/prompts/issue57-stage2-routing.txt",
+            ".agents/skills/professor-contact/tests/runtime/build_issue53_eval_request.py",
+            ".agents/skills/professor-contact/tests/runtime/prompts/issue53-stage4-missing-selection.txt",
         }
         self.assertTrue(required.issubset(set(verifier.INSTALL_REQUIRED_FILES)))
         consumer = self._consumer_with_all_files()
@@ -400,14 +402,18 @@ class Issue57InstallSurfaceTests(unittest.TestCase):
             self.args(consumer_root=consumer, producer_sha=""))
         self.assertEqual(payload["status"], "pass", payload)
 
-        missing = consumer / ".agents/skills/professor-contact/tests/runtime/prompts/issue57-stage2-routing.txt"
-        missing.unlink()
-        payload = verifier._checkpoint_install(
-            self.args(consumer_root=consumer, producer_sha=""))
-        self.assertEqual(payload["status"], "fail", payload)
-        self.assertTrue(any(
-            row["name"].endswith("issue57-stage2-routing.txt") and row["status"] == "fail"
-            for row in payload["checks"]))
+        # Negative case for every required asset: removing any single one
+        # must fail the install checkpoint.
+        for relative in sorted(required):
+            missing = consumer / relative
+            missing.unlink()
+            payload = verifier._checkpoint_install(
+                self.args(consumer_root=consumer, producer_sha=""))
+            self.assertEqual(payload["status"], "fail", relative)
+            self.assertTrue(any(
+                row["name"].endswith(relative) and row["status"] == "fail"
+                for row in payload["checks"]), relative)
+            missing.write_text("installed", encoding="utf-8")
 
     def test_stage2_routing_checkpoint_is_registered(self):
         self.assertIn("stage2-routing", verifier.CHECKPOINTS)

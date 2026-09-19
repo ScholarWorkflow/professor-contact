@@ -42,6 +42,10 @@ INSTALL_REQUIRED_FILES = (
     ".agents/skills/professor-contact/tests/runtime/build_issue55_eval_request.py",
     ".agents/skills/professor-contact/tests/runtime/verify_issue32_e2e.py",
     ".agents/skills/professor-contact/tests/runtime/prompts/issue55-stage3-routing.txt",
+    # PC57-R2 reuses the #53 Stage-4 request builder and prompt, so a clean
+    # consumer must carry them before either runtime case may start.
+    ".agents/skills/professor-contact/tests/runtime/build_issue53_eval_request.py",
+    ".agents/skills/professor-contact/tests/runtime/prompts/issue53-stage4-missing-selection.txt",
     ".agents/skills/professor-contact/tests/runtime/prepare_issue57_stage2_fixture.py",
     ".agents/skills/professor-contact/tests/runtime/build_issue57_stage2_eval_request.py",
     ".agents/skills/professor-contact/tests/runtime/prepare_issue57_stage4_fixture.py",
@@ -762,6 +766,35 @@ def _ownership_index(edges: list[dict[str, str]]) -> tuple[dict[str, set[str]], 
     return owners, direct
 
 
+ADAPTER_FIXTURE_READY_STATUSES = (
+    "FIXTURE_READY", "HARNESS_DISPATCH_UNCONFIRMED", "HARNESS_DISPATCH_MISMATCH",
+)
+
+
+def _adapter_prerequisite_block(
+        adapter: Any, checks: list[dict[str, Any]]) -> tuple[str, str] | None:
+    """adapter@9's fail-closed prerequisite, evaluated before any delegation
+    or relation topology is interpreted.
+
+    ``BLOCKED_DEPENDENCY`` (for example a null ``codex_version``) is a runtime
+    dependency failure: blocked / NOT TESTED, never a producer FAIL and never
+    INVALID_TEST_EXECUTION.  ``INVALID_EVIDENCE``, an unknown status, or a
+    missing status is corrupted adapter evidence.  Returns the early-exit
+    ``(status, classification)`` or ``None`` when the prerequisite passes.
+    """
+    fixture_status = adapter.get("fixture_status") if isinstance(adapter, dict) else None
+    if fixture_status == "BLOCKED_DEPENDENCY":
+        _check(checks, "adapter_prerequisite", False, {"fixture_status": fixture_status})
+        return "blocked", "BLOCKED_RUNTIME_PROVIDER"
+    if fixture_status == "INVALID_EVIDENCE":
+        _check(checks, "adapter_invalid_evidence", False, {"fixture_status": fixture_status})
+        return "invalid", "INVALID_TEST_EXECUTION"
+    if fixture_status not in ADAPTER_FIXTURE_READY_STATUSES:
+        _check(checks, "adapter_fixture_status", False, {"fixture_status": fixture_status})
+        return "invalid", "INVALID_TEST_EXECUTION"
+    return None
+
+
 def _checkpoint_stage2_routing(args: argparse.Namespace) -> dict[str, Any]:
     """Verify PC57-R1's Stage-2 nested native-routing target (adapter@9).
 
@@ -804,6 +837,9 @@ def _checkpoint_stage2_routing(args: argparse.Namespace) -> dict[str, Any]:
     if not isinstance(adapter, dict) or not isinstance(response, dict):
         _check(checks, "evidence_objects", False)
         return machine("invalid", "INVALID_TEST_EXECUTION")
+    prerequisite = _adapter_prerequisite_block(adapter, checks)
+    if prerequisite:
+        return machine(*prerequisite)
 
     output = response.get("output")
     root_thread_id = output.get("thread_id") if isinstance(output, dict) else None
@@ -1122,6 +1158,9 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
     if not isinstance(adapter, dict) or not isinstance(response, dict):
         _check(checks, "evidence_objects", False)
         return machine("invalid", "INVALID_TEST_EXECUTION")
+    prerequisite = _adapter_prerequisite_block(adapter, checks)
+    if prerequisite:
+        return machine(*prerequisite)
 
     output = response.get("output")
     root_thread_id = output.get("thread_id") if isinstance(output, dict) else None

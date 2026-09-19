@@ -216,6 +216,7 @@ class Stage2RoutingVerifierTests(unittest.TestCase):
 
     def _write_evidence(self, relations, *, envelope_ok=True, extra_adapter=None):
         adapter = {
+            "fixture_status": "FIXTURE_READY",
             "delegation": {
                 "state": "confirmed",
                 "basis": ["formal_spawn_relation"],
@@ -339,6 +340,47 @@ class Stage2RoutingVerifierTests(unittest.TestCase):
         self.assertEqual(payload["status"], "blocked", payload)
         self.assertEqual(payload["classification"], "BLOCKED_RUNTIME_PROVIDER")
 
+    def test_adapter_blocked_dependency_blocks_instead_of_invalid(self):
+        # adapter@9's fail-closed dependency blocker (e.g. codex_version=null)
+        # is a runtime dependency failure: NOT TESTED, never a producer FAIL
+        # and never malformed evidence, even with a healthy nested topology.
+        payload = self._run(self._nested_relations(),
+                            extra_adapter={"fixture_status": "BLOCKED_DEPENDENCY"})
+        self.assertEqual(payload["status"], "blocked", payload)
+        self.assertEqual(payload["classification"], "BLOCKED_RUNTIME_PROVIDER")
+        self.assertFalse(payload["routing_target_proved"])
+
+    def test_adapter_invalid_evidence_and_unknown_status_are_invalid(self):
+        for fixture_status in ("INVALID_EVIDENCE", "SOMETHING_ELSE"):
+            with self.subTest(fixture_status=fixture_status):
+                payload = self._run(self._nested_relations(),
+                                    extra_adapter={"fixture_status": fixture_status})
+                self.assertEqual(payload["status"], "invalid", payload)
+                self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
+
+    def test_adapter_prerequisite_requires_the_fixture_status_field(self):
+        relations = self._nested_relations()
+        adapter = {
+            "delegation": {
+                "state": "confirmed",
+                "basis": ["formal_spawn_relation"],
+                "child_thread_ids": ["coordinator-1"],
+            },
+            "dispatch": {"thread_relations": relations},
+        }
+        adapter_path = self.root / "adapter-no-status.json"
+        adapter_path.write_text(json.dumps(adapter), encoding="utf-8")
+        response_path = self.root / "response-no-status.json"
+        response_path.write_text(json.dumps({
+            "passed": True,
+            "output": {"exit_code": 0, "termination_reason": "completed",
+                       "thread_id": "root-1", "app_server_events": []},
+        }), encoding="utf-8")
+        payload = verifier._checkpoint_stage2_routing(self.args(
+            eval_response=response_path, adapter_output=adapter_path))
+        self.assertEqual(payload["status"], "invalid", payload)
+        self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
+
     def test_malformed_relation_shape_is_invalid(self):
         payload = self._run([
             {"tool": "spawnAgent", "status": "completed",
@@ -385,9 +427,12 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
         payload = verifier._checkpoint_stage4_snapshot(self.args(program_root))
         path.write_text(json.dumps(payload), encoding="utf-8")
 
-    def _run_stage4(self, program_root, pending, *, child_id="child-sel"):
+    def _run_stage4(self, program_root, pending, *, child_id="child-sel",
+                    sender="root-1", parent="root-1",
+                    fixture_status="FIXTURE_READY"):
         adapter_path = self.root / f"adapter-{abs(hash(program_root)) % 9999}.json"
         adapter_path.write_text(json.dumps({
+            "fixture_status": fixture_status,
             "delegation": {
                 "state": "confirmed",
                 "basis": ["formal_spawn_relation"],
@@ -395,7 +440,7 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
             },
             "dispatch": {"thread_relations": [{
                 "tool": "spawnAgent", "status": "completed",
-                "sender_thread_id": "root-1", "parent_thread_id": "root-1",
+                "sender_thread_id": sender, "parent_thread_id": parent,
                 "receiver_thread_ids": [child_id],
             }]},
         }), encoding="utf-8")
@@ -509,17 +554,56 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
         self.assertEqual(partial["status"], "fail", partial)
         self.assertEqual(partial["classification"], "FAIL_PRODUCT")
 
+    def test_stage4_ownership_follows_sender_thread_id_only(self):
+        # adapter@9's formal ownership authority is sender_thread_id; the
+        # same rule the Stage-2 checkpoint proves must hold for Stage-4
+        # root-child discovery.
+        program = self.root / "program-owner"
+        issue57_fixture.build_fixture(program, self.root / "profile-owner",
+                                      output=self.root / "setup-owner.json")
+        expected = verifier._expected_pending_projection(program)
+        self.assertIsNotNone(expected)
+
+        # parent_thread_id claims the root, but the formal owner is a shadow
+        # thread: the child is not a root child, so the run is conservatively
+        # blocked (NOT TESTED), never judged against the unowned result.
+        shadow = self._run_stage4(program, expected, child_id="child-shadow",
+                                  sender="shadow-1", parent="root-1")
+        self.assertEqual(shadow["status"], "blocked", shadow)
+        self.assertEqual(shadow["classification"], "BLOCKED_OBSERVABILITY")
+        self.assertIsNone(shadow["target_child_id"])
+
+        # The reverse: sender_thread_id is the root even when the app-server
+        # attribution points elsewhere; the Path-C result is consumed
+        # normally.
+        attributed = self._run_stage4(program, expected, child_id="child-attrib",
+                                      sender="root-1", parent="unrelated-9")
+        self.assertEqual(attributed["status"], "pass", attributed)
+        self.assertEqual(attributed["classification"], "PASS")
+        self.assertEqual(attributed["target_child_id"], "child-attrib")
+
     def test_no_formal_child_is_blocked_observability_not_fail(self):
         program = self.root / "program-blocked"
         issue57_fixture.build_fixture(program, self.root / "profile-blocked",
                                       output=self.root / "setup-blocked.json")
         expected = verifier._expected_pending_projection(program)
+        pre = self.root / "pre-blocked.json"
+        post = self.root / "post-blocked.json"
+        self._write_snapshot(program, pre)
+        self._write_snapshot(program, post)
+
+        # The shape adapter@9 actually emits when no formal spawn relation
+        # was observed: delegation=unobservable with the documented reason
+        # code, never confirmed-with-empty-children.
         adapter_path = self.root / "adapter-nospawn.json"
         adapter_path.write_text(json.dumps({
+            "fixture_status": "FIXTURE_READY",
             "delegation": {
-                "state": "confirmed",
-                "basis": ["formal_spawn_relation"],
+                "state": "unobservable",
+                "formal_child_count": 0,
                 "child_thread_ids": [],
+                "basis": [],
+                "reason_code": "no_supported_formal_spawn_relation",
             },
             "dispatch": {"thread_relations": []},
         }), encoding="utf-8")
@@ -527,10 +611,6 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
         response_path.write_text(json.dumps({
             "output": {"thread_id": "root-1", "app_server_events": []},
         }), encoding="utf-8")
-        pre = self.root / "pre-blocked.json"
-        post = self.root / "post-blocked.json"
-        self._write_snapshot(program, pre)
-        self._write_snapshot(program, post)
         payload = verifier._checkpoint_stage4_needs_input(self.args(
             program,
             eval_response=response_path, adapter_output=adapter_path,
@@ -540,6 +620,55 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
         self.assertEqual(payload["classification"], "BLOCKED_OBSERVABILITY",
                          "absence of a formal child alone must never be FAIL_PRODUCT")
         self.assertIsNotNone(expected)
+
+        # A legal confirmed delegation whose sender is not the root also has
+        # no root-direct child: still BLOCKED_OBSERVABILITY.
+        adapter_path = self.root / "adapter-foreign-sender.json"
+        adapter_path.write_text(json.dumps({
+            "fixture_status": "FIXTURE_READY",
+            "delegation": {
+                "state": "confirmed",
+                "basis": ["formal_spawn_relation"],
+                "child_thread_ids": ["child-x"],
+            },
+            "dispatch": {"thread_relations": [{
+                "tool": "spawnAgent", "status": "completed",
+                "sender_thread_id": "other-root",
+                "receiver_thread_ids": ["child-x"],
+            }]},
+        }), encoding="utf-8")
+        response_path = self.root / "response-foreign-sender.json"
+        response_path.write_text(json.dumps({
+            "output": {"thread_id": "root-1", "app_server_events": []},
+        }), encoding="utf-8")
+        payload = verifier._checkpoint_stage4_needs_input(self.args(
+            program,
+            eval_response=response_path, adapter_output=adapter_path,
+            pre_snapshot=pre, post_snapshot=post,
+        ))
+        self.assertEqual(payload["status"], "blocked", payload)
+        self.assertEqual(payload["classification"], "BLOCKED_OBSERVABILITY")
+
+    def test_stage4_adapter_prerequisite_blocked_dependency_is_not_invalid(self):
+        program = self.root / "program-dep"
+        issue57_fixture.build_fixture(program, self.root / "profile-dep",
+                                      output=self.root / "setup-dep.json")
+        expected = verifier._expected_pending_projection(program)
+        pre = self.root / "pre-dep.json"
+        post = self.root / "post-dep.json"
+        self._write_snapshot(program, pre)
+        self._write_snapshot(program, post)
+        blocked = self._run_stage4(program, expected, child_id="child-dep",
+                                   fixture_status="BLOCKED_DEPENDENCY")
+        self.assertEqual(blocked["status"], "blocked", blocked)
+        self.assertEqual(blocked["classification"], "BLOCKED_RUNTIME_PROVIDER",
+                         "an adapter dependency blocker is NOT TESTED, never "
+                         "a producer FAIL nor malformed evidence")
+
+        invalid = self._run_stage4(program, expected, child_id="child-dep2",
+                                   fixture_status="INVALID_EVIDENCE")
+        self.assertEqual(invalid["status"], "invalid", invalid)
+        self.assertEqual(invalid["classification"], "INVALID_TEST_EXECUTION")
 
     def test_malformed_or_missing_candidate_state_is_invalid(self):
         program = self.root / "program-bad"

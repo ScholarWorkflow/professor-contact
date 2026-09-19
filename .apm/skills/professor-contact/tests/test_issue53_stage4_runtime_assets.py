@@ -126,6 +126,7 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
     def _write_evidence(self, result, *, child_ids=("child-1",), status="completed"):
         adapter_path = self.root / f"adapter-{len(list(self.root.glob('adapter-*.json')))}.json"
         adapter_path.write_text(json.dumps({
+            "fixture_status": "FIXTURE_READY",
             "delegation": {
                 "state": "confirmed",
                 "basis": ["formal_spawn_relation"],
@@ -237,6 +238,7 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
 
         adapter_path = self.root / "unobservable.json"
         adapter_path.write_text(json.dumps({
+            "fixture_status": "FIXTURE_READY",
             "delegation": {"state": "unobservable", "basis": [], "child_thread_ids": []},
             "dispatch": {"thread_relations": []},
         }), encoding="utf-8")
