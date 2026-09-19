@@ -243,6 +243,14 @@ class CodexCallerSkillContractTests(unittest.TestCase):
             r"child message.*只能包含该 Stage 的 Input contract 字段和任务约束",
         )
         self.assertRegex(region, r"不得在 child payload 中写[\s\S]{0,120}路由元指令")
+        self.assertIn(
+            "Delegate this task to the installed custom agent <exact-target> and wait for its result before continuing",
+            region,
+        )
+        self.assertIn(
+            "Delegate this task to the installed custom agent professor-contact-idea-generator and wait for its result before continuing",
+            region,
+        )
         self.assertNotIn(
             "Delegate this task to the installed custom agent `professor-contact-downloader`",
             region,
