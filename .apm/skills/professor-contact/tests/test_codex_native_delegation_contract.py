@@ -231,9 +231,22 @@ class CodexCallerSkillContractTests(unittest.TestCase):
 
     def test_codex_caller_region_delegates_and_waits(self):
         region = self._skill_codex_region()
-        self.assertRegex(region, r"(?is)delegate to / use[\s\S]{0,200}(?:wait|等待)")
+        self.assertIn("用户要求执行某个 Stage 本身已经触发该 Stage 的 routing gate", region)
+        self.assertIn("当前 Codex root 必须在本轮使用 Codex 原生 subagent workflow", region)
         self.assertRegex(region, r"(?is)等待该子代理完成并返回结果")
         self.assertRegex(region, r"(?is)不\*\*把子代理的 instructions 复制进父对话里自己执行")
+
+    def test_codex_routing_does_not_require_outer_prompt_delegation_words(self):
+        region = self._skill_codex_region()
+        self.assertIn("不要求用户在外层请求中补写 agent 名或 delegate to / use 句式", region)
+        self.assertNotIn("caller 自己的请求中必须明确 **delegate to / use**", region)
+        self.assertNotIn("Delegate this task to the installed custom agent", region)
+
+    def test_active_host_selects_runtime_branch_without_cli_discovery(self):
+        region = self._skill_codex_region()
+        self.assertIn("运行分支只由当前执行器/host 决定", region)
+        self.assertIn("不得用 `command -v`", region)
+        self.assertRegex(region, r"不得用 shell 调用 `(?:opencode run|codex exec)`")
 
     def test_caller_separates_delegation_target_from_child_business_payload(self):
         region = self._skill_codex_region()
@@ -243,14 +256,6 @@ class CodexCallerSkillContractTests(unittest.TestCase):
             r"child message.*只能包含该 Stage 的 Input contract 字段和任务约束",
         )
         self.assertRegex(region, r"不得在 child payload 中写[\s\S]{0,120}路由元指令")
-        self.assertIn(
-            "Delegate this task to the installed custom agent `<exact-target>` and wait for its result before continuing",
-            region,
-        )
-        self.assertIn(
-            "Delegate this task to the installed custom agent `professor-contact-idea-generator` and wait for its result before continuing",
-            region,
-        )
         self.assertIn("不得用 shell 调用 `opencode run` 或其它 CLI 冒充 Codex 委派", region)
         self.assertNotIn(
             "Delegate this task to the installed custom agent `professor-contact-downloader`",
