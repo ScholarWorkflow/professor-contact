@@ -71,36 +71,45 @@ def _codex_branch(text: str) -> str:
 
 
 def _formal_relation_children(relation) -> list[str] | None:
-    """Receivers of a relation that fully satisfies the parser's formal
-    spawn shape, or ``None``.  The parser never partially accepts a
-    malformed formal relation, so neither does this helper: receivers must
-    be a non-empty list of non-empty strings, and a bare string is never
-    iterated as if it were a receiver list."""
+    """Receivers of a relation that satisfies the parser's formal spawn
+    shape, or ``None`` for relations that are not formal spawns.
+
+    adapter@9 never partially normalizes: a ``spawnAgent`` relation without
+    a non-empty owner, without a non-empty ``receiver_thread_ids`` list, or
+    with any receiver that is not a non-empty string is corrupted evidence
+    that fails the whole payload closed before any normalized relation
+    exists, so it can never appear in ``thread_relations``.  This helper
+    therefore rejects such a relation outright instead of silently skipping
+    it."""
     if not isinstance(relation, dict) or relation.get("tool") != "spawnAgent":
         return None
     sender = relation.get("sender_thread_id")
-    if not isinstance(sender, str) or not sender:
-        return None
     receivers = relation.get("receiver_thread_ids")
-    if not isinstance(receivers, list) or not receivers:
-        return None
-    if not all(isinstance(child, str) and child for child in receivers):
-        return None
+    if (not isinstance(sender, str) or not sender
+            or not isinstance(receivers, list) or not receivers
+            or not all(isinstance(child, str) and child
+                       for child in receivers)):
+        raise ValueError(
+            "malformed formal spawnAgent relation: adapter@9 fails the whole "
+            "evidence closed before normalization, so a normalized relation "
+            "graph can never contain one")
     return receivers
 
 
 def _delegation_summary(relations) -> dict:
-    """Build adapter@9's delegation summary from a relation graph.
+    """Build adapter@9's delegation summary from a normalized relation graph.
 
-    The pinned parser derives the summary from every formal ``spawnAgent``
-    relation of the response under the frozen ``confirmed_rule``
-    conditions: the exact ``spawnAgent`` tool, a non-empty
-    ``sender_thread_id`` owner, and a non-empty ``receiver_thread_ids``
-    list of non-empty strings.  A relation violating any condition is
-    never partially accepted — the parser fails such evidence closed, so
-    it contributes no children here either.  ``child_thread_ids`` is the
-    sorted distinct concrete child set, so a synthetic fixture must never
-    hand-write a summary that disagrees with its own ``thread_relations``.
+    The pinned parser derives the summary mechanically from the formal
+    ``spawnAgent`` relations of the response under the frozen
+    ``confirmed_rule`` shape (exact ``spawnAgent`` tool, non-empty
+    ``sender_thread_id`` owner, non-empty ``receiver_thread_ids`` of
+    non-empty strings), so ``child_thread_ids`` is the sorted distinct
+    concrete child set and a synthetic fixture must never hand-write a
+    summary that disagrees with its own ``thread_relations``.  A malformed
+    formal relation is corrupted evidence that fails the whole payload
+    closed before normalization — it can never appear in a normalized
+    graph, so the helper raises on one instead of partially accepting the
+    rest of the graph.
     """
     children: set[str] = set()
     for relation in relations:
@@ -126,8 +135,8 @@ def _delegation_summary(relations) -> dict:
 
 class SyntheticDelegationSummaryShapeTests(unittest.TestCase):
     """The helper is synthetic adapter@9 evidence: it must mirror the
-    parser's ``confirmed_rule`` exactly, including its refusal to partially
-    accept a malformed formal relation."""
+    parser's ``confirmed_rule`` exactly and refuse — never normalize — any
+    relation the parser would fail closed before normalization."""
 
     def test_complete_formal_relation_yields_confirmed_summary(self):
         summary = _delegation_summary([{
@@ -140,50 +149,70 @@ class SyntheticDelegationSummaryShapeTests(unittest.TestCase):
         self.assertEqual(summary["formal_child_count"], 1)
         self.assertEqual(summary["basis"], ["formal_spawn_relation"])
 
-    def test_non_spawn_or_ownerless_relations_stay_unobservable(self):
-        for relation in (
+    def test_non_spawn_relations_do_not_contribute_children(self):
+        # A wait-tool relation is a normalized relation but never a formal
+        # spawn, so a wait-only graph stays legitimately unobservable.
+        summary = _delegation_summary([
             {"tool": "wait", "sender_thread_id": "root-1",
              "receiver_thread_ids": ["child-1"]},
+        ])
+        self.assertEqual(summary["state"], "unobservable")
+        self.assertEqual(summary["child_thread_ids"], [])
+        self.assertEqual(summary["basis"], [])
+        self.assertEqual(
+            summary["reason_code"], "no_supported_formal_spawn_relation")
+
+    def test_malformed_formal_relations_are_rejected_before_normalization(self):
+        # The parser appends a formal relation to normalized evidence only
+        # after the full shape check and fails the whole payload closed
+        # otherwise, so no normalized graph can ever contain one: the
+        # helper raises instead of deriving an ``unobservable`` summary
+        # from it.  An empty receiver list is corrupted on a completed
+        # formal spawn and silently skipped while in progress — either way
+        # it never reaches a normalized graph.
+        for relation in (
             {"tool": "spawnAgent", "status": "completed",
              "receiver_thread_ids": ["child-1"]},
             {"tool": "spawnAgent", "status": "completed",
              "sender_thread_id": "", "receiver_thread_ids": ["child-1"]},
-        ):
-            with self.subTest(relation=relation):
-                summary = _delegation_summary([relation])
-                self.assertEqual(summary["state"], "unobservable")
-                self.assertEqual(summary["child_thread_ids"], [])
-                self.assertEqual(
-                    summary["reason_code"],
-                    "no_supported_formal_spawn_relation")
-
-    def test_malformed_receiver_shapes_never_yield_confirmed(self):
-        for receivers in (None, [], "child-1", 123, ["good-child", 123],
-                          ["good-child", None], [""]):
-            with self.subTest(receivers=receivers):
-                summary = _delegation_summary([{
-                    "tool": "spawnAgent", "status": "completed",
-                    "sender_thread_id": "root-1",
-                    "receiver_thread_ids": receivers,
-                }])
-                self.assertEqual(summary["state"], "unobservable", receivers)
-                self.assertEqual(summary["child_thread_ids"], [], receivers)
-                self.assertEqual(summary["basis"], [])
-
-    def test_mixed_relations_accept_only_the_complete_ones(self):
-        summary = _delegation_summary([
+            {"tool": "spawnAgent", "status": "completed",
+             "sender_thread_id": "root-1", "receiver_thread_ids": None},
+            {"tool": "spawnAgent", "status": "completed",
+             "sender_thread_id": "root-1", "receiver_thread_ids": []},
+            {"tool": "spawnAgent", "status": "item/started",
+             "sender_thread_id": "root-1", "receiver_thread_ids": []},
+            {"tool": "spawnAgent", "status": "completed",
+             "sender_thread_id": "root-1", "receiver_thread_ids": "child-1"},
+            {"tool": "spawnAgent", "status": "completed",
+             "sender_thread_id": "root-1", "receiver_thread_ids": 123},
             {"tool": "spawnAgent", "status": "completed",
              "sender_thread_id": "root-1",
              "receiver_thread_ids": ["good-child", 123]},
             {"tool": "spawnAgent", "status": "completed",
              "sender_thread_id": "root-1",
-             "receiver_thread_ids": ["kept-child"]},
-        ])
-        # The malformed relation contributes nothing (no partial
-        # acceptance); only the complete relation's children are confirmed.
-        self.assertEqual(summary["state"], "confirmed")
-        self.assertEqual(summary["child_thread_ids"], ["kept-child"])
-        self.assertEqual(summary["formal_child_count"], 1)
+             "receiver_thread_ids": ["good-child", None]},
+            {"tool": "spawnAgent", "status": "completed",
+             "sender_thread_id": "root-1", "receiver_thread_ids": [""]},
+        ):
+            with self.subTest(relation=relation):
+                with self.assertRaises(ValueError):
+                    _formal_relation_children(relation)
+                with self.assertRaises(ValueError):
+                    _delegation_summary([relation])
+
+    def test_mixed_valid_and_malformed_relations_are_rejected_whole(self):
+        # adapter@9 fails the whole evidence closed on the malformed
+        # relation, so the valid relation is never summarized: there is no
+        # "confirmed / kept-child" partial normalization to mirror.
+        with self.assertRaises(ValueError):
+            _delegation_summary([
+                {"tool": "spawnAgent", "status": "completed",
+                 "sender_thread_id": "root-1",
+                 "receiver_thread_ids": ["good-child", 123]},
+                {"tool": "spawnAgent", "status": "completed",
+                 "sender_thread_id": "root-1",
+                 "receiver_thread_ids": ["kept-child"]},
+            ])
 
 
 class Stage2CodexSourceContractTests(unittest.TestCase):
@@ -331,9 +360,15 @@ class Stage2RoutingVerifierTests(unittest.TestCase):
         return relation
 
     def _write_evidence(self, relations, *, envelope_ok=True, extra_adapter=None):
+        # A hand-written delegation override skips the derivation: the
+        # helper raises on a malformed formal relation, and the
+        # defense-in-depth cases that need one always supply their own
+        # deliberately impossible summary.
+        override = (extra_adapter or {}).get("delegation")
         adapter = {
             "fixture_status": "FIXTURE_READY",
-            "delegation": _delegation_summary(relations),
+            "delegation": (override if override is not None
+                           else _delegation_summary(relations)),
             "dispatch": {"thread_relations": relations},
         }
         if extra_adapter:
@@ -484,6 +519,49 @@ class Stage2RoutingVerifierTests(unittest.TestCase):
         self.assertEqual(payload["status"], "invalid")
         self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
 
+    def test_summary_field_mismatches_are_invalid(self):
+        # adapter@9 freezes all five summary fields as one mechanical
+        # derivation of the relation graph, so a wrong child set, count,
+        # basis entry, or reason code is as impossible as a wrong state
+        # and fails closed the same way.  A superset basis in particular
+        # must be rejected: the parser emits exactly
+        # ["formal_spawn_relation"], never a membership-compatible list.
+        base = _delegation_summary(self._nested_relations())
+        self.assertEqual(base["state"], "confirmed")
+        for field, wrong in (
+            ("child_thread_ids", ["coordinator-1", "WRONG-CHILD"]),
+            ("formal_child_count", 3),
+            ("basis", ["formal_spawn_relation", "runtime_observation"]),
+            ("reason_code", "unexpected_reason"),
+        ):
+            with self.subTest(field=field):
+                payload = self._run(
+                    self._nested_relations(),
+                    extra_adapter={"delegation": dict(base, **{field: wrong})})
+                self.assertEqual(payload["status"], "invalid", payload)
+                self.assertEqual(payload["classification"],
+                                 "INVALID_TEST_EXECUTION")
+
+    def test_unobservable_summary_field_drift_is_invalid_not_blocked(self):
+        # The full-field gate also guards the zeroed unobservable shape: a
+        # drifted count, basis, or reason code over an empty relation graph
+        # is impossible output and must fail closed instead of reaching the
+        # conservative BLOCKED_OBSERVABILITY downgrade.
+        for field, wrong in (("formal_child_count", 1),
+                             ("basis", ["formal_spawn_relation"]),
+                             ("reason_code", None)):
+            with self.subTest(field=field):
+                summary = {
+                    "state": "unobservable", "formal_child_count": 0,
+                    "child_thread_ids": [], "basis": [],
+                    "reason_code": "no_supported_formal_spawn_relation",
+                }
+                summary[field] = wrong
+                payload = self._run([], extra_adapter={"delegation": summary})
+                self.assertEqual(payload["status"], "invalid", payload)
+                self.assertEqual(payload["classification"],
+                                 "INVALID_TEST_EXECUTION")
+
     def test_provider_failure_before_target_is_blocked_runtime(self):
         payload = self._run([], envelope_ok=False)
         self.assertEqual(payload["status"], "blocked", payload)
@@ -589,16 +667,20 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
 
     def _run_stage4(self, program_root, pending, *, child_id="child-sel",
                     sender="root-1", parent="root-1",
-                    fixture_status="FIXTURE_READY"):
+                    fixture_status="FIXTURE_READY",
+                    delegation_override=None):
         adapter_path = self.root / f"adapter-{abs(hash(program_root)) % 9999}.json"
         relations = [{
             "tool": "spawnAgent", "status": "completed",
             "sender_thread_id": sender, "parent_thread_id": parent,
             "receiver_thread_ids": [child_id],
         }]
+        delegation = (delegation_override
+                      if delegation_override is not None
+                      else _delegation_summary(relations))
         adapter_path.write_text(json.dumps({
             "fixture_status": fixture_status,
-            "delegation": _delegation_summary(relations),
+            "delegation": delegation,
             "dispatch": {"thread_relations": relations},
         }), encoding="utf-8")
         contents = [{
@@ -851,6 +933,37 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
                 pre_snapshot=pre, post_snapshot=post))
             self.assertEqual(payload["status"], "invalid", payload)
             self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
+
+    def test_summary_field_mismatches_are_invalid(self):
+        # Same full-field gate as Stage 2, on the Stage-4 checkpoint: any
+        # frozen summary field that disagrees with the mechanical
+        # derivation of the adapter's own relation graph — child set,
+        # count, basis, or reason code — fails closed before the
+        # observability verdict.  A superset basis in particular must be
+        # rejected: the parser emits exactly ["formal_spawn_relation"].
+        program = self.root / "program-field-drift"
+        issue57_fixture.build_fixture(program, self.root / "profile-field-drift",
+                                      output=self.root / "setup-field-drift.json")
+        expected = verifier._expected_pending_projection(program)
+        self.assertIsNotNone(expected)
+        base = {
+            "state": "confirmed", "formal_child_count": 1,
+            "child_thread_ids": ["child-drift"],
+            "basis": ["formal_spawn_relation"], "reason_code": None,
+        }
+        for field, wrong in (
+            ("child_thread_ids", ["WRONG-CHILD"]),
+            ("formal_child_count", 2),
+            ("basis", ["formal_spawn_relation", "runtime_observation"]),
+            ("reason_code", "unexpected_reason"),
+        ):
+            with self.subTest(field=field):
+                payload = self._run_stage4(
+                    program, expected, child_id="child-drift",
+                    delegation_override=dict(base, **{field: wrong}))
+                self.assertEqual(payload["status"], "invalid", payload)
+                self.assertEqual(payload["classification"],
+                                 "INVALID_TEST_EXECUTION")
 
     def test_stage4_adapter_prerequisite_blocked_dependency_is_not_invalid(self):
         program = self.root / "program-dep"
