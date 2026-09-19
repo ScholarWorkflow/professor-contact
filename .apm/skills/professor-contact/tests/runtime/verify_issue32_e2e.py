@@ -51,9 +51,26 @@ STAGE5_NON_FIRST_CHOICE_PHRASE = "先生の研究室を志望として出願さ�
 STAGE5_SIGNATURE_SLOT = "出身の{name}（"
 STAGE5_LEARNING_SLOT_TAIL = " 先生の研究室を"
 STAGE5_SENT_DATE_SLOT = "{date}に初回連絡しました。"
+INSTALL_REQUIRED_FILES = (
+    ".agents/skills/professor-contact/SKILL.md",
+    ".agents/skills/professor-contact/scripts/contact_state.py",
+    ".codex/agents/professor-contact.toml",
+    ".codex/agents/professor-contact-idea-generator.toml",
+    ".codex/agents/professor-contact-style-validator.toml",
+    ".agents/skills/professor-contact/tests/runtime/prepare_issue55_stage3_fixture.py",
+    ".agents/skills/professor-contact/tests/runtime/build_issue55_eval_request.py",
+    ".agents/skills/professor-contact/tests/runtime/verify_issue32_e2e.py",
+    ".agents/skills/professor-contact/tests/runtime/prompts/issue55-stage3-routing.txt",
+)
 STAGE4_PROGRAM_OUTPUTS = {
     "套磁选择.json": Path("教授研究/套磁选择.json"),
     "邮件输入.json": Path("教授研究/邮件输入.json"),
+}
+STAGE3_SNAPSHOT_OUTPUTS = {
+    "套磁候选状态.json": Path("教授研究/X分野/Example Professor/套磁候选状态.json"),
+    "套磁想法候选.md": Path("教授研究/X分野/Example Professor/套磁想法候选.md"),
+    "套磁想法候选总览.md": Path("教授研究/套磁想法候选总览.md"),
+    **STAGE4_PROGRAM_OUTPUTS,
 }
 
 
@@ -231,13 +248,12 @@ def _checkpoint_install(args: argparse.Namespace) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     consumer = Path(args.consumer_root or "").resolve()
     _check(checks, "consumer_root_exists", bool(args.consumer_root) and consumer.is_dir(), str(consumer))
-    expected = [consumer / ".agents/skills/professor-contact/SKILL.md",
-                consumer / ".codex/agents/professor-contact.toml",
-                consumer / ".codex/agents/professor-contact-email-generator.toml"]
+    expected = [consumer / relative for relative in INSTALL_REQUIRED_FILES]
+    expected.append(consumer / ".codex/agents/professor-contact-email-generator.toml")
     for path in expected:
         _check(checks, f"installed:{path.relative_to(consumer)}", path.is_file(), str(path))
-        if path.exists():
-            _check(checks, f"contained:{path.name}", path.resolve().is_relative_to(consumer), str(path.resolve()))
+        _check(checks, f"contained:{path.relative_to(consumer)}",
+               path.resolve().is_relative_to(consumer), str(path.resolve()))
     generator_path = consumer / ".codex/agents/professor-contact-email-generator.toml"
     if generator_path.is_file():
         try:
@@ -486,6 +502,72 @@ def _checkpoint_stage3_final(args: argparse.Namespace) -> dict[str, Any]:
     return _finish(checks, candidate_state=str(path), candidate_ids=[row.get("id") for row in candidates if isinstance(row, dict)])
 
 
+def _stage3_artifacts(root: Path) -> dict[str, dict[str, Any]]:
+    artifacts: dict[str, dict[str, Any]] = {}
+    for name, relative in STAGE3_SNAPSHOT_OUTPUTS.items():
+        path = root / relative
+        exists = path.exists()
+        artifacts[name] = {
+            "exists": exists,
+            "sha256": _sha256(path) if path.is_file() else None,
+        }
+    return artifacts
+
+
+def _checkpoint_stage3_snapshot(args: argparse.Namespace) -> dict[str, Any]:
+    root = Path(args.program_root).resolve()
+    artifacts = _stage3_artifacts(root)
+    checks: list[dict[str, Any]] = []
+    _check(checks, "program_root_exists", root.is_dir(), str(root))
+    for name, artifact in artifacts.items():
+        _check(checks, f"snapshot:{name}", set(artifact) == {"exists", "sha256"}, artifact)
+        _check(
+            checks,
+            f"snapshot_hash_shape:{name}",
+            (not artifact["exists"] and artifact["sha256"] is None)
+            or (artifact["exists"] and isinstance(artifact["sha256"], str)
+                and len(artifact["sha256"]) == 64),
+            artifact,
+        )
+    return {
+        "status": "pass" if all(row["status"] == "pass" for row in checks) else "fail",
+        "checks": checks,
+        "artifacts": artifacts,
+    }
+
+
+def _load_stage3_snapshot(path: Path) -> dict[str, dict[str, Any]]:
+    payload = _load(path)
+    if isinstance(payload, dict) and isinstance(payload.get("artifacts"), dict):
+        payload = payload["artifacts"]
+    if not isinstance(payload, dict):
+        raise ValueError("stage3 snapshot must be an object")
+    expected = set(STAGE3_SNAPSHOT_OUTPUTS)
+    if set(payload) != expected:
+        raise ValueError(f"stage3 snapshot artifact names differ: {set(payload)!r}")
+    result: dict[str, dict[str, Any]] = {}
+    for name in expected:
+        row = payload[name]
+        if not isinstance(row, dict) or set(row) != {"exists", "sha256"}:
+            raise ValueError(f"invalid stage3 snapshot row: {name}")
+        if not isinstance(row["exists"], bool):
+            raise ValueError(f"invalid exists flag: {name}")
+        if row["exists"] and (not isinstance(row["sha256"], str)
+                               or len(row["sha256"]) != 64):
+            raise ValueError(f"missing sha256 for existing artifact: {name}")
+        if not row["exists"] and row["sha256"] is not None:
+            raise ValueError(f"absent artifact has a sha256: {name}")
+        result[name] = row
+    return result
+
+
+def _valid_issue55_validation_record(value: Any) -> bool:
+    """Validate the stricter terminal record for the fixed Stage-3 case."""
+    return (_valid_validation_record(value)
+            and isinstance(value, dict)
+            and value.get("result") in {"pass", "fail_after_2_rounds"})
+
+
 def _valid_validation_record(value: Any) -> bool:
     if not isinstance(value, dict) or value.get("result") not in (
             "pass", "fail_after_2_rounds", "skipped"):
@@ -501,6 +583,208 @@ def _valid_validation_record(value: Any) -> bool:
     if result == "skipped" and rounds > 2:
         return False
     return isinstance(value.get("issues"), list)
+
+
+def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
+    """Verify PC55-R1's root routing and terminal Stage-3 product state.
+
+    The adapter's formal relation is the only delegation evidence consumed
+    here.  In particular, this checkpoint deliberately does not inspect child
+    names, roles, prose, ordering, or completion claims.
+    """
+    checks: list[dict[str, Any]] = []
+    root = Path(args.program_root).resolve()
+    root_thread_id: str | None = None
+    direct_children: set[str] = set()
+    nested_formal_spawns: list[dict[str, Any]] = []
+
+    def machine(status: str, classification: str) -> dict[str, Any]:
+        return {
+            "status": status,
+            "classification": classification,
+            "root_thread_id": root_thread_id,
+            "root_direct_spawn_child_ids": sorted(direct_children),
+            "nested_formal_spawns": nested_formal_spawns,
+            "checks": checks,
+        }
+
+    pre_path = getattr(args, "pre_snapshot", None)
+    post_path = getattr(args, "post_snapshot", None)
+    if not pre_path or not post_path:
+        _check(checks, "snapshots_supplied", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    try:
+        pre = _load_stage3_snapshot(Path(pre_path))
+        post = _load_stage3_snapshot(Path(post_path))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        _check(checks, "snapshots_readable", False, str(exc))
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    expected_pre = {
+        name: {"exists": False, "sha256": None}
+        for name in STAGE3_SNAPSHOT_OUTPUTS
+    }
+    _check(checks, "pre_zero_write_snapshot", pre == expected_pre, pre)
+    current = _stage3_artifacts(root)
+    _check(checks, "post_matches_current", post == current,
+           {"post": post, "current": current})
+    if pre != expected_pre or post != current:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    try:
+        adapter = _load(Path(args.adapter_output)) if args.adapter_output else None
+        response = _load(Path(args.eval_response)) if args.eval_response else None
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "evidence_readable", False, str(exc))
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    if not isinstance(adapter, dict) or not isinstance(response, dict):
+        _check(checks, "evidence_objects", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    output = response.get("output")
+    root_thread_id = output.get("thread_id") if isinstance(output, dict) else None
+    events = output.get("app_server_events") if isinstance(output, dict) else None
+    _check(checks, "common_envelope_passed", response.get("passed") is True,
+           response.get("passed"))
+    _check(checks, "common_envelope_exit_code",
+           isinstance(output, dict) and output.get("exit_code") == 0,
+           output.get("exit_code") if isinstance(output, dict) else None)
+    _check(checks, "common_envelope_completed",
+           isinstance(output, dict) and output.get("termination_reason") == "completed",
+           output.get("termination_reason") if isinstance(output, dict) else None)
+    _check(checks, "raw_eval_surface",
+           isinstance(root_thread_id, str) and bool(root_thread_id.strip())
+           and isinstance(events, list),
+           {"thread_id": root_thread_id, "events": type(events).__name__})
+    if not all(row["status"] == "pass" for row in checks[-4:]):
+        return machine("blocked", "BLOCKED_RUNTIME/PROVIDER")
+
+    delegation = adapter.get("delegation")
+    if not isinstance(delegation, dict):
+        _check(checks, "adapter_delegation_object", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    if delegation.get("state") == "unobservable":
+        _check(checks, "delegation_observable", False, delegation)
+        return machine("blocked", "BLOCKED_OBSERVABILITY")
+    _check(checks, "delegation_confirmed", delegation.get("state") == "confirmed",
+           delegation.get("state"))
+    basis = delegation.get("basis")
+    _check(checks, "adapter_formal_basis",
+           isinstance(basis, list) and "formal_spawn_relation" in basis, basis)
+    if delegation.get("state") != "confirmed" or not isinstance(basis, list) \
+            or "formal_spawn_relation" not in basis:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    dispatch = adapter.get("dispatch")
+    relations = dispatch.get("thread_relations") if isinstance(dispatch, dict) else None
+    if not isinstance(relations, list):
+        _check(checks, "adapter_relations", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    owners: dict[str, set[str]] = {}
+    for relation in relations:
+        if not isinstance(relation, dict) or relation.get("tool") != "spawnAgent":
+            continue
+        sender = relation.get("sender_thread_id")
+        children = relation.get("receiver_thread_ids")
+        if not isinstance(sender, str) or not sender or not isinstance(children, list):
+            _check(checks, "adapter_relation_shape", False, relation)
+            return machine("invalid", "INVALID_TEST_EXECUTION")
+        for child in children:
+            if not isinstance(child, str) or not child:
+                _check(checks, "adapter_child_id_shape", False, relation)
+                return machine("invalid", "INVALID_TEST_EXECUTION")
+            owners.setdefault(child, set()).add(sender)
+            if sender == root_thread_id:
+                direct_children.add(child)
+        if sender != root_thread_id:
+            nested_formal_spawns.append({
+                "sender_thread_id": sender,
+                "receiver_thread_ids": list(children),
+            })
+    ownership_conflicts = {
+        child: sorted(senders) for child, senders in owners.items() if len(senders) != 1
+    }
+    _check(checks, "formal_ownership", not ownership_conflicts, ownership_conflicts)
+    if ownership_conflicts:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    if not owners:
+        _check(checks, "formal_spawn_relation_surface", False)
+        return machine("blocked", "BLOCKED_OBSERVABILITY")
+    _check(checks, "no_nested_formal_spawn", not nested_formal_spawns,
+           nested_formal_spawns)
+    if nested_formal_spawns:
+        return machine("fail", "FAIL_PRODUCT")
+    _check(checks, "root_direct_spawn_child_count", len(direct_children) >= 2,
+           {"observed": len(direct_children), "required": 2})
+
+    state_path = _professor_dir(root) / "套磁候选状态.json"
+    try:
+        state = _load(state_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "candidate_state_readable", False, str(exc))
+        return machine("fail", "FAIL_PRODUCT")
+    if not isinstance(state, dict):
+        _check(checks, "candidate_state_object", False, type(state).__name__)
+        return machine("fail", "FAIL_PRODUCT")
+    _check(checks, "state_schema", state.get("schema") == 2
+           and state.get("kind") == CANDIDATE_STATE_KIND
+           and state.get("identity_version") == DIRECTION_IDENTITY_VERSION
+           and state.get("generator_contract_version") == STAGE3_GENERATOR_CONTRACT_VERSION)
+    directions = state.get("directions")
+    direction_rows = [row for row in directions if isinstance(row, dict)
+                      and row.get("direction_id") == DIRECTION_ID] \
+        if isinstance(directions, list) else []
+    direction = direction_rows[0] if len(direction_rows) == 1 else None
+    _check(checks, "direction_row_unique", len(direction_rows) == 1,
+           {"observed": len(direction_rows), "required": 1})
+    candidates = direction.get("candidates") if isinstance(direction, dict) else None
+    if not isinstance(candidates, list):
+        candidates = []
+    candidates = [row for row in candidates if isinstance(row, dict)]
+    _check(checks, "candidate_count", 3 <= len(candidates) <= 5, len(candidates))
+    _check(checks, "candidate_ids_stable", all(
+        isinstance(row.get("id"), str) and bool(row.get("id"))
+        and row.get("direction_ids") == [DIRECTION_ID]
+        for row in candidates))
+    _check(checks, "direction_present", direction is not None)
+    validator = state.get("validator")
+    results = validator.get("results") if isinstance(validator, dict) else None
+    _check(checks, "validator_result_keys",
+           isinstance(results, dict) and set(results) == {DIRECTION_ID},
+           sorted(results) if isinstance(results, dict) else results)
+    result = results.get(DIRECTION_ID) if isinstance(results, dict) else None
+    _check(checks, "validation_present", _valid_issue55_validation_record(result), result)
+    rounds = result.get("rounds") if isinstance(result, dict) else None
+    expected_root_children = (
+        2 * rounds
+        if isinstance(rounds, int) and not isinstance(rounds, bool)
+        else None
+    )
+    _check(
+        checks,
+        "root_direct_spawn_child_count_matches_rounds",
+        expected_root_children is not None
+        and len(direct_children) == expected_root_children,
+        {
+            "observed": len(direct_children),
+            "rounds": rounds,
+            "required": expected_root_children,
+        },
+    )
+
+    stage4_current = {name: current[name] for name in STAGE4_PROGRAM_OUTPUTS}
+    stage4_absent = all(not row["exists"] for row in stage4_current.values())
+    _check(checks, "stage4_outputs_absent", stage4_absent, stage4_current)
+    product_checks = [row for row in checks if row["name"] in {
+        "state_schema", "direction_row_unique", "candidate_count",
+        "candidate_ids_stable", "direction_present", "validator_result_keys",
+        "validation_present", "root_direct_spawn_child_count",
+        "root_direct_spawn_child_count_matches_rounds", "stage4_outputs_absent",
+    }]
+    if not stage4_absent or not all(row["status"] == "pass" for row in product_checks):
+        return machine("fail", "FAIL_PRODUCT")
+    return machine("pass", "PASS")
 
 
 def _stage4_artifacts(root: Path) -> dict[str, dict[str, Any]]:
@@ -1258,6 +1542,8 @@ CHECKPOINTS = {
     "stage1-final": _checkpoint_stage1_final,
     "stage2-final": _checkpoint_stage2_final,
     "stage3-final": _checkpoint_stage3_final,
+    "stage3-snapshot": _checkpoint_stage3_snapshot,
+    "stage3-routing": _checkpoint_stage3_routing,
     "stage4-snapshot": _checkpoint_stage4_snapshot,
     "stage4-needs-input": _checkpoint_stage4_needs_input,
     "make-stage4-selection": _checkpoint_make_stage4_selection,

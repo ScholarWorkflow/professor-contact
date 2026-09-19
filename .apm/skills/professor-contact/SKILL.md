@@ -399,12 +399,28 @@ task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <
 
 Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>.toml`，Codex 按 `name` 识别）。调用语义只使用 Codex 官方文档支持的委派方式：
 
-- **使用 Codex 官方文档所定义的原生委派能力**：需要 child 时，必须使用 Codex 官方文档所定义的原生委派能力（native subagent/custom-agent delegation）完成委派——按 exact installed name 委派已安装的 named custom agent 并等待其结果；不得 inline 或模拟 child 的业务，也不得把 `exec_command` shell、`curl`、另起 Codex/OpenCode/eval 会话当作委派的替代路径。只有真实的机器级/运行时委派错误才能记为 Codex runtime/feature blocker。任何未公开或未确认的运行时特性、固定工具目录/namespace、私有 spawn schema 或内部事件/工具名，都不是普通 Codex 委派的前提；不得由父代理自行模拟 child 完成业务；
+- **运行分支只由当前执行器/host 决定**：当前 host 是 Codex 时始终执行本 Codex 分支；不得用 `command -v`、机器上是否装有 `opencode` / `codex` CLI，或任何 CLI 探测结果改选 OpenCode 分支。不得用 shell 调用 `opencode run` 或 `codex exec` 来代替当前 root 的原生委派，也不得另发 eval 请求来绕过本轮编排；
+- **需要 child 时直接委派**：当本 contract 要求 child 时，直接要求 Codex 使用已安装的 exact named custom agent，并等待它返回结果；不要求额外的能力探测作为 delegation 前置条件，也不得把 `exec_command` shell、`curl`、另起 Codex/OpenCode/eval 会话当作委派的替代路径。只有真实的 machine-level delegation failure 才记录 Codex runtime/feature blocker，不得由 parent inline 模拟或代替 child 完成业务。任何未公开或未确认的运行时特性、固定工具目录/namespace、私有 spawn schema 或内部事件/工具名，都不是普通 Codex 委派的前提；
 - **委派 payload 只带本阶段业务输入**：委派 payload 只携带该 Stage 的 Input contract 业务输入字段，不把调用者自己收到的路由指令原文转发给 child；任何 coordinator 不得把任务委派给与自身机器名相同的 named custom agent，同一委派链里同一个机器名只允许出现一层。runtime 里观察到过的失效形态：child 收到写给调用者的「交给已安装的 `professor-contact-analyzer`」这类路由指令后照做，又委派了一个同名 agent，于是每跳多出一层包装，嵌套叶子被推到 runtime 已无法 settlement 的深度；
-- 在 prompt 中显式要求 Codex **delegate to / use** 指定的 exact named custom agent（例如 “Delegate this task to the installed custom agent `professor-contact-downloader` and wait for its result before continuing”），并把该 Stage 的 Input contract 字段原样写进委派 prompt；
+- **delegation target 与 child message 分开**：caller 选择/使用已安装的 exact named custom agent 作为 delegation target；发送给 child 的 `child message` 只能包含该 Stage 的 Input contract 字段和任务约束。不得在 child payload 中写「Delegate this task to ...」或「交给已安装的 ...」这类路由元指令，也不得把 caller 自己收到的路由指令转发给 child；
+- **Stage 请求就是 root 的委派触发条件**：用户要求执行某个 Stage 本身已经触发该 Stage 的 routing gate；不要求用户在外层请求中补写 agent 名或 delegate to / use 句式。当前 Codex root 必须在本轮使用 Codex 原生 subagent workflow，按 routing matrix 选择已安装的 exact named custom agent 作为 delegation target，并等待结果；不得用 shell 调用 `opencode run` 或其它 CLI 冒充 Codex 委派；child 返回后，caller 才把结果用于后续 Stage；
 - 等待该子代理完成并返回结果后，才把结果用于后续 Stage；
 - **不**把子代理的 instructions 复制进父对话里自己执行，也**不**让父代理自称目标角色来冒充“已调用指定代理”；
 - **不**假设任何 Codex 官方文档未公开的 spawn API、调用参数或事件字段；runtime 无法用机器字段证明 child/agent 身份时，在证据里如实记录 observability gap，不发明字段补洞。
+
+#### Codex 下 Stage 1–5 顶层 routing matrix
+
+用户要求执行某个 Stage 本身就是 routing gate。顶层 caller 必须先把该 Stage 委派给下表中的 exact installed named custom agent，并等待结果后再继续；caller 不得因为能够运行 `contact_state.py` 就越过 Stage agent，也不得把 child instructions 复制到 root 自己执行。
+
+| Stage | 顶层 caller 必须先委派 | caller 必须等待 | caller 禁止 inline 的 owner 工作 |
+|---|---|---|---|
+| 1 | `professor-contact-downloader` | 是 | Stage-1 downloader business / collector fill routing |
+| 2 | `professor-contact-analyzer` | 是 | Stage-2 evidence/analyzer business |
+| 3 | `professor-contact-idea-generator` | 是 | `stage3-plan`、candidate model generation、candidate result file、`stage3-finalize` |
+| 4 | `professor-contact-selection` | 是 | pending selection 模拟、默认选择、`stage4-finalize` |
+| 5 | `professor-contact-email-generator` | 是 | `stage5-plan`、4句模型 payload、humanizer business、`stage5-finalize`、`email-validator` |
+
+Stage 4 缺少 selection 仍由 child 返回 `needs_input` + `pending_selection`；下一用户回合带真实 selection 做 fresh delegation。Stage 5 的 email-validator loop 仍归 email-generator 所有，不由顶层 caller 直接启动。
 
 #### Stage 2 在 Codex 下的委派链与用户选择
 
@@ -425,11 +441,12 @@ Codex 的 non-interactive 执行（`codex exec`）没有「暂停一个嵌套子
 
 #### Codex 下的 Stage 1：委派 exact named custom agent `professor-collector`
 
-缺 PDF 补齐时，Codex 侧使用 Codex 官方文档所定义的原生委派能力委派 installed named custom agent `professor-collector` 并**等待其结果**再继续；若原生委派在机器/运行时层面失败，记为 Codex runtime/feature blocker，绝不由本父代理自行补下 PDF。输入保持收窄为 `folder_path` + `pdf_only:true` + `item_keys=<缺失 item keys>`，以及仅在 caller 显式提供合法值时追加同值 `access_mode=<oa_only|allow_non_oa>`。缺省时完全省略该字段；Codex non-interactive 成功路径必须显式接收真实用户决定。非法值只在 `pdf_fill_needed` 时于 collector spawn 前返回结构化 `error`；`noop`/`needs_resolution` 不消费或校验它。绝不同时传 `professors`，也绝不扩大下载范围。OpenCode 的 Task 委派写法只属于 OpenCode 分支；Codex 分支不复制 collector 的 agent body、不由父代理 inline 模拟 collector，也不直接调 `pdf_fill.py`/worker 绕过 collector。collector 返回后无条件重跑 `contact_stage1.py build`，empty runtime result 仍只允许一次相同输入重试，且 retry 保持 `access_mode` 同值或同样省略。
+缺 PDF 补齐时，Codex 侧直接委派 installed named custom agent `professor-collector` 并**等待其结果**再继续；若原生委派在机器/运行时层面失败，记为 Codex runtime/feature blocker，绝不由本父代理自行补下 PDF。输入保持收窄为 `folder_path` + `pdf_only:true` + `item_keys=<缺失 item keys>`，以及仅在 caller 显式提供合法值时追加同值 `access_mode=<oa_only|allow_non_oa>`。缺省时完全省略该字段；Codex non-interactive 成功路径必须显式接收真实用户决定。非法值只在 `pdf_fill_needed` 时于 collector spawn 前返回结构化 `error`；`noop`/`needs_resolution` 不消费或校验它。绝不同时传 `professors`，也绝不扩大下载范围。OpenCode 的 Task 委派写法只属于 OpenCode 分支；Codex 分支不复制 collector 的 agent body、不由父代理 inline 模拟 collector，也不直接调 `pdf_fill.py`/worker 绕过 collector。collector 返回后无条件重跑 `contact_stage1.py build`，empty runtime result 仍只允许一次相同输入重试，且 retry 保持 `access_mode` 同值或同样省略。
 
 #### Codex 下的 Stage 5：caller choices 作为业务输入
 
 调用方可以把完整的 canonical JSON `choices` 作为 Stage 5 业务输入交给 `professor-contact-email-generator`。它不是 Codex runtime 的委派参数，也不是新的长期状态文件：调用方只在本轮把 JSON 原样写入临时文件，随后通过现有 runner 的 `--choices <临时文件>` 传入；不得默认、翻译、按位置重排或重新映射字段。每行必须带真实的非空 `email_id`、布尔 `first_choice`、非空 `signature_name` 与 `learning`；`both`/`followup` 还必须带真实的 `initial_sent_date`，`first` 不要求该日期。缺少完整 `choices` 时返回 `needs_input` 且不写最终邮件；有 choices 时仍由 runner 负责 contact-evidence、冲突与验证门禁。
+
 
 ### Stage 3/4 编排边界（业务规则一份，runtime 调用方式分开）
 
@@ -438,7 +455,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 **Stage 3 validator 校验循环**（两 runtime 共同遵守：validator 只报告不改写；fail 后只修正被指出的候选并重新 finalize；**最多 2 轮**；顺序依赖——validator 必须在 finalize 完成后运行，修正 finalize 完成后才能跑下一轮 validator；最终真实 result/rounds/issues 都经 `stage3-record-validation` 写入状态；绝不允许任何人自称「validator 已通过」代替真实委派与真实记录）：
 
 - **OpenCode（OpenCode-only 嵌套路径）**：`professor-contact-idea-generator` 在 `stage3-finalize` 后自己通过 OpenCode 原生 Task 委派启动 `professor-contact-style-validator` 白话校验循环（完整调用示例见上方「OpenCode 分支」与该 agent 的 Step 3.6；嵌套 Task 语法是 OpenCode 专属 API，不得写成跨 runtime 通用调用），fail → 修正 → 重新 finalize → 再校验，最多 2 轮，由 idea-generator 运行 `stage3-record-validation`。
-- **Codex（调用线程 sibling 编排）**：调用线程先委派 named `professor-contact-idea-generator` 并**等待生成 + `stage3-finalize` 完成**，再委派 named `professor-contact-style-validator`（输入 = 渲染后的 `套磁想法候选.md` 绝对路径 + `artifact: candidates`）；fail 且未到第 2 轮时，调用线程把 validator 真实 findings 原样交回新一轮 idea-generator——该轮只修正被指出的候选、重新 finalize，绝不重读 Stage 2、绝不扩展方向事实——然后再次委派 style-validator；第 2 轮后无论 pass / fail_after_2_rounds，都由调用线程用 `stage3-record-validation` 记录真实结果。两个 agent 都必须是 #27 已安装的 exact named custom agent，不把 OpenCode `task(...)` 翻译成任何 Codex 私有调用签名。**委派手段**：按上方 Codex 分支所定义的原生委派能力（native subagent/custom-agent delegation），按 exact installed name 要求 Codex 委派已安装的 named custom agent 执行该 Stage 并等待其结果（附上 Input contract 字段），并等待需要的 child 完成后再继续；spawn/wait 编排由 Codex 运行时自己负责，内部工具/事件名、私有函数签名或 request-side 字段形状都不属于产品 contract，不得写进本文件或委派 prompt——不得 inline 模拟 named agent、不得经 shell 嵌套其它 CLI、不得发明新的调用签名。
+- **Codex（root caller 的 sibling 编排）**：用户要求执行 Stage 3 时，root caller 立即使用 Codex 原生 subagent workflow 选择 installed named `professor-contact-idea-generator` 作为 delegation target，child message 只传 Stage 3 Input contract 字段和任务约束，并**等待生成 + `stage3-finalize` 完成**；外层用户请求不需要出现 agent 名或委派句式。随后 root caller 再选择 installed named `professor-contact-style-validator`（输入 = 渲染后的 `套磁想法候选.md` 绝对路径 + `artifact: candidates`），并等待需要的 child 完成后再继续；fail 且未到第 2 轮时，root caller 把 validator 真实 findings 原样交回新一轮 idea-generator——该轮只修正被指出的候选、重新 finalize，绝不重读 Stage 2、绝不扩展方向事实——然后再次委派 style-validator；第 2 轮后无论 pass / fail_after_2_rounds，都由 root caller 用 `stage3-record-validation` 记录真实结果。root caller 不得 inline 运行 `stage3-plan`、candidate model generation、candidate result file 或 `stage3-finalize`。两个 agent 都必须是 #27 已安装的 exact named custom agent，不把 OpenCode `task(...)` 翻译成任何 Codex 私有调用签名。spawn/wait 编排由 Codex 运行时自己负责，内部工具/事件名、私有函数签名或 request-side 字段形状都不属于产品 contract，不得写进本文件或 child message——不得 inline 模拟 named agent、不得经 shell 嵌套其它 CLI、不得发明新的调用签名。
 
 **Stage 4 用户选择边界**（两 runtime 共同遵守：候选机器事实源只有 `套磁候选状态.json`；没有用户真实选择就绝不 finalize、绝不默认/推荐/第一项自动选择；`套磁选择.json` 与 `邮件输入.json` 只由 `stage4-finalize` 写）：
 

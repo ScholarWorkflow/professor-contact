@@ -1,27 +1,21 @@
-"""Deterministic Codex orchestration contract (issue #51 behaviour, issue #47 layout).
+"""Deterministic Codex orchestration contract (issue #51/#55 behaviour, issue #47 layout).
 
 The merge gate is intentionally identity-agnostic.  fixtures@9 treats
 requested_role / loaded_identity as optional diagnostics, so this suite must
 not turn exact child names or named-role matches into PASS/FAIL conditions.
 
 These tests cover only producer-owned orchestration invariants that are
-mechanically provable from source.  For Codex, when the business flow needs a
-child the coordinator must use Codex's *documented native subagent/custom-agent
-delegation* (delegate to the exact installed name and wait), never inline or
-simulate the child, keep the delegation chain non-recursive (the payload
-carries only this stage's business fields and no coordinator delegates to its
-own machine name), reserve "runtime blocker" for a real machine/runtime
-delegation error, keep Codex/OpenCode invocation syntax isolated, and keep
-characterization-only tool envelopes out of production text.  An under-
-development / default-off runtime feature (Code Mode, programmatic tool-calling
-discovery) must never become a production prerequisite.
-
-The analyzer is a target-scoped projection (issue #47): the shared root
-``.apm/agents`` has no ``professor-contact-analyzer.agent.md``; Codex reads the
-Codex package projection and OpenCode reads the OpenCode package projection.
-Every other agent document is target-agnostic and lives at the root, so the
-tests resolve source paths through separate Codex/OpenCode resolvers instead of
-one generic path.
+mechanically provable from source: delegate and wait when a child is required
+through Codex's *documented native subagent/custom-agent delegation* (direct
+delegation to the exact installed name, with no capability probe as a
+prerequisite), never inline or simulate the child, fail closed on a real
+machine-level delegation error, keep Codex/OpenCode invocation syntax isolated,
+keep the delegation chain non-recursive (the payload carries only this stage's
+business fields and no coordinator delegates to its own machine name), keep
+characterization-only tool envelopes out of production text, and lock the
+top-level Stage 1–5 routing matrix and the Stage 3/5 ownership boundaries.  An
+under-development / default-off runtime feature (Code Mode, programmatic
+tool-calling discovery) must never become a production prerequisite.
 """
 from pathlib import Path
 import re
@@ -73,33 +67,39 @@ CODEX_OBSOLETE_PREREQUISITES = (
 
 # Each coordinator source document may state the invariant in its own
 # language; every invariant needs at least one of its literals, verbatim.
-# This replaces issue #51's obsolete "discover the capability first" gate with
-# the reconciled documented-native-delegation contract (issue #47 Phase 4).
+# This replaces issue #51's obsolete "discover the capability first" gate and
+# issue #55's routing correction with one documented-native-delegation
+# contract: direct delegation to the exact installed name, no capability probe
+# prerequisite, no shell/eval substitution.
 CODEX_NATIVE_DELEGATION_INVARIANTS = {
     "documented-native-delegation": (
         "使用 Codex 官方文档所定义的原生委派能力",
         "documented native subagent/custom-agent delegation",
+        "需要 child 时直接委派",
+        "directly delegate the PDF fill to the installed named custom agent",
+        "directly delegate to the installed named custom agent",
     ),
     "delegate-exact-name-and-wait": (
         "按 exact installed name 委派已安装的 named custom agent 并等待其结果",
         "delegate to the exact installed named custom agent and wait for its result",
+        "直接要求 Codex 使用已安装的 exact named custom agent，并等待它返回结果",
     ),
     "no-inline-no-shell-eval": (
         "不得 inline 或模拟 child 的业务",
         "never inline or simulate the child's work",
+        "不得由 parent inline 模拟或代替 child 完成业务",
     ),
     "only-real-machine-error-blocker": (
         "只有真实的机器级/运行时委派错误才能记为 Codex runtime/feature blocker",
         "only a real machine-level/runtime delegation error may be recorded as a "
         "Codex runtime/feature blocker",
+        "只有真实的 machine-level delegation failure 才记录 Codex runtime/feature blocker",
     ),
     "no-undocumented-prerequisite": (
         "都不是普通 Codex 委派的前提",
         "is a prerequisite for ordinary delegation",
     ),
 }
-
-
 # Runtime evidence for issue #51 showed a second, distinct failure shape: a
 # coordinator received the caller-facing routing sentence verbatim and
 # delegated the task to a named custom agent with *its own* machine name, so
@@ -327,9 +327,42 @@ class CodexCallerSkillContractTests(unittest.TestCase):
 
     def test_codex_caller_region_delegates_and_waits(self):
         region = self._skill_codex_region()
-        self.assertRegex(region, r"(?is)delegate to / use[\s\S]{0,200}(?:wait|等待)")
+        self.assertIn("用户要求执行某个 Stage 本身已经触发该 Stage 的 routing gate", region)
+        self.assertIn("当前 Codex root 必须在本轮使用 Codex 原生 subagent workflow", region)
         self.assertRegex(region, r"(?is)等待该子代理完成并返回结果")
         self.assertRegex(region, r"(?is)不\*\*把子代理的 instructions 复制进父对话里自己执行")
+
+    def test_codex_routing_does_not_require_outer_prompt_delegation_words(self):
+        region = self._skill_codex_region()
+        self.assertIn("不要求用户在外层请求中补写 agent 名或 delegate to / use 句式", region)
+        historical_chinese_prompt_routing_rules = (
+            "在 prompt 中显式要求 Codex **delegate to / use** 指定的 exact named custom agent",
+            "caller 自己的请求中必须明确 **delegate to / use** 指定的 exact named custom agent",
+        )
+        for old_rule in historical_chinese_prompt_routing_rules:
+            with self.subTest(old_rule=old_rule):
+                self.assertNotIn(old_rule, region)
+        self.assertNotIn("Delegate this task to the installed custom agent", region)
+
+    def test_active_host_selects_runtime_branch_without_cli_discovery(self):
+        region = self._skill_codex_region()
+        self.assertIn("运行分支只由当前执行器/host 决定", region)
+        self.assertIn("不得用 `command -v`", region)
+        self.assertRegex(region, r"不得用 shell 调用 `(?:opencode run|codex exec)`")
+
+    def test_caller_separates_delegation_target_from_child_business_payload(self):
+        region = self._skill_codex_region()
+        self.assertIn("delegation target 与 child message 分开", region)
+        self.assertRegex(
+            region,
+            r"child message.*只能包含该 Stage 的 Input contract 字段和任务约束",
+        )
+        self.assertRegex(region, r"不得在 child payload 中写[\s\S]{0,120}路由元指令")
+        self.assertIn("不得用 shell 调用 `opencode run` 或其它 CLI 冒充 Codex 委派", region)
+        self.assertNotIn(
+            "Delegate this task to the installed custom agent `professor-contact-downloader`",
+            region,
+        )
 
     def test_codex_caller_region_has_no_opencode_syntax(self):
         self.assertNotRegex(self._skill_codex_region(), r"task\(subagent_type")
@@ -344,6 +377,94 @@ class CodexCallerSkillContractTests(unittest.TestCase):
     def test_stage4_codex_boundary_preserves_explicit_selection_input(self):
         region = self._skill_codex_region()
         self.assertRegex(region, r"重新委派[\s\S]{0,200}`selection`")
+
+
+class CodexStageRoutingContractTests(unittest.TestCase):
+    """Issue #55 top-level routing and ownership gates."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.skill = read(SKILL_PATH)
+        cls.region = segment(cls.skill, SKILL_CODEX_REGION[0], SKILL_CODEX_REGION[1])
+
+    def test_stage_one_to_five_matrix_names_exact_owner_and_wait_gate(self):
+        expected = {
+            "1": "professor-contact-downloader",
+            "2": "professor-contact-analyzer",
+            "3": "professor-contact-idea-generator",
+            "4": "professor-contact-selection",
+            "5": "professor-contact-email-generator",
+        }
+        for stage, owner in expected.items():
+            with self.subTest(stage=stage):
+                self.assertIn(f"| {stage} | `{owner}` | 是 |", self.region)
+        self.assertIn("用户要求执行某个 Stage 本身就是 routing gate", self.region)
+        self.assertIn("必须先把该 Stage 委派", self.region)
+        self.assertIn("并等待结果后再继续", self.region)
+
+    def test_stage3_root_owns_only_validation_record_after_sibling_loop(self):
+        start = self.region.index("**Stage 3 validator 校验循环")
+        end = self.region.index("**Stage 4 用户选择边界", start)
+        section = self.region[start:end]
+        codex = section[section.index("- **Codex") :]
+        self.assertLess(
+            codex.index("professor-contact-idea-generator"),
+            codex.index("等待生成 + `stage3-finalize` 完成"),
+        )
+        self.assertLess(
+            codex.index("等待生成 + `stage3-finalize` 完成"),
+            codex.index("professor-contact-style-validator"),
+        )
+        self.assertIn("最多 2 轮", section)
+        self.assertIn("stage3-record-validation", section)
+        for forbidden in (
+            "stage3-plan", "candidate model generation", "candidate result file",
+            "stage3-finalize", "自称「validator 已通过" ,
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertIn(forbidden, section)
+
+    def test_stage5_top_level_does_not_own_email_validator(self):
+        row = next(line for line in self.region.splitlines()
+                   if line.startswith("| 5 |"))
+        self.assertIn("professor-contact-email-generator", row)
+        self.assertIn("email-validator", row)
+        self.assertIn("email-validator loop 仍归 email-generator 所有", self.region)
+
+    def test_codex_sources_drop_obsolete_discovery_prerequisite(self):
+        branches = {"SKILL.md": self.region}
+        branches.update({name: _codex_branch(name)
+                         for name in CODEX_NESTED_DELEGATOR_AGENTS})
+        forbidden = re.compile(
+            r"(?i)(?:before child business work first discover delegation capability|"
+            r"Code Mode / programmatic tool-calling surface discovery is a hard prerequisite|"
+            r"tool directory/search surface must be queried before delegation|"
+            r"discovery failure itself is a runtime blocker|"
+            r"Code Mode exec is the required/approved discovery step|"
+            r"委派前先发现 delegation capability（硬前置）|"
+            r"在执行任何 child 业务内容前，必须先通过当前 Codex 运行时的 Code Mode / "
+            r"programmatic tool-calling surface|"
+            r"discovery 失败或该能力不可调用时，明确记为 Codex runtime/feature blocker)"
+        )
+        for name, branch in branches.items():
+            with self.subTest(source=name):
+                self.assertNotRegex(branch, forbidden)
+
+    def test_opencode_sources_keep_native_task_contract(self):
+        for owner in CODEX_NESTED_DELEGATOR_AGENTS:
+            with self.subTest(owner=owner):
+                branch = _opencode_branch(owner)
+                self.assertRegex(branch, r"(?is)(?:task\s*\(|Task 委派|native Task)")
+
+    def test_no_version_private_tool_envelope_reaches_production_contracts(self):
+        for path in all_production_source_paths():
+            text = read(path)
+            for literal in FORBIDDEN_PRIVATE_LITERALS:
+                with self.subTest(path=path.name, literal=literal):
+                    self.assertNotIn(literal, text)
+            self.assertNotRegex(text, r"(?i)tool[- ]catalog")
+            self.assertNotRegex(text, r"枚举 tool catalog")
+            self.assertNotRegex(text, r"必须先枚举[\s\S]{0,40}(?:才|方)允许")
 
 
 class CodexNativeDelegationContractTests(unittest.TestCase):
@@ -434,16 +555,6 @@ class CodexNativeDelegationContractTests(unittest.TestCase):
             for invariant in CODEX_NATIVE_DELEGATION_INVARIANTS:
                 with self.subTest(leaf=leaf, invariant=invariant):
                     self.assertFalse(self._has(text, invariant))
-
-    def test_no_version_private_tool_envelope_reaches_production_contracts(self):
-        for path in all_production_source_paths():
-            text = read(path)
-            for literal in FORBIDDEN_PRIVATE_LITERALS:
-                with self.subTest(path=path.name, literal=literal):
-                    self.assertNotIn(literal, text)
-            self.assertNotRegex(text, r"(?i)tool[- ]catalog")
-            self.assertNotRegex(text, r"枚举 tool catalog")
-            self.assertNotRegex(text, r"必须先枚举[\s\S]{0,40}(?:才|方)允许")
 
 
 class CodexRecursionGuardTests(unittest.TestCase):

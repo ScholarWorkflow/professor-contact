@@ -1,0 +1,3 @@
+在 {{PROGRAM_ROOT}} 执行已安装 professor-contact 的正式 Stage 3，且只执行 Stage 3。
+直接消费现有 Stage 2 canonical input；不要进入 Stage 4。
+完成后正常结束。
