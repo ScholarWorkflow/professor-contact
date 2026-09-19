@@ -1,7 +1,9 @@
 import contextlib
+import copy
 import io
 import importlib.util
 import json
+import re
 import tempfile
 import unittest
 from argparse import Namespace
@@ -738,6 +740,274 @@ class Issue32VerifierTests(unittest.TestCase):
         }), encoding="utf-8")
         payload = verifier._checkpoint_runtime_graph(self.args(adapter_output=unobservable))
         self.assertEqual(payload["status"], "fail", payload)
+
+
+class RuntimeIdentityNoisePolicyTests(unittest.TestCase):
+    """Issue #47 final identity policy for the R3/R4 runtime gates.
+
+    The adapter's diagnostics surface may carry named-identity fields
+    (``fixture_status``, ``problems``, ``dispatch.agent_identity``) that
+    contradict the persisted child role.  ``stage3-routing``,
+    ``stage4-needs-input``, and ``runtime-graph`` must classify formal spawn
+    relations and business state identically with or without that noise, and
+    an identity-only payload must never manufacture a pass.
+    """
+
+    def setUp(self):
+        self.holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.holder.cleanup)
+        self.root = Path(self.holder.name) / "program"
+        self.profile = Path(self.holder.name) / "profile"
+        builder.build_fixture(self.root, self.profile)
+
+    def args(self, **overrides):
+        values = {
+            "program_root": self.root,
+            "consumer_root": None,
+            "eval_response": None,
+            "adapter_output": None,
+            "producer_sha": "",
+            "output": None,
+            "min_edges": 1,
+            "required_depth": 1,
+            "pre_snapshot": None,
+            "post_snapshot": None,
+        }
+        values.update(overrides)
+        return Namespace(**values)
+
+    def _write(self, name, payload):
+        path = Path(self.holder.name) / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def _with_identity_noise(self, adapter):
+        noisy = copy.deepcopy(adapter)
+        noisy["fixture_status"] = "HARNESS_DISPATCH_MISMATCH"
+        noisy["problems"] = ["contradictory identity evidence for child thread"]
+        noisy.setdefault("dispatch", {})["agent_identity"] = {
+            "child-thread": {
+                "requested_role": {
+                    "state": "confirmed",
+                    "role": "professor-contact-idea-generator",
+                },
+                "loaded_identity": {"state": "mismatch", "role": "default"},
+            }
+        }
+        return noisy
+
+    def _stage3_adapter(self):
+        return {
+            "delegation": {
+                "state": "confirmed",
+                "basis": ["formal_spawn_relation"],
+                "formal_child_count": 2,
+                "child_thread_ids": ["idea-a", "idea-b"],
+            },
+            "dispatch": {"thread_relations": [
+                {"tool": "spawnAgent", "status": "completed",
+                 "sender_thread_id": "root-thread",
+                 "receiver_thread_ids": ["idea-a"]},
+                {"tool": "spawnAgent", "status": "completed",
+                 "sender_thread_id": "root-thread",
+                 "receiver_thread_ids": ["idea-b"]},
+            ]},
+        }
+
+    def _build_stage3_routing_evidence(self):
+        pre = verifier._checkpoint_stage3_snapshot(self.args())
+        prof = self.root / "教授研究/X分野/Example Professor"
+        state = {
+            "schema": 2,
+            "kind": verifier.CANDIDATE_STATE_KIND,
+            "identity_version": verifier.DIRECTION_IDENTITY_VERSION,
+            "generator_contract_version": verifier.STAGE3_GENERATOR_CONTRACT_VERSION,
+            "directions": [{
+                "direction_id": verifier.DIRECTION_ID,
+                "candidates": [{"id": f"idea-{index}",
+                                "direction_ids": [verifier.DIRECTION_ID]}
+                               for index in range(3)],
+            }],
+            "validator": {"results": {verifier.DIRECTION_ID: {
+                "result": "pass", "rounds": 1, "issues": []}}},
+        }
+        (prof / "套磁候选状态.json").write_text(json.dumps(state), encoding="utf-8")
+        post = verifier._checkpoint_stage3_snapshot(self.args())
+        return {
+            "pre_snapshot": self._write("stage3-pre.json", pre["artifacts"]),
+            "post_snapshot": self._write("stage3-post.json", post["artifacts"]),
+            "eval_response": self._write("stage3-response.json", {
+                "passed": True,
+                "output": {
+                    "thread_id": "root-thread", "exit_code": 0,
+                    "termination_reason": "completed", "app_server_events": [],
+                },
+            }),
+        }
+
+    def test_stage3_routing_ignores_named_identity_noise(self):
+        evidence = self._build_stage3_routing_evidence()
+        clean = verifier._checkpoint_stage3_routing(self.args(
+            adapter_output=self._write("stage3-clean-adapter.json",
+                                       self._stage3_adapter()),
+            **evidence))
+        self.assertEqual(clean["status"], "pass", clean)
+        self.assertEqual(clean["classification"], "PASS")
+
+        noisy = verifier._checkpoint_stage3_routing(self.args(
+            adapter_output=self._write(
+                "stage3-noisy-adapter.json",
+                self._with_identity_noise(self._stage3_adapter())),
+            **evidence))
+        self.assertEqual(noisy, clean)
+
+    def _stage4_adapter(self):
+        return {
+            "delegation": {
+                "state": "confirmed",
+                "basis": ["formal_spawn_relation"],
+                "formal_child_count": 1,
+                "child_thread_ids": ["child-c"],
+            },
+            "dispatch": {"thread_relations": [
+                {"tool": "spawnAgent", "status": "completed",
+                 "parent_thread_id": "root-thread",
+                 "receiver_thread_ids": ["child-c"]},
+            ]},
+        }
+
+    def _build_stage4_needs_input_evidence(self):
+        prof = self.root / "教授研究/X分野/Example Professor"
+        state = {
+            "schema": 2,
+            "kind": verifier.CANDIDATE_STATE_KIND,
+            "professor": "Example Professor",
+            "directions": [{
+                "direction_id": verifier.DIRECTION_ID,
+                "candidates": [{
+                    "id": "idea-1", "title": "确定方向",
+                    "one_liner": "一句话概括",
+                    "research_question": "研究问题",
+                    "fit": "匹配理由",
+                }],
+            }],
+        }
+        (prof / "套磁候选状态.json").write_text(json.dumps(state), encoding="utf-8")
+        pending = verifier._candidate_state_pending_projection(self.root)
+        self.assertIsNotNone(pending)
+        self.assertTrue(pending)
+        zero = verifier._checkpoint_stage4_snapshot(self.args())["artifacts"]
+        return {
+            "pre_snapshot": self._write("stage4-pre.json", zero),
+            "post_snapshot": self._write("stage4-post.json", zero),
+            "eval_response": self._write("stage4-response.json", {
+                "output": {
+                    "thread_id": "root-thread",
+                    "app_server_events": [{
+                        "message": {
+                            "method": "rawResponseItem/completed",
+                            "params": {
+                                "threadId": "child-c",
+                                "item": {
+                                    "type": "message", "role": "assistant",
+                                    "content": [{
+                                        "type": "output_text",
+                                        "text": json.dumps({
+                                            "result": "needs_input",
+                                            "pending_selection": pending,
+                                        }),
+                                    }],
+                                },
+                            },
+                        },
+                    }],
+                },
+            }),
+        }
+
+    def test_stage4_needs_input_ignores_named_identity_noise(self):
+        evidence = self._build_stage4_needs_input_evidence()
+        clean = verifier._checkpoint_stage4_needs_input(self.args(
+            adapter_output=self._write("stage4-clean-adapter.json",
+                                       self._stage4_adapter()),
+            **evidence))
+        self.assertEqual(clean["status"], "pass", clean)
+        self.assertEqual(clean["classification"], "PASS")
+        self.assertEqual(clean["target_child_id"], "child-c")
+
+        noisy = verifier._checkpoint_stage4_needs_input(self.args(
+            adapter_output=self._write(
+                "stage4-noisy-adapter.json",
+                self._with_identity_noise(self._stage4_adapter())),
+            **evidence))
+        self.assertEqual(noisy, clean)
+
+    def test_runtime_graph_ignores_named_identity_noise(self):
+        formal = {
+            "delegation": {
+                "state": "confirmed",
+                "basis": ["formal_spawn_relation"],
+                "formal_child_count": 2,
+                "child_thread_ids": ["downloader", "analyzer"],
+            },
+            "dispatch": {"thread_relations": [
+                {"tool": "spawnAgent", "status": "completed",
+                 "parent_thread_id": "contact",
+                 "receiver_thread_ids": ["downloader"]},
+                {"tool": "spawnAgent", "status": "completed",
+                 "parent_thread_id": "downloader",
+                 "receiver_thread_ids": ["analyzer"]},
+                {"tool": "wait", "status": "completed",
+                 "parent_thread_id": "contact",
+                 "receiver_thread_ids": ["analyzer"]},
+            ]},
+        }
+        raw = self._write("graph-response.json", {
+            "output": {"app_server_events": [{"type": "spawnAgent"}]}})
+        clean = verifier._checkpoint_runtime_graph(self.args(
+            adapter_output=self._write("graph-clean-adapter.json", formal),
+            eval_response=raw, min_edges=2, required_depth=2))
+        self.assertEqual(clean["status"], "pass", clean)
+
+        noisy = verifier._checkpoint_runtime_graph(self.args(
+            adapter_output=self._write(
+                "graph-noisy-adapter.json",
+                self._with_identity_noise(formal)),
+            eval_response=raw, min_edges=2, required_depth=2))
+        self.assertEqual(noisy, clean)
+
+        identity_only = self._with_identity_noise(
+            {"loaded_agents": ["professor-contact", "downloader"]})
+        payload = verifier._checkpoint_runtime_graph(self.args(
+            adapter_output=self._write("graph-identity-only.json", identity_only)))
+        self.assertEqual(payload["status"], "fail", payload)
+        self.assertEqual(payload["observed"]["formal_relations"], [])
+
+
+ADAPTER_IDENTITY_GATE_KEYS = (
+    "requested_role", "loaded_identity", "effective_role", "agent_identity",
+    "agentRole", "agent_type", "expected_agents",
+)
+
+
+class RuntimeVerifierIdentityGateSourceTests(unittest.TestCase):
+    """The runtime acceptance verifier judges formal relations and business
+    state only: none of the adapter's named-identity keys may become a gate
+    input.  The exact-key ban is word-bounded so the required OpenCode
+    ``subagent_type`` exclusion and product fields like ``identity_version``
+    stay untouched."""
+
+    def test_runtime_verifier_source_uses_no_named_role_gate_keys(self):
+        source = VERIFIER_PATH.read_text(encoding="utf-8")
+        for key in ADAPTER_IDENTITY_GATE_KEYS:
+            with self.subTest(key=key):
+                self.assertIsNone(re.search(rf"\b{re.escape(key)}\b", source))
+        self.assertIn("identity_version", source)
+
+    def test_identity_gate_key_matcher_stays_narrow(self):
+        self.assertIsNone(re.search(r"\bagent_type\b", '"task(subagent_type"'))
+        self.assertIsNotNone(
+            re.search(r"\bagent_type\b", 'payload.get("agent_type")'))
 
 
 if __name__ == "__main__":
