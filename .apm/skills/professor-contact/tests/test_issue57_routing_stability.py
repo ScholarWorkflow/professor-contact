@@ -133,6 +133,27 @@ def _delegation_summary(relations) -> dict:
     }
 
 
+# The pinned adapter@9 fixture-status contract enumerates exactly eight
+# statuses (skills-test-fixtures@88d2056, FIXTURE_STATUSES).  The
+# prerequisite gate must freeze the whole enum verbatim, with the pinned
+# §8 semantics: harness and dependency blockers are NOT TESTED (never
+# INVALID), only corrupted adapter evidence and out-of-contract statuses
+# fail closed as INVALID, and the two named-role identity diagnostics
+# stay non-gating.  Both checkpoints (Stage-2 routing and Stage-4
+# needs-input) are graded against this one shared table so they cannot
+# drift apart.
+ADAPTER_STATUS_MATRIX = (
+    ("BLOCKED_DEPENDENCY", "blocked", "BLOCKED_RUNTIME_PROVIDER"),
+    ("HARNESS_ERROR", "blocked", "BLOCKED_RUNTIME_PROVIDER"),
+    ("HARNESS_CONTAMINATION", "blocked", "BLOCKED_RUNTIME_PROVIDER"),
+    ("NOT_RUN", "blocked", "BLOCKED_RUNTIME_PROVIDER"),
+    ("INVALID_EVIDENCE", "invalid", "INVALID_TEST_EXECUTION"),
+    ("SOMETHING_ELSE", "invalid", "INVALID_TEST_EXECUTION"),
+)
+NON_GATING_IDENTITY_STATUSES = ("HARNESS_DISPATCH_UNCONFIRMED",
+                                "HARNESS_DISPATCH_MISMATCH")
+
+
 class SyntheticDelegationSummaryShapeTests(unittest.TestCase):
     """The helper is synthetic adapter@9 evidence: it must mirror the
     parser's ``confirmed_rule`` exactly and refuse — never normalize — any
@@ -359,20 +380,23 @@ class Stage2RoutingVerifierTests(unittest.TestCase):
             relation["parent_thread_id"] = parent
         return relation
 
-    def _write_evidence(self, relations, *, envelope_ok=True, extra_adapter=None):
+    def _write_evidence(self, relations, *, envelope_ok=True, extra_adapter=None,
+                        fixture_status="FIXTURE_READY", omit_fixture_status=False):
         # A hand-written delegation override skips the derivation: the
         # helper raises on a malformed formal relation, and the
         # defense-in-depth cases that need one always supply their own
         # deliberately impossible summary.
         override = (extra_adapter or {}).get("delegation")
         adapter = {
-            "fixture_status": "FIXTURE_READY",
+            "fixture_status": fixture_status,
             "delegation": (override if override is not None
                            else _delegation_summary(relations)),
             "dispatch": {"thread_relations": relations},
         }
         if extra_adapter:
             adapter.update(extra_adapter)
+        if omit_fixture_status:
+            del adapter["fixture_status"]
         adapter_path = self.root / "adapter.json"
         adapter_path.write_text(json.dumps(adapter), encoding="utf-8")
         response_path = self.root / "response.json"
@@ -567,23 +591,41 @@ class Stage2RoutingVerifierTests(unittest.TestCase):
         self.assertEqual(payload["status"], "blocked", payload)
         self.assertEqual(payload["classification"], "BLOCKED_RUNTIME_PROVIDER")
 
-    def test_adapter_blocked_dependency_blocks_instead_of_invalid(self):
-        # adapter@9's fail-closed dependency blocker (e.g. codex_version=null)
-        # is a runtime dependency failure: NOT TESTED, never a producer FAIL
-        # and never malformed evidence, even with a healthy nested topology.
-        payload = self._run(self._nested_relations(),
-                            extra_adapter={"fixture_status": "BLOCKED_DEPENDENCY"})
-        self.assertEqual(payload["status"], "blocked", payload)
-        self.assertEqual(payload["classification"], "BLOCKED_RUNTIME_PROVIDER")
-        self.assertFalse(payload["routing_target_proved"])
+    def test_adapter_status_matrix_matches_the_frozen_contract(self):
+        # The prerequisite gate freezes the pinned adapter@9 status enum
+        # verbatim and is graded against the same shared table as Stage 4:
+        # harness and dependency blockers (e.g. a null codex_version) are
+        # NOT TESTED even with a healthy nested topology, while only
+        # corrupted adapter evidence and out-of-contract statuses —
+        # including a missing fixture_status field — fail closed as
+        # INVALID.
+        cases = list(ADAPTER_STATUS_MATRIX)
+        cases.append(("(missing)", "invalid", "INVALID_TEST_EXECUTION"))
+        for fixture_status, expected_status, expected_classification in cases:
+            with self.subTest(fixture_status=fixture_status):
+                kwargs = ({"omit_fixture_status": True}
+                          if fixture_status == "(missing)"
+                          else {"fixture_status": fixture_status})
+                payload = self._run(self._nested_relations(), **kwargs)
+                self.assertEqual(payload["status"], expected_status, payload)
+                self.assertEqual(payload["classification"],
+                                 expected_classification)
+                if expected_status == "blocked":
+                    self.assertFalse(payload["routing_target_proved"])
 
-    def test_adapter_invalid_evidence_and_unknown_status_are_invalid(self):
-        for fixture_status in ("INVALID_EVIDENCE", "SOMETHING_ELSE"):
+    def test_identity_diagnostic_statuses_do_not_block_a_proven_target(self):
+        # adapter@9 keeps named-role identity strictly diagnostic: an
+        # unconfirmed or mismatched dispatch never downgrades a confirmed
+        # delegation, so neither identity status may prerequisite-block a
+        # run whose formal relation and envelope evidence stand on their
+        # own.
+        for fixture_status in NON_GATING_IDENTITY_STATUSES:
             with self.subTest(fixture_status=fixture_status):
                 payload = self._run(self._nested_relations(),
                                     extra_adapter={"fixture_status": fixture_status})
-                self.assertEqual(payload["status"], "invalid", payload)
-                self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
+                self.assertEqual(payload["status"], "pass", payload)
+                self.assertEqual(payload["classification"], "PASS_TARGET")
+                self.assertTrue(payload["routing_target_proved"])
 
     def test_adapter_prerequisite_requires_the_fixture_status_field(self):
         relations = self._nested_relations()
@@ -668,7 +710,8 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
     def _evidence(self, program_root, pending, *, child_id="child-sel",
                   sender="root-1", parent="root-1",
                   fixture_status="FIXTURE_READY",
-                  delegation_override=None, child_texts=None):
+                  delegation_override=None, child_texts=None,
+                  omit_fixture_status=False):
         suffix = abs(hash(program_root)) % 9999
         adapter_path = self.root / f"adapter-{suffix}.json"
         relations = [{
@@ -679,11 +722,14 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
         delegation = (delegation_override
                       if delegation_override is not None
                       else _delegation_summary(relations))
-        adapter_path.write_text(json.dumps({
+        adapter = {
             "fixture_status": fixture_status,
             "delegation": delegation,
             "dispatch": {"thread_relations": relations},
-        }), encoding="utf-8")
+        }
+        if omit_fixture_status:
+            del adapter["fixture_status"]
+        adapter_path.write_text(json.dumps(adapter), encoding="utf-8")
         business_text = json.dumps({"result": "needs_input",
                                     "pending_selection": pending},
                                    ensure_ascii=False)
@@ -1118,26 +1164,47 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
                 self.assertEqual(payload["status"], "fail", payload)
                 self.assertEqual(payload["classification"], "FAIL_PRODUCT")
 
-    def test_stage4_adapter_prerequisite_blocked_dependency_is_not_invalid(self):
-        program = self.root / "program-dep"
-        issue57_fixture.build_fixture(program, self.root / "profile-dep",
-                                      output=self.root / "setup-dep.json")
+    def test_stage4_adapter_status_matrix_matches_the_frozen_contract(self):
+        # The same shared fixture-status table as Stage 2, graded on the
+        # Stage-4 checkpoint: harness and dependency blockers are NOT
+        # TESTED, while only corrupted adapter evidence and
+        # out-of-contract statuses — including a missing fixture_status
+        # field — fail closed as INVALID.
+        program = self.root / "program-matrix"
+        issue57_fixture.build_fixture(program, self.root / "profile-matrix",
+                                      output=self.root / "setup-matrix.json")
         expected = verifier._expected_pending_projection(program)
-        pre = self.root / "pre-dep.json"
-        post = self.root / "post-dep.json"
-        self._write_snapshot(program, pre)
-        self._write_snapshot(program, post)
-        blocked = self._run_stage4(program, expected, child_id="child-dep",
-                                   fixture_status="BLOCKED_DEPENDENCY")
-        self.assertEqual(blocked["status"], "blocked", blocked)
-        self.assertEqual(blocked["classification"], "BLOCKED_RUNTIME_PROVIDER",
-                         "an adapter dependency blocker is NOT TESTED, never "
-                         "a producer FAIL nor malformed evidence")
+        self.assertIsNotNone(expected)
+        cases = list(ADAPTER_STATUS_MATRIX)
+        cases.append(("(missing)", "invalid", "INVALID_TEST_EXECUTION"))
+        for fixture_status, expected_status, expected_classification in cases:
+            with self.subTest(fixture_status=fixture_status):
+                kwargs = ({"omit_fixture_status": True}
+                          if fixture_status == "(missing)"
+                          else {"fixture_status": fixture_status})
+                payload = self._run_stage4(
+                    program, expected, child_id="child-matrix", **kwargs)
+                self.assertEqual(payload["status"], expected_status, payload)
+                self.assertEqual(payload["classification"],
+                                 expected_classification)
 
-        invalid = self._run_stage4(program, expected, child_id="child-dep2",
-                                   fixture_status="INVALID_EVIDENCE")
-        self.assertEqual(invalid["status"], "invalid", invalid)
-        self.assertEqual(invalid["classification"], "INVALID_TEST_EXECUTION")
+    def test_stage4_identity_diagnostic_statuses_do_not_block_path_c(self):
+        # adapter@9 keeps named-role identity strictly diagnostic, so an
+        # unconfirmed or mismatched dispatch never prerequisite-blocks a
+        # run whose formal delegation and business evidence stand on
+        # their own.
+        program = self.root / "program-identity"
+        issue57_fixture.build_fixture(program, self.root / "profile-identity",
+                                      output=self.root / "setup-identity.json")
+        expected = verifier._expected_pending_projection(program)
+        self.assertIsNotNone(expected)
+        for fixture_status in NON_GATING_IDENTITY_STATUSES:
+            with self.subTest(fixture_status=fixture_status):
+                payload = self._run_stage4(program, expected,
+                                           child_id="child-identity",
+                                           fixture_status=fixture_status)
+                self.assertEqual(payload["status"], "pass", payload)
+                self.assertEqual(payload["classification"], "PASS")
 
     def test_malformed_or_missing_candidate_state_is_invalid(self):
         program = self.root / "program-bad"

@@ -789,33 +789,54 @@ def _ownership_index(edges: list[dict[str, str]]) -> tuple[dict[str, set[str]], 
     return owners, direct
 
 
-ADAPTER_FIXTURE_READY_STATUSES = (
-    "FIXTURE_READY", "HARNESS_DISPATCH_UNCONFIRMED", "HARNESS_DISPATCH_MISMATCH",
-)
+# The pinned adapter@9 contract enumerates exactly eight fixture statuses
+# (skills-test-fixtures@88d2056, FIXTURE_STATUSES), each with its own
+# semantics, so the prerequisite is a frozen status matrix instead of an
+# allowlist-plus-catch-all: identity diagnostics never gate, harness and
+# dependency blockers are NOT TESTED, and only corrupted adapter evidence
+# — or a status outside the pinned contract — is INVALID.
+ADAPTER_STATUS_VERDICTS: dict[str, tuple[str, str] | None] = {
+    "FIXTURE_READY": None,
+    "HARNESS_DISPATCH_UNCONFIRMED": None,
+    "HARNESS_DISPATCH_MISMATCH": None,
+    "BLOCKED_DEPENDENCY": ("blocked", "BLOCKED_RUNTIME_PROVIDER"),
+    "HARNESS_ERROR": ("blocked", "BLOCKED_RUNTIME_PROVIDER"),
+    "HARNESS_CONTAMINATION": ("blocked", "BLOCKED_RUNTIME_PROVIDER"),
+    "NOT_RUN": ("blocked", "BLOCKED_RUNTIME_PROVIDER"),
+    "INVALID_EVIDENCE": ("invalid", "INVALID_TEST_EXECUTION"),
+}
 
 
 def _adapter_prerequisite_block(
         adapter: Any, checks: list[dict[str, Any]]) -> tuple[str, str] | None:
-    """adapter@9's fail-closed prerequisite, evaluated before any delegation
-    or relation topology is interpreted.
+    """adapter@9's frozen fixture-status prerequisite, evaluated before any
+    delegation or relation topology is interpreted.
 
-    ``BLOCKED_DEPENDENCY`` (for example a null ``codex_version``) is a runtime
-    dependency failure: blocked / NOT TESTED, never a producer FAIL and never
-    INVALID_TEST_EXECUTION.  ``INVALID_EVIDENCE``, an unknown status, or a
-    missing status is corrupted adapter evidence.  Returns the early-exit
+    ``FIXTURE_READY`` and the two named-role identity diagnostics
+    (``HARNESS_DISPATCH_UNCONFIRMED`` / ``HARNESS_DISPATCH_MISMATCH``) let
+    the checkpoint proceed — identity is non-gating and never downgrades a
+    confirmed delegation.  ``BLOCKED_DEPENDENCY`` (for example a null
+    ``codex_version``), ``HARNESS_ERROR`` (fixture/wiring error),
+    ``HARNESS_CONTAMINATION`` (evidence sourced outside the allowed roots),
+    and ``NOT_RUN`` are provider/harness-side blockers: blocked / NOT
+    TESTED, never a producer FAIL and never INVALID_TEST_EXECUTION.  Only
+    ``INVALID_EVIDENCE`` — input evidence corrupt, stale, or mismatched —
+    plus a status outside the frozen contract (unknown or missing) is
+    malformed adapter evidence.  Returns the early-exit
     ``(status, classification)`` or ``None`` when the prerequisite passes.
     """
     fixture_status = adapter.get("fixture_status") if isinstance(adapter, dict) else None
-    if fixture_status == "BLOCKED_DEPENDENCY":
-        _check(checks, "adapter_prerequisite", False, {"fixture_status": fixture_status})
-        return "blocked", "BLOCKED_RUNTIME_PROVIDER"
-    if fixture_status == "INVALID_EVIDENCE":
-        _check(checks, "adapter_invalid_evidence", False, {"fixture_status": fixture_status})
-        return "invalid", "INVALID_TEST_EXECUTION"
-    if fixture_status not in ADAPTER_FIXTURE_READY_STATUSES:
-        _check(checks, "adapter_fixture_status", False, {"fixture_status": fixture_status})
-        return "invalid", "INVALID_TEST_EXECUTION"
-    return None
+    if isinstance(fixture_status, str) and fixture_status in ADAPTER_STATUS_VERDICTS:
+        early = ADAPTER_STATUS_VERDICTS[fixture_status]
+    else:
+        early = ("invalid", "INVALID_TEST_EXECUTION")
+    if early is None:
+        return None
+    check_name = ("adapter_invalid_evidence" if fixture_status == "INVALID_EVIDENCE"
+                  else "adapter_prerequisite" if early[0] == "blocked"
+                  else "adapter_fixture_status")
+    _check(checks, check_name, False, {"fixture_status": fixture_status})
+    return early
 
 
 def _checkpoint_stage2_routing(args: argparse.Namespace) -> dict[str, Any]:
