@@ -311,7 +311,11 @@ class CodexStageRoutingContractTests(unittest.TestCase):
             r"Code Mode / programmatic tool-calling surface discovery is a hard prerequisite|"
             r"tool directory/search surface must be queried before delegation|"
             r"discovery failure itself is a runtime blocker|"
-            r"Code Mode exec is the required/approved discovery step)"
+            r"Code Mode exec is the required/approved discovery step|"
+            r"委派前先发现 delegation capability（硬前置）|"
+            r"在执行任何 child 业务内容前，必须先通过当前 Codex 运行时的 Code Mode / "
+            r"programmatic tool-calling surface|"
+            r"discovery 失败或该能力不可调用时，明确记为 Codex runtime/feature blocker)"
         )
         for name, branch in branches.items():
             with self.subTest(source=name):

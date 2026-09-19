@@ -82,6 +82,12 @@ class Issue32VerifierTests(unittest.TestCase):
         self.assertEqual(payload["status"], "pass", payload)
 
     def test_install_requires_every_pc55_runtime_asset(self):
+        required_surfaces = {
+            ".agents/skills/professor-contact/scripts/contact_state.py",
+            ".codex/agents/professor-contact-idea-generator.toml",
+            ".codex/agents/professor-contact-style-validator.toml",
+        }
+        self.assertTrue(required_surfaces.issubset(set(verifier.INSTALL_REQUIRED_FILES)))
         consumer = Path(self.holder.name) / "consumer-assets"
         for relative in verifier.INSTALL_REQUIRED_FILES:
             path = consumer / relative

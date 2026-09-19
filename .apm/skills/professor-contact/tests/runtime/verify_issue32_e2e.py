@@ -34,7 +34,10 @@ DIRECTION_IDENTITY_VERSION = "direction-id-v1"
 STAGE3_GENERATOR_CONTRACT_VERSION = "stage3-ideas-v2"
 INSTALL_REQUIRED_FILES = (
     ".agents/skills/professor-contact/SKILL.md",
+    ".agents/skills/professor-contact/scripts/contact_state.py",
     ".codex/agents/professor-contact.toml",
+    ".codex/agents/professor-contact-idea-generator.toml",
+    ".codex/agents/professor-contact-style-validator.toml",
     ".agents/skills/professor-contact/tests/runtime/prepare_issue55_stage3_fixture.py",
     ".agents/skills/professor-contact/tests/runtime/build_issue55_eval_request.py",
     ".agents/skills/professor-contact/tests/runtime/verify_issue32_e2e.py",
