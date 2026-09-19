@@ -42,6 +42,10 @@ INSTALL_REQUIRED_FILES = (
     ".agents/skills/professor-contact/tests/runtime/build_issue55_eval_request.py",
     ".agents/skills/professor-contact/tests/runtime/verify_issue32_e2e.py",
     ".agents/skills/professor-contact/tests/runtime/prompts/issue55-stage3-routing.txt",
+    ".agents/skills/professor-contact/tests/runtime/prepare_issue57_stage2_fixture.py",
+    ".agents/skills/professor-contact/tests/runtime/build_issue57_stage2_eval_request.py",
+    ".agents/skills/professor-contact/tests/runtime/prepare_issue57_stage4_fixture.py",
+    ".agents/skills/professor-contact/tests/runtime/prompts/issue57-stage2-routing.txt",
 )
 STAGE4_PROGRAM_OUTPUTS = {
     "套磁选择.json": Path("教授研究/套磁选择.json"),
@@ -53,27 +57,6 @@ STAGE3_SNAPSHOT_OUTPUTS = {
     "套磁想法候选总览.md": Path("教授研究/套磁想法候选总览.md"),
     **STAGE4_PROGRAM_OUTPUTS,
 }
-ISSUE53_PENDING_SELECTION = [{
-    "professor": "Example Professor",
-    "kind": "direction",
-    "direction_ids": ["DIR00001"],
-    "candidates": [
-        {
-            "id": "idea-001",
-            "title": "Adaptive extension",
-            "one_liner": "Explore an adaptive extension of the synthetic processing setting.",
-            "research_question": "How can the synthetic setting adapt to changing conditions?",
-            "fit": "high",
-        },
-        {
-            "id": "idea-002",
-            "title": "Robust extension",
-            "one_liner": "Explore robustness under changing synthetic conditions.",
-            "research_question": "How robust is the synthetic setting under change?",
-            "fit": "medium",
-        },
-    ],
-}]
 
 
 def _load(path: Path) -> Any:
@@ -717,6 +700,208 @@ def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
     return machine("pass", "PASS")
 
 
+ADAPTER_FORMAL_RELATION_STATES = {
+    "started", "inProgress", "completed", "item/started", "item/completed",
+}
+
+
+def _formal_spawn_relations(adapter: Any) -> tuple[list[dict[str, str]], list[Any]]:
+    """Extract formal spawn edges from adapter@9's normalized relation graph.
+
+    A formal edge requires ``tool == "spawnAgent"``, an adapter-supported
+    relation state (attempt and completion states are both accepted — the
+    Stage-2 attempt gate must not impose child completion), a non-empty
+    ``sender_thread_id`` owner, and one or more concrete
+    ``receiver_thread_ids``.  ``sender_thread_id`` is the formal owner;
+    ``parent_thread_id`` is app-server event attribution and is never read
+    here.  Shape violations are returned separately so each checkpoint can
+    classify them as invalid evidence.
+    """
+    edges: list[dict[str, str]] = []
+    malformed: list[Any] = []
+    dispatch = adapter.get("dispatch") if isinstance(adapter, dict) else None
+    relations = dispatch.get("thread_relations") if isinstance(dispatch, dict) else None
+    if not isinstance(relations, list):
+        return edges, [relations]
+    for relation in relations:
+        if not isinstance(relation, dict) or relation.get("tool") != "spawnAgent":
+            continue
+        status = relation.get("status") or relation.get("event") or relation.get("relation")
+        if isinstance(relation.get("item"), dict):
+            status = relation["item"].get("status", status)
+        if status not in ADAPTER_FORMAL_RELATION_STATES:
+            continue
+        sender = relation.get("sender_thread_id")
+        children = relation.get("receiver_thread_ids")
+        if not isinstance(sender, str) or not sender.strip() \
+                or not isinstance(children, list) or not children:
+            malformed.append(relation)
+            continue
+        concrete: list[str] = []
+        for child in children:
+            if not isinstance(child, str) or not child.strip():
+                malformed.append(relation)
+                break
+            concrete.append(child)
+        if len(concrete) != len(children):
+            continue
+        for child in concrete:
+            edges.append({"sender_thread_id": sender, "receiver_thread_id": child})
+    return edges, malformed
+
+
+def _ownership_index(edges: list[dict[str, str]]) -> tuple[dict[str, set[str]], dict[str, str]]:
+    """Index formal edges by receiver owner; empty senders never own a child."""
+    owners: dict[str, set[str]] = {}
+    direct: dict[str, str] = {}
+    for edge in edges:
+        sender = edge["sender_thread_id"]
+        child = edge["receiver_thread_id"]
+        owners.setdefault(child, set()).add(sender)
+        direct.setdefault(child, sender)
+    return owners, direct
+
+
+def _checkpoint_stage2_routing(args: argparse.Namespace) -> dict[str, Any]:
+    """Verify PC57-R1's Stage-2 nested native-routing target (adapter@9).
+
+    Only the routing invariant is graded: the root reached the Stage-2
+    coordinator and that coordinator performed a real nested native
+    delegation.  Downstream ``paper-analysis``/uvx/OCR/finalization quality is
+    out of scope once the routing target is mechanically proven; a later
+    unchanged downstream failure is recorded as
+    ``blocked_or_failed_out_of_scope`` and never reverses the verdict.
+    Absence of a supported formal relation is conservatively
+    ``BLOCKED_OBSERVABILITY`` and is never inferred as a zero attempt.
+    """
+    checks: list[dict[str, Any]] = []
+    root_thread_id: str | None = None
+    direct_children: set[str] = set()
+    nested_formal_spawns: list[dict[str, Any]] = []
+    max_depth = 0
+    routing_target_proved = False
+    downstream: str | None = None
+
+    def machine(status: str, classification: str) -> dict[str, Any]:
+        return {
+            "status": status,
+            "classification": classification,
+            "root_thread_id": root_thread_id,
+            "root_direct_spawn_child_ids": sorted(direct_children),
+            "nested_formal_spawns": nested_formal_spawns,
+            "max_anonymous_depth": max_depth,
+            "routing_target_proved": routing_target_proved,
+            "downstream_status": downstream,
+            "checks": checks,
+        }
+
+    try:
+        adapter = _load(Path(args.adapter_output)) if args.adapter_output else None
+        response = _load(Path(args.eval_response)) if args.eval_response else None
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "evidence_readable", False, str(exc))
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    if not isinstance(adapter, dict) or not isinstance(response, dict):
+        _check(checks, "evidence_objects", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    output = response.get("output")
+    root_thread_id = output.get("thread_id") if isinstance(output, dict) else None
+    events = output.get("app_server_events") if isinstance(output, dict) else None
+    raw_surface_ok = (isinstance(root_thread_id, str) and bool(root_thread_id.strip())
+                      and isinstance(events, list))
+    _check(checks, "raw_eval_surface", raw_surface_ok,
+           {"thread_id": root_thread_id, "events": type(events).__name__})
+    if not raw_surface_ok:
+        return machine("blocked", "BLOCKED_RUNTIME_PROVIDER")
+    envelope_ok = (response.get("passed") is True
+                   and isinstance(output, dict) and output.get("exit_code") == 0
+                   and output.get("termination_reason") == "completed")
+    # Before the routing target is proven, a failed eval envelope means the
+    # provider/runtime failed first; a healthy envelope that still cannot
+    # prove the edge is an observability gap.
+    unproven_block = "BLOCKED_RUNTIME_PROVIDER" if not envelope_ok else "BLOCKED_OBSERVABILITY"
+
+    delegation = adapter.get("delegation")
+    if not isinstance(delegation, dict):
+        _check(checks, "adapter_delegation_object", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    if delegation.get("state") == "unobservable":
+        _check(checks, "delegation_observable", False, delegation)
+        return machine("blocked", unproven_block)
+    basis = delegation.get("basis")
+    formal_basis_ok = (delegation.get("state") == "confirmed"
+                       and isinstance(basis, list)
+                       and "formal_spawn_relation" in basis)
+    _check(checks, "adapter_formal_basis", formal_basis_ok,
+           {"state": delegation.get("state"), "basis": basis})
+    if not formal_basis_ok:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    dispatch = adapter.get("dispatch")
+    relations = dispatch.get("thread_relations") if isinstance(dispatch, dict) else None
+    if not isinstance(relations, list):
+        _check(checks, "adapter_relations", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    edges, malformed = _formal_spawn_relations(adapter)
+    _check(checks, "adapter_relation_shape", not malformed, malformed)
+    if malformed:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    owners, _ = _ownership_index(edges)
+    conflicts = {child: sorted(senders) for child, senders in owners.items()
+                 if len(senders) != 1}
+    _check(checks, "formal_ownership", not conflicts, conflicts)
+    if conflicts:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    for edge in edges:
+        if edge["sender_thread_id"] == root_thread_id:
+            direct_children.add(edge["receiver_thread_id"])
+    max_depth = _graph_depth([
+        {"parent": edge["sender_thread_id"], "child": edge["receiver_thread_id"]}
+        for edge in edges
+    ])
+    _check(checks, "formal_spawn_surface", bool(edges),
+           {"observed": len(edges)})
+    if not edges:
+        return machine("blocked", unproven_block)
+    _check(checks, "root_direct_formal_child", bool(direct_children),
+           sorted(direct_children))
+    if not direct_children:
+        return machine("blocked", unproven_block)
+
+    nested = [edge for edge in edges
+              if edge["sender_thread_id"] in direct_children
+              and edge["sender_thread_id"] != root_thread_id]
+    seen: set[tuple[str, str]] = set()
+    for edge in nested:
+        pair = (edge["sender_thread_id"], edge["receiver_thread_id"])
+        if pair not in seen:
+            seen.add(pair)
+            nested_formal_spawns.append({
+                "sender_thread_id": edge["sender_thread_id"],
+                "receiver_thread_ids": [edge["receiver_thread_id"]],
+            })
+    # A proven nested relation rules out the zero-attempt
+    # coordinator-unavailable path: the coordinator demonstrably delegated.
+    _check(checks, "nested_formal_spawn_from_root_child", bool(nested),
+           {"observed": len(nested_formal_spawns)})
+    if not nested:
+        return machine("blocked", unproven_block)
+    _check(checks, "anonymous_depth_at_least_two", max_depth >= 2,
+           {"observed": max_depth, "required": 2})
+    if max_depth < 2:
+        return machine("blocked", unproven_block)
+
+    routing_target_proved = True
+    downstream = "completed" if envelope_ok else "blocked_or_failed_out_of_scope"
+    _check(checks, "routing_target_proved", True,
+           {"downstream_status": downstream, "envelope_passed": envelope_ok})
+    return machine("pass", "PASS_TARGET")
+
+
 def _stage4_artifacts(root: Path) -> dict[str, dict[str, Any]]:
     artifacts: dict[str, dict[str, Any]] = {}
     for name, relative in STAGE4_PROGRAM_OUTPUTS.items():
@@ -771,7 +956,11 @@ def _load_stage4_snapshot(path: Path) -> dict[str, dict[str, Any]]:
     return result
 
 
-def _issue53_pending_projection(value: Any) -> list[dict[str, Any]] | None:
+PENDING_CANDIDATE_FIELDS = ("id", "title", "one_liner", "research_question", "fit")
+
+
+def _pending_selection_projection(value: Any) -> list[dict[str, Any]] | None:
+    """Normalize an observed ``pending_selection`` onto the pinned fields."""
     if not isinstance(value, list):
         return None
     projected: list[dict[str, Any]] = []
@@ -792,10 +981,9 @@ def _issue53_pending_projection(value: Any) -> list[dict[str, Any]] | None:
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 return None
-            fields = ("id", "title", "one_liner", "research_question", "fit")
-            if any(field not in candidate for field in fields):
+            if any(field not in candidate for field in PENDING_CANDIDATE_FIELDS):
                 return None
-            projected_candidates.append({field: candidate[field] for field in fields})
+            projected_candidates.append({field: candidate[field] for field in PENDING_CANDIDATE_FIELDS})
         projected.append({
             "professor": professor,
             "kind": kind,
@@ -803,6 +991,87 @@ def _issue53_pending_projection(value: Any) -> list[dict[str, Any]] | None:
             "candidates": projected_candidates,
         })
     return projected
+
+
+def _project_state_candidates(value: Any) -> list[dict[str, Any]] | None:
+    """Project canonical candidate rows, or ``None`` on malformed state."""
+    if not isinstance(value, list):
+        return None
+    projected: list[dict[str, Any]] = []
+    for candidate in value:
+        if not isinstance(candidate, dict):
+            return None
+        if any(field not in candidate for field in PENDING_CANDIDATE_FIELDS):
+            return None
+        projected.append({field: candidate[field] for field in PENDING_CANDIDATE_FIELDS})
+    return projected
+
+
+def _expected_pending_projection(program_root: Path) -> list[dict[str, Any]] | None:
+    """Derive the deterministic Path-C expectation from current canonical state.
+
+    The projection mirrors the selection-agent contract: one entry per
+    ordinary direction (``kind: "direction"``, exact ``direction_ids``) and
+    per explicit cross-direction group (``kind: "cross_direction"``, sorted
+    canonical ``direction_ids``), in file order per professor, with
+    candidates projected onto the presentation fields in stored order.
+    Directories with no candidates contribute no entry; a program without any
+    selectable candidate yields ``None``.
+    """
+    research_dir = program_root / "教授研究"
+    if not research_dir.is_dir():
+        return None
+    state_paths = sorted(
+        path for path in research_dir.glob("*/*/套磁候选状态.json") if path.is_file())
+    if not state_paths:
+        return None
+    expected: list[dict[str, Any]] = []
+    for state_path in state_paths:
+        try:
+            state = _load(state_path)
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(state, dict):
+            return None
+        professor = state_path.parent.name
+        directions = state.get("directions")
+        direction_rows = [row for row in directions if isinstance(row, dict)] \
+            if isinstance(directions, list) else []
+        for direction in direction_rows:
+            projected = _project_state_candidates(direction.get("candidates"))
+            if projected is None:
+                return None
+            direction_id = direction.get("direction_id")
+            if not projected:
+                continue
+            if not isinstance(direction_id, str) or not direction_id:
+                return None
+            expected.append({
+                "professor": professor,
+                "kind": "direction",
+                "direction_ids": [direction_id],
+                "candidates": projected,
+            })
+        groups = state.get("cross_direction_groups")
+        group_rows = [row for row in groups if isinstance(row, dict)] \
+            if isinstance(groups, list) else []
+        for group in group_rows:
+            projected = _project_state_candidates(group.get("candidates"))
+            if projected is None:
+                return None
+            direction_ids = group.get("direction_ids")
+            if not projected:
+                continue
+            if not isinstance(direction_ids, list) or not direction_ids \
+                    or not all(isinstance(item, str) and item for item in direction_ids):
+                return None
+            expected.append({
+                "professor": professor,
+                "kind": "cross_direction",
+                "direction_ids": sorted(direction_ids),
+                "candidates": projected,
+            })
+    return expected or None
 
 
 def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
@@ -883,32 +1152,15 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
     if not isinstance(relations, list):
         _check(checks, "adapter_relations", False)
         return machine("invalid", "INVALID_TEST_EXECUTION")
-    owners: dict[str, set[str]] = {}
+    edges, malformed = _formal_spawn_relations(adapter)
+    _check(checks, "adapter_relation_shape", not malformed, malformed)
+    if malformed:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    owners, _ = _ownership_index(edges)
     direct_children: set[str] = set()
-    for relation in relations:
-        if not isinstance(relation, dict) or relation.get("tool") != "spawnAgent":
-            continue
-        relation_status = relation.get("status") or relation.get("event") or relation.get("relation")
-        if isinstance(relation.get("item"), dict):
-            relation_status = relation["item"].get("status", relation_status)
-        if relation_status not in {
-            "started", "inProgress", "completed", "item/started", "item/completed",
-        }:
-            continue
-        parent = relation.get("parent_thread_id")
-        children = relation.get("receiver_thread_ids")
-        if children is None:
-            children = relation.get("child_thread_ids")
-        if not isinstance(parent, str) or not parent or not isinstance(children, list):
-            _check(checks, "adapter_relation_shape", False, relation)
-            return machine("invalid", "INVALID_TEST_EXECUTION")
-        for child in children:
-            if not isinstance(child, str) or not child:
-                _check(checks, "adapter_child_id_shape", False, relation)
-                return machine("invalid", "INVALID_TEST_EXECUTION")
-            owners.setdefault(child, set()).add(parent)
-            if parent == root_thread_id:
-                direct_children.add(child)
+    for edge in edges:
+        if edge["sender_thread_id"] == root_thread_id:
+            direct_children.add(edge["receiver_thread_id"])
     ownership_conflicts = {child: sorted(parents) for child, parents in owners.items() if len(parents) != 1}
     if ownership_conflicts:
         _check(checks, "formal_ownership", False, ownership_conflicts)
@@ -981,10 +1233,15 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
     _check(checks, "pending_selection_nonempty", isinstance(pending, list) and bool(pending), pending)
     if not isinstance(pending, list) or not pending:
         return machine("fail", "FAIL_PRODUCT")
-    projection = _issue53_pending_projection(pending)
-    _check(checks, "pending_selection_exact_fixture", projection == ISSUE53_PENDING_SELECTION,
-           {"expected": ISSUE53_PENDING_SELECTION, "observed": projection})
-    if projection != ISSUE53_PENDING_SELECTION:
+    projection = _pending_selection_projection(pending)
+    expected = _expected_pending_projection(root)
+    _check(checks, "expected_projection_derivable", expected is not None,
+           {"program_root": str(root)})
+    if expected is None:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    _check(checks, "pending_selection_matches_current_state", projection == expected,
+           {"expected": expected, "observed": projection})
+    if projection != expected:
         return machine("fail", "FAIL_PRODUCT")
     _check(checks, "no_root_prose_gate", True)
     return machine("pass", "PASS")
@@ -1225,6 +1482,7 @@ CHECKPOINTS = {
     "stage3-final": _checkpoint_stage3_final,
     "stage3-snapshot": _checkpoint_stage3_snapshot,
     "stage3-routing": _checkpoint_stage3_routing,
+    "stage2-routing": _checkpoint_stage2_routing,
     "stage4-snapshot": _checkpoint_stage4_snapshot,
     "stage4-needs-input": _checkpoint_stage4_needs_input,
     "make-stage4-selection": _checkpoint_make_stage4_selection,

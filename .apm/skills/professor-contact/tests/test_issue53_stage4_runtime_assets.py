@@ -134,6 +134,7 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
             "dispatch": {"thread_relations": [{
                 "tool": "spawnAgent",
                 "status": status,
+                "sender_thread_id": "root-1",
                 "parent_thread_id": "root-1",
                 "receiver_thread_ids": list(child_ids),
             }]},
@@ -199,6 +200,10 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
         }]
 
     def _run_verifier(self, result, **kwargs):
+        # The verifier now derives its expectation dynamically, so the #53
+        # fixture must exist before the checkpoint runs.
+        fixture.build_fixture(self.program, self.profile,
+                              output=self.output / "setup.json")
         adapter_path, response_path = self._write_evidence(result, **kwargs)
         pre = self.root / "pre.json"
         post = self.root / "post.json"
