@@ -244,13 +244,14 @@ class CodexCallerSkillContractTests(unittest.TestCase):
         )
         self.assertRegex(region, r"不得在 child payload 中写[\s\S]{0,120}路由元指令")
         self.assertIn(
-            "Delegate this task to the installed custom agent <exact-target> and wait for its result before continuing",
+            "Delegate this task to the installed custom agent `<exact-target>` and wait for its result before continuing",
             region,
         )
         self.assertIn(
-            "Delegate this task to the installed custom agent professor-contact-idea-generator and wait for its result before continuing",
+            "Delegate this task to the installed custom agent `professor-contact-idea-generator` and wait for its result before continuing",
             region,
         )
+        self.assertIn("不得用 shell 调用 `opencode run` 或其它 CLI 冒充 Codex 委派", region)
         self.assertNotIn(
             "Delegate this task to the installed custom agent `professor-contact-downloader`",
             region,
