@@ -798,6 +798,10 @@ def _checkpoint_stage2_routing(args: argparse.Namespace) -> dict[str, Any]:
     ``blocked_or_failed_out_of_scope`` and never reverses the verdict.
     Absence of a supported formal relation is conservatively
     ``BLOCKED_OBSERVABILITY`` and is never inferred as a zero attempt.
+    A delegation summary that contradicts its own relation graph
+    (``confirmed`` without a formal relation, or ``unobservable`` with one)
+    is impossible adapter output and fails closed as
+    ``INVALID_TEST_EXECUTION`` before the observability verdict.
     """
     checks: list[dict[str, Any]] = []
     root_thread_id: str | None = None
@@ -854,16 +858,9 @@ def _checkpoint_stage2_routing(args: argparse.Namespace) -> dict[str, Any]:
     if not isinstance(delegation, dict):
         _check(checks, "adapter_delegation_object", False)
         return machine("invalid", "INVALID_TEST_EXECUTION")
-    if delegation.get("state") == "unobservable":
-        _check(checks, "delegation_observable", False, delegation)
-        return machine("blocked", unproven_block)
-    basis = delegation.get("basis")
-    formal_basis_ok = (delegation.get("state") == "confirmed"
-                       and isinstance(basis, list)
-                       and "formal_spawn_relation" in basis)
-    _check(checks, "adapter_formal_basis", formal_basis_ok,
-           {"state": delegation.get("state"), "basis": basis})
-    if not formal_basis_ok:
+    delegation_state = delegation.get("state")
+    if delegation_state not in ("confirmed", "unobservable"):
+        _check(checks, "delegation_state", False, delegation_state)
         return machine("invalid", "INVALID_TEST_EXECUTION")
 
     dispatch = adapter.get("dispatch")
@@ -875,6 +872,26 @@ def _checkpoint_stage2_routing(args: argparse.Namespace) -> dict[str, Any]:
     edges, malformed = _formal_spawn_relations(adapter)
     _check(checks, "adapter_relation_shape", not malformed, malformed)
     if malformed:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # adapter@9 derives the delegation summary deterministically from the
+    # relation graph: confirmed iff at least one supported formal spawnAgent
+    # relation exists, unobservable otherwise.  A summary that disagrees
+    # with its own relations is contradictory machine evidence and fails
+    # closed before any observability verdict can downgrade it.
+    summary_consistent = (delegation_state == "confirmed") == bool(edges)
+    _check(checks, "delegation_summary_consistent", summary_consistent,
+           {"state": delegation_state, "formal_edges": len(edges)})
+    if not summary_consistent:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    if delegation_state == "unobservable":
+        _check(checks, "delegation_observable", False, delegation)
+        return machine("blocked", unproven_block)
+    basis = delegation.get("basis")
+    formal_basis_ok = (isinstance(basis, list)
+                       and "formal_spawn_relation" in basis)
+    _check(checks, "adapter_formal_basis", formal_basis_ok, basis)
+    if not formal_basis_ok:
         return machine("invalid", "INVALID_TEST_EXECUTION")
 
     owners, _ = _ownership_index(edges)
@@ -891,10 +908,10 @@ def _checkpoint_stage2_routing(args: argparse.Namespace) -> dict[str, Any]:
         {"parent": edge["sender_thread_id"], "child": edge["receiver_thread_id"]}
         for edge in edges
     ])
+    # Unreachable with zero edges: the consistency gate already failed
+    # closed on confirmed-without-relations.
     _check(checks, "formal_spawn_surface", bool(edges),
            {"observed": len(edges)})
-    if not edges:
-        return machine("blocked", unproven_block)
     _check(checks, "root_direct_formal_child", bool(direct_children),
            sorted(direct_children))
     if not direct_children:
@@ -1167,15 +1184,8 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
         _check(checks, "adapter_delegation_object", False)
         return machine("invalid", "INVALID_TEST_EXECUTION")
     delegation_state = delegation.get("state")
-    if delegation_state == "unobservable":
-        _check(checks, "delegation_observable", False, delegation)
-        return machine("blocked", "BLOCKED_OBSERVABILITY")
-    if delegation_state != "confirmed":
-        _check(checks, "delegation_confirmed", False, delegation)
-        return machine("invalid", "INVALID_TEST_EXECUTION")
-    basis = delegation.get("basis")
-    if not isinstance(basis, list) or "formal_spawn_relation" not in basis:
-        _check(checks, "adapter_formal_basis", False, basis)
+    if delegation_state not in ("confirmed", "unobservable"):
+        _check(checks, "delegation_state", False, delegation_state)
         return machine("invalid", "INVALID_TEST_EXECUTION")
 
     dispatch = adapter.get("dispatch")
@@ -1186,6 +1196,23 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
     edges, malformed = _formal_spawn_relations(adapter)
     _check(checks, "adapter_relation_shape", not malformed, malformed)
     if malformed:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # Same consistency gate as the Stage-2 routing checkpoint: adapter@9
+    # derives the delegation summary from the relation graph, so a summary
+    # that disagrees with its own relations is contradictory machine
+    # evidence and fails closed before the observability verdict.
+    summary_consistent = (delegation_state == "confirmed") == bool(edges)
+    _check(checks, "delegation_summary_consistent", summary_consistent,
+           {"state": delegation_state, "formal_edges": len(edges)})
+    if not summary_consistent:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    if delegation_state == "unobservable":
+        _check(checks, "delegation_observable", False, delegation)
+        return machine("blocked", "BLOCKED_OBSERVABILITY")
+    basis = delegation.get("basis")
+    if not isinstance(basis, list) or "formal_spawn_relation" not in basis:
+        _check(checks, "adapter_formal_basis", False, basis)
         return machine("invalid", "INVALID_TEST_EXECUTION")
     owners, _ = _ownership_index(edges)
     direct_children: set[str] = set()

@@ -70,32 +70,48 @@ def _codex_branch(text: str) -> str:
     return text[start:text.index("## Input", start)]
 
 
+def _formal_relation_children(relation) -> list[str] | None:
+    """Receivers of a relation that fully satisfies the parser's formal
+    spawn shape, or ``None``.  The parser never partially accepts a
+    malformed formal relation, so neither does this helper: receivers must
+    be a non-empty list of non-empty strings, and a bare string is never
+    iterated as if it were a receiver list."""
+    if not isinstance(relation, dict) or relation.get("tool") != "spawnAgent":
+        return None
+    sender = relation.get("sender_thread_id")
+    if not isinstance(sender, str) or not sender:
+        return None
+    receivers = relation.get("receiver_thread_ids")
+    if not isinstance(receivers, list) or not receivers:
+        return None
+    if not all(isinstance(child, str) and child for child in receivers):
+        return None
+    return receivers
+
+
 def _delegation_summary(relations) -> dict:
     """Build adapter@9's delegation summary from a relation graph.
 
     The pinned parser derives the summary from every formal ``spawnAgent``
-    relation of the response under the same frozen ``confirmed_rule``
+    relation of the response under the frozen ``confirmed_rule``
     conditions: the exact ``spawnAgent`` tool, a non-empty
-    ``sender_thread_id`` owner, and concrete ``receiver_thread_ids``.
-    ``child_thread_ids`` is the sorted distinct concrete child set, so a
-    synthetic fixture must never hand-write a summary that disagrees with
-    its own ``thread_relations``, and a relation the parser would fail
-    closed on (a missing owner) yields ``unobservable`` here, never
-    ``confirmed``.
+    ``sender_thread_id`` owner, and a non-empty ``receiver_thread_ids``
+    list of non-empty strings.  A relation violating any condition is
+    never partially accepted — the parser fails such evidence closed, so
+    it contributes no children here either.  ``child_thread_ids`` is the
+    sorted distinct concrete child set, so a synthetic fixture must never
+    hand-write a summary that disagrees with its own ``thread_relations``.
     """
-    children = sorted({
-        child for relation in relations
-        if isinstance(relation, dict) and relation.get("tool") == "spawnAgent"
-        and isinstance(relation.get("sender_thread_id"), str)
-        and relation["sender_thread_id"]
-        for child in (relation.get("receiver_thread_ids") or [])
-        if isinstance(child, str) and child
-    })
+    children: set[str] = set()
+    for relation in relations:
+        receivers = _formal_relation_children(relation)
+        if receivers:
+            children.update(receivers)
     if children:
         return {
             "state": "confirmed",
             "formal_child_count": len(children),
-            "child_thread_ids": children,
+            "child_thread_ids": sorted(children),
             "basis": ["formal_spawn_relation"],
             "reason_code": None,
         }
@@ -106,6 +122,68 @@ def _delegation_summary(relations) -> dict:
         "basis": [],
         "reason_code": "no_supported_formal_spawn_relation",
     }
+
+
+class SyntheticDelegationSummaryShapeTests(unittest.TestCase):
+    """The helper is synthetic adapter@9 evidence: it must mirror the
+    parser's ``confirmed_rule`` exactly, including its refusal to partially
+    accept a malformed formal relation."""
+
+    def test_complete_formal_relation_yields_confirmed_summary(self):
+        summary = _delegation_summary([{
+            "tool": "spawnAgent", "status": "completed",
+            "sender_thread_id": "root-1",
+            "receiver_thread_ids": ["coordinator-1", "coordinator-1"],
+        }])
+        self.assertEqual(summary["state"], "confirmed")
+        self.assertEqual(summary["child_thread_ids"], ["coordinator-1"])
+        self.assertEqual(summary["formal_child_count"], 1)
+        self.assertEqual(summary["basis"], ["formal_spawn_relation"])
+
+    def test_non_spawn_or_ownerless_relations_stay_unobservable(self):
+        for relation in (
+            {"tool": "wait", "sender_thread_id": "root-1",
+             "receiver_thread_ids": ["child-1"]},
+            {"tool": "spawnAgent", "status": "completed",
+             "receiver_thread_ids": ["child-1"]},
+            {"tool": "spawnAgent", "status": "completed",
+             "sender_thread_id": "", "receiver_thread_ids": ["child-1"]},
+        ):
+            with self.subTest(relation=relation):
+                summary = _delegation_summary([relation])
+                self.assertEqual(summary["state"], "unobservable")
+                self.assertEqual(summary["child_thread_ids"], [])
+                self.assertEqual(
+                    summary["reason_code"],
+                    "no_supported_formal_spawn_relation")
+
+    def test_malformed_receiver_shapes_never_yield_confirmed(self):
+        for receivers in (None, [], "child-1", 123, ["good-child", 123],
+                          ["good-child", None], [""]):
+            with self.subTest(receivers=receivers):
+                summary = _delegation_summary([{
+                    "tool": "spawnAgent", "status": "completed",
+                    "sender_thread_id": "root-1",
+                    "receiver_thread_ids": receivers,
+                }])
+                self.assertEqual(summary["state"], "unobservable", receivers)
+                self.assertEqual(summary["child_thread_ids"], [], receivers)
+                self.assertEqual(summary["basis"], [])
+
+    def test_mixed_relations_accept_only_the_complete_ones(self):
+        summary = _delegation_summary([
+            {"tool": "spawnAgent", "status": "completed",
+             "sender_thread_id": "root-1",
+             "receiver_thread_ids": ["good-child", 123]},
+            {"tool": "spawnAgent", "status": "completed",
+             "sender_thread_id": "root-1",
+             "receiver_thread_ids": ["kept-child"]},
+        ])
+        # The malformed relation contributes nothing (no partial
+        # acceptance); only the complete relation's children are confirmed.
+        self.assertEqual(summary["state"], "confirmed")
+        self.assertEqual(summary["child_thread_ids"], ["kept-child"])
+        self.assertEqual(summary["formal_child_count"], 1)
 
 
 class Stage2CodexSourceContractTests(unittest.TestCase):
@@ -361,29 +439,50 @@ class Stage2RoutingVerifierTests(unittest.TestCase):
         self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
 
     def test_unobservable_and_missing_formal_surface_block(self):
-        # The unobservable override below is deliberately contradictory
-        # normalized evidence — the parser never emits unobservable while
-        # formal relations are present. It pins the checkpoint's
-        # conservative BLOCKED_OBSERVABILITY for that impossible input.
-        unobservable = self._run(
-            self._nested_relations(),
-            extra_adapter={"delegation": {"state": "unobservable", "basis": [],
-                                          "child_thread_ids": []}})
-        self.assertEqual(unobservable["status"], "blocked")
-        self.assertEqual(unobservable["classification"], "BLOCKED_OBSERVABILITY")
-
-        no_spawn = self._run([
+        # Real unobservable runs stay conservatively blocked: with no
+        # supported formal relation anywhere (a wait-tool relation is not
+        # one, nor is an empty relation list), or with formal edges that
+        # trace only to a foreign sender, the checkpoint is NOT TESTED and
+        # is never inferred as a zero-attempt producer FAIL.
+        for relations in ([], [
             {"tool": "wait", "sender_thread_id": "root-1",
              "receiver_thread_ids": ["coordinator-1"]},
-        ])
-        self.assertEqual(no_spawn["status"], "blocked")
-        self.assertEqual(no_spawn["classification"], "BLOCKED_OBSERVABILITY")
+        ]):
+            payload = self._run(relations)
+            self.assertEqual(payload["status"], "blocked", payload)
+            self.assertEqual(payload["classification"], "BLOCKED_OBSERVABILITY")
 
         no_root_child = self._run([
             self._relation("not-root", ["coordinator-1"]),
             self._relation("coordinator-1", ["paper-1"]),
         ])
+        self.assertEqual(no_root_child["status"], "blocked", no_root_child)
         self.assertEqual(no_root_child["classification"], "BLOCKED_OBSERVABILITY")
+
+    def test_unobservable_summary_with_formal_relations_is_invalid(self):
+        # Deliberately impossible adapter output: adapter@9 derives the
+        # summary from the relation graph, so unobservable can only mean no
+        # supported formal relation exists.  Contradictory machine evidence
+        # fails closed as INVALID_TEST_EXECUTION — it must never be
+        # downgraded to a conservative BLOCKED_OBSERVABILITY.
+        unobservable = self._run(
+            self._nested_relations(),
+            extra_adapter={"delegation": {"state": "unobservable", "basis": [],
+                                          "child_thread_ids": []}})
+        self.assertEqual(unobservable["status"], "invalid")
+        self.assertEqual(unobservable["classification"], "INVALID_TEST_EXECUTION")
+
+    def test_confirmed_summary_without_formal_relations_is_invalid(self):
+        # The mirror image: the parser cannot emit confirmed without a
+        # formal relation either, so a confirmed summary over an empty
+        # relation list fails closed the same way, before any observability
+        # verdict.
+        payload = self._run([], extra_adapter={"delegation": {
+            "state": "confirmed", "formal_child_count": 1,
+            "child_thread_ids": ["coordinator-1"],
+            "basis": ["formal_spawn_relation"], "reason_code": None}})
+        self.assertEqual(payload["status"], "invalid")
+        self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
 
     def test_provider_failure_before_target_is_blocked_runtime(self):
         payload = self._run([], envelope_ok=False)
@@ -703,6 +802,55 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
         ))
         self.assertEqual(payload["status"], "blocked", payload)
         self.assertEqual(payload["classification"], "BLOCKED_OBSERVABILITY")
+
+    def test_summary_relation_contradictions_fail_closed(self):
+        # adapter@9 derives the delegation summary from the relation graph,
+        # so unobservable-with-formal-relations (and its mirror,
+        # confirmed-without-any) is impossible output.  Both must fail
+        # closed as INVALID_TEST_EXECUTION, never downgrade to the
+        # conservative BLOCKED_OBSERVABILITY of a genuinely unobservable
+        # run.
+        program = self.root / "program-contradiction"
+        issue57_fixture.build_fixture(program, self.root / "profile-contradiction",
+                                      output=self.root / "setup-contradiction.json")
+        expected = verifier._expected_pending_projection(program)
+        self.assertIsNotNone(expected)
+        pre = self.root / "pre-contradiction.json"
+        post = self.root / "post-contradiction.json"
+        self._write_snapshot(program, pre)
+        self._write_snapshot(program, post)
+        relations = [{
+            "tool": "spawnAgent", "status": "completed",
+            "sender_thread_id": "root-1", "parent_thread_id": "root-1",
+            "receiver_thread_ids": ["child-contradiction"],
+        }]
+        response_path = self.root / "response-contradiction.json"
+        response_path.write_text(json.dumps({
+            "output": {"thread_id": "root-1", "app_server_events": []},
+        }), encoding="utf-8")
+        contradictory_adapters = [{
+            "fixture_status": "FIXTURE_READY",
+            "delegation": {"state": "unobservable", "formal_child_count": 0,
+                           "child_thread_ids": [], "basis": [],
+                           "reason_code": "no_supported_formal_spawn_relation"},
+            "dispatch": {"thread_relations": relations},
+        }, {
+            "fixture_status": "FIXTURE_READY",
+            "delegation": {"state": "confirmed", "formal_child_count": 1,
+                           "child_thread_ids": ["child-contradiction"],
+                           "basis": ["formal_spawn_relation"],
+                           "reason_code": None},
+            "dispatch": {"thread_relations": []},
+        }]
+        for index, adapter in enumerate(contradictory_adapters):
+            adapter_path = self.root / f"adapter-contradiction-{index}.json"
+            adapter_path.write_text(json.dumps(adapter), encoding="utf-8")
+            payload = verifier._checkpoint_stage4_needs_input(self.args(
+                program,
+                eval_response=response_path, adapter_output=adapter_path,
+                pre_snapshot=pre, post_snapshot=post))
+            self.assertEqual(payload["status"], "invalid", payload)
+            self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
 
     def test_stage4_adapter_prerequisite_blocked_dependency_is_not_invalid(self):
         program = self.root / "program-dep"
