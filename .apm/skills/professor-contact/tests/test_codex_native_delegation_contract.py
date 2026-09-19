@@ -235,6 +235,19 @@ class CodexCallerSkillContractTests(unittest.TestCase):
         self.assertRegex(region, r"(?is)等待该子代理完成并返回结果")
         self.assertRegex(region, r"(?is)不\*\*把子代理的 instructions 复制进父对话里自己执行")
 
+    def test_caller_separates_delegation_target_from_child_business_payload(self):
+        region = self._skill_codex_region()
+        self.assertIn("delegation target 与 child message 分开", region)
+        self.assertRegex(
+            region,
+            r"child message.*只能包含该 Stage 的 Input contract 字段和任务约束",
+        )
+        self.assertRegex(region, r"不得在 child payload 中写[\s\S]{0,120}路由元指令")
+        self.assertNotIn(
+            "Delegate this task to the installed custom agent `professor-contact-downloader`",
+            region,
+        )
+
     def test_codex_caller_region_has_no_opencode_syntax(self):
         self.assertNotRegex(self._skill_codex_region(), r"task\(subagent_type")
 

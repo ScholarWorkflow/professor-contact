@@ -230,17 +230,21 @@ class Issue55Stage3RuntimeAssetTests(unittest.TestCase):
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
     def _write_evidence(self, *, direct_children=("child-generator", "child-validator"),
-                        delegation_state="confirmed", sender_field=True):
+                        delegation_state="confirmed", sender_field=True,
+                        nested_sender=None):
         relations = [
             {"tool": "spawnAgent", "sender_thread_id": "root-thread",
              "receiver_thread_ids": list(direct_children)},
-            {"tool": "spawnAgent", "sender_thread_id": direct_children[0],
-             "receiver_thread_ids": ["nested-child"]},
             {"tool": "wait", "sender_thread_id": "root-thread",
              "receiver_thread_ids": list(direct_children)},
             {"tool": "sendInput", "sender_thread_id": "root-thread",
              "receiver_thread_ids": [direct_children[0]]},
         ]
+        if nested_sender is not None:
+            relations.insert(1, {
+                "tool": "spawnAgent", "sender_thread_id": nested_sender,
+                "receiver_thread_ids": ["nested-child"],
+            })
         if not sender_field:
             relations[0].pop("sender_thread_id")
         adapter_path = self.output / "adapter.json"
@@ -306,6 +310,39 @@ class Issue55Stage3RuntimeAssetTests(unittest.TestCase):
             payload["root_direct_spawn_child_ids"],
             ["child-generator", "child-validator"],
         )
+
+    def test_stage3_routing_rejects_nested_formal_spawn_from_root_child(self):
+        payload = self._run(nested_sender="child-validator")
+        self.assertEqual(payload["status"], "fail", payload)
+        self.assertEqual(payload["classification"], "FAIL_PRODUCT")
+        self.assertTrue(any(
+            row["name"] == "no_nested_formal_spawn" and row["status"] == "fail"
+            for row in payload["checks"]
+        ))
+
+    def test_stage3_routing_requires_exactly_two_root_children_for_one_round(self):
+        payload = self._run(
+            validation="pass",
+            direct_children=("child-generator", "child-validator", "unexpected"),
+        )
+        self.assertEqual(payload["status"], "fail", payload)
+        self.assertEqual(payload["classification"], "FAIL_PRODUCT")
+
+    def test_stage3_routing_requires_exactly_four_root_children_for_two_rounds(self):
+        payload = self._run(
+            validation="fail_after_2_rounds",
+            direct_children=("generator-1", "validator-1"),
+        )
+        self.assertEqual(payload["status"], "fail", payload)
+        self.assertEqual(payload["classification"], "FAIL_PRODUCT")
+
+    def test_stage3_routing_accepts_clean_two_round_sibling_topology(self):
+        payload = self._run(
+            validation="fail_after_2_rounds",
+            direct_children=("generator-1", "validator-1", "generator-2", "validator-2"),
+        )
+        self.assertEqual(payload["status"], "pass", payload)
+        self.assertEqual(payload["classification"], "PASS")
 
     def test_stage3_routing_rejects_parent_only_relation_as_invalid_evidence(self):
         payload = self._run(sender_field=False)

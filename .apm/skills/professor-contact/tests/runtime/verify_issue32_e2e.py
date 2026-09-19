@@ -526,6 +526,7 @@ def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     root_thread_id: str | None = None
     direct_children: set[str] = set()
+    nested_formal_spawns: list[dict[str, Any]] = []
 
     def machine(status: str, classification: str) -> dict[str, Any]:
         return {
@@ -533,6 +534,7 @@ def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
             "classification": classification,
             "root_thread_id": root_thread_id,
             "root_direct_spawn_child_ids": sorted(direct_children),
+            "nested_formal_spawns": nested_formal_spawns,
             "checks": checks,
         }
 
@@ -625,6 +627,11 @@ def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
             owners.setdefault(child, set()).add(sender)
             if sender == root_thread_id:
                 direct_children.add(child)
+        if sender != root_thread_id:
+            nested_formal_spawns.append({
+                "sender_thread_id": sender,
+                "receiver_thread_ids": list(children),
+            })
     ownership_conflicts = {
         child: sorted(senders) for child, senders in owners.items() if len(senders) != 1
     }
@@ -634,10 +641,12 @@ def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
     if not owners:
         _check(checks, "formal_spawn_relation_surface", False)
         return machine("blocked", "BLOCKED_OBSERVABILITY")
+    _check(checks, "no_nested_formal_spawn", not nested_formal_spawns,
+           nested_formal_spawns)
+    if nested_formal_spawns:
+        return machine("fail", "FAIL_PRODUCT")
     _check(checks, "root_direct_spawn_child_count", len(direct_children) >= 2,
            {"observed": len(direct_children), "required": 2})
-    if len(direct_children) < 2:
-        return machine("fail", "FAIL_PRODUCT")
 
     state_path = _professor_dir(root) / "套磁候选状态.json"
     try:
@@ -676,6 +685,23 @@ def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
            sorted(results) if isinstance(results, dict) else results)
     result = results.get(DIRECTION_ID) if isinstance(results, dict) else None
     _check(checks, "validation_present", _valid_issue55_validation_record(result), result)
+    rounds = result.get("rounds") if isinstance(result, dict) else None
+    expected_root_children = (
+        2 * rounds
+        if isinstance(rounds, int) and not isinstance(rounds, bool)
+        else None
+    )
+    _check(
+        checks,
+        "root_direct_spawn_child_count_matches_rounds",
+        expected_root_children is not None
+        and len(direct_children) == expected_root_children,
+        {
+            "observed": len(direct_children),
+            "rounds": rounds,
+            "required": expected_root_children,
+        },
+    )
 
     stage4_current = {name: current[name] for name in STAGE4_PROGRAM_OUTPUTS}
     stage4_absent = all(not row["exists"] for row in stage4_current.values())
@@ -683,7 +709,8 @@ def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
     product_checks = [row for row in checks if row["name"] in {
         "state_schema", "direction_row_unique", "candidate_count",
         "candidate_ids_stable", "direction_present", "validator_result_keys",
-        "validation_present", "stage4_outputs_absent",
+        "validation_present", "root_direct_spawn_child_count",
+        "root_direct_spawn_child_count_matches_rounds", "stage4_outputs_absent",
     }]
     if not stage4_absent or not all(row["status"] == "pass" for row in product_checks):
         return machine("fail", "FAIL_PRODUCT")
