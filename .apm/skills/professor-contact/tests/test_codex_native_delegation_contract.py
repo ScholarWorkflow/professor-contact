@@ -239,7 +239,13 @@ class CodexCallerSkillContractTests(unittest.TestCase):
     def test_codex_routing_does_not_require_outer_prompt_delegation_words(self):
         region = self._skill_codex_region()
         self.assertIn("不要求用户在外层请求中补写 agent 名或 delegate to / use 句式", region)
-        self.assertNotIn("caller 自己的请求中必须明确 **delegate to / use**", region)
+        historical_chinese_prompt_routing_rules = (
+            "在 prompt 中显式要求 Codex **delegate to / use** 指定的 exact named custom agent",
+            "caller 自己的请求中必须明确 **delegate to / use** 指定的 exact named custom agent",
+        )
+        for old_rule in historical_chinese_prompt_routing_rules:
+            with self.subTest(old_rule=old_rule):
+                self.assertNotIn(old_rule, region)
         self.assertNotIn("Delegate this task to the installed custom agent", region)
 
     def test_active_host_selects_runtime_branch_without_cli_discovery(self):
