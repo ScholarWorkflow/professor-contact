@@ -6,6 +6,17 @@ canonical Stage-2 artifact production, and that the installed Stage-3 plan
 loader can consume that artifact.  Paper-analysis content quality and sidecar
 presence are deterministic/product-contract concerns and are not R2 runtime
 gates.
+
+Evidence routing (issue #40/#43): ``--adapter-output`` is the only
+gate-authoritative surface and must carry the formal spawn-relation delegation
+evidence.  ``--identity-adapter-output`` is an optional diagnostics surface
+(the adapter re-run with ``--consumer-root`` named-identity parsing).  A
+named-identity contradiction on that surface (for example a persisted child
+role of ``default`` whose developer evidence matches a named definition, which
+the adapter reports as ``INVALID_EVIDENCE``) is recorded verbatim under
+``observed.identity_diagnostics`` with ``gating: false`` and never downgrades
+the formal verdict, triggers a retry, or upgrades a failed formal gate.  This
+verifier therefore must not grow a named-identity PASS condition.
 """
 from __future__ import annotations
 
@@ -48,8 +59,38 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def _identity_diagnostics(path: Path | None) -> dict[str, Any] | None:
+    """Record the optional named-identity adapter surface verbatim.
+
+    The surface is diagnostics only: whatever it contains (including an
+    ``INVALID_EVIDENCE`` caused solely by a named-identity contradiction) is
+    copied into the verdict payload without participating in gating.
+    """
+    if path is None:
+        return None
+    try:
+        payload = _load_json(path)
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "source": str(path),
+            "readable": False,
+            "error": str(exc),
+            "gating": False,
+        }
+    if not isinstance(payload, dict):
+        return {"source": str(path), "readable": True, "gating": False}
+    return {
+        "source": str(path),
+        "readable": True,
+        "fixture_status": payload.get("fixture_status"),
+        "problems": payload.get("problems"),
+        "gating": False,
+    }
+
+
 def verify(*, program_root: Path, consumer_root: Path, eval_response: Path,
-           adapter_output: Path) -> dict[str, Any]:
+           adapter_output: Path,
+           identity_adapter_output: Path | None = None) -> dict[str, Any]:
     root = program_root.resolve()
     consumer = consumer_root.resolve()
     professor_dir = root / PROFESSOR_RELATIVE
@@ -142,17 +183,21 @@ def verify(*, program_root: Path, consumer_root: Path, eval_response: Path,
     })
 
     status = "pass" if all(row["status"] == "pass" for row in checks) else "fail"
+    observed: dict[str, Any] = {
+        "required_min_edges": R2_MIN_EDGES,
+        "required_depth": R2_REQUIRED_DEPTH,
+        "candidate_input": str(input_pack),
+        "stage3_runner": str(runner),
+        "stage3_profile": str(profile),
+        "stage3_stdout": stage3_stdout,
+    }
+    identity = _identity_diagnostics(identity_adapter_output)
+    if identity is not None:
+        observed["identity_diagnostics"] = identity
     return {
         "status": status,
         "checks": checks,
-        "observed": {
-            "required_min_edges": R2_MIN_EDGES,
-            "required_depth": R2_REQUIRED_DEPTH,
-            "candidate_input": str(input_pack),
-            "stage3_runner": str(runner),
-            "stage3_profile": str(profile),
-            "stage3_stdout": stage3_stdout,
-        },
+        "observed": observed,
     }
 
 
@@ -161,7 +206,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--program-root", type=Path, required=True)
     parser.add_argument("--consumer-root", type=Path, required=True)
     parser.add_argument("--eval-response", type=Path, required=True)
-    parser.add_argument("--adapter-output", type=Path, required=True)
+    parser.add_argument("--adapter-output", type=Path, required=True,
+                        help="gate-authoritative formal adapter surface (no named-identity parsing)")
+    parser.add_argument("--identity-adapter-output", type=Path,
+                        help="optional diagnostics surface (adapter re-run with --consumer-root); "
+                             "recorded verbatim, never gates")
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -174,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
             consumer_root=args.consumer_root,
             eval_response=args.eval_response,
             adapter_output=args.adapter_output,
+            identity_adapter_output=args.identity_adapter_output,
         )
     except Exception as exc:
         payload = {

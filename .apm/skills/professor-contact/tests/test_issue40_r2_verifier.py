@@ -74,6 +74,118 @@ class Issue40R2VerifierTests(unittest.TestCase):
             self.assertEqual(names["canonical_stage2_input_exists"], "pass")
             self.assertEqual(names["stage3_plan_consumes_stage2_input"], "pass")
 
+    def _continuity_fixture(self, base: Path) -> dict[str, Path]:
+        program = base / "program"
+        consumer = base / "consumer"
+        profile_root = base / "profile"
+        professor = program / module.PROFESSOR_RELATIVE
+        professor.mkdir(parents=True)
+        (professor / module.INPUT_PACK).write_text("{}\n", encoding="utf-8")
+        (profile_root / module.PROFILE_RELATIVE).parent.mkdir(parents=True)
+        (profile_root / module.PROFILE_RELATIVE).write_text("# profile\n", encoding="utf-8")
+        (program / module.verifier.MANIFEST_NAME).write_text(json.dumps({
+            "profile_root": str(profile_root),
+        }), encoding="utf-8")
+        runner = consumer / module.INSTALLED_RUNNER_RELATIVE
+        runner.parent.mkdir(parents=True)
+        runner.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, sys\n"
+            "print(json.dumps({'status': 'ok', 'jobs': []}))\n",
+            encoding="utf-8",
+        )
+        return {
+            "program": program,
+            "consumer": consumer,
+            "eval_response": base / "r2-response.json",
+            "adapter_output": base / "r2-adapter.json",
+            "identity_adapter_output": base / "r2-identity-adapter.json",
+        }
+
+    def test_named_identity_contradiction_is_diagnostics_only_and_never_gates(self):
+        """fixtures@9 run with --consumer-root fail-closed on the observed
+        R2 contradiction (persisted role 'default' vs developer definition
+        'paper-analysis').  That surface must be recorded verbatim without
+        downgrading the formal delegation verdict or triggering a retry."""
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self._continuity_fixture(Path(directory))
+            paths["eval_response"].write_text("{}\n", encoding="utf-8")
+            paths["adapter_output"].write_text("{}\n", encoding="utf-8")
+            paths["identity_adapter_output"].write_text(json.dumps({
+                "fixture_status": "INVALID_EVIDENCE",
+                "problems": [
+                    "contradictory identity evidence for child thread "
+                    "01a0b55f-6083-7923-a9ce-efdc1df5596d: persisted role "
+                    "confirms 'default' but child developer evidence matches "
+                    "'paper-analysis'",
+                ],
+            }), encoding="utf-8")
+
+            with mock.patch.object(
+                module.verifier, "_checkpoint_runtime_graph",
+                return_value={"status": "pass", "checks": [], "observed": {}},
+            ):
+                payload = module.verify(
+                    program_root=paths["program"],
+                    consumer_root=paths["consumer"],
+                    eval_response=paths["eval_response"],
+                    adapter_output=paths["adapter_output"],
+                    identity_adapter_output=paths["identity_adapter_output"],
+                )
+
+            self.assertEqual(payload["status"], "pass", payload)
+            diagnostics = payload["observed"]["identity_diagnostics"]
+            self.assertFalse(diagnostics["gating"])
+            self.assertEqual(diagnostics["fixture_status"], "INVALID_EVIDENCE")
+            self.assertIn("paper-analysis", diagnostics["problems"][0])
+
+    def test_identity_diagnostics_cannot_rescue_a_failed_formal_gate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self._continuity_fixture(Path(directory))
+            paths["eval_response"].write_text("{}\n", encoding="utf-8")
+            paths["adapter_output"].write_text("{}\n", encoding="utf-8")
+            paths["identity_adapter_output"].write_text(json.dumps({
+                "fixture_status": "FIXTURE_READY",
+                "problems": [],
+            }), encoding="utf-8")
+
+            with mock.patch.object(
+                module.verifier, "_checkpoint_runtime_graph",
+                return_value={"status": "fail", "checks": [], "observed": {}},
+            ):
+                payload = module.verify(
+                    program_root=paths["program"],
+                    consumer_root=paths["consumer"],
+                    eval_response=paths["eval_response"],
+                    adapter_output=paths["adapter_output"],
+                    identity_adapter_output=paths["identity_adapter_output"],
+                )
+
+            self.assertEqual(payload["status"], "fail", payload)
+            self.assertEqual(
+                payload["observed"]["identity_diagnostics"]["fixture_status"],
+                "FIXTURE_READY",
+            )
+
+    def test_identity_surface_defaults_to_absent_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self._continuity_fixture(Path(directory))
+            paths["eval_response"].write_text("{}\n", encoding="utf-8")
+            paths["adapter_output"].write_text("{}\n", encoding="utf-8")
+
+            with mock.patch.object(
+                module.verifier, "_checkpoint_runtime_graph",
+                return_value={"status": "pass", "checks": [], "observed": {}},
+            ):
+                payload = module.verify(
+                    program_root=paths["program"],
+                    consumer_root=paths["consumer"],
+                    eval_response=paths["eval_response"],
+                    adapter_output=paths["adapter_output"],
+                )
+
+            self.assertNotIn("identity_diagnostics", payload["observed"])
+
 
 if __name__ == "__main__":
     unittest.main()
