@@ -181,10 +181,20 @@ class Issue32VerifierTests(unittest.TestCase):
         }
         self.assertTrue(required_surfaces.issubset(set(verifier.INSTALL_REQUIRED_FILES)))
         consumer = Path(self.holder.name) / "consumer-assets"
-        for relative in verifier.INSTALL_REQUIRED_FILES:
+        for relative in (*verifier.INSTALL_REQUIRED_FILES,
+                         ".codex/agents/professor-contact-email-generator.toml"):
             path = consumer / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("installed", encoding="utf-8")
+        (consumer / ".codex/agents/professor-contact-email-generator.toml").write_text(
+            'name = "professor-contact-email-generator"\n'
+            'description = "Stage 5 email generator"\n'
+            'developer_instructions = """## Stage 5 caller Input contract\n'
+            'choices canonical JSON email_id first_choice signature_name learning initial_sent_date --choices\n'
+            '### Codex branch\npreserve choices unchanged\n'
+            '### humanizer-ja stage-5 constraints\n"""\n',
+            encoding="utf-8",
+        )
         producer_sha = "c" * 40
         (consumer / "apm.lock.yaml").write_text(
             "dependencies:\n"
