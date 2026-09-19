@@ -1206,6 +1206,49 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
                 self.assertEqual(payload["status"], "pass", payload)
                 self.assertEqual(payload["classification"], "PASS")
 
+    def test_stage4_prerequisite_outranks_product_write_attribution(self):
+        # Verdict precedence on one fixed feature surface: a clean pre
+        # snapshot, a post snapshot consistent with the current
+        # artifacts, and a Stage-4 output written this run.  Only the
+        # fixture_status varies.  A harness/provider blocker or corrupted
+        # adapter evidence is decided before feature attribution — under
+        # HARNESS_CONTAMINATION the evidence sources are outside the
+        # allowed roots, so the filesystem write can no longer be trusted
+        # as a producer FAIL — while the identity diagnostics stay
+        # non-gating and a ready fixture still fails the producer.
+        program = self.root / "program-precedence"
+        issue57_fixture.build_fixture(program, self.root / "profile-precedence",
+                                      output=self.root / "setup-precedence.json")
+        expected = verifier._expected_pending_projection(program)
+        self.assertIsNotNone(expected)
+        suffix = abs(hash(program)) % 9999
+        pre = self.root / f"pre-{suffix}.json"
+        post = self.root / f"post-{suffix}.json"
+        self._write_snapshot(program, pre)
+        output_path = program / "教授研究/套磁选择.json"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("{}", encoding="utf-8")
+        self._write_snapshot(program, post)
+        cases = {
+            "FIXTURE_READY": ("fail", "FAIL_PRODUCT"),
+            "HARNESS_ERROR": ("blocked", "BLOCKED_RUNTIME_PROVIDER"),
+            "HARNESS_CONTAMINATION": ("blocked", "BLOCKED_RUNTIME_PROVIDER"),
+            "NOT_RUN": ("blocked", "BLOCKED_RUNTIME_PROVIDER"),
+            "BLOCKED_DEPENDENCY": ("blocked", "BLOCKED_RUNTIME_PROVIDER"),
+            "INVALID_EVIDENCE": ("invalid", "INVALID_TEST_EXECUTION"),
+            "HARNESS_DISPATCH_UNCONFIRMED": ("fail", "FAIL_PRODUCT"),
+            "HARNESS_DISPATCH_MISMATCH": ("fail", "FAIL_PRODUCT"),
+        }
+        for fixture_status, (status, classification) in cases.items():
+            with self.subTest(fixture_status=fixture_status):
+                payload = self._stage4_verdict(program, expected, pre=pre,
+                                               post=post,
+                                               child_id="child-precedence",
+                                               fixture_status=fixture_status)
+                self.assertEqual(payload["status"], status, payload)
+                self.assertEqual(payload["classification"], classification,
+                                 payload)
+
     def test_malformed_or_missing_candidate_state_is_invalid(self):
         program = self.root / "program-bad"
         program.mkdir()

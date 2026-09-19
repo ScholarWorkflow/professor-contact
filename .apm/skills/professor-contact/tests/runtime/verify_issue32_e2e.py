@@ -1180,7 +1180,10 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
     current artifacts is stale or tampered evidence
     (``INVALID_TEST_EXECUTION``), and only consistent evidence showing
     Stage-4 outputs after a clean pre state proves the omitted-selection
-    path wrote them (``FAIL_PRODUCT``).
+    path wrote them (``FAIL_PRODUCT``).  The adapter prerequisite is
+    decided before that product-write attribution: a harness/provider
+    blocker or corrupted adapter evidence preempts the feature verdict,
+    while named-role identity diagnostics stay non-gating.
     """
     checks: list[dict[str, Any]] = []
     root = Path(args.program_root).resolve()
@@ -1231,14 +1234,13 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
     if not post_consistent:
         return machine("invalid", "INVALID_TEST_EXECUTION")
 
-    # Step 3: with valid pre/post/current evidence, outputs present after
-    # the run are positively attributed to this run's omitted-selection
-    # path.
-    zero_write = current == expected_absent
-    _check(checks, "current_zero_write", zero_write, current)
-    if not zero_write:
-        return machine("fail", "FAIL_PRODUCT")
-
+    # Step 3: the adapter prerequisite is decided before any feature
+    # attribution.  A harness/provider blocker or corrupted adapter
+    # evidence outranks the product-write observation — under
+    # HARNESS_CONTAMINATION the evidence sources themselves are outside
+    # the allowed roots, so this run's filesystem writes can no longer be
+    # trusted as a producer FAIL — while named-role identity diagnostics
+    # stay non-gating and never excuse a real product write.
     try:
         adapter = _load(Path(args.adapter_output)) if args.adapter_output else None
         response = _load(Path(args.eval_response)) if args.eval_response else None
@@ -1251,6 +1253,14 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
     prerequisite = _adapter_prerequisite_block(adapter, checks)
     if prerequisite:
         return machine(*prerequisite)
+
+    # Step 4: with valid pre/post/current evidence and a passed
+    # prerequisite, outputs present after the run are positively
+    # attributed to this run's omitted-selection path.
+    zero_write = current == expected_absent
+    _check(checks, "current_zero_write", zero_write, current)
+    if not zero_write:
+        return machine("fail", "FAIL_PRODUCT")
 
     output = response.get("output")
     root_thread_id = output.get("thread_id") if isinstance(output, dict) else None
