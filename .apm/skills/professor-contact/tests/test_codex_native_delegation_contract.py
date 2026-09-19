@@ -332,6 +332,28 @@ class EarlyRuntimeRoutingGateTests(unittest.TestCase):
                 )
 
 
+class EarlyMachineOutputGateTests(unittest.TestCase):
+    """Machine-returning agents must not leak progress prose as results."""
+
+    MACHINE_OUTPUT_AGENTS = (
+        "professor-contact-analyzer",
+        "professor-contact-email-validator",
+        "professor-contact-idea-generator",
+        "professor-contact-selection",
+        "professor-contact-style-validator",
+    )
+
+    def test_every_json_agent_front_loads_single_message_protocol(self):
+        for owner in self.MACHINE_OUTPUT_AGENTS:
+            with self.subTest(owner=owner):
+                body = frontmatter_and_body(agent_path(owner))[1]
+                prefix = "\n".join(body.splitlines()[:45])
+                self.assertIn("Machine output gate (read first)", prefix)
+                self.assertIn("不要发送进度说明", prefix)
+                self.assertIn("唯一一条 assistant message", prefix)
+                self.assertIn("JSON object", prefix)
+
+
 class CodexStageRoutingContractTests(unittest.TestCase):
     """Issue #55 top-level routing and ownership gates."""
 
