@@ -168,10 +168,12 @@ def evaluate(adapter: Any, case: str) -> dict[str, Any]:
 
     edge_children = {str(edge["child"]) for edge in edges}
     if not edge_children:
-        # Confirmed formal ownership exists, but no *completed* formal
-        # relation is available to prove the topology from.
-        return _verdict("not_tested", case, [],
-                        "confirmed_delegation_without_completed_formal_relation",
+        # A confirmed summary aggregates the concrete children of formal
+        # relations, and the raw status projection never empties this set;
+        # a confirmed summary with no formal relation at all is contradictory
+        # machine evidence, the mirror of unobservable-with-relations.
+        return _verdict("invalid_evidence", case, [],
+                        "delegation_summary_contradicts_relations",
                         problems=problems)
     summary_children = {str(child) for child in children if isinstance(child, str)}
     missing = sorted(child for child in edge_children if child not in summary_children)

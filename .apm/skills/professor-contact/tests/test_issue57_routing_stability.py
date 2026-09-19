@@ -70,6 +70,37 @@ def _codex_branch(text: str) -> str:
     return text[start:text.index("## Input", start)]
 
 
+def _delegation_summary(relations) -> dict:
+    """Build adapter@9's delegation summary from a relation graph.
+
+    The pinned parser derives the summary from every formal ``spawnAgent``
+    relation of the response: ``child_thread_ids`` is the sorted distinct
+    concrete child set, so a synthetic fixture must never hand-write a
+    summary that disagrees with its own ``thread_relations``.
+    """
+    children = sorted({
+        child for relation in relations
+        if isinstance(relation, dict) and relation.get("tool") == "spawnAgent"
+        for child in (relation.get("receiver_thread_ids") or [])
+        if isinstance(child, str) and child
+    })
+    if children:
+        return {
+            "state": "confirmed",
+            "formal_child_count": len(children),
+            "child_thread_ids": children,
+            "basis": ["formal_spawn_relation"],
+            "reason_code": None,
+        }
+    return {
+        "state": "unobservable",
+        "formal_child_count": 0,
+        "child_thread_ids": [],
+        "basis": [],
+        "reason_code": "no_supported_formal_spawn_relation",
+    }
+
+
 class Stage2CodexSourceContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -217,11 +248,7 @@ class Stage2RoutingVerifierTests(unittest.TestCase):
     def _write_evidence(self, relations, *, envelope_ok=True, extra_adapter=None):
         adapter = {
             "fixture_status": "FIXTURE_READY",
-            "delegation": {
-                "state": "confirmed",
-                "basis": ["formal_spawn_relation"],
-                "child_thread_ids": ["coordinator-1"],
-            },
+            "delegation": _delegation_summary(relations),
             "dispatch": {"thread_relations": relations},
         }
         if extra_adapter:
@@ -275,12 +302,24 @@ class Stage2RoutingVerifierTests(unittest.TestCase):
         self.assertEqual(payload["downstream_status"], "blocked_or_failed_out_of_scope")
         self.assertTrue(payload["routing_target_proved"])
 
-    def test_attempt_gate_accepts_started_relations_without_completion(self):
-        for status in ("started", "inProgress", "item/started", "item/completed"):
+    def test_formal_gate_never_depends_on_relation_status_or_child_completion(self):
+        # adapter@9 freezes only tool/sender/receivers for a formal relation.
+        # thread_relations[].status is the raw item.status projection with no
+        # contract-frozen enum, so any value — including null and an absent
+        # key — must gate identically, and the empty app-server event stream
+        # proves no child completion is ever required.
+        for status in ("started", "inProgress", "item/started", "item/completed",
+                       "queued", None):
             with self.subTest(status=status):
                 payload = self._run(self._nested_relations(nested_status=status))
                 self.assertEqual(payload["status"], "pass", payload)
                 self.assertEqual(payload["classification"], "PASS_TARGET")
+                self.assertTrue(payload["routing_target_proved"])
+        relations = self._nested_relations(nested_status=None)
+        del relations[1]["status"]
+        payload = self._run(relations)
+        self.assertEqual(payload["status"], "pass", payload)
+        self.assertEqual(payload["classification"], "PASS_TARGET")
 
     def test_ownership_follows_sender_thread_id_only(self):
         # parent_thread_id claims root, but the formal owner is a shadow
@@ -361,11 +400,7 @@ class Stage2RoutingVerifierTests(unittest.TestCase):
     def test_adapter_prerequisite_requires_the_fixture_status_field(self):
         relations = self._nested_relations()
         adapter = {
-            "delegation": {
-                "state": "confirmed",
-                "basis": ["formal_spawn_relation"],
-                "child_thread_ids": ["coordinator-1"],
-            },
+            "delegation": _delegation_summary(relations),
             "dispatch": {"thread_relations": relations},
         }
         adapter_path = self.root / "adapter-no-status.json"
@@ -431,18 +466,15 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
                     sender="root-1", parent="root-1",
                     fixture_status="FIXTURE_READY"):
         adapter_path = self.root / f"adapter-{abs(hash(program_root)) % 9999}.json"
+        relations = [{
+            "tool": "spawnAgent", "status": "completed",
+            "sender_thread_id": sender, "parent_thread_id": parent,
+            "receiver_thread_ids": [child_id],
+        }]
         adapter_path.write_text(json.dumps({
             "fixture_status": fixture_status,
-            "delegation": {
-                "state": "confirmed",
-                "basis": ["formal_spawn_relation"],
-                "child_thread_ids": [child_id],
-            },
-            "dispatch": {"thread_relations": [{
-                "tool": "spawnAgent", "status": "completed",
-                "sender_thread_id": sender, "parent_thread_id": parent,
-                "receiver_thread_ids": [child_id],
-            }]},
+            "delegation": _delegation_summary(relations),
+            "dispatch": {"thread_relations": relations},
         }), encoding="utf-8")
         contents = [{
             "type": "output_text",
@@ -623,19 +655,16 @@ class Stage4DynamicProjectionTests(unittest.TestCase):
 
         # A legal confirmed delegation whose sender is not the root also has
         # no root-direct child: still BLOCKED_OBSERVABILITY.
+        foreign_relations = [{
+            "tool": "spawnAgent", "status": "completed",
+            "sender_thread_id": "other-root",
+            "receiver_thread_ids": ["child-x"],
+        }]
         adapter_path = self.root / "adapter-foreign-sender.json"
         adapter_path.write_text(json.dumps({
             "fixture_status": "FIXTURE_READY",
-            "delegation": {
-                "state": "confirmed",
-                "basis": ["formal_spawn_relation"],
-                "child_thread_ids": ["child-x"],
-            },
-            "dispatch": {"thread_relations": [{
-                "tool": "spawnAgent", "status": "completed",
-                "sender_thread_id": "other-root",
-                "receiver_thread_ids": ["child-x"],
-            }]},
+            "delegation": _delegation_summary(foreign_relations),
+            "dispatch": {"thread_relations": foreign_relations},
         }), encoding="utf-8")
         response_path = self.root / "response-foreign-sender.json"
         response_path.write_text(json.dumps({

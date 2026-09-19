@@ -129,8 +129,10 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
             "fixture_status": "FIXTURE_READY",
             "delegation": {
                 "state": "confirmed",
+                "formal_child_count": len(set(child_ids)),
+                "child_thread_ids": sorted(set(child_ids)),
                 "basis": ["formal_spawn_relation"],
-                "child_thread_ids": list(child_ids),
+                "reason_code": None,
             },
             "dispatch": {"thread_relations": [{
                 "tool": "spawnAgent",
@@ -239,7 +241,13 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
         adapter_path = self.root / "unobservable.json"
         adapter_path.write_text(json.dumps({
             "fixture_status": "FIXTURE_READY",
-            "delegation": {"state": "unobservable", "basis": [], "child_thread_ids": []},
+            "delegation": {
+                "state": "unobservable",
+                "formal_child_count": 0,
+                "child_thread_ids": [],
+                "basis": [],
+                "reason_code": "no_supported_formal_spawn_relation",
+            },
             "dispatch": {"thread_relations": []},
         }), encoding="utf-8")
         response_path = self.root / "unobservable-response.json"

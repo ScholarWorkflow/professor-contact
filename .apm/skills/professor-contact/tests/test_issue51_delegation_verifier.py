@@ -3,9 +3,10 @@
 The verifier only consumes fixtures ``codex-eval-adapter@9`` output.  These
 tests pin its mechanical mapping between adapter machine evidence and the
 issue's verdict families (``pass`` / ``blocked`` / ``not_tested`` /
-``invalid_evidence``): topology is judged from formal completed ``spawnAgent``
-relations only, prose and identity diagnostics never create a PASS, and
-corrupted evidence fails closed instead of passing or blaming the producer.
+``invalid_evidence``): topology is judged from formal ``spawnAgent`` relations
+only (the raw ``item.status`` projection never gates an edge), prose and
+identity diagnostics never create a PASS, and corrupted evidence fails closed
+instead of passing or blaming the producer.
 """
 import contextlib
 import importlib.util
@@ -108,15 +109,30 @@ class Issue51VerifierTopologyTests(unittest.TestCase):
         self.assertEqual(payload["max_depth"], 1)
         self.assertEqual(payload["formal_spawn_relation_count"], 1)
 
-    def test_confirmed_without_completed_relation_is_not_tested(self):
+    def test_formal_topology_follows_relations_not_the_status_projection(self):
+        # adapter@9 freezes a formal relation on tool/sender/receivers only;
+        # the raw item.status projection has no frozen enum and never gates
+        # an edge, so an in-progress relation with concrete receivers still
+        # counts and the flat topology stays NOT TESTED.
         relations = [relation(ROOT, L1, status="in-progress")]
         payload = verifier.evaluate(
             adapter(relations=relations, delegation_payload=delegation(children=(L1,))),
             "r1")
         self.assertEqual(payload["status"], "not_tested", payload)
         self.assertEqual(
-            payload["reason_code"],
-            "confirmed_delegation_without_completed_formal_relation")
+            payload["reason_code"], "nested_formal_delegation_not_observed")
+        self.assertEqual(payload["formal_spawn_relation_count"], 1)
+
+    def test_confirmed_summary_without_any_formal_relation_contradicts(self):
+        # A confirmed summary aggregates formal relations' concrete children;
+        # with no formal relation observable the two evidence surfaces
+        # contradict and fail closed.
+        payload = verifier.evaluate(
+            adapter(relations=[], delegation_payload=delegation(children=(L1,))),
+            "r1")
+        self.assertEqual(payload["status"], "invalid_evidence", payload)
+        self.assertEqual(
+            payload["reason_code"], "delegation_summary_contradicts_relations")
 
     def test_assistant_prose_never_creates_delegation_evidence(self):
         noisy = adapter(relations=[], delegation_payload=delegation(

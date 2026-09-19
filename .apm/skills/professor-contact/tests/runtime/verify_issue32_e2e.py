@@ -704,22 +704,19 @@ def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
     return machine("pass", "PASS")
 
 
-ADAPTER_FORMAL_RELATION_STATES = {
-    "started", "inProgress", "completed", "item/started", "item/completed",
-}
-
-
 def _formal_spawn_relations(adapter: Any) -> tuple[list[dict[str, str]], list[Any]]:
     """Extract formal spawn edges from adapter@9's normalized relation graph.
 
-    A formal edge requires ``tool == "spawnAgent"``, an adapter-supported
-    relation state (attempt and completion states are both accepted — the
-    Stage-2 attempt gate must not impose child completion), a non-empty
-    ``sender_thread_id`` owner, and one or more concrete
-    ``receiver_thread_ids``.  ``sender_thread_id`` is the formal owner;
-    ``parent_thread_id`` is app-server event attribution and is never read
-    here.  Shape violations are returned separately so each checkpoint can
-    classify them as invalid evidence.
+    The pinned adapter@9 contract freezes exactly three formal-relation
+    conditions: ``tool == "spawnAgent"``, a non-empty ``sender_thread_id``
+    owner, and one or more concrete ``receiver_thread_ids``.
+    ``dispatch.thread_relations[].status`` is only the raw ``item.status``
+    projection and has no frozen enum, so it is never read here (diagnostics
+    only) and a formal edge never requires child completion.
+    ``sender_thread_id`` is the formal owner; ``parent_thread_id`` is
+    app-server event attribution and is never read here.  Shape violations
+    are returned separately so each checkpoint can classify them as invalid
+    evidence.
     """
     edges: list[dict[str, str]] = []
     malformed: list[Any] = []
@@ -729,11 +726,6 @@ def _formal_spawn_relations(adapter: Any) -> tuple[list[dict[str, str]], list[An
         return edges, [relations]
     for relation in relations:
         if not isinstance(relation, dict) or relation.get("tool") != "spawnAgent":
-            continue
-        status = relation.get("status") or relation.get("event") or relation.get("relation")
-        if isinstance(relation.get("item"), dict):
-            status = relation["item"].get("status", status)
-        if status not in ADAPTER_FORMAL_RELATION_STATES:
             continue
         sender = relation.get("sender_thread_id")
         children = relation.get("receiver_thread_ids")
@@ -1426,7 +1418,12 @@ def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _relation_rows(payload: Any) -> list[dict[str, Any]]:
-    """Extract formal spawn relations from adapter @9's normalized graph."""
+    """Extract formal spawn relations from adapter @9's normalized graph.
+
+    Like ``_formal_spawn_relations``, topology follows the pinned contract's
+    three frozen conditions only; the unfrozen raw ``relation.status``
+    projection stays diagnostics and never drops an edge.
+    """
     rows: list[dict[str, Any]] = []
     if not isinstance(payload, dict):
         return rows
@@ -1436,8 +1433,6 @@ def _relation_rows(payload: Any) -> list[dict[str, Any]]:
         return rows
     for relation in relations:
         if not isinstance(relation, dict) or relation.get("tool") != "spawnAgent":
-            continue
-        if relation.get("status") != "completed":
             continue
         parent = relation.get("parent_thread_id")
         children = relation.get("receiver_thread_ids")
