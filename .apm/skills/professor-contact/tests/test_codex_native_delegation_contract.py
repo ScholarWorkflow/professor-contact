@@ -283,6 +283,55 @@ class CodexCallerSkillContractTests(unittest.TestCase):
         self.assertRegex(region, r"重新委派[\s\S]{0,200}`selection`")
 
 
+class EarlyRuntimeRoutingGateTests(unittest.TestCase):
+    """Runtime routing must survive bounded/partial instruction reads.
+
+    PC57-R1 showed the root reading only the first 240 lines of the installed
+    Skill, while the Codex branch started later.  It then copied the earlier
+    OpenCode route into shell commands.  The routing gate is therefore a
+    load-bearing preamble, not merely a rule that may exist somewhere in a
+    long document.
+    """
+
+    def _assert_early_gate(self, label: str, body: str, line_budget: int = 80):
+        prefix = "\n".join(body.splitlines()[:line_budget])
+        self.assertIn("Runtime routing gate (read first)", prefix, label)
+        self.assertIn("当前 host", prefix, label)
+        self.assertIn("真实委派动作", prefix, label)
+        self.assertIn("不是能力探测前置条件", prefix, label)
+        self.assertIn("machine-level failure", prefix, label)
+        self.assertIn("`opencode run`", prefix, label)
+        self.assertIn("`codex exec`", prefix, label)
+
+    def test_root_skill_front_loads_all_stage_routes_before_business_detail(self):
+        body = frontmatter_and_body(SKILL_PATH)[1]
+        self._assert_early_gate("SKILL.md", body)
+        prefix = "\n".join(body.splitlines()[:80])
+        for stage, owner in {
+            "1": "professor-contact-downloader",
+            "2": "professor-contact-analyzer",
+            "3": "professor-contact-idea-generator",
+            "4": "professor-contact-selection",
+            "5": "professor-contact-email-generator",
+        }.items():
+            with self.subTest(stage=stage):
+                self.assertIn(f"Stage {stage} → `{owner}`", prefix)
+        self.assertLess(
+            body.index("Runtime routing gate (read first)"),
+            body.index("### OpenCode 分支"),
+        )
+
+    def test_every_nested_coordinator_front_loads_the_same_runtime_gate(self):
+        for owner in CODEX_NESTED_DELEGATOR_AGENTS:
+            with self.subTest(owner=owner):
+                body = frontmatter_and_body(agent_path(owner))[1]
+                self._assert_early_gate(owner, body)
+                self.assertLess(
+                    body.index("Runtime routing gate (read first)"),
+                    body.index(OPENCODE_BRANCH_MARKERS[owner][0]),
+                )
+
+
 class CodexStageRoutingContractTests(unittest.TestCase):
     """Issue #55 top-level routing and ownership gates."""
 

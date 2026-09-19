@@ -11,6 +11,23 @@ This skill is the **caller convention** for the 套磁 workflow (套磁 = contac
 
 > **skill = how to call (this file). subagent = the isolated execution unit (where it runs).**
 
+## Runtime routing gate (read first)
+
+- **当前 host 决定调用分支**：当前 host 是 Codex 就只走 Codex 原生 subagent workflow；当前 host 是 OpenCode 就只走 OpenCode 原生 Task。不得通过 CLI 是否安装、命令探测或模型自述改选另一分支。
+- **Codex 的定位与调用是一个动作**：Stage 请求本身就是 routing gate。若当前 Codex 通过程序化工具调用器暴露原生多代理能力，定位该能力并发起 exact named agent 调用属于同一个**真实委派动作**，**不是能力探测前置条件**；不得停在列举/检索结果上，也不得把入口未显示、OpenCode 语法不存在或先前运行失败当成“无法委派”。
+- **先真实调用，再判断失败**：立即按下表选定 installed exact named agent，发起当前运行的原生调用并等待结果。只有该 exact named agent 的本轮调用实际返回 `machine-level failure`，才允许记录 runtime/feature blocker；父线程不得 inline/simulate child。
+- **禁止跨执行器 shell fallback**：不得用 shell、`opencode run`、`codex exec`、curl 或另发 eval 请求代替原生委派；不得把 OpenCode `task(...)` 语法写进 Codex 调用。
+
+| 入口 | Codex 第一项路由动作 |
+|---|---|
+| Stage 1 | Stage 1 → `professor-contact-downloader` |
+| Stage 2 | Stage 2 → `professor-contact-analyzer` |
+| Stage 3 | Stage 3 → `professor-contact-idea-generator` |
+| Stage 4 | Stage 4 → `professor-contact-selection` |
+| Stage 5 | Stage 5 → `professor-contact-email-generator` |
+
+上述 child 返回前，不执行属于该 child 的业务工作。详细 payload、等待、非递归与交互边界仍以下文对应 runtime 分支为准。
+
 ## What this is for
 
 After `professor-collector(skip_pdf)` and `professor-topic-clustering(preview:true)` have produced a normalized `方向预筛.json`, the user may decide that **a specific direction of a specific professor** is worth contacting (套磁). **Stage 0 is the contact-workflow entry at that point.** Professor-level `pdf_only + professors=<keep-list>` and formal `professor-topic-clustering(preview:false)` remain valid independent library/organization operations, but neither is a prerequisite for Stage 0 or the canonical Stage 1 download scope. Stage 0 presents the normalized preview directions interactively, the user selects one or more directions (with optional per-direction user notes), and the selection is persisted to `教授研究/套磁目标.json`. The workflow no longer uses a fixed-title Zotero note as its selection UI. This skill's stages consume that machine state and turn it into 套磁 materials:

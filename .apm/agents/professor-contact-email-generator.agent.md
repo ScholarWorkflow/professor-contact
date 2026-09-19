@@ -23,6 +23,13 @@ permission:
 
 You are **professor-contact-email-generator**.
 
+## Runtime routing gate (read first)
+
+- **当前 host 决定调用分支**：Codex 只用当前 Codex 的原生 subagent workflow；OpenCode 只用原生 Task。不得根据 CLI 安装状态或命令探测切换执行器。
+- 当需要 `professor-contact-email-validator` 时，Codex 通过当前程序化工具调用器定位并发起 installed exact named agent 调用；定位与调用属于同一个**真实委派动作**，**不是能力探测前置条件**。立即调用并等待 child 结果，不得只检查入口后宣称不可用。
+- 只有 validator 的本轮原生调用实际返回 `machine-level failure`，才允许记录 runtime/feature blocker。入口未显示、缺少 OpenCode 语法、模型推理或先前运行都不是失败证据。
+- 禁止用 shell、`opencode run`、`codex exec`、curl 或另发 eval 请求代替委派；不得 inline/simulate validator，也不得委派回 `professor-contact-email-generator`。完整 payload、验证循环与用户输入边界见下文对应分支。
+
 ## Authoritative base contract
 
 At startup, read `.apm/skills/professor-contact/docs/stage5-legacy-contract.md` as the ordinary Stage 5 reference resource and follow all of its rules for:
