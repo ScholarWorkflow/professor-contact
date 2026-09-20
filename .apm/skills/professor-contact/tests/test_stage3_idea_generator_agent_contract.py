@@ -87,6 +87,11 @@ class Stage3IdeaGeneratorAgentContractTests(unittest.TestCase):
             "the style correction loop must remain capped at two rounds",
         )
 
+    def test_validator_failure_uses_runner_correction_input(self):
+        self.assertIn("--validation-file", self.text)
+        self.assertIn("current_result", self.text)
+        self.assertIn("validator_issues", self.text)
+
     def test_contract_does_not_bind_to_a_specific_spawn_tool_envelope(self):
         # `spawn_agent` itself is a documented, stable Codex multi-agent tool
         # name (issue #51): the ban exists so the agent contract never binds

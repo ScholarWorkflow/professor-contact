@@ -54,6 +54,13 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, section)
 
+    def test_stage3_validator_scope_and_correction_handoff_are_exact(self):
+        section = self._stage34_orchestration_section()
+        self.assertIn("只传这一份候选稿", section)
+        self.assertIn("artifact: candidates", section)
+        self.assertIn("validation-file", section)
+        self.assertIn("再次委派 style-validator", section)
+
     def test_stage4_has_codex_user_boundary_and_opencode_question_boundary(self):
         self.assertIn("professor-contact-selection", self.text)
         self.assertIn("question", self.text)

@@ -4728,6 +4728,72 @@ def _parse_cross_groups(raw: Any, pack_directions: list) -> list[dict]:
             for ids in groups.values()]
 
 
+def load_stage3_style_findings(path: Path, professor_dir: Path) -> list:
+    """Load the exact candidate-document failure emitted by the style validator.
+
+    Stage 3 owns only the rendered candidate document.  Requiring its absolute
+    path and ``artifact:candidates`` prevents a correction round from trying to
+    repair Stage-2 analysis or a program-level overview.
+    """
+    data, error = read_json_file(path)
+    if error or not isinstance(data, dict) or data.get("result") != "ok" \
+            or not isinstance(data.get("files"), list):
+        fail("invalid_validation_json", f"style-validator output unreadable: {path}")
+    target = (professor_dir / CANDIDATES_MD).resolve()
+    matches = []
+    for entry in data["files"]:
+        if not isinstance(entry, dict) or entry.get("artifact") != "candidates":
+            continue
+        try:
+            candidate_path = Path(entry.get("file") or "").resolve()
+        except (OSError, ValueError):
+            continue
+        if candidate_path == target:
+            matches.append(entry)
+    if len(matches) != 1:
+        fail("invalid_validation_json",
+             f"validator output must contain exactly one candidates result for {target}")
+    entry = matches[0]
+    if entry.get("verdict") != "fail":
+        fail("invalid_validation_json", "Stage-3 correction requires verdict=fail")
+    issues = entry.get("issues")
+    if not isinstance(issues, list) or not issues or not all(isinstance(i, dict) for i in issues):
+        fail("invalid_validation_json", "failed candidates result needs non-empty object issues")
+    return issues
+
+
+def stage3_current_result(direction: dict) -> dict:
+    return {
+        "schema": 2,
+        "kind": "candidates",
+        "direction_id": direction.get("direction_id"),
+        "mode": direction.get("mode"),
+        "refined": direction.get("refined"),
+        "priority": direction.get("priority") or "",
+        "candidates": direction.get("candidates") or [],
+    }
+
+
+def require_stage3_correction_invariants(old: dict, new: dict, path: Path) -> None:
+    """A style retry may rewrite prose, never identities or grounded evidence."""
+    if old.get("mode") != new.get("mode") or old.get("refined") != new.get("refined") \
+            or (old.get("priority") or "") != (new.get("priority") or ""):
+        fail("validation_correction_changed_machine_facts",
+             f"{path}: correction changed mode/refined/priority")
+    old_candidates = old.get("candidates") or []
+    new_candidates = new.get("candidates") or []
+    if [c.get("id") for c in old_candidates] != [c.get("id") for c in new_candidates]:
+        fail("validation_correction_changed_machine_facts",
+             f"{path}: correction changed candidate IDs or order")
+    fixed_fields = ("id", "kind", "direction_ids", "origin", "gap_refs",
+                    "anchor_type", "anchor_notes", "papers", "fit", "red_lines")
+    for before, after in zip(old_candidates, new_candidates):
+        changed = [field for field in fixed_fields if before.get(field) != after.get(field)]
+        if changed:
+            fail("validation_correction_changed_machine_facts",
+                 f"{path}: candidate {before.get('id')} changed {changed}")
+
+
 def cmd_stage3_plan(args) -> None:
     professor_dir = Path(args.professor_dir)
     program_root = Path(args.program_root) if args.program_root else professor_dir.parent.parent
@@ -4816,6 +4882,21 @@ def cmd_stage3_plan(args) -> None:
     state_directions = {d.get("direction_id"): d
                         for d in (state or {}).get("directions", [])
                         if isinstance(d, dict)}
+    validation_issues = None
+    if getattr(args, "validation_file", None):
+        if not direction_id_arg:
+            fail("invalid_params", "--validation-file requires --direction-id")
+        if skip_ids or cross_groups:
+            fail("invalid_params", "Stage-3 correction cannot skip or request cross-direction groups")
+        current = state_directions.get(direction_id_arg)
+        if not current or current.get("stage3_status") != "ready" or not current.get("candidates"):
+            fail("missing_candidate_state", f"no reusable Stage-3 result for {direction_id_arg}")
+        if contract_changed or profile_changed \
+                or input_fps.get(direction_id_arg) != pack_fps.get(direction_id_arg):
+            soft_exit("needs_refresh", "validation_source_changed",
+                      direction_id=direction_id_arg)
+        validation_issues = load_stage3_style_findings(
+            Path(args.validation_file), professor_dir)
     state_groups = {(g.get("group_id") if isinstance(g, dict) else None): g
                     for g in (state or {}).get("cross_direction_groups", [])
                     if isinstance(g, dict)}
@@ -4839,7 +4920,7 @@ def cmd_stage3_plan(args) -> None:
         if did in skip_ids:
             skipped.append(did)
             continue
-        if _direction_reusable(did):
+        if _direction_reusable(did) and validation_issues is None:
             reuse.append(did)
             continue
         gap_lines = []
@@ -4897,6 +4978,13 @@ def cmd_stage3_plan(args) -> None:
                     "count": "generated 与 refined 模式都必须给 3-5 个可选候选；有用户笔记时其中恰好 1 条 origin='user_refined'（校准后的用户想法本身成为可选候选），其余为真正不同的备选",
                     "diversity": "候选之间切入点/所挂 gap 不重复",
                     "scope": "本任务只属于 direction_id 指向的这一个方向；跨方向组合不在本任务内，绝不混入 candidates[]"}}})
+        if validation_issues is not None:
+            jobs[-1]["job_id"] = f"candidates-correction:{pack.get('professor')}:{did}"
+            jobs[-1]["model_input"].update({
+                "current_result": stage3_current_result(state_directions[did]),
+                "validator_issues": validation_issues,
+                "correction_rules": "返回完整 result；只改 validator_issues 点名的候选文字。候选 ID、顺序、方向、来源、gap_refs、anchor_notes、papers、fit、red_lines、mode/refined/priority 必须原样保留。",
+            })
     # Cross-direction jobs: explicit opt-in only (issue #8 §6). No requested
     # group ⇒ no cross job, no cross model call, no cross section.
     cross_jobs = []
@@ -5476,6 +5564,23 @@ def cmd_stage3_finalize(args) -> None:
         (state or {}).get("generator_contract_version") != STAGE3_GENERATOR_CONTRACT_VERSION
     old_directions = {d.get("direction_id"): d
                       for d in (state or {}).get("directions", []) if isinstance(d, dict)}
+    validation_issues = None
+    if getattr(args, "validation_file", None):
+        if not direction_id_arg:
+            fail("invalid_params", "--validation-file requires --direction-id")
+        if skip_ids or cross_groups:
+            fail("invalid_params", "Stage-3 correction cannot skip or request cross-direction groups")
+        current = old_directions.get(direction_id_arg)
+        if not current or current.get("stage3_status") != "ready" or not current.get("candidates"):
+            fail("missing_candidate_state", f"no reusable Stage-3 result for {direction_id_arg}")
+        if contract_changed or profile_changed \
+                or (state or {}).get("input_fingerprints", {}).get(direction_id_arg) \
+                != {direction_machine_id(d): d.get("input_fingerprint")
+                    for d in pack_directions}.get(direction_id_arg):
+            soft_exit("needs_refresh", "validation_source_changed",
+                      direction_id=direction_id_arg)
+        validation_issues = load_stage3_style_findings(
+            Path(args.validation_file), professor_dir)
     old_fps = (state or {}).get("input_fingerprints", {})
     selected_keys = None
     if refresh_scope == "selected":
@@ -5543,7 +5648,7 @@ def cmd_stage3_finalize(args) -> None:
                 "user_note_present": bool(direction.get("user_note")),
             })
             continue
-        if old_direction and not contract_changed and not profile_changed \
+        if old_direction and validation_issues is None and not contract_changed and not profile_changed \
                 and old_fps.get(did) == pack_fps.get(did) \
                 and old_direction.get("stage3_status") == "ready" \
                 and old_direction.get("candidates"):
@@ -5561,6 +5666,8 @@ def cmd_stage3_finalize(args) -> None:
         if rerror:
             fail("result_missing", f"{result_path}: {rerror}")
         checked = validate_candidate_result(pack, direction, data, result_path)
+        if validation_issues is not None:
+            require_stage3_correction_invariants(old_direction, checked, result_path)
         checked["name_ja"] = direction.get("name_ja")
         checked["name_zh"] = direction.get("name_zh")
         checked["credibility"] = direction.get("credibility")
@@ -5730,6 +5837,7 @@ def cmd_stage3_finalize(args) -> None:
                         "candidates": len(d.get("candidates") or [])}
                        for d in updated_directions],
         "skipped_direction_ids": skipped_out,
+        "corrected": sorted(processed_dids) if validation_issues is not None else [],
         "cross_direction_groups": [{"group_id": g["group_id"],
                                      "direction_ids": g["direction_ids"],
                                      "candidates": len(g.get("candidates") or [])}
@@ -8481,6 +8589,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "absent/empty means no cross-direction work at all")
     p.add_argument("--selection")
     p.add_argument("--program-root")
+    p.add_argument("--validation-file",
+                   help="raw style-validator JSON; with --direction-id, forces one text-only correction job")
     p.set_defaults(func=cmd_stage3_plan)
 
     p = sub.add_parser("stage3-finalize")
@@ -8497,6 +8607,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--selection")
     p.add_argument("--program-root")
     p.add_argument("--decision-file")
+    p.add_argument("--validation-file",
+                   help="same raw style-validator JSON used by stage3-plan correction")
     p.set_defaults(func=cmd_stage3_finalize)
 
     p = sub.add_parser("stage4-finalize")
