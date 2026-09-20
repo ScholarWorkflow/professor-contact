@@ -35,7 +35,7 @@ import seed_issue39_zotero as zseed  # noqa: E402
 HELPER_ID = "tests/runtime/prepare_issue40_runtime_fixture.py"
 SCHEMA_VERSION = 1
 FIXTURE_REPOSITORY = "skills-test-fixtures"
-FIXTURE_REVISION = "88d2056f35a6f7e114b6070adbbeeeb355fd4b7f"
+FIXTURE_REVISION = "9cb4547845be323a2a7b59139ee419476f2c7113"
 STAGE0_TARGET_RELATIVE = Path("教授研究/套磁目标.json")
 FILL_ATTACHMENT_TITLE = "Nonlinear Extensions of Synthetic Processing"
 FILL_PDF_LINES = (

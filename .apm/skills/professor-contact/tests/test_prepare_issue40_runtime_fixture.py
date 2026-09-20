@@ -33,7 +33,7 @@ builder = _load_module(
     "build_issue32_e2e_fixture",
     TESTS_DIR / "runtime" / "build_issue32_e2e_fixture.py")
 
-PINNED_FIXTURE_SHA = "88d2056f35a6f7e114b6070adbbeeeb355fd4b7f"
+PINNED_FIXTURE_SHA = "9cb4547845be323a2a7b59139ee419476f2c7113"
 READY_KEY = "RTA00001"
 FILL_KEY = "RTB00002"
 ATTACHMENT_KEY = "ATT00001"
