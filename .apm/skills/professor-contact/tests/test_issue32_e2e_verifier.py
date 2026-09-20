@@ -687,6 +687,7 @@ class Issue32VerifierTests(unittest.TestCase):
 
         events = Path(self.holder.name) / "adapter.json"
         events.write_text(json.dumps({
+            "fixture_status": "FIXTURE_READY",
             "delegation": {
                 "state": "confirmed",
                 "basis": ["formal_spawn_relation"],
@@ -695,11 +696,14 @@ class Issue32VerifierTests(unittest.TestCase):
             },
             "dispatch": {"thread_relations": [
                 {"tool": "spawnAgent", "status": "completed",
-                 "parent_thread_id": "contact", "receiver_thread_ids": ["downloader"]},
+                 "sender_thread_id": "contact", "parent_thread_id": "contact",
+                 "receiver_thread_ids": ["downloader"]},
                 {"tool": "spawnAgent", "status": "completed",
-                 "parent_thread_id": "downloader", "receiver_thread_ids": ["analyzer"]},
+                 "sender_thread_id": "downloader", "parent_thread_id": "downloader",
+                 "receiver_thread_ids": ["analyzer"]},
                 {"tool": "wait", "status": "completed",
-                 "parent_thread_id": "contact", "receiver_thread_ids": ["analyzer"]},
+                 "sender_thread_id": "contact", "parent_thread_id": "contact",
+                 "receiver_thread_ids": ["analyzer"]},
             ]},
         }), encoding="utf-8")
         raw_response = Path(self.holder.name) / "response.json"
@@ -720,13 +724,16 @@ class Issue32VerifierTests(unittest.TestCase):
 
         disconnected = Path(self.holder.name) / "disconnected.json"
         disconnected.write_text(json.dumps({
+            "fixture_status": "FIXTURE_READY",
             "delegation": {"state": "confirmed", "basis": ["formal_spawn_relation"],
                             "child_thread_ids": ["c1", "c2"]},
             "dispatch": {"thread_relations": [
                 {"tool": "spawnAgent", "status": "completed",
-                 "parent_thread_id": "p1", "receiver_thread_ids": ["c1"]},
+                 "sender_thread_id": "p1", "parent_thread_id": "p1",
+                 "receiver_thread_ids": ["c1"]},
                 {"tool": "spawnAgent", "status": "completed",
-                 "parent_thread_id": "p2", "receiver_thread_ids": ["c2"]},
+                 "sender_thread_id": "p2", "parent_thread_id": "p2",
+                 "receiver_thread_ids": ["c2"]},
             ]},
         }), encoding="utf-8")
         payload = verifier._checkpoint_runtime_graph(
@@ -735,10 +742,54 @@ class Issue32VerifierTests(unittest.TestCase):
 
         unobservable = Path(self.holder.name) / "unobservable.json"
         unobservable.write_text(json.dumps({
+            "fixture_status": "FIXTURE_READY",
             "delegation": {"state": "unobservable", "basis": [], "child_thread_ids": []},
             "dispatch": {"thread_relations": []},
         }), encoding="utf-8")
         payload = verifier._checkpoint_runtime_graph(self.args(adapter_output=unobservable))
+        self.assertEqual(payload["status"], "fail", payload)
+
+    def test_runtime_graph_ownership_follows_sender_thread_id_only(self):
+        # Pinned sender_rule for the shared topology extraction (consumed by
+        # both #32 and #51): a child is owned by sender_thread_id;
+        # parent_thread_id is app-server event attribution and never decides
+        # an edge.
+        sender_owned = Path(self.holder.name) / "sender-owned.json"
+        sender_owned.write_text(json.dumps({
+            "fixture_status": "FIXTURE_READY",
+            "delegation": {"state": "confirmed", "basis": ["formal_spawn_relation"],
+                           "formal_child_count": 2, "child_thread_ids": ["mid", "deep"]},
+            "dispatch": {"thread_relations": [
+                {"tool": "spawnAgent", "status": "completed",
+                 "sender_thread_id": "contact", "parent_thread_id": "unrelated-1",
+                 "receiver_thread_ids": ["mid"]},
+                {"tool": "spawnAgent", "status": "completed",
+                 "sender_thread_id": "mid", "parent_thread_id": "unrelated-2",
+                 "receiver_thread_ids": ["deep"]},
+            ]},
+        }), encoding="utf-8")
+        payload = verifier._checkpoint_runtime_graph(
+            self.args(adapter_output=sender_owned, min_edges=2, required_depth=2))
+        self.assertEqual(payload["status"], "pass", payload)
+
+        # Attribution-only nesting must not pass: the sender chain is
+        # disjoint, so no nested formal topology exists.
+        attribution_owned = Path(self.holder.name) / "attribution-owned.json"
+        attribution_owned.write_text(json.dumps({
+            "fixture_status": "FIXTURE_READY",
+            "delegation": {"state": "confirmed", "basis": ["formal_spawn_relation"],
+                           "formal_child_count": 2, "child_thread_ids": ["mid", "deep"]},
+            "dispatch": {"thread_relations": [
+                {"tool": "spawnAgent", "status": "completed",
+                 "sender_thread_id": "shadow-a", "parent_thread_id": "contact",
+                 "receiver_thread_ids": ["mid"]},
+                {"tool": "spawnAgent", "status": "completed",
+                 "sender_thread_id": "shadow-b", "parent_thread_id": "mid",
+                 "receiver_thread_ids": ["deep"]},
+            ]},
+        }), encoding="utf-8")
+        payload = verifier._checkpoint_runtime_graph(
+            self.args(adapter_output=attribution_owned, min_edges=2, required_depth=2))
         self.assertEqual(payload["status"], "fail", payload)
 
 
@@ -798,6 +849,7 @@ class RuntimeIdentityNoisePolicyTests(unittest.TestCase):
 
     def _stage3_adapter(self):
         return {
+            "fixture_status": "FIXTURE_READY",
             "delegation": {
                 "state": "confirmed",
                 "basis": ["formal_spawn_relation"],
@@ -863,6 +915,7 @@ class RuntimeIdentityNoisePolicyTests(unittest.TestCase):
 
     def _stage4_adapter(self):
         return {
+            "fixture_status": "FIXTURE_READY",
             "delegation": {
                 "state": "confirmed",
                 "basis": ["formal_spawn_relation"],
@@ -871,6 +924,7 @@ class RuntimeIdentityNoisePolicyTests(unittest.TestCase):
             },
             "dispatch": {"thread_relations": [
                 {"tool": "spawnAgent", "status": "completed",
+                 "sender_thread_id": "root-thread",
                  "parent_thread_id": "root-thread",
                  "receiver_thread_ids": ["child-c"]},
             ]},
@@ -893,7 +947,7 @@ class RuntimeIdentityNoisePolicyTests(unittest.TestCase):
             }],
         }
         (prof / "套磁候选状态.json").write_text(json.dumps(state), encoding="utf-8")
-        pending = verifier._candidate_state_pending_projection(self.root)
+        pending = verifier._expected_pending_projection(self.root)
         self.assertIsNotNone(pending)
         self.assertTrue(pending)
         zero = verifier._checkpoint_stage4_snapshot(self.args())["artifacts"]
@@ -944,6 +998,7 @@ class RuntimeIdentityNoisePolicyTests(unittest.TestCase):
 
     def test_runtime_graph_ignores_named_identity_noise(self):
         formal = {
+            "fixture_status": "FIXTURE_READY",
             "delegation": {
                 "state": "confirmed",
                 "basis": ["formal_spawn_relation"],
@@ -952,13 +1007,13 @@ class RuntimeIdentityNoisePolicyTests(unittest.TestCase):
             },
             "dispatch": {"thread_relations": [
                 {"tool": "spawnAgent", "status": "completed",
-                 "parent_thread_id": "contact",
+                 "sender_thread_id": "contact", "parent_thread_id": "contact",
                  "receiver_thread_ids": ["downloader"]},
                 {"tool": "spawnAgent", "status": "completed",
-                 "parent_thread_id": "downloader",
+                 "sender_thread_id": "downloader", "parent_thread_id": "downloader",
                  "receiver_thread_ids": ["analyzer"]},
                 {"tool": "wait", "status": "completed",
-                 "parent_thread_id": "contact",
+                 "sender_thread_id": "contact", "parent_thread_id": "contact",
                  "receiver_thread_ids": ["analyzer"]},
             ]},
         }
@@ -977,7 +1032,8 @@ class RuntimeIdentityNoisePolicyTests(unittest.TestCase):
         self.assertEqual(noisy, clean)
 
         identity_only = self._with_identity_noise(
-            {"loaded_agents": ["professor-contact", "downloader"]})
+            {"fixture_status": "FIXTURE_READY",
+             "loaded_agents": ["professor-contact", "downloader"]})
         payload = verifier._checkpoint_runtime_graph(self.args(
             adapter_output=self._write("graph-identity-only.json", identity_only)))
         self.assertEqual(payload["status"], "fail", payload)

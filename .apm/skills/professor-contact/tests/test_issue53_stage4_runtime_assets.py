@@ -131,14 +131,18 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
     def _write_evidence(self, result, *, child_ids=("child-1",), status="completed"):
         adapter_path = self.root / f"adapter-{len(list(self.root.glob('adapter-*.json')))}.json"
         adapter_path.write_text(json.dumps({
+            "fixture_status": "FIXTURE_READY",
             "delegation": {
                 "state": "confirmed",
+                "formal_child_count": len(set(child_ids)),
+                "child_thread_ids": sorted(set(child_ids)),
                 "basis": ["formal_spawn_relation"],
-                "child_thread_ids": list(child_ids),
+                "reason_code": None,
             },
             "dispatch": {"thread_relations": [{
                 "tool": "spawnAgent",
                 "status": status,
+                "sender_thread_id": "root-1",
                 "parent_thread_id": "root-1",
                 "receiver_thread_ids": list(child_ids),
             }]},
@@ -155,13 +159,15 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
             },
         }}]
         for child_id in child_ids:
+            # A non-assistant child item: outside the pinned business
+            # surface, so it must never be parsed as a business result.
             events.append({"message": {
                 "method": "rawResponseItem/completed",
                 "params": {
                     "threadId": child_id,
                     "item": {
                         "type": "message",
-                        "role": "assistant",
+                        "role": "developer",
                         "content": [{"type": "output_text", "text": "progress note"}],
                     },
                 },
@@ -204,6 +210,10 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
         }]
 
     def _run_verifier(self, result, **kwargs):
+        # setUp already builds the #53 fixture, so the dynamically derived
+        # expectation always has canonical state to read -- and any in-test
+        # state mutation (dynamic-projection test) must survive until the
+        # checkpoint runs.
         adapter_path, response_path = self._write_evidence(result, **kwargs)
         pre = self.root / "pre.json"
         post = self.root / "post.json"
@@ -218,7 +228,7 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
 
     def test_verifier_passes_only_child_attributed_exact_path_c_result(self):
         self.assertEqual(
-            verifier._candidate_state_pending_projection(self.program),
+            verifier._expected_pending_projection(self.program),
             verifier._pending_selection_projection(self._pending()),
         )
         payload = self._run_verifier({"result": "needs_input", "pending_selection": self._pending()})
@@ -254,14 +264,14 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
         payload = self._run_verifier({"result": "needs_input", "pending_selection": pending})
         self.assertEqual(payload["status"], "pass", payload)
         names = {row["name"]: row["status"] for row in payload["checks"]}
-        self.assertEqual(names["pending_selection_matches_candidate_state"], "pass", names)
+        self.assertEqual(names["pending_selection_matches_current_state"], "pass", names)
 
         stale = self._run_verifier({
             "result": "needs_input", "pending_selection": self._pending(),
         })
         self.assertEqual(stale["status"], "fail", stale)
         names = {row["name"]: row["status"] for row in stale["checks"]}
-        self.assertEqual(names["pending_selection_matches_candidate_state"], "fail", names)
+        self.assertEqual(names["pending_selection_matches_current_state"], "fail", names)
 
     def test_verifier_accepts_adapter9_in_progress_spawn_relation(self):
         payload = self._run_verifier(
@@ -278,7 +288,14 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
 
         adapter_path = self.root / "unobservable.json"
         adapter_path.write_text(json.dumps({
-            "delegation": {"state": "unobservable", "basis": [], "child_thread_ids": []},
+            "fixture_status": "FIXTURE_READY",
+            "delegation": {
+                "state": "unobservable",
+                "formal_child_count": 0,
+                "child_thread_ids": [],
+                "basis": [],
+                "reason_code": "no_supported_formal_spawn_relation",
+            },
             "dispatch": {"thread_relations": []},
         }), encoding="utf-8")
         response_path = self.root / "unobservable-response.json"

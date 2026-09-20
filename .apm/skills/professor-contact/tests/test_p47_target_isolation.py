@@ -85,8 +85,18 @@ class P47TargetIsolationTests(unittest.TestCase):
         self.assertIn("paper-analysis", body)
         self.assertIn("professor-contact-style-validator", body)
         self.assertRegex(body, r"(?is)(?:delegate|use|委派)[\s\S]{0,500}(?:wait|等待)")
-        for forbidden in ("task(", "question(", "opencode run", "spawn_agent(", "spawnAgent"):
+        for forbidden in ("task(", "question(", "spawn_agent(", "spawnAgent"):
             self.assertNotIn(forbidden, body, f"Codex projection leaked OpenCode API {forbidden!r}")
+        # #57's front-loaded routing gate names `opencode run` only inside the
+        # explicit shell-substitution prohibition; any other mention leaks
+        # operative OpenCode syntax into the Codex projection.
+        for match in re.finditer(r"opencode run", body):
+            line_start = body.rfind("\n", 0, match.start()) + 1
+            line_end = body.find("\n", match.end())
+            line = body[line_start:line_end if line_end != -1 else len(body)]
+            self.assertRegex(
+                line, r"禁止用 shell|不得用 shell",
+                f"opencode run may appear only as a named prohibition, saw: {line!r}")
 
 
 if __name__ == "__main__":

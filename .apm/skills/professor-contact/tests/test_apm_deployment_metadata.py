@@ -164,6 +164,18 @@ def _assert_codex_native_delegation_gate(codex: str):
     for marker in CODEX_NATIVE_DELEGATION_GATE_MARKERS:
         assert marker in codex, f"missing native-delegation gate marker: {marker}"
     for obsolete in CODEX_OBSOLETE_DISCOVERY_LITERALS:
+        if obsolete == "Code Mode":
+            # Issue #57 keeps the literal only as a rejected inference source
+            # inside the unavailable/blocker rule; it must never be required.
+            for match in re.finditer(re.escape(obsolete), codex):
+                context = codex[max(0, match.start() - 24):match.start()]
+                assert "缺少" in context or "reject" in context.lower(), (
+                    f"Code Mode must stay a rejected inference source, saw context: {context!r}"
+                )
+            assert not re.search(r"必须[^。\n]*Code Mode", codex), (
+                "Code Mode must never be required for delegation"
+            )
+            continue
         assert obsolete not in codex, (
             f"obsolete Code Mode prerequisite reappeared: {obsolete}"
         )
@@ -172,15 +184,21 @@ def _assert_codex_native_delegation_gate(codex: str):
         line for line in codex.splitlines() if CODEX_DELEGATION_REASON_CODE in line
     ]
     assert reason_lines, "the fail-closed reason code must be named in the Codex branch"
-    for line in reason_lines:
+    strict_lines = [line for line in reason_lines if "没看到接口" in line]
+    assert strict_lines, (
+        "at least one reason-code line must name the forbidden 'no interface' shortcut"
+    )
+    machine_failure = re.compile(r"machine-level(?: delegation)? failure|机器级失败")
+    for line in strict_lines:
         assert "实际尝试" in line, (
             f"reason code line lacks actual-attempt semantics: {line}"
         )
-        assert (
-            "machine-level failure" in line or "机器级失败" in line
-        ), f"reason code line lacks machine-level-failure semantics: {line}"
-        assert "没看到接口" in line, (
-            f"reason code line must name the forbidden 'no interface' shortcut: {line}"
+        assert machine_failure.search(line), (
+            f"reason code line lacks machine-level-failure semantics: {line}"
+        )
+    for line in reason_lines:
+        assert machine_failure.search(line), (
+            f"reason code line lacks machine-level-failure semantics: {line}"
         )
 
 
@@ -433,7 +451,8 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
     def test_codex_reason_code_semantics_are_load_bearing(self):
         codex = self._codex_analyzer_branch()
         reason_line = next(
-            line for line in codex.splitlines() if CODEX_DELEGATION_REASON_CODE in line
+            line for line in codex.splitlines()
+            if CODEX_DELEGATION_REASON_CODE in line and "没看到接口" in line
         )
         for drop in ("实际尝试", "machine-level failure", "没看到接口"):
             with self.subTest(dropped=drop):
@@ -478,6 +497,21 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
             with self.subTest(path=path):
                 _, body = _frontmatter_and_body(path)
                 for obsolete in CODEX_OBSOLETE_DISCOVERY_LITERALS:
+                    if obsolete == "Code Mode":
+                        # #57 reconciles the wording: the literal survives only
+                        # as a rejected inference source, never a requirement.
+                        for match in re.finditer(re.escape(obsolete), body):
+                            context = body[max(0, match.start() - 24):match.start()]
+                            self.assertTrue(
+                                "缺少" in context or "reject" in context.lower(),
+                                f"Code Mode must stay a rejected inference source, "
+                                f"saw context: {context!r}",
+                            )
+                        self.assertIsNone(
+                            re.search(r"必须[^。\n]*Code Mode", body),
+                            "Code Mode must never be required for delegation",
+                        )
+                        continue
                     self.assertNotIn(
                         obsolete,
                         body,
@@ -690,7 +724,7 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
                     "ALL_TOOLS",
                     "multi_agent_v1__spawn_agent",
                     "spawnAgent",
-                    "spawn_agent",
+                    "spawn_agent(",
                     "collabAgentToolCall",
                     "receiverThreadIds",
                 ):

@@ -1,0 +1,3 @@
+在 <PROGRAM_ROOT> 按已安装 professor-contact 的正式 Codex 工作流执行 Stage 2，且只执行 Stage 2。
+直接消费已准备好的 Stage 1 canonical state。本轮 chatgpt_handoff=continue，paper_analysis=all，gap_scope=selected_direction，freshness_scope=shortlist，kb_import=false。
+不要进入 Stage 3；按已安装的正式工作流正常处理并结束本轮。
