@@ -126,14 +126,18 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
     def _write_evidence(self, result, *, child_ids=("child-1",), status="completed"):
         adapter_path = self.root / f"adapter-{len(list(self.root.glob('adapter-*.json')))}.json"
         adapter_path.write_text(json.dumps({
+            "fixture_status": "FIXTURE_READY",
             "delegation": {
                 "state": "confirmed",
+                "formal_child_count": len(set(child_ids)),
+                "child_thread_ids": sorted(set(child_ids)),
                 "basis": ["formal_spawn_relation"],
-                "child_thread_ids": list(child_ids),
+                "reason_code": None,
             },
             "dispatch": {"thread_relations": [{
                 "tool": "spawnAgent",
                 "status": status,
+                "sender_thread_id": "root-1",
                 "parent_thread_id": "root-1",
                 "receiver_thread_ids": list(child_ids),
             }]},
@@ -150,13 +154,15 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
             },
         }}]
         for child_id in child_ids:
+            # A non-assistant child item: outside the pinned business
+            # surface, so it must never be parsed as a business result.
             events.append({"message": {
                 "method": "rawResponseItem/completed",
                 "params": {
                     "threadId": child_id,
                     "item": {
                         "type": "message",
-                        "role": "assistant",
+                        "role": "developer",
                         "content": [{"type": "output_text", "text": "progress note"}],
                     },
                 },
@@ -199,6 +205,10 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
         }]
 
     def _run_verifier(self, result, **kwargs):
+        # The verifier now derives its expectation dynamically, so the #53
+        # fixture must exist before the checkpoint runs.
+        fixture.build_fixture(self.program, self.profile,
+                              output=self.output / "setup.json")
         adapter_path, response_path = self._write_evidence(result, **kwargs)
         pre = self.root / "pre.json"
         post = self.root / "post.json"
@@ -232,7 +242,14 @@ class Issue53Stage4RuntimeAssetTests(unittest.TestCase):
 
         adapter_path = self.root / "unobservable.json"
         adapter_path.write_text(json.dumps({
-            "delegation": {"state": "unobservable", "basis": [], "child_thread_ids": []},
+            "fixture_status": "FIXTURE_READY",
+            "delegation": {
+                "state": "unobservable",
+                "formal_child_count": 0,
+                "child_thread_ids": [],
+                "basis": [],
+                "reason_code": "no_supported_formal_spawn_relation",
+            },
             "dispatch": {"thread_relations": []},
         }), encoding="utf-8")
         response_path = self.root / "unobservable-response.json"

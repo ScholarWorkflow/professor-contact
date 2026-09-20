@@ -283,6 +283,193 @@ class CodexCallerSkillContractTests(unittest.TestCase):
         self.assertRegex(region, r"重新委派[\s\S]{0,200}`selection`")
 
 
+class EarlyRuntimeRoutingGateTests(unittest.TestCase):
+    """Runtime routing must survive bounded/partial instruction reads.
+
+    PC57-R1 characterization: the root read only a leading slice of the
+    installed Skill (~240 lines), missed the Codex branch that started
+    later, and copied the earlier OpenCode route into shell commands.  The
+    contract that survives that evidence is *section order*: the runtime
+    routing gate is a load-bearing preamble that must precede every target
+    branch and every business section.  Per the Test Engineer Rule the
+    ordering is asserted structurally against the documents' own headings —
+    no fixed line budget, because no characterization run establishes a
+    stable read boundary measured in lines.
+    """
+
+    GATE_HEADING = "## Runtime routing gate (read first)"
+
+    # Invariants the gate section itself must state (heading-delimited).
+    GATE_LITERALS = (
+        "当前 host",
+        "真实委派动作",
+        "不是能力探测前置条件",
+        "machine-level failure",
+        "`opencode run`",
+        "`codex exec`",
+    )
+
+    # First business/instruction section of each document, named by that
+    # document's own heading.
+    FIRST_BUSINESS_SECTION = {
+        "SKILL.md": "## What this is for",
+        "professor-contact-downloader": "## Input",
+        "professor-contact-analyzer": "## 套磁方向方法论",
+        "professor-contact-email-generator": "## Authoritative base contract",
+    }
+
+    def _gate_section(self, label: str, body: str) -> str:
+        start = body.index(self.GATE_HEADING)
+        nxt = body.find("\n## ", start + len(self.GATE_HEADING))
+        self.assertLess(start, nxt if nxt != -1 else len(body), label)
+        return body[start : nxt if nxt != -1 else len(body)]
+
+    def _assert_gate_precedes_business(self, label: str, body: str):
+        gate = body.index(self.GATE_HEADING)
+        self.assertLess(
+            gate,
+            body.index(self.FIRST_BUSINESS_SECTION[label]),
+            label,
+        )
+        for literal in self.GATE_LITERALS:
+            self.assertIn(literal, self._gate_section(label, body), label)
+
+    def test_root_skill_front_loads_all_stage_routes_before_business_detail(self):
+        body = frontmatter_and_body(SKILL_PATH)[1]
+        self._assert_gate_precedes_business("SKILL.md", body)
+        gate = body.index(self.GATE_HEADING)
+        first_business = body.index(self.FIRST_BUSINESS_SECTION["SKILL.md"])
+        for stage, owner in {
+            "1": "professor-contact-downloader",
+            "2": "professor-contact-analyzer",
+            "3": "professor-contact-idea-generator",
+            "4": "professor-contact-selection",
+            "5": "professor-contact-email-generator",
+        }.items():
+            with self.subTest(stage=stage):
+                route = body.index(f"Stage {stage} → `{owner}`")
+                self.assertLess(gate, route)
+                self.assertLess(route, first_business)
+        self.assertLess(gate, body.index("### OpenCode 分支"))
+        self.assertLess(gate, body.index("### Codex 分支"))
+
+    def test_every_nested_coordinator_front_loads_the_same_runtime_gate(self):
+        for owner in CODEX_NESTED_DELEGATOR_AGENTS:
+            with self.subTest(owner=owner):
+                body = frontmatter_and_body(agent_path(owner))[1]
+                self._assert_gate_precedes_business(owner, body)
+                gate = body.index(self.GATE_HEADING)
+                self.assertLess(
+                    gate,
+                    body.index(OPENCODE_BRANCH_MARKERS[owner][0]),
+                )
+                self.assertLess(
+                    gate,
+                    body.index(CODEX_BRANCH_MARKERS[owner][0]),
+                )
+
+
+class NestedNativeInvocationCheckpointTests(unittest.TestCase):
+    """Nested coordinators must turn routing prose into a concrete action.
+
+    PC57-R1 ``OwoMoS`` reached the installed analyzer, prepared a real local
+    paper-analysis job, and then returned
+    ``codex_runtime_delegation_unavailable`` without making any native child
+    call.  The early abstract gate was present, but the long coordinator flow
+    diluted it before the execution and return boundaries.  Keep the stable
+    documented tool name (without freezing a private call signature) in every
+    nested gate, and repeat the zero-attempt prohibition at the analyzer's
+    load-bearing execution and return checkpoints.
+    """
+
+    def test_nested_gates_name_the_native_tool_without_a_call_signature(self):
+        for owner in CODEX_NESTED_DELEGATOR_AGENTS:
+            with self.subTest(owner=owner):
+                body = frontmatter_and_body(agent_path(owner))[1]
+                start = body.index("## Runtime routing gate (read first)")
+                end = body.index("\n## ", start + 1)
+                gate = body[start:end]
+                self.assertIn("`spawn_agent`", gate, owner)
+                self.assertNotRegex(gate, r"spawn_agent\s*\(", owner)
+
+    def test_analyzer_repeats_native_call_at_execution_boundary(self):
+        body = frontmatter_and_body(agent_path("professor-contact-analyzer"))[1]
+        start = body.index("6. **本地 route → `paper-analysis full`")
+        end = body.index("6.5 **future-work sidecar", start)
+        execution = body[start:end]
+        self.assertIn("`spawn_agent`", execution)
+        self.assertIn("exact named `paper-analysis`", execution)
+        self.assertRegex(execution, r"未调用[\s\S]{0,120}不得返回")
+
+    def test_analyzer_audits_zero_attempt_before_its_only_final_message(self):
+        body = frontmatter_and_body(agent_path("professor-contact-analyzer"))[1]
+        start = body.index("### Step 7 — Return value")
+        end = body.index("## Errors", start)
+        return_contract = body[start:end]
+        self.assertIn("`spawn_agent`", return_contract)
+        self.assertIn("codex_runtime_delegation_unavailable", return_contract)
+        self.assertRegex(return_contract, r"零次[\s\S]{0,160}禁止")
+
+
+class EarlyMachineOutputGateTests(unittest.TestCase):
+    """Machine-returning agents must not leak progress prose as results.
+
+    The single-message protocol is load-bearing preamble: the Machine output
+    gate must be the first H2 section of its document and must precede the
+    document's business/tool-flow/return-value sections.  Ordering is
+    asserted structurally against the documents' own headings — no fixed
+    line budget (Test Engineer Rule).
+    """
+
+    MACHINE_OUTPUT_AGENTS = (
+        "professor-contact-analyzer",
+        "professor-contact-email-validator",
+        "professor-contact-idea-generator",
+        "professor-contact-selection",
+        "professor-contact-style-validator",
+    )
+
+    MACHINE_GATE_HEADING = "## Machine output gate (read first)"
+
+    MACHINE_GATE_LITERALS = (
+        "不要发送进度说明",
+        "唯一一条 assistant message",
+        "JSON object",
+    )
+
+    FIRST_BUSINESS_SECTION = {
+        "professor-contact-analyzer": "## 套磁方向方法论",
+        "professor-contact-email-validator": "## 校验规则",
+        "professor-contact-idea-generator": "## 核心平衡原则",
+        "professor-contact-selection": "## Input",
+        "professor-contact-style-validator": "## Input",
+    }
+
+    def _gate_section(self, body: str) -> str:
+        start = body.index(self.MACHINE_GATE_HEADING)
+        nxt = body.find("\n## ", start + len(self.MACHINE_GATE_HEADING))
+        return body[start : nxt if nxt != -1 else len(body)]
+
+    def test_every_json_agent_front_loads_single_message_protocol(self):
+        for owner in self.MACHINE_OUTPUT_AGENTS:
+            with self.subTest(owner=owner):
+                body = frontmatter_and_body(agent_path(owner))[1]
+                headings = [
+                    match.start() for match in re.finditer(r"(?m)^## ", body)
+                ]
+                self.assertTrue(headings, owner)
+                gate = body.index(self.MACHINE_GATE_HEADING)
+                self.assertEqual(gate, headings[0], owner)
+                self.assertLess(
+                    gate,
+                    body.index(self.FIRST_BUSINESS_SECTION[owner]),
+                    owner,
+                )
+                section = self._gate_section(body)
+                for literal in self.MACHINE_GATE_LITERALS:
+                    self.assertIn(literal, section, owner)
+
+
 class CodexStageRoutingContractTests(unittest.TestCase):
     """Issue #55 top-level routing and ownership gates."""
 

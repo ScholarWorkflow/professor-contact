@@ -11,6 +11,23 @@ This skill is the **caller convention** for the 套磁 workflow (套磁 = contac
 
 > **skill = how to call (this file). subagent = the isolated execution unit (where it runs).**
 
+## Runtime routing gate (read first)
+
+- **当前 host 决定调用分支**：当前 host 是 Codex 就只走 Codex 原生 subagent workflow；当前 host 是 OpenCode 就只走 OpenCode 原生 Task。不得通过 CLI 是否安装、命令探测或模型自述改选另一分支。
+- **Codex 的定位与调用是一个动作**：Stage 请求本身就是 routing gate。若当前 Codex 通过程序化工具调用器暴露原生多代理能力，定位该能力并发起 exact named agent 调用属于同一个**真实委派动作**，**不是能力探测前置条件**；不得停在列举/检索结果上，也不得把入口未显示、OpenCode 语法不存在或先前运行失败当成“无法委派”。
+- **先真实调用，再判断失败**：立即按下表选定 installed exact named agent，发起当前运行的原生调用并等待结果。只有该 exact named agent 的本轮调用实际返回 `machine-level failure`，才允许记录 runtime/feature blocker；父线程不得 inline/simulate child。
+- **禁止跨执行器 shell fallback**：不得用 shell、`opencode run`、`codex exec`、curl 或另发 eval 请求代替原生委派；不得把 OpenCode `task(...)` 语法写进 Codex 调用。
+
+| 入口 | Codex 第一项路由动作 |
+|---|---|
+| Stage 1 | Stage 1 → `professor-contact-downloader` |
+| Stage 2 | Stage 2 → `professor-contact-analyzer` |
+| Stage 3 | Stage 3 → `professor-contact-idea-generator` |
+| Stage 4 | Stage 4 → `professor-contact-selection` |
+| Stage 5 | Stage 5 → `professor-contact-email-generator` |
+
+上述 child 返回前，不执行属于该 child 的业务工作。详细 payload、等待、非递归与交互边界仍以下文对应 runtime 分支为准。
+
 ## What this is for
 
 After `professor-collector(skip_pdf)` and `professor-topic-clustering(preview:true)` have produced a normalized `方向预筛.json`, the user may decide that **a specific direction of a specific professor** is worth contacting (套磁). **Stage 0 is the contact-workflow entry at that point.** Professor-level `pdf_only + professors=<keep-list>` and formal `professor-topic-clustering(preview:false)` remain valid independent library/organization operations, but neither is a prerequisite for Stage 0 or the canonical Stage 1 download scope. Stage 0 presents the normalized preview directions interactively, the user selects one or more directions (with optional per-direction user notes), and the selection is persisted to `教授研究/套磁目标.json`. The workflow no longer uses a fixed-title Zotero note as its selection UI. This skill's stages consume that machine state and turn it into 套磁 materials:
@@ -398,6 +415,17 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 | 3 | `professor-contact-idea-generator` | 是 | `stage3-plan`、candidate model generation、candidate result file、`stage3-finalize` |
 | 4 | `professor-contact-selection` | 是 | pending selection 模拟、默认选择、`stage4-finalize` |
 | 5 | `professor-contact-email-generator` | 是 | `stage5-plan`、4句模型 payload、humanizer business、`stage5-finalize`、`email-validator` |
+
+**Stage 4 请求没有例外顺序（入口即生效的固定顺序）**：
+
+```text
+Stage 4 request
+  -> FIRST routing action: delegate professor-contact-selection
+  -> wait
+  -> only then consume child result
+```
+
+一旦 root 被要求执行 Stage 4，无论 `selection` 提供还是省略，第一个路由动作就是委派已安装的 `professor-contact-selection` 并等待；child 结果返回之后才允许被消费。`selection omitted` 是该 child 的正式输入分支（child 读取当前 canonical `套磁候选状态.json` 并返回 Path C），不是 root 的提前返回条件；root 只转发/消费真实 child 结果，绝不代读候选状态、绝不自行合成 `needs_input`/`pending_selection`。
 
 Stage 4 缺少 selection 仍由 child 返回 `needs_input` + `pending_selection`；下一用户回合带真实 selection 做 fresh delegation。Stage 5 的 email-validator loop 仍归 email-generator 所有，不由顶层 caller 直接启动。
 

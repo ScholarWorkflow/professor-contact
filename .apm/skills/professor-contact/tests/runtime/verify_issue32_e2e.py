@@ -42,6 +42,14 @@ INSTALL_REQUIRED_FILES = (
     ".agents/skills/professor-contact/tests/runtime/build_issue55_eval_request.py",
     ".agents/skills/professor-contact/tests/runtime/verify_issue32_e2e.py",
     ".agents/skills/professor-contact/tests/runtime/prompts/issue55-stage3-routing.txt",
+    # PC57-R2 reuses the #53 Stage-4 request builder and prompt, so a clean
+    # consumer must carry them before either runtime case may start.
+    ".agents/skills/professor-contact/tests/runtime/build_issue53_eval_request.py",
+    ".agents/skills/professor-contact/tests/runtime/prompts/issue53-stage4-missing-selection.txt",
+    ".agents/skills/professor-contact/tests/runtime/prepare_issue57_stage2_fixture.py",
+    ".agents/skills/professor-contact/tests/runtime/build_issue57_stage2_eval_request.py",
+    ".agents/skills/professor-contact/tests/runtime/prepare_issue57_stage4_fixture.py",
+    ".agents/skills/professor-contact/tests/runtime/prompts/issue57-stage2-routing.txt",
 )
 STAGE4_PROGRAM_OUTPUTS = {
     "套磁选择.json": Path("教授研究/套磁选择.json"),
@@ -53,27 +61,6 @@ STAGE3_SNAPSHOT_OUTPUTS = {
     "套磁想法候选总览.md": Path("教授研究/套磁想法候选总览.md"),
     **STAGE4_PROGRAM_OUTPUTS,
 }
-ISSUE53_PENDING_SELECTION = [{
-    "professor": "Example Professor",
-    "kind": "direction",
-    "direction_ids": ["DIR00001"],
-    "candidates": [
-        {
-            "id": "idea-001",
-            "title": "Adaptive extension",
-            "one_liner": "Explore an adaptive extension of the synthetic processing setting.",
-            "research_question": "How can the synthetic setting adapt to changing conditions?",
-            "fit": "high",
-        },
-        {
-            "id": "idea-002",
-            "title": "Robust extension",
-            "one_liner": "Explore robustness under changing synthetic conditions.",
-            "research_question": "How robust is the synthetic setting under change?",
-            "fit": "medium",
-        },
-    ],
-}]
 
 
 def _load(path: Path) -> Any:
@@ -717,6 +704,300 @@ def _checkpoint_stage3_routing(args: argparse.Namespace) -> dict[str, Any]:
     return machine("pass", "PASS")
 
 
+def _formal_spawn_relations(adapter: Any) -> tuple[list[dict[str, str]], list[Any]]:
+    """Extract formal spawn edges from adapter@9's normalized relation graph.
+
+    The pinned adapter@9 contract freezes exactly three formal-relation
+    conditions: ``tool == "spawnAgent"``, a non-empty ``sender_thread_id``
+    owner, and one or more concrete ``receiver_thread_ids``.
+    ``dispatch.thread_relations[].status`` is only the raw ``item.status``
+    projection and has no frozen enum, so it is never read here (diagnostics
+    only) and a formal edge never requires child completion.
+    ``sender_thread_id`` is the formal owner; ``parent_thread_id`` is
+    app-server event attribution and is never read here.  Shape violations
+    are returned separately so each checkpoint can classify them as invalid
+    evidence.
+    """
+    edges: list[dict[str, str]] = []
+    malformed: list[Any] = []
+    dispatch = adapter.get("dispatch") if isinstance(adapter, dict) else None
+    relations = dispatch.get("thread_relations") if isinstance(dispatch, dict) else None
+    if not isinstance(relations, list):
+        return edges, [relations]
+    for relation in relations:
+        if not isinstance(relation, dict) or relation.get("tool") != "spawnAgent":
+            continue
+        sender = relation.get("sender_thread_id")
+        children = relation.get("receiver_thread_ids")
+        if not isinstance(sender, str) or not sender.strip() \
+                or not isinstance(children, list) or not children:
+            malformed.append(relation)
+            continue
+        concrete: list[str] = []
+        for child in children:
+            if not isinstance(child, str) or not child.strip():
+                malformed.append(relation)
+                break
+            concrete.append(child)
+        if len(concrete) != len(children):
+            continue
+        for child in concrete:
+            edges.append({"sender_thread_id": sender, "receiver_thread_id": child})
+    return edges, malformed
+
+
+def _expected_delegation_summary(edges: list[dict[str, str]]) -> dict[str, Any]:
+    """adapter@9's frozen delegation summary, derived mechanically from the
+    formal edges of the same response.
+
+    The pinned parser builds the summary from every supported formal
+    spawnAgent relation: ``child_thread_ids`` is the sorted distinct
+    concrete receiver union, ``formal_child_count`` its size, and a
+    confirmed summary carries ``basis=["formal_spawn_relation"]`` with
+    ``reason_code=None`` while an unobservable graph carries the zeroed
+    shape with ``reason_code="no_supported_formal_spawn_relation"``.  The
+    #57 checkpoints compare the observed summary against this derivation
+    field by field before trusting any of it.
+    """
+    children = sorted({edge["receiver_thread_id"] for edge in edges})
+    if children:
+        return {
+            "state": "confirmed",
+            "formal_child_count": len(children),
+            "child_thread_ids": children,
+            "basis": ["formal_spawn_relation"],
+            "reason_code": None,
+        }
+    return {
+        "state": "unobservable",
+        "formal_child_count": 0,
+        "child_thread_ids": [],
+        "basis": [],
+        "reason_code": "no_supported_formal_spawn_relation",
+    }
+
+
+def _ownership_index(edges: list[dict[str, str]]) -> tuple[dict[str, set[str]], dict[str, str]]:
+    """Index formal edges by receiver owner; empty senders never own a child."""
+    owners: dict[str, set[str]] = {}
+    direct: dict[str, str] = {}
+    for edge in edges:
+        sender = edge["sender_thread_id"]
+        child = edge["receiver_thread_id"]
+        owners.setdefault(child, set()).add(sender)
+        direct.setdefault(child, sender)
+    return owners, direct
+
+
+# The pinned adapter@9 contract enumerates exactly eight fixture statuses
+# (skills-test-fixtures@88d2056, FIXTURE_STATUSES), each with its own
+# semantics, so the prerequisite is a frozen status matrix instead of an
+# allowlist-plus-catch-all: identity diagnostics never gate, harness and
+# dependency blockers are NOT TESTED, and only corrupted adapter evidence
+# — or a status outside the pinned contract — is INVALID.
+ADAPTER_STATUS_VERDICTS: dict[str, tuple[str, str] | None] = {
+    "FIXTURE_READY": None,
+    "HARNESS_DISPATCH_UNCONFIRMED": None,
+    "HARNESS_DISPATCH_MISMATCH": None,
+    "BLOCKED_DEPENDENCY": ("blocked", "BLOCKED_RUNTIME_PROVIDER"),
+    "HARNESS_ERROR": ("blocked", "BLOCKED_RUNTIME_PROVIDER"),
+    "HARNESS_CONTAMINATION": ("blocked", "BLOCKED_RUNTIME_PROVIDER"),
+    "NOT_RUN": ("blocked", "BLOCKED_RUNTIME_PROVIDER"),
+    "INVALID_EVIDENCE": ("invalid", "INVALID_TEST_EXECUTION"),
+}
+
+
+def _adapter_prerequisite_block(
+        adapter: Any, checks: list[dict[str, Any]]) -> tuple[str, str] | None:
+    """adapter@9's frozen fixture-status prerequisite, evaluated before any
+    delegation or relation topology is interpreted.
+
+    ``FIXTURE_READY`` and the two named-role identity diagnostics
+    (``HARNESS_DISPATCH_UNCONFIRMED`` / ``HARNESS_DISPATCH_MISMATCH``) let
+    the checkpoint proceed — identity is non-gating and never downgrades a
+    confirmed delegation.  ``BLOCKED_DEPENDENCY`` (for example a null
+    ``codex_version``), ``HARNESS_ERROR`` (fixture/wiring error),
+    ``HARNESS_CONTAMINATION`` (evidence sourced outside the allowed roots),
+    and ``NOT_RUN`` are provider/harness-side blockers: blocked / NOT
+    TESTED, never a producer FAIL and never INVALID_TEST_EXECUTION.  Only
+    ``INVALID_EVIDENCE`` — input evidence corrupt, stale, or mismatched —
+    plus a status outside the frozen contract (unknown or missing) is
+    malformed adapter evidence.  Returns the early-exit
+    ``(status, classification)`` or ``None`` when the prerequisite passes.
+    """
+    fixture_status = adapter.get("fixture_status") if isinstance(adapter, dict) else None
+    if isinstance(fixture_status, str) and fixture_status in ADAPTER_STATUS_VERDICTS:
+        early = ADAPTER_STATUS_VERDICTS[fixture_status]
+    else:
+        early = ("invalid", "INVALID_TEST_EXECUTION")
+    if early is None:
+        return None
+    check_name = ("adapter_invalid_evidence" if fixture_status == "INVALID_EVIDENCE"
+                  else "adapter_prerequisite" if early[0] == "blocked"
+                  else "adapter_fixture_status")
+    _check(checks, check_name, False, {"fixture_status": fixture_status})
+    return early
+
+
+def _checkpoint_stage2_routing(args: argparse.Namespace) -> dict[str, Any]:
+    """Verify PC57-R1's Stage-2 nested native-routing target (adapter@9).
+
+    Only the routing invariant is graded: the root reached the Stage-2
+    coordinator and that coordinator performed a real nested native
+    delegation.  Downstream ``paper-analysis``/uvx/OCR/finalization quality is
+    out of scope once the routing target is mechanically proven; a later
+    unchanged downstream failure is recorded as
+    ``blocked_or_failed_out_of_scope`` and never reverses the verdict.
+    Absence of a supported formal relation is conservatively
+    ``BLOCKED_OBSERVABILITY`` and is never inferred as a zero attempt.
+    A delegation summary that disagrees with the mechanical derivation from
+    its own relation graph — any frozen field: ``state``, the sorted
+    distinct receiver union, ``formal_child_count``, ``basis``, or
+    ``reason_code`` — is impossible adapter output and fails closed as
+    ``INVALID_TEST_EXECUTION`` before the observability verdict.
+    """
+    checks: list[dict[str, Any]] = []
+    root_thread_id: str | None = None
+    direct_children: set[str] = set()
+    nested_formal_spawns: list[dict[str, Any]] = []
+    max_depth = 0
+    routing_target_proved = False
+    downstream: str | None = None
+
+    def machine(status: str, classification: str) -> dict[str, Any]:
+        return {
+            "status": status,
+            "classification": classification,
+            "root_thread_id": root_thread_id,
+            "root_direct_spawn_child_ids": sorted(direct_children),
+            "nested_formal_spawns": nested_formal_spawns,
+            "max_anonymous_depth": max_depth,
+            "routing_target_proved": routing_target_proved,
+            "downstream_status": downstream,
+            "checks": checks,
+        }
+
+    try:
+        adapter = _load(Path(args.adapter_output)) if args.adapter_output else None
+        response = _load(Path(args.eval_response)) if args.eval_response else None
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "evidence_readable", False, str(exc))
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    if not isinstance(adapter, dict) or not isinstance(response, dict):
+        _check(checks, "evidence_objects", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    prerequisite = _adapter_prerequisite_block(adapter, checks)
+    if prerequisite:
+        return machine(*prerequisite)
+
+    output = response.get("output")
+    root_thread_id = output.get("thread_id") if isinstance(output, dict) else None
+    events = output.get("app_server_events") if isinstance(output, dict) else None
+    raw_surface_ok = (isinstance(root_thread_id, str) and bool(root_thread_id.strip())
+                      and isinstance(events, list))
+    _check(checks, "raw_eval_surface", raw_surface_ok,
+           {"thread_id": root_thread_id, "events": type(events).__name__})
+    if not raw_surface_ok:
+        return machine("blocked", "BLOCKED_RUNTIME_PROVIDER")
+    envelope_ok = (response.get("passed") is True
+                   and isinstance(output, dict) and output.get("exit_code") == 0
+                   and output.get("termination_reason") == "completed")
+    # Before the routing target is proven, a failed eval envelope means the
+    # provider/runtime failed first; a healthy envelope that still cannot
+    # prove the edge is an observability gap.
+    unproven_block = "BLOCKED_RUNTIME_PROVIDER" if not envelope_ok else "BLOCKED_OBSERVABILITY"
+
+    delegation = adapter.get("delegation")
+    if not isinstance(delegation, dict):
+        _check(checks, "adapter_delegation_object", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    delegation_state = delegation.get("state")
+    if delegation_state not in ("confirmed", "unobservable"):
+        _check(checks, "delegation_state", False, delegation_state)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    dispatch = adapter.get("dispatch")
+    relations = dispatch.get("thread_relations") if isinstance(dispatch, dict) else None
+    if not isinstance(relations, list):
+        _check(checks, "adapter_relations", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    edges, malformed = _formal_spawn_relations(adapter)
+    _check(checks, "adapter_relation_shape", not malformed, malformed)
+    if malformed:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # adapter@9 derives the delegation summary mechanically from the
+    # relation graph, so every frozen summary field — state, the sorted
+    # distinct receiver union, its count, basis, and reason code — must
+    # equal that derivation from the adapter's own edges.  A summary that
+    # disagrees anywhere is contradictory machine evidence and fails closed
+    # before any observability verdict can downgrade it.
+    expected_summary = _expected_delegation_summary(edges)
+    observed_summary = {field: delegation.get(field)
+                        for field in expected_summary}
+    summary_consistent = observed_summary == expected_summary
+    _check(checks, "delegation_summary_consistent", summary_consistent,
+           {"observed": observed_summary, "expected": expected_summary})
+    if not summary_consistent:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    if delegation_state == "unobservable":
+        _check(checks, "delegation_observable", False, delegation)
+        return machine("blocked", unproven_block)
+
+    owners, _ = _ownership_index(edges)
+    conflicts = {child: sorted(senders) for child, senders in owners.items()
+                 if len(senders) != 1}
+    _check(checks, "formal_ownership", not conflicts, conflicts)
+    if conflicts:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    for edge in edges:
+        if edge["sender_thread_id"] == root_thread_id:
+            direct_children.add(edge["receiver_thread_id"])
+    max_depth = _graph_depth([
+        {"parent": edge["sender_thread_id"], "child": edge["receiver_thread_id"]}
+        for edge in edges
+    ])
+    # Unreachable with zero edges: the consistency gate already failed
+    # closed on confirmed-without-relations.
+    _check(checks, "formal_spawn_surface", bool(edges),
+           {"observed": len(edges)})
+    _check(checks, "root_direct_formal_child", bool(direct_children),
+           sorted(direct_children))
+    if not direct_children:
+        return machine("blocked", unproven_block)
+
+    nested = [edge for edge in edges
+              if edge["sender_thread_id"] in direct_children
+              and edge["sender_thread_id"] != root_thread_id]
+    seen: set[tuple[str, str]] = set()
+    for edge in nested:
+        pair = (edge["sender_thread_id"], edge["receiver_thread_id"])
+        if pair not in seen:
+            seen.add(pair)
+            nested_formal_spawns.append({
+                "sender_thread_id": edge["sender_thread_id"],
+                "receiver_thread_ids": [edge["receiver_thread_id"]],
+            })
+    # A proven nested relation rules out the zero-attempt
+    # coordinator-unavailable path: the coordinator demonstrably delegated.
+    _check(checks, "nested_formal_spawn_from_root_child", bool(nested),
+           {"observed": len(nested_formal_spawns)})
+    if not nested:
+        return machine("blocked", unproven_block)
+    _check(checks, "anonymous_depth_at_least_two", max_depth >= 2,
+           {"observed": max_depth, "required": 2})
+    if max_depth < 2:
+        return machine("blocked", unproven_block)
+
+    routing_target_proved = True
+    downstream = "completed" if envelope_ok else "blocked_or_failed_out_of_scope"
+    _check(checks, "routing_target_proved", True,
+           {"downstream_status": downstream, "envelope_passed": envelope_ok})
+    return machine("pass", "PASS_TARGET")
+
+
 def _stage4_artifacts(root: Path) -> dict[str, dict[str, Any]]:
     artifacts: dict[str, dict[str, Any]] = {}
     for name, relative in STAGE4_PROGRAM_OUTPUTS.items():
@@ -771,7 +1052,11 @@ def _load_stage4_snapshot(path: Path) -> dict[str, dict[str, Any]]:
     return result
 
 
-def _issue53_pending_projection(value: Any) -> list[dict[str, Any]] | None:
+PENDING_CANDIDATE_FIELDS = ("id", "title", "one_liner", "research_question", "fit")
+
+
+def _pending_selection_projection(value: Any) -> list[dict[str, Any]] | None:
+    """Normalize an observed ``pending_selection`` onto the pinned fields."""
     if not isinstance(value, list):
         return None
     projected: list[dict[str, Any]] = []
@@ -792,10 +1077,9 @@ def _issue53_pending_projection(value: Any) -> list[dict[str, Any]] | None:
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 return None
-            fields = ("id", "title", "one_liner", "research_question", "fit")
-            if any(field not in candidate for field in fields):
+            if any(field not in candidate for field in PENDING_CANDIDATE_FIELDS):
                 return None
-            projected_candidates.append({field: candidate[field] for field in fields})
+            projected_candidates.append({field: candidate[field] for field in PENDING_CANDIDATE_FIELDS})
         projected.append({
             "professor": professor,
             "kind": kind,
@@ -805,8 +1089,102 @@ def _issue53_pending_projection(value: Any) -> list[dict[str, Any]] | None:
     return projected
 
 
+def _project_state_candidates(value: Any) -> list[dict[str, Any]] | None:
+    """Project canonical candidate rows, or ``None`` on malformed state."""
+    if not isinstance(value, list):
+        return None
+    projected: list[dict[str, Any]] = []
+    for candidate in value:
+        if not isinstance(candidate, dict):
+            return None
+        if any(field not in candidate for field in PENDING_CANDIDATE_FIELDS):
+            return None
+        projected.append({field: candidate[field] for field in PENDING_CANDIDATE_FIELDS})
+    return projected
+
+
+def _expected_pending_projection(program_root: Path) -> list[dict[str, Any]] | None:
+    """Derive the deterministic Path-C expectation from current canonical state.
+
+    The projection mirrors the selection-agent contract: one entry per
+    ordinary direction (``kind: "direction"``, exact ``direction_ids``) and
+    per explicit cross-direction group (``kind: "cross_direction"``, sorted
+    canonical ``direction_ids``), in file order per professor, with
+    candidates projected onto the presentation fields in stored order.
+    Directories with no candidates contribute no entry; a program without any
+    selectable candidate yields ``None``.
+    """
+    research_dir = program_root / "教授研究"
+    if not research_dir.is_dir():
+        return None
+    state_paths = sorted(
+        path for path in research_dir.glob("*/*/套磁候选状态.json") if path.is_file())
+    if not state_paths:
+        return None
+    expected: list[dict[str, Any]] = []
+    for state_path in state_paths:
+        try:
+            state = _load(state_path)
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(state, dict):
+            return None
+        professor = state_path.parent.name
+        directions = state.get("directions")
+        direction_rows = [row for row in directions if isinstance(row, dict)] \
+            if isinstance(directions, list) else []
+        for direction in direction_rows:
+            projected = _project_state_candidates(direction.get("candidates"))
+            if projected is None:
+                return None
+            direction_id = direction.get("direction_id")
+            if not projected:
+                continue
+            if not isinstance(direction_id, str) or not direction_id:
+                return None
+            expected.append({
+                "professor": professor,
+                "kind": "direction",
+                "direction_ids": [direction_id],
+                "candidates": projected,
+            })
+        groups = state.get("cross_direction_groups")
+        group_rows = [row for row in groups if isinstance(row, dict)] \
+            if isinstance(groups, list) else []
+        for group in group_rows:
+            projected = _project_state_candidates(group.get("candidates"))
+            if projected is None:
+                return None
+            direction_ids = group.get("direction_ids")
+            if not projected:
+                continue
+            if not isinstance(direction_ids, list) or not direction_ids \
+                    or not all(isinstance(item, str) and item for item in direction_ids):
+                return None
+            expected.append({
+                "professor": professor,
+                "kind": "cross_direction",
+                "direction_ids": sorted(direction_ids),
+                "candidates": projected,
+            })
+    return expected or None
+
+
 def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
-    """Verify the PC53 child-attributed Stage-4 Path-C evidence."""
+    """Verify the PC53 child-attributed Stage-4 Path-C evidence.
+
+    Snapshot evidence is classified by attribution, per the frozen #57
+    verdict table: a pre snapshot that is not all-absent is precondition
+    pollution that can never be blamed on this run
+    (``INVALID_TEST_EXECUTION``), a post snapshot that disagrees with the
+    current artifacts is stale or tampered evidence
+    (``INVALID_TEST_EXECUTION``), and only consistent evidence showing
+    Stage-4 outputs after a clean pre state proves the omitted-selection
+    path wrote them (``FAIL_PRODUCT``).  The adapter prerequisite is
+    decided before that product-write attribution: a harness/provider
+    blocker or corrupted adapter evidence preempts the feature verdict,
+    while named-role identity diagnostics stay non-gating.
+    """
     checks: list[dict[str, Any]] = []
     root = Path(args.program_root).resolve()
     target_child_id: str | None = None
@@ -836,14 +1214,33 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
         name: {"exists": False, "sha256": None}
         for name in STAGE4_PROGRAM_OUTPUTS
     }
-    _check(checks, "pre_zero_write_snapshot", pre == expected_absent, pre)
-    _check(checks, "post_zero_write_snapshot", post == expected_absent, post)
     current = _stage4_artifacts(root)
-    zero_write = current == expected_absent
-    _check(checks, "current_zero_write", zero_write, current)
-    if not (pre == expected_absent and post == expected_absent and zero_write):
-        return machine("fail", "FAIL_PRODUCT")
 
+    # Step 1: the pre snapshot must prove a clean initial state.  Outputs
+    # that already existed before this run are stale/polluted fixture
+    # state, so the write cannot be attributed to the omitted-selection
+    # path and is never a producer FAIL.
+    pre_absent = pre == expected_absent
+    _check(checks, "pre_zero_write_snapshot", pre_absent, pre)
+    if not pre_absent:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # Step 2: the post snapshot must still match the current filesystem —
+    # same existence and same content hashes.  Any drift means the
+    # snapshot evidence is stale or was tampered with after the run.
+    post_consistent = post == current
+    _check(checks, "post_snapshot_matches_current", post_consistent,
+           {"post": post, "current": current})
+    if not post_consistent:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # Step 3: the adapter prerequisite is decided before any feature
+    # attribution.  A harness/provider blocker or corrupted adapter
+    # evidence outranks the product-write observation — under
+    # HARNESS_CONTAMINATION the evidence sources themselves are outside
+    # the allowed roots, so this run's filesystem writes can no longer be
+    # trusted as a producer FAIL — while named-role identity diagnostics
+    # stay non-gating and never excuse a real product write.
     try:
         adapter = _load(Path(args.adapter_output)) if args.adapter_output else None
         response = _load(Path(args.eval_response)) if args.eval_response else None
@@ -853,6 +1250,17 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
     if not isinstance(adapter, dict) or not isinstance(response, dict):
         _check(checks, "evidence_objects", False)
         return machine("invalid", "INVALID_TEST_EXECUTION")
+    prerequisite = _adapter_prerequisite_block(adapter, checks)
+    if prerequisite:
+        return machine(*prerequisite)
+
+    # Step 4: with valid pre/post/current evidence and a passed
+    # prerequisite, outputs present after the run are positively
+    # attributed to this run's omitted-selection path.
+    zero_write = current == expected_absent
+    _check(checks, "current_zero_write", zero_write, current)
+    if not zero_write:
+        return machine("fail", "FAIL_PRODUCT")
 
     output = response.get("output")
     root_thread_id = output.get("thread_id") if isinstance(output, dict) else None
@@ -867,15 +1275,8 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
         _check(checks, "adapter_delegation_object", False)
         return machine("invalid", "INVALID_TEST_EXECUTION")
     delegation_state = delegation.get("state")
-    if delegation_state == "unobservable":
-        _check(checks, "delegation_observable", False, delegation)
-        return machine("blocked", "BLOCKED_OBSERVABILITY")
-    if delegation_state != "confirmed":
-        _check(checks, "delegation_confirmed", False, delegation)
-        return machine("invalid", "INVALID_TEST_EXECUTION")
-    basis = delegation.get("basis")
-    if not isinstance(basis, list) or "formal_spawn_relation" not in basis:
-        _check(checks, "adapter_formal_basis", False, basis)
+    if delegation_state not in ("confirmed", "unobservable"):
+        _check(checks, "delegation_state", False, delegation_state)
         return machine("invalid", "INVALID_TEST_EXECUTION")
 
     dispatch = adapter.get("dispatch")
@@ -883,32 +1284,31 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
     if not isinstance(relations, list):
         _check(checks, "adapter_relations", False)
         return machine("invalid", "INVALID_TEST_EXECUTION")
-    owners: dict[str, set[str]] = {}
+    edges, malformed = _formal_spawn_relations(adapter)
+    _check(checks, "adapter_relation_shape", not malformed, malformed)
+    if malformed:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # Same full-field consistency gate as the Stage-2 routing checkpoint:
+    # every frozen delegation summary field must equal the mechanical
+    # derivation from the adapter's own relation graph, and a mismatch
+    # fails closed before the observability verdict.
+    expected_summary = _expected_delegation_summary(edges)
+    observed_summary = {field: delegation.get(field)
+                        for field in expected_summary}
+    summary_consistent = observed_summary == expected_summary
+    _check(checks, "delegation_summary_consistent", summary_consistent,
+           {"observed": observed_summary, "expected": expected_summary})
+    if not summary_consistent:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    if delegation_state == "unobservable":
+        _check(checks, "delegation_observable", False, delegation)
+        return machine("blocked", "BLOCKED_OBSERVABILITY")
+    owners, _ = _ownership_index(edges)
     direct_children: set[str] = set()
-    for relation in relations:
-        if not isinstance(relation, dict) or relation.get("tool") != "spawnAgent":
-            continue
-        relation_status = relation.get("status") or relation.get("event") or relation.get("relation")
-        if isinstance(relation.get("item"), dict):
-            relation_status = relation["item"].get("status", relation_status)
-        if relation_status not in {
-            "started", "inProgress", "completed", "item/started", "item/completed",
-        }:
-            continue
-        parent = relation.get("parent_thread_id")
-        children = relation.get("receiver_thread_ids")
-        if children is None:
-            children = relation.get("child_thread_ids")
-        if not isinstance(parent, str) or not parent or not isinstance(children, list):
-            _check(checks, "adapter_relation_shape", False, relation)
-            return machine("invalid", "INVALID_TEST_EXECUTION")
-        for child in children:
-            if not isinstance(child, str) or not child:
-                _check(checks, "adapter_child_id_shape", False, relation)
-                return machine("invalid", "INVALID_TEST_EXECUTION")
-            owners.setdefault(child, set()).add(parent)
-            if parent == root_thread_id:
-                direct_children.add(child)
+    for edge in edges:
+        if edge["sender_thread_id"] == root_thread_id:
+            direct_children.add(edge["receiver_thread_id"])
     ownership_conflicts = {child: sorted(parents) for child, parents in owners.items() if len(parents) != 1}
     if ownership_conflicts:
         _check(checks, "formal_ownership", False, ownership_conflicts)
@@ -917,8 +1317,42 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
     if not direct_children:
         return machine("blocked", "BLOCKED_OBSERVABILITY")
 
-    def child_result(child_id: str) -> tuple[str, dict[str, Any] | None]:
-        assistant_messages: list[str] = []
+    def business_message_row(item: Any) -> tuple[str, dict[str, Any] | None] | None:
+        """One ``(state, parsed)`` row for a completed assistant message
+        item, or ``None`` for items outside the pinned business surface."""
+        if not isinstance(item, dict) or item.get("type") != "message" or item.get("role") != "assistant":
+            # A child thread emits developer, user, reasoning, and tool
+            # items as well.  The contract pins business-result parsing to
+            # assistant output_text messages only.
+            return None
+        content = item.get("content")
+        if not isinstance(content, list):
+            return ("malformed", None)
+        texts: list[str] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "output_text":
+                text = part.get("text")
+                if not isinstance(text, str):
+                    return ("malformed", None)
+                texts.append(text)
+        if not texts:
+            return None
+        try:
+            parsed = json.loads("".join(texts))
+        except (TypeError, json.JSONDecodeError):
+            return ("not_json", None)
+        return ("object", parsed) if isinstance(parsed, dict) else ("not_json", None)
+
+    def child_messages(child_id: str) -> list[tuple[str, dict[str, Any] | None]]:
+        """Every supported business message of one child thread, in
+        arrival order.
+
+        The frozen PC57 verdict counts business JSONs, not children, and
+        makes each observable business message load-bearing: no later
+        message may repair or mask an earlier malformed or wrong one, so
+        the rows are never collapsed into a last-wins parse.
+        """
+        rows: list[tuple[str, dict[str, Any] | None]] = []
         for event in events:
             message = event.get("message") if isinstance(event, dict) else None
             if not isinstance(message, dict):
@@ -928,63 +1362,51 @@ def _checkpoint_stage4_needs_input(args: argparse.Namespace) -> dict[str, Any]:
             params = message.get("params")
             if not isinstance(params, dict) or params.get("threadId") != child_id:
                 continue
-            item = params.get("item")
-            if not isinstance(item, dict) or item.get("type") != "message" or item.get("role") != "assistant":
-                # A child thread emits developer, user, reasoning, and tool
-                # items as well.  The contract pins business-result parsing to
-                # assistant output_text messages only.
-                continue
-            content = item.get("content")
-            if not isinstance(content, list):
-                return "malformed", None
-            texts: list[str] = []
-            for part in content:
-                if isinstance(part, dict) and part.get("type") == "output_text":
-                    text = part.get("text")
-                    if not isinstance(text, str):
-                        return "malformed", None
-                    texts.append(text)
-            if texts:
-                assistant_messages.append("".join(texts))
-        if not assistant_messages:
-            return "absent", None
-        try:
-            parsed = json.loads(assistant_messages[-1])
-        except (TypeError, json.JSONDecodeError):
-            return "not_json", None
-        return ("object", parsed) if isinstance(parsed, dict) else ("not_json", None)
+            row = business_message_row(params.get("item"))
+            if row is not None:
+                rows.append(row)
+        return rows
 
-    observed: dict[str, tuple[str, dict[str, Any] | None]] = {
-        child: child_result(child) for child in sorted(direct_children)
+    observed: dict[str, list[tuple[str, dict[str, Any] | None]]] = {
+        child: child_messages(child) for child in sorted(direct_children)
     }
-    _check(checks, "child_message_surface", any(state != "absent" for state, _ in observed.values()), observed)
-    if all(state == "absent" for state, _ in observed.values()):
+    _check(checks, "child_message_surface",
+           any(rows for rows in observed.values()), observed)
+    if all(not rows for rows in observed.values()):
         return machine("blocked", "BLOCKED_OBSERVABILITY")
-    if any(state in {"malformed", "not_json"} for state, _ in observed.values()):
-        return machine("fail", "FAIL_PRODUCT")
 
-    path_c_children = [
-        child for child, (state, result) in observed.items()
-        if state == "object" and isinstance(result, dict)
-        and result.get("result") == "needs_input"
-    ]
-    if len(path_c_children) != 1:
-        object_children = [child for child, (state, _) in observed.items() if state == "object"]
-        if len(object_children) == 1:
-            target_child_id = object_children[0]
-            business_result = observed[target_child_id][1]
-        _check(checks, "exactly_one_path_c_child", False, path_c_children)
+    # Every observed business message is a product statement in its own
+    # right: a malformed message, a non-JSON message, or a wrong-result
+    # object is already a violation, and more than one Path-C result —
+    # repeated in one child or spread over children — is a duplicate.
+    path_c_results: list[tuple[str, dict[str, Any]]] = []
+    for child, rows in observed.items():
+        for state, parsed in rows:
+            if state == "object" and isinstance(parsed, dict) \
+                    and parsed.get("result") == "needs_input":
+                path_c_results.append((child, parsed))
+                continue
+            _check(checks, "child_business_results_supported", False,
+                   {"child_thread_id": child, "observed": parsed if state == "object" else state})
+            return machine("fail", "FAIL_PRODUCT")
+    if len(path_c_results) != 1:
+        _check(checks, "exactly_one_path_c_result", False,
+               [child for child, _ in path_c_results])
         return machine("fail", "FAIL_PRODUCT")
-    target_child_id = path_c_children[0]
-    business_result = observed[target_child_id][1]
+    target_child_id, business_result = path_c_results[0]
     pending = business_result.get("pending_selection") if isinstance(business_result, dict) else None
     _check(checks, "pending_selection_nonempty", isinstance(pending, list) and bool(pending), pending)
     if not isinstance(pending, list) or not pending:
         return machine("fail", "FAIL_PRODUCT")
-    projection = _issue53_pending_projection(pending)
-    _check(checks, "pending_selection_exact_fixture", projection == ISSUE53_PENDING_SELECTION,
-           {"expected": ISSUE53_PENDING_SELECTION, "observed": projection})
-    if projection != ISSUE53_PENDING_SELECTION:
+    projection = _pending_selection_projection(pending)
+    expected = _expected_pending_projection(root)
+    _check(checks, "expected_projection_derivable", expected is not None,
+           {"program_root": str(root)})
+    if expected is None:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    _check(checks, "pending_selection_matches_current_state", projection == expected,
+           {"expected": expected, "observed": projection})
+    if projection != expected:
         return machine("fail", "FAIL_PRODUCT")
     _check(checks, "no_root_prose_gate", True)
     return machine("pass", "PASS")
@@ -1130,7 +1552,18 @@ def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _relation_rows(payload: Any) -> list[dict[str, Any]]:
-    """Extract formal spawn relations from adapter @9's normalized graph."""
+    """Extract completed formal spawn edges from adapter @9's normalized graph.
+
+    Field authority and shape follow the same pinned sender_rule as
+    ``_formal_spawn_relations``: the formal owner is ``sender_thread_id`` and
+    ``parent_thread_id`` is app-server event attribution that is never read.
+    The completion boundary is issue-specific and stays frozen: the #32
+    runtime-graph checkpoint and the #51/#52 standalone verifier judge
+    completed formal ``spawnAgent`` topology, so only ``status ==
+    "completed"`` relations build edges here; the #57 attempt-style
+    extraction that never requires completion lives in
+    ``_formal_spawn_relations``.
+    """
     rows: list[dict[str, Any]] = []
     if not isinstance(payload, dict):
         return rows
@@ -1143,13 +1576,13 @@ def _relation_rows(payload: Any) -> list[dict[str, Any]]:
             continue
         if relation.get("status") != "completed":
             continue
-        parent = relation.get("parent_thread_id")
+        sender = relation.get("sender_thread_id")
         children = relation.get("receiver_thread_ids")
-        if not isinstance(parent, str) or not parent or not isinstance(children, list):
+        if not isinstance(sender, str) or not sender or not isinstance(children, list):
             continue
         for child in children:
             if isinstance(child, str) and child:
-                rows.append({"parent": parent, "child": child, "kind": "spawnAgent"})
+                rows.append({"parent": sender, "child": child, "kind": "spawnAgent"})
     return rows
 
 
@@ -1225,6 +1658,7 @@ CHECKPOINTS = {
     "stage3-final": _checkpoint_stage3_final,
     "stage3-snapshot": _checkpoint_stage3_snapshot,
     "stage3-routing": _checkpoint_stage3_routing,
+    "stage2-routing": _checkpoint_stage2_routing,
     "stage4-snapshot": _checkpoint_stage4_snapshot,
     "stage4-needs-input": _checkpoint_stage4_needs_input,
     "make-stage4-selection": _checkpoint_make_stage4_selection,
