@@ -369,6 +369,48 @@ class EarlyRuntimeRoutingGateTests(unittest.TestCase):
                 )
 
 
+class NestedNativeInvocationCheckpointTests(unittest.TestCase):
+    """Nested coordinators must turn routing prose into a concrete action.
+
+    PC57-R1 ``OwoMoS`` reached the installed analyzer, prepared a real local
+    paper-analysis job, and then returned
+    ``codex_runtime_delegation_unavailable`` without making any native child
+    call.  The early abstract gate was present, but the long coordinator flow
+    diluted it before the execution and return boundaries.  Keep the stable
+    documented tool name (without freezing a private call signature) in every
+    nested gate, and repeat the zero-attempt prohibition at the analyzer's
+    load-bearing execution and return checkpoints.
+    """
+
+    def test_nested_gates_name_the_native_tool_without_a_call_signature(self):
+        for owner in CODEX_NESTED_DELEGATOR_AGENTS:
+            with self.subTest(owner=owner):
+                body = frontmatter_and_body(agent_path(owner))[1]
+                start = body.index("## Runtime routing gate (read first)")
+                end = body.index("\n## ", start + 1)
+                gate = body[start:end]
+                self.assertIn("`spawn_agent`", gate, owner)
+                self.assertNotRegex(gate, r"spawn_agent\s*\(", owner)
+
+    def test_analyzer_repeats_native_call_at_execution_boundary(self):
+        body = frontmatter_and_body(agent_path("professor-contact-analyzer"))[1]
+        start = body.index("6. **本地 route → `paper-analysis full`")
+        end = body.index("6.5 **future-work sidecar", start)
+        execution = body[start:end]
+        self.assertIn("`spawn_agent`", execution)
+        self.assertIn("exact named `paper-analysis`", execution)
+        self.assertRegex(execution, r"未调用[\s\S]{0,120}不得返回")
+
+    def test_analyzer_audits_zero_attempt_before_its_only_final_message(self):
+        body = frontmatter_and_body(agent_path("professor-contact-analyzer"))[1]
+        start = body.index("### Step 7 — Return value")
+        end = body.index("## Errors", start)
+        return_contract = body[start:end]
+        self.assertIn("`spawn_agent`", return_contract)
+        self.assertIn("codex_runtime_delegation_unavailable", return_contract)
+        self.assertRegex(return_contract, r"零次[\s\S]{0,160}禁止")
+
+
 class EarlyMachineOutputGateTests(unittest.TestCase):
     """Machine-returning agents must not leak progress prose as results.
 
