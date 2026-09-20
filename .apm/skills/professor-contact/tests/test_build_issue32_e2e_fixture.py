@@ -38,6 +38,14 @@ class Issue32FixtureBuilderTests(unittest.TestCase):
             self.assertTrue((profile / "套磁邮件/套磁模板.md").is_file())
             self.assertTrue((profile / "套磁邮件/套磁跟进模板.md").is_file())
             self.assertIn("faculty@example.edu", (root / "教授研究/contact-evidence-fixture-input.json").read_text())
+            candidates = json.loads(
+                (root / "教授研究/_professor_candidates.json").read_text(encoding="utf-8"))
+            self.assertEqual(candidates, [{
+                "name": "Example Professor",
+                "email": "faculty@example.edu",
+                "source": "https://example.test/faculty/example-professor",
+                "provenance": "synthetic official faculty page",
+            }])
 
     def test_manifest_protects_builder_owned_rebuilds(self):
         with tempfile.TemporaryDirectory() as directory:

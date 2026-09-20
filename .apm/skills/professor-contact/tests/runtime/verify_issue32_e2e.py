@@ -338,8 +338,26 @@ def _checkpoint_initial(args: argparse.Namespace) -> dict[str, Any]:
                                           ("套磁邮件/套磁信息.md", "套磁邮件/套磁模板.md", "套磁邮件/套磁跟进模板.md")))
     _check(checks, "legal_application_inputs", (root / "info.json").is_file()
            and (root / "boshu_analysis.json").is_file())
-    _check(checks, "raw_contact_prerequisite", (root / "教授研究/contact-evidence-fixture-input.json").is_file()
-           and not (root / "教授研究/_联系方式证据.json").exists())
+    contact_fixture = root / "教授研究/contact-evidence-fixture-input.json"
+    professor_candidates = root / "教授研究/_professor_candidates.json"
+    raw_contact_ok = contact_fixture.is_file() and professor_candidates.is_file() \
+        and not (root / "教授研究/_联系方式证据.json").exists()
+    if raw_contact_ok:
+        try:
+            fixture_contact = _load(contact_fixture)
+            candidate_rows = _load(professor_candidates)
+            expected_email = str(
+                ((fixture_contact.get("official_only") or {}).get("email") or "")
+            ).strip()
+            raw_contact_ok = bool(expected_email) and any(
+                isinstance(row, dict)
+                and row.get("name") == fixture_contact.get("professor")
+                and row.get("email") == expected_email
+                for row in candidate_rows
+            )
+        except (OSError, json.JSONDecodeError, AttributeError):
+            raw_contact_ok = False
+    _check(checks, "raw_contact_prerequisite", raw_contact_ok)
     for relative in PROGRAM_STAGE_OUTPUTS:
         _check(checks, f"product_output_absent:{relative.as_posix()}", not (root / relative).exists())
     for relative in PROFESSOR_STAGE_OUTPUTS:
@@ -1962,7 +1980,12 @@ def main(argv: list[str] | None = None) -> int:
         payload = CHECKPOINTS[args.checkpoint](args)
     except Exception as exc:
         payload = _result("fail", [{"name": "verifier_exception", "status": "fail", "detail": str(exc)}])
-    if args.output is not None:
+    # The two make-* checkpoints own their output path: it is the product-like
+    # input they construct, while their evidence is emitted on stdout.  Other
+    # checkpoints use --output for the evidence document itself.
+    if args.output is not None and args.checkpoint not in {
+        "make-stage4-selection", "make-stage5-choices",
+    }:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
             json.dumps(payload, ensure_ascii=False, indent=1) + "\n",

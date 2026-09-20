@@ -311,6 +311,7 @@ class Issue32VerifierTests(unittest.TestCase):
             ])
         self.assertEqual(exit_code, 0)
         selected = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(selected["selection"][0]["ideas"][0]["id"], "alpha")
         self.assertNotIn("first_choice", json.dumps(selected))
         self.assertNotIn("signature_name", json.dumps(selected))
         self.assertNotIn("learning", json.dumps(selected))
@@ -386,6 +387,35 @@ class Issue32VerifierTests(unittest.TestCase):
         })
         after = sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob("*"))
         self.assertEqual(before, after)
+
+    def test_make_stage5_choices_cli_keeps_canonical_choices_in_output_file(self):
+        stage4_root = self.root / "教授研究"
+        email_id = "Example Professor::DIR00001::idea-1"
+        (stage4_root / "邮件输入.json").write_text(json.dumps({
+            "schema": 2, "kind": "professor-contact-email-input",
+            "emails": [{"email_id": email_id}],
+        }), encoding="utf-8")
+        output = Path(self.holder.name) / "stage5-choices.json"
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            exit_code = verifier.main([
+                "make-stage5-choices",
+                "--program-root", str(self.root),
+                "--output", str(output),
+            ])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), {
+            "email_id": email_id,
+            "first_choice": False,
+            "signature_name": "Fixture Applicant",
+            "learning": "I am studying reproducible research workflows.",
+            "initial_sent_date": "2026-09-15",
+        })
+        evidence = json.loads(stdout.getvalue())
+        self.assertEqual(evidence["status"], "pass", evidence)
+        self.assertEqual(evidence["observed"]["payload"]["email_id"], email_id)
 
     def test_stage5_snapshot_records_fixed_artifacts_without_writing(self):
         prof = self.root / "教授研究/X分野/Example Professor"

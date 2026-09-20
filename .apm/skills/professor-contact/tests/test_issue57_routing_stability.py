@@ -339,6 +339,12 @@ class Stage4SkillEntryContractTests(unittest.TestCase):
         self.assertIn("selection omitted", self.entry)
         self.assertIn("不是 root 的提前返回条件", self.entry)
 
+    def test_stage4_omitted_selection_forbids_root_preflight_before_delegation(self):
+        """The observed R3-B failure must not recur as an inline root preflight."""
+        self.assertIn("委派前不得读取任何 Stage 4 状态文件", self.entry)
+        self.assertIn("不得先用 shell 或文件工具检查候选", self.entry)
+        self.assertIn("root 自行返回 `needs_input` 视为 routing failure", self.entry)
+
     def test_stage4_entry_does_not_duplicate_child_business_instructions(self):
         # The added entry rule stays at the routing level: no selection
         # schema, no candidate field list, no finalize usage.

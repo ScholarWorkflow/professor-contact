@@ -166,6 +166,11 @@ class PrepareIssue40RuntimeFixtureTest(unittest.TestCase):
         self.assertEqual(manifest["item_keys"], [READY_KEY, FILL_KEY])
         self.assertEqual(manifest["missing_item_keys"], [FILL_KEY])
         self.assertEqual(manifest["fixture_run_id"], "zotero-20260916T000000Z-00001")
+        candidates = json.loads(
+            (program_root / "教授研究/_professor_candidates.json")
+            .read_text(encoding="utf-8"))
+        self.assertEqual(candidates[0]["name"], "Example Professor")
+        self.assertEqual(candidates[0]["email"], "faculty@example.edu")
 
         stored = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(stored["stage0"]["selected_direction_ids"], ["DIR00001"])

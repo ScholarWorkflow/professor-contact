@@ -191,6 +191,16 @@ def _write_inputs(program_root: Path, profile_root: Path,
             "source": "synthetic official faculty page",
         },
     })
+    # Seed the real professor-research input contract as well as the
+    # human-readable fixture provenance above.  The collector's deterministic
+    # contact-evidence rebuild consumes _professor_candidates.json; the
+    # fixture-only file is deliberately not a production input surface.
+    _write_json(program_root / "教授研究" / "_professor_candidates.json", [{
+        "name": PROFESSOR,
+        "email": "faculty@example.edu",
+        "source": "https://example.test/faculty/example-professor",
+        "provenance": "synthetic official faculty page",
+    }])
 
     profile_root.mkdir(parents=True, exist_ok=True)
     (profile_root / "套磁邮件").mkdir(parents=True, exist_ok=True)

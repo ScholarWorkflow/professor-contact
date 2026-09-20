@@ -448,6 +448,8 @@ Stage 4 request
 
 一旦 root 被要求执行 Stage 4，无论 `selection` 提供还是省略，第一个路由动作就是委派已安装的 `professor-contact-selection` 并等待；child 结果返回之后才允许被消费。`selection omitted` 是该 child 的正式输入分支（child 读取当前 canonical `套磁候选状态.json` 并返回 Path C），不是 root 的提前返回条件；root 只转发/消费真实 child 结果，绝不代读候选状态、绝不自行合成 `needs_input`/`pending_selection`。
 
+这个顺序也禁止任何 root preflight：委派前不得读取任何 Stage 4 状态文件，不得先用 shell 或文件工具检查候选，也不得在 commentary/prose 里先判断缺少选择。缺少 `selection` 时 root 自行返回 `needs_input` 视为 routing failure；只有真实 `professor-contact-selection` child result 可以给出该结果。
+
 Stage 4 缺少 selection 仍由 child 返回 `needs_input` + `pending_selection`；下一用户回合带真实 selection 做 fresh delegation。Stage 5 的 email-validator loop 仍归 email-generator 所有，不由顶层 caller 直接启动。
 
 #### Stage 2 在 Codex 下的委派链与用户选择
