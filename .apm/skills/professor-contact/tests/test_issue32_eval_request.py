@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import shlex
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -14,154 +15,261 @@ spec = importlib.util.spec_from_file_location("issue32_eval_request", MODULE_PAT
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
+FIXTURE_HTTP = "http://127.0.0.1:24121"
+FIXTURE_MCP = "http://127.0.0.1:24122/mcp"
+ENDPOINT_KEYS = ("shell_environment_policy.set.ZOTERO_HTTP_URL",
+                 "shell_environment_policy.set.ZOTERO_MCP_URL")
+NETWORK_KEY = "sandbox_workspace_write.network_access"
+
+
+def _flatten(value: dict, prefix: str = "") -> dict:
+    flat: dict[str, object] = {}
+    for key, item in value.items():
+        path = f"{prefix}{key}"
+        if isinstance(item, dict):
+            flat.update(_flatten(item, path + "."))
+        else:
+            flat[path] = item
+    return flat
+
 
 class Issue32EvalRequestTests(unittest.TestCase):
-    def test_default_request_omits_chrome_and_npm_wiring(self):
-        """#40 R1-R4 must not require or inject browser-specific runtime state."""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "consumer"
-            root.mkdir()
-            prompt = Path(directory) / "prompt.md"
-            prompt.write_text("Run Stage 1", encoding="utf-8")
-            output = Path(directory) / "request.json"
-            request = module.build_request(
-                consumer_root=root,
-                prompt_file=prompt,
-                output=output,
-                zotero_http_url="http://127.0.0.1:9000",
-                zotero_mcp_url="http://127.0.0.1:9001",
-                # Passing browser values without the explicit opt-in must not
-                # make the canonical R1-R4 matrix discover or inject Chrome.
-                chrome_profile_dir='/tmp/chrome "profile"',
-                chrome_cdp_port="9333",
-                npm_cache='/tmp/npm "cache"',
-            )
-            self.assertEqual(request["timeout"], 1800)
-            command = request["command"]
-            argv = shlex.split(command)
-            self.assertEqual(argv[:2], ["--json", "--ephemeral"])
-            self.assertNotIn("codex", argv[:2])
-            self.assertNotIn("exec", argv[:2])
-            assignments = [argv[index + 1] for index, value in enumerate(argv[:-1])
-                           if value == "--config"]
-            self.assertEqual(len(assignments), 6)
-            parsed = [tomllib.loads(f"{assignment}\n") for assignment in assignments]
-            self.assertEqual(parsed[0]["model_reasoning_effort"], "low")
-            project_trust = parsed[1]["projects"][str(root.resolve())]
-            self.assertEqual(project_trust["trust_level"], "trusted")
-            self.assertEqual(parsed[2]["shell_environment_policy"]["set"]["ZOTERO_HTTP_URL"],
-                             "http://127.0.0.1:9000")
-            self.assertIs(type(parsed[2]["shell_environment_policy"]["set"]["ZOTERO_HTTP_URL"]), str)
-            self.assertEqual(parsed[3]["shell_environment_policy"]["set"]["ZOTERO_MCP_URL"],
-                             "http://127.0.0.1:9001")
-            self.assertIs(type(parsed[3]["shell_environment_policy"]["set"]["ZOTERO_MCP_URL"]), str)
-            max_threads = parsed[4]["agents"]["max_concurrent_threads_per_session"]
-            self.assertIs(type(max_threads), int)
-            self.assertEqual(max_threads, module.DEFAULT_MAX_CONCURRENT_AGENT_THREADS)
-            self.assertEqual(max_threads, 16)
-            network_access = parsed[5]["sandbox_workspace_write"]["network_access"]
-            self.assertIs(type(network_access), bool)
-            self.assertIs(network_access, True)
-            self.assertFalse(any("NPM_CONFIG_CACHE" in value for value in assignments))
-            self.assertFalse(any("CHROME_PROFILE_DIR" in value for value in assignments))
-            self.assertFalse(any("CHROME_CDP_PORT" in value for value in assignments))
-            self.assertFalse(any("mcp_servers." in value for value in assignments))
-            self.assertEqual(json.loads(output.read_text())["command"], command)
+    def setUp(self):
+        self.holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.holder.cleanup)
+        self.root = Path(self.holder.name) / "consumer"
+        self.root.mkdir()
+        self.prompt = Path(self.holder.name) / "prompt.md"
+        self.prompt.write_text("Run the canonical case", encoding="utf-8")
+
+    def build(self, case, **overrides):
+        values = {
+            "case": case,
+            "consumer_root": self.root,
+            "prompt_file": self.prompt,
+            "output": Path(self.holder.name) / f"{case}-request.json",
+            "zotero_http_url": FIXTURE_HTTP,
+            "zotero_mcp_url": FIXTURE_MCP,
+        }
+        values.update(overrides)
+        return module.build_request(**values)
+
+    def configs(self, request):
+        """Return every config override flattened to dotted keys, parsed as TOML."""
+        argv = shlex.split(request["command"])
+        assignments = [argv[index + 1] for index, value in enumerate(argv[:-1])
+                       if value == "--config"]
+        flat: dict[str, object] = {}
+        for assignment in assignments:
+            flat.update(_flatten(tomllib.loads(f"{assignment}\n")))
+        return assignments, flat
+
+    def test_case_is_always_required(self):
+        with self.assertRaises(module.RequestBuildError):
+            self.build("")
+        with self.assertRaises(module.RequestBuildError):
+            self.build("R1")
+        with self.assertRaises(module.RequestBuildError):
+            self.build("stage5")
+        self.assertEqual(module.CANONICAL_CASES,
+                         ("r1", "r2", "r3a", "r3b", "r4a", "r4b"))
+
+    def test_r1_and_r2_inject_exact_fixture_endpoints_and_network(self):
+        for case in ("r1", "r2"):
+            with self.subTest(case=case):
+                _, configs = self.configs(self.build(case))
+                self.assertEqual(configs.get(ENDPOINT_KEYS[0]), FIXTURE_HTTP)
+                self.assertEqual(configs.get(ENDPOINT_KEYS[1]), FIXTURE_MCP)
+                self.assertIs(type(configs.get(ENDPOINT_KEYS[0])), str)
+                self.assertIs(type(configs.get(ENDPOINT_KEYS[1])), str)
+                self.assertIs(configs.get(NETWORK_KEY), True)
+
+    def test_r1_and_r2_fail_closed_without_fixture_endpoints(self):
+        for case in ("r1", "r2"):
+            for overrides in (
+                {"zotero_http_url": ""},
+                {"zotero_mcp_url": ""},
+                {"zotero_http_url": "   ", "zotero_mcp_url": ""},
+            ):
+                with self.subTest(case=case, overrides=overrides):
+                    with self.assertRaises(module.RequestBuildError) as ctx:
+                        self.build(case, **overrides)
+                    self.assertIn("requires fixture Zotero endpoints", str(ctx.exception))
+
+    def test_isolated_cases_inject_no_zotero_endpoint_or_network_override(self):
+        for case in ("r3a", "r3b", "r4a", "r4b"):
+            with self.subTest(case=case):
+                _, configs = self.configs(self.build(
+                    case, zotero_http_url="", zotero_mcp_url=""))
+                for key in (*ENDPOINT_KEYS, NETWORK_KEY):
+                    self.assertNotIn(key, configs)
+                self.assertNotIn("ZOTERO", " ".join(configs))
+
+    def test_isolated_cases_reject_supplied_zotero_endpoints(self):
+        for case in ("r3a", "r3b", "r4a", "r4b"):
+            with self.subTest(case=case):
+                with self.assertRaises(module.RequestBuildError) as ctx:
+                    self.build(case)
+                self.assertIn("does not use Zotero", str(ctx.exception))
+                with self.assertRaises(module.RequestBuildError):
+                    self.build(case, zotero_http_url="", zotero_mcp_url=FIXTURE_MCP)
+                with self.assertRaises(module.RequestBuildError):
+                    self.build(case, zotero_http_url=FIXTURE_HTTP, zotero_mcp_url="")
+
+    def test_no_canonical_case_emits_an_empty_string_override(self):
+        for case in module.CANONICAL_CASES:
+            isolated = case in module.ISOLATED_CASES
+            with self.subTest(case=case):
+                _, configs = self.configs(self.build(
+                    case,
+                    **({"zotero_http_url": "", "zotero_mcp_url": ""} if isolated else {})))
+                blank = [key for key, value in configs.items()
+                         if isinstance(value, str) and not value.strip()]
+                self.assertEqual(blank, [])
+
+    def test_every_canonical_case_keeps_model_trust_and_thread_behavior(self):
+        for case in module.CANONICAL_CASES:
+            isolated = case in module.ISOLATED_CASES
+            with self.subTest(case=case):
+                _, configs = self.configs(self.build(
+                    case,
+                    **({"zotero_http_url": "", "zotero_mcp_url": ""} if isolated else {})))
+                self.assertEqual(configs.get("model_reasoning_effort"), "low")
+                self.assertEqual(configs.get(
+                    f"projects.{self.root.resolve()}.trust_level"), "trusted")
+                self.assertIs(configs.get("agents.max_concurrent_threads_per_session"), 16)
+                argv = shlex.split(self.build(
+                    case,
+                    **({"zotero_http_url": "", "zotero_mcp_url": ""} if isolated else {})
+                )["command"])
+                self.assertEqual(argv[:2], ["--json", "--ephemeral"])
+                self.assertNotIn("codex", argv[:2])
+                self.assertNotIn("exec", argv[:2])
+                self.assertEqual(argv[argv.index("--sandbox") + 1], "workspace-write")
+                self.assertEqual(argv[argv.index("--model") + 1], "gpt-5.6-luna")
+
+    def test_chrome_npm_wiring_absent_from_every_canonical_case(self):
+        for case in module.CANONICAL_CASES:
+            isolated = case in module.ISOLATED_CASES
+            with self.subTest(case=case):
+                _, configs = self.configs(self.build(
+                    case,
+                    **({"zotero_http_url": "", "zotero_mcp_url": ""} if isolated else {})))
+                rendered = " ".join(configs)
+                for forbidden in ("NPM_CONFIG_CACHE", "CHROME_PROFILE_DIR", "CHROME_CDP_PORT",
+                                  "mcp_servers", "chrome", "cdp"):
+                    self.assertNotIn(forbidden, rendered)
+
+    def test_canonical_cases_reject_browser_arguments_instead_of_opting_in(self):
+        for case in module.CANONICAL_CASES:
+            isolated = case in module.ISOLATED_CASES
+            for overrides in (
+                {"chrome_profile_dir": "/tmp/chrome"},
+                {"chrome_cdp_port": "9333"},
+                {"npm_cache": "/tmp/npm"},
+            ):
+                with self.subTest(case=case, overrides=overrides):
+                    with self.assertRaises(module.RequestBuildError) as ctx:
+                        self.build(case,
+                                   **({"zotero_http_url": "", "zotero_mcp_url": ""}
+                                      if isolated else {}), **overrides)
+                    self.assertIn("Chrome/NPM", str(ctx.exception))
+
+    def test_browser_case_is_the_only_explicit_chrome_mode(self):
+        (self.root / ".codex").mkdir(parents=True)
+        (self.root / ".codex/config.toml").write_text(
+            '[mcp_servers."actual-browser-server"]\n'
+            'command = "npx"\n'
+            '[mcp_servers."actual-browser-server".env]\n'
+            'CHROME_PROFILE_DIR = "/tmp/profile"\n'
+            'CHROME_CDP_PORT = "9222"\n', encoding="utf-8")
+        _, configs = self.configs(self.build(
+            module.BROWSER_CASE,
+            chrome_profile_dir='/tmp/chrome "profile"',
+            chrome_cdp_port="9333",
+            npm_cache='/tmp/npm "cache"',
+        ))
+        self.assertEqual(configs.get("shell_environment_policy.set.NPM_CONFIG_CACHE"),
+                         '/tmp/npm "cache"')
+        self.assertEqual(
+            configs.get("mcp_servers.actual-browser-server.env.CHROME_PROFILE_DIR"),
+            '/tmp/chrome "profile"')
+        self.assertIs(type(
+            configs.get("mcp_servers.actual-browser-server.env.CHROME_CDP_PORT")), str)
+        self.assertEqual(configs.get("mcp_servers.actual-browser-server.env.CHROME_CDP_PORT"),
+                         "9333")
+        self.assertEqual(configs.get(ENDPOINT_KEYS[0]), FIXTURE_HTTP)
+        self.assertIs(configs.get(NETWORK_KEY), True)
+
+    def test_browser_case_requires_every_browser_value(self):
+        for overrides in (
+            {"chrome_profile_dir": ""},
+            {"chrome_cdp_port": ""},
+            {"npm_cache": ""},
+        ):
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(module.RequestBuildError) as ctx:
+                    self.build(module.BROWSER_CASE, **overrides)
+                self.assertIn("browser-specific mode", str(ctx.exception))
 
     def test_explicit_agent_thread_override_is_recorded_as_integer_config(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "consumer"
-            root.mkdir()
-            prompt = Path(directory) / "prompt.md"
-            prompt.write_text("Run Stage 2", encoding="utf-8")
-            output = Path(directory) / "request.json"
-            request = module.build_request(
-                consumer_root=root,
-                prompt_file=prompt,
-                output=output,
-                max_agent_threads=20,
-            )
-            argv = shlex.split(request["command"])
-            assignments = [argv[index + 1] for index, value in enumerate(argv[:-1])
-                           if value == "--config"]
-            parsed = [tomllib.loads(f"{assignment}\n") for assignment in assignments]
-            self.assertEqual(
-                parsed[4]["agents"]["max_concurrent_threads_per_session"], 20)
+        _, configs = self.configs(self.build("r1", max_agent_threads=20))
+        self.assertEqual(configs.get("agents.max_concurrent_threads_per_session"), 20)
 
     def test_nonpositive_agent_thread_override_is_rejected(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "consumer"
-            root.mkdir()
-            prompt = Path(directory) / "prompt.md"
-            prompt.write_text("Run Stage 2", encoding="utf-8")
-            with self.assertRaises(module.RequestBuildError):
-                module.build_request(
-                    consumer_root=root,
-                    prompt_file=prompt,
-                    output=Path(directory) / "request.json",
-                    max_agent_threads=0,
-                )
+        with self.assertRaises(module.RequestBuildError):
+            self.build("r1", max_agent_threads=0)
 
-    def test_enable_chrome_discovers_actual_server_and_injects_browser_wiring(self):
-        """A separate browser-specific recipe may opt into the legacy wiring."""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "consumer"
-            (root / ".codex").mkdir(parents=True)
-            (root / ".codex/config.toml").write_text(
-                '[mcp_servers."actual-browser-server"]\n'
-                'command = "npx"\n'
-                '[mcp_servers."actual-browser-server".env]\n'
-                'CHROME_PROFILE_DIR = "/tmp/profile"\n'
-                'CHROME_CDP_PORT = "9222"\n', encoding="utf-8")
-            prompt = Path(directory) / "prompt.md"
-            prompt.write_text("Run browser-specific case", encoding="utf-8")
-            output = Path(directory) / "request.json"
-            request = module.build_request(
-                consumer_root=root,
-                prompt_file=prompt,
-                output=output,
-                zotero_http_url="http://127.0.0.1:9000",
-                zotero_mcp_url="http://127.0.0.1:9001",
-                enable_chrome=True,
-                chrome_profile_dir='/tmp/chrome "profile"',
-                chrome_cdp_port="9333",
-                npm_cache='/tmp/npm "cache"',
-            )
-            argv = shlex.split(request["command"])
-            assignments = [argv[index + 1] for index, value in enumerate(argv[:-1])
-                           if value == "--config"]
-            self.assertEqual(len(assignments), 9)
-            parsed = [tomllib.loads(f"{assignment}\n") for assignment in assignments]
-            self.assertEqual(parsed[6]["shell_environment_policy"]["set"]["NPM_CONFIG_CACHE"],
-                             '/tmp/npm "cache"')
-            self.assertEqual(parsed[7]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_PROFILE_DIR"],
-                             '/tmp/chrome "profile"')
-            self.assertIs(type(parsed[8]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_CDP_PORT"]), str)
-            self.assertEqual(parsed[8]["mcp_servers"]["actual-browser-server"]["env"]["CHROME_CDP_PORT"], "9333")
+    def test_missing_consumer_root_is_rejected(self):
+        with self.assertRaises(module.RequestBuildError):
+            self.build("r1", consumer_root=self.root.parent / "absent")
 
     def test_ambiguous_chrome_configuration_is_blocked(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "consumer"
-            root.mkdir()
-            (root / "a.toml").write_text(
-                '[mcp_servers."chrome-a"]\ncommand = "a"\n', encoding="utf-8")
-            (root / "b.toml").write_text(
-                '[mcp_servers."chrome-b"]\ncommand = "b"\n', encoding="utf-8")
-            with self.assertRaises(module.RequestBuildError):
-                module.discover_chrome_server_id(root)
+        (self.root / "a.toml").write_text(
+            '[mcp_servers."chrome-a"]\ncommand = "a"\n', encoding="utf-8")
+        (self.root / "b.toml").write_text(
+            '[mcp_servers."chrome-b"]\ncommand = "b"\n', encoding="utf-8")
+        with self.assertRaises(module.RequestBuildError):
+            module.discover_chrome_server_id(self.root)
 
     def test_selects_page_scoped_server_from_generated_chrome_set(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "consumer"
-            root.mkdir()
-            (root / "config.toml").write_text(
-                '[mcp_servers."chrome-devtools"]\n'
-                'args = ["--scan"]\n'
-                '[mcp_servers."pdf-chrome"]\n'
-                'args = ["--page-id"]\n'
-                '[mcp_servers."sd-chrome"]\n'
-                'args = ["--output-mode=compact"]\n', encoding="utf-8")
-            self.assertEqual(module.discover_chrome_server_id(root), "pdf-chrome")
+        (self.root / "config.toml").write_text(
+            '[mcp_servers."chrome-devtools"]\n'
+            'args = ["--scan"]\n'
+            '[mcp_servers."pdf-chrome"]\n'
+            'args = ["--page-id"]\n'
+            '[mcp_servers."sd-chrome"]\n'
+            'args = ["--output-mode=compact"]\n', encoding="utf-8")
+        self.assertEqual(module.discover_chrome_server_id(self.root), "pdf-chrome")
+
+    def test_cli_requires_case_and_rejects_unknown_values(self):
+        output = Path(self.holder.name) / "cli-request.json"
+        missing = subprocess.run(
+            ["python3", str(MODULE_PATH), "--consumer-root", str(self.root),
+             "--prompt-file", str(self.prompt), "--output", str(output)],
+            capture_output=True, text=True, check=False)
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("--case", missing.stderr)
+        unknown = subprocess.run(
+            ["python3", str(MODULE_PATH), "--case", "r7",
+             "--consumer-root", str(self.root), "--prompt-file", str(self.prompt),
+             "--output", str(output)],
+            capture_output=True, text=True, check=False)
+        self.assertEqual(unknown.returncode, 2)
+        self.assertFalse(output.exists())
+
+    def test_cli_writes_isolated_case_without_endpoint_keys(self):
+        output = Path(self.holder.name) / "r4b-request.json"
+        completed = subprocess.run(
+            ["python3", str(MODULE_PATH), "--case", "r4b",
+             "--consumer-root", str(self.root), "--prompt-file", str(self.prompt),
+             "--output", str(output)],
+            capture_output=True, text=True, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout)["case"], "r4b")
+        _, configs = self.configs(json.loads(output.read_text(encoding="utf-8")))
+        for key in (*ENDPOINT_KEYS, NETWORK_KEY):
+            self.assertNotIn(key, configs)
 
     def test_r1_prompt_forces_single_root_dispatch_to_downloader(self):
         """R1 measures nested delegation, not ambiguous caller-convention routing."""

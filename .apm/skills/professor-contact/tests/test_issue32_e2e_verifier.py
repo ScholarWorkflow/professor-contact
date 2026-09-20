@@ -24,6 +24,20 @@ def load_module(name, path):
 builder = load_module("issue32_fixture_builder_for_verifier", BUILDER_PATH)
 verifier = load_module("issue32_verifier", VERIFIER_PATH)
 
+# Verdict selectors frozen in the issue #43 and issue #47 runtime recipes.  The
+# check names live in the verifier, so the recipes stay decidable: #43 judges
+# the choices feature only, while #47 final integration additionally requires a
+# contract-valid terminal validator record and still never gates copy quality.
+ISSUE43_STAGE5_CHECKS = (
+    "choice_email_id_matches_pack", "choice_signature_rendered",
+    "choice_learning_rendered", "choice_initial_sent_date_rendered",
+    "choice_non_first_choice_branch_rendered", "email_entries_frozen_and_valid",
+    "final_initial_exists", "final_followup_exists",
+)
+ISSUE47_INTEGRATION_CHECKS = ISSUE43_STAGE5_CHECKS + (
+    "email_validator_terminal_records_valid",
+)
+
 
 class Issue32VerifierTests(unittest.TestCase):
     def setUp(self):
@@ -54,18 +68,17 @@ class Issue32VerifierTests(unittest.TestCase):
         self.assertEqual(payload["status"], "pass", payload)
         self.assertFalse((self.root / "教授研究/套磁目标.json").exists())
 
-    def test_stage1_final_accepts_runtime_item_keys_from_manifest(self):
+    def test_stage1_final_accepts_runtime_item_key_from_manifest(self):
         root = Path(self.holder.name) / "dynamic-program"
         profile = Path(self.holder.name) / "dynamic-profile"
-        ready_key, fill_key = "READY1234", "FILL5678"
-        builder.build_fixture(root, profile, item_keys=(ready_key, fill_key))
+        item_key = "RT999999"
+        builder.build_fixture(root, profile, item_key=item_key)
 
         prof = root / "教授研究/X分野/Example Professor"
         papers_path = prof / "papers.json"
         papers = json.loads(papers_path.read_text(encoding="utf-8"))
-        for paper in papers["papers"]:
-            if paper["item_key"] == fill_key:
-                paper["pdf_status"] = "downloaded"
+        self.assertEqual([row["item_key"] for row in papers["papers"]], [item_key])
+        papers["papers"][0]["pdf_status"] = "downloaded"
         papers_path.write_text(json.dumps(papers), encoding="utf-8")
 
         (root / "教授研究/套磁阶段1候选.json").write_text(json.dumps({
@@ -75,9 +88,9 @@ class Issue32VerifierTests(unittest.TestCase):
                 "professor": "Example Professor",
                 "directions": [{
                     "direction_id": "DIR00001",
-                    "candidate_keys": [ready_key, fill_key],
+                    "candidate_keys": [item_key],
                     "pdf_readiness": {
-                        "usable_item_keys": [ready_key, fill_key],
+                        "usable_item_keys": [item_key],
                         "missing_item_keys": [],
                     },
                 }],
@@ -88,7 +101,7 @@ class Issue32VerifierTests(unittest.TestCase):
             "collector_payload": {
                 "folder_path": str(root),
                 "pdf_only": True,
-                "item_keys": [fill_key],
+                "item_keys": [item_key],
             },
         }), encoding="utf-8")
 
@@ -96,17 +109,52 @@ class Issue32VerifierTests(unittest.TestCase):
             self.args(program_root=root, eval_response=response))
         self.assertEqual(payload["status"], "pass", payload)
 
-    def test_stage1_final_accepts_noop_without_collector_payload_when_all_pdfs_ready(self):
-        root = Path(self.holder.name) / "noop-program"
-        profile = Path(self.holder.name) / "noop-profile"
-        ready_key, fill_key = "READY1234", "FILL5678"
-        builder.build_fixture(root, profile, item_keys=(ready_key, fill_key))
+    def test_stage1_final_rejects_a_second_candidate_outside_the_canonical_item(self):
+        """The one-item collapse means a second key is a contract violation."""
+        root = Path(self.holder.name) / "two-key-program"
+        profile = Path(self.holder.name) / "two-key-profile"
+        item_key = "RT999999"
+        builder.build_fixture(root, profile, item_key=item_key)
 
         prof = root / "教授研究/X分野/Example Professor"
         papers_path = prof / "papers.json"
         papers = json.loads(papers_path.read_text(encoding="utf-8"))
-        for paper in papers["papers"]:
-            paper["pdf_status"] = "downloaded"
+        papers["papers"][0]["pdf_status"] = "downloaded"
+        papers["papers"].append({"item_key": "OTHER1111", "pdf_status": "downloaded"})
+        papers_path.write_text(json.dumps(papers), encoding="utf-8")
+        (root / "教授研究/套磁阶段1候选.json").write_text(json.dumps({
+            "schema_version": 1,
+            "kind": "professor-contact-stage1",
+            "professors": [{
+                "professor": "Example Professor",
+                "directions": [{
+                    "direction_id": "DIR00001",
+                    "candidate_keys": [item_key, "OTHER1111"],
+                    "pdf_readiness": {
+                        "usable_item_keys": [item_key, "OTHER1111"],
+                        "missing_item_keys": [],
+                    },
+                }],
+            }],
+        }), encoding="utf-8")
+
+        payload = verifier._checkpoint_stage1_final(self.args(program_root=root))
+
+        self.assertEqual(payload["status"], "fail", payload)
+        names = {row["name"]: row["status"] for row in payload["checks"]}
+        self.assertEqual(names.get("snapshot_members"), "fail", names)
+        self.assertEqual(names.get("pdf_readiness"), "fail", names)
+
+    def test_stage1_final_accepts_noop_without_collector_payload_when_pdf_ready(self):
+        root = Path(self.holder.name) / "noop-program"
+        profile = Path(self.holder.name) / "noop-profile"
+        item_key = "RT999999"
+        builder.build_fixture(root, profile, item_key=item_key)
+
+        prof = root / "教授研究/X分野/Example Professor"
+        papers_path = prof / "papers.json"
+        papers = json.loads(papers_path.read_text(encoding="utf-8"))
+        papers["papers"][0]["pdf_status"] = "downloaded"
         papers_path.write_text(json.dumps(papers), encoding="utf-8")
 
         (root / "教授研究/套磁阶段1候选.json").write_text(json.dumps({
@@ -116,9 +164,9 @@ class Issue32VerifierTests(unittest.TestCase):
                 "professor": "Example Professor",
                 "directions": [{
                     "direction_id": "DIR00001",
-                    "candidate_keys": [ready_key, fill_key],
+                    "candidate_keys": [item_key],
                     "pdf_readiness": {
-                        "usable_item_keys": [ready_key, fill_key],
+                        "usable_item_keys": [item_key],
                         "missing_item_keys": [],
                     },
                 }],
@@ -128,13 +176,47 @@ class Issue32VerifierTests(unittest.TestCase):
         response.write_text(json.dumps({
             "stage1_result": {
                 "action": "noop",
-                "papers_pdf_downloaded": 2,
+                "papers_pdf_downloaded": 1,
             },
         }), encoding="utf-8")
 
         payload = verifier._checkpoint_stage1_final(
             self.args(program_root=root, eval_response=response))
         self.assertEqual(payload["status"], "pass", payload)
+
+    def test_initial_rejects_pre_ready_catalog_or_prebuilt_local_pdf(self):
+        """R1 must be the step that fills the single canonical item."""
+        prof = self.root / "教授研究/X分野/Example Professor"
+        papers_path = prof / "papers.json"
+        original_papers = papers_path.read_text(encoding="utf-8")
+        papers = json.loads(original_papers)
+        papers["papers"][0]["pdf_status"] = "downloaded"
+        papers["papers"][0]["pdf_path"] = "论文分析/AAAA1111.pdf"
+        papers_path.write_text(json.dumps(papers), encoding="utf-8")
+        (prof / "论文分析/AAAA1111.pdf").write_bytes(b"%PDF-1.4\n")
+
+        payload = verifier._checkpoint_initial(self.args())
+
+        names = {row["name"]: row["status"] for row in payload["checks"]}
+        self.assertEqual(payload["status"], "fail", payload)
+        self.assertEqual(names.get("catalog_pdf_pending"), "fail", names)
+        self.assertEqual(names.get("no_prebuilt_local_pdf"), "fail", names)
+        papers_path.write_text(original_papers, encoding="utf-8")
+        (prof / "论文分析/AAAA1111.pdf").unlink()
+        self.assertEqual(verifier._checkpoint_initial(self.args())["status"], "pass")
+
+    def test_initial_rejects_a_two_item_manifest(self):
+        manifest_path = self.root / "fixture-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["item_keys"] = ["AAAA1111", "BBBB2222"]
+        manifest["canonical_item_key"] = "AAAA1111"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        payload = verifier._checkpoint_initial(self.args())
+
+        names = {row["name"]: row["status"] for row in payload["checks"]}
+        self.assertEqual(payload["status"], "fail", payload)
+        self.assertEqual(names.get("item_keys"), "fail", names)
 
     def test_install_reads_exact_professor_contact_commit_from_structured_lock(self):
         consumer = Path(self.holder.name) / "consumer"
@@ -513,6 +595,93 @@ class Issue32VerifierTests(unittest.TestCase):
         ):
             self.assertEqual(names.get(name), "pass", names)
 
+    def _set_stage5_validations(self, initial, followup):
+        """Re-seed Stage 5 outputs and overwrite the two validator records."""
+        email_id = self._seed_stage5_final_outputs()
+        prof = self.root / "教授研究/X分野/Example Professor"
+        state = json.loads((prof / "套磁邮件状态.json").read_text(encoding="utf-8"))
+        entry = state["emails"][email_id]
+        if initial is None:
+            entry.pop("validation", None)
+        else:
+            entry["validation"] = initial
+        if followup is None:
+            entry.get("followup", {}).pop("validation", None)
+        else:
+            entry["followup"]["validation"] = followup
+        (prof / "套磁邮件状态.json").write_text(json.dumps(state), encoding="utf-8")
+        return self.args()
+
+    def test_stage5_final_separates_terminal_validator_record_from_copy_quality(self):
+        """#40: a legal non-pass terminal record is diagnostics, not a missing run."""
+        scenarios = [
+            # (initial, followup, terminal-valid, result-pass)
+            ({"result": "pass", "rounds": 1, "issues": []},
+             {"result": "pass", "rounds": 2, "issues": []}, "pass", "pass"),
+            ({"result": "fail_after_2_rounds", "rounds": 2, "issues": ["wording"]},
+             {"result": "fail_after_2_rounds", "rounds": 2, "issues": ["wording"]},
+             "pass", "fail"),
+            ({"result": "skipped", "rounds": 0, "issues": []},
+             {"result": "skipped", "rounds": 0, "issues": []}, "pass", "fail"),
+        ]
+        for initial, followup, terminal, result in scenarios:
+            with self.subTest(initial=initial["result"], rounds=initial["rounds"]):
+                payload = verifier._checkpoint_stage5_final(
+                    self._set_stage5_validations(initial, followup))
+                names = {row["name"]: row["status"] for row in payload["checks"]}
+                self.assertEqual(names.get("email_validator_terminal_records_valid"),
+                                 terminal, payload)
+                self.assertEqual(names.get("email_validator_result_pass"), result, payload)
+                # Freezing contact evidence/source is its own machine fact and
+                # never follows the validator lifecycle.
+                self.assertEqual(names.get("email_entries_frozen_and_valid"), "pass",
+                                 payload)
+
+    def test_stage5_final_rejects_missing_malformed_or_illegal_terminal_records(self):
+        illegal_rounds = {"result": "pass", "rounds": 5, "issues": []}
+        cases = [
+            ("missing initial", None, {"result": "pass", "rounds": 1, "issues": []}),
+            ("missing followup", {"result": "pass", "rounds": 1, "issues": []}, None),
+            ("unknown result", {"result": "needs_review", "rounds": 1, "issues": []},
+             {"result": "pass", "rounds": 1, "issues": []}),
+            ("non-list issues", {"result": "pass", "rounds": 1, "issues": "bad"},
+             {"result": "pass", "rounds": 1, "issues": []}),
+            ("illegal rounds", illegal_rounds,
+             {"result": "pass", "rounds": 1, "issues": []}),
+            ("fail_after_2_rounds with 1 round",
+             {"result": "fail_after_2_rounds", "rounds": 1, "issues": ["x"]},
+             {"result": "pass", "rounds": 1, "issues": []}),
+        ]
+        for label, initial, followup in cases:
+            with self.subTest(case=label):
+                payload = verifier._checkpoint_stage5_final(
+                    self._set_stage5_validations(initial, followup))
+                names = {row["name"]: row["status"] for row in payload["checks"]}
+                self.assertEqual(payload["status"], "fail", payload)
+                self.assertEqual(names.get("email_validator_terminal_records_valid"),
+                                 "fail", names)
+                self.assertEqual(names.get("email_validator_result_pass"), "fail", names)
+                self.assertEqual(names.get("email_entries_frozen_and_valid"), "pass",
+                                 names)
+
+    def test_fixed_issue43_and_issue47_selectors_stay_apart(self):
+        """#43 never gates copy quality; #47 integration requires the terminal record."""
+        self.assertEqual(ISSUE43_STAGE5_CHECKS, (
+            "choice_email_id_matches_pack", "choice_signature_rendered",
+            "choice_learning_rendered", "choice_initial_sent_date_rendered",
+            "choice_non_first_choice_branch_rendered", "email_entries_frozen_and_valid",
+            "final_initial_exists", "final_followup_exists",
+        ))
+        self.assertNotIn("email_validator_result_pass", ISSUE43_STAGE5_CHECKS)
+        self.assertNotIn("email_validator_terminal_records_valid", ISSUE43_STAGE5_CHECKS)
+        self.assertIn("email_validator_terminal_records_valid",
+                      ISSUE47_INTEGRATION_CHECKS)
+        self.assertNotIn("email_validator_result_pass", ISSUE47_INTEGRATION_CHECKS)
+        self._seed_stage5_final_outputs()
+        names = {row["name"] for row in
+                 verifier._checkpoint_stage5_final(self.args())["checks"]}
+        self.assertTrue(set(ISSUE47_INTEGRATION_CHECKS).issubset(names), names)
+
     def test_stage5_final_rejects_state_and_output_tampered_together(self):
         """Self-consistent state/output tampering must not read as a pass."""
         prof = self.root / "教授研究/X分野/Example Professor"
@@ -613,6 +782,44 @@ class Issue32VerifierTests(unittest.TestCase):
         (prof / "套磁候选输入.json").write_text(json.dumps(pack), encoding="utf-8")
         payload = verifier._checkpoint_stage2_final(self.args())
         self.assertEqual(payload["status"], "fail", payload)
+
+    def test_stage2_requires_analysis_of_the_canonical_item_not_a_substitute(self):
+        """R2 must analyze the paper R1 filled, so a substitute key cannot pass."""
+        root = Path(self.holder.name) / "stage2-program"
+        profile = Path(self.holder.name) / "stage2-profile"
+        item_key = "RT999999"
+        builder.build_fixture(root, profile, item_key=item_key)
+        prof = root / "教授研究/X分野/Example Professor"
+        (prof / "套磁候选输入.json").write_text(json.dumps({
+            "schema": 2,
+            "kind": "professor-contact-stage2-input",
+            "identity_version": "direction-id-v1",
+            "managed_by": "contact_state",
+            "professor": "Example Professor",
+            "professor_dir": str(prof),
+            "papers": {item_key: {"item_key": item_key}},
+            "directions": [{
+                "direction_id": "DIR00001",
+                "input_fingerprint": "direction-fingerprint",
+                "supporting_item_keys": [item_key],
+            }],
+        }), encoding="utf-8")
+        (prof / "论文分析/RT000000.md").write_text("analysis of another paper",
+                                                   encoding="utf-8")
+        (prof / "论文分析/RT000000.future_work.json").write_text("{}", encoding="utf-8")
+
+        payload = verifier._checkpoint_stage2_final(self.args(program_root=root))
+
+        names = {row["name"]: row["status"] for row in payload["checks"]}
+        self.assertEqual(payload["status"], "fail", payload)
+        self.assertEqual(names.get("analysis_for_canonical_paper"), "fail", names)
+        self.assertEqual(names.get("future_work_sidecar"), "fail", names)
+
+        (prof / "论文分析/RT999999.md").write_text("analysis", encoding="utf-8")
+        (prof / "论文分析/RT999999.future_work.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(
+            verifier._checkpoint_stage2_final(self.args(program_root=root))["status"],
+            "pass")
 
     def test_stage3_requires_current_v2_state_and_real_validation(self):
         prof = self.root / "教授研究/X分野/Example Professor"

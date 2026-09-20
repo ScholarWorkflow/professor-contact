@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Prepare the issue #40 runtime fixture: dynamic Zotero keys + Stage 0 target.
+"""Prepare the issue #40 runtime fixture: dynamic Zotero key + Stage 0 target.
 
 This is the single setup helper for the #40/#43 Codex runtime recipes.  In one
 invocation it seeds the disposable Zotero fixture through the real MCP write
-surface, attaches a deterministic synthetic PDF to the fill-target item,
-builds the raw program/profile inputs with the runtime-returned item keys,
-records the official deterministic Stage 0 selection, and writes machine
-readable setup evidence.  Runners must never assemble this state by hand, must
-never touch fixture SQLite, must never copy a real user Zotero profile, and
-must never target the production ports 23119/23120.
+surface, imports the deterministic synthetic PDF onto that same item, builds the
+raw program/profile inputs with the runtime-returned item key, records the
+official deterministic Stage 0 selection, and writes machine readable setup
+evidence.  Runners must never assemble this state by hand, must never touch
+fixture SQLite, must never copy a real user Zotero profile, and must never
+target the production ports 23119/23120.
 
 The MCP protocol functions are shared with the #39 seed helper so the fixture
-wire format has exactly one producer-owned implementation.
+wire format has exactly one producer-owned implementation.  The catalog metadata
+comes from the fixture builder so the Zotero item, ``papers.json`` and the
+imported PDF can never describe different papers.
 """
 from __future__ import annotations
 
@@ -37,13 +39,7 @@ SCHEMA_VERSION = 1
 FIXTURE_REPOSITORY = "skills-test-fixtures"
 FIXTURE_REVISION = "9cb4547845be323a2a7b59139ee419476f2c7113"
 STAGE0_TARGET_RELATIVE = Path("教授研究/套磁目标.json")
-FILL_ATTACHMENT_TITLE = "Nonlinear Extensions of Synthetic Processing"
-FILL_PDF_LINES = (
-    "Synthetic paper: Nonlinear Extensions of Synthetic Processing",
-    "Abstract: nonlinear extensions keep the fill target explicit.",
-    "Future work: evaluate the extended framework on synthetic workloads.",
-    "This deterministic PDF is producer-owned input, not a completed analysis.",
-)
+PAPER_FILE_NAME = "canonical-paper.pdf"
 
 
 class PrepareError(RuntimeError):
@@ -152,38 +148,42 @@ def _extract_attachment_key(result: object) -> str:
     raise PrepareError("write_item import returned no attachmentKey; refusing to invent one")
 
 
-def _seed_dynamic_items(http_post, zotero_mcp_url: str) -> tuple[dict[str, str], str, str]:
-    """Create the two synthetic journal items via the real MCP write surface."""
+def _canonical_item_fields() -> dict[str, str]:
+    return {
+        "title": builder.CANONICAL_PAPER_TITLE,
+        "date": str(builder.CANONICAL_PAPER_YEAR),
+        "publicationTitle": builder.CANONICAL_PUBLICATION_TITLE,
+        "abstractNote": builder.CANONICAL_PAPER_ABSTRACT,
+    }
+
+
+def _seed_canonical_item(http_post, zotero_mcp_url: str) -> tuple[dict[str, str], str]:
+    """Create the one synthetic journal item through the real MCP write surface."""
     session = zseed._open_session(http_post, zotero_mcp_url)
-    keys: list[str] = []
-    for index, item in enumerate(zseed.FIXED_ITEMS):
-        message = zseed._rpc_result(
-            http_post, zotero_mcp_url, session,
-            {"jsonrpc": "2.0", "id": 10 + index, "method": "tools/call",
-             "params": {"name": "write_item",
-                        "arguments": {"action": "create",
-                                      "itemType": "journalArticle",
-                                      "fields": item["fields"],
-                                      "creators": [dict(zseed.AUTHOR)]}}})
-        if not isinstance(message, dict) or not isinstance(message.get("result"), dict):
-            raise PrepareError("write_item did not return a JSON-RPC result")
-        key = zseed._extract_item_key(message["result"])
-        if not isinstance(key, str) or not key.strip():
-            raise PrepareError("write_item returned a non-string itemKey")
-        if key in zseed.LEGACY_ITEM_KEYS:
-            raise PrepareError(f"write_item returned a legacy fake key: {key!r}")
-        keys.append(key.strip())
-    if len(set(keys)) != len(zseed.FIXED_ITEMS):
-        raise PrepareError(f"write_item returned duplicate item keys: {keys!r}")
-    return session, keys[0], keys[1]
+    message = zseed._rpc_result(
+        http_post, zotero_mcp_url, session,
+        {"jsonrpc": "2.0", "id": 10, "method": "tools/call",
+         "params": {"name": "write_item",
+                    "arguments": {"action": "create",
+                                  "itemType": "journalArticle",
+                                  "fields": _canonical_item_fields(),
+                                  "creators": [dict(zseed.AUTHOR)]}}})
+    if not isinstance(message, dict) or not isinstance(message.get("result"), dict):
+        raise PrepareError("write_item did not return a JSON-RPC result")
+    key = zseed._extract_item_key(message["result"])
+    if not isinstance(key, str) or not key.strip():
+        raise PrepareError("write_item returned a non-string itemKey")
+    if key.strip() in zseed.LEGACY_ITEM_KEYS:
+        raise PrepareError(f"write_item returned a legacy fake key: {key!r}")
+    return session, key.strip()
 
 
-def _import_fill_attachment(http_post, zotero_mcp_url: str,
-                            session: dict[str, str], fill_key: str,
-                            work_dir: Path) -> tuple[str, bytes]:
-    """Attach the deterministic fill-target PDF through write_item import."""
-    pdf_bytes = builder.render_text_pdf(list(FILL_PDF_LINES))
-    pdf_path = work_dir / "fill-target.pdf"
+def _import_paper_attachment(http_post, zotero_mcp_url: str,
+                             session: dict[str, str], item_key: str,
+                             work_dir: Path) -> tuple[str, bytes]:
+    """Attach the deterministic PDF for the canonical item through write_item import."""
+    pdf_bytes = builder.render_text_pdf(list(builder.CANONICAL_PDF_LINES))
+    pdf_path = work_dir / PAPER_FILE_NAME
     pdf_path.write_bytes(pdf_bytes)
     message = zseed._rpc_result(
         http_post, zotero_mcp_url, session,
@@ -191,8 +191,8 @@ def _import_fill_attachment(http_post, zotero_mcp_url: str,
          "params": {"name": "write_item",
                     "arguments": {"action": "import",
                                   "filePath": str(pdf_path),
-                                  "parentItemKey": fill_key,
-                                  "title": FILL_ATTACHMENT_TITLE}}})
+                                  "parentItemKey": item_key,
+                                  "title": builder.CANONICAL_PAPER_TITLE}}})
     if not isinstance(message, dict) or not isinstance(message.get("result"), dict):
         raise PrepareError("write_item import did not return a JSON-RPC result")
     return _extract_attachment_key(message["result"]), pdf_bytes
@@ -250,18 +250,18 @@ def prepare_runtime_fixture(*, program_root: Path, profile_root: Path,
     _validate_http_url(zotero_http_url)
     _validate_professor_research_sha(professor_research_sha)
     evidence = validate_fixture_evidence(fixture_evidence)
-    session, ready_key, fill_key = _seed_dynamic_items(http_post, zotero_mcp_url)
+    session, item_key = _seed_canonical_item(http_post, zotero_mcp_url)
     program_root = Path(program_root).resolve()
     profile_root = Path(profile_root).resolve()
     consumer_root = Path(consumer_root).resolve() if consumer_root else None
-    with tempfile.TemporaryDirectory(prefix="issue40-fill-pdf.") as tmp:
-        attachment_key, pdf_bytes = _import_fill_attachment(
-            http_post, zotero_mcp_url, session, fill_key, Path(tmp))
+    with tempfile.TemporaryDirectory(prefix="issue40-paper-pdf.") as tmp:
+        attachment_key, pdf_bytes = _import_paper_attachment(
+            http_post, zotero_mcp_url, session, item_key, Path(tmp))
     manifest = builder.build_fixture(
         program_root, profile_root, consumer_root=consumer_root,
         professor_research_sha=professor_research_sha,
         zotero_http_url=zotero_http_url, zotero_mcp_url=zotero_mcp_url,
-        item_keys=(ready_key, fill_key), fixture_run_id=evidence["run_id"])
+        item_key=item_key, fixture_run_id=evidence["run_id"])
     stage0 = _record_stage0_selection(program_root, consumer_root)
     if not _forbidden_outputs_absent(program_root):
         raise PrepareError(
@@ -283,12 +283,12 @@ def prepare_runtime_fixture(*, program_root: Path, profile_root: Path,
         "consumer_root": str(consumer_root) if consumer_root else None,
         "program_root": manifest["program_root"],
         "profile_root": manifest["profile_root"],
-        "item_keys": {"ready": ready_key, "fill_target": fill_key},
-        "fill_target_attachment": {
+        "item_key": item_key,
+        "paper_attachment": {
             "key": attachment_key,
-            "parent_item_key": fill_key,
-            "title": FILL_ATTACHMENT_TITLE,
-            "file_name": "fill-target.pdf",
+            "parent_item_key": item_key,
+            "title": builder.CANONICAL_PAPER_TITLE,
+            "file_name": PAPER_FILE_NAME,
             "sha256": _sha256_bytes(pdf_bytes),
         },
         "stage0": {
@@ -340,9 +340,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False))
         return 1
     print(json.dumps({"status": "ok", "output": str(Path(args.output).resolve()),
-                      "item_keys": payload["item_keys"],
-                      "fill_target_attachment_key":
-                          payload["fill_target_attachment"]["key"],
+                      "item_key": payload["item_key"],
+                      "paper_attachment_key": payload["paper_attachment"]["key"],
                       "fixture_run_id": payload["fixture_run_id"]},
                      ensure_ascii=False))
     return 0

@@ -1,12 +1,13 @@
 """Issue #40: deterministic contract of the runtime fixture setup helper.
 
-PC40-R1 requires one producer-owned setup helper that seeds the disposable
-Zotero fixture through the real MCP write surface, attaches the deterministic
-fill-target PDF, injects the runtime-returned keys into ``papers.json`` and
-the preview, and records the official Stage 0 selection.  The helper must fail
-closed on every provenance, safety, or protocol mismatch and must never leave
-Stage 1–5 canonical outputs behind.
+PC40-R1 requires one producer-owned setup helper that seeds exactly one
+disposable-Zotero parent item through the real MCP write surface, attaches the
+deterministic canonical PDF onto that same item, injects the runtime-returned
+key into ``papers.json`` and the preview, and records the official Stage 0
+selection.  The helper must fail closed on every provenance, safety, or
+protocol mismatch and must never leave Stage 1–5 canonical outputs behind.
 """
+import hashlib
 import importlib.util
 import json
 import os
@@ -32,10 +33,11 @@ helper = _load_module("prepare_issue40_runtime_fixture", HELPER_PATH)
 builder = _load_module(
     "build_issue32_e2e_fixture",
     TESTS_DIR / "runtime" / "build_issue32_e2e_fixture.py")
+zseed = _load_module(
+    "seed_issue39_zotero", TESTS_DIR / "runtime" / "seed_issue39_zotero.py")
 
 PINNED_FIXTURE_SHA = "9cb4547845be323a2a7b59139ee419476f2c7113"
-READY_KEY = "RTA00001"
-FILL_KEY = "RTB00002"
+RUNTIME_KEY = "RT999999"
 ATTACHMENT_KEY = "ATT00001"
 PROFESSOR_DIR = Path("教授研究") / "X分野" / "Example Professor"
 
@@ -59,11 +61,11 @@ def evidence_file(**overrides):
 class FakeTransport:
     """Minimal Streamable-HTTP MCP server scripting create/import results."""
 
-    def __init__(self, *, import_payload=None):
-        self.item_keys = [READY_KEY, FILL_KEY]
+    def __init__(self, *, item_key=RUNTIME_KEY, import_payload=None):
+        self.item_key = item_key
         self.import_payload = import_payload if import_payload is not None else {
             "action": "import", "success": True,
-            "data": {"attachmentKey": ATTACHMENT_KEY, "parentItemKey": FILL_KEY},
+            "data": {"attachmentKey": ATTACHMENT_KEY, "parentItemKey": item_key},
         }
         self.created = 0
         self.calls = []
@@ -88,9 +90,8 @@ class FakeTransport:
                 })
             action = params["arguments"]["action"]
             if action == "create":
-                key = self.item_keys[self.created]
                 self.created += 1
-                inner = json.dumps({"itemKey": key, "action": "create"})
+                inner = json.dumps({"itemKey": self.item_key, "action": "create"})
             elif action == "import":
                 inner = json.dumps(self.import_payload)
             else:
@@ -101,10 +102,11 @@ class FakeTransport:
             })
         raise AssertionError(f"unexpected method {payload.get('method')!r}")
 
-    def write_item_arguments(self):
+    def write_item_arguments(self, action=None):
         return [params["arguments"]
                 for method, params in self.calls
-                if method == "tools/call" and params.get("name") == "write_item"]
+                if method == "tools/call" and params.get("name") == "write_item"
+                and (action is None or params["arguments"].get("action") == action)]
 
 
 class PrepareIssue40RuntimeFixtureTest(unittest.TestCase):
@@ -127,33 +129,52 @@ class PrepareIssue40RuntimeFixtureTest(unittest.TestCase):
             http_post=transport)
         return payload, root, program_root, output
 
-    def test_happy_path_injects_runtime_keys_and_stage0_target(self):
+    def test_happy_path_seeds_one_item_and_records_its_attachment(self):
         transport = FakeTransport()
         with evidence_file() as evidence:
             payload, root, program_root, output = self.run_helper(transport, evidence)
 
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["fixture_repo_sha"], PINNED_FIXTURE_SHA)
-        self.assertEqual(payload["item_keys"],
-                         {"ready": READY_KEY, "fill_target": FILL_KEY})
-        self.assertEqual(payload["fill_target_attachment"]["key"], ATTACHMENT_KEY)
-        self.assertEqual(payload["fill_target_attachment"]["parent_item_key"], FILL_KEY)
+        self.assertEqual(payload["item_key"], RUNTIME_KEY)
+        self.assertNotIn("item_keys", payload)
+        self.assertEqual(payload["paper_attachment"], {
+            "key": ATTACHMENT_KEY,
+            "parent_item_key": RUNTIME_KEY,
+            "title": builder.CANONICAL_PAPER_TITLE,
+            "file_name": "canonical-paper.pdf",
+            "sha256": hashlib.sha256(
+                builder.render_text_pdf(list(builder.CANONICAL_PDF_LINES))).hexdigest(),
+        })
         self.assertTrue(payload["forbidden_outputs_absent"])
-        self.assertNotIn(str(program_root),
-                         [call.get("filePath") for call in transport.write_item_arguments()
-                          if call.get("action") == "import"])
+
+        creates = transport.write_item_arguments("create")
+        imports = transport.write_item_arguments("import")
+        self.assertEqual(len(creates), 1, "canonical fixture must seed exactly one item")
+        self.assertEqual(len(imports), 1)
+        self.assertEqual(imports[0]["parentItemKey"], RUNTIME_KEY)
+        self.assertTrue(imports[0]["filePath"].endswith("canonical-paper.pdf"))
+        self.assertNotIn(str(program_root), imports[0]["filePath"])
+        self.assertEqual(imports[0]["title"], builder.CANONICAL_PAPER_TITLE)
+        self.assertEqual(creates[0]["fields"]["title"], builder.CANONICAL_PAPER_TITLE)
+        self.assertEqual(creates[0]["fields"]["abstractNote"],
+                         builder.CANONICAL_PAPER_ABSTRACT)
 
         papers = json.loads((program_root / PROFESSOR_DIR / "papers.json")
                             .read_text(encoding="utf-8"))
-        self.assertEqual([row["item_key"] for row in papers["papers"]],
-                         [READY_KEY, FILL_KEY])
-        self.assertEqual(papers["papers"][0]["pdf_path"], f"论文分析/{READY_KEY}.pdf")
-        self.assertTrue((program_root / PROFESSOR_DIR / f"论文分析/{READY_KEY}.pdf")
-                        .is_file())
+        self.assertEqual([row["item_key"] for row in papers["papers"]], [RUNTIME_KEY])
+        self.assertEqual(papers["papers"][0]["pdf_status"], "pending")
+        self.assertNotIn("pdf_path", papers["papers"][0])
+        self.assertFalse(list((program_root / PROFESSOR_DIR / "论文分析").glob("*.pdf")))
+        for legacy in zseed.LEGACY_ITEM_KEYS:
+            self.assertNotIn(legacy, json.dumps(papers))
+
         preview = json.loads((program_root / PROFESSOR_DIR / "方向预筛.json")
                              .read_text(encoding="utf-8"))
-        self.assertEqual([row["item_key"] for row in preview["directions"][0]["members"]],
-                         [READY_KEY, FILL_KEY])
+        direction = preview["directions"][0]
+        self.assertEqual([row["item_key"] for row in direction["members"]], [RUNTIME_KEY])
+        self.assertEqual([row["item_key"] for row in direction["representatives"]],
+                         [RUNTIME_KEY])
 
         target = json.loads((program_root / "教授研究" / "套磁目标.json")
                             .read_text(encoding="utf-8"))
@@ -163,8 +184,10 @@ class PrepareIssue40RuntimeFixtureTest(unittest.TestCase):
 
         manifest = json.loads((program_root / "fixture-manifest.json")
                               .read_text(encoding="utf-8"))
-        self.assertEqual(manifest["item_keys"], [READY_KEY, FILL_KEY])
-        self.assertEqual(manifest["missing_item_keys"], [FILL_KEY])
+        self.assertEqual(manifest["item_keys"], [RUNTIME_KEY])
+        self.assertEqual(manifest["canonical_item_key"], RUNTIME_KEY)
+        self.assertNotIn("missing_item_keys", manifest)
+        self.assertNotIn("ready_item_keys", manifest)
         self.assertEqual(manifest["fixture_run_id"], "zotero-20260916T000000Z-00001")
         candidates = json.loads(
             (program_root / "教授研究/_professor_candidates.json")
@@ -173,27 +196,23 @@ class PrepareIssue40RuntimeFixtureTest(unittest.TestCase):
         self.assertEqual(candidates[0]["email"], "faculty@example.edu")
 
         stored = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(stored["item_key"], RUNTIME_KEY)
         self.assertEqual(stored["stage0"]["selected_direction_ids"], ["DIR00001"])
-        self.assertIn(READY_KEY, json.dumps(stored["input_hashes"]["program_inputs"]))
+        self.assertEqual(
+            stored["input_hashes"]["program_inputs"][
+                "教授研究/X分野/Example Professor/papers.json"],
+            hashlib.sha256((program_root / PROFESSOR_DIR / "papers.json").read_bytes())
+            .hexdigest())
 
-        import_calls = [arguments for arguments in transport.write_item_arguments()
-                        if arguments["action"] == "import"]
-        self.assertEqual(len(import_calls), 1)
-        self.assertEqual(import_calls[0]["parentItemKey"], FILL_KEY)
-        self.assertTrue(import_calls[0]["filePath"].endswith(".pdf"))
-        self.assertEqual(import_calls[0]["title"],
-                         "Nonlinear Extensions of Synthetic Processing")
-
-    def test_builder_default_keys_stay_deterministic(self):
+    def test_builder_default_key_stays_deterministic(self):
         with tempfile.TemporaryDirectory(prefix="issue40-builder-default.") as tmp:
             root = Path(tmp)
             manifest = builder.build_fixture(root / "program", root / "profile")
-            self.assertEqual(manifest["item_keys"], ["AAAA1111", "BBBB2222"])
+            self.assertEqual(manifest["item_keys"], ["AAAA1111"])
             self.assertNotIn("fixture_run_id", manifest)
             papers = json.loads(
                 (root / "program" / PROFESSOR_DIR / "papers.json").read_text(encoding="utf-8"))
-            self.assertEqual([row["item_key"] for row in papers["papers"]],
-                             ["AAAA1111", "BBBB2222"])
+            self.assertEqual([row["item_key"] for row in papers["papers"]], ["AAAA1111"])
 
     def test_refuses_production_zotero_ports(self):
         transport = FakeTransport()
@@ -237,6 +256,16 @@ class PrepareIssue40RuntimeFixtureTest(unittest.TestCase):
                                 professor_research_sha="<professor-research SHA>")
         self.assertIn("40-hex", str(ctx.exception))
         self.assertEqual(transport.calls, [])
+
+    def test_refuses_legacy_fake_item_key(self):
+        for legacy in sorted(zseed.LEGACY_ITEM_KEYS):
+            with self.subTest(item_key=legacy):
+                transport = FakeTransport(item_key=legacy)
+                with evidence_file() as evidence:
+                    with self.assertRaises(Exception) as ctx:
+                        self.run_helper(transport, evidence)
+                self.assertIn("legacy", str(ctx.exception))
+                self.assertEqual(transport.write_item_arguments("import"), [])
 
     def test_refuses_import_result_without_attachment_key(self):
         transport = FakeTransport(import_payload={"action": "import", "success": True})
