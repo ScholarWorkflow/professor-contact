@@ -507,6 +507,26 @@ class NestedNativeInvocationCheckpointTests(unittest.TestCase):
         self.assertIn("exact named `paper-analysis`", execution)
         self.assertRegex(execution, r"未调用[\s\S]{0,120}不得返回")
 
+    def test_analyzer_waits_for_running_child_without_local_timeout(self):
+        """A wait heartbeat is not a child failure.
+
+        PC47-R2 observed a healthy paper-analysis child still marked running
+        after four wait calls.  The analyzer closed it and invented
+        ``paper_analysis_timeout``, losing the whole Stage 2 output.  The
+        production contract must make the terminal-state boundary explicit.
+        """
+        body = frontmatter_and_body(agent_path("professor-contact-analyzer"))[1]
+        start = body.index("### Codex 分支")
+        end = body.index("## Input", start)
+        codex = body[start:end]
+        for literal in (
+            "单次等待超时只是 heartbeat",
+            "只要 child 状态仍是 running、pending 或 inProgress，就继续等待",
+            "不得按等待次数或本地经过时间关闭、打断或放弃 child",
+            "completed、明确的 machine-level failure 或用户中止",
+        ):
+            self.assertIn(literal, codex)
+
     def test_analyzer_audits_zero_attempt_before_its_only_final_message(self):
         body = frontmatter_and_body(agent_path("professor-contact-analyzer"))[1]
         start = body.index("### Step 7 — Return value")
