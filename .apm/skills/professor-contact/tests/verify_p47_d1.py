@@ -11,7 +11,11 @@ from pathlib import Path
 
 
 ANALYZER = "professor-contact-analyzer"
-CODEX_FORBIDDEN = ("opencode run", "task(", "question(", "spawn_agent(", "spawnAgent")
+# Keep target-incompatible OpenCode syntax and the internal camelCase runtime
+# event out of generated Codex instructions.  Do not ban the documented
+# `spawn_agent` tool name itself; private namespaces/argument schemas are the
+# unsupported surface, not native delegation.
+CODEX_FORBIDDEN = ("opencode run", "task(", "question(", "spawnAgent")
 
 
 def parse_frontmatter(path: Path) -> tuple[dict[str, object], str]:
