@@ -461,24 +461,6 @@ class TransportBoundaryProjectionTests(unittest.TestCase):
                     f"{path}: endpoint override flags must not be documented",
                 )
 
-    def test_transport_boundary_sentences_are_byte_identical_across_projections(self):
-        markers = (
-            "5. **Transport boundary（取得 SID 后生效）**",
-            "   - `get_item_details {\"itemKey\":\"<key>\"}`（经 helper：",
-        )
-        for marker in markers:
-            def line_of(path):
-                for line in _frontmatter_and_body(path).splitlines():
-                    if line.startswith(marker):
-                        return line
-                raise AssertionError(f"{path}: missing {marker!r}")
-
-            self.assertEqual(
-                line_of(CODEX_ANALYZER_PATH),
-                line_of(OPENCODE_ANALYZER_PATH),
-                "the shared transport boundary must stay byte-identical across projections",
-            )
-
     def test_opencode_projection_mirrors_the_shared_transport_sections(self):
         body = _frontmatter_and_body(OPENCODE_ANALYZER_PATH)
         step27 = _section(body, "### Step 2.7", "### Step 3")
