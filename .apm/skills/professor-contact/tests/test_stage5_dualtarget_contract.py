@@ -96,12 +96,43 @@ class Stage5DualTargetContractTests(unittest.TestCase):
     def _sentences(self, statement):
         return [part for part in re.split(r"。|(?<=\.)\s+", statement) if part.strip()]
 
+    def _declared_public_choice_keys(self, label, section):
+        """Return only the keys named by the section's authoritative public-schema
+        declaration.  Other backticked names in retirement/authority clauses are
+        deliberately outside this declaration."""
+        for statement in self._statements(section):
+            flat = " ".join(statement.split())
+            marker = next(
+                (candidate for candidate in (
+                    "public row schema is exactly",
+                    "公开字段只有这七个",
+                ) if candidate in flat),
+                None,
+            )
+            if marker is None:
+                continue
+            declaration = flat.split(marker, 1)[1]
+            if marker == "公开字段只有这七个":
+                declaration = declaration.split("。", 1)[0]
+            else:
+                declaration = re.split(
+                    r"(?:\.\s+Anything outside it|:\s*any other key)",
+                    declaration,
+                    maxsplit=1,
+                )[0]
+            return tuple(re.findall(r"`([a-z][a-z0-9_]*)`", declaration))
+        self.fail(f"{label}: authoritative public choices schema declaration missing")
+
     def assert_public_choice_contract(self, label, section):
         """One public-input statement must advertise exactly the frozen keys,
         name a retired key only inside an explicit retirement clause, and keep
         `email_address` subordinate to the verified recipient."""
-        for key in CHOICE_PUBLIC_KEYS:
-            self.assertIn(f"`{key}`", section, f"{label}: public key {key} missing")
+        declared = self._declared_public_choice_keys(label, section)
+        self.assertCountEqual(
+            declared,
+            CHOICE_PUBLIC_KEYS,
+            f"{label}: public choices schema must be exactly the frozen seven keys",
+        )
         for statement in self._statements(section):
             # A retired key may only appear in a sentence that itself says the
             # key is retired, so adding one back to the advertised list fails.
