@@ -7,7 +7,6 @@ import argparse
 import json
 import re
 import subprocess
-import tomllib
 from pathlib import Path
 
 
@@ -35,9 +34,25 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, object], str]:
     return json.loads(parsed.stdout), text[end + 5 :]
 
 
+def parse_toml(path: Path) -> dict[str, object]:
+    """Parse TOML acceptance evidence with the project-mandated structured parser."""
+    parsed = subprocess.run(
+        ["yq", "-p=toml", "-o=json", ".", str(path)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if parsed.returncode != 0:
+        raise ValueError(f"{path}: invalid TOML: {parsed.stderr}")
+    data = json.loads(parsed.stdout)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: TOML root must be an object")
+    return data
+
+
 def read_codex(root: Path) -> tuple[Path, dict[str, object], str]:
     path = root / ".codex" / "agents" / f"{ANALYZER}.toml"
-    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    data = parse_toml(path)
     return path, data, str(data.get("developer_instructions", ""))
 
 
@@ -106,7 +121,7 @@ def main() -> int:
 
     codex_agents = []
     for path in sorted((args.codex_root / ".codex" / "agents").glob("*.toml")):
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        data = parse_toml(path)
         if data.get("name") == ANALYZER:
             codex_agents.append(path.name)
 
