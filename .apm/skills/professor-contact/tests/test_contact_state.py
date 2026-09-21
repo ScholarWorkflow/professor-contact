@@ -1385,16 +1385,16 @@ class TestStage5(BaseEnv):
         os.utime(info, (touched, touched))
         raw_path = self.root / "gated-raw.json"
         raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
-        choices_path = self.root / "gated-choices.json"
-        choices_path.write_text(json.dumps(
-            dict(self.choices(), alma_mater="特殊大学", email_address="wrong@example.test"),
-            ensure_ascii=False), encoding="utf-8")
+        # A missing file is the strongest observable proof of the ordering:
+        # if the runner touches choices before the verification gate, this path
+        # cannot return the verification reason below.
+        choices_path = self.root / "missing-gated-choices.json"
+        self.assertFalse(choices_path.exists())
 
         out = parse(run_cli("stage5-plan", "--program-root", self.root,
                             "--result", raw_path, "--choices", choices_path))
         self.assertEqual(out["status"], "needs_refresh", out)
         self.assertEqual(out["reason_code"], "verify_stale_fingerprint", out)
-        self.assertIn("不读取 choices", out["message"])
         self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
 
     def test_done_by_self_gap_banned_in_source_map(self):
