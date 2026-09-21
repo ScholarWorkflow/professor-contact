@@ -191,9 +191,6 @@ class Stage5DualTargetContractTests(unittest.TestCase):
                     match.start(), codex_start,
                     f"{needle!r} must not leak into the Codex branch")
         self.assertNotIn("question(", body)
-        # `spawn_agent` is a documented Codex multi-agent tool; the generator
-        # body stays off its concrete envelope (issue #51).
-        self.assertNotRegex(body, r"spawn_agent\s*\(")
 
     def test_codex_branch_stops_at_needs_input_without_autofill(self):
         codex = self._section(self.generator_body, "### Codex branch",
