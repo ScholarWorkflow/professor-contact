@@ -139,6 +139,13 @@ Stage 5 consumes the upstream reconciled artifact `教授研究/_联系方式证
 
 ## Execution summary
 
-`stage5-plan` / verification (contact-evidence decision first, web ladder only on escalation) → model result JSON → optional dynamic-field-only polish → user choices → `stage5_immutable.py stage5-finalize` → final validator loop → `stage5-record-validation`.
+The verification gate is executable and mandatory, not background guidance:
+
+1. **First command:** run `contact_state.py stage5-plan` without `--result` and without `--choices`, then parse its JSON. Do not author the model result yet.
+2. For every selected professor whose plan reports `verify: needs_recheck:<reason>`, complete Step 2.5 and write the full professor-level `_contact_verify.json` (all eight checklist items, fingerprints, and `verified_at`; the contact-evidence-first rules above decide the email item). Then rerun that same initial `stage5-plan`.
+3. **Hard gate:** do not create result JSON, consume choices, call `stage5_immutable.py stage5-finalize`, or spawn a validator until every selected professor reports `verify: ok`. A deterministic `needs_refresh` reason that requires Stage 4 repair is returned to the caller; ordinary `verify_missing` / `needs_recheck` is work for Step 2.5, not a completed Stage 5 result.
+4. If finalize nevertheless returns `verify_missing` or another repairable `verify_*` cache reason, return to Step 2.5, refresh the cache, rerun the initial plan, and retry. Never present that intermediate runner refusal as successful or completed Stage 5.
+
+`stage5-plan` (no result/choices) → Step 2.5 until `verify: ok` → model result JSON → optional dynamic-field-only polish → user choices → `stage5_immutable.py stage5-finalize` → final validator loop → `stage5-record-validation`.
 
 No template-wide humanization step exists in this workflow.

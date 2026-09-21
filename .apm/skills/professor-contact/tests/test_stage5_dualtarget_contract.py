@@ -153,6 +153,21 @@ class Stage5DualTargetContractTests(unittest.TestCase):
             "Run `professor-contact-email-validator` on both rendered first "
             "and follow-up `.md` files", body)
 
+    def test_presend_verification_is_a_hard_executable_gate(self):
+        body = self.generator_body
+        for needle in (
+            "run `contact_state.py stage5-plan` without `--result` and without `--choices`",
+            "complete Step 2.5 and write the full professor-level `_contact_verify.json`",
+            "until every selected professor reports `verify: ok`",
+            "ordinary `verify_missing` / `needs_recheck` is work for Step 2.5",
+            "return to Step 2.5, refresh the cache",
+        ):
+            self.assertIn(needle, body)
+        start = body.index("stage5-plan` (no result/choices)")
+        self.assertLess(start, body.index("model result JSON", start))
+        for needle in ("verify: ok", "verify_missing", "不带 `--result`/`--choices`"):
+            self.assertIn(needle, self.skill_text)
+
     def test_validator_machine_name_and_network_deny_are_intact(self):
         frontmatter, body = _frontmatter_and_body(VALIDATOR)
         fields = _top_level_fields(frontmatter)
