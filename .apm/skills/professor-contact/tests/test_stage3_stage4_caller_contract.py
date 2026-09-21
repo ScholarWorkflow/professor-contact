@@ -56,10 +56,27 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
 
     def test_stage3_validator_scope_and_correction_handoff_are_exact(self):
         section = self._stage34_orchestration_section()
-        self.assertIn("只传这一份候选稿", section)
+        self.assertIn("child message **只允许**含渲染后的单一教授级", section)
         self.assertIn("artifact: candidates", section)
         self.assertIn("validation-file", section)
         self.assertIn("再次委派 style-validator", section)
+
+    def test_stage3_two_round_limit_is_two_validator_calls(self):
+        section = self._stage34_orchestration_section()
+        for required in (
+            "验证轮 = style-validator 调用次数，不是修订次数",
+            "最多 2 次 style-validator",
+            "第 2 次 validator 返回后禁止再委派 idea-generator",
+            "初次 generator → 第 1 次 validator",
+            "一次修订 generator → 第 2 次 validator",
+        ):
+            self.assertIn(required, section)
+
+    def test_stage3_correction_passes_raw_file_not_issue_prose(self):
+        section = self._stage34_orchestration_section()
+        self.assertIn("validation_file: <原始 JSON 绝对路径>", section)
+        self.assertIn("direction_id: <失败方向 ID>", section)
+        self.assertIn("不得把 issues 摘抄或改写成 prose", section)
 
     def test_stage4_has_codex_user_boundary_and_opencode_question_boundary(self):
         self.assertIn("professor-contact-selection", self.text)
