@@ -29,6 +29,16 @@ GENERATOR = AGENTS_DIR / "professor-contact-email-generator.agent.md"
 VALIDATOR = AGENTS_DIR / "professor-contact-email-validator.agent.md"
 CHECKER_ENV = "PROFESSOR_CONTACT_EVIDENCE_SCRIPT"
 
+# Issue #43 freezes the public choices row, the runner-internal keys retired out
+# of it, and the wording that keeps `email_address` under the verified recipient.
+CHOICE_PUBLIC_KEYS = ("email_id", "first_choice", "signature_name", "learning",
+                      "initial_sent_date", "followup_subject", "email_address")
+RETIRED_CHOICE_KEY = re.compile(r"[`.](subject|alma_mater)`")
+RETIREMENT_MARKERS = ("retired", "superseded", "whitelist", "白名单外", "rejected",
+                      "拒绝", "invalid_choices_schema")
+RECIPIENT_SUBORDINATION = ("only confirm", "never replace", "一份权威", "唯一", "只是",
+                           "不能替换", "不得替换")
+
 # Deterministic stand-in for professor-research's contact_evidence.py: the
 # --check form prints a fixture freshness report (the locator tests only need
 # the discovery + subprocess boundary, not the ladder business branches that
@@ -70,6 +80,47 @@ class Stage5DualTargetContractTests(unittest.TestCase):
         start = body.index(start_marker)
         end = body.index(end_marker) if end_marker else len(body)
         return body[start:end]
+
+    def _statements(self, section):
+        """Split a contract section into caller-facing statements: a new
+        top-level bullet or a blank line starts one, so wrapped text stays with
+        the bullet it belongs to."""
+        blocks = [""]
+        for line in section.splitlines():
+            if line.startswith("- ") or not line.strip():
+                blocks.append(line)
+            else:
+                blocks[-1] = blocks[-1] + "\n" + line
+        return [block for block in blocks if block.strip()]
+
+    def _sentences(self, statement):
+        return [part for part in re.split(r"。|(?<=\.)\s+", statement) if part.strip()]
+
+    def assert_public_choice_contract(self, label, section):
+        """One public-input statement must advertise exactly the frozen keys,
+        name a retired key only inside an explicit retirement clause, and keep
+        `email_address` subordinate to the verified recipient."""
+        for key in CHOICE_PUBLIC_KEYS:
+            self.assertIn(f"`{key}`", section, f"{label}: public key {key} missing")
+        for statement in self._statements(section):
+            # A retired key may only appear in a sentence that itself says the
+            # key is retired, so adding one back to the advertised list fails.
+            for sentence in self._sentences(statement):
+                for match in RETIRED_CHOICE_KEY.finditer(sentence):
+                    self.assertTrue(
+                        any(marker in sentence for marker in RETIREMENT_MARKERS),
+                        f"{label}: retired key {match.group(1)} advertised as "
+                        f"usable: {sentence}")
+        authority = [statement for statement in self._statements(section)
+                     if "email_address" in statement and "items.email.value" in statement]
+        self.assertTrue(authority,
+                        f"{label}: choices.email_address is never tied to the "
+                        f"verified recipient")
+        for statement in authority:
+            self.assertIn("recipient_conflict", statement, label)
+            self.assertTrue(any(marker in statement for marker in RECIPIENT_SUBORDINATION),
+                            f"{label}: email_address not kept subordinate to "
+                            f"items.email.value: {statement}")
 
     def test_generator_document_has_explicit_dual_target_branches(self):
         body = self.generator_body
@@ -146,6 +197,20 @@ class Stage5DualTargetContractTests(unittest.TestCase):
         for needle in ("optional", "choices", "canonical JSON", "first_choice",
                        "initial_sent_date"):
             self.assertIn(needle, legacy)
+
+        # The retired keys stay out of what the authoritative public-input
+        # statements advertise, on every target's projection.
+        self.assert_public_choice_contract(
+            "generator agent",
+            self._section(body, "## Stage 5 caller Input contract",
+                          "## Direction provenance"))
+        self.assert_public_choice_contract(
+            "SKILL.md",
+            self._section(self.skill_text, "### 5.0 Stage 5 caller choices contract",
+                          "### 5.1 "))
+        self.assert_public_choice_contract(
+            "legacy contract",
+            self._section(legacy, "Issue #43 caller rule:", "**Runner 分工**"))
 
     def test_validator_requires_both_first_and_followup_validation(self):
         body = self.generator_body

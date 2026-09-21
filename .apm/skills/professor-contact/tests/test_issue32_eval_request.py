@@ -20,6 +20,9 @@ FIXTURE_MCP = "http://127.0.0.1:24122/mcp"
 ENDPOINT_KEYS = ("shell_environment_policy.set.ZOTERO_HTTP_URL",
                  "shell_environment_policy.set.ZOTERO_MCP_URL")
 NETWORK_KEY = "sandbox_workspace_write.network_access"
+RECIPE_CEILING = 7
+CEILING_KEY = "agents.max_concurrent_threads_per_session"
+CEILING_MISSING = "max_agent_threads has no default"
 
 
 def _flatten(value: dict, prefix: str = "") -> dict:
@@ -50,6 +53,10 @@ class Issue32EvalRequestTests(unittest.TestCase):
             "output": Path(self.holder.name) / f"{case}-request.json",
             "zotero_http_url": FIXTURE_HTTP,
             "zotero_mcp_url": FIXTURE_MCP,
+            # Every case passes its own ceiling; this is only a stand-in for the
+            # value the owning recipe freezes, and the sibling test below checks
+            # that omitting it fails closed.
+            "max_agent_threads": RECIPE_CEILING,
         }
         values.update(overrides)
         return module.build_request(**values)
@@ -127,7 +134,7 @@ class Issue32EvalRequestTests(unittest.TestCase):
                          if isinstance(value, str) and not value.strip()]
                 self.assertEqual(blank, [])
 
-    def test_every_canonical_case_keeps_model_trust_and_thread_behavior(self):
+    def test_every_canonical_case_keeps_model_and_trust_overrides(self):
         for case in module.CANONICAL_CASES:
             isolated = case in module.ISOLATED_CASES
             with self.subTest(case=case):
@@ -137,7 +144,6 @@ class Issue32EvalRequestTests(unittest.TestCase):
                 self.assertEqual(configs.get("model_reasoning_effort"), "low")
                 self.assertEqual(configs.get(
                     f"projects.{self.root.resolve()}.trust_level"), "trusted")
-                self.assertIs(configs.get("agents.max_concurrent_threads_per_session"), 16)
                 argv = shlex.split(self.build(
                     case,
                     **({"zotero_http_url": "", "zotero_mcp_url": ""} if isolated else {})
@@ -147,6 +153,15 @@ class Issue32EvalRequestTests(unittest.TestCase):
                 self.assertNotIn("exec", argv[:2])
                 self.assertEqual(argv[argv.index("--sandbox") + 1], "workspace-write")
                 self.assertEqual(argv[argv.index("--model") + 1], "gpt-5.6-luna")
+
+    def test_case_without_a_recipe_ceiling_fails_closed(self):
+        # The ceiling is a per-case resource setting owned by the recipe that
+        # runs the case, so the builder must not fall back to any default.
+        for case in module.CANONICAL_CASES + (module.BROWSER_CASE,):
+            with self.subTest(case=case):
+                with self.assertRaises(module.RequestBuildError) as ctx:
+                    self.build(case, max_agent_threads=None)
+                self.assertIn(CEILING_MISSING, str(ctx.exception))
 
     def test_chrome_npm_wiring_absent_from_every_canonical_case(self):
         for case in module.CANONICAL_CASES:
@@ -214,7 +229,7 @@ class Issue32EvalRequestTests(unittest.TestCase):
 
     def test_explicit_agent_thread_override_is_recorded_as_integer_config(self):
         _, configs = self.configs(self.build("r1", max_agent_threads=20))
-        self.assertEqual(configs.get("agents.max_concurrent_threads_per_session"), 20)
+        self.assertEqual(configs.get(CEILING_KEY), 20)
 
     def test_nonpositive_agent_thread_override_is_rejected(self):
         with self.assertRaises(module.RequestBuildError):
@@ -262,6 +277,7 @@ class Issue32EvalRequestTests(unittest.TestCase):
         output = Path(self.holder.name) / "r4b-request.json"
         completed = subprocess.run(
             ["python3", str(MODULE_PATH), "--case", "r4b",
+             "--max-agent-threads", str(RECIPE_CEILING),
              "--consumer-root", str(self.root), "--prompt-file", str(self.prompt),
              "--output", str(output)],
             capture_output=True, text=True, check=False)
@@ -270,6 +286,7 @@ class Issue32EvalRequestTests(unittest.TestCase):
         _, configs = self.configs(json.loads(output.read_text(encoding="utf-8")))
         for key in (*ENDPOINT_KEYS, NETWORK_KEY):
             self.assertNotIn(key, configs)
+        self.assertEqual(configs.get(CEILING_KEY), RECIPE_CEILING)
 
     def test_r1_prompt_forces_single_root_dispatch_to_downloader(self):
         """R1 measures nested delegation, not ambiguous caller-convention routing."""
