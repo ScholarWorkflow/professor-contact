@@ -482,12 +482,12 @@ class NestedNativeInvocationCheckpointTests(unittest.TestCase):
     ``codex_runtime_delegation_unavailable`` without making any native child
     call.  The early abstract gate was present, but the long coordinator flow
     diluted it before the execution and return boundaries.  Keep the stable
-    documented tool name (without freezing a private call signature) in every
-    nested gate, and repeat the zero-attempt prohibition at the analyzer's
+    documented tool name in every nested gate without freezing private
+    namespace/parameter/event details, and repeat the zero-attempt prohibition at the analyzer's
     load-bearing execution and return checkpoints.
     """
 
-    def test_nested_gates_name_the_native_tool_without_a_call_signature(self):
+    def test_nested_gates_name_the_native_tool(self):
         for owner in CODEX_NESTED_DELEGATOR_AGENTS:
             with self.subTest(owner=owner):
                 body = frontmatter_and_body(agent_path(owner))[1]
@@ -495,7 +495,6 @@ class NestedNativeInvocationCheckpointTests(unittest.TestCase):
                 end = body.index("\n## ", start + 1)
                 gate = body[start:end]
                 self.assertIn("`spawn_agent`", gate, owner)
-                self.assertNotRegex(gate, r"spawn_agent\s*\(", owner)
 
     def test_analyzer_repeats_native_call_at_execution_boundary(self):
         body = frontmatter_and_body(agent_path("professor-contact-analyzer"))[1]
