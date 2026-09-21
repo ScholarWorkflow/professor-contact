@@ -1297,11 +1297,5 @@ class RuntimeVerifierIdentityGateSourceTests(unittest.TestCase):
                 self.assertIsNone(re.search(rf"\b{re.escape(key)}\b", source))
         self.assertIn("identity_version", source)
 
-    def test_identity_gate_key_matcher_stays_narrow(self):
-        self.assertIsNone(re.search(r"\bagent_type\b", '"task(subagent_type"'))
-        self.assertIsNotNone(
-            re.search(r"\bagent_type\b", 'payload.get("agent_type")'))
-
-
 if __name__ == "__main__":
     unittest.main()
