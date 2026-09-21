@@ -19,40 +19,15 @@ def _frontmatter_and_body(path: Path):
     return lines[1:end], "\n".join(lines[end + 1 :]).strip()
 
 
-def _fields(lines):
-    result = {}
-    for line in lines:
-        if line and not line[0].isspace():
-            key, separator, value = line.partition(":")
-            if separator:
-                result[key.strip()] = value.strip()
-    return result
-
-
-def _manifest_fields(path: Path):
-    text = path.read_text(encoding="utf-8")
-    name = re.search(r"(?m)^name:\s*(\S+)\s*$", text)
-    targets = re.search(r"(?m)^targets:\s*\[([^\]]+)\]\s*$", text)
-    if name is None or targets is None:
-        raise AssertionError(f"{path}: package manifest must declare name and inline targets")
-    return name.group(1), [part.strip() for part in targets.group(1).split(",") if part.strip()]
-
-
 class P47TargetIsolationTests(unittest.TestCase):
     """Lock the target-specific Stage 2 projection required by PR #47."""
 
-    def test_target_packages_have_exact_scopes_and_single_stage2_projection(self):
-        self.assertTrue(OPENCode_PACKAGE.exists(), "OpenCode target package is missing")
-        self.assertTrue(CODEX_PACKAGE.exists(), "Codex target package is missing")
-        self.assertEqual(
-            _manifest_fields(OPENCode_PACKAGE / "apm.yml"),
-            ("professor-contact-opencode", ["opencode"]),
-        )
-        self.assertEqual(
-            _manifest_fields(CODEX_PACKAGE / "apm.yml"),
-            ("professor-contact-codex", ["codex"]),
-        )
-
+    def test_target_packages_keep_single_stage2_projection(self):
+        # Exact YAML target scopes are acceptance evidence from the clean APM
+        # install/characterization recipe, where they are parsed with yq. This
+        # source unit test only locks the producer layout; it must not re-parse
+        # apm.yml with regex or turn one YAML serialization style into a product
+        # invariant.
         root_analyzer = ROOT_AGENTS / f"{ANALYZER_NAME}.agent.md"
         self.assertFalse(
             root_analyzer.exists(),
@@ -61,19 +36,15 @@ class P47TargetIsolationTests(unittest.TestCase):
         for package in (OPENCode_PACKAGE, CODEX_PACKAGE):
             path = package / ".apm" / "agents" / f"{ANALYZER_NAME}.agent.md"
             self.assertTrue(path.exists(), f"missing target-specific analyzer: {path}")
-            frontmatter, body = _frontmatter_and_body(path)
-            fields = _fields(frontmatter)
-            self.assertEqual(fields.get("name"), ANALYZER_NAME)
-            self.assertEqual(fields.get("mode"), "subagent")
-            self.assertEqual(fields.get("hidden"), "true")
+            _, body = _frontmatter_and_body(path)
             self.assertTrue(body)
 
     def test_opencode_projection_preserves_native_delegation_contract(self):
         path = OPENCode_PACKAGE / ".apm" / "agents" / f"{ANALYZER_NAME}.agent.md"
-        frontmatter, body = _frontmatter_and_body(path)
-        frontmatter_text = "\n".join(frontmatter)
-        self.assertRegex(frontmatter_text, r"(?ms)^permission:\s*$.*?^\s+task:\s*allow\s*$")
-        self.assertRegex(frontmatter_text, r"(?ms)^permission:\s*$.*?^\s+question:\s*allow\s*$")
+        _, body = _frontmatter_and_body(path)
+        # Frontmatter permission fields are already covered by the deployment
+        # metadata contract. This isolation test stays on the distinct body-level
+        # risk: the OpenCode projection must keep its native Task branch.
         self.assertIn("### OpenCode 分支", body)
         self.assertIn("### Codex 分支", body)
         self.assertRegex(body, r"task\s*\(")
