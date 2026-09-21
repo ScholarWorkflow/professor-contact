@@ -437,6 +437,20 @@ class TransportBoundaryProjectionTests(unittest.TestCase):
                 self.assertIn("--response-meta", authorship)
                 self.assertIn("total_results", authorship)
                 self.assertIn("start=N", authorship)
+                # The same acceptance contract defines the missing-header
+                # branch: an unusable/null total must not silently make page 1
+                # look complete. Keep this inside the existing pagination case
+                # rather than inventing a second runtime/error matrix.
+                self.assertRegex(
+                    authorship,
+                    r"(?is)(?:total_results|Total-Results).{0,240}"
+                    r"(?:null|缺失|不可用|missing|unusable|unavailable)",
+                )
+                self.assertRegex(
+                    authorship,
+                    r"(?is)(?:fail[- ]?closed|不得[^。\n]{0,120}(?:完整|完成|继续)|"
+                    r"不能[^。\n]{0,120}(?:完整|完成|继续)|停止[^。\n]{0,120}署名线)",
+                )
 
     def test_projection_contract_documents_no_endpoint_override_flag(self):
         for path in (CODEX_ANALYZER_PATH, OPENCODE_ANALYZER_PATH):
