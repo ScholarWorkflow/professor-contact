@@ -287,11 +287,6 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
         # presented as the unified truth) must be gone.
         self.assertNotIn("the ONLY way", skill)
         self.assertNotIn("the Task tool is the ONLY way", skill)
-        # `spawn_agent` is a documented, stable Codex multi-agent tool name;
-        # the caller convention stays off it so the business contract never
-        # binds to one specific tool envelope (issue #51), not because the
-        # name were private.
-        self.assertNotRegex(skill, r"spawn_agent\s*\(")
         self.assertNotIn("agent_role", skill)
         self.assertNotIn("agent_path", skill)
 
@@ -336,13 +331,11 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
 
         # `subagent_depth`, Task and question are OpenCode/runtime-local
         # concepts; `agent_role`/`agent_path` are invented observability
-        # fields. `spawn_agent` is a documented Codex multi-agent tool, but
-        # the business branch must not bind to its concrete envelope — the
-        # documented named-custom-agent contract is the whole API (issue #51).
+        # fields. The documented `spawn_agent` name is allowed; only private
+        # namespace/parameter/event details are outside the product contract.
         self.assertNotIn("subagent_depth", codex)
         self.assertNotRegex(codex, r"task\s*\(")
         self.assertNotRegex(codex, r"question\s*\(")
-        self.assertNotRegex(codex, r"spawn_agent\s*\(")
         self.assertNotIn("agent_role", codex)
         self.assertNotIn("agent_path", codex)
 
@@ -535,7 +528,6 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
             "ALL_TOOLS",
             "multi_agent_v1__spawn_agent",
             "spawnAgent",
-            "spawn_agent",
             "collabAgentToolCall",
             "receiverThreadIds",
         ):
@@ -717,14 +709,13 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
                     "ALL_TOOLS",
                     "multi_agent_v1__spawn_agent",
                     "spawnAgent",
-                    "spawn_agent(",
                     "collabAgentToolCall",
                     "receiverThreadIds",
                 ):
                     self.assertNotIn(
                         forbidden,
                         body,
-                        "Codex internal spawn tool/event names must not enter either projection",
+                        "private Codex spawn namespaces/events must not enter either projection",
                     )
 
     def test_opencode_task_delegation_branch_survives_the_depth_boundary_fix(self):
