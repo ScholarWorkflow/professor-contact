@@ -43,14 +43,13 @@ from _codex_delegation_contract import (  # noqa: E402
 )
 
 # Issue #51 §2 keeps the "no private envelope" requirement in production and
-# bans only version-private surfaces: a measured tool-search namespace, the raw
-# spawn request shape, or a fixed catalog command from one characterization
-# run.  `spawn_agent` itself is a documented Codex tool name, so only its call
-# form stays out of production instructions.
+# bans version-private surfaces: a measured tool-search namespace, private
+# namespace/argument details, or a fixed catalog command from one
+# characterization run.  The documented native `spawn_agent` tool name itself
+# is allowed; assertions stay on the private envelope rather than tool spelling.
 FORBIDDEN_PRIVATE_LITERALS = (
     "ALL_TOOLS",
     "multi_agent_v1__",
-    "spawn_agent(",
     "agent_type=",
     "agent_role=",
 )
