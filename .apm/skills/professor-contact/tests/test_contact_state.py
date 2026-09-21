@@ -1377,9 +1377,7 @@ class TestStage5(BaseEnv):
 
     def test_stage5_gate_stops_before_the_choices_file_is_read(self):
         g1 = self.prepare()
-        # The cache fingerprint goes stale after info.json is rewritten; the
-        # row below is also schema-invalid on two counts, so any choices-driven
-        # reason code would prove the gate was bypassed.
+        # The cache fingerprint goes stale after info.json is rewritten.
         info = self.root / "info.json"
         touched = int(info.stat().st_mtime) + 3600
         os.utime(info, (touched, touched))
