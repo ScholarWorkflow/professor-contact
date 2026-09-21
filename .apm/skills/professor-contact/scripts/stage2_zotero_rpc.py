@@ -17,6 +17,12 @@ owned by ``zotero-read`` (``scripts/new-session.sh``): this helper never
 initializes a session and performs no business judgement — it forwards one
 call, prints the response body on stdout, and reports transport failures as a
 machine-readable JSON error line on stderr with a non-zero exit code.
+
+``http --response-meta <file>`` additionally writes ``{"total_results": …}`` to
+that file, where the value is Zotero's ``Total-Results`` header as an integer or
+``null`` when the header carries no usable count. stdout stays exactly the
+response body, so a caller that needs to paginate reads the sidecar instead of
+guessing whether one page was the whole result set.
 """
 
 from __future__ import annotations
@@ -36,6 +42,7 @@ EXIT_USAGE = 2
 EXIT_BAD_ARGUMENTS_JSON = 3
 EXIT_TRANSPORT_FAILURE = 4
 EXIT_HTTP_STATUS = 5
+EXIT_RESPONSE_META = 6
 
 
 def _fail(code: int, kind: str, **fields: object) -> None:
@@ -86,8 +93,44 @@ def _read_response(resp, unwrap_sse: bool) -> str:
     return body
 
 
+def _total_results(headers) -> int | None:
+    raw = headers.get("Total-Results")
+    if raw is None:
+        return None
+    text = raw.strip()
+    return int(text) if text.isdigit() else None
+
+
+def _write_response_meta(path: str, headers) -> None:
+    """Publish the page total as a sidecar so a caller can keep paginating.
+
+    Written before stdout and through ``os.replace`` so a caller that sees a
+    completed body never reads a half-written (or stale) total.
+    """
+    payload = {"total_results": _total_results(headers)}
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    tmp = os.path.join(directory, f".{os.path.basename(path)}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False)
+            handle.write("\n")
+        os.replace(tmp, path)
+    except OSError as exc:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        _fail(
+            EXIT_RESPONSE_META,
+            "response_meta_write_failed",
+            path=path,
+            detail=str(exc),
+        )
+
+
 def _request(url: str, *, method: str, headers: dict[str, str],
-             data: bytes | None, unwrap_sse: bool, source: str) -> None:
+             data: bytes | None, unwrap_sse: bool, source: str,
+             response_meta: str | None = None) -> None:
     # Proxy handlers are disabled on purpose: the resolved loopback endpoint
     # must be contacted directly, never through an ambient proxy.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -105,6 +148,8 @@ def _request(url: str, *, method: str, headers: dict[str, str],
                     body_preview=_read_response(resp, unwrap_sse)[:500],
                 )
             payload = _read_response(resp, unwrap_sse)
+            if response_meta is not None:
+                _write_response_meta(response_meta, resp.headers)
             sys.stdout.write(payload if payload.endswith("\n") else payload + "\n")
     except urllib.error.HTTPError as exc:  # non-2xx surfaces here as well
         preview = ""
@@ -175,6 +220,9 @@ def cmd_http(args: argparse.Namespace) -> None:
             detail="--path must be a relative path starting with / (no scheme, no authority)",
         )
     base, source = resolve_endpoint("ZOTERO_HTTP_URL", HTTP_FALLBACK)
+    response_meta = args.response_meta
+    if response_meta is not None and not response_meta.strip():
+        _fail(EXIT_USAGE, "invalid_argument", what="--response-meta")
     _request(
         base + path,
         method="GET",
@@ -182,6 +230,7 @@ def cmd_http(args: argparse.Namespace) -> None:
         data=None,
         unwrap_sse=False,
         source=source,
+        response_meta=response_meta,
     )
 
 
@@ -209,6 +258,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_http.add_argument("--path", required=True,
                         help="relative path starting with /, may include a query string")
+    p_http.add_argument("--response-meta",
+                        help="optional JSON sidecar path receiving "
+                             '{"total_results": <int|null>} from Total-Results')
     p_http.set_defaults(func=cmd_http)
     return parser
 
