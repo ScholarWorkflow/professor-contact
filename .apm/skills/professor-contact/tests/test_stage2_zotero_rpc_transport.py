@@ -335,26 +335,31 @@ class RandomPortTransportTests(unittest.TestCase):
         is intentionally outside this regression contract.
         """
         body = {"items": [{"key": "PAGE1"}]}
-        self.server.respond(
-            body=json.dumps(body),
-            headers={"Total-Results": "101"},
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            meta_path = Path(tmp) / "response-meta.json"
-            done = _run_helper(
-                [
-                    "http",
-                    "--path",
-                    "/api/users/0/collections/ABC/items?format=json&limit=100&start=0",
-                    "--response-meta",
-                    str(meta_path),
-                ],
-                self.env,
-            )
-            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-            self.assertEqual(json.loads(done.stdout), body)
-            metadata = json.loads(meta_path.read_text(encoding="utf-8"))
-            self.assertEqual(metadata["total_results"], 101)
+        # The acceptance contract defines both observable branches: a usable
+        # Total-Results header becomes an integer, while an absent header is
+        # represented explicitly as null.  Keep both in this one pagination
+        # case instead of creating a separate format/error matrix.
+        for label, headers, expected_total in (
+            ("present", {"Total-Results": "101"}, 101),
+            ("missing", {}, None),
+        ):
+            with self.subTest(total_results=label), tempfile.TemporaryDirectory() as tmp:
+                self.server.respond(body=json.dumps(body), headers=headers)
+                meta_path = Path(tmp) / "response-meta.json"
+                done = _run_helper(
+                    [
+                        "http",
+                        "--path",
+                        "/api/users/0/collections/ABC/items?format=json&limit=100&start=0",
+                        "--response-meta",
+                        str(meta_path),
+                    ],
+                    self.env,
+                )
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(json.loads(done.stdout), body)
+                metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+                self.assertEqual(metadata["total_results"], expected_total)
 
     def test_sse_response_is_unwrapped_to_data_payloads(self):
         payload = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": []}})
