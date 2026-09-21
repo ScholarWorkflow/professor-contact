@@ -22,6 +22,7 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -102,6 +103,8 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(self.server.response_status)
         self.send_header("Content-Type", self.server.response_content_type)
         self.send_header("Content-Length", str(len(payload)))
+        for key, value in self.server.response_headers.items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(payload)
 
@@ -122,6 +125,7 @@ class _CaptureServer:
         self._httpd.response_status = 200
         self._httpd.response_content_type = "application/json"
         self._httpd.response_body = "{}"
+        self._httpd.response_headers = {}
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
 
     @property
@@ -136,10 +140,11 @@ class _CaptureServer:
     def response_body(self) -> str:
         return self._httpd.response_body
 
-    def respond(self, status=200, content_type="application/json", body="{}"):
+    def respond(self, status=200, content_type="application/json", body="{}", headers=None):
         self._httpd.response_status = status
         self._httpd.response_content_type = content_type
         self._httpd.response_body = body
+        self._httpd.response_headers = dict(headers or {})
 
     def __enter__(self):
         self._thread.start()
@@ -321,6 +326,41 @@ class RandomPortTransportTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(done.stdout), {"items": [{"key": "NVSIVAQZ"}]})
 
+    def test_http_call_preserves_pagination_metadata_without_changing_body_stdout(self):
+        """Authorship pagination needs Zotero's Total-Results/Link response headers.
+
+        Keep stdout backward-compatible for existing body consumers, but expose
+        the response metadata through a deterministic JSON sidecar so the
+        analyzer can decide whether start=100, 200, ... is required.
+        """
+        body = {"items": [{"key": "PAGE1"}]}
+        link = (
+            f'<http://127.0.0.1:{self.server.port}/api/users/0/collections/ABC/items'
+            '?format=json&limit=100&start=100>; rel="next"'
+        )
+        self.server.respond(
+            body=json.dumps(body),
+            headers={"Total-Results": "101", "Link": link},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            meta_path = Path(tmp) / "response-meta.json"
+            done = _run_helper(
+                [
+                    "http",
+                    "--path",
+                    "/api/users/0/collections/ABC/items?format=json&limit=100&start=0",
+                    "--response-meta",
+                    str(meta_path),
+                ],
+                self.env,
+            )
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual(json.loads(done.stdout), body)
+            metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+            self.assertEqual(metadata["status"], 200)
+            self.assertEqual(metadata["total_results"], 101)
+            self.assertEqual(metadata["link"], link)
+
     def test_sse_response_is_unwrapped_to_data_payloads(self):
         payload = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": []}})
         self.server.respond(
@@ -387,6 +427,17 @@ class TransportBoundaryProjectionTests(unittest.TestCase):
             body,
         )
         self.assertIn("不得自行换端口重试", step27)
+
+    def test_authorship_pagination_consumes_helper_response_metadata(self):
+        """Both target projections must keep the pre-existing all-pages contract."""
+        for path in (CODEX_ANALYZER_PATH, OPENCODE_ANALYZER_PATH):
+            with self.subTest(projection=path.parents[2].name):
+                body = _frontmatter_and_body(path)
+                authorship = _section(body, "1.7 **署名线判定", "2. **判定相关论文")
+                self.assertIn("--response-meta", authorship)
+                self.assertIn("jq", authorship)
+                self.assertIn("total_results", authorship)
+                self.assertIn("start=N", authorship)
 
     def test_projection_contract_documents_no_endpoint_override_flag(self):
         for path in (CODEX_ANALYZER_PATH, OPENCODE_ANALYZER_PATH):
