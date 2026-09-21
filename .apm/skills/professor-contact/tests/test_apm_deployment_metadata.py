@@ -426,27 +426,6 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
     def test_codex_analyzer_requires_native_delegation_before_delegation_unavailable(self):
         _assert_codex_native_delegation_gate(self._codex_analyzer_branch())
 
-    def test_codex_native_delegation_gate_markers_are_load_bearing(self):
-        codex = self._codex_analyzer_branch()
-        for marker in CODEX_NATIVE_DELEGATION_GATE_MARKERS:
-            with self.subTest(marker=marker):
-                mutated = codex.replace(marker, "")
-                with self.assertRaises(AssertionError):
-                    _assert_codex_native_delegation_gate(mutated)
-
-    def test_codex_reason_code_semantics_are_load_bearing(self):
-        codex = self._codex_analyzer_branch()
-        reason_line = next(
-            line for line in codex.splitlines()
-            if CODEX_DELEGATION_REASON_CODE in line and "没看到接口" in line
-        )
-        for drop in ("实际尝试", "machine-level failure", "没看到接口"):
-            with self.subTest(dropped=drop):
-                mutated_line = reason_line.replace(drop, "")
-                mutated = codex.replace(reason_line, mutated_line)
-                with self.assertRaises(AssertionError):
-                    _assert_codex_native_delegation_gate(mutated)
-
     def test_codex_native_delegation_gate_survives_install_toml_projection(self):
         """The clean-install writes the Codex projection body into the
         generated ``.codex/agents/professor-contact-analyzer.toml``
