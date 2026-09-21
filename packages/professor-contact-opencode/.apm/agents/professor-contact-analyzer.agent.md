@@ -245,7 +245,7 @@ For each flagged direction:
    - **语义级主线判定归 professor-explain 导读，不重复**；本步只做零重读的年份统计（python 处理 papers.json）。
 
 1.7 **署名线判定（数据级；每教授一次，不随方向重复算）**——对每位被标记教授：
-   - **口径**：用 resolved `ZOTERO_HTTP_URL`（Step 2.7 的 endpoint contract）REST 分页拉该教授主分类全部条目（经 helper：`stage2_zotero_rpc.py http --path "/api/users/0/collections/<key>/items?format=json&limit=100&start=N" --response-meta "<该页的 sidecar 路径>"`；每页请求都带自己的 `--response-meta`，翻页以 sidecar 里的 `total_results` 为准而不是以「这一页返回了多少条」为准：从 `start=0` 起按 `start=0,100,200,...` 继续请求，直到累计取回的条目数 ≥ `total_results` 才算拉完；`total_results` 为 `null`（响应没有可用的 Total-Results 计数）时不得把首页当全集——按 transport failure fail-closed，在 notes 记录未覆盖并停止据此算署名线；多 lab 同名分类取并集、按 item key 去重；滤 note/attachment 类）。**不含「关联文献」分类**——那不是他个人的署名画像。一般 1–2 页请求。首个被标记方向时算好缓存进 `/tmp/<教授名>_套磁分析.json`，后续方向复用。
+   - **口径**：用 resolved `ZOTERO_HTTP_URL`（Step 2.7 的 endpoint contract）REST 分页拉该教授主分类全部条目（经 helper：`stage2_zotero_rpc.py http --path "/api/users/0/collections/<key>/items?format=json&limit=100&start=N" --response-meta "<该页的 sidecar 路径>"`；每页请求都带自己的 `--response-meta`，翻页以 sidecar 里的 `total_results` 为准而不是以「这一页返回了多少条」为准：从 `start=0` 起按 `start=0,100,200,...` 继续请求，直到累计取回的条目数 ≥ `total_results` 才算拉完；多 lab 同名分类取并集、按 item key 去重；滤 note/attachment 类）。**不含「关联文献」分类**——那不是他个人的署名画像。一般 1–2 页请求。首个被标记方向时算好缓存进 `/tmp/<教授名>_套磁分析.json`，后续方向复用。
    - **窗口与阈值**：取有 date 的条目看近 3 年；<3 篇 → 扩到近 5 年；仍 <3 篇 → `authorship_line = insufficient`（不启用任何按线的特殊处理）。样本足够时按 Step 3 的 `authorship` 统计：
      - corresponding 占比 ≥70% → `corresponding_dominant`（聊点以通讯线为主）；
      - 一作/独著占比 ≥50% → `first_author_present`（亲自动笔为主，新 AP 型，可聊一作线）；
