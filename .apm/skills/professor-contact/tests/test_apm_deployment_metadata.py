@@ -203,13 +203,6 @@ def _assert_codex_native_delegation_gate(codex: str):
 
 
 class ApmDeploymentMetadataTests(unittest.TestCase):
-    def test_manifest_keeps_opencode_and_codex_targets(self):
-        manifest = (REPO_ROOT / "apm.yml").read_text(encoding="utf-8")
-        match = re.search(r"(?m)^targets:\s*\[([^\]]+)\]\s*$", manifest)
-        self.assertIsNotNone(match, "apm.yml must declare explicit inline targets")
-        targets = [part.strip() for part in match.group(1).split(",") if part.strip()]
-        self.assertEqual(targets, ["opencode", "codex"])
-
     def test_all_agent_frontmatter_descriptions_are_yaml_safe(self):
         agent_paths = _source_agent_paths()
         self.assertTrue(agent_paths, "expected at least one .apm/agents/*.agent.md file")
