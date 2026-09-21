@@ -56,16 +56,38 @@ Codex-specific runtime calling convention and is not persisted.
   `first_choice`, a non-empty `signature_name`, and a non-empty `learning`.
 - `mode: both|followup` additionally requires a non-empty,
   non-`{{...}}` `initial_sent_date`; `mode: first` does not.
-- The only other caller-facing optional row fields are the existing
-  `followup_subject` and `email_address` fields. Do not publish runner
-  internals as new caller fields.
+- The public row schema is exactly these seven keys: `email_id`,
+  `first_choice`, `signature_name`, `learning`, `initial_sent_date`,
+  `followup_subject`, `email_address`. Anything outside it — including the
+  retired runner-internal keys `subject` and `alma_mater` — is rejected with
+  `invalid_choices_schema` and can never alter a rendered email: Subject comes
+  from `info.json` + `boshu_analysis.json` (or text the user hard-codes in
+  `套磁模板.md`) and `{{出身校}}` is a renderer default, so neither is a caller
+  field. Do not publish runner internals as new caller fields.
+- When present, `followup_subject` must be a non-empty placeholder-free string
+  and `email_address` must be one non-empty address string with no whitespace
+  and no `{{...}}`; a `null`, number, list or blank string is a shape error,
+  not an omitted field.
+- `_contact_verify.json` `items.email.value` (the Step 2.5 送信前核验 verdict)
+  is the **only** recipient authority. `choices.email_address` is the caller's
+  explicit recipient *decision* and may only confirm it: an address that
+  disagrees with the verified value, or that arrives before Step 2.5 has
+  recorded one, fails closed with `recipient_conflict` and writes nothing. To
+  send to a user-supplied address, Step 2.5 first writes that answer into
+  `items.email` (`source: user_provided`, `verdict: confirmed`), then the row
+  is re-run. A choices value may never replace the rendered recipient.
+- Ordering: the verification hard gate below runs first, so until every
+  selected professor reports `verify: ok` the runner does not read the choices
+  file at all — a blocked cache surfaces as `verify_*` (or a bare
+  contact-evidence reason that needs Stage 4 repair), never as a
+  choices-related code.
 
 When `choices` is supplied, preserve the object/list and every value exactly:
 write the canonical JSON to a temporary choices file and pass that file to the
-existing runner with `--choices`. Do not add defaults, translate fields, or
-map an email by position, professor name, or “first email”. The runner remains
-the sole authority for schema, type, ID-set, contact-evidence, and finalization
-validation.
+existing runner with `--choices`. Do not add defaults, translate fields, drop
+unknown keys, or map an email by position, professor name, or “first email”.
+The runner remains the sole authority for the public-key whitelist, types,
+ID-set, recipient authority, contact-evidence, and finalization validation.
 
 ## Direction provenance (issue #8 email-pack v2)
 
@@ -134,7 +156,7 @@ Stage 5 consumes the upstream reconciled artifact `教授研究/_联系方式证
 4. **Escalation voids evidence-seeded cache entries (deterministic).** If a previous run seeded `items.email` from evidence (sources all `level: "contact_evidence"`) and the decision is now `escalate` or `needs_refresh` (including source-state stale/unavailable/checker-unavailable and frozen-snapshot fingerprint mismatch), `stage5-plan` flags the professor as `needs_recheck:contact_evidence_escalated` (or the snapshot reason); in Step 2.5 do **not** reuse the cached email item even though the rest of the cache may be fresh — re-run the email ladder (levels 1–5) and rewrite `items.email` with ladder/user provenance, never re-seeding from the same escalated evidence. After a Stage-4 refresh (or a converged local rebuild + re-check restoring a fresh matching record), re-seeding from evidence is allowed again. `stage5-finalize` refuses with `verify_contact_evidence_escalated` until that rewrite happened. Ladder/user-verified entries are unaffected by unrelated evidence churn and keep their own 30-day TTL.
 5. Never treat a paper-derived address as current contact information (`paper_only` always escalates; upstream marks every paper correspondence row `current_email_evidence: false`, they are provenance only). Never silently choose between conflicting addresses (`conflict` always escalates to web verification or explicit user confirmation).
 6. **Address-conflict gate (deterministic, pre-generation).** The upstream artifact scopes itself as `workflow_evidence_not_send_time_authority`; `_contact_verify.json` is the send-time verification authority. When an accepted evidence decision names an address that DIFFERS from a still-usable `items.email` value — whatever the cache provenance (independent ladder/user verification included) — `stage5-plan` flags the professor as `needs_recheck:contact_evidence_verify_conflict` and `stage5-finalize` refuses with `verify_contact_evidence_verify_conflict` before writing anything. In that case do **not** seed or overwrite the cache entry silently: resolve explicitly with the user — if the artifact is wrong, fix the upstream evidence sources and let the rebuild refresh it; if the cache is wrong, re-run the email ladder (levels 1–5) or get explicit user confirmation, then rewrite `items.email` with the confirmed value and its provenance. The same address in any provenance reuses the cache freely without re-web. The finalize `contact_evidence_mismatch` guard remains the backstop for caches with no usable email value at all.
-7. `stage5-finalize` hard-fails with `contact_evidence_mismatch` when an accepted decision is overridden by a different `_contact_verify.json` email value. To change the recipient legitimately, rebuild the upstream artifact (or let the Stage 5 rebuild refresh it) and re-run Stage 4 so the pack snapshot is refreshed.
+7. `stage5-finalize` hard-fails with `contact_evidence_mismatch` when an accepted decision is overridden by a different `_contact_verify.json` email value. To change the recipient legitimately, rebuild the upstream artifact (or let the Stage 5 rebuild refresh it) and re-run Stage 4 so the pack snapshot is refreshed. A recipient the user states during Step 2.5 (including one echoed back in `choices.email_address`) becomes authority only after it is written into `items.email` as `verdict: confirmed` with `source: user_provided`; the row itself can never be that second record.
 8. The runner records the chosen email and its provenance/status into `套磁邮件状态.json` (`emails[<id>].contact_evidence`); the rendered 送信前核对 table keeps the evidence source visible for the validator. The final pre-send validator loop is unchanged and still mandatory.
 
 ## Execution summary
@@ -143,7 +165,7 @@ The verification gate is executable and mandatory, not background guidance:
 
 1. **First command:** run `contact_state.py stage5-plan` without `--result` and without `--choices`, then parse its JSON. Do not author the model result yet.
 2. For every selected professor whose plan reports `verify: needs_recheck:<reason>`, complete Step 2.5 and write the full professor-level `_contact_verify.json` (all eight checklist items, fingerprints, and `verified_at`; the contact-evidence-first rules above decide the email item). Then rerun that same initial `stage5-plan`.
-3. **Hard gate:** do not create result JSON, consume choices, call `stage5_immutable.py stage5-finalize`, or spawn a validator until every selected professor reports `verify: ok`. A deterministic `needs_refresh` reason that requires Stage 4 repair is returned to the caller; ordinary `verify_missing` / `needs_recheck` is work for Step 2.5, not a completed Stage 5 result.
+3. **Hard gate:** do not create result JSON, consume choices, call `stage5_immutable.py stage5-finalize`, or spawn a validator until every selected professor reports `verify: ok`. The runner enforces the same order: a `stage5-plan --result --choices` whose cache is not usable stops with `verify_*` (or the bare Stage-4 reason) and never reads the choices file, so a recipient decision taken before the gate has exactly one route — Step 2.5 writing `_contact_verify.json` `items.email`. A choices row can only confirm that verified address (`recipient_conflict` otherwise), never replace it. A deterministic `needs_refresh` reason that requires Stage 4 repair is returned to the caller; ordinary `verify_missing` / `needs_recheck` is work for Step 2.5, not a completed Stage 5 result.
 4. If finalize nevertheless returns `verify_missing` or another repairable `verify_*` cache reason, return to Step 2.5, refresh the cache, rerun the initial plan, and retry. Never present that intermediate runner refusal as successful or completed Stage 5.
 
 `stage5-plan` (no result/choices) → Step 2.5 until `verify: ok` → model result JSON → optional dynamic-field-only polish → user choices → `stage5_immutable.py stage5-finalize` → final validator loop → `stage5-record-validation`.

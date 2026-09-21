@@ -75,8 +75,21 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
     def test_stage3_correction_passes_raw_file_not_issue_prose(self):
         section = self._stage34_orchestration_section()
         self.assertIn("validation_file: <原始 JSON 绝对路径>", section)
-        self.assertIn("direction_id: <失败方向 ID>", section)
         self.assertIn("不得把 issues 摘抄或改写成 prose", section)
+        # BLOCKER 1 (issue #47 review @4e911dd): the caller never nominates the
+        # scope to repair — the recorded round does.
+        self.assertIn("**不得传 direction_id、不得把 issues 摘抄或改写成 prose**", section)
+        self.assertNotIn("direction_id: <失败方向 ID>", section)
+
+    def test_stage3_records_every_round_before_planning_a_correction(self):
+        section = self._stage34_orchestration_section()
+        for required in (
+            "每一轮 validator 返回后先由 runner 记录，再决定是否修正",
+            "`stage3-record-validation` 必须在 `stage3-plan --validation-file` 之前完成",
+            "由它绑定当前渲染 SHA、判定失败范围、累计轮次并返回 `needs_correction`",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, section)
 
     def test_stage4_has_codex_user_boundary_and_opencode_question_boundary(self):
         self.assertIn("professor-contact-selection", self.text)

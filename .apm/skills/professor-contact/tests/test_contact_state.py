@@ -749,22 +749,32 @@ class TestRunnerBasics(BaseEnv):
     def test_12_stage3_validator_is_persisted_separately(self):
         self.stage3_run()
         state_path = self.prof_dir / "套磁候选状态.json"
+        before = json.loads(state_path.read_text(encoding="utf-8"))
         validation_path = self.root / "stage3-validation.json"
-        validation_path.write_text(json.dumps({"results": [{
-            "direction_id": "DIR00001", "result": "pass", "rounds": 1, "issues": []
-        }]}, ensure_ascii=False), encoding="utf-8")
+        validation_path.write_text(json.dumps({"result": "ok", "files": [{
+            "file": str(self.prof_dir / "套磁想法候选.md"), "artifact": "candidates",
+            "verdict": "pass", "blocking": 0, "minor": 0, "issues": []}]},
+            ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("stage3-record-validation", "--professor-dir", self.prof_dir,
                             "--validation-file", validation_path))
         self.assertEqual(out["status"], "ok", out)
+        self.assertEqual(out["raw_verdict"], "pass")
+        self.assertEqual(out["scopes"], [{"scope": "direction:DIR00001", "result": "pass",
+                                          "rounds": 1, "blocking": 0}])
         state = json.loads(state_path.read_text(encoding="utf-8"))
         self.assertEqual(state["validator"]["results"]["DIR00001"]["result"], "pass")
+        self.assertEqual(state["validator"]["render_sha256"], out["render_sha256"])
+        # The record is bookkeeping next to the candidates, never a rewrite.
+        self.assertEqual(state["directions"], before["directions"])
+        self.assertEqual(state["cache"], before["cache"])
         old = state_path.read_bytes()
         validation_path.write_text(json.dumps({"results": [{
-            "collection_key": "NO_SUCH_DIRECTION", "result": "pass", "rounds": 1, "issues": []
-        }]}, ensure_ascii=False), encoding="utf-8")
+            "direction_id": "DIR00001", "result": "pass", "rounds": 1, "issues": []}]},
+            ensure_ascii=False), encoding="utf-8")
         bad = parse(run_cli("stage3-record-validation", "--professor-dir", self.prof_dir,
                             "--validation-file", validation_path))
         self.assertEqual(bad["status"], "error")
+        self.assertEqual(bad["reason_code"], "invalid_validation_json")
         self.assertEqual(state_path.read_bytes(), old)
 
     def test_13_stage2_validator_rewrite_round_trips_structured_narrative(self):
@@ -1272,6 +1282,222 @@ class TestStage5(BaseEnv):
         out = parse(run_cli("stage5-plan", "--program-root", self.root,
                             "--result", raw_path, "--choices", choices_path))
         self.assertEqual(out["reason_code"], "invalid_result_json")
+
+    def test_stage5_rejects_retired_internal_choice_keys(self):
+        # `subject` and `alma_mater` leaked into the choices row from old
+        # runner internals. They are not caller inputs: Subject comes from
+        # info.json + boshu_analysis.json and 出身校 is a renderer default, so
+        # a row carrying them must be rejected instead of rewriting a fact the
+        # deterministic renderer owns.
+        g1 = self.prepare()
+        raw_path = self.root / "retired-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "retired-choices.json"
+
+        for retired in ({"subject": "OVERRIDE 件名"}, {"alma_mater": "特殊大学"}):
+            choices_path.write_text(json.dumps(dict(self.choices(), **retired),
+                                                ensure_ascii=False), encoding="utf-8")
+            out = parse(run_cli("stage5-plan", "--program-root", self.root,
+                                "--result", raw_path, "--choices", choices_path))
+            self.assertEqual(out["status"], "error", retired)
+            self.assertEqual(out["reason_code"], "invalid_choices_schema", retired)
+            self.assertIn("outside the public schema", out["message"], retired)
+            self.assertFalse((self.prof_dir / "套磁邮件.md").exists(), retired)
+
+        # finalize carries the same check, so skipping the plan step cannot
+        # reach the renderer with a retired key either.
+        choices_path.write_text(json.dumps(dict(self.choices(), subject="OVERRIDE 件名"),
+                                            ensure_ascii=False), encoding="utf-8")
+        humanized_path = self.root / "retired-humanized.txt"
+        humanized_path.write_text("unused", encoding="utf-8")
+        out = parse(run_cli("stage5-finalize", "--program-root", self.root,
+                            "--result", raw_path, "--humanized", humanized_path,
+                            "--choices", choices_path))
+        self.assertEqual(out["status"], "error")
+        self.assertEqual(out["reason_code"], "invalid_choices_schema")
+        self.assertFalse((self.prof_dir / "套磁邮件.txt").exists())
+
+        # The public row alone still renders both facts deterministically.
+        choices_path.write_text(json.dumps(self.choices(), ensure_ascii=False), encoding="utf-8")
+        draft = parse(run_cli("stage5-plan", "--program-root", self.root,
+                              "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(draft["status"], "ok", draft)
+        humanized_path.write_text(draft["drafts"][0]["draft"], encoding="utf-8")
+        out = parse(run_cli("stage5-finalize", "--program-root", self.root,
+                            "--result", raw_path, "--humanized", humanized_path,
+                            "--choices", choices_path))
+        self.assertEqual(out["status"], "ok", out)
+        rendered = ((self.prof_dir / "套磁邮件.txt").read_text(encoding="utf-8") +
+                    (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8"))
+        self.assertTrue((self.prof_dir / "套磁邮件.txt").read_text(
+            encoding="utf-8").startswith("Subject: "))
+        self.assertIn("総合大学出身", rendered)
+        for leaked in ("OVERRIDE 件名", "特殊大学"):
+            self.assertNotIn(leaked, rendered)
+
+    def test_stage5_type_checks_optional_choice_fields(self):
+        g1 = self.prepare()
+        raw_path = self.root / "optional-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "optional-choices.json"
+
+        malformed = {
+            "followup_subject": ("", "   ", "{{件名}}", 42, ["Re: x"]),
+            "email_address": ("", "   ", "{{メールアドレス}}", "not-an-address",
+                              "faculty @example.test", 42),
+        }
+        for field, values in malformed.items():
+            for value in values:
+                choices = dict(self.choices(), initial_sent_date="2026年9月1日",
+                               **{field: value})
+                choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+                out = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "both",
+                                    "--result", raw_path, "--choices", choices_path))
+                self.assertEqual(out["status"], "error", (field, value))
+                self.assertEqual(out["reason_code"], "invalid_choices_schema", (field, value))
+                self.assertFalse((self.prof_dir / "套磁邮件.md").exists(), (field, value))
+                self.assertFalse((self.prof_dir / "套磁跟进邮件.md").exists(), (field, value))
+
+    def test_stage5_choice_address_conflicting_with_verified_recipient_fails_closed(self):
+        g1 = self.prepare()
+        raw_path = self.root / "conflict-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "conflict-choices.json"
+        choices = dict(self.choices(), initial_sent_date="2026年9月1日",
+                       email_address="other@example.test")
+        choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+
+        out = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "both",
+                            "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "recipient_conflict", out)
+        self.assertIn("faculty@example.test", out["message"])
+        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+        self.assertFalse((self.prof_dir / "套磁跟进邮件.md").exists())
+
+        # The same row reaches finalize after the plan step was skipped.
+        humanized_one = self.root / "conflict-initial.txt"
+        humanized_two = self.root / "conflict-followup.txt"
+        humanized_one.write_text("unused", encoding="utf-8")
+        humanized_two.write_text("unused", encoding="utf-8")
+        map_path = self.root / "conflict-map.json"
+        map_path.write_text(json.dumps({
+            self.choices()["email_id"]: str(humanized_one),
+            self.choices()["email_id"] + "::followup": str(humanized_two)},
+            ensure_ascii=False), encoding="utf-8")
+        out = parse(run_cli("stage5-finalize", "--program-root", self.root, "--mode", "both",
+                            "--result", raw_path, "--humanized-map", map_path,
+                            "--choices", choices_path))
+        self.assertEqual(out["status"], "error")
+        self.assertEqual(out["reason_code"], "recipient_conflict")
+        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+        self.assertFalse((self.prof_dir / "套磁跟进邮件.md").exists())
+
+    def test_stage5_followup_renders_the_verified_address_not_the_callers_spelling(self):
+        # An address that agrees with 送信前核验 (case-insensitively) is a
+        # confirmation, never a second authority: the rendered follow-up keeps
+        # the verified spelling.
+        g1 = self.prepare()
+        raw_path = self.root / "authority-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices = dict(self.choices(), initial_sent_date="2026年9月1日",
+                       email_address="FACULTY@Example.TEST")
+        choices_path = self.root / "authority-choices.json"
+        choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+
+        draft = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "both",
+                              "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(draft["status"], "ok", draft)
+        followup = next(row for row in draft["drafts"] if row["kind"] == "followup")
+        self.assertIn("faculty@example.test", followup["draft"])
+        self.assertNotIn("FACULTY@Example.TEST", followup["draft"])
+
+        initial_path = self.root / "authority-initial.txt"
+        followup_path = self.root / "authority-followup.txt"
+        initial_path.write_text(next(row for row in draft["drafts"]
+                                     if row["kind"] == "initial")["draft"], encoding="utf-8")
+        followup_path.write_text(followup["draft"], encoding="utf-8")
+        map_path = self.root / "authority-map.json"
+        map_path.write_text(json.dumps({
+            choices["email_id"]: str(initial_path),
+            choices["email_id"] + "::followup": str(followup_path)},
+            ensure_ascii=False), encoding="utf-8")
+        out = parse(run_cli("stage5-finalize", "--program-root", self.root, "--mode", "both",
+                            "--result", raw_path, "--humanized-map", map_path,
+                            "--choices", choices_path))
+        self.assertEqual(out["status"], "ok", out)
+        followup_md = (self.prof_dir / "套磁跟进邮件.md").read_text(encoding="utf-8")
+        self.assertIn("faculty@example.test", followup_md)
+        self.assertNotIn("FACULTY@Example.TEST", followup_md)
+
+    def test_stage5_unverified_cache_rejects_a_choices_address(self):
+        # choices cannot stand in for Step 2.5: with no verified recipient in
+        # _contact_verify.json the conflict is unresolved and nothing renders.
+        g1 = self.prepare()
+        verify_path = self.prof_dir / "_contact_verify.json"
+        cache = json.loads(verify_path.read_text(encoding="utf-8"))
+        cache["items"]["email"] = {"verdict": "unverified", "value": None, "sources": []}
+        verify_path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+        raw_path = self.root / "noauthority-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "noauthority-choices.json"
+        choices_path.write_text(json.dumps(
+            dict(self.choices(), email_address="someone@example.test"),
+            ensure_ascii=False), encoding="utf-8")
+
+        out = parse(run_cli("stage5-plan", "--program-root", self.root,
+                            "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "recipient_conflict", out)
+        self.assertIn("Step 2.5", out["message"])
+        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+
+    def test_stage5_user_provided_address_becomes_authority_only_through_the_cache(self):
+        # The supported correction path for a user-supplied recipient: Step 2.5
+        # writes it into items.email, and the matching choices row then renders.
+        g1 = self.prepare()
+        verify_path = self.prof_dir / "_contact_verify.json"
+        cache = json.loads(verify_path.read_text(encoding="utf-8"))
+        cache["items"]["email"] = {
+            "verdict": "confirmed", "value": "pdx-personal@example.test",
+            "sources": [{"source": "user_provided", "level": "user_verified",
+                         "value": "pdx-personal@example.test"}]}
+        verify_path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+        raw_path = self.root / "userprovided-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices = dict(self.choices(), initial_sent_date="2026年9月1日",
+                       email_address="pdx-personal@example.test")
+        choices_path = self.root / "userprovided-choices.json"
+        choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+
+        draft = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "both",
+                              "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(draft["status"], "ok", draft)
+        followup = next(row for row in draft["drafts"] if row["kind"] == "followup")
+        self.assertIn("pdx-personal@example.test", followup["draft"])
+        self.assertNotIn("faculty@example.test", followup["draft"])
+
+    def test_stage5_gate_stops_before_the_choices_file_is_read(self):
+        g1 = self.prepare()
+        # The cache fingerprint goes stale after info.json is rewritten; the
+        # row below is also schema-invalid on two counts, so any choices-driven
+        # reason code would prove the gate was bypassed.
+        info = self.root / "info.json"
+        touched = int(info.stat().st_mtime) + 3600
+        os.utime(info, (touched, touched))
+        raw_path = self.root / "gated-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "gated-choices.json"
+        choices_path.write_text(json.dumps(
+            dict(self.choices(), alma_mater="特殊大学", email_address="wrong@example.test"),
+            ensure_ascii=False), encoding="utf-8")
+
+        out = parse(run_cli("stage5-plan", "--program-root", self.root,
+                            "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertEqual(out["reason_code"], "verify_stale_fingerprint", out)
+        self.assertIn("不读取 choices", out["message"])
+        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
 
     def test_done_by_self_gap_banned_in_source_map(self):
         self.stage2_run(gap_overrides={

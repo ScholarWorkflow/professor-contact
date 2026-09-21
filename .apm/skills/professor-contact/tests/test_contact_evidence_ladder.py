@@ -268,7 +268,10 @@ class TestContactEvidenceLadder(BaseEnv):
                                 encoding="utf-8")
         draft = parse(run_cli("stage5-plan", "--program-root", self.root,
                               "--result", raw_path, "--choices", choices_path))
-        self.assertEqual(draft["status"], "ok", draft)
+        # The verification hard gate now stops the draft plan itself, so a
+        # blocked cache never reaches choices consumption or finalize at all.
+        if draft["status"] != "ok":
+            return draft
         humanized_path = self.root / f"{tag}-humanized.txt"
         humanized_path.write_text(draft["drafts"][0]["draft"], encoding="utf-8")
         return parse(run_cli("stage5-finalize", "--program-root", self.root,
