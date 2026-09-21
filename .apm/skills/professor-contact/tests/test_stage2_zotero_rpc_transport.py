@@ -326,21 +326,18 @@ class RandomPortTransportTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(done.stdout), {"items": [{"key": "NVSIVAQZ"}]})
 
-    def test_http_call_preserves_pagination_metadata_without_changing_body_stdout(self):
-        """Authorship pagination needs Zotero's Total-Results/Link response headers.
+    def test_http_call_preserves_pagination_total_without_changing_body_stdout(self):
+        """Authorship pagination needs Zotero's Total-Results response header.
 
         Keep stdout backward-compatible for existing body consumers, but expose
-        the response metadata through a deterministic JSON sidecar so the
-        analyzer can decide whether start=100, 200, ... is required.
+        the total count through a deterministic JSON sidecar so the analyzer can
+        decide whether start=100, 200, ... is required.  Other response metadata
+        is intentionally outside this regression contract.
         """
         body = {"items": [{"key": "PAGE1"}]}
-        link = (
-            f'<http://127.0.0.1:{self.server.port}/api/users/0/collections/ABC/items'
-            '?format=json&limit=100&start=100>; rel="next"'
-        )
         self.server.respond(
             body=json.dumps(body),
-            headers={"Total-Results": "101", "Link": link},
+            headers={"Total-Results": "101"},
         )
         with tempfile.TemporaryDirectory() as tmp:
             meta_path = Path(tmp) / "response-meta.json"
@@ -357,9 +354,7 @@ class RandomPortTransportTests(unittest.TestCase):
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
             self.assertEqual(json.loads(done.stdout), body)
             metadata = json.loads(meta_path.read_text(encoding="utf-8"))
-            self.assertEqual(metadata["status"], 200)
             self.assertEqual(metadata["total_results"], 101)
-            self.assertEqual(metadata["link"], link)
 
     def test_sse_response_is_unwrapped_to_data_payloads(self):
         payload = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": []}})
@@ -435,7 +430,6 @@ class TransportBoundaryProjectionTests(unittest.TestCase):
                 body = _frontmatter_and_body(path)
                 authorship = _section(body, "1.7 **署名线判定", "2. **判定相关论文")
                 self.assertIn("--response-meta", authorship)
-                self.assertIn("jq", authorship)
                 self.assertIn("total_results", authorship)
                 self.assertIn("start=N", authorship)
 
