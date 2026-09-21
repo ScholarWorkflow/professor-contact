@@ -56,8 +56,16 @@ class P47TargetIsolationTests(unittest.TestCase):
         self.assertIn("paper-analysis", body)
         self.assertIn("professor-contact-style-validator", body)
         self.assertRegex(body, r"(?is)(?:delegate|use|委派)[\s\S]{0,500}(?:wait|等待)")
-        for forbidden in ("task(", "question(", "spawn_agent(", "spawnAgent"):
-            self.assertNotIn(forbidden, body, f"Codex projection leaked OpenCode API {forbidden!r}")
+        # OpenCode-only call syntax and the internal camelCase runtime event stay
+        # forbidden.  The public Codex tool name `spawn_agent` is intentionally
+        # not banned: Project Consensus permits the documented native tool name
+        # while keeping private namespaces / parameter schemas out of the contract.
+        for forbidden in ("task(", "question(", "spawnAgent"):
+            self.assertNotIn(
+                forbidden,
+                body,
+                f"Codex projection leaked target-incompatible/private API {forbidden!r}",
+            )
         # #57's front-loaded routing gate names `opencode run` only inside the
         # explicit shell-substitution prohibition; any other mention leaks
         # operative OpenCode syntax into the Codex projection.
