@@ -14,7 +14,6 @@ import json
 import os
 import subprocess
 import tempfile
-import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -186,6 +185,23 @@ def _load_yaml(path: Path) -> tuple[Any | None, str | None]:
         return None, str(exc)
 
 
+def _load_toml(path: Path) -> tuple[Any | None, str | None]:
+    """Parse TOML through yq, the repository's structured TOML tool."""
+    try:
+        completed = subprocess.run(
+            ["yq", "-p=toml", "-o=json", ".", str(path)],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError as exc:
+        return None, str(exc)
+    if completed.returncode != 0:
+        return None, completed.stderr.strip() or f"yq exited {completed.returncode}"
+    try:
+        return json.loads(completed.stdout), None
+    except json.JSONDecodeError as exc:
+        return None, str(exc)
+
+
 def _resolved_professor_contact_commit(consumer: Path) -> tuple[str | None, str]:
     matches: list[tuple[Path, Any]] = []
     parse_errors: list[str] = []
@@ -259,8 +275,11 @@ def _checkpoint_install(args: argparse.Namespace) -> dict[str, Any]:
                path.resolve().is_relative_to(consumer), str(path.resolve()))
     generator_path = consumer / ".codex/agents/professor-contact-email-generator.toml"
     if generator_path.is_file():
-        try:
-            generator = tomllib.loads(generator_path.read_text(encoding="utf-8"))
+        generator, error = _load_toml(generator_path)
+        if error or not isinstance(generator, dict):
+            _check(checks, "generated_projection_readable", False,
+                   error or f"TOML root must be an object, got {type(generator).__name__}")
+        else:
             instructions = generator.get("developer_instructions")
             _check(checks, "generated_generator_name",
                    generator.get("name") == "professor-contact-email-generator")
@@ -283,8 +302,6 @@ def _checkpoint_install(args: argparse.Namespace) -> dict[str, Any]:
                 _check(checks, "generated_codex_branch_present", False)
                 _check(checks, "generated_codex_no_opencode_question", False)
                 _check(checks, "generated_codex_no_opencode_task", False)
-        except (OSError, tomllib.TOMLDecodeError) as exc:
-            _check(checks, "generated_projection_readable", False, str(exc))
     if args.producer_sha:
         resolved_commit, detail = _resolved_professor_contact_commit(consumer)
         _check(checks, "producer_sha_pinned", resolved_commit == args.producer_sha,
