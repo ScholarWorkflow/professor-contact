@@ -3578,7 +3578,10 @@ def validate_freshness_results(ctx: Stage2Context, results_dir: Path,
             if not isinstance(gap_id, str):
                 fail("invalid_result_json", f"{result_path}: gap_id must be a string")
             if gap_id not in judge_ids:
-                fail("unknown_reference_id", f"{result_path}: gap outside package: {gap_id}")
+                fail("unknown_reference_id",
+                     f"{result_path}: gap outside package: {gap_id!r} "
+                     f"(likely mistyped; copy one of the job model_input gap ids verbatim: "
+                     f"{sorted(judge_ids)})")
             if gap_id in by_gap:
                 fail("invalid_result_json", f"{result_path}: duplicate result for gap {gap_id}")
             by_gap[gap_id] = row
@@ -3695,7 +3698,9 @@ def validate_narrative_entry(ctx: Stage2Context, path: Path, entry: dict,
             pool = (scope["papers"] if ref_kind == "paper" else
                     scope["later"] if ref_kind == "later" else scope["gaps"])
             if ref_kind not in ("paper", "later", "gap") or ref_id not in pool:
-                fail("unknown_reference_id", f"{path}: ref {ref} outside package")
+                fail("unknown_reference_id",
+                     f"{path}: ref {ref!r} outside package (likely mistyped; legal "
+                     f"{ref_kind} ids: {sorted(pool)})")
         if placeholders != refs:
             fail("invalid_result_json",
                  f"{path}: {did} placeholders {sorted(placeholders)} != refs {sorted(refs)}")
@@ -3714,7 +3719,9 @@ def validate_narrative_entry(ctx: Stage2Context, path: Path, entry: dict,
             fail("invalid_result_json", f"{path}: {did} gap_notes[] must be objects")
         gap_id = note.get("gap_id")
         if gap_id not in scope["gaps"]:
-            fail("unknown_reference_id", f"{path}: gap note outside package: {gap_id}")
+            fail("unknown_reference_id",
+                 f"{path}: gap note outside package: {gap_id!r} (likely mistyped; "
+                 f"copy one of the job model_input gap ids verbatim: {sorted(scope['gaps'])})")
         if gap_id in gap_notes:
             fail("invalid_result_json", f"{path}: duplicate gap note {gap_id}")
         if not isinstance(note.get("summary"), str) or not isinstance(note.get("explanation"), str):

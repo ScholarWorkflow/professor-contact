@@ -8,7 +8,13 @@ command line:
 - ``mcp``  resolves the FULL MCP endpoint from ``ZOTERO_MCP_URL``
   (unset/empty -> production fallback ``http://127.0.0.1:23120/mcp``);
 - ``http`` resolves the REST base from ``ZOTERO_HTTP_URL``
-  (unset/empty -> production fallback ``http://127.0.0.1:23119``).
+  (unset/empty -> production fallback ``http://127.0.0.1:23119``);
+- ``probe`` resolves both endpoints the same way and answers the Stage 2
+  connectivity question in one deterministic call: it GETs
+  ``<ZOTERO_HTTP_URL>/connector/ping`` and the resolved MCP endpoint and
+  prints one compact JSON verdict (``{"online": true|false, ...}``) that also
+  states the exact endpoints used, so a caller never hand-writes a URL or
+  port to test connectivity.
 
 Both resolved values are normalized to drop one trailing ``/``. The CLI
 exposes no URL/port/endpoint argument, so a caller can never point real
@@ -37,6 +43,7 @@ import urllib.request
 HTTP_FALLBACK = "http://127.0.0.1:23119"
 MCP_FALLBACK = "http://127.0.0.1:23120/mcp"
 REQUEST_TIMEOUT = 60
+PROBE_TIMEOUT = 5
 
 EXIT_USAGE = 2
 EXIT_BAD_ARGUMENTS_JSON = 3
@@ -234,12 +241,62 @@ def cmd_http(args: argparse.Namespace) -> None:
     )
 
 
+def _probe_once(url: str) -> dict:
+    """One connectivity GET; any HTTP answer proves a listener, errors don't."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    req = urllib.request.Request(url, method="GET",
+                                 headers={"Accept": "application/json"})
+    try:
+        with opener.open(req, timeout=PROBE_TIMEOUT) as resp:
+            return {"reachable": True, "status": resp.status}
+    except urllib.error.HTTPError as exc:
+        # A non-2xx answer (e.g. 405 for a plain GET on an MCP endpoint) still
+        # proves the endpoint is served by a live listener.
+        try:
+            exc.read()
+        except Exception:  # noqa: BLE001 - best-effort drain only
+            pass
+        return {"reachable": True, "status": exc.code}
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        detail = getattr(exc, "reason", None) or exc
+        return {"reachable": False, "status": None, "error": str(detail)}
+
+
+def cmd_probe(args: argparse.Namespace) -> None:
+    http_base, http_source = resolve_endpoint("ZOTERO_HTTP_URL", HTTP_FALLBACK)
+    mcp_endpoint, mcp_source = resolve_endpoint("ZOTERO_MCP_URL", MCP_FALLBACK)
+    http_view = {
+        "endpoint": http_base + "/connector/ping",
+        "source": http_source,
+        **_probe_once(http_base + "/connector/ping"),
+    }
+    mcp_view = {
+        "endpoint": mcp_endpoint,
+        "source": mcp_source,
+        **_probe_once(mcp_endpoint),
+    }
+    verdict = {
+        "schema": 1,
+        "kind": "probe",
+        "online": bool(http_view["reachable"] and mcp_view["reachable"]),
+        "http": http_view,
+        "mcp": mcp_view,
+    }
+    sys.stdout.write(json.dumps(verdict, ensure_ascii=False) + "\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="stage2_zotero_rpc.py",
         description="Stage 2 Zotero transport helper (env-resolved endpoints only)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p_probe = sub.add_parser(
+        "probe",
+        help="deterministic connectivity check on both resolved endpoints",
+    )
+    p_probe.set_defaults(func=cmd_probe)
 
     p_mcp = sub.add_parser(
         "mcp",

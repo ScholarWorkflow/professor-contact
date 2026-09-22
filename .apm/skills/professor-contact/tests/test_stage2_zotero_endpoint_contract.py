@@ -97,8 +97,15 @@ class Stage2ZoteroEndpointContractTests(unittest.TestCase):
     def test_connectivity_probe_uses_resolved_endpoints_without_literal_ports(self):
         probe_line = next(line for line in self.step27.splitlines()
                           if "Probe Zotero" in line)
+        # The probe is deterministic: the helper resolves both endpoints from
+        # the environment internally; the model never hand-writes a URL.
+        self.assertIn("stage2_zotero_rpc.py probe", probe_line)
         self.assertIn("$ZOTERO_HTTP_URL", probe_line)
         self.assertIn("ZOTERO_MCP_URL", probe_line)
+        self.assertIn("online", probe_line)
+        # A curl-based probe is exactly how the literal production ports crept
+        # back into executed commands; the contract must not allow it.
+        self.assertNotRegex(probe_line, r"curl\s+-")
         for port in ("23119", "23120"):
             self.assertNotIn(port, probe_line)
 

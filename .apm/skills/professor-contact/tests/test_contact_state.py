@@ -618,6 +618,27 @@ class TestRunnerBasics(BaseEnv):
         self.assertEqual(out["reason_code"], "unknown_reference_id")
         self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
 
+    def test_06e2_truncated_gap_id_is_rejected_with_legal_ids_in_message(self):
+        # Batch-3 runtime failure shape: the analyzer dropped one character
+        # from a 64-hex gap id. The rejection must stay fail-closed AND name
+        # the legal job gap ids so the model can repair its result file by
+        # copying the right id verbatim.
+        facts = self.write_facts()
+        results = self.root / "truncated-freshness"
+        self.write_stage2_results(results)
+        legal_id = quote_id(self.gap_quotes["AAAA1111"])
+        freshness_path = results / "freshness-DIR00001.json"
+        freshness = json.loads(freshness_path.read_text(encoding="utf-8"))
+        row = next(row for row in freshness["results"] if row["gap_id"] == legal_id)
+        row["gap_id"] = legal_id[:-1]  # 63 hex: one character lost
+        freshness_path.write_text(json.dumps(freshness, ensure_ascii=False),
+                                  encoding="utf-8")
+        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        self.assertEqual(out["status"], "error")
+        self.assertEqual(out["reason_code"], "unknown_reference_id")
+        self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
+        self.assertIn(legal_id, out.get("message") or "")
+
     def test_06f_stage4_preserves_previous_direction_selection(self):
         self.stage3_run()
         results = self.add_second_direction()

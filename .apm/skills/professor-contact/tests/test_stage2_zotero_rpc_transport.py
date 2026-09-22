@@ -277,6 +277,58 @@ class RandomPortTransportTests(unittest.TestCase):
             "ZOTERO_MCP_URL": f"http://127.0.0.1:{server.port}/mcp/",
         }
 
+    def test_probe_reports_online_with_resolved_endpoints(self):
+        self.server.respond(status=200, body="pong")
+        done = _run_helper(["probe"], self.env)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        verdict = json.loads(done.stdout)
+        self.assertEqual(verdict["schema"], 1)
+        self.assertEqual(verdict["kind"], "probe")
+        self.assertTrue(verdict["online"])
+        self.assertEqual(
+            verdict["http"],
+            {"endpoint": f"http://127.0.0.1:{self.server.port}/connector/ping",
+             "source": "env", "reachable": True, "status": 200},
+        )
+        self.assertEqual(
+            verdict["mcp"],
+            {"endpoint": f"http://127.0.0.1:{self.server.port}/mcp",
+             "source": "env", "reachable": True, "status": 200},
+        )
+        probed_paths = [request["path"] for request in self.server.requests]
+        self.assertIn(f"/connector/ping", probed_paths)
+        self.assertIn("/mcp", probed_paths)
+
+    def test_probe_counts_non_2xx_mcp_answer_as_reachable(self):
+        # A plain GET on a streamable-HTTP MCP endpoint commonly yields 405;
+        # that still proves a live listener on the resolved endpoint.
+        self.server.respond(status=405, body="")
+        done = _run_helper(["probe"], self.env)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        verdict = json.loads(done.stdout)
+        self.assertTrue(verdict["online"])
+        self.assertEqual(verdict["http"]["reachable"], True)
+        self.assertEqual(verdict["http"]["status"], 405)
+        self.assertEqual(verdict["mcp"]["reachable"], True)
+        self.assertEqual(verdict["mcp"]["status"], 405)
+
+    def test_probe_offline_reports_both_endpoints_and_exits_zero(self):
+        refused = _refused_port()
+        env = {
+            "ZOTERO_HTTP_URL": f"http://127.0.0.1:{refused}",
+            "ZOTERO_MCP_URL": f"http://127.0.0.1:{refused}/mcp",
+        }
+        done = _run_helper(["probe"], env)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        verdict = json.loads(done.stdout)
+        self.assertFalse(verdict["online"])
+        self.assertFalse(verdict["http"]["reachable"])
+        self.assertFalse(verdict["mcp"]["reachable"])
+        self.assertEqual(verdict["http"]["endpoint"],
+                         f"http://127.0.0.1:{refused}/connector/ping")
+        self.assertEqual(verdict["mcp"]["endpoint"],
+                         f"http://127.0.0.1:{refused}/mcp")
+
     def test_mcp_call_reaches_random_port_with_exact_contract(self):
         self.server.respond(
             body=json.dumps({
@@ -407,8 +459,10 @@ class TransportBoundaryProjectionTests(unittest.TestCase):
         for label, section in (("step27", step27), ("hard_rules", hard_rules)):
             with self.subTest(section=label):
                 self.assertIn("stage2_zotero_rpc.py", section)
-        self.assertIn("Transport boundary（取得 SID 后生效）", step27)
+        self.assertIn("Transport boundary（从第 3 步 probe 起生效）", step27)
         self.assertIn("禁止再用 `curl`、Python requests 或手写 URL/port 直连 Zotero", step27)
+        self.assertIn("stage2_zotero_rpc.py probe", step27)
+        self.assertIn('"$ZOTERO_HTTP_URL/connector/ping"', step27)
         self.assertIn("--session-id", step27)
         self.assertIn("--arguments-json", step27)
         self.assertIn(
@@ -443,7 +497,8 @@ class TransportBoundaryProjectionTests(unittest.TestCase):
     def test_opencode_projection_mirrors_the_shared_transport_sections(self):
         body = _frontmatter_and_body(OPENCODE_ANALYZER_PATH)
         step27 = _section(body, "### Step 2.7", "### Step 3")
-        self.assertIn("Transport boundary（取得 SID 后生效）", step27)
+        self.assertIn("Transport boundary（从第 3 步 probe 起生效）", step27)
+        self.assertIn("stage2_zotero_rpc.py probe", step27)
         self.assertIn("stage2_zotero_rpc.py", step27)
 
     def test_helper_ships_inside_the_installed_skill_scripts(self):
