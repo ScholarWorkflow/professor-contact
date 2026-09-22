@@ -349,6 +349,7 @@ class RandomPortTransportTests(unittest.TestCase):
                 self.env,
             )
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual(done.stdout, self.server.response_body)
             self.assertEqual(json.loads(done.stdout), body)
             metadata = json.loads(meta_path.read_text(encoding="utf-8"))
             self.assertEqual(metadata["total_results"], 101)
