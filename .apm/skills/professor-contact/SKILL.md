@@ -28,6 +28,11 @@ This skill is the **caller convention** for the 套磁 workflow (套磁 = contac
 
 上述 child 返回前，不执行属于该 child 的业务工作。详细 payload、等待、非递归与交互边界仍以下文对应 runtime 分支为准。
 
+## Stage 收尾硬性步骤（read first——浅读也必须执行）
+
+- **Stage 3 在 validator 记录之前不算完成**：idea-generator 生成并 `stage3-finalize` 落盘后，Stage 3 还有一段强制收尾——再委派 installed named `professor-contact-style-validator`（child message 只带渲染后的单一教授级 `套磁想法候选.md` 绝对路径 + `artifact: candidates`），拿到 validator 原始 JSON 后先保存为临时文件并**立即运行 `python3 scripts/contact_state.py stage3-record-validation --professor-dir <教授目录> --validation-file <该文件>`**；`needs_correction=true` 才进入修正轮（整个 Stage 3 最多 2 次 validator，每次返回后都要 record-validation）。跳过 record-validation 直接宣布「Stage 3 完成」违反合同——`套磁候选状态.json` 的 `validator` 字段为空即未完成。完整编排（含 fail 轮次与修正范围规则）见下文「How to call」的 Stage 3 validator 循环。
+- **阅读边界**：本文件按 Stage 分章。执行某个 Stage 前必须读到该 Stage 对应章节的结尾（Codex/OpenCode 编排分支 + 「How to call」相关小节），不得只读文件前若干行就宣称掌握合同；分页读取时继续读到章节末尾再行动。
+
 ## What this is for
 
 After `professor-collector(skip_pdf)` and `professor-topic-clustering(preview:true)` have produced a normalized `方向预筛.json`, the user may decide that **a specific direction of a specific professor** is worth contacting (套磁). **Stage 0 is the contact-workflow entry at that point.** Professor-level `pdf_only + professors=<keep-list>` and formal `professor-topic-clustering(preview:false)` remain valid independent library/organization operations, but neither is a prerequisite for Stage 0 or the canonical Stage 1 download scope. Stage 0 presents the normalized preview directions interactively, the user selects one or more directions (with optional per-direction user notes), and the selection is persisted to `教授研究/套磁目标.json`. The workflow no longer uses a fixed-title Zotero note as its selection UI. This skill's stages consume that machine state and turn it into 套磁 materials:

@@ -39,6 +39,17 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
         self.assertLess(validator, validator_wait)
         self.assertIn("root caller", stage3)
 
+    def test_read_first_section_states_stage3_completion_requires_validation_record(self):
+        # Batch-5 runtime regression: the R3-A root read only the first ~280
+        # lines of SKILL.md and never reached the validator-loop section, so it
+        # announced "Stage 3 complete" without stage3-record-validation. The
+        # read-first completion summary must surface that obligation early.
+        header = self.text[: self.text.index("## What this is for")]
+        self.assertIn("Stage 收尾硬性步骤（read first", header)
+        self.assertIn("stage3-record-validation", header)
+        self.assertIn("validator` 字段为空即未完成", header)
+        self.assertIn("阅读边界", header)
+
     def test_stage3_retry_and_root_inline_forbidden_list_are_load_bearing(self):
         section = self._stage34_orchestration_section()
         for required in (
