@@ -1220,7 +1220,7 @@ class TestStage5(BaseEnv):
         self.assertEqual(out["reason_code"], "missing_user_choice")
         self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
 
-    def test_stage5_first_allows_missing_sent_date_but_choice_ids_fail_closed(self):
+    def test_stage5_first_allows_missing_initial_sent_date(self):
         g1 = self.prepare()
         raw_path = self.root / "first-without-date-raw.json"
         raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
@@ -1232,16 +1232,6 @@ class TestStage5(BaseEnv):
         out = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "first",
                             "--result", raw_path, "--choices", choices_path))
         self.assertEqual(out["status"], "ok", out)
-
-        for invalid_choices in (
-            {key: value for key, value in choices.items() if key != "email_id"},
-            dict(choices, email_id="not-selected-email"),
-        ):
-            choices_path.write_text(json.dumps(invalid_choices, ensure_ascii=False), encoding="utf-8")
-            out = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "first",
-                                "--result", raw_path, "--choices", choices_path))
-            self.assertEqual(out["status"], "error", invalid_choices)
-            self.assertEqual(out["reason_code"], "invalid_result_json", invalid_choices)
 
     def test_stage5_rejects_non_boolean_first_choice(self):
         g1 = self.prepare()
@@ -1290,23 +1280,28 @@ class TestStage5(BaseEnv):
             self.assertEqual(out["status"], "error", sent_date)
             self.assertEqual(out["reason_code"], "missing_user_choice", sent_date)
 
-    def test_stage5_choices_id_mapping_rejects_unknown_and_duplicate_rows(self):
+    def test_stage5_choices_id_mapping_fails_closed(self):
         g1 = self.prepare()
         raw_path = self.root / "id-mapping-raw.json"
         raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
         choices_path = self.root / "id-mapping-choice.json"
 
-        unknown = dict(self.choices(), email_id="unknown-email-id")
-        choices_path.write_text(json.dumps(unknown, ensure_ascii=False), encoding="utf-8")
-        out = parse(run_cli("stage5-plan", "--program-root", self.root,
-                            "--result", raw_path, "--choices", choices_path))
-        self.assertEqual(out["reason_code"], "invalid_result_json")
-
-        duplicate = [self.choices(), dict(self.choices())]
-        choices_path.write_text(json.dumps(duplicate, ensure_ascii=False), encoding="utf-8")
-        out = parse(run_cli("stage5-plan", "--program-root", self.root,
-                            "--result", raw_path, "--choices", choices_path))
-        self.assertEqual(out["reason_code"], "invalid_result_json")
+        valid = self.choices()
+        invalid_cases = (
+            ("missing-email-id",
+             {key: value for key, value in valid.items() if key != "email_id"}),
+            ("unknown-email-id", dict(valid, email_id="unknown-email-id")),
+            ("duplicate-email-id", [valid, dict(valid)]),
+            ("selected-id-set-mismatch", []),
+        )
+        for label, invalid_choices in invalid_cases:
+            with self.subTest(case=label):
+                choices_path.write_text(
+                    json.dumps(invalid_choices, ensure_ascii=False), encoding="utf-8")
+                out = parse(run_cli("stage5-plan", "--program-root", self.root,
+                                    "--result", raw_path, "--choices", choices_path))
+                self.assertEqual(out["status"], "error", label)
+                self.assertEqual(out["reason_code"], "invalid_result_json", label)
 
     def test_stage5_retired_choice_keys_cannot_control_rendering(self):
         # Regression against the pre-#43 runner, where `subject` and `alma_mater`
