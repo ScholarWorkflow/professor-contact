@@ -34,8 +34,8 @@ choices validation and deterministic finalization. Its public row schema is
 exactly `email_id`, `first_choice`, `signature_name`, `learning`,
 `initial_sent_date`, `followup_subject`, `email_address`: any other key —
 including the retired runner-internal `subject` and `alma_mater` — is rejected
-with `invalid_choices_schema` and can never alter a rendered email, and the two
-optional fields are shape-checked when present. `_contact_verify.json`
+with `invalid_choices_schema` and can never alter a rendered email.
+`_contact_verify.json`
 `items.email.value` is the one recipient authority; `choices.email_address` may
 only confirm it (`recipient_conflict` when it disagrees or arrives before Step
 2.5 has recorded a verified address), never replace it.
@@ -60,7 +60,7 @@ only confirm it (`recipient_conflict` when it disagrees or arrives before Step
 - `mode` (optional, default `both` when called by this agent) — `first` 只生成首封，`both` 同时生成首封和跟进，`followup` 只生成跟进。
 - `followup_template` (optional) — 跟进邮件模板绝对路径；缺省查找 `套磁邮件/套磁跟进模板.md`，再使用内嵌模板。
 - `skip_validation` (optional, default false) — true 时跳过 validator 循环（调试用）。**不豁免 Step 2.5 送信前核验**。
-- `choices` (optional) — canonical JSON object for one selected email or a list for multiple emails. Each row must contain the exact non-empty `email_id`, explicit boolean `first_choice`, non-empty `signature_name`, and non-empty `learning`. `mode: both|followup` additionally requires non-empty, non-placeholder `initial_sent_date`; `mode: first` does not. Those five plus the existing optional `followup_subject` and `email_address` are the whole public row schema — a row carrying any other key (including `subject`/`alma_mater`) or a malformed optional value fails with `invalid_choices_schema` and renders nothing. `email_address` only confirms the verified recipient; see Step 2.5 item 7.
+- `choices` (optional) — canonical JSON object for one selected email or a list for multiple emails. Each row must contain the exact non-empty `email_id`, explicit boolean `first_choice`, non-empty `signature_name`, and non-empty `learning`. `mode: both|followup` additionally requires non-empty, non-placeholder `initial_sent_date`; `mode: first` does not. Those five plus the existing optional `followup_subject` and `email_address` are the whole public row schema — a row carrying any other key (including `subject`/`alma_mater`) fails with `invalid_choices_schema` and renders nothing. `email_address` only confirms the verified recipient; see Step 2.5 item 7.
 
 When supplied, preserve `choices` exactly in a temporary `/tmp` JSON file and
 pass it through `--choices`; do not fill defaults, translate values, or map by
@@ -201,7 +201,7 @@ If `folder_path` missing → return the error JSON.
 ```json
 {"email_id": "...", "first_choice": false, "signature_name": "...", "learning": "<选中候选或自填>", "initial_sent_date": "<初次发送日期>"}
 ```
-   `first_choice` must be boolean, `signature_name` and `learning` must be non-empty, and `initial_sent_date` is required only for `both|followup` and may not be a `{{...}}` placeholder. The caller must write this value unchanged to `/tmp/<教授名>_邮件_results/choices.json`; it is not a persisted product fact. If no choices were supplied, OpenCode asks these questions once with `question`; Codex returns `needs_input` instead of guessing. Rows are limited to the seven public keys（见 Input `choices`）：白名单外的 key（含 `subject`/`alma_mater`）与畸形的 `followup_subject`/`email_address` 一律 `invalid_choices_schema`，runner 不会忽略后照常渲染。
+   `first_choice` must be boolean, `signature_name` and `learning` must be non-empty, and `initial_sent_date` is required only for `both|followup` and may not be a `{{...}}` placeholder. The caller must write this value unchanged to `/tmp/<教授名>_邮件_results/choices.json`; it is not a persisted product fact. If no choices were supplied, OpenCode asks these questions once with `question`; Codex returns `needs_input` instead of guessing. Rows are limited to the seven public keys（见 Input `choices`）：白名单外的 key（含 `subject`/`alma_mater`）一律 `invalid_choices_schema`，runner 不会忽略后照常渲染。
 3. 跑 `stage5-plan --mode both --result <raw result> --choices <choices>`：runner 校验首封 result 契约 → 确定性拼装首封和跟进草稿（跟进 Subject 默认 `Re:` + 首封 Subject；收件邮箱取自已核验的 `_contact_verify.json`，不是取自行里的地址；研究方向、学校、研究科、入学信息和署名来自同一封邮件记录；初次日期来自 choices）→ 返回两个 `draft`，其 `output_id` 分别为 `<email_id>` 和 `<email_id>::followup`，各自带 `protected` 与 `banned`。
 
 ### Step 5 — humanizer-ja 过稿（business モード）

@@ -64,10 +64,6 @@ Codex-specific runtime calling convention and is not persisted.
   from `info.json` + `boshu_analysis.json` (or text the user hard-codes in
   `套磁模板.md`) and `{{出身校}}` is a renderer default, so neither is a caller
   field. Do not publish runner internals as new caller fields.
-- When present, `followup_subject` must be a non-empty placeholder-free string
-  and `email_address` must be one non-empty address string with no whitespace
-  and no `{{...}}`; a `null`, number, list or blank string is a shape error,
-  not an omitted field.
 - `_contact_verify.json` `items.email.value` (the Step 2.5 送信前核验 verdict)
   is the **only** recipient authority. `choices.email_address` is the caller's
   explicit recipient *decision* and may only confirm it: an address that

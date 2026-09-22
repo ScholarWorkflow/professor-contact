@@ -257,9 +257,6 @@ Codex 自带的 typed spawn 参数。它是可选的 canonical JSON 输入，且
   `invalid_choices_schema` 拒绝，绝不静默忽略后照常渲染：Subject 由
   `info.json` + `boshu_analysis.json`（或用户在 `套磁模板.md` 写死的文本）决定，
   `{{出身校}}` 由 runner 缺省值决定，都不是 caller 可覆盖的事实。
-- `followup_subject` 给出现时必须是非空、无 `{{...}}` 占位的字符串；
-  `email_address` 给出现时必须是单个、非空、无空白无占位的地址串。形状不符同样是
-  `invalid_choices_schema`，不接受 `null`/数字/数组伪装成"未提供"。
 - **收件人只有一份权威**：`_contact_verify.json` 的 `items.email.value`（Step 2.5
   送信前核验结论）。`choices.email_address` 只是调用方对收件人的**明确答复**，
   用来确认这份权威：它与已核验地址一致（忽略大小写）才可通过；不一致 →
@@ -494,7 +491,7 @@ Codex 的 non-interactive 执行（`codex exec`）没有「暂停一个嵌套子
 
 #### Codex 下的 Stage 5：caller choices 作为业务输入
 
-调用方可以把完整的 canonical JSON `choices` 作为 Stage 5 业务输入交给 `professor-contact-email-generator`。它不是 Codex runtime 的委派参数，也不是新的长期状态文件：调用方只在本轮把 JSON 原样写入临时文件，随后通过现有 runner 的 `--choices <临时文件>` 传入；不得默认、翻译、按位置重排或重新映射字段。每行必须带真实的非空 `email_id`、布尔 `first_choice`、非空 `signature_name` 与 `learning`；`both`/`followup` 还必须带真实的 `initial_sent_date`，`first` 不要求该日期。公开字段只有这七个，白名单外的 key（含 `subject`、`alma_mater`）与被写坏的 `followup_subject`/`email_address` 都被 `invalid_choices_schema` 拒绝；`email_address` 只能确认 `_contact_verify.json` 里已核验的收件地址，不一致或抢先于核验即 `recipient_conflict`（详见 5.0）。缺少完整 `choices` 时返回 `needs_input` 且不写最终邮件；有 choices 时仍由 runner 负责收件人权威、contact-evidence、冲突与验证门禁，且门禁通过前根本不读 choices。
+调用方可以把完整的 canonical JSON `choices` 作为 Stage 5 业务输入交给 `professor-contact-email-generator`。它不是 Codex runtime 的委派参数，也不是新的长期状态文件：调用方只在本轮把 JSON 原样写入临时文件，随后通过现有 runner 的 `--choices <临时文件>` 传入；不得默认、翻译、按位置重排或重新映射字段。每行必须带真实的非空 `email_id`、布尔 `first_choice`、非空 `signature_name` 与 `learning`；`both`/`followup` 还必须带真实的 `initial_sent_date`，`first` 不要求该日期。公开字段只有这七个，白名单外的 key（含 `subject`、`alma_mater`）被 `invalid_choices_schema` 拒绝；`email_address` 只能确认 `_contact_verify.json` 里已核验的收件地址，不一致或抢先于核验即 `recipient_conflict`（详见 5.0）。缺少完整 `choices` 时返回 `needs_input` 且不写最终邮件；有 choices 时仍由 runner 负责收件人权威、contact-evidence、冲突与验证门禁，且门禁通过前根本不读 choices。
 
 
 ### Stage 3/4 编排边界（业务规则一份，runtime 调用方式分开）
@@ -544,7 +541,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 | `mode` | no | 仅阶段 5：`first`、`both`、`followup`；generator 缺省按 `both` 调用，runner CLI 为兼容旧脚本缺省 `first`。 |
 | `followup_template` | no | 仅阶段 5：跟进模板绝对路径；缺省查找 `套磁邮件/套磁跟进模板.md`。 |
 | `skip_validation` | no | 仅阶段 5：true 时跳过 validator 循环（调试用）。 |
-| `choices` | no | 仅阶段 5：canonical JSON 对象或对象列表；每行是带真实 `email_id` 的 `first_choice`/`signature_name`/`learning`，`both`/`followup` 还需 `initial_sent_date`，可选 `followup_subject`/`email_address`（白名单外 key 与畸形可选值 → `invalid_choices_schema`；`email_address` 只能确认已核验收件人，冲突 → `recipient_conflict`）。缺省时按 runtime 的交互边界停在 `needs_input` 或取得 `question` 答案；不写入长期状态。 |
+| `choices` | no | 仅阶段 5：canonical JSON 对象或对象列表；每行是带真实 `email_id` 的 `first_choice`/`signature_name`/`learning`，`both`/`followup` 还需 `initial_sent_date`，可选 `followup_subject`/`email_address`（白名单外 key → `invalid_choices_schema`；`email_address` 只能确认已核验收件人，冲突 → `recipient_conflict`）。缺省时按 runtime 的交互边界停在 `needs_input` 或取得 `question` 答案；不写入长期状态。 |
 
 **Do NOT** load this skill's body into the subagent prompt — just pass the inputs; the subagent loads its own instructions.
 

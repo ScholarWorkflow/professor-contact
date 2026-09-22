@@ -7631,18 +7631,6 @@ def require_user_choices(email_id: str, choices: Any) -> dict:
         fail("invalid_choices_schema",
              f"{email_id}: choices keys outside the public schema: {unknown}"
              f" (allowed: {list(STAGE5_PUBLIC_CHOICE_KEYS)}).{hint}")
-    if "followup_subject" in choices:
-        value = choices["followup_subject"]
-        if not isinstance(value, str) or not value.strip() or "{{" in value:
-            fail("invalid_choices_schema",
-                 f"{email_id}: followup_subject must be a non-empty string without placeholders")
-    if "email_address" in choices:
-        value = choices["email_address"]
-        if (not isinstance(value, str) or not value.strip() or "{{" in value or
-                re.search(r"\s", value.strip()) or "@" not in value.strip()):
-            fail("invalid_choices_schema",
-                 f"{email_id}: email_address must be one non-empty address string "
-                 "copied from a verified source (no placeholder, no whitespace)")
     return choices
 
 
