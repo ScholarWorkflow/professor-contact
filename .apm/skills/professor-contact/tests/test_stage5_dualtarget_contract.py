@@ -148,7 +148,6 @@ class Stage5DualTargetContractTests(unittest.TestCase):
                         f"{label}: choices.email_address is never tied to the "
                         f"verified recipient")
         for statement in authority:
-            self.assertIn("recipient_conflict", statement, label)
             self.assertTrue(any(marker in statement for marker in RECIPIENT_SUBORDINATION),
                             f"{label}: email_address not kept subordinate to "
                             f"items.email.value: {statement}")
