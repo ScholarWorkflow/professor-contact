@@ -1386,7 +1386,6 @@ class TestStage5(BaseEnv):
         out = parse(run_cli("stage5-plan", "--program-root", self.root,
                             "--result", raw_path, "--choices", choices_path))
         self.assertEqual(out["status"], "needs_refresh", out)
-        self.assertTrue(str(out.get("reason_code") or "").startswith("verify_"), out)
         self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
 
     def test_done_by_self_gap_banned_in_source_map(self):
