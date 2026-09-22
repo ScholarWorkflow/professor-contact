@@ -478,6 +478,27 @@ class Stage3ValidationIngestTests(Stage3DirectionGroupBase):
 
     # -- 10. the record is the producer's, not the caller's ---------------
 
+    def test_second_validator_round_requires_completed_correction(self):
+        self.render_single()
+        self.validator_output([self.finding("候选 dir_A_1")])
+        first = self.record()
+        self.assertEqual(first["round"], 1)
+        self.assertTrue(first["needs_correction"])
+
+        state_path = self.prof_dir / CANDIDATE_STATE
+        before_bytes = state_path.read_bytes()
+        before_validator = json.loads(json.dumps(
+            self.validator_block(), ensure_ascii=False))
+
+        # A second validator result cannot substitute for the required
+        # correction transition, even if that second result says pass.
+        self.validator_output([])
+        rejected = self.record()
+        self.assertEqual(rejected["status"], "error")
+        self.assertEqual(rejected["reason_code"], "validation_correction_required")
+        self.assertEqual(state_path.read_bytes(), before_bytes)
+        self.assertEqual(self.validator_block(), before_validator)
+
     def test_round_and_terminal_result_are_derived_not_supplied(self):
         self.render_two()
         # Junk a caller might invent is ignored: the runner reads only verdict,
@@ -493,6 +514,22 @@ class Stage3ValidationIngestTests(Stage3DirectionGroupBase):
         self.assertEqual(block["results"]["dir_B"]["rounds"], 1)
         self.assertEqual(block["results"]["dir_B"]["result"], "pass")
         self.assertEqual(list(block["pending"]), ["direction:dir_A"])
+
+        # The second validator round is legal only after the runner-authorized
+        # correction plan/finalize transition clears pending while preserving
+        # the round counter.
+        plan = self.correction_plan()
+        self.assertEqual(plan["correction_scopes"], ["direction:dir_A"])
+        corrected = self.generated_doc("dir_A", ["P1", "P2", None])
+        corrected["candidates"][0]["title"] = "候选 dir_A_1 改写"
+        self.results("round-derived-correction", {"dir_A": corrected})
+        correction = self.correction_finalize()
+        self.assertEqual(correction["status"], "ok",
+                         msg=json.dumps(correction, ensure_ascii=False))
+        after_correction = self.validator_block()
+        self.assertEqual(after_correction["round"], 1)
+        self.assertEqual(after_correction["pending"], {})
+
         self.validator_output([])
         self.assertEqual(self.record()["round"], 2)
         final = self.validator_block()
