@@ -36,7 +36,7 @@ builder = _load_module(
 zseed = _load_module(
     "seed_issue39_zotero", TESTS_DIR / "runtime" / "seed_issue39_zotero.py")
 
-PINNED_FIXTURE_SHA = "9cb4547845be323a2a7b59139ee419476f2c7113"
+PINNED_FIXTURE_SHA = "f03aea49d22ca22d5b885569a8d52706d50c8950"
 RUNTIME_KEY = "RT999999"
 ATTACHMENT_KEY = "ATT00001"
 PROFESSOR_DIR = Path("教授研究") / "X分野" / "Example Professor"
