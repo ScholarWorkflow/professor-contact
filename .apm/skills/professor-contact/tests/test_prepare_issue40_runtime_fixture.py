@@ -204,6 +204,20 @@ class PrepareIssue40RuntimeFixtureTest(unittest.TestCase):
             hashlib.sha256((program_root / PROFESSOR_DIR / "papers.json").read_bytes())
             .hexdigest())
 
+    def test_missing_clean_consumer_runner_fails_before_fixture_mutation(self):
+        transport = FakeTransport()
+        with tempfile.TemporaryDirectory(prefix="issue40-empty-consumer.") as tmp:
+            consumer_root = Path(tmp)
+            with evidence_file() as evidence:
+                with self.assertRaises(helper.PrepareError) as ctx:
+                    self.run_helper(
+                        transport, evidence, consumer_root=consumer_root)
+
+        self.assertIn("clean consumer install", str(ctx.exception))
+        self.assertEqual(
+            transport.calls, [],
+            "an invalid clean consumer must fail before mutating the disposable fixture")
+
     def test_builder_default_key_stays_deterministic(self):
         with tempfile.TemporaryDirectory(prefix="issue40-builder-default.") as tmp:
             root = Path(tmp)
