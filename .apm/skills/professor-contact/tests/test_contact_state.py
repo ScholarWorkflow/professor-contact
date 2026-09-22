@@ -1268,17 +1268,21 @@ class TestStage5(BaseEnv):
         raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
         choices_path = self.root / "followup-choice.json"
 
-        for sent_date in (None, "{{初回送信日}}"):
-            choices = dict(self.choices())
-            if sent_date is None:
-                choices.pop("initial_sent_date", None)
-            else:
-                choices["initial_sent_date"] = sent_date
-            choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
-            out = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "both",
-                                "--result", raw_path, "--choices", choices_path))
-            self.assertEqual(out["status"], "error", sent_date)
-            self.assertEqual(out["reason_code"], "missing_user_choice", sent_date)
+        for label, sent_date in (
+                ("missing", None),
+                ("blank", "   "),
+                ("placeholder", "{{初回送信日}}")):
+            with self.subTest(case=label):
+                choices = dict(self.choices())
+                if sent_date is None:
+                    choices.pop("initial_sent_date", None)
+                else:
+                    choices["initial_sent_date"] = sent_date
+                choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+                out = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "both",
+                                    "--result", raw_path, "--choices", choices_path))
+                self.assertEqual(out["status"], "error", label)
+                self.assertEqual(out["reason_code"], "missing_user_choice", label)
 
     def test_stage5_choices_id_mapping_fails_closed(self):
         g1 = self.prepare()
