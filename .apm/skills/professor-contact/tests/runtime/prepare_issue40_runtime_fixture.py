@@ -101,17 +101,19 @@ def _validate_http_url(zotero_http_url: str) -> None:
 
 
 def _contact_targets_script(consumer_root: Path | str | None) -> Path:
-    """Resolve the installed Stage 0 runner; consumer install wins over producer."""
-    candidates = []
+    """Resolve Stage 0 without crossing the clean-consumer boundary."""
     if consumer_root:
-        candidates.append(Path(consumer_root) / ".agents" / "skills"
-                          / "professor-contact" / "scripts" / "contact_targets.py")
-    candidates.append(_RUNTIME_DIR.parents[1] / "scripts" / "contact_targets.py")
-    for candidate in candidates:
+        candidate = (Path(consumer_root) / ".agents" / "skills"
+                     / "professor-contact" / "scripts" / "contact_targets.py")
         if candidate.is_file():
             return candidate
-    raise PrepareError(
-        "contact_targets.py not found in the consumer install or producer tree")
+        raise PrepareError(
+            f"contact_targets.py not found in clean consumer install: {candidate}")
+
+    candidate = _RUNTIME_DIR.parents[1] / "scripts" / "contact_targets.py"
+    if candidate.is_file():
+        return candidate
+    raise PrepareError("contact_targets.py not found in producer tree")
 
 
 def _extract_attachment_key(result: object) -> str:
@@ -198,9 +200,8 @@ def _import_paper_attachment(http_post, zotero_mcp_url: str,
     return _extract_attachment_key(message["result"]), pdf_bytes
 
 
-def _record_stage0_selection(program_root: Path, consumer_root: Path | str | None) -> dict:
-    """Run the official contact_targets select runner on a deterministic input."""
-    script = _contact_targets_script(consumer_root)
+def _record_stage0_selection(program_root: Path, script: Path) -> dict:
+    """Run the already-resolved official contact_targets runner."""
     preview_path = program_root / "教授研究" / "X分野" / builder.PROFESSOR / "方向预筛.json"
     selection = {"direction_ids": [builder.DIRECTION_ID], "notes": {}}
     with tempfile.TemporaryDirectory(prefix="issue40-stage0-input.") as tmp:
@@ -250,10 +251,11 @@ def prepare_runtime_fixture(*, program_root: Path, profile_root: Path,
     _validate_http_url(zotero_http_url)
     _validate_professor_research_sha(professor_research_sha)
     evidence = validate_fixture_evidence(fixture_evidence)
+    consumer_root = Path(consumer_root).resolve() if consumer_root else None
+    stage0_script = _contact_targets_script(consumer_root)
     session, item_key = _seed_canonical_item(http_post, zotero_mcp_url)
     program_root = Path(program_root).resolve()
     profile_root = Path(profile_root).resolve()
-    consumer_root = Path(consumer_root).resolve() if consumer_root else None
     with tempfile.TemporaryDirectory(prefix="issue40-paper-pdf.") as tmp:
         attachment_key, pdf_bytes = _import_paper_attachment(
             http_post, zotero_mcp_url, session, item_key, Path(tmp))
@@ -262,7 +264,7 @@ def prepare_runtime_fixture(*, program_root: Path, profile_root: Path,
         professor_research_sha=professor_research_sha,
         zotero_http_url=zotero_http_url, zotero_mcp_url=zotero_mcp_url,
         item_key=item_key, fixture_run_id=evidence["run_id"])
-    stage0 = _record_stage0_selection(program_root, consumer_root)
+    stage0 = _record_stage0_selection(program_root, stage0_script)
     if not _forbidden_outputs_absent(program_root):
         raise PrepareError(
             "Stage 1–5 canonical outputs already exist; the setup helper must "
