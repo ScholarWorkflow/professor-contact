@@ -103,7 +103,7 @@ class Issue40R2VerifierTests(unittest.TestCase):
         }
 
     def test_named_identity_contradiction_is_diagnostics_only_and_never_gates(self):
-        """fixtures@9 run with --consumer-root fail-closed on the observed
+        """The identity-diagnostics behavior introduced at fixtures@9 and preserved by the current @13 contract fail-closes on the observed
         R2 contradiction (persisted role 'default' vs developer definition
         'paper-analysis').  That surface must be recorded verbatim without
         downgrading the formal delegation verdict or triggering a retry."""

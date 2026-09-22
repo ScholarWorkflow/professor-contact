@@ -1,6 +1,6 @@
 """Deterministic Codex orchestration contract (issue #51/#55 behaviour, issue #47 layout).
 
-The merge gate is intentionally identity-agnostic.  fixtures@9 treats
+The merge gate is intentionally identity-agnostic.  The delegation surface introduced at fixtures@9 and preserved by the current @13 contract treats
 requested_role / loaded_identity as optional diagnostics, so this suite must
 not turn exact child names or named-role matches into PASS/FAIL conditions.
 
