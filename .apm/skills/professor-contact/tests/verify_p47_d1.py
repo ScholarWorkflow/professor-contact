@@ -15,7 +15,7 @@ ANALYZER = "professor-contact-analyzer"
 # event out of generated Codex instructions.  Do not ban the documented
 # `spawn_agent` tool name itself; private namespaces/argument schemas are the
 # unsupported surface, not native delegation.
-CODEX_FORBIDDEN = ("opencode run", "task(", "question(", "spawnAgent")
+CODEX_FORBIDDEN = ("task(", "question(", "spawnAgent")
 
 
 def parse_frontmatter(path: Path) -> tuple[dict[str, object], str]:
@@ -107,6 +107,14 @@ def check(name: str, passed: bool, details: object) -> dict[str, object]:
     return {"name": name, "passed": passed, "details": details}
 
 
+def opencode_run_mentions_are_prohibitions(body: str) -> tuple[bool, list[str]]:
+    """Allow the shell spelling only when the installed Codex contract names it
+    as a forbidden substitute, never as an operative delegation instruction."""
+    mentions = [line.strip() for line in body.splitlines() if "opencode run" in line]
+    allowed = all(re.search(r"禁止用 shell|不得用 shell", line) for line in mentions)
+    return allowed, mentions
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--producer", type=Path, required=True)
@@ -134,6 +142,9 @@ def main() -> int:
         args.producer / "packages" / "professor-contact-opencode" / ".apm" / "skills",
         args.producer / "packages" / "professor-contact-codex" / ".apm" / "skills",
     ]
+    codex_shell_ok, codex_shell_mentions = opencode_run_mentions_are_prohibitions(codex_body)
+    combined_codex_shell_ok, combined_codex_shell_mentions = \
+        opencode_run_mentions_are_prohibitions(combined_codex_body)
     checks = [
         check("codex_r2_agent_unique", len(codex_agents) == 1, {"matches": codex_agents}),
         check("codex_r2_agent_name_matches_contract", codex_data.get("name") == ANALYZER, {"name": codex_data.get("name")}),
@@ -143,7 +154,11 @@ def main() -> int:
             and bool(re.search(r"(?is)(?:delegate|use|委派).*?(?:wait|等待)", codex_body)),
             {"has_paper_analysis": "paper-analysis" in codex_body, "has_style_validator": "professor-contact-style-validator" in codex_body},
         ),
-        check("codex_no_opencode_shell_launch_contract", "opencode run" not in codex_body, None),
+        check(
+            "codex_no_opencode_shell_launch_contract",
+            codex_shell_ok,
+            {"mentions": codex_shell_mentions},
+        ),
         check("codex_no_opencode_task_api_contract", "task(" not in codex_body, None),
         check("codex_no_opencode_question_api_contract", "question(" not in codex_body, None),
         check(
@@ -190,9 +205,15 @@ def main() -> int:
         check(
             "combined_target_no_cross_target_leakage",
             all(token not in combined_codex_body for token in CODEX_FORBIDDEN)
+            and combined_codex_shell_ok
             and "### OpenCode 分支" in combined_opencode_body
             and "### Codex 分支" in combined_opencode_body,
-            {"codex_forbidden": [token for token in CODEX_FORBIDDEN if token in combined_codex_body]},
+            {
+                "codex_forbidden": [
+                    token for token in CODEX_FORBIDDEN if token in combined_codex_body
+                ],
+                "opencode_run_mentions": combined_codex_shell_mentions,
+            },
         ),
         check(
             "shared_business_assets_single_source",
