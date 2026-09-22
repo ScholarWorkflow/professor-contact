@@ -50,6 +50,20 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
         self.assertIn("validator` 字段为空即未完成", header)
         self.assertIn("阅读边界", header)
 
+    def test_correction_round_message_keeps_required_business_input(self):
+        # Batch-6 runtime regression: the correction round said the child
+        # message may ONLY contain validation_file, but idea-generator's Input
+        # contract requires folder_path — the correction agent answered
+        # `missing folder_path` twice, burned the thread budget, and the
+        # second validator never ran. The rule must keep the required
+        # business input while still banning direction_id / issue prose.
+        self.assertRegex(
+            self.text,
+            r"child message = Stage 3 正常业务输入（`folder_path` 等 Input contract 必需字段",
+        )
+        howto = self.text[self.text.index("task(subagent_type: \"professor-contact-idea-generator\", prompt: \"folder_path: <...>\\nvalidation_file:"):]
+        self.assertIn("validation_file: <已记录的 validator 原始 JSON 绝对路径>", howto[:400])
+
     def test_stage3_retry_and_root_inline_forbidden_list_are_load_bearing(self):
         section = self._stage34_orchestration_section()
         for required in (
