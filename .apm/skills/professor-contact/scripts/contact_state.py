@@ -8544,11 +8544,20 @@ def cmd_stage3_record_validation(args) -> None:
     if state_error or state is None:
         fail("missing_candidate_state",
              f"candidate state unreadable: {professor_dir / CANDIDATE_STATE}")
-    evidence = stage3_validation_evidence(Path(args.validation_file), professor_dir, state)
     previous = state.get("validator") if isinstance(state.get("validator"), dict) else {}
     raw_round = previous.get("round")
     if isinstance(raw_round, bool) or not isinstance(raw_round, int):
         raw_round = 0
+    previous_pending = (
+        previous.get("pending") if isinstance(previous.get("pending"), dict) else {}
+    )
+    if raw_round >= 1 and previous_pending:
+        fail(
+            "validation_correction_required",
+            "complete the recorded Stage-3 correction with stage3-plan/finalize "
+            "--validation-file before recording another validator round",
+        )
+    evidence = stage3_validation_evidence(Path(args.validation_file), professor_dir, state)
     round_no = raw_round + 1
     if round_no > STAGE3_VALIDATION_MAX_ROUNDS:
         fail("validation_rounds_exhausted",
