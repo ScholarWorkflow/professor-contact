@@ -150,7 +150,7 @@ def _request(url: str, *, method: str, headers: dict[str, str],
             payload = _read_response(resp, unwrap_sse)
             if response_meta is not None:
                 _write_response_meta(response_meta, resp.headers)
-            sys.stdout.write(payload if payload.endswith("\n") else payload + "\n")
+            sys.stdout.write(payload)
     except urllib.error.HTTPError as exc:  # non-2xx surfaces here as well
         preview = ""
         try:
