@@ -92,6 +92,11 @@ ID-set, recipient authority, contact-evidence, and finalization validation.
 ## Immutable-template override (Issue #9)
 
 1. `套磁模板.md` and `套磁跟进模板.md` are **user-owned immutable inputs**. The user is responsible for preparing, editing or humanizing them before this workflow runs.
+1.5 **Resolve the template/profile root deterministically BEFORE any runner call** — the templates are NOT part of `folder_path`. Resolution order:
+   - explicit `profile_path` input when the caller provides it → `<profile_path>/套磁邮件/`;
+   - else `profile_root` recorded in `<program_root>/fixture-manifest.json` (the runtime-fixture standard layout) → `<profile_root>/套磁邮件/`;
+   - else `<program_root>/../套磁邮件/`, `<program_root>/../../套磁邮件/` (at most two levels up); the caller working directory's `套磁邮件/` counts as the first candidate.
+   Pass the resolved absolute paths to EVERY `stage5-plan` and `stage5-finalize` invocation (`--template`, `--followup-template`, `--profile`). If `套磁模板.md` (and, for `both|followup` modes, `套磁跟进模板.md`) cannot be resolved, return `needs_input` (`reason_code: template_required`) asking for the profile root — never invoke the runner without the template arguments and never fabricate or inline a template yourself.
 2. Stage 5 must never run `humanizer-ja` over an assembled email, template text, Subject, header, signature, fixed request/closing text, or a follow-up body.
 3. Model-created dynamic fields are still limited to the reference contract: `interest_sentences_ja`, `future_aspiration_ja`, and `learning_candidates`. If optional polishing is configured, call `humanizer-ja` only on those dynamic strings **before** template assembly, then write the polished strings back into the result JSON. Do not change schema/kind/email_id/source_map, the required four-sentence structure, or sentence ④'s fixed contract.
 4. User-selected choices such as `learning`, `signature_name`, first-choice wording, dates and explicit subjects are not humanized.
