@@ -64,7 +64,7 @@ OPENCODE_BRANCH_MARKERS = {
         "**OpenCode (native Task/subagent delegation)**",
         "**Codex (non-interactive)**",
     ),
-    "professor-contact-analyzer": ("### OpenCode 分支", "### Codex 分支"),
+    "professor-contact-analyzer": ("### OpenCode 分支", "## Input"),
     "professor-contact-email-generator": (
         "### OpenCode branch",
         "### Codex branch",
