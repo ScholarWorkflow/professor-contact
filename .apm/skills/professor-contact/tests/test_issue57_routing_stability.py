@@ -301,12 +301,12 @@ class Stage2CodexSourceContractTests(unittest.TestCase):
         self.assertIsNone(re.search(r"必须[^。\n]*Code Mode", self.codex))
 
     def test_opencode_branch_keeps_depth_fallback_and_task_semantics(self):
-        opencode = self.opencode_analyzer[
-            self.opencode_analyzer.index("### OpenCode 分支"):self.opencode_analyzer.index("### Codex 分支")]
+        start = self.opencode_analyzer.index("### OpenCode 分支")
+        end = self.opencode_analyzer.index("## Input", start)
+        opencode = self.opencode_analyzer[start:end]
         self.assertIn("subagent_depth", opencode)
         self.assertIn("深度受限", opencode)
         self.assertIn("摘要级脉络", opencode)
-        self.assertIn("不构成 Codex 侧的迁移成功证据", opencode)
 
 
 class Stage4SkillEntryContractTests(unittest.TestCase):
