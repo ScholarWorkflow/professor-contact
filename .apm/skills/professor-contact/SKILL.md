@@ -257,11 +257,10 @@ Codex 自带的 typed spawn 参数。它是可选的 canonical JSON 输入，且
 - `mode: both|followup` 另需非空且非 `{{...}}` 占位的
   `initial_sent_date`；`mode: first` 不要求该字段。
 - 公开字段只有这七个：`email_id`、`first_choice`、`signature_name`、`learning`、
-  `initial_sent_date`、`followup_subject`、`email_address`。出现任何白名单外的
-  key（含历史上从 runner 内部泄漏的 `subject`、`alma_mater`）一律
-  `invalid_choices_schema` 拒绝，绝不静默忽略后照常渲染：Subject 由
-  `info.json` + `boshu_analysis.json`（或用户在 `套磁模板.md` 写死的文本）决定，
-  `{{出身校}}` 由 runner 缺省值决定，都不是 caller 可覆盖的事实。
+  `initial_sent_date`、`followup_subject`、`email_address`。历史 runner
+  内部兼容字段（例如 `subject`、`alma_mater`）不属于公共 API，caller 不得生成或
+  宣传这些字段；Issue #43 不定义这些非公共字段的拒绝/兼容语义，因此也不把它们升级为
+  caller acceptance gate。
 - **收件人只有一份权威**：`_contact_verify.json` 的 `items.email.value`（Step 2.5
   送信前核验结论）。`choices.email_address` 只是调用方对收件人的**明确答复**，
   用来确认这份权威：它与已核验地址一致（忽略大小写）才可通过；不一致 →
@@ -274,7 +273,7 @@ Codex 自带的 typed spawn 参数。它是可选的 canonical JSON 输入，且
   reason_code）。
 
 Caller 必须把 canonical JSON 原样写入一次性的临时 choices 文件并传给
-既有 runner 的 `--choices`。runner 继续负责白名单、类型、缺失、重复/未知/id 集合、
+既有 runner 的 `--choices`。runner 继续负责必填字段/类型、缺失、重复/未知/id 集合、
 收件人权威、contact-evidence 和最终写盘校验；caller 不补默认值、不按数组位置或教授名
 重映射。缺少 choices 时，OpenCode 继续走 `question`；Codex 的
 non-interactive 调用返回既有 `needs_input` 边界，不代选、不最终写盘。
