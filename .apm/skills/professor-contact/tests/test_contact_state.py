@@ -1418,6 +1418,29 @@ class TestStage5(BaseEnv):
         self.assertEqual(out["status"], "needs_refresh", out)
         self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
 
+    def test_stage5_finalize_gate_stops_before_the_choices_file_is_read(self):
+        # Issue #43 freezes verification-before-choices for the Stage-5 runner,
+        # not only for the planning command.  A missing choices file makes the
+        # ordering observable without depending on an exact verify reason code.
+        g1 = self.prepare()
+        info = self.root / "info.json"
+        touched = int(info.stat().st_mtime) + 3600
+        os.utime(info, (touched, touched))
+        raw_path = self.root / "finalize-gated-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        humanized_path = self.root / "finalize-gated-humanized.txt"
+        humanized_path.write_text("unused because verification must stop first", encoding="utf-8")
+        choices_path = self.root / "missing-finalize-gated-choices.json"
+        self.assertFalse(choices_path.exists())
+
+        out = parse(run_cli("stage5-finalize", "--program-root", self.root,
+                            "--result", raw_path, "--humanized", humanized_path,
+                            "--choices", choices_path))
+        self.assertEqual(out["status"], "needs_refresh", out)
+        for surface in self.final_surfaces("first"):
+            self.assertFalse(surface.exists())
+        self.assertFalse((self.prof_dir / "套磁邮件状态.json").exists())
+
     def test_done_by_self_gap_banned_in_source_map(self):
         self.stage2_run(gap_overrides={
             "AAAA1111": {"status": "done_by_self", "evidence": "已由教授后续论文接住"}})
