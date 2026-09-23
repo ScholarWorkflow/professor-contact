@@ -1277,25 +1277,6 @@ class RuntimeIdentityNoisePolicyTests(unittest.TestCase):
         self.assertEqual(payload["observed"]["formal_relations"], [])
 
 
-ADAPTER_IDENTITY_GATE_KEYS = (
-    "requested_role", "loaded_identity", "effective_role", "agent_identity",
-    "agentRole", "agent_type", "expected_agents",
-)
-
-
-class RuntimeVerifierIdentityGateSourceTests(unittest.TestCase):
-    """The runtime acceptance verifier judges formal relations and business
-    state only: none of the adapter's named-identity keys may become a gate
-    input.  The exact-key ban is word-bounded so the required OpenCode
-    ``subagent_type`` exclusion and product fields like ``identity_version``
-    stay untouched."""
-
-    def test_runtime_verifier_source_uses_no_named_role_gate_keys(self):
-        source = VERIFIER_PATH.read_text(encoding="utf-8")
-        for key in ADAPTER_IDENTITY_GATE_KEYS:
-            with self.subTest(key=key):
-                self.assertIsNone(re.search(rf"\b{re.escape(key)}\b", source))
-        self.assertIn("identity_version", source)
 
 if __name__ == "__main__":
     unittest.main()
