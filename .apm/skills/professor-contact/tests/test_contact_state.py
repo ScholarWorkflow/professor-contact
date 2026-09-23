@@ -1441,6 +1441,52 @@ class TestStage5(BaseEnv):
             self.assertFalse(surface.exists())
         self.assertFalse((self.prof_dir / "套磁邮件状态.json").exists())
 
+        # Batch boundary subcase: the gate is whole-batch, not per email —
+        # after professor A passes, a later sibling professor B with no verify
+        # cache must still stop the run before the choices file is read.  The
+        # professor attribution proves the runner really got past A, so the
+        # stop cannot come from leftover state on A.
+        g1 = self.prepare()
+        pack_path = self.root / "教授研究" / "邮件输入.json"
+        pack = json.loads(pack_path.read_text(encoding="utf-8"))
+        b_dir = self.prof_dir.parent / "第二 教授"
+        b_dir.mkdir(parents=True, exist_ok=True)
+        self.assertFalse((b_dir / "_contact_verify.json").exists())
+        b_email_id = "第二 教授::DIR00001::DIR00001_1"
+        b_row = copy.deepcopy(pack["emails"][0])
+        b_row["professor"] = "第二 教授"
+        b_row["professor_dir"] = str(b_dir)
+        b_row["email_id"] = b_email_id
+        pack["emails"].append(b_row)
+        pack_path.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
+        a_raw = self.raw_result(g1)
+        b_raw = copy.deepcopy(a_raw)
+        b_raw["email_id"] = b_email_id
+        batch_raw_path = self.root / "finalize-gated-batch-raw.json"
+        batch_raw_path.write_text(json.dumps([a_raw, b_raw], ensure_ascii=False), encoding="utf-8")
+        a_humanized = self.root / "finalize-gated-batch-a.txt"
+        b_humanized = self.root / "finalize-gated-batch-b.txt"
+        a_humanized.write_text("unused because verification must stop first", encoding="utf-8")
+        b_humanized.write_text("unused because verification must stop first", encoding="utf-8")
+        batch_map_path = self.root / "finalize-gated-batch-map.json"
+        batch_map_path.write_text(json.dumps({
+            a_raw["email_id"]: str(a_humanized),
+            b_email_id: str(b_humanized)}, ensure_ascii=False), encoding="utf-8")
+        batch_choices_path = self.root / "missing-finalize-gated-batch-choices.json"
+        self.assertFalse(batch_choices_path.exists())
+
+        out = parse(run_cli("stage5-finalize", "--program-root", self.root,
+                            "--result", batch_raw_path, "--humanized-map", batch_map_path,
+                            "--choices", batch_choices_path))
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertEqual(out.get("professor"), "第二 教授", out)
+        for surface in self.final_surfaces("first"):
+            self.assertFalse(surface.exists())
+        for ext in ("md", "txt"):
+            self.assertFalse((b_dir / f"套磁邮件.{ext}").exists())
+        self.assertFalse((self.prof_dir / "套磁邮件状态.json").exists())
+        self.assertFalse((b_dir / "套磁邮件状态.json").exists())
+
     def test_done_by_self_gap_banned_in_source_map(self):
         self.stage2_run(gap_overrides={
             "AAAA1111": {"status": "done_by_self", "evidence": "已由教授后续论文接住"}})

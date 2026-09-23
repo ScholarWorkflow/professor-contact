@@ -7961,6 +7961,50 @@ def cmd_stage5_finalize(args) -> None:
         program_root, list(dict.fromkeys(
             e.get("professor") for e in emails if e.get("professor"))))
     decisions = contact_evidence_decisions(emails, resolved_evidence)
+    # Verification hard gate, mirroring cmd_stage5_plan: until every selected
+    # professor's 送信前核验 is usable, no caller row — choices, result rows,
+    # humanized bodies — may be read at all. The per-email loop below consumes
+    # these saved checks so plan and finalize share one verify semantics.
+    verify_checks = {}
+    for email in emails:
+        professor_dir = Path(email.get("professor_dir") or program_root)
+        key = email.get("professor")
+        if key in verify_checks:
+            continue
+        check = verify_state(professor_dir, sources, decisions.get(key))
+        decision = decisions.get(key)
+        if check["ok"] and decision is not None and \
+                decision.get("status") == "needs_refresh":
+            # A frozen-snapshot mismatch makes this professor's pack entry
+            # stale for the whole run regardless of cache usability: the
+            # deterministic repair is a Stage-4 refresh, not a web lookup.
+            check = {"ok": False,
+                     "reason": decision.get("reason_code") or "contact_evidence_snapshot_stale",
+                     "path": None, "data": None}
+        verify_checks[key] = check
+    for professor, check in verify_checks.items():
+        decision = decisions.get(professor)
+        if not check["ok"]:
+            if decision is not None and decision.get("status") == "needs_refresh":
+                soft_exit("needs_refresh", decision.get("reason_code") or
+                          "contact_evidence_snapshot_stale", professor=professor,
+                          message="联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 "
+                                  "邮件输入.json，再重跑阶段 5。未写盘。")
+            soft_exit("needs_refresh", f"verify_{check['reason']}",
+                      professor=professor,
+                      message=f"送信前核验缓存不可用（{check['reason']}）：先完成 Step 2.5 核验。未写盘。")
+        if decision is not None and decision.get("status") not in ("escalate", "needs_refresh"):
+            # Recipient-evidence consistency backstop: an accepted decision
+            # must still match the cache the checklist will print, and the
+            # conflict is resolved before any choices row is read.
+            cache_email_value = str((((check["data"] or {}).get("items") or {}).get("email") or {})
+                                    .get("value") or "").strip()
+            recipient = str(decision.get("recipient_email") or "").strip()
+            if not cache_email_value or cache_email_value.casefold() != recipient.casefold():
+                fail("contact_evidence_mismatch",
+                     f"{professor}: 本地联系方式证据判定 {decision['status']}，收件邮箱应为 "
+                     f"{recipient}；核对表邮箱为「{cache_email_value or '空'}」。"
+                     "请按证据填写 _contact_verify.json，或重建 _联系方式证据.json 后重跑阶段 4。")
     result_path = Path(args.result)
     raw_by_id = load_id_map(result_path, {e.get("email_id") for e in emails}, "email result",
                             exact=not bool(args.email_id))
@@ -8007,34 +8051,14 @@ def cmd_stage5_finalize(args) -> None:
             fail("invalid_result_json", f"{email_id}: {'; '.join(hard)}")
         choices = choices_by_id.get(email_id)
         professor_dir = Path(email.get("professor_dir") or program_root)
-        verify_check = verify_state(professor_dir, sources,
-                                    decisions.get(email.get("professor")))
-        if not verify_check["ok"]:
-            soft_exit("needs_refresh", f"verify_{verify_check['reason']}",
-                      professor=email.get("professor"),
-                      message=f"送信前核验缓存不可用（{verify_check['reason']}）：先完成 Step 2.5 核验。未写盘。")
-        verify = verify_check["data"]
+        # The whole-batch verification gate above already stopped on any
+        # unusable professor before choices were read; consume its saved
+        # result instead of re-deriving a second verify semantics.
+        verify = verify_checks[email.get("professor")]["data"]
         warnings = (verify.get("items") or {}).get("warnings") or []
         decision = decisions.get(email.get("professor"))
-        if decision and decision.get("status") == "needs_refresh":
-            # Frozen-pack contract: 邮件输入.json is out of sync with the
-            # live contact facts (or predates the snapshot). Nothing may be
-            # generated from a pack Stage 5 cannot replay — the deterministic
-            # fix is a Stage-4 refresh, not a web lookup.
-            soft_exit("needs_refresh", decision.get("reason_code") or
-                      "contact_evidence_snapshot_stale",
-                      professor=email.get("professor"),
-                      message="联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 "
-                              "邮件输入.json，再重跑阶段 5。未写盘。")
         cache_email_value = str(((verify.get("items") or {}).get("email") or {})
                                 .get("value") or "").strip()
-        if decision and decision["status"] not in ("escalate", "needs_refresh"):
-            recipient = str(decision["recipient_email"] or "").strip()
-            if not cache_email_value or cache_email_value.casefold() != recipient.casefold():
-                fail("contact_evidence_mismatch",
-                     f"{email_id}: 本地联系方式证据判定 {decision['status']}，收件邮箱应为 "
-                     f"{recipient}；核对表邮箱为「{cache_email_value or '空'}」。"
-                     "请按证据填写 _contact_verify.json，或重建 _联系方式证据.json 后重跑阶段 4。")
         # Past the verification gate: only now may this row be validated, and
         # its explicit address only ever confirm the verified authority.
         require_user_choices(email_id, choices)
