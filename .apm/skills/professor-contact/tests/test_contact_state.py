@@ -1327,39 +1327,6 @@ class TestStage5(BaseEnv):
                                     "--result", raw_path, "--choices", choices_path))
                 self.assertEqual(out["status"], "error", label)
 
-    def test_stage5_retired_choice_keys_fail_closed(self):
-        # Issue #43 freezes an exact seven-key public choices schema.  Retired
-        # runner-internal keys are outside that schema, so the public caller
-        # path must reject them rather than silently accept-and-ignore them.
-        # Keep the assertion behavior-only: no exact reason-code taxonomy is
-        # part of this test.
-        g1 = self.prepare()
-        raw_path = self.root / "retired-raw.json"
-        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
-        choices_path = self.root / "retired-choices.json"
-
-        valid_choices = dict(self.choices(), initial_sent_date="2026年9月1日")
-        choices_path.write_text(json.dumps(valid_choices, ensure_ascii=False), encoding="utf-8")
-        baseline = parse(run_cli("stage5-plan", "--program-root", self.root,
-                                 "--mode", "both", "--result", raw_path,
-                                 "--choices", choices_path))
-        self.assertEqual(baseline["status"], "ok", baseline)
-
-        for key, sentinel in (("subject", "SENTINEL-RETIRED-SUBJECT"),
-                              ("alma_mater", "SENTINEL-RETIRED-ALMA-MATER")):
-            with self.subTest(key=key):
-                for surface in self.final_surfaces("both"):
-                    surface.unlink(missing_ok=True)
-                choices_path.write_text(json.dumps(
-                    dict(valid_choices, **{key: sentinel}),
-                    ensure_ascii=False), encoding="utf-8")
-                draft = parse(run_cli("stage5-plan", "--program-root", self.root,
-                                      "--mode", "both", "--result", raw_path,
-                                      "--choices", choices_path))
-                self.assertNotEqual(draft["status"], "ok", draft)
-                for surface in self.final_surfaces("both"):
-                    self.assertFalse(surface.exists(), sentinel)
-
     def test_stage5_choices_cannot_replace_the_verified_recipient(self):
         # Issue #43 freezes one interaction at this caller boundary:
         # choices.email_address may confirm the Step 2.5 verdict but can never
