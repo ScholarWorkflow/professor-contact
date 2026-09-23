@@ -374,7 +374,7 @@ non-interactive 调用返回既有 `needs_input` 边界，不代选、不最终�
   - `套磁信息.md` — profile（研究兴趣、背景[出身校/专业/工作经历]、想做/正在想的课题方向、语言偏好）。
   - `套磁模板.md` — 可覆盖首封邮件模板（含 `{{}}` 占位符；不建则阶段 5 用内嵌黄金骨架）。
   - `套磁跟进模板.md` — 可覆盖无回复跟进模板（可选；不建则使用内嵌模板）。可用占位符：`{{先生名}}` `{{大学}}` `{{研究科}}` `{{学位}}` `{{入学年度}}` `{{入学月}}` `{{出身校}}` `{{氏名}}` `{{初回送信日}}` `{{研究主题}}` `{{メールアドレス}}`。
-- **查找链**：`<调用方工作目录>/套磁邮件/套磁信息.md`（或 套磁模板.md）首选；subagent 找不到时读 `<program_root>/fixture-manifest.json` 的 `profile_root` 字段（运行时 fixture 的标准布局），用 `<profile_root>/套磁邮件/`；仍找不到再向上搜 `<program_root>` 的 `../套磁邮件/`、`../../套磁邮件/`（最多 2 级）。**阶段 5 把解析出的 `套磁模板.md`/`套磁跟进模板.md` 绝对路径显式传给 runner（`--template`/`--followup-template`）；解析不到时返回 `needs_input`，绝不无模板参数调用 runner、绝不自造模板。**
+- **查找链**：`<调用方工作目录>/套磁邮件/套磁信息.md`（或 套磁模板.md）首选；subagent 找不到时向上搜 `<program_root>` 的 `../套磁邮件/`、`../../套磁邮件/`（最多 2 级）。
 
 没写 profile → 阶段 3 只按论文内容生成想法、不做与用户真实兴趣的契合评估（并在报告注明）；阶段 5 缺字段（如姓名）交互补齐。
 
@@ -430,7 +430,7 @@ task(subagent_type: "professor-contact-idea-generator", prompt: "folder_path: <.
 task(subagent_type: "professor-contact-selection", prompt: "folder_path: <...>\nselection: <可选，直接给选择，跳过交互>")
 
 # 阶段 5：默认同时生成首封邮件和无回复跟进邮件
-task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <...>\nmode: both\nprofile_path: <可选，套磁邮件/ 模板与套磁信息所在根；缺省按查找链解析>\nchoices: <可选 canonical JSON；缺省由 question 取得>")
+task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <...>\nmode: both\nchoices: <可选 canonical JSON；缺省由 question 取得>")
 
 # 只生成首封或单独补生成跟进
 task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <...>\nmode: first|followup\nchoices: <可选 canonical JSON>")
