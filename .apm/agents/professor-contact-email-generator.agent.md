@@ -56,14 +56,13 @@ Codex-specific runtime calling convention and is not persisted.
   `first_choice`, a non-empty `signature_name`, and a non-empty `learning`.
 - `mode: both|followup` additionally requires a non-empty,
   non-`{{...}}` `initial_sent_date`; `mode: first` does not.
-- The public row schema is exactly these seven keys: `email_id`,
+- The caller-facing row schema advertises exactly these seven keys: `email_id`,
   `first_choice`, `signature_name`, `learning`, `initial_sent_date`,
-  `followup_subject`, `email_address`. Anything outside it — including the
-  retired runner-internal keys `subject` and `alma_mater` — is rejected with
-  `invalid_choices_schema` and can never alter a rendered email: Subject comes
-  from `info.json` + `boshu_analysis.json` (or text the user hard-codes in
-  `套磁模板.md`) and `{{出身校}}` is a renderer default, so neither is a caller
-  field. Do not publish runner internals as new caller fields.
+  `followup_subject`, `email_address`. Pre-existing runner-internal
+  compatibility fields such as `subject` and `alma_mater` are not public
+  API and callers must not emit them. Issue #43 does not define rejection or
+  compatibility semantics for those non-public fields, so do not turn them
+  into caller fields or acceptance gates.
 - `_contact_verify.json` `items.email.value` (the Step 2.5 送信前核验 verdict)
   is the **only** recipient authority. `choices.email_address` is the caller's
   explicit recipient *decision* and may only confirm it: an address that
@@ -82,8 +81,8 @@ When `choices` is supplied, preserve the object/list and every value exactly:
 write the canonical JSON to a temporary choices file and pass that file to the
 existing runner with `--choices`. Do not add defaults, translate fields, drop
 unknown keys, or map an email by position, professor name, or “first email”.
-The runner remains the sole authority for the public-key whitelist, types,
-ID-set, recipient authority, contact-evidence, and finalization validation.
+The runner remains the sole authority for required fields/types, ID-set,
+recipient authority, contact-evidence, and finalization validation.
 
 ## Direction provenance (issue #8 email-pack v2)
 
