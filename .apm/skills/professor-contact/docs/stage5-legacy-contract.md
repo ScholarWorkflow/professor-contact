@@ -33,7 +33,7 @@ not a Codex typed delegation parameter. The runner remains the owner of
 required-field/type/ID validation and deterministic finalization. The
 public row schema is exactly `email_id`, `first_choice`,
 `signature_name`, `learning`, `initial_sent_date`, `followup_subject`,
-`email_address`. Pre-existing runner-internal compatibility fields such as
+`email_address`. Anything outside it is non-public; pre-existing runner-internal compatibility fields such as
 `subject` and `alma_mater` remain non-public: callers must not generate or
 document them, and Issue #43 does not define their rejection/compatibility
 semantics as an acceptance requirement.
