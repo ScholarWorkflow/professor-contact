@@ -56,7 +56,7 @@ Codex-specific runtime calling convention and is not persisted.
   `first_choice`, a non-empty `signature_name`, and a non-empty `learning`.
 - `mode: both|followup` additionally requires a non-empty,
   non-`{{...}}` `initial_sent_date`; `mode: first` does not.
-- The caller-facing row schema advertises exactly these seven keys: `email_id`,
+- The public row schema is exactly these seven keys: `email_id`,
   `first_choice`, `signature_name`, `learning`, `initial_sent_date`,
   `followup_subject`, `email_address`. Pre-existing runner-internal
   compatibility fields such as `subject` and `alma_mater` are not public
