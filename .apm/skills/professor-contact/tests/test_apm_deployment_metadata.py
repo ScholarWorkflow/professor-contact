@@ -308,12 +308,25 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
             )
 
     def test_stage2_analyzer_has_explicit_target_specific_delegation_contract(self):
-        _, analyzer = _frontmatter_and_body(ANALYZER_PATH)
-        self.assertIn("### OpenCode 分支", analyzer, "Stage 2 analyzer must explain its OpenCode delegation path")
-        self.assertIn("### Codex 分支", analyzer, "Stage 2 analyzer must explain its Codex delegation path")
+        _, opencode_analyzer = _frontmatter_and_body(ANALYZER_PATH)
+        _, codex_analyzer = _frontmatter_and_body(
+            CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md"
+        )
+        self.assertIn(
+            "### OpenCode 分支", opencode_analyzer,
+            "Stage 2 OpenCode projection must explain its native delegation path",
+        )
+        self.assertNotIn(
+            "### Codex 分支", opencode_analyzer,
+            "Codex routing must not leak into the OpenCode projection",
+        )
+        self.assertIn(
+            "### Codex 分支", codex_analyzer,
+            "Stage 2 Codex projection must explain its native delegation path",
+        )
 
-        opencode = _target_branch(analyzer, "### OpenCode 分支", "### Codex 分支")
-        codex = _target_branch(analyzer, "### Codex 分支")
+        opencode = _target_branch(opencode_analyzer, "### OpenCode 分支", "## Input")
+        codex = _target_branch(codex_analyzer, "### Codex 分支", "## Input")
 
         for delegated_name in ("paper-analysis", "professor-contact-style-validator"):
             self.assertIn(delegated_name, opencode, f"OpenCode branch must retain delegation to {delegated_name}")
@@ -340,7 +353,9 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
         self.assertNotIn("agent_path", codex)
 
     def test_stage2_codex_noninteractive_choice_uses_fresh_root_and_persisted_state(self):
-        _, analyzer = _frontmatter_and_body(ANALYZER_PATH)
+        _, analyzer = _frontmatter_and_body(
+            CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md"
+        )
         skill = SKILL_PATH.read_text(encoding="utf-8")
         stage2_docs = f"{skill}\n{analyzer}"
 
@@ -378,7 +393,9 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
         )
 
     def test_stage2_analyzer_keeps_business_concurrency_limit_separate_from_codex_thread_limit(self):
-        _, analyzer = _frontmatter_and_body(ANALYZER_PATH)
+        _, analyzer = _frontmatter_and_body(
+            CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md"
+        )
         self.assertRegex(
             analyzer,
             r"(?:同时|同批)[^\n]{0,80}最多[^\n]{0,40}(?:\*\*)?3(?:\*\*)?[^\n]{0,80}paper-analysis",
@@ -699,7 +716,7 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
 
     def test_opencode_task_delegation_branch_survives_the_depth_boundary_fix(self):
         _, body = _frontmatter_and_body(ANALYZER_PATH)
-        opencode = _target_branch(body, "### OpenCode 分支", "### Codex 分支")
+        opencode = _target_branch(body, "### OpenCode 分支", "## Input")
         self.assertIn(
             "用 OpenCode 官方 Task 委派方式启动 `paper-analysis`",
             opencode,
