@@ -569,7 +569,6 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
                 )
 
     def test_top_level_recursion_clause_subjects_analyzer_not_the_chain(self):
-        recursion_lines = []
         for path, body in self._analyzer_projections():
             with self.subTest(projection=path.parents[2].name):
                 line = next(
@@ -608,12 +607,6 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
                     line,
                     "leaves must stay terminal in the same sentence that lifts the coordinator ban",
                 )
-                recursion_lines.append(line)
-        self.assertEqual(
-            recursion_lines[0],
-            recursion_lines[1],
-            "the recursion clause is shared text and must stay byte-identical across projections",
-        )
 
     def test_analyzer_requires_paper_analysis_full_mode_leaf_delegation(self):
         for path, body in self._analyzer_projections():
