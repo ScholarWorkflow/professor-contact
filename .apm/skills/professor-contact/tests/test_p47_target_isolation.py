@@ -46,8 +46,14 @@ class P47TargetIsolationTests(unittest.TestCase):
         # metadata contract. This isolation test stays on the distinct body-level
         # risk: the OpenCode projection must keep its native Task branch.
         self.assertIn("### OpenCode 分支", body)
-        self.assertIn("### Codex 分支", body)
         self.assertRegex(body, r"task\s*\(")
+        # Project Consensus keeps Codex routing rules out of the OpenCode
+        # projection. Lock concrete Codex-only operative surfaces only; do not
+        # turn unrelated prose or diagnostics into a source-wide keyword gate.
+        self.assertNotIn("### Codex 分支", body)
+        self.assertNotIn("spawn_agent", body)
+        self.assertNotIn(".codex/agents/", body)
+        self.assertNotIn("codex exec", body.lower())
 
     def test_codex_projection_is_named_agent_only_and_keeps_stage2_delegation(self):
         path = CODEX_PACKAGE / ".apm" / "agents" / f"{ANALYZER_NAME}.agent.md"
