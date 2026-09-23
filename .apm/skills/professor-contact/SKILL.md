@@ -194,7 +194,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_targets.py resolve ...
 
 ### 缓存失效（稳定 reason_code）
 
-所有 `needs_refresh` / `needs_scope_choice` / `degraded` / `needs_decision` 返回稳定 `reason_code`：`profile_changed`、`source_fingerprint_changed`、`missing_input_pack`、`missing_email_pack`、`missing_valid_sidecar`、`gap_status_unknown`、`manual_markdown_changed`、`shortlist_over_limit`、`result_missing`、`invalid_result_json`、`unknown_reference_id`、`blacklisted_gap_anchor`、`invalid_papers_override`、`duplicate_selection`、`duplicate_idea_id`、`duplicate_email_id`、`humanized_map_required`、`invalid_humanized_map`、`missing_user_choice`、`invalid_choices_schema`、`recipient_conflict`、`humanizer_violation`、`verify_stale`、`contact_evidence_snapshot_stale`、`contact_evidence_snapshot_missing` 等。给人读的 Markdown 只显示日常中文解释，不显示内部 hash。
+所有 `needs_refresh` / `needs_scope_choice` / `degraded` / `needs_decision` 返回稳定 `reason_code`：`profile_changed`、`source_fingerprint_changed`、`missing_input_pack`、`missing_email_pack`、`missing_valid_sidecar`、`gap_status_unknown`、`manual_markdown_changed`、`shortlist_over_limit`、`result_missing`、`invalid_result_json`、`unknown_reference_id`、`blacklisted_gap_anchor`、`invalid_papers_override`、`duplicate_selection`、`duplicate_idea_id`、`duplicate_email_id`、`humanized_map_required`、`invalid_humanized_map`、`missing_user_choice`、`recipient_conflict`、`humanizer_violation`、`verify_stale`、`contact_evidence_snapshot_stale`、`contact_evidence_snapshot_missing` 等。给人读的 Markdown 只显示日常中文解释，不显示内部 hash。
 
 阶段 2、3 白话校验结果分别用 `stage2-record-validation`、`stage3-record-validation` 写回各自状态文件的独立 `validator` 字段；不能覆盖阶段数据状态。阶段 5 使用 `stage5-record-validation`，其每条 `issues` 必须是列表，并保留原邮件的模型结果、用户选择、文件路径和 render SHA。
 
@@ -499,7 +499,7 @@ Codex 的 non-interactive 执行（`codex exec`）没有「暂停一个嵌套子
 
 #### Codex 下的 Stage 5：caller choices 作为业务输入
 
-调用方可以把完整的 canonical JSON `choices` 作为 Stage 5 业务输入交给 `professor-contact-email-generator`。它不是 Codex runtime 的委派参数，也不是新的长期状态文件：调用方只在本轮把 JSON 原样写入临时文件，随后通过现有 runner 的 `--choices <临时文件>` 传入；不得默认、翻译、按位置重排或重新映射字段。每行必须带真实的非空 `email_id`、布尔 `first_choice`、非空 `signature_name` 与 `learning`；`both`/`followup` 还必须带真实的 `initial_sent_date`，`first` 不要求该日期。公开字段只有这七个，白名单外的 key（含 `subject`、`alma_mater`）被 `invalid_choices_schema` 拒绝；`email_address` 只能确认 `_contact_verify.json` 里已核验的收件地址，不一致或抢先于核验即 `recipient_conflict`（详见 5.0）。缺少完整 `choices` 时返回 `needs_input` 且不写最终邮件；有 choices 时仍由 runner 负责收件人权威、contact-evidence、冲突与验证门禁，且门禁通过前根本不读 choices。
+调用方可以把完整的 canonical JSON `choices` 作为 Stage 5 业务输入交给 `professor-contact-email-generator`。它不是 Codex runtime 的委派参数，也不是新的长期状态文件：调用方只在本轮把 JSON 原样写入临时文件，随后通过现有 runner 的 `--choices <临时文件>` 传入；不得默认、翻译、按位置重排或重新映射字段。每行必须带真实的非空 `email_id`、布尔 `first_choice`、非空 `signature_name` 与 `learning`；`both`/`followup` 还必须带真实的 `initial_sent_date`，`first` 不要求该日期。caller-facing 公开字段只有这七个；历史 runner 内部兼容字段（如 `subject`、`alma_mater`）不属于公共 API，caller 不得生成或宣传，且 #43 不冻结其内部兼容/拒绝语义；`email_address` 只能确认 `_contact_verify.json` 里已核验的收件地址，不一致或抢先于核验即 `recipient_conflict`（详见 5.0）。缺少完整 `choices` 时返回 `needs_input` 且不写最终邮件；有 choices 时仍由 runner 负责收件人权威、contact-evidence、冲突与验证门禁，且门禁通过前根本不读 choices。
 
 
 ### Stage 3/4 编排边界（业务规则一份，runtime 调用方式分开）
@@ -549,7 +549,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 | `mode` | no | 仅阶段 5：`first`、`both`、`followup`；generator 缺省按 `both` 调用，runner CLI 为兼容旧脚本缺省 `first`。 |
 | `followup_template` | no | 仅阶段 5：跟进模板绝对路径；缺省查找 `套磁邮件/套磁跟进模板.md`。 |
 | `skip_validation` | no | 仅阶段 5：true 时跳过 validator 循环（调试用）。 |
-| `choices` | no | 仅阶段 5：canonical JSON 对象或对象列表；每行是带真实 `email_id` 的 `first_choice`/`signature_name`/`learning`，`both`/`followup` 还需 `initial_sent_date`，可选 `followup_subject`/`email_address`（白名单外 key → `invalid_choices_schema`；`email_address` 只能确认已核验收件人，冲突 → `recipient_conflict`）。缺省时按 runtime 的交互边界停在 `needs_input` 或取得 `question` 答案；不写入长期状态。 |
+| `choices` | no | 仅阶段 5：canonical JSON 对象或对象列表；每行是带真实 `email_id` 的 `first_choice`/`signature_name`/`learning`，`both`/`followup` 还需 `initial_sent_date`，可选 `followup_subject`/`email_address`；历史 runner 内部兼容字段不属于公共 caller API，也不作为 #43 的拒绝验收项；`email_address` 只能确认已核验收件人，冲突 → `recipient_conflict`。缺省时按 runtime 的交互边界停在 `needs_input` 或取得 `question` 答案；不写入长期状态。 |
 
 **Do NOT** load this skill's body into the subagent prompt — just pass the inputs; the subagent loads its own instructions.
 
