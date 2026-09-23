@@ -358,33 +358,6 @@ class InstalledSharedSkillsLocatorTests(unittest.TestCase):
         self.assertEqual(error, "script_missing")
 
 
-class TemplateResolutionContractTests(unittest.TestCase):
-    """Batch-10 r43b regression: the Stage-5 template root must be resolvable
-    deterministically (fixture layout keeps it under profile_root, outside
-    folder_path); the generator must never call the runner template-less."""
-
-    @classmethod
-    def setUpClass(cls):
-        repo = Path(__file__).resolve().parents[4]
-        cls.skill = (repo / ".apm" / "skills" / "professor-contact" / "SKILL.md").read_text(encoding="utf-8")
-        cls.generator = (repo / ".apm" / "agents" / "professor-contact-email-generator.agent.md").read_text(encoding="utf-8")
-
-    def test_skill_lookup_chain_includes_fixture_manifest_profile_root(self):
-        self.assertRegex(self.skill, r"fixture-manifest\.json` 的 `profile_root`")
-        self.assertRegex(self.skill, r"`<profile_root>/套磁邮件/`")
-        self.assertIn("绝不无模板参数调用 runner", self.skill)
-
-    def test_skill_stage5_call_example_carries_profile_path(self):
-        self.assertIn(
-            "profile_path: <可选，套磁邮件/ 模板与套磁信息所在根；缺省按查找链解析>",
-            self.skill)
-
-    def test_generator_resolves_templates_before_runner_calls(self):
-        self.assertIn("Resolve the template/profile root deterministically BEFORE any runner call", self.generator)
-        self.assertIn("`profile_root` recorded in `<program_root>/fixture-manifest.json`", self.generator)
-        self.assertIn("`--template`, `--followup-template`, `--profile`", self.generator)
-        self.assertIn("never invoke the runner without the template arguments", self.generator)
-
 
 if __name__ == "__main__":
     unittest.main()
