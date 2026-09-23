@@ -58,7 +58,7 @@ Codex-specific runtime calling convention and is not persisted.
   non-`{{...}}` `initial_sent_date`; `mode: first` does not.
 - The public row schema is exactly these seven keys: `email_id`,
   `first_choice`, `signature_name`, `learning`, `initial_sent_date`,
-  `followup_subject`, `email_address`. Pre-existing runner-internal
+  `followup_subject`, `email_address`. Anything outside it is non-public; pre-existing runner-internal
   compatibility fields such as `subject` and `alma_mater` are not public
   API and callers must not emit them. Issue #43 does not define rejection or
   compatibility semantics for those non-public fields, so do not turn them
