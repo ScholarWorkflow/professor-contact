@@ -338,6 +338,13 @@ class CodexCallerSkillContractTests(unittest.TestCase):
         self.assertRegex(region, r"(?is)等待该子代理完成并返回结果")
         self.assertRegex(region, r"(?is)不\*\*把子代理的 instructions 复制进父对话里自己执行")
 
+    def test_codex_waits_again_when_child_is_still_running(self):
+        early = self.skill.split("## Stage 收尾硬性步骤", 1)[0]
+        region = self._skill_codex_region()
+        rule = "子代理仍在运行时继续等待，不得结束当前回合"
+        self.assertIn(rule, early)
+        self.assertIn(rule, region)
+
     def test_codex_routing_does_not_require_outer_prompt_delegation_words(self):
         region = self._skill_codex_region()
         self.assertIn("不要求用户在外层请求中补写 agent 名或 delegate to / use 句式", region)

@@ -16,6 +16,7 @@ This skill is the **caller convention** for the 套磁 workflow (套磁 = contac
 - **当前 host 决定调用分支**：当前 host 是 Codex 就只走 Codex 原生 subagent workflow；当前 host 是 OpenCode 就只走 OpenCode 原生 Task。不得通过 CLI 是否安装、命令探测或模型自述改选另一分支。
 - **Codex 的定位与调用是一个动作**：Stage 请求本身就是 routing gate。若当前 Codex 通过程序化工具调用器暴露原生多代理能力，定位该能力并发起 exact named agent 调用属于同一个**真实委派动作**，**不是能力探测前置条件**；不得停在列举/检索结果上，也不得把入口未显示、OpenCode 语法不存在或先前运行失败当成“无法委派”。
 - **先真实调用，再判断失败**：立即按下表选定 installed exact named agent，发起当前运行的原生调用并等待结果。只有该 exact named agent 的本轮调用实际返回 `machine-level failure`，才允许记录 runtime/feature blocker；父线程不得 inline/simulate child。
+- **等待到子代理结束**：一次等待调用返回只说明这次调用结束；若结果显示子代理仍在运行时继续等待，不得结束当前回合。拿到子代理最终结果后再汇报 Stage 结果。
 - **禁止跨执行器 shell fallback**：不得用 shell、`opencode run`、`codex exec`、curl 或另发 eval 请求代替原生委派；不得把 OpenCode `task(...)` 语法写进 Codex 调用。
 
 | 入口 | Codex 第一项路由动作 |
@@ -446,6 +447,7 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 - **delegation target 与 child message 分开**：caller 选择/使用已安装的 exact named custom agent 作为 delegation target；发送给 child 的 `child message` 只能包含该 Stage 的 Input contract 字段和任务约束。不得在 child payload 中写「Delegate this task to ...」或「交给已安装的 ...」这类路由元指令，也不得把 caller 自己收到的路由指令转发给 child；
 - **Stage 请求就是 root 的委派触发条件**：用户要求执行某个 Stage 本身已经触发该 Stage 的 routing gate；不要求用户在外层请求中补写 agent 名或 delegate to / use 句式。当前 Codex root 必须在本轮使用 Codex 原生 subagent workflow，按 routing matrix 选择已安装的 exact named custom agent 作为 delegation target，并等待结果；不得用 shell 调用 `opencode run` 或其它 CLI 冒充 Codex 委派；child 返回后，caller 才把结果用于后续 Stage；
 - 等待该子代理完成并返回结果后，才把结果用于后续 Stage；
+- 一次等待调用返回不等于子代理已完成；子代理仍在运行时继续等待，不得结束当前回合。收到最终结果后才结束或继续本轮。
 - **不**把子代理的 instructions 复制进父对话里自己执行，也**不**让父代理自称目标角色来冒充“已调用指定代理”；
 - **不**假设任何 Codex 官方文档未公开的 spawn API、调用参数或事件字段；runtime 无法用机器字段证明 child/agent 身份时，在证据里如实记录 observability gap，不发明字段补洞。
 
