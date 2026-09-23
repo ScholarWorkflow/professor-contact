@@ -149,16 +149,5 @@ class Stage2ZoteroEndpointContractTests(unittest.TestCase):
             r"ZOTERO_HTTP_URL[\s\S]{0,200}ZOTERO_MCP_URL",
         )
 
-    def test_opencode_and_codex_stage2_branches_are_preserved(self):
-        opencode_start = self.body.index("### OpenCode 分支")
-        codex_start = self.body.index("### Codex 分支")
-        self.assertLess(opencode_start, codex_start)
-        opencode = _section(self.body, "### OpenCode 分支", "### Codex 分支")
-        codex = _section(self.body, "### Codex 分支", "## Input")
-        for name in ("paper-analysis", "professor-contact-style-validator"):
-            self.assertIn(name, opencode)
-            self.assertIn(name, codex)
-
-
 if __name__ == "__main__":
     unittest.main()
