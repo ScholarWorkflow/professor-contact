@@ -119,11 +119,11 @@ class Stage5DualTargetContractTests(unittest.TestCase):
     def assert_public_choice_contract(self, label, section):
         """The natural-language documents expose the same formal caller schema.
 
-        Do not infer policy from prose keywords here. Retirement and recipient
-        authority are business behavior and are covered through the public
-        runner path in test_contact_state.py. The static contract only checks
-        formal field names and that the recipient authority field is referenced
-        beside the caller field.
+        Do not infer rejection semantics for non-public compatibility keys from
+        prose here. This static contract checks only the formally advertised
+        caller field names and that recipient authority is referenced beside the
+        caller field; recipient-authority behavior stays covered through the
+        public runner path in test_contact_state.py.
         """
         declared = self._declared_public_choice_keys(label, section)
         self.assertCountEqual(
@@ -206,8 +206,9 @@ class Stage5DualTargetContractTests(unittest.TestCase):
         legacy = LEGACY_CONTRACT.read_text(encoding="utf-8")
 
         # The authoritative public-input declarations, rather than incidental
-        # wording, are the source-level contract. Runtime tests own fail-closed
-        # retirement and recipient-authority behavior.
+        # wording, are the source-level contract. Non-public compatibility-key
+        # semantics are intentionally outside this acceptance; runner tests own
+        # recipient-authority behavior.
         self.assert_public_choice_contract(
             "generator agent",
             self._section(body, "## Stage 5 caller Input contract",
