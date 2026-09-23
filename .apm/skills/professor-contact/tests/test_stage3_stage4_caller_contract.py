@@ -39,6 +39,31 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
         self.assertLess(validator, validator_wait)
         self.assertIn("root caller", stage3)
 
+    def test_read_first_section_states_stage3_completion_requires_validation_record(self):
+        # Batch-5 runtime regression: the R3-A root read only the first ~280
+        # lines of SKILL.md and never reached the validator-loop section, so it
+        # announced "Stage 3 complete" without stage3-record-validation. The
+        # read-first completion summary must surface that obligation early.
+        header = self.text[: self.text.index("## What this is for")]
+        self.assertIn("Stage 收尾硬性步骤（read first", header)
+        self.assertIn("stage3-record-validation", header)
+        self.assertIn("validator` 字段为空即未完成", header)
+        self.assertIn("阅读边界", header)
+
+    def test_correction_round_message_keeps_required_business_input(self):
+        # Batch-6 runtime regression: the correction round said the child
+        # message may ONLY contain validation_file, but idea-generator's Input
+        # contract requires folder_path — the correction agent answered
+        # `missing folder_path` twice, burned the thread budget, and the
+        # second validator never ran. The rule must keep the required
+        # business input while still banning direction_id / issue prose.
+        self.assertRegex(
+            self.text,
+            r"child message = Stage 3 正常业务输入（`folder_path` 等 Input contract 必需字段",
+        )
+        howto = self.text[self.text.index("task(subagent_type: \"professor-contact-idea-generator\", prompt: \"folder_path: <...>\\nvalidation_file:"):]
+        self.assertIn("validation_file: <已记录的 validator 原始 JSON 绝对路径>", howto[:400])
+
     def test_stage3_retry_and_root_inline_forbidden_list_are_load_bearing(self):
         section = self._stage34_orchestration_section()
         for required in (
@@ -50,6 +75,43 @@ class Stage3Stage4CallerContractTests(unittest.TestCase):
             "stage3-finalize",
             "不重读 Stage 2",
             "不扩展方向事实",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, section)
+
+    def test_stage3_validator_scope_and_correction_handoff_are_exact(self):
+        section = self._stage34_orchestration_section()
+        self.assertIn("child message **只允许**含渲染后的单一教授级", section)
+        self.assertIn("artifact: candidates", section)
+        self.assertIn("validation-file", section)
+        self.assertIn("再次委派 style-validator", section)
+
+    def test_stage3_two_round_limit_is_two_validator_calls(self):
+        section = self._stage34_orchestration_section()
+        for required in (
+            "验证轮 = style-validator 调用次数，不是修订次数",
+            "最多 2 次 style-validator",
+            "第 2 次 validator 返回后禁止再委派 idea-generator",
+            "初次 generator → 第 1 次 validator",
+            "一次修订 generator → 第 2 次 validator",
+        ):
+            self.assertIn(required, section)
+
+    def test_stage3_correction_passes_raw_file_not_issue_prose(self):
+        section = self._stage34_orchestration_section()
+        self.assertIn("validation_file: <原始 JSON 绝对路径>", section)
+        self.assertIn("不得把 issues 摘抄或改写成 prose", section)
+        # BLOCKER 1 (issue #47 review @4e911dd): the caller never nominates the
+        # scope to repair — the recorded round does.
+        self.assertIn("**不得传 direction_id、不得把 issues 摘抄或改写成 prose**", section)
+        self.assertNotIn("direction_id: <失败方向 ID>", section)
+
+    def test_stage3_records_every_round_before_planning_a_correction(self):
+        section = self._stage34_orchestration_section()
+        for required in (
+            "每一轮 validator 返回后先由 runner 记录，再决定是否修正",
+            "`stage3-record-validation` 必须在 `stage3-plan --validation-file` 之前完成",
+            "由它绑定当前渲染 SHA、判定失败范围、累计轮次并返回 `needs_correction`",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, section)

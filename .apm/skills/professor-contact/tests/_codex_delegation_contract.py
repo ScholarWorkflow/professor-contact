@@ -13,7 +13,9 @@ They do not assert which named child was requested or loaded.
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-AGENTS_DIR = REPO_ROOT / ".apm" / "agents"
+ROOT_AGENTS = REPO_ROOT / ".apm" / "agents"
+OPENCODE_AGENTS = REPO_ROOT / "packages" / "professor-contact-opencode" / ".apm" / "agents"
+CODEX_AGENTS = REPO_ROOT / "packages" / "professor-contact-codex" / ".apm" / "agents"
 SKILL_PATH = REPO_ROOT / ".apm" / "skills" / "professor-contact" / "SKILL.md"
 
 ALL_AGENT_NAMES = (
@@ -62,7 +64,7 @@ OPENCODE_BRANCH_MARKERS = {
         "**OpenCode (native Task/subagent delegation)**",
         "**Codex (non-interactive)**",
     ),
-    "professor-contact-analyzer": ("### OpenCode 分支", "### Codex 分支"),
+    "professor-contact-analyzer": ("### OpenCode 分支", "## Input"),
     "professor-contact-email-generator": (
         "### OpenCode branch",
         "### Codex branch",
@@ -72,8 +74,39 @@ OPENCODE_BRANCH_MARKERS = {
 SKILL_CODEX_REGION = ("### Codex 分支", "### Input contract")
 
 
-def agent_path(name: str) -> Path:
-    return AGENTS_DIR / f"{name}.agent.md"
+# Agents that exist only as per-target projections (not in the shared root
+# .apm/agents).  Every other agent document is target-agnostic and lives at the
+# repository root.
+TARGET_SCOPED_AGENTS = {"professor-contact-analyzer"}
+
+
+def codex_agent_path(name: str) -> Path:
+    if name in TARGET_SCOPED_AGENTS:
+        return CODEX_AGENTS / f"{name}.agent.md"
+    return ROOT_AGENTS / f"{name}.agent.md"
+
+
+def opencode_agent_path(name: str) -> Path:
+    if name in TARGET_SCOPED_AGENTS:
+        return OPENCODE_AGENTS / f"{name}.agent.md"
+    return ROOT_AGENTS / f"{name}.agent.md"
+
+
+def all_production_source_paths() -> list[Path]:
+    """Every repo-owned production source document the invariants read.
+
+    The shared root agents plus the two target-scoped analyzer projections.
+    The root analyzer deliberately does not exist after issue #47, so it is not
+    listed here.
+    """
+    paths: list[Path] = [SKILL_PATH]
+    for name in ALL_AGENT_NAMES:
+        if name in TARGET_SCOPED_AGENTS:
+            paths.append(codex_agent_path(name))
+            paths.append(opencode_agent_path(name))
+        else:
+            paths.append(ROOT_AGENTS / f"{name}.agent.md")
+    return paths
 
 
 def read(path: Path) -> str:

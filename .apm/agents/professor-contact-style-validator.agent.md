@@ -60,7 +60,7 @@ You are **professor-contact-style-validator**, the 白话校验 subagent for the
 ### D. 判定与产出
 
 - **verdict**：任何 blocking → `fail`；只有 minor → `pass_with_minor`；干净 → `pass`。
-- 每条 issue 给：`rule` 编号、`severity`、`location`（行号或引文片段 ≤20 字）、`suggestion`（怎么改，一句）。
+- 每条 issue 给：`rule` 编号、`severity`、`location`（行号或引文片段 ≤20 字）、`quote`（**被点名那行渲染文本的逐字片段**，≤40 字，不得改写/翻译/加省略号）、`suggestion`（怎么改，一句）。`candidates` 类的 blocking 条目缺 `quote`、或 `quote` 在该文件里找不到原文，runner 会整份拒绝（`invalid_validation_json` / `validation_quote_not_in_render`）：范围归属由 runner 按 `quote` 落在哪个方向/跨方向小节的渲染文本来判定，不接受你自己指定 direction_id。
 - 不确定是否违规时**倾向报告**并降为 minor——宁可多报让调用方判断，不可漏报。
 
 ## Return value (your single message back to the caller)
@@ -82,5 +82,6 @@ Return ONLY this JSON:
 ## Hard rules
 
 - **只报告不改写**：绝不 write/edit 任何文件；绝不 spawn 子代理。
+- **原始 JSON 就是交接件**：调用方把你这份 `result` + `files[]` 原样存盘交给 runner（阶段 3 `stage3-record-validation` / 阶段 2 `stage2-record-validation`）；调用方不得改写成 `results[]`/`rounds`/`direction_id` 这类规范化结构——轮次与范围只由 runner 推导。
 - **对照事实不做深查**：本校验只管文字与轻量结构；future work 标签真伪、gap_status 一致性由调用方的 Step 3.5 / 断言 D-F 负责，不在你的职责内。
 - 快而糙没关系：grep/python 正则批量扫 + 人工通读可疑段，不必逐句精读长文件。

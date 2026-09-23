@@ -8,7 +8,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "stage2_input_router.py"
-AGENT = ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md"
+AGENT = (
+    ROOT.parents[2]
+    / "packages"
+    / "professor-contact-opencode"
+    / ".apm"
+    / "agents"
+    / "professor-contact-analyzer.agent.md"
+)
 SPEC = importlib.util.spec_from_file_location("stage2_input_router", SCRIPT)
 router = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = router

@@ -1,17 +1,21 @@
-"""Deterministic Codex orchestration contract for issue #55.
+"""Deterministic Codex orchestration contract (issue #51/#55 behaviour, issue #47 layout).
 
-The merge gate is intentionally identity-agnostic.  fixtures@9 treats
+The merge gate is intentionally identity-agnostic.  The delegation surface introduced at fixtures@9 and preserved by the current @13 contract treats
 requested_role / loaded_identity as optional diagnostics, so this suite must
 not turn exact child names or named-role matches into PASS/FAIL conditions.
 
 These tests cover only producer-owned orchestration invariants that are
-mechanically provable from source: delegate and wait when a child is required,
-never inline or simulate the child, fail closed on machine-level delegation
-failure, keep Codex/OpenCode syntax isolated, keep the delegation chain
-non-recursive (the payload carries only this stage's business fields and no
-coordinator delegates to its own machine name), and keep characterization-only
-tool envelopes out of production text.  They also lock the top-level Stage 1–5
-routing matrix and the Stage 3/5 ownership boundaries.
+mechanically provable from source: delegate and wait when a child is required
+through Codex's *documented native subagent/custom-agent delegation* (direct
+delegation to the exact installed name, with no capability probe as a
+prerequisite), never inline or simulate the child, fail closed on a real
+machine-level delegation error, keep Codex/OpenCode invocation syntax isolated,
+keep the delegation chain non-recursive (the payload carries only this stage's
+business fields and no coordinator delegates to its own machine name), keep
+characterization-only tool envelopes out of production text, and lock the
+top-level Stage 1–5 routing matrix and the Stage 3/5 ownership boundaries.  An
+under-development / default-off runtime feature (Code Mode, programmatic
+tool-calling discovery) must never become a production prerequisite.
 """
 from pathlib import Path
 import re
@@ -27,29 +31,74 @@ from _codex_delegation_contract import (  # noqa: E402
     CODEX_NESTED_DELEGATOR_AGENTS,
     CODEX_NON_DELEGATORS,
     OPENCODE_BRANCH_MARKERS,
+    ROOT_AGENTS,
     SKILL_CODEX_REGION,
     SKILL_PATH,
-    agent_path,
+    all_production_source_paths,
+    codex_agent_path,
     frontmatter_and_body,
+    opencode_agent_path,
     read,
     segment,
 )
 
-# The product contract stays at the named-agent level and bans version-private
-# envelopes: a measured tool-search namespace, the raw spawn request shape, or
-# a fixed catalog command from one characterization run.  `spawn_agent` itself
-# is a documented Codex tool name, so only its call form stays out of
-# production instructions.
+# Issue #51 §2 keeps the "no private envelope" requirement in production and
+# bans version-private surfaces: a measured tool-search namespace, private
+# namespace/argument details, or a fixed catalog command from one
+# characterization run.  The documented native `spawn_agent` tool name itself
+# is allowed; assertions stay on the private envelope rather than tool spelling.
 FORBIDDEN_PRIVATE_LITERALS = (
     "ALL_TOOLS",
     "multi_agent_v1__",
-    "spawn_agent(",
     "agent_type=",
     "agent_role=",
 )
 
+# Words that must never appear as an ordinary Codex delegation prerequisite in
+# production source.  `professor-research#26/#27` reconciled the contract to
+# documented native delegation; Code Mode and programmatic tool-calling
+# discovery are under development / default-off and cannot gate a real child.
+CODEX_OBSOLETE_PREREQUISITES = (
+    "Code Mode",
+    "programmatic tool-calling",
+    "discovery surface",
+)
+
 # Each coordinator source document may state the invariant in its own
 # language; every invariant needs at least one of its literals, verbatim.
+# This replaces issue #51's obsolete "discover the capability first" gate and
+# issue #55's routing correction with one documented-native-delegation
+# contract: direct delegation to the exact installed name, no capability probe
+# prerequisite, no shell/eval substitution.
+CODEX_NATIVE_DELEGATION_INVARIANTS = {
+    "documented-native-delegation": (
+        "使用 Codex 官方文档所定义的原生委派能力",
+        "documented native subagent/custom-agent delegation",
+        "需要 child 时直接委派",
+        "directly delegate the PDF fill to the installed named custom agent",
+        "directly delegate to the installed named custom agent",
+    ),
+    "delegate-exact-name-and-wait": (
+        "按 exact installed name 委派已安装的 named custom agent 并等待其结果",
+        "delegate to the exact installed named custom agent and wait for its result",
+        "直接要求 Codex 使用已安装的 exact named custom agent，并等待它返回结果",
+    ),
+    "no-inline-no-shell-eval": (
+        "不得 inline 或模拟 child 的业务",
+        "never inline or simulate the child's work",
+        "不得由 parent inline 模拟或代替 child 完成业务",
+    ),
+    "only-real-machine-error-blocker": (
+        "只有真实的机器级/运行时委派错误才能记为 Codex runtime/feature blocker",
+        "only a real machine-level/runtime delegation error may be recorded as a "
+        "Codex runtime/feature blocker",
+        "只有真实的 machine-level delegation failure 才记录 Codex runtime/feature blocker",
+    ),
+    "no-undocumented-prerequisite": (
+        "都不是普通 Codex 委派的前提",
+        "is a prerequisite for ordinary delegation",
+    ),
+}
 # Runtime evidence for issue #51 showed a second, distinct failure shape: a
 # coordinator received the caller-facing routing sentence verbatim and
 # delegated the task to a named custom agent with *its own* machine name, so
@@ -72,6 +121,18 @@ CODEX_RECURSION_INVARIANTS = {
         "delegation chain",
     ),
 }
+
+
+def _root_agent(name: str) -> Path:
+    """Physical path of a target-agnostic (root) agent source document."""
+    return ROOT_AGENTS / f"{name}.agent.md"
+
+
+def agent_path(name: str) -> Path:
+    """Issue #47 layout resolution for the #57 gate suites: shared agents stay
+    at the repository root and the target-scoped analyzer resolves to its
+    Codex projection, which carries the Codex runtime gates."""
+    return codex_agent_path(name)
 
 
 def _first_position(text: str, literals) -> int:
@@ -102,22 +163,63 @@ RECURSION_BOUNDARY_PATTERN = re.compile(
 
 def _codex_branch(name: str) -> str:
     markers = CODEX_BRANCH_MARKERS[name]
-    body = frontmatter_and_body(agent_path(name))[1]
+    body = frontmatter_and_body(codex_agent_path(name))[1]
     return segment(body, markers[0], markers[1])
 
 
 def _opencode_branch(name: str) -> str:
     markers = OPENCODE_BRANCH_MARKERS[name]
-    body = frontmatter_and_body(agent_path(name))[1]
+    body = frontmatter_and_body(opencode_agent_path(name))[1]
     return segment(body, markers[0], markers[1])
 
 
 class CodexDelegationInventoryTests(unittest.TestCase):
-    def test_source_inventory_partitions_the_eight_repo_agents(self):
+    """Issue #47 Phase 2: logical identity inventory and physical layout are
+    two distinct invariants.  test_p47_target_isolation.py is the layout
+    authority; these tests prove the #52 inventory helper does not silently
+    assume one analyzer file under the shared root."""
+
+    def test_logical_source_inventory_partitions_the_eight_repo_agents(self):
         delegators = set(CODEX_NESTED_DELEGATOR_AGENTS)
         leaves = set(CODEX_NON_DELEGATORS)
         self.assertFalse(delegators & leaves)
         self.assertEqual(delegators | leaves, set(ALL_AGENT_NAMES))
+
+    def test_root_analyzer_is_absent_and_both_target_projections_exist(self):
+        analyzer = "professor-contact-analyzer"
+        self.assertFalse(
+            (ROOT_AGENTS / f"{analyzer}.agent.md").exists(),
+            "issue #47 removed the mixed-target root analyzer; do not restore it",
+        )
+        self.assertTrue(codex_agent_path(analyzer).exists())
+        self.assertTrue(opencode_agent_path(analyzer).exists())
+
+    def test_both_analyzer_projections_keep_the_same_machine_name(self):
+        for path in (
+            codex_agent_path("professor-contact-analyzer"),
+            opencode_agent_path("professor-contact-analyzer"),
+        ):
+            with self.subTest(path=path):
+                frontmatter, _ = frontmatter_and_body(path)
+                self.assertIn("name: professor-contact-analyzer", frontmatter)
+
+    def test_seven_shared_agents_resolve_to_the_root_for_both_targets(self):
+        shared = [name for name in ALL_AGENT_NAMES if name != "professor-contact-analyzer"]
+        self.assertEqual(len(shared), 7)
+        for name in shared:
+            with self.subTest(name=name):
+                self.assertEqual(codex_agent_path(name), _root_agent(name))
+                self.assertEqual(opencode_agent_path(name), _root_agent(name))
+                self.assertTrue(_root_agent(name).exists())
+
+    def test_production_source_paths_cover_skill_plus_seven_root_agents_plus_two_analyzers(self):
+        paths = all_production_source_paths()
+        self.assertIn(SKILL_PATH, paths)
+        # 7 shared root agents + 2 target-scoped analyzer projections = 9 agent docs
+        self.assertEqual(len(paths), 1 + 7 + 2)
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertTrue(path.exists(), f"missing production source: {path}")
 
 
 class CodexNestedDelegatorContractTests(unittest.TestCase):
@@ -180,14 +282,14 @@ class CodexNestedDelegatorContractTests(unittest.TestCase):
         self.assertIn("omitting it when absent", branch)
 
     def test_analyzer_stage2_business_concurrency_rule_is_untouched(self):
-        body = frontmatter_and_body(agent_path("professor-contact-analyzer"))[1]
+        body = frontmatter_and_body(codex_agent_path("professor-contact-analyzer"))[1]
         self.assertRegex(
             body,
             r"(?is)max_concurrent_threads_per_session[\s\S]{0,300}(?:不等价|不能互相替代)",
         )
 
     def test_email_generator_stage5_business_contract_is_untouched(self):
-        body = frontmatter_and_body(agent_path("professor-contact-email-generator"))[1]
+        body = frontmatter_and_body(_root_agent("professor-contact-email-generator"))[1]
         self.assertIn("dynamic-fields-only", body)
         self.assertIn("Do not pass `--humanized` or `--humanized-map`", body)
         self.assertIn("needs_input", _codex_branch("professor-contact-email-generator"))
@@ -209,10 +311,10 @@ class CodexLeafAgentTests(unittest.TestCase):
         }
         for leaf, needle in expectations.items():
             with self.subTest(leaf=leaf):
-                self.assertIn(needle, read(agent_path(leaf)))
+                self.assertIn(needle, read(_root_agent(leaf)))
 
     def test_idea_generator_codex_sibling_boundary_stays_caller_owned(self):
-        body = frontmatter_and_body(agent_path("professor-contact-idea-generator"))[1]
+        body = frontmatter_and_body(_root_agent("professor-contact-idea-generator"))[1]
         start = body.index("**Codex 分支（调用线程 sibling 编排；本 agent 不启动任何子代理）**")
         branch = body[start:]
         self.assertIn("调用线程", branch)
@@ -235,6 +337,13 @@ class CodexCallerSkillContractTests(unittest.TestCase):
         self.assertIn("当前 Codex root 必须在本轮使用 Codex 原生 subagent workflow", region)
         self.assertRegex(region, r"(?is)等待该子代理完成并返回结果")
         self.assertRegex(region, r"(?is)不\*\*把子代理的 instructions 复制进父对话里自己执行")
+
+    def test_codex_waits_again_when_child_is_still_running(self):
+        early = self.skill.split("## Stage 收尾硬性步骤", 1)[0]
+        region = self._skill_codex_region()
+        rule = "子代理仍在运行时继续等待，不得结束当前回合"
+        self.assertIn(rule, early)
+        self.assertIn(rule, region)
 
     def test_codex_routing_does_not_require_outer_prompt_delegation_words(self):
         region = self._skill_codex_region()
@@ -361,11 +470,14 @@ class EarlyRuntimeRoutingGateTests(unittest.TestCase):
                 gate = body.index(self.GATE_HEADING)
                 self.assertLess(
                     gate,
-                    body.index(OPENCODE_BRANCH_MARKERS[owner][0]),
-                )
-                self.assertLess(
-                    gate,
                     body.index(CODEX_BRANCH_MARKERS[owner][0]),
+                )
+                # Issue #47 target isolation: the OpenCode branch lives in the
+                # OpenCode projection, and the same gate must front-load there.
+                opencode_body = frontmatter_and_body(opencode_agent_path(owner))[1]
+                self.assertLess(
+                    opencode_body.index(self.GATE_HEADING),
+                    opencode_body.index(OPENCODE_BRANCH_MARKERS[owner][0]),
                 )
 
 
@@ -377,12 +489,12 @@ class NestedNativeInvocationCheckpointTests(unittest.TestCase):
     ``codex_runtime_delegation_unavailable`` without making any native child
     call.  The early abstract gate was present, but the long coordinator flow
     diluted it before the execution and return boundaries.  Keep the stable
-    documented tool name (without freezing a private call signature) in every
-    nested gate, and repeat the zero-attempt prohibition at the analyzer's
+    documented tool name in every nested gate without freezing private
+    namespace/parameter/event details, and repeat the zero-attempt prohibition at the analyzer's
     load-bearing execution and return checkpoints.
     """
 
-    def test_nested_gates_name_the_native_tool_without_a_call_signature(self):
+    def test_nested_gates_name_the_native_tool(self):
         for owner in CODEX_NESTED_DELEGATOR_AGENTS:
             with self.subTest(owner=owner):
                 body = frontmatter_and_body(agent_path(owner))[1]
@@ -390,7 +502,6 @@ class NestedNativeInvocationCheckpointTests(unittest.TestCase):
                 end = body.index("\n## ", start + 1)
                 gate = body[start:end]
                 self.assertIn("`spawn_agent`", gate, owner)
-                self.assertNotRegex(gate, r"spawn_agent\s*\(", owner)
 
     def test_analyzer_repeats_native_call_at_execution_boundary(self):
         body = frontmatter_and_body(agent_path("professor-contact-analyzer"))[1]
@@ -400,6 +511,26 @@ class NestedNativeInvocationCheckpointTests(unittest.TestCase):
         self.assertIn("`spawn_agent`", execution)
         self.assertIn("exact named `paper-analysis`", execution)
         self.assertRegex(execution, r"未调用[\s\S]{0,120}不得返回")
+
+    def test_analyzer_waits_for_running_child_without_local_timeout(self):
+        """A wait heartbeat is not a child failure.
+
+        PC47-R2 observed a healthy paper-analysis child still marked running
+        after four wait calls.  The analyzer closed it and invented
+        ``paper_analysis_timeout``, losing the whole Stage 2 output.  The
+        production contract must make the terminal-state boundary explicit.
+        """
+        body = frontmatter_and_body(agent_path("professor-contact-analyzer"))[1]
+        start = body.index("### Codex 分支")
+        end = body.index("## Input", start)
+        codex = body[start:end]
+        for literal in (
+            "单次等待超时只是 heartbeat",
+            "只要 child 状态仍是 running、pending 或 inProgress，就继续等待",
+            "不得按等待次数或本地经过时间关闭、打断或放弃 child",
+            "completed、明确的 machine-level failure 或用户中止",
+        ):
+            self.assertIn(literal, codex)
 
     def test_analyzer_audits_zero_attempt_before_its_only_final_message(self):
         body = frontmatter_and_body(agent_path("professor-contact-analyzer"))[1]
@@ -548,8 +679,7 @@ class CodexStageRoutingContractTests(unittest.TestCase):
                 self.assertRegex(branch, r"(?is)(?:task\s*\(|Task 委派|native Task)")
 
     def test_no_version_private_tool_envelope_reaches_production_contracts(self):
-        docs = [SKILL_PATH] + [agent_path(name) for name in ALL_AGENT_NAMES]
-        for path in docs:
+        for path in all_production_source_paths():
             text = read(path)
             for literal in FORBIDDEN_PRIVATE_LITERALS:
                 with self.subTest(path=path.name, literal=literal):
@@ -557,6 +687,111 @@ class CodexStageRoutingContractTests(unittest.TestCase):
             self.assertNotRegex(text, r"(?i)tool[- ]catalog")
             self.assertNotRegex(text, r"枚举 tool catalog")
             self.assertNotRegex(text, r"必须先枚举[\s\S]{0,40}(?:才|方)允许")
+
+
+class CodexNativeDelegationContractTests(unittest.TestCase):
+    """Issue #47 Phase 4: production source requires documented native
+    delegation (not a Code Mode discovery gate) before awaiting a child."""
+
+    @classmethod
+    def setUpClass(cls):
+        skill = read(SKILL_PATH)
+        cls.branches = {
+            "SKILL.md Codex caller": segment(
+                skill, SKILL_CODEX_REGION[0], SKILL_CODEX_REGION[1]),
+        }
+        for owner in CODEX_NESTED_DELEGATOR_AGENTS:
+            cls.branches[owner] = _codex_branch(owner)
+
+    def _has(self, text: str, invariant: str) -> bool:
+        return any(literal in text
+                   for literal in CODEX_NATIVE_DELEGATION_INVARIANTS[invariant])
+
+    def test_every_codex_coordinator_states_the_native_delegation_invariants(self):
+        for label, branch in self.branches.items():
+            for invariant in CODEX_NATIVE_DELEGATION_INVARIANTS:
+                with self.subTest(doc=label, invariant=invariant):
+                    self.assertTrue(
+                        self._has(branch, invariant),
+                        f"{label}: production source omits {invariant}",
+                    )
+
+    def test_native_delegation_reads_as_a_precondition_to_waiting_on_children(self):
+        for label, branch in self.branches.items():
+            with self.subTest(doc=label):
+                requirement = _first_position(
+                    branch, CODEX_NATIVE_DELEGATION_INVARIANTS["documented-native-delegation"])
+                wait = WAIT_PATTERN.search(branch)
+                self.assertIsNotNone(wait, f"{label}: no wait-for-child-result step")
+                self.assertLess(
+                    requirement, wait.start(),
+                    "documented native delegation must be stated before the "
+                    "delegated child is awaited",
+                )
+
+    def test_generated_codex_projection_keeps_the_native_delegation_invariant(self):
+        """`apm install` embeds each agent body verbatim as
+        `developer_instructions` and copies SKILL.md itself, so the invariant
+        must survive in exactly that projected segment."""
+        for name in CODEX_NESTED_DELEGATOR_AGENTS:
+            frontmatter, body = frontmatter_and_body(codex_agent_path(name))
+            projected = HTML_COMMENT_PATTERN.sub("", body)
+            with self.subTest(agent=name):
+                self.assertTrue(self._has(projected, "documented-native-delegation"),
+                                f"{name}: projection loses the native delegation gate")
+                self.assertFalse(
+                    self._has("\n".join(frontmatter), "documented-native-delegation"),
+                    f"{name}: frontmatter is not projected into Codex instructions",
+                )
+        self.assertTrue(self._has(read(SKILL_PATH), "documented-native-delegation"))
+
+    def test_no_production_codex_source_makes_code_mode_discovery_a_prerequisite(self):
+        """The obsolete Code Mode / programmatic tool-calling discovery gate
+        must not appear anywhere in the production Codex contract."""
+        docs = {
+            "SKILL.md Codex caller": segment(
+                read(SKILL_PATH), SKILL_CODEX_REGION[0], SKILL_CODEX_REGION[1]),
+        }
+        for owner in CODEX_NESTED_DELEGATOR_AGENTS:
+            docs[owner] = _codex_branch(owner)
+        for label, branch in docs.items():
+            for literal in CODEX_OBSOLETE_PREREQUISITES:
+                if literal == "Code Mode":
+                    # #57's reconciliation keeps the literal only as a
+                    # rejected inference source, never a prerequisite.
+                    for match in re.finditer(re.escape(literal), branch):
+                        context = branch[max(0, match.start() - 24):match.start()]
+                        self.assertTrue(
+                            "缺少" in context or "reject" in context.lower(),
+                            f"{label}: Code Mode must stay a rejected inference "
+                            f"source, saw context: {context!r}",
+                        )
+                    self.assertIsNone(
+                        re.search(r"必须[^。\n]*Code Mode", branch),
+                        f"{label}: Code Mode must never be required",
+                    )
+                    continue
+                with self.subTest(doc=label, literal=literal):
+                    self.assertNotIn(literal, branch)
+
+    def test_opencode_branches_stay_free_of_the_codex_native_delegation_wording(self):
+        for owner in CODEX_NESTED_DELEGATOR_AGENTS:
+            with self.subTest(owner=owner):
+                branch = _opencode_branch(owner)
+                self.assertNotIn("Code Mode", branch)
+                self.assertNotIn(
+                    "使用 Codex 官方文档所定义的原生委派能力", branch)
+                self.assertRegex(
+                    branch, r"(?is)(?:task\s*\(|Task 委派|native Task)",
+                    "OpenCode projection keeps its own Task delegation path",
+                )
+
+    def test_leaf_sources_do_not_gain_a_delegation_contract(self):
+        for leaf in CODEX_NON_DELEGATORS:
+            text = read(_root_agent(leaf))
+            for invariant in CODEX_NATIVE_DELEGATION_INVARIANTS:
+                with self.subTest(leaf=leaf, invariant=invariant):
+                    self.assertFalse(self._has(text, invariant))
 
 
 class CodexRecursionGuardTests(unittest.TestCase):
@@ -602,7 +837,7 @@ class CodexRecursionGuardTests(unittest.TestCase):
 
     def test_generated_codex_projection_keeps_the_recursion_guard(self):
         for name in CODEX_NESTED_DELEGATOR_AGENTS:
-            frontmatter, body = frontmatter_and_body(agent_path(name))
+            frontmatter, body = frontmatter_and_body(codex_agent_path(name))
             projected = HTML_COMMENT_PATTERN.sub("", body)
             for invariant in CODEX_RECURSION_INVARIANTS:
                 with self.subTest(agent=name, invariant=invariant):
@@ -623,7 +858,7 @@ class CodexRecursionGuardTests(unittest.TestCase):
 
     def test_leaf_sources_do_not_gain_the_codex_recursion_guard(self):
         for leaf in CODEX_NON_DELEGATORS:
-            text = read(agent_path(leaf))
+            text = read(_root_agent(leaf))
             for invariant in CODEX_RECURSION_INVARIANTS:
                 with self.subTest(leaf=leaf, invariant=invariant):
                     self.assertFalse(self._has(text, invariant))

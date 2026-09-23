@@ -11,7 +11,14 @@ import re
 import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-ANALYZER_PATH = REPO_ROOT / ".apm" / "agents" / "professor-contact-analyzer.agent.md"
+ANALYZER_PATH = (
+    REPO_ROOT
+    / "packages"
+    / "professor-contact-opencode"
+    / ".apm"
+    / "agents"
+    / "professor-contact-analyzer.agent.md"
+)
 
 HTTP_FALLBACK = "http://127.0.0.1:23119"
 MCP_FALLBACK = "http://127.0.0.1:23120/mcp"
@@ -65,9 +72,11 @@ class Stage2ZoteroEndpointContractTests(unittest.TestCase):
     def test_http_endpoint_is_a_base_url_with_production_fallback(self):
         self.assertIn(HTTP_FALLBACK, self.step27)
         self.assertIn("base URL", self.step27)
-        # Execution appends paths to the resolved variable, never to a literal.
+        # The connectivity probe appends paths to the resolved variable; every
+        # post-SID REST execution goes through the helper's relative-path
+        # surface, which resolves the same variable internally.
         self.assertIn('"$ZOTERO_HTTP_URL/connector/ping"', self.step27)
-        self.assertIn('"$ZOTERO_HTTP_URL/api/users/0/', self.body)
+        self.assertIn('stage2_zotero_rpc.py http --path "/api/users/0/', self.body)
 
     def test_mcp_endpoint_is_complete_and_never_double_appends_mcp(self):
         self.assertIn(MCP_FALLBACK, self.step27)
@@ -88,8 +97,15 @@ class Stage2ZoteroEndpointContractTests(unittest.TestCase):
     def test_connectivity_probe_uses_resolved_endpoints_without_literal_ports(self):
         probe_line = next(line for line in self.step27.splitlines()
                           if "Probe Zotero" in line)
+        # The probe is deterministic: the helper resolves both endpoints from
+        # the environment internally; the model never hand-writes a URL.
+        self.assertIn("stage2_zotero_rpc.py probe", probe_line)
         self.assertIn("$ZOTERO_HTTP_URL", probe_line)
         self.assertIn("ZOTERO_MCP_URL", probe_line)
+        self.assertIn("online", probe_line)
+        # A curl-based probe is exactly how the literal production ports crept
+        # back into executed commands; the contract must not allow it.
+        self.assertNotRegex(probe_line, r"curl\s+-")
         for port in ("23119", "23120"):
             self.assertNotIn(port, probe_line)
 
@@ -103,7 +119,9 @@ class Stage2ZoteroEndpointContractTests(unittest.TestCase):
 
     def test_authorship_line_pagination_uses_resolved_http_url(self):
         section = _section(self.body, "1.7 **署名线判定", "2. **判定相关论文")
-        self.assertIn('GET "$ZOTERO_HTTP_URL/api/users/0/collections/', section)
+        self.assertIn(
+            'stage2_zotero_rpc.py http --path "/api/users/0/collections/', section)
+        self.assertNotIn("curl", section)
         for port in ("23119", "23120"):
             self.assertNotIn(port, section)
 
@@ -130,17 +148,6 @@ class Stage2ZoteroEndpointContractTests(unittest.TestCase):
             hard_rules,
             r"ZOTERO_HTTP_URL[\s\S]{0,200}ZOTERO_MCP_URL",
         )
-
-    def test_opencode_and_codex_stage2_branches_are_preserved(self):
-        opencode_start = self.body.index("### OpenCode 分支")
-        codex_start = self.body.index("### Codex 分支")
-        self.assertLess(opencode_start, codex_start)
-        opencode = _section(self.body, "### OpenCode 分支", "### Codex 分支")
-        codex = _section(self.body, "### Codex 分支", "## Input")
-        for name in ("paper-analysis", "professor-contact-style-validator"):
-            self.assertIn(name, opencode)
-            self.assertIn(name, codex)
-
 
 if __name__ == "__main__":
     unittest.main()

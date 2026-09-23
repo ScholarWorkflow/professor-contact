@@ -1,10 +1,30 @@
 #!/usr/bin/env python3
 """Build a machine-readable Codex eval request for issue #32.
 
-This module only constructs the request.  It never invokes Codex, the eval
-server, or a browser.  Chrome's MCP server id is discovered from the clean
-consumer's generated TOML configuration so the request cannot silently bind
-to a guessed server name.
+This module only constructs the request. It never invokes Codex, the eval
+server, or a browser.
+
+Every request declares the canonical case it serves through ``--case``; the
+case, never the prompt text, decides what the request may inject:
+
+``r1``, ``r2``
+    the disposable-Zotero continuity cases: both fixture endpoints are required
+    and localhost network access is granted.
+``r3a``, ``r3b``, ``r4a``, ``r4b``
+    Stage 3-5 cases: no Zotero endpoint and no network override at all, because
+    the production ``stage2_zotero_rpc.py`` treats an unset or empty
+    ``ZOTERO_*`` as the production ``23119/23120`` fallback.
+``browser``
+    the distinct explicit mode reserved for a separate browser-specific recipe;
+    it is the only case that may inject Chrome/NPM wiring.
+
+``--max-agent-threads`` has no default. ``agents.max_concurrent_threads_per_session``
+is a per-session resource ceiling, so the case that is being run owns the value
+and passes it in; a cross-case default here would silently apply one case's
+topology to another and the request builder must not invent one. Omitting it
+fails closed.
+
+Unused optional environment is omitted, never injected as an empty string.
 """
 from __future__ import annotations
 
@@ -19,6 +39,13 @@ from pathlib import Path
 
 class RequestBuildError(RuntimeError):
     pass
+
+
+CANONICAL_CASES = ("r1", "r2", "r3a", "r3b", "r4a", "r4b")
+FIXTURE_ENDPOINT_CASES = ("r1", "r2")
+ISOLATED_CASES = ("r3a", "r3b", "r4a", "r4b")
+BROWSER_CASE = "browser"
+REQUEST_CASES = CANONICAL_CASES + (BROWSER_CASE,)
 
 
 def _toml_string(value: str) -> str:
@@ -82,21 +109,73 @@ def discover_chrome_server_id(consumer_root: Path) -> str:
     return ids[0]
 
 
-def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
+def _non_empty_names(values: dict[str, object]) -> list[str]:
+    return sorted(name for name, value in values.items()
+                  if isinstance(value, str) and value.strip())
+
+
+def _resolve_endpoints(case: str, zotero_http_url: str,
+                       zotero_mcp_url: str) -> tuple[str, str] | None:
+    """Return the fixture endpoints to inject, or ``None`` when the case must not."""
+    supplied = _non_empty_names({"--zotero-http-url": zotero_http_url,
+                                 "--zotero-mcp-url": zotero_mcp_url})
+    if case in ISOLATED_CASES:
+        if supplied:
+            raise RequestBuildError(
+                f"case {case} does not use Zotero; refusing endpoint arguments {supplied} "
+                "because an empty or unused override leaves the production "
+                "23119/23120 fallback reachable")
+        return None
+    if len(supplied) != 2:
+        missing = [name for name in ("--zotero-http-url", "--zotero-mcp-url")
+                   if name not in supplied]
+        raise RequestBuildError(f"case {case} requires fixture Zotero endpoints; "
+                                f"missing {missing}")
+    return (str(zotero_http_url), str(zotero_mcp_url))
+
+
+def build_request(*, case: str, consumer_root: Path, prompt_file: Path, output: Path,
                   model: str = "gpt-5.6-luna", reasoning: str = "low",
                   zotero_http_url: str = "", zotero_mcp_url: str = "",
+                  max_agent_threads: int | None = None,
                   chrome_profile_dir: str = "", chrome_cdp_port: str = "",
                   npm_cache: str = "", timeout: int = 1800) -> dict[str, object]:
     consumer_root = Path(consumer_root).resolve()
     prompt = Path(prompt_file).read_text(encoding="utf-8")
     if not consumer_root.is_dir():
         raise RequestBuildError(f"consumer root does not exist: {consumer_root}")
-    server_id = discover_chrome_server_id(consumer_root)
-    server_key = _toml_key_segment(server_id)
-    # The eval-server passes this as a per-run config override.  Without an
-    # explicit trust entry, Codex does not load the clean consumer's
-    # `.codex/config.toml`, so the MCP env leaves below become an env-only
-    # table and fail configuration parsing.
+    if case not in REQUEST_CASES:
+        raise RequestBuildError(
+            f"unknown case {case!r}; expected one of {list(REQUEST_CASES)}")
+    if max_agent_threads is None:
+        raise RequestBuildError(
+            "max_agent_threads has no default: the ceiling comes from the "
+            "frozen recipe of the case being run")
+    if isinstance(max_agent_threads, bool) or not isinstance(max_agent_threads, int):
+        raise RequestBuildError("max_agent_threads must be an integer")
+    if max_agent_threads < 1:
+        raise RequestBuildError("max_agent_threads must be >= 1")
+    browser_values = {"--chrome-profile-dir": chrome_profile_dir,
+                      "--chrome-cdp-port": chrome_cdp_port,
+                      "--npm-cache": npm_cache}
+    if case in CANONICAL_CASES:
+        supplied = _non_empty_names(browser_values)
+        if supplied:
+            raise RequestBuildError(
+                f"canonical case {case} must stay free of Chrome/NPM wiring; "
+                f"refusing {supplied}; a browser-specific recipe uses case "
+                f"{BROWSER_CASE!r}")
+    else:
+        missing = [name for name in browser_values if name not in _non_empty_names(browser_values)]
+        if missing:
+            raise RequestBuildError(
+                f"case {BROWSER_CASE} is the explicit browser-specific mode; "
+                f"missing {missing}")
+    endpoints = _resolve_endpoints(case, zotero_http_url, zotero_mcp_url)
+
+    # The eval-server passes this as a per-run config override. Without an
+    # explicit trust entry, Codex does not load the clean consumer's generated
+    # project configuration.
     project_trust = (
         "projects=" + "{" + _toml_string(str(consumer_root)) +
         '={trust_level="trusted"}}'
@@ -104,16 +183,32 @@ def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
     config_values = [
         f"model_reasoning_effort={_toml_string(reasoning)}",
         project_trust,
-        f"shell_environment_policy.set.ZOTERO_HTTP_URL={_toml_string(zotero_http_url)}",
-        f"shell_environment_policy.set.ZOTERO_MCP_URL={_toml_string(zotero_mcp_url)}",
-        # `--sandbox workspace-write` alone does not grant network access; the
-        # Zotero fixture endpoints stay unreachable without this override.
-        "sandbox_workspace_write.network_access=true",
-        f"shell_environment_policy.set.NPM_CONFIG_CACHE={_toml_string(npm_cache)}",
-        f"mcp_servers.{server_key}.env.CHROME_PROFILE_DIR={_toml_string(chrome_profile_dir)}",
-        f"mcp_servers.{server_key}.env.CHROME_CDP_PORT={_toml_string(chrome_cdp_port)}",
+        # Recorded as an explicit one-run override instead of mutating the
+        # generated consumer config; the value itself comes from the caller.
+        f"agents.max_concurrent_threads_per_session={max_agent_threads}",
     ]
-    # eval-server prepends ``codex exec``.  Its request contract therefore
+    if endpoints is not None:
+        config_values.extend([
+            f"shell_environment_policy.set.ZOTERO_HTTP_URL={_toml_string(endpoints[0])}",
+            f"shell_environment_policy.set.ZOTERO_MCP_URL={_toml_string(endpoints[1])}",
+            # `--sandbox workspace-write` alone does not grant network access; the
+            # Zotero fixture endpoints stay unreachable without this override.
+            "sandbox_workspace_write.network_access=true",
+        ])
+
+    # Canonical #40/#47 R1-R4 never discover or inject Chrome/NPM state; only
+    # the separately declared browser mode may, and it discovers the server id
+    # from the clean consumer's generated TOML rather than guessing.
+    if case == BROWSER_CASE:
+        server_id = discover_chrome_server_id(consumer_root)
+        server_key = _toml_key_segment(server_id)
+        config_values.extend([
+            f"shell_environment_policy.set.NPM_CONFIG_CACHE={_toml_string(npm_cache)}",
+            f"mcp_servers.{server_key}.env.CHROME_PROFILE_DIR={_toml_string(chrome_profile_dir)}",
+            f"mcp_servers.{server_key}.env.CHROME_CDP_PORT={_toml_string(chrome_cdp_port)}",
+        ])
+
+    # eval-server prepends ``codex exec``. Its request contract therefore
     # accepts only the arguments that follow that executable pair.
     argv = ["--json", "--ephemeral", "--skip-git-repo-check",
             "--sandbox", "workspace-write", "--cd", str(consumer_root),
@@ -135,6 +230,9 @@ def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--case", required=True, choices=REQUEST_CASES,
+                        help="canonical runtime case; it alone decides Zotero, "
+                             "network and Chrome/NPM injection")
     parser.add_argument("--consumer-root", type=Path, required=True)
     parser.add_argument("--prompt-file", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -142,6 +240,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--reasoning", default="low")
     parser.add_argument("--zotero-http-url", default="")
     parser.add_argument("--zotero-mcp-url", default="")
+    parser.add_argument("--max-agent-threads", type=int, default=None,
+                        help="agents.max_concurrent_threads_per_session for this "
+                             "run; there is deliberately no default because the "
+                             "ceiling belongs to the recipe owning the case")
     parser.add_argument("--chrome-profile-dir", default="")
     parser.add_argument("--chrome-cdp-port", default="")
     parser.add_argument("--npm-cache", default="")
@@ -153,15 +255,20 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         request = build_request(
+            case=args.case,
             consumer_root=args.consumer_root, prompt_file=args.prompt_file, output=args.output,
             model=args.model, reasoning=args.reasoning, zotero_http_url=args.zotero_http_url,
-            zotero_mcp_url=args.zotero_mcp_url, chrome_profile_dir=args.chrome_profile_dir,
-            chrome_cdp_port=args.chrome_cdp_port, npm_cache=args.npm_cache, timeout=args.timeout)
+            zotero_mcp_url=args.zotero_mcp_url, max_agent_threads=args.max_agent_threads,
+            chrome_profile_dir=args.chrome_profile_dir,
+            chrome_cdp_port=args.chrome_cdp_port, npm_cache=args.npm_cache,
+            timeout=args.timeout)
     except Exception as exc:
         print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False))
         return 1
-    print(json.dumps({"status": "ok", "output": str(args.output.resolve()),
-                      "timeout": request["timeout"]}, ensure_ascii=False))
+    print(json.dumps({"status": "ok", "case": args.case,
+                      "output": str(args.output.resolve()),
+                      "timeout": request["timeout"],
+                      "max_agent_threads": args.max_agent_threads}, ensure_ascii=False))
     return 0
 
 

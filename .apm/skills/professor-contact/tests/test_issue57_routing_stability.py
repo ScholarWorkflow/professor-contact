@@ -16,7 +16,15 @@ from pathlib import Path
 TESTS_DIR = Path(__file__).resolve().parent
 RUNTIME_DIR = TESTS_DIR / "runtime"
 REPO_ROOT = Path(__file__).resolve().parents[4]
-ANALYZER_PATH = REPO_ROOT / ".apm" / "agents" / "professor-contact-analyzer.agent.md"
+# Issue #47 target isolation: the analyzer is target-scoped, so the #57 Codex
+# source contract reads the Codex projection and the OpenCode-branch contract
+# reads the OpenCode projection.  The shared root analyzer must stay absent.
+ANALYZER_PATH = (
+    REPO_ROOT / "packages" / "professor-contact-codex" / ".apm" / "agents"
+    / "professor-contact-analyzer.agent.md")
+OPENCODE_ANALYZER_PATH = (
+    REPO_ROOT / "packages" / "professor-contact-opencode" / ".apm" / "agents"
+    / "professor-contact-analyzer.agent.md")
 SKILL_PATH = REPO_ROOT / ".apm" / "skills" / "professor-contact" / "SKILL.md"
 
 # The frozen PC53 regression expectation.  The dynamic projection must keep
@@ -243,6 +251,10 @@ class Stage2CodexSourceContractTests(unittest.TestCase):
             raise AssertionError(f"missing analyzer document: {ANALYZER_PATH}")
         cls.analyzer = ANALYZER_PATH.read_text(encoding="utf-8")
         cls.codex = _codex_branch(cls.analyzer)
+        if not OPENCODE_ANALYZER_PATH.exists():
+            raise AssertionError(
+                f"missing analyzer document: {OPENCODE_ANALYZER_PATH}")
+        cls.opencode_analyzer = OPENCODE_ANALYZER_PATH.read_text(encoding="utf-8")
 
     def test_required_child_delegation_is_the_first_action_then_wait(self):
         self.assertIn("原生委派就是处理该 child 的第一个动作", self.codex)
@@ -289,12 +301,12 @@ class Stage2CodexSourceContractTests(unittest.TestCase):
         self.assertIsNone(re.search(r"必须[^。\n]*Code Mode", self.codex))
 
     def test_opencode_branch_keeps_depth_fallback_and_task_semantics(self):
-        opencode = self.analyzer[
-            self.analyzer.index("### OpenCode 分支"):self.analyzer.index("### Codex 分支")]
+        start = self.opencode_analyzer.index("### OpenCode 分支")
+        end = self.opencode_analyzer.index("## Input", start)
+        opencode = self.opencode_analyzer[start:end]
         self.assertIn("subagent_depth", opencode)
         self.assertIn("深度受限", opencode)
         self.assertIn("摘要级脉络", opencode)
-        self.assertIn("不构成 Codex 侧的迁移成功证据", opencode)
 
 
 class Stage4SkillEntryContractTests(unittest.TestCase):
@@ -326,6 +338,12 @@ class Stage4SkillEntryContractTests(unittest.TestCase):
         )
         self.assertIn("selection omitted", self.entry)
         self.assertIn("不是 root 的提前返回条件", self.entry)
+
+    def test_stage4_omitted_selection_forbids_root_preflight_before_delegation(self):
+        """The observed R3-B failure must not recur as an inline root preflight."""
+        self.assertIn("委派前不得读取任何 Stage 4 状态文件", self.entry)
+        self.assertIn("不得先用 shell 或文件工具检查候选", self.entry)
+        self.assertIn("root 自行返回 `needs_input` 视为 routing failure", self.entry)
 
     def test_stage4_entry_does_not_duplicate_child_business_instructions(self):
         # The added entry rule stays at the routing level: no selection

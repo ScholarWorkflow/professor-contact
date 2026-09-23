@@ -11,7 +11,14 @@ import _stage2_handoff_test_support as support
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "stage2_chatgpt_handoff.py"
 SKILL = ROOT / "SKILL.md"
-AGENT = ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md"
+AGENT = (
+    ROOT.parents[2]
+    / "packages"
+    / "professor-contact-opencode"
+    / ".apm"
+    / "agents"
+    / "professor-contact-analyzer.agent.md"
+)
 SPEC = importlib.util.spec_from_file_location("stage2_chatgpt_handoff", SCRIPT)
 handoff = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

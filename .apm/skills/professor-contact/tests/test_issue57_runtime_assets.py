@@ -377,11 +377,29 @@ class Issue57InstallSurfaceTests(unittest.TestCase):
         values.update(overrides)
         return Namespace(**values)
 
+    # The merged install gate deep-validates the generated Stage-5
+    # projection, so that asset carries its real shape instead of a plain
+    # placeholder while every other required file stays a placeholder.
+    GENERATOR_TOML = (
+        'name = "professor-contact-email-generator"\n'
+        "developer_instructions = '''Stage 5 emits the choices object: email_id,\n"
+        "first_choice, signature_name, learning, initial_sent_date; callers pass\n"
+        "--choices and the finalized contact selection.\n"
+        "### Codex branch\n"
+        "Delegate to the installed exact named child and wait for its result.\n"
+        "### humanizer-ja stage-5 constraints\n"
+        "Applies after the choices object is frozen.\n"
+        "'''\n"
+    )
+
     def _consumer_with_all_files(self):
         consumer = self.root / "consumer"
         for relative in verifier.INSTALL_REQUIRED_FILES:
             path = consumer / relative
             path.parent.mkdir(parents=True, exist_ok=True)
+            if relative == ".codex/agents/professor-contact-email-generator.toml":
+                path.write_text(self.GENERATOR_TOML, encoding="utf-8")
+                continue
             path.write_text("installed", encoding="utf-8")
         return consumer
 

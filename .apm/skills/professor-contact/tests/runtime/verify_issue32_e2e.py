@@ -2,9 +2,9 @@
 """Read-only checkpoints for issue #32's Stage 0–5 runtime evaluation.
 
 The verifier observes product state and adapter-provided structured evidence.
-It never repairs product files.  The sole intentional write is the
-``make-stage4-selection`` helper, which models an explicit user selection and
-writes only the requested output path.
+It never repairs product files.  The only intentional writes are the
+``make-stage4-selection`` and ``make-stage5-choices`` helpers, which model
+explicit caller inputs and write only their requested output paths.
 """
 from __future__ import annotations
 
@@ -20,24 +20,43 @@ from typing import Any
 MANIFEST_NAME = "fixture-manifest.json"
 PROFESSOR = "Example Professor"
 DIRECTION_ID = "DIR00001"
-ITEM_KEYS = ("AAAA1111", "BBBB2222")
+CANONICAL_ITEM_KEY = "AAAA1111"
 PROGRAM_STAGE_OUTPUTS = (
     Path("教授研究/套磁目标.json"), Path("教授研究/套磁阶段1候选.json"),
+    Path("教授研究/套磁选择.json"), Path("教授研究/邮件输入.json"),
 )
 PROFESSOR_STAGE_OUTPUTS = (
     Path("套磁候选输入.json"), Path("套磁候选状态.json"),
-    Path("套磁选择.json"), Path("邮件输入.json"),
 )
 INPUT_PACK_KIND = "professor-contact-stage2-input"
 CANDIDATE_STATE_KIND = "professor-contact-stage3-state"
 DIRECTION_IDENTITY_VERSION = "direction-id-v1"
 STAGE3_GENERATOR_CONTRACT_VERSION = "stage3-ideas-v2"
+STAGE5_FINAL_NAMES = (
+    "套磁邮件.md", "套磁邮件.txt", "套磁跟进邮件.md", "套磁跟进邮件.txt",
+)
+STAGE5_CHOICES_SENTINELS = {
+    "first_choice": False,
+    "signature_name": "Fixture Applicant",
+    "learning": "I am studying reproducible research workflows.",
+    "initial_sent_date": "2026-09-15",
+}
+STAGE5_FIRST_CHOICE_PHRASE = "先生の研究室を第一志望として出願させていただきたく存じます"
+STAGE5_NON_FIRST_CHOICE_PHRASE = "先生の研究室を志望として出願させていただきたく存じます"
+# Issue #43 §6.4 requires the sentinels at the deterministic template slots:
+# the signature inside ``出身の{{氏名}}（`` on the identity line, learning
+# directly before the aspiration value on the same template line, and the
+# follow-up date inside ``{{初回送信日}}に初回連絡しました。``.
+STAGE5_SIGNATURE_SLOT = "出身の{name}（"
+STAGE5_LEARNING_SLOT_TAIL = " 先生の研究室を"
+STAGE5_SENT_DATE_SLOT = "{date}に初回連絡しました。"
 INSTALL_REQUIRED_FILES = (
     ".agents/skills/professor-contact/SKILL.md",
     ".agents/skills/professor-contact/scripts/contact_state.py",
     ".codex/agents/professor-contact.toml",
     ".codex/agents/professor-contact-idea-generator.toml",
     ".codex/agents/professor-contact-style-validator.toml",
+    ".codex/agents/professor-contact-email-generator.toml",
     ".agents/skills/professor-contact/tests/runtime/prepare_issue55_stage3_fixture.py",
     ".agents/skills/professor-contact/tests/runtime/build_issue55_eval_request.py",
     ".agents/skills/professor-contact/tests/runtime/verify_issue32_e2e.py",
@@ -97,7 +116,13 @@ def _manifest(root: Path) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
            manifest.get("fixture_mode"))
     _check(checks, "program_root_matches", Path(manifest.get("program_root", "")).resolve() == root.resolve())
     _check(checks, "direction_ids", manifest.get("direction_ids") == [DIRECTION_ID], manifest.get("direction_ids"))
-    _check(checks, "item_keys", manifest.get("item_keys") == ["AAAA1111", "BBBB2222"], manifest.get("item_keys"))
+    item_keys = manifest.get("item_keys")
+    valid_item_keys = (isinstance(item_keys, list) and len(item_keys) == 1
+                       and isinstance(item_keys[0], str) and item_keys[0])
+    _check(checks, "item_keys", valid_item_keys, item_keys)
+    _check(checks, "canonical_item_key",
+           valid_item_keys and manifest.get("canonical_item_key") == item_keys[0],
+           manifest.get("canonical_item_key"))
     return manifest, checks
 
 
@@ -123,11 +148,48 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _runtime_item_key(root: Path) -> str:
+    """Return the fixture's single canonical Zotero item key.
+
+    The deterministic fixture keeps the historical ``CANONICAL_ITEM_KEY``
+    constant, while the runtime recipe replaces it with the key returned by the
+    disposable Zotero.  The manifest is the provenance source for that runtime
+    key, so checkpoints must derive their expectations from it instead of
+    inventing literals.
+    """
+    try:
+        manifest = _load(root / MANIFEST_NAME)
+    except (OSError, json.JSONDecodeError):
+        return CANONICAL_ITEM_KEY
+    keys = manifest.get("item_keys")
+    if (isinstance(keys, list) and len(keys) == 1
+            and isinstance(keys[0], str) and keys[0]):
+        return keys[0]
+    return CANONICAL_ITEM_KEY
+
+
 def _load_yaml(path: Path) -> tuple[Any | None, str | None]:
     """Parse YAML through yq, the repository's structured YAML tool."""
     try:
         completed = subprocess.run(
             ["yq", "-o=json", ".", str(path)],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError as exc:
+        return None, str(exc)
+    if completed.returncode != 0:
+        return None, completed.stderr.strip() or f"yq exited {completed.returncode}"
+    try:
+        return json.loads(completed.stdout), None
+    except json.JSONDecodeError as exc:
+        return None, str(exc)
+
+
+def _load_toml(path: Path) -> tuple[Any | None, str | None]:
+    """Parse TOML through yq, the repository's structured TOML tool."""
+    try:
+        completed = subprocess.run(
+            ["yq", "-p=toml", "-o=json", ".", str(path)],
             capture_output=True, text=True, check=False,
         )
     except OSError as exc:
@@ -206,10 +268,40 @@ def _checkpoint_install(args: argparse.Namespace) -> dict[str, Any]:
     consumer = Path(args.consumer_root or "").resolve()
     _check(checks, "consumer_root_exists", bool(args.consumer_root) and consumer.is_dir(), str(consumer))
     expected = [consumer / relative for relative in INSTALL_REQUIRED_FILES]
+    expected.append(consumer / ".codex/agents/professor-contact-email-generator.toml")
     for path in expected:
         _check(checks, f"installed:{path.relative_to(consumer)}", path.is_file(), str(path))
         _check(checks, f"contained:{path.relative_to(consumer)}",
                path.resolve().is_relative_to(consumer), str(path.resolve()))
+    generator_path = consumer / ".codex/agents/professor-contact-email-generator.toml"
+    if generator_path.is_file():
+        generator, error = _load_toml(generator_path)
+        if error or not isinstance(generator, dict):
+            _check(checks, "generated_projection_readable", False,
+                   error or f"TOML root must be an object, got {type(generator).__name__}")
+        else:
+            instructions = generator.get("developer_instructions")
+            _check(checks, "generated_generator_name",
+                   generator.get("name") == "professor-contact-email-generator")
+            _check(checks, "generated_choices_contract",
+                   isinstance(instructions, str)
+                   and all(token in instructions for token in (
+                       "Stage 5", "choices", "email_id", "first_choice",
+                       "signature_name", "learning", "initial_sent_date", "--choices")))
+            if isinstance(instructions, str):
+                branch_start = instructions.find("### Codex branch")
+                branch_end = instructions.find("### humanizer-ja stage-5 constraints", branch_start + 1)
+                codex_branch = instructions[branch_start:branch_end] \
+                    if branch_start >= 0 and branch_end > branch_start else ""
+                _check(checks, "generated_codex_branch_present", bool(codex_branch))
+                _check(checks, "generated_codex_no_opencode_question",
+                       bool(codex_branch) and "question(" not in codex_branch)
+                _check(checks, "generated_codex_no_opencode_task",
+                       bool(codex_branch) and "task(subagent_type" not in codex_branch)
+            else:
+                _check(checks, "generated_codex_branch_present", False)
+                _check(checks, "generated_codex_no_opencode_question", False)
+                _check(checks, "generated_codex_no_opencode_task", False)
     if args.producer_sha:
         resolved_commit, detail = _resolved_professor_contact_commit(consumer)
         _check(checks, "producer_sha_pinned", resolved_commit == args.producer_sha,
@@ -237,27 +329,54 @@ def _checkpoint_initial(args: argparse.Namespace) -> dict[str, Any]:
         for relative, expected in profile_hashes.items())
     _check(checks, "profile_file_hashes", profile_ok)
     prof = _professor_dir(root)
+    item_key = _runtime_item_key(root)
     _check(checks, "preview_exists", (prof / "方向预筛.json").is_file())
     direction = _direction(root)
     _check(checks, "legal_direction_preview", direction is not None)
+    preview_members = [row.get("item_key") for row in (direction or {}).get("members", [])
+                       if isinstance(row, dict)]
+    preview_representatives = [
+        row.get("item_key") for row in (direction or {}).get("representatives", [])
+        if isinstance(row, dict)]
+    _check(checks, "preview_single_item",
+           preview_members == [item_key] and preview_representatives == [item_key],
+           {"members": preview_members, "representatives": preview_representatives})
     try:
         papers = _load(prof / "papers.json").get("papers", [])
     except (OSError, json.JSONDecodeError, AttributeError):
         papers = []
     by_key = {row.get("item_key"): row for row in papers if isinstance(row, dict)}
-    _check(checks, "catalog_keys", set(by_key) == {"AAAA1111", "BBBB2222"}, list(by_key))
-    _check(checks, "ready_and_missing", by_key.get("AAAA1111", {}).get("pdf_status") == "downloaded"
-           and by_key.get("BBBB2222", {}).get("pdf_status") == "missing", by_key)
-    pdf = prof / "论文分析/AAAA1111.pdf"
-    pdf_bytes = pdf.read_bytes() if pdf.is_file() else b""
-    _check(checks, "deterministic_text_pdf", pdf_bytes.startswith(b"%PDF-1.4")
-           and b"/Type /Page" in pdf_bytes and b"/Contents" in pdf_bytes and b"%%EOF" in pdf_bytes)
+    _check(checks, "catalog_keys", list(by_key) == [item_key], list(by_key))
+    catalog_row = by_key.get(item_key, {})
+    _check(checks, "catalog_pdf_pending",
+           catalog_row.get("pdf_status") == "pending" and not catalog_row.get("pdf_path"),
+           catalog_row)
+    local_pdfs = sorted(path.name for path in (prof / "论文分析").glob("*.pdf"))
+    _check(checks, "no_prebuilt_local_pdf", not local_pdfs, local_pdfs)
     _check(checks, "profile_inputs", all((Path(manifest["profile_root"]) / name).is_file() for name in
                                           ("套磁邮件/套磁信息.md", "套磁邮件/套磁模板.md", "套磁邮件/套磁跟进模板.md")))
     _check(checks, "legal_application_inputs", (root / "info.json").is_file()
            and (root / "boshu_analysis.json").is_file())
-    _check(checks, "raw_contact_prerequisite", (root / "教授研究/contact-evidence-fixture-input.json").is_file()
-           and not (root / "教授研究/_联系方式证据.json").exists())
+    contact_fixture = root / "教授研究/contact-evidence-fixture-input.json"
+    professor_candidates = root / "教授研究/_professor_candidates.json"
+    raw_contact_ok = contact_fixture.is_file() and professor_candidates.is_file() \
+        and not (root / "教授研究/_联系方式证据.json").exists()
+    if raw_contact_ok:
+        try:
+            fixture_contact = _load(contact_fixture)
+            candidate_rows = _load(professor_candidates)
+            expected_email = str(
+                ((fixture_contact.get("official_only") or {}).get("email") or "")
+            ).strip()
+            raw_contact_ok = bool(expected_email) and any(
+                isinstance(row, dict)
+                and row.get("name") == fixture_contact.get("professor")
+                and row.get("email") == expected_email
+                for row in candidate_rows
+            )
+        except (OSError, json.JSONDecodeError, AttributeError):
+            raw_contact_ok = False
+    _check(checks, "raw_contact_prerequisite", raw_contact_ok)
     for relative in PROGRAM_STAGE_OUTPUTS:
         _check(checks, f"product_output_absent:{relative.as_posix()}", not (root / relative).exists())
     for relative in PROFESSOR_STAGE_OUTPUTS:
@@ -266,7 +385,7 @@ def _checkpoint_initial(args: argparse.Namespace) -> dict[str, Any]:
     _check(checks, "no_prebuilt_analysis", not list((prof / "论文分析").glob("*.md"))
            and not list((prof / "论文分析").glob("*.future_work.json")))
     return _finish(checks, professor=PROFESSOR, direction_id=DIRECTION_ID,
-                   item_keys=sorted(by_key), pdf=str(pdf))
+                   item_keys=sorted(by_key))
 
 
 def _response(args: argparse.Namespace) -> Any:
@@ -314,6 +433,7 @@ def _checkpoint_stage1_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
     prof = _professor_dir(root)
+    item_key = _runtime_item_key(root)
     snapshot_path = root / "教授研究/套磁阶段1候选.json"
     try:
         snapshot = _load(snapshot_path)
@@ -329,23 +449,34 @@ def _checkpoint_stage1_final(args: argparse.Namespace) -> dict[str, Any]:
     direction = next((row for row in (professor_row or {}).get("directions", [])
                       if isinstance(row, dict) and row.get("direction_id") == DIRECTION_ID), None)
     _check(checks, "snapshot_direction", direction is not None)
+    missing_item_keys = None
     if direction:
-        _check(checks, "snapshot_members", set(direction.get("candidate_keys", [])) == set(ITEM_KEYS), direction.get("candidate_keys"))
+        _check(checks, "snapshot_members", direction.get("candidate_keys") == [item_key],
+               direction.get("candidate_keys"))
         readiness = direction.get("pdf_readiness", {})
-        _check(checks, "pdf_readiness", set(readiness.get("usable_item_keys", [])) == set(ITEM_KEYS)
-               and readiness.get("missing_item_keys", []) == [], readiness)
+        missing_item_keys = readiness.get("missing_item_keys")
+        _check(checks, "pdf_readiness",
+               readiness.get("usable_item_keys") == [item_key]
+               and missing_item_keys == [], readiness)
     by_key = {row.get("item_key"): row for row in papers if isinstance(row, dict)}
-    _check(checks, "collector_completed", by_key.get("BBBB2222", {}).get("pdf_status") == "downloaded")
+    _check(checks, "collector_completed",
+           by_key.get(item_key, {}).get("pdf_status") == "downloaded",
+           by_key.get(item_key))
     if args.eval_response:
         try:
             response = _response(args)
-            payloads = _structured_values(response, {"collector_payload", "collector_request", "tool_payload"})
+            collector_payloads = _structured_values(response, {"collector_payload", "collector_request", "tool_payload"})
+            payloads = list(collector_payloads)
             if isinstance(response, dict):
                 payloads.append(response)
             exact = any(isinstance(row, dict) and row.get("folder_path") and row.get("pdf_only") is True
-                        and row.get("item_keys") == ["BBBB2222"] and "professors" not in row
+                        and row.get("item_keys") == [item_key] and "professors" not in row
                         for row in payloads)
-            _check(checks, "collector_payload_contract", exact)
+            noop = (missing_item_keys == []
+                    and not collector_payloads
+                    and by_key.get(item_key, {}).get("pdf_status") == "downloaded")
+            _check(checks, "collector_payload_contract", noop or exact,
+                   "stage1 action=noop: all candidate PDFs are downloaded" if noop else None)
         except (OSError, json.JSONDecodeError) as exc:
             _check(checks, "eval_response_readable", False, str(exc))
     return _finish(checks, snapshot_file=str(snapshot_path), papers=sorted(by_key))
@@ -355,6 +486,7 @@ def _checkpoint_stage2_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
     prof = _professor_dir(root)
+    item_key = _runtime_item_key(root)
     try:
         pack = _load(prof / "套磁候选输入.json")
     except (OSError, json.JSONDecodeError) as exc:
@@ -381,8 +513,12 @@ def _checkpoint_stage2_final(args: argparse.Namespace) -> dict[str, Any]:
            and isinstance(direction.get("input_fingerprint"), str)
            and bool(direction.get("input_fingerprint"))
            and isinstance(direction.get("supporting_item_keys"), list))
-    _check(checks, "analysis_for_ready_paper", bool(list((prof / "论文分析").glob("AAAA1111*.md"))))
-    _check(checks, "future_work_sidecar", bool(list((prof / "论文分析").glob("AAAA1111*.future_work.json"))))
+    # Stage 2 must analyze the single canonical item Stage 1 collected, so the
+    # continuity gate cannot be satisfied by a separately pre-ready paper.
+    _check(checks, "analysis_for_canonical_paper",
+           bool(list((prof / "论文分析").glob(f"{item_key}*.md"))))
+    _check(checks, "future_work_sidecar",
+           bool(list((prof / "论文分析").glob(f"{item_key}*.future_work.json"))))
     return _finish(checks, candidate_input=str(prof / "套磁候选输入.json"))
 
 
@@ -1127,6 +1263,8 @@ def _expected_pending_projection(program_root: Path) -> list[dict[str, Any]] | N
             state = _load(state_path)
         except (OSError, json.JSONDecodeError):
             return None
+        except (OSError, json.JSONDecodeError):
+            return None
         if not isinstance(state, dict):
             return None
         professor = state_path.parent.name
@@ -1428,6 +1566,13 @@ def _candidate_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
 def _checkpoint_make_stage4_selection(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
+    direction_id = getattr(args, "direction_id", DIRECTION_ID)
+    selection_policy = getattr(args, "selection_policy", "lexicographic-first-candidate-id")
+    _check(checks, "stage4_direction_id", direction_id == DIRECTION_ID, direction_id)
+    _check(checks, "stage4_selection_policy",
+           selection_policy == "lexicographic-first-candidate-id", selection_policy)
+    if any(row["status"] == "fail" for row in checks):
+        return _finish(checks)
     state_path = _professor_dir(root) / "套磁候选状态.json"
     try:
         rows = sorted(_candidate_rows(_load(state_path)), key=lambda row: str(row["id"]))
@@ -1455,10 +1600,10 @@ def _checkpoint_make_stage4_selection(args: argparse.Namespace) -> dict[str, Any
 def _checkpoint_stage4_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
-    prof = _professor_dir(root)
+    stage4_root = root / "教授研究"
     try:
-        selection = _load(prof / "套磁选择.json")
-        email_input = _load(prof / "邮件输入.json")
+        selection = _load(stage4_root / "套磁选择.json")
+        email_input = _load(stage4_root / "邮件输入.json")
     except (OSError, json.JSONDecodeError) as exc:
         _check(checks, "stage4_outputs_readable", False, str(exc))
         return _finish(checks)
@@ -1471,7 +1616,97 @@ def _checkpoint_stage4_final(args: argparse.Namespace) -> dict[str, Any]:
     _check(checks, "contact_evidence_frozen", bool(evidence) and all(
         isinstance(item, dict) and bool(item.get("record_fingerprint")) and isinstance(item.get("record"), dict)
         for item in evidence), evidence)
-    return _finish(checks, selection_file=str(prof / "套磁选择.json"), email_count=len(emails) if isinstance(emails, list) else 0)
+    return _finish(checks, selection_file=str(stage4_root / "套磁选择.json"),
+                   email_count=len(emails) if isinstance(emails, list) else 0)
+
+
+def _stage5_candidate_paths(professor_dir: Path, name: str) -> tuple[Path, ...]:
+    return (professor_dir / name, professor_dir / "套磁邮件" / name)
+
+
+def _checkpoint_stage5_snapshot(args: argparse.Namespace) -> dict[str, Any]:
+    """Capture the issue-43 Stage 5 artifact state without changing it."""
+    root = Path(args.program_root).resolve()
+    relative_paths = (
+        Path("教授研究/X分野/Example Professor/套磁邮件.md"),
+        Path("教授研究/X分野/Example Professor/套磁邮件.txt"),
+        Path("教授研究/X分野/Example Professor/套磁跟进邮件.md"),
+        Path("教授研究/X分野/Example Professor/套磁跟进邮件.txt"),
+        Path("教授研究/X分野/Example Professor/套磁邮件状态.json"),
+    )
+    artifacts: dict[str, dict[str, Any]] = {}
+    for relative in relative_paths:
+        path = root / relative
+        artifacts[relative.as_posix()] = {
+            "exists": path.exists(),
+            "sha256": _sha256(path) if path.is_file() else None,
+        }
+    return {"status": "pass", "observed": {"artifacts": artifacts}}
+
+
+def _checkpoint_stage5_pristine(args: argparse.Namespace) -> dict[str, Any]:
+    root = Path(args.program_root).resolve()
+    checks: list[dict[str, Any]] = []
+    prof = _professor_dir(root)
+    stage4_root = root / "教授研究"
+    try:
+        selection = _load(stage4_root / "套磁选择.json")
+        email_pack = _load(stage4_root / "邮件输入.json")
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "stage4_outputs_readable", False, str(exc))
+        return _finish(checks)
+
+    _check(checks, "selection_has_direction", _contains_direction(selection))
+    emails = email_pack.get("emails", email_pack.get("messages", [])) \
+        if isinstance(email_pack, dict) else []
+    if isinstance(emails, dict):
+        emails = list(emails.values())
+    _check(checks, "email_pack_readable", isinstance(email_pack, dict)
+           and email_pack.get("kind") == "professor-contact-email-input")
+    _check(checks, "email_pack_nonempty", isinstance(emails, list) and bool(emails),
+           len(emails) if isinstance(emails, list) else type(emails).__name__)
+
+    for name in STAGE5_FINAL_NAMES:
+        candidates = _stage5_candidate_paths(prof, name)
+        _check(checks, f"{name}_absent", not any(path.exists() for path in candidates),
+               [str(path) for path in candidates])
+    state_candidates = _stage5_candidate_paths(prof, "套磁邮件状态.json")
+    _check(checks, "email_state_absent", not any(path.exists() for path in state_candidates),
+           [str(path) for path in state_candidates])
+    return _finish(checks, professor_dir=str(prof), email_count=len(emails) if isinstance(emails, list) else 0)
+
+
+def _checkpoint_make_stage5_choices(args: argparse.Namespace) -> dict[str, Any]:
+    root = Path(args.program_root).resolve()
+    checks: list[dict[str, Any]] = []
+    stage4_root = root / "教授研究"
+    try:
+        email_pack = _load(stage4_root / "邮件输入.json")
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "email_pack_readable", False, str(exc))
+        return _finish(checks)
+    emails = email_pack.get("emails", email_pack.get("messages", [])) \
+        if isinstance(email_pack, dict) else []
+    if isinstance(emails, dict):
+        emails = list(emails.values())
+    valid_rows = [row for row in emails if isinstance(row, dict) and isinstance(row.get("email_id"), str)
+                  and row.get("email_id")]
+    _check(checks, "exactly_one_real_email", len(emails) == 1 and len(valid_rows) == 1,
+           [row.get("email_id") for row in valid_rows])
+    if len(emails) != 1 or len(valid_rows) != 1:
+        return _finish(checks, output=str(Path(args.output).resolve()))
+
+    payload = {"email_id": valid_rows[0]["email_id"], **STAGE5_CHOICES_SENTINELS}
+    output = Path(args.output).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=output.parent,
+                                     prefix=f".{output.name}.", delete=False) as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=1)
+        handle.write("\n")
+        temp_name = handle.name
+    os.replace(temp_name, output)
+    _check(checks, "choices_written", output.is_file(), str(output))
+    return _finish(checks, email_id=valid_rows[0]["email_id"], output=str(output), payload=payload)
 
 
 def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
@@ -1492,10 +1727,14 @@ def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
     followup_txt = [path for path in txt_files if "跟进" in path.name or "follow" in path.name.lower()]
     _check(checks, "initial_email_output", bool(initial_md) and bool(initial_txt), [path.name for path in all_files])
     _check(checks, "followup_email_output", bool(followup_md) and bool(followup_txt), [path.name for path in all_files])
+    _check(checks, "final_initial_exists", bool(initial_md) and bool(initial_txt),
+           [str(path) for path in initial_md + initial_txt])
+    _check(checks, "final_followup_exists", bool(followup_md) and bool(followup_txt),
+           [str(path) for path in followup_md + followup_txt])
     text = "\n".join(path.read_text(encoding="utf-8", errors="replace") for path in all_files)
     _check(checks, "no_unresolved_placeholders", "{{" not in text and "}}" not in text)
     _check(checks, "pre_send_checklist", "送信前核对" in text or "send" in text.lower())
-    email_pack_path = prof / "邮件输入.json"
+    email_pack_path = root / "教授研究/邮件输入.json"
     state_path = prof / "套磁邮件状态.json"
     try:
         email_pack = _load(email_pack_path)
@@ -1518,12 +1757,72 @@ def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
     if isinstance(pack_emails, dict):
         pack_emails = list(pack_emails.values())
     state_emails = email_state.get("emails", {}) if isinstance(email_state, dict) else {}
-    frozen_and_valid = True
+    initial_text = "\n".join(path.read_text(encoding="utf-8", errors="replace")
+                              for path in initial_md + initial_txt)
+    followup_text = "\n".join(path.read_text(encoding="utf-8", errors="replace")
+                               for path in followup_md + followup_txt)
+    initial_txt_text = "\n".join(path.read_text(encoding="utf-8", errors="replace")
+                                 for path in initial_txt)
+    followup_txt_text = "\n".join(path.read_text(encoding="utf-8", errors="replace")
+                                  for path in followup_txt)
+    choice_email_id_ok = bool(pack_emails)
+    choice_signature_ok = bool(pack_emails)
+    choice_learning_ok = bool(pack_emails)
+    choice_initial_sent_date_ok = bool(pack_emails)
+    choice_branch_ok = bool(pack_emails)
+    for email in pack_emails if isinstance(pack_emails, list) else []:
+        email_id = email.get("email_id") if isinstance(email, dict) else None
+        entry = state_emails.get(email_id) if isinstance(state_emails, dict) else None
+        choices = entry.get("choices") if isinstance(entry, dict) else None
+        followup_choices = entry.get("followup", {}).get("choices") \
+            if isinstance(entry, dict) and isinstance(entry.get("followup"), dict) else None
+        choice_rows = [row for row in (choices, followup_choices) if isinstance(row, dict)]
+        choice_email_id_ok = choice_email_id_ok and len(choice_rows) == 2 \
+            and all(row.get("email_id") == email_id for row in choice_rows)
+        # Issue #43 pins the caller's fixed sentinels as the independent
+        # expected, rendered at the deterministic template slots from §6.4:
+        # expected values never come from product state, and only the slot
+        # occurrence in the canonical .txt -- not presence anywhere in the
+        # merged output -- decides the render checks.
+        choice_signature_ok = choice_signature_ok and isinstance(choices, dict) \
+            and choices.get("signature_name") == STAGE5_CHOICES_SENTINELS["signature_name"] \
+            and STAGE5_SIGNATURE_SLOT.format(
+                name=STAGE5_CHOICES_SENTINELS["signature_name"]) in initial_txt_text
+        choice_learning_ok = choice_learning_ok and isinstance(choices, dict) \
+            and choices.get("learning") == STAGE5_CHOICES_SENTINELS["learning"] \
+            and STAGE5_CHOICES_SENTINELS["learning"] + STAGE5_LEARNING_SLOT_TAIL \
+            in initial_txt_text
+        choice_initial_sent_date_ok = choice_initial_sent_date_ok \
+            and isinstance(followup_choices, dict) \
+            and followup_choices.get("initial_sent_date") \
+            == STAGE5_CHOICES_SENTINELS["initial_sent_date"] \
+            and STAGE5_SENT_DATE_SLOT.format(
+                date=STAGE5_CHOICES_SENTINELS["initial_sent_date"]) in followup_txt_text
+        choice_branch_ok = choice_branch_ok and isinstance(choices, dict) \
+            and choices.get("first_choice") is False \
+            and STAGE5_NON_FIRST_CHOICE_PHRASE in initial_text \
+            and STAGE5_FIRST_CHOICE_PHRASE not in initial_text
+    _check(checks, "choice_email_id_matches_pack", choice_email_id_ok)
+    _check(checks, "choice_signature_rendered", choice_signature_ok)
+    _check(checks, "choice_learning_rendered", choice_learning_ok)
+    _check(checks, "choice_initial_sent_date_rendered", choice_initial_sent_date_ok)
+    _check(checks, "choice_non_first_choice_branch_rendered", choice_branch_ok)
+    # Issue #43 keeps frozen contact evidence and the pack/source fingerprint
+    # as its machine invariants, while the unchanged downstream email
+    # validator's copy quality stays separate evidence that never decides the
+    # issue-43 feature verdict.
+    # Issue #40 separates two machine facts that must not gate each other: the
+    # validator must have produced a contract-valid terminal record, while the
+    # unchanged validator's copy quality stays independent diagnostics.
+    terminal_records_ok = bool(pack_emails)
+    copy_quality_pass = bool(pack_emails)
+    frozen_and_valid = bool(pack_emails)
     invalid_details: list[Any] = []
     for email in pack_emails if isinstance(pack_emails, list) else []:
         if not isinstance(email, dict):
-            frozen_and_valid = False
             invalid_details.append("email entry is not an object")
+            terminal_records_ok = False
+            copy_quality_pass = False
             continue
         email_id = email.get("email_id")
         evidence = email.get("contact_evidence")
@@ -1538,16 +1837,24 @@ def _checkpoint_stage5_final(args: argparse.Namespace) -> dict[str, Any]:
         valid_source = (isinstance(email_id, str) and isinstance(email.get("source_hash"), str)
                         and bool(email.get("source_hash")) and isinstance(entry, dict)
                         and entry.get("input_fingerprint") == email.get("source_hash"))
-        valid_validation = (_valid_validation_record(initial_validation)
-                            and initial_validation.get("result") == "pass"
-                            and _valid_validation_record(followup_validation)
-                            and followup_validation.get("result") == "pass")
-        if not (valid_evidence and valid_source and valid_validation):
+        terminal_valid = (_valid_validation_record(initial_validation)
+                          and _valid_validation_record(followup_validation))
+        if not terminal_valid:
+            terminal_records_ok = False
+        if not (terminal_valid and initial_validation.get("result") == "pass"
+                and followup_validation.get("result") == "pass"):
+            copy_quality_pass = False
+        if not (valid_evidence and valid_source):
             frozen_and_valid = False
+        if not (valid_evidence and valid_source and terminal_valid):
             invalid_details.append({"email_id": email_id, "evidence": valid_evidence,
-                                    "source": valid_source, "validation": valid_validation})
+                                    "source": valid_source,
+                                    "terminal_validation": terminal_valid})
     _check(checks, "email_entries_frozen_and_valid", bool(pack_emails) and frozen_and_valid,
            invalid_details)
+    _check(checks, "email_validator_terminal_records_valid", terminal_records_ok,
+           invalid_details)
+    _check(checks, "email_validator_result_pass", copy_quality_pass, invalid_details)
     return _finish(checks, email_files=[path.name for path in all_files], email_state=str(state_path))
 
 
@@ -1663,6 +1970,9 @@ CHECKPOINTS = {
     "stage4-needs-input": _checkpoint_stage4_needs_input,
     "make-stage4-selection": _checkpoint_make_stage4_selection,
     "stage4-final": _checkpoint_stage4_final,
+    "stage5-snapshot": _checkpoint_stage5_snapshot,
+    "stage5-pristine": _checkpoint_stage5_pristine,
+    "make-stage5-choices": _checkpoint_make_stage5_choices,
     "stage5-final": _checkpoint_stage5_final,
     "runtime-graph": _checkpoint_runtime_graph,
 }
@@ -1670,7 +1980,10 @@ CHECKPOINTS = {
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("checkpoint", choices=tuple(CHECKPOINTS))
+    parser.add_argument("checkpoint", nargs="?", choices=tuple(CHECKPOINTS))
+    parser.add_argument("--make-stage4-selection", action="store_true")
+    parser.add_argument("--direction-id", default=DIRECTION_ID)
+    parser.add_argument("--selection-policy", default="lexicographic-first-candidate-id")
     parser.add_argument("--program-root", type=Path)
     parser.add_argument("--consumer-root", type=Path)
     parser.add_argument("--eval-response", type=Path)
@@ -1687,14 +2000,25 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.make_stage4_selection:
+            if args.checkpoint and args.checkpoint != "make-stage4-selection":
+                raise ValueError("--make-stage4-selection cannot be combined with another checkpoint")
+            args.checkpoint = "make-stage4-selection"
+        if args.checkpoint is None:
+            raise ValueError("checkpoint is required")
         if args.checkpoint != "install" and args.program_root is None:
             raise ValueError("--program-root is required for this checkpoint")
-        if args.checkpoint == "make-stage4-selection" and args.output is None:
-            raise ValueError("--output is required for make-stage4-selection")
+        if args.checkpoint in {"make-stage4-selection", "make-stage5-choices"} and args.output is None:
+            raise ValueError(f"--output is required for {args.checkpoint}")
         payload = CHECKPOINTS[args.checkpoint](args)
     except Exception as exc:
         payload = _result("fail", [{"name": "verifier_exception", "status": "fail", "detail": str(exc)}])
-    if args.output is not None:
+    # The two make-* checkpoints own their output path: it is the product-like
+    # input they construct, while their evidence is emitted on stdout.  Other
+    # checkpoints use --output for the evidence document itself.
+    if args.output is not None and args.checkpoint not in {
+        "make-stage4-selection", "make-stage5-choices",
+    }:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
             json.dumps(payload, ensure_ascii=False, indent=1) + "\n",

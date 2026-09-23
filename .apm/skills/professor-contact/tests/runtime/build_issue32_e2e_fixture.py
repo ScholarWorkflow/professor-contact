@@ -2,10 +2,14 @@
 """Build the producer-owned raw fixture for issue #32's Stage 0–5 E2E.
 
 This builder deliberately stops before the first product-generated state.  It
-creates synthetic upstream inputs, a legal direction preview, one ready PDF,
-one missing PDF, and the fixed email/profile inputs.  The installed
+creates synthetic upstream inputs, a legal direction preview, one catalog paper
+whose PDF is still pending, and the fixed email/profile inputs.  The installed
 professor-contact runner must create every target, snapshot, analysis,
 candidate, selection, evidence, and email artifact during the E2E run.
+
+The #40/#47 canonical fixture carries exactly one item so R1 fills and R2
+analyzes the same paper, which is what makes the Stage 1 -> Stage 2 continuity
+gate observable instead of satisfiable by a pre-ready second paper.
 """
 from __future__ import annotations
 
@@ -20,15 +24,28 @@ MANIFEST_NAME = "fixture-manifest.json"
 MANIFEST_ID = "tests/runtime/build_issue32_e2e_fixture.py"
 PROFESSOR = "Example Professor"
 DIRECTION_ID = "DIR00001"
-ITEM_KEYS = ("AAAA1111", "BBBB2222")
+CANONICAL_ITEM_KEY = "AAAA1111"
+CANONICAL_PAPER_TITLE = "Adaptive Processing in Synthetic Systems"
+CANONICAL_PAPER_TITLE_ZH = "合成系统中的自适应处理"
+CANONICAL_PAPER_YEAR = 2024
+CANONICAL_PAPER_AUTHORS = (PROFESSOR, "Synthetic Researcher")
+CANONICAL_PAPER_ABSTRACT = (
+    "A deterministic synthetic paper about adaptive and nonlinear processing.")
+CANONICAL_PUBLICATION_TITLE = "Synthetic Processing Journal"
+CANONICAL_PDF_LINES = (
+    "Synthetic paper: Adaptive Processing in Synthetic Systems",
+    "Abstract: adaptive and nonlinear processing is evaluated.",
+    "Future work: extend the framework to nonlinear and adaptive settings.",
+    "This deterministic PDF is producer-owned input, not a completed analysis.",
+)
 FIXED_NOTE = "I want to study adaptive and nonlinear extensions of this processing framework."
 FORBIDDEN_STAGE_OUTPUTS = (
     Path("教授研究/套磁目标.json"),
     Path("教授研究/套磁阶段1候选.json"),
+    Path("教授研究/套磁选择.json"),
+    Path("教授研究/邮件输入.json"),
     Path("教授研究/X分野/Example Professor/套磁候选输入.json"),
     Path("教授研究/X分野/Example Professor/套磁候选状态.json"),
-    Path("教授研究/X分野/Example Professor/套磁选择.json"),
-    Path("教授研究/X分野/Example Professor/邮件输入.json"),
 )
 
 
@@ -105,7 +122,8 @@ def _tree_hashes(root: Path, *, exclude: set[str] | None = None) -> dict[str, st
     }
 
 
-def _write_inputs(program_root: Path, profile_root: Path) -> dict[str, str]:
+def _write_inputs(program_root: Path, profile_root: Path,
+                  item_key: str = CANONICAL_ITEM_KEY) -> dict[str, str]:
     professor_dir = program_root / "教授研究" / "X分野" / PROFESSOR
     analysis_dir = professor_dir / "论文分析"
     analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -124,44 +142,26 @@ def _write_inputs(program_root: Path, profile_root: Path) -> dict[str, str]:
             "name_zh": "自适应与非线性处理",
             "summary_zh": "Synthetic direction for the issue #32 runtime contract.",
             "user_note": FIXED_NOTE,
-            "members": [
-                {"item_key": "AAAA1111", "preview_confidence": "high"},
-                {"item_key": "BBBB2222", "preview_confidence": "high"},
-            ],
-            "representatives": [{"item_key": "AAAA1111"}],
+            "members": [{"item_key": item_key, "preview_confidence": "high"}],
+            "representatives": [{"item_key": item_key}],
         }],
     }
     _write_json(program_root / preview_relative, preview)
+    # The single catalog row stays ``pending`` on purpose: the deterministic PDF
+    # lives in the disposable Zotero as an attachment, so Stage 1 must collect it
+    # before Stage 2 can analyze the same item.
     papers = {
-        "papers": [
-            {
-                "item_key": "AAAA1111",
-                "title": "Adaptive Processing in Synthetic Systems",
-                "title_zh": "合成系统中的自适应处理",
-                "year": 2024,
-                "authors": [PROFESSOR, "Synthetic Researcher"],
-                "abstract": "A deterministic synthetic paper about adaptive and nonlinear processing.",
-                "pdf_status": "downloaded",
-                "pdf_path": "论文分析/AAAA1111.pdf",
-            },
-            {
-                "item_key": "BBBB2222",
-                "title": "Nonlinear Extensions of Synthetic Processing",
-                "title_zh": "合成处理的非线性扩展",
-                "year": 2023,
-                "authors": [PROFESSOR, "Synthetic Collaborator"],
-                "abstract": "A synthetic paper whose PDF must be collected during Stage 1.",
-                "pdf_status": "missing",
-            },
-        ]
+        "papers": [{
+            "item_key": item_key,
+            "title": CANONICAL_PAPER_TITLE,
+            "title_zh": CANONICAL_PAPER_TITLE_ZH,
+            "year": CANONICAL_PAPER_YEAR,
+            "authors": list(CANONICAL_PAPER_AUTHORS),
+            "abstract": CANONICAL_PAPER_ABSTRACT,
+            "pdf_status": "pending",
+        }]
     }
     _write_json(professor_dir / "papers.json", papers)
-    (analysis_dir / "AAAA1111.pdf").write_bytes(render_text_pdf([
-        "Synthetic paper: Adaptive Processing in Synthetic Systems",
-        "Abstract: adaptive and nonlinear processing is evaluated.",
-        "Future work: extend the framework to nonlinear and adaptive settings.",
-        "This deterministic PDF is producer-owned input, not a completed analysis.",
-    ]))
     _write_json(program_root / "info.json", {
         "schema_version": 1,
         "program": "issue32-stage0-5-runtime-fixture",
@@ -189,6 +189,16 @@ def _write_inputs(program_root: Path, profile_root: Path) -> dict[str, str]:
             "source": "synthetic official faculty page",
         },
     })
+    # Seed the real professor-research input contract as well as the
+    # human-readable fixture provenance above.  The collector's deterministic
+    # contact-evidence rebuild consumes _professor_candidates.json; the
+    # fixture-only file is deliberately not a production input surface.
+    _write_json(program_root / "教授研究" / "_professor_candidates.json", [{
+        "name": PROFESSOR,
+        "email": "faculty@example.edu",
+        "source": "https://example.test/faculty/example-professor",
+        "provenance": "synthetic official faculty page",
+    }])
 
     profile_root.mkdir(parents=True, exist_ok=True)
     (profile_root / "套磁邮件").mkdir(parents=True, exist_ok=True)
@@ -224,11 +234,26 @@ def _write_inputs(program_root: Path, profile_root: Path) -> dict[str, str]:
 
 def build_fixture(program_root: Path, profile_root: Path, *, consumer_root: Path | None = None,
                   professor_research_sha: str = "", zotero_http_url: str = "",
-                  zotero_mcp_url: str = "") -> dict:
+                  zotero_mcp_url: str = "",
+                  item_key: str | None = None,
+                  fixture_run_id: str = "") -> dict:
+    """Build the raw fixture; ``item_key`` injects the runtime-returned Zotero key.
+
+    The default ``item_key`` keeps the deterministic E2E fixture byte-stable;
+    the issue #40 runtime setup helper passes the real key it received from the
+    disposable Zotero so no fake key ever enters ``papers.json``/preview.
+    """
+    key = item_key if item_key is not None else CANONICAL_ITEM_KEY
+    if not isinstance(key, str) or not key.strip():
+        raise FixtureBuildError(f"item_key must be a non-empty string: {key!r}")
+    if key == CANONICAL_ITEM_KEY and fixture_run_id:
+        raise FixtureBuildError(
+            "fixture_run_id requires a runtime item_key; the deterministic "
+            "fixture must stay decoupled from fixture runs")
     program_root = Path(program_root).resolve()
     profile_root = Path(profile_root).resolve()
     _prepare_output(program_root)
-    program_hashes = _write_inputs(program_root, profile_root)
+    program_hashes = _write_inputs(program_root, profile_root, key)
     manifest = {
         "schema_version": 1,
         "builder": MANIFEST_ID,
@@ -239,9 +264,8 @@ def build_fixture(program_root: Path, profile_root: Path, *, consumer_root: Path
         "consumer_root": str(Path(consumer_root).resolve()) if consumer_root else None,
         "professor": PROFESSOR,
         "direction_ids": [DIRECTION_ID],
-        "item_keys": list(ITEM_KEYS),
-        "ready_item_keys": ["AAAA1111"],
-        "missing_item_keys": ["BBBB2222"],
+        "item_keys": [key],
+        "canonical_item_key": key,
         "professor_research_sha": professor_research_sha,
         "zotero_http_url": zotero_http_url,
         "zotero_mcp_url": zotero_mcp_url,
@@ -249,6 +273,8 @@ def build_fixture(program_root: Path, profile_root: Path, *, consumer_root: Path
         "profile_files": _tree_hashes(profile_root),
         "forbidden_product_outputs": [path.as_posix() for path in FORBIDDEN_STAGE_OUTPUTS],
     }
+    if fixture_run_id:
+        manifest["fixture_run_id"] = fixture_run_id
     _write_json(program_root / MANIFEST_NAME, manifest)
     return manifest
 

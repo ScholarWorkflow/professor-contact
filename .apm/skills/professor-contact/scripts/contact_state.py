@@ -3578,7 +3578,10 @@ def validate_freshness_results(ctx: Stage2Context, results_dir: Path,
             if not isinstance(gap_id, str):
                 fail("invalid_result_json", f"{result_path}: gap_id must be a string")
             if gap_id not in judge_ids:
-                fail("unknown_reference_id", f"{result_path}: gap outside package: {gap_id}")
+                fail("unknown_reference_id",
+                     f"{result_path}: gap outside package: {gap_id!r} "
+                     f"(likely mistyped; copy one of the job model_input gap ids verbatim: "
+                     f"{sorted(judge_ids)})")
             if gap_id in by_gap:
                 fail("invalid_result_json", f"{result_path}: duplicate result for gap {gap_id}")
             by_gap[gap_id] = row
@@ -3695,7 +3698,9 @@ def validate_narrative_entry(ctx: Stage2Context, path: Path, entry: dict,
             pool = (scope["papers"] if ref_kind == "paper" else
                     scope["later"] if ref_kind == "later" else scope["gaps"])
             if ref_kind not in ("paper", "later", "gap") or ref_id not in pool:
-                fail("unknown_reference_id", f"{path}: ref {ref} outside package")
+                fail("unknown_reference_id",
+                     f"{path}: ref {ref!r} outside package (likely mistyped; legal "
+                     f"{ref_kind} ids: {sorted(pool)})")
         if placeholders != refs:
             fail("invalid_result_json",
                  f"{path}: {did} placeholders {sorted(placeholders)} != refs {sorted(refs)}")
@@ -3714,7 +3719,9 @@ def validate_narrative_entry(ctx: Stage2Context, path: Path, entry: dict,
             fail("invalid_result_json", f"{path}: {did} gap_notes[] must be objects")
         gap_id = note.get("gap_id")
         if gap_id not in scope["gaps"]:
-            fail("unknown_reference_id", f"{path}: gap note outside package: {gap_id}")
+            fail("unknown_reference_id",
+                 f"{path}: gap note outside package: {gap_id!r} (likely mistyped; "
+                 f"copy one of the job model_input gap ids verbatim: {sorted(scope['gaps'])})")
         if gap_id in gap_notes:
             fail("invalid_result_json", f"{path}: duplicate gap note {gap_id}")
         if not isinstance(note.get("summary"), str) or not isinstance(note.get("explanation"), str):
@@ -4728,6 +4735,311 @@ def _parse_cross_groups(raw: Any, pack_directions: list) -> list[dict]:
             for ids in groups.values()]
 
 
+CANDIDATE_META_PREFIX = "<!-- candidate_meta: "
+STAGE3_SCOPE_PREFIX = "<!-- stage3_scope: "
+STAGE3_VALIDATION_MAX_ROUNDS = 2
+
+
+def _stage3_marker_payload(text: str, prefix: str) -> dict:
+    try:
+        payload = json.loads(text[len(prefix):].removesuffix("-->").strip())
+    except json.JSONDecodeError as exc:
+        fail("validation_render_unparsable", f"{prefix!r} marker is not JSON: {exc}")
+    return payload if isinstance(payload, dict) else {}
+
+
+def stage3_render_line_scopes(md_text: str) -> list:
+    """Per-line machine scope of the runner-rendered candidate document.
+
+    Section markers come from the renderer itself and every idea block carries
+    its canonical ``direction_ids``/``group_id`` in ``candidate_meta``, so a
+    rendered line is addressable without reading professor names or positions.
+    ``None`` means the line sits outside any direction or group section.
+    """
+    scopes: list = []
+    section = None
+    block = None
+    heading_line = None
+    for index, raw in enumerate(md_text.splitlines(), start=1):
+        text = raw.strip()
+        if text.startswith("## "):
+            section, block, heading_line = None, None, None
+            scopes.append(section)
+            continue
+        if text.startswith("### "):
+            block, heading_line = None, index
+            scopes.append(section)
+            continue
+        if text.startswith(STAGE3_SCOPE_PREFIX):
+            section, block = _stage3_marker_payload(text, STAGE3_SCOPE_PREFIX), None
+            heading_line = None
+            scopes.append(section)
+            continue
+        if text.startswith(CANDIDATE_META_PREFIX):
+            meta = _stage3_marker_payload(text, CANDIDATE_META_PREFIX)
+            ids = [x for x in (meta.get("direction_ids") or []) if isinstance(x, str) and x]
+            if meta.get("group_id"):
+                block = {"kind": "group", "group_id": meta["group_id"]}
+            elif len(ids) == 1:
+                block = {"kind": "direction", "direction_id": ids[0]}
+            else:
+                block = {"kind": "global"}
+            block["candidate_id"] = meta.get("id")
+            if heading_line and index - heading_line <= 4:
+                for back in range(heading_line, index):
+                    scopes[back - 1] = block
+            heading_line = None
+            scopes.append(block)
+            continue
+        scopes.append(block if block is not None else section)
+    return scopes
+
+
+def scope_key(scope: dict) -> str:
+    """Canonical machine identity of a rendered scope: direction_id or group_id."""
+    if not isinstance(scope, dict):
+        return "global"
+    if scope.get("kind") == "direction" and scope.get("direction_id"):
+        return f"direction:{scope['direction_id']}"
+    if scope.get("kind") == "group" and scope.get("group_id"):
+        return f"group:{scope['group_id']}"
+    return "global"
+
+
+def _stage3_bound_render(professor_dir: Path, state: dict) -> tuple[str, str]:
+    """Current rendered candidate text, bound to the revision the state records."""
+    cache = (state or {}).get("cache")
+    recorded = cache.get("render", {}).get(CANDIDATES_MD, {}).get("sha256") \
+        if isinstance(cache, dict) and isinstance(cache.get("render"), dict) else None
+    path = professor_dir / CANDIDATES_MD
+    try:
+        body = split_frontmatter(path.read_text(encoding="utf-8"))[1]
+    except (OSError, UnicodeDecodeError) as exc:
+        fail("validation_render_missing", f"{path}: {exc}")
+    current = sha256_text(body)
+    if not recorded or current != recorded:
+        fail("validation_render_stale",
+             f"{path}: validator evidence must bind the candidate revision recorded in "
+             f"{professor_dir / CANDIDATE_STATE}; re-run the style validator on the current render")
+    return current, body
+
+
+def _stage3_issue_scopes(issue: dict, body: str, scopes: list, path: Path) -> list:
+    quote = issue.get("quote")
+    if not isinstance(quote, str) or not quote.strip():
+        fail("invalid_validation_json",
+             f"{path}: every Stage-3 validation issue needs the verbatim rendered quote")
+    needle = quote.strip()
+    hits = [index for index, line in enumerate(body.splitlines()) if needle in line]
+    if not hits:
+        fail("validation_quote_not_in_render",
+             f"{path}: validator quote {needle[:20]!r} is not part of the bound render")
+    found = []
+    for line in hits:
+        scope = scopes[line] or {"kind": "global"}
+        if scope_key(scope) not in [scope_key(item) for item in found]:
+            found.append(scope)
+    return found
+
+
+def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict) -> dict:
+    """Normalize raw style-validator JSON into bound, machine-scoped evidence.
+
+    This is the only Stage-3 validator handoff: the runner reads the validator's
+    own output, binds it to the exact rendered revision, and routes each finding
+    to the canonical scope whose rendered text contains the quoted fragment.  A
+    caller never translates ``files[].verdict`` into ``results[]``.
+    """
+    data, error = read_json_file(path)
+    if error or not isinstance(data, dict) or data.get("result") != "ok" \
+            or not isinstance(data.get("files"), list):
+        fail("invalid_validation_json", f"style-validator output unreadable: {path}")
+    target = (professor_dir / CANDIDATES_MD).resolve()
+    matches = []
+    for entry in data["files"]:
+        if not isinstance(entry, dict) or entry.get("artifact") != "candidates":
+            continue
+        try:
+            candidate_path = Path(entry.get("file") or "").resolve()
+        except (OSError, ValueError):
+            continue
+        if candidate_path == target:
+            matches.append(entry)
+    if len(matches) != 1:
+        fail("invalid_validation_json",
+             f"validator output must contain exactly one candidates result for {target}")
+    entry = matches[0]
+    verdict = entry.get("verdict")
+    if verdict not in ("pass", "pass_with_minor", "fail"):
+        fail("invalid_validation_json",
+             f"candidates verdict must be pass|pass_with_minor|fail: {verdict!r}")
+    issues = entry.get("issues")
+    if not isinstance(issues, list) or not all(isinstance(i, dict) for i in issues):
+        fail("invalid_validation_json", "candidates validation issues must be an object list")
+    blocking = [i for i in issues if i.get("severity") == "blocking"]
+    if verdict == "fail" and not blocking:
+        fail("invalid_validation_json", "fail verdict needs at least one blocking issue")
+    if verdict != "fail" and blocking:
+        fail("invalid_validation_json", "blocking issues require verdict=fail")
+    render_sha, body = _stage3_bound_render(professor_dir, state)
+    scopes = stage3_render_line_scopes(body)
+    rendered = {}
+    for scope in scopes:
+        if scope:
+            rendered.setdefault(scope_key(scope), {k: v for k, v in scope.items()
+                                                   if k != "candidate_id"})
+    failed: dict = {}
+    for issue in blocking:
+        for scope in _stage3_issue_scopes(issue, body, scopes, path):
+            key = scope_key(scope)
+            row = failed.setdefault(key, {"scope": {k: v for k, v in scope.items()
+                                                    if k != "candidate_id"},
+                                          "candidate_ids": [], "issues": []})
+            row["issues"].append({**issue, "scope": scope, "render_sha256": render_sha})
+            if scope.get("candidate_id") and scope["candidate_id"] not in row["candidate_ids"]:
+                row["candidate_ids"].append(scope["candidate_id"])
+    return {
+        "verdict": verdict,
+        "render_sha256": render_sha,
+        "scopes": rendered,
+        "failed": failed,
+        "issues": issues,
+        "blocking": blocking,
+    }
+
+
+def stage3_correction_scopes(state: dict, evidence: dict) -> list:
+    """Scopes a correction round may repair, from recorded evidence only.
+
+    Fails closed when the round was never recorded, when the render moved on, or
+    when a caller nominates a scope the validator did not fail.
+    """
+    validator = state.get("validator") if isinstance(state.get("validator"), dict) else {}
+    recorded = validator.get("pending") if isinstance(validator.get("pending"), dict) else {}
+    if validator.get("render_sha256") != evidence["render_sha256"]:
+        fail("validation_evidence_not_recorded",
+             "record this validator round with stage3-record-validation before planning a correction")
+    if evidence["failed"] and not recorded:
+        fail("validation_evidence_not_recorded",
+             "the recorded round has no open findings on this render: re-run the style validator "
+             "on the current render and record that round")
+    for key in recorded:
+        if key not in evidence["failed"]:
+            fail("validation_evidence_not_recorded",
+                 f"validator evidence no longer matches the recorded round: {key}")
+    scopes = {}
+    for key, row in evidence["failed"].items():
+        if key == "global":
+            # File-level prose is runner-rendered preamble, so it belongs to
+            # every scope of this render rather than to a caller's guess.
+            for other_key, other in evidence["scopes"].items():
+                if other_key != "global":
+                    scopes.setdefault(other_key, {"scope": other, "candidate_ids": [],
+                                                  "issues": list(row["issues"])})
+            continue
+        scopes[key] = row
+    return [scopes[key] for key in sorted(scopes)]
+
+
+def carry_stage3_validator(old_validator: dict, processed_scopes: set, *,
+                           correction: bool, render_sha: str | None) -> dict | None:
+    """Rewrite the recorded validator block after the render is replaced.
+
+    Every record binds the render it was produced from, so a scope whose text was
+    rewritten loses its old proof and must be validated again.  A correction
+    round keeps the round counter — the next recorded round is the terminal one
+    for that render — while any other re-render starts a fresh bounded cycle.
+    Records for scopes this run did not touch stay valid.
+    """
+    results = {ident: row for ident, row in (old_validator.get("results") or {}).items()
+               if f"direction:{ident}" not in processed_scopes}
+    groups = {ident: row for ident, row in (old_validator.get("groups") or {}).items()
+              if f"group:{ident}" not in processed_scopes}
+    if not results and not groups and not correction:
+        return None
+    return {
+        "round": int(old_validator.get("round") or 0) if correction else 0,
+        "render_sha256": render_sha if correction else None,
+        "raw_verdict": old_validator.get("raw_verdict") if correction else None,
+        "results": results,
+        "groups": groups,
+        "pending": {},
+        "global": (old_validator.get("global") or []) if correction else [],
+        "updated_at": old_validator.get("updated_at"),
+    }
+
+
+def stage3_current_result(direction: dict) -> dict:
+    return {
+        "schema": 2,
+        "kind": "candidates",
+        "direction_id": direction.get("direction_id"),
+        "mode": direction.get("mode"),
+        "refined": direction.get("refined"),
+        "priority": direction.get("priority") or "",
+        "candidates": direction.get("candidates") or [],
+    }
+
+
+STAGE3_IMMUTABLE_CANDIDATE_FIELDS = ("id", "kind", "direction_ids", "origin", "gap_refs",
+                                     "anchor_type", "anchor_notes", "fit", "red_lines")
+STAGE3_REPAIRABLE_CANDIDATE_FIELDS = ("title", "one_liner", "research_question", "points",
+                                      "fit_note", "why_recommended", "tension_points")
+
+
+def _paper_refs(candidate: dict) -> list:
+    return [{"item_key": paper.get("item_key"),
+             "direction_ids": paper.get("direction_ids") or []}
+            for paper in (candidate.get("papers") or []) if isinstance(paper, dict)]
+
+
+def require_stage3_correction_invariants(old: dict, new: dict, path: Path,
+                                         named_candidates: list | None = None) -> None:
+    """A style retry repairs prose the validator may reject, never machine facts.
+
+    Red-line presentation and refined grounding IDs are deliberately excluded
+    from the repairable set: the renderer owns their label and dedup rules, so
+    asking the model to change them would create findings it is forbidden to
+    fix.  ``priority`` and the refined prose fields are repairable precisely
+    because the style validator is authorized to reject them.
+    """
+    if old.get("mode") != new.get("mode"):
+        fail("validation_correction_changed_machine_facts",
+             f"{path}: correction changed mode")
+    old_refined, new_refined = old.get("refined") or {}, new.get("refined") or {}
+    if bool(old.get("refined")) != bool(new.get("refined")):
+        fail("validation_correction_changed_machine_facts",
+             f"{path}: correction changed the presence of the refined block")
+    if old_refined.get("gap_ids") != new_refined.get("gap_ids"):
+        fail("validation_correction_changed_machine_facts",
+             f"{path}: correction changed refined.gap_ids grounding")
+    old_candidates = old.get("candidates") or []
+    new_candidates = new.get("candidates") or []
+    if [c.get("id") for c in old_candidates] != [c.get("id") for c in new_candidates]:
+        fail("validation_correction_changed_machine_facts",
+             f"{path}: correction changed candidate IDs or order")
+    named = set(named_candidates or [])
+    for before, after in zip(old_candidates, new_candidates):
+        cid = before.get("id")
+        changed = [field for field in STAGE3_IMMUTABLE_CANDIDATE_FIELDS
+                   if before.get(field) != after.get(field)]
+        if _paper_refs(before) != _paper_refs(after):
+            changed.append("papers(item_key/direction_ids)")
+        if changed:
+            fail("validation_correction_changed_machine_facts",
+                 f"{path}: candidate {cid} changed {changed}")
+        touched = [field for field in STAGE3_REPAIRABLE_CANDIDATE_FIELDS
+                   if before.get(field) != after.get(field)]
+        for paper_before, paper_after in zip(before.get("papers") or [],
+                                             after.get("papers") or []):
+            for field in ("role", "fit_note"):
+                if (paper_before or {}).get(field) != (paper_after or {}).get(field):
+                    touched.append(f"papers[{(paper_before or {}).get('item_key')}].{field}")
+        if touched and cid not in named:
+            fail("validation_correction_changed_untouched_candidate",
+                 f"{path}: candidate {cid} rewrote {touched} without a validator finding")
+
+
 def cmd_stage3_plan(args) -> None:
     professor_dir = Path(args.professor_dir)
     program_root = Path(args.program_root) if args.program_root else professor_dir.parent.parent
@@ -4800,16 +5112,6 @@ def cmd_stage3_plan(args) -> None:
                 sel_did = direction_machine_id(legacy) if legacy is not None else None
             if sel_did:
                 selected_keys.add(sel_did)
-    scoped_dids = set()
-    for direction in pack_directions:
-        did = direction_machine_id(direction)
-        if direction_id_arg and did != direction_id_arg:
-            continue
-        if refresh_scope == "flagged" and direction.get("status") != "active":
-            continue
-        if refresh_scope == "selected" and did not in (selected_keys or set()):
-            continue
-        scoped_dids.add(did)
     pack_fps = {direction_machine_id(d): d.get("input_fingerprint")
                 for d in pack_directions}
     input_fps = (state or {}).get("input_fingerprints", {})
@@ -4819,6 +5121,55 @@ def cmd_stage3_plan(args) -> None:
     state_groups = {(g.get("group_id") if isinstance(g, dict) else None): g
                     for g in (state or {}).get("cross_direction_groups", [])
                     if isinstance(g, dict)}
+    correction: dict = {}
+    validation_render_sha = None
+    if getattr(args, "validation_file", None):
+        evidence = stage3_validation_evidence(Path(args.validation_file), professor_dir, state)
+        validation_render_sha = evidence["render_sha256"]
+        if skip_ids:
+            fail("invalid_params", "Stage-3 correction cannot skip directions")
+        if cross_groups:
+            fail("invalid_params", "Stage-3 correction cannot request new cross-direction groups")
+        for row in stage3_correction_scopes(state, evidence):
+            scope = row["scope"]
+            if scope["kind"] == "direction":
+                did = scope["direction_id"]
+                current = state_directions.get(did)
+                if not current or current.get("stage3_status") != "ready" \
+                        or not current.get("candidates"):
+                    fail("missing_candidate_state", f"no reusable Stage-3 result for {did}")
+                if direction_id_arg and did != direction_id_arg:
+                    fail("validation_scope_not_in_evidence",
+                         f"--direction-id {direction_id_arg!r} is not the failed scope {did!r}")
+                if contract_changed or profile_changed \
+                        or input_fps.get(did) != pack_fps.get(did):
+                    soft_exit("needs_refresh", "validation_source_changed", direction_id=did)
+                correction[f"direction:{did}"] = row
+            elif scope["kind"] == "group":
+                gid = scope["group_id"]
+                if gid not in state_groups or not (state_groups[gid].get("candidates") or []):
+                    fail("missing_candidate_state", f"no reusable Stage-3 group result for {gid}")
+                correction[f"group:{gid}"] = row
+        if direction_id_arg and f"direction:{direction_id_arg}" not in correction:
+            fail("validation_scope_not_in_evidence",
+                 f"direction_id {direction_id_arg!r} has no failed Stage-3 validation scope")
+        for key in [k for k in correction if k.startswith("group:")]:
+            gid = key.split(":", 1)[1]
+            cross_groups.append({"group_id": gid,
+                                 "direction_ids": list(state_groups[gid].get("direction_ids") or [])})
+    correction_dids = {key.split(":", 1)[1] for key in correction if key.startswith("direction:")}
+    scoped_dids = set()
+    for direction in pack_directions:
+        did = direction_machine_id(direction)
+        if getattr(args, "validation_file", None) and did not in correction_dids:
+            continue
+        if direction_id_arg and did != direction_id_arg:
+            continue
+        if refresh_scope == "flagged" and direction.get("status") != "active":
+            continue
+        if refresh_scope == "selected" and did not in (selected_keys or set()):
+            continue
+        scoped_dids.add(did)
 
     def _direction_reusable(did: str) -> bool:
         if contract_changed:
@@ -4839,7 +5190,7 @@ def cmd_stage3_plan(args) -> None:
         if did in skip_ids:
             skipped.append(did)
             continue
-        if _direction_reusable(did):
+        if _direction_reusable(did) and did not in correction_dids:
             reuse.append(did)
             continue
         gap_lines = []
@@ -4897,13 +5248,30 @@ def cmd_stage3_plan(args) -> None:
                     "count": "generated 与 refined 模式都必须给 3-5 个可选候选；有用户笔记时其中恰好 1 条 origin='user_refined'（校准后的用户想法本身成为可选候选），其余为真正不同的备选",
                     "diversity": "候选之间切入点/所挂 gap 不重复",
                     "scope": "本任务只属于 direction_id 指向的这一个方向；跨方向组合不在本任务内，绝不混入 candidates[]"}}})
+        row = correction.get(f"direction:{did}")
+        if row is not None:
+            jobs[-1]["job_id"] = f"candidates-correction:{pack.get('professor')}:{did}"
+            jobs[-1]["model_input"].update({
+                "current_result": stage3_current_result(state_directions[did]),
+                "validator_issues": row["issues"],
+                "repairable_candidate_ids": row["candidate_ids"],
+                "scope": row["scope"],
+                "correction_rules": (
+                    "返回完整 result；只改 validator_issues 点名的候选文字，"
+                    "且只改 repairable_candidate_ids 列出的候选。"
+                    "候选 ID、顺序、方向、来源、gap_refs、anchor_notes、papers 引用、fit、"
+                    "红线内容与 refined 的 gap_ids 锚定属于机器事实，必须原样保留；"
+                    "候选标题、一句话、研究问题、展开、贴合度说明、为何值得推、张力点、"
+                    "推荐优先级与 refined 说明文字可以按清单改写。"),
+            })
     # Cross-direction jobs: explicit opt-in only (issue #8 §6). No requested
     # group ⇒ no cross job, no cross model call, no cross section.
     cross_jobs = []
     for group in cross_groups:
         stale = True
         old_group = state_groups.get(group["group_id"])
-        if old_group and not contract_changed \
+        group_correction = correction.get(f"group:{group['group_id']}")
+        if old_group and not contract_changed and group_correction is None \
                 and _cross_group_fresh(old_group, pack_fps, current_profile_fp) \
                 and old_group.get("candidates"):
             continue
@@ -4966,12 +5334,28 @@ def cmd_stage3_plan(args) -> None:
                     "provenance": "每条候选 kind:'cross_direction'、direction_ids 必须等于本组全部参与方向（排序后）；gap_refs 每条 {direction_id, item_key, gap_id} 三元组只能引用该 direction_id 自己切片里的精确 gap；papers[] 每篇 {item_key, direction_ids, role, fit_note}，direction_ids 是真实支撑该论文的方向子集，同一论文只出现一次",
                     "grounding": "每个参与方向都必须贡献至少一条真实证据（挂它的 gap 或支撑它的论文）；只引用单方向证据的伪跨方向候选会被拒绝",
                     "count": "给 1-3 个跨方向候选；没有真正的跨方向洞察就输出更少；3-5 的常规名额只属于普通方向任务"}}})
+        if group_correction is not None:
+            cross_jobs[-1]["job_id"] = f"cross-correction:{pack.get('professor')}:{group['group_id']}"
+            cross_jobs[-1]["model_input"].update({
+                "current_result": {"schema": 2, "kind": "cross_candidates",
+                                   "group_id": group["group_id"],
+                                   "direction_ids": group["direction_ids"],
+                                   "candidates": (old_group or {}).get("candidates") or []},
+                "validator_issues": group_correction["issues"],
+                "repairable_candidate_ids": group_correction["candidate_ids"],
+                "scope": group_correction["scope"],
+                "correction_rules": "返回完整 result；只改 validator_issues 点名且列在 "
+                                    "repairable_candidate_ids 里的跨方向候选文字，kind、"
+                                    "direction_ids、gap_refs、papers 引用等机器事实原样保留。",
+            })
     emit({
         "status": "ok",
         "professor": pack.get("professor"),
         "professor_dir": str(professor_dir),
         "refresh_scope": refresh_scope,
         "direction_id": direction_id_arg,
+        "correction_scopes": sorted(correction),
+        "validation_render_sha256": validation_render_sha,
         "profile_fingerprint": current_profile_fp,
         "profile_changed_reason": "profile_changed" if profile_changed else None,
         "generator_contract_version": STAGE3_GENERATOR_CONTRACT_VERSION,
@@ -5273,9 +5657,33 @@ def validate_cross_result(pack: dict, group: dict, data: Any, path: Path) -> dic
             "candidates": checked}
 
 
+def _red_line_key(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "")).casefold()
+
+
+def _candidate_red_lines(candidate: dict, shared_red_lines: set) -> list:
+    """Deterministic red-line presentation (style rule C10 lives in the runner).
+
+    Range labels and duplication are rendering decisions, so the renderer owns
+    them: a candidate line already stated by the section header is dropped, and
+    what remains is labelled with the candidate number.  The candidate's own
+    ``red_lines`` machine facts stay untouched either way.
+    """
+    out, seen = [], set(shared_red_lines or ())
+    for text in candidate.get("red_lines") or []:
+        value = str(text).strip()
+        key = _red_line_key(value)
+        if not value or key in seen:
+            continue
+        seen.add(key)
+        out.append(value)
+    return out
+
+
 def _render_idea_block(lines: list, number: int, heading_label: str,
                        candidate: dict, paper_index: dict,
-                       group_id: str | None = None) -> None:
+                       group_id: str | None = None,
+                       shared_red_lines: set | None = None) -> None:
     """Render one idea (per-direction candidate or explicit cross-direction
     idea) with its machine meta comment and full body (issue #8 §7.2: meta
     carries direction_ids provenance and exact gap_refs triples)."""
@@ -5322,8 +5730,9 @@ def _render_idea_block(lines: list, number: int, heading_label: str,
         fit_note = (fit_note + " " if fit_note else "") + "⚠️ 此论文教授为中间作者"
     lines.append(f"**贴合度**：{candidate.get('fit')} — {fit_note or '—'}")
     lines.append("")
-    if candidate.get("red_lines"):
-        lines.append(f"**红线**：{'；'.join(candidate['red_lines'])}")
+    red_lines = _candidate_red_lines(candidate, shared_red_lines)
+    if red_lines:
+        lines.append(f"**红线**：{'；'.join(f'【候选 {number}】{text}' for text in red_lines)}")
         lines.append("")
     lines.append(f"**为何值得推**：{candidate.get('why_recommended') or '—'}")
     if candidate.get("tension_points"):
@@ -5334,6 +5743,10 @@ def _render_idea_block(lines: list, number: int, heading_label: str,
             lines.append("")
             lines.append(f"> 注：该候选踩着已完成 future work（{gap['gap_id'][:12]}…）作【我的延伸】，差异点见 anchor_notes。")
     lines.append("")
+
+
+def _stage3_scope_marker(payload: dict) -> str:
+    return f"<!-- stage3_scope: {json.dumps(payload, ensure_ascii=False, sort_keys=True)} -->"
 
 
 def render_candidates_md(professor: str, category: str, direction_entries: list,
@@ -5350,11 +5763,14 @@ def render_candidates_md(professor: str, category: str, direction_entries: list,
     for entry in direction_entries:
         credibility = entry.get("credibility") or {}
         verdict = credibility.get("verdict") or "未判定"
+        direction_id = entry.get("direction_id") or entry.get("collection_key")
         lines.append(f"## {entry['name_ja']}（{entry.get('name_zh') or ''}）")
         lines.append("")
-        direction_id = entry.get("direction_id") or entry.get("collection_key")
+        lines.append(_stage3_scope_marker({"kind": "direction", "direction_id": direction_id}))
+        lines.append("")
         lines.append(f"> 方向 ID：{direction_id} ｜ 脉络、论文一览、用户笔记 → 见《套磁候选分析.md》。")
         red_lines = [r for r in entry.get("red_lines", []) if r.get("scope") != "global"]
+        shared_red_lines = {_red_line_key(r.get("text")) for r in red_lines}
         if red_lines:
             rendered = "；".join(f"【方向】{r.get('text', '').strip()}" for r in red_lines)
             lines.append(f"> 方向级共享红线（只在这里写一次）：{rendered}")
@@ -5378,9 +5794,13 @@ def render_candidates_md(professor: str, category: str, direction_entries: list,
         for d in (entry.get("_pack_papers") or []):
             paper_index[d["item_key"]] = d
         for number, candidate in enumerate(candidates, start=1):
-            _render_idea_block(lines, number, "候选", candidate, paper_index)
+            _render_idea_block(lines, number, "候选", candidate, paper_index,
+                               shared_red_lines=shared_red_lines)
         if entry.get("priority"):
             lines.append("## 推荐优先级")
+            lines.append("")
+            lines.append(_stage3_scope_marker({"kind": "direction",
+                                               "direction_id": direction_id}))
             lines.append("")
             lines.append(entry["priority"])
             lines.append("")
@@ -5389,6 +5809,8 @@ def render_candidates_md(professor: str, category: str, direction_entries: list,
         if not entries:
             continue
         lines.append("## 跨方向想法（显式标注）")
+        lines.append("")
+        lines.append(_stage3_scope_marker({"kind": "group", "group_id": group.get("group_id")}))
         lines.append("")
         lines.append("> 以下候选显式跨越多个已解析方向（绝不隐式合并方向池）；每条列出全部参与方向的 resolved 方向 ID。")
         lines.append("")
@@ -5476,7 +5898,44 @@ def cmd_stage3_finalize(args) -> None:
         (state or {}).get("generator_contract_version") != STAGE3_GENERATOR_CONTRACT_VERSION
     old_directions = {d.get("direction_id"): d
                       for d in (state or {}).get("directions", []) if isinstance(d, dict)}
+    old_groups = {(g.get("group_id") if isinstance(g, dict) else None): g
+                  for g in (state or {}).get("cross_direction_groups", [])
+                  if isinstance(g, dict)}
     old_fps = (state or {}).get("input_fingerprints", {})
+    pack_fps = {direction_machine_id(d): d.get("input_fingerprint")
+                for d in pack_directions}
+    correction: dict = {}
+    if getattr(args, "validation_file", None):
+        if skip_ids or cross_groups:
+            fail("invalid_params", "Stage-3 correction cannot skip or request cross-direction groups")
+        evidence = stage3_validation_evidence(Path(args.validation_file), professor_dir, state)
+        for row in stage3_correction_scopes(state, evidence):
+            scope = row["scope"]
+            if scope["kind"] == "direction":
+                did = scope["direction_id"]
+                current = old_directions.get(did)
+                if not current or current.get("stage3_status") != "ready" \
+                        or not current.get("candidates"):
+                    fail("missing_candidate_state", f"no reusable Stage-3 result for {did}")
+                if direction_id_arg and did != direction_id_arg:
+                    fail("validation_scope_not_in_evidence",
+                         f"--direction-id {direction_id_arg!r} is not the failed scope {did!r}")
+                if contract_changed or profile_changed or old_fps.get(did) != pack_fps.get(did):
+                    soft_exit("needs_refresh", "validation_source_changed", direction_id=did)
+                correction[f"direction:{did}"] = row
+            elif scope["kind"] == "group":
+                gid = scope["group_id"]
+                if gid not in old_groups or not (old_groups[gid].get("candidates") or []):
+                    fail("missing_candidate_state", f"no reusable Stage-3 group result for {gid}")
+                correction[f"group:{gid}"] = row
+        if direction_id_arg and f"direction:{direction_id_arg}" not in correction:
+            fail("validation_scope_not_in_evidence",
+                 f"direction_id {direction_id_arg!r} has no failed Stage-3 validation scope")
+        for key in [k for k in correction if k.startswith("group:")]:
+            gid = key.split(":", 1)[1]
+            cross_groups.append({"group_id": gid,
+                                 "direction_ids": list(old_groups[gid].get("direction_ids") or [])})
+    correction_dids = {key.split(":", 1)[1] for key in correction if key.startswith("direction:")}
     selected_keys = None
     if refresh_scope == "selected":
         selection_path = args.selection or (Path(args.program_root) / "教授研究" / SELECTION_FILE)
@@ -5501,11 +5960,11 @@ def cmd_stage3_finalize(args) -> None:
             decision = decision_data.get("decision")
     professor = pack.get("professor")
     category = professor_dir.parent.name
-    pack_fps = {direction_machine_id(d): d.get("input_fingerprint")
-                for d in pack_directions}
     scoped_dids = set()
     for direction in pack_directions:
         did = direction_machine_id(direction)
+        if getattr(args, "validation_file", None) and did not in correction_dids:
+            continue
         if direction_id_arg and did != direction_id_arg:
             continue
         if refresh_scope == "flagged" and direction.get("status") != "active":
@@ -5514,7 +5973,7 @@ def cmd_stage3_finalize(args) -> None:
             continue
         scoped_dids.add(did)
     updated_directions, reused, skipped_out = [], [], []
-    processed_dids = set()
+    processed_scopes = set()
     for direction in pack_directions:
         did = direction_machine_id(direction)
         if did not in scoped_dids:
@@ -5543,7 +6002,8 @@ def cmd_stage3_finalize(args) -> None:
                 "user_note_present": bool(direction.get("user_note")),
             })
             continue
-        if old_direction and not contract_changed and not profile_changed \
+        if old_direction and did not in correction_dids and not contract_changed \
+                and not profile_changed \
                 and old_fps.get(did) == pack_fps.get(did) \
                 and old_direction.get("stage3_status") == "ready" \
                 and old_direction.get("candidates"):
@@ -5556,11 +6016,15 @@ def cmd_stage3_finalize(args) -> None:
             updated_directions.append(old_direction)
             continue
         result_path = results_dir / safe_result_file("candidates", did)
-        processed_dids.add(did)
+        processed_scopes.add(f"direction:{did}")
         data, rerror = read_json_file(result_path)
         if rerror:
             fail("result_missing", f"{result_path}: {rerror}")
         checked = validate_candidate_result(pack, direction, data, result_path)
+        row = correction.get(f"direction:{did}")
+        if row is not None:
+            require_stage3_correction_invariants(old_direction, checked, result_path,
+                                                 row["candidate_ids"])
         checked["name_ja"] = direction.get("name_ja")
         checked["name_zh"] = direction.get("name_zh")
         checked["credibility"] = direction.get("credibility")
@@ -5574,22 +6038,25 @@ def cmd_stage3_finalize(args) -> None:
     # still match; otherwise it needs the result file its plan job pointed at.
     # Groups from earlier runs that are no longer requested are dropped and
     # reported — never silently kept.
-    old_groups = {(g.get("group_id") if isinstance(g, dict) else None): g
-                  for g in (state or {}).get("cross_direction_groups", [])
-                  if isinstance(g, dict)}
     final_groups, dropped_groups = [], []
     for group in cross_groups:
         old_group = old_groups.get(group["group_id"])
-        if old_group and not contract_changed \
+        group_row = correction.get(f"group:{group['group_id']}")
+        if old_group and group_row is None and not contract_changed \
                 and _cross_group_fresh(old_group, pack_fps, current_profile_fp) \
                 and old_group.get("candidates"):
             final_groups.append(old_group)
             continue
         result_path = results_dir / safe_result_file("candidates", group["group_id"])
+        processed_scopes.add(f"group:{group['group_id']}")
         data, rerror = read_json_file(result_path)
         if rerror:
             fail("result_missing", f"{result_path}: {rerror}")
         checked = validate_cross_result(pack, group, data, result_path)
+        if group_row is not None:
+            require_stage3_correction_invariants(
+                old_group, {"candidates": checked["candidates"]}, result_path,
+                group_row["candidate_ids"])
         final_groups.append({
             "group_id": group["group_id"],
             "direction_ids": list(group["direction_ids"]),
@@ -5706,18 +6173,12 @@ def cmd_stage3_finalize(args) -> None:
         "cross_direction_groups": final_groups,
         "cache": {"render": {CANDIDATES_MD: {"sha256": md_result.get("sha256")}}},
     }
-    if state and state.get("validator"):
-        old_validator = state["validator"]
-        old_results = old_validator.get("results") if isinstance(old_validator, dict) else None
-        if isinstance(old_results, dict):
-            retained = {key: value for key, value in old_results.items()
-                        if key not in processed_dids}
-            # A processed direction has a new rendered body, so its old
-            # validator result is not carried forward; untouched directions are.
-            if retained:
-                new_state["validator"] = {
-                    "results": retained,
-                    "updated_at": old_validator.get("updated_at") if isinstance(old_validator, dict) else None}
+    if isinstance((state or {}).get("validator"), dict):
+        retained = carry_stage3_validator(
+            state["validator"], processed_scopes,
+            correction=bool(correction), render_sha=md_result.get("sha256"))
+        if retained:
+            new_state["validator"] = retained
     atomic_json(professor_dir / CANDIDATE_STATE, new_state)
     emit({
         "status": "ok", "professor": professor,
@@ -5730,6 +6191,10 @@ def cmd_stage3_finalize(args) -> None:
                         "candidates": len(d.get("candidates") or [])}
                        for d in updated_directions],
         "skipped_direction_ids": skipped_out,
+        "corrected": sorted(key.split(":", 1)[1] for key in correction
+                            if key.startswith("direction:")),
+        "corrected_groups": sorted(key.split(":", 1)[1] for key in correction
+                                   if key.startswith("group:")),
         "cross_direction_groups": [{"group_id": g["group_id"],
                                      "direction_ids": g["direction_ids"],
                                      "candidates": len(g.get("candidates") or [])}
@@ -6996,6 +7461,36 @@ def cmd_stage5_plan(args) -> None:
         fail("result_missing", f"{result_path}: {rerror}")
     by_id = load_id_map(result_path, {e.get("email_id") for e in emails}, "email result",
                         exact=not bool(args.email_id))
+    # The model result contract is checked before anything else: it is the
+    # caller's own file, and a broken result must not hide behind a cache gate.
+    problems_by_id = {}
+    for email in emails:
+        email_id = email.get("email_id")
+        raw = by_id.get(email_id)
+        if raw is None:
+            fail("result_missing", f"no raw result for {email_id}")
+        problems = validate_email_raw(email, raw)
+        hard = [x for x in problems if not x.startswith("WARNING")]
+        if hard:
+            fail("invalid_result_json", f"{email_id}: {'; '.join(hard)}")
+        problems_by_id[email_id] = [x for x in problems if x.startswith("WARNING")]
+    # Verification hard gate: until every selected professor's 送信前核验 is
+    # usable, no caller row may be read at all — the only pre-gate recipient
+    # decision surface is Step 2.5 writing `_contact_verify.json` items.email.
+    # The two stop codes keep their distinct repairs: a bare contact-evidence
+    # reason means Stage 4 must re-freeze the pack, `verify_*` means Step 2.5.
+    for professor, check in verify_checks.items():
+        if check["ok"]:
+            continue
+        decision = decisions.get(professor) or {}
+        if decision.get("status") == "needs_refresh":
+            soft_exit("needs_refresh", decision.get("reason_code") or
+                      "contact_evidence_snapshot_stale", professor=professor,
+                      message="联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 "
+                              "邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。")
+        soft_exit("needs_refresh", f"verify_{check['reason']}", professor=professor,
+                  message=f"送信前核验缓存不可用（{check['reason']}）：先完成 Step 2.5 核验。"
+                          "核验通过前不读取 choices。未写盘。")
     choices_path = getattr(args, "choices", None)
     choices_by_id = (load_id_map(Path(choices_path), {e.get("email_id") for e in emails}, "choices",
                                  exact=not bool(args.email_id))
@@ -7003,17 +7498,14 @@ def cmd_stage5_plan(args) -> None:
     drafts = []
     for email in emails:
         raw = by_id.get(email.get("email_id"))
-        if raw is None:
-            fail("result_missing", f"no raw result for {email.get('email_id')}")
-        problems = validate_email_raw(email, raw)
-        hard = [x for x in problems if not x.startswith("WARNING")]
-        if hard:
-            fail("invalid_result_json", f"{email.get('email_id')}: {'; '.join(hard)}")
-        warnings = [x for x in problems if x.startswith("WARNING")]
+        warnings = problems_by_id[email.get("email_id")]
         choices = choices_by_id.get(email.get("email_id"))
         require_user_choices(email.get("email_id"), choices)
         if mode in ("both", "followup"):
             require_followup_choices(email.get("email_id"), choices)
+        stage5_recipient_authority(
+            email.get("email_id"), choices,
+            (verify_checks.get(email.get("professor")) or {}).get("data"))
         if mode in ("first", "both"):
             draft, protected, banned = assemble_draft(
                 email, raw, choices, sources, template_text)
@@ -7114,6 +7606,11 @@ def validate_email_raw(email: dict, raw: Any) -> list:
     return problems
 
 
+# Issue #43 freezes the caller-facing choices contract, but does not redefine
+# pre-existing runner-internal compatibility fields. Keep renderer defaults
+# here; public caller declarations are owned by the Stage-5 docs/projections.
+DEFAULT_ALMA_MATER = "総合大学出身"
+
 def require_user_choices(email_id: str, choices: Any) -> dict:
     if not isinstance(choices, dict):
         fail("missing_user_choice", f"{email_id}: choices object required")
@@ -7124,6 +7621,33 @@ def require_user_choices(email_id: str, choices: Any) -> dict:
     if not isinstance(choices.get("learning"), str) or not choices["learning"].strip():
         fail("missing_user_choice", f"{email_id}: learning is required")
     return choices
+
+
+def stage5_recipient_authority(email_id: str, choices: dict, verify: dict | None) -> str:
+    """Return the single recipient address an email may render.
+
+    `_contact_verify.json` is the send-time authority; `choices.email_address`
+    is the caller's explicit recipient *decision*, which Step 2.5 records into
+    that cache. It may confirm the authority and may never replace it, so an
+    address that disagrees with — or arrives before — the verified value fails
+    closed instead of silently steering a follow-up to a different mailbox.
+    """
+    verified = str((((verify or {}).get("items") or {}).get("email") or {})
+                   .get("value") or "").strip()
+    stated = str((choices or {}).get("email_address") or "").strip()
+    if not stated:
+        return verified
+    if not verified:
+        fail("recipient_conflict",
+             f"{email_id}: choices.email_address 已给出，但 _contact_verify.json 还没有已核验的"
+             "收件邮箱。先在 Step 2.5 把用户的明确答复写入 items.email（source user_provided，"
+             "verdict confirmed）再重跑；choices 不得代替送信前核验。")
+    if stated.casefold() != verified.casefold():
+        fail("recipient_conflict",
+             f"{email_id}: choices.email_address「{stated}」与送信前核验的权威收件邮箱"
+             f"「{verified}」不一致。按 Step 2.5 复核结论修正 choices 或重写缓存，"
+             "不存在第二份收件人权威。")
+    return verified
 
 
 def require_followup_choices(email_id: str, choices: dict) -> None:
@@ -7195,7 +7719,7 @@ def humanized_paths(args, emails: list[dict], exact: bool = True) -> dict[str, P
 def assemble_draft(email: dict, raw: dict, choices: dict,
                    sources: dict, template_text: str) -> tuple[str, list, list]:
     values = header_values(sources, email)
-    values["出身校"] = choices.get("alma_mater") or "総合大学出身"
+    values["出身校"] = choices.get("alma_mater") or DEFAULT_ALMA_MATER
     values["氏名"] = choices.get("signature_name") or ""
     values["志望"] = ("先生の研究室を第一志望として出願させていただきたく存じます"
                       if choices.get("first_choice") else
@@ -7225,7 +7749,7 @@ def assemble_draft(email: dict, raw: dict, choices: dict,
 def assemble_followup_draft(email: dict, choices: dict, sources: dict,
                             template_text: str, verify: dict | None = None) -> tuple[str, list, list]:
     values = header_values(sources, email)
-    values["出身校"] = choices.get("alma_mater") or "総合大学出身"
+    values["出身校"] = choices.get("alma_mater") or DEFAULT_ALMA_MATER
     values["氏名"] = choices.get("signature_name") or ""
     values["初回送信日"] = choices.get("initial_sent_date") or ""
     # Issue #8 §8.3: a multi-direction (cross) email must not guess ONE
@@ -7236,9 +7760,8 @@ def assemble_followup_draft(email: dict, choices: dict, sources: dict,
     else:
         values["研究主题"] = (email.get("name_ja") or
                                (email.get("idea") or {}).get("title") or "関連分野")
-    verify_items = (verify or {}).get("items") or {}
-    values["メールアドレス"] = (choices.get("email_address") or
-                              (verify_items.get("email") or {}).get("value") or "")
+    values["メールアドレス"] = stage5_recipient_authority(
+        email.get("email_id"), choices, verify)
     subject = choices.get("followup_subject") or f"Re: {choices.get('subject') or subject_line(values)}"
     values["subject"] = subject
     body = template_text
@@ -7420,6 +7943,50 @@ def cmd_stage5_finalize(args) -> None:
         program_root, list(dict.fromkeys(
             e.get("professor") for e in emails if e.get("professor"))))
     decisions = contact_evidence_decisions(emails, resolved_evidence)
+    # Verification hard gate, mirroring cmd_stage5_plan: until every selected
+    # professor's 送信前核验 is usable, no caller row — choices, result rows,
+    # humanized bodies — may be read at all. The per-email loop below consumes
+    # these saved checks so plan and finalize share one verify semantics.
+    verify_checks = {}
+    for email in emails:
+        professor_dir = Path(email.get("professor_dir") or program_root)
+        key = email.get("professor")
+        if key in verify_checks:
+            continue
+        check = verify_state(professor_dir, sources, decisions.get(key))
+        decision = decisions.get(key)
+        if check["ok"] and decision is not None and \
+                decision.get("status") == "needs_refresh":
+            # A frozen-snapshot mismatch makes this professor's pack entry
+            # stale for the whole run regardless of cache usability: the
+            # deterministic repair is a Stage-4 refresh, not a web lookup.
+            check = {"ok": False,
+                     "reason": decision.get("reason_code") or "contact_evidence_snapshot_stale",
+                     "path": None, "data": None}
+        verify_checks[key] = check
+    for professor, check in verify_checks.items():
+        decision = decisions.get(professor)
+        if not check["ok"]:
+            if decision is not None and decision.get("status") == "needs_refresh":
+                soft_exit("needs_refresh", decision.get("reason_code") or
+                          "contact_evidence_snapshot_stale", professor=professor,
+                          message="联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 "
+                                  "邮件输入.json，再重跑阶段 5。未写盘。")
+            soft_exit("needs_refresh", f"verify_{check['reason']}",
+                      professor=professor,
+                      message=f"送信前核验缓存不可用（{check['reason']}）：先完成 Step 2.5 核验。未写盘。")
+        if decision is not None and decision.get("status") not in ("escalate", "needs_refresh"):
+            # Recipient-evidence consistency backstop: an accepted decision
+            # must still match the cache the checklist will print, and the
+            # conflict is resolved before any choices row is read.
+            cache_email_value = str((((check["data"] or {}).get("items") or {}).get("email") or {})
+                                    .get("value") or "").strip()
+            recipient = str(decision.get("recipient_email") or "").strip()
+            if not cache_email_value or cache_email_value.casefold() != recipient.casefold():
+                fail("contact_evidence_mismatch",
+                     f"{professor}: 本地联系方式证据判定 {decision['status']}，收件邮箱应为 "
+                     f"{recipient}；核对表邮箱为「{cache_email_value or '空'}」。"
+                     "请按证据填写 _contact_verify.json，或重建 _联系方式证据.json 后重跑阶段 4。")
     result_path = Path(args.result)
     raw_by_id = load_id_map(result_path, {e.get("email_id") for e in emails}, "email result",
                             exact=not bool(args.email_id))
@@ -7465,38 +8032,21 @@ def cmd_stage5_finalize(args) -> None:
         if hard:
             fail("invalid_result_json", f"{email_id}: {'; '.join(hard)}")
         choices = choices_by_id.get(email_id)
+        professor_dir = Path(email.get("professor_dir") or program_root)
+        # The whole-batch verification gate above already stopped on any
+        # unusable professor before choices were read; consume its saved
+        # result instead of re-deriving a second verify semantics.
+        verify = verify_checks[email.get("professor")]["data"]
+        warnings = (verify.get("items") or {}).get("warnings") or []
+        decision = decisions.get(email.get("professor"))
+        cache_email_value = str(((verify.get("items") or {}).get("email") or {})
+                                .get("value") or "").strip()
+        # Past the verification gate: only now may this row be validated, and
+        # its explicit address only ever confirm the verified authority.
         require_user_choices(email_id, choices)
         if mode in ("both", "followup"):
             require_followup_choices(email_id, choices)
-        professor_dir = Path(email.get("professor_dir") or program_root)
-        verify_check = verify_state(professor_dir, sources,
-                                    decisions.get(email.get("professor")))
-        if not verify_check["ok"]:
-            soft_exit("needs_refresh", f"verify_{verify_check['reason']}",
-                      professor=email.get("professor"),
-                      message=f"送信前核验缓存不可用（{verify_check['reason']}）：先完成 Step 2.5 核验。未写盘。")
-        verify = verify_check["data"]
-        warnings = (verify.get("items") or {}).get("warnings") or []
-        decision = decisions.get(email.get("professor"))
-        if decision and decision.get("status") == "needs_refresh":
-            # Frozen-pack contract: 邮件输入.json is out of sync with the
-            # live contact facts (or predates the snapshot). Nothing may be
-            # generated from a pack Stage 5 cannot replay — the deterministic
-            # fix is a Stage-4 refresh, not a web lookup.
-            soft_exit("needs_refresh", decision.get("reason_code") or
-                      "contact_evidence_snapshot_stale",
-                      professor=email.get("professor"),
-                      message="联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 "
-                              "邮件输入.json，再重跑阶段 5。未写盘。")
-        cache_email_value = str(((verify.get("items") or {}).get("email") or {})
-                                .get("value") or "").strip()
-        if decision and decision["status"] not in ("escalate", "needs_refresh"):
-            recipient = str(decision["recipient_email"] or "").strip()
-            if not cache_email_value or cache_email_value.casefold() != recipient.casefold():
-                fail("contact_evidence_mismatch",
-                     f"{email_id}: 本地联系方式证据判定 {decision['status']}，收件邮箱应为 "
-                     f"{recipient}；核对表邮箱为「{cache_email_value or '空'}」。"
-                     "请按证据填写 _contact_verify.json，或重建 _联系方式证据.json 后重跑阶段 4。")
+        stage5_recipient_authority(email_id, choices, verify)
         roster_verdict = ((verify.get("items") or {}).get("roster") or {}).get("verdict")
         email_verdict = ((verify.get("items") or {}).get("email") or {}).get("verdict")
         banner_needed = bool(warnings) or roster_verdict == "not_found" or email_verdict == "unverified"
@@ -7550,10 +8100,10 @@ def cmd_stage5_finalize(args) -> None:
             if "{{" in humanized:
                 fail("humanizer_violation", f"{output_id}: residual {{}} placeholders")
             subject_match = re.match(r"Subject: (.*)", humanized)
-            subject = (choices.get("subject") if kind == "initial" else choices.get("followup_subject"))
+            subject = choices.get("followup_subject") if kind == "followup" else None
             subject = subject or (subject_match.group(1).strip() if subject_match else
                                   (subject_line(values) if kind == "initial" else
-                                   f"Re: {choices.get('subject') or subject_line(values)}"))
+                                   f"Re: {subject_line(values)}"))
             body_text = re.sub(r"^Subject: .*\n+", "", humanized, count=1)
             lines = [
                 f"# {heading} — {email.get('professor')}（{email.get('name_ja')}）",
@@ -7987,20 +8537,86 @@ def cmd_stage2_record_validation(args) -> None:
 
 
 def cmd_stage3_record_validation(args) -> None:
+    """Record one real Stage-3 validator round from its own raw output.
+
+    The runner owns the translation: rounds are counted here, the terminal
+    verdict per machine scope is derived from the validator's own findings, and
+    the record is bound to the rendered revision it describes.  Nothing in the
+    written state can be asserted by a caller.
+    """
     professor_dir = Path(args.professor_dir)
     pack, _ = load_input_pack(professor_dir)
     state, state_error = load_candidate_state(professor_dir, pack)
     if state_error or state is None:
         fail("missing_candidate_state",
              f"candidate state unreadable: {professor_dir / CANDIDATE_STATE}")
-    allowed = {d.get("direction_id") for d in state.get("directions", [])
-               if isinstance(d, dict)}
-    results = load_validator_results(Path(args.validation_file), allowed, "direction_id")
+    previous = state.get("validator") if isinstance(state.get("validator"), dict) else {}
+    raw_round = previous.get("round")
+    if isinstance(raw_round, bool) or not isinstance(raw_round, int):
+        raw_round = 0
+    previous_pending = (
+        previous.get("pending") if isinstance(previous.get("pending"), dict) else {}
+    )
+    if raw_round >= 1 and previous_pending:
+        fail(
+            "validation_correction_required",
+            "complete the recorded Stage-3 correction with stage3-plan/finalize "
+            "--validation-file before recording another validator round",
+        )
+    evidence = stage3_validation_evidence(Path(args.validation_file), professor_dir, state)
+    round_no = raw_round + 1
+    if round_no > STAGE3_VALIDATION_MAX_ROUNDS:
+        fail("validation_rounds_exhausted",
+             f"Stage-3 style validation is bounded to {STAGE3_VALIDATION_MAX_ROUNDS} rounds; "
+             "the terminal record already exists")
+    results = dict(previous.get("results") or {}) if isinstance(previous.get("results"), dict) else {}
+    groups = dict(previous.get("groups") or {}) if isinstance(previous.get("groups"), dict) else {}
+    pending = dict(previous.get("pending") or {}) if isinstance(previous.get("pending"), dict) else {}
+    at = now_utc()
+    exhausted = round_no >= STAGE3_VALIDATION_MAX_ROUNDS
+    summary = []
+    for key, scope in sorted(evidence["scopes"].items()):
+        if key == "global":
+            continue
+        kind, _, ident = key.partition(":")
+        row = evidence["failed"].get(key) or {}
+        issues = row.get("issues") or []
+        record = {
+            "result": "pass" if not issues else (
+                "fail_after_2_rounds" if exhausted else "fail"),
+            "rounds": round_no,
+            "issues": issues,
+            "candidate_ids": row.get("candidate_ids") or [],
+            "scope": scope,
+            "render_sha256": evidence["render_sha256"],
+            "validated_at": at,
+        }
+        target = results if kind == "direction" else groups
+        if issues and not exhausted:
+            target.pop(ident, None)
+            pending[key] = record
+        else:
+            target[ident] = record
+            pending.pop(key, None)
+        summary.append({"scope": key, "result": record["result"], "rounds": round_no,
+                        "blocking": len(issues)})
     updated = dict(state)
-    updated["validator"] = {"results": results, "updated_at": now_utc()}
+    updated["validator"] = {
+        "round": round_no,
+        "render_sha256": evidence["render_sha256"],
+        "raw_verdict": evidence["verdict"],
+        "results": results,
+        "groups": groups,
+        "pending": pending,
+        "global": (evidence["failed"].get("global") or {}).get("issues") or [],
+        "updated_at": at,
+    }
     atomic_json(professor_dir / CANDIDATE_STATE, updated)
     emit({"status": "ok", "state_path": str(professor_dir / CANDIDATE_STATE),
-          "updated": sorted(results)})
+          "round": round_no, "raw_verdict": evidence["verdict"],
+          "render_sha256": evidence["render_sha256"], "scopes": summary,
+          "needs_correction": bool(pending),
+          "terminal": not pending})
 
 
 def read_legacy_index(index_path: Path) -> tuple[dict | None, str | None]:
@@ -8481,6 +9097,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "absent/empty means no cross-direction work at all")
     p.add_argument("--selection")
     p.add_argument("--program-root")
+    p.add_argument("--validation-file",
+                   help="raw style-validator JSON; forces text-only correction jobs for the scopes "
+                        "the recorded round actually failed (--direction-id may only narrow them)")
     p.set_defaults(func=cmd_stage3_plan)
 
     p = sub.add_parser("stage3-finalize")
@@ -8497,6 +9116,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--selection")
     p.add_argument("--program-root")
     p.add_argument("--decision-file")
+    p.add_argument("--validation-file",
+                   help="same raw style-validator JSON used by stage3-plan correction")
     p.set_defaults(func=cmd_stage3_finalize)
 
     p = sub.add_parser("stage4-finalize")

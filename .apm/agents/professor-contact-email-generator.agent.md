@@ -44,6 +44,46 @@ At startup, read `.apm/skills/professor-contact/docs/stage5-legacy-contract.md` 
 
 That resource preserves the pre-Issue-#9 contract for reference and is **not an agent primitive**. Its template-wide/full-body humanizer instructions are obsolete and are overridden by the rules below. Where it shows OpenCode-native tool calling or the retired full-body humanizer pass, that syntax is an OpenCode-branch illustration, not a cross-target API — call harness tools per the dual-target rules below instead. Its recipient-email ladder inside Step 2.5 is additionally scoped by the Issue #10 contact-evidence-first rules below: the five-level ladder runs only when the upstream contact evidence does not already settle the recipient.
 
+## Stage 5 caller Input contract
+
+The caller may provide an optional `choices` canonical JSON value. This is a
+ScholarWorkflow business input shared by both install targets; it is not a
+Codex-specific runtime calling convention and is not persisted.
+
+- For one selected email, `choices` is one object. For multiple selected
+  emails, it is a list with one object per email.
+- Every row must carry the exact `email_id`, an explicit boolean
+  `first_choice`, a non-empty `signature_name`, and a non-empty `learning`.
+- `mode: both|followup` additionally requires a non-empty,
+  non-`{{...}}` `initial_sent_date`; `mode: first` does not.
+- The public row schema is exactly these seven keys: `email_id`,
+  `first_choice`, `signature_name`, `learning`, `initial_sent_date`,
+  `followup_subject`, `email_address`. Anything outside it is non-public; pre-existing runner-internal
+  compatibility fields such as `subject` and `alma_mater` are not public
+  API and callers must not emit them. Issue #43 does not define rejection or
+  compatibility semantics for those non-public fields, so do not turn them
+  into caller fields or acceptance gates.
+- `_contact_verify.json` `items.email.value` (the Step 2.5 送信前核验 verdict)
+  is the **only** recipient authority. `choices.email_address` is the caller's
+  explicit recipient *decision* and may only confirm it: an address that
+  disagrees with the verified value, or that arrives before Step 2.5 has
+  recorded one, fails closed with `recipient_conflict` and writes nothing. To
+  send to a user-supplied address, Step 2.5 first writes that answer into
+  `items.email` (`source: user_provided`, `verdict: confirmed`), then the row
+  is re-run. A choices value may never replace the rendered recipient.
+- Ordering: the verification hard gate below runs first, so until every
+  selected professor reports `verify: ok` the runner does not read the choices
+  file at all — a blocked cache surfaces as `verify_*` (or a bare
+  contact-evidence reason that needs Stage 4 repair), never as a
+  choices-related code.
+
+When `choices` is supplied, preserve the object/list and every value exactly:
+write the canonical JSON to a temporary choices file and pass that file to the
+existing runner with `--choices`. Do not add defaults, translate fields, drop
+unknown keys, or map an email by position, professor name, or “first email”.
+The runner remains the sole authority for required fields/types, ID-set,
+recipient authority, contact-evidence, and finalization validation.
+
 ## Direction provenance (issue #8 email-pack v2)
 
 `邮件输入.json` is schema 2: every `emails[]` entry carries `direction_ids` (sorted canonical IDs) and `directions[]` (per-direction display names) — for cross-direction ideas both list ALL participants, and `email_id` is built from the canonical direction scope (`professor::A+B::idea`, A+B == B+A). The runner passes this provenance into the model input; never guess which evidence belongs to which direction, and never reconstruct direction identity from names or a legacy `collection_key`. For a multi-direction follow-up email the topic line uses the selected idea title, not one singular direction name.
@@ -75,17 +115,21 @@ Stage 5 runs on both install targets with identical business rules; only the har
 
 - Delegate validator rounds to the hidden validator subagent with OpenCode's native Task tool, e.g. `task(subagent_type: "professor-contact-email-validator", prompt: "files: …\nemail_pack: …")`, and consume its structured JSON verdict.
 - Load `humanizer-ja` through the native skill capability (`skill(name: "humanizer-ja")`).
-- Ask the user for required decisions with the native `question` tool.
+- If the caller did not provide `choices`, ask for the required decisions with
+  the native `question` tool and write the resulting canonical object/list to
+  the temporary choices file. If the caller did provide `choices`, preserve it
+  and pass it to the runner without asking a second question.
 - Web verification (escalated email-ladder levels 3/4) uses the native `websearch` / `webfetch` tools.
 
 ### Codex branch (installed named agents + official surfaces)
 
 - Keep the delegation non-recursive: the delegation payload carries only that stage's Input contract business fields, and never forwards the caller's own received routing instruction verbatim to the child; no coordinator may delegate to a named custom agent that has its own machine name; the same machine name may appear only once in a delegation chain (this agent's child is `professor-contact-email-validator`, never `professor-contact-email-generator`).
 - When a validator child is required, directly delegate to the installed named custom agent and wait for its result before continuing. A real machine-level delegation failure is a Codex runtime/feature blocker; the parent must not inline or simulate the child's work.
-- Top-level callers delegate Stage 5 to the installed named custom agent `professor-contact-email-generator`; inside Stage 5, delegate validator rounds to the installed named custom agent `professor-contact-email-validator`, wait for its result, and consume it before continuing. Do not copy its instructions into the parent dialogue, do not claim its role as your own, and do not assume spawn APIs, parameters or event fields that Codex documentation does not expose. If the native delegation to the validator fails at the machine/runtime level, stop and record a Codex runtime/feature blocker: never run the validation rounds yourself in this parent agent, never inline-simulate the validator, and never present unfinished validation as a completed Stage 5.
-- Use the installed, discoverable `humanizer-ja` Skill. Do not write OpenCode's native skill/Task/question tool-call syntax into Codex flows.
+- Top-level callers delegate Stage 5 to the installed named custom agent `professor-contact-email-generator`; inside Stage 5, delegate validator rounds to the installed named custom agent `professor-contact-email-validator` using Codex's documented native subagent/custom-agent delegation: delegate to the exact installed named custom agent and wait for its result, and consume it before continuing. Do not copy its instructions into the parent dialogue, do not claim its role as your own, do not assume spawn APIs, parameters or event fields that Codex documentation does not expose, never inline or simulate the child's work, and never substitute `exec_command` shell, `curl`, or another Codex/OpenCode/eval session for native delegation; never present unfinished validation as a completed Stage 5, and only a real machine-level/runtime delegation error may be recorded as a Codex runtime/feature blocker — never run the validation rounds yourself in this parent agent and never inline-simulate the validator. No undocumented runtime feature, fixed tool namespace, private spawn schema, or internal event/tool name is a prerequisite for ordinary delegation.
+- Use the installed, discoverable `humanizer-ja` Skill. Do not write OpenCode's native skill, Task, or interactive-prompt tool-call syntax into Codex flows.
 - Web verification uses Codex's official web search surface. Shell HTTP (`curl`, Python requests) may only reach the eval service, never substitute for the harness web capability.
 - When a required user decision (conflicting-address choice, `initial_sent_date`, first-choice/learning/signature, email confirmation) was not supplied by the caller, stop at the existing `needs_input`/unfinished boundary: never auto-pick the first option, never fabricate a date, learning field, signature or "confirmed" state, and never write the final email. Do not invent a continuation/resume protocol; hand the missing decision back to the caller/user explicitly.
+- When the caller supplies complete `choices`, write that canonical JSON value unchanged（原样）to a temporary file and pass it to `stage5-plan` and `stage5-finalize` through `--choices`. Do not restate the values as separate prompt fields or describe them as Codex runtime parameters.
 
 ### humanizer-ja stage-5 constraints (both targets)
 
@@ -107,11 +151,18 @@ Stage 5 consumes the upstream reconciled artifact `教授研究/_联系方式证
 4. **Escalation voids evidence-seeded cache entries (deterministic).** If a previous run seeded `items.email` from evidence (sources all `level: "contact_evidence"`) and the decision is now `escalate` or `needs_refresh` (including source-state stale/unavailable/checker-unavailable and frozen-snapshot fingerprint mismatch), `stage5-plan` flags the professor as `needs_recheck:contact_evidence_escalated` (or the snapshot reason); in Step 2.5 do **not** reuse the cached email item even though the rest of the cache may be fresh — re-run the email ladder (levels 1–5) and rewrite `items.email` with ladder/user provenance, never re-seeding from the same escalated evidence. After a Stage-4 refresh (or a converged local rebuild + re-check restoring a fresh matching record), re-seeding from evidence is allowed again. `stage5-finalize` refuses with `verify_contact_evidence_escalated` until that rewrite happened. Ladder/user-verified entries are unaffected by unrelated evidence churn and keep their own 30-day TTL.
 5. Never treat a paper-derived address as current contact information (`paper_only` always escalates; upstream marks every paper correspondence row `current_email_evidence: false`, they are provenance only). Never silently choose between conflicting addresses (`conflict` always escalates to web verification or explicit user confirmation).
 6. **Address-conflict gate (deterministic, pre-generation).** The upstream artifact scopes itself as `workflow_evidence_not_send_time_authority`; `_contact_verify.json` is the send-time verification authority. When an accepted evidence decision names an address that DIFFERS from a still-usable `items.email` value — whatever the cache provenance (independent ladder/user verification included) — `stage5-plan` flags the professor as `needs_recheck:contact_evidence_verify_conflict` and `stage5-finalize` refuses with `verify_contact_evidence_verify_conflict` before writing anything. In that case do **not** seed or overwrite the cache entry silently: resolve explicitly with the user — if the artifact is wrong, fix the upstream evidence sources and let the rebuild refresh it; if the cache is wrong, re-run the email ladder (levels 1–5) or get explicit user confirmation, then rewrite `items.email` with the confirmed value and its provenance. The same address in any provenance reuses the cache freely without re-web. The finalize `contact_evidence_mismatch` guard remains the backstop for caches with no usable email value at all.
-7. `stage5-finalize` hard-fails with `contact_evidence_mismatch` when an accepted decision is overridden by a different `_contact_verify.json` email value. To change the recipient legitimately, rebuild the upstream artifact (or let the Stage 5 rebuild refresh it) and re-run Stage 4 so the pack snapshot is refreshed.
+7. `stage5-finalize` hard-fails with `contact_evidence_mismatch` when an accepted decision is overridden by a different `_contact_verify.json` email value. To change the recipient legitimately, rebuild the upstream artifact (or let the Stage 5 rebuild refresh it) and re-run Stage 4 so the pack snapshot is refreshed. A recipient the user states during Step 2.5 (including one echoed back in `choices.email_address`) becomes authority only after it is written into `items.email` as `verdict: confirmed` with `source: user_provided`; the row itself can never be that second record.
 8. The runner records the chosen email and its provenance/status into `套磁邮件状态.json` (`emails[<id>].contact_evidence`); the rendered 送信前核对 table keeps the evidence source visible for the validator. The final pre-send validator loop is unchanged and still mandatory.
 
 ## Execution summary
 
-`stage5-plan` / verification (contact-evidence decision first, web ladder only on escalation) → model result JSON → optional dynamic-field-only polish → user choices → `stage5_immutable.py stage5-finalize` → final validator loop → `stage5-record-validation`.
+The verification gate is executable and mandatory, not background guidance:
+
+1. **First command:** run `contact_state.py stage5-plan` without `--result` and without `--choices`, then parse its JSON. Do not author the model result yet.
+2. For every selected professor whose plan reports `verify: needs_recheck:<reason>`, complete Step 2.5 and write the full professor-level `_contact_verify.json` (all eight checklist items, fingerprints, and `verified_at`; the contact-evidence-first rules above decide the email item). Then rerun that same initial `stage5-plan`.
+3. **Hard gate:** do not create result JSON, consume choices, call `stage5_immutable.py stage5-finalize`, or spawn a validator until every selected professor reports `verify: ok`. The runner enforces the same order: a `stage5-plan --result --choices` whose cache is not usable stops with `verify_*` (or the bare Stage-4 reason) and never reads the choices file, so a recipient decision taken before the gate has exactly one route — Step 2.5 writing `_contact_verify.json` `items.email`. A choices row can only confirm that verified address (`recipient_conflict` otherwise), never replace it. A deterministic `needs_refresh` reason that requires Stage 4 repair is returned to the caller; ordinary `verify_missing` / `needs_recheck` is work for Step 2.5, not a completed Stage 5 result.
+4. If finalize nevertheless returns `verify_missing` or another repairable `verify_*` cache reason, return to Step 2.5, refresh the cache, rerun the initial plan, and retry. Never present that intermediate runner refusal as successful or completed Stage 5.
+
+`stage5-plan` (no result/choices) → Step 2.5 until `verify: ok` → model result JSON → optional dynamic-field-only polish → user choices → `stage5_immutable.py stage5-finalize` → final validator loop → `stage5-record-validation`.
 
 No template-wide humanization step exists in this workflow.

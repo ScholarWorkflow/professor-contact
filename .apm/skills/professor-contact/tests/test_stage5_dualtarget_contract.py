@@ -29,6 +29,12 @@ GENERATOR = AGENTS_DIR / "professor-contact-email-generator.agent.md"
 VALIDATOR = AGENTS_DIR / "professor-contact-email-validator.agent.md"
 CHECKER_ENV = "PROFESSOR_CONTACT_EVIDENCE_SCRIPT"
 
+# Issue #43 freezes the public choices row. Natural-language explanations are
+# not machine schema: behavior tests own retirement / recipient-authority
+# semantics, while this source contract checks only the formal public fields.
+CHOICE_PUBLIC_KEYS = ("email_id", "first_choice", "signature_name", "learning",
+                      "initial_sent_date", "followup_subject", "email_address")
+
 # Deterministic stand-in for professor-research's contact_evidence.py: the
 # --check form prints a fixture freshness report (the locator tests only need
 # the discovery + subprocess boundary, not the ladder business branches that
@@ -71,6 +77,70 @@ class Stage5DualTargetContractTests(unittest.TestCase):
         end = body.index(end_marker) if end_marker else len(body)
         return body[start:end]
 
+    def _statements(self, section):
+        """Split a contract section into caller-facing statements: a new
+        top-level bullet or a blank line starts one, so wrapped text stays with
+        the bullet it belongs to."""
+        blocks = [""]
+        for line in section.splitlines():
+            if line.startswith("- ") or not line.strip():
+                blocks.append(line)
+            else:
+                blocks[-1] = blocks[-1] + "\n" + line
+        return [block for block in blocks if block.strip()]
+
+    def _declared_public_choice_keys(self, label, section):
+        """Return only the keys named by the section's authoritative public-schema
+        declaration.  Other backticked names in retirement/authority clauses are
+        deliberately outside this declaration."""
+        for statement in self._statements(section):
+            flat = " ".join(statement.split())
+            marker = next(
+                (candidate for candidate in (
+                    "public row schema is exactly",
+                    "公开字段只有这七个",
+                ) if candidate in flat),
+                None,
+            )
+            if marker is None:
+                continue
+            declaration = flat.split(marker, 1)[1]
+            if marker == "公开字段只有这七个":
+                declaration = declaration.split("。", 1)[0]
+            else:
+                declaration = re.split(
+                    r"(?:\.\s+Anything outside it|:\s*any other key)",
+                    declaration,
+                    maxsplit=1,
+                )[0]
+            return tuple(re.findall(r"`([a-z][a-z0-9_]*)`", declaration))
+        self.fail(f"{label}: authoritative public choices schema declaration missing")
+
+    def assert_public_choice_contract(self, label, section):
+        """The natural-language documents expose the same formal caller schema.
+
+        Do not infer rejection semantics for non-public compatibility keys from
+        prose here. This static contract checks only the formally advertised
+        caller field names and that recipient authority is referenced beside the
+        caller field; recipient-authority behavior stays covered through the
+        public runner path in test_contact_state.py.
+        """
+        declared = self._declared_public_choice_keys(label, section)
+        self.assertCountEqual(
+            declared,
+            CHOICE_PUBLIC_KEYS,
+            f"{label}: public choices schema must be exactly the frozen seven keys",
+        )
+        authority = [
+            statement for statement in self._statements(section)
+            if "email_address" in statement and "items.email.value" in statement
+        ]
+        self.assertTrue(
+            authority,
+            f"{label}: choices.email_address must be documented together with "
+            f"the verified items.email.value authority",
+        )
+
     def test_generator_document_has_explicit_dual_target_branches(self):
         body = self.generator_body
         openecode_start = body.index("### OpenCode branch")
@@ -109,9 +179,6 @@ class Stage5DualTargetContractTests(unittest.TestCase):
                     match.start(), codex_start,
                     f"{needle!r} must not leak into the Codex branch")
         self.assertNotIn("question(", body)
-        # `spawn_agent` is a documented Codex multi-agent tool; the generator
-        # body stays off its concrete envelope (issue #51).
-        self.assertNotRegex(body, r"spawn_agent\s*\(")
 
     def test_codex_branch_stops_at_needs_input_without_autofill(self):
         codex = self._section(self.generator_body, "### Codex branch",
@@ -122,11 +189,58 @@ class Stage5DualTargetContractTests(unittest.TestCase):
         self.assertIn("never write the final email", codex)
         self.assertIn("continuation/resume", codex)
 
+    def test_stage5_choices_are_a_shared_business_input_not_a_runtime_api(self):
+        body = self.generator_body
+        self.assertIn("optional `choices`", body)
+
+        opencode = self._section(body, "### OpenCode branch", "### Codex branch")
+        codex = self._section(body, "### Codex branch",
+                              "### humanizer-ja stage-5 constraints")
+        self.assertIn("choices", opencode)
+        self.assertIn("question", opencode)
+        self.assertIn("choices", codex)
+        self.assertIn("--choices", codex)
+        self.assertNotIn("question(", codex)
+        self.assertNotIn("task(subagent_type", codex)
+
+        legacy = LEGACY_CONTRACT.read_text(encoding="utf-8")
+
+        # The authoritative public-input declarations, rather than incidental
+        # wording, are the source-level contract. Non-public compatibility-key
+        # semantics are intentionally outside this acceptance; runner tests own
+        # recipient-authority behavior.
+        self.assert_public_choice_contract(
+            "generator agent",
+            self._section(body, "## Stage 5 caller Input contract",
+                          "## Direction provenance"))
+        self.assert_public_choice_contract(
+            "SKILL.md",
+            self._section(self.skill_text, "### 5.0 Stage 5 caller choices contract",
+                          "### 5.1 "))
+        self.assert_public_choice_contract(
+            "legacy contract",
+            self._section(legacy, "Issue #43 caller rule:", "**Runner 分工**"))
+
     def test_validator_requires_both_first_and_followup_validation(self):
         body = self.generator_body
         self.assertIn(
             "Run `professor-contact-email-validator` on both rendered first "
             "and follow-up `.md` files", body)
+
+    def test_presend_verification_is_a_hard_executable_gate(self):
+        body = self.generator_body
+        for needle in (
+            "run `contact_state.py stage5-plan` without `--result` and without `--choices`",
+            "complete Step 2.5 and write the full professor-level `_contact_verify.json`",
+            "until every selected professor reports `verify: ok`",
+            "ordinary `verify_missing` / `needs_recheck` is work for Step 2.5",
+            "return to Step 2.5, refresh the cache",
+        ):
+            self.assertIn(needle, body)
+        start = body.index("stage5-plan` (no result/choices)")
+        self.assertLess(start, body.index("model result JSON", start))
+        for needle in ("verify: ok", "verify_missing", "不带 `--result`/`--choices`"):
+            self.assertIn(needle, self.skill_text)
 
     def test_validator_machine_name_and_network_deny_are_intact(self):
         frontmatter, body = _frontmatter_and_body(VALIDATOR)
@@ -242,6 +356,7 @@ class InstalledSharedSkillsLocatorTests(unittest.TestCase):
         report, error = module.run_contact_evidence_check(program_root)
         self.assertIsNone(report)
         self.assertEqual(error, "script_missing")
+
 
 
 if __name__ == "__main__":

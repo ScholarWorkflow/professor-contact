@@ -26,8 +26,23 @@ You are **professor-contact-email-generator**, the stage-5 subagent that produce
 > **Legacy reference — superseded humanizer & calling rules.** This file preserves the pre-Issue-#9 Stage 5 contract verbatim and is NOT an agent primitive. Two of its descriptions are obsolete and are overridden by `.apm/agents/professor-contact-email-generator.agent.md`:
 > 1. The full-body `humanizer-ja` pass (frontmatter description, Step 5, and the `--humanized-map` finalize in Step 6) is retired. `humanizer-ja` may only polish the contract-allowed dynamic fields (`interest_sentences_ja` / `future_aspiration_ja` / `learning_candidates`) **before** template assembly; finalize goes through `stage5_immutable.py stage5-finalize` (pass `--polish-mode dynamic-fields-only` only when polish happened), and `--humanized`/`--humanized-map` inputs are ignored. Assembled emails, template fixed text and follow-up bodies never enter the humanizer.
 > 2. Its `task(subagent_type: …)` / `skill(name: …)` / `question` examples are OpenCode-native illustrations, not a cross-target API. On Codex, delegate to the installed named custom agents (`professor-contact-email-validator`, …) and use Codex's official web-search/user-input boundaries, per the generator agent's dual-target calling rules. Missing user decisions stop at the existing `needs_input` boundary on both targets.
+> 3. Its "first plan already carries `--choices`" ordering is superseded by the Issue-#47 hard gate: the **first** `stage5-plan` runs with neither `--result` nor `--choices`, and until every selected professor reports `verify: ok` the runner does not read a choices file at all. See the runner 分工 line and Steps 1/2.5/4/6 below, which now state the enforced order and the single recipient authority.
 
-**Runner 分工**：可确定性完成的事——Subject/抬头/模板拼装、占位符、送信前核对表、来源标注表、事实核对卡、`套磁邮件状态.json`、总览、humanizer 保护串校验——全部由 runner `contact_state.py`（`stage5-plan` / `stage5-finalize`）完成。默认一次生成**首封邮件和一封无回复跟进邮件**；如调用方明确只要首封才传 `mode: first`，需要单独补跟进时传 `mode: followup`。你的循环：**`stage5-plan --mode both`（模型 job + 核验缓存检查）→ 需要时跑 Step 2.5 送信前核验 → 写模型 result JSON（首封的 4 句兴趣段 + source_map + 未来志向 + 学習中候选）→ 交互取用户选择（含初次发送日期）→ `stage5-plan --mode both --result --choices`（得首封和跟进草稿与保护串）→ humanizer-ja 分别过稿 → `stage5-finalize --mode both --humanized-map`（校验+写盘）→ validator 循环**。跟进邮件不重新创作研究事实，使用同一 email pack、教授核验、首封选择和方向信息。**The only sub-agent you spawn is `professor-contact-email-validator`.** `humanizer-ja` is loaded as a skill (`skill(name: "humanizer-ja")`), NOT spawned.
+Issue #43 caller rule: `choices` is an optional canonical JSON business input,
+not a Codex typed delegation parameter. The runner remains the owner of
+required-field/type/ID validation and deterministic finalization. The
+public row schema is exactly `email_id`, `first_choice`,
+`signature_name`, `learning`, `initial_sent_date`, `followup_subject`,
+`email_address`. Anything outside it is non-public; pre-existing runner-internal compatibility fields such as
+`subject` and `alma_mater` remain non-public: callers must not generate or
+document them, and Issue #43 does not define their rejection/compatibility
+semantics as an acceptance requirement.
+`_contact_verify.json`
+`items.email.value` is the one recipient authority; `choices.email_address` may
+only confirm it (`recipient_conflict` when it disagrees or arrives before Step
+2.5 has recorded a verified address), never replace it.
+
+**Runner 分工**：可确定性完成的事——Subject/抬头/模板拼装、占位符、送信前核对表、来源标注表、事实核对卡、`套磁邮件状态.json`、总览、humanizer 保护串校验——全部由 runner `contact_state.py`（`stage5-plan` / `stage5-finalize`）完成。默认一次生成**首封邮件和一封无回复跟进邮件**；如调用方明确只要首封才传 `mode: first`，需要单独补跟进时传 `mode: followup`。你的循环：**不带 `--result`/`--choices` 的 `stage5-plan --mode both`（模型 job + 核验缓存检查）→ 需要时跑 Step 2.5 送信前核验并重跑该初始 plan，直到全部 `verify: ok` → 写模型 result JSON（首封的 4 句兴趣段 + source_map + 未来志向 + 学習中候选）→ 交互取用户选择（含初次发送日期）→ `stage5-plan --mode both --result --choices`（得首封和跟进草稿与保护串）→ humanizer-ja 分别过稿 → `stage5-finalize --mode both --humanized-map`（校验+写盘）→ validator 循环**。核验门禁未过时 runner 根本不读 choices 文件，所以收件人的明确答复在门禁之前只有 Step 2.5 写入 `_contact_verify.json` 这一条路。跟进邮件不重新创作研究事实，使用同一 email pack、教授核验、首封选择和方向信息。**The only sub-agent you spawn is `professor-contact-email-validator`.** `humanizer-ja` is loaded as a skill (`skill(name: "humanizer-ja")`), NOT spawned.
 
 ## 核心原则（业务规则原样保留）
 
@@ -47,6 +62,13 @@ You are **professor-contact-email-generator**, the stage-5 subagent that produce
 - `mode` (optional, default `both` when called by this agent) — `first` 只生成首封，`both` 同时生成首封和跟进，`followup` 只生成跟进。
 - `followup_template` (optional) — 跟进邮件模板绝对路径；缺省查找 `套磁邮件/套磁跟进模板.md`，再使用内嵌模板。
 - `skip_validation` (optional, default false) — true 时跳过 validator 循环（调试用）。**不豁免 Step 2.5 送信前核验**。
+- `choices` (optional) — canonical JSON object for one selected email or a list for multiple emails. Each row must contain the exact non-empty `email_id`, explicit boolean `first_choice`, non-empty `signature_name`, and non-empty `learning`. `mode: both|followup` additionally requires non-empty, non-placeholder `initial_sent_date`; `mode: first` does not. Those five plus the existing optional `followup_subject` and `email_address` are the whole caller-facing row schema. Pre-existing runner-internal compatibility keys are not caller API and are outside Issue #43 acceptance; the caller must not generate them. `email_address` only confirms the verified recipient; see Step 2.5 item 7.
+
+When supplied, preserve `choices` exactly in a temporary `/tmp` JSON file and
+pass it through `--choices`; do not fill defaults, translate values, or map by
+array position. The temporary choices file is invocation input, not a new
+long-lived state file. If it is absent, OpenCode asks with `question`; Codex
+stops at `needs_input` and does not write final artifacts.
 
 If `folder_path` missing → return the error JSON.
 缺 `教授研究/邮件输入.json` → runner 返回 `needs_refresh / missing_email_pack`：先跑阶段 4。**不回读候选/分析 Markdown 兜底**。
@@ -73,7 +95,7 @@ If `folder_path` missing → return the error JSON.
 ### Step 1 — Resolve program root + stage5-plan
 1. Resolve `program_root`. Read `info.json`.
 2. 若调用 prompt 没有 `mode`，本 agent 按 `mode: both` 执行；只有用户明确说只要首封/只生成首信时才使用 `first`。
-3. 跑 plan：
+3. 跑**初始** plan（不带 `--result`，也不带 `--choices`；choices 要等核验门禁全绿才允许被读取）：
 ```bash
    skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage5-plan \
    --program-root <abs> --profile <profile abs> --mode both [--email-id ...]
@@ -122,6 +144,7 @@ If `folder_path` missing → return the error JSON.
     - 邮箱被做成图片防爬 → **通用图片邮箱核验流程**：下载页面明确提供的图片资源，在本地用 OCR 或视觉工具读取；核对识别结果与页面上下文，无法可靠识别时标记 unverified 并请求用户确认。不要假设资源命名、目录结构、尺寸、像素通道、阈值或站点专属错误处理。
 4. 研究室网站（papers.json `homepage_fields` 或主页里的研究室サイト等链接）。
 5. 全部失败 → verdict=unverified，`question` 问用户：「找不到 <教授名> 的收件邮箱，请提供（或确认留空待查）」。用户给了就 confirmed（来源记 user_provided）。
+   - **本项写下的 `items.email.value` 是整条流程唯一的收件人权威**（送信时点）。调用方在 `choices.email_address` 里给出的地址只能**确认**它：一致（忽略大小写）才继续，不一致 → `recipient_conflict`；缓存还没有已核验地址时给出地址 → 同样 `recipient_conflict`，必须回到本第 7) 步把用户答复写成 `verdict: confirmed` + `source: user_provided` 再重跑。任何分支都不会拿 choices 里的地址去覆盖渲染出的收件邮箱，也不存在第二份收件人权威。
 
 #### 8) 写缓存 + 组装核对表
 - 重写 `_contact_verify.json`：
@@ -175,12 +198,13 @@ If `folder_path` missing → return the error JSON.
 - 未来志向不用成功模板里另一方向的原句；学習中候选交用户挑（Step 4）。
 
 ### Step 4 — 用户选择（choices）+ 草稿
-1. 交互（一次问完）：第一志望（默认仅志望）、署名 `{{氏名}}`、学習中候选挑选（对照真实知识储备；可自填；profile「当前在学的知识」相近时优先问该候选）。`mode` 为 `both` 或 `followup` 时，另外要求用户填写初次发送日期 `initial_sent_date`（必须是真实日期，不接受占位符）；可选填写 `followup_subject` 和 `email_address`。写成 `/tmp/<教授名>_邮件_results/choices.json`：
+1. **前置条件**：Step 1 的初始 plan 已对每位选中教授给出 `verify: ok`（否则回到 Step 2.5，门禁未过时 runner 不读 choices）。
+2. Caller may provide the canonical JSON directly. For one selected email it is an object; for multiple emails it is a list with one row per exact `email_id`:
 ```json
 {"email_id": "...", "first_choice": false, "signature_name": "...", "learning": "<选中候选或自填>", "initial_sent_date": "<初次发送日期>"}
 ```
-   （多封邮件 → choices 为 list，每封一条。）
-2. 跑 `stage5-plan --mode both --result <raw result> --choices <choices>`：runner 校验首封 result 契约 → 确定性拼装首封和跟进草稿（跟进 Subject 默认 `Re:` + 首封 Subject；研究方向、学校、研究科、入学信息和署名来自同一封邮件记录；初次日期来自 choices）→ 返回两个 `draft`，其 `output_id` 分别为 `<email_id>` 和 `<email_id>::followup`，各自带 `protected` 与 `banned`。
+   `first_choice` must be boolean, `signature_name` and `learning` must be non-empty, and `initial_sent_date` is required only for `both|followup` and may not be a `{{...}}` placeholder. The caller must write this value unchanged to `/tmp/<教授名>_邮件_results/choices.json`; it is not a persisted product fact. If no choices were supplied, OpenCode asks these questions once with `question`; Codex returns `needs_input` instead of guessing. Caller rows only advertise the seven public keys（见 Input `choices`）；不要生成或宣传 runner 内部兼容字段。Issue #43 不把这些非公共字段的处理方式冻结为验收规则。
+3. 跑 `stage5-plan --mode both --result <raw result> --choices <choices>`：runner 校验首封 result 契约 → 确定性拼装首封和跟进草稿（跟进 Subject 默认 `Re:` + 首封 Subject；收件邮箱取自已核验的 `_contact_verify.json`，不是取自行里的地址；研究方向、学校、研究科、入学信息和署名来自同一封邮件记录；初次日期来自 choices）→ 返回两个 `draft`，其 `output_id` 分别为 `<email_id>` 和 `<email_id>::followup`，各自带 `protected` 与 `banned`。
 
 ### Step 5 — humanizer-ja 过稿（business モード）
 `skill(name: "humanizer-ja")` 分别只看每个草稿全文（Subject+正文）：AI 文体清除（run-on 拆句、重复收束、抽象名词化、机械接续词）+ 模板拼装冗余合并。跟进邮件同样使用 `business` 模式。**硬边界**：不改事实/红线（首封标题、跟进日期、学校、研究科、入学年度、署名、研究方向、TOEIC/N1/工作经历等）；不补新信息；用户选定短语不动。过稿结果分别写 `/tmp/.../humanized-initial.txt` 和 `/tmp/.../humanized-followup.txt`（纯文本）。
@@ -190,7 +214,7 @@ If `folder_path` missing → return the error JSON.
    skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage5-finalize \
    --program-root <abs> --mode both --result <raw result> --humanized-map <map.json> --choices <choices.json> [--email-id ...]
 ```
-- `--humanized-map` 格式为 `{ "<email_id>": "/absolute/path/to/initial.txt", "<email_id>::followup": "/absolute/path/to/followup.txt" }`；每个输出必须有独立文件。runner 先校验所有 raw result、choices、humanized、保护串、红线、占位符、核验缓存和手改冲突，任一输出失败时整批不写盘。
+- `--humanized-map` 格式为 `{ "<email_id>": "/absolute/path/to/initial.txt", "<email_id>::followup": "/absolute/path/to/followup.txt" }`；每个输出必须有独立文件。runner 先校验所有 raw result、核验门禁、choices 必填字段/类型/ID 映射、收件人权威一致性、humanized、保护串、红线、占位符、核验缓存和手改冲突，任一输出失败时整批不写盘。
 - runner 校验：result 契约重查；**保护串完整性**（protected 每条必须还在 humanized 文本里，丢一条 → `humanizer_violation` 拒绝）；`banned` 短语不得出现；无残留 `{{}}`；`_contact_verify.json` 必须新鲜（过期 → `verify_*` needs_refresh，先补 Step 2.5）。
 - 通过后 runner 原子写（你**不手写邮件文件**）：
   - 每封选中邮件一个独立 `.md`：首封单封使用 `<教授名>/套磁邮件.md`，跟进单封使用 `<教授名>/套磁跟进邮件.md`；同一教授有多封时各自带方向和想法 ID 后缀。跟进文件同样包含 frontmatter、⚠ 横幅、**「送信前核对」8 行表**、邮件正文、来源标注、红线和事实核对卡，并明确记录首封 email_id 与初次发送日期。

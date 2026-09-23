@@ -1,0 +1,1 @@
+继续 ${PROGRAM_ROOT} 的正式 professor-contact 工作流，只执行 Stage 3。直接消费现有 Stage 2 canonical input，按正式 orchestration/delegation contract 生成候选状态；不要进入 Stage 4。完成后正常结束。

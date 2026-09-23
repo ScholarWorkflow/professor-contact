@@ -1,12 +1,16 @@
 from pathlib import Path
+import json
 import re
+import tomllib
 import unittest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 AGENTS_DIR = REPO_ROOT / ".apm" / "agents"
 SKILL_PATH = REPO_ROOT / ".apm" / "skills" / "professor-contact" / "SKILL.md"
-ANALYZER_PATH = AGENTS_DIR / "professor-contact-analyzer.agent.md"
+OPENCode_AGENT_DIR = REPO_ROOT / "packages" / "professor-contact-opencode" / ".apm" / "agents"
+CODEX_AGENT_DIR = REPO_ROOT / "packages" / "professor-contact-codex" / ".apm" / "agents"
+ANALYZER_PATH = OPENCode_AGENT_DIR / "professor-contact-analyzer.agent.md"
 MANIFEST_PATH = REPO_ROOT / "apm.yml"
 
 # Machine identities of the 8 source agents; install projections (Codex TOML /
@@ -21,6 +25,25 @@ EXPECTED_AGENT_NAMES = (
     "professor-contact-email-validator",
     "professor-contact-style-validator",
 )
+
+
+def _source_agent_paths():
+    return sorted(AGENTS_DIR.glob("*.agent.md")) + [
+        OPENCode_AGENT_DIR / "professor-contact-analyzer.agent.md",
+        CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md",
+    ]
+
+
+def _source_agent_by_name():
+    paths = {}
+    for path in sorted(AGENTS_DIR.glob("*.agent.md")) + [ANALYZER_PATH]:
+        frontmatter, _ = _frontmatter_and_body(path)
+        fields = _top_level_fields(frontmatter)
+        name = fields.get("name", "")
+        if name in paths:
+            raise AssertionError(f"duplicate source agent machine name {name!r}")
+        paths[name] = path
+    return paths
 
 # Caller-facing stage agents (the two validators are invoked by their owning
 # stage agents, not by the caller).
@@ -109,16 +132,79 @@ def _target_branch(text: str, heading: str, next_heading: str | None = None) -> 
     return text[start:end]
 
 
-class ApmDeploymentMetadataTests(unittest.TestCase):
-    def test_manifest_keeps_opencode_and_codex_targets(self):
-        manifest = (REPO_ROOT / "apm.yml").read_text(encoding="utf-8")
-        match = re.search(r"(?m)^targets:\s*\[([^\]]+)\]\s*$", manifest)
-        self.assertIsNotNone(match, "apm.yml must declare explicit inline targets")
-        targets = [part.strip() for part in match.group(1).split(",") if part.strip()]
-        self.assertEqual(targets, ["opencode", "codex"])
+# Documented-native-delegation gate (issue #47 Phase 4): the obsolete Code Mode /
+# programmatic tool-calling discovery prerequisite is removed, because that
+# feature is under development / default-off and must never gate an ordinary
+# Codex child. The reconciled production contract requires Codex's documented
+# native subagent/custom-agent delegation: delegate to the exact installed name
+# and wait, never skip just because another runtime's syntax is missing, and
+# fail closed only on a real machine-level delegation failure.
+CODEX_NATIVE_DELEGATION_GATE_MARKERS = (
+    "使用 Codex 官方文档所定义的原生委派能力",
+    "按 exact installed name 委派已安装的 named custom agent 并等待其结果",
+    "不能因为缺少另一运行时的调用语法就跳过委派",
+    "任何未公开或未确认的运行时特性、固定工具 namespace、私有 spawn schema "
+    "或内部事件/工具名都不是普通 Codex 委派的前提",
+)
 
+# Wording of the removed Code Mode prerequisite; it must not reappear in any
+# production Codex contract.
+CODEX_OBSOLETE_DISCOVERY_LITERALS = (
+    "Code Mode",
+    "programmatic tool-calling",
+)
+
+# The fail-closed reason code may only be emitted after an actual native
+# delegation attempt returned a machine-level failure; the model's own "no
+# interface" impression is never machine evidence.
+CODEX_DELEGATION_REASON_CODE = "codex_runtime_delegation_unavailable"
+
+
+def _assert_codex_native_delegation_gate(codex: str):
+    for marker in CODEX_NATIVE_DELEGATION_GATE_MARKERS:
+        assert marker in codex, f"missing native-delegation gate marker: {marker}"
+    for obsolete in CODEX_OBSOLETE_DISCOVERY_LITERALS:
+        if obsolete == "Code Mode":
+            # Issue #57 keeps the literal only as a rejected inference source
+            # inside the unavailable/blocker rule; it must never be required.
+            for match in re.finditer(re.escape(obsolete), codex):
+                context = codex[max(0, match.start() - 24):match.start()]
+                assert "缺少" in context or "reject" in context.lower(), (
+                    f"Code Mode must stay a rejected inference source, saw context: {context!r}"
+                )
+            assert not re.search(r"必须[^。\n]*Code Mode", codex), (
+                "Code Mode must never be required for delegation"
+            )
+            continue
+        assert obsolete not in codex, (
+            f"obsolete Code Mode prerequisite reappeared: {obsolete}"
+        )
+
+    reason_lines = [
+        line for line in codex.splitlines() if CODEX_DELEGATION_REASON_CODE in line
+    ]
+    assert reason_lines, "the fail-closed reason code must be named in the Codex branch"
+    strict_lines = [line for line in reason_lines if "没看到接口" in line]
+    assert strict_lines, (
+        "at least one reason-code line must name the forbidden 'no interface' shortcut"
+    )
+    machine_failure = re.compile(r"machine-level(?: delegation)? failure|机器级失败")
+    for line in strict_lines:
+        assert "实际尝试" in line, (
+            f"reason code line lacks actual-attempt semantics: {line}"
+        )
+        assert machine_failure.search(line), (
+            f"reason code line lacks machine-level-failure semantics: {line}"
+        )
+    for line in reason_lines:
+        assert machine_failure.search(line), (
+            f"reason code line lacks machine-level-failure semantics: {line}"
+        )
+
+
+class ApmDeploymentMetadataTests(unittest.TestCase):
     def test_all_agent_frontmatter_descriptions_are_yaml_safe(self):
-        agent_paths = sorted(AGENTS_DIR.glob("*.agent.md"))
+        agent_paths = _source_agent_paths()
         self.assertTrue(agent_paths, "expected at least one .apm/agents/*.agent.md file")
 
         for path in agent_paths:
@@ -140,18 +226,26 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
                 self.fail(f"{path}: duplicate agent machine name {name!r} (already in {names[name]})")
             names[name] = path.name
 
-        for expected in EXPECTED_AGENT_NAMES:
-            self.assertIn(expected, names, f"missing source agent {expected!r}")
         self.assertEqual(
-            set(names),
-            set(EXPECTED_AGENT_NAMES),
-            "the .apm/agents source set must be exactly the 8 professor-contact agents",
+            set(names), set(EXPECTED_AGENT_NAMES) - {"professor-contact-analyzer"},
+            "the root source set must contain the 7 shared agents; analyzer projections are target-scoped",
         )
+        for package_dir in (OPENCode_AGENT_DIR, CODEX_AGENT_DIR):
+            path = package_dir / "professor-contact-analyzer.agent.md"
+            self.assertTrue(path.exists(), f"missing target-scoped analyzer {path}")
+            frontmatter, _ = _frontmatter_and_body(path)
+            fields = _top_level_fields(frontmatter)
+            self.assertEqual(fields.get("name"), "professor-contact-analyzer")
+
+        for expected in EXPECTED_AGENT_NAMES:
+            if expected == "professor-contact-analyzer":
+                continue
+            self.assertIn(expected, names, f"missing source agent {expected!r}")
 
     def test_opencode_native_frontmatter_is_preserved(self):
         for name in EXPECTED_AGENT_NAMES:
             with self.subTest(agent=name):
-                path = AGENTS_DIR / f"{name}.agent.md"
+                path = _source_agent_by_name()[name]
                 self.assertTrue(path.exists(), f"{path}: source agent must exist")
                 frontmatter, _ = _frontmatter_and_body(path)
                 fields = _top_level_fields(frontmatter)
@@ -193,11 +287,6 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
         # presented as the unified truth) must be gone.
         self.assertNotIn("the ONLY way", skill)
         self.assertNotIn("the Task tool is the ONLY way", skill)
-        # `spawn_agent` is a documented, stable Codex multi-agent tool name;
-        # the caller convention stays off it so the business contract never
-        # binds to one specific tool envelope (issue #51), not because the
-        # name were private.
-        self.assertNotRegex(skill, r"spawn_agent\s*\(")
         self.assertNotIn("agent_role", skill)
         self.assertNotIn("agent_path", skill)
 
@@ -219,12 +308,25 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
             )
 
     def test_stage2_analyzer_has_explicit_target_specific_delegation_contract(self):
-        _, analyzer = _frontmatter_and_body(ANALYZER_PATH)
-        self.assertIn("### OpenCode 分支", analyzer, "Stage 2 analyzer must explain its OpenCode delegation path")
-        self.assertIn("### Codex 分支", analyzer, "Stage 2 analyzer must explain its Codex delegation path")
+        _, opencode_analyzer = _frontmatter_and_body(ANALYZER_PATH)
+        _, codex_analyzer = _frontmatter_and_body(
+            CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md"
+        )
+        self.assertIn(
+            "### OpenCode 分支", opencode_analyzer,
+            "Stage 2 OpenCode projection must explain its native delegation path",
+        )
+        self.assertNotIn(
+            "### Codex 分支", opencode_analyzer,
+            "Codex routing must not leak into the OpenCode projection",
+        )
+        self.assertIn(
+            "### Codex 分支", codex_analyzer,
+            "Stage 2 Codex projection must explain its native delegation path",
+        )
 
-        opencode = _target_branch(analyzer, "### OpenCode 分支", "### Codex 分支")
-        codex = _target_branch(analyzer, "### Codex 分支")
+        opencode = _target_branch(opencode_analyzer, "### OpenCode 分支", "## Input")
+        codex = _target_branch(codex_analyzer, "### Codex 分支", "## Input")
 
         for delegated_name in ("paper-analysis", "professor-contact-style-validator"):
             self.assertIn(delegated_name, opencode, f"OpenCode branch must retain delegation to {delegated_name}")
@@ -242,18 +344,18 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
 
         # `subagent_depth`, Task and question are OpenCode/runtime-local
         # concepts; `agent_role`/`agent_path` are invented observability
-        # fields. `spawn_agent` is a documented Codex multi-agent tool, but
-        # the business branch must not bind to its concrete envelope — the
-        # documented named-custom-agent contract is the whole API (issue #51).
+        # fields. The documented `spawn_agent` name is allowed; only private
+        # namespace/parameter/event details are outside the product contract.
         self.assertNotIn("subagent_depth", codex)
         self.assertNotRegex(codex, r"task\s*\(")
         self.assertNotRegex(codex, r"question\s*\(")
-        self.assertNotRegex(codex, r"spawn_agent\s*\(")
         self.assertNotIn("agent_role", codex)
         self.assertNotIn("agent_path", codex)
 
     def test_stage2_codex_noninteractive_choice_uses_fresh_root_and_persisted_state(self):
-        _, analyzer = _frontmatter_and_body(ANALYZER_PATH)
+        _, analyzer = _frontmatter_and_body(
+            CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md"
+        )
         skill = SKILL_PATH.read_text(encoding="utf-8")
         stage2_docs = f"{skill}\n{analyzer}"
 
@@ -291,7 +393,9 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
         )
 
     def test_stage2_analyzer_keeps_business_concurrency_limit_separate_from_codex_thread_limit(self):
-        _, analyzer = _frontmatter_and_body(ANALYZER_PATH)
+        _, analyzer = _frontmatter_and_body(
+            CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md"
+        )
         self.assertRegex(
             analyzer,
             r"(?:同时|同批)[^\n]{0,80}最多[^\n]{0,40}(?:\*\*)?3(?:\*\*)?[^\n]{0,80}paper-analysis",
@@ -306,11 +410,322 @@ class ApmDeploymentMetadataTests(unittest.TestCase):
                 "Codex's global thread limit must not be described as the Stage 2 paper-analysis concurrency rule",
             )
 
+    def _codex_analyzer_branch(self):
+        _, analyzer = _frontmatter_and_body(
+            CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md"
+        )
+        return _target_branch(analyzer, "### Codex 分支")
+
+    def test_codex_analyzer_requires_runtime_subagent_delegation(self):
+        codex = self._codex_analyzer_branch()
+        self.assertRegex(
+            codex,
+            r"(?s)当前 Codex session.{0,240}subagent delegation capability",
+            "Codex Stage 2 must require the delegation capability actually provided by the current session",
+        )
+
+    def test_codex_analyzer_does_not_equate_missing_opencode_task_with_no_delegation(self):
+        codex = self._codex_analyzer_branch()
+        self.assertRegex(
+            codex,
+            r"(?s)OpenCode.*task.{0,180}(?:无关|not related|不等于)",
+            "the Codex branch must say that OpenCode task syntax is unrelated to Codex delegation availability",
+        )
+
+    def test_codex_analyzer_requires_machine_failure_before_runtime_blocker(self):
+        codex = self._codex_analyzer_branch()
+        self.assertRegex(
+            codex,
+            r"(?s)实际尝试.{0,220}(?:机器级失败|machine-level failure).{0,180}(?:blocker|阻塞)",
+            "a runtime blocker requires an attempted delegation and a machine-level failure",
+        )
+
+    def test_codex_analyzer_requires_native_delegation_before_delegation_unavailable(self):
+        _assert_codex_native_delegation_gate(self._codex_analyzer_branch())
+
+    def test_codex_native_delegation_gate_survives_install_toml_projection(self):
+        """The clean-install writes the Codex projection body into the
+        generated ``.codex/agents/professor-contact-analyzer.toml``
+        ``developer_instructions`` (frontmatter stripped, edge newlines
+        normalized, TOML basic-string escaped). Gate the native-delegation
+        markers on that payload shape, not only on the source Markdown."""
+        path = CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md"
+        frontmatter, body = _frontmatter_and_body(path)
+        fields = _top_level_fields(frontmatter)
+        instructions = body.strip("\n")
+
+        # JSON basic-string escaping is TOML basic-string escaping for the
+        # escapes json.dumps emits (\b\t\n\f\r\"\\\uXXXX), so the rendered
+        # document below is exactly the TOML the installer writes.
+        toml_text = (
+            f"name = {json.dumps(fields['name'])}\n"
+            f"description = {json.dumps(fields['description'])}\n"
+            f"developer_instructions = {json.dumps(instructions)}\n"
+        )
+        parsed = tomllib.loads(toml_text)
+        self.assertEqual(parsed["name"], "professor-contact-analyzer")
+        self.assertEqual(parsed["developer_instructions"], instructions)
+        _assert_codex_native_delegation_gate(parsed["developer_instructions"])
+
+    def test_code_mode_discovery_is_absent_from_both_analyzer_projections(self):
+        """Issue #47 Phase 4 removed the Code Mode / programmatic tool-calling
+        discovery prerequisite from production. The OpenCode file keeps its own
+        Task/question/permission branch, so isolation is proven by the obsolete
+        Code Mode wording appearing in neither projection."""
+        for path in (
+            ANALYZER_PATH,
+            CODEX_AGENT_DIR / "professor-contact-analyzer.agent.md",
+        ):
+            with self.subTest(path=path):
+                _, body = _frontmatter_and_body(path)
+                for obsolete in CODEX_OBSOLETE_DISCOVERY_LITERALS:
+                    if obsolete == "Code Mode":
+                        # #57 reconciles the wording: the literal survives only
+                        # as a rejected inference source, never a requirement.
+                        for match in re.finditer(re.escape(obsolete), body):
+                            context = body[max(0, match.start() - 24):match.start()]
+                            self.assertTrue(
+                                "缺少" in context or "reject" in context.lower(),
+                                f"Code Mode must stay a rejected inference source, "
+                                f"saw context: {context!r}",
+                            )
+                        self.assertIsNone(
+                            re.search(r"必须[^。\n]*Code Mode", body),
+                            "Code Mode must never be required for delegation",
+                        )
+                        continue
+                    self.assertNotIn(
+                        obsolete,
+                        body,
+                        "the removed Code Mode prerequisite must not reappear in "
+                        "any analyzer projection",
+                    )
+
+    def test_codex_analyzer_keeps_exact_paper_analysis_role(self):
+        codex = self._codex_analyzer_branch()
+        self.assertRegex(
+            codex,
+            r"exact installed name [`']?paper-analysis[`']?",
+            "Codex must delegate to the exact installed paper-analysis role",
+        )
+
+    def test_codex_analyzer_does_not_inline_paper_analysis(self):
+        codex = self._codex_analyzer_branch()
+        self.assertRegex(
+            codex,
+            r"(?s)(?:不得|不).*?(?:inline|模拟执行).*?paper-analysis",
+            "Codex analyzer must not inline or simulate paper-analysis",
+        )
+
+    def test_codex_analyzer_does_not_hardcode_internal_spawn_api(self):
+        codex = self._codex_analyzer_branch()
+        for forbidden in (
+            "multi_agent_v1__",
+            "ALL_TOOLS",
+            "multi_agent_v1__spawn_agent",
+            "spawnAgent",
+            "collabAgentToolCall",
+            "receiverThreadIds",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(
+                    forbidden,
+                    codex,
+                    "the Codex product contract must not hard-code internal runtime APIs",
+                )
+
+    # Phrases that suppress paper-analysis's contract-required internal leaf
+    # delegation. They may appear in an analyzer contract only inside the rule
+    # that forbids writing them into a caller prompt.
+    DELEGATION_SUPPRESSING_PHRASES = (
+        "不要委派更深层代理",
+        "不要启动子代理",
+        "禁止继续 spawn",
+    )
+
+    def _analyzer_projections(self):
+        for package_dir in (OPENCode_AGENT_DIR, CODEX_AGENT_DIR):
+            path = package_dir / "professor-contact-analyzer.agent.md"
+            _, body = _frontmatter_and_body(path)
+            yield path, body
+
+    def test_analyzer_depth_boundary_starts_at_paper_analysis_leaves(self):
+        for path, body in self._analyzer_projections():
+            with self.subTest(projection=path.parents[2].name):
+                self.assertIn(
+                    "从 `paper-analysis` 自己的只读分析叶子开始",
+                    body,
+                    "the depth budget must place the no-deeper boundary at paper-analysis's leaves",
+                )
+                self.assertIn(
+                    "不从 `paper-analysis` coordinator 开始",
+                    body,
+                    "the depth budget must not stop paper-analysis's own coordination",
+                )
+                self.assertIn(
+                    "叶子必须是终点",
+                    body,
+                    "leaves must be documented as the terminal delegation level",
+                )
+
+    def test_top_level_recursion_clause_subjects_analyzer_not_the_chain(self):
+        for path, body in self._analyzer_projections():
+            with self.subTest(projection=path.parents[2].name):
+                line = next(
+                    (text for text in body.splitlines() if "绝不递归" in text),
+                    None,
+                )
+                self.assertIsNotNone(
+                    line,
+                    "the top-level recursion clause must exist in each projection",
+                )
+                # The former parenthetical disjunct banned leaf spawning with no
+                # subject, so the whole chain could be misread as unable to spawn
+                # the leaves; the ban must name analyzer as the only spawner.
+                self.assertNotIn(
+                    "、不 spawn `paper-analysis` 的内部叶子",
+                    line,
+                    "the leaf-spawn ban must not stand without an explicit analyzer subject",
+                )
+                self.assertIn(
+                    "绝不递归：analyzer 不加载 `paper-analysis` skill",
+                    line,
+                    "the recursion clause must name analyzer as the subject of the skill ban",
+                )
+                self.assertIn(
+                    "也不由 analyzer 自己直接 spawn `paper-analysis` 的内部叶子",
+                    line,
+                    "the leaf-spawn ban must name analyzer itself as the only forbidden spawner",
+                )
+                self.assertIn(
+                    "`paper-analysis` coordinator 必须按其自身正式 contract 的 Step 3 自行启动 3 个只读分析叶子",
+                    line,
+                    "the recursion clause must keep paper-analysis's coordinator duty explicit",
+                )
+                self.assertIn(
+                    "这些叶子不得再继续委派",
+                    line,
+                    "leaves must stay terminal in the same sentence that lifts the coordinator ban",
+                )
+
+    def test_analyzer_requires_paper_analysis_full_mode_leaf_delegation(self):
+        for path, body in self._analyzer_projections():
+            with self.subTest(projection=path.parents[2].name):
+                self.assertIn(
+                    "允许且要求的委派链",
+                    body,
+                    "the contract must allow and require analyzer -> paper-analysis -> leaves",
+                )
+                self.assertRegex(
+                    body,
+                    r"full mode 下 `paper-analysis` 是 coordinator",
+                    "full-mode paper-analysis must be documented as the coordinator of its own leaves",
+                )
+                self.assertRegex(
+                    body,
+                    r"按它自身正式 contract 的 Step 3",
+                    "leaf delegation must stay owned by paper-analysis's own contract",
+                )
+
+    def test_analyzer_contract_confines_suppression_phrases_to_the_prohibition_rule(self):
+        for path, body in self._analyzer_projections():
+            with self.subTest(projection=path.parents[2].name):
+                hits = [
+                    line
+                    for line in body.splitlines()
+                    if any(phrase in line for phrase in self.DELEGATION_SUPPRESSING_PHRASES)
+                ]
+                self.assertTrue(
+                    hits,
+                    "the contract must explicitly enumerate the suppression semantics it forbids",
+                )
+                for line in hits:
+                    self.assertIn(
+                        "绝不写入",
+                        line,
+                        "suppression phrases are only allowed inside the forbid-writing rule",
+                    )
+                    self.assertIn("阻止", line)
+                    self.assertIn("paper-analysis", line)
+
+    def test_analyzer_caller_prompt_carries_business_inputs_only(self):
+        for path, body in self._analyzer_projections():
+            with self.subTest(projection=path.parents[2].name):
+                self.assertRegex(
+                    body,
+                    r"(?:Task/)?委派 prompt 只装业务输入，不装编排约束",
+                    "caller prompts must carry business inputs only, not orchestration constraints",
+                )
+                self.assertRegex(
+                    body,
+                    r"research_direction_file",
+                    "the business-input enumeration must keep the existing Input contract parameters",
+                )
+                self.assertIn(
+                    "绝不重写、裁剪或覆盖 `paper-analysis` 自身的内部 orchestration 规则",
+                    body,
+                    "caller prompts must not rewrite or override paper-analysis's internal orchestration",
+                )
+
+    def test_depth_guard_targets_leaves_not_the_coordinator(self):
+        codex = self._codex_analyzer_branch()
+        self.assertRegex(
+            codex,
+            r"analyzer 不递归 spawn analyzer",
+            "the depth guard must forbid analyzer self-recursion",
+        )
+        self.assertRegex(
+            codex,
+            r"analyzer 不 spawn `paper-analysis` 的内部叶子",
+            "the depth guard must forbid analyzer spawning paper-analysis's leaves",
+        )
+        self.assertRegex(
+            codex,
+            r"analyzer 不要求叶子再继续分派",
+            "the depth guard must forbid analyzer demanding further dispatch from leaves",
+        )
+        self.assertRegex(
+            codex,
+            r"`paper-analysis` coordinator 仍按自己的正式 contract 负责启动其 3 个只读叶子",
+            "the depth guard must keep paper-analysis's own coordinator duty intact",
+        )
+
+    def test_spawn_api_names_stay_out_of_both_analyzer_projections(self):
+        for path, body in self._analyzer_projections():
+            with self.subTest(projection=path.parents[2].name):
+                for forbidden in (
+                    "multi_agent_v1__",
+                    "ALL_TOOLS",
+                    "multi_agent_v1__spawn_agent",
+                    "spawnAgent",
+                    "collabAgentToolCall",
+                    "receiverThreadIds",
+                ):
+                    self.assertNotIn(
+                        forbidden,
+                        body,
+                        "private Codex spawn namespaces/events must not enter either projection",
+                    )
+
+    def test_opencode_task_delegation_branch_survives_the_depth_boundary_fix(self):
+        _, body = _frontmatter_and_body(ANALYZER_PATH)
+        opencode = _target_branch(body, "### OpenCode 分支", "## Input")
+        self.assertIn(
+            "用 OpenCode 官方 Task 委派方式启动 `paper-analysis`",
+            opencode,
+            "the OpenCode Task delegation path must remain the documented mechanism",
+        )
+        self.assertIn(
+            "subagent_depth",
+            opencode,
+            "the OpenCode depth budget documentation must remain",
+        )
+
     def test_no_scholarflow_codex_dependency_is_introduced(self):
         manifest = MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertNotIn("scholarflow-codex", manifest.lower())
         self.assertNotIn("scholarflow-codex", SKILL_PATH.read_text(encoding="utf-8").lower())
-        for path in sorted(AGENTS_DIR.glob("*.agent.md")):
+        for path in _source_agent_paths():
             self.assertNotIn(
                 "scholarflow-codex",
                 path.read_text(encoding="utf-8").lower(),

@@ -13,7 +13,7 @@ class Stage1Stage2ContractTests(unittest.TestCase):
     """
 
     def test_analyzer_contract_consumes_stage1_candidate_snapshot(self):
-        agent = (ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md").read_text(
+        agent = (ROOT.parents[2] / "packages" / "professor-contact-opencode" / ".apm" / "agents" / "professor-contact-analyzer.agent.md").read_text(
             encoding="utf-8"
         )
         # Stage 2 verifies the Stage 1 snapshot and reads candidate_keys as the
@@ -51,7 +51,7 @@ class Stage1Stage2ContractTests(unittest.TestCase):
     def test_analyzer_contract_invokes_resolve_pipeline(self):
         """Issue #7: Stage 2 must resolve provisional directions against full-text
         evidence and emit authoritative resolved_direction state."""
-        agent = (ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md").read_text(
+        agent = (ROOT.parents[2] / "packages" / "professor-contact-opencode" / ".apm" / "agents" / "professor-contact-analyzer.agent.md").read_text(
             encoding="utf-8"
         )
         # The resolve subcommand must be invoked by the analyzer.
@@ -104,7 +104,7 @@ class Stage2PreflightContractTests(unittest.TestCase):
     """
 
     def test_analyzer_contract_orders_preflight_before_zotero_and_reads(self):
-        agent = (ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md").read_text(
+        agent = (ROOT.parents[2] / "packages" / "professor-contact-opencode" / ".apm" / "agents" / "professor-contact-analyzer.agent.md").read_text(
             encoding="utf-8"
         )
         resolve = agent.index("### Step 2 — Deterministic target resolver")
@@ -124,7 +124,7 @@ class Stage2PreflightContractTests(unittest.TestCase):
         self.assertIn("仅当 `process_professors` 非空", gate_section)
 
     def test_analyzer_contract_reuse_all_is_a_no_op(self):
-        agent = (ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md").read_text(
+        agent = (ROOT.parents[2] / "packages" / "professor-contact-opencode" / ".apm" / "agents" / "professor-contact-analyzer.agent.md").read_text(
             encoding="utf-8"
         )
         preflight = agent.index("### Step 2.6 — Stage 2 early preflight gate")
@@ -148,7 +148,7 @@ class Stage2PreflightContractTests(unittest.TestCase):
         self.assertIn("preflight_inputs_changed", agent)
 
     def test_analyzer_contract_documents_no_early_exit_cases(self):
-        agent = (ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md").read_text(
+        agent = (ROOT.parents[2] / "packages" / "professor-contact-opencode" / ".apm" / "agents" / "professor-contact-analyzer.agent.md").read_text(
             encoding="utf-8"
         )
         preflight = agent.index("### Step 2.6 — Stage 2 early preflight gate")
@@ -166,7 +166,7 @@ class Stage2PreflightContractTests(unittest.TestCase):
         self.assertIn("不生成新 handoff ZIP", gate_section)
 
     def test_analyzer_contract_pins_initialization_hard_rule(self):
-        agent = (ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md").read_text(
+        agent = (ROOT.parents[2] / "packages" / "professor-contact-opencode" / ".apm" / "agents" / "professor-contact-analyzer.agent.md").read_text(
             encoding="utf-8"
         )
         self.assertIn("Stage 2 初始化顺序固定且 preflight gate 不可绕过", agent)
@@ -188,7 +188,7 @@ class Stage2PreflightContractTests(unittest.TestCase):
         self.assertIn("仅 cache，Stage 3 不读取", skill)
 
     def test_analyzer_contract_binds_facts_to_the_preflight_proof(self):
-        agent = (ROOT.parents[1] / "agents" / "professor-contact-analyzer.agent.md").read_text(
+        agent = (ROOT.parents[2] / "packages" / "professor-contact-opencode" / ".apm" / "agents" / "professor-contact-analyzer.agent.md").read_text(
             encoding="utf-8"
         )
         # Step 6.1 carries the saved proof id into the facts JSON...

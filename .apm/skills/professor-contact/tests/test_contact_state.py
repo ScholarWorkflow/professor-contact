@@ -618,6 +618,27 @@ class TestRunnerBasics(BaseEnv):
         self.assertEqual(out["reason_code"], "unknown_reference_id")
         self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
 
+    def test_06e2_truncated_gap_id_is_rejected_with_legal_ids_in_message(self):
+        # Batch-3 runtime failure shape: the analyzer dropped one character
+        # from a 64-hex gap id. The rejection must stay fail-closed AND name
+        # the legal job gap ids so the model can repair its result file by
+        # copying the right id verbatim.
+        facts = self.write_facts()
+        results = self.root / "truncated-freshness"
+        self.write_stage2_results(results)
+        legal_id = quote_id(self.gap_quotes["AAAA1111"])
+        freshness_path = results / "freshness-DIR00001.json"
+        freshness = json.loads(freshness_path.read_text(encoding="utf-8"))
+        row = next(row for row in freshness["results"] if row["gap_id"] == legal_id)
+        row["gap_id"] = legal_id[:-1]  # 63 hex: one character lost
+        freshness_path.write_text(json.dumps(freshness, ensure_ascii=False),
+                                  encoding="utf-8")
+        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        self.assertEqual(out["status"], "error")
+        self.assertEqual(out["reason_code"], "unknown_reference_id")
+        self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
+        self.assertIn(legal_id, out.get("message") or "")
+
     def test_06f_stage4_preserves_previous_direction_selection(self):
         self.stage3_run()
         results = self.add_second_direction()
@@ -749,22 +770,32 @@ class TestRunnerBasics(BaseEnv):
     def test_12_stage3_validator_is_persisted_separately(self):
         self.stage3_run()
         state_path = self.prof_dir / "套磁候选状态.json"
+        before = json.loads(state_path.read_text(encoding="utf-8"))
         validation_path = self.root / "stage3-validation.json"
-        validation_path.write_text(json.dumps({"results": [{
-            "direction_id": "DIR00001", "result": "pass", "rounds": 1, "issues": []
-        }]}, ensure_ascii=False), encoding="utf-8")
+        validation_path.write_text(json.dumps({"result": "ok", "files": [{
+            "file": str(self.prof_dir / "套磁想法候选.md"), "artifact": "candidates",
+            "verdict": "pass", "blocking": 0, "minor": 0, "issues": []}]},
+            ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("stage3-record-validation", "--professor-dir", self.prof_dir,
                             "--validation-file", validation_path))
         self.assertEqual(out["status"], "ok", out)
+        self.assertEqual(out["raw_verdict"], "pass")
+        self.assertEqual(out["scopes"], [{"scope": "direction:DIR00001", "result": "pass",
+                                          "rounds": 1, "blocking": 0}])
         state = json.loads(state_path.read_text(encoding="utf-8"))
         self.assertEqual(state["validator"]["results"]["DIR00001"]["result"], "pass")
+        self.assertEqual(state["validator"]["render_sha256"], out["render_sha256"])
+        # The record is bookkeeping next to the candidates, never a rewrite.
+        self.assertEqual(state["directions"], before["directions"])
+        self.assertEqual(state["cache"], before["cache"])
         old = state_path.read_bytes()
         validation_path.write_text(json.dumps({"results": [{
-            "collection_key": "NO_SUCH_DIRECTION", "result": "pass", "rounds": 1, "issues": []
-        }]}, ensure_ascii=False), encoding="utf-8")
+            "direction_id": "DIR00001", "result": "pass", "rounds": 1, "issues": []}]},
+            ensure_ascii=False), encoding="utf-8")
         bad = parse(run_cli("stage3-record-validation", "--professor-dir", self.prof_dir,
                             "--validation-file", validation_path))
         self.assertEqual(bad["status"], "error")
+        self.assertEqual(bad["reason_code"], "invalid_validation_json")
         self.assertEqual(state_path.read_bytes(), old)
 
     def test_13_stage2_validator_rewrite_round_trips_structured_narrative(self):
@@ -928,6 +959,31 @@ class TestStage5(BaseEnv):
     def choices(self):
         return {"email_id": "試験 教授::DIR00001::DIR00001_1", "first_choice": False,
                 "signature_name": "試験 太郎", "learning": "比較手法の基礎知識の習得"}
+
+    def final_surfaces(self, mode):
+        """Every email file the caller can observe after a committed write."""
+        prefixes = ["套磁邮件"] + (["套磁跟进邮件"] if mode == "both" else [])
+        return [self.prof_dir / f"{prefix}.{ext}"
+                for prefix in prefixes for ext in ("md", "txt")]
+
+    def commit_both(self, raw_path, choices_path, draft):
+        """Commit plan drafts through the public finalize path and return every
+        final rendered surface."""
+        email_id = self.choices()["email_id"]
+        keys = {"initial": email_id, "followup": f"{email_id}::followup"}
+        mapping = {}
+        for row in draft["drafts"]:
+            text_path = self.root / f"final-{row['kind']}.txt"
+            text_path.write_text(row["draft"], encoding="utf-8")
+            mapping[keys[row["kind"]]] = str(text_path)
+        map_path = self.root / "final-map.json"
+        map_path.write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
+        out = parse(run_cli("stage5-finalize", "--program-root", self.root, "--mode", "both",
+                            "--result", raw_path, "--humanized-map", map_path,
+                            "--choices", choices_path))
+        self.assertEqual(out["status"], "ok", out)
+        return "\n".join(path.read_text(encoding="utf-8")
+                         for path in self.final_surfaces("both"))
 
     def test_stage5_full_flow_and_fact_card(self):
         g1 = self.prepare()
@@ -1184,6 +1240,219 @@ class TestStage5(BaseEnv):
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "missing_user_choice")
         self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+
+    def test_stage5_first_allows_missing_initial_sent_date(self):
+        g1 = self.prepare()
+        raw_path = self.root / "first-without-date-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "first-without-date-choices.json"
+        choices = dict(self.choices())
+        choices.pop("initial_sent_date", None)
+        choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+
+        out = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "first",
+                            "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(out["status"], "ok", out)
+
+    def test_stage5_rejects_non_boolean_first_choice(self):
+        g1 = self.prepare()
+        raw_path = self.root / "non-boolean-choice-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "non-boolean-choice.json"
+        choices = dict(self.choices(), first_choice="false")
+        choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+
+        out = parse(run_cli("stage5-plan", "--program-root", self.root,
+                            "--result", raw_path, "--choices", choices_path))
+
+        self.assertEqual(out["status"], "error")
+        self.assertEqual(out["reason_code"], "missing_user_choice")
+        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+
+    def test_stage5_rejects_blank_signature_and_learning(self):
+        g1 = self.prepare()
+        raw_path = self.root / "blank-choice-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "blank-choice.json"
+
+        for field in ("signature_name", "learning"):
+            choices = dict(self.choices(), **{field: "   "})
+            choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+            out = parse(run_cli("stage5-plan", "--program-root", self.root,
+                                "--result", raw_path, "--choices", choices_path))
+            self.assertEqual(out["status"], "error", field)
+            self.assertEqual(out["reason_code"], "missing_user_choice", field)
+
+    def test_stage5_followup_requires_non_placeholder_initial_sent_date(self):
+        g1 = self.prepare()
+        raw_path = self.root / "followup-choice-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "followup-choice.json"
+
+        for label, sent_date in (
+                ("missing", None),
+                ("blank", "   "),
+                ("placeholder", "{{初回送信日}}")):
+            with self.subTest(case=label):
+                choices = dict(self.choices())
+                if sent_date is None:
+                    choices.pop("initial_sent_date", None)
+                else:
+                    choices["initial_sent_date"] = sent_date
+                choices_path.write_text(json.dumps(choices, ensure_ascii=False), encoding="utf-8")
+                out = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "both",
+                                    "--result", raw_path, "--choices", choices_path))
+                self.assertEqual(out["status"], "error", label)
+                self.assertEqual(out["reason_code"], "missing_user_choice", label)
+
+    def test_stage5_choices_id_mapping_fails_closed(self):
+        g1 = self.prepare()
+        raw_path = self.root / "id-mapping-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "id-mapping-choice.json"
+
+        valid = self.choices()
+        invalid_cases = (
+            ("missing-email-id",
+             {key: value for key, value in valid.items() if key != "email_id"}),
+            ("unknown-email-id", dict(valid, email_id="unknown-email-id")),
+            ("duplicate-email-id", [valid, dict(valid)]),
+            ("selected-id-set-mismatch", []),
+        )
+        for label, invalid_choices in invalid_cases:
+            with self.subTest(case=label):
+                choices_path.write_text(
+                    json.dumps(invalid_choices, ensure_ascii=False), encoding="utf-8")
+                out = parse(run_cli("stage5-plan", "--program-root", self.root,
+                                    "--result", raw_path, "--choices", choices_path))
+                self.assertEqual(out["status"], "error", label)
+
+    def test_stage5_choices_cannot_replace_the_verified_recipient(self):
+        # Issue #43 freezes one interaction at this caller boundary:
+        # choices.email_address may confirm the Step 2.5 verdict but can never
+        # become a second recipient authority. The rest of the evidence ladder
+        # stays owned by the contact-evidence tests, so only the three rows
+        # observable from here are checked, through the public plan path.
+        g1 = self.prepare()
+        verified = "faculty@example.test"
+        raw_path = self.root / "recipient-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "recipient-choices.json"
+        verify_path = self.prof_dir / "_contact_verify.json"
+
+        for label, cached, supplied, accepted in (
+                ("different-address", verified, "other@example.test", False),
+                ("no-verified-address", None, verified, False),
+                ("same-address", verified, verified, True)):
+            with self.subTest(label=label):
+                cache = json.loads(verify_path.read_text(encoding="utf-8"))
+                cache["items"]["email"] = {
+                    "verdict": "confirmed" if cached else "unverified",
+                    "value": cached,
+                    "sources": []}
+                verify_path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+                for surface in self.final_surfaces("both"):
+                    surface.unlink(missing_ok=True)
+                choices_path.write_text(json.dumps(
+                    dict(self.choices(), initial_sent_date="2026年9月1日",
+                         email_address=supplied), ensure_ascii=False), encoding="utf-8")
+                draft = parse(run_cli("stage5-plan", "--program-root", self.root, "--mode", "both",
+                                      "--result", raw_path, "--choices", choices_path))
+                if not accepted:
+                    self.assertNotEqual(draft["status"], "ok", label)
+                    for surface in self.final_surfaces("both"):
+                        self.assertFalse(surface.exists(), label)
+                    continue
+                self.assertEqual(draft["status"], "ok", draft)
+                self.assertIn(verified, self.commit_both(raw_path, choices_path, draft))
+
+    def test_stage5_gate_stops_before_the_choices_file_is_read(self):
+        g1 = self.prepare()
+        # The cache fingerprint goes stale after info.json is rewritten.
+        info = self.root / "info.json"
+        touched = int(info.stat().st_mtime) + 3600
+        os.utime(info, (touched, touched))
+        raw_path = self.root / "gated-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        # A missing file is the strongest observable proof of the ordering:
+        # if the runner touches choices before the verification gate, this path
+        # cannot return the verification reason below.
+        choices_path = self.root / "missing-gated-choices.json"
+        self.assertFalse(choices_path.exists())
+
+        out = parse(run_cli("stage5-plan", "--program-root", self.root,
+                            "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+
+    def test_stage5_finalize_gate_stops_before_the_choices_file_is_read(self):
+        # Issue #43 freezes verification-before-choices for the Stage-5 runner,
+        # not only for the planning command.  A missing choices file makes the
+        # ordering observable without depending on an exact verify reason code.
+        g1 = self.prepare()
+        info = self.root / "info.json"
+        touched = int(info.stat().st_mtime) + 3600
+        os.utime(info, (touched, touched))
+        raw_path = self.root / "finalize-gated-raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        humanized_path = self.root / "finalize-gated-humanized.txt"
+        humanized_path.write_text("unused because verification must stop first", encoding="utf-8")
+        choices_path = self.root / "missing-finalize-gated-choices.json"
+        self.assertFalse(choices_path.exists())
+
+        out = parse(run_cli("stage5-finalize", "--program-root", self.root,
+                            "--result", raw_path, "--humanized", humanized_path,
+                            "--choices", choices_path))
+        self.assertEqual(out["status"], "needs_refresh", out)
+        for surface in self.final_surfaces("first"):
+            self.assertFalse(surface.exists())
+        self.assertFalse((self.prof_dir / "套磁邮件状态.json").exists())
+
+        # Batch boundary subcase: the gate is whole-batch, not per email —
+        # after professor A passes, a later sibling professor B with no verify
+        # cache must still stop the run before the choices file is read.  The
+        # professor attribution proves the runner really got past A, so the
+        # stop cannot come from leftover state on A.
+        g1 = self.prepare()
+        pack_path = self.root / "教授研究" / "邮件输入.json"
+        pack = json.loads(pack_path.read_text(encoding="utf-8"))
+        b_dir = self.prof_dir.parent / "第二 教授"
+        b_dir.mkdir(parents=True, exist_ok=True)
+        self.assertFalse((b_dir / "_contact_verify.json").exists())
+        b_email_id = "第二 教授::DIR00001::DIR00001_1"
+        b_row = copy.deepcopy(pack["emails"][0])
+        b_row["professor"] = "第二 教授"
+        b_row["professor_dir"] = str(b_dir)
+        b_row["email_id"] = b_email_id
+        pack["emails"].append(b_row)
+        pack_path.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
+        a_raw = self.raw_result(g1)
+        b_raw = copy.deepcopy(a_raw)
+        b_raw["email_id"] = b_email_id
+        batch_raw_path = self.root / "finalize-gated-batch-raw.json"
+        batch_raw_path.write_text(json.dumps([a_raw, b_raw], ensure_ascii=False), encoding="utf-8")
+        a_humanized = self.root / "finalize-gated-batch-a.txt"
+        b_humanized = self.root / "finalize-gated-batch-b.txt"
+        a_humanized.write_text("unused because verification must stop first", encoding="utf-8")
+        b_humanized.write_text("unused because verification must stop first", encoding="utf-8")
+        batch_map_path = self.root / "finalize-gated-batch-map.json"
+        batch_map_path.write_text(json.dumps({
+            a_raw["email_id"]: str(a_humanized),
+            b_email_id: str(b_humanized)}, ensure_ascii=False), encoding="utf-8")
+        batch_choices_path = self.root / "missing-finalize-gated-batch-choices.json"
+        self.assertFalse(batch_choices_path.exists())
+
+        out = parse(run_cli("stage5-finalize", "--program-root", self.root,
+                            "--result", batch_raw_path, "--humanized-map", batch_map_path,
+                            "--choices", batch_choices_path))
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertEqual(out.get("professor"), "第二 教授", out)
+        for surface in self.final_surfaces("first"):
+            self.assertFalse(surface.exists())
+        for ext in ("md", "txt"):
+            self.assertFalse((b_dir / f"套磁邮件.{ext}").exists())
+        self.assertFalse((self.prof_dir / "套磁邮件状态.json").exists())
+        self.assertFalse((b_dir / "套磁邮件状态.json").exists())
 
     def test_done_by_self_gap_banned_in_source_map(self):
         self.stage2_run(gap_overrides={

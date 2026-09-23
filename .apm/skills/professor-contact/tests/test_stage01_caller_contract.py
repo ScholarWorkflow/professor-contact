@@ -8,7 +8,14 @@ AGENTS_DIR = REPO_ROOT / ".apm" / "agents"
 SKILL_PATH = REPO_ROOT / ".apm" / "skills" / "professor-contact" / "SKILL.md"
 STAGE0_AGENT = AGENTS_DIR / "professor-contact.agent.md"
 STAGE1_AGENT = AGENTS_DIR / "professor-contact-downloader.agent.md"
-STAGE2_AGENT = AGENTS_DIR / "professor-contact-analyzer.agent.md"
+STAGE2_AGENT = (
+    REPO_ROOT
+    / "packages"
+    / "professor-contact-opencode"
+    / ".apm"
+    / "agents"
+    / "professor-contact-analyzer.agent.md"
+)
 
 
 def _read(path: Path) -> str:
