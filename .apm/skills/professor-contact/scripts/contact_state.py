@@ -7606,18 +7606,10 @@ def validate_email_raw(email: dict, raw: Any) -> list:
     return problems
 
 
-# Issue #43 §5.0 public row schema — this list is the whole caller-facing
-# surface. Keys that once leaked in from runner internals (`subject`,
-# `alma_mater`) are retired: they may not arrive through `--choices` and
-# change a rendered email.
-STAGE5_PUBLIC_CHOICE_KEYS = ("email_id", "first_choice", "signature_name",
-                             "learning", "initial_sent_date",
-                             "followup_subject", "email_address")
-STAGE5_RETIRED_CHOICE_KEYS = ("subject", "alma_mater")
-# {{出身校}} fills with this default; a real school name belongs in the
-# user-owned 套磁模板.md fixed text, not in a caller row.
+# Issue #43 freezes the caller-facing choices contract, but does not redefine
+# pre-existing runner-internal compatibility fields. Keep renderer defaults
+# here; public caller declarations are owned by the Stage-5 docs/projections.
 DEFAULT_ALMA_MATER = "総合大学出身"
-
 
 def require_user_choices(email_id: str, choices: Any) -> dict:
     if not isinstance(choices, dict):
@@ -7628,16 +7620,6 @@ def require_user_choices(email_id: str, choices: Any) -> dict:
         fail("missing_user_choice", f"{email_id}: signature_name is required")
     if not isinstance(choices.get("learning"), str) or not choices["learning"].strip():
         fail("missing_user_choice", f"{email_id}: learning is required")
-    unknown = sorted(set(choices) - set(STAGE5_PUBLIC_CHOICE_KEYS))
-    if unknown:
-        retired = [key for key in unknown if key in STAGE5_RETIRED_CHOICE_KEYS]
-        hint = (" Retired internal keys cannot alter output: Subject comes from "
-                "info.json/boshu_analysis.json (or text the user hard-codes in "
-                "套磁模板.md), 出身校 is not a caller field."
-                if retired else "")
-        fail("invalid_choices_schema",
-             f"{email_id}: choices keys outside the public schema: {unknown}"
-             f" (allowed: {list(STAGE5_PUBLIC_CHOICE_KEYS)}).{hint}")
     return choices
 
 
@@ -7737,7 +7719,7 @@ def humanized_paths(args, emails: list[dict], exact: bool = True) -> dict[str, P
 def assemble_draft(email: dict, raw: dict, choices: dict,
                    sources: dict, template_text: str) -> tuple[str, list, list]:
     values = header_values(sources, email)
-    values["出身校"] = DEFAULT_ALMA_MATER
+    values["出身校"] = choices.get("alma_mater") or DEFAULT_ALMA_MATER
     values["氏名"] = choices.get("signature_name") or ""
     values["志望"] = ("先生の研究室を第一志望として出願させていただきたく存じます"
                       if choices.get("first_choice") else
@@ -7745,7 +7727,7 @@ def assemble_draft(email: dict, raw: dict, choices: dict,
     values["学習中"] = choices.get("learning") or ""
     values["兴趣段"] = "\n".join(raw.get("interest_sentences_ja") or [])
     values["未来志向"] = raw.get("future_aspiration_ja") or ""
-    subject = subject_line(values)
+    subject = choices.get("subject") or subject_line(values)
     values["subject"] = subject
     body = template_text
     for key, value in values.items():
@@ -7767,7 +7749,7 @@ def assemble_draft(email: dict, raw: dict, choices: dict,
 def assemble_followup_draft(email: dict, choices: dict, sources: dict,
                             template_text: str, verify: dict | None = None) -> tuple[str, list, list]:
     values = header_values(sources, email)
-    values["出身校"] = DEFAULT_ALMA_MATER
+    values["出身校"] = choices.get("alma_mater") or DEFAULT_ALMA_MATER
     values["氏名"] = choices.get("signature_name") or ""
     values["初回送信日"] = choices.get("initial_sent_date") or ""
     # Issue #8 §8.3: a multi-direction (cross) email must not guess ONE
@@ -7780,7 +7762,7 @@ def assemble_followup_draft(email: dict, choices: dict, sources: dict,
                                (email.get("idea") or {}).get("title") or "関連分野")
     values["メールアドレス"] = stage5_recipient_authority(
         email.get("email_id"), choices, verify)
-    subject = choices.get("followup_subject") or f"Re: {subject_line(values)}"
+    subject = choices.get("followup_subject") or f"Re: {choices.get('subject') or subject_line(values)}"
     values["subject"] = subject
     body = template_text
     for key, value in values.items():
