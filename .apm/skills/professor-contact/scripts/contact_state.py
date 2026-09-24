@@ -694,14 +694,22 @@ def load_candidate_state(professor_dir: Path, pack: dict | None) -> tuple[dict |
     return normalize_candidate_state(raw, pack)
 
 
-def stage5_output_paths(email: dict, emails: list[dict], professor_dir: Path,
+def stage5_output_peers(email: dict, all_emails: list) -> list:
+    """Every pack row that would write into this email's professor directory.
+
+    Collision naming counts peers from identity metadata only, so an
+    unselected row's ``professor_dir`` is never resolved here: a malformed or
+    unusable path belonging to another email cannot change (or block) the
+    selected email's collision-safe filename."""
+    professor = email.get("professor")
+    if not isinstance(professor, str) or not professor:
+        return [email]
+    return [peer for peer in all_emails
+            if isinstance(peer, dict) and peer.get("professor") == professor]
+
+
+def stage5_output_paths(email: dict, peers: list, professor_dir: Path,
                         kind: str = "initial") -> tuple[Path, Path]:
-    target_dir = professor_dir.resolve()
-    peers = []
-    for candidate in emails:
-        candidate_dir = Path(candidate.get("professor_dir") or professor_dir).resolve()
-        if candidate_dir == target_dir:
-            peers.append(candidate)
     prefix = "套磁跟进邮件" if kind == "followup" else "套磁邮件"
     if len(peers) <= 1:
         return professor_dir / f"{prefix}.md", professor_dir / f"{prefix}.txt"
@@ -7344,6 +7352,24 @@ def gap_job_block(gap: dict) -> dict:
              "evidence": gap.get("evidence"), "confidence": gap.get("confidence")}
 
 
+def select_stage5_email(all_emails: list, requested_email_id: str) -> list:
+    """Resolve ``--email-id`` into the hard single-email execution scope.
+
+    Identity resolution happens before any path, evidence, cache, result or
+    state validation, so an unrelated malformed pack entry can neither block
+    nor be mistaken for the target: non-dict rows and rows without the
+    requested id are skipped while searching. An id that appears more than
+    once is an ambiguous pack and fails closed rather than picking one."""
+    matches = [row for row in all_emails
+               if isinstance(row, dict) and row.get("email_id") == requested_email_id]
+    if not matches:
+        fail("invalid_params", f"email_id not found: {requested_email_id}")
+    if len(matches) > 1:
+        fail("invalid_email_pack",
+             f"email pack contains duplicate email_id: {requested_email_id}")
+    return matches
+
+
 def stage5_mode(args) -> str:
     mode = getattr(args, "mode", None) or "first"
     if mode not in ("first", "both", "followup"):
@@ -7360,14 +7386,14 @@ def cmd_stage5_plan(args) -> None:
         soft_exit("needs_refresh", "missing_email_pack", email_pack=str(pack_path),
                   message="缺 邮件输入.json：先跑阶段 4（professor-contact-selection）编译。")
     all_emails = pack.get("emails") or []
-    emails = all_emails
+    # Identity resolution is the first validity boundary: an unrelated
+    # malformed row can neither block a targeted run nor be mistaken for the
+    # target, while the selected row keeps every existing fail-closed check.
+    emails = (select_stage5_email(all_emails, args.email_id) if args.email_id
+              else all_emails)
     for email in emails:
         professor_dir = Path(email.get("professor_dir") or program_root)
         require_professor_dir_under_program(professor_dir, program_root)
-    if args.email_id:
-        emails = [e for e in emails if e.get("email_id") == args.email_id]
-        if not emails:
-            fail("invalid_params", f"email_id not found: {args.email_id}")
     sources = load_header_sources(program_root)
     resolved_evidence = resolve_contact_evidence(
         program_root, list(dict.fromkeys(
@@ -7671,6 +7697,14 @@ def load_id_map(path: Path, expected_ids: set, label: str, exact: bool = True) -
     if error:
         fail("invalid_result_json", f"{label} unreadable: {path}: {error}")
     rows = data if isinstance(data, list) else [data]
+    if not exact:
+        # Scoped/targeted mode: unrelated rows are noise, however malformed,
+        # duplicated or unknown. Only the selected ids' own occurrences are
+        # validated below, and each of them must appear exactly once.
+        rows = [row for row in rows
+                if isinstance(row, dict) and row.get("email_id") in expected_ids]
+        if len(rows) != len(expected_ids):
+            fail("invalid_result_json", f"{label} email_id set does not match selected emails")
     if not all(isinstance(row, dict) for row in rows):
         fail("invalid_result_json", f"{label} must contain objects")
     ids = [row.get("email_id") for row in rows]
@@ -7927,17 +7961,19 @@ def cmd_stage5_finalize(args) -> None:
     if error:
         soft_exit("needs_refresh", "missing_email_pack", email_pack=str(pack_path))
     all_emails = pack.get("emails") or []
-    all_ids = [email.get("email_id") for email in all_emails]
-    if len(set(all_ids)) != len(all_ids) or any(not isinstance(email_id, str) for email_id in all_ids):
-        fail("invalid_email_pack", "email pack contains duplicate or missing email_id")
-    emails = all_emails
+    if args.email_id:
+        # Identity resolution is the first validity boundary, ahead of the
+        # pack-wide id/path checks: an unrelated malformed row must not block
+        # a targeted run.
+        emails = select_stage5_email(all_emails, args.email_id)
+    else:
+        all_ids = [email.get("email_id") for email in all_emails]
+        if len(set(all_ids)) != len(all_ids) or any(not isinstance(email_id, str) for email_id in all_ids):
+            fail("invalid_email_pack", "email pack contains duplicate or missing email_id")
+        emails = all_emails
     for email in emails:
         professor_dir = Path(email.get("professor_dir") or program_root)
         require_professor_dir_under_program(professor_dir, program_root)
-    if args.email_id:
-        emails = [e for e in emails if e.get("email_id") == args.email_id]
-        if not emails:
-            fail("invalid_params", f"email_id not found: {args.email_id}")
     sources = load_header_sources(program_root)
     resolved_evidence = resolve_contact_evidence(
         program_root, list(dict.fromkeys(
@@ -8146,7 +8182,8 @@ def cmd_stage5_finalize(args) -> None:
             md_body = "\n".join(lines).rstrip() + "\n"
             txt_body = f"Subject: {subject}\n\n{body_text.strip()}\n"
             state_fingerprint = sha256_obj({"output_id": output_id, "input": input_fp})
-            md_path, txt_path = stage5_output_paths(email, all_emails, professor_dir, kind)
+            md_path, txt_path = stage5_output_paths(
+                email, stage5_output_peers(email, all_emails), professor_dir, kind)
             previous = root_entry if kind == "initial" else root_entry.get("followup", {})
             old_render = previous.get("render") or {}
             existing_md_sha = None
@@ -8181,57 +8218,64 @@ def cmd_stage5_finalize(args) -> None:
             else:
                 root_entry.setdefault("followup", {}).update(update)
 
-    projections = load_projections(program_root)
-    overview_rows = ["| 教授 | 方向（ja/zh） | 收件邮箱 | 核验 | 首封邮件 | 跟进邮件 | 首封纯文本 | 跟进纯文本 |",
-                     "|---|---|---|---|---|---|---|---|"]
-    overview_entries = []
-    for email in all_emails:
-        professor_dir = Path(email.get("professor_dir") or program_root)
-        email_state = state_updates.get(str(professor_dir))
-        if email_state is None:
-            email_state, state_error = read_json_file(professor_dir / EMAIL_STATE)
-            if state_error is not None:
-                email_state = None
-        state_entry = ((email_state or {}).get("emails") or {}).get(email.get("email_id")) \
-            if email_state is not None else None
-        files = (state_entry or {}).get("files") or {}
-        followup_files = ((state_entry or {}).get("followup") or {}).get("files") or {}
-        if files or followup_files:
-            overview_entries.append({"email": email, "initial": files,
-                                     "followup": followup_files})
-    for entry in overview_entries:
-        email = entry["email"]
-        professor_dir = Path(email.get("professor_dir") or program_root)
-        verify_check = verify_state(professor_dir, sources)
-        items = ((verify_check.get("data") or {}).get("items") or {})
-        email_value = (items.get("email") or {}).get("value") or "?"
-        warnings = items.get("warnings") or []
-        bad = []
-        if (items.get("roster") or {}).get("verdict") == "not_found":
-            bad.append("在册 not_found")
-        if (items.get("email") or {}).get("verdict") == "unverified":
-            bad.append("邮箱 unverified")
-        bad.extend(str(w) for w in warnings)
-        verify_label = "✅ 全 confirmed" if not bad else "⚠ " + "；".join(bad)
-        def link(path: str | None, label: str) -> str:
-            return f"[{label}]({rel_path(Path(path), program_root / '教授研究')})" if path else "—"
-        initial = entry["initial"]
-        followup = entry["followup"]
-        overview_rows.append(
-            f"| {email.get('professor')} | {email.get('name_ja')}/{email.get('name_zh')} | "
-            f"{email_value} | {verify_label} | {link(initial.get('md'), '.md')} | "
-            f"{link(followup.get('md'), '跟进 .md')} | {link(initial.get('txt'), '首封 .txt')} | "
-            f"{link(followup.get('txt'), '跟进 .txt')} |")
-    overview_body = ("# 套磁邮件总览\n\n"
-                     f"> {now_utc()} ｜ 由 contact_state 渲染\n\n" +
-                     "\n".join(overview_rows) + "\n")
     overview_path = program_root / "教授研究" / EMAIL_OVERVIEW
-    overview_sha = sha256_text(overview_body)
-    overview_conflict = projection_conflict(overview_path, overview_body, projections,
-                                            EMAIL_OVERVIEW)
-    if overview_conflict:
-        soft_exit("needs_decision", overview_conflict["reason_code"],
-                  target=overview_conflict.get("target"))
+    if args.email_id:
+        # A targeted run is one selected email's transaction. Rebuilding the
+        # program aggregate would re-open every unrelated professor's state
+        # and verify cache, and a one-row table is not the aggregate — so the
+        # existing file stays byte-for-byte and a missing one stays absent.
+        overview_sha = None
+    else:
+        projections = load_projections(program_root)
+        overview_rows = ["| 教授 | 方向（ja/zh） | 收件邮箱 | 核验 | 首封邮件 | 跟进邮件 | 首封纯文本 | 跟进纯文本 |",
+                         "|---|---|---|---|---|---|---|---|"]
+        overview_entries = []
+        for email in all_emails:
+            professor_dir = Path(email.get("professor_dir") or program_root)
+            email_state = state_updates.get(str(professor_dir))
+            if email_state is None:
+                email_state, state_error = read_json_file(professor_dir / EMAIL_STATE)
+                if state_error is not None:
+                    email_state = None
+            state_entry = ((email_state or {}).get("emails") or {}).get(email.get("email_id")) \
+                if email_state is not None else None
+            files = (state_entry or {}).get("files") or {}
+            followup_files = ((state_entry or {}).get("followup") or {}).get("files") or {}
+            if files or followup_files:
+                overview_entries.append({"email": email, "initial": files,
+                                         "followup": followup_files})
+        for entry in overview_entries:
+            email = entry["email"]
+            professor_dir = Path(email.get("professor_dir") or program_root)
+            verify_check = verify_state(professor_dir, sources)
+            items = ((verify_check.get("data") or {}).get("items") or {})
+            email_value = (items.get("email") or {}).get("value") or "?"
+            warnings = items.get("warnings") or []
+            bad = []
+            if (items.get("roster") or {}).get("verdict") == "not_found":
+                bad.append("在册 not_found")
+            if (items.get("email") or {}).get("verdict") == "unverified":
+                bad.append("邮箱 unverified")
+            bad.extend(str(w) for w in warnings)
+            verify_label = "✅ 全 confirmed" if not bad else "⚠ " + "；".join(bad)
+            def link(path: str | None, label: str) -> str:
+                return f"[{label}]({rel_path(Path(path), program_root / '教授研究')})" if path else "—"
+            initial = entry["initial"]
+            followup = entry["followup"]
+            overview_rows.append(
+                f"| {email.get('professor')} | {email.get('name_ja')}/{email.get('name_zh')} | "
+                f"{email_value} | {verify_label} | {link(initial.get('md'), '.md')} | "
+                f"{link(followup.get('md'), '跟进 .md')} | {link(initial.get('txt'), '首封 .txt')} | "
+                f"{link(followup.get('txt'), '跟进 .txt')} |")
+        overview_body = ("# 套磁邮件总览\n\n"
+                         f"> {now_utc()} ｜ 由 contact_state 渲染\n\n" +
+                         "\n".join(overview_rows) + "\n")
+        overview_sha = sha256_text(overview_body)
+        overview_conflict = projection_conflict(overview_path, overview_body, projections,
+                                                EMAIL_OVERVIEW)
+        if overview_conflict:
+            soft_exit("needs_decision", overview_conflict["reason_code"],
+                      target=overview_conflict.get("target"))
 
     # Commit only after every email and the aggregate projection passed validation.
     for item in prepared:
@@ -8240,15 +8284,19 @@ def cmd_stage5_finalize(args) -> None:
         atomic_write(item["txt"], item["txt_body"])
     for professor_dir, email_state in state_updates.items():
         atomic_json(Path(professor_dir) / EMAIL_STATE, email_state)
-    overview_fingerprint = sha256_obj({"projection": EMAIL_OVERVIEW, "body": overview_sha})
-    atomic_write(overview_path, render_frontmatter(overview_fingerprint, overview_sha) + overview_body)
-    projections.setdefault("render", {})[EMAIL_OVERVIEW] = {"sha256": overview_sha}
-    save_projections(program_root, projections)
+    if overview_sha is None:
+        overview_md = str(overview_path) if overview_path.is_file() else None
+    else:
+        overview_fingerprint = sha256_obj({"projection": EMAIL_OVERVIEW, "body": overview_sha})
+        atomic_write(overview_path, render_frontmatter(overview_fingerprint, overview_sha) + overview_body)
+        projections.setdefault("render", {})[EMAIL_OVERVIEW] = {"sha256": overview_sha}
+        save_projections(program_root, projections)
+        overview_md = str(overview_path)
     emit({"status": "ok", "emails": [
         {"email_id": item["email_id"], "output_id": item["output_id"], "kind": item["kind"],
          "md": str(item["md"]), "txt": str(item["txt"]),
          "warnings": len(item["warnings"]), "banner": item["banner"]}
-        for item in prepared], "overview_md": str(overview_path)})
+        for item in prepared], "overview_md": overview_md})
 
 
 def cmd_stage5_record_validation(args) -> None:

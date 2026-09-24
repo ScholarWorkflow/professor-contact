@@ -108,6 +108,64 @@ class TestStage5ImmutableTemplates(BaseEnv):
         self.assertIn("过稿: none", followup_md)
 
 
+class TestStage5ImmutableTargetedScope(BaseEnv):
+    """Issue #59 T59-6: the supported immutable finalize entry inherits the
+    runner's selected-email scope instead of adding a wrapper-only path."""
+
+    def immutable_finalize(self, root, results, choices):
+        return parse(run_wrapper(
+            "stage5-finalize", "--program-root", root, "--result", results,
+            "--choices", choices, "--email-id", helpers.ISSUE59_EMAIL_ID))
+
+    def test_issue59_t59_6_wrapper_finalize_keeps_selected_email_scope(self):
+        prepared = helpers.issue59_dependency_variant(self.root, "state", self)
+        overview = prepared["overview"]
+        a_dir = self.root / "教授研究" / "X分野" / helpers.ISSUE59_PROFESSOR
+        b_dir = prepared["b_dir"]
+        untouched = {
+            str(path): Path(path).read_bytes()
+            for path in (prepared["b_state"], prepared["b_verify"], overview)}
+        out = self.immutable_finalize(self.root, prepared["results"],
+                                      prepared["choices"])
+        self.assertEqual(out["status"], "ok", out)
+        self.assertEqual([(row["email_id"], row["output_id"])
+                          for row in out["emails"]],
+                         [(helpers.ISSUE59_EMAIL_ID, helpers.ISSUE59_EMAIL_ID)])
+        state = json.loads((a_dir / "套磁邮件状态.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(state["emails"]), [helpers.ISSUE59_EMAIL_ID])
+        self.assertFalse((b_dir / "套磁邮件.md").exists())
+        self.assertEqual(out["overview_md"], str(overview), out)
+        for name, payload in untouched.items():
+            self.assertEqual(Path(name).read_bytes(), payload, name)
+
+        # Same single-email scope as the direct deterministic finalize.
+        direct_root = self.root / "direct"
+        direct = helpers.issue59_dependency_variant(direct_root, "state", self)
+        drafts = parse(helpers.run_cli(
+            "stage5-plan", "--program-root", direct_root,
+            "--result", direct["results"], "--choices", direct["choices"],
+            "--email-id", helpers.ISSUE59_EMAIL_ID))
+        self.assertEqual(drafts["status"], "ok", drafts)
+        body = direct_root / "issue59-t59-6-direct.txt"
+        body.write_text(drafts["drafts"][0]["draft"], encoding="utf-8")
+        reference = parse(helpers.run_cli(
+            "stage5-finalize", "--program-root", direct_root,
+            "--result", direct["results"], "--choices", direct["choices"],
+            "--humanized", body, "--email-id", helpers.ISSUE59_EMAIL_ID))
+        self.assertEqual(reference["status"], "ok", reference)
+        for key in ("email_id", "output_id", "kind"):
+            self.assertEqual([row[key] for row in out["emails"]],
+                             [row[key] for row in reference["emails"]], key)
+        self.assertEqual([Path(row["md"]).name for row in out["emails"]],
+                         [Path(row["md"]).name for row in reference["emails"]])
+        self.assertEqual([Path(row["txt"]).name for row in out["emails"]],
+                         [Path(row["txt"]).name for row in reference["emails"]])
+        direct_state = json.loads((direct["fixture"]["dirs"][helpers.ISSUE59_PROFESSOR] /
+                                   "套磁邮件状态.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(state["emails"]), list(direct_state["emails"]))
+        self.assertEqual(out["overview_md"], str(overview), out)
+
+
 # The wrapper executes a temporary copy of the runner; the copy's __file__
 # lives in a scratch directory, so the installed-layout checker locator must
 # be resolved from the real runner's location and pinned for the child via

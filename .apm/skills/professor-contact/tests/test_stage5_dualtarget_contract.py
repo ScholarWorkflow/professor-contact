@@ -358,6 +358,96 @@ class InstalledSharedSkillsLocatorTests(unittest.TestCase):
         self.assertEqual(error, "script_missing")
 
 
+# Issue #59 T59-7 reads the caller documents, so it resolves the installed
+# projection first (the formal clean consumer has no .apm/agents tree at all)
+# and only falls back to the repository source.
+ISSUE59_GENERATOR_CANDIDATES = (
+    REPO_ROOT / ".opencode" / "agents" / "professor-contact-email-generator.md",
+    REPO_ROOT / ".agents" / "agents" / "professor-contact-email-generator.md",
+    GENERATOR,
+)
+
+# (contract item, machine tokens that must sit in the same scope statement,
+#  normative marker that keeps the statement from being a bare command listing)
+ISSUE59_T59_7_ITEMS = (
+    ("keep one selected email_id across the plan and immutable finalize calls",
+     ("stage5-plan", "stage5-finalize"), ("same", "同一")),
+    ("run the validator only for the selected rendered outputs",
+     ("professor-contact-email-validator",), ("only", "只")),
+    ("write only the selected output ids before recording validation",
+     ("stage5-record-validation", "validation"), ("only", "只", "仅")),
+    ("keep stage5-record-validation on its existing row-scoped contract",
+     ("stage5-record-validation", "--professor-dir", "--validation-file"),
+     ("no", "不")),
+)
+
+
+def _issue59_document_body(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    return _frontmatter_and_body(path)[1] if text.startswith("---\n") else text
+
+
+def _issue59_scope_statements(body: str) -> list:
+    """Statements of the authoritative targeted-scope sections.
+
+    One statement is one top-level bullet, numbered item or paragraph that
+    carries the ``--email-id`` scope flag, so unrelated Stage 5 prose can never
+    satisfy the contract items and a frontmatter rewrite cannot hide the section.
+    """
+    statements, current = [], []
+    for line in body.splitlines() + [""]:
+        starts = not line.strip() or re.match(r"(?:[-*]|\d+\.)\s", line)
+        if starts:
+            block = "\n".join(current).strip()
+            if "--email-id" in block:
+                statements.append(block)
+            current = [line] if line.strip() else []
+        else:
+            current.append(line)
+    return statements
+
+
+class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
+    """T59-7: the current Stage-5 caller documents keep a targeted run scoped
+    to the selected email, its rendered outputs and those validation rows."""
+
+    def setUp(self):
+        self.generator = next((path for path in ISSUE59_GENERATOR_CANDIDATES
+                               if path.is_file()), None)
+        self.documents = {
+            "generator": self.generator,
+            "SKILL.md": SKILL_PATH,
+            "workflow-reference": SKILL_DIR / "docs" / "workflow-reference.md",
+        }
+
+    def test_issue59_t59_7_targeted_scope_documents_hold_selected_output_scope(self):
+        self.assertIsNotNone(
+            self.generator,
+            f"no generator document among {ISSUE59_GENERATOR_CANDIDATES}")
+        for label, path in self.documents.items():
+            with self.subTest(document=label):
+                self.assertTrue(path.is_file(), f"{label}: missing {path}")
+                statements = _issue59_scope_statements(
+                    _issue59_document_body(path))
+                self.assertTrue(
+                    statements,
+                    f"{label}: no --email-id targeted-scope statement in {path}")
+                for item, tokens, markers in ISSUE59_T59_7_ITEMS:
+                    with self.subTest(document=label, item=item):
+                        matched = [row for row in statements
+                                   if all(token in row for token in tokens)
+                                   and any(marker in row for marker in markers)]
+                        self.assertTrue(
+                            matched,
+                            f"{label}: the --email-id scope statements never state "
+                            f"{item}")
+                for span in re.findall(r"`([^`\n]*)`",
+                                       path.read_text(encoding="utf-8")):
+                    self.assertIsNone(
+                        re.search(r"stage5-record-validation\b.*--email-id", span),
+                        f"{label}: {span!r} presents --email-id as a "
+                        f"stage5-record-validation argument")
+
 
 if __name__ == "__main__":
     unittest.main()
