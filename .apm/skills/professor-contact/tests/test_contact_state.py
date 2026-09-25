@@ -897,15 +897,11 @@ ISSUE59_OTHER_PROFESSOR = "佐藤 花子"
 ISSUE59_DIRECTION_ID = "DIR00001"
 ISSUE59_IDEA_ID = "DIR00001_1"
 ISSUE59_PEER_IDEA_ID = "DIR00001_2"
-ISSUE59_SPLIT_DIRECTION_ID = "DIR00002"
-ISSUE59_SPLIT_IDEA_ID = "DIR00002_1"
 ISSUE59_EMAIL_ID = "試験 教授::DIR00001::DIR00001_1"
 ISSUE59_PEER_EMAIL_ID = "試験 教授::DIR00001::DIR00001_2"
-ISSUE59_SPLIT_EMAIL_ID = "試験 教授::DIR00002::DIR00002_1"
 ISSUE59_OTHER_EMAIL_ID = "佐藤 花子::DIR00001::DIR00001_1"
 ISSUE59_IDEAS = {ISSUE59_EMAIL_ID: ISSUE59_IDEA_ID,
                  ISSUE59_PEER_EMAIL_ID: ISSUE59_PEER_IDEA_ID,
-                 ISSUE59_SPLIT_EMAIL_ID: ISSUE59_SPLIT_IDEA_ID,
                  ISSUE59_OTHER_EMAIL_ID: ISSUE59_IDEA_ID}
 ISSUE59_GAP_QUOTE = ("Future work will extend the synthetic comparison "
                      "to a second input pattern.")
@@ -968,26 +964,25 @@ def issue59_source_hash(row: dict) -> str:
 
 
 def issue59_email_row(professor, professor_dir, *, idea_id=ISSUE59_IDEA_ID,
-                      direction_id=ISSUE59_DIRECTION_ID,
                       name="合成输入比较", contact_evidence=None):
     gap_id = quote_id(ISSUE59_GAP_QUOTE)
     row = {
         "professor": professor,
         "professor_dir": str(professor_dir),
-        "email_id": f"{professor}::{direction_id}::{idea_id}",
-        "direction_ids": [direction_id],
-        "directions": [{"direction_id": direction_id,
+        "email_id": f"{professor}::{ISSUE59_DIRECTION_ID}::{idea_id}",
+        "direction_ids": [ISSUE59_DIRECTION_ID],
+        "directions": [{"direction_id": ISSUE59_DIRECTION_ID,
                         "name_ja": name, "name_zh": name}],
         "name_ja": name,
         "name_zh": name,
-        "collection_key": direction_id,
+        "collection_key": ISSUE59_DIRECTION_ID,
         "user_note": "我想比较两种合成输入的处理结果。",
         "user_supplement": "",
         "idea": {"id": idea_id, "title": "第二种输入模式的合成比较", "idea_zh": ""},
         "papers": [{"item_key": "AAAA1111", "title": ISSUE59_PAPER_TITLE, "year": 2023,
                     "authorship": "corresponding", "fit_note": "教授通讯",
-                    "direction_ids": [direction_id]}],
-        "gaps": [{"gap_id": gap_id, "direction_id": direction_id,
+                    "direction_ids": [ISSUE59_DIRECTION_ID]}],
+        "gaps": [{"gap_id": gap_id, "direction_id": ISSUE59_DIRECTION_ID,
                   "item_key": "AAAA1111", "zotero_key": "AAAA1111",
                   "paper_title": ISSUE59_PAPER_TITLE, "paper_year": 2023,
                   "quote": ISSUE59_GAP_QUOTE,
@@ -1210,7 +1205,6 @@ def write_issue59_stage5_fixture(program_root, specs=(), *, extra_rows=(),
     for spec in (list(specs) or [{}]):
         spec = dict(spec)
         spec.setdefault("professor", ISSUE59_PROFESSOR)
-        spec.setdefault("direction_id", ISSUE59_DIRECTION_ID)
         spec.setdefault("idea_id", ISSUE59_IDEA_ID)
         spec.setdefault("field", "X分野" if spec["professor"] == ISSUE59_PROFESSOR
                         else "Y分野")
@@ -1240,7 +1234,6 @@ def write_issue59_stage5_fixture(program_root, specs=(), *, extra_rows=(),
         professor_dir = Path(spec["dir"])
         row = issue59_email_row(spec["professor"], professor_dir,
                                 idea_id=spec["idea_id"],
-                                direction_id=spec["direction_id"],
                                 contact_evidence=snapshots.get(spec["professor"]))
         rows.append(row)
         dirs[spec["professor"]] = professor_dir
@@ -2467,10 +2460,11 @@ class TestStage5TargetedEmailScope(BaseEnv):
                 self.assertEqual(payload["status"], "error", payload)
                 self.assertEqual(payload["reason_code"], "invalid_professor_dir",
                                  payload)
-        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
-        self.assertFalse((self.prof_dir / contact_state.EMAIL_STATE).exists())
         b_dir = fixture["dirs"][ISSUE59_OTHER_PROFESSOR]
-        self.assertFalse((b_dir / "套磁邮件.md").exists())
+        for professor_dir in (self.prof_dir, b_dir):
+            self.assertFalse((professor_dir / "套磁邮件.md").exists())
+            self.assertFalse((professor_dir / "套磁邮件.txt").exists())
+            self.assertFalse((professor_dir / contact_state.EMAIL_STATE).exists())
 
 
 if __name__ == "__main__":
