@@ -441,6 +441,13 @@ def _issue59_contract_units(section: str) -> list:
     return units
 
 
+def _issue59_first_token_index(text: str, tokens) -> int:
+    """Locate a semantic marker without freezing its exact surrounding prose."""
+    lowered = text.lower()
+    positions = [lowered.find(token.lower()) for token in tokens]
+    return min(position for position in positions if position >= 0)
+
+
 class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
     """T59-7: current Stage-5 caller docs keep selected-output scope."""
 
@@ -477,6 +484,17 @@ class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
                         self.assertTrue(
                             matched,
                             f"{label}: the targeted-scope section never states {item}")
+                        if item.startswith("write only the selected output ids"):
+                            self.assertTrue(
+                                any(
+                                    _issue59_first_token_index(unit, token_groups[0])
+                                    < _issue59_first_token_index(
+                                        unit, ("stage5-record-validation",))
+                                    for unit in matched
+                                ),
+                                f"{label}: selected validation-file ids must be "
+                                "documented before stage5-record-validation",
+                            )
 
 
 if __name__ == "__main__":
