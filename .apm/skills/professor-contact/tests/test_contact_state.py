@@ -1547,6 +1547,69 @@ class TestStage5(BaseEnv):
         self.assertEqual({entry["files"]["md"] for entry in state["emails"].values()},
                          {str(path) for path in md_paths})
 
+        # Issue #59 promises that omitting --email-id preserves batch naming.
+        # Stage 4 can produce the same professor from two different professor
+        # directories when the selected direction scopes differ; before this
+        # PR collision suffixing was directory-scoped, so each directory keeps
+        # the fixed filename instead of being coupled by the professor label.
+        split_root = self.root / "batch-directory-boundary"
+        first_dir = split_root / "教授研究" / "X分野" / ISSUE59_PROFESSOR
+        second_dir = split_root / "教授研究" / "Y分野" / ISSUE59_PROFESSOR
+        split = write_issue59_stage5_fixture(split_root, [
+            {"professor": ISSUE59_PROFESSOR, "dir": first_dir},
+            {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID,
+             "dir": second_dir}])
+        split_pack = json.loads(split["pack"].read_text(encoding="utf-8"))
+        second_scope = "DIR00002"
+        second_idea = "DIR00002_1"
+        second_email = f"{ISSUE59_PROFESSOR}::{second_scope}::{second_idea}"
+        second_row = split_pack["emails"][1]
+        second_row["email_id"] = second_email
+        second_row["direction_ids"] = [second_scope]
+        second_row["directions"][0]["direction_id"] = second_scope
+        second_row["collection_key"] = second_scope
+        second_row["idea"]["id"] = second_idea
+        second_row["gaps"][0]["direction_id"] = second_scope
+        second_row["allowed_sources"] = [
+            f"idea:{second_idea}" if str(source).startswith("idea:") else source
+            for source in second_row["allowed_sources"]]
+        second_row["source_hash"] = issue59_source_hash(second_row)
+        split["pack"].write_text(
+            json.dumps(split_pack, ensure_ascii=False, indent=1), encoding="utf-8")
+
+        split_raw = split_root / "batch-directory-raw.json"
+        split_raw.write_text(json.dumps([
+            issue59_result(split["gap_id"], ISSUE59_EMAIL_ID, ISSUE59_IDEA_ID),
+            issue59_result(split["gap_id"], second_email, second_idea),
+        ], ensure_ascii=False), encoding="utf-8")
+        split_choices = split_root / "batch-directory-choices.json"
+        split_choices.write_text(json.dumps([
+            issue59_choices(ISSUE59_EMAIL_ID),
+            issue59_choices(second_email),
+        ], ensure_ascii=False), encoding="utf-8")
+        split_plan = parse(run_cli(
+            "stage5-plan", "--program-root", split_root,
+            "--result", split_raw, "--choices", split_choices))
+        self.assertEqual(split_plan["status"], "ok", split_plan)
+        split_humanized = {}
+        for index, draft_row in enumerate(split_plan["drafts"]):
+            draft_path = split_root / f"batch-directory-humanized-{index}.txt"
+            draft_path.write_text(draft_row["draft"], encoding="utf-8")
+            split_humanized[draft_row["output_id"]] = str(draft_path)
+        split_map = split_root / "batch-directory-humanized.json"
+        split_map.write_text(json.dumps(split_humanized, ensure_ascii=False),
+                             encoding="utf-8")
+        split_out = parse(run_cli(
+            "stage5-finalize", "--program-root", split_root,
+            "--result", split_raw, "--choices", split_choices,
+            "--humanized-map", split_map))
+        self.assertEqual(split_out["status"], "ok", split_out)
+        split_md = {row["email_id"]: Path(row["md"]) for row in split_out["emails"]}
+        self.assertEqual(split_md[ISSUE59_EMAIL_ID].parent, first_dir)
+        self.assertEqual(split_md[second_email].parent, second_dir)
+        self.assertEqual(split_md[ISSUE59_EMAIL_ID].name, "套磁邮件.md")
+        self.assertEqual(split_md[second_email].name, "套磁邮件.md")
+
     def test_stage5_batch_failure_does_not_write_first_email(self):
         g1 = write_issue59_stage5_fixture(self.root)["gap_id"]
         raw1 = self.raw_result(g1)
@@ -2244,6 +2307,23 @@ class TestStage5TargetedEmailScope(BaseEnv):
                 self.assert_drafts_are_one_a(
                     self.plan("--result", results, "--choices", choices,
                               "--email-id", ISSUE59_EMAIL_ID))
+
+        # A malformed same-professor row without a usable email_id is noise,
+        # not a second output identity. Targeted mode may inspect enough
+        # identity metadata to find real peers, but this row must neither
+        # resolve its escaped path nor force A onto a collision-suffixed name.
+        malformed_peer = copy.deepcopy(fixture["rows"][0])
+        malformed_peer.pop("email_id", None)
+        malformed_peer["professor_dir"] = str(self.outside(ISSUE59_PROFESSOR))
+        self.write_pack([copy.deepcopy(fixture["rows"][0]), malformed_peer])
+        malformed_peer_out = self.finalize(
+            "--result", results, "--choices", choices, "--humanized", humanized,
+            "--email-id", ISSUE59_EMAIL_ID)
+        self.assert_output_is_one_a(malformed_peer_out)
+        self.assertEqual(Path(malformed_peer_out["emails"][0]["md"]).name,
+                         "套磁邮件.md")
+        self.assertEqual(Path(malformed_peer_out["emails"][0]["txt"]).name,
+                         "套磁邮件.txt")
 
         # Collision naming comes from identity metadata, so an unselected
         # same-professor peer's path is never resolved. Canonical A+A2 first.
