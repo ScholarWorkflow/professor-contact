@@ -1554,6 +1554,8 @@ class TestStage5(BaseEnv):
                             "--choices", choices_path))
         self.assertEqual(out["status"], "ok", out)
         self.assertEqual(len(out["emails"]), 2)
+        overview_path = self.root / "教授研究" / contact_state.EMAIL_OVERVIEW
+        self.assertEqual(out["overview_md"], str(overview_path), out)
         md_paths = {Path(row["md"]) for row in out["emails"]}
         txt_paths = {Path(row["txt"]) for row in out["emails"]}
         self.assertEqual(len(md_paths), 2)
@@ -1584,7 +1586,7 @@ class TestStage5(BaseEnv):
         self.assertEqual(persisted["emails"][first_id], a_state)
         self.assertIn(second_id, persisted["emails"])
 
-        overview = (self.root / "教授研究" / "套磁邮件总览.md").read_text(encoding="utf-8")
+        overview = overview_path.read_text(encoding="utf-8")
         self.assertEqual(overview.count("[.md]("), 2)
         state = json.loads((self.prof_dir / "套磁邮件状态.json").read_text(encoding="utf-8"))
         self.assertEqual({entry["files"]["md"] for entry in state["emails"].values()},
@@ -2601,6 +2603,53 @@ class TestStage5TargetedEmailScope(BaseEnv):
                     f"{surface}: invalid B path created files outside program_root")
         b_dir = fixture["dirs"][ISSUE59_OTHER_PROFESSOR]
         for professor_dir in (self.prof_dir, b_dir):
+            self.assertFalse((professor_dir / "套磁邮件.md").exists())
+            self.assertFalse((professor_dir / "套磁邮件.txt").exists())
+            self.assertFalse((professor_dir / contact_state.EMAIL_STATE).exists())
+
+        # AC59-7 also freezes the batch aggregate compatibility path that this
+        # PR moved under the new targeted/batch branch.  Reuse the existing
+        # managed-conflict fixture rather than adding a new top-level case.
+        conflict_root = self.root / "batch-overview-conflict"
+        conflict_fixture = write_issue59_stage5_fixture(conflict_root, [
+            {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
+            {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh"}],
+            overview="conflict", case=self)
+        conflict_results = issue59_write_results(
+            conflict_root, "issue59-5-conflict-raw.json",
+            conflict_fixture["email_ids"])
+        conflict_choices = issue59_write_choices(
+            conflict_root, "issue59-5-conflict-choices.json",
+            conflict_fixture["email_ids"])
+        conflict_plan = self.plan(
+            "--result", conflict_results, "--choices", conflict_choices,
+            root=conflict_root)
+        self.assertEqual(conflict_plan["status"], "ok", conflict_plan)
+        humanized_map = {}
+        for row in conflict_plan["drafts"]:
+            rendered = conflict_root / (
+                "issue59-5-conflict-" +
+                row["output_id"].replace("::", "-") + ".txt")
+            rendered.write_text(row["draft"], encoding="utf-8")
+            humanized_map[row["output_id"]] = str(rendered)
+        conflict_humanized = issue59_write_json(
+            conflict_root, "issue59-5-conflict-humanized-map.json",
+            humanized_map)
+
+        conflict_overview = conflict_fixture["overview"]
+        projection_registry = (
+            conflict_root / "教授研究" / contact_state.PROJECTIONS_FILE)
+        overview_before = conflict_overview.read_bytes()
+        projection_before = projection_registry.read_bytes()
+        conflict = self.finalize(
+            "--result", conflict_results, "--choices", conflict_choices,
+            "--humanized-map", conflict_humanized, root=conflict_root)
+        self.assertEqual(conflict["status"], "needs_decision", conflict)
+        self.assertEqual(conflict["reason_code"], "manual_markdown_changed", conflict)
+        self.assertEqual(conflict["target"], str(conflict_overview), conflict)
+        self.assertEqual(conflict_overview.read_bytes(), overview_before)
+        self.assertEqual(projection_registry.read_bytes(), projection_before)
+        for professor_dir in conflict_fixture["dirs"].values():
             self.assertFalse((professor_dir / "套磁邮件.md").exists())
             self.assertFalse((professor_dir / "套磁邮件.txt").exists())
             self.assertFalse((professor_dir / contact_state.EMAIL_STATE).exists())
