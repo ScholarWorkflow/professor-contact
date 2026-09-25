@@ -384,6 +384,7 @@ ISSUE59_T59_7_ITEMS = (
      (("validation file", "validation 文件", "校验文件"),
       ("selected", "被选", "本次渲染"),
       ("output id", "output_id", "output ids", "输出的 id", "输出 id", "输出 ID"),
+      ("stage5-record-validation",),
       ("only", "只", "仅"))),
     ("keep stage5-record-validation on its existing row-scoped contract",
      (("stage5-record-validation",), ("--professor-dir",), ("--validation-file",),
