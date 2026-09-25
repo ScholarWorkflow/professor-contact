@@ -370,7 +370,7 @@ non-interactive 调用返回既有 `needs_input` 边界，不代选、不最终�
 
 ### 5.10 单封定向执行范围（`--email-id`）
 
-Issue #59：`--email-id` 是**硬执行范围**，不是过滤提示。同一次定向运行里 `stage5-plan` 与 `stage5-finalize` 必须携带**同一个 `--email-id`**：一封有效邮件可以在无关条目状态陈旧、损坏或缺失的程序级 `邮件输入.json` 上单独跑通。
+Issue #59：`--email-id` 是**硬执行范围**，不是过滤提示。同一次定向运行里 `stage5-plan` 与 `stage5_immutable.py stage5-finalize` 必须携带**同一个 `--email-id`**：一封有效邮件可以在无关条目状态陈旧、损坏或缺失的程序级 `邮件输入.json` 上单独跑通。
 
 - **身份解析最先**：runner 先用 `email_id` 选出本次范围，之后才做 `professor_dir`、contact evidence、`_contact_verify.json`、`套磁邮件状态.json`、result、choices、模板与写盘校验。找不到 → `invalid_params` / `email_id not found: <id>`；同一 `email_id` 命中多行 → `invalid_email_pack`。定向模式从不按数组位置、教授名或「第一封」猜测目标。
 - **无关行只是噪声**：非 dict 行、缺少 `email_id` 的行、未知 id 行、重复的未知 id 行一律不阻断也不处理；被选 id 自己重复或在 result/choices 中缺席仍然 fail closed。`validate_email_raw`、`require_user_choices`、`require_followup_choices`、`stage5_recipient_authority` 对被选行的约束一条不放松。
