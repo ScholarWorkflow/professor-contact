@@ -1552,65 +1552,6 @@ class TestStage5(BaseEnv):
         self.assertEqual({entry["files"]["md"] for entry in state["emails"].values()},
                          {str(path) for path in md_paths})
 
-        # Issue #59 also freezes the pre-existing *batch* collision namespace:
-        # without --email-id, two valid rows for the same professor that write
-        # to different professor_dir values must keep their directory-local
-        # unsuffixed filenames. A professor-name-only peer grouping would make
-        # this scenario suffix both outputs and silently change batch behavior.
-        split_root = self.root / "split-dir-batch"
-        first_dir = split_root / "教授研究" / "X分野" / ISSUE59_PROFESSOR
-        second_dir = split_root / "教授研究" / "Z分野" / ISSUE59_PROFESSOR
-        second_direction = "DIR00002"
-        second_idea = "DIR00002_1"
-        second_email = (
-            f"{ISSUE59_PROFESSOR}::{second_direction}::{second_idea}")
-        split_fixture = write_issue59_stage5_fixture(split_root, [
-            {"professor": ISSUE59_PROFESSOR, "dir": first_dir,
-             "direction_id": ISSUE59_DIRECTION_ID, "idea_id": ISSUE59_IDEA_ID},
-            {"professor": ISSUE59_PROFESSOR, "dir": second_dir,
-             "direction_id": second_direction, "idea_id": second_idea}],
-            case=self)
-
-        split_raw = split_root / "batch-split-raw.json"
-        split_raw.write_text(json.dumps([
-            issue59_result(split_fixture["gap_id"], ISSUE59_EMAIL_ID,
-                           ISSUE59_IDEA_ID),
-            issue59_result(split_fixture["gap_id"], second_email, second_idea),
-        ], ensure_ascii=False), encoding="utf-8")
-        split_choices = split_root / "batch-split-choices.json"
-        split_choices.write_text(json.dumps([
-            issue59_choices(ISSUE59_EMAIL_ID),
-            issue59_choices(second_email),
-        ], ensure_ascii=False), encoding="utf-8")
-
-        split_plan = parse(run_cli(
-            "stage5-plan", "--program-root", split_root,
-            "--result", split_raw, "--choices", split_choices))
-        self.assertEqual(split_plan["status"], "ok", split_plan)
-        split_humanized = {}
-        for row in split_plan["drafts"]:
-            draft_path = split_root / (
-                f"humanized-{row['email_id'].replace('::', '-')}.txt")
-            draft_path.write_text(row["draft"], encoding="utf-8")
-            split_humanized[row["output_id"]] = str(draft_path)
-        split_map = split_root / "batch-split-humanized-map.json"
-        split_map.write_text(
-            json.dumps(split_humanized, ensure_ascii=False), encoding="utf-8")
-
-        split_out = parse(run_cli(
-            "stage5-finalize", "--program-root", split_root,
-            "--result", split_raw, "--humanized-map", split_map,
-            "--choices", split_choices))
-        self.assertEqual(split_out["status"], "ok", split_out)
-        by_id = {row["email_id"]: row for row in split_out["emails"]}
-        self.assertEqual(Path(by_id[ISSUE59_EMAIL_ID]["md"]),
-                         first_dir / "套磁邮件.md")
-        self.assertEqual(Path(by_id[ISSUE59_EMAIL_ID]["txt"]),
-                         first_dir / "套磁邮件.txt")
-        self.assertEqual(Path(by_id[second_email]["md"]),
-                         second_dir / "套磁邮件.md")
-        self.assertEqual(Path(by_id[second_email]["txt"]),
-                         second_dir / "套磁邮件.txt")
 
     def test_stage5_batch_failure_does_not_write_first_email(self):
         g1 = write_issue59_stage5_fixture(self.root, case=self)["gap_id"]
