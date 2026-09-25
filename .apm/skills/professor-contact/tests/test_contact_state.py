@@ -1073,14 +1073,14 @@ def issue59_choices(email_id=ISSUE59_EMAIL_ID):
             "signature_name": "試験 太郎", "learning": "比較手法の基礎知識の習得"}
 
 
-def issue59_evidence_record(professor, *, email=ISSUE59_EMAIL_ADDRESS):
+def issue59_evidence_record(professor, item_key, *,
+                            email=ISSUE59_EMAIL_ADDRESS):
     """One professor record exactly representable by the owner reconciler.
 
-    The canonical Issue-59 fixture uses a single official candidate and no
-    correspondence evidence, so the real professor-research producer yields
-    ``official_only`` with a usable current email.  Cross-source confirmation
-    is not an Issue-59 acceptance dimension and must not be manufactured by a
-    Stage-5 fixture.
+    Keep the pre-existing Issue-59 baseline on ``confirmed_cross_source``:
+    the fixture now earns that verdict from a real official candidate plus one
+    recent high-confidence correspondence record, instead of hand-authoring a
+    schema-2 artifact that the owner checker would reject.
     """
     return {
         "professor": {"name": professor, "name_romaji": None},
@@ -1088,12 +1088,16 @@ def issue59_evidence_record(professor, *, email=ISSUE59_EMAIL_ADDRESS):
             "email": email, "current_source": True,
             "provenance": [{"source_type": "official_professor_candidate",
                             "source": "issue59-fixture"}]}],
-        "paper_correspondence": [],
-        "identity": {"matched_verified_contacts": 0,
+        "paper_correspondence": [{
+            "email": email, "name": professor, "item_key": item_key, "doi": None,
+            "paper_year": 2025, "channel": "correspondence", "confidence": "high",
+            "identity_match": "direct", "recent": True,
+            "current_email_evidence": False}],
+        "identity": {"matched_verified_contacts": 1,
                      "unmatched_verified_contacts": [],
                      "ambiguous_unpaired_records_ignored": 0},
-        "verdict": "official_only",
-        "confirmed_emails": [],
+        "verdict": "confirmed_cross_source",
+        "confirmed_emails": [email],
         "conflicting_paper_emails": [],
         "current_email": email,
         "evidence_status": {
@@ -1152,25 +1156,40 @@ def issue59_write_evidence(program_root, professor_dirs, stale_for=()):
         json.dumps(candidates, ensure_ascii=False, indent=1), encoding="utf-8")
 
     paper_projections = []
-    for name, professor_dir in professor_dirs.items():
+    evidence_item_keys = {}
+    correspondence = {}
+    for index, (name, professor_dir) in enumerate(professor_dirs.items()):
         professor_dir.mkdir(parents=True, exist_ok=True)
+        item_key = "AAAA1111" if index == 0 else f"ISS59{index:03d}"
+        evidence_item_keys[name] = item_key
         papers = {
             "professor": {"name": name},
-            "papers": [{"item_key": "AAAA1111", "year": 2025,
-                        "doi": "10.1/issue59"}],
+            "papers": [{"item_key": item_key, "year": 2025}],
         }
         papers_path = professor_dir / "papers.json"
         papers_path.write_text(
             json.dumps(papers, ensure_ascii=False, indent=1), encoding="utf-8")
         paper_projections.append((papers_path, papers))
+        correspondence[item_key] = {
+            "paper_year": 2025,
+            "channel": "correspondence",
+            "confidence": "high",
+            "contacts": [{
+                "name": name, "email": ISSUE59_EMAIL_ADDRESS,
+                "channel": "correspondence", "confidence": "high",
+            }],
+        }
 
     correspondence_path = professors_root / "_corresp_cache.json"
+    correspondence_path.write_text(
+        json.dumps(correspondence, ensure_ascii=False, indent=1), encoding="utf-8")
     signature_path = professors_root / "_署名对照.json"
     fingerprints = [
         issue59_source_fingerprint(
             "professor_candidates", candidates_path, professors_root, candidates),
         issue59_source_fingerprint(
-            "paper_correspondence", correspondence_path, professors_root),
+            "paper_correspondence", correspondence_path, professors_root,
+            correspondence),
         issue59_source_fingerprint(
             "signature_book", signature_path, professors_root),
     ]
@@ -1191,7 +1210,10 @@ def issue59_write_evidence(program_root, professor_dirs, stale_for=()):
         },
         "degraded": False, "global_degraded": False, "source_errors": [],
         "source_fingerprints": {"algorithm": "sha256", "files": fingerprints},
-        "professors": [issue59_evidence_record(name) for name in professors],
+        "professors": [
+            issue59_evidence_record(name, evidence_item_keys[name])
+            for name in professors
+        ],
     }
     path = professors_root / contact_state.CONTACT_EVIDENCE_FILE
     path.write_text(json.dumps(artifact, ensure_ascii=False, indent=1), encoding="utf-8")
