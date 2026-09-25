@@ -912,10 +912,6 @@ ISSUE59_STALE_DAYS = 45
 # demonstrably stale inside the program-level checker report.
 ISSUE59_B_STALE_REASON = "source_changed:papers_json:Y分野/佐藤 花子/papers.json"
 ISSUE59_MALFORMED_JSON = "{ this is not the email state"
-# The runner's own source_hash field set (issue #10 refreeze contract).
-ISSUE59_SOURCE_HASH_FIELDS = ("email_id", "direction_ids", "directions", "idea",
-                              "papers", "gaps", "red_lines", "allowed_sources",
-                              "contact_evidence", "cross_direction")
 def issue59_checker_stub(stale=None, marker=None):
     """Deterministic stand-in for professor-research's ``contact_evidence.py``.
 
@@ -959,8 +955,8 @@ ISSUE59_VERIFIED_AT = issue59_verified_at()
 
 
 def issue59_source_hash(row: dict) -> str:
-    """Hash a pack row with the runner's own helper over its frozen fact fields."""
-    return contact_state.sha256_obj({key: row[key] for key in ISSUE59_SOURCE_HASH_FIELDS})
+    """Hash a pack row through the producer's canonical Stage-4 helper."""
+    return contact_state.email_source_hash(row)
 
 
 def issue59_email_row(professor, professor_dir, *, idea_id=ISSUE59_IDEA_ID,
@@ -2042,7 +2038,7 @@ class TestMigrate(BaseEnv):
         self.assertTrue(any(row["reason"] == "already_migrated" for row in out["skipped"]))
 
 
-ISSUE59_DEPENDENCY_VARIANTS = ("state", "verify", "clean")
+ISSUE59_DEPENDENCY_VARIANTS = ("state", "verify", "clean", "overview-conflict")
 
 
 def issue59_write_json(program_root, name, payload):
@@ -2065,14 +2061,14 @@ def issue59_write_choices(program_root, name, email_ids, extra_rows=()):
 
 
 def issue59_dependency_variant(program_root, variant, case):
-    """Build one of the three T59-4 unrelated-B dependency shapes from scratch.
+    """Build T59-4 dependency shapes from scratch.
 
     ``state`` corrupts only B's 套磁邮件状态.json; ``verify`` corrupts only B's
     _contact_verify.json while its state still lists B's rendered files (the
     shape the pre-fix aggregate path read first); ``clean`` leaves both valid
-    and seeds no program aggregate. Each variant is constructed in its own
-    program root, so the no-overview branch is never a finalized fixture whose
-    aggregate was deleted afterwards.
+    and seeds no program aggregate; ``overview-conflict`` leaves B valid and
+    seeds only a managed aggregate projection conflict. Each variant is built
+    in its own program root so every subcase changes one acceptance dimension.
     """
     program_root = Path(program_root)
     b_dir = program_root / "教授研究" / "Y分野" / ISSUE59_OTHER_PROFESSOR
@@ -2086,7 +2082,8 @@ def issue59_dependency_variant(program_root, variant, case):
         {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh",
          "email_state": ISSUE59_MALFORMED_JSON if variant == "state" else b_state,
          "verified": "malformed" if variant == "verify" else "fresh"}],
-        overview=None if variant == "clean" else "seed", case=case)
+        overview=("conflict" if variant == "overview-conflict"
+                  else None if variant == "clean" else "seed"), case=case)
     if variant != "state":
         for name in ("套磁邮件.md", "套磁邮件.txt"):
             (b_dir / name).write_text("ISSUE59-B-RENDERED\n", encoding="utf-8")
@@ -2278,6 +2275,36 @@ class TestStage5TargetedEmailScope(BaseEnv):
         self.assert_output_is_one_a(escaped)
         self.assertEqual(Path(escaped["emails"][0]["md"]).name, expected_md)
         self.assertEqual(Path(escaped["emails"][0]["txt"]).name, expected_txt)
+
+        # A malformed same-professor row without a usable email identity is not
+        # a real collision peer. This is a separate fresh root so the naming
+        # oracle is not affected by the valid-A2 collision subcase above.
+        malformed_root = self.root / "malformed-same-professor-peer"
+        malformed = write_issue59_stage5_fixture(malformed_root, [
+            {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
+            {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID,
+             "evidence": "fresh"}], case=self)
+        malformed_rows = copy.deepcopy(malformed["rows"])
+        del malformed_rows[1]["email_id"]
+        malformed_pack = malformed_root / "教授研究" / contact_state.EMAIL_PACK
+        pack = json.loads(malformed_pack.read_text(encoding="utf-8"))
+        pack["emails"] = malformed_rows
+        malformed_pack.write_text(
+            json.dumps(pack, ensure_ascii=False, indent=1), encoding="utf-8")
+        malformed_results = issue59_write_results(
+            malformed_root, "issue59-1-malformed-peer-raw.json", [ISSUE59_EMAIL_ID])
+        malformed_choices = issue59_write_choices(
+            malformed_root, "issue59-1-malformed-peer-choices.json", [ISSUE59_EMAIL_ID])
+        malformed_humanized = self.humanized(
+            "issue59-1-malformed-peer", malformed_results, malformed_choices,
+            root=malformed_root)
+        malformed_out = self.finalize(
+            "--result", malformed_results, "--choices", malformed_choices,
+            "--humanized", malformed_humanized, "--email-id", ISSUE59_EMAIL_ID,
+            root=malformed_root)
+        self.assert_output_is_one_a(malformed_out)
+        self.assertEqual(Path(malformed_out["emails"][0]["md"]).name, "套磁邮件.md")
+        self.assertEqual(Path(malformed_out["emails"][0]["txt"]).name, "套磁邮件.txt")
 
         # Fail-closed controls on both command surfaces: the target must exist,
         # must be unambiguous, and its own path must stay inside the program.
