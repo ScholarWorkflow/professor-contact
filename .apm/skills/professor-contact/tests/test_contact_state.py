@@ -2202,6 +2202,20 @@ class TestStage5TargetedEmailScope(BaseEnv):
         return {str(path): Path(path).read_bytes() for path in paths
                 if path is not None and Path(path).exists()}
 
+    def stage5_artifact_snapshot(self, root=None):
+        """Capture only Stage-5 rendered/state artifacts for no-write oracles."""
+        program_root = Path(root or self.root)
+        research = program_root / "教授研究"
+        if not research.exists():
+            return {}
+        snapshot = {}
+        for path in research.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.name == contact_state.EMAIL_STATE or path.name.startswith("套磁邮件"):
+                snapshot[str(path.relative_to(program_root))] = path.read_bytes()
+        return snapshot
+
     # ---- scope assertions -------------------------------------------------
 
     def assert_plan_jobs_are_one_a(self, jobs):
@@ -2323,6 +2337,7 @@ class TestStage5TargetedEmailScope(BaseEnv):
             target = missing if rows is None else ISSUE59_EMAIL_ID
             for surface in ("plan", "finalize"):
                 with self.subTest(control=control, surface=surface):
+                    before = self.stage5_artifact_snapshot()
                     payload = (self.plan("--email-id", target) if surface == "plan"
                                else self.finalize("--result", results, "--choices",
                                                   choices, "--humanized", humanized,
@@ -2331,6 +2346,13 @@ class TestStage5TargetedEmailScope(BaseEnv):
                     self.assertEqual(payload["reason_code"], reason, payload)
                     if expected_message is not None:
                         self.assertEqual(payload["message"], expected_message)
+                    self.assertEqual(
+                        self.stage5_artifact_snapshot(), before,
+                        f"{control}/{surface}: fail-closed validation mutated Stage-5 artifacts")
+                    if control == "selected-outside-root":
+                        self.assertFalse(
+                            self.outside_root.exists(),
+                            f"{surface}: invalid selected path created files outside program_root")
 
     def test_issue59_t59_2_result_and_choices_rows_are_selected_scoped(self):
         write_issue59_stage5_fixture(self.root, case=self)
@@ -2375,6 +2397,7 @@ class TestStage5TargetedEmailScope(BaseEnv):
                 for surface in ("plan", "finalize"):
                     with self.subTest(selected=label, document=document,
                                       surface=surface):
+                        before = self.stage5_artifact_snapshot()
                         payload = (self.plan(
                             "--result", bad_result, "--choices", bad_choices,
                             "--email-id", ISSUE59_EMAIL_ID)
@@ -2385,6 +2408,10 @@ class TestStage5TargetedEmailScope(BaseEnv):
                         self.assertEqual(payload["status"], "error", payload)
                         self.assertEqual(payload["reason_code"], "invalid_result_json",
                                          payload)
+                        self.assertEqual(
+                            self.stage5_artifact_snapshot(), before,
+                            f"{label}/{document}/{surface}: invalid selected row mutated "
+                            "Stage-5 artifacts")
 
         # A selected row's own content contract is not relaxed by scoping on
         # either deterministic Stage-5 command surface.
@@ -2393,6 +2420,7 @@ class TestStage5TargetedEmailScope(BaseEnv):
                                        future_aspiration_ja="")])
         for surface in ("plan", "finalize"):
             with self.subTest(selected="invalid-raw", surface=surface):
+                before = self.stage5_artifact_snapshot()
                 payload = (self.plan(
                     "--result", broken, "--choices", choices,
                     "--email-id", ISSUE59_EMAIL_ID)
@@ -2401,6 +2429,10 @@ class TestStage5TargetedEmailScope(BaseEnv):
                     "--humanized", humanized, "--email-id", ISSUE59_EMAIL_ID))
                 self.assertEqual(payload["status"], "error", payload)
                 self.assertEqual(payload["reason_code"], "invalid_result_json", payload)
+                self.assertEqual(
+                    self.stage5_artifact_snapshot(), before,
+                    f"invalid-raw/{surface}: invalid selected result mutated "
+                    "Stage-5 artifacts")
 
         # Batch mode keeps load_id_map(exact=True) strict. The choices half of
         # that boundary is owned by test_stage5_choices_id_mapping_fails_closed
