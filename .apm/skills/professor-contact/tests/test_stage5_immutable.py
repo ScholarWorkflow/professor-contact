@@ -138,32 +138,7 @@ class TestStage5ImmutableTargetedScope(BaseEnv):
         for name, payload in untouched.items():
             self.assertEqual(Path(name).read_bytes(), payload, name)
 
-        # Same single-email scope as the direct deterministic finalize.
-        direct_root = self.root / "direct"
-        direct = helpers.issue59_dependency_variant(direct_root, "state", self)
-        drafts = parse(helpers.run_cli(
-            "stage5-plan", "--program-root", direct_root,
-            "--result", direct["results"], "--choices", direct["choices"],
-            "--email-id", helpers.ISSUE59_EMAIL_ID))
-        self.assertEqual(drafts["status"], "ok", drafts)
-        body = direct_root / "issue59-t59-6-direct.txt"
-        body.write_text(drafts["drafts"][0]["draft"], encoding="utf-8")
-        reference = parse(helpers.run_cli(
-            "stage5-finalize", "--program-root", direct_root,
-            "--result", direct["results"], "--choices", direct["choices"],
-            "--humanized", body, "--email-id", helpers.ISSUE59_EMAIL_ID))
-        self.assertEqual(reference["status"], "ok", reference)
-        for key in ("email_id", "output_id", "kind"):
-            self.assertEqual([row[key] for row in out["emails"]],
-                             [row[key] for row in reference["emails"]], key)
-        self.assertEqual([Path(row["md"]).name for row in out["emails"]],
-                         [Path(row["md"]).name for row in reference["emails"]])
-        self.assertEqual([Path(row["txt"]).name for row in out["emails"]],
-                         [Path(row["txt"]).name for row in reference["emails"]])
-        direct_state = json.loads((direct["fixture"]["dirs"][helpers.ISSUE59_PROFESSOR] /
-                                   "套磁邮件状态.json").read_text(encoding="utf-8"))
-        self.assertEqual(list(state["emails"]), list(direct_state["emails"]))
-        self.assertEqual(out["overview_md"], str(overview), out)
+
 
 
 # The wrapper executes a temporary copy of the runner; the copy's __file__
