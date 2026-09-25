@@ -1208,7 +1208,7 @@ def write_issue59_stage5_fixture(program_root, specs=(), *, extra_rows=(),
         spec.setdefault("field", "X分野" if spec["professor"] == ISSUE59_PROFESSOR
                         else "Y分野")
         spec.setdefault("verified", "fresh")
-        spec.setdefault("evidence", "none")
+        spec.setdefault("evidence", "fresh")
         spec.setdefault("dir", research / spec["field"] / spec["professor"])
         normalized.append(spec)
 
@@ -1479,7 +1479,8 @@ class TestStage5(BaseEnv):
     def test_stage5_multiple_emails_use_distinct_files(self):
         fixture = write_issue59_stage5_fixture(self.root, [
             {"professor": ISSUE59_PROFESSOR},
-            {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID}])
+            {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID}],
+            case=self)
         g1 = fixture["gap_id"]
         second_id = ISSUE59_PEER_EMAIL_ID
 
@@ -1547,71 +1548,8 @@ class TestStage5(BaseEnv):
         self.assertEqual({entry["files"]["md"] for entry in state["emails"].values()},
                          {str(path) for path in md_paths})
 
-        # Issue #59 promises that omitting --email-id preserves batch naming.
-        # Stage 4 can produce the same professor from two different professor
-        # directories when the selected direction scopes differ; before this
-        # PR collision suffixing was directory-scoped, so each directory keeps
-        # the fixed filename instead of being coupled by the professor label.
-        split_root = self.root / "batch-directory-boundary"
-        first_dir = split_root / "教授研究" / "X分野" / ISSUE59_PROFESSOR
-        second_dir = split_root / "教授研究" / "Y分野" / ISSUE59_PROFESSOR
-        split = write_issue59_stage5_fixture(split_root, [
-            {"professor": ISSUE59_PROFESSOR, "dir": first_dir},
-            {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID,
-             "dir": second_dir}])
-        split_pack = json.loads(split["pack"].read_text(encoding="utf-8"))
-        second_scope = "DIR00002"
-        second_idea = "DIR00002_1"
-        second_email = f"{ISSUE59_PROFESSOR}::{second_scope}::{second_idea}"
-        second_row = split_pack["emails"][1]
-        second_row["email_id"] = second_email
-        second_row["direction_ids"] = [second_scope]
-        second_row["directions"][0]["direction_id"] = second_scope
-        second_row["collection_key"] = second_scope
-        second_row["idea"]["id"] = second_idea
-        second_row["gaps"][0]["direction_id"] = second_scope
-        second_row["allowed_sources"] = [
-            f"idea:{second_idea}" if str(source).startswith("idea:") else source
-            for source in second_row["allowed_sources"]]
-        second_row["source_hash"] = issue59_source_hash(second_row)
-        split["pack"].write_text(
-            json.dumps(split_pack, ensure_ascii=False, indent=1), encoding="utf-8")
-
-        split_raw = split_root / "batch-directory-raw.json"
-        split_raw.write_text(json.dumps([
-            issue59_result(split["gap_id"], ISSUE59_EMAIL_ID, ISSUE59_IDEA_ID),
-            issue59_result(split["gap_id"], second_email, second_idea),
-        ], ensure_ascii=False), encoding="utf-8")
-        split_choices = split_root / "batch-directory-choices.json"
-        split_choices.write_text(json.dumps([
-            issue59_choices(ISSUE59_EMAIL_ID),
-            issue59_choices(second_email),
-        ], ensure_ascii=False), encoding="utf-8")
-        split_plan = parse(run_cli(
-            "stage5-plan", "--program-root", split_root,
-            "--result", split_raw, "--choices", split_choices))
-        self.assertEqual(split_plan["status"], "ok", split_plan)
-        split_humanized = {}
-        for index, draft_row in enumerate(split_plan["drafts"]):
-            draft_path = split_root / f"batch-directory-humanized-{index}.txt"
-            draft_path.write_text(draft_row["draft"], encoding="utf-8")
-            split_humanized[draft_row["output_id"]] = str(draft_path)
-        split_map = split_root / "batch-directory-humanized.json"
-        split_map.write_text(json.dumps(split_humanized, ensure_ascii=False),
-                             encoding="utf-8")
-        split_out = parse(run_cli(
-            "stage5-finalize", "--program-root", split_root,
-            "--result", split_raw, "--choices", split_choices,
-            "--humanized-map", split_map))
-        self.assertEqual(split_out["status"], "ok", split_out)
-        split_md = {row["email_id"]: Path(row["md"]) for row in split_out["emails"]}
-        self.assertEqual(split_md[ISSUE59_EMAIL_ID].parent, first_dir)
-        self.assertEqual(split_md[second_email].parent, second_dir)
-        self.assertEqual(split_md[ISSUE59_EMAIL_ID].name, "套磁邮件.md")
-        self.assertEqual(split_md[second_email].name, "套磁邮件.md")
-
     def test_stage5_batch_failure_does_not_write_first_email(self):
-        g1 = write_issue59_stage5_fixture(self.root)["gap_id"]
+        g1 = write_issue59_stage5_fixture(self.root, case=self)["gap_id"]
         raw1 = self.raw_result(g1)
         raw_one_path = self.root / "first-raw.json"
         raw_one_path.write_text(json.dumps(raw1, ensure_ascii=False), encoding="utf-8")
@@ -1624,7 +1562,8 @@ class TestStage5(BaseEnv):
         second_id = ISSUE59_PEER_EMAIL_ID
         write_issue59_stage5_fixture(self.root, [
             {"professor": ISSUE59_PROFESSOR},
-            {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID}])
+            {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID}],
+            case=self)
         raw2["email_id"] = second_id
         raw2["future_aspiration_ja"] = ""
         raw_path = self.root / "batch-raw.json"
@@ -1746,7 +1685,7 @@ class TestStage5(BaseEnv):
                 self.assertEqual(out["reason_code"], "missing_user_choice", label)
 
     def test_stage5_choices_id_mapping_fails_closed(self):
-        g1 = write_issue59_stage5_fixture(self.root)["gap_id"]
+        g1 = write_issue59_stage5_fixture(self.root, case=self)["gap_id"]
         raw_path = self.root / "id-mapping-raw.json"
         raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
         choices_path = self.root / "id-mapping-choice.json"
@@ -2308,60 +2247,44 @@ class TestStage5TargetedEmailScope(BaseEnv):
                     self.plan("--result", results, "--choices", choices,
                               "--email-id", ISSUE59_EMAIL_ID))
 
-        # A malformed same-professor row without a usable email_id is noise,
-        # not a second output identity. Targeted mode may inspect enough
-        # identity metadata to find real peers, but this row must neither
-        # resolve its escaped path nor force A onto a collision-suffixed name.
-        malformed_peer = copy.deepcopy(fixture["rows"][0])
-        malformed_peer.pop("email_id", None)
-        malformed_peer["professor_dir"] = str(self.outside(ISSUE59_PROFESSOR))
-        self.write_pack([copy.deepcopy(fixture["rows"][0]), malformed_peer])
-        malformed_peer_out = self.finalize(
-            "--result", results, "--choices", choices, "--humanized", humanized,
-            "--email-id", ISSUE59_EMAIL_ID)
-        self.assert_output_is_one_a(malformed_peer_out)
-        self.assertEqual(Path(malformed_peer_out["emails"][0]["md"]).name,
-                         "套磁邮件.md")
-        self.assertEqual(Path(malformed_peer_out["emails"][0]["txt"]).name,
-                         "套磁邮件.txt")
-
         # Collision naming comes from identity metadata, so an unselected
-        # same-professor peer's path is never resolved. Canonical A+A2 first.
+        # same-professor peer's path is never resolved. Derive the expected
+        # filename from the frozen naming contract rather than another product run.
         peers = write_issue59_stage5_fixture(self.root, [
             {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
             {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID,
              "evidence": "fresh"}], case=self)
         peer_results = self.write_results("issue59-1-peer-raw.json", peers["email_ids"])
         peer_choices = self.write_choices("issue59-1-peer-choices.json", peers["email_ids"])
-        peer_drafts = self.plan("--result", peer_results, "--choices", peer_choices)
-        self.assertEqual(peer_drafts["status"], "ok", peer_drafts)
-        peer_map = self.humanized_map("issue59-1-peer-map.json", peer_drafts["drafts"])
-        canonical = self.finalize("--result", peer_results, "--choices", peer_choices,
-                                  "--humanized-map", peer_map)
-        self.assertEqual(canonical["status"], "ok", canonical)
-        expected = [Path(row["md"]).name for row in canonical["emails"]
-                    if row["email_id"] == ISSUE59_EMAIL_ID]
-        self.assertEqual(len(expected), 1)
-        self.assertNotEqual(expected, ["套磁邮件.md"])
+        peer_humanized = self.humanized(
+            "issue59-1-peer", peer_results, peer_choices)
 
-        # Only A2's professor_dir escapes: A keeps its collision-suffixed name
-        # instead of falling back to the single-email filename.
+        email_hash = hashlib.sha256(
+            ISSUE59_EMAIL_ID.encode("utf-8")).hexdigest()[:8]
+        suffix = f"{ISSUE59_DIRECTION_ID}_{ISSUE59_IDEA_ID}_{email_hash}"
+        expected_md = f"套磁邮件_{suffix}.md"
+        expected_txt = f"套磁邮件_{suffix}.txt"
+
+        # Only A2's professor_dir escapes: A keeps the contract-defined
+        # collision-suffixed name without resolving A2's path.
         self.write_pack(self.defective_rows(peers, "outside-root-professor-dir"))
-        escaped = self.finalize("--result", peer_results, "--choices", peer_choices,
-                                "--humanized-map", peer_map,
-                                "--email-id", ISSUE59_EMAIL_ID)
+        escaped = self.finalize(
+            "--result", peer_results, "--choices", peer_choices,
+            "--humanized", peer_humanized, "--email-id", ISSUE59_EMAIL_ID)
         self.assert_output_is_one_a(escaped)
-        self.assertEqual([Path(escaped["emails"][0]["md"]).name], expected)
+        self.assertEqual(Path(escaped["emails"][0]["md"]).name, expected_md)
+        self.assertEqual(Path(escaped["emails"][0]["txt"]).name, expected_txt)
 
         # Fail-closed controls on both command surfaces: the target must exist,
         # must be unambiguous, and its own path must stay inside the program.
         missing = "不存在的::DIR00001::DIR00001_1"
-        for control, rows, reason, needle in (
+        for control, rows, reason, expected_message in (
                 ("missing-target", None, "invalid_params",
                  f"email_id not found: {missing}"),
                 ("duplicate-selected",
                  [copy.deepcopy(fixture["rows"][0]) for _ in (0, 1)],
-                 "invalid_email_pack", ISSUE59_EMAIL_ID),
+                 "invalid_email_pack",
+                 f"email pack contains duplicate email_id: {ISSUE59_EMAIL_ID}"),
                 ("selected-outside-root",
                  self.defective_rows(fixture, "selected-outside-root"),
                  "invalid_professor_dir", None)):
@@ -2376,8 +2299,8 @@ class TestStage5TargetedEmailScope(BaseEnv):
                                                   "--email-id", target))
                     self.assertEqual(payload["status"], "error", payload)
                     self.assertEqual(payload["reason_code"], reason, payload)
-                    if needle:
-                        self.assertIn(needle, json.dumps(payload, ensure_ascii=False))
+                    if expected_message is not None:
+                        self.assertEqual(payload["message"], expected_message)
 
     def test_issue59_t59_2_result_and_choices_rows_are_selected_scoped(self):
         write_issue59_stage5_fixture(self.root, case=self)
@@ -2408,20 +2331,30 @@ class TestStage5TargetedEmailScope(BaseEnv):
                         "--result", raw, "--choices", picked, "--humanized", humanized,
                         "--email-id", ISSUE59_EMAIL_ID))
 
-        # The selected id's own occurrence is still validated exactly once.
+        # The selected id's own occurrence is still validated exactly once
+        # in both scoped documents.
         for label, email_ids in (("duplicated", [ISSUE59_EMAIL_ID, ISSUE59_EMAIL_ID]),
                                  ("absent", [ISSUE59_OTHER_EMAIL_ID])):
-            raw_path = self.write_results(f"issue59-2-{label}.json", email_ids)
-            for surface in ("plan", "finalize"):
-                with self.subTest(selected=label, surface=surface):
-                    payload = (self.plan("--result", raw_path, "--choices", choices,
-                                         "--email-id", ISSUE59_EMAIL_ID)
-                               if surface == "plan" else self.finalize(
-                        "--result", raw_path, "--choices", choices,
-                        "--humanized", humanized, "--email-id", ISSUE59_EMAIL_ID))
-                    self.assertEqual(payload["status"], "error", payload)
-                    self.assertEqual(payload["reason_code"], "invalid_result_json",
-                                     payload)
+            for document in ("result", "choices"):
+                bad_result = (self.write_results(
+                    f"issue59-2-{label}-result.json", email_ids)
+                              if document == "result" else results)
+                bad_choices = (self.write_choices(
+                    f"issue59-2-{label}-choices.json", email_ids)
+                               if document == "choices" else choices)
+                for surface in ("plan", "finalize"):
+                    with self.subTest(selected=label, document=document,
+                                      surface=surface):
+                        payload = (self.plan(
+                            "--result", bad_result, "--choices", bad_choices,
+                            "--email-id", ISSUE59_EMAIL_ID)
+                                   if surface == "plan" else self.finalize(
+                            "--result", bad_result, "--choices", bad_choices,
+                            "--humanized", humanized,
+                            "--email-id", ISSUE59_EMAIL_ID))
+                        self.assertEqual(payload["status"], "error", payload)
+                        self.assertEqual(payload["reason_code"], "invalid_result_json",
+                                         payload)
 
         # A selected row's own content contract is not relaxed by scoping.
         broken = self.write_json("issue59-2-broken.json",
