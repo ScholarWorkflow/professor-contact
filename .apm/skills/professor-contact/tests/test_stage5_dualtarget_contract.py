@@ -447,7 +447,7 @@ def _issue59_contract_units(section: str) -> list:
 
 def _issue59_semantic_text(text: str) -> str:
     """Normalize Markdown decoration without changing the documented semantics."""
-    plain = text.replace("\`", "").replace("*", "")
+    plain = text.replace("`", "").replace("*", "")
     return " ".join(plain.split()).lower()
 
 
