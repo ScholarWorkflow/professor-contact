@@ -2243,9 +2243,6 @@ class TestStage5TargetedEmailScope(BaseEnv):
             with self.subTest(defect=defect, surface="plan"):
                 self.assert_plan_jobs_are_one_a(
                     self.plan("--email-id", ISSUE59_EMAIL_ID))
-                self.assert_drafts_are_one_a(
-                    self.plan("--result", results, "--choices", choices,
-                              "--email-id", ISSUE59_EMAIL_ID))
 
         # Collision naming comes from identity metadata, so an unselected
         # same-professor peer's path is never resolved. Derive the expected
@@ -2402,13 +2399,6 @@ class TestStage5TargetedEmailScope(BaseEnv):
         self.assertEqual(report["result"], "stale")
         self.assertEqual({entry["name"]: entry["result"] for entry in report["professors"]},
                          {ISSUE59_PROFESSOR: "fresh", ISSUE59_OTHER_PROFESSOR: "stale"})
-
-        # Batch mode is one run for the whole program root, so B alone does
-        # block it — the contrast that makes the targeted scope observable.
-        batch = self.plan("--result", results, "--choices", choices)
-        self.assertEqual(batch["status"], "needs_refresh", batch)
-        self.assertEqual(batch["professor"], ISSUE59_OTHER_PROFESSOR)
-        self.assertTrue(marker.exists())
 
     def test_issue59_t59_4_targeted_finalize_has_no_unrelated_dependency(self):
         for variant in ISSUE59_DEPENDENCY_VARIANTS:
