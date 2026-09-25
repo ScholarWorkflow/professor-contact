@@ -1585,7 +1585,8 @@ class TestStage5(BaseEnv):
                             "--choices", choices_path))
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "invalid_result_json")
-        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+        self.assertEqual(list(self.prof_dir.glob("套磁邮件*.md")), [])
+        self.assertEqual(list(self.prof_dir.glob("套磁邮件*.txt")), [])
         self.assertFalse((self.prof_dir / "套磁邮件状态.json").exists())
 
     def test_humanizer_lost_title_rejected(self):
@@ -2429,6 +2430,7 @@ class TestStage5TargetedEmailScope(BaseEnv):
                                  [ISSUE59_EMAIL_ID])
                 a_dir = root / "教授研究" / "X分野" / ISSUE59_PROFESSOR
                 self.assertTrue((a_dir / "套磁邮件.md").is_file())
+                self.assertTrue((a_dir / "套磁邮件.txt").is_file())
                 self.assertTrue((a_dir / "套磁邮件状态.json").is_file())
                 for name, payload in untouched.items():
                     self.assertEqual(Path(name).read_bytes(), payload, name)
