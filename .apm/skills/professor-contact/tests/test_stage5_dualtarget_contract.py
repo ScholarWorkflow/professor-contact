@@ -358,13 +358,11 @@ class InstalledSharedSkillsLocatorTests(unittest.TestCase):
         self.assertEqual(error, "script_missing")
 
 
-# Issue #59 T59-7 reads the caller documents, so it resolves the installed
-# projection first (the formal clean consumer has no .apm/agents tree at all)
-# and only falls back to the repository source.
-ISSUE59_GENERATOR_CANDIDATES = (
-    REPO_ROOT / ".opencode" / "agents" / "professor-contact-email-generator.md",
-    REPO_ROOT / ".agents" / "agents" / "professor-contact-email-generator.md",
-    GENERATOR,
+# Issue #59 T59-7 reads the repository source in source-tree CI, but the
+# formal --target opencode clean consumer has no .apm/agents tree and must
+# therefore prove the contract from OpenCode's installed agent projection.
+ISSUE59_INSTALLED_GENERATOR = (
+    REPO_ROOT / ".opencode" / "agents" / "professor-contact-email-generator.md"
 )
 
 # The markers below express contract semantics, not a frozen prose sentence.
@@ -462,8 +460,7 @@ class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
     """T59-7: current Stage-5 caller docs keep selected-output scope."""
 
     def setUp(self):
-        self.generator = next((path for path in ISSUE59_GENERATOR_CANDIDATES
-                               if path.is_file()), None)
+        self.generator = GENERATOR if GENERATOR.is_file() else ISSUE59_INSTALLED_GENERATOR
         self.documents = {
             "generator": self.generator,
             "SKILL.md": SKILL_PATH,
@@ -471,9 +468,9 @@ class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
         }
 
     def test_issue59_t59_7_targeted_scope_documents_hold_selected_output_scope(self):
-        self.assertIsNotNone(
-            self.generator,
-            f"no generator document among {ISSUE59_GENERATOR_CANDIDATES}")
+        self.assertTrue(
+            self.generator.is_file(),
+            f"generator document missing at required path: {self.generator}")
         for label, path in self.documents.items():
             with self.subTest(document=label):
                 self.assertTrue(path.is_file(), f"{label}: missing {path}")
