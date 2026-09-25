@@ -2490,7 +2490,7 @@ class TestStage5TargetedEmailScope(BaseEnv):
         fixture = write_issue59_stage5_fixture(self.root, [
             {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
             {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh",
-             "source_state": "stale", "verified": "stale"}], case=self)
+             "source_state": "stale"}], case=self)
         marker = fixture["checker_marker"]
         results = self.write_results("issue59-3-raw.json", fixture["email_ids"])
         choices = self.write_choices("issue59-3-choices.json", fixture["email_ids"])
