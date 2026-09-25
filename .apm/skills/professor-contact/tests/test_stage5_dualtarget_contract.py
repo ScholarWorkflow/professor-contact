@@ -373,16 +373,22 @@ ISSUE59_GENERATOR_CANDIDATES = (
 # repeat --email-id merely to satisfy the test.
 ISSUE59_T59_7_ITEMS = (
     ("keep one selected email_id across the plan and immutable finalize calls",
-     ("stage5-plan", "stage5-finalize"), ("same", "同一", "相同")),
+     (("stage5-plan",), ("stage5-finalize",), ("email_id", "--email-id"),
+      ("same", "同一", "相同"))),
     ("run the validator only for the selected rendered outputs",
-     ("professor-contact-email-validator",), ("only", "只", "仅")),
+     (("professor-contact-email-validator",),
+      ("selected", "被选", "本次渲染"),
+      ("rendered", "render", "渲染", "output", "输出"),
+      ("only", "只", "仅"))),
     ("write only the selected output ids before recording validation",
-     ("stage5-record-validation", "validation"), ("only", "只", "仅")),
+     (("validation file", "validation 文件", "校验文件"),
+      ("selected", "被选", "本次渲染"),
+      ("output id", "output_id", "output ids", "输出的 id", "输出 id", "输出 ID"),
+      ("only", "只", "仅"))),
     ("keep stage5-record-validation on its existing row-scoped contract",
-     ("stage5-record-validation", "--professor-dir", "--validation-file"),
-     ("no", "not", "不", "无需")),
+     (("stage5-record-validation",), ("--professor-dir",), ("--validation-file",),
+      ("--email-id",), ("no", "not", "never", "不", "不得", "无需", "禁止"))),
 )
-ISSUE59_NEGATION_MARKERS = ("no", "not", "never", "不", "不得", "无需", "禁止")
 
 
 def _issue59_document_body(path: Path) -> str:
@@ -457,26 +463,17 @@ class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
                     section,
                     f"{label}: no authoritative --email-id Stage-5 scope section in {path}")
                 units = _issue59_contract_units(section)
-                for item, tokens, markers in ISSUE59_T59_7_ITEMS:
+                for item, token_groups in ISSUE59_T59_7_ITEMS:
                     with self.subTest(document=label, item=item):
-                        matched = [unit for unit in units
-                                   if all(token in unit for token in tokens)
-                                   and any(marker in unit.lower() for marker in markers)]
+                        matched = []
+                        for unit in units:
+                            lowered = unit.lower()
+                            if all(any(token.lower() in lowered for token in group)
+                                   for group in token_groups):
+                                matched.append(unit)
                         self.assertTrue(
                             matched,
                             f"{label}: the targeted-scope section never states {item}")
-
-                # A negative mention such as "do not add --email-id" is valid
-                # documentation and must not be mistaken for a positive CLI
-                # requirement.  Only a co-occurrence without negation fails.
-                for unit in units:
-                    if "stage5-record-validation" not in unit or "--email-id" not in unit:
-                        continue
-                    lowered = unit.lower()
-                    self.assertTrue(
-                        any(marker in lowered for marker in ISSUE59_NEGATION_MARKERS),
-                        f"{label}: stage5-record-validation presents --email-id "
-                        f"without preserving the no-new-flag contract")
 
 
 if __name__ == "__main__":
