@@ -1707,6 +1707,7 @@ class TestStage5(BaseEnv):
                 out = parse(run_cli("stage5-plan", "--program-root", self.root,
                                     "--result", raw_path, "--choices", choices_path))
                 self.assertEqual(out["status"], "error", label)
+                self.assertEqual(out["reason_code"], "invalid_result_json", label)
 
     def test_stage5_choices_cannot_replace_the_verified_recipient(self):
         # Issue #43 freezes one interaction at this caller boundary:
@@ -2416,9 +2417,10 @@ class TestStage5TargetedEmailScope(BaseEnv):
                 results, choices = prepared["results"], prepared["choices"]
                 b_dir = prepared["b_dir"]
                 overview = prepared["overview"]
+                b_outputs = (b_dir / "套磁邮件.md", b_dir / "套磁邮件.txt")
+                absent_b_outputs = tuple(path for path in b_outputs if not path.exists())
                 untouched = self.snapshot(
-                    prepared["b_state"], prepared["b_verify"],
-                    b_dir / "套磁邮件.md", b_dir / "套磁邮件.txt", overview)
+                    prepared["b_state"], prepared["b_verify"], *b_outputs, overview)
                 aggregate = root / "教授研究" / contact_state.EMAIL_OVERVIEW
                 if variant == "clean":
                     # A third independently built instance, not a finalized
@@ -2443,6 +2445,10 @@ class TestStage5TargetedEmailScope(BaseEnv):
                 self.assertEqual(list(state["emails"]), [ISSUE59_EMAIL_ID])
                 for name, payload in untouched.items():
                     self.assertEqual(Path(name).read_bytes(), payload, name)
+                for path in absent_b_outputs:
+                    self.assertFalse(
+                        path.exists(),
+                        f"targeted finalize created unrelated output: {path}")
                 if overview is None:
                     self.assertFalse(aggregate.exists())
                     self.assertIsNone(out["overview_md"], out)
