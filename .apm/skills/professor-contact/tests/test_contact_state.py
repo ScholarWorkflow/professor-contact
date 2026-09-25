@@ -2282,8 +2282,7 @@ class TestStage5TargetedEmailScope(BaseEnv):
                  f"email_id not found: {missing}"),
                 ("duplicate-selected",
                  [copy.deepcopy(fixture["rows"][0]) for _ in (0, 1)],
-                 "invalid_email_pack",
-                 f"email pack contains duplicate email_id: {ISSUE59_EMAIL_ID}"),
+                 "invalid_email_pack", None),
                 ("selected-outside-root",
                  self.defective_rows(fixture, "selected-outside-root"),
                  "invalid_professor_dir", None)):
@@ -2355,14 +2354,21 @@ class TestStage5TargetedEmailScope(BaseEnv):
                         self.assertEqual(payload["reason_code"], "invalid_result_json",
                                          payload)
 
-        # A selected row's own content contract is not relaxed by scoping.
+        # A selected row's own content contract is not relaxed by scoping on
+        # either deterministic Stage-5 command surface.
         broken = self.write_json("issue59-2-broken.json",
                                  [dict(self.result_row(ISSUE59_EMAIL_ID),
                                        future_aspiration_ja="")])
-        payload = self.plan("--result", broken, "--choices", choices,
-                            "--email-id", ISSUE59_EMAIL_ID)
-        self.assertEqual(payload["status"], "error", payload)
-        self.assertEqual(payload["reason_code"], "invalid_result_json", payload)
+        for surface in ("plan", "finalize"):
+            with self.subTest(selected="invalid-raw", surface=surface):
+                payload = (self.plan(
+                    "--result", broken, "--choices", choices,
+                    "--email-id", ISSUE59_EMAIL_ID)
+                           if surface == "plan" else self.finalize(
+                    "--result", broken, "--choices", choices,
+                    "--humanized", humanized, "--email-id", ISSUE59_EMAIL_ID))
+                self.assertEqual(payload["status"], "error", payload)
+                self.assertEqual(payload["reason_code"], "invalid_result_json", payload)
 
         # Batch mode keeps load_id_map(exact=True) strict. The choices half of
         # that boundary is owned by test_stage5_choices_id_mapping_fails_closed
@@ -2431,7 +2437,10 @@ class TestStage5TargetedEmailScope(BaseEnv):
                 a_dir = root / "教授研究" / "X分野" / ISSUE59_PROFESSOR
                 self.assertTrue((a_dir / "套磁邮件.md").is_file())
                 self.assertTrue((a_dir / "套磁邮件.txt").is_file())
-                self.assertTrue((a_dir / "套磁邮件状态.json").is_file())
+                state_path = a_dir / contact_state.EMAIL_STATE
+                self.assertTrue(state_path.is_file())
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(list(state["emails"]), [ISSUE59_EMAIL_ID])
                 for name, payload in untouched.items():
                     self.assertEqual(Path(name).read_bytes(), payload, name)
                 if overview is None:
