@@ -2527,6 +2527,11 @@ class TestStage5TargetedEmailScope(BaseEnv):
                 untouched = self.snapshot(
                     prepared["b_state"], prepared["b_verify"], *b_outputs, overview)
                 aggregate = root / "教授研究" / contact_state.EMAIL_OVERVIEW
+                projection_registry = (
+                    root / "教授研究" / contact_state.PROJECTIONS_FILE)
+                projection_before = (
+                    projection_registry.read_bytes()
+                    if projection_registry.is_file() else None)
                 if variant == "clean":
                     # A third independently built instance, not a finalized
                     # fixture with its aggregate removed afterwards.
@@ -2559,6 +2564,15 @@ class TestStage5TargetedEmailScope(BaseEnv):
                     self.assertIsNone(out["overview_md"], out)
                 else:
                     self.assertEqual(out["overview_md"], str(overview), out)
+                if projection_before is None:
+                    self.assertFalse(
+                        projection_registry.exists(),
+                        "targeted finalize created program projection metadata")
+                else:
+                    self.assertTrue(projection_registry.is_file())
+                    self.assertEqual(
+                        projection_registry.read_bytes(), projection_before,
+                        "targeted finalize mutated program projection metadata")
 
     def test_issue59_t59_5_batch_mode_still_validates_every_pack_row(self):
         fixture = write_issue59_stage5_fixture(self.root, [
@@ -2582,6 +2596,9 @@ class TestStage5TargetedEmailScope(BaseEnv):
                 self.assertEqual(payload["status"], "error", payload)
                 self.assertEqual(payload["reason_code"], "invalid_professor_dir",
                                  payload)
+                self.assertFalse(
+                    self.outside_root.exists(),
+                    f"{surface}: invalid B path created files outside program_root")
         b_dir = fixture["dirs"][ISSUE59_OTHER_PROFESSOR]
         for professor_dir in (self.prof_dir, b_dir):
             self.assertFalse((professor_dir / "套磁邮件.md").exists())
