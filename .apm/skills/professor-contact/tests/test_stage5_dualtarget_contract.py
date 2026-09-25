@@ -419,7 +419,9 @@ def _issue59_targeted_scope_section(body: str) -> str:
             end += 1
         section = "\n".join(lines[index:end]).strip()
         if ("--email-id" in section and
-                "stage5-plan" in section and "stage5-finalize" in section):
+                "stage5-plan" in section and "stage5-finalize" in section and
+                "professor-contact-email-validator" in section and
+                "stage5-record-validation" in section):
             candidates.append(section)
     return min(candidates, key=len) if candidates else ""
 
