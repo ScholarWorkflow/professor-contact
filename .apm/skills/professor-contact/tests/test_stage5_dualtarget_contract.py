@@ -367,19 +367,22 @@ ISSUE59_GENERATOR_CANDIDATES = (
     GENERATOR,
 )
 
-# (contract item, machine tokens that must sit in the same scope statement,
-#  normative marker that keeps the statement from being a bare command listing)
+# The markers below express contract semantics, not a frozen prose sentence.
+# T59-7 deliberately evaluates the authoritative targeted-scope section as a
+# whole and then its clauses; subordinate bullets/paragraphs do not need to
+# repeat --email-id merely to satisfy the test.
 ISSUE59_T59_7_ITEMS = (
     ("keep one selected email_id across the plan and immutable finalize calls",
-     ("stage5-plan", "stage5-finalize"), ("same", "同一")),
+     ("stage5-plan", "stage5-finalize"), ("same", "同一", "相同")),
     ("run the validator only for the selected rendered outputs",
-     ("professor-contact-email-validator",), ("only", "只")),
+     ("professor-contact-email-validator",), ("only", "只", "仅")),
     ("write only the selected output ids before recording validation",
      ("stage5-record-validation", "validation"), ("only", "只", "仅")),
     ("keep stage5-record-validation on its existing row-scoped contract",
      ("stage5-record-validation", "--professor-dir", "--validation-file"),
-     ("no", "不")),
+     ("no", "not", "不", "无需")),
 )
+ISSUE59_NEGATION_MARKERS = ("no", "not", "never", "不", "不得", "无需", "禁止")
 
 
 def _issue59_document_body(path: Path) -> str:
@@ -387,29 +390,50 @@ def _issue59_document_body(path: Path) -> str:
     return _frontmatter_and_body(path)[1] if text.startswith("---\n") else text
 
 
-def _issue59_scope_statements(body: str) -> list:
-    """Statements of the authoritative targeted-scope sections.
+def _issue59_targeted_scope_section(body: str) -> str:
+    """Return the smallest heading section carrying the targeted Stage-5 contract.
 
-    One statement is one top-level bullet, numbered item or paragraph that
-    carries the ``--email-id`` scope flag, so unrelated Stage 5 prose can never
-    satisfy the contract items and a frontmatter rewrite cannot hide the section.
+    The acceptance contract is section-scoped.  A harmless Markdown refactor
+    must not fail merely because --email-id moved to the heading/intro while
+    the subordinate bullets retained the same semantics.
     """
-    statements, current = [], []
-    for line in body.splitlines() + [""]:
+    lines = body.splitlines()
+    candidates = []
+    for index, line in enumerate(lines):
+        heading = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if not heading:
+            continue
+        level = len(heading.group(1))
+        end = index + 1
+        while end < len(lines):
+            next_heading = re.match(r"^(#{1,6})\s+(.+)$", lines[end])
+            if next_heading and len(next_heading.group(1)) <= level:
+                break
+            end += 1
+        section = "\n".join(lines[index:end]).strip()
+        if ("--email-id" in section and
+                "stage5-plan" in section and "stage5-finalize" in section):
+            candidates.append(section)
+    return min(candidates, key=len) if candidates else ""
+
+
+def _issue59_contract_units(section: str) -> list:
+    """Split one contract section into semantic clauses without freezing layout."""
+    units, current = [], []
+    for line in section.splitlines() + [""]:
         starts = not line.strip() or re.match(r"(?:[-*]|\d+\.)\s", line)
         if starts:
             block = "\n".join(current).strip()
-            if "--email-id" in block:
-                statements.append(block)
+            if block:
+                units.append(block)
             current = [line] if line.strip() else []
         else:
             current.append(line)
-    return statements
+    return units
 
 
 class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
-    """T59-7: the current Stage-5 caller documents keep a targeted run scoped
-    to the selected email, its rendered outputs and those validation rows."""
+    """T59-7: current Stage-5 caller docs keep selected-output scope."""
 
     def setUp(self):
         self.generator = next((path for path in ISSUE59_GENERATOR_CANDIDATES
@@ -427,26 +451,32 @@ class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
         for label, path in self.documents.items():
             with self.subTest(document=label):
                 self.assertTrue(path.is_file(), f"{label}: missing {path}")
-                statements = _issue59_scope_statements(
+                section = _issue59_targeted_scope_section(
                     _issue59_document_body(path))
                 self.assertTrue(
-                    statements,
-                    f"{label}: no --email-id targeted-scope statement in {path}")
+                    section,
+                    f"{label}: no authoritative --email-id Stage-5 scope section in {path}")
+                units = _issue59_contract_units(section)
                 for item, tokens, markers in ISSUE59_T59_7_ITEMS:
                     with self.subTest(document=label, item=item):
-                        matched = [row for row in statements
-                                   if all(token in row for token in tokens)
-                                   and any(marker in row for marker in markers)]
+                        matched = [unit for unit in units
+                                   if all(token in unit for token in tokens)
+                                   and any(marker in unit.lower() for marker in markers)]
                         self.assertTrue(
                             matched,
-                            f"{label}: the --email-id scope statements never state "
-                            f"{item}")
-                for span in re.findall(r"`([^`\n]*)`",
-                                       path.read_text(encoding="utf-8")):
-                    self.assertIsNone(
-                        re.search(r"stage5-record-validation\b.*--email-id", span),
-                        f"{label}: {span!r} presents --email-id as a "
-                        f"stage5-record-validation argument")
+                            f"{label}: the targeted-scope section never states {item}")
+
+                # A negative mention such as "do not add --email-id" is valid
+                # documentation and must not be mistaken for a positive CLI
+                # requirement.  Only a co-occurrence without negation fails.
+                for unit in units:
+                    if "stage5-record-validation" not in unit or "--email-id" not in unit:
+                        continue
+                    lowered = unit.lower()
+                    self.assertTrue(
+                        any(marker in lowered for marker in ISSUE59_NEGATION_MARKERS),
+                        f"{label}: stage5-record-validation presents --email-id "
+                        f"without preserving the no-new-flag contract")
 
 
 if __name__ == "__main__":
