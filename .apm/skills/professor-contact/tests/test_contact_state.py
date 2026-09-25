@@ -954,59 +954,101 @@ def issue59_verified_at(days_ago: int = 1) -> str:
 ISSUE59_VERIFIED_AT = issue59_verified_at()
 
 
-def issue59_source_hash(row: dict) -> str:
-    """Hash a pack row through the producer's canonical Stage-4 helper."""
-    return contact_state.email_source_hash(row)
-
-
 def issue59_email_row(professor, professor_dir, *, idea_id=ISSUE59_IDEA_ID,
                       direction_id=ISSUE59_DIRECTION_ID,
                       name="合成输入比较", contact_evidence=None):
+    """Build one legal Stage-4 email row through the producer compiler.
+
+    The Issue-59 fixture owns only fixed synthetic Stage-4 source values. All
+    derived handoff fields (identity, paper/gap projection, allowed sources,
+    fingerprints carried into the row, and source_hash) come from
+    compile_email_entry, so this fixture cannot drift into a shadow Stage-4
+    producer.
+    """
+    professor_dir = Path(professor_dir)
     gap_id = quote_id(ISSUE59_GAP_QUOTE)
-    row = {
+    input_fingerprint = contact_state.sha256_obj({
+        "fixture": "issue59-stage4-input",
         "professor": professor,
-        "professor_dir": str(professor_dir),
-        "email_id": f"{professor}::{direction_id}::{idea_id}",
-        "direction_ids": [direction_id],
-        "directions": [{"direction_id": direction_id,
-                        "name_ja": name, "name_zh": name}],
+        "direction_id": direction_id,
+    })
+    gap = {
+        "gap_id": gap_id, "item_key": "AAAA1111",
+        "paper_title": ISSUE59_PAPER_TITLE, "paper_year": 2023,
+        "quote": ISSUE59_GAP_QUOTE,
+        "translation_zh": f"中译：{ISSUE59_GAP_QUOTE[:24]}",
+        "source": "Conclusion", "page": 8, "status": "open",
+        "confidence": "high", "completed_part": None, "remaining_gap": None,
+        "evidence": "无更晚论文实现该点（AAAA1111）",
+    }
+    credibility = {
+        "verdict": "站得住", "mainline": "主线",
+        "authorship_line": "corresponding_dominant", "note": "test",
+    }
+    pack_direction = {
+        "direction_id": direction_id,
+        "collection_key": direction_id,
         "name_ja": name,
         "name_zh": name,
-        "collection_key": direction_id,
         "user_note": "我想比较两种合成输入的处理结果。",
-        "user_supplement": "",
-        "idea": {"id": idea_id, "title": "第二种输入模式的合成比较", "idea_zh": ""},
-        "papers": [{"item_key": "AAAA1111", "title": ISSUE59_PAPER_TITLE, "year": 2023,
-                    "authorship": "corresponding", "fit_note": "教授通讯",
-                    "direction_ids": [direction_id]}],
-        "gaps": [{"gap_id": gap_id, "direction_id": direction_id,
-                  "item_key": "AAAA1111", "zotero_key": "AAAA1111",
-                  "paper_title": ISSUE59_PAPER_TITLE, "paper_year": 2023,
-                  "quote": ISSUE59_GAP_QUOTE,
-                  "translation_zh": f"中译：{ISSUE59_GAP_QUOTE[:24]}",
-                  "source": "Conclusion", "page": 8, "status": "open",
-                  "email_use": "anchor", "confidence": "high",
-                  "completed_part": None, "remaining_gap": None,
-                  "evidence": "无更晚论文实现该点（AAAA1111）"}],
-        "anchorable_gaps": [gap_id],
-        "allowed_sources": [f"gap:{gap_id}", f"idea:{idea_id}", "later:AAAA1111",
-                            "paper:AAAA1111", "profile.interest", "template",
-                            "user_note"],
-        "soft_materials": {
-            "positioning": [f"教授从 {{P:AAAA1111}} 起研究合成输入比较；"
-                            f"{{G:{gap_id}}} 是延伸点。"],
-            "credibility": {"verdict": "站得住", "mainline": "主线",
-                            "authorship_line": "corresponding_dominant",
-                            "note": "test"}},
-        "red_lines": [{"scope": "global", "text": "不得引用未提供来源的数字",
-                       "banned_phrases": ["99.9%"]}],
-        "cross_direction": None,
-        "profile": {"fields": {}, "fingerprint": None},
-        "fingerprints": {"input": None, "candidate_state": None, "profile": None},
-        "contact_evidence": contact_evidence,
+        "input_fingerprint": input_fingerprint,
+        "supporting_item_keys": ["AAAA1111"],
+        "named_keys": [],
+        "resolved_addition_keys": [],
+        "gap_shortlist": [gap],
+        "gaps_excluded": [],
+        "completed_gap_blacklist": [],
+        "red_lines": [{
+            "scope": "global", "text": "不得引用未提供来源的数字",
+            "banned_phrases": ["99.9%"],
+        }],
+        "credibility": credibility,
+        "narrative": {
+            "positioning": [{
+                "text": (f"教授从 {{P:AAAA1111}} 起研究合成输入比较；"
+                         f"{{G:{gap_id}}} 是延伸点。"),
+            }],
+        },
     }
-    row["source_hash"] = issue59_source_hash(row)
-    return row
+    pack = {
+        "professor": professor,
+        "professor_dir": str(professor_dir),
+        "papers": {
+            "AAAA1111": {
+                "item_key": "AAAA1111",
+                "title": ISSUE59_PAPER_TITLE,
+                "year": 2023,
+                "authorship": "corresponding",
+            },
+        },
+        "directions": [pack_direction],
+    }
+    idea = {
+        "id": idea_id,
+        "title": "第二种输入模式的合成比较",
+        "idea_zh": "",
+        "direction_ids": [direction_id],
+        "papers": [{
+            "item_key": "AAAA1111",
+            "direction_ids": [direction_id],
+            "fit_note": "教授通讯",
+        }],
+        "gap_refs": [{
+            "direction_id": direction_id,
+            "item_key": "AAAA1111",
+            "gap_id": gap_id,
+        }],
+        "red_lines": [],
+        "banned_phrases": [],
+        "_profile_fields": {},
+    }
+    # compile_email_entry currently does not consume program_root, but pass the
+    # semantic root so the fixture remains correct if that helper begins using
+    # it later.
+    program_root = professor_dir.parents[2]
+    return contact_state.compile_email_entry(
+        pack, {}, pack_direction, idea, "", program_root, None,
+        contact_evidence=contact_evidence)
 
 
 def issue59_result(gap_id, email_id=ISSUE59_EMAIL_ID, idea_id=ISSUE59_IDEA_ID):
