@@ -373,8 +373,8 @@ ISSUE59_GENERATOR_CANDIDATES = (
 # repeat --email-id merely to satisfy the test.
 ISSUE59_T59_7_ITEMS = (
     ("keep one selected email_id across the plan and immutable finalize calls",
-     (("stage5-plan",), ("stage5-finalize",), ("email_id", "--email-id"),
-      ("same", "同一", "相同"))),
+     (("stage5-plan",), ("stage5_immutable.py",), ("stage5-finalize",),
+      ("email_id", "--email-id"), ("same", "同一", "相同"))),
     ("run the validator only for the selected rendered outputs",
      (("professor-contact-email-validator",),
       ("selected", "被选", "本次渲染"),
@@ -388,7 +388,11 @@ ISSUE59_T59_7_ITEMS = (
       ("only", "只", "仅"))),
     ("keep stage5-record-validation on its existing row-scoped contract",
      (("stage5-record-validation",), ("--professor-dir",), ("--validation-file",),
-      ("--email-id",), ("no", "not", "never", "不", "不得", "无需", "禁止"))),
+      ("--email-id",),
+      ("gains no --email-id", "does not add --email-id", "do not add --email-id",
+       "no new --email-id", "must not receive --email-id", "without --email-id",
+       "不新增 --email-id", "不增加 --email-id", "不得新增 --email-id",
+       "不应新增 --email-id", "无需 --email-id"))),
 )
 
 
@@ -441,9 +445,15 @@ def _issue59_contract_units(section: str) -> list:
     return units
 
 
+def _issue59_semantic_text(text: str) -> str:
+    """Normalize Markdown decoration without changing the documented semantics."""
+    plain = text.replace("\`", "").replace("*", "")
+    return " ".join(plain.split()).lower()
+
+
 def _issue59_first_token_index(text: str, tokens) -> int:
     """Locate a semantic marker without freezing its exact surrounding prose."""
-    lowered = text.lower()
+    lowered = _issue59_semantic_text(text)
     positions = [lowered.find(token.lower()) for token in tokens]
     return min(position for position in positions if position >= 0)
 
@@ -477,8 +487,8 @@ class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
                     with self.subTest(document=label, item=item):
                         matched = []
                         for unit in units:
-                            lowered = unit.lower()
-                            if all(any(token.lower() in lowered for token in group)
+                            semantic = _issue59_semantic_text(unit)
+                            if all(any(token.lower() in semantic for token in group)
                                    for group in token_groups):
                                 matched.append(unit)
                         self.assertTrue(
