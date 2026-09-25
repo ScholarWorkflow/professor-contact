@@ -716,8 +716,17 @@ def stage5_output_peers(email: dict, all_emails: list, professor_dir: Path,
     professor = email.get("professor")
     if not isinstance(professor, str) or not professor:
         return [email]
-    return [peer for peer in all_emails
-            if isinstance(peer, dict) and peer.get("professor") == professor]
+    peers = []
+    seen_ids = set()
+    for peer in all_emails:
+        if not isinstance(peer, dict) or peer.get("professor") != professor:
+            continue
+        peer_id = peer.get("email_id")
+        if not isinstance(peer_id, str) or not peer_id or peer_id in seen_ids:
+            continue
+        seen_ids.add(peer_id)
+        peers.append(peer)
+    return peers or [email]
 
 
 def stage5_output_paths(email: dict, peers: list, professor_dir: Path,
@@ -6247,6 +6256,17 @@ def _stage4_cross_group(pack: dict, group_entry: dict) -> list[dict] | None:
     return participants
 
 
+EMAIL_SOURCE_HASH_FIELDS = (
+    "email_id", "direction_ids", "directions", "idea", "papers", "gaps",
+    "red_lines", "allowed_sources", "contact_evidence", "cross_direction",
+)
+
+
+def email_source_hash(entry: dict) -> str:
+    """Return the canonical Stage-4 → Stage-5 fact hash for one email row."""
+    return sha256_obj({key: entry[key] for key in EMAIL_SOURCE_HASH_FIELDS})
+
+
 def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
                         idea: dict, note: str, program_root: Path,
                         profile_fp: str | None, papers_override: list[str] | None = None,
@@ -6404,9 +6424,7 @@ def compile_email_entry(pack: dict, state_direction: dict, pack_direction: dict,
     # belongs in the pack integrity hash: a refrozen snapshot always yields a
     # new source_hash, never a silent in-place substitution. cross_direction
     # joins it so a re-participated idea re-hashes too.
-    entry["source_hash"] = sha256_obj({k: entry[k] for k in (
-        "email_id", "direction_ids", "directions", "idea", "papers", "gaps",
-        "red_lines", "allowed_sources", "contact_evidence", "cross_direction")})
+    entry["source_hash"] = email_source_hash(entry)
     return entry
 
 
