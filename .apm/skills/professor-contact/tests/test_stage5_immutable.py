@@ -134,6 +134,7 @@ class TestStage5ImmutableTargetedScope(BaseEnv):
         state = json.loads((a_dir / "套磁邮件状态.json").read_text(encoding="utf-8"))
         self.assertEqual(list(state["emails"]), [helpers.ISSUE59_EMAIL_ID])
         self.assertFalse((b_dir / "套磁邮件.md").exists())
+        self.assertFalse((b_dir / "套磁邮件.txt").exists())
         self.assertEqual(out["overview_md"], str(overview), out)
         for name, payload in untouched.items():
             self.assertEqual(Path(name).read_bytes(), payload, name)
