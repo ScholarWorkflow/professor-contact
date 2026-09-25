@@ -897,11 +897,15 @@ ISSUE59_OTHER_PROFESSOR = "佐藤 花子"
 ISSUE59_DIRECTION_ID = "DIR00001"
 ISSUE59_IDEA_ID = "DIR00001_1"
 ISSUE59_PEER_IDEA_ID = "DIR00001_2"
+ISSUE59_SPLIT_DIRECTION_ID = "DIR00002"
+ISSUE59_SPLIT_IDEA_ID = "DIR00002_1"
 ISSUE59_EMAIL_ID = "試験 教授::DIR00001::DIR00001_1"
 ISSUE59_PEER_EMAIL_ID = "試験 教授::DIR00001::DIR00001_2"
+ISSUE59_SPLIT_EMAIL_ID = "試験 教授::DIR00002::DIR00002_1"
 ISSUE59_OTHER_EMAIL_ID = "佐藤 花子::DIR00001::DIR00001_1"
 ISSUE59_IDEAS = {ISSUE59_EMAIL_ID: ISSUE59_IDEA_ID,
                  ISSUE59_PEER_EMAIL_ID: ISSUE59_PEER_IDEA_ID,
+                 ISSUE59_SPLIT_EMAIL_ID: ISSUE59_SPLIT_IDEA_ID,
                  ISSUE59_OTHER_EMAIL_ID: ISSUE59_IDEA_ID}
 ISSUE59_GAP_QUOTE = ("Future work will extend the synthetic comparison "
                      "to a second input pattern.")
@@ -964,25 +968,26 @@ def issue59_source_hash(row: dict) -> str:
 
 
 def issue59_email_row(professor, professor_dir, *, idea_id=ISSUE59_IDEA_ID,
+                      direction_id=ISSUE59_DIRECTION_ID,
                       name="合成输入比较", contact_evidence=None):
     gap_id = quote_id(ISSUE59_GAP_QUOTE)
     row = {
         "professor": professor,
         "professor_dir": str(professor_dir),
-        "email_id": f"{professor}::{ISSUE59_DIRECTION_ID}::{idea_id}",
-        "direction_ids": [ISSUE59_DIRECTION_ID],
-        "directions": [{"direction_id": ISSUE59_DIRECTION_ID,
+        "email_id": f"{professor}::{direction_id}::{idea_id}",
+        "direction_ids": [direction_id],
+        "directions": [{"direction_id": direction_id,
                         "name_ja": name, "name_zh": name}],
         "name_ja": name,
         "name_zh": name,
-        "collection_key": ISSUE59_DIRECTION_ID,
+        "collection_key": direction_id,
         "user_note": "我想比较两种合成输入的处理结果。",
         "user_supplement": "",
         "idea": {"id": idea_id, "title": "第二种输入模式的合成比较", "idea_zh": ""},
         "papers": [{"item_key": "AAAA1111", "title": ISSUE59_PAPER_TITLE, "year": 2023,
                     "authorship": "corresponding", "fit_note": "教授通讯",
-                    "direction_ids": [ISSUE59_DIRECTION_ID]}],
-        "gaps": [{"gap_id": gap_id, "direction_id": ISSUE59_DIRECTION_ID,
+                    "direction_ids": [direction_id]}],
+        "gaps": [{"gap_id": gap_id, "direction_id": direction_id,
                   "item_key": "AAAA1111", "zotero_key": "AAAA1111",
                   "paper_title": ISSUE59_PAPER_TITLE, "paper_year": 2023,
                   "quote": ISSUE59_GAP_QUOTE,
@@ -1182,8 +1187,9 @@ def write_issue59_stage5_fixture(program_root, specs=(), *, extra_rows=(),
     program aggregate come from this writer, so one valid target can sit
     beside any amount of unrelated or invalid state.
 
-    Each spec is a dict of ``professor`` / ``idea_id`` / ``field`` / ``dir`` /
-    ``verified`` (``fresh`` | ``stale`` | ``missing`` | ``malformed``) /
+    Each spec is a dict of ``professor`` / ``direction_id`` / ``idea_id`` /
+    ``field`` / ``dir`` / ``verified``
+    (``fresh`` | ``stale`` | ``missing`` | ``malformed``) /
     ``evidence`` (``none`` | ``fresh`` | ``stale``) / ``source_state``
     (``stale`` asks the injected checker to report that professor stale) /
     ``email_state``. ``overview`` seeds the program aggregate with ``"seed"``
@@ -1204,6 +1210,7 @@ def write_issue59_stage5_fixture(program_root, specs=(), *, extra_rows=(),
     for spec in (list(specs) or [{}]):
         spec = dict(spec)
         spec.setdefault("professor", ISSUE59_PROFESSOR)
+        spec.setdefault("direction_id", ISSUE59_DIRECTION_ID)
         spec.setdefault("idea_id", ISSUE59_IDEA_ID)
         spec.setdefault("field", "X分野" if spec["professor"] == ISSUE59_PROFESSOR
                         else "Y分野")
@@ -1233,6 +1240,7 @@ def write_issue59_stage5_fixture(program_root, specs=(), *, extra_rows=(),
         professor_dir = Path(spec["dir"])
         row = issue59_email_row(spec["professor"], professor_dir,
                                 idea_id=spec["idea_id"],
+                                direction_id=spec["direction_id"],
                                 contact_evidence=snapshots.get(spec["professor"]))
         rows.append(row)
         dirs[spec["professor"]] = professor_dir
@@ -1547,6 +1555,60 @@ class TestStage5(BaseEnv):
         state = json.loads((self.prof_dir / "套磁邮件状态.json").read_text(encoding="utf-8"))
         self.assertEqual({entry["files"]["md"] for entry in state["emails"].values()},
                          {str(path) for path in md_paths})
+
+        # Batch mode predates Issue #59 and its collision boundary is directory
+        # scoped.  Two legal identities for the same professor in different
+        # professor_dir values must therefore keep the fixed basename in each
+        # directory; grouping by professor name would be an Issue-59 regression.
+        split_root = self.root / "split-directory-batch"
+        split_a_dir = split_root / "教授研究" / "X分野" / ISSUE59_PROFESSOR
+        split_b_dir = split_root / "教授研究" / "Z分野" / ISSUE59_PROFESSOR
+        split_fixture = write_issue59_stage5_fixture(split_root, [
+            {"professor": ISSUE59_PROFESSOR,
+             "direction_id": ISSUE59_DIRECTION_ID,
+             "idea_id": ISSUE59_IDEA_ID,
+             "dir": split_a_dir},
+            {"professor": ISSUE59_PROFESSOR,
+             "direction_id": ISSUE59_SPLIT_DIRECTION_ID,
+             "idea_id": ISSUE59_SPLIT_IDEA_ID,
+             "field": "Z分野",
+             "dir": split_b_dir}],
+            case=self)
+        split_results = issue59_write_results(
+            split_root, "split-directory-raw.json", split_fixture["email_ids"])
+        split_choices = issue59_write_choices(
+            split_root, "split-directory-choices.json", split_fixture["email_ids"])
+        split_drafts = parse(run_cli(
+            "stage5-plan", "--program-root", split_root,
+            "--result", split_results, "--choices", split_choices))
+        self.assertEqual(split_drafts["status"], "ok", split_drafts)
+        split_humanized = {}
+        for draft_row in split_drafts["drafts"]:
+            path = split_root / (
+                "split-humanized-" + draft_row["output_id"].replace("::", "-") + ".txt")
+            path.write_text(draft_row["draft"], encoding="utf-8")
+            split_humanized[draft_row["output_id"]] = str(path)
+        split_map = split_root / "split-directory-humanized-map.json"
+        split_map.write_text(
+            json.dumps(split_humanized, ensure_ascii=False), encoding="utf-8")
+        split_out = parse(run_cli(
+            "stage5-finalize", "--program-root", split_root,
+            "--result", split_results, "--humanized-map", split_map,
+            "--choices", split_choices))
+        self.assertEqual(split_out["status"], "ok", split_out)
+        split_by_id = {row["email_id"]: row for row in split_out["emails"]}
+        self.assertEqual(
+            Path(split_by_id[ISSUE59_EMAIL_ID]["md"]),
+            split_a_dir / "套磁邮件.md")
+        self.assertEqual(
+            Path(split_by_id[ISSUE59_EMAIL_ID]["txt"]),
+            split_a_dir / "套磁邮件.txt")
+        self.assertEqual(
+            Path(split_by_id[ISSUE59_SPLIT_EMAIL_ID]["md"]),
+            split_b_dir / "套磁邮件.md")
+        self.assertEqual(
+            Path(split_by_id[ISSUE59_SPLIT_EMAIL_ID]["txt"]),
+            split_b_dir / "套磁邮件.txt")
 
     def test_stage5_batch_failure_does_not_write_first_email(self):
         g1 = write_issue59_stage5_fixture(self.root, case=self)["gap_id"]
@@ -2271,6 +2333,39 @@ class TestStage5TargetedEmailScope(BaseEnv):
         self.assert_output_is_one_a(escaped)
         self.assertEqual(Path(escaped["emails"][0]["md"]).name, expected_md)
         self.assertEqual(Path(escaped["emails"][0]["txt"]).name, expected_txt)
+
+        # A malformed same-professor row is not a real collision peer.  Missing
+        # identity plus an escaped path must remain pure unselected noise and
+        # cannot change A from its fixed single-email basename.
+        malformed_root = self.root / "same-professor-missing-id"
+        malformed_fixture = write_issue59_stage5_fixture(
+            malformed_root, [{"professor": ISSUE59_PROFESSOR, "evidence": "fresh"}],
+            case=self)
+        malformed_results = issue59_write_results(
+            malformed_root, "issue59-1-malformed-peer-raw.json", [ISSUE59_EMAIL_ID])
+        malformed_choices = issue59_write_choices(
+            malformed_root, "issue59-1-malformed-peer-choices.json", [ISSUE59_EMAIL_ID])
+        malformed_humanized = self.humanized(
+            "issue59-1-malformed-peer", malformed_results, malformed_choices,
+            root=malformed_root)
+        malformed_peer = copy.deepcopy(malformed_fixture["rows"][0])
+        malformed_peer.pop("email_id")
+        malformed_peer["professor_dir"] = str(
+            malformed_root.parent / "issue59-outside" / ISSUE59_PROFESSOR)
+        malformed_pack = json.loads(
+            malformed_fixture["pack"].read_text(encoding="utf-8"))
+        malformed_pack["emails"] = [
+            copy.deepcopy(malformed_fixture["rows"][0]), malformed_peer]
+        malformed_fixture["pack"].write_text(
+            json.dumps(malformed_pack, ensure_ascii=False, indent=1),
+            encoding="utf-8")
+        malformed_out = self.finalize(
+            "--result", malformed_results, "--choices", malformed_choices,
+            "--humanized", malformed_humanized, "--email-id", ISSUE59_EMAIL_ID,
+            root=malformed_root)
+        self.assert_output_is_one_a(malformed_out)
+        self.assertEqual(Path(malformed_out["emails"][0]["md"]).name, "套磁邮件.md")
+        self.assertEqual(Path(malformed_out["emails"][0]["txt"]).name, "套磁邮件.txt")
 
         # Fail-closed controls on both command surfaces: the target must exist,
         # must be unambiguous, and its own path must stay inside the program.
