@@ -1074,22 +1074,26 @@ def issue59_choices(email_id=ISSUE59_EMAIL_ID):
 
 
 def issue59_evidence_record(professor, *, email=ISSUE59_EMAIL_ADDRESS):
+    """One professor record exactly representable by the owner reconciler.
+
+    The canonical Issue-59 fixture uses a single official candidate and no
+    correspondence evidence, so the real professor-research producer yields
+    ``official_only`` with a usable current email.  Cross-source confirmation
+    is not an Issue-59 acceptance dimension and must not be manufactured by a
+    Stage-5 fixture.
+    """
     return {
         "professor": {"name": professor, "name_romaji": None},
         "official_emails": [{
             "email": email, "current_source": True,
             "provenance": [{"source_type": "official_professor_candidate",
-                            "source": "recruitment-faculty-list"}]}],
-        "paper_correspondence": [{
-            "email": email, "name": professor, "item_key": "AAAA1111", "doi": None,
-            "paper_year": 2025, "channel": "correspondence", "confidence": "high",
-            "identity_match": "direct", "recent": True,
-            "current_email_evidence": False}],
-        "identity": {"matched_verified_contacts": 1,
+                            "source": "issue59-fixture"}]}],
+        "paper_correspondence": [],
+        "identity": {"matched_verified_contacts": 0,
                      "unmatched_verified_contacts": [],
                      "ambiguous_unpaired_records_ignored": 0},
-        "verdict": "confirmed_cross_source",
-        "confirmed_emails": [email],
+        "verdict": "official_only",
+        "confirmed_emails": [],
         "conflicting_paper_emails": [],
         "current_email": email,
         "evidence_status": {
@@ -1101,23 +1105,95 @@ def issue59_evidence_record(professor, *, email=ISSUE59_EMAIL_ADDRESS):
     }
 
 
-def issue59_write_evidence(program_root, professors, stale_for=()):
-    """Write the upstream artifact plus one frozen snapshot per professor.
+def issue59_projection_hash(value):
+    """Hash the minimal owner projection used by this fixture.
 
-    A ``stale_for`` professor's snapshot is frozen from a record whose current
-    email has since moved, which is exactly the live/pack divergence Stage 5
-    must refuse to adopt silently — the live record itself stays usable.
+    The source JSON below contains only fields consumed by
+    professor-research/contact_evidence.py, so its owner projection is the
+    value itself.  Canonical separators + sorted keys match the documented
+    schema-2 fingerprint contract without copying the owner reconciler.
     """
+    canonical = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def issue59_source_fingerprint(source, path, professors_root, projection=None):
+    path = Path(path)
+    rel = path.relative_to(professors_root).as_posix()
+    if projection is None:
+        return {"source": source, "path": rel, "present": False,
+                "sha256": None, "bytes": None}
+    return {"source": source, "path": rel, "present": True,
+            "sha256": issue59_projection_hash(projection),
+            "bytes": len(path.read_bytes())}
+
+
+def issue59_write_evidence(program_root, professor_dirs, stale_for=()):
+    """Write an owner-contract-valid evidence handoff plus frozen snapshots.
+
+    Unlike the source-state checker stub, this artifact is not synthetic
+    readiness evidence: it follows professor-research's schema-2 handoff,
+    including the persisted sources and non-empty fingerprint index that the
+    real ``contact_evidence.py --check`` requires.  The stub is therefore
+    limited to supplying the case-specific fresh/stale source-state report.
+    """
+    program_root = Path(program_root)
+    professors_root = program_root / "教授研究"
+    professor_dirs = {name: Path(path) for name, path in professor_dirs.items()}
+    professors = list(professor_dirs)
+
+    candidates = [
+        {"name": name, "email": ISSUE59_EMAIL_ADDRESS, "source": "issue59-fixture"}
+        for name in professors
+    ]
+    candidates_path = professors_root / "_professor_candidates.json"
+    candidates_path.write_text(
+        json.dumps(candidates, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    paper_projections = []
+    for name, professor_dir in professor_dirs.items():
+        professor_dir.mkdir(parents=True, exist_ok=True)
+        papers = {
+            "professor": {"name": name},
+            "papers": [{"item_key": "AAAA1111", "year": 2025,
+                        "doi": "10.1/issue59"}],
+        }
+        papers_path = professor_dir / "papers.json"
+        papers_path.write_text(
+            json.dumps(papers, ensure_ascii=False, indent=1), encoding="utf-8")
+        paper_projections.append((papers_path, papers))
+
+    correspondence_path = professors_root / "_corresp_cache.json"
+    signature_path = professors_root / "_署名对照.json"
+    fingerprints = [
+        issue59_source_fingerprint(
+            "professor_candidates", candidates_path, professors_root, candidates),
+        issue59_source_fingerprint(
+            "paper_correspondence", correspondence_path, professors_root),
+        issue59_source_fingerprint(
+            "signature_book", signature_path, professors_root),
+    ]
+    fingerprints.extend(
+        issue59_source_fingerprint(
+            "papers_json", papers_path, professors_root, projection)
+        for papers_path, projection in paper_projections)
+
     artifact = {
         "schema": 2, "kind": contact_state.CONTACT_EVIDENCE_KIND,
         "generated_at": contact_state.now_utc(),
         "recent_paper_years": 5, "current_year": int(contact_state.now_utc()[:4]),
         "scope": "workflow_evidence_not_send_time_authority",
-        "sources": {}, "degraded": False, "global_degraded": False,
-        "source_errors": [],
-        "source_fingerprints": {"algorithm": "sha256", "files": []},
-        "professors": [issue59_evidence_record(name) for name in professors]}
-    path = Path(program_root) / "教授研究" / contact_state.CONTACT_EVIDENCE_FILE
+        "sources": {
+            "professor_candidates": "_professor_candidates.json",
+            "paper_correspondence": "_corresp_cache.json",
+            "signature_book": "_署名对照.json",
+        },
+        "degraded": False, "global_degraded": False, "source_errors": [],
+        "source_fingerprints": {"algorithm": "sha256", "files": fingerprints},
+        "professors": [issue59_evidence_record(name) for name in professors],
+    }
+    path = professors_root / contact_state.CONTACT_EVIDENCE_FILE
     path.write_text(json.dumps(artifact, ensure_ascii=False, indent=1), encoding="utf-8")
     snapshots = {}
     for name in professors:
@@ -1126,8 +1202,8 @@ def issue59_write_evidence(program_root, professors, stale_for=()):
             frozen = json.loads(json.dumps(artifact, ensure_ascii=False))
             for record in frozen["professors"]:
                 if record["professor"]["name"] == name:
+                    record["official_emails"][0]["email"] = "moved@example.test"
                     record["current_email"] = "moved@example.test"
-                    record["confirmed_emails"] = ["moved@example.test"]
         snapshots[name] = contact_state.contact_evidence_snapshot(frozen, None, name)
     return snapshots
 
@@ -1264,8 +1340,12 @@ def write_issue59_stage5_fixture(program_root, specs=(), *, extra_rows=(),
         checker_marker = install_issue59_checker(case, program_root, stale={
             spec["professor"]: ISSUE59_B_STALE_REASON for spec in normalized
             if spec.get("source_state") == "stale"})
+        professor_dirs = {}
+        for spec in normalized:
+            if spec["evidence"] != "none":
+                professor_dirs.setdefault(spec["professor"], Path(spec["dir"]))
         snapshots = issue59_write_evidence(
-            program_root, wanted,
+            program_root, professor_dirs,
             stale_for=[s["professor"] for s in normalized if s["evidence"] == "stale"])
 
     rows, dirs, verified_dirs = [], {}, {}
