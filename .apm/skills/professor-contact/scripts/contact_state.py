@@ -694,13 +694,25 @@ def load_candidate_state(professor_dir: Path, pack: dict | None) -> tuple[dict |
     return normalize_candidate_state(raw, pack)
 
 
-def stage5_output_peers(email: dict, all_emails: list) -> list:
-    """Every pack row that would write into this email's professor directory.
+def stage5_output_peers(email: dict, all_emails: list, professor_dir: Path,
+                        *, targeted: bool) -> list:
+    """Rows that share this email's output-collision namespace.
 
-    Collision naming counts peers from identity metadata only, so an
-    unselected row's ``professor_dir`` is never resolved here: a malformed or
-    unusable path belonging to another email cannot change (or block) the
-    selected email's collision-safe filename."""
+    Targeted mode cannot resolve unrelated ``professor_dir`` values, so it
+    derives peers from identity metadata only. Batch mode preserves the
+    pre-Issue-59 directory-scoped naming contract after the normal all-row path
+    validation has succeeded.
+    """
+    if not targeted:
+        target_dir = professor_dir.resolve()
+        peers = []
+        for candidate in all_emails:
+            candidate_dir = Path(
+                candidate.get("professor_dir") or professor_dir).resolve()
+            if candidate_dir == target_dir:
+                peers.append(candidate)
+        return peers
+
     professor = email.get("professor")
     if not isinstance(professor, str) or not professor:
         return [email]
@@ -8183,7 +8195,10 @@ def cmd_stage5_finalize(args) -> None:
             txt_body = f"Subject: {subject}\n\n{body_text.strip()}\n"
             state_fingerprint = sha256_obj({"output_id": output_id, "input": input_fp})
             md_path, txt_path = stage5_output_paths(
-                email, stage5_output_peers(email, all_emails), professor_dir, kind)
+                email,
+                stage5_output_peers(
+                    email, all_emails, professor_dir, targeted=bool(args.email_id)),
+                professor_dir, kind)
             previous = root_entry if kind == "initial" else root_entry.get("followup", {})
             old_render = previous.get("render") or {}
             existing_md_sha = None
