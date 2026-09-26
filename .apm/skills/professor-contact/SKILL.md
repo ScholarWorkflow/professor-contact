@@ -192,6 +192,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_targets.py resolve ...
 | `gap_scope` | 2 | `relevant` / `selected_direction` / `all` | `selected_direction` | 只决定从哪些**已有有效 sidecar** 的论文选 gap；绝不触发额外 gap 提取 |
 | `freshness_scope` | 2 | `shortlist` / `full` | `shortlist` | `shortlist` 只判断稳定排序的 5–10 条 gap；`full` 判断候选池全部。独立于 gap_scope 可单独扩大 |
 | `refresh_scope` | 3 | `flagged` / `selected` / `all` | `flagged` | 只决定哪些方向（重新）生成候选；`flagged` 在 preview 工作流中=当前 Stage 2 输入包内的被选方向（旧参数名保留为兼容）；不调用阶段 2，不读 Zotero/sidecar/`_index.json`/Markdown |
+| `--email-id` | 5 | `邮件输入.json` 中真实、非空的单个 `email_id` | 未传=包内全部邮件 | **硬执行范围**：本次 plan/finalize 只处理这一封邮件，无关条目的损坏/陈旧状态既不阻断也不被读写；两次调用必须传同一个 id（详见 5.10） |
 
 ### 缓存失效（稳定 reason_code）
 
@@ -342,7 +343,7 @@ non-interactive 调用返回既有 `needs_input` 边界，不代选、不最终�
 ### 5.8 产物
 
 - `<教授名>/套磁邮件.md` / `.txt` — 阶段 5首封邮件；无回复版本为同目录的 `套磁跟进邮件.md` / `.txt`。两类文件都包含独立的送信前核对表、humanizer 保护校验和 validator 记录；跟进文件额外记录首封 email_id 与初次发送日期。
-- `教授研究/套磁邮件总览.md` — 程序级聚合。
+- `教授研究/套磁邮件总览.md` — 程序级聚合；`--email-id` 定向运行不重建它（既有文件按字节不动、缺失不凭空生成，`overview_md` 相应返回既有路径或 `null`，见 5.10）。
 - 幂等：同方向重跑覆盖对应文件（受管 md 人手改动 → `needs_decision`）；`套磁邮件状态.json` 记录 render sha 与 validation 状态。
 - **阶段 5 不需要 Zotero**（纯本地文件；论文标题已在阶段 2 从 Zotero 取过）。
 
@@ -366,6 +367,17 @@ non-interactive 调用返回既有 `needs_input` 边界，不代选、不最终�
 - **范例**：公开文档只使用 `Professor Example`、`Fixture University A`、`faculty@example.edu` 和 `https://example.test/` 等合成值。
 
 操作细节（阶梯步骤/缓存 schema/核对表模板）内嵌在 `professor-contact-email-generator` agent 定义中，本节为设计共识记录。
+
+### 5.10 单封定向执行范围（`--email-id`）
+
+Issue #59：`--email-id` 是**硬执行范围**，不是过滤提示。同一次定向运行里 `stage5-plan` 与 `stage5_immutable.py stage5-finalize` 必须携带**同一个 `--email-id`**：一封有效邮件可以在无关条目状态陈旧、损坏或缺失的程序级 `邮件输入.json` 上单独跑通。
+
+- **身份解析最先**：runner 先用 `email_id` 选出本次范围，之后才做 `professor_dir`、contact evidence、`_contact_verify.json`、`套磁邮件状态.json`、result、choices、模板与写盘校验。找不到 → `invalid_params` / `email_id not found: <id>`；同一 `email_id` 命中多行 → `invalid_email_pack`。定向模式从不按数组位置、教授名或「第一封」猜测目标。
+- **无关行只是噪声**：非 dict 行、缺少 `email_id` 的行、未知 id 行、重复的未知 id 行一律不阻断也不处理；被选 id 自己重复或在 result/choices 中缺席仍然 fail closed。`validate_email_raw`、`require_user_choices`、`require_followup_choices`、`stage5_recipient_authority` 对被选行的约束一条不放松。
+- **教授级只读被选教授**：`professor_dir` 程序根约束、contact-evidence 新鲜度/指纹判定、`_contact_verify.json` 读取与 `needs_recheck` 都只作用于被选教授；绝不因为别的教授缺 cache、指纹陈旧或快照失配而阻断本次定向运行。
+- **输出命名不解析别的路径**：同教授邻居数量只从身份字段（`professor` 等）计算，绝不解析未选行的 `professor_dir`；文件名与 `test_stage5_multiple_emails_use_distinct_files` 既有约定一致。
+- **程序级总览不进入定向事务**：定向 finalize 不重建 `套磁邮件总览.md`，不检测投影冲突，也不写 `needs_decision`——一行表格不是程序级聚合。已存在的聚合按字节原样保留，结果里 `overview_md` 返回该既有路径；不存在则 `overview_md` 为 `null`，且绝不凭空造出一份残缺聚合。批量模式仍照旧重建聚合并照常报 `needs_decision`。
+- **调用方契约**：`professor-contact-email-validator` 只校验本次渲染出的那对 `套磁邮件.md` / `套磁跟进邮件.md`；校验文件只写被选输出的 id；`stage5-record-validation` 沿用 `--professor-dir` + `--validation-file`，**不新增 `--email-id`**，因为它消费的本来就是调用方给的那几行。
 
 ## 输入前提：profile 与 套磁邮件/ 配置目录
 

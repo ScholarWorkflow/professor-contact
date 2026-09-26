@@ -251,6 +251,7 @@ flowchart TD
     MAIL["邮件输入.json<br/>论文事实 + frozen contact_evidence"]
     EXTRA["profile + template + info.json<br/>boshu_analysis.json + _contact_verify.json"]
     PLAN["stage5-plan"]
+    SCOPE["--email-id 身份解析<br/>命中 0 → invalid_params<br/>命中 >1 → invalid_email_pack"]
     CE["contact-evidence freshness / fingerprint gate"]
     REFRESH["needs_refresh<br/>回 Stage 4 重冻结"]
     VERIFY["送信前核验"]
@@ -263,7 +264,8 @@ flowchart TD
 
     MAIL --> PLAN
     EXTRA --> PLAN
-    PLAN --> CE
+    PLAN --> SCOPE
+    SCOPE --> CE
     CE -->|"snapshot 缺失或 live record 改变"| REFRESH
     CE -->|"一致"| VERIFY --> MODEL --> HUM --> CHOICE --> ASM --> VAL --> OUT
 ```
@@ -276,6 +278,10 @@ flowchart TD
 - `_contact_verify.json` 才是送信核验 cache，但不能替代邮件包的冻结事实边界。
 
 humanizer 的当前边界：只润色模型动态字段，且发生在模板拼装前。Subject、模板固定文字、用户选择短语、整封首封/跟进成品都不能交给 humanizer 重写。
+
+单封定向范围（Issue #59）：`stage5-plan` 与 `stage5_immutable.py stage5-finalize` 都可以带 `--email-id <id>`；同一次定向运行的每次调用必须传**同一个 `email_id`**。runner 先按 `email_id` 解析出本次唯一范围，再依次做 `professor_dir` 归属、contact-evidence 新鲜度/指纹、`_contact_verify.json`、`套磁邮件状态.json`、result、choices、模板与写盘校验。因此无关条目的损坏或非 dict 形状既不会阻断这一封，也不会被读取或被写入；被选条目自身仍走全部既有 fail-closed 检查（含收件人权威）。找不到该 id → `invalid_params`（`email_id not found: <id>`）；同一 id 在包内出现多次 → `invalid_email_pack`，绝不按数组位置或教授名猜。
+
+定向 finalize 是这一封邮件的事务：只写被选邮件的 md/txt 与 `套磁邮件状态.json`，不重建程序级 `套磁邮件总览.md`、不做聚合的投影冲突检测；总览已存在则结果 `overview_md` 给出其路径，不存在则为 `null`。批量（不带 `--email-id`）继续处理包内全部邮件并照旧重建聚合。校验侧同样按范围收敛：`professor-contact-email-validator` 只跑本次渲染出的那对 md，validation 文件只写被选输出的 id，`stage5-record-validation` 沿用 `--professor-dir` + `--validation-file`（它只记录调用方给出的那些行，因此不新增 `--email-id`）。
 
 ## 10. 机器事实源与人类投影
 

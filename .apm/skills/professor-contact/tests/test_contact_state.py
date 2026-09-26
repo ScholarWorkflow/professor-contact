@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -891,6 +892,537 @@ class TestRunnerBasics(BaseEnv):
         self.assertIn("教授先做了", (self.prof_dir / "套磁候选分析.md").read_text(encoding="utf-8"))
 
 
+ISSUE59_PROFESSOR = "試験 教授"
+ISSUE59_OTHER_PROFESSOR = "佐藤 花子"
+ISSUE59_DIRECTION_ID = "DIR00001"
+ISSUE59_IDEA_ID = "DIR00001_1"
+ISSUE59_PEER_IDEA_ID = "DIR00001_2"
+ISSUE59_EMAIL_ID = "試験 教授::DIR00001::DIR00001_1"
+ISSUE59_PEER_EMAIL_ID = "試験 教授::DIR00001::DIR00001_2"
+ISSUE59_OTHER_EMAIL_ID = "佐藤 花子::DIR00001::DIR00001_1"
+ISSUE59_IDEAS = {ISSUE59_EMAIL_ID: ISSUE59_IDEA_ID,
+                 ISSUE59_PEER_EMAIL_ID: ISSUE59_PEER_IDEA_ID,
+                 ISSUE59_OTHER_EMAIL_ID: ISSUE59_IDEA_ID}
+ISSUE59_GAP_QUOTE = ("Future work will extend the synthetic comparison "
+                     "to a second input pattern.")
+ISSUE59_PAPER_TITLE = "Synthetic comparison of input patterns"
+ISSUE59_EMAIL_ADDRESS = "faculty@example.test"
+ISSUE59_STALE_DAYS = 45
+# One owner-shaped source-state reason, used only to make professor B
+# demonstrably stale inside the program-level checker report.
+ISSUE59_B_STALE_REASON = "source_changed:papers_json:Y分野/佐藤 花子/papers.json"
+ISSUE59_MALFORMED_JSON = "{ this is not the email state"
+def issue59_checker_stub(stale=None, marker=None):
+    """Deterministic stand-in for professor-research's ``contact_evidence.py``.
+
+    ``stale`` maps a professor to the owner-shaped reason their *live source
+    state* is out of date; the report stays program-level, so its top-level
+    ``result`` goes stale as soon as any professor does. ``marker`` is written
+    only by the rebuild branch, which lets a case prove that an unrelated
+    professor never pulled Stage 5 into a rebuild.
+    """
+    return (
+        "import json, os, sys\n"
+        f"STALE = {json.dumps(dict(stale or {}), ensure_ascii=False)}\n"
+        f"MARKER = {json.dumps(str(marker or ''), ensure_ascii=False)}\n"
+        "artifact = json.load(open(os.path.join(sys.argv[1], '教授研究', "
+        f"{json.dumps(contact_state.CONTACT_EVIDENCE_FILE)}), encoding='utf-8'))\n"
+        "if '--check' in sys.argv:\n"
+        "    entries = [{'name': r['professor']['name'],\n"
+        "                'result': 'stale' if STALE.get(r['professor']['name']) else 'fresh',\n"
+        "                'reasons': [STALE[r['professor']['name']]]\n"
+        "                if STALE.get(r['professor']['name']) else []}\n"
+        "               for r in artifact['professors']]\n"
+        "    reasons = sorted({x for e in entries for x in e['reasons']})\n"
+        "    print(json.dumps({'result': 'stale' if reasons else 'fresh',\n"
+        "                      'reasons': reasons, 'professors': entries},\n"
+        "                     ensure_ascii=False))\n"
+        "else:\n"
+        "    if MARKER:\n"
+        "        open(MARKER, 'w', encoding='utf-8').write('rebuilt\\n')\n"
+        "    print(json.dumps({'result': 'ok'}))\n")
+
+
+def issue59_verified_at(days_ago: int = 1) -> str:
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+
+
+# Computed once per process so repeated fixture calls stay byte-identical while
+# remaining inside the runner's 30-day verify-cache window.
+ISSUE59_VERIFIED_AT = issue59_verified_at()
+
+
+def issue59_email_row(professor, professor_dir, *, idea_id=ISSUE59_IDEA_ID,
+                      direction_id=ISSUE59_DIRECTION_ID,
+                      name="合成输入比较", contact_evidence=None):
+    """Build one legal Stage-4 email row through the producer compiler.
+
+    The Issue-59 fixture owns only fixed synthetic Stage-4 source values. All
+    derived handoff fields (identity, paper/gap projection, allowed sources,
+    fingerprints carried into the row, and source_hash) come from
+    compile_email_entry, so this fixture cannot drift into a shadow Stage-4
+    producer.
+    """
+    professor_dir = Path(professor_dir)
+    gap_id = quote_id(ISSUE59_GAP_QUOTE)
+    input_fingerprint = contact_state.sha256_obj({
+        "fixture": "issue59-stage4-input",
+        "professor": professor,
+        "direction_id": direction_id,
+    })
+    gap = {
+        "gap_id": gap_id, "item_key": "AAAA1111",
+        "paper_title": ISSUE59_PAPER_TITLE, "paper_year": 2023,
+        "quote": ISSUE59_GAP_QUOTE,
+        "translation_zh": f"中译：{ISSUE59_GAP_QUOTE[:24]}",
+        "source": "Conclusion", "page": 8, "status": "open",
+        "confidence": "high", "completed_part": None, "remaining_gap": None,
+        "evidence": "无更晚论文实现该点（AAAA1111）",
+    }
+    credibility = {
+        "verdict": "站得住", "mainline": "主线",
+        "authorship_line": "corresponding_dominant", "note": "test",
+    }
+    pack_direction = {
+        "direction_id": direction_id,
+        "collection_key": direction_id,
+        "name_ja": name,
+        "name_zh": name,
+        "user_note": "我想比较两种合成输入的处理结果。",
+        "input_fingerprint": input_fingerprint,
+        "supporting_item_keys": ["AAAA1111"],
+        "named_keys": [],
+        "resolved_addition_keys": [],
+        "gap_shortlist": [gap],
+        "gaps_excluded": [],
+        "completed_gap_blacklist": [],
+        "red_lines": [{
+            "scope": "global", "text": "不得引用未提供来源的数字",
+            "banned_phrases": ["99.9%"],
+        }],
+        "credibility": credibility,
+        "narrative": {
+            "positioning": [{
+                "text": (f"教授从 {{P:AAAA1111}} 起研究合成输入比较；"
+                         f"{{G:{gap_id}}} 是延伸点。"),
+            }],
+        },
+    }
+    pack = {
+        "professor": professor,
+        "professor_dir": str(professor_dir),
+        "papers": {
+            "AAAA1111": {
+                "item_key": "AAAA1111",
+                "title": ISSUE59_PAPER_TITLE,
+                "year": 2023,
+                "authorship": "corresponding",
+            },
+        },
+        "directions": [pack_direction],
+    }
+    idea = {
+        "id": idea_id,
+        "title": "第二种输入模式的合成比较",
+        "idea_zh": "",
+        "direction_ids": [direction_id],
+        "papers": [{
+            "item_key": "AAAA1111",
+            "direction_ids": [direction_id],
+            "fit_note": "教授通讯",
+        }],
+        "gap_refs": [{
+            "direction_id": direction_id,
+            "item_key": "AAAA1111",
+            "gap_id": gap_id,
+        }],
+        "red_lines": [],
+        "banned_phrases": [],
+        "_profile_fields": {},
+    }
+    # compile_email_entry currently does not consume program_root, but pass the
+    # semantic root so the fixture remains correct if that helper begins using
+    # it later.
+    program_root = professor_dir.parents[2]
+    return contact_state.compile_email_entry(
+        pack, {}, pack_direction, idea, "", program_root, None,
+        contact_evidence=contact_evidence)
+
+
+def issue59_result(gap_id, email_id=ISSUE59_EMAIL_ID, idea_id=ISSUE59_IDEA_ID):
+    return {"schema": 1, "kind": "email", "email_id": email_id,
+            "interest_sentences_ja": [
+                "合成输入を比较する仕組みを、分かりやすく検証できる形にしたいと考えてきました。",
+                "先生のご論文「Synthetic comparison of input patterns」を拝読し、入力比較を広げる可能性に気づかされました。",
+                "例えば、別の合成入力でも同じ比較ができれば、といったことです。",
+                "このような比較場面は、まだ数多く存在すると感じております。"],
+            "future_aspiration_ja": "入力設計、評価実験、実データへの適用",
+            "learning_candidates": ["比較手法の基礎知識の習得", "評価方法の基礎"],
+            "source_map": [
+                {"output": "①", "source_ids": ["profile.interest"]},
+                {"output": "②", "source_ids": ["paper:AAAA1111"]},
+                {"output": "③", "source_ids": [f"gap:{gap_id}"]},
+                {"output": "④", "source_ids": ["template"]},
+                {"output": "future", "source_ids": [f"idea:{idea_id}"]}]}
+
+
+def issue59_choices(email_id=ISSUE59_EMAIL_ID):
+    return {"email_id": email_id, "first_choice": False,
+            "signature_name": "試験 太郎", "learning": "比較手法の基礎知識の習得"}
+
+
+def issue59_evidence_record(professor, item_key, *,
+                            email=ISSUE59_EMAIL_ADDRESS):
+    """One professor record exactly representable by the owner reconciler.
+
+    Keep the pre-existing Issue-59 baseline on ``confirmed_cross_source``:
+    the fixture now earns that verdict from a real official candidate plus one
+    recent high-confidence correspondence record, instead of hand-authoring a
+    schema-2 artifact that the owner checker would reject.
+    """
+    return {
+        "professor": {"name": professor, "name_romaji": None},
+        "official_emails": [{
+            "email": email, "current_source": True,
+            "provenance": [{"source_type": "official_professor_candidate",
+                            "source": "issue59-fixture"}]}],
+        "paper_correspondence": [{
+            "email": email, "name": professor, "item_key": item_key, "doi": None,
+            "paper_year": 2025, "channel": "correspondence", "confidence": "high",
+            "identity_match": "direct", "recent": True,
+            "current_email_evidence": False}],
+        "identity": {"matched_verified_contacts": 1,
+                     "unmatched_verified_contacts": [],
+                     "ambiguous_unpaired_records_ignored": 0},
+        "verdict": "confirmed_cross_source",
+        "confirmed_emails": [email],
+        "conflicting_paper_emails": [],
+        "current_email": email,
+        "evidence_status": {
+            "official_candidates_unavailable": False,
+            "professor_papers_unavailable": False,
+            "paper_correspondence_unavailable": False,
+            "signature_aliases_unavailable": False,
+            "current_email_blocked_by": []},
+    }
+
+
+def issue59_projection_hash(value):
+    """Hash the minimal owner projection used by this fixture.
+
+    The source JSON below contains only fields consumed by
+    professor-research/contact_evidence.py, so its owner projection is the
+    value itself.  Canonical separators + sorted keys match the documented
+    schema-2 fingerprint contract without copying the owner reconciler.
+    """
+    canonical = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def issue59_source_fingerprint(source, path, professors_root, projection=None):
+    path = Path(path)
+    rel = path.relative_to(professors_root).as_posix()
+    if projection is None:
+        return {"source": source, "path": rel, "present": False,
+                "sha256": None, "bytes": None}
+    return {"source": source, "path": rel, "present": True,
+            "sha256": issue59_projection_hash(projection),
+            "bytes": len(path.read_bytes())}
+
+
+def issue59_write_evidence(program_root, professor_dirs, stale_for=()):
+    """Write an owner-contract-valid evidence handoff plus frozen snapshots.
+
+    Unlike the source-state checker stub, this artifact is not synthetic
+    readiness evidence: it follows professor-research's schema-2 handoff,
+    including the persisted sources and non-empty fingerprint index that the
+    real ``contact_evidence.py --check`` requires.  The stub is therefore
+    limited to supplying the case-specific fresh/stale source-state report.
+    """
+    program_root = Path(program_root)
+    professors_root = program_root / "教授研究"
+    professor_dirs = {name: Path(path) for name, path in professor_dirs.items()}
+    professors = list(professor_dirs)
+
+    candidates = [
+        {"name": name, "email": ISSUE59_EMAIL_ADDRESS, "source": "issue59-fixture"}
+        for name in professors
+    ]
+    candidates_path = professors_root / "_professor_candidates.json"
+    candidates_path.write_text(
+        json.dumps(candidates, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    paper_projections = []
+    evidence_item_keys = {}
+    correspondence = {}
+    for index, (name, professor_dir) in enumerate(professor_dirs.items()):
+        professor_dir.mkdir(parents=True, exist_ok=True)
+        item_key = "AAAA1111" if index == 0 else f"ISS59{index:03d}"
+        evidence_item_keys[name] = item_key
+        papers = {
+            "professor": {"name": name},
+            "papers": [{"item_key": item_key, "year": 2025}],
+        }
+        papers_path = professor_dir / "papers.json"
+        papers_path.write_text(
+            json.dumps(papers, ensure_ascii=False, indent=1), encoding="utf-8")
+        paper_projections.append((papers_path, papers))
+        correspondence[item_key] = {
+            "paper_year": 2025,
+            "channel": "correspondence",
+            "confidence": "high",
+            "contacts": [{
+                "name": name, "email": ISSUE59_EMAIL_ADDRESS,
+                "channel": "correspondence", "confidence": "high",
+            }],
+        }
+
+    correspondence_path = professors_root / "_corresp_cache.json"
+    correspondence_path.write_text(
+        json.dumps(correspondence, ensure_ascii=False, indent=1), encoding="utf-8")
+    signature_path = professors_root / "_署名对照.json"
+    fingerprints = [
+        issue59_source_fingerprint(
+            "professor_candidates", candidates_path, professors_root, candidates),
+        issue59_source_fingerprint(
+            "paper_correspondence", correspondence_path, professors_root,
+            correspondence),
+        issue59_source_fingerprint(
+            "signature_book", signature_path, professors_root),
+    ]
+    fingerprints.extend(
+        issue59_source_fingerprint(
+            "papers_json", papers_path, professors_root, projection)
+        for papers_path, projection in paper_projections)
+
+    artifact = {
+        "schema": 2, "kind": contact_state.CONTACT_EVIDENCE_KIND,
+        "generated_at": contact_state.now_utc(),
+        "recent_paper_years": 5, "current_year": int(contact_state.now_utc()[:4]),
+        "scope": "workflow_evidence_not_send_time_authority",
+        "sources": {
+            "professor_candidates": "_professor_candidates.json",
+            "paper_correspondence": "_corresp_cache.json",
+            "signature_book": "_署名对照.json",
+        },
+        "degraded": False, "global_degraded": False, "source_errors": [],
+        "source_fingerprints": {"algorithm": "sha256", "files": fingerprints},
+        "professors": [
+            issue59_evidence_record(name, evidence_item_keys[name])
+            for name in professors
+        ],
+    }
+    path = professors_root / contact_state.CONTACT_EVIDENCE_FILE
+    path.write_text(json.dumps(artifact, ensure_ascii=False, indent=1), encoding="utf-8")
+    snapshots = {}
+    for name in professors:
+        frozen = artifact
+        if name in stale_for:
+            frozen = json.loads(json.dumps(artifact, ensure_ascii=False))
+            for record in frozen["professors"]:
+                if record["professor"]["name"] == name:
+                    record["official_emails"][0]["email"] = "moved@example.test"
+                    record["current_email"] = "moved@example.test"
+        snapshots[name] = contact_state.contact_evidence_snapshot(frozen, None, name)
+    return snapshots
+
+
+def install_issue59_checker(case, program_root, stale=None):
+    """Certify fixture professors as source-state fresh, except ``stale``.
+
+    The stub stands in for professor-research's ``contact_evidence.py`` and
+    must live outside the program root, which holds user data only; the
+    injected locator variable is restored when the case ends.
+    """
+    saved = os.environ.get(contact_state.UPSTREAM_SCRIPT_ENV)
+
+    def restore():
+        if saved is None:
+            os.environ.pop(contact_state.UPSTREAM_SCRIPT_ENV, None)
+        else:
+            os.environ[contact_state.UPSTREAM_SCRIPT_ENV] = saved
+
+    case.addCleanup(restore)
+    holder = tempfile.TemporaryDirectory(prefix="issue59-checker-")
+    case.addCleanup(holder.cleanup)
+    script = Path(holder.name) / "skills" / "professor-collector" / "scripts"
+    script = script / "contact_evidence.py"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    marker = Path(holder.name) / "rebuild-marker.txt"
+    script.write_text(issue59_checker_stub(stale, marker), encoding="utf-8")
+    os.environ[contact_state.UPSTREAM_SCRIPT_ENV] = str(script)
+    return marker
+
+
+def write_issue59_verify(program_root, professor_dir, professor, *, days_ago=1,
+                         email_value=ISSUE59_EMAIL_ADDRESS):
+    info = Path(program_root) / "info.json"
+    boshu = Path(program_root) / "boshu_analysis.json"
+    verify = {
+        "professor": professor,
+        "verified_at": (ISSUE59_VERIFIED_AT if days_ago == 1
+                        else issue59_verified_at(days_ago)),
+        "source_fingerprints": {
+            "info_json": f"{info}:{int(info.stat().st_mtime)}",
+            "boshu_analysis": f"{boshu}:{int(boshu.stat().st_mtime)}"},
+        "items": {
+            "email": {"verdict": "confirmed", "value": email_value, "sources": []},
+            "roster": {"verdict": "confirmed", "value": "X分野/教授 @P.1", "sources": []},
+            "season": {"verdict": "confirmed", "value": "春季 少数名", "sources": []},
+            "header": {"verdict": "confirmed", "value": "", "sources": []},
+            "subject_batch": {"verdict": "confirmed", "value": "", "sources": []},
+            "schedule": {"verdict": "unverified", "value": None, "sources": []},
+            "consent": {"verdict": "unverified", "value": None, "sources": []},
+            "warnings": []}}
+    path = Path(professor_dir) / "_contact_verify.json"
+    path.write_text(json.dumps(verify, ensure_ascii=False, indent=1), encoding="utf-8")
+    return path
+
+
+def write_issue59_overview(program_root):
+    """Seed the program aggregate with fixed bytes a targeted run must keep."""
+    path = Path(program_root) / "教授研究" / contact_state.EMAIL_OVERVIEW
+    path.write_text("# 套磁邮件总览\n\n> issue59 预置聚合表：定向运行不得改写\n",
+                    encoding="utf-8")
+    return path
+
+
+def write_issue59_stale_overview(program_root):
+    """A managed aggregate whose body no longer matches its recorded render sha.
+
+    Batch Stage 5 must surface that as ``needs_decision`` before writing
+    anything; a targeted run must never open the aggregate at all.
+    """
+    body = ("# 套磁邮件总览\n\n> 2026-01-01T00:00:00Z ｜ 由 contact_state 渲染\n\n"
+            "| 教授 | 方向（ja/zh） | 收件邮箱 | 核验 | 首封邮件 | 跟进邮件 | "
+            "首封纯文本 | 跟进纯文本 |\n|---|---|---|---|---|---|---|---|\n")
+    sha = contact_state.sha256_text(body)
+    key = contact_state.EMAIL_OVERVIEW
+    path = Path(program_root) / "教授研究" / key
+    path.write_text(contact_state.render_frontmatter(
+        contact_state.sha256_obj({"projection": key, "body": sha}), sha) + body,
+        encoding="utf-8")
+    (Path(program_root) / "教授研究" / contact_state.PROJECTIONS_FILE).write_text(
+        json.dumps({"render": {key: {"sha256": "0" * 64}}}), encoding="utf-8")
+    return path
+
+
+def write_issue59_stage5_fixture(program_root, specs=(), *, extra_rows=(),
+                                 overview=None, case=None):
+    """Materialize the Stage 4 → Stage 5 handoff directly under ``program_root``.
+
+    No Stage 2/3/4 runner is involved: every ``邮件输入.json`` row, every
+    per-professor ``_contact_verify.json`` / ``套磁邮件状态.json`` and the
+    program aggregate come from this writer, so one valid target can sit
+    beside any amount of unrelated or invalid state.
+
+    Each spec is a dict of ``professor`` / ``direction_id`` / ``idea_id`` /
+    ``field`` / ``dir`` / ``verified``
+    (``fresh`` | ``stale`` | ``missing`` | ``malformed``) /
+    ``evidence`` (``none`` | ``fresh`` | ``stale``) / ``source_state``
+    (``stale`` asks the injected checker to report that professor stale) /
+    ``email_state``. ``overview`` seeds the program aggregate with ``"seed"``
+    bytes or a conflicting managed render with ``"conflict"``.
+    """
+    program_root = Path(program_root)
+    research = program_root / "教授研究"
+    research.mkdir(parents=True, exist_ok=True)
+    (program_root / "info.json").write_text(json.dumps({
+        "university": "試験大学", "department": "試験研究科",
+        "target": {"intake_year": 2027, "intake_term": "april"}}), encoding="utf-8")
+    (program_root / "boshu_analysis.json").write_text(json.dumps({
+        "exam_type": {"degree": "博士前期課程",
+                      "selection_name": "春季 テスト選抜 合成工学専攻"}},
+        ensure_ascii=False), encoding="utf-8")
+
+    normalized = []
+    for spec in (list(specs) or [{}]):
+        spec = dict(spec)
+        spec.setdefault("professor", ISSUE59_PROFESSOR)
+        spec.setdefault("idea_id", ISSUE59_IDEA_ID)
+        spec.setdefault("field", "X分野" if spec["professor"] == ISSUE59_PROFESSOR
+                        else "Y分野")
+        spec.setdefault("verified", "fresh")
+        spec.setdefault("evidence", "fresh")
+        spec.setdefault("dir", research / spec["field"] / spec["professor"])
+        normalized.append(spec)
+
+    wanted = list(dict.fromkeys(
+        spec["professor"] for spec in normalized if spec["evidence"] != "none"))
+    snapshots = {}
+    checker_marker = None
+    if wanted:
+        if case is None:
+            raise AssertionError(
+                "issue59 fixture: an evidence snapshot needs a unittest case so "
+                "PROFESSOR_CONTACT_EVIDENCE_SCRIPT is restored")
+        checker_marker = install_issue59_checker(case, program_root, stale={
+            spec["professor"]: ISSUE59_B_STALE_REASON for spec in normalized
+            if spec.get("source_state") == "stale"})
+        professor_dirs = {}
+        for spec in normalized:
+            if spec["evidence"] != "none":
+                professor_dirs.setdefault(spec["professor"], Path(spec["dir"]))
+        snapshots = issue59_write_evidence(
+            program_root, professor_dirs,
+            stale_for=[s["professor"] for s in normalized if s["evidence"] == "stale"])
+
+    rows, dirs, verified_dirs = [], {}, {}
+    for spec in normalized:
+        professor_dir = Path(spec["dir"])
+        row = issue59_email_row(
+            spec["professor"], professor_dir,
+            idea_id=spec["idea_id"],
+            direction_id=spec.get("direction_id", ISSUE59_DIRECTION_ID),
+            contact_evidence=snapshots.get(spec["professor"]))
+        rows.append(row)
+        dirs[spec["professor"]] = professor_dir
+        professor_dir.mkdir(parents=True, exist_ok=True)
+        if spec.get("email_state") is not None:
+            payload = spec["email_state"]
+            (professor_dir / contact_state.EMAIL_STATE).write_text(
+                payload if isinstance(payload, str)
+                else json.dumps(payload, ensure_ascii=False, indent=1),
+                encoding="utf-8")
+        if spec["verified"] == "missing":
+            continue
+        if spec["verified"] == "malformed":
+            verified_dirs[spec["professor"]] = (
+                professor_dir / contact_state.VERIFY_FILE)
+            verified_dirs[spec["professor"]].write_text(
+                ISSUE59_MALFORMED_JSON, encoding="utf-8")
+            continue
+        verified_dirs[spec["professor"]] = write_issue59_verify(
+            program_root, professor_dir, spec["professor"],
+            days_ago=1 if spec["verified"] == "fresh" else ISSUE59_STALE_DAYS)
+
+    pack_path = research / contact_state.EMAIL_PACK
+    pack_path.write_text(json.dumps({
+        "schema": contact_state.EMAIL_PACK_SCHEMA,
+        "kind": contact_state.EMAIL_PACK_KIND,
+        "identity_version": contact_state.DIRECTION_IDENTITY_VERSION,
+        "managed_by": contact_state.MANAGED_BY,
+        "generated_at": contact_state.now_utc(),
+        "program_root": str(program_root),
+        "profile_fingerprint": None,
+        "emails": rows + list(extra_rows)}, ensure_ascii=False, indent=1),
+        encoding="utf-8")
+    if overview == "conflict":
+        write_issue59_stale_overview(program_root)
+    elif overview == "seed":
+        write_issue59_overview(program_root)
+    return {"program_root": program_root, "pack": pack_path, "rows": rows,
+            "dirs": dirs, "verify": verified_dirs,
+            "overview": (research / contact_state.EMAIL_OVERVIEW
+                         if overview else None),
+            "checker_marker": checker_marker,
+            "email_ids": [row["email_id"] for row in rows],
+            "gap_id": quote_id(ISSUE59_GAP_QUOTE)}
+
+
 class TestStage5(BaseEnv):
     def test_stage5_requires_user_template(self):
         self.prepare()
@@ -940,25 +1472,10 @@ class TestStage5(BaseEnv):
         return quote_id(self.gap_quotes["AAAA1111"])
 
     def raw_result(self, g1):
-        email_id = "試験 教授::DIR00001::DIR00001_1"
-        return {"schema": 1, "kind": "email", "email_id": email_id,
-                "interest_sentences_ja": [
-                    "合成输入を比较する仕組みを、分かりやすく検証できる形にしたいと考えてきました。",
-                    "先生のご論文「Synthetic comparison of input patterns」を拝読し、入力比較を広げる可能性に気づかされました。",
-                    "例えば、別の合成入力でも同じ比較ができれば、といったことです。",
-                    "このような比較場面は、まだ数多く存在すると感じております。"],
-                "future_aspiration_ja": "入力設計、評価実験、実データへの適用",
-                "learning_candidates": ["比較手法の基礎知識の習得", "評価方法の基礎"],
-                "source_map": [
-                    {"output": "①", "source_ids": ["profile.interest"]},
-                    {"output": "②", "source_ids": ["paper:AAAA1111"]},
-                    {"output": "③", "source_ids": [f"gap:{g1}"]},
-                    {"output": "④", "source_ids": ["template"]},
-                    {"output": "future", "source_ids": ["idea:DIR00001_1"]}]}
+        return issue59_result(g1)
 
     def choices(self):
-        return {"email_id": "試験 教授::DIR00001::DIR00001_1", "first_choice": False,
-                "signature_name": "試験 太郎", "learning": "比較手法の基礎知識の習得"}
+        return issue59_choices()
 
     def final_surfaces(self, mode):
         """Every email file the caller can observe after a committed write."""
@@ -1104,17 +1621,12 @@ class TestStage5(BaseEnv):
         self.assertEqual(state["emails"][choices["email_id"]]["followup"]["validation"]["result"], "pass")
 
     def test_stage5_multiple_emails_use_distinct_files(self):
-        g1 = self.prepare()
-        pack_path = self.root / "教授研究" / "邮件输入.json"
-        pack = json.loads(pack_path.read_text(encoding="utf-8"))
-        second = json.loads(json.dumps(pack["emails"][0], ensure_ascii=False))
-        second_id = "试验 教授::DIR00001::DIR00001_2"
-        second["email_id"] = second_id
-        second["idea"]["id"] = "DIR00001_2"
-        second["idea"]["title"] = "第二个候选"
-        second["allowed_sources"].append("idea:DIR00001_2")
-        pack["emails"].append(second)
-        pack_path.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
+        fixture = write_issue59_stage5_fixture(self.root, [
+            {"professor": ISSUE59_PROFESSOR},
+            {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID}],
+            case=self)
+        g1 = fixture["gap_id"]
+        second_id = ISSUE59_PEER_EMAIL_ID
 
         raw1 = self.raw_result(g1)
         raw2 = json.loads(json.dumps(raw1, ensure_ascii=False))
@@ -1144,6 +1656,8 @@ class TestStage5(BaseEnv):
                             "--choices", choices_path))
         self.assertEqual(out["status"], "ok", out)
         self.assertEqual(len(out["emails"]), 2)
+        overview_path = self.root / "教授研究" / contact_state.EMAIL_OVERVIEW
+        self.assertEqual(out["overview_md"], str(overview_path), out)
         md_paths = {Path(row["md"]) for row in out["emails"]}
         txt_paths = {Path(row["txt"]) for row in out["emails"]}
         self.assertEqual(len(md_paths), 2)
@@ -1152,21 +1666,37 @@ class TestStage5(BaseEnv):
         self.assertNotIn(self.prof_dir / "套磁邮件.md", md_paths)
         self.assertNotIn(self.prof_dir / "套磁邮件.txt", txt_paths)
 
+        # Issue #59 T59-5: A and A2 share one 套磁邮件状态.json, so a targeted
+        # A2 run must leave the already rendered A bytes and A's state entry
+        # alone instead of rewriting the professor's whole state file.
+        first_id = self.choices()["email_id"]
+        a_files = {Path(row[key]): Path(row[key]).read_bytes()
+                   for row in out["emails"] if row["email_id"] == first_id
+                   for key in ("md", "txt")}
+        shared_state = self.prof_dir / "套磁邮件状态.json"
+        a_state = copy.deepcopy(json.loads(
+            shared_state.read_text(encoding="utf-8"))["emails"][first_id])
+
         one = parse(run_cli("stage5-finalize", "--program-root", self.root,
                             "--result", raw_path, "--humanized-map", humanized_map,
                             "--choices", choices_path, "--email-id", second_id))
         self.assertEqual(one["status"], "ok", one)
         self.assertEqual(Path(one["emails"][0]["md"]),
                          next(path for path in md_paths if "DIR00001_2" in path.name))
+        self.assertEqual({path: path.read_bytes() for path in a_files}, a_files)
+        persisted = json.loads(shared_state.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["emails"][first_id], a_state)
+        self.assertIn(second_id, persisted["emails"])
 
-        overview = (self.root / "教授研究" / "套磁邮件总览.md").read_text(encoding="utf-8")
+        overview = overview_path.read_text(encoding="utf-8")
         self.assertEqual(overview.count("[.md]("), 2)
         state = json.loads((self.prof_dir / "套磁邮件状态.json").read_text(encoding="utf-8"))
         self.assertEqual({entry["files"]["md"] for entry in state["emails"].values()},
                          {str(path) for path in md_paths})
 
+
     def test_stage5_batch_failure_does_not_write_first_email(self):
-        g1 = self.prepare()
+        g1 = write_issue59_stage5_fixture(self.root, case=self)["gap_id"]
         raw1 = self.raw_result(g1)
         raw_one_path = self.root / "first-raw.json"
         raw_one_path.write_text(json.dumps(raw1, ensure_ascii=False), encoding="utf-8")
@@ -1176,16 +1706,13 @@ class TestStage5(BaseEnv):
                               "--result", raw_one_path, "--choices", choices_one_path))
         self.assertEqual(draft["status"], "ok", draft)
         raw2 = json.loads(json.dumps(raw1, ensure_ascii=False))
-        second_id = "试验 教授::DIR00001::DIR00001_2"
-        pack_path = self.root / "教授研究" / "邮件输入.json"
-        pack = json.loads(pack_path.read_text(encoding="utf-8"))
-        second = json.loads(json.dumps(pack["emails"][0], ensure_ascii=False))
-        second["email_id"] = second_id
-        second["idea"]["id"] = "DIR00001_2"
-        second["allowed_sources"].append("idea:DIR00001_2")
-        pack["emails"].append(second)
-        pack_path.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
+        second_id = ISSUE59_PEER_EMAIL_ID
+        write_issue59_stage5_fixture(self.root, [
+            {"professor": ISSUE59_PROFESSOR},
+            {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID}],
+            case=self)
         raw2["email_id"] = second_id
+        raw2["source_map"][-1]["source_ids"] = [f"idea:{ISSUE59_PEER_IDEA_ID}"]
         raw2["future_aspiration_ja"] = ""
         raw_path = self.root / "batch-raw.json"
         raw_path.write_text(json.dumps([raw1, raw2], ensure_ascii=False), encoding="utf-8")
@@ -1205,7 +1732,8 @@ class TestStage5(BaseEnv):
                             "--choices", choices_path))
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "invalid_result_json")
-        self.assertFalse((self.prof_dir / "套磁邮件.md").exists())
+        self.assertEqual(list(self.prof_dir.glob("套磁邮件*.md")), [])
+        self.assertEqual(list(self.prof_dir.glob("套磁邮件*.txt")), [])
         self.assertFalse((self.prof_dir / "套磁邮件状态.json").exists())
 
     def test_humanizer_lost_title_rejected(self):
@@ -1306,7 +1834,7 @@ class TestStage5(BaseEnv):
                 self.assertEqual(out["reason_code"], "missing_user_choice", label)
 
     def test_stage5_choices_id_mapping_fails_closed(self):
-        g1 = self.prepare()
+        g1 = write_issue59_stage5_fixture(self.root, case=self)["gap_id"]
         raw_path = self.root / "id-mapping-raw.json"
         raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
         choices_path = self.root / "id-mapping-choice.json"
@@ -1326,6 +1854,7 @@ class TestStage5(BaseEnv):
                 out = parse(run_cli("stage5-plan", "--program-root", self.root,
                                     "--result", raw_path, "--choices", choices_path))
                 self.assertEqual(out["status"], "error", label)
+                self.assertEqual(out["reason_code"], "invalid_result_json", label)
 
     def test_stage5_choices_cannot_replace_the_verified_recipient(self):
         # Issue #43 freezes one interaction at this caller boundary:
@@ -1654,6 +2183,578 @@ class TestMigrate(BaseEnv):
         out = parse(run_cli("migrate-v3", "--apply", plan_path, "--program-root", self.root))
         self.assertEqual(out["status"], "ok")
         self.assertTrue(any(row["reason"] == "already_migrated" for row in out["skipped"]))
+
+
+ISSUE59_DEPENDENCY_VARIANTS = ("state", "verify", "clean", "overview-conflict")
+
+
+def issue59_write_json(program_root, name, payload):
+    path = Path(program_root) / name
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def issue59_write_results(program_root, name, email_ids, extra_rows=()):
+    gap_id = quote_id(ISSUE59_GAP_QUOTE)
+    rows = [issue59_result(gap_id, email_id=email_id,
+                           idea_id=ISSUE59_IDEAS[email_id]) for email_id in email_ids]
+    return issue59_write_json(program_root, name, rows + list(extra_rows))
+
+
+def issue59_write_choices(program_root, name, email_ids, extra_rows=()):
+    return issue59_write_json(
+        program_root, name,
+        [issue59_choices(email_id) for email_id in email_ids] + list(extra_rows))
+
+
+def issue59_dependency_variant(program_root, variant, case):
+    """Build T59-4 dependency shapes from scratch.
+
+    ``state`` corrupts only B's 套磁邮件状态.json; ``verify`` corrupts only B's
+    _contact_verify.json while its state still lists B's rendered files (the
+    shape the pre-fix aggregate path read first); ``clean`` leaves both valid
+    and seeds no program aggregate; ``overview-conflict`` leaves B valid and
+    seeds only a managed aggregate projection conflict. Each variant is built
+    in its own program root so every subcase changes one acceptance dimension.
+    """
+    program_root = Path(program_root)
+    b_dir = program_root / "教授研究" / "Y分野" / ISSUE59_OTHER_PROFESSOR
+    b_state = {"schema": 1, "kind": "email_state", "professor": ISSUE59_OTHER_PROFESSOR,
+               "emails": {ISSUE59_OTHER_EMAIL_ID: {
+                   "files": {"md": str(b_dir / "套磁邮件.md"),
+                             "txt": str(b_dir / "套磁邮件.txt")},
+                   "validation": {"result": "pass", "rounds": 1}}}}
+    fixture = write_issue59_stage5_fixture(program_root, [
+        {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
+        {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh",
+         "email_state": ISSUE59_MALFORMED_JSON if variant == "state" else b_state,
+         "verified": "malformed" if variant == "verify" else "fresh"}],
+        overview=("conflict" if variant == "overview-conflict"
+                  else None if variant == "clean" else "seed"), case=case)
+    if variant != "state":
+        for name in ("套磁邮件.md", "套磁邮件.txt"):
+            (b_dir / name).write_text("ISSUE59-B-RENDERED\n", encoding="utf-8")
+    return {"fixture": fixture,
+            "results": issue59_write_results(
+                program_root, "issue59-dependency-raw.json", [ISSUE59_EMAIL_ID]),
+            "choices": issue59_write_choices(
+                program_root, "issue59-dependency-choices.json", [ISSUE59_EMAIL_ID]),
+            "b_dir": b_dir,
+            "b_state": b_dir / contact_state.EMAIL_STATE,
+            "b_verify": b_dir / contact_state.VERIFY_FILE,
+            "overview": fixture["overview"]}
+
+
+class TestStage5TargetedEmailScope(BaseEnv):
+    """Issue #59: ``--email-id`` is a hard single-email execution scope.
+
+    Every case runs the public Stage-5 CLI against a program root whose
+    ``邮件输入.json`` mixes the one valid target with unrelated rows that are
+    malformed, escaped, stale or simply unusable. A targeted run must resolve
+    the requested id first and then behave as if nothing else in the pack
+    existed; batch mode keeps its existing all-email validation.
+    """
+
+    def setUp(self):
+        super().setUp()
+        env = contact_state.UPSTREAM_SCRIPT_ENV
+        saved = os.environ.get(env)
+
+        def restore():
+            if saved is None:
+                os.environ.pop(env, None)
+            else:
+                os.environ[env] = saved
+
+        self.addCleanup(restore)
+        # Hermetic default: no sibling/installed producer script answers, so an
+        # evidence case only works when the fixture installs its own stub.
+        os.environ[env] = str(self.root / "checker-not-installed.py")
+        # <program_root.parent>/issue59-outside backs every invalid-path
+        # control and never leaks into the shared temp directory.
+        self.outside_root = self.root.parent / "issue59-outside"
+        self.addCleanup(shutil.rmtree, self.outside_root, True)
+        self.gap_id = quote_id(ISSUE59_GAP_QUOTE)
+
+    # ---- deterministic input builders ------------------------------------
+
+    def outside(self, professor):
+        return self.outside_root / professor
+
+    def write_json(self, name, payload, root=None):
+        return issue59_write_json(root or self.root, name, payload)
+
+    def write_results(self, name, email_ids, extra_rows=()):
+        return issue59_write_results(self.root, name, email_ids, extra_rows)
+
+    def write_choices(self, name, email_ids, extra_rows=()):
+        return issue59_write_choices(self.root, name, email_ids, extra_rows)
+
+    def result_row(self, email_id):
+        return issue59_result(self.gap_id, email_id=email_id,
+                              idea_id=ISSUE59_IDEAS[email_id])
+
+    def write_pack(self, rows):
+        """Replace 邮件输入.json so exactly one unrelated defect is visible."""
+        path = self.root / "教授研究" / contact_state.EMAIL_PACK
+        pack = json.loads(path.read_text(encoding="utf-8"))
+        pack["emails"] = list(rows)
+        path.write_text(json.dumps(pack, ensure_ascii=False, indent=1), encoding="utf-8")
+        return pack
+
+    def defective_rows(self, fixture, defect):
+        """The fixture's own pack rows plus the named defect and nothing else."""
+        rows = copy.deepcopy(fixture["rows"])
+        if defect == "not-a-dict":
+            return rows + ["not-a-dict"]
+        if defect == "duplicate-unrelated-email-id":
+            return rows + [copy.deepcopy(rows[-1])]
+        target = rows[0] if defect.startswith("selected-") else rows[-1]
+        if defect in ("outside-root-professor-dir", "selected-outside-root"):
+            target["professor_dir"] = str(self.outside(target["professor"]))
+        elif defect == "non-string-professor-dir":
+            target["professor_dir"] = 42
+        elif defect == "missing-email-id":
+            del target["email_id"]
+        else:
+            raise AssertionError(f"unknown defect: {defect}")
+        return rows
+
+    def humanized_map(self, name, drafts):
+        mapping = {}
+        for row in drafts:
+            body = self.root / f"humanized-{row['output_id'].replace('::', '-')}.txt"
+            body.write_text(row["draft"], encoding="utf-8")
+            mapping[row["output_id"]] = str(body)
+        return self.write_json(name, mapping)
+
+    def plan(self, *arguments, root=None):
+        return parse(run_cli("stage5-plan", "--program-root", root or self.root,
+                             *arguments))
+
+    def finalize(self, *arguments, root=None):
+        return parse(run_cli("stage5-finalize", "--program-root", root or self.root,
+                             *arguments))
+
+    def humanized(self, name, results, choices, root=None):
+        """The render input finalize needs: A's own plan draft, unedited."""
+        draft = self.plan("--result", results, "--choices", choices,
+                          "--email-id", ISSUE59_EMAIL_ID, root=root)
+        self.assertEqual(draft["status"], "ok", draft)
+        path = (root or self.root) / f"{name}-humanized.txt"
+        path.write_text(draft["drafts"][0]["draft"], encoding="utf-8")
+        return path
+
+    def snapshot(self, *paths):
+        return {str(path): Path(path).read_bytes() for path in paths
+                if path is not None and Path(path).exists()}
+
+    def stage5_artifact_snapshot(self, root=None):
+        """Capture only Stage-5 rendered/state artifacts for no-write oracles."""
+        program_root = Path(root or self.root)
+        research = program_root / "教授研究"
+        if not research.exists():
+            return {}
+        snapshot = {}
+        for path in research.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.name == contact_state.EMAIL_STATE or path.name.startswith("套磁邮件"):
+                snapshot[str(path.relative_to(program_root))] = path.read_bytes()
+        return snapshot
+
+    # ---- scope assertions -------------------------------------------------
+
+    def assert_plan_jobs_are_one_a(self, jobs):
+        self.assertEqual(jobs["status"], "ok", jobs)
+        self.assertEqual(jobs["emails"], [ISSUE59_EMAIL_ID])
+        self.assertEqual(jobs["verify"], {ISSUE59_PROFESSOR: "ok"})
+        self.assertEqual([job["job_id"] for job in jobs["jobs"]],
+                         [f"email:{ISSUE59_EMAIL_ID}"])
+
+    def assert_drafts_are_one_a(self, payload):
+        self.assertEqual(payload["status"], "ok", payload)
+        self.assertEqual([row["email_id"] for row in payload["drafts"]],
+                         [ISSUE59_EMAIL_ID])
+
+    def assert_output_is_one_a(self, payload):
+        self.assertEqual(payload["status"], "ok", payload)
+        self.assertEqual([(row["email_id"], row["output_id"]) for row in payload["emails"]],
+                         [(ISSUE59_EMAIL_ID, ISSUE59_EMAIL_ID)])
+
+    # ---- cases ------------------------------------------------------------
+
+    def test_issue59_t59_1_email_id_is_resolved_before_any_other_check(self):
+        fixture = write_issue59_stage5_fixture(self.root, [
+            {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
+            {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh"}], case=self)
+        results = self.write_results("issue59-1-raw.json", [ISSUE59_EMAIL_ID])
+        choices = self.write_choices("issue59-1-choices.json", [ISSUE59_EMAIL_ID])
+        humanized = self.humanized("issue59-1", results, choices)
+
+        # Defects that used to block both targeted surfaces, plus the two
+        # pack-wide ID defects that used to block finalize before selection.
+        both_surfaces = ("outside-root-professor-dir", "non-string-professor-dir",
+                         "not-a-dict")
+        for defect in both_surfaces + ("missing-email-id",
+                                       "duplicate-unrelated-email-id"):
+            self.write_pack(self.defective_rows(fixture, defect))
+            with self.subTest(defect=defect, surface="finalize"):
+                self.assert_output_is_one_a(self.finalize(
+                    "--result", results, "--choices", choices, "--humanized", humanized,
+                    "--email-id", ISSUE59_EMAIL_ID))
+            if defect not in both_surfaces:
+                continue
+            with self.subTest(defect=defect, surface="plan"):
+                self.assert_plan_jobs_are_one_a(
+                    self.plan("--email-id", ISSUE59_EMAIL_ID))
+
+        # Collision naming comes from identity metadata, so an unselected
+        # same-professor peer's path is never resolved. Derive the expected
+        # filename from the frozen naming contract rather than another product run.
+        peers = write_issue59_stage5_fixture(self.root, [
+            {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
+            {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID,
+             "evidence": "fresh"}], case=self)
+        peer_results = self.write_results("issue59-1-peer-raw.json", peers["email_ids"])
+        peer_choices = self.write_choices("issue59-1-peer-choices.json", peers["email_ids"])
+        peer_humanized = self.humanized(
+            "issue59-1-peer", peer_results, peer_choices)
+
+        email_hash = hashlib.sha256(
+            ISSUE59_EMAIL_ID.encode("utf-8")).hexdigest()[:8]
+        suffix = f"{ISSUE59_DIRECTION_ID}_{ISSUE59_IDEA_ID}_{email_hash}"
+        expected_md = f"套磁邮件_{suffix}.md"
+        expected_txt = f"套磁邮件_{suffix}.txt"
+
+        # Only A2's professor_dir escapes: A keeps the contract-defined
+        # collision-suffixed name without resolving A2's path.
+        self.write_pack(self.defective_rows(peers, "outside-root-professor-dir"))
+        escaped = self.finalize(
+            "--result", peer_results, "--choices", peer_choices,
+            "--humanized", peer_humanized, "--email-id", ISSUE59_EMAIL_ID)
+        self.assert_output_is_one_a(escaped)
+        self.assertEqual(Path(escaped["emails"][0]["md"]).name, expected_md)
+        self.assertEqual(Path(escaped["emails"][0]["txt"]).name, expected_txt)
+
+        # A malformed same-professor row without a usable email identity is not
+        # a real collision peer. This is a separate fresh root so the naming
+        # oracle is not affected by the valid-A2 collision subcase above.
+        malformed_root = self.root / "malformed-same-professor-peer"
+        malformed = write_issue59_stage5_fixture(malformed_root, [
+            {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
+            {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID,
+             "evidence": "fresh"}], case=self)
+        malformed_rows = copy.deepcopy(malformed["rows"])
+        del malformed_rows[1]["email_id"]
+        malformed_pack = malformed_root / "教授研究" / contact_state.EMAIL_PACK
+        pack = json.loads(malformed_pack.read_text(encoding="utf-8"))
+        pack["emails"] = malformed_rows
+        malformed_pack.write_text(
+            json.dumps(pack, ensure_ascii=False, indent=1), encoding="utf-8")
+        malformed_results = issue59_write_results(
+            malformed_root, "issue59-1-malformed-peer-raw.json", [ISSUE59_EMAIL_ID])
+        malformed_choices = issue59_write_choices(
+            malformed_root, "issue59-1-malformed-peer-choices.json", [ISSUE59_EMAIL_ID])
+        malformed_humanized = self.humanized(
+            "issue59-1-malformed-peer", malformed_results, malformed_choices,
+            root=malformed_root)
+        malformed_out = self.finalize(
+            "--result", malformed_results, "--choices", malformed_choices,
+            "--humanized", malformed_humanized, "--email-id", ISSUE59_EMAIL_ID,
+            root=malformed_root)
+        self.assert_output_is_one_a(malformed_out)
+        self.assertEqual(Path(malformed_out["emails"][0]["md"]).name, "套磁邮件.md")
+        self.assertEqual(Path(malformed_out["emails"][0]["txt"]).name, "套磁邮件.txt")
+
+        # Fail-closed controls on both command surfaces: the target must exist,
+        # must be unambiguous, and its own path must stay inside the program.
+        missing = "不存在的::DIR00001::DIR00001_1"
+        for control, rows, reason, expected_message in (
+                ("missing-target", copy.deepcopy(fixture["rows"]), "invalid_params",
+                 f"email_id not found: {missing}"),
+                ("duplicate-selected",
+                 [copy.deepcopy(fixture["rows"][0]) for _ in (0, 1)],
+                 "invalid_email_pack", None),
+                ("selected-outside-root",
+                 self.defective_rows(fixture, "selected-outside-root"),
+                 "invalid_professor_dir", None)):
+            self.write_pack(rows)
+            target = missing if control == "missing-target" else ISSUE59_EMAIL_ID
+            for surface in ("plan", "finalize"):
+                with self.subTest(control=control, surface=surface):
+                    before = self.stage5_artifact_snapshot()
+                    payload = (self.plan("--email-id", target) if surface == "plan"
+                               else self.finalize("--result", results, "--choices",
+                                                  choices, "--humanized", humanized,
+                                                  "--email-id", target))
+                    self.assertEqual(payload["status"], "error", payload)
+                    self.assertEqual(payload["reason_code"], reason, payload)
+                    if expected_message is not None:
+                        self.assertEqual(payload["message"], expected_message)
+                    self.assertEqual(
+                        self.stage5_artifact_snapshot(), before,
+                        f"{control}/{surface}: fail-closed validation mutated Stage-5 artifacts")
+                    if control == "selected-outside-root":
+                        self.assertFalse(
+                            self.outside_root.exists(),
+                            f"{surface}: invalid selected path created files outside program_root")
+
+    def test_issue59_t59_2_result_and_choices_rows_are_selected_scoped(self):
+        write_issue59_stage5_fixture(self.root, case=self)
+        results = self.write_results("issue59-2-raw.json", [ISSUE59_EMAIL_ID])
+        choices = self.write_choices("issue59-2-choices.json", [ISSUE59_EMAIL_ID])
+        humanized = self.humanized("issue59-2", results, choices)
+
+        unrelated = {
+            "non-dict-row": ["not-a-row"],
+            "missing-email-id": [{"idea": {"id": "DIR00001_1"}}],
+            "duplicate-unrelated-email-id": [
+                {"email_id": "幽灵 教授::DIR00007::DIR00007_1"},
+                {"email_id": "幽灵 教授::DIR00007::DIR00007_1"}],
+        }
+        for label, extra in unrelated.items():
+            for document in ("result", "choices"):
+                with self.subTest(defect=label, document=document):
+                    rows = ([self.result_row(ISSUE59_EMAIL_ID)] + extra
+                            if document == "result" else
+                            [issue59_choices(ISSUE59_EMAIL_ID)] + extra)
+                    noisy = self.write_json(f"issue59-2-{label}-{document}.json", rows)
+                    raw = noisy if document == "result" else results
+                    picked = noisy if document == "choices" else choices
+                    self.assert_drafts_are_one_a(self.plan(
+                        "--result", raw, "--choices", picked,
+                        "--email-id", ISSUE59_EMAIL_ID))
+                    self.assert_output_is_one_a(self.finalize(
+                        "--result", raw, "--choices", picked, "--humanized", humanized,
+                        "--email-id", ISSUE59_EMAIL_ID))
+
+        # The selected id's own occurrence is still validated exactly once
+        # in both scoped documents.
+        for label, email_ids in (("duplicated", [ISSUE59_EMAIL_ID, ISSUE59_EMAIL_ID]),
+                                 ("absent", [ISSUE59_OTHER_EMAIL_ID])):
+            for document in ("result", "choices"):
+                bad_result = (self.write_results(
+                    f"issue59-2-{label}-result.json", email_ids)
+                              if document == "result" else results)
+                bad_choices = (self.write_choices(
+                    f"issue59-2-{label}-choices.json", email_ids)
+                               if document == "choices" else choices)
+                for surface in ("plan", "finalize"):
+                    with self.subTest(selected=label, document=document,
+                                      surface=surface):
+                        before = self.stage5_artifact_snapshot()
+                        payload = (self.plan(
+                            "--result", bad_result, "--choices", bad_choices,
+                            "--email-id", ISSUE59_EMAIL_ID)
+                                   if surface == "plan" else self.finalize(
+                            "--result", bad_result, "--choices", bad_choices,
+                            "--humanized", humanized,
+                            "--email-id", ISSUE59_EMAIL_ID))
+                        self.assertEqual(payload["status"], "error", payload)
+                        self.assertEqual(payload["reason_code"], "invalid_result_json",
+                                         payload)
+                        self.assertEqual(
+                            self.stage5_artifact_snapshot(), before,
+                            f"{label}/{document}/{surface}: invalid selected row mutated "
+                            "Stage-5 artifacts")
+
+        # A selected row's own content contract is not relaxed by scoping on
+        # either deterministic Stage-5 command surface.
+        broken = self.write_json("issue59-2-broken.json",
+                                 [dict(self.result_row(ISSUE59_EMAIL_ID),
+                                       future_aspiration_ja="")])
+        for surface in ("plan", "finalize"):
+            with self.subTest(selected="invalid-raw", surface=surface):
+                before = self.stage5_artifact_snapshot()
+                payload = (self.plan(
+                    "--result", broken, "--choices", choices,
+                    "--email-id", ISSUE59_EMAIL_ID)
+                           if surface == "plan" else self.finalize(
+                    "--result", broken, "--choices", choices,
+                    "--humanized", humanized, "--email-id", ISSUE59_EMAIL_ID))
+                self.assertEqual(payload["status"], "error", payload)
+                self.assertEqual(payload["reason_code"], "invalid_result_json", payload)
+                self.assertEqual(
+                    self.stage5_artifact_snapshot(), before,
+                    f"invalid-raw/{surface}: invalid selected result mutated "
+                    "Stage-5 artifacts")
+
+        # Batch mode keeps load_id_map(exact=True) strict. The choices half of
+        # that boundary is owned by test_stage5_choices_id_mapping_fails_closed
+        # (T59-5), so only the raw-result loader control is added here.
+        batch_raw = self.write_json("issue59-2-batch-raw.json",
+                                    [self.result_row(ISSUE59_EMAIL_ID),
+                                     {"first_choice": True}])
+        batch = self.plan("--result", batch_raw, "--choices", choices)
+        self.assertEqual(batch["status"], "error", batch)
+        self.assertEqual(batch["reason_code"], "invalid_result_json", batch)
+
+    def test_issue59_t59_3_unrelated_stale_source_state_cannot_rebuild_for_a(self):
+        fixture = write_issue59_stage5_fixture(self.root, [
+            {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
+            {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh",
+             "source_state": "stale"}], case=self)
+        marker = fixture["checker_marker"]
+        results = self.write_results("issue59-3-raw.json", fixture["email_ids"])
+        choices = self.write_choices("issue59-3-choices.json", fixture["email_ids"])
+        humanized = self.humanized("issue59-3", results, choices)
+
+        jobs = self.plan("--email-id", ISSUE59_EMAIL_ID)
+        self.assert_plan_jobs_are_one_a(jobs)
+        self.assertEqual(set(jobs["contact_evidence"]), {ISSUE59_PROFESSOR})
+        self.assert_output_is_one_a(self.finalize(
+            "--result", results, "--choices", choices, "--humanized", humanized,
+            "--email-id", ISSUE59_EMAIL_ID))
+        self.assertFalse(marker.exists(),
+                         "B alone must not pull a targeted run into a rebuild")
+
+        # The owner report stays program-level: B is visible inside it.
+        report, error = contact_state.run_upstream_check_argv([
+            sys.executable, str(contact_state.upstream_check_script()),
+            str(self.root), "--check"])
+        self.assertIsNone(error)
+        self.assertEqual(report["result"], "stale")
+        self.assertEqual({entry["name"]: entry["result"] for entry in report["professors"]},
+                         {ISSUE59_PROFESSOR: "fresh", ISSUE59_OTHER_PROFESSOR: "stale"})
+
+    def test_issue59_t59_4_targeted_finalize_has_no_unrelated_dependency(self):
+        for variant in ISSUE59_DEPENDENCY_VARIANTS:
+            with self.subTest(variant=variant):
+                root = self.root / f"variant-{variant}"
+                prepared = issue59_dependency_variant(root, variant, self)
+                results, choices = prepared["results"], prepared["choices"]
+                b_dir = prepared["b_dir"]
+                overview = prepared["overview"]
+                b_outputs = (b_dir / "套磁邮件.md", b_dir / "套磁邮件.txt")
+                absent_b_outputs = tuple(path for path in b_outputs if not path.exists())
+                untouched = self.snapshot(
+                    prepared["b_state"], prepared["b_verify"], *b_outputs, overview)
+                aggregate = root / "教授研究" / contact_state.EMAIL_OVERVIEW
+                projection_registry = (
+                    root / "教授研究" / contact_state.PROJECTIONS_FILE)
+                projection_before = (
+                    projection_registry.read_bytes()
+                    if projection_registry.is_file() else None)
+                if variant == "clean":
+                    # A third independently built instance, not a finalized
+                    # fixture with its aggregate removed afterwards.
+                    self.assertFalse(aggregate.exists())
+                    self.assertFalse((root / "教授研究" / "X分野" / ISSUE59_PROFESSOR
+                                      / "套磁邮件.md").exists())
+                humanized = self.humanized(f"issue59-4-{variant}", results, choices,
+                                           root=root)
+                out = self.finalize("--result", results, "--choices", choices,
+                                    "--humanized", humanized,
+                                    "--email-id", ISSUE59_EMAIL_ID, root=root)
+                self.assertEqual(out["status"], "ok", out)
+                self.assertEqual([row["email_id"] for row in out["emails"]],
+                                 [ISSUE59_EMAIL_ID])
+                a_dir = root / "教授研究" / "X分野" / ISSUE59_PROFESSOR
+                self.assertTrue((a_dir / "套磁邮件.md").is_file())
+                self.assertTrue((a_dir / "套磁邮件.txt").is_file())
+                state_path = a_dir / contact_state.EMAIL_STATE
+                self.assertTrue(state_path.is_file())
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(list(state["emails"]), [ISSUE59_EMAIL_ID])
+                for name, payload in untouched.items():
+                    self.assertEqual(Path(name).read_bytes(), payload, name)
+                for path in absent_b_outputs:
+                    self.assertFalse(
+                        path.exists(),
+                        f"targeted finalize created unrelated output: {path}")
+                if overview is None:
+                    self.assertFalse(aggregate.exists())
+                    self.assertIsNone(out["overview_md"], out)
+                else:
+                    self.assertEqual(out["overview_md"], str(overview), out)
+                if projection_before is None:
+                    self.assertFalse(
+                        projection_registry.exists(),
+                        "targeted finalize created program projection metadata")
+                else:
+                    self.assertTrue(projection_registry.is_file())
+                    self.assertEqual(
+                        projection_registry.read_bytes(), projection_before,
+                        "targeted finalize mutated program projection metadata")
+
+    def test_issue59_t59_5_batch_mode_still_validates_every_pack_row(self):
+        fixture = write_issue59_stage5_fixture(self.root, [
+            {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
+            {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh"}], case=self)
+        both = fixture["email_ids"]
+        results = self.write_results("issue59-5-raw.json", both)
+        choices = self.write_choices("issue59-5-choices.json", both)
+        drafts = self.plan("--result", results, "--choices", choices)
+        self.assertEqual(drafts["status"], "ok", drafts)
+        humanized = self.humanized_map("issue59-5-map.json", drafts["drafts"])
+
+        # Only B's professor_dir escapes the program root.
+        self.write_pack(self.defective_rows(fixture, "outside-root-professor-dir"))
+        for surface in ("plan", "finalize"):
+            with self.subTest(surface=surface):
+                payload = (self.plan("--result", results, "--choices", choices)
+                           if surface == "plan" else self.finalize(
+                        "--result", results, "--choices", choices,
+                        "--humanized-map", humanized))
+                self.assertEqual(payload["status"], "error", payload)
+                self.assertEqual(payload["reason_code"], "invalid_professor_dir",
+                                 payload)
+                self.assertFalse(
+                    self.outside_root.exists(),
+                    f"{surface}: invalid B path created files outside program_root")
+        b_dir = fixture["dirs"][ISSUE59_OTHER_PROFESSOR]
+        for professor_dir in (self.prof_dir, b_dir):
+            self.assertFalse((professor_dir / "套磁邮件.md").exists())
+            self.assertFalse((professor_dir / "套磁邮件.txt").exists())
+            self.assertFalse((professor_dir / contact_state.EMAIL_STATE).exists())
+
+        # AC59-7 also freezes the batch aggregate compatibility path that this
+        # PR moved under the new targeted/batch branch.  Reuse the existing
+        # managed-conflict fixture rather than adding a new top-level case.
+        conflict_root = self.root / "batch-overview-conflict"
+        conflict_fixture = write_issue59_stage5_fixture(conflict_root, [
+            {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
+            {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh"}],
+            overview="conflict", case=self)
+        conflict_results = issue59_write_results(
+            conflict_root, "issue59-5-conflict-raw.json",
+            conflict_fixture["email_ids"])
+        conflict_choices = issue59_write_choices(
+            conflict_root, "issue59-5-conflict-choices.json",
+            conflict_fixture["email_ids"])
+        conflict_plan = self.plan(
+            "--result", conflict_results, "--choices", conflict_choices,
+            root=conflict_root)
+        self.assertEqual(conflict_plan["status"], "ok", conflict_plan)
+        humanized_map = {}
+        for row in conflict_plan["drafts"]:
+            rendered = conflict_root / (
+                "issue59-5-conflict-" +
+                row["output_id"].replace("::", "-") + ".txt")
+            rendered.write_text(row["draft"], encoding="utf-8")
+            humanized_map[row["output_id"]] = str(rendered)
+        conflict_humanized = issue59_write_json(
+            conflict_root, "issue59-5-conflict-humanized-map.json",
+            humanized_map)
+
+        conflict_overview = conflict_fixture["overview"]
+        projection_registry = (
+            conflict_root / "教授研究" / contact_state.PROJECTIONS_FILE)
+        overview_before = conflict_overview.read_bytes()
+        projection_before = projection_registry.read_bytes()
+        conflict = self.finalize(
+            "--result", conflict_results, "--choices", conflict_choices,
+            "--humanized-map", conflict_humanized, root=conflict_root)
+        self.assertEqual(conflict["status"], "needs_decision", conflict)
+        self.assertEqual(conflict["reason_code"], "manual_markdown_changed", conflict)
+        self.assertEqual(conflict["target"], str(conflict_overview), conflict)
+        self.assertEqual(conflict_overview.read_bytes(), overview_before)
+        self.assertEqual(projection_registry.read_bytes(), projection_before)
+        for professor_dir in conflict_fixture["dirs"].values():
+            self.assertFalse((professor_dir / "套磁邮件.md").exists())
+            self.assertFalse((professor_dir / "套磁邮件.txt").exists())
+            self.assertFalse((professor_dir / contact_state.EMAIL_STATE).exists())
 
 
 if __name__ == "__main__":

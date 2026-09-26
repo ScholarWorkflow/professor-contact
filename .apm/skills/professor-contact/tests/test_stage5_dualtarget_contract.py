@@ -358,6 +358,199 @@ class InstalledSharedSkillsLocatorTests(unittest.TestCase):
         self.assertEqual(error, "script_missing")
 
 
+# Issue #59 T59-7 reads the repository source in source-tree CI, but the
+# formal --target opencode clean consumer has no .apm/agents tree and must
+# therefore prove the contract from OpenCode's installed agent projection.
+ISSUE59_INSTALLED_GENERATOR = (
+    REPO_ROOT / ".opencode" / "agents" / "professor-contact-email-generator.md"
+)
+
+# The markers below express contract semantics, not a frozen prose sentence.
+# T59-7 deliberately evaluates the authoritative targeted-scope section as a
+# whole and then its clauses; subordinate bullets/paragraphs do not need to
+# repeat --email-id merely to satisfy the test.
+ISSUE59_T59_7_ITEMS = (
+    ("keep one selected email_id across the plan and immutable finalize calls",
+     (("stage5-plan",), ("stage5_immutable.py",), ("stage5-finalize",),
+      ("email_id", "--email-id"), ("same", "同一", "相同"))),
+    ("run the validator only for the selected rendered outputs",
+     (("professor-contact-email-validator",),
+      ("selected", "被选", "本次渲染"),
+      ("rendered", "render", "渲染", "output", "输出"),
+      ("only", "只", "仅"))),
+    ("write only the selected output ids before recording validation",
+     (("validation file", "validation 文件", "校验文件"),
+      ("selected", "被选", "本次渲染"),
+      ("output id", "output_id", "output ids", "输出的 id", "输出 id", "输出 ID"),
+      ("stage5-record-validation",),
+      ("only", "只", "仅"))),
+    ("keep stage5-record-validation on its existing row-scoped contract",
+     (("stage5-record-validation",), ("--professor-dir",), ("--validation-file",),
+      ("--email-id",),
+      ("gains no --email-id", "does not add --email-id", "do not add --email-id",
+       "no new --email-id", "must not receive --email-id", "without --email-id",
+       "不新增 --email-id", "不增加 --email-id", "不得新增 --email-id",
+       "不应新增 --email-id", "无需 --email-id"))),
+)
+
+
+def _issue59_document_body(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    return _frontmatter_and_body(path)[1] if text.startswith("---\n") else text
+
+
+def _issue59_targeted_scope_section(body: str) -> str:
+    """Return the smallest heading section carrying the targeted Stage-5 contract.
+
+    The acceptance contract is section-scoped.  A harmless Markdown refactor
+    must not fail merely because --email-id moved to the heading/intro while
+    the subordinate bullets retained the same semantics.
+    """
+    lines = body.splitlines()
+    candidates = []
+    for index, line in enumerate(lines):
+        heading = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if not heading:
+            continue
+        level = len(heading.group(1))
+        end = index + 1
+        while end < len(lines):
+            next_heading = re.match(r"^(#{1,6})\s+(.+)$", lines[end])
+            if next_heading and len(next_heading.group(1)) <= level:
+                break
+            end += 1
+        section = "\n".join(lines[index:end]).strip()
+        if ("--email-id" in section and
+                "stage5-plan" in section and "stage5-finalize" in section and
+                "professor-contact-email-validator" in section and
+                "stage5-record-validation" in section):
+            candidates.append(section)
+    return min(candidates, key=len) if candidates else ""
+
+
+def _issue59_contract_units(section: str) -> list:
+    """Split one contract section into semantic clauses without freezing layout."""
+    units, current = [], []
+    for line in section.splitlines() + [""]:
+        starts = not line.strip() or re.match(r"(?:[-*]|\d+\.)\s", line)
+        if starts:
+            block = "\n".join(current).strip()
+            if block:
+                units.append(block)
+            current = [line] if line.strip() else []
+        else:
+            current.append(line)
+    return units
+
+
+def _issue59_semantic_text(text: str) -> str:
+    """Normalize Markdown decoration without changing the documented semantics."""
+    plain = text.replace("`", "").replace("*", "")
+    return " ".join(plain.split()).lower()
+
+
+def _issue59_first_token_index(text: str, tokens) -> int:
+    """Locate a semantic marker without freezing its exact surrounding prose."""
+    lowered = _issue59_semantic_text(text)
+    positions = [lowered.find(token.lower()) for token in tokens]
+    return min(position for position in positions if position >= 0)
+
+
+def _issue59_negates_scope_claim(unit: str, item: str) -> bool:
+    """Do not count a clause that contains the required words in a denial."""
+    semantic = _issue59_semantic_text(unit)
+    if item.startswith("keep one selected email_id"):
+        return bool(re.search(
+            r"\b(?:do not|does not|never)\s+(?:pass|keep|use|carry)\b"
+            r".*\bsame\b", semantic))
+    if item.startswith(("run the validator only", "write only the selected")):
+        return bool(re.search(r"\bnot\s+only\b|不只|不仅|不僅|并非只|並非只", semantic))
+    return False
+
+
+def _issue59_conflicting_scope_instructions(section: str) -> list[str]:
+    """Reject explicit all-email instructions in the targeted caller section.
+
+    A positive clause elsewhere in the section cannot cancel an opposite
+    instruction to the caller. Split clauses so the documented batch behavior
+    does not count as a targeted-scope conflict.
+    """
+    conflicts = []
+    for clause in re.split(r"[。；\n]|(?<=[.!?])\s+(?=[A-Z])", section):
+        semantic = _issue59_semantic_text(clause)
+        if not semantic or (
+                any(word in semantic for word in ("batch", "批量"))
+                and not any(word in semantic for word in ("targeted", "定向"))):
+            continue
+        # An explicit prohibition of all-email processing supports the scope
+        # contract; it is not a competing instruction to process all emails.
+        if re.search(r"\b(?:do not|don't|never|must not|should not)\b|"
+                     r"不要|不得|不应|不能|绝不|禁止", semantic):
+            continue
+        all_emails = any(phrase in semantic for phrase in (
+            "all emails", "every email", "所有邮件", "全部邮件"))
+        all_outputs = any(phrase in semantic for phrase in (
+            "all output id", "every output id", "所有输出 id", "全部输出 id",
+            "所有输出的 id", "全部输出的 id"))
+        if (("professor-contact-email-validator" in semantic and all_emails)
+                or (any(name in semantic for name in (
+                    "validation file", "validation 文件", "校验文件"))
+                    and all_outputs)):
+            conflicts.append(clause.strip())
+    return conflicts
+
+
+class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
+    """T59-7: current Stage-5 caller docs keep selected-output scope."""
+
+    def setUp(self):
+        self.generator = GENERATOR if GENERATOR.is_file() else ISSUE59_INSTALLED_GENERATOR
+        self.documents = {
+            "generator": self.generator,
+            "SKILL.md": SKILL_PATH,
+            "workflow-reference": SKILL_DIR / "docs" / "workflow-reference.md",
+        }
+
+    def test_issue59_t59_7_targeted_scope_documents_hold_selected_output_scope(self):
+        self.assertTrue(
+            self.generator.is_file(),
+            f"generator document missing at required path: {self.generator}")
+        for label, path in self.documents.items():
+            with self.subTest(document=label):
+                self.assertTrue(path.is_file(), f"{label}: missing {path}")
+                section = _issue59_targeted_scope_section(
+                    _issue59_document_body(path))
+                self.assertTrue(
+                    section,
+                    f"{label}: no authoritative --email-id Stage-5 scope section in {path}")
+                self.assertEqual(
+                    _issue59_conflicting_scope_instructions(section), [],
+                    f"{label}: conflicting all-email caller instruction in {path}")
+                units = _issue59_contract_units(section)
+                for item, token_groups in ISSUE59_T59_7_ITEMS:
+                    with self.subTest(document=label, item=item):
+                        matched = []
+                        for unit in units:
+                            semantic = _issue59_semantic_text(unit)
+                            if (all(any(token.lower() in semantic for token in group)
+                                    for group in token_groups)
+                                    and not _issue59_negates_scope_claim(unit, item)):
+                                matched.append(unit)
+                        self.assertTrue(
+                            matched,
+                            f"{label}: the targeted-scope section never states {item}")
+                        if item.startswith("write only the selected output ids"):
+                            self.assertTrue(
+                                any(
+                                    _issue59_first_token_index(unit, token_groups[0])
+                                    < _issue59_first_token_index(
+                                        unit, ("stage5-record-validation",))
+                                    for unit in matched
+                                ),
+                                f"{label}: selected validation-file ids must be "
+                                "documented before stage5-record-validation",
+                            )
+
 
 if __name__ == "__main__":
     unittest.main()

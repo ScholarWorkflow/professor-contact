@@ -107,6 +107,17 @@ The wrapper asks `contact_state.py stage5-plan` for the exact deterministic draf
 6. Run `professor-contact-email-validator` on both rendered first and follow-up `.md` files, delegating per the dual-target rules below. Validator failures still block/record exactly as in the reference contract.
 7. For any two professors using the same template version, all fixed template text outside explicit `{{...}}` placeholder substitutions must remain byte-identical.
 
+## Targeted single-email scope (Issue #59)
+
+`--email-id` is a **hard execution scope**, not a display filter: one valid email must be producible even when unrelated entries of the program-level `邮件输入.json` carry invalid or stale Stage-5 state.
+
+1. When Stage 5 was invoked with `--email-id`, pass **the same `email_id`** through every Stage-5 call of that run — `stage5-plan`, the `stage5_immutable.py stage5-finalize` wrapper, and any re-plan after a `needs_recheck`. Never restate the target by array position, professor name, or "first email", and never mix a targeted plan with a batch finalize.
+2. The runner resolves that identity **before** any `professor_dir`, contact-evidence, `_contact_verify.json`, `套磁邮件状态.json`, result, choices, template or write validation. A missing match is `invalid_params` / `email_id not found: <id>`; an id occurring more than once is `invalid_email_pack` (ambiguous pack — never pick one).
+3. Unrelated pack rows are noise: malformed, non-dict, missing-`email_id`, unknown-id and duplicate-unknown-id rows neither block nor get processed. The selected row keeps every existing fail-closed check (`validate_email_raw`, `require_user_choices`, `require_followup_choices`, `stage5_recipient_authority`), and its own duplicate/absence still fails.
+4. Only the selected professor's directory is path-validated, only the selected professor's source-state and frozen `contact_evidence` snapshot are certified, and only the selected professor's `_contact_verify.json` is read. Another professor's missing or stale verify cache can neither block nor be repaired by this run.
+5. Run `professor-contact-email-validator` **only for the selected rendered outputs**, and write the validation file with **only those selected output IDs**. Then call `stage5-record-validation` with that selected validation file: it keeps its existing `--professor-dir` + `--validation-file` contract and gains **no `--email-id` flag**, because it already records exactly the rows the caller supplies.
+6. A targeted finalize is that one email's transaction: it never rebuilds `教授研究/套磁邮件总览.md`, never re-opens unrelated state or verify caches, and never reports a program-wide `needs_decision` projection conflict. An existing aggregate stays byte-for-byte and `overview_md` returns its path; when none exists, `overview_md` is `null` — an incomplete one-row aggregate is never written. Batch mode (no `--email-id`) keeps its existing all-email validation, aggregate rebuild and result shape.
+
 ## Dual-target harness calling (Codex / OpenCode)
 
 Stage 5 runs on both install targets with identical business rules; only the harness calling surfaces differ. Never present one harness's tool syntax as the other's API, and never let the model's self-description ("I called the validator/humanizer") replace real delegation.

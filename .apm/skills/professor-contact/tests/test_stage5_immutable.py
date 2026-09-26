@@ -108,6 +108,40 @@ class TestStage5ImmutableTemplates(BaseEnv):
         self.assertIn("过稿: none", followup_md)
 
 
+class TestStage5ImmutableTargetedScope(BaseEnv):
+    """Issue #59 T59-6: the supported immutable finalize entry inherits the
+    runner's selected-email scope instead of adding a wrapper-only path."""
+
+    def immutable_finalize(self, root, results, choices):
+        return parse(run_wrapper(
+            "stage5-finalize", "--program-root", root, "--result", results,
+            "--choices", choices, "--email-id", helpers.ISSUE59_EMAIL_ID))
+
+    def test_issue59_t59_6_wrapper_finalize_keeps_selected_email_scope(self):
+        prepared = helpers.issue59_dependency_variant(self.root, "state", self)
+        overview = prepared["overview"]
+        a_dir = self.root / "教授研究" / "X分野" / helpers.ISSUE59_PROFESSOR
+        b_dir = prepared["b_dir"]
+        untouched = {
+            str(path): Path(path).read_bytes()
+            for path in (prepared["b_state"], prepared["b_verify"], overview)}
+        out = self.immutable_finalize(self.root, prepared["results"],
+                                      prepared["choices"])
+        self.assertEqual(out["status"], "ok", out)
+        self.assertEqual([(row["email_id"], row["output_id"])
+                          for row in out["emails"]],
+                         [(helpers.ISSUE59_EMAIL_ID, helpers.ISSUE59_EMAIL_ID)])
+        state = json.loads((a_dir / "套磁邮件状态.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(state["emails"]), [helpers.ISSUE59_EMAIL_ID])
+        self.assertFalse((b_dir / "套磁邮件.md").exists())
+        self.assertFalse((b_dir / "套磁邮件.txt").exists())
+        self.assertEqual(out["overview_md"], str(overview), out)
+        for name, payload in untouched.items():
+            self.assertEqual(Path(name).read_bytes(), payload, name)
+
+
+
+
 # The wrapper executes a temporary copy of the runner; the copy's __file__
 # lives in a scratch directory, so the installed-layout checker locator must
 # be resolved from the real runner's location and pinned for the child via
