@@ -468,6 +468,38 @@ def _issue59_negates_scope_claim(unit: str, item: str) -> bool:
     return False
 
 
+def _issue59_conflicting_scope_instructions(section: str) -> list[str]:
+    """Reject explicit all-email instructions in the targeted caller section.
+
+    A positive clause elsewhere in the section cannot cancel an opposite
+    instruction to the caller. Split clauses so the documented batch behavior
+    does not count as a targeted-scope conflict.
+    """
+    conflicts = []
+    for clause in re.split(r"[。；\n]|(?<=[.!?])\s+(?=[A-Z])", section):
+        semantic = _issue59_semantic_text(clause)
+        if not semantic or (
+                any(word in semantic for word in ("batch", "批量"))
+                and not any(word in semantic for word in ("targeted", "定向"))):
+            continue
+        # An explicit prohibition of all-email processing supports the scope
+        # contract; it is not a competing instruction to process all emails.
+        if re.search(r"\b(?:do not|don't|never|must not|should not)\b|"
+                     r"不要|不得|不应|不能|绝不|禁止", semantic):
+            continue
+        all_emails = any(phrase in semantic for phrase in (
+            "all emails", "every email", "所有邮件", "全部邮件"))
+        all_outputs = any(phrase in semantic for phrase in (
+            "all output id", "every output id", "所有输出 id", "全部输出 id",
+            "所有输出的 id", "全部输出的 id"))
+        if (("professor-contact-email-validator" in semantic and all_emails)
+                or (any(name in semantic for name in (
+                    "validation file", "validation 文件", "校验文件"))
+                    and all_outputs)):
+            conflicts.append(clause.strip())
+    return conflicts
+
+
 class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
     """T59-7: current Stage-5 caller docs keep selected-output scope."""
 
@@ -491,6 +523,9 @@ class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
                 self.assertTrue(
                     section,
                     f"{label}: no authoritative --email-id Stage-5 scope section in {path}")
+                self.assertEqual(
+                    _issue59_conflicting_scope_instructions(section), [],
+                    f"{label}: conflicting all-email caller instruction in {path}")
                 units = _issue59_contract_units(section)
                 for item, token_groups in ISSUE59_T59_7_ITEMS:
                     with self.subTest(document=label, item=item):
