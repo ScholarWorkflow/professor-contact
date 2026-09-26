@@ -2471,7 +2471,7 @@ class TestStage5TargetedEmailScope(BaseEnv):
         # must be unambiguous, and its own path must stay inside the program.
         missing = "不存在的::DIR00001::DIR00001_1"
         for control, rows, reason, expected_message in (
-                ("missing-target", None, "invalid_params",
+                ("missing-target", copy.deepcopy(fixture["rows"]), "invalid_params",
                  f"email_id not found: {missing}"),
                 ("duplicate-selected",
                  [copy.deepcopy(fixture["rows"][0]) for _ in (0, 1)],
@@ -2479,9 +2479,8 @@ class TestStage5TargetedEmailScope(BaseEnv):
                 ("selected-outside-root",
                  self.defective_rows(fixture, "selected-outside-root"),
                  "invalid_professor_dir", None)):
-            if rows is not None:
-                self.write_pack(rows)
-            target = missing if rows is None else ISSUE59_EMAIL_ID
+            self.write_pack(rows)
+            target = missing if control == "missing-target" else ISSUE59_EMAIL_ID
             for surface in ("plan", "finalize"):
                 with self.subTest(control=control, surface=surface):
                     before = self.stage5_artifact_snapshot()
