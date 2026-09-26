@@ -32,6 +32,7 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_APM_PAT_SCHOLARWORKFLOW: ${{ secrets.GITHUB_APM_PAT_SCHOLARWORKFLOW }}
           PRODUCER_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -49,9 +50,11 @@ jobs:
           printf '%s\n' "$PRODUCER_SHA" > "$OUTPUT_DIR/producer-sha.txt"
           printf '%s\n' "$CONSUMER_ROOT" > "$OUTPUT_DIR/consumer-path.txt"
           printf '%s\n' 'apm install "https://github.com/ScholarWorkflow/professor-contact.git#$PRODUCER_SHA" --target opencode --trust-transitive-mcp' > "$OUTPUT_DIR/install-command.txt"
-
-          # Authentication setup only. The installed source remains the frozen remote URL.
-          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          if [ -n "${GITHUB_APM_PAT_SCHOLARWORKFLOW:-}" ]; then
+            printf '%s\n' 'GITHUB_APM_PAT_SCHOLARWORKFLOW: configured' > "$OUTPUT_DIR/auth-provenance.txt"
+          else
+            printf '%s\n' 'GITHUB_APM_PAT_SCHOLARWORKFLOW: not-configured' > "$OUTPUT_DIR/auth-provenance.txt"
+          fi
 
           cd "$CONSUMER_ROOT"
           git init -q
