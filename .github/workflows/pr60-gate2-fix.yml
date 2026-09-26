@@ -1,0 +1,55 @@
+name: PR60 Gate2 one-shot fix
+
+on:
+  push:
+    branches: [codex/issue-59-stage5-email-scope]
+    paths:
+      - .github/workflows/pr60-gate2-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/issue-59-stage5-email-scope
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Isolate the missing-target control
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.apm/skills/professor-contact/tests/test_contact_state.py')
+          text = path.read_text(encoding='utf-8')
+          old_tuple = '''                ("missing-target", None, "invalid_params",
+                       f"email_id not found: {missing}"),'''
+          new_tuple = '''                ("missing-target", copy.deepcopy(fixture["rows"]), "invalid_params",
+                       f"email_id not found: {missing}"),'''
+          old_scope = '''            if rows is not None:
+                self.write_pack(rows)
+            target = missing if rows is None else ISSUE59_EMAIL_ID'''
+          new_scope = '''            self.write_pack(rows)
+            target = missing if control == "missing-target" else ISSUE59_EMAIL_ID'''
+          if text.count(old_tuple) != 1:
+              raise SystemExit(f'expected one missing-target tuple, found {text.count(old_tuple)}')
+          if text.count(old_scope) != 1:
+              raise SystemExit(f'expected one stale-pack scope block, found {text.count(old_scope)}')
+          text = text.replace(old_tuple, new_tuple, 1).replace(old_scope, new_scope, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Run focused T59-1 proof
+        run: python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_contact_state.py' -k issue59_t59_1 -v
+      - name: Commit Gate 2 correction
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .apm/skills/professor-contact/tests/test_contact_state.py
+          git diff --cached --check
+          git commit -m "test: isolate issue59 missing-target control"
+          git push origin HEAD:codex/issue-59-stage5-email-scope
