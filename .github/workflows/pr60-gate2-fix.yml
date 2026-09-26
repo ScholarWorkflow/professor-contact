@@ -27,19 +27,34 @@ jobs:
 
           path = Path('.apm/skills/professor-contact/tests/test_contact_state.py')
           text = path.read_text(encoding='utf-8')
-          old_tuple = '                ("missing-target", None, "invalid_params",'
-          new_tuple = '                ("missing-target", copy.deepcopy(fixture["rows"]), "invalid_params",'
-          old_scope = '''            if rows is not None:
-                self.write_pack(rows)
-            target = missing if rows is None else ISSUE59_EMAIL_ID'''
-          new_scope = '''            self.write_pack(rows)
-            target = missing if control == "missing-target" else ISSUE59_EMAIL_ID'''
-          if text.count(old_tuple) != 1:
-              raise SystemExit(f'expected one missing-target tuple line, found {text.count(old_tuple)}')
-          if text.count(old_scope) != 1:
-              raise SystemExit(f'expected one stale-pack scope block, found {text.count(old_scope)}')
-          text = text.replace(old_tuple, new_tuple, 1).replace(old_scope, new_scope, 1)
-          path.write_text(text, encoding='utf-8')
+          lines = text.splitlines()
+          tuple_hits = []
+          scope_hits = []
+          for index, line in enumerate(lines):
+              if line.strip() == '("missing-target", None, "invalid_params",':
+                  tuple_hits.append(index)
+              if (line.strip() == 'if rows is not None:' and index + 2 < len(lines)
+                      and lines[index + 1].strip() == 'self.write_pack(rows)'
+                      and lines[index + 2].strip()
+                      == 'target = missing if rows is None else ISSUE59_EMAIL_ID'):
+                  scope_hits.append(index)
+          if len(tuple_hits) != 1:
+              raise SystemExit(f'expected one missing-target tuple line, found {len(tuple_hits)}')
+          if len(scope_hits) != 1:
+              raise SystemExit(f'expected one stale-pack scope block, found {len(scope_hits)}')
+
+          tuple_index = tuple_hits[0]
+          tuple_indent = lines[tuple_index][:len(lines[tuple_index]) - len(lines[tuple_index].lstrip())]
+          lines[tuple_index] = (
+              tuple_indent + '("missing-target", copy.deepcopy(fixture["rows"]), "invalid_params",')
+
+          scope_index = scope_hits[0]
+          scope_indent = lines[scope_index][:len(lines[scope_index]) - len(lines[scope_index].lstrip())]
+          lines[scope_index:scope_index + 3] = [
+              scope_indent + 'self.write_pack(rows)',
+              scope_indent + 'target = missing if control == "missing-target" else ISSUE59_EMAIL_ID',
+          ]
+          path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
           PY
       - name: Run focused T59-1 proof
         run: python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_contact_state.py' -k issue59_t59_1 -v
