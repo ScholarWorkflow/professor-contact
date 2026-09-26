@@ -15,6 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Install frozen Recipe tooling
         shell: bash
         run: |
@@ -26,6 +27,7 @@ jobs:
           python3 --version
           apm --version
           yq --version
+
       - name: Run frozen Issue 59 Gate 3 Recipe
         shell: bash
         env:
@@ -41,12 +43,14 @@ jobs:
           OUTPUT_DIR="$RUN_ROOT/output"
           CONSUMER_ROOT="$RUN_ROOT/consumer"
           mkdir -p "$CONFIG_DIR" "$OUTPUT_DIR" "$CONSUMER_ROOT"
+          trap 'mkdir -p /tmp/pr60-gate3-evidence; cp -a "$OUTPUT_DIR/." /tmp/pr60-gate3-evidence/ 2>/dev/null || true' EXIT
+
           printf '%s\n' "$RUN_ROOT" > "$OUTPUT_DIR/run-root.txt"
           printf '%s\n' "$PRODUCER_SHA" > "$OUTPUT_DIR/producer-sha.txt"
           printf '%s\n' "$CONSUMER_ROOT" > "$OUTPUT_DIR/consumer-path.txt"
           printf '%s\n' 'apm install "https://github.com/ScholarWorkflow/professor-contact.git#$PRODUCER_SHA" --target opencode --trust-transitive-mcp' > "$OUTPUT_DIR/install-command.txt"
 
-          # Authentication setup only; the recorded APM source remains the frozen remote URL.
+          # Authentication setup only. The installed source remains the frozen remote URL.
           git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
           cd "$CONSUMER_ROOT"
@@ -121,6 +125,27 @@ jobs:
           PY
           }
 
+          run_focused() {
+            local pattern="$1"
+            local rc exec_rc
+            set +e
+            python3 -m unittest discover \
+              -s "$SKILL_ROOT/tests" \
+              -p 'test_*.py' \
+              -k "$pattern" -v \
+              2>&1 | tee "$OUTPUT_DIR/$pattern.log"
+            rc=${PIPESTATUS[0]}
+            set -e
+            printf '%s\n' "$rc" > "$OUTPUT_DIR/$pattern.status.txt"
+            set +e
+            check_one_unittest_execution "$OUTPUT_DIR/$pattern.log"
+            exec_rc=$?
+            set -e
+            printf '%s\n' "$exec_rc" > "$OUTPUT_DIR/$pattern.execution-proof.status.txt"
+            if [ "$rc" -ne 0 ] || [ "$exec_rc" -ne 0 ]; then return 1; fi
+            return 0
+          }
+
           snapshot_issue59_consumer "$OUTPUT_DIR/consumer-tree-before.sha256"
 
           ISSUE59_CASES="1 2 3 4 5 6 7"
@@ -133,42 +158,13 @@ jobs:
           set -o pipefail
           ISSUE59_RC=0
           for N in $ISSUE59_CASES; do
-            PATTERN="issue59_t59_$N"
-            set +e
-            python3 -m unittest discover \
-              -s "$SKILL_ROOT/tests" \
-              -p 'test_*.py' \
-              -k "$PATTERN" -v \
-              2>&1 | tee "$OUTPUT_DIR/$PATTERN.log"
-            RC=${PIPESTATUS[0]}
-            set -e
-            printf '%s\n' "$RC" > "$OUTPUT_DIR/$PATTERN.status.txt"
-            set +e
-            check_one_unittest_execution "$OUTPUT_DIR/$PATTERN.log"
-            EXEC_RC=$?
-            set -e
-            printf '%s\n' "$EXEC_RC" > "$OUTPUT_DIR/$PATTERN.execution-proof.status.txt"
-            if [ "$RC" -ne 0 ] || [ "$EXEC_RC" -ne 0 ]; then ISSUE59_RC=1; fi
+            run_focused "issue59_t59_$N" || ISSUE59_RC=1
           done
           printf '%s\n' "$ISSUE59_RC" > "$OUTPUT_DIR/issue59-status.txt"
 
           REUSED_RC=0
           for PATTERN in $REUSED_PATTERNS; do
-            set +e
-            python3 -m unittest discover \
-              -s "$SKILL_ROOT/tests" \
-              -p 'test_*.py' \
-              -k "$PATTERN" -v \
-              2>&1 | tee "$OUTPUT_DIR/$PATTERN.log"
-            RC=${PIPESTATUS[0]}
-            set -e
-            printf '%s\n' "$RC" > "$OUTPUT_DIR/$PATTERN.status.txt"
-            set +e
-            check_one_unittest_execution "$OUTPUT_DIR/$PATTERN.log"
-            EXEC_RC=$?
-            set -e
-            printf '%s\n' "$EXEC_RC" > "$OUTPUT_DIR/$PATTERN.execution-proof.status.txt"
-            if [ "$RC" -ne 0 ] || [ "$EXEC_RC" -ne 0 ]; then REUSED_RC=1; fi
+            run_focused "$PATTERN" || REUSED_RC=1
           done
           printf '%s\n' "$REUSED_RC" > "$OUTPUT_DIR/reused-status.txt"
 
@@ -178,21 +174,7 @@ jobs:
               test_06_email_pack_exact_join_only|test_10_email_pack_self_contained) ;;
               *) echo "unfrozen handoff pattern: $PATTERN" >&2; exit 2 ;;
             esac
-            set +e
-            python3 -m unittest discover \
-              -s "$SKILL_ROOT/tests" \
-              -p 'test_*.py' \
-              -k "$PATTERN" -v \
-              2>&1 | tee "$OUTPUT_DIR/$PATTERN.log"
-            RC=${PIPESTATUS[0]}
-            set -e
-            printf '%s\n' "$RC" > "$OUTPUT_DIR/$PATTERN.status.txt"
-            set +e
-            check_one_unittest_execution "$OUTPUT_DIR/$PATTERN.log"
-            EXEC_RC=$?
-            set -e
-            printf '%s\n' "$EXEC_RC" > "$OUTPUT_DIR/$PATTERN.execution-proof.status.txt"
-            if [ "$RC" -ne 0 ] || [ "$EXEC_RC" -ne 0 ]; then HANDOFF_RC=1; fi
+            run_focused "$PATTERN" || HANDOFF_RC=1
           done
           printf '%s\n' "$HANDOFF_RC" > "$OUTPUT_DIR/handoff-status.txt"
 
@@ -246,6 +228,43 @@ jobs:
           import sys
           from pathlib import Path
 
+          case_path = Path(sys.argv[1])
+          supporting_path = Path(sys.argv[2])
+          producer_sha = sys.argv[3]
           allowed = {'PASS — executed_on_current_sha', 'PASS — reused_from_prior_sha', 'FAIL', 'BLOCKED', 'NOT TESTED'}
-          case_path, supporting_path, sha = map(Path, sys.argv[1:3]) + (None,)
+
+          def rows(path):
+              with path.open(encoding='utf-8', newline='') as fh:
+                  return list(csv.DictReader(fh, delimiter='\t'))
+
+          cases = rows(case_path)
+          assert {r['case_id'] for r in cases} == {f'T59-{n}' for n in range(1, 8)}
+          assert len(cases) == 7
+          support = rows(supporting_path)
+          assert {r['proof_id'] for r in support} == {
+              'R59-choices-mapping', 'R59-batch-precommit', 'R59-multi-email-shared-state',
+              'H06-stage4-exact-join', 'H10-stage4-self-contained'
+          }
+          assert len(support) == 5
+          for row in cases + support:
+              assert row['verdict'] in allowed
+              assert row['verdict'] == 'PASS — executed_on_current_sha'
+              assert row['source_sha'] == producer_sha
+              assert row['reused_pass'] == 'no'
+              assert row['revalidation_reason'] == 'executed'
+              assert row['impact_analysis'] == 'N/A'
+              assert row['evidence_files']
           PY
+
+          cp -a "$OUTPUT_DIR/." /tmp/pr60-gate3-evidence/
+          if [ "$ISSUE59_RC" -ne 0 ] || [ "$REUSED_RC" -ne 0 ] || [ "$HANDOFF_RC" -ne 0 ] || [ "$TREE_RC" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Upload Gate 3 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr60-gate3-evidence-${{ github.sha }}
+          path: /tmp/pr60-gate3-evidence
+          if-no-files-found: warn
