@@ -456,6 +456,18 @@ def _issue59_first_token_index(text: str, tokens) -> int:
     return min(position for position in positions if position >= 0)
 
 
+def _issue59_negates_scope_claim(unit: str, item: str) -> bool:
+    """Do not count a clause that contains the required words in a denial."""
+    semantic = _issue59_semantic_text(unit)
+    if item.startswith("keep one selected email_id"):
+        return bool(re.search(
+            r"\b(?:do not|does not|never)\s+(?:pass|keep|use|carry)\b"
+            r".*\bsame\b", semantic))
+    if item.startswith(("run the validator only", "write only the selected")):
+        return bool(re.search(r"\bnot\s+only\b|不只|不仅|不僅|并非只|並非只", semantic))
+    return False
+
+
 class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
     """T59-7: current Stage-5 caller docs keep selected-output scope."""
 
@@ -485,8 +497,9 @@ class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
                         matched = []
                         for unit in units:
                             semantic = _issue59_semantic_text(unit)
-                            if all(any(token.lower() in semantic for token in group)
-                                   for group in token_groups):
+                            if (all(any(token.lower() in semantic for token in group)
+                                    for group in token_groups)
+                                    and not _issue59_negates_scope_claim(unit, item)):
                                 matched.append(unit)
                         self.assertTrue(
                             matched,
