@@ -27,17 +27,15 @@ jobs:
 
           path = Path('.apm/skills/professor-contact/tests/test_contact_state.py')
           text = path.read_text(encoding='utf-8')
-          old_tuple = '''                ("missing-target", None, "invalid_params",
-                       f"email_id not found: {missing}"),'''
-          new_tuple = '''                ("missing-target", copy.deepcopy(fixture["rows"]), "invalid_params",
-                       f"email_id not found: {missing}"),'''
+          old_tuple = '                ("missing-target", None, "invalid_params",'
+          new_tuple = '                ("missing-target", copy.deepcopy(fixture["rows"]), "invalid_params",'
           old_scope = '''            if rows is not None:
                 self.write_pack(rows)
             target = missing if rows is None else ISSUE59_EMAIL_ID'''
           new_scope = '''            self.write_pack(rows)
             target = missing if control == "missing-target" else ISSUE59_EMAIL_ID'''
           if text.count(old_tuple) != 1:
-              raise SystemExit(f'expected one missing-target tuple, found {text.count(old_tuple)}')
+              raise SystemExit(f'expected one missing-target tuple line, found {text.count(old_tuple)}')
           if text.count(old_scope) != 1:
               raise SystemExit(f'expected one stale-pack scope block, found {text.count(old_scope)}')
           text = text.replace(old_tuple, new_tuple, 1).replace(old_scope, new_scope, 1)
