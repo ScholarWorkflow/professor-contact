@@ -1712,6 +1712,7 @@ class TestStage5(BaseEnv):
             {"professor": ISSUE59_PROFESSOR, "idea_id": ISSUE59_PEER_IDEA_ID}],
             case=self)
         raw2["email_id"] = second_id
+        raw2["source_map"][-1]["source_ids"] = [f"idea:{ISSUE59_PEER_IDEA_ID}"]
         raw2["future_aspiration_ja"] = ""
         raw_path = self.root / "batch-raw.json"
         raw_path.write_text(json.dumps([raw1, raw2], ensure_ascii=False), encoding="utf-8")
