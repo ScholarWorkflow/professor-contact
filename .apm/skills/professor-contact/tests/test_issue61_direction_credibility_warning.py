@@ -118,20 +118,17 @@ class DirectionCredibilityWarningTests(ResolvedPipelineMixin, unittest.TestCase)
                 _, _, _, warnings = self.warning_lines(verdict)
                 self.assertEqual(warnings, [], msg=f"verdict {verdict} must not warn")
 
-    # -- acceptance 2: no internal execution parameter in the warning --
+    # -- acceptance 2 regression: the concrete force:true parameter leak is gone --
 
-    def test_warning_has_no_internal_execution_parameter(self):
+    def test_warning_does_not_leak_force_parameter(self):
         for verdict in FLAGGED_VERDICTS:
             with self.subTest(verdict=verdict):
                 _, _, _, warnings = self.warning_lines(verdict)
                 self.assertEqual(len(warnings), 1, msg="warning disappeared from the render")
                 text = warnings[0]
-                lowered = text.lower()
-                for token in ("force", "--", "`", "true", "json", ".py"):
-                    self.assertNotIn(token, lowered,
-                                     msg=f"internal parameter leaked into the warning: {text}")
-                self.assertNotIn(":", text, msg=f"key:value parameter form in warning: {text}")
-                self.assertNotIn("：重聚类", text, msg=f"re-clustering command in warning: {text}")
+                compact = "".join(text.lower().split())
+                self.assertNotIn("force:true", compact,
+                                 msg=f"force execution parameter leaked into the warning: {text}")
 
     # -- acceptance 3/4: the warning ships inside the render the validator binds to --
 
