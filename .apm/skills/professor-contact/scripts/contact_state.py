@@ -5804,7 +5804,7 @@ def render_candidates_md(professor: str, category: str, direction_entries: list,
             rendered = "；".join(f"【方向】{r.get('text', '').strip()}" for r in red_lines)
             lines.append(f"> 方向级共享红线（只在这里写一次）：{rendered}")
         if verdict in ("勉强", "疑似幻觉"):
-            lines.append("> ⚠️ 该方向归类存疑，建议对教授跑 force:true 重聚类后重新考虑；候选内容仍基于论文实际内容。")
+            lines.append("> ⚠️ 该方向的归类目前不够可靠。建议先重新整理这位教授的研究方向，再决定是否继续使用这个方向；下方候选仍只依据论文实际内容生成。")
         lines.append("")
         refined = entry.get("refined")
         if refined:
