@@ -432,9 +432,14 @@ def _run_json(script: Path, arguments: list[object]) -> dict:
     return payload
 
 
+def _stage0_target(root: Path) -> Path:
+    """The professor-local Stage-0 file this fixture's own ``select`` run writes."""
+    return root / "教授研究" / "X分野" / PROFESSOR / "套磁目标.json"
+
+
 def _run_stage0(root: Path, skill_dir: Path) -> dict:
     script = skill_dir / "scripts" / "contact_targets.py"
-    preview = root / "教授研究" / "X分野" / PROFESSOR / "方向预筛.json"
+    preview = _stage0_target(root).parent / "方向预筛.json"
     selection = {"direction_ids": [DIRECTION_ID], "notes": {DIRECTION_ID: FIXED_NOTE}}
     with tempfile.TemporaryDirectory(prefix="pc57-stage0-") as directory:
         selection_path = Path(directory) / "selection.json"
@@ -443,7 +448,7 @@ def _run_stage0(root: Path, skill_dir: Path) -> dict:
             "select", "--program-root", root, "--preview", preview,
             "--selection-file", selection_path,
         ])
-    target = root / "教授研究" / "套磁目标.json"
+    target = _stage0_target(root)
     if not target.is_file():
         raise SetupError(f"Stage 0 runner did not create {target}")
     return {"status": result.get("status"), "result": result, "target_file": str(target)}
@@ -451,11 +456,12 @@ def _run_stage0(root: Path, skill_dir: Path) -> dict:
 
 def _run_stage1(root: Path, skill_dir: Path) -> dict:
     script = skill_dir / "scripts" / "contact_stage1.py"
+    target = _stage0_target(root)
     built = _run_json(script, [
-        "build", "--program-root", root, "--professors", PROFESSOR,
+        "build", "--program-root", root, "--target-file", target,
     ])
     verified = _run_json(script, [
-        "verify", "--program-root", root, "--professors", PROFESSOR,
+        "verify", "--program-root", root, "--target-file", target,
     ])
     if built.get("status") != "ok" or verified.get("status") != "ok":
         raise SetupError("product Stage 1 runner did not produce a verified snapshot")
@@ -529,7 +535,7 @@ def prepare_stage2_fixture(*, program_root: Path, profile_root: Path,
 
     input_hashes = {
         "info.json": _sha256_file(root / "info.json"),
-        "教授研究/套磁目标.json": _sha256_file(root / "教授研究" / "套磁目标.json"),
+        f"教授研究/X分野/{PROFESSOR}/套磁目标.json": _sha256_file(_stage0_target(root)),
         "教授研究/套磁阶段1候选.json": _sha256_file(root / "教授研究" / "套磁阶段1候选.json"),
         f"教授研究/X分野/{PROFESSOR}/论文分析/{item_key}.pdf":
             _sha256_file(root / f"教授研究/X分野/{PROFESSOR}/论文分析/{item_key}.pdf"),

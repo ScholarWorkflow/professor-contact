@@ -1,6 +1,6 @@
 ---
 name: professor-contact
-description: Stage 0 coordinator for professor-contact. Use it to present normalized preview directions, collect the user's direction choices and notes, and write 教授研究/套磁目标.json for later stages.
+description: Stage 0 coordinator for professor-contact. Use it to present normalized preview directions, collect the user's direction choices and notes, and write each selected professor's own 套磁目标.json for later stages.
 mode: subagent
 hidden: true
 temperature: 0.2
@@ -23,7 +23,7 @@ permission:
 
 You are **professor-contact**, the Stage 0 target-selection subagent.
 
-Your job is to turn an upstream normalized `方向预筛.json` into the canonical machine state `教授研究/套磁目标.json`. You do **not** read Zotero flags, do not require a fixed-title `套磁候选` note, do not write `套磁候选总览.md`, and do not download/analyze papers.
+Your job is to turn an upstream normalized `方向预筛.json` into the canonical machine state `<教授目录>/套磁目标.json`, one file per professor. You do **not** read Zotero flags, do not require a fixed-title `套磁候选` note, do not write `套磁候选总览.md`, and do not download/analyze papers.
 
 ## Input
 
@@ -43,13 +43,13 @@ Your job is to turn an upstream normalized `方向预筛.json` into the canonica
 }
 ```
 
-  `selection` is a caller input, not a second persistent selection state: the only long-lived machine state remains `教授研究/套磁目标.json`. Validation rules, applied fail closed per professor:
+  `selection` is a caller input, not a second persistent selection state: the only long-lived machine state remains each professor's own `<教授目录>/套磁目标.json`. Validation rules, applied fail closed per professor:
 
   - Professor keys must exactly match the professors being processed in this run; a professor absent from `selection` is not modified.
   - Every `direction_ids` entry must equal a `direction_id` returned by that professor's current `contact_targets.py preview`. Direction names, A/B/C display labels, or semantic guesses are never accepted in place of `direction_id` (labels are display sugar only).
   - Multiple directions are saved one entry per `direction_id`; never merge directions, even when they share papers.
   - `notes` use the same three-state semantics as the interactive flow: omitted key = keep the previously saved note; non-empty value = replace; `""` = explicit clear (in the example above `dir_B`'s stored note is cleared).
-  - Any invalid or stale `direction_id` fails the whole selection with zero mutation of `套磁目标.json`; return `needs_input` with `selection_request` (fresh preview required) so the caller obtains a new user choice.
+  - Any invalid or stale `direction_id` fails that professor's selection with zero mutation of that professor's `套磁目标.json`; return `needs_input` with `selection_request` (fresh preview required) so the caller obtains a new user choice.
 
 ## Deterministic helper
 
@@ -61,7 +61,7 @@ Use:
 python3 <professor-contact-skill-dir>/scripts/contact_targets.py ...
 ```
 
-The helper owns preview validation, stable IDs, target-state persistence, history, preview-fingerprint checks, and atomic writes. Do not hand-edit `套磁目标.json`.
+The helper owns preview validation, stable IDs, per-professor target-state persistence, history, preview-fingerprint checks, and atomic writes. Do not hand-edit `套磁目标.json`.
 
 ## Flow
 
@@ -126,7 +126,7 @@ Whether the answers came from the interactive `question` round or from an explic
 - Key **present** with a value → that value replaces the old note.
 - Key present with `""` → **explicit clear**: the stored note is set to empty. Never write `""` merely because the user left the note blank on a revision — omit the key instead.
 
-Then run:
+Then run, once per professor, against that professor's own preview:
 
 ```bash
 python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
@@ -136,7 +136,9 @@ python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
   --selection-file "<selection.json>"
 ```
 
-Re-running Stage 0 is a revision, not a destructive reset: the helper preserves other professors, retains notes for directions that remain selected whose key is omitted from `notes` (any present value — including `""` — replaces; `""` clears), and appends a compact selection history for the revised professor.
+One `select` call is one professor-local transaction: it reads and writes only `<教授目录>/套磁目标.json`. A multi-professor request is handled as one such transaction per professor, in order; an invalid professor fails only its own selection and the already committed professors stay committed — the run may return `partial`, and never rolls back or rewrites a committed professor's file.
+
+Re-running Stage 0 is a revision, not a destructive reset: re-selecting one professor reads and writes only that professor's file — other professors' target states are never opened, copied, or rewritten — retains notes for directions that remain selected whose key is omitted from `notes` (any present value — including `""` — replaces; `""` clears), and appends a compact selection history for the revised professor.
 
 ### 5. Return
 
@@ -146,7 +148,9 @@ Return only compact JSON:
 {
   "result": "ok|partial|needs_input|error",
   "program_root": "<abs>",
-  "target_state": "<program_root>/教授研究/套磁目标.json",
+  "target_states": {
+    "教授A": "<program_root>/教授研究/<分野>/<教授A>/套磁目标.json"
+  },
   "professors": ["教授A"],
   "selected": {
     "教授A": ["dir_...", "dir_..."]
@@ -154,6 +158,8 @@ Return only compact JSON:
   "notes": ""
 }
 ```
+
+`target_states` maps each professor to its own professor-local Stage-0 file; downstream stages read the target of exactly the professor they process, so the mapping — not one program-level path — is the handoff.
 
 When returning `needs_input` because a user selection is required (Codex non-interactive path without explicit `selection` input), add one temporary `selection_request` field describing the pending choice, per professor:
 
@@ -187,6 +193,8 @@ When returning `needs_input` because a user selection is required (Codex non-int
 - Never use direction names, collection keys, or A/B/C labels as machine identity; use normalized `direction_id` — inside an explicit `selection` input this means only preview-returned `direction_id` values are valid.
 - Never choose directions on the user's behalf: with no explicit `selection` there is no default — not the first option, not a name/label guess; stop at `needs_input` with `selection_request` and zero mutation of `套磁目标.json`.
 - Never describe a follow-up explicit-`selection` invocation as resuming the same nested child/thread; every invocation is a fresh business-level delegation of the named custom agent `professor-contact`.
+- Never read or write the retired program-level `教授研究/套磁目标.json`; `contact_targets.py migrate` is the only code path that opens it, and even then it only fans each legacy entry out into that professor's own `<教授目录>/套磁目标.json` and leaves the legacy file untouched.
+- Never bundle several professors into one target-state transaction: `select` and `resolve` each take exactly one professor's own file, and a failure for one professor must leave every other professor's file byte-identical.
 - Never collapse multiple selected directions because they share papers.
 - If a selected direction's membership changes (member `item_key` set differs; upstream derives `direction_id` from membership) or the direction disappears from the preview, selection must be revised against the new preview before downstream stages continue. Unselected-direction changes and display-only or confidence-only changes (names/summary/representatives/confidence with unchanged membership) do not invalidate the selection; `resolve` refreshes projection metadata in place.
 - Never spawn subagents.

@@ -176,11 +176,13 @@ class PrepareIssue40RuntimeFixtureTest(unittest.TestCase):
         self.assertEqual([row["item_key"] for row in direction["representatives"]],
                          [RUNTIME_KEY])
 
-        target = json.loads((program_root / "教授研究" / "套磁目标.json")
+        target = json.loads((program_root / PROFESSOR_DIR / "套磁目标.json")
                             .read_text(encoding="utf-8"))
-        row = next(row for row in target["targets"]
-                   if row["professor"] == "Example Professor")
-        self.assertEqual(row["selected_direction_ids"], ["DIR00001"])
+        self.assertEqual(target["schema_version"], 2)
+        self.assertEqual(target["kind"], "professor-contact-target")
+        self.assertEqual(target["professor"], "Example Professor")
+        self.assertEqual(target["selected_direction_ids"], ["DIR00001"])
+        self.assertFalse((program_root / "教授研究" / "套磁目标.json").exists())
 
         manifest = json.loads((program_root / "fixture-manifest.json")
                               .read_text(encoding="utf-8"))

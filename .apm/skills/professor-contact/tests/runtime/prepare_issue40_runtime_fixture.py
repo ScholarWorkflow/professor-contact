@@ -38,7 +38,7 @@ HELPER_ID = "tests/runtime/prepare_issue40_runtime_fixture.py"
 SCHEMA_VERSION = 1
 FIXTURE_REPOSITORY = "skills-test-fixtures"
 FIXTURE_REVISION = "f03aea49d22ca22d5b885569a8d52706d50c8950"
-STAGE0_TARGET_RELATIVE = Path("教授研究/套磁目标.json")
+STAGE0_TARGET_RELATIVE = Path(f"教授研究/X分野/{builder.PROFESSOR}/套磁目标.json")
 PAPER_FILE_NAME = "canonical-paper.pdf"
 
 
@@ -222,15 +222,16 @@ def _record_stage0_selection(program_root: Path, script: Path) -> dict:
                            .read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise PrepareError(f"Stage 0 target unreadable after select: {exc}") from exc
-    targets = state.get("targets") if isinstance(state, dict) else None
-    row = next((row for row in targets or []
-                if isinstance(row, dict) and row.get("professor") == builder.PROFESSOR), None)
-    if row is None or row.get("selected_direction_ids") != [builder.DIRECTION_ID]:
+    if not isinstance(state, dict) or state.get("professor") != builder.PROFESSOR:
+        raise PrepareError(
+            "Stage 0 local target does not belong to the fixture professor: "
+            f"{json.dumps(state, ensure_ascii=False)[:200] if state else 'target missing'}")
+    if state.get("selected_direction_ids") != [builder.DIRECTION_ID]:
         raise PrepareError(
             "Stage 0 target does not record the deterministic selection: "
-            f"{json.dumps(row, ensure_ascii=False) if row else 'target missing'}")
+            f"{json.dumps(state.get('selected_direction_ids'), ensure_ascii=False)}")
     return {"runner": script, "selection": selection,
-            "selected_direction_ids": row["selected_direction_ids"],
+            "selected_direction_ids": state["selected_direction_ids"],
             "runner_sha256": _sha256_bytes(script.read_bytes())}
 
 

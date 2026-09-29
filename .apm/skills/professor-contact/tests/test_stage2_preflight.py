@@ -123,25 +123,27 @@ class PreflightBase(unittest.TestCase):
         self.facts_path.write_text(json.dumps(self.facts, ensure_ascii=False, indent=1),
                                    encoding="utf-8")
         self.target = {
-            "schema_version": 1, "kind": "professor-contact-targets",
-            "updated_at": "2026-01-01T00:00:00Z",
-            "targets": [{
-                "professor": PROFESSOR, "professor_dir": str(Path("教授研究") / "X分野" / PROFESSOR),
-                "preview_path": str(Path("教授研究") / "X分野" / PROFESSOR / "方向预筛.json"),
-                "preview_fingerprint": "pv-1", "preview_fingerprint_version": "v1",
-                "selected_direction_ids": ["DIR00001", "DIR00002"],
-                "directions": [
-                    {"direction_id": "DIR00001", "name_ja": "合成输入比较", "name_zh": "合成输入比较",
-                     "summary_zh": "比较合成输入",
-                     "members": [{"item_key": "AAAA1111", "preview_confidence": "high"},
-                                 {"item_key": "BBBB2222", "preview_confidence": "high"},
-                                 {"item_key": "CCCC3333", "preview_confidence": "low"}],
-                     "user_note": "我想比较两种合成输入的处理结果。"},
-                    {"direction_id": "DIR00002", "name_ja": "第二方向", "name_zh": "第二方向",
-                     "summary_zh": "第二条线索",
-                     "members": [{"item_key": "BBBB2222", "preview_confidence": "high"}],
-                     "user_note": "第二方向的用户笔记。"},
-                ]}]}
+            "schema_version": 2, "kind": "professor-contact-target",
+            "selected_at": "2026-01-01T00:00:00Z",
+            "professor": PROFESSOR, "professor_dir": str(Path("教授研究") / "X分野" / PROFESSOR),
+            "preview_path": str(Path("教授研究") / "X分野" / PROFESSOR / "方向预筛.json"),
+            "preview_fingerprint": "pv-1", "preview_fingerprint_version": "v1",
+            "selected_direction_ids": ["DIR00001", "DIR00002"],
+            "directions": [
+                {"direction_id": "DIR00001", "name_ja": "合成输入比较", "name_zh": "合成输入比较",
+                 "summary_zh": "比较合成输入",
+                 "members": [{"item_key": "AAAA1111", "preview_confidence": "high"},
+                             {"item_key": "BBBB2222", "preview_confidence": "high"},
+                             {"item_key": "CCCC3333", "preview_confidence": "low"}],
+                 "user_note": "我想比较两种合成输入的处理结果。"},
+                {"direction_id": "DIR00002", "name_ja": "第二方向", "name_zh": "第二方向",
+                 "summary_zh": "第二条线索",
+                 "members": [{"item_key": "BBBB2222", "preview_confidence": "high"}],
+                 "user_note": "第二方向的用户笔记。"},
+            ],
+            "selection_history": [],
+        }
+        self.target_file = self.prof_dir / "套磁目标.json"
         self._write_target()
         self.snapshot_entry = {
             "professor": PROFESSOR,
@@ -194,8 +196,8 @@ class PreflightBase(unittest.TestCase):
     # -- fixture writers ----------------------------------------------------
 
     def _write_target(self):
-        path = self.root / "教授研究" / "套磁目标.json"
-        path.write_text(json.dumps(self.target, ensure_ascii=False, indent=1), encoding="utf-8")
+        self.target_file.write_text(
+            json.dumps(self.target, ensure_ascii=False, indent=1), encoding="utf-8")
 
     def _write_snapshot(self):
         snapshot = {"schema_version": 1, "kind": "professor-contact-stage1",
@@ -278,7 +280,8 @@ class PreflightBase(unittest.TestCase):
             param_overrides.get("max_relevant_papers"))
         meta = contact_state.stage2_preflight_metadata(
             program_root=self.root, professor_dir=self.prof_dir,
-            target=contact_state.read_stage2_target(self.root, PROFESSOR),
+            target=contact_state.read_stage2_target(
+                self.target_file, self.root, PROFESSOR),
             snapshot_entry=contact_state.read_stage1_professor_entry(self.root, PROFESSOR),
             pack_directions=pack["directions"], params=params,
             current_year=current_year if current_year is not None else YEAR,
@@ -304,6 +307,7 @@ class PreflightBase(unittest.TestCase):
     def preflight(self, **overrides):
         args = argparse.Namespace(
             program_root=str(self.root), professor=PROFESSOR,
+            target_file=str(self.target_file),
             paper_analysis=overrides.get("paper_analysis", "relevant"),
             gap_scope=overrides.get("gap_scope", "selected_direction"),
             freshness_scope=overrides.get("freshness_scope", "shortlist"),
@@ -354,7 +358,7 @@ class TestPreflightDecision(PreflightBase):
 
     def test_c_target_note_change_invalidates_only_that_direction(self):
         self.build_accepted_state()
-        self.target["targets"][0]["directions"][0]["user_note"] = "改过之后的笔记。"
+        self.target["directions"][0]["user_note"] = "改过之后的笔记。"
         self._write_target()
         payload = self.preflight()
         self.assertEqual(payload["action"], "process")
@@ -366,8 +370,8 @@ class TestPreflightDecision(PreflightBase):
 
     def test_d_selection_add_invalidates_only_new_direction(self):
         self.build_accepted_state()
-        self.target["targets"][0]["selected_direction_ids"].append("DIR00003")
-        self.target["targets"][0]["directions"].append(
+        self.target["selected_direction_ids"].append("DIR00003")
+        self.target["directions"].append(
             {"direction_id": "DIR00003", "name_ja": "第三方向", "name_zh": "第三方向",
              "summary_zh": "第三条线索",
              "members": [{"item_key": "CCCC3333", "preview_confidence": "high"}],
@@ -414,7 +418,7 @@ class TestPreflightDecision(PreflightBase):
 
     def test_g_whole_preview_fingerprint_alone_does_not_invalidate(self):
         self.build_accepted_state()
-        self.target["targets"][0]["preview_fingerprint"] = "pv-2"
+        self.target["preview_fingerprint"] = "pv-2"
         self.snapshot_entry["preview_fingerprint"] = "pv-2"
         self._write_target()
         self._write_snapshot()
@@ -649,7 +653,17 @@ class TestPreflightGuardrails(PreflightBase):
                 self.preflight(**overrides)
 
     def test_missing_target_state_is_a_hard_error(self):
-        (self.root / "教授研究" / "套磁目标.json").unlink()
+        """S0-ISO-5: the retired program-level table is not a Stage 2 fallback."""
+        self.target_file.unlink()
+        program_table = self.root / "教授研究" / "套磁目标.json"
+        program_table.write_text(json.dumps(
+            {"schema_version": 2, "kind": "professor-contact-target",
+             **{key: value for key, value in self.target.items()
+                if key not in ("schema_version", "kind")}},
+            ensure_ascii=False), encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            self.preflight()
+        program_table.unlink()
         with self.assertRaises(SystemExit):
             self.preflight()
 
@@ -712,7 +726,7 @@ class TestFinalizePreflightWiring(PreflightBase):
         pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
         md_before = (self.prof_dir / "套磁候选分析.md").read_bytes()
         cache_before = (self.prof_dir / "论文分析" / "_freshness_cache.json").read_bytes()
-        self.target["targets"][0]["directions"][0]["user_note"] = "preflight 之后的修改。"
+        self.target["directions"][0]["user_note"] = "preflight 之后的修改。"
         self._write_target()
         out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
                             "--results", self.root / "results",
@@ -748,7 +762,7 @@ class TestFinalizePreflightWiring(PreflightBase):
         self.build_accepted_state()
         plan = self.save_preflight_file()
         pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
-        self.target["targets"][0]["selected_direction_ids"].pop()
+        self.target["selected_direction_ids"].pop()
         self._write_target()
         out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
                             "--results", self.root / "results",

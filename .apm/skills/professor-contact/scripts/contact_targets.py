@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Deterministic target-state helper for professor-contact Stage 0-2.
+"""Deterministic per-professor target-state helper for professor-contact Stage 0-2.
 
-Turns normalized professor direction previews into the canonical
-``教授研究/套磁目标.json`` machine state. Never opens Zotero, starts models,
-or performs network I/O.
+One professor owns exactly one authoritative Stage-0 file:
+``<professor_dir>/套磁目标.json`` (schema 2, one target object, no ``targets[]``).
+``select`` and ``resolve`` only ever touch that professor's own file and preview.
+The retired program-level table ``教授研究/套磁目标.json`` is read by ``migrate``
+only; it is never a runtime authority. Never opens Zotero, starts models, or
+performs network I/O.
 """
 
 from __future__ import annotations
@@ -18,11 +21,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
-KIND = "professor-contact-targets"
-TARGET_FILE = Path("教授研究") / "套磁目标.json"
+SCHEMA_VERSION = 2
+KIND = "professor-contact-target"
+RESEARCH_DIR = Path("教授研究")
+TARGET_FILE_NAME = "套磁目标.json"
+# Legacy program-level table: migration input only, never read by select/resolve.
+LEGACY_TARGET_FILE = RESEARCH_DIR / TARGET_FILE_NAME
 PREVIEW_NAME = "方向预筛.json"
 VALID_CONFIDENCE = {"high", "low"}
+LEGACY_SCHEMA_VERSION = 1
+LEGACY_KIND = "professor-contact-targets"
 
 
 def now_utc() -> str:
@@ -65,12 +73,17 @@ def _require_nonempty(value: Any, field: str) -> str:
 
 def _relative_under(path: Path, root: Path, field: str) -> str:
     resolved = path.resolve()
-    allowed = (root.resolve() / "教授研究").resolve()
+    allowed = (root.resolve() / RESEARCH_DIR).resolve()
     try:
         rel = resolved.relative_to(allowed)
     except ValueError as exc:
         raise ValueError(f"{field} must be under {allowed}") from exc
-    return str(Path("教授研究") / rel)
+    return str(RESEARCH_DIR / rel)
+
+
+def local_target_path(professor_dir: Path) -> Path:
+    """Authoritative Stage-0 file of the professor owning ``professor_dir``."""
+    return professor_dir / TARGET_FILE_NAME
 
 
 def validate_preview(preview_path: Path) -> dict[str, Any]:
@@ -196,16 +209,67 @@ def preview_options(preview_path: Path) -> dict[str, Any]:
     }
 
 
-def _load_state(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        return {"schema_version": SCHEMA_VERSION, "kind": KIND, "updated_at": None, "targets": []}
-    state = load_json(path)
+def _validate_selected_directions(target: dict[str, Any]) -> None:
+    _require_nonempty(target.get("professor"), "professor")
+    if "targets" in target:
+        raise ValueError("per-professor target state must not carry a targets[] envelope")
+    raw_ids = target.get("selected_direction_ids")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise ValueError("selected_direction_ids must be a non-empty array")
+    direction_ids = [_require_nonempty(value, "selected_direction_ids[]") for value in raw_ids]
+    if len(direction_ids) != len(set(direction_ids)):
+        raise ValueError("selected_direction_ids contains duplicates")
+
+    directions = target.get("directions")
+    if not isinstance(directions, list) or not directions:
+        raise ValueError("directions must be a non-empty array")
+    seen_ids: set[str] = set()
+    for direction in directions:
+        if not isinstance(direction, dict):
+            raise ValueError("target direction must be an object")
+        direction_id = _require_nonempty(direction.get("direction_id"), "directions[].direction_id")
+        if direction_id in seen_ids:
+            raise ValueError(f"duplicate direction_id: {direction_id}")
+        seen_ids.add(direction_id)
+        members = direction.get("members")
+        if not isinstance(members, list) or not members:
+            raise ValueError(f"{direction_id}.members must be a non-empty array")
+        for member in members:
+            if not isinstance(member, dict):
+                raise ValueError(f"{direction_id}.members entries must be objects")
+            _require_nonempty(member.get("item_key"), f"{direction_id}.member.item_key")
+        note = direction.get("user_note", "")
+        if not isinstance(note, str):
+            raise ValueError(f"{direction_id}.user_note must be a string")
+    unknown = sorted(set(direction_ids) - seen_ids)
+    if unknown:
+        raise ValueError(f"directions[] missing selected direction_id(s): {unknown}")
+
+
+def _validate_target_identity(target: dict[str, Any], target_path: Path, program_root: Path) -> None:
+    """Prove the file is the authoritative Stage-0 state of exactly its own professor."""
+    target_rel = _relative_under(target_path, program_root, "target_path")
+    if Path(target_rel).name != TARGET_FILE_NAME:
+        raise ValueError(f"target file must be named {TARGET_FILE_NAME}")
+    professor_dir = str(Path(target_rel).parent)
+    stored_dir = _require_nonempty(target.get("professor_dir"), "professor_dir")
+    if stored_dir != professor_dir:
+        raise ValueError(f"professor_dir {stored_dir} does not match the directory holding the target")
+    preview_rel = _require_nonempty(target.get("preview_path"), "preview_path")
+    if Path(preview_rel).name != PREVIEW_NAME:
+        raise ValueError(f"preview_path must name {PREVIEW_NAME}")
+    if str(Path(preview_rel).parent) != professor_dir:
+        raise ValueError(f"preview_path must resolve under the stored professor_dir: {preview_rel}")
+
+
+def _load_local_target(target_path: Path, program_root: Path) -> dict[str, Any]:
+    state = load_json(target_path)
     if not isinstance(state, dict):
         raise ValueError("target state root must be an object")
     if state.get("schema_version") != SCHEMA_VERSION or state.get("kind") != KIND:
         raise ValueError("unsupported target state schema")
-    if not isinstance(state.get("targets"), list):
-        raise ValueError("target state targets must be an array")
+    _validate_selected_directions(state)
+    _validate_target_identity(state, target_path, program_root)
     return state
 
 
@@ -246,11 +310,8 @@ def select_target(program_root: Path, preview_path: Path, selection: dict[str, A
     if unknown:
         raise ValueError(f"unknown direction_id(s): {unknown}")
 
-    state_path = program_root / TARGET_FILE
-    state = _load_state(state_path)
-    targets = list(state["targets"])
-    existing_index = next((i for i, target in enumerate(targets) if target.get("professor") == preview["professor"]), None)
-    existing = targets[existing_index] if existing_index is not None else None
+    state_path = local_target_path(preview_path.parent)
+    existing = _load_local_target(state_path, program_root) if state_path.is_file() else None
     existing_notes = {
         direction.get("direction_id"): direction.get("user_note") or ""
         for direction in (existing or {}).get("directions", [])
@@ -283,6 +344,8 @@ def select_target(program_root: Path, preview_path: Path, selection: dict[str, A
 
     timestamp = selected_at or now_utc()
     target = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": KIND,
         "professor": preview["professor"],
         "professor_dir": str(Path(preview_rel).parent),
         "preview_path": preview_rel,
@@ -295,14 +358,7 @@ def select_target(program_root: Path, preview_path: Path, selection: dict[str, A
         "selected_at": timestamp,
         "selection_history": history,
     }
-    if existing_index is None:
-        targets.append(target)
-    else:
-        targets[existing_index] = target
-    targets.sort(key=lambda item: (str(item.get("professor") or ""), str(item.get("professor_dir") or "")))
-    state["targets"] = targets
-    state["updated_at"] = timestamp
-    atomic_json(state_path, state)
+    atomic_json(state_path, target)
     return {
         "status": "ok",
         "state_path": str(state_path),
@@ -313,7 +369,7 @@ def select_target(program_root: Path, preview_path: Path, selection: dict[str, A
 
 
 def _member_keys(direction: dict[str, Any]) -> list[str]:
-    """Membership identity: sorted item_keys. Upstream derives direction_id from
+    """Membership identity: sorted itemKeys. Upstream derives direction_id from
     these, while member_fingerprint also hashes preview_confidence, so only the
     key set is material for target validity."""
     return sorted(
@@ -342,89 +398,209 @@ def _projection_differs(stored: dict[str, Any], current: dict[str, Any]) -> bool
     return any(stored.get(key) != value for key, value in expected.items())
 
 
-def resolve_targets(program_root: Path, professors: list[str] | None = None) -> dict[str, Any]:
-    program_root = program_root.resolve()
-    state_path = program_root / TARGET_FILE
-    if not state_path.is_file():
-        return {"status": "needs_input", "reason_code": "missing_target_state", "state_path": str(state_path), "targets": []}
-    state = _load_state(state_path)
-    requested = {name.strip() for name in (professors or []) if name.strip()}
-    targets = [deepcopy(target) for target in state["targets"] if not requested or target.get("professor") in requested]
-    if requested:
-        found = {target.get("professor") for target in targets}
-        missing = sorted(requested - found)
-        if missing:
-            return {"status": "needs_input", "reason_code": "professor_not_selected", "missing_professors": missing, "state_path": str(state_path), "targets": targets}
+def resolve_target(target_path: Path, program_root: Path, professors: list[str] | None = None) -> dict[str, Any]:
+    """Resolve one professor from its professor-local authoritative target file.
 
-    stale = []
-    refreshed = []
-    for target in targets:
+    Only that file and that preview are read; a projection refresh writes only
+    the same local file. The legacy program-level table is never consulted.
+    """
+    program_root = program_root.resolve()
+    target_path = target_path.resolve()
+    state_path = str(target_path)
+    if not target_path.is_file():
+        return {"status": "needs_input", "reason_code": "missing_target_state", "state_path": state_path, "targets": []}
+    target = _load_local_target(target_path, program_root)
+
+    requested = {name.strip() for name in (professors or []) if name.strip()}
+    if requested and target["professor"] not in requested:
+        return {
+            "status": "needs_input",
+            "reason_code": "professor_not_selected",
+            "missing_professors": sorted(requested),
+            "state_path": state_path,
+            "targets": [],
+        }
+
+    targets = [target]
+    stale: list[dict[str, Any]] = []
+    refreshed: list[dict[str, Any]] = []
+    try:
         preview_path = program_root / str(target.get("preview_path") or "")
-        try:
-            _relative_under(preview_path, program_root, "preview_path")
-            preview = validate_preview(preview_path)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            stale.append({"professor": target.get("professor"), "reason": "preview_unreadable", "detail": str(exc)})
-            continue
+        _relative_under(preview_path, program_root, "preview_path")
+        preview = validate_preview(preview_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        stale.append({"professor": target.get("professor"), "reason": "preview_unreadable", "detail": str(exc)})
+        preview = None
+    if preview is not None:
         if preview.get("professor") != target.get("professor"):
             stale.append({"professor": target.get("professor"), "reason": "professor_changed"})
-            continue
-        current_by_id = {direction["direction_id"]: direction for direction in preview["directions"]}
-        stale_directions = []
-        projection_updates = []
-        for stored in target.get("directions", []):
-            direction_id = stored.get("direction_id")
-            current = current_by_id.get(direction_id)
-            if current is None:
-                stale_directions.append({
-                    "direction_id": direction_id,
-                    "reason": "selected_direction_removed",
-                    "stored_member_fingerprint": stored.get("member_fingerprint"),
-                    "stored_member_keys": _member_keys(stored),
+        else:
+            current_by_id = {direction["direction_id"]: direction for direction in preview["directions"]}
+            stale_directions = []
+            projection_updates = []
+            for stored in target.get("directions", []):
+                direction_id = stored.get("direction_id")
+                current = current_by_id.get(direction_id)
+                if current is None:
+                    stale_directions.append({
+                        "direction_id": direction_id,
+                        "reason": "selected_direction_removed",
+                        "stored_member_fingerprint": stored.get("member_fingerprint"),
+                        "stored_member_keys": _member_keys(stored),
+                    })
+                elif _member_keys(current) != _member_keys(stored):
+                    stale_directions.append({
+                        "direction_id": direction_id,
+                        "reason": "selected_direction_changed",
+                        "stored_member_fingerprint": stored.get("member_fingerprint"),
+                        "current_member_fingerprint": current.get("member_fingerprint"),
+                        "stored_member_keys": _member_keys(stored),
+                        "current_member_keys": _member_keys(current),
+                    })
+                elif _projection_differs(stored, current):
+                    projection_updates.append((stored, _selected_projection(current)))
+            if stale_directions:
+                stale.append({
+                    "professor": target.get("professor"),
+                    "reason": "selected_directions_stale",
+                    "direction_ids": [entry["direction_id"] for entry in stale_directions],
+                    "directions": stale_directions,
+                    "stored_preview_fingerprint": target.get("preview_fingerprint"),
+                    "current_preview_fingerprint": preview.get("preview_fingerprint"),
                 })
-            elif _member_keys(current) != _member_keys(stored):
-                stale_directions.append({
-                    "direction_id": direction_id,
-                    "reason": "selected_direction_changed",
-                    "stored_member_fingerprint": stored.get("member_fingerprint"),
-                    "current_member_fingerprint": current.get("member_fingerprint"),
-                    "stored_member_keys": _member_keys(stored),
-                    "current_member_keys": _member_keys(current),
+            elif projection_updates:
+                for stored, expected in projection_updates:
+                    stored.update(expected)
+                target["preview_fingerprint"] = preview["preview_fingerprint"]
+                target["preview_fingerprint_version"] = preview["preview_fingerprint_version"]
+                target["direction_id_version"] = preview.get("direction_id_version")
+                target["projection_refreshed_at"] = now_utc()
+                refreshed.append({
+                    "professor": target.get("professor"),
+                    "direction_ids": [stored.get("direction_id") for stored, _ in projection_updates],
                 })
-            elif _projection_differs(stored, current):
-                projection_updates.append((stored, _selected_projection(current)))
-        if stale_directions:
-            stale.append({
-                "professor": target.get("professor"),
-                "reason": "selected_directions_stale",
-                "direction_ids": [entry["direction_id"] for entry in stale_directions],
-                "directions": stale_directions,
-                "stored_preview_fingerprint": target.get("preview_fingerprint"),
-                "current_preview_fingerprint": preview.get("preview_fingerprint"),
-            })
-            continue
-        if projection_updates:
-            for stored, expected in projection_updates:
-                stored.update(expected)
-            target["preview_fingerprint"] = preview["preview_fingerprint"]
-            target["preview_fingerprint_version"] = preview["preview_fingerprint_version"]
-            target["direction_id_version"] = preview.get("direction_id_version")
-            target["projection_refreshed_at"] = now_utc()
-            refreshed.append({
-                "professor": target.get("professor"),
-                "direction_ids": [stored.get("direction_id") for stored, _ in projection_updates],
-            })
-    if refreshed:
-        refreshed_by_professor = {target.get("professor"): target for target in targets}
-        state["targets"] = [refreshed_by_professor.get(target.get("professor"), target) for target in state["targets"]]
-        state["updated_at"] = now_utc()
-        atomic_json(state_path, state)
+                atomic_json(target_path, target)
     if stale:
-        return {"status": "needs_refresh", "reason_code": "preview_changed", "state_path": str(state_path), "stale_targets": stale, "targets": targets}
-    result = {"status": "ok", "state_path": str(state_path), "targets": targets, "professors": [target.get("professor") for target in targets]}
+        return {"status": "needs_refresh", "reason_code": "preview_changed", "state_path": state_path, "stale_targets": stale, "targets": targets}
+    result = {"status": "ok", "state_path": state_path, "targets": targets, "professors": [target.get("professor") for target in targets]}
     if refreshed:
         result["projection_refreshed"] = refreshed
     return result
+
+
+def _load_legacy_state(legacy_path: Path) -> list[Any]:
+    """Parse the retired program-level table and return its entries untouched."""
+    state = load_json(legacy_path)
+    if not isinstance(state, dict):
+        raise ValueError("legacy target state root must be an object")
+    if state.get("schema_version") != LEGACY_SCHEMA_VERSION or state.get("kind") != LEGACY_KIND:
+        raise ValueError("unsupported legacy target state schema")
+    if not isinstance(state.get("targets"), list):
+        raise ValueError("legacy target state targets must be an array")
+    return state["targets"]
+
+
+def _legacy_entry_to_target(entry: Any) -> dict[str, Any]:
+    if not isinstance(entry, dict):
+        raise ValueError("legacy target entry must be an object")
+    history = entry.get("selection_history") or []
+    if not isinstance(history, list):
+        raise ValueError("legacy selection_history must be an array")
+    target = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": KIND,
+        "professor": _require_nonempty(entry.get("professor"), "professor"),
+        "professor_dir": _require_nonempty(entry.get("professor_dir"), "professor_dir"),
+        "preview_path": _require_nonempty(entry.get("preview_path"), "preview_path"),
+        "preview_fingerprint": _require_nonempty(entry.get("preview_fingerprint"), "preview_fingerprint"),
+        "preview_fingerprint_version": _require_nonempty(
+            entry.get("preview_fingerprint_version"), "preview_fingerprint_version"),
+        "direction_id_version": entry.get("direction_id_version"),
+        "membership_mode": entry.get("membership_mode"),
+        "selected_direction_ids": entry.get("selected_direction_ids"),
+        "directions": entry.get("directions"),
+        "selected_at": _require_nonempty(entry.get("selected_at"), "selected_at"),
+        "selection_history": deepcopy(history),
+    }
+    if "projection_refreshed_at" in entry:
+        target["projection_refreshed_at"] = entry["projection_refreshed_at"]
+    _validate_selected_directions(target)
+    return target
+
+
+def _comparable_target(target: dict[str, Any]) -> dict[str, Any]:
+    """Migration identity comparison: the refresh timestamp is runtime metadata."""
+    return {key: value for key, value in target.items() if key != "projection_refreshed_at"}
+
+
+def _migrate_entry(program_root: Path, entry: Any) -> dict[str, Any]:
+    target = _legacy_entry_to_target(entry)
+    professor = target["professor"]
+    professor_dir = program_root / target["professor_dir"]
+    _validate_target_identity(target, local_target_path(professor_dir), program_root)
+
+    preview_path = program_root / target["preview_path"]
+    preview = validate_preview(preview_path)
+    if preview.get("professor") != professor:
+        raise ValueError(f"preview professor {preview.get('professor')} does not match entry {professor}")
+
+    state_path = local_target_path(professor_dir).resolve()
+    if state_path.is_file():
+        try:
+            existing = load_json(state_path)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            return {"status": "conflict", "professor": professor, "state_path": str(state_path),
+                    "detail": f"existing local target is unreadable: {exc}"}
+        if not isinstance(existing, dict):
+            return {"status": "conflict", "professor": professor, "state_path": str(state_path),
+                    "detail": "existing local target root is not an object"}
+        if _comparable_target(existing) == _comparable_target(target):
+            return {"status": "already_migrated", "professor": professor, "state_path": str(state_path)}
+        return {"status": "conflict", "professor": professor, "state_path": str(state_path),
+                "detail": "existing local target differs from the legacy entry"}
+
+    atomic_json(state_path, target)
+    return {"status": "migrated", "professor": professor, "state_path": str(state_path)}
+
+
+def migrate_legacy_targets(program_root: Path) -> dict[str, Any]:
+    """Fan the retired program-level table out into professor-local targets.
+
+    The only code path allowed to read legacy contents. Entries are migrated
+    independently: one bad entry cannot block or roll back the others, and the
+    legacy file itself is left untouched for audit.
+    """
+    program_root = program_root.resolve()
+    legacy_path = program_root / LEGACY_TARGET_FILE
+    if not legacy_path.is_file():
+        return {"status": "ok", "reason_code": "no_legacy_state", "legacy_path": str(legacy_path), "entries": []}
+    try:
+        entries = _load_legacy_state(legacy_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return {"status": "error", "reason_code": "legacy_unreadable", "message": str(exc),
+                "legacy_path": str(legacy_path), "entries": []}
+
+    results = []
+    for entry in entries:
+        professor = entry.get("professor") if isinstance(entry, dict) else None
+        try:
+            results.append(_migrate_entry(program_root, entry))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            results.append({"status": "failed", "professor": professor, "detail": str(exc)})
+
+    def names(status: str) -> list[str]:
+        return [item["professor"] for item in results if item["status"] == status]
+
+    failures = [item for item in results if item["status"] in {"failed", "conflict"}]
+    payload = {
+        "status": "partial" if failures else "ok",
+        "legacy_path": str(legacy_path),
+        "migrated": names("migrated"),
+        "already_migrated": names("already_migrated"),
+        "failures": failures,
+        "entries": results,
+    }
+    return payload
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -438,7 +614,10 @@ def _parser() -> argparse.ArgumentParser:
     select.add_argument("--selection-file", required=True, type=Path)
     resolve = sub.add_parser("resolve")
     resolve.add_argument("--program-root", required=True, type=Path)
+    resolve.add_argument("--target-file", required=True, type=Path)
     resolve.add_argument("--professors", default="")
+    migrate = sub.add_parser("migrate")
+    migrate.add_argument("--program-root", required=True, type=Path)
     return parser
 
 
@@ -453,7 +632,11 @@ def main() -> int:
             return 0
         if args.command == "resolve":
             professors = [part.strip() for part in args.professors.split(",") if part.strip()]
-            payload = resolve_targets(args.program_root, professors)
+            payload = resolve_target(args.target_file, args.program_root, professors)
+            emit(payload)
+            return 0 if payload["status"] == "ok" else 2
+        if args.command == "migrate":
+            payload = migrate_legacy_targets(args.program_root)
             emit(payload)
             return 0 if payload["status"] == "ok" else 2
     except (OSError, ValueError, json.JSONDecodeError) as exc:

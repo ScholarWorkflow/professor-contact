@@ -66,6 +66,7 @@ class Issue32VerifierTests(unittest.TestCase):
     def test_initial_checkpoint_is_pass_and_stage0_state_is_absent(self):
         payload = verifier._checkpoint_initial(self.args())
         self.assertEqual(payload["status"], "pass", payload)
+        self.assertFalse((self.root / "教授研究/X分野/Example Professor/套磁目标.json").exists())
         self.assertFalse((self.root / "教授研究/套磁目标.json").exists())
 
     def test_stage1_final_accepts_runtime_item_key_from_manifest(self):

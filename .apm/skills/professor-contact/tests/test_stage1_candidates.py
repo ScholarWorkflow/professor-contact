@@ -128,14 +128,23 @@ def snapshot_path(root: Path) -> Path:
     return root / "教授研究" / "套磁阶段1候选.json"
 
 
-def build(root: Path, professors=None, named=None):
+def legacy_table_path(root: Path) -> Path:
+    return root / "教授研究" / "套磁目标.json"
+
+
+def target_file(root: Path, professor: str = "教授A") -> Path:
+    """Authoritative professor-local Stage-0 target used by the Stage-1 caller."""
+    return root / "教授研究" / "lab" / professor / "套磁目标.json"
+
+
+def build(root: Path, target: Path | None = None, named=None):
     named_path = None
     if named is not None:
         named_path = root / "教授研究" / "_named_input.json"
         write_json(named_path, named)
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        result = stage1.build_command(root, professors, named_path)
+        result = stage1.build_command(root, target or target_file(root), named_path)
     # build_command only emits to stdout on the resolve-failure soft-exit path.
     emitted = json.loads(out.getvalue()) if out.getvalue().strip() else result
     return result, emitted
@@ -147,6 +156,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.preview_path = self.root / "教授研究" / "lab" / "教授A" / "方向预筛.json"
         self.papers_path = self.root / "教授研究" / "lab" / "教授A" / "papers.json"
+        self.target_file = target_file(self.root)
         write_json(self.preview_path, preview_payload())
         write_json(self.papers_path, papers_payload())
         targets.select_target(
@@ -156,7 +166,7 @@ class Stage1CandidateTests(unittest.TestCase):
             selected_at="2026-09-04T00:00:00Z",
         )
         self.guarded = [
-            self.root / "教授研究" / "套磁目标.json",
+            self.target_file,
             self.preview_path,
             self.papers_path,
         ]
@@ -196,8 +206,8 @@ class Stage1CandidateTests(unittest.TestCase):
         # P3 (dir_B member, no overlap with A) must not leak into A.
         self.assertNotIn("P3", by_dir["dir_A"]["candidate_keys"])
         # Expansion never rewrites the preview or target state: C's membership is untouched.
-        target_state = read_json(self.root / "教授研究" / "套磁目标.json")
-        selected_ids = target_state["targets"][0]["selected_direction_ids"]
+        target_state = read_json(self.target_file)
+        selected_ids = target_state["selected_direction_ids"]
         self.assertEqual(selected_ids, ["dir_A", "dir_B"])
         self.assert_guards_untouched()
 
@@ -333,7 +343,7 @@ class Stage1CandidateTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             with self.assertRaises(SystemExit) as ctx:
-                stage1.build_command(self.root, None, None)
+                stage1.build_command(self.root, self.target_file, None)
         self.assertEqual(ctx.exception.code, 2)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["status"], "needs_refresh")
@@ -353,13 +363,15 @@ class Stage1CandidateTests(unittest.TestCase):
             selected_at="2026-09-04T00:00:02Z",
         )
         build(self.root)
+        build(self.root, target_file(self.root, "教授B"))
         snap = read_json(snapshot_path(self.root))
         self.assertEqual(snap["kind"], "professor-contact-stage1")
         self.assertEqual(snap["membership_claim"], "non_final_candidates_only")
         self.assertEqual(
             [item["professor"] for item in snap["professors"]], ["教授A", "教授B"]
         )
-        filtered, _ = build(self.root, professors=["教授A"])
+        rebuilt_a, _ = build(self.root)
+        self.assertEqual(rebuilt_a["professors"], ["教授A"])
         snap2 = read_json(snapshot_path(self.root))
         self.assertEqual(
             [item["professor"] for item in snap2["professors"]], ["教授A", "教授B"]
@@ -371,7 +383,8 @@ class Stage1CandidateTests(unittest.TestCase):
 
     def test_cli_build_writes_snapshot_and_exits_zero(self):
         proc = subprocess.run(
-            [sys.executable, str(SCRIPT), "build", "--program-root", str(self.root)],
+            [sys.executable, str(SCRIPT), "build", "--program-root", str(self.root),
+             "--target-file", str(self.target_file)],
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -410,7 +423,7 @@ class Stage1CandidateTests(unittest.TestCase):
         before = snapshot_path(self.root).read_bytes()
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            result = stage1.verify_command(self.root, None)
+            result = stage1.verify_command(self.root, self.target_file)
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["professors"], ["教授A"])
         self.assertEqual(snapshot_path(self.root).read_bytes(), before)
@@ -419,7 +432,7 @@ class Stage1CandidateTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             with self.assertRaises(SystemExit) as ctx:
-                stage1.verify_command(self.root, None)
+                stage1.verify_command(self.root, self.target_file)
         self.assertEqual(ctx.exception.code, 2)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["reason_code"], "missing_stage1_snapshot")
@@ -433,7 +446,7 @@ class Stage1CandidateTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             with self.assertRaises(SystemExit) as ctx:
-                stage1.verify_command(self.root, None)
+                stage1.verify_command(self.root, self.target_file)
         self.assertEqual(ctx.exception.code, 2)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["reason_code"], "stale_stage1_snapshot")
@@ -450,7 +463,7 @@ class Stage1CandidateTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             with self.assertRaises(SystemExit) as ctx:
-                stage1.verify_command(self.root, None)
+                stage1.verify_command(self.root, self.target_file)
         self.assertEqual(ctx.exception.code, 2)
         self.assertEqual(json.loads(out.getvalue())["reason_code"], "preview_changed")
 
@@ -470,7 +483,7 @@ class Stage1CandidateTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             with self.assertRaises(SystemExit) as ctx:
-                stage1.verify_command(self.root, None)
+                stage1.verify_command(self.root, target_file(self.root, "教授B"))
         self.assertEqual(ctx.exception.code, 2)
         self.assertEqual(json.loads(out.getvalue())["reason_code"], "professor_missing_from_snapshot")
 
@@ -495,7 +508,7 @@ class Stage1CandidateTests(unittest.TestCase):
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            verified = stage1.verify_command(self.root, None)
+            verified = stage1.verify_command(self.root, self.target_file)
         self.assertEqual(verified["status"], "ok")
 
     def test_unselected_direction_change_stales_the_candidate_snapshot(self):
@@ -534,7 +547,7 @@ class Stage1CandidateTests(unittest.TestCase):
         )
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+            self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
 
         # P7 joins UNSELECTED dir_B as a high-confidence member: for dir_A it is now
         # placed elsewhere and must clear the strict gate, which 0.4 coverage fails.
@@ -542,13 +555,13 @@ class Stage1CandidateTests(unittest.TestCase):
         preview["directions"][1]["members"].append({"item_key": "P7", "preview_confidence": "high"})
         write_json(self.preview_path, preview)
 
-        resolution = targets.resolve_targets(self.root)
+        resolution = targets.resolve_target(self.target_file, self.root)
         self.assertEqual(resolution["status"], "ok")  # target freshness intentionally passes
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             with self.assertRaises(SystemExit) as ctx:
-                stage1.verify_command(self.root, None)
+                stage1.verify_command(self.root, self.target_file)
         self.assertEqual(ctx.exception.code, 2)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["reason_code"], "stale_stage1_snapshot")
@@ -563,7 +576,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertNotIn("P7", by_dir["dir_A"]["candidate_keys"])
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+            self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
 
     # --- Exact dependency fingerprint regression tests (issue #6 follow-up) ---
 
@@ -582,7 +595,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self._build_selected_a()
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+            self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
         before = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
 
         preview = preview_payload()
@@ -595,7 +608,7 @@ class Stage1CandidateTests(unittest.TestCase):
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+            self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
         # Exact dependency fingerprint is unchanged → no rebuild needed.
         self.assertEqual(
             read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
@@ -613,7 +626,7 @@ class Stage1CandidateTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             with self.assertRaises(SystemExit) as ctx:
-                stage1.verify_command(self.root, None)
+                stage1.verify_command(self.root, self.target_file)
         self.assertEqual(ctx.exception.code, 2)
         self.assertEqual(
             json.loads(out.getvalue())["stale_professors"],
@@ -633,7 +646,7 @@ class Stage1CandidateTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             with self.assertRaises(SystemExit) as ctx:
-                stage1.verify_command(self.root, None)
+                stage1.verify_command(self.root, self.target_file)
         self.assertEqual(ctx.exception.code, 2)
         self.assertEqual(
             json.loads(out.getvalue())["stale_professors"],
@@ -648,7 +661,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self._build_selected_a()
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+            self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
         before = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
 
         data = read_json(self.papers_path)
@@ -659,7 +672,7 @@ class Stage1CandidateTests(unittest.TestCase):
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+            self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
         self.assertEqual(
             read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
             before,
@@ -682,17 +695,17 @@ class Stage1CandidateTests(unittest.TestCase):
         preview["directions"][0]["coverage_share"] = 0.99
         write_json(self.preview_path, preview)
 
-        resolution = targets.resolve_targets(self.root)
+        resolution = targets.resolve_target(self.target_file, self.root)
         self.assertEqual(resolution["status"], "ok")
         # resolve refreshed the projection in place (target preview_fingerprint updated).
         self.assertEqual(
-            read_json(self.root / "教授研究" / "套磁目标.json")["targets"][0]["preview_fingerprint"],
+            read_json(self.target_file)["preview_fingerprint"],
             "fp-new",
         )
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(stage1.verify_command(self.root, None)["status"], "ok")
+            self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
         self.assertEqual(
             read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
             before,
@@ -713,6 +726,48 @@ class Stage1CandidateTests(unittest.TestCase):
             before,
         )
         self.assert_guards_untouched()
+
+    def test_s0_iso_5_stage1_builds_and_verifies_from_the_local_target(self):
+        """S0-ISO-5: Stage 1 needs only A's professor-local Stage-0 target."""
+        self.assertFalse(legacy_table_path(self.root).exists())
+        result, payload = build(self.root)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(result["professors"], ["教授A"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            verified = stage1.verify_command(self.root, self.target_file)
+        self.assertEqual(verified["status"], "ok")
+        self.assertEqual(verified["professors"], ["教授A"])
+        self.assertFalse(legacy_table_path(self.root).exists())
+
+    def test_s0_iso_5_corrupt_legacy_table_is_not_a_stage1_input(self):
+        build(self.root)
+        legacy_table_path(self.root).write_text("{ corrupt legacy table", encoding="utf-8")
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
+        result, payload = build(self.root)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(result["action"], "pdf_fill_needed")
+        self.assertEqual(
+            legacy_table_path(self.root).read_text(encoding="utf-8"), "{ corrupt legacy table")
+
+    def test_s0_iso_5_stage1_never_falls_back_to_the_legacy_table(self):
+        """Counterexample 6: a valid legacy table must not substitute for local state."""
+        legacy_table_path(self.root).write_text(json.dumps({
+            "schema_version": 1, "kind": "professor-contact-targets", "updated_at": None,
+            "targets": [read_json(self.target_file)]}, ensure_ascii=False), encoding="utf-8")
+        self.target_file.unlink()
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                stage1.build_command(self.root, self.target_file, None)
+        self.assertEqual(ctx.exception.code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["status"], "needs_input")
+        self.assertEqual(payload["reason_code"], "missing_target_state")
 
     def test_agent_contract_delegates_only_item_scoped_fast_path(self):
         agent = (ROOT.parents[1] / "agents" / "professor-contact-downloader.agent.md").read_text(

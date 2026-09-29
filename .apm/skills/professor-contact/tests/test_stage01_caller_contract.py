@@ -31,6 +31,69 @@ class Stage01CallerContractTests(unittest.TestCase):
     from drifting while the implementation is developed.
     """
 
+    #: Commands whose only Stage-0 authority input is one professor's local target.
+    TARGET_BOUND_COMMANDS = (
+        "contact_targets.py resolve",
+        "contact_stage1.py build",
+        "contact_stage1.py verify",
+        "stage2-preflight",
+    )
+    #: Sources owned by the Stage 0-1 caller contract.
+    STAGE01_SOURCES = (STAGE0_AGENT, STAGE1_AGENT, SKILL_PATH)
+
+    @staticmethod
+    def _clauses(text: str) -> list[str]:
+        """Sentences with backslash-continued command lines joined back together."""
+        return re.split(r"[。；\n]", text.replace("\\\n", " "))
+
+    def test_every_target_bound_command_names_the_local_target_file(self):
+        """S0-ISO-5/6 caller side: no Stage 0-1 invocation may omit --target-file."""
+        for path in self.STAGE01_SOURCES:
+            text = _read(path)
+            for clause in self._clauses(text):
+                for command in self.TARGET_BOUND_COMMANDS:
+                    if command in clause:
+                        self.assertIn(
+                            "--target-file",
+                            clause,
+                            msg=f"{path.name}: {command} without an explicit local target: {clause}",
+                        )
+
+    def test_stage01_return_contract_is_a_target_states_mapping(self):
+        """The handoff is one entry per professor, never one program-level path."""
+        for path in (STAGE0_AGENT, STAGE1_AGENT):
+            text = _read(path)
+            with self.subTest(source=path.name):
+                self.assertIn('"target_states": {', text)
+                self.assertNotIn('"target_state": ', text)
+
+    def test_retired_program_table_only_appears_as_a_prohibition_or_migration_input(self):
+        retired = "教授研究/套磁目标.json"
+        markers = ("绝不", "不得", "不读", "退役", "migrate", "Never", "not a", "only")
+        for path in self.STAGE01_SOURCES:
+            text = _read(path)
+            lines = [line for line in text.splitlines() if retired in line]
+            self.assertTrue(lines, msg=f"{path.name}: retired table never mentioned")
+            for line in lines:
+                self.assertTrue(
+                    any(marker in line for marker in markers),
+                    msg=f"{path.name}: {line}",
+                )
+
+    def test_stage0_documents_one_professor_per_transaction_and_partial_results(self):
+        text = _read(STAGE0_AGENT)
+        self.assertIn("<教授目录>/套磁目标.json", text)
+        self.assertRegex(text, r"(?is)one[` ]+select[` ]+call is one professor-local transaction")
+        self.assertRegex(text, r"(?is)partial[\s\S]{0,300}(?:never|does not)[\s\S]{0,200}(?:roll back|rolls back)")
+
+    def test_stage1_resolves_one_professor_per_invocation(self):
+        text = _read(STAGE1_AGENT)
+        self.assertRegex(
+            text,
+            r"(?is)one invocation resolves exactly one professor",
+        )
+        self.assertIn("missing_target_state", text)
+
     def test_stage0_exposes_structured_selection_for_noninteractive_callers(self):
         text = _read(STAGE0_AGENT)
 

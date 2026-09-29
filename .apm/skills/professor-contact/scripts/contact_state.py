@@ -98,7 +98,7 @@ STAGE2_PREFLIGHT_VERSION = "stage2-preflight-v1"
 # _resolved_directions.json binding to the facts' preflight proof. Packs
 # accepted under v1 semantics must re-prove through the slow path.
 STAGE2_RESOLUTION_SEMANTICS_VERSION = 2
-STAGE2_TARGET_FILE = Path("教授研究") / "套磁目标.json"
+STAGE2_TARGET_FILE_NAME = "套磁目标.json"
 STAGE1_SNAPSHOT_FILE = Path("教授研究") / "套磁阶段1候选.json"
 AUTHORSHIP_LEDGER_FILE = Path("教授研究") / "_署名对照.json"
 PAPER_ANALYSIS_SCOPES = ("relevant", "all")
@@ -3017,14 +3017,31 @@ def stage2_program_inputs(program_root: Path, professor_dir: Path, professor: st
     }
 
 
-def read_stage2_target(program_root: Path, professor: str) -> dict | None:
-    data, error = read_json_file(program_root / STAGE2_TARGET_FILE)
-    if error or not isinstance(data, dict) or not isinstance(data.get("targets"), list):
+def stage2_target_path(professor_dir: Path) -> Path:
+    """Professor-local Stage-0 authority for the professor owning ``professor_dir``."""
+    return Path(professor_dir) / STAGE2_TARGET_FILE_NAME
+
+
+def read_stage2_target(target_path: Path, program_root: Path, professor: str) -> dict | None:
+    """Read one professor's Stage-0 target, fail-closed to ``None``.
+
+    The retired program-level ``教授研究/套磁目标.json`` is not read here: the
+    caller passes the professor's own local target file.
+    """
+    data, error = read_json_file(Path(target_path))
+    if error or not isinstance(data, dict):
         return None
-    for target in data["targets"]:
-        if isinstance(target, dict) and target.get("professor") == professor:
-            return target
-    return None
+    if data.get("schema_version") != 2 or data.get("kind") != "professor-contact-target":
+        return None
+    if data.get("professor") != professor:
+        return None
+    professor_dir = str(data.get("professor_dir") or "")
+    if not professor_dir:
+        return None
+    declared = (Path(program_root) / professor_dir / STAGE2_TARGET_FILE_NAME).resolve()
+    if str(declared) != str(Path(target_path).resolve()):
+        return None
+    return data
 
 
 def read_stage1_professor_entry(program_root: Path, professor: str) -> dict | None:
@@ -3312,7 +3329,7 @@ def cmd_stage2_preflight(args) -> None:
     params = stage2_preflight_params(args.paper_analysis, args.gap_scope,
                                      args.freshness_scope, args.max_relevant_papers)
     current_year = datetime.now().year
-    target = read_stage2_target(program_root, professor)
+    target = read_stage2_target(Path(args.target_file), program_root, professor)
     if target is None:
         fail("invalid_params",
              f"professor has no selected target state; run contact_targets.py resolve first: {professor}")
@@ -4141,7 +4158,7 @@ def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
     if not isinstance(params, dict) or params.get("gap_scope") != ctx.gap_scope or \
             params.get("freshness_scope") != ctx.freshness_scope:
         soft_exit("needs_refresh", "preflight_inputs_changed", drift=["params"])
-    target = read_stage2_target(ctx.program_root, ctx.professor)
+    target = read_stage2_target(stage2_target_path(ctx.professor_dir), ctx.program_root, ctx.professor)
     snapshot_entry = read_stage1_professor_entry(ctx.program_root, ctx.professor)
     if target is None or snapshot_entry is None:
         soft_exit("needs_refresh", "preflight_inputs_changed",
@@ -9127,6 +9144,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("stage2-preflight")
     p.add_argument("--program-root", required=True)
     p.add_argument("--professor", required=True)
+    p.add_argument("--target-file", required=True,
+                   help="authoritative professor-local Stage-0 target file")
     p.add_argument("--paper-analysis", default="relevant")
     p.add_argument("--gap-scope", default="selected_direction")
     p.add_argument("--freshness-scope", default="shortlist")

@@ -83,6 +83,10 @@ def _run_stage1(*arguments):
                           text=True, capture_output=True, check=False, timeout=300)
 
 
+def _target_file(root: Path) -> Path:
+    return root / "教授研究" / "X分野" / PROFESSOR / "套磁目标.json"
+
+
 def assert_stage1_verify_ok(testcase: unittest.TestCase, root: Path):
     """The Stage 2 caller contract runs ``contact_stage1.py verify`` first.
 
@@ -90,7 +94,8 @@ def assert_stage1_verify_ok(testcase: unittest.TestCase, root: Path):
     Stage 1 build fails this gate with ``stale_stage1_snapshot``, so every
     analyzer-enterable mode must verify clean against the persisted tree.
     """
-    result = _run_stage1("verify", "--program-root", root, "--professors", PROFESSOR)
+    result = _run_stage1("verify", "--program-root", root,
+                         "--target-file", _target_file(root))
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError:
@@ -140,7 +145,8 @@ class BuildIssue29Stage2FixtureTests(unittest.TestCase):
         self.assertEqual(manifest["expected_preflight_action"], "reuse_all")
 
         payload = _runner_json(_run_runner(
-            "stage2-preflight", "--program-root", root, "--professor", PROFESSOR))
+            "stage2-preflight", "--program-root", root, "--professor", PROFESSOR,
+            "--target-file", _target_file(root)))
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["action"], "reuse_all", payload)
         self.assertEqual(payload["reason_codes"], [])
@@ -170,7 +176,8 @@ class BuildIssue29Stage2FixtureTests(unittest.TestCase):
         self.assertEqual(facts["directions"][0]["member_keys"], ["AAAA1111"])
 
         payload = _runner_json(_run_runner(
-            "stage2-preflight", "--program-root", root, "--professor", PROFESSOR))
+            "stage2-preflight", "--program-root", root, "--professor", PROFESSOR,
+            "--target-file", _target_file(root)))
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["action"], "process", payload)
         self.assertIn("missing_input_pack", payload["reason_codes"])
@@ -229,7 +236,8 @@ class BuildIssue29Stage2FixtureTests(unittest.TestCase):
         self.assertEqual(manifest["direction_ids"], ["DIR00001"])
         self.assertEqual(manifest["item_keys"], ["AAAA1111"])
         protected = {row["path"]: row["sha256"] for row in manifest["protected_files"]}
-        for relative in ("facts.json", "info.json", "教授研究/套磁目标.json",
+        for relative in ("facts.json", "info.json",
+                         "教授研究/X分野/試験 教授/套磁目标.json",
                          "教授研究/X分野/試験 教授/方向预筛.json",
                          "教授研究/X分野/試験 教授/papers.json",
                          "教授研究/X分野/試験 教授/论文分析/AAAA1111.pdf"):

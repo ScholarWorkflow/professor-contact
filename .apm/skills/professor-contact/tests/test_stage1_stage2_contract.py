@@ -1,7 +1,24 @@
+import re
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
+
+# Analyzer commands whose input is the Stage-0 target of exactly one professor.
+TARGET_BOUND_COMMANDS = ("contact_targets.py", "contact_stage1.py", "stage2-preflight")
+RETIRED_PROGRAM_TABLE = "教授研究/套磁目标.json"
+PROHIBITION_MARKERS = ("绝不", "不读", "退役", "migrate")
+
+
+def bash_commands(text: str) -> list[str]:
+    """Every ```bash fenced command, joined across backslash continuations."""
+    commands = []
+    for block in re.findall(r"```bash\n(.*?)```", text, flags=re.S):
+        for chunk in re.split(r"\n\s*\n", block):
+            command = " ".join(line.rstrip("\\").strip() for line in chunk.splitlines())
+            if command.strip():
+                commands.append(command)
+    return commands
 
 
 class Stage1Stage2ContractTests(unittest.TestCase):
@@ -170,10 +187,44 @@ class Stage2PreflightContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("Stage 2 初始化顺序固定且 preflight gate 不可绕过", agent)
-        self.assertIn("resolve → `contact_targets.py resolve` → `contact_stage1.py verify` → "
-                      "逐教授 `contact_state.py stage2-preflight`", agent)
+        self.assertIn("resolve → 逐教授 `contact_targets.py resolve --target-file", agent)
+        self.assertIn("`contact_stage1.py verify --target-file`", agent)
+        self.assertIn("逐教授 `contact_state.py stage2-preflight --target-file`", agent)
         self.assertIn("correctness-preserving", agent)
         self.assertIn("绝不生成新的科学事实", agent)
+
+    def test_s0_iso_6_both_projections_pass_the_local_target_explicitly(self):
+        """S0-ISO-6: every analyzer target input names the professor-local file."""
+        for target in ("professor-contact-codex", "professor-contact-opencode"):
+            with self.subTest(target=target):
+                agent = self._analyzer(target)
+                bound = [command for command in bash_commands(agent)
+                         if any(name in command for name in TARGET_BOUND_COMMANDS)]
+                self.assertTrue(bound, msg=target)
+                for command in bound:
+                    self.assertIn("--target-file", command, msg=command)
+                self.assertIn('"target_states": {"<教授名>": ', agent)
+                self.assertNotIn('"target_state": ', agent)
+
+    def test_s0_iso_6_program_level_table_is_only_a_prohibition(self):
+        """S0-ISO-6: neither analyzer reads or reconstructs the retired table."""
+        for target in ("professor-contact-codex", "professor-contact-opencode"):
+            with self.subTest(target=target):
+                agent = self._analyzer(target)
+                mentioned = [line for line in agent.splitlines()
+                             if RETIRED_PROGRAM_TABLE in line]
+                self.assertTrue(mentioned, msg=target)
+                for line in mentioned:
+                    self.assertTrue(
+                        any(marker in line for marker in PROHIBITION_MARKERS),
+                        msg=line,
+                    )
+                self.assertIn("不自行推导路径", agent)
+
+    def _analyzer(self, target: str) -> str:
+        path = (ROOT.parents[2] / "packages" / target / ".apm" / "agents"
+                / "professor-contact-analyzer.agent.md")
+        return path.read_text(encoding="utf-8")
 
     def test_skill_contract_documents_the_preflight_gate(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

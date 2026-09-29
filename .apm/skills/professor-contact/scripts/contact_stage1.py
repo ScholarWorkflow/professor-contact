@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Deterministic Stage 1 candidate builder for professor-contact.
 
-Turns the selected target state (``教授研究/套磁目标.json``) into per-direction,
-high-recall candidate sets for PDF assurance and persists a machine-readable
-snapshot (``教授研究/套磁阶段1候选.json``). Expansion is cheap-evidence only and
-never decides final direction membership. Never opens Zotero, starts models,
-performs network I/O, or mutates direction membership anywhere.
+Turns one professor's selected target state (``<professor_dir>/套磁目标.json``)
+into per-direction, high-recall candidate sets for PDF assurance and persists a
+machine-readable snapshot (``教授研究/套磁阶段1候选.json``). Expansion is
+cheap-evidence only and never decides final direction membership. Never opens
+Zotero, starts models, performs network I/O, or mutates direction membership
+anywhere.
 """
 
 from __future__ import annotations
@@ -485,9 +486,9 @@ def load_snapshot(path: Path) -> dict[str, Any]:
     return state
 
 
-def build_command(program_root: Path, professors: list[str] | None, named_file: Path | None) -> dict[str, Any]:
+def build_command(program_root: Path, target_file: Path, named_file: Path | None) -> dict[str, Any]:
     program_root = program_root.resolve()
-    resolution = contact_targets.resolve_targets(program_root, professors)
+    resolution = contact_targets.resolve_target(target_file, program_root)
     if resolution.get("status") != "ok":
         emit(resolution)
         raise SystemExit(2)
@@ -555,7 +556,7 @@ def build_command(program_root: Path, professors: list[str] | None, named_file: 
     }
 
 
-def verify_command(program_root: Path, professors: list[str] | None) -> dict[str, Any]:
+def verify_command(program_root: Path, target_file: Path) -> dict[str, Any]:
     """Read-only consistency check between the snapshot and the current inputs.
 
     Stage 2 consumes the snapshot's candidate sets, so it must verify (not trust)
@@ -563,7 +564,7 @@ def verify_command(program_root: Path, professors: list[str] | None) -> dict[str
     the current target selection and papers state. Never writes.
     """
     program_root = program_root.resolve()
-    resolution = contact_targets.resolve_targets(program_root, professors)
+    resolution = contact_targets.resolve_target(target_file, program_root)
     if resolution.get("status") != "ok":
         emit(resolution)
         raise SystemExit(2)
@@ -637,21 +638,21 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     build = sub.add_parser("build")
     build.add_argument("--program-root", required=True, type=Path)
-    build.add_argument("--professors", default="")
+    build.add_argument("--target-file", required=True, type=Path,
+                       help="authoritative professor-local Stage-0 target file")
     build.add_argument("--named-file", default=None, type=Path)
     verify = sub.add_parser("verify")
     verify.add_argument("--program-root", required=True, type=Path)
-    verify.add_argument("--professors", default="")
+    verify.add_argument("--target-file", required=True, type=Path,
+                        help="authoritative professor-local Stage-0 target file")
     args = parser.parse_args()
     try:
         if args.command == "build":
-            professors = [part.strip() for part in args.professors.split(",") if part.strip()]
-            payload = build_command(args.program_root, professors or None, args.named_file)
+            payload = build_command(args.program_root, args.target_file, args.named_file)
             emit(payload)
             return 0
         if args.command == "verify":
-            professors = [part.strip() for part in args.professors.split(",") if part.strip()]
-            payload = verify_command(args.program_root, professors or None)
+            payload = verify_command(args.program_root, args.target_file)
             emit(payload)
             return 0
     except (OSError, ValueError, json.JSONDecodeError) as exc:

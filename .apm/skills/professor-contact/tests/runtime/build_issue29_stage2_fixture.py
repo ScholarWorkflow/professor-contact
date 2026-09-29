@@ -104,26 +104,25 @@ def _write_stage0_state(root: Path, prof_dir: Path, *, direction_id: str,
         json.dumps(preview, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
     target = {
-        "schema_version": 1, "kind": "professor-contact-targets",
-        "updated_at": "2026-01-01T00:00:00Z",
-        "targets": [{
-            "professor": professor,
-            "professor_dir": str(Path("教授研究") / "X分野" / professor),
-            "preview_path": str(preview_relative),
-            "preview_fingerprint": "pv-1", "preview_fingerprint_version": "v1",
-            "direction_id_version": "v1",
-            "selected_direction_ids": [direction_id],
-            "directions": [{
-                "direction_id": direction_id,
-                "name_ja": direction["name_ja"], "name_zh": direction["name_zh"],
-                "summary_zh": direction["summary_zh"],
-                "members": [{"item_key": key, "preview_confidence": "high"}
-                            for key in direction["member_keys"]],
-                "user_note": direction["user_note"],
-            }],
+        "schema_version": 2, "kind": "professor-contact-target",
+        "selected_at": "2026-01-01T00:00:00Z",
+        "professor": professor,
+        "professor_dir": str(Path("教授研究") / "X分野" / professor),
+        "preview_path": str(preview_relative),
+        "preview_fingerprint": "pv-1", "preview_fingerprint_version": "v1",
+        "direction_id_version": "v1",
+        "selected_direction_ids": [direction_id],
+        "directions": [{
+            "direction_id": direction_id,
+            "name_ja": direction["name_ja"], "name_zh": direction["name_zh"],
+            "summary_zh": direction["summary_zh"],
+            "members": [{"item_key": key, "preview_confidence": "high"}
+                        for key in direction["member_keys"]],
+            "user_note": direction["user_note"],
         }],
+        "selection_history": [],
     }
-    (root / "教授研究" / "套磁目标.json").write_text(
+    _target_file(prof_dir).write_text(
         json.dumps(target, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
     (prof_dir / "papers.json").write_text(
@@ -161,36 +160,42 @@ def _run_contact_script(script: Path, arguments: list) -> dict:
     return payload
 
 
-def _build_and_verify_stage1_snapshot(root: Path) -> None:
+def _target_file(prof_dir: Path) -> Path:
+    """The professor-local Stage-0 authority file this fixture writes and resolves."""
+    return Path(prof_dir) / "套磁目标.json"
+
+
+def _build_and_verify_stage1_snapshot(root: Path, prof_dir: Path) -> None:
     """Produce the Stage 1 snapshot with the product's own builder, then verify.
 
     The Stage 2 caller contract runs ``contact_stage1.py verify`` before any
     Stage 2 gate, so a runtime fixture must carry a snapshot whose
     ``input_fingerprint`` the product computed itself over the persisted
     papers/preview/target state. ``build`` and ``verify`` are both read-mostly
-    and deterministic here: ``resolve_targets`` only writes while projections
+    and deterministic here: ``resolve_target`` only writes while projections
     change, so the verified fingerprint stays valid at runtime.
     """
     stage1 = TESTS_DIR.parent / "scripts" / "contact_stage1.py"
+    target_file = _target_file(prof_dir)
     built = _run_contact_script(
-        stage1, ["build", "--program-root", root, "--professors", PROFESSOR])
+        stage1, ["build", "--program-root", root, "--target-file", target_file])
     if built.get("status") != "ok" or built.get("action") != "noop":
         raise FixtureBuildError(
             "contact_stage1 build rejected the fixture state: "
             + json.dumps(built, ensure_ascii=False))
     verified = _run_contact_script(
-        stage1, ["verify", "--program-root", root, "--professors", PROFESSOR])
+        stage1, ["verify", "--program-root", root, "--target-file", target_file])
     if verified.get("status") != "ok":
         raise FixtureBuildError(
             "contact_stage1 verify rejected the freshly built snapshot: "
             + json.dumps(verified, ensure_ascii=False))
 
 
-def _resolve_targets(root: Path) -> dict:
+def _resolve_targets(root: Path, prof_dir: Path) -> dict:
     """Run the deterministic target resolver at the final location."""
     script = TESTS_DIR.parent / "scripts" / "contact_targets.py"
     payload = _run_contact_script(
-        script, ["resolve", "--program-root", root])
+        script, ["resolve", "--program-root", root, "--target-file", _target_file(prof_dir)])
     if payload.get("status") != "ok":
         raise FixtureBuildError(
             "contact_targets resolve rejected the Stage 0 state: "
@@ -318,8 +323,8 @@ class SinglePaperBuilder(preflight_templates.PreflightBase):
             papers=[{"item_key": self.ITEM_KEY, "title": self.TITLE,
                      "title_zh": None, "pdf_status": "downloaded"}],
             seed_count=1)
-        _resolve_targets(self.root)
-        _build_and_verify_stage1_snapshot(self.root)
+        _resolve_targets(self.root, self.prof_dir)
+        _build_and_verify_stage1_snapshot(self.root, self.prof_dir)
         self._write_parseable_pdf()
 
     def _reduce_to_single_candidate(self):
@@ -417,8 +422,8 @@ class MaterialPendingBuilder(ResolvedPipelineMixin, unittest.TestCase):
                     {"item_key": "P2", "title": "Chemistry Paper",
                      "title_zh": None, "pdf_status": "downloaded"}],
             seed_count=2)
-        _resolve_targets(self.root)
-        _build_and_verify_stage1_snapshot(self.root)
+        _resolve_targets(self.root, self.prof_dir)
+        _build_and_verify_stage1_snapshot(self.root, self.prof_dir)
         if (self.prof_dir / "套磁候选输入.json").exists():
             raise FixtureBuildError("material_pending fixture must not contain an accepted pack")
 
