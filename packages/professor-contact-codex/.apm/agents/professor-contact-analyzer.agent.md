@@ -576,7 +576,7 @@ Return ONLY this JSON, no surrounding prose:
 {
   "result": "ok|partial|needs_input|needs_external_result|error",
   "program_root": "<abs>",
-  "target_states": {"<教授名>": "<program_root>/<教授目录>/套磁目标.json"},
+  "transactions": [{"professor":"<教授名>","professor_dir":"教授研究/<分野>/<教授名>","preview_path":"教授研究/<分野>/<教授名>/方向预筛.json","target_state":"<program_root>/<教授目录>/套磁目标.json"}],
   "reason_code": "<chatgpt_result_required|stage2_plan_stale|stage2_writer_busy|...|null>",
   "reused_professors": ["<Step 2.6 reuse_all no-op 复用的教授名>"],
   "handoffs": [{"professor":"", "handoff_id":"", "bundle_path":"", "jobs":0, "missing":[]}],
@@ -596,7 +596,7 @@ Return ONLY this JSON, no surrounding prose:
 }
 ```
 
-`target_states` 是教授名 → 该教授自己那份 local target 绝对路径的映射（本轮解析过的每位教授一条）；返回值里不存在单一程序级 target 路径。
+`transactions` 是教授级事务记录数组：本轮解析过的每位教授一条，每条以 canonical `professor_dir` + `preview_path` 标识，并带上该教授实际使用的那份 `target_state` 绝对路径；教授展示名只是显示字段（不同目录的两位教授可以同名），因此**禁止**把 local target handoff 写成以展示名为唯一 key 的映射，那会挤掉同名另一位教授的一条事务。返回值里同样不存在单一程序级 target 路径，也不新增程序级持久索引。
 - `ok` — 全部被标记方向完成；`needs_external_result` — `wait` 已生成 bundle 或外部结果仍缺/非法，是可恢复软停止，必须返回 `chatgpt_result_required` 或 importer reason_code + handoff/missing；`partial` — 其它方向级失败/降级，包括本地 continuation 的 `stage2_plan_stale` / `stage2_writer_busy`；`error` — Zotero/路径/runner 等不可继续错误。**wait 的 external 不完整绝不能降级为本地高耗执行。**
 - `reused_professors` 列出 Step 2.6 判定 `reuse_all` 的教授；其 `analyses[]` 条目 `reused: true`，`pack`/`md` 指向既有 accepted 产物（未 rewrite、时间戳未变），无 credibility/计数更新。
 - **不回传** gap 原文全文、论文全文、逐条大推理——人读细节在渲染后的 md 与输入包里。

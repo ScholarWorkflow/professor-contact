@@ -210,18 +210,18 @@ def _record_stage0_selection(program_root: Path, script: Path) -> dict:
             json.dumps(selection, ensure_ascii=False, sort_keys=True) + "\n",
             encoding="utf-8")
         result = pc39._run_json(script, [
-            "select",
+            "bootstrap",
             "--program-root", program_root,
             "--preview", preview_path,
             "--selection-file", selection_path,
         ])
     if result.get("status") != "ok":
-        raise PrepareError(f"contact_targets select did not report ok: {result!r}")
+        raise PrepareError(f"contact_targets bootstrap did not report ok: {result!r}")
     try:
         state = json.loads((program_root / STAGE0_TARGET_RELATIVE)
                            .read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise PrepareError(f"Stage 0 target unreadable after select: {exc}") from exc
+        raise PrepareError(f"Stage 0 target unreadable after bootstrap: {exc}") from exc
     if not isinstance(state, dict) or state.get("professor") != builder.PROFESSOR:
         raise PrepareError(
             "Stage 0 local target does not belong to the fixture professor: "

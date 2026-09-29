@@ -3044,14 +3044,77 @@ def read_stage2_target(target_path: Path, program_root: Path, professor: str) ->
     return data
 
 
-def read_stage1_professor_entry(program_root: Path, professor: str) -> dict | None:
+def _canonical_under(program_root: Path, value) -> str | None:
+    """Resolved absolute path of a program-relative or absolute value."""
+    if value in (None, ""):
+        return None
+    path = Path(str(value))
+    if not path.is_absolute():
+        path = Path(program_root) / path
+    try:
+        return str(path.resolve())
+    except OSError:
+        return None
+
+
+def read_stage1_professor_entry(program_root: Path, professor: str, professor_dir,
+                                preview_path) -> dict | None:
+    """Locate the snapshot entry of one professor-local transaction.
+
+    ``professor`` is only a display field: two professors may share it, so the
+    match is the canonical ``professor_dir`` + ``preview_path`` pair. A missing
+    or duplicated canonical match fails closed instead of taking a first
+    same-name entry.
+    """
     data, error = read_json_file(program_root / STAGE1_SNAPSHOT_FILE)
     if error or not isinstance(data, dict) or not isinstance(data.get("professors"), list):
         return None
-    for entry in data["professors"]:
-        if isinstance(entry, dict) and entry.get("professor") == professor:
-            return entry
-    return None
+    dir_key = _canonical_under(program_root, professor_dir)
+    preview_key = _canonical_under(program_root, preview_path)
+    if dir_key is None or preview_key is None:
+        return None
+    matches = [entry for entry in data["professors"]
+               if isinstance(entry, dict)
+               and entry.get("professor") == professor
+               and _canonical_under(program_root, entry.get("professor_dir")) == dir_key
+               and _canonical_under(program_root, entry.get("preview_path")) == preview_key]
+    return matches[0] if len(matches) == 1 else None
+
+
+def stage2_local_identity(program_root: Path, professor_dir: Path, professor: str,
+                          target: dict | None, snapshot_entry: dict | None) -> dict:
+    """Canonical transaction identity a Stage-2 proof must keep binding.
+
+    The digest is of the professor-local target file this transaction opened and
+    the fingerprint is of the exact Stage-1 entry it matched; display name alone
+    cannot tell two same-name professors apart.
+    """
+    target_path = stage2_target_path(professor_dir)
+    try:
+        digest = sha256_bytes(Path(target_path).read_bytes())
+    except OSError:
+        digest = None
+    return {
+        "professor": professor,
+        "professor_dir": _canonical_under(program_root, (target or {}).get("professor_dir"))
+                         or str(Path(professor_dir).resolve()),
+        "preview_path": _canonical_under(program_root, (target or {}).get("preview_path")),
+        "target_state": str(Path(target_path).resolve()),
+        "target_state_sha256": digest,
+        "stage1_input_fingerprint": (snapshot_entry or {}).get("input_fingerprint"),
+    }
+
+
+def stage2_transaction_identity(ctx: "Stage2Context") -> tuple[dict | None, dict | None, dict]:
+    """Reopen the professor's local target and relocate its exact Stage-1 entry."""
+    target = read_stage2_target(stage2_target_path(ctx.professor_dir), ctx.program_root,
+                                ctx.professor)
+    snapshot_entry = read_stage1_professor_entry(
+        ctx.program_root, ctx.professor, (target or {}).get("professor_dir"),
+        (target or {}).get("preview_path"))
+    identity = stage2_local_identity(ctx.program_root, ctx.professor_dir, ctx.professor,
+                                     target, snapshot_entry)
+    return target, snapshot_entry, identity
 
 
 def stage2_preflight_cheap_inputs(program_root: Path, professor_dir: Path, professor: str,
@@ -3077,6 +3140,8 @@ def stage2_preflight_cheap_inputs(program_root: Path, professor_dir: Path, profe
         "versions": stage2_preflight_versions(),
         "params": params,
         "current_year": current_year,
+        "identity": stage2_local_identity(program_root, professor_dir, professor,
+                                          target, snapshot_entry),
         "program_inputs": stage2_program_inputs(program_root, professor_dir, professor,
                                                 target, snapshot_entry),
         "selected_direction_ids": sorted((target or {}).get("selected_direction_ids") or []),
@@ -3334,7 +3399,9 @@ def cmd_stage2_preflight(args) -> None:
         fail("invalid_params",
              f"professor has no selected target state; run contact_targets.py resolve first: {professor}")
     professor_dir = program_root / str(target.get("professor_dir") or "")
-    snapshot_entry = read_stage1_professor_entry(program_root, professor)
+    snapshot_entry = read_stage1_professor_entry(program_root, professor,
+                                                 target.get("professor_dir"),
+                                                 target.get("preview_path"))
     pack_path = professor_dir / INPUT_PACK
     pack, _error = load_input_pack(professor_dir)
     cache_block = (pack or {}).get("cache")
@@ -3506,8 +3573,39 @@ def cmd_stage2_preflight(args) -> None:
     })
 
 
+def stage2_plan_bind_preflight(ctx: Stage2Context, preflight_file) -> tuple[dict, str | None]:
+    """Bind this plan to one professor-local Stage-2 transaction.
+
+    The plan sits between preflight and finalize, so it must carry the canonical
+    identity the preflight proof bound — reopen the same local target, relocate
+    the exact Stage-1 entry — and never rediscover the transaction from the
+    display name, which two professors may share.
+    """
+    _target, _entry, identity = stage2_transaction_identity(ctx)
+    if not preflight_file:
+        binding = ctx.facts.get("stage2_preflight")
+        proof_id = binding.get("preflight_id") if isinstance(binding, dict) else None
+        return identity, (str(proof_id) if proof_id else None)
+    plan, error = read_json_file(Path(preflight_file))
+    if (error or not isinstance(plan, dict) or plan.get("status") != "ok"
+            or not isinstance(plan.get("preflight_inputs"), dict)):
+        fail("invalid_params", f"preflight file unreadable or not a preflight payload: "
+                              f"{preflight_file}")
+    if plan.get("professor") != ctx.professor:
+        fail("invalid_params", "preflight file professor mismatch: "
+                              f"{plan.get('professor')!r} != {ctx.professor!r}")
+    plan_inputs = plan["preflight_inputs"]
+    if plan_inputs.get("identity") != identity:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=["identity"])
+    proof_id = sha256_obj({"professor": plan["professor"], "preflight_inputs": plan_inputs})
+    if plan.get("preflight_id") != proof_id:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=["preflight_proof_id"])
+    return identity, proof_id
+
+
 def cmd_stage2_plan(args) -> None:
     ctx = Stage2Context(Path(args.facts))
+    identity, proof_id = stage2_plan_bind_preflight(ctx, getattr(args, "preflight_file", None))
     jobs, reuse_list, process_list = [], [], []
     for plan in ctx.direction_plans:
         ckey = plan["did"]
@@ -3579,6 +3677,8 @@ def cmd_stage2_plan(args) -> None:
         "status": "ok",
         "professor": ctx.professor,
         "professor_dir": str(ctx.professor_dir),
+        "preflight_id": proof_id,
+        "transaction_identity": identity,
         "pack_path": str(ctx.pack_path),
         "params": {"gap_scope": ctx.gap_scope, "freshness_scope": ctx.freshness_scope},
         "directions": [{
@@ -4109,6 +4209,8 @@ def stage2_preflight_plan_drift(plan_inputs: dict, current: dict) -> list:
         drift.append("versions")
     if plan_inputs.get("current_year") != current["current_year"]:
         drift.append("current_year")
+    if plan_inputs.get("identity") != current["identity"]:
+        drift.append("identity")
     if plan_inputs.get("program_inputs") != current["program_inputs"]:
         drift.append("program_inputs")
     if plan_inputs.get("selected_direction_ids") != current["selected_direction_ids"]:
@@ -4158,8 +4260,7 @@ def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
     if not isinstance(params, dict) or params.get("gap_scope") != ctx.gap_scope or \
             params.get("freshness_scope") != ctx.freshness_scope:
         soft_exit("needs_refresh", "preflight_inputs_changed", drift=["params"])
-    target = read_stage2_target(stage2_target_path(ctx.professor_dir), ctx.program_root, ctx.professor)
-    snapshot_entry = read_stage1_professor_entry(ctx.program_root, ctx.professor)
+    target, snapshot_entry, _identity = stage2_transaction_identity(ctx)
     if target is None or snapshot_entry is None:
         soft_exit("needs_refresh", "preflight_inputs_changed",
                   drift=["target_or_snapshot_missing"])
@@ -9139,6 +9240,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("stage2-plan")
     p.add_argument("--facts", required=True)
+    p.add_argument("--preflight-file",
+                   help="saved stage2-preflight stdout; the plan is bound to the same "
+                        "professor-local transaction identity before it emits jobs")
     p.set_defaults(func=lambda a: cmd_stage2_plan(a))
 
     p = sub.add_parser("stage2-preflight")

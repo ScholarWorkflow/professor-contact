@@ -29,23 +29,29 @@ Your job is to turn an upstream normalized `方向预筛.json` into the canonica
 
 - `folder_path` — program root containing `info.json`, or a per-専攻 folder from which the program root can be resolved. REQUIRED.
 - `professors` (optional) — comma-separated professor names. If omitted, enumerate professors that have `方向预筛.json` and let the user choose which professor to inspect.
-- `selection` (optional) — explicit structured user selection so non-interactive callers (automation/smoke, Codex) can answer without an interactive round. Shape:
+- `selection` (optional) — explicit structured user selection so non-interactive callers (automation/smoke, Codex) can answer without an interactive round. Shape: one professor-local transaction record per professor, identified by that professor's canonical directory pair — never by the display name:
 
 ```json
 {
-  "教授A": {
-    "direction_ids": ["dir_A", "dir_B"],
-    "notes": {
-      "dir_A": "explicit user note text",
-      "dir_B": ""
+  "transactions": [
+    {
+      "professor_dir": "教授研究/<分野>/教授A",
+      "preview_path": "教授研究/<分野>/教授A/方向预筛.json",
+      "direction_ids": ["dir_A", "dir_B"],
+      "notes": {
+        "dir_A": "explicit user note text",
+        "dir_B": ""
+      },
+      "professor": "教授A"
     }
-  }
+  ]
 }
 ```
 
-  `selection` is a caller input, not a second persistent selection state: the only long-lived machine state remains each professor's own `<教授目录>/套磁目标.json`. Validation rules, applied fail closed per professor:
+  `selection` is a caller input, not a second persistent selection state: the only long-lived machine state remains each professor's own `<教授目录>/套磁目标.json`. Validation rules, applied fail closed per transaction record:
 
-  - Professor keys must exactly match the professors being processed in this run; a professor absent from `selection` is not modified.
+  - `professor_dir` and `preview_path` are the machine identity of the record; they must name the same professor directory under the program root (`preview_path` is that directory's `方向预筛.json`), and the record is applied to exactly that directory's `套磁目标.json`. `professor` is a display field only — two professors in different directories may share it, so each keeps its own record and neither replaces or merges with the other.
+  - A professor directory absent from `selection` is not modified.
   - Every `direction_ids` entry must equal a `direction_id` returned by that professor's current `contact_targets.py preview`. Direction names, A/B/C display labels, or semantic guesses are never accepted in place of `direction_id` (labels are display sugar only).
   - Multiple directions are saved one entry per `direction_id`; never merge directions, even when they share papers.
   - `notes` use the same three-state semantics as the interactive flow: omitted key = keep the previously saved note; non-empty value = replace; `""` = explicit clear (in the example above `dir_B`'s stored note is cleared).
@@ -103,7 +109,7 @@ When an explicit `selection` input is provided (on any harness), skip the intera
 
 **Codex (non-interactive)**: Codex's non-interactive execution provides no pause-a-nested-child-and-resume interaction for custom agents, so Stage 0 uses a business-level two-step input instead:
 
-- `selection` provided → validate it against the current preview (rules in Input) and continue directly with step 4 (`contact_targets.py select`).
+- `selection` provided → validate it against the current preview (rules in Input) and continue directly with step 4 (`contact_targets.py bootstrap` for a professor with no local target yet, `contact_targets.py select` to revise an existing one).
 - `selection` missing → **do not choose anything on the user's behalf**: never the first option, never by direction name, never by A/B/C label. Return `needs_input` with a temporary `selection_request` payload (see Return) that carries, per professor, every preview direction's `direction_id`, Japanese/Chinese name, `summary_zh`, representatives, paper count, and evidence warnings — everything a top-level caller needs to present the choice to the real user. Do not write or modify `套磁目标.json`.
 - The top-level caller shows `selection_request` to the user; after the user answers, it delegates again to the installed named custom agent `professor-contact` in a later top-level turn, passing the answer as an explicit structured `selection`. That invocation continues the same Stage 0 business semantics — it is a fresh delegation, not a resume of the previous nested child/thread, and no experimental user-input API is part of this contract.
 
@@ -126,7 +132,17 @@ Whether the answers came from the interactive `question` round or from an explic
 - Key **present** with a value → that value replaces the old note.
 - Key present with `""` → **explicit clear**: the stored note is set to empty. Never write `""` merely because the user left the note blank on a revision — omit the key instead.
 
-Then run, once per professor, against that professor's own preview:
+Then run one helper invocation per transaction record, against that record's own preview (`--preview` is the record's `preview_path`, and the temporary selection file is that record's `direction_ids` + `notes`):
+
+```bash
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
+  bootstrap \
+  --program-root "<program_root>" \
+  --preview "<教授目录>/方向预筛.json" \
+  --selection-file "<selection.json>"
+```
+
+`bootstrap` is the only Stage-0 entry that establishes a professor's first `<教授目录>/套磁目标.json`; it is also the only path that reads the retired program-level `教授研究/套磁目标.json` for that professor (reliable legacy history is carried over, an unparseable legacy document is left untouched and recorded as `legacy_recovery` unavailability, and no other professor's legacy entry is ever pulled into this record). Once that file exists, a revision uses the same command with `select`:
 
 ```bash
 python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
@@ -136,9 +152,11 @@ python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
   --selection-file "<selection.json>"
 ```
 
-One `select` call is one professor-local transaction: it reads and writes only `<教授目录>/套磁目标.json`. A multi-professor request is handled as one such transaction per professor, in order; an invalid professor fails only its own selection and the already committed professors stay committed — the run may return `partial`, and never rolls back or rewrites a committed professor's file.
+`select` only revises an existing local target: when the file is absent it returns `bootstrap_required` with zero writes and the caller re-runs `bootstrap` — `select` never establishes a target and never opens the legacy table.
 
-Re-running Stage 0 is a revision, not a destructive reset: re-selecting one professor reads and writes only that professor's file — other professors' target states are never opened, copied, or rewritten — retains notes for directions that remain selected whose key is omitted from `notes` (any present value — including `""` — replaces; `""` clears), and appends a compact selection history for the revised professor.
+One `select` call is one professor-local transaction, and one `bootstrap` call is one too: each reads and writes only the `<教授目录>/套磁目标.json` resolved from its own record. A multi-professor request is handled as one such transaction per record, in order; an invalid record fails only its own selection and the already committed records stay committed — the run may return `partial`, and never rolls back or rewrites a committed professor's file. Two records that share a display name are two different professors: each keeps its own directory, its own result entry, and its own failure.
+
+Re-running Stage 0 is a revision, not a destructive reset: re-selecting one professor reads and writes only that professor's file — other professors' target states (same name or not) are never opened, copied, or rewritten — retains notes for directions that remain selected whose key is omitted from `notes` (any present value — including `""` — replaces; `""` clears), and appends a compact selection history for the revised professor.
 
 ### 5. Return
 
@@ -148,25 +166,32 @@ Return only compact JSON:
 {
   "result": "ok|partial|needs_input|error",
   "program_root": "<abs>",
-  "target_states": {
-    "教授A": "<program_root>/教授研究/<分野>/<教授A>/套磁目标.json"
-  },
-  "professors": ["教授A"],
-  "selected": {
-    "教授A": ["dir_...", "dir_..."]
-  },
+  "transactions": [
+    {
+      "professor": "教授A",
+      "professor_dir": "教授研究/<分野>/教授A",
+      "preview_path": "教授研究/<分野>/教授A/方向预筛.json",
+      "target_state": "<program_root>/教授研究/<分野>/教授A/套磁目标.json",
+      "status": "ok|needs_input|error",
+      "mode": "fresh|migrated|migrated_revised|revised|already_established|null",
+      "direction_ids": ["dir_...", "dir_..."]
+    }
+  ],
   "notes": ""
 }
 ```
 
-`target_states` maps each professor to its own professor-local Stage-0 file; downstream stages read the target of exactly the professor they process, so the mapping — not one program-level path — is the handoff.
+`transactions` is the handoff: exactly one professor-local transaction record per professor processed in this run, each carrying the canonical `professor_dir` and `preview_path` plus the `target_state` file that record actually committed. Never a mapping keyed by professor display name — two professors in different directories can share a name, and a name-keyed result silently drops one of their transactions. Downstream stages receive a record's `target_state` path (or its `--target-file`) for exactly the professor they process, so these records — not one program-level path — are the handoff, and no program-level persistent index is created by Stage 0.
 
-When returning `needs_input` because a user selection is required (Codex non-interactive path without explicit `selection` input), add one temporary `selection_request` field describing the pending choice, per professor:
+When returning `needs_input` because a user selection is required (Codex non-interactive path without explicit `selection` input), add one temporary `selection_request` field describing the pending choice as one record per professor:
 
 ```json
 {
-  "selection_request": {
-    "教授A": {
+  "selection_request": [
+    {
+      "professor": "教授A",
+      "professor_dir": "教授研究/<分野>/教授A",
+      "preview_path": "教授研究/<分野>/教授A/方向预筛.json",
       "directions": [
         {
           "direction_id": "dir_A",
@@ -179,7 +204,7 @@ When returning `needs_input` because a user selection is required (Codex non-int
         }
       ]
     }
-  }
+  ]
 }
 ```
 
@@ -193,8 +218,8 @@ When returning `needs_input` because a user selection is required (Codex non-int
 - Never use direction names, collection keys, or A/B/C labels as machine identity; use normalized `direction_id` — inside an explicit `selection` input this means only preview-returned `direction_id` values are valid.
 - Never choose directions on the user's behalf: with no explicit `selection` there is no default — not the first option, not a name/label guess; stop at `needs_input` with `selection_request` and zero mutation of `套磁目标.json`.
 - Never describe a follow-up explicit-`selection` invocation as resuming the same nested child/thread; every invocation is a fresh business-level delegation of the named custom agent `professor-contact`.
-- Never read or write the retired program-level `教授研究/套磁目标.json`; `contact_targets.py migrate` is the only code path that opens it, and even then it only fans each legacy entry out into that professor's own `<教授目录>/套磁目标.json` and leaves the legacy file untouched.
-- Never bundle several professors into one target-state transaction: `select` and `resolve` each take exactly one professor's own file, and a failure for one professor must leave every other professor's file byte-identical.
+- Never read or write the retired program-level `教授研究/套磁目标.json` yourself; `contact_targets.py bootstrap` and the standalone `contact_targets.py migrate` (which reuses that same first-establishment helper) are the only code paths that open it, and even then each reads it for one professor's own directory, fans that professor's reliable legacy entries into `<教授目录>/套磁目标.json`, and leaves the legacy file byte-identical.
+- Never bundle several professors into one target-state transaction: `bootstrap`, `select` and `resolve` each take exactly one professor's own preview or file, and a failure for one professor must leave every other professor's file byte-identical — including a professor who shares the same display name in another directory.
 - Never collapse multiple selected directions because they share papers.
 - If a selected direction's membership changes (member `item_key` set differs; upstream derives `direction_id` from membership) or the direction disappears from the preview, selection must be revised against the new preview before downstream stages continue. Unselected-direction changes and display-only or confidence-only changes (names/summary/representatives/confidence with unchanged membership) do not invalidate the selection; `resolve` refreshes projection metadata in place.
 - Never spawn subagents.

@@ -159,7 +159,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self.target_file = target_file(self.root)
         write_json(self.preview_path, preview_payload())
         write_json(self.papers_path, papers_payload())
-        targets.select_target(
+        targets.bootstrap_target(
             self.root,
             self.preview_path,
             {"direction_ids": ["dir_A", "dir_B"], "notes": {}},
@@ -356,7 +356,7 @@ class Stage1CandidateTests(unittest.TestCase):
         payload_b = papers_payload()
         payload_b["professor"] = {"name": "教授B"}
         write_json(papers_b_path, payload_b)
-        targets.select_target(
+        targets.bootstrap_target(
             self.root,
             preview_b_path,
             {"direction_ids": ["dir_B"], "notes": {}},
@@ -380,6 +380,77 @@ class Stage1CandidateTests(unittest.TestCase):
             snap2["professors"][1]["input_fingerprint"],
             snap["professors"][1]["input_fingerprint"],
         )
+
+    def test_issue64_t5_same_display_name_professors_keep_separate_snapshot_entries(self):
+        """G64-T5: Stage 1 merges and verifies by canonical local identity only."""
+        a2_dir = self.root / "教授研究" / "other-lab" / "教授A"
+        a2_preview = a2_dir / "方向预筛.json"
+        write_json(a2_preview, preview_payload(fp="fp-a2"))
+        a2_papers = a2_dir / "papers.json"
+        write_json(a2_papers, papers_payload())
+        a2_target = a2_dir / "套磁目标.json"
+        targets.bootstrap_target(
+            self.root, a2_preview, {"direction_ids": ["dir_C"], "notes": {}},
+            selected_at="2026-09-04T00:00:05Z")
+
+        first, _ = build(self.root)
+        self.assertEqual(first["professors"], ["教授A"])
+        build(self.root, a2_target)
+        snap = read_json(snapshot_path(self.root))
+        self.assertEqual([item["professor"] for item in snap["professors"]], ["教授A", "教授A"])
+        self.assertEqual(
+            [item["professor_dir"] for item in snap["professors"]],
+            ["教授研究/lab/教授A", "教授研究/other-lab/教授A"])
+
+        rebuilt, _ = build(self.root)
+        self.assertEqual(rebuilt["per_target"][0]["preview_path"], "教授研究/lab/教授A/方向预筛.json")
+        snap2 = read_json(snapshot_path(self.root))
+        self.assertEqual(len(snap2["professors"]), 2)
+        self.assertEqual(snap2["professors"][1], snap["professors"][1])
+        self.assertEqual(snap2["professors"][0]["input_fingerprint"],
+                         snap["professors"][0]["input_fingerprint"])
+
+        # Only the sibling's own inputs drift: verifying A must still hit A's entry.
+        data = read_json(a2_papers)
+        for item in data["papers"]:
+            item["pdf_status"] = "downloaded"
+        write_json(a2_papers, data)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                stage1.verify_command(self.root, a2_target)
+        self.assertEqual(ctx.exception.code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["reason_code"], "stale_stage1_snapshot")
+        self.assertEqual(
+            payload["stale_professors"],
+            [{"professor": "教授A", "professor_dir": "教授研究/other-lab/教授A",
+              "preview_path": "教授研究/other-lab/教授A/方向预筛.json",
+              "problems": ["input_fingerprint_mismatch"]}])
+
+    def test_issue64_t5_same_display_name_missing_entry_names_its_own_professor_dir(self):
+        a2_dir = self.root / "教授研究" / "other-lab" / "教授A"
+        a2_preview = a2_dir / "方向预筛.json"
+        write_json(a2_preview, preview_payload(fp="fp-a2"))
+        write_json(a2_dir / "papers.json", papers_payload())
+        a2_target = a2_dir / "套磁目标.json"
+        targets.bootstrap_target(
+            self.root, a2_preview, {"direction_ids": ["dir_C"], "notes": {}},
+            selected_at="2026-09-04T00:00:06Z")
+        build(self.root)
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                stage1.verify_command(self.root, a2_target)
+        self.assertEqual(ctx.exception.code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["reason_code"], "professor_missing_from_snapshot")
+        self.assertEqual(payload["professor_dir"], "教授研究/other-lab/教授A")
 
     def test_cli_build_writes_snapshot_and_exits_zero(self):
         proc = subprocess.run(
@@ -452,7 +523,9 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(payload["reason_code"], "stale_stage1_snapshot")
         self.assertEqual(
             payload["stale_professors"],
-            [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
+            [{"professor": "教授A", "professor_dir": "教授研究/lab/教授A",
+              "preview_path": "教授研究/lab/教授A/方向预筛.json",
+              "problems": ["input_fingerprint_mismatch"]}],
         )
 
     def test_verify_forwards_preview_refresh_and_missing_professor(self):
@@ -474,7 +547,7 @@ class Stage1CandidateTests(unittest.TestCase):
         payload_b = papers_payload()
         payload_b["professor"] = {"name": "教授B"}
         write_json(papers_b_path, payload_b)
-        targets.select_target(
+        targets.bootstrap_target(
             self.root,
             preview_b_path,
             {"direction_ids": ["dir_B"], "notes": {}},
@@ -567,7 +640,9 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(payload["reason_code"], "stale_stage1_snapshot")
         self.assertEqual(
             payload["stale_professors"],
-            [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
+            [{"professor": "教授A", "professor_dir": "教授研究/lab/教授A",
+              "preview_path": "教授研究/lab/教授A/方向预筛.json",
+              "problems": ["input_fingerprint_mismatch"]}],
         )
 
         build(self.root)
@@ -630,7 +705,9 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 2)
         self.assertEqual(
             json.loads(out.getvalue())["stale_professors"],
-            [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
+            [{"professor": "教授A", "professor_dir": "教授研究/lab/教授A",
+              "preview_path": "教授研究/lab/教授A/方向预筛.json",
+              "problems": ["input_fingerprint_mismatch"]}],
         )
 
     def test_paper_title_zh_change_stales_snapshot(self):
@@ -650,7 +727,9 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 2)
         self.assertEqual(
             json.loads(out.getvalue())["stale_professors"],
-            [{"professor": "教授A", "problems": ["input_fingerprint_mismatch"]}],
+            [{"professor": "教授A", "professor_dir": "教授研究/lab/教授A",
+              "preview_path": "教授研究/lab/教授A/方向预筛.json",
+              "problems": ["input_fingerprint_mismatch"]}],
         )
 
     def test_non_candidate_pdf_status_change_keeps_snapshot_valid(self):
@@ -727,8 +806,8 @@ class Stage1CandidateTests(unittest.TestCase):
         )
         self.assert_guards_untouched()
 
-    def test_s0_iso_5_stage1_builds_and_verifies_from_the_local_target(self):
-        """S0-ISO-5: Stage 1 needs only A's professor-local Stage-0 target."""
+    def test_issue64_t5_stage1_builds_and_verifies_from_the_local_target(self):
+        """G64-T5: Stage 1 needs only A's professor-local Stage-0 target."""
         self.assertFalse(legacy_table_path(self.root).exists())
         result, payload = build(self.root)
         self.assertEqual(payload["status"], "ok")
@@ -740,7 +819,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(verified["professors"], ["教授A"])
         self.assertFalse(legacy_table_path(self.root).exists())
 
-    def test_s0_iso_5_corrupt_legacy_table_is_not_a_stage1_input(self):
+    def test_issue64_t5_corrupt_legacy_table_is_not_a_stage1_input(self):
         build(self.root)
         legacy_table_path(self.root).write_text("{ corrupt legacy table", encoding="utf-8")
 
@@ -753,7 +832,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(
             legacy_table_path(self.root).read_text(encoding="utf-8"), "{ corrupt legacy table")
 
-    def test_s0_iso_5_stage1_never_falls_back_to_the_legacy_table(self):
+    def test_issue64_t5_stage1_never_falls_back_to_the_legacy_table(self):
         """Counterexample 6: a valid legacy table must not substitute for local state."""
         legacy_table_path(self.root).write_text(json.dumps({
             "schema_version": 1, "kind": "professor-contact-targets", "updated_at": None,

@@ -433,7 +433,7 @@ def _run_json(script: Path, arguments: list[object]) -> dict:
 
 
 def _stage0_target(root: Path) -> Path:
-    """The professor-local Stage-0 file this fixture's own ``select`` run writes."""
+    """The professor-local Stage-0 file this fixture's own ``bootstrap`` run writes."""
     return root / "教授研究" / "X分野" / PROFESSOR / "套磁目标.json"
 
 
@@ -445,7 +445,7 @@ def _run_stage0(root: Path, skill_dir: Path) -> dict:
         selection_path = Path(directory) / "selection.json"
         _write_json(selection_path, selection)
         result = _run_json(script, [
-            "select", "--program-root", root, "--preview", preview,
+            "bootstrap", "--program-root", root, "--preview", preview,
             "--selection-file", selection_path,
         ])
     target = _stage0_target(root)

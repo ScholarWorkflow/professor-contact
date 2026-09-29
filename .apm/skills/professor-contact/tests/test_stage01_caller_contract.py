@@ -16,6 +16,14 @@ STAGE2_AGENT = (
     / "agents"
     / "professor-contact-analyzer.agent.md"
 )
+STAGE2_CODEX_AGENT = (
+    REPO_ROOT
+    / "packages"
+    / "professor-contact-codex"
+    / ".apm"
+    / "agents"
+    / "professor-contact-analyzer.agent.md"
+)
 
 
 def _read(path: Path) -> str:
@@ -47,7 +55,7 @@ class Stage01CallerContractTests(unittest.TestCase):
         return re.split(r"[。；\n]", text.replace("\\\n", " "))
 
     def test_every_target_bound_command_names_the_local_target_file(self):
-        """S0-ISO-5/6 caller side: no Stage 0-1 invocation may omit --target-file."""
+        """R64-6 caller side (G64-T5): no Stage 0-1 invocation may omit --target-file."""
         for path in self.STAGE01_SOURCES:
             text = _read(path)
             for clause in self._clauses(text):
@@ -59,13 +67,60 @@ class Stage01CallerContractTests(unittest.TestCase):
                             msg=f"{path.name}: {command} without an explicit local target: {clause}",
                         )
 
-    def test_stage01_return_contract_is_a_target_states_mapping(self):
-        """The handoff is one entry per professor, never one program-level path."""
-        for path in (STAGE0_AGENT, STAGE1_AGENT):
+    #: Canonical professor-local identity a transaction record must carry (R64-17).
+    TRANSACTION_IDENTITY_FIELDS = ('"professor_dir"', '"preview_path"', '"target_state"')
+    #: Sources that carry the Stage 0 -> Stage 1 -> Stage 2 local-target handoff.
+    HANDOFF_SOURCES = (STAGE0_AGENT, STAGE1_AGENT, SKILL_PATH, STAGE2_AGENT, STAGE2_CODEX_AGENT)
+
+    @staticmethod
+    def _json_blocks(text: str) -> list[str]:
+        return re.findall(r"```json\n(.*?)```", text, flags=re.DOTALL)
+
+    def test_issue64_t4_caller_handoff_is_professor_local_transaction_records(self):
+        """G64-T4 support (R64-17): every handoff contract carries one record per
+        professor-local transaction, identified by canonical paths.
+
+        The main proof is the two-same-name-professors case in
+        `test_contact_targets.py`; this assertion only pins the caller-facing
+        source contract so a display-name-keyed handoff cannot come back.
+        """
+        for path in self.HANDOFF_SOURCES:
             text = _read(path)
-            with self.subTest(source=path.name):
-                self.assertIn('"target_states": {', text)
-                self.assertNotIn('"target_state": ', text)
+            with self.subTest(source=str(path.relative_to(REPO_ROOT))):
+                self.assertIn('"transactions"', text)
+                blocks = self._json_blocks(text)
+                self.assertTrue(blocks, msg=f"{path.name}: no JSON contract block")
+                carriers = [block for block in blocks
+                            if all(field in block for field in self.TRANSACTION_IDENTITY_FIELDS)]
+                self.assertTrue(carriers, msg=f"{path.name}: no transaction record example")
+
+    def test_issue64_t4_no_contract_example_hands_off_targets_keyed_by_display_name(self):
+        """A `{"target_states": {"同名教授": ...}}` result silently drops one transaction."""
+        for path in self.HANDOFF_SOURCES:
+            text = _read(path)
+            rel = str(path.relative_to(REPO_ROOT))
+            for block in self._json_blocks(text):
+                self.assertNotIn("target_states", block, msg=f"{rel}: name-keyed handoff shape")
+            for line in text.splitlines():
+                if "target_states" in line:
+                    self.assertTrue(
+                        any(marker in line for marker in ("禁止", "绝不", "不得", "Never", "never")),
+                        msg=f"{rel}: name-keyed shape stated as contract: {line}",
+                    )
+
+    def test_issue64_t4_stage0_documents_bootstrap_and_revision_split(self):
+        """G64-T7 support (R64-4/8): `select` revises only; `bootstrap` establishes."""
+        stage0 = _read(STAGE0_AGENT)
+        skill = _read(SKILL_PATH)
+        for text in (stage0, skill):
+            self.assertRegex(
+                text,
+                r"(?is)bootstrap_required[\s\S]{0,160}(?:zero writes|零写入)",
+            )
+        self.assertRegex(
+            stage0,
+            r"(?is)only Stage-0 entry that establishes a professor.s first",
+        )
 
     def test_retired_program_table_only_appears_as_a_prohibition_or_migration_input(self):
         retired = "教授研究/套磁目标.json"

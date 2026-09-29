@@ -458,12 +458,23 @@ def build_professor_entry(
     }
     summary = {
         "professor": target.get("professor"),
+        "professor_dir": target.get("professor_dir"),
+        "preview_path": target.get("preview_path"),
         "action": action,
         "work_queue_item_keys": sorted(work_queue),
         "missing_item_keys": sorted(missing),
         "unresolved_item_keys": sorted(unresolved),
     }
     return professor_entry, summary, unmatched
+
+
+def local_identity(target: dict[str, Any]) -> tuple[str, str]:
+    """Canonical professor-local identity of a Stage-0 target or snapshot entry.
+
+    Display name alone cannot distinguish two professors in the shared snapshot,
+    so every merge and lookup keys on ``professor_dir`` plus ``preview_path``.
+    """
+    return (str(target.get("professor_dir") or ""), str(target.get("preview_path") or ""))
 
 
 def load_snapshot(path: Path) -> dict[str, Any]:
@@ -493,7 +504,7 @@ def build_command(program_root: Path, target_file: Path, named_file: Path | None
         emit(resolution)
         raise SystemExit(2)
 
-    named_by_professor: dict[str, dict[str, list[str]]] = {}
+    named_by_target: dict[tuple[str, str], dict[str, list[str]]] = {}
     if named_file is not None:
         named_directions = parse_named_file(named_file)
         all_targets = resolution.get("targets", [])
@@ -505,25 +516,25 @@ def build_command(program_root: Path, target_file: Path, named_file: Path | None
             target = owner.get(direction_id)
             if target is None:
                 raise ValueError(f"named-papers reference unknown direction_id: {direction_id}")
-            named_by_professor.setdefault(target["professor"], {})[direction_id] = entries
+            named_by_target.setdefault(local_identity(target), {})[direction_id] = entries
 
     snapshot_path = program_root / SNAPSHOT_FILE
     snapshot = load_snapshot(snapshot_path)
     entries = [item for item in snapshot["professors"] if isinstance(item, dict)]
-    processed: dict[str, dict[str, Any]] = {}
+    processed: dict[tuple[str, str], dict[str, Any]] = {}
     summaries: list[dict[str, Any]] = []
     unmatched_all: list[dict[str, str]] = []
     for target in resolution.get("targets", []):
-        name = target.get("professor")
         entry, summary, unmatched = build_professor_entry(
-            program_root, target, named_by_professor.get(name, {})
+            program_root, target, named_by_target.get(local_identity(target), {})
         )
-        processed[name] = entry
+        processed[local_identity(target)] = entry
         summaries.append(summary)
         unmatched_all.extend(unmatched)
-    merged = [item for item in entries if item.get("professor") not in processed]
+    merged = [item for item in entries if local_identity(item) not in processed]
     merged.extend(processed.values())
-    merged.sort(key=lambda item: (str(item.get("professor") or ""), str(item.get("professor_dir") or "")))
+    merged.sort(key=lambda item: (str(item.get("professor_dir") or ""),
+                                  str(item.get("preview_path") or "")))
     snapshot["professors"] = merged
     snapshot["updated_at"] = now_utc()
     atomic_json(snapshot_path, snapshot)
@@ -544,15 +555,18 @@ def build_command(program_root: Path, target_file: Path, named_file: Path | None
         "missing_item_keys": missing_union,
         "unresolved_item_keys": unresolved_union,
         "unmatched_named_entries": unmatched_all,
-        "per_professor": {
-            item["professor"]: {
+        "per_target": [
+            {
+                "professor": item["professor"],
+                "professor_dir": item["professor_dir"],
+                "preview_path": item["preview_path"],
                 "action": item["action"],
                 "work_queue_item_keys": item["work_queue_item_keys"],
                 "missing_item_keys": item["missing_item_keys"],
                 "unresolved_item_keys": item["unresolved_item_keys"],
             }
             for item in summaries
-        },
+        ],
     }
 
 
@@ -574,15 +588,17 @@ def verify_command(program_root: Path, target_file: Path) -> dict[str, Any]:
               "snapshot_path": str(snapshot_path), "notes": "run Stage 1 (contact_stage1.py build) first"})
         raise SystemExit(2)
     snapshot = load_snapshot(snapshot_path)
-    entries = {item.get("professor"): item for item in snapshot["professors"] if isinstance(item, dict)}
+    entries = {local_identity(item): item for item in snapshot["professors"] if isinstance(item, dict)}
     stale: list[dict[str, Any]] = []
     checked: list[str] = []
     for target in resolution.get("targets", []):
         name = target.get("professor")
-        entry = entries.get(name)
+        entry = entries.get(local_identity(target))
         if entry is None:
             emit({"status": "needs_input", "reason_code": "professor_missing_from_snapshot",
                   "snapshot_path": str(snapshot_path), "professor": name,
+                  "professor_dir": target.get("professor_dir"),
+                  "preview_path": target.get("preview_path"),
                   "notes": "run Stage 1 (contact_stage1.py build) first"})
             raise SystemExit(2)
         problems: list[str] = []
@@ -622,7 +638,9 @@ def verify_command(program_root: Path, target_file: Path) -> dict[str, Any]:
             if entry.get("input_fingerprint") != current_fingerprint:
                 problems.append("input_fingerprint_mismatch")
         if problems:
-            stale.append({"professor": name, "problems": sorted(set(problems))})
+            stale.append({"professor": name, "professor_dir": target.get("professor_dir"),
+                          "preview_path": target.get("preview_path"),
+                          "problems": sorted(set(problems))})
         else:
             checked.append(name)
     if stale:

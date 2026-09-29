@@ -3,10 +3,13 @@
 
 One professor owns exactly one authoritative Stage-0 file:
 ``<professor_dir>/套磁目标.json`` (schema 2, one target object, no ``targets[]``).
-``select`` and ``resolve`` only ever touch that professor's own file and preview.
-The retired program-level table ``教授研究/套磁目标.json`` is read by ``migrate``
-only; it is never a runtime authority. Never opens Zotero, starts models, or
-performs network I/O.
+``select`` only revises that professor's existing file and ``resolve`` only reads
+the file its caller names; neither touches the retired program-level table, and a
+missing local file is a ``bootstrap_required`` result with zero writes.
+``bootstrap`` is the sole path that establishes a professor's first local target
+and the only runtime reader of ``教授研究/套磁目标.json``; ``migrate`` reuses the
+same per-professor classification and commit helpers. Never opens Zotero, starts
+models, or performs network I/O.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ import sys
 import tempfile
 from copy import deepcopy
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 SCHEMA_VERSION = 2
@@ -287,12 +290,18 @@ def _history_snapshot(target: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def select_target(program_root: Path, preview_path: Path, selection: dict[str, Any], *, selected_at: str | None = None) -> dict[str, Any]:
-    program_root = program_root.resolve()
-    preview_path = preview_path.resolve()
-    preview_rel = _relative_under(preview_path, program_root, "preview_path")
-    preview = validate_preview(preview_path)
+def _transaction(professor: str, professor_dir_rel: str, preview_rel: str,
+                 state_path: Path) -> dict[str, Any]:
+    """Professor-local transaction record: canonical identity, never display name alone."""
+    return {
+        "professor": professor,
+        "professor_dir": professor_dir_rel,
+        "preview_path": preview_rel,
+        "target_state": str(Path(state_path).resolve()),
+    }
 
+
+def _validated_selection(preview: dict[str, Any], selection: Any) -> tuple[list[str], dict[str, Any]]:
     if not isinstance(selection, dict):
         raise ValueError("selection must be an object")
     raw_ids = selection.get("direction_ids")
@@ -304,26 +313,20 @@ def select_target(program_root: Path, preview_path: Path, selection: dict[str, A
     notes = selection.get("notes") or {}
     if not isinstance(notes, dict):
         raise ValueError("selection.notes must be an object")
-
-    by_id = {direction["direction_id"]: direction for direction in preview["directions"]}
-    unknown = sorted(set(direction_ids) - set(by_id))
+    by_id = {direction["direction_id"] for direction in preview["directions"]}
+    unknown = sorted(set(direction_ids) - by_id)
     if unknown:
         raise ValueError(f"unknown direction_id(s): {unknown}")
+    return direction_ids, notes
 
-    state_path = local_target_path(preview_path.parent)
-    existing = _load_local_target(state_path, program_root) if state_path.is_file() else None
-    existing_notes = {
-        direction.get("direction_id"): direction.get("user_note") or ""
-        for direction in (existing or {}).get("directions", [])
-    }
-    history = list((existing or {}).get("selection_history") or [])
-    if existing:
-        history.append(_history_snapshot(existing))
 
+def _target_from_selection(preview: dict[str, Any], preview_rel: str, direction_ids: list[str],
+                           note_for: Any, history: list[dict[str, Any]], timestamp: str) -> dict[str, Any]:
+    by_id = {direction["direction_id"]: direction for direction in preview["directions"]}
     selected_directions = []
     for direction_id in direction_ids:
         source = deepcopy(by_id[direction_id])
-        note = notes[direction_id] if direction_id in notes else existing_notes.get(direction_id, "")
+        note = note_for(direction_id)
         if note is None:
             note = ""
         if not isinstance(note, str):
@@ -341,9 +344,7 @@ def select_target(program_root: Path, preview_path: Path, selection: dict[str, A
             "coverage_share": source.get("coverage_share"),
             "user_note": note,
         })
-
-    timestamp = selected_at or now_utc()
-    target = {
+    return {
         "schema_version": SCHEMA_VERSION,
         "kind": KIND,
         "professor": preview["professor"],
@@ -358,10 +359,52 @@ def select_target(program_root: Path, preview_path: Path, selection: dict[str, A
         "selected_at": timestamp,
         "selection_history": history,
     }
+
+
+def select_target(program_root: Path, preview_path: Path, selection: dict[str, Any], *, selected_at: str | None = None) -> dict[str, Any]:
+    """Revise the professor's existing local target; never establish one here.
+
+    A missing local file is ``bootstrap_required`` with zero writes: first
+    establishment belongs to :func:`bootstrap_target`, the only path allowed to
+    read the retired program-level table.
+    """
+    program_root = program_root.resolve()
+    preview_path = preview_path.resolve()
+    preview_rel = _relative_under(preview_path, program_root, "preview_path")
+    preview = validate_preview(preview_path)
+    direction_ids, notes = _validated_selection(preview, selection)
+
+    state_path = local_target_path(preview_path.parent)
+    professor_dir_rel = str(Path(preview_rel).parent)
+    transaction = _transaction(preview["professor"], professor_dir_rel, preview_rel, state_path)
+    if not state_path.is_file():
+        return {
+            "status": "needs_input",
+            "reason_code": "bootstrap_required",
+            "message": "run contact_targets.py bootstrap to establish the first professor-local target",
+            "transaction": transaction,
+            "state_path": transaction["target_state"],
+        }
+
+    existing = _load_local_target(state_path, program_root)
+    existing_notes = {
+        direction.get("direction_id"): direction.get("user_note") or ""
+        for direction in existing.get("directions", [])
+    }
+    history = list(existing.get("selection_history") or [])
+    history.append(_history_snapshot(existing))
+    timestamp = selected_at or now_utc()
+
+    def note_for(direction_id: str) -> Any:
+        return notes[direction_id] if direction_id in notes else existing_notes.get(direction_id, "")
+
+    target = _target_from_selection(preview, preview_rel, direction_ids, note_for, history, timestamp)
     atomic_json(state_path, target)
     return {
         "status": "ok",
+        "mode": "revised",
         "state_path": str(state_path),
+        "transaction": transaction,
         "professor": preview["professor"],
         "selected_direction_ids": direction_ids,
         "selected_count": len(direction_ids),
@@ -410,6 +453,8 @@ def resolve_target(target_path: Path, program_root: Path, professors: list[str] 
     if not target_path.is_file():
         return {"status": "needs_input", "reason_code": "missing_target_state", "state_path": state_path, "targets": []}
     target = _load_local_target(target_path, program_root)
+    transaction = _transaction(target["professor"], target["professor_dir"],
+                               target["preview_path"], target_path)
 
     requested = {name.strip() for name in (professors or []) if name.strip()}
     if requested and target["professor"] not in requested:
@@ -418,6 +463,7 @@ def resolve_target(target_path: Path, program_root: Path, professors: list[str] 
             "reason_code": "professor_not_selected",
             "missing_professors": sorted(requested),
             "state_path": state_path,
+            "transaction": transaction,
             "targets": [],
         }
 
@@ -481,8 +527,10 @@ def resolve_target(target_path: Path, program_root: Path, professors: list[str] 
                 })
                 atomic_json(target_path, target)
     if stale:
-        return {"status": "needs_refresh", "reason_code": "preview_changed", "state_path": state_path, "stale_targets": stale, "targets": targets}
-    result = {"status": "ok", "state_path": state_path, "targets": targets, "professors": [target.get("professor") for target in targets]}
+        return {"status": "needs_refresh", "reason_code": "preview_changed", "state_path": state_path,
+                "transaction": transaction, "stale_targets": stale, "targets": targets}
+    result = {"status": "ok", "state_path": state_path, "transaction": transaction, "targets": targets,
+              "professors": [target.get("professor") for target in targets]}
     if refreshed:
         result["projection_refreshed"] = refreshed
     return result
@@ -533,66 +581,301 @@ def _comparable_target(target: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in target.items() if key != "projection_refreshed_at"}
 
 
-def _migrate_entry(program_root: Path, entry: Any) -> dict[str, Any]:
-    target = _legacy_entry_to_target(entry)
-    professor = target["professor"]
-    professor_dir = program_root / target["professor_dir"]
-    _validate_target_identity(target, local_target_path(professor_dir), program_root)
+def _canonical_rel(value: Any) -> str:
+    """Canonical program-relative path text, rejecting absolute or escaping values."""
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("canonical path must be non-empty")
+    path = PurePosixPath(text)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"path is not a canonical program-relative path: {text}")
+    return str(path)
 
-    preview_path = program_root / target["preview_path"]
+
+def _entry_canonical(entry: Any) -> tuple[str, str, str] | None:
+    """Cheap canonical identity of a legacy entry; None when it cannot be attributed."""
+    if not isinstance(entry, dict):
+        return None
+    try:
+        professor = _require_nonempty(entry.get("professor"), "professor")
+        professor_dir = _canonical_rel(entry.get("professor_dir"))
+        preview_path = _canonical_rel(entry.get("preview_path"))
+    except ValueError:
+        return None
+    return professor, professor_dir, preview_path
+
+
+def _candidate_key(target: dict[str, Any]) -> str:
+    """Normalized legacy-candidate semantics for the pre-write conflict check."""
+    return json.dumps({
+        "professor": target.get("professor"),
+        "professor_dir": target.get("professor_dir"),
+        "preview_path": target.get("preview_path"),
+        "selected_direction_ids": sorted(target.get("selected_direction_ids") or []),
+        "directions": sorted(
+            [{
+                "direction_id": direction.get("direction_id"),
+                "user_note": direction.get("user_note") or "",
+                "members": _member_keys(direction),
+            } for direction in target.get("directions") or []],
+            key=lambda item: str(item["direction_id"])),
+    }, ensure_ascii=False, sort_keys=True)
+
+
+def _preflight_candidates(candidates: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, int]:
+    """Collapse semantically identical candidates to one source.
+
+    Returns ``(source, conflict_count)``; a conflict count above one means the
+    caller must fail closed with zero writes, before any local file exists.
+    """
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        groups.setdefault(_candidate_key(candidate), []).append(candidate)
+    if len(groups) > 1:
+        return None, len(groups)
+    if not groups:
+        return None, 0
+    group = next(iter(groups.values()))
+    source = max(group, key=lambda item: (len(item.get("selection_history") or []),
+                                          str(item.get("selected_at") or "")))
+    return source, 1
+
+
+def _reliable_candidates(entries: list[Any], program_root: Path, professor_dir_rel: str,
+                         preview_rel: str, professor: str) -> tuple[list[dict[str, Any]], list[dict[str, str]], list[str]]:
+    """Split legacy entries into this professor's candidates and non-blocking others.
+
+    Only entries whose canonical name, ``professor_dir`` and ``preview_path`` all
+    match the current professor are validated further; foreign, unknown-owner and
+    path-conflicting entries are reported and never imported or business-checked.
+    """
+    candidates: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    defective: list[str] = []
+    for entry in entries:
+        canonical = _entry_canonical(entry)
+        if canonical is None:
+            skipped.append({"reason": "identity_unreliable"})
+            continue
+        if canonical != (professor, professor_dir_rel, preview_rel):
+            skipped.append({"reason": "same_name_other_dir" if canonical[0] == professor else "other_professor"})
+            continue
+        try:
+            target = _legacy_entry_to_target(entry)
+            _validate_target_identity(target, local_target_path(program_root / professor_dir_rel), program_root)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            defective.append(str(exc))
+            continue
+        candidates.append(target)
+    return candidates, skipped, defective
+
+
+def _write_first_local(program_root: Path, professor_dir_rel: str, target: dict[str, Any]) -> Path:
+    """The single commit shared by bootstrap and bulk migration: one atomic write."""
+    state_path = local_target_path(program_root / professor_dir_rel).resolve()
+    atomic_json(state_path, target)
+    return state_path
+
+
+def bootstrap_target(program_root: Path, preview_path: Path, selection: dict[str, Any], *, selected_at: str | None = None) -> dict[str, Any]:
+    """Establish the first professor-local target; the only runtime legacy reader.
+
+    Fixed order: validate the current preview and this round's selection, classify
+    the legacy table, keep only reliably-attributable candidates, finish the
+    conflict preflight in memory, then write at most once. A whole-document parse
+    failure is reported as recovery-unavailable and never blocks this professor.
+    """
+    program_root = program_root.resolve()
+    preview_path = preview_path.resolve()
+    preview_rel = _relative_under(preview_path, program_root, "preview_path")
     preview = validate_preview(preview_path)
-    if preview.get("professor") != professor:
-        raise ValueError(f"preview professor {preview.get('professor')} does not match entry {professor}")
+    direction_ids, notes = _validated_selection(preview, selection)
 
-    state_path = local_target_path(professor_dir).resolve()
+    state_path = local_target_path(preview_path.parent)
+    professor_dir_rel = str(Path(preview_rel).parent)
+    professor = preview["professor"]
+    transaction = _transaction(professor, professor_dir_rel, preview_rel, state_path)
+    if state_path.is_file():
+        established = _load_local_target(state_path, program_root)
+        return {
+            "status": "ok",
+            "mode": "already_established",
+            "state_path": str(state_path),
+            "transaction": transaction,
+            "professor": professor,
+            "selected_direction_ids": established["selected_direction_ids"],
+        }
+
+    candidates: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    legacy_recovery: str | None = None
+    source: dict[str, Any] | None = None
+    legacy_path = program_root / LEGACY_TARGET_FILE
+    if legacy_path.is_file():
+        try:
+            raw_entries = _load_legacy_state(legacy_path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            legacy_recovery = "legacy_recovery_unavailable"
+        else:
+            candidates, skipped, defective = _reliable_candidates(
+                raw_entries, program_root, professor_dir_rel, preview_rel, professor)
+            if defective:
+                return {"status": "error", "reason_code": "invalid_legacy_candidate_state",
+                        "message": "; ".join(defective), "transaction": transaction,
+                        "skipped": skipped}
+            source, conflicts = _preflight_candidates(candidates)
+            if conflicts > 1:
+                return {"status": "error", "reason_code": "legacy_candidates_conflict",
+                        "message": f"{conflicts} conflicting legacy entries claim this professor",
+                        "transaction": transaction, "skipped": skipped}
+            if skipped:
+                legacy_recovery = "legacy_recovery_ambiguous"
+
+    history = list(source.get("selection_history") or []) if source else []
+    if source:
+        history.append(_history_snapshot(source))
+    existing_notes = {
+        direction.get("direction_id"): direction.get("user_note") or ""
+        for direction in (source or {}).get("directions", [])
+    }
+
+    def note_for(direction_id: str) -> Any:
+        return notes[direction_id] if direction_id in notes else existing_notes.get(direction_id, "")
+
+    target = _target_from_selection(preview, preview_rel, direction_ids, note_for, history,
+                                    selected_at or now_utc())
+    if source is None:
+        mode = "fresh"
+    elif _candidate_key(source) == _candidate_key(target):
+        # Unchanged selection migrates rather than revises: legacy history and its own timestamp carry over.
+        mode = "migrated"
+        target = _target_from_selection(
+            preview, preview_rel, direction_ids, note_for,
+            deepcopy(source.get("selection_history") or []),
+            source.get("selected_at") or target["selected_at"])
+    else:
+        mode = "migrated_revised"
+    committed = _write_first_local(program_root, professor_dir_rel, target)
+    result = {
+        "status": "ok",
+        "mode": mode,
+        "state_path": str(committed),
+        "transaction": _transaction(professor, professor_dir_rel, preview_rel, committed),
+        "professor": professor,
+        "selected_direction_ids": direction_ids,
+        "selected_count": len(direction_ids),
+        "legacy_candidates": len(candidates),
+    }
+    if legacy_recovery:
+        result["legacy_recovery"] = legacy_recovery
+    if skipped:
+        result["legacy_skipped"] = skipped
+    return result
+
+
+def _migrate_group(program_root: Path, professor_dir_rel: str,
+                   candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    """Migrate one professor's already-classified legacy candidates.
+
+    Any conflict or unreadable local state is decided in memory before the only
+    commit, so a group never partially writes.
+    """
+    professor = candidates[0]["professor"]
+    preview_rel = candidates[0]["preview_path"]
+    state_path = local_target_path(program_root / professor_dir_rel)
+    source, conflicts = _preflight_candidates(candidates)
+    if conflicts > 1:
+        return {"status": "conflict", "professor": professor, "state_path": str(state_path),
+                "detail": f"{conflicts} conflicting legacy entries claim this professor"}
+
+    try:
+        preview = validate_preview(program_root / preview_rel)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return {"status": "failed", "professor": professor, "state_path": str(state_path),
+                "detail": f"preview unreadable: {exc}"}
+    if preview.get("professor") != professor:
+        return {"status": "failed", "professor": professor, "state_path": str(state_path),
+                "detail": f"preview professor {preview.get('professor')} does not match entry {professor}"}
+
     if state_path.is_file():
         try:
             existing = load_json(state_path)
         except (OSError, json.JSONDecodeError, ValueError) as exc:
-            return {"status": "conflict", "professor": professor, "state_path": str(state_path),
+            return {"status": "conflict", "professor": professor, "state_path": str(state_path.resolve()),
                     "detail": f"existing local target is unreadable: {exc}"}
         if not isinstance(existing, dict):
-            return {"status": "conflict", "professor": professor, "state_path": str(state_path),
+            return {"status": "conflict", "professor": professor, "state_path": str(state_path.resolve()),
                     "detail": "existing local target root is not an object"}
-        if _comparable_target(existing) == _comparable_target(target):
-            return {"status": "already_migrated", "professor": professor, "state_path": str(state_path)}
-        return {"status": "conflict", "professor": professor, "state_path": str(state_path),
+        if _comparable_target(existing) == _comparable_target(source):
+            return {"status": "already_migrated", "professor": professor,
+                    "state_path": str(state_path.resolve())}
+        return {"status": "conflict", "professor": professor, "state_path": str(state_path.resolve()),
                 "detail": "existing local target differs from the legacy entry"}
 
-    atomic_json(state_path, target)
-    return {"status": "migrated", "professor": professor, "state_path": str(state_path)}
+    committed = _write_first_local(program_root, professor_dir_rel, deepcopy(source))
+    return {"status": "migrated", "professor": professor, "state_path": str(committed)}
 
 
 def migrate_legacy_targets(program_root: Path) -> dict[str, Any]:
     """Fan the retired program-level table out into professor-local targets.
 
-    The only code path allowed to read legacy contents. Entries are migrated
-    independently: one bad entry cannot block or roll back the others, and the
-    legacy file itself is left untouched for audit.
+    Explicit bulk migration reuses the bootstrap classification, per-professor
+    conflict preflight and commit helper, so the two paths cannot disagree:
+    entries group by canonical ``professor_dir``, a group writes at most once and
+    only after every conflict in that group is resolved in memory. The legacy
+    file itself is left untouched for audit.
     """
     program_root = program_root.resolve()
     legacy_path = program_root / LEGACY_TARGET_FILE
     if not legacy_path.is_file():
         return {"status": "ok", "reason_code": "no_legacy_state", "legacy_path": str(legacy_path), "entries": []}
     try:
-        entries = _load_legacy_state(legacy_path)
+        raw_entries = _load_legacy_state(legacy_path)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return {"status": "error", "reason_code": "legacy_unreadable", "message": str(exc),
                 "legacy_path": str(legacy_path), "entries": []}
 
-    results = []
-    for entry in entries:
-        professor = entry.get("professor") if isinstance(entry, dict) else None
+    groups: dict[str, list[dict[str, Any]]] = {}
+    owner_of: list[str | None] = []
+    defective: list[str | None] = []
+    for entry in raw_entries:
+        canonical = _entry_canonical(entry)
+        if canonical is None:
+            owner_of.append(None)
+            defective.append("legacy entry identity is unreliable")
+            continue
+        professor, professor_dir_rel, _preview_rel = canonical
         try:
-            results.append(_migrate_entry(program_root, entry))
+            target = _legacy_entry_to_target(entry)
+            _validate_target_identity(target, local_target_path(program_root / professor_dir_rel), program_root)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            results.append({"status": "failed", "professor": professor, "detail": str(exc)})
+            owner_of.append(None)
+            defective.append(str(exc))
+            continue
+        owner_of.append(professor_dir_rel)
+        defective.append(None)
+        groups.setdefault(professor_dir_rel, []).append(target)
+
+    decided = {professor_dir_rel: _migrate_group(program_root, professor_dir_rel, candidates)
+               for professor_dir_rel, candidates in groups.items()}
+
+    outcomes = list(decided.values())
+    results: list[dict[str, Any]] = []
+    for index, entry in enumerate(raw_entries):
+        professor = entry.get("professor") if isinstance(entry, dict) else None
+        if defective[index]:
+            orphan = {"status": "failed", "professor": professor, "detail": defective[index]}
+            outcomes.append(orphan)
+            results.append(orphan)
+            continue
+        outcome = decided[owner_of[index]]
+        results.append({**outcome, "professor": outcome["professor"] or professor})
 
     def names(status: str) -> list[str]:
-        return [item["professor"] for item in results if item["status"] == status]
+        return [item["professor"] for item in outcomes if item["status"] == status]
 
-    failures = [item for item in results if item["status"] in {"failed", "conflict"}]
-    payload = {
+    failures = [item for item in outcomes if item["status"] in {"failed", "conflict"}]
+    return {
         "status": "partial" if failures else "ok",
         "legacy_path": str(legacy_path),
         "migrated": names("migrated"),
@@ -600,7 +883,6 @@ def migrate_legacy_targets(program_root: Path) -> dict[str, Any]:
         "failures": failures,
         "entries": results,
     }
-    return payload
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -612,6 +894,10 @@ def _parser() -> argparse.ArgumentParser:
     select.add_argument("--program-root", required=True, type=Path)
     select.add_argument("--preview", required=True, type=Path)
     select.add_argument("--selection-file", required=True, type=Path)
+    bootstrap = sub.add_parser("bootstrap")
+    bootstrap.add_argument("--program-root", required=True, type=Path)
+    bootstrap.add_argument("--preview", required=True, type=Path)
+    bootstrap.add_argument("--selection-file", required=True, type=Path)
     resolve = sub.add_parser("resolve")
     resolve.add_argument("--program-root", required=True, type=Path)
     resolve.add_argument("--target-file", required=True, type=Path)
@@ -627,9 +913,11 @@ def main() -> int:
         if args.command == "preview":
             emit(preview_options(args.preview))
             return 0
-        if args.command == "select":
-            emit(select_target(args.program_root, args.preview, load_json(args.selection_file)))
-            return 0
+        if args.command in {"select", "bootstrap"}:
+            handler = select_target if args.command == "select" else bootstrap_target
+            payload = handler(args.program_root, args.preview, load_json(args.selection_file))
+            emit(payload)
+            return 0 if payload["status"] == "ok" else 2
         if args.command == "resolve":
             professors = [part.strip() for part in args.professors.split(",") if part.strip()]
             payload = resolve_target(args.target_file, args.program_root, professors)

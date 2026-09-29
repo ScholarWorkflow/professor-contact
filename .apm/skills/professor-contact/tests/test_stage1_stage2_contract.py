@@ -193,8 +193,14 @@ class Stage2PreflightContractTests(unittest.TestCase):
         self.assertIn("correctness-preserving", agent)
         self.assertIn("绝不生成新的科学事实", agent)
 
-    def test_s0_iso_6_both_projections_pass_the_local_target_explicitly(self):
-        """S0-ISO-6: every analyzer target input names the professor-local file."""
+    def test_issue64_t7_both_projections_pass_the_local_target_explicitly(self):
+        """G64-T4/T7 support (R64-17): analyzer input and handoff stay professor-local.
+
+        Every target-bound analyzer command names one professor's own local
+        target, and the returned handoff is a transaction record array carrying
+        that professor's canonical identity — not a mapping keyed by display
+        name, which cannot represent two same-name professors.
+        """
         for target in ("professor-contact-codex", "professor-contact-opencode"):
             with self.subTest(target=target):
                 agent = self._analyzer(target)
@@ -203,11 +209,13 @@ class Stage2PreflightContractTests(unittest.TestCase):
                 self.assertTrue(bound, msg=target)
                 for command in bound:
                     self.assertIn("--target-file", command, msg=command)
-                self.assertIn('"target_states": {"<教授名>": ', agent)
-                self.assertNotIn('"target_state": ', agent)
+                self.assertIn('"transactions": [', agent)
+                for field in ('"professor_dir"', '"preview_path"', '"target_state"'):
+                    self.assertIn(field, agent, msg=target)
+                self.assertNotIn('"target_states": {', agent)
 
-    def test_s0_iso_6_program_level_table_is_only_a_prohibition(self):
-        """S0-ISO-6: neither analyzer reads or reconstructs the retired table."""
+    def test_issue64_t7_program_level_table_is_only_a_prohibition(self):
+        """R64-5 (G64-T7): neither analyzer reads or reconstructs the retired table."""
         for target in ("professor-contact-codex", "professor-contact-opencode"):
             with self.subTest(target=target):
                 agent = self._analyzer(target)

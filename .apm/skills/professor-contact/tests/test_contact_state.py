@@ -1454,7 +1454,7 @@ class TestStage5(BaseEnv):
         stat = (self.root / "info.json").stat()
         boshu_stat = (self.root / "boshu_analysis.json").stat()
         verify = {
-            "professor": "試験 教授", "verified_at": "2026-08-27T16:00:00Z",
+            "professor": "試験 教授", "verified_at": ISSUE59_VERIFIED_AT,
             "source_fingerprints": {
                 "info_json": f"{self.root / 'info.json'}:{int(stat.st_mtime)}",
                 "boshu_analysis": f"{self.root / 'boshu_analysis.json'}:{int(boshu_stat.st_mtime)}"},
@@ -2755,6 +2755,202 @@ class TestStage5TargetedEmailScope(BaseEnv):
             self.assertFalse((professor_dir / "套磁邮件.md").exists())
             self.assertFalse((professor_dir / "套磁邮件.txt").exists())
             self.assertFalse((professor_dir / contact_state.EMAIL_STATE).exists())
+
+
+class TestIssue64Stage2Identity(BaseEnv):
+    """G64-T6: preflight → plan → finalize bind one professor-local transaction.
+
+    Both professors display as ``試験 教授``; only ``professor_dir`` /
+    ``preview_path`` separate them, and the sibling entry is written first so a
+    display-name first-match lookup provably binds the wrong transaction.
+    """
+
+    PROFESSOR = "試験 教授"
+    A_REL = Path("教授研究") / "X分野" / "試験 教授"
+    B_REL = Path("教授研究") / "Y分野" / "試験 教授"
+    PACK_NAME = "套磁候选输入.json"
+
+    def setUp(self):
+        super().setUp()
+        self.a_target = self.prof_dir / "套磁目标.json"
+        self.b_target = self.root / self.B_REL / "套磁目标.json"
+        self.legacy = self.root / "教授研究" / "套磁目标.json"
+        self.snapshot = self.root / "教授研究" / "套磁阶段1候选.json"
+        self._write_target(self.a_target, self.A_REL, "pv-a", "DIR00001")
+        self._write_target(self.b_target, self.B_REL, "pv-b", "DIR00009")
+        self._write_snapshot(self._entry(self.B_REL, "stage1-fp-b", "DIR00009"),
+                             self._entry(self.A_REL, "stage1-fp-a", "DIR00001"))
+
+    def _write_target(self, path, rel_dir, fingerprint, direction_id):
+        target = {
+            "schema_version": 2, "kind": "professor-contact-target",
+            "selected_at": "2026-01-01T00:00:00Z", "professor": self.PROFESSOR,
+            "professor_dir": str(rel_dir), "preview_path": str(rel_dir / "方向预筛.json"),
+            "preview_fingerprint": fingerprint,
+            "preview_fingerprint_version": "preview-v1",
+            "selected_direction_ids": [direction_id],
+            "directions": [{
+                "direction_id": direction_id, "name_ja": "合成输入比较",
+                "name_zh": "合成输入比较", "summary_zh": "比较合成输入",
+                "member_fingerprint": f"mf-{direction_id}",
+                "members": [{"item_key": "AAAA1111", "preview_confidence": "high"},
+                            {"item_key": "BBBB2222", "preview_confidence": "high"}],
+                "user_note": "我想比较两种合成输入的处理结果。"}],
+            "selection_history": [],
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(target, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    def _entry(self, rel_dir, fingerprint, direction_id):
+        return {
+            "professor": self.PROFESSOR, "professor_dir": str(rel_dir),
+            "preview_path": str(rel_dir / "方向预筛.json"),
+            "preview_fingerprint": "pv-a" if rel_dir == self.A_REL else "pv-b",
+            "input_fingerprint": fingerprint, "built_at": "2026-01-01T00:00:00Z",
+            "action": "noop",
+            "directions": [{
+                "direction_id": direction_id,
+                "provisional_member_keys": ["AAAA1111", "BBBB2222"],
+                "candidate_keys": ["AAAA1111", "BBBB2222"],
+                "expansion_reasons": {"AAAA1111": ["provisional_member"],
+                                      "BBBB2222": ["provisional_member"]},
+                "expansion_evidence": {},
+                "pdf_readiness": {"usable_item_keys": ["AAAA1111", "BBBB2222"],
+                                  "missing_item_keys": [], "unresolved_item_keys": [],
+                                  "status_counts": {"downloaded": 2}}}],
+        }
+
+    def _write_snapshot(self, *entries):
+        self.snapshot.write_text(json.dumps({
+            "schema_version": 1, "kind": "professor-contact-stage1",
+            "updated_at": "2026-01-01T00:00:00Z", "professors": list(entries)},
+            ensure_ascii=False, indent=1), encoding="utf-8")
+
+    def preflight(self, target=None):
+        result = run_cli("stage2-preflight", "--program-root", self.root,
+                         "--professor", self.PROFESSOR,
+                         "--target-file", target or self.a_target,
+                         "--paper-analysis", "relevant", "--gap-scope", "selected_direction",
+                         "--freshness-scope", "shortlist")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return parse(result)
+
+    def save(self, payload, name):
+        path = self.root / name
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        return path
+
+    def facts_bound_to(self, proof_id):
+        year = contact_state.datetime.now().year
+
+        def extra(facts):
+            facts["current_year"] = year
+            facts["stage2_preflight"] = {"preflight_id": proof_id}
+
+        return self.write_facts(extra=extra)
+
+    def run_plan(self, facts, preflight_file):
+        result = run_cli("stage2-plan", "--facts", facts,
+                         "--preflight-file", preflight_file)
+        return result, parse(result)
+
+    def run_finalize(self, facts, preflight_file):
+        results = self.root / "results"
+        self.write_stage2_results(results)
+        result = run_cli("stage2-finalize", "--facts", facts, "--results", results,
+                         "--preflight-file", preflight_file)
+        return result, parse(result)
+
+    def accepted_run(self):
+        proof = self.preflight()
+        proof_file = self.save(proof, "proof.json")
+        facts = self.facts_bound_to(proof["preflight_id"])
+        result, payload = self.run_finalize(facts, proof_file)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["status"], "ok", payload)
+        return proof, proof_file, facts, (self.prof_dir / self.PACK_NAME).read_bytes()
+
+    def test_issue64_t6_preflight_binds_a_canonical_identity_not_the_same_name_sibling(self):
+        payload = self.preflight()
+        identity = payload["preflight_inputs"]["identity"]
+        self.assertEqual(identity["professor"], self.PROFESSOR)
+        self.assertEqual(identity["professor_dir"], str((self.root / self.A_REL).resolve()))
+        self.assertEqual(identity["preview_path"],
+                         str((self.root / self.A_REL / "方向预筛.json").resolve()))
+        self.assertEqual(identity["target_state"], str(self.a_target.resolve()))
+        self.assertEqual(identity["target_state_sha256"],
+                         contact_state.sha256_bytes(self.a_target.read_bytes()))
+        self.assertEqual(identity["stage1_input_fingerprint"], "stage1-fp-a")
+        self.assertNotIn("stage1-fp-b", json.dumps(payload, ensure_ascii=False))
+        self.assertEqual(payload["preflight_id"], contact_state.sha256_obj(
+            {"professor": payload["professor"],
+             "preflight_inputs": payload["preflight_inputs"]}))
+
+    def test_issue64_t6_plan_carries_the_consumed_preflight_proof(self):
+        proof = self.preflight()
+        proof_file = self.save(proof, "proof.json")
+        result, payload = self.run_plan(self.write_facts(), proof_file)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["status"], "ok", payload)
+        self.assertEqual(payload["preflight_id"], proof["preflight_id"])
+        self.assertEqual(payload["transaction_identity"], proof["preflight_inputs"]["identity"])
+        self.assertEqual([entry["direction_id"] for entry in payload["directions"]], ["DIR00001"])
+
+    def test_issue64_t6_plan_refuses_the_same_name_siblings_preflight_proof(self):
+        b_proof_file = self.save(self.preflight(target=self.b_target), "b-proof.json")
+        result, payload = self.run_plan(self.write_facts(), b_proof_file)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed")
+        self.assertEqual(payload["drift"], ["identity"])
+
+    def test_issue64_t6_finalize_refuses_a_changed_local_target_before_any_write(self):
+        _proof, proof_file, facts, pack_before = self.accepted_run()
+        target = json.loads(self.a_target.read_text(encoding="utf-8"))
+        target["preview_fingerprint"] = "pv-a-rotated"
+        self.a_target.write_text(json.dumps(target, ensure_ascii=False, indent=1),
+                                 encoding="utf-8")
+
+        result, payload = self.run_finalize(facts, proof_file)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed")
+        self.assertEqual(payload["drift"], ["identity"])
+        self.assertEqual((self.prof_dir / self.PACK_NAME).read_bytes(), pack_before)
+
+    def test_issue64_t6_finalize_refuses_when_the_exact_stage1_entry_moves(self):
+        _proof, proof_file, facts, pack_before = self.accepted_run()
+        entries = json.loads(self.snapshot.read_text(encoding="utf-8"))["professors"]
+        for entry in entries:
+            if entry["professor_dir"] == str(self.A_REL):
+                entry["input_fingerprint"] = "stage1-fp-a-rotated"
+        self._write_snapshot(*entries)
+
+        result, payload = self.run_finalize(facts, proof_file)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed")
+        self.assertIn("identity", payload["drift"])
+        self.assertIn("program_inputs", payload["drift"])
+        self.assertEqual((self.prof_dir / self.PACK_NAME).read_bytes(), pack_before)
+
+    def test_issue64_t6_sibling_and_legacy_states_never_enter_the_a_transaction(self):
+        clean = self.preflight()
+        self.b_target.write_text("{ broken sibling", encoding="utf-8")
+        self.legacy.write_text("{ broken legacy", encoding="utf-8")
+
+        self.assertEqual(self.preflight(), clean)
+        proof_file = self.save(clean, "proof.json")
+        facts = self.facts_bound_to(clean["preflight_id"])
+        result, payload = self.run_plan(facts, proof_file)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["preflight_id"], clean["preflight_id"])
+        self.assertEqual(payload["transaction_identity"], clean["preflight_inputs"]["identity"])
+        result, payload = self.run_finalize(facts, proof_file)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["status"], "ok", payload)
+        self.assertEqual(self.b_target.read_bytes(), b"{ broken sibling")
+        self.assertEqual(self.legacy.read_bytes(), b"{ broken legacy")
 
 
 if __name__ == "__main__":

@@ -148,6 +148,7 @@ class PreflightBase(unittest.TestCase):
         self.snapshot_entry = {
             "professor": PROFESSOR,
             "professor_dir": str(Path("教授研究") / "X分野" / PROFESSOR),
+            "preview_path": str(Path("教授研究") / "X分野" / PROFESSOR / "方向预筛.json"),
             "preview_fingerprint": "pv-1",
             "input_fingerprint": "stage1-fp-1",
             "built_at": "2026-01-01T00:00:00Z", "action": "noop",
@@ -282,7 +283,8 @@ class PreflightBase(unittest.TestCase):
             program_root=self.root, professor_dir=self.prof_dir,
             target=contact_state.read_stage2_target(
                 self.target_file, self.root, PROFESSOR),
-            snapshot_entry=contact_state.read_stage1_professor_entry(self.root, PROFESSOR),
+            snapshot_entry=contact_state.read_stage1_professor_entry(
+                self.root, PROFESSOR, self.target["professor_dir"], self.target["preview_path"]),
             pack_directions=pack["directions"], params=params,
             current_year=current_year if current_year is not None else YEAR,
             ctx=ctx, cache_entries=contact_state.load_freshness_cache(self.prof_dir))
@@ -653,7 +655,7 @@ class TestPreflightGuardrails(PreflightBase):
                 self.preflight(**overrides)
 
     def test_missing_target_state_is_a_hard_error(self):
-        """S0-ISO-5: the retired program-level table is not a Stage 2 fallback."""
+        """R64-5: the retired program-level table is not a Stage 2 fallback."""
         self.target_file.unlink()
         program_table = self.root / "教授研究" / "套磁目标.json"
         program_table.write_text(json.dumps(

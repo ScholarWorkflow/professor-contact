@@ -62,7 +62,7 @@ flowchart TD
 ### 与旧流程相比已经退役的路径
 
 - Zotero 固定标题 `套磁候选` note → Stage 0 target state；
-- 程序级 `教授研究/套磁目标.json`（schema 1 / kind `professor-contact-targets`）作为 Stage 0 权威 → 现为纯迁移输入，只由 `contact_targets.py migrate` 读取一次并逐条 fan-out 成各教授自己的 local target；
+- 程序级 `教授研究/套磁目标.json`（schema 1 / kind `professor-contact-targets`）作为 Stage 0 权威 → 现为纯迁移输入：只在建立某位教授的第一份 local target 时，由 `contact_targets.py bootstrap` 按该教授自己的目录读取一次并逐条 fan-out（standalone `migrate` 复用同一套 first-establishment helper），旧文件本身不删不改；
 - `教授研究/套磁候选总览.md` 作为 Stage 0 机器/人类输出；
 - 先按 professor keep-list 给教授全部论文补 PDF，再进入 contact；
 - 用 Zotero direction `collection_key` 作为套磁方向机器身份；
@@ -96,7 +96,7 @@ Stage 0 直接消费 `方向预筛.json` 的 normalized contract。至少依赖�
 
 用户可以多选方向，并为每个方向提供 `user_note`。A/B/C、方向显示名与 Zotero collection key 都不是机器身份。
 
-Stage 0 的权威状态是**每位被选教授一份、只描述该教授自己**的 `<教授目录>/套磁目标.json`（schema 2 / kind `professor-contact-target`，无 `targets[]` 信封、无程序级索引文件）。路径由被校验的 preview 反推（`<preview 的父目录>/套磁目标.json`），调用方不传也不猜。一次 `select` 是一位教授的原子事务；多教授请求逐笔提交，已提交的教授绝不因后续教授失败而回滚或被重写。旧程序级 `教授研究/套磁目标.json` 只由 `contact_targets.py migrate` 一次性逐条 fan-out 读取，运行期 select/resolve/Stage 1/Stage 2 一律不再读它。
+Stage 0 的权威状态是**每位被选教授一份、只描述该教授自己**的 `<教授目录>/套磁目标.json`（schema 2 / kind `professor-contact-target`，无 `targets[]` 信封、无程序级索引文件）。路径由被校验的 preview 反推（`<preview 的父目录>/套磁目标.json`），调用方不传也不猜。建立与修订分工固定：`bootstrap` 是唯一建立该教授第一份 local v2 的入口，`select` 只修订已存在的 local（文件缺失返回 `bootstrap_required` 且零写入）。一位教授一笔事务、一次调用只写该教授那一份；多教授请求逐笔提交，已提交的教授绝不因后续教授失败而回滚或被重写，同名不同目录的两位教授各算一笔事务。Stage 0 → Stage 1/2 的交接是教授级事务记录数组（`transactions`，每条含 canonical `professor_dir`、`preview_path` 与实际 `target_state`），不是以教授展示名为 key 的映射。旧程序级 `教授研究/套磁目标.json` 只在 first-establishment 时按该教授目录读取一次，运行期 select/resolve/Stage 1/Stage 2 一律不再读它。
 
 ```mermaid
 flowchart LR

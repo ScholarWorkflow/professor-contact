@@ -37,7 +37,7 @@ You do NOT run a broad professor-level downloader. Stage 0 already persisted eac
 ## Input
 
 - `folder_path` — program root containing `info.json`, or a per-専攻 folder resolvable to it. REQUIRED.
-- `professors` (optional) — comma-separated professor names. Stage 1 runs one professor-local target at a time, so the caller's own scope is the set of `<教授目录>/套磁目标.json` files: with `professors` supplied, use exactly those professors' target files; when omitted, use every professor directory under `教授研究/` that already carries its own `套磁目标.json` (normally the `target_states` mapping returned by Stage 0). A professor with no local target file is not silently skipped — report it as `missing_target_state`.
+- `professors` (optional) — comma-separated professor names. Stage 1 runs one professor-local target at a time, so the caller's own scope is the set of `<教授目录>/套磁目标.json` files: with `professors` supplied, use exactly those professors' target files; when omitted, use every professor directory under `教授研究/` that already carries its own `套磁目标.json` (normally the `transactions` records returned by Stage 0, whose canonical `professor_dir`/`preview_path`/`target_state` name each file). A professor with no local target file is not silently skipped — report it as `missing_target_state`.
 - `named_papers_file` (optional) — absolute path to a JSON file mapping `direction_id` → array of user-named papers (Zotero item keys or exact paper titles). Use it when the user explicitly names papers that must be in a direction's candidates.
 - `access_mode` (optional): `"oa_only" | "allow_non_oa"` (exact values: `oa_only` and `allow_non_oa`) — the caller's current network-access decision for this run. If supplied, it must be exactly one of those values; the downloader does not infer, translate, cache, or otherwise reinterpret it.
 
@@ -168,12 +168,17 @@ Return only compact JSON:
 {
   "result": "ok|partial|needs_input|needs_refresh|error",
   "program_root": "<abs>",
-  "target_states": {
-    "教授A": "<program_root>/教授研究/<分野>/教授A/套磁目标.json"
-  },
+  "transactions": [
+    {
+      "professor": "教授A",
+      "professor_dir": "教授研究/<分野>/教授A",
+      "preview_path": "教授研究/<分野>/教授A/方向预筛.json",
+      "target_state": "<program_root>/教授研究/<分野>/教授A/套磁目标.json",
+      "action": "pdf_fill_needed|needs_resolution|noop",
+      "missing_item_keys": []
+    }
+  ],
   "stage1_snapshot": "<program_root>/教授研究/套磁阶段1候选.json",
-  "professors": ["教授A"],
-  "action": "pdf_fill_needed|needs_resolution|noop",
   "candidate_count": 0,
   "papers_pdf_downloaded": 0,
   "papers_no_env": 0,
@@ -182,7 +187,7 @@ Return only compact JSON:
 }
 ```
 
-`candidate_count` = total expanded candidate keys across selected directions (union/deduplicated). `action` is the **post-fill** (or build-time, when no fill was needed) snapshot action. `ok` — build succeeded and every candidate has usable full text (or the collector finished and the refreshed snapshot is `noop`); `partial` — the collector could not fill some missing keys or unresolved keys remain (they stay eligible/diagnosed for the next run).
+`transactions` carries one entry per professor-local target this run processed, identified by that professor's canonical `professor_dir` + `preview_path` plus the `--target-file` it ran as `target_state`; the display `professor` field is for showing to the user only, since two professors in different directories can share it and a mapping keyed by that name would drop one of them. `candidate_count` = total expanded candidate keys across selected directions (union/deduplicated) over these records. `action` is the **post-fill** (or build-time, when no fill was needed) snapshot action of each record. `ok` — build succeeded and every candidate has usable full text (or the collector finished and the refreshed snapshot is `noop`); `partial` — the collector could not fill some missing keys or unresolved keys remain (they stay eligible/diagnosed for the next run).
 
 ## Hard rules
 
