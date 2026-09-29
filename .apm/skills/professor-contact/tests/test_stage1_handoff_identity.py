@@ -81,12 +81,15 @@ def _has_display_keyed_state_path_map(value) -> bool:
     if isinstance(value, dict):
         if value and all(isinstance(item, str) for item in value.values()):
             state_paths = []
-            for item in value.values():
+            for key, item in value.items():
                 path = PurePosixPath(item)
                 if path.name in {TARGET_NAME, STAGE1_NAME}:
-                    state_paths.append((item, str(path.parent)))
-            if state_paths:
-                for key, (path_value, parent) in zip(value.keys(), state_paths):
+                    state_paths.append((key, item, str(path.parent)))
+            # Only classify a dictionary as a state-path map when every value is
+            # itself a state path. A transaction record may legitimately consist
+            # entirely of string fields, including professor_dir and both paths.
+            if len(state_paths) == len(value):
+                for key, path_value, parent in state_paths:
                     if key not in {path_value, parent}:
                         return True
         return any(_has_display_keyed_state_path_map(item) for item in value.values())
