@@ -202,10 +202,12 @@ class PreflightBase(unittest.TestCase):
             json.dumps(self.target, ensure_ascii=False, indent=1), encoding="utf-8")
 
     def _write_snapshot(self):
-        snapshot = {"schema_version": 1, "kind": "professor-contact-stage1",
-                    "updated_at": "2026-01-01T00:00:00Z", "professors": [self.snapshot_entry]}
-        path = self.root / "教授研究" / "套磁阶段1候选.json"
-        path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=1), encoding="utf-8")
+        state = dict(self.snapshot_entry)
+        state.update({"schema_version": 2, "kind": "professor-contact-stage1",
+                      "updated_at": "2026-01-01T00:00:00Z",
+                      "membership_claim": "non_final_candidates_only"})
+        path = self.prof_dir / "套磁阶段1候选.json"
+        path.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
 
     def _read_pack(self) -> dict:
         return json.loads((self.prof_dir / "套磁候选输入.json").read_text(encoding="utf-8"))
@@ -280,12 +282,12 @@ class PreflightBase(unittest.TestCase):
             param_overrides.get("gap_scope", "selected_direction"),
             param_overrides.get("freshness_scope", "shortlist"),
             param_overrides.get("max_relevant_papers"))
+        target = contact_state.read_stage2_target(self.target_file, self.root, PROFESSOR)
         meta = contact_state.stage2_preflight_metadata(
             program_root=self.root, professor_dir=self.prof_dir,
-            target=contact_state.read_stage2_target(
-                self.target_file, self.root, PROFESSOR),
+            target=target,
             snapshot_entry=contact_state.read_stage1_professor_entry(
-                self.root, PROFESSOR, self.target["professor_dir"], self.target["preview_path"]),
+                self.root, self.prof_dir, PROFESSOR, target),
             pack_directions=pack["directions"], params=params,
             current_year=current_year if current_year is not None else YEAR,
             ctx=ctx, cache_entries=contact_state.load_freshness_cache(self.prof_dir))

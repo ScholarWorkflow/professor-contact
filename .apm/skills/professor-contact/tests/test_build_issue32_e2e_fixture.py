@@ -75,6 +75,8 @@ class Issue32FixtureBuilderTests(unittest.TestCase):
             self.assertFalse((root / "教授研究/X分野/Example Professor/套磁目标.json").exists())
             self.assertFalse((root / "教授研究/套磁目标.json").exists())
             self.assertFalse((root / "教授研究/套磁阶段1候选.json").exists())
+            self.assertFalse(
+                (root / "教授研究/X分野/Example Professor/套磁阶段1候选.json").exists())
 
     def test_manifest_forbids_program_level_stage4_outputs(self):
         """Stage 4 canonical products are program-level; professor-local paths are stale."""
@@ -88,6 +90,8 @@ class Issue32FixtureBuilderTests(unittest.TestCase):
             self.assertIn(Path("教授研究/X分野/Example Professor/套磁目标.json"), forbidden)
             self.assertNotIn(Path("教授研究/套磁目标.json"), forbidden)
             self.assertIn(Path("教授研究/套磁阶段1候选.json"), forbidden)
+            self.assertIn(
+                Path("教授研究/X分野/Example Professor/套磁阶段1候选.json"), forbidden)
             self.assertIn(Path("教授研究/X分野/Example Professor/套磁候选输入.json"), forbidden)
             self.assertIn(Path("教授研究/X分野/Example Professor/套磁候选状态.json"), forbidden)
             for stale in (

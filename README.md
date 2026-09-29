@@ -12,7 +12,7 @@ flowchart LR
     S0["Stage 0<br/>方向选择"]
     T["套磁目标.json"]
     S1["Stage 1<br/>候选集 + 定向补 PDF"]
-    C["套磁阶段1候选.json"]
+    C["<教授目录>/套磁阶段1候选.json"]
     S2["Stage 2<br/>全文分析 + resolved directions"]
     I["套磁候选输入.json"]
     S3["Stage 3<br/>3–5 个想法 / 方向"]
@@ -25,7 +25,7 @@ flowchart LR
     PRE --> S0 --> T --> S1 --> C --> S2 --> I --> S3 --> ST --> S4 --> M --> S5 --> O
 ```
 
-Stage 0 不再使用 Zotero 固定标题 `套磁候选` note；Stage 1 的 canonical 下载范围是方向候选 `item_keys`；正式 Zotero clustering 是可选组织投影；Stage 3 与 Stage 5 分别以 `套磁候选输入.json` 与 `邮件输入.json` 为唯一事实源。
+Stage 0 不再使用 Zotero 固定标题 `套磁候选` note；Stage 0 与 Stage 1 的正式状态都是逐教授文件（`<教授目录>/套磁目标.json`、`<教授目录>/套磁阶段1候选.json`），一位教授的操作不读别人的状态；Stage 1 的 canonical 下载范围是方向候选 `item_keys`；正式 Zotero clustering 是可选组织投影；Stage 3 与 Stage 5 分别以 `套磁候选输入.json` 与 `邮件输入.json` 为唯一事实源。
 
 ## 开发参考
 

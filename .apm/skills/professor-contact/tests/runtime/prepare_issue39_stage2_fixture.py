@@ -405,7 +405,7 @@ def _run_stage1(root: Path, skill_dir: Path) -> dict:
     ])
     if built.get("status") != "ok" or verified.get("status") != "ok":
         raise SetupError("product Stage 1 runner did not produce a verified snapshot")
-    snapshot = root / "教授研究" / "套磁阶段1候选.json"
+    snapshot = Path(target).parent / "套磁阶段1候选.json"
     if not snapshot.is_file():
         raise SetupError(f"Stage 1 runner did not create {snapshot}")
     return {"build": built, "verify": verified, "snapshot_file": str(snapshot)}

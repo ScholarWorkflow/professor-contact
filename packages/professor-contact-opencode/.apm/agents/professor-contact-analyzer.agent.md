@@ -126,7 +126,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
 
 ### Step 2.5 — Verify + consume the Stage 1 candidate snapshot（候选集是分析范围的来源）
 
-Stage 1 已为每个被选方向构建保守扩召的候选集并写进 `<program_root>/教授研究/套磁阶段1候选.json`（`membership_claim: non_final_candidates_only`）。读任何论文数据之前，先验证它对当前输入仍然新鲜：
+Stage 1 已为每个被选方向构建保守扩召的候选集，并写进该教授自己那份 `<教授目录>/套磁阶段1候选.json`（`membership_claim: non_final_candidates_only`；每位教授一份正式状态，程序级 `教授研究/套磁阶段1候选.json` 已失去 authority，Stage 2 不读它）。读任何论文数据之前，先验证它对当前输入仍然新鲜：
 
 ```bash
 python3 <professor-contact-skill-dir>/scripts/contact_stage1.py \
@@ -135,7 +135,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_stage1.py \
 
 一次 verify 只针对一位教授的 local target（`--professors` 已从该 CLI 移除）；多位教授就各自 verify 一次。
 
-- `missing_stage1_snapshot` / `professor_missing_from_snapshot` / `stale_stage1_snapshot` → return `needs_input`，要求先（重）跑 Stage 1；**绝不自己改写或脑补候选快照**。
+- `missing_stage1_snapshot` / `stale_stage1_snapshot` → return `needs_input`，要求先（重）跑该教授的 Stage 1；**绝不自己改写或脑补候选快照**。另一位教授的快照缺失、损坏或尚未迁移与本教授无关，不得因此阻塞本教授，也不得为此去读程序级聚合文件。
 - `preview_changed` / `professor_not_selected` 等 resolve 级状态 → 同 Step 2 的处理（needs_refresh / needs_input）。
 - `ok` → 读回快照中每个被选教授条目，取出逐方向的：
   - `candidate_keys`（provisional members ∪ Stage 1 扩召，本方向的**读取/相关性/分析范围**）；
@@ -582,7 +582,8 @@ Return ONLY this JSON, no surrounding prose:
 {
   "result": "ok|partial|needs_input|needs_external_result|error",
   "program_root": "<abs>",
-  "transactions": [{"professor":"<教授名>","professor_dir":"教授研究/<分野>/<教授名>","preview_path":"教授研究/<分野>/<教授名>/方向预筛.json","target_state":"<program_root>/<教授目录>/套磁目标.json"}],
+  "target_states": {"<教授名>": "<program_root>/<教授目录>/套磁目标.json"},
+  "stage1_snapshots": {"<教授名>": "<program_root>/<教授目录>/套磁阶段1候选.json"},
   "reason_code": "<chatgpt_result_required|stage2_plan_stale|stage2_writer_busy|...|null>",
   "reused_professors": ["<Step 2.6 reuse_all no-op 复用的教授名>"],
   "handoffs": [{"professor":"", "handoff_id":"", "bundle_path":"", "jobs":0, "missing":[]}],
@@ -602,7 +603,7 @@ Return ONLY this JSON, no surrounding prose:
 }
 ```
 
-`transactions` 是教授级事务记录数组：本轮解析过的每位教授一条，每条以 canonical `professor_dir` + `preview_path` 标识，并带上该教授实际使用的那份 `target_state` 绝对路径；教授展示名只是显示字段（不同目录的两位教授可以同名），因此**禁止**把 local target handoff 写成以展示名为唯一 key 的映射，那会挤掉同名另一位教授的一条事务。返回值里同样不存在单一程序级 target 路径，也不新增程序级持久索引。
+`target_states` 是教授名 → 该教授自己那份 local target 绝对路径的映射（本轮解析过的每位教授一条）；返回值里不存在单一程序级 target 路径。`stage1_snapshots` 同样是教授名 → 该教授自己那份 Stage-1 正式状态绝对路径的映射，与 verify 消费的那一份一致。
 - `ok` — 全部被标记方向完成；`needs_external_result` — `wait` 已生成 bundle 或外部结果仍缺/非法，是可恢复软停止，必须返回 `chatgpt_result_required` 或 importer reason_code + handoff/missing；`partial` — 其它方向级失败/降级，包括本地 continuation 的 `stage2_plan_stale` / `stage2_writer_busy`；`error` — Zotero/路径/runner 等不可继续错误。**wait 的 external 不完整绝不能降级为本地高耗执行。**
 - `reused_professors` 列出 Step 2.6 判定 `reuse_all` 的教授；其 `analyses[]` 条目 `reused: true`，`pack`/`md` 指向既有 accepted 产物（未 rewrite、时间戳未变），无 credibility/计数更新。
 - **不回传** gap 原文全文、论文全文、逐条大推理——人读细节在渲染后的 md 与输入包里。

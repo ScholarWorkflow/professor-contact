@@ -37,7 +37,8 @@ You do NOT run a broad professor-level downloader. Stage 0 already persisted eac
 ## Input
 
 - `folder_path` — program root containing `info.json`, or a per-専攻 folder resolvable to it. REQUIRED.
-- `professors` (optional) — comma-separated professor names. Stage 1 runs one professor-local target at a time, so the caller's own scope is the set of `<教授目录>/套磁目标.json` files: with `professors` supplied, use exactly those professors' target files; when omitted, use every professor directory under `教授研究/` that already carries its own `套磁目标.json` (normally the `transactions` records returned by Stage 0, whose canonical `professor_dir`/`preview_path`/`target_state` name each file). A professor with no local target file is not silently skipped — report it as `missing_target_state`.
+- `target_files` (optional) — comma-separated absolute paths of the professors' own `<教授目录>/套磁目标.json` files, taken from Stage 0's returned `target_states` values. When supplied, these are exactly the professors in scope for this run, and every `resolve`/`build`/`verify` call carries one of them as `--target-file`.
+- `professors` (optional) — comma-separated professor names. Stage 1 runs one professor-local target at a time, so the caller's own scope is the set of `<教授目录>/套磁目标.json` files: with `target_files` supplied use exactly those, otherwise with `professors` supplied use exactly those professors' target files; when both are omitted, use every professor directory under `教授研究/` that already carries its own `套磁目标.json` (normally the `target_states` mapping returned by Stage 0). A professor with no local target file is not silently skipped — report it as `missing_target_state`.
 - `named_papers_file` (optional) — absolute path to a JSON file mapping `direction_id` → array of user-named papers (Zotero item keys or exact paper titles). Use it when the user explicitly names papers that must be in a direction's candidates.
 - `access_mode` (optional): `"oa_only" | "allow_non_oa"` (exact values: `oa_only` and `allow_non_oa`) — the caller's current network-access decision for this run. If supplied, it must be exactly one of those values; the downloader does not infer, translate, cache, or otherwise reinterpret it.
 
@@ -77,7 +78,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_stage1.py \
   [--named-file "<named_papers_file absolute path>"]
 ```
 
-The builder reads that professor's `套磁目标.json`, that professor's `方向预筛.json`, and `papers.json`, then updates the machine-readable snapshot `教授研究/套磁阶段1候选.json` containing, per direction: `direction_id`, provisional member keys, expanded candidate keys, expansion reason(s) per added paper, expansion evidence, the preview/input fingerprint, and a PDF readiness summary. The snapshot keeps entries for professors outside this call's scope. It never modifies the target state, preview, or papers.json, and its `membership_claim` is `non_final_candidates_only`.
+The builder reads that professor's `套磁目标.json`, that professor's `方向预筛.json`, and `papers.json`, then writes that professor's own machine-readable state `<教授目录>/套磁阶段1候选.json` containing, per direction: `direction_id`, provisional member keys, expanded candidate keys, expansion reason(s) per added paper, expansion evidence, the preview/input fingerprint, and a PDF readiness summary. One call touches exactly one professor: it never reads, validates or rewrites another professor's Stage-1 state, and the retired program-level `教授研究/套磁阶段1候选.json` is not written or consulted. It never modifies the target state, preview, or papers.json, and its `membership_claim` is `non_final_candidates_only`.
 
 Interpret results strictly:
 
@@ -168,17 +169,14 @@ Return only compact JSON:
 {
   "result": "ok|partial|needs_input|needs_refresh|error",
   "program_root": "<abs>",
-  "transactions": [
-    {
-      "professor": "教授A",
-      "professor_dir": "教授研究/<分野>/教授A",
-      "preview_path": "教授研究/<分野>/教授A/方向预筛.json",
-      "target_state": "<program_root>/教授研究/<分野>/教授A/套磁目标.json",
-      "action": "pdf_fill_needed|needs_resolution|noop",
-      "missing_item_keys": []
-    }
-  ],
-  "stage1_snapshot": "<program_root>/教授研究/套磁阶段1候选.json",
+  "target_states": {
+    "教授A": "<program_root>/教授研究/<分野>/教授A/套磁目标.json"
+  },
+  "stage1_snapshots": {
+    "教授A": "<program_root>/教授研究/<分野>/教授A/套磁阶段1候选.json"
+  },
+  "professors": ["教授A"],
+  "action": "pdf_fill_needed|needs_resolution|noop",
   "candidate_count": 0,
   "papers_pdf_downloaded": 0,
   "papers_no_env": 0,
@@ -197,6 +195,7 @@ Return only compact JSON:
 - Never infer selected directions/professors from formal Zotero direction collections.
 - Never modify `套磁目标.json`, `方向预筛.json`, or `papers.json` yourself.
 - Never open the retired program-level `教授研究/套磁目标.json` and never treat an omitted professor scope as permission to discover targets from a program-wide table: every `resolve`/`build`/`verify` call carries one professor's own `--target-file`.
+- Each professor's Stage-1 state `<教授目录>/套磁阶段1候选.json` is that professor's own authority. Never read, validate or rewrite another professor's Stage-1 state to advance this one, and never open the retired program-level `教授研究/套磁阶段1候选.json`: another professor's missing, damaged or unmigrated state never blocks this call.
 - Never download PDFs yourself and never call Zotero write APIs yourself. Never bypass the collector by calling `pdf_fill.py` or any worker script directly — the fill goes through the exact `professor-collector` role or it does not happen.
 - The collector is always the exact business role `professor-collector`: OpenCode reaches it through native Task delegation, Codex through delegate-and-wait of the installed named custom agent — never this parent agent simulating it inline. If the runtime cannot machine-prove which child ran, record an observability gap in your notes; never invent identity event fields to fill the hole.
 - Always refresh the snapshot after the collector returns; never leave `套磁阶段1候选.json` describing pre-fill state, and never return `ok` while missing or unresolved candidate keys remain (`partial` + notes instead).

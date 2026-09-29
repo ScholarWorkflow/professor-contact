@@ -82,19 +82,17 @@ class Issue32VerifierTests(unittest.TestCase):
         papers["papers"][0]["pdf_status"] = "downloaded"
         papers_path.write_text(json.dumps(papers), encoding="utf-8")
 
-        (root / "教授研究/套磁阶段1候选.json").write_text(json.dumps({
-            "schema_version": 1,
+        (prof / "套磁阶段1候选.json").write_text(json.dumps({
+            "schema_version": 2,
             "kind": "professor-contact-stage1",
-            "professors": [{
-                "professor": "Example Professor",
-                "directions": [{
-                    "direction_id": "DIR00001",
-                    "candidate_keys": [item_key],
-                    "pdf_readiness": {
-                        "usable_item_keys": [item_key],
-                        "missing_item_keys": [],
-                    },
-                }],
+            "professor": "Example Professor",
+            "directions": [{
+                "direction_id": "DIR00001",
+                "candidate_keys": [item_key],
+                "pdf_readiness": {
+                    "usable_item_keys": [item_key],
+                    "missing_item_keys": [],
+                },
             }],
         }), encoding="utf-8")
         response = Path(self.holder.name) / "dynamic-r1-response.json"
@@ -123,19 +121,17 @@ class Issue32VerifierTests(unittest.TestCase):
         papers["papers"][0]["pdf_status"] = "downloaded"
         papers["papers"].append({"item_key": "OTHER1111", "pdf_status": "downloaded"})
         papers_path.write_text(json.dumps(papers), encoding="utf-8")
-        (root / "教授研究/套磁阶段1候选.json").write_text(json.dumps({
-            "schema_version": 1,
+        (prof / "套磁阶段1候选.json").write_text(json.dumps({
+            "schema_version": 2,
             "kind": "professor-contact-stage1",
-            "professors": [{
-                "professor": "Example Professor",
-                "directions": [{
-                    "direction_id": "DIR00001",
-                    "candidate_keys": [item_key, "OTHER1111"],
-                    "pdf_readiness": {
-                        "usable_item_keys": [item_key, "OTHER1111"],
-                        "missing_item_keys": [],
-                    },
-                }],
+            "professor": "Example Professor",
+            "directions": [{
+                "direction_id": "DIR00001",
+                "candidate_keys": [item_key, "OTHER1111"],
+                "pdf_readiness": {
+                    "usable_item_keys": [item_key, "OTHER1111"],
+                    "missing_item_keys": [],
+                },
             }],
         }), encoding="utf-8")
 
@@ -158,19 +154,17 @@ class Issue32VerifierTests(unittest.TestCase):
         papers["papers"][0]["pdf_status"] = "downloaded"
         papers_path.write_text(json.dumps(papers), encoding="utf-8")
 
-        (root / "教授研究/套磁阶段1候选.json").write_text(json.dumps({
-            "schema_version": 1,
+        (prof / "套磁阶段1候选.json").write_text(json.dumps({
+            "schema_version": 2,
             "kind": "professor-contact-stage1",
-            "professors": [{
-                "professor": "Example Professor",
-                "directions": [{
-                    "direction_id": "DIR00001",
-                    "candidate_keys": [item_key],
-                    "pdf_readiness": {
-                        "usable_item_keys": [item_key],
-                        "missing_item_keys": [],
-                    },
-                }],
+            "professor": "Example Professor",
+            "directions": [{
+                "direction_id": "DIR00001",
+                "candidate_keys": [item_key],
+                "pdf_readiness": {
+                    "usable_item_keys": [item_key],
+                    "missing_item_keys": [],
+                },
             }],
         }), encoding="utf-8")
         response = Path(self.holder.name) / "noop-r1-response.json"

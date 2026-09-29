@@ -44,6 +44,7 @@ FORBIDDEN_STAGE_OUTPUTS = (
     Path("教授研究/套磁选择.json"),
     Path("教授研究/邮件输入.json"),
     Path("教授研究/X分野/Example Professor/套磁目标.json"),
+    Path("教授研究/X分野/Example Professor/套磁阶段1候选.json"),
     Path("教授研究/X分野/Example Professor/套磁候选输入.json"),
     Path("教授研究/X分野/Example Professor/套磁候选状态.json"),
 )

@@ -30,7 +30,7 @@ flowchart TD
     TARGET["<教授目录>/套磁目标.json<br/>selected provisional target<br/>每位被选教授一份"]
 
     S1["Stage 1 · professor-contact-downloader<br/>resolve targets + build candidates"]
-    CAND["教授研究/套磁阶段1候选.json<br/>membership_claim: non_final_candidates_only"]
+    CAND["<教授目录>/套磁阶段1候选.json<br/>membership_claim: non_final_candidates_only<br/>每位被选教授一份"]
     FILL["professor-collector<br/>pdf_only:true + item_keys<br/>仅缺失候选 PDF"]
 
     S2["Stage 2 · professor-contact-analyzer<br/>preflight + full evidence + direction resolution"]
@@ -76,7 +76,7 @@ flowchart TD
 | Stage | 主要执行者 | 当前输入边界 | 当前权威输出 | 下游约束 |
 |---|---|---|---|---|
 | 0 | `professor-contact` | normalized `方向预筛.json` | 逐教授 `<教授目录>/套磁目标.json`（每位被选教授一份） | 使用稳定 `direction_id`；一次 `select` 只提交一位教授；无 Stage 0 Markdown |
-| 1 | `professor-contact-downloader` | 该教授的 local target + preview + `papers.json` | `教授研究/套磁阶段1候选.json` | 一次只 `resolve`/`build --target-file` 一位教授；快照按教授 merge，不挤掉其他教授条目；仅候选集；归属声明必须是 non-final |
+| 1 | `professor-contact-downloader` | 该教授的 local target + preview + `papers.json` | `<教授目录>/套磁阶段1候选.json` | 一次只 `resolve`/`build --target-file` 一位教授；只写该教授自己那份，不读不写其他教授的状态，也不读程序级聚合；仅候选集；归属声明必须是 non-final |
 | 2 | `professor-contact-analyzer` + `paper-analysis` | 该教授的 local target + verified Stage 1 snapshot + 本地论文证据 | `_resolved_directions.json`、`套磁候选输入.json` | 全文 resolved direction 对 outreach 权威；input pack 是 Stage 3 唯一事实源 |
 | 3 | `professor-contact-idea-generator` | `套磁候选输入.json` + profile | `套磁候选状态.json` | 不读 Markdown / `_index.json` / sidecar；默认每方向 3–5 条 |
 | 4 | `professor-contact-selection` | `套磁候选状态.json` + 用户真实选择 | `套磁选择.json`、`邮件输入.json` | exact `direction_id` / `(direction_id,item_key,gap_id)` join；过期零写入 |
