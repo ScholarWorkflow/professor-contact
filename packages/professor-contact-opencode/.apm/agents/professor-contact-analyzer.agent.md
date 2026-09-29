@@ -507,7 +507,9 @@ runner 校验：result schema/kind 正确、**`collection_key`/`provisional_dire
 
 **F. 跑 `stage2-plan`**（纯确定性）：
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-plan --facts /tmp/<教授名>_套磁_facts.json
+python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-plan \
+  --facts /tmp/<教授名>_套磁_facts.json \
+  --preflight-file /tmp/<教授名>_stage2_preflight.json
 ```
 
 
