@@ -196,7 +196,8 @@ class Issue65Gate2Stage1Tests(unittest.TestCase):
 
     def test_issue65_stage1_professor_local_authority_and_isolation(self):
         root = self.env.root
-        legacy_snapshot = root / "教授研究" / STAGE1_NAME
+        legacy_stage1 = root / "教授研究" / STAGE1_NAME
+        legacy_target = root / "教授研究" / TARGET_NAME
         a_dir = stage1_fixture.same_name_professor(root, "labA", "fp-a")
         b_dir = stage1_fixture.same_name_professor(root, "labB", "fp-b")
         a_target = a_dir / TARGET_NAME
@@ -206,14 +207,14 @@ class Issue65Gate2Stage1Tests(unittest.TestCase):
 
         stage1_fixture.build(root, b_target)
         self.assertTrue(b_state.is_file())
-        legacy_snapshot.write_text(
+        legacy_stage1.write_text(
             json.dumps(
                 {
                     "schema_version": 1,
                     "kind": "professor-contact-stage1",
                     "updated_at": None,
                     "professors": [],
-                    "sentinel": "issue-65-legacy-aggregate-sentinel",
+                    "sentinel": "issue-65-legacy-stage1-sentinel",
                 },
                 ensure_ascii=False,
                 indent=1,
@@ -221,10 +222,13 @@ class Issue65Gate2Stage1Tests(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
+        legacy_target.write_text("{ retired program target sentinel", encoding="utf-8")
         b_before = b_state.read_bytes()
-        legacy_before = legacy_snapshot.read_bytes()
+        legacy_stage1_before = legacy_stage1.read_bytes()
+        legacy_target_before = legacy_target.read_bytes()
 
-        guard = stage1_fixture.ForbiddenAuthorityGuard([b_state, legacy_snapshot])
+        forbidden = [b_state, legacy_stage1, legacy_target]
+        guard = stage1_fixture.ForbiddenAuthorityGuard(forbidden)
         with guard:
             _first, first_payload = stage1_fixture.build(root, a_target)
             self.assertEqual(first_payload.get("status"), "ok")
@@ -238,14 +242,15 @@ class Issue65Gate2Stage1Tests(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 reverified = stage1_fixture.stage1.verify_command(root, a_target)
             self.assertEqual(reverified.get("status"), "ok")
-        self.assertEqual(guard.accesses, [], f"foreign Stage-1 authority accessed: {guard.accesses}")
+        self.assertEqual(guard.accesses, [], f"foreign/retired authority accessed: {guard.accesses}")
         self.assertEqual(b_state.read_bytes(), b_before)
-        self.assertEqual(legacy_snapshot.read_bytes(), legacy_before)
+        self.assertEqual(legacy_stage1.read_bytes(), legacy_stage1_before)
+        self.assertEqual(legacy_target.read_bytes(), legacy_target_before)
 
         # A missing state must not be substituted by the same-display-name B state.
         a_before = a_state.read_bytes()
         a_state.unlink()
-        guard = stage1_fixture.ForbiddenAuthorityGuard([b_state, legacy_snapshot])
+        guard = stage1_fixture.ForbiddenAuthorityGuard(forbidden)
         rejected = False
         try:
             with guard, contextlib.redirect_stdout(io.StringIO()):
@@ -256,7 +261,7 @@ class Issue65Gate2Stage1Tests(unittest.TestCase):
         finally:
             a_state.write_bytes(a_before)
         self.assertTrue(rejected, "verify accepted B as A when A Stage-1 state was missing")
-        self.assertEqual(guard.accesses, [], f"missing-A verify accessed B/legacy: {guard.accesses}")
+        self.assertEqual(guard.accesses, [], f"missing-A verify accessed B/retired state: {guard.accesses}")
 
 
 class Issue65Gate2Stage2Tests(stage2_fixture.Issue65Stage2BindingEnv):
@@ -272,6 +277,11 @@ class Issue65Gate2Stage2Tests(stage2_fixture.Issue65Stage2BindingEnv):
         )
         return self._capture(stage2_fixture.contact_state.cmd_stage2_preflight, args)
 
+    def _gate2_guard(self):
+        return stage2_fixture._ForeignAuthorityGuard(
+            [self.b_snapshot, self.legacy_snapshot, self.legacy_target]
+        )
+
     @staticmethod
     def _is_rejected(text: str, code) -> bool:
         if code is not None:
@@ -283,49 +293,53 @@ class Issue65Gate2Stage2Tests(stage2_fixture.Issue65Stage2BindingEnv):
         return not (isinstance(payload, dict) and payload.get("status") == "ok")
 
     def test_issue65_stage2_exact_stage1_binding_lifecycle(self):
-        # A missing local state cannot fall through to the same-display-name B state.
+        self.legacy_target = self.root / "教授研究" / TARGET_NAME
+        self.legacy_target.write_text("{ retired program target sentinel", encoding="utf-8")
+        legacy_target_before = self.legacy_target.read_bytes()
+
+        # A missing local state cannot fall through to same-display-name B or retired authority.
         a_snapshot_before = self.a_snapshot.read_bytes()
         outputs_before_missing = self.outputs_state()
         self.a_snapshot.unlink()
-        guard = self.guard()
+        guard = self._gate2_guard()
         try:
             with guard:
                 text, code = self._raw_preflight()
             self.assertTrue(self._is_rejected(text, code), text)
             self.assertEqual(self.outputs_state(), outputs_before_missing)
-            self.assertEqual(guard.accesses, [], f"missing-A preflight accessed B/legacy: {guard.accesses}")
+            self.assertEqual(guard.accesses, [], f"missing-A preflight accessed B/retired state: {guard.accesses}")
         finally:
             self.a_snapshot.write_bytes(a_snapshot_before)
 
-        guard = self.guard()
+        guard = self._gate2_guard()
         with guard:
             proof = self.preflight()
         self.assertEqual(proof.get("status"), "ok", proof)
-        self.assertEqual(guard.accesses, [], f"preflight accessed B/legacy: {guard.accesses}")
+        self.assertEqual(guard.accesses, [], f"preflight accessed B/retired state: {guard.accesses}")
         self.preflight_file.write_text(json.dumps(proof, ensure_ascii=False), encoding="utf-8")
         self._write_facts(preflight_id=proof["preflight_id"])
 
-        guard = self.guard()
+        guard = self._gate2_guard()
         with guard:
             planned = self.plan()
         self.assertEqual(planned.get("status"), "ok", planned)
-        self.assertEqual(guard.accesses, [], f"plan accessed B/legacy: {guard.accesses}")
+        self.assertEqual(guard.accesses, [], f"plan accessed B/retired state: {guard.accesses}")
 
         target_before = self.a_target.read_bytes()
         snapshot_before = self.a_snapshot.read_bytes()
         outputs_before = self.outputs_state()
         b_before = self.fingerprint(self.b_snapshot)
-        legacy_before = self.fingerprint(self.legacy_snapshot)
+        legacy_stage1_before = self.fingerprint(self.legacy_snapshot)
 
         drifted = json.loads(self.a_target.read_text(encoding="utf-8"))
         drifted["directions"][0]["user_note"] = "gate2 changed target binding"
         self.a_target.write_text(json.dumps(drifted, ensure_ascii=False, indent=1), encoding="utf-8")
-        guard = self.guard()
+        guard = self._gate2_guard()
         with guard:
             text, code = self.finalize()
         self.assertTrue(self._is_rejected(text, code), text)
         self.assertEqual(self.outputs_state(), outputs_before)
-        self.assertEqual(guard.accesses, [], f"stale-target finalize accessed B/legacy: {guard.accesses}")
+        self.assertEqual(guard.accesses, [], f"stale-target finalize accessed B/retired state: {guard.accesses}")
         self.a_target.write_bytes(target_before)
 
         state = json.loads(self.a_snapshot.read_text(encoding="utf-8"))
@@ -334,21 +348,22 @@ class Issue65Gate2Stage2Tests(stage2_fixture.Issue65Stage2BindingEnv):
         replacement = ("0" if set(original_fingerprint) != {"0"} else "1") * len(original_fingerprint)
         state["input_fingerprint"] = replacement
         self.a_snapshot.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
-        guard = self.guard()
+        guard = self._gate2_guard()
         with guard:
             text, code = self.finalize()
         self.assertTrue(self._is_rejected(text, code), text)
         self.assertEqual(self.outputs_state(), outputs_before)
-        self.assertEqual(guard.accesses, [], f"stale-Stage1 finalize accessed B/legacy: {guard.accesses}")
+        self.assertEqual(guard.accesses, [], f"stale-Stage1 finalize accessed B/retired state: {guard.accesses}")
         self.a_snapshot.write_bytes(snapshot_before)
 
-        guard = self.guard()
+        guard = self._gate2_guard()
         with guard:
             text, code = self.finalize()
         self.assertFalse(self._is_rejected(text, code), text)
-        self.assertEqual(guard.accesses, [], f"legal finalize accessed B/legacy: {guard.accesses}")
+        self.assertEqual(guard.accesses, [], f"legal finalize accessed B/retired state: {guard.accesses}")
         self.assertEqual(self.fingerprint(self.b_snapshot), b_before)
-        self.assertEqual(self.fingerprint(self.legacy_snapshot), legacy_before)
+        self.assertEqual(self.fingerprint(self.legacy_snapshot), legacy_stage1_before)
+        self.assertEqual(self.legacy_target.read_bytes(), legacy_target_before)
         self.assertEqual(self.a_target.read_bytes(), target_before)
         self.assertEqual(self.a_snapshot.read_bytes(), snapshot_before)
 
@@ -380,10 +395,8 @@ class Stage1HandoffIdentityTests(unittest.TestCase):
                     f"Stage-1 command uses retired program target: {block}",
                 )
 
-        # The exact return field/shape is not frozen by Gate 1. If an active
-        # result does expose machine state references, it may not re-index them
-        # by professor display text. A result with no such state references is
-        # acceptable and is proved by the caller/analyzer wiring checks instead.
+        # Gate 1 does not freeze an exact return field/shape. If an active result
+        # exposes machine state references, it may not re-index them by display text.
         for payload in _json_blocks(downloader_text):
             if "result" not in payload:
                 continue
