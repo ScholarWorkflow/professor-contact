@@ -283,7 +283,7 @@ class TestWrapperKeepsInstalledLayoutLocator(unittest.TestCase):
         stat = (fixture_root / "info.json").stat()
         boshu_stat = (fixture_root / "boshu_analysis.json").stat()
         verify = {
-            "professor": "試験 教授", "verified_at": "2026-08-27T16:00:00Z",
+            "professor": "試験 教授", "verified_at": helpers.ISSUE59_VERIFIED_AT,
             "source_fingerprints": {
                 "info_json": f"{fixture_root / 'info.json'}:{int(stat.st_mtime)}",
                 "boshu_analysis": f"{fixture_root / 'boshu_analysis.json'}:{int(boshu_stat.st_mtime)}"},

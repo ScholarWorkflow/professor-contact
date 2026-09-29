@@ -2,6 +2,7 @@ import importlib.util
 import json
 import shlex
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -260,13 +261,13 @@ class Issue32EvalRequestTests(unittest.TestCase):
     def test_cli_requires_case_and_rejects_unknown_values(self):
         output = Path(self.holder.name) / "cli-request.json"
         missing = subprocess.run(
-            ["python3", str(MODULE_PATH), "--consumer-root", str(self.root),
+            [sys.executable, str(MODULE_PATH), "--consumer-root", str(self.root),
              "--prompt-file", str(self.prompt), "--output", str(output)],
             capture_output=True, text=True, check=False)
         self.assertEqual(missing.returncode, 2)
         self.assertIn("--case", missing.stderr)
         unknown = subprocess.run(
-            ["python3", str(MODULE_PATH), "--case", "r7",
+            [sys.executable, str(MODULE_PATH), "--case", "r7",
              "--consumer-root", str(self.root), "--prompt-file", str(self.prompt),
              "--output", str(output)],
             capture_output=True, text=True, check=False)
@@ -276,7 +277,7 @@ class Issue32EvalRequestTests(unittest.TestCase):
     def test_cli_writes_isolated_case_without_endpoint_keys(self):
         output = Path(self.holder.name) / "r4b-request.json"
         completed = subprocess.run(
-            ["python3", str(MODULE_PATH), "--case", "r4b",
+            [sys.executable, str(MODULE_PATH), "--case", "r4b",
              "--max-agent-threads", str(RECIPE_CEILING),
              "--consumer-root", str(self.root), "--prompt-file", str(self.prompt),
              "--output", str(output)],
