@@ -387,6 +387,11 @@ def select_target(program_root: Path, preview_path: Path, selection: dict[str, A
         }
 
     existing = _load_local_target(state_path, program_root)
+    if existing.get("professor") != preview["professor"]:
+        raise ValueError(
+            f"target professor {existing.get('professor')!r} does not match current preview professor "
+            f"{preview['professor']!r}"
+        )
     existing_notes = {
         direction.get("direction_id"): direction.get("user_note") or ""
         for direction in existing.get("directions", [])
@@ -641,6 +646,35 @@ def _preflight_candidates(candidates: list[dict[str, Any]]) -> tuple[dict[str, A
     return source, 1
 
 
+def _prepare_migration_source(source: dict[str, Any], preview: dict[str, Any]) -> dict[str, Any]:
+    """Validate a legacy selection against the current preview before it gains authority.
+
+    Bulk migration has no current user selection with which to revise a stale
+    legacy choice. Therefore a removed direction or changed selected member set
+    must fail before the first local write. Projection-only changes are safe to
+    refresh in memory, matching normal Stage-0 resolve semantics.
+    """
+    prepared = deepcopy(source)
+    current_by_id = {direction["direction_id"]: direction for direction in preview["directions"]}
+    projection_changed = False
+    for stored in prepared.get("directions", []):
+        direction_id = stored.get("direction_id")
+        current = current_by_id.get(direction_id)
+        if current is None:
+            raise ValueError(f"selected direction {direction_id} no longer exists")
+        if _member_keys(current) != _member_keys(stored):
+            raise ValueError(f"selected direction {direction_id} membership changed")
+        if _projection_differs(stored, current):
+            stored.update(_selected_projection(current))
+            projection_changed = True
+    if projection_changed:
+        prepared["preview_fingerprint"] = preview["preview_fingerprint"]
+        prepared["preview_fingerprint_version"] = preview["preview_fingerprint_version"]
+        prepared["direction_id_version"] = preview.get("direction_id_version")
+        prepared["projection_refreshed_at"] = now_utc()
+    return prepared
+
+
 def _reliable_candidates(entries: list[Any], program_root: Path, professor_dir_rel: str,
                          preview_rel: str, professor: str) -> tuple[list[dict[str, Any]], list[dict[str, str]], list[str]]:
     """Split legacy entries into this professor's candidates and non-blocking others.
@@ -697,6 +731,11 @@ def bootstrap_target(program_root: Path, preview_path: Path, selection: dict[str
     transaction = _transaction(professor, professor_dir_rel, preview_rel, state_path)
     if state_path.is_file():
         established = _load_local_target(state_path, program_root)
+        if established.get("professor") != professor:
+            raise ValueError(
+                f"target professor {established.get('professor')!r} does not match current preview professor "
+                f"{professor!r}"
+            )
         return {
             "status": "ok",
             "mode": "already_established",
@@ -796,6 +835,11 @@ def _migrate_group(program_root: Path, professor_dir_rel: str,
     if preview.get("professor") != professor:
         return {"status": "failed", "professor": professor, "state_path": str(state_path),
                 "detail": f"preview professor {preview.get('professor')} does not match entry {professor}"}
+    try:
+        source = _prepare_migration_source(source, preview)
+    except ValueError as exc:
+        return {"status": "failed", "professor": professor, "state_path": str(state_path),
+                "detail": f"legacy target is stale: {exc}"}
 
     if state_path.is_file():
         try:
