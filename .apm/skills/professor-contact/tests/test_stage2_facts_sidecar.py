@@ -8,6 +8,8 @@ import unicodedata
 import unittest
 from pathlib import Path
 
+from stage2_test_support import run_bound_stage2_plan
+
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "contact_state.py"
 
@@ -177,7 +179,7 @@ class FactsSidecarTests(unittest.TestCase):
         facts = self.write_facts()
         results = self.root / "results"
         self.write_stage2_results(results)
-        plan = parse(run_cli("stage2-plan", "--facts", facts))
+        plan = parse(run_bound_stage2_plan(run_cli, facts))
         self.assertEqual(plan["status"], "ok", plan)
         out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
         self.assertEqual(out["status"], "ok", out)
@@ -370,10 +372,10 @@ class FactsSidecarTests(unittest.TestCase):
         facts = self.write_facts()
         results = self.root / "results"
         self.write_stage2_results(results)
-        self.assertEqual(parse(run_cli("stage2-plan", "--facts", facts))["status"], "ok")
+        self.assertEqual(parse(run_bound_stage2_plan(run_cli, facts))["status"], "ok")
         self.assertEqual(parse(run_cli("stage2-finalize", "--facts", facts,
                                        "--results", results))["status"], "ok")
-        rerun = parse(run_cli("stage2-plan", "--facts", facts))
+        rerun = parse(run_bound_stage2_plan(run_cli, facts))
         self.assertEqual(rerun["directions"][0]["action"], "reuse")
 
         # Any byte change to the facts sidecar must invalidate the input pack.
@@ -381,7 +383,7 @@ class FactsSidecarTests(unittest.TestCase):
         payload["confidence"] = 0.7
         self.facts_sidecar.write_text(
             json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-        after = parse(run_cli("stage2-plan", "--facts", facts))
+        after = parse(run_bound_stage2_plan(run_cli, facts))
         self.assertEqual(after["directions"][0]["action"], "process")
 
     def test_invalid_facts_sidecar_shape_fails_closed(self):

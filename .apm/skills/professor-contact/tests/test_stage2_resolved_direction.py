@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from stage2_test_support import run_bound_stage2_plan
+
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "contact_state.py"
 
@@ -487,7 +489,7 @@ class ResolvedPipelineMixin:
 
     def run_stage2_finalize(self, facts_path):
         """stage2-plan → freshness/narrative results → stage2-finalize with the sidecar."""
-        plan_payload = parse(run_cli("stage2-plan", "--facts", str(facts_path)))
+        plan_payload = parse(run_bound_stage2_plan(run_cli, facts_path))
         results_dir = self.root / "stage2_results"
         results_dir.mkdir(exist_ok=True)
         narrative_directions = []

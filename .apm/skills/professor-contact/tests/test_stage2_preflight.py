@@ -640,7 +640,10 @@ class TestPreflightDecision(PreflightBase):
         changed = self.direction(payload, "DIR00002")
         self.assertEqual(changed["action"], "process")
         self.assertIn("candidate_set_changed", changed["reason_codes"])
-        plan = parse(run_cli("stage2-plan", "--facts", self.facts_path))
+        proof_path = self.root / "partial-invalidation-preflight.json"
+        proof_path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        plan = parse(run_cli("stage2-plan", "--facts", self.facts_path,
+                             "--preflight-file", proof_path))
         self.assertEqual(plan["status"], "ok")
         by_key = {entry["direction_id"]: entry for entry in plan["directions"]}
         self.assertEqual(by_key["DIR00001"]["action"], "reuse")

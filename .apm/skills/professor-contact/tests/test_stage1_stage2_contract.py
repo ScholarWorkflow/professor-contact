@@ -229,6 +229,17 @@ class Stage2PreflightContractTests(unittest.TestCase):
                     )
                 self.assertIn("不自行推导路径", agent)
 
+    def test_issue64_t7_stage2_plan_commands_pass_the_saved_preflight_proof(self):
+        """The production plan hop consumes the proof saved by Step 2.6."""
+        expected_proof = "--preflight-file /tmp/<教授名>_stage2_preflight.json"
+        for target in ("professor-contact-codex", "professor-contact-opencode"):
+            with self.subTest(target=target):
+                commands = [command for command in bash_commands(self._analyzer(target))
+                            if "contact_state.py stage2-plan" in command]
+                self.assertEqual(len(commands), 1, msg=commands)
+                self.assertIn("--facts /tmp/<教授名>_套磁_facts.json", commands[0])
+                self.assertIn(expected_proof, commands[0])
+
     def _analyzer(self, target: str) -> str:
         path = (ROOT.parents[2] / "packages" / target / ".apm" / "agents"
                 / "professor-contact-analyzer.agent.md")

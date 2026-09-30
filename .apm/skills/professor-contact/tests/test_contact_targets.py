@@ -757,6 +757,31 @@ class ContactTargetsTests(unittest.TestCase):
         self.assertEqual(len(result["failures"]), 1)
         self.assertFalse(self.target_path.exists())
 
+    def test_issue64_t3_bulk_migration_conflicting_carry_forward_state_writes_nothing(self):
+        self.bootstrap(["dir_A"], {"dir_A": "note A"})
+        entry = self.a_entry()
+        self.target_path.unlink()
+
+        variants = (
+            ("selection_history", [{"marker": "different-history"}]),
+            ("selected_at", "2025-12-31T23:59:59Z"),
+        )
+        for field, value in variants:
+            with self.subTest(field=field):
+                self.target_path.unlink(missing_ok=True)
+                conflicting = copy.deepcopy(entry)
+                conflicting[field] = value
+                self.write_legacy(copy.deepcopy(entry), conflicting)
+                legacy_before = self.legacy_path.read_bytes()
+
+                result = mod.migrate_legacy_targets(self.root)
+
+                self.assertEqual(result["status"], "partial")
+                self.assertEqual([item["status"] for item in result["entries"]],
+                                 ["conflict", "conflict"])
+                self.assertFalse(self.target_path.exists())
+                self.assertEqual(self.legacy_path.read_bytes(), legacy_before)
+
     def test_issue64_t3_bulk_migration_writes_nothing_for_unparseable_legacy(self):
         self.bootstrap(["dir_A"])
         entry = self.a_entry()

@@ -3583,9 +3583,7 @@ def stage2_plan_bind_preflight(ctx: Stage2Context, preflight_file) -> tuple[dict
     """
     _target, _entry, identity = stage2_transaction_identity(ctx)
     if not preflight_file:
-        binding = ctx.facts.get("stage2_preflight")
-        proof_id = binding.get("preflight_id") if isinstance(binding, dict) else None
-        return identity, (str(proof_id) if proof_id else None)
+        fail("invalid_params", "stage2-plan requires --preflight-file")
     plan, error = read_json_file(Path(preflight_file))
     if (error or not isinstance(plan, dict) or plan.get("status") != "ok"
             or not isinstance(plan.get("preflight_inputs"), dict)):
@@ -9240,7 +9238,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("stage2-plan")
     p.add_argument("--facts", required=True)
-    p.add_argument("--preflight-file",
+    p.add_argument("--preflight-file", required=True,
                    help="saved stage2-preflight stdout; the plan is bound to the same "
                         "professor-local transaction identity before it emits jobs")
     p.set_defaults(func=lambda a: cmd_stage2_plan(a))

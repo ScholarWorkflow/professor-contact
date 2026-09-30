@@ -610,9 +610,9 @@ def _entry_canonical(entry: Any) -> tuple[str, str, str] | None:
     return professor, professor_dir, preview_path
 
 
-def _candidate_key(target: dict[str, Any]) -> str:
+def _candidate_key(target: dict[str, Any], *, include_carry_forward: bool = True) -> str:
     """Normalized legacy-candidate semantics for the pre-write conflict check."""
-    return json.dumps({
+    semantics = {
         "professor": target.get("professor"),
         "professor_dir": target.get("professor_dir"),
         "preview_path": target.get("preview_path"),
@@ -624,7 +624,11 @@ def _candidate_key(target: dict[str, Any]) -> str:
                 "members": _member_keys(direction),
             } for direction in target.get("directions") or []],
             key=lambda item: str(item["direction_id"])),
-    }, ensure_ascii=False, sort_keys=True)
+    }
+    if include_carry_forward:
+        semantics["selected_at"] = target.get("selected_at")
+        semantics["selection_history"] = target.get("selection_history") or []
+    return json.dumps(semantics, ensure_ascii=False, sort_keys=True)
 
 
 def _preflight_candidates(candidates: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, int]:
@@ -785,7 +789,8 @@ def bootstrap_target(program_root: Path, preview_path: Path, selection: dict[str
                                     selected_at or now_utc())
     if source is None:
         mode = "fresh"
-    elif _candidate_key(source) == _candidate_key(target):
+    elif _candidate_key(source, include_carry_forward=False) == \
+            _candidate_key(target, include_carry_forward=False):
         # Unchanged selection migrates rather than revises: legacy history and its own timestamp carry over.
         mode = "migrated"
         target = _target_from_selection(

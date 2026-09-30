@@ -155,11 +155,29 @@ class BaseEnv(unittest.TestCase):
                                 "explanation": "研究计划比较另一种合成场景。"}]}]},
             ensure_ascii=False), encoding="utf-8")
 
+    def run_bound_stage2_plan(self, facts: Path):
+        """Run plan business tests with a synthetic but identity-valid proof."""
+        ctx = contact_state.Stage2Context(facts)
+        _target, _entry, identity = contact_state.stage2_transaction_identity(ctx)
+        preflight_inputs = {"identity": identity}
+        proof = {
+            "status": "ok",
+            "professor": ctx.professor,
+            "preflight_inputs": preflight_inputs,
+            "preflight_id": contact_state.sha256_obj({
+                "professor": ctx.professor,
+                "preflight_inputs": preflight_inputs,
+            }),
+        }
+        proof_path = self.root / "synthetic-stage2-plan-proof.json"
+        proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=1), encoding="utf-8")
+        return run_cli("stage2-plan", "--facts", facts, "--preflight-file", proof_path)
+
     def stage2_run(self, gap_overrides=None):
         facts = self.write_facts()
         results = self.root / "results"
         self.write_stage2_results(results, gap_overrides)
-        plan = parse(run_cli("stage2-plan", "--facts", facts))
+        plan = parse(self.run_bound_stage2_plan(facts))
         self.assertEqual(plan["status"], "ok")
         out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
         self.assertEqual(out["status"], "ok", out)
@@ -286,11 +304,11 @@ class TestRunnerBasics(BaseEnv):
             facts["directions"][0]["relevant_keys"] = []
         facts = self.write_facts(extra)
         results = self.root / "results"
-        plan = parse(run_cli("stage2-plan", "--facts", facts))
+        plan = parse(self.run_bound_stage2_plan(facts))
         direction = plan["directions"][0]
         self.assertLessEqual(direction["judge_count"], 10)
         self.assertGreaterEqual(direction["judge_count"], 5)
-        plan2 = parse(run_cli("stage2-plan", "--facts", facts))
+        plan2 = parse(self.run_bound_stage2_plan(facts))
         self.assertEqual(plan["directions"][0]["judge_count"],
                          plan2["directions"][0]["judge_count"])
 
@@ -302,7 +320,7 @@ class TestRunnerBasics(BaseEnv):
                 facts["papers"][1]["month"] = paper_month
 
             facts = self.write_facts(extra)
-            plan = parse(run_cli("stage2-plan", "--facts", facts))
+            plan = parse(self.run_bound_stage2_plan(facts))
             freshness = next(job for job in plan["jobs"] if job["kind"] == "freshness")
             first_gap = next(gap for gap in freshness["model_input"]["gaps"]
                              if gap["item_key"] == "AAAA1111")
@@ -314,7 +332,7 @@ class TestRunnerBasics(BaseEnv):
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
         sidecar["analysis"] = str(self.prof_dir / "论文分析" / "other.md")
         sidecar_path.write_text(json.dumps(sidecar, ensure_ascii=False), encoding="utf-8")
-        plan = parse(run_cli("stage2-plan", "--facts", self.write_facts()))
+        plan = parse(self.run_bound_stage2_plan(self.write_facts()))
         self.assertEqual(plan["directions"][0]["gap_pool"], 1)
 
     def test_01d_narrative_cannot_reference_non_direction_paper(self):
@@ -2911,6 +2929,19 @@ class TestIssue64Stage2Identity(BaseEnv):
         self.assertEqual(payload["preflight_id"], proof["preflight_id"])
         self.assertEqual(payload["transaction_identity"], proof["preflight_inputs"]["identity"])
         self.assertEqual([entry["direction_id"] for entry in payload["directions"]], ["DIR00001"])
+
+    def test_issue64_t6_plan_requires_the_preflight_proof(self):
+        facts = self.write_facts()
+
+        result = run_cli("stage2-plan", "--facts", facts)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--preflight-file", result.stderr)
+        self.assertEqual(self.formal_outputs(), {
+            self.PACK_NAME: None,
+            "套磁候选分析.md": None,
+            "论文分析/_freshness_cache.json": None,
+        })
 
     def test_issue64_t6_plan_refuses_the_same_name_siblings_preflight_proof(self):
         b_proof_file = self.save(self.preflight(target=self.b_target), "b-proof.json")
