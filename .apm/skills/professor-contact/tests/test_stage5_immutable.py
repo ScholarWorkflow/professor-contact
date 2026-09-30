@@ -55,6 +55,7 @@ class TestStage5ImmutableTemplates(BaseEnv):
         g1 = self.prepare()
         raw, choice = self.write_inputs(g1)
         out = parse(run_wrapper("stage5-finalize", "--program-root", self.root,
+                                "--email-pack", self.email_pack,
                                 "--result", raw, "--choices", choice))
         self.assertEqual(out["status"], "ok", out)
         txt = (self.prof_dir / "套磁邮件.txt").read_text(encoding="utf-8")
@@ -70,6 +71,7 @@ class TestStage5ImmutableTemplates(BaseEnv):
         g1 = self.prepare()
         raw, choice = self.write_inputs(g1)
         out = parse(run_wrapper("stage5-finalize", "--program-root", self.root,
+                                "--email-pack", self.email_pack,
                                 "--result", raw, "--choices", choice,
                                 "--polish-mode", "dynamic-fields-only"))
         self.assertEqual(out["status"], "ok", out)
@@ -83,6 +85,7 @@ class TestStage5ImmutableTemplates(BaseEnv):
         malicious = self.root / "full-body-humanized.txt"
         malicious.write_text("Subject: hacked\n\nMUTATED-TEMPLATE", encoding="utf-8")
         out = parse(run_wrapper("stage5-finalize", "--program-root", self.root,
+                                "--email-pack", self.email_pack,
                                 "--result", raw, "--choices", choice,
                                 "--humanized", malicious))
         self.assertEqual(out["status"], "ok", out)
@@ -96,6 +99,7 @@ class TestStage5ImmutableTemplates(BaseEnv):
         choices = dict(self.choices(), initial_sent_date="2026年9月1日")
         raw, choice = self.write_inputs(g1, choices)
         out = parse(run_wrapper("stage5-finalize", "--program-root", self.root,
+                                "--email-pack", self.email_pack,
                                 "--mode", "both", "--result", raw,
                                 "--choices", choice))
         self.assertEqual(out["status"], "ok", out)
@@ -274,6 +278,9 @@ class TestWrapperKeepsInstalledLayoutLocator(unittest.TestCase):
         out = parse(helpers.run_cli("stage4-finalize", "--program-root", fixture_root,
                                     "--selection-input", sel_input))
         self.assertEqual(out["status"], "ok", out)
+        # Issue #67: Stage 4 publishes only the professor-local pair, so the caller carries it.
+        env.email_pack = Path(out["results"][0]["email_pack"])
+        self.assertTrue(env.email_pack.is_file(), out)
         (fixture_root / "info.json").write_text(json.dumps({
             "university": "試験大学", "department": "試験研究科",
             "target": {"intake_year": 2027, "intake_term": "april"}}), encoding="utf-8")
@@ -312,6 +319,7 @@ class TestWrapperKeepsInstalledLayoutLocator(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(self.wrapper), "stage5-finalize",
              "--program-root", str(env.root),
+             "--email-pack", str(env.email_pack),
              "--template", str(env.root / "synthetic-template.md"),
              "--result", str(raw),
              "--choices", str(choice), "--polish-mode", "none"],
