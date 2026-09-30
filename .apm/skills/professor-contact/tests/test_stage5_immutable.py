@@ -36,6 +36,13 @@ def run_wrapper(*arguments):
             args.extend(["--template", str(template)])
         if "--mode" in args and args[args.index("--mode") + 1] in {"both", "followup"} and "--followup-template" not in args:
             args.extend(["--followup-template", str(followup)])
+        # These cases own template immutability, not pack routing, and each
+        # builds exactly one professor-local pack (issue #68), so the pack that
+        # a real caller would name is handed over here once.
+        if "--email-pack" not in args:
+            found = [path for path in helpers.stage5_local_packs(root).values() if path]
+            if len(found) == 1:
+                args.extend(["--email-pack", str(found[0])])
     return subprocess.run([sys.executable, str(WRAPPER), *args], text=True, capture_output=True, check=False)
 
 
@@ -114,7 +121,9 @@ class TestStage5ImmutableTargetedScope(BaseEnv):
 
     def immutable_finalize(self, root, results, choices):
         return parse(run_wrapper(
-            "stage5-finalize", "--program-root", root, "--result", results,
+            "stage5-finalize", "--program-root", root,
+            "--email-pack", helpers.stage5_local_packs(root)[helpers.ISSUE59_PROFESSOR],
+            "--result", results,
             "--choices", choices, "--email-id", helpers.ISSUE59_EMAIL_ID))
 
     def test_issue59_t59_6_wrapper_finalize_keeps_selected_email_scope(self):
@@ -274,6 +283,9 @@ class TestWrapperKeepsInstalledLayoutLocator(unittest.TestCase):
         out = parse(helpers.run_cli("stage4-finalize", "--program-root", fixture_root,
                                     "--selection-input", sel_input))
         self.assertEqual(out["status"], "ok", out)
+        # Issue #67's migration owns this fan-out; the test only needs the
+        # professor-local pack that Stage 5 must be handed explicitly.
+        helpers.localize_stage4_pack(fixture_root)
         (fixture_root / "info.json").write_text(json.dumps({
             "university": "試験大学", "department": "試験研究科",
             "target": {"intake_year": 2027, "intake_term": "april"}}), encoding="utf-8")
@@ -283,7 +295,7 @@ class TestWrapperKeepsInstalledLayoutLocator(unittest.TestCase):
         stat = (fixture_root / "info.json").stat()
         boshu_stat = (fixture_root / "boshu_analysis.json").stat()
         verify = {
-            "professor": "試験 教授", "verified_at": "2026-08-27T16:00:00Z",
+            "professor": "試験 教授", "verified_at": helpers.ISSUE59_VERIFIED_AT,
             "source_fingerprints": {
                 "info_json": f"{fixture_root / 'info.json'}:{int(stat.st_mtime)}",
                 "boshu_analysis": f"{fixture_root / 'boshu_analysis.json'}:{int(boshu_stat.st_mtime)}"},
@@ -312,6 +324,7 @@ class TestWrapperKeepsInstalledLayoutLocator(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(self.wrapper), "stage5-finalize",
              "--program-root", str(env.root),
+             "--email-pack", str(env.prof_dir / "邮件输入.json"),
              "--template", str(env.root / "synthetic-template.md"),
              "--result", str(raw),
              "--choices", str(choice), "--polish-mode", "none"],
@@ -330,3 +343,89 @@ class TestWrapperKeepsInstalledLayoutLocator(unittest.TestCase):
             self.assertIsNone(decision.get("reason_code"), decision)
         self.assertNotIn("contact_evidence_check_unavailable",
                          json.dumps(state, ensure_ascii=False))
+
+
+# Issue #68: one professor's local 邮件输入.json is the only Stage-5 fact source.
+# A conflicting legacy pack is detectable because the render names its direction.
+ISSUE68_POISON_DIRECTION = "被污染的旧全局方向"
+
+
+class TestStage5ImmutableLocalPack(helpers.Stage5LocalHarness, BaseEnv):
+    """Issue #68 T68-8: the immutable wrapper routes one professor-local pack.
+
+    ``stage5-finalize`` must hand the caller's ``--email-pack`` through
+    wrapper args -> internal stage5-plan -> temporary finalize runner, without
+    scanning professor dirs itself and without the legacy program-level
+    fallback, so a poisoned global pack cannot reach this professor's render.
+    """
+
+    def poison_legacy_pack(self, mode):
+        """Materialize #67's legacy schema-2 program pack as a decoy."""
+        path = self.root / "教授研究" / helpers.contact_state.EMAIL_PACK
+        if mode == "corrupt":
+            path.write_text(helpers.ISSUE59_MALFORMED_JSON, encoding="utf-8")
+            return path
+        legacy = json.loads(self.pack_for().read_text(encoding="utf-8"))
+        foreign = json.loads(self.pack_for(
+            helpers.ISSUE59_OTHER_PROFESSOR).read_text(encoding="utf-8"))["emails"]
+        legacy["schema"] = helpers.contact_state.EMAIL_PACK_SCHEMA
+        legacy.pop("professor")
+        legacy.pop("professor_dir")
+        legacy["emails"] = json.loads(json.dumps(legacy["emails"] + foreign))
+        for row in legacy["emails"]:
+            row["name_ja"] = ISSUE68_POISON_DIRECTION
+            row["name_zh"] = ISSUE68_POISON_DIRECTION
+        path.write_text(json.dumps(legacy, ensure_ascii=False, indent=1), encoding="utf-8")
+        return path
+
+    def test_issue68_t68_8_wrapper_routes_the_local_pack_only(self):
+        helpers.write_issue59_stage5_fixture(self.root, [
+            {"professor": helpers.ISSUE59_PROFESSOR, "evidence": "fresh"},
+            {"professor": helpers.ISSUE59_PROFESSOR, "evidence": "fresh",
+             "idea_id": helpers.ISSUE59_PEER_IDEA_ID},
+            {"professor": helpers.ISSUE59_OTHER_PROFESSOR, "evidence": "fresh"}],
+            case=self)
+        pack = self.pack_for()
+        b_dir = self.pack_for(helpers.ISSUE59_OTHER_PROFESSOR).parent
+        scopes = {
+            "targeted": (("--email-id", helpers.ISSUE59_EMAIL_ID),
+                         [helpers.ISSUE59_EMAIL_ID]),
+            "batch": ((), [helpers.ISSUE59_EMAIL_ID, helpers.ISSUE59_PEER_EMAIL_ID]),
+        }
+        for mode in ("conflicting", "corrupt"):
+            legacy = self.poison_legacy_pack(mode)
+            legacy_before = legacy.read_bytes()
+            for scope, (scope_args, expected) in scopes.items():
+                with self.subTest(poison=mode, scope=scope):
+                    results = helpers.issue59_write_results(
+                        self.root, f"issue68-t68-8-{scope}-raw.json", expected)
+                    choices = helpers.issue59_write_choices(
+                        self.root, f"issue68-t68-8-{scope}-choices.json", expected)
+                    out = parse(run_wrapper(
+                        "stage5-finalize", "--program-root", self.root,
+                        "--email-pack", pack, "--result", results,
+                        "--choices", choices, "--polish-mode", "none", *scope_args))
+                    self.assertEqual(out["status"], "ok", out)
+                    self.assertEqual([row["email_id"] for row in out["emails"]],
+                                     expected, out)
+                    for row in out["emails"]:
+                        md = Path(row["md"])
+                        self.assertEqual(md.parent, pack.parent,
+                                         f"{md} escaped the owning professor's dir")
+                        body = md.read_text(encoding="utf-8")
+                        self.assertIn("合成输入比较", body,
+                                      "the named local pack did not reach the render")
+                        self.assertNotIn(ISSUE68_POISON_DIRECTION, body,
+                                         f"{mode} legacy pack reached the render")
+                        self.assertIn("FIXED-BEGIN", body,
+                                      "immutable template lines lost in transit")
+                        self.assertIn("过稿: none", body,
+                                      "finalize did not run through the wrapper copy")
+                    self.assertEqual(legacy.read_bytes(), legacy_before,
+                                     f"{mode}: Stage 5 wrote the legacy pack")
+                    for name in ("套磁邮件.md", "套磁邮件.txt"):
+                        self.assertFalse((b_dir / name).exists(),
+                                         f"{scope}: wrapper rendered another professor")
+                    self.assertFalse((self.root / "教授研究"
+                                      / helpers.contact_state.EMAIL_OVERVIEW).exists(),
+                                     "finalize rebuilt the program aggregate")

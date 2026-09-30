@@ -11,6 +11,12 @@ The legacy runner hard-codes a full-body humanizer provenance label. Rather than
 forking the large state runner, immutable finalization executes a temporary copy
 whose only source change is that audit label. The caller declares whether no
 polish happened or dynamic fields alone were polished.
+
+Issue #68 does not give this wrapper a pack authority of its own: the caller's
+professor-local ``--email-pack`` is forwarded unchanged to the internal
+``stage5-plan`` and to the temporary finalize runner, so the wrapper never scans
+professor directories from an ``email_id`` and no program-level default exists to
+fall back on.
 """
 from __future__ import annotations
 

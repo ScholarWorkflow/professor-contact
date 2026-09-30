@@ -37,6 +37,11 @@ INPUT_PACK_SCHEMA = 2
 CANDIDATE_STATE_SCHEMA = 2
 SELECTION_SCHEMA = 2
 EMAIL_PACK_SCHEMA = 2
+# Issue #67 owns this professor-local Stage-4 container
+# (<professor_dir>/套磁选择.json + 邮件输入.json). Stage 5 consumes the producer's
+# constant instead of defining a second schema, and the legacy program-level
+# schema-2 container is not a Stage-5 fact source.
+STAGE4_LOCAL_SCHEMA = 3
 DIRECTION_IDENTITY_VERSION = "direction-id-v1"
 STAGE3_GENERATOR_CONTRACT_VERSION = "stage3-ideas-v2"
 STAGE3_CROSS_CONTRACT_VERSION = "stage3-cross-v1"
@@ -7407,23 +7412,80 @@ def stage5_mode(args) -> str:
     return mode
 
 
-def cmd_stage5_plan(args) -> None:
-    program_root = Path(args.program_root)
-    mode = stage5_mode(args)
-    pack_path = Path(args.email_pack) if args.email_pack else program_root / "教授研究" / EMAIL_PACK
+def stage5_pack_owner(pack, pack_path: Path) -> dict:
+    """The single professor a Stage-5 pack claims, or a fail-closed stop.
+
+    Issue #67's professor-local ``<professor_dir>/邮件输入.json`` is the only pack
+    Stage 5 accepts: the legacy program-level pack is #67's migration input, not
+    a second Stage-5 authority, so a pack that cannot name exactly one professor
+    inside the program stops the run before any row is read.
+    """
+    if not isinstance(pack, dict):
+        fail("invalid_email_pack", "email pack is not an object", email_pack=str(pack_path))
+    if pack.get("schema") != STAGE4_LOCAL_SCHEMA or pack.get("kind") != EMAIL_PACK_KIND:
+        fail("invalid_email_pack",
+             f"email pack must be the professor-local schema {STAGE4_LOCAL_SCHEMA} "
+             f"{EMAIL_PACK} written by stage4-finalize", email_pack=str(pack_path))
+    professor = pack.get("professor")
+    professor_dir = pack.get("professor_dir")
+    if not isinstance(professor, str) or not professor.strip() or \
+            not isinstance(professor_dir, str) or not professor_dir.strip():
+        fail("invalid_email_pack", "email pack does not prove a single professor owner",
+             email_pack=str(pack_path))
+    return {"professor": professor, "professor_dir": Path(professor_dir)}
+
+
+def stage5_local_pack(args, program_root: Path) -> tuple[Path, dict, list, list]:
+    """Resolve the one professor-local pack that owns this Stage-5 run.
+
+    Returns ``(pack_path, pack, pack_rows, selected_rows)``. ``--email-pack`` is
+    mandatory and is the only fact source, so no program-level path is ever
+    constructed here. Row-level validity keeps the Issue #59 ordering: id
+    resolution stays the first boundary, so an unselected malformed row cannot
+    become a precondition of the selected transaction, while the selected rows
+    must still agree with the pack's own professor ownership.
+    """
+    if not getattr(args, "email_pack", None):
+        fail("invalid_params",
+             "stage5 requires --email-pack with the professor-local "
+             f"{EMAIL_PACK} written by stage4-finalize")
+    pack_path = Path(args.email_pack)
     pack, error = read_json_file(pack_path)
     if error:
         soft_exit("needs_refresh", "missing_email_pack", email_pack=str(pack_path),
-                  message="缺 邮件输入.json：先跑阶段 4（professor-contact-selection）编译。")
-    all_emails = pack.get("emails") or []
-    # Identity resolution is the first validity boundary: an unrelated
-    # malformed row can neither block a targeted run nor be mistaken for the
-    # target, while the selected row keeps every existing fail-closed check.
+                  message="缺该教授的 邮件输入.json：先跑阶段 4（professor-contact-selection）编译。")
+    owner = stage5_pack_owner(pack, pack_path)
+    require_professor_dir_under_program(owner["professor_dir"], program_root)
+    all_emails = pack.get("emails")
+    if not isinstance(all_emails, list):
+        fail("invalid_email_pack", "email pack has no emails list", email_pack=str(pack_path))
     emails = (select_stage5_email(all_emails, args.email_id) if args.email_id
               else all_emails)
+    if not args.email_id:
+        all_ids = [email.get("email_id") for email in all_emails]
+        if len(set(all_ids)) != len(all_ids) or any(not isinstance(email_id, str) for email_id in all_ids):
+            fail("invalid_email_pack", "email pack contains duplicate or missing email_id")
     for email in emails:
+        if not isinstance(email, dict):
+            fail("invalid_email_pack", "email pack row is not an object",
+                 email_pack=str(pack_path))
         professor_dir = Path(email.get("professor_dir") or program_root)
+        # Escaped paths keep their own reason code and stay first: an outside
+        # program root is an invalid_professor_dir contract, not a ownership one.
         require_professor_dir_under_program(professor_dir, program_root)
+        if email.get("professor") != owner["professor"] or \
+                professor_dir.resolve() != owner["professor_dir"].resolve():
+            fail("invalid_email_pack",
+                 f"{email.get('email_id')}: row names a professor other than the "
+                 f"pack owner {owner['professor']}", email_pack=str(pack_path),
+                 professor_dir=str(professor_dir))
+    return pack_path, pack, all_emails, emails
+
+
+def cmd_stage5_plan(args) -> None:
+    program_root = Path(args.program_root)
+    mode = stage5_mode(args)
+    pack_path, pack, all_emails, emails = stage5_local_pack(args, program_root)
     sources = load_header_sources(program_root)
     resolved_evidence = resolve_contact_evidence(
         program_root, list(dict.fromkeys(
@@ -7986,24 +8048,7 @@ def render_fact_check_card(email: dict, pack_path: Path, professor_dir: Path) ->
 def cmd_stage5_finalize(args) -> None:
     program_root = Path(args.program_root)
     mode = stage5_mode(args)
-    pack_path = Path(args.email_pack) if args.email_pack else program_root / "教授研究" / EMAIL_PACK
-    pack, error = read_json_file(pack_path)
-    if error:
-        soft_exit("needs_refresh", "missing_email_pack", email_pack=str(pack_path))
-    all_emails = pack.get("emails") or []
-    if args.email_id:
-        # Identity resolution is the first validity boundary, ahead of the
-        # pack-wide id/path checks: an unrelated malformed row must not block
-        # a targeted run.
-        emails = select_stage5_email(all_emails, args.email_id)
-    else:
-        all_ids = [email.get("email_id") for email in all_emails]
-        if len(set(all_ids)) != len(all_ids) or any(not isinstance(email_id, str) for email_id in all_ids):
-            fail("invalid_email_pack", "email pack contains duplicate or missing email_id")
-        emails = all_emails
-    for email in emails:
-        professor_dir = Path(email.get("professor_dir") or program_root)
-        require_professor_dir_under_program(professor_dir, program_root)
+    pack_path, pack, all_emails, emails = stage5_local_pack(args, program_root)
     sources = load_header_sources(program_root)
     resolved_evidence = resolve_contact_evidence(
         program_root, list(dict.fromkeys(
@@ -8251,85 +8296,110 @@ def cmd_stage5_finalize(args) -> None:
             else:
                 root_entry.setdefault("followup", {}).update(update)
 
-    overview_path = program_root / "教授研究" / EMAIL_OVERVIEW
-    if args.email_id:
-        # A targeted run is one selected email's transaction. Rebuilding the
-        # program aggregate would re-open every unrelated professor's state
-        # and verify cache, and a one-row table is not the aggregate — so the
-        # existing file stays byte-for-byte and a missing one stays absent.
-        overview_sha = None
-    else:
-        projections = load_projections(program_root)
-        overview_rows = ["| 教授 | 方向（ja/zh） | 收件邮箱 | 核验 | 首封邮件 | 跟进邮件 | 首封纯文本 | 跟进纯文本 |",
-                         "|---|---|---|---|---|---|---|---|"]
-        overview_entries = []
-        for email in all_emails:
-            professor_dir = Path(email.get("professor_dir") or program_root)
-            email_state = state_updates.get(str(professor_dir))
-            if email_state is None:
-                email_state, state_error = read_json_file(professor_dir / EMAIL_STATE)
-                if state_error is not None:
-                    email_state = None
-            state_entry = ((email_state or {}).get("emails") or {}).get(email.get("email_id")) \
-                if email_state is not None else None
-            files = (state_entry or {}).get("files") or {}
-            followup_files = ((state_entry or {}).get("followup") or {}).get("files") or {}
-            if files or followup_files:
-                overview_entries.append({"email": email, "initial": files,
-                                         "followup": followup_files})
-        for entry in overview_entries:
-            email = entry["email"]
-            professor_dir = Path(email.get("professor_dir") or program_root)
-            verify_check = verify_state(professor_dir, sources)
-            items = ((verify_check.get("data") or {}).get("items") or {})
-            email_value = (items.get("email") or {}).get("value") or "?"
-            warnings = items.get("warnings") or []
-            bad = []
-            if (items.get("roster") or {}).get("verdict") == "not_found":
-                bad.append("在册 not_found")
-            if (items.get("email") or {}).get("verdict") == "unverified":
-                bad.append("邮箱 unverified")
-            bad.extend(str(w) for w in warnings)
-            verify_label = "✅ 全 confirmed" if not bad else "⚠ " + "；".join(bad)
-            def link(path: str | None, label: str) -> str:
-                return f"[{label}]({rel_path(Path(path), program_root / '教授研究')})" if path else "—"
-            initial = entry["initial"]
-            followup = entry["followup"]
-            overview_rows.append(
-                f"| {email.get('professor')} | {email.get('name_ja')}/{email.get('name_zh')} | "
-                f"{email_value} | {verify_label} | {link(initial.get('md'), '.md')} | "
-                f"{link(followup.get('md'), '跟进 .md')} | {link(initial.get('txt'), '首封 .txt')} | "
-                f"{link(followup.get('txt'), '跟进 .txt')} |")
-        overview_body = ("# 套磁邮件总览\n\n"
-                         f"> {now_utc()} ｜ 由 contact_state 渲染\n\n" +
-                         "\n".join(overview_rows) + "\n")
-        overview_sha = sha256_text(overview_body)
-        overview_conflict = projection_conflict(overview_path, overview_body, projections,
-                                                EMAIL_OVERVIEW)
-        if overview_conflict:
-            soft_exit("needs_decision", overview_conflict["reason_code"],
-                      target=overview_conflict.get("target"))
-
-    # Commit only after every email and the aggregate projection passed validation.
+    # Issue #68: this professor's transaction commits on its own validation. The
+    # program aggregate is a derived projection that stage5-rebuild-overview
+    # owns, so a stale, conflicting or missing overview is never a commit gate
+    # here and no local run writes it.
     for item in prepared:
         atomic_write(item["md"], render_frontmatter(
             sha256_obj({"email_id": item["email_id"], "input": item["input_fp"]}), item["md_sha"]) + item["md_body"])
         atomic_write(item["txt"], item["txt_body"])
     for professor_dir, email_state in state_updates.items():
         atomic_json(Path(professor_dir) / EMAIL_STATE, email_state)
-    if overview_sha is None:
-        overview_md = str(overview_path) if overview_path.is_file() else None
-    else:
-        overview_fingerprint = sha256_obj({"projection": EMAIL_OVERVIEW, "body": overview_sha})
-        atomic_write(overview_path, render_frontmatter(overview_fingerprint, overview_sha) + overview_body)
-        projections.setdefault("render", {})[EMAIL_OVERVIEW] = {"sha256": overview_sha}
-        save_projections(program_root, projections)
-        overview_md = str(overview_path)
+    overview_path = program_root / "教授研究" / EMAIL_OVERVIEW
     emit({"status": "ok", "emails": [
         {"email_id": item["email_id"], "output_id": item["output_id"], "kind": item["kind"],
          "md": str(item["md"]), "txt": str(item["txt"]),
          "warnings": len(item["warnings"]), "banner": item["banner"]}
-        for item in prepared], "overview_md": overview_md})
+        for item in prepared],
+        "overview_md": str(overview_path) if overview_path.is_file() else None})
+
+
+def cmd_stage5_rebuild_overview(args) -> None:
+    """Rebuild the program 套磁邮件总览.md from professor-local Stage-5 state.
+
+    Issue #68 made this aggregate the only Stage-5 writer of a derived
+    projection: it reads every professor-local pack, its exact local state and
+    its verify cache, and writes nothing else. A malformed pack or state fails
+    closed before the file is touched, and a manual overview edit stops only
+    this rebuild.
+    """
+    program_root = Path(args.program_root)
+    research_root = program_root / "教授研究"
+    sources = load_header_sources(program_root)
+    projections = load_projections(program_root)
+    overview_rows = ["| 教授 | 方向（ja/zh） | 收件邮箱 | 核验 | 首封邮件 | 跟进邮件 | 首封纯文本 | 跟进纯文本 |",
+                     "|---|---|---|---|---|---|---|---|"]
+    professors = 0
+    rendered = 0
+    for pack_path in (sorted(research_root.rglob(EMAIL_PACK)) if research_root.is_dir() else []):
+        if pack_path.parent == research_root:
+            # The legacy program-level pack is Issue #67's migration input and
+            # names no professor, so it contributes no rows to the aggregate.
+            continue
+        pack, error = read_json_file(pack_path)
+        if error:
+            fail("missing_email_pack", f"email pack unreadable: {pack_path}",
+                 email_pack=str(pack_path))
+        owner = stage5_pack_owner(pack, pack_path)
+        require_professor_dir_under_program(owner["professor_dir"], program_root)
+        state_path = owner["professor_dir"] / EMAIL_STATE
+        email_state, state_error = read_json_file(state_path)
+        if state_error == "not_found":
+            # Stage 5 never ran for this professor: there is nothing to project.
+            continue
+        if state_error or not isinstance(email_state, dict):
+            fail("missing_email_state",
+                 f"{owner['professor']}: email state unreadable: {state_path}")
+        entries = email_state.get("emails") or {}
+        if not isinstance(entries, dict):
+            fail("missing_email_state",
+                 f"{owner['professor']}: email state has no emails object: {state_path}")
+        verify_check = verify_state(owner["professor_dir"], sources)
+        items = ((verify_check.get("data") or {}).get("items") or {})
+        email_value = (items.get("email") or {}).get("value") or "?"
+        bad = []
+        if (items.get("roster") or {}).get("verdict") == "not_found":
+            bad.append("在册 not_found")
+        if (items.get("email") or {}).get("verdict") == "unverified":
+            bad.append("邮箱 unverified")
+        bad.extend(str(w) for w in (items.get("warnings") or []))
+        verify_label = "✅ 全 confirmed" if not bad else "⚠ " + "；".join(bad)
+
+        def link(path: str | None, label: str) -> str:
+            return f"[{label}]({rel_path(Path(path), research_root)})" if path else "—"
+
+        professors += 1
+        for email in pack.get("emails") or []:
+            if not isinstance(email, dict):
+                continue
+            entry = entries.get(email.get("email_id"))
+            if not isinstance(entry, dict):
+                continue
+            initial = entry.get("files") or {}
+            followup = (entry.get("followup") or {}).get("files") or {}
+            if not initial and not followup:
+                continue
+            rendered += 1
+            overview_rows.append(
+                f"| {email.get('professor')} | {email.get('name_ja')}/{email.get('name_zh')} | "
+                f"{email_value} | {verify_label} | {link(initial.get('md'), '.md')} | "
+                f"{link(followup.get('md'), '跟进 .md')} | {link(initial.get('txt'), '首封 .txt')} | "
+                f"{link(followup.get('txt'), '跟进 .txt')} |")
+    overview_body = ("# 套磁邮件总览\n\n"
+                     f"> {now_utc()} ｜ 由 contact_state 渲染\n\n" +
+                     "\n".join(overview_rows) + "\n")
+    overview_path = research_root / EMAIL_OVERVIEW
+    conflict = projection_conflict(overview_path, overview_body, projections, EMAIL_OVERVIEW)
+    if conflict:
+        soft_exit("needs_decision", conflict["reason_code"], target=conflict.get("target"))
+    body_sha = sha256_text(overview_body)
+    atomic_write(overview_path, render_frontmatter(
+        sha256_obj({"projection": EMAIL_OVERVIEW, "body": body_sha}), body_sha) + overview_body)
+    projections.setdefault("render", {})[EMAIL_OVERVIEW] = {"sha256": body_sha}
+    save_projections(program_root, projections)
+    emit({"status": "ok", "overview_md": str(overview_path), "professors": professors,
+          "emails": rendered})
 
 
 def cmd_stage5_record_validation(args) -> None:
@@ -9209,7 +9279,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("stage5-plan")
     p.add_argument("--program-root", required=True)
-    p.add_argument("--email-pack")
+    # Optional at the parser on purpose: a missing local pack must answer with
+    # this runner's own JSON error contract (invalid_params), not an argparse
+    # usage dump. Issue #68 removed the program-level fallback, so there is no
+    # default path left to construct.
+    p.add_argument("--email-pack",
+                   help="教授本地 邮件输入.json（阶段 4 产出；阶段 5 必填的唯一事实源）")
     p.add_argument("--email-id")
     p.add_argument("--profile")
     p.add_argument("--template")
@@ -9222,7 +9297,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("stage5-finalize")
     p.add_argument("--program-root", required=True)
-    p.add_argument("--email-pack")
+    p.add_argument("--email-pack",
+                   help="教授本地 邮件输入.json（阶段 4 产出；阶段 5 必填的唯一事实源）")
     p.add_argument("--email-id")
     p.add_argument("--result", required=True)
     p.add_argument("--humanized")
@@ -9235,6 +9311,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile")
     p.add_argument("--decision-file")
     p.set_defaults(func=cmd_stage5_finalize)
+
+    p = sub.add_parser("stage5-rebuild-overview",
+                       help="只重建程序级 套磁邮件总览.md：从各教授本地 pack 与其本地状态派生，"
+                            "不改动任何 pack/状态/邮件/核验文件")
+    p.add_argument("--program-root", required=True)
+    p.set_defaults(func=cmd_stage5_rebuild_overview)
 
     p = sub.add_parser("stage5-record-validation")
     p.add_argument("--professor-dir", required=True)

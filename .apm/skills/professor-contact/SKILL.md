@@ -90,7 +90,7 @@ Stage 0 does not require Zotero to be open. Later stages may still use Zotero as
 | 2 | `professor-contact-analyzer` | 先 `contact_stage1.py verify` 校验 Stage 1 候选快照，再对每位教授跑 `contact_state.py stage2-preflight`：`reuse_all` 教授在 Zotero probe、PDF 读取、OCR、paper-analysis、handoff、模型 job 之前以 no-op 复用既有 `套磁候选输入.json` + `套磁候选分析.md` 结束（`chatgpt_result` 提供或 `kb_import=true` 时禁止 early exit）；仅对 process 教授以逐方向 `candidate_keys` 为读取/相关性/分析范围（可信度闸门只用 provisional members）；**full `paper-analysis` 覆盖候选集去重并集——每个 unique candidate 复用未变的有效 full analysis，否则跑一次 full pass（摘要级相关集与成本门只截断 gap/叙事，绝不截断 full analysis，issue #7 required flow #2）**→ 判定相关论文、署名、主线与 post-cost-gate 分析 scope 后，**总是先生成确定性的 ChatGPT handoff ZIP**。`chatgpt_handoff=continue` 时 ZIP 只是低成本 side effect，随后旧的本地 OCR/`paper-analysis` 路径语义不变；`wait` 时在任何新 OCR/`paper-analysis` 前软停止。提供匹配 result ZIP 后先严格本地导入成普通 analysis/sidecar，再继续既有 `stage2-resolve-plan → stage2-resolve-finalize → stage2-plan → stage2-finalize --preflight-file`（resolve 流水线对每个被选方向做权威性归属判定：移除误归类、新增他向支持、重命名、拆分/合并、写 `resolved_direction` 状态）。gap/runner/状态机仍完全本地 | `<教授名>/论文分析/_chatgpt_handoff/stage2-<id>.zip`（传输层）+ `<教授名>/论文分析/_resolved_directions.json`（方向权威归属）+ 原有 `<教授名>/套磁候选输入.json`（带 `resolved_directions` 字段与 `cache.preflight` 复用元数据，Stage 3 唯一事实源）/分析报告/_freshness_cache/index/sidecar |
 | 3 | `professor-contact-idea-generator` | **只读输入包 + profile**（不读任何 Markdown/_index/sidecar；输入包为 v2：professor 级 `papers[item_key]` 单一规范论文记录 + 各方向 `supporting_item_keys` 引用）：`stage3-plan --direction-id`（canonical 机器身份；`--collection-key` 仅为 v1 兼容并经输入包精确映射解析）按 `refresh_scope` 生成逐 resolved 方向独立 job（结果文件由 runner 返回安全名 `candidates-<id>-<hash>.json`；模型输入只含本方向切片，绝不发全方向并集），每方向 3-5 条可选候选（除非 `--skip-direction-ids` 显式跳过→持久化 `stage3_status:"skipped"`；refined 模式同样 3-5 条且恰好 1 条 `origin:"user_refined"` 的校准后用户想法）；候选为 v2 精确溯源：`kind:"direction"` + `direction_ids:[本方向]` + `gap_refs` 精确 `(direction_id,item_key,gap_id)` 三元组（在另一方向合法的 gap 配错 direction_id 一律拒绝）；**跨方向为显式 opt-in**：只有调用方传 `--cross-direction-groups '[["DIR_A","DIR_B"]]'`（≥2 个既有 direction ID、排序去重）才生成独立 `kind:"cross_direction"` job（组身份 `cross:<hash>`，缓存=参与方向指纹+profile+契约版本），默认无任何 cross job/模型调用/Markdown 节 → `stage3-finalize` 校验后写 v2 状态并渲染候选文件（按方向分节 + 仅显式组才有的「跨方向想法（显式标注）」节；未再请求的组确定性删除并报告 `group_not_requested`）；复用逐 direction_id 判定（指纹不含 collection_key/显示名：纯投影改名只重渲染）；profile 改动只失效阶段 3/4；白话校验结果另由 `stage3-record-validation` 从 validator 原始 JSON 写入独立字段（绑定渲染 SHA + 逐条 issue 的 direction_id/group_id 范围） | `<教授名>/套磁候选状态.json`（schema 2：逐方向 `direction_id` + `cross_direction_groups`） + `<教授名>/套磁想法候选.md` + `套磁想法候选总览.md`（后两者 runner 渲染） |
 | 4 | `professor-contact-selection` | 用户从**候选状态**（非 Markdown）挑选：selection 条目以 `direction_ids`（canonical，排序规范化）圈定作用域——普通方向 `[DIR]`、跨方向想法 `[DIR_A,DIR_B]`（与组的排序 ID 完全一致）；`stage4-finalize` 按 direction_id + 精确三元组 join（候选 id 只在其 direction 作用域内解析，跨作用域引用整批 fail closed）并校验指纹（过期 `needs_refresh` 不落盘；组选取逐参与方向指纹校验，漂移 `cross_participant_changed`；v1 选择条目仅在有唯一 collection_key→direction_id 机器映射时可迁移，歧义 `legacy_direction_identity` 零写入；部分复选（只重选部分教授/方向）保留未涉及条目并整体重编译进两个正式文件——被保留条目的候选状态缺失/无法精确迁移/输入包不可读 → `candidate_state_missing`/`legacy_direction_identity`/`preserved_selection_uncompilable`，任何写盘前零写入，绝不静默挤出既有选择）→ 写 `套磁选择.json`（schema 2，保留候选的 `direction_ids`/精确溯源）并**编译程序级邮件输入包**（`邮件输入.json` schema 2：每条 email 携带 `direction_ids` + `directions[]` 显示名 provenance，`email_id = 教授::'+'.join(sorted(direction_ids))::想法ID`（A+B==B+A）；跨方向按参与方向切片并集编译——论文按 `item_key` 去重且各带 `direction_ids` 归属、gap 每行携带 `direction_id`；`cross_direction` 组信息与 `contact_evidence` 一起参与 `source_hash`；done_by_self 只作 extension_context_only；上游 `_联系方式证据.json` 记录连同 `record_fingerprint` 冻结进每条 email——阶段 5 的收件事实源） | `教授研究/套磁选择.json` + `教授研究/邮件输入.json`（阶段 5 唯一事实源，自包含短证据＋冻结联系方式快照） |
-| 5 | `professor-contact-email-generator` | **只读邮件输入包**（+profile/模板/info/boshu/`_contact_verify.json`）：默认生成首封和无回复跟进两种输出；先运行不带 `--result`/`--choices` 的 `stage5-plan --mode both`，逐教授完成送信前核验并重跑，直到全部 `verify: ok`（`verify_missing`/普通 `needs_recheck` 是 5.9 待办，不是完成结果；需 Stage 4 修复的确定性 `needs_refresh` 才返回调用方）→ 模型只回首封的 4 句兴趣段+source_map+未来志向+学習中候选 →（可选）`humanizer-ja` 只润色模型动态字段（拼装前，5.6）→ 用户 choices（含初次发送日期；缺决定即停在既有 `needs_input` 边界，不代选、不编日期）→ `stage5_immutable.py stage5-finalize --mode both`（确定性模板拼装+保护串校验+渲染；仅在动态字段确被润色时传 `--polish-mode dynamic-fields-only`；整封成品与模板固定文字从不进入 humanizer）→ 首封和跟进各自过 validator 循环（validator 也只读 md+邮件包）并记录 `stage5-record-validation` | 每封选中邮件独立的 `套磁邮件.md`/`.txt` 与 `套磁跟进邮件.md`/`.txt`（单封用固定名，多封按方向与想法 ID 加后缀）+ `<教授名>/套磁邮件状态.json` + `套磁邮件总览.md` + `_contact_verify.json` |
+| 5 | `professor-contact-email-generator` | **只读该教授的本地邮件输入包**（`--email-pack <教授目录>/邮件输入.json`，Issue #68；+profile/模板/info/boshu/`_contact_verify.json`）：默认生成首封和无回复跟进两种输出；先运行不带 `--result`/`--choices` 的 `stage5-plan --mode both`，逐教授完成送信前核验并重跑，直到全部 `verify: ok`（`verify_missing`/普通 `needs_recheck` 是 5.9 待办，不是完成结果；需 Stage 4 修复的确定性 `needs_refresh` 才返回调用方）→ 模型只回首封的 4 句兴趣段+source_map+未来志向+学習中候选 →（可选）`humanizer-ja` 只润色模型动态字段（拼装前，5.6）→ 用户 choices（含初次发送日期；缺决定即停在既有 `needs_input` 边界，不代选、不编日期）→ `stage5_immutable.py stage5-finalize --mode both`（确定性模板拼装+保护串校验+渲染；仅在动态字段确被润色时传 `--polish-mode dynamic-fields-only`；整封成品与模板固定文字从不进入 humanizer）→ 首封和跟进各自过 validator 循环（validator 也只读 md+邮件包）并记录 `stage5-record-validation` | 每封选中邮件独立的 `套磁邮件.md`/`.txt` 与 `套磁跟进邮件.md`/`.txt`（单封用固定名，多封按方向与想法 ID 加后缀）+ `<教授名>/套磁邮件状态.json` + `_contact_verify.json`（一次 owner 调用只提交这一位教授；程序级 `套磁邮件总览.md` 是派生投影，由 `stage5-rebuild-overview` 单独重建，见 5.11） |
 
 
 ## Stage 2 ChatGPT handoff（只替换逐论文高耗分析）
@@ -192,7 +192,8 @@ python3 <professor-contact-skill-dir>/scripts/contact_targets.py resolve ...
 | `gap_scope` | 2 | `relevant` / `selected_direction` / `all` | `selected_direction` | 只决定从哪些**已有有效 sidecar** 的论文选 gap；绝不触发额外 gap 提取 |
 | `freshness_scope` | 2 | `shortlist` / `full` | `shortlist` | `shortlist` 只判断稳定排序的 5–10 条 gap；`full` 判断候选池全部。独立于 gap_scope 可单独扩大 |
 | `refresh_scope` | 3 | `flagged` / `selected` / `all` | `flagged` | 只决定哪些方向（重新）生成候选；`flagged` 在 preview 工作流中=当前 Stage 2 输入包内的被选方向（旧参数名保留为兼容）；不调用阶段 2，不读 Zotero/sidecar/`_index.json`/Markdown |
-| `--email-id` | 5 | `邮件输入.json` 中真实、非空的单个 `email_id` | 未传=包内全部邮件 | **硬执行范围**：本次 plan/finalize 只处理这一封邮件，无关条目的损坏/陈旧状态既不阻断也不被读写；两次调用必须传同一个 id（详见 5.10） |
+| `--email-pack` | 5 | 阶段 4 落盘的 `<教授目录>/邮件输入.json` 绝对路径 | **无缺省**（缺失即 `invalid_params`） | Issue #68：该教授的本地邮件输入包是阶段 5 唯一事实源；不存在程序级回退包，pack 路径在同一次运行的 plan/finalize 必须一致（详见 5.11） |
+| `--email-id` | 5 | `邮件输入.json` 中真实、非空的单个 `email_id` | 未传=该教授包内全部邮件 | **硬执行范围**：本次 plan/finalize 只处理这一封邮件，无关条目的损坏/陈旧状态既不阻断也不被读写；两次调用必须传同一个 id（详见 5.10） |
 
 ### 缓存失效（稳定 reason_code）
 
@@ -343,7 +344,7 @@ non-interactive 调用返回既有 `needs_input` 边界，不代选、不最终�
 ### 5.8 产物
 
 - `<教授名>/套磁邮件.md` / `.txt` — 阶段 5首封邮件；无回复版本为同目录的 `套磁跟进邮件.md` / `.txt`。两类文件都包含独立的送信前核对表、humanizer 保护校验和 validator 记录；跟进文件额外记录首封 email_id 与初次发送日期。
-- `教授研究/套磁邮件总览.md` — 程序级聚合；`--email-id` 定向运行不重建它（既有文件按字节不动、缺失不凭空生成，`overview_md` 相应返回既有路径或 `null`，见 5.10）。
+- `教授研究/套磁邮件总览.md` — 程序级派生聚合，唯一阶段 5 写入者是 `stage5-rebuild-overview --program-root <abs>`；任何 finalize（定向或批量）都不创建、不更新它，也不因它陈旧/冲突/缺失而阻断该教授的提交（`overview_md` 只返回既有路径或 `null`，见 5.10、5.11）。人手改动聚合只在 rebuild 时返回 `needs_decision`，不影响逐教授事务。
 - 幂等：同方向重跑覆盖对应文件（受管 md 人手改动 → `needs_decision`）；`套磁邮件状态.json` 记录 render sha 与 validation 状态。
 - **阶段 5 不需要 Zotero**（纯本地文件；论文标题已在阶段 2 从 Zotero 取过）。
 
@@ -370,14 +371,25 @@ non-interactive 调用返回既有 `needs_input` 边界，不代选、不最终�
 
 ### 5.10 单封定向执行范围（`--email-id`）
 
-Issue #59：`--email-id` 是**硬执行范围**，不是过滤提示。同一次定向运行里 `stage5-plan` 与 `stage5_immutable.py stage5-finalize` 必须携带**同一个 `--email-id`**：一封有效邮件可以在无关条目状态陈旧、损坏或缺失的程序级 `邮件输入.json` 上单独跑通。
+Issue #59：`--email-id` 是**硬执行范围**，不是过滤提示。同一次定向运行里 `stage5-plan` 与 `stage5_immutable.py stage5-finalize` 必须携带**同一个 `--email-id`**（以及同一个 `--email-pack`）：一封有效邮件可以在无关条目状态陈旧、损坏或缺失的该教授本地 `邮件输入.json` 上单独跑通。
 
 - **身份解析最先**：runner 先用 `email_id` 选出本次范围，之后才做 `professor_dir`、contact evidence、`_contact_verify.json`、`套磁邮件状态.json`、result、choices、模板与写盘校验。找不到 → `invalid_params` / `email_id not found: <id>`；同一 `email_id` 命中多行 → `invalid_email_pack`。定向模式从不按数组位置、教授名或「第一封」猜测目标。
 - **无关行只是噪声**：非 dict 行、缺少 `email_id` 的行、未知 id 行、重复的未知 id 行一律不阻断也不处理；被选 id 自己重复或在 result/choices 中缺席仍然 fail closed。`validate_email_raw`、`require_user_choices`、`require_followup_choices`、`stage5_recipient_authority` 对被选行的约束一条不放松。
 - **教授级只读被选教授**：`professor_dir` 程序根约束、contact-evidence 新鲜度/指纹判定、`_contact_verify.json` 读取与 `needs_recheck` 都只作用于被选教授；绝不因为别的教授缺 cache、指纹陈旧或快照失配而阻断本次定向运行。
 - **输出命名不解析别的路径**：同教授邻居数量只从身份字段（`professor` 等）计算，绝不解析未选行的 `professor_dir`；文件名与 `test_stage5_multiple_emails_use_distinct_files` 既有约定一致。
-- **程序级总览不进入定向事务**：定向 finalize 不重建 `套磁邮件总览.md`，不检测投影冲突，也不写 `needs_decision`——一行表格不是程序级聚合。已存在的聚合按字节原样保留，结果里 `overview_md` 返回该既有路径；不存在则 `overview_md` 为 `null`，且绝不凭空造出一份残缺聚合。批量模式仍照旧重建聚合并照常报 `needs_decision`。
+- **程序级总览不进入阶段 5 事务**：finalize 从不重建 `套磁邮件总览.md`，不检测聚合的投影冲突，也不因此写 `needs_decision`——一行表格不是程序级聚合，残缺聚合也绝不凭空生成。已存在的聚合按字节原样保留，结果里 `overview_md` 返回该既有路径；不存在则为 `null`。聚合由 `stage5-rebuild-overview` 单独重建（见 5.11）。
 - **调用方契约**：`professor-contact-email-validator` 只校验本次渲染出的那对 `套磁邮件.md` / `套磁跟进邮件.md`；校验文件只写被选输出的 id；`stage5-record-validation` 沿用 `--professor-dir` + `--validation-file`，**不新增 `--email-id`**，因为它消费的本来就是调用方给的那几行。
+
+### 5.11 阶段 5 逐教授事务归属（Issue #68）
+
+每位教授在每个阶段都有自己的正式状态文件；阶段 5 的事实源只可能是**该教授的本地邮件输入包** `<教授目录>/邮件输入.json`（阶段 4 `stage4-finalize` 落盘的 professor-local 容器，内部只声明一个 `professor` + `professor_dir`）。阶段 4 的成功结果把这个路径交给调用方，调用方再原样传给阶段 5。
+
+- **唯一事实源，无程序级回退**：`stage5-plan` / `stage5-finalize` 必须携带 `--email-pack <教授目录>/邮件输入.json`。缺参数 → `invalid_params`；该路径缺失或不可读 → 该教授 `needs_refresh` / `missing_email_pack`；包无法证明单一教授归属 → `invalid_email_pack`。绝不读取旧的程序级 `教授研究/邮件输入.json` 作为兜底，也不为它写第二套适配器或双读双写（迁移由 Issue #67 负责）。
+- **一次 owner 调用 = 一个教授事务**：A、B 两位教授 = 两次 exact named `professor-contact-email-generator` owner 调用，各自携带自己的 pack 路径、result JSON、choices、`_contact_verify.json` 与 `套磁邮件状态.json`。一次 child payload 绝不夹带另一位教授的 pack 或行。
+- **互不为前置**：B 的 pack/状态/核验缓存缺失或损坏既不阻断 A，也不被 A 读写；B 失败不回滚 A 已提交的渲染。批量模式（不带 `--email-id`）= 该教授包内全部邮件，仍只覆盖一位教授。
+- **并发不是产品契约**：多次 owner 调用的顺序、是否并行由调用方编排决定，runner 不提供并发保证，也不依赖并发才成立。
+- **聚合是派生投影**：`contact_state.py stage5-rebuild-overview --program-root <abs>` 枚举各教授本地 pack，精确 join 各自本地 `套磁邮件状态.json`，读取 `_contact_verify.json` 只为展示，然后写出 `教授研究/套磁邮件总览.md`。它不修改任何本地 pack、状态、邮件或核验缓存；删除聚合后可以重建；本地输入或状态畸形时 fail closed 且不覆盖既有聚合；聚合被人手改动只让 rebuild 返回 `needs_decision`，绝不阻断任何教授的 finalize。
+- **校验侧不变**：验证仍在该教授自己的事务内完成，`stage5-record-validation` 沿用 `--professor-dir` + `--validation-file`，不因 Issue #68 新增 `--email-id`（Issue #59 的参数与语义形状不变）。
 
 ## 输入前提：profile 与 套磁邮件/ 配置目录
 
@@ -578,14 +590,14 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 - `<教授名>/套磁候选输入.json` — 阶段 2：按方向组织的最小事实包（支撑论文——fulltext 论文带 runner 校验过的规范化 `paper_facts`（来自 `.facts.json` sidecar，含 `facts_state`，指纹不符即 fail closed）、gap shortlist 全证据、排除清单+原因、`completed_gap_blacklist`、版本关系、红线、user_note、narrative、`input_fingerprint`）。阶段 3 **唯一**事实源；不含 profile。`cache.preflight` 是 finalize 种入的 Stage 2 复用元数据（integrity sha、逐方向 target/candidate/accepted/freshness 指纹、artifact stat guards、参数/版本）——仅 cache，Stage 3–5 不读取、不受影响。
 - `<教授名>/论文分析/_freshness_cache.json` — 阶段 2：逐 gap freshness 缓存（status/model_evidence/candidate_paper_ids/gap_fingerprint/candidate_fingerprint/evaluated_at/confidence/completed_part/remaining_gap；无 TTL，指纹任一变化只失效受影响 gap）。
 - `<教授名>/套磁候选状态.json` — 阶段 3：规范化候选状态（candidate_meta 的 gap_ids 在此，不在 Markdown）；每方向带权威 `direction_id`（resolved ID）；显式跨方向想法存独立 `cross_direction` 列表（`direction_ids` 引用全部参与 resolved 方向、`owner_*` 记录生成方向、`direction_fingerprints` 冻结参与方向指纹）；profile/输入包指纹在此。
-- `教授研究/邮件输入.json` — 阶段 4：程序级邮件输入包（精确 join 的 gap 短证据、真实标题、红线+banned_phrases、allowed_sources、source_hash（`contact_evidence` 参与其中），自包含——阶段 5 与 validator 只读它，不读上游）；含上游 `教授研究/_联系方式证据.json` 的教授级 `contact_evidence` 冻结快照（verdict/current_email/provenance/`record_fingerprint`/record；无工件为 null）。它是阶段 5 的收件事实源：live `--check`/rebuild 只作指纹/freshness 验证，指纹不一致或快照缺失 → `needs_refresh` 重跑阶段 4 重冻结，绝不直接采用 live/rebuild 新地址。
+- `教授研究/邮件输入.json` — 阶段 4：程序级邮件输入包（精确 join 的 gap 短证据、真实标题、红线+banned_phrases、allowed_sources、source_hash（`contact_evidence` 参与其中），自包含）；含上游 `教授研究/_联系方式证据.json` 的教授级 `contact_evidence` 冻结快照（verdict/current_email/provenance/`record_fingerprint`/record；无工件为 null）。Issue #68 起，阶段 5 与 validator 只读 `--email-pack` 指向的**该教授本地包** `<教授目录>/邮件输入.json`（同一份编译内容，逐教授归属），程序级路径不再被阶段 5 读取、也不作兜底（迁移由 Issue #67 负责）。它是阶段 5 的收件事实源：live `--check`/rebuild 只作指纹/freshness 验证，指纹不一致或快照缺失 → `needs_refresh` 重跑阶段 4 重冻结，绝不直接采用 live/rebuild 新地址。
 - `<教授名>/套磁邮件状态.json` — 阶段 5：逐 email 保存首封的 model_result/choices/render sha/validation，以及 `followup` 子对象的文件、render sha/validation；另记 `contact_evidence` 决策（status/reason_code/chosen_email/evidence_email/provenance/web_lookup_required/snapshot_stale）。validator 结束后由 runner `stage5-record-validation --professor-dir <教授目录> --validation-file <validation.json>` 原子写入实际 `pass|fail_after_2_rounds|skipped` 结果。
 - `<教授名>/套磁想法候选.md` — 阶段 3（v2 模板）：按 resolved 方向分节（方向节开头带权威 `direction_id`，指路分析文件+共享红线一次 → 「你的草稿修正版」（保真/校准/基本方向）→ 每候选七件套（一句话大白话·强制启发链三段式「我的兴趣起手 → 教授的具体工作或原话 → 启发我探索的方向」，pivot 不得落在教授局限上（不足式表述只进「张力点」） / 研究问题行·求知式表述 / 要点式展开挂缺口编号+≤30 字摘录 / 五列支撑论文表：论文｜年份｜署名｜作用｜分析 / 贴合度 / 仅本候选红线 / 为何值得推吸收原匹配评估材料）→ 推荐优先级 2-3 行文字（兴趣契合作主推依据，能力匹配仅说明；纯交付物候选降为「配套承诺：」并入主候选）；显式跨方向想法（若有）单列「跨方向想法（显式标注）」末节并列出全部参与方向；写盘后过 `professor-contact-style-validator` 白话校验。原阶段 2 的想法级匹配评估材料整体搬到这里。
 - `教授研究/套磁想法候选总览.md` — 阶段 3 聚合（跨教授，供异步挑选）。
 - `教授研究/套磁选择.json` — 阶段 4：用户挑选结果（每方向选中的想法 + 支撑论文 item_keys），供阶段 5 消费。
 - `<教授名>/套磁邮件.md` / `.txt` — 阶段 5首封邮件；无回复版本为同目录的 `套磁跟进邮件.md` / `.txt`。两类文件均有独立的送信前核对表、humanizer 保护校验和 validator 记录；跟进文件额外记录首封 email_id 与初次发送日期。
 - `<教授名>/_contact_verify.json` — 阶段 5：教授级核验缓存（各项目 verdict＋来源＋时间戳＋info.json/boshu_analysis.json 指纹）；指纹变化或 >30 天才重核。同一教授多封邮件共享。
-- `教授研究/套磁邮件总览.md` — 阶段 5 聚合（教授/方向/**收件邮箱｜核验状态**/首封链接/跟进链接）。
+- `教授研究/套磁邮件总览.md` — 阶段 5 派生投影（教授/方向/**收件邮箱｜核验状态**/首封链接/跟进链接）：由 `stage5-rebuild-overview --program-root <abs>` 枚举各教授本地包、精确 join 其本地 `套磁邮件状态.json` 并读 `_contact_verify.json` 作展示后重建；任何 finalize 都不写它、也不被它的状态阻断（Issue #68，见 5.11）。
 
 ## 论文引用链接约定（本地 md 引用论文分析文件）
 

@@ -146,8 +146,10 @@ class TestContactEvidenceLadder(BaseEnv):
         out = parse(run_cli("stage4-finalize", "--program-root", self.root,
                             "--selection-input", sel_input))
         self.assertEqual(out["status"], "ok", out)
-        pack = json.loads((self.root / "教授研究" / "邮件输入.json")
-                          .read_text(encoding="utf-8"))
+        # Issue #68: Stage 5 reads only the professor-local pack, so the compiled
+        # Stage-4 handoff is migrated here the way issue #67 leaves it.
+        pack_path = helpers.localize_stage4_pack(self.root)["試験 教授"]
+        pack = json.loads(pack_path.read_text(encoding="utf-8"))
         return pack["emails"][0]
 
     def compile_pack_two_professors(self, second_professor="佐藤 花子"):
@@ -172,6 +174,7 @@ class TestContactEvidenceLadder(BaseEnv):
         out = parse(run_cli("stage4-finalize", "--program-root", self.root,
                             "--selection-input", sel_input))
         self.assertEqual(out["status"], "ok", out)
+        helpers.localize_stage4_pack(self.root)
         return second_dir
 
     def write_checker(self, check, rebuild_artifact=None, post_rebuild_check=None,
@@ -253,8 +256,14 @@ class TestContactEvidenceLadder(BaseEnv):
                         encoding="utf-8")
         return artifact
 
-    def plan_jobs(self):
-        return parse(run_cli("stage5-plan", "--program-root", self.root))
+    def plan_jobs(self, professor=None):
+        """One Stage-5 owner call. Issue #68: with more than one professor in
+        the program root the caller must name that professor's own pack."""
+        args = ["stage5-plan", "--program-root", self.root]
+        if professor is not None:
+            args += ["--email-pack",
+                     str(helpers.stage5_local_packs(self.root)[professor])]
+        return parse(run_cli(*args))
 
     def decision(self, plan):
         return plan["contact_evidence"]["試験 教授"]
@@ -1044,12 +1053,15 @@ class TestContactEvidenceLadder(BaseEnv):
                 {"name": "佐藤 花子", "result": "unavailable",
                  "reasons": ["source_unreadable:papers_json:教授研究/Y分野/佐藤 花子/papers.json"]},
             ]))
-        plan = self.plan_jobs()
+        plan = self.plan_jobs("試験 教授")
         fresh_decision = plan["contact_evidence"]["試験 教授"]
         self.assertEqual(fresh_decision["status"], "confirmed_cross_source")
         self.assertIsNone(fresh_decision["reason_code"])
         self.assertFalse(fresh_decision["web_lookup_required"])
-        unavailable_decision = plan["contact_evidence"]["佐藤 花子"]
+        # Issue #68: the other professor is a separate owner transaction, so the
+        # degraded record is proven against that professor's own pack only.
+        unavailable_decision = self.plan_jobs(
+            "佐藤 花子")["contact_evidence"]["佐藤 花子"]
         self.assertEqual(unavailable_decision["status"], "escalate")
         self.assertEqual(unavailable_decision["reason_code"],
                          "contact_evidence_source_unavailable")
