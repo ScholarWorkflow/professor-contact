@@ -50,7 +50,7 @@ If `folder_path` missing → return the error JSON.
 ## Tools
 1. `read` — `教授研究/<分类>/<教授名>/套磁候选状态.json`（schema 2，逐 `direction_id` 键控：每方向候选 id/title/one_liner/research_question/fit/fit_note/gap_refs（精确三元组）/papers；顶层 `cross_direction_groups[]` 显式跨方向组：`group_id`/排序 `direction_ids`/`direction_fingerprints`/candidates（id/title/one_liner/fit/gap_refs/papers））。旧 `教授研究/套磁候选总览.md` 已随 Stage 0 改版退役，Stage 0 不再产出：属历史遗留文件，缺失是预期状态，跳过即可，绝不作为输入或展示索引。
 2. `question` — **OpenCode-only** 交互挑选（未给 `selection` 时的 OpenCode 路径）；`question` 不是跨 runtime 通用 API，Codex 缺 `selection` 时走 Step 2 路径 C（`needs_input`，不提问、不 finalize）。
-3. bash — invoke the repo-relative `contact_state.py` runner from this Skill（stage4-finalize）；`python3` for JSON write（`ensure_ascii=False, indent=1`）.
+3. bash — 只调用当前 consumer 精确提交安装副本中的 `contact_state.py` runner（`python3 .agents/skills/professor-contact/scripts/contact_state.py`）；禁止通过登记仓库解析 runner，以免执行到别的 checkout；`python3` 也用于写 JSON（`ensure_ascii=False, indent=1`）。
 4. `write` — 仅写 `/tmp` selection-input JSON。
 
 ## Execution flow
@@ -58,7 +58,7 @@ If `folder_path` missing → return the error JSON.
 ### Step 1 — Resolve program root + locate candidate states
 1. Resolve `program_root`.
 2. 找状态：`find 教授研究 -name "套磁候选状态.json"`。缺失 → error `"先跑 professor-contact-idea-generator（阶段 3）生成 套磁候选状态.json"`。读每个状态的方向/候选清单供挑选展示（候选摘要字段够用：id/title/one_liner/research_question/fit；不给 gap 原文全文），并**记录状态顶层 `profile_path` 的绝对路径**——Step 3 的 `stage4-finalize` 必须把它原样传给 `--profile`。
-3. 每位教授的目录（`professor_dir`）就是一个 Stage-4 事务边界：读该教授自己的 `套磁候选状态.json` + `套磁候选输入.json` + 该教授目录内已有的 local `套磁选择.json`；显示名（`professor`）只是业务/展示内容，两个不同目录即使同名也必须各自成为一个事务，绝不按名字合并选择或共享状态（issue #67）。
+3. 每位教授的目录（`professor_dir`）就是一个 Stage-4 事务边界：读该教授自己的 `套磁候选状态.json` + `套磁候选输入.json` + 该教授目录内已有的 local `套磁选择.json`；selection-input 的 `professor` 必须从该目录 `套磁候选输入.json` 顶层同名字段原样复制，绝不能从目录 basename、用户称呼或模型记忆猜测。显示名（`professor`）只是业务/展示内容，两个不同目录即使同名也必须各自成为一个事务，绝不按名字合并选择或共享状态（issue #67）。
 
 ### Step 2 — Get the user's selection（按 runtime 分支）
 
@@ -100,14 +100,14 @@ If `folder_path` missing → return the error JSON.
 
 本 Step 只在路径 A/B 已经拿到**用户真实选择**后进入；Codex 路径 C（缺 `selection`）到 Step 2 为止，绝不进入本 Step。把用户选择写成 `/tmp/套磁选择输入.json`：
 ```json
-{"selections": [{"professor": "<kanji>", "professor_dir": "<教授文件夹 abs>",
+{"selections": [{"professor": "<该教授套磁候选输入.json 顶层 professor 原样值>", "professor_dir": "<教授文件夹 abs>",
                  "direction_id": "<方向 direction_id>",
                  "reason": "<flag note 理由，若有>",
                  "ideas": [{"id": "<候选 id>", "note": "<用户补充/调整>"}]}]}
 ```
 然后：
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage4-finalize \
+python3 .agents/skills/professor-contact/scripts/contact_state.py stage4-finalize \
   --program-root <program_root abs> --selection-input /tmp/套磁选择输入.json --profile <该状态顶层 profile_path 的绝对路径>
 ```
 `--profile` **必传**，取值就是本 Step 所读状态顶层的 `profile_path`（caller 显式给出同一文件的绝对路径时以 caller 为准，二者必须指向同一文件）：runner 用它重算 profile 指纹并与状态中记录的指纹比对；省略 `--profile` 时 runner 的 current 指纹为 `None`，与任何已记录指纹必然失配 → `profile_changed` fail-closed 零写入。
@@ -127,7 +127,7 @@ runner 行为（你只消费其返回 JSON）：
 
 某教授目录内还没有 local pair、而历史程序级 `教授研究/套磁选择.json` 里存在该教授的行时，用确定性迁移命令按**一位教授一次**建立 local 权威：
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage4-migrate-local \
+python3 .agents/skills/professor-contact/scripts/contact_state.py stage4-migrate-local \
   --program-root <program_root abs> --professor-dir <该教授目录 abs> --profile <该状态顶层 profile_path 的绝对路径>
 ```
 - 它只把该教授的 legacy 选择行当作**行来源**，邮件事实一律按该教授当前的 `套磁候选状态.json` + `套磁候选输入.json` 重编译；历史 `教授研究/邮件输入.json` 里的 email 记录**从不**被复制成新的 local truth。

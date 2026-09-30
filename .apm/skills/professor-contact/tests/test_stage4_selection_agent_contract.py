@@ -165,6 +165,33 @@ class Issue67Stage4SelectionContractTests(unittest.TestCase):
             r"(?:程序级|教授研究/套磁选择\.json).{0,60}(?:绝不|never)\S{0,12}(?:写入|权威)",
             "the program-level pair must stay a historical source, never authority")
 
+    def test_runner_comes_from_the_exact_installed_consumer_skill(self):
+        self.assertNotIn(
+            "skillrepo exec professor-contact",
+            self.text,
+            "a clean consumer must not resolve Stage-4 through an ambient registered "
+            "development checkout",
+        )
+        self.assertIn(
+            ".agents/skills/professor-contact/scripts/contact_state.py",
+            self.text,
+            "the Stage-4 command must execute the runner installed in this consumer",
+        )
+        self.assertRegex(
+            self.text,
+            r"(?:精确提交|exact[- ]SHA|当前 consumer).{0,80}(?:安装|installed).{0,80}runner",
+            "the command provenance rule must be explicit enough for a clean consumer",
+        )
+
+    def test_selection_professor_is_copied_from_the_professor_input_pack(self):
+        self.assertIn("套磁候选输入.json", self.text)
+        self.assertRegex(
+            self.text,
+            r"professor.{0,40}(?:原样|逐字|exact).{0,40}(?:复制|抄)",
+            "the display professor must come from the selected directory's input pack, "
+            "not from the directory basename or a guessed label",
+        )
+
     def test_agent_never_invents_or_auto_selects_for_a_professor(self):
         self.assertRegex(
             self.text,
