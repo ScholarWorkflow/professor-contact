@@ -191,6 +191,11 @@ class Issue67Stage4SelectionContractTests(unittest.TestCase):
             "the display professor must come from the selected directory's input pack, "
             "not from the directory basename or a guessed label",
         )
+        self.assertRegex(
+            self.text,
+            r"路径 C.{0,80}(?:不要求|不读).{0,30}套磁候选输入\.json",
+            "the omitted-selection path must remain derivable from candidate state alone",
+        )
 
     def test_agent_never_invents_or_auto_selects_for_a_professor(self):
         self.assertRegex(

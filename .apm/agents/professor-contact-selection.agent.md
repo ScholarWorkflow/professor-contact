@@ -58,7 +58,7 @@ If `folder_path` missing → return the error JSON.
 ### Step 1 — Resolve program root + locate candidate states
 1. Resolve `program_root`.
 2. 找状态：`find 教授研究 -name "套磁候选状态.json"`。缺失 → error `"先跑 professor-contact-idea-generator（阶段 3）生成 套磁候选状态.json"`。读每个状态的方向/候选清单供挑选展示（候选摘要字段够用：id/title/one_liner/research_question/fit；不给 gap 原文全文），并**记录状态顶层 `profile_path` 的绝对路径**——Step 3 的 `stage4-finalize` 必须把它原样传给 `--profile`。
-3. 每位教授的目录（`professor_dir`）就是一个 Stage-4 事务边界：读该教授自己的 `套磁候选状态.json` + `套磁候选输入.json` + 该教授目录内已有的 local `套磁选择.json`；selection-input 的 `professor` 必须从该目录 `套磁候选输入.json` 顶层同名字段原样复制，绝不能从目录 basename、用户称呼或模型记忆猜测。显示名（`professor`）只是业务/展示内容，两个不同目录即使同名也必须各自成为一个事务，绝不按名字合并选择或共享状态（issue #67）。
+3. 每位教授的目录（`professor_dir`）就是一个 Stage-4 事务边界：始终读该教授自己的 `套磁候选状态.json` 和该教授目录内已有的 local `套磁选择.json`；只有路径 A/B 拿到真实选择、准备进入 Step 3 时才要求读取 `套磁候选输入.json`。此时 selection-input 的 `professor` 必须从该输入包顶层同名字段原样复制，绝不能从目录 basename、用户称呼或模型记忆猜测。路径 C 不要求 `套磁候选输入.json` 存在，展示用 `professor` 取 canonical `professor_dir` 的 basename，其余字段逐项抄自候选状态。显示名（`professor`）只是业务/展示内容，两个不同目录即使同名也必须各自成为一个事务，绝不按名字合并选择或共享状态（issue #67）。
 
 ### Step 2 — Get the user's selection（按 runtime 分支）
 
@@ -77,7 +77,7 @@ If `folder_path` missing → return the error JSON.
 
 **路径 C（Codex）——缺 `selection`**：non-interactive/无显式选择时停在这里等真实用户输入，绝不替用户做决定：
 1. 读取真实 `套磁候选状态.json`（只认机器状态，不从 Markdown 或记忆重造候选）；
-2. 构造**仅用于展示**的 `pending_selection` payload——每个条目/字段逐项抄自本轮读取的候选状态（普通方向 `kind:"direction"`，跨方向组 `kind:"cross_direction"` 并保留组的排序 `direction_ids`）：
+2. 构造**仅用于展示**的 `pending_selection` payload——`professor` 取 canonical `professor_dir` 的 basename；其它条目/字段逐项抄自本轮读取的候选状态（普通方向 `kind:"direction"`，跨方向组 `kind:"cross_direction"` 并保留组的排序 `direction_ids`）。本路径不读也不要求 `套磁候选输入.json`：
    ```json
    [{"professor": "<教授名>",
      "professor_dir": "<该教授目录 abs canonical 路径>",
