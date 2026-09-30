@@ -1,0 +1,6 @@
+进入 <PROGRAM_ROOT> 的正式 professor-contact Stage 4。
+本轮用户提供明确选择，涉及两个教授目录；两位教授的显示名相同，必须按目录区分：
+- 教授研究/AL分野/isolation-alpha：方向 DIR00001，选候选 issue67-alpha-1。
+- 教授研究/BE分野/isolation-beta：方向 DIR00001，选候选 issue67-beta-1。
+请按已安装的 Stage 4 caller contract 处理这两位教授的显式选择并结束本轮；
+不要进入 Stage 5，不要改动本轮没有选择的内容。

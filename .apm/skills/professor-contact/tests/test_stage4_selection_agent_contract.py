@@ -102,5 +102,75 @@ class Stage4SelectionAgentContractTests(unittest.TestCase):
         )
 
 
+class Issue67Stage4SelectionContractTests(unittest.TestCase):
+    """Issue #67: the selection child works per canonical professor, never globally.
+
+    These are the documented-input halves of `PC67-DADJ`; the machine halves run in
+    `Issue67AdjacentStateTests`, and the actual delegation lives in the runtime
+    smoke cases.
+    """
+
+    def setUp(self):
+        self.assertTrue(AGENT_PATH.exists(), f"missing agent document: {AGENT_PATH}")
+        self.text = AGENT_PATH.read_text(encoding="utf-8")
+
+    def test_canonical_professor_dir_is_the_per_professor_read_and_map_unit(self):
+        for required in ("professor_dir", "canonical", "套磁候选状态.json",
+                         "每轮重新读盘"):
+            with self.subTest(required=required):
+                self.assertIn(required, self.text)
+        self.assertRegex(
+            self.text,
+            r"(?:显示名|同名|display).{0,40}(?:不|never)\S{0,20}(?:合并|merge|同一)",
+            "the same display name must not merge two canonical directories")
+
+    def test_pending_selection_row_carries_the_professor_directory(self):
+        self.assertIn("pending_selection", self.text)
+        self.assertRegex(
+            self.text,
+            r'"professor_dir"\s*:',
+            "every pending_selection entry must name the canonical professor_dir the "
+            "next turn has to write back")
+
+    def test_aggregate_result_is_consumed_row_by_row(self):
+        for required in ("results[]", "partial", "needs_refresh", "selection_file",
+                         "email_pack"):
+            with self.subTest(required=required):
+                self.assertIn(required, self.text)
+        self.assertRegex(
+            self.text,
+            r"(?:别的教授|其他教授).{0,40}(?:不|never)\S{0,16}(?:阻断|前置条件|撤销)",
+            "one professor's failure must neither block nor revoke another's commit")
+
+    def test_path_c_still_delegates_waits_and_writes_nothing_formally(self):
+        self.assertIn("OpenCode", self.text)
+        self.assertIn("question", self.text)
+        self.assertIn("重新委派本 agent", self.text)
+        self.assertRegex(
+            self.text,
+            r"重新委派本 agent.{0,40}显式传入.{0,20}selection",
+            "the next user turn must re-delegate this child with an explicit "
+            "selection instead of resuming the old child thread")
+        self.assertRegex(
+            self.text,
+            r"(?:零写盘|不写任何文件|零写入)",
+            "the missing-selection turn must stay free of formal writes")
+
+    def test_legacy_program_pair_is_never_written_and_only_migrates_per_professor(self):
+        self.assertIn("stage4-migrate-local", self.text)
+        self.assertIn("already_local", self.text)
+        self.assertIn("local_pair_incomplete", self.text)
+        self.assertRegex(
+            self.text,
+            r"(?:程序级|教授研究/套磁选择\.json).{0,60}(?:绝不|never)\S{0,12}(?:写入|权威)",
+            "the program-level pair must stay a historical source, never authority")
+
+    def test_agent_never_invents_or_auto_selects_for_a_professor(self):
+        self.assertRegex(
+            self.text,
+            r"(?:不得|禁止|绝不).{0,30}(?:默认|推荐|自动选第一项)",
+            "the child may not substitute its own recommendation for user choice")
+
+
 if __name__ == "__main__":
     unittest.main()

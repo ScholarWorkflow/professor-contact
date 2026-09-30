@@ -84,9 +84,19 @@ unknown keys, or map an email by position, professor name, or “first email”.
 The runner remains the sole authority for required fields/types, ID-set,
 recipient authority, contact-evidence, and finalization validation.
 
+Alongside `choices`, the caller supplies `email_pack`: the absolute
+`<教授目录>/邮件输入.json` path from a successful Stage-4 `results[]` row. Pass it
+through unchanged as `--email-pack` on every Stage-5 call of that run — never a
+program-level path, never a path this agent guessed (see the professor-local
+section below).
+
+## Professor-local email pack (issue #67)
+
+Stage 5's only email fact source is the pack Stage 4 committed **inside that professor's directory**: `<教授目录>/邮件输入.json` (schema 3). The caller passes the exact absolute path from a successful Stage-4 `results[]` row as `--email-pack`, and every Stage-5 call of the same run (`stage5-plan` and the `stage5_immutable.py stage5-finalize` wrapper) uses that same path. Mixed Stage-4 results hand off only the successfully committed professors; a row whose `email_pack` is `null` has nothing to generate. When `--email-pack` is omitted the runner still resolves the historical program-level `教授研究/邮件输入.json`, which Stage 4 no longer writes: a missing file returns `needs_refresh` / `missing_email_pack` (re-run Stage 4), and an existing one is only a legacy migration source, never the new flow's authority. One local pack is never split into per-email fan-out and never re-aggregated into a second program-level fact file.
+
 ## Direction provenance (issue #8 email-pack v2)
 
-`邮件输入.json` is schema 2: every `emails[]` entry carries `direction_ids` (sorted canonical IDs) and `directions[]` (per-direction display names) — for cross-direction ideas both list ALL participants, and `email_id` is built from the canonical direction scope (`professor::A+B::idea`, A+B == B+A). The runner passes this provenance into the model input; never guess which evidence belongs to which direction, and never reconstruct direction identity from names or a legacy `collection_key`. For a multi-direction follow-up email the topic line uses the selected idea title, not one singular direction name.
+The local `邮件输入.json` is schema 3: every `emails[]` entry carries `direction_ids` (sorted canonical IDs) and `directions[]` (per-direction display names) — for cross-direction ideas both list ALL participants, and `email_id` is built from the canonical direction scope (`professor::A+B::idea`, A+B == B+A); `professor_dir` is a location, never part of the identity. The runner passes this provenance into the model input; never guess which evidence belongs to which direction, and never reconstruct direction identity from names or a legacy `collection_key`. For a multi-direction follow-up email the topic line uses the selected idea title, not one singular direction name.
 
 ## Immutable-template override (Issue #9)
 
@@ -109,7 +119,7 @@ The wrapper asks `contact_state.py stage5-plan` for the exact deterministic draf
 
 ## Targeted single-email scope (Issue #59)
 
-`--email-id` is a **hard execution scope**, not a display filter: one valid email must be producible even when unrelated entries of the program-level `邮件输入.json` carry invalid or stale Stage-5 state.
+`--email-id` is a **hard execution scope**, not a display filter: one valid email must be producible even when unrelated entries of that professor's local `邮件输入.json` carry invalid or stale Stage-5 state.
 
 1. When Stage 5 was invoked with `--email-id`, pass **the same `email_id`** through every Stage-5 call of that run — `stage5-plan`, the `stage5_immutable.py stage5-finalize` wrapper, and any re-plan after a `needs_recheck`. Never restate the target by array position, professor name, or "first email", and never mix a targeted plan with a batch finalize.
 2. The runner resolves that identity **before** any `professor_dir`, contact-evidence, `_contact_verify.json`, `套磁邮件状态.json`, result, choices, template or write validation. A missing match is `invalid_params` / `email_id not found: <id>`; an id occurring more than once is `invalid_email_pack` (ambiguous pack — never pick one).
