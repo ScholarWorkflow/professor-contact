@@ -2861,14 +2861,30 @@ class TestIssue64Stage2Identity(BaseEnv):
                          "--preflight-file", preflight_file)
         return result, parse(result)
 
+    def formal_outputs(self):
+        """Every artifact ``stage2-finalize`` publishes for this professor."""
+        outputs = {}
+        for rel in (self.PACK_NAME, "套磁候选分析.md", "论文分析/_freshness_cache.json"):
+            path = self.prof_dir / rel
+            outputs[rel] = path.read_bytes() if path.is_file() else None
+        return outputs
+
     def accepted_run(self):
+        """The fixed Gate 2 chain: stage2-preflight → stage2-plan → stage2-finalize."""
         proof = self.preflight()
         proof_file = self.save(proof, "proof.json")
         facts = self.facts_bound_to(proof["preflight_id"])
+        result, payload = self.run_plan(facts, proof_file)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["status"], "ok", payload)
+        self.assertEqual(payload["transaction_identity"], proof["preflight_inputs"]["identity"])
         result, payload = self.run_finalize(facts, proof_file)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(payload["status"], "ok", payload)
-        return proof, proof_file, facts, (self.prof_dir / self.PACK_NAME).read_bytes()
+        outputs = self.formal_outputs()
+        for rel, raw in outputs.items():
+            self.assertIsNotNone(raw, msg=f"{rel} is not published by the accepted chain")
+        return proof, proof_file, facts, outputs
 
     def test_issue64_t6_preflight_binds_a_canonical_identity_not_the_same_name_sibling(self):
         payload = self.preflight()
@@ -2905,26 +2921,40 @@ class TestIssue64Stage2Identity(BaseEnv):
         self.assertEqual(payload["drift"], ["identity"])
 
     def test_issue64_t6_finalize_refuses_a_changed_local_target_before_any_write(self):
-        _proof, proof_file, facts, pack_before = self.accepted_run()
+        _proof, proof_file, facts, outputs_before = self.accepted_run()
         target = json.loads(self.a_target.read_text(encoding="utf-8"))
         target["preview_fingerprint"] = "pv-a-rotated"
         self.a_target.write_text(json.dumps(target, ensure_ascii=False, indent=1),
                                  encoding="utf-8")
+
+        result, payload = self.run_plan(facts, proof_file)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed")
+        self.assertEqual(payload["drift"], ["identity"])
+        self.assertFalse(payload.get("jobs"))
 
         result, payload = self.run_finalize(facts, proof_file)
         self.assertEqual(result.returncode, 2)
         self.assertEqual(payload["status"], "needs_refresh", payload)
         self.assertEqual(payload["reason_code"], "preflight_inputs_changed")
         self.assertEqual(payload["drift"], ["identity"])
-        self.assertEqual((self.prof_dir / self.PACK_NAME).read_bytes(), pack_before)
+        self.assertEqual(self.formal_outputs(), outputs_before)
 
     def test_issue64_t6_finalize_refuses_when_the_exact_stage1_entry_moves(self):
-        _proof, proof_file, facts, pack_before = self.accepted_run()
+        _proof, proof_file, facts, outputs_before = self.accepted_run()
         entries = json.loads(self.snapshot.read_text(encoding="utf-8"))["professors"]
         for entry in entries:
             if entry["professor_dir"] == str(self.A_REL):
                 entry["input_fingerprint"] = "stage1-fp-a-rotated"
         self._write_snapshot(*entries)
+
+        result, payload = self.run_plan(facts, proof_file)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed")
+        self.assertIn("identity", payload["drift"])
+        self.assertFalse(payload.get("jobs"))
 
         result, payload = self.run_finalize(facts, proof_file)
         self.assertEqual(result.returncode, 2)
@@ -2932,7 +2962,7 @@ class TestIssue64Stage2Identity(BaseEnv):
         self.assertEqual(payload["reason_code"], "preflight_inputs_changed")
         self.assertIn("identity", payload["drift"])
         self.assertIn("program_inputs", payload["drift"])
-        self.assertEqual((self.prof_dir / self.PACK_NAME).read_bytes(), pack_before)
+        self.assertEqual(self.formal_outputs(), outputs_before)
 
     def test_issue64_t6_sibling_and_legacy_states_never_enter_the_a_transaction(self):
         clean = self.preflight()

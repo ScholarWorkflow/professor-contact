@@ -54,8 +54,8 @@ class Stage01CallerContractTests(unittest.TestCase):
         """Sentences with backslash-continued command lines joined back together."""
         return re.split(r"[。；\n]", text.replace("\\\n", " "))
 
-    def test_every_target_bound_command_names_the_local_target_file(self):
-        """R64-6 caller side (G64-T5): no Stage 0-1 invocation may omit --target-file."""
+    def test_issue64_t7_every_target_bound_command_names_the_local_target_file(self):
+        """R64-6 caller side (G64-T7): no documented invocation may omit --target-file."""
         for path in self.STAGE01_SOURCES:
             text = _read(path)
             for clause in self._clauses(text):
@@ -122,7 +122,7 @@ class Stage01CallerContractTests(unittest.TestCase):
             r"(?is)only Stage-0 entry that establishes a professor.s first",
         )
 
-    def test_retired_program_table_only_appears_as_a_prohibition_or_migration_input(self):
+    def test_issue64_t7_retired_program_table_only_appears_as_a_prohibition_or_migration_input(self):
         retired = "教授研究/套磁目标.json"
         markers = ("绝不", "不得", "不读", "退役", "migrate", "Never", "not a", "only")
         for path in self.STAGE01_SOURCES:
@@ -135,13 +135,13 @@ class Stage01CallerContractTests(unittest.TestCase):
                     msg=f"{path.name}: {line}",
                 )
 
-    def test_stage0_documents_one_professor_per_transaction_and_partial_results(self):
+    def test_issue64_t7_stage0_documents_one_professor_per_transaction_and_partial_results(self):
         text = _read(STAGE0_AGENT)
         self.assertIn("<教授目录>/套磁目标.json", text)
         self.assertRegex(text, r"(?is)one[` ]+select[` ]+call is one professor-local transaction")
         self.assertRegex(text, r"(?is)partial[\s\S]{0,300}(?:never|does not)[\s\S]{0,200}(?:roll back|rolls back)")
 
-    def test_stage1_resolves_one_professor_per_invocation(self):
+    def test_issue64_t7_stage1_resolves_one_professor_per_invocation(self):
         text = _read(STAGE1_AGENT)
         self.assertRegex(
             text,
