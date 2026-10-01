@@ -2869,6 +2869,7 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
     """A/B share one display professor name; only canonical identity separates them."""
 
     DISPLAY = "教授同名"
+    B_DISPLAY = None
     PACK = "套磁候选输入.json"
     ANALYSIS_MD = "套磁候选分析.md"
     FRESHNESS_CACHE = Path("论文分析") / "_freshness_cache.json"
@@ -2885,7 +2886,8 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
         self.targets = {}
         self.snapshots = {}
         for group in ("labA", "labB"):
-            self.prof_dirs[group] = self._make_professor(group, f"fp-{group}")
+            professor = self.DISPLAY if group == "labA" else (self.B_DISPLAY or self.DISPLAY)
+            self.prof_dirs[group] = self._make_professor(group, f"fp-{group}", professor=professor)
         self.a_dir = self.prof_dirs["labA"]
         self.b_dir = self.prof_dirs["labB"]
         self.a_target = self.targets["labA"]
@@ -2896,7 +2898,7 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
         ledger.write_text(json.dumps({
             "updated_at": "2026-09-29T00:00:00Z", "overrides": {},
             "professors": {self.DISPLAY: {
-                "books": [{"prof_name_tokens": ["教授", "同名"], "seed_count": 2, "auto": [],
+                "books": [{"prof_name_tokens": ["教授", self.DISPLAY.removeprefix("教授")], "seed_count": 2, "auto": [],
                            "conflicted": [], "offenders": [], "typos": [], "mashes": []}],
                 "seed_count": 2}}}, ensure_ascii=False), encoding="utf-8")
         self.legacy_snapshot.write_text(json.dumps({
@@ -2912,9 +2914,9 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
 
     # -- fixture -----------------------------------------------------------
 
-    def _preview(self, fingerprint: str) -> dict:
+    def _preview(self, fingerprint: str, *, professor: str | None = None) -> dict:
         return {
-            "schema_version": 1, "professor": self.DISPLAY,
+            "schema_version": 1, "professor": professor if professor is not None else self.DISPLAY,
             "direction_id_version": "members-v1", "membership_mode": "overlap_allowed",
             "membership_coverage": {"assigned_unique_members": 2, "membership_edges": 2,
                                     "overlap_member_count": 0, "overlap_members": [],
@@ -2936,12 +2938,13 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
             }],
         }
 
-    def _make_professor(self, group: str, fingerprint: str) -> Path:
-        professor_dir = self.root / "教授研究" / group / self.DISPLAY
+    def _make_professor(self, group: str, fingerprint: str, *, professor: str | None = None) -> Path:
+        display = professor if professor is not None else self.DISPLAY
+        professor_dir = self.root / "教授研究" / group / display
         analysis_dir = professor_dir / "论文分析"
         analysis_dir.mkdir(parents=True)
         preview = professor_dir / "方向预筛.json"
-        preview.write_text(json.dumps(self._preview(fingerprint), ensure_ascii=False, indent=1),
+        preview.write_text(json.dumps(self._preview(fingerprint, professor=display), ensure_ascii=False, indent=1),
                            encoding="utf-8")
         catalog = []
         for key, year, status in (("AAAA1111", 2023, "downloaded"),
@@ -2953,7 +2956,7 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
                             "pdf_status": status, "analysis_file": str(analysis),
                             "sidecar_file": str(sidecar)})
         (professor_dir / "papers.json").write_text(
-            json.dumps({"professor": {"name": self.DISPLAY}, "papers": catalog},
+            json.dumps({"professor": {"name": display}, "papers": catalog},
                        ensure_ascii=False, indent=1), encoding="utf-8")
         contact_targets.select_target(
             self.root, preview, {"direction_ids": ["DIR00001"],

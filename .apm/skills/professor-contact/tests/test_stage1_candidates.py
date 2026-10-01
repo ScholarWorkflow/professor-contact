@@ -269,12 +269,18 @@ def professor_local_state(professor_dir: Path) -> Path:
     return Path(professor_dir) / "套磁阶段1候选.json"
 
 
-def same_name_professor(root: Path, group: str, fingerprint: str) -> Path:
-    """One complete professor whose display name is identical for every group."""
-    professor_dir = root / "教授研究" / group / "教授同名"
+def same_name_professor(
+    root: Path, group: str, fingerprint: str, *, professor: str | None = None
+) -> Path:
+    """Build one professor; preserve the same-name fixture when no name is supplied."""
+    display = professor if professor is not None else "教授同名"
+    professor_dir = root / "教授研究" / group / display
     preview = professor_dir / "方向预筛.json"
-    write_json(preview, preview_payload(professor="教授同名", fp=fingerprint))
-    write_json(professor_dir / "papers.json", papers_payload())
+    write_json(preview, preview_payload(professor=display, fp=fingerprint))
+    catalog = papers_payload()
+    if professor is not None:
+        catalog["professor"]["name"] = display
+    write_json(professor_dir / "papers.json", catalog)
     targets.select_target(
         root, preview, {"direction_ids": ["dir_A"], "notes": {}},
         selected_at="2026-09-29T00:00:00Z",
