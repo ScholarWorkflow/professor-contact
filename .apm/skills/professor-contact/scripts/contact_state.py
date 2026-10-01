@@ -244,6 +244,61 @@ def atomic_json_many(items: list[tuple[Path, Any]]) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def staged_pair_commit(items: list[tuple[Path, str]]) -> None:
+    """Replace a small set of text files as one local transaction (issue #66).
+
+    All files are staged first, then installed in list order with one atomic
+    replace each — the LAST install is the business commit point. An ordinary
+    exception before the final install restores every previous file's old
+    bytes (absence included), so no reader ever observes a state that the
+    transaction later rolls back. Once the final install returned, the
+    transaction is committed: remaining cleanup is best-effort and a cleanup
+    error never rolls business files back or re-frames the result as
+    uncommitted. Hard-crash durability between two replaces is out of scope.
+    """
+    staged: list[tuple[Path, Path]] = []
+    installed: list[Path] = []
+    backups: dict[Path, bytes | None] = {}
+    try:
+        for path, text in items:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
+            staged.append((path, Path(temporary)))
+        for path, temporary in staged:
+            backups[path] = path.read_bytes() if path.exists() else None
+            os.replace(temporary, path)
+            installed.append(path)
+    except BaseException:
+        for path in reversed(installed):
+            old = backups.get(path)
+            try:
+                if old is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    fd, temporary = tempfile.mkstemp(
+                        prefix=f".{path.name}.restore.", dir=path.parent)
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(old)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temporary, path)
+            except OSError:
+                pass
+        for _, temporary in staged:
+            temporary.unlink(missing_ok=True)
+        raise
+    else:
+        for _, temporary in staged:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def emit(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1))
 
@@ -744,6 +799,41 @@ def load_candidate_state(professor_dir: Path, pack: dict | None) -> tuple[dict |
         return None, None
     if error or not isinstance(raw, dict):
         return None, error or "invalid_candidate_state"
+    return normalize_candidate_state(raw, pack)
+
+
+def strict_candidate_state(professor_dir: Path) -> tuple[dict | None, str | None]:
+    """Compatibility/migration owner for aggregate consumers (issue #66 r5).
+
+    Loads one professor's candidate state with strict legacy identity proof:
+    every collection_key the legacy state actually references must resolve to
+    exactly ONE canonical direction_id in the same professor's normalized
+    input pack (0 or >1 matches → legacy_direction_identity) before any
+    migration runs. Aggregate rebuild only consumes the canonical state
+    returned here and never re-implements the collection_key mapping itself;
+    the pack supplies identity migration only, never candidate facts.
+    """
+    raw, error = read_json_file(Path(professor_dir) / CANDIDATE_STATE)
+    if error == "not_found":
+        return None, None
+    if error or not isinstance(raw, dict):
+        return None, error or "invalid_candidate_state"
+    if raw.get("schema") == CANDIDATE_STATE_SCHEMA:
+        return normalize_candidate_state(raw, None)
+    pack, pack_error = load_input_pack(professor_dir)
+    if pack is None:
+        return None, pack_error or "missing_input_pack"
+    pack_directions = pack.get("directions") or []
+    for entry in raw.get("directions") or []:
+        if not isinstance(entry, dict):
+            return None, "invalid_candidate_state"
+        ckey = entry.get("collection_key")
+        if not (isinstance(ckey, str) and ckey.strip()):
+            continue
+        matches = sorted({direction_machine_id(d) for d in pack_directions
+                          if isinstance(d, dict) and d.get("collection_key") == ckey})
+        if len(matches) != 1:
+            return None, "legacy_direction_identity"
     return normalize_candidate_state(raw, pack)
 
 
@@ -5388,34 +5478,14 @@ def cmd_stage3_plan(args) -> None:
         (state or {}).get("generator_contract_version") != STAGE3_GENERATOR_CONTRACT_VERSION
     selected_keys = None
     if refresh_scope == "selected":
-        if args.selection:
-            # An explicit --selection is one professor's own container: identity
-            # comes from canonical professor_dir, never the display name.
-            selected_keys = _stage3_selected_scope_keys(
-                Path(args.selection), professor_dir, by_ckey)
-        else:
-            selection_path = Path(args.program_root) / "教授研究" / SELECTION_FILE
-            selection_data, sel_error = read_json_file(Path(selection_path))
-            if sel_error:
-                fail("invalid_params", f"selection file unreadable: {selection_path}")
-            selected_keys = set()
-            for sel in selection_data.get("selections", []):
-                if sel.get("professor") != pack.get("professor"):
-                    continue
-                # Stage 4 records one canonical `direction_ids` scope per row (a
-                # cross-direction row carries every participating direction), so the
-                # selected refresh must read that list — `direction_id` / legacy
-                # `collection_key` stay accepted for older selection files.
-                scope = sel.get("direction_ids")
-                if isinstance(scope, list) and scope:
-                    selected_keys.update(str(did) for did in scope if did)
-                    continue
-                sel_did = sel.get("direction_id")
-                if not sel_did:
-                    legacy = by_ckey.get(sel.get("collection_key"))
-                    sel_did = direction_machine_id(legacy) if legacy is not None else None
-                if sel_did:
-                    selected_keys.add(sel_did)
+        if not args.selection:
+            selection_path = professor_dir / SELECTION_FILE
+            fail("invalid_params",
+                 f"selection file unreadable without explicit --selection: {selection_path}")
+        # Selected refresh is bound to the explicit professor-local Stage-4
+        # container. Never fall back to the legacy program-level file.
+        selected_keys = _stage3_selected_scope_keys(
+            Path(args.selection), professor_dir, by_ckey)
     pack_fps = {direction_machine_id(d): d.get("input_fingerprint")
                 for d in pack_directions}
     input_fps = (state or {}).get("input_fingerprints", {})
@@ -6242,30 +6312,13 @@ def cmd_stage3_finalize(args) -> None:
     correction_dids = {key.split(":", 1)[1] for key in correction if key.startswith("direction:")}
     selected_keys = None
     if refresh_scope == "selected":
-        if args.selection:
-            # An explicit --selection is one professor's own container: identity
-            # comes from canonical professor_dir, never the display name.
-            selected_keys = _stage3_selected_scope_keys(
-                Path(args.selection), professor_dir, by_ckey)
-        else:
-            selection_path = Path(args.program_root) / "教授研究" / SELECTION_FILE
-            selection_data, sel_error = read_json_file(Path(selection_path))
-            if sel_error:
-                fail("invalid_params", f"selection file unreadable: {selection_path}")
-            selected_keys = set()
-            for sel in selection_data.get("selections", []):
-                if sel.get("professor") != pack.get("professor"):
-                    continue
-                scope = sel.get("direction_ids")
-                if isinstance(scope, list) and scope:
-                    selected_keys.update(str(did) for did in scope if did)
-                    continue
-                sel_did = sel.get("direction_id")
-                if not sel_did:
-                    legacy = by_ckey.get(sel.get("collection_key"))
-                    sel_did = direction_machine_id(legacy) if legacy is not None else None
-                if sel_did:
-                    selected_keys.add(sel_did)
+        if not args.selection:
+            selection_path = professor_dir / SELECTION_FILE
+            fail("invalid_params",
+                 f"selection file unreadable without explicit --selection: {selection_path}")
+        # Plan and finalize consume the same explicit professor-local selection.
+        selected_keys = _stage3_selected_scope_keys(
+            Path(args.selection), professor_dir, by_ckey)
     results_dir = Path(args.results)
     decision = None
     if getattr(args, "decision_file", None):
@@ -6435,45 +6488,12 @@ def cmd_stage3_finalize(args) -> None:
     body = render_candidates_md(professor, category, md_entries,
                                 current_profile_fp, state_fingerprint, professor_dir,
                                 cross_groups=cross_md_groups)
-    projections = load_projections(program_root)
-    overview_entries = []
-    for d in updated_directions:
-        overview_entries.append({
-            "professor": professor, "name_ja": d.get("name_ja"),
-            "candidates": d.get("candidates") or [],
-            "priority": d.get("priority"),
-            "_candidates_md_rel": rel_path(md_path, program_root / "教授研究")})
-    overview_cross = [{"professor": professor, "group_id": g["group_id"],
-                       "direction_ids": g["direction_ids"],
-                       "candidates": g.get("candidates") or [],
-                       "_candidates_md_rel": rel_path(md_path, program_root / "教授研究")}
-                      for g in cross_md_groups]
-    overview_body = render_candidates_overview(overview_entries, program_root,
-                                               cross_groups=overview_cross)
-    overview_path = program_root / "教授研究" / CANDIDATES_OVERVIEW
     md_conflict = managed_conflict(
         md_path, body, old_render.get(CANDIDATES_MD, {}).get("sha256"), decision)
     if md_conflict:
         soft_exit("needs_decision", md_conflict["reason_code"], target=md_conflict.get("target"),
                   options=["overwrite", "keep_manual", "promote"])
-    overview_conflict = projection_conflict(overview_path, overview_body, projections,
-                                            CANDIDATES_OVERVIEW)
-    if overview_conflict:
-        soft_exit("needs_decision", overview_conflict["reason_code"],
-                  target=overview_conflict.get("target"))
-    md_result = managed_write(md_path, body, state_fingerprint,
-                              old_render.get(CANDIDATES_MD, {}).get("sha256"), decision)
-    if md_result.get("needs_decision"):
-        soft_exit("needs_decision", md_result["reason_code"], target=md_result.get("target"),
-                  options=["overwrite", "keep_manual", "promote"])
-    overview_result = projection_write(overview_path, overview_body, projections,
-                                       CANDIDATES_OVERVIEW)
-    if overview_result.get("needs_decision"):
-        soft_exit("needs_decision", overview_result.get("reason_code"),
-                  target=overview_result.get("target"))
-    projections.setdefault("render", {})[CANDIDATES_OVERVIEW] = {
-        "sha256": overview_result.get("sha256")}
-    save_projections(program_root, projections)
+    body_sha = sha256_text(body)
     new_state = {
         "schema": CANDIDATE_STATE_SCHEMA, "kind": CANDIDATE_STATE_KIND,
         "identity_version": DIRECTION_IDENTITY_VERSION,
@@ -6485,15 +6505,31 @@ def cmd_stage3_finalize(args) -> None:
         "input_fingerprints": input_fps,
         "directions": updated_directions,
         "cross_direction_groups": final_groups,
-        "cache": {"render": {CANDIDATES_MD: {"sha256": md_result.get("sha256")}}},
+        "cache": {"render": {CANDIDATES_MD: {"sha256": body_sha}}},
     }
     if isinstance((state or {}).get("validator"), dict):
         retained = carry_stage3_validator(
             state["validator"], processed_scopes,
-            correction=bool(correction), render_sha=md_result.get("sha256"))
+            correction=bool(correction), render_sha=body_sha)
         if retained:
             new_state["validator"] = retained
-    atomic_json(professor_dir / CANDIDATE_STATE, new_state)
+    # Local transaction (issue #66 r10 §2): stage both files, install the
+    # local Markdown first, and install the candidate state LAST — the state
+    # replace is the only business commit point. The program level is NOT part
+    # of this transaction: finalize never reads or writes 套磁想法候选总览.md /
+    # _contact_projections.json, so another professor's state, a stale or
+    # missing overview, or a corrupt projection registry can never block or
+    # re-judge this commit. The derived overview is rebuilt from committed
+    # states by `stage3-rebuild-overview` after terminal validation.
+    state_path = professor_dir / CANDIDATE_STATE
+    try:
+        staged_pair_commit([
+            (md_path, render_frontmatter(state_fingerprint, body_sha) + body),
+            (state_path, json.dumps(new_state, ensure_ascii=False, sort_keys=True,
+                                    indent=1) + "\n"),
+        ])
+    except Exception as exc:
+        fail("local_pair_commit_failed", str(exc), target=str(state_path))
     emit({
         "status": "ok", "professor": professor,
         "state_path": str(professor_dir / CANDIDATE_STATE),
@@ -6514,7 +6550,101 @@ def cmd_stage3_finalize(args) -> None:
                                      "candidates": len(g.get("candidates") or [])}
                                     for g in final_groups],
         "dropped_cross_direction": dropped_groups,
-        "reused": reused, "md_sha256": md_result.get("sha256"),
+        "reused": reused, "md_sha256": body_sha,
+    })
+
+
+def cmd_stage3_rebuild_overview(args) -> None:
+    """Rebuild the program-level candidates overview from committed states.
+
+    The overview is a human-facing projection derived ONLY from committed
+    professor-local candidate states (issue #66 r10 §3): the local Markdown
+    contributes a link path and never machine facts; `_contact_projections.json`
+    is not read and not written; manual-edit protection is projection-local
+    (frontmatter render_sha256 must match the current body, otherwise the
+    rebuild fails closed with manual_markdown_changed and nothing changes).
+    Any discovered state that is malformed or cannot be exactly identity-
+    migrated fails the whole rebuild BEFORE the overview write — no partial
+    overview is ever published.
+    """
+    program_root = Path(args.program_root)
+    research_root = (program_root / "教授研究").resolve()
+    if not research_root.is_dir():
+        fail("invalid_params", f"program_root has no 教授研究 directory: {program_root}")
+    discovered: dict[str, Path] = {}
+    for state_path in sorted(research_root.rglob(CANDIDATE_STATE)):
+        try:
+            parent = state_path.parent.resolve()
+            relative = parent.relative_to(research_root)
+        except (OSError, ValueError):
+            fail("state_outside_program_root", str(state_path),
+                 message="discovered candidate state resolves outside the 教授研究 root")
+        discovered.setdefault(relative.as_posix(), parent)
+    records = []
+    for identity in sorted(discovered):
+        professor_dir = discovered[identity]
+        state, state_error = strict_candidate_state(professor_dir)
+        if state is None and state_error is None:
+            # The state vanished between discovery and read: this professor
+            # currently has no committed state and contributes no rows.
+            continue
+        if state_error:
+            fail(state_error,
+                 "candidate state cannot be included in the program overview",
+                 professor_identity=identity, professor_dir=str(professor_dir))
+        records.append((identity, professor_dir, state))
+    direction_entries, cross_entries = [], []
+    for identity, professor_dir, state in records:
+        display = state.get("professor") or identity
+        md_rel = rel_path(professor_dir / CANDIDATES_MD, research_root)
+        for row in sorted((state.get("directions") or []),
+                          key=lambda item: str(item.get("direction_id") or "")):
+            direction_entries.append({
+                "professor": display, "name_ja": row.get("name_ja"),
+                "candidates": row.get("candidates") or [],
+                "priority": row.get("priority"),
+                "_candidates_md_rel": md_rel})
+        for row in sorted((state.get("cross_direction_groups") or []),
+                          key=lambda item: str(item.get("group_id") or "")):
+            cross_entries.append({
+                "professor": display, "group_id": row.get("group_id"),
+                "direction_ids": row.get("direction_ids") or [],
+                "candidates": row.get("candidates") or [],
+                "_candidates_md_rel": md_rel})
+    body = render_candidates_overview(direction_entries, research_root,
+                                      cross_groups=cross_entries)
+    overview_path = research_root / CANDIDATES_OVERVIEW
+    if overview_path.is_file():
+        try:
+            existing_text = overview_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            fail("overview_unreadable", str(exc), target=str(overview_path))
+        header, existing_body = split_frontmatter(existing_text)
+        if not isinstance(header, dict) or header.get("managed_by") != MANAGED_BY or \
+                header.get("render_sha256") != sha256_text(existing_body):
+            soft_exit("needs_decision", "manual_markdown_changed",
+                      target=str(overview_path))
+    body_sha = sha256_text(body)
+    projection_fingerprint = sha256_obj({"projection": CANDIDATES_OVERVIEW,
+                                         "body": body_sha})
+    try:
+        atomic_write(overview_path,
+                     render_frontmatter(projection_fingerprint, body_sha) + body)
+    except Exception as exc:
+        fail("overview_write_failed", str(exc), target=str(overview_path))
+    emit({
+        "status": "ok",
+        "overview_md": str(overview_path),
+        "sha256": body_sha,
+        "professor_count": len(records),
+        "direction_rows": len(direction_entries),
+        "cross_direction_rows": len(cross_entries),
+        "professors": [{"professor_identity": identity,
+                        "professor": state.get("professor"),
+                        "directions": len(state.get("directions") or []),
+                        "cross_direction_groups":
+                            len(state.get("cross_direction_groups") or [])}
+                       for identity, _, state in records],
     })
 
 
@@ -9673,6 +9803,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--validation-file",
                    help="same raw style-validator JSON used by stage3-plan correction")
     p.set_defaults(func=cmd_stage3_finalize)
+
+    p = sub.add_parser("stage3-rebuild-overview",
+                       help="rebuild the program-level candidates overview from committed "
+                            "professor-local candidate states (derived projection; issue #66)")
+    p.add_argument("--program-root", required=True)
+    p.set_defaults(func=cmd_stage3_rebuild_overview)
 
     p = sub.add_parser("stage4-finalize",
                        help="commit professor-local Stage-4 authority per professor and emit "

@@ -544,14 +544,25 @@ class TestRunnerBasics(BaseEnv):
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "invalid_result_json")
 
-    def test_05e_overview_manual_edit_blocks_before_md_write(self):
+    def test_05e_overview_manual_edit_does_not_block_local_finalize(self):
+        # Issue #66: the program overview is a derived projection owned by
+        # stage3-rebuild-overview. A manual overview edit (or any program-level
+        # projection problem) must NOT block, roll back or re-judge a legal
+        # professor-local Stage-3 commit, and finalize must not touch the
+        # overview or the projection registry at all.
         self.stage3_run()
         md_path = self.prof_dir / "套磁想法候选.md"
-        md_before = md_path.read_bytes()
+        state_path = self.prof_dir / "套磁候选状态.json"
         overview_path = self.root / "教授研究" / "套磁想法候选总览.md"
+        registry_path = self.root / "教授研究" / "_contact_projections.json"
         overview_path.write_text(
-            overview_path.read_text(encoding="utf-8").replace("推荐顺序", "手工改动"),
+            "# 套磁想法候选总览\n\n上一轮 rebuild 留下的聚合。\n", encoding="utf-8")
+        overview_before = overview_path.read_bytes()
+        registry_missing_before = not registry_path.exists()
+        overview_path.write_text(
+            overview_path.read_text(encoding="utf-8").replace("聚合", "手工改动"),
             encoding="utf-8")
+        overview_edited = overview_path.read_bytes()
         profile = self.root / "changed-profile.md"
         profile.write_text("兴趣发生变化\n", encoding="utf-8")
         results = self.root / "rerender-results"
@@ -564,9 +575,21 @@ class TestRunnerBasics(BaseEnv):
             "stage3-finalize", "--professor-dir", self.prof_dir,
             "--results", results, "--program-root", self.root,
             "--profile", profile))
-        self.assertEqual(out["status"], "needs_decision")
-        self.assertEqual(out["reason_code"], "manual_markdown_changed")
-        self.assertEqual(md_path.read_bytes(), md_before)
+        self.assertEqual(out["status"], "ok", out)
+        # The professor-local pair advanced to the new profile render…
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["profile_fingerprint"],
+                         contact_state.profile_fingerprint(str(profile)))
+        rendered = md_path.read_text(encoding="utf-8")
+        _, md_body = contact_state.split_frontmatter(rendered)
+        self.assertEqual(state["cache"]["render"]["套磁想法候选.md"]["sha256"],
+                         contact_state.sha256_text(md_body))
+        # …while the overview keeps the manual edit byte-for-byte and the
+        # registry is never created or touched by the local commit.
+        self.assertEqual(overview_path.read_bytes(), overview_edited)
+        self.assertNotEqual(overview_edited, overview_before)
+        self.assertTrue(registry_missing_before)
+        self.assertFalse(registry_path.exists())
 
     def test_06_email_pack_exact_join_only(self):
         self.stage3_run()

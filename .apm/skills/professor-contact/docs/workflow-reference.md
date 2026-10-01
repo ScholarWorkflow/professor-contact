@@ -78,7 +78,7 @@ flowchart TD
 | 0 | `professor-contact` | normalized `方向预筛.json` | 逐教授 `<教授目录>/套磁目标.json`（每位被选教授一份） | 使用稳定 `direction_id`；一次 `select` 只提交一位教授；无 Stage 0 Markdown |
 | 1 | `professor-contact-downloader` | 该教授的 local target + preview + `papers.json` | `<教授目录>/套磁阶段1候选.json` | 一次只 `resolve`/`build --target-file` 一位教授；只写该教授自己那份，不读不写其他教授的状态，也不读程序级聚合；仅候选集；归属声明必须是 non-final |
 | 2 | `professor-contact-analyzer` + `paper-analysis` | 该教授的 local target + verified Stage 1 snapshot + 本地论文证据 | `_resolved_directions.json`、`套磁候选输入.json` | 全文 resolved direction 对 outreach 权威；input pack 是 Stage 3 唯一事实源 |
-| 3 | `professor-contact-idea-generator` | `套磁候选输入.json` + profile | `套磁候选状态.json` | 不读 Markdown / `_index.json` / sidecar；默认每方向 3–5 条 |
+| 3 | `professor-contact-idea-generator` | `套磁候选输入.json` + profile | `套磁候选状态.json` + `套磁想法候选.md`（教授本地事务）；总览由 `stage3-rebuild-overview` 从全部已提交状态重建 | 不读 Markdown / `_index.json` / sidecar；默认每方向 3–5 条；教授本地提交不被其它教授/总览/registry 异常阻塞，总览不反向进入 Stage 4 事实源 |
 | 4 | `professor-contact-selection` | `套磁候选状态.json` + 用户真实选择 | `<教授目录>/套磁选择.json`、`<教授目录>/邮件输入.json` | 以 canonical `professor_dir` 为事务边界逐教授提交，一次聚合 `results[]` 可 partial；exact `direction_id` / `(direction_id,item_key,gap_id)` join；该教授过期零写入，无关教授不阻断、不撤销已提交教授 |
 | 5 | `professor-contact-email-generator` | Stage 4 交出的 `<教授目录>/邮件输入.json` + profile/template/info/boshu + verify cache | 邮件 md/txt、跟进邮件、`套磁邮件状态.json`、总览 | 该教授的 `邮件输入.json` 是论文事实与冻结联系方式的事实源 |
 
@@ -200,13 +200,16 @@ flowchart LR
     PROFILE["用户 profile"]
     PLAN["stage3-plan<br/>按 direction_id 切最小 model_input"]
     MODEL["每方向 3–5 条候选"]
-    FIN["stage3-finalize"]
-    ST["套磁候选状态.json"]
-    MD["套磁想法候选.md / 总览<br/>只做人类投影"]
+    FIN["stage3-finalize<br/>教授本地事务<br/>MD 先装 / 状态最后装"]
+    ST["套磁候选状态.json<br/>教授级正式状态＝提交标记"]
+    MD["套磁想法候选.md<br/>教授本地投影"]
+    REB["stage3-rebuild-overview<br/>terminal 后一次 best-effort"]
+    OV["套磁想法候选总览.md<br/>程序级派生投影"]
 
     I --> PLAN
     PROFILE --> PLAN --> MODEL --> FIN --> ST
     FIN -.-> MD
+    ST --> REB -.-> OV
 ```
 
 约束：
@@ -215,6 +218,8 @@ flowchart LR
 - `gap_refs` 必须精确到 `(direction_id, item_key, gap_id)`。
 - cross-direction 候选是显式 opt-in；未传 `cross_direction_groups` 时不得偷偷生成跨方向 job 或 section。
 - profile 变化影响 Stage 3/4，而不要求重跑 Stage 2 学术事实。
+- **教授本地提交独立（issue #66）**：`stage3-finalize` 只读取/提交当前教授——候选状态与本地 Markdown 以一个本地事务写盘（Markdown 先安装、候选状态最后安装＝唯一提交标记；提交前普通失败恢复旧内容，提交后清理失败不回滚），绝不读写其它教授的状态、`套磁想法候选总览.md` 或 `_contact_projections.json`。其它教授状态异常、总览缺失/过期/被手改都不会阻塞、回滚或重判一次合法的教授本地提交。
+- **总览只是派生投影**：`stage3-rebuild-overview` 在 terminal 校验后由 terminal owner（OpenCode=idea-generator；Codex=root caller）best-effort 运行一次，从全部已提交教授级 `套磁候选状态.json` 派生 `套磁想法候选总览.md`（教授/方向/候选数/推荐顺序/链接全部来自状态；本地 Markdown 只贡献链接路径；排序以 resolved professor 目录身份为跨教授 tie-breaker，方向/组按机器身份稳定排序）。任一已发现状态 malformed 或 legacy 身份无法精确迁移（0 个或多个 canonical `direction_id` 匹配）时，写总览之前整体失败，绝不发布部分总览；手工改动总览（frontmatter 无效或 body hash 失配）→ rebuild fail closed。aggregate 失败不修改教授本地状态，也不把 Stage 3 改回未完成；`overview_md` 只是目标路径，不是 rebuild 成功证据。
 
 ## 8. Stage 4：真实用户选择与邮件包编译
 
