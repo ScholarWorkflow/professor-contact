@@ -762,6 +762,53 @@ class ContactTargetsTests(unittest.TestCase):
         self.assertEqual(self.read_target(self.b_target_path())['professor'], '教授B')
         self.assertEqual(self.legacy_path.read_bytes(), legacy_before)
 
+    def test_issue64_t3_bulk_migration_own_invalid_candidate_blocks_its_group(self):
+        """An identity-reliable record whose content fails validation keeps its
+        professor and blocks that professor's bulk write, exactly like first
+        establishment: zero write for the professor, one failed outcome — never
+        migrated and failed at once — while other professors continue."""
+        self.bootstrap(["dir_A"], {"dir_A": "note A"})
+        a_target = self.read_target()
+        b_preview = self.write_b_preview(fp="fp-b")
+        mod.bootstrap_target(self.root, b_preview,
+                             {"direction_ids": ["dir_A"], "notes": {"dir_A": "note B"}},
+                             selected_at=BOOTSTRAP_AT)
+        b_target = self.read_target(self.b_target_path())
+        self.target_path.unlink()
+        self.b_target_path().unlink()
+        self.write_legacy(
+            self.a_entry(a_target, selection_history="not-an-array"),
+            self.a_entry(a_target),
+            legacy_entry(b_target, str(PROFESSOR_B_DIR), str(PROFESSOR_B_DIR / PREVIEW_NAME)))
+        legacy_before = self.legacy_path.read_bytes()
+        result = mod.migrate_legacy_targets(self.root)
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["migrated"], ["教授B"])
+        self.assertEqual([item["professor"] for item in result["failures"]], ["教授A"])
+        self.assertFalse(self.target_path.exists())
+        self.assertEqual(self.read_target(self.b_target_path())["professor"], "教授B")
+        self.assertEqual(self.legacy_path.read_bytes(), legacy_before)
+
+    def test_issue64_t3_bootstrap_and_bulk_agree_on_invalid_own_candidate(self):
+        """One migration semantics (r25 §5.2): the same legacy input reaches the
+        same fail-closed verdict under the single-professor establishment entry
+        and the bulk entry — the invalid own candidate is never demoted to an
+        unattributable record that the remaining subset could migrate around."""
+        self.bootstrap(["dir_A"], {"dir_A": "note A"})
+        invalid_a = self.a_entry(selection_history="not-an-array")
+        self.target_path.unlink()
+        self.write_legacy(invalid_a)
+        bootstrapped = self.bootstrap(["dir_A"], {"dir_A": "note A"}, selected_at=REVISION_AT)
+        self.assertEqual(bootstrapped["status"], "error")
+        self.assertEqual(bootstrapped["reason_code"], "invalid_legacy_candidate_state")
+        self.assertFalse(self.target_path.exists())
+        legacy_before = self.legacy_path.read_bytes()
+        result = mod.migrate_legacy_targets(self.root)
+        self.assertEqual(result["migrated"], [])
+        self.assertEqual([item["professor"] for item in result["failures"]], ["教授A"])
+        self.assertFalse(self.target_path.exists())
+        self.assertEqual(self.legacy_path.read_bytes(), legacy_before)
+
     def test_issue64_t3_standalone_migration_never_publishes_materially_stale_selection(self):
         self.bootstrap()
         self.write_legacy(self.a_entry())

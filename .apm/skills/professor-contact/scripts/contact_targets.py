@@ -871,8 +871,11 @@ def migrate_legacy_targets(program_root: Path) -> dict[str, Any]:
     Explicit bulk migration reuses the bootstrap classification, per-professor
     conflict preflight and commit helper, so the two paths cannot disagree:
     entries group by canonical ``professor_dir``, a group writes at most once and
-    only after every conflict in that group is resolved in memory. The legacy
-    file itself is left untouched for audit.
+    only after every conflict in that group is resolved in memory. A record with
+    reliable identity but invalid content keeps its professor and fails that
+    professor's group closed with zero writes — the same verdict first
+    establishment reaches on the same input; only truly unattributable entries
+    are skipped as orphans. The legacy file itself is left untouched for audit.
     """
     program_root = program_root.resolve()
     legacy_path = program_root / LEGACY_TARGET_FILE
@@ -885,35 +888,55 @@ def migrate_legacy_targets(program_root: Path) -> dict[str, Any]:
                 "legacy_path": str(legacy_path), "entries": []}
 
     groups: dict[str, list[dict[str, Any]]] = {}
+    group_professor: dict[str, str] = {}
+    group_errors: dict[str, str] = {}
     owner_of: list[str | None] = []
-    defective: list[str | None] = []
+    entry_error: list[str | None] = []
     for entry in raw_entries:
         canonical = _entry_canonical(entry)
         if canonical is None:
             owner_of.append(None)
-            defective.append("legacy entry identity is unreliable")
+            entry_error.append("legacy entry identity is unreliable")
             continue
         professor, professor_dir_rel, _preview_rel = canonical
+        group_professor.setdefault(professor_dir_rel, professor)
         try:
             target = _legacy_entry_to_target(entry)
             _validate_target_identity(target, local_target_path(program_root / professor_dir_rel), program_root)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            owner_of.append(None)
-            defective.append(str(exc))
+            # Identity is reliable, content is not: the record keeps its professor
+            # and blocks its own group's write — the same verdict first
+            # establishment reaches on the same input. It must never be demoted
+            # to an unattributable record the converted subset could migrate
+            # around.
+            owner_of.append(professor_dir_rel)
+            entry_error.append(str(exc))
+            group_errors.setdefault(professor_dir_rel, str(exc))
             continue
         owner_of.append(professor_dir_rel)
-        defective.append(None)
+        entry_error.append(None)
         groups.setdefault(professor_dir_rel, []).append(target)
 
-    decided = {professor_dir_rel: _migrate_group(program_root, professor_dir_rel, candidates)
-               for professor_dir_rel, candidates in groups.items()}
+    def failed_group(professor_dir_rel: str) -> dict[str, Any]:
+        return {"status": "failed", "professor": group_professor[professor_dir_rel],
+                "state_path": str(local_target_path(program_root / professor_dir_rel).resolve()),
+                "detail": group_errors[professor_dir_rel]}
+
+    decided: dict[str, dict[str, Any]] = {}
+    for professor_dir_rel, candidates in groups.items():
+        decided[professor_dir_rel] = (failed_group(professor_dir_rel)
+                                      if professor_dir_rel in group_errors
+                                      else _migrate_group(program_root, professor_dir_rel, candidates))
+    for professor_dir_rel in group_errors:
+        if professor_dir_rel not in decided:
+            decided[professor_dir_rel] = failed_group(professor_dir_rel)
 
     outcomes = list(decided.values())
     results: list[dict[str, Any]] = []
     for index, entry in enumerate(raw_entries):
         professor = entry.get("professor") if isinstance(entry, dict) else None
-        if defective[index]:
-            orphan = {"status": "failed", "professor": professor, "detail": defective[index]}
+        if owner_of[index] is None:
+            orphan = {"status": "failed", "professor": professor, "detail": entry_error[index]}
             outcomes.append(orphan)
             results.append(orphan)
             continue
