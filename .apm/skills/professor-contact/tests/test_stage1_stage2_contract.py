@@ -159,8 +159,9 @@ class Stage2PreflightContractTests(unittest.TestCase):
         self.assertIn("不碰 Zotero", gate_section)
         self.assertIn("不读 PDF 内容", gate_section)
         self.assertIn("不写任何 workflow state", gate_section)
-        # Preflight stdout is saved and passed back to finalize.
-        self.assertIn("/tmp/<教授名>_stage2_preflight.json", gate_section)
+        # Preflight stdout is saved and passed back to finalize, at this
+        # professor transaction's own transient location.
+        self.assertIn("<本教授事务临时目录>/stage2_preflight.json", gate_section)
         self.assertIn("--preflight-file", agent)
         self.assertIn("preflight_inputs_changed", agent)
 
@@ -231,7 +232,7 @@ class Stage2PreflightContractTests(unittest.TestCase):
 
     def test_issue64_t7_stage2_plan_commands_pass_the_saved_preflight_proof(self):
         """The production plan hop consumes the proof saved by Step 2.6."""
-        expected_proof = "--preflight-file /tmp/<教授名>_stage2_preflight.json"
+        expected_proof = "--preflight-file <本教授事务临时目录>/stage2_preflight.json"
         for target in ("professor-contact-codex", "professor-contact-opencode"):
             with self.subTest(target=target):
                 commands = [command for command in bash_commands(self._analyzer(target))
@@ -239,6 +240,20 @@ class Stage2PreflightContractTests(unittest.TestCase):
                 self.assertEqual(len(commands), 1, msg=commands)
                 self.assertIn("--facts /tmp/<教授名>_套磁_facts.json", commands[0])
                 self.assertIn(expected_proof, commands[0])
+
+    def test_issue64_t7_preflight_proof_save_is_per_professor_transaction(self):
+        """R64-17/R64-20 supplement (§6/§8.2): each professor transaction saves the
+        preflight proof at its own transient location and carries the actual path
+        in its transaction record, so two same-name professors in different
+        directories can never share, overwrite or delete one another's proof."""
+        for target in ("professor-contact-codex", "professor-contact-opencode"):
+            with self.subTest(target=target):
+                agent = self._analyzer(target)
+                # The display-name-keyed shared path is retired: professor B's
+                # preflight must not be able to overwrite professor A's proof.
+                self.assertNotIn("/tmp/<教授名>_stage2_preflight.json", agent, msg=target)
+                self.assertIn("<本教授事务临时目录>/stage2_preflight.json", agent, msg=target)
+                self.assertIn("不再根据教授展示名", agent, msg=target)
 
     def _analyzer(self, target: str) -> str:
         path = (ROOT.parents[2] / "packages" / target / ".apm" / "agents"

@@ -150,7 +150,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py \
 
 （参数与本次 Stage 2 调用收到的同名输入一致；缺省同 analyzer 缺省。`--target-file` 必须是 Step 2 刚解析过的那一位教授的 local target，且与 `--professor` 一致——preflight 不接受程序级总表，也不自行推导路径。）
 
-- stdout **原样保存**到 `/tmp/<教授名>_stage2_preflight.json`；payload 内含本次输入的稳定证明 `preflight_id`。本教授后续 `stage2-finalize` 必须以 `--preflight-file` 传回同一文件（TOCTOU 防护：finalize 在任何写盘前重算 cheap inputs，与 preflight 时不一致 → `needs_refresh/preflight_inputs_changed`，不写 pack/freshness/Markdown）。finalize 还会校验 **facts 绑定**：Step 6.1 写入 facts 的 `stage2_preflight.preflight_id` 必须与该 payload 的 `preflight_id` 一致，否则同样 `needs_refresh`——同一教授并发/重入的另一次调用可能覆盖这份共享保存文件，绝不允许用它给早先准备的 facts 盖章。
+- 为本教授事务建立**独立临时目录**（例如 `mktemp -d`），stdout **原样保存**到 `<本教授事务临时目录>/stage2_preflight.json`；payload 内含本次输入的稳定证明 `preflight_id`。不同教授事务（**含同名不同目录的教授**）各用各的临时目录，绝不共用、覆盖或删除他人仍需消费的证明；实际保存路径记入本教授的事务记录（与该教授 canonical `professor_dir` / `preview_path` / local target 关联），后续步骤一律从该记录取实际路径，**不再根据教授展示名重新拼接或查找证明路径**。本教授后续 `stage2-finalize` 必须以 `--preflight-file` 传回同一文件（TOCTOU 防护：finalize 在任何写盘前重算 cheap inputs，与 preflight 时不一致 → `needs_refresh/preflight_inputs_changed`，不写 pack/freshness/Markdown）。finalize 还会校验 **facts 绑定**：Step 6.1 写入 facts 的 `stage2_preflight.preflight_id` 必须与该 payload 的 `preflight_id` 一致，否则同样 `needs_refresh`——同一教授并发/重入的另一次调用可能覆盖同一保存位置，绝不允许用它给早先准备的 facts 盖章。该证明至少保留到本事务的 plan/finalize（及 resolve 流水线）消费完毕；清理只删除本教授事务自己的临时目录。
 - 按 payload `action` 分区：`reuse_all` → `reusable_professors`；`process` → `process_professors`。所有 `reason_codes`（教授级与逐方向）如实记入返回 notes，绝不静默丢弃。
 - **`reusable_professors` 硬性禁区**（该教授 Stage 2 就此结束）：不得执行 `get_item_details`/`get_item_abstract`/`get_content`、Zotero collection/member 扫描、authorship 重建、PDF 打开/读取、OCR、`paper-analysis full|gap-only`、`stage2_chatgpt_handoff build`、Stage 2 模型 job、`stage2-plan`、`stage2-finalize`、style validator。直接复用既有 accepted `套磁候选输入.json` + `套磁候选分析.md` 返回；不更新时间戳、不 rewrite pack——真正的 no-op reuse。
 - **两个禁止 early hard exit 的例外**（即使 preflight 全命中也必须进 `process_professors`，走既有完整路径）：`chatgpt_result` 被显式提供（wait → resume 必须按当前输入 rebuild current bundle → validate → import 外部 result，绝不能忽略 result ZIP）；`kb_import=true`（显式请求的外部 side effect；不在 #11 设计 KB-only 路径）。
@@ -427,7 +427,7 @@ For each flagged direction:
 
 - `sidecar_file` 只在 6.5 判定有效（schema 1 / status ok / 锚定级 items）时填；`facts_file` 只在 6.7 探测到 `<analysis>.facts.json` 时填（`pdf_file` 是其指纹校验材料）；`gap_scope` 由 runner 据此过滤候选池。runner 会独立校验 facts sidecar（指纹 + future_work_ids 精确 join），校验通过的论文以规范化 `paper_facts` 进入输入包支撑论文，校验失败只降级为无 facts，绝不回读 PDF/Markdown 或补跑模型。
 - **`papers[]` 必须覆盖全教授被选方向 `candidate_keys` 的去重并集**（不只相关集）：每篇候选都带元数据与 analysis/sidecar/facts 字段，runner 的 resolved_direction 逐方向指纹与 6.1.5 的 paper_evidence 都以 candidate union 为证据范围——relevant 集只决定 gap/叙事，绝不收窄归属 resolution 的证据。
-- `stage2_preflight.preflight_id` 从 Step 2.6 保存的 `/tmp/<教授名>_stage2_preflight.json` 原样复制：它是本轮 evidence 准备所依赖的那次 preflight 决定的证明。`stage2-finalize` 会核对 facts 与 `--preflight-file` 的绑定，缺失或不一致 → `needs_refresh/preflight_inputs_changed`（本轮白跑，绝不盖章）；resolve 流水线（plan/finalize/accept）也把同一 proof id 记进 `_resolved_directions.json`，另一代 facts/preflight 的 sidecar 一律拒绝应用。
+- `stage2_preflight.preflight_id` 从 Step 2.6 保存的 `<本教授事务临时目录>/stage2_preflight.json` 原样复制：它是本轮 evidence 准备所依赖的那次 preflight 决定的证明。`stage2-finalize` 会核对 facts 与 `--preflight-file` 的绑定，缺失或不一致 → `needs_refresh/preflight_inputs_changed`（本轮白跑，绝不盖章）；resolve 流水线（plan/finalize/accept）也把同一 proof id 记进 `_resolved_directions.json`，另一代 facts/preflight 的 sidecar 一律拒绝应用。
 - `member_keys` = Step 2.5 快照的 `candidate_keys`（方向范围工作全集：provisional members ∪ Stage 1 扩召）——runner 的 `gap_scope=selected_direction` gap 池据此取已有有效 sidecar 的候选论文，扩召论文的分析才能真正贡献方向 gap。
 - `provisional_member_keys` = target state 的 `members[]`（审计用，参与 runner 指纹的只有 member/relevant/named keys 与 credibility 等字段；归属语义以 `membership_claim: non_final_candidates_only` 为准，Stage 2 绝不宣称最终成员）。
 - `relevant_keys` = Step 5.2 判定的相关集（⊆ candidate_keys）；`named_keys` = user_note 点名 ∪ 快照 `user_named`。
@@ -506,7 +506,7 @@ runner 校验：result schema/kind 正确、**`collection_key`/`provisional_dire
 ```bash
 python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-plan \
   --facts /tmp/<教授名>_套磁_facts.json \
-  --preflight-file /tmp/<教授名>_stage2_preflight.json
+  --preflight-file <本教授事务临时目录>/stage2_preflight.json
 ```
 
 
@@ -533,7 +533,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-plan \
 **6.3 跑 `stage2-finalize`**：
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-finalize --facts <facts> --results <results 目录> --preflight-file /tmp/<教授名>_stage2_preflight.json --resolved-directions <教授目录>/论文分析/_resolved_directions.json
+python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-finalize --facts <facts> --results <results 目录> --preflight-file <本教授事务临时目录>/stage2_preflight.json --resolved-directions <教授目录>/论文分析/_resolved_directions.json
 ```
 
 `--preflight-file` 是 Step 2.6 保存的同一份 preflight stdout，必须原样传回。finalize 在**任何写盘之前**重算 cheap structural inputs 并与 preflight 时比对：不一致 → `needs_refresh/preflight_inputs_changed`（不写 pack/freshness cache/Markdown；本轮按可恢复 partial 返回，稍后从 Step 2 重新开始）。finalize 还会重算 payload 的 `preflight_id`，并要求与 facts 的 `stage2_preflight.preflight_id`（Step 6.1 写入）一致：payload 被同一教授的另一次调用覆盖、facts 缺失绑定或 id 不一致 → 同样 `needs_refresh/preflight_inputs_changed`（drift 记 `preflight_proof_id`/`preflight_proof_binding`），不写任何文件。比对全部通过时，finalize 把本轮 accepted state 的 preflight metadata 种进 `套磁候选输入.json` 的 `cache.preflight`（含 pack integrity sha、逐 provisional 方向的 target/candidate 指纹、provisional→resolved 映射、逐 resolved 方向 accepted/freshness 指纹与 artifact stat guards），供下一次 Stage 2 的 Step 2.6 early reuse 判定。`stage2-refine-finalize` 会清除 `cache.preflight` 与 validator（保守失效：修订后的 pack 下次必须重新证明，重跑通过后再次 seed）。
