@@ -70,10 +70,11 @@ class EvidenceResult(unittest.TextTestResult):
         super().addSubTest(test, subtest, err)
 
 
-def classify(result, load_errors):
+def classify(result, load_errors, missing_required_prefixes=()):
     if load_errors or result is None:
         return "CASE_NOT_STARTED"
     if (result.testsRun == 0 or result.started != result.completed
+            or missing_required_prefixes
             or result.expectedFailures or result.unexpectedSuccesses
             or any(e['verdict'] == 'INVALID_TEST_EXECUTION' for e in result.events)):
         return "INVALID_TEST_EXECUTION"
@@ -89,6 +90,7 @@ def main():
     parser.add_argument("--start", required=True)
     parser.add_argument("--pattern", required=True)
     parser.add_argument("--contains")
+    parser.add_argument("--require-prefix", action="append", default=[])
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     if Path(args.out).exists():
@@ -114,8 +116,14 @@ def main():
             ).run(suite)
     except BaseException as exc:
         interruption = {"type": type(exc).__name__, "message": str(exc)}
+    missing_required_prefixes = []
+    if result is not None:
+        missing_required_prefixes = [
+            prefix for prefix in args.require_prefix
+            if not any(test_id.startswith(prefix) for test_id in result.started)
+        ]
     verdict = ("INVALID_TEST_EXECUTION" if interruption
-               else classify(result, load_errors))
+               else classify(result, load_errors, missing_required_prefixes))
 
     def records(items):
         return [{"test_id": test.id(), "detail": detail} for test, detail in items]
@@ -125,12 +133,14 @@ def main():
         "python": sys.version,
         "cwd": str(Path.cwd()),
         "selection": {"start": args.start, "pattern": args.pattern,
-                      "contains": args.contains},
+                      "contains": args.contains,
+                      "required_prefixes": args.require_prefix},
         "load_errors": load_errors,
         "interruption": interruption,
         "tests_run": result.testsRun if result else 0,
         "started": result.started if result else [],
         "completed": result.completed if result else [],
+        "missing_required_prefixes": missing_required_prefixes,
         "failures": records(result.failures) if result else [],
         "errors": records(result.errors) if result else [],
         "events": result.events if result else [],
