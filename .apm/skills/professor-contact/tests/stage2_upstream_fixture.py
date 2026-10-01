@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from gate2_evidence import TestPreparationError
+
 ROOT = Path(__file__).parents[1]
 
 
@@ -18,7 +20,7 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-def prepare_stage2_proof(run_cli, facts_path):
+def _prepare_stage2_proof(run_cli, facts_path):
     facts_path = Path(facts_path)
     facts = json.loads(facts_path.read_text())
     program_root = Path(facts['program_root'])
@@ -91,6 +93,18 @@ def prepare_stage2_proof(run_cli, facts_path):
     facts['stage2_preflight'] = {'preflight_id': proof['preflight_id']}
     write_json(facts_path, facts)
     return proof_path
+
+
+def prepare_stage2_proof(run_cli, facts_path):
+    """Build legal upstream state; failures are invalid prerequisites for the downstream proof."""
+    try:
+        return _prepare_stage2_proof(run_cli, facts_path)
+    except TestPreparationError:
+        raise
+    except Exception as exc:
+        raise TestPreparationError(
+            f'Stage-2 prerequisite preparation failed: {type(exc).__name__}: {exc}'
+        ) from exc
 
 
 def run_bound_stage2_plan(run_cli, facts_path):
