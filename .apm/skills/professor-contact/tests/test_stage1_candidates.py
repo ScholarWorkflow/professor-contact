@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from issue64_test_support import path_set
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "contact_stage1.py"
@@ -809,7 +810,10 @@ class Stage1CandidateTests(unittest.TestCase):
     def test_issue64_t5_stage1_builds_and_verifies_from_the_local_target(self):
         """G64-T5: Stage 1 needs only A's professor-local Stage-0 target."""
         self.assertFalse(legacy_table_path(self.root).exists())
+        before_paths = path_set(self.root / '教授研究')
         result, payload = build(self.root)
+        self.assertEqual(path_set(self.root / '教授研究'),
+                         before_paths | {'套磁阶段1候选.json'})
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(result["professors"], ["教授A"])
         out = io.StringIO()
@@ -818,10 +822,13 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(verified["status"], "ok")
         self.assertEqual(verified["professors"], ["教授A"])
         self.assertFalse(legacy_table_path(self.root).exists())
+        self.assertEqual(path_set(self.root / '教授研究'), before_paths | {'套磁阶段1候选.json'})
 
     def test_issue64_t5_corrupt_legacy_table_is_not_a_stage1_input(self):
         build(self.root)
         legacy_table_path(self.root).write_text("{ corrupt legacy table", encoding="utf-8")
+        before_paths = path_set(self.root / '教授研究')
+        legacy_before = legacy_table_path(self.root).read_bytes()
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -831,6 +838,8 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(result["action"], "pdf_fill_needed")
         self.assertEqual(
             legacy_table_path(self.root).read_text(encoding="utf-8"), "{ corrupt legacy table")
+        self.assertEqual(legacy_table_path(self.root).read_bytes(), legacy_before)
+        self.assertEqual(path_set(self.root / '教授研究'), before_paths)
 
     def test_issue64_t5_stage1_never_falls_back_to_the_legacy_table(self):
         """Counterexample 6: a valid legacy table must not substitute for local state."""

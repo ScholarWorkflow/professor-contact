@@ -4232,8 +4232,8 @@ def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
     Stage 2 may run for a long time after the preflight decided to prepare
     evidence. Stage 0/1 state or papers.json can change underneath; finalize
     must never stamp results derived from a stale candidate universe as
-    current. Returns (plan, target, snapshot_entry); plan is None when the
-    caller did not pass a preflight file (legacy direct callers).
+    current. Returns (plan, target, snapshot_entry); a saved preflight proof is
+    required for every finalize invocation.
 
     The payload is also bound to the facts run it produced: ``preflight_id``
     must be the payload's self-consistent proof id and must equal the id the
@@ -4244,7 +4244,7 @@ def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
     earlier target state.
     """
     if not getattr(args, "preflight_file", None):
-        return None, None, None
+        fail("invalid_params", "stage2-finalize requires --preflight-file")
     plan, error = read_json_file(Path(args.preflight_file))
     if (error or not isinstance(plan, dict) or plan.get("status") != "ok"
             or not isinstance(plan.get("preflight_inputs"), dict)):
@@ -9259,7 +9259,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--results", required=True)
     p.add_argument("--decision-file")
     p.add_argument("--resolved-directions")
-    p.add_argument("--preflight-file",
+    p.add_argument("--preflight-file", required=True,
                    help="saved stage2-preflight stdout; re-verifies cheap inputs "
                         "before any write and seeds cache.preflight")
     p.set_defaults(func=cmd_stage2_finalize)

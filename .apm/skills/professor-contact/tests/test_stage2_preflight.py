@@ -1,3 +1,4 @@
+from stage2_upstream_fixture import run_bound_stage2_finalize
 """Stage 2 early preflight cache gate regression tests (issue #11).
 
 The preflight must decide from persisted state alone whether an accepted
@@ -257,7 +258,7 @@ class PreflightBase(unittest.TestCase):
     def stage2_finalize(self):
         facts = self.facts_path
         results = self.write_stage2_results()
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "ok", out)
         return out
 
@@ -340,6 +341,10 @@ class TestPreflightDecision(PreflightBase):
     def test_a_legacy_pack_falls_back_to_process(self):
         self.stage2_finalize()
         self.record_validation()
+        # Model an already persisted legacy artifact, not a no-proof writer.
+        pack = self._read_pack()
+        pack['cache'].pop('preflight')
+        self._write_pack(pack)
         payload = self.preflight()
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["action"], "process")
@@ -703,6 +708,10 @@ class TestFinalizePreflightWiring(PreflightBase):
     def test_legacy_slow_path_seeds_metadata_for_next_run(self):
         self.stage2_finalize()
         self.record_validation()
+        # The legacy cache shape remains an input compatibility condition.
+        pack = self._read_pack()
+        pack['cache'].pop('preflight')
+        self._write_pack(pack)
         self.assertIn("legacy_pack_no_preflight", self.preflight()["reason_codes"])
         plan = self.save_preflight_file()
         self.bind_facts_to_plan(plan)
@@ -718,12 +727,15 @@ class TestFinalizePreflightWiring(PreflightBase):
         payload = self.preflight()
         self.assertEqual(payload["action"], "reuse_all", payload)
 
-    def test_finalize_without_preflight_file_stays_legacy(self):
+    def test_finalize_without_preflight_file_is_rejected_without_writing(self):
         self.stage2_finalize()
-        out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
-                            "--results", self.root / "results"))
-        self.assertEqual(out["status"], "ok", out)
-        self.assertNotIn("preflight", self._read_pack().get("cache", {}))
+        pack_path = self.prof_dir / '套磁候选输入.json'
+        before = pack_path.read_bytes()
+        result = run_cli("stage2-finalize", "--facts", self.facts_path,
+                         "--results", self.root / "results")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('--preflight-file', result.stderr)
+        self.assertEqual(pack_path.read_bytes(), before)
 
     def test_finalize_race_on_target_change_writes_nothing(self):
         self.build_accepted_state()

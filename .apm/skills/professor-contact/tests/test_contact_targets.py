@@ -5,6 +5,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+from issue64_test_support import observe_target_access, path_set
 
 MODULE_PATH = Path(__file__).parents[1] / "scripts" / "contact_targets.py"
 spec = importlib.util.spec_from_file_location("contact_targets", MODULE_PATH)
@@ -175,7 +177,10 @@ class ContactTargetsTests(unittest.TestCase):
     # --- G64-T1: local authority, sibling isolation, legacy inertness ------
 
     def test_issue64_t1_authority_is_one_professor_local_file(self):
+        before_paths = path_set(self.root / RESEARCH_DIR)
         result = self.bootstrap(["dir_A", "dir_B"], {"dir_A": "note A", "dir_B": "note B"})
+        self.assertEqual(path_set(self.root / RESEARCH_DIR),
+                         before_paths | {str(Path('lab') / '教授A' / TARGET_NAME)})
         self.assertEqual(result["status"], "ok")
         self.assertEqual(Path(result["state_path"]).resolve(), self.target_path.resolve())
         self.assertFalse(self.legacy_path.exists())
@@ -222,7 +227,12 @@ class ContactTargetsTests(unittest.TestCase):
                              selected_at=REVISION_AT)
         self.b_target_path().write_text("nope", encoding="utf-8")
 
-        result = self.select(["dir_B"], selected_at="2026-09-03T12:02:00Z")
+        before_paths = path_set(self.root / RESEARCH_DIR)
+        with observe_target_access(self.b_target_path()) as accesses:
+            result = self.select(["dir_B"], selected_at="2026-09-03T12:02:00Z")
+            self.assertEqual(self.resolve()['status'], 'ok')
+        self.assertEqual(accesses, [], 'A accessed the sibling target')
+        self.assertEqual(path_set(self.root / RESEARCH_DIR), before_paths)
 
         self.assertEqual(result["status"], "ok")
         target = self.read_target()
@@ -281,6 +291,9 @@ class ContactTargetsTests(unittest.TestCase):
         notes = {d["direction_id"]: d["user_note"] for d in self.read_target()["directions"]}
         self.assertEqual(notes["dir_A"], "")
         self.assertEqual(notes["dir_B"], "old B")
+        self.select(["dir_A", "dir_B"], {"dir_B": "updated B"})
+        notes = {d["direction_id"]: d["user_note"] for d in self.read_target()["directions"]}
+        self.assertEqual(notes, {'dir_A': '', 'dir_B': 'updated B'})
 
     def test_issue64_t2_resolve_tolerates_preview_fingerprint_only_change(self):
         self.bootstrap(["dir_A"], {"dir_A": "note A"})
@@ -450,7 +463,33 @@ class ContactTargetsTests(unittest.TestCase):
         result = self.resolve()
         self.assertEqual(result["status"], "needs_refresh")
         self.assertEqual(result["stale_targets"][0]["reason"], "professor_changed")
+        for operation in (self.select, self.bootstrap):
+            with self.assertRaises(ValueError):
+                operation()
         self.assertEqual(self.target_path.read_bytes(), before)
+
+    def test_issue64_atomic_real_revision_and_first_establishment_preserve_bytes_on_commit_failure(self):
+        # P64-ATOMIC: two distinct initial states; no low-level-only oracle.
+        self.bootstrap()
+        self.write_legacy(self.a_entry())
+        target_before = self.target_path.read_bytes()
+        preview_before = self.preview_path.read_bytes()
+        legacy_before = self.legacy_path.read_bytes()
+        before_paths = path_set(self.root)
+        with mock.patch.object(mod.os, 'replace', side_effect=OSError('commit failure')):
+            with self.assertRaises(OSError):
+                self.select(['dir_B'])
+        self.assertEqual(self.target_path.read_bytes(), target_before)
+        self.assertEqual(path_set(self.root), before_paths)
+        self.target_path.unlink()
+        before_paths = path_set(self.root)
+        with mock.patch.object(mod.os, 'replace', side_effect=OSError('commit failure')):
+            with self.assertRaises(OSError):
+                self.bootstrap()
+        self.assertFalse(self.target_path.exists())
+        self.assertEqual(self.preview_path.read_bytes(), preview_before)
+        self.assertEqual(self.legacy_path.read_bytes(), legacy_before)
+        self.assertEqual(path_set(self.root), before_paths)
 
     def test_issue64_t2_local_target_outside_the_research_directory_fails_closed(self):
         self.bootstrap(["dir_A"])
@@ -701,6 +740,43 @@ class ContactTargetsTests(unittest.TestCase):
         self.assertEqual(a_target["directions"][0]["user_note"], "note A")
         self.assertFalse(self.b_target_path().exists())
         self.assertEqual(self.resolve()["status"], "ok")
+
+    def test_issue64_t3_bulk_migration_keeps_later_professor_when_first_group_fails(self):
+        self._legacy_fixture()
+        entries = json.loads(self.legacy_path.read_text())['targets']
+        # Swap which group is defective while retaining valid upstream entries.
+        good_a = copy.deepcopy(entries[0])
+        good_b = copy.deepcopy(good_a)
+        good_b.update(professor='教授B', professor_dir=str(PROFESSOR_B_DIR),
+                      preview_path=str(PROFESSOR_B_DIR / PREVIEW_NAME),
+                      preview_fingerprint='fp-b')
+        bad_a = copy.deepcopy(good_a)
+        bad_a['directions'] = []
+        self.write_legacy(bad_a, good_b)
+        legacy_before = self.legacy_path.read_bytes()
+        result = mod.migrate_legacy_targets(self.root)
+        self.assertEqual(result['status'], 'partial')
+        self.assertEqual(result['migrated'], ['教授B'])
+        self.assertEqual(result['failures'][0]['professor'], '教授A')
+        self.assertFalse(self.target_path.exists())
+        self.assertEqual(self.read_target(self.b_target_path())['professor'], '教授B')
+        self.assertEqual(self.legacy_path.read_bytes(), legacy_before)
+
+    def test_issue64_t3_standalone_migration_never_publishes_materially_stale_selection(self):
+        self.bootstrap()
+        self.write_legacy(self.a_entry())
+        self.target_path.unlink()
+        changed = preview(fp='fp-new')
+        changed['directions'][0]['members'] = [{'item_key': 'P9', 'preview_confidence': 'high'}]
+        changed['directions'][0]['member_fingerprint'] = member_fingerprint(changed['directions'][0]['members'])
+        write_json(self.preview_path, changed)
+        before_paths = path_set(self.root)
+        legacy_before = self.legacy_path.read_bytes()
+        result = mod.migrate_legacy_targets(self.root)
+        self.assertEqual(result['status'], 'partial')
+        self.assertFalse(self.target_path.exists())
+        self.assertEqual(path_set(self.root), before_paths)
+        self.assertEqual(self.legacy_path.read_bytes(), legacy_before)
 
     def test_issue64_t3_bulk_migration_is_idempotent_and_keeps_legacy_untouched(self):
         self._legacy_fixture()

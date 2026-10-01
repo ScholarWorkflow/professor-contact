@@ -1,3 +1,4 @@
+from stage2_upstream_fixture import run_bound_stage2_finalize, prepare_stage2_proof
 """Tests for Stage 2 resolved_direction functionality (issue #7).
 
 Verifies that Stage 2 can resolve provisional directions against full-text
@@ -464,6 +465,7 @@ class ResolvedPipelineMixin:
             "papers": papers,
             "directions": directions,
         })
+        prepare_stage2_proof(run_cli, facts_path)
         return facts_path
 
     def run_resolve(self, facts_path, resolve_results):
@@ -518,9 +520,7 @@ class ResolvedPipelineMixin:
         write_json(results_dir / "narrative.json", {
             "schema": 1, "kind": "narrative", "directions": narrative_directions})
         sidecar_path = self.prof_dir / "论文分析" / "_resolved_directions.json"
-        payload = parse(run_cli("stage2-finalize", "--facts", str(facts_path),
-                                "--results", str(results_dir),
-                                "--resolved-directions", str(sidecar_path)))
+        payload = parse(run_bound_stage2_finalize(run_cli, str(facts_path), "--results", str(results_dir), "--resolved-directions", str(sidecar_path)))
         return payload
 
     def load_pack(self):

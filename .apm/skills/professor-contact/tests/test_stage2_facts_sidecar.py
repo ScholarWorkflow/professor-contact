@@ -1,3 +1,4 @@
+from stage2_upstream_fixture import run_bound_stage2_finalize
 import hashlib
 import json
 import subprocess
@@ -181,7 +182,7 @@ class FactsSidecarTests(unittest.TestCase):
         self.write_stage2_results(results)
         plan = parse(run_bound_stage2_plan(run_cli, facts))
         self.assertEqual(plan["status"], "ok", plan)
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "ok", out)
         return json.loads(
             (self.prof_dir / "套磁候选输入.json").read_text(encoding="utf-8"))
@@ -373,8 +374,7 @@ class FactsSidecarTests(unittest.TestCase):
         results = self.root / "results"
         self.write_stage2_results(results)
         self.assertEqual(parse(run_bound_stage2_plan(run_cli, facts))["status"], "ok")
-        self.assertEqual(parse(run_cli("stage2-finalize", "--facts", facts,
-                                       "--results", results))["status"], "ok")
+        self.assertEqual(parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))["status"], "ok")
         rerun = parse(run_bound_stage2_plan(run_cli, facts))
         self.assertEqual(rerun["directions"][0]["action"], "reuse")
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import re
 import unittest
 
@@ -93,6 +94,31 @@ class Stage01CallerContractTests(unittest.TestCase):
                 carriers = [block for block in blocks
                             if all(field in block for field in self.TRANSACTION_IDENTITY_FIELDS)]
                 self.assertTrue(carriers, msg=f"{path.name}: no transaction record example")
+        # Pin each authoritative carrier separately, not any unrelated example.
+        stage0 = _read(STAGE0_AGENT)
+        input_section = stage0.split('## Input', 1)[1].split('## ', 1)[0]
+        input_record = json.loads(self._json_blocks(input_section)[0])['transactions']
+        self.assertIsInstance(input_record, list)
+        self.assertTrue(input_record)
+        for record in input_record:
+            self.assertTrue({'professor_dir', 'preview_path'} <= record.keys())
+        pending_section = stage0.split('When returning `needs_input`', 1)[1]
+        pending = json.loads(self._json_blocks(pending_section)[0])['selection_request']
+        self.assertIsInstance(pending, list)
+        self.assertTrue(pending)
+        for record in pending:
+            self.assertTrue({'professor_dir', 'preview_path'} <= record.keys())
+        for path in (STAGE0_AGENT, STAGE1_AGENT, STAGE2_AGENT, STAGE2_CODEX_AGENT):
+            text = _read(path)
+            # Return sections follow every input/selection example.
+            text = text[text.index('Return'):]
+            records = [json.loads(block)['transactions'] for block in self._json_blocks(text)
+                       if '"transactions"' in block]
+            self.assertTrue(records)
+            for carrier in records:
+                self.assertIsInstance(carrier, list)
+                for record in carrier:
+                    self.assertTrue({'professor_dir', 'preview_path', 'target_state'} <= record.keys())
 
     def test_issue64_t4_no_contract_example_hands_off_targets_keyed_by_display_name(self):
         """A `{"target_states": {"同名教授": ...}}` result silently drops one transaction."""
@@ -124,14 +150,20 @@ class Stage01CallerContractTests(unittest.TestCase):
 
     def test_issue64_t7_retired_program_table_only_appears_as_a_prohibition_or_migration_input(self):
         retired = "教授研究/套磁目标.json"
-        markers = ("绝不", "不得", "不读", "退役", "migrate", "Never", "not a", "only")
-        for path in self.STAGE01_SOURCES:
+        prohibition = r'(?i)(?:绝不(?:回退)?读|不读|不得(?:读|写|读取)|Never (?:read|open|write))'
+        migration = r'(?:contact_targets\.py (?:bootstrap|migrate)|`bootstrap`)[\s\S]*(?:only|只在|纯迁移)'
+        for path in self.HANDOFF_SOURCES:
             text = _read(path)
             lines = [line for line in text.splitlines() if retired in line]
             self.assertTrue(lines, msg=f"{path.name}: retired table never mentioned")
             for line in lines:
                 self.assertTrue(
-                    any(marker in line for marker in markers),
+                    re.search(prohibition, line) is not None or (
+                        path in self.STAGE01_SOURCES and (
+                            re.search(migration, line) is not None or (
+                                re.search(r'(?:only|只在|纯迁移)', line) is not None
+                                and re.search(r'contact_targets\.py (?:bootstrap|migrate)|`bootstrap`', line)
+                            ))),
                     msg=f"{path.name}: {line}",
                 )
 

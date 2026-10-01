@@ -10,6 +10,8 @@ import tempfile
 import unicodedata
 import unittest
 from pathlib import Path
+from issue64_test_support import path_set
+from stage2_upstream_fixture import run_bound_stage2_plan, run_bound_stage2_finalize
 
 import importlib.util
 
@@ -156,22 +158,7 @@ class BaseEnv(unittest.TestCase):
             ensure_ascii=False), encoding="utf-8")
 
     def run_bound_stage2_plan(self, facts: Path):
-        """Run plan business tests with a synthetic but identity-valid proof."""
-        ctx = contact_state.Stage2Context(facts)
-        _target, _entry, identity = contact_state.stage2_transaction_identity(ctx)
-        preflight_inputs = {"identity": identity}
-        proof = {
-            "status": "ok",
-            "professor": ctx.professor,
-            "preflight_inputs": preflight_inputs,
-            "preflight_id": contact_state.sha256_obj({
-                "professor": ctx.professor,
-                "preflight_inputs": preflight_inputs,
-            }),
-        }
-        proof_path = self.root / "synthetic-stage2-plan-proof.json"
-        proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=1), encoding="utf-8")
-        return run_cli("stage2-plan", "--facts", facts, "--preflight-file", proof_path)
+        return run_bound_stage2_plan(run_cli, facts)
 
     def stage2_run(self, gap_overrides=None):
         facts = self.write_facts()
@@ -179,7 +166,7 @@ class BaseEnv(unittest.TestCase):
         self.write_stage2_results(results, gap_overrides)
         plan = parse(self.run_bound_stage2_plan(facts))
         self.assertEqual(plan["status"], "ok")
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "ok", out)
         return out
 
@@ -187,8 +174,7 @@ class BaseEnv(unittest.TestCase):
         facts = self.write_facts()
         results = self.root / "results"
         self.write_stage2_results(results)
-        self.assertEqual(parse(run_cli(
-            "stage2-finalize", "--facts", facts, "--results", results))["status"], "ok")
+        self.assertEqual(parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))["status"], "ok")
         s3 = self.root / "s3results"
         s3.mkdir(parents=True, exist_ok=True)
         g1 = quote_id(self.gap_quotes["AAAA1111"])
@@ -345,7 +331,7 @@ class TestRunnerBasics(BaseEnv):
         block["text"] = "不相关论文 {{P:CCCC3333}}。"
         block["refs"] = ["paper:CCCC3333"]
         narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "unknown_reference_id")
         self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
@@ -356,8 +342,7 @@ class TestRunnerBasics(BaseEnv):
         cache = json.loads(cache_path.read_text(encoding="utf-8"))
         self.assertEqual(len(cache["entries"]), 2)
         results = self.root / "results"
-        out = parse(run_cli("stage2-finalize", "--facts", self.write_facts(),
-                            "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, self.write_facts(), "--results", results))
         self.assertEqual(out["status"], "ok")
         self.assertEqual(out["freshness_judged"], 0)
         for paper in self.papers:
@@ -365,8 +350,7 @@ class TestRunnerBasics(BaseEnv):
                 paper["abstract"] = "updated abstract of the 2024 real-time paper"
         results2 = self.root / "results2"
         self.write_stage2_results(results2)
-        out2 = parse(run_cli("stage2-finalize", "--facts", self.write_facts(),
-                             "--results", results2))
+        out2 = parse(run_bound_stage2_finalize(run_cli, self.write_facts(), "--results", results2))
         self.assertEqual(out2["status"], "ok")
         self.assertEqual(out2["freshness_judged"], 1,
                          "only the gap whose later-candidate set changed re-judges; the other stays cached")
@@ -632,7 +616,7 @@ class TestRunnerBasics(BaseEnv):
                                       "candidate_paper_ids": [], "evidence": "bad"})
         (results / "freshness-DIR00001.json").write_text(
             json.dumps(freshness, ensure_ascii=False), encoding="utf-8")
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "unknown_reference_id")
         self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
@@ -652,7 +636,7 @@ class TestRunnerBasics(BaseEnv):
         row["gap_id"] = legal_id[:-1]  # 63 hex: one character lost
         freshness_path.write_text(json.dumps(freshness, ensure_ascii=False),
                                   encoding="utf-8")
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "unknown_reference_id")
         self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
@@ -875,7 +859,7 @@ class TestRunnerBasics(BaseEnv):
         facts = self.write_facts(extra)
         results = self.root / "redline-results"
         self.write_stage2_results(results)
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "ok", out)
         md = (self.prof_dir / "套磁候选分析.md").read_text(encoding="utf-8")
         global_lines = [line for line in md.splitlines() if line.startswith("- 【全局】")]
@@ -2889,6 +2873,8 @@ class TestIssue64Stage2Identity(BaseEnv):
 
     def accepted_run(self):
         """The fixed Gate 2 chain: stage2-preflight → stage2-plan → stage2-finalize."""
+        before_paths = path_set(self.root / '教授研究')
+        legacy_before = self.legacy.read_bytes() if self.legacy.exists() else None
         proof = self.preflight()
         proof_file = self.save(proof, "proof.json")
         facts = self.facts_bound_to(proof["preflight_id"])
@@ -2902,7 +2888,23 @@ class TestIssue64Stage2Identity(BaseEnv):
         outputs = self.formal_outputs()
         for rel, raw in outputs.items():
             self.assertIsNotNone(raw, msg=f"{rel} is not published by the accepted chain")
+        expected_new = {str(self.A_REL.relative_to('教授研究') / rel) for rel in outputs}
+        self.assertEqual(path_set(self.root / '教授研究'), before_paths | expected_new)
+        self.assertEqual(self.legacy.read_bytes() if self.legacy.exists() else None, legacy_before)
         return proof, proof_file, facts, outputs
+
+    def test_issue64_t6_finalize_requires_preflight_before_any_formal_write(self):
+        proof = self.preflight()
+        facts = self.facts_bound_to(proof['preflight_id'])
+        results = self.root / 'results'
+        self.write_stage2_results(results)
+        before = self.formal_outputs()
+        paths_before = path_set(self.root / '教授研究')
+        result = run_cli('stage2-finalize', '--facts', facts, '--results', results)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('--preflight-file', result.stderr)
+        self.assertEqual(self.formal_outputs(), before)
+        self.assertEqual(path_set(self.root / '教授研究'), paths_before)
 
     def test_issue64_t6_preflight_binds_a_canonical_identity_not_the_same_name_sibling(self):
         payload = self.preflight()
@@ -2999,6 +3001,7 @@ class TestIssue64Stage2Identity(BaseEnv):
         clean = self.preflight()
         self.b_target.write_text("{ broken sibling", encoding="utf-8")
         self.legacy.write_text("{ broken legacy", encoding="utf-8")
+        paths_before = path_set(self.root / '教授研究')
 
         self.assertEqual(self.preflight(), clean)
         proof_file = self.save(clean, "proof.json")
@@ -3012,6 +3015,8 @@ class TestIssue64Stage2Identity(BaseEnv):
         self.assertEqual(payload["status"], "ok", payload)
         self.assertEqual(self.b_target.read_bytes(), b"{ broken sibling")
         self.assertEqual(self.legacy.read_bytes(), b"{ broken legacy")
+        expected = {str(self.A_REL.relative_to('教授研究') / rel) for rel in self.formal_outputs()}
+        self.assertEqual(path_set(self.root / '教授研究'), paths_before | expected)
 
 
 if __name__ == "__main__":
