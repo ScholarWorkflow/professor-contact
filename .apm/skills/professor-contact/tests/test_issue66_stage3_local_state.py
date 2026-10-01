@@ -587,6 +587,56 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
             self.assertEqual(out["reason_code"], "legacy_direction_identity")
             self.assert_unchanged(before)
 
+            # (d2) review D1: a v2 state with valid schema/kind/identity
+            #      stamps but a structurally corrupt directions container
+            #      fails closed BEFORE any overview write.
+            write_b_state({"schema": contact_state.CANDIDATE_STATE_SCHEMA,
+                           "kind": contact_state.CANDIDATE_STATE_KIND,
+                           "identity_version": contact_state.DIRECTION_IDENTITY_VERSION,
+                           "generator_contract_version":
+                               contact_state.STAGE3_GENERATOR_CONTRACT_VERSION,
+                           "professor": SECOND_PROFESSOR,
+                           "directions": {"dir_C": {"candidates": []}}})
+            before = self.snapshot(*snapshot_paths)
+            out = parse(run_cli("stage3-rebuild-overview", "--program-root", self.root))
+            self.assertEqual(out["status"], "error", out)
+            self.assertEqual(out["reason_code"], "invalid_candidate_state")
+            self.assert_unchanged(before)
+
+            # (d3) review D1: candidates as a non-list on a stamped v2 row —
+            #      the count basis is corrupt, so the rebuild must stop and
+            #      preserve the old overview.
+            write_b_state({"schema": contact_state.CANDIDATE_STATE_SCHEMA,
+                           "kind": contact_state.CANDIDATE_STATE_KIND,
+                           "identity_version": contact_state.DIRECTION_IDENTITY_VERSION,
+                           "generator_contract_version":
+                               contact_state.STAGE3_GENERATOR_CONTRACT_VERSION,
+                           "professor": SECOND_PROFESSOR,
+                           "directions": [{"direction_id": "dir_C",
+                                           "candidates": "garbage"}]})
+            before = self.snapshot(*snapshot_paths)
+            out = parse(run_cli("stage3-rebuild-overview", "--program-root", self.root))
+            self.assertEqual(out["status"], "error", out)
+            self.assertEqual(out["reason_code"], "invalid_candidate_state")
+            self.assert_unchanged(before)
+
+            # (d4) review D1: a cross group without a machine group identity
+            #      fails closed before any overview write.
+            write_b_state({"schema": contact_state.CANDIDATE_STATE_SCHEMA,
+                           "kind": contact_state.CANDIDATE_STATE_KIND,
+                           "identity_version": contact_state.DIRECTION_IDENTITY_VERSION,
+                           "generator_contract_version":
+                               contact_state.STAGE3_GENERATOR_CONTRACT_VERSION,
+                           "professor": SECOND_PROFESSOR,
+                           "directions": [{"direction_id": "dir_C", "candidates": []}],
+                           "cross_direction_groups": [{"direction_ids": ["dir_C"],
+                                                        "candidates": []}]})
+            before = self.snapshot(*snapshot_paths)
+            out = parse(run_cli("stage3-rebuild-overview", "--program-root", self.root))
+            self.assertEqual(out["status"], "error", out)
+            self.assertEqual(out["reason_code"], "invalid_candidate_state")
+            self.assert_unchanged(before)
+
             # (e) manual overview conflict fails the rebuild, keeps the edit.
             b_state_path.write_text(original_b_state, encoding="utf-8")
             b_pack_path.write_text(original_b_pack, encoding="utf-8")

@@ -802,6 +802,47 @@ def load_candidate_state(professor_dir: Path, pack: dict | None) -> tuple[dict |
     return normalize_candidate_state(raw, pack)
 
 
+def _strict_candidate_shape(state: dict) -> str | None:
+    """Machine-shape proof over the fields the aggregate consumes (issue #66).
+
+    normalize_candidate_state stamps v2 identity fields without a deep
+    structural pass — the Stage-4 behavior #66 must not change — so an
+    on-disk state whose directions/candidates/groups are structurally
+    corrupt would otherwise reach the overview renderer and publish garbage
+    rows (r10 §3.7 requires every committed state to fail closed BEFORE the
+    overview write). The compatibility/migration owner proves the shape
+    here; renderer and rebuild stay pure consumers.
+    """
+    directions = state.get("directions")
+    if not isinstance(directions, list):
+        return "invalid_candidate_state"
+    for row in directions:
+        if not isinstance(row, dict):
+            return "invalid_candidate_state"
+        did = row.get("direction_id")
+        if not (isinstance(did, str) and did.strip()):
+            return "invalid_candidate_state"
+        candidates = row.get("candidates")
+        if candidates is not None and not isinstance(candidates, list):
+            return "invalid_candidate_state"
+    groups = state.get("cross_direction_groups")
+    if groups is not None and not isinstance(groups, list):
+        return "invalid_candidate_state"
+    for row in groups or []:
+        if not isinstance(row, dict):
+            return "invalid_candidate_state"
+        gid = row.get("group_id")
+        if not (isinstance(gid, str) and gid.strip()):
+            return "invalid_candidate_state"
+        direction_ids = row.get("direction_ids")
+        if direction_ids is not None and not isinstance(direction_ids, list):
+            return "invalid_candidate_state"
+        candidates = row.get("candidates")
+        if candidates is not None and not isinstance(candidates, list):
+            return "invalid_candidate_state"
+    return None
+
+
 def strict_candidate_state(professor_dir: Path) -> tuple[dict | None, str | None]:
     """Compatibility/migration owner for aggregate consumers (issue #66 r5).
 
@@ -809,9 +850,11 @@ def strict_candidate_state(professor_dir: Path) -> tuple[dict | None, str | None
     every collection_key the legacy state actually references must resolve to
     exactly ONE canonical direction_id in the same professor's normalized
     input pack (0 or >1 matches → legacy_direction_identity) before any
-    migration runs. Aggregate rebuild only consumes the canonical state
-    returned here and never re-implements the collection_key mapping itself;
-    the pack supplies identity migration only, never candidate facts.
+    migration runs, and the canonical state's machine shape is proven
+    structurally before it may feed the aggregate. Aggregate rebuild only
+    consumes the canonical state returned here and never re-implements the
+    collection_key mapping itself; the pack supplies identity migration only,
+    never candidate facts. Stage 4's existing normalize behavior is untouched.
     """
     raw, error = read_json_file(Path(professor_dir) / CANDIDATE_STATE)
     if error == "not_found":
@@ -819,22 +862,29 @@ def strict_candidate_state(professor_dir: Path) -> tuple[dict | None, str | None
     if error or not isinstance(raw, dict):
         return None, error or "invalid_candidate_state"
     if raw.get("schema") == CANDIDATE_STATE_SCHEMA:
-        return normalize_candidate_state(raw, None)
-    pack, pack_error = load_input_pack(professor_dir)
-    if pack is None:
-        return None, pack_error or "missing_input_pack"
-    pack_directions = pack.get("directions") or []
-    for entry in raw.get("directions") or []:
-        if not isinstance(entry, dict):
-            return None, "invalid_candidate_state"
-        ckey = entry.get("collection_key")
-        if not (isinstance(ckey, str) and ckey.strip()):
-            continue
-        matches = sorted({direction_machine_id(d) for d in pack_directions
-                          if isinstance(d, dict) and d.get("collection_key") == ckey})
-        if len(matches) != 1:
-            return None, "legacy_direction_identity"
-    return normalize_candidate_state(raw, pack)
+        canonical, canonical_error = normalize_candidate_state(raw, None)
+    else:
+        pack, pack_error = load_input_pack(professor_dir)
+        if pack is None:
+            return None, pack_error or "missing_input_pack"
+        pack_directions = pack.get("directions") or []
+        for entry in raw.get("directions") or []:
+            if not isinstance(entry, dict):
+                return None, "invalid_candidate_state"
+            ckey = entry.get("collection_key")
+            if not (isinstance(ckey, str) and ckey.strip()):
+                continue
+            matches = sorted({direction_machine_id(d) for d in pack_directions
+                              if isinstance(d, dict) and d.get("collection_key") == ckey})
+            if len(matches) != 1:
+                return None, "legacy_direction_identity"
+        canonical, canonical_error = normalize_candidate_state(raw, pack)
+    if canonical is None:
+        return None, canonical_error
+    shape_error = _strict_candidate_shape(canonical)
+    if shape_error:
+        return None, shape_error
+    return canonical, None
 
 
 def stage5_output_peers(email: dict, all_emails: list, professor_dir: Path,
