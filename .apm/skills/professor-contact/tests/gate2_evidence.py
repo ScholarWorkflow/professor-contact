@@ -6,6 +6,10 @@ import sys
 import unittest
 
 
+class TestPreparationError(RuntimeError):
+    """A test-only prerequisite failed before the claimed product assertion."""
+
+
 class EvidenceResult(unittest.TextTestResult):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -39,26 +43,30 @@ class EvidenceResult(unittest.TextTestResult):
                 delattr(test, name)
         super().stopTest(test)
 
-    def record(self, test, kind, detail=None):
+    def record(self, test, kind, err=None, detail=None):
         # Module/class setup errors arrive as unittest _ErrorHolder objects.
         owner = getattr(test, 'test_case', test)
-        phase = self.phases.get(owner.id(), 'setup')
+        preparation_error = bool(
+            err and isinstance(err, tuple) and err[0]
+            and issubclass(err[0], TestPreparationError)
+        )
+        phase = 'prerequisite' if preparation_error else self.phases.get(owner.id(), 'setup')
         verdict = ('FAIL' if phase == 'product' else 'INVALID_TEST_EXECUTION')
         self.events.append({'test_id': owner.id(), 'evidence_id': test.id(),
                             'kind': kind, 'phase': phase, 'verdict': verdict,
                             'detail': detail})
 
     def addError(self, test, err):
-        self.record(test, 'error', self._exc_info_to_string(err, test))
+        self.record(test, 'error', err, self._exc_info_to_string(err, test))
         super().addError(test, err)
 
     def addFailure(self, test, err):
-        self.record(test, 'failure', self._exc_info_to_string(err, test))
+        self.record(test, 'failure', err, self._exc_info_to_string(err, test))
         super().addFailure(test, err)
 
     def addSubTest(self, test, subtest, err):
         if err is not None:
-            self.record(subtest, 'subtest', self._exc_info_to_string(err, subtest))
+            self.record(subtest, 'subtest', err, self._exc_info_to_string(err, subtest))
         super().addSubTest(test, subtest, err)
 
 
