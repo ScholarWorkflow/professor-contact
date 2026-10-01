@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from gate2_evidence import EvidenceResult, classify, main
+from gate2_evidence import EvidenceResult, TestPreparationError, classify, main
 
 
 class Gate2EvidenceTests(unittest.TestCase):
@@ -38,6 +38,14 @@ class Gate2EvidenceTests(unittest.TestCase):
         self.assertEqual(classify(result, []), 'INVALID_TEST_EXECUTION')
         self.assertEqual(executed, [])
         self.assertEqual(result.events[0]['phase'], 'setup')
+
+        class InMethodPrerequisite(unittest.TestCase):
+            def test_value(self):
+                raise TestPreparationError('upstream prerequisite unavailable')
+        result = self.run_sample(InMethodPrerequisite)
+        self.assertEqual(classify(result, []), 'INVALID_TEST_EXECUTION')
+        self.assertEqual(result.events[0]['phase'], 'prerequisite')
+        self.assertEqual(result.events[0]['verdict'], 'INVALID_TEST_EXECUTION')
 
     def test_subtest_failure_is_fail_and_cleanup_error_retains_product_failure(self):
         class Sample(unittest.TestCase):
