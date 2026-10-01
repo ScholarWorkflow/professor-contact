@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 from gate2_evidence import EvidenceResult, TestPreparationError, classify, main
+import stage2_upstream_fixture
 
 
 class Gate2EvidenceTests(unittest.TestCase):
@@ -47,6 +48,17 @@ class Gate2EvidenceTests(unittest.TestCase):
         self.assertEqual(result.events[0]['phase'], 'prerequisite')
         self.assertEqual(result.events[0]['verdict'], 'INVALID_TEST_EXECUTION')
 
+        class WrappedStage2Prerequisite(unittest.TestCase):
+            def test_value(self):
+                stage2_upstream_fixture.prepare_stage2_proof(None, 'unused.json')
+        with mock.patch.object(
+                stage2_upstream_fixture, '_prepare_stage2_proof',
+                side_effect=AssertionError('controlled upstream preparation failure')):
+            result = self.run_sample(WrappedStage2Prerequisite)
+        self.assertEqual(classify(result, []), 'INVALID_TEST_EXECUTION')
+        self.assertEqual(result.events[0]['phase'], 'prerequisite')
+        self.assertEqual(result.events[0]['verdict'], 'INVALID_TEST_EXECUTION')
+
     def test_subtest_failure_is_fail_and_cleanup_error_retains_product_failure(self):
         class Sample(unittest.TestCase):
             def test_value(self):
@@ -63,6 +75,12 @@ class Gate2EvidenceTests(unittest.TestCase):
         result = unittest.TextTestRunner(stream=io.StringIO(), resultclass=EvidenceResult).run(
             unittest.TestSuite())
         self.assertEqual(classify(result, []), 'INVALID_TEST_EXECUTION')
+        class Present(unittest.TestCase):
+            def test_value(self):
+                pass
+        result = self.run_sample(Present)
+        self.assertEqual(classify(result, [], ['missing.required.proof.']),
+                         'INVALID_TEST_EXECUTION')
         class Skipped(unittest.TestCase):
             @unittest.skip('declared unavailable path')
             def test_value(self):
