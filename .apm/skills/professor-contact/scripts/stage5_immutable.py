@@ -34,7 +34,7 @@ UPSTREAM_SCRIPT_ENV = "PROFESSOR_CONTACT_EVIDENCE_SCRIPT"
 
 _PLAN_OPTIONS = {
     "--program-root", "--email-pack", "--email-id", "--profile", "--template",
-    "--followup-template", "--mode", "--result", "--choices",
+    "--followup-template", "--mode", "--result", "--choices", "--choices-scope",
 }
 _VALUE_OPTIONS = _PLAN_OPTIONS | {"--decision-file"}
 _POLISH_MODES = {"none", "dynamic-fields-only"}

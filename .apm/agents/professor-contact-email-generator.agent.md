@@ -54,6 +54,12 @@ Codex-specific runtime calling convention and is not persisted.
   emails, it is a list with one object per email.
 - Every row must carry the exact `email_id`, an explicit boolean
   `first_choice`, a non-empty `signature_name`, and a non-empty `learning`.
+- When one caller request covers several professors, a row may carry an
+  optional `professor_dir` (that professor's canonical directory) declaring
+  its owner explicitly. Rows without it are legacy format and the runner
+  attributes them deterministically from the caller's read-only scope (see
+  the professor-local ownership rules below). Callers never slice `choices`
+  per professor by hand: every owner receives the same original value.
 - `mode: both|followup` additionally requires a non-empty,
   non-`{{...}}` `initial_sent_date`; `mode: first` does not.
 - The public row schema is exactly these seven keys: `email_id`,
@@ -82,16 +88,61 @@ write the canonical JSON to a temporary choices file and pass that file to the
 existing runner with `--choices`. Do not add defaults, translate fields, drop
 unknown keys, or map an email by position, professor name, or “first email”.
 The runner remains the sole authority for required fields/types, ID-set,
-recipient authority, contact-evidence, and finalization validation.
+recipient authority, contact-evidence, and finalization validation. When the
+caller also supplies a read-only attribution scope (`--choices-scope`), pass
+that value through to `stage5-plan` and `stage5-finalize` unchanged as well;
+it is the root-computed `canonical professor_dir -> email_id set` context the
+runner needs to attribute legacy rows, never a fact source of its own.
 
 ## Professor-local Stage-5 ownership (Issue #68)
 
 Stage 4's success result hands over **one professor-local email pack**: `<professor_dir>/邮件输入.json`, the container `stage4-finalize` writes per professor and that names exactly one `professor` plus its `professor_dir`. Stage 5 accepts that path as its only fact source:
 
 - Every Stage-5 call of one owner run — `stage5-plan`, the `stage5_immutable.py stage5-finalize` wrapper, and any re-plan after a `needs_recheck` — carries the **same `--email-pack`** at that professor's local pack. There is no program-level pack to fall back on: a call without `--email-pack` stops with `invalid_params`, an unreadable local pack returns `needs_refresh` / `missing_email_pack` for that professor, and a pack that cannot prove one professor owner is `invalid_email_pack`. The immutable wrapper forwards the same path to its internal plan and temporary finalize runner instead of resolving a pack of its own.
+- **Two Stage-5 entries.** Right after Stage 4, the root consumes the exact
+  `email_pack` path the Stage-4 success result delivered. A standalone Stage-5
+  call discovers its inputs read-only with
+  `contact_state.py stage5-list-inputs --program-root <abs>`: one row per
+  professor-local pack carrying `professor`, `professor_dir`, `email_pack`,
+  `status` and `reason_code`. A bad container fails as its own row
+  (`missing_email_pack` / `invalid_email_pack` / `invalid_professor_dir`) and
+  never blocks another valid professor; the command reads no verify, state,
+  render, overview or legacy program-level pack file and writes nothing.
+  `--professor` selects the unique exact name match; a missing or ambiguous
+  name returns `needs_input` (`professor_not_found` / `professor_ambiguous`)
+  instead of a guess.
 - **One owner invocation = one professor transaction.** Running professors A and B means two exact-named `professor-contact-email-generator` invocations, each with its own pack path, result JSON, choices, `_contact_verify.json` and `套磁邮件状态.json`. B's missing, stale or malformed pack, cache or state is never a precondition of A, and B's failure never rolls back A's committed render. A+B is not one invocation that carries two packs: a child payload holds only that professor's Stage-5 inputs.
+- **Choices attribution (plan r10 §3).** The formal choice identity is
+  `(canonical professor_dir, email_id)`; the display field `professor` is
+  display-only. The caller's original `choices` is forwarded to every owner
+  unchanged, together with the read-only scope `--choices-scope` the root
+  computed from the packs it selected (canonical `professor_dir` -> that
+  professor's current `email_id` set; default when absent: this run's own
+  pack). The runner attributes rows in two phases: explicit `professor_dir`
+  rows partition by directory first, so a row owned by B — including its id
+  errors (`choice_owner_invalid`) — only ever affects B and is excluded from
+  A's checks; a legacy row without a directory computes its
+  `original_candidates` from that scope before any explicit binding is
+  considered, a unique candidate binds unconditionally and joins this
+  professor's exact-one duplicate check (never silently dropped), only a
+  multi-candidate row may exclude professors a legal explicit row already
+  satisfied (one remaining -> binds that professor; several remaining -> this
+  professor returns `needs_input` / `choice_owner_ambiguous`; none remaining
+  -> the row changes no satisfied professor's verdict), and an unresolvable
+  explicit directory never transfers its failure by id — a professor with no
+  attributable row fails only by its own missing rule. `stage5-plan` and
+  `stage5-finalize` (through the immutable wrapper) share exactly these
+  attribution, duplicate and failure-assignment semantics.
 - Running those owner invocations sequentially is an orchestration choice, not a product contract; no concurrency or ordering guarantee is defined for two professors' Stage-5 transactions.
 - `教授研究/套磁邮件总览.md` is a **derived projection** whose only Stage-5 writer is `contact_state.py stage5-rebuild-overview --program-root <abs>`. It joins each professor's local pack with that professor's own `套磁邮件状态.json` and reads `_contact_verify.json` for display, and it modifies no pack, state, rendered email or verify cache. A professor's finalize never creates or updates the aggregate, and a stale, conflicting or missing aggregate never gates that professor's commit — `overview_md` only reports an existing path or `null`. Rebuild the aggregate after one or more professors commit; a malformed local pack or state makes the rebuild fail closed without overwriting the existing aggregate, and a manual aggregate edit makes only the rebuild return `needs_decision`.
+- **Root ordering.** The root delegates one owner per professor, waits for and
+  consumes every owner result of this request, and only then rebuilds the
+  aggregate **at most once** with `stage5-rebuild-overview`; a
+  single-professor request follows the same order. The aggregate's
+  `ok` / `needs_decision` / `error` result is reported separately and never
+  changes, rolls back, re-runs or downgrades any professor-local result. The
+  generator agent itself never scans other professors' directories and never
+  runs the aggregate rebuild.
 - `stage5-record-validation` keeps its existing `--professor-dir` + `--validation-file` contract inside the same professor transaction and gains no `--email-id` flag (Issue #59 rules are unchanged).
 
 ## Direction provenance (issue #8 email-pack v2)

@@ -264,6 +264,9 @@ Codex 自带的 typed spawn 参数。它是可选的 canonical JSON 输入，且
   内部兼容字段（例如 `subject`、`alma_mater`）不属于公共 API，caller 不得生成或
   宣传这些字段；Issue #43 不定义这些非公共字段的拒绝/兼容语义，因此也不把它们升级为
   caller acceptance gate。
+- 一次请求覆盖多位教授时，行可以带可选的 `professor_dir`（该教授的规范目录路径）
+  显式声明归属；不带的行是旧格式，由 runner 按只读归属上下文确定性计算归属（见 5.11）。
+  caller 不按教授手工拆分 `choices`：每位教授 owner 收到的都是同一份原始 `choices`。
 - **收件人只有一份权威**：`_contact_verify.json` 的 `items.email.value`（Step 2.5
   送信前核验结论）。`choices.email_address` 只是调用方对收件人的**明确答复**，
   用来确认这份权威：它与已核验地址一致（忽略大小写）才可通过；不一致 →
@@ -388,7 +391,10 @@ Issue #59：`--email-id` 是**硬执行范围**，不是过滤提示。同一次
 - **一次 owner 调用 = 一个教授事务**：A、B 两位教授 = 两次 exact named `professor-contact-email-generator` owner 调用，各自携带自己的 pack 路径、result JSON、choices、`_contact_verify.json` 与 `套磁邮件状态.json`。一次 child payload 绝不夹带另一位教授的 pack 或行。
 - **互不为前置**：B 的 pack/状态/核验缓存缺失或损坏既不阻断 A，也不被 A 读写；B 失败不回滚 A 已提交的渲染。批量模式（不带 `--email-id`）= 该教授包内全部邮件，仍只覆盖一位教授。
 - **并发不是产品契约**：多次 owner 调用的顺序、是否并行由调用方编排决定，runner 不提供并发保证，也不依赖并发才成立。
+- **两条入口**：紧接阶段 4 时，root 直接消费阶段 4 成功结果交付的确切 `email_pack` 路径。独立阶段 5 用只读命令 `contact_state.py stage5-list-inputs --program-root <abs>` 逐个发现教授本地包，逐行返回 `professor`、`professor_dir`、`email_pack`、`status`、`reason_code`：单个坏包只形成自己的失败行（不可读 `missing_email_pack`、无法证明单一归属 `invalid_email_pack`、目录越界或不对应容器 `invalid_professor_dir`），不阻止其它有效教授；它不读核验、状态、渲染、总览或程序级旧包，不写任何文件。`--professor` 只做唯一精确匹配，缺失或同名歧义返回 `needs_input`（`professor_not_found` / `professor_ambiguous`），不任选。
+- **choices 归属（第 10 版计划 §3）**：正式选择身份是 `(canonical professor_dir, email_id)`。root 与 generator 把用户原始 `choices` 原样交给每位教授 owner，不手工切片、改写或补默认值；root 在选定本次要执行的教授本地包后得到只读归属上下文 `canonical professor_dir -> 本次执行范围的 email_id 集合`，随 owner 调用以 `--choices-scope` 传入（缺省即本次 pack 自身）。runner 两阶段归属：显式带 `professor_dir` 的行先按目录分区，已归属 B 的行（含编号错误 `choice_owner_invalid`）只影响 B，A 校验前先排除所有显式归属他人的行；无目录旧行先按只读范围计算 `original_candidates`（计算不考虑谁已有显式选择）——唯一候选必须无条件绑定并进入本教授 exact-one 重复检查，不得静默忽略；多候选时才排除已有合法显式绑定的教授（剩 1 个 → 绑定该教授；剩多个 → 该教授 `needs_input` / `choice_owner_ambiguous`；剩 0 个 → 不改变已显式满足教授的 verdict）；候选为空或显式目录无法规范化、越界、不对应本次范围时，禁止按编号转嫁失败，该教授只按自己的 missing 规则失败。归属完成后每个 expected `email_id` 精确出现一次，缺失、重复或字段无效只让本教授 fail closed；`stage5-plan` 与 `stage5-finalize`（含 `stage5_immutable.py` 包装）共用同一套归属、候选、歧义、重复与失败归属语义。
 - **聚合是派生投影**：`contact_state.py stage5-rebuild-overview --program-root <abs>` 枚举各教授本地 pack，精确 join 各自本地 `套磁邮件状态.json`，读取 `_contact_verify.json` 只为展示，然后写出 `教授研究/套磁邮件总览.md`。它不修改任何本地 pack、状态、邮件或核验缓存；删除聚合后可以重建；本地输入或状态畸形时 fail closed 且不覆盖既有聚合；聚合被人手改动只让 rebuild 返回 `needs_decision`，绝不阻断任何教授的 finalize。
+- **顶层顺序**：root 对每位教授分别委派 owner，等待并消费本次全部 owner 结果之后，最多调用一次 `stage5-rebuild-overview`；单教授请求采用同一顺序。总览的 `ok` / `needs_decision` / `error` 结果单独报告，不改变、不回滚、不重跑、不降级任何教授结果；`professor-contact-email-generator` 不扫描其他教授目录，也不执行总览重建。
 - **校验侧不变**：验证仍在该教授自己的事务内完成，`stage5-record-validation` 沿用 `--professor-dir` + `--validation-file`，不因 Issue #68 新增 `--email-id`（Issue #59 的参数与语义形状不变）。
 
 ## 输入前提：profile 与 套磁邮件/ 配置目录
