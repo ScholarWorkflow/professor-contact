@@ -81,6 +81,10 @@ class Gate2EvidenceTests(unittest.TestCase):
         result = self.run_sample(Present)
         self.assertEqual(classify(result, [], ['missing.required.proof.']),
                          'INVALID_TEST_EXECUTION')
+        duplicate = self.run_sample(Present)
+        duplicate.started.append(duplicate.started[0])
+        duplicate.completed.append(duplicate.completed[0])
+        self.assertEqual(classify(duplicate, []), 'INVALID_TEST_EXECUTION')
         class Skipped(unittest.TestCase):
             @unittest.skip('declared unavailable path')
             def test_value(self):
