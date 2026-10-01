@@ -73,7 +73,10 @@ class EvidenceResult(unittest.TextTestResult):
 def classify(result, load_errors, missing_required_prefixes=()):
     if load_errors or result is None:
         return "CASE_NOT_STARTED"
-    if (result.testsRun == 0 or result.started != result.completed
+    if (result.testsRun == 0
+            or len(result.started) != result.testsRun
+            or len(set(result.started)) != result.testsRun
+            or result.started != result.completed
             or missing_required_prefixes
             or result.expectedFailures or result.unexpectedSuccesses
             or any(e['verdict'] == 'INVALID_TEST_EXECUTION' for e in result.events)):
