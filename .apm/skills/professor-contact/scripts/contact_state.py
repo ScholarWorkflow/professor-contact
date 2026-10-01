@@ -5274,6 +5274,62 @@ def require_stage3_correction_invariants(old: dict, new: dict, path: Path,
                  f"{path}: candidate {cid} rewrote {touched} without a validator finding")
 
 
+def _stage3_selected_scope_keys(selection_path: Path, professor_dir: Path,
+                                by_ckey: dict) -> set:
+    """Selected-refresh scope from one explicit professor-local selection container.
+
+    An explicit ``--selection`` is ONE professor's own container (issue #67): the
+    container's top-level canonical ``professor_dir`` and every row's canonical
+    ``professor_dir`` must equal the current professor directory before any
+    direction is consumed. A missing, unresolvable or foreign identity fails the
+    refresh before task generation or any formal write — never silently skipped,
+    rebound to the container's directory, or accepted on the top-level check
+    alone. Direction reading keeps the exact machine relation (canonical
+    ``direction_ids`` first, deprecated ``direction_id`` / ``collection_key``
+    through the pack's unique mapping); the display name never filters rows."""
+    selection_data, sel_error = read_json_file(Path(selection_path))
+    if sel_error:
+        fail("invalid_params", f"selection file unreadable: {selection_path}")
+    if not isinstance(selection_data, dict):
+        fail("invalid_selection",
+             f"selection container must be an object: {selection_path}")
+    canonical = canonical_professor_dir(professor_dir)
+    container_dir = selection_data.get("professor_dir")
+    if not str(container_dir or "").strip() \
+            or canonical_professor_dir(container_dir) != canonical:
+        fail("selection_scope_mismatch",
+             f"selection container {selection_path} is bound to "
+             f"{container_dir or 'no professor_dir'}, not the current professor "
+             f"directory {professor_dir}")
+    rows = selection_data.get("selections")
+    if not isinstance(rows, list):
+        fail("invalid_selection",
+             f"selection container selections must be a list: {selection_path}")
+    selected_keys = set()
+    for index, sel in enumerate(rows):
+        if not isinstance(sel, dict):
+            fail("invalid_selection",
+                 f"selections[{index}] in {selection_path} must be an object")
+        row_dir = sel.get("professor_dir")
+        if not str(row_dir or "").strip() \
+                or canonical_professor_dir(row_dir) != canonical:
+            fail("selection_scope_mismatch",
+                 f"selections[{index}] in {selection_path} carries professor_dir "
+                 f"{row_dir or 'missing'}; a professor-local container may only hold "
+                 "rows bound to the same canonical directory")
+        scope = sel.get("direction_ids")
+        if isinstance(scope, list) and scope:
+            selected_keys.update(str(did) for did in scope if did)
+            continue
+        sel_did = sel.get("direction_id")
+        if not sel_did:
+            legacy = by_ckey.get(sel.get("collection_key"))
+            sel_did = direction_machine_id(legacy) if legacy is not None else None
+        if sel_did:
+            selected_keys.add(sel_did)
+    return selected_keys
+
+
 def cmd_stage3_plan(args) -> None:
     professor_dir = Path(args.professor_dir)
     program_root = Path(args.program_root) if args.program_root else professor_dir.parent.parent
@@ -5332,28 +5388,34 @@ def cmd_stage3_plan(args) -> None:
         (state or {}).get("generator_contract_version") != STAGE3_GENERATOR_CONTRACT_VERSION
     selected_keys = None
     if refresh_scope == "selected":
-        selection_path = args.selection or (Path(args.program_root) / "教授研究" / SELECTION_FILE)
-        selection_data, sel_error = read_json_file(Path(selection_path))
-        if sel_error:
-            fail("invalid_params", f"selection file unreadable: {selection_path}")
-        selected_keys = set()
-        for sel in selection_data.get("selections", []):
-            if sel.get("professor") != pack.get("professor"):
-                continue
-            # Stage 4 records one canonical `direction_ids` scope per row (a
-            # cross-direction row carries every participating direction), so the
-            # selected refresh must read that list — `direction_id` / legacy
-            # `collection_key` stay accepted for older selection files.
-            scope = sel.get("direction_ids")
-            if isinstance(scope, list) and scope:
-                selected_keys.update(str(did) for did in scope if did)
-                continue
-            sel_did = sel.get("direction_id")
-            if not sel_did:
-                legacy = by_ckey.get(sel.get("collection_key"))
-                sel_did = direction_machine_id(legacy) if legacy is not None else None
-            if sel_did:
-                selected_keys.add(sel_did)
+        if args.selection:
+            # An explicit --selection is one professor's own container: identity
+            # comes from canonical professor_dir, never the display name.
+            selected_keys = _stage3_selected_scope_keys(
+                Path(args.selection), professor_dir, by_ckey)
+        else:
+            selection_path = Path(args.program_root) / "教授研究" / SELECTION_FILE
+            selection_data, sel_error = read_json_file(Path(selection_path))
+            if sel_error:
+                fail("invalid_params", f"selection file unreadable: {selection_path}")
+            selected_keys = set()
+            for sel in selection_data.get("selections", []):
+                if sel.get("professor") != pack.get("professor"):
+                    continue
+                # Stage 4 records one canonical `direction_ids` scope per row (a
+                # cross-direction row carries every participating direction), so the
+                # selected refresh must read that list — `direction_id` / legacy
+                # `collection_key` stay accepted for older selection files.
+                scope = sel.get("direction_ids")
+                if isinstance(scope, list) and scope:
+                    selected_keys.update(str(did) for did in scope if did)
+                    continue
+                sel_did = sel.get("direction_id")
+                if not sel_did:
+                    legacy = by_ckey.get(sel.get("collection_key"))
+                    sel_did = direction_machine_id(legacy) if legacy is not None else None
+                if sel_did:
+                    selected_keys.add(sel_did)
     pack_fps = {direction_machine_id(d): d.get("input_fingerprint")
                 for d in pack_directions}
     input_fps = (state or {}).get("input_fingerprints", {})
@@ -6180,24 +6242,30 @@ def cmd_stage3_finalize(args) -> None:
     correction_dids = {key.split(":", 1)[1] for key in correction if key.startswith("direction:")}
     selected_keys = None
     if refresh_scope == "selected":
-        selection_path = args.selection or (Path(args.program_root) / "教授研究" / SELECTION_FILE)
-        selection_data, sel_error = read_json_file(Path(selection_path))
-        if sel_error:
-            fail("invalid_params", f"selection file unreadable: {selection_path}")
-        selected_keys = set()
-        for sel in selection_data.get("selections", []):
-            if sel.get("professor") != pack.get("professor"):
-                continue
-            scope = sel.get("direction_ids")
-            if isinstance(scope, list) and scope:
-                selected_keys.update(str(did) for did in scope if did)
-                continue
-            sel_did = sel.get("direction_id")
-            if not sel_did:
-                legacy = by_ckey.get(sel.get("collection_key"))
-                sel_did = direction_machine_id(legacy) if legacy is not None else None
-            if sel_did:
-                selected_keys.add(sel_did)
+        if args.selection:
+            # An explicit --selection is one professor's own container: identity
+            # comes from canonical professor_dir, never the display name.
+            selected_keys = _stage3_selected_scope_keys(
+                Path(args.selection), professor_dir, by_ckey)
+        else:
+            selection_path = Path(args.program_root) / "教授研究" / SELECTION_FILE
+            selection_data, sel_error = read_json_file(Path(selection_path))
+            if sel_error:
+                fail("invalid_params", f"selection file unreadable: {selection_path}")
+            selected_keys = set()
+            for sel in selection_data.get("selections", []):
+                if sel.get("professor") != pack.get("professor"):
+                    continue
+                scope = sel.get("direction_ids")
+                if isinstance(scope, list) and scope:
+                    selected_keys.update(str(did) for did in scope if did)
+                    continue
+                sel_did = sel.get("direction_id")
+                if not sel_did:
+                    legacy = by_ckey.get(sel.get("collection_key"))
+                    sel_did = direction_machine_id(legacy) if legacy is not None else None
+                if sel_did:
+                    selected_keys.add(sel_did)
     results_dir = Path(args.results)
     decision = None
     if getattr(args, "decision_file", None):
@@ -6707,7 +6775,11 @@ def validate_stage4_selections(selects: Any, states: dict, packs: dict) -> None:
             fail("legacy_direction_identity",
                  f"selection[{index}] ({professor}) cannot be mapped to canonical direction_ids "
                  "through an exact machine relation; re-run stage 3 for this professor")
-        scope_key = (professor, tuple(direction_ids))
+        # The duplicate scope is formal identity: canonical professor_dir plus the
+        # machine-normalized direction set. Display text can never split or merge
+        # a scope, so rewriting it cannot bypass this check (issue #67 R67-G1-9).
+        scope_key = (canonical_professor_dir(select.get("professor_dir")),
+                     tuple(direction_ids))
         if scope_key in seen_scopes:
             fail("duplicate_selection",
                  f"duplicate professor+direction-scope selection: {professor}::{'+'.join(direction_ids)}")
@@ -6873,7 +6945,10 @@ def _stage4_professor_commit(program_root: Path, professor_dir: Path, selects: l
                  "direction_ids through an exact machine relation; re-run stage 3 for this "
                  "professor. This professor wrote no file.")
         resolved_selects.append({**select, "direction_ids": ids})
-    current_scope = {(s.get("professor"), tuple(s.get("direction_ids") or []))
+    # The container already fixes the professor: inside one canonical
+    # professor_dir the scope is only the direction set, so a display-name change
+    # neither preserves a stale row nor splits one scope into two (issue #67).
+    current_scope = {tuple(s.get("direction_ids") or [])
                      for s in resolved_selects}
     # Same-professor preserved directions are recompiled into the same local pair,
     # so they share this professor's fail-closed outcome instead of being dropped.
@@ -6882,7 +6957,7 @@ def _stage4_professor_commit(program_root: Path, professor_dir: Path, selects: l
         if not isinstance(old, dict):
             continue
         ids, identity_error = _selection_direction_ids(old, packs)
-        if ids and (old.get("professor"), tuple(ids)) in current_scope:
+        if ids and tuple(ids) in current_scope:
             continue
         if identity_error or not ids:
             fail("legacy_direction_identity",
@@ -6896,13 +6971,12 @@ def _stage4_professor_commit(program_root: Path, professor_dir: Path, selects: l
         preserved.append({**old, "direction_ids": ids})
 
     all_selects = preserved + resolved_selects
-    preserved_keys = {(p.get("professor"), tuple(p.get("direction_ids") or []))
+    preserved_keys = {tuple(p.get("direction_ids") or [])
                       for p in preserved}
     skipped = []
 
     def record_skip(select_obj: dict, entry: dict) -> None:
-        if (select_obj.get("professor"),
-                tuple(select_obj.get("direction_ids") or [])) in preserved_keys:
+        if tuple(select_obj.get("direction_ids") or []) in preserved_keys:
             soft_exit("needs_refresh", "preserved_selection_uncompilable",
                       direction_ids=select_obj.get("direction_ids"),
                       message="既有选择无法按当前候选状态/输入包重编译：先重跑阶段 3，再重新选择。该教授未写入任何选择/邮件包。")
