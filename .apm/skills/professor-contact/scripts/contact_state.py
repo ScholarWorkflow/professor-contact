@@ -811,7 +811,9 @@ def _strict_candidate_shape(state: dict) -> str | None:
     corrupt would otherwise reach the overview renderer and publish garbage
     rows (r10 §3.7 requires every committed state to fail closed BEFORE the
     overview write). The compatibility/migration owner proves the shape
-    here; renderer and rebuild stay pure consumers.
+    here; renderer and rebuild stay pure consumers. Corrupt values are
+    never treated as empty: the candidate list (and a group's member list)
+    must be present and well-typed, or the state fails closed.
     """
     directions = state.get("directions")
     if not isinstance(directions, list):
@@ -823,7 +825,8 @@ def _strict_candidate_shape(state: dict) -> str | None:
         if not (isinstance(did, str) and did.strip()):
             return "invalid_candidate_state"
         candidates = row.get("candidates")
-        if candidates is not None and not isinstance(candidates, list):
+        if not isinstance(candidates, list) or \
+                any(not isinstance(c, dict) for c in candidates):
             return "invalid_candidate_state"
     groups = state.get("cross_direction_groups")
     if groups is not None and not isinstance(groups, list):
@@ -835,10 +838,12 @@ def _strict_candidate_shape(state: dict) -> str | None:
         if not (isinstance(gid, str) and gid.strip()):
             return "invalid_candidate_state"
         direction_ids = row.get("direction_ids")
-        if direction_ids is not None and not isinstance(direction_ids, list):
+        if not isinstance(direction_ids, list) or \
+                any(not isinstance(item, str) for item in direction_ids):
             return "invalid_candidate_state"
         candidates = row.get("candidates")
-        if candidates is not None and not isinstance(candidates, list):
+        if not isinstance(candidates, list) or \
+                any(not isinstance(c, dict) for c in candidates):
             return "invalid_candidate_state"
     return None
 

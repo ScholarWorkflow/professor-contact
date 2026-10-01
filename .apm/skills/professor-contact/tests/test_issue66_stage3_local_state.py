@@ -476,7 +476,17 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                          contact_state.sha256_text(md_body))
 
         # 3. Post-commit cleanup unlink failure: both new byte sets stay, the
-        #    committed transaction is not rolled back or re-framed.
+        #    committed transaction is not rolled back or re-framed. A second
+        #    profile makes this transaction's content deterministically
+        #    different from the previous run's committed pair (the frontmatter
+        #    state_fingerprint binds the profile), so retention of the NEW
+        #    bytes is provable even within the same second.
+        previous_md = md_path.read_bytes()
+        previous_state_bytes = state_path.read_bytes()
+        previous_state = json.loads(previous_state_bytes)
+        profile2 = self.root / "iso4-profile-2.md"
+        profile2.write_text("兴趣变化：第二种输入模式的扩展比较\n", encoding="utf-8")
+        profile2_args = ("--profile", str(profile2))
         staged_prefixes = (f".{CANDIDATES_MD}.", f".{CANDIDATE_STATE}.")
         owner_dir = os.path.realpath(self.prof_dir)
 
@@ -488,7 +498,7 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
             payload, code = call_runner(
                 "stage3-finalize", "--professor-dir", self.prof_dir,
                 "--results", a_results, "--program-root", self.root,
-                *profile_args)
+                *profile2_args)
         self.assertEqual(code, 0)
         self.assertEqual(payload["status"], "ok", payload)
         current_state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -496,6 +506,21 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
             md_path.read_text(encoding="utf-8"))
         self.assertEqual(current_state["cache"]["render"][CANDIDATES_MD]["sha256"],
                          contact_state.sha256_text(md_body))
+        # Review C2: the old pair is self-consistent too, so consistency
+        # alone cannot prove retention. Both retained files must be THIS
+        # transaction's new content — not the previous run's committed pair
+        # (a cleanup-failure rollback would restore exactly those bytes).
+        self.assertNotEqual(md_path.read_bytes(), previous_md,
+                            "cleanup failure must not roll the local Markdown "
+                            "back to the previous run's bytes")
+        self.assertNotEqual(state_path.read_bytes(), previous_state_bytes,
+                            "cleanup failure must not roll the candidate state "
+                            "back to the previous run's bytes")
+        self.assertNotEqual(current_state["profile_fingerprint"],
+                            previous_state["profile_fingerprint"])
+        self.assertEqual(current_state["profile_fingerprint"],
+                         contact_state.profile_fingerprint(str(profile2)))
+        self.assertIn("profile：有", md_path.read_text(encoding="utf-8"))
 
     # -- S3-ISO-5 ---------------------------------------------------------
 
@@ -677,6 +702,43 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                            "directions": [{"direction_id": "dir_C", "candidates": []}],
                            "cross_direction_groups": [{"direction_ids": ["dir_C"],
                                                         "candidates": []}]})
+            before = self.snapshot(*snapshot_paths)
+            out = parse(run_cli("stage3-rebuild-overview", "--program-root", self.root))
+            self.assertEqual(out["status"], "error", out)
+            self.assertEqual(out["reason_code"], "invalid_candidate_state")
+            self.assert_unchanged(before)
+
+            # (d5) review C1: a null candidate list on a stamped v2 row is
+            #      CORRUPT, not zero candidates — the rebuild must fail
+            #      closed instead of publishing a count-0 row.
+            write_b_state({"schema": contact_state.CANDIDATE_STATE_SCHEMA,
+                           "kind": contact_state.CANDIDATE_STATE_KIND,
+                           "identity_version": contact_state.DIRECTION_IDENTITY_VERSION,
+                           "generator_contract_version":
+                               contact_state.STAGE3_GENERATOR_CONTRACT_VERSION,
+                           "professor": SECOND_PROFESSOR,
+                           "directions": [{"direction_id": "dir_C",
+                                           "name_ja": "対照", "name_zh": "对照",
+                                           "candidates": None}]})
+            before = self.snapshot(*snapshot_paths)
+            out = parse(run_cli("stage3-rebuild-overview", "--program-root", self.root))
+            self.assertEqual(out["status"], "error", out)
+            self.assertEqual(out["reason_code"], "invalid_candidate_state")
+            self.assert_unchanged(before)
+
+            # (d6) review C1: non-list candidate members and null group
+            #      fields fail closed before any overview write.
+            write_b_state({"schema": contact_state.CANDIDATE_STATE_SCHEMA,
+                           "kind": contact_state.CANDIDATE_STATE_KIND,
+                           "identity_version": contact_state.DIRECTION_IDENTITY_VERSION,
+                           "generator_contract_version":
+                               contact_state.STAGE3_GENERATOR_CONTRACT_VERSION,
+                           "professor": SECOND_PROFESSOR,
+                           "directions": [{"direction_id": "dir_C",
+                                           "candidates": [None, "garbage"]}],
+                           "cross_direction_groups": [
+                               {"group_id": "cross:abc", "direction_ids": None,
+                                "candidates": None}]})
             before = self.snapshot(*snapshot_paths)
             out = parse(run_cli("stage3-rebuild-overview", "--program-root", self.root))
             self.assertEqual(out["status"], "error", out)
