@@ -4050,5 +4050,55 @@ class Issue67AdjacentStateTests(_Issue67Stage4Fixture):
         self.assertEqual(self.job_directions(scoped), ["DIR00001", "DIR00002"], scoped)
 
 
+class Issue67SameProfessorFailClosedTests(_Issue67Stage4Fixture):
+    """R67-G1-3: inside ONE professor, any entry failure fails the whole batch.
+
+    A professor whose own selection batch carries an entry that cannot be
+    resolved against its current facts (invalid direction identity) must fail
+    with zero writes -- never a partial commit of the valid remainder. A
+    professor-local prior selection that contains a non-object entry is a
+    corrupt authority: re-submission must fail closed without rewriting the
+    pair, never silently drop the entry.
+    """
+
+    def test_01_invalid_direction_entry_fails_the_whole_professor(self):
+        """DIR00001 (valid) + DIR99999 (absent from pack) -> error, zero write."""
+        out = self.stage4([
+            self.row(self.prof_dir, direction_ids=["DIR00001"]),
+            self.row(self.prof_dir, direction_ids=["DIR99999"], idea="ghost"),
+        ], name="fc1.json")
+        self.assertEqual(out["status"], "error", out)
+        row = stage4_row(out)
+        self.assertEqual(row["reason_code"], "validation_failed", out)
+        self.assertIn(
+            {"detail": "direction not in state/pack", "direction_ids": ["DIR99999"],
+             "professor": "試験 教授", "reason": "needs_refresh"},
+            row["skipped"], out)
+        self.assert_no_pair(self.prof_dir, "invalid direction entry")
+        self.assert_program_pair_absent()
+
+    def test_02_prior_selection_non_object_entry_fails_closed(self):
+        """A null entry in the professor-local prior selection stops the commit."""
+        first = self.stage4([self.row(self.prof_dir, idea=["DIR00001_1", "DIR00001_2"])],
+                            name="fc2-first.json")
+        self.assertEqual(stage4_row(first)["status"], "ok", first)
+        selection_path = self.prof_dir / self.SELECT
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        selection["selections"] = [None] + selection["selections"]
+        selection_path.write_text(json.dumps(selection, ensure_ascii=False, indent=1) + "\n",
+                                  encoding="utf-8")
+        corrupted = (selection_path.read_bytes(), (self.prof_dir / self.PACK).read_bytes())
+
+        out = self.stage4([self.row(self.prof_dir, idea="DIR00001_1")], name="fc2.json")
+        self.assertEqual(out["status"], "error", out)
+        row = stage4_row(out)
+        self.assertEqual(row["reason_code"], "invalid_selection", out)
+        self.assertIsNone(row["selection_file"], out)
+        self.assertIsNone(row["email_pack"], out)
+        self.assertEqual((selection_path.read_bytes(), (self.prof_dir / self.PACK).read_bytes()),
+                         corrupted, "the corrupt prior selection must not be rewritten")
+        self.assert_program_pair_absent()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

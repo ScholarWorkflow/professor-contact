@@ -6923,9 +6923,14 @@ def _stage4_professor_commit(program_root: Path, professor_dir: Path, selects: l
     prior_rows = (prior_selection or {}).get("selections") or []
     if not isinstance(prior_rows, list):
         fail("invalid_selection", f"existing local selection.selections must be a list: {selection_path}")
-    for old in prior_rows:
+    for index, old in enumerate(prior_rows):
         if not isinstance(old, dict):
-            continue
+            # A non-object entry in the professor-local prior selection is a
+            # corrupt authority: fail closed without rewriting the pair, never
+            # silently drop the entry (R67-G1-3).
+            fail("invalid_selection",
+                 f"existing local selection contains a non-object entry at "
+                 f"index {index}: {selection_path}")
         if canonical_professor_dir(old.get("professor_dir")) != canonical:
             fail("local_selection_foreign_row",
                  f"existing local selection in {professor_dir} carries a row bound to "
@@ -7094,11 +7099,14 @@ def _stage4_professor_commit(program_root: Path, professor_dir: Path, selects: l
             "ideas": [{"id": i.get("id"), "note": i.get("note") or "",
                        "papers_override": i.get("papers_override") or None}
                       for i in select.get("ideas", [])]})
-    if not written_selections:
-        # The row must stay actionable per professor: skipped carries the exact
-        # per-direction reason (missing input pack, needs_stage3, ...) instead of
-        # a bare "no valid selections".
-        fail("validation_failed", "no valid selections", skipped=skipped)
+    if skipped or not written_selections:
+        # R67-G1-3: inside ONE professor any entry failure fails the whole
+        # batch with zero writes -- a valid remainder must never be partially
+        # committed while another entry of the same professor failed. skipped
+        # carries the exact per-entry reason (missing input pack, needs_stage3,
+        # direction not in state/pack, ...) so the row stays actionable.
+        fail("validation_failed", "selection batch has uncompilable entries",
+             skipped=skipped)
     selection_doc = {
         "schema": STAGE4_LOCAL_SCHEMA, "kind": SELECTION_KIND,
         "identity_version": DIRECTION_IDENTITY_VERSION,
