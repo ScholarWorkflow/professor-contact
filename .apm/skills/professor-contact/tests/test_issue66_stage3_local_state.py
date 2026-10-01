@@ -22,6 +22,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import unittest
@@ -309,22 +310,41 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
     # -- S3-ISO-1 ---------------------------------------------------------
 
     def test_s3_iso_1_local_finalize_isolation(self):
-        """B/overview/registry anomalies each leave A's local commit intact.
+        """Each single-variable anomaly leaves A's local commit intact.
 
-        Low-level open records prove finalize never even opens the foreign
-        candidate state, the program overview or the projection registry.
+        Per the frozen recipe the three sub-scenarios run SEPARATELY, each
+        with exactly ONE non-owner disturbance in place; A's finalize must
+        succeed, the disturbed object's exact bytes must survive, the other
+        non-owner objects must stay absent, and the low-level open record
+        must prove finalize never opened any of the three.
         """
         a_pack = self.prof_dir / "套磁候选输入.json"
         a_results = self.write_a_results("s3-iso-1")
         foreign_state = self.root / "教授研究" / "Y分野" / SECOND_PROFESSOR / CANDIDATE_STATE
-        foreign_state.parent.mkdir(parents=True, exist_ok=True)
-        foreign_state.write_text("{ malformed foreign state", encoding="utf-8")
-        self.overview_path.write_text("手工改过的总览\n", encoding="utf-8")
-        self.registry_path.write_text("{ malformed registry", encoding="utf-8")
-        before = self.snapshot(foreign_state, self.overview_path, self.registry_path)
 
-        for index in range(3):
-            with self.subTest(scenario=index):
+        def reset_single_variable_baseline():
+            shutil.rmtree(self.root / "教授研究" / "Y分野", ignore_errors=True)
+            self.overview_path.unlink(missing_ok=True)
+            self.registry_path.unlink(missing_ok=True)
+
+        for disturbance in ("b_state_malformed", "overview_conflict",
+                            "registry_malformed"):
+            with self.subTest(scenario=disturbance):
+                reset_single_variable_baseline()
+                if disturbance == "b_state_malformed":
+                    foreign_state.parent.mkdir(parents=True, exist_ok=True)
+                    foreign_state.write_text("{ malformed foreign state",
+                                             encoding="utf-8")
+                    disturbed = foreign_state
+                elif disturbance == "overview_conflict":
+                    self.overview_path.write_text("手工改过的总览\n", encoding="utf-8")
+                    disturbed = self.overview_path
+                else:
+                    self.registry_path.write_text("{ malformed registry",
+                                                  encoding="utf-8")
+                    disturbed = self.registry_path
+                before = self.snapshot(disturbed)
+
                 with OpenRecorder() as recorder:
                     payload, code = call_runner(
                         "stage3-finalize", "--professor-dir", self.prof_dir,
@@ -332,10 +352,16 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                 self.assertEqual(code, 0)
                 self.assertEqual(payload["status"], "ok", payload)
                 self.assert_unchanged(before)
-                # Negative proof: the forbidden paths were never opened.
-                self.assertFalse(recorder.was_opened(foreign_state))
-                self.assertFalse(recorder.was_opened(self.overview_path))
-                self.assertFalse(recorder.was_opened(self.registry_path))
+                # Single variable: the two undisturbed non-owner objects
+                # must remain absent for this run.
+                for other in (foreign_state, self.overview_path, self.registry_path):
+                    if other != disturbed:
+                        self.assertFalse(other.exists(),
+                                         f"unexpected non-owner object: {other}")
+                # Negative proof: none of the three forbidden paths opened.
+                for forbidden in (foreign_state, self.overview_path,
+                                  self.registry_path):
+                    self.assertFalse(recorder.was_opened(forbidden))
                 # Positive control: the recorder sees A's own real reads.
                 self.assertTrue(recorder.was_opened(a_pack))
 
@@ -368,9 +394,16 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         state_path = self.prof_dir / CANDIDATE_STATE
         old_md, old_state = md_path.read_bytes(), state_path.read_bytes()
         a_results = self.write_a_results("s3-iso-4-reuse")
+        # A changed profile makes the re-render deterministically different
+        # from the old bytes (render header 校准 flip), so "new Markdown
+        # installed" is byte-observable even when the clock has not ticked.
+        profile = self.root / "iso4-profile.md"
+        profile.write_text("兴趣：第二种输入模式的比较\n", encoding="utf-8")
+        profile_args = ("--profile", str(profile))
 
         # 1. Pause after the Markdown install, before the state replace: a
-        #    concurrent reader still sees the OLD committed state, and the
+        #    concurrent reader sees the NEW Markdown already installed while
+        #    the candidate state is still the OLD committed one, and the
         #    failing state replace restores both old byte sets.
         attempted, released = threading.Event(), threading.Event()
         observed = {}
@@ -378,6 +411,7 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         def reader():
             self.assertTrue(attempted.wait(30))
             observed["state"] = state_path.read_bytes()
+            observed["md"] = md_path.read_bytes()
             released.set()
 
         def gate(real, src, dst):
@@ -393,12 +427,16 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                     lambda src, dst: dst == os.path.realpath(state_path), gate):
                 payload, code = call_runner(
                     "stage3-finalize", "--professor-dir", self.prof_dir,
-                    "--results", a_results, "--program-root", self.root)
+                    "--results", a_results, "--program-root", self.root,
+                    *profile_args)
         finally:
             watcher.join(30)
         self.assertEqual(payload["reason_code"], "local_pair_commit_failed", payload)
         self.assertEqual(observed["state"], old_state,
                          "a reader before the commit point saw new state bytes")
+        self.assertNotEqual(observed["md"], old_md,
+                            "the new Markdown was not installed before the "
+                            "state replace: install order not observable")
         self.assertEqual(md_path.read_bytes(), old_md)
         self.assertEqual(state_path.read_bytes(), old_state)
 
@@ -426,7 +464,8 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                     install_then_release):
                 payload, code = call_runner(
                     "stage3-finalize", "--professor-dir", self.prof_dir,
-                    "--results", a_results, "--program-root", self.root)
+                    "--results", a_results, "--program-root", self.root,
+                    *profile_args)
         finally:
             watcher.join(30)
         self.assertEqual(code, 0)
@@ -448,7 +487,8 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         with failing_unlink(cleanup_target):
             payload, code = call_runner(
                 "stage3-finalize", "--professor-dir", self.prof_dir,
-                "--results", a_results, "--program-root", self.root)
+                "--results", a_results, "--program-root", self.root,
+                *profile_args)
         self.assertEqual(code, 0)
         self.assertEqual(payload["status"], "ok", payload)
         current_state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -491,10 +531,11 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                       body)
         self.assertIn(f"| 試験 教授 | センサ網 | 3 | 主推 1 | [{CANDIDATES_MD}]({a_link}) |", body)
         self.assertIn(f"| 試験 教授 | センサ網 | 3 | 并推 Twin | [{CANDIDATES_MD}]({twin_link}) |", body)
-        # Cross rows keep the same group ID for both professors.
-        self.assertIn(f"显式跨方向组（group_id {CROSS_GID}） | [{CANDIDATES_MD}]({a_link}) |",
+        # Cross rows keep the same group ID for both professors, and each
+        # row's candidate count comes from its OWN committed state (1 vs 2).
+        self.assertIn(f"| 試験 教授 | 跨方向：dir_A＋dir_B | 1 | 显式跨方向组（group_id {CROSS_GID}） | [{CANDIDATES_MD}]({a_link}) |",
                       body)
-        self.assertIn(f"显式跨方向组（group_id {CROSS_GID}） | [{CANDIDATES_MD}]({twin_link}) |",
+        self.assertIn(f"| 試験 教授 | 跨方向：dir_A＋dir_B | 2 | 显式跨方向组（group_id {CROSS_GID}） | [{CANDIDATES_MD}]({twin_link}) |",
                       body)
         self.assertNotIn("与状态矛盾的人工行", body)
         # Stable ordering: canonical professor identity is the tie-breaker.
@@ -518,8 +559,13 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         b_pack_path = self.root / "教授研究" / "Y分野" / SECOND_PROFESSOR / "套磁候选输入.json"
         out = parse(run_cli("stage3-rebuild-overview", "--program-root", self.root))
         self.assertEqual(out["status"], "ok", out)
-        snapshot_paths = (self.prof_dir / CANDIDATE_STATE, self.overview_path,
-                          self.registry_path)
+        # Local files of BOTH professors plus the aggregate artifacts: every
+        # failure sub-scenario must leave all of them byte-identical.
+        snapshot_paths = (self.prof_dir / CANDIDATE_STATE,
+                          self.prof_dir / CANDIDATES_MD,
+                          b_state_path,
+                          self.root / "教授研究" / "Y分野" / SECOND_PROFESSOR / CANDIDATES_MD,
+                          self.overview_path, self.registry_path)
         legacy_candidate = {"id": "C1", "title": "旧候选", "one_liner": "一句话",
                             "research_question": "旧的问题", "points": [],
                             "gap_ids": [], "papers": [], "fit": "high",
