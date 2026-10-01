@@ -70,10 +70,15 @@ class EvidenceResult(unittest.TextTestResult):
         super().addSubTest(test, subtest, err)
 
 
-def classify(result, load_errors, missing_required_prefixes=()):
+def classify(result, load_errors, missing_required_prefixes=(), interruption=None):
     if load_errors or result is None:
         return "CASE_NOT_STARTED"
-    if (result.testsRun == 0
+    # Once a valid product assertion/error has directly proved a product defect,
+    # later harness/cleanup damage must not reclassify that defect as INVALID.
+    if any(e['verdict'] == 'FAIL' for e in result.events):
+        return "FAIL"
+    if (interruption
+            or result.testsRun == 0
             or len(result.started) != result.testsRun
             or len(set(result.started)) != result.testsRun
             or result.started != result.completed
@@ -81,8 +86,9 @@ def classify(result, load_errors, missing_required_prefixes=()):
             or result.expectedFailures or result.unexpectedSuccesses
             or any(e['verdict'] == 'INVALID_TEST_EXECUTION' for e in result.events)):
         return "INVALID_TEST_EXECUTION"
+    # A unittest failure/error without an attributed event is unusable evidence.
     if result.failures or result.errors:
-        return "FAIL"
+        return "INVALID_TEST_EXECUTION"
     if result.skipped:
         return "NOT TESTED"
     return "PASS"
@@ -125,8 +131,9 @@ def main():
             prefix for prefix in args.require_prefix
             if not any(test_id.startswith(prefix) for test_id in result.started)
         ]
-    verdict = ("INVALID_TEST_EXECUTION" if interruption
-               else classify(result, load_errors, missing_required_prefixes))
+    verdict = classify(
+        result, load_errors, missing_required_prefixes, interruption=interruption
+    )
 
     def records(items):
         return [{"test_id": test.id(), "detail": detail} for test, detail in items]
