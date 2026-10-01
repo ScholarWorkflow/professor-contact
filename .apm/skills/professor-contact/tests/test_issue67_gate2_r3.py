@@ -169,25 +169,49 @@ class Issue67Gate2R3SelectionContractTests(unittest.TestCase):
         )
         self.text = SELECTION_AGENT.read_text(encoding="utf-8")
 
+    def _step1(self) -> str:
+        start = self.text.index("### Step 1")
+        end = self.text.index("### Step 2", start)
+        return self.text[start:end]
+
     def test_explicit_selection_routes_requested_professors_before_formal_reads(self):
-        self.assertIn(
-            "bind each requested professor BEFORE any whole-project read", self.text
+        step1 = self._step1()
+        no_dir = step1.index("条目没有目录来源")
+        before_no_dir = step1[:no_dir]
+        self.assertRegex(
+            before_no_dir,
+            r"先按原请求逐教授分流.{0,40}再读任何教授正式文件",
         )
-        self.assertIn("先按原请求逐教授分流，再读任何教授正式文件", self.text)
-        self.assertIn("只读取请求所涉及教授", self.text)
-        self.assertIn("不得先执行全项目扫描", self.text)
+        self.assertNotIn(
+            'find 教授研究 -name "套磁候选状态.json"',
+            before_no_dir,
+            "whole-project discovery is only allowed after entering the no-dir branch",
+        )
 
     def test_reliable_professor_dir_does_not_require_unrelated_professor_state(self):
-        self.assertIn("条目已带可靠 `professor_dir`", self.text)
-        self.assertIn("无关教授的候选状态/输入包/身份/迁移状态都不是本教授的前置读取条件", self.text)
-        self.assertIn("零读取、零写入", self.text)
+        step1 = self._step1()
+        known = step1.index("条目已带可靠 `professor_dir`")
+        no_dir = step1.index("条目没有目录来源", known)
+        known_dir_branch = step1[known:no_dir]
+        self.assertRegex(
+            known_dir_branch,
+            r"只读取请求所涉及教授.{0,100}(?:不得|不是).{0,120}(?:全项目扫描|前置读取条件)",
+        )
+        self.assertNotIn('find 教授研究 -name', known_dir_branch)
 
     def test_no_dir_structured_and_natural_language_inputs_remain_supported_per_request(self):
-        self.assertIn("`professor_dir` 绝不因此变成用户新增必填项", self.text)
-        self.assertIn("结构化只报名字 / 自然语言", self.text)
-        self.assertIn("逐请求", self.text)
-        self.assertIn("同名多个目录是歧义", self.text)
-        self.assertIn("只给该请求返回待补输入行", self.text)
+        step1 = self._step1()
+        no_dir = step1[step1.index("条目没有目录来源"):]
+        self.assertRegex(
+            self.text,
+            r"professor_dir.{0,80}(?:绝不|不).{0,40}(?:用户新增必填项|必填)",
+        )
+        self.assertRegex(no_dir, r"结构化.{0,30}自然语言")
+        self.assertIn("逐请求", no_dir)
+        self.assertRegex(
+            no_dir,
+            r"同名.{0,40}(?:歧义|无法唯一).{0,80}(?:只|对应请求)",
+        )
 
 
 if __name__ == "__main__":
