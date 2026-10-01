@@ -59,14 +59,14 @@ class Gate2EvidenceTests(unittest.TestCase):
         self.assertEqual(result.events[0]['phase'], 'prerequisite')
         self.assertEqual(result.events[0]['verdict'], 'INVALID_TEST_EXECUTION')
 
-    def test_subtest_failure_is_fail_and_cleanup_error_retains_product_failure(self):
+    def test_product_failure_stays_fail_when_later_cleanup_is_invalid(self):
         class Sample(unittest.TestCase):
             def test_value(self):
                 with self.subTest(value=1):
                     self.assertEqual(1, 2)
                 self.addCleanup(lambda: (_ for _ in ()).throw(OSError('cleanup failed')))
         result = self.run_sample(Sample)
-        self.assertEqual(classify(result, []), 'INVALID_TEST_EXECUTION')
+        self.assertEqual(classify(result, []), 'FAIL')
         self.assertEqual([e['verdict'] for e in result.events],
                          ['FAIL', 'INVALID_TEST_EXECUTION'])
 
@@ -92,14 +92,13 @@ class Gate2EvidenceTests(unittest.TestCase):
         self.assertEqual(classify(self.run_sample(Skipped), []), 'NOT TESTED')
         result.started.append('incomplete.test')
         self.assertEqual(classify(result, []), 'INVALID_TEST_EXECUTION')
-        class Interrupted(unittest.TestCase):
-            def test_a_failure(self):
-                self.assertEqual(1, 2)
-            def test_b_interrupt(self):
+
+        class InterruptedOnly(unittest.TestCase):
+            def test_interrupt(self):
                 raise KeyboardInterrupt('execution interrupted')
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'evidence.json'
-            suite = unittest.defaultTestLoader.loadTestsFromTestCase(Interrupted)
+            suite = unittest.defaultTestLoader.loadTestsFromTestCase(InterruptedOnly)
             with mock.patch.object(unittest.TestLoader, 'discover', return_value=suite), \
                     mock.patch.object(sys, 'argv', ['gate2_evidence', '--start', directory,
                                                    '--pattern', 'test_*.py', '--out', str(output)]), \
@@ -108,6 +107,22 @@ class Gate2EvidenceTests(unittest.TestCase):
             evidence = json.loads(output.read_text())
             self.assertEqual(evidence['verdict'], 'INVALID_TEST_EXECUTION')
             self.assertEqual(evidence['interruption']['type'], 'KeyboardInterrupt')
-            self.assertEqual(evidence['tests_run'], 2)
+
+        class FailThenInterrupted(unittest.TestCase):
+            def test_a_failure(self):
+                self.assertEqual(1, 2)
+            def test_b_interrupt(self):
+                raise KeyboardInterrupt('execution interrupted')
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'evidence.json'
+            suite = unittest.defaultTestLoader.loadTestsFromTestCase(FailThenInterrupted)
+            with mock.patch.object(unittest.TestLoader, 'discover', return_value=suite), \
+                    mock.patch.object(sys, 'argv', ['gate2_evidence', '--start', directory,
+                                                   '--pattern', 'test_*.py', '--out', str(output)]), \
+                    mock.patch('sys.stderr', io.StringIO()):
+                self.assertEqual(main(), 1)
+            evidence = json.loads(output.read_text())
+            self.assertEqual(evidence['verdict'], 'FAIL')
+            self.assertEqual(evidence['interruption']['type'], 'KeyboardInterrupt')
             self.assertEqual(evidence['events'][0]['verdict'], 'FAIL')
             self.assertTrue(evidence['failures'][0]['test_id'].endswith('test_a_failure'))
