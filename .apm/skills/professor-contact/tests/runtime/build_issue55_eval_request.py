@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 
-MODEL = "gpt-5.6-luna"
+MODEL = "gpt-6-luna"
 REASONING = "low"
 TIMEOUT = 900
 PROMPT_TOKEN = "{{PROGRAM_ROOT}}"
