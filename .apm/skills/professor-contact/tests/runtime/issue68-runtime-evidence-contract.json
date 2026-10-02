@@ -1,11 +1,26 @@
 {
-  "revision": "issue-68-runtime-evidence-r10-2026-10-02",
-  "fixture_sha": "a96c239cca0e1e07eb142089e4d379baf4072277",
+  "revision": "issue-68-runtime-evidence-r11-2026-10-02",
+  "fixture_sha": "cd5ee15b29773e4daedd28a2f5c3ecdcfc74bd04",
+  "eval_server_revision": "24ae06f3233c72c56d772050f51f0f4274ac5c84",
   "manual_patch": "no",
   "codex": {
-    "source": "https://github.com/openai/codex/blob/a7660cd15490875b8c22f66e577da115ed927fe3/codex-rs/app-server-protocol/src/protocol/v2/item.rs",
-    "shared_adapter_owns": ["formal spawnAgent senderThreadId/receiverThreadIds", "rawResponseItem/completed message role/content"],
-    "producer_verifier_uses": ["collabAgentToolCall agentsStates status/message", "commandExecution id/command/aggregatedOutput", "item/started then item/completed with runtime_seq"],
+    "sources": [
+      "https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-protocol/src/protocol/v2/thread.rs",
+      "https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-protocol/src/protocol/v2/item.rs"
+    ],
+    "shared_adapter_owns": [
+      "formal spawnAgent senderThreadId/receiverThreadIds from live app-server events",
+      "formal spawnAgent senderThreadId/receiverThreadIds from output.root_thread_read",
+      "rawResponseItem/completed message role/content"
+    ],
+    "root_history_contract": "skills-test-fixtures/codex-root-thread-read@1",
+    "root_history_request": "thread/read threadId=<eval root> includeTurns=true on the same runtime generation",
+    "formal_ownership": "only non-empty spawnAgent senderThreadId plus concrete receiverThreadIds; subAgentActivity, parentThreadId and identity fields cannot create ownership",
+    "producer_verifier_uses": [
+      "collabAgentToolCall agentsStates status/message",
+      "commandExecution id/command/aggregatedOutput",
+      "item/started then item/completed with runtime_seq"
+    ],
     "identity": "diagnostic only; cannot create, rewrite or reject formal ownership"
   },
   "opencode": {
@@ -17,6 +32,7 @@
     "child_events_in_root_stream": false
   },
   "business_payload": ["email_pack", "choices", "choices_scope"],
+  "runner": ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r11.py",
   "runner_attribution_owner": "PC68-D1/P7; actual plan/finalize/immutable scope consumption",
   "native_transport_owner": "PC68-R1; full canonical choices and scope on each formal owner",
   "missing_observation": "BLOCKED_OBSERVABILITY; never guess replacement fields or retry",
