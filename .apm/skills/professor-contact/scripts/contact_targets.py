@@ -874,8 +874,11 @@ def migrate_legacy_targets(program_root: Path) -> dict[str, Any]:
     only after every conflict in that group is resolved in memory. A record with
     reliable identity but invalid content keeps its professor and fails that
     professor's group closed with zero writes — the same verdict first
-    establishment reaches on the same input; only truly unattributable entries
-    are skipped as orphans. The legacy file itself is left untouched for audit.
+    establishment reaches on the same input. Records whose claimed identity
+    facts contradict each other (path conflicts) or that cannot be attributed
+    at all are reported and skipped without blocking their professor's valid
+    records or any other professor. The legacy file itself is left untouched
+    for audit.
     """
     program_root = program_root.resolve()
     legacy_path = program_root / LEGACY_TARGET_FILE
@@ -902,7 +905,6 @@ def migrate_legacy_targets(program_root: Path) -> dict[str, Any]:
         group_professor.setdefault(professor_dir_rel, professor)
         try:
             target = _legacy_entry_to_target(entry)
-            _validate_target_identity(target, local_target_path(program_root / professor_dir_rel), program_root)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             # Identity is reliable, content is not: the record keeps its professor
             # and blocks its own group's write — the same verdict first
@@ -912,6 +914,16 @@ def migrate_legacy_targets(program_root: Path) -> dict[str, Any]:
             owner_of.append(professor_dir_rel)
             entry_error.append(str(exc))
             group_errors.setdefault(professor_dir_rel, str(exc))
+            continue
+        try:
+            _validate_target_identity(target, local_target_path(program_root / professor_dir_rel), program_root)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            # Path conflict: the claimed identity facts contradict each other
+            # (the preview_path is not under the claimed professor_dir), so
+            # ownership is not reliable. Report and skip — never block this
+            # professor's remaining valid records or any other professor.
+            owner_of.append(None)
+            entry_error.append(str(exc))
             continue
         owner_of.append(professor_dir_rel)
         entry_error.append(None)

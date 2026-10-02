@@ -809,6 +809,27 @@ class ContactTargetsTests(unittest.TestCase):
         self.assertFalse(self.target_path.exists())
         self.assertEqual(self.legacy_path.read_bytes(), legacy_before)
 
+    def test_issue64_t3_path_conflicting_entry_is_skipped_without_blocking_its_professor(self):
+        """A path-conflicting record (claimed professor_dir with a preview_path
+        under another directory) is an attribution failure, not content: report
+        and skip it — it must never block the professor's own valid record nor
+        any other professor (R64-15/R64-16), unlike an identity-reliable record
+        whose content fails validation."""
+        self.bootstrap(["dir_A"], {"dir_A": "note A"})
+        a_target = self.read_target()
+        self.target_path.unlink()
+        conflicting = self.a_entry(a_target)
+        conflicting["preview_path"] = str(PROFESSOR_B_DIR / PREVIEW_NAME)
+        self.write_legacy(self.a_entry(a_target), conflicting)
+        legacy_before = self.legacy_path.read_bytes()
+        result = mod.migrate_legacy_targets(self.root)
+        self.assertEqual(result["migrated"], ["教授A"])
+        self.assertEqual([(item["status"], item.get("professor")) for item in result["failures"]],
+                         [("failed", "教授A")])
+        migrated = self.read_target()
+        self.assertEqual(migrated["directions"][0]["user_note"], "note A")
+        self.assertEqual(self.legacy_path.read_bytes(), legacy_before)
+
     def test_issue64_t3_standalone_migration_never_publishes_materially_stale_selection(self):
         self.bootstrap()
         self.write_legacy(self.a_entry())
