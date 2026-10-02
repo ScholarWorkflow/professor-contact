@@ -121,7 +121,7 @@ def _is_professor_local_reference(token: str, filename: str) -> bool:
 
 
 def _is_current_owner_reference(token: str, filename: str) -> bool:
-    return _reference_owner(token, filename) == CURRENT_OWNER
+    return _is_professor_local_reference(token, filename)
 
 
 def _is_reference_bound_to_owner(token: str, filename: str, owner: str) -> bool:
