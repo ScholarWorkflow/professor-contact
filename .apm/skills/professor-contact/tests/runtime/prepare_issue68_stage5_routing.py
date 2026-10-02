@@ -41,6 +41,17 @@ def prepare(program_root, installed_script, output_dir):
         scope[canonical_dir] = [row["email_id"]]
         result = helpers.issue59_write_results(program_root, f"raw-{index}.json", [row["email_id"]])
         raw_results[canonical_dir] = str(result)
+        initial = subprocess.run([sys.executable, str(installed_script), "stage5-plan",
+                                  "--program-root", str(program_root), "--email-pack", str(pack),
+                                  "--template", str(template), "--mode", "first"],
+                                 capture_output=True, text=True, check=False)
+        (output_dir / f"owner-{index}-initial-plan.stdout.json").write_text(initial.stdout, encoding="utf-8")
+        (output_dir / f"owner-{index}-initial-plan.stderr.txt").write_text(initial.stderr, encoding="utf-8")
+        (output_dir / f"owner-{index}-initial-plan.exit-code.txt").write_text(str(initial.returncode) + "\n")
+        initial_payload = json.loads(initial.stdout)
+        if initial.returncode != 0 or initial_payload.get("status") != "ok" \
+                or initial_payload.get("verify", {}).get(row["professor"]) != "needs_recheck:missing":
+            raise ValueError(f"owner {index} initial verification boundary changed: {initial_payload}")
         run = subprocess.run([sys.executable, str(installed_script), "stage5-plan",
                               "--program-root", str(program_root), "--email-pack", str(pack),
                               "--result", str(result), "--template", str(template), "--mode", "first"],
@@ -53,7 +64,7 @@ def prepare(program_root, installed_script, output_dir):
             raise ValueError(f"owner {index} did not stop at the frozen verification gate: {payload}")
         owners.append({"professor": row["professor"], "professor_dir": canonical_dir,
                        "email_pack": str(pack.resolve()), "email_ids": [row["email_id"]],
-                       "expected_result": payload, "result": str(result)})
+                       "expected_result": payload, "initial_plan": initial_payload, "result": str(result)})
     choices.append({"email_id": "unselected::D::I", "transport_sentinel": "noise"})
     broken = program_root / "教授研究" / "Z分野" / "无效样例" / helpers.contact_state.EMAIL_PACK
     broken.parent.mkdir(parents=True)

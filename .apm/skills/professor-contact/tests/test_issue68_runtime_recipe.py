@@ -76,7 +76,8 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
                   "content": [{"type": "input_text", "text": self.payload(owner)}]})
             event(seq + 1, "item/completed", "root", {"type": "collabAgentToolCall", "tool": "wait",
                   "status": "completed", "senderThreadId": "root", "receiverThreadIds": [child],
-                  "agentsStates": {child: {"status": "completed", "message": json.dumps(owner["expected_result"])}}})
+                  "agentsStates": {child: {"status": "completed", "message": json.dumps(
+                      dict(owner["expected_result"], professor_dir=owner["professor_dir"]))}}})
         event(9, "item/started", "root", {"type": "commandExecution", "id": "rebuild"})
         event(10, "item/completed", "root", {"type": "commandExecution", "id": "rebuild",
               "command": self.command("stage5-rebuild-overview"), "aggregatedOutput": "{}"})
@@ -97,7 +98,7 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
             events.append(tool(f"task-{index}", "task", {"subagent_type": verify.AGENT, "prompt": self.payload(owner)},
                                3 + index * 3, 5 + index * 3,
                                '<task id="child" state="completed"><task_result>' +
-                               json.dumps(owner["expected_result"]) + '</task_result></task>'))
+                               json.dumps(dict(owner["expected_result"], professor_dir=owner["professor_dir"])) + '</task_result></task>'))
         events += [tool("rebuild", "bash", {"command": self.command("stage5-rebuild-overview")}, 9, 10, "{}"),
                    {"type": "text", "sessionID": "root", "part": {"text": self.root_result()}}]
         return events, {"fixture_status": "FIXTURE_READY"}
@@ -129,6 +130,41 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
                 payload[field] = value
                 content["text"] = json.dumps(payload)
                 self.assertEqual(verify.verify_codex(response, adapter, self.manifest)["verdict"], "FAIL_PRODUCT")
+
+    def test_observed_wrong_directory_or_success_is_failure_not_missing_evidence(self):
+        for changed in ({"professor_dir": str(self.root / "translated")},
+                        {"status": "ok", "reason_code": None}):
+            with self.subTest(changed=changed):
+                response, adapter = self.codex_evidence()
+                state = response["output"]["app_server_events"][3]["message"]["params"]["item"]["agentsStates"]["child-0"]
+                state["message"] = json.dumps(dict(json.loads(state["message"]), **changed))
+                self.assertEqual(verify.verify_codex(response, adapter, self.manifest)["verdict"], "FAIL_PRODUCT")
+                events, shared = self.opencode_evidence()
+                row = dict(self.manifest["owners"][0]["expected_result"], professor_dir=self.manifest["owners"][0]["professor_dir"])
+                events[1]["part"]["state"]["output"] = '<task state="completed"><task_result>' + json.dumps(dict(row, **changed)) + '</task_result></task>'
+                self.assertEqual(verify.verify_opencode(events, shared, self.manifest)["verdict"], "FAIL_PRODUCT")
+        calls = [{"start": 1, "end": 2, "thread": "root",
+                  "command": self.command("stage5-list-inputs"), "output": self.discovery()},
+                 {"start": 3, "end": 4, "thread": "child-0",
+                  "command": self.command("stage5-plan", ["--email-pack", str(self.root / "translated" / "邮件输入.json")]),
+                  "output": json.dumps({"status": "needs_refresh", "reason_code": "missing_email_pack"})}]
+        result = verify.runtime_checks(calls, self.manifest, [4, 8], [self.root_result()], root="root",
+                                       owner_threads={"child-0": self.manifest["owners"][0]["email_pack"]})
+        self.assertEqual(result["reason_code"], "owner_plan_directory_changed")
+
+    def test_unfinished_input_result_is_consumed_exactly_without_inventing_reason_enum(self):
+        response, adapter = self.codex_evidence()
+        state = response["output"]["app_server_events"][3]["message"]["params"]["item"]["agentsStates"]["child-0"]
+        actual = dict(json.loads(state["message"]), status="needs_input", reason_code="verify_missing_contact_email")
+        state["message"] = json.dumps(actual)
+        root_item = response["output"]["app_server_events"][-1]["message"]["params"]["item"]["content"][0]
+        rows = json.loads(root_item["text"])
+        rows[0] = actual
+        root_item["text"] = json.dumps(rows)
+        self.assertEqual(verify.verify_codex(response, adapter, self.manifest)["verdict"], "PASS")
+        rows[0]["reason_code"] = "invented_by_root"
+        root_item["text"] = json.dumps(rows)
+        self.assertEqual(verify.verify_codex(response, adapter, self.manifest)["verdict"], "FAIL_PRODUCT")
 
     def test_early_or_multiple_rebuild_is_a_product_failure(self):
         events, shared = self.opencode_evidence()

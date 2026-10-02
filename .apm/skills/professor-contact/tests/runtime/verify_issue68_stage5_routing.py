@@ -81,6 +81,32 @@ def result_observed(text, expected):
                for value in json_values(text) for row in objects(value))
 
 
+def owner_outcome(texts, owner):
+    """Routing owns unfinished outcome transport, not Step 2.5 decisions.
+
+    A completed, observable contradictory result is product failure. The
+    plan-with-result precheck proves a blocked prerequisite, not the exact
+    terminal status/reason of the agent's mandatory initial-plan workflow.
+    """
+    rows = [row for text in texts for value in json_values(text) for row in objects(value)
+            if "status" in row and "reason_code" in row]
+    if not rows:
+        return None, verdict("BLOCKED_OBSERVABILITY", "owner_business_result_unobservable")
+    outcomes = []
+    for row in rows:
+        if row.get("professor_dir") != owner["professor_dir"]:
+            return None, verdict("FAIL_PRODUCT", "owner_result_directory_changed", observed_result=row)
+        if row["status"] not in ("needs_input", "needs_refresh") or not isinstance(row["reason_code"], str) \
+                or not row["reason_code"]:
+            return None, verdict("FAIL_PRODUCT", "owner_verification_boundary_bypassed", observed_result=row)
+        outcome = {key: row[key] for key in ("professor_dir", "status", "reason_code")}
+        if outcome not in outcomes:
+            outcomes.append(outcome)
+    if len(outcomes) != 1:
+        return None, verdict("FAIL_PRODUCT", "owner_results_conflict", observed_results=outcomes)
+    return outcomes[0], None
+
+
 def command_action(command, manifest):
     """Only a structured executed shell item can supply a CLI invocation."""
     tokens = shlex.split(command)
@@ -113,7 +139,7 @@ def command_action(command, manifest):
     return {"action": action, "flags": flags}
 
 
-def runtime_checks(calls, manifest, completion_points, root_texts, root=None):
+def runtime_checks(calls, manifest, completion_points, root_texts, root=None, outcomes=None, owner_threads=None):
     discovery, plans, rebuilds = [], [], []
     for call in calls:
         try:
@@ -133,6 +159,9 @@ def runtime_checks(calls, manifest, completion_points, root_texts, root=None):
         if parsed["action"] == "stage5-list-inputs":
             discovery.append(parsed)
         elif parsed["action"] == "stage5-plan":
+            expected_pack = (owner_threads or {}).get(call.get("thread"))
+            if expected_pack and parsed["flags"].get("--email-pack") != expected_pack:
+                return verdict("FAIL_PRODUCT", "owner_plan_directory_changed", observed_call=call["command"])
             plans.append(parsed)
         else:
             rebuilds.append(parsed)
@@ -171,9 +200,14 @@ def runtime_checks(calls, manifest, completion_points, root_texts, root=None):
         return verdict("FAIL_PRODUCT", "aggregate_precedes_result_consumption")
     for owner in manifest["owners"]:
         rows = [row for text in root_texts for value in json_values(text) for row in objects(value)]
+        expected = (outcomes or {}).get(owner["email_pack"],
+                    dict(owner["expected_result"], professor_dir=owner["professor_dir"]))
         if not any(row.get("professor_dir") == owner["professor_dir"]
-                   and row.get("status") == owner["expected_result"]["status"]
-                   and row.get("reason_code") == owner["expected_result"]["reason_code"] for row in rows):
+                   and row.get("status") == expected["status"]
+                   and row.get("reason_code") == expected["reason_code"] for row in rows):
+            if any(row.get("professor_dir") == owner["professor_dir"] and "status" in row
+                   and "reason_code" in row for row in rows):
+                return verdict("FAIL_PRODUCT", "root_changed_owner_result")
             return verdict("BLOCKED_OBSERVABILITY", "root_consumed_result_unobservable")
     return verdict("PASS", owner_pack_set=sorted(expected_packs), rebuild_count=len(rebuilds))
 
@@ -255,7 +289,7 @@ def verify_codex(response, adapter, manifest):
                 calls.append({"start": command_starts[item_id], "end": seq,
                               "command": item.get("command", ""), "output": item.get("aggregatedOutput", ""),
                               "thread": thread})
-    assigned = {}
+    assigned, outcomes = {}, {}
     for child in children:
         # Native startup can inject user-role environment messages. Only
         # messages containing a business email_pack object are caller input.
@@ -274,11 +308,14 @@ def verify_codex(response, adapter, manifest):
             return verdict("BLOCKED_OBSERVABILITY", "completion_or_wait_unobservable")
         if waits[child] < complete[child]:
             return verdict("FAIL_PRODUCT", "wait_precedes_owner_completion")
-        if not any(result_observed(text, owner["expected_result"]) for text in results.get(child, [])):
-            return verdict("BLOCKED_OBSERVABILITY", "owner_business_result_unobservable")
+        outcome, problem = owner_outcome(results.get(child, []), owner)
+        if problem:
+            return problem
+        outcomes[pack] = outcome
     if raw.get("termination_reason") != "completed":
         return verdict("BLOCKED_DEPENDENCY", "root_turn_not_completed")
-    result = runtime_checks(calls, manifest, list(waits.values()), root_texts, root=root)
+    result = runtime_checks(calls, manifest, list(waits.values()), root_texts, root=root, outcomes=outcomes,
+                            owner_threads={child: pack for pack, child in assigned.items()})
     result["identity_diagnostics"] = adapter.get("dispatch", {}).get("agent_identity", {})
     return result
 
@@ -344,7 +381,7 @@ def verify_opencode(events, fixture_verdict, manifest):
         return verdict("BLOCKED_OBSERVABILITY", "structured_tasks_unobservable")
     if len(tasks) != 2:
         return verdict("FAIL_PRODUCT", "wrong_owner_count")
-    assigned = {}
+    assigned, outcomes = {}, {}
     for call_id, inputs in tasks.items():
         pack, problem = business_payload(inputs.get("prompt"), manifest)
         if problem:
@@ -355,9 +392,11 @@ def verify_opencode(events, fixture_verdict, manifest):
         if call_id not in done:
             return verdict("BLOCKED_OBSERVABILITY", "foreground_task_terminal_unobservable")
         owner = next(owner for owner in manifest["owners"] if owner["email_pack"] == pack)
-        if not result_observed(done[call_id][1], owner["expected_result"]):
-            return verdict("BLOCKED_OBSERVABILITY", "owner_business_result_unobservable")
-    return runtime_checks(list(calls.values()), manifest, [row[0] for row in done.values()], root_texts)
+        outcome, problem = owner_outcome([done[call_id][1]], owner)
+        if problem:
+            return problem
+        outcomes[pack] = outcome
+    return runtime_checks(list(calls.values()), manifest, [row[0] for row in done.values()], root_texts, outcomes=outcomes)
 
 
 def main():
