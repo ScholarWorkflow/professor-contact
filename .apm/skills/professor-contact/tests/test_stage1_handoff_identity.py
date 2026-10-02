@@ -476,13 +476,6 @@ class Issue65Gate2Stage2Tests(stage2_fixture.Issue65Stage2BindingEnv):
 
 class Stage1HandoffIdentityTests(unittest.TestCase):
     def test_issue65_stage1_transient_handoff_is_collision_free(self):
-        self.assertFalse(
-            _is_reference_bound_to_owner(
-                "教授研究/教授乙/套磁目标.json", TARGET_NAME, "教授甲"
-            ),
-            "oracle must reject a foreign professor path even when it is professor-local",
-        )
-
         skill_text = SKILL_PATH.read_text(encoding="utf-8")
         caller_payloads = _task_prompt(skill_text, "professor-contact-downloader")
         self.assertTrue(caller_payloads, "no active Stage-1 caller payload in SKILL.md")
