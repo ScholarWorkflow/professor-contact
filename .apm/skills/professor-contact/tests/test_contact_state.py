@@ -3043,28 +3043,49 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
             code = exc.code if isinstance(exc.code, int) else 1
         return buffer.getvalue(), code
 
+    def _run_formal(self, func, *args, scenario):
+        """Run one formal Stage-2 command; escaping crashes fail the assertion.
+
+        A raw product exception must not escape as a test-body error: the
+        product-call boundary converts it into an assertion failure so the
+        evaluator can attribute it to the producer instead of the fixture.
+        """
+        try:
+            return self._capture(func, *args)
+        except Exception as exc:
+            self.fail(f"{scenario} product call raised {type(exc).__name__}: {exc}")
+
+    def _formal_ok_payload(self, text: str, code, scenario: str) -> dict:
+        """Parse one formal command's stdout that must be an ok terminal."""
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            self.fail(f"{scenario} emitted unparseable output: {text!r}")
+        self.assertEqual(payload.get("status"), "ok", f"{scenario} terminal: {payload}")
+        self.assertIsNone(code, f"{scenario} exit code: {code!r}")
+        return payload
+
     def preflight(self):
         args = argparse.Namespace(
             program_root=str(self.root), professor=self.DISPLAY,
             target_file=str(self.a_target), paper_analysis="relevant",
             gap_scope="selected_direction", freshness_scope="shortlist",
             max_relevant_papers=None)
-        text, code = self._capture(contact_state.cmd_stage2_preflight, args)
-        self.assertIsNone(code, f"preflight exited: {text}")
-        return json.loads(text)
+        text, code = self._run_formal(contact_state.cmd_stage2_preflight, args,
+                                      scenario="preflight")
+        return self._formal_ok_payload(text, code, "preflight")
 
     def plan(self):
         args = argparse.Namespace(facts=str(self.facts_path))
-        text, code = self._capture(contact_state.cmd_stage2_plan, args)
-        self.assertIsNone(code, f"plan exited: {text}")
-        return json.loads(text)
+        text, code = self._run_formal(contact_state.cmd_stage2_plan, args, scenario="plan")
+        return self._formal_ok_payload(text, code, "plan")
 
     def finalize(self):
         args = argparse.Namespace(facts=str(self.facts_path),
                                   results=str(self.results),
                                   decision_file=None, resolved_directions=None,
                                   preflight_file=str(self.preflight_file))
-        return self._capture(contact_state.cmd_stage2_finalize, args)
+        return self._run_formal(contact_state.cmd_stage2_finalize, args, scenario="finalize")
 
     def outputs_state(self):
         state = {}
