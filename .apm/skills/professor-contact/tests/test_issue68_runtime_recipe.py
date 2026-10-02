@@ -206,7 +206,7 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
         request = build.build_request(self.root, "固定业务输入")
         tokens = shlex.split(request["command"])
         self.assertEqual(tokens, ["--json", "--skip-git-repo-check", "--sandbox", "workspace-write", "--cd", str(self.root),
-                         "--model", "gpt-5.6-luna", "--config", 'model_reasoning_effort="low"', "--config",
+                         "--model", "gpt-6-luna", "--config", 'model_reasoning_effort="low"', "--config",
                          "agents.max_concurrent_threads_per_session=2", "--config",
                          'projects={' + json.dumps(str(self.root)) + '={trust_level="trusted"}}', "--", "固定业务输入"])
 
