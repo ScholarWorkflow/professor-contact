@@ -62,14 +62,14 @@ def _bash_blocks(text: str) -> list[str]:
     return _fenced(text, r"(?:bash|shell|sh)")
 
 
-def _json_blocks(text: str) -> list[dict]:
+def _json_blocks(text: str) -> list[dict | list]:
     payloads = []
     for block in _fenced(text, "json"):
         try:
             payload = json.loads(block)
         except json.JSONDecodeError:
             continue
-        if isinstance(payload, dict):
+        if isinstance(payload, (dict, list)):
             payloads.append(payload)
     return payloads
 
@@ -526,7 +526,7 @@ class Stage1HandoffIdentityTests(unittest.TestCase):
         return_section = _markdown_section(downloader_text, "Return")
         self.assertTrue(return_section, "downloader has no active Return section")
         return_payloads = _json_blocks(return_section)
-        self.assertTrue(return_payloads, "downloader Return section has no JSON object")
+        self.assertTrue(return_payloads, "downloader Return section has no JSON container")
 
         matched_pairs: set[tuple[str, str]] = set()
         for payload in return_payloads:
