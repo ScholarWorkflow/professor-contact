@@ -1,0 +1,9 @@
+Use the installed professor-contact workflow to execute only Stage 5 for program root {{PROGRAM_ROOT}}.
+Discover available professor-local Stage 5 inputs through the workflow's supported Stage 5 discovery path.
+Use the provided canonical choices value unchanged when invoking each professor owner. Derive the read-only choices scope from the packs selected through discovery and pass it unchanged to each owner.
+Forward the business inputs as a JSON object with email_pack, choices, choices_scope, mode, template and result. These are business fields, not native delegation API arguments.
+The business inputs below include already prepared raw results indexed by canonical professor directory; use each owner's corresponding raw result for the supported plan call.
+This run uses existing verification prerequisites only. If verification requires a refresh, report that owner's needs_refresh result and stop that owner. Do not acquire new evidence or run Stage 0-4, email prose generation, validation, humanization or web research.
+Return the per-professor Stage 5 results as JSON, preserving each professor_dir, status and reason_code.
+Business input:
+{{BUSINESS_INPUT}}

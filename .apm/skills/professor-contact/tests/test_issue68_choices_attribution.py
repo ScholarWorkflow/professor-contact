@@ -1,6 +1,6 @@
 """Issue #68 plan r10 §2/§3: choices attribution and read-only discovery.
 
-The r10 plan freezes the cross-professor choice identity as
+The r10 candidate plan specifies the cross-professor choice identity as
 ``(canonical professor_dir, email_id)``. These cases lock the deterministic
 runner side of that contract: explicit ``professor_dir`` rows partition first,
 legacy rows without a directory compute ``original_candidates`` from the
@@ -50,6 +50,31 @@ class R10TwoProfessorFixture:
             [{"professor": A, "evidence": "fresh"},
              {"professor": B, "evidence": "fresh"}], case=self)
 
+    def colliding_owner_fixture(self):
+        """Two legal packs with the same display name and compiled email id.
+
+        Both owners share the synthetic recipient evidence, but own separate
+        directories, verification caches, packs and eventual output/state.
+        The scope is derived from these packs, never invented independently.
+        """
+        fixture = helpers.write_issue59_stage5_fixture(
+            self.root, [{"professor": A, "evidence": "fresh"}], case=self)
+        a_dir = fixture["dirs"][A].resolve()
+        b_dir = (self.root / "教授研究" / "Y分野" / A).resolve()
+        b_dir.mkdir(parents=True)
+        row = helpers.issue59_email_row(
+            A, b_dir, contact_evidence=fixture["rows"][0]["contact_evidence"])
+        b_pack = helpers.write_stage5_local_pack(self.root, A, b_dir, [row])
+        helpers.write_issue59_verify(self.root, b_dir, A)
+        packs = [fixture["pack"], b_pack]
+        scope = {}
+        for path in packs:
+            pack = json.loads(path.read_text(encoding="utf-8"))
+            scope[str(Path(pack["professor_dir"]).resolve())] = [
+                email["email_id"] for email in pack["emails"]]
+        self.assertEqual(scope, {str(a_dir): [A_ID], str(b_dir): [A_ID]})
+        return a_dir, b_dir, packs, self.write_json("collision-scope.json", scope)
+
 
 class TestStage5ChoicesAttribution(helpers.Stage5LocalHarness, R10TwoProfessorFixture,
                                    BaseEnv):
@@ -97,33 +122,44 @@ class TestStage5ChoicesAttribution(helpers.Stage5LocalHarness, R10TwoProfessorFi
         """With original_candidates={A,B}, excluding the explicitly satisfied A
         leaves B: the legacy row binds B and A is neither duplicate nor
         ambiguous."""
-        fixture = self.a_b_fixture()
-        a_dir, b_dir = fixture["dirs"][A], fixture["dirs"][B]
-        scope = self.write_json("r10-cx4-scope.json",
-                                {str(a_dir): [A_ID], str(b_dir): [A_ID]})
+        a_dir, b_dir, packs, scope = self.colliding_owner_fixture()
         results = self.write_results("r10-cx4-raw.json", [A_ID])
-        choices = self.write_json("r10-cx4-choices.json",
-                                  [explicit_row(A_ID, a_dir),
-                                   helpers.issue59_choices(A_ID)])
-        jobs = self.plan("--result", results, "--choices", choices,
-                         "--choices-scope", scope, "--email-id", A_ID,
-                         pack=self.pack_for(A))
-        self.assertEqual(jobs["status"], "ok", jobs)
-        self.assertEqual([row["email_id"] for row in jobs["drafts"]], [A_ID], jobs)
+        rows = [explicit_row(A_ID, a_dir), helpers.issue59_choices(A_ID)]
+        for order in (rows, list(reversed(rows))):
+            choices = self.write_json("r10-cx4-choices.json", order)
+            for surface in ("plan", "finalize"):
+                for pack in packs:
+                    with self.subTest(order=order, surface=surface, pack=pack):
+                        jobs = self.plan("--result", results, "--choices", choices,
+                                         "--choices-scope", scope, "--email-id", A_ID,
+                                         pack=pack)
+                        self.assertEqual(jobs["status"], "ok", jobs)
+                        self.assertEqual([row["email_id"] for row in jobs["drafts"]], [A_ID])
+                        if surface == "finalize":
+                            other = packs[1] if pack == packs[0] else packs[0]
+                            other_dir = Path(json.loads(other.read_text())["professor_dir"])
+                            other_before = {p: p.read_bytes() for p in other_dir.iterdir() if p.is_file()}
+                            humanized = self.root / "collision-humanized.txt"
+                            humanized.write_text(jobs["drafts"][0]["draft"], encoding="utf-8")
+                            out = self.finalize("--result", results, "--choices", choices,
+                                                "--choices-scope", scope, "--email-id", A_ID,
+                                                "--humanized", humanized, pack=pack)
+                            self.assertEqual(out["status"], "ok", out)
+                            state = Path(json.loads(pack.read_text())["professor_dir"]) / contact_state.EMAIL_STATE
+                            self.assertTrue(state.is_file())
+                            self.assertEqual({p: p.read_bytes() for p in other_dir.iterdir() if p.is_file()},
+                                             other_before)
 
     def test_issue68_r10_undecided_multi_candidate_owner_returns_needs_input(self):
-        fixture = self.a_b_fixture()
-        a_dir, b_dir = fixture["dirs"][A], fixture["dirs"][B]
-        scope = self.write_json("r10-amb-scope.json",
-                                {str(a_dir): [A_ID], str(b_dir): [A_ID]})
+        a_dir, b_dir, packs, scope = self.colliding_owner_fixture()
         results = self.write_results("r10-amb-raw.json", [A_ID])
         choices = self.write_json("r10-amb-choices.json",
                                   [helpers.issue59_choices(A_ID)])
-        for surface in ("plan", "finalize"):
-            with self.subTest(surface=surface):
+        for surface, pack in ((surface, pack) for surface in ("plan", "finalize") for pack in packs):
+            with self.subTest(surface=surface, pack=pack):
                 before = self.stage5_artifact_snapshot()
                 out = self.stage5_call(surface, results=results, choices=choices,
-                                       email_id=A_ID, pack=self.pack_for(A),
+                                       email_id=A_ID, pack=pack,
                                        scope=scope)
                 self.assertEqual(out["status"], "needs_input", out)
                 self.assertEqual(out["reason_code"], "choice_owner_ambiguous", out)
@@ -152,7 +188,7 @@ class TestStage5ChoicesAttribution(helpers.Stage5LocalHarness, R10TwoProfessorFi
         b_jobs = self.plan("--result", b_results, "--choices", choices,
                            "--choices-scope", scope, "--email-id", B_ID,
                            pack=self.pack_for(B))
-        self.assertEqual(b_jobs["status"], "error", b_jobs)
+        self.assertEqual(b_jobs["status"], "needs_input", b_jobs)
         self.assertEqual(b_jobs["reason_code"], "choice_owner_invalid", b_jobs)
 
     def test_issue68_r10_counterexample5_invalid_explicit_dir_never_transfers_by_id(self):
@@ -318,7 +354,7 @@ class TestStage5ImmutableWrapperForwardsChoicesScope(helpers.Stage5LocalHarness,
     """The wrapper forwards ``--choices-scope`` to its internal plan call, so
     the immutable finalize path shares the exact attribution semantics."""
 
-    def wrapper_finalize(self, *extra):
+    def wrapper_finalize(self, *extra, pack=None):
         template = self.root / "synthetic-template.md"
         if not template.is_file():
             template.write_text(
@@ -327,15 +363,12 @@ class TestStage5ImmutableWrapperForwardsChoicesScope(helpers.Stage5LocalHarness,
                 "{{学習中}}\n{{志望}}", encoding="utf-8")
         return subprocess.run(
             [sys.executable, str(WRAPPER), "stage5-finalize",
-             "--program-root", str(self.root), "--email-pack", str(self.pack_for(A)),
+             "--program-root", str(self.root), "--email-pack", str(pack or self.pack_for(A)),
              "--mode", "first", "--template", str(template), *extra],
             text=True, capture_output=True, check=False)
 
     def test_issue68_r10_wrapper_attribution_matches_the_runner(self):
-        fixture = self.a_b_fixture()
-        a_dir, b_dir = fixture["dirs"][A], fixture["dirs"][B]
-        scope = self.write_json("r10-wrap-scope.json",
-                                {str(a_dir): [A_ID], str(b_dir): [A_ID]})
+        a_dir, b_dir, packs, scope = self.colliding_owner_fixture()
         results = self.write_results("r10-wrap-raw.json", [A_ID])
         choices = self.write_json("r10-wrap-choices.json",
                                   [explicit_row(A_ID, a_dir),
@@ -343,16 +376,20 @@ class TestStage5ImmutableWrapperForwardsChoicesScope(helpers.Stage5LocalHarness,
         common = ["--result", str(results), "--choices", str(choices),
                   "--email-id", A_ID]
 
-        without_scope = self.wrapper_finalize(*common)
+        without_scope = self.wrapper_finalize(*common, pack=packs[0])
         self.assertNotEqual(without_scope.returncode, 0, without_scope.stdout)
         self.assertEqual(json.loads(without_scope.stdout)["reason_code"],
                          "invalid_result_json", without_scope.stdout)
 
-        with_scope = self.wrapper_finalize(*common, "--choices-scope", str(scope))
-        payload = json.loads(with_scope.stdout)
-        self.assertEqual(payload["status"], "ok", payload)
-        self.assertEqual([row["email_id"] for row in payload["emails"]], [A_ID],
-                         payload)
+        for pack in packs:
+            with self.subTest(pack=pack):
+                with_scope = self.wrapper_finalize(*common, "--choices-scope", str(scope), pack=pack)
+                payload = json.loads(with_scope.stdout)
+                self.assertEqual(payload["status"], "ok", payload)
+                self.assertEqual([row["email_id"] for row in payload["emails"]], [A_ID], payload)
+                owner_dir = Path(json.loads(pack.read_text())["professor_dir"])
+                for row in payload["emails"]:
+                    self.assertEqual(Path(row["md"]).parent.resolve(), owner_dir.resolve())
 
 
 if __name__ == "__main__":

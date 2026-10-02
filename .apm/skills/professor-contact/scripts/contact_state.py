@@ -7567,10 +7567,14 @@ def stage5_choices_by_id(args, owner: dict, emails: list, program_root: Path) ->
     attributed: dict = {}
     explicit: dict = {}
     ambiguous_ids: set = set()
+    legacy_rows = []
     for row in rows:
         row_id = row.get("email_id")
         raw_dir = row.get("professor_dir")
-        if isinstance(raw_dir, str) and raw_dir.strip():
+        if "professor_dir" in row:
+            if not isinstance(raw_dir, str) or not raw_dir.strip():
+                # An invalid explicit directory is never a legacy binding.
+                continue
             canonical = str(Path(raw_dir).resolve())
             target = scope.get(canonical)
             if target is None:
@@ -7578,13 +7582,10 @@ def stage5_choices_by_id(args, owner: dict, emails: list, program_root: Path) ->
                 # set): the row leaves with its professor, whatever id it names.
                 continue
             if row_id not in target:
-                if canonical == owner_dir and any(
-                        row_id in ids for dir_, ids in scope.items()
-                        if dir_ != owner_dir):
-                    fail("choice_owner_invalid",
-                         f"{row_id}: explicit row names this professor but that "
-                         "email_id belongs to another selected professor's scope",
-                         email_id=row_id, professor_dir=canonical)
+                if canonical == owner_dir:
+                    soft_exit("needs_input", "choice_owner_invalid",
+                              message=f"{row_id}: 显式目录内的邮件编号不属于本教授当前执行范围。未写盘。",
+                              email_id=row_id, professor_dir=canonical)
                 continue
             # A legal explicit binding counts for the exclusion rule no matter
             # which professor it names — the owner's own explicit row satisfies
@@ -7593,6 +7594,11 @@ def stage5_choices_by_id(args, owner: dict, emails: list, program_root: Path) ->
             if canonical == owner_dir:
                 attributed.setdefault(row_id, []).append(row)
             continue
+        legacy_rows.append(row)
+    # Resolve legacy rows only after every legal explicit binding is known.
+    # Input order cannot change ownership or turn a valid choice into ambiguity.
+    for row in legacy_rows:
+        row_id = row.get("email_id")
         # Legacy row: original candidates from the current execution scope only.
         candidates = sorted(dir_ for dir_, ids in scope.items() if row_id in ids)
         if not candidates:
@@ -8544,11 +8550,11 @@ def cmd_stage5_rebuild_overview(args) -> None:
     program_root = Path(args.program_root)
     research_root = program_root / "教授研究"
     sources = load_header_sources(program_root)
-    projections = load_projections(program_root)
     overview_rows = ["| 教授 | 方向（ja/zh） | 收件邮箱 | 核验 | 首封邮件 | 跟进邮件 | 首封纯文本 | 跟进纯文本 |",
                      "|---|---|---|---|---|---|---|---|"]
     professors = 0
     rendered = 0
+    generated_at = []
     for pack_path in (sorted(research_root.rglob(EMAIL_PACK)) if research_root.is_dir() else []):
         if pack_path.parent == research_root:
             # The legacy program-level pack is Issue #67's migration input and
@@ -8597,6 +8603,10 @@ def cmd_stage5_rebuild_overview(args) -> None:
             followup = (entry.get("followup") or {}).get("files") or {}
             if not initial and not followup:
                 continue
+            for value in (entry.get("generated_at"),
+                          (entry.get("followup") or {}).get("generated_at")):
+                if isinstance(value, str) and value:
+                    generated_at.append(value)
             rendered += 1
             overview_rows.append(
                 f"| {email.get('professor')} | {email.get('name_ja')}/{email.get('name_zh')} | "
@@ -8604,17 +8614,17 @@ def cmd_stage5_rebuild_overview(args) -> None:
                 f"{link(followup.get('md'), '跟进 .md')} | {link(initial.get('txt'), '首封 .txt')} | "
                 f"{link(followup.get('txt'), '跟进 .txt')} |")
     overview_body = ("# 套磁邮件总览\n\n"
-                     f"> {now_utc()} ｜ 由 contact_state 渲染\n\n" +
+                     f"> {max(generated_at, default='尚无已提交邮件')} ｜ 由 contact_state 渲染\n\n" +
                      "\n".join(overview_rows) + "\n")
     overview_path = research_root / EMAIL_OVERVIEW
-    conflict = projection_conflict(overview_path, overview_body, projections, EMAIL_OVERVIEW)
-    if conflict:
-        soft_exit("needs_decision", conflict["reason_code"], target=conflict.get("target"))
+    if overview_path.exists():
+        header, existing_body = split_frontmatter(overview_path.read_text(encoding="utf-8"))
+        if not header or header.get("managed_by") != MANAGED_BY or \
+                header.get("render_sha256") != sha256_text(existing_body):
+            soft_exit("needs_decision", "manual_markdown_changed", target=str(overview_path))
     body_sha = sha256_text(overview_body)
     atomic_write(overview_path, render_frontmatter(
         sha256_obj({"projection": EMAIL_OVERVIEW, "body": body_sha}), body_sha) + overview_body)
-    projections.setdefault("render", {})[EMAIL_OVERVIEW] = {"sha256": body_sha}
-    save_projections(program_root, projections)
     emit({"status": "ok", "overview_md": str(overview_path), "professors": professors,
           "emails": rendered})
 

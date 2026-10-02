@@ -2961,6 +2961,14 @@ class TestStage5PerProfessorState(Stage5LocalHarness, BaseEnv):
                 self.assertEqual(payload["reason_code"], "invalid_params", payload)
                 self.assertIn("--email-pack", payload["message"], payload)
                 self.assertEqual(self.stage5_artifact_snapshot(), before)
+                missing = parse(run_cli(
+                    f"stage5-{surface}", "--program-root", self.root,
+                    "--email-pack", self.prof_dir / contact_state.EMAIL_PACK,
+                    "--result", self.root / "unused-raw.json",
+                    "--choices", self.root / "unused-choices.json"))
+                self.assertEqual(missing["status"], "needs_refresh", missing)
+                self.assertEqual(missing["reason_code"], "missing_email_pack", missing)
+                self.assertEqual(self.stage5_artifact_snapshot(), before)
         self.assertTrue(legacy.is_file(), "Stage 5 consumed the legacy pack")
 
     def test_issue68_t68_1c_local_pack_must_prove_one_professor(self):
@@ -3243,6 +3251,53 @@ class TestStage5PerProfessorState(Stage5LocalHarness, BaseEnv):
                 self.assertEqual(out["status"], "ok", out)
                 self.assertEqual(overview.read_bytes(), overview_before)
                 self.assertEqual(registry.read_bytes(), registry_before)
+
+    def test_issue68_unselected_malformed_local_row_is_noise(self):
+        fixture = write_issue59_stage5_fixture(self.root, [
+            {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"} ], case=self)
+        pack = json.loads(fixture["pack"].read_text(encoding="utf-8"))
+        pack["emails"].append({"email_id": "unselected", "professor_dir": "/invalid", "source_hash": "bad"})
+        fixture["pack"].write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
+        results, choices = self.inputs("local-noise", [ISSUE59_EMAIL_ID])
+        plan = self.plan("--result", results, "--choices", choices, "--email-id", ISSUE59_EMAIL_ID)
+        self.assertEqual(plan["status"], "ok", plan)
+        humanized = self.root / "local-noise-body.txt"
+        humanized.write_text(plan["drafts"][0]["draft"], encoding="utf-8")
+        committed = self.finalize("--result", results, "--choices", choices, "--email-id", ISSUE59_EMAIL_ID,
+                                  "--humanized", humanized)
+        self.assertEqual(committed["status"], "ok", committed)
+        state = json.loads((self.prof_dir / contact_state.EMAIL_STATE).read_text(encoding="utf-8"))
+        self.assertEqual(set(state["emails"]), {ISSUE59_EMAIL_ID})
+
+    def test_issue68_validation_updates_only_the_named_local_state(self):
+        fixture = write_issue59_stage5_fixture(self.root, [
+            {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
+            {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh"}], case=self)
+        a_dir = fixture["dirs"][ISSUE59_PROFESSOR]
+        b_dir = fixture["dirs"][ISSUE59_OTHER_PROFESSOR]
+        results, choices = self.inputs("validation-owner", [ISSUE59_EMAIL_ID])
+        humanized = self.humanized("validation-owner", results, choices)
+        committed = self.finalize("--result", results, "--choices", choices,
+                                  "--humanized", humanized, "--email-id", ISSUE59_EMAIL_ID)
+        self.assertEqual(committed["status"], "ok", committed)
+        (b_dir / contact_state.EMAIL_STATE).write_text(ISSUE59_MALFORMED_JSON, encoding="utf-8")
+        write_issue59_stale_overview(self.root)
+        def snapshot():
+            return {str(path.relative_to(self.root)): path.read_bytes()
+                    for path in (self.root / "教授研究").rglob("*") if path.is_file()}
+        before = snapshot()
+        validation = self.write_json("validation.json", {"results": [{
+            "email_id": ISSUE59_EMAIL_ID, "result": "pass", "rounds": 1, "issues": []}]})
+        out = parse(run_cli("stage5-record-validation", "--professor-dir", a_dir,
+                            "--validation-file", validation))
+        self.assertEqual(out["status"], "ok", out)
+        state_path = a_dir / contact_state.EMAIL_STATE
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["emails"][ISSUE59_EMAIL_ID]["validation"]["result"], "pass")
+        after = snapshot()
+        state_key = str(state_path.relative_to(self.root))
+        self.assertEqual({p: b for p, b in before.items() if p != state_key},
+                         {p: b for p, b in after.items() if p != state_key})
 
     def test_issue68_counterexample_row_cannot_claim_another_professor(self):
         fixture = write_issue59_stage5_fixture(self.root, [

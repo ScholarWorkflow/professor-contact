@@ -8,11 +8,16 @@ malformed local pack or state fails closed before the aggregate is touched.
 """
 
 import importlib.util
+import hashlib
+import io
+import contextlib
 import json
 import re
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("contact_state_test_helpers",
@@ -119,27 +124,49 @@ class TestStage5OverviewRebuild(helpers.Stage5LocalHarness, BaseEnv):
         self.commit(A, A_ID)
         first = self.rebuild()
         self.assertEqual(first["status"], "ok", first)
-        table_before = self.table()
+        bytes_before = self.overview.read_bytes()
         local_before = self.local_surfaces()
+        # Distinct clock values must not change a projection of fixed inputs.
+        with patch.object(contact_state, "now_utc", return_value="2099-01-01T00:00:00Z"):
+            with contextlib.redirect_stdout(io.StringIO()):
+                contact_state.cmd_stage5_rebuild_overview(SimpleNamespace(program_root=self.root))
+        self.assertEqual(self.overview.read_bytes(), bytes_before)
         self.overview.unlink()
 
         second = self.rebuild()
         self.assertEqual(second["status"], "ok", second)
-        self.assertEqual(self.table(), table_before, "the rebuilt table is not deterministic")
-        # The projection registry keeps describing the file it just wrote.
-        _, body = contact_state.split_frontmatter(self.overview.read_text(encoding="utf-8"))
-        registry = json.loads(self.registry.read_text(encoding="utf-8"))
-        self.assertEqual((registry.get("render") or {}).get(OVERVIEW, {}).get("sha256"),
-                         contact_state.sha256_text(body),
-                         "the rebuild left a stale render fingerprint")
+        self.assertEqual(self.overview.read_bytes(), bytes_before,
+                         "the rebuilt bytes are not deterministic")
+        header, body = self.overview.read_text(encoding="utf-8").split("\n---\n\n", 1)
+        fields = dict(line.split(": ", 1) for line in header.splitlines()[1:])
+        self.assertEqual(fields["managed_by"], "contact_state")
+        self.assertEqual(fields["render_sha256"], hashlib.sha256(body.encode()).hexdigest())
+        self.assertFalse(self.registry.exists())
         self.assertEqual(self.local_surfaces(), local_before)
+
+    def test_issue68_rebuild_never_reads_or_writes_shared_registry(self):
+        self.commit(A, A_ID)
+        self.registry.write_text(helpers.ISSUE59_MALFORMED_JSON, encoding="utf-8")
+        before = self.registry.read_bytes()
+        original_open = Path.open
+
+        def guarded_open(path, *args, **kwargs):
+            self.assertNotEqual(path.resolve(), self.registry.resolve(),
+                                "overview accessed the shared registry")
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(Path, "open", guarded_open), contextlib.redirect_stdout(io.StringIO()):
+            contact_state.cmd_stage5_rebuild_overview(SimpleNamespace(program_root=self.root))
+        self.assertTrue(self.overview.is_file())
+        self.assertEqual(self.registry.read_bytes(), before)
 
     def test_issue68_t68_7_manual_aggregate_edit_blocks_only_the_rebuild(self):
         self.commit(A, A_ID)
         self.assertEqual(self.rebuild()["status"], "ok")
         edited = self.overview.read_text(encoding="utf-8") + "| 手工 | 手工 | 手工 | 手工 | 手工 | 手工 | 手工 | 手工 |\n"
         self.overview.write_text(edited, encoding="utf-8")
-        overview_before, registry_before = self.overview.read_bytes(), self.registry.read_bytes()
+        overview_before = self.overview.read_bytes()
+        self.assertFalse(self.registry.exists())
         local_before = self.local_surfaces()
 
         out = self.rebuild()
@@ -147,7 +174,7 @@ class TestStage5OverviewRebuild(helpers.Stage5LocalHarness, BaseEnv):
         self.assertEqual(out["reason_code"], "manual_markdown_changed", out)
         self.assertEqual(self.overview.read_bytes(), overview_before,
                          "the rebuild overwrote a manual edit")
-        self.assertEqual(self.registry.read_bytes(), registry_before)
+        self.assertFalse(self.registry.exists())
         self.assertEqual(self.local_surfaces(), local_before)
 
         # The aggregate is not a commit gate: B still commits while A's
