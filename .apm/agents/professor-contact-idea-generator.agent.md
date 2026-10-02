@@ -173,7 +173,7 @@ task(subagent_type: "professor-contact-style-validator",
      prompt: "files: <该教授 套磁想法候选.md 绝对路径>\nartifact: candidates")
 ```
 
-fail → 把 validator 的唯一最终业务 JSON **原样完整落盘**为临时 `validation_file`（拷贝 child 返回的 JSON 正文本身；不得重构字段、不改写 issues、不自行计算 `result/rounds/direction_id`，也绝不手写 `printf`/模板重打），**先**运行 `stage3-record-validation --professor-dir <教授目录> --validation-file <abs>`；返回 `needs_correction=true` 才给 `stage3-plan --validation-file <同一个 abs>`（不传 direction_id：失败范围来自这轮记录）。该 correction job 的 `model_input.current_result` 是当前完整结果，`model_input.validator_issues` 是精确问题，`model_input.repairable_candidate_ids` 是点名可改的候选。只改点名文字并写 plan 返回的 `result_file`，再用相同 `--validation-file` 跑 `stage3-finalize`；runner 会拒绝 ID、顺序、证据与其它机器事实变化，也会拒绝改动未被点名的候选。随后重新 `task(...)` 校验，**最多 2 轮**；每一轮都要记录，第 2 轮的记录就是终局（`pass` 或 `fail_after_2_rounds`）。
+fail → 把 validator 的唯一最终业务 JSON **原样完整落盘**为临时 `validation_file`（拷贝 child 返回的 JSON 正文本身；落盘字节必须与该消息逐字节相同——不得新增结尾换行、不得重新排版或精简任何字段；不得重构字段、不改写 issues、不自行计算 `result/rounds/direction_id`，也绝不手写 `printf`/模板重打；某一条写入通道被拒时，换一条通道把同一份原话重写一遍，绝不改写内容后重新提交），**先**运行 `stage3-record-validation --professor-dir <教授目录> --validation-file <abs>`；返回 `needs_correction=true` 才给 `stage3-plan --validation-file <同一个 abs>`（不传 direction_id：失败范围来自这轮记录）。该 correction job 的 `model_input.current_result` 是当前完整结果，`model_input.validator_issues` 是精确问题，`model_input.repairable_candidate_ids` 是点名可改的候选。只改点名文字并写 plan 返回的 `result_file`，再用相同 `--validation-file` 跑 `stage3-finalize`；runner 会拒绝 ID、顺序、证据与其它机器事实变化，也会拒绝改动未被点名的候选。随后重新 `task(...)` 校验，**最多 2 轮**；每一轮都要记录，第 2 轮的记录就是终局（`pass` 或 `fail_after_2_rounds`）。
 
 **Codex 分支（调用线程 sibling 编排；本 agent 不启动任何子代理）**：你完成 `stage3-finalize` 后本轮即结束；validator 由**调用线程**顺序委派，你只在自己的返回 `notes` 里注明「等待 Codex 调用线程运行 style-validator 校验」：
 

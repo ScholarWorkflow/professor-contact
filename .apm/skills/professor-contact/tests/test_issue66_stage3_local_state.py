@@ -1053,6 +1053,12 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         self.assertGreaterEqual(section.count("立即停止 Stage 3"), 2)
         self.assertIn("不得用 `printf`/模板重打", section)
         self.assertIn("无重构权", section)
+        # Last-mile handoff: byte-exact on-disk content, declined-channel
+        # retry rule, and the post-run transcript comparison.
+        self.assertIn("落盘字节必须与 child 消息逐字节相同", section)
+        self.assertIn("不得新增结尾换行", section)
+        self.assertIn("换一条通道把同一份原话重写一遍", section)
+        self.assertIn("逐字节比对", section)
         # OpenCode bullet carries the same-round source binding and the
         # early-stop on any runner non-success.
         self.assertIn("每一轮只解析一次 profile/source tuple", opencode_bullet)
