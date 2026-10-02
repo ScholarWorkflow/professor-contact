@@ -33,6 +33,7 @@ TARGET_NAME = "套磁目标.json"
 STAGE1_NAME = "套磁阶段1候选.json"
 PROGRAM_STATE_DIR = "教授研究"
 OWNER_PLACEHOLDERS = {"<教授目录>", "<professor_dir>"}
+CURRENT_OWNER = "<current_professor>"
 
 
 def _load_fixture_module(name: str, path: Path):
@@ -94,22 +95,37 @@ def _task_prompt(text: str, agent_name: str) -> list[str]:
 _PATH_STOP = set(" \t\n\"'`(){}[],;|&，。；：（）「」、")
 
 
-def _is_professor_local_reference(token: str, filename: str) -> bool:
-    """Return True only for a reference with an explicit professor owner anchor."""
+def _reference_owner(token: str, filename: str) -> str | None:
+    """Return the owner anchor encoded by one state reference."""
     path = PurePosixPath(token)
     if path.name != filename or ".." in path.parts or token.startswith("/"):
-        return False
+        return None
 
     segments = list(path.parts)
     if segments and segments[0] == "<program_root>":
         segments = segments[1:]
     if len(segments) < 2:
-        return False
+        return None
 
     parent = segments[:-1]
     if len(parent) == 1 and parent[0] in OWNER_PLACEHOLDERS:
-        return True
-    return len(parent) >= 2 and parent[0] == PROGRAM_STATE_DIR
+        return CURRENT_OWNER
+    if len(parent) >= 2 and parent[0] == PROGRAM_STATE_DIR:
+        owner = parent[-1]
+        return CURRENT_OWNER if owner in OWNER_PLACEHOLDERS else owner
+    return None
+
+
+def _is_professor_local_reference(token: str, filename: str) -> bool:
+    return _reference_owner(token, filename) is not None
+
+
+def _is_current_owner_reference(token: str, filename: str) -> bool:
+    return _reference_owner(token, filename) == CURRENT_OWNER
+
+
+def _is_reference_bound_to_owner(token: str, filename: str, owner: str) -> bool:
+    return _reference_owner(token, filename) == owner
 
 
 def _state_reference_scopes(text: str, filename: str) -> tuple[list[str], list[str], list[str]]:
@@ -459,6 +475,13 @@ class Issue65Gate2Stage2Tests(stage2_fixture.Issue65Stage2BindingEnv):
 
 class Stage1HandoffIdentityTests(unittest.TestCase):
     def test_issue65_stage1_transient_handoff_is_collision_free(self):
+        self.assertFalse(
+            _is_reference_bound_to_owner(
+                "教授研究/教授乙/套磁目标.json", TARGET_NAME, "教授甲"
+            ),
+            "oracle must reject a foreign professor path even when it is professor-local",
+        )
+
         skill_text = SKILL_PATH.read_text(encoding="utf-8")
         caller_payloads = _task_prompt(skill_text, "professor-contact-downloader")
         self.assertTrue(caller_payloads, "no active Stage-1 caller payload in SKILL.md")
@@ -471,6 +494,11 @@ class Stage1HandoffIdentityTests(unittest.TestCase):
                 f"Stage-1 caller payload points at non-professor-local authority: {foreign}",
             )
             self.assertEqual(unbound, [], f"Stage-1 caller target is not professor-local: {block}")
+            for value in local:
+                self.assertTrue(
+                    _is_current_owner_reference(value, TARGET_NAME),
+                    f"Stage-1 caller payload hard-codes another professor owner: {value!r}",
+                )
 
         downloader_text = STAGE1_AGENT.read_text(encoding="utf-8")
         stage1_commands = [
@@ -482,8 +510,8 @@ class Stage1HandoffIdentityTests(unittest.TestCase):
             self.assertTrue(flags, f"Stage-1 command omits explicit local target: {block}")
             for value in flags:
                 self.assertTrue(
-                    _is_professor_local_reference(value, TARGET_NAME),
-                    f"Stage-1 command uses a non-professor-local target: {value!r} in {block}",
+                    _is_current_owner_reference(value, TARGET_NAME),
+                    f"Stage-1 command is not bound to the current professor target: {value!r} in {block}",
                 )
 
         downloader_fenced = "\n".join(_fenced(downloader_text))
@@ -506,33 +534,42 @@ class Stage1HandoffIdentityTests(unittest.TestCase):
         return_payloads = _json_blocks(return_section)
         self.assertTrue(return_payloads, "downloader Return section has no JSON object")
 
-        matched_parents: set[str] = set()
+        matched_owners: set[str] = set()
         for payload in return_payloads:
-            target_parents: set[str] = set()
-            snapshot_parents: set[str] = set()
-            for value in _strings(payload):
-                target_parent = _state_parent(value, TARGET_NAME)
-                if target_parent is not None:
-                    self.assertTrue(
-                        _is_professor_local_reference(value, TARGET_NAME),
-                        f"downloader Return JSON contains non-local target: {value}",
-                    )
-                    target_parents.add(target_parent)
-
-                snapshot_parent = _state_parent(value, STAGE1_NAME)
-                if snapshot_parent is not None:
-                    self.assertTrue(
-                        _is_professor_local_reference(value, STAGE1_NAME),
-                        f"downloader Return JSON contains non-local Stage-1 snapshot: {value}",
-                    )
-                    snapshot_parents.add(snapshot_parent)
-
-            matched_parents.update(target_parents & snapshot_parents)
+            target_states = payload.get("target_states")
+            stage1_snapshots = payload.get("stage1_snapshots")
+            self.assertIsInstance(target_states, dict, "downloader Return target_states must be a map")
+            self.assertIsInstance(
+                stage1_snapshots, dict, "downloader Return stage1_snapshots must be a map"
+            )
+            self.assertEqual(
+                set(target_states),
+                set(stage1_snapshots),
+                "downloader Return target/snapshot maps must describe the same professors",
+            )
+            for owner in target_states:
+                target_value = target_states[owner]
+                snapshot_value = stage1_snapshots[owner]
+                self.assertIsInstance(target_value, str)
+                self.assertIsInstance(snapshot_value, str)
+                self.assertTrue(
+                    _is_reference_bound_to_owner(target_value, TARGET_NAME, owner),
+                    f"downloader Return target path is not bound to map owner {owner!r}: {target_value!r}",
+                )
+                self.assertTrue(
+                    _is_reference_bound_to_owner(snapshot_value, STAGE1_NAME, owner),
+                    f"downloader Return snapshot path is not bound to map owner {owner!r}: {snapshot_value!r}",
+                )
+                self.assertEqual(
+                    _state_parent(target_value, TARGET_NAME),
+                    _state_parent(snapshot_value, STAGE1_NAME),
+                    f"downloader Return target/snapshot parents differ for {owner!r}",
+                )
+                matched_owners.add(owner)
 
         self.assertTrue(
-            matched_parents,
-            "downloader Return JSON must contain at least one professor-local "
-            "target + Stage-1 snapshot pair with the same owner parent",
+            matched_owners,
+            "downloader Return JSON must contain at least one owner-bound target + Stage-1 snapshot pair",
         )
 
         for agent in (STAGE2_OPENCODE, STAGE2_CODEX):
@@ -556,8 +593,8 @@ class Stage1HandoffIdentityTests(unittest.TestCase):
                     )
                     for value in flags:
                         self.assertTrue(
-                            _is_professor_local_reference(value, TARGET_NAME),
-                            f"{agent.name}: command uses a non-professor-local target: {value!r}",
+                            _is_current_owner_reference(value, TARGET_NAME),
+                            f"{agent.name}: command is not bound to the current professor target: {value!r}",
                         )
                 foreign_stage1 = _state_reference_scopes(
                     "\n".join(_fenced(text)), STAGE1_NAME
