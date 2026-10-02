@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from unittest import mock
 
 from gate2_evidence import TestPreparationError
@@ -61,40 +62,26 @@ class Issue74FixtureTests(unittest.TestCase):
                 result[key] = ("file", path.read_bytes())
         return result
 
-    def traced_build(self, number, paths):
-        common = TESTS / "runtime" / "fixture_support.py"
-        self.assertTrue(common.is_file(), "planned producer-owned shared module is missing")
-        observed = set()
-        previous = sys.getprofile()
+    def require_hook(self, triggered):
+        if triggered != [True]:
+            raise TestPreparationError("declared operation hook was not reached exactly once")
 
-        def trace(frame, event, argument):
-            ancestor = frame
-            inside_common = False
-            while ancestor is not None:
-                if ancestor.f_code.co_filename == str(common):
-                    inside_common = True
-                    break
-                ancestor = ancestor.f_back
-            if not inside_common:
-                return
-            if event == "call" and frame.f_code == Path.mkdir.__code__:
-                if frame.f_locals.get("self") in paths[:2]:
-                    observed.add("directory")
-            if event == "call" and frame.f_code == Path.open.__code__:
-                mode = frame.f_locals.get("mode", "r")
-                if any(flag in mode for flag in "wax+"):
-                    observed.add("write")
-            if event == "c_call" and argument is hashlib.sha256:
-                observed.add("digest")
-
+    @contextmanager
+    def injected_failure(self, triggered):
+        error = None
         try:
-            sys.setprofile(trace)
-            result = self.build(number, paths)
-        finally:
-            sys.setprofile(previous)
-        self.assertEqual(observed, {"directory", "write", "digest"},
-                         "both real entries must actually share all three operations")
-        return result
+            yield
+        except Exception as caught:
+            error = caught
+        self.require_hook(triggered)
+        if error is None:
+            self.fail("valid injected conflict or write error was silently accepted")
+        if isinstance(error, AssertionError):
+            raise error
+
+    def writing(self, args, kwargs):
+        mode = kwargs.get("mode", args[0] if args else "r")
+        return any(flag in mode for flag in "wax+")
 
     def baseline(self, number):
         filename = Path(self.entries[number].__file__).name
@@ -121,7 +108,7 @@ class Issue74FixtureTests(unittest.TestCase):
                 # receive exactly the same resolved path values.
                 shutil.rmtree(paths[0].parent)
                 paths[0].parent.mkdir()
-                actual = self.traced_build(number, paths)
+                actual = self.build(number, paths)
                 self.assertEqual(actual, reference)
                 self.assertEqual(self.snapshot(paths[0].parent), expected)
                 self.assertEqual(json.loads(paths[2].read_text(encoding="utf-8")), actual)
@@ -159,7 +146,10 @@ class Issue74FixtureTests(unittest.TestCase):
 
     def test_preexisting_conflicts_fail_before_any_sample_write(self):
         for number in (53, 55):
-            for kind in ("file-root", "nonempty-root", "file-output", "directory-output", "sample-output", "producer-root", "producer-output"):
+            kinds = ["file-root", "nonempty-root", "file-output", "directory-output", "sample-output", "producer-root", "producer-root-exact", "producer-output"]
+            if number == 53:
+                kinds.extend(["file-profile", "nonempty-profile", "producer-profile", "producer-profile-exact"])
+            for kind in kinds:
                 with self.subTest(entry=number, conflict=kind):
                     program, profile, output = self.paths(f"conflict-{number}-{kind}")
                     producer = program.parent / "synthetic-producer"
@@ -177,16 +167,28 @@ class Issue74FixtureTests(unittest.TestCase):
                         output = program / "info.json"
                     elif kind == "producer-root":
                         program = producer / "forbidden"
+                    elif kind == "producer-root-exact":
+                        program = producer
                     elif kind == "producer-output":
                         output = producer / "forbidden.json"
+                    elif kind == "file-profile":
+                        profile.write_bytes(b"original-profile")
+                    elif kind == "nonempty-profile":
+                        profile.mkdir()
+                        (profile / "keep").write_bytes(b"original-profile-content")
+                    elif kind == "producer-profile":
+                        profile = producer / "forbidden-profile"
+                    elif kind == "producer-profile-exact":
+                        profile = producer
                     before = self.snapshot(program.parent if kind != "producer-root" else producer.parent)
                     with mock.patch.object(self.entries[number], "_producer_root", return_value=producer):
                         with self.assertRaises(self.entries[number].FixtureBuildError):
                             self.build(number, (program, profile, output))
                     parent = producer.parent
                     self.assertEqual(self.snapshot(parent), before)
-                    self.assertFalse(profile.exists())
-                    if kind not in ("file-root", "nonempty-root"):
+                    if kind not in ("file-profile", "nonempty-profile", "producer-profile-exact"):
+                        self.assertFalse(profile.exists())
+                    if kind not in ("file-root", "nonempty-root", "producer-root-exact"):
                         self.assertFalse(program.exists())
 
     def test_equal_and_nested_issue53_roots_are_rejected_without_changes(self):
@@ -243,7 +245,7 @@ class Issue74FixtureTests(unittest.TestCase):
                 triggered = []
 
                 def interleave(path, *args, **kwargs):
-                    if path == paths[0] / "info.json" and not triggered:
+                    if path == paths[0] / "info.json" and self.writing(args, kwargs) and not triggered:
                         triggered.append(True)
                         identity = (paths[0].stat().st_dev, paths[0].stat().st_ino)
                         alias = self.space / f"alias-{number}"
@@ -258,7 +260,7 @@ class Issue74FixtureTests(unittest.TestCase):
 
                 with mock.patch.object(Path, "open", interleave):
                     self.build(number, paths)
-                self.assertEqual(triggered, [True], "declared file-opening hook was not reached")
+                self.require_hook(triggered)
                 self.assertEqual(set(path.name for path in paths[0].parent.iterdir()),
                                  {"program", "profile", "manifest.json"} if number == 53 else {"program", "manifest.json"})
 
@@ -275,7 +277,8 @@ spec.loader.exec_module(entry)
 program, profile, output = map(Path, sys.argv[2:5])
 original = Path.open
 def stop_at_first_write(path, *args, **kwargs):
-    if path == program / "info.json":
+    mode = kwargs.get("mode", args[0] if args else "r")
+    if path == program / "info.json" and any(flag in mode for flag in "wax+"):
         os._exit(91)
     return original(path, *args, **kwargs)
 with mock.patch.object(Path, "open", stop_at_first_write):
@@ -294,7 +297,8 @@ with mock.patch.object(Path, "open", stop_at_first_write):
                                             cwd=self.space, env=environment, capture_output=True, text=True, timeout=30)
                 except subprocess.TimeoutExpired as error:
                     raise TestPreparationError("abrupt-exit probe did not finish") from error
-                self.assertEqual(result.returncode, 91, result.stderr)
+                if result.returncode != 91:
+                    raise TestPreparationError("abrupt-exit hook not reached: " + result.stderr)
                 before_files = self.snapshot(paths[0].parent)
                 before_paths = set(path.relative_to(paths[0].parent) for path in paths[0].parent.rglob("*"))
                 self.assertGreater(len(list(paths[0].parent.iterdir())), 2 if number == 53 else 1,
@@ -312,16 +316,16 @@ with mock.patch.object(Path, "open", stop_at_first_write):
                 triggered = []
 
                 def conflict(path, *args, **kwargs):
-                    if path == paths[2] and not triggered:
+                    if path == paths[2] and self.writing(args, kwargs) and not triggered:
                         triggered.append(True)
                         with original_open(path, "xb") as stream:
                             stream.write(b"other-call-manifest")
                     return original_open(path, *args, **kwargs)
 
                 with mock.patch.object(Path, "open", conflict):
-                    with self.assertRaises(Exception):
+                    with self.injected_failure(triggered):
                         self.build(number, paths)
-                self.assertEqual(triggered, [True])
+                self.require_hook(triggered)
                 self.assertEqual(paths[2].read_bytes(), b"other-call-manifest")
                 self.assertTrue((paths[0] / "info.json").is_file())
                 self.assertEqual(set(path.name for path in paths[0].parent.iterdir()),
@@ -348,9 +352,9 @@ with mock.patch.object(Path, "open", stop_at_first_write):
                     return original_mkdir(path, *args, **kwargs)
 
                 with mock.patch.object(Path, "mkdir", fail_second):
-                    with self.assertRaises(Exception):
+                    with self.injected_failure(triggered):
                         self.build(53, paths)
-                self.assertEqual(triggered, [True])
+                self.require_hook(triggered)
                 self.assertFalse(paths[1].exists())
                 self.assertFalse(paths[2].exists())
                 if initial == "new":
@@ -373,15 +377,15 @@ with mock.patch.object(Path, "open", stop_at_first_write):
                 triggered = []
 
                 def fail_write(path, *args, **kwargs):
-                    if path == profile_file:
+                    if path == profile_file and self.writing(args, kwargs):
                         triggered.append(True)
                         raise OSError("controlled sample write failure")
                     return original_open(path, *args, **kwargs)
 
                 with mock.patch.object(Path, "open", fail_write):
-                    with self.assertRaises(Exception):
+                    with self.injected_failure(triggered):
                         self.build(number, paths)
-                self.assertEqual(triggered, [True])
+                self.require_hook(triggered)
                 self.assertTrue((paths[0] / "info.json").is_file())
                 self.assertFalse(paths[2].exists())
                 self.assertEqual(set(path.name for path in paths[0].parent.iterdir()),

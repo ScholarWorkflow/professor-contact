@@ -1,14 +1,15 @@
-# 第 74 号议题测试方案第 1 版
+# 第 74 号议题测试方案第 2 版
 
 ## 状态与唯一来源
 
-- 修订号：`issue74-test-r1`；状态：待第二关口审核，未执行正式验收，不声明通过。
-- 本文件及同一提交的 `.apm/skills/professor-contact/tests/test_issue74_fixture_support.py` 构成完整方案。后续修改在本文件合入，更新修订号；不维护评论补丁。
+- 修订号：`issue74-test-r2`；方案内容已冻结；第二关口部分完成，尚未通过；第三关口未执行。冻结文本不等于审核通过。
+- 本文件及同一提交的 `.apm/skills/professor-contact/tests/test_issue74_fixture_support.py`、`test-plan/issue-74-required-cases.json`、`test-plan/issue-74-pass-check.jq` 构成唯一权威方案正文。判定检查样例为同目录的 `issue-74-check-samples.jq` 和 `check-issue-74-pass-check.sh`，注入判定边界样例为 `tests/issue74_recipe_checks.py`（相对于技能目录）。后续修改在本文件合入，更新修订号；不维护评论补丁。
+- 本版取代本地提交 `ca1a604d211933ebadf0f53c6d3a351c4356c1b8` 的第一版全部测试方案；尚无第二关口完整通过历史，不适用通过后重开。
 - 取代范围：第 74 号议题正文的“测试安排草案”。不取代需求、已批准执行计划或任何已有测试通过记录。
 - 正式需求：[第 74 号议题需求第 1 版](https://github.com/ScholarWorkflow/professor-contact/issues/74)，读取更新时间 `2026-10-02T16:02:24Z`；决定人为议题记载的项目负责人。
 - 执行计划：[第三版](https://github.com/ScholarWorkflow/professor-contact/blob/a328e788a21af8fc7d3ebf052c399054d242b786/plan/issue-74.md)。计划审核来源为项目工作目录《第75号拉取请求-第三版执行计划复审-2026-10-03.md》，批准只覆盖实施。
 - 兼容基准：`768b49ef4514e36edec6b57ed3821a99af9e9c00`。测试读取该固定提交的两个旧入口作为合法成功结果的独立参照，不用当前共用工具生成预期值。
-- 待测产品：后续完成迁移的准确提交，由执行前的 `git rev-parse HEAD` 记录。目前请求只含执行计划，没有共用模块；本方案不宣称旧实现已满足新安全约定。
+- 待测产品：后续完成迁移的准确提交，由执行前的 `git rev-parse HEAD` 记录。目前业务仍为兼容基准，没有共用模块；本方案不宣称旧实现已满足新安全约定。
 - 方案和判定版本：审核者须绑定包含本文件和测试文件的准确提交；判定入口为该获审版本的 `tests/gate2_evidence.py`。执行前核对文件内容与获审版本一致。产品、方案、判定提交可以不同，分别记录。
 - 规则来源：项目正式 `PROJECT_CONSENSUS.md`、`Test Engineer Rule.md`，以前者为准。规则文件在项目工作目录，不把草稿复制为本仓库规范。
 
@@ -18,9 +19,9 @@
 
 | 要求／证明 | 唯一负责者和用例 | 直接观察事项 |
 | --- | --- | --- |
-| R1：测试归属、虚构数据；R2：两个入口共用三类操作及成功兼容 | `test_compatibility_bytes_manifest_hashes_and_returns`；归属及禁止业务改动另由 S74 源码检查负责 | 共用模块位于 `tests/runtime/fixture_support.py`；两个真实入口各自产生来自共用模块调用栈的目录创建、文件写入、摘要计算事件；固定旧版本与当前版本在同一路径下的返回对象、全部文件字节一致；摘要由标准库独立重算；原包装返回保留；禁止输出缺席 |
+| R2：成功结果兼容 | `test_compatibility_bytes_manifest_hashes_and_returns` | 固定旧版本与当前版本在同一路径下的返回对象、全部文件字节一致；摘要由标准库独立重算；原包装返回保留；禁止输出缺席。实际共用三类操作由 S74 的完整源码调用链独立证明，不按某个内部摘要函数或调用栈格式判断 |
 | R2：命令和按文件加载两种方式 | `test_cli_from_unrelated_directory_without_pythonpath` | 按文件加载用于所有新增用例；两个旧脚本从无关目录直接启动，不设置 `PYTHONPATH`；成功退出及结构化字段保持原约定；失败退出为 1、状态为 `error`，既有文件字节不变 |
-| R3：预先拒绝危险路径与清单冲突 | `test_preexisting_conflicts_fail_before_any_sample_write` | 文件根、非空根、已有文件／目录清单、清单与样例重合、生产者内根／输出：原字节保留，未创建其他样例；保持旧 `FixtureBuildError` 通道 |
+| R3：预先拒绝危险路径与清单冲突 | `test_preexisting_conflicts_fail_before_any_sample_write` | 两入口的文件根、非空根、已有文件／目录清单、清单与样例重合、生产者内根／输出，以及第 53 号第二根的对应拒绝类别：原字节保留，未创建其他样例；保持旧 `FixtureBuildError` 通道 |
 | R3：第 53 号双根独立 | `test_equal_and_nested_issue53_roots_are_rejected_without_changes` | 根相等、两种祖先关系均拒绝；根和清单未创建 |
 | R3：已有空目录不删除重建 | `test_existing_empty_root_identity_is_preserved` | 已有目录设备编号与目录编号保持；不得调用删除该目录的操作 |
 | R3：不同运行独立 | `test_different_runs_do_not_share_writable_outputs` | 两次独立分配后，修改右侧文件，左侧全部字节不变 |
@@ -30,7 +31,7 @@
 | R3：写入失败保留部分样例 | `test_sample_write_failure_preserves_partial_samples` | 资料写入故障发生后，已写 `info.json` 保留、清单缺席、占用释放 |
 | R3：异常占用拒绝接管 | `test_abrupt_exit_leaves_occupation_and_next_call_cannot_take_over` | 子进程在首次写入前以 91 退出，跳过正常释放；占用保留；下一调用拒绝且不改变文件或路径集合 |
 | R4：产品失败、准备无效、空执行分类 | P74：既有 `test_gate2_evidence.Gate2EvidenceTests` 的判定通道验证 | 有效成功为 `PASS`；有效产品断言或调用失败为 `FAIL`；准备无效、空执行、缺少证明等保持对应非通过终态；产品失败不会被后续清理错误掩盖 |
-| R1 非目标、R4 文档职责与使用方法 | S74：下文固定源码与文档检查 | 差异仅在计划允许范围；使用说明区分准备／执行／判定／业务样例，给出新增样例、独立目录、异常占用清理及实际运行步骤 |
+| R1 归属、虚构数据和非目标；R2 实际复用；R4 文档职责与使用方法 | S74：下文固定源码与文档检查 | 共用模块位于生产者测试目录；两入口在合法成功路径实际调用共用目录、写入、摘要操作；虚构业务数据由调用方拥有；差异仅在计划允许范围；使用说明区分准备／执行／判定／业务样例，给出新增样例、独立目录、异常占用清理及实际运行步骤 |
 | 两入口现有业务验收兼容 | G74：一次完整回归中的既有 `test_issue53_stage4_runtime_assets`、`test_issue55_stage3_runtime_assets` | 沿用这两个版本化测试的原断言，禁止为本次迁移降低判定条件 |
 
 兼容字节用例分别覆盖根外清单和合法根内新清单，防止一律拒绝根内输出。只比较固定同一路径的字节；路径文本属于生成内容，不能把不同路径产生的字节差异当作回归。独立摘要比较不调用被测 `sha256` 作为唯一参照。
@@ -43,17 +44,17 @@
 
 每个方法在 `TMPDIR` 下创建独占 `TemporaryDirectory`，拒绝位于生产者内的临时空间。所有路径、符号链接、竞争者内容、替换目录和异常进程均属于该隔离空间。测试结束整体清理自有空间，不连接真实用户目录或状态；故障前后的必要字节和路径关系由断言纳入结构化事件。这里整体清理测试自有空间不等于授权被测准备工具清理遗留占用。
 
-故障注入固定在 `Path.open` 和 `Path.mkdir` 的文件操作边界：只控制竞争顺序或一次操作故障，不改变产品返回值、不重写业务输入、不代替调用方执行传递。调用栈观察使用 `sys.setprofile`，不以内部函数名称作为验收条件。程序会断言注入点被真实到达；未到达时先检查下面的执行前假设，不得直接将观察程序的失效认定为产品失败。
+故障注入固定在 `Path.open` 和 `Path.mkdir` 的文件操作边界：只控制竞争顺序或一次操作故障，不改变产品返回值、不重写业务输入、不代替调用方执行传递。不以内部函数名称或调用栈格式作为验收条件。注入点未被真实到达时，测试抛出 `TestPreparationError`，属于执行无效；不将观察程序失效认定为产品失败。该处理不能代替第二关口对钩子适用性的确认。
 
 异常退出子进程最多运行 30 秒，超时保存原始诊断并以 `TestPreparationError` 标为执行无效；不重试。实际故障进程应由 `subprocess.run` 的超时处理结束，本用例不启动孙进程。
 
 ## P74：第二关口的执行前检查
 
-本次作者仅阅读代码和官方约定，未运行以下检查，不能宣布第二关口完整通过。第二关口审核时完成这些适用检查并将结果绑定准确提交；不得用产品完整验收代替检查。
+本版已完成既有判定程序的四个方法检查及通过完整性检查的六个最小样例，记录见末节；未执行产品验收。以下涉及迁移实现的可观察假设仍未确认，不能宣布第二关口完整通过。补齐时绑定准确提交；不得用产品完整验收代替检查。
 
-- 可执行：旧入口、`gate2_evidence.py` 与原测试命令已有固定源码；新共用模块尚待实施。检查实际 CPython 3.12 中 `Path.open`、`Path.mkdir` 与 `hashlib.sha256` 能提供当前观察事件；源码改变操作方式时，先修订观察程序，不新增产品要求。
+- 可执行：旧入口、`gate2_evidence.py` 与原测试命令已有固定源码；解释器与结构化判定命令已实际执行。新共用模块尚待实施；源码改变文件操作方式时，先修订观察程序，不新增产品要求。
 - 隔离：确认临时目录在生产者外、没有共享可写状态；异常进程只访问自有目录；生产者路径负例使用虚构目录。
-- 可观察：确认迁移后的两个入口分别使用共用模块完成三种操作，清单确实经过声明的打开边界，第二根确实经过声明的创建边界。只需对应源码及最小非验收观察，不重复完整业务准备。
+- 可观察：按迁移后的完整源码确认清单和样例经过声明的打开边界、第二根经过声明的创建边界，并确认调用方生产者根参数可在虚构目录负例中代入；不修改或代替被测业务。只需源码及必要的最小非验收观察，不重复完整业务准备。两入口实际共用三种操作属于 S74 产品证明，不能由接口存在替代。
 - 可区分：执行下列现有判定通道样例；样例预期由 R4 与测试审核规则决定，不由判定程序自述决定。有效失败及无效样例是被验证程序的输入，外层样例验证成功时其检查结果为 `PASS`。
 
 以下命令从仓库根运行。先使用下节的目录分配与版本记录步骤，再执行：
@@ -61,11 +62,15 @@
 ```sh
 uv run --no-project --python 3.12 .apm/skills/professor-contact/tests/gate2_evidence.py --start .apm/skills/professor-contact/tests --pattern test_gate2_evidence.py --require-prefix test_gate2_evidence.Gate2EvidenceTests. --out "$RUN_DIR/preflight.json" > "$RUN_DIR/preflight.stdout" 2> "$RUN_DIR/preflight.stderr"
 jq '{schema_version,python,selection,tests_run,started,completed,events,load_errors,interruption,verdict}' "$RUN_DIR/preflight.json"
+uv run --no-project --python 3.12 .apm/skills/professor-contact/tests/gate2_evidence.py --start .apm/skills/professor-contact/tests --pattern issue74_recipe_checks.py --contains issue74_recipe_checks.Issue74RecipeChecks. --require-prefix issue74_recipe_checks.Issue74RecipeChecks. --out "$RUN_DIR/recipe-checks.json" > "$RUN_DIR/recipe-checks.stdout" 2> "$RUN_DIR/recipe-checks.stderr"
+jq '{schema_version,python,selection,tests_run,started,completed,events,load_errors,interruption,verdict}' "$RUN_DIR/recipe-checks.json"
+sh test-plan/check-issue-74-pass-check.sh "$RUN_DIR/completeness"
+jq -e 'length == 6 and all(.matched == true)' "$RUN_DIR/completeness/results.json"
 ```
 
-需完整读取全部样例及结果；记录三种通道、失败后清理／中断仍保留失败、空执行与缺少证明不能通过的结果。检查失败时暂停依赖该判定程序的验收，分析是判定程序、检查样例或环境问题。不得将这次非产品执行写成产品通过。
+需完整读取全部样例及结果；两个检查模块各恰好完成四个规定方法，且没有产品方法被发现或执行。记录三种通道、失败后清理／中断仍保留失败、空执行与缺少证明不能通过的结果。检查失败时暂停依赖该判定程序的验收，分析是判定程序、检查样例或环境问题。不得将这次非产品执行写成产品通过。
 
-官方依据：[CPython 3.12 调用栈观察](https://docs.python.org/3.12/library/sys.html#sys.setprofile)、[文件操作](https://docs.python.org/3.12/library/pathlib.html#pathlib.Path.open)、[结构化测试结果](https://docs.python.org/3.12/library/unittest.html#unittest.TestResult)。这些依据说明接口，不证明本次操作钩子已到达；本方案不声称已完成最小观察。
+官方依据：[CPython 3.12 文件操作](https://docs.python.org/3.12/library/pathlib.html#pathlib.Path.open)、[结构化测试结果](https://docs.python.org/3.12/library/unittest.html#unittest.TestResult)。这些依据说明接口，不证明迁移实现的操作钩子已到达。本版移除调用栈观察，不保留失去必要性的旧检查。
 
 ## S74：固定源码与文档检查
 
@@ -81,7 +86,7 @@ git show "HEAD:$DOC_PATH" > "$RUN_DIR/usage.md"
 
 任何读取失败则此证明未完成，不把空输出当通过。审核者完整阅读这些版本化静态产物并在执行记录逐项记录“满足／不满足”、准确文件与位置及依据：
 
-1. 共用模块只负责目录、文件和摘要；虚构数据仍由两调用方拥有；没有启动浏览器、外部服务、代理或读取用户资料的路径。
+1. 共用模块只负责目录、文件和摘要；完整阅读两个 `build_fixture` 的合法成功调用链，分别记录每项操作到共用模块的准确文件与位置，确认不是仅导入、未调用或仍由入口独立完成。虚构数据仍由两调用方拥有；没有启动浏览器、外部服务、代理或读取用户资料的路径。另阅读占用路径生成及冲突检查、释放和归属检查，确认占用不与根、样例或清单重合，未取得占用者不清理他人状态。
 2. 没有迁移范围外准备入口，没有修改业务程序、状态接口、代理配置或其他议题的验收断言。判定程序保持产品失败优先、空执行非通过；如确有变化，先分析影响并修订方案，不静默复用。
 3. 使用说明区分四项职责，包含旧入口参数、如何新增议题专属样例、如何执行并按结构化结果判断、独立目录分配、异常占用不得自动接管及隔离空间整体清理责任。
 
@@ -98,6 +103,7 @@ git status --porcelain
 RUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/issue74-evidence.XXXXXXXX")
 export TMPDIR="$RUN_DIR"
 export PYTHONDONTWRITEBYTECODE=1
+export UV_CACHE_DIR="$RUN_DIR/uv-cache"
 git rev-parse HEAD > "$RUN_DIR/product-sha.txt"
 git log -1 --format=%H -- test-plan/issue-74.md .apm/skills/professor-contact/tests/test_issue74_fixture_support.py > "$RUN_DIR/recipe-sha.txt"
 git log -1 --format=%H -- .apm/skills/professor-contact/tests/gate2_evidence.py > "$RUN_DIR/evaluator-sha.txt"
@@ -105,16 +111,20 @@ uv --version > "$RUN_DIR/uv-version.txt"
 uv run --no-project --python 3.12 python -V > "$RUN_DIR/python-version.txt"
 ```
 
-`git status` 有任何未提交变更时，停止而不运行。记录 `RUN_DIR` 实际值、开始时间、获审方案提交、需求与计划指针。环境资产：不适用；本地确定性检查不依赖共享运行环境。源码参照基准须可由 `git show` 取得，否则为测试准备无效，不去下载或改用当前代码作参照。
+`git status` 有任何未提交变更时，停止而不运行。记录 `RUN_DIR` 实际值、开始时间、获审方案提交、需求与计划指针。`UV_CACHE_DIR` 由独立运行目录分配，仅是依赖缓存位置，不改变解释器、输入或断言。环境资产：不适用；本地确定性检查不依赖共享运行环境。源码参照基准须可由 `git show` 取得，否则为测试准备无效，不去下载或改用当前代码作参照。
 
 完整回归只执行一次；新增用例和旧第 53、55 号用例都由这一执行拥有，不再另跑定向验收重复证明。完整回归保留已有判定程序自身测试，这是检查完整回归仍包含已冻结判定契约；P74 属于第二关口验证，不能计作一次产品通过。
 
 ```sh
 uv run --no-project --python 3.12 .apm/skills/professor-contact/tests/gate2_evidence.py --start .apm/skills/professor-contact/tests --pattern 'test_*.py' --require-prefix test_issue74_fixture_support.Issue74FixtureTests. --require-prefix test_issue53_stage4_runtime_assets.Issue53Stage4RuntimeAssetTests. --require-prefix test_issue55_stage3_runtime_assets.Issue55Stage3RuntimeAssetTests. --require-prefix test_gate2_evidence.Gate2EvidenceTests. --out "$RUN_DIR/regression.json" > "$RUN_DIR/regression.stdout" 2> "$RUN_DIR/regression.stderr"
+REGRESSION_EXIT=$?
+printf '%s\n' "$REGRESSION_EXIT" > "$RUN_DIR/regression-exit.txt"
 jq '{schema_version,python,cwd,selection,tests_run,started,completed,events,failures,errors,skipped,expected_failures,unexpected_successes,missing_required_prefixes,load_errors,interruption,verdict}' "$RUN_DIR/regression.json"
+jq --slurpfile required test-plan/issue-74-required-cases.json -f test-plan/issue-74-pass-check.jq "$RUN_DIR/regression.json" > "$RUN_DIR/complete-pass.json"
+jq -e '. == true' "$RUN_DIR/complete-pass.json"
 ```
 
-不能只用进程退出码或外层总判定推断全部用例通过。逐个检查 `started`／`completed` 的编号与顺序、对应 `events`、失败／错误／跳过记录，以及要求前缀是否到达；缺少必需新用例不能通过。失败子用例的 `evidence_id` 和详情须保留。完整回归的既有范围外失败保留原记录，按其原要求归属判断，不扩大本议题产品要求或掩盖整轮未就绪。
+不能只用进程退出码或外层总判定推断全部用例通过。39 个必需方法编号由同提交的 `issue-74-required-cases.json` 固定：11 个新增方法、24 个既有第 53／55 号方法、4 个既有判定方法。通过检查必须为 `true` 且回归退出码为 0；只验证类名前缀不够。程序按结构化字段确认执行数、唯一编号、开始与完成顺序、全部错误和跳过记录，以及全部必需方法存在，不要求不同合法运行采用同一排序。非通过时完整保留记录，逐方法按固定 `classify` 的字段规则判断；完整性检查仅确认是否全部通过，不改写产品失败或其他终态。失败子用例的 `evidence_id` 和详情须保留。完整回归的既有范围外失败按其原要求归属判断，不扩大本议题产品要求或掩盖整轮未就绪。
 
 ## 判定、停止和第三关口记录
 
@@ -128,4 +138,20 @@ jq '{schema_version,python,cwd,selection,tests_run,started,completed,events,fail
 
 以后变化命中以下依赖才改变通过来源：两准备入口及共用模块、路径／目录／写入／摘要语义、业务数据格式、直接导入和命令入口、文档职责、样例初始状态、Python 文件操作观察、固定参照版本、判定程序和证据结构。只改提交编号不自动废除旧结果；仅判定解释变化且旧原始证据完整时选择 `REJUDGE_PRIOR_EVIDENCE`；不受影响时按准确来源和影响分析选择 `REUSE_PRIOR_PASS`；行为、输入或观察事实变化时重新执行受影响用例。
 
-最终条件：三个关口均完整通过、S74 全部满足、所有必需用例对当前版本有效通过、无未解决产品失败或必需用例非通过终态，才能记录合并就绪。作者当前结论：第二关口待审核，第三关口未执行。
+最终条件：三个关口均完整通过、S74 全部满足、所有必需用例对当前版本有效通过、无未解决产品失败或必需用例非通过终态，才能记录合并就绪。当前结论：第二关口部分完成，第三关口未执行；不得开始 G74 正式验收。
+
+## 第二版冻结和第二关口检查记录
+
+冻结日期：2026-10-03。准确方案提交由本轮冻结审核记录引用；本节不是并列方案。需求第 1 版、第三版执行计划及兼容基准未变。第一关口保留上一轮完整通过；第二关口第一版尚未通过，本轮是首次完整通过前的修订，不适用第 6.2 节通过后重开。
+
+已确认：要求均有明确证明负责者；11 个新增方法不增加正式要求；字节及摘要参照独立；保护和回滚直接观察状态；全部必需方法已固定；执行、证据解析与停止规则已固定；旧调用栈检查已删除。S74 只阅读静态产物，不重复业务调用；G74 只执行一次。没有本议题旧产品通过记录可复用，39 个必需方法及 S74 均为 `EXECUTE_CURRENT`；P74 是设计检查，不冒充产品通过。
+
+2026-10-03 本轮非验收检查：CPython `3.12.13`，uv `0.12.11`。既有判定程序四个方法实际全部完成，结构化结果为 `PASS`；直接覆盖有效成功、有效产品失败、准备无效、空执行、缺少证明、跳过、中断及失败优先。注入判定边界的四个样例也全部通过：预期拒绝为通过、故障被吞为失败、钩子未到达为执行无效、回调断言不被吞。通过检查六个样例全部与独立预期一致，接受正常成功及不同合法顺序／额外可选字段，拒绝产品失败、空执行、漏方法和矛盾通过证据。原始证据固定于本轮冻结审核记录指定目录，并保留全部命令、输入和输出。第一次静态清单生成因默认 uv 缓存权限失败，未开始任何测试；改用临时缓存后完成，未改变测试配置或产品状态。
+
+全部尝试另包含一次执行偏离：注入判定边界检查模块初版直接导入了产品测试类，发现程序运行了 15 个方法（11 个产品方法和 4 个判定样例），原始总判定为 `FAIL`。该次针对未迁移旧代码，且不符合第二关口的非验收范围或第三关口获审方案，不能作为本议题正式产品判定、旧通过来源或合并依据；按测试执行偏离保留为 `INVALID_TEST_EXECUTION`。修正模块导入、固定 `load_tests` 和方法过滤后，以新证据文件只执行 4 个判定样例，结果为 `PASS`。这是检查程序修订后的验证，不是同条件重试；旧记录不覆盖、不丢弃。隔离目录已由测试自身清理，没有修改业务或真实用户状态。
+
+尚未完成的关键假设：共用模块及两入口迁移尚不存在。五个依赖文件操作注入的新增方法（重叠占用、异常退出、清单竞争、第二根回滚、部分写入失败），以及虚构生产者根代入，须由迁移后的准确源码和必要的最小非验收观察确认。当前不能证明 `Path.open`／`Path.mkdir` 钩子及 `_producer_root` 代入对未来实现有效；这些属于材料不足，不是已发现产品缺陷，也不得要求未来实现采用特定内部 API 来迎合测试。实现采用其他合法操作方式时，只修订对应观察程序和直接受影响证明。
+
+第 3.3 节自洽检查：唯一方案、证明负责者、最小执行、固定输入和判定、删除旧检查、判定通道及完整性检查均已确认；涉及未来实现的可观察性仍未确认，不能把全部八项记为 `yes`。操作钩子未到达应为执行无效，但正确分类并不能使该证明通过。补齐后须重新检查修改后的完整第二关口记录，再由审核记录宣布是否完整通过。
+
+第二关口：未完成，完整性为部分完成。第三关口：未完成，没有产品验收执行。已发现且修正的方案问题：类名前缀可漏方法；第 53 号第二根拒绝分支未覆盖；内部摘要调用栈会错误拒绝等价合法实现；钩子未到达原本会误归产品失败。最小修正分别为固定方法清单及通过检查、补入同方法子用例、把复用归属交给静态源码证明、使用准备无效通道。没有修改产品、正式需求或实施计划，也没有取得合并就绪结论。
