@@ -5229,8 +5229,16 @@ def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict) -> 
     to the canonical scope whose rendered text contains the quoted fragment.  A
     caller never translates ``files[].verdict`` into ``results[]``.
     """
-    data, error = read_json_file(path)
-    if error or not isinstance(data, dict) or data.get("result") != "ok" \
+    try:
+        raw_input = path.read_bytes()
+    except (OSError, ValueError):
+        fail("invalid_validation_json", f"style-validator output unreadable: {path}")
+    input_sha = sha256_bytes(raw_input)
+    try:
+        data = json.loads(raw_input.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        data = None
+    if not isinstance(data, dict) or data.get("result") != "ok" \
             or not isinstance(data.get("files"), list):
         fail("invalid_validation_json", f"style-validator output unreadable: {path}")
     target = (professor_dir / CANDIDATES_MD).resolve()
@@ -5280,6 +5288,7 @@ def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict) -> 
     return {
         "verdict": verdict,
         "render_sha256": render_sha,
+        "validation_input_sha256": input_sha,
         "scopes": rendered,
         "failed": failed,
         "issues": issues,
@@ -9345,6 +9354,7 @@ def cmd_stage3_record_validation(args) -> None:
     emit({"status": "ok", "state_path": str(professor_dir / CANDIDATE_STATE),
           "round": round_no, "raw_verdict": evidence["verdict"],
           "render_sha256": evidence["render_sha256"], "scopes": summary,
+          "validation_input_sha256": evidence["validation_input_sha256"],
           "needs_correction": bool(pending),
           "terminal": not pending})
 
