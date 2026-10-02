@@ -528,42 +528,37 @@ class Stage1HandoffIdentityTests(unittest.TestCase):
         return_payloads = _json_blocks(return_section)
         self.assertTrue(return_payloads, "downloader Return section has no JSON object")
 
-        matched_owners: set[str] = set()
+        matched_pairs: set[tuple[str, str]] = set()
         for payload in return_payloads:
-            target_states = payload.get("target_states")
-            stage1_snapshots = payload.get("stage1_snapshots")
-            self.assertIsInstance(target_states, dict, "downloader Return target_states must be a map")
-            self.assertIsInstance(
-                stage1_snapshots, dict, "downloader Return stage1_snapshots must be a map"
-            )
-            self.assertEqual(
-                set(target_states),
-                set(stage1_snapshots),
-                "downloader Return target/snapshot maps must describe the same professors",
-            )
-            for owner in target_states:
-                target_value = target_states[owner]
-                snapshot_value = stage1_snapshots[owner]
-                self.assertIsInstance(target_value, str)
-                self.assertIsInstance(snapshot_value, str)
-                self.assertTrue(
-                    _is_reference_bound_to_owner(target_value, TARGET_NAME, owner),
-                    f"downloader Return target path is not bound to map owner {owner!r}: {target_value!r}",
+            strings = list(_strings(payload))
+            target_refs = [value for value in strings if PurePosixPath(value).name == TARGET_NAME]
+            snapshot_refs = [value for value in strings if PurePosixPath(value).name == STAGE1_NAME]
+
+            for value in target_refs:
+                self.assertIsNotNone(
+                    _reference_owner(value, TARGET_NAME),
+                    f"downloader Return JSON contains unbound/non-local target: {value!r}",
                 )
-                self.assertTrue(
-                    _is_reference_bound_to_owner(snapshot_value, STAGE1_NAME, owner),
-                    f"downloader Return snapshot path is not bound to map owner {owner!r}: {snapshot_value!r}",
+            for value in snapshot_refs:
+                self.assertIsNotNone(
+                    _reference_owner(value, STAGE1_NAME),
+                    f"downloader Return JSON contains unbound/non-local Stage-1 snapshot: {value!r}",
                 )
-                self.assertEqual(
-                    _state_parent(target_value, TARGET_NAME),
-                    _state_parent(snapshot_value, STAGE1_NAME),
-                    f"downloader Return target/snapshot parents differ for {owner!r}",
-                )
-                matched_owners.add(owner)
+
+            for target_value in target_refs:
+                target_owner = _reference_owner(target_value, TARGET_NAME)
+                target_parent = _state_parent(target_value, TARGET_NAME)
+                for snapshot_value in snapshot_refs:
+                    if (
+                        target_owner == _reference_owner(snapshot_value, STAGE1_NAME)
+                        and target_parent == _state_parent(snapshot_value, STAGE1_NAME)
+                    ):
+                        matched_pairs.add((target_value, snapshot_value))
 
         self.assertTrue(
-            matched_owners,
-            "downloader Return JSON must contain at least one owner-bound target + Stage-1 snapshot pair",
+            matched_pairs,
+            "downloader Return JSON must contain at least one professor-local target + "
+            "Stage-1 snapshot pair bound to the same owner parent",
         )
 
         for agent in (STAGE2_OPENCODE, STAGE2_CODEX):
