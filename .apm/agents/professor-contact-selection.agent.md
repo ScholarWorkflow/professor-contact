@@ -61,7 +61,7 @@ If `folder_path` missing → return the error JSON.
    - **条目已带可靠 `professor_dir`（路径 A 机器输入）**：直接采用该 canonical 身份。在读取该教授任何正式文件（`套磁候选状态.json`、`套磁候选输入.json`、local `套磁选择.json`）之前，先验证该目录属于当前 `<program_root>/教授研究/`；越界 → 该教授一行 error（`invalid_professor_dir`，零读取、零写入），其他教授照常。此后**只读取请求所涉及教授**的候选状态与输入包——不得先执行全项目扫描，任何无关教授的候选状态/输入包/身份/迁移状态都不是本教授的前置读取条件；机器输入已带目录与想法编号时，也不以想法预校验作为进入 Step 3 执行程序的条件（想法/方向最终有效性由 runner fail closed）。
    - **条目没有目录来源（结构化只报名字 / 自然语言）**：保留这两类既有入口，`professor_dir` 绝不变成用户新增必填项。允许为确定目录做候选文件位置发现（如 `find 教授研究 -name "套磁候选状态.json"`），并**逐请求**做确定性解析：某个候选文件的读取/解析失败只结束它对应的请求，绝不妨碍其他请求继续解析；只有当前机器资料能唯一证明的匹配（该教授输入包/状态顶层 `professor` 与请求显示名完全一致，且全程序只有一个这样的目录）才可绑定目录；同名多个目录是歧义 → 只给该请求返回待补输入行，绝不靠显示名猜测绑定，也不把其他请求并进这一行。绑定成功后，自然语言的想法选择也只在**已绑定教授**的当前候选中精确映射，不得就近匹配。
    - **路径 C（缺 `selection`）**：仍可为展示候选做发现与读取；该路径零正式写入，不属于「保存 A 被 B 阻断」的修复边界（见 Step 2 路径 C）。
-3. 对每位已绑定目录的教授：读该教授自己的 `套磁候选状态.json`（每轮以磁盘为准）供挑选/展示（候选摘要字段够用：id/title/one_liner/research_question/fit；不给 gap 原文全文），并**记录状态顶层 `profile_path` 的绝对路径**——Step 3 的 `stage4-finalize` 必须把它原样传给 `--profile`。local `套磁选择.json` 只在准备该教授事务/迁移（Step 3.5）时读取。路径 A/B 拿到真实选择、准备进入 Step 3 时才要求读取 `套磁候选输入.json`：selection-input 的 `professor` 必须从该输入包顶层同名字段原样复制，绝不能从目录 basename、用户称呼或模型记忆猜测。路径 C 不要求 `套磁候选输入.json` 存在，展示用 `professor` 取 canonical `professor_dir` 的 basename，其余字段逐项抄自候选状态。
+3. 对每位已绑定目录的教授：读该教授自己的 `套磁候选状态.json`（每轮以磁盘为准）供挑选/展示（候选摘要字段够用：id/title/one_liner/research_question/fit；不给 gap 原文全文），并**记录状态顶层 `profile_path` 的绝对路径**——Step 3 的迁移命令与 Step 4 的 `stage4-finalize` 必须把它原样传给 `--profile`。local `套磁选择.json` 只在准备该教授事务/迁移（Step 3）时读取。路径 A/B 拿到真实选择、准备进入 Step 4 时才要求读取 `套磁候选输入.json`：selection-input 的 `professor` 必须从该输入包顶层同名字段原样复制，绝不能从目录 basename、用户称呼或模型记忆猜测。路径 C 不要求 `套磁候选输入.json` 存在，展示用 `professor` 取 canonical `professor_dir` 的 basename，其余字段逐项抄自候选状态。
 4. 某教授的身份/读取/映射/迁移预期失败只结束**该教授**：失败结果保留原因，`selection_file` 与 `email_pack` 为 `null`，其他已解析教授照常进入 Step 3；无法唯一绑定目录的请求保留与原请求的对应关系并报待补输入，不伪造目录。任何请求条目都无法建立教授边界（如 `selection` 整体不可解析）→ 走 Errors 的调用级错误出口。
 
 ### Step 2 — Get the user's selection（按 runtime 分支）
@@ -70,7 +70,7 @@ If `folder_path` missing → return the error JSON.
 
 **路径 A（两个 runtime 通用）——`selection` 显式给定**：
 - 每条选择先按 Step 1 绑定到 canonical `professor_dir`（条目自带可靠目录的直接采用；只报名字/自然语言的由本 agent 逐请求确定性解析补入——同显示名的两位教授是两个目录，必须是两个教授事务）。带目录的机器输入不以全项目读取或想法预校验作为进入执行程序的前置；选中的 `id` 最终必须存在于该教授状态（该方向 `candidates[]` 或其名下 `cross_direction[]`），找不到 → **该教授整批 fail closed**（runner 该教授行返回 `unknown_idea_id`，该教授不写任何文件；同批其它教授照常成功），绝不静默跳过后照写该教授其余选择；`ideas[].note` 记录用户补充。自然语言形式的选择**必须能无歧义映射到已绑定教授当前候选中的真实 idea id**，不得猜测、不得就近匹配，映射不清 → 只给该请求返回 `needs_input` 并列出真实候选（同路径 C 的 `pending_selection`）。
-- 该教授解析/绑定成功 → 正常进入 Step 3 的 `stage4-finalize`；其他教授的解析或读取失败不牵连它。
+- 该教授解析/绑定成功 → 按顺序进入 Step 3（迁移判定：需要时 `stage4-migrate-local`）与 Step 4（`stage4-finalize`）；expected migration failure 只形成该教授结果，其他教授的解析或读取失败也不牵连它。
 
 **路径 B（OpenCode-only）——交互 `question`**（`question` 是 OpenCode 官方交互工具，不得当作 Codex 或跨 runtime API）：
 - 对每个教授/方向，`question` tool（`multiple: true`）：
@@ -100,9 +100,22 @@ If `folder_path` missing → return the error JSON.
 - **支持「选想法但调整支撑论文」**：用户注明（如"候选2，论文只留 2024 那篇"）→ 记入该 idea 的 `note`（阶段 5 的 ②点名以输入包 papers 为准自行取舍）；runner 不因 note 改动 gap_ids。
 - `papers_override` 若存在，必须是当前候选状态 `papers[]` 中不重复的 item key 列表；包外 key、重复 key 或其他形状由 runner 返回 `invalid_papers_override`，选择文件和邮件包均不写入。空列表等同未指定，保留候选原顺序；非空列表按用户顺序编译。
 
-### Step 3 — Write selection-input 并跑 stage4-finalize
+### Step 3 — 每教授迁移判定：先于 finalize 决定是否 stage4-migrate-local
 
-本 Step 只对**已绑定目录且拿到用户真实选择**的教授进入；Codex 路径 C（缺 `selection`）到 Step 2 为止，绝不进入本 Step。把用户选择写成 `/tmp/套磁选择输入.json`（只含进入本 Step 的教授）：
+对每位已绑定目录、拿到真实选择的教授，在进入 Step 4 的 `stage4-finalize` 之前先完成迁移判定（判定只看该教授自己）。仅当该教授目录内 `套磁选择.json` 与 `邮件输入.json` **均不存在**、且历史程序级 `教授研究/套磁选择.json` 可读并存在规范 `professor_dir` 精确等于该目录的行时才需要迁移——用确定性迁移命令按**一位教授一次**建立 local 权威：
+```bash
+python3 .agents/skills/professor-contact/scripts/contact_state.py stage4-migrate-local \
+  --program-root <program_root abs> --professor-dir <该教授目录 abs> --profile <该状态顶层 profile_path 的绝对路径>
+```
+- 它只把该教授的 legacy 选择行当作**行来源**，邮件事实一律按该教授当前的 `套磁候选状态.json` + `套磁候选输入.json` 重编译；历史 `教授研究/邮件输入.json` 里的 email 记录**从不**被复制成新的 local truth。
+- 其余情况（完整 local pair 已存在 → `already_local`；没有该教授的 legacy 行或历史文件不可读 → `not_applicable`）不运行迁移命令，直接进入 Step 4。`migrated` 与 `already_local` 之后同样继续该教授的 Step 4 正常 local finalize。
+- **顺序硬规则**：绝不先跑 `stage4-finalize` 再补迁移——finalize 会先创建 local pair，其后的迁移只会看到完整 pair 并返回 `already_local`，历史行既未被迁移也未被按当前事实审查。
+- **迁移按教授独立**：expected migration failure（`local_pair_incomplete` 半文件对零写入、待刷新等）只形成**该教授**的结果行（`selection_file`/`email_pack` 为 `null`），该教授不进入 Step 4，也不阻断其他教授继续 Step 3/Step 4。迁移另一位教授失败不影响本教授，也**不修改**任何历史程序级文件的字节；本 agent 绝不删除历史文件，也不把它们当作第二份权威。
+
+
+### Step 4 — Write selection-input 并跑 stage4-finalize
+
+本 Step 只对**已完成 Step 3 迁移判定（`migrated`/`already_local`/`not_applicable`）且拿到用户真实选择**的教授进入；expected migration failure 的教授停在 Step 3 的结果行。Codex 路径 C（缺 `selection`）到 Step 2 为止，绝不进入本 Step。把用户选择写成 `/tmp/套磁选择输入.json`（只含进入本 Step 的教授）：
 ```json
 {"selections": [{"professor": "<该教授套磁候选输入.json 顶层 professor 原样值>", "professor_dir": "<教授文件夹 abs>",
                  "direction_id": "<方向 direction_id>",
@@ -127,18 +140,7 @@ runner 行为（你只消费其返回 JSON）：
 - 通过 → 原子写该教授的 `<教授目录>/套磁选择.json`（同 教授+方向 旧选择被替换，未涉及的保留；gap_ids 从状态原样保留，绝不重建）并编译 `<教授目录>/邮件输入.json`（schema 3；每选中想法一条 email 记录：`direction_ids` + `directions[]` 显示名 provenance + `email_id = 教授::'+'.join(sorted(direction_ids))::想法ID`（A+B==B+A）/idea/papers（输入包回填真实标题，各带 `direction_ids` 归属）/gaps（精确 `(direction_id,item_key,gap_id)` 三元组 join，每行携带 `direction_id`；`partial→remaining_only`、`unknown→anchor_with_caveat`、`done_by_self→extension_context_only` 永不可锚）/red_lines+banned_phrases/user 补充/soft_materials/profile 指纹/allowed_sources/source_hash；**跨方向想法**以组排序 `direction_ids` 归属与命名，email 按参与方向切片的确定性并集编译（论文按 `item_key` 去重、共享论文保持单一身份并携带双方 `direction_ids`），并带 `cross_direction` 字段（`group_id`/`direction_ids`/`direction_fingerprints`，参与 email `source_hash`））。
 - **联系方式证据快照（Issue #10）**：编译时 runner 读取 `教授研究/_联系方式证据.json`（professor-research 产出的调和工件），把该教授的记录（verdict / current_email / official provenance / paper correspondence / `record_fingerprint`）作为 `contact_evidence` 快照冻结进每条 email 记录（并参与 email 的 `source_hash`）；工件缺失或该教授无记录时为 `null`。**快照是阶段 5 的收件事实源**：阶段 5 的收件邮箱读自它，上游 source-state freshness（`contact_evidence.py --check` 逐教授三态 + 必要时的本地确定性 rebuild/复查）只作指纹/freshness 验证——live/rebuild record 指纹与快照不一致或快照缺失时阶段 5 返回 `needs_refresh` 要求重跑本阶段刷新邮件包；本阶段不做任何邮箱裁决。
 
-### Step 3.5 — 历史程序级选择的逐教授迁移（只在需要时）
-
-某教授目录内还没有 local pair、而历史程序级 `教授研究/套磁选择.json` 里存在该教授的行时，用确定性迁移命令按**一位教授一次**建立 local 权威：
-```bash
-python3 .agents/skills/professor-contact/scripts/contact_state.py stage4-migrate-local \
-  --program-root <program_root abs> --professor-dir <该教授目录 abs> --profile <该状态顶层 profile_path 的绝对路径>
-```
-- 它只把该教授的 legacy 选择行当作**行来源**，邮件事实一律按该教授当前的 `套磁候选状态.json` + `套磁候选输入.json` 重编译；历史 `教授研究/邮件输入.json` 里的 email 记录**从不**被复制成新的 local truth。
-- 完整 local pair 已存在 → `already_local`，已有文件 byte-for-byte 保留；没有该教授的 legacy 行（或历史文件不可读）→ `not_applicable`。`migrated` 与 `already_local` 之后继续该教授的 Step 3 正常 local finalize，`not_applicable` 直接进入正常提交。
-- **迁移按教授独立**：`local_pair_incomplete`（半文件对零写入）、待刷新或其他预期迁移失败只进入**该教授**的结果行（`selection_file`/`email_pack` 为 `null`），不要求其他教授迁移全部成功，也不阻断其他教授的正常提交。迁移另一位教授失败不影响本教授，也**不修改**任何历史程序级文件的字节；本 agent 绝不删除历史文件，也不把它们当作第二份权威。
-
-### Step 4 — Return value (your single message back to the caller)
+### Step 5 — Return value (your single message back to the caller)
 Return ONLY this JSON, no surrounding prose:
 ```json
 {

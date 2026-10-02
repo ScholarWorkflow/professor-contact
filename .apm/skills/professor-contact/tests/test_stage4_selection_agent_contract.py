@@ -4,6 +4,7 @@ These tests guard the documented user-choice boundary only.  They do not claim
 to prove that Codex or OpenCode actually invoked a named agent; that belongs to
 the clean-consumer runtime smoke tests required by PROJECT_CONSENSUS.
 """
+import re
 from pathlib import Path
 import unittest
 
@@ -155,6 +156,32 @@ class Issue67Stage4SelectionContractTests(unittest.TestCase):
             self.text,
             r"(?:零写盘|不写任何文件|零写入)",
             "the missing-selection turn must stay free of formal writes")
+
+    def test_migration_is_orchestrated_before_finalize(self):
+        """Plan r19 order: bind -> migrate decision -> migrate-local -> finalize.
+
+        The migration step (and its command block) must precede the finalize
+        step in the documented execution flow. If finalize ran first it would
+        create the local pair and the subsequent migration could only observe
+        `already_local`, so the legacy row would be neither migrated nor
+        reviewed. Path A must also route through the migration decision
+        instead of jumping straight into `stage4-finalize`.
+        """
+        command_blocks = re.findall(r"```bash\n(.*?)```", self.text, re.S)
+        migrate_positions = [i for i, block in enumerate(command_blocks)
+                             if "contact_state.py stage4-migrate-local" in block]
+        finalize_positions = [i for i, block in enumerate(command_blocks)
+                              if "contact_state.py stage4-finalize" in block]
+        self.assertTrue(migrate_positions, "the migrate-local command block is required")
+        self.assertTrue(finalize_positions, "the finalize command block is required")
+        self.assertLess(
+            min(migrate_positions), min(finalize_positions),
+            "stage4-migrate-local must be orchestrated before stage4-finalize")
+        self.assertNotRegex(
+            self.text,
+            r"绑定成功[^。\n]*直接[^。\n]*`?stage4-finalize`?",
+            "path A must route through the migration decision, not straight "
+            "into finalize")
 
     def test_legacy_program_pair_is_never_written_and_only_migrates_per_professor(self):
         self.assertIn("stage4-migrate-local", self.text)
