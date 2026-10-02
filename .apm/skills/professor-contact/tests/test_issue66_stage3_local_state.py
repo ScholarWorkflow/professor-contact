@@ -1042,6 +1042,35 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         self.assertIn("stage3-rebuild-overview", wfref)
         self.assertIn("派生投影", wfref)
 
+        # Review r11 (plan issue-66-plan-r11-2026-10-02 §4-§6): the Codex
+        # state machine, stop points, 2/4 sibling bound and the raw
+        # validator handoff are load-bearing contract text.
+        self.assertIn("Codex Stage 3 固定状态转移", section)
+        self.assertIn("G1 → V1 → record(V1)", section)
+        self.assertIn("G2(validation_file = V1 原始 JSON)", section)
+        self.assertIn("root 直属 Stage-3 child 总数只能是 2 或 4", section)
+        self.assertIn("第 5 个 child 一律是 caller contract violation", section)
+        self.assertGreaterEqual(section.count("立即停止 Stage 3"), 2)
+        self.assertIn("不得用 `printf`/模板重打", section)
+        self.assertIn("无重构权", section)
+        # OpenCode bullet carries the same-round source binding and the
+        # early-stop on any runner non-success.
+        self.assertIn("每一轮只解析一次 profile/source tuple", opencode_bullet)
+        self.assertIn("同一 `--profile <abs>`", opencode_bullet)
+        self.assertIn("立即结束并把结构化失败返回 caller", opencode_bullet)
+        # Agent doc: hard source-binding preconditions with the plan
+        # fingerprint check and runner non-success early stop.
+        self.assertIn("Source binding（执行前硬条件", agent)
+        self.assertIn("profile_fingerprint_binding_failed", agent)
+        self.assertIn("runner 非成功早停", agent)
+        self.assertIn("原样完整落盘", agent)
+        self.assertIn("绝不手写 `printf`/模板重打", agent)
+        # Workflow reference syncs the state machine and the sibling bound.
+        self.assertIn("generator source-binding", wfref)
+        self.assertIn("固定状态转移", wfref)
+        self.assertIn("只能是 2 或 4", wfref)
+        self.assertIn("无字段重构、翻译或重打权", wfref)
+
         # Agent doc: OpenCode runs the rebuild after the terminal record;
         # Codex callers run it after the child returned.
         self.assertIn("stage3-rebuild-overview", agent)

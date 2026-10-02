@@ -75,15 +75,18 @@ If `folder_path` missing → return the error JSON.
 
 ### Step 1 — Resolve program root + runner plan
 1. Resolve `program_root`. Read `info.json`.
-2. 定位每位教授的 `套磁候选输入.json`（`find 教授研究 -name 套磁候选输入.json`；`professors` 给定时按目录名精确匹配过滤）。缺失 → error `"先跑 professor-contact-analyzer（阶段 2）生成 套磁候选输入.json"`。
-3. 读 profile（查找链同 Input）。**`stage3-plan` / `stage3-finalize` 都传 `--profile <abs>`**——runner 算指纹并判定失效；如果只处理一个方向，两次都传相同的 `--direction-id <方向 ID>`（与 `--skip-direction-ids`/`--cross-direction-groups` 一样 plan/finalize 必须一致）；**`--refresh-scope selected` 时两次都必须再传 `--selection <教授文件夹 abs>/套磁选择.json`**（Stage-4 选择是教授级 local 文件，issue #67），绝不依赖程序级同名文件：
+2. **Source binding（执行前硬条件，issue-66-plan-r11 §4）**：每个 child 只在本步解析一次全部 Stage 3 输入，形成本轮固定 source tuple——`professor_dir`、`program_root`、resolved `profile_path`（存在 profile 时必须为绝对路径）、`refresh_scope`、`skip_direction_ids`、`cross_direction_groups`、selected 范围的 `selection_path`、修正轮的 `validation_file`。此后的 `stage3-plan` 与 `stage3-finalize` 都必须使用同一 tuple；存在 profile 时二者都必须显式传同一 `--profile <abs>`，修正轮不得临场更换 profile、program root、professor 或事实来源。
+3. 定位每位教授的 `套磁候选输入.json`（`find 教授研究 -name 套磁候选输入.json`；`professors` 给定时按目录名精确匹配过滤）。缺失 → error `"先跑 professor-contact-analyzer（阶段 2）生成 套磁候选输入.json"`。
+4. 读 profile（查找链同 Input）。**`stage3-plan` / `stage3-finalize` 都传 `--profile <abs>`**——runner 算指纹并判定失效；如果只处理一个方向，两次都传相同的 `--direction-id <方向 ID>`（与 `--skip-direction-ids`/`--cross-direction-groups` 一样 plan/finalize 必须一致）；**`--refresh-scope selected` 时两次都必须显式传同一个 `--selection <教授目录>/套磁选择.json`**（该路径是教授本地第四阶段选择文件，issue #67），绝不依赖程序级同名文件：
 ```bash
 skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage3-plan \
   --professor-dir <教授文件夹 abs> --profile <profile abs> --refresh-scope flagged \
   --direction-id <方向 ID> --cross-direction-groups '[["DIR_A","DIR_B"]]' \
   --program-root <program_root abs>
 ```
-4. plan 返回：每方向 `action: reuse|process|skipped`（输入包指纹、profile 指纹、生成器契约版本都没变且已有候选 → `reuse`，零模型调用；`skip_direction_ids` 命中 → `skipped`）+ 逐方向模型 job + 每个显式请求的 cross 组一个独立 `kind:"cross_direction"` job。**结果的 `result_file` 由 plan 逐 job 返回**（`candidates-<安全ID>-<hash>.json`；cross job 用组身份 `cross:<hash>`）——模型/代理必须写 plan 给的精确文件名，绝不自拼。方向身份 = 输入包每方向的 `direction_id`（canonical；`collection_key` 只是投影元数据）。普通 job 的 `model_input` 只含**本方向切片**：`direction_id`、`mode`（refined/generated，由有无 user_note 决定）、user_note 原文、credibility、红线、支撑论文元数据（professor 级 `papers` 投影）、gap shortlist（quote ≤300 字/中译/状态/证据/completed_part/remaining_gap/confidence）、done_by_self 黑名单（供【我的延伸】差异点）、profile 文本（≤2000 字）、候选契约规则——**不含其他方向的任何信息**（方向归属由 job 决定，不让模型猜）。cross job 的 `model_input` 含排序后的 `direction_ids`、逐方向显示名、以及带 `direction_ids` 归属标注的参与方向论文/gap 并集。
+5. **plan 指纹硬检查**：存在 profile 时，`stage3-plan` 返回的 `profile_fingerprint` 必须是非空字符串且绑定本 child 传入的同一 `--profile`；得到 `null` 或与已解析 profile 不一致 → 当场返回 error（notes 注明 `profile_fingerprint_binding_failed`），不写任何 result 文件、不运行 finalize。
+6. plan 返回：每方向 `action: reuse|process|skipped`（输入包指纹、profile 指纹、生成器契约版本都没变且已有候选 → `reuse`，零模型调用；`skip_direction_ids` 命中 → `skipped`）+ 逐方向模型 job + 每个显式请求的 cross 组一个独立 `kind:"cross_direction"` job。**结果的 `result_file` 由 plan 逐 job 返回**（`candidates-<安全ID>-<hash>.json`；cross job 用组身份 `cross:<hash>`）——模型/代理必须写 plan 给的精确文件名，绝不自拼。方向身份 = 输入包每方向的 `direction_id`（canonical；`collection_key` 只是投影元数据）。普通 job 的 `model_input` 只含**本方向切片**：`direction_id`、`mode`（refined/generated，由有无 user_note 决定）、user_note 原文、credibility、红线、支撑论文元数据（professor 级 `papers` 投影）、gap shortlist（quote ≤300 字/中译/状态/证据/completed_part/remaining_gap/confidence）、done_by_self 黑名单（供【我的延伸】差异点）、profile 文本（≤2000 字）、候选契约规则——**不含其他方向的任何信息**（方向归属由 job 决定，不让模型猜）。cross job 的 `model_input` 含排序后的 `direction_ids`、逐方向显示名、以及带 `direction_ids` 归属标注的参与方向论文/gap 并集。
+7. **runner 非成功早停**：`stage3-plan` 或 `stage3-finalize` 任一返回非成功终态（error/needs_refresh/needs_decision，含 `validation_source_changed`），立即结束本 child 并把该结构化失败原样返回 caller（`result:"error"` + reason_code）；**绝不允许更换 profile/source 后自行重试来绕过 fail-closed**。
 
 ### Step 2 — 逐 job 写候选 result JSON
 对每个 `process` 方向，把 plan 给的 job 变成一份结构化候选 JSON（写到 plan 返回的精确 `result_file`，通常在 `/tmp/<教授名>_候选_results/` 下）：
@@ -170,7 +173,7 @@ task(subagent_type: "professor-contact-style-validator",
      prompt: "files: <该教授 套磁想法候选.md 绝对路径>\nartifact: candidates")
 ```
 
-fail → 把 validator 原样 JSON 写进临时 `validation_file`，**先**运行 `stage3-record-validation --professor-dir <教授目录> --validation-file <abs>`；返回 `needs_correction=true` 才给 `stage3-plan --validation-file <同一个 abs>`（不传 direction_id：失败范围来自这轮记录）。该 correction job 的 `model_input.current_result` 是当前完整结果，`model_input.validator_issues` 是精确问题，`model_input.repairable_candidate_ids` 是点名可改的候选。只改点名文字并写 plan 返回的 `result_file`，再用相同 `--validation-file` 跑 `stage3-finalize`；runner 会拒绝 ID、顺序、证据与其它机器事实变化，也会拒绝改动未被点名的候选。随后重新 `task(...)` 校验，**最多 2 轮**；每一轮都要记录，第 2 轮的记录就是终局（`pass` 或 `fail_after_2_rounds`）。
+fail → 把 validator 的唯一最终业务 JSON **原样完整落盘**为临时 `validation_file`（拷贝 child 返回的 JSON 正文本身；不得重构字段、不改写 issues、不自行计算 `result/rounds/direction_id`，也绝不手写 `printf`/模板重打），**先**运行 `stage3-record-validation --professor-dir <教授目录> --validation-file <abs>`；返回 `needs_correction=true` 才给 `stage3-plan --validation-file <同一个 abs>`（不传 direction_id：失败范围来自这轮记录）。该 correction job 的 `model_input.current_result` 是当前完整结果，`model_input.validator_issues` 是精确问题，`model_input.repairable_candidate_ids` 是点名可改的候选。只改点名文字并写 plan 返回的 `result_file`，再用相同 `--validation-file` 跑 `stage3-finalize`；runner 会拒绝 ID、顺序、证据与其它机器事实变化，也会拒绝改动未被点名的候选。随后重新 `task(...)` 校验，**最多 2 轮**；每一轮都要记录，第 2 轮的记录就是终局（`pass` 或 `fail_after_2_rounds`）。
 
 **Codex 分支（调用线程 sibling 编排；本 agent 不启动任何子代理）**：你完成 `stage3-finalize` 后本轮即结束；validator 由**调用线程**顺序委派，你只在自己的返回 `notes` 里注明「等待 Codex 调用线程运行 style-validator 校验」：
 
@@ -187,7 +190,7 @@ Codex 调用线程
   -> 第 2 轮记录后无论 pass / fail_after_2_rounds 都不再委派 idea-generator
 ```
 
-fail 轮收到 `validation_file` 时：`stage3-plan` 与 `stage3-finalize` 都传同一个 `--validation-file <abs>`，**不传 direction_id**——要修哪些方向/跨方向组由上一轮记录决定，指定一个证据里没有的方向会直接 `validation_scope_not_in_evidence`；只修正 `model_input.validator_issues` 点名的 `current_result` 候选文字，其余候选与方向切片原样保留；不得借机重新读取 Stage 2 或扩展方向事实；修正后再交回调用线程委派 validator。
+fail 轮收到 `validation_file` 时：`stage3-plan` 与 `stage3-finalize` 都传同一个 `--validation-file <abs>`，**不传 direction_id**——要修哪些方向/跨方向组由上一轮记录决定，指定一个证据里没有的方向会直接 `validation_scope_not_in_evidence`；修正轮沿用 Step 1 的同一 source tuple（同一 profile/program_root/scope），只增加这份已记录的 `validation_file`，绝不临场更换 profile 或事实来源；只修正 `model_input.validator_issues` 点名的 `current_result` 候选文字，其余候选与方向切片原样保留；不得借机重新读取 Stage 2 或扩展方向事实；runner 非成功立即结束并返回结构化失败；修正后再交回调用线程委派 validator。
 
 **共同收尾（两个分支一致）**：校验器**只报告不改写**（pass/fail + blocking/minor 清单）；仍 fail → 保留产物并在返回 `notes` 记「白话校验未通过：<要点>」。每一轮都**必须**用 validator 的原始 JSON 运行 `stage3-record-validation --professor-dir <教授目录> --validation-file <validation.json>`（OpenCode 下由你运行；Codex 下由调用线程运行）；runner 只接受 `result` + `files[]` 里 `artifact: candidates` 那一条，非法/缺失 quote、非当前渲染、缺 candidates 条目都不写入且不会覆盖阶段 3 候选状态；`rounds`、`result`、`direction_id` 由 runner 推导，调用方自带的那些字段一律忽略。**terminal record-validation 之后重建程序级总览（恰好一次、best-effort）**：OpenCode 下由你在终局记录后运行 `stage3-rebuild-overview --program-root <程序根>`，并把 aggregate rebuild 的 structured result 汇进最终 JSON 的 `notes`（失败记「程序级总览重建失败：<reason_code>」；它绝不把已 terminal 的 Stage 3 改回未完成，也绝不为此重跑 finalize）；Codex 下 rebuild 由调用线程在你返回之后自己运行并在 root 汇报，你不得声称自己运行过它。结果里的 `overview_md` 只是 human-facing 目标路径，永远不是 rebuild 成功证据。**绝不允许由你或调用线程自称「validator 已通过」来代替真实委派与真实记录。**
 
