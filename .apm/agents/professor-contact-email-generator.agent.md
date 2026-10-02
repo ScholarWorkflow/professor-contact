@@ -110,6 +110,7 @@ The local `邮件输入.json` is schema 3: every `emails[]` entry carries `direc
 skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage5_immutable.py stage5-finalize \
   --program-root <abs> --mode both --result <result.json> --choices <choices.json> \
   --template <abs template> --followup-template <abs followup template> \
+  --email-pack <abs path from the Stage-4 success row> \
   [--polish-mode dynamic-fields-only] [--email-id ...]
 ```
 
