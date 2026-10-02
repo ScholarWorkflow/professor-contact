@@ -18,6 +18,7 @@ This skill is the **caller convention** for the 套磁 workflow (套磁 = contac
 - **先真实调用，再判断失败**：立即按下表选定 installed exact named agent，发起当前运行的原生调用并等待结果。只有该 exact named agent 的本轮调用实际返回 `machine-level failure`，才允许记录 runtime/feature blocker；父线程不得 inline/simulate child。
 - **等待到子代理结束**：一次等待调用返回只说明这次调用结束；若结果显示子代理仍在运行时继续等待，不得结束当前回合。拿到子代理最终结果后再汇报 Stage 结果。
 - **禁止跨执行器 shell fallback**：不得用 shell、`opencode run`、`codex exec`、curl 或另发 eval 请求代替原生委派；不得把 OpenCode `task(...)` 语法写进 Codex 调用。
+- **阶段 5 的调用前输入解析**：独立重入时，root 先用已安装的 `contact_state.py stage5-list-inputs --program-root <abs>` 只读发现本次本地包，再从已选合法包的 `professor_dir` 与 `emails[].email_id` 计算完整只读范围。这个步骤是确定 owner 的输入解析，不执行 owner 的核验、生成或提交。随后立即逐教授原生委派：业务对象的 `email_pack` 必须是发现结果中的真实绝对路径，`choices_scope` 必须是本次全部已选教授的完整范围，`choices` 必须是未经切片或改写的原值；禁止用占位串代替路径或范围，禁止让每个 child 重新发现其它教授来补全 caller 输入。阶段 4 衔接直接使用其实际交付路径。缺核验也必须先委派 owner，再消费它的机器结果。
 
 | 入口 | Codex 第一项路由动作 |
 |---|---|

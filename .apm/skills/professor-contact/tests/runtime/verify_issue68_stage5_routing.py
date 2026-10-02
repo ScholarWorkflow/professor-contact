@@ -84,6 +84,8 @@ def result_observed(text, expected):
 def command_action(command, manifest):
     """Only a structured executed shell item can supply a CLI invocation."""
     tokens = shlex.split(command)
+    if len(tokens) == 3 and Path(tokens[0]).name in ("sh", "bash", "zsh") and tokens[1] in ("-c", "-lc"):
+        tokens = shlex.split(tokens[2])
     actions = {"stage5-list-inputs", "stage5-plan", "stage5-rebuild-overview"}
     found = [token for token in tokens if token in actions]
     if not found:
@@ -98,6 +100,8 @@ def command_action(command, manifest):
         raise ValueError("stage5_invocation_script_unobservable")
     flags = {}
     tail = tokens[index + 1:]
+    if "--help" in tail or "-h" in tail:
+        return None
     if len(tail) % 2:
         raise ValueError("stage5_invocation_arguments_unobservable")
     for offset in range(0, len(tail), 2):
@@ -253,7 +257,10 @@ def verify_codex(response, adapter, manifest):
                               "thread": thread})
     assigned = {}
     for child in children:
-        texts = payloads.get(child, [])
+        # Native startup can inject user-role environment messages. Only
+        # messages containing a business email_pack object are caller input.
+        texts = [text for text in payloads.get(child, []) if any(
+            "email_pack" in row for value in json_values(text) for row in objects(value))]
         if len(texts) != 1:
             return verdict("BLOCKED_OBSERVABILITY", "completed_user_payload_unobservable")
         pack, problem = business_payload(texts[0], manifest)

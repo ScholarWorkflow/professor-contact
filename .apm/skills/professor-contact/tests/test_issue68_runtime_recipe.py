@@ -104,6 +104,14 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
 
     def test_codex_pass_uses_formal_ownership_and_wait_results_without_identity_gate(self):
         response, adapter = self.codex_evidence()
+        events = response["output"]["app_server_events"]
+        bootstrap = copy.deepcopy(events[2])
+        bootstrap["message"]["params"]["item"]["content"][0]["text"] = '<environment_context>{"cwd":"/consumer"}</environment_context>'
+        events.insert(2, bootstrap)
+        for seq, event in enumerate(events, 1):
+            event["runtime_seq"] = seq
+        command = events[1]["message"]["params"]["item"]
+        command["command"] = shlex.join(["/bin/zsh", "-lc", command["command"]])
         self.assertEqual(verify.verify_codex(response, adapter, self.manifest)["verdict"], "PASS")
 
     def test_opencode_pass_uses_foreground_task_completion_and_execution_times(self):
@@ -111,7 +119,9 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
         self.assertEqual(verify.verify_opencode(events, shared, self.manifest)["verdict"], "PASS")
 
     def test_wrong_owner_and_mutated_transport_are_product_failures(self):
-        for field, value in (("email_pack", self.manifest["invalid_pack"]), ("choices", []), ("choices_scope", {})):
+        for field, value in (("email_pack", self.manifest["invalid_pack"]),
+                             ("email_pack", "DISCOVERED_BY_WORKFLOW"),
+                             ("choices", []), ("choices_scope", {}), ("choices_scope", "DERIVE_FROM_DISCOVERED_PACK")):
             with self.subTest(field=field):
                 response, adapter = self.codex_evidence()
                 content = response["output"]["app_server_events"][2]["message"]["params"]["item"]["content"][0]

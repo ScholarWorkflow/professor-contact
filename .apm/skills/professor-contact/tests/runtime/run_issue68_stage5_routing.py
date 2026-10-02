@@ -244,6 +244,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", choices=("PC68-D1", "PC68-R1"), default="PC68-R1")
     parser.add_argument("--execution-kind", choices=("preflight", "acceptance"), default="preflight")
+    parser.add_argument("--preflight-host", choices=("codex", "opencode"))
     parser.add_argument("--producer-root", type=Path, required=True)
     parser.add_argument("--producer-sha", required=True)
     parser.add_argument("--fixture-root", type=Path)
@@ -265,6 +266,8 @@ def main():
             raise ValueError("output_must_be_outside_producer")
         provenance = {"producer": clean_revision(args.producer_root, args.producer_sha), "manual_patch": "no",
                       "execution_kind": args.execution_kind}
+        if args.preflight_host and (args.execution_kind != "preflight" or args.case != "PC68-R1"):
+            raise ValueError("partial_host_is_preflight_only")
         if args.case == "PC68-R1":
             if args.fixture_root is None or args.eval_direnv_root is None or args.fixture_sha != FIXTURE_SHA:
                 raise ValueError("missing_or_wrong_frozen_fixture_arguments")
@@ -273,11 +276,14 @@ def main():
             write_json(output / "provenance.json", provenance)
             hosts = []
             for name, execute in (("codex", codex_host), ("opencode", opencode_host)):
+                if args.preflight_host and args.preflight_host != name:
+                    continue
                 host = execute(args, output)
                 write_json(output / f"{name}-verdict.json", host)
                 hosts.append(host)
                 progress(name + " 结束：" + host.get("verdict", host["state"]))
-            result = combine(hosts)
+            result = combine(hosts) if not args.preflight_host else verdict(
+                "NOT_TESTED", "partial_preflight_only", host=args.preflight_host, hosts=hosts)
         else:
             write_json(output / "provenance.json", provenance)
             result = deterministic(args, output)

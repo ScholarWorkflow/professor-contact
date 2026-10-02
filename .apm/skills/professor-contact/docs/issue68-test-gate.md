@@ -40,6 +40,8 @@
 | M3 | §2 合法上游样例、直接证据：旧 B 包编号与伪造 scope 不一致，且仅检查 A，无法证明碰撞归属；用编译器生成同名同编号的两个真实本地包，检查两个 owner 的 plan/finalize/wrapper；修正两阶段解析 | AD68-4、D1/P7；执行当前版本 |
 | M4 | §3.1–3.3：七项证明和四个运行入口缺失，真实转发和判定链不可执行；补固定程序、完整 scope 转发证据、三个判定通道及原生顺序解析 | D1 的固定入口、R1；当前执行；合成检查不复用为运行通过 |
 
+当前真实步骤验证另发现 R1 直接依赖的两个问题。运行器会先注入环境说明形式的 user 消息，不能以全部 user 消息数量作为业务输入数量；解析程序改为定位含 `email_pack` 的业务对象，同时支持当前版本正式 commandExecution 的 shell 包装。用原始完整证据重新判读发现 root 把 `DISCOVERED_BY_WORKFLOW` 作为包路径、用范围占位串委派，没有执行本应由 root 负责的只读解析；正确判定为 `FAIL_PRODUCT`，不能写成运行器不可观察。最小产品修正把第五阶段的输入解析责任放到调用入口，并明确真实路径、完整范围和原样选择必须在委派前形成；generator 保持单教授职责并使用项目要求的单条 JSON 结果协议。只影响 R1，不改变 D1 的已通过业务实现。
+
 `Reused proof / PASS`：第九版 P1–P4、P6 的设计未受这两项产品修正影响，沿用其要求和断言；没有正式第三关口 PASS 可复用，`N/A`。原 PR 的 828 项自测不升级为正式第三关口证明。`Affected Gate 3 cases`：D1、R1；运行输入、scope 和解析已变化，不用旧运行替代。
 
 ## 唯一证明负责者
@@ -77,6 +79,8 @@ uv run --no-project .apm/skills/professor-contact/tests/runtime/run_issue68_stag
 ```
 
 正式批准前只使用 `--execution-kind preflight`，保留该性质，不能当作当前正式验收执行。`uv` 缓存目录可以设在临时目录；不改变业务输入、运行配置或断言。
+
+只排查受影响宿主时，可在 `preflight` 的 R1 命令增加 `--preflight-host codex|opencode`。该入口只能形成局部宿主记录，整个 R1 固定为 `NOT_TESTED / partial_preflight_only`，不能生成两宿主通过；正式 acceptance 禁止此参数。外部服务故障没有新增排查价值时停止，不借局部步骤重复请求该宿主。
 
 D1 在验证七项发现集合且开始 unittest 前写 `CASE_STARTED`；只接受 7 项普通执行，零 skip、expected failure、unexpected success。真实断言失败为 `FAIL_PRODUCT`；发现集合或执行不完整为 `INVALID_TEST_EXECUTION`。输出 `provenance.json`、`case-started.json`、`unittest.txt`、`final-verdict.json`。
 
