@@ -19,7 +19,9 @@ PROOFS = {
     "P2": [("test_contact_state", "TestStage5PerProfessorState", [
         "test_issue68_t68_3_other_professor_files_never_gate_this_one",
         "test_issue68_t68_4_this_professor_stays_fail_closed",
-        "test_issue68_unselected_malformed_local_row_is_noise"])],
+        "test_issue68_unselected_malformed_local_row_is_noise"]),
+        ("test_issue68_choices_attribution", "TestStage5ChoicesAttribution", [
+        "test_issue68_r11_targeted_run_filters_unselected_explicit_rows"])],
     "P3": [("test_contact_state", "TestStage5PerProfessorState", [
         "test_issue68_t68_5_local_batch_covers_one_professor_only"])],
     "P4": [("test_contact_state", "TestStage5PerProfessorState", [
@@ -29,7 +31,15 @@ PROOFS = {
         "test_issue68_t68_7_finalize_never_touches_the_aggregate"]),
         ("test_stage5_overview", "TestStage5OverviewRebuild", None)],
     "P6": [("test_issue68_choices_attribution", "TestStage5ListInputs", None)],
-    "P7": [("test_issue68_choices_attribution", "TestStage5ChoicesAttribution", None),
+    "P7": [("test_issue68_choices_attribution", "TestStage5ChoicesAttribution", [
+        "test_issue68_r10_counterexample3_unique_candidate_legacy_row_is_a_duplicate",
+        "test_issue68_r10_counterexample4_multi_candidate_excludes_satisfied_owner",
+        "test_issue68_r10_undecided_multi_candidate_owner_returns_needs_input",
+        "test_issue68_r10_counterexample2_cross_professor_error_stays_with_its_owner",
+        "test_issue68_r10_counterexample5_invalid_explicit_dir_never_transfers_by_id",
+        "test_issue68_r10_choices_scope_is_validated_against_this_run",
+        "test_issue68_r10_foreign_rows_stay_noise_without_a_scope",
+        "test_issue68_r10_single_object_choices_and_default_scope_keep_working"]),
         ("test_issue68_choices_attribution", "TestStage5ImmutableWrapperForwardsChoicesScope", None)],
 }
 
