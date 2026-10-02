@@ -21,8 +21,9 @@ MANIFEST_NAME = "fixture-manifest.json"
 PROFESSOR = "Example Professor"
 DIRECTION_ID = "DIR00001"
 CANONICAL_ITEM_KEY = "AAAA1111"
+STAGE0_TARGET_RELATIVE = Path(f"教授研究/X分野/{PROFESSOR}/套磁目标.json")
 PROGRAM_STAGE_OUTPUTS = (
-    Path("教授研究/套磁目标.json"), Path("教授研究/套磁阶段1候选.json"),
+    STAGE0_TARGET_RELATIVE, Path("教授研究/套磁阶段1候选.json"),
     Path("教授研究/套磁选择.json"), Path("教授研究/邮件输入.json"),
 )
 PROFESSOR_STAGE_OUTPUTS = (
@@ -412,12 +413,13 @@ def _checkpoint_stage0_needs_input(args: argparse.Namespace) -> dict[str, Any]:
 def _checkpoint_stage0_final(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     checks: list[dict[str, Any]] = []
-    path = root / "教授研究/套磁目标.json"
+    path = root / STAGE0_TARGET_RELATIVE
     try:
         payload = _load(path)
-        targets = payload.get("targets", [])
-        target = next(row for row in targets if row.get("professor") == PROFESSOR)
-    except (OSError, json.JSONDecodeError, StopIteration, AttributeError) as exc:
+        if payload.get("professor") != PROFESSOR:
+            raise ValueError(f"target professor mismatch: {payload.get('professor')!r}")
+        target = payload
+    except (OSError, json.JSONDecodeError, AttributeError, ValueError) as exc:
         _check(checks, "target_readable", False, str(exc))
         return _finish(checks)
     selected = target.get("selected_direction_ids", [])

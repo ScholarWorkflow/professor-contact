@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import re
 import unittest
 
@@ -12,6 +13,14 @@ STAGE2_AGENT = (
     REPO_ROOT
     / "packages"
     / "professor-contact-opencode"
+    / ".apm"
+    / "agents"
+    / "professor-contact-analyzer.agent.md"
+)
+STAGE2_CODEX_AGENT = (
+    REPO_ROOT
+    / "packages"
+    / "professor-contact-codex"
     / ".apm"
     / "agents"
     / "professor-contact-analyzer.agent.md"
@@ -30,6 +39,147 @@ class Stage01CallerContractTests(unittest.TestCase):
     PROJECT_CONSENSUS; these tests only prevent source-level caller contracts
     from drifting while the implementation is developed.
     """
+
+    #: Commands whose only Stage-0 authority input is one professor's local target.
+    TARGET_BOUND_COMMANDS = (
+        "contact_targets.py resolve",
+        "contact_stage1.py build",
+        "contact_stage1.py verify",
+        "stage2-preflight",
+    )
+    #: Sources owned by the Stage 0-1 caller contract.
+    STAGE01_SOURCES = (STAGE0_AGENT, STAGE1_AGENT, SKILL_PATH)
+
+    @staticmethod
+    def _clauses(text: str) -> list[str]:
+        """Sentences with backslash-continued command lines joined back together."""
+        return re.split(r"[。；\n]", text.replace("\\\n", " "))
+
+    def test_issue64_t7_every_target_bound_command_names_the_local_target_file(self):
+        """R64-6 caller side (G64-T7): no documented invocation may omit --target-file."""
+        for path in self.STAGE01_SOURCES:
+            text = _read(path)
+            for clause in self._clauses(text):
+                for command in self.TARGET_BOUND_COMMANDS:
+                    if command in clause:
+                        self.assertIn(
+                            "--target-file",
+                            clause,
+                            msg=f"{path.name}: {command} without an explicit local target: {clause}",
+                        )
+
+    #: Canonical professor-local identity a transaction record must carry (R64-17).
+    TRANSACTION_IDENTITY_FIELDS = ('"professor_dir"', '"preview_path"', '"target_state"')
+    #: Sources that carry the Stage 0 -> Stage 1 -> Stage 2 local-target handoff.
+    HANDOFF_SOURCES = (STAGE0_AGENT, STAGE1_AGENT, SKILL_PATH, STAGE2_AGENT, STAGE2_CODEX_AGENT)
+
+    @staticmethod
+    def _json_blocks(text: str) -> list[str]:
+        return re.findall(r"```json\n(.*?)```", text, flags=re.DOTALL)
+
+    def test_issue64_t4_caller_handoff_is_professor_local_transaction_records(self):
+        """G64-T4 support (R64-17): every handoff contract carries one record per
+        professor-local transaction, identified by canonical paths.
+
+        The main proof is the two-same-name-professors case in
+        `test_contact_targets.py`; this assertion only pins the caller-facing
+        source contract so a display-name-keyed handoff cannot come back.
+        """
+        for path in self.HANDOFF_SOURCES:
+            text = _read(path)
+            with self.subTest(source=str(path.relative_to(REPO_ROOT))):
+                self.assertIn('"transactions"', text)
+                blocks = self._json_blocks(text)
+                self.assertTrue(blocks, msg=f"{path.name}: no JSON contract block")
+                carriers = [block for block in blocks
+                            if all(field in block for field in self.TRANSACTION_IDENTITY_FIELDS)]
+                self.assertTrue(carriers, msg=f"{path.name}: no transaction record example")
+        # Pin each authoritative carrier separately, not any unrelated example.
+        stage0 = _read(STAGE0_AGENT)
+        input_section = stage0.split('## Input', 1)[1].split('## ', 1)[0]
+        input_record = json.loads(self._json_blocks(input_section)[0])['transactions']
+        self.assertIsInstance(input_record, list)
+        self.assertTrue(input_record)
+        for record in input_record:
+            self.assertTrue({'professor_dir', 'preview_path'} <= record.keys())
+        pending_section = stage0.split('When returning `needs_input`', 1)[1]
+        pending = json.loads(self._json_blocks(pending_section)[0])['selection_request']
+        self.assertIsInstance(pending, list)
+        self.assertTrue(pending)
+        for record in pending:
+            self.assertTrue({'professor_dir', 'preview_path'} <= record.keys())
+        for path in (STAGE0_AGENT, STAGE1_AGENT, STAGE2_AGENT, STAGE2_CODEX_AGENT):
+            text = _read(path)
+            # Return sections follow every input/selection example.
+            text = text[text.index('Return'):]
+            records = [json.loads(block)['transactions'] for block in self._json_blocks(text)
+                       if '"transactions"' in block]
+            self.assertTrue(records)
+            for carrier in records:
+                self.assertIsInstance(carrier, list)
+                for record in carrier:
+                    self.assertTrue({'professor_dir', 'preview_path', 'target_state'} <= record.keys())
+
+    def test_issue64_t4_no_contract_example_hands_off_targets_keyed_by_display_name(self):
+        """A `{"target_states": {"同名教授": ...}}` result silently drops one transaction."""
+        for path in self.HANDOFF_SOURCES:
+            text = _read(path)
+            rel = str(path.relative_to(REPO_ROOT))
+            for block in self._json_blocks(text):
+                self.assertNotIn("target_states", block, msg=f"{rel}: name-keyed handoff shape")
+            for line in text.splitlines():
+                if "target_states" in line:
+                    self.assertTrue(
+                        any(marker in line for marker in ("禁止", "绝不", "不得", "Never", "never")),
+                        msg=f"{rel}: name-keyed shape stated as contract: {line}",
+                    )
+
+    def test_issue64_t4_stage0_documents_bootstrap_and_revision_split(self):
+        """G64-T7 support (R64-4/8): `select` revises only; `bootstrap` establishes."""
+        stage0 = _read(STAGE0_AGENT)
+        skill = _read(SKILL_PATH)
+        for text in (stage0, skill):
+            self.assertRegex(
+                text,
+                r"(?is)bootstrap_required[\s\S]{0,160}(?:zero writes|零写入)",
+            )
+        self.assertRegex(
+            stage0,
+            r"(?is)only Stage-0 entry that establishes a professor.s first",
+        )
+
+    def test_issue64_t7_retired_program_table_only_appears_as_a_prohibition_or_migration_input(self):
+        retired = "教授研究/套磁目标.json"
+        prohibition = r'(?i)(?:绝不(?:回退)?读|不读|不得(?:读|写|读取)|Never (?:read|open|write))'
+        migration = r'(?:contact_targets\.py (?:bootstrap|migrate)|`bootstrap`)[\s\S]*(?:only|只在|纯迁移)'
+        for path in self.HANDOFF_SOURCES:
+            text = _read(path)
+            lines = [line for line in text.splitlines() if retired in line]
+            self.assertTrue(lines, msg=f"{path.name}: retired table never mentioned")
+            for line in lines:
+                self.assertTrue(
+                    re.search(prohibition, line) is not None or (
+                        path in self.STAGE01_SOURCES and (
+                            re.search(migration, line) is not None or (
+                                re.search(r'(?:only|只在|纯迁移)', line) is not None
+                                and re.search(r'contact_targets\.py (?:bootstrap|migrate)|`bootstrap`', line)
+                            ))),
+                    msg=f"{path.name}: {line}",
+                )
+
+    def test_issue64_t7_stage0_documents_one_professor_per_transaction_and_partial_results(self):
+        text = _read(STAGE0_AGENT)
+        self.assertIn("<教授目录>/套磁目标.json", text)
+        self.assertRegex(text, r"(?is)one[` ]+select[` ]+call is one professor-local transaction")
+        self.assertRegex(text, r"(?is)partial[\s\S]{0,300}(?:never|does not)[\s\S]{0,200}(?:roll back|rolls back)")
+
+    def test_issue64_t7_stage1_resolves_one_professor_per_invocation(self):
+        text = _read(STAGE1_AGENT)
+        self.assertRegex(
+            text,
+            r"(?is)one invocation resolves exactly one professor",
+        )
+        self.assertIn("missing_target_state", text)
 
     def test_stage0_exposes_structured_selection_for_noninteractive_callers(self):
         text = _read(STAGE0_AGENT)

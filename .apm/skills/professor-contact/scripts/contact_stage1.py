@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Deterministic Stage 1 candidate builder for professor-contact.
 
-Turns the selected target state (``教授研究/套磁目标.json``) into per-direction,
-high-recall candidate sets for PDF assurance and persists a machine-readable
-snapshot (``教授研究/套磁阶段1候选.json``). Expansion is cheap-evidence only and
-never decides final direction membership. Never opens Zotero, starts models,
-performs network I/O, or mutates direction membership anywhere.
+Turns one professor's selected target state (``<professor_dir>/套磁目标.json``)
+into per-direction, high-recall candidate sets for PDF assurance and persists a
+machine-readable snapshot (``教授研究/套磁阶段1候选.json``). Expansion is
+cheap-evidence only and never decides final direction membership. Never opens
+Zotero, starts models, performs network I/O, or mutates direction membership
+anywhere.
 """
 
 from __future__ import annotations
@@ -457,12 +458,23 @@ def build_professor_entry(
     }
     summary = {
         "professor": target.get("professor"),
+        "professor_dir": target.get("professor_dir"),
+        "preview_path": target.get("preview_path"),
         "action": action,
         "work_queue_item_keys": sorted(work_queue),
         "missing_item_keys": sorted(missing),
         "unresolved_item_keys": sorted(unresolved),
     }
     return professor_entry, summary, unmatched
+
+
+def local_identity(target: dict[str, Any]) -> tuple[str, str]:
+    """Canonical professor-local identity of a Stage-0 target or snapshot entry.
+
+    Display name alone cannot distinguish two professors in the shared snapshot,
+    so every merge and lookup keys on ``professor_dir`` plus ``preview_path``.
+    """
+    return (str(target.get("professor_dir") or ""), str(target.get("preview_path") or ""))
 
 
 def load_snapshot(path: Path) -> dict[str, Any]:
@@ -485,14 +497,14 @@ def load_snapshot(path: Path) -> dict[str, Any]:
     return state
 
 
-def build_command(program_root: Path, professors: list[str] | None, named_file: Path | None) -> dict[str, Any]:
+def build_command(program_root: Path, target_file: Path, named_file: Path | None) -> dict[str, Any]:
     program_root = program_root.resolve()
-    resolution = contact_targets.resolve_targets(program_root, professors)
+    resolution = contact_targets.resolve_target(target_file, program_root)
     if resolution.get("status") != "ok":
         emit(resolution)
         raise SystemExit(2)
 
-    named_by_professor: dict[str, dict[str, list[str]]] = {}
+    named_by_target: dict[tuple[str, str], dict[str, list[str]]] = {}
     if named_file is not None:
         named_directions = parse_named_file(named_file)
         all_targets = resolution.get("targets", [])
@@ -504,25 +516,25 @@ def build_command(program_root: Path, professors: list[str] | None, named_file: 
             target = owner.get(direction_id)
             if target is None:
                 raise ValueError(f"named-papers reference unknown direction_id: {direction_id}")
-            named_by_professor.setdefault(target["professor"], {})[direction_id] = entries
+            named_by_target.setdefault(local_identity(target), {})[direction_id] = entries
 
     snapshot_path = program_root / SNAPSHOT_FILE
     snapshot = load_snapshot(snapshot_path)
     entries = [item for item in snapshot["professors"] if isinstance(item, dict)]
-    processed: dict[str, dict[str, Any]] = {}
+    processed: dict[tuple[str, str], dict[str, Any]] = {}
     summaries: list[dict[str, Any]] = []
     unmatched_all: list[dict[str, str]] = []
     for target in resolution.get("targets", []):
-        name = target.get("professor")
         entry, summary, unmatched = build_professor_entry(
-            program_root, target, named_by_professor.get(name, {})
+            program_root, target, named_by_target.get(local_identity(target), {})
         )
-        processed[name] = entry
+        processed[local_identity(target)] = entry
         summaries.append(summary)
         unmatched_all.extend(unmatched)
-    merged = [item for item in entries if item.get("professor") not in processed]
+    merged = [item for item in entries if local_identity(item) not in processed]
     merged.extend(processed.values())
-    merged.sort(key=lambda item: (str(item.get("professor") or ""), str(item.get("professor_dir") or "")))
+    merged.sort(key=lambda item: (str(item.get("professor_dir") or ""),
+                                  str(item.get("preview_path") or "")))
     snapshot["professors"] = merged
     snapshot["updated_at"] = now_utc()
     atomic_json(snapshot_path, snapshot)
@@ -543,19 +555,22 @@ def build_command(program_root: Path, professors: list[str] | None, named_file: 
         "missing_item_keys": missing_union,
         "unresolved_item_keys": unresolved_union,
         "unmatched_named_entries": unmatched_all,
-        "per_professor": {
-            item["professor"]: {
+        "per_target": [
+            {
+                "professor": item["professor"],
+                "professor_dir": item["professor_dir"],
+                "preview_path": item["preview_path"],
                 "action": item["action"],
                 "work_queue_item_keys": item["work_queue_item_keys"],
                 "missing_item_keys": item["missing_item_keys"],
                 "unresolved_item_keys": item["unresolved_item_keys"],
             }
             for item in summaries
-        },
+        ],
     }
 
 
-def verify_command(program_root: Path, professors: list[str] | None) -> dict[str, Any]:
+def verify_command(program_root: Path, target_file: Path) -> dict[str, Any]:
     """Read-only consistency check between the snapshot and the current inputs.
 
     Stage 2 consumes the snapshot's candidate sets, so it must verify (not trust)
@@ -563,7 +578,7 @@ def verify_command(program_root: Path, professors: list[str] | None) -> dict[str
     the current target selection and papers state. Never writes.
     """
     program_root = program_root.resolve()
-    resolution = contact_targets.resolve_targets(program_root, professors)
+    resolution = contact_targets.resolve_target(target_file, program_root)
     if resolution.get("status") != "ok":
         emit(resolution)
         raise SystemExit(2)
@@ -573,15 +588,17 @@ def verify_command(program_root: Path, professors: list[str] | None) -> dict[str
               "snapshot_path": str(snapshot_path), "notes": "run Stage 1 (contact_stage1.py build) first"})
         raise SystemExit(2)
     snapshot = load_snapshot(snapshot_path)
-    entries = {item.get("professor"): item for item in snapshot["professors"] if isinstance(item, dict)}
+    entries = {local_identity(item): item for item in snapshot["professors"] if isinstance(item, dict)}
     stale: list[dict[str, Any]] = []
     checked: list[str] = []
     for target in resolution.get("targets", []):
         name = target.get("professor")
-        entry = entries.get(name)
+        entry = entries.get(local_identity(target))
         if entry is None:
             emit({"status": "needs_input", "reason_code": "professor_missing_from_snapshot",
                   "snapshot_path": str(snapshot_path), "professor": name,
+                  "professor_dir": target.get("professor_dir"),
+                  "preview_path": target.get("preview_path"),
                   "notes": "run Stage 1 (contact_stage1.py build) first"})
             raise SystemExit(2)
         problems: list[str] = []
@@ -621,7 +638,9 @@ def verify_command(program_root: Path, professors: list[str] | None) -> dict[str
             if entry.get("input_fingerprint") != current_fingerprint:
                 problems.append("input_fingerprint_mismatch")
         if problems:
-            stale.append({"professor": name, "problems": sorted(set(problems))})
+            stale.append({"professor": name, "professor_dir": target.get("professor_dir"),
+                          "preview_path": target.get("preview_path"),
+                          "problems": sorted(set(problems))})
         else:
             checked.append(name)
     if stale:
@@ -637,21 +656,21 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     build = sub.add_parser("build")
     build.add_argument("--program-root", required=True, type=Path)
-    build.add_argument("--professors", default="")
+    build.add_argument("--target-file", required=True, type=Path,
+                       help="authoritative professor-local Stage-0 target file")
     build.add_argument("--named-file", default=None, type=Path)
     verify = sub.add_parser("verify")
     verify.add_argument("--program-root", required=True, type=Path)
-    verify.add_argument("--professors", default="")
+    verify.add_argument("--target-file", required=True, type=Path,
+                        help="authoritative professor-local Stage-0 target file")
     args = parser.parse_args()
     try:
         if args.command == "build":
-            professors = [part.strip() for part in args.professors.split(",") if part.strip()]
-            payload = build_command(args.program_root, professors or None, args.named_file)
+            payload = build_command(args.program_root, args.target_file, args.named_file)
             emit(payload)
             return 0
         if args.command == "verify":
-            professors = [part.strip() for part in args.professors.split(",") if part.strip()]
-            payload = verify_command(args.program_root, professors or None)
+            payload = verify_command(args.program_root, args.target_file)
             emit(payload)
             return 0
     except (OSError, ValueError, json.JSONDecodeError) as exc:

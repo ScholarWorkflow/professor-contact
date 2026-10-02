@@ -333,7 +333,7 @@ class TestResolvedProofBinding(ResolvedPreflightBase):
 
     def _advance_to_new_generation(self):
         """A later invocation observes changed target state: a new proof id."""
-        self.target["targets"][0]["directions"][0]["user_note"] = "later invocation note"
+        self.target["directions"][0]["user_note"] = "later invocation note"
         self._write_target()
         plan = self.preflight()
         self.assertEqual(plan["action"], "process", plan)

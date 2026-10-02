@@ -372,18 +372,23 @@ def _write_raw_inputs(root: Path, items: dict) -> list[dict[str, str]]:
     ]
 
 
+def _stage0_target(root: Path) -> Path:
+    """The professor-local Stage-0 file this fixture's own ``bootstrap`` run writes."""
+    return root / "教授研究" / "X分野" / PROFESSOR / "套磁目标.json"
+
+
 def _run_stage0(root: Path, skill_dir: Path) -> dict:
     script = skill_dir / "scripts" / "contact_targets.py"
-    preview = root / "教授研究" / "X分野" / PROFESSOR / "方向预筛.json"
+    preview = _stage0_target(root).parent / "方向预筛.json"
     selection = {"direction_ids": [DIRECTION_ID], "notes": {DIRECTION_ID: FIXED_NOTE}}
     with tempfile.TemporaryDirectory(prefix="pc39-stage0-") as directory:
         selection_path = Path(directory) / "selection.json"
         _write_json(selection_path, selection)
         result = _run_json(script, [
-            "select", "--program-root", root, "--preview", preview,
+            "bootstrap", "--program-root", root, "--preview", preview,
             "--selection-file", selection_path,
         ])
-    target = root / "教授研究" / "套磁目标.json"
+    target = _stage0_target(root)
     if not target.is_file():
         raise SetupError(f"Stage 0 runner did not create {target}")
     return {"status": result.get("status"), "result": result, "target_file": str(target)}
@@ -391,11 +396,12 @@ def _run_stage0(root: Path, skill_dir: Path) -> dict:
 
 def _run_stage1(root: Path, skill_dir: Path) -> dict:
     script = skill_dir / "scripts" / "contact_stage1.py"
+    target = _stage0_target(root)
     built = _run_json(script, [
-        "build", "--program-root", root, "--professors", PROFESSOR,
+        "build", "--program-root", root, "--target-file", target,
     ])
     verified = _run_json(script, [
-        "verify", "--program-root", root, "--professors", PROFESSOR,
+        "verify", "--program-root", root, "--target-file", target,
     ])
     if built.get("status") != "ok" or verified.get("status") != "ok":
         raise SetupError("product Stage 1 runner did not produce a verified snapshot")

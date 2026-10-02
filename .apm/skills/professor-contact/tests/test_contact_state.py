@@ -10,6 +10,8 @@ import tempfile
 import unicodedata
 import unittest
 from pathlib import Path
+from issue64_test_support import path_set
+from stage2_upstream_fixture import run_bound_stage2_plan, run_bound_stage2_finalize
 
 import importlib.util
 
@@ -155,13 +157,16 @@ class BaseEnv(unittest.TestCase):
                                 "explanation": "研究计划比较另一种合成场景。"}]}]},
             ensure_ascii=False), encoding="utf-8")
 
+    def run_bound_stage2_plan(self, facts: Path):
+        return run_bound_stage2_plan(run_cli, facts)
+
     def stage2_run(self, gap_overrides=None):
         facts = self.write_facts()
         results = self.root / "results"
         self.write_stage2_results(results, gap_overrides)
-        plan = parse(run_cli("stage2-plan", "--facts", facts))
+        plan = parse(self.run_bound_stage2_plan(facts))
         self.assertEqual(plan["status"], "ok")
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "ok", out)
         return out
 
@@ -169,8 +174,7 @@ class BaseEnv(unittest.TestCase):
         facts = self.write_facts()
         results = self.root / "results"
         self.write_stage2_results(results)
-        self.assertEqual(parse(run_cli(
-            "stage2-finalize", "--facts", facts, "--results", results))["status"], "ok")
+        self.assertEqual(parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))["status"], "ok")
         s3 = self.root / "s3results"
         s3.mkdir(parents=True, exist_ok=True)
         g1 = quote_id(self.gap_quotes["AAAA1111"])
@@ -286,11 +290,11 @@ class TestRunnerBasics(BaseEnv):
             facts["directions"][0]["relevant_keys"] = []
         facts = self.write_facts(extra)
         results = self.root / "results"
-        plan = parse(run_cli("stage2-plan", "--facts", facts))
+        plan = parse(self.run_bound_stage2_plan(facts))
         direction = plan["directions"][0]
         self.assertLessEqual(direction["judge_count"], 10)
         self.assertGreaterEqual(direction["judge_count"], 5)
-        plan2 = parse(run_cli("stage2-plan", "--facts", facts))
+        plan2 = parse(self.run_bound_stage2_plan(facts))
         self.assertEqual(plan["directions"][0]["judge_count"],
                          plan2["directions"][0]["judge_count"])
 
@@ -302,7 +306,7 @@ class TestRunnerBasics(BaseEnv):
                 facts["papers"][1]["month"] = paper_month
 
             facts = self.write_facts(extra)
-            plan = parse(run_cli("stage2-plan", "--facts", facts))
+            plan = parse(self.run_bound_stage2_plan(facts))
             freshness = next(job for job in plan["jobs"] if job["kind"] == "freshness")
             first_gap = next(gap for gap in freshness["model_input"]["gaps"]
                              if gap["item_key"] == "AAAA1111")
@@ -314,7 +318,7 @@ class TestRunnerBasics(BaseEnv):
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
         sidecar["analysis"] = str(self.prof_dir / "论文分析" / "other.md")
         sidecar_path.write_text(json.dumps(sidecar, ensure_ascii=False), encoding="utf-8")
-        plan = parse(run_cli("stage2-plan", "--facts", self.write_facts()))
+        plan = parse(self.run_bound_stage2_plan(self.write_facts()))
         self.assertEqual(plan["directions"][0]["gap_pool"], 1)
 
     def test_01d_narrative_cannot_reference_non_direction_paper(self):
@@ -327,7 +331,7 @@ class TestRunnerBasics(BaseEnv):
         block["text"] = "不相关论文 {{P:CCCC3333}}。"
         block["refs"] = ["paper:CCCC3333"]
         narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "unknown_reference_id")
         self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
@@ -338,8 +342,7 @@ class TestRunnerBasics(BaseEnv):
         cache = json.loads(cache_path.read_text(encoding="utf-8"))
         self.assertEqual(len(cache["entries"]), 2)
         results = self.root / "results"
-        out = parse(run_cli("stage2-finalize", "--facts", self.write_facts(),
-                            "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, self.write_facts(), "--results", results))
         self.assertEqual(out["status"], "ok")
         self.assertEqual(out["freshness_judged"], 0)
         for paper in self.papers:
@@ -347,8 +350,7 @@ class TestRunnerBasics(BaseEnv):
                 paper["abstract"] = "updated abstract of the 2024 real-time paper"
         results2 = self.root / "results2"
         self.write_stage2_results(results2)
-        out2 = parse(run_cli("stage2-finalize", "--facts", self.write_facts(),
-                             "--results", results2))
+        out2 = parse(run_bound_stage2_finalize(run_cli, self.write_facts(), "--results", results2))
         self.assertEqual(out2["status"], "ok")
         self.assertEqual(out2["freshness_judged"], 1,
                          "only the gap whose later-candidate set changed re-judges; the other stays cached")
@@ -614,7 +616,7 @@ class TestRunnerBasics(BaseEnv):
                                       "candidate_paper_ids": [], "evidence": "bad"})
         (results / "freshness-DIR00001.json").write_text(
             json.dumps(freshness, ensure_ascii=False), encoding="utf-8")
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "unknown_reference_id")
         self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
@@ -634,7 +636,7 @@ class TestRunnerBasics(BaseEnv):
         row["gap_id"] = legal_id[:-1]  # 63 hex: one character lost
         freshness_path.write_text(json.dumps(freshness, ensure_ascii=False),
                                   encoding="utf-8")
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "unknown_reference_id")
         self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
@@ -857,7 +859,7 @@ class TestRunnerBasics(BaseEnv):
         facts = self.write_facts(extra)
         results = self.root / "redline-results"
         self.write_stage2_results(results)
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "ok", out)
         md = (self.prof_dir / "套磁候选分析.md").read_text(encoding="utf-8")
         global_lines = [line for line in md.splitlines() if line.startswith("- 【全局】")]
@@ -1454,7 +1456,7 @@ class TestStage5(BaseEnv):
         stat = (self.root / "info.json").stat()
         boshu_stat = (self.root / "boshu_analysis.json").stat()
         verify = {
-            "professor": "試験 教授", "verified_at": "2026-08-27T16:00:00Z",
+            "professor": "試験 教授", "verified_at": ISSUE59_VERIFIED_AT,
             "source_fingerprints": {
                 "info_json": f"{self.root / 'info.json'}:{int(stat.st_mtime)}",
                 "boshu_analysis": f"{self.root / 'boshu_analysis.json'}:{int(boshu_stat.st_mtime)}"},
@@ -2755,6 +2757,266 @@ class TestStage5TargetedEmailScope(BaseEnv):
             self.assertFalse((professor_dir / "套磁邮件.md").exists())
             self.assertFalse((professor_dir / "套磁邮件.txt").exists())
             self.assertFalse((professor_dir / contact_state.EMAIL_STATE).exists())
+
+
+class TestIssue64Stage2Identity(BaseEnv):
+    """G64-T6: preflight → plan → finalize bind one professor-local transaction.
+
+    Both professors display as ``試験 教授``; only ``professor_dir`` /
+    ``preview_path`` separate them, and the sibling entry is written first so a
+    display-name first-match lookup provably binds the wrong transaction.
+    """
+
+    PROFESSOR = "試験 教授"
+    A_REL = Path("教授研究") / "X分野" / "試験 教授"
+    B_REL = Path("教授研究") / "Y分野" / "試験 教授"
+    PACK_NAME = "套磁候选输入.json"
+
+    def setUp(self):
+        super().setUp()
+        self.a_target = self.prof_dir / "套磁目标.json"
+        self.b_target = self.root / self.B_REL / "套磁目标.json"
+        self.legacy = self.root / "教授研究" / "套磁目标.json"
+        self.snapshot = self.root / "教授研究" / "套磁阶段1候选.json"
+        self._write_target(self.a_target, self.A_REL, "pv-a", "DIR00001")
+        self._write_target(self.b_target, self.B_REL, "pv-b", "DIR00009")
+        self._write_snapshot(self._entry(self.B_REL, "stage1-fp-b", "DIR00009"),
+                             self._entry(self.A_REL, "stage1-fp-a", "DIR00001"))
+
+    def _write_target(self, path, rel_dir, fingerprint, direction_id):
+        target = {
+            "schema_version": 2, "kind": "professor-contact-target",
+            "selected_at": "2026-01-01T00:00:00Z", "professor": self.PROFESSOR,
+            "professor_dir": str(rel_dir), "preview_path": str(rel_dir / "方向预筛.json"),
+            "preview_fingerprint": fingerprint,
+            "preview_fingerprint_version": "preview-v1",
+            "selected_direction_ids": [direction_id],
+            "directions": [{
+                "direction_id": direction_id, "name_ja": "合成输入比较",
+                "name_zh": "合成输入比较", "summary_zh": "比较合成输入",
+                "member_fingerprint": f"mf-{direction_id}",
+                "members": [{"item_key": "AAAA1111", "preview_confidence": "high"},
+                            {"item_key": "BBBB2222", "preview_confidence": "high"}],
+                "user_note": "我想比较两种合成输入的处理结果。"}],
+            "selection_history": [],
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(target, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    def _entry(self, rel_dir, fingerprint, direction_id):
+        return {
+            "professor": self.PROFESSOR, "professor_dir": str(rel_dir),
+            "preview_path": str(rel_dir / "方向预筛.json"),
+            "preview_fingerprint": "pv-a" if rel_dir == self.A_REL else "pv-b",
+            "input_fingerprint": fingerprint, "built_at": "2026-01-01T00:00:00Z",
+            "action": "noop",
+            "directions": [{
+                "direction_id": direction_id,
+                "provisional_member_keys": ["AAAA1111", "BBBB2222"],
+                "candidate_keys": ["AAAA1111", "BBBB2222"],
+                "expansion_reasons": {"AAAA1111": ["provisional_member"],
+                                      "BBBB2222": ["provisional_member"]},
+                "expansion_evidence": {},
+                "pdf_readiness": {"usable_item_keys": ["AAAA1111", "BBBB2222"],
+                                  "missing_item_keys": [], "unresolved_item_keys": [],
+                                  "status_counts": {"downloaded": 2}}}],
+        }
+
+    def _write_snapshot(self, *entries):
+        self.snapshot.write_text(json.dumps({
+            "schema_version": 1, "kind": "professor-contact-stage1",
+            "updated_at": "2026-01-01T00:00:00Z", "professors": list(entries)},
+            ensure_ascii=False, indent=1), encoding="utf-8")
+
+    def preflight(self, target=None):
+        result = run_cli("stage2-preflight", "--program-root", self.root,
+                         "--professor", self.PROFESSOR,
+                         "--target-file", target or self.a_target,
+                         "--paper-analysis", "relevant", "--gap-scope", "selected_direction",
+                         "--freshness-scope", "shortlist")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return parse(result)
+
+    def save(self, payload, name):
+        path = self.root / name
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        return path
+
+    def facts_bound_to(self, proof_id):
+        year = contact_state.datetime.now().year
+
+        def extra(facts):
+            facts["current_year"] = year
+            facts["stage2_preflight"] = {"preflight_id": proof_id}
+
+        return self.write_facts(extra=extra)
+
+    def run_plan(self, facts, preflight_file):
+        result = run_cli("stage2-plan", "--facts", facts,
+                         "--preflight-file", preflight_file)
+        return result, parse(result)
+
+    def run_finalize(self, facts, preflight_file):
+        results = self.root / "results"
+        self.write_stage2_results(results)
+        result = run_cli("stage2-finalize", "--facts", facts, "--results", results,
+                         "--preflight-file", preflight_file)
+        return result, parse(result)
+
+    def formal_outputs(self):
+        """Every artifact ``stage2-finalize`` publishes for this professor."""
+        outputs = {}
+        for rel in (self.PACK_NAME, "套磁候选分析.md", "论文分析/_freshness_cache.json"):
+            path = self.prof_dir / rel
+            outputs[rel] = path.read_bytes() if path.is_file() else None
+        return outputs
+
+    def accepted_run(self):
+        """The fixed Gate 2 chain: stage2-preflight → stage2-plan → stage2-finalize."""
+        before_paths = path_set(self.root / '教授研究')
+        legacy_before = self.legacy.read_bytes() if self.legacy.exists() else None
+        proof = self.preflight()
+        proof_file = self.save(proof, "proof.json")
+        facts = self.facts_bound_to(proof["preflight_id"])
+        result, payload = self.run_plan(facts, proof_file)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["status"], "ok", payload)
+        self.assertEqual(payload["transaction_identity"], proof["preflight_inputs"]["identity"])
+        result, payload = self.run_finalize(facts, proof_file)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["status"], "ok", payload)
+        outputs = self.formal_outputs()
+        for rel, raw in outputs.items():
+            self.assertIsNotNone(raw, msg=f"{rel} is not published by the accepted chain")
+        expected_new = {str(self.A_REL.relative_to('教授研究') / rel) for rel in outputs}
+        self.assertEqual(path_set(self.root / '教授研究'), before_paths | expected_new)
+        self.assertEqual(self.legacy.read_bytes() if self.legacy.exists() else None, legacy_before)
+        return proof, proof_file, facts, outputs
+
+    def test_issue64_t6_finalize_requires_preflight_before_any_formal_write(self):
+        proof = self.preflight()
+        facts = self.facts_bound_to(proof['preflight_id'])
+        results = self.root / 'results'
+        self.write_stage2_results(results)
+        before = self.formal_outputs()
+        paths_before = path_set(self.root / '教授研究')
+        result = run_cli('stage2-finalize', '--facts', facts, '--results', results)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('--preflight-file', result.stderr)
+        self.assertEqual(self.formal_outputs(), before)
+        self.assertEqual(path_set(self.root / '教授研究'), paths_before)
+
+    def test_issue64_t6_preflight_binds_a_canonical_identity_not_the_same_name_sibling(self):
+        payload = self.preflight()
+        identity = payload["preflight_inputs"]["identity"]
+        self.assertEqual(identity["professor"], self.PROFESSOR)
+        self.assertEqual(identity["professor_dir"], str((self.root / self.A_REL).resolve()))
+        self.assertEqual(identity["preview_path"],
+                         str((self.root / self.A_REL / "方向预筛.json").resolve()))
+        self.assertEqual(identity["target_state"], str(self.a_target.resolve()))
+        self.assertEqual(identity["target_state_sha256"],
+                         contact_state.sha256_bytes(self.a_target.read_bytes()))
+        self.assertEqual(identity["stage1_input_fingerprint"], "stage1-fp-a")
+        self.assertNotIn("stage1-fp-b", json.dumps(payload, ensure_ascii=False))
+        self.assertEqual(payload["preflight_id"], contact_state.sha256_obj(
+            {"professor": payload["professor"],
+             "preflight_inputs": payload["preflight_inputs"]}))
+
+    def test_issue64_t6_plan_carries_the_consumed_preflight_proof(self):
+        proof = self.preflight()
+        proof_file = self.save(proof, "proof.json")
+        result, payload = self.run_plan(self.write_facts(), proof_file)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["status"], "ok", payload)
+        self.assertEqual(payload["preflight_id"], proof["preflight_id"])
+        self.assertEqual(payload["transaction_identity"], proof["preflight_inputs"]["identity"])
+        self.assertEqual([entry["direction_id"] for entry in payload["directions"]], ["DIR00001"])
+
+    def test_issue64_t6_plan_requires_the_preflight_proof(self):
+        facts = self.write_facts()
+
+        result = run_cli("stage2-plan", "--facts", facts)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--preflight-file", result.stderr)
+        self.assertEqual(self.formal_outputs(), {
+            self.PACK_NAME: None,
+            "套磁候选分析.md": None,
+            "论文分析/_freshness_cache.json": None,
+        })
+
+    def test_issue64_t6_plan_refuses_the_same_name_siblings_preflight_proof(self):
+        b_proof_file = self.save(self.preflight(target=self.b_target), "b-proof.json")
+        result, payload = self.run_plan(self.write_facts(), b_proof_file)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed")
+        self.assertEqual(payload["drift"], ["identity"])
+
+    def test_issue64_t6_finalize_refuses_a_changed_local_target_before_any_write(self):
+        _proof, proof_file, facts, outputs_before = self.accepted_run()
+        target = json.loads(self.a_target.read_text(encoding="utf-8"))
+        target["preview_fingerprint"] = "pv-a-rotated"
+        self.a_target.write_text(json.dumps(target, ensure_ascii=False, indent=1),
+                                 encoding="utf-8")
+
+        result, payload = self.run_plan(facts, proof_file)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed")
+        self.assertEqual(payload["drift"], ["identity"])
+        self.assertFalse(payload.get("jobs"))
+
+        result, payload = self.run_finalize(facts, proof_file)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed")
+        self.assertEqual(payload["drift"], ["identity"])
+        self.assertEqual(self.formal_outputs(), outputs_before)
+
+    def test_issue64_t6_finalize_refuses_when_the_exact_stage1_entry_moves(self):
+        _proof, proof_file, facts, outputs_before = self.accepted_run()
+        entries = json.loads(self.snapshot.read_text(encoding="utf-8"))["professors"]
+        for entry in entries:
+            if entry["professor_dir"] == str(self.A_REL):
+                entry["input_fingerprint"] = "stage1-fp-a-rotated"
+        self._write_snapshot(*entries)
+
+        result, payload = self.run_plan(facts, proof_file)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed")
+        self.assertIn("identity", payload["drift"])
+        self.assertFalse(payload.get("jobs"))
+
+        result, payload = self.run_finalize(facts, proof_file)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed")
+        self.assertIn("identity", payload["drift"])
+        self.assertIn("program_inputs", payload["drift"])
+        self.assertEqual(self.formal_outputs(), outputs_before)
+
+    def test_issue64_t6_sibling_and_legacy_states_never_enter_the_a_transaction(self):
+        clean = self.preflight()
+        self.b_target.write_text("{ broken sibling", encoding="utf-8")
+        self.legacy.write_text("{ broken legacy", encoding="utf-8")
+        paths_before = path_set(self.root / '教授研究')
+
+        self.assertEqual(self.preflight(), clean)
+        proof_file = self.save(clean, "proof.json")
+        facts = self.facts_bound_to(clean["preflight_id"])
+        result, payload = self.run_plan(facts, proof_file)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["preflight_id"], clean["preflight_id"])
+        self.assertEqual(payload["transaction_identity"], clean["preflight_inputs"]["identity"])
+        result, payload = self.run_finalize(facts, proof_file)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["status"], "ok", payload)
+        self.assertEqual(self.b_target.read_bytes(), b"{ broken sibling")
+        self.assertEqual(self.legacy.read_bytes(), b"{ broken legacy")
+        expected = {str(self.A_REL.relative_to('教授研究') / rel) for rel in self.formal_outputs()}
+        self.assertEqual(path_set(self.root / '教授研究'), paths_before | expected)
 
 
 if __name__ == "__main__":

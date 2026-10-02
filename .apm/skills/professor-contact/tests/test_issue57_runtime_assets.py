@@ -192,11 +192,14 @@ class Issue57Stage2FixtureTests(unittest.TestCase):
         self.assertIn("Z57REAL01", json.dumps(evidence["input_hashes"]))
         # Canonical Stage-0/Stage-1 state came from the producer runners.
         target = json.loads(
-            (program / "教授研究/套磁目标.json").read_text(encoding="utf-8"))
-        target_row = target["targets"][0]
-        self.assertEqual(target_row["professor"], stage2_fixture.PROFESSOR)
-        self.assertEqual(target_row["selected_direction_ids"],
+            (program / f"教授研究/X分野/{stage2_fixture.PROFESSOR}/套磁目标.json")
+            .read_text(encoding="utf-8"))
+        self.assertEqual(target["schema_version"], 2)
+        self.assertEqual(target["kind"], "professor-contact-target")
+        self.assertEqual(target["professor"], stage2_fixture.PROFESSOR)
+        self.assertEqual(target["selected_direction_ids"],
                          [stage2_fixture.DIRECTION_ID])
+        self.assertFalse((program / "教授研究/套磁目标.json").exists())
         snapshot = json.loads(
             (program / "教授研究/套磁阶段1候选.json").read_text(encoding="utf-8"))
         direction = snapshot["professors"][0]["directions"][0]

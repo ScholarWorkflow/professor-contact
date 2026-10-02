@@ -78,7 +78,10 @@ class PrepareIssue39Stage2FixtureTests(unittest.TestCase):
             self.assertTrue(evidence_path.is_file())
 
             program = root / "教授研究" / "X分野" / "Example Professor"
-            self.assertTrue((root / "教授研究" / "套磁目标.json").is_file())
+            self.assertTrue((program / "套磁目标.json").is_file())
+            self.assertFalse((root / "教授研究" / "套磁目标.json").exists())
+            self.assertEqual(Path(evidence["stage0"]["target_file"]).resolve(),
+                             (program / "套磁目标.json").resolve())
             self.assertTrue((root / "教授研究" / "套磁阶段1候选.json").is_file())
             papers = helper.read_json(program / "papers.json")["papers"]
             by_key = {row["item_key"]: row for row in papers}

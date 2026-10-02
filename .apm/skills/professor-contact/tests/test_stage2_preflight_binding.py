@@ -24,7 +24,7 @@ class TestStage2PreflightBinding(PreflightBase):
 
         # A later invocation observes target state B and overwrites the saved
         # preflight proof.  The old facts file still contains state A's note.
-        self.target["targets"][0]["directions"][0]["user_note"] = "later invocation note"
+        self.target["directions"][0]["user_note"] = "later invocation note"
         self._write_target()
         later_plan = self.preflight()
         self.assertEqual(later_plan["action"], "process", later_plan)
@@ -55,7 +55,7 @@ class TestStage2PreflightBinding(PreflightBase):
 
         # A later invocation observes target state B; its payload matches the
         # current disk state, but the facts were prepared under proof A.
-        self.target["targets"][0]["directions"][0]["user_note"] = "later invocation note"
+        self.target["directions"][0]["user_note"] = "later invocation note"
         self._write_target()
         later_plan = self.preflight()
         self.assertEqual(later_plan["action"], "process", later_plan)
@@ -80,7 +80,7 @@ class TestStage2PreflightBinding(PreflightBase):
 
         # A payload re-computed for the current state but carrying proof A's id
         # is not a self-consistent proof and must fail closed.
-        self.target["targets"][0]["directions"][0]["user_note"] = "later invocation note"
+        self.target["directions"][0]["user_note"] = "later invocation note"
         self._write_target()
         later_plan = self.preflight()
         first_plan = json.loads(first_plan_path.read_text(encoding="utf-8"))

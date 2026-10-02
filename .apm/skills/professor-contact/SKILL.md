@@ -1,6 +1,6 @@
 ---
 name: professor-contact
-description: 处理日本大学院程序的「套磁」工作流（runner 版）。Stage 0 从 professor-topic-clustering 的 normalized 方向预筛.json 交互选择方向并写 `教授研究/套磁目标.json`（不再使用 Zotero 固定标题「套磁候选」note，无 Stage 0 Markdown）；Stage 1 由 `contact_stage1.py` 按被选方向构建保守高召回候选快照 `教授研究/套磁阶段1候选.json`（候选按方向独立、只做廉价证据扩召、绝不宣称最终归属），并只对缺失 PDF 的候选 item key 走 `professor-collector(pdf_only, item_keys=…)` item 级定向补下（全部就绪即 no-op）；Stage 2 只消费该机器状态与候选集。阶段 2--5 由本地确定性 runner `contact_state.py` 分担缓存、范围选择与输入包：阶段 2 产出 `套磁候选输入.json`（阶段 3 唯一事实源；gap 池只来自有效 sidecar，`gap_scope`/`freshness_scope` 控制，freshness 逐 gap 缓存于 `_freshness_cache.json`）；阶段 3 产出 `套磁候选状态.json`（`refresh_scope` 控制，只读输入包不读 Markdown）；阶段 4 由 runner 校验指纹后写 `套磁选择.json` + 编译程序级 `邮件输入.json`（精确 item_key+gap_id join，阶段 5 唯一事实源；含上游 `_联系方式证据.json` 教授级证据快照）；阶段 5 由 runner 拼装渲染邮件（送信前核对表/来源表/事实核对卡/humanizer 保护串；收件邮箱一律读自邮件输入包内冻结的 `contact_evidence` 快照（`邮件输入.json` 是阶段 5 唯一事实源，快照参与 `source_hash`），以上游逐教授 source-state freshness（`--check` + 本地确定性 rebuild/复查）与指纹一致作验证 gate，live/rebuild 改变了 record 或快照缺失即返回 `needs_refresh` 要求重跑阶段 4，仅证据不足/冲突/源过时才升级网页核验）。受管 Markdown 带 `managed_by: contact_state` frontmatter，人手改动返回 `needs_decision`。future-work 证据仍 sidecar-first（paper-analysis gap-only 链不变），不降低任何事实核验/时效/人工确认要求。
+description: 处理日本大学院程序的「套磁」工作流（runner 版）。Stage 0 从 professor-topic-clustering 的 normalized 方向预筛.json 交互选择方向并逐教授写 `<教授目录>/套磁目标.json`（每位被选教授一份权威状态；不再使用 Zotero 固定标题「套磁候选」note，无 Stage 0 Markdown）；Stage 1 由 `contact_stage1.py` 按被选方向构建保守高召回候选快照 `教授研究/套磁阶段1候选.json`（候选按方向独立、只做廉价证据扩召、绝不宣称最终归属），并只对缺失 PDF 的候选 item key 走 `professor-collector(pdf_only, item_keys=…)` item 级定向补下（全部就绪即 no-op）；Stage 2 只消费该机器状态与候选集。阶段 2--5 由本地确定性 runner `contact_state.py` 分担缓存、范围选择与输入包：阶段 2 产出 `套磁候选输入.json`（阶段 3 唯一事实源；gap 池只来自有效 sidecar，`gap_scope`/`freshness_scope` 控制，freshness 逐 gap 缓存于 `_freshness_cache.json`）；阶段 3 产出 `套磁候选状态.json`（`refresh_scope` 控制，只读输入包不读 Markdown）；阶段 4 由 runner 校验指纹后写 `套磁选择.json` + 编译程序级 `邮件输入.json`（精确 item_key+gap_id join，阶段 5 唯一事实源；含上游 `_联系方式证据.json` 教授级证据快照）；阶段 5 由 runner 拼装渲染邮件（送信前核对表/来源表/事实核对卡/humanizer 保护串；收件邮箱一律读自邮件输入包内冻结的 `contact_evidence` 快照（`邮件输入.json` 是阶段 5 唯一事实源，快照参与 `source_hash`），以上游逐教授 source-state freshness（`--check` + 本地确定性 rebuild/复查）与指纹一致作验证 gate，live/rebuild 改变了 record 或快照缺失即返回 `needs_refresh` 要求重跑阶段 4，仅证据不足/冲突/源过时才升级网页核验）。受管 Markdown 带 `managed_by: contact_state` frontmatter，人手改动返回 `needs_decision`。future-work 证据仍 sidecar-first（paper-analysis gap-only 链不变），不降低任何事实核验/时效/人工确认要求。
 metadata:
   version: 2.2.0
 ---
@@ -36,7 +36,7 @@ This skill is the **caller convention** for the 套磁 workflow (套磁 = contac
 
 ## What this is for
 
-After `professor-collector(skip_pdf)` and `professor-topic-clustering(preview:true)` have produced a normalized `方向预筛.json`, the user may decide that **a specific direction of a specific professor** is worth contacting (套磁). **Stage 0 is the contact-workflow entry at that point.** Professor-level `pdf_only + professors=<keep-list>` and formal `professor-topic-clustering(preview:false)` remain valid independent library/organization operations, but neither is a prerequisite for Stage 0 or the canonical Stage 1 download scope. Stage 0 presents the normalized preview directions interactively, the user selects one or more directions (with optional per-direction user notes), and the selection is persisted to `教授研究/套磁目标.json`. The workflow no longer uses a fixed-title Zotero note as its selection UI. This skill's stages consume that machine state and turn it into 套磁 materials:
+After `professor-collector(skip_pdf)` and `professor-topic-clustering(preview:true)` have produced a normalized `方向预筛.json`, the user may decide that **a specific direction of a specific professor** is worth contacting (套磁). **Stage 0 is the contact-workflow entry at that point.** Professor-level `pdf_only + professors=<keep-list>` and formal `professor-topic-clustering(preview:false)` remain valid independent library/organization operations, but neither is a prerequisite for Stage 0 or the canonical Stage 1 download scope. Stage 0 presents the normalized preview directions interactively, the user selects one or more directions (with optional per-direction user notes), and the selection is persisted to that professor's own `<教授目录>/套磁目标.json` (one file per selected professor). The workflow no longer uses a fixed-title Zotero note as its selection UI. This skill's stages consume that machine state and turn it into 套磁 materials:
 
 ```mermaid
 flowchart TD
@@ -44,7 +44,7 @@ flowchart TD
     P["professor-topic-clustering<br/>preview:true"]
     J["normalized 方向预筛.json<br/>stable direction_id + complete members"]
     S0["Stage 0<br/>interactive direction selection"]
-    T["教授研究/套磁目标.json"]
+    T["<教授目录>/套磁目标.json<br/>每位被选教授一份"]
     S1["Stage 1<br/>direction-scoped candidate snapshot"]
     F["professor-collector<br/>pdf_only:true + item_keys<br/>missing candidates only"]
     S2["Stage 2<br/>evidence analysis + accepted resolution"]
@@ -79,15 +79,16 @@ Stage 0 does not require Zotero to be open. Later stages may still use Zotero as
 - **机器 ID**：交互界面里的 A/B/C 展示标签不是身份；机器身份是稳定 `direction_id`。
 - **多方向独立**：两个被选方向即使共享论文也保持独立（各自 `direction_id`/`members[]`/`member_fingerprint`/names/summary/user_note）；Stage 2 会按教授、按 `item_key` 去重昂贵工作并复用结果，但**绝不因此合并方向**。
 - **修订**：对同一教授重跑 Stage 0 = 修订该教授的选择，不影响其他教授；仍被选方向的 note 保留，除非该方向的 key 出现在 selection `notes` 里——省略 key = 保留旧 note，key 出现即替换（显式传空串 = 清空）；先前的选择快照存 `selection_history`。
+- **事务身份**：Stage 0 的一位教授 = 一笔教授级事务，由该教授的 canonical `professor_dir` + `preview_path` 标识；展示名只作显示字段，不同目录的同名教授是两位教授，各自一笔、互不覆盖，交接结果用 `transactions` 记录数组表示。`bootstrap` 只建立该教授第一份 local v2，`select` 只修订已存在的那一份（文件缺失 → `bootstrap_required` 且零写入）；一笔失败绝不回滚或重写已提交的其他笔。
 - **preview 变更**：target 新鲜度按**被选方向逐个判定**，整体 `preview_fingerprint` 只作 provenance/audit 元数据，不作为唯一有效性闸门：未选方向的新增/删除/改名/重聚类不影响已选 target；被选方向成员集合（`item_key`，即上游 `direction_id` 的推导依据）变化或方向消失 → Stage 1/2 以 `needs_refresh`（reason_code `preview_changed`，stale 条目精确到 `direction_id`）停止，须回 Stage 0 修订选择；成员集合不变时，`member_fingerprint` 变化（如 `preview_confidence` 升降）与 display 元数据（name/summary/representatives 等）变化一样只触发投影刷新——`resolve` 就地刷新该方向投影元数据并返回 `ok`（`user_note`、`selection_history`、选择本身不动），payload 以 `projection_refreshed` 标注。
 
 ## 阶段总览（每阶段 = 一个 subagent，可独立调用）
 
 | 阶段 | subagent | 做什么 | 产物 |
 |---|---|---|---|
-| 0 | `professor-contact` | 读 normalized `方向预筛.json` → 交互选定方向（可多选 + per-direction user note） | `教授研究/套磁目标.json`（机器状态；无 Stage 0 Markdown） |
-| 1 | `professor-contact-downloader` | 先 `contact_targets.py resolve`，再 `contact_stage1.py build` 构建逐方向候选快照（保守扩召 + 就绪检查），仅对缺失候选跑 `professor-collector(pdf_only, item_keys=<缺失 keys>[, access_mode=<oa_only|allow_non_oa>])` 定向补下；全部就绪则 no-op | `教授研究/套磁阶段1候选.json`（机器状态）+ PDF 附件补下 |
-| 2 | `professor-contact-analyzer` | 先 `contact_stage1.py verify` 校验 Stage 1 候选快照，再对每位教授跑 `contact_state.py stage2-preflight`：`reuse_all` 教授在 Zotero probe、PDF 读取、OCR、paper-analysis、handoff、模型 job 之前以 no-op 复用既有 `套磁候选输入.json` + `套磁候选分析.md` 结束（`chatgpt_result` 提供或 `kb_import=true` 时禁止 early exit）；仅对 process 教授以逐方向 `candidate_keys` 为读取/相关性/分析范围（可信度闸门只用 provisional members）；**full `paper-analysis` 覆盖候选集去重并集——每个 unique candidate 复用未变的有效 full analysis，否则跑一次 full pass（摘要级相关集与成本门只截断 gap/叙事，绝不截断 full analysis，issue #7 required flow #2）**→ 判定相关论文、署名、主线与 post-cost-gate 分析 scope 后，**总是先生成确定性的 ChatGPT handoff ZIP**。`chatgpt_handoff=continue` 时 ZIP 只是低成本 side effect，随后旧的本地 OCR/`paper-analysis` 路径语义不变；`wait` 时在任何新 OCR/`paper-analysis` 前软停止。提供匹配 result ZIP 后先严格本地导入成普通 analysis/sidecar，再继续既有 `stage2-resolve-plan → stage2-resolve-finalize → stage2-plan → stage2-finalize --preflight-file`（resolve 流水线对每个被选方向做权威性归属判定：移除误归类、新增他向支持、重命名、拆分/合并、写 `resolved_direction` 状态）。gap/runner/状态机仍完全本地 | `<教授名>/论文分析/_chatgpt_handoff/stage2-<id>.zip`（传输层）+ `<教授名>/论文分析/_resolved_directions.json`（方向权威归属）+ 原有 `<教授名>/套磁候选输入.json`（带 `resolved_directions` 字段与 `cache.preflight` 复用元数据，Stage 3 唯一事实源）/分析报告/_freshness_cache/index/sidecar |
+| 0 | `professor-contact` | 读 normalized `方向预筛.json` → 交互选定方向（可多选 + per-direction user note） | 逐教授 `<教授目录>/套磁目标.json`（机器状态，每位被选教授一份；无 Stage 0 Markdown） |
+| 1 | `professor-contact-downloader` | 对每位教授用自己那份 `<教授目录>/套磁目标.json` 先 `contact_targets.py resolve --target-file`，再 `contact_stage1.py build --target-file` 构建逐方向候选快照（保守扩召 + 就绪检查），仅对缺失候选跑 `professor-collector(pdf_only, item_keys=<缺失 keys>[, access_mode=<oa_only|allow_non_oa>])` 定向补下；全部就绪则 no-op | `教授研究/套磁阶段1候选.json`（机器状态）+ PDF 附件补下 |
+| 2 | `professor-contact-analyzer` | 用该教授 `<教授目录>/套磁目标.json` 作 `--target-file` 先 `contact_stage1.py verify --target-file` 校验 Stage 1 候选快照，再对每位教授跑 `contact_state.py stage2-preflight --target-file`：`reuse_all` 教授在 Zotero probe、PDF 读取、OCR、paper-analysis、handoff、模型 job 之前以 no-op 复用既有 `套磁候选输入.json` + `套磁候选分析.md` 结束（`chatgpt_result` 提供或 `kb_import=true` 时禁止 early exit）；仅对 process 教授以逐方向 `candidate_keys` 为读取/相关性/分析范围（可信度闸门只用 provisional members）；**full `paper-analysis` 覆盖候选集去重并集——每个 unique candidate 复用未变的有效 full analysis，否则跑一次 full pass（摘要级相关集与成本门只截断 gap/叙事，绝不截断 full analysis，issue #7 required flow #2）**→ 判定相关论文、署名、主线与 post-cost-gate 分析 scope 后，**总是先生成确定性的 ChatGPT handoff ZIP**。`chatgpt_handoff=continue` 时 ZIP 只是低成本 side effect，随后旧的本地 OCR/`paper-analysis` 路径语义不变；`wait` 时在任何新 OCR/`paper-analysis` 前软停止。提供匹配 result ZIP 后先严格本地导入成普通 analysis/sidecar，再继续既有 `stage2-resolve-plan → stage2-resolve-finalize → stage2-plan → stage2-finalize --preflight-file`（resolve 流水线对每个被选方向做权威性归属判定：移除误归类、新增他向支持、重命名、拆分/合并、写 `resolved_direction` 状态）。gap/runner/状态机仍完全本地 | `<教授名>/论文分析/_chatgpt_handoff/stage2-<id>.zip`（传输层）+ `<教授名>/论文分析/_resolved_directions.json`（方向权威归属）+ 原有 `<教授名>/套磁候选输入.json`（带 `resolved_directions` 字段与 `cache.preflight` 复用元数据，Stage 3 唯一事实源）/分析报告/_freshness_cache/index/sidecar |
 | 3 | `professor-contact-idea-generator` | **只读输入包 + profile**（不读任何 Markdown/_index/sidecar；输入包为 v2：professor 级 `papers[item_key]` 单一规范论文记录 + 各方向 `supporting_item_keys` 引用）：`stage3-plan --direction-id`（canonical 机器身份；`--collection-key` 仅为 v1 兼容并经输入包精确映射解析）按 `refresh_scope` 生成逐 resolved 方向独立 job（结果文件由 runner 返回安全名 `candidates-<id>-<hash>.json`；模型输入只含本方向切片，绝不发全方向并集），每方向 3-5 条可选候选（除非 `--skip-direction-ids` 显式跳过→持久化 `stage3_status:"skipped"`；refined 模式同样 3-5 条且恰好 1 条 `origin:"user_refined"` 的校准后用户想法）；候选为 v2 精确溯源：`kind:"direction"` + `direction_ids:[本方向]` + `gap_refs` 精确 `(direction_id,item_key,gap_id)` 三元组（在另一方向合法的 gap 配错 direction_id 一律拒绝）；**跨方向为显式 opt-in**：只有调用方传 `--cross-direction-groups '[["DIR_A","DIR_B"]]'`（≥2 个既有 direction ID、排序去重）才生成独立 `kind:"cross_direction"` job（组身份 `cross:<hash>`，缓存=参与方向指纹+profile+契约版本），默认无任何 cross job/模型调用/Markdown 节 → `stage3-finalize` 校验后写 v2 状态并渲染候选文件（按方向分节 + 仅显式组才有的「跨方向想法（显式标注）」节；未再请求的组确定性删除并报告 `group_not_requested`）；复用逐 direction_id 判定（指纹不含 collection_key/显示名：纯投影改名只重渲染）；profile 改动只失效阶段 3/4；白话校验结果另由 `stage3-record-validation` 从 validator 原始 JSON 写入独立字段（绑定渲染 SHA + 逐条 issue 的 direction_id/group_id 范围） | `<教授名>/套磁候选状态.json`（schema 2：逐方向 `direction_id` + `cross_direction_groups`） + `<教授名>/套磁想法候选.md` + `套磁想法候选总览.md`（后两者 runner 渲染） |
 | 4 | `professor-contact-selection` | 用户从**候选状态**（非 Markdown）挑选：selection 条目以 `direction_ids`（canonical，排序规范化）圈定作用域——普通方向 `[DIR]`、跨方向想法 `[DIR_A,DIR_B]`（与组的排序 ID 完全一致）；`stage4-finalize` 按 direction_id + 精确三元组 join（候选 id 只在其 direction 作用域内解析，跨作用域引用整批 fail closed）并校验指纹（过期 `needs_refresh` 不落盘；组选取逐参与方向指纹校验，漂移 `cross_participant_changed`；v1 选择条目仅在有唯一 collection_key→direction_id 机器映射时可迁移，歧义 `legacy_direction_identity` 零写入；部分复选（只重选部分教授/方向）保留未涉及条目并整体重编译进两个正式文件——被保留条目的候选状态缺失/无法精确迁移/输入包不可读 → `candidate_state_missing`/`legacy_direction_identity`/`preserved_selection_uncompilable`，任何写盘前零写入，绝不静默挤出既有选择）→ 写 `套磁选择.json`（schema 2，保留候选的 `direction_ids`/精确溯源）并**编译程序级邮件输入包**（`邮件输入.json` schema 2：每条 email 携带 `direction_ids` + `directions[]` 显示名 provenance，`email_id = 教授::'+'.join(sorted(direction_ids))::想法ID`（A+B==B+A）；跨方向按参与方向切片并集编译——论文按 `item_key` 去重且各带 `direction_ids` 归属、gap 每行携带 `direction_id`；`cross_direction` 组信息与 `contact_evidence` 一起参与 `source_hash`；done_by_self 只作 extension_context_only；上游 `_联系方式证据.json` 记录连同 `record_fingerprint` 冻结进每条 email——阶段 5 的收件事实源） | `教授研究/套磁选择.json` + `教授研究/邮件输入.json`（阶段 5 唯一事实源，自包含短证据＋冻结联系方式快照） |
 | 5 | `professor-contact-email-generator` | **只读邮件输入包**（+profile/模板/info/boshu/`_contact_verify.json`）：默认生成首封和无回复跟进两种输出；先运行不带 `--result`/`--choices` 的 `stage5-plan --mode both`，逐教授完成送信前核验并重跑，直到全部 `verify: ok`（`verify_missing`/普通 `needs_recheck` 是 5.9 待办，不是完成结果；需 Stage 4 修复的确定性 `needs_refresh` 才返回调用方）→ 模型只回首封的 4 句兴趣段+source_map+未来志向+学習中候选 →（可选）`humanizer-ja` 只润色模型动态字段（拼装前，5.6）→ 用户 choices（含初次发送日期；缺决定即停在既有 `needs_input` 边界，不代选、不编日期）→ `stage5_immutable.py stage5-finalize --mode both`（确定性模板拼装+保护串校验+渲染；仅在动态字段确被润色时传 `--polish-mode dynamic-fields-only`；整封成品与模板固定文字从不进入 humanizer）→ 首封和跟进各自过 validator 循环（validator 也只读 md+邮件包）并记录 `stage5-record-validation` | 每封选中邮件独立的 `套磁邮件.md`/`.txt` 与 `套磁跟进邮件.md`/`.txt`（单封用固定名，多封按方向与想法 ID 加后缀）+ `<教授名>/套磁邮件状态.json` + `套磁邮件总览.md` + `_contact_verify.json` |
@@ -120,7 +121,7 @@ Stage 2 的 handoff 是**可选执行通道，不是第二套工作流**。`套�
 
 ## 目标状态语义（替代旧「标记语义」）
 
-- **套磁处理教授名单来自 `套磁目标.json`**：Stage 1/2 先用 `contact_targets.py resolve` 解析当前被选目标，再把名单显式传给下游；这只是 contact workflow 的 target scope。Professor-level collector keep-list（`pdf_only + professors=<keep-list>`、`screened:"out"`/`include_deferred`）可以作为独立的库维护状态存在，但**不是 Stage 0/1 的前置事实源，也不由 Stage 1 重跑或改写**；Stage 1 的 PDF 补下只走 item-scoped fast path。
+- **套磁处理教授名单来自各自的 `<教授目录>/套磁目标.json`**：Stage 1/2 一次只处理一份 local target——用 `contact_targets.py resolve --target-file <教授目录>/套磁目标.json` 解析该教授，再把该教授显式传给下游；不存在程序级 target 表，省略 `professors` 也不等于「打开全局表发现全部被选教授」。这只是 contact workflow 的 target scope。Professor-level collector keep-list（`pdf_only + professors=<keep-list>`、`screened:"out"`/`include_deferred`）可以作为独立的库维护状态存在，但**不是 Stage 0/1 的前置事实源，也不由 Stage 1 重跑或改写**；Stage 1 的 PDF 补下只走 item-scoped fast path。
 - **阶段 1 下载范围 = 方向候选集**：不再是「被选教授的全部可下论文」。Stage 1 先为每个被选方向构建保守高召回的候选集，再只对缺 PDF 的候选 item key 定向补下。
 
 ### Stage 1 方向候选集与定向补 PDF
@@ -140,15 +141,15 @@ Stage 2 的 handoff 是**可选执行通道，不是第二套工作流**。`套�
    - 未提供时完全省略 `access_mode`，不生成默认值、不变成 downloader 的 `needs_input`、不发明 child continuation/resume；有交互能力的下游仍可按既有 `question` 规则询问，Codex non-interactive 成功路径必须由 caller 显式提供合法值。
    - 非法值只在 `action=pdf_fill_needed` 时校验，并在 collector spawn 前返回结构化 `error`；不自动映射、不 spawn、不新增 `needs_input` continuation。`noop` / `needs_resolution` 不消费也不校验本轮无用的 `access_mode`。
 6. **重跑幂等**：换网络后重跑同一流程，`papers.json` 状态未变的缺失候选自然重新入选重试。
-7. **补下后刷新快照（强制）**：collector 会改 `papers.json`，downloader 在 collector 返回后必须重跑 `contact_stage1.py build`，以 post-fill 就绪状态作为最终快照与返回值——绝不留下描述补下前状态的 `套磁阶段1候选.json`（Stage 2 要 verify 消费它）。
+7. **补下后刷新快照（强制）**：collector 会改 `papers.json`，downloader 在 collector 返回后必须对该教授重跑 `contact_stage1.py build --target-file <教授目录>/套磁目标.json`，以 post-fill 就绪状态作为最终快照与返回值——绝不留下描述补下前状态的 `套磁阶段1候选.json`（Stage 2 要 verify 消费它）。快照里其他教授的条目由 merge 保留，不因本次重建丢失。
 8. **action 语义**：`noop` = 每个候选都已有 usable full text（missing 与 unresolved 皆空）；`pdf_fill_needed` = 有缺失可补候选；`needs_resolution` = 候选存在于 target/preview 但 `papers.json` 无条目（fast path 无法补）——返回 `partial` 并附诊断，绝不判成 `noop`。
-9. **Stage 2 消费**：Stage 2 先 `contact_stage1.py verify` 校验快照对当前输入新鲜，再以逐方向 `candidate_keys` 作为读取/相关性/分析范围（`gap_scope=selected_direction` 的 gap 池同样来自候选集 sidecar）；**full `paper-analysis` 覆盖候选集去重并集，摘要级相关集与成本门只截断 gap/叙事，绝不截断 full analysis**；方向可信度闸门只用 provisional members，`relevance_reason` 附扩召理由，扩召候选绝不写成最终成员。
+9. **Stage 2 消费**：Stage 2 先以该教授那份 `<教授目录>/套磁目标.json` 为 `--target-file` 运行 `contact_stage1.py verify` 校验快照对当前输入新鲜，再以逐方向 `candidate_keys` 作为读取/相关性/分析范围（`gap_scope=selected_direction` 的 gap 池同样来自候选集 sidecar）；**full `paper-analysis` 覆盖候选集去重并集，摘要级相关集与成本门只截断 gap/叙事，绝不截断 full analysis**；方向可信度闸门只用 provisional members，`relevance_reason` 附扩召理由，扩召候选绝不写成最终成员。
 
 快照 `教授研究/套磁阶段1候选.json`（schema 1 / kind `professor-contact-stage1`）按教授持久化：逐方向 `direction_id`/provisional member keys/expanded candidate keys/逐篇 expansion reasons（+overlap evidence）/`input_fingerprint`/PDF readiness 汇总。`input_fingerprint` 是**精确依赖指纹**（v2），仅覆盖能改变候选成员/就绪状态的字段——被选方向身份与 provisional member item keys；被选方向词面画像输入（`name_ja`/`name_zh`/`summary_zh` + representative `title`/`title_zh`，供 `direction_profile_tokens()` 消费）；**全部** preview 方向的 membership placement 与 `preview_confidence`（cross-direction 门槛/low-confidence 理由/未安置判定由此派生）；Stage 1 实际读取的论文字段——`title`/`title_zh` 覆盖全部论文（扩召输入），`pdf_status` **仅对候选集**做指纹化（非候选论文的 pdf_status 变化不改变任何 Stage-2 input，绝不触发重建）。`preview_fingerprint` 仅作 provenance/audit 元数据保留，**不再是** Stage 1 有效性闸门——上游 `resolve` 会因 display-only 投影变化（如 `coverage_share`）合法改写 target 中的旧指纹，整 preview 指纹变化但精确依赖不变时 `verify` 仍 `ok`。`membership_claim` 恒为 `non_final_candidates_only`——**Stage 1 从不宣称最终方向归属**，候选集只是 Stage 2 的输入。无 Stage 1 人读 Markdown。
 
 ### Canonical target state
 
-`<program_root>/教授研究/套磁目标.json` 为 schema 1 / kind `professor-contact-targets`，每个被选教授一个 target 对象，至少携带：
+`<教授目录>/套磁目标.json` 为 schema 2 / kind `professor-contact-target`：**每个被选教授一份、只描述该教授自己**（无双教授 `targets[]` 权威、无程序级索引文件），至少携带：
 
 - professor identity 与教授目录；
 - preview 路径、指纹与指纹版本；
@@ -162,10 +163,32 @@ Stage 2 的 handoff 是**可选执行通道，不是第二套工作流**。`套�
 **禁止手改此状态**，一律经 helper。`<professor-contact-skill-dir>` 指本 skill 在当前 workspace 中的安装目录（即本 `SKILL.md` 与其 `scripts/` 所在目录；consumer 安装投影为 `.agents/skills/professor-contact/`），调用一律解析到该目录，**绝不**经 user-global registry wrapper（`skillrepo exec`）、开发 checkout 或 workspace 外路径执行：
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_targets.py preview ...
-python3 <professor-contact-skill-dir>/scripts/contact_targets.py select ...
-python3 <professor-contact-skill-dir>/scripts/contact_targets.py resolve ...
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py preview --preview "<教授目录>/方向预筛.json"
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py bootstrap --program-root "<program_root>" --preview "<教授目录>/方向预筛.json" --selection-file "<selection.json>"
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py select --program-root "<program_root>" --preview "<教授目录>/方向预筛.json" --selection-file "<selection.json>"
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py resolve --program-root "<program_root>" --target-file "<教授目录>/套磁目标.json"
+python3 <professor-contact-skill-dir>/scripts/contact_targets.py migrate --program-root "<program_root>"
 ```
+
+`bootstrap` 与 `select` 都从被校验的 preview 反推权威路径（`<preview 的父目录>/套磁目标.json`），只读只写该教授这一份；`resolve` 一次只解析一份 local target，投影刷新也只写同一份。分工固定：`bootstrap` 是**唯一**建立该教授第一份 local v2 的入口（也是唯一在教授作用域内读旧程序级 `教授研究/套磁目标.json` 的入口：只收集可靠归属该教授的条目，先在内存完成该教授全部 conflict 判定，最后至多一次原子写；整份 legacy 不可解析时不 salvage、不改 legacy，仍允许 fresh establish 并在结果里标记 recovery 不可用）；`select` 只修订**已存在**的 local，文件缺失时返回 `bootstrap_required` 且零写入，**不读**旧表。standalone `migrate` 复用同一套 first-establishment helper 做逐条 fan-out：合法条目各自写成该教授的 local v2，已有且不同的 local 记为 conflict 绝不覆盖，旧文件保留不删改写；整份文档不可解析则报错并零写入。多教授请求按教授逐笔事务执行，一笔一个事务，A 失败不回滚已提交的 B。
+
+Stage 0 交给下游的是**教授级事务记录数组**（`transactions`），每条至少携带 canonical `professor_dir`、`preview_path` 与实际写入的 `target_state`：
+
+```json
+{
+  "transactions": [
+    {
+      "professor": "教授A",
+      "professor_dir": "教授研究/<分野>/教授A",
+      "preview_path": "教授研究/<分野>/教授A/方向预筛.json",
+      "target_state": "<program_root>/教授研究/<分野>/教授A/套磁目标.json",
+      "direction_ids": ["dir_..."]
+    }
+  ]
+}
+```
+
+教授展示名只是显示字段：两位不同目录的教授可以同名，因此**禁止**用 `{"target_states": {"<教授名>": ...}}` 这种以展示名为唯一 key 的映射作 handoff——那会挤掉同名另一位教授的事务。也不新增任何程序级持久索引。
 
 ## 确定性 runner 与状态文件
 
@@ -204,7 +227,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_targets.py resolve ...
 
 阶段 2 输入包失效条件（仅这些）：Stage 0 选择修订（方向被取消选择/换方向）、user_note 正文变化、方向成员集合变化、被选方向成员身份变化（成员 `item_key` 集合变化或方向消失，`needs_refresh` 阻断；未选方向变化、置信度/display 元数据漂移、整体指纹变化均不阻断，后者由 resolve 就地刷新投影元数据）、Stage 1 候选集（`candidate_keys` 参与 direction 指纹）变化、相关论文元数据/sidecar/freshness/版本关系/署名线变化、`force=true`。未变化直接复用包（不读论文全文、不重判 gap、不重写叙事）。freshness 缓存逐 gap 失效：任一相关后续论文的元数据/摘要/PDF/分析变化只影响受影响 gap。profile 改动只失效阶段 3 候选与阶段 4 选择/邮件包。阶段 3 复用逐 direction_id 判定（canonical 机器身份 + 该方向输入指纹；指纹只含模型相关证据，不含 `collection_key` 与显示名——纯投影改名/显示名改名只触发确定性重渲染，绝不重跑想法模型）；显式跨方向组缓存 = 排序参与方向 ID + 各参与方向当前输入指纹 + profile 指纹 + cross 契约版本，任一参与方向变化只让该组重生成，不影响无关方向与无关组（plan/finalize 同一判定）。上一轮未被请求的组由 finalize 确定性删除并报告 `dropped_cross_direction`（稳定 reason `group_not_requested`）。`--skip-direction-ids` 显式跳过的方向持久化 `stage3_status:"skipped"`（与"从未处理"可区分），取消跳过后正常处理。
 
-**阶段 2 early preflight gate（`contact_state.py stage2-preflight`）**：analyzer 在 `contact_targets.py resolve` → `contact_stage1.py verify` 之后、任何昂贵准备（Zotero probe、论文读取、OCR、paper-analysis、handoff build、模型 job）之前，对每位教授运行只读 preflight。它只消费本地 persisted state：逐方向 `target_fingerprint`（仅 hash Stage 2 实际消费的 target 字段——direction_id/name_ja/name_zh/summary_zh/members/user_note；整体 preview 指纹、选择历史、display 投影不进缓存键）、`candidate_fingerprint`（已 verify 的 Stage 1 快照逐方向候选视图，不重跑扩召）、教授级 Stage 1 input 指纹与 candidate 视图指纹（`papers.json` 只投影当前教授所有 selected directions 的 Stage 1 `candidate_keys` 并集的目录记录视图、`_署名对照.json` 只取当前教授的署名簿+overrides 切片——非 candidate 论文、其他教授的记录和 tagger 重建时间戳不进缓存键，不得触发慢路径；catalog/ledger 缺失、不可解析或关键容器 malformed 时用稳定 sentinel 使指纹必然失配，fail-closed 回慢路径）、逐 provisional 方向的 **authoritative resolved 输出集**（issue #7×#11：`resolved_direction_ids`/`merged_into` 与逐 resolved 条目的 accepted+freshness 指纹——split child 以自己的 stable resolved ID 保留 early reuse，merged 源方向凭 `merged_into` provenance 继续可证明；recorded 映射与 pack 实际 `resolved_direction` 分组不符 → `resolved_set_changed`）、candidate-union **resolution evidence guards**（覆盖教授级 candidate union 内全部可能进入归属/rename/split/merge 判断的候选论文 artifact，任何一篇 facts/sidecar/pdf 变化 → 早期 miss，不受 relevant/gap scope 限制）、accepted artifact 的 stat guards（path/size/mtime_ns/ctime_ns；**绝不为 cache 检查重读 PDF bytes**）、`_freshness_cache.json` 中该方向已浮现 gap 的视图指纹、pack integrity sha（`cache.preflight.accepted_directions_sha256`）以及 Stage 2 参数/语义版本（`paper_analysis`/`gap_scope`/`freshness_scope`/`max_relevant_papers`/`current_year`；`chatgpt_handoff` 不属于输出语义身份）。全部命中且 validator 结果为 pass/skipped → 教授 `reuse_all`：直接复用既有 `套磁候选输入.json` + `套磁候选分析.md`，不更新时间戳、不 rewrite pack，本轮无需 Zotero 在线；`chatgpt_result` 显式提供或 `kb_import=true` 时禁止 early hard exit。任一条件无法证明安全（legacy pack 无 `cache.preflight`、`cache.preflight` 或其 `program_inputs`/`directions`/artifact guards/freshness `entries` 容器为 truthy 非 dict 的 malformed 形状（稳定 reason `preflight_cache_malformed`/`preflight_record_missing`）、preflight/semantics 版本变化、参数变化、指纹/artifact guard 不一致、validator 未验收或失败）→ 整位教授回原 Stage 2 慢路径：preflight 是 correctness-preserving 优化而非弱化缓存，绝不生成新的科学事实；部分失效时由既有 `stage2-plan` 逐方向 reuse，只对受影响方向生成 job，未受影响论文不重跑 OCR/paper-analysis。慢路径结束的 `stage2-finalize` 必须传回 `--preflight-file`（Step 保存的 preflight stdout，payload 含稳定证明 `preflight_id`；analyzer 写 facts JSON 时把该 id 原样抄入 facts 的 `stage2_preflight.preflight_id`）：finalize 在任何写盘前重算 cheap inputs，不一致 → `needs_refresh/preflight_inputs_changed`（TOCTOU 防护，pack/freshness/Markdown 一律不动）；并核对 payload 的 `preflight_id` 与 facts 记录的绑定——payload 被同一教授并发/重入的另一次调用覆盖、facts 缺失绑定或 id 不一致时同样 `needs_refresh`，绝不允许用晚到的 proof 给早先准备的 facts 盖章；`--resolved-directions` 的 `_resolved_directions.json` 也绑定同一 proof（resolve 流水线写入时盖章 `stage2_preflight.preflight_id`，accept 同样校验）：sidecar 来自另一代 facts/preflight → `needs_refresh/resolved_directions_proof_mismatch`（写盘前拒绝，零写入）；全部一致则把 preflight metadata 种进 `cache.preflight`——首次 Stage 2 后自动 seed，下一次 Stage 2 才可 early reuse。
+**阶段 2 early preflight gate（`contact_state.py stage2-preflight`）**：analyzer 在 `contact_targets.py resolve --target-file <教授目录>/套磁目标.json` → `contact_stage1.py verify --target-file <同一份>` 之后、任何昂贵准备（Zotero probe、论文读取、OCR、paper-analysis、handoff build、模型 job）之前，对每位教授运行只读 preflight（`stage2-preflight --target-file` 同样只接收该教授这一份本地 target）。它只消费本地 persisted state：逐方向 `target_fingerprint`（仅 hash Stage 2 实际消费的 target 字段——direction_id/name_ja/name_zh/summary_zh/members/user_note；整体 preview 指纹、选择历史、display 投影不进缓存键）、`candidate_fingerprint`（已 verify 的 Stage 1 快照逐方向候选视图，不重跑扩召）、教授级 Stage 1 input 指纹与 candidate 视图指纹（`papers.json` 只投影当前教授所有 selected directions 的 Stage 1 `candidate_keys` 并集的目录记录视图、`_署名对照.json` 只取当前教授的署名簿+overrides 切片——非 candidate 论文、其他教授的记录和 tagger 重建时间戳不进缓存键，不得触发慢路径；catalog/ledger 缺失、不可解析或关键容器 malformed 时用稳定 sentinel 使指纹必然失配，fail-closed 回慢路径）、逐 provisional 方向的 **authoritative resolved 输出集**（issue #7×#11：`resolved_direction_ids`/`merged_into` 与逐 resolved 条目的 accepted+freshness 指纹——split child 以自己的 stable resolved ID 保留 early reuse，merged 源方向凭 `merged_into` provenance 继续可证明；recorded 映射与 pack 实际 `resolved_direction` 分组不符 → `resolved_set_changed`）、candidate-union **resolution evidence guards**（覆盖教授级 candidate union 内全部可能进入归属/rename/split/merge 判断的候选论文 artifact，任何一篇 facts/sidecar/pdf 变化 → 早期 miss，不受 relevant/gap scope 限制）、accepted artifact 的 stat guards（path/size/mtime_ns/ctime_ns；**绝不为 cache 检查重读 PDF bytes**）、`_freshness_cache.json` 中该方向已浮现 gap 的视图指纹、pack integrity sha（`cache.preflight.accepted_directions_sha256`）以及 Stage 2 参数/语义版本（`paper_analysis`/`gap_scope`/`freshness_scope`/`max_relevant_papers`/`current_year`；`chatgpt_handoff` 不属于输出语义身份）。全部命中且 validator 结果为 pass/skipped → 教授 `reuse_all`：直接复用既有 `套磁候选输入.json` + `套磁候选分析.md`，不更新时间戳、不 rewrite pack，本轮无需 Zotero 在线；`chatgpt_result` 显式提供或 `kb_import=true` 时禁止 early hard exit。任一条件无法证明安全（legacy pack 无 `cache.preflight`、`cache.preflight` 或其 `program_inputs`/`directions`/artifact guards/freshness `entries` 容器为 truthy 非 dict 的 malformed 形状（稳定 reason `preflight_cache_malformed`/`preflight_record_missing`）、preflight/semantics 版本变化、参数变化、指纹/artifact guard 不一致、validator 未验收或失败）→ 整位教授回原 Stage 2 慢路径：preflight 是 correctness-preserving 优化而非弱化缓存，绝不生成新的科学事实；部分失效时由既有 `stage2-plan` 逐方向 reuse，只对受影响方向生成 job，未受影响论文不重跑 OCR/paper-analysis。慢路径结束的 `stage2-finalize` 必须传回 `--preflight-file`（Step 保存的 preflight stdout，payload 含稳定证明 `preflight_id`；analyzer 写 facts JSON 时把该 id 原样抄入 facts 的 `stage2_preflight.preflight_id`）：finalize 在任何写盘前重算 cheap inputs，不一致 → `needs_refresh/preflight_inputs_changed`（TOCTOU 防护，pack/freshness/Markdown 一律不动）；并核对 payload 的 `preflight_id` 与 facts 记录的绑定——payload 被同一教授并发/重入的另一次调用覆盖、facts 缺失绑定或 id 不一致时同样 `needs_refresh`，绝不允许用晚到的 proof 给早先准备的 facts 盖章；`--resolved-directions` 的 `_resolved_directions.json` 也绑定同一 proof（resolve 流水线写入时盖章 `stage2_preflight.preflight_id`，accept 同样校验）：sidecar 来自另一代 facts/preflight → `needs_refresh/resolved_directions_proof_mismatch`（写盘前拒绝，零写入）；全部一致则把 preflight metadata 种进 `cache.preflight`——首次 Stage 2 后自动 seed，下一次 Stage 2 才可 early reuse。
 
 阶段 2 白话校验失败时，不能直接改受管 Markdown，也不能把普通 `stage2-finalize` 当作修订入口，因为相同输入指纹会命中旧叙事。原 facts 文件存在时，调用 `stage2-refine-plan --facts <facts.json> --validation-file <validation.json>`；原 facts 已过期或不存在时，调用 `stage2-refine-plan --professor-dir <教授目录> --validation-file <validation.json>`，runner 从已接受输入包做 pack-only 修订。两种路径都生成每个失败方向的短修订 job；模型只改 `narrative.positioning/gap_notes`，然后用对应的 `stage2-refine-finalize` 校验并重渲染。runner 只替换结构化叙事，freshness、gap、用户笔记和论文事实不变；成功后清除旧 validator 状态，需重新校验并最终调用 `stage2-record-validation`。全局红线中的 item key 由 runner 渲染为论文标题或“相关论文”，不进入人读正文。`stage2-refine-finalize` 同时清除 `cache.preflight`（保守失效：修订后的 pack 下次 Stage 2 必须重新走慢路径证明，通过后再次 seed）。
 
@@ -419,7 +442,7 @@ Issue #59：`--email-id` 是**硬执行范围**，不是过滤提示。同一次
 在 OpenCode 中用 Task 工具按 exact name 调用：
 
 ```
-# 阶段 0：交互选定套磁方向（读 方向预筛.json，写 套磁目标.json）
+# 阶段 0：交互选定套磁方向（读该教授 方向预筛.json，逐教授写 <教授目录>/套磁目标.json）
 # 缺省用 OpenCode 原生 question 交互；显式给 selection（结构化 direction_ids + notes）时跳过提问直接保存，用于自动化/smoke
 task(subagent_type: "professor-contact", prompt: "folder_path: <program-root or per-専攻 subfolder>\nprofessors: <可选，逗号分隔精确教授名>\nselection: <可选，显式结构化选择，形状见 Input contract>")
 
@@ -502,14 +525,14 @@ Codex 的 non-interactive 执行（`codex exec`）没有「暂停一个嵌套子
 
 1. 调用方**没有**显式给 `selection` 时，委派 `professor-contact` 会返回 `needs_input` + `selection_request`（逐教授列出每个方向的 `direction_id`/日中名/`summary_zh`/representatives/论文数/evidence warnings），**不写、不改 `套磁目标.json`**，绝不自动替用户选（不选第一项、不按方向名或 A/B/C 标签猜）；
 2. 顶层调用者把 `selection_request` 展示给真实用户；
-3. 用户回答后，顶层调用者在后续顶层 turn **重新委派** installed named custom agent `professor-contact`，把用户答案作为显式结构化 `selection` 传入——professor key 精确匹配；`direction_id` 必须来自该教授当前 `contact_targets.py preview`（机器身份，方向名/A-B-C 标签无效）；多方向逐 `direction_id` 独立保存；`notes` 省略 key=保留旧备注、非空=替换、`""`=显式清空；invalid/stale `direction_id` 一律 fail closed、零写入并要求重新取得用户选择；
+3. 用户回答后，顶层调用者在后续顶层 turn **重新委派** installed named custom agent `professor-contact`，把用户答案作为显式结构化 `selection` 传入——事务记录以 canonical `professor_dir` + `preview_path` 精确标识该教授那份 local（展示名只作显示，同名不同目录各一条、绝不互相覆盖）；`direction_id` 必须来自该条当前 `contact_targets.py preview`（机器身份，方向名/A-B-C 标签无效）；多方向逐 `direction_id` 独立保存；`notes` 省略 key=保留旧备注、非空=替换、`""`=显式清空；invalid/stale `direction_id` 一律 fail closed、零写入该教授的 local 并要求重新取得用户选择；
 4. 新 invocation 延续的是同一 Stage 0 **业务语义**——它是一次新的委派，不是对原 nested child/thread 的 resume；也不把 App Server 实验性 user-input 接口混进 eval 调用链。
 
-`selection` 只是调用输入，不是第二份长期状态；长期机器状态仍然只有 `教授研究/套磁目标.json`。
+`selection` 只是调用输入，不是第二份长期状态；长期机器状态仍然只有各教授自己的 `<教授目录>/套磁目标.json`（一次 `bootstrap` 或 `select` 只写一位教授那一份，返回的 `transactions` 记录以该教授的 canonical 路径标识那份 local target）。
 
 #### Codex 下的 Stage 1：委派 exact named custom agent `professor-collector`
 
-缺 PDF 补齐时，Codex 侧直接委派 installed named custom agent `professor-collector` 并**等待其结果**再继续；若原生委派在机器/运行时层面失败，记为 Codex runtime/feature blocker，绝不由本父代理自行补下 PDF。输入保持收窄为 `folder_path` + `pdf_only:true` + `item_keys=<缺失 item keys>`，以及仅在 caller 显式提供合法值时追加同值 `access_mode=<oa_only|allow_non_oa>`。缺省时完全省略该字段；Codex non-interactive 成功路径必须显式接收真实用户决定。非法值只在 `pdf_fill_needed` 时于 collector spawn 前返回结构化 `error`；`noop`/`needs_resolution` 不消费或校验它。绝不同时传 `professors`，也绝不扩大下载范围。OpenCode 的 Task 委派写法只属于 OpenCode 分支；Codex 分支不复制 collector 的 agent body、不由父代理 inline 模拟 collector，也不直接调 `pdf_fill.py`/worker 绕过 collector。collector 返回后无条件重跑 `contact_stage1.py build`，empty runtime result 仍只允许一次相同输入重试，且 retry 保持 `access_mode` 同值或同样省略。
+缺 PDF 补齐时，Codex 侧直接委派 installed named custom agent `professor-collector` 并**等待其结果**再继续；若原生委派在机器/运行时层面失败，记为 Codex runtime/feature blocker，绝不由本父代理自行补下 PDF。输入保持收窄为 `folder_path` + `pdf_only:true` + `item_keys=<缺失 item keys>`，以及仅在 caller 显式提供合法值时追加同值 `access_mode=<oa_only|allow_non_oa>`。缺省时完全省略该字段；Codex non-interactive 成功路径必须显式接收真实用户决定。非法值只在 `pdf_fill_needed` 时于 collector spawn 前返回结构化 `error`；`noop`/`needs_resolution` 不消费或校验它。绝不同时传 `professors`，也绝不扩大下载范围。OpenCode 的 Task 委派写法只属于 OpenCode 分支；Codex 分支不复制 collector 的 agent body、不由父代理 inline 模拟 collector，也不直接调 `pdf_fill.py`/worker 绕过 collector。collector 返回后无条件对该教授重跑 `contact_stage1.py build --target-file <教授目录>/套磁目标.json`，empty runtime result 仍只允许一次相同输入重试，且 retry 保持 `access_mode` 同值或同样省略。
 
 #### Codex 下的 Stage 5：caller choices 作为业务输入
 
@@ -545,7 +568,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 |---|---|---|
 | `folder_path` | yes | 程序根（含 info.json）或 per-専攻 子文件夹。 |
 | `profile_path` | no | profile 文件绝对路径；缺省自动向上搜 `套磁邮件/套磁信息.md`。 |
-| `professors` | no | 限定只处理这些教授（逗号分隔 kanji 名）；缺省=处理 `套磁目标.json` 中全部被选目标。名单中的教授未被 Stage 0 选入 → resolver 返回 `professor_not_selected`（needs_input）。 |
+| `professors` | no | 限定只处理这些教授（逗号分隔 kanji 名）。Stage 1/2 一次调用只吃一位教授的 `--target-file <教授目录>/套磁目标.json`，名单决定枚举哪几份 local target 依次跑；缺省=遍历 `教授研究/` 下已带有自己 `套磁目标.json` 的全部教授。名单中的教授没有 local target → resolver 返回 `professor_not_selected`/`missing_target_state`（needs_input）。 |
 | `named_papers_file` | no | 仅阶段 1：JSON 文件绝对路径，`{"directions": {"<direction_id>": ["<item_key 或精确标题>", ...]}}`，把用户显式点名的论文并入对应方向候选集（`user_named` 理由）。 |
 | `access_mode` | no | 仅阶段 1：caller 从真实用户取得的本轮网络访问决定；显式值严格为 `"oa_only" | "allow_non_oa"`，在 `pdf_fill_needed` 时以同名同值原样转发，缺省则完全省略。`noop` / `needs_resolution` 不消费或校验；非法值在 collector spawn 前结构化 fail closed。 |
 | `paper_analysis` | no | 仅阶段 2：`relevant`（只跑相关论文——user_note 点名 ∪ 术语/语义匹配，缺省）或 `all`（方向全部成员论文，强制全量）。相关集 >10 篇时 analyzer 会先问确认。 |
@@ -559,7 +582,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 | `skip_direction_ids` | no | 仅阶段 3：逗号分隔的显式跳过方向；持久化 `stage3_status:"skipped"`，取消跳过后正常处理。 |
 | `cross_direction_groups` | no | 仅阶段 3：JSON 方向 ID 组列表（每组 ≥2 个既有 direction ID）；显式 opt-in，缺省零跨方向 job/模型调用/Markdown 节。 |
 | `kb_import` | no | 仅阶段 2：`true` 时把每篇相关论文的分析做成 KB 条目入库（tag 含 `zotero://…/<item_key>`，source=分析文件，重跑走 `updateKnowledge` 原地更新）；缺省 `false`。相关论文全量入库为后续项。 |
-| `selection` | no | 阶段 0 与阶段 4：显式结构化选择，跳过交互提问。阶段 0 形状 `{"教授A": {"direction_ids": [...], "notes": {"dir_...": "..."}}}`——professor key 精确匹配、`direction_id` 必须来自当前 preview、多方向逐 ID 独立保存、`notes` 省略 key=保留旧备注/非空=替换/`""`=显式清空、invalid/stale ID fail closed 零写入；缺省（未传）时 Stage 0 在 OpenCode 用 `question` 交互、在 Codex 返回 `needs_input`+`selection_request`。阶段 4 形状见该 agent 说明。 |
+| `selection` | no | 阶段 0 与阶段 4：显式结构化选择，跳过交互提问。阶段 0 形状是教授级事务记录数组 `{"transactions": [{"professor_dir": "教授研究/<分野>/教授A", "preview_path": "教授研究/<分野>/教授A/方向预筛.json", "direction_ids": [...], "notes": {"dir_...": "..."}, "professor": "教授A"}]}`——事务由 canonical `professor_dir` + `preview_path` 标识（教授展示名只作显示，同名不同目录是两位教授，各自一条、互不覆盖）、`direction_id` 必须来自该条 preview、多方向逐 ID 独立保存、`notes` 省略 key=保留旧备注/非空=替换/`""`=显式清空、invalid/stale ID 只失败该条并零写入该教授的 local；缺省（未传）时 Stage 0 在 OpenCode 用 `question` 交互、在 Codex 返回 `needs_input`+`selection_request`（同样按事务记录数组逐教授一条）。阶段 4 形状见该 agent 说明。 |
 | `mode` | no | 仅阶段 5：`first`、`both`、`followup`；generator 缺省按 `both` 调用，runner CLI 为兼容旧脚本缺省 `first`。 |
 | `followup_template` | no | 仅阶段 5：跟进模板绝对路径；缺省查找 `套磁邮件/套磁跟进模板.md`。 |
 | `skip_validation` | no | 仅阶段 5：true 时跳过 validator 循环（调试用）。 |
@@ -569,8 +592,8 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 
 ## Persisted output — 教授研究/ folder
 
-- `教授研究/套磁目标.json` — Stage 0 机器状态：每个被选教授的 target（稳定 `direction_id`、provisional `members[]`、`member_fingerprint`、representatives、user_note、preview 路径/指纹、`selection_history`）。**无 Stage 0 Markdown 产物**（旧 `套磁候选总览.md` 已退役）；禁止手改，经 `contact_targets.py` 维护。
-- `教授研究/套磁阶段1候选.json` — Stage 1 机器状态（schema 1 / kind `professor-contact-stage1`）：逐被选教授/方向记录 provisional member keys、expanded candidate keys、逐篇 expansion reasons（+overlap `expansion_evidence`）、精确依赖指纹 `input_fingerprint`（v2：被选方向身份+provisional keys、被选方向词面画像字段、全部 preview 方向的 membership/confidence、`title`/`title_zh` 覆盖全部论文、`pdf_status` **仅对候选集**——仅覆盖能改变候选成员/就绪的输入；非候选论文 pdf_status 变化、整 preview 指纹变化但依赖不变时不再误触发重建）、PDF readiness 汇总与 `work_queue_item_keys`/`missing_item_keys`（工作队列=候选并集去重，只把缺失 keys 送 item 级 `pdf_only`）。`membership_claim` 恒为 `non_final_candidates_only`；禁止手改，经 `contact_stage1.py build` 维护；**无 Stage 1 Markdown 产物**。
+- `<教授目录>/套磁目标.json` — Stage 0 机器状态（schema 2 / kind `professor-contact-target`）：**每位被选教授一份、只含该教授自己**的 target（稳定 `direction_id`、provisional `members[]`、`member_fingerprint`、representatives、user_note、preview 路径/指纹、`selection_history`）。旧的程序级 `教授研究/套磁目标.json`（schema 1 / kind `professor-contact-targets`）已退役为纯迁移输入：只在建立该教授第一份 local v2 时由 `contact_targets.py bootstrap` 按其自己的目录读一次（standalone `contact_targets.py migrate` 复用同一套 helper 逐条 fan-out），运行期 select/resolve/Stage 1/Stage 2 一律不再读它，迁移也不删改旧文件。**无 Stage 0 Markdown 产物**（旧 `套磁候选总览.md` 已退役）；禁止手改，经 `contact_targets.py` 维护。
+- `教授研究/套磁阶段1候选.json` — Stage 1 机器状态（schema 1 / kind `professor-contact-stage1`）：逐被选教授/方向记录 provisional member keys、expanded candidate keys、逐篇 expansion reasons（+overlap `expansion_evidence`）、精确依赖指纹 `input_fingerprint`（v2：被选方向身份+provisional keys、被选方向词面画像字段、全部 preview 方向的 membership/confidence、`title`/`title_zh` 覆盖全部论文、`pdf_status` **仅对候选集**——仅覆盖能改变候选成员/就绪的输入；非候选论文 pdf_status 变化、整 preview 指纹变化但依赖不变时不再误触发重建）、PDF readiness 汇总与 `work_queue_item_keys`/`missing_item_keys`（工作队列=候选并集去重，只把缺失 keys 送 item 级 `pdf_only`）。`membership_claim` 恒为 `non_final_candidates_only`；禁止手改，经逐教授 `contact_stage1.py build --target-file <教授目录>/套磁目标.json` 维护（快照仍是那一份程序级文件，按教授条目 merge 写入）；**无 Stage 1 Markdown 产物**。
 - `<教授名>/套磁候选分析.md` — 阶段 2（v2 模板）：每方向四节——「方向定位」（可信度一句+署名线一句+分要点时间线，论文小总结只在此讲一遍）、「论文一览」（唯一表格：论文｜年份｜署名｜分析）、「与我的契合」（note 逐字+评估-only）、「可延伸方向」（【作者 future work】四件套=原文摘录/中译/大白话解释/gap_status；【我的延伸】带差异点；done_by_self 单列「已被本人实现」小节）。人读文本零 item key：首现全称+zotero+[分析] 链接，此后《固定缩写》（年份）挂同一链接。重跑=全量重写，无「本轮新增」式追加。
 - `<教授名>/论文分析/_index.json` + `<作者>/<标题>.md` + `<作者>/<标题>.md.future_work.json` + `<作者>/<标题>.md.facts.json` — 阶段 2：完整分析的 future-work sidecar 优先（本地 PDF full 另产 `.facts.json` 结构化事实 sidecar：`paper` 元数据、research_problem/object/approach、findings/contributions/topic_terms/limitations、`input_fingerprint` 源 PDF 指纹与精确 join 的 `future_work_ids`）；旧分析只迁移当前相关论文，仍缺才只跑该篇 `gap-only`。`_index.json` 由阶段 2 独占写入，根为 `schema: 2`、`future_work_schema: 1`；每篇 `gaps[]` 只存 `gap_id`、`status`、`evidence`，原文/翻译/出处只在 sidecar，另记 `facts_sidecar`/`facts_state`/`facts_error`（valid｜unavailable｜failed + 稳定 reason）。旧 `gap`/`gap_zh`/`gap_source`/`gap_status` 字段暂保留兼容。
 - `<教授名>/论文分析/_ocr/<标题>.txt` — 阶段 2：扫描版 PDF 的 LLM OCR 产物（含元数据头 + 逐页文本 + 图描述；复用 vision-tools glance 链；不入库、无 `llm_ocr` 标记；重跑复用）。
@@ -602,7 +625,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 - **facts sidecar-first（fulltext 论文机器事实主源）**：本地 PDF full 三件套（`.md`/`.future_work.json`/`.facts.json`）在本地与 ChatGPT handoff 两条路径语义一致——handoff 的 PDF job 也必须带 facts 草稿并经本地 `facts.py finalize` 验证落盘。Stage 2 只复用通过校验（schema/generator/`analysis` 名/`evidence_level`/`input_fingerprint`==当前 PDF sha256/`future_work_ids` 精确 join 当前 future-work sidecar）的 facts，并以规范化 `paper_facts` 进入输入包；校验失败按 `facts_state=failed` fail closed。摘要级/OCR-only/legacy 论文 `facts_state=unavailable`，诚实保持证据等级；**任何路径都绝不为补 facts 触发第二次全文模型 pass**，`.future_work.json` 始终是引用证据的唯一权威。
 - **每阶段独立跑、可中断**：PDF 下载（阶段 1，最慢）可单独丢后台；分析（2）/想法（3）可重复跑（改 profile 后重新生成想法不需要重下 PDF，也**不需要重跑阶段 2**——profile 已移出阶段 2；重跑阶段 2 靠输入包指纹 + `_index.json` 幂等——输入包指纹未变的方向直接复用，`_ocr/` 产物复用，freshness 缓存命中不重判）。阶段 2 只跑**相关论文**（默认 `relevant`，相关集 >10 篇会先问确认），扫描版论文会走逐页 OCR（较久）后再做 paper-analysis。旧产物迁移见「确定性 runner」节 `migrate-v3`。
 - **Zotero 在线要求按阶段区分**：Stage 0 与 Stage 1 的候选构建全本地（读 `方向预筛.json`/`套磁目标.json`/`papers.json`，写 `套磁阶段1候选.json`），不需要 Zotero；阶段 1 的定向补下与阶段 2 的读元数据/摘要/附件才需要 Zotero 在线，离线时 agent 会提示打开 Zotero。阶段 2 的 preflight `reuse_all` 教授完全不需要 Zotero 在线——accepted state 完整且本地指纹未变时，即使 Zotero 未打开也可安全复用并继续阶段 3。
-- **排序依赖**：Stage 0 只能在 professor-topic-clustering(`preview:true`) 产出 normalized `方向预筛.json` 之后跑；被选方向成员身份变化（成员 `item_key` 集合变化或方向消失）→ 阶段 1/2 以 `needs_refresh` 停止，须回 Stage 0 修订选择；未选方向、display 元数据或置信度变化不阻断。阶段 2 前置顺序 = Stage 1 快照存在且 `contact_stage1.py verify` 通过（快照缺失/过期 → `needs_input` 重跑 Stage 1）→ 逐教授 `stage2-preflight`（`reuse_all` 教授在 Zotero probe 之前 no-op 结束），分析范围取逐方向 `candidate_keys`。阶段 2 依赖阶段 1 候选集的 PDF 尽量全（有 PDF 的论文走全文深度分析；扫描版才触发 OCR；摘要缺失时仍可用 abstractNote 分析，PDF 只是增强）；候选集中暂时 `no_env`/`failed` 的论文按摘要参与分析，换网络后重跑 Stage 1 只补缺失候选。
+- **排序依赖**：Stage 0 只能在 professor-topic-clustering(`preview:true`) 产出 normalized `方向预筛.json` 之后跑；被选方向成员身份变化（成员 `item_key` 集合变化或方向消失）→ 阶段 1/2 以 `needs_refresh` 停止，须回 Stage 0 修订选择；未选方向、display 元数据或置信度变化不阻断。阶段 2 前置顺序 = 用该教授 `<教授目录>/套磁目标.json` 作为 `--target-file`，Stage 1 快照存在且 `contact_stage1.py verify --target-file` 通过（快照缺失/过期 → `needs_input` 重跑 Stage 1）→ 逐教授 `stage2-preflight --target-file`（`reuse_all` 教授在 Zotero probe 之前 no-op 结束），分析范围取逐方向 `candidate_keys`。阶段 2 依赖阶段 1 候选集的 PDF 尽量全（有 PDF 的论文走全文深度分析；扫描版才触发 OCR；摘要缺失时仍可用 abstractNote 分析，PDF 只是增强）；候选集中暂时 `no_env`/`failed` 的论文按摘要参与分析，换网络后重跑 Stage 1 只补缺失候选。
 - **诚实**：分析/想法严格基于论文实际内容与 profile；想法候选是「贴合论文方向的候选」，是否真实符合你想法由你在阶段 4 挑选决定（平衡原则）；阶段 5 邮件绝不编造 profile 之外的信息。
 - **阶段 5 只产兴趣段**：详见「阶段 5 — 套磁邮件」专节（只产兴趣段 / 模板占位符 / Subject 构造 / 红线硬约束 / 志望默认非第一 / humanizer-ja 动态字段润色 / 校验循环）。
 
@@ -611,6 +634,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 以下行为已退出本 workflow 契约（磁盘上的历史文件可以保留，但任何阶段都不得把它们当 target state 消费）：
 
 - Zotero 固定标题 `套磁候选` note 作为必需输入；
+- 程序级 `教授研究/套磁目标.json`（schema 1 / kind `professor-contact-targets`）作为 Stage 0 权威：已退役为纯迁移输入，只在建立某教授第一份 local v2 时由 `contact_targets.py bootstrap`（或复用同一套 helper 的 standalone `migrate`）按其自己的目录读一次，运行期一律以 `<教授目录>/套磁目标.json` 为事实源，任何 helper 都不再重建程序级表；
 - `教授研究/套磁候选总览.md` 作为 Stage 0 输出；
 - Stage 1/2 重新扫描 Zotero 来「发现」被选方向；
 - 用 Zotero 方向 `collection_key` 充当套磁方向身份（`collection_key` 现在只是 `direction_id` 的兼容 join 键）。
@@ -623,7 +647,7 @@ flowchart TD
     P["professor-topic-clustering<br/>preview:true"]
     J["normalized 方向预筛.json"]
     S0["Stage 0<br/>选择 direction_id + user_note"]
-    T["教授研究/套磁目标.json"]
+    T["<教授目录>/套磁目标.json<br/>每位被选教授一份"]
     S1["Stage 1<br/>方向候选快照"]
     F["professor-collector<br/>pdf_only:true + item_keys<br/>仅缺失候选 PDF"]
     S2["Stage 2<br/>全文证据 + accepted resolved direction"]

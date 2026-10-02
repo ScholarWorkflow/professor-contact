@@ -1,0 +1,167 @@
+import argparse
+import json
+import os
+from pathlib import Path
+import sys
+import unittest
+
+
+class TestPreparationError(RuntimeError):
+    """A test-only prerequisite failed before the claimed product assertion."""
+
+
+class EvidenceResult(unittest.TextTestResult):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.started = []
+        self.completed = []
+        self.events = []
+        self.phases = {}
+        self.originals = {}
+
+    def startTest(self, test):
+        self.started.append(test.id())
+        self.phases[test.id()] = 'setup'
+        originals = {}
+        for name, phase in (('_callSetUp', 'setup'), ('_callTestMethod', 'product'),
+                            ('_callTearDown', 'teardown'), ('_callCleanup', 'cleanup')):
+            original = getattr(test, name)
+            originals[name] = (name in test.__dict__, test.__dict__.get(name))
+            def invoke(*args, _original=original, _phase=phase, **kwargs):
+                self.phases[test.id()] = _phase
+                return _original(*args, **kwargs)
+            setattr(test, name, invoke)
+        self.originals[test.id()] = originals
+        super().startTest(test)
+
+    def stopTest(self, test):
+        self.completed.append(test.id())
+        for name, (present, value) in self.originals.pop(test.id(), {}).items():
+            if present:
+                setattr(test, name, value)
+            else:
+                delattr(test, name)
+        super().stopTest(test)
+
+    def record(self, test, kind, err=None, detail=None):
+        # Module/class setup errors arrive as unittest _ErrorHolder objects.
+        owner = getattr(test, 'test_case', test)
+        preparation_error = bool(
+            err and isinstance(err, tuple) and err[0]
+            and issubclass(err[0], TestPreparationError)
+        )
+        phase = 'prerequisite' if preparation_error else self.phases.get(owner.id(), 'setup')
+        verdict = ('FAIL' if phase == 'product' else 'INVALID_TEST_EXECUTION')
+        self.events.append({'test_id': owner.id(), 'evidence_id': test.id(),
+                            'kind': kind, 'phase': phase, 'verdict': verdict,
+                            'detail': detail})
+
+    def addError(self, test, err):
+        self.record(test, 'error', err, self._exc_info_to_string(err, test))
+        super().addError(test, err)
+
+    def addFailure(self, test, err):
+        self.record(test, 'failure', err, self._exc_info_to_string(err, test))
+        super().addFailure(test, err)
+
+    def addSubTest(self, test, subtest, err):
+        if err is not None:
+            self.record(subtest, 'subtest', err, self._exc_info_to_string(err, subtest))
+        super().addSubTest(test, subtest, err)
+
+
+def classify(result, load_errors, missing_required_prefixes=(), interruption=None):
+    if load_errors or result is None:
+        return "CASE_NOT_STARTED"
+    # Once a valid product assertion/error has directly proved a product defect,
+    # later harness/cleanup damage must not reclassify that defect as INVALID.
+    if any(e['verdict'] == 'FAIL' for e in result.events):
+        return "FAIL"
+    if (interruption
+            or result.testsRun == 0
+            or len(result.started) != result.testsRun
+            or len(set(result.started)) != result.testsRun
+            or result.started != result.completed
+            or missing_required_prefixes
+            or result.expectedFailures or result.unexpectedSuccesses
+            or any(e['verdict'] == 'INVALID_TEST_EXECUTION' for e in result.events)):
+        return "INVALID_TEST_EXECUTION"
+    # A unittest failure/error without an attributed event is unusable evidence.
+    if result.failures or result.errors:
+        return "INVALID_TEST_EXECUTION"
+    if result.skipped:
+        return "NOT TESTED"
+    return "PASS"
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--start", required=True)
+    parser.add_argument("--pattern", required=True)
+    parser.add_argument("--contains")
+    parser.add_argument("--require-prefix", action="append", default=[])
+    parser.add_argument("--out", required=True)
+    args = parser.parse_args()
+    if Path(args.out).exists():
+        parser.error('--out already exists; use a new evidence file')
+    # 子进程的 python3 必须使用与本入口相同的解释器。
+    os.environ["PATH"] = str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"]
+    loader = unittest.TestLoader()
+    if args.contains:
+        loader.testNamePatterns = ["*" + args.contains + "*"]
+    load_errors = []
+    result = None
+    interruption = None
+    try:
+        suite = loader.discover(args.start, pattern=args.pattern)
+        load_errors = list(loader.errors)
+        if not load_errors:
+            def make_result(*args, **kwargs):
+                nonlocal result
+                result = EvidenceResult(*args, **kwargs)
+                return result
+            result = unittest.TextTestRunner(
+                verbosity=2, resultclass=make_result
+            ).run(suite)
+    except BaseException as exc:
+        interruption = {"type": type(exc).__name__, "message": str(exc)}
+    missing_required_prefixes = []
+    if result is not None:
+        missing_required_prefixes = [
+            prefix for prefix in args.require_prefix
+            if not any(test_id.startswith(prefix) for test_id in result.started)
+        ]
+    verdict = classify(
+        result, load_errors, missing_required_prefixes, interruption=interruption
+    )
+
+    def records(items):
+        return [{"test_id": test.id(), "detail": detail} for test, detail in items]
+
+    evidence = {
+        "schema_version": 2,
+        "python": sys.version,
+        "cwd": str(Path.cwd()),
+        "selection": {"start": args.start, "pattern": args.pattern,
+                      "contains": args.contains,
+                      "required_prefixes": args.require_prefix},
+        "load_errors": load_errors,
+        "interruption": interruption,
+        "tests_run": result.testsRun if result else 0,
+        "started": result.started if result else [],
+        "completed": result.completed if result else [],
+        "missing_required_prefixes": missing_required_prefixes,
+        "failures": records(result.failures) if result else [],
+        "errors": records(result.errors) if result else [],
+        "events": result.events if result else [],
+        "skipped": records(result.skipped) if result else [],
+        "expected_failures": records(result.expectedFailures) if result else [],
+        "unexpected_successes": [test.id() for test in result.unexpectedSuccesses] if result else [],
+        "verdict": verdict,
+    }
+    Path(args.out).write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n")
+    return 0 if verdict == "PASS" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
