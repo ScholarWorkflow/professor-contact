@@ -145,20 +145,28 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
     def test_ensure_new_output_rejects_existing_producer_and_overlap(self):
         taken = self.root / "taken.json"
         taken.write_text("keep", encoding="utf-8")
-        reserved = [self.root / "sample.json", self.root / ".sample.fixture-claim"]
+        reserved = [self.root / "sample.json"]
+        claims = [self.root / ".sample.fixture-claim"]
         for bad in (
             taken,
             self.root,
             fixture53._producer_root() / ".issue74-output-forbidden",
             self.root / "sample.json",
-            self.root / ".sample.fixture-claim",
         ):
             with self.assertRaises(support.FixtureBuildError):
-                support.ensure_new_output(bad, reserved=reserved)
+                support.ensure_new_output(bad, reserved=reserved, claims=claims)
         self.assertEqual(taken.read_text(encoding="utf-8"), "keep")
 
-        fresh = support.ensure_new_output(self.root / "fresh.json", reserved=reserved)
+        fresh = support.ensure_new_output(
+            self.root / "fresh.json", reserved=reserved, claims=claims)
         self.assertEqual(fresh, (self.root / "fresh.json").resolve())
+
+    def test_ensure_new_output_refuses_claim_directory_and_its_inside(self):
+        claim = self.root / ".sample.fixture-claim"
+        for bad in (claim, claim / "manifest.json", claim / "nested" / "out.json"):
+            with self.assertRaises(support.FixtureBuildError):
+                support.ensure_new_output(bad, claims=[claim])
+        self.assertFalse(claim.exists())
 
     def test_discard_created_root_respects_ownership(self):
         created = support.prepare_root(self.root / "created")
@@ -264,6 +272,18 @@ class Issue53RollbackAndProtectionTests(IsolatedRootsTestCase):
         self.assertFalse((self.root / "program").exists())
         self.assertFalse((self.root / "profile").exists())
 
+    def test_manifest_inside_claim_directory_is_refused_before_any_write(self):
+        program = self.root / "program"
+        profile = self.root / "profile"
+        claim = support.claim_path_for(program.resolve())
+        with self.assertRaises(fixture53.FixtureBuildError):
+            fixture53.build_fixture(
+                program, profile, output=claim / "nested" / "setup.json")
+        self.assertFalse(claim.exists())
+        self.assertFalse((claim / "nested" / "setup.json").exists())
+        self.assertFalse(program.exists())
+        self.assertFalse(profile.exists())
+
     def test_success_releases_both_claims(self):
         program = self.root / "program"
         profile = self.root / "profile"
@@ -285,6 +305,15 @@ class Issue55ProtectionTests(IsolatedRootsTestCase):
         self.assertTrue(program.is_dir())
         self.assertFalse(any(program.iterdir()))
         self.assertFalse((self.output / "setup.json").exists())
+
+    def test_manifest_inside_claim_directory_is_refused_before_any_write(self):
+        program = self.root / "program"
+        claim = support.claim_path_for(program.resolve())
+        with self.assertRaises(fixture55.FixtureBuildError):
+            fixture55.build_fixture(program, output=claim / "manifest.json")
+        self.assertFalse(claim.exists())
+        self.assertFalse((claim / "manifest.json").exists())
+        self.assertFalse(program.exists())
 
     def test_manifest_bytes_use_the_stable_json_format(self):
         program = self.root / "program"

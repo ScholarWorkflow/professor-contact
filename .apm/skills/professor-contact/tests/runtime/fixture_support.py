@@ -68,9 +68,17 @@ def check_mutually_independent(
 
 
 def ensure_new_output(
-    path: Path, *, reserved: Iterable[Path] = (), description: str = "manifest output"
+    path: Path,
+    *,
+    reserved: Iterable[Path] = (),
+    claims: Iterable[Path] = (),
+    description: str = "manifest output",
 ) -> Path:
-    """Resolve a not-yet-existing output path that overlaps no reserved path."""
+    """Resolve a not-yet-existing output path that overlaps no reserved path.
+
+    A claim directory and every path inside it are refused outright; sample
+    roots may still contain the output as long as no sample file is hit.
+    """
     resolved = resolved_outside_producer(path, description=description)
     if resolved.exists():
         raise FixtureBuildError(f"{description} already exists: {resolved}")
@@ -78,6 +86,11 @@ def ensure_new_output(
         if resolved == Path(reserved_path).resolve():
             raise FixtureBuildError(
                 f"{description} overlaps a reserved fixture path: {resolved}")
+    for claim_path in claims:
+        claim = Path(claim_path).resolve()
+        if resolved == claim or resolved.is_relative_to(claim):
+            raise FixtureBuildError(
+                f"{description} overlaps an exclusive claim directory: {resolved}")
     return resolved
 
 

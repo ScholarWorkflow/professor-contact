@@ -128,7 +128,8 @@ def build_fixture(program_root: Path, *, output: Path) -> dict[str, Any]:
     input_pack = professor_dir / "套磁候选输入.json"
     manifest_path = support.ensure_new_output(
         output,
-        reserved=[root, support.claim_path_for(root), info, profile, input_pack])
+        reserved=[root, info, profile, input_pack],
+        claims=[support.claim_path_for(root)])
 
     root_prepared = support.prepare_root(root, description="fixture root")
     try:
