@@ -7543,16 +7543,23 @@ def stage5_choices_scope(args, owner: dict, emails: list, program_root: Path) ->
 
 
 def stage5_choices_by_id(args, owner: dict, emails: list, program_root: Path) -> dict:
-    """Issue #68 §3 two-phase ``choices`` attribution for this owner only.
+    """Issue #68 r11 §3.3 two-phase ``choices`` attribution for this owner.
 
     Explicit ``professor_dir`` rows partition first: a row naming professor B
     belongs to B even when its ``email_id`` collides with A's, and A never
-    validates, fails on, or rebinds it. Only rows without ``professor_dir``
-    (legacy format) may look the id up in the read-only scope, and they must
-    compute ``original_candidates`` from that scope alone — never from who
-    already has an explicit row. A single candidate binds unconditionally, so
-    it joins the professor's exact-one duplicate check; only a multi-candidate
-    row may exclude professors a legal explicit row already satisfied, and a
+    validates, fails on, or rebinds it. In a targeted run (``--email-id``) the
+    professor's own scope is only the target id, so rows attributed to this
+    professor are filtered by target first: unselected, missing or unknown ids
+    are noise that never blocks the target and never counts as a legal
+    explicit binding, while the target id itself keeps every strict check.
+    Only a full-professor batch run treats an explicit row whose id sits
+    outside the professor's execution range as ``needs_input``
+    ``choice_owner_invalid``. Only rows without ``professor_dir`` (legacy
+    format) may look the id up in the read-only scope, and they must compute
+    ``original_candidates`` from that scope alone — never from who already has
+    an explicit row. A single candidate binds unconditionally, so it joins the
+    professor's exact-one duplicate check; only a multi-candidate row may
+    exclude professors a legal explicit row already satisfied, and a
     multi-candidate row that stays undecided returns ``needs_input``
     ``choice_owner_ambiguous``. An unresolvable or foreign row can never turn
     into this professor's failure by id alone.
@@ -7563,6 +7570,7 @@ def stage5_choices_by_id(args, owner: dict, emails: list, program_root: Path) ->
     rows = stage5_choices_rows(Path(choices_path))
     scope = stage5_choices_scope(args, owner, emails, program_root)
     owner_dir = str(owner["professor_dir"].resolve())
+    targeted = bool(getattr(args, "email_id", None))
     expected = {email.get("email_id") for email in emails}
     attributed: dict = {}
     explicit: dict = {}
@@ -7583,6 +7591,12 @@ def stage5_choices_by_id(args, owner: dict, emails: list, program_root: Path) ->
                 continue
             if row_id not in target:
                 if canonical == owner_dir:
+                    if targeted:
+                        # R68-2 / r11 §3.3 rule 2: a targeted run filters the
+                        # professor's unselected ids before any ownership or
+                        # field judgment — an explicit Y row never blocks the
+                        # target X, and it is not a legal explicit binding.
+                        continue
                     soft_exit("needs_input", "choice_owner_invalid",
                               message=f"{row_id}: 显式目录内的邮件编号不属于本教授当前执行范围。未写盘。",
                               email_id=row_id, professor_dir=canonical)

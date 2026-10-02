@@ -168,8 +168,10 @@ class TestStage5ChoicesAttribution(helpers.Stage5LocalHarness, R10TwoProfessorFi
                                  f"{surface}: ambiguity wrote Stage-5 artifacts")
 
     def test_issue68_r10_counterexample2_cross_professor_error_stays_with_its_owner(self):
-        """B_dir + A's id fails only B's own invocation; A keeps succeeding and
-        must never rebind or inherit B's bad row."""
+        """R11 §3.3: a wrong ``B_dir + A's id`` row fails only B — B's batch
+        run answers ``needs_input`` / ``choice_owner_invalid``, B's targeted
+        run filters the unselected id first and fails only by its own missing
+        rule. A never rebinds or inherits B's bad row in either mode."""
         fixture = self.a_b_fixture()
         a_dir, b_dir = fixture["dirs"][A], fixture["dirs"][B]
         scope = self.write_json("r10-cx2-scope.json",
@@ -185,11 +187,81 @@ class TestStage5ChoicesAttribution(helpers.Stage5LocalHarness, R10TwoProfessorFi
         self.assertEqual(a_jobs["status"], "ok", a_jobs)
         self.assertEqual([row["email_id"] for row in a_jobs["drafts"]], [A_ID],
                          a_jobs)
+        a_batch = self.plan("--result", a_results, "--choices", choices,
+                            "--choices-scope", scope, pack=self.pack_for(A))
+        self.assertEqual(a_batch["status"], "ok", a_batch)
+        self.assertEqual(sorted(row["email_id"] for row in a_batch["drafts"]),
+                         [A_ID], a_batch)
+        b_batch = self.plan("--result", b_results, "--choices", choices,
+                            "--choices-scope", scope, pack=self.pack_for(B))
+        self.assertEqual(b_batch["status"], "needs_input", b_batch)
+        self.assertEqual(b_batch["reason_code"], "choice_owner_invalid", b_batch)
         b_jobs = self.plan("--result", b_results, "--choices", choices,
                            "--choices-scope", scope, "--email-id", B_ID,
                            pack=self.pack_for(B))
-        self.assertEqual(b_jobs["status"], "needs_input", b_jobs)
-        self.assertEqual(b_jobs["reason_code"], "choice_owner_invalid", b_jobs)
+        self.assertEqual(b_jobs["status"], "error", b_jobs)
+        self.assertEqual(b_jobs["reason_code"], "invalid_result_json", b_jobs)
+
+    def test_issue68_r11_targeted_run_filters_unselected_explicit_rows(self):
+        """R11 §3.3 rule 2 + counterexamples: in a targeted run the
+        professor's own unselected explicit rows are noise — never
+        ``choice_owner_invalid``, never field errors — while the target X
+        keeps its strict checks and plan/finalize stay identical."""
+        fixture = helpers.write_issue59_stage5_fixture(self.root, [
+            {"professor": A, "evidence": "fresh"},
+            {"professor": A, "evidence": "fresh",
+             "idea_id": helpers.ISSUE59_PEER_IDEA_ID}], case=self)
+        a_dir = fixture["dirs"][A]
+        x_id, y_id = fixture["email_ids"]
+        results = self.write_results("r11-filter-raw.json", [x_id])
+        humanized = self.root / "r11-filter-humanized.txt"
+        # Same professor, unselected explicit Y rows of every shape: plain,
+        # broken fields, missing id, duplicated unknown id.
+        choices_variants = {
+            "plain-y": [explicit_row(x_id, a_dir), explicit_row(y_id, a_dir)],
+            "broken-y-fields": [explicit_row(x_id, a_dir),
+                                dict(explicit_row(y_id, a_dir),
+                                     first_choice="not-a-boolean")],
+            "y-without-id": [explicit_row(x_id, a_dir),
+                             {"professor_dir": str(a_dir), "first_choice": True}],
+            "duplicate-unknown-id": [explicit_row(x_id, a_dir),
+                                     explicit_row("幽灵::D::I", a_dir),
+                                     explicit_row("幽灵::D::I", a_dir)],
+        }
+        for label, rows in choices_variants.items():
+            choices = self.write_json(f"r11-filter-{label}-choices.json", rows)
+            draft = self.plan("--result", results, "--choices", choices,
+                              "--email-id", x_id, pack=self.pack_for())
+            self.assertEqual(draft["status"], "ok", draft)
+            self.assertEqual([row["email_id"] for row in draft["drafts"]], [x_id],
+                             draft)
+            if label != "plain-y":
+                continue
+            humanized.write_text(draft["drafts"][0]["draft"], encoding="utf-8")
+            out = self.finalize("--result", results, "--choices", choices,
+                                "--email-id", x_id, "--humanized", humanized,
+                                pack=self.pack_for())
+            self.assertEqual(out["status"], "ok", out)
+            self.assertEqual([row["email_id"] for row in out["emails"]], [x_id],
+                             out)
+
+        # The same filter holds when the unselected id sits inside another
+        # professor's scope entry of a full multi-professor scope: the
+        # caller's unselected explicit Y must not become an ownership error.
+        fixture = self.a_b_fixture()
+        a_dir, b_dir = fixture["dirs"][A], fixture["dirs"][B]
+        scope = self.write_json("r11-filter-full-scope.json",
+                                {str(a_dir): [A_ID], str(b_dir): [B_ID]})
+        results = self.write_results("r11-filter-full-raw.json", [A_ID])
+        choices = self.write_json("r11-filter-full-choices.json",
+                                  [explicit_row(A_ID, a_dir),
+                                   explicit_row(B_ID, a_dir)])
+        jobs = self.plan("--result", results, "--choices", choices,
+                         "--choices-scope", scope, "--email-id", A_ID,
+                         pack=self.pack_for(A))
+        self.assertEqual(jobs["status"], "ok", jobs)
+        self.assertEqual([row["email_id"] for row in jobs["drafts"]], [A_ID],
+                         jobs)
 
     def test_issue68_r10_counterexample5_invalid_explicit_dir_never_transfers_by_id(self):
         """An explicit row whose directory cannot map into this run never
