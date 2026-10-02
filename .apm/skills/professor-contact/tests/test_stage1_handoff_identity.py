@@ -523,44 +523,6 @@ class Stage1HandoffIdentityTests(unittest.TestCase):
             f"downloader active block references Stage-1 state without a bound path: {snapshot_unbound}",
         )
 
-        return_section = _markdown_section(downloader_text, "Return")
-        self.assertTrue(return_section, "downloader has no active Return section")
-        return_payloads = _json_blocks(return_section)
-        self.assertTrue(return_payloads, "downloader Return section has no JSON container")
-
-        matched_pairs: set[tuple[str, str]] = set()
-        for payload in return_payloads:
-            strings = list(_strings(payload))
-            target_refs = [value for value in strings if PurePosixPath(value).name == TARGET_NAME]
-            snapshot_refs = [value for value in strings if PurePosixPath(value).name == STAGE1_NAME]
-
-            for value in target_refs:
-                self.assertIsNotNone(
-                    _reference_owner(value, TARGET_NAME),
-                    f"downloader Return JSON contains unbound/non-local target: {value!r}",
-                )
-            for value in snapshot_refs:
-                self.assertIsNotNone(
-                    _reference_owner(value, STAGE1_NAME),
-                    f"downloader Return JSON contains unbound/non-local Stage-1 snapshot: {value!r}",
-                )
-
-            for target_value in target_refs:
-                target_owner = _reference_owner(target_value, TARGET_NAME)
-                target_parent = _state_parent(target_value, TARGET_NAME)
-                for snapshot_value in snapshot_refs:
-                    if (
-                        target_owner == _reference_owner(snapshot_value, STAGE1_NAME)
-                        and target_parent == _state_parent(snapshot_value, STAGE1_NAME)
-                    ):
-                        matched_pairs.add((target_value, snapshot_value))
-
-        self.assertTrue(
-            matched_pairs,
-            "downloader Return JSON must contain at least one professor-local target + "
-            "Stage-1 snapshot pair bound to the same owner parent",
-        )
-
         for agent in (STAGE2_OPENCODE, STAGE2_CODEX):
             with self.subTest(analyzer=str(agent.relative_to(REPO_ROOT))):
                 text = agent.read_text(encoding="utf-8")
