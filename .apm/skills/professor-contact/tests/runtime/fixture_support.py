@@ -67,6 +67,26 @@ def check_mutually_independent(
             f"{first_resolved}, {second_resolved}")
 
 
+def check_roots_separated_from_claims(
+    roots: Iterable[Path], claims: Iterable[Path]
+) -> None:
+    """Refuse roots equal to, inside, or containing a claim path of this run.
+
+    Checked before any claim is acquired so a root can never take over the
+    empty claim directory of another root in the same run.
+    """
+    claim_paths = [Path(claim).resolve() for claim in claims]
+    for root in roots:
+        resolved_root = Path(root).resolve()
+        for claim in claim_paths:
+            if (resolved_root == claim
+                    or resolved_root.is_relative_to(claim)
+                    or claim.is_relative_to(resolved_root)):
+                raise FixtureBuildError(
+                    "fixture root overlaps an exclusive claim directory of "
+                    f"this run: {resolved_root} vs {claim}")
+
+
 def ensure_new_output(
     path: Path,
     *,

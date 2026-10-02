@@ -109,10 +109,12 @@ def build_fixture(program_root: Path, profile_root: Path, *, output: Path) -> di
     info_path = program / "info.json"
     state_path = program / "教授研究/X分野/Example Professor/套磁候选状态.json"
     profile_path = profile / "套磁邮件/套磁信息.md"
+    claims = [support.claim_path_for(program), support.claim_path_for(profile)]
+    support.check_roots_separated_from_claims([program, profile], claims)
     manifest_path = support.ensure_new_output(
         output,
         reserved=[program, profile, info_path, state_path, profile_path],
-        claims=[support.claim_path_for(program), support.claim_path_for(profile)])
+        claims=claims)
 
     program_prepared = support.prepare_root(program, description="program root")
     try:

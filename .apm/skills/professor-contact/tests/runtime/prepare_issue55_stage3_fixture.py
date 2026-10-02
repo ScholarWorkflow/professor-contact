@@ -126,6 +126,8 @@ def build_fixture(program_root: Path, *, output: Path) -> dict[str, Any]:
     info = root / "info.json"
     profile = root / "套磁邮件" / "套磁信息.md"
     input_pack = professor_dir / "套磁候选输入.json"
+    support.check_roots_separated_from_claims(
+        [root], [support.claim_path_for(root)])
     manifest_path = support.ensure_new_output(
         output,
         reserved=[root, info, profile, input_pack],

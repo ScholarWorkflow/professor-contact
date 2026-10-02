@@ -142,6 +142,15 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
             self.root / "left", self.root / "right",
             first_label="a", second_label="b")
 
+    def test_roots_separated_from_claims_rejects_overlap_and_containment(self):
+        root = self.root / "root"
+        claim = self.root / "sibling.fixture-claim"
+        for bad_root in (claim, claim / "inner", self.root):
+            with self.assertRaises(support.FixtureBuildError):
+                support.check_roots_separated_from_claims([bad_root], [claim])
+        support.check_roots_separated_from_claims(
+            [root, claim.parent / "other"], [claim])
+
     def test_ensure_new_output_rejects_existing_producer_and_overlap(self):
         taken = self.root / "taken.json"
         taken.write_text("keep", encoding="utf-8")
@@ -281,6 +290,25 @@ class Issue53RollbackAndProtectionTests(IsolatedRootsTestCase):
                 program, profile, output=claim / "nested" / "setup.json")
         self.assertFalse(claim.exists())
         self.assertFalse((claim / "nested" / "setup.json").exists())
+        self.assertFalse(program.exists())
+        self.assertFalse(profile.exists())
+
+    def test_profile_root_taking_the_program_claim_path_is_refused(self):
+        program = self.root / "program"
+        profile = support.claim_path_for(program.resolve())
+        with self.assertRaises(fixture53.FixtureBuildError):
+            fixture53.build_fixture(
+                program, profile, output=self.output / "setup.json")
+        self.assertFalse(program.exists())
+        self.assertFalse(profile.exists())
+        self.assertFalse((self.output / "setup.json").exists())
+
+    def test_root_inside_the_other_claim_directory_is_refused(self):
+        program = self.root / "program"
+        profile = support.claim_path_for(program.resolve()) / "inner"
+        with self.assertRaises(fixture53.FixtureBuildError):
+            fixture53.build_fixture(
+                program, profile, output=self.output / "setup.json")
         self.assertFalse(program.exists())
         self.assertFalse(profile.exists())
 
