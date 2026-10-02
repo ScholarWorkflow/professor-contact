@@ -3369,6 +3369,17 @@ def cmd_stage2_preflight(args) -> None:
              f"professor has no selected target state; run contact_targets.py resolve first: {professor}")
     professor_dir = program_root / str(target.get("professor_dir") or "")
     snapshot_entry = read_stage1_professor_entry(program_root, professor_dir, professor, target)
+    if snapshot_entry is None:
+        # The professor-local Stage-1 state is a required preflight proof input
+        # (R64-20 exact-entry binding): missing, malformed or misowned state has
+        # no candidate universe to bind, so fail closed to the refresh lifecycle
+        # instead of the slow path, and never fall back to another professor's
+        # state or the retired program aggregate.
+        state_path = stage1_state_path(professor_dir)
+        soft_exit("needs_refresh",
+                  "missing_stage1_snapshot" if not state_path.is_file()
+                  else "invalid_stage1_snapshot",
+                  snapshot_path=str(state_path), professor=professor)
     pack_path = professor_dir / INPUT_PACK
     pack, _error = load_input_pack(professor_dir)
     cache_block = (pack or {}).get("cache")
