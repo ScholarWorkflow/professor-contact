@@ -322,6 +322,23 @@ class Issue67AdjacentCallerContractTests(unittest.TestCase):
                     text,
                     r"(?:没有聚合 JSON|没有任何成功行)[^\n]{0,80}handoff",
                     "the caller must be told that a fatal run is not a handoff point")
+                retry_line = self._line(label, "runner 因编程异常中断时")
+                self.assertIn(
+                    "`professor-contact-selection`",
+                    retry_line,
+                    "fatal retry must re-enter Stage 4 through the named selection owner",
+                )
+                self.assertRegex(
+                    retry_line,
+                    r"重新委派.{0,80}`professor-contact-selection`|"
+                    r"`professor-contact-selection`.{0,80}重新委派",
+                    "fatal retry must be a fresh delegation through the Stage-4 owner",
+                )
+                self.assertNotIn(
+                    "重新发起一次 `stage4-finalize`",
+                    retry_line,
+                    "the root/caller must not bypass the Stage-4 owner on fatal retry",
+                )
             self.assertIn("已提交的教授不被回滚或删除", self.documents["reference"])
             self.assertIn("不删除、不回滚已提交的教授", self.skill)
 
