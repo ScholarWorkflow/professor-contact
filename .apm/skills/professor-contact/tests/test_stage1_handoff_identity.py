@@ -125,7 +125,8 @@ def _is_current_owner_reference(token: str, filename: str) -> bool:
 
 
 def _is_reference_bound_to_owner(token: str, filename: str, owner: str) -> bool:
-    return _reference_owner(token, filename) == owner
+    reference_owner = _reference_owner(token, filename)
+    return reference_owner in {CURRENT_OWNER, owner}
 
 
 def _state_reference_scopes(text: str, filename: str) -> tuple[list[str], list[str], list[str]]:
