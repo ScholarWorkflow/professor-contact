@@ -19,6 +19,7 @@ This skill is the **caller convention** for the 套磁 workflow (套磁 = contac
 - **等待到子代理结束**：一次等待调用返回只说明这次调用结束；若结果显示子代理仍在运行时继续等待，不得结束当前回合。拿到子代理最终结果后再汇报 Stage 结果。
 - **禁止跨执行器 shell fallback**：不得用 shell、`opencode run`、`codex exec`、curl 或另发 eval 请求代替原生委派；不得把 OpenCode `task(...)` 语法写进 Codex 调用。
 - **阶段 5 的调用前输入解析**：独立重入时，root 先用已安装的 `contact_state.py stage5-list-inputs --program-root <abs>` 只读发现本次本地包，再从已选合法包的 `professor_dir` 与 `emails[].email_id` 计算完整只读范围。这个步骤是确定 owner 的输入解析，不执行 owner 的核验、生成或提交。随后立即逐教授原生委派：业务对象的 `email_pack` 必须是发现结果中的真实绝对路径，`choices_scope` 必须是本次全部已选教授的完整范围，`choices` 必须是未经切片或改写的原值；禁止用占位串代替路径或范围，禁止让每个 child 重新发现其它教授来补全 caller 输入。阶段 4 衔接直接使用其实际交付路径。缺核验也必须先委派 owner，再消费它的机器结果。
+- **阶段 5 路径由程序传递**：将每个 owner 的同一业务对象用 JSON 序列化程序写到本次独占的临时文件，文件名使用不含教授名称的 ASCII 名称；原生业务对象仍完整原样包含 `email_pack`、`choices` 和 `choices_scope`，另带 `owner_input_file` 指向该临时副本。副本还包含实际 `program_root`、`mode`、`template` 及调用者已提供的 `result`。从发现结果和调用者 JSON 字段取值，不手写教授目录或编号，不修改已安装技能；这不是新的事实源或原生委派参数。owner 通过 JSON 读取字段，以 subprocess 参数列表调用原有 runner，避免模型重打含非 ASCII 字符或空格的路径。本轮结果交付前保留临时副本，交付后按临时文件生命周期清理。
 
 | 入口 | Codex 第一项路由动作 |
 |---|---|

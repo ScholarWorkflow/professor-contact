@@ -72,6 +72,14 @@ def business_payload(text, manifest):
             return None, verdict("BLOCKED_OBSERVABILITY", f"{field}_transport_unobservable")
         if row[field] != expected_value:
             return None, verdict("FAIL_PRODUCT", f"{field}_transport_changed", observed_pack=pack)
+    if "owner_input_file" in row:
+        try:
+            packet = json.loads(Path(row["owner_input_file"]).read_text())
+        except (OSError, ValueError, TypeError):
+            return None, verdict("BLOCKED_OBSERVABILITY", "owner_input_copy_unobservable")
+        for field in ("email_pack", "choices", "choices_scope"):
+            if packet.get(field) != row[field]:
+                return None, verdict("FAIL_PRODUCT", "owner_input_copy_changed", field=field)
     return pack, None
 
 

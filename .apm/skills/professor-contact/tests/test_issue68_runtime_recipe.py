@@ -130,6 +130,14 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
                 payload[field] = value
                 content["text"] = json.dumps(payload)
                 self.assertEqual(verify.verify_codex(response, adapter, self.manifest)["verdict"], "FAIL_PRODUCT")
+        owner = self.manifest["owners"][0]
+        row = json.loads(self.payload(owner))
+        packet = self.root / "owner-0.json"
+        packet.write_text(json.dumps(row))
+        row["owner_input_file"] = str(packet)
+        self.assertIsNone(verify.business_payload(json.dumps(row), self.manifest)[1])
+        packet.write_text(json.dumps(dict(row, email_pack=str(self.root / "translated" / "邮件输入.json"))))
+        self.assertEqual(verify.business_payload(json.dumps(row), self.manifest)[1]["verdict"], "FAIL_PRODUCT")
 
     def test_observed_wrong_directory_or_success_is_failure_not_missing_evidence(self):
         for changed in ({"professor_dir": str(self.root / "translated")},
