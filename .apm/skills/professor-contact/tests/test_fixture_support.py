@@ -177,23 +177,28 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
                 support.ensure_new_output(bad, claims=[claim])
         self.assertFalse(claim.exists())
 
-    def test_claim_namespace_is_reserved_for_roots_and_outputs(self):
-        with self.assertRaises(support.FixtureBuildError):
-            support.prepare_root(self.root / ".taken.fixture-claim")
-        self.assertFalse((self.root / ".taken.fixture-claim").exists())
+    def test_claim_like_names_are_legal_without_live_claim(self):
+        direct_root = self.root / ".ordinary.fixture-claim"
+        prepared = support.prepare_root(direct_root)
+        self.assertEqual(prepared.path, direct_root.resolve())
+        prepared.release()
 
-        with self.assertRaises(support.FixtureBuildError):
-            support.prepare_root(self.root / ".outer.fixture-claim" / "inner")
-        self.assertFalse((self.root / ".outer.fixture-claim").exists())
+        nested_parent = self.root / ".ordinary-parent.fixture-claim"
+        nested_parent.mkdir()
+        nested_root = nested_parent / "inner"
+        prepared_nested = support.prepare_root(nested_root)
+        self.assertEqual(prepared_nested.path, nested_root.resolve())
+        prepared_nested.release()
 
-        with self.assertRaises(support.FixtureBuildError):
-            support.ensure_new_output(self.root / ".taken.fixture-claim")
-        with self.assertRaises(support.FixtureBuildError):
-            support.ensure_new_output(self.root / ".outer.fixture-claim" / "out.json")
+        direct_output = self.root / ".ordinary-output.fixture-claim"
+        self.assertEqual(
+            support.ensure_new_output(direct_output), direct_output.resolve())
 
-        normal_root = support.prepare_root(self.root / "plain-root")
-        normal_root.release()
-        support.ensure_new_output(self.root / "plain-output.json")
+        output_parent = self.root / ".ordinary-output-parent.fixture-claim"
+        output_parent.mkdir()
+        nested_output = output_parent / "manifest.json"
+        self.assertEqual(
+            support.ensure_new_output(nested_output), nested_output.resolve())
 
     def test_discard_created_root_respects_ownership(self):
         created = support.prepare_root(self.root / "created")
