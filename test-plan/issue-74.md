@@ -30,7 +30,7 @@
 | Proof ID | Requirement | 负责证明 | 不证明 |
 | --- | --- | --- | --- |
 | `T74-CORE` | R2、R3 | `test_fixture_support.py`：共用写入/摘要格式、危险路径拒绝、已有空目录身份保持、清单排他创建、第 53 号相等/嵌套语义、回滚边界、第 55 号清单字节 | 不证明 README 文案与 PR 差异范围 |
-| `T74-CLI` | R2 | `test_issue74_cli_compat.py`：第 53、55 号脚本都从无关工作目录、清掉 `PYTHONPATH` 后按原 CLI 入口成功运行并生成对应清单 | 不证明业务阶段运行时路由 |
+| `T74-CLI` | R2 | `test_issue74_cli_compat.py`：第 53、55 号脚本都从无关工作目录、清掉 `PYTHONPATH` 后按原 CLI 入口成功运行；两个 `build_fixture` 返回对象保持基准字段集合，并与实际写出的 manifest 一致 | 不证明业务阶段运行时路由 |
 | `T74-53` | R1、R2、R3 | `test_issue53_stage4_runtime_assets.py` 既有验收，证明第 53 号真实调用方仍能使用迁移后的准备入口，且原有验收断言保持成立 | 不证明第 55 号入口 |
 | `T74-55` | R1、R2、R3 | `test_issue55_stage3_runtime_assets.py` 既有验收，证明第 55 号真实调用方仍能使用迁移后的准备入口，且原有验收断言保持成立 | 不证明第 53 号双根回滚 |
 | `T74-STATIC` | R1、R2、R3、R4 | `test_issue74_static_acceptance.py`：差异范围、共用 helper 外部运行依赖边界、两个入口真实复用、CLI 参数、虚构标志、README 必需说明 | 不替代动态产品断言 |
@@ -170,7 +170,7 @@ test -z "$(git -C "$CHECKOUT" status --porcelain)"
 1. R1–R4 均有唯一 proof owner；没有把旧计划第 3 版的占用/锚点设计重新带入本版要求。
 2. 第 53 号嵌套合法、完全相同拒绝、第二根失败回滚三项与计划第 4 版修订 1 一致。
 3. G74 只运行一次完整生产者回归，没有为了同一产品事实重复启动第二次业务验收。
-4. 第 53、55 号受支持 CLI 从无关工作目录、无 `PYTHONPATH` 的直接调用由 `T74-CLI` 明确证明，不靠模块导入成功间接推断。
+4. 第 53、55 号受支持 CLI 从无关工作目录、无 `PYTHONPATH` 的直接调用，以及两个 `build_fixture` 返回 manifest 合同，由 `T74-CLI` 明确证明，不靠模块导入成功间接推断。
 5. 差异范围、真实 helper 复用、CLI 参数、虚构数据和 README 责任说明由 `T74-STATIC` 在同一次 G74 中证明。
 6. 正式 verdict 只来自当前 `gate2_evidence.py`；其三个 verdict channel 与关键对抗样例由 `T74-EVIDENCE` 验证。
 7. 不需要真实安装、代理、MCP、浏览器、外部服务或用户状态；不存在未处理的 Runtime Preflight 假设。
