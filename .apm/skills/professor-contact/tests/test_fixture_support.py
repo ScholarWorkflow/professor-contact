@@ -200,6 +200,50 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
         self.assertEqual(
             support.ensure_new_output(nested_output), nested_output.resolve())
 
+    def test_live_claim_collision_is_refused_but_shaped_names_stay_legal(self):
+        live = self.root / ".taken.fixture-claim"
+        live.mkdir()
+        with self.assertRaises(support.FixtureBuildError):
+            support.prepare_root(live)
+        self.assertTrue(live.is_dir())
+        self.assertFalse(any(live.iterdir()))
+        with self.assertRaises(support.FixtureBuildError):
+            support.ensure_new_output(live)
+
+        inside = support.prepare_root(live / "inner")
+        self.assertTrue(inside.created)
+        inside.release()
+        self.assertTrue((live / "inner").is_dir())
+        output = support.ensure_new_output(live / "out.json")
+        support.write_json_exclusive(output, {"schema_version": 1})
+        self.assertTrue(output.is_file())
+
+        shaped = support.prepare_root(self.root / ".ordinary.fixture-claim")
+        self.assertTrue(shaped.created)
+        shaped.release()
+        self.assertTrue((self.root / ".ordinary.fixture-claim").is_dir())
+
+        nested = support.prepare_root(self.root / ".layer.fixture-claim" / "inner")
+        nested.release()
+        plain_output = support.ensure_new_output(self.root / ".named.fixture-claim")
+        support.write_json_exclusive(plain_output, {"schema_version": 1})
+
+        normal = support.prepare_root(self.root / "plain-root")
+        normal.release()
+        support.ensure_new_output(self.root / "plain-output.json")
+
+    def test_claim_shaped_roots_stay_legal_for_both_entries(self):
+        program = self.root / ".shaped-program.fixture-claim"
+        profile = self.root / "shaped-profile"
+        manifest = fixture53.build_fixture(
+            program, profile, output=self.output / "shaped53.json")
+        self.assertEqual(manifest["fixture_kind"], "stage4-only")
+
+        program55 = self.root / ".shaped-55.fixture-claim"
+        manifest55 = fixture55.build_fixture(
+            program55, output=self.output / "shaped55.json")
+        self.assertEqual(manifest55["fixture_kind"], "issue55-stage3-pre")
+
     def test_discard_created_root_respects_ownership(self):
         created = support.prepare_root(self.root / "created")
         self.assertTrue(created.created)

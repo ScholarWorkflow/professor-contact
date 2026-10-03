@@ -33,17 +33,18 @@ def _is_claim_name(name: str) -> bool:
     return name.startswith(".") and name.endswith(_CLAIM_SUFFIX) and name != _CLAIM_SUFFIX
 
 
-def _assert_outside_claim_namespace(path: Path, *, description: str) -> None:
-    """Refuse paths on, inside, or under the reserved claim-name namespace.
+def _assert_outside_live_claim(path: Path, *, description: str) -> None:
+    """Refuse taking an existing claim directory itself as root or output.
 
-    Claim directories of any run are named with the internal claim encoding,
-    so a sample root or manifest output that matches the encoding anywhere on
-    its path could collide with another run's exclusive claim and pollute it.
+    The claim encoding is internal, so a claim-shaped name without an
+    existing claim directory stays a legal input, and paths inside a
+    claim-shaped directory stay legal as well. Only an existing claim
+    directory taken as the sample root or manifest output itself collides
+    with another run's exclusive occupation.
     """
-    if _is_claim_name(path.name) or any(
-            _is_claim_name(ancestor.name) for ancestor in path.parents):
+    if _is_claim_name(path.name) and path.exists():
         raise FixtureBuildError(
-            f"{description} must not use the reserved claim namespace: {path}")
+            f"{description} collides with an existing claim directory: {path}")
 
 
 def producer_root() -> Path:
@@ -117,7 +118,7 @@ def ensure_new_output(
     roots may still contain the output as long as no sample file is hit.
     """
     resolved = resolved_outside_producer(path, description=description)
-    _assert_outside_claim_namespace(resolved, description=description)
+    _assert_outside_live_claim(resolved, description=description)
     if resolved.exists():
         raise FixtureBuildError(f"{description} already exists: {resolved}")
     for reserved_path in reserved:
@@ -170,7 +171,7 @@ def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRo
     by the returned object and must be released by the caller.
     """
     resolved = resolved_outside_producer(path, description=description)
-    _assert_outside_claim_namespace(resolved, description=description)
+    _assert_outside_live_claim(resolved, description=description)
     if resolved.exists():
         if not resolved.is_dir():
             raise FixtureBuildError(f"{description} is not a directory: {resolved}")
@@ -187,6 +188,12 @@ def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRo
             f"refusing to take over or delete it: {claim}") from None
     try:
         created = False
+        if resolved.exists() and _is_claim_name(resolved.name):
+            # The upfront check proved it absent, so this is another run's
+            # claim that appeared in between; never take it over as a root.
+            raise FixtureBuildError(
+                f"{description} collides with an existing claim directory: "
+                f"{resolved}")
         if resolved.exists():
             if not resolved.is_dir() or any(resolved.iterdir()):
                 raise FixtureBuildError(
@@ -196,7 +203,7 @@ def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRo
                 resolved.mkdir()
                 created = True
             except FileExistsError:
-                if not resolved.is_dir() or any(resolved.iterdir()):
+                if _is_claim_name(resolved.name) or not resolved.is_dir() or any(resolved.iterdir()):
                     raise FixtureBuildError(
                         f"{description} changed while the claim was held: {resolved}"
                     ) from None
