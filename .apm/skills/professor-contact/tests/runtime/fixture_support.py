@@ -19,9 +19,15 @@ anchor to the next deterministic internal name.
 
 Every parent creation and file write walks its components with atomic
 mkdir/O_EXCL steps and re-refuses live claims, so an anchor another run
-publishes after an earlier check can never be followed into. A leftover
-anchor from an abnormal termination is refused and reported; it is never
-taken over or deleted automatically.
+publishes after an earlier check can never be followed into. Conflict
+detection for an acquisition runs over the whole deterministic anchor-name
+sequence before any name is selected, so mutual exclusion of one real root
+never depends on which business path occupies which internal name. The
+occupation directory behind an anchor is sealed read-only once marked, so
+the resolved occupation directory cannot be written through any other
+spelling, and only the release path re-enables writing inside it. A
+leftover anchor from an abnormal termination is refused and reported; it
+is never taken over or deleted automatically.
 """
 from __future__ import annotations
 
@@ -119,6 +125,10 @@ def _mkdir_parents_claim_free(*paths: Path) -> None:
                 component.mkdir()
             except FileExistsError:
                 pass
+            except OSError as exc:
+                raise FixtureBuildError(
+                    "refusing to create inside a read-only occupation "
+                    f"directory: {component}") from exc
             if _is_live_claim(component):
                 raise FixtureBuildError(
                     "refusing to create or write inside an existing claim "
@@ -177,15 +187,24 @@ def check_mutually_independent(
 def check_roots_separated_from_claims(
     roots: Iterable[Path], claims: Iterable[Path]
 ) -> None:
-    """Refuse roots equal to, inside, or containing a claim path of this run.
+    """Refuse roots equal to, inside, or containing a published occupation.
 
-    Checked before any claim is acquired so a root can never take over the
-    empty claim directory of another root in the same run.
+    Only a live claim (an anchor symlink carrying the internal marker)
+    blocks a root: an unused candidate claim name is an ordinary legal
+    path for business use, because the acquisition either skips it or
+    falls back to the next internal name. The claim is resolved before
+    comparison so a root can never follow an anchor symlink into the
+    occupation directory behind it.
     """
-    claim_paths = [Path(claim).resolve() for claim in claims]
+    claim_dirs = []
+    for claim in claims:
+        claim_path = Path(claim)
+        if not _is_live_claim(claim_path):
+            continue
+        claim_dirs.append(claim_path.resolve())
     for root in roots:
         resolved_root = Path(root).resolve()
-        for claim in claim_paths:
+        for claim in claim_dirs:
             if (resolved_root == claim
                     or resolved_root.is_relative_to(claim)
                     or claim.is_relative_to(resolved_root)):
@@ -222,8 +241,14 @@ def ensure_new_output(
             raise FixtureBuildError(
                 f"{description} overlaps a reserved fixture path: {resolved}")
     for claim_path in claims:
-        claim = Path(claim_path).resolve()
-        if resolved == claim or resolved.is_relative_to(claim):
+        claim = Path(claim_path)
+        if not _is_live_claim(claim):
+            # An unused candidate claim name stays an ordinary legal path
+            # for business use; only a published occupation may block the
+            # output path.
+            continue
+        claim_dir = claim.resolve()
+        if resolved == claim_dir or resolved.is_relative_to(claim_dir):
             raise FixtureBuildError(
                 f"{description} overlaps an exclusive claim directory: {resolved}")
     return resolved
@@ -269,7 +294,26 @@ def _held_dir_for(resolved: Path) -> Path:
     return Path(tempfile.gettempdir()) / f"professor-contact-claim-{token}"
 
 
+def _seal_held_dir(held: Path) -> None:
+    """Make the occupation directory read-only for every caller.
+
+    The resolved occupation directory must never be writable by another
+    invocation through any spelling: after sealing, a foreign creation
+    inside it fails with a kernel permission error instead of corrupting
+    the held state. Only the release path re-enables writing.
+    """
+    try:
+        held.chmod(0o500)
+    except OSError as exc:
+        raise FixtureBuildError(
+            f"could not seal the occupation directory: {held}") from exc
+
+
 def _remove_held_dir(held: Path) -> None:
+    try:
+        held.chmod(0o700)
+    except OSError:
+        pass
     try:
         (held / _HELD_MARKER).unlink()
     except FileNotFoundError:
@@ -294,42 +338,54 @@ def _discard_claim(anchor: Path, held: Path) -> None:
 
 def _publish_anchor(resolved: Path, held: Path, business_paths: Iterable[Path],
                     description: str) -> Path:
-    """Publish the occupation anchor at the first free internal name.
+    """Publish the occupation anchor for one resolved sample root.
 
-    A name occupied by a live claim of another run is a claim conflict
-    (never taken over). A name occupied by ordinary content is skipped, so
-    the internal encoding never blocks an otherwise legal root. Candidates
-    that would overlap or contain any of this run's business paths (roots,
-    sample files, manifest output) are skipped as well: a fallback anchor
-    must never occupy a legal business path.
+    Conflict detection runs over the whole deterministic anchor-name
+    sequence before any name is selected, so mutual exclusion of one real
+    root never depends on which business path occupies which internal
+    name: if any candidate carries another run's live occupation, this
+    acquisition refuses instead of settling on a later free name. A name
+    occupied by ordinary content is only skipped for selection, so the
+    internal encoding never blocks an otherwise legal root. Candidates
+    that would overlap or contain any of this run's business paths
+    (roots, sample files, manifest output) are skipped as well: a
+    fallback anchor must never occupy a legal business path.
     """
-    business = [Path(b) for b in business_paths]
+    business = [Path(b).resolve() for b in business_paths]
 
     def overlaps_business(candidate: Path) -> bool:
         return any(candidate == b or candidate.is_relative_to(b)
                    or b.is_relative_to(candidate) for b in business)
 
-    anchor = claim_path_for(resolved)
-    for attempt in range(64):
-        if _is_live_claim(anchor):
-            raise FixtureBuildError(
-                "another preparation still holds the claim for this fixture "
-                f"root; refusing to take over or delete it: {anchor}")
-        if not os.path.lexists(anchor):
-            if not overlaps_business(anchor):
-                try:
-                    os.symlink(held, anchor)
-                    return anchor
-                except FileExistsError:
-                    # The name was taken between the check and the publish:
-                    # re-classify. A live claim is a hard conflict; ordinary
-                    # content moves the anchor to the next internal name.
-                    if _is_live_claim(anchor):
-                        raise FixtureBuildError(
-                            "another preparation still holds the claim for "
-                            "this fixture root; refusing to take over or "
-                            f"delete it: {anchor}") from None
-        anchor = anchor.with_name(anchor.name + f".r{attempt + 2}")
+    def conflict(candidate: Path) -> FixtureBuildError:
+        return FixtureBuildError(
+            "another preparation still holds the claim for this fixture "
+            f"root; refusing to take over or delete it: {candidate}")
+
+    first = claim_path_for(resolved)
+    candidates = [first]
+    for attempt in range(63):
+        candidates.append(first.with_name(first.name + f".r{attempt + 2}"))
+    for candidate in candidates:
+        if _is_live_claim(candidate):
+            raise conflict(candidate)
+    for candidate in candidates:
+        if os.path.lexists(candidate):
+            # The name appeared after the sequence-wide probe: re-classify.
+            # A live claim is a hard conflict; ordinary content only moves
+            # the selection to the next internal name.
+            if _is_live_claim(candidate):
+                raise conflict(candidate)
+            continue
+        if overlaps_business(candidate):
+            continue
+        try:
+            os.symlink(held, candidate)
+        except FileExistsError:
+            if _is_live_claim(candidate):
+                raise conflict(candidate) from None
+            continue
+        return candidate
     raise FixtureBuildError(
         f"could not find a free claim anchor name beside {resolved}")
 
@@ -367,6 +423,7 @@ def prepare_root(path: Path, *, description: str = "fixture root",
         _remove_held_dir(held)
         raise FixtureBuildError(
             f"could not prepare the occupation directory: {held}") from None
+    _seal_held_dir(held)
     try:
         anchor = _publish_anchor(
             resolved, held,
@@ -396,6 +453,11 @@ def prepare_root(path: Path, *, description: str = "fixture root",
                     raise FixtureBuildError(
                         f"{description} changed while the claim was held: {resolved}"
                     ) from None
+            except OSError as exc:
+                raise FixtureBuildError(
+                    f"{description} cannot be created (the location is not "
+                    f"writable, for example inside a sealed occupation "
+                    f"directory): {resolved}") from exc
         identity = resolved.stat()
     except BaseException:
         _discard_claim(anchor, held)
@@ -423,7 +485,12 @@ def write_text(path: Path, text: str) -> None:
     _refuse_live_claim_path(raw, resolved, description="sample write")
     _refuse_live_claim_ancestors(raw, resolved)
     _mkdir_parents_claim_free(raw.parent, resolved.parent)
-    path.write_text(text, encoding="utf-8")
+    try:
+        path.write_text(text, encoding="utf-8")
+    except PermissionError as exc:
+        raise FixtureBuildError(
+            "sample path is not writable (refused; it may lie inside a "
+            f"sealed occupation directory): {path}") from exc
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -446,6 +513,10 @@ def write_json_exclusive(path: Path, value: Any) -> None:
         raise FixtureBuildError(
             f"output appeared during preparation; refusing to overwrite: {path}"
         ) from None
+    except PermissionError as exc:
+        raise FixtureBuildError(
+            "output path is not writable (refused; it may lie inside a "
+            f"sealed occupation directory): {path}") from exc
     except OSError as exc:
         raise FixtureBuildError(
             f"refusing to write through a symlink at the output path: {path}"
