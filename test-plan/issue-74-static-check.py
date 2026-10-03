@@ -49,10 +49,14 @@ def main() -> int:
             ".apm/skills/professor-contact/tests/runtime/prepare_issue55_stage3_fixture.py",
             ".apm/skills/professor-contact/tests/test_fixture_support.py",
         }
+        test_material_paths = {
+            ".apm/skills/professor-contact/tests/test_issue74_cli_compat.py",
+        }
         allowed_nonimplementation = {"plan/issue-74.md"}
         unexpected = [
             path for path in changed
             if path not in implementation_paths
+            and path not in test_material_paths
             and path not in allowed_nonimplementation
             and not path.startswith("test-plan/issue-74")
         ]
