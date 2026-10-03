@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
-import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -17,37 +18,32 @@ SELECTION_FILE = Path("教授研究/套磁选择.json")
 EMAIL_INPUT_FILE = Path("教授研究/邮件输入.json")
 
 
-class FixtureBuildError(RuntimeError):
-    pass
+def _load_fixture_support():
+    module_path = Path(__file__).with_name("fixture_support.py").resolve()
+    digest = hashlib.sha256(str(module_path).encode("utf-8")).hexdigest()[:16]
+    name = f"professor_contact_fixture_support_{digest}"
+    module = sys.modules.get(name)
+    if module is not None:
+        return module
+    spec = importlib.util.spec_from_file_location(name, module_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _write_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+support = _load_fixture_support()
+FixtureBuildError = support.FixtureBuildError
+sha256 = support.file_sha256
+_write_json = support.write_json
 
 
 def _producer_root() -> Path:
-    return Path(__file__).resolve().parents[5]
+    return support.producer_root()
 
 
 def _prepare_root(root: Path) -> None:
-    root = root.resolve()
-    producer = _producer_root()
-    if root == producer or root.is_relative_to(producer):
-        raise FixtureBuildError(f"fixture root must be outside producer checkout: {root}")
-    if root.exists():
-        if not root.is_dir():
-            raise FixtureBuildError(f"fixture root is not a directory: {root}")
-        entries = list(root.iterdir())
-        if entries:
-            raise FixtureBuildError(f"refusing to replace non-empty foreign directory: {root}")
-        root.rmdir()
-    root.parent.mkdir(parents=True, exist_ok=True)
-    root.mkdir()
+    support.prepare_root(root, description="fixture root").release()
 
 
 def _candidate_state(profile_path: Path) -> dict[str, Any]:
@@ -91,56 +87,79 @@ def _candidate_state(profile_path: Path) -> dict[str, Any]:
     }
 
 
-def build_fixture(program_root: Path, profile_root: Path, *, output: Path) -> dict[str, Any]:
-    program_root = Path(program_root).resolve()
-    profile_root = Path(profile_root).resolve()
-    if program_root == profile_root:
-        raise FixtureBuildError("program and profile roots must be distinct")
-    _prepare_root(program_root)
+def _rollback_prepared_root(prepared) -> None:
+    """Roll back the first root after a failed second-root acquisition.
+
+    Only a directory this run created, and still owns, is removed. A root
+    that existed before the call keeps its state; a replaced directory is
+    never recursively deleted.
+    """
     try:
-        _prepare_root(profile_root)
-    except Exception:
-        shutil.rmtree(program_root)
+        if prepared.created:
+            support.discard_created_root(prepared)
+    finally:
+        prepared.release()
+
+
+def build_fixture(program_root: Path, profile_root: Path, *, output: Path) -> dict[str, Any]:
+    program = support.resolved_outside_producer(program_root, description="program root")
+    profile = support.resolved_outside_producer(profile_root, description="profile root")
+    support.check_mutually_independent(
+        program, profile, first_label="program root", second_label="profile root")
+    info_path = program / "info.json"
+    state_path = program / "教授研究/X分野/Example Professor/套磁候选状态.json"
+    profile_path = profile / "套磁邮件/套磁信息.md"
+    claims = [support.claim_path_for(program), support.claim_path_for(profile)]
+    support.check_roots_separated_from_claims([program, profile], claims)
+    manifest_path = support.ensure_new_output(
+        output,
+        reserved=[program, profile, info_path, state_path, profile_path],
+        claims=claims)
+
+    program_prepared = support.prepare_root(program, description="program root")
+    try:
+        profile_prepared = support.prepare_root(profile, description="profile root")
+    except BaseException:
+        _rollback_prepared_root(program_prepared)
         raise
 
-    _write_json(program_root / "info.json", {
-        "schema": 1,
-        "kind": "issue53-stage4-program",
-        "program": "Synthetic Systems",
-    })
-    state_path = program_root / "教授研究/X分野/Example Professor/套磁候选状态.json"
-    profile_path = profile_root / "套磁邮件/套磁信息.md"
-    _write_json(state_path, _candidate_state(profile_path))
-    profile_path.parent.mkdir(parents=True, exist_ok=True)
-    profile_path.write_text(
-        "# Synthetic applicant profile\n\n"
-        "大学：Fixture University\n研究科：Synthetic Systems\n"
-        "専攻：適応信号処理\n",
-        encoding="utf-8",
-    )
+    try:
+        _write_json(info_path, {
+            "schema": 1,
+            "kind": "issue53-stage4-program",
+            "program": "Synthetic Systems",
+        })
+        _write_json(state_path, _candidate_state(profile_path))
+        support.write_text(
+            profile_path,
+            "# Synthetic applicant profile\n\n"
+            "大学：Fixture University\n研究科：Synthetic Systems\n"
+            "専攻：適応信号処理\n",
+        )
 
-    input_hashes = {
-        "info.json": sha256(program_root / "info.json"),
-        "教授研究/X分野/Example Professor/套磁候选状态.json": sha256(state_path),
-        "profile/套磁邮件/套磁信息.md": sha256(profile_path),
-    }
-    # Keep the manifest small and deterministic: it records the fixed input,
-    # not a runtime output that the child may create.
-    manifest = {
-        "schema_version": 1,
-        "builder": MANIFEST_ID,
-        "fixture_kind": "stage4-only",
-        "program_root": str(program_root),
-        "profile_root": str(profile_root),
-        "professor": PROFESSOR,
-        "direction_id": DIRECTION_ID,
-        "input_hashes": input_hashes,
-        "forbidden_outputs": [SELECTION_FILE.as_posix(), EMAIL_INPUT_FILE.as_posix()],
-        "manual_patch": "no",
-    }
-    output = Path(output).resolve()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(output, manifest)
+        input_hashes = {
+            "info.json": sha256(info_path),
+            "教授研究/X分野/Example Professor/套磁候选状态.json": sha256(state_path),
+            "profile/套磁邮件/套磁信息.md": sha256(profile_path),
+        }
+        # Keep the manifest small and deterministic: it records the fixed input,
+        # not a runtime output that the child may create.
+        manifest = {
+            "schema_version": 1,
+            "builder": MANIFEST_ID,
+            "fixture_kind": "stage4-only",
+            "program_root": str(program),
+            "profile_root": str(profile),
+            "professor": PROFESSOR,
+            "direction_id": DIRECTION_ID,
+            "input_hashes": input_hashes,
+            "forbidden_outputs": [SELECTION_FILE.as_posix(), EMAIL_INPUT_FILE.as_posix()],
+            "manual_patch": "no",
+        }
+        support.write_json_exclusive(manifest_path, manifest)
+    finally:
+        profile_prepared.release()
+        program_prepared.release()
     return manifest
 
 

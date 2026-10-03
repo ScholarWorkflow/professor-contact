@@ -181,7 +181,7 @@ class Issue74FixtureTests(unittest.TestCase):
                     elif kind == "producer-profile-exact":
                         profile = producer
                     before = self.snapshot(program.parent if kind != "producer-root" else producer.parent)
-                    with mock.patch.object(self.entries[number], "_producer_root", return_value=producer):
+                    with mock.patch.object(self.entries[number].support, "producer_root", return_value=producer):
                         with self.assertRaises(self.entries[number].FixtureBuildError):
                             self.build(number, (program, profile, output))
                     parent = producer.parent
@@ -309,20 +309,21 @@ with mock.patch.object(Path, "open", stop_at_first_write):
                 self.assertEqual(set(path.relative_to(paths[0].parent) for path in paths[0].parent.rglob("*")), before_paths)
 
     def test_manifest_creation_race_preserves_competing_bytes_and_partial_samples(self):
-        original_open = Path.open
+        original_open = os.open
         for number in (53, 55):
             with self.subTest(entry=number):
                 paths = self.paths(f"race-{number}")
                 triggered = []
 
-                def conflict(path, *args, **kwargs):
-                    if path == paths[2] and self.writing(args, kwargs) and not triggered:
+                def conflict(path, flags, *args, **kwargs):
+                    if Path(path) == paths[2] and flags & os.O_CREAT and not triggered:
                         triggered.append(True)
-                        with original_open(path, "xb") as stream:
+                        handle = original_open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+                        with os.fdopen(handle, "wb") as stream:
                             stream.write(b"other-call-manifest")
-                    return original_open(path, *args, **kwargs)
+                    return original_open(path, flags, *args, **kwargs)
 
-                with mock.patch.object(Path, "open", conflict):
+                with mock.patch.object(os, "open", conflict):
                     with self.injected_failure(triggered):
                         self.build(number, paths)
                 self.require_hook(triggered)
