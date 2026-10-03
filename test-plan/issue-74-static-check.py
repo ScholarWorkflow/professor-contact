@@ -81,26 +81,30 @@ def main() -> int:
             checks,
         )
 
-        support = load_module("issue74_static_support", helper_path)
         fixture53 = load_module(
             "issue74_static_fixture53", RUNTIME / "prepare_issue53_stage4_fixture.py"
         )
         fixture55 = load_module(
             "issue74_static_fixture55", RUNTIME / "prepare_issue55_stage3_fixture.py"
         )
+        require(
+            fixture53.support is fixture55.support,
+            "issue 53 and issue 55 load the same shared helper module",
+            checks,
+        )
         for label, fixture in (("53", fixture53), ("55", fixture55)):
             require(
-                fixture.FixtureBuildError is support.FixtureBuildError,
+                fixture.FixtureBuildError is fixture.support.FixtureBuildError,
                 f"issue {label} reuses shared FixtureBuildError",
                 checks,
             )
             require(
-                fixture.sha256 is support.file_sha256,
+                fixture.sha256 is fixture.support.file_sha256,
                 f"issue {label} reuses shared SHA-256 helper",
                 checks,
             )
             require(
-                fixture._write_json is support.write_json,
+                fixture._write_json is fixture.support.write_json,
                 f"issue {label} reuses shared JSON writer",
                 checks,
             )
