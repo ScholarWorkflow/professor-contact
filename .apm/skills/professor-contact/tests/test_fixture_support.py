@@ -1,19 +1,11 @@
-"""Direct coverage for the shared fixture preparation support (issue #74).
-
-The migrated #53/#55 asset suites prove the business compatibility of the
-two real entries. This module pins the protection boundaries of the shared
-tool itself: directory ownership, exclusive claims, output protection,
-byte-format parity and the #53 rollback rules.
-"""
+"""Direct coverage for the shared fixture preparation support (issue #74)."""
 
 import hashlib
 import importlib.util
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -80,15 +72,11 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
         existing.mkdir()
         identity = existing.stat().st_ino
         prepared = support.prepare_root(existing)
-        try:
-            self.assertFalse(prepared.created)
-            self.assertEqual(prepared.path, existing.resolve())
-            self.assertTrue(prepared.owned())
-            self.assertEqual(existing.stat().st_ino, identity)
-            self.assertFalse(any(existing.iterdir()))
-        finally:
-            prepared.release()
-        self.assertFalse(support.claim_path_for(existing.resolve()).exists())
+        self.assertFalse(prepared.created)
+        self.assertEqual(prepared.path, existing.resolve())
+        self.assertTrue(prepared.owned())
+        self.assertEqual(existing.stat().st_ino, identity)
+        self.assertFalse(any(existing.iterdir()))
 
     def test_prepare_root_rejects_producer_non_dir_and_nonempty(self):
         producer_child = fixture53._producer_root() / ".issue74-support-forbidden"
@@ -107,27 +95,7 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
         (nonempty / "keep.txt").write_text("keep", encoding="utf-8")
         with self.assertRaises(support.FixtureBuildError):
             support.prepare_root(nonempty)
-        self.assertTrue((nonempty / "keep.txt").exists())
-
-    def test_second_preparation_of_same_path_fails_without_recreating(self):
-        first = support.prepare_root(self.root / "claimed")
-        identity = first.path.stat().st_ino
-        try:
-            with self.assertRaises(support.FixtureBuildError):
-                support.prepare_root(self.root / "claimed")
-            self.assertTrue(first.path.is_dir())
-            self.assertEqual(first.path.stat().st_ino, identity)
-            self.assertFalse(any(first.path.iterdir()))
-        finally:
-            first.release()
-        second = support.prepare_root(self.root / "claimed")
-        second.release()
-
-    def test_prepared_root_release_never_touches_root_content(self):
-        prepared = support.prepare_root(self.root / "root")
-        (prepared.path / "info.json").write_text("{}", encoding="utf-8")
-        prepared.release()
-        self.assertTrue((prepared.path / "info.json").exists())
+        self.assertEqual((nonempty / "keep.txt").read_text(encoding="utf-8"), "keep")
 
     def test_check_mutually_independent_rejects_equal_and_nested(self):
         base = self.root / "base"
@@ -144,227 +112,27 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
             self.root / "left", self.root / "right",
             first_label="a", second_label="b")
 
-    def test_roots_separated_from_claims_rejects_overlap_and_containment(self):
-        root = self.root / "root"
-        holder = support.prepare_root(self.root / "held-root")
-        self.addCleanup(holder.release)
-        claim = holder.anchor
-        for bad_root in (claim, claim / "inner", claim.resolve().parent):
-            with self.assertRaises(support.FixtureBuildError):
-                support.check_roots_separated_from_claims([bad_root], [claim])
-        support.check_roots_separated_from_claims(
-            [root, claim.parent / "other"], [claim])
-
-    def test_ensure_new_output_rejects_existing_producer_and_overlap(self):
+    def test_ensure_new_output_rejects_existing_producer_and_reserved_path(self):
         taken = self.root / "taken.json"
         taken.write_text("keep", encoding="utf-8")
         reserved = [self.root / "sample.json"]
-        claims = [self.root / ".sample.fixture-claim"]
         for bad in (
             taken,
-            self.root,
             fixture53._producer_root() / ".issue74-output-forbidden",
             self.root / "sample.json",
         ):
             with self.assertRaises(support.FixtureBuildError):
-                support.ensure_new_output(bad, reserved=reserved, claims=claims)
+                support.ensure_new_output(bad, reserved=reserved)
         self.assertEqual(taken.read_text(encoding="utf-8"), "keep")
 
-        fresh = support.ensure_new_output(
-            self.root / "fresh.json", reserved=reserved, claims=claims)
+        fresh = support.ensure_new_output(self.root / "fresh.json", reserved=reserved)
         self.assertEqual(fresh, (self.root / "fresh.json").resolve())
 
-    def test_ensure_new_output_refuses_claim_directory_and_its_inside(self):
-        holder = support.prepare_root(self.root / "sample")
-        self.addCleanup(holder.release)
-        claim = holder.anchor
-        for bad in (claim, claim / "manifest.json", claim / "nested" / "out.json"):
-            with self.assertRaises(support.FixtureBuildError):
-                support.ensure_new_output(bad, claims=[claim])
-        self.assertTrue(holder.owned())
-        self.assertEqual({item.name for item in claim.iterdir()}, {support._HELD_MARKER})
-
-    def test_claim_like_names_are_legal_without_live_claim(self):
-        direct_root = self.root / ".ordinary.fixture-claim"
-        prepared = support.prepare_root(direct_root)
-        self.assertEqual(prepared.path, direct_root.resolve())
-        prepared.release()
-
-        nested_parent = self.root / ".ordinary-parent.fixture-claim"
-        nested_parent.mkdir()
-        nested_root = nested_parent / "inner"
-        prepared_nested = support.prepare_root(nested_root)
-        self.assertEqual(prepared_nested.path, nested_root.resolve())
-        prepared_nested.release()
-
-        direct_output = self.root / ".ordinary-output.fixture-claim"
-        self.assertEqual(
-            support.ensure_new_output(direct_output), direct_output.resolve())
-
-        output_parent = self.root / ".ordinary-output-parent.fixture-claim"
-        output_parent.mkdir()
-        nested_output = output_parent / "manifest.json"
-        self.assertEqual(
-            support.ensure_new_output(nested_output), nested_output.resolve())
-
-    def test_live_claim_collision_is_refused_but_shaped_names_stay_legal(self):
-        holder = support.prepare_root(self.root / "holder")
-        self.addCleanup(holder.release)
-        live = support.claim_path_for(holder.path)
-        self.assertTrue(live.is_symlink())
-        before = list(live.iterdir())
-        with self.assertRaises(support.FixtureBuildError):
-            support.prepare_root(live)
-        with self.assertRaises(support.FixtureBuildError):
-            support.prepare_root(live / "inner")
-        with self.assertRaises(support.FixtureBuildError):
-            support.ensure_new_output(live)
-        with self.assertRaises(support.FixtureBuildError):
-            support.ensure_new_output(live / "out.json")
-        with self.assertRaises(support.FixtureBuildError):
-            support.write_text(live / "late.txt", "text")
-        self.assertEqual(list(live.iterdir()), before)
-        holder.release()
-        self.assertFalse(live.exists())
-
-        inactive = self.root / ".taken.fixture-claim"
-        inactive.mkdir()
-        inside = support.prepare_root(inactive / "inner")
-        self.assertTrue(inside.created)
-        inside.release()
-        self.assertTrue((inactive / "inner").is_dir())
-        output = support.ensure_new_output(inactive / "out.json")
-        support.write_json_exclusive(output, {"schema_version": 1})
-        self.assertTrue(output.is_file())
-
-        shaped = support.prepare_root(self.root / ".ordinary.fixture-claim")
-        self.assertTrue(shaped.created)
-        shaped.release()
-        self.assertTrue((self.root / ".ordinary.fixture-claim").is_dir())
-
-        nested = support.prepare_root(self.root / ".layer.fixture-claim" / "inner")
-        nested.release()
-        plain_output = support.ensure_new_output(self.root / ".named.fixture-claim")
-        support.write_json_exclusive(plain_output, {"schema_version": 1})
-
-        normal = support.prepare_root(self.root / "plain-root")
-        normal.release()
-        support.ensure_new_output(self.root / "plain-output.json")
-
-    def test_normal_directory_at_anchor_name_does_not_block_preparation(self):
-        occupied = self.root / ".program.fixture-claim"
-        occupied.mkdir()
-        manifest = fixture53.build_fixture(
-            self.root / "program", self.root / "profile",
-            output=self.output / "setup.json")
-        self.assertEqual(manifest["fixture_kind"], "stage4-only")
-        self.assertTrue(occupied.is_dir())
-        self.assertFalse(any(occupied.iterdir()))
-        self.assertTrue((self.root / "program" / "info.json").is_file())
-
-        prepared = support.prepare_root(self.root / "solo")
-        anchor = support.claim_path_for(self.root / "solo")
-        self.assertTrue(anchor.is_symlink())
-        with self.assertRaises(support.FixtureBuildError):
-            support.prepare_root(self.root / "solo")
-        prepared.release()
-        self.assertFalse(anchor.exists())
-
-    def test_ordinary_symlink_at_preferred_anchor_does_not_block_preparation(self):
-        program = self.root / "program"
-        preferred = support.claim_path_for(program)
-        ordinary_target = self.root / "ordinary-anchor-target"
-        ordinary_target.mkdir()
-        os.symlink(ordinary_target, preferred)
-
-        manifest = fixture53.build_fixture(
-            program, self.root / "profile", output=self.output / "setup.json")
-        self.assertEqual(manifest["fixture_kind"], "stage4-only")
-        self.assertTrue(preferred.is_symlink())
-        self.assertEqual(preferred.resolve(), ordinary_target.resolve())
-        self.assertFalse(any(ordinary_target.iterdir()))
-        self.assertTrue((program / "info.json").is_file())
-        self.assertTrue((self.output / "setup.json").is_file())
-
-    def test_preexisting_empty_claim_shaped_root_stays_legal(self):
-        pre = self.root / ".pre-existing.fixture-claim"
-        pre.mkdir()
-        identity = pre.stat().st_ino
-        prepared = support.prepare_root(pre)
-        self.assertFalse(prepared.created)
-        self.assertTrue(prepared.owned())
-        prepared.release()
-        self.assertEqual(pre.stat().st_ino, identity)
-        self.assertFalse(any(pre.iterdir()))
-
-    def test_live_claim_appearing_after_upfront_check_blocks_claim_and_root(self):
-        parent = (self.root / ".late.fixture-claim").resolve()
-        inner = parent / "inner"
-        original_mkdir = Path.mkdir
-        planted = []
-
-        def plant_anchor_after_parent_creation(path, *args, **kwargs):
-            result = original_mkdir(path, *args, **kwargs)
-            if path == parent and not planted:
-                planted.append(True)
-                parent.rmdir()
-                held = self.root / ".late.fixture-claim.held-1"
-                held.mkdir()
-                (held / support._HELD_MARKER).touch()
-                os.symlink(held, parent)
-            return result
-
-        with mock.patch.object(Path, "mkdir", plant_anchor_after_parent_creation):
-            with self.assertRaises(support.FixtureBuildError):
-                support.prepare_root(inner)
-        self.assertTrue(planted)
-        self.assertTrue((self.root / ".late.fixture-claim.held-1").is_dir())
-        self.assertEqual(
-            {item.name for item in parent.iterdir()}, {support._HELD_MARKER}
-        )
-        self.assertFalse(inner.exists())
-
-    def test_sample_and_manifest_write_refuse_live_claim_ancestor(self):
-        holder = support.prepare_root(self.root / "holder")
-        self.addCleanup(holder.release)
-        anchor = support.claim_path_for(holder.path)
-        before = list(anchor.iterdir())
-        with self.assertRaises(support.FixtureBuildError):
-            support.write_text(anchor / "late.txt", "text")
-        with self.assertRaises(support.FixtureBuildError):
-            support.write_json(anchor / "late.json", {"schema_version": 1})
-        self.assertEqual(list(anchor.iterdir()), before)
-
-        manifest_parent = self.root / ".late-manifest.fixture-claim"
-        manifest_parent.mkdir()
-        output = support.ensure_new_output(manifest_parent / "out.json")
-        manifest_parent.rmdir()
-        held = self.root / ".late-manifest.fixture-claim.held-1"
-        held.mkdir()
-        (held / support._HELD_MARKER).touch()
-        os.symlink(held, manifest_parent)
-        with self.assertRaises(support.FixtureBuildError):
-            support.write_json_exclusive(output, {"schema_version": 1})
-        self.assertFalse(output.exists())
-
-    def test_claim_shaped_roots_stay_legal_for_both_entries(self):
-        program = self.root / ".shaped-program.fixture-claim"
-        profile = self.root / "shaped-profile"
-        manifest = fixture53.build_fixture(
-            program, profile, output=self.output / "shaped53.json")
-        self.assertEqual(manifest["fixture_kind"], "stage4-only")
-
-        program55 = self.root / ".shaped-55.fixture-claim"
-        manifest55 = fixture55.build_fixture(
-            program55, output=self.output / "shaped55.json")
-        self.assertEqual(manifest55["fixture_kind"], "issue55-stage3-pre")
-
-    def test_discard_created_root_respects_ownership(self):
+    def test_discard_created_root_respects_recorded_identity(self):
         created = support.prepare_root(self.root / "created")
         self.assertTrue(created.created)
         support.discard_created_root(created)
         self.assertFalse(created.path.exists())
-        created.release()
 
         pre_existing = self.root / "pre-existing"
         pre_existing.mkdir()
@@ -373,64 +141,39 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
         with self.assertRaises(support.FixtureBuildError):
             support.discard_created_root(prepared)
         self.assertTrue(pre_existing.is_dir())
-        prepared.release()
 
-        vanished = support.prepare_root(self.root / "vanished")
-        vanished.path.rmdir()
-        self.assertFalse(vanished.owned())
+        replaced = support.prepare_root(self.root / "replaced")
+        replaced.path.rmdir()
+        replaced.path.mkdir()
+        self.assertFalse(replaced.owned())
         with self.assertRaises(support.FixtureBuildError):
-            support.discard_created_root(vanished)
-        vanished.release()
+            support.discard_created_root(replaced)
+        self.assertTrue(replaced.path.is_dir())
 
 
-class Issue53RollbackAndProtectionTests(IsolatedRootsTestCase):
-    def hold_claim(self, root: Path) -> Path:
-        """Simulate another run holding the exclusive claim for root."""
-        claim = support.claim_path_for(root.resolve())
-        held = self.root / f"held-{root.name}"
-        held.mkdir()
-        marker = held / support._HELD_MARKER
-        marker.touch()
-        os.symlink(held, claim)
-        self.addCleanup(claim.unlink)
-        self.addCleanup(held.rmdir)
-        self.addCleanup(marker.unlink)
-        return claim
-
+class Issue53ProtectionTests(IsolatedRootsTestCase):
     def test_second_root_failure_rolls_back_created_first_root(self):
-        self.hold_claim(self.root / "profile")
+        profile = self.root / "profile"
+        profile.write_text("not a directory", encoding="utf-8")
         with self.assertRaises(fixture53.FixtureBuildError):
             fixture53.build_fixture(
-                self.root / "program", self.root / "profile",
+                self.root / "program", profile,
                 output=self.output / "setup.json")
         self.assertFalse((self.root / "program").exists())
-        self.assertFalse((self.root / "profile").exists())
-        self.assertTrue(support.claim_path_for(self.root / "profile").exists())
+        self.assertEqual(profile.read_text(encoding="utf-8"), "not a directory")
+        self.assertFalse((self.output / "setup.json").exists())
 
     def test_second_root_failure_keeps_pre_existing_first_root(self):
         program = self.root / "program"
         program.mkdir()
         identity = program.stat().st_ino
-        self.hold_claim(self.root / "profile")
+        profile = self.root / "profile"
+        profile.write_text("not a directory", encoding="utf-8")
         with self.assertRaises(fixture53.FixtureBuildError):
-            fixture53.build_fixture(
-                program, self.root / "profile",
-                output=self.output / "setup.json")
+            fixture53.build_fixture(program, profile, output=self.output / "setup.json")
         self.assertTrue(program.is_dir())
         self.assertEqual(program.stat().st_ino, identity)
         self.assertFalse(any(program.iterdir()))
-
-    def test_claim_conflict_on_first_root_fails_without_side_effects(self):
-        program = self.root / "program"
-        program.mkdir()
-        self.hold_claim(program)
-        with self.assertRaises(fixture53.FixtureBuildError):
-            fixture53.build_fixture(
-                program, self.root / "profile",
-                output=self.output / "setup.json")
-        self.assertTrue(program.is_dir())
-        self.assertFalse((self.root / "profile").exists())
-        self.assertFalse((self.output / "setup.json").exists())
 
     def test_equal_and_nested_roots_are_refused(self):
         program = self.root / "program"
@@ -468,139 +211,15 @@ class Issue53RollbackAndProtectionTests(IsolatedRootsTestCase):
         self.assertFalse((self.root / "program").exists())
         self.assertFalse((self.root / "profile").exists())
 
-    def test_manifest_inside_unused_preferred_claim_path_is_legal(self):
-        program = self.root / "program"
-        profile = self.root / "profile"
-        claim = support.claim_path_for(program.resolve())
-        output = claim / "nested" / "setup.json"
-        result = fixture53.build_fixture(program, profile, output=output)
-        self.assertEqual(result["fixture_kind"], "stage4-only")
-        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
-        self.assertTrue((program / "info.json").is_file())
-        self.assertTrue((profile / "套磁邮件/套磁信息.md").is_file())
-        self.assertFalse(claim.is_symlink())
-
-    def test_profile_root_at_unused_preferred_claim_path_is_legal(self):
-        program = self.root / "program"
-        profile = support.claim_path_for(program.resolve())
-        output = self.output / "setup.json"
-        result = fixture53.build_fixture(program, profile, output=output)
-        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
-        self.assertTrue((program / "info.json").is_file())
-        self.assertTrue((profile / "套磁邮件/套磁信息.md").is_file())
-        self.assertFalse(profile.is_symlink())
-
-    def test_profile_root_inside_unused_preferred_claim_path_is_legal(self):
-        program = self.root / "program"
-        profile = support.claim_path_for(program.resolve()) / "inner"
-        output = self.output / "setup.json"
-        result = fixture53.build_fixture(program, profile, output=output)
-        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
-        self.assertTrue((program / "info.json").is_file())
-        self.assertTrue((profile / "套磁邮件/套磁信息.md").is_file())
-        self.assertFalse(profile.parent.is_symlink())
-
-    def test_publish_conflict_reclassifies_live_occupier_before_fallback(self):
-        holder = support.prepare_root(self.root / "holder")
-        self.addCleanup(holder.release)
-        anchor = support.claim_path_for(holder.path)
-        before = list(anchor.iterdir())
-        real = support._is_live_claim
-        seen = []
-
-        def stale_precheck(path):
-            result = real(path)
-            if path == anchor and not seen:
-                seen.append(True)
-                return False
-            return result
-
-        with mock.patch.object(support, "_is_live_claim", stale_precheck):
-            with self.assertRaises(fixture55.FixtureBuildError):
-                fixture55.build_fixture(
-                    self.root / "holder", output=self.output / "late.json")
-        self.assertEqual(list(anchor.iterdir()), before)
-        self.assertTrue(holder.owned())
-        self.assertTrue((self.root / "holder").is_dir())
-        self.assertFalse((self.output / "late.json").exists())
-        holder.release()
-        self.assertFalse(anchor.exists())
-        self.assertTrue((self.root / "holder").is_dir())
-
-    def test_fallback_anchor_skips_planned_profile_path(self):
-        blocked = self.root / ".program.fixture-claim"
-        blocked.mkdir()
-        profile = self.root / ".program.fixture-claim.r2"
-        manifest = fixture53.build_fixture(
-            self.root / "program", profile, output=self.output / "setup.json")
-        self.assertEqual(manifest["fixture_kind"], "stage4-only")
-        self.assertFalse(os.path.islink(profile))
-        self.assertTrue((profile / "套磁邮件/套磁信息.md").is_file())
-        self.assertFalse(os.path.islink(blocked))
-        self.assertFalse(any(blocked.iterdir()))
-        self.assertTrue((self.root / "program" / "info.json").is_file())
-
-    def test_fallback_anchor_skips_planned_manifest_path(self):
-        blocked = self.root / ".solo.fixture-claim"
-        blocked.mkdir()
-        nested = self.root / ".solo.fixture-claim.r2"
-        manifest = fixture55.build_fixture(
-            self.root / "solo", output=nested / "nested" / "setup.json")
-        self.assertEqual(manifest["fixture_kind"], "issue55-stage3-pre")
-        self.assertFalse(os.path.islink(nested))
-        self.assertTrue((nested / "nested" / "setup.json").is_file())
-        self.assertFalse(os.path.islink(blocked))
-
-    def test_root_equal_to_another_run_claim_is_refused_and_claim_stays_empty(self):
-        holder_root = self.root / "holder"
-        prepared = support.prepare_root(holder_root)
-        self.addCleanup(prepared.release)
-        claim = support.claim_path_for(holder_root.resolve())
-        self.assertTrue(claim.is_symlink())
-        before = list(claim.iterdir())
-        with self.assertRaises(fixture53.FixtureBuildError):
-            fixture53.build_fixture(
-                self.root / "b-program", claim, output=self.output / "b-setup.json")
-        self.assertEqual(list(claim.iterdir()), before)
-        self.assertTrue(prepared.owned())
-        prepared.release()
-        self.assertFalse(claim.exists())
-        normal = support.prepare_root(self.root / "normal-root")
-        normal.release()
-
-    def test_success_releases_both_claims(self):
-        program = self.root / "program"
-        profile = self.root / "profile"
-        fixture53.build_fixture(program, profile, output=self.output / "setup.json")
-        self.assertFalse(support.claim_path_for(program.resolve()).exists())
-        self.assertFalse(support.claim_path_for(profile.resolve()).exists())
-        self.assertTrue((self.output / "setup.json").is_file())
-
 
 class Issue55ProtectionTests(IsolatedRootsTestCase):
-    def test_claim_conflict_blocks_preparation_and_keeps_directory(self):
-        program = self.root / "program"
-        program.mkdir()
-        claim = support.claim_path_for(program.resolve())
-        claim.mkdir()
-        self.addCleanup(claim.rmdir)
-        manifest = fixture55.build_fixture(program, output=self.output / "setup.json")
-        self.assertEqual(manifest["fixture_kind"], "issue55-stage3-pre")
-        self.assertTrue(program.is_dir())
-        self.assertTrue((program / "info.json").is_file())
-        self.assertTrue(claim.is_dir())
-        self.assertFalse(any(claim.iterdir()))
-        self.assertTrue((self.output / "setup.json").is_file())
-
-    def test_manifest_inside_unused_preferred_claim_path_is_legal(self):
-        program = self.root / "program"
-        claim = support.claim_path_for(program.resolve())
-        output = claim / "manifest.json"
-        result = fixture55.build_fixture(program, output=output)
-        self.assertEqual(result["fixture_kind"], "issue55-stage3-pre")
-        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
-        self.assertTrue((program / "info.json").is_file())
-        self.assertFalse(claim.is_symlink())
+    def test_preexisting_manifest_output_is_refused_without_writes(self):
+        pre_manifest = self.output / "taken.json"
+        pre_manifest.write_text("keep", encoding="utf-8")
+        with self.assertRaises(fixture55.FixtureBuildError):
+            fixture55.build_fixture(self.root / "program", output=pre_manifest)
+        self.assertEqual(pre_manifest.read_text(encoding="utf-8"), "keep")
+        self.assertFalse((self.root / "program").exists())
 
     def test_manifest_bytes_use_the_stable_json_format(self):
         program = self.root / "program"
@@ -610,7 +229,6 @@ class Issue55ProtectionTests(IsolatedRootsTestCase):
             raw,
             (json.dumps(manifest, ensure_ascii=False, indent=1) + "\n").encode("utf-8"),
         )
-        self.assertFalse(support.claim_path_for(program.resolve()).exists())
 
 
 if __name__ == "__main__":
