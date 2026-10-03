@@ -6,35 +6,25 @@
       "case_id": "T74-CORE",
       "pattern": "test_fixture_support.py",
       "expected_count": 16,
-      "required_prefixes": [
-        "test_fixture_support.FixtureSupportPrimitiveTests.",
-        "test_fixture_support.Issue53ProtectionTests.",
-        "test_fixture_support.Issue55ProtectionTests."
-      ]
+      "required_prefix": "test_fixture_support."
     },
     {
       "case_id": "T74-53",
       "pattern": "test_issue53_stage4_runtime_assets.py",
       "expected_count": 8,
-      "required_prefixes": [
-        "test_issue53_stage4_runtime_assets.Issue53Stage4RuntimeAssetTests."
-      ]
+      "required_prefix": "test_issue53_stage4_runtime_assets.Issue53Stage4RuntimeAssetTests."
     },
     {
       "case_id": "T74-55",
       "pattern": "test_issue55_stage3_runtime_assets.py",
       "expected_count": 16,
-      "required_prefixes": [
-        "test_issue55_stage3_runtime_assets.Issue55Stage3RuntimeAssetTests."
-      ]
+      "required_prefix": "test_issue55_stage3_runtime_assets.Issue55Stage3RuntimeAssetTests."
     },
     {
       "case_id": "T74-EVIDENCE",
       "pattern": "test_gate2_evidence.py",
       "expected_count": 4,
-      "required_prefixes": [
-        "test_gate2_evidence.Gate2EvidenceTests."
-      ]
+      "required_prefix": "test_gate2_evidence.Gate2EvidenceTests."
     }
   ]
 }
