@@ -12,6 +12,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -241,6 +242,67 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
         normal = support.prepare_root(self.root / "plain-root")
         normal.release()
         support.ensure_new_output(self.root / "plain-output.json")
+
+    def test_preexisting_empty_claim_shaped_root_stays_legal(self):
+        pre = self.root / ".pre-existing.fixture-claim"
+        pre.mkdir()
+        identity = pre.stat().st_ino
+        prepared = support.prepare_root(pre)
+        self.assertFalse(prepared.created)
+        self.assertTrue(prepared.owned())
+        prepared.release()
+        self.assertEqual(pre.stat().st_ino, identity)
+        self.assertFalse(any(pre.iterdir()))
+
+    def test_live_claim_appearing_after_upfront_check_blocks_claim_and_root(self):
+        parent = (self.root / ".late.fixture-claim").resolve()
+        parent.mkdir()
+        inner = parent / "inner"
+        original_mkdir = Path.mkdir
+        planted = []
+
+        def plant_on_parent_mkdir(path, *args, **kwargs):
+            result = original_mkdir(path, *args, **kwargs)
+            if path == parent and not planted:
+                planted.append(True)
+                (parent / ".held").touch()
+            return result
+
+        with mock.patch.object(Path, "mkdir", plant_on_parent_mkdir):
+            with self.assertRaises(support.FixtureBuildError):
+                support.prepare_root(inner)
+        self.assertTrue(planted)
+        self.assertEqual(
+            sorted(path.name for path in parent.iterdir()), [".held"])
+
+    def test_sample_and_manifest_write_refuse_claim_that_appeared_later(self):
+        parent = self.root / ".writer.fixture-claim"
+        parent.mkdir()
+        program = parent / "program"
+        profile = parent / "profile"
+        original = fixture53._write_json
+        planted = []
+
+        def plant(path, value):
+            if not planted:
+                planted.append(True)
+                (parent / ".held").touch()
+            return original(path, value)
+
+        with mock.patch.object(fixture53, "_write_json", plant):
+            with self.assertRaises(fixture53.FixtureBuildError):
+                fixture53.build_fixture(
+                    program, profile, output=self.output / "late-writer.json")
+        self.assertTrue(planted)
+        self.assertFalse((program / "info.json").is_file())
+
+        manifest_parent = self.root / ".late-manifest.fixture-claim"
+        manifest_parent.mkdir()
+        output = support.ensure_new_output(manifest_parent / "out.json")
+        (manifest_parent / ".held").touch()
+        with self.assertRaises(support.FixtureBuildError):
+            support.write_json_exclusive(output, {"schema_version": 1})
+        self.assertFalse(output.exists())
 
     def test_claim_shaped_roots_stay_legal_for_both_entries(self):
         program = self.root / ".shaped-program.fixture-claim"

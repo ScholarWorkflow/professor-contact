@@ -62,6 +62,20 @@ def _assert_outside_live_claim(path: Path, *, description: str) -> None:
                 f"{description} is inside an existing claim directory: {ancestor}")
 
 
+def _refuse_live_claim_ancestors(path: Path) -> None:
+    """Re-check ancestors right before creating or writing under them.
+
+    An ancestor claim of another run can appear after the initial
+    preparation checks; every creation and write re-runs this guard so
+    nothing enters another run's claim directory.
+    """
+    for ancestor in path.parents:
+        if _is_live_claim(ancestor):
+            raise FixtureBuildError(
+                "refusing to create or write inside an existing claim "
+                f"directory: {ancestor}")
+
+
 def producer_root() -> Path:
     # tests/runtime/fixture_support.py -> parents[5] is the producer checkout.
     return Path(__file__).resolve().parents[5]
@@ -191,6 +205,7 @@ def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRo
             raise FixtureBuildError(
                 f"refusing to replace non-empty foreign directory: {resolved}")
     resolved.parent.mkdir(parents=True, exist_ok=True)
+    _refuse_live_claim_ancestors(resolved)
     claim = claim_path_for(resolved)
     try:
         claim.mkdir()
@@ -206,12 +221,11 @@ def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRo
             f"could not mark the acquired claim directory: {claim}") from None
     try:
         created = False
-        if resolved.exists() and _is_claim_name(resolved.name):
-            # The upfront check proved it absent, so this is another run's
-            # claim that appeared in between; never take it over as a root.
+        if _is_live_claim(resolved):
             raise FixtureBuildError(
                 f"{description} collides with an existing claim directory: "
                 f"{resolved}")
+        _refuse_live_claim_ancestors(resolved)
         if resolved.exists():
             if not resolved.is_dir() or any(resolved.iterdir()):
                 raise FixtureBuildError(
@@ -221,7 +235,8 @@ def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRo
                 resolved.mkdir()
                 created = True
             except FileExistsError:
-                if _is_claim_name(resolved.name) or not resolved.is_dir() or any(resolved.iterdir()):
+                if (_is_live_claim(resolved) or not resolved.is_dir()
+                        or any(resolved.iterdir())):
                     raise FixtureBuildError(
                         f"{description} changed while the claim was held: {resolved}"
                     ) from None
@@ -247,6 +262,7 @@ def discard_created_root(prepared: PreparedRoot) -> None:
 
 def write_text(path: Path, text: str) -> None:
     path = Path(path)
+    _refuse_live_claim_ancestors(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
 
@@ -258,6 +274,7 @@ def write_json(path: Path, value: Any) -> None:
 def write_json_exclusive(path: Path, value: Any) -> None:
     """Create the file exclusively; an existing file is never overwritten."""
     path = Path(path)
+    _refuse_live_claim_ancestors(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = (json.dumps(value, ensure_ascii=False, indent=1) + "\n").encode("utf-8")
     try:
