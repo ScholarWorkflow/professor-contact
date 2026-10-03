@@ -65,6 +65,7 @@ class Issue74StaticAcceptanceTests(unittest.TestCase):
         test_material_paths = {
             ".apm/skills/professor-contact/tests/test_issue74_cli_compat.py",
             ".apm/skills/professor-contact/tests/test_issue74_static_acceptance.py",
+            ".github/workflows/issue-74-formal.yml",
             "test-plan/issue-74.md",
         }
         allowed = implementation_paths | test_material_paths | {"plan/issue-74.md"}
