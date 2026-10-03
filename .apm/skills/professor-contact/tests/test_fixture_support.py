@@ -201,20 +201,30 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
             support.ensure_new_output(nested_output), nested_output.resolve())
 
     def test_live_claim_collision_is_refused_but_shaped_names_stay_legal(self):
-        live = self.root / ".taken.fixture-claim"
-        live.mkdir()
+        holder = support.prepare_root(self.root / "holder")
+        self.addCleanup(holder.release)
+        live = support.claim_path_for(holder.path)
+        self.assertTrue(live.is_dir())
+        self.assertEqual(len(list(live.iterdir())), 1)
         with self.assertRaises(support.FixtureBuildError):
             support.prepare_root(live)
-        self.assertTrue(live.is_dir())
-        self.assertFalse(any(live.iterdir()))
+        with self.assertRaises(support.FixtureBuildError):
+            support.prepare_root(live / "inner")
         with self.assertRaises(support.FixtureBuildError):
             support.ensure_new_output(live)
+        with self.assertRaises(support.FixtureBuildError):
+            support.ensure_new_output(live / "out.json")
+        self.assertEqual(len(list(live.iterdir())), 1)
+        holder.release()
+        self.assertFalse(live.exists())
 
-        inside = support.prepare_root(live / "inner")
+        inactive = self.root / ".taken.fixture-claim"
+        inactive.mkdir()
+        inside = support.prepare_root(inactive / "inner")
         self.assertTrue(inside.created)
         inside.release()
-        self.assertTrue((live / "inner").is_dir())
-        output = support.ensure_new_output(live / "out.json")
+        self.assertTrue((inactive / "inner").is_dir())
+        output = support.ensure_new_output(inactive / "out.json")
         support.write_json_exclusive(output, {"schema_version": 1})
         self.assertTrue(output.is_file())
 
@@ -388,7 +398,7 @@ class Issue53RollbackAndProtectionTests(IsolatedRootsTestCase):
         with self.assertRaises(fixture53.FixtureBuildError):
             fixture53.build_fixture(
                 self.root / "b-program", claim, output=self.output / "b-setup.json")
-        self.assertFalse(any(claim.iterdir()))
+        self.assertEqual(len(list(claim.iterdir())), 1)
         self.assertTrue(prepared.owned())
         prepared.release()
         self.assertFalse(claim.exists())

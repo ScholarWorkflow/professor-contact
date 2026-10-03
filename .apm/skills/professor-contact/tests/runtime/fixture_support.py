@@ -27,24 +27,39 @@ class FixtureBuildError(RuntimeError):
 
 
 _CLAIM_SUFFIX = ".fixture-claim"
+_CLAIM_MARKER = ".held"
 
 
 def _is_claim_name(name: str) -> bool:
     return name.startswith(".") and name.endswith(_CLAIM_SUFFIX) and name != _CLAIM_SUFFIX
 
 
-def _assert_outside_live_claim(path: Path, *, description: str) -> None:
-    """Refuse taking an existing claim directory itself as root or output.
+def _is_live_claim(path: Path) -> bool:
+    """Whether path is a claim directory another run holds or left behind.
 
-    The claim encoding is internal, so a claim-shaped name without an
-    existing claim directory stays a legal input, and paths inside a
-    claim-shaped directory stay legal as well. Only an existing claim
-    directory taken as the sample root or manifest output itself collides
-    with another run's exclusive occupation.
+    The claim encoding alone is internal, so a claim-shaped directory only
+    counts as an actual claim while it carries the internal occupation
+    marker; released or never-claimed directories of the same shape stay
+    legal inputs.
     """
-    if _is_claim_name(path.name) and path.exists():
+    return (_is_claim_name(path.name) and path.is_dir()
+            and (path / _CLAIM_MARKER).exists())
+
+
+def _assert_outside_live_claim(path: Path, *, description: str) -> None:
+    """Refuse paths at or inside an actual claim directory of another run.
+
+    The claim directory itself and everything inside it belong to that
+    run's exclusive occupation until it releases; writing there would
+    break its release. Claim-shaped names without a live claim stay legal.
+    """
+    if _is_live_claim(path):
         raise FixtureBuildError(
             f"{description} collides with an existing claim directory: {path}")
+    for ancestor in path.parents:
+        if _is_live_claim(ancestor):
+            raise FixtureBuildError(
+                f"{description} is inside an existing claim directory: {ancestor}")
 
 
 def producer_root() -> Path:
@@ -156,10 +171,7 @@ class PreparedRoot:
         if self._claim_released:
             return
         self._claim_released = True
-        try:
-            self.claim.rmdir()
-        except FileNotFoundError:
-            pass
+        _discard_claim(self.claim)
 
 
 def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRoot:
@@ -186,6 +198,12 @@ def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRo
         raise FixtureBuildError(
             "another preparation still holds the claim for this fixture root; "
             f"refusing to take over or delete it: {claim}") from None
+    try:
+        (claim / _CLAIM_MARKER).touch(exist_ok=False)
+    except OSError:
+        _discard_claim(claim)
+        raise FixtureBuildError(
+            f"could not mark the acquired claim directory: {claim}") from None
     try:
         created = False
         if resolved.exists() and _is_claim_name(resolved.name):
@@ -257,6 +275,10 @@ def file_sha256(path: Path) -> str:
 
 
 def _discard_claim(claim: Path) -> None:
+    try:
+        (claim / _CLAIM_MARKER).unlink()
+    except FileNotFoundError:
+        pass
     try:
         claim.rmdir()
     except FileNotFoundError:
