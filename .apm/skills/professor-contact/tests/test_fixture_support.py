@@ -9,6 +9,7 @@ byte-format parity and the #53 rollback rules.
 import hashlib
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -205,8 +206,8 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
         holder = support.prepare_root(self.root / "holder")
         self.addCleanup(holder.release)
         live = support.claim_path_for(holder.path)
-        self.assertTrue(live.is_dir())
-        self.assertEqual(len(list(live.iterdir())), 1)
+        self.assertTrue(live.is_symlink())
+        self.assertEqual(len(list(live.iterdir())), 0)
         with self.assertRaises(support.FixtureBuildError):
             support.prepare_root(live)
         with self.assertRaises(support.FixtureBuildError):
@@ -215,7 +216,9 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
             support.ensure_new_output(live)
         with self.assertRaises(support.FixtureBuildError):
             support.ensure_new_output(live / "out.json")
-        self.assertEqual(len(list(live.iterdir())), 1)
+        with self.assertRaises(support.FixtureBuildError):
+            support.write_text(live / "late.txt", "text")
+        self.assertEqual(len(list(live.iterdir())), 0)
         holder.release()
         self.assertFalse(live.exists())
 
@@ -256,50 +259,45 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
 
     def test_live_claim_appearing_after_upfront_check_blocks_claim_and_root(self):
         parent = (self.root / ".late.fixture-claim").resolve()
-        parent.mkdir()
         inner = parent / "inner"
         original_mkdir = Path.mkdir
         planted = []
 
-        def plant_on_parent_mkdir(path, *args, **kwargs):
+        def plant_anchor_after_parent_creation(path, *args, **kwargs):
             result = original_mkdir(path, *args, **kwargs)
             if path == parent and not planted:
                 planted.append(True)
-                (parent / ".held").touch()
+                parent.rmdir()
+                held = self.root / ".late.fixture-claim.held-1"
+                held.mkdir()
+                os.symlink(held, parent)
             return result
 
-        with mock.patch.object(Path, "mkdir", plant_on_parent_mkdir):
+        with mock.patch.object(Path, "mkdir", plant_anchor_after_parent_creation):
             with self.assertRaises(support.FixtureBuildError):
                 support.prepare_root(inner)
         self.assertTrue(planted)
-        self.assertEqual(
-            sorted(path.name for path in parent.iterdir()), [".held"])
+        self.assertTrue((self.root / ".late.fixture-claim.held-1").is_dir())
+        self.assertEqual(len(list(parent.iterdir())), 0)
+        self.assertFalse(inner.exists())
 
-    def test_sample_and_manifest_write_refuse_claim_that_appeared_later(self):
-        parent = self.root / ".writer.fixture-claim"
-        parent.mkdir()
-        program = parent / "program"
-        profile = parent / "profile"
-        original = fixture53._write_json
-        planted = []
-
-        def plant(path, value):
-            if not planted:
-                planted.append(True)
-                (parent / ".held").touch()
-            return original(path, value)
-
-        with mock.patch.object(fixture53, "_write_json", plant):
-            with self.assertRaises(fixture53.FixtureBuildError):
-                fixture53.build_fixture(
-                    program, profile, output=self.output / "late-writer.json")
-        self.assertTrue(planted)
-        self.assertFalse((program / "info.json").is_file())
+    def test_sample_and_manifest_write_refuse_live_claim_ancestor(self):
+        holder = support.prepare_root(self.root / "holder")
+        self.addCleanup(holder.release)
+        anchor = support.claim_path_for(holder.path)
+        with self.assertRaises(support.FixtureBuildError):
+            support.write_text(anchor / "late.txt", "text")
+        with self.assertRaises(support.FixtureBuildError):
+            support.write_json(anchor / "late.json", {"schema_version": 1})
+        self.assertEqual(len(list(anchor.iterdir())), 0)
 
         manifest_parent = self.root / ".late-manifest.fixture-claim"
         manifest_parent.mkdir()
         output = support.ensure_new_output(manifest_parent / "out.json")
-        (manifest_parent / ".held").touch()
+        manifest_parent.rmdir()
+        held = self.root / ".late-manifest.fixture-claim.held-1"
+        held.mkdir()
+        os.symlink(held, manifest_parent)
         with self.assertRaises(support.FixtureBuildError):
             support.write_json_exclusive(output, {"schema_version": 1})
         self.assertFalse(output.exists())
@@ -456,11 +454,11 @@ class Issue53RollbackAndProtectionTests(IsolatedRootsTestCase):
         prepared = support.prepare_root(holder_root)
         self.addCleanup(prepared.release)
         claim = support.claim_path_for(holder_root.resolve())
-        self.assertTrue(claim.is_dir())
+        self.assertTrue(claim.is_symlink())
         with self.assertRaises(fixture53.FixtureBuildError):
             fixture53.build_fixture(
                 self.root / "b-program", claim, output=self.output / "b-setup.json")
-        self.assertEqual(len(list(claim.iterdir())), 1)
+        self.assertEqual(len(list(claim.iterdir())), 0)
         self.assertTrue(prepared.owned())
         prepared.release()
         self.assertFalse(claim.exists())
