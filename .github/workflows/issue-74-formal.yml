@@ -1,0 +1,140 @@
+name: Issue 74 formal gate
+
+on:
+  pull_request:
+    paths:
+      - ".apm/skills/professor-contact/tests/**"
+      - "plan/issue-74.md"
+      - "test-plan/issue-74.md"
+      - ".github/workflows/issue-74-formal.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  issue74-formal:
+    if: github.event.pull_request.head.ref == 'codex/issue-74-fixture-support'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Execute frozen issue 74 recipe
+        id: formal
+        shell: bash
+        run: |
+          set -u
+          SOURCE_REPO=$(git rev-parse --show-toplevel)
+          SOURCE_SHA=$(git -C "$SOURCE_REPO" rev-parse HEAD)
+          EXPECTED_SHA='${{ github.event.pull_request.head.sha }}'
+          BASE_SHA=768b49ef4514e36edec6b57ed3821a99af9e9c00
+
+          command -v python3.12 >/dev/null
+          command -v jq >/dev/null
+          test "$SOURCE_SHA" = "$EXPECTED_SHA"
+          test -z "$(git -C "$SOURCE_REPO" status --porcelain)"
+          git -C "$SOURCE_REPO" cat-file -e "$BASE_SHA^{commit}"
+
+          RUN_ROOT=$(mktemp -d "$RUNNER_TEMP/issue74-plan4.XXXXXXXX")
+          CHECKOUT="$RUN_ROOT/checkout"
+          ARTIFACT_DIR="$RUNNER_TEMP/issue74-formal-evidence"
+          mkdir -p "$RUN_ROOT/tmp" "$ARTIFACT_DIR"
+          echo "ISSUE74_ARTIFACT_DIR=$ARTIFACT_DIR" >> "$GITHUB_ENV"
+
+          git clone --no-local --no-checkout "$SOURCE_REPO" "$CHECKOUT"
+          git -C "$CHECKOUT" checkout --detach "$SOURCE_SHA"
+          test "$(git -C "$CHECKOUT" rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git -C "$CHECKOUT" status --porcelain)"
+          git -C "$CHECKOUT" cat-file -e "$BASE_SHA^{commit}"
+
+          printf '%s\n' "$SOURCE_SHA" > "$RUN_ROOT/product-sha.txt"
+          printf '%s\n' "$EXPECTED_SHA" > "$RUN_ROOT/expected-sha.txt"
+          printf '%s\n' "$CHECKOUT" > "$RUN_ROOT/checkout-path.txt"
+          python3.12 --version > "$RUN_ROOT/python-version.txt" 2>&1
+          jq --version > "$RUN_ROOT/jq-version.txt"
+          git -C "$CHECKOUT" log -1 --format=%H -- test-plan/issue-74.md > "$RUN_ROOT/recipe-sha.txt"
+          git -C "$CHECKOUT" log -1 --format=%H -- \
+            .apm/skills/professor-contact/tests/gate2_evidence.py \
+            .apm/skills/professor-contact/tests/test_gate2_evidence.py \
+            > "$RUN_ROOT/evaluator-sha.txt"
+
+          export TMPDIR="$RUN_ROOT/tmp"
+          export PYTHONDONTWRITEBYTECODE=1
+          cd "$CHECKOUT/.apm/skills/professor-contact"
+
+          run_case() {
+            case_id=$1
+            pattern=$2
+            prefix=$3
+            set +e
+            python3.12 tests/gate2_evidence.py \
+              --start tests \
+              --pattern "$pattern" \
+              --require-prefix "$prefix" \
+              --out "$RUN_ROOT/$case_id.json" \
+              > "$RUN_ROOT/$case_id.stdout" \
+              2> "$RUN_ROOT/$case_id.stderr"
+            rc=$?
+            set -e
+            printf '%s\n' "$rc" > "$RUN_ROOT/$case_id-exit.txt"
+          }
+
+          set -e
+          run_case T74-CORE test_fixture_support.py test_fixture_support.
+          run_case T74-CLI test_issue74_cli_compat.py test_issue74_cli_compat.Issue74CliCompatibilityTests.
+          run_case T74-53 test_issue53_stage4_runtime_assets.py test_issue53_stage4_runtime_assets.Issue53Stage4RuntimeAssetTests.
+          run_case T74-55 test_issue55_stage3_runtime_assets.py test_issue55_stage3_runtime_assets.Issue55Stage3RuntimeAssetTests.
+          run_case T74-STATIC test_issue74_static_acceptance.py test_issue74_static_acceptance.Issue74StaticAcceptanceTests.
+          run_case T74-EVIDENCE test_gate2_evidence.py test_gate2_evidence.Gate2EvidenceTests.
+
+          FORMAL_STATUS=0
+          for case in T74-CORE T74-CLI T74-53 T74-55 T74-STATIC T74-EVIDENCE; do
+            if [ ! -s "$RUN_ROOT/$case.json" ]; then
+              FORMAL_STATUS=1
+              continue
+            fi
+            verdict=$(jq -r '.verdict // "MISSING"' "$RUN_ROOT/$case.json")
+            rc=$(cat "$RUN_ROOT/$case-exit.txt")
+            if [ "$verdict" != PASS ] || [ "$rc" != 0 ]; then
+              FORMAL_STATUS=1
+            fi
+          done
+          if [ -n "$(git -C "$CHECKOUT" status --porcelain)" ]; then
+            FORMAL_STATUS=1
+          fi
+
+          cp "$RUN_ROOT"/product-sha.txt "$ARTIFACT_DIR"/
+          cp "$RUN_ROOT"/expected-sha.txt "$ARTIFACT_DIR"/
+          cp "$RUN_ROOT"/python-version.txt "$ARTIFACT_DIR"/
+          cp "$RUN_ROOT"/jq-version.txt "$ARTIFACT_DIR"/
+          cp "$RUN_ROOT"/recipe-sha.txt "$ARTIFACT_DIR"/
+          cp "$RUN_ROOT"/evaluator-sha.txt "$ARTIFACT_DIR"/
+          cp "$RUN_ROOT"/T74-* "$ARTIFACT_DIR"/
+
+          jq -n \
+            --arg product_sha "$SOURCE_SHA" \
+            --arg recipe_sha "$(cat "$RUN_ROOT/recipe-sha.txt")" \
+            --arg evaluator_sha "$(cat "$RUN_ROOT/evaluator-sha.txt")" \
+            --arg checkout_clean "$(test -z "$(git -C "$CHECKOUT" status --porcelain)" && echo yes || echo no)" \
+            --argjson formal_status "$FORMAL_STATUS" \
+            '{schema_version:1, product_sha:$product_sha, recipe_sha:$recipe_sha, evaluator_sha:$evaluator_sha, checkout_clean:$checkout_clean, formal_status:$formal_status}' \
+            > "$ARTIFACT_DIR/summary.json"
+
+          exit "$FORMAL_STATUS"
+
+      - name: Upload formal evidence
+        if: always() && env.ISSUE74_ARTIFACT_DIR != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue74-formal-${{ github.event.pull_request.head.sha }}
+          path: ${{ env.ISSUE74_ARTIFACT_DIR }}
+          if-no-files-found: error
+          retention-days: 7
