@@ -116,9 +116,13 @@ def build_fixture(program_root: Path, profile_root: Path, *, output: Path) -> di
         reserved=[program, profile, info_path, state_path, profile_path],
         claims=claims)
 
-    program_prepared = support.prepare_root(program, description="program root")
+    business_paths = [program, profile, info_path, state_path, profile_path,
+                      manifest_path]
+    program_prepared = support.prepare_root(
+        program, description="program root", business_paths=business_paths)
     try:
-        profile_prepared = support.prepare_root(profile, description="profile root")
+        profile_prepared = support.prepare_root(
+            profile, description="profile root", business_paths=business_paths)
     except BaseException:
         _rollback_prepared_root(program_prepared)
         raise

@@ -133,7 +133,9 @@ def build_fixture(program_root: Path, *, output: Path) -> dict[str, Any]:
         reserved=[root, info, profile, input_pack],
         claims=[support.claim_path_for(root)])
 
-    root_prepared = support.prepare_root(root, description="fixture root")
+    business_paths = [root, info, profile, input_pack, manifest_path]
+    root_prepared = support.prepare_root(
+        root, description="fixture root", business_paths=business_paths)
     try:
         _write_json(info, {
             "schema_version": 1,

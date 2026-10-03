@@ -292,13 +292,23 @@ def _discard_claim(anchor: Path, held: Path) -> None:
     _remove_held_dir(held)
 
 
-def _publish_anchor(resolved: Path, held: Path, description: str) -> Path:
+def _publish_anchor(resolved: Path, held: Path, business_paths: Iterable[Path],
+                    description: str) -> Path:
     """Publish the occupation anchor at the first free internal name.
 
     A name occupied by a live claim of another run is a claim conflict
-    (never taken over); a name occupied by ordinary content is skipped, so
-    the internal encoding never blocks an otherwise legal root.
+    (never taken over). A name occupied by ordinary content is skipped, so
+    the internal encoding never blocks an otherwise legal root. Candidates
+    that would overlap or contain any of this run's business paths (roots,
+    sample files, manifest output) are skipped as well: a fallback anchor
+    must never occupy a legal business path.
     """
+    business = [Path(b) for b in business_paths]
+
+    def overlaps_business(candidate: Path) -> bool:
+        return any(candidate == b or candidate.is_relative_to(b)
+                   or b.is_relative_to(candidate) for b in business)
+
     anchor = claim_path_for(resolved)
     for attempt in range(64):
         if _is_live_claim(anchor):
@@ -306,17 +316,26 @@ def _publish_anchor(resolved: Path, held: Path, description: str) -> Path:
                 "another preparation still holds the claim for this fixture "
                 f"root; refusing to take over or delete it: {anchor}")
         if not os.path.lexists(anchor):
-            try:
-                os.symlink(held, anchor)
-                return anchor
-            except FileExistsError:
-                pass
+            if not overlaps_business(anchor):
+                try:
+                    os.symlink(held, anchor)
+                    return anchor
+                except FileExistsError:
+                    # The name was taken between the check and the publish:
+                    # re-classify. A live claim is a hard conflict; ordinary
+                    # content moves the anchor to the next internal name.
+                    if _is_live_claim(anchor):
+                        raise FixtureBuildError(
+                            "another preparation still holds the claim for "
+                            "this fixture root; refusing to take over or "
+                            f"delete it: {anchor}") from None
         anchor = anchor.with_name(anchor.name + f".r{attempt + 2}")
     raise FixtureBuildError(
         f"could not find a free claim anchor name beside {resolved}")
 
 
-def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRoot:
+def prepare_root(path: Path, *, description: str = "fixture root",
+                 business_paths: Iterable[Path] = ()) -> PreparedRoot:
     """Acquire one sample root exclusively and prepare it as an empty directory.
 
     An existing empty directory is kept as-is (its ownership is recorded);
@@ -349,7 +368,10 @@ def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRo
         raise FixtureBuildError(
             f"could not prepare the occupation directory: {held}") from None
     try:
-        anchor = _publish_anchor(resolved, held, description=description)
+        anchor = _publish_anchor(
+            resolved, held,
+            business_paths=[raw, resolved, *business_paths],
+            description=description)
     except BaseException:
         _remove_held_dir(held)
         raise

@@ -494,6 +494,57 @@ class Issue53RollbackAndProtectionTests(IsolatedRootsTestCase):
         self.assertFalse(program.exists())
         self.assertFalse(profile.exists())
 
+    def test_publish_conflict_reclassifies_live_occupier_before_fallback(self):
+        holder = support.prepare_root(self.root / "holder")
+        self.addCleanup(holder.release)
+        anchor = support.claim_path_for(holder.path)
+        before = list(anchor.iterdir())
+        real = support._is_live_claim
+        seen = []
+
+        def stale_precheck(path):
+            result = real(path)
+            if path == anchor and not seen:
+                seen.append(True)
+                return False
+            return result
+
+        with mock.patch.object(support, "_is_live_claim", stale_precheck):
+            with self.assertRaises(fixture55.FixtureBuildError):
+                fixture55.build_fixture(
+                    self.root / "holder", output=self.output / "late.json")
+        self.assertEqual(list(anchor.iterdir()), before)
+        self.assertTrue(holder.owned())
+        self.assertTrue((self.root / "holder").is_dir())
+        self.assertFalse((self.output / "late.json").exists())
+        holder.release()
+        self.assertFalse(anchor.exists())
+        self.assertTrue((self.root / "holder").is_dir())
+
+    def test_fallback_anchor_skips_planned_profile_path(self):
+        blocked = self.root / ".program.fixture-claim"
+        blocked.mkdir()
+        profile = self.root / ".program.fixture-claim.r2"
+        manifest = fixture53.build_fixture(
+            self.root / "program", profile, output=self.output / "setup.json")
+        self.assertEqual(manifest["fixture_kind"], "stage4-only")
+        self.assertFalse(os.path.islink(profile))
+        self.assertTrue((profile / "套磁邮件/套磁信息.md").is_file())
+        self.assertFalse(os.path.islink(blocked))
+        self.assertFalse(any(blocked.iterdir()))
+        self.assertTrue((self.root / "program" / "info.json").is_file())
+
+    def test_fallback_anchor_skips_planned_manifest_path(self):
+        blocked = self.root / ".solo.fixture-claim"
+        blocked.mkdir()
+        nested = self.root / ".solo.fixture-claim.r2"
+        manifest = fixture55.build_fixture(
+            self.root / "solo", output=nested / "nested" / "setup.json")
+        self.assertEqual(manifest["fixture_kind"], "issue55-stage3-pre")
+        self.assertFalse(os.path.islink(nested))
+        self.assertTrue((nested / "nested" / "setup.json").is_file())
+        self.assertFalse(os.path.islink(blocked))
+
     def test_root_equal_to_another_run_claim_is_refused_and_claim_stays_empty(self):
         holder_root = self.root / "holder"
         prepared = support.prepare_root(holder_root)
