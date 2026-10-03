@@ -8,14 +8,20 @@ planned sample paths and manifest content.
 Directory identity is the fully resolved path. For every sample root the
 caller acquires an exclusive claim before touching the directory and keeps
 it until its writes are done or its rollback has finished. The claim is an
-occupation anchor published with a single atomic exclusive creation next to
-the root and removed with a single atomic removal, so the occupation is
-never visible in an intermediate state. A legacy anchor from an abnormal
-termination keeps refusing takeover. A claim-shaped name without an anchor
-is an ordinary legal path.
+occupation anchor symlink published beside the root with one atomic
+exclusive creation and removed with one atomic unlink; it points at an
+occupation directory in the temporary isolation space and carries an
+internal marker, so an occupation is recognisable in exactly one complete
+state from birth to removal. A legacy anchor keeps refusing takeover. A
+claim-shaped name without an anchor is an ordinary legal path, and normal
+content that happens to occupy the preferred anchor name only moves the
+anchor to the next deterministic internal name.
 
-A leftover anchor from an abnormal termination is refused and reported; it
-is never taken over or deleted automatically.
+Every parent creation and file write walks its components with atomic
+mkdir/O_EXCL steps and re-refuses live claims, so an anchor another run
+publishes after an earlier check can never be followed into. A leftover
+anchor from an abnormal termination is refused and reported; it is never
+taken over or deleted automatically.
 """
 from __future__ import annotations
 
@@ -34,6 +40,7 @@ class FixtureBuildError(RuntimeError):
 
 
 _CLAIM_SUFFIX = ".fixture-claim"
+_HELD_MARKER = ".held"
 
 
 def _is_claim_name(name: str) -> bool:
@@ -43,12 +50,20 @@ def _is_claim_name(name: str) -> bool:
 def _is_live_claim(path: Path) -> bool:
     """Whether path is an occupation anchor published by a preparation run.
 
-    The anchor is created atomically (one exclusive symlink creation) and
-    removed atomically, so a claim-shaped path is a live occupation exactly
-    while it is a symlink; ordinary directories of the same shape are legal
-    inputs.
+    The anchor is a symlink created atomically (complete from birth) and
+    removed atomically, and the occupation directory it points to carries
+    the internal marker before publication, so an anchor is recognisable in
+    exactly its held state. Ordinary directories, files and user symlinks
+    of the same shape are legal inputs.
     """
-    return _is_claim_name(path.name) and path.is_symlink()
+    if not path.is_symlink():
+        return False
+    if _is_claim_name(path.name):
+        return True
+    try:
+        return (path / _HELD_MARKER).exists()
+    except OSError:
+        return False
 
 
 def _refuse_live_claim_path(*paths: Path, description: str) -> None:
@@ -59,12 +74,7 @@ def _refuse_live_claim_path(*paths: Path, description: str) -> None:
 
 
 def _refuse_live_claim_ancestors(*paths: Path) -> None:
-    """Re-check ancestors right before creating or writing under them.
-
-    An ancestor claim of another run can appear after the initial
-    preparation checks; every creation and write re-runs this guard so
-    nothing enters another run's claim directory.
-    """
+    """Refuse live claim anchors on the ancestors of any given spelling."""
     seen = set()
     for path in paths:
         for ancestor in Path(path).parents:
@@ -75,6 +85,44 @@ def _refuse_live_claim_ancestors(*paths: Path) -> None:
                 raise FixtureBuildError(
                     "refusing to create or write inside an existing claim "
                     f"directory: {ancestor}")
+
+
+def _mkdir_parents_claim_free(*paths: Path) -> None:
+    """Create missing parent components one atomic mkdir at a time.
+
+    os.mkdir never follows or replaces symlinks, so an occupation anchor
+    another run publishes at a missing component after the pre-checks loses
+    the creation race (EEXIST) or is recognised and refused; once a
+    component exists as a real directory no later anchor can take its
+    place. Existing non-claim symlinks stay ordinary user state.
+    """
+    seen = set()
+    for path in paths:
+        probe = Path(path)
+        missing = []
+        while True:
+            if _is_live_claim(probe):
+                raise FixtureBuildError(
+                    "refusing to create or write inside an existing claim "
+                    f"directory: {probe}")
+            if probe.is_symlink():
+                break
+            if probe.exists():
+                break
+            missing.append(probe)
+            parent = probe.parent
+            if parent == probe:
+                break
+            probe = parent
+        for component in reversed(missing):
+            try:
+                component.mkdir()
+            except FileExistsError:
+                pass
+            if _is_live_claim(component):
+                raise FixtureBuildError(
+                    "refusing to create or write inside an existing claim "
+                    f"directory: {component}")
 
 
 def producer_root() -> Path:
@@ -102,7 +150,12 @@ def resolved_outside_producer(path: Path, *, description: str) -> Path:
 
 
 def claim_path_for(root: Path) -> Path:
-    """Exclusive-claim location for a resolved sample root (internal encoding)."""
+    """Preferred exclusive-claim location for a resolved sample root.
+
+    Internal encoding. When ordinary content already occupies this name the
+    acquisition falls back to the next deterministic internal name, so the
+    encoding never becomes a restriction on user paths.
+    """
     return root.parent / ("." + root.name + _CLAIM_SUFFIX)
 
 
@@ -152,8 +205,8 @@ def ensure_new_output(
 
     A live claim anchor on the output path itself or an ancestor is refused;
     sample roots may still contain the output as long as no sample file is
-    hit. The caller must re-run the live-claim guard through
-    ``write_json_exclusive`` at write time.
+    hit. The caller must create the file through ``write_json_exclusive``,
+    which re-runs the live-claim guard at creation time.
     """
     raw = Path(os.path.abspath(os.fspath(path)))
     resolved = Path(path).resolve()
@@ -210,14 +263,19 @@ def _held_dir_for(resolved: Path) -> Path:
 
     The anchor symlink beside the sample root points here. Keeping the
     occupation directory out of the root's parent leaves exactly one
-    visible entry per held root and makes the anchor's atomic creation
-    and removal the only observable occupation states.
+    visible entry per held root beside it.
     """
     token = f"{os.getpid():x}-{uuid.uuid4().hex[:8]}"
     return Path(tempfile.gettempdir()) / f"professor-contact-claim-{token}"
 
 
 def _remove_held_dir(held: Path) -> None:
+    try:
+        (held / _HELD_MARKER).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
     try:
         held.rmdir()
     except FileNotFoundError:
@@ -232,6 +290,30 @@ def _discard_claim(anchor: Path, held: Path) -> None:
     except FileNotFoundError:
         pass
     _remove_held_dir(held)
+
+
+def _publish_anchor(resolved: Path, held: Path, description: str) -> Path:
+    """Publish the occupation anchor at the first free internal name.
+
+    A name occupied by a live claim of another run is a claim conflict
+    (never taken over); a name occupied by ordinary content is skipped, so
+    the internal encoding never blocks an otherwise legal root.
+    """
+    anchor = claim_path_for(resolved)
+    for attempt in range(64):
+        if _is_live_claim(anchor):
+            raise FixtureBuildError(
+                "another preparation still holds the claim for this fixture "
+                f"root; refusing to take over or delete it: {anchor}")
+        if not os.path.lexists(anchor):
+            try:
+                os.symlink(held, anchor)
+                return anchor
+            except FileExistsError:
+                pass
+        anchor = anchor.with_name(anchor.name + f".r{attempt + 2}")
+    raise FixtureBuildError(
+        f"could not find a free claim anchor name beside {resolved}")
 
 
 def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRoot:
@@ -256,22 +338,21 @@ def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRo
         if any(resolved.iterdir()):
             raise FixtureBuildError(
                 f"refusing to replace non-empty foreign directory: {resolved}")
-    resolved.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_parents_claim_free(raw.parent, resolved.parent)
     _refuse_live_claim_ancestors(raw, resolved)
-    anchor = claim_path_for(resolved)
     held = _held_dir_for(resolved)
     held.mkdir()
     try:
-        os.symlink(held, anchor)
-    except FileExistsError:
-        _remove_held_dir(held)
-        raise FixtureBuildError(
-            "another preparation still holds the claim for this fixture root; "
-            f"refusing to take over or delete it: {anchor}") from None
+        (held / _HELD_MARKER).touch(exist_ok=False)
     except OSError:
         _remove_held_dir(held)
         raise FixtureBuildError(
-            f"could not publish the claim for this fixture root: {anchor}") from None
+            f"could not prepare the occupation directory: {held}") from None
+    try:
+        anchor = _publish_anchor(resolved, held, description=description)
+    except BaseException:
+        _remove_held_dir(held)
+        raise
     try:
         created = False
         if _is_live_claim(resolved):
@@ -315,9 +396,11 @@ def discard_created_root(prepared: PreparedRoot) -> None:
 
 def write_text(path: Path, text: str) -> None:
     path = Path(path)
-    _refuse_live_claim_ancestors(
-        Path(os.path.abspath(os.fspath(path))), path.resolve())
-    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = Path(os.path.abspath(os.fspath(path)))
+    resolved = path.resolve()
+    _refuse_live_claim_path(raw, resolved, description="sample write")
+    _refuse_live_claim_ancestors(raw, resolved)
+    _mkdir_parents_claim_free(raw.parent, resolved.parent)
     path.write_text(text, encoding="utf-8")
 
 
@@ -328,16 +411,23 @@ def write_json(path: Path, value: Any) -> None:
 def write_json_exclusive(path: Path, value: Any) -> None:
     """Create the file exclusively; an existing file is never overwritten."""
     path = Path(path)
-    _refuse_live_claim_ancestors(
-        Path(os.path.abspath(os.fspath(path))), path.resolve())
-    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = Path(os.path.abspath(os.fspath(path)))
+    resolved = path.resolve()
+    _refuse_live_claim_path(raw, resolved, description="manifest output")
+    _refuse_live_claim_ancestors(raw, resolved)
+    _mkdir_parents_claim_free(raw.parent, resolved.parent)
     payload = (json.dumps(value, ensure_ascii=False, indent=1) + "\n").encode("utf-8")
     try:
-        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o644)
     except FileExistsError:
         raise FixtureBuildError(
             f"output appeared during preparation; refusing to overwrite: {path}"
         ) from None
+    except OSError as exc:
+        raise FixtureBuildError(
+            f"refusing to write through a symlink at the output path: {path}"
+        ) from exc
     with os.fdopen(handle, "wb") as stream:
         stream.write(payload)
 

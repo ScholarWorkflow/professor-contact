@@ -207,7 +207,7 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
         self.addCleanup(holder.release)
         live = support.claim_path_for(holder.path)
         self.assertTrue(live.is_symlink())
-        self.assertEqual(len(list(live.iterdir())), 0)
+        before = list(live.iterdir())
         with self.assertRaises(support.FixtureBuildError):
             support.prepare_root(live)
         with self.assertRaises(support.FixtureBuildError):
@@ -218,7 +218,7 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
             support.ensure_new_output(live / "out.json")
         with self.assertRaises(support.FixtureBuildError):
             support.write_text(live / "late.txt", "text")
-        self.assertEqual(len(list(live.iterdir())), 0)
+        self.assertEqual(list(live.iterdir()), before)
         holder.release()
         self.assertFalse(live.exists())
 
@@ -245,6 +245,38 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
         normal = support.prepare_root(self.root / "plain-root")
         normal.release()
         support.ensure_new_output(self.root / "plain-output.json")
+
+    def test_normal_directory_at_anchor_name_does_not_block_preparation(self):
+        occupied = self.root / ".program.fixture-claim"
+        occupied.mkdir()
+        manifest = fixture53.build_fixture(
+            self.root / "program", self.root / "profile",
+            output=self.output / "setup.json")
+        self.assertEqual(manifest["fixture_kind"], "stage4-only")
+        self.assertTrue(occupied.is_dir())
+        self.assertFalse(any(occupied.iterdir()))
+        self.assertTrue((self.root / "program" / "info.json").is_file())
+
+        prepared = support.prepare_root(self.root / "solo")
+        anchor = support.claim_path_for(self.root / "solo")
+        self.assertTrue(anchor.is_symlink())
+        with self.assertRaises(support.FixtureBuildError):
+            support.prepare_root(self.root / "solo")
+        prepared.release()
+        self.assertFalse(anchor.exists())
+
+    def test_dangling_preferred_anchor_still_refuses_takeover(self):
+        preferred = support.claim_path_for(self.root / "program")
+        held = self.root / ".late.fixture-claim.held-legacy"
+        held.mkdir()
+        os.symlink(held, preferred)
+        self.addCleanup(held.rmdir)
+        with self.assertRaises(fixture53.FixtureBuildError):
+            fixture53.build_fixture(
+                self.root / "program", self.root / "profile",
+                output=self.output / "setup.json")
+        self.assertTrue(preferred.is_symlink())
+        self.assertFalse((self.root / "program").exists())
 
     def test_preexisting_empty_claim_shaped_root_stays_legal(self):
         pre = self.root / ".pre-existing.fixture-claim"
@@ -285,11 +317,12 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
         holder = support.prepare_root(self.root / "holder")
         self.addCleanup(holder.release)
         anchor = support.claim_path_for(holder.path)
+        before = list(anchor.iterdir())
         with self.assertRaises(support.FixtureBuildError):
             support.write_text(anchor / "late.txt", "text")
         with self.assertRaises(support.FixtureBuildError):
             support.write_json(anchor / "late.json", {"schema_version": 1})
-        self.assertEqual(len(list(anchor.iterdir())), 0)
+        self.assertEqual(list(anchor.iterdir()), before)
 
         manifest_parent = self.root / ".late-manifest.fixture-claim"
         manifest_parent.mkdir()
@@ -342,9 +375,11 @@ class Issue53RollbackAndProtectionTests(IsolatedRootsTestCase):
     def hold_claim(self, root: Path) -> Path:
         """Simulate another run holding the exclusive claim for root."""
         claim = support.claim_path_for(root.resolve())
-        claim.parent.mkdir(parents=True, exist_ok=True)
-        claim.mkdir()
-        self.addCleanup(claim.rmdir)
+        held = self.root / f"held-{root.name}"
+        held.mkdir()
+        os.symlink(held, claim)
+        self.addCleanup(claim.unlink)
+        self.addCleanup(held.rmdir)
         return claim
 
     def test_second_root_failure_rolls_back_created_first_root(self):
@@ -455,10 +490,11 @@ class Issue53RollbackAndProtectionTests(IsolatedRootsTestCase):
         self.addCleanup(prepared.release)
         claim = support.claim_path_for(holder_root.resolve())
         self.assertTrue(claim.is_symlink())
+        before = list(claim.iterdir())
         with self.assertRaises(fixture53.FixtureBuildError):
             fixture53.build_fixture(
                 self.root / "b-program", claim, output=self.output / "b-setup.json")
-        self.assertEqual(len(list(claim.iterdir())), 0)
+        self.assertEqual(list(claim.iterdir()), before)
         self.assertTrue(prepared.owned())
         prepared.release()
         self.assertFalse(claim.exists())
@@ -481,11 +517,13 @@ class Issue55ProtectionTests(IsolatedRootsTestCase):
         claim = support.claim_path_for(program.resolve())
         claim.mkdir()
         self.addCleanup(claim.rmdir)
-        with self.assertRaises(fixture55.FixtureBuildError):
-            fixture55.build_fixture(program, output=self.output / "setup.json")
+        manifest = fixture55.build_fixture(program, output=self.output / "setup.json")
+        self.assertEqual(manifest["fixture_kind"], "issue55-stage3-pre")
         self.assertTrue(program.is_dir())
-        self.assertFalse(any(program.iterdir()))
-        self.assertFalse((self.output / "setup.json").exists())
+        self.assertTrue((program / "info.json").is_file())
+        self.assertTrue(claim.is_dir())
+        self.assertFalse(any(claim.iterdir()))
+        self.assertTrue((self.output / "setup.json").is_file())
 
     def test_manifest_inside_claim_directory_is_refused_before_any_write(self):
         program = self.root / "program"
