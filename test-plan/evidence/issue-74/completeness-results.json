@@ -1,0 +1,38 @@
+[
+  {
+    "name": "valid-success",
+    "expected": true,
+    "actual": true,
+    "matched": true
+  },
+  {
+    "name": "valid-success-reordered",
+    "expected": true,
+    "actual": true,
+    "matched": true
+  },
+  {
+    "name": "valid-product-failure",
+    "expected": false,
+    "actual": false,
+    "matched": true
+  },
+  {
+    "name": "invalid-empty-execution",
+    "expected": false,
+    "actual": false,
+    "matched": true
+  },
+  {
+    "name": "missing-required-method",
+    "expected": false,
+    "actual": false,
+    "matched": true
+  },
+  {
+    "name": "conflicting-pass-evidence",
+    "expected": false,
+    "actual": false,
+    "matched": true
+  }
+]

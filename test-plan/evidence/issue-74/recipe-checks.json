@@ -1,0 +1,35 @@
+{
+  "schema_version": 2,
+  "python": "3.12.13 (main, Jun 23 2026, 15:44:24) [Clang 22.1.3 ]",
+  "selection": {
+    "start": ".apm/skills/professor-contact/tests",
+    "pattern": "issue74_recipe_checks.py",
+    "contains": "issue74_recipe_checks.Issue74RecipeChecks.",
+    "required_prefixes": [
+      "issue74_recipe_checks.Issue74RecipeChecks."
+    ]
+  },
+  "load_errors": [],
+  "interruption": null,
+  "tests_run": 4,
+  "started": [
+    "issue74_recipe_checks.Issue74RecipeChecks.test_callback_assertion_is_not_swallowed",
+    "issue74_recipe_checks.Issue74RecipeChecks.test_missing_hook_is_invalid",
+    "issue74_recipe_checks.Issue74RecipeChecks.test_valid_product_failure_stays_failure",
+    "issue74_recipe_checks.Issue74RecipeChecks.test_valid_rejection_is_accepted"
+  ],
+  "completed": [
+    "issue74_recipe_checks.Issue74RecipeChecks.test_callback_assertion_is_not_swallowed",
+    "issue74_recipe_checks.Issue74RecipeChecks.test_missing_hook_is_invalid",
+    "issue74_recipe_checks.Issue74RecipeChecks.test_valid_product_failure_stays_failure",
+    "issue74_recipe_checks.Issue74RecipeChecks.test_valid_rejection_is_accepted"
+  ],
+  "missing_required_prefixes": [],
+  "failures": [],
+  "errors": [],
+  "events": [],
+  "skipped": [],
+  "expected_failures": [],
+  "unexpected_successes": [],
+  "verdict": "PASS"
+}
