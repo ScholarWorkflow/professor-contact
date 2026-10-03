@@ -6,10 +6,10 @@
 - 正式需求：Issue #74 需求第 1 版 R1–R4，正文读取版本更新时间 `2026-10-02T16:02:24Z`。
 - 正式执行计划：`plan/issue-74.md` 计划第 4 版修订 1，语义修订提交 `07f895e3bfb91f2d27300042676aff5317d348cf`；PR 评论 `5971365538` 已给出 `Plan conclusion: APPROVED`。
 - 兼容基准：`768b49ef4514e36edec6b57ed3821a99af9e9c00`。
-- 被审产品实现基点：`bf0e59bc5aa989c8fcb1341d94ea44bfedc22127`。其后的测试工程师提交只允许增加或修改 `test-plan/issue-74*` 与 `.apm/skills/professor-contact/tests/test_issue74_cli_compat.py`；S74 必须确认没有额外业务程序差异。
-- 当前唯一权威测试方案由本文件、`test-plan/issue-74-required-cases.json`、`test-plan/issue-74-static-check.py` 与 `.apm/skills/professor-contact/tests/test_issue74_cli_compat.py` 共同组成。
+- 被审产品实现基点：`bf0e59bc5aa989c8fcb1341d94ea44bfedc22127`。其后的测试工程师提交只允许修改本文件，以及新增 `.apm/skills/professor-contact/tests/test_issue74_cli_compat.py`、`.apm/skills/professor-contact/tests/test_issue74_static_acceptance.py`；正式执行前须确认没有额外业务程序差异。
+- 当前唯一权威测试方案是本文件指定的 proof、Recipe、判定条件和当前 HEAD 中对应测试源码；执行者不读取历史 amendment。
 - 计划第 4 版已明确删除旧测试方案、旧执行结果和旧专属审核脚本；此前针对计划第 3 版形成的 `issue74-test-r*`、执行记录和 Gate 2/Gate 3 结论均不作为本版 PASS 来源。
-- 正式运行绑定执行时准确 `HEAD`，并记录当前方案与判定程序版本。
+- 正式运行绑定执行时准确 `HEAD`，并记录本文件与 `gate2_evidence.py` 的实际版本。
 - 当前状态：等待 Gate 2 完整复审；Gate 2 通过前不得开始本版正式验收执行。
 
 ## 冻结要求
@@ -29,28 +29,28 @@
 
 | Proof ID | Requirement | 负责证明 | 不证明 |
 | --- | --- | --- | --- |
-| `T74-CORE` | R2、R3 | `test_fixture_support.py` 当前 16 个方法：共用写入/摘要格式、危险路径拒绝、已有空目录身份保持、清单排他创建、第 53 号相等/嵌套语义、回滚边界、第 55 号清单字节 | 不证明 README 文案与 PR 差异范围 |
-| `T74-CLI` | R2 | `test_issue74_cli_compat.py` 当前 1 个方法：第 53、55 号脚本都从无关工作目录、无 `PYTHONPATH` 的受支持 CLI 入口成功运行并生成对应清单 | 不证明业务阶段运行时路由 |
-| `T74-53` | R1、R2、R3 | `test_issue53_stage4_runtime_assets.py` 当前 8 个既有验收方法，证明第 53 号真实调用方仍能使用迁移后的准备入口，且其原有验收断言保持成立 | 不证明第 55 号入口 |
-| `T74-55` | R1、R2、R3 | `test_issue55_stage3_runtime_assets.py` 当前 16 个既有验收方法，证明第 55 号真实调用方仍能使用迁移后的准备入口，且其原有验收断言保持成立 | 不证明第 53 号双根回滚 |
-| `T74-EVIDENCE` | R4 | `test_gate2_evidence.py` 当前 4 个方法，区分 PASS、产品 FAIL、准备/环境无效、产品失败后清理无效、空执行/缺失执行等通道 | 不证明产品准备入口本身正确 |
-| `S74` | R1、R2、R3、R4 | `issue-74-static-check.py`：差异范围、共用 helper 外部依赖边界、两个入口真实复用、CLI 参数、虚构标志、README 必需说明 | 不替代运行时产品断言 |
-| `RUN74` | R3 | 正式执行环境每次新建独占 `<run-root>` 和独立检出；本次运行所有临时写入位于该 `<run-root>` | 不要求 `fixture_support.py` 自己分配或仲裁不同运行目录 |
+| `T74-CORE` | R2、R3 | `test_fixture_support.py`：共用写入/摘要格式、危险路径拒绝、已有空目录身份保持、清单排他创建、第 53 号相等/嵌套语义、回滚边界、第 55 号清单字节 | 不证明 README 文案与 PR 差异范围 |
+| `T74-CLI` | R2 | `test_issue74_cli_compat.py`：第 53、55 号脚本都从无关工作目录、清掉 `PYTHONPATH` 后按原 CLI 入口成功运行并生成对应清单 | 不证明业务阶段运行时路由 |
+| `T74-53` | R1、R2、R3 | `test_issue53_stage4_runtime_assets.py` 既有验收，证明第 53 号真实调用方仍能使用迁移后的准备入口，且原有验收断言保持成立 | 不证明第 55 号入口 |
+| `T74-55` | R1、R2、R3 | `test_issue55_stage3_runtime_assets.py` 既有验收，证明第 55 号真实调用方仍能使用迁移后的准备入口，且原有验收断言保持成立 | 不证明第 53 号双根回滚 |
+| `T74-STATIC` | R1、R2、R3、R4 | `test_issue74_static_acceptance.py`：差异范围、共用 helper 外部运行依赖边界、两个入口真实复用、CLI 参数、虚构标志、README 必需说明 | 不替代动态产品断言 |
+| `T74-EVIDENCE` | R4 | `test_gate2_evidence.py`：验证 `gate2_evidence.py` 的 PASS、产品 FAIL、准备无效、空执行/缺失执行、跳过、中断等 verdict channel | 不证明产品准备入口本身正确 |
+| `RUN74` | R3 | 正式执行每次新建独占 `<run-root>` 和独立检出；本次运行所有临时写入位于该 `<run-root>` | 不要求 `fixture_support.py` 自己分配或仲裁不同运行目录 |
 
-`test-plan/issue-74-required-cases.json` 固定五个运行 proof 的当前模块前缀与方法数量：`T74-CORE=16`、`T74-CLI=1`、`T74-53=8`、`T74-55=16`、`T74-EVIDENCE=4`。这些数量用于确认当前冻结 proof 没有缺失，不把整个仓库总测试数量写成产品要求。
+所有动态 proof 在一次 G74 完整生产者回归中共同执行。不存在为同一业务事实重复启动第二次验收运行。
 
 ## Gate 2 执行前检查
 
-本次 Merge Gate 不依赖真实安装、代理委派、MCP、浏览器、外部服务、端口、用户 profile 或第三方运行时。五个动态 proof 都是生产者仓库内的确定性测试；S74 是确定性源码/文档检查。因此不需要 Runtime Preflight 的真实外部运行。
+本次 Merge Gate 不依赖真实安装、代理委派、MCP、浏览器、外部服务、端口、用户 profile 或第三方运行时。所有 proof 都是生产者仓库内的确定性测试，因此不需要 Runtime Preflight 的真实外部业务运行。
 
 对完整证明链的四项检查如下：
 
-- `Executable`：`gate2_evidence.py`、五个 proof 文件及 S74 检查器均存在；相关测试只使用仓库代码、Python 标准库和临时目录。正式运行使用新的独立 Git 检出，不依赖调用者工作树文件。仓库 CI 明确固定 CPython 3.12，本方案同样固定 `python3.12`，不允许失败后换解释器。
-- `Isolated`：动态测试使用 `TemporaryDirectory`；正式执行另外创建本次独占 `<run-root>`，并把 `TMPDIR` 指向该目录。不同正式运行必须重新创建新的 `<run-root>`，不得复用旧运行目录。
-- `Observable`：动态 proof 的正式事实直接来自 `gate2_evidence.py` JSON 的 `started`、`completed`、`events`、`failures`、`errors`、`skipped`、`missing_required_prefixes`、`interruption`、`verdict`；S74 输出独立 JSON。
-- `Discriminating`：`T74-EVIDENCE` 明确包含合法成功、产品断言失败、fixture/prerequisite 失败、产品失败后 cleanup 失败、零执行、缺失必需 proof、跳过和中断反例；不会把产品 FAIL 改成准备失败，也不会把无执行改成 PASS。
+- `Executable`：`gate2_evidence.py` 及上述 proof 文件均存在；测试只使用仓库代码、Python 标准库、Git 和临时目录。仓库 CI 固定 CPython 3.12，本方案同样固定 `python3.12`，失败后不得换解释器寻找 PASS。
+- `Isolated`：动态测试使用 `TemporaryDirectory`；正式执行另外创建本次独占 `<run-root>`，把 `TMPDIR` 指向该目录，并在来源仓库及其 worktree 之外创建干净独立检出。不同正式运行必须重新创建新的 `<run-root>`。
+- `Observable`：正式 verdict 直接读取 `gate2_evidence.py` JSON 的 `verdict`；`started`、`completed`、`events`、`failures`、`errors`、`skipped`、`missing_required_prefixes`、`interruption` 用于审计该 verdict，不从日志文本推断。
+- `Discriminating`：`T74-EVIDENCE` 对当前 `gate2_evidence.py` 直接验证合法成功 → `PASS`、有效产品失败 → `FAIL`、准备/证据/执行无效 → invalid 类终态；同时覆盖“产品失败后 cleanup 失败不能把产品 FAIL 改写成 invalid”和“零执行不能 PASS”。
 
-没有发现需要在 Gate 2 前先运行正式验收才能确认的证据能力缺口。
+`T74-EVIDENCE` 与 `gate2_evidence.py` 在产品实现基点 `bf0e59b` 上已经由仓库 Python 3.12 CI 成功执行；这只作为 Gate 2 的判定程序能力依据，不作为本版产品验收 PASS。两文件自该基点后未修改时可继续作为 Preflight 依据；若任一文件在正式执行前变化，须先重新判断 Gate 2 受影响范围。
 
 ## 正式执行环境
 
@@ -82,14 +82,11 @@ printf '%s\n' "$CHECKOUT" > "$RUN_ROOT/checkout-path.txt"
 python3.12 --version > "$RUN_ROOT/python-version.txt" 2>&1
 jq --version > "$RUN_ROOT/jq-version.txt"
 
-git -C "$CHECKOUT" log -1 --format=%H -- \
-  test-plan/issue-74.md \
-  test-plan/issue-74-required-cases.json \
-  test-plan/issue-74-static-check.py \
-  .apm/skills/professor-contact/tests/test_issue74_cli_compat.py \
+git -C "$CHECKOUT" log -1 --format=%H -- test-plan/issue-74.md \
   > "$RUN_ROOT/recipe-sha.txt"
 git -C "$CHECKOUT" log -1 --format=%H -- \
   .apm/skills/professor-contact/tests/gate2_evidence.py \
+  .apm/skills/professor-contact/tests/test_gate2_evidence.py \
   > "$RUN_ROOT/evaluator-sha.txt"
 
 export TMPDIR="$RUN_ROOT/tmp"
@@ -97,15 +94,15 @@ export PYTHONDONTWRITEBYTECODE=1
 cd "$CHECKOUT/.apm/skills/professor-contact"
 ```
 
-若 `python3.12`、`jq`、Git、基准提交或独立检出前提不可用，或来源仓库/独立检出不干净、检出 SHA 不一致，则 `CASE_NOT_STARTED`；保存原始错误后停止，不换 Python、不退回来源工作树继续执行。
+若 `python3.12`、`jq`、Git、基准提交或独立检出前提不可用，或来源仓库/独立检出不干净、检出 SHA 不一致，则 G74 为 `CASE_NOT_STARTED`；保存原始错误后停止，不换 Python、不退回来源工作树继续执行。
 
-## G74：完整生产者回归与必需 proof
+## G74：一次正式完整回归
 
 ### 身份与依据
 
 - Case ID：`G74`。
-- Requirement：R1–R4；动态部分由 `T74-CORE`、`T74-CLI`、`T74-53`、`T74-55`、`T74-EVIDENCE` 分工。
-- 判定语义：`ABSOLUTE_PASS`。当前有效执行中任一正式失败、错误、跳过、加载错误、中断、缺少必需 proof 或总 `verdict != PASS`，G74 即不通过；不得用基线也失败、范围外归属或 CI 通过抵消。
+- Requirement：R1–R4；由 `T74-CORE`、`T74-CLI`、`T74-53`、`T74-55`、`T74-STATIC`、`T74-EVIDENCE` 分工。
+- 判定语义：`ABSOLUTE_PASS`。当前有效执行中任一正式产品失败、错误、跳过、加载错误、中断、缺少必需 proof 或总 `verdict != PASS`，均不得写成 G74 `PASS`。
 - `CASE_STARTED`：`gate2_evidence.py` 成功加载测试且首个测试进入 `started` 后。
 
 ### Recipe
@@ -119,6 +116,7 @@ python3.12 tests/gate2_evidence.py \
   --pattern 'test_*.py' \
   --require-prefix test_fixture_support. \
   --require-prefix test_issue74_cli_compat.Issue74CliCompatibilityTests. \
+  --require-prefix test_issue74_static_acceptance.Issue74StaticAcceptanceTests. \
   --require-prefix test_issue53_stage4_runtime_assets.Issue53Stage4RuntimeAssetTests. \
   --require-prefix test_issue55_stage3_runtime_assets.Issue55Stage3RuntimeAssetTests. \
   --require-prefix test_gate2_evidence.Gate2EvidenceTests. \
@@ -130,87 +128,40 @@ printf '%s\n' "$G74_EXIT" > "$RUN_ROOT/g74-exit.txt"
 set -e
 ```
 
-然后只按 JSON 字段判定：
+正式 verdict 直接采用 `g74.json.verdict`。退出码只做一致性检查：`PASS` 必须同时满足 `G74_EXIT=0`；任何非 `PASS` 必须保留 JSON 原终态，不能改写。若 JSON 缺失/损坏，或退出码与 `verdict` 的受支持关系冲突，则记 `INVALID_TEST_EXECUTION`。
+
+读取结构化证据：
 
 ```sh
-test "$(cat "$RUN_ROOT/g74-exit.txt")" = 0
+jq '{schema_version,python,selection,tests_run,started,completed,missing_required_prefixes,load_errors,interruption,events,failures,errors,skipped,expected_failures,unexpected_successes,verdict}' \
+  "$RUN_ROOT/g74.json"
 
-jq -e '
-  .verdict == "PASS"
-  and .load_errors == []
-  and .interruption == null
-  and .started == .completed
-  and (.started | length) == .tests_run
-  and (.started | unique | length) == .tests_run
-  and .events == []
-  and .failures == []
-  and .errors == []
-  and .skipped == []
-  and .expected_failures == []
-  and .unexpected_successes == []
-  and .missing_required_prefixes == []
-' "$RUN_ROOT/g74.json"
-
-jq -e \
-  --slurpfile required "$CHECKOUT/test-plan/issue-74-required-cases.json" '
-  . as $e
-  | ($required[0].cases | all(
-      . as $case
-      | ([ $e.started[] | select(startswith($case.required_prefix)) ] | length)
-          == $case.expected_count
-    ))
-' "$RUN_ROOT/g74.json"
+if [ "$(jq -r '.verdict' "$RUN_ROOT/g74.json")" = PASS ]; then
+  test "$(cat "$RUN_ROOT/g74-exit.txt")" = 0
+  jq -e '.missing_required_prefixes == [] and .load_errors == [] and .interruption == null' \
+    "$RUN_ROOT/g74.json"
+fi
 
 test -z "$(git -C "$CHECKOUT" status --porcelain)"
 ```
 
-两个 `jq -e` 均为真、`G74_EXIT=0` 且运行后独立检出仍干净时，G74 唯一 verdict 为 `PASS`。`gate2_evidence.py` 已把产品断言失败记录为 `FAIL`，把准备/环境问题记录为 `INVALID_TEST_EXECUTION` 或启动前终态；执行者不得重新解释。
-
-## S74：静态范围、复用、CLI 与文档证明
-
-### 身份与依据
-
-- Case ID：`S74`。
-- Requirement：R1、R2、R3、R4。
-- Proof：确认最终差异未修改业务程序；共用 helper 没有浏览器/外部服务进程依赖；第 53、55 号入口真实复用同一个 helper 的错误类型、JSON 写入和 SHA-256；原 CLI 参数不变；fixture 保持虚构标志；README 包含 R4 与计划第 4 版的目录 owner 说明。
-
-### Recipe
-
-在同一个独立 `CHECKOUT` 执行：
-
-```sh
-set +e
-python3.12 "$CHECKOUT/test-plan/issue-74-static-check.py" \
-  > "$RUN_ROOT/s74.json" \
-  2> "$RUN_ROOT/s74.stderr"
-S74_EXIT=$?
-printf '%s\n' "$S74_EXIT" > "$RUN_ROOT/s74-exit.txt"
-set -e
-
-test "$(cat "$RUN_ROOT/s74-exit.txt")" = 0
-jq -e '.verdict == "PASS" and (.checks | length) > 0 and (.error? == null)' \
-  "$RUN_ROOT/s74.json"
-test -z "$(git -C "$CHECKOUT" status --porcelain)"
-```
-
-退出码为 0、JSON `verdict` 为 `PASS` 且独立检出仍干净时，S74 唯一 verdict 为 `PASS`。
+`gate2_evidence.py` 的当前分类规则已经由 `T74-EVIDENCE` 验证；执行者不得用 stderr 文本、普通 CI、基线结果或“不是本 PR 引入”覆盖该结构化 verdict。
 
 ## 执行、重试与证据保存
 
-- G74 与 S74 各执行一次，不因结果不理想重试，不修改输入、测试、判定条件或 Python 版本来寻找 PASS。
-- 若在 `CASE_STARTED` 前出现 Git、Python、`jq`、文件系统等合法执行前提阻断，记录 `CASE_NOT_STARTED`；开始后测试基础设施或证据损坏按 `gate2_evidence.py` 结构化结果归类。产品断言失败保持 `FAIL`。
-- 不复用计划第 3 版的任何第 74 号执行结果。本版首次 Gate 3 对 G74、S74 都选择 `EXECUTE_CURRENT`。
-- 完整 stdout/stderr、运行目录和完整 JSON 保留在本地。仓库只提交最小脱敏证据：产品 SHA、运行编号、实际 Python/`jq` 版本、G74 关键结构化字段、五个必需 proof 的方法数量、S74 检查结果和最终 verdict；不得提交整个临时运行目录。
+- G74 正式执行一次，不因结果不理想重试，不修改输入、测试、判定条件或 Python 版本来寻找 PASS。
+- 若在 `CASE_STARTED` 前出现 Git、Python、`jq`、文件系统等合法执行前提阻断，记录 `CASE_NOT_STARTED`；开始后准备/证据问题按 `gate2_evidence.py` 结构化结果归类。产品断言失败保持 `FAIL`。
+- 不复用计划第 3 版的任何第 74 号执行结果。本版首次 Gate 3 对 G74 选择 `EXECUTE_CURRENT`。
+- 完整 stdout/stderr、运行目录和完整 JSON 保留在本地。仓库只提交最小脱敏证据：产品 SHA、运行编号、实际 Python/`jq` 版本、G74 关键结构化字段、六个 required prefix 的存在情况和最终 verdict；不得提交整个临时运行目录。
 - 正式结果写入 `test-plan/issue-74-results.md`；若提交结构化证据副本，路径固定为 `test-plan/evidence/issue-74/`，删除调用者机器无关的绝对路径后再提交。
 
-## Gate 3 决策表
+## Gate 3 决策
 
 | Case | 首次本版动作 | PASS 条件 |
 | --- | --- | --- |
-| G74 | `EXECUTE_CURRENT` | `ABSOLUTE_PASS` 条件全部满足，且五个冻结 proof 的当前方法数量分别为 16/1/8/16/4 |
-| S74 | `EXECUTE_CURRENT` | 静态检查退出码 0，JSON `verdict=PASS`，运行后检出干净 |
+| G74 | `EXECUTE_CURRENT` | 当前 HEAD 在独立检出中按冻结命令得到 `g74.json.verdict == PASS`、`G74_EXIT=0`、六个 required prefix 全部存在，且执行后检出仍干净 |
 
-只有 G74、S74 都对当前 HEAD 有有效 PASS，且没有新的未解决 `PRODUCT`、`RECIPE` 或执行偏离问题，第三关口才可为 `PASS`。Gate 2 通过本身不等于第三关口通过。
+只有 G74 对当前版本有有效 PASS，且没有新的未解决 `PRODUCT`、`RECIPE` 或执行偏离问题，第三关口才可为 `PASS`。Gate 2 通过本身不等于第三关口通过。
 
 ## Gate 2 完整性检查清单
 
@@ -218,10 +169,11 @@ test -z "$(git -C "$CHECKOUT" status --porcelain)"
 
 1. R1–R4 均有唯一 proof owner；没有把旧计划第 3 版的占用/锚点设计重新带入本版要求。
 2. 第 53 号嵌套合法、完全相同拒绝、第二根失败回滚三项与计划第 4 版修订 1 一致。
-3. G74 使用单次完整回归，没有为了同一产品事实重复运行相同业务入口；S74 只负责源码/文档事实。
-4. `gate2_evidence.py` 的 JSON 字段、`jq` 判定和五个 proof 数量共同给出唯一 verdict。
-5. 第 53、55 号受支持 CLI 从无关工作目录、无 `PYTHONPATH` 的直接调用由 `T74-CLI` 明确证明，不靠模块导入成功间接推断。
-6. 不需要真实安装、代理、MCP、浏览器、外部服务或用户状态；不存在未处理的 Runtime Preflight 假设。
-7. 不允许旧测试方案、旧执行结果、普通 CI 成功代替本版正式 G74/S74。
+3. G74 只运行一次完整生产者回归，没有为了同一产品事实重复启动第二次业务验收。
+4. 第 53、55 号受支持 CLI 从无关工作目录、无 `PYTHONPATH` 的直接调用由 `T74-CLI` 明确证明，不靠模块导入成功间接推断。
+5. 差异范围、真实 helper 复用、CLI 参数、虚构数据和 README 责任说明由 `T74-STATIC` 在同一次 G74 中证明。
+6. 正式 verdict 只来自当前 `gate2_evidence.py`；其三个 verdict channel 与关键对抗样例由 `T74-EVIDENCE` 验证。
+7. 不需要真实安装、代理、MCP、浏览器、外部服务或用户状态；不存在未处理的 Runtime Preflight 假设。
+8. 不允许旧测试方案、旧执行结果、普通 CI 成功代替本版正式 G74。
 
 本文件创建时不自行声明 Gate 2 已通过；正式 Gate 2 结论由测试工程师在完整复审后单独记录。
