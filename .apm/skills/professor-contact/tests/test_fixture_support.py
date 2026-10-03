@@ -265,18 +265,21 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
         prepared.release()
         self.assertFalse(anchor.exists())
 
-    def test_dangling_preferred_anchor_still_refuses_takeover(self):
-        preferred = support.claim_path_for(self.root / "program")
-        held = self.root / ".late.fixture-claim.held-legacy"
-        held.mkdir()
-        os.symlink(held, preferred)
-        self.addCleanup(held.rmdir)
-        with self.assertRaises(fixture53.FixtureBuildError):
-            fixture53.build_fixture(
-                self.root / "program", self.root / "profile",
-                output=self.output / "setup.json")
+    def test_ordinary_symlink_at_preferred_anchor_does_not_block_preparation(self):
+        program = self.root / "program"
+        preferred = support.claim_path_for(program)
+        ordinary_target = self.root / "ordinary-anchor-target"
+        ordinary_target.mkdir()
+        os.symlink(ordinary_target, preferred)
+
+        manifest = fixture53.build_fixture(
+            program, self.root / "profile", output=self.output / "setup.json")
+        self.assertEqual(manifest["fixture_kind"], "stage4-only")
         self.assertTrue(preferred.is_symlink())
-        self.assertFalse((self.root / "program").exists())
+        self.assertEqual(preferred.resolve(), ordinary_target.resolve())
+        self.assertFalse(any(ordinary_target.iterdir()))
+        self.assertTrue((program / "info.json").is_file())
+        self.assertTrue((self.output / "setup.json").is_file())
 
     def test_preexisting_empty_claim_shaped_root_stays_legal(self):
         pre = self.root / ".pre-existing.fixture-claim"
@@ -302,6 +305,7 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
                 parent.rmdir()
                 held = self.root / ".late.fixture-claim.held-1"
                 held.mkdir()
+                (held / support._HELD_MARKER).touch()
                 os.symlink(held, parent)
             return result
 
@@ -310,7 +314,9 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
                 support.prepare_root(inner)
         self.assertTrue(planted)
         self.assertTrue((self.root / ".late.fixture-claim.held-1").is_dir())
-        self.assertEqual(len(list(parent.iterdir())), 0)
+        self.assertEqual(
+            {item.name for item in parent.iterdir()}, {support._HELD_MARKER}
+        )
         self.assertFalse(inner.exists())
 
     def test_sample_and_manifest_write_refuse_live_claim_ancestor(self):
@@ -330,6 +336,7 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
         manifest_parent.rmdir()
         held = self.root / ".late-manifest.fixture-claim.held-1"
         held.mkdir()
+        (held / support._HELD_MARKER).touch()
         os.symlink(held, manifest_parent)
         with self.assertRaises(support.FixtureBuildError):
             support.write_json_exclusive(output, {"schema_version": 1})
@@ -377,9 +384,12 @@ class Issue53RollbackAndProtectionTests(IsolatedRootsTestCase):
         claim = support.claim_path_for(root.resolve())
         held = self.root / f"held-{root.name}"
         held.mkdir()
+        marker = held / support._HELD_MARKER
+        marker.touch()
         os.symlink(held, claim)
         self.addCleanup(claim.unlink)
         self.addCleanup(held.rmdir)
+        self.addCleanup(marker.unlink)
         return claim
 
     def test_second_root_failure_rolls_back_created_first_root(self):
