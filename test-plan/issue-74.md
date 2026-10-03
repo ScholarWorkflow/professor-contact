@@ -100,73 +100,50 @@ cd "$CHECKOUT/.apm/skills/professor-contact"
 
 六个 Case 使用同一个固定入口。每个输出文件在本次 `<run-root>` 中只创建一次；若已存在则停止，不删除后重跑。
 
-### T74-CORE
+为保证某个 Case 非 `PASS` 时仍能继续执行其他独立 Case，固定使用下面的包装函数。它只保存原始退出码，不解释 verdict：
 
 ```sh
-python3.12 tests/gate2_evidence.py \
-  --start tests --pattern 'test_fixture_support.py' \
-  --require-prefix test_fixture_support. \
-  --out "$RUN_ROOT/T74-CORE.json" \
-  > "$RUN_ROOT/T74-CORE.stdout" 2> "$RUN_ROOT/T74-CORE.stderr"
+run_case() {
+  case_id=$1
+  pattern=$2
+  prefix=$3
+  set +e
+  python3.12 tests/gate2_evidence.py \
+    --start tests \
+    --pattern "$pattern" \
+    --require-prefix "$prefix" \
+    --out "$RUN_ROOT/$case_id.json" \
+    > "$RUN_ROOT/$case_id.stdout" \
+    2> "$RUN_ROOT/$case_id.stderr"
+  rc=$?
+  set -e
+  printf '%s\n' "$rc" > "$RUN_ROOT/$case_id-exit.txt"
+}
+
+run_case T74-CORE \
+  test_fixture_support.py \
+  test_fixture_support.
+
+run_case T74-CLI \
+  test_issue74_cli_compat.py \
+  test_issue74_cli_compat.Issue74CliCompatibilityTests.
+
+run_case T74-53 \
+  test_issue53_stage4_runtime_assets.py \
+  test_issue53_stage4_runtime_assets.Issue53Stage4RuntimeAssetTests.
+
+run_case T74-55 \
+  test_issue55_stage3_runtime_assets.py \
+  test_issue55_stage3_runtime_assets.Issue55Stage3RuntimeAssetTests.
+
+run_case T74-STATIC \
+  test_issue74_static_acceptance.py \
+  test_issue74_static_acceptance.Issue74StaticAcceptanceTests.
+
+run_case T74-EVIDENCE \
+  test_gate2_evidence.py \
+  test_gate2_evidence.Gate2EvidenceTests.
 ```
-
-### T74-CLI
-
-```sh
-python3.12 tests/gate2_evidence.py \
-  --start tests --pattern 'test_issue74_cli_compat.py' \
-  --require-prefix test_issue74_cli_compat.Issue74CliCompatibilityTests. \
-  --out "$RUN_ROOT/T74-CLI.json" \
-  > "$RUN_ROOT/T74-CLI.stdout" 2> "$RUN_ROOT/T74-CLI.stderr"
-```
-
-### T74-53
-
-```sh
-python3.12 tests/gate2_evidence.py \
-  --start tests --pattern 'test_issue53_stage4_runtime_assets.py' \
-  --require-prefix test_issue53_stage4_runtime_assets.Issue53Stage4RuntimeAssetTests. \
-  --out "$RUN_ROOT/T74-53.json" \
-  > "$RUN_ROOT/T74-53.stdout" 2> "$RUN_ROOT/T74-53.stderr"
-```
-
-### T74-55
-
-```sh
-python3.12 tests/gate2_evidence.py \
-  --start tests --pattern 'test_issue55_stage3_runtime_assets.py' \
-  --require-prefix test_issue55_stage3_runtime_assets.Issue55Stage3RuntimeAssetTests. \
-  --out "$RUN_ROOT/T74-55.json" \
-  > "$RUN_ROOT/T74-55.stdout" 2> "$RUN_ROOT/T74-55.stderr"
-```
-
-### T74-STATIC
-
-```sh
-python3.12 tests/gate2_evidence.py \
-  --start tests --pattern 'test_issue74_static_acceptance.py' \
-  --require-prefix test_issue74_static_acceptance.Issue74StaticAcceptanceTests. \
-  --out "$RUN_ROOT/T74-STATIC.json" \
-  > "$RUN_ROOT/T74-STATIC.stdout" 2> "$RUN_ROOT/T74-STATIC.stderr"
-```
-
-### T74-EVIDENCE
-
-```sh
-python3.12 tests/gate2_evidence.py \
-  --start tests --pattern 'test_gate2_evidence.py' \
-  --require-prefix test_gate2_evidence.Gate2EvidenceTests. \
-  --out "$RUN_ROOT/T74-EVIDENCE.json" \
-  > "$RUN_ROOT/T74-EVIDENCE.stdout" 2> "$RUN_ROOT/T74-EVIDENCE.stderr"
-```
-
-每条命令均须单独记录退出码；退出码不为 0 也必须保留对应 JSON，不得因结果不理想而重跑：
-
-```sh
-printf '%s\n' "$?" > "$RUN_ROOT/<CASE>-exit.txt"
-```
-
-实际执行时必须在每条命令结束后立即保存该命令的退出码，不能用后续命令的 `$?` 代替。
 
 ## 判定
 
