@@ -31,7 +31,7 @@ jobs:
         id: formal
         shell: bash
         run: |
-          set -u
+          set -eu
           SOURCE_REPO=$(git rev-parse --show-toplevel)
           SOURCE_SHA=$(git -C "$SOURCE_REPO" rev-parse HEAD)
           EXPECTED_SHA='${{ github.event.pull_request.head.sha }}'
@@ -87,7 +87,6 @@ jobs:
             printf '%s\n' "$rc" > "$RUN_ROOT/$case_id-exit.txt"
           }
 
-          set -e
           run_case T74-CORE test_fixture_support.py test_fixture_support.
           run_case T74-CLI test_issue74_cli_compat.py test_issue74_cli_compat.Issue74CliCompatibilityTests.
           run_case T74-53 test_issue53_stage4_runtime_assets.py test_issue53_stage4_runtime_assets.Issue53Stage4RuntimeAssetTests.
