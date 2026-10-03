@@ -9,6 +9,12 @@
       "required_prefix": "test_fixture_support."
     },
     {
+      "case_id": "T74-CLI",
+      "pattern": "test_issue74_cli_compat.py",
+      "expected_count": 1,
+      "required_prefix": "test_issue74_cli_compat.Issue74CliCompatibilityTests."
+    },
+    {
       "case_id": "T74-53",
       "pattern": "test_issue53_stage4_runtime_assets.py",
       "expected_count": 8,
