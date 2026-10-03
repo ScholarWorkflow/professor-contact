@@ -73,20 +73,50 @@ def ensure_new_output(
 
 
 class PreparedRoot:
-    """A prepared sample root and the identity recorded at preparation time."""
+    """A prepared sample root and the identity recorded at preparation time.
 
-    def __init__(self, path: Path, created: bool, identity: tuple[int, int]):
+    The held open descriptor keeps the prepared directory object alive for
+    the identity check: a removed directory keeps ``st_nlink == 0`` while a
+    handle to it is open, so a replacement at the same path is detected
+    even when the kernel hands out the same inode number again.
+    """
+
+    def __init__(self, path: Path, created: bool, identity: tuple[int, int],
+                 dir_fd: int):
         self.path = path
         self.created = created
         self._identity = identity
+        self._dir_fd: int | None = dir_fd
 
     def owned(self) -> bool:
         """Whether the directory is still the one this run prepared."""
+        if self._dir_fd is None:
+            return False
         try:
+            held = os.fstat(self._dir_fd)
             current = self.path.stat()
         except OSError:
             return False
-        return self.path.is_dir() and (current.st_ino, current.st_dev) == self._identity
+        if held.st_nlink == 0:
+            return False
+        return (self.path.is_dir()
+                and (held.st_ino, held.st_dev) == (current.st_ino, current.st_dev))
+
+    def close(self) -> None:
+        """Release the held directory descriptor; idempotent."""
+        if self._dir_fd is None:
+            return
+        try:
+            os.close(self._dir_fd)
+        except OSError:
+            pass
+        self._dir_fd = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRoot:
@@ -109,7 +139,12 @@ def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRo
                 raise FixtureBuildError(
                     f"{description} changed during preparation: {resolved}") from None
     identity = resolved.stat()
-    return PreparedRoot(resolved, created, (identity.st_ino, identity.st_dev))
+    try:
+        dir_fd = os.open(resolved, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError as exc:
+        raise FixtureBuildError(
+            f"could not hold the prepared directory open: {resolved}") from exc
+    return PreparedRoot(resolved, created, (identity.st_ino, identity.st_dev), dir_fd)
 
 
 def discard_created_root(prepared: PreparedRoot) -> None:
@@ -123,6 +158,7 @@ def discard_created_root(prepared: PreparedRoot) -> None:
             "fixture root ownership changed before rollback; "
             f"refusing destructive cleanup: {prepared.path}")
     shutil.rmtree(prepared.path)
+    prepared.close()
 
 
 def write_text(path: Path, text: str) -> None:
