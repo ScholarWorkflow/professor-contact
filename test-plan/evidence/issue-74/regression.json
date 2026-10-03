@@ -7,6 +7,7 @@
     "contains": null,
     "required_prefixes": [
       "test_issue74_fixture_support.Issue74FixtureTests.",
+      "test_issue74_cross_run_claims.Issue74CrossRunClaimTests.",
       "test_issue53_stage4_runtime_assets.Issue53Stage4RuntimeAssetTests.",
       "test_issue55_stage3_runtime_assets.Issue55Stage3RuntimeAssetTests.",
       "test_gate2_evidence.Gate2EvidenceTests."
@@ -14,7 +15,7 @@
   },
   "load_errors": [],
   "interruption": null,
-  "tests_run": 898,
+  "tests_run": 907,
   "started": [
     "test_apm_deployment_metadata.ApmDeploymentMetadataTests.test_all_agent_frontmatter_descriptions_are_yaml_safe",
     "test_apm_deployment_metadata.ApmDeploymentMetadataTests.test_all_eight_source_agents_exist_with_exact_machine_names",
@@ -265,16 +266,22 @@
     "test_contact_targets.ContactTargetsTests.test_issue64_t4_transaction_records_carry_canonical_identity",
     "test_contact_targets_gate2_oracle.Issue64Gate2T3OracleTests.test_issue64_t3_path_conflict_cannot_publish_any_sibling_target",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_check_mutually_independent_rejects_equal_and_nested",
+    "test_fixture_support.FixtureSupportPrimitiveTests.test_claim_like_names_are_legal_without_live_claim",
+    "test_fixture_support.FixtureSupportPrimitiveTests.test_claim_shaped_roots_stay_legal_for_both_entries",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_discard_created_root_respects_ownership",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_ensure_new_output_refuses_claim_directory_and_its_inside",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_ensure_new_output_rejects_existing_producer_and_overlap",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_exclusive_json_write_refuses_to_overwrite",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_file_sha256_matches_file_bytes",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_json_write_byte_format_is_stable",
+    "test_fixture_support.FixtureSupportPrimitiveTests.test_live_claim_appearing_after_upfront_check_blocks_claim_and_root",
+    "test_fixture_support.FixtureSupportPrimitiveTests.test_live_claim_collision_is_refused_but_shaped_names_stay_legal",
+    "test_fixture_support.FixtureSupportPrimitiveTests.test_preexisting_empty_claim_shaped_root_stays_legal",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_prepare_root_keeps_existing_empty_directory",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_prepare_root_rejects_producer_non_dir_and_nonempty",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_prepared_root_release_never_touches_root_content",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_roots_separated_from_claims_rejects_overlap_and_containment",
+    "test_fixture_support.FixtureSupportPrimitiveTests.test_sample_and_manifest_write_refuse_live_claim_ancestor",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_second_preparation_of_same_path_fails_without_recreating",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_claim_conflict_on_first_root_fails_without_side_effects",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_equal_and_nested_roots_are_refused",
@@ -282,6 +289,7 @@
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_manifest_inside_root_is_allowed_but_sample_overlap_is_not",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_preexisting_manifest_output_is_refused_without_writes",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_profile_root_taking_the_program_claim_path_is_refused",
+    "test_fixture_support.Issue53RollbackAndProtectionTests.test_root_equal_to_another_run_claim_is_refused_and_claim_stays_empty",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_root_inside_the_other_claim_directory_is_refused",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_second_root_failure_keeps_pre_existing_first_root",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_second_root_failure_rolls_back_created_first_root",
@@ -488,6 +496,8 @@
     "test_issue61_direction_credibility_warning.DirectionCredibilityWarningTests.test_flagged_verdicts_render_one_visible_warning",
     "test_issue61_direction_credibility_warning.DirectionCredibilityWarningTests.test_warning_does_not_leak_force_parameter",
     "test_issue61_direction_credibility_warning.DirectionCredibilityWarningTests.test_warning_is_part_of_the_sha_bound_render",
+    "test_issue74_cross_run_claims.Issue74CrossRunClaimTests.test_claim_like_paths_without_live_claim_remain_legal",
+    "test_issue74_cross_run_claims.Issue74CrossRunClaimTests.test_live_claim_directory_cannot_be_used_as_another_run_root",
     "test_issue74_fixture_support.Issue74FixtureTests.test_abrupt_exit_leaves_occupation_and_next_call_cannot_take_over",
     "test_issue74_fixture_support.Issue74FixtureTests.test_cli_from_unrelated_directory_without_pythonpath",
     "test_issue74_fixture_support.Issue74FixtureTests.test_compatibility_bytes_manifest_hashes_and_returns",
@@ -1165,16 +1175,22 @@
     "test_contact_targets.ContactTargetsTests.test_issue64_t4_transaction_records_carry_canonical_identity",
     "test_contact_targets_gate2_oracle.Issue64Gate2T3OracleTests.test_issue64_t3_path_conflict_cannot_publish_any_sibling_target",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_check_mutually_independent_rejects_equal_and_nested",
+    "test_fixture_support.FixtureSupportPrimitiveTests.test_claim_like_names_are_legal_without_live_claim",
+    "test_fixture_support.FixtureSupportPrimitiveTests.test_claim_shaped_roots_stay_legal_for_both_entries",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_discard_created_root_respects_ownership",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_ensure_new_output_refuses_claim_directory_and_its_inside",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_ensure_new_output_rejects_existing_producer_and_overlap",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_exclusive_json_write_refuses_to_overwrite",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_file_sha256_matches_file_bytes",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_json_write_byte_format_is_stable",
+    "test_fixture_support.FixtureSupportPrimitiveTests.test_live_claim_appearing_after_upfront_check_blocks_claim_and_root",
+    "test_fixture_support.FixtureSupportPrimitiveTests.test_live_claim_collision_is_refused_but_shaped_names_stay_legal",
+    "test_fixture_support.FixtureSupportPrimitiveTests.test_preexisting_empty_claim_shaped_root_stays_legal",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_prepare_root_keeps_existing_empty_directory",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_prepare_root_rejects_producer_non_dir_and_nonempty",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_prepared_root_release_never_touches_root_content",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_roots_separated_from_claims_rejects_overlap_and_containment",
+    "test_fixture_support.FixtureSupportPrimitiveTests.test_sample_and_manifest_write_refuse_live_claim_ancestor",
     "test_fixture_support.FixtureSupportPrimitiveTests.test_second_preparation_of_same_path_fails_without_recreating",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_claim_conflict_on_first_root_fails_without_side_effects",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_equal_and_nested_roots_are_refused",
@@ -1182,6 +1198,7 @@
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_manifest_inside_root_is_allowed_but_sample_overlap_is_not",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_preexisting_manifest_output_is_refused_without_writes",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_profile_root_taking_the_program_claim_path_is_refused",
+    "test_fixture_support.Issue53RollbackAndProtectionTests.test_root_equal_to_another_run_claim_is_refused_and_claim_stays_empty",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_root_inside_the_other_claim_directory_is_refused",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_second_root_failure_keeps_pre_existing_first_root",
     "test_fixture_support.Issue53RollbackAndProtectionTests.test_second_root_failure_rolls_back_created_first_root",
@@ -1388,6 +1405,8 @@
     "test_issue61_direction_credibility_warning.DirectionCredibilityWarningTests.test_flagged_verdicts_render_one_visible_warning",
     "test_issue61_direction_credibility_warning.DirectionCredibilityWarningTests.test_warning_does_not_leak_force_parameter",
     "test_issue61_direction_credibility_warning.DirectionCredibilityWarningTests.test_warning_is_part_of_the_sha_bound_render",
+    "test_issue74_cross_run_claims.Issue74CrossRunClaimTests.test_claim_like_paths_without_live_claim_remain_legal",
+    "test_issue74_cross_run_claims.Issue74CrossRunClaimTests.test_live_claim_directory_cannot_be_used_as_another_run_root",
     "test_issue74_fixture_support.Issue74FixtureTests.test_abrupt_exit_leaves_occupation_and_next_call_cannot_take_over",
     "test_issue74_fixture_support.Issue74FixtureTests.test_cli_from_unrelated_directory_without_pythonpath",
     "test_issue74_fixture_support.Issue74FixtureTests.test_compatibility_bytes_manifest_hashes_and_returns",
@@ -1816,11 +1835,206 @@
     "test_verify_issue39_endpoint_runtime.VerifyIssue39EndpointRuntimeTests.test_trust_check_resolves_symlinked_consumer_paths"
   ],
   "missing_required_prefixes": [],
-  "failures": [],
-  "errors": [],
-  "events": [],
+  "failures": [
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_both_outputs_followup_reuses_facts_and_date",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_checklist_header_row_matches_body_salutation",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_choices_cannot_replace_the_verified_recipient (label='same-address')",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/test_contact_state.py\", line 1897, in test_stage5_choices_cannot_replace_the_verified_recipient\n    self.assertEqual(draft[\"status\"], \"ok\", draft)\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_first_allows_missing_initial_sent_date",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_followup_requires_non_placeholder_initial_sent_date (case='missing')",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/test_contact_state.py\", line 1835, in test_stage5_followup_requires_non_placeholder_initial_sent_date\n    self.assertEqual(out[\"status\"], \"error\", label)\nAssertionError: 'needs_refresh' != 'error'\n- needs_refresh\n+ error\n : missing\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_followup_requires_non_placeholder_initial_sent_date (case='blank')",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/test_contact_state.py\", line 1835, in test_stage5_followup_requires_non_placeholder_initial_sent_date\n    self.assertEqual(out[\"status\"], \"error\", label)\nAssertionError: 'needs_refresh' != 'error'\n- needs_refresh\n+ error\n : blank\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_followup_requires_non_placeholder_initial_sent_date (case='placeholder')",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/test_contact_state.py\", line 1835, in test_stage5_followup_requires_non_placeholder_initial_sent_date\n    self.assertEqual(out[\"status\"], \"error\", label)\nAssertionError: 'needs_refresh' != 'error'\n- needs_refresh\n+ error\n : placeholder\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_full_flow_and_fact_card",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_rejects_blank_signature_and_learning",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'error'\n- needs_refresh\n+ error\n : signature_name\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_rejects_non_boolean_first_choice",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'error'\n- needs_refresh\n+ error\n\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_requires_explicit_user_choices",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'error'\n- needs_refresh\n+ error\n\n"
+    },
+    {
+      "test_id": "test_stage5_immutable.TestStage5ImmutableTemplates.test_dynamic_field_polish_provenance_is_explicit",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_stage5_immutable.TestStage5ImmutableTemplates.test_finalize_without_full_body_humanizer_preserves_fixed_segments",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_stage5_immutable.TestStage5ImmutableTemplates.test_first_and_followup_are_both_rendered_from_stable_templates",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_stage5_immutable.TestStage5ImmutableTemplates.test_full_body_humanized_argument_is_ignored",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    }
+  ],
+  "errors": [
+    {
+      "test_id": "test_contact_state.TestStage5.test_humanizer_lost_title_rejected",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \".local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/case.py\", line 589, in _callTestMethod\n    if method() is not None:\n       ^^^^^^^^\n  File \"<worktree>/.apm/skills/professor-contact/tests/test_contact_state.py\", line 1750, in test_humanizer_lost_title_rejected\n    broken = draft[\"drafts\"][0][\"draft\"].replace(\n             ~~~~~^^^^^^^^^^\nKeyError: 'drafts'\n"
+    }
+  ],
+  "events": [
+    {
+      "test_id": "test_contact_state.TestStage5.test_humanizer_lost_title_rejected",
+      "evidence_id": "test_contact_state.TestStage5.test_humanizer_lost_title_rejected",
+      "kind": "error",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \".local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/case.py\", line 589, in _callTestMethod\n    if method() is not None:\n       ^^^^^^^^\n  File \"<worktree>/.apm/skills/professor-contact/tests/test_contact_state.py\", line 1750, in test_humanizer_lost_title_rejected\n    broken = draft[\"drafts\"][0][\"draft\"].replace(\n             ~~~~~^^^^^^^^^^\nKeyError: 'drafts'\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_both_outputs_followup_reuses_facts_and_date",
+      "evidence_id": "test_contact_state.TestStage5.test_stage5_both_outputs_followup_reuses_facts_and_date",
+      "kind": "failure",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_checklist_header_row_matches_body_salutation",
+      "evidence_id": "test_contact_state.TestStage5.test_stage5_checklist_header_row_matches_body_salutation",
+      "kind": "failure",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_choices_cannot_replace_the_verified_recipient",
+      "evidence_id": "test_contact_state.TestStage5.test_stage5_choices_cannot_replace_the_verified_recipient (label='same-address')",
+      "kind": "subtest",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/test_contact_state.py\", line 1897, in test_stage5_choices_cannot_replace_the_verified_recipient\n    self.assertEqual(draft[\"status\"], \"ok\", draft)\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_first_allows_missing_initial_sent_date",
+      "evidence_id": "test_contact_state.TestStage5.test_stage5_first_allows_missing_initial_sent_date",
+      "kind": "failure",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_followup_requires_non_placeholder_initial_sent_date",
+      "evidence_id": "test_contact_state.TestStage5.test_stage5_followup_requires_non_placeholder_initial_sent_date (case='missing')",
+      "kind": "subtest",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/test_contact_state.py\", line 1835, in test_stage5_followup_requires_non_placeholder_initial_sent_date\n    self.assertEqual(out[\"status\"], \"error\", label)\nAssertionError: 'needs_refresh' != 'error'\n- needs_refresh\n+ error\n : missing\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_followup_requires_non_placeholder_initial_sent_date",
+      "evidence_id": "test_contact_state.TestStage5.test_stage5_followup_requires_non_placeholder_initial_sent_date (case='blank')",
+      "kind": "subtest",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/test_contact_state.py\", line 1835, in test_stage5_followup_requires_non_placeholder_initial_sent_date\n    self.assertEqual(out[\"status\"], \"error\", label)\nAssertionError: 'needs_refresh' != 'error'\n- needs_refresh\n+ error\n : blank\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_followup_requires_non_placeholder_initial_sent_date",
+      "evidence_id": "test_contact_state.TestStage5.test_stage5_followup_requires_non_placeholder_initial_sent_date (case='placeholder')",
+      "kind": "subtest",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/test_contact_state.py\", line 1835, in test_stage5_followup_requires_non_placeholder_initial_sent_date\n    self.assertEqual(out[\"status\"], \"error\", label)\nAssertionError: 'needs_refresh' != 'error'\n- needs_refresh\n+ error\n : placeholder\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_full_flow_and_fact_card",
+      "evidence_id": "test_contact_state.TestStage5.test_stage5_full_flow_and_fact_card",
+      "kind": "failure",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_rejects_blank_signature_and_learning",
+      "evidence_id": "test_contact_state.TestStage5.test_stage5_rejects_blank_signature_and_learning",
+      "kind": "failure",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'error'\n- needs_refresh\n+ error\n : signature_name\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_rejects_non_boolean_first_choice",
+      "evidence_id": "test_contact_state.TestStage5.test_stage5_rejects_non_boolean_first_choice",
+      "kind": "failure",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'error'\n- needs_refresh\n+ error\n\n"
+    },
+    {
+      "test_id": "test_contact_state.TestStage5.test_stage5_requires_explicit_user_choices",
+      "evidence_id": "test_contact_state.TestStage5.test_stage5_requires_explicit_user_choices",
+      "kind": "failure",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'error'\n- needs_refresh\n+ error\n\n"
+    },
+    {
+      "test_id": "test_stage5_immutable.TestStage5ImmutableTemplates.test_dynamic_field_polish_provenance_is_explicit",
+      "evidence_id": "test_stage5_immutable.TestStage5ImmutableTemplates.test_dynamic_field_polish_provenance_is_explicit",
+      "kind": "failure",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_stage5_immutable.TestStage5ImmutableTemplates.test_finalize_without_full_body_humanizer_preserves_fixed_segments",
+      "evidence_id": "test_stage5_immutable.TestStage5ImmutableTemplates.test_finalize_without_full_body_humanizer_preserves_fixed_segments",
+      "kind": "failure",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_stage5_immutable.TestStage5ImmutableTemplates.test_first_and_followup_are_both_rendered_from_stable_templates",
+      "evidence_id": "test_stage5_immutable.TestStage5ImmutableTemplates.test_first_and_followup_are_both_rendered_from_stable_templates",
+      "kind": "failure",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    },
+    {
+      "test_id": "test_stage5_immutable.TestStage5ImmutableTemplates.test_full_body_humanized_argument_is_ignored",
+      "evidence_id": "test_stage5_immutable.TestStage5ImmutableTemplates.test_full_body_humanized_argument_is_ignored",
+      "kind": "failure",
+      "phase": "product",
+      "verdict": "FAIL",
+      "detail": "Traceback (most recent call last):\n  File \"<worktree>/.apm/skills/professor-contact/tests/gate2_evidence.py\", line 32, in invoke\n    return _original(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'needs_refresh' != 'ok'\n- needs_refresh\n+ ok\n : {'message': '联系方式证据快照与上游 live 指纹不一致或缺失：先重跑阶段 4 刷新 邮件输入.json，再重跑阶段 5。核验通过前不读取 choices。未写盘。', 'professor': '試験 教授', 'reason_code': 'contact_evidence_snapshot_missing', 'status': 'needs_refresh'}\n"
+    }
+  ],
   "skipped": [],
   "expected_failures": [],
   "unexpected_successes": [],
-  "verdict": "PASS"
+  "verdict": "FAIL"
 }
