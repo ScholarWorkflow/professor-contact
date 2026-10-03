@@ -29,6 +29,23 @@ class FixtureBuildError(RuntimeError):
 _CLAIM_SUFFIX = ".fixture-claim"
 
 
+def _is_claim_name(name: str) -> bool:
+    return name.startswith(".") and name.endswith(_CLAIM_SUFFIX) and name != _CLAIM_SUFFIX
+
+
+def _assert_outside_claim_namespace(path: Path, *, description: str) -> None:
+    """Refuse paths on, inside, or under the reserved claim-name namespace.
+
+    Claim directories of any run are named with the internal claim encoding,
+    so a sample root or manifest output that matches the encoding anywhere on
+    its path could collide with another run's exclusive claim and pollute it.
+    """
+    if _is_claim_name(path.name) or any(
+            _is_claim_name(ancestor.name) for ancestor in path.parents):
+        raise FixtureBuildError(
+            f"{description} must not use the reserved claim namespace: {path}")
+
+
 def producer_root() -> Path:
     # tests/runtime/fixture_support.py -> parents[5] is the producer checkout.
     return Path(__file__).resolve().parents[5]
@@ -100,6 +117,7 @@ def ensure_new_output(
     roots may still contain the output as long as no sample file is hit.
     """
     resolved = resolved_outside_producer(path, description=description)
+    _assert_outside_claim_namespace(resolved, description=description)
     if resolved.exists():
         raise FixtureBuildError(f"{description} already exists: {resolved}")
     for reserved_path in reserved:
@@ -152,6 +170,7 @@ def prepare_root(path: Path, *, description: str = "fixture root") -> PreparedRo
     by the returned object and must be released by the caller.
     """
     resolved = resolved_outside_producer(path, description=description)
+    _assert_outside_claim_namespace(resolved, description=description)
     if resolved.exists():
         if not resolved.is_dir():
             raise FixtureBuildError(f"{description} is not a directory: {resolved}")

@@ -177,6 +177,24 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
                 support.ensure_new_output(bad, claims=[claim])
         self.assertFalse(claim.exists())
 
+    def test_claim_namespace_is_reserved_for_roots_and_outputs(self):
+        with self.assertRaises(support.FixtureBuildError):
+            support.prepare_root(self.root / ".taken.fixture-claim")
+        self.assertFalse((self.root / ".taken.fixture-claim").exists())
+
+        with self.assertRaises(support.FixtureBuildError):
+            support.prepare_root(self.root / ".outer.fixture-claim" / "inner")
+        self.assertFalse((self.root / ".outer.fixture-claim").exists())
+
+        with self.assertRaises(support.FixtureBuildError):
+            support.ensure_new_output(self.root / ".taken.fixture-claim")
+        with self.assertRaises(support.FixtureBuildError):
+            support.ensure_new_output(self.root / ".outer.fixture-claim" / "out.json")
+
+        normal_root = support.prepare_root(self.root / "plain-root")
+        normal_root.release()
+        support.ensure_new_output(self.root / "plain-output.json")
+
     def test_discard_created_root_respects_ownership(self):
         created = support.prepare_root(self.root / "created")
         self.assertTrue(created.created)
@@ -311,6 +329,22 @@ class Issue53RollbackAndProtectionTests(IsolatedRootsTestCase):
                 program, profile, output=self.output / "setup.json")
         self.assertFalse(program.exists())
         self.assertFalse(profile.exists())
+
+    def test_root_equal_to_another_run_claim_is_refused_and_claim_stays_empty(self):
+        holder_root = self.root / "holder"
+        prepared = support.prepare_root(holder_root)
+        self.addCleanup(prepared.release)
+        claim = support.claim_path_for(holder_root.resolve())
+        self.assertTrue(claim.is_dir())
+        with self.assertRaises(fixture53.FixtureBuildError):
+            fixture53.build_fixture(
+                self.root / "b-program", claim, output=self.output / "b-setup.json")
+        self.assertFalse(any(claim.iterdir()))
+        self.assertTrue(prepared.owned())
+        prepared.release()
+        self.assertFalse(claim.exists())
+        normal = support.prepare_root(self.root / "normal-root")
+        normal.release()
 
     def test_success_releases_both_claims(self):
         program = self.root / "program"
