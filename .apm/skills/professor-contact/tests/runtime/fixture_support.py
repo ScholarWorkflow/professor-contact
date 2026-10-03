@@ -52,14 +52,14 @@ def _is_live_claim(path: Path) -> bool:
 
     The anchor is a symlink created atomically (complete from birth) and
     removed atomically, and the occupation directory it points to carries
-    the internal marker before publication, so an anchor is recognisable in
-    exactly its held state. Ordinary directories, files and user symlinks
-    of the same shape are legal inputs.
+    the internal marker before publication and keeps it until the anchor is
+    removed, so an anchor is recognisable in exactly its held state. The
+    claim-name encoding never turns a symlink (or anything else) without
+    the marker into an occupation: ordinary directories, files and user
+    symlinks of the same shape are legal inputs.
     """
     if not path.is_symlink():
         return False
-    if _is_claim_name(path.name):
-        return True
     try:
         return (path / _HELD_MARKER).exists()
     except OSError:
