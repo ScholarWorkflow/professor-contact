@@ -146,8 +146,10 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
 
     def test_roots_separated_from_claims_rejects_overlap_and_containment(self):
         root = self.root / "root"
-        claim = self.root / "sibling.fixture-claim"
-        for bad_root in (claim, claim / "inner", self.root):
+        holder = support.prepare_root(self.root / "held-root")
+        self.addCleanup(holder.release)
+        claim = holder.anchor
+        for bad_root in (claim, claim / "inner", claim.resolve().parent):
             with self.assertRaises(support.FixtureBuildError):
                 support.check_roots_separated_from_claims([bad_root], [claim])
         support.check_roots_separated_from_claims(
@@ -173,11 +175,14 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
         self.assertEqual(fresh, (self.root / "fresh.json").resolve())
 
     def test_ensure_new_output_refuses_claim_directory_and_its_inside(self):
-        claim = self.root / ".sample.fixture-claim"
+        holder = support.prepare_root(self.root / "sample")
+        self.addCleanup(holder.release)
+        claim = holder.anchor
         for bad in (claim, claim / "manifest.json", claim / "nested" / "out.json"):
             with self.assertRaises(support.FixtureBuildError):
                 support.ensure_new_output(bad, claims=[claim])
-        self.assertFalse(claim.exists())
+        self.assertTrue(holder.owned())
+        self.assertEqual({item.name for item in claim.iterdir()}, {support._HELD_MARKER})
 
     def test_claim_like_names_are_legal_without_live_claim(self):
         direct_root = self.root / ".ordinary.fixture-claim"
@@ -463,36 +468,37 @@ class Issue53RollbackAndProtectionTests(IsolatedRootsTestCase):
         self.assertFalse((self.root / "program").exists())
         self.assertFalse((self.root / "profile").exists())
 
-    def test_manifest_inside_claim_directory_is_refused_before_any_write(self):
+    def test_manifest_inside_unused_preferred_claim_path_is_legal(self):
         program = self.root / "program"
         profile = self.root / "profile"
         claim = support.claim_path_for(program.resolve())
-        with self.assertRaises(fixture53.FixtureBuildError):
-            fixture53.build_fixture(
-                program, profile, output=claim / "nested" / "setup.json")
-        self.assertFalse(claim.exists())
-        self.assertFalse((claim / "nested" / "setup.json").exists())
-        self.assertFalse(program.exists())
-        self.assertFalse(profile.exists())
+        output = claim / "nested" / "setup.json"
+        result = fixture53.build_fixture(program, profile, output=output)
+        self.assertEqual(result["fixture_kind"], "stage4-only")
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
+        self.assertTrue((program / "info.json").is_file())
+        self.assertTrue((profile / "套磁邮件/套磁信息.md").is_file())
+        self.assertFalse(claim.is_symlink())
 
-    def test_profile_root_taking_the_program_claim_path_is_refused(self):
+    def test_profile_root_at_unused_preferred_claim_path_is_legal(self):
         program = self.root / "program"
         profile = support.claim_path_for(program.resolve())
-        with self.assertRaises(fixture53.FixtureBuildError):
-            fixture53.build_fixture(
-                program, profile, output=self.output / "setup.json")
-        self.assertFalse(program.exists())
-        self.assertFalse(profile.exists())
-        self.assertFalse((self.output / "setup.json").exists())
+        output = self.output / "setup.json"
+        result = fixture53.build_fixture(program, profile, output=output)
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
+        self.assertTrue((program / "info.json").is_file())
+        self.assertTrue((profile / "套磁邮件/套磁信息.md").is_file())
+        self.assertFalse(profile.is_symlink())
 
-    def test_root_inside_the_other_claim_directory_is_refused(self):
+    def test_profile_root_inside_unused_preferred_claim_path_is_legal(self):
         program = self.root / "program"
         profile = support.claim_path_for(program.resolve()) / "inner"
-        with self.assertRaises(fixture53.FixtureBuildError):
-            fixture53.build_fixture(
-                program, profile, output=self.output / "setup.json")
-        self.assertFalse(program.exists())
-        self.assertFalse(profile.exists())
+        output = self.output / "setup.json"
+        result = fixture53.build_fixture(program, profile, output=output)
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
+        self.assertTrue((program / "info.json").is_file())
+        self.assertTrue((profile / "套磁邮件/套磁信息.md").is_file())
+        self.assertFalse(profile.parent.is_symlink())
 
     def test_publish_conflict_reclassifies_live_occupier_before_fallback(self):
         holder = support.prepare_root(self.root / "holder")
@@ -586,14 +592,15 @@ class Issue55ProtectionTests(IsolatedRootsTestCase):
         self.assertFalse(any(claim.iterdir()))
         self.assertTrue((self.output / "setup.json").is_file())
 
-    def test_manifest_inside_claim_directory_is_refused_before_any_write(self):
+    def test_manifest_inside_unused_preferred_claim_path_is_legal(self):
         program = self.root / "program"
         claim = support.claim_path_for(program.resolve())
-        with self.assertRaises(fixture55.FixtureBuildError):
-            fixture55.build_fixture(program, output=claim / "manifest.json")
-        self.assertFalse(claim.exists())
-        self.assertFalse((claim / "manifest.json").exists())
-        self.assertFalse(program.exists())
+        output = claim / "manifest.json"
+        result = fixture55.build_fixture(program, output=output)
+        self.assertEqual(result["fixture_kind"], "issue55-stage3-pre")
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
+        self.assertTrue((program / "info.json").is_file())
+        self.assertFalse(claim.is_symlink())
 
     def test_manifest_bytes_use_the_stable_json_format(self):
         program = self.root / "program"

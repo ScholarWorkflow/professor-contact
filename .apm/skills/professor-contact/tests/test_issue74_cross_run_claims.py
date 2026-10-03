@@ -103,13 +103,18 @@ class Issue74CrossRunClaimTests(unittest.TestCase):
     def test_claim_like_paths_without_live_claim_remain_legal(self):
         """Internal claim encoding alone must not make a legal path invalid."""
         for number in (53, 55):
-            for surface in (
+            surfaces = (
                 "root-name",
                 "root-ancestor",
                 "output-name",
                 "output-ancestor",
                 "preferred-anchor-symlink",
-            ):
+                "preferred-anchor-output",
+                "preferred-anchor-output-ancestor",
+            )
+            if number == 53:
+                surfaces += ("preferred-anchor-profile", "preferred-anchor-profile-ancestor")
+            for surface in surfaces:
                 with self.subTest(entry=number, surface=surface):
                     parent = self.space / f"inactive-claim-like-{number}-{surface}"
                     parent.mkdir()
@@ -119,6 +124,7 @@ class Issue74CrossRunClaimTests(unittest.TestCase):
                     claim_like = ".ordinary.fixture-claim"
                     ordinary_anchor = None
                     ordinary_target = None
+                    preferred = self.entries[number].support.claim_path_for(program.resolve())
 
                     if surface == "root-name":
                         program = parent / claim_like
@@ -132,6 +138,14 @@ class Issue74CrossRunClaimTests(unittest.TestCase):
                         ordinary_parent = parent / claim_like
                         ordinary_parent.mkdir()
                         output = ordinary_parent / "manifest.json"
+                    elif surface == "preferred-anchor-output":
+                        output = preferred
+                    elif surface == "preferred-anchor-output-ancestor":
+                        output = preferred / "nested" / "manifest.json"
+                    elif surface == "preferred-anchor-profile":
+                        profile = preferred
+                    elif surface == "preferred-anchor-profile-ancestor":
+                        profile = preferred / "inner"
                     else:
                         ordinary_target = parent / "ordinary-anchor-target"
                         ordinary_target.mkdir()
@@ -147,6 +161,8 @@ class Issue74CrossRunClaimTests(unittest.TestCase):
                         self.assertTrue(profile.is_dir())
                     self.assertTrue(output.is_file())
                     self.assertGreater(len(output.read_bytes()), 0)
+                    if surface.startswith("preferred-anchor-") and ordinary_anchor is None:
+                        self.assertFalse(preferred.is_symlink())
                     if ordinary_anchor is not None:
                         self.assertTrue(ordinary_anchor.is_symlink())
                         self.assertEqual(

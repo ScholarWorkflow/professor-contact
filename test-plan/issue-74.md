@@ -1,26 +1,32 @@
-# 第 74 号议题测试方案第 7 版
+# 第 74 号议题测试方案第 8 版
 
 ## 状态与唯一来源
 
-- 修订号：`issue74-test-r7`。
-- 本版只修复第六版的一个验收 `false-FAIL`：第六版后的实现测试把“首选内部锚点名称上存在普通符号链接、但该链接不代表真实占用”的合法输入固定成必须拒绝；这与已批准计划“内部名称编码不得扩大合法输入拒绝范围、普通内容占用内部名称时应改用其他内部名称”的约定冲突。
-- 本版不修改正式需求、不修改已批准执行计划、不降低任何 PASS 条件，也不修改 `ABSOLUTE_PASS`。41 个必需方法名称与数量不变；只扩展既有 R2/R3 合法输入 proof，并修正实现测试对“真实占用”和“普通同名符号链接”的区分。
+- 修订号：`issue74-test-r8`。
+- 本版修复第七版遗漏的一个验收 `false-FAIL`：无真实占用时，业务清单或第 53 号资料根使用首选内部锚点位置及其子路径，现有实现测试却要求拒绝。该预期与已批准计划“内部名称编码不得扩大合法输入拒绝范围、内部占用应避开业务路径”的约定冲突。
+- 本版不修改正式需求、不修改已批准执行计划、不降低任何 PASS 条件，也不修改 `ABSOLUTE_PASS`。41 个必需方法名称与数量不变；只扩展既有 R2/R3 合法输入证明，修正四个实现测试的错误拒绝预期，并让两个辅助函数拒绝用例使用真实持有的占用而非未使用的候选名称。
 - 本文件及当前 head 中的 `.apm/skills/professor-contact/tests/test_issue74_fixture_support.py`、`.apm/skills/professor-contact/tests/test_issue74_cross_run_claims.py`、`.apm/skills/professor-contact/tests/test_fixture_support.py`、`test-plan/issue-74-required-cases.json`、`test-plan/issue-74-pass-check.jq` 构成当前唯一权威测试方案正文。判定检查样例仍为 `test-plan/issue-74-check-samples.jq`、`test-plan/check-issue-74-pass-check.sh` 和 `.apm/skills/professor-contact/tests/issue74_recipe_checks.py`。
-- 本版全部取代第六版 `issue74-test-r6`。历史方案和历史执行证据只作为来源记录，不需要执行者拼接。
+- 本版全部取代第七版 `issue74-test-r7`。第七版正式来源为提交 `90955c5a560d136a42de623b4bc603b60d720e56` 及 PR 76 评论 `https://github.com/ScholarWorkflow/professor-contact/pull/76#issuecomment-5969344015`（读取时更新时间 `2026-10-03T12:51:48Z`）；被审核输入为 `20b829d48e6fb55819ac4fa0c457a88b53cfe351`。历史方案和历史执行证据只作为来源记录，不需要执行者拼接。
 - 正式需求：第 74 号议题需求第 1 版，R1—R4。
 - 正式执行计划：`plan/issue-74.md` 第 3 版，提交 `a328e788a21af8fc7d3ebf052c399054d242b786`，已有正式批准。本次 Recipe 修订不重开计划审核。
 - 兼容基准：`768b49ef4514e36edec6b57ed3821a99af9e9c00`。
 - 判定语义保持 `ABSOLUTE_PASS`：正式 G74 中任何有效测试失败、错误、跳过、非零回归退出或总 `verdict != PASS` 都使 G74 为 `FAIL`。基线失败、范围外归属或“不是本 PR 引入”都不能把该次 G74 改写为 `PASS`。
 
-## 第七版合法重开事实
+## 第八版合法重开事实与修订结论
 
 本次只重开 R2/R3“内部占用编码不能扩大合法输入拒绝范围”的 proof，满足 `Test Engineer Rule` §6.2 的三项事实：
 
 1. **冻结要求／规则**：第三版批准计划要求允许收紧的旧输入仅限已冻结危险类别和真实并发占用冲突；其他合法输入不得借内部占用编码扩大拒绝范围。占用名称编码属于内部实现，普通内容占住首选内部名称时应改用其他内部名称；只有真实活动或异常遗留占用才属于必须拒绝的占用冲突。
-2. **负责 Proof／Case**：第六版 R2/R3 的负责方法是 `test_issue74_cross_run_claims.Issue74CrossRunClaimTests.test_claim_like_paths_without_live_claim_remain_legal`；同时 G74 使用 `--pattern 'test_*.py'` 执行整个生产者测试目录，因此 `test_fixture_support.py` 中任何未经正式要求支持的失败预期也会直接改变 `ABSOLUTE_PASS` verdict。
-3. **最小错误结果**：没有活动占用时，在某合法根的首选内部锚点位置预先放置一个普通符号链接，链接目标是普通空目录且不带当前占用标记。该输入没有生产者归属、非空根、已有输出、根重合或真实并发占用。当前实现与新增实现测试仍把它当成真实占用而拒绝，因此正确实现若按计划将它作为普通内容并回退到下一个内部名称，旧 Recipe 反而会给出 `FAIL`，形成明确 `false-FAIL`。
+2. **负责 Proof／Case**：第七版 R2/R3 的负责方法是 `test_issue74_cross_run_claims.Issue74CrossRunClaimTests.test_claim_like_paths_without_live_claim_remain_legal`；同时 G74 使用 `--pattern 'test_*.py'` 执行整个生产者测试目录，因此 `test_fixture_support.py` 中任何未经正式要求支持的失败预期也会直接改变 `ABSOLUTE_PASS` verdict。
+3. **最小错误结果**：在生产者之外的空隔离目录中，程序根为 `program`、输出为 `.program.fixture-claim/manifest.json`，两者均不存在且没有真实占用，其余前提合法。满足要求的实现避开输出路径选择内部占用，产出兼容样例与清单并释放自有占用。被审版本 `test_fixture_support.py` 第 466、478、488、589 行起的四个用例却对输出或资料根的这种布局使用 `assertRaises`，合法成功会使 G74 失败。第七版合法证明只覆盖普通同名路径和普通符号链接，未覆盖业务路径恰好使用首选名称的错误拒绝，构成明确 `false-FAIL`。
 
-修复方式固定如下：既有正式方法 `test_claim_like_paths_without_live_claim_remain_legal` 增加“普通符号链接占用当前首选内部锚点名”这一合法面，第 53、55 号两个受支持入口都必须成功，普通符号链接及其目标保持不变；`test_fixture_support.py` 中真实占用模拟必须携带当前内部占用标记，普通同名符号链接改为成功预期。方法总数仍为 41 个，不新增第二个 proof owner。
+分类：直接问题为 `RECIPE`；相同冻结要求下第七版 `PASS + COMPLETE` 漏审，另记 `REVIEW_DEFECT`。不重开正式要求或执行计划。
+
+修复方式固定如下：既有正式方法 `test_claim_like_paths_without_live_claim_remain_legal` 保留第七版全部输入，并增加两个入口的清单等于或位于首选内部名称内的合法输入；第 53 号还覆盖资料根等于或位于首选内部名称内。四个错误拒绝用例改为核查成功、样例文件、清单内容与返回对象一致，且业务路径没有成为内部占用符号链接。两个辅助函数拒绝用例以 `prepare_root` 取得的真实占用为输入，不再把未使用的候选名称当作实际占用。既有真实占用拒绝、禁止副作用、回滚及异常遗留用例保留。方法总数仍为 41 个，不新增第二个证明负责者。
+
+第八版执行前检查依据：两个入口和调用方式未变，隔离目录前提、证据格式、判定程序及通过条件未变；成功事实由输出 JSON 与返回对象、实际样例文件及路径类型直接断言，真实占用负例由已取得的持有对象建立，拒绝后核查持有状态及占用内容。正确合法成功不再被四项异常断言拒绝，未成功构建不能满足新增成功断言。本次只作测试源码和方案自洽核查，不执行正式 G74，也不将当前产品行为当作正确预期来源。
+
+本次修订完成后的设计结论：`Test Engineer Gate 1: PASS`（复用未改变的冻结要求）；`Test Engineer Gate 2: PASS`；`Gate review completeness: COMPLETE`（按 §6.2 限定范围，并核对完整记录自洽）。此结论只确认测试设计；已知产品阻断项仍须由实现执行者修复，当前 `Gate 3: NOT_READY`。本版尚未在 PR 发布，不表示远端已取得本版正文；执行者必须取得含本文件及配套测试的完整固定提交后才能使用。
 
 ## 要求与证明归属
 
@@ -30,7 +36,7 @@
 | --- | --- | --- |
 | R2 成功结果兼容 | `test_issue74_fixture_support.Issue74FixtureTests.test_compatibility_bytes_manifest_hashes_and_returns` | 固定基准与当前版本的返回对象、文件字节、摘要和包装行为兼容 |
 | R2 两种既有调用方式 | `test_cli_from_unrelated_directory_without_pythonpath` | 按文件加载和无关目录直接 CLI 均保持原约定 |
-| R2/R3 内部占用名称不能扩大合法输入拒绝范围 | `test_issue74_cross_run_claims.Issue74CrossRunClaimTests.test_claim_like_paths_without_live_claim_remain_legal` | 无实际占用时四种 claim 风格路径，以及普通符号链接占用当前首选内部锚点名，均保持合法 |
+| R2/R3 内部占用名称不能扩大合法输入拒绝范围 | `test_issue74_cross_run_claims.Issue74CrossRunClaimTests.test_claim_like_paths_without_live_claim_remain_legal` | 无实际占用时四种同名路径、普通符号链接占用首选内部名称、清单使用首选名称及其子路径、第 53 号资料根使用首选名称及其子路径，均保持合法 |
 | R3 预先危险路径与清单冲突 | `test_preexisting_conflicts_fail_before_any_sample_write` | 拒绝已冻结危险输入，拒绝前不写样例、不覆盖原内容 |
 | R3 第 53 号双根独立 | `test_equal_and_nested_issue53_roots_are_rejected_without_changes` | 相等与互为祖先均拒绝 |
 | R3 已有空目录身份保持 | `test_existing_empty_root_identity_is_preserved` | 不删除重建既有空目录 |
@@ -51,7 +57,7 @@
 
 本版不增加真实安装、代理、MCP、浏览器、外部进程或第三方服务依赖。正式产品证明仍是 producer-local deterministic test。
 
-第六版已经冻结的独立检出环境继续原样有效：从当前干净仓库通过本地 Git 对象建立一个位于系统临时目录下的独立检出，并在该检出中运行冻结命令。本版只改变一个 producer-local 合法输入断言，不改变该环境前提、结构化证据格式或判定程序。
+第七版已经冻结的独立检出环境继续原样有效：从当前干净仓库通过本地 Git 对象建立一个位于系统临时目录下的独立检出，并在该检出中运行冻结命令。本版只改变受影响合法输入及真实占用负例的测试断言，不改变该环境前提、结构化证据格式或判定程序。
 
 正式执行前必须确认：
 
@@ -154,7 +160,7 @@ printf '%s\n' "$(git status --porcelain)" > "$RUN_DIR/checkout-status-after.txt"
 
 ## P74：判定程序第二关口证明
 
-P74 继续使用既有的判定通道验证和完整性样例。若以下文件相对已通过的第六版 Gate 2 来源均未改变，可记录 `REUSE_PRIOR_PASS`，并保存准确来源提交和影响分析：
+P74 继续使用第七版来源提交 `90955c5a560d136a42de623b4bc603b60d720e56` 中已经通过的判定通道验证和完整性样例。以下文件从该提交到被审核产品提交 `20b829d48e6fb55819ac4fa0c457a88b53cfe351` 的内容比较无差异，本版也未修改它们，因此本轮 P74 采用 `REUSE_PRIOR_PASS`；复用的是判定程序设计证明，不是新增产品输入的执行结果：
 
 - `.apm/skills/professor-contact/tests/gate2_evidence.py`
 - `.apm/skills/professor-contact/tests/issue74_recipe_checks.py`
@@ -190,9 +196,13 @@ S74 读取当前待测提交的固定源码与文档，不从调用者原工作�
 
 第五版运行 `issue74-evidence.RO4o0YdT` 保持其原始事实：907 个方法有效运行，41 个必需方法通过，但整轮 `verdict == FAIL`、回归退出码 1、`complete-pass == false`。它仍是第六版环境修订的重开依据，不得重新判为 `PASS`。
 
-第六版当前有效运行 `issue74-evidence.Vf9dEgan` 保持其原始事实：909 个方法有效运行，41 个必需方法和整轮 `ABSOLUTE_PASS` 均通过。该运行证明的是第六版 Recipe 与当时测试输入；本版改变了 R2/R3 合法输入断言和 `test_fixture_support.py` 的正式全量回归输入，因此该运行不能作为第七版 G74 的当前 PASS 来源，也不能把旧 909 个结果重新判读为本版新增输入已经执行。
+第六版运行 `issue74-evidence.Vf9dEgan` 保持其原始事实：909 个方法有效运行，41 个必需方法和整轮 `ABSOLUTE_PASS` 均通过。该运行证明的是第六版 Recipe 与当时测试输入，不能作为第八版新增合法输入已经执行的证明。
 
-第七版 G74 选择 `EXECUTE_CURRENT`：产品修复后必须按上述独立检出 Recipe 重新执行一次完整回归。P74 的判定入口和通道验证若未变化，可按准确来源继续 `REUSE_PRIOR_PASS`；S74 按当前产品源码重新判断。
+第七版执行者评论 `https://github.com/ScholarWorkflow/professor-contact/pull/76#issuecomment-5969994577`（读取时更新时间 `2026-10-03T14:15:17Z`）报告运行 `issue74-evidence.AH8XmYKm` 的 912 项通过，产品记录提交为 `20b829d48e6fb55819ac4fa0c457a88b53cfe351`。本版不追溯改写该次执行事实，也未在本轮重新审核其全部原始机器证据；新增合法输入和修正后的断言没有在该次运行中执行，不能复用或重新判读为第八版 G74 的通过结果。
+
+第八版 G74 选择 `EXECUTE_CURRENT`：四个错误拒绝预期、真实占用负例前提及正式合法输入均已变化，旧证据不含本版待判事实，不能仅靠重新判读取得通过。产品修复且本版配套测试已进入待测提交后，必须按上述独立检出 Recipe 执行一次完整回归；不得执行第七版测试来证明第八版通过。未受影响的需求、执行计划和测试证明设计复用第七版来源；G74 使用已冻结整套回归且保持 `ABSOLUTE_PASS`，故其当前正式执行仍包含全部测试，不增加额外业务执行。
+
+P74 采用上述准确来源的 `REUSE_PRIOR_PASS`。S74 当前已有未解决的产品阻断项：同一真实根可能因不同业务路径取得不同占用，及解析后的实际占用目录可被另一调用写入；这些事实已经属于第七版 S74 第 2 项，不因发现它们重开未受影响的测试设计。实现执行者修复后，S74 对占用选择、实际目录识别、写入及释放的直接连带路径采用 `EXECUTE_CURRENT` 静态核查，记录当前源码位置与依据；没有新有效结论前不能复用旧结论写就绪。
 
 ## Gate 3 记录要求
 
@@ -204,7 +214,7 @@ Gate 3 对每个必需 proof 记录：
 - 原始证据位置、运行编号和命令；
 - 影响分析及最终 verdict。
 
-第七版 G74 固定为 `EXECUTE_CURRENT`。只有三个 Gate 均为 `PASS`、S74 满足、G74 满足上述 `ABSOLUTE_PASS`、41 个必需方法对当前产品版本均有有效 PASS，且没有未解决的 producer `FAIL` 或必需 case 的非通过终态，才能记录：
+第八版 G74 固定为 `EXECUTE_CURRENT`。只有三个 Gate 均为 `PASS`、S74 满足、G74 满足上述 `ABSOLUTE_PASS`、41 个必需方法对当前产品版本均有有效 PASS，且没有未解决的 producer `FAIL` 或必需 case 的非通过终态，才能记录：
 
 `Merge conclusion: READY`
 
