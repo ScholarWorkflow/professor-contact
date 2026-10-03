@@ -101,13 +101,14 @@ class Issue74CrossRunClaimTests(unittest.TestCase):
                 self.assertTrue(paths[2].is_file())
 
     def test_claim_like_paths_without_live_claim_remain_legal(self):
-        """Internal claim-name encoding alone must not make a legal path invalid."""
+        """Internal claim encoding alone must not make a legal path invalid."""
         for number in (53, 55):
             for surface in (
                 "root-name",
                 "root-ancestor",
                 "output-name",
                 "output-ancestor",
+                "preferred-anchor-symlink",
             ):
                 with self.subTest(entry=number, surface=surface):
                     parent = self.space / f"inactive-claim-like-{number}-{surface}"
@@ -116,6 +117,8 @@ class Issue74CrossRunClaimTests(unittest.TestCase):
                     profile = parent / "profile"
                     output = parent / "manifest.json"
                     claim_like = ".ordinary.fixture-claim"
+                    ordinary_anchor = None
+                    ordinary_target = None
 
                     if surface == "root-name":
                         program = parent / claim_like
@@ -125,10 +128,17 @@ class Issue74CrossRunClaimTests(unittest.TestCase):
                         program = ordinary_parent / "program"
                     elif surface == "output-name":
                         output = parent / claim_like
-                    else:
+                    elif surface == "output-ancestor":
                         ordinary_parent = parent / claim_like
                         ordinary_parent.mkdir()
                         output = ordinary_parent / "manifest.json"
+                    else:
+                        ordinary_target = parent / "ordinary-anchor-target"
+                        ordinary_target.mkdir()
+                        ordinary_anchor = self.entries[number].support.claim_path_for(
+                            program.resolve()
+                        )
+                        os.symlink(ordinary_target, ordinary_anchor)
 
                     result = self.build(number, (program, profile, output))
                     self.assertIsInstance(result, dict)
@@ -137,6 +147,12 @@ class Issue74CrossRunClaimTests(unittest.TestCase):
                         self.assertTrue(profile.is_dir())
                     self.assertTrue(output.is_file())
                     self.assertGreater(len(output.read_bytes()), 0)
+                    if ordinary_anchor is not None:
+                        self.assertTrue(ordinary_anchor.is_symlink())
+                        self.assertEqual(
+                            ordinary_anchor.resolve(), ordinary_target.resolve()
+                        )
+                        self.assertFalse(any(ordinary_target.iterdir()))
 
 
 if __name__ == "__main__":
