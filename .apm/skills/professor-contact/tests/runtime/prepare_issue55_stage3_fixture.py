@@ -50,9 +50,7 @@ def _producer_root() -> Path:
 
 
 def _prepare_root(root: Path) -> Path:
-    prepared = support.prepare_root(root, description="fixture root")
-    prepared.release()
-    return prepared.path
+    return support.prepare_root(root, description="fixture root").path
 
 
 def _stage2_input(professor_dir: Path) -> dict[str, Any]:
@@ -126,55 +124,47 @@ def build_fixture(program_root: Path, *, output: Path) -> dict[str, Any]:
     info = root / "info.json"
     profile = root / "套磁邮件" / "套磁信息.md"
     input_pack = professor_dir / "套磁候选输入.json"
-    support.check_roots_separated_from_claims(
-        [root], [support.claim_path_for(root)])
     manifest_path = support.ensure_new_output(
         output,
-        reserved=[root, info, profile, input_pack],
-        claims=[support.claim_path_for(root)])
+        reserved=[root, info, profile, input_pack])
 
-    business_paths = [root, info, profile, input_pack, manifest_path]
-    root_prepared = support.prepare_root(
-        root, description="fixture root", business_paths=business_paths)
-    try:
-        _write_json(info, {
-            "schema_version": 1,
-            "kind": "issue55-stage3-program",
-            "program": "Synthetic Systems",
-        })
-        support.write_text(
-            profile,
-            "# Synthetic applicant profile\n\n"
-            "研究兴趣：适应信号处理、分布变化下的稳健性。\n"
-            "经验：使用 Python 进行信号处理实验与可复现分析。\n"
-            "希望探索：在变化环境中如何保持在线模型的稳定适应。\n",
-        )
-        _write_json(input_pack, _stage2_input(professor_dir))
+    support.prepare_root(root, description="fixture root")
+    _write_json(info, {
+        "schema_version": 1,
+        "kind": "issue55-stage3-program",
+        "program": "Synthetic Systems",
+    })
+    support.write_text(
+        profile,
+        "# Synthetic applicant profile\n\n"
+        "研究兴趣：适应信号处理、分布变化下的稳健性。\n"
+        "经验：使用 Python 进行信号处理实验与可复现分析。\n"
+        "希望探索：在变化环境中如何保持在线模型的稳定适应。\n",
+    )
+    _write_json(input_pack, _stage2_input(professor_dir))
 
-        input_hashes = {
-            "info.json": sha256(info),
-            "套磁邮件/套磁信息.md": sha256(profile),
-            "教授研究/X分野/Example Professor/套磁候选输入.json": sha256(input_pack),
-        }
-        manifest = {
-            "schema_version": 1,
-            "builder": MANIFEST_ID,
-            "fixture_kind": "issue55-stage3-pre",
-            "program_root": str(root),
-            "professor": PROFESSOR,
-            "direction_id": DIRECTION_ID,
-            "item_key": ITEM_KEY,
-            "gap_id": GAP_ID,
-            "input_hashes": input_hashes,
-            "forbidden_outputs": list(FORBIDDEN_OUTPUTS),
-            "stage1_stage2_runtime_artifacts": [],
-            "manual_patch": "no",
-            "network_used": False,
-            "runtime_fixture_started": False,
-        }
-        support.write_json_exclusive(manifest_path, manifest)
-    finally:
-        root_prepared.release()
+    input_hashes = {
+        "info.json": sha256(info),
+        "套磁邮件/套磁信息.md": sha256(profile),
+        "教授研究/X分野/Example Professor/套磁候选输入.json": sha256(input_pack),
+    }
+    manifest = {
+        "schema_version": 1,
+        "builder": MANIFEST_ID,
+        "fixture_kind": "issue55-stage3-pre",
+        "program_root": str(root),
+        "professor": PROFESSOR,
+        "direction_id": DIRECTION_ID,
+        "item_key": ITEM_KEY,
+        "gap_id": GAP_ID,
+        "input_hashes": input_hashes,
+        "forbidden_outputs": list(FORBIDDEN_OUTPUTS),
+        "stage1_stage2_runtime_artifacts": [],
+        "manual_patch": "no",
+        "network_used": False,
+        "runtime_fixture_started": False,
+    }
+    support.write_json_exclusive(manifest_path, manifest)
     return manifest
 
 
