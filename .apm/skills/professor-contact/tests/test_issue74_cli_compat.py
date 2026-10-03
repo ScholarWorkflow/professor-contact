@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,8 +12,10 @@ import unittest
 from pathlib import Path
 
 
+BASE_SHA = "768b49ef4514e36edec6b57ed3821a99af9e9c00"
 TESTS_DIR = Path(__file__).resolve().parent
 RUNTIME_DIR = TESTS_DIR / "runtime"
+REPO_ROOT = TESTS_DIR.parents[3]
 
 
 def load_module(name: str, path: Path):
@@ -23,6 +26,14 @@ def load_module(name: str, path: Path):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def snapshot_files(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
 
 
 class Issue74CliCompatibilityTests(unittest.TestCase):
@@ -125,6 +136,89 @@ class Issue74CliCompatibilityTests(unittest.TestCase):
                 manifest55,
                 json.loads(output55.read_text(encoding="utf-8")),
             )
+
+    def test_generated_bytes_hashes_and_returns_match_compatibility_base(self):
+        base_check = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "cat-file", "-e", f"{BASE_SHA}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if base_check.returncode != 0:
+            self.skipTest(
+                "compatibility base commit is not present in this checkout; "
+                "the formal issue-74 recipe verifies it before T74-CLI starts"
+            )
+
+        current53 = load_module(
+            "issue74_parity_current53", RUNTIME_DIR / "prepare_issue53_stage4_fixture.py"
+        )
+        current55 = load_module(
+            "issue74_parity_current55", RUNTIME_DIR / "prepare_issue55_stage3_fixture.py"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            holder = Path(directory)
+            baseline_checkout = holder / "baseline-checkout"
+            add = subprocess.run(
+                [
+                    "git", "-C", str(REPO_ROOT), "worktree", "add", "--detach",
+                    str(baseline_checkout), BASE_SHA,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if add.returncode != 0:
+                self.fail(f"could not create compatibility-base worktree: {add.stderr}")
+            try:
+                baseline_runtime = (
+                    baseline_checkout
+                    / ".apm/skills/professor-contact/tests/runtime"
+                )
+                baseline53 = load_module(
+                    "issue74_parity_base53",
+                    baseline_runtime / "prepare_issue53_stage4_fixture.py",
+                )
+                baseline55 = load_module(
+                    "issue74_parity_base55",
+                    baseline_runtime / "prepare_issue55_stage3_fixture.py",
+                )
+
+                root53 = holder / "fixture53"
+                program53 = root53 / "program"
+                profile53 = root53 / "profile"
+                output53 = root53 / "output/setup.json"
+                baseline_manifest53 = baseline53.build_fixture(
+                    program53, profile53, output=output53
+                )
+                baseline_bytes53 = snapshot_files(root53)
+                shutil.rmtree(root53)
+                current_manifest53 = current53.build_fixture(
+                    program53, profile53, output=output53
+                )
+                self.assertEqual(current_manifest53, baseline_manifest53)
+                self.assertEqual(snapshot_files(root53), baseline_bytes53)
+
+                root55 = holder / "fixture55"
+                program55 = root55 / "program"
+                output55 = root55 / "output/setup.json"
+                baseline_manifest55 = baseline55.build_fixture(program55, output=output55)
+                baseline_bytes55 = snapshot_files(root55)
+                shutil.rmtree(root55)
+                current_manifest55 = current55.build_fixture(program55, output=output55)
+                self.assertEqual(current_manifest55, baseline_manifest55)
+                self.assertEqual(snapshot_files(root55), baseline_bytes55)
+            finally:
+                subprocess.run(
+                    [
+                        "git", "-C", str(REPO_ROOT), "worktree", "remove", "--force",
+                        str(baseline_checkout),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
 
 
 if __name__ == "__main__":
