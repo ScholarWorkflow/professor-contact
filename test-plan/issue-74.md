@@ -5,7 +5,7 @@
 - 修订号：`issue74-test-r7`。
 - 本版只修复第六版的一个验收 `false-FAIL`：第六版后的实现测试把“首选内部锚点名称上存在普通符号链接、但该链接不代表真实占用”的合法输入固定成必须拒绝；这与已批准计划“内部名称编码不得扩大合法输入拒绝范围、普通内容占用内部名称时应改用其他内部名称”的约定冲突。
 - 本版不修改正式需求、不修改已批准执行计划、不降低任何 PASS 条件，也不修改 `ABSOLUTE_PASS`。41 个必需方法名称与数量不变；只扩展既有 R2/R3 合法输入 proof，并修正实现测试对“真实占用”和“普通同名符号链接”的区分。
-- 本文件及同一提交的 `.apm/skills/professor-contact/tests/test_issue74_fixture_support.py`、`.apm/skills/professor-contact/tests/test_issue74_cross_run_claims.py`、`test-plan/issue-74-required-cases.json`、`test-plan/issue-74-pass-check.jq` 构成当前唯一权威测试方案正文。判定检查样例仍为 `test-plan/issue-74-check-samples.jq`、`test-plan/check-issue-74-pass-check.sh` 和 `.apm/skills/professor-contact/tests/issue74_recipe_checks.py`。
+- 本文件及当前 head 中的 `.apm/skills/professor-contact/tests/test_issue74_fixture_support.py`、`.apm/skills/professor-contact/tests/test_issue74_cross_run_claims.py`、`.apm/skills/professor-contact/tests/test_fixture_support.py`、`test-plan/issue-74-required-cases.json`、`test-plan/issue-74-pass-check.jq` 构成当前唯一权威测试方案正文。判定检查样例仍为 `test-plan/issue-74-check-samples.jq`、`test-plan/check-issue-74-pass-check.sh` 和 `.apm/skills/professor-contact/tests/issue74_recipe_checks.py`。
 - 本版全部取代第六版 `issue74-test-r6`。历史方案和历史执行证据只作为来源记录，不需要执行者拼接。
 - 正式需求：第 74 号议题需求第 1 版，R1—R4。
 - 正式执行计划：`plan/issue-74.md` 第 3 版，提交 `a328e788a21af8fc7d3ebf052c399054d242b786`，已有正式批准。本次 Recipe 修订不重开计划审核。
@@ -96,6 +96,7 @@ git log -1 --format=%H -- \
   test-plan/issue-74.md \
   .apm/skills/professor-contact/tests/test_issue74_fixture_support.py \
   .apm/skills/professor-contact/tests/test_issue74_cross_run_claims.py \
+  .apm/skills/professor-contact/tests/test_fixture_support.py \
   test-plan/issue-74-required-cases.json \
   test-plan/issue-74-pass-check.jq > "$RUN_DIR/recipe-sha.txt"
 git log -1 --format=%H -- \
@@ -169,7 +170,7 @@ P74 继续使用既有的判定通道验证和完整性样例。若以下文件�
 S74 读取当前待测提交的固定源码与文档，不从调用者原工作树读取。至少完整检查：
 
 1. `tests/runtime/fixture_support.py` 只负责目录、文件、摘要和占用操作；第 53、55 号入口的合法成功调用链确实复用共用目录准备、写入和摘要能力；虚构业务数据仍由调用方拥有；没有浏览器、外部服务、代理或真实用户资料路径。
-2. 占用生成、冲突、释放和归属符合已批准计划：相同真实路径竞争同一占用；其他运行仍持有或异常遗留的实际占用不能被接管；未取得占用者不能清理他人状态；占用不能进入另一运行的样例或清单；内部占用名称编码不能在没有实际占用或其他冻结危险条件时永久禁用普通路径。
+2. 占用生成、冲突、释放和归属符合已批准计划：相同真实路径竞争同一占用；若两个调用同时竞争同一候选锚点，后到调用在原子发布失败后必须先识别该候选是否已经成为真实占用，不能把同一路径转而发布成第二个回退锚点；普通内容占用内部候选名时才可继续寻找其他内部名；实际最终选择的首选或回退锚点均不得与本次根目录、样例文件或清单输出相等或形成包含关系；其他运行仍持有或异常遗留的实际占用不能被接管；未取得占用者不能清理他人状态；占用不能进入另一运行的样例或清单；内部占用名称编码不能在没有实际占用或其他冻结危险条件时永久禁用普通路径。
 3. 迁移范围外业务程序、状态接口、代理配置及其他议题验收断言没有被本议题修改；判定程序若变化必须先分析影响。
 4. `tests/README.md` 区分共用准备、执行与判定、问题专属样例和断言四项职责；记录旧入口调用、独立目录分配、异常占用拒绝接管、隔离空间清理责任和结构化结果判断；不得把内部占用编码写成永久用户路径限制。
 
