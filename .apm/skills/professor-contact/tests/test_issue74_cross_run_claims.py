@@ -1,4 +1,4 @@
-"""Issue 74 R3: a live claim directory cannot become another run's sample root."""
+"""Issue 74 R3: cross-run claim safety without reserving internal claim names."""
 import importlib.util
 import os
 from pathlib import Path
@@ -99,6 +99,44 @@ class Issue74CrossRunClaimTests(unittest.TestCase):
                     )
                 self.assertTrue((paths[0] / "info.json").is_file())
                 self.assertTrue(paths[2].is_file())
+
+    def test_claim_like_paths_without_live_claim_remain_legal(self):
+        """Internal claim-name encoding alone must not make a legal path invalid."""
+        for number in (53, 55):
+            for surface in (
+                "root-name",
+                "root-ancestor",
+                "output-name",
+                "output-ancestor",
+            ):
+                with self.subTest(entry=number, surface=surface):
+                    parent = self.space / f"inactive-claim-like-{number}-{surface}"
+                    parent.mkdir()
+                    program = parent / "program"
+                    profile = parent / "profile"
+                    output = parent / "manifest.json"
+                    claim_like = ".ordinary.fixture-claim"
+
+                    if surface == "root-name":
+                        program = parent / claim_like
+                    elif surface == "root-ancestor":
+                        ordinary_parent = parent / claim_like
+                        ordinary_parent.mkdir()
+                        program = ordinary_parent / "program"
+                    elif surface == "output-name":
+                        output = parent / claim_like
+                    else:
+                        ordinary_parent = parent / claim_like
+                        ordinary_parent.mkdir()
+                        output = ordinary_parent / "manifest.json"
+
+                    result = self.build(number, (program, profile, output))
+                    self.assertIsInstance(result, dict)
+                    self.assertTrue((program / "info.json").is_file())
+                    if number == 53:
+                        self.assertTrue(profile.is_dir())
+                    self.assertTrue(output.is_file())
+                    self.assertGreater(len(output.read_bytes()), 0)
 
 
 if __name__ == "__main__":
