@@ -97,18 +97,19 @@ class FixtureSupportPrimitiveTests(IsolatedRootsTestCase):
             support.prepare_root(nonempty)
         self.assertEqual((nonempty / "keep.txt").read_text(encoding="utf-8"), "keep")
 
-    def test_check_mutually_independent_rejects_equal_and_nested(self):
+    def test_check_roots_distinct_rejects_only_identical_roots(self):
         base = self.root / "base"
-        for first, second in (
-            (base, base),
-            (base, base / "sub"),
-            (base / "sub", base),
-        ):
-            with self.assertRaises(support.FixtureBuildError):
-                support.check_mutually_independent(
-                    first, second, first_label="a", second_label="b")
+        with self.assertRaises(support.FixtureBuildError):
+            support.check_roots_distinct(
+                base, base, first_label="a", second_label="b")
 
-        support.check_mutually_independent(
+        # Nesting in either direction is no longer a refusal.
+        support.check_roots_distinct(
+            base, base / "sub", first_label="a", second_label="b")
+        support.check_roots_distinct(
+            base / "sub", base, first_label="a", second_label="b")
+
+        support.check_roots_distinct(
             self.root / "left", self.root / "right",
             first_label="a", second_label="b")
 
@@ -175,13 +176,40 @@ class Issue53ProtectionTests(IsolatedRootsTestCase):
         self.assertEqual(program.stat().st_ino, identity)
         self.assertFalse(any(program.iterdir()))
 
-    def test_equal_and_nested_roots_are_refused(self):
+    def test_equal_roots_refused_but_nested_roots_build(self):
         program = self.root / "program"
-        for profile in (program, program / "sub", self.root):
-            with self.assertRaises(fixture53.FixtureBuildError):
-                fixture53.build_fixture(
-                    program, profile, output=self.output / "setup.json")
+        # Identical roots stay refused.
+        with self.assertRaises(fixture53.FixtureBuildError):
+            fixture53.build_fixture(
+                program, program, output=self.output / "setup.json")
         self.assertFalse(program.exists())
+        self.assertFalse((self.output / "setup.json").exists())
+
+        # A profile root nested inside the program root is a legal layout.
+        manifest = fixture53.build_fixture(
+            program, program / "profile", output=self.output / "setup.json")
+        self.assertIsInstance(manifest, dict)
+        self.assertTrue((program / "info.json").is_file())
+        self.assertTrue(
+            (program / "profile" / "套磁邮件" / "套磁信息.md").is_file())
+        self.assertTrue((self.output / "setup.json").is_file())
+
+    def test_nonempty_nested_profile_root_refused_for_content(self):
+        program = self.root / "program"
+        profile = program / "profile"
+        profile.mkdir(parents=True)
+        (profile / "keep.txt").write_text("keep", encoding="utf-8")
+        with self.assertRaises(fixture53.FixtureBuildError):
+            fixture53.build_fixture(
+                program, profile, output=self.output / "setup.json")
+        # The refusal is the existing content, not the nesting: nothing is
+        # replaced and the pre-existing program root is left as it was.
+        self.assertTrue(program.is_dir())
+        self.assertEqual(
+            sorted(path.name for path in program.iterdir()), ["profile"])
+        self.assertEqual(
+            (profile / "keep.txt").read_text(encoding="utf-8"), "keep")
+        self.assertFalse((self.output / "setup.json").exists())
 
     def test_manifest_inside_root_is_allowed_but_sample_overlap_is_not(self):
         program = self.root / "program"

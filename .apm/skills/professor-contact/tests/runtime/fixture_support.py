@@ -36,19 +36,20 @@ def resolved_outside_producer(path: Path, *, description: str) -> Path:
     return resolved
 
 
-def check_mutually_independent(
+def check_roots_distinct(
     first: Path, second: Path, *, first_label: str, second_label: str
 ) -> None:
+    """Refuse two sample roots only when they resolve to the same directory.
+
+    Nested roots (one inside the other) are accepted on purpose: whether a
+    nested layout is meaningful is the caller's decision, and the shared
+    preparation below still refuses to touch any existing content.
+    """
     first_resolved = Path(first).resolve()
     second_resolved = Path(second).resolve()
     if first_resolved == second_resolved:
         raise FixtureBuildError(
             f"{first_label} and {second_label} must be distinct: {first_resolved}")
-    if (first_resolved.is_relative_to(second_resolved)
-            or second_resolved.is_relative_to(first_resolved)):
-        raise FixtureBuildError(
-            f"{first_label} and {second_label} must be independent directories: "
-            f"{first_resolved}, {second_resolved}")
 
 
 def ensure_new_output(

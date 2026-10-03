@@ -96,7 +96,7 @@ def _rollback_prepared_root(prepared) -> None:
 def build_fixture(program_root: Path, profile_root: Path, *, output: Path) -> dict[str, Any]:
     program = support.resolved_outside_producer(program_root, description="program root")
     profile = support.resolved_outside_producer(profile_root, description="profile root")
-    support.check_mutually_independent(
+    support.check_roots_distinct(
         program, profile, first_label="program root", second_label="profile root")
     info_path = program / "info.json"
     state_path = program / "教授研究/X分野/Example Professor/套磁候选状态.json"
