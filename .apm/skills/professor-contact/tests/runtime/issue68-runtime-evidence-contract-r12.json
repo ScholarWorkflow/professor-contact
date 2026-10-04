@@ -1,0 +1,58 @@
+{
+  "revision": "issue-68-runtime-evidence-r12-2026-10-04",
+  "fixture_sha": "cd5ee15b29773e4daedd28a2f5c3ecdcfc74bd04",
+  "eval_server_revision": "24ae06f3233c72c56d772050f51f0f4274ac5c84",
+  "eval_server_revision_role": "frozen expected service revision; each formal attempt must archive direct build provenance for the actual instance before acceptance execution",
+  "manual_patch": "no",
+  "codex": {
+    "sources": [
+      "https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-protocol/src/protocol/v2/thread.rs",
+      "https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-protocol/src/protocol/v2/item.rs",
+      "https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/protocol/src/models.rs"
+    ],
+    "shared_adapter_owns": [
+      "formal spawnAgent senderThreadId/receiverThreadIds from live app-server events",
+      "formal spawnAgent senderThreadId/receiverThreadIds from output.root_thread_read",
+      "rawResponseItem/completed message role/content for child payload/result transport"
+    ],
+    "root_history_contract": "skills-test-fixtures/codex-root-thread-read@1",
+    "root_history_request": "thread/read threadId=<eval root> includeTurns=true on the same runtime generation",
+    "root_final_source": "within output.root_thread_read.result.thread.turns, select the latest turn containing AgentMessage phase=final_answer and require exactly one such terminal AgentMessage in that turn; only its text is the root business result source",
+    "root_history_exclusion": "AgentMessage phase=commentary, phase absent/unknown, earlier turns, live historical assistant messages and nested diagnostics cannot become or contaminate the final business result source",
+    "formal_ownership": "only non-empty spawnAgent senderThreadId plus concrete receiverThreadIds; subAgentActivity, parentThreadId and identity fields cannot create ownership",
+    "producer_verifier_uses": [
+      "collabAgentToolCall agentsStates status/message",
+      "commandExecution id/command/aggregatedOutput",
+      "item/started then item/completed with runtime_seq",
+      "root thread/read AgentMessage phase=final_answer text selected by source and turn order"
+    ],
+    "identity": "diagnostic only; cannot create, rewrite or reject formal ownership"
+  },
+  "opencode": {
+    "sources": [
+      "https://github.com/anomalyco/opencode/blob/7945de208964a49300d7f770d1a71d078db9a4c4/packages/schema/src/v1/session.ts",
+      "https://github.com/anomalyco/opencode/blob/7945de208964a49300d7f770d1a71d078db9a4c4/packages/opencode/src/tool/task.ts",
+      "https://github.com/anomalyco/opencode/blob/7945de208964a49300d7f770d1a71d078db9a4c4/packages/opencode/src/cli/cmd/run.ts"
+    ],
+    "producer_verifier_uses": [
+      "part.callID/tool/state.input",
+      "state.status=completed",
+      "state.time.start/end",
+      "foreground Task output task state=completed/task_result",
+      "root text part id/sessionID/messageID/text/time.end and event stream order"
+    ],
+    "root_final_source": "opencode run --format json emits only completed root-session text parts; after every foreground owner task has completed, the last emitted root text event before the successful run reaches idle is the sole root business result source",
+    "root_history_exclusion": "all earlier root text events are historical/commentary and cannot be merged into the final business result source",
+    "child_events_in_root_stream": false
+  },
+  "business_payload": [
+    "email_pack",
+    "choices",
+    "choices_scope"
+  ],
+  "runner": ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r12.py",
+  "runner_attribution_owner": "PC68-D1/P7; actual plan/finalize/immutable scope consumption",
+  "native_transport_owner": "PC68-R1; full canonical choices and scope on each formal owner",
+  "missing_observation": "BLOCKED_OBSERVABILITY; never infer a terminal message from prose, merge historical messages, guess replacement fields or retry",
+  "preflight": "source shapes and synthetic oracle tests do not constitute real-host acceptance PASS; current service must prove root_thread_read plus actual service build provenance and required isolation evidence before PC68-R1 acceptance starts"
+}
