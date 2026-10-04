@@ -1,0 +1,89 @@
+{
+  "revision": "issue-68-runtime-evidence-r18-2026-10-04",
+  "fixture_sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+  "fixture_contract": "skills-test-fixtures/codex-eval-adapter@16",
+  "fixture_source": "skills-test-fixtures#33 merged as c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+  "eval_server_additional_patch_required": false,
+  "eval_server_revision": "3fdfa9387140cfc2e2aa3af415f85015f79706d2",
+  "eval_server_revision_role": "frozen expected service revision; the formal entry must prove the listening service process runs from this clean checkout before acceptance and remains the same instance after the request",
+  "manual_patch": "no",
+  "codex": {
+    "shared_adapter_owns": [
+      "formal V1/V2 spawn relation normalization into dispatch.thread_relations",
+      "rawResponseItem/completed preservation in output.app_server_events",
+      "child_thread_reads provenance used by the V2 formal relation"
+    ],
+    "root_final_source": "From output.app_server_events select entries whose runtime_generation equals output.runtime_generation, message.method is rawResponseItem/completed, message.params.threadId equals output.thread_id, message.params.turnId equals output.turn_id, item.type is message, item.role is assistant, and item.phase is final_answer. Require exactly one such item; join its content parts of type output_text in order.",
+    "root_final_exclusions": [
+      "different runtime_generation",
+      "different threadId including child threads",
+      "different turnId including earlier root turns",
+      "commentary phase",
+      "missing or unknown phase",
+      "non-message raw items"
+    ],
+    "owner_business_input_source": "From each formal child thread's own commandExecution items (message.method item/completed, item.type commandExecution) read the plaintext business object the owner actually consumed: email_pack, choices and choices_scope. The recorded command may embed that object as JSON or as a Python literal inside shell quoting; both supported forms are decoded from the same command text. Require exactly one attributable object per formal child.",
+    "owner_business_input_exclusions": [
+      "child task input delivered as item.type agent_message with an input_text NEW_TASK shell plus encrypted_content, which carries no plaintext business object",
+      "output.child_thread_reads metadata-only snapshots",
+      "items of other threads or other runtime generations"
+    ],
+    "owner_business_input_fallback": "A plaintext child user message (rawResponseItem/completed, item.type message, item.role user) remains the delivery fallback for hosts that hand the business object to the child itself; it is used only when the child's own commandExecution items expose no business object, and it keeps the frozen BLOCKED_OBSERVABILITY reason code completed_user_payload_unobservable when it is absent or not unique.",
+    "choices_scope_equivalence": "The supported choices_scope value is the mapping professor_dir -> email ids. The object form and the list of {professor_dir, email_ids} entries describe the same value, so the comparison is on the parsed mapping; serialization form, key order and whitespace are never a failure. Every professor_dir string and every email id must match the caller's canonical value exactly.",
+    "terminal_precedence": "A proven FAIL_PRODUCT is never downgraded to a blocked or invalid terminal by another formal child's missing or ambiguous evidence.",
+    "missing_observation": "BLOCKED_OBSERVABILITY",
+    "malformed_or_ambiguous_observation": "INVALID_EVIDENCE",
+    "formal_ownership": "Use the shared adapter @16 formal topology only. Identity diagnostics cannot create, rewrite, upgrade or downgrade ownership.",
+    "producer_verifier_uses": [
+      "shared adapter dispatch.thread_relations",
+      "collabAgentToolCall wait agentsStates status/message where present",
+      "commandExecution id/command/aggregatedOutput",
+      "item lifecycle runtime_seq",
+      "current-root/current-turn raw final_answer output_text",
+      "formal child commandExecution plaintext business object"
+    ]
+  },
+  "business_payload": [
+    "email_pack",
+    "choices",
+    "choices_scope"
+  ],
+  "runner": ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r18_codex.py",
+  "runner_reuse": "run_issue68_stage5_routing.py pipeline rebound through run_issue68_stage5_routing_r18.py; normal shared fixture parser is used unchanged; no root-history wrapper, multi-host execution or combine step",
+  "preflight": {
+    "capability_entry": ".apm/skills/professor-contact/tests/runtime/check_issue68_codex_final_source_r13.py",
+    "capability_evidence_revision": "pr72-r13-preflight-exec-2026-10-04",
+    "capability_reuse_rule": "Reusable because the request builder, root final-source selector, model, reasoning, sandbox, fixture adapter, eval-server revision and root observation field are unchanged; r18 changes only the owner business-input evidence source.",
+    "isolation_entry": ".apm/skills/professor-contact/tests/runtime/check_issue68_eval_service_isolation_r14.py",
+    "isolation_success": "ISOLATION_CONFIRMED",
+    "owner_business_input_basis": "The formal child commandExecution surface is characterized by the saved r15 formal attempt archive (codex/codex-response.json, 830 app_server_events, two formal children, exactly one plaintext business object per child). Whether Gate 2 requires a further non-acceptance probe before rerunning PC68-R1 is the reviewer's decision, not this contract's.",
+    "on_absent": "stop before formal PC68-R1",
+    "retry": "none"
+  },
+  "formal_run_archive_requirements": {
+    "before_request": [
+      "clean eval-server checkout at the frozen revision",
+      "resolved EVAL_PORT",
+      "unique listening PID",
+      "listener cwd equal to the frozen eval-server checkout",
+      "listener command identifies eval_server.py and the same EVAL_PORT",
+      "listener process start time",
+      "service process CODEX_HOME exists and differs from the production default ~/.codex",
+      "config sqlite_home, inherited CODEX_SQLITE_HOME and config log_dir are recorded when present",
+      "any explicit SQLite/log path is inside the test CODEX_HOME"
+    ],
+    "after_request": [
+      "same EVAL_PORT",
+      "same listening PID",
+      "same listener cwd",
+      "same listener process start time",
+      "same storage-isolation evidence",
+      "eval-server checkout still clean at the frozen revision"
+    ],
+    "artifacts": [
+      "eval-service-provenance.before.json",
+      "eval-service-provenance.after.json",
+      "provenance.json"
+    ]
+  }
+}
