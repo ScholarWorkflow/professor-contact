@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import types
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -5117,6 +5118,11 @@ def _parse_cross_groups(raw: Any, pack_directions: list) -> list[dict]:
 CANDIDATE_META_PREFIX = "<!-- candidate_meta: "
 STAGE3_SCOPE_PREFIX = "<!-- stage3_scope: "
 STAGE3_VALIDATION_MAX_ROUNDS = 2
+# Issue #66 r13 §5.1: the runner-generated per-invocation credential. It
+# freezes the first-round parse (sources + first-round controls) so a
+# correction sub-thread never re-derives professor/profile/scope arguments.
+STAGE3_INVOCATION_VERSION = "stage3-invocation-v1"
+STAGE3_INVOCATION_FILE = "stage3-invocation.json"
 
 
 def _stage3_marker_payload(text: str, prefix: str) -> dict:
@@ -5482,9 +5488,165 @@ def _stage3_selected_scope_keys(selection_path: Path, professor_dir: Path,
         if sel_did:
             selected_keys.add(sel_did)
     return selected_keys
+# --- Issue #66 r13 §5: per-invocation credential production/consumption ----
+
+def _write_stage3_invocation(directory: str, payload: dict) -> tuple[str, str]:
+    """Create this invocation's credential file exclusively (r13 §5.1).
+
+    The caller owns a per-invocation temporary directory; the credential file
+    inside it must be created with O_EXCL so a reused directory can never
+    silently overwrite an earlier credential.  The returned digest is the
+    SHA-256 of the exact bytes written; the file is never modified afterwards.
+    """
+    dir_path = Path(directory)
+    if dir_path.exists() and not dir_path.is_dir():
+        fail("invalid_params",
+             f"--capture-invocation must name a directory: {directory}")
+    try:
+        dir_path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        fail("invalid_params", f"--capture-invocation is unusable: {exc}")
+    data = (json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1)
+            + "\n").encode("utf-8")
+    target = dir_path / STAGE3_INVOCATION_FILE
+    try:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        fail("invalid_params",
+             f"--capture-invocation file already exists (the directory must be "
+             f"exclusive to this invocation): {target}")
+    except OSError as exc:
+        fail("invalid_params", f"--capture-invocation is unusable: {exc}")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return str(target), sha256_bytes(data)
+
+
+STAGE3_INVOCATION_SOURCE_PARAMS = ("professor_dir", "program_root", "profile",
+                                   "refresh_scope", "skip_direction_ids",
+                                   "cross_direction_groups", "direction_id",
+                                   "collection_key", "selection")
+
+
+def _read_stage3_invocation(args) -> dict | None:
+    """Load + verify the invocation credential, or return None (r13 §5.2).
+
+    Refuses the credential mode outright when any first-round source/control
+    parameter is re-supplied (mutual exclusion, no precedence), when only one
+    half of the file/digest pair is given, when the file is damaged, when the
+    version is unsupported, or when the digest does not match the bytes this
+    invocation actually read — all before any candidate or state write.
+    """
+    file_arg = getattr(args, "invocation_file", None)
+    sha_arg = getattr(args, "invocation_sha256", None)
+    if bool(file_arg) != bool(sha_arg):
+        fail("invalid_params",
+             "--invocation-file and --invocation-sha256 must be used together")
+    if not file_arg:
+        return None
+    if getattr(args, "capture_invocation", None):
+        fail("invalid_params",
+             "--capture-invocation produces a first-round credential and cannot "
+             "be combined with --invocation-file")
+    replayed = [name for name in STAGE3_INVOCATION_SOURCE_PARAMS
+                if getattr(args, name, None) is not None]
+    if replayed:
+        fail("invalid_params",
+             f"--invocation-file is mutually exclusive with {replayed}; the "
+             "credential alone carries the first-round sources and controls")
+    try:
+        raw = Path(file_arg).read_bytes()
+    except (OSError, ValueError):
+        fail("invalid_invocation", f"invocation file unreadable: {file_arg}")
+    if sha_arg != sha256_bytes(raw):
+        fail("invocation_sha256_mismatch",
+             f"invocation digest does not match the bytes read: {file_arg}")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("invalid_invocation", f"invocation file is not valid JSON: {file_arg}")
+    if not isinstance(payload, dict):
+        fail("invalid_invocation", f"invocation file must hold a JSON object: {file_arg}")
+    if payload.get("version") != STAGE3_INVOCATION_VERSION:
+        fail("invocation_version_unsupported",
+             f"invocation version {payload.get('version')!r} is not supported "
+             f"(expected {STAGE3_INVOCATION_VERSION!r}); re-run the first-round "
+             "stage3-plan to produce a fresh credential")
+    professor_dir = payload.get("professor_dir")
+    program_root = payload.get("program_root")
+    for name, value in (("professor_dir", professor_dir), ("program_root", program_root)):
+        if not isinstance(value, str) or not value.strip():
+            fail("invalid_invocation", f"invocation {name} is missing or not a path")
+    # Directory ownership: the credential binds the professor to its program.
+    require_professor_dir_under_program(Path(professor_dir), Path(program_root))
+    return payload
+
+
+def _require_invocation_source(invocation: dict) -> None:
+    """The recorded profile digest must still match the real input (r13 §5.2)."""
+    recorded_sha = invocation.get("profile_sha256")
+    if profile_fingerprint(invocation.get("profile_path")) != recorded_sha:
+        soft_exit("needs_refresh", "validation_source_changed",
+                  message="调用凭据记录的资料摘要与实际资料不符：重新执行首轮 "
+                          "stage3-plan 生成新凭据；未修改任何文件。")
+
+
+def _stage3_args_from_invocation(args, invocation: dict, correction: bool):
+    """Rebuild this call's parsed parameters from one verified credential.
+
+    Plain generation replays the recorded first-round controls exactly as they
+    were parsed ("未传入" stays absent).  A credential correction keeps those
+    controls as records only: no re-applied skip, no replayed group request,
+    no first-round direction limit — the work set comes from the recorded
+    validation round (r13 §5.4).
+    """
+    overrides = {
+        "professor_dir": invocation["professor_dir"],
+        "program_root": invocation["program_root"],
+        "profile": invocation.get("profile_path"),
+        "refresh_scope": invocation.get("refresh_scope"),
+        "selection": invocation.get("selection"),
+    }
+    if correction:
+        overrides.update({
+            "direction_id": None,
+            "collection_key": None,
+            "skip_direction_ids": None,
+            "cross_direction_groups": None,
+        })
+    else:
+        overrides.update({
+            "direction_id": invocation.get("direction_id"),
+            "collection_key": invocation.get("collection_key"),
+            "skip_direction_ids": invocation.get("skip_direction_ids_argument"),
+            "cross_direction_groups": invocation.get("cross_direction_groups_argument"),
+        })
+    return types.SimpleNamespace(**{**vars(args), **overrides})
 
 
 def cmd_stage3_plan(args) -> None:
+    invocation = _read_stage3_invocation(args)
+    if invocation is None and not getattr(args, "professor_dir", None):
+        fail("invalid_params",
+             "stage3-plan needs --professor-dir or an invocation credential "
+             "(--invocation-file + --invocation-sha256)")
+    credential_correction = invocation is not None and \
+        bool(getattr(args, "validation_file", None))
+    if getattr(args, "capture_invocation", None) and \
+            getattr(args, "validation_file", None):
+        fail("invalid_params",
+             "--capture-invocation records a first-round plan; correction plans "
+             "reuse the original invocation credential")
+    if invocation is not None:
+        _require_invocation_source(invocation)
+        args = _stage3_args_from_invocation(args, invocation,
+                                            correction=credential_correction)
     professor_dir = Path(args.professor_dir)
     program_root = Path(args.program_root) if args.program_root else professor_dir.parent.parent
     require_professor_dir_under_program(professor_dir, program_root)
@@ -5587,6 +5749,11 @@ def cmd_stage3_plan(args) -> None:
                 gid = scope["group_id"]
                 if gid not in state_groups or not (state_groups[gid].get("candidates") or []):
                     fail("missing_candidate_state", f"no reusable Stage-3 group result for {gid}")
+                if credential_correction and (
+                        contract_changed or profile_changed
+                        or not _cross_group_fresh(state_groups[gid], pack_fps,
+                                                  current_profile_fp)):
+                    soft_exit("needs_refresh", "validation_source_changed", group_id=gid)
                 correction[f"group:{gid}"] = row
         if direction_id_arg and f"direction:{direction_id_arg}" not in correction:
             fail("validation_scope_not_in_evidence",
@@ -5595,11 +5762,19 @@ def cmd_stage3_plan(args) -> None:
             gid = key.split(":", 1)[1]
             cross_groups.append({"group_id": gid,
                                  "direction_ids": list(state_groups[gid].get("direction_ids") or [])})
+        if credential_correction and not correction:
+            fail("validation_evidence_not_recorded",
+                 "the credential correction needs a recorded round with open findings")
     correction_dids = {key.split(":", 1)[1] for key in correction if key.startswith("direction:")}
     scoped_dids = set()
     for direction in pack_directions:
         did = direction_machine_id(direction)
         if getattr(args, "validation_file", None) and did not in correction_dids:
+            continue
+        if credential_correction:
+            # r13 §5.4: the credential correction work set is exactly D — the
+            # first-round refresh/selection/scope filters must not shrink it.
+            scoped_dids.add(did)
             continue
         if direction_id_arg and did != direction_id_arg:
             continue
@@ -5786,6 +5961,33 @@ def cmd_stage3_plan(args) -> None:
                                     "repairable_candidate_ids 里的跨方向候选文字，kind、"
                                     "direction_ids、gap_refs、papers 引用等机器事实原样保留。",
             })
+    # r13 §5.1: after every input check passed and the plan succeeded, freeze
+    # THIS invocation's parsed parameters into an exclusive credential file.
+    # A capture failure fails the plan: no ok payload is emitted at all.
+    invocation_result = {}
+    capture_dir = getattr(args, "capture_invocation", None)
+    if capture_dir:
+        credential = {
+            "version": STAGE3_INVOCATION_VERSION,
+            "professor_dir": str(professor_dir.resolve()),
+            "program_root": str(program_root.resolve()),
+            "profile_path": str(Path(args.profile).resolve()) if args.profile else None,
+            "profile_sha256": current_profile_fp,
+            "refresh_scope": args.refresh_scope,
+            "direction_id": args.direction_id,
+            "collection_key": args.collection_key,
+            "collection_key_direction_id": direction_id_arg,
+            "skip_direction_ids_argument": args.skip_direction_ids,
+            "skipped_direction_ids": list(skip_ids),
+            "cross_direction_groups_argument": args.cross_direction_groups,
+            "cross_direction_groups": [
+                {"group_id": g["group_id"], "direction_ids": list(g["direction_ids"])}
+                for g in cross_groups],
+            "selection": str(Path(args.selection).resolve()) if args.selection else None,
+        }
+        file_path, file_sha = _write_stage3_invocation(capture_dir, credential)
+        invocation_result = {"invocation_file": file_path,
+                             "invocation_sha256": file_sha}
     emit({
         "status": "ok",
         "professor": pack.get("professor"),
@@ -5811,6 +6013,7 @@ def cmd_stage3_plan(args) -> None:
                                     for g in cross_groups],
         "jobs": jobs + cross_jobs,
         "write_needed": bool(jobs + cross_jobs),
+        **invocation_result,
     })
 
 
@@ -6285,6 +6488,17 @@ def render_candidates_overview(entries: list, program_root: Path,
 
 
 def cmd_stage3_finalize(args) -> None:
+    invocation = _read_stage3_invocation(args)
+    if invocation is None and not getattr(args, "professor_dir", None):
+        fail("invalid_params",
+             "stage3-finalize needs --professor-dir or an invocation credential "
+             "(--invocation-file + --invocation-sha256)")
+    credential_correction = invocation is not None and \
+        bool(getattr(args, "validation_file", None))
+    if invocation is not None:
+        _require_invocation_source(invocation)
+        args = _stage3_args_from_invocation(args, invocation,
+                                            correction=credential_correction)
     professor_dir = Path(args.professor_dir)
     program_root = Path(args.program_root) if args.program_root else professor_dir.parent.parent
     require_professor_dir_under_program(professor_dir, program_root)
@@ -6334,11 +6548,15 @@ def cmd_stage3_finalize(args) -> None:
     profile_changed = bool(state) and current_profile_fp != old_profile_fp
     contract_changed = bool(state) and \
         (state or {}).get("generator_contract_version") != STAGE3_GENERATOR_CONTRACT_VERSION
+    if getattr(args, "validation_file", None) and profile_changed:
+        # r13 §5.5-5: correction prose never rebinds the recorded profile.
+        soft_exit("needs_refresh", "validation_source_changed")
     old_directions = {d.get("direction_id"): d
                       for d in (state or {}).get("directions", []) if isinstance(d, dict)}
+    old_group_list = [g for g in (state or {}).get("cross_direction_groups", [])
+                      if isinstance(g, dict)]
     old_groups = {(g.get("group_id") if isinstance(g, dict) else None): g
-                  for g in (state or {}).get("cross_direction_groups", [])
-                  if isinstance(g, dict)}
+                  for g in old_group_list}
     old_fps = (state or {}).get("input_fingerprints", {})
     pack_fps = {direction_machine_id(d): d.get("input_fingerprint")
                 for d in pack_directions}
@@ -6365,6 +6583,11 @@ def cmd_stage3_finalize(args) -> None:
                 gid = scope["group_id"]
                 if gid not in old_groups or not (old_groups[gid].get("candidates") or []):
                     fail("missing_candidate_state", f"no reusable Stage-3 group result for {gid}")
+                if credential_correction and (
+                        contract_changed or profile_changed
+                        or not _cross_group_fresh(old_groups[gid], pack_fps,
+                                                  current_profile_fp)):
+                    soft_exit("needs_refresh", "validation_source_changed", group_id=gid)
                 correction[f"group:{gid}"] = row
         if direction_id_arg and f"direction:{direction_id_arg}" not in correction:
             fail("validation_scope_not_in_evidence",
@@ -6373,6 +6596,9 @@ def cmd_stage3_finalize(args) -> None:
             gid = key.split(":", 1)[1]
             cross_groups.append({"group_id": gid,
                                  "direction_ids": list(old_groups[gid].get("direction_ids") or [])})
+        if credential_correction and not correction:
+            fail("validation_evidence_not_recorded",
+                 "the credential correction needs a recorded round with open findings")
     correction_dids = {key.split(":", 1)[1] for key in correction if key.startswith("direction:")}
     selected_keys = None
     if refresh_scope == "selected":
@@ -6395,6 +6621,11 @@ def cmd_stage3_finalize(args) -> None:
     for direction in pack_directions:
         did = direction_machine_id(direction)
         if getattr(args, "validation_file", None) and did not in correction_dids:
+            continue
+        if credential_correction:
+            # r13 §5.4: the credential correction work set is exactly D — the
+            # first-round refresh/selection/scope filters must not shrink it.
+            scoped_dids.add(did)
             continue
         if direction_id_arg and did != direction_id_arg:
             continue
@@ -6467,8 +6698,11 @@ def cmd_stage3_finalize(args) -> None:
     # Cross-direction groups: only EXPLICITLY requested groups exist (issue #8
     # §6). A group survives when its recorded participant fingerprints + profile
     # still match; otherwise it needs the result file its plan job pointed at.
-    # Groups from earlier runs that are no longer requested are dropped and
-    # reported — never silently kept.
+    # Plain generation still drops earlier groups that are no longer requested
+    # and reports them — never silently keeps them. A correction (credential or
+    # explicit) instead replaces in place inside the OLD group list and
+    # preserves every uninvolved group: an unrequested group is never a
+    # removal request (r13 §5.5).
     final_groups, dropped_groups = [], []
     for group in cross_groups:
         old_group = old_groups.get(group["group_id"])
@@ -6491,18 +6725,29 @@ def cmd_stage3_finalize(args) -> None:
         final_groups.append({
             "group_id": group["group_id"],
             "direction_ids": list(group["direction_ids"]),
-            "direction_fingerprints": {pid: pack_fps.get(pid)
-                                       for pid in group["direction_ids"]},
-            "profile_fingerprint": current_profile_fp,
+            # r13 §5.5-5: correction prose never rebinds a group's recorded
+            # source fingerprints; only a real (re)generation does.
+            "direction_fingerprints": (
+                old_group.get("direction_fingerprints") if group_row is not None
+                else {pid: pack_fps.get(pid) for pid in group["direction_ids"]}),
+            "profile_fingerprint": (
+                old_group.get("profile_fingerprint") if group_row is not None
+                else current_profile_fp),
             "candidates": checked["candidates"],
         })
     requested_ids = {g["group_id"] for g in cross_groups}
-    for group_id, group in old_groups.items():
-        if group_id in requested_ids:
-            continue
-        dropped_groups.append({"group_id": group_id,
-                               "direction_ids": group.get("direction_ids") or [],
-                               "reason": "group_not_requested"})
+    if correction:
+        # r13 §5.5-2/3: the identity set and the list order stay exactly as
+        # before; each old group is either replaced in place or kept as-is.
+        kept = {g["group_id"]: g for g in final_groups}
+        final_groups = [kept.get(g.get("group_id"), g) for g in old_group_list]
+    else:
+        for group_id, group in old_groups.items():
+            if group_id in requested_ids:
+                continue
+            dropped_groups.append({"group_id": group_id,
+                                   "direction_ids": group.get("direction_ids") or [],
+                                   "reason": "group_not_requested"})
     all_group_candidates = [c for g in final_groups for c in g.get("candidates") or []]
     cross_ids = [c.get("id") for c in all_group_candidates]
     if len(set(cross_ids)) != len(cross_ids):
@@ -6544,7 +6789,14 @@ def cmd_stage3_finalize(args) -> None:
         clone["candidates"] = [dict(c, _participants=participants)
                                for c in clone.get("candidates") or []]
         cross_md_groups.append(clone)
-    input_fps = dict(pack_fps)
+    if correction:
+        # r13 §5.5-2: objects outside the correction work set keep their
+        # recorded source fingerprints — correction prose never re-binds them.
+        input_fps = {did: (pack_fps.get(did) if did in scoped_dids
+                           else old_fps.get(did, pack_fps.get(did)))
+                     for did in pack_fps}
+    else:
+        input_fps = dict(pack_fps)
     state_fingerprint = sha256_obj({"professor": professor, "directions": input_fps,
                                     "profile": current_profile_fp})
     md_path = professor_dir / CANDIDATES_MD
@@ -6605,8 +6857,9 @@ def cmd_stage3_finalize(args) -> None:
                         "candidates": len(d.get("candidates") or [])}
                        for d in updated_directions],
         "skipped_direction_ids": skipped_out,
-        "corrected": sorted(key.split(":", 1)[1] for key in correction
-                            if key.startswith("direction:")),
+        # r13 §5.5: the reported correction set is what this run actually
+        # replaced — never a scope the admission filters kept out.
+        "corrected": sorted(correction_dids & scoped_dids),
         "corrected_groups": sorted(key.split(":", 1)[1] for key in correction
                                    if key.startswith("group:")),
         "cross_direction_groups": [{"group_id": g["group_id"],
@@ -9828,7 +10081,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_stage2_refine_finalize)
 
     p = sub.add_parser("stage3-plan")
-    p.add_argument("--professor-dir", required=True)
+    p.add_argument("--professor-dir",
+                   help="required without an invocation credential; mutually "
+                        "exclusive with --invocation-file")
     p.add_argument("--profile")
     p.add_argument("--refresh-scope", choices=REFRESH_SCOPES)
     p.add_argument("--direction-id", help="只处理输入包中的一个方向（canonical 机器身份）")
@@ -9847,10 +10102,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--validation-file",
                    help="raw style-validator JSON; forces text-only correction jobs for the scopes "
                         "the recorded round actually failed (--direction-id may only narrow them)")
+    p.add_argument("--capture-invocation", metavar="DIR",
+                   help="first-round only: write this invocation's exclusive credential "
+                        "file into the per-invocation directory and return its path+sha256")
+    p.add_argument("--invocation-file", metavar="FILE",
+                   help="consume a captured invocation credential (with --invocation-sha256); "
+                        "mutually exclusive with re-supplied professor/profile/root/scope/"
+                        "skip/group/direction/selection source parameters")
+    p.add_argument("--invocation-sha256", metavar="SHA256",
+                   help="SHA-256 of the exact credential file bytes")
     p.set_defaults(func=cmd_stage3_plan)
 
     p = sub.add_parser("stage3-finalize")
-    p.add_argument("--professor-dir", required=True)
+    p.add_argument("--professor-dir",
+                   help="required without an invocation credential; mutually "
+                        "exclusive with --invocation-file")
     p.add_argument("--results", required=True)
     p.add_argument("--profile")
     p.add_argument("--refresh-scope", choices=REFRESH_SCOPES)
@@ -9867,6 +10133,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--decision-file")
     p.add_argument("--validation-file",
                    help="same raw style-validator JSON used by stage3-plan correction")
+    p.add_argument("--invocation-file", metavar="FILE",
+                   help="consume a captured invocation credential (with --invocation-sha256); "
+                        "mutually exclusive with re-supplied professor/profile/root/scope/"
+                        "skip/group/direction/selection source parameters")
+    p.add_argument("--invocation-sha256", metavar="SHA256",
+                   help="SHA-256 of the exact credential file bytes")
     p.set_defaults(func=cmd_stage3_finalize)
 
     p = sub.add_parser("stage3-rebuild-overview",
