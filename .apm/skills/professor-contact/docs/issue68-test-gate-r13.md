@@ -2,7 +2,7 @@
 
 记录版本：`issue-68-gate2-r13-2026-10-04`。
 
-本记录只重审 `PC68-R1` 的 Codex 证据来源和相关 Recipe。Gate 1 冻结要求不变，`PC68-D1/P1–P7` 的历史 PASS 不因本次证据来源修正自动失效。第十二版中 `root_thread_read`、`skills-test-fixtures#28` 和 `eval-server#21` 作为当前 `PC68-R1` 前提的部分由本记录取代；第十二版历史执行事实继续保留。
+本记录只重审 `PC68-R1` 的 Codex 证据来源和相关 Recipe。Gate 1 冻结要求不变，`PC68-D1/P1–P7` 的历史 PASS 不因本次证据来源修正自动失效。第十二版中 `root_thread_read`、`skills-test-fixtures#28` 和 `eval-server#21` 作为当前 `PC68-R1` 前提的部分由本记录取代；第十二版历史执行事实继续保留。自本记录生效起，`run_issue68_stage5_routing_r12_codex.py`（含第十二版记录中的全部执行指令）以及 `run_issue68_stage5_routing_r12.py`、`run_issue68_stage5_routing.py` 的直接调用停止作为 `PC68-R1` 执行指令，仅作历史与管线实现保留；当前唯一正式入口是第 4 节所列 `run_issue68_stage5_routing_r13_codex.py`。
 
 ## 1. 当前输入
 
@@ -97,6 +97,8 @@ CASE_NOT_STARTED     -> 修 bootstrap/transport，不执行正式 PC68-R1
 
 该检查不判断 native delegation；正式 delegation 仍由 `skills-test-fixtures@16` 和正式 `PC68-R1` 机器证据判断。
 
+Preflight 只证明观察面。`gate2-r12` 权威记录保留的其余要求继续有效：正式 `PC68-R1` 的每次尝试在验收执行前必须归档实际运行实例的直接构建来源和本次证明依赖的隔离证据，与 r13 证据契约的 `eval_server_revision`（当前冻结 `3fdfa9387140cfc2e2aa3af415f85015f79706d2`，即第 1 节 eval-server current master）与 `eval_server_revision_role` 对齐。缺这两项归档时，即使 Preflight 通过也不得宣布 Gate 2 完成。
+
 ## 6. Discriminating 回归
 
 `test_issue68_runtime_r13.py` 固定以下反例：
@@ -125,6 +127,6 @@ Gate 3: NOT_READY / PARTIAL
 Merge: NOT_READY
 ```
 
-当前缺少的事实只有一项：用当前正式 `gpt-6-luna` profile 对现有 eval service 执行一次 r13 Preflight，确认实际 raw message 带可归属的 `phase=final_answer`。在该结果出现前不得把源码“字段可选存在”直接当作实际环境已可观察。
+当前缺少的事实有两项。第一，用当前正式 `gpt-6-luna` profile 对现有 eval service 执行一次 r13 Preflight，确认实际 raw message 带可归属的 `phase=final_answer`；在该结果出现前不得把源码“字段可选存在”直接当作实际环境已可观察。第二，按 `gate2-r12` 权威记录归档实际服务构建来源与隔离依据（见第 5 节与 r13 证据契约的 `eval_server_revision`/`formal_run_archive_requirements`）；Preflight 通过本身不构成该项证据。
 
 下一责任人：本地执行 agent。只执行第 5 节 Preflight，不执行正式 `PC68-R1`；结果交回测试工程师判定 Gate 2。
