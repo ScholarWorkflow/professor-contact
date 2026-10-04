@@ -34,6 +34,7 @@ import shlex
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 RUNTIME = Path(__file__).resolve().parent / "runtime"
@@ -96,6 +97,8 @@ WIRING_TESTS = (
     "test_contract_freezes_owner_input_isolation_and_partition_evidence",
     "test_verifier_refuses_the_opencode_host",
     "test_channel_declaration_matches_the_matrix",
+    "test_resolve_eval_port_keeps_direnv_as_the_formal_source",
+    "test_resolve_eval_port_falls_back_to_the_unique_verified_listener",
 )
 
 
@@ -665,6 +668,46 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                 verify.main()
         finally:
             sys.argv = original
+
+    def test_resolve_eval_port_keeps_direnv_as_the_formal_source(self):
+        """A valid direnv EVAL_PORT stays the formal source: it is returned
+        as-is and neither the lsof listing nor the instance verification
+        runs."""
+        calls = []
+
+        def fake_check_output(argv, *args, **kwargs):
+            calls.append(list(argv))
+            return "15432\n"
+
+        with unittest.mock.patch("subprocess.check_output", side_effect=fake_check_output), \
+                unittest.mock.patch.object(entry, "capture_service_instance") as capture:
+            self.assertEqual(entry.resolve_eval_port("/eval-server"), "15432")
+        self.assertEqual(calls, [["direnv", "exec", "/eval-server", "printenv", "EVAL_PORT"]])
+        capture.assert_not_called()
+
+    def test_resolve_eval_port_falls_back_to_the_unique_verified_listener(self):
+        """Without direnv, the port falls back to the single candidate that
+        passes ``capture_service_instance``; ambiguous or unverified
+        listeners must not be returned."""
+        listing = "p101\nn127.0.0.1:17902\n\np202\nn*:18080\n"
+
+        def fake_check_output(argv, *args, **kwargs):
+            if argv[0] == "direnv":
+                raise FileNotFoundError("direnv is not installed")
+            if argv[0] == "lsof":
+                return listing
+            raise AssertionError("unexpected subprocess call: " + repr(list(argv)))
+
+        def fake_capture(eval_root, port):
+            if port == "17902":
+                return {"port": port, "pid": 101, "start_time": "t", "command": "c",
+                        "cwd": eval_root}
+            raise ValueError("eval_service_port_mismatch")
+
+        with unittest.mock.patch("subprocess.check_output", side_effect=fake_check_output), \
+                unittest.mock.patch.object(entry, "capture_service_instance",
+                                           side_effect=fake_capture):
+            self.assertEqual(entry.resolve_eval_port("/eval-server"), "17902")
 
     def test_channel_declaration_matches_the_matrix(self):
         declared = set(PASS_CHANNEL) | set(FAIL_CHANNEL) | set(BLOCKED_INVALID_CHANNEL)

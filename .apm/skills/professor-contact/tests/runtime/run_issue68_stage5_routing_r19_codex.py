@@ -95,14 +95,47 @@ def overlaps(left, right):
 
 
 def resolve_eval_port(eval_root):
-    port = subprocess.check_output(
-        ["direnv", "exec", str(eval_root), "printenv", "EVAL_PORT"],
-        cwd=eval_root,
+    """Resolve the listening eval service port.
+
+    direnv is the formal source: ``direnv exec <eval_root> printenv
+    EVAL_PORT``. When direnv is unavailable or its output is unusable, the
+    entry falls back to the unique ``eval_server.py`` listener that passes
+    the frozen-checkout verification of ``capture_service_instance``, and the
+    resolved service (port, pid, command, cwd, start time) is recorded in the
+    captured provenance files.
+    """
+    try:
+        port = subprocess.check_output(
+            ["direnv", "exec", str(eval_root), "printenv", "EVAL_PORT"],
+            cwd=eval_root,
+            text=True,
+        ).strip()
+    except (OSError, subprocess.SubprocessError):
+        port = ""
+    if port.isdecimal() and 1 <= int(port) <= 65535:
+        return port
+    candidates = []
+    pid = None
+    for line in subprocess.check_output(
+        ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"],
         text=True,
-    ).strip()
-    if not port.isdecimal() or not 1 <= int(port) <= 65535:
+    ).splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            pid = line[1:]
+        elif line.startswith("n") and pid:
+            port = line[1:].rsplit(":", 1)[-1]
+            if port.isdecimal() and 1 <= int(port) <= 65535 and port not in candidates:
+                candidates.append(port)
+    verified = []
+    for candidate in candidates:
+        try:
+            capture_service_instance(eval_root, candidate)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            continue
+        verified.append(candidate)
+    if len(verified) != 1:
         raise ValueError("eval_port_unavailable")
-    return port
+    return verified[0]
 
 
 def capture_service_instance(eval_root, port):
