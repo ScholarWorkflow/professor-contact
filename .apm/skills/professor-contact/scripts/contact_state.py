@@ -5123,6 +5123,16 @@ STAGE3_VALIDATION_MAX_ROUNDS = 2
 # correction sub-thread never re-derives professor/profile/scope arguments.
 STAGE3_INVOCATION_VERSION = "stage3-invocation-v1"
 STAGE3_INVOCATION_FILE = "stage3-invocation.json"
+# Issue #66 r13 §6: the mechanical validation-evidence handoff. The validator
+# writes its one raw output file; the root saves those exact bytes to the
+# recorded target and records that same file. All three files live in the
+# per-professor, per-invocation, per-round handoff directory under the system
+# temporary root — never inside the professor state directory.
+STAGE3_HANDOFF_VERSION = "stage3-handoff-v1"
+STAGE3_HANDOFF_ROOT = "professor-contact-stage3-handoff"
+STAGE3_HANDOFF_FILE = "handoff.json"
+STAGE3_VALIDATOR_OUTPUT_FILE = "validator-output.json"
+STAGE3_VALIDATION_TARGET_FILE = "validation-result.json"
 
 
 def _stage3_marker_payload(text: str, prefix: str) -> dict:
@@ -5227,23 +5237,14 @@ def _stage3_issue_scopes(issue: dict, body: str, scopes: list, path: Path) -> li
     return found
 
 
-def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict) -> dict:
-    """Normalize raw style-validator JSON into bound, machine-scoped evidence.
+def _stage3_candidates_entry(data: Any, path: Path, professor_dir: Path) -> tuple[dict, str, list]:
+    """Shape-check raw style-validator JSON and return the one candidates entry
+    bound to this professor's rendered document, with its verdict and issues.
 
-    This is the only Stage-3 validator handoff: the runner reads the validator's
-    own output, binds it to the exact rendered revision, and routes each finding
-    to the canonical scope whose rendered text contains the quoted fragment.  A
-    caller never translates ``files[].verdict`` into ``results[]``.
+    Shared by the record entry (r13 §6.4) and the save entry (r13 §6.3); per
+    §6.5 the remaining ``files`` entries may belong to other professors of a
+    batch call and are not this professor's precondition.
     """
-    try:
-        raw_input = path.read_bytes()
-    except (OSError, ValueError):
-        fail("invalid_validation_json", f"style-validator output unreadable: {path}")
-    input_sha = sha256_bytes(raw_input)
-    try:
-        data = json.loads(raw_input.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        data = None
     if not isinstance(data, dict) or data.get("result") != "ok" \
             or not isinstance(data.get("files"), list):
         fail("invalid_validation_json", f"style-validator output unreadable: {path}")
@@ -5274,6 +5275,33 @@ def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict) -> 
         fail("invalid_validation_json", "fail verdict needs at least one blocking issue")
     if verdict != "fail" and blocking:
         fail("invalid_validation_json", "blocking issues require verdict=fail")
+    return entry, verdict, issues
+
+
+def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict, *,
+                               raw_input: bytes | None = None) -> dict:
+    """Normalize raw style-validator JSON into bound, machine-scoped evidence.
+
+    This is the only Stage-3 validator handoff: the runner reads the validator's
+    own output, binds it to the exact rendered revision, and routes each finding
+    to the canonical scope whose rendered text contains the quoted fragment.  A
+    caller never translates ``files[].verdict`` into ``results[]``.  The handoff
+    mode (r13 §6.4) passes the already digest-checked byte buffer as
+    ``raw_input`` so the digest is proven over the exact bytes parsed here —
+    never a snapshot re-opened afterwards.
+    """
+    if raw_input is None:
+        try:
+            raw_input = path.read_bytes()
+        except (OSError, ValueError):
+            fail("invalid_validation_json", f"style-validator output unreadable: {path}")
+    input_sha = sha256_bytes(raw_input)
+    try:
+        data = json.loads(raw_input.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        data = None
+    _entry, verdict, issues = _stage3_candidates_entry(data, path, professor_dir)
+    blocking = [i for i in issues if i.get("severity") == "blocking"]
     render_sha, body = _stage3_bound_render(professor_dir, state)
     scopes = stage3_render_line_scopes(body)
     rendered = {}
@@ -5628,6 +5656,289 @@ def _stage3_args_from_invocation(args, invocation: dict, correction: bool):
             "cross_direction_groups": invocation.get("cross_direction_groups_argument"),
         })
     return types.SimpleNamespace(**{**vars(args), **overrides})
+
+
+# --- Issue #66 r13 §6: validation handoff prepare/save/record ---------------
+
+def _require_stage3_handoff_round(state: dict, render_sha: str, requested_round: int) -> None:
+    """The requested validation round must match the committed record facts.
+
+    r13 §6.1: the round decision reuses the record entry's own facts — the
+    committed ``validator`` block — never the emptiness of a temporary
+    directory.  A caller cannot reopen round 1 over a recorded round, cannot
+    start round 2 without a previous round whose open findings were corrected
+    and committed under the existing correction constraints, and cannot pass
+    ``round=2`` to bypass an owed correction.
+    """
+    validator = state.get("validator") if isinstance(state.get("validator"), dict) else {}
+    raw_round = validator.get("round")
+    if isinstance(raw_round, bool) or not isinstance(raw_round, int):
+        raw_round = 0
+    pending = validator.get("pending") if isinstance(validator.get("pending"), dict) else {}
+    if requested_round == 1:
+        if raw_round >= 1:
+            fail("validation_round_already_recorded",
+                 f"this professor already has a recorded Stage-3 validator round "
+                 f"{raw_round}; a first validation round cannot be prepared again")
+        return
+    if raw_round == 0:
+        fail("validation_round_sequence_invalid",
+             "round 2 needs a recorded previous round whose findings were corrected")
+    if raw_round >= STAGE3_VALIDATION_MAX_ROUNDS:
+        fail("validation_rounds_exhausted",
+             f"Stage-3 style validation is bounded to {STAGE3_VALIDATION_MAX_ROUNDS} rounds; "
+             "the terminal record already exists")
+    if validator.get("raw_verdict") != "fail":
+        fail("validation_rounds_exhausted",
+             "the previous validator round recorded no correction: the terminal "
+             "record already exists")
+    if pending:
+        fail("validation_correction_required",
+             "complete the recorded Stage-3 correction with stage3-plan/finalize "
+             "--validation-file before preparing round 2")
+    if validator.get("render_sha256") != render_sha:
+        fail("validation_round_sequence_invalid",
+             "the committed correction round does not carry the current render")
+
+
+def _stage3_handoff_directory(professor_dir: Path, round_no: int) -> Path:
+    """This professor's, this round's exclusive handoff directory (r13 §6.1).
+
+    Keyed by the canonical professor directory digest under the system
+    temporary root, so two professors never share handoff files and a reused
+    round directory can never silently host a second handoff.
+    """
+    token = sha256_text(str(Path(professor_dir).resolve()))[:16]
+    return Path(tempfile.gettempdir()) / STAGE3_HANDOFF_ROOT / token / f"round-{round_no}"
+
+
+def _load_stage3_handoff(args) -> dict:
+    """Load + verify the handoff metadata and its invocation credential.
+
+    Shared by save (r13 §6.3) and record (r13 §6.4): the metadata digest is
+    checked against the exact bytes read, every binding must be present, and
+    the referenced invocation credential must still be the same bytes with a
+    supported version and matching professor ownership.  The caller never
+    supplies source, target or professor through other parameters.
+    """
+    try:
+        raw = Path(args.handoff_file).read_bytes()
+    except (OSError, ValueError):
+        fail("invalid_handoff", f"handoff file unreadable: {args.handoff_file}")
+    if args.handoff_sha256 != sha256_bytes(raw):
+        fail("handoff_sha256_mismatch",
+             f"handoff digest does not match the bytes read: {args.handoff_file}")
+    try:
+        metadata = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("invalid_handoff", f"handoff file is not valid JSON: {args.handoff_file}")
+    if not isinstance(metadata, dict):
+        fail("invalid_handoff", f"handoff file must hold a JSON object: {args.handoff_file}")
+    if metadata.get("version") != STAGE3_HANDOFF_VERSION:
+        fail("invalid_handoff",
+             f"handoff version {metadata.get('version')!r} is not supported "
+             f"(expected {STAGE3_HANDOFF_VERSION!r})")
+    for name in ("professor_dir", "program_root", "candidates_md", "invocation_file",
+                 "invocation_sha256", "output_file", "validation_file", "render_sha256"):
+        value = metadata.get(name)
+        if not isinstance(value, str) or not value.strip():
+            fail("invalid_handoff", f"handoff {name} is missing or not a path")
+    round_no = metadata.get("round")
+    if isinstance(round_no, bool) or round_no not in (1, 2):
+        fail("invalid_handoff", f"handoff round must be 1 or 2: {round_no!r}")
+    try:
+        credential_raw = Path(metadata["invocation_file"]).read_bytes()
+    except (OSError, ValueError):
+        fail("invalid_handoff",
+             f"handoff invocation credential unreadable: {metadata['invocation_file']}")
+    if metadata["invocation_sha256"] != sha256_bytes(credential_raw):
+        fail("invalid_handoff",
+             f"handoff invocation credential no longer matches its recorded digest: "
+             f"{metadata['invocation_file']}")
+    try:
+        credential = json.loads(credential_raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("invalid_handoff", "handoff invocation credential is not valid JSON")
+    if not isinstance(credential, dict) \
+            or credential.get("version") != STAGE3_INVOCATION_VERSION:
+        fail("invalid_handoff", "handoff invocation credential version is not supported")
+    if credential.get("professor_dir") != metadata["professor_dir"] \
+            or credential.get("program_root") != metadata["program_root"]:
+        fail("invalid_handoff",
+             "handoff professor/program bindings do not match the invocation credential")
+    require_professor_dir_under_program(Path(metadata["professor_dir"]),
+                                        Path(metadata["program_root"]))
+    if Path(metadata["candidates_md"]).resolve() != \
+            (Path(metadata["professor_dir"]) / CANDIDATES_MD).resolve():
+        fail("invalid_handoff",
+             "handoff candidates_md is not this professor's rendered candidate document")
+    return metadata
+
+
+def cmd_stage3_prepare_validation(args) -> None:
+    """r13 §6.1: prepare this round's one-time validation handoff.
+
+    Reads only the invocation credential, the professor's committed candidate
+    state and the bound candidate document; commits and changes nothing.  The
+    handoff metadata, the validator output path and the saved target path live
+    in a per-professor, per-round exclusive directory under the system
+    temporary root — never inside the professor state directory.
+    """
+    invocation = _read_stage3_invocation(args)
+    if invocation is None:
+        fail("invalid_params",
+             "stage3-prepare-validation needs an invocation credential "
+             "(--invocation-file + --invocation-sha256)")
+    _require_invocation_source(invocation)
+    professor_dir = Path(invocation["professor_dir"])
+    program_root = Path(invocation["program_root"])
+    require_professor_dir_under_program(professor_dir, program_root)
+    round_no = args.round
+    pack, pack_error = load_input_pack(professor_dir)
+    if pack is None:
+        fail("missing_input_pack", f"{professor_dir / INPUT_PACK}: {pack_error}")
+    state, state_error = load_candidate_state(professor_dir, pack)
+    if state_error or state is None:
+        fail("missing_candidate_state",
+             f"candidate state unreadable: {professor_dir / CANDIDATE_STATE}")
+    render_sha, _body = _stage3_bound_render(professor_dir, state)
+    _require_stage3_handoff_round(state, render_sha, round_no)
+    directory = _stage3_handoff_directory(professor_dir, round_no)
+    output_file = directory / STAGE3_VALIDATOR_OUTPUT_FILE
+    validation_file = directory / STAGE3_VALIDATION_TARGET_FILE
+    handoff_file = directory / STAGE3_HANDOFF_FILE
+    try:
+        directory.mkdir(parents=True)
+    except FileExistsError:
+        fail("validation_handoff_collision",
+             f"the handoff directory for this professor and round already exists; "
+             f"earlier round results are never reused: {directory}")
+    except OSError as exc:
+        fail("validation_handoff_collision", f"handoff directory is unusable: {exc}")
+    for label, target in (("output_file", output_file),
+                          ("validation_file", validation_file),
+                          ("handoff_file", handoff_file)):
+        if target.is_symlink() or target.exists():
+            fail("validation_handoff_collision",
+                 f"{label} already exists; the handoff directory must stay exclusive "
+                 f"to this professor, invocation and round: {target}")
+    metadata = {
+        "version": STAGE3_HANDOFF_VERSION,
+        "professor_dir": str(professor_dir.resolve()),
+        "program_root": str(program_root.resolve()),
+        "candidates_md": str((professor_dir / CANDIDATES_MD).resolve()),
+        "invocation_file": str(Path(args.invocation_file).resolve()),
+        "invocation_sha256": args.invocation_sha256,
+        "round": round_no,
+        "render_sha256": render_sha,
+        "output_file": str(output_file),
+        "validation_file": str(validation_file),
+    }
+    data = (json.dumps(metadata, ensure_ascii=False, sort_keys=True, indent=1)
+            + "\n").encode("utf-8")
+    try:
+        fd = os.open(handoff_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except OSError as exc:
+        fail("validation_handoff_collision", f"handoff file cannot be created: {exc}")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        handoff_file.unlink(missing_ok=True)
+        raise
+    emit({
+        "status": "ok",
+        "professor": pack.get("professor"),
+        "professor_dir": str(professor_dir),
+        "candidates_md": str((professor_dir / CANDIDATES_MD).resolve()),
+        "round": round_no,
+        "render_sha256": render_sha,
+        "handoff_file": str(handoff_file),
+        "handoff_sha256": sha256_bytes(data),
+        "output_file": str(output_file),
+        "validation_file": str(validation_file),
+    })
+
+
+def cmd_stage3_save_validation(args) -> None:
+    """r13 §6.3: copy the validator's raw output bytes to the recorded target.
+
+    Source, target, professor and round all come from the verified handoff
+    metadata; the caller cannot pass content, another source or another
+    target.  One read of the regular (non-symlink) source fixes the byte
+    buffer that is validated, then written unchanged — no re-serialization,
+    no field sorting, no whitespace edits — to a target created exclusively.
+    A normal failure removes only a target this entry created itself and
+    never deletes the source, the credential or committed professor files.
+    """
+    metadata = _load_stage3_handoff(args)
+    professor_dir = Path(metadata["professor_dir"])
+    round_no = metadata["round"]
+    pack, pack_error = load_input_pack(professor_dir)
+    if pack is None:
+        fail("missing_input_pack", f"{professor_dir / INPUT_PACK}: {pack_error}")
+    state, state_error = load_candidate_state(professor_dir, pack)
+    if state_error or state is None:
+        fail("missing_candidate_state",
+             f"candidate state unreadable: {professor_dir / CANDIDATE_STATE}")
+    render_sha, _body = _stage3_bound_render(professor_dir, state)
+    if render_sha != metadata["render_sha256"]:
+        fail("validation_render_changed",
+             "the committed candidate render changed since this handoff was prepared; "
+             "re-run stage3-prepare-validation on the current render")
+    _require_stage3_handoff_round(state, render_sha, round_no)
+    source = Path(metadata["output_file"])
+    target = Path(metadata["validation_file"])
+    if source.is_symlink() or not source.is_file():
+        fail("invalid_validation_source",
+             f"the validator output must be this round's regular source file: {source}")
+    if target.is_symlink() or target.exists():
+        fail("validation_handoff_collision",
+             f"the validation target already exists: {target}")
+    try:
+        raw = source.read_bytes()
+    except (OSError, ValueError):
+        fail("invalid_validation_source", f"validator output unreadable: {source}")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("invalid_validation_json",
+             f"validator output is not complete UTF-8 JSON: {source}")
+    _entry, _verdict, _issues = _stage3_candidates_entry(data, source, professor_dir)
+    if not isinstance(data.get("notes"), str):
+        fail("invalid_validation_json",
+             f"validator output must hold the complete result/files/notes structure: {source}")
+    created = False
+    try:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException as exc:
+        # A normal failure removes only the unfinished target this entry
+        # created; sources, credentials and committed files stay untouched.
+        if created:
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if isinstance(exc, OSError):
+            fail("validation_handoff_collision",
+                 f"validation target cannot be created: {exc}")
+        raise
+    emit({
+        "status": "ok",
+        "professor": pack.get("professor"),
+        "professor_dir": str(professor_dir),
+        "round": round_no,
+        "render_sha256": render_sha,
+        "validation_file": str(target),
+        "validation_sha256": sha256_bytes(raw),
+    })
 
 
 def cmd_stage3_plan(args) -> None:
@@ -9535,8 +9846,44 @@ def cmd_stage3_record_validation(args) -> None:
     verdict per machine scope is derived from the validator's own findings, and
     the record is bound to the rendered revision it describes.  Nothing in the
     written state can be asserted by a caller.
+
+    The handoff mode (r13 §6.4, ``--handoff-file`` + ``--handoff-sha256`` +
+    ``--expected-validation-sha256``) takes the professor and validation path
+    from the verified handoff metadata and digest-checks the exact byte buffer
+    it then parses — the legacy ``--professor-dir`` + ``--validation-file``
+    calls keep their behavior unchanged, and the two modes are mutually
+    exclusive.
     """
-    professor_dir = Path(args.professor_dir)
+    handoff_triple = (getattr(args, "handoff_file", None),
+                      getattr(args, "handoff_sha256", None),
+                      getattr(args, "expected_validation_sha256", None))
+    handoff_mode = any(handoff_triple)
+    if handoff_mode and not all(handoff_triple):
+        fail("invalid_params",
+             "--handoff-file, --handoff-sha256 and --expected-validation-sha256 "
+             "must be used together")
+    legacy_pair = (getattr(args, "professor_dir", None),
+                   getattr(args, "validation_file", None))
+    if bool(legacy_pair[0]) != bool(legacy_pair[1]):
+        fail("invalid_params",
+             "stage3-record-validation needs --professor-dir and --validation-file together")
+    if handoff_mode and any(legacy_pair):
+        fail("invalid_params",
+             "the handoff mode is mutually exclusive with --professor-dir and "
+             "--validation-file; the handoff metadata alone carries both")
+    if not handoff_mode and not all(legacy_pair):
+        fail("invalid_params",
+             "stage3-record-validation needs --professor-dir + --validation-file, "
+             "or the handoff mode (--handoff-file + --handoff-sha256 + "
+             "--expected-validation-sha256)")
+    metadata = None
+    if handoff_mode:
+        metadata = _load_stage3_handoff(args)
+        professor_dir = Path(metadata["professor_dir"])
+        validation_path = Path(metadata["validation_file"])
+    else:
+        professor_dir = Path(args.professor_dir)
+        validation_path = Path(args.validation_file)
     pack, _ = load_input_pack(professor_dir)
     state, state_error = load_candidate_state(professor_dir, pack)
     if state_error or state is None:
@@ -9555,8 +9902,37 @@ def cmd_stage3_record_validation(args) -> None:
             "complete the recorded Stage-3 correction with stage3-plan/finalize "
             "--validation-file before recording another validator round",
         )
-    evidence = stage3_validation_evidence(Path(args.validation_file), professor_dir, state)
+    raw_input = None
+    if handoff_mode:
+        # r13 §6.4: the render and round must still match the verified handoff,
+        # and the digest must hold over the exact bytes parsed below — never
+        # over one snapshot while another file is opened for the record.
+        render_sha, _body = _stage3_bound_render(professor_dir, state)
+        if render_sha != metadata["render_sha256"]:
+            fail("validation_render_changed",
+                 "the committed candidate render changed since this handoff was "
+                 "prepared; re-run stage3-prepare-validation")
+        _require_stage3_handoff_round(state, render_sha, metadata["round"])
+        if validation_path.is_symlink() or not validation_path.is_file():
+            fail("invalid_validation_source",
+                 f"the recorded validation file must be this round's regular "
+                 f"target file: {validation_path}")
+        try:
+            raw_input = validation_path.read_bytes()
+        except (OSError, ValueError):
+            fail("invalid_validation_json",
+                 f"style-validator output unreadable: {validation_path}")
+        if sha256_bytes(raw_input) != args.expected_validation_sha256:
+            fail("validation_sha256_mismatch",
+                 f"the recorded validation bytes do not match the digest returned by "
+                 f"stage3-save-validation: {validation_path}")
+    evidence = stage3_validation_evidence(validation_path, professor_dir, state,
+                                          raw_input=raw_input)
     round_no = raw_round + 1
+    if metadata is not None and round_no != metadata["round"]:
+        fail("validation_round_sequence_invalid",
+             f"the recorded round {round_no} does not match the handoff round "
+             f"{metadata['round']}")
     if round_no > STAGE3_VALIDATION_MAX_ROUNDS:
         fail("validation_rounds_exhausted",
              f"Stage-3 style validation is bounded to {STAGE3_VALIDATION_MAX_ROUNDS} rounds; "
@@ -10147,6 +10523,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--program-root", required=True)
     p.set_defaults(func=cmd_stage3_rebuild_overview)
 
+    p = sub.add_parser("stage3-prepare-validation",
+                       help="issue #66 r13 §6.1: create this round's one-time validation "
+                            "handoff (metadata, validator output path, saved target path) "
+                            "from this professor's invocation credential and committed state")
+    p.add_argument("--invocation-file", metavar="FILE", required=True,
+                   help="the captured invocation credential of the committed round")
+    p.add_argument("--invocation-sha256", metavar="SHA256", required=True,
+                   help="SHA-256 of the exact credential file bytes")
+    p.add_argument("--round", type=int, required=True, choices=(1, 2),
+                   help="the validation round to prepare; must match the professor's "
+                        "recorded validator facts, never the temp directory state")
+    p.set_defaults(func=cmd_stage3_prepare_validation)
+
+    p = sub.add_parser("stage3-save-validation",
+                       help="issue #66 r13 §6.3: copy the validator's raw output bytes, "
+                            "unchanged, from the handoff's source file to its recorded target")
+    p.add_argument("--handoff-file", metavar="FILE", required=True,
+                   help="the handoff metadata file returned by stage3-prepare-validation")
+    p.add_argument("--handoff-sha256", metavar="SHA256", required=True,
+                   help="SHA-256 of the exact handoff metadata bytes")
+    p.set_defaults(func=cmd_stage3_save_validation)
+
     p = sub.add_parser("stage4-finalize",
                        help="commit professor-local Stage-4 authority per professor and emit "
                             "one aggregate 教授-scoped result (issue #67)")
@@ -10203,8 +10601,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_stage2_record_validation)
 
     p = sub.add_parser("stage3-record-validation")
-    p.add_argument("--professor-dir", required=True)
-    p.add_argument("--validation-file", required=True)
+    p.add_argument("--professor-dir", required=False,
+                   help="legacy mode together with --validation-file; mutually "
+                        "exclusive with the handoff mode")
+    p.add_argument("--validation-file", required=False,
+                   help="legacy mode together with --professor-dir; mutually "
+                        "exclusive with the handoff mode")
+    p.add_argument("--handoff-file", metavar="FILE",
+                   help="handoff mode (issue #66 r13 §6.4) together with --handoff-sha256 "
+                        "and --expected-validation-sha256: professor and validation path "
+                        "come from the verified handoff metadata")
+    p.add_argument("--handoff-sha256", metavar="SHA256",
+                   help="SHA-256 of the exact handoff metadata bytes")
+    p.add_argument("--expected-validation-sha256",
+                   metavar="SHA256",
+                   help="digest returned by stage3-save-validation; proven over the exact "
+                        "bytes this record parses")
     p.set_defaults(func=cmd_stage3_record_validation)
 
     p = sub.add_parser("migrate-v3")
