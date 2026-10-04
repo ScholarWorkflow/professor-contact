@@ -7,19 +7,25 @@ Test Plan r19 §3.2.2 keeps three explicit verdict channels over the §7
 counterexample matrix:
 - PASS channel: the valid owner-local A+B run, a diagnostic object recorded by
   a non-stage5 command, the single ``results`` wrapper, a stale earlier-turn
-  final answer, and the canonical ``試験`` spelling.
+  final answer, the canonical ``試験`` spelling, the r15 real-host empty
+  wait pairing attributed through root subAgentActivity completion events,
+  and the r15 real-host compound command shapes (a ``python3 -c`` child
+  packet and a ``python3 -c`` root partition preparation).
 - FAIL_PRODUCT channel: every proven isolation/partition/orchestration
   violation — a sibling sentinel or a ``choices_scope`` field in the consumed
-  input, missing/multiple/owner-executed/changed root partitions, a plan
-  ``--choices-scope``, discovery ``--emit-choices-scope``, a changed bundle
-  file, wrong owner count, wait before owner completion, early or repeated
-  rebuilds, a changed owner result behind an intact formal topology, and the
-  rewritten ``試験`` spelling counterexample (carried by
-  test_canonical_unicode_is_preserved).
+  input, missing/multiple/owner-executed (strict or compound)/changed root
+  partitions, a plan ``--choices-scope``, discovery ``--emit-choices-scope``,
+  a changed bundle file, wrong owner count, wait before owner completion
+  (including a subAgentActivity completion point earlier than the child's
+  turn completion), early or repeated rebuilds, a changed owner result behind
+  an intact formal topology, and the rewritten ``試験`` spelling
+  counterexample (carried by test_canonical_unicode_is_preserved).
 - BLOCKED_OBSERVABILITY / INVALID_EVIDENCE channel: missing consumption
   evidence on both frozen surfaces (completed_user_payload_unobservable,
-  owner_business_object_unobservable) and two distinct consumed objects
-  (owner_business_object_ambiguous).
+  owner_business_object_unobservable), two distinct consumed objects
+  (owner_business_object_ambiguous), a wait with neither pairing surface
+  (completion_or_wait_unobservable), and a compound root text carrying
+  several action words (root_orchestration_ambiguous).
 """
 import importlib
 import importlib.util
@@ -53,10 +59,13 @@ REWRITTEN_SPELLING = "试验"
 
 PASS_CHANNEL = (
     "test_valid_owner_local_run_passes",
+    "test_compound_child_packet_is_still_consumption_evidence",
+    "test_compound_root_partition_is_recognized",
     "test_diagnostic_object_outside_stage5_commands_does_not_change_the_verdict",
     "test_results_wrapper_final_answer_still_passes",
     "test_stale_final_answer_is_not_terminal",
     "test_canonical_unicode_is_preserved",
+    "test_wait_pairing_falls_back_to_sub_agent_activity",
 )
 FAIL_CHANNEL = (
     "test_sibling_sentinel_in_consumed_input_is_a_product_failure",
@@ -64,6 +73,7 @@ FAIL_CHANNEL = (
     "test_missing_root_partition_is_a_product_failure",
     "test_multiple_successful_partitions_are_a_product_failure",
     "test_partition_executed_by_owner_is_a_product_failure",
+    "test_compound_partition_by_owner_is_a_product_failure",
     "test_changed_partition_output_is_a_product_failure",
     "test_plan_carrying_choices_scope_is_a_product_failure",
     "test_discovery_emitting_scope_is_a_product_failure",
@@ -72,10 +82,13 @@ FAIL_CHANNEL = (
     "test_early_or_multiple_rebuild_is_a_product_failure",
     "test_routing_proof_survives_downstream_business_failure",
     "test_canonical_unicode_is_preserved",
+    "test_sub_agent_activity_pairing_still_enforces_wait_order",
 )
 BLOCKED_INVALID_CHANNEL = (
     "test_ambiguous_consumed_objects_are_invalid_evidence",
     "test_missing_consumption_evidence_is_blocked",
+    "test_wait_without_any_pairing_surface_blocks",
+    "test_multi_action_compound_root_command_blocks_orchestration",
 )
 WIRING_TESTS = (
     "test_bridge_pins_the_r19_verifier_and_r12_builder",
@@ -145,6 +158,46 @@ class TestIssue68RuntimeR19(unittest.TestCase):
             tokens.extend((flag, value))
         return shlex.join(tokens)
 
+    def compound_command(self, action, *owner_packs):
+        """The r15 real-host compound preparation shape: a ``python3 -c``
+        wrapper whose stage5 argv is a quoted JSON list, so no action word is
+        a standalone shell token and strict flag parsing sees nothing."""
+        argv = ["python3", "/installed/contact_state.py", action,
+                "--program-root", self.manifest["program_root"]]
+        for pack in owner_packs:
+            argv.extend(("--owner", pack))
+        body = ("import subprocess\n"
+                "argv = " + json.dumps(argv, ensure_ascii=False) + "\n"
+                "subprocess.check_output(argv, text=True)")
+        return shlex.join(["/bin/zsh", "-lc", "python3 -c " + shlex.quote(body)])
+
+    def compound_plan_command(self, owner, packet):
+        """The r15 real-host child shape: the one-professor packet rides as a
+        JSON/Python literal inside a ``python3 -c`` wrapper around the
+        ``stage5-plan`` argv list."""
+        argv = ["python3", "/installed/contact_state.py", "stage5-plan",
+                "--program-root", self.manifest["program_root"],
+                "--email-pack", owner["email_pack"]]
+        body = ("import subprocess, json\n"
+                "packet = " + json.dumps(packet, ensure_ascii=False) + "\n"
+                "argv = " + json.dumps(argv, ensure_ascii=False) + "\n"
+                "subprocess.check_output(argv + [\"--packet\", json.dumps(packet, ensure_ascii=False)],"
+                " text=True)")
+        return shlex.join(["/bin/zsh", "-lc", "python3 -c " + shlex.quote(body)])
+
+    def compound_two_action_command(self):
+        """A compound root text carrying two action words: unattributable."""
+        discovery = json.dumps(["python3", "/installed/contact_state.py", "stage5-list-inputs",
+                                "--program-root", self.manifest["program_root"]], ensure_ascii=False)
+        partition = json.dumps(["python3", "/installed/contact_state.py", "stage5-partition-choices",
+                                "--program-root", self.manifest["program_root"]], ensure_ascii=False)
+        body = ("import subprocess\n"
+                "discovery = " + discovery + "\n"
+                "partition = " + partition + "\n"
+                "subprocess.check_output(discovery, text=True)\n"
+                "subprocess.check_output(partition, text=True)")
+        return shlex.join(["/bin/zsh", "-lc", "python3 -c " + shlex.quote(body)])
+
     def discovery(self):
         return json.dumps({"status": "ok", "inputs": [
             *[{"email_pack": owner["email_pack"], "status": "ok"} for owner in self.manifest["owners"]],
@@ -168,10 +221,18 @@ class TestIssue68RuntimeR19(unittest.TestCase):
 
     def evidence(self, *, per_owner=None, partition_present=True, partition_count=1,
                  partition_rows=None, discovery_flags=(), rebuild_timing=None,
-                 wait_before_completion=False, old_turn_final=None, final_text=None):
+                 wait_before_completion=False, old_turn_final=None, final_text=None,
+                 wait_pairing="agentsStates", sub_agent_activity=None,
+                 partition_compound=False, root_extra_commands=()):
         """One faithful r19 baseline: root discovery plus one deterministic
         partition, two formal children each consuming its own packet on its
-        own stage5 plan surface, and the current-turn root final answer."""
+        own stage5 plan surface, and the current-turn root final answer.
+        ``wait_pairing="empty"`` is the r15 real-host wait shape with empty
+        receiverThreadIds/agentsStates; ``sub_agent_activity`` adds the root
+        subAgentActivity completed item before or after each child's
+        turn/completed. ``partition_compound`` emits the root partition in
+        the r15 real-host ``python3 -c`` compound shape and
+        ``root_extra_commands`` appends further root command items."""
         per_owner = per_owner or {}
         events, relations, seq = [], [], 0
 
@@ -192,24 +253,39 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                                              "aggregatedOutput": output})
 
         def wait_item(child, owner):
-            return {"type": "collabAgentToolCall", "id": "wait-" + child, "tool": "wait",
-                    "status": "completed", "senderThreadId": "root",
-                    "receiverThreadIds": [child],
-                    "agentsStates": {child: {"status": "completed", "message": json.dumps(
-                        dict(owner["expected_result"], professor_dir=owner["professor_dir"]),
-                        ensure_ascii=False)}}}
+            item = {"type": "collabAgentToolCall", "id": "wait-" + child, "tool": "wait",
+                    "status": "completed", "senderThreadId": "root"}
+            if wait_pairing == "empty":
+                item.update({"receiverThreadIds": [], "agentsStates": {}})
+            else:
+                item.update({"receiverThreadIds": [child],
+                             "agentsStates": {child: {"status": "completed", "message": json.dumps(
+                                 dict(owner["expected_result"], professor_dir=owner["professor_dir"]),
+                                 ensure_ascii=False)}}})
+            return item
+
+        def sub_agent_completed(child, index):
+            return {"type": "subAgentActivity", "id": "subagent-completed-" + child,
+                    "kind": "completed", "agentThreadId": child,
+                    "agentPath": "/root/stage5_" + str(index)}
 
         command("root", "root-discovery",
                 self.stage5_command("stage5-list-inputs", *discovery_flags), self.discovery())
         if partition_present:
             for number in range(partition_count):
-                command("root", "root-partition-" + str(number),
-                        self.stage5_command("stage5-partition-choices",
-                                            ("--owner", self.owner(0)["email_pack"]),
-                                            ("--owner", self.owner(1)["email_pack"])),
+                partition_command = (self.compound_command("stage5-partition-choices",
+                                                           self.owner(0)["email_pack"],
+                                                           self.owner(1)["email_pack"])
+                                     if partition_compound else
+                                     self.stage5_command("stage5-partition-choices",
+                                                         ("--owner", self.owner(0)["email_pack"]),
+                                                         ("--owner", self.owner(1)["email_pack"])))
+                command("root", "root-partition-" + str(number), partition_command,
                         self.partition_output(partition_rows))
         if rebuild_timing == "early":
             command("root", "root-rebuild-early", self.stage5_command("stage5-rebuild-overview"))
+        for offset, (command_text, output) in enumerate(root_extra_commands):
+            command("root", "root-extra-" + str(offset), command_text, output)
         for index, owner in enumerate(self.manifest["owners"]):
             child = "child-" + str(index)
             relations.append({"tool": "spawnAgent", "sender_thread_id": "root",
@@ -229,10 +305,12 @@ class TestIssue68RuntimeR19(unittest.TestCase):
             spec = per_owner.get(index, {})
             if spec.get("commands", True):
                 for offset, packet in enumerate(spec.get("packets", [self.packet(owner)])):
-                    command(child, "exec-" + str(index) + "-packet-" + str(offset),
-                            self.stage5_command("stage5-plan",
-                                                ("--email-pack", owner["email_pack"]),
-                                                ("--packet", json.dumps(packet, ensure_ascii=False))),
+                    packet_command = (self.compound_plan_command(owner, packet)
+                                      if spec.get("compound_packet") else
+                                      self.stage5_command("stage5-plan",
+                                                          ("--email-pack", owner["email_pack"]),
+                                                          ("--packet", json.dumps(packet, ensure_ascii=False))))
+                    command(child, "exec-" + str(index) + "-packet-" + str(offset), packet_command,
                             json.dumps(owner["expected_result"], ensure_ascii=False))
                 command(child, "exec-" + str(index) + "-choices",
                         self.stage5_command("stage5-plan",
@@ -249,13 +327,18 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                     ensure_ascii=False)}],
             })
             wait = wait_item(child, owner)
+            sub_completed = sub_agent_completed(child, index)
             if wait_before_completion:
                 event("item/completed", "root", wait)
                 event("turn/completed", child, {"type": "turn", "id": "turn-" + str(index)},
                       turn="turn-" + str(index), turn_status="completed")
             else:
+                if sub_agent_activity == "before_completion":
+                    event("item/completed", "root", sub_completed)
                 event("turn/completed", child, {"type": "turn", "id": "turn-" + str(index)},
                       turn="turn-" + str(index), turn_status="completed")
+                if sub_agent_activity == "after_completion":
+                    event("item/completed", "root", sub_completed)
                 event("item/completed", "root", wait)
         if rebuild_timing == "double":
             command("root", "root-rebuild-a", self.stage5_command("stage5-rebuild-overview"))
@@ -287,6 +370,28 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertEqual(result["rebuild_count"], 0)
         self.assertEqual(result["owner_pack_set"],
                          sorted(owner["email_pack"] for owner in self.manifest["owners"]))
+
+    def test_compound_child_packet_is_still_consumption_evidence(self):
+        """The r15 real-host child shape: the packet rides inside a
+        ``python3 -c`` compound expression whose stage5 argv is a quoted
+        list, so strict parsing sees no invocation; the loose business
+        surface still attributes the consumed packet."""
+        response, adapter = self.evidence(per_owner={0: {"compound_packet": True},
+                                                     1: {"compound_packet": True}})
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["owner_pack_set"],
+                         sorted(owner["email_pack"] for owner in self.manifest["owners"]))
+
+    def test_compound_root_partition_is_recognized(self):
+        """The r15 real-host root shape: the partition preparation is a
+        ``python3 -c`` compound command whose single action word is
+        ``stage5-partition-choices``; success is judged from the
+        aggregatedOutput JSON alone."""
+        response, adapter = self.evidence(partition_compound=True)
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["partition_executions"], 1)
 
     def test_diagnostic_object_outside_stage5_commands_does_not_change_the_verdict(self):
         echo = shlex.join(["echo", json.dumps({"email_pack": self.owner(1)["email_pack"],
@@ -370,6 +475,19 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("FAIL_PRODUCT", "partition_executed_by_owner"))
 
+    def test_compound_partition_by_owner_is_a_product_failure(self):
+        """A child compound text whose single action word is
+        ``stage5-partition-choices`` proves an owner executed the partition
+        entry even when strict parsing cannot attribute the call."""
+        compound = self.compound_command("stage5-partition-choices",
+                                         self.owner(0)["email_pack"],
+                                         self.owner(1)["email_pack"])
+        response, adapter = self.evidence(
+            per_owner={0: {"extra_commands": [(compound, self.partition_output())]}})
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "partition_executed_by_owner"))
+
     def test_changed_partition_output_is_a_product_failure(self):
         rows = self.partition_rows()
         rows[0] = dict(rows[0], choices_rows=[])
@@ -418,6 +536,27 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("FAIL_PRODUCT", "wait_precedes_owner_completion"))
 
+    def test_wait_pairing_falls_back_to_sub_agent_activity(self):
+        response, adapter = self.evidence(wait_pairing="empty", sub_agent_activity="after_completion")
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["wait_evidence"],
+                         {"child-0": "subAgentActivity", "child-1": "subAgentActivity"})
+
+    def test_wait_without_any_pairing_surface_blocks(self):
+        response, adapter = self.evidence(wait_pairing="empty")
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("BLOCKED_OBSERVABILITY", "completion_or_wait_unobservable"))
+        self.assertEqual(result["missing_surface"], ["missing_wait_pairing"])
+
+    def test_sub_agent_activity_pairing_still_enforces_wait_order(self):
+        response, adapter = self.evidence(wait_pairing="empty",
+                                          sub_agent_activity="before_completion")
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "wait_precedes_owner_completion"))
+
     def test_early_or_multiple_rebuild_is_a_product_failure(self):
         response, adapter = self.evidence(rebuild_timing="early")
         result = verify.verify_codex(response, adapter, self.manifest)
@@ -427,6 +566,16 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         result = verify.verify_codex(response, adapter, self.manifest)
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("FAIL_PRODUCT", "multiple_aggregate_rebuilds"))
+
+    def test_multi_action_compound_root_command_blocks_orchestration(self):
+        """A compound root text carrying two action words cannot be
+        attributed to one orchestration step and stays blocked."""
+        compound = self.compound_two_action_command()
+        response, adapter = self.evidence(root_extra_commands=[(compound, "")])
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("BLOCKED_OBSERVABILITY", "root_orchestration_ambiguous"))
+        self.assertEqual(result["detail"], compound[:200])
 
     def test_routing_proof_survives_downstream_business_failure(self):
         changed = json.dumps({"status": "needs_refresh", "reason_code": "verify_missing",

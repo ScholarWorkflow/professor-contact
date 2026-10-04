@@ -9,17 +9,35 @@ fixture: the root discovers the local packs, runs the deterministic
 one-professor packet (``email_pack`` plus that owner's own ``choices`` rows,
 never a ``choices_scope``).
 
-A child's consumption surface is only its own command texts that invoke a
-supported stage5 CLI; objects recorded by other commands (echo/log/diagnostic
-examples) are never consumption evidence. Each consumed object must equal the
-manifest's per-owner expected bundle rows after parsing, must not carry any
-sibling marker or a ``choices_scope`` field, and must keep
+The root wait/consume point per formal child comes from two supported
+surfaces, preferred first: the completed ``collabAgentToolCall`` ``wait``
+item pairing (a ``receiverThreadIds`` entry plus a completed ``agentsStates``
+status) and, when that pairing is empty as in the r15 real-host output, the
+``subAgentActivity`` ``kind=completed`` item that reports the child's
+``agentThreadId`` back to the root. A child still needs its own
+``turn/completed``; a child missing the paired wait point or that turn
+completion stays ``completion_or_wait_unobservable``, and a PASS verdict
+records which surface supplied each wait point as diagnostic-only
+``wait_evidence``.
+
+A child's consumption surface is only its own command texts that reference the
+producer CLI (``contact_state.py``) together with a supported stage5 action
+word; objects recorded by other commands (echo/log/diagnostic examples) are
+never consumption evidence. Real Codex hosts hand the child a compound
+``python3 -c``/wrapper expression whose packet rides inside as a JSON or
+Python literal and whose stage5 arguments are a quoted argv list, so the
+consumption surface is recognized by that loose text shape and never requires
+the command to parse into standalone flags. Each consumed object must equal
+the manifest's per-owner expected bundle rows after parsing, must not carry
+any sibling marker or a ``choices_scope`` field, and must keep
 ``professor_dir``/``email_id`` byte for byte. The root orchestration oracle
 proves exactly one successful root partition consistent with the manifest,
 owner plans bound to their own pack and bundle file without a choices scope,
-and at most one rebuild after both owner results were consumed. A proven
-product failure is never downgraded to a blocked or invalid terminal by
-another child's missing or ambiguous evidence.
+and at most one rebuild after both owner results were consumed; root
+orchestration calls are recognized either by strict flag parsing or, for
+compound preparations, by their single action word plus their
+``aggregatedOutput``. A proven product failure is never downgraded to a
+blocked or invalid terminal by another child's missing or ambiguous evidence.
 """
 import argparse
 import json
@@ -84,21 +102,32 @@ def command_action(command, manifest):
     return {"action": action, "flags": flags}
 
 
-def _is_stage5_invocation(text, manifest):
-    try:
-        return command_action(text, manifest) is not None
-    except ValueError:
+def is_business_surface(text):
+    """Loose business-surface recognition over one command text.
+
+    A command text is a consumption or orchestration candidate when it
+    references the producer CLI (``contact_state.py``) and any supported
+    stage5 action word. Real Codex hosts wrap both inside ``python3 -c`` and
+    wrapper compound expressions — the action word then lives inside a quoted
+    string, never a standalone token — so this check only decides whether a
+    text is worth extracting business objects or output facts from; it never
+    parses flags. Strict ``command_action`` parsing stays the only source for
+    flag facts.
+    """
+    if not isinstance(text, str):
         return False
+    return "contact_state.py" in text and any(action in text for action in ACTIONS)
 
 
 def consumed_business_objects(stage5_command_texts, payload_texts):
     """The one business object this owner consumed, from its stage5 commands.
 
-    Only command texts that invoke a supported stage5 CLI are the consumption
-    surface; a business object recorded by any other command (echo/log or a
-    diagnostic example) is never consumption evidence. The plaintext child
-    user message stays the delivery fallback for hosts that hand the business
-    object to the child itself; it keeps the frozen
+    Only command texts on the loose business surface (producer CLI plus a
+    supported stage5 action word, however compound the expression) are the
+    consumption surface; a business object recorded by any other command
+    (echo/log or a diagnostic example) is never consumption evidence. The
+    plaintext child user message stays the delivery fallback for hosts that
+    hand the business object to the child itself; it keeps the frozen
     ``completed_user_payload_unobservable`` blocker when it is absent or not
     unique and no stage5 command surface exists.
     """
@@ -244,6 +273,18 @@ def _dir_key(row):
     return str(row.get("professor_dir"))
 
 
+def _compound_action(command):
+    """The single supported stage5 action word in a compound command text.
+
+    Compound host expressions carry action words inside quoted strings, so
+    strict parsing cannot attribute them; the loose text scan does. Returns
+    None when several action words appear — such a text cannot be attributed
+    to one orchestration step.
+    """
+    actions = [action for action in ACTIONS if action in command]
+    return actions[0] if len(actions) == 1 else None
+
+
 def runtime_checks(calls, manifest, completion_points, root_texts, root=None, outcomes=None, owner_threads=None):
     """The r19 root orchestration oracle over executed stage5 calls.
 
@@ -254,20 +295,58 @@ def runtime_checks(calls, manifest, completion_points, root_texts, root=None, ou
     at most one rebuild may run after every owner result was consumed; and
     the pinned final source must carry one consistent consumed outcome per
     owner directory.
+
+    A supported call is recognized on two surfaces. A call whose command
+    parses strictly under ``command_action`` keeps every flag fact: only such
+    a call can prove the ``--emit-choices-scope``/``--choices-scope``/
+    ``--program-root`` facts. A compound command (a ``python3 -c``/wrapper
+    preparation whose action words are quoted string fragments, never
+    standalone tokens) is recognized by ``is_business_surface`` plus its
+    single action word and contributes only its thread attribution and its
+    ``aggregatedOutput``: discovery and partition success are judged from the
+    output JSON alone. A compound root text carrying several action words
+    cannot be attributed to one orchestration step and stays
+    BLOCKED_OBSERVABILITY/root_orchestration_ambiguous. A child's compound
+    consumption is judged by the packet oracle; on a child thread only a
+    strictly parsed partition, or a compound text whose single action word is
+    ``stage5-partition-choices``, proves ``partition_executed_by_owner``.
     """
     discovery, partitions, plans, rebuilds = [], [], [], []
     owner_threads = owner_threads or {}
     for call in calls:
+        command, thread = call["command"], call.get("thread")
         try:
-            parsed = command_action(call["command"], manifest)
+            parsed = command_action(command, manifest)
         except ValueError as exc:
-            return verdict("BLOCKED_OBSERVABILITY", str(exc))
+            if not is_business_surface(command):
+                return verdict("BLOCKED_OBSERVABILITY", str(exc))
+            parsed = None
         if parsed is None:
-            continue
+            if not is_business_surface(command):
+                continue
+            if "--help" in command:
+                # Help output stays non-evidence, mirroring the strict
+                # grammar's --help exclusion for compound texts too.
+                continue
+            action = _compound_action(command)
+            if action is None:
+                if root is None or thread == root:
+                    return verdict("BLOCKED_OBSERVABILITY", "root_orchestration_ambiguous",
+                                   detail=command[:200])
+                continue
+            if root is not None and thread != root:
+                # A child's compound consumption is judged by the packet
+                # oracle, never by orchestration flag facts.
+                if action == "stage5-partition-choices":
+                    return verdict("FAIL_PRODUCT", "partition_executed_by_owner")
+                continue
+            parsed = {"action": action, "flags": {}, "compound": True}
         if parsed.get("problem"):
             return verdict("FAIL_PRODUCT", parsed["problem"])
         parsed.update(call)
         action, thread = parsed["action"], call.get("thread")
+        # Compound calls carry empty flags, so this scope check can only ever
+        # fire for a strictly parsed discovery call.
         if action == "stage5-list-inputs" and "--emit-choices-scope" in parsed["flags"]:
             return verdict("FAIL_PRODUCT", "discovery_emits_choices_scope")
         if action == "stage5-plan":
@@ -374,6 +453,7 @@ def _verify_codex_events(response, adapter, manifest):
     if len(children) != 2:
         return verdict("FAIL_PRODUCT", "wrong_owner_count", formal_children=sorted(children))
     payloads, complete, results, waits = {}, {}, {}, {}
+    sub_completed = {}
     command_starts, calls, root_texts, commands = {}, [], [], {}
     previous_seq = -1
     for event in events:
@@ -399,13 +479,23 @@ def _verify_codex_events(response, adapter, manifest):
         if method == "item/completed" and item.get("type") == "collabAgentToolCall" \
                 and item.get("senderThreadId") == root and item.get("tool") == "wait" \
                 and item.get("status") == "completed":
+            # Preferred wait/consume surface: the pairing fields attribute the
+            # root wait to the formal child it blocked on.
             for child in item.get("receiverThreadIds", []):
                 if child in children:
                     state = item.get("agentsStates", {}).get(child, {})
                     if state.get("status") == "completed":
                         waits[child] = seq
-                        complete.setdefault(child, seq)
                         results.setdefault(child, []).append(state.get("message", ""))
+        if method == "item/completed" and item.get("type") == "subAgentActivity" \
+                and item.get("kind") == "completed" \
+                and item.get("agentThreadId") in children:
+            # Fallback wait/consume surface: r15 real hosts emit an empty
+            # collabAgentToolCall pairing but still report each formal child's
+            # completion to the root as a subAgentActivity completed item. The
+            # first completed report of a child is its earliest root-observable
+            # consumption point; any thread may carry it.
+            sub_completed.setdefault(item["agentThreadId"], seq)
         if thread in children | {root} and item.get("type") == "commandExecution":
             item_id = (thread, item.get("id"))
             if method == "item/started":
@@ -419,9 +509,9 @@ def _verify_codex_events(response, adapter, manifest):
                               "command": item.get("command", ""), "output": item.get("aggregatedOutput", ""),
                               "thread": thread})
     failures, invalids, blockers = [], [], []
-    assigned, outcomes = {}, {}
+    assigned, outcomes, effective_waits = {}, {}, {}
     for child in sorted(children):
-        stage5_texts = [text for text in commands.get(child, []) if _is_stage5_invocation(text, manifest)]
+        stage5_texts = [text for text in commands.get(child, []) if is_business_surface(text)]
         rows, problem = consumed_business_objects(stage5_texts, payloads.get(child, []))
         if not problem:
             pack, problem = owner_payload(rows, manifest)
@@ -433,10 +523,16 @@ def _verify_codex_events(response, adapter, manifest):
             continue
         assigned[pack] = child
         owner = next(owner for owner in manifest["owners"] if owner["email_pack"] == pack)
-        if child not in complete or child not in waits:
-            blockers.append(verdict("BLOCKED_OBSERVABILITY", "completion_or_wait_unobservable"))
+        effective_wait = waits.get(child, sub_completed.get(child))
+        if effective_wait is None or child not in complete:
+            blockers.append(verdict("BLOCKED_OBSERVABILITY", "completion_or_wait_unobservable",
+                                    missing_surface=[label for label, absent in
+                                                     (("missing_wait_pairing", effective_wait is None),
+                                                      ("missing_turn_completion", child not in complete))
+                                                     if absent]))
             continue
-        if waits[child] < complete[child]:
+        effective_waits[child] = effective_wait
+        if effective_wait < complete[child]:
             failures.append(verdict("FAIL_PRODUCT", "wait_precedes_owner_completion"))
             continue
         outcome, problem = base.owner_outcome(results.get(child, []), owner)
@@ -449,9 +545,13 @@ def _verify_codex_events(response, adapter, manifest):
             return bucket[0]
     if raw.get("termination_reason") != "completed":
         return verdict("BLOCKED_DEPENDENCY", "root_turn_not_completed")
-    result = runtime_checks(calls, manifest, list(waits.values()), root_texts, root=root, outcomes=outcomes,
+    result = runtime_checks(calls, manifest, list(effective_waits.values()), root_texts, root=root,
+                            outcomes=outcomes,
                             owner_threads={child: pack for pack, child in assigned.items()})
     result["identity_diagnostics"] = adapter.get("dispatch", {}).get("agent_identity", {})
+    if result["verdict"] == "PASS":
+        result["wait_evidence"] = {child: ("collabAgentToolCall" if child in waits else "subAgentActivity")
+                                   for child in sorted(children)}
     return result
 
 
