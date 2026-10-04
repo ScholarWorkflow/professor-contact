@@ -2,10 +2,10 @@
 """PC68-R1 Codex-only formal entrypoint (Gate-2 r14).
 
 r14 keeps the r13 request, fixture adapter and raw final-answer evaluator.
-Before the acceptance request it also proves that the listening eval service
-comes from the frozen clean checkout, then verifies that the same service
-instance remains in place after the request. These provenance checks are part
-of the Recipe and never count as product acceptance by themselves.
+Before the acceptance request it proves that the listening eval service comes
+from the frozen clean checkout and uses test-only persistent Codex storage,
+then verifies that the same service and storage boundary remain in place after
+the request. These checks are Recipe evidence, not product acceptance.
 """
 import argparse
 import json
@@ -15,6 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import issue68_eval_service_isolation_r14 as isolation
 import run_issue68_stage5_routing as base
 import run_issue68_stage5_routing_r13 as bridge
 
@@ -138,7 +139,8 @@ def capture_eval_service_provenance(eval_root, expected_revision):
     revision = base.clean_revision(eval_root, expected_revision)
     port = resolve_eval_port(eval_root)
     service = capture_service_instance(eval_root, port)
-    return {"eval_server": revision, "service": service}
+    storage = isolation.capture_storage_isolation(service)
+    return {"eval_server": revision, "service": service, "storage": storage}
 
 
 def same_service(before, after):
@@ -149,6 +151,7 @@ def same_service(before, after):
         and before.get("service", {}).get("start_time") == after.get("service", {}).get("start_time")
         and before.get("service", {}).get("cwd") == after.get("service", {}).get("cwd")
         and before.get("service", {}).get("command") == after.get("service", {}).get("command")
+        and before.get("storage") == after.get("storage")
     )
 
 
@@ -183,6 +186,7 @@ def main(argv=None):
             "fixture": fixture,
             "eval_server": service_before["eval_server"],
             "eval_service_before": service_before["service"],
+            "eval_storage_before": service_before["storage"],
             "manual_patch": "no",
             "execution_kind": EXECUTION_KIND,
             "case": CASE,
@@ -193,7 +197,7 @@ def main(argv=None):
         }
         base.write_json(output / "provenance.json", provenance)
 
-        base.progress("只执行 Codex；服务来源已归档；单次正式请求，失败不重试、不换服务、不换模型、不改断言")
+        base.progress("只执行 Codex；服务来源和隔离已归档；单次正式请求，失败不重试、不换服务、不换模型、不改断言")
         host = base.codex_host(args, output)
         base.write_json(output / "codex-verdict.json", host)
 
