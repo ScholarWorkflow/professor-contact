@@ -12,7 +12,7 @@
 2. **正式 Zotero 聚类不是 professor-contact 前置条件。** `preview:false` 的正式聚类是可选的 Zotero 组织投影；outreach 的方向权威在 Stage 2 全文证据解析后形成。
 3. **Stage 1 不再先给“保留教授”全量补 PDF。** 它先按被选方向构建保守高召回候选集，再仅把缺 PDF 的 `item_key` 交给 `professor-collector(pdf_only:true, item_keys=...)`。
 4. **Stage 2 是学术证据与方向归属的权威层。** preview membership 只是 provisional；全文 facts / future-work sidecar 与 resolved-direction 状态决定后续 outreach 事实。
-5. **Stage 3 与 Stage 5 都有唯一事实源。** Stage 3 只消费 `套磁候选输入.json`；Stage 5 只以 `邮件输入.json` 为研究与联系方式冻结事实源，再加 profile/template/info/boshu/verify 等被允许的非论文输入。
+5. **Stage 3、Stage 4 与 Stage 5 都有唯一事实源。** Stage 3 只消费 `套磁候选输入.json`；Stage 4 的选择/邮件包归属于单个教授（`<教授目录>/套磁选择.json` + `<教授目录>/邮件输入.json`，schema 3，Issue #67），程序级同名 Stage-4 文件不再被写入或当作权威；Stage 5 只以 Stage 4 交出的该教授 `邮件输入.json` 为研究与联系方式冻结事实源，再加 profile/template/info/boshu/verify 等被允许的非论文输入。
 6. **Markdown 是人类投影，不是反向输入。** 受管 Markdown 不得被后续阶段重新解析成机器状态。
 7. **模型只做语义判断；确定性 runner 负责身份、join、fingerprint、缓存、校验、原子写与渲染。**
 
@@ -40,9 +40,9 @@ flowchart TD
     S3["Stage 3 · idea-generator<br/>每 resolved direction 生成 / 修正 3–5 个想法"]
     STATE3["套磁候选状态.json<br/>canonical candidate state"]
 
-    S4["Stage 4 · selection<br/>用户选择 + fingerprint + exact join"]
-    SEL["教授研究/套磁选择.json"]
-    MAIL["教授研究/邮件输入.json<br/>Stage 5 唯一事实源"]
+    S4["Stage 4 · selection<br/>逐教授事务：用户选择 + fingerprint + exact join"]
+    SEL["教授目录/套磁选择.json<br/>schema 3 · professor-local authority"]
+    MAIL["教授目录/邮件输入.json<br/>Stage 4 交出给 Stage 5 的事实源"]
 
     S5["Stage 5 · email-generator<br/>送信前核验 + 动态字段生成 + 确定性拼装"]
     VAL["professor-contact-email-validator"]
@@ -79,8 +79,8 @@ flowchart TD
 | 1 | `professor-contact-downloader` | 该教授的 local target + preview + `papers.json` | `<教授目录>/套磁阶段1候选.json` | 一次只 `resolve`/`build --target-file` 一位教授；只写该教授自己那份，不读不写其他教授的状态，也不读程序级聚合；仅候选集；归属声明必须是 non-final |
 | 2 | `professor-contact-analyzer` + `paper-analysis` | 该教授的 local target + verified Stage 1 snapshot + 本地论文证据 | `_resolved_directions.json`、`套磁候选输入.json` | 全文 resolved direction 对 outreach 权威；input pack 是 Stage 3 唯一事实源 |
 | 3 | `professor-contact-idea-generator` | `套磁候选输入.json` + profile | `套磁候选状态.json` | 不读 Markdown / `_index.json` / sidecar；默认每方向 3–5 条 |
-| 4 | `professor-contact-selection` | `套磁候选状态.json` + 用户真实选择 | `套磁选择.json`、`邮件输入.json` | exact `direction_id` / `(direction_id,item_key,gap_id)` join；过期零写入 |
-| 5 | `professor-contact-email-generator` | `邮件输入.json` + profile/template/info/boshu + verify cache | 邮件 md/txt、跟进邮件、`套磁邮件状态.json`、总览 | `邮件输入.json` 是论文事实与冻结联系方式的唯一事实源 |
+| 4 | `professor-contact-selection` | `套磁候选状态.json` + 用户真实选择 | `<教授目录>/套磁选择.json`、`<教授目录>/邮件输入.json` | 以 canonical `professor_dir` 为事务边界逐教授提交，一次聚合 `results[]` 可 partial；exact `direction_id` / `(direction_id,item_key,gap_id)` join；该教授过期零写入，无关教授不阻断、不撤销已提交教授 |
+| 5 | `professor-contact-email-generator` | Stage 4 交出的 `<教授目录>/邮件输入.json` + profile/template/info/boshu + verify cache | 邮件 md/txt、跟进邮件、`套磁邮件状态.json`、总览 | 该教授的 `邮件输入.json` 是论文事实与冻结联系方式的事实源 |
 
 ## 4. Stage 0：从 preview 选择目标方向
 
@@ -218,26 +218,32 @@ flowchart LR
 
 ## 8. Stage 4：真实用户选择与邮件包编译
 
-Stage 4 的选择源是 `套磁候选状态.json`，不是 Markdown。没有真实用户选择就不能 finalize。
+Stage 4 的选择源是 `套磁候选状态.json`，不是 Markdown。没有真实用户选择就不能 finalize。一次调用按 canonical `professor_dir` 分组，每位教授是一个独立事务：一位教授的 expected 失败既不阻断也不撤销另一位已提交的教授，runner 只输出一个聚合 JSON（`status=ok|partial|error` + `results[]`）。
+
+caller 逐行消费 `results[]`：`partial` 只把 `status=ok` 行的 `email_pack` 原路径交给阶段 5（`--email-pack`），失败行按自己的 `reason_code` 单独修复。runner 因编程异常中断时没有聚合 JSON，因此也没有任何成功行可 handoff——重新委派正式 Stage 4 owner `professor-contact-selection` 重新处理这批显式选择，从各教授已有的 local 权威与当前阶段 3 事实进入，已提交的教授不被回滚或删除。
 
 ```mermaid
 flowchart TD
-    ST["套磁候选状态.json"]
+    ST["套磁候选状态.json<br/>该教授"]
     USER["用户真实选择"]
-    F["stage4-finalize"]
+    F["stage4-finalize<br/>逐教授事务"]
     G{"fingerprint + scope + exact gap join"}
-    STOP["needs_refresh / needs_input<br/>零写入"]
-    SEL["套磁选择.json"]
-    MAIL["邮件输入.json<br/>schema 2"]
+    STOP["该教授 needs_refresh / error<br/>该教授零写入"]
+    SEL["教授目录/套磁选择.json<br/>schema 3"]
+    MAIL["教授目录/邮件输入.json<br/>schema 3"]
+    AGG["聚合 results[]<br/>ok / partial / error"]
 
     ST --> F
     USER --> F --> G
     G -->|"失败"| STOP
     G -->|"通过"| SEL
     G -->|"通过"| MAIL
+    SEL --> AGG
+    MAIL --> AGG
+    STOP --> AGG
 ```
 
-`邮件输入.json` 编译并冻结：
+该教授的 `邮件输入.json` 编译并冻结：
 
 - 选中 idea 与 `direction_ids`；
 - 方向 display provenance；
@@ -247,6 +253,8 @@ flowchart TD
 - 上游 `_联系方式证据.json` 中该教授的 contact evidence snapshot 与 record fingerprint。
 
 从这一刻起，Stage 5 不再重构论文事实。
+
+历史遗留的程序级选择行按教授逐个迁移：`stage4-migrate-local --program-root <程序根> --professor-dir <教授目录>` 只把该教授的 legacy 选择行当作行来源，邮件事实一律按当前 `套磁候选状态.json` + 输入包重编译（不复制 legacy 邮件行），完整 local pair 已存在即 `already_local` 原样保留，只有一半即 `local_pair_incomplete` 零写入，无对应 legacy 行即 `not_applicable`；legacy 程序级文件的字节始终不被修改，也不再被当作权威。
 
 ## 9. Stage 5：唯一邮件事实源、冻结联系方式与确定性拼装
 

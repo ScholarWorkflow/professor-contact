@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 from pathlib import Path
@@ -70,11 +71,35 @@ INSTALL_REQUIRED_FILES = (
     ".agents/skills/professor-contact/tests/runtime/build_issue57_stage2_eval_request.py",
     ".agents/skills/professor-contact/tests/runtime/prepare_issue57_stage4_fixture.py",
     ".agents/skills/professor-contact/tests/runtime/prompts/issue57-stage2-routing.txt",
+    # PC67-RISO drives one real explicit-selection Stage-4 call, so a clean
+    # consumer must carry the isolation fixture and its frozen prompt.
+    ".agents/skills/professor-contact/tests/runtime/prepare_issue67_stage4_isolation_fixture.py",
+    ".agents/skills/professor-contact/tests/runtime/prompts/issue67-stage4-isolation.txt",
 )
 STAGE4_PROGRAM_OUTPUTS = {
     "套磁选择.json": Path("教授研究/套磁选择.json"),
     "邮件输入.json": Path("教授研究/邮件输入.json"),
 }
+# Issue #67 PC67-RISO grades one explicit-selection Stage-4 call from file
+# bytes and formal delegation evidence only: the professor-local pair is schema
+# 3 and the legacy program-level container keeps its schema-2 identity.
+ISSUE67_FIXTURE_BUILDER = "tests/runtime/prepare_issue67_stage4_isolation_fixture.py"
+ISSUE67_PROMPT_NAME = "issue67-stage4-isolation.txt"
+ISSUE67_FORBIDDEN_REQUEST_TOKENS = ("network_access", "ZOTERO", "CHROME", "NPM",
+                                    "agents.max_concurrent")
+ISSUE67_REQUEST_ARGV_PREFIX = ("--json", "--skip-git-repo-check",
+                               "--sandbox", "workspace-write")
+ISSUE67_REQUEST_MODEL = "gpt-5.6-luna"
+ISSUE67_REQUEST_REASONING = "low"
+INPUT_PACK_SCHEMA = 2
+CANDIDATE_STATE_SCHEMA = 2
+STAGE4_LOCAL_SCHEMA = 3
+SELECTION_KIND = "professor-contact-selection"
+EMAIL_PACK_KIND = "professor-contact-email-input"
+LOCAL_SELECTION_FILE = "套磁选择.json"
+LOCAL_EMAIL_PACK_FILE = "邮件输入.json"
+LOCAL_INPUT_PACK_FILE = "套磁候选输入.json"
+LOCAL_CANDIDATE_STATE_FILE = "套磁候选状态.json"
 STAGE3_SNAPSHOT_OUTPUTS = {
     "套磁候选状态.json": Path("教授研究/X分野/Example Professor/套磁候选状态.json"),
     "套磁想法候选.md": Path("教授研究/X分野/Example Professor/套磁想法候选.md"),
@@ -1147,6 +1172,267 @@ def _stage4_artifacts(root: Path) -> dict[str, dict[str, Any]]:
     return artifacts
 
 
+def _file_state(path: Path) -> dict[str, Any]:
+    exists = Path(path).is_file()
+    return {"exists": exists, "sha256": _sha256(path) if exists else None}
+
+
+def _canonical_dir(value: Any) -> str:
+    """Canonical professor_dir identity: the resolved path, never a name."""
+    return str(Path(str(value or "")).resolve())
+
+
+def _canonical_input_pack(document: Any) -> tuple[bool, Any]:
+    """Structural check of the shipped canonical v2 input-pack contract."""
+    if not isinstance(document, dict):
+        return False, "not_object"
+    if (document.get("schema") != INPUT_PACK_SCHEMA
+            or document.get("kind") != INPUT_PACK_KIND
+            or document.get("identity_version") != DIRECTION_IDENTITY_VERSION):
+        return False, {"schema": document.get("schema"), "kind": document.get("kind"),
+                       "identity_version": document.get("identity_version")}
+    if not str(document.get("professor") or "").strip() \
+            or not str(document.get("professor_dir") or "").strip():
+        return False, "missing_pack_professor_identity"
+    papers = document.get("papers")
+    directions = document.get("directions")
+    if not isinstance(papers, dict) or not isinstance(directions, list) or not directions:
+        return False, "missing_pack_papers_or_directions"
+    ids: list[str] = []
+    fingerprints: dict[str, str] = {}
+    for row in directions:
+        if not isinstance(row, dict):
+            return False, "pack_direction_not_object"
+        direction_id = row.get("direction_id")
+        if not isinstance(direction_id, str) or not direction_id.strip():
+            return False, "pack_direction_without_machine_identity"
+        ids.append(direction_id)
+        fingerprint = row.get("input_fingerprint")
+        if not isinstance(fingerprint, str) or not fingerprint:
+            return False, {"direction_id": direction_id, "reason": "missing_input_fingerprint"}
+        fingerprints[direction_id] = fingerprint
+        for key in row.get("supporting_item_keys") or []:
+            if key not in papers:
+                return False, {"direction_id": direction_id,
+                               "reason": "unresolved_supporting_item_key", "item_key": key}
+    if len(set(ids)) != len(ids):
+        return False, "duplicate_pack_direction_id"
+    return True, {"direction_ids": ids, "input_fingerprints": fingerprints,
+                  "professor": document.get("professor"), "item_keys": sorted(papers)}
+
+
+def _canonical_candidate_state(document: Any, pack: Any, profile_sha: str | None,
+                              ) -> tuple[bool, Any]:
+    """Structural check of the shipped canonical v2 candidate-state contract.
+
+    A state that fails here is exactly the malformed-bytes condition the #67
+    isolation fixture freezes for professor B: the producer can only fail that
+    professor and must leave these bytes untouched.
+    """
+    if not isinstance(document, dict):
+        return False, "not_object"
+    if (document.get("schema") != CANDIDATE_STATE_SCHEMA
+            or document.get("kind") != CANDIDATE_STATE_KIND
+            or document.get("identity_version") != DIRECTION_IDENTITY_VERSION
+            or document.get("generator_contract_version")
+            != STAGE3_GENERATOR_CONTRACT_VERSION):
+        return False, {"schema": document.get("schema"), "kind": document.get("kind"),
+                       "identity_version": document.get("identity_version"),
+                       "generator_contract_version": document.get("generator_contract_version")}
+    if not isinstance(profile_sha, str) or document.get("profile_fingerprint") != profile_sha:
+        return False, {"reason": "profile_fingerprint_mismatch",
+                       "observed": document.get("profile_fingerprint")}
+    if not isinstance(pack, dict):
+        return False, "pack_unavailable_for_join"
+    pack_directions = {row["direction_id"]: row.get("input_fingerprint")
+                       for row in pack.get("directions") or [] if isinstance(row, dict)}
+    directions = document.get("directions")
+    if not isinstance(directions, list) or not directions:
+        return False, "missing_state_directions"
+    state_ids: list[str] = []
+    idea_ids: dict[str, list[str]] = {}
+    for row in directions:
+        if not isinstance(row, dict):
+            return False, "state_direction_not_object"
+        direction_id = row.get("direction_id")
+        if not isinstance(direction_id, str) or direction_id not in pack_directions:
+            return False, {"reason": "state_direction_outside_pack",
+                           "direction_id": direction_id}
+        state_ids.append(direction_id)
+        candidates = row.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            return False, {"reason": "missing_state_candidates", "direction_id": direction_id}
+        ideas: list[str] = []
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or not str(candidate.get("id") or "").strip():
+                return False, {"reason": "candidate_without_id", "direction_id": direction_id}
+            ideas.append(str(candidate["id"]))
+        idea_ids[direction_id] = ideas
+    fingerprints = document.get("input_fingerprints")
+    if not isinstance(fingerprints, dict):
+        return False, "missing_state_input_fingerprints"
+    for direction_id in state_ids:
+        if fingerprints.get(direction_id) != pack_directions[direction_id]:
+            return False, {"reason": "state_pack_fingerprint_mismatch",
+                           "direction_id": direction_id}
+    return True, {"direction_ids": state_ids, "idea_ids": idea_ids}
+
+
+def _issue67_manifest(path: Path, root: Path, checks: list[dict[str, Any]],
+                      ) -> dict[str, Any] | None:
+    """Load the frozen isolation manifest and prove it describes this program."""
+    try:
+        manifest = _load(Path(path))
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "fixture_manifest_readable", False, str(exc))
+        return None
+    if not isinstance(manifest, dict):
+        _check(checks, "fixture_manifest_object", False, type(manifest).__name__)
+        return None
+    _check(checks, "fixture_builder", manifest.get("builder") == ISSUE67_FIXTURE_BUILDER,
+           manifest.get("builder"))
+    _check(checks, "fixture_kind", manifest.get("fixture_kind") == "stage4-isolation",
+           manifest.get("fixture_kind"))
+    _check(checks, "program_root_matches",
+           _canonical_dir(manifest.get("program_root")) == str(root),
+           {"manifest": manifest.get("program_root"), "observed": str(root)})
+    _check(checks, "manual_patch_absent", manifest.get("manual_patch") == "no",
+           manifest.get("manual_patch"))
+    installed_builder = Path(__file__).with_name(Path(ISSUE67_FIXTURE_BUILDER).name)
+    _check(checks, "installed_builder_is_the_manifest_builder",
+           installed_builder.is_file() and _sha256(installed_builder) == manifest.get("builder_sha256"),
+           {"installed": str(installed_builder), "pinned": manifest.get("builder_sha256")})
+    if any(row["status"] == "fail" for row in checks):
+        return None
+    return manifest
+
+
+def _issue67_fixture_facts(root: Path, manifest: dict[str, Any],
+                           checks: list[dict[str, Any]], *,
+                           expect_local_pairs_absent: bool) -> dict[str, Any] | None:
+    """Prove the frozen fixture's single-fault precondition from current bytes.
+
+    The fault under test is exactly one non-canonical canonical candidate-state
+    file in professor B's directory while every other declared fixture input
+    stays canonical.  A preparer that moves that single fault onto another file
+    breaks this precondition, so the oracle reports a broken test run instead of
+    grading a product claim.
+    """
+    entries = manifest.get("professors")
+    if not isinstance(entries, list) or len(entries) != 2:
+        _check(checks, "fixture_two_professors", False, entries)
+        return None
+    entries = [row for row in entries if isinstance(row, dict)]
+    faults = [row for row in entries
+              if (row.get("candidate_state") or {}).get("canonical") is False]
+    _check(checks, "fixture_single_fault", len(faults) == 1,
+           {"faults": len(faults), "roles": [row.get("role") for row in entries]})
+    if len(faults) != 1:
+        return None
+    fault = faults[0]
+    _check(checks, "fixture_fault_role", fault.get("role") == "malformed_candidate_state",
+           fault.get("role"))
+    _check(checks, "fixture_fault_is_candidate_state",
+           (fault.get("candidate_state") or {}).get("relative_path")
+           == LOCAL_CANDIDATE_STATE_FILE,
+           (fault.get("candidate_state") or {}).get("relative_path"))
+    profile_sha = manifest.get("profile_sha256")
+    _check(checks, "fixture_profile_matches_manifest",
+           isinstance(profile_sha, str)
+           and _file_state(Path(manifest.get("profile_file") or ""))["sha256"] == profile_sha,
+           {"profile_file": manifest.get("profile_file")})
+    facts: dict[str, Any] = {}
+    for entry in entries:
+        directory = Path(entry.get("professor_dir") or "")
+        canonical = _canonical_dir(directory)
+        pack_path = directory / LOCAL_INPUT_PACK_FILE
+        state_path = directory / LOCAL_CANDIDATE_STATE_FILE
+        _check(checks, f"fixture_professor_dir_canonical[{canonical}]",
+               canonical == (entry.get("canonical_professor_dir") or "")
+               and directory.is_dir()
+               and Path(str(root / "教授研究")) in Path(canonical).parents,
+               {"declared": entry.get("canonical_professor_dir"), "observed": canonical})
+        _check(checks, f"fixture_professor_input_hashes[{canonical}]",
+               _file_state(pack_path)["sha256"] == (entry.get("input_pack") or {}).get("sha256")
+               and _file_state(state_path)["sha256"]
+               == (entry.get("candidate_state") or {}).get("sha256"),
+               {"input_pack": _file_state(pack_path), "candidate_state": _file_state(state_path)})
+        try:
+            pack_document = _load(pack_path)
+            state_document = _load(state_path)
+        except (OSError, json.JSONDecodeError) as exc:
+            _check(checks, f"fixture_professor_inputs_readable[{canonical}]", False, str(exc))
+            continue
+        pack_ok, pack_detail = _canonical_input_pack(pack_document)
+        state_ok, state_detail = _canonical_candidate_state(state_document,
+                                                            pack_document, profile_sha)
+        declared = (entry.get("candidate_state") or {}).get("canonical")
+        _check(checks, f"fixture_input_pack_canonical[{canonical}]", pack_ok, pack_detail)
+        _check(checks, f"fixture_candidate_state_canonical_matches_declaration[{canonical}]",
+               state_ok is bool(declared),
+               {"declared": declared, "observed": state_ok, "detail": state_detail})
+        selection_state = _file_state(directory / LOCAL_SELECTION_FILE)
+        email_state = _file_state(directory / LOCAL_EMAIL_PACK_FILE)
+        if expect_local_pairs_absent:
+            _check(checks, f"fixture_local_pair_absent[{canonical}]",
+                   not selection_state["exists"] and not email_state["exists"],
+                   {"selection": selection_state, "email_pack": email_state})
+        facts[canonical] = {
+            "role": entry.get("role"),
+            "professor": entry.get("professor"),
+            "idea_id": entry.get("idea_id"),
+            "direction_id": entry.get("direction_id"),
+            "directory": canonical,
+            "input_pack": _file_state(pack_path),
+            "candidate_state": _file_state(state_path),
+            "selection_file": selection_state,
+            "email_pack": email_state,
+            "pack_document": pack_document,
+            "pack_facts": pack_detail,
+            "state_document": state_document,
+            "state_facts": state_detail,
+            "state_canonical": bool(state_ok),
+        }
+    _check(checks, "fixture_fault_is_the_only_non_canonical_state",
+           len(facts) == len(entries)
+           and [row for row in facts.values() if not row["state_canonical"]]
+           and all(row["state_canonical"] for key, row in facts.items()
+                   if key != _canonical_dir(fault.get("professor_dir"))),
+           {"fault": _canonical_dir(fault.get("professor_dir")),
+            "non_canonical": [key for key, row in facts.items() if not row["state_canonical"]]})
+    if any(row["status"] == "fail" for row in checks):
+        return None
+    return {"manifest": manifest, "fault_dir": _canonical_dir(fault.get("professor_dir")),
+            "fault_sha256": (fault.get("candidate_state") or {}).get("sha256"),
+            "profile_sha256": profile_sha, "professors": facts}
+
+
+def _issue67_isolation_pre_state(root: Path, manifest_path: Path
+                                ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Snapshot the per-professor pre-run state the isolation oracle needs."""
+    checks: list[dict[str, Any]] = []
+    manifest = _issue67_manifest(manifest_path, root, checks)
+    if manifest is None:
+        return None, checks
+    facts = _issue67_fixture_facts(root, manifest, checks, expect_local_pairs_absent=True)
+    if facts is None:
+        return None, checks
+    professors = {
+        canonical: {key: row[key] for key in
+                    ("professor", "idea_id", "direction_id", "input_pack", "candidate_state",
+                     "selection_file", "email_pack")}
+        for canonical, row in facts["professors"].items()}
+    return {
+        "builder": manifest.get("builder"),
+        "manifest_sha256": _sha256(Path(manifest_path)),
+        "program_root": str(root),
+        "professors": professors,
+        "fault": {"professor_dir": facts["fault_dir"],
+                  "relative_path": LOCAL_CANDIDATE_STATE_FILE,
+                  "sha256": facts["fault_sha256"]},
+    }, checks
+
+
 def _checkpoint_stage4_snapshot(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.program_root).resolve()
     artifacts = _stage4_artifacts(root)
@@ -1158,11 +1444,20 @@ def _checkpoint_stage4_snapshot(args: argparse.Namespace) -> dict[str, Any]:
                (not artifact["exists"] and artifact["sha256"] is None)
                or (artifact["exists"] and isinstance(artifact["sha256"], str)
                    and len(artifact["sha256"]) == 64), artifact)
-    return {
+    payload: dict[str, Any] = {
         "status": "pass" if all(row["status"] == "pass" for row in checks) else "fail",
         "checks": checks,
         "artifacts": artifacts,
     }
+    manifest_path = getattr(args, "fixture_manifest", None)
+    if manifest_path:
+        isolation, isolation_checks = _issue67_isolation_pre_state(
+            root, Path(manifest_path))
+        payload["checks"].extend(isolation_checks)
+        payload["isolation_pre"] = isolation
+        payload["status"] = "pass" if all(row["status"] == "pass"
+                                         for row in payload["checks"]) else "fail"
+    return payload
 
 
 def _load_stage4_snapshot(path: Path) -> dict[str, dict[str, Any]]:
@@ -1621,6 +1916,459 @@ def _checkpoint_stage4_final(args: argparse.Namespace) -> dict[str, Any]:
                    email_count=len(emails) if isinstance(emails, list) else 0)
 
 
+def _is_sha(value: Any, length: int = 64) -> bool:
+    return isinstance(value, str) and len(value) == length \
+        and all(char in "0123456789abcdef" for char in value)
+
+
+def _issue67_input_sha_records(path: Path) -> dict[str, str]:
+    """Parse ``shasum -a 256`` output into ``{recorded path: sha256}``."""
+    records: dict[str, str] = {}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        digest, separator, recorded = line.partition(" ")
+        if not separator or not _is_sha(digest):
+            raise ValueError(f"unparsable sha256 line: {line!r}")
+        records[recorded.strip()] = digest
+    return records
+
+
+def _issue67_local_identity_values(*documents: Any) -> set[str]:
+    """Every machine identifier a Stage-4 container asserts, as strings."""
+    values: set[str] = set()
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        for key in ("email_id", "collection_key"):
+            if document.get(key):
+                values.add(str(document[key]))
+        for key in ("direction_ids",):
+            values.update(str(item) for item in document.get(key) or [])
+        rows = document.get("selections") or document.get("emails") or []
+        if isinstance(rows, list):
+            for row in rows:
+                values.update(_issue67_local_identity_values(row))
+        values.update(_issue67_local_identity_values(document.get("idea")))
+    return values
+
+
+def _checkpoint_stage4_professor_isolation(args: argparse.Namespace) -> dict[str, Any]:
+    """Grade PC67-RISO: one professor's fault must stay that professor's own.
+
+    Every claim is decided from file bytes and the adapter's formal spawn
+    relations: the valid professor's professor-local pair must exist and agree
+    with the current candidate state and input pack, the fault professor's pair
+    must be absent, the fault professor's frozen malformed candidate-state
+    bytes must be untouched, and the legacy program-level Stage-4 pair must be
+    byte-identical and never promoted into local authority.  Model prose is
+    never evidence.
+    """
+    checks: list[dict[str, Any]] = []
+    given_root = Path(args.program_root)
+    root = given_root.resolve()
+    observed: dict[str, Any] = {"program_root": str(root)}
+
+    def machine(status: str, classification: str) -> dict[str, Any]:
+        return {"status": status, "classification": classification,
+                "checks": checks, "observed": observed}
+
+    def phase_failed() -> bool:
+        return any(row["status"] == "fail" for row in checks)
+
+    # Phase A: the recipe's frozen evidence set must all be present.
+    supplied = {
+        "fixture_manifest": getattr(args, "fixture_manifest", None),
+        "pre_snapshot": getattr(args, "pre_snapshot", None),
+        "eval_request": getattr(args, "eval_request", None),
+        "input_sha256": getattr(args, "input_sha256", None),
+        "eval_response": getattr(args, "eval_response", None),
+        "adapter_output": getattr(args, "adapter_output", None),
+        "install_verdict": getattr(args, "install_verdict", None),
+    }
+    _check(checks, "evidence_supplied",
+           not [name for name, value in supplied.items() if not value],
+           sorted(name for name, value in supplied.items() if not value))
+    _check(checks, "producer_sha_wellformed", _is_sha(args.producer_sha or "", 40),
+           args.producer_sha)
+    _check(checks, "fixture_sha_wellformed",
+           _is_sha(getattr(args, "fixture_sha", "") or "", 40),
+           getattr(args, "fixture_sha", ""))
+    if phase_failed():
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # Phase B: the frozen fixture manifest describes this program root.
+    manifest = _issue67_manifest(Path(supplied["fixture_manifest"]), root, checks)
+    if manifest is None:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    observed["display_name"] = manifest.get("display_name")
+
+    # Phase C: the pre snapshot was taken from this manifest, before any write.
+    try:
+        pre = _load(Path(supplied["pre_snapshot"]))
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "pre_snapshot_readable", False, str(exc))
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    isolation_pre = pre.get("isolation_pre") if isinstance(pre, dict) else None
+    _check(checks, "pre_snapshot_carries_isolation_pre", isinstance(isolation_pre, dict),
+           type(isolation_pre).__name__)
+    if not isinstance(isolation_pre, dict):
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    _check(checks, "pre_snapshot_is_for_this_manifest",
+           isolation_pre.get("builder") == ISSUE67_FIXTURE_BUILDER
+           and isolation_pre.get("manifest_sha256")
+           == _sha256(Path(supplied["fixture_manifest"]))
+           and _canonical_dir(isolation_pre.get("program_root")) == str(root),
+           {"builder": isolation_pre.get("builder"),
+            "manifest_sha256": isolation_pre.get("manifest_sha256"),
+            "program_root": isolation_pre.get("program_root")})
+    expected_legacy = {
+        name: (manifest.get("legacy_program_pair") or {}).get(relative.as_posix())
+        for name, relative in STAGE4_PROGRAM_OUTPUTS.items()}
+    observed_legacy = {
+        name: (row or {}).get("sha256")
+        for name, row in (pre.get("artifacts") or {}).items()}
+    _check(checks, "pre_snapshot_legacy_program_pair_pinned",
+           observed_legacy == expected_legacy and all(_is_sha(value)
+                                                      for value in expected_legacy.values()),
+           {"expected": expected_legacy, "observed": observed_legacy})
+    _check(checks, "pre_snapshot_fault_pinned",
+           (isolation_pre.get("fault") or {}).get("sha256")
+           == (manifest.get("fault") or {}).get("sha256")
+           and (isolation_pre.get("fault") or {}).get("relative_path")
+           == LOCAL_CANDIDATE_STATE_FILE,
+           {"pre": isolation_pre.get("fault"), "manifest": manifest.get("fault")})
+    _check(checks, "pre_snapshot_professor_set_matches_manifest",
+           set(isolation_pre.get("professors") or {})
+           == {(row.get("canonical_professor_dir") or "")
+               for row in manifest.get("professors") or []},
+           {"pre": sorted(isolation_pre.get("professors") or {}),
+            "manifest": sorted(str(row.get("canonical_professor_dir") or "")
+                               for row in manifest.get("professors") or [])})
+    if phase_failed():
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # Phase D: exact-SHA install and provenance, re-derived from the lock.
+    try:
+        install = _load(Path(supplied["install_verdict"]))
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "install_verdict_readable", False, str(exc))
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    install_rows = install.get("checks") if isinstance(install, dict) else None
+    _check(checks, "install_verdict_pass",
+           isinstance(install, dict) and install.get("status") == "pass"
+           and isinstance(install_rows, list) and bool(install_rows)
+           and all(isinstance(row, dict) and row.get("status") == "pass"
+                   for row in install_rows),
+           {"status": install.get("status") if isinstance(install, dict) else None,
+            "failed": [row.get("name") for row in install_rows or []
+                       if isinstance(row, dict) and row.get("status") != "pass"]})
+    pinned_row = next((row for row in install_rows or [] if isinstance(row, dict)
+                       and row.get("name") == "producer_sha_pinned"), None)
+    _check(checks, "install_verdict_pinned_producer_sha",
+           isinstance(pinned_row, dict) and pinned_row.get("status") == "pass", pinned_row)
+    consumer = Path(str((install.get("observed") or {}).get("consumer_root")
+                        if isinstance(install, dict) else "") or "")
+    if consumer.is_dir():
+        resolved_commit, source = _resolved_professor_contact_commit(consumer)
+    else:
+        resolved_commit, source = None, f"consumer root missing: {consumer}"
+    _check(checks, "install_provenance_rederived",
+           resolved_commit == args.producer_sha,
+           {"expected": args.producer_sha, "observed": resolved_commit, "source": source})
+    observed["consumer_root"] = str(consumer)
+    observed["producer_sha"] = args.producer_sha
+    observed["fixture_sha"] = getattr(args, "fixture_sha", "")
+    if phase_failed():
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # Phase E: the frozen inputs the run consumed are the ones hashed upfront.
+    try:
+        records = _issue67_input_sha_records(Path(supplied["input_sha256"]))
+    except (OSError, ValueError) as exc:
+        _check(checks, "input_sha256_readable", False, str(exc))
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    _check(checks, "input_sha256_records_stable",
+           all(digest == _file_state(Path(recorded))["sha256"]
+               for recorded, digest in records.items()),
+           {recorded: {"recorded": digest, "observed": _file_state(Path(recorded))["sha256"]}
+            for recorded, digest in records.items()
+            if digest != _file_state(Path(recorded))["sha256"]})
+    required_names = {Path(supplied["fixture_manifest"]).name,
+                      Path(supplied["pre_snapshot"]).name, ISSUE67_PROMPT_NAME,
+                      Path(supplied["eval_request"]).name}
+    _check(checks, "input_sha256_covers_frozen_inputs",
+           required_names <= {Path(recorded).name for recorded in records},
+           sorted(Path(recorded).name for recorded in records))
+    prompt_paths = [recorded for recorded in records
+                    if Path(recorded).name == ISSUE67_PROMPT_NAME]
+    _check(checks, "input_sha256_names_one_prompt", len(prompt_paths) == 1, prompt_paths)
+    if phase_failed():
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # Phase F: the eval request carries only the frozen command surface, and its
+    # prompt is the substituted frozen prompt for this program root.
+    try:
+        request = _load(Path(supplied["eval_request"]))
+        prompt_text = Path(prompt_paths[0]).read_text(encoding="utf-8")
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "eval_request_readable", False, str(exc))
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    command = request.get("command") if isinstance(request, dict) else None
+    timeout = request.get("timeout") if isinstance(request, dict) else None
+    _check(checks, "eval_request_shape",
+           isinstance(command, str) and isinstance(timeout, int) and timeout > 0,
+           {"command": command, "timeout": timeout})
+    if phase_failed():
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    argv = shlex.split(command)
+    for forbidden in ISSUE67_FORBIDDEN_REQUEST_TOKENS:
+        _check(checks, f"eval_request_excludes[{forbidden}]", forbidden not in command,
+               forbidden)
+    trust_config = "projects={" + json.dumps(str(consumer)) + '={trust_level="trusted"}}'
+    expected_configs = ["features.multi_agent_v2.enabled=true",
+                        f'model_reasoning_effort="{ISSUE67_REQUEST_REASONING}"',
+                        trust_config]
+    expected_argv = [*ISSUE67_REQUEST_ARGV_PREFIX, "--cd", str(consumer),
+                     "--model", ISSUE67_REQUEST_MODEL]
+    for config in expected_configs:
+        expected_argv.extend(["--config", config])
+    expected_argv.extend(["--", prompt_text])
+    _check(checks, "eval_request_command_surface", argv == expected_argv, argv[:8])
+    configs = [argv[index + 1] for index, item in enumerate(argv) if item == "--config"]
+    _check(checks, "eval_request_config_surface",
+           configs == expected_configs,
+           configs)
+    values: dict[str, str] = {}
+    for index, item in enumerate(argv):
+        if item.startswith("--") and index + 1 < len(argv) and not argv[index + 1].startswith("--"):
+            values.setdefault(item, argv[index + 1])
+    _check(checks, "eval_request_targets_installed_consumer",
+           values.get("--cd") == str(consumer)
+           and values.get("--model") == ISSUE67_REQUEST_MODEL, values)
+    _check(checks, "eval_request_prompt_is_frozen_prompt",
+           argv[-1] == prompt_text and "<PROGRAM_ROOT>" not in prompt_text
+           and any(str(root) == spelling or prompt_text.count(spelling) == 1
+                   for spelling in {str(root), str(given_root)} if spelling in prompt_text)
+           and all(str(row.get("relative_path")) in prompt_text
+                   for row in manifest.get("professors") or []),
+           {"prompt": prompt_text, "argv_tail": argv[-1],
+            "relative_paths": [str(row.get("relative_path"))
+                               for row in manifest.get("professors") or []]})
+    if phase_failed():
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # Phase G: the product never edits a frozen fixture input.  This is decided
+    # before the fixture's structural precondition so that a repaired or
+    # rewritten fault file is attributed to the producer, not to the harness.
+    drift = {relative: {"recorded": digest,
+                        "observed": _file_state(root / relative)["sha256"]}
+             for relative, digest in (manifest.get("input_hashes") or {}).items()
+             if digest != _file_state(root / relative)["sha256"]}
+    _check(checks, "fixture_inputs_unchanged", not drift, drift)
+    fault_path = Path(str((manifest.get("fault") or {}).get("professor_dir") or "")) \
+        / LOCAL_CANDIDATE_STATE_FILE
+    _check(checks, "fault_professor_bytes_unchanged",
+           not drift and _file_state(fault_path)["sha256"]
+           == (manifest.get("fault") or {}).get("sha256"),
+           {"manifest": (manifest.get("fault") or {}).get("sha256"),
+            "observed": _file_state(fault_path)["sha256"]})
+    _check(checks, "program_level_pair_unchanged",
+           {name: _file_state(root / relative)
+            for name, relative in STAGE4_PROGRAM_OUTPUTS.items()}
+           == {name: {"exists": True, "sha256": digest}
+               for name, digest in expected_legacy.items()},
+           {name: _file_state(root / relative) for name, relative in
+            STAGE4_PROGRAM_OUTPUTS.items()})
+    if phase_failed():
+        return machine("fail", "FAIL_PRODUCT")
+
+    # Phase H: the frozen fixture really carries one malformed canonical
+    # candidate state and nothing else.  A preparer that moved that single
+    # fault onto another file makes this run ungradeable, never a PASS.
+    facts = _issue67_fixture_facts(root, manifest, checks, expect_local_pairs_absent=False)
+    if facts is None:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    valid_dirs = [key for key, row in facts["professors"].items() if row["role"] == "valid"]
+    _check(checks, "fixture_exactly_one_valid_professor", len(valid_dirs) == 1, valid_dirs)
+    if phase_failed():
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+
+    # Phase I: formal delegation evidence, decided before any product claim.
+    try:
+        adapter = _load(Path(supplied["adapter_output"]))
+        response = _load(Path(supplied["eval_response"]))
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "evidence_readable", False, str(exc))
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    prerequisite = _adapter_prerequisite_block(adapter, checks)
+    if prerequisite:
+        return machine(*prerequisite)
+    delegation = adapter.get("delegation")
+    if not isinstance(delegation, dict):
+        _check(checks, "adapter_delegation_object", False)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    delegation_state = delegation.get("state")
+    if delegation_state not in ("confirmed", "unobservable"):
+        _check(checks, "delegation_state", False, delegation_state)
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    edges, malformed = _formal_spawn_relations(adapter)
+    _check(checks, "adapter_relation_shape", not malformed, malformed)
+    if malformed:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    expected_summary = _expected_delegation_summary(edges)
+    observed_summary = {field: delegation.get(field) for field in expected_summary}
+    _check(checks, "delegation_summary_consistent", observed_summary == expected_summary,
+           {"observed": observed_summary, "expected": expected_summary})
+    if observed_summary != expected_summary:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    if delegation_state == "unobservable":
+        _check(checks, "delegation_observable", False, delegation)
+        return machine("blocked", "BLOCKED_OBSERVABILITY")
+    output = response.get("output") if isinstance(response, dict) else None
+    root_thread_id = output.get("thread_id") if isinstance(output, dict) else None
+    events = output.get("app_server_events") if isinstance(output, dict) else None
+    if not isinstance(root_thread_id, str) or not root_thread_id.strip() \
+            or not isinstance(events, list):
+        _check(checks, "raw_eval_surface", False, {
+            "thread_id": root_thread_id, "events": type(events).__name__})
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    owners, _ = _ownership_index(edges)
+    conflicts = {child: sorted(parents) for child, parents in owners.items()
+                 if len(parents) != 1}
+    _check(checks, "formal_ownership", not conflicts, conflicts)
+    if conflicts:
+        return machine("invalid", "INVALID_TEST_EXECUTION")
+    direct_children = sorted({edge["receiver_thread_id"] for edge in edges
+                              if edge["sender_thread_id"] == root_thread_id})
+    _check(checks, "formal_root_child", bool(direct_children), direct_children)
+    observed["formal_child_thread_ids"] = direct_children
+    if not direct_children:
+        return machine("blocked", "BLOCKED_OBSERVABILITY")
+
+    # Phase J: the isolation product claim itself.
+    a = facts["professors"][valid_dirs[0]]
+    b = facts["professors"][facts["fault_dir"]]
+    a_dir = Path(valid_dirs[0])
+    selection_state = _file_state(a_dir / LOCAL_SELECTION_FILE)
+    email_state = _file_state(a_dir / LOCAL_EMAIL_PACK_FILE)
+    _check(checks, "valid_professor_local_pair_written",
+           selection_state["exists"] and email_state["exists"],
+           {"selection": selection_state, "email_pack": email_state})
+    if not (selection_state["exists"] and email_state["exists"]):
+        return machine("fail", "FAIL_PRODUCT")
+    try:
+        selection_doc = _load(a_dir / LOCAL_SELECTION_FILE)
+        email_doc = _load(a_dir / LOCAL_EMAIL_PACK_FILE)
+        legacy_selection = _load(root / STAGE4_PROGRAM_OUTPUTS["套磁选择.json"])
+        legacy_pack = _load(root / STAGE4_PROGRAM_OUTPUTS["邮件输入.json"])
+    except (OSError, json.JSONDecodeError) as exc:
+        _check(checks, "valid_professor_local_pair_readable", False, str(exc))
+        return machine("fail", "FAIL_PRODUCT")
+    rows = selection_doc.get("selections") if isinstance(
+        selection_doc.get("selections"), list) else []
+    emails = email_doc.get("emails") if isinstance(email_doc.get("emails"), list) else []
+    _check(checks, "valid_professor_pair_is_professor_local_schema",
+           selection_doc.get("schema") == STAGE4_LOCAL_SCHEMA
+           and email_doc.get("schema") == STAGE4_LOCAL_SCHEMA
+           and selection_doc.get("kind") == SELECTION_KIND
+           and email_doc.get("kind") == EMAIL_PACK_KIND
+           and selection_doc.get("identity_version") == DIRECTION_IDENTITY_VERSION
+           and email_doc.get("identity_version") == DIRECTION_IDENTITY_VERSION,
+           {"selection": {key: selection_doc.get(key)
+                          for key in ("schema", "kind", "identity_version")},
+            "email_pack": {key: email_doc.get(key)
+                           for key in ("schema", "kind", "identity_version")}})
+    scope = a["direction_id"]
+    expected_email_id = f"{a['professor']}::{scope}::{a['idea_id']}"
+    _check(checks, "valid_professor_pair_bound_to_canonical_professor_dir",
+           all(_canonical_dir(document.get("professor_dir")) == valid_dirs[0]
+               for document in (selection_doc, email_doc))
+           and all(_canonical_dir(row.get("professor_dir")) == valid_dirs[0]
+                   for row in rows + emails if isinstance(row, dict))
+           and all(str(row.get("professor") or "") == str(a["professor"])
+                   for row in rows + emails if isinstance(row, dict))
+           and _canonical_dir(selection_doc.get("program_root")) == str(root)
+           and _canonical_dir(email_doc.get("program_root")) == str(root),
+           {"selection_dir": selection_doc.get("professor_dir"),
+            "email_dir": email_doc.get("professor_dir"),
+            "canonical": valid_dirs[0], "rows": [row.get("professor_dir") for row in rows],
+            "emails": [row.get("professor_dir") for row in emails]})
+    _check(checks, "valid_professor_pair_carries_current_profile_fingerprint",
+           selection_doc.get("profile_fingerprint") == facts["profile_sha256"]
+           and email_doc.get("profile_fingerprint") == facts["profile_sha256"],
+           {"selection": selection_doc.get("profile_fingerprint"),
+            "email_pack": email_doc.get("profile_fingerprint"),
+            "expected": facts["profile_sha256"]})
+    idea_ids_in_state = (a["state_facts"] or {}).get("idea_ids", {}).get(scope) or []
+    _check(checks, "valid_professor_selection_matches_this_request_and_current_state",
+           len(rows) == 1 and isinstance(rows[0], dict)
+           and rows[0].get("direction_ids") == [scope]
+           and [str(idea.get("id")) for idea in rows[0].get("ideas") or []
+                if isinstance(idea, dict)] == [a["idea_id"]]
+           and a["idea_id"] in idea_ids_in_state,
+           {"rows": rows, "state_idea_ids": idea_ids_in_state,
+            "requested": {"direction_id": scope, "idea_id": a["idea_id"]}})
+    pack_direction = next((row for row in a["pack_document"].get("directions") or []
+                           if isinstance(row, dict)
+                           and row.get("direction_id") == scope), {})
+    allowed_gap_keys = {
+        (row.get("item_key"), row.get("gap_id"))
+        for row in (pack_direction.get("gap_shortlist") or [])
+        + (pack_direction.get("gaps_excluded") or [])
+        + (pack_direction.get("completed_gap_blacklist") or [])}
+    allowed_item_keys = set((a["pack_facts"] or {}).get("item_keys") or [])
+    pack_fingerprints = (a["pack_facts"] or {}).get("input_fingerprints") or {}
+    emails_ok = (len(emails) == 1 and all(
+        isinstance(row, dict)
+        and row.get("email_id") == expected_email_id
+        and row.get("direction_ids") == [scope]
+        and (row.get("idea") or {}).get("id") == a["idea_id"]
+        and (row.get("fingerprints") or {}).get("input") == pack_fingerprints.get(scope)
+        and (row.get("fingerprints") or {}).get("profile") == facts["profile_sha256"]
+        and all((gap.get("item_key"), gap.get("gap_id")) in allowed_gap_keys
+                for gap in row.get("gaps") or [] if isinstance(gap, dict))
+        and all(paper.get("item_key") in allowed_item_keys
+                for paper in row.get("papers") or [] if isinstance(paper, dict))
+        for row in emails))
+    _check(checks, "valid_professor_email_pack_matches_current_facts", emails_ok,
+           {"expected_email_id": expected_email_id, "emails": emails,
+            "allowed_gaps": sorted(str(key) for key in allowed_gap_keys),
+            "input_fingerprint": pack_fingerprints.get(scope)})
+    legacy_markers = _issue67_local_identity_values(legacy_selection, legacy_pack)
+    local_markers = _issue67_local_identity_values(selection_doc, email_doc)
+    promoted = sorted(value for value in local_markers & legacy_markers
+                      if value not in {str(a["professor"])})
+    _check(checks, "legacy_program_pair_not_promoted_into_local_authority",
+           not promoted, {"legacy_markers": sorted(legacy_markers), "promoted": promoted})
+    _check(checks, "fault_professor_local_pair_absent",
+           not b["selection_file"]["exists"] and not b["email_pack"]["exists"],
+           {"selection": b["selection_file"], "email_pack": b["email_pack"]})
+    expected_locations = sorted(str(path) for path in (
+        (a_dir / LOCAL_SELECTION_FILE).resolve(), (a_dir / LOCAL_EMAIL_PACK_FILE).resolve(),
+        (root / STAGE4_PROGRAM_OUTPUTS["套磁选择.json"]).resolve(),
+        (root / STAGE4_PROGRAM_OUTPUTS["邮件输入.json"]).resolve()))
+    found_locations = sorted(str(path.resolve()) for path in (root / "教授研究").rglob("*")
+                             if path.is_file() and path.name
+                             in {LOCAL_SELECTION_FILE, LOCAL_EMAIL_PACK_FILE})
+    _check(checks, "stage4_pair_written_only_where_the_contract_allows",
+           found_locations == expected_locations,
+           {"found": found_locations, "expected": expected_locations})
+    _check(checks, "no_program_level_pair_rewritten",
+           all(_file_state(root / relative)["sha256"] == expected
+               for relative, expected in (manifest.get("legacy_program_pair") or {}).items()),
+           {relative: _file_state(root / relative)["sha256"]
+            for relative in (manifest.get("legacy_program_pair") or {})})
+    observed["valid_professor_dir"] = valid_dirs[0]
+    observed["fault_professor_dir"] = facts["fault_dir"]
+    observed["valid_professor_selection_file"] = str(a_dir / LOCAL_SELECTION_FILE)
+    observed["valid_professor_email_pack"] = str(a_dir / LOCAL_EMAIL_PACK_FILE)
+    observed["fault_professor_bytes_sha256"] = b["candidate_state"]["sha256"]
+    if phase_failed():
+        return machine("fail", "FAIL_PRODUCT")
+    return machine("pass", "PASS_TARGET")
+
+
 def _stage5_candidate_paths(professor_dir: Path, name: str) -> tuple[Path, ...]:
     return (professor_dir / name, professor_dir / "套磁邮件" / name)
 
@@ -1969,6 +2717,7 @@ CHECKPOINTS = {
     "stage2-routing": _checkpoint_stage2_routing,
     "stage4-snapshot": _checkpoint_stage4_snapshot,
     "stage4-needs-input": _checkpoint_stage4_needs_input,
+    "stage4-professor-isolation": _checkpoint_stage4_professor_isolation,
     "make-stage4-selection": _checkpoint_make_stage4_selection,
     "stage4-final": _checkpoint_stage4_final,
     "stage5-snapshot": _checkpoint_stage5_snapshot,
@@ -1991,6 +2740,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--adapter-output", type=Path)
     parser.add_argument("--pre-snapshot", type=Path)
     parser.add_argument("--post-snapshot", type=Path)
+    # PC67-RISO evidence inputs: the frozen fixture, its pre snapshot, the exact
+    # request that ran, the recorded input hashes, and the install verdict.
+    parser.add_argument("--fixture-manifest", type=Path)
+    parser.add_argument("--eval-request", type=Path)
+    parser.add_argument("--input-sha256", type=Path)
+    parser.add_argument("--install-verdict", type=Path)
+    parser.add_argument("--fixture-sha", default="")
     parser.add_argument("--producer-sha", default="")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--min-edges", type=int, default=1)

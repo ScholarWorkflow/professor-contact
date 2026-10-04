@@ -2,8 +2,13 @@ import contextlib
 import copy
 import io
 import importlib.util
+import hashlib
 import json
 import re
+import shlex
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from argparse import Namespace
@@ -12,6 +17,7 @@ from pathlib import Path
 TESTS_DIR = Path(__file__).resolve().parent
 BUILDER_PATH = TESTS_DIR / "runtime/build_issue32_e2e_fixture.py"
 VERIFIER_PATH = TESTS_DIR / "runtime/verify_issue32_e2e.py"
+RUNTIME_DIR = TESTS_DIR / "runtime"
 
 
 def load_module(name, path):
@@ -36,6 +42,53 @@ ISSUE43_STAGE5_CHECKS = (
 )
 ISSUE47_INTEGRATION_CHECKS = ISSUE43_STAGE5_CHECKS + (
     "email_validator_terminal_records_valid",
+)
+
+# PC67-RISO is graded in-process: the frozen isolation preparer, the frozen
+# Stage-4 eval-request builder, and the real Stage-4 producer CLI.  Nothing in
+# this file starts Codex; the eval request is only checked as a command surface.
+ISSUE67_PREPARER_PATH = RUNTIME_DIR / "prepare_issue67_stage4_isolation_fixture.py"
+ISSUE67_PROMPT_PATH = RUNTIME_DIR / "prompts" / "issue67-stage4-isolation.txt"
+PRODUCER_PATH = TESTS_DIR.parent / "scripts" / "contact_state.py"
+issue67_fixture = load_module(
+    "issue67_stage4_isolation_fixture_for_verifier", ISSUE67_PREPARER_PATH)
+issue67_request = load_module(
+    "issue67_stage4_eval_request_builder_for_verifier",
+    RUNTIME_DIR / "build_issue67_eval_request.py",
+)
+PRODUCER_SHA = "c" * 40
+FIXTURE_SHA = "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
+CHILD_THREAD_ID = "child-selection-1"
+# The claims PASS_TARGET must prove directly from bytes and formal relations
+# (issue #67 Gate 2 §4); none of them may be inferred from model prose.
+ISSUE67_PROVEN_GATES = (
+    "install_verdict_pass", "install_verdict_pinned_producer_sha",
+    "install_provenance_rederived", "formal_root_child",
+    "fixture_inputs_unchanged", "fault_professor_bytes_unchanged",
+    "program_level_pair_unchanged", "no_program_level_pair_rewritten",
+    "valid_professor_local_pair_written",
+    "valid_professor_pair_is_professor_local_schema",
+    "valid_professor_pair_bound_to_canonical_professor_dir",
+    "valid_professor_pair_carries_current_profile_fingerprint",
+    "valid_professor_selection_matches_this_request_and_current_state",
+    "valid_professor_email_pack_matches_current_facts",
+    "legacy_program_pair_not_promoted_into_local_authority",
+    "fault_professor_local_pair_absent",
+    "stage4_pair_written_only_where_the_contract_allows",
+)
+# A non-canonical Stage-2 input pack: the fault shape the counterexample
+# preparer swaps in for the frozen candidate-state fault.
+NON_CANONICAL_INPUT_PACK_BYTES = (
+    b'{\n  "schema": 2,\n  "kind": "professor-contact-stage2-input",\n'
+    b'  "identity_version": "direction-id-v0-not-canonical",\n  "directions": []\n}\n'
+)
+GENERATOR_TOML = (
+    'name = "professor-contact-email-generator"\n'
+    'description = "Stage 5 email generator"\n'
+    'developer_instructions = """## Stage 5 caller Input contract\n'
+    'choices canonical JSON email_id first_choice signature_name learning '
+    'initial_sent_date --choices\n### Codex branch\npreserve choices unchanged\n'
+    '### humanizer-ja stage-5 constraints\n"""\n'
 )
 
 
@@ -1271,6 +1324,725 @@ class RuntimeIdentityNoisePolicyTests(unittest.TestCase):
         self.assertEqual(payload["status"], "fail", payload)
         self.assertEqual(payload["observed"]["formal_relations"], [])
 
+
+
+class Issue67Stage4IsolationHarnessTests(unittest.TestCase):
+    """PC67-RISO oracle: frozen fixture/prompt/verifier only, never Codex.
+
+    Each case either inspects the shipped assets or drives the real Stage-4
+    producer CLI over the frozen fixture and grades the isolation checkpoint
+    from file bytes plus synthetic formal-delegation evidence.  The minimal
+    counterexample the Gate-2 record requires is a preparer that swaps professor
+    B's single malformed candidate-state fault for another fault while every
+    other manifest field stays self-consistent with the bytes it ships: that run
+    must be ``INVALID_TEST_EXECUTION``, never a PASS.
+    """
+
+    def setUp(self):
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        self.root = Path(holder.name).resolve()
+        self.program = self.root / "program"
+        self.profile = self.root / "profile"
+        self.consumer = self.root / "consumer"
+        self.out = self.root / "output"
+        self.consumer.mkdir()
+        self.out.mkdir()
+        self.chain = None
+        self.manifest = None
+        self.producer_rc = None
+        self.producer_result = None
+
+    # -- recipe plumbing ---------------------------------------------------
+    def _args(self, **overrides):
+        values = {
+            "program_root": self.program,
+            "consumer_root": self.consumer,
+            "eval_response": None,
+            "adapter_output": None,
+            "producer_sha": PRODUCER_SHA,
+            "output": None,
+            "min_edges": 1,
+            "required_depth": 1,
+            "pre_snapshot": None,
+            "post_snapshot": None,
+            "fixture_manifest": None,
+            "eval_request": None,
+            "input_sha256": None,
+            "install_verdict": None,
+            "fixture_sha": FIXTURE_SHA,
+        }
+        values.update(overrides)
+        return Namespace(**values)
+
+    @staticmethod
+    def _sha(path):
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+    @staticmethod
+    def _write(path, payload):
+        Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n",
+                              encoding="utf-8")
+
+    @staticmethod
+    def _statuses(payload):
+        return {row["name"]: row["status"] for row in payload["checks"]}
+
+    @staticmethod
+    def _failed(payload):
+        return sorted(row["name"] for row in payload["checks"] if row["status"] != "pass")
+
+    def _frozen_fixture(self, manifest_path):
+        return issue67_fixture.build_fixture(self.program, self.profile,
+                                            output=manifest_path)
+
+    def _install_consumer(self):
+        for relative in verifier.INSTALL_REQUIRED_FILES:
+            path = self.consumer / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("installed\n", encoding="utf-8")
+        (self.consumer / ".codex/agents/professor-contact-email-generator.toml").write_text(
+            GENERATOR_TOML, encoding="utf-8")
+        (self.consumer / "apm.lock.yaml").write_text(
+            "dependencies:\n  - name: professor-contact\n"
+            f"    resolved_commit: {PRODUCER_SHA}\n", encoding="utf-8")
+
+    def _manual_pre_snapshot(self, manifest_path, manifest):
+        """The pre-run snapshot shape, for fixtures a mutant preparer shipped."""
+        professors = {}
+        for entry in manifest["professors"]:
+            directory = Path(entry["professor_dir"])
+            professors[entry["canonical_professor_dir"]] = {
+                "professor": entry["professor"],
+                "idea_id": entry["idea_id"],
+                "direction_id": entry["direction_id"],
+                "input_pack": verifier._file_state(
+                    directory / verifier.LOCAL_INPUT_PACK_FILE),
+                "candidate_state": verifier._file_state(
+                    directory / verifier.LOCAL_CANDIDATE_STATE_FILE),
+                "selection_file": verifier._file_state(
+                    directory / verifier.LOCAL_SELECTION_FILE),
+                "email_pack": verifier._file_state(
+                    directory / verifier.LOCAL_EMAIL_PACK_FILE),
+            }
+        return {
+            "status": "pass",
+            "checks": [],
+            "artifacts": verifier._stage4_artifacts(self.program),
+            "isolation_pre": {
+                "builder": manifest["builder"],
+                "manifest_sha256": self._sha(manifest_path),
+                "program_root": str(self.program),
+                "professors": professors,
+                "fault": {
+                    "professor_dir": manifest["fault"]["professor_dir"],
+                    "relative_path": manifest["fault"]["relative_path"],
+                    "sha256": manifest["fault"]["sha256"],
+                },
+            },
+        }
+
+    def _run_producer(self, manifest):
+        selections = [{
+            "professor": entry["professor"],
+            "professor_dir": entry["professor_dir"],
+            "direction_ids": [entry["direction_id"]],
+            "ideas": [{"id": entry["idea_id"], "note": ""}],
+        } for entry in manifest["professors"]]
+        input_path = self.out / "selection-input.json"
+        self._write(input_path, {"selections": selections})
+        completed = subprocess.run(
+            [sys.executable, str(PRODUCER_PATH), "stage4-finalize",
+             "--program-root", str(self.program),
+             "--selection-input", str(input_path),
+             "--profile", manifest["profile_file"]],
+            text=True, capture_output=True, check=False)
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            payload = None
+        return completed.returncode, payload
+
+    @staticmethod
+    def _formal_adapter(*, root_thread="root-1", child=CHILD_THREAD_ID,
+                        status="completed", fixture_status="FIXTURE_READY"):
+        return {
+            "fixture_status": fixture_status,
+            "delegation": {
+                "state": "confirmed",
+                "formal_child_count": 1,
+                "child_thread_ids": [child],
+                "basis": ["formal_spawn_relation"],
+                "reason_code": None,
+            },
+            "dispatch": {"thread_relations": [{
+                "tool": "spawnAgent",
+                "status": status,
+                "sender_thread_id": root_thread,
+                "parent_thread_id": root_thread,
+                "receiver_thread_ids": [child],
+            }]},
+        }
+
+    @staticmethod
+    def _raw_response(*, root_thread="root-1", child=CHILD_THREAD_ID, prose="stage4 done",
+                      events=None):
+        if events is None:
+            events = [{"message": {
+                "method": "rawResponseItem/completed",
+                "params": {
+                    "threadId": child,
+                    "item": {"type": "message", "role": "assistant",
+                             "content": [{"type": "output_text", "text": prose}]},
+                },
+            }}]
+        return {"output": {"thread_id": root_thread, "termination_reason": "completed",
+                           "exit_code": 0, "app_server_events": events}}
+
+    def _build(self, *, fixture=None, manual_pre=False):
+        """Assemble the frozen PC67-RISO evidence set and run the real producer."""
+        manifest_path = self.out / "fixture-manifest.json"
+        manifest = (fixture or self._frozen_fixture)(manifest_path)
+        pre_path = self.out / "pre-snapshot.json"
+        if manual_pre:
+            self._write(pre_path, self._manual_pre_snapshot(manifest_path, manifest))
+        else:
+            pre = verifier._checkpoint_stage4_snapshot(
+                self._args(fixture_manifest=manifest_path))
+            self.assertEqual(pre["status"], "pass", self._failed(pre))
+            self._write(pre_path, pre)
+        self._install_consumer()
+        install_path = self.out / "install-verdict.json"
+        install = verifier._checkpoint_install(self._args())
+        self.assertEqual(install["status"], "pass", self._failed(install))
+        self._write(install_path, install)
+        prompt_path = self.out / verifier.ISSUE67_PROMPT_NAME
+        prompt_path.write_text(
+            ISSUE67_PROMPT_PATH.read_text(encoding="utf-8").replace(
+                "<PROGRAM_ROOT>", str(self.program)),
+            encoding="utf-8")
+        request_path = self.out / "eval-request.json"
+        issue67_request.build_request(
+            consumer_root=self.consumer, prompt_file=prompt_path, output=request_path,
+            model=verifier.ISSUE67_REQUEST_MODEL,
+            reasoning=verifier.ISSUE67_REQUEST_REASONING, timeout=900)
+        sha_path = self.out / "input-sha256.txt"
+        sha_path.write_text("".join(
+            f"{self._sha(path)}  {path}\n"
+            for path in (manifest_path, pre_path, prompt_path, request_path)),
+            encoding="utf-8")
+        self.producer_rc, self.producer_result = self._run_producer(manifest)
+        adapter_path = self.out / "adapter.json"
+        self._write(adapter_path, self._formal_adapter())
+        response_path = self.out / "response.json"
+        self._write(response_path, self._raw_response())
+        self.manifest = manifest
+        self.chain = {
+            "fixture_manifest": manifest_path,
+            "pre_snapshot": pre_path,
+            "eval_request": request_path,
+            "input_sha256": sha_path,
+            "eval_response": response_path,
+            "adapter_output": adapter_path,
+            "install_verdict": install_path,
+        }
+        return self.chain
+
+    def _verdict(self, **overrides):
+        if self.chain is None:
+            self._build()
+        values = dict(self.chain)
+        values.update(overrides)
+        return verifier._checkpoint_stage4_professor_isolation(self._args(**values))
+
+    def test_persistent_v2_request_accepts_the_existing_isolation_proof(self):
+        payload = self._verdict()
+        self.assertEqual(payload["classification"], "PASS_TARGET", self._failed(payload))
+        request = json.loads(self.chain["eval_request"].read_text(encoding="utf-8"))
+        argv = shlex.split(request["command"])
+        self.assertNotIn("--ephemeral", argv)
+        self.assertIn('features.multi_agent_v2.enabled=true', argv)
+
+    def test_ephemeral_request_is_invalid_even_when_product_files_are_correct(self):
+        self._build()
+        request_path = self.chain["eval_request"]
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        argv = shlex.split(request["command"])
+        argv.insert(1, "--ephemeral")
+        request["command"] = shlex.join(argv)
+        self._write(request_path, request)
+        sha_path = self.chain["input_sha256"]
+        records = verifier._issue67_input_sha_records(sha_path)
+        records[str(request_path)] = self._sha(request_path)
+        sha_path.write_text("".join(f"{digest}  {path}\n" for path, digest in records.items()),
+                            encoding="utf-8")
+        payload = self._verdict()
+        self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("eval_request_command_surface", self._failed(payload))
+
+    def _professor_dirs(self):
+        valid = next(row for row in self.manifest["professors"] if row["role"] == "valid")
+        fault = next(row for row in self.manifest["professors"]
+                     if row["role"] == "malformed_candidate_state")
+        return (Path(valid["canonical_professor_dir"]),
+                Path(fault["canonical_professor_dir"]))
+
+    def _mutant_preparer(self, manifest_path):
+        """Counterexample preparer: B's fault becomes another file, manifest self-consistent."""
+        manifest = self._frozen_fixture(manifest_path)
+        alpha = Path(manifest["professors"][0]["professor_dir"])
+        beta = Path(manifest["professors"][1]["professor_dir"])
+        state = json.loads((alpha / verifier.LOCAL_CANDIDATE_STATE_FILE).read_text(
+            encoding="utf-8"))
+        state["directions"][0]["candidates"][0]["id"] = \
+            manifest["professors"][1]["idea_id"]
+        self._write(beta / verifier.LOCAL_CANDIDATE_STATE_FILE, state)
+        (beta / verifier.LOCAL_INPUT_PACK_FILE).write_bytes(NON_CANONICAL_INPUT_PACK_BYTES)
+        for entry in manifest["professors"]:
+            directory = Path(entry["professor_dir"])
+            entry["input_pack"]["sha256"] = self._sha(
+                directory / verifier.LOCAL_INPUT_PACK_FILE)
+            entry["candidate_state"]["sha256"] = self._sha(
+                directory / verifier.LOCAL_CANDIDATE_STATE_FILE)
+            # The mutant ships a canonical candidate state for both professors
+            # and still calls the candidate state the fault, so a manifest-only
+            # reading looks self-consistent all the way through.
+            entry["input_pack"]["canonical"] = directory != beta
+            entry["candidate_state"]["canonical"] = True
+        manifest["fault"]["sha256"] = self._sha(
+            beta / verifier.LOCAL_CANDIDATE_STATE_FILE)
+        manifest["fault"]["spec_sha256"] = manifest["fault"]["sha256"]
+        manifest["input_hashes"] = {
+            relative: self._sha(self.program / relative)
+            for relative in manifest["input_hashes"]}
+        manifest["legacy_program_pair"] = {
+            relative: self._sha(self.program / relative)
+            for relative in manifest["legacy_program_pair"]}
+        manifest["builder_sha256"] = self._sha(ISSUE67_PREPARER_PATH)
+        self._write(manifest_path, manifest)
+        return manifest
+
+    # -- shipped assets ----------------------------------------------------
+    def test_frozen_isolation_assets_ship_inside_the_installed_consumer(self):
+        self.assertIn(".agents/skills/professor-contact/tests/runtime/"
+                      "prepare_issue67_stage4_isolation_fixture.py",
+                      verifier.INSTALL_REQUIRED_FILES)
+        self.assertIn(".agents/skills/professor-contact/tests/runtime/prompts/"
+                      "issue67-stage4-isolation.txt", verifier.INSTALL_REQUIRED_FILES)
+        self.assertIs(verifier.CHECKPOINTS["stage4-professor-isolation"],
+                      verifier._checkpoint_stage4_professor_isolation)
+        destinations = {action.dest for action in verifier._parser()._actions}
+        self.assertTrue({"fixture_manifest", "eval_request", "input_sha256",
+                         "install_verdict", "fixture_sha"} <= destinations)
+        self.assertEqual(verifier.STAGE4_LOCAL_SCHEMA, 3)
+        self.assertEqual(verifier.ISSUE67_REQUEST_MODEL, "gpt-5.6-luna")
+        self.assertEqual(verifier.ISSUE67_REQUEST_REASONING, "low")
+
+    def test_frozen_prompt_identifies_both_professors_by_canonical_directory(self):
+        text = ISSUE67_PROMPT_PATH.read_text(encoding="utf-8")
+        self.assertEqual(text.count("<PROGRAM_ROOT>"), 1)
+        for spec in issue67_fixture.PROFESSORS:
+            self.assertIn(f"教授研究/{spec['field']}/{spec['directory']}", text)
+            self.assertIn(spec["idea_id"], text)
+        # The display name is shared, so it cannot be the transaction identity.
+        self.assertNotIn(issue67_fixture.DISPLAY_NAME, text)
+
+    def test_frozen_fixture_freezes_one_candidate_state_fault_and_history_only_pair(self):
+        manifest_path = self.out / "fixture-manifest.json"
+        manifest = self._frozen_fixture(manifest_path)
+        self.assertEqual(manifest["builder"], verifier.ISSUE67_FIXTURE_BUILDER)
+        self.assertEqual(manifest["fixture_kind"], "stage4-isolation")
+        self.assertEqual(manifest["manual_patch"], "no")
+        self.assertEqual(manifest["builder_sha256"], self._sha(ISSUE67_PREPARER_PATH))
+        self.assertEqual([row["professor"] for row in manifest["professors"]],
+                         [issue67_fixture.DISPLAY_NAME] * 2)
+        self.assertEqual(len({row["canonical_professor_dir"]
+                              for row in manifest["professors"]}), 2)
+        faults = [row for row in manifest["professors"]
+                  if not row["candidate_state"]["canonical"]]
+        self.assertEqual(len(faults), 1, manifest["professors"])
+        self.assertEqual(faults[0]["candidate_state"]["relative_path"],
+                         verifier.LOCAL_CANDIDATE_STATE_FILE)
+        self.assertEqual(faults[0]["role"], "malformed_candidate_state")
+        self.assertEqual(manifest["fault"]["kind"], "malformed_canonical_candidate_state")
+        self.assertEqual(manifest["fault"]["expected_reason_code"], "invalid_candidate_state")
+        self.assertEqual(manifest["fault"]["relative_path"],
+                         verifier.LOCAL_CANDIDATE_STATE_FILE)
+        self.assertEqual(
+            self._sha(Path(manifest["fault"]["professor_dir"])
+                      / verifier.LOCAL_CANDIDATE_STATE_FILE), manifest["fault"]["sha256"])
+        self.assertEqual(
+            self._sha(Path(manifest["fault"]["professor_dir"])
+                      / verifier.LOCAL_CANDIDATE_STATE_FILE),
+            hashlib.sha256(issue67_fixture.MALFORMED_CANDIDATE_STATE_BYTES).hexdigest())
+        self.assertEqual(len(manifest["forbidden_outputs"]), 4)
+        for entry in manifest["professors"]:
+            directory = Path(entry["canonical_professor_dir"])
+            for name in (verifier.LOCAL_SELECTION_FILE, verifier.LOCAL_EMAIL_PACK_FILE):
+                self.assertFalse((directory / name).exists(), directory)
+        # The legacy program-level pair is history that contradicts current facts.
+        self.assertEqual(sorted(manifest["legacy_program_pair"]),
+                         ["教授研究/套磁选择.json", "教授研究/邮件输入.json"])
+        legacy = json.loads((self.program / "教授研究/套磁选择.json").read_text(
+            encoding="utf-8"))
+        self.assertEqual(legacy["schema"], 2)
+        self.assertEqual(legacy["selections"][0]["direction_ids"],
+                         [issue67_fixture.LEGACY_DIRECTION_ID])
+        self.assertNotIn(issue67_fixture.LEGACY_DIRECTION_ID,
+                         [row["direction_id"] for row in manifest["professors"]])
+
+    def test_stage4_snapshot_pins_the_isolation_pre_state_and_stays_compatible(self):
+        manifest_path = self.out / "fixture-manifest.json"
+        manifest = self._frozen_fixture(manifest_path)
+        with_manifest = verifier._checkpoint_stage4_snapshot(
+            self._args(fixture_manifest=manifest_path))
+        self.assertEqual(with_manifest["status"], "pass", self._failed(with_manifest))
+        pre = with_manifest["isolation_pre"]
+        self.assertEqual(pre["builder"], verifier.ISSUE67_FIXTURE_BUILDER)
+        self.assertEqual(pre["manifest_sha256"], self._sha(manifest_path))
+        self.assertEqual(pre["program_root"], str(self.program))
+        self.assertEqual(pre["fault"], {
+            "professor_dir": manifest["fault"]["professor_dir"],
+            "relative_path": verifier.LOCAL_CANDIDATE_STATE_FILE,
+            "sha256": manifest["fault"]["sha256"]})
+        self.assertEqual(set(pre["professors"]),
+                         {row["canonical_professor_dir"] for row in manifest["professors"]})
+        for row in pre["professors"].values():
+            self.assertFalse(row["selection_file"]["exists"])
+            self.assertFalse(row["email_pack"]["exists"])
+        # The program-level artifact shape other recipes depend on is unchanged.
+        without_manifest = verifier._checkpoint_stage4_snapshot(self._args())
+        self.assertEqual(without_manifest["artifacts"], with_manifest["artifacts"])
+        self.assertNotIn("isolation_pre", without_manifest)
+        self.assertEqual(set(without_manifest), {"status", "checks", "artifacts"})
+
+    # -- the positive oracle ----------------------------------------------
+    def test_isolation_checkpoint_passes_the_real_producer_isolation(self):
+        self._build()
+        payload = self._verdict()
+        self.assertEqual(payload["status"], "pass", self._failed(payload))
+        self.assertEqual(payload["classification"], "PASS_TARGET")
+        self.assertEqual(self._failed(payload), [])
+        names = self._statuses(payload)
+        for gate in ISSUE67_PROVEN_GATES:
+            self.assertEqual(names.get(gate), "pass", gate)
+        alpha, beta = self._professor_dirs()
+        observed = payload["observed"]
+        self.assertEqual(observed["producer_sha"], PRODUCER_SHA)
+        self.assertEqual(observed["fixture_sha"], FIXTURE_SHA)
+        self.assertEqual(observed["consumer_root"], str(self.consumer))
+        self.assertEqual(observed["formal_child_thread_ids"], [CHILD_THREAD_ID])
+        self.assertEqual(observed["valid_professor_dir"], str(alpha))
+        self.assertEqual(observed["fault_professor_dir"], str(beta))
+        self.assertEqual(observed["valid_professor_selection_file"],
+                         str(alpha / verifier.LOCAL_SELECTION_FILE))
+        self.assertEqual(observed["valid_professor_email_pack"],
+                         str(alpha / verifier.LOCAL_EMAIL_PACK_FILE))
+        self.assertEqual(observed["fault_professor_bytes_sha256"],
+                         self.manifest["fault"]["sha256"])
+        # The producer itself isolated the two professors in one aggregate call.
+        self.assertEqual(self.producer_rc, 0)
+        self.assertEqual(self.producer_result["status"], "partial")
+        rows = {row["professor_dir"]: row for row in self.producer_result["results"]}
+        self.assertEqual(rows[str(alpha)]["status"], "ok")
+        self.assertEqual(rows[str(beta)]["status"], "needs_refresh")
+        self.assertEqual(rows[str(beta)]["reason_code"], "invalid_candidate_state")
+        self.assertIsNone(rows[str(beta)]["selection_file"])
+        # What the oracle accepted is a professor-local schema-3 pair carrying
+        # the current profile fingerprint, not the legacy program-level schema.
+        selection = json.loads((alpha / verifier.LOCAL_SELECTION_FILE).read_text(
+            encoding="utf-8"))
+        pack = json.loads((alpha / verifier.LOCAL_EMAIL_PACK_FILE).read_text(
+            encoding="utf-8"))
+        self.assertEqual(selection["schema"], verifier.STAGE4_LOCAL_SCHEMA)
+        self.assertEqual(pack["schema"], verifier.STAGE4_LOCAL_SCHEMA)
+        self.assertEqual(selection["profile_fingerprint"], self.manifest["profile_sha256"])
+        self.assertEqual(len(pack["emails"]), 1)
+        self.assertEqual(
+            pack["emails"][0]["email_id"],
+            f"{issue67_fixture.DISPLAY_NAME}::"
+            f"{self.manifest['professors'][0]['direction_id']}::"
+            f"{self.manifest['professors'][0]['idea_id']}")
+
+    def test_model_prose_never_grades_the_isolation_verdict(self):
+        self._build()
+        boasting = ("两位教授的套磁选择与邮件输入都已成功写入程序级容器，"
+                    "isolation-beta 也已完成。")
+        adapter = self.out / "boasting-adapter.json"
+        self._write(adapter, self._formal_adapter())
+        response = self.out / "boasting-response.json"
+        self._write(response, self._raw_response(prose=boasting))
+        loud = self._verdict(adapter_output=adapter, eval_response=response)
+        self.assertEqual(loud["classification"], "PASS_TARGET", self._failed(loud))
+        alpha, _ = self._professor_dirs()
+        for name in (verifier.LOCAL_SELECTION_FILE, verifier.LOCAL_EMAIL_PACK_FILE):
+            (alpha / name).unlink()
+        silent = self._verdict(adapter_output=adapter, eval_response=response)
+        self.assertEqual(silent["status"], "fail", silent)
+        self.assertEqual(silent["classification"], "FAIL_PRODUCT")
+        self.assertIn("valid_professor_local_pair_written", self._failed(silent))
+
+    # -- the required counterexample --------------------------------------
+    def test_swapping_the_single_fault_for_another_fault_is_never_a_pass(self):
+        self._build(fixture=self._mutant_preparer, manual_pre=True)
+        payload = self._verdict()
+        self.assertEqual(payload["status"], "invalid", payload)
+        self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
+        # Everything the manifest pins still matches the shipped bytes, so the
+        # only possible rejection is the frozen single-fault precondition.
+        self.assertEqual(self._failed(payload), ["fixture_single_fault"])
+
+    def test_rewriting_the_frozen_fault_bytes_is_a_product_failure(self):
+        self._build()
+        alpha, beta = self._professor_dirs()
+        canonical = json.loads(
+            (alpha / verifier.LOCAL_CANDIDATE_STATE_FILE).read_text(encoding="utf-8"))
+        canonical["directions"][0]["candidates"][0]["id"] = \
+            self.manifest["professors"][1]["idea_id"]
+        self._write(beta / verifier.LOCAL_CANDIDATE_STATE_FILE, canonical)
+        payload = self._verdict()
+        self.assertEqual(payload["classification"], "FAIL_PRODUCT", payload)
+        failed = self._failed(payload)
+        self.assertIn("fixture_inputs_unchanged", failed)
+        self.assertIn("fault_professor_bytes_unchanged", failed)
+
+    def test_writing_the_fault_professor_pair_is_a_product_failure(self):
+        self._build()
+        alpha, beta = self._professor_dirs()
+        for name in (verifier.LOCAL_SELECTION_FILE, verifier.LOCAL_EMAIL_PACK_FILE):
+            shutil.copy(alpha / name, beta / name)
+        payload = self._verdict()
+        self.assertEqual(payload["classification"], "FAIL_PRODUCT", payload)
+        failed = self._failed(payload)
+        self.assertIn("fault_professor_local_pair_absent", failed)
+        self.assertIn("stage4_pair_written_only_where_the_contract_allows", failed)
+
+    def test_pair_bound_to_the_display_name_instead_of_the_directory_is_a_failure(self):
+        self._build()
+        alpha, _ = self._professor_dirs()
+        lookalike = alpha.parent / issue67_fixture.DISPLAY_NAME
+        lookalike.mkdir()
+        for name in (verifier.LOCAL_SELECTION_FILE, verifier.LOCAL_EMAIL_PACK_FILE):
+            shutil.copy(alpha / name, lookalike / name)
+        payload = self._verdict()
+        self.assertEqual(payload["classification"], "FAIL_PRODUCT", payload)
+        self.assertIn("stage4_pair_written_only_where_the_contract_allows",
+                      self._failed(payload))
+        shutil.rmtree(lookalike)
+        # The same pair, now pointing at the display-name directory instead of
+        # the canonical one, must fail the identity gate.
+        selection_path = alpha / verifier.LOCAL_SELECTION_FILE
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        moved = str(alpha.parent / issue67_fixture.DISPLAY_NAME)
+        selection["professor_dir"] = moved
+        for row in selection["selections"]:
+            row["professor_dir"] = moved
+        self._write(selection_path, selection)
+        rebound = self._verdict()
+        self.assertEqual(rebound["classification"], "FAIL_PRODUCT", rebound)
+        self.assertIn("valid_professor_pair_bound_to_canonical_professor_dir",
+                      self._failed(rebound))
+
+    def test_legacy_program_pair_regaining_authority_is_a_product_failure(self):
+        self._build()
+        path = self.program / "教授研究/套磁选择.json"
+        legacy = json.loads(path.read_text(encoding="utf-8"))
+        legacy["schema"] = verifier.STAGE4_LOCAL_SCHEMA
+        legacy["selections"].append({
+            "professor": self.manifest["professors"][0]["professor"],
+            "professor_dir": self.manifest["professors"][0]["professor_dir"],
+            "direction_ids": [self.manifest["professors"][0]["direction_id"]],
+            "ideas": [{"id": self.manifest["professors"][0]["idea_id"], "note": ""}],
+        })
+        self._write(path, legacy)
+        payload = self._verdict()
+        self.assertEqual(payload["classification"], "FAIL_PRODUCT", payload)
+        failed = self._failed(payload)
+        self.assertIn("program_level_pair_unchanged", failed)
+        self.assertIn("fixture_inputs_unchanged", failed)
+        # The Phase-J pin of the same hashes is the second, redundant proof and
+        # is only reached once the frozen bytes are intact (see ISSUE67_PROVEN_GATES).
+        self.assertNotIn("no_program_level_pair_rewritten", failed)
+
+    def test_local_pair_contradicting_current_facts_or_legacy_identity_fails(self):
+        self._build()
+        alpha, _ = self._professor_dirs()
+        pack_path = alpha / verifier.LOCAL_EMAIL_PACK_FILE
+        original = pack_path.read_bytes()
+        pack = json.loads(original.decode("utf-8"))
+        pack["emails"][0]["idea"]["id"] = "issue67-not-in-current-state"
+        self._write(pack_path, pack)
+        stale = self._verdict()
+        self.assertEqual(stale["classification"], "FAIL_PRODUCT", stale)
+        self.assertIn("valid_professor_email_pack_matches_current_facts",
+                      self._failed(stale))
+        pack_path.write_bytes(original)
+        selection_path = alpha / verifier.LOCAL_SELECTION_FILE
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        selection["selections"][0]["direction_ids"] = [
+            self.manifest["professors"][0]["direction_id"],
+            issue67_fixture.LEGACY_DIRECTION_ID]
+        self._write(selection_path, selection)
+        promoted = self._verdict()
+        self.assertEqual(promoted["classification"], "FAIL_PRODUCT", promoted)
+        failed = self._failed(promoted)
+        self.assertIn("legacy_program_pair_not_promoted_into_local_authority", failed)
+        self.assertIn("valid_professor_selection_matches_this_request_and_current_state",
+                      failed)
+
+    # -- verdict attribution ------------------------------------------------
+    def test_unobservable_or_unowned_delegation_is_blocked_not_failed(self):
+        self._build()
+        unobservable = self.out / "unobservable-adapter.json"
+        self._write(unobservable, {
+            "fixture_status": "FIXTURE_READY",
+            "delegation": {"state": "unobservable", "formal_child_count": 0,
+                           "child_thread_ids": [], "basis": [],
+                           "reason_code": "no_supported_formal_spawn_relation"},
+            "dispatch": {"thread_relations": []},
+        })
+        empty = self.out / "empty-response.json"
+        self._write(empty, self._raw_response(events=[]))
+        blocked = self._verdict(adapter_output=unobservable, eval_response=empty)
+        self.assertEqual(blocked["status"], "blocked", blocked)
+        self.assertEqual(blocked["classification"], "BLOCKED_OBSERVABILITY")
+        self.assertIn("delegation_observable", self._failed(blocked))
+
+        foreign = self.out / "foreign-owner-adapter.json"
+        self._write(foreign, self._formal_adapter(root_thread="some-other-root"))
+        orphan = self._verdict(adapter_output=foreign)
+        self.assertEqual(orphan["classification"], "BLOCKED_OBSERVABILITY", orphan)
+        self.assertIn("formal_root_child", self._failed(orphan))
+
+        provider = self.out / "provider-adapter.json"
+        self._write(provider, self._formal_adapter(fixture_status="BLOCKED_DEPENDENCY"))
+        dependent = self._verdict(adapter_output=provider)
+        self.assertEqual(dependent["classification"], "BLOCKED_RUNTIME_PROVIDER")
+
+    def test_inconsistent_or_malformed_adapter_evidence_is_an_invalid_run(self):
+        self._build()
+        lying = self.out / "lying-adapter.json"
+        self._write(lying, {
+            "fixture_status": "FIXTURE_READY",
+            "delegation": {"state": "confirmed", "formal_child_count": 1,
+                           "child_thread_ids": [CHILD_THREAD_ID],
+                           "basis": ["formal_spawn_relation"], "reason_code": None},
+            "dispatch": {"thread_relations": []},
+        })
+        inconsistent = self._verdict(adapter_output=lying)
+        self.assertEqual(inconsistent["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("delegation_summary_consistent", self._failed(inconsistent))
+
+        malformed = self.out / "malformed-relation-adapter.json"
+        self._write(malformed, {
+            "fixture_status": "FIXTURE_READY",
+            "delegation": {"state": "unobservable", "formal_child_count": 0,
+                           "child_thread_ids": [], "basis": [],
+                           "reason_code": "no_supported_formal_spawn_relation"},
+            "dispatch": {"thread_relations": [{
+                "tool": "spawnAgent", "status": "completed",
+                "sender_thread_id": "root-1", "parent_thread_id": "root-1",
+                "receiver_thread_ids": []}]},
+        })
+        shape = self._verdict(adapter_output=malformed)
+        self.assertEqual(shape["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("adapter_relation_shape", self._failed(shape))
+
+        corrupt = self.out / "corrupt-adapter.json"
+        corrupt.write_text("{", encoding="utf-8")
+        unreadable = self._verdict(adapter_output=corrupt)
+        self.assertEqual(unreadable["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("evidence_readable", self._failed(unreadable))
+
+        invalid_evidence = self.out / "invalid-evidence-adapter.json"
+        self._write(invalid_evidence, self._formal_adapter(fixture_status="INVALID_EVIDENCE"))
+        stale = self._verdict(adapter_output=invalid_evidence)
+        self.assertEqual(stale["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("adapter_invalid_evidence", self._failed(stale))
+
+        missing = self._verdict(adapter_output=None)
+        self.assertEqual(missing["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("evidence_supplied", self._failed(missing))
+
+    def test_damaged_or_foreign_harness_evidence_is_an_invalid_run(self):
+        self._build()
+        failing_install = self.out / "failing-install.json"
+        self._write(failing_install, {
+            "status": "fail",
+            "checks": [{"name": "producer_sha_pinned", "status": "fail", "detail": {}}],
+            "observed": {"consumer_root": str(self.consumer)},
+        })
+        broken = self._verdict(install_verdict=failing_install)
+        self.assertEqual(broken["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("install_verdict_pass", self._failed(broken))
+
+        # A lock that resolves to another commit is not exact-SHA provenance.
+        (self.consumer / "apm.lock.yaml").write_text(
+            "dependencies:\n  - name: professor-contact\n"
+            f"    resolved_commit: {'d' * 40}\n", encoding="utf-8")
+        rerun = self.out / "rerun-install.json"
+        self._write(rerun, verifier._checkpoint_install(
+            self._args(producer_sha="d" * 40)))
+        provenance = self._verdict(install_verdict=rerun)
+        self.assertEqual(provenance["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("install_provenance_rederived", self._failed(provenance))
+        (self.consumer / "apm.lock.yaml").write_text(
+            "dependencies:\n  - name: professor-contact\n"
+            f"    resolved_commit: {PRODUCER_SHA}\n", encoding="utf-8")
+
+        alt = self.out / "alt"
+        alt.mkdir()
+        network_prompt = alt / "network-prompt.txt"
+        network_prompt.write_text("run stage 4 with network access", encoding="utf-8")
+        widened = alt / "eval-request.json"
+        issue67_request.build_request(
+            consumer_root=self.consumer, prompt_file=network_prompt, output=widened,
+            model=verifier.ISSUE67_REQUEST_MODEL,
+            reasoning=verifier.ISSUE67_REQUEST_REASONING, timeout=900)
+        request = json.loads(widened.read_text(encoding="utf-8"))
+        request["command"] = request["command"].replace(
+            "--sandbox", '--config network_access="allowed" --sandbox', 1)
+        self._write(widened, request)
+        forbidden = self._verdict(eval_request=widened)
+        self.assertEqual(forbidden["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("eval_request_excludes[network_access]", self._failed(forbidden))
+
+        prose_prompt = alt / "issue67-stage4-isolation.txt"
+        prose_prompt.write_text("do stage 4 however you like", encoding="utf-8")
+        rewritten = alt / "eval-request.json"
+        issue67_request.build_request(
+            consumer_root=self.consumer, prompt_file=prose_prompt, output=rewritten,
+            model=verifier.ISSUE67_REQUEST_MODEL,
+            reasoning=verifier.ISSUE67_REQUEST_REASONING, timeout=900)
+        foreign_prompt = self._verdict(eval_request=rewritten)
+        self.assertEqual(foreign_prompt["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("eval_request_prompt_is_frozen_prompt", self._failed(foreign_prompt))
+
+        damaged = alt / "input-sha256.txt"
+        damaged.write_text("not-a-digest  whatever\n", encoding="utf-8")
+        unparsable = self._verdict(input_sha256=damaged)
+        self.assertEqual(unparsable["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("input_sha256_readable", self._failed(unparsable))
+
+        drifted = alt / "drifted-sha.txt"
+        recorded = {Path(line.partition("  ")[2].strip()): line.partition("  ")[0]
+                    for line in self.chain["input_sha256"].read_text(
+                        encoding="utf-8").splitlines() if line.strip()}
+        drifted.write_text("".join(
+            f"{'f' * 64}  {path}\n" if path.name == "fixture-manifest.json"
+            else f"{digest}  {path}\n" for path, digest in recorded.items()),
+            encoding="utf-8")
+        unstable = self._verdict(input_sha256=drifted)
+        self.assertEqual(unstable["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("input_sha256_records_stable", self._failed(unstable))
+
+        other = self.out / "other-pre.json"
+        pre = json.loads(self.chain["pre_snapshot"].read_text(encoding="utf-8"))
+        pre["isolation_pre"]["program_root"] = str(self.root / "elsewhere")
+        self._write(other, pre)
+        foreign_root = self._verdict(pre_snapshot=other)
+        self.assertEqual(foreign_root["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("pre_snapshot_is_for_this_manifest", self._failed(foreign_root))
 
 
 if __name__ == "__main__":

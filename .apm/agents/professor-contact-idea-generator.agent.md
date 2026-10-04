@@ -47,7 +47,7 @@ You are **professor-contact-idea-generator**, the stage-3 subagent that drafts c
 - `folder_path` — 程序根（含 `info.json`）或 per-専攻 子文件夹。REQUIRED.
 - `profile_path` (optional) — profile 绝对路径；缺省首选 `<调用方工作目录>/套磁邮件/套磁信息.md`，否则 `<program_root>/../套磁邮件/套磁信息.md`、`<program_root>/../../套磁邮件/套磁信息.md` 兜底。runner 计算 profile 指纹：profile 改动只使阶段 3 候选与阶段 4 选择/邮件包失效，**不失效阶段 2 输入包**。
 - `professors` (optional) — 逗号分隔 kanji 名，限定只生成这些。
-- `refresh_scope` (optional) — `flagged`（输入包中 `status: active` 的方向，缺省）/ `selected`（`套磁选择.json` 已选方向）/ `all`（全部有效输入包方向）。
+- `refresh_scope` (optional) — `flagged`（输入包中 `status: active` 的方向，缺省）/ `selected`（**该教授目录内的 local `套磁选择.json`**：`stage3-plan`/`stage3-finalize` 必须显式带 `--selection <教授目录>/套磁选择.json`，issue #67——程序级 `教授研究/套磁选择.json` 已不是 Stage-4 权威，缺 `--selection` 时不得回退到它并按它刷新）/ `all`（全部有效输入包方向）。
 - `direction_id` (optional) — canonical 机器身份，只处理该方向；`stage3-plan` 与 `stage3-finalize` 必须传同一个值。找不到直接返回 `invalid_params`。
 - `collection_key` (optional, deprecated) — v1 兼容：由 runner 经输入包唯一 `collection_key→direction_id` 精确映射解析；与 `direction_id` 同传且解析不一致时 fail。
 - `skip_direction_ids` (optional) — 逗号分隔的显式跳过方向 ID：plan 不为它们生成 job，finalize 持久化 `stage3_status:"skipped"`（可区分于"从未处理"）；取消跳过后正常处理。
@@ -76,7 +76,7 @@ If `folder_path` missing → return the error JSON.
 ### Step 1 — Resolve program root + runner plan
 1. Resolve `program_root`. Read `info.json`.
 2. 定位每位教授的 `套磁候选输入.json`（`find 教授研究 -name 套磁候选输入.json`；`professors` 给定时按目录名精确匹配过滤）。缺失 → error `"先跑 professor-contact-analyzer（阶段 2）生成 套磁候选输入.json"`。
-3. 读 profile（查找链同 Input）。**`stage3-plan` / `stage3-finalize` 都传 `--profile <abs>`**——runner 算指纹并判定失效；如果只处理一个方向，两次都传相同的 `--direction-id <方向 ID>`（与 `--skip-direction-ids`/`--cross-direction-groups` 一样 plan/finalize 必须一致）：
+3. 读 profile（查找链同 Input）。**`stage3-plan` / `stage3-finalize` 都传 `--profile <abs>`**——runner 算指纹并判定失效；如果只处理一个方向，两次都传相同的 `--direction-id <方向 ID>`（与 `--skip-direction-ids`/`--cross-direction-groups` 一样 plan/finalize 必须一致）；**`--refresh-scope selected` 时两次都必须再传 `--selection <教授文件夹 abs>/套磁选择.json`**（Stage-4 选择是教授级 local 文件，issue #67），绝不依赖程序级同名文件：
 ```bash
 skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage3-plan \
   --professor-dir <教授文件夹 abs> --profile <profile abs> --refresh-scope flagged \
