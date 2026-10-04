@@ -17,7 +17,7 @@
     ],
     "root_history_contract": "skills-test-fixtures/codex-root-thread-read@1",
     "root_history_request": "thread/read threadId=<eval root> includeTurns=true on the same runtime generation",
-    "root_final_source": "within output.root_thread_read.result.thread.turns, select the latest turn containing AgentMessage phase=final_answer and require exactly one such terminal AgentMessage in that turn; only its text is the root business result source",
+    "root_final_source": "within output.root_thread_read.result.thread.turns, select the last turn and require exactly one AgentMessage phase=final_answer in that turn; only its text is the root business result source",
     "root_history_exclusion": "AgentMessage phase=commentary, phase absent/unknown, earlier turns, live historical assistant messages and nested diagnostics cannot become or contaminate the final business result source",
     "formal_ownership": "only non-empty spawnAgent senderThreadId plus concrete receiverThreadIds; subAgentActivity, parentThreadId and identity fields cannot create ownership",
     "producer_verifier_uses": [
