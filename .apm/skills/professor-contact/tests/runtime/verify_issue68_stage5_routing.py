@@ -2,7 +2,9 @@
 """PC68-R1 verifier: parsed fields, formal ownership and ordered lifecycle.
 
 Missing supported business/lifecycle observations are BLOCKED_OBSERVABILITY,
-never a guessed product failure. Identity diagnostics cannot create an edge.
+never a guessed product failure. A complete attributable source missing or
+changing business content is FAIL_PRODUCT; corrupted evidence is
+INVALID_EVIDENCE. Identity diagnostics cannot create an edge.
 Synthetic verifier tests characterize the oracle; they are not runtime PASS.
 """
 import argparse
@@ -57,9 +59,19 @@ def message_text(item):
 
 
 def business_payload(text, manifest):
+    """Resolve source completeness and attribution first, then content.
+
+    A truly missing business source is BLOCKED_OBSERVABILITY; evidence that
+    cannot be parsed into one attributable source is INVALID_EVIDENCE; a
+    complete attributable source omitting or changing business fields is a
+    real product omission, never an observability gap.
+    """
     rows = [row for value in json_values(text) for row in objects(value)]
     candidates = [row for row in rows if "email_pack" in row]
-    if len(candidates) != 1:
+    if len(candidates) > 1:
+        return None, verdict("INVALID_EVIDENCE", "owner_business_object_ambiguous",
+                             observed_candidates=len(candidates))
+    if not candidates:
         return None, verdict("BLOCKED_OBSERVABILITY", "owner_business_object_unobservable")
     row = candidates[0]
     pack = row["email_pack"]
@@ -69,7 +81,7 @@ def business_payload(text, manifest):
     for field, expected_value in (("choices", manifest["expected_choices"]),
                                   ("choices_scope", manifest["expected_scope"])):
         if field not in row:
-            return None, verdict("BLOCKED_OBSERVABILITY", f"{field}_transport_unobservable")
+            return None, verdict("FAIL_PRODUCT", f"{field}_transport_missing", observed_pack=pack)
         if row[field] != expected_value:
             return None, verdict("FAIL_PRODUCT", f"{field}_transport_changed", observed_pack=pack)
     # R1's source is the completed native payload, not a temporary file's
@@ -89,11 +101,20 @@ def owner_outcome(texts, owner):
     A completed, observable contradictory result is product failure. The
     plan-with-result precheck proves a blocked prerequisite, not the exact
     terminal status/reason of the agent's mandatory initial-plan workflow.
+    Source completeness and attribution come first: no result content at
+    all is BLOCKED_OBSERVABILITY, a malformed recorded result payload is
+    INVALID_EVIDENCE, and a complete attributable result without business
+    content is a real product omission.
     """
-    rows = [row for text in texts for value in json_values(text) for row in objects(value)
+    if not isinstance(texts, (list, tuple)) or any(not isinstance(text, str) for text in texts):
+        return None, verdict("INVALID_EVIDENCE", "owner_result_payload_unparseable")
+    usable = [text for text in texts if text.strip()]
+    if not usable:
+        return None, verdict("BLOCKED_OBSERVABILITY", "owner_business_result_unobservable")
+    rows = [row for text in usable for value in json_values(text) for row in objects(value)
             if "status" in row and "reason_code" in row]
     if not rows:
-        return None, verdict("BLOCKED_OBSERVABILITY", "owner_business_result_unobservable")
+        return None, verdict("FAIL_PRODUCT", "owner_business_result_missing")
     outcomes = []
     for row in rows:
         if row.get("professor_dir") != owner["professor_dir"]:
