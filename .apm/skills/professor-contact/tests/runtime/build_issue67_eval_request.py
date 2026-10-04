@@ -35,11 +35,14 @@ def build_request(*, consumer_root: Path, prompt_file: Path, output: Path,
     if not prompt.strip():
         raise RequestBuildError("prompt file is empty")
 
-    trust_override = f'projects."{consumer_root}".trust_level="trusted"'
+    # The fixture@16 characterization uses persistent V2 threads.  The root
+    # projects inline table keeps paths containing dots as atomic map keys.
+    trust_override = 'projects={' + json.dumps(str(consumer_root)) + '={trust_level="trusted"}}'
     argv = [
-        "--json", "--ephemeral", "--skip-git-repo-check",
+        "--json", "--skip-git-repo-check",
         "--sandbox", "workspace-write", "--cd", str(consumer_root),
         "--model", model,
+        "--config", 'features.multi_agent_v2.enabled=true',
         "--config", f'model_reasoning_effort="{reasoning}"',
         "--config", trust_override,
         "--", prompt,

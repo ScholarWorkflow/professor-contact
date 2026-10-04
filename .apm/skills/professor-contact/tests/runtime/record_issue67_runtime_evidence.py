@@ -61,10 +61,13 @@ def record(*, eval_request: Path, eval_response: Path, expected_model: str,
     if not isinstance(command, str) or not command.strip():
         raise EvidenceError("eval request has no command")
     try:
-        argv = shlex.split(command)
+        tokens = shlex.split(command)
     except ValueError as exc:
         raise EvidenceError(f"eval request command cannot be tokenized: {exc}") from exc
 
+    if "--" not in tokens or tokens.index("--") != len(tokens) - 2:
+        raise EvidenceError("request must contain one prompt after --")
+    argv = tokens[:tokens.index("--")]
     model = _flag_once(argv, "--model")
     sandbox = _flag_once(argv, "--sandbox")
     cwd = _flag_once(argv, "--cd")
@@ -76,6 +79,15 @@ def record(*, eval_request: Path, eval_response: Path, expected_model: str,
     if configs.count(reasoning_token) != 1:
         raise EvidenceError(
             f"request does not contain exactly one Gate-2 reasoning override {reasoning_token!r}")
+    expected_argv = [
+        "--json", "--skip-git-repo-check", "--sandbox", "workspace-write",
+        "--cd", cwd, "--model", expected_model,
+        "--config", "features.multi_agent_v2.enabled=true",
+        "--config", reasoning_token,
+        "--config", 'projects={' + json.dumps(cwd) + '={trust_level="trusted"}}',
+    ]
+    if argv != expected_argv:
+        raise EvidenceError("request does not match Gate-2 persistent V2 invocation")
 
     version = response.get("version")
     runtime = response.get("output")
@@ -100,6 +112,9 @@ def record(*, eval_request: Path, eval_response: Path, expected_model: str,
             "sandbox": sandbox,
             "consumer_root": cwd,
             "config_overrides": configs,
+            "multi_agent_v2_enabled": True,
+            "session_mode": "default_persistent",
+            "ephemeral": False,
         },
         "runtime": {
             "codex_version": version,

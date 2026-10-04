@@ -52,8 +52,11 @@ class Issue67RuntimeConfigTests(unittest.TestCase):
             configs = [argv[index + 1] for index, value in enumerate(argv)
                        if value == "--config"]
             self.assertIn('model_reasoning_effort="low"', configs)
-            self.assertTrue(any(value.endswith('trust_level="trusted"')
-                                for value in configs))
+            self.assertIn('features.multi_agent_v2.enabled=true', configs)
+            self.assertIn('projects={' + json.dumps(str(root.resolve()))
+                          + '={trust_level="trusted"}}', configs)
+            self.assertNotIn("--ephemeral", argv)
+            self.assertNotIn("resume", argv)
             self.assertNotIn("gpt-5.6-luna", request["command"])
             self.assertEqual(json.loads(output.read_text(encoding="utf-8")), request)
 

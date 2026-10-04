@@ -26,11 +26,13 @@ class Issue67RuntimeEvidenceTests(unittest.TestCase):
         response = root / "eval-response.json"
         output = root / "runtime-evidence.json"
         command = shlex.join([
-            "--json", "--ephemeral", "--skip-git-repo-check",
+            "--json", "--skip-git-repo-check",
             "--sandbox", "workspace-write", "--cd", str(root / "consumer"),
             "--model", model,
+            "--config", 'features.multi_agent_v2.enabled=true',
             "--config", f'model_reasoning_effort="{reasoning}"',
-            "--config", f'projects."{root / "consumer"}".trust_level="trusted"',
+            "--config", 'projects={' + json.dumps(str(root / "consumer"))
+            + '={trust_level="trusted"}}',
             "--", "fixture prompt",
         ])
         request.write_text(json.dumps({"command": command, "timeout": 900}), encoding="utf-8")
@@ -66,6 +68,9 @@ class Issue67RuntimeEvidenceTests(unittest.TestCase):
             self.assertEqual(evidence["invocation"]["model"], "gpt-6-luna")
             self.assertEqual(evidence["invocation"]["reasoning"], "low")
             self.assertEqual(evidence["invocation"]["sandbox"], "workspace-write")
+            self.assertEqual(evidence["invocation"]["session_mode"], "default_persistent")
+            self.assertFalse(evidence["invocation"]["ephemeral"])
+            self.assertTrue(evidence["invocation"]["multi_agent_v2_enabled"])
             self.assertEqual(evidence["runtime"], {
                 "codex_version": "codex-cli 0.157.0",
                 "backend": "app-server",
@@ -107,6 +112,28 @@ class Issue67RuntimeEvidenceTests(unittest.TestCase):
                     output=output,
                 )
             self.assertFalse(output.exists())
+
+    def test_rejects_ephemeral_resume_and_missing_v2_before_recording(self):
+        for mutation in ("ephemeral", "resume", "missing_v2"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                request, response, output = self._artifacts(root)
+                data = json.loads(request.read_text(encoding="utf-8"))
+                argv = shlex.split(data["command"])
+                if mutation == "ephemeral":
+                    argv.insert(1, "--ephemeral")
+                elif mutation == "resume":
+                    argv.insert(0, "resume")
+                else:
+                    index = argv.index('features.multi_agent_v2.enabled=true')
+                    del argv[index - 1:index + 1]
+                data["command"] = shlex.join(argv)
+                request.write_text(json.dumps(data), encoding="utf-8")
+                with self.assertRaises(recorder.EvidenceError):
+                    recorder.record(eval_request=request, eval_response=response,
+                                    expected_model="gpt-6-luna", expected_reasoning="low",
+                                    output=output)
+                self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

@@ -87,7 +87,7 @@ ISSUE67_FIXTURE_BUILDER = "tests/runtime/prepare_issue67_stage4_isolation_fixtur
 ISSUE67_PROMPT_NAME = "issue67-stage4-isolation.txt"
 ISSUE67_FORBIDDEN_REQUEST_TOKENS = ("network_access", "ZOTERO", "CHROME", "NPM",
                                     "agents.max_concurrent")
-ISSUE67_REQUEST_ARGV_PREFIX = ("--json", "--ephemeral", "--skip-git-repo-check",
+ISSUE67_REQUEST_ARGV_PREFIX = ("--json", "--skip-git-repo-check",
                                "--sandbox", "workspace-write")
 ISSUE67_REQUEST_MODEL = "gpt-5.6-luna"
 ISSUE67_REQUEST_REASONING = "low"
@@ -2125,18 +2125,19 @@ def _checkpoint_stage4_professor_isolation(args: argparse.Namespace) -> dict[str
     for forbidden in ISSUE67_FORBIDDEN_REQUEST_TOKENS:
         _check(checks, f"eval_request_excludes[{forbidden}]", forbidden not in command,
                forbidden)
-    _check(checks, "eval_request_command_surface",
-           tuple(argv[:5]) == ISSUE67_REQUEST_ARGV_PREFIX and "--" in argv,
-           argv[:8])
+    trust_config = "projects={" + json.dumps(str(consumer)) + '={trust_level="trusted"}}'
+    expected_configs = ["features.multi_agent_v2.enabled=true",
+                        f'model_reasoning_effort="{ISSUE67_REQUEST_REASONING}"',
+                        trust_config]
+    expected_argv = [*ISSUE67_REQUEST_ARGV_PREFIX, "--cd", str(consumer),
+                     "--model", ISSUE67_REQUEST_MODEL]
+    for config in expected_configs:
+        expected_argv.extend(["--config", config])
+    expected_argv.extend(["--", prompt_text])
+    _check(checks, "eval_request_command_surface", argv == expected_argv, argv[:8])
     configs = [argv[index + 1] for index, item in enumerate(argv) if item == "--config"]
-    allowed_configs = {
-        f'model_reasoning_effort="{ISSUE67_REQUEST_REASONING}"',
-        f'projects."{consumer}".trust_level="trusted"',
-        "projects={" + json.dumps(str(consumer)) + '={trust_level="trusted"}}',
-    }
     _check(checks, "eval_request_config_surface",
-           set(configs) <= allowed_configs
-           and any(config.endswith('trust_level="trusted"') for config in configs),
+           configs == expected_configs,
            configs)
     values: dict[str, str] = {}
     for index, item in enumerate(argv):

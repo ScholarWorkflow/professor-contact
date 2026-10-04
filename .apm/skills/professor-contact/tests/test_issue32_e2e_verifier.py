@@ -5,6 +5,7 @@ import importlib.util
 import hashlib
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -53,10 +54,10 @@ issue67_fixture = load_module(
     "issue67_stage4_isolation_fixture_for_verifier", ISSUE67_PREPARER_PATH)
 issue67_request = load_module(
     "issue67_stage4_eval_request_builder_for_verifier",
-    RUNTIME_DIR / "build_issue53_eval_request.py",
+    RUNTIME_DIR / "build_issue67_eval_request.py",
 )
 PRODUCER_SHA = "c" * 40
-FIXTURE_SHA = "a96c239cca0e1e07eb142089e4d379baf4072277"
+FIXTURE_SHA = "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
 CHILD_THREAD_ID = "child-selection-1"
 # The claims PASS_TARGET must prove directly from bytes and formal relations
 # (issue #67 Gate 2 §4); none of them may be inferred from model prose.
@@ -1553,6 +1554,31 @@ class Issue67Stage4IsolationHarnessTests(unittest.TestCase):
         values = dict(self.chain)
         values.update(overrides)
         return verifier._checkpoint_stage4_professor_isolation(self._args(**values))
+
+    def test_persistent_v2_request_accepts_the_existing_isolation_proof(self):
+        payload = self._verdict()
+        self.assertEqual(payload["classification"], "PASS_TARGET", self._failed(payload))
+        request = json.loads(self.chain["eval_request"].read_text(encoding="utf-8"))
+        argv = shlex.split(request["command"])
+        self.assertNotIn("--ephemeral", argv)
+        self.assertIn('features.multi_agent_v2.enabled=true', argv)
+
+    def test_ephemeral_request_is_invalid_even_when_product_files_are_correct(self):
+        self._build()
+        request_path = self.chain["eval_request"]
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        argv = shlex.split(request["command"])
+        argv.insert(1, "--ephemeral")
+        request["command"] = shlex.join(argv)
+        self._write(request_path, request)
+        sha_path = self.chain["input_sha256"]
+        records = verifier._issue67_input_sha_records(sha_path)
+        records[str(request_path)] = self._sha(request_path)
+        sha_path.write_text("".join(f"{digest}  {path}\n" for path, digest in records.items()),
+                            encoding="utf-8")
+        payload = self._verdict()
+        self.assertEqual(payload["classification"], "INVALID_TEST_EXECUTION")
+        self.assertIn("eval_request_command_surface", self._failed(payload))
 
     def _professor_dirs(self):
         valid = next(row for row in self.manifest["professors"] if row["role"] == "valid")
