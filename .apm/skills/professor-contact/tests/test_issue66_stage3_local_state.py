@@ -225,6 +225,9 @@ _COMPARE_WORDS = ("比较", "比对", "核对", "校验", "对照")
 _AGREEMENT_WORDS = ("一致", "同一", "相同")
 _FINGERPRINT_WORDS = ("指纹", "fingerprint")
 _SKIP_COMPARISON = re.compile(r"(?:无需|不必|不用|无须|不再|不要求|不需要)")
+# A dropped repeat or extra comparison keeps the binding intact, whether the
+# qualifier is written before or after the cancellation word.
+_SKIP_EXEMPT = re.compile(r"(?:重复|再次|重新|额外|另行|二次)")
 _MISMATCH_STOP = re.compile(
     r"(?:不一致|不符合|不同)[^。；\n]{0,12}(?:立即)?(?:停止|结束|error|失败)")
 
@@ -290,21 +293,31 @@ def _response_is_fingerprint_source(clauses):
     return False
 
 
+def _clause_skips_comparison(sentence):
+    """True when one clause drops the comparison instead of a repeat of it."""
+    if not (_CONCORDANCE_SENTENCE.search(sentence)
+            or _COMPARISON_TOPIC.search(sentence)):
+        return False
+    for match in _SKIP_COMPARISON.finditer(sentence):
+        tail = sentence[match.end():]
+        if _SKIP_EXEMPT.search(sentence[max(0, match.start() - 6):match.start()] + tail):
+            continue
+        if any(word in tail for word in _COMPARE_WORDS + _AGREEMENT_WORDS):
+            return True
+    return False
+
+
 def _concordance_cancelled(text):
     """True when the text cancels the plan/committed fingerprint comparison.
 
-    The cancellation has to sit in the same sub-clause as the agreement
-    wording, which covers both "but it need not match the plan fingerprint"
-    and "but the run need not compare the two fingerprints" while leaving a
-    demand that merely mentions a read failure or a disagreement alone.
+    The cancellation has to sit in the same sub-clause as the agreement or
+    comparison wording, which covers "but it need not match the plan
+    fingerprint" and "but the run need not compare the two fingerprints".  A
+    dropped repeat ("need not compare again, the check after finalize still has
+    to match") keeps the binding and is not a cancellation.
     """
-    for clause in _CLAUSE_SPLIT.split(text):
-        if not _CONCORDANCE_SENTENCE.search(clause):
-            continue
-        if (any(word in clause for word in _CANCEL_WORDS)
-                and any(word in clause for word in _COMPARE_WORDS + _FINGERPRINT_WORDS)):
-            return True
-    return False
+    return any(_clause_skips_comparison(sentence)
+               for sentence in _CLAUSE_SPLIT.split(text))
 
 
 def _skips_comparison(text):
@@ -313,19 +326,12 @@ def _skips_comparison(text):
     A sentence that negates the comparison itself ("this round need not compare
     the committed fingerprint with the plan fingerprint") contradicts the
     binding rule wherever it sits in the profile branch, including in front of
-    the parts that carry the binding markers.  The sentence counts when it
-    carries the agreement wording or when it is about the comparison topic, so
-    the cancellation is still read when its wording differs.
+    the parts that carry the binding markers.  The whole sub-clause is read, so
+    a cancellation written as "need not carry out a comparison of ..." is still
+    caught.
     """
-    for sentence in _CLAUSE_SPLIT.split(text):
-        if not (_CONCORDANCE_SENTENCE.search(sentence)
-                or _COMPARISON_TOPIC.search(sentence)):
-            continue
-        for match in _SKIP_COMPARISON.finditer(sentence):
-            after = sentence[match.end():match.end() + 6]
-            if any(word in after for word in _COMPARE_WORDS + _AGREEMENT_WORDS):
-                return True
-    return False
+    return any(_clause_skips_comparison(sentence)
+               for sentence in _CLAUSE_SPLIT.split(text))
 
 
 def _doc_binding_disposition(agent):
@@ -1349,11 +1355,16 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         plan_line = next((line for line in agent.splitlines()
                           if "plan 指纹硬检查" in line), None)
         self.assertIsNotNone(plan_line, "plan-side hard check not found")
-        good_source = ("用返回值中的 `state_path` 定位并读取该状态文件里实际提交的 "
-                       "`profile_fingerprint`")
-        plan_strong = "必须是非空字符串且绑定本 child 传入的同一 `--profile`"
-        self.assertIn(good_source, frozen, "committed-state source clause not found")
-        self.assertIn(plan_strong, plan_line, "plan-side non-empty demand not found")
+        # The mutation anchors are located by pattern; the behaviour itself is
+        # judged by _doc_binding_disposition, so no Chinese sentence is pinned
+        # as the acceptance wording (issue-66 gate2 revision, 2026-10-04 19:19).
+        source_clause = re.search(r"finalize 成功[^。；\n]{0,80}?state_path[^。；\n]{0,40}",
+                                  frozen)
+        self.assertIsNotNone(source_clause, "committed-state source clause not found")
+        good_source = source_clause.group()
+        plan_clause = re.search(r"存在 profile 时[^。；\n]{0,80}", plan_line)
+        self.assertIsNotNone(plan_clause, "plan-side profile clause not found")
+        plan_strong = plan_clause.group()
         # The boundary that closes the profile-present branch condition is
         # derived from the guard structure, not from a pinned sentence, so a
         # standalone cancelling sentence can be placed right after it.
@@ -1361,7 +1372,7 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         self.assertIsNotNone(command_prefix, "profile-present branch command not found")
         # The branch condition closes here; a cancelling sentence placed after
         # this point sits in front of the parts that carry the binding markers.
-        guard_end = frozen[guard.start():guard.end() + command_prefix.start()]
+        guard_end = frozen[guard.start():guard.end() + 1]
         self.assertTrue(guard_end.endswith("时，"),
                         "profile-present branch boundary not found")
         # The concordance and read-failure spans are located by pattern, so no
@@ -1412,6 +1423,14 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                 "它必须是非空字符串且与 plan 返回的 `profile_fingerprint` 完全一致，"
                 "但实际执行无需比较这两个指纹"
             ).replace(read_fail_stop, "状态文件读取失败"),
+            # A cancellation written as "need not carry out a comparison of the
+            # committed fingerprint and the plan fingerprint" (the
+            # counterexample in the 2026-10-04 19:19 review).
+            "skip_comparison_verb": agent.replace(
+                guard_end, "时。本轮无需对提交状态指纹与 `plan` 指纹进行比较。本命令的"),
+            # The same shape with other cancellation wording.
+            "skip_comparison_check": agent.replace(
+                guard_end, "时。本轮不必对提交状态指纹与计划指纹做核对。本命令的"),
             # The cancellation arrives after a still-positive agreement wording
             # (the counterexample in the 2026-10-04 18:24 review).
             "tail_cancellation": agent.replace(
@@ -1460,6 +1479,25 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                 self.assertNotEqual(variant, agent, f"{label} rewrite did not apply")
                 ok, why = _doc_binding_disposition(variant)
                 self.assertTrue(ok, f"equivalent wording rejected: {label} ({why})")
+        # Equivalent rewrites of the committed-state source and of the plan-side
+        # check are accepted too: the contract is the behaviour, so the same
+        # requirement written in other words must not fail the case.
+        equivalent_rewrites = {
+            "状态来源改写":
+                (good_source,
+                 "`stage3-finalize` 成功后，根据返回的 `state_path` 打开对应状态文件，"
+                 "读取其中实际提交的 `profile_fingerprint`"),
+            "计划侧改写":
+                (plan_strong,
+                 "存在 profile 时，`stage3-plan` 回传的 profile 指纹必须非空，并且要绑定"
+                 "本 child 传入的同一 `--profile`"),
+        }
+        for label, (pinned, rewritten) in equivalent_rewrites.items():
+            with self.subTest(equivalent_check=label):
+                variant = agent.replace(pinned, rewritten, 1)
+                self.assertNotEqual(variant, agent, f"{label} rewrite did not apply")
+                ok, why = _doc_binding_disposition(variant)
+                self.assertTrue(ok, f"equivalent {label} rejected: {why}")
         # Workflow reference syncs the state machine and the sibling bound.
         self.assertIn("generator source-binding", wfref)
         self.assertIn("固定状态转移", wfref)
