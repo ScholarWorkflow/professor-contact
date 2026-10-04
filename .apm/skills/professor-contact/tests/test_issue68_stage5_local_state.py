@@ -37,10 +37,9 @@ PROOFS = {
         "test_issue68_r10_undecided_multi_candidate_owner_returns_needs_input",
         "test_issue68_r10_counterexample2_cross_professor_error_stays_with_its_owner",
         "test_issue68_r10_counterexample5_invalid_explicit_dir_never_transfers_by_id",
-        "test_issue68_r10_choices_scope_is_validated_against_this_run",
         "test_issue68_r10_foreign_rows_stay_noise_without_a_scope",
         "test_issue68_r10_single_object_choices_and_default_scope_keep_working"]),
-        ("test_issue68_choices_attribution", "TestStage5ImmutableWrapperForwardsChoicesScope", None)],
+        ("test_issue68_choices_attribution", "TestStage5ImmutableWrapperOwnerLocalChoices", None)],
 }
 
 

@@ -1,14 +1,12 @@
-"""Issue #68 plan r10 §2/§3: choices attribution and read-only discovery.
+"""Issue #68 plan r12 §3.3/§3.5: choices ownership and read-only discovery.
 
-The r10 candidate plan specifies the cross-professor choice identity as
-``(canonical professor_dir, email_id)``. These cases lock the deterministic
-runner side of that contract: explicit ``professor_dir`` rows partition first,
-legacy rows without a directory compute ``original_candidates`` from the
-caller's read-only scope before any explicit binding is considered, only a
-multi-candidate row may exclude professors a legal explicit row already
-satisfied, and ``stage5-list-inputs`` discovers professor-local packs without
-reading or writing anything else. The plan's representative
-counterexamples 2-5 each have a case here.
+Plan r12 moved cross-professor choice attribution to the root deterministic
+partition (``stage5-partition-choices``); the frozen identity stays
+``(canonical professor_dir, email_id)``. These cases lock the owner side of
+that contract: the runner consumes only its own one-professor bundle rows,
+a targeted run filters the professor's unselected ids first, a full-professor
+batch keeps its own wrong-id failure, and ``stage5-list-inputs`` discovers
+professor-local packs without reading or writing anything else.
 """
 
 import importlib.util
@@ -55,7 +53,7 @@ class R10TwoProfessorFixture:
 
         Both owners share the synthetic recipient evidence, but own separate
         directories, verification caches, packs and eventual output/state.
-        The scope is derived from these packs, never invented independently.
+        The root partition derives candidates from these packs directly.
         """
         fixture = helpers.write_issue59_stage5_fixture(
             self.root, [{"professor": A, "evidence": "fresh"}], case=self)
@@ -66,14 +64,15 @@ class R10TwoProfessorFixture:
             A, b_dir, contact_evidence=fixture["rows"][0]["contact_evidence"])
         b_pack = helpers.write_stage5_local_pack(self.root, A, b_dir, [row])
         helpers.write_issue59_verify(self.root, b_dir, A)
-        packs = [fixture["pack"], b_pack]
-        scope = {}
-        for path in packs:
-            pack = json.loads(path.read_text(encoding="utf-8"))
-            scope[str(Path(pack["professor_dir"]).resolve())] = [
-                email["email_id"] for email in pack["emails"]]
-        self.assertEqual(scope, {str(a_dir): [A_ID], str(b_dir): [A_ID]})
-        return a_dir, b_dir, packs, self.write_json("collision-scope.json", scope)
+        return a_dir, b_dir, [fixture["pack"], b_pack]
+
+    def partition(self, packs, choices):
+        """The root deterministic partition over the selected packs."""
+        arguments = ["stage5-partition-choices", "--program-root", self.root,
+                     "--choices", choices]
+        for pack in packs:
+            arguments += ["--owner", str(pack)]
+        return parse(helpers.run_cli(*arguments))
 
 
 class TestStage5ChoicesAttribution(helpers.Stage5LocalHarness, R10TwoProfessorFixture,
@@ -81,12 +80,10 @@ class TestStage5ChoicesAttribution(helpers.Stage5LocalHarness, R10TwoProfessorFi
     """Plan r10 §3: two-phase attribution shared by plan and finalize."""
 
     def stage5_call(self, surface, *, results, choices, email_id, pack,
-                    scope=None, root=None):
+                    root=None):
         program_root = Path(root or self.root)
         arguments = ["--result", results, "--choices", choices,
                      "--email-id", email_id]
-        if scope is not None:
-            arguments += ["--choices-scope", scope]
         if surface == "finalize":
             placeholder = program_root / "placeholder-humanized.txt"
             placeholder.write_text("占位正文\n", encoding="utf-8")
@@ -119,88 +116,104 @@ class TestStage5ChoicesAttribution(helpers.Stage5LocalHarness, R10TwoProfessorFi
         self.assertEqual(batch["reason_code"], "invalid_result_json", batch)
 
     def test_issue68_r10_counterexample4_multi_candidate_excludes_satisfied_owner(self):
-        """With original_candidates={A,B}, excluding the explicitly satisfied A
-        leaves B: the legacy row binds B and A is neither duplicate nor
-        ambiguous."""
-        a_dir, b_dir, packs, scope = self.colliding_owner_fixture()
+        """With candidates={A,B}, the root partition excludes the explicitly
+        satisfied A: the legacy row lands in B's bundle, A keeps its explicit
+        row, and both one-professor bundles finalize without cross-writes."""
+        a_dir, b_dir, packs = self.colliding_owner_fixture()
         results = self.write_results("r10-cx4-raw.json", [A_ID])
         rows = [explicit_row(A_ID, a_dir), helpers.issue59_choices(A_ID)]
         for order in (rows, list(reversed(rows))):
             choices = self.write_json("r10-cx4-choices.json", order)
-            for surface in ("plan", "finalize"):
-                for pack in packs:
-                    with self.subTest(order=order, surface=surface, pack=pack):
-                        jobs = self.plan("--result", results, "--choices", choices,
-                                         "--choices-scope", scope, "--email-id", A_ID,
-                                         pack=pack)
-                        self.assertEqual(jobs["status"], "ok", jobs)
-                        self.assertEqual([row["email_id"] for row in jobs["drafts"]], [A_ID])
-                        if surface == "finalize":
-                            other = packs[1] if pack == packs[0] else packs[0]
-                            other_dir = Path(json.loads(other.read_text())["professor_dir"])
-                            other_before = {p: p.read_bytes() for p in other_dir.iterdir() if p.is_file()}
-                            humanized = self.root / "collision-humanized.txt"
-                            humanized.write_text(jobs["drafts"][0]["draft"], encoding="utf-8")
-                            out = self.finalize("--result", results, "--choices", choices,
-                                                "--choices-scope", scope, "--email-id", A_ID,
-                                                "--humanized", humanized, pack=pack)
-                            self.assertEqual(out["status"], "ok", out)
-                            state = Path(json.loads(pack.read_text())["professor_dir"]) / contact_state.EMAIL_STATE
-                            self.assertTrue(state.is_file())
-                            self.assertEqual({p: p.read_bytes() for p in other_dir.iterdir() if p.is_file()},
-                                             other_before)
+            partition = self.partition(packs, choices)
+            self.assertEqual(partition["status"], "ok", partition)
+            owners = {entry["professor_dir"]: entry
+                      for entry in partition["owners"]}
+            for pack in packs:
+                owner_dir = str(Path(
+                    json.loads(pack.read_text())["professor_dir"]).resolve())
+                with self.subTest(order=order, pack=pack):
+                    self.assertEqual(owners[owner_dir]["partition"]["status"],
+                                     "ok", partition)
+                    bundle = self.write_json(
+                        "r10-cx4-bundle.json",
+                        owners[owner_dir]["choices_rows"])
+                    jobs = self.plan("--result", results, "--choices", bundle,
+                                     "--email-id", A_ID, pack=pack)
+                    self.assertEqual(jobs["status"], "ok", jobs)
+                    self.assertEqual(
+                        [row["email_id"] for row in jobs["drafts"]], [A_ID])
+                    other = packs[1] if pack == packs[0] else packs[0]
+                    other_dir = Path(json.loads(other.read_text())["professor_dir"])
+                    other_before = {p: p.read_bytes() for p in other_dir.iterdir() if p.is_file()}
+                    humanized = self.root / "collision-humanized.txt"
+                    humanized.write_text(jobs["drafts"][0]["draft"], encoding="utf-8")
+                    out = self.finalize("--result", results, "--choices", bundle,
+                                        "--email-id", A_ID,
+                                        "--humanized", humanized, pack=pack)
+                    self.assertEqual(out["status"], "ok", out)
+                    state = Path(json.loads(pack.read_text())["professor_dir"]) / contact_state.EMAIL_STATE
+                    self.assertTrue(state.is_file())
+                    self.assertEqual({p: p.read_bytes() for p in other_dir.iterdir() if p.is_file()},
+                                     other_before)
 
     def test_issue68_r10_undecided_multi_candidate_owner_returns_needs_input(self):
-        a_dir, b_dir, packs, scope = self.colliding_owner_fixture()
-        results = self.write_results("r10-amb-raw.json", [A_ID])
+        """A legacy row whose id lives in two selected packs stays an
+        unresolved root-partition ambiguity: no owner receives the row."""
+        a_dir, b_dir, packs = self.colliding_owner_fixture()
         choices = self.write_json("r10-amb-choices.json",
                                   [helpers.issue59_choices(A_ID)])
-        for surface, pack in ((surface, pack) for surface in ("plan", "finalize") for pack in packs):
-            with self.subTest(surface=surface, pack=pack):
-                before = self.stage5_artifact_snapshot()
-                out = self.stage5_call(surface, results=results, choices=choices,
-                                       email_id=A_ID, pack=pack,
-                                       scope=scope)
-                self.assertEqual(out["status"], "needs_input", out)
-                self.assertEqual(out["reason_code"], "choice_owner_ambiguous", out)
-                self.assertEqual(out.get("email_ids"), [A_ID], out)
-                self.assertEqual(self.stage5_artifact_snapshot(), before,
-                                 f"{surface}: ambiguity wrote Stage-5 artifacts")
+        before = self.stage5_artifact_snapshot()
+        partition = self.partition(packs, choices)
+        self.assertEqual(partition["status"], "ok", partition)
+        for entry in partition["owners"]:
+            self.assertEqual(entry["partition"]["status"], "needs_input",
+                             partition)
+            self.assertEqual(entry["partition"]["reason_code"],
+                             "choice_owner_ambiguous", partition)
+            self.assertEqual(entry["partition"]["email_ids"], [A_ID], partition)
+            self.assertNotIn("choices_rows", entry, partition)
+        self.assertEqual(self.stage5_artifact_snapshot(), before,
+                         "ambiguity wrote Stage-5 artifacts")
 
     def test_issue68_r10_counterexample2_cross_professor_error_stays_with_its_owner(self):
-        """R11 §3.3: a wrong ``B_dir + A's id`` row fails only B — B's batch
-        run answers ``needs_input`` / ``choice_owner_invalid``, B's targeted
-        run filters the unselected id first and fails only by its own missing
-        rule. A never rebinds or inherits B's bad row in either mode."""
+        """Plan r12 §3.3 rule 5: a wrong ``B_dir + A's id`` row fails only B's
+        root partition — B answers ``needs_input`` / ``choice_owner_invalid``
+        and gets no bundle. A's bundle stays legal in targeted and batch mode,
+        and B's row never reaches A's runner."""
         fixture = self.a_b_fixture()
-        a_dir, b_dir = fixture["dirs"][A], fixture["dirs"][B]
-        scope = self.write_json("r10-cx2-scope.json",
-                                {str(a_dir): [A_ID], str(b_dir): [B_ID]})
+        a_dir, b_dir = fixture["dirs"][A].resolve(), fixture["dirs"][B].resolve()
+        a_pack, b_pack = self.pack_for(A), self.pack_for(B)
         a_results = self.write_results("r10-cx2-a-raw.json", [A_ID])
-        b_results = self.write_results("r10-cx2-b-raw.json", [B_ID])
         choices = self.write_json("r10-cx2-choices.json",
                                   [explicit_row(A_ID, a_dir),
                                    explicit_row(A_ID, b_dir)])
-        a_jobs = self.plan("--result", a_results, "--choices", choices,
-                           "--choices-scope", scope, "--email-id", A_ID,
-                           pack=self.pack_for(A))
+        partition = self.partition([a_pack, b_pack], choices)
+        self.assertEqual(partition["status"], "ok", partition)
+        owners = {entry["professor_dir"]: entry for entry in partition["owners"]}
+        a_entry, b_entry = owners[str(a_dir)], owners[str(b_dir)]
+        self.assertEqual(a_entry["partition"]["status"], "ok", partition)
+        self.assertEqual([row["email_id"] for row in a_entry["choices_rows"]],
+                         [A_ID], partition)
+        self.assertNotIn(str(b_dir), json.dumps(a_entry["choices_rows"]),
+                         partition)
+        self.assertEqual(b_entry["partition"]["status"], "needs_input",
+                         partition)
+        self.assertEqual(b_entry["partition"]["reason_code"],
+                         "choice_owner_invalid", partition)
+        self.assertEqual(b_entry["partition"]["email_id"], A_ID, partition)
+        self.assertNotIn("choices_rows", b_entry, partition)
+        a_bundle = self.write_json("r10-cx2-a-bundle.json",
+                                   a_entry["choices_rows"])
+        a_jobs = self.plan("--result", a_results, "--choices", a_bundle,
+                           "--email-id", A_ID, pack=a_pack)
         self.assertEqual(a_jobs["status"], "ok", a_jobs)
         self.assertEqual([row["email_id"] for row in a_jobs["drafts"]], [A_ID],
                          a_jobs)
-        a_batch = self.plan("--result", a_results, "--choices", choices,
-                            "--choices-scope", scope, pack=self.pack_for(A))
+        a_batch = self.plan("--result", a_results, "--choices", a_bundle,
+                            pack=a_pack)
         self.assertEqual(a_batch["status"], "ok", a_batch)
         self.assertEqual(sorted(row["email_id"] for row in a_batch["drafts"]),
                          [A_ID], a_batch)
-        b_batch = self.plan("--result", b_results, "--choices", choices,
-                            "--choices-scope", scope, pack=self.pack_for(B))
-        self.assertEqual(b_batch["status"], "needs_input", b_batch)
-        self.assertEqual(b_batch["reason_code"], "choice_owner_invalid", b_batch)
-        b_jobs = self.plan("--result", b_results, "--choices", choices,
-                           "--choices-scope", scope, "--email-id", B_ID,
-                           pack=self.pack_for(B))
-        self.assertEqual(b_jobs["status"], "error", b_jobs)
-        self.assertEqual(b_jobs["reason_code"], "invalid_result_json", b_jobs)
 
     def test_issue68_r11_targeted_run_filters_unselected_explicit_rows(self):
         """R11 §3.3 rule 2 + counterexamples: in a targeted run the
@@ -245,28 +258,25 @@ class TestStage5ChoicesAttribution(helpers.Stage5LocalHarness, R10TwoProfessorFi
             self.assertEqual([row["email_id"] for row in out["emails"]], [x_id],
                              out)
 
-        # The same filter holds when the unselected id sits inside another
-        # professor's scope entry of a full multi-professor scope: the
-        # caller's unselected explicit Y must not become an ownership error.
+        # The same filter holds when the bundle carries another of the
+        # professor's own unselected explicit ids: the caller's unselected
+        # explicit Y must not become an ownership error.
         fixture = self.a_b_fixture()
-        a_dir, b_dir = fixture["dirs"][A], fixture["dirs"][B]
-        scope = self.write_json("r11-filter-full-scope.json",
-                                {str(a_dir): [A_ID], str(b_dir): [B_ID]})
+        a_dir = fixture["dirs"][A]
         results = self.write_results("r11-filter-full-raw.json", [A_ID])
         choices = self.write_json("r11-filter-full-choices.json",
                                   [explicit_row(A_ID, a_dir),
                                    explicit_row(B_ID, a_dir)])
         jobs = self.plan("--result", results, "--choices", choices,
-                         "--choices-scope", scope, "--email-id", A_ID,
-                         pack=self.pack_for(A))
+                         "--email-id", A_ID, pack=self.pack_for(A))
         self.assertEqual(jobs["status"], "ok", jobs)
         self.assertEqual([row["email_id"] for row in jobs["drafts"]], [A_ID],
                          jobs)
 
     def test_issue68_r10_counterexample5_invalid_explicit_dir_never_transfers_by_id(self):
-        """An explicit row whose directory cannot map into this run never
-        turns into the professor whose id happens to match: A only fails by
-        its own missing rule."""
+        """A foreign explicit row inside an owner-local bundle is this owner's
+        input error (plan r12 §3.5 fail closed); it never transfers its
+        failure by id to another professor nor re-binds as a legacy row."""
         fixture = helpers.write_issue59_stage5_fixture(self.root, [
             {"professor": A, "evidence": "fresh"}], case=self)
         results = self.write_results("r10-cx5-raw.json", [A_ID])
@@ -280,28 +290,8 @@ class TestStage5ChoicesAttribution(helpers.Stage5LocalHarness, R10TwoProfessorFi
                 out = self.plan("--result", results, "--choices", choices,
                                 "--email-id", A_ID, pack=self.pack_for())
                 self.assertEqual(out["status"], "error", out)
-                self.assertEqual(out["reason_code"], "invalid_result_json", out)
-
-    def test_issue68_r10_choices_scope_is_validated_against_this_run(self):
-        fixture = self.a_b_fixture()
-        a_dir = fixture["dirs"][A]
-        results = self.write_results("r10-scope-raw.json", [A_ID])
-        choices = self.write_json("r10-scope-choices.json",
-                                  [helpers.issue59_choices(A_ID)])
-        cases = {
-            "not-an-object": [],
-            "owner-missing": {str(fixture["dirs"][B]): [B_ID]},
-            "outside-dir": {str(self.outside("别人")): [A_ID]},
-            "ids-not-strings": {str(a_dir): [42]},
-        }
-        for label, payload in cases.items():
-            with self.subTest(scope=label):
-                scope = self.write_json(f"r10-scope-{label}.json", payload)
-                out = self.plan("--result", results, "--choices", choices,
-                                "--choices-scope", scope, "--email-id", A_ID,
-                                pack=self.pack_for(A))
-                self.assertEqual(out["status"], "error", out)
                 self.assertEqual(out["reason_code"], "invalid_params", out)
+                self.assertIn(str(row_dir), out["message"], out)
 
     def test_issue68_r10_foreign_rows_stay_noise_without_a_scope(self):
         """P7: other professors' rows and unknown ids never block this owner
@@ -420,11 +410,12 @@ class TestStage5ListInputs(helpers.Stage5LocalHarness, R10TwoProfessorFixture,
         self.assertEqual(bare, {"status": "ok", "inputs": []}, bare)
 
 
-class TestStage5ImmutableWrapperForwardsChoicesScope(helpers.Stage5LocalHarness,
-                                                    R10TwoProfessorFixture,
-                                                    BaseEnv):
-    """The wrapper forwards ``--choices-scope`` to its internal plan call, so
-    the immutable finalize path shares the exact attribution semantics."""
+class TestStage5ImmutableWrapperOwnerLocalChoices(helpers.Stage5LocalHarness,
+                                                  R10TwoProfessorFixture,
+                                                  BaseEnv):
+    """The wrapper inherits only the current owner's pack and owner-local
+    choices: raw multi-source ``choices`` fail closed, while the one-professor
+    bundle from the root partition finalizes exactly like the runner."""
 
     def wrapper_finalize(self, *extra, pack=None):
         template = self.root / "synthetic-template.md"
@@ -440,28 +431,38 @@ class TestStage5ImmutableWrapperForwardsChoicesScope(helpers.Stage5LocalHarness,
             text=True, capture_output=True, check=False)
 
     def test_issue68_r10_wrapper_attribution_matches_the_runner(self):
-        a_dir, b_dir, packs, scope = self.colliding_owner_fixture()
+        a_dir, b_dir, packs = self.colliding_owner_fixture()
         results = self.write_results("r10-wrap-raw.json", [A_ID])
         choices = self.write_json("r10-wrap-choices.json",
                                   [explicit_row(A_ID, a_dir),
                                    helpers.issue59_choices(A_ID)])
-        common = ["--result", str(results), "--choices", str(choices),
-                  "--email-id", A_ID]
 
-        without_scope = self.wrapper_finalize(*common, pack=packs[0])
-        self.assertNotEqual(without_scope.returncode, 0, without_scope.stdout)
-        self.assertEqual(json.loads(without_scope.stdout)["reason_code"],
-                         "invalid_result_json", without_scope.stdout)
+        raw = self.wrapper_finalize("--result", str(results), "--choices",
+                                    str(choices), "--email-id", A_ID,
+                                    pack=packs[0])
+        self.assertNotEqual(raw.returncode, 0, raw.stdout)
+        self.assertEqual(json.loads(raw.stdout)["reason_code"],
+                         "invalid_result_json", raw.stdout)
 
+        partition = self.partition(packs, choices)
+        self.assertEqual(partition["status"], "ok", partition)
+        owners = {entry["professor_dir"]: entry
+                  for entry in partition["owners"]}
         for pack in packs:
+            owner_dir = str(Path(
+                json.loads(pack.read_text())["professor_dir"]).resolve())
             with self.subTest(pack=pack):
-                with_scope = self.wrapper_finalize(*common, "--choices-scope", str(scope), pack=pack)
-                payload = json.loads(with_scope.stdout)
+                bundle = self.write_json(
+                    "r10-wrap-bundle.json", owners[owner_dir]["choices_rows"])
+                wrapped = self.wrapper_finalize("--result", str(results),
+                                                "--choices", str(bundle),
+                                                "--email-id", A_ID, pack=pack)
+                payload = json.loads(wrapped.stdout)
                 self.assertEqual(payload["status"], "ok", payload)
                 self.assertEqual([row["email_id"] for row in payload["emails"]], [A_ID], payload)
-                owner_dir = Path(json.loads(pack.read_text())["professor_dir"])
                 for row in payload["emails"]:
-                    self.assertEqual(Path(row["md"]).parent.resolve(), owner_dir.resolve())
+                    self.assertEqual(Path(row["md"]).parent.resolve(),
+                                     Path(owner_dir).resolve())
 
 
 if __name__ == "__main__":
