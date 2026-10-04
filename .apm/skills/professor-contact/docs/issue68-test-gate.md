@@ -71,16 +71,16 @@ P1–P7 名称及组成测试的唯一清单在 `tests/test_issue68_stage5_local
 工作目录：固定 SHA 的干净 producer。可代入变量只有 `PRODUCER_ROOT`、其完整 `PRODUCER_SHA`、指定固定 fixture 的 `FIXTURE_ROOT`、提供现有 `EVAL_PORT` 的 `EVAL_DIRENV_ROOT`、新的 producer 外部证据目录 `OUTPUT_DIR`。不把用户配置、日志和真实业务数据提交到仓库。
 
 ```bash
-uv run --no-project .apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing.py \
+uv run --no-project .apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r11.py \
   --execution-kind acceptance --case PC68-D1 \
   --producer-root "$PRODUCER_ROOT" --producer-sha "$PRODUCER_SHA" \
   --output-dir "$D1_OUTPUT_DIR"
 
-uv run --no-project .apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing.py \
+uv run --no-project .apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r11.py \
   --execution-kind acceptance --case PC68-R1 \
   --producer-root "$PRODUCER_ROOT" --producer-sha "$PRODUCER_SHA" \
   --fixture-root "$FIXTURE_ROOT" \
-  --fixture-sha a96c239cca0e1e07eb142089e4d379baf4072277 \
+  --fixture-sha cd5ee15b29773e4daedd28a2f5c3ecdcfc74bd04 \
   --eval-direnv-root "$EVAL_DIRENV_ROOT" --output-dir "$R1_OUTPUT_DIR"
 ```
 
