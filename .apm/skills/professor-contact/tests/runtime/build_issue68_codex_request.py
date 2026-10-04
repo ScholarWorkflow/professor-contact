@@ -10,7 +10,7 @@ def build_request(consumer_root, prompt):
     consumer = str(Path(consumer_root).resolve())
     trust = 'projects={' + json.dumps(consumer) + '={trust_level="trusted"}}'
     argv = ["--json", "--skip-git-repo-check", "--sandbox", "workspace-write",
-            "--cd", consumer, "--model", "gpt-6-luna",
+            "--cd", consumer, "--model", "gpt-5.6-luna",
             "--config", 'model_reasoning_effort="low"',
             "--config", "agents.max_concurrent_threads_per_session=2",
             "--config", trust, "--", prompt]
