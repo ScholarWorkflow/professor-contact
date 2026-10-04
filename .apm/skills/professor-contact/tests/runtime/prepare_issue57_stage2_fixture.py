@@ -465,7 +465,7 @@ def _run_stage1(root: Path, skill_dir: Path) -> dict:
     ])
     if built.get("status") != "ok" or verified.get("status") != "ok":
         raise SetupError("product Stage 1 runner did not produce a verified snapshot")
-    snapshot = root / "教授研究" / "套磁阶段1候选.json"
+    snapshot = target.parent / "套磁阶段1候选.json"
     if not snapshot.is_file():
         raise SetupError(f"Stage 1 runner did not create {snapshot}")
     return {"build": built, "verify": verified, "snapshot_file": str(snapshot)}
@@ -536,7 +536,8 @@ def prepare_stage2_fixture(*, program_root: Path, profile_root: Path,
     input_hashes = {
         "info.json": _sha256_file(root / "info.json"),
         f"教授研究/X分野/{PROFESSOR}/套磁目标.json": _sha256_file(_stage0_target(root)),
-        "教授研究/套磁阶段1候选.json": _sha256_file(root / "教授研究" / "套磁阶段1候选.json"),
+        f"教授研究/X分野/{PROFESSOR}/套磁阶段1候选.json":
+            _sha256_file(_stage0_target(root).parent / "套磁阶段1候选.json"),
         f"教授研究/X分野/{PROFESSOR}/论文分析/{item_key}.pdf":
             _sha256_file(root / f"教授研究/X分野/{PROFESSOR}/论文分析/{item_key}.pdf"),
         "profile/套磁邮件/套磁信息.md": _sha256_file(profile_path),

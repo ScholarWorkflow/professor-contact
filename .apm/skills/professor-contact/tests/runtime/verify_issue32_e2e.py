@@ -23,10 +23,10 @@ DIRECTION_ID = "DIR00001"
 CANONICAL_ITEM_KEY = "AAAA1111"
 STAGE0_TARGET_RELATIVE = Path(f"教授研究/X分野/{PROFESSOR}/套磁目标.json")
 PROGRAM_STAGE_OUTPUTS = (
-    STAGE0_TARGET_RELATIVE, Path("教授研究/套磁阶段1候选.json"),
-    Path("教授研究/套磁选择.json"), Path("教授研究/邮件输入.json"),
+    STAGE0_TARGET_RELATIVE, Path("教授研究/套磁选择.json"), Path("教授研究/邮件输入.json"),
 )
 PROFESSOR_STAGE_OUTPUTS = (
+    Path("套磁阶段1候选.json"),
     Path("套磁候选输入.json"), Path("套磁候选状态.json"),
 )
 INPUT_PACK_KIND = "professor-contact-stage2-input"
@@ -436,19 +436,18 @@ def _checkpoint_stage1_final(args: argparse.Namespace) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     prof = _professor_dir(root)
     item_key = _runtime_item_key(root)
-    snapshot_path = root / "教授研究/套磁阶段1候选.json"
+    snapshot_path = prof / "套磁阶段1候选.json"
     try:
         snapshot = _load(snapshot_path)
         papers = _load(prof / "papers.json").get("papers", [])
     except (OSError, json.JSONDecodeError, AttributeError) as exc:
         _check(checks, "stage1_files_readable", False, str(exc))
         return _finish(checks)
-    _check(checks, "snapshot_schema", snapshot.get("schema_version") == 1
-           and snapshot.get("kind") == "professor-contact-stage1")
-    professor_row = next((row for row in snapshot.get("professors", [])
-                          if isinstance(row, dict) and row.get("professor") == PROFESSOR), None)
-    _check(checks, "snapshot_professor", professor_row is not None)
-    direction = next((row for row in (professor_row or {}).get("directions", [])
+    _check(checks, "snapshot_schema", snapshot.get("schema_version") == 2
+           and snapshot.get("kind") == "professor-contact-stage1"
+           and "professors" not in snapshot)
+    _check(checks, "snapshot_professor", snapshot.get("professor") == PROFESSOR)
+    direction = next((row for row in snapshot.get("directions", [])
                       if isinstance(row, dict) and row.get("direction_id") == DIRECTION_ID), None)
     _check(checks, "snapshot_direction", direction is not None)
     missing_item_keys = None

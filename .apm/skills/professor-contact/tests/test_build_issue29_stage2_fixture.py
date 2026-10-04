@@ -183,11 +183,12 @@ class BuildIssue29Stage2FixtureTests(unittest.TestCase):
         self.assertIn("missing_input_pack", payload["reason_codes"])
 
         assert_stage1_verify_ok(self, root)
-        snapshot = json.loads((root / "教授研究" / "套磁阶段1候选.json").read_text(
-            encoding="utf-8"))
-        entry = snapshot["professors"][0]
-        self.assertEqual(entry["action"], "noop")
-        self.assertEqual(entry["directions"][0]["candidate_keys"], ["AAAA1111"])
+        snapshot = json.loads(
+            (root / "教授研究" / "X分野" / PROFESSOR / "套磁阶段1候选.json")
+            .read_text(encoding="utf-8"))
+        self.assertNotIn("professors", snapshot)
+        self.assertEqual(snapshot["action"], "noop")
+        self.assertEqual(snapshot["directions"][0]["candidate_keys"], ["AAAA1111"])
 
         pdf_bytes = (analysis_dir / "AAAA1111.pdf").read_bytes()
         assert_minimal_pdf_structure(self, pdf_bytes, paper["title"])

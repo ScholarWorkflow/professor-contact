@@ -2,6 +2,8 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -125,12 +127,24 @@ def preview_payload(professor="教授A", fp="fp-a"):
     }
 
 
-def snapshot_path(root: Path) -> Path:
-    return root / "教授研究" / "套磁阶段1候选.json"
+def snapshot_path(root: Path, professor: str = "教授A") -> Path:
+    """One professor's own authoritative Stage-1 state file."""
+    return root / "教授研究" / "lab" / professor / "套磁阶段1候选.json"
 
 
 def legacy_table_path(root: Path) -> Path:
     return root / "教授研究" / "套磁目标.json"
+
+
+def legacy_aggregate_path(root: Path) -> Path:
+    """The retired program-level Stage-1 aggregate, only reachable by migrate-legacy."""
+    return root / "教授研究" / "套磁阶段1候选.json"
+
+
+def legacy_entry(state: dict) -> dict:
+    """One v1 aggregate entry rebuilt from the professor-local v2 file it produced."""
+    return {key: value for key, value in state.items()
+            if key not in {"schema_version", "kind", "expansion_policy"}}
 
 
 def target_file(root: Path, professor: str = "教授A") -> Path:
@@ -149,6 +163,129 @@ def build(root: Path, target: Path | None = None, named=None):
     # build_command only emits to stdout on the resolve-failure soft-exit path.
     emitted = json.loads(out.getvalue()) if out.getvalue().strip() else result
     return result, emitted
+
+
+class ForbiddenAuthorityGuard:
+    """Record filesystem access to state that must stay foreign to one professor.
+
+    Existence checks, metadata, content and mutation access all count, plus any
+    directory enumeration that actually yields one of the forbidden entries.
+    Building a path string is not an access: only the syscall layer is wrapped.
+    """
+
+    _PATH_ARGS = {
+        "stat": (0,), "lstat": (0,), "open": (0,), "remove": (0,), "unlink": (0,),
+        "rename": (0, 1), "replace": (0, 1), "mkdir": (0,), "makedirs": (0,),
+        "rmdir": (0,), "utime": (0,), "chmod": (0,), "link": (0, 1),
+        "symlink": (0, 1), "readlink": (0,), "access": (0,),
+    }
+
+    def __init__(self, forbidden):
+        self.targets = set()
+        for path in forbidden:
+            literal = os.path.abspath(os.fspath(path))
+            self.targets.add(literal)
+            self.targets.add(os.path.realpath(literal))
+        self.accesses: list[str] = []
+        self._restore = []
+
+    def _spellings(self, value):
+        try:
+            text = os.fspath(value)
+        except TypeError:
+            return ()
+        if isinstance(text, bytes):
+            text = os.fsdecode(text)
+        if not isinstance(text, str) or not text:
+            return ()
+        literal = os.path.abspath(text)
+        return (literal,) if literal in self.targets else ()
+
+    def _record(self, operation, value):
+        if self._spellings(value):
+            self.accesses.append(f"{operation} {value}")
+
+    def __enter__(self):
+        import builtins
+
+        for name, indexes in self._PATH_ARGS.items():
+            original = getattr(os, name)
+            setattr(os, name, self._path_proxy(original, name, indexes))
+            self._restore.append((os, name, original))
+        for name in ("listdir", "scandir"):
+            original = getattr(os, name)
+            setattr(os, name, self._enum_proxy(original, name))
+            self._restore.append((os, name, original))
+        for module, label in ((io, "io.open"), (builtins, "open")):
+            original = module.open
+            setattr(module, "open", self._path_proxy(original, label, (0,)))
+            self._restore.append((module, "open", original))
+        self._restore.append((Path, "open", Path.open))
+        Path.open = self._path_proxy(Path.open, "Path.open", (0,))
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        for module, name, original in reversed(self._restore):
+            setattr(module, name, original)
+        self._restore = []
+        return False
+
+    def _path_proxy(self, original, operation, indexes):
+        def proxy(*args, **kwargs):
+            for index in indexes:
+                if index < len(args):
+                    self._record(operation, args[index])
+            for name in ("src", "dst", "path", "file", "filename"):
+                if name in kwargs:
+                    self._record(operation, kwargs[name])
+            return original(*args, **kwargs)
+        return proxy
+
+    def _enum_proxy(self, original, operation):
+        recorded = self._record
+
+        def hits(base, name):
+            return recorded(f"{operation}:{base}", f"{base}/{name}")
+
+        def proxy(path, *args, **kwargs):
+            base = os.path.abspath(os.fspath(path))
+            result = original(path, *args, **kwargs)
+            if operation == "listdir":
+                names = list(result)
+                for name in names:
+                    hits(base, name)
+                return names
+
+            def yielded():
+                with result as iterator:
+                    for entry in iterator:
+                        hits(base, entry.name)
+                        yield entry
+            return yielded()
+        return proxy
+
+
+def professor_local_state(professor_dir: Path) -> Path:
+    return Path(professor_dir) / "套磁阶段1候选.json"
+
+
+def same_name_professor(
+    root: Path, group: str, fingerprint: str, *, professor: str | None = None
+) -> Path:
+    """Build one professor; preserve the same-name fixture when no name is supplied."""
+    display = professor if professor is not None else "教授同名"
+    professor_dir = root / "教授研究" / group / display
+    preview = professor_dir / "方向预筛.json"
+    write_json(preview, preview_payload(professor=display, fp=fingerprint))
+    catalog = papers_payload()
+    if professor is not None:
+        catalog["professor"]["name"] = display
+    write_json(professor_dir / "papers.json", catalog)
+    targets.bootstrap_target(
+        root, preview, {"direction_ids": ["dir_A"], "notes": {}},
+        selected_at="2026-09-29T00:00:00Z",
+    )
+    return professor_dir
 
 
 class Stage1CandidateTests(unittest.TestCase):
@@ -183,7 +320,7 @@ class Stage1CandidateTests(unittest.TestCase):
     def test_selected_directions_keep_separate_candidate_sets_with_shared_paper_once(self):
         build(self.root)
         snap = read_json(snapshot_path(self.root))
-        entry = snap["professors"][0]
+        entry = snap
         by_dir = {d["direction_id"]: d for d in entry["directions"]}
         self.assertEqual(set(by_dir), {"dir_A", "dir_B"})
         self.assertEqual(by_dir["dir_A"]["candidate_keys"], ["P1", "P2", "P5", "P8"])
@@ -196,7 +333,7 @@ class Stage1CandidateTests(unittest.TestCase):
     def test_cross_direction_overlap_adds_paper_without_moving_membership(self):
         result, _ = build(self.root)
         snap = read_json(snapshot_path(self.root))
-        entry = snap["professors"][0]
+        entry = snap
         by_dir = {d["direction_id"]: d for d in entry["directions"]}
         # P8 sits in preview direction C but strongly overlaps dir_A's cheap-evidence profile.
         self.assertIn("P8", by_dir["dir_A"]["candidate_keys"])
@@ -215,7 +352,7 @@ class Stage1CandidateTests(unittest.TestCase):
     def test_unplaced_paper_with_overlap_joins_and_unrelated_one_stays_out(self):
         result, _ = build(self.root)
         snap = read_json(snapshot_path(self.root))
-        by_dir = {d["direction_id"]: d for d in snap["professors"][0]["directions"]}
+        by_dir = {d["direction_id"]: d for d in snap["directions"]}
         self.assertIn("P5", by_dir["dir_A"]["candidate_keys"])
         self.assertEqual(
             by_dir["dir_A"]["expansion_reasons"]["P5"],
@@ -227,7 +364,7 @@ class Stage1CandidateTests(unittest.TestCase):
     def test_low_confidence_own_member_records_evidence_reason(self):
         result, _ = build(self.root)
         snap = read_json(snapshot_path(self.root))
-        by_dir = {d["direction_id"]: d for d in snap["professors"][0]["directions"]}
+        by_dir = {d["direction_id"]: d for d in snap["directions"]}
         self.assertEqual(
             by_dir["dir_A"]["expansion_reasons"]["P2"],
             ["provisional_member", "low_confidence_preview"],
@@ -239,7 +376,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(result["action"], "pdf_fill_needed")
         self.assertEqual(result["missing_item_keys"], ["P2", "P3", "P5", "P8"])
         snap = read_json(snapshot_path(self.root))
-        by_dir = {d["direction_id"]: d for d in snap["professors"][0]["directions"]}
+        by_dir = {d["direction_id"]: d for d in snap["directions"]}
         readiness_a = by_dir["dir_A"]["pdf_readiness"]
         self.assertEqual(readiness_a["usable_item_keys"], ["P1"])
         self.assertNotIn("P1", readiness_a["missing_item_keys"])
@@ -258,12 +395,12 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(result["action"], "noop")
         self.assertEqual(result["missing_item_keys"], [])
         snap = read_json(snapshot_path(self.root))
-        self.assertEqual(snap["professors"][0]["action"], "noop")
+        self.assertEqual(snap["action"], "noop")
 
     def test_only_missing_keys_are_queued_for_targeted_fill(self):
         result, _ = build(self.root)
         snap = read_json(snapshot_path(self.root))
-        entry = snap["professors"][0]
+        entry = snap
         downloaded = set(entry["work_queue_item_keys"]) - set(entry["missing_item_keys"])
         self.assertEqual(downloaded, {"P1"})
         # The work queue is the union/dedup of candidate keys; the fill list is its
@@ -278,14 +415,14 @@ class Stage1CandidateTests(unittest.TestCase):
         # targets); the named overlay itself must never enter it, while the
         # named papers still land in the candidate sets and reasons.
         build(self.root)
-        plain_fingerprint = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
+        plain_fingerprint = read_json(snapshot_path(self.root))["input_fingerprint"]
         named = {"directions": {"dir_B": ["P5"], "dir_A": ["Sparse Sensing Networks", "No Such Paper Anywhere"]}}
         result, _ = build(self.root, named=named)
         self.assertEqual(
-            read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
+            read_json(snapshot_path(self.root))["input_fingerprint"],
             plain_fingerprint,
         )
-        by_dir = {d["direction_id"]: d for d in read_json(snapshot_path(self.root))["professors"][0]["directions"]}
+        by_dir = {d["direction_id"]: d for d in read_json(snapshot_path(self.root))["directions"]}
         self.assertIn("P5", by_dir["dir_B"]["candidate_keys"])
         self.assertIn("user_named", by_dir["dir_B"]["expansion_reasons"]["P5"])
         self.assertIn("user_named", by_dir["dir_A"]["expansion_reasons"]["P2"])
@@ -321,11 +458,11 @@ class Stage1CandidateTests(unittest.TestCase):
     def test_rebuild_is_stable_and_status_change_retries_fill(self):
         first, _ = build(self.root)
         snap = read_json(snapshot_path(self.root))
-        fingerprint = snap["professors"][0]["input_fingerprint"]
+        fingerprint = snap["input_fingerprint"]
         second, _ = build(self.root)
         snap2 = read_json(snapshot_path(self.root))
-        self.assertEqual(snap2["professors"][0]["input_fingerprint"], fingerprint)
-        self.assertEqual(snap2["professors"][0]["missing_item_keys"], ["P2", "P3", "P5", "P8"])
+        self.assertEqual(snap2["input_fingerprint"], fingerprint)
+        self.assertEqual(snap2["missing_item_keys"], ["P2", "P3", "P5", "P8"])
 
         data = read_json(self.papers_path)
         for p in data["papers"]:
@@ -335,7 +472,7 @@ class Stage1CandidateTests(unittest.TestCase):
         third, payload = build(self.root)
         self.assertNotIn("P2", payload["missing_item_keys"])
         snap3 = read_json(snapshot_path(self.root))
-        self.assertNotEqual(snap3["professors"][0]["input_fingerprint"], fingerprint)
+        self.assertNotEqual(snap3["input_fingerprint"], fingerprint)
 
     def test_selected_membership_change_blocks_stage1(self):
         preview = preview_payload(fp="fp-new")
@@ -350,7 +487,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(payload["status"], "needs_refresh")
         self.assertEqual(payload["reason_code"], "preview_changed")
 
-    def test_snapshot_marks_membership_non_final_and_preserves_other_professors(self):
+    def test_snapshot_marks_membership_non_final_and_leaves_other_professors_alone(self):
         preview_b_path = self.root / "教授研究" / "lab" / "教授B" / "方向预筛.json"
         write_json(preview_b_path, preview_payload(professor="教授B", fp="fp-b"))
         papers_b_path = self.root / "教授研究" / "lab" / "教授B" / "papers.json"
@@ -368,22 +505,17 @@ class Stage1CandidateTests(unittest.TestCase):
         snap = read_json(snapshot_path(self.root))
         self.assertEqual(snap["kind"], "professor-contact-stage1")
         self.assertEqual(snap["membership_claim"], "non_final_candidates_only")
-        self.assertEqual(
-            [item["professor"] for item in snap["professors"]], ["教授A", "教授B"]
-        )
+        self.assertNotIn("professors", snap)
+        self.assertEqual(snap["professor"], "教授A")
+        self.assertEqual(read_json(snapshot_path(self.root, "教授B"))["professor"], "教授B")
+        b_before = snapshot_path(self.root, "教授B").read_bytes()
         rebuilt_a, _ = build(self.root)
         self.assertEqual(rebuilt_a["professors"], ["教授A"])
-        snap2 = read_json(snapshot_path(self.root))
-        self.assertEqual(
-            [item["professor"] for item in snap2["professors"]], ["教授A", "教授B"]
-        )
-        self.assertEqual(
-            snap2["professors"][1]["input_fingerprint"],
-            snap["professors"][1]["input_fingerprint"],
-        )
+        self.assertEqual(snapshot_path(self.root, "教授B").read_bytes(), b_before)
+        self.assertEqual(read_json(snapshot_path(self.root))["professor"], "教授A")
 
     def test_issue64_t5_same_display_name_professors_keep_separate_snapshot_entries(self):
-        """G64-T5: Stage 1 merges and verifies by canonical local identity only."""
+        """G64-T5: Stage 1 keys formal state by canonical professor-local identity."""
         a2_dir = self.root / "教授研究" / "other-lab" / "教授A"
         a2_preview = a2_dir / "方向预筛.json"
         write_json(a2_preview, preview_payload(fp="fp-a2"))
@@ -396,22 +528,23 @@ class Stage1CandidateTests(unittest.TestCase):
 
         first, _ = build(self.root)
         self.assertEqual(first["professors"], ["教授A"])
+        a_state = professor_local_state(self.target_file.parent)
+        b_state = professor_local_state(a2_target.parent)
+        self.assertFalse(b_state.exists())
         build(self.root, a2_target)
-        snap = read_json(snapshot_path(self.root))
-        self.assertEqual([item["professor"] for item in snap["professors"]], ["教授A", "教授A"])
-        self.assertEqual(
-            [item["professor_dir"] for item in snap["professors"]],
-            ["教授研究/lab/教授A", "教授研究/other-lab/教授A"])
+        self.assertTrue(b_state.is_file())
+        self.assertEqual(read_json(b_state)["professor_dir"],
+                         "教授研究/other-lab/教授A")
+        self.assertNotEqual(read_json(a_state)["input_fingerprint"],
+                            read_json(b_state)["input_fingerprint"])
 
         rebuilt, _ = build(self.root)
-        self.assertEqual(rebuilt["per_target"][0]["preview_path"], "教授研究/lab/教授A/方向预筛.json")
-        snap2 = read_json(snapshot_path(self.root))
-        self.assertEqual(len(snap2["professors"]), 2)
-        self.assertEqual(snap2["professors"][1], snap["professors"][1])
-        self.assertEqual(snap2["professors"][0]["input_fingerprint"],
-                         snap["professors"][0]["input_fingerprint"])
+        self.assertEqual(rebuilt["professors"], ["教授A"])
+        b_before = b_state.read_bytes()
+        self.assertEqual(b_state.read_bytes(), b_before)
 
-        # Only the sibling's own inputs drift: verifying A must still hit A's entry.
+        # Only the sibling's own inputs drift: verifying A must still be ok,
+        # while verifying B names B's own professor-local state.
         data = read_json(a2_papers)
         for item in data["papers"]:
             item["pdf_status"] = "downloaded"
@@ -450,8 +583,10 @@ class Stage1CandidateTests(unittest.TestCase):
                 stage1.verify_command(self.root, a2_target)
         self.assertEqual(ctx.exception.code, 2)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["reason_code"], "professor_missing_from_snapshot")
-        self.assertEqual(payload["professor_dir"], "教授研究/other-lab/教授A")
+        self.assertEqual(payload["reason_code"], "missing_stage1_snapshot")
+        self.assertEqual(
+            Path(payload["snapshot_path"]).resolve(),
+            professor_local_state(a2_dir).resolve())
 
     def test_cli_build_writes_snapshot_and_exits_zero(self):
         proc = subprocess.run(
@@ -488,7 +623,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(result["missing_item_keys"], [])
         self.assertEqual(result["unresolved_item_keys"], ["P9"])
         snap = read_json(snapshot_path(self.root))
-        self.assertEqual(snap["professors"][0]["action"], "needs_resolution")
+        self.assertEqual(snap["action"], "needs_resolution")
 
     def test_verify_accepts_a_fresh_snapshot_without_writing(self):
         build(self.root)
@@ -529,7 +664,7 @@ class Stage1CandidateTests(unittest.TestCase):
               "problems": ["input_fingerprint_mismatch"]}],
         )
 
-    def test_verify_forwards_preview_refresh_and_missing_professor(self):
+    def test_verify_forwards_preview_refresh_and_missing_local_state(self):
         build(self.root)
         preview = preview_payload(fp="fp-new")
         preview["directions"][0]["members"].append({"item_key": "P9", "preview_confidence": "low"})
@@ -559,7 +694,16 @@ class Stage1CandidateTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as ctx:
                 stage1.verify_command(self.root, target_file(self.root, "教授B"))
         self.assertEqual(ctx.exception.code, 2)
-        self.assertEqual(json.loads(out.getvalue())["reason_code"], "professor_missing_from_snapshot")
+        # A's own build left no state for B and B has none: a missing local state is
+        # reported as missing, never as a lookup failure inside another professor's file.
+        rejected = json.loads(out.getvalue())
+        self.assertEqual(rejected["reason_code"], "missing_stage1_snapshot")
+        self.assertTrue(
+            rejected["snapshot_path"].endswith(
+                str(Path("教授研究") / "lab" / "教授B" / "套磁阶段1候选.json")),
+            rejected["snapshot_path"],
+        )
+        self.assertFalse(snapshot_path(self.root, "教授B").exists())
 
     def test_fill_then_rebuild_then_verify_chain(self):
         # Simulates the Stage 1 → collector → snapshot refresh → Stage 2 verify chain:
@@ -577,8 +721,8 @@ class Stage1CandidateTests(unittest.TestCase):
         result, _ = build(self.root)
         self.assertEqual(result["action"], "noop")
         snap = read_json(snapshot_path(self.root))
-        self.assertEqual(snap["professors"][0]["action"], "noop")
-        self.assertEqual(snap["professors"][0]["missing_item_keys"], [])
+        self.assertEqual(snap["action"], "noop")
+        self.assertEqual(snap["missing_item_keys"], [])
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -611,9 +755,9 @@ class Stage1CandidateTests(unittest.TestCase):
 
         build(self.root)
         snap = read_json(snapshot_path(self.root))
-        self.assertIn("input_fingerprint", snap["professors"][0])
-        self.assertNotIn("preview_digest", snap["professors"][0])
-        by_dir = {d["direction_id"]: d for d in snap["professors"][0]["directions"]}
+        self.assertIn("input_fingerprint", snap)
+        self.assertNotIn("preview_digest", snap)
+        by_dir = {d["direction_id"]: d for d in snap["directions"]}
         self.assertIn("P7", by_dir["dir_A"]["candidate_keys"])
         self.assertEqual(
             by_dir["dir_A"]["expansion_reasons"]["P7"],
@@ -648,7 +792,7 @@ class Stage1CandidateTests(unittest.TestCase):
 
         build(self.root)
         snap = read_json(snapshot_path(self.root))
-        by_dir = {d["direction_id"]: d for d in snap["professors"][0]["directions"]}
+        by_dir = {d["direction_id"]: d for d in snap["directions"]}
         self.assertNotIn("P7", by_dir["dir_A"]["candidate_keys"])
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -672,7 +816,7 @@ class Stage1CandidateTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
-        before = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
+        before = read_json(snapshot_path(self.root))["input_fingerprint"]
 
         preview = preview_payload()
         # dir_B is unselected: change its display-only fields (name/summary/representative title).
@@ -687,7 +831,7 @@ class Stage1CandidateTests(unittest.TestCase):
             self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
         # Exact dependency fingerprint is unchanged → no rebuild needed.
         self.assertEqual(
-            read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
+            read_json(snapshot_path(self.root))["input_fingerprint"],
             before,
         )
 
@@ -742,7 +886,7 @@ class Stage1CandidateTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
-        before = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
+        before = read_json(snapshot_path(self.root))["input_fingerprint"]
 
         data = read_json(self.papers_path)
         for p in data["papers"]:
@@ -754,7 +898,7 @@ class Stage1CandidateTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
         self.assertEqual(
-            read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
+            read_json(snapshot_path(self.root))["input_fingerprint"],
             before,
         )
 
@@ -768,7 +912,7 @@ class Stage1CandidateTests(unittest.TestCase):
         # top-level preview_fingerprint, assert resolve refreshes the projection, then
         # assert Stage-1 verify still stays ok.
         self._build_selected_a()
-        before = read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"]
+        before = read_json(snapshot_path(self.root))["input_fingerprint"]
         preview = preview_payload(fp="fp-new")
         # coverage_share is part of the selected-direction projection that resolve
         # refreshes in place; it is NOT consumed by Stage 1.
@@ -787,7 +931,7 @@ class Stage1CandidateTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
         self.assertEqual(
-            read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
+            read_json(snapshot_path(self.root))["input_fingerprint"],
             before,
         )
         # Display-only preview drift must not block a fresh Stage-1 build either:
@@ -802,7 +946,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(result["action"], "pdf_fill_needed")
         self.assertEqual(result["missing_item_keys"], ["P2", "P5", "P8"])
         self.assertEqual(
-            read_json(snapshot_path(self.root))["professors"][0]["input_fingerprint"],
+            read_json(snapshot_path(self.root))["input_fingerprint"],
             before,
         )
         self.assert_guards_untouched()
@@ -813,7 +957,7 @@ class Stage1CandidateTests(unittest.TestCase):
         before_paths = path_set(self.root / '教授研究')
         result, payload = build(self.root)
         self.assertEqual(path_set(self.root / '教授研究'),
-                         before_paths | {'套磁阶段1候选.json'})
+                         before_paths | {'lab/教授A/套磁阶段1候选.json'})
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(result["professors"], ["教授A"])
         out = io.StringIO()
@@ -822,7 +966,8 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(verified["status"], "ok")
         self.assertEqual(verified["professors"], ["教授A"])
         self.assertFalse(legacy_table_path(self.root).exists())
-        self.assertEqual(path_set(self.root / '教授研究'), before_paths | {'套磁阶段1候选.json'})
+        self.assertEqual(path_set(self.root / '教授研究'),
+                         before_paths | {'lab/教授A/套磁阶段1候选.json'})
 
     def test_issue64_t5_corrupt_legacy_table_is_not_a_stage1_input(self):
         build(self.root)
@@ -856,6 +1001,138 @@ class Stage1CandidateTests(unittest.TestCase):
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["status"], "needs_input")
         self.assertEqual(payload["reason_code"], "missing_target_state")
+
+    def test_issue65_stage1_professor_local_authority_and_isolation(self):
+        # C65-01: A's four formal Stage-1 operations never observe B's authority.
+        # A and B share one display ``professor`` value on purpose: only the
+        # canonical professor-local identity may separate their formal state.
+        legacy_snapshot = self.root / "教授研究" / "套磁阶段1候选.json"
+        a_dir = same_name_professor(self.root, "labA", "fp-a")
+        b_dir = same_name_professor(self.root, "labB", "fp-b")
+        a_state = professor_local_state(a_dir)
+        b_state = professor_local_state(b_dir)
+        a_target = a_dir / "套磁目标.json"
+        b_target = b_dir / "套磁目标.json"
+        self.assertNotEqual(a_target.resolve(), b_target.resolve())
+        self.assertEqual(read_json(a_target)["professor"], read_json(b_target)["professor"])
+        self.assertFalse(a_state.exists())
+
+        build(self.root, b_target)
+        self.assertTrue(
+            b_state.is_file(),
+            "B's own professor-local Stage-1 state is the required isolation input",
+        )
+        legacy_snapshot.write_text(
+            json.dumps({"schema_version": 1, "kind": "professor-contact-stage1",
+                        "updated_at": None, "professors": [],
+                        "sentinel": "issue-65-legacy-aggregate-sentinel"},
+                       ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+        def fingerprint(path: Path):
+            raw = path.read_bytes() if path.is_file() else None
+            return (path.is_file(), raw, hashlib.sha256(raw or b"").hexdigest())
+
+        b_before = fingerprint(b_state)
+        legacy_before = fingerprint(legacy_snapshot)
+        self.assertNotEqual(b_before[1], legacy_before[1])
+        a_directory = a_state.resolve().parent
+        b_directory = b_state.resolve().parent
+
+        guard = ForbiddenAuthorityGuard([b_state, legacy_snapshot])
+        with guard:
+            first, first_payload = build(self.root, a_target)
+            self.assertEqual(first_payload["status"], "ok")
+            self.assertEqual(first["action"], "pdf_fill_needed")
+            self.assertEqual(first["professors"], ["教授同名"])
+            self.assertTrue(a_state.is_file())
+            a_reference = Path(first_payload["snapshot_path"])
+            self.assertEqual(a_reference.parent, a_directory)
+            # Lexical comparison against identities resolved before the guard opened:
+            # touching B's path here would itself be a forbidden metadata access.
+            self.assertNotEqual(a_reference.parent, b_directory)
+
+            state = read_json(a_state)
+            self.assertEqual(state["schema_version"], 2)
+            self.assertEqual(state["kind"], "professor-contact-stage1")
+            self.assertNotIn("professors", state)
+            self.assertEqual(state["professor"], "教授同名")
+            self.assertEqual(state["professor_dir"], str(Path("教授研究") / "labA" / "教授同名"))
+            self.assertEqual(str(Path(state["preview_path"]).parent), state["professor_dir"])
+            self.assertEqual(state["membership_claim"], "non_final_candidates_only")
+
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                verified = stage1.verify_command(self.root, a_target)
+            self.assertEqual(verified["status"], "ok")
+
+            again, again_payload = build(self.root, a_target)
+            self.assertEqual(again_payload["status"], "ok")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                reverified = stage1.verify_command(self.root, a_target)
+            self.assertEqual(reverified["status"], "ok")
+        self.assertEqual(
+            guard.accesses, [], f"forbidden Stage-1 authority accessed: {guard.accesses}")
+
+        self.assertEqual(fingerprint(b_state), b_before)
+        self.assertEqual(fingerprint(legacy_snapshot), legacy_before)
+        self.assertEqual(read_json(a_state)["input_fingerprint"], state["input_fingerprint"])
+
+    def test_migrate_legacy_lands_valid_entries_while_keeping_a_bad_entry_local(self):
+        build(self.root)
+        state_path = snapshot_path(self.root)
+        original = read_json(state_path)
+        state_path.unlink()
+        aggregate = legacy_aggregate_path(self.root)
+        write_json(aggregate, {
+            "schema_version": 1, "kind": "professor-contact-stage1", "updated_at": None,
+            "professors": [legacy_entry(original), {"professor": "教授B", "directions": []}],
+        })
+        aggregate_before = aggregate.read_bytes()
+
+        result = stage1.migrate_legacy_command(self.root)
+
+        self.assertEqual(result["status"], "partial", result)
+        self.assertEqual([row["professor"] for row in result["migrated"]], ["教授A"])
+        self.assertEqual(read_json(state_path), original)
+        self.assertEqual([row["professor"] for row in result["errors"]], ["教授B"])
+        self.assertTrue(result["errors"][0]["reason"])
+        self.assertEqual(aggregate.read_bytes(), aggregate_before)
+
+    def test_migrate_legacy_writes_nothing_when_the_legacy_root_is_not_a_v1_aggregate(self):
+        build(self.root)
+        state_path = snapshot_path(self.root)
+        state_path.unlink()
+        aggregate = legacy_aggregate_path(self.root)
+        write_json(aggregate, {
+            "schema_version": 1, "kind": "professor-contact-stage1",
+            "professors": {"教授A": {}},
+        })
+        aggregate_before = aggregate.read_bytes()
+
+        with self.assertRaises(ValueError):
+            stage1.migrate_legacy_command(self.root)
+
+        self.assertFalse(state_path.exists())
+        self.assertEqual(aggregate.read_bytes(), aggregate_before)
+
+    def test_migrate_legacy_never_overwrites_an_existing_professor_state(self):
+        build(self.root)
+        state_path = snapshot_path(self.root)
+        before = state_path.read_bytes()
+        entry = legacy_entry(read_json(state_path))
+        entry["input_fingerprint"] = "0" * 64
+        write_json(legacy_aggregate_path(self.root), {
+            "schema_version": 1, "kind": "professor-contact-stage1", "updated_at": None,
+            "professors": [entry],
+        })
+
+        result = stage1.migrate_legacy_command(self.root)
+
+        self.assertEqual(result["status"], "ok", result)
+        self.assertEqual(result["migrated"], [])
+        self.assertEqual([row["professor"] for row in result["skipped_existing"]], ["教授A"])
+        self.assertEqual(state_path.read_bytes(), before)
 
     def test_agent_contract_delegates_only_item_scoped_fast_path(self):
         agent = (ROOT.parents[1] / "agents" / "professor-contact-downloader.agent.md").read_text(
