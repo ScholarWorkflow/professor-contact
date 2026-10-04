@@ -3083,9 +3083,65 @@ def read_stage1_professor_entry(program_root: Path, professor_dir: Path, profess
         return None
     if str(Path(str(data.get("preview_path") or "")).parent) != stored_dir:
         return None
+    target_preview = str((target or {}).get("preview_path") or "")
+    snapshot_preview = str(data.get("preview_path") or "")
+    if not target_preview or not snapshot_preview:
+        return None
+    if str((program_root / snapshot_preview).resolve()) != str((program_root / target_preview).resolve()):
+        return None
     if not isinstance(data.get("directions"), list):
         return None
     return data
+
+
+def _canonical_under(program_root: Path, value) -> str | None:
+    """Resolved absolute path of a program-relative or absolute value."""
+    if value in (None, ""):
+        return None
+    path = Path(str(value))
+    if not path.is_absolute():
+        path = Path(program_root) / path
+    try:
+        return str(path.resolve())
+    except OSError:
+        return None
+
+
+def stage2_local_identity(program_root: Path, professor_dir: Path, professor: str,
+                          target: dict | None, snapshot_entry: dict | None) -> dict:
+    """Canonical transaction identity a Stage-2 proof must keep binding.
+
+    The digest covers the full bytes of the professor-local target file this
+    transaction opened, and the fingerprint is the exact Stage-1 input
+    fingerprint it matched; display name alone cannot tell two professors
+    apart, and partial business-field fingerprints cannot see target content
+    outside the selected projection (e.g. selection_history).
+    """
+    target_path = stage2_target_path(professor_dir)
+    try:
+        digest = sha256_bytes(Path(target_path).read_bytes())
+    except OSError:
+        digest = None
+    return {
+        "professor": professor,
+        "professor_dir": _canonical_under(program_root, (target or {}).get("professor_dir"))
+                         or str(Path(professor_dir).resolve()),
+        "preview_path": _canonical_under(program_root, (target or {}).get("preview_path")),
+        "target_state": str(Path(target_path).resolve()),
+        "target_state_sha256": digest,
+        "stage1_input_fingerprint": (snapshot_entry or {}).get("input_fingerprint"),
+    }
+
+
+def stage2_transaction_identity(ctx: "Stage2Context") -> tuple[dict | None, dict | None, dict]:
+    """Reopen the professor's local target and reread its exact Stage-1 entry."""
+    target = read_stage2_target(stage2_target_path(ctx.professor_dir), ctx.program_root,
+                                ctx.professor)
+    snapshot_entry = read_stage1_professor_entry(
+        ctx.program_root, ctx.professor_dir, ctx.professor, target)
+    identity = stage2_local_identity(ctx.program_root, ctx.professor_dir, ctx.professor,
+                                     target, snapshot_entry)
+    return target, snapshot_entry, identity
 
 
 def stage2_preflight_cheap_inputs(program_root: Path, professor_dir: Path, professor: str,
@@ -3111,6 +3167,8 @@ def stage2_preflight_cheap_inputs(program_root: Path, professor_dir: Path, profe
         "versions": stage2_preflight_versions(),
         "params": params,
         "current_year": current_year,
+        "identity": stage2_local_identity(program_root, professor_dir, professor,
+                                          target, snapshot_entry),
         "program_inputs": stage2_program_inputs(program_root, professor_dir, professor,
                                                 target, snapshot_entry),
         "selected_direction_ids": sorted((target or {}).get("selected_direction_ids") or []),
@@ -3551,8 +3609,37 @@ def cmd_stage2_preflight(args) -> None:
     })
 
 
+def stage2_plan_bind_preflight(ctx: Stage2Context, preflight_file) -> tuple[dict, str | None]:
+    """Bind this plan to one professor-local Stage-2 transaction.
+
+    The plan sits between preflight and finalize, so it must carry the canonical
+    identity the preflight proof bound — reopen the same professor-local target,
+    reread the exact Stage-1 entry — and never rediscover the transaction from
+    the display name or emit jobs from inputs the proof never saw.
+    """
+    _target, _entry, identity = stage2_transaction_identity(ctx)
+    if not preflight_file:
+        fail("invalid_params", "stage2-plan requires --preflight-file")
+    plan, error = read_json_file(Path(preflight_file))
+    if (error or not isinstance(plan, dict) or plan.get("status") != "ok"
+            or not isinstance(plan.get("preflight_inputs"), dict)):
+        fail("invalid_params", f"preflight file unreadable or not a preflight payload: "
+                               f"{preflight_file}")
+    if plan.get("professor") != ctx.professor:
+        fail("invalid_params", "preflight file professor mismatch: "
+                               f"{plan.get('professor')!r} != {ctx.professor!r}")
+    plan_inputs = plan["preflight_inputs"]
+    if plan_inputs.get("identity") != identity:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=["identity"])
+    proof_id = sha256_obj({"professor": plan["professor"], "preflight_inputs": plan_inputs})
+    if plan.get("preflight_id") != proof_id:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=["preflight_proof_id"])
+    return identity, proof_id
+
+
 def cmd_stage2_plan(args) -> None:
     ctx = Stage2Context(Path(args.facts))
+    identity, proof_id = stage2_plan_bind_preflight(ctx, getattr(args, "preflight_file", None))
     jobs, reuse_list, process_list = [], [], []
     for plan in ctx.direction_plans:
         ckey = plan["did"]
@@ -3624,6 +3711,8 @@ def cmd_stage2_plan(args) -> None:
         "status": "ok",
         "professor": ctx.professor,
         "professor_dir": str(ctx.professor_dir),
+        "preflight_id": proof_id,
+        "transaction_identity": identity,
         "pack_path": str(ctx.pack_path),
         "params": {"gap_scope": ctx.gap_scope, "freshness_scope": ctx.freshness_scope},
         "directions": [{
@@ -4154,6 +4243,8 @@ def stage2_preflight_plan_drift(plan_inputs: dict, current: dict) -> list:
         drift.append("versions")
     if plan_inputs.get("current_year") != current["current_year"]:
         drift.append("current_year")
+    if plan_inputs.get("identity") != current["identity"]:
+        drift.append("identity")
     if plan_inputs.get("program_inputs") != current["program_inputs"]:
         drift.append("program_inputs")
     if plan_inputs.get("selected_direction_ids") != current["selected_direction_ids"]:

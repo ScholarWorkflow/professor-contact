@@ -3076,9 +3076,16 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
         return self._formal_ok_payload(text, code, "preflight")
 
     def plan(self):
-        args = argparse.Namespace(facts=str(self.facts_path))
+        args = argparse.Namespace(facts=str(self.facts_path),
+                                  preflight_file=str(self.preflight_file))
         text, code = self._run_formal(contact_state.cmd_stage2_plan, args, scenario="plan")
         return self._formal_ok_payload(text, code, "plan")
+
+    def plan_raw(self, preflight_file):
+        """Run the formal plan against an explicit preflight file (no ok assert)."""
+        args = argparse.Namespace(facts=str(self.facts_path),
+                                  preflight_file=str(preflight_file))
+        return self._run_formal(contact_state.cmd_stage2_plan, args, scenario="plan")
 
     def finalize(self):
         args = argparse.Namespace(facts=str(self.facts_path),
@@ -3183,6 +3190,85 @@ class Issue65Stage2BindingTests(Issue65Stage2BindingEnv):
         self.assertEqual(self.fingerprint(self.legacy_snapshot), legacy_before)
         self.assertEqual(self.a_target.read_bytes(), target_before)
         self.assertEqual(self.a_snapshot.read_bytes(), snapshot_before)
+
+
+class TestIssue64Stage2PlanBinding(Issue65Stage2BindingEnv):
+    """G64-T6（适配教授本地快照）：plan 消费已保存的 preflight 证明并把完整
+    教授本地目标身份重新绑定；只改 selection_history 这类部分指纹覆盖不到的
+    目标内容，必须在 plan 与 finalize 两处失败且零写入。"""
+
+    def _preflight_for(self, professor, target_file):
+        args = argparse.Namespace(
+            program_root=str(self.root), professor=professor,
+            target_file=str(target_file), paper_analysis="relevant",
+            gap_scope="selected_direction", freshness_scope="shortlist",
+            max_relevant_papers=None)
+        text, code = self._run_formal(contact_state.cmd_stage2_preflight, args,
+                                      scenario=f"preflight {target_file}")
+        return self._formal_ok_payload(text, code, f"preflight {target_file}")
+
+    def _save_proof(self, proof):
+        self.preflight_file.write_text(json.dumps(proof, ensure_ascii=False), encoding="utf-8")
+        return proof
+
+    def _bind_facts(self, proof):
+        self._write_facts(preflight_id=proof["preflight_id"])
+
+    def _mutate_target_selection_history(self):
+        target = json.loads(self.a_target.read_text(encoding="utf-8"))
+        target["selection_history"] = [dict(
+            selected_at="2026-09-30T00:00:00Z",
+            selected_direction_ids=list(target["selected_direction_ids"]))]
+        self.a_target.write_text(json.dumps(target, ensure_ascii=False, indent=1),
+                                 encoding="utf-8")
+
+    def test_issue64_t6_plan_carries_the_consumed_preflight_proof(self):
+        proof = self._save_proof(self.preflight())
+        self._bind_facts(proof)
+        planned = self.plan()
+        self.assertEqual(planned.get("status"), "ok", planned)
+        self.assertEqual(planned.get("preflight_id"), proof["preflight_id"])
+        identity = planned.get("transaction_identity")
+        self.assertEqual(identity["professor"], self.DISPLAY)
+        self.assertEqual(Path(identity["target_state"]).resolve(),
+                         self.a_target.resolve())
+        snapshot = json.loads(self.a_snapshot.read_text(encoding="utf-8"))
+        self.assertEqual(identity["stage1_input_fingerprint"],
+                         snapshot["input_fingerprint"])
+
+    def test_issue64_t6_plan_refuses_a_sibling_preflight_proof(self):
+        sibling_proof = self._save_proof(self._preflight_for(self.DISPLAY, self.b_target))
+        self._bind_facts(sibling_proof)
+        text, code = self.plan_raw(self.preflight_file)
+        payload = json.loads(text)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed", payload)
+        self.assertEqual(code, 2)
+
+    def test_issue64_t6_plan_refuses_a_missing_preflight_file(self):
+        text, code = self.plan_raw(self.root / "不存在的证明.json")
+        payload = json.loads(text)
+        self.assertEqual(payload["reason_code"], "invalid_params", payload)
+        self.assertEqual(code, 1)
+
+    def test_issue64_t6_selection_history_change_fails_plan_and_finalize_with_zero_writes(self):
+        proof = self._save_proof(self.preflight())
+        self._bind_facts(proof)
+        outputs_before = self.outputs_state()
+        self._mutate_target_selection_history()
+
+        text, code = self.plan_raw(self.preflight_file)
+        payload = json.loads(text)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(code, 2)
+        self.assertIn("identity", payload.get("drift", []), payload)
+
+        text, code = self.finalize()
+        payload = json.loads(text)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(code, 2)
+        self.assertIn("identity", payload.get("drift", []), payload)
+        self.assertEqual(self.outputs_state(), outputs_before)
 
 
 if __name__ == "__main__":

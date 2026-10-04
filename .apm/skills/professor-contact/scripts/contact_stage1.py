@@ -137,6 +137,17 @@ def validate_local_state(state: Any, state_path: Path, program_root: Path,
     preview_dir = str(Path(str(state.get("preview_path") or "")).parent)
     if preview_dir != stored_dir:
         return "stage1 snapshot preview_path must resolve under its own professor_dir"
+    target_preview = str(target.get("preview_path") or "")
+    snapshot_preview = str(state.get("preview_path") or "")
+    if not target_preview or not snapshot_preview:
+        return "stage1 snapshot preview_path must match the resolved target preview_path"
+    try:
+        same_preview = ((program_root / snapshot_preview).resolve()
+                        == (program_root / target_preview).resolve())
+    except OSError:
+        same_preview = False
+    if not same_preview:
+        return "stage1 snapshot preview_path does not match the resolved target preview_path"
     if not isinstance(state.get("directions"), list):
         return "stage1 snapshot directions must be an array"
     return None
