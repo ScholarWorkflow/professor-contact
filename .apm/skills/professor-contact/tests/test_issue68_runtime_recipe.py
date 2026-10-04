@@ -216,6 +216,26 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
         self.assertEqual(len(manifest["owners"]), 2)
         self.assertTrue(all(owner["expected_result"]["status"] == "needs_refresh" for owner in manifest["owners"]))
         self.assertEqual(manifest["manual_patch"], "no")
+        evidence = self.root / "evidence"
+        for name in ("canonical-choices.json", "partition-bundles.json", "root-partition.stdout.json",
+                     "root-partition.stderr.txt", "root-partition.exit-code.txt"):
+            self.assertTrue((evidence / name).is_file(), name)
+        self.assertEqual(json.loads((evidence / "root-partition.exit-code.txt").read_text()), 0)
+        self.assertNotIn("expected_scope", manifest)
+        self.assertEqual([entry["status"] for entry in manifest["partition"]["owners"]], ["ok", "ok"])
+        for index, owner in enumerate(manifest["owners"]):
+            bundle = evidence / f"owner-{index}-bundle-choices.json"
+            self.assertTrue(bundle.is_file())
+            self.assertEqual(json.loads(bundle.read_text()), owner["expected_choices_rows"])
+            self.assertEqual(manifest["partition"]["owners"][index]["choices_rows"],
+                             owner["expected_choices_rows"])
+            self.assertEqual(manifest["partition"]["bundle_file"], "partition-bundles.json")
+            sibling = manifest["owners"][1 - index]
+            self.assertIn("choices_scope", owner["sibling_exclusions"])
+            self.assertIn(f"owner-{1 - index}", owner["sibling_exclusions"])
+            self.assertIn(sibling["email_pack"], owner["sibling_exclusions"])
+            self.assertIn(sibling["professor_dir"], owner["sibling_exclusions"])
+            self.assertIn(sibling["email_ids"][0], owner["sibling_exclusions"])
 
     def test_combined_verdict_requires_both_pass_and_keeps_invalid_and_blocked(self):
         self.assertEqual(verify.combine([verify.verdict("PASS"), verify.verdict("PASS")])["verdict"], "PASS")
