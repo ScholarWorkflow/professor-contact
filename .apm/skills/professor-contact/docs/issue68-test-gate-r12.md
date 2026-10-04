@@ -42,14 +42,14 @@ output.root_thread_read
   -> request == thread/read(threadId=<root>, includeTurns=true)
   -> result.thread.id == <root>
   -> turns 按原顺序
-  -> 最新一个包含 AgentMessage phase=final_answer 的 turn
-  -> 该 turn 必须恰好有一个 phase=final_answer 的 AgentMessage
+  -> 最后一个 turn
+  -> 该 turn 必须恰好有一个 AgentMessage phase=final_answer
   -> 只消费该 AgentMessage.text
 ```
 
 `phase=commentary`、`phase` 缺失或未知、较早 turn、实时事件中的历史 assistant 消息、嵌套诊断都不能进入最终业务结果数组。
 
-如果 `root_thread_read`、归属信息或可识别的 `final_answer` 缺失，判 `BLOCKED_OBSERVABILITY`；字段损坏、归属不匹配或同一最终 turn 有多个 `final_answer`，判 `INVALID_EVIDENCE`。不得依据模型文字含义猜哪个消息是最终消息。
+如果 `root_thread_read`、归属信息或最后一个 turn 中可识别的 `final_answer` 缺失，判 `BLOCKED_OBSERVABILITY`；字段损坏、归属不匹配或最后一个 turn 有多个 `final_answer`，判 `INVALID_EVIDENCE`。不得依据模型文字含义猜哪个消息是最终消息，也不得退回较早 turn 的 `final_answer`。
 
 ### OpenCode
 
@@ -79,7 +79,8 @@ output.root_thread_read
 3. 唯一最终消息自身存在同目录矛盾：`FAIL_PRODUCT / root_consumed_results_conflict`。
 4. 真正没有可识别最终消息：`BLOCKED_OBSERVABILITY`。
 5. 唯一最终消息损坏：`INVALID_EVIDENCE`。
-6. Codex 只有 `phase` 未知的 assistant 消息：`BLOCKED_OBSERVABILITY`，不得猜测。
+6. Codex 最后一个 turn 只有 `phase` 未知的 assistant 消息：`BLOCKED_OBSERVABILITY`，不得猜测。
+7. Codex 较早 turn 有合法 `final_answer`、最后一个 turn 没有可识别终态：`BLOCKED_OBSERVABILITY`，不得退回旧终态。
 
 这些合成回归只证明判定程序不会按已知反例误判，不构成真实宿主第三关通过。
 
