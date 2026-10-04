@@ -212,7 +212,8 @@ _READ_FAIL_WORDING = re.compile(r"状态文件读取失败(?:或不一致)?")
 # requirement, whether the cancellation sits before or after the comparison
 # wording ("but the run need not compare the two fingerprints").
 _CONCORDANCE_SENTENCE = re.compile(
-    r"(?:与|跟)[^。；\n]{0,12}(?:plan|计划)[^。；\n]{0,60}?(?:一致|同一|相同)")
+    r"(?:与|跟|同)[^。；\n]{0,12}(?:plan|计划)[^。；\n]{0,60}?(?:一致|同一|相同)|"
+    r"其[^。；\n]{0,6}(?:与|跟|同)[^。；\n]{0,12}(?:plan|计划)")
 _CANCEL_WORDS = ("不必", "无需", "不用", "无须", "不再", "不要求", "不需要", "无需再")
 _COMPARE_WORDS = ("比较", "比对", "核对", "校验", "对照")
 _FINGERPRINT_WORDS = ("指纹", "fingerprint")
@@ -1400,6 +1401,7 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                 "plan 中文口径": "从该状态文件的 `profile_fingerprint` 字段取出的值必须"
                                  "与 `stage3-plan` 的 profile 指纹逐字相同",
                 "显式要求比较": "它必须是非空字符串，且必须比较提交指纹与计划指纹",
+                "其与计划指纹一致": "它必须是非空字符串，且其与计划指纹一致",
         }.items():
             with self.subTest(equivalent_wording=label):
                 variant = agent.replace(concordance, rewritten)
