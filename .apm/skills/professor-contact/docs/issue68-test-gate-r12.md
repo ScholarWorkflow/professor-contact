@@ -16,7 +16,7 @@
 | Base revision | `2ed4da800a6e2ff557d7b37a36db810ccddd5c7e` |
 | Fixture | `RekiDunois/skills-test-fixtures@cd5ee15b29773e4daedd28a2f5c3ecdcfc74bd04` |
 | Codex 默认配置 | 项目共识 `PROJECT_CONSENSUS.md`（更新时间 2026-10-04 14:41）：默认 Codex profile 为 `--model gpt-6-luna --config 'model_reasoning_effort="low"'`；该共识修订取代 `issue-68-gate2-r11-2026-10-04` 所引用的旧共识默认 `gpt-5.6-luna` |
-| 正式入口 | `.apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r12.py` |
+| 正式入口 | `.apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r12_codex.py`（2026-10-04 范围调整：`PC68-R1` 只执行 Codex 宿主，无多宿主合并判定） |
 | 证据约定 | `.apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-contract-r12.json`，revision=`issue-68-runtime-evidence-r12-2026-10-04` |
 | Merge Gate cases | `PC68-D1`、`PC68-R1` |
 | 本轮来源 | `pr72-test-review-r2-2026-10-04` |
@@ -34,6 +34,15 @@
 3. 入口接线修正（本轮审核缺陷 D1 的修复）：基础运行器在 `codex_host`/`opencode_host` 内以进程内函数直接调用 `build_request`、`verify_codex`、`verify_opencode`，不经过子进程，argv 改写到不了这三处。第十二版入口因此把基础运行器模块的这三个属性重绑到 r12 构建器与 r12 判定器实现，管线中唯一走子进程的判定依赖（Codex 共享解析器）继续改写为设施根线程历史包装器。接线由回归 `test_bridge_pins_base_runner_bindings_to_r12_implementations` 与 `test_base_runner_pipeline_uses_r12_final_source_and_consensus_model` 固定。
 
 没有确认产品实现缺陷，没有重开正式计划，也不修改产品要求。
+
+## 2026-10-04 测试范围调整（权威记录 `issue-68-gate2-r12-2026-10-04` 后继）
+
+当前运行测试 `PC68-R1` 只保留 Codex 宿主，不再以多宿主运行或合并判定作为验收前提；`PC68-D1/P1–P7` 的范围和既有通过复用不变。由此产生的执行约束：
+
+1. 正式入口唯一：`run_issue68_stage5_routing_r12_codex.py`。最终判定即 Codex 宿主判定（`PASS` / `FAIL_PRODUCT` / `INVALID_EVIDENCE` / `INVALID_TEST_*` / `BLOCKED_OBSERVABILITY` / `BLOCKED_DEPENDENCY`），原样落 `final-verdict.json`，不做任何多宿主合并。
+2. 旧 `PC68-R1` 通用运行命令（含 `run_issue68_stage5_routing.py` 与 `run_issue68_stage5_routing_r12.py` 的直接调用）停止作为执行指令，仅作历史与管线实现保留；不得把仅允许执行前检查的 `--preflight-host codex` 当作正式验收。
+3. 正式运行恢复后先执行一次最小能力检查；失败即按预设出口停止，不发起正式用例、不临场重试、不换服务、不换模型、不改断言。能力检查是独立前置步骤，不算正式验收。
+4. 接线由回归 `tests/test_issue68_runtime_r12_codex.py` 固定：入口只执行 Codex（不触 OpenCode 路径、不调用 `combine`）、构建器/判定器/契约/设施绑定正确（`gpt-6-luna`、`cd5ee15b29773e4daedd28a2f5c3ecdcfc74bd04`）、判定直通不合并、归档清单完整、producer 与 fixture 修订运行前后校验干净。
 
 ## `PC68-R1` 最终业务结果来源
 
@@ -114,15 +123,22 @@ output.root_thread_read
 
 最小能力检查失败时按预设出口停止，不发起正式用例、不临场重试、不换服务、不换模型、不改断言。
 
-## 固定执行入口
+## 固定执行入口（Codex 专用）
 
-能力检查满足后，正式运行仍由本地执行代理调用唯一入口：
+能力检查满足后，正式运行由本地执行代理调用唯一入口。入口固定 `PC68-R1`、`execution_kind=acceptance`、宿主为 `codex`，不接受 `--case`、`--execution-kind`、`--preflight-host` 参数。
+
+### 执行步骤
+
+1. **执行前检查（引导阶段，入口自动执行）**：入口唯一性（`sys.argv[0]` 必须解析为本入口，否则 `entrypoint_uniqueness_violated`）；r12 证据契约校验（revision、fixture SHA、runner 指向本入口、`manual_patch=no`）；设施 fixture SHA 必须等于 `cd5ee15b29773e4daedd28a2f5c3ecdcfc74bd04`；`$PRODUCER_ROOT` 必须检出 `$PRODUCER_SHA` 且工作树干净；输出目录必须不存在或为空且在 producer 之外。
+2. **最小能力检查（独立前置步骤，不算正式验收）**：正式运行前执行一次最小能力检查并保存"执行前观察条件"一节所列六项证据；检查失败即按预设出口停止，不发起正式用例、不临场重试、不换服务、不换模型、不改断言。能力检查的任何结果都不写 `final-verdict.json` 判定。
+3. **正式运行（唯一一次 Codex 请求）**：执行下方命令。入口把冻结管线进程内重绑到 r12 资产（共识请求构建器 `build_issue68_codex_request_r12.py`、最终来源判定器 `verify_issue68_stage5_routing_r12.verify_codex`、设施根线程历史解析器包装器），只调用 Codex 宿主一次，请求失败不重试、不换服务、不换模型、不改断言。
+4. **归档**：输出目录按下方归档清单留档；`$PRODUCER_ROOT` 与 `$FIXTURE_ROOT` 在运行结束后再次校验干净，任何漂移判 `INVALID_TEST_EXECUTION / revision_or_execution_changed`。
+
+### 正式运行命令
 
 ```bash
 uv run --no-project python \
-  .apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r12.py \
-  --case PC68-R1 \
-  --execution-kind acceptance \
+  .apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r12_codex.py \
   --producer-root "$PRODUCER_ROOT" \
   --producer-sha "$PRODUCER_SHA" \
   --fixture-root "$FIXTURE_ROOT" \
@@ -131,7 +147,32 @@ uv run --no-project python \
   --output-dir "$R1_OUTPUT_DIR"
 ```
 
-所有尝试都必须保留。不得把步骤验证、合成回归、旧阻断结果或能力检查当作正式宿主通过。`$PRODUCER_SHA` 必须等于"当前有效输入"表中由权威发布版（issue #68 评论）冻结的目标仓库修订；`$PRODUCER_ROOT`、`$FIXTURE_ROOT`、`$EVAL_DIRENV_ROOT`、`$R1_OUTPUT_DIR` 沿用 r11 记录的代入约定。
+`$PRODUCER_SHA` 必须等于"当前有效输入"表中由权威发布版（issue #68 评论）冻结的目标仓库修订；`$PRODUCER_ROOT`、`$FIXTURE_ROOT`、`$EVAL_DIRENV_ROOT`、`$R1_OUTPUT_DIR` 沿用 r11 记录的代入约定。所有尝试都必须保留。不得把步骤验证、合成回归、旧阻断结果或能力检查当作正式宿主通过。
+
+### 历史命令（停止作为执行指令，仅历史）
+
+下列通用运行命令自 2026-10-04 范围调整起停止作为执行指令，仅作历史记录与管线实现保留；不得再用它发起 `PC68-R1` 正式运行，也不得把 `--preflight-host codex` 的部分运行当作验收：
+
+```bash
+uv run --no-project python \
+  .apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r12.py \
+  --case PC68-R1 --execution-kind acceptance ...   # 仅历史，停止使用
+```
+
+### 归档清单（输出目录，与 r12 证据契约对齐）
+
+| 文件 | 产生者 |
+| --- | --- |
+| `provenance.json`（producer/fixture 修订、`execution_kind=acceptance`、`host=codex`、`single_request_no_retry=yes`） | 入口引导阶段 |
+| `codex/install.json`、`codex/install.*.txt`（apm install 命令与输出） | 冻结管线 `install_host` |
+| `codex/apm.lock.yaml`、`codex/installed-entrypoint.json`（consumer 安装与唯一入口脚本） | 冻结管线 `install_host` |
+| `codex/fixture-manifest.json`、`codex/canonical-choices.json`、`codex/expected-scope.json`、`codex/root-prompt.txt`、`codex/owner-*` 业务输入 | 冻结管线 `prepare` |
+| `codex/config.toml.before`、`codex/config.toml.after`（consumer 配置前后快照） | 冻结管线 `archive_config` |
+| `codex/codex-request.json`（r12 共识构建器产物：`gpt-6-luna` + `model_reasoning_effort="low"`） | 冻结管线 `codex_host` |
+| `codex/case-started.json`、`codex/codex-response.json`（唯一一次正式请求的原始响应） | 冻结管线 `codex_host` |
+| `codex/codex-adapter.json`、`codex/shared-parser.*.txt`（设施根线程历史包装器解析产物） | 冻结管线共享解析器 |
+| `codex-verdict.json`（Codex 宿主判定） | 入口 |
+| `final-verdict.json`（与 `codex-verdict.json` 逐字段一致；无多宿主合并） | 入口 |
 
 ## 第三关处置
 
@@ -140,7 +181,7 @@ uv run --no-project python \
 | `PC68-D1/P1–P7` | `REUSE_PRIOR_PASS`。产品行为及确定性证明依赖未被本轮测试修复命中 |
 | 旧 `PC68-R1` Codex | 保留既有 `BLOCKED_OBSERVABILITY`；旧证据没有可补造的 `root_thread_read` |
 | 旧 `PC68-R1` OpenCode | 保留既有 `BLOCKED_DEPENDENCY`；没有新恢复事实 |
-| 当前 `PC68-R1` | `EXECUTE_CURRENT`，但在执行前观察条件满足之前不得启动正式验收 |
+| 当前 `PC68-R1` | `EXECUTE_CURRENT`（只执行 Codex 宿主，经"固定执行入口（Codex 专用）"一节的唯一入口），但在执行前观察条件满足之前不得启动正式验收 |
 
 完整旧证据只有在自身已经包含修正后所需的最终消息归属事实时才能 `REJUDGE_PRIOR_EVIDENCE`；缺失字段不得补写。
 

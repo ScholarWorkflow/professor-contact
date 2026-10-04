@@ -50,7 +50,8 @@
     "choices",
     "choices_scope"
   ],
-  "runner": ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r12.py",
+  "runner": ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r12_codex.py",
+  "runner_reuse": ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing.py pipeline rebound in-process through run_issue68_stage5_routing_r12.py; no multi-host execution and no combine step; generic runner commands are not execution instructions",
   "runner_attribution_owner": "PC68-D1/P7; actual plan/finalize/immutable scope consumption",
   "native_transport_owner": "PC68-R1; full canonical choices and scope on each formal owner",
   "missing_observation": "BLOCKED_OBSERVABILITY; never infer a terminal message from prose, merge historical messages, guess replacement fields or retry",
