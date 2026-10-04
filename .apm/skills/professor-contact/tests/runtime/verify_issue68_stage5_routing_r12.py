@@ -52,26 +52,24 @@ def codex_final_result_source(response):
     turns = thread.get("turns")
     if not isinstance(turns, list):
         return None, verdict("INVALID_EVIDENCE", "root_thread_read_turns_malformed")
-
-    latest = []
-    for turn in turns:
-        if not isinstance(turn, dict) or not isinstance(turn.get("items"), list):
-            return None, verdict("INVALID_EVIDENCE", "root_thread_read_turn_malformed")
-        terminal = []
-        for item in turn["items"]:
-            if not isinstance(item, dict):
-                return None, verdict("INVALID_EVIDENCE", "root_thread_read_item_malformed")
-            if item.get("type") == "agentMessage" and item.get("phase") == "final_answer":
-                if not isinstance(item.get("text"), str):
-                    return None, verdict("INVALID_EVIDENCE", "root_final_message_malformed")
-                terminal.append(item["text"])
-        if terminal:
-            latest = terminal
-    if not latest:
+    if not turns:
         return None, verdict("BLOCKED_OBSERVABILITY", "root_final_message_unobservable")
-    if len(latest) != 1:
+    turn = turns[-1]
+    if not isinstance(turn, dict) or not isinstance(turn.get("items"), list):
+        return None, verdict("INVALID_EVIDENCE", "root_thread_read_turn_malformed")
+    terminal = []
+    for item in turn["items"]:
+        if not isinstance(item, dict):
+            return None, verdict("INVALID_EVIDENCE", "root_thread_read_item_malformed")
+        if item.get("type") == "agentMessage" and item.get("phase") == "final_answer":
+            if not isinstance(item.get("text"), str):
+                return None, verdict("INVALID_EVIDENCE", "root_final_message_malformed")
+            terminal.append(item["text"])
+    if not terminal:
+        return None, verdict("BLOCKED_OBSERVABILITY", "root_final_message_unobservable")
+    if len(terminal) != 1:
         return None, verdict("INVALID_EVIDENCE", "root_final_message_ambiguous")
-    return latest[0], None
+    return terminal[0], None
 
 
 def opencode_final_result_source(events):
