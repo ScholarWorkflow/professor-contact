@@ -1,4 +1,4 @@
-"""Gate-2 r14 regressions for formal eval-service provenance.
+"""Gate-2 r14 regressions for formal eval-service provenance and isolation.
 
 These tests validate Recipe wiring only. They do not execute PC68-R1 acceptance.
 """
@@ -59,10 +59,43 @@ class TestIssue68RuntimeR14(unittest.TestCase):
             "cwd": str(self.eval_root),
         }
 
+    def stable_storage(self, pid=40721):
+        codex_home = self.root / "test-codex-home"
+        codex_home.mkdir(exist_ok=True)
+        return {
+            "status": "ISOLATION_CONFIRMED",
+            "service_pid": pid,
+            "service_cwd": str(self.eval_root),
+            "codex_home": str(codex_home),
+            "production_default_codex_home": str((Path.home() / ".codex").resolve()),
+            "config_path": str(codex_home / "config.toml"),
+            "config_present": False,
+            "sqlite": {
+                "config_sqlite_home": None,
+                "inherited_CODEX_SQLITE_HOME": None,
+                "effective_path": str(codex_home),
+                "source": "CODEX_HOME fallback",
+                "inside_test_codex_home": True,
+            },
+            "log": {
+                "config_log_dir": None,
+                "effective_path": None,
+                "source": "CODEX_HOME-derived default",
+                "inside_test_codex_home": True,
+            },
+        }
+
+    def service_provenance(self, pid=40721):
+        return {
+            "eval_server": {"sha": EVAL_SHA, "dirty": "no"},
+            "service": self.stable_service(pid),
+            "storage": self.stable_storage(pid),
+        }
+
     def clean_revision(self, root, expected):
         return {"sha": expected, "dirty": "no", "root": str(Path(root))}
 
-    def test_contract_binds_unique_r14_entry_and_reuses_r13_preflight_only_by_dependency(self):
+    def test_contract_binds_unique_r14_entry_and_splits_capability_from_isolation_preflight(self):
         contract = entry.load_contract()
         self.assertEqual(contract["fixture_sha"], FIXTURE_SHA)
         self.assertEqual(contract["eval_server_revision"], EVAL_SHA)
@@ -71,10 +104,17 @@ class TestIssue68RuntimeR14(unittest.TestCase):
             ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r14_codex.py",
         )
         self.assertEqual(
-            contract["preflight"]["entry"],
+            contract["preflight"]["capability_entry"],
             ".apm/skills/professor-contact/tests/runtime/check_issue68_codex_final_source_r13.py",
         )
-        self.assertIn("r14 changes only formal-run service provenance", contract["preflight"]["reuse_rule"])
+        self.assertEqual(
+            contract["preflight"]["isolation_entry"],
+            ".apm/skills/professor-contact/tests/runtime/check_issue68_eval_service_isolation_r14.py",
+        )
+        self.assertIn(
+            "r14 changes only formal-run service provenance",
+            contract["preflight"]["capability_reuse_rule"],
+        )
 
     def test_capture_service_instance_binds_listener_to_checkout_port_and_start_time(self):
         responses = {
@@ -107,8 +147,43 @@ class TestIssue68RuntimeR14(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "eval_service_cwd_mismatch"):
                 entry.capture_service_instance(self.eval_root, "17902")
 
-    def test_formal_entry_archives_service_before_request_and_rechecks_after(self):
-        before = {"eval_server": {"sha": EVAL_SHA, "dirty": "no"}, "service": self.stable_service()}
+    def test_storage_isolation_accepts_nonproduction_home_and_records_sqlite_and_log(self):
+        codex_home = self.root / "test-codex-home"
+        codex_home.mkdir()
+        sqlite_home = codex_home / "sqlite"
+        log_dir = codex_home / "logs"
+        (codex_home / "config.toml").write_text(
+            f'sqlite_home = "{sqlite_home}"\nlog_dir = "{log_dir}"\n', encoding="utf-8"
+        )
+        env = f"/usr/bin/python eval_server.py --port 17902 CODEX_HOME={codex_home}"
+        with mock.patch.object(entry.isolation, "process_environment_text", return_value=env):
+            observed = entry.isolation.capture_storage_isolation(self.stable_service())
+        self.assertEqual(observed["status"], "ISOLATION_CONFIRMED")
+        self.assertEqual(observed["sqlite"]["source"], "config.sqlite_home")
+        self.assertEqual(observed["log"]["source"], "config.log_dir")
+        self.assertTrue(observed["sqlite"]["inside_test_codex_home"])
+        self.assertTrue(observed["log"]["inside_test_codex_home"])
+
+    def test_storage_isolation_rejects_production_default_or_external_sqlite(self):
+        default_home = (Path.home() / ".codex").resolve()
+        env = f"/usr/bin/python eval_server.py --port 17902 CODEX_HOME={default_home}"
+        with mock.patch.object(entry.isolation, "process_environment_text", return_value=env):
+            with self.assertRaisesRegex(ValueError, "eval_service_uses_production_codex_home"):
+                entry.isolation.capture_storage_isolation(self.stable_service())
+
+        codex_home = self.root / "test-codex-home"
+        codex_home.mkdir()
+        external = self.root / "foreign-sqlite"
+        env = (
+            f"/usr/bin/python eval_server.py --port 17902 CODEX_HOME={codex_home} "
+            f"CODEX_SQLITE_HOME={external}"
+        )
+        with mock.patch.object(entry.isolation, "process_environment_text", return_value=env):
+            with self.assertRaisesRegex(ValueError, "eval_service_sqlite_env_not_test_only"):
+                entry.isolation.capture_storage_isolation(self.stable_service())
+
+    def test_formal_entry_archives_service_and_storage_before_request_and_rechecks_after(self):
+        before = self.service_provenance()
         host_calls = []
 
         def fake_host(args, output):
@@ -133,6 +208,7 @@ class TestIssue68RuntimeR14(unittest.TestCase):
         self.assertEqual(final["verdict"], "PASS")
         self.assertEqual(provenance["eval_server"]["sha"], EVAL_SHA)
         self.assertEqual(provenance["eval_service_before"]["pid"], 40721)
+        self.assertEqual(provenance["eval_storage_before"]["status"], "ISOLATION_CONFIRMED")
 
     def test_formal_entry_stops_before_acceptance_when_eval_revision_is_wrong(self):
         host = mock.Mock()
@@ -157,9 +233,9 @@ class TestIssue68RuntimeR14(unittest.TestCase):
             ("CASE_NOT_STARTED", "wrong_revision_or_dirty_checkout"),
         )
 
-    def test_formal_entry_invalidates_if_service_instance_changes_during_request(self):
-        before = {"eval_server": {"sha": EVAL_SHA, "dirty": "no"}, "service": self.stable_service(40721)}
-        after = {"eval_server": {"sha": EVAL_SHA, "dirty": "no"}, "service": self.stable_service(50000)}
+    def test_formal_entry_invalidates_if_service_or_storage_changes_during_request(self):
+        before = self.service_provenance(40721)
+        after = self.service_provenance(50000)
 
         with mock.patch.object(entry, "pin", return_value=None), \
              mock.patch.object(entry, "check_entry_uniqueness", return_value=True), \
