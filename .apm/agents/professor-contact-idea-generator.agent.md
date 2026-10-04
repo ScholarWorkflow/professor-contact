@@ -152,6 +152,8 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
   --program-root <program_root abs>
 ```
 
+**finalize 指纹绑定检查（Step 1.5 的 finalize 侧，issue-66-plan-r11 §4）**：本命令的 `--profile` 必须逐字复用 `stage3-plan` 那次的**完全相同绝对路径字符串**（同一输入组），绝不重新解析或临场替换；`stage3-finalize` 返回的 `profile_fingerprint` 必须是非空字符串且与 plan 返回的 `profile_fingerprint` 完全一致——得到 `null` 或不一致 → **立即停止**并返回 error（notes 注明 `profile_fingerprint_binding_failed`），不进入 Step 3.6 validator 循环、不运行 `stage3-record-validation`、不重建总览、绝不返回 `ok`/`partial`。绑定失败是 fail-closed 前置条件：plan 侧空指纹必须停在写任何候选 result 文件之前（Step 1.5），绝不允许带着失效绑定继续跑到 `stage3-finalize` 落盘之后才处理。
+
 runner 逐条校验（契约见 Step 2）后以**同一个本地事务**原子写两份文件（本地 Markdown 先安装、`套磁候选状态.json` 最后安装＝唯一提交标记；提交前普通失败恢复两份旧内容，提交后清理失败不回滚）：
 - `<教授文件夹>/套磁候选状态.json` — v2 候选机器状态（schema 2：逐方向 `direction_id` 键控 + `input_fingerprint`、profile 指纹、生成器契约版本、规范化候选：`kind`/`direction_ids`/`gap_refs` 三元组/anchor_type（runner 依引用自动推导 author_future_work / my_extension / none）/回填后的支撑论文、`stage3_status` ready|skipped；显式跨方向组存 `cross_direction_groups`：排序 `direction_ids` + `direction_fingerprints` 参与方向指纹 + `profile_fingerprint`）。返回值 `dropped_cross_direction` 报告被删除的组及稳定 reason：`group_not_requested`（本轮未再请求该组）。
 - `<教授文件夹>/套磁想法候选.md` — runner 确定性渲染：frontmatter（managed_by/contact_state + 指纹）、按 resolved 方向分节（方向节开头带 `方向 ID：<direction_id>` 指路行：脉络/论文一览/用户笔记 → 见《套磁候选分析.md》）、方向级共享红线一次、refined 块（保真/校准/基本方向/变体）、候选块（`candidate_meta` 机器注释含 `direction_ids` 与 `gap_refs` 精确三元组、一句话、研究问题、展开、五列支撑论文表——「分析」列由 runner 从输入包 analysis_file 派生相对链接、贴合度（middle 主支撑自动加「⚠️ 此论文教授为中间作者」）、红线、为何值得推、张力点）、推荐优先级；仅当存在显式请求的组时才有「跨方向想法（显式标注）」末节（每条带 `**参与方向**` 行与 cross meta + group_id）。
