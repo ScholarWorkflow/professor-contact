@@ -22,6 +22,7 @@ r13 Preflight producer        = d6800a6ec12ed25e955c3393b6f91178f59ddc15
 r14 tested Recipe head        = a3447399ab97ea2fba8d1ade2dbcec37d6d231a3
 r14 tested merge commit       = ff468457b73af957b7e747425f4dafa19739c528
 current main in tested merge  = 62eda84f60736d7a1e7081b41ae0f81a5f48500b
+r14 authority doc commit      = 73d4ca4cd8cfe50f5d8bb863bba1c08c8d060b6d (documentation-only; no Recipe dependency changed)
 fixture                       = c738fa2f8bcbb16cd99d741332d5f59b062b6357
 fixture contract              = skills-test-fixtures/codex-eval-adapter@16
 eval-server frozen revision   = 3fdfa9387140cfc2e2aa3af415f85015f79706d2
@@ -144,6 +145,8 @@ OK (skipped=2)
 ```
 
 两项 skip 都是 Issue #74 在 shallow checkout 下要求 compatibility base 的专属检查，与 Issue #68 无关。`test_issue68_runtime_r14.py` 的服务来源、存储隔离、请求前停止、请求后实例变化失效等回归全部实际执行并通过。
+
+提交 `73d4ca4cd8cfe50f5d8bb863bba1c08c8d060b6d` 只把上述已完成执行写入本权威记录，没有修改 runner、contract、helper、测试代码、固定输入或 evaluator，因此不触发受影响 case 重执行；`a3447399...` 的 PASS 继续有效。
 
 因此：
 
