@@ -1,0 +1,48 @@
+{
+  "revision": "issue-68-runtime-evidence-r13-2026-10-04",
+  "fixture_sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+  "fixture_contract": "skills-test-fixtures/codex-eval-adapter@16",
+  "fixture_source": "skills-test-fixtures#33 merged as c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+  "eval_server_additional_patch_required": false,
+  "manual_patch": "no",
+  "codex": {
+    "shared_adapter_owns": [
+      "formal V1/V2 spawn relation normalization into dispatch.thread_relations",
+      "rawResponseItem/completed preservation in output.app_server_events",
+      "child_thread_reads provenance used by the V2 formal relation"
+    ],
+    "root_final_source": "From output.app_server_events select entries whose runtime_generation equals output.runtime_generation, message.method is rawResponseItem/completed, message.params.threadId equals output.thread_id, message.params.turnId equals output.turn_id, item.type is message, item.role is assistant, and item.phase is final_answer. Require exactly one such item; join its content parts of type output_text in order.",
+    "root_final_exclusions": [
+      "different runtime_generation",
+      "different threadId including child threads",
+      "different turnId including earlier root turns",
+      "commentary phase",
+      "missing or unknown phase",
+      "non-message raw items"
+    ],
+    "missing_observation": "BLOCKED_OBSERVABILITY",
+    "malformed_or_ambiguous_observation": "INVALID_EVIDENCE",
+    "formal_ownership": "Use the shared adapter @16 formal topology only. Identity diagnostics cannot create, rewrite, upgrade or downgrade ownership.",
+    "producer_verifier_uses": [
+      "shared adapter dispatch.thread_relations",
+      "collabAgentToolCall wait agentsStates status/message where present",
+      "commandExecution id/command/aggregatedOutput",
+      "item lifecycle runtime_seq",
+      "current-root/current-turn raw final_answer output_text"
+    ]
+  },
+  "business_payload": [
+    "email_pack",
+    "choices",
+    "choices_scope"
+  ],
+  "runner": ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r13_codex.py",
+  "runner_reuse": "run_issue68_stage5_routing.py pipeline rebound through run_issue68_stage5_routing_r13.py; normal shared fixture parser is used unchanged; no root-history wrapper, multi-host execution or combine step",
+  "preflight": {
+    "entry": ".apm/skills/professor-contact/tests/runtime/check_issue68_codex_final_source_r13.py",
+    "purpose": "One non-acceptance request against the existing eval service using the same gpt-6-luna/low/workspace-write request shape confirms the current profile exposes the attributable raw final-answer source.",
+    "success": "CAPABILITY_CONFIRMED",
+    "on_absent": "stop before formal PC68-R1",
+    "retry": "none"
+  }
+}
