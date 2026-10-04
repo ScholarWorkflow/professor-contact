@@ -171,11 +171,12 @@ def failing_unlink(predicate):
 # finalize response, must be rejected even though it still carries every marker
 # string.  The helpers below derive that disposition from the text itself.
 
-_STEP3_START = re.compile(r"\*\*finalize 指纹绑定检查（[^）\n]*按本轮是否实际解析到 profile")
+_STEP3_START = re.compile(r"\*\*finalize 指纹绑定检查（")
 _BRANCH_WITH_PROFILE = re.compile(
     r"(?:存在|有)[^。；\n]{0,60}?profile[^。；\n]{0,8}时")
 _BRANCH_NO_PROFILE = re.compile(r"(?:无|没有|未)[^。；\n]{0,12}profile")
 _CLAUSE_SPLIT = re.compile(r"[。；\n]+")
+_CANCEL_CLAUSE_SPLIT = re.compile(r"[，。；\n]+")
 _CLOSE_REFS = ("该状态文件", "该状态", "其中", "它", "状态文件")
 _STATE_SOURCE = re.compile(r"state_path|状态文件")
 _BIND_FIELD = re.compile(r"profile_fingerprint")
@@ -247,13 +248,22 @@ def _agent_steps(agent):
 def _binding_branches(step3):
     """Split the finalize-side binding rule into its two profile branches.
 
-    The rule is one paragraph; the branches are read from that paragraph only,
-    so the runner bullets that follow it can never be mistaken for the
-    no-profile branch.  A document whose profile-present branch condition is
-    missing yields no branches at all, which is what the frozen rule forbids.
+    The branches are read from the binding paragraph alone, so the runner
+    bullets that follow it can never be mistaken for the no-profile branch.
+    The paragraph may be re-flowed across lines: a line break inside the rule
+    keeps the same contract and must not be read as a missing branch.  A
+    document whose profile-present branch condition is missing yields no
+    branches at all, which is what the frozen rule forbids.
     """
     parts = _STEP3_START.split(step3, 1)
-    body = (parts[1] if len(parts) > 1 else step3).split("\n", 1)[0]
+    body = parts[1] if len(parts) > 1 else step3
+    stop = _BIND_PARAGRAPH_END.search(body)
+    if stop:
+        body = body[:stop.start()]
+    separator = body.find("\n\n")
+    if separator >= 0:
+        body = body[:separator]
+    body = body.replace("\n", "")
     with_profile = _BRANCH_WITH_PROFILE.search(body)
     no_profile = _BRANCH_NO_PROFILE.search(body)
     if not with_profile or not no_profile or no_profile.start() < with_profile.start():
@@ -294,16 +304,33 @@ def _response_is_fingerprint_source(clauses):
 
 
 def _clause_skips_comparison(sentence):
-    """True when one clause drops the comparison instead of a repeat of it."""
+    """True when one clause drops the comparison instead of a repeat of it.
+
+    A cancellation only reads as harmless when the same comma-separated clause
+    still requires the comparison ("need not compare again because the check
+    after finalize must match"); a requirement stated in a later clause cannot
+    rescue an earlier clause that drops the comparison outright.
+    """
     if not (_CONCORDANCE_SENTENCE.search(sentence)
             or _COMPARISON_TOPIC.search(sentence)):
         return False
-    for match in _SKIP_COMPARISON.finditer(sentence):
-        tail = sentence[match.end():]
-        if _SKIP_EXEMPT.search(sentence[max(0, match.start() - 6):match.start()] + tail):
+    chunks = _CANCEL_CLAUSE_SPLIT.split(sentence)
+    for chunk in chunks:
+        matches = list(_SKIP_COMPARISON.finditer(chunk))
+        if not matches:
             continue
-        if any(word in tail for word in _COMPARE_WORDS + _AGREEMENT_WORDS):
-            return True
+        # A requirement inside the same comma-separated clause keeps the
+        # binding ("need not compare again because the check must match"); a
+        # requirement in a later clause cannot rescue an earlier clause that
+        # drops the comparison outright.
+        if _COMPARISON_REQUIRED.search(chunk):
+            continue
+        for match in matches:
+            tail = chunk[match.end():]
+            if _SKIP_EXEMPT.search(chunk[max(0, match.start() - 6):match.start()] + tail):
+                continue
+            if any(word in tail for word in _COMPARE_WORDS + _AGREEMENT_WORDS):
+                return True
     return False
 
 
@@ -422,7 +449,444 @@ def _doc_binding_disposition(agent):
     # finalize-side rule (the plan check itself defers to Step 1.5 for it).
     if not _EARLY_STOP_BEFORE_WRITE.search(with_profile):
         return False, "plan-side stop not pinned before the result files are written"
-    return True, "conditional branch with committed-state source and both stop points"
+    return True, "conditional branch committed-state source and both stop points"
+
+
+# -- S3-DOC-1 binding fact table (issue-66 gate2 revision, 2026-10-04 20:02) --
+#
+# The 2026-10-04 20:02 review asks for the frozen facts of plan r11 §4 to be
+# proved one by one instead of patching a regex per counterexample.  Each fact
+# below has a judgment and at least one minimal mutation that changes only that
+# fact, plus a legal control where the wording must stay free.
+
+_BINDING_HEADING = re.compile(r"\*\*finalize 指纹绑定检查（")
+_PLAN_CHECK_LABEL = "**plan 指纹硬检查**"
+_REBIND_PLAN_FINALIZE = re.compile(
+    r"stage3-plan[^。；\n]{0,60}stage3-finalize|"
+    r"stage3-finalize[^。；\n]{0,60}stage3-plan")
+_REBIND_NAMES = ("stage3-plan", "stage3-finalize")
+_TUPLE_NAMES = ("source tuple", "professor_dir", "program_root", "refresh_scope",
+                "skip_direction_ids", "cross_direction_groups", "validation_file")
+_TUPLE_PIN = re.compile(r"固定\s*source\s*tuple|同一\s*tuple|同一\s*source\s*tuple")
+_TUPLE_CORRECTION = re.compile(
+    r"修正轮[^。；\n]{0,24}(?:只|仅)[^。；\n]{0,8}(?:增加|加入|新增)|"
+    r"只增加[^。；\n]{0,12}validation_file")
+_SAME_PROFILE_PATH = re.compile(
+    r"(?:逐字复用|沿用|重复使用)[^。；\n]{0,40}(?:绝对路径|路径字符串)|"
+    r"(?:绝对路径|路径字符串)[^。；\n]{0,30}(?:逐字复用|沿用|完全相同)")
+_UNCHANGED_PROFILE_PATH = re.compile(r"绝不[^。；\n]{0,8}(?:重新解析|临场替换)")
+_PLAN_BIND_RESOLVED = re.compile(
+    r"绑定\s*本\s*child[^。；\n]{0,12}(?:传入|解析)[^。；\n]{0,12}(?:同一\s*)?"
+    r"`?--profile`?|绑定\s*(?:已解析|resolved)[^。；\n]{0,12}profile")
+_COMMITTED_NONEMPTY = re.compile(
+    r"提交[^。；\n]{0,24}非空|非空[^。；\n]{0,24}提交|"
+    r"必须是非空(?:字符串)?|`profile_fingerprint`[^。；\n]{0,20}必须是非空")
+_NULLISH = ("null", "`null`", "空指纹", "为空")
+_NULL_STOP = re.compile(
+    r"得到[^。；\n]{0,12}`?null`?[^。；\n]{0,30}?(?:停止|结束|失败)|"
+    r"空指纹[^。；\n]{0,16}(?:立即)?(?:停止|结束|失败)")
+_FORBIDDEN_ACTIONS = ("不进入 Step 3.6", "不运行 `stage3-record-validation`", "不重建总览")
+_NO_OK_RETURN = re.compile(r"绝不返回\s*`?ok`?")
+_NO_PROFILE_ERROR = re.compile(
+    r"(?:null|`null`|空指纹)[^。；\n]{0,8}(?:时|则)?[^。；\n]{0,8}返回\s*error")
+_NO_PROFILE_CONTINUE = re.compile(r"不报错|合法结果")
+_FIELD_READ = re.compile(
+    r"(?:读取|读|取|核对)[^。；\n]{0,30}`?profile_fingerprint`?|"
+    r"`?profile_fingerprint`?[^。；\n]{0,16}(?:必须|一致)")
+_OTHER_SOURCE = re.compile(
+    r"(?:临时|缓存|内存|环境变量|响应)[^。；\n]{0,12}(?:读取|中的)|"
+    r"从[^。；\n]{0,8}响应[^。；\n]{0,8}(?:读取|取)")
+_BIND_PARAGRAPH_END = re.compile(r"(?m)^- |^### |^\*\*")
+_COMPARISON_REQUIRED = re.compile(
+    r"(?:必须|应当|应|要)[^。；\n]{0,24}(?:比较|比对|核对|一致|相同|同一)|"
+    r"(?:一致|相同|同一)[^。；\n]{0,12}(?:必须|否则|不通过)")
+_MUTATION_BIND_FAIL = "必填项不满足时照样继续处理，并记录警告"
+_PLAN_SCOPE_PHRASE = "存在 profile 时"
+_PLAN_NONEMPTY_PHRASE = "必须是非空字符串且绑定本 child 传入的同一 `--profile`"
+_PLAN_BIND_PHRASE = "绑定本 child 传入的同一 `--profile`"
+
+
+def _binding_paragraph(agent):
+    """Return the whole finalize-side binding paragraph, across line breaks."""
+    match = _BINDING_HEADING.search(agent)
+    if not match:
+        return None
+    end = len(agent)
+    for stop in (_BIND_PARAGRAPH_END.search(agent, match.end()),
+                 agent.find("\n\n", match.end()) if agent.find("\n\n", match.end()) >= 0
+                 else None):
+        if stop is not None:
+            end = min(end, stop.start() if hasattr(stop, "start") else stop)
+    return agent[match.start():end]
+
+
+def _revised_span(step1, step3, whole, old, new, label):
+    """Replace one span in whichever section holds it, keeping the rest as is."""
+    if old in step3:
+        return whole.replace(step3, step3.replace(old, new, 1), 1)
+    if old in step1:
+        return whole.replace(step1, step1.replace(old, new, 1), 1)
+    raise AssertionError(f"{label}: span not found :: {old[:60]}")
+
+
+def _binding_facts(agent, skill):
+    """Prove the plan r11 §4 source-binding facts one by one.
+
+    Returns a list of (fact_id, ok, reason).  The facts are judged on the
+    agent's own contract text, with the Skill's Stage 3 boundary as the
+    cross-check for the same input group.
+    """
+    facts = []
+    paragraph = _binding_paragraph(agent)
+    if paragraph is None:
+        return [("F4.0", False, "binding paragraph not found")]
+
+    reuses = (any(name in paragraph for name in _REBIND_NAMES)
+              and bool(_SAME_PROFILE_PATH.search(paragraph)))
+    # A correction round reuses the same source tuple and only adds the
+    # validation file that the previous round recorded.
+    correction_keeps = re.search(
+        r"修正轮[^。；\n]{0,60}(?:同一|相同)[^。；\n]{0,16}validation"
+        r"|(?:stage3-plan|plan)[^。；\n]{0,12}(?:与|和|/)[^。；\n]{0,12}finalize"
+        r"[^。；\n]{0,30}(?:同一|相同)[^。；\n]{0,12}validation", agent)
+    facts.append(("F4.1",
+                  bool(reuses) and bool(correction_keeps),
+                  "plan/finalize must reuse one source tuple, and a correction "
+                  "round only adds the recorded validation file"))
+    facts.append(("F4.2a", bool(_SAME_PROFILE_PATH.search(paragraph))
+                  and bool(_UNCHANGED_PROFILE_PATH.search(paragraph)),
+                  "both commands must use the same absolute --profile path"))
+    present_branch, _no_profile = _binding_branches(agent)
+    if present_branch is None:
+        present_branch = paragraph
+    facts.append(("F4.2b",
+                  bool(re.search(r"(?:同一|相同)\s*`--profile`", present_branch))
+                  and bool(re.search(r"stage3-plan[^。；\n]{0,24}(?:同一|相同)", present_branch))
+                  and bool(re.search(r"本命令的\s*`--profile`", present_branch)),
+                  "both commands must carry the same --profile argument"))
+    plan_clause = re.search(r"\*\*plan 指纹硬检查\*\*[^\n]*", agent)
+    plan_clause = plan_clause.group() if plan_clause else present_branch
+    facts.append(("F4.3", bool(_PLAN_BIND_RESOLVED.search(plan_clause)),
+                  "the plan fingerprint must bind the resolved profile"))
+    facts.append(("F4.4", bool(_COMMITTED_NONEMPTY.search(paragraph)),
+                  "the committed fingerprint must be non-empty"))
+    nullish = [name for name in _NULLISH if name in paragraph]
+    facts.append(("F4.5",
+                  bool(_NULL_STOP.search(paragraph)) and bool(nullish),
+                  "a null committed fingerprint must stop the child"))
+    facts.append(("F4.6",
+                  all(action in paragraph for action in _FORBIDDEN_ACTIONS)
+                  and bool(_NO_OK_RETURN.search(paragraph)),
+                  "binding failure must forbid the later stage 3 actions"))
+    facts.append(("F4.7",
+                  bool(_NO_PROFILE_CONTINUE.search(paragraph))
+                  and not _NO_PROFILE_ERROR.search(paragraph),
+                  "a no-profile round must not return an error"))
+    source_clause = _fingerprint_source_clause(_binding_clauses(paragraph))
+    if source_clause is None:
+        facts.append(("F4.8", False, "committed-state source clause not found"))
+    else:
+        facts.append(("F4.8",
+                      bool(_STATE_SOURCE.search(source_clause))
+                      and bool(_FIELD_READ.search(source_clause))
+                      and not _OTHER_SOURCE.search(source_clause),
+                      "the value must be read from the named state file"))
+
+    section = _stage34_section(skill)
+    facts.append(("F4.9",
+                  bool(_TUPLE_PIN.search(section))
+                  and bool(_TUPLE_CORRECTION.search(section)),
+                  "the skill boundary must pin one tuple, adding only "
+                  "validation_file for a correction round"))
+    return facts
+
+
+def _stage34_section(skill):
+    """Return the Stage 3/4 orchestration boundary section of the Skill."""
+    start = skill.find("### Stage 3/4 编排边界")
+    if start < 0:
+        return ""
+    end = skill.find("\n### ", start + 1)
+    return skill[start:end if end > 0 else len(skill)]
+
+
+def _codex_bullet(skill):
+    """Return the Codex sibling-orchestration bullet of the Skill boundary."""
+    section = _stage34_section(skill)
+    start = section.find("- **Codex（root caller")
+    if start < 0:
+        return ""
+    end = section.find("\n- **", start + 1)
+    return section[start:end if end > 0 else len(section)]
+
+
+def _source_binding_mutation_cases(agent, skill):
+    """Mutations that each break exactly one source-binding fact."""
+    paragraph = _binding_paragraph(agent)
+    steps = _agent_steps(agent)
+    step1 = steps.get(STEP1_NAME, "")
+    step3 = steps.get(STEP3_NAME, "")
+    plan_line = next((line for line in agent.splitlines()
+                      if _PLAN_CHECK_LABEL in line), "")
+    section = _stage34_section(skill)
+    cases = []
+
+    def case(fact_id, label, mutated):
+        cases.append((fact_id, label, mutated))
+
+
+    same_path = _SAME_PROFILE_PATH.search(paragraph)
+    if same_path:
+        mutated = agent.replace(same_path.group(), "单独解析 profile", 1)
+        case("F4.2a", "profile path re-resolved", mutated)
+    plan_arg = re.search(r"`stage3-plan`[^。；\n]{0,8}与本命令都传了[^。；\n]{0,8}`--profile`",
+                         paragraph)
+    if plan_arg:
+        case("F4.2b", "plan no longer carries the same --profile",
+             agent.replace(plan_arg.group(), "`stage3-plan` 单独解析自己的 profile"))
+    plan_binding = re.search(r"且?绑定本 child 传入的同一 `--profile`", plan_line)
+    if plan_binding:
+        case("F4.3", "plan binding loses the resolved profile",
+             agent.replace(plan_line,
+                           plan_line.replace(plan_binding.group(),
+                                             "非空即可，无需对应已解析 profile"), 1))
+    if _COMMITTED_NONEMPTY.search(paragraph):
+        match = _COMMITTED_NONEMPTY.search(paragraph)
+        case("F4.4", "committed fingerprint may be empty",
+             agent.replace(match.group(), "可以为空在任何情况下"))
+    null_line = _NULL_STOP.search(paragraph)
+    if null_line:
+        case("F4.5", "null no longer stops the child",
+             agent.replace(null_line.group(), "为空时继续按既有无资料行为处理"))
+    case("F4.6", "later stage 3 actions stay allowed",
+         agent.replace("不进入 Step 3.6 validator 循环", "进入 Step 3.6 validator 循环"))
+    no_profile = _BRANCH_NO_PROFILE.search(paragraph)
+    if no_profile:
+        case("F4.7", "no-profile null returns an error",
+             agent.replace(paragraph,
+                           paragraph.replace("是合法结果", "时返回 error 并停止", 1), 1))
+    source_clause = _fingerprint_source_clause(_binding_clauses(paragraph))
+    if source_clause:
+        case("F4.8", "value read from a temporary cache",
+             agent.replace(source_clause,
+                           source_clause.replace("该状态文件里实际提交的", "本地临时缓存中的", 1), 1))
+    if reuses_text := re.search(r"此后的[^。；\n]{0,40}", paragraph):
+        case("F4.1", "no shared source tuple",
+             agent.replace(reuses_text.group(), "此后两步各按当次解析结果执行。"))
+    if "只增加" in section:
+        case("F4.9", "correction round may change the source",
+             skill.replace("只增加", "可以更换", 1))
+    return cases
+
+
+# -- S3-DOC-1 state machine / raw handoff / rebuild fact table ---------------
+
+_PAT_G1_STOP = re.compile(r"G1`?\s*非成功[^。；\n]{0,24}立即停止 Stage 3")
+_PAT_G1_NO_V1 = re.compile(r"不派发\s*V1|不得派发\s*V1")
+_PAT_RECORD_V1_PASS = re.compile(
+    r"needs_correction=false[^。；\n]{0,24}(?:立即\s*terminal|终局)")
+_PAT_G2_STOP = re.compile(r"G2`?\s*非成功[^。；\n]{0,40}立即停止 Stage 3")
+_PAT_G2_NO_V2 = re.compile(r"不派发\s*V2|禁止\s*V2|不得派发\s*V2")
+_PAT_NO_RETRY = re.compile(r"不得\s*retry\s*generator|不得再派发任何新 generator")
+_PAT_V2_RECORD = re.compile(r"V2[^。；\n]{0,24}record[^。；\n]{0,24}terminal")
+_PAT_NO_THIRD = re.compile(r"禁止再委派 idea-generator|不存在第\s*3\s*个\s*generator"
+                           r"|不再委派 idea-generator")
+_PAT_CHILD_COUNT = re.compile(r"child[^。；\n]{0,12}只能\s*(?:是)?\s*2\s*(?:或|/)\s*4")
+_PAT_FIFTH = re.compile(
+    r"第\s*5\s*个[^。；\n，]{0,10}(?:caller contract violation|contract violation|非法|violation)")
+_PAT_NO_INLINE = re.compile(r"不得\s*inline")
+_PAT_INLINE_TARGETS = re.compile(r"stage3-plan|stage3-finalize")
+_PAT_UNIQUE_MESSAGE = re.compile(r"唯一最终业务")
+_PAT_BYTE_EXACT = re.compile(r"逐字节相同|逐字节比对")
+_PAT_NO_TRAILING_NEWLINE = re.compile(r"不得新增结尾换行|不新增结尾换行")
+_PAT_SAME_FILE = re.compile(r"同一个文件|同一文件|同一份文件")
+_PAT_RECORD_CMD = re.compile(r"stage3-record-validation")
+_PAT_RECORD_HANDOFF = re.compile(
+    r"(?:把|将)[^。；\n]{0,30}(?:原始 JSON|原始业务 JSON|该轮原始 JSON)"
+    r"[^。；\n]{0,30}交给\s*`stage3-record-validation`")
+_PAT_RECORD_THEN_PLAN = re.compile(
+    r"stage3-record-validation[^。；\n]{0,30}在[^。；\n]{0,20}"
+    r"stage3-plan\s*--validation-file[^。；\n]{0,10}之前")
+_PAT_AFTER_TERMINAL = re.compile(r"terminal[^。；\n]{0,24}之后")
+_PAT_ONCE = re.compile(r"恰好一次|一次")
+_PAT_BEST_EFFORT = re.compile(r"best-effort")
+_PAT_REBUILD_CMD = re.compile(r"stage3-rebuild-overview")
+_PAT_NO_REVERSE = re.compile(
+    r"(?:不反转|绝不反转)[^。；\n]{0,12}local terminal|"
+    r"绝不把已\s*terminal[^。；\n]{0,16}改回|不把已\s*terminal[^。；\n]{0,16}改回")
+_PAT_NO_REFINALIZE = re.compile(r"不为修(?:总览|overview)重跑\s*finalize")
+_PAT_OVERVIEW_NOT_PROOF = re.compile(
+    r"(?:overview_md|overview)[^。；\n]{0,30}不是[^。；\n]{0,16}成功证据")
+_PAT_ROOT_REPORTS = re.compile(r"在\s*root[^。；\n]{0,24}报告|root[^。；\n]{0,10}汇报")
+_PAT_NO_EDIT_RETURN = re.compile(r"不得事后修改它|不得事后改\s*idea-generator")
+_PAT_IDEAGEN_REBUILD_AFTER = re.compile(r"由你在终局记录后运行|终局记录之后由你")
+_PAT_CODEX_REBUILD_AFTER = re.compile(r"Codex 下 rebuild 由调用线程在你返回之后")
+
+
+def _facts_from_table(table, text):
+    """Judge one fact table against one document, returning fact rows."""
+    rows = []
+    for fact_id, predicate, reason in table:
+        try:
+            rows.append((fact_id, bool(predicate(text)), reason))
+        except Exception as exc:  # a malformed pattern is a failed fact
+            rows.append((fact_id, False, f"{reason} :: {type(exc).__name__}"))
+    return rows
+
+
+def _state_machine_block(skill):
+    """Return the hard stop-point paragraph of the Skill state machine."""
+    section = _stage34_section(skill)
+    start = section.find("停止点是硬边界")
+    if start < 0:
+        return ""
+    end = section.find("\n- **", start + 1)
+    return section[start:end if end > 0 else len(section)]
+
+
+_BOUNDARY_TABLE = [
+    ("F5.8", lambda t: _PAT_RECORD_HANDOFF.search(t),
+     "the boundary hands the round JSON to the record command"),
+    ("F5.9", lambda t: _PAT_NO_INLINE.search(t),
+     "the boundary forbids inlining the named agents"),
+]
+
+_STATE_MACHINE_TABLE = [
+    ("F5.1", lambda t: _PAT_G1_STOP.search(t) and _PAT_G1_NO_V1.search(t),
+     "a failed G1 must stop before V1"),
+    ("F5.3", lambda t: _PAT_G2_STOP.search(t) and _PAT_G2_NO_V2.search(t),
+     "a failed G2 must stop before V2"),
+    ("F6.1", lambda t: _PAT_BYTE_EXACT.search(t),
+     "the raw validator message is written byte-exact"),
+]
+
+_SKILL_BULLET_TABLE = [
+    ("F5.2", lambda t: _PAT_RECORD_V1_PASS.search(t),
+     "record(V1) without correction must be terminal"),
+    ("F5.4", lambda t: _PAT_NO_RETRY.search(t),
+     "a stopped round must not retry the generator"),
+    ("F5.5", lambda t: _PAT_V2_RECORD.search(t) and _PAT_NO_THIRD.search(t),
+     "V2 is recorded once and no third generator follows"),
+    ("F5.6", lambda t: _PAT_CHILD_COUNT.search(t) and _PAT_FIFTH.search(t),
+     "the root keeps 2 or 4 stage-3 children"),
+    ("F6.2", lambda t: _PAT_SAME_FILE.search(t) and _PAT_RECORD_CMD.search(t),
+     "the same file is handed to the record command"),
+    ("F7.1", lambda t: _PAT_REBUILD_CMD.search(t) and _PAT_AFTER_TERMINAL.search(t)
+     and _PAT_ONCE.search(t) and _PAT_BEST_EFFORT.search(t),
+     "the rebuild runs once, after the terminal record, best-effort"),
+    ("F7.2", lambda t: _PAT_NO_REVERSE.search(t) and _PAT_NO_REFINALIZE.search(t),
+     "a rebuild failure must not reverse the terminal or rerun finalize"),
+    ("F7.3", lambda t: _PAT_OVERVIEW_NOT_PROOF.search(t),
+     "the overview path is not success evidence"),
+    ("F7.4", lambda t: _PAT_ROOT_REPORTS.search(t) and _PAT_NO_EDIT_RETURN.search(t),
+     "the Codex root reports the rebuild result and cannot edit the return"),
+]
+
+_AGENT_TABLE = [
+    ("F7.5", lambda t: _PAT_IDEAGEN_REBUILD_AFTER.search(t),
+     "the OpenCode owner runs the rebuild after the terminal record"),
+    ("F7.6", lambda t: _PAT_CODEX_REBUILD_AFTER.search(t),
+     "the Codex root owns the rebuild after the child returned"),
+    ("F7.7", lambda t: _PAT_OVERVIEW_NOT_PROOF.search(t),
+     "the agent document states the overview path is not success evidence"),
+]
+
+_WFREF_TABLE = [
+    ("F7.8", lambda t: _PAT_UNIQUE_MESSAGE.search(t) and _PAT_BYTE_EXACT.search(t)
+     and bool(_PAT_NO_TRAILING_NEWLINE.search(t)),
+     "the reference freezes the byte-exact raw handoff"),
+    ("F7.9", lambda t: _PAT_CHILD_COUNT.search(t) and _PAT_FIFTH.search(t),
+     "the reference freezes the 2 or 4 sibling bound"),
+]
+
+
+def _state_machine_facts(agent, skill, wfref):
+    """Prove the Codex state machine, raw handoff and rebuild contract facts."""
+    table = [
+        ("F6.3", lambda t: _PAT_RECORD_THEN_PLAN.search(t),
+         "the record must happen before the correction plan uses the file"),
+    ]
+    facts = _facts_from_table(_STATE_MACHINE_TABLE, _state_machine_block(skill))
+    facts += _facts_from_table(_BOUNDARY_TABLE, _stage34_section(skill))
+    facts += _facts_from_table(_SKILL_BULLET_TABLE, _codex_bullet(skill))
+    facts += _facts_from_table(table, _stage34_section(skill))
+    facts += _facts_from_table(_AGENT_TABLE, agent)
+    facts += _facts_from_table(_WFREF_TABLE, wfref)
+    return facts
+
+
+def _state_machine_mutation_cases(agent, skill, wfref):
+    """Mutations that each break exactly one state machine / handoff fact.
+
+    Each row is (fact_id, target document, label, mutated document).
+    """
+    block = _state_machine_block(skill)
+    bullet = _codex_bullet(skill)
+    section = _stage34_section(skill)
+
+    def swap(source, old, new, label):
+        if old not in source:
+            raise AssertionError(f"{label}: span not found :: {old[:50]}")
+        return source.replace(old, new, 1)
+
+    return [
+        ("F5.1", "skill", "a failed G1 still dispatches V1",
+         swap(block, "不派发 V1", "仍然派发 V1 继续尝试", "F5.1")),
+        ("F5.2", "skill", "a passing record still dispatches G2",
+         swap(bullet, "不得再委派 idea-generator",
+              "仍需继续委派 idea-generator 再生成一轮", "F5.2")),
+        ("F5.3", "skill", "a failed G2 still dispatches V2",
+         swap(block, "不派发 V2", "可以派发 V2 再校验一次", "F5.3")),
+        ("F5.4", "skill", "a stopped round retries the generator",
+         swap(bullet, "不得 retry generator", "可以 retry generator", "F5.4")),
+        ("F5.5", "skill", "a third generator follows V2",
+         swap(bullet, "不存在第 3 个 generator",
+              "第 3 个 generator 可以按需要继续派发", "F5.5")),
+        ("F5.6", "skill", "the fifth child is allowed",
+         swap(swap(section, "第 5 个 child 一律是 caller contract violation",
+                   "第 5 个 child 属于允许的补充校验，不是 caller contract violation",
+                   "F5.6/section"),
+              "第 5 个即 caller contract violation",
+              "第 5 个属于允许的补充校验，不算 caller contract violation", "F5.6/bullet")),
+        ("F5.9", "skill", "the caller may inline the named agents",
+         swap(swap(section, "不得 inline", "可以 inline", "F5.9/section"),
+              "不得 inline", "可以 inline", "F5.9/bullet")),
+        ("F6.1", "skill", "the handoff is re-serialized",
+         swap(block, "逐字节相同", "字段等价即可", "F6.1")),
+        ("F6.2", "skill", "record-validation consumes a rewritten copy",
+         swap(bullet, "同一文件", "改写后的副本", "F6.2")),
+        ("F6.3", "skill", "the order dependency is reversed",
+         swap(section, "`stage3-record-validation` 必须在 `stage3-plan --validation-file` 之前完成",
+              "`stage3-plan --validation-file` 必须在 `stage3-record-validation` 之前完成",
+              "F6.3")),
+        ("F7.1", "skill", "the rebuild runs twice around the terminal",
+         swap(bullet, "best-effort 运行一次",
+              "terminal 之前先 rebuild 一次、terminal 之后再 rebuild 一次", "F7.1")),
+        ("F7.2", "skill", "a rebuild failure reruns finalize",
+         swap(bullet, "不为修总览重跑 finalize",
+              "总览失败时可以重跑 finalize 修好它", "F7.2")),
+        ("F7.3", "skill", "the overview path becomes success evidence",
+         swap(bullet, "不是成功证据", "可以作为成功证据", "F7.3")),
+        ("F7.4", "skill", "the root edits the child return",
+         swap(bullet, "不得事后修改它", "可以事后修正它", "F7.4")),
+        ("F7.5", "agent", "the OpenCode owner rebuilds before the record",
+         swap(agent, "由你在终局记录后运行",
+              "由你在终局记录之前运行", "F7.5")),
+        ("F7.6", "agent", "the agent claims the Codex rebuild itself",
+         swap(agent, "Codex 下 rebuild 由调用线程在你返回之后自己运行",
+              "Codex 下 rebuild 同样由你自己运行", "F7.6")),
+        ("F7.7", "agent", "the agent calls the overview a success proof",
+         swap(agent, "永远不是 rebuild 成功证据",
+              "就是 rebuild 成功证据", "F7.7")),
+        ("F7.8", "wfref", "the reference loses the byte-exact handoff",
+         swap(wfref, "不得新增结尾换行", "可以补一个结尾换行", "F7.8")),
+        ("F7.9", "wfref", "the reference loosens the sibling bound",
+         swap(wfref, "第 5 个即 caller contract violation",
+              "第 5 个属于允许的补充校验，不算 caller contract violation", "F7.9")),
+        ("F5.8", "skill", "the round JSON bypasses the record command",
+         swap(section, "把该轮原始 JSON 交给 `stage3-record-validation`",
+              "把该轮原始 JSON 直接交给修正代理，跳过记录命令", "F5.8")),
+    ]
 
 
 class TestIssue66Stage3(Stage3DirectionGroupBase):
@@ -1473,6 +1937,10 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                                  "与 `stage3-plan` 的 profile 指纹逐字相同",
                 "显式要求比较": "它必须是非空字符串，且必须比较提交指纹与计划指纹",
                 "其与计划指纹一致": "它必须是非空字符串，且其与计划指纹一致",
+                "无需重复比较但仍须核对":
+                    "本轮无需重复比较提交状态指纹与 `plan` 指纹；"
+                    "finalize 后仍必须从 `state_path` 读取提交状态并核对一次，"
+                    "结果必须与 plan 指纹完全一致",
         }.items():
             with self.subTest(equivalent_wording=label):
                 variant = agent.replace(concordance, rewritten)
@@ -1498,6 +1966,52 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                 self.assertNotEqual(variant, agent, f"{label} rewrite did not apply")
                 ok, why = _doc_binding_disposition(variant)
                 self.assertTrue(ok, f"equivalent {label} rejected: {why}")
+        # plan r11 §4 facts, proved one by one: the frozen input binding must
+        # be judged as a table instead of one marker at a time (review
+        # 2026-10-04 20:02).  A legal re-flow of the same paragraph has to pass
+        # too, so a line break can never become a false failure.
+        binding_rows = _binding_facts(agent, skill)
+        for fact_id, ok, why in binding_rows:
+            with self.subTest(source_binding_fact=fact_id):
+                self.assertTrue(ok, f"{fact_id} failed: {why}")
+        paragraph = _binding_paragraph(agent)
+        self.assertIsNotNone(paragraph, "binding paragraph not found")
+        wrapped = agent.replace(paragraph, paragraph.replace("；", "；\n", 2), 1)
+        with self.subTest(source_binding_fact="reflowed paragraph"):
+            self.assertNotEqual(wrapped, agent, "paragraph reflow did not apply")
+            self.assertTrue(_doc_binding_disposition(wrapped)[0],
+                            "a legal reflow of the binding paragraph was rejected")
+            self.assertTrue(all(ok for _, ok, _ in _binding_facts(wrapped, skill)),
+                            "a legal reflow broke the source-binding facts")
+        for fact_id, label, mutated in _source_binding_mutation_cases(agent, skill):
+            with self.subTest(source_binding_mutation=label):
+                if mutated == skill or (mutated != agent
+                                        and _binding_paragraph(mutated) is None):
+                    docs = (agent, mutated)
+                else:
+                    docs = (mutated, skill)
+                self.assertIn(fact_id,
+                              [row_id for row_id, ok, _ in _binding_facts(*docs)
+                               if not ok],
+                              f"{label}: its fact still passed")
+        # plan r11 §5-§7 facts: the Codex state machine, the raw validator
+        # handoff and the terminal rebuild owner are judged as relations, so a
+        # conflicting sentence is rejected even when every marker survives.
+        for fact_id, ok, why in _state_machine_facts(agent, skill, wfref):
+            with self.subTest(state_machine_fact=fact_id):
+                self.assertTrue(ok, f"{fact_id} failed: {why}")
+        for fact_id, target, label, mutated in _state_machine_mutation_cases(
+                agent, skill, wfref):
+            with self.subTest(state_machine_mutation=label):
+                docs = {"agent": agent, "skill": skill, "wfref": wfref}
+                self.assertNotEqual(mutated, docs[target],
+                                    f"{label} mutation did not apply")
+                docs[target] = mutated
+                rows = _state_machine_facts(docs["agent"], docs["skill"], docs["wfref"])
+                broken = [row_id for row_id, ok, _ in rows if not ok]
+                self.assertIn(fact_id, broken,
+                              f"{label}: its fact still passed")
+
         # Workflow reference syncs the state machine and the sibling bound.
         self.assertIn("generator source-binding", wfref)
         self.assertIn("固定状态转移", wfref)
