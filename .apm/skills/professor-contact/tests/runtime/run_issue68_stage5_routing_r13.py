@@ -3,8 +3,9 @@
 
 The base runner stays authoritative. r13 pins the merged shared fixture from
 skills-test-fixtures #33, keeps its normal shared parser unchanged, and rebinds
-only the request builder plus Codex final-source verifier. No root-history
-wrapper or eval-server patch is part of this recipe.
+the request builder plus both final-source verifiers (Codex r13 raw-event
+channel, OpenCode delegated r12 channel). No root-history wrapper or
+eval-server patch is part of this recipe.
 """
 import build_issue68_codex_request_r12 as builder
 import run_issue68_stage5_routing as base
@@ -18,6 +19,7 @@ def pin_base_runner():
     base.FIXTURE_SHA = FIXTURE_SHA
     base.build_request = builder.build_request
     base.verify_codex = verifier.verify_codex
+    base.verify_opencode = verifier.verify_opencode
     return base
 
 

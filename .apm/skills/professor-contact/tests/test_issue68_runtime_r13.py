@@ -356,6 +356,7 @@ class TestIssue68RuntimeR13(unittest.TestCase):
             "FIXTURE_SHA": base.FIXTURE_SHA,
             "build_request": base.build_request,
             "verify_codex": base.verify_codex,
+            "verify_opencode": base.verify_opencode,
             "run": base.run,
         }
         self.addCleanup(lambda: [setattr(base, key, value) for key, value in original.items()])
@@ -363,7 +364,16 @@ class TestIssue68RuntimeR13(unittest.TestCase):
         self.assertEqual(base.FIXTURE_SHA, FIXTURE_SHA)
         self.assertIs(base.run, original["run"])
         self.assertIs(base.verify_codex, verify.verify_codex)
+        self.assertIs(base.verify_opencode, verify.verify_opencode)
         self.assertIs(base.build_request, build.build_request)
+
+    def test_bridge_rebinds_opencode_verifier_away_from_the_frozen_base(self):
+        base = importlib.import_module("run_issue68_stage5_routing")
+        original = base.verify_opencode
+        self.addCleanup(setattr, base, "verify_opencode", original)
+        bridge.pin_base_runner()
+        self.assertIsNot(base.verify_opencode, original)
+        self.assertIs(base.verify_opencode, verify.verify_opencode)
 
     def test_request_keeps_current_consensus_model(self):
         request = build.build_request(self.root, "固定业务输入")
@@ -379,6 +389,25 @@ class TestIssue68RuntimeR13(unittest.TestCase):
         self.assertEqual(contract["fixture_contract"], "skills-test-fixtures/codex-eval-adapter@16")
         self.assertFalse(contract["eval_server_additional_patch_required"])
         self.assertNotIn("root_thread_read", json.dumps(contract, ensure_ascii=False))
+
+    def test_contract_freezes_eval_server_revision_and_archive_requirements(self):
+        contract = json.loads(
+            (RUNTIME / "issue68-runtime-evidence-contract-r13.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            contract["eval_server_revision"], "3fdfa9387140cfc2e2aa3af415f85015f79706d2"
+        )
+        self.assertIn(
+            "direct build provenance for the actual instance",
+            contract["eval_server_revision_role"],
+        )
+        self.assertEqual(
+            contract["formal_run_archive_requirements"],
+            [
+                "direct build provenance of the actual eval server instance that serves the formal request",
+                "isolation evidence required for this proof",
+            ],
+        )
 
     def test_codex_only_entry_binds_r13_contract(self):
         entry = load("run_issue68_stage5_routing_r13_codex")
