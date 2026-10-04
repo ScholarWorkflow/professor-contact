@@ -168,11 +168,12 @@ class Issue55Stage3RuntimeAssetTests(unittest.TestCase):
             output=request_path,
         )
         argv = shlex.split(request["command"])
-        self.assertEqual(argv[:7], [
-            "--json", "--ephemeral", "--skip-git-repo-check",
+        self.assertEqual(argv[:6], [
+            "--json", "--skip-git-repo-check",
             "--sandbox", "workspace-write", "--cd", str(self.consumer.resolve()),
         ])
-        self.assertEqual(argv[7:10], ["--model", "gpt-6-luna", "--config"])
+        self.assertNotIn("--ephemeral", argv)
+        self.assertEqual(argv[6:9], ["--model", "gpt-6-luna", "--config"])
         self.assertIn('model_reasoning_effort="low"', argv)
         self.assertIn(
             f'projects."{self.consumer.resolve()}".trust_level="trusted"', argv,
