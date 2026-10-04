@@ -203,27 +203,152 @@ class TestIssue68RuntimeR12(unittest.TestCase):
         self.assertIn('model_reasoning_effort="low"', tokens)
         self.assertNotIn("gpt-5.6-luna", tokens)
 
-    def test_bridge_pins_r12_parser_verifier_request_builder_and_fixture(self):
-        seen = []
+    def rebind_base_runner(self):
+        """Hand out the base runner module with its bindings restorable."""
+        base_module = importlib.import_module("run_issue68_stage5_routing")
+        names = ("FIXTURE_SHA", "run", "build_request", "verify_codex", "verify_opencode")
+        originals = {name: getattr(base_module, name) for name in names}
+        self.addCleanup(lambda: [setattr(base_module, name, originals[name]) for name in names])
+        return base_module
+
+    def test_bridge_fixture_sha_is_the_gate2_r12_fixture(self):
+        self.assertEqual(bridge.FIXTURE_SHA, "cd5ee15b29773e4daedd28a2f5c3ecdcfc74bd04")
+
+    def test_bridge_rewrites_codex_shared_parser_to_root_history_wrapper(self):
+        seen = {}
 
         def fake_run(argv, cwd, prefix, *, env=None, timeout=180):
-            seen.append(list(argv))
+            seen["argv"] = list(argv)
             return 0
 
         old = bridge._ORIGINAL_RUN
         bridge._ORIGINAL_RUN = fake_run
         self.addCleanup(setattr, bridge, "_ORIGINAL_RUN", old)
         with tempfile.TemporaryDirectory() as root:
-            fixture = Path(root) / "fixture"
-            parser = fixture / "scripts" / "parse_codex_eval_evidence.py"
-            bridge.run([sys.executable, str(parser)], Path(root), Path(root) / "a")
-            bridge.run([sys.executable, str(RUNTIME / "verify_issue68_stage5_routing.py")], Path(root), Path(root) / "b")
-            bridge.run([sys.executable, str(RUNTIME / "build_issue68_codex_request.py")], Path(root), Path(root) / "c")
-        self.assertEqual(Path(seen[0][1]).name, "parse_codex_eval_evidence_with_root_history.py")
-        self.assertIn("--root-history-contract", seen[0])
-        self.assertEqual(Path(seen[1][1]).name, "verify_issue68_stage5_routing_r12.py")
-        self.assertEqual(Path(seen[2][1]).name, "build_issue68_codex_request_r12.py")
-        self.assertEqual(bridge.FIXTURE_SHA, "cd5ee15b29773e4daedd28a2f5c3ecdcfc74bd04")
+            parser = Path(root) / "fixture" / "scripts" / "parse_codex_eval_evidence.py"
+            bridge.run([sys.executable, str(parser)], Path(root), Path(root) / "run")
+        self.assertEqual(Path(seen["argv"][1]).name, "parse_codex_eval_evidence_with_root_history.py")
+        contract = seen["argv"][seen["argv"].index("--root-history-contract") + 1]
+        self.assertEqual(Path(contract).name, "codex-root-thread-read-contract.json")
+
+    def test_bridge_passes_other_subprocess_commands_through_unchanged(self):
+        seen = {}
+
+        def fake_run(argv, cwd, prefix, *, env=None, timeout=180):
+            seen["argv"] = list(argv)
+            return 0
+
+        old = bridge._ORIGINAL_RUN
+        bridge._ORIGINAL_RUN = fake_run
+        self.addCleanup(setattr, bridge, "_ORIGINAL_RUN", old)
+        argv = [sys.executable, "parse_opencode_evidence.py", "--events", "run.ndjson", "--output", "verdict.json"]
+        bridge.run(argv, Path("."), Path("run"))
+        self.assertEqual(seen["argv"], argv)
+
+    def test_bridge_pins_base_runner_bindings_to_r12_implementations(self):
+        base_module = self.rebind_base_runner()
+        bridge.pin_base_runner()
+        self.assertEqual(base_module.FIXTURE_SHA, "cd5ee15b29773e4daedd28a2f5c3ecdcfc74bd04")
+        self.assertIs(base_module.run, bridge.run)
+        self.assertIs(base_module.build_request,
+                      importlib.import_module("build_issue68_codex_request_r12").build_request)
+        self.assertIs(base_module.verify_codex,
+                      importlib.import_module("verify_issue68_stage5_routing_r12").verify_codex)
+        self.assertIs(base_module.verify_opencode,
+                      importlib.import_module("verify_issue68_stage5_routing_r12").verify_opencode)
+        self.assertEqual(base_module.verify_codex.__module__, "verify_issue68_stage5_routing_r12")
+        self.assertEqual(base_module.verify_opencode.__module__, "verify_issue68_stage5_routing_r12")
+        self.assertEqual(base_module.build_request.__module__, "build_issue68_codex_request_r12")
+
+    def test_base_runner_pipeline_uses_r12_final_source_and_consensus_model(self):
+        """The formal in-process calls must behave like r12, not the r11 modules."""
+        base_module = self.rebind_base_runner()
+        bridge.pin_base_runner()
+        history = self.history_conflict()
+        response, adapter = self.codex_evidence(history=(history,))
+        self.assertEqual(base_module.verify_codex(response, adapter, self.manifest)["verdict"], "PASS")
+        events, shared = self.opencode_evidence(history=(history,))
+        self.assertEqual(base_module.verify_opencode(events, shared, self.manifest)["verdict"], "PASS")
+        request = base_module.build_request(self.root, "固定业务输入")
+        tokens = shlex.split(request["command"])
+        self.assertIn("gpt-6-luna", tokens)
+        self.assertNotIn("gpt-5.6-luna", tokens)
+
+    def test_codex_thread_read_contract_violations_are_invalid(self):
+        def judged(change):
+            response, adapter = self.codex_evidence()
+            change(response)
+            return verify.verify_codex(response, adapter, self.manifest)
+
+        def read(response):
+            return response["output"]["root_thread_read"]
+
+        def second_final(response):
+            read(response)["result"]["thread"]["turns"][0]["items"].append(
+                {"type": "agentMessage", "id": "final-duplicate", "text": self.root_result(),
+                 "phase": "final_answer"})
+
+        cases = (
+            ("root_thread_read_malformed",
+             lambda response: response["output"].__setitem__("root_thread_read", ["not-an-object"])),
+            ("root_thread_read_attribution_mismatch",
+             lambda response: read(response).__setitem__("thread_id", "another-thread")),
+            ("root_thread_read_request_mismatch",
+             lambda response: read(response)["request"]["params"].__setitem__("includeTurns", False)),
+            ("root_thread_read_result_error_malformed",
+             lambda response: (read(response).__setitem__("error", {"kind": "broken"}),
+                               read(response).__setitem__("result", {"thread": {"id": "root", "turns": []}}))),
+            ("root_thread_read_result_malformed",
+             lambda response: read(response).__setitem__("result", ["not-an-object"])),
+            ("root_thread_read_thread_mismatch",
+             lambda response: read(response)["result"]["thread"].__setitem__("id", "another-thread")),
+            ("root_thread_read_turns_malformed",
+             lambda response: read(response)["result"]["thread"].__setitem__("turns", "not-a-list")),
+            ("root_thread_read_turn_malformed",
+             lambda response: read(response)["result"]["thread"].__setitem__("turns", [{"items": "not-a-list"}])),
+            ("root_thread_read_item_malformed",
+             lambda response: read(response)["result"]["thread"]["turns"][0]["items"].insert(0, "not-an-object")),
+            ("root_final_message_ambiguous", second_final),
+        )
+        for reason_code, change in cases:
+            with self.subTest(reason_code=reason_code):
+                result = judged(change)
+                self.assertEqual((result["verdict"], result["reason_code"]),
+                                 ("INVALID_EVIDENCE", reason_code))
+
+    def test_codex_thread_read_error_blocks_without_fabricating_final_message(self):
+        response, adapter = self.codex_evidence()
+        read = response["output"]["root_thread_read"]
+        read["error"] = {"kind": "root_thread_unavailable"}
+        read["result"] = None
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("BLOCKED_OBSERVABILITY", "root_final_message_unobservable"))
+
+    def test_opencode_final_source_contract_violations_are_invalid(self):
+        def rogue_session_event():
+            return {"type": "text", "sessionID": "child", "timestamp": 99,
+                    "part": {"id": "prt-child", "sessionID": "child", "messageID": "msg-child",
+                             "type": "text", "text": "子线程文本", "time": {"start": 99, "end": 100}}}
+
+        def judged(change):
+            events, shared = self.opencode_evidence()
+            change(events)
+            return verify.verify_opencode(events, shared, self.manifest)
+
+        cases = (
+            ("root_session_not_unique", lambda events: events.append(rogue_session_event())),
+            ("root_text_part_malformed", lambda events: events[-1].__setitem__("part", "not-an-object")),
+            ("root_text_part_malformed", lambda events: events[-1]["part"].__setitem__("sessionID", "child")),
+            ("root_text_part_malformed", lambda events: events[-1]["part"].__setitem__("id", "")),
+            ("root_text_part_malformed", lambda events: events[-1]["part"]["time"].pop("end")),
+            ("root_text_part_malformed", lambda events: events[-1]["part"].__setitem__("text", 7)),
+        )
+        for expected_reason, change in cases:
+            with self.subTest(reason_code=expected_reason):
+                result = judged(change)
+                self.assertEqual((result["verdict"], result["reason_code"]),
+                                 ("INVALID_EVIDENCE", expected_reason))
 
 
 if __name__ == "__main__":
