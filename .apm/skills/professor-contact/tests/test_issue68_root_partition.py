@@ -12,6 +12,10 @@ selected packs only, ambiguous collisions stay at root as
 owner. These cases lock plan r12's representative counterexamples 7.1-7.7
 plus the narrowed owner-local loader (plan §3.5): a sibling row that reaches
 an owner bundle is that owner's input error, never a reroute.
+
+Test Plan r19 additions: the deterministic row-preserving rerun oracle and
+the owner-entry isolation oracle (both bound into P7), plus
+``TestStage5BatchStaysAtomic`` for P3's zero-partial-commit requirement.
 """
 
 import importlib.util
@@ -321,6 +325,87 @@ class TestStage5RootPartition(R12PartitionFixture, helpers.Stage5LocalHarness,
                          pack=c_pack)
         self.assertEqual(jobs["status"], "ok", jobs)
 
+    def test_r12_partition_preserves_rows_and_reruns_deterministically(self):
+        """Plan r19 P7: the partition entry only re-containers rows.
+
+        Every business byte of an explicit row — ``professor_dir``, a
+        ``transport_sentinel`` stand-in for caller fields and the compiled
+        Stage-4 fields — must survive into its owner's ``choices_rows``
+        unchanged, and the same inputs must answer byte-identical output on
+        every rerun: the entry is deterministic, with no model in the loop.
+        """
+        fixture = self.a_b_fixture()
+        a_dir, b_dir = fixture["dirs"][A].resolve(), fixture["dirs"][B].resolve()
+        a_pack, b_pack = self.pack_for(A), self.pack_for(B)
+        a_row = dict(explicit_row(A_ID, a_dir), transport_sentinel="row-a")
+        b_row = dict(explicit_row(B_ID, b_dir), transport_sentinel="row-b")
+        choices = self.write_json("det-choices.json", [a_row, b_row])
+        out_path = self.root / "det-bundles.json"
+        first = self.partition([(a_pack, None), (b_pack, None)], choices)
+        second = self.partition([(a_pack, None), (b_pack, None)], choices,
+                                out=out_path)
+        for run in (first, second):
+            self.assertEqual(run["status"], "ok", run)
+        owners = self.owner_map(second)
+        for dir_, row in ((a_dir, a_row), (b_dir, b_row)):
+            entry = owners[str(dir_)]
+            self.assertEqual(entry["partition"]["status"], "ok", second)
+            # Deep equality with the input source row: no field rewritten.
+            self.assertEqual(entry["choices_rows"], [row], second)
+            self.assertEqual(entry["choices_rows"],
+                             self.owner_map(first)[str(dir_)]["choices_rows"],
+                             first)
+        # Byte-identical canonical output across reruns, and the --out file
+        # holds exactly the answered payload.
+        canonical_first = json.dumps(first, ensure_ascii=False, sort_keys=True)
+        canonical_second = json.dumps(second, ensure_ascii=False, sort_keys=True)
+        self.assertEqual(canonical_first, canonical_second)
+        self.assertEqual(json.loads(out_path.read_text(encoding="utf-8")),
+                         second)
+
+    def test_r12_owner_bundle_has_no_scope_and_no_sibling_state_paths(self):
+        """Plan r19 P7: one owner entry leaks nothing about its sibling.
+
+        No ``choices_scope`` structure exists anywhere in the partition
+        answer, and an owner entry never carries the sibling's on-disk paths
+        (pack, verify cache, papers) nor its identity bytes.
+        """
+        fixture = self.a_b_fixture()
+        a_dir, b_dir = fixture["dirs"][A].resolve(), fixture["dirs"][B].resolve()
+        a_pack, b_pack = self.pack_for(A), self.pack_for(B)
+        choices = self.write_json("isolation-choices.json",
+                                  [explicit_row(A_ID, a_dir),
+                                   explicit_row(B_ID, b_dir)])
+        out_path = self.root / "isolation-bundles.json"
+        out = self.partition([(a_pack, None), (b_pack, None)], choices,
+                             out=out_path)
+        self.assertEqual(out["status"], "ok", out)
+        self.assertNotIn("choices_scope", json.dumps(out, ensure_ascii=False),
+                         out)
+        self.assertNotIn("choices_scope", out_path.read_text(encoding="utf-8"))
+        # Enumerate the sibling's real files; never guess their names.
+        def dir_files(directory):
+            files = sorted(str(path.resolve()) for path in directory.iterdir()
+                           if path.is_file())
+            self.assertTrue(files, f"fixture produced no files in {directory}")
+            self.assertIn(str((directory / contact_state.EMAIL_PACK).resolve()),
+                          files, directory)
+            return files
+        a_files, b_files = dir_files(a_dir), dir_files(b_dir)
+        owners = self.owner_map(out)
+        a_text = json.dumps(owners[str(a_dir)], ensure_ascii=False)
+        b_text = json.dumps(owners[str(b_dir)], ensure_ascii=False)
+        for path in b_files:
+            self.assertNotIn(path, a_text,
+                             f"A's entry carries B's file path: {path}")
+        for path in a_files:
+            self.assertNotIn(path, b_text,
+                             f"B's entry carries A's file path: {path}")
+        self.assertNotIn(B_ID, a_text, a_text)
+        self.assertNotIn(str(b_dir), a_text, a_text)
+        self.assertNotIn(A_ID, b_text, b_text)
+        self.assertNotIn(str(a_dir), b_text, b_text)
+
 
 class TestStage5OwnerLocalBundleLoader(R12PartitionFixture,
                                        helpers.Stage5LocalHarness, BaseEnv):
@@ -378,6 +463,76 @@ class TestStage5OwnerLocalBundleLoader(R12PartitionFixture,
         self.assertEqual(out["status"], "ok", out)
         self.assertEqual([row["email_id"] for row in out["emails"]], [A_ID])
         self.assertTrue(Path(out["emails"][0]["md"]).is_file(), out)
+
+
+class TestStage5BatchStaysAtomic(helpers.Stage5LocalHarness, BaseEnv):
+    """Plan r19 P3: one professor's own batch is a zero-partial-commit deal.
+
+    A full-professor batch (no ``--email-id``) whose second email is missing
+    its must-have humanized body must answer the whole batch's error and
+    commit nothing — no rendered md/txt for either email, no professor state
+    — instead of splitting into a partial success. The positive control at
+    the end proves every other premise was legal: only the tested condition
+    differs between the failing and the committing run.
+    """
+
+    def research_files(self):
+        research = self.root / "教授研究"
+        return {str(path): path.read_bytes()
+                for path in sorted(research.rglob("*")) if path.is_file()}
+
+    def test_r19_batch_with_one_missing_humanized_commits_nothing(self):
+        fixture = helpers.write_issue59_stage5_fixture(self.root, [
+            {"professor": A, "evidence": "fresh"},
+            {"professor": A, "evidence": "fresh",
+             "idea_id": helpers.ISSUE59_PEER_IDEA_ID}], case=self)
+        prof_dir = fixture["dirs"][A].resolve()
+        both = list(fixture["email_ids"])
+        results = self.write_results("batch-raw.json", both)
+        choices = self.write_choices("batch-choices.json", both)
+        drafts = self.plan("--result", results, "--choices", choices)
+        self.assertEqual(drafts["status"], "ok", drafts)
+        self.assertEqual(sorted(row["email_id"] for row in drafts["drafts"]),
+                         sorted(both), drafts)
+        complete = json.loads(
+            self.humanized_map("batch-map.json", drafts["drafts"])
+            .read_text(encoding="utf-8"))
+        self.assertEqual(sorted(complete), sorted(
+            row["output_id"] for row in drafts["drafts"]), complete)
+        # The one broken premise: one output's body file does not exist.
+        missing_id = sorted(complete)[-1]
+        missing_path = self.root / "absent-batch-humanized.txt"
+        self.assertFalse(missing_path.exists())
+        broken = self.write_json("batch-broken-map.json",
+                                 {**complete, missing_id: str(missing_path)})
+
+        before = self.research_files()
+        out = self.finalize("--result", results, "--choices", choices,
+                            "--humanized-map", broken)
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "result_missing", out)
+        self.assertIn(str(missing_path), out["message"], out)
+        self.assertEqual(self.research_files(), before,
+                         "the failed batch left a partial commit behind")
+        self.assertFalse(any(path.name == contact_state.EMAIL_STATE or
+                             path.name.startswith("套磁邮件")
+                             for path in prof_dir.iterdir()),
+                         f"partial commit survived in {prof_dir}")
+
+        # Positive control: restore only the tested condition and the very
+        # same batch commits both emails in one professor-local transaction.
+        out = self.finalize("--result", results, "--choices", choices,
+                            "--humanized-map",
+                            self.root / "batch-map.json")
+        self.assertEqual(out["status"], "ok", out)
+        self.assertEqual(sorted(row["email_id"] for row in out["emails"]),
+                         sorted(both), out)
+        rendered = [Path(row["md"]) for row in out["emails"]]
+        rendered += [Path(row["txt"]) for row in out["emails"]]
+        self.assertEqual(len(set(rendered)), 2 * len(both), out)
+        self.assertTrue(all(path.parent.resolve() == prof_dir
+                            for path in rendered), out)
+        self.assertTrue((prof_dir / contact_state.EMAIL_STATE).is_file())
 
 
 if __name__ == "__main__":

@@ -409,6 +409,33 @@ class TestStage5ListInputs(helpers.Stage5LocalHarness, R10TwoProfessorFixture,
                                      "--program-root", empty))
         self.assertEqual(bare, {"status": "ok", "inputs": []}, bare)
 
+    def test_issue68_r19_scope_emission_is_not_supported(self):
+        """Plan r19: discovery stays pure read-only.
+
+        The r11 ``--emit-choices-scope`` transport (and any ``--choices-scope``
+        spelling) must be gone from the parser: the command fails instead of
+        answering, creates no scope file, writes nothing under the program
+        root, and a normal discovery answer carries no ``choices_scope``.
+        """
+        self.a_b_fixture()
+        scope_path = self.root / "choices-scope.json"
+        before = self.research_files()
+        for flag in ("--emit-choices-scope", "--choices-scope"):
+            with self.subTest(flag=flag):
+                raw = helpers.run_cli("stage5-list-inputs", "--program-root",
+                                      self.root, flag, str(scope_path))
+                self.assertNotEqual(raw.returncode, 0, raw.stdout)
+                self.assertFalse(
+                    scope_path.exists(),
+                    f"{flag} created {scope_path}")
+                self.assertEqual(self.research_files(), before,
+                                 f"{flag} wrote or mutated a file")
+        discovery = parse(helpers.run_cli("stage5-list-inputs",
+                                          "--program-root", self.root))
+        self.assertEqual(discovery["status"], "ok", discovery)
+        self.assertNotIn("choices_scope",
+                         json.dumps(discovery, ensure_ascii=False), discovery)
+
 
 class TestStage5ImmutableWrapperOwnerLocalChoices(helpers.Stage5LocalHarness,
                                                   R10TwoProfessorFixture,
