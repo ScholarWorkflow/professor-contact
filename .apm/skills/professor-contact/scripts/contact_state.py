@@ -7697,14 +7697,48 @@ def stage5_list_input_rows(program_root: Path) -> list:
     return inputs
 
 
+def stage5_emit_choices_scope(scope_path: Path, inputs: list) -> None:
+    """Write the complete read-only attribution scope of the discovered packs.
+
+    Issue #68 plan r11 §3.3: the caller obtains the scope
+    (``canonical professor_dir -> this run's email ids``) from the runner
+    instead of retyping professor directories or email ids, so the canonical
+    spelling survives transport byte for byte. Only the discovered legal packs
+    contribute; every value is taken verbatim from each pack's own
+    ``professor_dir`` and ``emails[].email_id`` fields. The file is the only
+    write and is a transport representation, never a second fact source.
+    """
+    scope = {}
+    for row in inputs:
+        if row.get("status") != "ok":
+            continue
+        pack, error = read_json_file(Path(row["email_pack"]))
+        if error or not isinstance(pack, dict) or not isinstance(pack.get("emails"), list):
+            fail("invalid_email_pack",
+                 f"choices scope source pack unreadable: {row['email_pack']}")
+        ids = []
+        for email in pack["emails"]:
+            email_id = email.get("email_id") if isinstance(email, dict) else None
+            if not isinstance(email_id, str) or not email_id:
+                fail("invalid_email_pack",
+                     f"choices scope source pack has a non-string email_id: {row['email_pack']}")
+            ids.append(email_id)
+        scope[str(row["professor_dir"])] = ids
+    scope_path.write_text(json.dumps(scope, ensure_ascii=False, indent=1) + "\n",
+                          encoding="utf-8")
+
+
 def cmd_stage5_list_inputs(args) -> None:
     """Read-only Stage-5 input discovery for a standalone Stage-5 call.
 
     Returns one row per professor-local pack with ``professor``,
-    ``professor_dir``, ``email_pack``, ``status`` and ``reason_code``. No file
-    is written and no managed state is consulted; a bad container only fails
-    its own row. ``--professor`` selects the unique exact name match, and a
-    missing or ambiguous name returns ``needs_input`` instead of guessing.
+    ``professor_dir``, ``email_pack``, ``status`` and ``reason_code``. No
+    managed state is consulted; a bad container only fails its own row.
+    ``--professor`` selects the unique exact name match, and a missing or
+    ambiguous name returns ``needs_input`` instead of guessing.
+    ``--emit-choices-scope`` additionally writes the complete read-only
+    attribution scope of the remaining legal packs to the given path so the
+    caller hands every owner a byte-identical runner-obtained value.
     """
     inputs = stage5_list_input_rows(Path(args.program_root))
     wanted = getattr(args, "professor", None)
@@ -7715,6 +7749,9 @@ def cmd_stage5_list_inputs(args) -> None:
                       "professor_ambiguous" if len(named) > 1 else "professor_not_found",
                       professor=wanted)
         inputs = named
+    scope_path = getattr(args, "emit_choices_scope", None)
+    if scope_path:
+        stage5_emit_choices_scope(Path(scope_path), inputs)
     emit({"status": "ok", "inputs": inputs})
 
 
@@ -9565,6 +9602,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--program-root", required=True)
     p.add_argument("--professor",
                    help="只返回唯一精确匹配该教授名的行；缺失或同名歧义返回 needs_input")
+    p.add_argument("--emit-choices-scope",
+                   help="把其余合法包的完整只读归属范围（规范 professor_dir -> 本次 email_id 集合，"
+                        "逐字节取自各包原字段）写到该路径，供 caller 原样传给每位 owner")
     p.set_defaults(func=cmd_stage5_list_inputs)
 
     p = sub.add_parser("stage5-rebuild-overview",
