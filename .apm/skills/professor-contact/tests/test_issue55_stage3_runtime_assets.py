@@ -172,7 +172,7 @@ class Issue55Stage3RuntimeAssetTests(unittest.TestCase):
             "--json", "--ephemeral", "--skip-git-repo-check",
             "--sandbox", "workspace-write", "--cd", str(self.consumer.resolve()),
         ])
-        self.assertEqual(argv[7:10], ["--model", "gpt-5.6-luna", "--config"])
+        self.assertEqual(argv[7:10], ["--model", "gpt-6-luna", "--config"])
         self.assertIn('model_reasoning_effort="low"', argv)
         self.assertIn(
             f'projects."{self.consumer.resolve()}".trust_level="trusted"', argv,
