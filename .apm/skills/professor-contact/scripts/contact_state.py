@@ -7502,79 +7502,34 @@ def stage5_choices_rows(path: Path) -> list:
     return [row for row in rows if isinstance(row, dict)]
 
 
-def stage5_choices_scope(args, owner: dict, emails: list, program_root: Path) -> dict:
-    """The caller's read-only attribution scope: professor_dir -> email ids.
+def stage5_choices_by_id(args, owner: dict, emails: list) -> dict:
+    """Owner-local ``choices`` loader for one professor transaction.
 
-    Issue #68 §3/§7: root computes this from the professor-local packs it
-    already selected and hands the same value to every owner invocation. It
-    only resolves who a legacy ``choices`` row belongs to; it never becomes a
-    second business fact source and is never written anywhere. Without
-    ``--choices-scope`` the scope is exactly this run's own pack, which keeps
-    every single-professor legacy call working unchanged.
-    """
-    expected = [email.get("email_id") for email in emails]
-    scope_path = getattr(args, "choices_scope", None)
-    if not scope_path:
-        return {str(owner["professor_dir"].resolve()): set(expected)}
-    data, error = read_json_file(Path(scope_path))
-    if error or not isinstance(data, dict):
-        fail("invalid_params",
-             f"choices scope unreadable or not an object: {scope_path}")
-    allowed = (program_root / "教授研究").resolve()
-    scope = {}
-    for raw_dir, ids in data.items():
-        canonical = Path(str(raw_dir)).resolve()
-        try:
-            canonical.relative_to(allowed)
-        except ValueError:
-            fail("invalid_params",
-                 f"choices scope professor_dir outside program root: {raw_dir}",
-                 professor_dir=str(canonical))
-        if not isinstance(ids, list) or \
-                any(not isinstance(email_id, str) for email_id in ids):
-            fail("invalid_params",
-                 f"choices scope for {raw_dir} must be a list of email_id strings")
-        scope[str(canonical)] = set(ids)
-    if str(owner["professor_dir"].resolve()) not in scope:
-        fail("invalid_params",
-             "choices scope must contain this run's own professor_dir",
-             professor_dir=str(owner["professor_dir"]))
-    return scope
-
-
-def stage5_choices_by_id(args, owner: dict, emails: list, program_root: Path) -> dict:
-    """Issue #68 r11 §3.3 two-phase ``choices`` attribution for this owner.
-
-    Explicit ``professor_dir`` rows partition first: a row naming professor B
-    belongs to B even when its ``email_id`` collides with A's, and A never
-    validates, fails on, or rebinds it. In a targeted run (``--email-id``) the
-    professor's own scope is only the target id, so rows attributed to this
-    professor are filtered by target first: unselected, missing or unknown ids
-    are noise that never blocks the target and never counts as a legal
-    explicit binding, while the target id itself keeps every strict check.
-    Only a full-professor batch run treats an explicit row whose id sits
-    outside the professor's execution range as ``needs_input``
-    ``choice_owner_invalid``. Only rows without ``professor_dir`` (legacy
-    format) may look the id up in the read-only scope, and they must compute
-    ``original_candidates`` from that scope alone — never from who already has
-    an explicit row. A single candidate binds unconditionally, so it joins the
-    professor's exact-one duplicate check; only a multi-candidate row may
-    exclude professors a legal explicit row already satisfied, and a
-    multi-candidate row that stays undecided returns ``needs_input``
-    ``choice_owner_ambiguous``. An unresolvable or foreign row can never turn
-    into this professor's failure by id alone.
+    Plan r12 §3.3/§3.5: cross-professor attribution happened exactly once at
+    the root partition entry (``stage5-partition-choices``), so this loader
+    only ever consumes the current owner's one-professor bundle rows. An
+    explicit ``professor_dir`` row naming another professor is a caller
+    contract violation: the runner fails closed as this owner's input error
+    and never re-routes the row to its professor. The professor's own
+    explicit rows keep the frozen #59 / R68-2 / R68-3 behavior: a targeted
+    run (``--email-id``) filters unselected, missing or unknown ids before
+    any ownership or field judgment — they never block the target and never
+    count as a legal explicit binding — while a full-professor batch treats
+    an id outside the pack's execution range as ``needs_input``
+    ``choice_owner_invalid``. Legacy rows without a directory keep the
+    exact-one binding semantics as this professor's own business validation:
+    a row whose id sits inside the current execution range binds and joins
+    the exact-one duplicate check, anything else is noise. Duplicate,
+    missing and field checks below belong to this professor alone.
     """
     choices_path = getattr(args, "choices", None)
     if not choices_path:
         return {}
     rows = stage5_choices_rows(Path(choices_path))
-    scope = stage5_choices_scope(args, owner, emails, program_root)
     owner_dir = str(owner["professor_dir"].resolve())
     targeted = bool(getattr(args, "email_id", None))
     expected = {email.get("email_id") for email in emails}
     attributed: dict = {}
-    explicit: dict = {}
-    ambiguous_ids: set = set()
     legacy_rows = []
     for row in rows:
         row_id = row.get("email_id")
@@ -7584,59 +7539,32 @@ def stage5_choices_by_id(args, owner: dict, emails: list, program_root: Path) ->
                 # An invalid explicit directory is never a legacy binding.
                 continue
             canonical = str(Path(raw_dir).resolve())
-            target = scope.get(canonical)
-            if target is None:
-                # Explicitly another professor (or outside this run's selected
-                # set): the row leaves with its professor, whatever id it names.
-                continue
-            if row_id not in target:
-                if canonical == owner_dir:
-                    if targeted:
-                        # R68-2 / r11 §3.3 rule 2: a targeted run filters the
-                        # professor's unselected ids before any ownership or
-                        # field judgment — an explicit Y row never blocks the
-                        # target X, and it is not a legal explicit binding.
-                        continue
-                    soft_exit("needs_input", "choice_owner_invalid",
-                              message=f"{row_id}: 显式目录内的邮件编号不属于本教授当前执行范围。未写盘。",
-                              email_id=row_id, professor_dir=canonical)
-                continue
-            # A legal explicit binding counts for the exclusion rule no matter
-            # which professor it names — the owner's own explicit row satisfies
-            # the owner exactly like B's satisfies B (plan §3 rule 6).
-            explicit.setdefault(row_id, set()).add(canonical)
-            if canonical == owner_dir:
-                attributed.setdefault(row_id, []).append(row)
+            if canonical != owner_dir:
+                # Another professor's row reached this owner-local bundle:
+                # fail closed on this owner's input, never re-route the row.
+                fail("invalid_params",
+                     f"owner-local choices name another professor: {raw_dir}",
+                     professor_dir=str(canonical))
+            if row_id not in expected:
+                if targeted:
+                    # R68-2: a targeted run filters the professor's unselected
+                    # ids before any ownership or field judgment — an explicit
+                    # Y row never blocks the target X, and it is not a legal
+                    # explicit binding.
+                    continue
+                soft_exit("needs_input", "choice_owner_invalid",
+                          message=f"{row_id}: 显式目录内的邮件编号不属于本教授当前执行范围。未写盘。",
+                          email_id=row_id, professor_dir=canonical)
+            attributed.setdefault(row_id, []).append(row)
             continue
         legacy_rows.append(row)
-    # Resolve legacy rows only after every legal explicit binding is known.
-    # Input order cannot change ownership or turn a valid choice into ambiguity.
+    # Legacy rows: the execution range of this pack is the only candidate
+    # owner, so a row whose id sits inside it binds and joins this professor's
+    # exact-one duplicate check; every other id is unrelated noise.
     for row in legacy_rows:
         row_id = row.get("email_id")
-        # Legacy row: original candidates from the current execution scope only.
-        candidates = sorted(dir_ for dir_, ids in scope.items() if row_id in ids)
-        if not candidates:
-            continue
-        if len(candidates) == 1:
-            bound = candidates[0]
-        else:
-            satisfied = explicit.get(row_id) or set()
-            remaining = [dir_ for dir_ in candidates if dir_ not in satisfied]
-            if not remaining:
-                continue
-            if len(remaining) > 1:
-                if owner_dir in remaining:
-                    ambiguous_ids.add(row_id)
-                continue
-            bound = remaining[0]
-        if bound != owner_dir:
-            continue
-        attributed.setdefault(row_id, []).append(row)
-    if ambiguous_ids:
-        soft_exit("needs_input", "choice_owner_ambiguous",
-                  email_ids=sorted(ambiguous_ids),
-                  message="无目录旧格式 choices 行在多个已选教授范围内命中同一 email_id："
-                          "请为每行显式补充 professor_dir 后重跑。未写盘。")
+        if row_id in expected:
+            attributed.setdefault(row_id, []).append(row)
     for email_id in sorted(expected):
         count = len(attributed.get(email_id, ()))
         if count != 1:
@@ -7697,37 +7625,6 @@ def stage5_list_input_rows(program_root: Path) -> list:
     return inputs
 
 
-def stage5_emit_choices_scope(scope_path: Path, inputs: list) -> None:
-    """Write the complete read-only attribution scope of the discovered packs.
-
-    Issue #68 plan r11 §3.3: the caller obtains the scope
-    (``canonical professor_dir -> this run's email ids``) from the runner
-    instead of retyping professor directories or email ids, so the canonical
-    spelling survives transport byte for byte. Only the discovered legal packs
-    contribute; every value is taken verbatim from each pack's own
-    ``professor_dir`` and ``emails[].email_id`` fields. The file is the only
-    write and is a transport representation, never a second fact source.
-    """
-    scope = {}
-    for row in inputs:
-        if row.get("status") != "ok":
-            continue
-        pack, error = read_json_file(Path(row["email_pack"]))
-        if error or not isinstance(pack, dict) or not isinstance(pack.get("emails"), list):
-            fail("invalid_email_pack",
-                 f"choices scope source pack unreadable: {row['email_pack']}")
-        ids = []
-        for email in pack["emails"]:
-            email_id = email.get("email_id") if isinstance(email, dict) else None
-            if not isinstance(email_id, str) or not email_id:
-                fail("invalid_email_pack",
-                     f"choices scope source pack has a non-string email_id: {row['email_pack']}")
-            ids.append(email_id)
-        scope[str(row["professor_dir"])] = ids
-    scope_path.write_text(json.dumps(scope, ensure_ascii=False, indent=1) + "\n",
-                          encoding="utf-8")
-
-
 def cmd_stage5_list_inputs(args) -> None:
     """Read-only Stage-5 input discovery for a standalone Stage-5 call.
 
@@ -7735,10 +7632,9 @@ def cmd_stage5_list_inputs(args) -> None:
     ``professor_dir``, ``email_pack``, ``status`` and ``reason_code``. No
     managed state is consulted; a bad container only fails its own row.
     ``--professor`` selects the unique exact name match, and a missing or
-    ambiguous name returns ``needs_input`` instead of guessing.
-    ``--emit-choices-scope`` additionally writes the complete read-only
-    attribution scope of the remaining legal packs to the given path so the
-    caller hands every owner a byte-identical runner-obtained value.
+    ambiguous name returns ``needs_input`` instead of guessing. Discovery
+    only finds packs: it never writes a file and never produces data one
+    owner would share with another (plan r12 §3.7).
     """
     inputs = stage5_list_input_rows(Path(args.program_root))
     wanted = getattr(args, "professor", None)
@@ -7749,10 +7645,213 @@ def cmd_stage5_list_inputs(args) -> None:
                       "professor_ambiguous" if len(named) > 1 else "professor_not_found",
                       professor=wanted)
         inputs = named
-    scope_path = getattr(args, "emit_choices_scope", None)
-    if scope_path:
-        stage5_emit_choices_scope(Path(scope_path), inputs)
     emit({"status": "ok", "inputs": inputs})
+
+
+def stage5_partition_pack_spec(program_root: Path, pack_path: str,
+                               email_id: str | None) -> dict:
+    """Resolve one ``--owner`` pack into a partition spec or its own failure.
+
+    The partition consumes packs the caller already selected from Stage-4
+    success results or read-only discovery rows. A pack that cannot prove one
+    professor stays that owner's own input-resolution failure with the
+    runner's verdict shape; it never blocks another owner (plan r12 §3.2).
+    """
+    path = Path(pack_path)
+    spec = {"pack_path": pack_path, "email_id": email_id, "professor": None,
+            "owner_dir": None, "ids": None, "failure": None}
+
+    def owner_failure(status, reason_code, message):
+        spec["failure"] = {"status": status, "reason_code": reason_code,
+                           "email_pack": pack_path, "message": message}
+        return spec
+
+    pack, error = read_json_file(path)
+    if error:
+        return owner_failure(
+            "needs_refresh", "missing_email_pack",
+            "缺该教授的 邮件输入.json：先跑阶段 4（professor-contact-selection）编译。")
+    if not isinstance(pack, dict) or \
+            pack.get("schema") != STAGE4_LOCAL_SCHEMA or pack.get("kind") != EMAIL_PACK_KIND:
+        return owner_failure(
+            "error", "invalid_email_pack",
+            f"email pack must be the professor-local schema {STAGE4_LOCAL_SCHEMA} "
+            f"{EMAIL_PACK} written by stage4-finalize")
+    professor = pack.get("professor")
+    professor_dir = pack.get("professor_dir")
+    if not isinstance(professor, str) or not professor.strip() or \
+            not isinstance(professor_dir, str) or not professor_dir.strip():
+        return owner_failure(
+            "error", "invalid_email_pack",
+            "email pack does not prove a single professor owner")
+    allowed = (program_root / "教授研究").resolve()
+    canonical = Path(professor_dir).resolve()
+    try:
+        canonical.relative_to(allowed)
+    except ValueError:
+        return owner_failure(
+            "error", "invalid_professor_dir",
+            "professor_dir must be inside program_root/教授研究")
+    emails = pack.get("emails")
+    if not isinstance(emails, list):
+        return owner_failure("error", "invalid_email_pack",
+                             "email pack has no emails list")
+    ids = [email.get("email_id") for email in emails
+           if isinstance(email, dict) and isinstance(email.get("email_id"), str)]
+    spec["professor"] = professor
+    spec["owner_dir"] = str(canonical)
+    spec["ids"] = ids
+    spec["range"] = {email_id} if email_id else set(ids)
+    return spec
+
+
+def cmd_stage5_partition_choices(args) -> None:
+    """Root-side deterministic ``choices`` partition (plan r12 §3.3).
+
+    One user request may carry A+B's raw ``choices``, but the raw
+    multi-professor object is never delegated to any professor owner. This
+    entry partitions it exactly once by the frozen identity ``(canonical
+    professor_dir, email_id)`` and answers one self-contained per-owner
+    bundle: each holds only that professor's ``professor_dir``, ``email_pack``
+    path, targeted ``email_id`` if any, and its own ``choices`` row subset.
+    Explicit ``professor_dir`` rows enter their named owner only; a targeted
+    owner excludes its own unselected ids first; a full-professor batch id
+    error stays that owner's ``needs_input`` ``choice_owner_invalid``. A
+    legacy row without a directory computes its candidates from this run's
+    selected packs alone: zero candidates is an unrelated row (dropped), one
+    candidate binds that owner, and several candidates stay at root as the
+    affected owners' ``needs_input`` ``choice_owner_ambiguous`` — the row is
+    broadcast to no one, and one owner's partition failure never blocks
+    another owner's legal bundle. Business validation (duplicate, missing,
+    fields, recipient) is not copied here; each owner's deterministic Stage-5
+    path keeps running it on its own bundle.
+    """
+    program_root = Path(args.program_root)
+    raw_owners = getattr(args, "owner", None)
+    if not raw_owners:
+        fail("invalid_params",
+             "stage5-partition-choices requires at least one "
+             "--owner <email_pack> [email_id]")
+    specs = []
+    for owner in raw_owners:
+        if len(owner) > 2:
+            fail("invalid_params",
+                 "--owner accepts at most <email_pack> <email_id>")
+        specs.append(stage5_partition_pack_spec(
+            program_root, owner[0], owner[1] if len(owner) > 1 else None))
+    seen_dirs: dict = {}
+    for spec in specs:
+        if spec["owner_dir"] is None:
+            continue
+        if spec["owner_dir"] in seen_dirs:
+            fail("invalid_params",
+                 "--owner names the same professor_dir more than once",
+                 professor_dir=spec["owner_dir"])
+        seen_dirs[spec["owner_dir"]] = spec
+    rows = stage5_choices_rows(Path(args.choices))
+    by_dir = {spec["owner_dir"]: spec for spec in specs if spec["owner_dir"]}
+    attributed: dict = {dir_: {} for dir_ in by_dir}
+    explicit_satisfied: dict = {}
+    invalid_ids: dict = {}
+    ambiguous_ids: dict = {dir_: set() for dir_ in by_dir}
+    legacy_rows = []
+    ranges = {dir_: spec["range"] for dir_, spec in by_dir.items()}
+    for row in rows:
+        row_id = row.get("email_id")
+        raw_dir = row.get("professor_dir")
+        if "professor_dir" in row:
+            if not isinstance(raw_dir, str) or not raw_dir.strip():
+                # An invalid explicit directory is never a legacy binding.
+                continue
+            canonical = str(Path(raw_dir).resolve())
+            spec = by_dir.get(canonical)
+            if spec is None:
+                # The row leaves with its professor; nobody in this run owns
+                # it, so no bundle ever carries it.
+                continue
+            try:
+                in_range = row_id in spec["range"]
+            except TypeError:
+                in_range = False
+            if in_range:
+                attributed[canonical].setdefault(row_id, []).append(row)
+                explicit_satisfied.setdefault(row_id, set()).add(canonical)
+            elif spec["email_id"]:
+                # R68-2: a targeted owner's unselected ids stay noise.
+                continue
+            else:
+                # R68-3: the professor's own batch error id fails only that
+                # owner's partition, never another owner's bundle.
+                invalid_ids.setdefault(canonical, row_id)
+            continue
+        legacy_rows.append(row)
+    # Resolve legacy rows only after every legal explicit binding is known:
+    # input order cannot change ownership or turn a claimed id ambiguous.
+    for row in legacy_rows:
+        row_id = row.get("email_id")
+        try:
+            candidates = sorted(dir_ for dir_, rng in ranges.items()
+                                if row_id in rng)
+        except TypeError:
+            candidates = []
+        if not candidates:
+            continue  # unrelated row: dropped, changes no verdict
+        if len(candidates) == 1:
+            bound = candidates[0]
+        else:
+            # Only a multi-candidate row may exclude owners a legal explicit
+            # row already satisfied; an undecided collision stays at root.
+            satisfied = explicit_satisfied.get(row_id) or set()
+            remaining = [dir_ for dir_ in candidates if dir_ not in satisfied]
+            if not remaining:
+                continue
+            if len(remaining) > 1:
+                for dir_ in remaining:
+                    ambiguous_ids[dir_].add(row_id)
+                continue
+            bound = remaining[0]
+        attributed[bound].setdefault(row_id, []).append(row)
+    owners = []
+    for spec in specs:
+        email_id = spec["email_id"]
+        base = {"professor": spec["professor"],
+                "professor_dir": spec["owner_dir"],
+                "email_pack": spec["pack_path"],
+                "email_id": email_id}
+        if spec["failure"] is not None:
+            owners.append({**base, "partition": spec["failure"]})
+            continue
+        dir_ = spec["owner_dir"]
+        if ambiguous_ids[dir_]:
+            owners.append({**base, "partition": {
+                "status": "needs_input", "reason_code": "choice_owner_ambiguous",
+                "email_ids": sorted(ambiguous_ids[dir_]),
+                "message": "无目录旧格式 choices 行在多个已选教授范围内命中同一 email_id："
+                           "请为每行显式补充 professor_dir 后重跑。未写盘。"}})
+            continue
+        if dir_ in invalid_ids:
+            owners.append({**base, "partition": {
+                "status": "needs_input", "reason_code": "choice_owner_invalid",
+                "email_id": invalid_ids[dir_],
+                "message": "显式目录内的邮件编号不属于本教授当前执行范围。未写盘。"}})
+            continue
+        ordered: list = []
+        for pack_email_id in spec["ids"]:
+            if email_id and pack_email_id != email_id:
+                continue
+            ordered.extend(attributed[dir_].get(pack_email_id, []))
+        owners.append({**base, "partition": {"status": "ok"},
+                       "choices_rows": ordered})
+    payload = {"status": "ok", "choices": str(Path(args.choices)),
+               "owners": owners}
+    out_path = getattr(args, "out", None)
+    if out_path:
+        # A transport representation for this request only: the caller hands
+        # each owner its own bundle and cleans the file up with the request.
+        Path(out_path).write_text(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1) + "\n",
+            encoding="utf-8")
+    emit(payload)
 
 
 def cmd_stage5_plan(args) -> None:
@@ -7882,12 +7981,12 @@ def cmd_stage5_plan(args) -> None:
         soft_exit("needs_refresh", f"verify_{check['reason']}", professor=professor,
                   message=f"送信前核验缓存不可用（{check['reason']}）：先完成 Step 2.5 核验。"
                           "核验通过前不读取 choices。未写盘。")
-    # Issue #68 §3: plan and finalize share one choices attribution — explicit
-    # professor_dir rows partition first, legacy rows compute original
-    # candidates from the read-only scope, and only this owner's bound rows
-    # enter the exact-one duplicate check.
+    # Issue #68 plan r12: plan and finalize share one owner-local choices
+    # loader — root already partitioned the raw choices once, so this runner
+    # only validates the rows of its own one-professor bundle (exact-one
+    # duplicate, missing and field checks stay here).
     choices_by_id = stage5_choices_by_id(
-        args, stage5_pack_owner(pack, pack_path), emails, program_root)
+        args, stage5_pack_owner(pack, pack_path), emails)
     drafts = []
     for email in emails:
         raw = by_id.get(email.get("email_id"))
@@ -8376,9 +8475,9 @@ def cmd_stage5_finalize(args) -> None:
     result_path = Path(args.result)
     raw_by_id = load_id_map(result_path, {e.get("email_id") for e in emails}, "email result",
                             exact=not bool(args.email_id))
-    # Same shared attribution as stage5-plan (Issue #68 §3 rule 10).
+    # Same owner-local bundle loader as stage5-plan (Issue #68 plan r12).
     choices_by_id = stage5_choices_by_id(
-        args, stage5_pack_owner(pack, pack_path), emails, program_root)
+        args, stage5_pack_owner(pack, pack_path), emails)
     humanized_by_id = humanized_paths(args, emails, exact=not bool(args.email_id))
     decision = None
     if getattr(args, "decision_file", None):
@@ -9570,10 +9669,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--mode", choices=("first", "both", "followup"), default="first",
                     help="生成首封、首封+跟进，或只生成跟进邮件")
     p.add_argument("--result")
-    p.add_argument("--choices")
-    p.add_argument("--choices-scope",
-                   help="只读归属上下文：JSON object 映射 canonical professor_dir -> 本次执行范围"
-                        "的 email_id 列表；root 传入，不改变 choices 事实（缺省为本次 pack 自身）")
+    p.add_argument("--choices",
+                   help="本 owner bundle 的 choices JSON：root 已按教授分配完成，"
+                        "这里只应包含本教授的行")
     p.set_defaults(func=cmd_stage5_plan)
 
     p = sub.add_parser("stage5-finalize")
@@ -9591,10 +9689,23 @@ def build_parser() -> argparse.ArgumentParser:
                     help="生成首封、首封+跟进，或只生成跟进邮件")
     p.add_argument("--profile")
     p.add_argument("--decision-file")
-    p.add_argument("--choices-scope",
-                   help="只读归属上下文：JSON object 映射 canonical professor_dir -> 本次执行范围"
-                        "的 email_id 列表；root 传入，不改变 choices 事实（缺省为本次 pack 自身）")
     p.set_defaults(func=cmd_stage5_finalize)
+
+    p = sub.add_parser("stage5-partition-choices",
+                       help="root 确定性分配：把本次选中的教授本地包与原始多教授 choices 按 "
+                            "(canonical professor_dir, email_id) 一次性划入各 per-owner bundle；"
+                            "歧义留在 root，不向任何 owner 广播多教授数据")
+    p.add_argument("--program-root", required=True)
+    p.add_argument("--owner", action="append", nargs="+",
+                   metavar=("EMAIL_PACK", "EMAIL_ID"),
+                   help="本次选中的一个教授本地 邮件输入.json（来自阶段 4 结果或 discovery 行），"
+                        "可后跟该教授的定向 email_id；每位教授恰好一次，可重复")
+    p.add_argument("--choices", required=True,
+                   help="原始多教授 choices JSON（object 或 object list）；只在本入口分配一次")
+    p.add_argument("--out",
+                   help="把 per-owner bundle 载荷写入该临时 JSON 文件（传输载体，"
+                        "本次请求生命周期结束后由调用方清理）")
+    p.set_defaults(func=cmd_stage5_partition_choices)
 
     p = sub.add_parser("stage5-list-inputs",
                        help="只读发现各教授本地 邮件输入.json：逐个返回 professor、professor_dir、"
@@ -9602,9 +9713,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--program-root", required=True)
     p.add_argument("--professor",
                    help="只返回唯一精确匹配该教授名的行；缺失或同名歧义返回 needs_input")
-    p.add_argument("--emit-choices-scope",
-                   help="把其余合法包的完整只读归属范围（规范 professor_dir -> 本次 email_id 集合，"
-                        "逐字节取自各包原字段）写到该路径，供 caller 原样传给每位 owner")
     p.set_defaults(func=cmd_stage5_list_inputs)
 
     p = sub.add_parser("stage5-rebuild-overview",

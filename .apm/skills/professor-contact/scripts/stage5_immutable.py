@@ -16,7 +16,10 @@ Issue #68 does not give this wrapper a pack authority of its own: the caller's
 professor-local ``--email-pack`` is forwarded unchanged to the internal
 ``stage5-plan`` and to the temporary finalize runner, so the wrapper never scans
 professor directories from an ``email_id`` and no program-level default exists to
-fall back on.
+fall back on. Plan r12 keeps the wrapper inside one owner's transaction: it
+inherits only the current owner's ``email_pack``, owner-local ``choices`` and
+optional ``email_id``; it never discovers sibling professors and never
+rebuilds any cross-professor attribution data.
 """
 from __future__ import annotations
 
@@ -34,7 +37,7 @@ UPSTREAM_SCRIPT_ENV = "PROFESSOR_CONTACT_EVIDENCE_SCRIPT"
 
 _PLAN_OPTIONS = {
     "--program-root", "--email-pack", "--email-id", "--profile", "--template",
-    "--followup-template", "--mode", "--result", "--choices", "--choices-scope",
+    "--followup-template", "--mode", "--result", "--choices",
 }
 _VALUE_OPTIONS = _PLAN_OPTIONS | {"--decision-file"}
 _POLISH_MODES = {"none", "dynamic-fields-only"}
