@@ -212,11 +212,19 @@ _READ_FAIL_WORDING = re.compile(r"状态文件读取失败(?:或不一致)?")
 # requirement, whether the cancellation sits before or after the comparison
 # wording ("but the run need not compare the two fingerprints").
 _CONCORDANCE_SENTENCE = re.compile(
-    r"(?:与|跟|同)[^。；\n]{0,12}(?:plan|计划)[^。；\n]{0,60}?(?:一致|同一|相同)|"
-    r"其[^。；\n]{0,6}(?:与|跟|同)[^。；\n]{0,12}(?:plan|计划)")
+    r"(?:与|跟|同)[^。；\n]{0,20}(?:plan|计划)[^。；\n]{0,60}?(?:一致|同一|相同)|"
+    r"其[^。；\n]{0,6}(?:与|跟|同)[^。；\n]{0,12}(?:plan|计划)|"
+    r"(?:比较|比对|核对)[^。；\n]{0,16}(?:plan|计划)")
+# The comparison topic (committed fingerprint versus plan fingerprint), used to
+# read a cancellation sentence even when it carries no agreement wording.
+_COMPARISON_TOPIC = re.compile(
+    r"(?:比较|比对|核对)[^。；\n]{0,16}(?:plan|计划)|"
+    r"(?:plan|计划)[^。；\n]{0,16}(?:指纹|fingerprint)")
 _CANCEL_WORDS = ("不必", "无需", "不用", "无须", "不再", "不要求", "不需要", "无需再")
 _COMPARE_WORDS = ("比较", "比对", "核对", "校验", "对照")
+_AGREEMENT_WORDS = ("一致", "同一", "相同")
 _FINGERPRINT_WORDS = ("指纹", "fingerprint")
+_SKIP_COMPARISON = re.compile(r"(?:无需|不必|不用|无须|不再|不要求|不需要)")
 _MISMATCH_STOP = re.compile(
     r"(?:不一致|不符合|不同)[^。；\n]{0,12}(?:立即)?(?:停止|结束|error|失败)")
 
@@ -299,6 +307,27 @@ def _concordance_cancelled(text):
     return False
 
 
+def _skips_comparison(text):
+    """True when a sentence demands skipping the fingerprint comparison.
+
+    A sentence that negates the comparison itself ("this round need not compare
+    the committed fingerprint with the plan fingerprint") contradicts the
+    binding rule wherever it sits in the profile branch, including in front of
+    the parts that carry the binding markers.  The sentence counts when it
+    carries the agreement wording or when it is about the comparison topic, so
+    the cancellation is still read when its wording differs.
+    """
+    for sentence in _CLAUSE_SPLIT.split(text):
+        if not (_CONCORDANCE_SENTENCE.search(sentence)
+                or _COMPARISON_TOPIC.search(sentence)):
+            continue
+        for match in _SKIP_COMPARISON.finditer(sentence):
+            after = sentence[match.end():match.end() + 6]
+            if any(word in after for word in _COMPARE_WORDS + _AGREEMENT_WORDS):
+                return True
+    return False
+
+
 def _doc_binding_disposition(agent):
     """Decide whether the agent document carries the frozen binding contract.
 
@@ -343,8 +372,11 @@ def _doc_binding_disposition(agent):
         return False, "plan/committed fingerprint mismatch not stopped on"
     if not _CONCORDANCE_SENTENCE.search(force_scope):
         return False, "committed fingerprint not required to match the plan fingerprint"
-    if _concordance_cancelled(force_scope):
-        return False, "plan/committed fingerprint comparison cancelled in the same rule"
+    # The cancellation checks cover the whole profile-present branch: a
+    # cancelling sentence placed in front of the marker-carrying parts would
+    # otherwise be cut away from the checked scope.
+    if _concordance_cancelled(with_profile) or _skips_comparison(with_profile):
+        return False, "plan/committed fingerprint comparison cancelled in the profile branch"
     if _BIND_FAIL_MARKER not in force_scope:
         return False, "missing profile_fingerprint_binding_failed note"
 
@@ -1322,6 +1354,16 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         plan_strong = "必须是非空字符串且绑定本 child 传入的同一 `--profile`"
         self.assertIn(good_source, frozen, "committed-state source clause not found")
         self.assertIn(plan_strong, plan_line, "plan-side non-empty demand not found")
+        # The boundary that closes the profile-present branch condition is
+        # derived from the guard structure, not from a pinned sentence, so a
+        # standalone cancelling sentence can be placed right after it.
+        command_prefix = re.search(r"本命令的[^。；\n]{0,4}`--profile`", frozen[guard.end():])
+        self.assertIsNotNone(command_prefix, "profile-present branch command not found")
+        # The branch condition closes here; a cancelling sentence placed after
+        # this point sits in front of the parts that carry the binding markers.
+        guard_end = frozen[guard.start():guard.end() + command_prefix.start()]
+        self.assertTrue(guard_end.endswith("时，"),
+                        "profile-present branch boundary not found")
         # The concordance and read-failure spans are located by pattern, so no
         # single Chinese sentence is frozen as the acceptance wording.
         concordance_match = _CONCORDANCE_SENTENCE.search(frozen)
@@ -1376,6 +1418,16 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                 concordance,
                 "它必须是非空字符串且与 plan 返回的 `profile_fingerprint` 完全一致，"
                 "但实际执行无需比较这两个指纹"),
+            # A standalone cancelling sentence placed in front of the parts that
+            # carry the binding markers (the counterexample in the 2026-10-04
+            # 19:01 review).
+            "prefix_sentence_cancellation": agent.replace(
+                guard_end, "时。本轮无需比较提交状态指纹与 plan 指纹。本命令的 `--profile`"
+                " 必须逐字复用"),
+            # The same shape with different cancellation wording.
+            "prefix_sentence_needs_no_comparison": agent.replace(
+                guard_end, "时。本轮不必比较提交状态指纹与计划指纹。本命令的 `--profile`"
+                " 必须逐字复用"),
             # The mismatch stop point alone is dropped, and the read-failure
             # stop point alone is dropped.
             "mismatch_stop_removed": agent.replace(
