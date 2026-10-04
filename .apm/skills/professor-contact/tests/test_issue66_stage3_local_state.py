@@ -202,7 +202,20 @@ _PROFILE_SCOPE = re.compile(r"profile[^。；\n]{0,12}(?:时|存在|有)|仅[^�
 _BIND_FAIL_MARKER = "profile_fingerprint_binding_failed"
 _EARLY_STOP_BEFORE_WRITE = re.compile(
     r"(?:之前|早于|停在)[^。；\n]{0,16}(?:写|落盘)[^。；\n]{0,20}result")
-_READ_FAIL_STOP = re.compile(r"读取失败[^。；\n]{0,12}(?:立即)?(?:停止|结束|error)")
+_READ_FAIL_STOP = re.compile(r"读取失败[^。；\n]{0,20}(?:立即)?(?:停止|结束|error)")
+# The committed fingerprint has to be compared with the plan fingerprint and a
+# mismatch has to stop the child (issue-66 gate2 revision 2).  A cancelled
+# comparison ("but it need not match the plan fingerprint") is not a
+# requirement, and a document that never demands the comparison is defective.
+_CONCORDANCE_MENTION = re.compile(
+    r"(?:与|跟)[^。；\n]{0,12}(?:plan|计划)[^。；\n]{0,60}?"
+    r"(?:一致|同一|相同|比较|核对|比对)")
+_CONCORDANCE_CANCELLED = ("不必", "无需", "不用", "无须", "不再", "不要求", "不需要")
+_COMPARISON_MENTION = re.compile(
+    r"(?:比较|核对|比对)[^。；\n]{0,20}(?:plan|计划)")
+_COMPARISON_CANCELLED = ("无需", "不必", "不用", "无须", "不需要", "不用再")
+_MISMATCH_STOP = re.compile(
+    r"(?:不一致|不符合|不同)[^。；\n]{0,12}(?:立即)?(?:停止|结束|error|失败)")
 
 STEP1_NAME = "Step 1 — Resolve program root + runner plan"
 STEP3_NAME = "Step 3 — 跑 stage3-finalize（校验 + 状态写入 + 确定性渲染）"
@@ -266,15 +279,36 @@ def _response_is_fingerprint_source(clauses):
     return False
 
 
+def _requires_plan_concordance(text):
+    """True when the text demands the committed fingerprint match the plan one.
+
+    Two cancellation shapes are refused: a mention that negates the comparison
+    ("but it need not match the plan fingerprint") and a demand that drops the
+    comparison itself ("no need to compare the committed and plan
+    fingerprints").  A document that never states the requirement is defective
+    by absence, which the caller reports separately.
+    """
+    for mention in _CONCORDANCE_MENTION.finditer(text):
+        prefix = text[max(0, mention.start() - 6):mention.start()]
+        if any(word in prefix for word in _CONCORDANCE_CANCELLED):
+            return False
+    for mention in _COMPARISON_MENTION.finditer(text):
+        prefix = text[max(0, mention.start() - 6):mention.start()]
+        if any(word in prefix for word in _COMPARISON_CANCELLED):
+            return False
+    return True
+
+
 def _doc_binding_disposition(agent):
     """Decide whether the agent document carries the frozen binding contract.
 
     Judged over the two branches of the finalize-side rule plus the plan-side
     hard check: (1) the branch condition on this round's profile, (2) the
     fingerprint read from committed state and not from the finalize response,
-    (3) the plan/path/fingerprint consistency demands, (4) both stop points,
-    with the plan-side stop before any candidate result file is written, and
-    (5) the explicit null-is-legal continuation when no profile exists.
+    (3) the plan/path/fingerprint consistency demands — non-empty, matching the
+    plan fingerprint, and stopping on a mismatch or an unreadable state — with
+    the plan-side stop before any candidate result file is written, and (4) the
+    explicit null-is-legal continuation when no profile exists.
     """
     if not _STEP3_START.search(agent):
         return False, "missing finalize-side binding rule"
@@ -305,6 +339,10 @@ def _doc_binding_disposition(agent):
         return False, "empty-fingerprint failure not scoped to this round's profile"
     if not _READ_FAIL_STOP.search(force_scope):
         return False, "unreadable committed state not stopped on"
+    if not _MISMATCH_STOP.search(force_scope):
+        return False, "plan/committed fingerprint mismatch not stopped on"
+    if not _requires_plan_concordance(force_scope):
+        return False, "committed fingerprint not required to match the plan fingerprint"
     if _BIND_FAIL_MARKER not in force_scope:
         return False, "missing profile_fingerprint_binding_failed note"
 
@@ -1260,11 +1298,13 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         ok, why = _doc_binding_disposition(agent)
         self.assertTrue(
             ok, f"agent binding branch fails the frozen judgment: {why}")
-        # The judgment above has to reject the two historical defects it
-        # replaces: the unconditional non-empty demand (8fe6f96) and the
-        # fingerprint read from the finalize response (edc39f6).  Each
-        # mutation is cut into the current frozen paragraph, so a judgment
-        # that merely accepts the current text is caught here.
+        # The judgment above has to reject the historical defects it replaces
+        # and the concordance gap found in this revision: the unconditional
+        # non-empty demand (8fe6f96), the fingerprint read from the finalize
+        # response (edc39f6), and an instruction that lets the committed
+        # fingerprint differ from the plan fingerprint.  Each mutation is cut
+        # into the current frozen paragraph, so a judgment that merely accepts
+        # the current text is caught here.
         frozen = next((line for line in agent.splitlines()
                        if _STEP3_START.search(line)), None)
         self.assertIsNotNone(frozen, "frozen binding paragraph not found")
@@ -1278,8 +1318,12 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         good_source = ("用返回值中的 `state_path` 定位并读取该状态文件里实际提交的 "
                        "`profile_fingerprint`")
         plan_strong = "必须是非空字符串且绑定本 child 传入的同一 `--profile`"
+        concordance = "它必须是非空字符串且与 plan 返回的 `profile_fingerprint` 完全一致"
+        read_fail_stop = "状态文件读取失败或不一致"
         self.assertIn(good_source, frozen, "committed-state source clause not found")
         self.assertIn(plan_strong, plan_line, "plan-side non-empty demand not found")
+        self.assertIn(concordance, frozen, "concordance demand not found")
+        self.assertIn(read_fail_stop, frozen, "read-failure stop point not found")
         mutations = {
             # The 8fe6f96 defect: the branch guard dropped, so the frozen
             # stop rule applies to every round, no-profile rounds included.
@@ -1304,7 +1348,22 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
             "plan_stop_removed": agent.replace(
                 "plan 侧空指纹必须停在写任何候选 result 文件之前（Step 1.5），",
                 "plan 侧空指纹按绑定失败处理，"),
+            # The concordance demand is cancelled, and the mismatch stop point
+            # is dropped (the counterexample in the 2026-10-04 18:00 review).
+            "concordance_cancelled": agent.replace(
+                concordance,
+                "它必须是非空字符串，但不必与 plan 返回的 `profile_fingerprint` 完全一致"
+            ).replace(read_fail_stop, "状态文件读取失败"),
+            # The mismatch stop point alone is dropped, and the read-failure
+            # stop point alone is dropped.
+            "mismatch_stop_removed": agent.replace(
+                read_fail_stop, "状态文件读取失败"),
+            "read_failure_stop_removed": agent.replace(
+                read_fail_stop, "状态文件不一致"),
         }
+        # Note: dropping the concordance wording alone is not a defect — the
+        # "mismatch -> stop" clause in the same rule still binds the committed
+        # fingerprint to the plan one, and that clause is asserted above.
         for label, mutated in mutations.items():
             with self.subTest(mutation=label):
                 self.assertNotEqual(mutated, agent,
