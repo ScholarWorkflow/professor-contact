@@ -79,7 +79,7 @@ If `folder_path` missing → return the error JSON.
 3. 定位每位教授的 `套磁候选输入.json`（`find 教授研究 -name 套磁候选输入.json`；`professors` 给定时按目录名精确匹配过滤）。缺失 → error `"先跑 professor-contact-analyzer（阶段 2）生成 套磁候选输入.json"`。
 4. 读 profile（查找链同 Input）。**`stage3-plan` / `stage3-finalize` 都传 `--profile <abs>`**——runner 算指纹并判定失效；如果只处理一个方向，两次都传相同的 `--direction-id <方向 ID>`（与 `--skip-direction-ids`/`--cross-direction-groups` 一样 plan/finalize 必须一致）；**`--refresh-scope selected` 时两次都必须显式传同一个 `--selection <教授目录>/套磁选择.json`**（该路径是教授本地第四阶段选择文件，issue #67），绝不依赖程序级同名文件：
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage3-plan \
+python3 .agents/skills/professor-contact/scripts/contact_state.py stage3-plan \
   --professor-dir <教授文件夹 abs> --profile <profile abs> --refresh-scope flagged \
   --direction-id <方向 ID> --cross-direction-groups '[["DIR_A","DIR_B"]]' \
   --program-root <program_root abs>
@@ -145,7 +145,7 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_s
 
 ### Step 3 — 跑 stage3-finalize（校验 + 状态写入 + 确定性渲染）
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage3-finalize \
+python3 .agents/skills/professor-contact/scripts/contact_state.py stage3-finalize \
   --professor-dir <教授文件夹 abs> --results /tmp/<教授名>_候选_results \
   --profile <profile abs> --refresh-scope flagged --direction-id <方向 ID> \
   --cross-direction-groups '[["DIR_A","DIR_B"]]' \
