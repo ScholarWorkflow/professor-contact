@@ -233,7 +233,7 @@ def main(argv=None):
     finally:
         base.stop_active()
         base.write_json(output / "final-verdict.json", result)
-    base.progress("结束：" + result.get("verdict", result["state"]))
+    base.progress("结束：" + (result.get("verdict") or result.get("state", "UNKNOWN")))
     return 0 if result.get("verdict") == "PASS" else 1
 
 
