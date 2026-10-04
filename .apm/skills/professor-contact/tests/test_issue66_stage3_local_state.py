@@ -163,6 +163,190 @@ def failing_unlink(predicate):
         yield
 
 
+# -- S3-DOC-1 static judgment helpers (issue-66 gate2 r15 revision) ---------
+#
+# The agent document is prose, so the binding branch has to be judged on the
+# clause structure instead of on marker substrings: a document that demands a
+# non-empty fingerprint unconditionally, or that reads the fingerprint from the
+# finalize response, must be rejected even though it still carries every marker
+# string.  The helpers below derive that disposition from the text itself.
+
+_STEP3_START = re.compile(r"\*\*finalize 指纹绑定检查（[^）\n]*按本轮是否实际解析到 profile")
+_BRANCH_WITH_PROFILE = re.compile(
+    r"(?:存在|有)[^。；\n]{0,60}?profile[^。；\n]{0,8}时")
+_BRANCH_NO_PROFILE = re.compile(r"(?:无|没有|未)[^。；\n]{0,12}profile")
+_CLAUSE_SPLIT = re.compile(r"[。；\n]+")
+_CLOSE_REFS = ("该状态文件", "该状态", "其中", "它", "状态文件")
+_STATE_SOURCE = re.compile(r"state_path|状态文件")
+_BIND_FIELD = re.compile(r"profile_fingerprint")
+# A read of the field from the finalize response, as opposed to the frozen
+# rule's denial that the response carries it at all.
+_RESPONSE_FIELD_SOURCE = re.compile(
+    r"读取[^。；\n]{0,20}返回的[^。；\n]{0,6}`?profile_fingerprint|"
+    r"用返回值中的[^。；\n]{0,6}`?profile_fingerprint|"
+    r"finalize[^。；\n]{0,12}返回的[^。；\n]{0,6}`?profile_fingerprint")
+_UNCONDITIONAL = re.compile(r"^\s*(?:这一条|本条|本命令的[^，。；\n]{0,8}|其)?\s*必须")
+_MUST_NONEMPTY = re.compile(r"必须[^。；\n]{0,20}非空")
+_STOP_VERB = re.compile(r"立即(?:停止|结束)")
+_NULL_VALUE = re.compile(r"`?null`?")
+_ALLOW_CONTINUE = re.compile(
+    r"不报错|不停止|不阻断|合法结果|继续|允许[^。；\n]{0,8}空")
+# "null is a legal result" may be stated with the null value late in the
+# clause; the prohibition on stopping arrives in a following sentence.
+_NULL_IS_LEGAL = re.compile(r"`?null`?[^。；\n]{0,20}是[^。；\n]{0,8}合法")
+_NO_PROFILE_STOP_WORD = re.compile(r"(?:一律|必须)停|立即(?:停止|结束)")
+_NULL_DEMAND = re.compile(
+    r"`?profile_fingerprint`?[^。；\n]{0,30}(?:必须|非空)|"
+    r"必须[^。；\n]{0,20}非空")
+_PROFILE_SCOPE = re.compile(r"profile[^。；\n]{0,12}(?:时|存在|有)|仅[^。；\n]{0,8}profile")
+_BIND_FAIL_MARKER = "profile_fingerprint_binding_failed"
+_EARLY_STOP_BEFORE_WRITE = re.compile(
+    r"(?:之前|早于|停在)[^。；\n]{0,16}(?:写|落盘)[^。；\n]{0,20}result")
+_READ_FAIL_STOP = re.compile(r"读取失败[^。；\n]{0,12}(?:立即)?(?:停止|结束|error)")
+
+STEP1_NAME = "Step 1 — Resolve program root + runner plan"
+STEP3_NAME = "Step 3 — 跑 stage3-finalize（校验 + 状态写入 + 确定性渲染）"
+
+
+def _agent_steps(agent):
+    """Return the `### Step n` sections of the agent document, keyed by title."""
+    starts = list(re.finditer(r"(?m)^### (Step [^\n]+)$", agent))
+    return {match.group(1).strip():
+            agent[match.start():starts[index + 1].start()
+                  if index + 1 < len(starts) else len(agent)]
+            for index, match in enumerate(starts)}
+
+
+def _binding_branches(step3):
+    """Split the finalize-side binding rule into its two profile branches.
+
+    The rule is one paragraph; the branches are read from that paragraph only,
+    so the runner bullets that follow it can never be mistaken for the
+    no-profile branch.  A document whose profile-present branch condition is
+    missing yields no branches at all, which is what the frozen rule forbids.
+    """
+    parts = _STEP3_START.split(step3, 1)
+    body = (parts[1] if len(parts) > 1 else step3).split("\n", 1)[0]
+    with_profile = _BRANCH_WITH_PROFILE.search(body)
+    no_profile = _BRANCH_NO_PROFILE.search(body)
+    if not with_profile or not no_profile or no_profile.start() < with_profile.start():
+        return None, None
+    return (body[with_profile.start():no_profile.start()],
+            body[no_profile.start():])
+
+
+def _binding_clauses(text):
+    """Split one binding branch into punctuation-separated clauses."""
+    return [clause.strip() for clause in _CLAUSE_SPLIT.split(text) if clause.strip()]
+
+
+def _fingerprint_source_clause(clauses):
+    """Return the clause that pins where the committed fingerprint is read from."""
+    for index, clause in enumerate(clauses):
+        if not _BIND_FIELD.search(clause):
+            continue
+        window = "，".join(clauses[max(0, index - 2):index + 1])
+        if _STATE_SOURCE.search(window) \
+                or any(ref in window for ref in _CLOSE_REFS):
+            return clause
+    return None
+
+
+def _response_is_fingerprint_source(clauses):
+    """True when a clause reads profile_fingerprint out of the finalize response.
+
+    This is the edc39f6 defect: the value has to come from the committed state
+    file named by the returned state_path, never from the finalize response.
+    """
+    for clause in clauses:
+        if not _BIND_FIELD.search(clause):
+            continue
+        if _RESPONSE_FIELD_SOURCE.search(clause):
+            return True
+    return False
+
+
+def _doc_binding_disposition(agent):
+    """Decide whether the agent document carries the frozen binding contract.
+
+    Judged over the two branches of the finalize-side rule plus the plan-side
+    hard check: (1) the branch condition on this round's profile, (2) the
+    fingerprint read from committed state and not from the finalize response,
+    (3) the plan/path/fingerprint consistency demands, (4) both stop points,
+    with the plan-side stop before any candidate result file is written, and
+    (5) the explicit null-is-legal continuation when no profile exists.
+    """
+    if not _STEP3_START.search(agent):
+        return False, "missing finalize-side binding rule"
+    steps = _agent_steps(agent)
+    step1, step3 = steps.get(STEP1_NAME), steps.get(STEP3_NAME)
+    if step1 is None or step3 is None:
+        return False, "missing Step 1 / Step 3 section"
+    with_profile, no_profile = _binding_branches(step3)
+    if with_profile is None:
+        return False, "binding rule states no profile-present / no-profile branches"
+
+    profile_clauses = _binding_clauses(with_profile)
+    if _response_is_fingerprint_source(profile_clauses):
+        return False, "fingerprint read from the finalize response"
+    if _fingerprint_source_clause(profile_clauses) is None:
+        return False, "fingerprint source (state_path / state file) not pinned"
+    for clause in profile_clauses:
+        if _UNCONDITIONAL.search(clause) and (_MUST_NONEMPTY.search(clause)
+                                              or _STOP_VERB.search(clause)):
+            return False, "unconditional non-empty/stop demand in the profile branch"
+    body_clauses = None
+    for index, clause in enumerate(profile_clauses):
+        if _BIND_FAIL_MARKER in clause or _UNCONDITIONAL.search(clause):
+            body_clauses = profile_clauses[index:]
+            break
+    force_scope = "，".join(body_clauses or profile_clauses)
+    if not _PROFILE_SCOPE.search(force_scope):
+        return False, "empty-fingerprint failure not scoped to this round's profile"
+    if not _READ_FAIL_STOP.search(force_scope):
+        return False, "unreadable committed state not stopped on"
+    if _BIND_FAIL_MARKER not in force_scope:
+        return False, "missing profile_fingerprint_binding_failed note"
+
+    no_clauses = _binding_clauses(no_profile)
+    if any(_NO_PROFILE_STOP_WORD.search(clause)
+           or _UNCONDITIONAL.search(clause) and _STOP_VERB.search(clause)
+           for clause in no_clauses):
+        return False, "no-profile branch demands a stop"
+    null_clause = next((clause for clause in no_clauses
+                        if _NULL_IS_LEGAL.search(clause)), None)
+    if null_clause is None:
+        return False, "no-profile null fingerprint not declared a legal result"
+    if _NULL_DEMAND.search(null_clause):
+        return False, "no-profile branch demands a non-empty fingerprint"
+    if not any(_NULL_VALUE.search(clause) and _ALLOW_CONTINUE.search(clause)
+               for clause in no_clauses):
+        return False, "no-profile null fingerprint not declared legal to continue"
+
+    plan_clauses = [chunk.strip()
+                    for chunk in re.split(r"(?m)^\d+\.\s+|\n", step1)
+                    if chunk.strip()]
+    plan_index = next((index for index, chunk in enumerate(plan_clauses)
+                       if "指纹硬检查" in chunk), None)
+    if plan_index is None:
+        return False, "missing plan-side hard fingerprint check"
+    plan_clause = plan_clauses[plan_index]
+    # The section intro can ride along on the same split chunk; the check
+    # itself starts at its own label.
+    plan_check = plan_clause[plan_clause.index("**plan 指纹硬检查**"):]
+    if _BIND_FAIL_MARKER not in plan_check:
+        return False, "plan-side check missing profile_fingerprint_binding_failed"
+    if not _PROFILE_SCOPE.search(plan_check):
+        return False, "plan-side check not scoped to this round's profile"
+    if not _MUST_NONEMPTY.search(plan_check):
+        return False, "plan-side check missing the non-empty fingerprint demand"
+    # The plan-side stop point is pinned by the fail-closed rationale of the
+    # finalize-side rule (the plan check itself defers to Step 1.5 for it).
+    if not _EARLY_STOP_BEFORE_WRITE.search(with_profile):
+        return False, "plan-side stop not pinned before the result files are written"
+    return True, "conditional branch with committed-state source and both stop points"
+
+
 class TestIssue66Stage3(Stage3DirectionGroupBase):
     """One professor A (dir_A/dir_B + shared paper) from the shared builder."""
 
@@ -1071,6 +1255,65 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         self.assertIn("runner 非成功早停", agent)
         self.assertIn("原样完整落盘", agent)
         self.assertIn("绝不手写 `printf`/模板重打", agent)
+        # Agent doc: the binding branch itself, not just its marker strings
+        # (issue-66 gate2 r15 revision; closes 5978275031 / 5978453336).
+        ok, why = _doc_binding_disposition(agent)
+        self.assertTrue(
+            ok, f"agent binding branch fails the frozen judgment: {why}")
+        # The judgment above has to reject the two historical defects it
+        # replaces: the unconditional non-empty demand (8fe6f96) and the
+        # fingerprint read from the finalize response (edc39f6).  Each
+        # mutation is cut into the current frozen paragraph, so a judgment
+        # that merely accepts the current text is caught here.
+        frozen = next((line for line in agent.splitlines()
+                       if _STEP3_START.search(line)), None)
+        self.assertIsNotNone(frozen, "frozen binding paragraph not found")
+        guard = _BRANCH_WITH_PROFILE.search(frozen)
+        no_guard = _BRANCH_NO_PROFILE.search(frozen)
+        self.assertIsNotNone(guard, "profile-present branch condition missing")
+        self.assertIsNotNone(no_guard, "no-profile branch condition missing")
+        plan_line = next((line for line in agent.splitlines()
+                          if "plan 指纹硬检查" in line), None)
+        self.assertIsNotNone(plan_line, "plan-side hard check not found")
+        good_source = ("用返回值中的 `state_path` 定位并读取该状态文件里实际提交的 "
+                       "`profile_fingerprint`")
+        plan_strong = "必须是非空字符串且绑定本 child 传入的同一 `--profile`"
+        self.assertIn(good_source, frozen, "committed-state source clause not found")
+        self.assertIn(plan_strong, plan_line, "plan-side non-empty demand not found")
+        mutations = {
+            # The 8fe6f96 defect: the branch guard dropped, so the frozen
+            # stop rule applies to every round, no-profile rounds included.
+            "unconditional_nonempty": agent.replace(guard.group(), ""),
+            # The edc39f6 defect: source switched to the finalize response.
+            "wrong_response_source": agent.replace(
+                good_source,
+                "读取 `stage3-finalize` 返回的 `profile_fingerprint`"),
+            # No-profile branch re-armed with a stop / non-empty demand.
+            "no_profile_stop": agent.replace(
+                "**不报错、不停止**",
+                "**不报错**，`profile_fingerprint` 为 `null` 时一律停止并返回 error"),
+            "no_profile_nonempty": agent.replace("合法结果", "必须是非空字符串"),
+            # Plan-side hard check loses the scope / the non-empty demand.
+            "plan_scope_removed": agent.replace(
+                plan_line, plan_line.replace(
+                    plan_strong, "必须与已解析 profile 一致")),
+            "plan_nonempty_removed": agent.replace(
+                plan_line, plan_line.replace(
+                    plan_strong, "必须绑定本 child 传入的同一 `--profile`")),
+            # The plan-side stop point is dropped from the fail-closed text.
+            "plan_stop_removed": agent.replace(
+                "plan 侧空指纹必须停在写任何候选 result 文件之前（Step 1.5），",
+                "plan 侧空指纹按绑定失败处理，"),
+        }
+        for label, mutated in mutations.items():
+            with self.subTest(mutation=label):
+                self.assertNotEqual(mutated, agent,
+                                    f"{label} mutation did not apply")
+                ok, why = _doc_binding_disposition(mutated)
+                self.assertFalse(ok, f"judgment accepted the {label} defect")
+        # The unmutated document every mutation derives from stays the
+        # accepted one, so the matrix cannot pass by rejecting everything.
+        self.assertTrue(_doc_binding_disposition(agent)[0])
         # Workflow reference syncs the state machine and the sibling bound.
         self.assertIn("generator source-binding", wfref)
         self.assertIn("固定状态转移", wfref)
