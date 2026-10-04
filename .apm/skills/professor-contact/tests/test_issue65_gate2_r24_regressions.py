@@ -109,18 +109,25 @@ class Issue65Gate2Stage2ProofBindingTests(Issue65Gate2R24Base):
         # Missing proof cannot be treated as a legal plan input.
         text, code = self.plan_raw(self.root / "不存在的证明.json")
         payload = self._payload(text, "missing-proof plan")
+        self.assertEqual(payload.get("status"), "error", payload)
         self.assertEqual(payload.get("reason_code"), "invalid_params", payload)
         self.assertEqual(code, 1, f"missing-proof plan exit code: {code!r}")
         self.assertEqual(self.outputs_state(), initial_outputs)
 
-        # A valid proof from another professor cannot be consumed by A.
+        # A valid proof from another professor cannot be consumed by A. The
+        # professor mismatch is a malformed plan input, so invalid_params is
+        # the unique expected terminal before deeper identity-drift checks.
         sibling_proof = self._preflight_for(self.B_DISPLAY, self.b_target)
         self.preflight_file.write_text(
             json.dumps(sibling_proof, ensure_ascii=False), encoding="utf-8"
         )
         self._write_facts(preflight_id=sibling_proof["preflight_id"])
         text, code = self.plan_raw(self.preflight_file)
-        self._require_refresh(text, code, "sibling-proof plan", drift="identity")
+        payload = self._payload(text, "sibling-proof plan")
+        self.assertEqual(payload.get("status"), "error", payload)
+        self.assertEqual(payload.get("reason_code"), "invalid_params", payload)
+        self.assertIn("professor mismatch", payload.get("message", ""), payload)
+        self.assertEqual(code, 1, f"sibling-proof plan exit code: {code!r}")
         self.assertEqual(self.outputs_state(), initial_outputs)
 
         # A legal A proof must cover bytes outside the old partial direction fingerprint.
