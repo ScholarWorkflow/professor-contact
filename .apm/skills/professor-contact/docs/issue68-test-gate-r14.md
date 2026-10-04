@@ -19,7 +19,9 @@ Requirement / Gate 1          = unchanged from issue-68-plan-r11 and prior appro
 r13 capability Preflight      = pr72-r13-preflight-exec-2026-10-04
 r13 capability result         = CAPABILITY_CONFIRMED
 r13 Preflight producer        = d6800a6ec12ed25e955c3393b6f91178f59ddc15
-r14 Recipe implementation     = through 9084cd637d72270518c328624301e9a228bfd219
+r14 tested Recipe head        = a3447399ab97ea2fba8d1ade2dbcec37d6d231a3
+r14 tested merge commit       = ff468457b73af957b7e747425f4dafa19739c528
+current main in tested merge  = 62eda84f60736d7a1e7081b41ae0f81a5f48500b
 fixture                       = c738fa2f8bcbb16cd99d741332d5f59b062b6357
 fixture contract              = skills-test-fixtures/codex-eval-adapter@16
 eval-server frozen revision   = 3fdfa9387140cfc2e2aa3af415f85015f79706d2
@@ -109,7 +111,7 @@ raw current final count  = 1
 selected text            = ok
 ```
 
-该观察的声明依赖在 r14 未变化，因此复用。
+测试工程师已对归档中的原始 `response.json` 独立重判：当前 `runtime_generation`、root `thread_id`、当前 `turn_id` 下恰好一个 `assistant + phase=final_answer`，文本为 `ok`；request/response/capability 三个文件的 SHA256 与归档清单一致。该观察的声明依赖在 r14 未变化，因此复用。
 
 ### 5.2 Shared-service isolation — `EXECUTE_CURRENT`
 
@@ -129,7 +131,29 @@ ISOLATION_CONFIRMED
 
 `CASE_NOT_STARTED` 表示服务来源、进程环境或存储隔离证据不足；不得执行正式 `PC68-R1`，也不得归因产品失败。无 retry。
 
-## 6. 正式 PC68-R1 Recipe
+## 6. r14 确定性回归
+
+第一次 r14 CI 暴露一项测试资产错误：正式 runner 的结束日志用了 `result.get("verdict", result["state"])`，Python 会预先计算默认参数，合法 verdict 对象没有 `state` 时触发 `KeyError`。该错误没有经过产品判定路径，分类为测试资产错误。提交 `a3447399ab97ea2fba8d1ade2dbcec37d6d231a3` 改为惰性选择 verdict/state。
+
+修复后 GitHub CI 在 PR HEAD `a3447399...` 与 `main@62eda84...` 的合成提交 `ff468457b73af957b7e747425f4dafa19739c528` 上执行：
+
+```text
+python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_*.py' -v
+Ran 1003 tests in 247.798s
+OK (skipped=2)
+```
+
+两项 skip 都是 Issue #74 在 shallow checkout 下要求 compatibility base 的专属检查，与 Issue #68 无关。`test_issue68_runtime_r14.py` 的服务来源、存储隔离、请求前停止、请求后实例变化失效等回归全部实际执行并通过。
+
+因此：
+
+```text
+PC68-R1 r14 deterministic tests = PASS
+```
+
+本次 CI 没有真实 `PC68-R1` 模型验收请求。
+
+## 7. 正式 PC68-R1 Recipe
 
 只有 5.1 `CAPABILITY_CONFIRMED` 且 5.2 `ISOLATION_CONFIRMED` 后才能执行：
 
@@ -145,7 +169,7 @@ python .apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r1
 
 单次正式请求，不重试、不换服务、不换模型、不改断言。正式入口必须在 `provenance.json`、`eval-service-provenance.before.json`、`eval-service-provenance.after.json` 中保存运行版本、服务来源及隔离证据。
 
-## 7. Gate 2 当前状态
+## 8. Gate 2 当前状态
 
 当前：
 
@@ -153,11 +177,11 @@ python .apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r1
 Gate 1                              = PASS + COMPLETE，未重开
 PC68-D1/P1–P7                       = prior PASS，不重开
 PC68-R1 final-source capability     = REUSE_PRIOR_PASS / CAPABILITY_CONFIRMED
-PC68-R1 r14 deterministic tests     = pending CI at current head
+PC68-R1 r14 deterministic tests     = PASS
 PC68-R1 shared-service isolation    = EXECUTE_CURRENT / not run
 Gate 2                              = PARTIAL / NOT COMPLETE
 Gate 3                              = NOT_READY
 Merge                               = NOT_READY
 ```
 
-Gate 2 只剩两项事实：当前 r14 回归必须通过；本地执行一次 5.2 isolation check 并取得 `ISOLATION_CONFIRMED`。两项满足后测试工程师再做第 3.3 节完整复审；通过后才冻结 r14 并交第三关口执行正式 `PC68-R1`。
+Gate 2 只剩本地执行一次 5.2 isolation check 并取得 `ISOLATION_CONFIRMED`。该检查不发模型请求。取得结果后，测试工程师按 Test Engineer Rule 第 3.3 节做完整复审；通过后才冻结 r14 并交第三关口执行正式 `PC68-R1`。
