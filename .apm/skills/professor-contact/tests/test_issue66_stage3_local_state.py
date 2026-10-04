@@ -203,17 +203,19 @@ _BIND_FAIL_MARKER = "profile_fingerprint_binding_failed"
 _EARLY_STOP_BEFORE_WRITE = re.compile(
     r"(?:之前|早于|停在)[^。；\n]{0,16}(?:写|落盘)[^。；\n]{0,20}result")
 _READ_FAIL_STOP = re.compile(r"读取失败[^。；\n]{0,20}(?:立即)?(?:停止|结束|error)")
+# The wording that carries the read-failure stop point, located by pattern so
+# no single sentence is frozen as the acceptance wording.
+_READ_FAIL_WORDING = re.compile(r"状态文件读取失败(?:或不一致)?")
 # The committed fingerprint has to be compared with the plan fingerprint and a
-# mismatch has to stop the child (issue-66 gate2 revision 2).  A cancelled
-# comparison ("but it need not match the plan fingerprint") is not a
-# requirement, and a document that never demands the comparison is defective.
-_CONCORDANCE_MENTION = re.compile(
-    r"(?:与|跟)[^。；\n]{0,12}(?:plan|计划)[^。；\n]{0,60}?"
-    r"(?:一致|同一|相同|比较|核对|比对)")
-_CONCORDANCE_CANCELLED = ("不必", "无需", "不用", "无须", "不再", "不要求", "不需要")
-_COMPARISON_MENTION = re.compile(
-    r"(?:比较|核对|比对)[^。；\n]{0,20}(?:plan|计划)")
-_COMPARISON_CANCELLED = ("无需", "不必", "不用", "无须", "不需要", "不用再")
+# mismatch has to stop the child (issue-66 gate2 revision 2).  The judgment
+# works on the demand's semantics: a cancelled comparison is not a
+# requirement, whether the cancellation sits before or after the comparison
+# wording ("but the run need not compare the two fingerprints").
+_CONCORDANCE_SENTENCE = re.compile(
+    r"(?:与|跟)[^。；\n]{0,12}(?:plan|计划)[^。；\n]{0,60}?(?:一致|同一|相同)")
+_CANCEL_WORDS = ("不必", "无需", "不用", "无须", "不再", "不要求", "不需要", "无需再")
+_COMPARE_WORDS = ("比较", "比对", "核对", "校验", "对照")
+_FINGERPRINT_WORDS = ("指纹", "fingerprint")
 _MISMATCH_STOP = re.compile(
     r"(?:不一致|不符合|不同)[^。；\n]{0,12}(?:立即)?(?:停止|结束|error|失败)")
 
@@ -279,24 +281,21 @@ def _response_is_fingerprint_source(clauses):
     return False
 
 
-def _requires_plan_concordance(text):
-    """True when the text demands the committed fingerprint match the plan one.
+def _concordance_cancelled(text):
+    """True when the text cancels the plan/committed fingerprint comparison.
 
-    Two cancellation shapes are refused: a mention that negates the comparison
-    ("but it need not match the plan fingerprint") and a demand that drops the
-    comparison itself ("no need to compare the committed and plan
-    fingerprints").  A document that never states the requirement is defective
-    by absence, which the caller reports separately.
+    The cancellation has to sit in the same sub-clause as the agreement
+    wording, which covers both "but it need not match the plan fingerprint"
+    and "but the run need not compare the two fingerprints" while leaving a
+    demand that merely mentions a read failure or a disagreement alone.
     """
-    for mention in _CONCORDANCE_MENTION.finditer(text):
-        prefix = text[max(0, mention.start() - 6):mention.start()]
-        if any(word in prefix for word in _CONCORDANCE_CANCELLED):
-            return False
-    for mention in _COMPARISON_MENTION.finditer(text):
-        prefix = text[max(0, mention.start() - 6):mention.start()]
-        if any(word in prefix for word in _COMPARISON_CANCELLED):
-            return False
-    return True
+    for clause in _CLAUSE_SPLIT.split(text):
+        if not _CONCORDANCE_SENTENCE.search(clause):
+            continue
+        if (any(word in clause for word in _CANCEL_WORDS)
+                and any(word in clause for word in _COMPARE_WORDS + _FINGERPRINT_WORDS)):
+            return True
+    return False
 
 
 def _doc_binding_disposition(agent):
@@ -341,8 +340,10 @@ def _doc_binding_disposition(agent):
         return False, "unreadable committed state not stopped on"
     if not _MISMATCH_STOP.search(force_scope):
         return False, "plan/committed fingerprint mismatch not stopped on"
-    if not _requires_plan_concordance(force_scope):
+    if not _CONCORDANCE_SENTENCE.search(force_scope):
         return False, "committed fingerprint not required to match the plan fingerprint"
+    if _concordance_cancelled(force_scope):
+        return False, "plan/committed fingerprint comparison cancelled in the same rule"
     if _BIND_FAIL_MARKER not in force_scope:
         return False, "missing profile_fingerprint_binding_failed note"
 
@@ -1318,12 +1319,24 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         good_source = ("用返回值中的 `state_path` 定位并读取该状态文件里实际提交的 "
                        "`profile_fingerprint`")
         plan_strong = "必须是非空字符串且绑定本 child 传入的同一 `--profile`"
-        concordance = "它必须是非空字符串且与 plan 返回的 `profile_fingerprint` 完全一致"
-        read_fail_stop = "状态文件读取失败或不一致"
         self.assertIn(good_source, frozen, "committed-state source clause not found")
         self.assertIn(plan_strong, plan_line, "plan-side non-empty demand not found")
-        self.assertIn(concordance, frozen, "concordance demand not found")
-        self.assertIn(read_fail_stop, frozen, "read-failure stop point not found")
+        # The concordance and read-failure spans are located by pattern, so no
+        # single Chinese sentence is frozen as the acceptance wording.
+        concordance_match = _CONCORDANCE_SENTENCE.search(frozen)
+        self.assertIsNotNone(concordance_match, "concordance wording not found")
+        # Replace only the clause that carries the demand, so the paragraph
+        # anchors and the rest of the rule stay untouched.
+        clause_sep = "——"
+        sentence_start = frozen.rfind(clause_sep, 0, concordance_match.start()) + len(clause_sep)
+        sentence_end = frozen.find(clause_sep, concordance_match.end())
+        sentence_end = len(frozen) if sentence_end < 0 else sentence_end
+        concordance = frozen[sentence_start:sentence_end]
+        # The read-failure wording is located by pattern too.
+        read_fail_match = _READ_FAIL_WORDING.search(frozen)
+        self.assertIsNotNone(read_fail_match, "read-failure stop point not found")
+        read_fail_stop = read_fail_match.group()
+        self.assertIn("读取失败", read_fail_stop)
         mutations = {
             # The 8fe6f96 defect: the branch guard dropped, so the frozen
             # stop rule applies to every round, no-profile rounds included.
@@ -1348,16 +1361,24 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
             "plan_stop_removed": agent.replace(
                 "plan 侧空指纹必须停在写任何候选 result 文件之前（Step 1.5），",
                 "plan 侧空指纹按绑定失败处理，"),
-            # The concordance demand is cancelled, and the mismatch stop point
-            # is dropped (the counterexample in the 2026-10-04 18:00 review).
+            # The concordance clause is rewritten to cancel the comparison, and
+            # the mismatch stop point is dropped (the counterexample in the
+            # 2026-10-04 18:00 review).
             "concordance_cancelled": agent.replace(
                 concordance,
-                "它必须是非空字符串，但不必与 plan 返回的 `profile_fingerprint` 完全一致"
+                "它必须是非空字符串且与 plan 返回的 `profile_fingerprint` 完全一致，"
+                "但实际执行无需比较这两个指纹"
             ).replace(read_fail_stop, "状态文件读取失败"),
+            # The cancellation arrives after a still-positive agreement wording
+            # (the counterexample in the 2026-10-04 18:24 review).
+            "tail_cancellation": agent.replace(
+                concordance,
+                "它必须是非空字符串且与 plan 返回的 `profile_fingerprint` 完全一致，"
+                "但实际执行无需比较这两个指纹"),
             # The mismatch stop point alone is dropped, and the read-failure
             # stop point alone is dropped.
             "mismatch_stop_removed": agent.replace(
-                read_fail_stop, "状态文件读取失败"),
+                "、状态文件读取失败或不一致", "、状态文件读取失败"),
             "read_failure_stop_removed": agent.replace(
                 read_fail_stop, "状态文件不一致"),
         }
@@ -1370,9 +1391,21 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                                     f"{label} mutation did not apply")
                 ok, why = _doc_binding_disposition(mutated)
                 self.assertFalse(ok, f"judgment accepted the {label} defect")
-        # The unmutated document every mutation derives from stays the
-        # accepted one, so the matrix cannot pass by rejecting everything.
+        # The unmutated document every mutation derives from stays the accepted
+        # one, so the matrix cannot pass by rejecting everything.
         self.assertTrue(_doc_binding_disposition(agent)[0])
+        # A legal rewrite that keeps the same demand in different words is
+        # accepted: the contract is the behaviour, not one frozen sentence.
+        for label, rewritten in {
+                "plan 中文口径": "从该状态文件的 `profile_fingerprint` 字段取出的值必须"
+                                 "与 `stage3-plan` 的 profile 指纹逐字相同",
+                "显式要求比较": "它必须是非空字符串，且必须比较提交指纹与计划指纹",
+        }.items():
+            with self.subTest(equivalent_wording=label):
+                variant = agent.replace(concordance, rewritten)
+                self.assertNotEqual(variant, agent, f"{label} rewrite did not apply")
+                ok, why = _doc_binding_disposition(variant)
+                self.assertTrue(ok, f"equivalent wording rejected: {label} ({why})")
         # Workflow reference syncs the state machine and the sibling bound.
         self.assertIn("generator source-binding", wfref)
         self.assertIn("固定状态转移", wfref)
