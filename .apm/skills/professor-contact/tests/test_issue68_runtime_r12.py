@@ -164,6 +164,18 @@ class TestIssue68RuntimeR12(unittest.TestCase):
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("BLOCKED_OBSERVABILITY", "root_final_message_unobservable"))
 
+    def test_stale_prior_codex_final_cannot_replace_last_turn_terminal_source(self):
+        response, adapter = self.codex_evidence()
+        response["output"]["root_thread_read"]["result"]["thread"]["turns"] = [
+            {"items": [{"type": "agentMessage", "id": "prior-final", "text": self.root_result(),
+                        "phase": "final_answer"}]},
+            {"items": [{"type": "agentMessage", "id": "current-unknown", "text": self.history_conflict(),
+                        "phase": None}]},
+        ]
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("BLOCKED_OBSERVABILITY", "root_final_message_unobservable"))
+
     def test_missing_opencode_final_text_after_tasks_blocks(self):
         events, shared = self.opencode_evidence()
         events.pop()
