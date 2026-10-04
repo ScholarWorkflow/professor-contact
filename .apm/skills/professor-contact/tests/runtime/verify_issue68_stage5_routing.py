@@ -109,6 +109,39 @@ def owner_outcome(texts, owner):
     return outcomes[0], None
 
 
+def final_result_rows(texts):
+    """The pinned final business result source: top-level rows of root's own
+    final message. Recursion stops at that array/object, so historical
+    references and nested diagnostics are never terminal results."""
+    rows = []
+    for text in texts:
+        for value in json_values(text):
+            rows.extend(row for row in (value if isinstance(value, list) else [value])
+                        if isinstance(row, dict))
+    return rows
+
+
+def source_malformed(texts):
+    """A result-shaped JSON fragment that cannot be decoded is damaged evidence,
+    not a missing observation."""
+    decoder = json.JSONDecoder()
+    for text in texts:
+        offset = 0
+        while offset < len(text):
+            if text[offset] not in "[{":
+                offset += 1
+                continue
+            try:
+                _, length = decoder.raw_decode(text[offset:])
+            except ValueError:
+                if text[offset:offset + 2] in ('{"', "[{"):
+                    return True
+                offset += 1
+            else:
+                offset += length
+    return False
+
+
 def command_action(command, manifest):
     """Only a structured executed shell item can supply a CLI invocation."""
     tokens = shlex.split(command)
@@ -200,17 +233,27 @@ def runtime_checks(calls, manifest, completion_points, root_texts, root=None, ou
         return verdict("FAIL_PRODUCT", "multiple_aggregate_rebuilds")
     if rebuilds and rebuilds[0]["start"] <= max(completion_points):
         return verdict("FAIL_PRODUCT", "aggregate_precedes_result_consumption")
+    # The pinned final business result source is root's own final message.
+    # Inside that source each professor directory must resolve to exactly one
+    # consistent consumed outcome matching the owner's returned result.
+    if source_malformed(root_texts):
+        return verdict("INVALID_EVIDENCE", "root_final_result_malformed")
+    rows = [row for row in final_result_rows(root_texts) if "status" in row and "reason_code" in row]
     for owner in manifest["owners"]:
-        rows = [row for text in root_texts for value in json_values(text) for row in objects(value)]
         expected = (outcomes or {}).get(owner["email_pack"],
                     dict(owner["expected_result"], professor_dir=owner["professor_dir"]))
-        if not any(row.get("professor_dir") == owner["professor_dir"]
-                   and row.get("status") == expected["status"]
-                   and row.get("reason_code") == expected["reason_code"] for row in rows):
-            if any(row.get("professor_dir") == owner["professor_dir"] and "status" in row
-                   and "reason_code" in row for row in rows):
-                return verdict("FAIL_PRODUCT", "root_changed_owner_result")
+        consumed = [row for row in rows if row.get("professor_dir") == owner["professor_dir"]]
+        if not consumed:
             return verdict("BLOCKED_OBSERVABILITY", "root_consumed_result_unobservable")
+        seen = []
+        for row in consumed:
+            outcome = {key: row[key] for key in ("professor_dir", "status", "reason_code")}
+            if outcome not in seen:
+                seen.append(outcome)
+        if len(seen) != 1:
+            return verdict("FAIL_PRODUCT", "root_consumed_results_conflict", observed_results=seen)
+        if seen[0] != expected:
+            return verdict("FAIL_PRODUCT", "root_changed_owner_result", observed_result=seen[0])
     return verdict("PASS", owner_pack_set=sorted(expected_packs), rebuild_count=len(rebuilds))
 
 
