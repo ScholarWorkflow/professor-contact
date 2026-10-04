@@ -41,10 +41,12 @@
   "runner": ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r14_codex.py",
   "runner_reuse": "run_issue68_stage5_routing.py pipeline rebound through run_issue68_stage5_routing_r13.py; normal shared fixture parser is used unchanged; no root-history wrapper, multi-host execution or combine step",
   "preflight": {
-    "entry": ".apm/skills/professor-contact/tests/runtime/check_issue68_codex_final_source_r13.py",
-    "evidence_revision": "pr72-r13-preflight-exec-2026-10-04",
-    "reuse_rule": "Reusable for r14 because the request builder, final-source selector, model, reasoning, sandbox, fixture adapter, eval-server revision and observation field are unchanged; r14 changes only formal-run service provenance archiving.",
-    "success": "CAPABILITY_CONFIRMED",
+    "capability_entry": ".apm/skills/professor-contact/tests/runtime/check_issue68_codex_final_source_r13.py",
+    "capability_evidence_revision": "pr72-r13-preflight-exec-2026-10-04",
+    "capability_reuse_rule": "Reusable for r14 because the request builder, final-source selector, model, reasoning, sandbox, fixture adapter, eval-server revision and observation field are unchanged; r14 changes only formal-run service provenance and storage isolation enforcement.",
+    "capability_success": "CAPABILITY_CONFIRMED",
+    "isolation_entry": ".apm/skills/professor-contact/tests/runtime/check_issue68_eval_service_isolation_r14.py",
+    "isolation_success": "ISOLATION_CONFIRMED",
     "on_absent": "stop before formal PC68-R1",
     "retry": "none"
   },
@@ -55,13 +57,17 @@
       "unique listening PID",
       "listener cwd equal to the frozen eval-server checkout",
       "listener command identifies eval_server.py and the same EVAL_PORT",
-      "listener process start time"
+      "listener process start time",
+      "service process CODEX_HOME exists and differs from the production default ~/.codex",
+      "config sqlite_home, inherited CODEX_SQLITE_HOME and config log_dir are recorded when present",
+      "any explicit SQLite/log path is inside the test CODEX_HOME"
     ],
     "after_request": [
       "same EVAL_PORT",
       "same listening PID",
       "same listener cwd",
       "same listener process start time",
+      "same storage-isolation evidence",
       "eval-server checkout still clean at the frozen revision"
     ],
     "artifacts": [
