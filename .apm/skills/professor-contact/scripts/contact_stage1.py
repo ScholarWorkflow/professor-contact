@@ -663,7 +663,10 @@ def verify_command(program_root: Path, target_file: Path) -> dict[str, Any]:
     if problems:
         emit({"status": "needs_input", "reason_code": "stale_stage1_snapshot",
               "snapshot_path": str(state_path), "professor": name,
-              "stale_professors": [{"professor": name, "problems": sorted(set(problems))}],
+              "stale_professors": [{"professor": name,
+                                    "professor_dir": target.get("professor_dir"),
+                                    "preview_path": target.get("preview_path"),
+                                    "problems": sorted(set(problems))}],
               "notes": "re-run Stage 1 (contact_stage1.py build) before Stage 2"})
         raise SystemExit(2)
     return {"status": "ok", "snapshot_path": str(state_path), "professors": [name]}

@@ -198,9 +198,10 @@ class Stage2PreflightContractTests(unittest.TestCase):
         """G64-T4/T7 support (R64-17): analyzer input and handoff stay professor-local.
 
         Every target-bound analyzer command names one professor's own local
-        target, and the returned handoff is a transaction record array carrying
-        that professor's canonical identity — not a mapping keyed by display
-        name, which cannot represent two same-name professors.
+        target, and the returned handoff carries the professor's
+        target_states / stage1_snapshots maps — requirement r2 permits the
+        name-keyed outer shape in the unique-name scope, and the retired
+        program-level paths stay excluded (C65-03 owns that proof).
         """
         for target in ("professor-contact-codex", "professor-contact-opencode"):
             with self.subTest(target=target):
@@ -210,10 +211,9 @@ class Stage2PreflightContractTests(unittest.TestCase):
                 self.assertTrue(bound, msg=target)
                 for command in bound:
                     self.assertIn("--target-file", command, msg=command)
-                self.assertIn('"transactions": [', agent)
-                for field in ('"professor_dir"', '"preview_path"', '"target_state"'):
-                    self.assertIn(field, agent, msg=target)
-                self.assertNotIn('"target_states": {', agent)
+                self.assertIn('"target_states": {', agent)
+                self.assertIn('"stage1_snapshots": {', agent)
+                self.assertNotIn('"transactions": [', agent)
 
     def test_issue64_t7_program_level_table_is_only_a_prohibition(self):
         """R64-5 (G64-T7): neither analyzer reads or reconstructs the retired table."""

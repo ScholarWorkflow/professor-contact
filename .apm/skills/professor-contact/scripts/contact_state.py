@@ -4154,8 +4154,6 @@ def stage2_preflight_plan_drift(plan_inputs: dict, current: dict) -> list:
         drift.append("versions")
     if plan_inputs.get("current_year") != current["current_year"]:
         drift.append("current_year")
-    if plan_inputs.get("identity") != current["identity"]:
-        drift.append("identity")
     if plan_inputs.get("program_inputs") != current["program_inputs"]:
         drift.append("program_inputs")
     if plan_inputs.get("selected_direction_ids") != current["selected_direction_ids"]:

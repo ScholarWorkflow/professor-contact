@@ -12,6 +12,9 @@ from gate2_evidence import TestPreparationError
 
 
 BASE_SHA = "768b49ef4514e36edec6b57ed3821a99af9e9c00"
+# issue-74 自身的合并提交：静态 diff 认证绑定到已记录的 issue-74 合并，
+# 而不是当前分支头（其他议题合并后 BASE_SHA..HEAD 会混入非 issue-74 材料）。
+ISSUE74_MERGE_SHA = "03dfd501f5212c86356409f7e011f676384f2633"
 TESTS_DIR = Path(__file__).resolve().parent
 RUNTIME_DIR = TESTS_DIR / "runtime"
 REPO_ROOT = TESTS_DIR.parents[3]
@@ -46,7 +49,8 @@ class Issue74StaticAcceptanceTests(unittest.TestCase):
 
         try:
             result = subprocess.run(
-                ["git", "-C", str(REPO_ROOT), "diff", "--name-only", f"{BASE_SHA}..HEAD"],
+                ["git", "-C", str(REPO_ROOT), "diff", "--name-only",
+                 f"{BASE_SHA}..{ISSUE74_MERGE_SHA}"],
                 check=True,
                 capture_output=True,
                 text=True,

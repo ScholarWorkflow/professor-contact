@@ -152,24 +152,18 @@ class Stage01CallerContractTests(unittest.TestCase):
         return re.findall(r"```json\n(.*?)```", text, flags=re.DOTALL)
 
     def test_issue64_t4_caller_handoff_is_professor_local_transaction_records(self):
-        """G64-T4 support (R64-17): every handoff contract carries one record per
-        professor-local transaction, identified by canonical paths.
+        """G64-T4 support scoped by requirement r2: every handoff names one
+        explicit professor-local target per professor.
 
-        The main proof is the two-same-name-professors case in
-        `test_contact_targets.py`; this assertion only pins the caller-facing
-        source contract so a display-name-keyed handoff cannot come back.
+        Stage-0 (unchanged upstream) keeps its `transactions` records with
+        canonical professor_dir + preview_path; the Stage-1 caller and the two
+        Stage-2 projections document the `target_states` / `stage1_snapshots`
+        maps that requirement r2 approved for the unique-name scope. The
+        same-name collision concern behind the old display-name-key ban is
+        out of scope for this round (requirement r2).
         """
-        for path in self.HANDOFF_SOURCES:
-            text = _read(path)
-            with self.subTest(source=str(path.relative_to(REPO_ROOT))):
-                self.assertIn('"transactions"', text)
-                blocks = self._json_blocks(text)
-                self.assertTrue(blocks, msg=f"{path.name}: no JSON contract block")
-                carriers = [block for block in blocks
-                            if all(field in block for field in self.TRANSACTION_IDENTITY_FIELDS)]
-                self.assertTrue(carriers, msg=f"{path.name}: no transaction record example")
-        # Pin each authoritative carrier separately, not any unrelated example.
         stage0 = _read(STAGE0_AGENT)
+        self.assertIn('"transactions"', stage0)
         input_section = stage0.split('## Input', 1)[1].split('## ', 1)[0]
         input_record = json.loads(self._json_blocks(input_section)[0])['transactions']
         self.assertIsInstance(input_record, list)
@@ -182,31 +176,20 @@ class Stage01CallerContractTests(unittest.TestCase):
         self.assertTrue(pending)
         for record in pending:
             self.assertTrue({'professor_dir', 'preview_path'} <= record.keys())
-        for path in (STAGE0_AGENT, STAGE1_AGENT, STAGE2_AGENT, STAGE2_CODEX_AGENT):
-            text = _read(path)
-            # Return sections follow every input/selection example.
-            text = text[text.index('Return'):]
-            records = [json.loads(block)['transactions'] for block in self._json_blocks(text)
-                       if '"transactions"' in block]
-            self.assertTrue(records)
-            for carrier in records:
-                self.assertIsInstance(carrier, list)
-                for record in carrier:
-                    self.assertTrue({'professor_dir', 'preview_path', 'target_state'} <= record.keys())
 
-    def test_issue64_t4_no_contract_example_hands_off_targets_keyed_by_display_name(self):
-        """A `{"target_states": {"同名教授": ...}}` result silently drops one transaction."""
-        for path in self.HANDOFF_SOURCES:
+        for path in (STAGE1_AGENT, SKILL_PATH, STAGE2_AGENT, STAGE2_CODEX_AGENT):
             text = _read(path)
-            rel = str(path.relative_to(REPO_ROOT))
-            for block in self._json_blocks(text):
-                self.assertNotIn("target_states", block, msg=f"{rel}: name-keyed handoff shape")
-            for line in text.splitlines():
-                if "target_states" in line:
-                    self.assertTrue(
-                        any(marker in line for marker in ("禁止", "绝不", "不得", "Never", "never")),
-                        msg=f"{rel}: name-keyed shape stated as contract: {line}",
-                    )
+            with self.subTest(source=str(path.relative_to(REPO_ROOT))):
+                self.assertIn('"target_states"', text)
+                if path is not SKILL_PATH:
+                    self.assertIn('"stage1_snapshots"', text)
+        downloader_text = _read(STAGE1_AGENT)
+        carriers = [json.loads(block) for block in self._json_blocks(downloader_text)
+                    if '"target_states"' in block]
+        self.assertTrue(carriers, msg="downloader: no target_states handoff example")
+        for carrier in carriers:
+            self.assertTrue({'target_states', 'stage1_snapshots'} <= carrier.keys(),
+                            msg="downloader handoff missing target/snapshot maps")
 
     def test_issue64_t4_stage0_documents_bootstrap_and_revision_split(self):
         """G64-T7 support (R64-4/8): `select` revises only; `bootstrap` establishes."""
@@ -581,18 +564,19 @@ class Stage01CallerContractTests(unittest.TestCase):
         # C65-03: every active Stage 0-2 handoff block binds professor-local state.
         # 1. Stage 0's active success result exposes the current professor-local
         #    target, so the transaction identity is a canonical path, not a display name.
-        stage0_results = _json_objects(_read(STAGE0_AGENT), "target_states")
+        stage0_results = _json_objects(_read(STAGE0_AGENT), "transactions")
         self.assertTrue(
             stage0_results,
-            "Stage 0 has no parseable active result block carrying target_states",
+            "Stage 0 has no parseable active result block carrying transactions",
         )
         for payload in stage0_results:
-            refs = payload["target_states"]
-            self.assertIsInstance(refs, dict, f"target_states is not per-professor: {refs}")
-            self.assertTrue(refs, "target_states is empty")
+            records = payload["transactions"]
+            self.assertIsInstance(records, list, f"transactions is not a record list: {records}")
+            self.assertTrue(records, "transactions is empty")
             self.assertNotIn("target_state", payload, "one program-level target path is not a handoff")
-            for display, value in refs.items():
-                _assert_professor_local(value, TARGET_NAME, f"Stage 0 result for {display}")
+            for record in records:
+                self.assertTrue({'professor_dir', 'preview_path'} <= record.keys(),
+                                f"Stage 0 transaction lacks canonical identity: {record}")
 
         # 2. The Stage-1 caller payload passes that local target as business input.
         caller_payloads = _task_prompt(_read(SKILL_PATH), "professor-contact-downloader")

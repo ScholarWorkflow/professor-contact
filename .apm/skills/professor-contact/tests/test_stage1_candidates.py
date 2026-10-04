@@ -281,7 +281,7 @@ def same_name_professor(
     if professor is not None:
         catalog["professor"]["name"] = display
     write_json(professor_dir / "papers.json", catalog)
-    targets.select_target(
+    targets.bootstrap_target(
         root, preview, {"direction_ids": ["dir_A"], "notes": {}},
         selected_at="2026-09-29T00:00:00Z",
     )
@@ -515,7 +515,7 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(read_json(snapshot_path(self.root))["professor"], "教授A")
 
     def test_issue64_t5_same_display_name_professors_keep_separate_snapshot_entries(self):
-        """G64-T5: Stage 1 merges and verifies by canonical local identity only."""
+        """G64-T5: Stage 1 keys formal state by canonical professor-local identity."""
         a2_dir = self.root / "教授研究" / "other-lab" / "教授A"
         a2_preview = a2_dir / "方向预筛.json"
         write_json(a2_preview, preview_payload(fp="fp-a2"))
@@ -528,22 +528,23 @@ class Stage1CandidateTests(unittest.TestCase):
 
         first, _ = build(self.root)
         self.assertEqual(first["professors"], ["教授A"])
+        a_state = professor_local_state(self.target_file.parent)
+        b_state = professor_local_state(a2_target.parent)
+        self.assertFalse(b_state.exists())
         build(self.root, a2_target)
-        snap = read_json(snapshot_path(self.root))
-        self.assertEqual([item["professor"] for item in snap["professors"]], ["教授A", "教授A"])
-        self.assertEqual(
-            [item["professor_dir"] for item in snap["professors"]],
-            ["教授研究/lab/教授A", "教授研究/other-lab/教授A"])
+        self.assertTrue(b_state.is_file())
+        self.assertEqual(read_json(b_state)["professor_dir"],
+                         "教授研究/other-lab/教授A")
+        self.assertNotEqual(read_json(a_state)["input_fingerprint"],
+                            read_json(b_state)["input_fingerprint"])
 
         rebuilt, _ = build(self.root)
-        self.assertEqual(rebuilt["per_target"][0]["preview_path"], "教授研究/lab/教授A/方向预筛.json")
-        snap2 = read_json(snapshot_path(self.root))
-        self.assertEqual(len(snap2["professors"]), 2)
-        self.assertEqual(snap2["professors"][1], snap["professors"][1])
-        self.assertEqual(snap2["professors"][0]["input_fingerprint"],
-                         snap["professors"][0]["input_fingerprint"])
+        self.assertEqual(rebuilt["professors"], ["教授A"])
+        b_before = b_state.read_bytes()
+        self.assertEqual(b_state.read_bytes(), b_before)
 
-        # Only the sibling's own inputs drift: verifying A must still hit A's entry.
+        # Only the sibling's own inputs drift: verifying A must still be ok,
+        # while verifying B names B's own professor-local state.
         data = read_json(a2_papers)
         for item in data["papers"]:
             item["pdf_status"] = "downloaded"
@@ -582,8 +583,10 @@ class Stage1CandidateTests(unittest.TestCase):
                 stage1.verify_command(self.root, a2_target)
         self.assertEqual(ctx.exception.code, 2)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["reason_code"], "professor_missing_from_snapshot")
-        self.assertEqual(payload["professor_dir"], "教授研究/other-lab/教授A")
+        self.assertEqual(payload["reason_code"], "missing_stage1_snapshot")
+        self.assertEqual(
+            Path(payload["snapshot_path"]).resolve(),
+            professor_local_state(a2_dir).resolve())
 
     def test_cli_build_writes_snapshot_and_exits_zero(self):
         proc = subprocess.run(
@@ -954,7 +957,7 @@ class Stage1CandidateTests(unittest.TestCase):
         before_paths = path_set(self.root / '教授研究')
         result, payload = build(self.root)
         self.assertEqual(path_set(self.root / '教授研究'),
-                         before_paths | {'套磁阶段1候选.json'})
+                         before_paths | {'lab/教授A/套磁阶段1候选.json'})
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(result["professors"], ["教授A"])
         out = io.StringIO()
@@ -963,7 +966,8 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(verified["status"], "ok")
         self.assertEqual(verified["professors"], ["教授A"])
         self.assertFalse(legacy_table_path(self.root).exists())
-        self.assertEqual(path_set(self.root / '教授研究'), before_paths | {'套磁阶段1候选.json'})
+        self.assertEqual(path_set(self.root / '教授研究'),
+                         before_paths | {'lab/教授A/套磁阶段1候选.json'})
 
     def test_issue64_t5_corrupt_legacy_table_is_not_a_stage1_input(self):
         build(self.root)

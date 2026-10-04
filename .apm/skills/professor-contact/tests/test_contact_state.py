@@ -2958,7 +2958,7 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
         (professor_dir / "papers.json").write_text(
             json.dumps({"professor": {"name": display}, "papers": catalog},
                        ensure_ascii=False, indent=1), encoding="utf-8")
-        contact_targets.select_target(
+        contact_targets.bootstrap_target(
             self.root, preview, {"direction_ids": ["DIR00001"],
                                  "notes": {"DIR00001": "我想比较两种合成输入的处理结果。"}},
             selected_at="2026-09-29T00:00:00Z")
