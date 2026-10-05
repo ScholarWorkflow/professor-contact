@@ -1,15 +1,15 @@
-# Issue #68 / PR #72 Gate 2 候选记录 r27 — 测试计划第23版 单一权威测试实现
+# Issue #68 / PR #72 Gate 2 候选记录 r28 — 测试计划第23版 单一权威测试实现
 
-记录版本：`issue68-r27-r23-candidate-2026-10-05`。
+记录版本：`issue68-r28-r23-candidate-2026-10-05`。
 
-本文件是当前单一测试候选记录，测试计划见 [当前测试计划](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-5993806361)。第二关口尚待独立审核；第三关口尚未运行，状态为 NOT READY。
+本文件是当前单一测试候选记录，取代 r27 候选记录。测试计划见 [当前测试计划](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-5993806361)。第二关口尚待独立审核；第三关口尚未运行，状态为 NOT READY。
 
 ## 0. 版本绑定（全部固定到真实提交）
 
 | 角色 | 版本 | 说明 / 影响分析 |
 | --- | --- | --- |
 | 被测产品 | `ScholarWorkflow/professor-contact@35f2785b4d13783683860db910a36add2347bd29` | 产品 Stage-5 实现完成于 `a229012`；产品脚本不变；本次仅调整代理说明、测试与文档，实际业务入口及输入输出不变 |
-| 测试实现 / 判定程序（代码） | `ScholarWorkflow/professor-contact@4c69b5d555f368c320463917d35424e1c5bda33d` | 当前判定程序、组件映射及非正式解析器回归固定在此代码提交 |
+| 测试实现 / 判定程序（代码） | `ScholarWorkflow/professor-contact@e931ab22fbe492bdf0c4ecb74e906d2c23dfce23` | 当前判定程序、组件映射及非正式解析器回归固定在此代码提交 |
 | 当前记录所在提交 | 本文件的后续文档提交 | 仅固定记录；不改变代码、业务说明或证据契约 |
 | 共享 fixture adapter | `skills-test-fixtures@c738fa2f8bcbb16cd99d741332d5f59b062b6357`（adapter@16） | 未变 |
 | eval-server | `3fdfa9387140cfc2e2aa3af415f85015f79706d2`（检出干净） | 未变 |
@@ -91,7 +91,7 @@ per-child 实际业务消费判定（消费面 = child 命令文本同时引用 
 
 root 编排：discovery 恰为 `{A ok, B ok, invalid_pack error}`；root 恰一次成功 `stage5-partition-choices` 且输出与 manifest 一致（`root_partition_not_deterministic` / `multiple_root_partitions` / `root_partition_changed` / `partition_executed_by_owner`）；成功 partition 完成前任何 owner 业务调用开始 → `owner_business_precedes_partition`；plan 禁 `--choices-scope`、`--email-pack` 绑定归属、`--choices` 文件 rows == expected；owner 结果须与消费回执一致，每个 owner 目录恰一条且不改写。
 
-**最终总览证据链**：消费完全部教授结果后，root 必须恰好调用一次 `stage5-rebuild-overview`；调用开始时间必须晚于所有结果消费点。该调用的 `aggregatedOutput` 是总览结果的唯一来源，必须能从中识别出恰好一个受支持的结构化结果。最终 root 消息须把这个总览结果作为单独结果原样报告，且与 `aggregatedOutput` 中识别出的对象一致；同时保留每位教授已消费且未改变的结果。缺少重建、重复重建或在结果消费前重建为产品失败；调用输出缺失属于可观察性阻断，格式损坏、冲突或无法唯一归属属于无效证据；最终消息漏报或改写总览结果为产品失败。
+**最终总览证据链**：消费完全部教授结果后，root 必须恰好调用一次 `stage5-rebuild-overview`；调用开始时间必须晚于所有结果消费点。该调用的 `aggregatedOutput` 是总览结果的唯一来源，必须能从中识别出恰好一个受支持的结构化结果。最终 root 消息中，只有与此唯一结构化结果完整相同、且不会同时归属为某位教授结果的对象，才能作为单独的总览结果原样报告；同一对象若可能同时归属教授行与总览，判为 INVALID_EVIDENCE。归属按完整对象及其来源比较，不能仅因对象含 `professor_dir` 字段就拒绝：若该字段来自 `aggregatedOutput` 中真实总览 error，且该对象与教授结果可区分，允许原样报告并通过。最终消息还须保留每位教授已消费且未改变的结果。缺少重建、重复重建或在结果消费前重建为产品失败；调用输出缺失属于可观察性阻断，格式损坏、冲突或无法唯一归属属于无效证据；最终消息漏报或改写总览结果为产品失败。
 
 总览和教授结果按结果对象本身的字段与形状识别，不依赖 `results`、`overview` 或其他特定包装键。最终当前消息只解析支持范围内的直接结果值与单层整体包装；不递归搜索历史消息、嵌套诊断或其它旧输出来补缺。成功返回形状为 `status:"ok"` 并含 `overview_md`、`professors`、`emails`；成功结果没有 `reason_code` 也有效。失败的 `needs_decision` 或 `error` 结果按调用返回的结构识别并原样单独报告；只要教授结果保持与消费回执一致，这类总览结果仍可通过，不因总览自身失败而改写教授结果。
 
@@ -104,7 +104,7 @@ root 编排：discovery 恰为 `{A ok, B ok, invalid_pack error}`；root 恰一�
 ## 5. Preflight（r22 §6 四项）
 
 ```text
-Recipe Preflight（2026-10-05，r27）
+Recipe Preflight（2026-10-05，r28）
 - executable: satisfied — direnv（/Users/rekidunois/.local/bin/direnv）经正式来源解析
   EVAL_PORT 17902（证据 /tmp/pc68-r19-work/executable-preflight/direnv_eval_port.txt）；
   入口经该来源可达 case 边界（load_contract 通过，唯一监听者 = 冻结检出同一实例 PID 40721）。
@@ -115,13 +115,14 @@ Recipe Preflight（2026-10-05，r27）
   r15 表征 + r24/r25 合成回归）、root 合法回执（root agent_message FINAL_ANSWER，r15 seq
   14579/14679 表征）、partition/aggregate 顺序（runtime_seq + aggregatedOutput）、root final
   （r13 selector）。
-- discriminating: supported — 新代码提交 4c69b5d555f368c320463917d35424e1c5bda33d 的
+- discriminating: supported — 新代码提交 e931ab22fbe492bdf0c4ecb74e906d2c23dfce23 的
   非正式解析器回归命令：
   env UV_CACHE_DIR=/private/tmp/uv-cache-pr72 uv run python .apm/skills/professor-contact/tests/test_issue68_runtime_r19.py
-  结果 49 passed、0 failed；日志 /private/tmp/pr72-runtime-preflight-final-20261005.log。
+  结果 51 passed、0 failed；日志 /private/tmp/pr72-runtime-preflight-final-20261005.log。
   该项只验证解析器回归，不是 PC68-D1 或 PC68-R1 正式执行证据。覆盖合法总览结果、
   缺少 reason_code 的成功形状、并列报告的教授与总览结果、任意分组键、失败总览结果
-  原样报告，以及缺失、损坏、冲突、未报告和过早/重复调用等反例。
+  原样报告（包括含 professor_dir 的真实总览 error）、教授／总览双重归属歧义，以及缺失、
+  损坏、冲突、未报告和过早/重复调用等反例。
 - critical assumption gap: none identified。
 ```
 
@@ -130,12 +131,12 @@ Recipe Preflight（2026-10-05，r27）
 ```text
 tests/runtime/issue68-runtime-evidence-contract-r19.json  revision=issue-68-runtime-evidence-r26-2026-10-05
 tests/runtime/run_issue68_stage5_routing.py               base runner（PC68-D1 完整入口）
-tests/runtime/run_issue68_stage5_routing_r19.py           bridge（r12 builder + r27 verifier pin）
-tests/runtime/run_issue68_stage5_routing_r19_codex.py     r27 Codex-only 正式入口
-tests/runtime/verify_issue68_stage5_routing_r19.py        r27 verifier
+tests/runtime/run_issue68_stage5_routing_r19.py           bridge（r12 builder + 当前绑定 verifier pin）
+tests/runtime/run_issue68_stage5_routing_r19_codex.py     当前 Codex-only 正式入口
+tests/runtime/verify_issue68_stage5_routing_r19.py        当前绑定 verifier
 tests/runtime/prepare_issue68_stage5_routing.py           fixture builder
 tests/runtime/prompts/issue68-stage5-root.txt             root prompt
-tests/test_issue68_runtime_r19.py                         49 项非正式解析器回归 + 三通道声明
+tests/test_issue68_runtime_r19.py                         51 项非正式解析器回归 + 三通道声明
 tests/test_issue68_stage5_local_state.py / test_issue68_root_partition.py / test_issue68_choices_attribution.py  PC68-D1 资产
 历史资产不在当前链路；正式执行结果及原始尝试保留。
 ```
@@ -144,7 +145,7 @@ tests/test_issue68_stage5_local_state.py / test_issue68_root_partition.py / test
 
 历史全量单元回归 983 项通过；此前的辅助代码清理后，运行时判定回归 42 项、代理说明回归 15 项再次通过。第68号议题相关回归 154 项通过。离线合成证据确认直接与组合总览命令均不改变合法教授业务的通过结果。
 
-绑定代码提交 `4c69b5d555f368c320463917d35424e1c5bda33d` 的非正式解析器预检已执行：`env UV_CACHE_DIR=/private/tmp/uv-cache-pr72 uv run python .apm/skills/professor-contact/tests/test_issue68_runtime_r19.py`，49 项通过、0 项失败；完整日志为 `/private/tmp/pr72-runtime-preflight-final-20261005.log`。该回归属于测试程序预检，不是正式验收。
+绑定代码提交 `e931ab22fbe492bdf0c4ecb74e906d2c23dfce23` 的非正式解析器预检已执行：`env UV_CACHE_DIR=/private/tmp/uv-cache-pr72 uv run python .apm/skills/professor-contact/tests/test_issue68_runtime_r19.py`，51 项通过、0 项失败；完整日志为 `/private/tmp/pr72-runtime-preflight-final-20261005.log`。该回归属于测试程序预检，不是正式验收。
 
 以上检查不能代替正式验收。历史正式尝试及其原始判定不改写；当前绑定版本的 PC68-D1 完整入口和 PC68-R1 正式用例尚未运行，不标为 PASS。
 
@@ -166,7 +167,7 @@ Consensus runtime 配置变化时只重开受影响 proof
 ```text
 验收来源：    第68号议题当前验收约定及本轮用户决定
 测试计划第23版: COMPLETE（current）
-Gate 2:       待独立审核；尚无 PASS+COMPLETE 结论
+Gate 2:       待独立复审（仍按 NEEDS_MODIFICATION 处理）；尚无 PASS+COMPLETE 结论
 Gate 3:       NOT_READY（尚未运行 PC68-D1 完整入口及 PC68-R1）
 Merge:        NOT_READY
 ```
