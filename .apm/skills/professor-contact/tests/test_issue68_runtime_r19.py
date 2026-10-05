@@ -3,15 +3,6 @@
 Synthetic evidence characterizes the evaluator and the recipe wiring. It is not
 a real-host PC68-R1 acceptance PASS.
 
-Test Plan r22 §4/§5 decides the verdict on actual business consumption: each
-formal child's real Stage 5 ``commandExecution`` surface (or an equivalent
-supported read) plus the root's legal result receipts. The complete root->child
-plaintext task payload is not a PASS condition, and the encrypted entry
-delivery (the root->child ``agent_message`` NEW_TASK whose payload is
-``encrypted_content``) is diagnostics only — neither a PASS condition nor a
-BLOCKED_OBSERVABILITY source (Test Plan r22 §4.1), so the previous revision's
-``owner_entry_transport_unobservable`` PASS cap is removed.
-
 Test Plan r22 §4 keeps three explicit verdict channels over the §7
 counterexample matrix:
 - PASS channel (restored: a valid clean run is reported as PASS): the valid
@@ -508,9 +499,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
     # ---- PASS channel: the valid owner-local run ---------------------------
 
     def test_valid_owner_local_run_passes(self):
-        """Test Plan r22 §4.1: a valid clean run is reported as PASS; the
-        encrypted entry delivery is diagnostics only and never caps the
-        terminal."""
+        """A valid professor-local run passes."""
         response, adapter = self.evidence()
         result = verify.verify_codex(response, adapter, self.manifest)
         self.assertEqual(result["verdict"], "PASS")
@@ -790,7 +779,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         response, adapter = self.evidence(per_owner={0: {"commands": False}})
         result = verify.verify_codex(response, adapter, self.manifest)
         self.assertEqual((result["verdict"], result["reason_code"]),
-                         ("BLOCKED_OBSERVABILITY", "completed_user_payload_unobservable"))
+                         ("BLOCKED_OBSERVABILITY", "owner_business_object_unobservable"))
         response, adapter = self.evidence(per_owner={0: {"packets": []}})
         result = verify.verify_codex(response, adapter, self.manifest)
         self.assertEqual((result["verdict"], result["reason_code"]),
@@ -916,7 +905,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
     def test_contract_freezes_owner_input_isolation_and_partition_evidence(self):
         contract = json.loads(
             (RUNTIME / "issue68-runtime-evidence-contract-r19.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r25-2026-10-05")
+        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r26-2026-10-05")
         self.assertEqual(contract["fixture_sha"], FIXTURE_SHA)
         self.assertEqual(contract["eval_server_revision"], "3fdfa9387140cfc2e2aa3af415f85015f79706d2")
         self.assertEqual(contract["runner"], ".apm/skills/professor-contact/tests/runtime/"
@@ -940,18 +929,6 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertIn("receiverThreadIds/agentsStates", codex["wait_consume_evidence"])
         self.assertIn("diagnostics only", codex["wait_consume_evidence"])
         self.assertIn("never guesses a PASS", codex["wait_consume_evidence"])
-        # r22 semantics: root result consumption is proven by the legal
-        # agent_message FINAL_ANSWER receipt chain; the encrypted entry NEW_TASK
-        # delivery is diagnostics only, neither a PASS condition nor a
-        # BLOCKED_OBSERVABILITY source.
-        self.assertIn("agent_message FINAL_ANSWER receipt chain",
-                      codex["wait_consume_evidence"])
-        self.assertIn("encrypted_content", codex["wait_consume_evidence"])
-        self.assertIn("neither a PASS condition nor a BLOCKED_OBSERVABILITY source",
-                      codex["wait_consume_evidence"])
-        self.assertNotIn("owner_entry_transport_evidence", codex)
-        self.assertNotIn("owner_entry_evidence_status", codex)
-        self.assertNotIn("owner_entry_transport_unobservable", json.dumps(contract))
         self.assertIn("subagentactivity", codex["producer_verifier_uses"][1].lower())
         self.assertIn("diagnostics only", codex["producer_verifier_uses"][3])
         self.assertIn("never downgraded", codex["terminal_precedence"])

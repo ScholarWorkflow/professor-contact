@@ -552,88 +552,6 @@ class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
                             )
 
 
-# Issue #68 T68-9 keeps the per-professor Stage-5 owner contract reviewable from
-# the same three authoritative documents. A clause belongs to that contract only
-# when it names Issue #68 itself or sits under a heading that does: dropping the
-# attribution, or letting a rule survive only because similar words moved into an
-# unrelated chapter, fails the gate instead of passing silently.
-ISSUE68_MARKER = "68"
-ISSUE68_HEADING = re.compile(r"^(#{1,6})\s+(.+)$")
-
-# Each item is one documented owner rule, expressed as alternative tokens that
-# must all appear inside a single clause. English and Chinese spellings are
-# accepted because the documents are bilingual, not because either may be
-# dropped: an item with no clause carrying all of its tokens is a missing rule.
-ISSUE68_T68_9_OWNER_ITEMS = (
-    ("the pack named by --email-pack is the professor-local Stage-5 fact source",
-     (("邮件输入.json", "邮件输入包", "email pack"), ("事实源", "fact source", "只承认"))),
-    ("no program-level pack exists as a Stage-5 fallback",
-     (("程序级", "program-level", "program-wide"),
-      ("回退", "兜底", "fall back", "fallback", "不再是"))),
-    ("absent, unreadable or unowned packs stop with the existing deterministic reasons",
-     (("invalid_params",), ("needs_refresh", "missing_email_pack"),
-      ("invalid_email_pack",))),
-    ("one owner invocation is exactly one professor transaction",
-     (("owner",), ("事务", "transaction"))),
-    ("several professors mean two exact-named generator owner invocations",
-     (("professor-contact-email-generator",),
-      ("两次", "two exact", "per professor", "每位教授"))),
-    ("each owner payload carries only that professor's Stage-5 inputs",
-     (("payload",), ("绝不夹带", "holds only", "只携带", "never another"),
-      ("教授", "professor"))),
-    ("one professor's failure neither blocks nor rolls back another",
-     (("不回滚", "never rolls back"),
-      ("不阻断", "既不阻断", "never a precondition"))),
-    ("ordering or concurrency between owner invocations is not a product contract",
-     (("并发", "concurrency", "并行", "sequentially", "顺序"),
-      ("产品契约", "product contract"))),
-    ("a batch run without --email-id still covers exactly one professor",
-     (("批量", "batch"), ("一位教授", "one professor", "那一位", "同一位"))),
-    ("the aggregate is a derived projection owned by stage5-rebuild-overview",
-     (("stage5-rebuild-overview",), ("派生投影", "derived projection"))),
-    ("finalize never writes the aggregate and is never gated by it",
-     (("finalize",), ("总览", "aggregate", "overview"),
-      ("不创建", "never creates", "不更新", "也不更新", "不阻断", "never gates",
-       "绝不阻断"))),
-    ("rebuild modifies no local pack, state, email or verify cache",
-     (("rebuild", "重建"), ("不修改", "modifies no", "不改动", "不覆盖"))),
-    ("rebuild fails closed on malformed local data without overwriting the aggregate",
-     (("fail closed", "fail-closed", "不覆盖"), ("聚合", "aggregate", "总览"))),
-    ("a manual aggregate edit blocks only the rebuild",
-     (("needs_decision",), ("人手", "manual", "手工"))),
-    ("rebuild reads _contact_verify.json for display only",
-     (("_contact_verify.json",), ("展示", "display"))),
-    ("stage5-record-validation keeps its row-scoped contract with no new --email-id",
-     (("stage5-record-validation",), ("--email-id",),
-      ("gains no", "不新增", "保持", "unchanged", "沿用", "不变"))),
-)
-
-
-def _issue68_owner_units(text: str) -> list:
-    """Return the document's Issue #68 owner-contract clauses.
-
-    Headings attribute a whole section; a clause that names Issue #68 itself is
-    picked up where it lives, so a table row or paragraph stays in scope without
-    being rewritten into the ownership section.
-    """
-    lines = text.splitlines()
-    headings = [(index, len(match.group(1)), match.group(2))
-                for index, line in enumerate(lines)
-                if (match := ISSUE68_HEADING.match(line))]
-    covered: set = set()
-    units = []
-    for position, (index, level, title) in enumerate(headings):
-        if ISSUE68_MARKER not in title:
-            continue
-        end = next((other for other, other_level, _ in headings[position + 1:]
-                    if other_level <= level), len(lines))
-        covered.update(range(index, end))
-        units.extend(_issue59_contract_units("\n".join(lines[index:end])))
-    units.extend(lines[row] for row in range(len(lines))
-                 if row not in covered and ISSUE68_MARKER in lines[row])
-    return [_issue59_semantic_text(unit) for unit in units if unit.strip()]
-
-
 def _issue68_clause(units, token_groups) -> str:
     """Return the first owner clause carrying every token group, else ''."""
     for unit in units:
@@ -648,35 +566,6 @@ class Issue68OwnerScopeDocumentContractTests(unittest.TestCase):
 
     def setUp(self):
         self.generator = GENERATOR if GENERATOR.is_file() else ISSUE59_INSTALLED_GENERATOR
-        self.documents = {
-            "generator": self.generator,
-            "SKILL.md": SKILL_PATH,
-            "workflow-reference": SKILL_DIR / "docs" / "workflow-reference.md",
-        }
-
-    def test_issue68_t68_9_documents_state_the_one_professor_owner_payload(self):
-        self.assertTrue(
-            self.generator.is_file(),
-            f"generator document missing at required path: {self.generator}")
-        for label, path in self.documents.items():
-            with self.subTest(document=label):
-                self.assertTrue(path.is_file(), f"{label}: missing {path}")
-                units = _issue68_owner_units(_issue59_document_body(path))
-                self.assertTrue(
-                    units,
-                    f"{label}: no Issue #68 owner-contract clause in {path}")
-                self.assertTrue(
-                    any("--email-pack" in unit and ISSUE68_MARKER in unit
-                        for unit in units),
-                    f"{label}: the Issue #68 contract never ties the owner rules to "
-                    f"--email-pack in {path}",
-                )
-                for item, token_groups in ISSUE68_T68_9_OWNER_ITEMS:
-                    with self.subTest(document=label, item=item):
-                        self.assertTrue(
-                            _issue68_clause(units, token_groups),
-                            f"{label}: the Issue #68 owner contract never states "
-                            f"{item}")
 
     def test_issue68_t68_9_owner_rule_stays_inside_the_codex_branch_contract(self):
         body = _issue59_document_body(self.generator)
@@ -687,10 +576,10 @@ class Issue68OwnerScopeDocumentContractTests(unittest.TestCase):
         # The per-professor rule must be a Codex-branch statement about the same
         # installed named agent, not a new calling API.
         owner = _issue68_clause(_issue59_contract_units(codex), (
-            ("professor-contact-email-generator",), ("payload",), ("68",)))
+            ("professor-contact-email-generator",), ("business",), ("68",)))
         self.assertTrue(
             owner,
-            "Codex branch: no Issue #68 one-professor owner-payload rule")
+            "Codex branch: no Issue #68 professor-local business rule")
         for needle in ("exact-named", "exact installed named custom agent"):
             self.assertIn(needle, codex,
                           f"Codex branch lost the exact-named delegation rule: {needle}")

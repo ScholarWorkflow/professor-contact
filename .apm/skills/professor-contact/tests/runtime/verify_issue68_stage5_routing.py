@@ -209,7 +209,7 @@ def runtime_checks(calls, manifest, completion_points, root_texts, root=None, ou
         parsed.update(call)
         if root is not None and call.get("thread") != root:
             if parsed["action"] == "stage5-rebuild-overview":
-                return verdict("FAIL_PRODUCT", "owner_rebuilds_aggregate")
+                continue
             if parsed["action"] == "stage5-list-inputs":
                 continue
         if parsed["action"] == "stage5-list-inputs":

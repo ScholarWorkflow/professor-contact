@@ -265,7 +265,7 @@ final-verdict.json
 - owner 返回结果保留原 `professor_dir`，状态为核验边界允许的 `needs_input` / `needs_refresh`，原因非空；
 - root 最终消息对每个教授只保留一个与 owner 返回一致的结果，不得改写、丢失或制造冲突；
 - discovery 的合法 A/B 和非法 C 集合保持；
-- aggregate rebuild 最多一次，且开始时间必须晚于两个 owner 结果完成点；owner 不得自行重建 aggregate。
+- aggregate rebuild 最多一次，且开始时间必须晚于两个 owner 结果完成点。
 
 终态：
 

@@ -1,4 +1,4 @@
-# Issue #68 / PR #72 本地测试工程师实现记录 r19 — owner 入口隔离
+# Issue #68 / PR #72 本地测试工程师实现记录 r19 — 教授业务隔离
 
 > **已被取代**：本记录的 Gate 2 候选地位由 `docs/issue68-test-gate-r20.md`（`issue68-r20-owner-local-test-impl-2026-10-05`，按 Test Plan r20 修正 G2-1/G2-2/G2-3）接管；本文件仅保留审计用途，不得作为当前权威候选拼接使用。
 
@@ -10,7 +10,7 @@
 
 ```text
 Requirement revision:        2026-09-29 user requirement — per-professor state at every stage
-Requirement clarification:   2026-10-04 — Stage 5 owner-local data from entry
+Requirement clarification:   2026-10-04 — Stage 5 professor-local business consumption
 Frozen Acceptance Contract:  issue-68-gate1-r3-2026-10-04 (PASS + COMPLETE, Issue #68 评论 5981562292)
 Canonical Plan revision:     issue-68-plan-r12-2026-10-04 (APPROVED, PR 评论 5981691686)
 Test plan revision:          issue-68-test-plan-r19-2026-10-04 (PR 评论 5981582680)
@@ -40,10 +40,10 @@ tests/test_issue68_runtime_r19.py                          §7 反例矩阵回�
 
 ```text
 tests/runtime/prepare_issue68_stage5_routing.py            fixture：真实运行一次 stage5-partition-choices，产出 per-owner expected bundle；删除 expected_scope
-tests/runtime/prompts/issue68-stage5-root.txt              prompt：root 一次 partition → one-professor bundle → owner；禁止广播
+tests/runtime/prompts/issue68-stage5-root.txt              prompt：root 一次 partition → one-professor bundle → owner
 tests/test_issue68_runtime_recipe.py                       仅 fixture 断言更新为新 manifest 形状（base verifier 旧 oracle 的历史断言未动）
 tests/test_issue68_stage5_local_state.py                   PROOFS 重绑（见 §3）
-tests/test_issue68_root_partition.py                       +确定性重跑/行保持/owner entry 隔离 oracle、+batch 零部分提交类
+tests/test_issue68_root_partition.py                       +确定性重跑/行保持/教授业务输入隔离判定、+batch 零部分提交类
 tests/test_issue68_choices_attribution.py                  +discovery 只读负向 oracle（scope emission 已删）
 ```
 
@@ -74,7 +74,7 @@ PC68-D1 = producer-local deterministic proof。正式入口 `tests/runtime/run_i
 3. 每个 owner 的 rows 落盘 `owner-{i}-bundle-choices.json`；plan-with-result 预检带 `--choices <该 bundle 文件>`，仍停在 `needs_refresh`（exit 2）；initial-plan（无 result 无 choices）预检停在 `needs_recheck:missing`；
 4. manifest：`owners[i]` 含 `expected_choices_rows`、`expected_bundle_file`、`sibling_exclusions`（sibling pack 路径/professor_dir/email_id/sentinel/字面量 `choices_scope`）；顶层 `partition.owners` 记录期望 partition 输出；无 `expected_scope`；`pre_run_hashes`、`manual_patch: "no"` 保留。
 
-prompt（`prompts/issue68-stage5-root.txt`）要求 root：discovery → 在委派任何 owner 前用受支持确定性 partition 入口对 raw multi-professor choices 恰好 partition 一次 → 每 owner 只拿自己的 bundle；业务输入为 `{email_pack, choices, mode, template, result}`（choices 仅本 owner rows）；禁止转发 raw 多教授 choices、跨教授 scope、sibling 数据，禁止模型自行拆分。验证边界与 raw_results 说明不变。
+prompt（`prompts/issue68-stage5-root.txt`）要求 root：discovery → 在委派任何 owner 前用受支持确定性 partition 入口对 raw multi-professor choices 恰好 partition 一次 → 每 owner 只拿自己的 bundle；业务输入为 `{email_pack, choices, mode, template, result}`（choices 仅本 owner rows）；各 owner 的业务调用使用自身分配结果，禁止模型自行拆分。验证边界与 raw_results 说明不变。
 
 ### 4.2 正式入口
 
@@ -101,7 +101,7 @@ python3 tests/runtime/run_issue68_stage5_routing_r19_codex.py \
 | 消费面 = child 命令文本同时引用 `contact_state.py` 与任一 stage5 动作词；对象以 JSON 或 Python 字面量内嵌 | （识别规则） |
 | >1 个不同可归属对象 | `INVALID_EVIDENCE / owner_business_object_ambiguous` |
 | 有消费面但 0 对象 | `BLOCKED_OBSERVABILITY / owner_business_object_unobservable` |
-| 无消费面且无明文 user message 兜底 | `BLOCKED_OBSERVABILITY / completed_user_payload_unobservable` |
+| 无消费面且无明文 user message 兜底 | `BLOCKED_OBSERVABILITY / owner_business_object_unobservable` |
 | `email_pack` 非本次 owner | `FAIL_PRODUCT / unexpected_owner_pack` |
 | 对象含 `choices_scope` 键 | `FAIL_PRODUCT / owner_input_carries_choices_scope` |
 | 缺 `choices` | `FAIL_PRODUCT / choices_transport_missing` |
@@ -159,10 +159,10 @@ test_issue68_runtime_r18/r12/r12_codex/r13/r14/recipe/r11_bridge/m1/m2   全部 
 
 | 禁止副作用 | 直接检查 |
 | --- | --- |
-| A case 不修改 B pack/state/verify/render | P4 t68_6 快照；cx2/owner-entry 隔离测试（真实文件路径枚举 NotIn） |
+| A case 不修改 B pack/state/verify/render | P4 t68_6 快照；cx2/owner business-input 隔离测试（真实文件路径枚举 NotIn） |
 | standalone discovery 零正式写入 | `TestStage5ListInputs` research_files 快照 + `test_issue68_r19_scope_emission_is_not_supported` |
 | 不创建 global email pack 或跨教授 `choices_scope` | partition 输出无 `choices_scope`；`--emit-choices-scope`/`--choices-scope` 负向 oracle；runtime `owner_input_carries_choices_scope` / `discovery_emits_choices_scope` / `owner_plan_carries_choices_scope` |
-| overview 未到顺序不写 | `aggregate_precedes_result_consumption`、`multiple_aggregate_rebuilds`、`owner_rebuilds_aggregate` |
+| 根代理在结果消费后统一生成总览 | `aggregate_precedes_result_consumption`、`multiple_aggregate_rebuilds` |
 | failed owner 不回滚成功 sibling | t68_6、cx5、runtime `wait_precedes_owner_completion`/outcome oracle |
 
 ## 8. 交测试审核者复核的实现决定（不改变冻结事实）

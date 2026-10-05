@@ -115,16 +115,15 @@ Stage 4's success result hands over **one professor-local email pack**: `<profes
   `status` and `reason_code`. A bad container fails as its own row
   (`missing_email_pack` / `invalid_email_pack` / `invalid_professor_dir`) and
   never blocks another valid professor; the command reads no verify, state,
-  render, overview or legacy program-level pack file and writes nothing.
+  render or legacy program-level pack file and writes nothing.
   `--professor` selects the unique exact name match; a missing or ambiguous
   name returns `needs_input` (`professor_not_found` / `professor_ambiguous`)
   instead of a guess.
-- **One owner invocation = one professor transaction.** Running professors A and B means two exact-named `professor-contact-email-generator` invocations, each with its own pack path, result JSON, choices, `_contact_verify.json` and `套磁邮件状态.json`. B's missing, stale or malformed pack, cache or state is never a precondition of A, and B's failure never rolls back A's committed render. A+B is not one invocation that carries two packs: a child payload holds only that professor's Stage-5 inputs.
+- **One owner invocation = one professor transaction.** Running professors A and B means two exact-named `professor-contact-email-generator` invocations, each with its own pack path, result JSON, choices, `_contact_verify.json` and `套磁邮件状态.json`. B's missing, stale or malformed pack, cache or state is never a precondition of A, and B's failure never rolls back A's committed render. Each invocation consumes only that professor's Stage-5 business inputs.
 - **Root deterministic partition, then one-professor bundles (plan r12
   §3.3).** The formal choice identity is `(canonical professor_dir, email_id)`;
   the display field `professor` is display-only. A multi-professor request may
-  carry A+B's raw `choices`, but the raw multi-professor object is never
-  delegated to any owner. Before delegating, the root partitions it exactly
+  carry A+B's raw `choices`; each owner's business calls use its partitioned rows. Before delegating, the root partitions it exactly
   once with the deterministic runner entry
   `contact_state.py stage5-partition-choices --program-root <abs> --owner
   <email_pack> [<email_id>] ... --choices <raw choices> [--out <temp.json>]`:
@@ -141,11 +140,9 @@ Stage 4's success result hands over **one professor-local email pack**: `<profes
   several candidates after excluding owners a legal explicit row already
   satisfied: every affected owner's partition answers `needs_input` /
   `choice_owner_ambiguous` and the row is broadcast to no one). One owner's
-  partition failure never blocks another owner's legal bundle. Each owner is
-  then delegated with its own bundle only — A's payload contains no B
-  `professor_dir`, `email_id`, choice row or path, and B's payload contains
-  no A data — and the temporary `--out` transport file is cleaned up when the
-  request's lifecycle ends.
+  partition failure never blocks another owner's legal bundle. Each owner
+  consumes its assigned bundle in its business calls. The temporary `--out`
+  transport file is cleaned up when the request's lifecycle ends.
 - **Owner-local choices loading.** `stage5-plan` and `stage5-finalize`
   (through the immutable wrapper) consume only the current owner's bundle
   rows and keep this professor's own business validation: the exact-one
@@ -161,15 +158,6 @@ Stage 4's success result hands over **one professor-local email pack**: `<profes
   this owner's input error (`invalid_params`) and never re-routes the row to
   its professor.
 - Running those owner invocations sequentially is an orchestration choice, not a product contract; no concurrency or ordering guarantee is defined for two professors' Stage-5 transactions.
-- `教授研究/套磁邮件总览.md` is a **derived projection** whose only Stage-5 writer is `contact_state.py stage5-rebuild-overview --program-root <abs>`. It joins each professor's local pack with that professor's own `套磁邮件状态.json` and reads `_contact_verify.json` for display, and it modifies no pack, state, rendered email or verify cache. A professor's finalize never creates or updates the aggregate, and a stale, conflicting or missing aggregate never gates that professor's commit — `overview_md` only reports an existing path or `null`. Rebuild the aggregate after one or more professors commit; a malformed local pack or state makes the rebuild fail closed without overwriting the existing aggregate, and a manual aggregate edit makes only the rebuild return `needs_decision`.
-- **Root ordering.** The root delegates one owner per professor, waits for and
-  consumes every owner result of this request, and only then rebuilds the
-  aggregate **at most once** with `stage5-rebuild-overview`; a
-  single-professor request follows the same order. The aggregate's
-  `ok` / `needs_decision` / `error` result is reported separately and never
-  changes, rolls back, re-runs or downgrades any professor-local result. The
-  generator agent itself never scans other professors' directories and never
-  runs the aggregate rebuild.
 - `stage5-record-validation` keeps its existing `--professor-dir` + `--validation-file` contract inside the same professor transaction and gains no `--email-id` flag (Issue #59 rules are unchanged).
 
 ## Direction provenance (issue #8 email-pack v2)
@@ -205,7 +193,7 @@ The wrapper asks `contact_state.py stage5-plan` for the exact deterministic draf
 3. Unrelated pack rows are noise: malformed, non-dict, missing-`email_id`, unknown-id and duplicate-unknown-id rows neither block nor get processed. The selected row keeps every existing fail-closed check (`validate_email_raw`, `require_user_choices`, `require_followup_choices`, `stage5_recipient_authority`), and its own duplicate/absence still fails.
 4. Only the selected professor's directory is path-validated, only the selected professor's source-state and frozen `contact_evidence` snapshot are certified, and only the selected professor's `_contact_verify.json` is read. Another professor's missing or stale verify cache can neither block nor be repaired by this run.
 5. Run `professor-contact-email-validator` **only for the selected rendered outputs**, and write the validation file with **only those selected output IDs**. Then call `stage5-record-validation` with that selected validation file: it keeps its existing `--professor-dir` + `--validation-file` contract and gains **no `--email-id` flag**, because it already records exactly the rows the caller supplies.
-6. A targeted finalize is that one email's transaction: it never touches `教授研究/套磁邮件总览.md`, never re-opens unrelated state or verify caches, and never reports a program-wide `needs_decision` projection conflict. Issue #68 moved the aggregate out of every Stage-5 commit, so a batch finalize — which now covers exactly the one professor named by `--email-pack` — behaves the same way: it neither rebuilds the aggregate nor detects its conflict, and `overview_md` reports an existing path or `null` for both scopes. `stage5-rebuild-overview` owns the aggregate; an incomplete one-row projection is never written by a local run.
+6. A targeted finalize commits only that email's local outputs and state, and does not re-open unrelated state or verify caches.
 
 ## Dual-target harness calling (Codex / OpenCode)
 
@@ -226,7 +214,7 @@ Stage 5 runs on both install targets with identical business rules; only the har
 - Keep the delegation non-recursive: the delegation payload carries only that stage's Input contract business fields, and never forwards the caller's own received routing instruction verbatim to the child; no coordinator may delegate to a named custom agent that has its own machine name; the same machine name may appear only once in a delegation chain (this agent's child is `professor-contact-email-validator`, never `professor-contact-email-generator`).
 - When a validator child is required, directly delegate to the installed named custom agent and wait for its result before continuing. A real machine-level delegation failure is a Codex runtime/feature blocker; the parent must not inline or simulate the child's work.
 - Top-level callers delegate Stage 5 to the installed named custom agent `professor-contact-email-generator`; inside Stage 5, delegate validator rounds to the installed named custom agent `professor-contact-email-validator` using Codex's documented native subagent/custom-agent delegation: delegate to the exact installed named custom agent and wait for its result, and consume it before continuing. Do not copy its instructions into the parent dialogue, do not claim its role as your own, do not assume spawn APIs, parameters or event fields that Codex documentation does not expose, never inline or simulate the child's work, and never substitute `exec_command` shell, `curl`, or another Codex/OpenCode/eval session for native delegation; never present unfinished validation as a completed Stage 5, and only a real machine-level/runtime delegation error may be recorded as a Codex runtime/feature blocker — never run the validation rounds yourself in this parent agent and never inline-simulate the validator. No undocumented runtime feature, fixed tool namespace, private spawn schema, or internal event/tool name is a prerequisite for ordinary delegation.
-- For several professors (Issue #68), the caller delegates **one exact-named `professor-contact-email-generator` owner invocation per professor**, each payload carrying only that professor's Stage-5 business inputs plus its own professor-local `--email-pack` path — never another professor's pack, rows or state. Only the business payload of each owner invocation changes: the exact-named validator delegation, waiting for its result and consuming it stay exactly as documented above, and this rule adds no spawn parameters, no event schema and no OpenCode Task syntax to the Codex branch.
+- For several professors (Issue #68), the caller delegates **one exact-named `professor-contact-email-generator` owner invocation per professor**, each invocation consuming that professor's Stage-5 business inputs through its professor-local `--email-pack` path. Only the business payload of each owner invocation changes: the exact-named validator delegation, waiting for its result and consuming it stay exactly as documented above, and this rule adds no spawn parameters, no event schema and no OpenCode Task syntax to the Codex branch.
 - Use the installed, discoverable `humanizer-ja` Skill. Do not write OpenCode's native skill, Task, or interactive-prompt tool-call syntax into Codex flows.
 - Web verification uses Codex's official web search surface. Shell HTTP (`curl`, Python requests) may only reach the eval service, never substitute for the harness web capability.
 - When a required user decision (conflicting-address choice, `initial_sent_date`, first-choice/learning/signature, email confirmation) was not supplied by the caller, stop at the existing `needs_input`/unfinished boundary: never auto-pick the first option, never fabricate a date, learning field, signature or "confirmed" state, and never write the final email. Do not invent a continuation/resume protocol; hand the missing decision back to the caller/user explicitly.

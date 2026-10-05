@@ -1,4 +1,4 @@
-# Issue #68 / PR #72 本地测试工程师实现记录 r20 — owner 入口隔离
+# Issue #68 / PR #72 本地测试工程师实现记录 r20 — 教授业务隔离
 
 > **已被取代**：本记录的 Gate 2 候选地位由 `docs/issue68-test-gate-r21.md`（`issue68-r21-receipt-consumption-2026-10-05`，按 Gate 2 审核更正 PR 评论 `5990445769` 将 wait/consume 证据来源改写为真实 root `agent_message` FINAL_ANSWER 回执面）接管；本文件仅保留审计用途，不得作为当前权威候选拼接使用。
 
@@ -12,7 +12,7 @@
 
 ```text
 Requirement revision:        2026-09-29 user requirement — per-professor state at every stage
-Requirement clarification:   2026-10-04 — Stage 5 owner-local data from entry
+Requirement clarification:   2026-10-04 — Stage 5 professor-local business consumption
 Frozen Acceptance Contract:  issue-68-gate1-r3-2026-10-04 (PASS + COMPLETE, Issue #68 评论 5981562292)
 Canonical Plan revision:     issue-68-plan-r12-2026-10-04 (APPROVED, PR 评论 5981691686)
 Test plan revision:          issue-68-test-plan-r20-2026-10-05 (PR 评论 5989428845；取代 r19，r19 及其实现的审计保留)
@@ -37,12 +37,12 @@ eval-server revision:        3fdfa9387140cfc2e2aa3af415f85015f79706d2（未变�
 | `R68-5` | `PC68-D1/P5` | program overview 是派生输出，不进入 local finalize commit gate | t68_7 + `test_stage5_overview.TestStage5OverviewRebuild` 全类 |
 | `R68-6` | `PC68-D1/P1` | #68 不新增 global→local migration、global fallback、dual-read、dual-write；#67 migration ownership 是冻结依赖 | 由 P1 组件承载（t68_2 legacy global pack cannot change local result；t68_1c 单教授证明）；随 P1 的复验决定复验 |
 | `R68-7` | `PC68-D1/P2 + P4` | validator / record-validation 只以当前 professor 本次输出为条件；targeted selected-output scope 不被 sibling 状态扩大 | P2 的 t68_3/t68_4/r11 targeted 过滤 + P4 的 `test_issue68_validation_updates_only_the_named_local_state` |
-| `R68-8` | `PC68-D1/P4 + P7`、`PC68-R1` | deterministic partition/bundle 不含 sibling；运行时 owner 实际取得或实际读取并用于业务调用的数据只属于自己 | P4 cx2/owner-entry 隔离 + P7 partition 全类；runtime evaluator `owner_input_contains_sibling_data` / `owner_bundle_choices_changed` |
+| `R68-8` | `PC68-D1/P4 + P7`、`PC68-R1` | deterministic partition/bundle 不含 sibling；运行时 owner 实际取得或实际读取并用于业务调用的数据只属于自己 | P4 cx2/owner business-input 隔离 + P7 partition 全类；runtime evaluator `owner_input_contains_sibling_data` / `owner_bundle_choices_changed` |
 | `AD68-1` | `PC68-R1`（`P5` 提供 deterministic 辅助证明） | root 委派各 owner，等待并**消费** owner result 后，顶层 request 最多一次 rebuild overview | runtime wait/consume 配对（见 §4.3）+ `aggregate_precedes_result_consumption` + `multiple_aggregate_rebuilds` |
 | `AD68-2` | `implementation_scope: #48` | writer-lock ownership 继续属于 #48；#68 不新增第二套 lock；#68 不改变 writer ownership / canonical rebuild interface，故本项不设独立测试 case，#48 实现状态不是 #68 的 Merge Gate | 无测试组件；仅当 #68 触碰 writer ownership / canonical rebuild interface 时重开 |
 | `AD68-3` | `PC68-D1/P6` | standalone discovery 只读；坏 B 只形成 B 的 input-resolution failure，不影响合法 A/C | `TestStage5ListInputs` 全类 + `test_issue68_r19_scope_emission_is_not_supported` + cx7 |
-| `AD68-4` | `PC68-D1/P7`、`PC68-R1` | raw multi-professor choices 只在 root deterministic partition；owner 不收到 cross-professor scope；legacy ambiguity 不广播 | P7 `TestStage5RootPartition` 全类（cx1–cx5、cx7、确定性重跑、owner-entry 隔离）+ runtime `root_partition_*` / `owner_input_carries_choices_scope` |
-| `AD68-5` | `PC68-D1/P7`、`PC68-R1` | one-professor transport；canonical path/ID 原样；临时 transport 不恢复 sibling 数据 | P7 行保持/重跑一致 + runtime `canonical_preservation`（`試験`→`试验` 判 FAIL）+ `test_r12_owner_bundle_has_no_scope_and_no_sibling_state_paths` |
+| `AD68-4` | `PC68-D1/P7`、`PC68-R1` | raw multi-professor choices 只在 root deterministic partition；owner 业务调用不消费 cross-professor scope；legacy ambiguity 不广播 | P7 `TestStage5RootPartition` 全类（cx1–cx5、cx7、确定性重跑、owner business-input 隔离）+ runtime `root_partition_*` / `owner_input_carries_choices_scope` |
+| `AD68-5` | `PC68-D1/P7`、`PC68-R1` | 本教授业务输入；canonical path/ID 原样 | P7 行保持/重跑一致 + runtime `canonical_preservation`（`試験`→`试验` 判 FAIL）+ `test_r12_owner_bundle_has_no_scope_and_no_sibling_state_paths` |
 
 `PC68-D1` 不证明 Codex native delegation、真实 child 输入观察、root 对 child result 的实际消费、运行时调用顺序——这些只归 `PC68-R1`。
 
@@ -57,7 +57,7 @@ tests/runtime/run_issue68_stage5_routing_r19_codex.py      Codex-only 正式入�
 tests/runtime/verify_issue68_stage5_routing_r19.py         evaluator（owner-local 消费 + root partition + wait/consume + 聚合顺序）
 tests/test_issue68_runtime_r19.py                          r20 反例矩阵回归（35 项，三通道声明）
 tests/runtime/prepare_issue68_stage5_routing.py            fixture：真实运行一次 stage5-partition-choices；per-owner expected rows；无 expected_scope
-tests/runtime/prompts/issue68-stage5-root.txt              prompt：root 一次 partition → one-professor bundle → owner；禁止广播
+tests/runtime/prompts/issue68-stage5-root.txt              prompt：root 一次 partition → one-professor bundle → owner
 tests/test_issue68_stage5_local_state.py                   PC68-D1 PROOFS（7 个 proof 方法，组件映射见 §2）
 tests/test_issue68_root_partition.py / test_issue68_choices_attribution.py / test_issue68_runtime_recipe.py
 ```
@@ -68,7 +68,7 @@ tests/test_issue68_root_partition.py / test_issue68_choices_attribution.py / tes
 
 ### 4.1 fixture 与 prompt
 
-与 r19 候选一致（本记录自包含复述要点）：构造 A（`試験 教授`）/B（`佐藤 花子`）local pack、synthetic template、噪声 legacy row、坏包；对 `canonical-choices.json` 用安装的 producer CLI 真实运行一次 `stage5-partition-choices`（stdout/stderr/exit-code 留证，校验每个 owner `partition.status=ok` 且 rows 与构造行一致）；每 owner rows 落盘 `owner-{i}-bundle-choices.json`；plan-with-result 预检带 `--choices` bundle，停在 `needs_refresh`（exit 2）。manifest：`owners[i].expected_choices_rows / expected_bundle_file / sibling_exclusions`、顶层 `partition.owners`、无 `expected_scope`。prompt 要求 root 一次 partition → one-professor bundle，禁止广播与模型拆分。
+与 r19 候选一致（本记录自包含复述要点）：构造 A（`試験 教授`）/B（`佐藤 花子`）local pack、synthetic template、噪声 legacy row、坏包；对 `canonical-choices.json` 用安装的 producer CLI 真实运行一次 `stage5-partition-choices`（stdout/stderr/exit-code 留证，校验每个 owner `partition.status=ok` 且 rows 与构造行一致）；每 owner rows 落盘 `owner-{i}-bundle-choices.json`；plan-with-result 预检带 `--choices` bundle，停在 `needs_refresh`（exit 2）。manifest：`owners[i].expected_choices_rows / expected_bundle_file / sibling_exclusions`、顶层 `partition.owners`、无 `expected_scope`。prompt 要求 root 一次 partition → one-professor bundle，禁止模型拆分。
 
 ### 4.2 正式入口与端口来源（G2-2 修正后）
 

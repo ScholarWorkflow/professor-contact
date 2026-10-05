@@ -14,7 +14,7 @@ plus the narrowed owner-local loader (plan §3.5): a sibling row that reaches
 an owner bundle is that owner's input error, never a reroute.
 
 Test Plan r19 additions: the deterministic row-preserving rerun oracle and
-the owner-entry isolation oracle (both bound into P7), plus
+the owner business-bundle isolation oracle (both bound into P7), plus
 ``TestStage5BatchStaysAtomic`` for P3's zero-partial-commit requirement.
 """
 

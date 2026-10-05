@@ -22,12 +22,7 @@ the "Wait completed." wait message, subAgentActivity completed reports and
 child turn/completed events are diagnostics only and never evidence; the
 successful root partition must also complete before any owner business call
 starts. The contract freezes these conditions as owner_input_isolation,
-canonical_preservation and partition_evidence. Per Test Plan r22 §4.1 the
-root->child agent_message NEW_TASK entry delivery (an encrypted_content
-payload) is diagnostics only: it is neither a PASS condition nor a
-BLOCKED_OBSERVABILITY source, and the verdict is decided by each child's
-actual Stage 5 business consumption plus the root's legal FINAL_ANSWER result
-receipts. EVAL_PORT has exactly
+canonical_preservation and partition_evidence. EVAL_PORT has exactly
 one formal source, ``direnv exec`` per the r20 Project Consensus: when direnv is
 missing or its output is unusable the Executable precondition is unsatisfied
 and the entry refuses to start. Before the acceptance request the entry
@@ -52,7 +47,7 @@ import run_issue68_stage5_routing_r19 as bridge
 HERE = Path(__file__).resolve().parent
 FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
-CONTRACT_REVISION = "issue-68-runtime-evidence-r25-2026-10-05"
+CONTRACT_REVISION = "issue-68-runtime-evidence-r26-2026-10-05"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
 EXECUTION_KIND = "acceptance"
 HOST = "codex"

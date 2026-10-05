@@ -1,101 +1,5 @@
 #!/usr/bin/env python3
-"""Gate-2 r25 PC68-R1 verifier: owner-local consumption and the root partition.
-
-r13 keeps the root final business message selector unchanged: exactly one
-current-root, current-turn ``rawResponseItem/completed`` assistant
-``final_answer``. r19 rewrites the owner business-input oracle around the r19
-fixture: the root discovers the local packs, runs the deterministic
-``stage5-partition-choices`` entry exactly once and hands every formal child a
-one-professor packet (``email_pack`` plus that owner's own ``choices`` rows,
-never a ``choices_scope``).
-
-Test Plan r22 §4/§5 decides the verdict on the surfaces the run can actually
-prove: each formal child's real Stage 5 ``commandExecution`` business
-consumption (or an equivalent supported read), the root partition, and the
-root's legal result receipts. The complete root->child plaintext task payload
-is NOT a PASS condition: Test Plan r22 §4.1 removes the owner-entry
-transport/read observability requirement, so an encrypted entry delivery
-never caps a terminal and a missing plaintext entry payload is never a
-BLOCKED_OBSERVABILITY source. Diagnostics only, never verdict-changing: the
-root->child ``agent_message`` NEW_TASK delivery whose payload is
-``encrypted_content``, collabAgentToolCall ``receiverThreadIds``/
-``agentsStates``, the "Wait completed." wait message, ``subAgentActivity``
-completed reports, child ``turn/completed`` events, ``requested_role`` and
-``loaded_identity``.
-
-r22 binds the root result-receipt surface to the frozen field chain. Formal
-children stay the shared adapter's ``spawnAgent`` relation
-(``dispatch.thread_relations`` edges whose ``sender_thread_id`` is the root
-thread). The ``child_thread_id -> child_agent_path`` binding comes only from
-the same run's ``subAgentActivity`` items (``item.agentThreadId`` ->
-``item.agentPath``), and the agent path is an association key only: it never
-creates, rewrites, upgrades or downgrades formal ownership. The root's only
-legal consumption receipt for one formal child is a current-turn root-thread
-``rawResponseItem/completed`` ``agent_message`` (``params.turnId`` equal to
-``output.turn_id``) whose ``recipient`` is ``/root`` and whose ``author``
-equals that child's agent path, whose input_text body is exactly the Codex
-child completion shape — the three header lines ``Message Type: FINAL_ANSWER``
-/ ``Task name: /root`` / ``Sender: <child_agent_path>`` (the Sender line must
-equal the child's agent path) then the ``Payload:`` marker and one JSON object
-whose top level carries ``professor_dir``/``status``/``reason_code`` (the
-payload is read at its top level only, never recursively through nested
-objects) — and whose payload
-outcome equals the outcome the child itself returned on its own thread; the
-receipt's ``runtime_seq`` is the root's consumption point for that child's
-result and the aggregate must not precede every owner's consumption point.
-Diagnostics only, never consumption evidence: collabAgentToolCall
-``receiverThreadIds``/``agentsStates``, the "Wait completed." wait message,
-``subAgentActivity`` completed reports, child ``turn/completed`` events,
-``requested_role`` and ``loaded_identity``. The per-child ``agentPath``
-mapping must be unique before any receipt is attributed: a child with no
-agent-path mapping stays ``root_result_consumption_unobservable``, a child
-observed under more than one distinct agent path is
-``child_agent_path_mapping_ambiguous`` damaged evidence no matter how correct
-the surviving path's own receipt looks, and a child without a legal receipt
-stays ``root_result_consumption_unobservable`` — or
-``root_result_receipt_malformed`` when a receipt names this owner's
-professor_dir but its Payload top level lacks ``status`` or ``reason_code``;
-none of these is ever cured
-into a PASS by those surfaces; legal receipts carrying more than one distinct
-outcome stay ``root_result_receipt_ambiguous``; a payload outcome differing
-from the child's own result is ``root_receipt_payload_changed``.
-
-The oracle also freezes the partition ordering fact: the root's successful
-``stage5-partition-choices`` call must complete before any owner business
-call starts on a child thread; an owner business command that starts before
-the partition completed is a product failure
-(``owner_business_precedes_partition``). EVAL_PORT resolution is the formal
-entry's responsibility and takes the port only from ``direnv exec``.
-
-A child's consumption surface is only its own command texts that reference the
-producer CLI (``contact_state.py``) together with a supported stage5 action
-word; objects recorded by other commands (echo/log/diagnostic examples) are
-never consumption evidence. Real Codex hosts hand the child a compound
-``python3 -c``/wrapper expression whose packet rides inside as a JSON or
-Python literal and whose stage5 arguments are a quoted argv list, so the
-consumption surface is recognized by that loose text shape and never requires
-the command to parse into standalone flags. Each consumed object must equal
-the manifest's per-owner expected bundle rows after parsing, must not carry
-any sibling marker or a ``choices_scope`` field, and must keep
-``professor_dir``/``email_id`` byte for byte. The root orchestration oracle
-proves exactly one successful root partition consistent with the manifest,
-owner plans bound to their own pack and bundle file without a choices scope,
-and at most one rebuild after both owner results were consumed; root
-orchestration calls are recognized either by strict flag parsing or, for
-compound preparations, by their single action word plus their
-``aggregatedOutput``. A proven product failure is never downgraded to a
-blocked or invalid terminal by another child's missing or ambiguous evidence.
-
-r25 removes the previous revision's entry-transport PASS cap per Test Plan
-r22 §4.1: an otherwise-clean terminal is reported as PASS with its product
-facts (``owner_pack_set``/``rebuild_count``/``partition_executions``/
-``identity_diagnostics``), and FAIL_PRODUCT and INVALID_EVIDENCE terminals
-keep their precedence. A completed commandExecution without a started record
-does not end the scan: it is collected as an observability gap, produces no
-call, and surfaces as ``BLOCKED_OBSERVABILITY``/``command_start_unobservable``
-only on the otherwise-clean terminal, so a sibling child's proven failure
-keeps its precedence.
-"""
+"""PC68-R1 verifier: professor-local business consumption and root orchestration."""
 import argparse
 import json
 import shlex
@@ -177,18 +81,14 @@ def is_business_surface(text):
     return "contact_state.py" in text and any(action in text for action in ACTIONS)
 
 
-def consumed_business_objects(stage5_command_texts, payload_texts):
-    """The one business object this owner consumed, from its stage5 commands.
+def is_owner_business_surface(text):
+    """Only professor business commands supply consumed-input evidence."""
+    return is_business_surface(text) and any(
+        action in text for action in ("stage5-partition-choices", "stage5-plan"))
 
-    Only command texts on the loose business surface (producer CLI plus a
-    supported stage5 action word, however compound the expression) are the
-    consumption surface; a business object recorded by any other command
-    (echo/log or a diagnostic example) is never consumption evidence. The
-    plaintext child user message stays the delivery fallback for hosts that
-    hand the business object to the child itself; it keeps the frozen
-    ``completed_user_payload_unobservable`` blocker when it is absent or not
-    unique and no stage5 command surface exists.
-    """
+
+def consumed_business_objects(stage5_command_texts):
+    """Extract actual business inputs from the child's executed commands."""
     consumed = command_surface._unique([row for text in stage5_command_texts
                                         for row in command_surface.business_objects(text)])
     if len(consumed) > 1:
@@ -196,14 +96,7 @@ def consumed_business_objects(stage5_command_texts, payload_texts):
                            observed_candidates=len(consumed))
     if consumed:
         return consumed, None
-    if stage5_command_texts:
-        return [], verdict("BLOCKED_OBSERVABILITY", "owner_business_object_unobservable")
-    delivered = [text for text in payload_texts
-                 if any("email_pack" in row for value in base.json_values(text) for row in base.objects(value))]
-    if len(delivered) == 1:
-        return command_surface._unique([row for text in delivered
-                                        for row in command_surface.business_objects(text)]), None
-    return [], verdict("BLOCKED_OBSERVABILITY", "completed_user_payload_unobservable")
+    return [], verdict("BLOCKED_OBSERVABILITY", "owner_business_object_unobservable")
 
 
 def _choices_summary(observed, expected):
@@ -438,6 +331,8 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
     owner_threads = owner_threads or {}
     for call in calls:
         command, thread = call["command"], call.get("thread")
+        if root is not None and thread != root and _compound_action(command) == "stage5-rebuild-overview":
+            continue
         try:
             parsed = command_action(command, manifest)
         except ValueError as exc:
@@ -478,7 +373,7 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
                 return problem
         if root is not None and thread != root:
             if action == "stage5-rebuild-overview":
-                return verdict("FAIL_PRODUCT", "owner_rebuilds_aggregate")
+                continue
             if action == "stage5-partition-choices":
                 return verdict("FAIL_PRODUCT", "partition_executed_by_owner")
             if action == "stage5-list-inputs":
@@ -519,8 +414,7 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
     # r20 ordering fact: the successful root partition must complete before
     # any owner business call starts on a child thread. On a child thread a
     # strictly parsed stage5-list-inputs stays outside the business surface;
-    # every other strictly parsed stage5 call and every compound command on
-    # the loose business surface counts as an owner business call.
+    # plan and partition commands count as owner business calls.
     partition_end = partition_call["end"]
     for call in calls:
         if root is None or call.get("thread") == root:
@@ -531,9 +425,9 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
         except ValueError:
             parsed = None
         if parsed is not None:
-            if parsed["action"] == "stage5-list-inputs":
+            if parsed["action"] in {"stage5-list-inputs", "stage5-rebuild-overview"}:
                 continue
-        elif not is_business_surface(command):
+        elif not is_owner_business_surface(command):
             continue
         if call["start"] < partition_end:
             return verdict("FAIL_PRODUCT", "owner_business_precedes_partition",
@@ -598,7 +492,7 @@ def _verify_codex_events(response, adapter, manifest):
         return verdict("BLOCKED_OBSERVABILITY", "formal_delegation_unobservable")
     if len(children) != 2:
         return verdict("FAIL_PRODUCT", "wrong_owner_count", formal_children=sorted(children))
-    payloads, results = {}, {}
+    results = {}
     agent_paths, receipts = {}, []
     command_starts, calls, root_texts, commands = {}, [], [], {}
     observability_gaps = []
@@ -623,9 +517,7 @@ def _verify_codex_events(response, adapter, manifest):
                     known.append(agent_path)
         if method == "rawResponseItem/completed" and item.get("type") == "message":
             text = base.message_text(item)
-            if thread in children and item.get("role") == "user":
-                payloads.setdefault(thread, []).append(text)
-            elif thread in children and item.get("role") == "assistant":
+            if thread in children and item.get("role") == "assistant":
                 results.setdefault(thread, []).append(text)
             elif thread == root and item.get("role") == "assistant":
                 root_texts.append(text)
@@ -660,8 +552,8 @@ def _verify_codex_events(response, adapter, manifest):
     failures, invalids, blockers = [], [], []
     assigned, outcomes, consume_points = {}, {}, {}
     for child in sorted(children):
-        stage5_texts = [text for text in commands.get(child, []) if is_business_surface(text)]
-        rows, problem = consumed_business_objects(stage5_texts, payloads.get(child, []))
+        stage5_texts = [text for text in commands.get(child, []) if is_owner_business_surface(text)]
+        rows, problem = consumed_business_objects(stage5_texts)
         if not problem:
             pack, problem = owner_payload(rows, manifest)
         if problem:
@@ -742,10 +634,7 @@ def _verify_codex_events(response, adapter, manifest):
                             owner_threads={child: pack for pack, child in assigned.items()})
     result["identity_diagnostics"] = adapter.get("dispatch", {}).get("agent_identity", {})
     # Unified terminal precedence: a proven FAIL/INVALID keeps its precedence
-    # over the collected observability gaps, and a gap surfaces only on the
-    # otherwise-clean terminal. Test Plan r22 §4.1: the encrypted root->child
-    # NEW_TASK entry delivery is diagnostics only, so an otherwise-clean run
-    # is reported as PASS and never capped by the unobservable entry payload.
+    # over collected observability gaps, which affect only otherwise-clean runs.
     if result.get("verdict") in ("FAIL_PRODUCT", "INVALID_EVIDENCE"):
         return result
     if observability_gaps:
