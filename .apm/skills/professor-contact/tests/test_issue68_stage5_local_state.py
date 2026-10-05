@@ -1,16 +1,19 @@
 """PC68-D1: seven proof owners, reusing concrete regression assertions.
 
-Component mapping per Test Plan r19 (``issue-68-test-plan-r19-2026-10-04``):
+Component mapping per Test Plan r23 (``issue-68-test-plan-r23-2026-10-05``):
 P1/P2/P5 keep their earlier owners; P3 adds the batch zero-partial-commit
-class ``TestStage5BatchStaysAtomic``; P4 adds direct owner-local input
-checks from ``test_issue68_root_partition`` (cx2's owner bundles plus the
-sibling fail-closed loader); P6 owns the read-only discovery class
-(including the r19 scope-emission negative oracle); P7 binds the full r12
-root-partition attribution classes beside the r10 attribution cases.
+class ``TestStage5BatchStaysAtomic``; P4 owns per-professor transaction and
+local-validation checks; P6 owns the read-only discovery class (including
+the r19 scope-emission negative oracle); P7 binds the full r12 root-partition
+and owner-local bundle-loader classes beside the r10 attribution cases.
 Only these seven methods are discovered in this asset. Components are run
 with their own setUp/tearDown/cleanups; a skip or nonordinary outcome cannot
 turn the enclosing proof into PASS. The component mapping is also used by
-the gate runner to avoid running the same component twice.
+Test Plan r23 to assign each deterministic method to one proof owner. P4
+keeps its transaction checks separate from P7's routing and attribution
+suites; each outer proof records its own component IDs, test count, and log
+so both proofs retain machine-readable evidence without running shared
+methods twice.
 """
 import importlib
 import io
@@ -34,11 +37,7 @@ PROOFS = {
         ("test_issue68_root_partition", "TestStage5BatchStaysAtomic", None)],
     "P4": [("test_contact_state", "TestStage5PerProfessorState", [
         "test_issue68_t68_6_second_professor_failure_keeps_first_commit",
-        "test_issue68_validation_updates_only_the_named_local_state"]),
-        ("test_issue68_root_partition", "TestStage5RootPartition", [
-        "test_r12_cx2_owner_bundles_hold_only_their_own_professor"]),
-        ("test_issue68_root_partition", "TestStage5OwnerLocalBundleLoader", [
-        "test_sibling_explicit_row_in_owner_bundle_fails_closed"])],
+        "test_issue68_validation_updates_only_the_named_local_state"])],
     "P5": [("test_contact_state", "TestStage5PerProfessorState", [
         "test_issue68_t68_7_finalize_never_touches_the_aggregate"]),
         ("test_stage5_overview", "TestStage5OverviewRebuild", None)],

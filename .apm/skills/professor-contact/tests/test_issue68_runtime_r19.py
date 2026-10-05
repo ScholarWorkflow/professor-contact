@@ -88,6 +88,7 @@ PASS_CHANNEL = (
     "test_diagnostic_object_outside_stage5_commands_does_not_change_the_verdict",
     "test_non_final_answer_diagnostic_message_is_not_consumption",
     "test_results_wrapper_final_answer_still_passes",
+    "test_failed_overview_rebuild_is_reported_without_changing_owner_results",
     "test_stale_final_answer_is_not_terminal",
     "test_canonical_unicode_is_preserved",
 )
@@ -106,6 +107,10 @@ FAIL_CHANNEL = (
     "test_wrong_owner_count_is_a_product_failure",
     "test_rebuild_before_result_consumption_fails",
     "test_early_or_multiple_rebuild_is_a_product_failure",
+    "test_missing_overview_rebuild_is_a_product_failure",
+    "test_changed_final_overview_report_is_a_product_failure",
+    "test_changed_professor_result_in_final_report_is_a_product_failure",
+    "test_missing_final_overview_report_is_a_product_failure",
     "test_receipt_payload_changed_is_a_product_failure",
     "test_routing_proof_survives_downstream_business_failure",
     "test_canonical_unicode_is_preserved",
@@ -122,6 +127,8 @@ BLOCKED_INVALID_CHANNEL = (
     "test_conflicting_agent_path_mapping_is_invalid",
     "test_ambiguous_root_receipts_are_invalid",
     "test_multi_action_compound_root_command_blocks_orchestration",
+    "test_damaged_or_unattributable_rebuild_result_is_invalid_evidence",
+    "test_missing_rebuild_result_output_is_blocked",
 )
 WIRING_TESTS = (
     "test_bridge_pins_the_r19_verifier_and_r12_builder",
@@ -250,15 +257,38 @@ class TestIssue68RuntimeR19(unittest.TestCase):
              "choices_rows": row["choices_rows"]}
             for row in (self.partition_rows() if rows is None else rows)]}, ensure_ascii=False)
 
-    def root_result(self):
-        return json.dumps([dict(owner["expected_result"], professor_dir=owner["professor_dir"])
-                           for owner in self.manifest["owners"]], ensure_ascii=False)
+    def successful_overview_result(self):
+        """The producer's successful JSON shape has no reason_code."""
+        return {"status": "ok", "overview_md": str(self.root / "教授研究" / "套磁邮件总览.md"),
+                "professors": len(self.manifest["owners"]), "emails": len(self.manifest["owners"])}
+
+    def failed_overview_result(self):
+        """A real soft_exit shape: status/reason_code plus its target field."""
+        return {"status": "needs_decision", "reason_code": "manual_markdown_changed",
+                "target": str(self.root / "教授研究" / "套磁邮件总览.md")}
+
+    def root_result(self, *, overview=None, owner_results=None, include_overview=True,
+                    wrapper_key=None):
+        """Use arbitrary grouping labels; only direct result object shapes matter."""
+        owners = owner_results
+        if owners is None:
+            owners = [dict(owner["expected_result"], professor_dir=owner["professor_dir"])
+                      for owner in self.manifest["owners"]]
+        report = {"synthetic_owner_group": owners}
+        if include_overview:
+            report["synthetic_aggregate_group"] = (self.successful_overview_result()
+                                                    if overview is None else overview)
+        if wrapper_key is not None:
+            report = {wrapper_key: report}
+        return json.dumps(report, ensure_ascii=False)
 
     def evidence(self, *, per_owner=None, partition_present=True, partition_count=1,
                  partition_rows=None, discovery_flags=(), rebuild_timing=None,
                  old_turn_final=None, final_text=None, receipts="normal",
                  partition_compound=False, root_extra_commands=(),
                  owner_business_before_partition=False, agent_paths=None,
+                 rebuild_present=True, rebuild_result=None, reported_overview=None,
+                 report_overview=True, reported_owner_results=None,
                  drop_started=()):
         """One faithful r24 baseline: root discovery plus one deterministic
         partition, the root-thread ``subAgentActivity`` items binding each
@@ -293,13 +323,29 @@ class TestIssue68RuntimeR19(unittest.TestCase):
             events.append({"runtime_seq": seq, "runtime_generation": "g", "direction": "recv",
                            "message": {"method": method, "params": params}})
 
-        def command(thread, item_id, command_text, output=""):
+        def command(thread, item_id, command_text, output="", exit_code=0):
             if item_id not in drop_started:
                 event("item/started", thread, {"type": "commandExecution", "id": item_id,
                                                "command": command_text})
             event("item/completed", thread, {"type": "commandExecution", "id": item_id,
-                                             "command": command_text, "exitCode": 0,
+                                             "command": command_text, "exitCode": exit_code,
                                              "aggregatedOutput": output})
+
+        def rebuild(item_id):
+            value = self.successful_overview_result() if rebuild_result is None else rebuild_result
+            if isinstance(value, str):
+                output = value
+                try:
+                    decoded = json.loads(value)
+                except json.JSONDecodeError:
+                    decoded = None
+            else:
+                decoded = value
+                output = json.dumps(value, ensure_ascii=False)
+            status = decoded.get("status") if isinstance(decoded, dict) else None
+            exit_code = 2 if status == "needs_decision" else 1 if status == "error" else 0
+            command("root", item_id, self.stage5_command("stage5-rebuild-overview"),
+                    output, exit_code=exit_code)
 
         def agent_message_receipt(author_path, text, item_id):
             event("rawResponseItem/completed", "root", {
@@ -371,7 +417,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                 command("root", "root-partition-" + str(number), partition_command,
                         self.partition_output(partition_rows))
         if rebuild_timing == "early":
-            command("root", "root-rebuild-early", self.stage5_command("stage5-rebuild-overview"))
+            rebuild("root-rebuild-early")
         for offset, (command_text, output) in enumerate(root_extra_commands):
             command("root", "root-extra-" + str(offset), command_text, output)
         path_lists = agent_paths or {}
@@ -432,8 +478,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
             if rebuild_timing == "between" and index == 0:
                 # Timing counterexample: the root rebuilds before the
                 # root-thread receipt that consumes this child's result.
-                command("root", "root-rebuild-between",
-                        self.stage5_command("stage5-rebuild-overview"))
+                rebuild("root-rebuild-between")
             if receipts == "missing":
                 continue
             if receipts == "cross_child" and index == 0:
@@ -477,8 +522,10 @@ class TestIssue68RuntimeR19(unittest.TestCase):
             else:
                 root_receipt(child, paths[-1], receipt_payload(owner))
         if rebuild_timing == "double":
-            command("root", "root-rebuild-a", self.stage5_command("stage5-rebuild-overview"))
-            command("root", "root-rebuild-b", self.stage5_command("stage5-rebuild-overview"))
+            rebuild("root-rebuild-a")
+            rebuild("root-rebuild-b")
+        elif rebuild_timing is None and rebuild_present:
+            rebuild("root-rebuild")
         if old_turn_final is not None:
             event("rawResponseItem/completed", "root", {
                 "type": "message", "role": "assistant", "phase": "final_answer",
@@ -486,7 +533,10 @@ class TestIssue68RuntimeR19(unittest.TestCase):
             }, turn="turn-old")
         event("rawResponseItem/completed", "root", {
             "type": "message", "role": "assistant", "phase": "final_answer",
-            "content": [{"type": "output_text", "text": final_text or self.root_result()}],
+            "content": [{"type": "output_text", "text": final_text or self.root_result(
+                overview=(reported_overview if reported_overview is not None else
+                          (rebuild_result if isinstance(rebuild_result, dict) else None)),
+                owner_results=reported_owner_results, include_overview=report_overview)}],
         })
         response = {"version": "codex-cli 0.159.0-alpha.12.1",
                     "output": {"thread_id": "root", "turn_id": "turn-current", "runtime_generation": "g",
@@ -504,7 +554,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         result = verify.verify_codex(response, adapter, self.manifest)
         self.assertEqual(result["verdict"], "PASS")
         self.assertEqual(result["partition_executions"], 1)
-        self.assertEqual(result["rebuild_count"], 0)
+        self.assertEqual(result["rebuild_count"], 1)
         self.assertEqual(result["owner_pack_set"],
                          sorted(owner["email_pack"] for owner in self.manifest["owners"]))
         self.assertIn("identity_diagnostics", result)
@@ -551,9 +601,66 @@ class TestIssue68RuntimeR19(unittest.TestCase):
 
     def test_results_wrapper_final_answer_still_passes(self):
         response, adapter = self.evidence(final_text=json.dumps(
-            {"results": json.loads(self.root_result())}, ensure_ascii=False))
+            {"arbitrary_wrapper": json.loads(self.root_result())}, ensure_ascii=False))
         result = verify.verify_codex(response, adapter, self.manifest)
         self.assertEqual(result["verdict"], "PASS")
+
+    def test_failed_overview_rebuild_is_reported_without_changing_owner_results(self):
+        """soft_exit and fail aggregates remain separate from owner outcomes."""
+        failures = [self.failed_overview_result(),
+                    {"status": "error", "reason_code": "missing_email_pack",
+                     "message": "email pack unreadable", "email_pack": self.owner(0)["email_pack"]}]
+        for failed in failures:
+            with self.subTest(status=failed["status"]):
+                response, adapter = self.evidence(rebuild_result=failed)
+                result = verify.verify_codex(response, adapter, self.manifest)
+                self.assertEqual(result["verdict"], "PASS")
+                self.assertEqual(result["rebuild_count"], 1)
+
+    def test_missing_overview_rebuild_is_a_product_failure(self):
+        response, adapter = self.evidence(rebuild_present=False)
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "aggregate_rebuild_missing"))
+
+    def test_changed_final_overview_report_is_a_product_failure(self):
+        reported = dict(self.successful_overview_result(), emails=99)
+        response, adapter = self.evidence(reported_overview=reported)
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "root_overview_result_changed"))
+
+    def test_changed_professor_result_in_final_report_is_a_product_failure(self):
+        owners = [dict(owner["expected_result"], professor_dir=owner["professor_dir"])
+                  for owner in self.manifest["owners"]]
+        owners[0]["status"] = "ok"
+        owners[0]["reason_code"] = "changed"
+        response, adapter = self.evidence(reported_owner_results=owners)
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "root_changed_owner_result"))
+
+    def test_missing_final_overview_report_is_a_product_failure(self):
+        response, adapter = self.evidence(report_overview=False)
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "root_overview_result_unreported"))
+
+    def test_damaged_or_unattributable_rebuild_result_is_invalid_evidence(self):
+        response, adapter = self.evidence(rebuild_result='{"status":')
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("INVALID_EVIDENCE", "root_overview_call_result_malformed"))
+        response, adapter = self.evidence(rebuild_result={"status": "ok"})
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("INVALID_EVIDENCE", "root_overview_call_result_unattributable"))
+
+    def test_missing_rebuild_result_output_is_blocked(self):
+        response, adapter = self.evidence(rebuild_result="")
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("BLOCKED_OBSERVABILITY", "root_overview_call_result_unobservable"))
 
     def test_stale_final_answer_is_not_terminal(self):
         response, adapter = self.evidence(old_turn_final=json.dumps(
@@ -931,6 +1038,12 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertIn("never guesses a PASS", codex["wait_consume_evidence"])
         self.assertIn("subagentactivity", codex["producer_verifier_uses"][1].lower())
         self.assertIn("diagnostics only", codex["producer_verifier_uses"][3])
+        self.assertIn("exactly one", codex["overview_result_reporting"])
+        self.assertIn("aggregatedOutput", codex["overview_result_reporting"])
+        self.assertIn("without reason_code", codex["overview_result_reporting"])
+        self.assertIn("property names are not frozen", codex["overview_result_reporting"])
+        self.assertIn("never recursively", codex["overview_result_reporting"])
+        self.assertIn("stage5-rebuild-overview", codex["producer_verifier_uses"][-1])
         self.assertIn("never downgraded", codex["terminal_precedence"])
         self.assertEqual(codex["missing_observation"], "BLOCKED_OBSERVABILITY")
         self.assertEqual(codex["malformed_or_ambiguous_observation"], "INVALID_EVIDENCE")

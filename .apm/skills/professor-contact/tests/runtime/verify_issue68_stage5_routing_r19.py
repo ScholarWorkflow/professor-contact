@@ -149,27 +149,68 @@ def owner_payload(rows, manifest):
 
 
 def final_result_rows(texts):
-    """The pinned final business result source, single wrapper layer aware.
+    """Professor rows from the pinned final message's direct report values."""
+    return [row for row in _final_report_candidates(texts)
+            if "professor_dir" in row and "status" in row and "reason_code" in row]
 
-    For every top-level JSON value of the pinned root text: a list contributes
-    its dicts, a result row (``status`` plus ``reason_code``) contributes
-    itself, and a dict with exactly one key contributes only the dicts of that
-    one list value. Recursion never goes deeper, so historical references and
-    nested diagnostics are never terminal results; top-level values are never
-    merged or deduplicated against each other.
+
+def _is_overview_result(value):
+    """Recognize producer CLI result shapes without requiring report keys."""
+    if not isinstance(value, dict) or not isinstance(value.get("status"), str):
+        return False
+    if value["status"] == "ok":
+        return {"overview_md", "professors", "emails"} <= set(value)
+    return "professor_dir" not in value and isinstance(value.get("reason_code"), str) \
+        and bool(value["reason_code"])
+
+
+def _final_report_candidates(texts):
+    """Read direct result values; never recurse into history or diagnostics.
+
+    A top-level array contributes its direct objects. A report object may put
+    professor rows and the overview result side by side under arbitrary keys.
+    One single-object envelope is allowed; grouping key names are not pinned.
     """
-    rows = []
+    candidates = []
     for text in texts:
         for value in base.json_values(text):
             if isinstance(value, list):
-                rows.extend(row for row in value if isinstance(row, dict))
-            elif isinstance(value, dict) and "status" in value and "reason_code" in value:
-                rows.append(value)
-            elif isinstance(value, dict) and len(value) == 1:
-                nested = next(iter(value.values()))
-                if isinstance(nested, list):
-                    rows.extend(row for row in nested if isinstance(row, dict))
-    return rows
+                candidates.extend(row for row in value if isinstance(row, dict))
+                continue
+            if not isinstance(value, dict):
+                continue
+            if "professor_dir" in value or _is_overview_result(value):
+                candidates.append(value)
+                continue
+            report = value
+            if len(report) == 1:
+                nested = next(iter(report.values()))
+                if isinstance(nested, dict):
+                    report = nested
+            for member in report.values():
+                if isinstance(member, dict):
+                    candidates.append(member)
+                elif isinstance(member, list):
+                    candidates.extend(row for row in member if isinstance(row, dict))
+    return candidates
+
+
+def _overview_call_result(call):
+    """Resolve exactly one result from this call's aggregatedOutput."""
+    output = call.get("output")
+    if not isinstance(output, str) or not output.strip():
+        return None, verdict("BLOCKED_OBSERVABILITY", "root_overview_call_result_unobservable")
+    if base.source_malformed([output]):
+        return None, verdict("INVALID_EVIDENCE", "root_overview_call_result_malformed")
+    values = base.json_values(output)
+    if not values:
+        return None, verdict("BLOCKED_OBSERVABILITY", "root_overview_call_result_unobservable")
+    results = [value for value in values if _is_overview_result(value)]
+    if len(results) > 1:
+        return None, verdict("INVALID_EVIDENCE", "root_overview_call_result_ambiguous")
+    if len(results) != 1:
+        return None, verdict("INVALID_EVIDENCE", "root_overview_call_result_unattributable")
+    return results[0], None
 
 
 def _receipt_body(item):
@@ -306,11 +347,12 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
     per-owner bundles match the manifest partition record and whose
     completion precedes every owner business call; owner plans stay
     bound to their own pack and bundle file and never carry a choices scope;
-    at most one rebuild may run after every owner result was consumed
+    exactly one rebuild must run after every owner result was consumed
     (``consumption_points`` are the root's per-child result-consumption
-    points, the earliest matching root-thread receipt seqs); and the pinned
-    final source must carry one consistent consumed outcome per owner
-    directory.
+    points, the earliest matching root-thread receipt seqs). The rebuild's
+    ``aggregatedOutput`` is the result source, and the pinned final source must
+    report that result separately while preserving one consistent consumed
+    outcome per owner directory.
 
     A supported call is recognized on two surfaces. A call whose command
     parses strictly under ``command_action`` keeps every flag fact: only such
@@ -434,20 +476,28 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
                            observed_call=command[:200])
     if len(rebuilds) > 1:
         return verdict("FAIL_PRODUCT", "multiple_aggregate_rebuilds")
-    if rebuilds and rebuilds[0]["start"] <= max(consumption_points):
+    if not rebuilds:
+        return verdict("FAIL_PRODUCT", "aggregate_rebuild_missing")
+    if rebuilds[0]["start"] <= max(consumption_points):
         return verdict("FAIL_PRODUCT", "aggregate_precedes_result_consumption")
+    overview_result, problem = _overview_call_result(rebuilds[0])
+    if problem:
+        return problem
     # The pinned final business result source is root's own final message.
-    # Inside that source each professor directory must resolve to exactly one
-    # consistent consumed outcome matching the owner's returned result.
+    # Grouping names in that source are not part of the result contract; rows
+    # and the overview result are associated by their direct object shapes.
     if base.source_malformed(root_texts):
         return verdict("INVALID_EVIDENCE", "root_final_result_malformed")
-    rows = [row for row in final_result_rows(root_texts) if "status" in row and "reason_code" in row]
+    candidates = _final_report_candidates(root_texts)
     for owner in manifest["owners"]:
         expected = (outcomes or {}).get(owner["email_pack"],
                     dict(owner["expected_result"], professor_dir=owner["professor_dir"]))
-        consumed = [row for row in rows if row.get("professor_dir") == owner["professor_dir"]]
+        consumed = [row for row in candidates if row.get("professor_dir") == owner["professor_dir"]]
         if not consumed:
             return verdict("BLOCKED_OBSERVABILITY", "root_consumed_result_unobservable")
+        if any("status" not in row or "reason_code" not in row for row in consumed):
+            return verdict("INVALID_EVIDENCE", "root_final_result_malformed",
+                           observed_professor_dir=owner["professor_dir"])
         seen = []
         for row in consumed:
             outcome = {key: row[key] for key in ("professor_dir", "status", "reason_code")}
@@ -457,6 +507,17 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
             return verdict("FAIL_PRODUCT", "root_consumed_results_conflict", observed_results=seen)
         if seen[0] != expected:
             return verdict("FAIL_PRODUCT", "root_changed_owner_result", observed_result=seen[0])
+    reported_overviews = [row for row in candidates if "professor_dir" not in row and
+                          any(field in row for field in
+                              ("status", "reason_code", "overview_md", "professors", "emails"))]
+    if not reported_overviews:
+        return verdict("FAIL_PRODUCT", "root_overview_result_unreported")
+    if len(reported_overviews) != 1:
+        return verdict("INVALID_EVIDENCE", "root_overview_result_ambiguous",
+                       observed_candidates=len(reported_overviews))
+    if reported_overviews[0] != overview_result:
+        return verdict("FAIL_PRODUCT", "root_overview_result_changed",
+                       observed_result=reported_overviews[0], expected_result=overview_result)
     return verdict("PASS", owner_pack_set=sorted(expected_packs), rebuild_count=len(rebuilds),
                    partition_executions=1)
 
