@@ -1,5 +1,7 @@
 # Issue #68 / PR #72 Gate 2 候选记录 r23 — 单一权威测试实现
 
+> **已被取代**：本记录的 Gate 2 候选地位由 `docs/issue68-test-gate-r24.md`（`issue68-r24-r21-authoritative-candidate-2026-10-05`，按 Test Plan r21 处理 Observable 未满足封顶、缺字段回执、terminal precedence 与版本绑定）接管；本文件仅保留审计用途，不得作为当前权威候选拼接使用。其 §0 的"工作树未提交修正"占位文字已由 r24 记录的真实提交绑定取代。
+
 记录版本：`issue68-r23-authoritative-candidate-2026-10-05`。
 
 本文件是**测试实现记录与 Gate 2 候选材料，不是第二关口权威结论**。按 r22 第二关口完整复审（PR 评论 `5992000966`）阻断项 2 的最小修改，本记录把 Test Plan r20 的完整 requirement mapping、两个 case 的完整 Recipe、当前 Preflight、parser/evaluator/终态、复验依赖与取代关系合并为单一自包含候选；分别写明被测产品版本与测试实现/判定程序版本。是否通过 Gate 2 由测试审核者决定。
