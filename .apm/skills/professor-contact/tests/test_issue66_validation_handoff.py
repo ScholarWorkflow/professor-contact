@@ -31,7 +31,7 @@ from pathlib import Path
 from test_stage2_resolved_direction import (
     parse, quote_id, run_cli, write_json)
 from test_stage3_direction_groups import (
-    PROFESSOR, Stage3DirectionGroupBase, contact_state, result_file)
+    PROFESSOR, QUOTES, Stage3DirectionGroupBase, contact_state, result_file)
 
 CANDIDATE_STATE = "套磁候选状态.json"
 CANDIDATES_MD = "套磁想法候选.md"
@@ -605,6 +605,187 @@ class EndToEndHandoffLoopTests(ValidationHandoffBase):
                          "validation_round_already_recorded")
         self.assertEqual(self.prepare(2)["reason_code"],
                          "validation_rounds_exhausted")
+
+
+class BatchHandoffTests(ValidationHandoffBase):
+    """§6.5: one complete raw JSON, per-professor exact matching."""
+
+    def build_same_named_professor(self):
+        """A second professor with the SAME display name in another
+        subdirection: the canonical directory is the only identity
+        difference (r13 §6.5 同名教授按规范目录区分)."""
+        saved_dir, saved_professor = self.prof_dir, self.professor
+        prof_b = self.root / "教授研究" / "Y分野" / PROFESSOR
+        (prof_b / "论文分析").mkdir(parents=True)
+        self.prof_dir, self.professor = prof_b, PROFESSOR
+        try:
+            papers = [
+                self.make_paper("Q1", "Contrast Field Paper",
+                                ["contrast", "field"], [QUOTES["Q1"]]),
+                self.make_paper("Q2", "Second Contrast Paper",
+                                ["second", "contrast"], [QUOTES["Q2"]]),
+            ]
+            directions = [self.make_direction("dir_C", ["Q1", "Q2"],
+                                              name_ja="対照", name_zh="对照",
+                                              summary="对照方向")]
+            facts_path = self.write_facts(papers, directions,
+                                          name="facts-b.json")
+            self.run_resolve(facts_path, {})
+            payload = self.run_stage2_finalize(facts_path)
+            self.assertEqual(payload["status"], "ok",
+                             msg=json.dumps(payload, ensure_ascii=False))
+            results = self.root / "s3-b"
+            results.mkdir(parents=True, exist_ok=True)
+            write_json(results / result_file("candidates", "dir_C"),
+                       self.generated_doc("dir_C", ["Q1", "Q2", None]))
+            out = parse(run_cli("stage3-finalize", "--professor-dir", prof_b,
+                                "--results", str(results),
+                                "--program-root", self.root))
+            self.assertEqual(out["status"], "ok",
+                             msg=json.dumps(out, ensure_ascii=False))
+        finally:
+            self.prof_dir, self.professor = saved_dir, saved_professor
+        return prof_b
+
+    def entry(self, candidate_md, verdict, issues=(), blocking=None):
+        blocking_count = len([i for i in issues
+                              if i.get("severity") == "blocking"])
+        return {"file": str(candidate_md), "artifact": "candidates",
+                "verdict": verdict, "blocking": blocking_count
+                if blocking is None else blocking,
+                "minor": 0, "issues": list(issues)}
+
+    def complete_raw(self, entries):
+        payload = {"result": "ok", "files": list(entries), "notes": ""}
+        return (json.dumps(payload, ensure_ascii=False, indent=1)
+                + "\n").encode("utf-8")
+
+    def write_source(self, out, raw):
+        """Replace the round's source file with a new complete raw (the
+        exclusive-create shape mirrors how the validator writes it)."""
+        Path(out["output_file"]).unlink(missing_ok=True)
+        fd = os.open(out["output_file"],
+                     os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(raw)
+
+    def test_batch_raw_matches_only_this_professor(self):
+        self.commit_first()
+        prof_b = self.build_same_named_professor()
+        cand_a = (self.prof_dir / CANDIDATES_MD).resolve()
+        cand_b = (prof_b / CANDIDATES_MD).resolve()
+        ghost_b = (prof_b / "未渲染" / CANDIDATES_MD).resolve()
+        out_a = self.prepare(1)
+        self.assertEqual(out_a["status"], "ok",
+                         msg=json.dumps(out_a, ensure_ascii=False))
+        # 甲的输出源里，甲条目缺席（只有乙的条目）→ 恰好一项被违反。
+        self.write_source(out_a, self.complete_raw(
+            [self.entry(ghost_b, "pass")]))
+        saved = self.save(out_a)
+        self.assertEqual(saved["reason_code"], "invalid_validation_json")
+        # 甲条目重复 → 同样拒绝。
+        self.write_source(out_a, self.complete_raw(
+            [self.entry(cand_a, "pass"), self.entry(cand_a, "pass")]))
+        saved = self.save(out_a)
+        self.assertEqual(saved["reason_code"], "invalid_validation_json")
+        # 推进甲不以乙状态可读为前提：乙条目指向不存在的路径，
+        # 甲自己的唯一条目仍然合法保存并记录。
+        raw_a = self.complete_raw([self.entry(cand_a, "pass"),
+                                   self.entry(ghost_b, "fail", blocking=1)])
+        self.write_source(out_a, raw_a)
+        saved_a = self.save(out_a)
+        self.assertEqual(saved_a["status"], "ok",
+                         msg=json.dumps(saved_a, ensure_ascii=False))
+        self.assertEqual(saved_a["validation_sha256"],
+                         hashlib.sha256(raw_a).hexdigest())
+        self.assertEqual(Path(saved_a["validation_file"]).read_bytes(), raw_a)
+        rec_a = self.record_handoff(out_a, saved_a["validation_sha256"])
+        self.assertEqual(rec_a["status"], "ok",
+                         msg=json.dumps(rec_a, ensure_ascii=False))
+        self.assertFalse(rec_a["needs_correction"])
+        # 同名教授按规范目录区分：同一份完整原文（甲条目 + 乙条目）写入
+        # 乙的输出源，乙的保存必须精确命中乙的条目。
+        cap_b = self.prepare_for(prof_b)
+        out_b = parse(run_cli(
+            "stage3-prepare-validation",
+            "--invocation-file", cap_b["invocation_file"],
+            "--invocation-sha256", cap_b["invocation_sha256"],
+            "--round", "1"))
+        self.assertEqual(out_b["status"], "ok",
+                         msg=json.dumps(out_b, ensure_ascii=False))
+        finding_b = {"rule": "B5", "severity": "blocking",
+                     "location": "validator 自报位置",
+                     "quote": "候选 dir_C_1", "suggestion": "日常语言解释。"}
+        raw_b = self.complete_raw([self.entry(cand_a, "pass"),
+                                   self.entry(cand_b, "fail",
+                                              issues=[finding_b])])
+        self.write_source(out_b, raw_b)
+        saved_b = self.save(out_b)
+        self.assertEqual(saved_b["status"], "ok",
+                         msg=json.dumps(saved_b, ensure_ascii=False))
+        self.assertEqual(saved_b["validation_sha256"],
+                         hashlib.sha256(raw_b).hexdigest())
+        rec_b = self.record_handoff(out_b, saved_b["validation_sha256"])
+        self.assertEqual(rec_b["status"], "ok",
+                         msg=json.dumps(rec_b, ensure_ascii=False))
+        self.assertEqual(rec_b["round"], 1)
+        self.assertTrue(rec_b["needs_correction"],
+                        "the blocking issue binds to 乙's own render")
+
+    def prepare_for(self, prof_dir):
+        token = hashlib.sha256(str(prof_dir).encode()).hexdigest()[:8]
+        cap_dir = self.root / f"invocation-{token}"
+        plan = parse(run_cli("stage3-plan", "--professor-dir", prof_dir,
+                             "--program-root", self.root,
+                             "--capture-invocation", cap_dir))
+        self.assertEqual(plan["status"], "ok",
+                         msg=json.dumps(plan, ensure_ascii=False))
+        return plan
+
+
+class SecondRoundTerminalTests(ValidationHandoffBase):
+    """§7: the second failing round is the terminal, no third round."""
+
+    def test_second_round_fail_is_terminal_after_two_rounds(self):
+        self.commit_first()
+        out1 = self.prepare(1)
+        self.assertEqual(out1["status"], "ok",
+                         msg=json.dumps(out1, ensure_ascii=False))
+        self.validator_writes(out1, [self.finding("候选 dir_A_1")])
+        saved1 = self.save(out1)
+        rec1 = self.record_handoff(out1, saved1["validation_sha256"])
+        self.assertTrue(rec1["needs_correction"])
+        corrected = self.generated_doc("dir_A", ["P1", "P2", None])
+        corrected["candidates"][0]["title"] = "候选 dir_A_1 修正版"
+        fin2 = self.credential_finalize(
+            self.write_results("g2-fail", {"dir_A": corrected}),
+            "--validation-file", saved1["validation_file"])
+        self.assertEqual(fin2["status"], "ok",
+                         msg=json.dumps(fin2, ensure_ascii=False))
+        out2 = self.prepare(2)
+        self.assertEqual(out2["status"], "ok",
+                         msg=json.dumps(out2, ensure_ascii=False))
+        # V2 在修正后的渲染上仍失败：fail_after_2_rounds 就是终态。
+        self.validator_writes(out2, [self.finding("候选 dir_A_1 修正版")])
+        saved2 = self.save(out2)
+        rec2 = self.record_handoff(out2, saved2["validation_sha256"])
+        self.assertEqual(rec2["status"], "ok",
+                         msg=json.dumps(rec2, ensure_ascii=False))
+        self.assertEqual(rec2["round"], 2)
+        self.assertFalse(rec2["needs_correction"])
+        self.assertTrue(rec2["terminal"])
+        state = self.load_state()
+        self.assertEqual(state["validator"]["results"]["dir_A"]["result"],
+                         "fail_after_2_rounds")
+        self.assertEqual(state["validator"]["results"]["dir_A"]["rounds"], 2)
+        # 第三轮禁止：prepare 两侧都拒绝，重复 record 也拒绝。
+        self.assertEqual(self.prepare(1)["reason_code"],
+                         "validation_round_already_recorded")
+        self.assertEqual(self.prepare(2)["reason_code"],
+                         "validation_rounds_exhausted")
+        third = self.record_legacy(self.validator_bytes(
+            [self.finding("候选 dir_A_1 修正版")]))
+        self.assertEqual(third["reason_code"], "validation_rounds_exhausted")
 
 
 if __name__ == "__main__":
