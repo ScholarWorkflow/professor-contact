@@ -981,15 +981,76 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
         self.assertEqual(lock_files, [])
 
 
-class CredentialEntryIsolationTests(TestIssue66Stage3):
+class CredentialEntryIsolationTests(Stage3DirectionGroupBase):
     """The isolation / manual-conflict / transaction / candidate-contract
     facts re-proved through the frozen credential entry (r13 §5.2): capture
     once, then every commit consumes the credential and re-supplying source
-    parameters is refused."""
+    parameters is refused.
+
+    Deliberately NOT a subclass of TestIssue66Stage3: inheriting the case
+    class would re-run the original eight tests a second time under this
+    class, and repeated execution is not additional coverage.
+    """
 
     def setUp(self):
         super().setUp()
+        self.overview_path = self.root / "教授研究" / CANDIDATES_OVERVIEW
+        self.registry_path = self.root / "教授研究" / PROJECTIONS_FILE
         self._cap_seq = itertools.count(1)
+
+    def write_a_results(self, name, docs=None):
+        docs = docs or {"dir_A": self.generated_doc("dir_A", ["P1", "P2", None]),
+                        "dir_B": self.generated_doc("dir_B", ["P1", "P3", None])}
+        return self.write_results(name, docs)
+
+    def snapshot(self, *paths):
+        return {Path(p): (Path(p).read_bytes() if Path(p).exists() else None)
+                for p in paths}
+
+    def assert_unchanged(self, before):
+        for path, old in before.items():
+            current = path.read_bytes() if path.exists() else None
+            self.assertEqual(current, old, f"unexpected change: {path}")
+
+    def write_a_cross(self, results):
+        write_json(results / result_file("candidates", CROSS_GID),
+                   {"schema": 2, "kind": "cross_candidates",
+                    "group_id": CROSS_GID, "direction_ids": ["dir_A", "dir_B"],
+                    "candidates": [self.cross_candidate(
+                        "XA", ["dir_A", "dir_B"], ["P2", "P3"], ["P1"],
+                        gap_owner={"P2": "dir_A", "P3": "dir_B"})]})
+        return results
+
+    @staticmethod
+    def machine_projection(state):
+        """Volatile-field-free projection of the candidate machine contract."""
+        return {
+            "schema": state["schema"], "kind": state["kind"],
+            "identity_version": state["identity_version"],
+            "generator_contract_version": state["generator_contract_version"],
+            "professor": state["professor"],
+            "profile_fingerprint": state["profile_fingerprint"],
+            "input_fingerprints": state["input_fingerprints"],
+            "directions": [{"direction_id": d["direction_id"],
+                            "stage3_status": d["stage3_status"],
+                            "candidates": [{"id": c["id"], "kind": c["kind"],
+                                            "direction_ids": c["direction_ids"],
+                                            "gap_refs": c["gap_refs"],
+                                            "papers": [p["item_key"]
+                                                       for p in c["papers"]]}
+                                           for c in d["candidates"]]}
+                           for d in state["directions"]],
+            "cross_direction_groups": [
+                {"group_id": g["group_id"],
+                 "direction_ids": g["direction_ids"],
+                 "direction_fingerprints": g.get("direction_fingerprints"),
+                 "profile_fingerprint": g.get("profile_fingerprint"),
+                 "candidates": [{"id": c["id"], "kind": c["kind"],
+                                 "direction_ids": c["direction_ids"],
+                                 "gap_refs": c["gap_refs"]}
+                                for c in g["candidates"]]}
+                for g in state["cross_direction_groups"]],
+        }
 
     def capture(self, *extra):
         cap_dir = self.root / f"cap-iso-{next(self._cap_seq)}"
