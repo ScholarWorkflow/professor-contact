@@ -1,8 +1,8 @@
-# Issue #68 / PR #72 Gate 2 候选记录 r28 — 测试计划第23版 单一权威测试实现
+# Issue #68 / PR #72 Gate 2 候选记录 r29 — 测试计划第23版 单一权威测试实现
 
-记录版本：`issue68-r28-r23-candidate-2026-10-05`。
+记录版本：`issue68-r29-r23-candidate-2026-10-06`。
 
-本文件是当前单一测试候选记录，取代 r27 候选记录。测试计划见 [当前测试计划](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-5993806361)。第二关口尚待独立审核；第三关口尚未运行，状态为 NOT READY。
+本文件是当前单一测试候选记录，取代 r28 候选记录。测试计划见 [当前测试计划](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-5993806361)。第二关口已于 2026-10-06 经独立只读复核为 PASS+COMPLETE；第三关口尚未运行，状态为 NOT READY。
 
 ## 0. 版本绑定（全部固定到真实提交）
 
@@ -104,7 +104,7 @@ root 编排：discovery 恰为 `{A ok, B ok, invalid_pack error}`；root 恰一�
 ## 5. Preflight（r22 §6 四项）
 
 ```text
-Recipe Preflight（2026-10-05，r28）
+Recipe Preflight（2026-10-06，r29）
 - executable: satisfied — direnv（/Users/rekidunois/.local/bin/direnv）经正式来源解析
   EVAL_PORT 17902（证据 /tmp/pc68-r19-work/executable-preflight/direnv_eval_port.txt）；
   入口经该来源可达 case 边界（load_contract 通过，唯一监听者 = 冻结检出同一实例 PID 40721）。
@@ -167,7 +167,9 @@ Consensus runtime 配置变化时只重开受影响 proof
 ```text
 验收来源：    第68号议题当前验收约定及本轮用户决定
 测试计划第23版: COMPLETE（current）
-Gate 2:       待独立复审（仍按 NEEDS_MODIFICATION 处理）；尚无 PASS+COMPLETE 结论
-Gate 3:       NOT_READY（尚未运行 PC68-D1 完整入口及 PC68-R1）
+Gate 2:       PASS+COMPLETE（独立只读复核：2026-10-06）
+复核记录：唯一 blocker“带 professor_dir 的总览 error 完整对象归属及教授/总览双重角色判为 INVALID_EVIDENCE”已修复。
+Gate 3:       NOT_READY（PC68-D1 完整入口及 PC68-R1 均尚未运行）
+记录完整性： COMPLETE（延续 r28）
 Merge:        NOT_READY
 ```
