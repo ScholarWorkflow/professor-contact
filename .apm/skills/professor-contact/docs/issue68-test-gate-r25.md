@@ -1,8 +1,8 @@
-# Issue #68 / PR #72 Gate 2 候选记录 r31 — 测试计划第23版 单一权威测试实现
+# Issue #68 / PR #72 Gate 2 候选记录 r32 — 测试计划第23版 单一权威测试实现
 
-记录版本：`issue68-r31-r23-candidate-2026-10-06`。
+记录版本：`issue68-r32-r23-candidate-2026-10-06`。
 
-本文件是当前单一测试候选记录，取代 r30 候选记录。测试计划见 [当前测试计划](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-5993806361)。第二关口已于 2026-10-06 经独立只读复核为 PASS+COMPLETE；PC68-D1 完整入口机器判定 PASS；PC68-R1 尚未进入正式请求，第三关口仍为 NOT READY。
+本文件是当前单一测试候选记录，取代 r31 候选记录。测试计划见 [当前测试计划](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-5993806361)。第二关口记录为 PASS+COMPLETE；PC68-D1 完整入口机器判定 PASS；PC68-R1 已发出一次正式请求，机器判定为 `BLOCKED_OBSERVABILITY / formal_delegation_unobservable`，第三关口仍为 NOT READY。
 
 ## 0. 版本绑定（全部固定到真实提交）
 
@@ -151,22 +151,23 @@ tests/test_issue68_stage5_local_state.py / test_issue68_root_partition.py / test
 
 `PC68-D1` 完整入口使用本记录 r29 配方，执行命令、开始／结束时间和机器回执保存在 `/private/tmp/pc68-d1-r29-20261006/`。开始时间为 `2026-10-06T00:25:07+0800`，结束时间为 `2026-10-06T00:25:51+0800`。机器判定 `PASS`，runner 退出码 `0`；P1–P7 七个 proof 均通过，`tests_run=7`、`skipped=0`、`expected_failures=0`、`unexpected_successes=0`、`failures=0`、`errors=0`。主要证据为 `execution-record.json`、`proof-counts.json`、`output/proofs.json`、`output/unittest.txt` 和 `runner-exit-code.txt`。回执中的 `execution_kind` 为 `preflight`：冻结命令未传该参数，runner 如实记录默认值；本记录保留机器回执原值，不改写该字段。
 
-`PC68-R1` 的全部启动记录均保留；前置失败没有进入正式请求：
+`PC68-R1` 的全部启动和正式请求记录均保留：
 
 - `/private/tmp/pc68-r1-r29-20261006/`：`CASE_NOT_STARTED / wrong_revision_or_dirty_checkout`，producer 检出版本不符。
 - `/private/tmp/pc68-r1-r29-20261006-formal/`：固定 producer、fixture、eval-server 均干净且隔离通过；runner 在临时消费者准备阶段超时，`CASE_NOT_STARTED / consumer_install_failed`，退出码 `1`。日志止于解析 `ScholarWorkflow/professor-contact`，没有 `POST /eval`。
 - `/private/tmp/pc68-r1-r30-20261006-formal/`：`CASE_NOT_STARTED / output_directory_not_empty`，退出码 `2`。外层日志误放入输出目录；未安装工作流，也未发请求。该操作错误及证据保留。
 - `/private/tmp/pc68-r1-r30b-20261006-formal/`：runner 于 `2026-10-06 01:04:42 +0800` 开始，`01:05:20 +0800` 结束，退出码 `1`；机器状态为 `CASE_NOT_STARTED / consumer_install_failed`。按项目共识，`apm install --target codex` 只在新建的 `/private/tmp/pc68-r1-r30b-20261006-formal/consumers/codex` 中准备被测工作流及传递依赖，不是安装 Codex 应用。工作流包已解析，但克隆传递依赖 `ScholarWorkflow/zotero-tools` 时发生 GitHub TLS EOF，安装未完成。无 `case-started.json`，没有 `POST /eval`、模型调用、owner 处理、结果回执或 overview 调用。外层日志为 `/private/tmp/pc68-r1-r30b-20261006-formal.stdout.log` 和同前缀 `.stderr.log`。
+- `/private/tmp/pc68-r1-r31-retry-20261006-01/`：runner 于 `2026-10-06 01:22:03 +0800` 开始；安装成功（`codex/install.exit-code.txt=0`），并于 `01:22:37 +0800` 发出唯一一次正式 `/eval` 请求，`01:23:19 +0800` 结束，runner 退出码 `1`。产品、fixture、eval-server 分别固定为 `35f2785b4d13783683860db910a36add2347bd29`、`c738fa2f8bcbb16cd99d741332d5f59b062b6357`、`3fdfa9387140cfc2e2aa3af415f85015f79706d2`；临时消费者在该目录下的 `consumers/codex`，`manual_patch=no`。服务端口 `17902`、PID `40721`，前后服务与隔离状态不变，storage 为 `ISOLATION_CONFIRMED`。Eval 响应正常结束（`passed=true`、`termination_reason=completed`、eval `exit_code=0`），但冻结适配器与判定器返回 `BLOCKED_OBSERVABILITY / formal_delegation_unobservable`：`formal_child_count=0`、`no_supported_formal_spawn_relation`，`child_thread_reads=[]`。本次没有重发。完整证据：`codex/codex-request.json`、`codex/root-prompt.txt`、`codex/codex-response.json`、`codex/codex-adapter.json`、`final-verdict.json`、同前缀 `.runner.log`。
 
-正式请求计数仍为 `0`；上述记录不是 PC68-R1 产品测试失败或通过。按冻结 Recipe 不再重试，不更换服务、模型、入口或判定条件。
+正式请求计数为 `1`。PC68-R1 未得到 PASS 或 FAIL；当前机器结果为 `BLOCKED_OBSERVABILITY / formal_delegation_unobservable`。按冻结 Recipe 不再重试，不更换服务、模型、入口或判定条件。
 
 ## 8. 复验依赖
 
 ```text
 PC68-D1    = PASS（完整固定入口，七个 proof 一次执行；回执 execution_kind=preflight，见 §7.1）
-PC68-R1    = CASE_NOT_STARTED（见 §7.1 的全部前置启动记录；未向 /eval 发出正式请求）
+PC68-R1    = BLOCKED_OBSERVABILITY / formal_delegation_unobservable（见 §7.1；正式请求已完成，但 formal child relation 无可支持的观察证据）
 P1/P5 此前 PASS 仅可作为未改变事实的支持证据，不可替代当前完整 PC68-D1；
-       PC68-R1 未进入正式用例，不标为 PASS 或 FAIL
+       PC68-R1 未取得 PASS 或 FAIL
 R68-6 随 P1；R68-7 随 P2/P4
 fixture、正式入口、实际消费 evidence surface、result-consumption evidence、parser/evaluator 或
 Consensus runtime 配置变化时只重开受影响 proof
@@ -179,7 +180,7 @@ Consensus runtime 配置变化时只重开受影响 proof
 测试计划第23版: COMPLETE（current）
 Gate 2:       PASS+COMPLETE（独立只读复核：2026-10-06）
 复核记录：唯一 blocker“带 professor_dir 的总览 error 完整对象归属及教授/总览双重角色判为 INVALID_EVIDENCE”已修复。
-Gate 3:       NOT_READY（PC68-R1 未进入正式请求；固定工作流的传递依赖安装遇到 TLS EOF，依冻结 Recipe 不重试）
-记录完整性： COMPLETE（延续 r30，包含两项 case 的本轮机器记录）
+Gate 3:       NOT_READY（PC68-R1 返回 BLOCKED_OBSERVABILITY / formal_delegation_unobservable）
+记录完整性： COMPLETE（延续 r31，包含两项 case 的本轮机器记录）
 Merge:        NOT_READY
 ```
