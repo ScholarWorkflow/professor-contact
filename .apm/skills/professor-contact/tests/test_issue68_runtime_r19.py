@@ -1,4 +1,4 @@
-"""Gate-2 r22 regressions for owner-local consumption and the root partition.
+"""Gate-2 r23 regressions for owner-local consumption and the root partition.
 
 Synthetic evidence characterizes the evaluator and the recipe wiring. It is not
 a real-host PC68-R1 acceptance PASS.
@@ -29,7 +29,13 @@ counterexample matrix:
   (owner_business_object_ambiguous), a missing root receipt
   (root_result_consumption_unobservable), a well-shaped receipt sent by
   another child's author, which the author binding alone keeps from being
-  misattributed (root_result_consumption_unobservable), two receipts with
+  misattributed (root_result_consumption_unobservable), a shape-correct
+  receipt from the child's own author whose Payload top level carries only a
+  nested diagnostic object, which the top-level-only payload read keeps from
+  ever counting as consumption (root_result_consumption_unobservable), one
+  formal child observed under two distinct agentPath values while the
+  surviving path's own receipt is perfectly shaped and outcome-correct
+  (child_agent_path_mapping_ambiguous), two receipts with
   conflicting outcomes for one owner (root_result_receipt_ambiguous), and a
   compound root text carrying several action words
   (root_orchestration_ambiguous).
@@ -100,6 +106,8 @@ BLOCKED_INVALID_CHANNEL = (
     "test_missing_consumption_evidence_is_blocked",
     "test_missing_root_receipt_blocks",
     "test_cross_child_body_is_not_a_consumption_receipt",
+    "test_nested_diagnostic_payload_is_not_a_consumption_receipt",
+    "test_conflicting_agent_path_mapping_is_invalid",
     "test_ambiguous_root_receipts_are_invalid",
     "test_multi_action_compound_root_command_blocks_orchestration",
 )
@@ -238,21 +246,25 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                  partition_rows=None, discovery_flags=(), rebuild_timing=None,
                  old_turn_final=None, final_text=None, receipts="normal",
                  partition_compound=False, root_extra_commands=(),
-                 owner_business_before_partition=False):
-        """One faithful r22 baseline: root discovery plus one deterministic
+                 owner_business_before_partition=False, agent_paths=None):
+        """One faithful r23 baseline: root discovery plus one deterministic
         partition, the root-thread ``subAgentActivity`` items binding each
         child thread to its agent path, two formal children each consuming
         its own packet on its own stage5 plan surface, one root-thread
         ``agent_message`` FINAL_ANSWER receipt per child on the current turn,
         and the current-turn root final answer. ``receipts`` selects the
         receipt counterexample shape ("normal" default, "missing",
-        "changed", "ambiguous", "cross_child", "diagnostic_only");
+        "changed", "ambiguous", "cross_child", "diagnostic_only", "nested");
         ``partition_compound`` emits the root partition in the r15 real-host
         ``python3 -c`` compound shape and ``root_extra_commands`` appends
         further root command items. ``rebuild_timing="between"`` places one
         root rebuild before the first child's receipt consumption point;
         ``owner_business_before_partition`` starts a child business command
-        before the root partition completes."""
+        before the root partition completes. ``agent_paths`` maps a child
+        index to the list of ``agentPath`` values its subAgentActivity items
+        carry (default one canonical path per child; more than one makes the
+        child-to-path mapping ambiguous, and the child's own receipt is then
+        authored by the last path in its list)."""
         per_owner = per_owner or {}
         events, relations, seq = [], [], 0
 
@@ -281,14 +293,14 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                 "content": [{"type": "input_text", "text": text}],
             })
 
-        def root_receipt(child, path_index, payload, suffix=""):
+        def root_receipt(child, author_path, payload, suffix=""):
             """The real-host root receipt shape: a root-thread
             ``agent_message`` FINAL_ANSWER whose Payload JSON names the
             owner's professor_dir (author is the child's agent path)."""
             agent_message_receipt(
-                CHILD_AGENT_PATHS[path_index],
+                author_path,
                 "Message Type: FINAL_ANSWER\nTask name: /root\nSender: "
-                + CHILD_AGENT_PATHS[path_index] + "\nPayload:\n" + payload,
+                + author_path + "\nPayload:\n" + payload,
                 "receipt-" + child + suffix)
 
         def receipt_payload(owner):
@@ -302,6 +314,14 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         def ambiguous_receipt_payload(owner):
             return json.dumps(dict(owner["expected_result"], professor_dir=owner["professor_dir"],
                                    status="needs_input"), ensure_ascii=False)
+
+        def nested_receipt_payload(owner):
+            """The reviewer's blocker-3 shape: a Payload whose top level
+            carries only a nested diagnostic object naming this owner with
+            the child's own outcome values."""
+            return json.dumps({"diagnostic": dict(owner["expected_result"],
+                                                  professor_dir=owner["professor_dir"])},
+                              ensure_ascii=False)
 
         command("root", "root-discovery",
                 self.stage5_command("stage5-list-inputs", *discovery_flags), self.discovery())
@@ -332,27 +352,31 @@ class TestIssue68RuntimeR19(unittest.TestCase):
             command("root", "root-rebuild-early", self.stage5_command("stage5-rebuild-overview"))
         for offset, (command_text, output) in enumerate(root_extra_commands):
             command("root", "root-extra-" + str(offset), command_text, output)
+        path_lists = agent_paths or {}
         for index in range(len(self.manifest["owners"])):
             # The real-host child_thread_id -> agent_path association: the
             # completed root-thread subAgentActivity item carries both keys.
-            event("item/completed", "root", {
-                "type": "subAgentActivity", "id": "subagent-" + str(index),
-                "kind": "completed",
-                "agentThreadId": "child-" + str(index),
-                "agentPath": CHILD_AGENT_PATHS[index],
-            })
+            for offset, path in enumerate(path_lists.get(index, [CHILD_AGENT_PATHS[index]])):
+                event("item/completed", "root", {
+                    "type": "subAgentActivity",
+                    "id": "subagent-" + str(index) + ("" if offset == 0 else "-" + str(offset)),
+                    "kind": "completed",
+                    "agentThreadId": "child-" + str(index),
+                    "agentPath": path,
+                })
         for index, owner in enumerate(self.manifest["owners"]):
             child = "child-" + str(index)
+            paths = path_lists.get(index, [CHILD_AGENT_PATHS[index]])
             relations.append({"tool": "spawnAgent", "sender_thread_id": "root",
                               "receiver_thread_ids": [child]})
             event("rawResponseItem/completed", child, {
                 "type": "agent_message",
                 "id": "amsg-" + str(index),
                 "author": "/root",
-                "recipient": CHILD_AGENT_PATHS[index],
+                "recipient": paths[0],
                 "content": [
                     {"type": "input_text",
-                     "text": "Message Type: NEW_TASK\nTask name: " + CHILD_AGENT_PATHS[index]
+                     "text": "Message Type: NEW_TASK\nTask name: " + paths[0]
                              + "\nSender: /root\nPayload:\n"},
                     {"type": "encrypted_content", "encrypted_content": "gAAAAA-encrypted-task-payload"},
                 ],
@@ -393,15 +417,23 @@ class TestIssue68RuntimeR19(unittest.TestCase):
             if receipts == "cross_child" and index == 0:
                 continue  # this child's own receipt is absent in this shape
             if receipts == "diagnostic_only" and index == 0:
-                root_receipt(child, index, receipt_payload(owner))
+                root_receipt(child, paths[-1], receipt_payload(owner))
                 # A root agent_message from this child's author whose body
                 # carries the same result JSON without the FINAL_ANSWER
                 # shape: a diagnostic surface, never a consumption receipt.
                 agent_message_receipt(
-                    CHILD_AGENT_PATHS[index],
+                    paths[-1],
                     "Message Type: PROGRESS\nTask name: /root\nSender: "
-                    + CHILD_AGENT_PATHS[index] + "\nPayload:\n" + receipt_payload(owner),
+                    + paths[-1] + "\nPayload:\n" + receipt_payload(owner),
                     "receipt-progress-" + child)
+                continue
+            if receipts == "nested" and index == 0:
+                # Blocker-3 discriminator: the child's own author sends a
+                # fully shaped FINAL_ANSWER receipt whose Payload top level
+                # carries only a nested diagnostic object naming this owner
+                # with the child's own outcome values. The payload is read at
+                # its top level only, so this receipt is never consumption.
+                root_receipt(child, paths[-1], nested_receipt_payload(owner))
                 continue
             if receipts == "cross_child" and index == 1:
                 # Judge's discriminator: the other child's author sends a
@@ -414,12 +446,12 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                     + CHILD_AGENT_PATHS[1] + "\nPayload:\n" + receipt_payload(self.owner(0)),
                     "receipt-cross-child-0")
             if receipts == "changed":
-                root_receipt(child, index, changed_receipt_payload(owner))
+                root_receipt(child, paths[-1], changed_receipt_payload(owner))
             elif receipts == "ambiguous" and index == 0:
-                root_receipt(child, index, receipt_payload(owner), suffix="-a")
-                root_receipt(child, index, ambiguous_receipt_payload(owner), suffix="-b")
+                root_receipt(child, paths[-1], receipt_payload(owner), suffix="-a")
+                root_receipt(child, paths[-1], ambiguous_receipt_payload(owner), suffix="-b")
             else:
-                root_receipt(child, index, receipt_payload(owner))
+                root_receipt(child, paths[-1], receipt_payload(owner))
         if rebuild_timing == "double":
             command("root", "root-rebuild-a", self.stage5_command("stage5-rebuild-overview"))
             command("root", "root-rebuild-b", self.stage5_command("stage5-rebuild-overview"))
@@ -731,6 +763,32 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("BLOCKED_OBSERVABILITY", "root_result_consumption_unobservable"))
 
+    def test_nested_diagnostic_payload_is_not_a_consumption_receipt(self):
+        """Reviewer blocker 3: the child's own author sends a fully shaped
+        FINAL_ANSWER receipt whose Payload top level carries only a nested
+        diagnostic object naming this owner with the child's own outcome
+        values. The payload is read at its top level only and never
+        recursively, so the nested object is not an outcome: the child keeps
+        no consumption receipt and the run stays blocked, never a false
+        PASS."""
+        response, adapter = self.evidence(receipts="nested")
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("BLOCKED_OBSERVABILITY", "root_result_consumption_unobservable"))
+
+    def test_conflicting_agent_path_mapping_is_invalid(self):
+        """Reviewer blocker 4: the same formal child is observed under two
+        distinct agentPath values while only the second path sends a
+        perfectly shaped, outcome-correct receipt. The child-to-author
+        association is no longer unique, so the evidence itself is damaged
+        (INVALID) even though the surviving receipt alone would have
+        matched."""
+        response, adapter = self.evidence(agent_paths={0: ["/root/a", "/root/b"]})
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("INVALID_EVIDENCE", "child_agent_path_mapping_ambiguous"))
+        self.assertEqual(result["detail"], ["/root/a", "/root/b"])
+
     def test_ambiguous_root_receipts_are_invalid(self):
         """Two root receipts for one owner carrying different outcomes leave
         the consumed result ambiguous: damaged evidence, never a guessed
@@ -775,7 +833,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
     def test_contract_freezes_owner_input_isolation_and_partition_evidence(self):
         contract = json.loads(
             (RUNTIME / "issue68-runtime-evidence-contract-r19.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r22-2026-10-05")
+        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r23-2026-10-05")
         self.assertEqual(contract["fixture_sha"], FIXTURE_SHA)
         self.assertEqual(contract["eval_server_revision"], "3fdfa9387140cfc2e2aa3af415f85015f79706d2")
         self.assertEqual(contract["runner"], ".apm/skills/professor-contact/tests/runtime/"
@@ -792,6 +850,8 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertIn("message.params.turnId equals output.turn_id", codex["wait_consume_evidence"])
         self.assertIn("FINAL_ANSWER", codex["wait_consume_evidence"])
         self.assertIn("root_result_consumption_unobservable", codex["wait_consume_evidence"])
+        self.assertIn("top level only", codex["wait_consume_evidence"])
+        self.assertIn("child_agent_path_mapping_ambiguous", codex["wait_consume_evidence"])
         self.assertIn("root_result_receipt_ambiguous", codex["wait_consume_evidence"])
         self.assertIn("root_receipt_payload_changed", codex["wait_consume_evidence"])
         self.assertIn("receiverThreadIds/agentsStates", codex["wait_consume_evidence"])

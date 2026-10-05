@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PC68-R1 Codex-only formal entrypoint (Gate-2 r22).
+"""PC68-R1 Codex-only formal entrypoint (Gate-2 r23).
 
 r22 keeps the r13 request, the r12 request builder, the merged shared fixture
 adapter, the r13 root final-source selector, the r14 service/storage isolation
@@ -47,7 +47,7 @@ import run_issue68_stage5_routing_r19 as bridge
 HERE = Path(__file__).resolve().parent
 FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
-CONTRACT_REVISION = "issue-68-runtime-evidence-r22-2026-10-05"
+CONTRACT_REVISION = "issue-68-runtime-evidence-r23-2026-10-05"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
 EXECUTION_KIND = "acceptance"
 HOST = "codex"

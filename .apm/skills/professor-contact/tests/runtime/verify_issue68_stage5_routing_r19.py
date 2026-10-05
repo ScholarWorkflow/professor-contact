@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate-2 r22 PC68-R1 verifier: owner-local consumption and the root partition.
+"""Gate-2 r23 PC68-R1 verifier: owner-local consumption and the root partition.
 
 r13 keeps the root final business message selector unchanged: exactly one
 current-root, current-turn ``rawResponseItem/completed`` assistant
@@ -23,19 +23,25 @@ equals that child's agent path, whose input_text body is exactly the Codex
 child completion shape — the three header lines ``Message Type: FINAL_ANSWER``
 / ``Task name: /root`` / ``Sender: <child_agent_path>`` (the Sender line must
 equal the child's agent path) then the ``Payload:`` marker and one JSON object
-carrying ``professor_dir``/``status``/``reason_code`` — and whose payload
+whose top level carries ``professor_dir``/``status``/``reason_code`` (the
+payload is read at its top level only, never recursively through nested
+objects) — and whose payload
 outcome equals the outcome the child itself returned on its own thread; the
 receipt's ``runtime_seq`` is the root's consumption point for that child's
 result and the aggregate must not precede every owner's consumption point.
 Diagnostics only, never consumption evidence: collabAgentToolCall
 ``receiverThreadIds``/``agentsStates``, the "Wait completed." wait message,
 ``subAgentActivity`` completed reports, child ``turn/completed`` events,
-``requested_role`` and ``loaded_identity``. A child without an agent-path
-mapping or without a legal receipt stays
-``root_result_consumption_unobservable`` and is never cured into a PASS by
-those surfaces; legal receipts carrying more than one distinct outcome stay
-``root_result_receipt_ambiguous``; a payload outcome differing from the
-child's own result is ``root_receipt_payload_changed``.
+``requested_role`` and ``loaded_identity``. The per-child ``agentPath``
+mapping must be unique before any receipt is attributed: a child with no
+agent-path mapping stays ``root_result_consumption_unobservable``, a child
+observed under more than one distinct agent path is
+``child_agent_path_mapping_ambiguous`` damaged evidence no matter how correct
+the surviving path's own receipt looks, and a child without a legal receipt
+stays ``root_result_consumption_unobservable``; none of these is ever cured
+into a PASS by those surfaces; legal receipts carrying more than one distinct
+outcome stay ``root_result_receipt_ambiguous``; a payload outcome differing
+from the child's own result is ``root_receipt_payload_changed``.
 
 The oracle also freezes the partition ordering fact: the root's successful
 ``stage5-partition-choices`` call must complete before any owner business
@@ -283,25 +289,22 @@ def _final_answer_payload(text, author_path):
 
 
 def receipt_payload_outcomes(receipt, professor_dir):
-    """The distinct outcome triples one receipt's Payload JSON names for one owner.
+    """The one outcome triple one receipt's Payload top level names for one owner.
 
     Only the strictly shaped FINAL_ANSWER body counts, and the ``Sender:``
-    header must equal the receipt's own ``author``; inside the parsed Payload
-    JSON only rows naming this professor_dir contribute their
-    professor_dir/status/reason_code triple. A receipt whose body fails the
-    shape check or names another professor_dir contributes nothing and is
-    never this owner's consumption evidence.
+    header must equal the receipt's own ``author``. The parsed Payload JSON is
+    read at its top level only and never recursively: the object must carry
+    ``professor_dir`` equal to this owner's directory as a top-level field and
+    the outcome triple comes from the top-level fields alone. A receipt whose
+    top level carries only a nested object (a diagnostic wrapper, for
+    example), whose body fails the shape check or which names another
+    professor_dir contributes nothing and is never this owner's consumption
+    evidence.
     """
     payload = _final_answer_payload(receipt["text"], receipt["author"])
-    if payload is None:
+    if payload is None or payload.get("professor_dir") != professor_dir:
         return []
-    outcomes = []
-    for row in base.objects(payload):
-        if row.get("professor_dir") == professor_dir:
-            outcome = {key: row.get(key) for key in ("professor_dir", "status", "reason_code")}
-            if outcome not in outcomes:
-                outcomes.append(outcome)
-    return outcomes
+    return [{key: payload.get(key) for key in ("professor_dir", "status", "reason_code")}]
 
 
 def _plan_checks(parsed, manifest, expected_pack):
@@ -633,15 +636,27 @@ def _verify_codex_events(response, adapter, manifest):
         if problem:
             _classify(problem, failures, invalids, blockers)
             continue
-        # The root consumed this child's result only where a root-thread
-        # agent_message receipt bound to this child's agent path (from the
-        # subAgentActivity association, never from the receipt body) carries
-        # a strictly shaped FINAL_ANSWER payload naming this owner's
-        # professor_dir with exactly the outcome the child itself returned.
+        # The child_thread_id -> agent_path mapping must be unique before any
+        # receipt can be attributed: with no agent path the child can never be
+        # bound to a receipt author, and with more than one distinct agentPath
+        # the formal child to author association is ambiguous, so the evidence
+        # itself is damaged no matter how correct one surviving path's own
+        # receipt looks. Only a unique mapping may bind receipts to that one
+        # agent path author.
         paths = agent_paths.get(child, [])
+        if len(paths) != 1:
+            if not paths:
+                blockers.append(verdict("BLOCKED_OBSERVABILITY",
+                                        "root_result_consumption_unobservable",
+                                        detail="missing_agent_path_mapping"))
+            else:
+                invalids.append(verdict("INVALID_EVIDENCE",
+                                        "child_agent_path_mapping_ambiguous",
+                                        detail=list(paths)))
+            continue
         matched = []
         for receipt in receipts:
-            if receipt["author"] not in paths:
+            if receipt["author"] != paths[0]:
                 continue
             receipt_own = receipt_payload_outcomes(receipt, owner["professor_dir"])
             if receipt_own:
