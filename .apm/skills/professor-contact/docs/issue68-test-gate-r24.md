@@ -1,5 +1,7 @@
 # Issue #68 / PR #72 Gate 2 候选记录 r24 — Test Plan r21 单一权威测试实现
 
+> **已被取代**：本记录的 Gate 2 候选地位由 `docs/issue68-test-gate-r25.md`（`issue68-r25-r22-authoritative-candidate-2026-10-05`，按 Test Plan r22 撤销 owner-entry Observable 要求并移除 PASS 封顶）接管；本文件仅保留审计用途，不得作为当前权威候选拼接使用。
+
 记录版本：`issue68-r24-r21-authoritative-candidate-2026-10-05`。
 
 本文件是**测试实现记录与 Gate 2 候选材料，不是第二关口权威结论**。它按 Test Plan r21（`issue-68-test-plan-r21-2026-10-05`，PR 评论 `5992834520`，取代 r20）与 r23 Gate 2 复审（PR 评论 `5992000966`）处理 4 个阻断项，并把全部内容合并为单一自包含候选。是否通过 Gate 2 由测试审核者决定。
