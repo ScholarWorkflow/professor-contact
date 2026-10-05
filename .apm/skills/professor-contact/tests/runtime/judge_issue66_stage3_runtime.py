@@ -1,7 +1,7 @@
 """Mechanical judge for the S3-RT-CODEX-1 runtime evidence (issue #66).
 
 This is the single decision program required by the frozen test plan
-(``issue-66-test-plan-r19-clarification-r2-2026-10-05`` §四/§六).  It folds
+(``issue-66-test-plan-r19-clarification-r3-2026-10-05`` §四/§六).  It folds
 every required evidence surface into ONE verdict — formal delegation
 attribution, the invocation-credential value chain, the per-round
 prepare→validate→save→record handoff, the validator-produced raw bytes, the
@@ -24,9 +24,6 @@ Inputs (files only; the judge never talks to the network):
                         child_thread_reads)
 - ``--candidate-state`` the professor's committed 套磁候选状态.json
 - ``--program-root``    the run's program root (Stage-4 absence check)
-- ``--child-evidence``  optional: ``collect_child_thread_evidence.py``
-                        output — the supported read channel for each child
-                        thread's input and business messages
 - ``--install-evidence`` / ``--fixture-evidence`` / ``--pre-snapshot`` /
   ``--post-snapshot``   optional: the producer verifier outputs, folded in
 - ``--routing-evidence`` optional: the legacy topology verifier output,
@@ -760,15 +757,6 @@ class Judge:
                 if path and Path(path) == Path(output_file):
                     return True
         if not actions_seen:
-            child_evidence = (self.surfaces.get("child") or {}).get(
-                "threads") or []
-            for thread in child_evidence:
-                if thread.get("thread_id") == child:
-                    calls = thread.get("tool_calls") or []
-                    if any(output_file in (call.get("input") or "")
-                           for call in calls):
-                        return True
-                    return None
             return None
         return False
 
@@ -1059,7 +1047,6 @@ def main(argv=None) -> int:
     parser.add_argument("--adapter-output", required=True)
     parser.add_argument("--candidate-state", default=None)
     parser.add_argument("--program-root", default=None)
-    parser.add_argument("--child-evidence", default=None)
     parser.add_argument("--install-evidence", default=None)
     parser.add_argument("--fixture-evidence", default=None)
     parser.add_argument("--routing-evidence", default=None)
@@ -1077,7 +1064,6 @@ def main(argv=None) -> int:
     candidate_state = _load(args.candidate_state)
     program_root = Path(args.program_root) if args.program_root else None
     surfaces = {
-        "child": _load(args.child_evidence),
         "install": _load(args.install_evidence),
         "fixture": _load(args.fixture_evidence),
         "routing": _load(args.routing_evidence),
