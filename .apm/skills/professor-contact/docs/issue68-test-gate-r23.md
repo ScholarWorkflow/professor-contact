@@ -112,11 +112,14 @@ root 编排：discovery 恰为 `{A ok, B ok, invalid_pack error}`（严格解析
 ## 5. Preflight（r20 §6 四项；不含正式验收）
 
 ```text
-Recipe Preflight（2026-10-05，r23）
-- executable: NOT satisfied（当前环境）— EVAL_PORT 正式来源 direnv 在当前环境缺失；正式入口按
-  G2-2 修正只认 direnv，缺即 eval_port_unavailable 拒绝启动。Recipe 无需再改；在具备 Project
-  Consensus 正式环境处补最小 Executable Preflight（保存 direnv printenv 输出 + 入口可达 case
-  边界证据）后本项即满足。服务实况（r15 归档同一实例 PID 40721，冻结检出干净）仅作环境证据。
+Recipe Preflight（2026-10-05，r23；executable 于同日补齐）
+- executable: satisfied — `direnv exec <eval-server检出> printenv EVAL_PORT` 输出 17902
+  （证据 /tmp/pc68-r19-work/executable-preflight/direnv_eval_port.txt，stderr 显示 flake
+  dev shell 加载）；r23 正式入口经该正式来源解析同端口，capture_service_instance 确认唯一
+  监听者 = r15 归档同一实例（PID 40721，cwd = 冻结检出 3fdfa938，检出干净）；load_contract
+  通过（revision r23）——正式入口可达 case 边界。未运行正式 PC68-R1。
+  备注：早前记录的"direnv 缺失"是环境 PATH 未包含 ~/.local/bin 的误判；direnv 实际位于
+  /Users/rekidunois/.local/bin/direnv，PATH 修正后正式来源可用。
 - isolated: supported — /tmp/pc68-r19-work/isolation-now.json（ISOLATION_CONFIRMED；
   CODEX_HOME=/private/tmp/test-codex-home，sqlite/log 均在内）；入口保留输出目录非空拒绝、
   overlaps 检查、前后隔离归档。
@@ -125,7 +128,7 @@ Recipe Preflight（2026-10-05，r23）
 - discriminating: supported — r23 回归 39 项三通道：默认合法 → PASS；sibling/choices_scope/
   载荷改写/canonical 转写/跨 child 正文/嵌套 Payload/冲突 agentPath/回执缺失歧义 → 各对应
   FAIL/INVALID/BLOCKED；真实数据负例：r15 raw 重判 FAIL_PRODUCT/owner_input_carries_choices_scope。
-- critical assumption gap: direnv 缺失（executable 未满足）为唯一未闭合项。
+- critical assumption gap: none identified
 ```
 
 ## 6. 测试资产清单（判定程序版本）
@@ -163,8 +166,10 @@ R68-6 随 P1；R68-7 随 P2/P4；AD68-2 仅在 #68 触碰 writer ownership / can
 ## 9. 当前状态
 
 ```text
-Gate 2: 阻断项 3、4 已修正，阻断项 2 已由本单一自包含候选闭合；阻断项 1（Executable）待正式
-        环境 direnv 可用后补最小 Preflight。等待测试审核者完整复审（本记录不自行宣告 PASS）。
-Gate 3: NOT_READY（PC68-R1 继续暂停；PC68-D1 未按本 Recipe 正式执行）
+Gate 2: 阻断项 3、4 已修正，阻断项 2 已由本单一自包含候选闭合；阻断项 1（Executable）已于
+        2026-10-05 补齐最小 Preflight（direnv 正式来源 + 入口可达 case 边界），四项 Preflight
+        全部满足。等待测试审核者完整复审（本记录不自行宣告 PASS）。
+Gate 3: READY to execute upon Gate 2 PASS + COMPLETE（正式 PC68-R1 尚未运行；PC68-D1 未按
+        本 Recipe 正式执行）
 Merge:  NOT_READY
 ```
