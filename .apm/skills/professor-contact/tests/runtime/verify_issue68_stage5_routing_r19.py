@@ -155,13 +155,13 @@ def final_result_rows(texts):
 
 
 def _is_overview_result(value):
-    """Recognize producer CLI result shapes without requiring report keys."""
+    """Recognize producer rebuild results from their actual structured shape."""
     if not isinstance(value, dict) or not isinstance(value.get("status"), str):
         return False
     if value["status"] == "ok":
         return {"overview_md", "professors", "emails"} <= set(value)
-    return "professor_dir" not in value and isinstance(value.get("reason_code"), str) \
-        and bool(value["reason_code"])
+    return value["status"] in {"needs_decision", "error"} \
+        and isinstance(value.get("reason_code"), str) and bool(value["reason_code"])
 
 
 def _final_report_candidates(texts):
@@ -339,6 +339,60 @@ def _compound_action(command):
     return actions[0] if len(actions) == 1 else None
 
 
+def _final_result_role_ambiguity(source_matches, manifest, outcomes=None):
+    """Reject one final object that is both the rebuild result and an owner row."""
+    for row in source_matches:
+        if not isinstance(row, dict):
+            continue
+        for owner in manifest["owners"]:
+            expected = (outcomes or {}).get(owner["email_pack"],
+                        dict(owner["expected_result"], professor_dir=owner["professor_dir"]))
+            if row.get("professor_dir") != owner["professor_dir"] or \
+                    any(field not in row for field in ("status", "reason_code")):
+                continue
+            reported_owner = {key: row[key] for key in
+                              ("professor_dir", "status", "reason_code")}
+            if reported_owner == expected:
+                return verdict("INVALID_EVIDENCE", "root_final_result_role_ambiguous",
+                               observed_result=row, professor_dir=owner["professor_dir"])
+    return None
+
+
+def _early_final_result_role_ambiguity(calls, root, root_texts, manifest, outcomes=None):
+    """Find a role collision before invalid owner-status results short-circuit."""
+    if base.source_malformed(root_texts):
+        return None
+    rebuilds = []
+    for call in calls:
+        if call.get("thread") != root:
+            continue
+        command = call.get("command", "")
+        try:
+            parsed = command_action(command, manifest)
+        except ValueError:
+            if not is_business_surface(command):
+                continue
+            parsed = None
+        if parsed is None:
+            if not is_business_surface(command) or "--help" in command:
+                continue
+            action = _compound_action(command)
+        else:
+            if parsed.get("problem"):
+                continue
+            action = parsed.get("action")
+        if action == "stage5-rebuild-overview":
+            rebuilds.append(call)
+    if len(rebuilds) != 1:
+        return None
+    overview_result, problem = _overview_call_result(rebuilds[0])
+    if problem:
+        return None
+    source_matches = [row for row in _final_report_candidates(root_texts)
+                      if row == overview_result]
+    return _final_result_role_ambiguity(source_matches, manifest, outcomes)
+
+
 def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, outcomes=None, owner_threads=None):
     """The r21 root orchestration oracle over executed stage5 calls.
 
@@ -489,10 +543,29 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
     if base.source_malformed(root_texts):
         return verdict("INVALID_EVIDENCE", "root_final_result_malformed")
     candidates = _final_report_candidates(root_texts)
+    source_matches = [row for row in candidates if row == overview_result]
+    for row in source_matches:
+        for owner in manifest["owners"]:
+            expected = (outcomes or {}).get(owner["email_pack"],
+                        dict(owner["expected_result"], professor_dir=owner["professor_dir"]))
+            if row.get("professor_dir") != owner["professor_dir"] or \
+                    "status" not in row or "reason_code" not in row:
+                continue
+            reported_owner = {key: row[key] for key in
+                              ("professor_dir", "status", "reason_code")}
+            if reported_owner == expected:
+                return verdict("INVALID_EVIDENCE", "root_final_result_role_ambiguous",
+                               observed_result=row, professor_dir=owner["professor_dir"])
+    if len(source_matches) > 1:
+        return verdict("INVALID_EVIDENCE", "root_overview_result_ambiguous",
+                       observed_candidates=len(source_matches))
+    source_match = source_matches[0] if source_matches else None
+    owner_candidates = [row for row in candidates if row is not source_match]
     for owner in manifest["owners"]:
         expected = (outcomes or {}).get(owner["email_pack"],
                     dict(owner["expected_result"], professor_dir=owner["professor_dir"]))
-        consumed = [row for row in candidates if row.get("professor_dir") == owner["professor_dir"]]
+        consumed = [row for row in owner_candidates
+                    if row.get("professor_dir") == owner["professor_dir"]]
         if not consumed:
             return verdict("BLOCKED_OBSERVABILITY", "root_consumed_result_unobservable")
         if any("status" not in row or "reason_code" not in row for row in consumed):
@@ -507,9 +580,15 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
             return verdict("FAIL_PRODUCT", "root_consumed_results_conflict", observed_results=seen)
         if seen[0] != expected:
             return verdict("FAIL_PRODUCT", "root_changed_owner_result", observed_result=seen[0])
-    reported_overviews = [row for row in candidates if "professor_dir" not in row and
-                          any(field in row for field in
-                              ("status", "reason_code", "overview_md", "professors", "emails"))]
+    reported_overviews = [source_match] if source_match is not None else [
+        row for row in owner_candidates
+        if _is_overview_result(row) and (
+            row.get("status") == "ok"
+            or row.get("professor_dir") not in
+               {owner["professor_dir"] for owner in manifest["owners"]}
+            or any(field in row for field in ("overview_md", "professors", "emails"))
+        )
+    ]
     if not reported_overviews:
         return verdict("FAIL_PRODUCT", "root_overview_result_unreported")
     if len(reported_overviews) != 1:
@@ -685,6 +764,13 @@ def _verify_codex_events(response, adapter, manifest):
             continue
         consume_points[child] = min(seq for seq, _ in matched)
         outcomes[pack] = outcome
+    if failures and not invalids and not blockers and all(
+            problem.get("reason_code") == "owner_verification_boundary_bypassed"
+            for problem in failures):
+        role_problem = _early_final_result_role_ambiguity(
+            calls, root, root_texts, manifest, outcomes)
+        if role_problem:
+            return role_problem
     for bucket in (failures, invalids, blockers):
         if bucket:
             return bucket[0]

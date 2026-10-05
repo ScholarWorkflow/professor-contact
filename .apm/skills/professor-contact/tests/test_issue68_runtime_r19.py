@@ -89,6 +89,7 @@ PASS_CHANNEL = (
     "test_non_final_answer_diagnostic_message_is_not_consumption",
     "test_results_wrapper_final_answer_still_passes",
     "test_failed_overview_rebuild_is_reported_without_changing_owner_results",
+    "test_error_overview_with_professor_dir_is_source_attributed",
     "test_stale_final_answer_is_not_terminal",
     "test_canonical_unicode_is_preserved",
 )
@@ -128,6 +129,7 @@ BLOCKED_INVALID_CHANNEL = (
     "test_ambiguous_root_receipts_are_invalid",
     "test_multi_action_compound_root_command_blocks_orchestration",
     "test_damaged_or_unattributable_rebuild_result_is_invalid_evidence",
+    "test_same_result_cannot_be_attributed_to_owner_and_overview",
     "test_missing_rebuild_result_output_is_blocked",
 )
 WIRING_TESTS = (
@@ -266,6 +268,12 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         """A real soft_exit shape: status/reason_code plus its target field."""
         return {"status": "needs_decision", "reason_code": "manual_markdown_changed",
                 "target": str(self.root / "教授研究" / "套磁邮件总览.md")}
+
+    def failed_overview_error_result(self):
+        """A real fail shape may carry a professor_dir alongside its error."""
+        return {"status": "error", "reason_code": "overview_input_unreadable",
+                "message": "overview source could not be read",
+                "professor_dir": self.owner(0)["professor_dir"]}
 
     def root_result(self, *, overview=None, owner_results=None, include_overview=True,
                     wrapper_key=None):
@@ -616,6 +624,26 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                 result = verify.verify_codex(response, adapter, self.manifest)
                 self.assertEqual(result["verdict"], "PASS")
                 self.assertEqual(result["rebuild_count"], 1)
+
+    def test_error_overview_with_professor_dir_is_source_attributed(self):
+        """A full match to aggregatedOutput owns the overview role even when
+        fail() includes professor_dir; unchanged owner rows remain separate."""
+        response, adapter = self.evidence(
+            rebuild_result=self.failed_overview_error_result())
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["rebuild_count"], 1)
+
+    def test_same_result_cannot_be_attributed_to_owner_and_overview(self):
+        """When the full overview result also matches an owner's outcome triple,
+        the same report object has two plausible roles and is invalid evidence."""
+        owner = self.owner(0)
+        owner["expected_result"] = {"status": "error", "reason_code": "shared_failure"}
+        overview = dict(owner["expected_result"], professor_dir=owner["professor_dir"])
+        response, adapter = self.evidence(rebuild_result=overview)
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("INVALID_EVIDENCE", "root_final_result_role_ambiguous"))
 
     def test_missing_overview_rebuild_is_a_product_failure(self):
         response, adapter = self.evidence(rebuild_present=False)
