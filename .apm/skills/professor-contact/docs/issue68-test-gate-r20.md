@@ -1,5 +1,7 @@
 # Issue #68 / PR #72 本地测试工程师实现记录 r20 — owner 入口隔离
 
+> **已被取代**：本记录的 Gate 2 候选地位由 `docs/issue68-test-gate-r21.md`（`issue68-r21-receipt-consumption-2026-10-05`，按 Gate 2 审核更正 PR 评论 `5990445769` 将 wait/consume 证据来源改写为真实 root `agent_message` FINAL_ANSWER 回执面）接管；本文件仅保留审计用途，不得作为当前权威候选拼接使用。
+
 记录版本：`issue68-r20-owner-local-test-impl-2026-10-05`。
 
 本文件是**测试实现记录与 Gate 2 候选材料，不是第二关口权威结论**。它按 Test Plan r20（`issue-68-test-plan-r20-2026-10-05`，PR 评论 `5989428845`，完整取代 r19）第 10 节的指派：修正 G2-1、G2-2，补齐 r20 §2 的完整 requirement mapping，并把本记录作为唯一自包含 Gate 2 候选（执行者不需要拼接 r19 候选、修正评论 `5989255322` 或本评论之外的任何材料）。是否重开或通过第二关口由测试审核者决定。

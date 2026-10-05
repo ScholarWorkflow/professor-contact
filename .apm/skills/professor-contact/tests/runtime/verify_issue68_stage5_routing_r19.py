@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate-2 r20 PC68-R1 verifier: owner-local consumption and the root partition.
+"""Gate-2 r21 PC68-R1 verifier: owner-local consumption and the root partition.
 
 r13 keeps the root final business message selector unchanged: exactly one
 current-root, current-turn ``rawResponseItem/completed`` assistant
@@ -9,19 +9,22 @@ fixture: the root discovers the local packs, runs the deterministic
 one-professor packet (``email_pack`` plus that owner's own ``choices`` rows,
 never a ``choices_scope``).
 
-r20 freezes the wait/consume semantics: the root's result-consumption point
-per formal child is proven only by the completed ``collabAgentToolCall``
-``wait`` item pairing (a ``receiverThreadIds`` entry plus a completed
-``agentsStates`` status carrying the child's result message). A child's own
-``turn/completed`` and the root's ``subAgentActivity`` ``kind=completed`` item
-are child-completion evidence only: they never prove that the root took or
-consumed the child's result and never substitute for the wait pairing. A
-child missing the wait pairing, or its own completion point (its own
-``turn/completed``, or the subAgentActivity report when that turn event is
-absent), stays ``completion_or_wait_unobservable`` and is never cured into a
-PASS by the completion surfaces.
+r21 rewrites the wait/consume semantics around the real root result-receipt
+surface: the root's result-consumption point per formal child is proven only
+by a root-thread ``rawResponseItem/completed`` ``agent_message`` FINAL_ANSWER
+receipt whose payload JSON names that owner's ``professor_dir`` and whose
+professor_dir/status/reason_code outcome equals the outcome the child itself
+returned on its own thread; the receipt's ``runtime_seq`` is the consumption
+point. The official Codex V2 wait item (openai/codex
+``multi_agents_v2/wait.rs``) always carries empty ``receiverThreadIds``/
+``agentsStates`` and a ``WaitAgentResult.message`` that is only the "Wait
+completed." status text, so wait pairing fields are never consumption
+evidence. A child's ``turn/completed`` and the root's ``subAgentActivity``
+report are diagnostics only and their absence never blocks; a missing receipt
+stays ``root_result_consumption_unobservable`` and is never cured into a PASS
+by the completion surfaces.
 
-r20 also freezes the partition ordering fact: the root's successful
+The oracle also freezes the partition ordering fact: the root's successful
 ``stage5-partition-choices`` call must complete before any owner business
 call starts on a child thread; an owner business command that starts before
 the partition completed is a product failure
@@ -229,6 +232,24 @@ def final_result_rows(texts):
     return rows
 
 
+def receipt_outcomes(text, professor_dir):
+    """The distinct outcome triples one root receipt carries for one owner.
+
+    A receipt matches the owner when its payload JSON — extracted with the
+    shared ``json_values``/``objects`` decoders — contains a row whose
+    ``professor_dir`` equals the owner's directory; each matching row
+    contributes its professor_dir/status/reason_code triple.
+    """
+    outcomes = []
+    for value in base.json_values(text):
+        for row in base.objects(value):
+            if row.get("professor_dir") == professor_dir:
+                outcome = {key: row.get(key) for key in ("professor_dir", "status", "reason_code")}
+                if outcome not in outcomes:
+                    outcomes.append(outcome)
+    return outcomes
+
+
 def _plan_checks(parsed, manifest, expected_pack):
     flags = parsed["flags"]
     if expected_pack is not None and flags.get("--email-pack") != expected_pack:
@@ -293,8 +314,8 @@ def _compound_action(command):
     return actions[0] if len(actions) == 1 else None
 
 
-def runtime_checks(calls, manifest, completion_points, root_texts, root=None, outcomes=None, owner_threads=None):
-    """The r20 root orchestration oracle over executed stage5 calls.
+def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, outcomes=None, owner_threads=None):
+    """The r21 root orchestration oracle over executed stage5 calls.
 
     Discovery must report exactly the fixture owner set and must not emit a
     choices scope; the root must succeed at exactly one partition whose
@@ -302,9 +323,10 @@ def runtime_checks(calls, manifest, completion_points, root_texts, root=None, ou
     completion precedes every owner business call; owner plans stay
     bound to their own pack and bundle file and never carry a choices scope;
     at most one rebuild may run after every owner result was consumed
-    (``completion_points`` are the root's per-child result-consumption points,
-    the agentsStates wait pairing seqs); and the pinned final source must
-    carry one consistent consumed outcome per owner directory.
+    (``consumption_points`` are the root's per-child result-consumption
+    points, the earliest matching root-thread receipt seqs); and the pinned
+    final source must carry one consistent consumed outcome per owner
+    directory.
 
     A supported call is recognized on two surfaces. A call whose command
     parses strictly under ``command_action`` keeps every flag fact: only such
@@ -427,7 +449,7 @@ def runtime_checks(calls, manifest, completion_points, root_texts, root=None, ou
                            observed_call=command[:200])
     if len(rebuilds) > 1:
         return verdict("FAIL_PRODUCT", "multiple_aggregate_rebuilds")
-    if rebuilds and rebuilds[0]["start"] <= max(completion_points):
+    if rebuilds and rebuilds[0]["start"] <= max(consumption_points):
         return verdict("FAIL_PRODUCT", "aggregate_precedes_result_consumption")
     # The pinned final business result source is root's own final message.
     # Inside that source each professor directory must resolve to exactly one
@@ -485,8 +507,8 @@ def _verify_codex_events(response, adapter, manifest):
         return verdict("BLOCKED_OBSERVABILITY", "formal_delegation_unobservable")
     if len(children) != 2:
         return verdict("FAIL_PRODUCT", "wrong_owner_count", formal_children=sorted(children))
-    payloads, complete, results, waits = {}, {}, {}, {}
-    sub_completed = {}
+    payloads, complete, results = {}, {}, {}
+    receipts = []
     command_starts, calls, root_texts, commands = {}, [], [], {}
     previous_seq = -1
     for event in events:
@@ -509,26 +531,15 @@ def _verify_codex_events(response, adapter, manifest):
                 results.setdefault(thread, []).append(text)
             elif thread == root and item.get("role") == "assistant":
                 root_texts.append(text)
-        if method == "item/completed" and item.get("type") == "collabAgentToolCall" \
-                and item.get("senderThreadId") == root and item.get("tool") == "wait" \
-                and item.get("status") == "completed":
-            # The only root result-consumption surface: the pairing fields
-            # attribute the root wait to the formal child it blocked on and
-            # carry the child's result message back to the root.
-            for child in item.get("receiverThreadIds", []):
-                if child in children:
-                    state = item.get("agentsStates", {}).get(child, {})
-                    if state.get("status") == "completed":
-                        waits[child] = seq
-                        results.setdefault(child, []).append(state.get("message", ""))
-        if method == "item/completed" and item.get("type") == "subAgentActivity" \
-                and item.get("kind") == "completed" \
-                and item.get("agentThreadId") in children:
-            # Child-completion evidence only: the root's completed report of a
-            # formal child never proves that the root consumed the child's
-            # result. It is the fallback completion point when a child's own
-            # turn/completed is missing; any thread may carry it.
-            sub_completed.setdefault(item["agentThreadId"], seq)
+        if method == "rawResponseItem/completed" and item.get("type") == "agent_message" \
+                and thread == root:
+            # The real root result-consumption surface: the child's
+            # FINAL_ANSWER receipt delivered back on the root thread. The
+            # official V2 wait item's pairing fields are always empty and its
+            # message is only wait status text, so collabAgentToolCall wait
+            # items are never parsed as consumption evidence.
+            receipts.append({"seq": seq, "author": item.get("author"),
+                             "text": base.message_text(item)})
         if thread in children | {root} and item.get("type") == "commandExecution":
             item_id = (thread, item.get("id"))
             if method == "item/started":
@@ -556,29 +567,41 @@ def _verify_codex_events(response, adapter, manifest):
             continue
         assigned[pack] = child
         owner = next(owner for owner in manifest["owners"] if owner["email_pack"] == pack)
-        wait_seq = waits.get(child)
-        completion = complete.get(child)
-        if completion is None:
-            # The child's own turn/completed is the completion point; the
-            # root's subAgentActivity completed report is only the fallback
-            # when that turn event is absent. Both are child-completion
-            # evidence and never prove result consumption.
-            completion = sub_completed.get(child)
-        if wait_seq is None or completion is None:
-            blockers.append(verdict("BLOCKED_OBSERVABILITY", "completion_or_wait_unobservable",
-                                    missing_surface=[label for label, absent in
-                                                     (("missing_wait_pairing", wait_seq is None),
-                                                      ("missing_turn_completion", completion is None))
-                                                     if absent]))
-            continue
-        consume_points[child] = wait_seq
-        if wait_seq < completion:
-            failures.append(verdict("FAIL_PRODUCT", "wait_precedes_owner_completion"))
-            continue
         outcome, problem = base.owner_outcome(results.get(child, []), owner)
         if problem:
             _classify(problem, failures, invalids, blockers)
             continue
+        # The root consumed this child's result only where a root-thread
+        # agent_message receipt names this owner's professor_dir and carries
+        # exactly the outcome the child itself returned.
+        matched = []
+        for receipt in receipts:
+            receipt_own = receipt_outcomes(receipt["text"], owner["professor_dir"])
+            if receipt_own:
+                matched.append((receipt["seq"], receipt_own))
+        if not matched:
+            blockers.append(verdict("BLOCKED_OBSERVABILITY", "root_result_consumption_unobservable"))
+            continue
+        observed = []
+        for _, receipt_own in matched:
+            for candidate in receipt_own:
+                if candidate not in observed:
+                    observed.append(candidate)
+        if len(observed) != 1:
+            invalids.append(verdict("INVALID_EVIDENCE", "root_result_receipt_ambiguous",
+                                    observed_outcomes=observed))
+            continue
+        receipt_seq = min(seq for seq, _ in matched)
+        completion = complete.get(child)
+        if completion is not None and receipt_seq < completion:
+            invalids.append(verdict("INVALID_EVIDENCE", "root_receipt_precedes_child_completion",
+                                    receipt_seq=receipt_seq, child_completion=completion))
+            continue
+        if observed[0] != outcome:
+            failures.append(verdict("FAIL_PRODUCT", "root_receipt_payload_changed",
+                                    observed_result=observed[0], expected_result=outcome))
+            continue
+        consume_points[child] = receipt_seq
         outcomes[pack] = outcome
     for bucket in (failures, invalids, blockers):
         if bucket:
@@ -596,8 +619,8 @@ def _judge_with_final_source(judge, final_text, *args):
     """Run the frozen r19 orchestration oracle with one machine-selected root text."""
     original = runtime_checks
 
-    def pinned(calls, manifest, completion_points, _root_texts, **kwargs):
-        return original(calls, manifest, completion_points, [final_text], **kwargs)
+    def pinned(calls, manifest, consumption_points, _root_texts, **kwargs):
+        return original(calls, manifest, consumption_points, [final_text], **kwargs)
 
     globals()["runtime_checks"] = pinned
     try:

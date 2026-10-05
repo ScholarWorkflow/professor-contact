@@ -1,34 +1,35 @@
-"""Gate-2 r20 regressions for owner-local consumption and the root partition.
+"""Gate-2 r21 regressions for owner-local consumption and the root partition.
 
 Synthetic evidence characterizes the evaluator and the recipe wiring. It is not
 a real-host PC68-R1 acceptance PASS.
 
-Test Plan r20 §4 keeps three explicit verdict channels over the §7
+Test Plan r21 §4 keeps three explicit verdict channels over the §7
 counterexample matrix:
-- PASS channel: the valid owner-local A+B run with a complete agentsStates
-  wait pairing, a diagnostic object recorded by a non-stage5 command, the
-  single ``results`` wrapper, a stale earlier-turn final answer, the canonical
-  ``試験`` spelling, and the r15 real-host compound command shapes (a
-  ``python3 -c`` child packet and a ``python3 -c`` root partition
-  preparation).
+- PASS channel: the valid owner-local A+B run whose every formal child result
+  is consumed through a root-thread ``agent_message`` FINAL_ANSWER receipt, a
+  diagnostic object recorded by a non-stage5 command, the single ``results``
+  wrapper, a stale earlier-turn final answer, the canonical ``試験``
+  spelling, and the r15 real-host compound command shapes (a ``python3 -c``
+  child packet and a ``python3 -c`` root partition preparation).
 - FAIL_PRODUCT channel: every proven isolation/partition/orchestration
   violation — a sibling sentinel or a ``choices_scope`` field in the consumed
   input, missing/multiple/owner-executed (strict or compound)/changed root
   partitions, an owner business command starting before the root partition
   completed, a plan ``--choices-scope``, discovery ``--emit-choices-scope``,
-  a changed bundle file, wrong owner count, the agentsStates wait pairing
-  earlier than the child's turn completion, an aggregate rebuilt between the
-  child completion surfaces and the wait pairing, early or repeated rebuilds,
-  a changed owner result behind an intact formal topology, and the rewritten
-  ``試験`` spelling counterexample (carried by
+  a changed bundle file, wrong owner count, an aggregate rebuilt between the
+  child completion and the root receipt consumption point, early or repeated
+  rebuilds, a root receipt whose payload differs from the child's own
+  returned outcome, a changed owner result behind an intact formal topology,
+  and the rewritten ``試験`` spelling counterexample (carried by
   test_canonical_unicode_is_preserved).
 - BLOCKED_OBSERVABILITY / INVALID_EVIDENCE channel: missing consumption
-  evidence on both frozen surfaces (completed_user_payload_unobservable,
+  evidence on the frozen child surfaces (completed_user_payload_unobservable,
   owner_business_object_unobservable), two distinct consumed objects
-  (owner_business_object_ambiguous), a wait with no agentsStates pairing,
-  with or without root subAgentActivity completion reports, which are
-  child-completion evidence only (completion_or_wait_unobservable), and a
-  compound root text carrying several action words
+  (owner_business_object_ambiguous), a missing root receipt
+  (root_result_consumption_unobservable), a receipt earlier than the child's
+  own turn/completed (root_receipt_precedes_child_completion), two receipts
+  with conflicting outcomes for one owner (root_result_receipt_ambiguous),
+  and a compound root text carrying several action words
   (root_orchestration_ambiguous).
 """
 import importlib
@@ -83,18 +84,19 @@ FAIL_CHANNEL = (
     "test_plan_carrying_choices_scope_is_a_product_failure",
     "test_discovery_emitting_scope_is_a_product_failure",
     "test_changed_bundle_file_is_a_product_failure",
-    "test_wrong_owner_count_and_wait_order_are_failures",
-    "test_wait_pairing_before_child_completion_is_a_product_failure",
+    "test_wrong_owner_count_is_a_product_failure",
     "test_rebuild_between_child_completion_and_result_consumption_fails",
     "test_early_or_multiple_rebuild_is_a_product_failure",
+    "test_receipt_payload_changed_is_a_product_failure",
     "test_routing_proof_survives_downstream_business_failure",
     "test_canonical_unicode_is_preserved",
 )
 BLOCKED_INVALID_CHANNEL = (
     "test_ambiguous_consumed_objects_are_invalid_evidence",
     "test_missing_consumption_evidence_is_blocked",
-    "test_wait_without_any_pairing_surface_blocks",
-    "test_wait_pairing_absence_is_not_cured_by_sub_agent_activity",
+    "test_missing_root_receipt_blocks",
+    "test_receipt_before_child_completion_is_invalid",
+    "test_ambiguous_root_receipts_are_invalid",
     "test_multi_action_compound_root_command_blocks_orchestration",
 )
 WIRING_TESTS = (
@@ -230,21 +232,20 @@ class TestIssue68RuntimeR19(unittest.TestCase):
 
     def evidence(self, *, per_owner=None, partition_present=True, partition_count=1,
                  partition_rows=None, discovery_flags=(), rebuild_timing=None,
-                 wait_before_completion=False, old_turn_final=None, final_text=None,
-                 wait_pairing="agentsStates", sub_agent_activity=None,
+                 old_turn_final=None, final_text=None, receipts="normal",
                  partition_compound=False, root_extra_commands=(),
                  owner_business_before_partition=False):
-        """One faithful r20 baseline: root discovery plus one deterministic
+        """One faithful r21 baseline: root discovery plus one deterministic
         partition, two formal children each consuming its own packet on its
-        own stage5 plan surface, and the current-turn root final answer.
-        ``wait_pairing="empty"`` is the r15 real-host wait shape with empty
-        receiverThreadIds/agentsStates; ``sub_agent_activity`` adds the root
-        subAgentActivity completed item before or after each child's
-        turn/completed. ``partition_compound`` emits the root partition in
-        the r15 real-host ``python3 -c`` compound shape and
-        ``root_extra_commands`` appends further root command items.
-        ``rebuild_timing="between"`` places one root rebuild between the
-        first child's completion surfaces and its agentsStates wait pairing;
+        own stage5 plan surface, one root-thread ``agent_message``
+        FINAL_ANSWER receipt per child placed after that child's
+        ``turn/completed``, and the current-turn root final answer.
+        ``receipts`` selects the receipt counterexample shape ("normal"
+        default, "missing", "changed", "ambiguous", "before_completion");
+        ``partition_compound`` emits the root partition in the r15 real-host
+        ``python3 -c`` compound shape and ``root_extra_commands`` appends
+        further root command items. ``rebuild_timing="between"`` places one
+        root rebuild between the first child's completion and its receipt;
         ``owner_business_before_partition`` starts a child business command
         before the root partition completes."""
         per_owner = per_owner or {}
@@ -266,22 +267,33 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                                              "command": command_text, "exitCode": 0,
                                              "aggregatedOutput": output})
 
-        def wait_item(child, owner):
-            item = {"type": "collabAgentToolCall", "id": "wait-" + child, "tool": "wait",
-                    "status": "completed", "senderThreadId": "root"}
-            if wait_pairing == "empty":
-                item.update({"receiverThreadIds": [], "agentsStates": {}})
-            else:
-                item.update({"receiverThreadIds": [child],
-                             "agentsStates": {child: {"status": "completed", "message": json.dumps(
-                                 dict(owner["expected_result"], professor_dir=owner["professor_dir"]),
-                                 ensure_ascii=False)}}})
-            return item
+        def root_receipt(child, index, payload):
+            """The r21 real-host root receipt shape: a root-thread
+            ``agent_message`` FINAL_ANSWER whose Payload JSON names the
+            owner's professor_dir (author is the child's agent path)."""
+            event("rawResponseItem/completed", "root", {
+                "type": "agent_message",
+                "id": "receipt-" + child,
+                "author": "/root/stage5_" + str(index),
+                "recipient": "/root",
+                "content": [
+                    {"type": "input_text",
+                     "text": "Message Type: FINAL_ANSWER\nTask name: /root\nSender: /root/stage5_"
+                             + str(index) + "\nPayload:\n" + payload},
+                ],
+            })
 
-        def sub_agent_completed(child, index):
-            return {"type": "subAgentActivity", "id": "subagent-completed-" + child,
-                    "kind": "completed", "agentThreadId": child,
-                    "agentPath": "/root/stage5_" + str(index)}
+        def receipt_payload(owner):
+            return json.dumps(dict(owner["expected_result"], professor_dir=owner["professor_dir"]),
+                              ensure_ascii=False)
+
+        def changed_receipt_payload(owner):
+            return json.dumps(dict(owner["expected_result"], professor_dir=owner["professor_dir"],
+                                   status="ok", reason_code="invented"), ensure_ascii=False)
+
+        def ambiguous_receipt_payload(owner):
+            return json.dumps(dict(owner["expected_result"], professor_dir=owner["professor_dir"],
+                                   status="needs_input"), ensure_ascii=False)
 
         command("root", "root-discovery",
                 self.stage5_command("stage5-list-inputs", *discovery_flags), self.discovery())
@@ -352,25 +364,28 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                     dict(owner["expected_result"], professor_dir=owner["professor_dir"]),
                     ensure_ascii=False)}],
             })
-            wait = wait_item(child, owner)
-            sub_completed = sub_agent_completed(child, index)
-            if wait_before_completion:
-                event("item/completed", "root", wait)
-                event("turn/completed", child, {"type": "turn", "id": "turn-" + str(index)},
-                      turn="turn-" + str(index), turn_status="completed")
+            if receipts == "before_completion" and index == 0:
+                # Timing counterexample: the receipt claims the result before
+                # the child's own turn completed.
+                root_receipt(child, index, receipt_payload(owner))
+            event("turn/completed", child, {"type": "turn", "id": "turn-" + str(index)},
+                  turn="turn-" + str(index), turn_status="completed")
+            if rebuild_timing == "between" and index == 0:
+                # r21 risk timing: the root rebuilds between the child's
+                # completion and its result-consumption receipt.
+                command("root", "root-rebuild-between",
+                        self.stage5_command("stage5-rebuild-overview"))
+            if receipts == "missing":
+                continue
+            if receipts == "before_completion" and index == 0:
+                continue  # this child's receipt was already emitted above
+            if receipts == "changed":
+                root_receipt(child, index, changed_receipt_payload(owner))
+            elif receipts == "ambiguous" and index == 0:
+                root_receipt(child, index, receipt_payload(owner))
+                root_receipt(child, index, ambiguous_receipt_payload(owner))
             else:
-                if sub_agent_activity == "before_completion":
-                    event("item/completed", "root", sub_completed)
-                event("turn/completed", child, {"type": "turn", "id": "turn-" + str(index)},
-                      turn="turn-" + str(index), turn_status="completed")
-                if sub_agent_activity == "after_completion":
-                    event("item/completed", "root", sub_completed)
-                if rebuild_timing == "between" and index == 0:
-                    # r20 risk timing: the root rebuilds between the child's
-                    # completion surfaces and its result-consumption wait.
-                    command("root", "root-rebuild-between",
-                            self.stage5_command("stage5-rebuild-overview"))
-                event("item/completed", "root", wait)
+                root_receipt(child, index, receipt_payload(owner))
         if rebuild_timing == "double":
             command("root", "root-rebuild-a", self.stage5_command("stage5-rebuild-overview"))
             command("root", "root-rebuild-b", self.stage5_command("stage5-rebuild-overview"))
@@ -567,51 +582,26 @@ class TestIssue68RuntimeR19(unittest.TestCase):
 
     # ---- FAIL_PRODUCT channel: orchestration -------------------------------
 
-    def test_wrong_owner_count_and_wait_order_are_failures(self):
+    def test_wrong_owner_count_is_a_product_failure(self):
         response, adapter = self.evidence()
         adapter["dispatch"]["thread_relations"] = adapter["dispatch"]["thread_relations"][:1]
         result = verify.verify_codex(response, adapter, self.manifest)
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("FAIL_PRODUCT", "wrong_owner_count"))
-        response, adapter = self.evidence(wait_before_completion=True)
-        result = verify.verify_codex(response, adapter, self.manifest)
-        self.assertEqual((result["verdict"], result["reason_code"]),
-                         ("FAIL_PRODUCT", "wait_precedes_owner_completion"))
 
-    def test_wait_pairing_absence_is_not_cured_by_sub_agent_activity(self):
-        """r20: an empty collabAgentToolCall pairing is never cured by the
-        root's subAgentActivity completed reports — those are child-completion
-        evidence only, so the run stays blocked instead of passing."""
-        response, adapter = self.evidence(wait_pairing="empty",
-                                          sub_agent_activity="after_completion")
+    def test_receipt_before_child_completion_is_invalid(self):
+        """A root receipt whose seq precedes the child's own turn/completed
+        claims a result the child had not finished: damaged evidence."""
+        response, adapter = self.evidence(receipts="before_completion")
         result = verify.verify_codex(response, adapter, self.manifest)
         self.assertEqual((result["verdict"], result["reason_code"]),
-                         ("BLOCKED_OBSERVABILITY", "completion_or_wait_unobservable"))
-        self.assertIn("missing_wait_pairing", result["missing_surface"])
-        self.assertNotEqual(result["verdict"], "PASS")
-
-    def test_wait_without_any_pairing_surface_blocks(self):
-        response, adapter = self.evidence(wait_pairing="empty")
-        result = verify.verify_codex(response, adapter, self.manifest)
-        self.assertEqual((result["verdict"], result["reason_code"]),
-                         ("BLOCKED_OBSERVABILITY", "completion_or_wait_unobservable"))
-        self.assertEqual(result["missing_surface"], ["missing_wait_pairing"])
-
-    def test_wait_pairing_before_child_completion_is_a_product_failure(self):
-        """The agentsStates wait pairing earlier than the child's own
-        turn/completed proves the root claimed a result before the child
-        finished: a product failure."""
-        response, adapter = self.evidence(wait_before_completion=True)
-        result = verify.verify_codex(response, adapter, self.manifest)
-        self.assertEqual((result["verdict"], result["reason_code"]),
-                         ("FAIL_PRODUCT", "wait_precedes_owner_completion"))
+                         ("INVALID_EVIDENCE", "root_receipt_precedes_child_completion"))
 
     def test_rebuild_between_child_completion_and_result_consumption_fails(self):
-        """r20 risk timing: the children completed and the root saw the
-        subAgentActivity reports, but the rebuild runs before the agentsStates
-        wait pairing — the aggregate still precedes result consumption."""
-        response, adapter = self.evidence(rebuild_timing="between",
-                                          sub_agent_activity="after_completion")
+        """r21 risk timing: the children completed, but the rebuild runs
+        before the root-thread agent_message receipt that consumes each
+        result — the aggregate still precedes result consumption."""
+        response, adapter = self.evidence(rebuild_timing="between")
         result = verify.verify_codex(response, adapter, self.manifest)
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("FAIL_PRODUCT", "aggregate_precedes_result_consumption"))
@@ -625,6 +615,21 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         result = verify.verify_codex(response, adapter, self.manifest)
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("FAIL_PRODUCT", "multiple_aggregate_rebuilds"))
+
+    def test_receipt_payload_changed_is_a_product_failure(self):
+        """The root receipt's Payload outcome differs from the outcome the
+        child itself returned on its own thread: the root did not receive
+        what the child produced."""
+        response, adapter = self.evidence(receipts="changed")
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "root_receipt_payload_changed"))
+        self.assertEqual(result["observed_result"],
+                         {"professor_dir": self.owner(0)["professor_dir"],
+                          "status": "ok", "reason_code": "invented"})
+        self.assertEqual(result["expected_result"],
+                         dict(self.owner(0)["expected_result"],
+                              professor_dir=self.owner(0)["professor_dir"]))
 
     def test_multi_action_compound_root_command_blocks_orchestration(self):
         """A compound root text carrying two action words cannot be
@@ -644,8 +649,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("FAIL_PRODUCT", "owner_result_directory_changed"))
         self.assertNotIn(result["reason_code"],
-                         ("wrong_owner_count", "formal_delegation_unobservable",
-                          "completion_or_wait_unobservable"))
+                         ("wrong_owner_count", "formal_delegation_unobservable"))
 
     # ---- frozen blocked and invalid channels -------------------------------
 
@@ -668,6 +672,29 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         result = verify.verify_codex(response, adapter, self.manifest)
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("BLOCKED_OBSERVABILITY", "owner_business_object_unobservable"))
+
+    def test_missing_root_receipt_blocks(self):
+        """Without any root-thread agent_message receipt the root never
+        provably consumed the child results, and no wait or completion event
+        cures the missing consumption surface."""
+        response, adapter = self.evidence(receipts="missing")
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("BLOCKED_OBSERVABILITY", "root_result_consumption_unobservable"))
+
+    def test_ambiguous_root_receipts_are_invalid(self):
+        """Two root receipts for one owner carrying different outcomes leave
+        the consumed result ambiguous: damaged evidence, never a guessed
+        product failure."""
+        response, adapter = self.evidence(receipts="ambiguous")
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("INVALID_EVIDENCE", "root_result_receipt_ambiguous"))
+        self.assertEqual(result["observed_outcomes"], [
+            dict(self.owner(0)["expected_result"], professor_dir=self.owner(0)["professor_dir"]),
+            {"professor_dir": self.owner(0)["professor_dir"], "status": "needs_input",
+             "reason_code": "verify_missing"},
+        ])
 
     # ---- wiring and contract ----------------------------------------------
 
@@ -699,7 +726,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
     def test_contract_freezes_owner_input_isolation_and_partition_evidence(self):
         contract = json.loads(
             (RUNTIME / "issue68-runtime-evidence-contract-r19.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r20-2026-10-05")
+        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r21-2026-10-05")
         self.assertEqual(contract["fixture_sha"], FIXTURE_SHA)
         self.assertEqual(contract["eval_server_revision"], "3fdfa9387140cfc2e2aa3af415f85015f79706d2")
         self.assertEqual(contract["runner"], ".apm/skills/professor-contact/tests/runtime/"
@@ -709,8 +736,10 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertIn("byte for byte", codex["canonical_preservation"])
         self.assertIn("exactly once", codex["partition_evidence"])
         self.assertIn("owner_business_precedes_partition", codex["partition_evidence"])
-        self.assertIn("only", codex["wait_consume_evidence"])
-        self.assertIn("child-completion evidence only", codex["wait_consume_evidence"])
+        self.assertIn("agent_message", codex["wait_consume_evidence"])
+        self.assertIn("root_result_consumption_unobservable", codex["wait_consume_evidence"])
+        self.assertIn("wait.rs", codex["wait_consume_evidence"])
+        self.assertIn("empty receiver_thread_ids/agents_states", codex["wait_consume_evidence"])
         self.assertIn("never downgraded", codex["terminal_precedence"])
         self.assertEqual(codex["missing_observation"], "BLOCKED_OBSERVABILITY")
         self.assertEqual(codex["malformed_or_ambiguous_observation"], "INVALID_EVIDENCE")
