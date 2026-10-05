@@ -1,8 +1,8 @@
-# Issue #68 / PR #72 Gate 2 候选记录 r29 — 测试计划第23版 单一权威测试实现
+# Issue #68 / PR #72 Gate 2 候选记录 r31 — 测试计划第23版 单一权威测试实现
 
-记录版本：`issue68-r29-r23-candidate-2026-10-06`。
+记录版本：`issue68-r31-r23-candidate-2026-10-06`。
 
-本文件是当前单一测试候选记录，取代 r28 候选记录。测试计划见 [当前测试计划](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-5993806361)。第二关口已于 2026-10-06 经独立只读复核为 PASS+COMPLETE；第三关口尚未运行，状态为 NOT READY。
+本文件是当前单一测试候选记录，取代 r30 候选记录。测试计划见 [当前测试计划](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-5993806361)。第二关口已于 2026-10-06 经独立只读复核为 PASS+COMPLETE；PC68-D1 完整入口机器判定 PASS；PC68-R1 尚未进入正式请求，第三关口仍为 NOT READY。
 
 ## 0. 版本绑定（全部固定到真实提交）
 
@@ -147,16 +147,26 @@ tests/test_issue68_stage5_local_state.py / test_issue68_root_partition.py / test
 
 绑定代码提交 `e931ab22fbe492bdf0c4ecb74e906d2c23dfce23` 的非正式解析器预检已执行：`env UV_CACHE_DIR=/private/tmp/uv-cache-pr72 uv run python .apm/skills/professor-contact/tests/test_issue68_runtime_r19.py`，51 项通过、0 项失败；完整日志为 `/private/tmp/pr72-runtime-preflight-final-20261005.log`。该回归属于测试程序预检，不是正式验收。
 
-以上检查不能代替正式验收。历史正式尝试及其原始判定不改写；当前绑定版本的 PC68-D1 完整入口和 PC68-R1 正式用例尚未运行，不标为 PASS。
+### 7.1 当前绑定版本执行记录（2026-10-06）
+
+`PC68-D1` 完整入口使用本记录 r29 配方，执行命令、开始／结束时间和机器回执保存在 `/private/tmp/pc68-d1-r29-20261006/`。开始时间为 `2026-10-06T00:25:07+0800`，结束时间为 `2026-10-06T00:25:51+0800`。机器判定 `PASS`，runner 退出码 `0`；P1–P7 七个 proof 均通过，`tests_run=7`、`skipped=0`、`expected_failures=0`、`unexpected_successes=0`、`failures=0`、`errors=0`。主要证据为 `execution-record.json`、`proof-counts.json`、`output/proofs.json`、`output/unittest.txt` 和 `runner-exit-code.txt`。回执中的 `execution_kind` 为 `preflight`：冻结命令未传该参数，runner 如实记录默认值；本记录保留机器回执原值，不改写该字段。
+
+`PC68-R1` 的全部启动记录均保留；前置失败没有进入正式请求：
+
+- `/private/tmp/pc68-r1-r29-20261006/`：`CASE_NOT_STARTED / wrong_revision_or_dirty_checkout`，producer 检出版本不符。
+- `/private/tmp/pc68-r1-r29-20261006-formal/`：固定 producer、fixture、eval-server 均干净且隔离通过；runner 在临时消费者准备阶段超时，`CASE_NOT_STARTED / consumer_install_failed`，退出码 `1`。日志止于解析 `ScholarWorkflow/professor-contact`，没有 `POST /eval`。
+- `/private/tmp/pc68-r1-r30-20261006-formal/`：`CASE_NOT_STARTED / output_directory_not_empty`，退出码 `2`。外层日志误放入输出目录；未安装工作流，也未发请求。该操作错误及证据保留。
+- `/private/tmp/pc68-r1-r30b-20261006-formal/`：runner 于 `2026-10-06 01:04:42 +0800` 开始，`01:05:20 +0800` 结束，退出码 `1`；机器状态为 `CASE_NOT_STARTED / consumer_install_failed`。按项目共识，`apm install --target codex` 只在新建的 `/private/tmp/pc68-r1-r30b-20261006-formal/consumers/codex` 中准备被测工作流及传递依赖，不是安装 Codex 应用。工作流包已解析，但克隆传递依赖 `ScholarWorkflow/zotero-tools` 时发生 GitHub TLS EOF，安装未完成。无 `case-started.json`，没有 `POST /eval`、模型调用、owner 处理、结果回执或 overview 调用。外层日志为 `/private/tmp/pc68-r1-r30b-20261006-formal.stdout.log` 和同前缀 `.stderr.log`。
+
+正式请求计数仍为 `0`；上述记录不是 PC68-R1 产品测试失败或通过。按冻结 Recipe 不再重试，不更换服务、模型、入口或判定条件。
 
 ## 8. 复验依赖
 
 ```text
-PC68-D1    = EXECUTE_CURRENT（完整固定入口，七个 proof 一次执行）
-P2/P3/P4/P6/P7 = EXECUTE_CURRENT
-PC68-R1    = EXECUTE_CURRENT
+PC68-D1    = PASS（完整固定入口，七个 proof 一次执行；回执 execution_kind=preflight，见 §7.1）
+PC68-R1    = CASE_NOT_STARTED（见 §7.1 的全部前置启动记录；未向 /eval 发出正式请求）
 P1/P5 此前 PASS 仅可作为未改变事实的支持证据，不可替代当前完整 PC68-D1；
-       未在当前版本实际执行的用例不得标 PASS
+       PC68-R1 未进入正式用例，不标为 PASS 或 FAIL
 R68-6 随 P1；R68-7 随 P2/P4
 fixture、正式入口、实际消费 evidence surface、result-consumption evidence、parser/evaluator 或
 Consensus runtime 配置变化时只重开受影响 proof
@@ -169,7 +179,7 @@ Consensus runtime 配置变化时只重开受影响 proof
 测试计划第23版: COMPLETE（current）
 Gate 2:       PASS+COMPLETE（独立只读复核：2026-10-06）
 复核记录：唯一 blocker“带 professor_dir 的总览 error 完整对象归属及教授/总览双重角色判为 INVALID_EVIDENCE”已修复。
-Gate 3:       NOT_READY（PC68-D1 完整入口及 PC68-R1 均尚未运行）
-记录完整性： COMPLETE（延续 r28）
+Gate 3:       NOT_READY（PC68-R1 未进入正式请求；固定工作流的传递依赖安装遇到 TLS EOF，依冻结 Recipe 不重试）
+记录完整性： COMPLETE（延续 r30，包含两项 case 的本轮机器记录）
 Merge:        NOT_READY
 ```
