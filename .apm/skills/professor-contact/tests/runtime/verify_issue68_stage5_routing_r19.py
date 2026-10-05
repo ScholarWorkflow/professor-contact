@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate-2 r23 PC68-R1 verifier: owner-local consumption and the root partition.
+"""Gate-2 r24 PC68-R1 verifier: owner-local consumption and the root partition.
 
 r13 keeps the root final business message selector unchanged: exactly one
 current-root, current-turn ``rawResponseItem/completed`` assistant
@@ -38,7 +38,10 @@ agent-path mapping stays ``root_result_consumption_unobservable``, a child
 observed under more than one distinct agent path is
 ``child_agent_path_mapping_ambiguous`` damaged evidence no matter how correct
 the surviving path's own receipt looks, and a child without a legal receipt
-stays ``root_result_consumption_unobservable``; none of these is ever cured
+stays ``root_result_consumption_unobservable`` — or
+``root_result_receipt_malformed`` when a receipt names this owner's
+professor_dir but its Payload top level lacks ``status`` or ``reason_code``;
+none of these is ever cured
 into a PASS by those surfaces; legal receipts carrying more than one distinct
 outcome stay ``root_result_receipt_ambiguous``; a payload outcome differing
 from the child's own result is ``root_receipt_payload_changed``.
@@ -68,6 +71,20 @@ orchestration calls are recognized either by strict flag parsing or, for
 compound preparations, by their single action word plus their
 ``aggregatedOutput``. A proven product failure is never downgraded to a
 blocked or invalid terminal by another child's missing or ambiguous evidence.
+
+r24 adds the frozen Test Plan r21 observability facts. The current Codex V2
+runtime delivers the owner invocation only as a root->child ``agent_message``
+NEW_TASK whose payload is ``encrypted_content``, so a complete owner-entry
+transport/read observation does not exist: with the contract's
+``owner_entry_evidence_status`` NOT_AVAILABLE a proven-clean PASS terminal is
+capped to ``BLOCKED_OBSERVABILITY``/``owner_entry_transport_unobservable``
+(``capped_from="PASS"`` with the original PASS facts kept) and never reported
+as PASS, while FAIL_PRODUCT and INVALID_EVIDENCE terminals keep their
+precedence. A completed commandExecution without a started record no longer
+ends the scan: it is collected as an observability gap, produces no call, and
+surfaces as ``BLOCKED_OBSERVABILITY``/``command_start_unobservable`` only on
+the otherwise-clean terminal, so a sibling child's proven failure keeps its
+precedence.
 """
 import argparse
 import json
@@ -84,6 +101,18 @@ verdict = base.verdict
 combine = base.combine
 owner_outcome = base.owner_outcome
 codex_final_result_source = final_source.codex_final_result_source
+
+EVIDENCE_CONTRACT = Path(__file__).resolve().parent / "issue68-runtime-evidence-contract-r19.json"
+
+
+def owner_entry_evidence_status():
+    """The frozen owner-entry transport fact from the pinned evidence contract."""
+    contract = json.loads(EVIDENCE_CONTRACT.read_text(encoding="utf-8"))
+    status = contract.get("codex", {}).get("owner_entry_evidence_status")
+    if not isinstance(status, str) or not status:
+        raise ValueError("contract_owner_entry_evidence_status_missing")
+    return status
+
 
 ACTIONS = {"stage5-list-inputs", "stage5-partition-choices", "stage5-plan",
            "stage5-rebuild-overview"}
@@ -295,16 +324,22 @@ def receipt_payload_outcomes(receipt, professor_dir):
     header must equal the receipt's own ``author``. The parsed Payload JSON is
     read at its top level only and never recursively: the object must carry
     ``professor_dir`` equal to this owner's directory as a top-level field and
-    the outcome triple comes from the top-level fields alone. A receipt whose
-    top level carries only a nested object (a diagnostic wrapper, for
-    example), whose body fails the shape check or which names another
-    professor_dir contributes nothing and is never this owner's consumption
-    evidence.
+    the outcome triple comes from the top-level fields alone. A payload whose
+    top level names this owner but lacks ``status`` or ``reason_code`` is
+    malformed evidence: it contributes no triple and the second return value
+    reports the missing field names, so a missing field is never read as a
+    ``None`` outcome. A receipt whose top level carries only a nested object
+    (a diagnostic wrapper, for example), whose body fails the shape check or
+    which names another professor_dir contributes nothing and is never this
+    owner's consumption evidence.
     """
     payload = _final_answer_payload(receipt["text"], receipt["author"])
     if payload is None or payload.get("professor_dir") != professor_dir:
-        return []
-    return [{key: payload.get(key) for key in ("professor_dir", "status", "reason_code")}]
+        return [], []
+    missing = sorted(field for field in ("status", "reason_code") if field not in payload)
+    if missing:
+        return [], missing
+    return [{key: payload[key] for key in ("professor_dir", "status", "reason_code")}], []
 
 
 def _plan_checks(parsed, manifest, expected_pack):
@@ -543,7 +578,7 @@ def _classify(problem, failures, invalids, blockers):
         blockers.append(problem)
 
 
-def _verify_codex_events(response, adapter, manifest):
+def _verify_codex_events(response, adapter, manifest, owner_entry_status=None):
     status = adapter.get("fixture_status")
     if status in ("INVALID_EVIDENCE", "HARNESS_ERROR", "HARNESS_CONTAMINATION"):
         return verdict("INVALID_EVIDENCE", "shared_adapter_rejected")
@@ -567,6 +602,7 @@ def _verify_codex_events(response, adapter, manifest):
     payloads, results = {}, {}
     agent_paths, receipts = {}, []
     command_starts, calls, root_texts, commands = {}, [], [], {}
+    observability_gaps = []
     previous_seq = -1
     for event in events:
         seq = event.get("runtime_seq")
@@ -611,7 +647,12 @@ def _verify_codex_events(response, adapter, manifest):
                 command_starts[item_id] = seq
             elif method == "item/completed":
                 if item_id not in command_starts:
-                    return verdict("BLOCKED_OBSERVABILITY", "command_start_unobservable")
+                    # r24: a completed commandExecution without a started
+                    # record is an observability gap, not an early terminal.
+                    # The command yields no call and the scan continues, so a
+                    # sibling child's proven failure keeps its precedence.
+                    observability_gaps.append(("command_start_unobservable", thread, seq))
+                    continue
                 if thread in children:
                     commands.setdefault(thread, []).append(item.get("command", ""))
                 calls.append({"start": command_starts[item_id], "end": seq,
@@ -654,15 +695,28 @@ def _verify_codex_events(response, adapter, manifest):
                                         "child_agent_path_mapping_ambiguous",
                                         detail=list(paths)))
             continue
-        matched = []
+        matched, malformed = [], []
         for receipt in receipts:
             if receipt["author"] != paths[0]:
                 continue
-            receipt_own = receipt_payload_outcomes(receipt, owner["professor_dir"])
+            receipt_own, missing_fields = receipt_payload_outcomes(receipt, owner["professor_dir"])
+            if missing_fields:
+                # A receipt naming this owner whose Payload top level lacks
+                # status/reason_code is malformed evidence, never a changed
+                # payload: it counts as no legal receipt.
+                malformed.append(missing_fields)
+                continue
             if receipt_own:
                 matched.append((receipt["seq"], receipt_own))
         if not matched:
-            blockers.append(verdict("BLOCKED_OBSERVABILITY", "root_result_consumption_unobservable"))
+            if malformed:
+                blockers.append(verdict("BLOCKED_OBSERVABILITY",
+                                        "root_result_receipt_malformed",
+                                        detail=sorted({field for fields in malformed
+                                                       for field in fields})))
+            else:
+                blockers.append(verdict("BLOCKED_OBSERVABILITY",
+                                        "root_result_consumption_unobservable"))
             continue
         observed = []
         for _, receipt_own in matched:
@@ -688,6 +742,21 @@ def _verify_codex_events(response, adapter, manifest):
                             outcomes=outcomes,
                             owner_threads={child: pack for pack, child in assigned.items()})
     result["identity_diagnostics"] = adapter.get("dispatch", {}).get("agent_identity", {})
+    # r24 unified terminal precedence: a proven FAIL/INVALID keeps its
+    # precedence over the collected observability gaps, a gap surfaces only on
+    # the otherwise-clean PASS/BLOCKED terminal, and the owner-entry cap
+    # applies only to a PASS (a non-PASS verdict is never rewritten).
+    if result.get("verdict") in ("FAIL_PRODUCT", "INVALID_EVIDENCE"):
+        return result
+    if observability_gaps:
+        return verdict("BLOCKED_OBSERVABILITY", "command_start_unobservable",
+                       detail=[list(gap) for gap in observability_gaps])
+    if owner_entry_status == "NOT_AVAILABLE" and result.get("verdict") == "PASS":
+        capped = verdict("BLOCKED_OBSERVABILITY", "owner_entry_transport_unobservable",
+                         capped_from="PASS")
+        capped.update({key: value for key, value in result.items()
+                       if key not in ("verdict", "reason_code")})
+        return capped
     return result
 
 
@@ -709,7 +778,9 @@ def verify_codex(response, adapter, manifest):
     final_text, problem = codex_final_result_source(response)
     if problem:
         return problem
-    return _judge_with_final_source(_verify_codex_events, final_text, response, adapter, manifest)
+    entry_status = owner_entry_evidence_status()
+    return _judge_with_final_source(_verify_codex_events, final_text, response, adapter, manifest,
+                                    entry_status)
 
 
 def main():
