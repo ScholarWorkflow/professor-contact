@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
-"""PC68-R1 Codex-only formal entrypoint (Gate-2 r21).
+"""PC68-R1 Codex-only formal entrypoint (Gate-2 r22).
 
-r21 keeps the r13 request, the r12 request builder, the merged shared fixture
+r22 keeps the r13 request, the r12 request builder, the merged shared fixture
 adapter, the r13 root final-source selector, the r14 service/storage isolation
 enforcement and the r19 owner-local consumption and root partition oracle:
 every formal child must consume exactly its own one-professor packet (its own
 email_pack and choices rows, never a sibling marker or a choices_scope field)
 through its own stage5 command surface, and the root must run the
 deterministic stage5-partition-choices entry exactly once with bundles that
-match the manifest partition record. r21 rewrites the wait/consume semantics
-around the real root result receipt: the root's result consumption per formal
-child is proven only by the root thread's rawResponseItem/completed
-agent_message FINAL_ANSWER receipt, whose author is the child's agent path and
+match the manifest partition record. r22 binds the root result receipt to the
+frozen field chain: the child's agent path comes only from the same run's
+subAgentActivity items (agentThreadId to agentPath, an association key that
+never creates formal ownership), and the root's consumption receipt for one
+formal child is a current-turn root-thread agent_message whose author equals
+that child's agent path, whose recipient is /root, and whose body is exactly
+the FINAL_ANSWER completion shape (Message Type / Task name / Sender / Payload)
 whose Payload JSON names the owner's professor_dir with the same outcome the
 child itself returned; the receipt's runtime_seq is the consumption point the
-aggregate must not precede. The official Codex V2 wait implementation
-(openai/codex multi_agents_v2/wait.rs) always returns empty
-receiver_thread_ids/agents_states and a wait message that is only the "Wait
-completed." status text, so wait pairing fields are never evidence; the
+aggregate must not precede. collabAgentToolCall receiverThreadIds/agentsStates,
+the "Wait completed." wait message, subAgentActivity completed reports and
+child turn/completed events are diagnostics only and never evidence; the
 successful root partition must also complete before any owner business call
 starts. The contract freezes these conditions as owner_input_isolation,
 canonical_preservation and partition_evidence. EVAL_PORT has exactly one
@@ -45,7 +47,7 @@ import run_issue68_stage5_routing_r19 as bridge
 HERE = Path(__file__).resolve().parent
 FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
-CONTRACT_REVISION = "issue-68-runtime-evidence-r21-2026-10-05"
+CONTRACT_REVISION = "issue-68-runtime-evidence-r22-2026-10-05"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
 EXECUTION_KIND = "acceptance"
 HOST = "codex"

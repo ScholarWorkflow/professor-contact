@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate-2 r21 PC68-R1 verifier: owner-local consumption and the root partition.
+"""Gate-2 r22 PC68-R1 verifier: owner-local consumption and the root partition.
 
 r13 keeps the root final business message selector unchanged: exactly one
 current-root, current-turn ``rawResponseItem/completed`` assistant
@@ -9,20 +9,33 @@ fixture: the root discovers the local packs, runs the deterministic
 one-professor packet (``email_pack`` plus that owner's own ``choices`` rows,
 never a ``choices_scope``).
 
-r21 rewrites the wait/consume semantics around the real root result-receipt
-surface: the root's result-consumption point per formal child is proven only
-by a root-thread ``rawResponseItem/completed`` ``agent_message`` FINAL_ANSWER
-receipt whose payload JSON names that owner's ``professor_dir`` and whose
-professor_dir/status/reason_code outcome equals the outcome the child itself
-returned on its own thread; the receipt's ``runtime_seq`` is the consumption
-point. The official Codex V2 wait item (openai/codex
-``multi_agents_v2/wait.rs``) always carries empty ``receiverThreadIds``/
-``agentsStates`` and a ``WaitAgentResult.message`` that is only the "Wait
-completed." status text, so wait pairing fields are never consumption
-evidence. A child's ``turn/completed`` and the root's ``subAgentActivity``
-report are diagnostics only and their absence never blocks; a missing receipt
-stays ``root_result_consumption_unobservable`` and is never cured into a PASS
-by the completion surfaces.
+r22 binds the root result-receipt surface to the frozen field chain. Formal
+children stay the shared adapter's ``spawnAgent`` relation
+(``dispatch.thread_relations`` edges whose ``sender_thread_id`` is the root
+thread). The ``child_thread_id -> child_agent_path`` binding comes only from
+the same run's ``subAgentActivity`` items (``item.agentThreadId`` ->
+``item.agentPath``), and the agent path is an association key only: it never
+creates, rewrites, upgrades or downgrades formal ownership. The root's only
+legal consumption receipt for one formal child is a current-turn root-thread
+``rawResponseItem/completed`` ``agent_message`` (``params.turnId`` equal to
+``output.turn_id``) whose ``recipient`` is ``/root`` and whose ``author``
+equals that child's agent path, whose input_text body is exactly the Codex
+child completion shape — the three header lines ``Message Type: FINAL_ANSWER``
+/ ``Task name: /root`` / ``Sender: <child_agent_path>`` (the Sender line must
+equal the child's agent path) then the ``Payload:`` marker and one JSON object
+carrying ``professor_dir``/``status``/``reason_code`` — and whose payload
+outcome equals the outcome the child itself returned on its own thread; the
+receipt's ``runtime_seq`` is the root's consumption point for that child's
+result and the aggregate must not precede every owner's consumption point.
+Diagnostics only, never consumption evidence: collabAgentToolCall
+``receiverThreadIds``/``agentsStates``, the "Wait completed." wait message,
+``subAgentActivity`` completed reports, child ``turn/completed`` events,
+``requested_role`` and ``loaded_identity``. A child without an agent-path
+mapping or without a legal receipt stays
+``root_result_consumption_unobservable`` and is never cured into a PASS by
+those surfaces; legal receipts carrying more than one distinct outcome stay
+``root_result_receipt_ambiguous``; a payload outcome differing from the
+child's own result is ``root_receipt_payload_changed``.
 
 The oracle also freezes the partition ordering fact: the root's successful
 ``stage5-partition-choices`` call must complete before any owner business
@@ -232,21 +245,62 @@ def final_result_rows(texts):
     return rows
 
 
-def receipt_outcomes(text, professor_dir):
-    """The distinct outcome triples one root receipt carries for one owner.
+def _receipt_body(item):
+    """The frozen receipt body: only the item's ``input_text`` content parts."""
+    content = item.get("content")
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(part["text"] for part in content if isinstance(part, dict)
+                     and part.get("type") == "input_text"
+                     and isinstance(part.get("text"), str))
 
-    A receipt matches the owner when its payload JSON — extracted with the
-    shared ``json_values``/``objects`` decoders — contains a row whose
-    ``professor_dir`` equals the owner's directory; each matching row
-    contributes its professor_dir/status/reason_code triple.
+
+def _final_answer_payload(text, author_path):
+    """The strictly shaped Codex child completion payload of one receipt body.
+
+    The frozen receipt body is the three header lines ``Message Type:
+    FINAL_ANSWER``, ``Task name: /root`` and ``Sender: <author_path>`` (each
+    checked line by line, trailing whitespace tolerated), then the
+    ``Payload:`` marker, then exactly one JSON object carrying the result.
+    Any other shape — a different message type, a Sender line naming another
+    agent, a missing marker or a body that does not parse into one JSON
+    object — returns None: such a text is never a consumption receipt.
     """
+    if not isinstance(text, str) or not isinstance(author_path, str):
+        return None
+    lines = text.splitlines()
+    expected = ["Message Type: FINAL_ANSWER", "Task name: /root",
+                "Sender: " + author_path, "Payload:"]
+    if len(lines) <= len(expected):
+        return None
+    if any(line.rstrip() != want for line, want in zip(expected, lines)):
+        return None
+    try:
+        payload = json.loads("\n".join(lines[len(expected):]).strip())
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def receipt_payload_outcomes(receipt, professor_dir):
+    """The distinct outcome triples one receipt's Payload JSON names for one owner.
+
+    Only the strictly shaped FINAL_ANSWER body counts, and the ``Sender:``
+    header must equal the receipt's own ``author``; inside the parsed Payload
+    JSON only rows naming this professor_dir contribute their
+    professor_dir/status/reason_code triple. A receipt whose body fails the
+    shape check or names another professor_dir contributes nothing and is
+    never this owner's consumption evidence.
+    """
+    payload = _final_answer_payload(receipt["text"], receipt["author"])
+    if payload is None:
+        return []
     outcomes = []
-    for value in base.json_values(text):
-        for row in base.objects(value):
-            if row.get("professor_dir") == professor_dir:
-                outcome = {key: row.get(key) for key in ("professor_dir", "status", "reason_code")}
-                if outcome not in outcomes:
-                    outcomes.append(outcome)
+    for row in base.objects(payload):
+        if row.get("professor_dir") == professor_dir:
+            outcome = {key: row.get(key) for key in ("professor_dir", "status", "reason_code")}
+            if outcome not in outcomes:
+                outcomes.append(outcome)
     return outcomes
 
 
@@ -507,8 +561,8 @@ def _verify_codex_events(response, adapter, manifest):
         return verdict("BLOCKED_OBSERVABILITY", "formal_delegation_unobservable")
     if len(children) != 2:
         return verdict("FAIL_PRODUCT", "wrong_owner_count", formal_children=sorted(children))
-    payloads, complete, results = {}, {}, {}
-    receipts = []
+    payloads, results = {}, {}
+    agent_paths, receipts = {}, []
     command_starts, calls, root_texts, commands = {}, [], [], {}
     previous_seq = -1
     for event in events:
@@ -519,10 +573,16 @@ def _verify_codex_events(response, adapter, manifest):
         message = event.get("message", {})
         method, params = message.get("method"), message.get("params", {})
         thread, item = params.get("threadId"), params.get("item", {})
-        if method == "turn/completed" and thread in children:
-            turn = params.get("turn", {})
-            if turn.get("id") and turn.get("status") == "completed":
-                complete[thread] = seq
+        if item.get("type") == "subAgentActivity":
+            # The child_thread_id -> child_agent_path association from the
+            # same run's subAgentActivity items (item/started and
+            # item/completed both carry it). agentPath is an association key
+            # only and never creates formal ownership.
+            child_thread, agent_path = item.get("agentThreadId"), item.get("agentPath")
+            if isinstance(child_thread, str) and isinstance(agent_path, str):
+                known = agent_paths.setdefault(child_thread, [])
+                if agent_path not in known:
+                    known.append(agent_path)
         if method == "rawResponseItem/completed" and item.get("type") == "message":
             text = base.message_text(item)
             if thread in children and item.get("role") == "user":
@@ -532,14 +592,16 @@ def _verify_codex_events(response, adapter, manifest):
             elif thread == root and item.get("role") == "assistant":
                 root_texts.append(text)
         if method == "rawResponseItem/completed" and item.get("type") == "agent_message" \
-                and thread == root:
-            # The real root result-consumption surface: the child's
-            # FINAL_ANSWER receipt delivered back on the root thread. The
-            # official V2 wait item's pairing fields are always empty and its
-            # message is only wait status text, so collabAgentToolCall wait
-            # items are never parsed as consumption evidence.
+                and thread == root and item.get("recipient") == "/root" \
+                and params.get("turnId") == raw.get("turn_id"):
+            # The only root result-consumption surface: a current-turn
+            # root-thread agent_message receipt. The official V2 wait item's
+            # pairing fields are always empty and its message is only wait
+            # status text, so collabAgentToolCall wait items are never parsed
+            # as consumption evidence; each receipt body must still parse as
+            # the frozen FINAL_ANSWER shape before it counts.
             receipts.append({"seq": seq, "author": item.get("author"),
-                             "text": base.message_text(item)})
+                             "text": _receipt_body(item)})
         if thread in children | {root} and item.get("type") == "commandExecution":
             item_id = (thread, item.get("id"))
             if method == "item/started":
@@ -572,11 +634,16 @@ def _verify_codex_events(response, adapter, manifest):
             _classify(problem, failures, invalids, blockers)
             continue
         # The root consumed this child's result only where a root-thread
-        # agent_message receipt names this owner's professor_dir and carries
-        # exactly the outcome the child itself returned.
+        # agent_message receipt bound to this child's agent path (from the
+        # subAgentActivity association, never from the receipt body) carries
+        # a strictly shaped FINAL_ANSWER payload naming this owner's
+        # professor_dir with exactly the outcome the child itself returned.
+        paths = agent_paths.get(child, [])
         matched = []
         for receipt in receipts:
-            receipt_own = receipt_outcomes(receipt["text"], owner["professor_dir"])
+            if receipt["author"] not in paths:
+                continue
+            receipt_own = receipt_payload_outcomes(receipt, owner["professor_dir"])
             if receipt_own:
                 matched.append((receipt["seq"], receipt_own))
         if not matched:
@@ -591,17 +658,11 @@ def _verify_codex_events(response, adapter, manifest):
             invalids.append(verdict("INVALID_EVIDENCE", "root_result_receipt_ambiguous",
                                     observed_outcomes=observed))
             continue
-        receipt_seq = min(seq for seq, _ in matched)
-        completion = complete.get(child)
-        if completion is not None and receipt_seq < completion:
-            invalids.append(verdict("INVALID_EVIDENCE", "root_receipt_precedes_child_completion",
-                                    receipt_seq=receipt_seq, child_completion=completion))
-            continue
         if observed[0] != outcome:
             failures.append(verdict("FAIL_PRODUCT", "root_receipt_payload_changed",
                                     observed_result=observed[0], expected_result=outcome))
             continue
-        consume_points[child] = receipt_seq
+        consume_points[child] = min(seq for seq, _ in matched)
         outcomes[pack] = outcome
     for bucket in (failures, invalids, blockers):
         if bucket:

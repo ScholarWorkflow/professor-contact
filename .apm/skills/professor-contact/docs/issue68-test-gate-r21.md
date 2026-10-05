@@ -1,5 +1,7 @@
 # Issue #68 / PR #72 本地测试工程师实现记录 r21 — 真实 wait/consume 回执面
 
+> **已被取代**：本记录的 Gate 2 候选地位由 `docs/issue68-test-gate-r22.md`（`issue68-r22-frozen-receipt-chain-2026-10-05`，按审核澄清 PR 评论 `5991384143` 固定回执取证字段链并补上 `author == child_agent_path` 绑定）接管；本文件仅保留审计用途，不得作为当前权威候选拼接使用。
+
 记录版本：`issue68-r21-receipt-consumption-2026-10-05`。
 
 本文件是**测试实现记录与 Gate 2 候选材料，不是第二关口权威结论**。它响应 Gate 2 审核更正（PR 评论 `5990445769`）：撤销 r20 的 `agentsStates` 配对要求，按最小 Recipe Preflight 在既有 r15 正式 raw 上证实 root 结果消费的真实事件形状，并据此重写 contract/verifier/回归。本记录完整取代 `docs/issue68-test-gate-r20.md` 的候选地位（r19/r20 记录保留审计）；执行者无需拼接历史评论。
