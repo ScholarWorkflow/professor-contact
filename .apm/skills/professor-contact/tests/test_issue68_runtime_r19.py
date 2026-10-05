@@ -1,31 +1,35 @@
-"""Gate-2 r19 regressions for owner-local consumption and the root partition.
+"""Gate-2 r20 regressions for owner-local consumption and the root partition.
 
 Synthetic evidence characterizes the evaluator and the recipe wiring. It is not
 a real-host PC68-R1 acceptance PASS.
 
-Test Plan r19 §3.2.2 keeps three explicit verdict channels over the §7
+Test Plan r20 §4 keeps three explicit verdict channels over the §7
 counterexample matrix:
-- PASS channel: the valid owner-local A+B run, a diagnostic object recorded by
-  a non-stage5 command, the single ``results`` wrapper, a stale earlier-turn
-  final answer, the canonical ``試験`` spelling, the r15 real-host empty
-  wait pairing attributed through root subAgentActivity completion events,
-  and the r15 real-host compound command shapes (a ``python3 -c`` child
-  packet and a ``python3 -c`` root partition preparation).
+- PASS channel: the valid owner-local A+B run with a complete agentsStates
+  wait pairing, a diagnostic object recorded by a non-stage5 command, the
+  single ``results`` wrapper, a stale earlier-turn final answer, the canonical
+  ``試験`` spelling, and the r15 real-host compound command shapes (a
+  ``python3 -c`` child packet and a ``python3 -c`` root partition
+  preparation).
 - FAIL_PRODUCT channel: every proven isolation/partition/orchestration
   violation — a sibling sentinel or a ``choices_scope`` field in the consumed
   input, missing/multiple/owner-executed (strict or compound)/changed root
-  partitions, a plan ``--choices-scope``, discovery ``--emit-choices-scope``,
-  a changed bundle file, wrong owner count, wait before owner completion
-  (including a subAgentActivity completion point earlier than the child's
-  turn completion), early or repeated rebuilds, a changed owner result behind
-  an intact formal topology, and the rewritten ``試験`` spelling
-  counterexample (carried by test_canonical_unicode_is_preserved).
+  partitions, an owner business command starting before the root partition
+  completed, a plan ``--choices-scope``, discovery ``--emit-choices-scope``,
+  a changed bundle file, wrong owner count, the agentsStates wait pairing
+  earlier than the child's turn completion, an aggregate rebuilt between the
+  child completion surfaces and the wait pairing, early or repeated rebuilds,
+  a changed owner result behind an intact formal topology, and the rewritten
+  ``試験`` spelling counterexample (carried by
+  test_canonical_unicode_is_preserved).
 - BLOCKED_OBSERVABILITY / INVALID_EVIDENCE channel: missing consumption
   evidence on both frozen surfaces (completed_user_payload_unobservable,
   owner_business_object_unobservable), two distinct consumed objects
-  (owner_business_object_ambiguous), a wait with neither pairing surface
-  (completion_or_wait_unobservable), and a compound root text carrying
-  several action words (root_orchestration_ambiguous).
+  (owner_business_object_ambiguous), a wait with no agentsStates pairing,
+  with or without root subAgentActivity completion reports, which are
+  child-completion evidence only (completion_or_wait_unobservable), and a
+  compound root text carrying several action words
+  (root_orchestration_ambiguous).
 """
 import importlib
 import importlib.util
@@ -66,7 +70,6 @@ PASS_CHANNEL = (
     "test_results_wrapper_final_answer_still_passes",
     "test_stale_final_answer_is_not_terminal",
     "test_canonical_unicode_is_preserved",
-    "test_wait_pairing_falls_back_to_sub_agent_activity",
 )
 FAIL_CHANNEL = (
     "test_sibling_sentinel_in_consumed_input_is_a_product_failure",
@@ -76,19 +79,22 @@ FAIL_CHANNEL = (
     "test_partition_executed_by_owner_is_a_product_failure",
     "test_compound_partition_by_owner_is_a_product_failure",
     "test_changed_partition_output_is_a_product_failure",
+    "test_owner_business_before_root_partition_is_a_product_failure",
     "test_plan_carrying_choices_scope_is_a_product_failure",
     "test_discovery_emitting_scope_is_a_product_failure",
     "test_changed_bundle_file_is_a_product_failure",
     "test_wrong_owner_count_and_wait_order_are_failures",
+    "test_wait_pairing_before_child_completion_is_a_product_failure",
+    "test_rebuild_between_child_completion_and_result_consumption_fails",
     "test_early_or_multiple_rebuild_is_a_product_failure",
     "test_routing_proof_survives_downstream_business_failure",
     "test_canonical_unicode_is_preserved",
-    "test_sub_agent_activity_pairing_still_enforces_wait_order",
 )
 BLOCKED_INVALID_CHANNEL = (
     "test_ambiguous_consumed_objects_are_invalid_evidence",
     "test_missing_consumption_evidence_is_blocked",
     "test_wait_without_any_pairing_surface_blocks",
+    "test_wait_pairing_absence_is_not_cured_by_sub_agent_activity",
     "test_multi_action_compound_root_command_blocks_orchestration",
 )
 WIRING_TESTS = (
@@ -97,8 +103,8 @@ WIRING_TESTS = (
     "test_contract_freezes_owner_input_isolation_and_partition_evidence",
     "test_verifier_refuses_the_opencode_host",
     "test_channel_declaration_matches_the_matrix",
-    "test_resolve_eval_port_keeps_direnv_as_the_formal_source",
-    "test_resolve_eval_port_falls_back_to_the_unique_verified_listener",
+    "test_resolve_eval_port_uses_direnv_only",
+    "test_resolve_eval_port_refuses_to_start_without_direnv",
 )
 
 
@@ -226,8 +232,9 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                  partition_rows=None, discovery_flags=(), rebuild_timing=None,
                  wait_before_completion=False, old_turn_final=None, final_text=None,
                  wait_pairing="agentsStates", sub_agent_activity=None,
-                 partition_compound=False, root_extra_commands=()):
-        """One faithful r19 baseline: root discovery plus one deterministic
+                 partition_compound=False, root_extra_commands=(),
+                 owner_business_before_partition=False):
+        """One faithful r20 baseline: root discovery plus one deterministic
         partition, two formal children each consuming its own packet on its
         own stage5 plan surface, and the current-turn root final answer.
         ``wait_pairing="empty"`` is the r15 real-host wait shape with empty
@@ -235,7 +242,11 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         subAgentActivity completed item before or after each child's
         turn/completed. ``partition_compound`` emits the root partition in
         the r15 real-host ``python3 -c`` compound shape and
-        ``root_extra_commands`` appends further root command items."""
+        ``root_extra_commands`` appends further root command items.
+        ``rebuild_timing="between"`` places one root rebuild between the
+        first child's completion surfaces and its agentsStates wait pairing;
+        ``owner_business_before_partition`` starts a child business command
+        before the root partition completes."""
         per_owner = per_owner or {}
         events, relations, seq = [], [], 0
 
@@ -274,6 +285,18 @@ class TestIssue68RuntimeR19(unittest.TestCase):
 
         command("root", "root-discovery",
                 self.stage5_command("stage5-list-inputs", *discovery_flags), self.discovery())
+        if owner_business_before_partition:
+            # r20 ordering counterexample: the first owner's own one-professor
+            # plan command starts before the root partition completes. The
+            # command text matches the child's later packet command, so the
+            # packet oracle still sees exactly one consumed object.
+            early_owner = self.owner(0)
+            command("child-0", "exec-early-packet",
+                    self.stage5_command("stage5-plan",
+                                        ("--email-pack", early_owner["email_pack"]),
+                                        ("--packet", json.dumps(self.packet(early_owner),
+                                                                ensure_ascii=False))),
+                    json.dumps(early_owner["expected_result"], ensure_ascii=False))
         if partition_present:
             for number in range(partition_count):
                 partition_command = (self.compound_command("stage5-partition-choices",
@@ -342,6 +365,11 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                       turn="turn-" + str(index), turn_status="completed")
                 if sub_agent_activity == "after_completion":
                     event("item/completed", "root", sub_completed)
+                if rebuild_timing == "between" and index == 0:
+                    # r20 risk timing: the root rebuilds between the child's
+                    # completion surfaces and its result-consumption wait.
+                    command("root", "root-rebuild-between",
+                            self.stage5_command("stage5-rebuild-overview"))
                 event("item/completed", "root", wait)
         if rebuild_timing == "double":
             command("root", "root-rebuild-a", self.stage5_command("stage5-rebuild-overview"))
@@ -499,6 +527,17 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("FAIL_PRODUCT", "root_partition_changed"))
 
+    def test_owner_business_before_root_partition_is_a_product_failure(self):
+        """r20 ordering fact: the root's successful partition must complete
+        before any owner business call starts; a child business command that
+        starts earlier is a product failure."""
+        response, adapter = self.evidence(owner_business_before_partition=True)
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "owner_business_precedes_partition"))
+        self.assertIn("stage5-plan", result["observed_call"])
+        self.assertIn("contact_state.py", result["observed_call"])
+
     # ---- FAIL_PRODUCT channel: plan, discovery and bundle files ------------
 
     def test_plan_carrying_choices_scope_is_a_product_failure(self):
@@ -539,12 +578,17 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("FAIL_PRODUCT", "wait_precedes_owner_completion"))
 
-    def test_wait_pairing_falls_back_to_sub_agent_activity(self):
-        response, adapter = self.evidence(wait_pairing="empty", sub_agent_activity="after_completion")
+    def test_wait_pairing_absence_is_not_cured_by_sub_agent_activity(self):
+        """r20: an empty collabAgentToolCall pairing is never cured by the
+        root's subAgentActivity completed reports — those are child-completion
+        evidence only, so the run stays blocked instead of passing."""
+        response, adapter = self.evidence(wait_pairing="empty",
+                                          sub_agent_activity="after_completion")
         result = verify.verify_codex(response, adapter, self.manifest)
-        self.assertEqual(result["verdict"], "PASS")
-        self.assertEqual(result["wait_evidence"],
-                         {"child-0": "subAgentActivity", "child-1": "subAgentActivity"})
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("BLOCKED_OBSERVABILITY", "completion_or_wait_unobservable"))
+        self.assertIn("missing_wait_pairing", result["missing_surface"])
+        self.assertNotEqual(result["verdict"], "PASS")
 
     def test_wait_without_any_pairing_surface_blocks(self):
         response, adapter = self.evidence(wait_pairing="empty")
@@ -553,12 +597,24 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                          ("BLOCKED_OBSERVABILITY", "completion_or_wait_unobservable"))
         self.assertEqual(result["missing_surface"], ["missing_wait_pairing"])
 
-    def test_sub_agent_activity_pairing_still_enforces_wait_order(self):
-        response, adapter = self.evidence(wait_pairing="empty",
-                                          sub_agent_activity="before_completion")
+    def test_wait_pairing_before_child_completion_is_a_product_failure(self):
+        """The agentsStates wait pairing earlier than the child's own
+        turn/completed proves the root claimed a result before the child
+        finished: a product failure."""
+        response, adapter = self.evidence(wait_before_completion=True)
         result = verify.verify_codex(response, adapter, self.manifest)
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("FAIL_PRODUCT", "wait_precedes_owner_completion"))
+
+    def test_rebuild_between_child_completion_and_result_consumption_fails(self):
+        """r20 risk timing: the children completed and the root saw the
+        subAgentActivity reports, but the rebuild runs before the agentsStates
+        wait pairing — the aggregate still precedes result consumption."""
+        response, adapter = self.evidence(rebuild_timing="between",
+                                          sub_agent_activity="after_completion")
+        result = verify.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "aggregate_precedes_result_consumption"))
 
     def test_early_or_multiple_rebuild_is_a_product_failure(self):
         response, adapter = self.evidence(rebuild_timing="early")
@@ -643,7 +699,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
     def test_contract_freezes_owner_input_isolation_and_partition_evidence(self):
         contract = json.loads(
             (RUNTIME / "issue68-runtime-evidence-contract-r19.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r19-2026-10-05")
+        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r20-2026-10-05")
         self.assertEqual(contract["fixture_sha"], FIXTURE_SHA)
         self.assertEqual(contract["eval_server_revision"], "3fdfa9387140cfc2e2aa3af415f85015f79706d2")
         self.assertEqual(contract["runner"], ".apm/skills/professor-contact/tests/runtime/"
@@ -652,6 +708,9 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertIn("sibling", codex["owner_input_isolation"])
         self.assertIn("byte for byte", codex["canonical_preservation"])
         self.assertIn("exactly once", codex["partition_evidence"])
+        self.assertIn("owner_business_precedes_partition", codex["partition_evidence"])
+        self.assertIn("only", codex["wait_consume_evidence"])
+        self.assertIn("child-completion evidence only", codex["wait_consume_evidence"])
         self.assertIn("never downgraded", codex["terminal_precedence"])
         self.assertEqual(codex["missing_observation"], "BLOCKED_OBSERVABILITY")
         self.assertEqual(codex["malformed_or_ambiguous_observation"], "INVALID_EVIDENCE")
@@ -669,45 +728,32 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         finally:
             sys.argv = original
 
-    def test_resolve_eval_port_keeps_direnv_as_the_formal_source(self):
-        """A valid direnv EVAL_PORT stays the formal source: it is returned
-        as-is and neither the lsof listing nor the instance verification
-        runs."""
+    def test_resolve_eval_port_uses_direnv_only(self):
+        """A valid direnv EVAL_PORT is the only source: it is returned as-is
+        and neither a listener scan nor the instance verification runs."""
         calls = []
 
         def fake_check_output(argv, *args, **kwargs):
             calls.append(list(argv))
-            return "15432\n"
+            return "17902\n"
 
         with unittest.mock.patch("subprocess.check_output", side_effect=fake_check_output), \
                 unittest.mock.patch.object(entry, "capture_service_instance") as capture:
-            self.assertEqual(entry.resolve_eval_port("/eval-server"), "15432")
+            self.assertEqual(entry.resolve_eval_port("/eval-server"), "17902")
         self.assertEqual(calls, [["direnv", "exec", "/eval-server", "printenv", "EVAL_PORT"]])
         capture.assert_not_called()
 
-    def test_resolve_eval_port_falls_back_to_the_unique_verified_listener(self):
-        """Without direnv, the port falls back to the single candidate that
-        passes ``capture_service_instance``; ambiguous or unverified
-        listeners must not be returned."""
-        listing = "p101\nn127.0.0.1:17902\n\np202\nn*:18080\n"
-
+    def test_resolve_eval_port_refuses_to_start_without_direnv(self):
+        """direnv missing means the Executable precondition is unsatisfied:
+        the entry refuses to start with eval_port_unavailable instead of
+        scanning listening ports."""
         def fake_check_output(argv, *args, **kwargs):
-            if argv[0] == "direnv":
-                raise FileNotFoundError("direnv is not installed")
-            if argv[0] == "lsof":
-                return listing
-            raise AssertionError("unexpected subprocess call: " + repr(list(argv)))
+            raise FileNotFoundError("direnv is not installed")
 
-        def fake_capture(eval_root, port):
-            if port == "17902":
-                return {"port": port, "pid": 101, "start_time": "t", "command": "c",
-                        "cwd": eval_root}
-            raise ValueError("eval_service_port_mismatch")
-
-        with unittest.mock.patch("subprocess.check_output", side_effect=fake_check_output), \
-                unittest.mock.patch.object(entry, "capture_service_instance",
-                                           side_effect=fake_capture):
-            self.assertEqual(entry.resolve_eval_port("/eval-server"), "17902")
+        with unittest.mock.patch("subprocess.check_output", side_effect=fake_check_output):
+            with self.assertRaises(ValueError) as caught:
+                entry.resolve_eval_port("/eval-server")
+        self.assertEqual(str(caught.exception), "eval_port_unavailable")
 
     def test_channel_declaration_matches_the_matrix(self):
         declared = set(PASS_CHANNEL) | set(FAIL_CHANNEL) | set(BLOCKED_INVALID_CHANNEL)

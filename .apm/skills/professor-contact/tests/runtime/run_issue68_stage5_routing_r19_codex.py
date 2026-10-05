@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
-"""PC68-R1 Codex-only formal entrypoint (Gate-2 r19).
+"""PC68-R1 Codex-only formal entrypoint (Gate-2 r20).
 
-r19 keeps the r13 request, the r12 request builder, the merged shared fixture
-adapter, the r13 root final-source selector and the r14 service/storage
-isolation enforcement. It rebinds the Codex verifier to the r19 owner-local
-consumption and root partition oracle: every formal child must consume exactly
-its own one-professor packet (its own email_pack and choices rows, never a
-sibling marker or a choices_scope field) through its own stage5 command
-surface, and the root must run the deterministic stage5-partition-choices
-entry exactly once with bundles that match the manifest partition record. The
-contract freezes these conditions as owner_input_isolation,
-canonical_preservation and partition_evidence. Before the acceptance request
-the entry proves that the listening eval service comes from the frozen clean
-checkout and uses test-only persistent Codex storage, then verifies that the
-same service and storage boundary remain in place after the request. These
-checks are Recipe evidence, not product acceptance.
+r20 keeps the r13 request, the r12 request builder, the merged shared fixture
+adapter, the r13 root final-source selector, the r14 service/storage isolation
+enforcement and the r19 owner-local consumption and root partition oracle:
+every formal child must consume exactly its own one-professor packet (its own
+email_pack and choices rows, never a sibling marker or a choices_scope field)
+through its own stage5 command surface, and the root must run the
+deterministic stage5-partition-choices entry exactly once with bundles that
+match the manifest partition record. r20 freezes the wait/consume semantics:
+the root's result consumption is proven only by the per-child agentsStates
+pairing of a completed collabAgentToolCall wait item, while a child's own
+turn/completed and the root's subAgentActivity completed item are
+child-completion evidence only and never substitute for the wait pairing; the
+successful root partition must also complete before any owner business call
+starts. The contract freezes these conditions as owner_input_isolation,
+canonical_preservation and partition_evidence. EVAL_PORT has exactly one
+formal source, ``direnv exec`` per the r20 Project Consensus: when direnv is
+missing or its output is unusable the Executable precondition is unsatisfied
+and the entry refuses to start. Before the acceptance request the entry
+proves that the eval service comes from the frozen clean checkout and uses
+test-only persistent Codex storage, then verifies that the same service and
+storage boundary remain in place after the request. These checks are Recipe
+evidence, not product acceptance.
 """
 import argparse
 import json
@@ -32,7 +40,7 @@ import run_issue68_stage5_routing_r19 as bridge
 HERE = Path(__file__).resolve().parent
 FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
-CONTRACT_REVISION = "issue-68-runtime-evidence-r19-2026-10-05"
+CONTRACT_REVISION = "issue-68-runtime-evidence-r20-2026-10-05"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
 EXECUTION_KIND = "acceptance"
 HOST = "codex"
@@ -97,12 +105,13 @@ def overlaps(left, right):
 def resolve_eval_port(eval_root):
     """Resolve the listening eval service port.
 
-    direnv is the formal source: ``direnv exec <eval_root> printenv
-    EVAL_PORT``. When direnv is unavailable or its output is unusable, the
-    entry falls back to the unique ``eval_server.py`` listener that passes
-    the frozen-checkout verification of ``capture_service_instance``, and the
-    resolved service (port, pid, command, cwd, start time) is recorded in the
-    captured provenance files.
+    Per the r20 Project Consensus, EVAL_PORT has exactly one formal source:
+    ``direnv exec <eval_root> printenv EVAL_PORT``. When direnv is missing the
+    Executable precondition is unsatisfied and the entry refuses to start;
+    the same holds when direnv runs but its output is not a decimal port in
+    1-65535. There is no listener-scan fallback; the resolved port is only
+    re-verified against the listening process by ``capture_service_instance``
+    when the provenance is recorded.
     """
     try:
         port = subprocess.check_output(
@@ -110,32 +119,11 @@ def resolve_eval_port(eval_root):
             cwd=eval_root,
             text=True,
         ).strip()
-    except (OSError, subprocess.SubprocessError):
-        port = ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("eval_port_unavailable") from exc
     if port.isdecimal() and 1 <= int(port) <= 65535:
         return port
-    candidates = []
-    pid = None
-    for line in subprocess.check_output(
-        ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"],
-        text=True,
-    ).splitlines():
-        if line.startswith("p") and line[1:].isdigit():
-            pid = line[1:]
-        elif line.startswith("n") and pid:
-            port = line[1:].rsplit(":", 1)[-1]
-            if port.isdecimal() and 1 <= int(port) <= 65535 and port not in candidates:
-                candidates.append(port)
-    verified = []
-    for candidate in candidates:
-        try:
-            capture_service_instance(eval_root, candidate)
-        except (OSError, ValueError, subprocess.SubprocessError):
-            continue
-        verified.append(candidate)
-    if len(verified) != 1:
-        raise ValueError("eval_port_unavailable")
-    return verified[0]
+    raise ValueError("eval_port_unavailable")
 
 
 def capture_service_instance(eval_root, port):

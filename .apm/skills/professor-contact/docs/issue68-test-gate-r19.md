@@ -1,5 +1,7 @@
 # Issue #68 / PR #72 本地测试工程师实现记录 r19 — owner 入口隔离
 
+> **已被取代**：本记录的 Gate 2 候选地位由 `docs/issue68-test-gate-r20.md`（`issue68-r20-owner-local-test-impl-2026-10-05`，按 Test Plan r20 修正 G2-1/G2-2/G2-3）接管；本文件仅保留审计用途，不得作为当前权威候选拼接使用。
+
 记录版本：`issue68-r19-owner-local-test-impl-2026-10-05`。
 
 本文件是**测试实现记录与 Gate 2 候选材料，不是第二关口权威结论**。它按 Test Plan r19（`issue-68-test-plan-r19-2026-10-04`，PR 评论 `5981582680`）第 10 节的指派，交付可执行的确定性测试、runtime fixture/prompt、证据提取、evaluator、正式入口与 Preflight；是否重开或通过第二关口由测试审核者决定。本记录独立包含全部当前 Recipe、parser/evaluator、Preflight 与 verdict 条件，执行者不需要拼接历史评论。

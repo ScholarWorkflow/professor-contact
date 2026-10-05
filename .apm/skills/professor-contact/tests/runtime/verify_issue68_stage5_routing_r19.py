@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate-2 r19 PC68-R1 verifier: owner-local consumption and the root partition.
+"""Gate-2 r20 PC68-R1 verifier: owner-local consumption and the root partition.
 
 r13 keeps the root final business message selector unchanged: exactly one
 current-root, current-turn ``rawResponseItem/completed`` assistant
@@ -9,16 +9,24 @@ fixture: the root discovers the local packs, runs the deterministic
 one-professor packet (``email_pack`` plus that owner's own ``choices`` rows,
 never a ``choices_scope``).
 
-The root wait/consume point per formal child comes from two supported
-surfaces, preferred first: the completed ``collabAgentToolCall`` ``wait``
-item pairing (a ``receiverThreadIds`` entry plus a completed ``agentsStates``
-status) and, when that pairing is empty as in the r15 real-host output, the
-``subAgentActivity`` ``kind=completed`` item that reports the child's
-``agentThreadId`` back to the root. A child still needs its own
-``turn/completed``; a child missing the paired wait point or that turn
-completion stays ``completion_or_wait_unobservable``, and a PASS verdict
-records which surface supplied each wait point as diagnostic-only
-``wait_evidence``.
+r20 freezes the wait/consume semantics: the root's result-consumption point
+per formal child is proven only by the completed ``collabAgentToolCall``
+``wait`` item pairing (a ``receiverThreadIds`` entry plus a completed
+``agentsStates`` status carrying the child's result message). A child's own
+``turn/completed`` and the root's ``subAgentActivity`` ``kind=completed`` item
+are child-completion evidence only: they never prove that the root took or
+consumed the child's result and never substitute for the wait pairing. A
+child missing the wait pairing, or its own completion point (its own
+``turn/completed``, or the subAgentActivity report when that turn event is
+absent), stays ``completion_or_wait_unobservable`` and is never cured into a
+PASS by the completion surfaces.
+
+r20 also freezes the partition ordering fact: the root's successful
+``stage5-partition-choices`` call must complete before any owner business
+call starts on a child thread; an owner business command that starts before
+the partition completed is a product failure
+(``owner_business_precedes_partition``). EVAL_PORT resolution is the formal
+entry's responsibility and takes the port only from ``direnv exec``.
 
 A child's consumption surface is only its own command texts that reference the
 producer CLI (``contact_state.py``) together with a supported stage5 action
@@ -286,15 +294,17 @@ def _compound_action(command):
 
 
 def runtime_checks(calls, manifest, completion_points, root_texts, root=None, outcomes=None, owner_threads=None):
-    """The r19 root orchestration oracle over executed stage5 calls.
+    """The r20 root orchestration oracle over executed stage5 calls.
 
     Discovery must report exactly the fixture owner set and must not emit a
     choices scope; the root must succeed at exactly one partition whose
-    per-owner bundles match the manifest partition record; owner plans stay
+    per-owner bundles match the manifest partition record and whose
+    completion precedes every owner business call; owner plans stay
     bound to their own pack and bundle file and never carry a choices scope;
-    at most one rebuild may run after every owner result was consumed; and
-    the pinned final source must carry one consistent consumed outcome per
-    owner directory.
+    at most one rebuild may run after every owner result was consumed
+    (``completion_points`` are the root's per-child result-consumption points,
+    the agentsStates wait pairing seqs); and the pinned final source must
+    carry one consistent consumed outcome per owner directory.
 
     A supported call is recognized on two surfaces. A call whose command
     parses strictly under ``command_action`` keeps every flag fact: only such
@@ -382,16 +392,39 @@ def runtime_checks(calls, manifest, completion_points, root_texts, root=None, ou
         return verdict("BLOCKED_OBSERVABILITY", "discovery_result_unobservable")
     if discovered != {**{pack: "ok" for pack in expected_packs}, manifest["invalid_pack"]: "error"}:
         return verdict("FAIL_PRODUCT", "discovery_owner_set_changed")
-    successful = [payload for call in partitions
+    successful = [(call, payload) for call in partitions
                   for payload in [_partition_payload(call.get("output"))] if payload is not None]
     if not successful:
         return verdict("FAIL_PRODUCT", "root_partition_not_deterministic", partition_commands=len(partitions))
     if len(successful) > 1:
         return verdict("FAIL_PRODUCT", "multiple_root_partitions")
-    observed = _partition_rows(successful[0])
+    partition_call, partition_payload = successful[0]
+    observed = _partition_rows(partition_payload)
     expected = [_owner_projection(entry) for entry in manifest["partition"]["owners"]]
     if observed is None or sorted(observed, key=_dir_key) != sorted(expected, key=_dir_key):
         return verdict("FAIL_PRODUCT", "root_partition_changed", observed_owners=observed)
+    # r20 ordering fact: the successful root partition must complete before
+    # any owner business call starts on a child thread. On a child thread a
+    # strictly parsed stage5-list-inputs stays outside the business surface;
+    # every other strictly parsed stage5 call and every compound command on
+    # the loose business surface counts as an owner business call.
+    partition_end = partition_call["end"]
+    for call in calls:
+        if root is None or call.get("thread") == root:
+            continue
+        command = call.get("command", "")
+        try:
+            parsed = command_action(command, manifest)
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            if parsed["action"] == "stage5-list-inputs":
+                continue
+        elif not is_business_surface(command):
+            continue
+        if call["start"] < partition_end:
+            return verdict("FAIL_PRODUCT", "owner_business_precedes_partition",
+                           observed_call=command[:200])
     if len(rebuilds) > 1:
         return verdict("FAIL_PRODUCT", "multiple_aggregate_rebuilds")
     if rebuilds and rebuilds[0]["start"] <= max(completion_points):
@@ -479,8 +512,9 @@ def _verify_codex_events(response, adapter, manifest):
         if method == "item/completed" and item.get("type") == "collabAgentToolCall" \
                 and item.get("senderThreadId") == root and item.get("tool") == "wait" \
                 and item.get("status") == "completed":
-            # Preferred wait/consume surface: the pairing fields attribute the
-            # root wait to the formal child it blocked on.
+            # The only root result-consumption surface: the pairing fields
+            # attribute the root wait to the formal child it blocked on and
+            # carry the child's result message back to the root.
             for child in item.get("receiverThreadIds", []):
                 if child in children:
                     state = item.get("agentsStates", {}).get(child, {})
@@ -490,11 +524,10 @@ def _verify_codex_events(response, adapter, manifest):
         if method == "item/completed" and item.get("type") == "subAgentActivity" \
                 and item.get("kind") == "completed" \
                 and item.get("agentThreadId") in children:
-            # Fallback wait/consume surface: r15 real hosts emit an empty
-            # collabAgentToolCall pairing but still report each formal child's
-            # completion to the root as a subAgentActivity completed item. The
-            # first completed report of a child is its earliest root-observable
-            # consumption point; any thread may carry it.
+            # Child-completion evidence only: the root's completed report of a
+            # formal child never proves that the root consumed the child's
+            # result. It is the fallback completion point when a child's own
+            # turn/completed is missing; any thread may carry it.
             sub_completed.setdefault(item["agentThreadId"], seq)
         if thread in children | {root} and item.get("type") == "commandExecution":
             item_id = (thread, item.get("id"))
@@ -509,7 +542,7 @@ def _verify_codex_events(response, adapter, manifest):
                               "command": item.get("command", ""), "output": item.get("aggregatedOutput", ""),
                               "thread": thread})
     failures, invalids, blockers = [], [], []
-    assigned, outcomes, effective_waits = {}, {}, {}
+    assigned, outcomes, consume_points = {}, {}, {}
     for child in sorted(children):
         stage5_texts = [text for text in commands.get(child, []) if is_business_surface(text)]
         rows, problem = consumed_business_objects(stage5_texts, payloads.get(child, []))
@@ -523,16 +556,23 @@ def _verify_codex_events(response, adapter, manifest):
             continue
         assigned[pack] = child
         owner = next(owner for owner in manifest["owners"] if owner["email_pack"] == pack)
-        effective_wait = waits.get(child, sub_completed.get(child))
-        if effective_wait is None or child not in complete:
+        wait_seq = waits.get(child)
+        completion = complete.get(child)
+        if completion is None:
+            # The child's own turn/completed is the completion point; the
+            # root's subAgentActivity completed report is only the fallback
+            # when that turn event is absent. Both are child-completion
+            # evidence and never prove result consumption.
+            completion = sub_completed.get(child)
+        if wait_seq is None or completion is None:
             blockers.append(verdict("BLOCKED_OBSERVABILITY", "completion_or_wait_unobservable",
                                     missing_surface=[label for label, absent in
-                                                     (("missing_wait_pairing", effective_wait is None),
-                                                      ("missing_turn_completion", child not in complete))
+                                                     (("missing_wait_pairing", wait_seq is None),
+                                                      ("missing_turn_completion", completion is None))
                                                      if absent]))
             continue
-        effective_waits[child] = effective_wait
-        if effective_wait < complete[child]:
+        consume_points[child] = wait_seq
+        if wait_seq < completion:
             failures.append(verdict("FAIL_PRODUCT", "wait_precedes_owner_completion"))
             continue
         outcome, problem = base.owner_outcome(results.get(child, []), owner)
@@ -545,13 +585,10 @@ def _verify_codex_events(response, adapter, manifest):
             return bucket[0]
     if raw.get("termination_reason") != "completed":
         return verdict("BLOCKED_DEPENDENCY", "root_turn_not_completed")
-    result = runtime_checks(calls, manifest, list(effective_waits.values()), root_texts, root=root,
+    result = runtime_checks(calls, manifest, list(consume_points.values()), root_texts, root=root,
                             outcomes=outcomes,
                             owner_threads={child: pack for pack, child in assigned.items()})
     result["identity_diagnostics"] = adapter.get("dispatch", {}).get("agent_identity", {})
-    if result["verdict"] == "PASS":
-        result["wait_evidence"] = {child: ("collabAgentToolCall" if child in waits else "subAgentActivity")
-                                   for child in sorted(children)}
     return result
 
 
