@@ -305,6 +305,8 @@ class InvocationConsumptionTests(InvocationCredentialBase):
 
     def test_damaged_version_digest_and_ownership_fail_before_writes(self):
         cap, _ = self.capture()
+        results = self.write_results("refused-results", self.all_docs())
+        before = {p: p.read_bytes() for p in sorted(results.iterdir())}
         template = json.loads(
             Path(cap["invocation_file"]).read_text(encoding="utf-8"))
         # Digest mismatch: real file, wrong expected sha.
@@ -313,11 +315,21 @@ class InvocationConsumptionTests(InvocationCredentialBase):
                             "--invocation-sha256", "0" * 64))
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "invocation_sha256_mismatch")
+        fin = parse(run_cli("stage3-finalize",
+                            "--invocation-file", cap["invocation_file"],
+                            "--invocation-sha256", "0" * 64,
+                            "--results", str(results)))
+        self.assertEqual(fin["status"], "error")
+        self.assertEqual(fin["reason_code"], "invocation_sha256_mismatch")
         # Damaged bytes, matching digest of the damaged bytes.
         path, sha = self.write_credential({"version": INVOCATION_VERSION, "oops": True})
         out = parse(run_cli("stage3-plan", "--invocation-file", path,
                             "--invocation-sha256", sha))
         self.assertEqual(out["reason_code"], "invalid_invocation")
+        fin = parse(run_cli("stage3-finalize", "--invocation-file", path,
+                            "--invocation-sha256", sha,
+                            "--results", str(results)))
+        self.assertEqual(fin["reason_code"], "invalid_invocation")
         # Unsupported credential version.
         path, sha = self.write_credential({**template, "version": "stage3-invocation-v0"})
         out = parse(run_cli("stage3-plan", "--invocation-file", path,
@@ -335,6 +347,11 @@ class InvocationConsumptionTests(InvocationCredentialBase):
         self.assertEqual(out["reason_code"], "invalid_params")
         fin = parse(run_cli("stage3-finalize", "--results", str(self.root / "r")))
         self.assertEqual(fin["reason_code"], "invalid_params")
+        # Every refusal above happened before any write: the prepared result
+        # files are byte-identical and no candidate state was created.
+        after = {p: p.read_bytes() for p in sorted(results.iterdir())}
+        self.assertEqual(after, before)
+        self.assertFalse((self.prof_dir / CANDIDATE_STATE).exists())
 
     def test_profile_digest_guard_stops_stale_credentials(self):
         profile = self.root / "profile.md"
@@ -409,12 +426,24 @@ class CredentialCorrectionTests(InvocationCredentialBase):
         corrected = self.generated_doc("dir_B", ["P1", "P3", None])
         corrected["candidates"][0]["title"] = "候选 dir_B_1 修正版"
         fix = self.write_results("cred-fix-b", {"dir_B": corrected})
+        # Read-set sentinel: the correction's work set is exactly dir_B, so
+        # garbage in the out-of-set result files must never be consumed and
+        # must survive byte-identical.
+        (fix / result_file("candidates", "dir_A")).write_bytes(b"{ corrupt dir_A")
+        (fix / result_file("candidates", "dir_C")).write_bytes(b"{ corrupt dir_C")
+        corrupt_before = {
+            "dir_A": (fix / result_file("candidates", "dir_A")).read_bytes(),
+            "dir_C": (fix / result_file("candidates", "dir_C")).read_bytes()}
         before = self.load_state()
         out = self.credential_finalize(cap, fix, "--validation-file", self.validation)
         self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
         self.assertEqual(out["corrected"], ["dir_B"])
         self.assertEqual(out["corrected_groups"], [])
         self.assertEqual(out["dropped_cross_direction"], [])
+        self.assertEqual(
+            {k: (fix / result_file("candidates", k)).read_bytes()
+             for k in corrupt_before},
+            corrupt_before, "out-of-set result files were never consumed")
         after = self.load_state()
         by_did_before = {d["direction_id"]: d for d in before["directions"]}
         by_did_after = {d["direction_id"]: d for d in after["directions"]}
@@ -510,11 +539,18 @@ class CredentialCorrectionTests(InvocationCredentialBase):
         corrected["title"] = "候选 X1 修正版"
         fix = self.write_results("cred-fix-ab", {})
         self.write_cross(fix, GID_AB, [corrected])
+        # Read-set sentinel: the sibling group's result file is corrupted in
+        # place — the G=GID_AB correction must not consume or rewrite it.
+        sibling = fix / result_file("candidates", GID_AC)
+        sibling.write_bytes(b"{ corrupt sibling group")
+        sibling_before = sibling.read_bytes()
         out2 = self.credential_finalize(cap, fix, "--validation-file", self.validation)
         self.assertEqual(out2["status"], "ok", msg=json.dumps(out2, ensure_ascii=False))
         self.assertEqual(out2["corrected"], [])
         self.assertEqual(out2["corrected_groups"], [GID_AB])
         self.assertEqual(out2["dropped_cross_direction"], [])
+        self.assertEqual(sibling.read_bytes(), sibling_before,
+                         "the out-of-work-set group result was never consumed")
         after = self.load_state()
         groups = {g["group_id"]: g for g in after["cross_direction_groups"]}
         self.assertEqual([g["group_id"] for g in after["cross_direction_groups"]],
@@ -526,6 +562,31 @@ class CredentialCorrectionTests(InvocationCredentialBase):
         self.assertEqual(groups[GID_AB]["direction_fingerprints"],
                          next(g for g in before["cross_direction_groups"]
                               if g["group_id"] == GID_AB)["direction_fingerprints"])
+        # Group correction does not touch the participating ordinary
+        # directions: their candidates and preserved validator records stay.
+        by_did = {d["direction_id"]: d for d in after["directions"]}
+        by_did_before = {d["direction_id"]: d for d in before["directions"]}
+        self.assertEqual(by_did["dir_A"], by_did_before["dir_A"])
+        self.assertEqual(by_did["dir_B"], by_did_before["dir_B"])
+        self.assertEqual(self.load_validator_block()["round"], 1,
+                         "a correction must not reset the round")
+
+    def test_render_text_quote_expands_scopes_under_credential(self):
+        """File-level expansion (render text, not a candidate title) keeps
+        working through the credential correction path (r13 §5.4)."""
+        self.commit_baseline_with_group()
+        cap, _ = self.capture()
+        rerun = self.credential_finalize(cap, self.write_results(
+            "expand-base", self.all_docs()))
+        self.assertEqual(rerun["status"], "ok", msg=json.dumps(rerun, ensure_ascii=False))
+        # "流式输入" only appears in each candidate's research_question prose,
+        # so the scope comes from the rendered text, never from a caller guess.
+        self.validator_output([self.finding("流式输入")])
+        self.assertEqual(self.record()["needs_correction"], True)
+        cplan = self.credential_plan(cap, "--validation-file", self.validation)
+        self.assertEqual(cplan["status"], "ok", msg=json.dumps(cplan, ensure_ascii=False))
+        self.assertEqual(cplan["correction_scopes"],
+                         ["direction:dir_A", "direction:dir_B", "direction:dir_C"])
 
     def test_credential_correction_requires_a_recorded_open_round(self):
         self.commit_baseline_with_group()

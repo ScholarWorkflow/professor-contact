@@ -18,6 +18,7 @@ group builder from test_stage3_direction_groups.
 import builtins
 import contextlib
 import io
+import itertools
 import json
 import os
 import shutil
@@ -978,6 +979,284 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
                       if p.is_file() and (p.name.endswith(".lock")
                                           or ".lock." in p.name)]
         self.assertEqual(lock_files, [])
+
+
+class CredentialEntryIsolationTests(TestIssue66Stage3):
+    """The isolation / manual-conflict / transaction / candidate-contract
+    facts re-proved through the frozen credential entry (r13 §5.2): capture
+    once, then every commit consumes the credential and re-supplying source
+    parameters is refused."""
+
+    def setUp(self):
+        super().setUp()
+        self._cap_seq = itertools.count(1)
+
+    def capture(self, *extra):
+        cap_dir = self.root / f"cap-iso-{next(self._cap_seq)}"
+        plan = parse(run_cli("stage3-plan", "--professor-dir", self.prof_dir,
+                             "--program-root", self.root,
+                             "--capture-invocation", cap_dir, *extra))
+        self.assertEqual(plan["status"], "ok",
+                         msg=json.dumps(plan, ensure_ascii=False))
+        return plan
+
+    def credential_finalize(self, cap, results, *extra):
+        # Credential consumption and re-supplied source parameters are
+        # mutually exclusive, so --program-root must NOT be passed here.
+        return parse(run_cli(
+            "stage3-finalize",
+            "--invocation-file", cap["invocation_file"],
+            "--invocation-sha256", cap["invocation_sha256"],
+            "--results", str(results), *extra))
+
+    def test_s3_iso_1_b_anomalies_via_credential_entry(self):
+        """R66-1 through the credential path: B state / overview / registry
+        anomalies never block or touch A's local commit, and the credential
+        finalize opens none of the three forbidden objects."""
+        a_pack = self.prof_dir / "套磁候选输入.json"
+        foreign_state = (self.root / "教授研究" / "Y分野" / SECOND_PROFESSOR
+                         / CANDIDATE_STATE)
+
+        def reset_single_variable_baseline():
+            shutil.rmtree(self.root / "教授研究" / "Y分野", ignore_errors=True)
+            self.overview_path.unlink(missing_ok=True)
+            self.registry_path.unlink(missing_ok=True)
+
+        cap = self.capture()
+        for disturbance in ("b_state_malformed", "overview_conflict",
+                            "registry_malformed"):
+            with self.subTest(scenario=disturbance):
+                reset_single_variable_baseline()
+                if disturbance == "b_state_malformed":
+                    foreign_state.parent.mkdir(parents=True, exist_ok=True)
+                    foreign_state.write_text("{ malformed foreign state",
+                                             encoding="utf-8")
+                    disturbed = foreign_state
+                elif disturbance == "overview_conflict":
+                    self.overview_path.write_text("手工改过的总览\n",
+                                                  encoding="utf-8")
+                    disturbed = self.overview_path
+                else:
+                    self.registry_path.write_text("{ malformed registry",
+                                                  encoding="utf-8")
+                    disturbed = self.registry_path
+                before = self.snapshot(disturbed)
+                a_results = self.write_a_results(f"cred-iso-1-{disturbance}")
+                # In-process call so OpenRecorder can observe real opens.
+                with OpenRecorder() as recorder:
+                    out, code = call_runner(
+                        "stage3-finalize",
+                        "--invocation-file", cap["invocation_file"],
+                        "--invocation-sha256", cap["invocation_sha256"],
+                        "--results", str(a_results))
+                self.assertEqual(code, 0)
+                self.assertEqual(out["status"], "ok", out)
+                self.assert_unchanged(before)
+                for other in (foreign_state, self.overview_path,
+                              self.registry_path):
+                    if other != disturbed:
+                        self.assertFalse(other.exists(),
+                                         f"unexpected non-owner object: {other}")
+                for forbidden in (foreign_state, self.overview_path,
+                                  self.registry_path):
+                    self.assertFalse(recorder.was_opened(forbidden))
+                self.assertTrue(recorder.was_opened(a_pack))
+
+    def test_s3_iso_3_manual_conflict_via_credential_entry(self):
+        """A's own manually edited local Markdown still fails closed when the
+        commit arrives through the credential entry."""
+        cap = self.capture()
+        out = self.credential_finalize(cap, self.write_a_results("cred-iso-3"))
+        self.assertEqual(out["status"], "ok", out)
+        md_path = self.prof_dir / CANDIDATES_MD
+        state_path = self.prof_dir / CANDIDATE_STATE
+        md_path.write_text(
+            md_path.read_text(encoding="utf-8") + "\n人工修改的一行\n",
+            encoding="utf-8")
+        manual_md = md_path.read_bytes()
+        before = self.snapshot(state_path, self.overview_path,
+                               self.registry_path)
+        out2 = self.credential_finalize(
+            cap, self.write_a_results("cred-iso-3-reuse"))
+        self.assertEqual(out2["status"], "needs_decision", out2)
+        self.assertEqual(out2["reason_code"], "manual_markdown_changed")
+        self.assert_unchanged(before)
+        self.assertEqual(md_path.read_bytes(), manual_md)
+
+    def test_s3_iso_4_commit_marker_via_credential_entry(self):
+        """Markdown-first / state-last stays observable through the
+        credential entry: the correction round re-renders the Markdown (the
+        only caller-legal way to change the render over a frozen credential),
+        the pre-commit failure restores both old byte sets, and the released
+        commit binds the committed state's render to the installed body."""
+        cap = self.capture()
+        results = self.write_a_results("cred-iso-4")
+        out = self.credential_finalize(cap, results)
+        self.assertEqual(out["status"], "ok", out)
+        md_path = self.prof_dir / CANDIDATES_MD
+        state_path = self.prof_dir / CANDIDATE_STATE
+        # Record a real blocking finding, then correct dir_A's prose: the
+        # correction work set re-renders dir_A, so "new Markdown installed"
+        # is byte-observable through the credential replay.
+        validation = self.root / "cred-iso-4-validation.json"
+        write_json(validation, {"result": "ok", "files": [{
+            "file": str(md_path), "artifact": "candidates",
+            "verdict": "fail", "blocking": 1, "minor": 0,
+            "issues": [{"rule": "B5", "severity": "blocking",
+                        "location": "validator 自报位置",
+                        "quote": "候选 dir_A_1",
+                        "suggestion": "首次出现时用日常语言解释。"}]}]})
+        record = parse(run_cli("stage3-record-validation", "--professor-dir",
+                               self.prof_dir, "--validation-file", validation))
+        self.assertEqual(record["needs_correction"], True, record)
+        # The rollback baseline is the state as of the correction commit's
+        # start: the first-round commit plus the recorded validator block.
+        old_md, old_state = md_path.read_bytes(), state_path.read_bytes()
+        corrected = self.generated_doc("dir_A", ["P1", "P2", None])
+        corrected["candidates"][0]["one_liner"] = (
+            "教授的工作启发我思考延伸方向（ISO-4 凭据修正改写）")
+        write_json(results / result_file("candidates", "dir_A"), corrected)
+
+        def cred_correction_argv():
+            return ("stage3-finalize",
+                    "--invocation-file", cap["invocation_file"],
+                    "--invocation-sha256", cap["invocation_sha256"],
+                    "--results", str(results),
+                    "--validation-file", str(validation))
+
+        attempted, released = threading.Event(), threading.Event()
+        observed = {}
+
+        def reader():
+            self.assertTrue(attempted.wait(30))
+            observed["state"] = state_path.read_bytes()
+            observed["md"] = md_path.read_bytes()
+            released.set()
+
+        def gate(real, src, dst):
+            # The credential carries the RESOLVED professor directory, so the
+            # runner's raw dst is the /private/tmp form while state_path was
+            # built from the /tmp form; compare resolved.
+            if Path(dst) == Path(os.path.realpath(state_path)):
+                attempted.set()
+                self.assertTrue(released.wait(30))
+                raise OSError("synthetic candidate-state install failure")
+
+        watcher = threading.Thread(target=reader)
+        watcher.start()
+        try:
+            with gated_os_replace(
+                    lambda src, dst: dst == os.path.realpath(state_path), gate):
+                payload, code = call_runner(*cred_correction_argv())
+        finally:
+            watcher.join(30)
+        self.assertEqual(payload["reason_code"], "local_pair_commit_failed",
+                         payload)
+        self.assertEqual(observed["state"], old_state)
+        self.assertNotEqual(observed["md"], old_md)
+        self.assertEqual(md_path.read_bytes(), old_md)
+        self.assertEqual(state_path.read_bytes(), old_state)
+
+        # Release the state replace: the committed state's render SHA binds
+        # the installed Markdown body, as on the plain entry.
+        attempted, released = threading.Event(), threading.Event()
+        observed = {}
+
+        def reader_after_install():
+            self.assertTrue(attempted.wait(30))
+            observed["state"] = json.loads(
+                state_path.read_text(encoding="utf-8"))
+            released.set()
+
+        def install_then_release(real, src, dst):
+            real(src, dst)
+            attempted.set()
+            self.assertTrue(released.wait(30))
+
+        watcher = threading.Thread(target=reader_after_install)
+        watcher.start()
+        try:
+            with gated_os_replace(
+                    lambda src, dst: dst == os.path.realpath(state_path),
+                    install_then_release):
+                payload, code = call_runner(*cred_correction_argv())
+        finally:
+            watcher.join(30)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["status"], "ok", payload)
+        _, md_body = contact_state.split_frontmatter(
+            md_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            observed["state"]["cache"]["render"][CANDIDATES_MD]["sha256"],
+            contact_state.sha256_text(md_body))
+
+    def test_s3_comp_1_preserved_contract_via_credential_entry(self):
+        """Two directions + one cross group keep the frozen machine contract
+        when both the first round and the correction consume the credential;
+        the group survives and unprocessed scopes keep their proofs."""
+        # The cross-direction group request is a first-round control: it is
+        # captured INTO the credential, never re-supplied at finalize.
+        cap = self.capture("--cross-direction-groups", CROSS_GROUP_ARG)
+        results = self.write_a_cross(self.write_a_results("cred-comp-1"))
+        out = self.credential_finalize(cap, results)
+        self.assertEqual(out["status"], "ok", out)
+        state_path = self.prof_dir / CANDIDATE_STATE
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        projection = self.machine_projection(state)
+        self.assertEqual(projection["schema"], 2)
+        self.assertEqual([d["direction_id"] for d in projection["directions"]],
+                         ["dir_A", "dir_B"])
+        self.assertEqual(projection["cross_direction_groups"][0]["group_id"],
+                         CROSS_GID)
+        self.assertEqual(projection["cross_direction_groups"][0]["direction_ids"],
+                         ["dir_A", "dir_B"])
+
+        # Round 1 fails the dir_A scope and the cross-group scope; the
+        # credential correction re-renders both and the group survives.
+        validation = self.root / "cred-comp-1-validation.json"
+        finding = {"rule": "B5", "severity": "blocking",
+                   "location": "validator 自报位置", "quote": "",
+                   "suggestion": "首次出现时用日常语言解释。"}
+        write_json(validation, {"result": "ok", "files": [{
+            "file": str(self.prof_dir / CANDIDATES_MD), "artifact": "candidates",
+            "verdict": "fail", "blocking": 2, "minor": 0,
+            "issues": [dict(finding, quote="候选 dir_A_1"),
+                       dict(finding, quote="候选 XA")]}]})
+        record = parse(run_cli("stage3-record-validation", "--professor-dir",
+                               self.prof_dir, "--validation-file", validation))
+        self.assertEqual(record["needs_correction"], True, record)
+        block = json.loads(state_path.read_text(encoding="utf-8"))["validator"]
+        self.assertEqual(set(block["pending"]),
+                         {"direction:dir_A", f"group:{CROSS_GID}"})
+        self.assertEqual(block["results"]["dir_B"]["result"], "pass")
+
+        revised = self.generated_doc("dir_A", ["P1", "P2", None])
+        revised["priority"] = "主推 候选1（凭据修订版）"
+        write_json(results / result_file("candidates", "dir_A"), revised)
+        out = self.credential_finalize(cap, results,
+                                       "--validation-file", validation)
+        self.assertEqual(out["status"], "ok", out)
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(self.machine_projection(state), projection)
+        block = state["validator"]
+        self.assertEqual(block["round"], 1)
+        self.assertEqual(block["render_sha256"],
+                         state["cache"]["render"][CANDIDATES_MD]["sha256"])
+        self.assertIn("dir_B", block["results"])
+        self.assertEqual(block["results"]["dir_B"]["result"], "pass")
+        self.assertEqual(block["groups"], {})
+        self.assertEqual(block["pending"], {})
+
+        # Round 2 on the corrected render is the terminal record.
+        write_json(validation, {"result": "ok", "files": [{
+            "file": str(self.prof_dir / CANDIDATES_MD), "artifact": "candidates",
+            "verdict": "pass", "blocking": 0, "minor": 0, "issues": []}]})
+        record = parse(run_cli("stage3-record-validation", "--professor-dir",
+                               self.prof_dir, "--validation-file", validation))
+        self.assertEqual(record["needs_correction"], False, record)
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["validator"]["results"]["dir_A"]["result"], "pass")
+        self.assertEqual(state["validator"]["results"]["dir_A"]["rounds"], 2)
 
 
 if __name__ == "__main__":

@@ -150,6 +150,10 @@ class ValidationHandoffBase(Stage3DirectionGroupBase):
         return json.loads(
             (self.prof_dir / CANDIDATE_STATE).read_text(encoding="utf-8"))
 
+    def render_sha_now(self):
+        """The committed render SHA the state currently binds."""
+        return self.load_state()["cache"]["render"][CANDIDATES_MD]["sha256"]
+
     def recommit_changed_render(self, name):
         """A new committed render over the same credential, deterministically.
 
@@ -223,8 +227,12 @@ class PrepareHandoffTests(ValidationHandoffBase):
         out = self.prepare_credential(
             {**template, "professor_dir": str(self.root / "其他研究" / PROFESSOR)}, 1)
         self.assertEqual(out["reason_code"], "invalid_professor_dir")
-        # Nothing above wrote a handoff for this professor's round directory.
+        # Nothing above wrote a handoff for this professor's round directory,
+        # and the committed files are untouched by every refusal.
         self.assertFalse(self.handoff_round_dir(1).exists())
+        state = self.load_state()
+        self.assertEqual(state["cache"]["render"][CANDIDATES_MD]["sha256"],
+                         self.render_sha_now())
 
     def handoff_round_dir(self, round_no):
         token = hashlib.sha256(
@@ -456,10 +464,20 @@ class SaveHandoffTests(ValidationHandoffBase):
         self.validator_writes(out)
         # A new plain commit over the same credential advances the render.
         self.recommit_changed_render("改版")
+        state_after_recommit = self.load_state()
+        md_before = (self.prof_dir / CANDIDATES_MD).read_bytes()
         saved = self.save(out)
         self.assertEqual(saved["status"], "error")
         self.assertEqual(saved["reason_code"], "validation_render_changed")
         self.assertFalse(Path(out["validation_file"]).exists())
+        # The refusal itself changed nothing: the source keeps the validator
+        # bytes, the committed state and the rendered Markdown keep the
+        # post-recommit values.
+        self.assertEqual(Path(out["output_file"]).read_bytes(),
+                         self.validator_bytes())
+        self.assertEqual(self.load_state(), state_after_recommit)
+        self.assertEqual((self.prof_dir / CANDIDATES_MD).read_bytes(),
+                         md_before)
 
 
 class RecordHandoffTests(ValidationHandoffBase):
@@ -503,6 +521,7 @@ class RecordHandoffTests(ValidationHandoffBase):
     def test_record_digests_the_bytes_it_actually_parses(self):
         out, saved = self.committed_round1([self.finding("候选 dir_A_1")])
         expected = saved["validation_sha256"]
+        md_before = (self.prof_dir / CANDIDATES_MD).read_bytes()
         wrong = parse(run_cli("stage3-record-validation",
                               "--handoff-file", out["handoff_file"],
                               "--handoff-sha256", out["handoff_sha256"],
@@ -512,6 +531,8 @@ class RecordHandoffTests(ValidationHandoffBase):
         state = self.load_state()
         self.assertIsNone(state.get("validator"),
                           "a refused record writes nothing")
+        self.assertEqual((self.prof_dir / CANDIDATES_MD).read_bytes(),
+                         md_before)
         # The accepted digest is exactly what the record consumed.
         recorded = self.record_handoff(out, expected)
         self.assertEqual(recorded["status"], "ok",
@@ -688,23 +709,8 @@ class BatchHandoffTests(ValidationHandoffBase):
             [self.entry(cand_a, "pass"), self.entry(cand_a, "pass")]))
         saved = self.save(out_a)
         self.assertEqual(saved["reason_code"], "invalid_validation_json")
-        # 推进甲不以乙状态可读为前提：乙条目指向不存在的路径，
-        # 甲自己的唯一条目仍然合法保存并记录。
-        raw_a = self.complete_raw([self.entry(cand_a, "pass"),
-                                   self.entry(ghost_b, "fail", blocking=1)])
-        self.write_source(out_a, raw_a)
-        saved_a = self.save(out_a)
-        self.assertEqual(saved_a["status"], "ok",
-                         msg=json.dumps(saved_a, ensure_ascii=False))
-        self.assertEqual(saved_a["validation_sha256"],
-                         hashlib.sha256(raw_a).hexdigest())
-        self.assertEqual(Path(saved_a["validation_file"]).read_bytes(), raw_a)
-        rec_a = self.record_handoff(out_a, saved_a["validation_sha256"])
-        self.assertEqual(rec_a["status"], "ok",
-                         msg=json.dumps(rec_a, ensure_ascii=False))
-        self.assertFalse(rec_a["needs_correction"])
-        # 同名教授按规范目录区分：同一份完整原文（甲条目 + 乙条目）写入
-        # 乙的输出源，乙的保存必须精确命中乙的条目。
+        # 同名教授按规范目录区分：同一份完整原文字节分别写入两个源文件，
+        # 两边的保存与记录都精确命中各自教授的条目。
         cap_b = self.prepare_for(prof_b)
         out_b = parse(run_cli(
             "stage3-prepare-validation",
@@ -716,21 +722,101 @@ class BatchHandoffTests(ValidationHandoffBase):
         finding_b = {"rule": "B5", "severity": "blocking",
                      "location": "validator 自报位置",
                      "quote": "候选 dir_C_1", "suggestion": "日常语言解释。"}
-        raw_b = self.complete_raw([self.entry(cand_a, "pass"),
-                                   self.entry(cand_b, "fail",
-                                              issues=[finding_b])])
-        self.write_source(out_b, raw_b)
+        raw_shared = self.complete_raw([self.entry(cand_a, "pass"),
+                                        self.entry(cand_b, "fail",
+                                                   issues=[finding_b])])
+        self.write_source(out_a, raw_shared)
+        self.write_source(out_b, raw_shared)
+        saved_a = self.save(out_a)
+        self.assertEqual(saved_a["status"], "ok",
+                         msg=json.dumps(saved_a, ensure_ascii=False))
         saved_b = self.save(out_b)
         self.assertEqual(saved_b["status"], "ok",
                          msg=json.dumps(saved_b, ensure_ascii=False))
-        self.assertEqual(saved_b["validation_sha256"],
-                         hashlib.sha256(raw_b).hexdigest())
+        self.assertEqual(Path(saved_a["validation_file"]).read_bytes(),
+                         raw_shared)
+        self.assertEqual(Path(saved_b["validation_file"]).read_bytes(),
+                         raw_shared)
+        self.assertEqual(saved_a["validation_sha256"],
+                         saved_b["validation_sha256"])
+        rec_a = self.record_handoff(out_a, saved_a["validation_sha256"])
+        self.assertEqual(rec_a["status"], "ok",
+                         msg=json.dumps(rec_a, ensure_ascii=False))
+        self.assertFalse(rec_a["needs_correction"])
         rec_b = self.record_handoff(out_b, saved_b["validation_sha256"])
         self.assertEqual(rec_b["status"], "ok",
                          msg=json.dumps(rec_b, ensure_ascii=False))
         self.assertEqual(rec_b["round"], 1)
         self.assertTrue(rec_b["needs_correction"],
                         "the blocking issue binds to 乙's own render")
+        # 只对已记录需修正者派发修正：甲已终态且无已记录 open 问题，
+        # 其凭据修正被拒；乙的修正集合恰为已记录方向，不含甲。
+        self.assertEqual(self.prepare(1)["reason_code"],
+                         "validation_round_already_recorded")
+        plan_a = self.credential_plan(
+            "--validation-file", saved_a["validation_file"])
+        self.assertEqual(plan_a["reason_code"],
+                         "validation_evidence_not_recorded")
+        cplan_b = parse(run_cli(
+            "stage3-plan",
+            "--invocation-file", cap_b["invocation_file"],
+            "--invocation-sha256", cap_b["invocation_sha256"],
+            "--validation-file", saved_b["validation_file"]))
+        self.assertEqual(cplan_b["status"], "ok",
+                         msg=json.dumps(cplan_b, ensure_ascii=False))
+        self.assertEqual(cplan_b["correction_scopes"], ["direction:dir_C"])
+        self.assertEqual([job["direction_id"] for job in cplan_b["jobs"]],
+                         ["dir_C"])
+
+    def test_batch_advances_a_while_b_state_unreadable(self):
+        self.commit_first()
+        prof_b = self.build_same_named_professor()
+        cand_a = (self.prof_dir / CANDIDATES_MD).resolve()
+        cand_b = (prof_b / CANDIDATES_MD).resolve()
+        out_a = self.prepare(1)
+        self.assertEqual(out_a["status"], "ok",
+                         msg=json.dumps(out_a, ensure_ascii=False))
+        cap_b = self.prepare_for(prof_b)
+        out_b = parse(run_cli(
+            "stage3-prepare-validation",
+            "--invocation-file", cap_b["invocation_file"],
+            "--invocation-sha256", cap_b["invocation_sha256"],
+            "--round", "1"))
+        self.assertEqual(out_b["status"], "ok",
+                         msg=json.dumps(out_b, ensure_ascii=False))
+        # 真实批次形态：乙的正式状态在准备之后、交接之前变得不可读。
+        state_b = prof_b / CANDIDATE_STATE
+        good_b = state_b.read_bytes()
+        state_b.write_bytes(b"{ broken batch state")
+        finding_b = {"rule": "B5", "severity": "blocking",
+                     "location": "validator 自报位置",
+                     "quote": "候选 dir_C_1", "suggestion": "日常语言解释。"}
+        raw_shared = self.complete_raw([self.entry(cand_a, "pass"),
+                                        self.entry(cand_b, "fail",
+                                                   issues=[finding_b])])
+        self.write_source(out_a, raw_shared)
+        self.write_source(out_b, raw_shared)
+        # 甲推进：保存与记录都不需要读乙。
+        saved_a = self.save(out_a)
+        self.assertEqual(saved_a["status"], "ok",
+                         msg=json.dumps(saved_a, ensure_ascii=False))
+        self.assertEqual(Path(saved_a["validation_file"]).read_bytes(),
+                         raw_shared)
+        rec_a = self.record_handoff(out_a, saved_a["validation_sha256"])
+        self.assertEqual(rec_a["status"], "ok",
+                         msg=json.dumps(rec_a, ensure_ascii=False))
+        self.assertFalse(rec_a["needs_correction"])
+        # 甲无已记录 open 问题 → 其凭据修正被拒。
+        plan_a = self.credential_plan(
+            "--validation-file", saved_a["validation_file"])
+        self.assertEqual(plan_a["reason_code"],
+                         "validation_evidence_not_recorded")
+        # 乙的保存核对自己的正式状态 → 状态不可读即拒绝，且不删源。
+        saved_b = self.save(out_b)
+        self.assertEqual(saved_b["status"], "error")
+        self.assertEqual(saved_b["reason_code"], "missing_candidate_state")
+        self.assertEqual(Path(out_b["output_file"]).read_bytes(), raw_shared)
+        state_b.write_bytes(good_b)
 
     def prepare_for(self, prof_dir):
         token = hashlib.sha256(str(prof_dir).encode()).hexdigest()[:8]
