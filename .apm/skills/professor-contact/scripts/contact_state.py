@@ -9670,8 +9670,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="生成首封、首封+跟进，或只生成跟进邮件")
     p.add_argument("--result")
     p.add_argument("--choices",
-                   help="本 owner bundle 的 choices JSON：root 已按教授分配完成，"
-                        "这里只应包含本教授的行")
+                   help="当前教授选择 JSON 文件的路径；只含本教授已分配的行")
     p.set_defaults(func=cmd_stage5_plan)
 
     p = sub.add_parser("stage5-finalize")
@@ -9682,7 +9681,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--result", required=True)
     p.add_argument("--humanized")
     p.add_argument("--humanized-map", help="JSON object mapping output_id to absolute humanized body path")
-    p.add_argument("--choices")
+    p.add_argument("--choices",
+                   help="当前教授选择 JSON 文件的路径；只含本教授已分配的行")
     p.add_argument("--template")
     p.add_argument("--followup-template")
     p.add_argument("--mode", choices=("first", "both", "followup"), default="first",
@@ -9692,19 +9692,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_stage5_finalize)
 
     p = sub.add_parser("stage5-partition-choices",
-                       help="root 确定性分配：把本次选中的教授本地包与原始多教授 choices 按 "
-                            "(canonical professor_dir, email_id) 一次性划入各 per-owner bundle；"
-                            "歧义留在 root，不向任何 owner 广播多教授数据")
+                       help="根代理确定性分配：按 (professor_dir, email_id) 一次性分配原始选择；"
+                            "返回顶层 owners 列表，根代理逐项生成单教授交接文件；"
+                            "歧义留在根代理，不向教授代理广播多教授数据",
+                       description="返回对象的顶层 owners 列表包含本次所有教授的分配结果；"
+                                   "仅根代理解析，并逐项生成单教授交接文件。")
     p.add_argument("--program-root", required=True)
     p.add_argument("--owner", action="append", nargs="+",
                    metavar=("EMAIL_PACK", "EMAIL_ID"),
                    help="本次选中的一个教授本地 邮件输入.json（来自阶段 4 结果或 discovery 行），"
                         "可后跟该教授的定向 email_id；每位教授恰好一次，可重复")
     p.add_argument("--choices", required=True,
-                   help="原始多教授 choices JSON（object 或 object list）；只在本入口分配一次")
+                   help="原始用户选择 JSON 文件的路径；文件内容为对象或对象列表；只在根代理分配")
     p.add_argument("--out",
-                   help="把 per-owner bundle 载荷写入该临时 JSON 文件（传输载体，"
-                        "本次请求生命周期结束后由调用方清理）")
+                   help="写出包含完整 owners 列表的多教授分配对象的 JSON 文件路径；"
+                        "仅根代理解析并逐项生成单教授交接文件，不能整份交给教授代理；"
+                        "本次请求生命周期结束后由调用方清理")
     p.set_defaults(func=cmd_stage5_partition_choices)
 
     p = sub.add_parser("stage5-list-inputs",

@@ -16,9 +16,11 @@ Issue #68 does not give this wrapper a pack authority of its own: the caller's
 professor-local ``--email-pack`` is forwarded unchanged to the internal
 ``stage5-plan`` and to the temporary finalize runner, so the wrapper never scans
 professor directories from an ``email_id`` and no program-level default exists to
-fall back on. Plan r12 keeps the wrapper inside one owner's transaction: it
-inherits only the current owner's ``email_pack``, owner-local ``choices`` and
-optional ``email_id``; it never discovers sibling professors and never
+fall back on. Plan r13 keeps the wrapper inside one owner's transaction: it
+inherits only the current owner's ``email_pack``, the unchanged JSON file path
+in ``--choices`` and optional ``email_id``. The internal plan and final runner
+receive that same owner-local file path; this wrapper does not parse or
+partition raw multi-professor choices. It never discovers sibling professors and never
 rebuilds any cross-professor attribution data.
 """
 from __future__ import annotations
