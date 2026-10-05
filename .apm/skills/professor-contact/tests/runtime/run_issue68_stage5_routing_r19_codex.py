@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PC68-R1 Codex-only formal entrypoint (Gate-2 r24).
+"""PC68-R1 Codex-only formal entrypoint (Gate-2 r25).
 
 r22 keeps the r13 request, the r12 request builder, the merged shared fixture
 adapter, the r13 root final-source selector, the r14 service/storage isolation
@@ -22,12 +22,12 @@ the "Wait completed." wait message, subAgentActivity completed reports and
 child turn/completed events are diagnostics only and never evidence; the
 successful root partition must also complete before any owner business call
 starts. The contract freezes these conditions as owner_input_isolation,
-canonical_preservation and partition_evidence. r24 freezes the Test Plan r21
-§3 observability fact as owner_entry_transport_evidence: the current Codex V2
-runtime delivers the owner invocation only as an encrypted root->child
-agent_message NEW_TASK, so a complete owner-entry transport/read observation
-does not exist and the verifier caps a proven-clean PASS terminal to
-BLOCKED_OBSERVABILITY/owner_entry_transport_unobservable. EVAL_PORT has exactly
+canonical_preservation and partition_evidence. Per Test Plan r22 §4.1 the
+root->child agent_message NEW_TASK entry delivery (an encrypted_content
+payload) is diagnostics only: it is neither a PASS condition nor a
+BLOCKED_OBSERVABILITY source, and the verdict is decided by each child's
+actual Stage 5 business consumption plus the root's legal FINAL_ANSWER result
+receipts. EVAL_PORT has exactly
 one formal source, ``direnv exec`` per the r20 Project Consensus: when direnv is
 missing or its output is unusable the Executable precondition is unsatisfied
 and the entry refuses to start. Before the acceptance request the entry
@@ -52,7 +52,7 @@ import run_issue68_stage5_routing_r19 as bridge
 HERE = Path(__file__).resolve().parent
 FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
-CONTRACT_REVISION = "issue-68-runtime-evidence-r24-2026-10-05"
+CONTRACT_REVISION = "issue-68-runtime-evidence-r25-2026-10-05"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
 EXECUTION_KIND = "acceptance"
 HOST = "codex"
@@ -80,10 +80,6 @@ def load_contract():
         raise ValueError("contract_canonical_preservation_missing")
     if not codex.get("partition_evidence"):
         raise ValueError("contract_partition_evidence_missing")
-    if not codex.get("owner_entry_transport_evidence"):
-        raise ValueError("contract_owner_entry_transport_evidence_missing")
-    if not codex.get("owner_entry_evidence_status"):
-        raise ValueError("contract_owner_entry_evidence_status_missing")
     return contract
 
 

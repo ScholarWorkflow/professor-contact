@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate-2 r24 PC68-R1 verifier: owner-local consumption and the root partition.
+"""Gate-2 r25 PC68-R1 verifier: owner-local consumption and the root partition.
 
 r13 keeps the root final business message selector unchanged: exactly one
 current-root, current-turn ``rawResponseItem/completed`` assistant
@@ -8,6 +8,20 @@ fixture: the root discovers the local packs, runs the deterministic
 ``stage5-partition-choices`` entry exactly once and hands every formal child a
 one-professor packet (``email_pack`` plus that owner's own ``choices`` rows,
 never a ``choices_scope``).
+
+Test Plan r22 §4/§5 decides the verdict on the surfaces the run can actually
+prove: each formal child's real Stage 5 ``commandExecution`` business
+consumption (or an equivalent supported read), the root partition, and the
+root's legal result receipts. The complete root->child plaintext task payload
+is NOT a PASS condition: Test Plan r22 §4.1 removes the owner-entry
+transport/read observability requirement, so an encrypted entry delivery
+never caps a terminal and a missing plaintext entry payload is never a
+BLOCKED_OBSERVABILITY source. Diagnostics only, never verdict-changing: the
+root->child ``agent_message`` NEW_TASK delivery whose payload is
+``encrypted_content``, collabAgentToolCall ``receiverThreadIds``/
+``agentsStates``, the "Wait completed." wait message, ``subAgentActivity``
+completed reports, child ``turn/completed`` events, ``requested_role`` and
+``loaded_identity``.
 
 r22 binds the root result-receipt surface to the frozen field chain. Formal
 children stay the shared adapter's ``spawnAgent`` relation
@@ -72,19 +86,15 @@ compound preparations, by their single action word plus their
 ``aggregatedOutput``. A proven product failure is never downgraded to a
 blocked or invalid terminal by another child's missing or ambiguous evidence.
 
-r24 adds the frozen Test Plan r21 observability facts. The current Codex V2
-runtime delivers the owner invocation only as a root->child ``agent_message``
-NEW_TASK whose payload is ``encrypted_content``, so a complete owner-entry
-transport/read observation does not exist: with the contract's
-``owner_entry_evidence_status`` NOT_AVAILABLE a proven-clean PASS terminal is
-capped to ``BLOCKED_OBSERVABILITY``/``owner_entry_transport_unobservable``
-(``capped_from="PASS"`` with the original PASS facts kept) and never reported
-as PASS, while FAIL_PRODUCT and INVALID_EVIDENCE terminals keep their
-precedence. A completed commandExecution without a started record no longer
-ends the scan: it is collected as an observability gap, produces no call, and
-surfaces as ``BLOCKED_OBSERVABILITY``/``command_start_unobservable`` only on
-the otherwise-clean terminal, so a sibling child's proven failure keeps its
-precedence.
+r25 removes the previous revision's entry-transport PASS cap per Test Plan
+r22 §4.1: an otherwise-clean terminal is reported as PASS with its product
+facts (``owner_pack_set``/``rebuild_count``/``partition_executions``/
+``identity_diagnostics``), and FAIL_PRODUCT and INVALID_EVIDENCE terminals
+keep their precedence. A completed commandExecution without a started record
+does not end the scan: it is collected as an observability gap, produces no
+call, and surfaces as ``BLOCKED_OBSERVABILITY``/``command_start_unobservable``
+only on the otherwise-clean terminal, so a sibling child's proven failure
+keeps its precedence.
 """
 import argparse
 import json
@@ -101,17 +111,6 @@ verdict = base.verdict
 combine = base.combine
 owner_outcome = base.owner_outcome
 codex_final_result_source = final_source.codex_final_result_source
-
-EVIDENCE_CONTRACT = Path(__file__).resolve().parent / "issue68-runtime-evidence-contract-r19.json"
-
-
-def owner_entry_evidence_status():
-    """The frozen owner-entry transport fact from the pinned evidence contract."""
-    contract = json.loads(EVIDENCE_CONTRACT.read_text(encoding="utf-8"))
-    status = contract.get("codex", {}).get("owner_entry_evidence_status")
-    if not isinstance(status, str) or not status:
-        raise ValueError("contract_owner_entry_evidence_status_missing")
-    return status
 
 
 ACTIONS = {"stage5-list-inputs", "stage5-partition-choices", "stage5-plan",
@@ -578,7 +577,7 @@ def _classify(problem, failures, invalids, blockers):
         blockers.append(problem)
 
 
-def _verify_codex_events(response, adapter, manifest, owner_entry_status=None):
+def _verify_codex_events(response, adapter, manifest):
     status = adapter.get("fixture_status")
     if status in ("INVALID_EVIDENCE", "HARNESS_ERROR", "HARNESS_CONTAMINATION"):
         return verdict("INVALID_EVIDENCE", "shared_adapter_rejected")
@@ -742,21 +741,16 @@ def _verify_codex_events(response, adapter, manifest, owner_entry_status=None):
                             outcomes=outcomes,
                             owner_threads={child: pack for pack, child in assigned.items()})
     result["identity_diagnostics"] = adapter.get("dispatch", {}).get("agent_identity", {})
-    # r24 unified terminal precedence: a proven FAIL/INVALID keeps its
-    # precedence over the collected observability gaps, a gap surfaces only on
-    # the otherwise-clean PASS/BLOCKED terminal, and the owner-entry cap
-    # applies only to a PASS (a non-PASS verdict is never rewritten).
+    # Unified terminal precedence: a proven FAIL/INVALID keeps its precedence
+    # over the collected observability gaps, and a gap surfaces only on the
+    # otherwise-clean terminal. Test Plan r22 §4.1: the encrypted root->child
+    # NEW_TASK entry delivery is diagnostics only, so an otherwise-clean run
+    # is reported as PASS and never capped by the unobservable entry payload.
     if result.get("verdict") in ("FAIL_PRODUCT", "INVALID_EVIDENCE"):
         return result
     if observability_gaps:
         return verdict("BLOCKED_OBSERVABILITY", "command_start_unobservable",
                        detail=[list(gap) for gap in observability_gaps])
-    if owner_entry_status == "NOT_AVAILABLE" and result.get("verdict") == "PASS":
-        capped = verdict("BLOCKED_OBSERVABILITY", "owner_entry_transport_unobservable",
-                         capped_from="PASS")
-        capped.update({key: value for key, value in result.items()
-                       if key not in ("verdict", "reason_code")})
-        return capped
     return result
 
 
@@ -778,9 +772,7 @@ def verify_codex(response, adapter, manifest):
     final_text, problem = codex_final_result_source(response)
     if problem:
         return problem
-    entry_status = owner_entry_evidence_status()
-    return _judge_with_final_source(_verify_codex_events, final_text, response, adapter, manifest,
-                                    entry_status)
+    return _judge_with_final_source(_verify_codex_events, final_text, response, adapter, manifest)
 
 
 def main():

@@ -1,32 +1,29 @@
-"""Gate-2 r24 regressions for owner-local consumption and the root partition.
+"""Gate-2 r25 regressions for owner-local consumption and the root partition.
 
 Synthetic evidence characterizes the evaluator and the recipe wiring. It is not
 a real-host PC68-R1 acceptance PASS.
 
-Test Plan r21 §3 records the frozen r15 characterization fact: the current
-Codex V2 runtime delivers the owner invocation only as a root->child
-``agent_message`` NEW_TASK whose payload is ``encrypted_content``, so a
-complete owner-entry transport/read observation does not exist, so the §3
-Observable condition stays unsatisfied. The r24 contract freezes this as
-``owner_entry_evidence_status`` NOT_AVAILABLE and the verifier caps a
-proven-clean PASS terminal to
-BLOCKED_OBSERVABILITY/owner_entry_transport_unobservable (``capped_from`` PASS,
-the original PASS facts kept on the verdict); FAIL_PRODUCT and
-INVALID_EVIDENCE terminals keep their precedence, so the r15 archive
-re-judgement stays FAIL_PRODUCT.
+Test Plan r22 §4/§5 decides the verdict on actual business consumption: each
+formal child's real Stage 5 ``commandExecution`` surface (or an equivalent
+supported read) plus the root's legal result receipts. The complete root->child
+plaintext task payload is not a PASS condition, and the encrypted entry
+delivery (the root->child ``agent_message`` NEW_TASK whose payload is
+``encrypted_content``) is diagnostics only — neither a PASS condition nor a
+BLOCKED_OBSERVABILITY source (Test Plan r22 §4.1), so the previous revision's
+``owner_entry_transport_unobservable`` PASS cap is removed.
 
 Test Plan r22 §4 keeps three explicit verdict channels over the §7
 counterexample matrix:
-- PASS channel (r24: every clean run is capped at its PASS terminal): the
-  valid owner-local A+B run whose every formal child result is consumed
-  through a root-thread ``agent_message`` FINAL_ANSWER receipt bound to that
-  child's agent path, a diagnostic object recorded by a non-stage5 command, a
+- PASS channel (restored: a valid clean run is reported as PASS): the valid
+  owner-local A+B run whose every formal child result is consumed through a
+  root-thread ``agent_message`` FINAL_ANSWER receipt bound to that child's
+  agent path, a diagnostic object recorded by a non-stage5 command, a
   non-FINAL_ANSWER diagnostic agent_message on the root thread, the single
   ``results`` wrapper, a stale earlier-turn final answer, the canonical
   ``試験`` spelling, and the r15 real-host compound command shapes (a
   ``python3 -c`` child packet and a ``python3 -c`` root partition
-  preparation). Each asserts the owner_entry_transport_unobservable cap with
-  ``capped_from`` PASS plus the preserved product facts.
+  preparation). Each asserts a plain PASS verdict with the preserved product
+  facts (``owner_pack_set``/``rebuild_count``/``partition_executions``).
 - FAIL_PRODUCT channel: every proven isolation/partition/orchestration
   violation — a sibling sentinel or a ``choices_scope`` field in the consumed
   input, missing/multiple/owner-executed (strict or compound)/changed root
@@ -94,12 +91,12 @@ REWRITTEN_SPELLING = "试验"
 CHILD_AGENT_PATHS = ("/root/stage5_x", "/root/stage5_y")
 
 PASS_CHANNEL = (
-    "test_valid_owner_local_run_caps_from_pass",
+    "test_valid_owner_local_run_passes",
     "test_compound_child_packet_is_still_consumption_evidence",
     "test_compound_root_partition_is_recognized",
     "test_diagnostic_object_outside_stage5_commands_does_not_change_the_verdict",
     "test_non_final_answer_diagnostic_message_is_not_consumption",
-    "test_results_wrapper_final_answer_caps_from_pass",
+    "test_results_wrapper_final_answer_still_passes",
     "test_stale_final_answer_is_not_terminal",
     "test_canonical_unicode_is_preserved",
 )
@@ -138,7 +135,6 @@ BLOCKED_INVALID_CHANNEL = (
 WIRING_TESTS = (
     "test_bridge_pins_the_r19_verifier_and_r12_builder",
     "test_codex_only_entry_binds_the_r19_contract",
-    "test_load_contract_requires_the_owner_entry_status",
     "test_contract_freezes_owner_input_isolation_and_partition_evidence",
     "test_verifier_refuses_the_opencode_host",
     "test_channel_declaration_matches_the_matrix",
@@ -511,23 +507,18 @@ class TestIssue68RuntimeR19(unittest.TestCase):
 
     # ---- PASS channel: the valid owner-local run ---------------------------
 
-    def assert_capped_from_pass(self, result):
-        """r24 cap: the owner-entry transport is unobservable on the current
-        Codex V2 runtime, so a proven-clean PASS terminal is capped to
-        BLOCKED_OBSERVABILITY/owner_entry_transport_unobservable while every
-        product fact of the underlying PASS stays on the verdict."""
-        self.assertEqual(result["verdict"], "BLOCKED_OBSERVABILITY")
-        self.assertEqual(result["reason_code"], "owner_entry_transport_unobservable")
-        self.assertEqual(result["capped_from"], "PASS")
-
-    def test_valid_owner_local_run_caps_from_pass(self):
+    def test_valid_owner_local_run_passes(self):
+        """Test Plan r22 §4.1: a valid clean run is reported as PASS; the
+        encrypted entry delivery is diagnostics only and never caps the
+        terminal."""
         response, adapter = self.evidence()
         result = verify.verify_codex(response, adapter, self.manifest)
-        self.assert_capped_from_pass(result)
+        self.assertEqual(result["verdict"], "PASS")
         self.assertEqual(result["partition_executions"], 1)
         self.assertEqual(result["rebuild_count"], 0)
         self.assertEqual(result["owner_pack_set"],
                          sorted(owner["email_pack"] for owner in self.manifest["owners"]))
+        self.assertIn("identity_diagnostics", result)
 
     def test_compound_child_packet_is_still_consumption_evidence(self):
         """The r15 real-host child shape: the packet rides inside a
@@ -537,7 +528,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         response, adapter = self.evidence(per_owner={0: {"compound_packet": True},
                                                      1: {"compound_packet": True}})
         result = verify.verify_codex(response, adapter, self.manifest)
-        self.assert_capped_from_pass(result)
+        self.assertEqual(result["verdict"], "PASS")
         self.assertEqual(result["owner_pack_set"],
                          sorted(owner["email_pack"] for owner in self.manifest["owners"]))
 
@@ -548,7 +539,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         aggregatedOutput JSON alone."""
         response, adapter = self.evidence(partition_compound=True)
         result = verify.verify_codex(response, adapter, self.manifest)
-        self.assert_capped_from_pass(result)
+        self.assertEqual(result["verdict"], "PASS")
         self.assertEqual(result["partition_executions"], 1)
 
     def test_diagnostic_object_outside_stage5_commands_does_not_change_the_verdict(self):
@@ -556,7 +547,7 @@ class TestIssue68RuntimeR19(unittest.TestCase):
                                                "note": "diagnostic example"}, ensure_ascii=False)])
         response, adapter = self.evidence(per_owner={0: {"extra_commands": [(echo, "")]}})
         result = verify.verify_codex(response, adapter, self.manifest)
-        self.assert_capped_from_pass(result)
+        self.assertEqual(result["verdict"], "PASS")
 
     def test_non_final_answer_diagnostic_message_is_not_consumption(self):
         """Reviewer discriminator 2: a root agent_message from child-0's
@@ -566,27 +557,27 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         real FINAL_ANSWER receipt still proves consumption."""
         response, adapter = self.evidence(receipts="diagnostic_only")
         result = verify.verify_codex(response, adapter, self.manifest)
-        self.assert_capped_from_pass(result)
+        self.assertEqual(result["verdict"], "PASS")
         self.assertEqual(result["partition_executions"], 1)
 
-    def test_results_wrapper_final_answer_caps_from_pass(self):
+    def test_results_wrapper_final_answer_still_passes(self):
         response, adapter = self.evidence(final_text=json.dumps(
             {"results": json.loads(self.root_result())}, ensure_ascii=False))
         result = verify.verify_codex(response, adapter, self.manifest)
-        self.assert_capped_from_pass(result)
+        self.assertEqual(result["verdict"], "PASS")
 
     def test_stale_final_answer_is_not_terminal(self):
         response, adapter = self.evidence(old_turn_final=json.dumps(
             [{"professor_dir": "stale", "status": "ok", "reason_code": "invented"}]))
         result = verify.verify_codex(response, adapter, self.manifest)
-        self.assert_capped_from_pass(result)
+        self.assertEqual(result["verdict"], "PASS")
 
     def test_canonical_unicode_is_preserved(self):
         packet = self.packet(self.owner(0))
         self.assertIn(CANONICAL_SPELLING, json.dumps(packet, ensure_ascii=False))
         response, adapter = self.evidence()
         result = verify.verify_codex(response, adapter, self.manifest)
-        self.assert_capped_from_pass(result)
+        self.assertEqual(result["verdict"], "PASS")
         rewritten = dict(packet, choices=json.loads(json.dumps(
             packet["choices"], ensure_ascii=False).replace(CANONICAL_SPELLING, REWRITTEN_SPELLING)))
         self.assertNotEqual(rewritten["choices"], self.owner(0)["expected_choices_rows"])
@@ -922,21 +913,10 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         with self.assertRaises(ValueError):
             entry.check_entry_uniqueness(str(RUNTIME / "run_issue68_stage5_routing_r18_codex.py"))
 
-    def test_load_contract_requires_the_owner_entry_status(self):
-        """The r24 load_contract validation: a contract whose codex section
-        lacks owner_entry_evidence_status is refused before the entry starts."""
-        bad = json.loads(entry.CONTRACT.read_text(encoding="utf-8"))
-        del bad["codex"]["owner_entry_evidence_status"]
-        bad_path = self.root / "contract-without-entry-status.json"
-        bad_path.write_text(json.dumps(bad, ensure_ascii=False), encoding="utf-8")
-        with unittest.mock.patch.object(entry, "CONTRACT", bad_path):
-            with self.assertRaises(ValueError):
-                entry.load_contract()
-
     def test_contract_freezes_owner_input_isolation_and_partition_evidence(self):
         contract = json.loads(
             (RUNTIME / "issue68-runtime-evidence-contract-r19.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r24-2026-10-05")
+        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r25-2026-10-05")
         self.assertEqual(contract["fixture_sha"], FIXTURE_SHA)
         self.assertEqual(contract["eval_server_revision"], "3fdfa9387140cfc2e2aa3af415f85015f79706d2")
         self.assertEqual(contract["runner"], ".apm/skills/professor-contact/tests/runtime/"
@@ -960,16 +940,23 @@ class TestIssue68RuntimeR19(unittest.TestCase):
         self.assertIn("receiverThreadIds/agentsStates", codex["wait_consume_evidence"])
         self.assertIn("diagnostics only", codex["wait_consume_evidence"])
         self.assertIn("never guesses a PASS", codex["wait_consume_evidence"])
+        # r22 semantics: root result consumption is proven by the legal
+        # agent_message FINAL_ANSWER receipt chain; the encrypted entry NEW_TASK
+        # delivery is diagnostics only, neither a PASS condition nor a
+        # BLOCKED_OBSERVABILITY source.
+        self.assertIn("agent_message FINAL_ANSWER receipt chain",
+                      codex["wait_consume_evidence"])
+        self.assertIn("encrypted_content", codex["wait_consume_evidence"])
+        self.assertIn("neither a PASS condition nor a BLOCKED_OBSERVABILITY source",
+                      codex["wait_consume_evidence"])
+        self.assertNotIn("owner_entry_transport_evidence", codex)
+        self.assertNotIn("owner_entry_evidence_status", codex)
+        self.assertNotIn("owner_entry_transport_unobservable", json.dumps(contract))
         self.assertIn("subagentactivity", codex["producer_verifier_uses"][1].lower())
         self.assertIn("diagnostics only", codex["producer_verifier_uses"][3])
         self.assertIn("never downgraded", codex["terminal_precedence"])
         self.assertEqual(codex["missing_observation"], "BLOCKED_OBSERVABILITY")
         self.assertEqual(codex["malformed_or_ambiguous_observation"], "INVALID_EVIDENCE")
-        self.assertEqual(codex["owner_entry_evidence_status"], "NOT_AVAILABLE")
-        self.assertIn("NEW_TASK", codex["owner_entry_transport_evidence"])
-        self.assertIn("encrypted_content", codex["owner_entry_transport_evidence"])
-        self.assertIn("owner_entry_transport_unobservable", codex["owner_entry_transport_evidence"])
-        self.assertIn("commandExecution", codex["owner_entry_transport_evidence"])
         for key in ("capability_entry", "isolation_entry"):
             self.assertTrue((RUNTIME / Path(contract["preflight"][key]).name).is_file())
 
