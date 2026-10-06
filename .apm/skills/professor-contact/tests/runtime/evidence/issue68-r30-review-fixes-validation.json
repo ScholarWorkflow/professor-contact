@@ -353,6 +353,36 @@
   },
   "latest_candidate_validation": {
     "runtime": {
+      "tests": 53,
+      "exit_code": 0,
+      "source": "remaining_root_facts.final"
+    },
+    "lifecycle": {
+      "tests": 50,
+      "exit_code": 0,
+      "source": "lifecycle_after_remaining_root"
+    },
+    "recipe": {
+      "tests": 11,
+      "exit_code": 0,
+      "source": "final_recipe_check"
+    },
+    "environment": {
+      "tests": 12,
+      "exit_code": 0,
+      "source": "final_environment_check"
+    },
+    "total_checks_this_candidate": 126,
+    "counting_note": "当前候选53项运行判定、50项生命周期、11项准备步骤和12项环境检查，不与历史123/120或其他轮次累加，不是正式证明或验收结论"
+  },
+  "lifecycle_after_final_ambiguity": {
+    "tests": 50,
+    "exit_code": 0,
+    "elapsed_seconds": 3.018,
+    "captured_output": "WARN `--no-project` was provided, but no project was found\n..................................................\n----------------------------------------------------------------------\nRan 50 tests in 3.018s\n\nOK\n"
+  },
+  "historical_candidate_validation_123": {
+    "runtime": {
       "tests": 50,
       "exit_code": 0,
       "source": "root_final_ambiguity.after"
@@ -373,12 +403,43 @@
       "source": "final_environment_check"
     },
     "total_checks_this_candidate": 123,
-    "counting_note": "最新候选检查数量，不与前轮120/其他轮次累加，不是正式proof或验收结论"
+    "counting_note": "最新候选检查数量，不与前轮120/其他轮次累加，不是正式proof或验收结论",
+    "round_note": "修复重复根总览、成功重复分配和完整发现集合错误遮蔽前的123项候选轮次，整块保留，不累计"
   },
-  "lifecycle_after_final_ambiguity": {
+  "remaining_root_facts": {
+    "before": {
+      "tests": 52,
+      "failures": 9,
+      "exit_code": 1,
+      "elapsed_seconds": 13.724,
+      "source": "/private/tmp/pc68-r30-remaining-root-before.log",
+      "captured_output": "WARN `--no-project` was provided, but no project was found\n.......................FFFFFFFFF...........................\n======================================================================\nFAIL: test_independent_root_failures_require_current_paired_undamaged_evidence (test_issue68_runtime_r19.OwnerObservationTests.test_independent_root_failures_require_current_paired_undamaged_evidence) (fact='rebuild', damage='bad_output')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 784, in test_independent_root_failures_require_current_paired_undamaged_evidence\n    self.assertEqual(result[\"reason_code\"], \"multiple_aggregate_rebuilds\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'root_final_message_ambiguous' != 'multiple_aggregate_rebuilds'\n- root_final_message_ambiguous\n+ multiple_aggregate_rebuilds\n\n\n======================================================================\nFAIL: test_independent_root_failures_survive_child_gaps_and_final_source_gaps (test_issue68_runtime_r19.OwnerObservationTests.test_independent_root_failures_survive_child_gaps_and_final_source_gaps) (fact='rebuild', final='present')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 754, in test_independent_root_failures_survive_child_gaps_and_final_source_gaps\n    self.assertEqual((result[\"verdict\"], result[\"reason_code\"]),\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                     (\"FAIL_PRODUCT\", reason))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Tuples differ: ('BLOCKED_OBSERVABILITY', 'owner_business_result_unobservable') != ('FAIL_PRODUCT', 'multiple_aggregate_rebuilds')\n\nFirst differing element 0:\n'BLOCKED_OBSERVABILITY'\n'FAIL_PRODUCT'\n\n- ('BLOCKED_OBSERVABILITY', 'owner_business_result_unobservable')\n+ ('FAIL_PRODUCT', 'multiple_aggregate_rebuilds')\n\n======================================================================\nFAIL: test_independent_root_failures_survive_child_gaps_and_final_source_gaps (test_issue68_runtime_r19.OwnerObservationTests.test_independent_root_failures_survive_child_gaps_and_final_source_gaps) (fact='rebuild', final='missing')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 754, in test_independent_root_failures_survive_child_gaps_and_final_source_gaps\n    self.assertEqual((result[\"verdict\"], result[\"reason_code\"]),\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                     (\"FAIL_PRODUCT\", reason))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Tuples differ: ('BLOCKED_OBSERVABILITY', 'root_final_message_unobservable') != ('FAIL_PRODUCT', 'multiple_aggregate_rebuilds')\n\nFirst differing element 0:\n'BLOCKED_OBSERVABILITY'\n'FAIL_PRODUCT'\n\n- ('BLOCKED_OBSERVABILITY', 'root_final_message_unobservable')\n+ ('FAIL_PRODUCT', 'multiple_aggregate_rebuilds')\n\n======================================================================\nFAIL: test_independent_root_failures_survive_child_gaps_and_final_source_gaps (test_issue68_runtime_r19.OwnerObservationTests.test_independent_root_failures_survive_child_gaps_and_final_source_gaps) (fact='rebuild', final='ambiguous')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 754, in test_independent_root_failures_survive_child_gaps_and_final_source_gaps\n    self.assertEqual((result[\"verdict\"], result[\"reason_code\"]),\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                     (\"FAIL_PRODUCT\", reason))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Tuples differ: ('INVALID_EVIDENCE', 'root_final_message_ambiguous') != ('FAIL_PRODUCT', 'multiple_aggregate_rebuilds')\n\nFirst differing element 0:\n'INVALID_EVIDENCE'\n'FAIL_PRODUCT'\n\n- ('INVALID_EVIDENCE', 'root_final_message_ambiguous')\n+ ('FAIL_PRODUCT', 'multiple_aggregate_rebuilds')\n\n======================================================================\nFAIL: test_independent_root_failures_survive_child_gaps_and_final_source_gaps (test_issue68_runtime_r19.OwnerObservationTests.test_independent_root_failures_survive_child_gaps_and_final_source_gaps) (fact='partition', final='missing')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 754, in test_independent_root_failures_survive_child_gaps_and_final_source_gaps\n    self.assertEqual((result[\"verdict\"], result[\"reason_code\"]),\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                     (\"FAIL_PRODUCT\", reason))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Tuples differ: ('BLOCKED_OBSERVABILITY', 'root_final_message_unobservable') != ('FAIL_PRODUCT', 'multiple_root_partitions')\n\nFirst differing element 0:\n'BLOCKED_OBSERVABILITY'\n'FAIL_PRODUCT'\n\n- ('BLOCKED_OBSERVABILITY', 'root_final_message_unobservable')\n+ ('FAIL_PRODUCT', 'multiple_root_partitions')\n\n======================================================================\nFAIL: test_independent_root_failures_survive_child_gaps_and_final_source_gaps (test_issue68_runtime_r19.OwnerObservationTests.test_independent_root_failures_survive_child_gaps_and_final_source_gaps) (fact='partition', final='ambiguous')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 754, in test_independent_root_failures_survive_child_gaps_and_final_source_gaps\n    self.assertEqual((result[\"verdict\"], result[\"reason_code\"]),\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                     (\"FAIL_PRODUCT\", reason))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Tuples differ: ('INVALID_EVIDENCE', 'root_final_message_ambiguous') != ('FAIL_PRODUCT', 'multiple_root_partitions')\n\nFirst differing element 0:\n'INVALID_EVIDENCE'\n'FAIL_PRODUCT'\n\n- ('INVALID_EVIDENCE', 'root_final_message_ambiguous')\n+ ('FAIL_PRODUCT', 'multiple_root_partitions')\n\n======================================================================\nFAIL: test_independent_root_failures_survive_child_gaps_and_final_source_gaps (test_issue68_runtime_r19.OwnerObservationTests.test_independent_root_failures_survive_child_gaps_and_final_source_gaps) (fact='discovery', final='present')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 754, in test_independent_root_failures_survive_child_gaps_and_final_source_gaps\n    self.assertEqual((result[\"verdict\"], result[\"reason_code\"]),\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                     (\"FAIL_PRODUCT\", reason))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Tuples differ: ('INVALID_EVIDENCE', 'owner_capture_manifest_mismatch') != ('FAIL_PRODUCT', 'discovery_owner_set_changed')\n\nFirst differing element 0:\n'INVALID_EVIDENCE'\n'FAIL_PRODUCT'\n\n- ('INVALID_EVIDENCE', 'owner_capture_manifest_mismatch')\n+ ('FAIL_PRODUCT', 'discovery_owner_set_changed')\n\n======================================================================\nFAIL: test_independent_root_failures_survive_child_gaps_and_final_source_gaps (test_issue68_runtime_r19.OwnerObservationTests.test_independent_root_failures_survive_child_gaps_and_final_source_gaps) (fact='discovery', final='missing')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 754, in test_independent_root_failures_survive_child_gaps_and_final_source_gaps\n    self.assertEqual((result[\"verdict\"], result[\"reason_code\"]),\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                     (\"FAIL_PRODUCT\", reason))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Tuples differ: ('BLOCKED_OBSERVABILITY', 'root_final_message_unobservable') != ('FAIL_PRODUCT', 'discovery_owner_set_changed')\n\nFirst differing element 0:\n'BLOCKED_OBSERVABILITY'\n'FAIL_PRODUCT'\n\n- ('BLOCKED_OBSERVABILITY', 'root_final_message_unobservable')\n+ ('FAIL_PRODUCT', 'discovery_owner_set_changed')\n\n======================================================================\nFAIL: test_independent_root_failures_survive_child_gaps_and_final_source_gaps (test_issue68_runtime_r19.OwnerObservationTests.test_independent_root_failures_survive_child_gaps_and_final_source_gaps) (fact='discovery', final='ambiguous')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 754, in test_independent_root_failures_survive_child_gaps_and_final_source_gaps\n    self.assertEqual((result[\"verdict\"], result[\"reason_code\"]),\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                     (\"FAIL_PRODUCT\", reason))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Tuples differ: ('INVALID_EVIDENCE', 'root_final_message_ambiguous') != ('FAIL_PRODUCT', 'discovery_owner_set_changed')\n\nFirst differing element 0:\n'INVALID_EVIDENCE'\n'FAIL_PRODUCT'\n\n- ('INVALID_EVIDENCE', 'root_final_message_ambiguous')\n+ ('FAIL_PRODUCT', 'discovery_owner_set_changed')\n\n----------------------------------------------------------------------\nRan 52 tests in 13.724s\n\nFAILED (failures=9)\n"
+    },
+    "after": {
+      "tests": 52,
+      "exit_code": 0,
+      "elapsed_seconds": 14.156,
+      "source": "/private/tmp/pc68-r30-remaining-root-after.log",
+      "captured_output": "WARN `--no-project` was provided, but no project was found\n....................................................\n----------------------------------------------------------------------\nRan 52 tests in 14.156s\n\nOK\n"
+    },
+    "final": {
+      "tests": 53,
+      "exit_code": 0,
+      "elapsed_seconds": 16.938,
+      "source": "/private/tmp/pc68-r30-remaining-root-final.log",
+      "captured_output": "WARN `--no-project` was provided, but no project was found\n.....................................................\n----------------------------------------------------------------------\nRan 53 tests in 16.938s\n\nOK\n"
+    },
+    "correction": "重复根总览、成功重复分配、完整发现集合错误的独立实际事实先于教授缺证及最终消息缺失或歧义；严格同运行、当前根轮次及调用开始完成配对，旧轮次、损坏或缺失事件不构造产品失败",
+    "affected_case": "PC68-R1",
+    "d1_dependency_changed": false,
+    "helper_unchanged": true,
+    "no_new_eval_request": true
+  },
+  "lifecycle_after_remaining_root": {
     "tests": 50,
     "exit_code": 0,
-    "elapsed_seconds": 3.018,
-    "captured_output": "WARN `--no-project` was provided, but no project was found\n..................................................\n----------------------------------------------------------------------\nRan 50 tests in 3.018s\n\nOK\n"
+    "elapsed_seconds": 3.116,
+    "source": "/private/tmp/pc68-r30-lifecycle-after-remaining-root.log",
+    "captured_output": "WARN `--no-project` was provided, but no project was found\n..................................................\n----------------------------------------------------------------------\nRan 50 tests in 3.116s\n\nOK\n"
   }
 }

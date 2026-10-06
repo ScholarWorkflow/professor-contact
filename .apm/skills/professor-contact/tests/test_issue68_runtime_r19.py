@@ -709,6 +709,114 @@ class OwnerObservationTests(unittest.TestCase):
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("INVALID_EVIDENCE", "root_final_message_ambiguous"))
 
+    def independent_root_runtime(self, fact, *, final="ambiguous"):
+        if fact == "discovery":
+            self.manifest["invalid_pack"] = str(self.root / "invalid-pack.json")
+            Path(self.manifest["owner_capture"]["manifest_path"]).write_text(
+                json.dumps(self.manifest), encoding="utf-8")
+        response, adapter = self.incomplete_runtime()
+        events = response["output"]["app_server_events"]
+        if fact == "discovery":
+            events[1]["message"]["params"]["item"]["aggregatedOutput"] = json.dumps({
+                "status": "ok", "inputs": [{"email_pack": str(self.pack), "status": "ok"}]})
+        else:
+            if fact == "rebuild":
+                command = shlex.join(["uv", "run", "python", str(self.entrypoint),
+                                      "stage5-rebuild-overview", "--program-root", str(self.root)])
+                item = {"type": "commandExecution", "id": "rebuild-1", "command": command}
+                first = [{"runtime_generation": 1, "message": {"method": method, "params": {
+                    "threadId": "synthetic-root", "turnId": "synthetic-turn", "item": value}}}
+                    for method, value in (("item/started", item), ("item/completed",
+                        dict(item, aggregatedOutput='{"status":"ok"}', exitCode=0)))]
+                second = copy.deepcopy(first)
+                for event in second:
+                    event["message"]["params"]["item"]["id"] = "rebuild-2"
+                events[-1:-1] = first + second
+            else:
+                second = copy.deepcopy(events[2:4])
+                for event in second:
+                    event["message"]["params"]["item"]["id"] = "partition-2"
+                events[-1:-1] = second
+        if final == "missing":
+            events[:] = [event for event in events
+                         if event["message"]["method"] != "rawResponseItem/completed"]
+        elif final == "ambiguous":
+            events.append(copy.deepcopy(events[-1]))
+        for index, event in enumerate(events, 1):
+            event["runtime_seq"] = index
+        return response, adapter
+
+    def test_independent_root_failures_survive_child_gaps_and_final_source_gaps(self):
+        reasons = {"rebuild": "multiple_aggregate_rebuilds", "partition": "multiple_root_partitions",
+                   "discovery": "discovery_owner_set_changed"}
+        for fact, reason in reasons.items():
+            for final in ("present", "missing", "ambiguous"):
+                response, adapter = self.independent_root_runtime(fact, final=final)
+                with self.subTest(fact=fact, final=final):
+                    result = verifier.verify_codex(response, adapter, self.manifest)
+                    self.assertEqual((result["verdict"], result["reason_code"]),
+                                     ("FAIL_PRODUCT", reason))
+
+    def test_independent_root_failures_require_current_paired_undamaged_evidence(self):
+        for fact in ("rebuild", "partition", "discovery"):
+            for damage in ("old_turn", "end_turn", "missing_start", "missing_completion",
+                           "generation", "empty_id", "repeated_id", "start_command", "bad_output"):
+                response, adapter = self.independent_root_runtime(fact)
+                events = response["output"]["app_server_events"]
+                action = {"rebuild": "stage5-rebuild-overview", "partition": "stage5-partition-choices",
+                          "discovery": "stage5-list-inputs"}[fact]
+                selected = [event for event in events if action in
+                            event["message"]["params"]["item"].get("command", "")]
+                if damage in ("missing_start", "missing_completion"):
+                    missing_method = "item/started" if damage == "missing_start" else "item/completed"
+                    events[:] = [event for event in events if event not in selected or
+                                 event["message"]["method"] != missing_method]
+                else:
+                    for event in selected:
+                        params = event["message"]["params"]
+                        if damage == "old_turn":
+                            params["turnId"] = "previous-root-turn"
+                        elif damage == "end_turn":
+                            if event["message"]["method"] == "item/completed":
+                                params["turnId"] = "another-root-turn"
+                        elif damage == "generation":
+                            event["runtime_generation"] = "1"
+                        elif damage == "empty_id":
+                            params["item"]["id"] = ""
+                        elif damage == "repeated_id":
+                            params["item"]["id"] = "duplicate-call"
+                        elif damage == "start_command":
+                            if event["message"]["method"] == "item/started":
+                                params["item"]["command"] = "printf another-command"
+                        elif event["message"]["method"] == "item/completed":
+                            params["item"]["aggregatedOutput"] = '{"status":'
+                with self.subTest(fact=fact, damage=damage):
+                    result = verifier.verify_codex(response, adapter, self.manifest)
+                    # Rebuild count needs completed calls, not successful output.
+                    if fact == "discovery" and damage == "repeated_id":
+                        # One uniquely paired discovery call still has a valid identity.
+                        self.assertEqual(result["reason_code"], "discovery_owner_set_changed")
+                    elif fact == "rebuild" and damage == "bad_output":
+                        self.assertEqual(result["reason_code"], "multiple_aggregate_rebuilds")
+                    else:
+                        self.assertNotEqual(result["verdict"], "FAIL_PRODUCT")
+
+    def test_independent_root_scan_does_not_infer_failure_from_absent_calls(self):
+        for fact in ("rebuild", "partition", "discovery"):
+            response, adapter = self.independent_root_runtime(fact)
+            events = response["output"]["app_server_events"]
+            if fact == "discovery":
+                events[1]["message"]["params"]["item"]["aggregatedOutput"] = json.dumps({
+                    "status": "ok", "inputs": [
+                        {"email_pack": str(self.pack), "status": "ok"},
+                        {"email_pack": self.manifest["invalid_pack"], "status": "error"}]})
+            else:
+                events[:] = [event for event in events if event["message"]["params"]["item"].get("id")
+                             != ("rebuild-2" if fact == "rebuild" else "partition-2")]
+            with self.subTest(fact=fact):
+                self.assertNotEqual(verifier.verify_codex(response, adapter, self.manifest)["verdict"],
+                                    "FAIL_PRODUCT")
+
     def test_full_entry_ambiguous_final_cannot_hide_damaged_scope_attribution(self):
         for change in ("generation", "order", "turn"):
             response, adapter = self.ambiguous_runtime(scope=True)

@@ -362,13 +362,15 @@
   },
   "validation_evidence": {
     "source": "tests/runtime/evidence/issue68-r30-review-fixes-validation.json",
-    "latest_candidate_checks": 123,
-    "runtime": 50,
+    "latest_candidate_checks": 126,
+    "runtime": 53,
     "lifecycle": 50,
     "recipe": 11,
     "environment": 12,
     "formal_case_started": false,
     "overall_preflight_status": "PREFLIGHT_INCOMPLETE",
-    "counting_note": "不同轮次不累计，正式D1复用，R1未执行"
+    "counting_note": "不同轮次不累计，历史123项完整保留；当前126项为53+50+11+12，正式D1复用，R1未执行",
+    "runtime_source": "remaining_root_facts.final",
+    "lifecycle_source": "lifecycle_after_remaining_root"
   }
 }

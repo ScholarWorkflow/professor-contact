@@ -1290,6 +1290,76 @@ def _classify(problem, failures, invalids, blockers):
         blockers.append(problem)
 
 
+def _independent_root_return_failure(calls, manifest, root, turn):
+    """Positive current-turn facts independent of child and final observations.
+
+    Missing calls or unusable returns prove nothing here. Count only distinct,
+    paired calls; discovery and successful partitions require their complete
+    actual structured returns, never command text or preparation expectations.
+    """
+    if not isinstance(turn, str) or not turn:
+        return None
+    attributed = [call for call in calls if call.get("thread") == root
+                  and call.get("start_turn") == turn and call.get("end_turn") == turn
+                  and isinstance(call.get("id"), str) and call["id"]
+                  and call.get("start_command") == call.get("command")]
+    ids = [call["id"] for call in attributed]
+    # Repeated identifiers damage pairing and cannot prove two executions.
+    attributed = [call for call in attributed if ids.count(call["id"]) == 1]
+    rebuilds, partitions = [], []
+    for call in attributed:
+        command = call.get("command", "")
+        try:
+            parsed = command_action(command, manifest)
+        except (ValueError, TypeError):
+            parsed = None
+        if parsed:
+            action = parsed["action"]
+        elif is_business_surface(command) and "--help" not in command:
+            action = _compound_action(command)
+        else:
+            continue
+        if action == "stage5-rebuild-overview":
+            rebuilds.append(call)
+            continue
+        if type(call.get("exit_code")) is not int or call["exit_code"] != 0:
+            continue
+        try:
+            payload = _strict_json_object(call.get("output"))
+        except (ValueError, TypeError):
+            continue
+        if payload.get("status") != "ok":
+            continue
+        if action == "stage5-partition-choices":
+            rows = _partition_rows(payload)
+            if rows is None or any(not isinstance(entry, dict) for entry in payload["owners"]):
+                continue
+            dirs = [row["professor_dir"] for row in rows]
+            if any(not isinstance(directory, str) for directory in dirs) \
+                    or len(set(dirs)) != len(dirs):
+                continue
+            partitions.append(call)
+        elif action == "stage5-list-inputs":
+            inputs = payload.get("inputs")
+            if not isinstance(inputs, list) or any(not isinstance(row, dict)
+                    or not isinstance(row.get("email_pack"), str)
+                    or not isinstance(row.get("status"), str) for row in inputs):
+                continue
+            packs = [row["email_pack"] for row in inputs]
+            if len(set(packs)) != len(packs) or "invalid_pack" not in manifest:
+                continue
+            observed = {row["email_pack"]: row["status"] for row in inputs}
+            expected = {owner["email_pack"]: "ok" for owner in manifest["owners"]}
+            expected[manifest["invalid_pack"]] = "error"
+            if observed != expected:
+                return verdict("FAIL_PRODUCT", "discovery_owner_set_changed")
+    if len(rebuilds) > 1:
+        return verdict("FAIL_PRODUCT", "multiple_aggregate_rebuilds")
+    if len(partitions) > 1:
+        return verdict("FAIL_PRODUCT", "multiple_root_partitions")
+    return None
+
+
 def _verify_codex_events(response, adapter, manifest, final_problem=None):
     status = adapter.get("fixture_status")
     if status in ("INVALID_EVIDENCE", "HARNESS_ERROR", "HARNESS_CONTAMINATION"):
@@ -1353,7 +1423,7 @@ def _verify_codex_events(response, adapter, manifest, final_problem=None):
         if thread in children | {root} and item.get("type") == "commandExecution":
             item_id = (thread, item.get("id"))
             if method == "item/started":
-                command_starts[item_id] = (seq, params.get("turnId"))
+                command_starts[item_id] = (seq, params.get("turnId"), item.get("command", ""))
             elif method == "item/completed":
                 if item_id not in command_starts:
                     # r24: a completed commandExecution without a started
@@ -1362,11 +1432,12 @@ def _verify_codex_events(response, adapter, manifest, final_problem=None):
                     # sibling child's proven failure keeps its precedence.
                     observability_gaps.append(("command_start_unobservable", thread, seq))
                     continue
-                start_seq, start_turn = command_starts[item_id]
+                start_seq, start_turn, start_command = command_starts[item_id]
                 call = {"id": item.get("id"), "start": start_seq, "end": seq,
                         "command": item.get("command", ""), "output": item.get("aggregatedOutput", ""),
                         "thread": thread, "generation": generation,
-                        "start_turn": start_turn, "end_turn": params.get("turnId")}
+                        "start_turn": start_turn, "end_turn": params.get("turnId"),
+                        "start_command": start_command, "exit_code": item.get("exitCode")}
                 calls.append(call)
                 if thread in children:
                     business_calls.setdefault(thread, []).append(call)
@@ -1401,6 +1472,9 @@ def _verify_codex_events(response, adapter, manifest, final_problem=None):
             failures.append(verdict("FAIL_PRODUCT", reason))
     if failures:
         return failures[0]
+    independent_problem = _independent_root_return_failure(calls, manifest, root, raw.get("turn_id"))
+    if independent_problem:
+        return independent_problem
     if final_problem:
         return final_problem
     if not children:
