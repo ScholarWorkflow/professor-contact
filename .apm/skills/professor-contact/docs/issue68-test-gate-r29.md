@@ -18,7 +18,9 @@
 | 运行证据契约 | `.apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-contract-r19.json`，契约修订 `issue-68-runtime-evidence-r29-2026-10-06` |
 | 共享测试资产参考版本 | r25 读取时记为 `c738fa2f8bcbb16cd99d741332d5f59b062b6357`；当前实际检出位置与版本尚未核验 |
 
-r25 将实际输入观察限定为测试观察：在教授代理正常解析 `owner_input_file` 的原有动作中复制同一次 JSON 解析对象，继续用同一对象执行原有业务命令。它不要求解密提示词、等待运行环境增加输入事件、添加产品日志或新增业务入口。第 5 节记录的本地合成采集预检证明普通命令路径可留存同次解析对象、实际参数和只读计划输出；它不证明运行时 `app_server` 事件及真实线程关联。观察方法仍待第二关口审核。
+r25 要求观察教授原有 `owner_input_file` 解析所得对象，并由同一对象驱动原业务调用。本地合成捕获器已验证这段本地路径，但不证明根线程实际交给该教授的文件路径。对现有数据模型的独立检查发现：适配器 `dispatch.thread_relations` 只含根/子线程关系，`subAgentActivity` 只含子线程与 `agentPath` 关联；当前接受的事件字段没有把根交接记录中的精确 `owner_input_file` 路径独立绑定到接收子线程。子线程 `commandExecution.command` 和信封都是子线程本次调用的证据，不能证明文件路径来自根交接；内容相同的替代文件因此无法排除。
+
+运行证据契约现将该事实记为 `BLOCKED_OBSERVABILITY / owner_handoff_input_path_unobservable`。在测试计划审核者裁定可用的独立路径证据或修订证明方法之前，PC68-R1 不可启动；阻断发生在评估服务检查、消费者安装和正式请求之前。该结论不否定已验证的本地解析器与 CLI 捕获步骤，也不把本地合成预检当作正式输入来源证明。
 
 ## 2. 用例、输入和范围
 
@@ -43,7 +45,7 @@ r25 将实际输入观察限定为测试观察：在教授代理正常解析 `ow
 | `shared assets` | 从 producer/fixture 的干净 SHA 和 `apm.lock.yaml` 哈希记录 | 尚未采集；实际资产检出未核实 |
 | `service version` | 请求前后只读取得服务 `git rev-parse HEAD`，通过既有 `clean_revision` 校验并确认 `same_service`；不硬编码 eval SHA。listener 信息单独保留在 `eval-service-provenance.before/after.json` | 尚未采集；服务未读取或请求 |
 | 产品检出 | 产品仓库路径、干净状态、完整提交号；必须等于 `b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d` | 当前正式运行环境未核验 |
-| 测试实现 | 唯一候选完整提交号、入口与判定程序版本；须在第二关口审核后冻结 | 等待本轮测试实现新提交 SHA |
+| 测试实现 | 唯一候选完整提交号、入口与判定程序版本；须在第二关口审核后冻结 | 本轮候选 SHA 为 `37a1d8c58cfb59249818529d9b120a5b143cc17c`；此 SHA 待审核，不表示获批或正式运行通过 |
 | 输入与预期 | 第 2 节逐项列出的真实测试值、来源、前后文件状态及独立预期 | 未知 |
 | 运行路径 | 空输出目录、消费者目录、证据归档目录及互不重叠证明 | 未知 |
 
@@ -62,8 +64,8 @@ r25 将实际输入观察限定为测试观察：在教授代理正常解析 `ow
 | 4. 根代理发现 | 根代理通过原有只读发现路径检查本地包；坏包不得影响合法教授包 | 正式根线程的 `commandExecution` 调用编号、实际线程、运行代次、事件顺序和 `aggregatedOutput`；输出应区分两位合法教授与坏包，且发现不带 `--emit-choices-scope` | 输出缺失或不能归属时按证据缺失/无效分类；真实有效输出显示业务越界时判产品失败 |
 | 5. 根代理分配 | 根代理在正式根线程上恰好成功调用一次 `stage5-partition-choices`；只处理本次请求输入 | 调用的线程、运行代次、`commandExecution.id`、参数及真实 `aggregatedOutput`；完整分配行中的教授目录、包、目标和所有选择字段与第 1 步独立预期逐字段相同；分配完成事件先于任一教授业务调用 | 零次或多次成功根分配、分配由教授线程执行、分配结果错配或任一教授业务早于分配完成：有直接有效证据时 `FAIL_PRODUCT`。没有支持的调用观察时不得推断产品行为，按阻断或无效证据处理 |
 | 6. 正式委派 | 根代理按两位教授分别委派；线程身份只采用共享适配器确认的正式 `spawnAgent` 关系 | `dispatch.thread_relations` 中 `tool=spawnAgent` 且 `sender_thread_id` 为根线程的两条正式边；线程 ID 与运行代次。以同次 `subAgentActivity` 唯一绑定 `agentThreadId` 到 `agentPath`；`agentPath` 只作回执关联键 | 没有正式关系但运行未证明实际调用时不得宣称委派故障；缺少受支持线程关系为 `BLOCKED` 或 `NOT TESTED`，按实际停止原因说明。单一 child 被多个不同 path 绑定为 `INVALID_TEST_EXECUTION` |
-| 7. 教授交接与实际读取 | 根代理在本次运行中生成各自 `owner_input_file`。各教授代理沿原有正常路径解析自己的 JSON；观察程序只读复制该次解析所得对象，后续业务参数继续取同一个对象 | 每位教授一次正常读取的原对象副本；输出来自该次命令的标准输出并进入该 `commandExecution.aggregatedOutput`。严格 JSON 信封含 `pc68_actual_input_observation`、`stage5_invocation`、`stage5_plan`、`return_code`；关联 `runtime_generation`、正式教授 `thread_id`、`commandExecution.id`、教授目录、`source_step=owner_input_json_parse`、`business_step=stage5-plan`。逐次调用逐份保存 | 整个 `stage5_invocation` 缺失为 `BLOCKED_OBSERVABILITY`；该对象存在但必需 `argv` 缺失或损坏为 `INVALID_EVIDENCE`。信封格式损坏、运行/线程/调用关联歧义为 `INVALID_EVIDENCE`。不得从命令文字、加密提示词、事后文件或预期值补证 |
-| 8. 首次计划与数据边界 | 同一教授、同一解析对象驱动原有 `stage5-plan`；本例首次调用不带 `--result` 或 `--choices`。业务程序必须是消费者内正式程序 | 同一 `commandExecution` 中实际 `stage5_invocation.argv` 完整字符串数组、`stage5_plan` 原始结构化结果与 `return_code`；按原字段检查 `email_pack`、`emails`、`jobs[].model_input`、核验状态。将读取对象与本次根分配对应项、本地包独立预期逐字段比较，并检查没有兄弟教授数据、改写路径或编号 | 有效实际证据证明错包、错编号、选择错配、兄弟数据、`--choices-scope` 或首调含 `--result`/`--choices`：`FAIL_PRODUCT`。只有命令文字出现参数不能证明实际调用参数。核验证据要求早停时不得执行后续选择读取、重规划、渲染、提交或校验 |
+| 7. 教授交接与实际读取 | 根代理在本次运行中生成各自 `owner_input_file`。各教授代理沿原有正常路径解析自己的 JSON；固定捕获器只读复制该次解析所得对象，后续业务参数继续取同一个对象。当前事件没有独立字段把根交付的精确文件路径绑定到接收子线程，因此 PC68-R1 在计划审核裁定前不可启动 | 每次本地捕获信封含 `pc68_fixed_capture`、`pc68_actual_input_observation`、`stage5_invocation`、`stage5_raw_stdout`、`stage5_process`、`stage5_plan`、`return_code`。同一 `capture_id` 关联本地读取、实际 CLI `argv`、stdout/stderr 摘要和退出码；verifier 从独立 `commandExecution.command` 校验固定捕获器的精确调用路径/参数，脚本摘要从固定仓库源码校验。另关联 `runtime_generation`、正式教授 `thread_id`、`commandExecution.id`、教授目录、`source_step=owner_input_json_parse`、`business_step=stage5-plan` | 整个 `stage5_invocation` 缺失为 `BLOCKED_OBSERVABILITY`；对象存在但必需 `argv` 缺失或损坏为 `INVALID_EVIDENCE`。字段关联不一致、捕获器调用不符或运行/线程/调用关联歧义为 `INVALID_EVIDENCE`。根交付路径无独立来源时为 `BLOCKED_OBSERVABILITY / owner_handoff_input_path_unobservable`；不能用同内容替代文件、子线程命令或信封自报路径补证 |
+| 8. 首次计划与数据边界 | 同一教授、同一解析对象驱动原有 `stage5-plan`；本例首次调用不带 `--result` 或 `--choices`。业务程序必须是消费者内正式程序。此项只有经计划审核者解决根交付路径绑定后才可进入 PC68-R1 | 同一 `commandExecution` 中实际 `stage5_invocation.argv` 完整字符串数组、`stage5_raw_stdout`、与其一致的 `stage5_plan` 结构化结果及 `return_code`；按原字段检查 `email_pack`、`emails`、`jobs[].model_input`、核验状态。将读取对象与本次根分配对应项、本地包独立预期逐字段比较，并检查没有兄弟教授数据、改写路径或编号 | 有效实际证据证明错包、错编号、选择错配、兄弟数据、`--choices-scope` 或首调含 `--result`/`--choices`：`FAIL_PRODUCT`。只有命令文字出现参数不能证明实际调用参数。核验证据要求早停时不得执行后续选择读取、重规划、渲染、提交或校验 |
 | 9. 教授结果与根消费 | 根代理等待并分别消费正式教授线程真实返回；每位教授结果独立保留 | 正式 child 自身线程的原始最终结果；同一运行、当前 root turn 的 `rawResponseItem/completed` `agent_message` 回执；`recipient=/root`、`author` 等于唯一 `agentPath`，正文为规定的 `Message Type: FINAL_ANSWER`、`Task name: /root`、`Sender: <path>`、`Payload:` 和唯一顶层 JSON。Payload 顶层含 `professor_dir`、`status`、`reason_code`；回执 `runtime_seq` 是消费点 | child 无 path 或无合法回执为阻断；多个不同 outcome 或 path 映射歧义为无效证据；合法回执与 child 自身结果不一致为 `FAIL_PRODUCT`。`child_thread_reads`、等待消息、完成诊断、角色自述和身份诊断均不能代替消费回执 |
 | 10. 总览和最终消息 | 根代理消费完两位教授结果后，在根线程独立调用一次 `stage5-rebuild-overview` | 唯一总览调用的 `commandExecution.aggregatedOutput` 是结果唯一来源；开始顺序晚于每个正式教授结果消费点。当前根线程最终 `final_answer` 分别原样报告每位教授结果及完整总览结果；对象按业务字段识别，不要求固定包装键 | 提前或重复总览调用、改写教授结果、漏报或改写总览、结果双重归属冲突：有效证据证明时为 `FAIL_PRODUCT`。输出缺失为观察阻断，损坏/冲突/无法唯一归属为无效证据 |
 | 11. 后置检查与清理 | 请求结束后检查本地状态、传递文件和服务隔离；只清理本请求临时数据 | 本地状态前后快照、相关文件内容/校验值、临时文件创建和清理事件；证明没有跨教授写入、总览反向修改教授结果，观察副本在原文件清理后仍可复查；请求后服务 provenance 与请求前一致 | 服务进程或存储隔离变化、证据被污染或不能归属为无效执行；真实跨教授写入为产品失败。清理不能删除其他请求数据，清理错误不得改写教授结果 |
@@ -72,34 +74,38 @@ r25 将实际输入观察限定为测试观察：在教授代理正常解析 `ow
 
 ## 5. 正式运行前必须完成的观察预检
 
+**当前门状态：`BLOCKED_OBSERVABILITY / owner_handoff_input_path_unobservable`，PC68-R1 不可启动。** 合成捕获预检只证明子线程本地文件解析到同次 CLI 的关联；它不能证明该文件路径就是根线程在本次委派中交付的路径。`issue68-runtime-evidence-contract-r19.json` 的 `handoff_path_binding` 记录了缺失字段、现有事件字段和待审核事项。即使第二关口状态被另行改为完成，也不能越过这一阻断。
+
 四项必要预检为：入口可执行、消费者与服务及输出隔离、所需证据可取得且能关联到本次运行/调用/教授、判定能区分合法输入、产品错配、缺失与损坏证据。这里的观察能力检查是最小非验收检查，不是 PC68-R1，也不运行完整教授业务。
 
 观察能力预检必须用合成 JSON 输入，通过普通命令工具的标准输出，实际验证以下完整路径：
 
-1. 用正常解析动作对合成 `owner_input_file` JSON 只解析一次；在原解析路径只读复制实际解析对象，保存原始输入及解析对象以供逐字段核对。
+1. 用固定捕获器对合成 `owner_input_file` JSON 只解析一次；在原解析路径只读复制实际解析对象，记录输入字节摘要、对象摘要和读取次数。
 2. 让原有 `stage5-plan` 使用该同一个内存对象执行只读计划；不经第二次文件读取、不复制一份预期对象充当解析结果，也不更换业务入口。
-3. 在发起原 `contact_state.py` 子进程时，由调用包装器实际捕获完整有序 `argv` 字符串数组；不从 shell 命令文字还原参数。
-4. 将实际解析对象、实际 `argv`、同次真实只读 `stage5-plan` 结构化标准输出和退出码装入单个严格 JSON 信封，出现在同一普通命令调用的标准输出及对应 `commandExecution.aggregatedOutput`。
-5. 对照 `runtime_generation`、正式教授线程、`commandExecution.id`、教授目录、来源步骤和业务步骤，证明信封唯一对应这次读取和调用。重复调用分别产生、分别检查信封。
+3. 在发起原 `contact_state.py` 子进程时，由固定捕获器实际捕获完整有序 `argv`、原始标准输出、标准错误摘要及退出码；不从 shell 命令文字还原参数。
+4. 将上述值装入单个严格 JSON 信封。verifier 从独立 `commandExecution.command` 字段核对精确捕获器路径和参数，并从 runner 创建的 manifest 核对动态消费者目录；捕获器摘要从固定仓库源码取得，不接受信封自报替代。
+5. 对照 `runtime_generation`、正式教授线程、`commandExecution.id`、教授目录、来源步骤和业务步骤，证明本地捕获信封唯一对应这次读取和调用。重复调用分别产生、分别检查信封。
 6. 执行合法读取后清理、前序来源与实际读取不一致、错误教授/目标/业务值、仅有命令文字、无关读取、事后读取、缺失观察、格式损坏和关联歧义等合成反例。验证格式/归属错误与产品输入错配分别分类，且观察不改变业务对象和参数。
 7. 保留合成输入、普通命令、原始标准输出、原始事件、判定输出、版本及校验值；清理临时源文件后，仍能用保存副本完成判定。
 
-当前已知的判定边界：合法读取后清理仍应认可已保留的同次证据；前序分配与实际读取错配或首次计划真实返回错误包、编号、业务数据或兄弟数据应为 `FAIL_PRODUCT`；整个 `stage5_invocation` 字段缺失为 `BLOCKED_OBSERVABILITY`；字段对象存在但必需 `argv` 缺失或损坏为 `INVALID_EVIDENCE`；信封及关联损坏或歧义为 `INVALID_EVIDENCE`。命令文字、无关打印、无关读取和事后文件不能作为实际输入证明。
+当前已知的判定边界：合法读取后清理仍应认可已保留的同次证据；前序分配与实际读取错配或首次计划真实返回错误包、编号、业务数据或兄弟数据应为 `FAIL_PRODUCT`；整个 `stage5_invocation` 字段缺失为 `BLOCKED_OBSERVABILITY`；字段对象存在但必需 `argv` 缺失或损坏为 `INVALID_EVIDENCE`；信封及关联损坏或歧义为 `INVALID_EVIDENCE`。固定本地捕获器能把单次解析和同次 CLI 绑定起来，但没有根交付路径的独立受支持来源，故不能排除内容相同的替代文件；计划审核裁定前 PC68-R1 仍不可启动。命令文字、无关打印、无关读取和事后文件不能作为实际输入证明。
 
-合成采集预检新结果见本节下方。r28 的 17 项及上一轮 19 项单元检查已被下方 22 项定向检查结果取代。契约格式检查只证明 JSON 可解析，不扩大本次预检证明范围。
+合成采集预检新结果见本节下方。本轮完整 `test_issue68_runtime_r19.py` 共 19 项，全部通过；契约格式检查只证明 JSON 可解析，不扩大本次预检证明范围。合成捕获验证通过不等于正式入口观察预检通过。
 
 ### 本地合成采集预检结果
 
 采集预检使用本地合成 `schema=3` 邮件包和模板，真实调用产品 `contact_state.py stage5-plan`，不是 PC68-R1。原始 CLI 退出码为 `0`；结构化输出为 `status=ok`、一个 `email_id`、一个邮件 job 和一个 `jobs[].model_input`，并含 `verify.合成教授=needs_recheck:missing`。这证明该合成输入下真实本地 CLI 产生了只读计划输出，不是正式教授数据或业务结果。
 
-runner 的 `_synthetic_capture_preflight()` 将 stdout 和 manifest 落盘后重新读取，再交给判定程序，返回 `verified=true`、`reason=null`。证据文件为：
+runner 的 `_synthetic_capture_preflight()` 将 stdout 和 manifest 落盘后重新读取，再交给判定程序，返回 `verified=true`、`reason=null`。这只说明合成捕获本身可验证；正式入口因根交付路径缺少独立来源仍返回 `BLOCKED_OBSERVABILITY`，不会检查服务或发送请求。证据文件为：
 
 | 证据 | 路径 | 说明 |
 | --- | --- | --- |
 | 采集预检 manifest | `.apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-synthetic-capture-preflight.json` | 记录合成输入、一次读取、实际 `argv`、CLI 退出码与结构化输出、普通 stdout 采集方式及合成关联标签；并记录评估服务未调用、正式请求未发送、正式用例未开始 |
-| 普通命令 stdout JSON | `.apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-synthetic-capture-stdout.json` | 保存同次 `pc68_actual_input_observation` 对象副本、实际 CLI `stage5_invocation.argv`、同次 `stage5_plan` 结构化结果和 `return_code=0` |
+| 普通命令 stdout JSON | `.apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-synthetic-capture-stdout.json` | 保存 `pc68_fixed_capture`、`pc68_actual_input_observation`、实际 CLI `stage5_invocation.argv`、`stage5_raw_stdout`、`stage5_process` 摘要、同次 `stage5_plan` 结构化结果和 `return_code=0` |
 
-stdout 经普通命令输出原样管道传给 `tee` 保存。manifest 记录 `owner_input_read_count=1`、`producer_return_code=0`、`eval_service_called=false`、`external_request_made=false`、`formal_case_started=false`。关联值 `runtime_generation=synthetic-r29-capture-preflight`、`thread_id=synthetic-professor-thread`、`commandExecution_id=synthetic-command-1` 都是合成值，不是 `app_server` 的真实运行代次、正式线程或调用编号。
+两个受跟踪的合成 JSON 在固定捕获器和 verifier 验证后，将机器本地绝对路径替换为 `/__pc68_*__/` 占位路径以便移植；manifest 另存路径替换前 stdout 与解析对象的 SHA-256。它们保留捕获关系及原值校验摘要，不包含本机路径。
+
+预检脚本从固定捕获器进程的 stdout 管道读取结果并保存为合成证据。manifest 记录 `owner_input_read_count=1`、`producer_return_code=0`、`eval_service_called=false`、`external_request_made=false`、`formal_case_started=false`。关联值 `runtime_generation=synthetic-r29-fixed-capture-preflight`、`thread_id=synthetic-professor-thread`、`commandExecution_id=synthetic-command-fixed-capture` 都是合成值，不是 `app_server` 的真实运行代次、正式线程或调用编号。
 
 契约格式检查命令：
 
@@ -112,12 +118,12 @@ jq -e . .apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-con
 定向检查完整命令：
 
 ```bash
-uv --offline --cache-dir /private/tmp/issue68-uv-cache run python .apm/skills/professor-contact/tests/test_issue68_runtime_r19.py
+UV_CACHE_DIR=/tmp/pc68-uv-cache uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_runtime_r19.py
 ```
 
-结果：22 项通过，耗时 `0.228s`，结果 `OK`。无 `FAIL_PRODUCT` 的混合聚合断言包含 `CASE_NOT_STARTED` 子项，并确认该子项分类保留。该检查和采集都是合成预检，不是 PC68-R1 正式验收。
+本轮实现提交 `37a1d8c58cfb59249818529d9b120a5b143cc17c` 上，定向检查 20 项通过，结果 `OK`。无 `FAIL_PRODUCT` 的混合聚合断言包含 `CASE_NOT_STARTED` 子项，并确认该子项分类保留。合成采集预检还确认真实合成 CLI 返回 `status=ok`，runner 重读 stdout/manifest 后判为 `verified=true`、`reason=null`。这些检查只验证判定与本地合成观察路径，不是 `PC68-D1` 或 `PC68-R1` 正式验收。
 
-实际 `model`、`executor`、`entrypoint`、`isolation`、`shared assets`、`service version` 尚未采集；真实 `app_server` 事件及正式教授线程关联也未核实。主机、适配器、进程号和端口不是独立必填项。契约仍为 `input_observation_gate.formal_run_allowed=false`、`reason_code=second_gate_incomplete`；runner 必须先返回 `CASE_NOT_STARTED`，不得读取或请求评估服务。实际文件中的 `eval_service_called=false`、`external_request_made=false`、`formal_case_started=false` 确认本次服务和正式用例均未运行。PC68-R1 仍未运行，第二关口仍为 `INCOMPLETE`。
+实际 `model`、`executor`、`entrypoint`、`isolation`、`shared assets`、`service version` 尚未采集；真实 `app_server` 事件及正式教授线程关联也未核实。主机、适配器、进程号和端口不是独立必填项。契约仍为 `input_observation_gate.formal_run_allowed=false`、`reason_code=owner_handoff_input_path_unobservable`；runner 必须先返回 `CASE_NOT_STARTED`，不得读取或请求评估服务。实际文件中的 `eval_service_called=false`、`external_request_made=false`、`formal_case_started=false` 确认本次服务和正式用例均未运行。PC68-R1 仍未运行，第二关口仍为 `INCOMPLETE`。
 
 ## 6. 正式终态、机器标签和总体分类
 
@@ -151,7 +157,7 @@ r25 的六种正式终态分别用于每个正式 child。对每个 child 保留
 3. 教授线程原有 JSON 解析动作同次复制的只读对象。
 4. 同一命令调用中的真实 `stage5_invocation.argv` 和 `stage5_plan` 结构化输出。
 
-信封采用 `issue-68-test-plan-r25-owner-input-v2`。`pc68_actual_input_observation` 的来源为 `owner_input_json_parse`、业务步骤为 `stage5-plan`，其中 `object` 是该次解析对象副本；`stage5_invocation.argv` 是发起原 `contact_state.py` 子进程时实际收到的完整有序字符串参数；`stage5_plan` 是同一命令中的结构化标准输出对象；`return_code` 是同次调用退出码。证据保存在 `output.app_server_events.commandExecution.aggregatedOutput`，并关联 `output.runtime_generation`、正式线程 `thread_id`、`commandExecution.id`、教授目录和步骤名。
+`pc68_actual_input_observation` 采用 `issue-68-test-plan-r25-owner-input-v2`。`pc68_fixed_capture` 记录固定捕获源码摘要、一次读取的候选本地文件和解析对象摘要；`stage5_invocation` 和 `stage5_process` 用相同 `capture_id` 关联实际 argv、stdout/stderr 摘要及退出码；`stage5_raw_stdout` 是原始 stdout，`stage5_plan` 必须与解析该 stdout 得到的对象一致，`return_code` 是同次调用退出码。正式线程证据应保存在 `output.app_server_events.commandExecution.aggregatedOutput`，并关联 `output.runtime_generation`、正式线程 `thread_id`、`commandExecution.id`、教授目录和步骤名。当前可见事件不独立给出根线程交付的 `owner_input_file` 精确路径，因此本地信封不证明根交付来源，PC68-R1 仍待计划审核者裁定路径绑定方法。
 
 结构化选择按字段和值比较，不要求缩进、键顺序或换行一致；教授目录、包路径和邮件编号按原字符串比较，不可规范化后掩盖改写。命令文字、命令中的 JSON/Python 字面量、临时路径、准备阶段文件、manifest 预期值、事后重读文件、最终业务结果、教授自述、加密提示词及无关输出均不能替代实际输入证据。计划输出只证明它明确返回的真实字段；它不证明该调用没有返回或记录的数据。
 
@@ -171,7 +177,7 @@ r25 的六种正式终态分别用于每个正式 child。对每个 child 保留
 
 | 类型 | 入口与用途 | 证据边界 |
 | --- | --- | --- |
-| 非正式合成回归 | `uv --offline --cache-dir /private/tmp/issue68-uv-cache run python .apm/skills/professor-contact/tests/test_issue68_runtime_r19.py`；另有第 5 节的合成输入采集预检 | 验证判定程序和合成观察路径。不是 `PC68-D1`，也不是 `PC68-R1` 的正式结果。 |
+| 非正式合成回归 | `uv --offline --cache-dir /tmp/issue68-uv-cache run python .apm/skills/professor-contact/tests/test_issue68_runtime_r19.py`；另有第 5 节的合成输入采集预检 | 验证判定程序和合成观察路径。不是 `PC68-D1`，也不是 `PC68-R1` 的正式结果。 |
 | 正式确定性用例 `PC68-D1` | 本节固定的 `run_issue68_stage5_routing.py --case PC68-D1` 完整入口，只运行 P1—P7 组件 | r25 规定的当前目标产品正式确定性用例；不调用评估服务，不发送模型请求，也不证明真实委派和运行时结果消费。具体是否执行以该版本运行记录为准。 |
 | 正式运行用例 `PC68-R1` | r25 规定的现有评估服务及干净消费者入口，使用当前编码执行器分支，唯一一次正式请求 | 证明实际根线程、教授线程、输入读取、结果消费及总览。不能由合成回归或 `PC68-D1` 代替。 |
 
@@ -182,7 +188,7 @@ r25 的六种正式终态分别用于每个正式 child。对每个 child 保留
 从 producer 仓库根目录执行。命令中的 `<干净产品检出绝对路径>` 和 `<空证据目录绝对路径>` 须替换成真实路径；证据目录须为空，并与产品检出不相交。产品目标版本固定为 r25 指定的提交：
 
 ```bash
-env UV_CACHE_DIR=/private/tmp/uv-cache-pr72 uv run python .apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing.py \
+env UV_CACHE_DIR=/tmp/uv-cache-pr72 uv run python .apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing.py \
   --case PC68-D1 \
   --producer-root <干净产品检出绝对路径> --producer-sha b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d \
   --output-dir <空证据目录绝对路径>
@@ -282,7 +288,7 @@ runner 必须发现恰好七个固定外层方法。集合变化为 `INVALID_TES
 
 这 43 个组件名称、proof 归属和数量是执行映射；它们不是 43 次独立正式用例。每个组件只由所属 proof 调用一次；三个 proof 层级的归属不可互换：P5 的确定性总览组件不证明 PC68-R1 的运行时总览顺序，P7 的选择分配不证明实际委派或教授读取，只有 PC68-R1 能证明这些真实运行事实。
 
-**历史执行记录。** `/private/tmp/pc68-d1-r29-20261006/` 中的原始记录已读取：`execution-record.json` 将运行绑定到 case=`PC68-D1`、候选 `issue68-r29-r23-candidate-2026-10-06`、测试代码 `e931ab22fbe492bdf0c4ecb74e906d2c23dfce23`、干净产品 `35f2785b4d13783683860db910a36add2347bd29`；时间为 `2026-10-06T00:25:07+0800` 至 `2026-10-06T00:25:51+0800`，机器 verdict=`PASS`，退出码 `0`。7 个外层测试正常结束，0 跳过、0 预期失败、0 意外成功、0 失败、0 错误；P1—P7 的历史组件数分别为 4、4、2、2、7、4、20，共 43。可复查文件包括 `command.txt`、`execution-record.json`、`proof-counts.json`、`output/proofs.json`、`output/unittest.txt`、`output/final-verdict.json` 和 `runner-exit-code.txt`。历史命令未传 `--execution-kind`，故记录为 `preflight`；其 case 仍是正式 `PC68-D1`。这次旧产品/旧候选的结果不代表目标产品 `b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d` 或当前测试实现候选已通过；此处只保留原结论，不判断复用或关口状态。
+**历史执行记录。** 此前在执行主机临时目录中读取过原始记录；该目录未随仓库移交。`execution-record.json` 将运行绑定到 case=`PC68-D1`、候选 `issue68-r29-r23-candidate-2026-10-06`、测试代码 `e931ab22fbe492bdf0c4ecb74e906d2c23dfce23`、干净产品 `35f2785b4d13783683860db910a36add2347bd29`；时间为 `2026-10-06T00:25:07+0800` 至 `2026-10-06T00:25:51+0800`，机器 verdict=`PASS`，退出码 `0`。7 个外层测试正常结束，0 跳过、0 预期失败、0 意外成功、0 失败、0 错误；P1—P7 的历史组件数分别为 4、4、2、2、7、4、20，共 43。此前读取的文件包括 `command.txt`、`execution-record.json`、`proof-counts.json`、`output/proofs.json`、`output/unittest.txt`、`output/final-verdict.json` 和 `runner-exit-code.txt`。历史命令未传 `--execution-kind`，故记录为 `preflight`；其 case 仍是正式 `PC68-D1`。这次旧产品/旧候选的结果不代表目标产品 `b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d` 或当前测试实现候选已通过；此处只保留原结论，不判断复用或关口状态。
 
 | 证明 | r25 保留的证明内容 | 本轮测试改动影响分析 | 历史执行结果（非当前候选结论） |
 | --- | --- | --- | --- |
@@ -307,8 +313,8 @@ runner 必须发现恰好七个固定外层方法。集合变化为 `INVALID_TES
 ## 11. 当前关口结论及限制
 
 - 测试计划 r25 是唯一当前依据，完整取代 r24；产品方向 r13 和产品目标 SHA 固定如第 1 节。
-- 契约 JSON 格式检查通过；22 项定向单元检查和本地合成采集预检通过：真实合成 CLI 返回 `status=ok`，runner 落盘并重读 stdout/manifest 后判为 `verified=true`、`reason=null`。定向检查耗时 `0.228s`、结果 `OK`。证据路径及命令见第 5 节；这些结果只证明本地合成调用路径。
+- 契约 JSON 格式检查通过；本轮实现提交 `37a1d8c58cfb59249818529d9b120a5b143cc17c` 对应的 20 项定向单元检查和本地合成采集预检通过：真实合成 CLI 返回 `status=ok`，runner 落盘并重读 stdout/manifest 后判为 `verified=true`、`reason=null`。这些结果只证明本地合成调用路径。
 - 实际 `model`、`executor`、`entrypoint`、`isolation`、`shared assets`、`service version` 尚未采集；真实 `app_server` 事件和正式教授线程/调用归属也未核验。Gate 2 仍为 `INCOMPLETE`；runner 必须先返回 `CASE_NOT_STARTED`，不得触碰评估服务。评估服务、正式请求和 `PC68-R1` 均未运行。
-- PC68-D1 历史目录 `/private/tmp/pc68-d1-r29-20261006/` 有可读的 43 组件回执；它绑定旧产品与旧候选版本，只保留为历史 `PASS`，不能记成当前目标产品或当前候选通过。
-- 新测试实现完整提交 SHA 等待本轮新提交后更新；当前以占位标示。
+- PC68-D1 历史记录曾在执行主机临时目录中可读，包含 43 个组件回执；该目录未随仓库移交。记录绑定旧产品与旧候选版本，只保留为历史 `PASS`，不能记成当前目标产品或当前候选通过。
+- 本轮测试实现候选完整 SHA 为 `37a1d8c58cfb59249818529d9b120a5b143cc17c`；须经第二关口审核后才能冻结并用于正式运行。
 - 第 3 节的六项运行事实、产品和共享资产实际检出以及 PC68-R1 真实输入值均未采集；不得猜测。主机、适配器、进程号和端口不是独立必填。Gate 2 审核通过且必填事实固定前，不启动正式请求；本次未运行评估服务或发送请求。
