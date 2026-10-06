@@ -87,13 +87,11 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         observation = contract["codex"]["owner_business_input_observation"]
 
         self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r29-2026-10-06")
-        self.assertEqual(observation["status"], "blocked")
+        self.assertEqual(observation["status"], "supported")
         self.assertEqual(observation["schema"], verify.OWNER_OBSERVATION_SCHEMA)
         self.assertEqual(observation["source"],
                          "output.app_server_events.commandExecution.aggregatedOutput")
-        self.assertEqual(observation["handoff_path_binding"]["status"], "blocked")
-        self.assertEqual(observation["handoff_path_binding"]["reason_code"],
-                         "owner_handoff_input_path_unobservable")
+        self.assertNotIn("handoff_path_binding", observation)
         envelope = observation["envelope"]
         self.assertEqual(set(envelope), {
             "pc68_fixed_capture", "pc68_actual_input_observation", "stage5_invocation",
@@ -110,8 +108,8 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         for field in ("FAIL_PRODUCT", "BLOCKED_OBSERVABILITY", "INVALID_EVIDENCE", "调用结束后的文件内容"):
             self.assertIn(field, requirements)
         gate = contract["preflight"]["input_observation_gate"]
-        self.assertEqual(gate["status"], "BLOCKED_OBSERVABILITY")
-        self.assertEqual(gate["reason_code"], "owner_handoff_input_path_unobservable")
+        self.assertEqual(gate["status"], "READY_FOR_GATE2_REVIEW")
+        self.assertEqual(gate["reason_code"], "second_gate_incomplete")
         self.assertFalse(gate["formal_run_allowed"])
         self.assertFalse(contract["preflight"]["input_observation_gate"]["formal_run_allowed"])
         self.assertEqual(contract["preflight"]["second_gate_status"], "INCOMPLETE")
@@ -134,25 +132,19 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
 
         self.assertFalse(gate["ready"])
         self.assertEqual(gate["state"], "BLOCKED_OBSERVABILITY")
-        self.assertEqual(gate["reason_code"], "owner_handoff_input_path_unobservable")
+        self.assertEqual(gate["reason_code"], "actual_input_evidence_source_unavailable")
         self.assertFalse(gate["service_preflight_allowed"])
 
-    def test_arbitrary_supported_handoff_source_cannot_open_gate(self):
+    def test_observation_support_does_not_complete_gate_two(self):
         contract = entry.load_contract()
-        contract["codex"]["owner_business_input_observation"]["status"] = "supported"
-        contract["codex"]["owner_business_input_observation"]["handoff_path_binding"] = {
-            "status": "supported", "source": "unverified-claim:root-handoff-path"
-        }
-        contract["preflight"]["second_gate_status"] = "COMPLETE"
-        contract["preflight"]["input_observation_gate"]["formal_run_allowed"] = True
 
         gate = entry.actual_input_observation_preflight(contract)
 
-        self.assertFalse(gate["ready"])
-        self.assertEqual(gate["state"], "BLOCKED_OBSERVABILITY")
-        self.assertEqual(gate["reason_code"], "owner_handoff_input_path_unobservable")
-        self.assertEqual(gate["formal_run_block_reason"],
-                         "owner_handoff_input_path_unobservable")
+        self.assertTrue(gate["ready"])
+        self.assertEqual(gate["state"], "OBSERVATION_SOURCE_SUPPORTED")
+        self.assertIsNone(gate["reason_code"])
+        self.assertEqual(gate["formal_run_block_reason"], "second_gate_incomplete")
+        self.assertIn("second_gate_incomplete", gate["formal_run_block_reasons"])
         self.assertFalse(gate["service_preflight_allowed"])
 
     def test_r25_observation_support_does_not_complete_gate_two(self):
@@ -160,11 +152,10 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
 
         gate = entry.actual_input_observation_preflight(contract)
 
-        self.assertFalse(gate["ready"])
-        self.assertEqual(gate["state"], "BLOCKED_OBSERVABILITY")
-        self.assertEqual(gate["reason_code"], "owner_handoff_input_path_unobservable")
+        self.assertTrue(gate["ready"])
+        self.assertEqual(gate["state"], "OBSERVATION_SOURCE_SUPPORTED")
+        self.assertIsNone(gate["reason_code"])
         self.assertFalse(gate["formal_run_allowed"])
-        self.assertIn("owner_handoff_input_path_unobservable", gate["formal_run_block_reasons"])
         self.assertIn("second_gate_incomplete", gate["formal_run_block_reasons"])
         self.assertGreater(len(gate["runtime_environment_missing"]), 0)
         self.assertFalse(gate["service_preflight_allowed"])
@@ -172,19 +163,18 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertEqual(gate["synthetic_capture"]["verifier_parser"], "consumed_business_objects")
         self.assertFalse(gate["synthetic_capture"]["app_server_aggregatedOutput_proven"])
 
-    def test_gate_two_approval_cannot_bypass_unobservable_handoff_path(self):
+    def test_gate_two_approval_allows_next_preflight_after_observation_check(self):
         contract = entry.load_contract()
         contract["preflight"]["second_gate_status"] = "COMPLETE"
         contract["preflight"]["input_observation_gate"]["formal_run_allowed"] = True
-        contract["formal_runtime_environment"]["optional_diagnostics"] = {}
 
         gate = entry.actual_input_observation_preflight(contract)
 
-        self.assertFalse(gate["ready"])
-        self.assertFalse(gate["service_preflight_allowed"])
+        self.assertTrue(gate["ready"])
+        self.assertTrue(gate["service_preflight_allowed"])
         self.assertFalse(gate["formal_run_allowed"])
-        self.assertEqual(gate["state"], "BLOCKED_OBSERVABILITY")
-        self.assertEqual(gate["formal_run_block_reason"], "owner_handoff_input_path_unobservable")
+        self.assertEqual(gate["state"], "OBSERVATION_SOURCE_SUPPORTED")
+        self.assertEqual(gate["formal_run_block_reason"], "runtime_environment_capture_pending")
 
     def test_runtime_facts_are_collected_from_this_run_before_request(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -382,10 +372,10 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             self.assertEqual(json.loads((output / "final-verdict.json").read_text())["state"],
                              "CASE_NOT_STARTED")
             self.assertEqual(json.loads((output / "final-verdict.json").read_text())["reason_code"],
-                             "owner_handoff_input_path_unobservable")
-            self.assertFalse(json.loads((output / "input-evidence-preflight.json").read_text())["ready"])
+                             "second_gate_incomplete")
+            self.assertTrue(json.loads((output / "input-evidence-preflight.json").read_text())["ready"])
             self.assertEqual(json.loads((output / "input-evidence-preflight.json").read_text())[
-                "state"], "BLOCKED_OBSERVABILITY")
+                "state"], "OBSERVATION_SOURCE_SUPPORTED")
             self.assertFalse(json.loads((output / "input-evidence-preflight.json").read_text())["formal_run_allowed"])
             clean_revision.assert_not_called()
             service.assert_not_called()

@@ -32,9 +32,6 @@ PREFLIGHT_STDOUT = PREFLIGHT_DIR / "issue68-r29-synthetic-capture-stdout.json"
 REQUIRED_RUNTIME_FACTS = (
     "model", "executor", "entrypoint", "isolation", "shared_assets", "service_version",
 )
-# No accepted event surface currently independently binds the root handoff path
-# to its receiving child thread. Add a source only with its verifier implementation.
-SUPPORTED_ROOT_HANDOFF_PATH_SOURCES = frozenset()
 PRE_SERVICE_RUNTIME_FACTS = tuple(
     fact for fact in REQUIRED_RUNTIME_FACTS if fact != "service_version"
 )
@@ -76,11 +73,8 @@ def load_contract():
     if observation.get("schema") != OWNER_OBSERVATION_SCHEMA \
             or observation.get("source") != "output.app_server_events.commandExecution.aggregatedOutput":
         raise ValueError("contract_actual_input_observation_source_mismatch")
-    if observation.get("status") == "blocked":
-        binding = observation.get("handoff_path_binding", {})
-        if binding.get("status") != "blocked" \
-                or binding.get("reason_code") != "owner_handoff_input_path_unobservable":
-            raise ValueError("contract_actual_input_observation_block_reason_missing")
+    if observation.get("status") != "supported":
+        raise ValueError("contract_actual_input_observation_status_unsupported")
     second_gate_status = contract.get("preflight", {}).get("second_gate_status")
     if second_gate_status not in ("INCOMPLETE", "COMPLETE"):
         raise ValueError("contract_second_gate_status_mismatch")
@@ -343,18 +337,10 @@ def actual_input_observation_preflight(contract):
     observation = contract.get("codex", {}).get("owner_business_input_observation", {})
     prompt = HERE / "prompts" / "issue68-stage5-root.txt"
     prompt_supported = prompt.is_file() and OWNER_OBSERVATION_SCHEMA in prompt.read_text(encoding="utf-8")
-    path_binding = observation.get("handoff_path_binding", {})
-    path_source = path_binding.get("source")
-    path_binding_supported = (
-        path_binding.get("status") == "supported"
-        and isinstance(path_source, str)
-        and path_source in SUPPORTED_ROOT_HANDOFF_PATH_SOURCES
-    )
     source_supported = (
         observation.get("status") == "supported"
         and observation.get("schema") == OWNER_OBSERVATION_SCHEMA
         and observation.get("source") == "output.app_server_events.commandExecution.aggregatedOutput"
-        and path_binding_supported
         and prompt_supported
     )
     artifact, capture_problem = _synthetic_capture_preflight()
@@ -368,27 +354,26 @@ def actual_input_observation_preflight(contract):
     runtime_values = {key: None for key in REQUIRED_RUNTIME_FACTS}
     missing_runtime_values = list(REQUIRED_RUNTIME_FACTS)
     block_reasons = []
-    if not path_binding_supported:
-        block_reasons.append("owner_handoff_input_path_unobservable")
+    if not source_supported:
+        block_reasons.append("actual_input_evidence_source_unavailable")
+    if not capture_supported:
+        block_reasons.append((capture_problem or {}).get("reason_code", "synthetic_capture_preflight_missing"))
     if not second_gate_complete:
         block_reasons.append("second_gate_incomplete")
     elif not gate_allowed:
         block_reasons.append("second_gate_decision_missing")
-    blocked_for_path = not path_binding_supported
     return {
         "ready": source_supported and capture_supported,
-        "state": "BLOCKED_OBSERVABILITY" if blocked_for_path else
-                 ("OBSERVATION_SOURCE_SUPPORTED" if source_supported and capture_supported else
-                  (capture_problem or {}).get("state", "CASE_NOT_STARTED")),
-        "reason_code": "owner_handoff_input_path_unobservable" if blocked_for_path else
-                       (None if source_supported and capture_supported else
+        "state": ("OBSERVATION_SOURCE_SUPPORTED" if source_supported and capture_supported else
+                  ((capture_problem or {}).get("state", "CASE_NOT_STARTED") if not capture_supported else
+                   "BLOCKED_OBSERVABILITY")),
+        "reason_code": (None if source_supported and capture_supported else
                         ((capture_problem or {}).get("reason_code") if not capture_supported
                          else "actual_input_evidence_source_unavailable")),
         "formal_run_allowed": False,
-        "formal_run_block_reason": ("owner_handoff_input_path_unobservable" if blocked_for_path else
-                                    ("second_gate_incomplete" if not second_gate_complete else
-                                     ("second_gate_decision_missing" if not gate_allowed else
-                                      "runtime_environment_capture_pending"))),
+        "formal_run_block_reason": ("second_gate_incomplete" if not second_gate_complete else
+                                    ("second_gate_decision_missing" if not gate_allowed else
+                                     "runtime_environment_capture_pending")),
         "formal_run_block_reasons": block_reasons,
         "service_preflight_allowed": service_preflight_allowed,
         "runtime_environment_missing": missing_runtime_values,
@@ -406,7 +391,7 @@ def actual_input_observation_preflight(contract):
         "source_status": observation.get("status"),
         "source": observation.get("source"),
         "schema": observation.get("schema"),
-        "detail": ("Synthetic local command stdout was captured and re-read by the verifier; formal app_server, runtime values, and gate 2 remain unproven."
+        "detail": ("Synthetic local command stdout was captured and re-read by the verifier; formal app_server association and runtime values remain unproven."
                    if source_supported and capture_supported else
                    "Observation source or synthetic capture preflight is not fully installed."),
     }

@@ -222,7 +222,6 @@ def run(artifact_path, stdout_capture_path, command_record):
             "limitations": [
                 "Synthetic IDs are test inputs, not Codex app_server event evidence.",
                 "This preflight does not prove formal commandExecution.aggregatedOutput or PC68-R1 behavior.",
-                "The current event adapter does not expose an independently attributable root-to-child owner_input_file path.",
             ],
         }
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
