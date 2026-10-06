@@ -8,7 +8,7 @@ readonly repository_slug='ScholarWorkflow/professor-contact'
 readonly uv_cache_dir='/private/tmp/issue66-uv-cache'
 readonly uv_expected='uv 0.12.11 (aarch64-apple-darwin)'
 readonly python_expected='Python 3.14.6'
-readonly runner_revision='issue-66-local-candidate-runner-r14-2026-10-06'
+readonly runner_revision='issue-66-local-candidate-runner-r16-2026-10-06'
 
 usage() {
   printf '用法：%s local\n' "$0" >&2
@@ -113,6 +113,12 @@ capture_required() {
   rc=$?
   [[ "$rc" -eq 0 ]] || stop "命令 $name 失败，退出码 $rc。"
 }
+
+capture_required invocation-directory pwd -P
+invocation_directory="$(<"$evidence_dir/commands/invocation-directory.stdout")"
+if ! cd -- "$repo_root"; then
+  stop "无法切换到仓库根目录：$repo_root"
+fi
 
 candidate_changes='.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py
 .apm/skills/professor-contact/tests/test_issue66_runtime_judge.py
@@ -369,7 +375,7 @@ validate_judge_sample_ledger() {
       "read_reuse",
       "evidence_channels"
     ] as $allowed_families
-    | length == 85
+    | length == 96
       and all(.[];
         . as $record
         | .schema_version == "issue66.sample-ledger.v1"
@@ -425,10 +431,10 @@ validate_judge_sample_ledger() {
         )
       )
       and ([.[].sample_id] | length == (unique | length))
-      and ([.[] | select(.expected.classification_status == "asserted")] | length == 78)
-      and ([.[] | select(.expected.classification_status == "not_asserted")] | length == 7)
-      and ([.[] | select(.expected.facts_status == "asserted")] | length == 65)
-      and ([.[] | select(.expected.facts_status == "partial")] | length == 2)
+      and ([.[] | select(.expected.classification_status == "asserted")] | length == 90)
+      and ([.[] | select(.expected.classification_status == "not_asserted")] | length == 6)
+      and ([.[] | select(.expected.facts_status == "asserted")] | length == 77)
+      and ([.[] | select(.expected.facts_status == "partial")] | length == 1)
       and ([.[] | select(.expected.facts_status == "not_asserted")] | length == 18)
       and ([.[].sample_family[]] | unique) == ["evidence_channels",
         "file_permissions", "formal_relations", "order_and_stops",
@@ -748,6 +754,7 @@ R19-5-B3|classification=FAIL|judge|test_source_metadata_drift_fails|.apm/skills/
 R19-5-B4|classification=FAIL|judge|test_missing_first_commit_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1024|missing first commit
 R19-5-B5|classification=FAIL|judge|test_handoff_value_drift_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1567|handoff value drift
 R19-5-B6|classification=FAIL|judge|test_prepare_return_for_another_round_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1583|round binding
+R19-5-B7|classification=FAIL;fact:F-credential-chain=fail|judge|test_committed_profile_fingerprint_must_match_capture|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|committed state profile fingerprint differs from captured source fingerprint
 R19-5-C1|classification=PASS|judge|test_one_round_pass|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:599|formal root delegation and routing chain
 R19-5-C2|classification=FAIL|judge|test_named_root_call_with_confirmed_zero_children_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|named root call with confirmed zero children
 R19-5-C3|classification=FAIL|judge|test_nested_foreign_relation_is_product_failure|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:709|nested foreign relation
@@ -770,6 +777,9 @@ R19-5-F4|classification=FAIL|judge|test_rebuild_started_before_terminal_record_c
 R19-5-F5|classification=INVALID_TEST_EXECUTION;fact:F-rebuild=gap|judge|test_rebuild_without_completion_is_an_evidence_gap|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1526|rebuild lacks completion evidence
 R19-5-F6|classification=FAIL|judge|test_terminal_round_bookkeeping_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|incorrect terminal round count
 R19-5-F7|classification=FAIL|judge|test_unrecognized_failure_text_does_not_hide_zero_child_failure|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|unrecognized machine failure text cannot hide confirmed zero-child failure
+R19-5-F8|classification=FAIL;fact:F-stop-order=fail|judge|test_failed_prepare_write_and_record_stop_dependent_actions|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|failed prepare followed by validator dispatch|1
+R19-5-F9|classification=FAIL;fact:F-stop-order=fail|judge|test_failed_prepare_write_and_record_stop_dependent_actions|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|failed validator write followed by save|2
+R19-5-F10|classification=FAIL;fact:F-stop-order=fail|judge|test_failed_prepare_write_and_record_stop_dependent_actions|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|failed record followed by rebuild|3
 R19-5-G1|artifact_set=unchanged_on_refusal|credential|test_credential_rejection_preserves_the_full_committed_artifact_set|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_invocation_credential.py|credential rejection snapshot||direct-assertion
 R19-5-G2|artifact_set=unchanged_on_refusal|validation_handoff|test_prepare_save_and_record_refusals_preserve_the_same_artifact_set|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_validation_handoff.py|prepare save and record refusal snapshots||direct-assertion
 R19-5-H1|read_set=matches_independent_expected|credential|test_exact_result_read_set_rejects_an_extra_open|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_invocation_credential.py|real open positive control and out-of-set negative control||direct-assertion
@@ -789,7 +799,7 @@ R19-5-I10|classification=INVALID_TEST_EXECUTION|judge|test_mismatched_call_id_ca
 R19-5-I11|classification=INVALID_TEST_EXECUTION|judge|test_mixed_evidence_set_ids_are_invalid|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|mixed evidence-set identifiers
 SAMPLE_RECORDS
 
-  if [[ "$sample_row_count" -ne 48 ]]; then
+  if [[ "$sample_row_count" -ne 52 ]]; then
     sample_ledger_valid='false'
   fi
   while IFS= read -r tsv_line || [[ -n "$tsv_line" ]]; do
@@ -800,16 +810,16 @@ SAMPLE_RECORDS
       sample_ledger_valid='false'
     fi
   done < "$evidence_dir/samples.tsv"
-  if [[ "$sample_tsv_rows" -ne 49 ]]; then
+  if [[ "$sample_tsv_rows" -ne 53 ]]; then
     sample_ledger_valid='false'
   fi
-  if [[ "$family_A" -ne 3 || "$family_B" -ne 6 || "$family_C" -ne 5 \
-    || "$family_D" -ne 5 || "$family_E" -ne 5 || "$family_F" -ne 7 \
+  if [[ "$family_A" -ne 3 || "$family_B" -ne 7 || "$family_C" -ne 5 \
+    || "$family_D" -ne 5 || "$family_E" -ne 5 || "$family_F" -ne 10 \
     || "$family_G" -ne 2 || "$family_H" -ne 4 || "$family_I" -ne 11 ]]; then
     sample_ledger_valid='false'
   fi
   if [[ "$sample_ledger_valid" == 'true' ]]; then
-    printf 'sample_ledger_status=VALID_JUDGE_AND_DIRECT_ASSERTION_RECORDS_48_SAMPLES_24_COLUMNS\n' >> "$evidence_dir/metadata.txt"
+    printf 'sample_ledger_status=VALID_JUDGE_AND_DIRECT_ASSERTION_RECORDS_52_SAMPLES_24_COLUMNS\n' >> "$evidence_dir/metadata.txt"
     return 0
   fi
   printf 'sample_ledger_status=INVALID_TEST_EXECUTION\n' >> "$evidence_dir/metadata.txt"
@@ -881,6 +891,7 @@ read -r candidate_summary _ < "$evidence_dir/commands/candidate-summary.stdout"
 {
   printf 'repository=%s\n' "$repository_slug"
   printf 'worktree=%s\n' "$repo_root"
+  printf 'invocation_directory=%s\n' "$invocation_directory"
   printf 'product_target_sha=%s\n' "$product_target_sha"
   printf 'test_commit_sha=%s\n' "$test_commit_sha"
   printf 'fixture_tree_sha=%s\n' "$fixture_tree_sha"
@@ -904,7 +915,7 @@ printf '证据目录：%s\n' "$evidence_dir"
 
 export ISSUE66_SAMPLE_LEDGER="$EVIDENCE_DIR/judge-samples.jsonl"
 : > "$ISSUE66_SAMPLE_LEDGER"
-run_suite judge test_issue66_runtime_judge.py 81 PASS '' 0
+run_suite judge test_issue66_runtime_judge.py 90 PASS '' 0
 unset ISSUE66_SAMPLE_LEDGER
 run_suite credential test_issue66_invocation_credential.py 17 PASS '' 0
 run_suite local_state test_issue66_stage3_local_state.py 12 PASS '' 0

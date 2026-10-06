@@ -397,6 +397,12 @@ class InvocationConsumptionTests(InvocationCredentialBase):
         committed = self.credential_finalize(cap, results)
         self.assertEqual(committed["status"], "ok",
                          msg=json.dumps(committed, ensure_ascii=False))
+        credential = json.loads(
+            Path(cap["invocation_file"]).read_text(encoding="utf-8"))
+        profile_sha = hashlib.sha256(profile.read_bytes()).hexdigest()
+        self.assertEqual(cap["profile_fingerprint"], profile_sha)
+        self.assertEqual(credential["profile_sha256"], profile_sha)
+        self.assertEqual(self.load_state()["profile_fingerprint"], profile_sha)
         prepared = parse(run_cli(
             "stage3-prepare-validation",
             "--invocation-file", cap["invocation_file"],

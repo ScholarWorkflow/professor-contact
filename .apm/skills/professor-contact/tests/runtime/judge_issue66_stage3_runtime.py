@@ -120,7 +120,8 @@ def stage3_command(command: str) -> str | None:
     return None
 
 
-def command_file_behavior(command: str, cwd: str | None):
+def command_file_behavior(command: str, cwd: str | None, *,
+                          ignored_stage3_subcommands=()):
     """Return every legible file operation and whether any part is unknown.
 
     Operations are ``(kind, absolute_path, exclusive_create)`` tuples. Shell
@@ -346,6 +347,12 @@ def command_file_behavior(command: str, cwd: str | None):
             if not add(kind, target, exclusive):
                 unknown = True
         if not argv:
+            continue
+        stage3 = next((argv[position + 1] for position, token in
+                       enumerate(argv[:-1])
+                       if Path(token).name == "contact_state.py"
+                       and argv[position + 1].startswith("stage3-")), None)
+        if stage3 in ignored_stage3_subcommands:
             continue
         executable = Path(argv[0]).name
         if executable in {"cat", "head", "tail", "jq", "rg", "grep", "ls",
@@ -927,16 +934,28 @@ class Judge:
         pre = self.surfaces.get("pre")
         post = self.surfaces.get("post")
         if pre is not None and post is not None:
-            self.row("F-stage4-absence", "pass" if not self._stage4_files()
-                     else "fail",
-                     "Stage-4 selection / mail-input artifacts absent",
-                     self._stage4_files() or [])
+            stage4_files = self._stage4_files()
+            if stage4_files is None:
+                self.row("F-stage4-absence", "gap",
+                         "program_root is missing or unreadable; Stage-4 absence cannot be checked",
+                         [])
+            elif stage4_files:
+                self.row("F-stage4-absence", "fail",
+                         "Stage-4 selection / mail-input artifacts must be absent",
+                         stage4_files)
+            else:
+                self.row("F-stage4-absence", "pass",
+                         "Stage-4 selection / mail-input artifacts absent", [])
 
     def _stage4_files(self):
+        if self.program_root is None or not self.program_root.is_dir():
+            return None
         found = []
-        if self.program_root is not None:
+        try:
             for pattern in ("套磁选择.json", "邮件输入.json"):
                 found.extend(str(p) for p in self.program_root.rglob(pattern))
+        except OSError:
+            return None
         return found
 
     # -- fix 1: formal attribution -----------------------------------------
@@ -1392,6 +1411,16 @@ class Judge:
             problems.append("capture return invocation_sha256 is not a "
                             "64-character SHA-256 digest")
         captured = self._credential_source(capture, cap_payload, problems, gaps)
+        profile_fingerprint = captured.get("profile_fingerprint")
+        if profile_fingerprint is not None:
+            if not isinstance(self.state, dict) \
+                    or "profile_fingerprint" not in self.state:
+                gaps.append("committed candidate state misses the captured profile fingerprint")
+            elif self.state["profile_fingerprint"] != profile_fingerprint:
+                problems.append("committed candidate state profile fingerprint differs from capture")
+        elif isinstance(self.state, dict) \
+                and self.state.get("profile_fingerprint") is not None:
+            problems.append("committed candidate state has a profile fingerprint absent from capture")
         consumption = []
         for child, record, subcommand in consumers:
             try:
@@ -1759,12 +1788,16 @@ class Judge:
                     f"round {entry['round']}: MISMATCH msg={msg_sha} "
                     f"save={save_sha} record={record_sha}")
             # the root must not touch the source outside the save entry
-            root_rewrite = self._root_source_rewrite(entry)
+            root_rewrite, root_gaps = self._root_source_rewrite(entry)
             if root_rewrite:
                 problems.append(
                     f"round {entry['round']}: root window writes the "
                     f"validator source outside the save entry "
                     f"({root_rewrite})")
+            if root_gaps:
+                gapped = True
+                rows.append(f"round {entry['round']}: root file operations "
+                            f"are not fully observable ({root_gaps})")
         if problems:
             self.row("F-raw-original", "fail",
                      "raw validator production or integrity violated",
@@ -1798,23 +1831,44 @@ class Judge:
         return start, finish, (execs, changes)
 
     @staticmethod
-    def _literal_written_bytes(command):
+    def _literal_written_bytes(command, expected_path, cwd):
         try:
             tokens = shlex.split(command)
             source = tokens[tokens.index("-c") + 1]
             tree = ast.parse(source)
         except (ValueError, IndexError, SyntaxError):
             return None
+        expected = Path(expected_path)
+        if not expected.is_absolute():
+            expected = (Path(cwd or ".") / expected).resolve()
+        writes = []
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute) \
                     or node.func.attr != "write" or not node.args:
                 continue
+            receiver = node.func.value
+            if not isinstance(receiver, ast.Call) \
+                    or not isinstance(receiver.func, ast.Name) \
+                    or receiver.func.id != "open":
+                continue
+            path_node = (receiver.args[0] if receiver.args else next(
+                (kw.value for kw in receiver.keywords if kw.arg == "file"), None))
+            if not isinstance(path_node, ast.Constant) \
+                    or not isinstance(path_node.value, str):
+                return None
+            actual = Path(path_node.value)
+            if not actual.is_absolute():
+                actual = (Path(cwd or ".") / actual).resolve()
+            if actual != expected:
+                continue
             value = node.args[0]
             if isinstance(value, ast.Constant) \
                     and isinstance(value.value, (bytes, str)):
-                return value.value if isinstance(value.value, bytes) \
-                    else value.value.encode("utf-8")
-        return None
+                writes.append(value.value if isinstance(value.value, bytes)
+                              else value.value.encode("utf-8"))
+            else:
+                return None
+        return writes[0] if len(writes) == 1 else None
 
     @staticmethod
     def _filechange_added_bytes(change):
@@ -1899,12 +1953,16 @@ class Judge:
         if path != Path(output_file) or not exclusive:
             return False
         if isinstance(observation, dict) and "command" in observation:
-            raw = self._literal_written_bytes(observation["command"])
+            raw = self._literal_written_bytes(
+                observation["command"], output_file,
+                observation.get("cwd"))
         else:
             raw = self._filechange_added_bytes(observation)
             if raw is None:
                 return None
-        if raw is None or raw != message["bytes"]:
+        if raw is None:
+            return None
+        if raw != message["bytes"]:
             return False
         return True
 
@@ -1914,21 +1972,19 @@ class Judge:
         validation_file = entry.get("validation_file") or ""
         record_cutoff = (entry.get("record") or {}).get("index")
         if record_cutoff is None:
-            return []
-        spawn_index = next(
-            (spawn["index"] for spawn, c in self.m.ordered_children()
-             if c == entry["child"]), -1)
-        hits = []
+            return [], ["record completion is missing"]
+        hits, gaps = [], []
         for record in self.m.execs.get(self.m.root_id, []):
             if record.get("index") is None or record.get("call_index") is None \
-                    or record["call_index"] <= spawn_index \
-                    or record["index"] >= record_cutoff:
+                    or record["call_index"] >= record_cutoff:
                 continue
-            if stage3_command(record["command"]) in {
-                    ROOT_SAVE, ROOT_RECORD, ROOT_PREPARE}:
-                continue
-            operations, _unknown = command_file_behavior(
-                record.get("command", ""), record.get("cwd"))
+            operations, unknown = command_file_behavior(
+                record.get("command", ""), record.get("cwd"),
+                ignored_stage3_subcommands={ROOT_SAVE, ROOT_RECORD,
+                                           ROOT_PREPARE})
+            if unknown:
+                gaps.append(f"event {record['index']}: command includes "
+                            "unresolved file behavior")
             for kind, path, _exclusive in operations:
                 if kind != "write":
                     continue
@@ -1937,15 +1993,24 @@ class Judge:
                 if validation_file \
                         and Path(path) == Path(validation_file):
                     hits.append(f"event {record['index']}: {path}")
+        for incomplete in self.m.incomplete_execs:
+            if incomplete.get("thread_id") == self.m.root_id \
+                    and incomplete.get("index", -1) < record_cutoff:
+                gaps.append(f"event {incomplete.get('index')}: incomplete "
+                            "root command before record completion")
         for change in self.m.file_changes.get(self.m.root_id, []):
-            if change["index"] <= spawn_index \
-                    or change["index"] >= record_cutoff:
+            if change["index"] >= record_cutoff:
                 continue
             path = change.get("path") or ""
             if path and (Path(path) == Path(output_file)
                          or Path(path) == Path(validation_file)):
                 hits.append(f"event {change['index']}: {path}")
-        return hits
+        for change in self.m.incomplete_file_changes:
+            if change.get("thread_id") == self.m.root_id \
+                    and change.get("index", -1) < record_cutoff:
+                gaps.append(f"event {change.get('index')}: incomplete root "
+                            "fileChange before record completion")
+        return hits, gaps
 
     # -- fix 4: real file-operation write scope ------------------------------
 
@@ -2065,6 +2130,71 @@ class Judge:
         rounds = getattr(self, "rounds", [])
         problems = []
         gaps = []
+        child_roles = {child: spawn["agent_type"]
+                       for spawn, child in m.ordered_children() if child}
+        failed_operations = []
+        for thread, records_for_thread in m.execs.items():
+            role = child_roles.get(thread)
+            for record in records_for_thread:
+                subcommand = stage3_command(record.get("command", ""))
+                operations, _unknown = command_file_behavior(
+                    record.get("command", ""), record.get("cwd"))
+                has_write = any(kind == "write" for kind, _path, _exclusive
+                                in operations)
+                tracked = (subcommand is not None
+                           or role == GENERATOR_AGENT
+                           or role == VALIDATOR_AGENT and has_write)
+                if not tracked:
+                    continue
+                result = self._exec_result(record)
+                failed_return = False
+                if subcommand is not None and result is True:
+                    payload, state = self._json_from_output(record.get("output"))
+                    failed_return = state == "ok" and isinstance(payload, dict) \
+                        and payload.get("status") not in (None, "ok")
+                if result is False or failed_return:
+                    failed_operations.append((record.get("index"),
+                                              record.get("call_index"),
+                                              thread, role, subcommand,
+                                              has_write))
+                elif result is None and subcommand is not None \
+                        and record.get("index") is None:
+                    gaps.append(f"event {record.get('call_index')}: {subcommand} "
+                                "has no completed result for stop-order checking")
+        for spawn in m.spawns:
+            output = m.spawn_outputs.get(spawn.get("call_id"))
+            if self._spawn_output_is_failure(output):
+                failed_operations.append((output["index"], spawn["index"],
+                                          m.root_id, None, "spawn_agent", False))
+
+        for finish, start, thread, role, operation, failed_write in failed_operations:
+            if finish is None:
+                continue
+            dependents = []
+            for spawn in m.spawns:
+                if spawn["index"] > finish:
+                    dependents.append(f"spawn event {spawn['index']}")
+            for owner, records_for_thread in m.execs.items():
+                for record in records_for_thread:
+                    if record.get("call_index", -1) <= finish:
+                        continue
+                    if stage3_command(record.get("command", "")) is not None:
+                        dependents.append(
+                            f"event {record['call_index']}: "
+                            f"{stage3_command(record['command'])}")
+                    elif owner == thread and (role == GENERATOR_AGENT
+                                              or role == VALIDATOR_AGENT
+                                              and failed_write):
+                        dependents.append(f"event {record['call_index']}: child command")
+            if role in {GENERATOR_AGENT, VALIDATOR_AGENT}:
+                for message in m.assistant_messages.get(thread, []):
+                    if message["index"] > finish:
+                        dependents.append(f"event {message['index']}: child message")
+            if dependents:
+                problems.append(
+                    f"event {finish}: {operation} failed but dependent business "
+                    f"actions followed: {dependents}")
+
         records = {entry["round"]: entry["record"] for entry in rounds}
         last_record = max((r["index"] for r in records.values()), default=-1)
         # A dispatch is the root's function_call event. Check it even when the
