@@ -14,7 +14,7 @@
 | 获批产品方向 | `issue-68-plan-r13-2026-10-06`，第 68 号议题评论 `6000673923`；范围批准见 PR #72 评论 `6000931583` |
 | 被测产品目标 | `ScholarWorkflow/professor-contact@b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d` |
 | 测试改动前基线 | `ScholarWorkflow/professor-contact@1c5023decdcfb22b5d196bf22640b3dab45a7b99` |
-| 新增测试实现提交 | `待最终实现提交 SHA 固定后更新` |
+| 新增测试实现提交 | `ebd62ac9e98d57dc721df646dbdc540fb452d1f9` |
 | 运行证据契约 | `.apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-contract-r19.json`，契约修订 `issue-68-runtime-evidence-r25-2026-10-06` |
 | 共享测试资产参考版本 | r25 读取时记为 `c738fa2f8bcbb16cd99d741332d5f59b062b6357`；当前实际检出位置与版本尚未核验 |
 
