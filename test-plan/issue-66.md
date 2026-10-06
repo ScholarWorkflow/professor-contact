@@ -2,7 +2,7 @@
 
 ## 计划与候选身份
 
-本记录唯一执行依据是 PR #73 评论 [5991701404](https://github.com/ScholarWorkflow/professor-contact/pull/73#issuecomment-5991701404) 所附完整计划 `issue-66-test-plan-r19-clarification-r4-2026-10-05`，逐项落实其中第 2–9 节的完整测试、预检、复验和历史要求。审核评论 [6009197999](https://github.com/ScholarWorkflow/professor-contact/pull/73#issuecomment-6009197999) 只用于定位该完整计划要求修复的八类测试问题，不替代完整计划。
+本记录唯一执行依据是 PR #73 评论 [6022078922](https://github.com/ScholarWorkflow/professor-contact/pull/73#issuecomment-6022078922) 所附完整计划 `issue-66-test-plan-r19-clarification-r5-2026-10-07`，逐项落实其中第 2–9 节的完整测试、预检、复验和历史要求。本版取代第四版评论 [5991701404](https://github.com/ScholarWorkflow/professor-contact/pull/73#issuecomment-5991701404)，补清内部命令失败后的唯一错误报告及本地候选汇总顺序。审核评论 [6009197999](https://github.com/ScholarWorkflow/professor-contact/pull/73#issuecomment-6009197999) 仅用于定位八类测试问题，不替代完整计划。第十三版实施方案及其批准不变。
 
 | 项目 | 固定值或取值方式 |
 | --- | --- |
@@ -13,18 +13,18 @@
 | 夹具树 | `c738fa2f8bcbb16cd99d741332d5f59b062b6357` |
 | 适配约定 | `skills-test-fixtures/codex-eval-adapter@16` |
 | 测试提交 | 每次运行时执行 `git rev-parse HEAD`，写入该轮证据；不在计划中伪填提交号 |
-| 本地运行器 | [issue-66-run.sh](issue-66-run.sh)，修订标记 `issue-66-local-candidate-runner-r19-2026-10-06` |
+| 本地运行器 | [issue-66-run.sh](issue-66-run.sh)，修订标记 `issue-66-local-candidate-runner-r20-2026-10-07` |
 | 任务辅助脚本 | `.tmp_scripts/2026-10-06_watch_pr73.sh` 保留在工作树；只排除此单一文件，不计入候选摘要 |
 
 候选输入摘要在运行时对运行器固定清单逐文件计算，再对清单计算 SHA-256。运行器在套件前后各算一次；不把摘要写回本记录或运行器。每条命令的完整标准输出、标准错误、退出码和实际命令保存在唯一临时证据目录。每条样例在 `samples.tsv` 保存候选摘要、测试状态、动态源码位置及原始日志指针；判定器样例还关联真实 JSONL 返回、判定器摘要、事件摘要及事件引用。测试提交号和产品目标号分开记录。
 
 固定本地环境为 `uv 0.12.11` 与 Python `3.14.6`，解释器通过 `uv run --no-project --python 3.14.6` 选择，缓存目录为 `/private/tmp/issue66-uv-cache`。运行器捕获实际 `uv`、Python、Bash、`jq`、操作系统、Codex CLI、OpenCode 及可用时的 `shellcheck` 版本。它先核对仓库根、远端、目标提交祖先关系、产品源相对产品目标无差异、工作树变更范围、候选文件摘要和工具版本；测试前后均重新计算候选摘要。
 
-当前字段解析使用 `jq 1.8.2`，安装配置使用 `yq 4.53.3`。结构化运行直接依赖固定文件 `.apm/skills/professor-contact/tests/runtime/issue66_suite_result.py`、`.apm/skills/professor-contact/tests/runtime/issue66_suite_classify.jq` 和回归文件 `.apm/skills/professor-contact/tests/test_issue66_suite_result.py`；三者均纳入候选摘要，不依赖测试日志排版。
+当前字段解析使用 `jq 1.8.2`，安装配置使用 `yq 4.53.3`。结构化运行直接依赖固定文件 `.apm/skills/professor-contact/tests/runtime/issue66_suite_result.py`、`.apm/skills/professor-contact/tests/runtime/issue66_suite_classify.jq`、`.apm/skills/professor-contact/tests/runtime/issue66_candidate_classify.jq` 和回归文件 `.apm/skills/professor-contact/tests/test_issue66_suite_result.py`；四者均纳入候选摘要，不依赖测试日志排版。
 
-## R4 第 2 节完整证明对应
+## R5 第 2 节完整证明对应
 
-下表覆盖 R4 第 2 节列出的全部要求和用例；本轮复验受影响的确定性用例并准备安装与执行接线，不新增模型隔离运行。精确目标提交的真实 APM 安装已执行；正式评测及服务、存储归属尚未核实。安装、输入及请求预检无需第二关口批准。
+下表覆盖 R5 第 2 节列出的全部要求和用例；本轮复验受影响的确定性用例并准备安装与执行接线，不新增模型隔离运行。精确目标提交的真实 APM 安装已执行；服务只读诊断已有实际端口和配置，完整存储归属预检仍未通过，正式评测未执行。安装、输入及请求预检无需第二关口批准。
 
 | 要求 | 负责用例 | 本轮负责的事实及实际调用链 | 测试、程序与证据来源 |
 | --- | --- | --- | --- |
@@ -74,9 +74,9 @@ uv run --no-project --python 3.14.6 python -B \
 
 | 顺序 | 测试文件 | 预期条目数 | 本地候选期望 |
 | --- | --- | ---: | --- |
-| 1 | `test_issue66_runtime_judge.py` | 109 | 全部通过；122 次真实判定调用写入 `judge-samples.jsonl` |
+| 1 | `test_issue66_runtime_judge.py` | 113 | 全部通过；真实判定调用写入 `judge-samples.jsonl`，实际数量由本轮账本核验 |
 | 2 | `test_issue66_execution_wiring.py` | 10 | 请求构造、快照、历史保留、正式归属及独立安装预检接线全部通过；不代替真实环境预检 |
-| 3 | `test_issue66_suite_result.py` | 5 | 结构化回调、失败身份及解析拒绝全部通过 |
+| 3 | `test_issue66_suite_result.py` | 9 | 结构化回调、失败身份、解析拒绝及四种候选汇总组合全部通过 |
 | 4 | `test_issue66_invocation_credential.py` | 17 | 全部通过 |
 | 5 | `test_issue66_stage3_local_state.py` | 12 | 全部通过 |
 | 6 | `test_issue66_validation_handoff.py` | 22 | 21 项通过；保留一个已知产品失败 |
@@ -88,25 +88,41 @@ uv run --no-project --python 3.14.6 python -B \
 
 执行中若条目数、退出码、失败身份、记录结构、样例映射或前后候选摘要任一不符，整轮记录为 `INVALID_TEST_EXECUTION`。确定性套件按记录如实为已知产品失败且所有执行证据有效时，候选整体为 `FAIL`。这两类本地结果都不是正式评测结论。
 
-## 本轮实际执行结果
+## 第五版新增定向检查与统一运行
+
+停止检查新增四个方法、六条账本样例：`test_internal_generator_failure_reports_once_and_stops` 和 `test_internal_generator_failure_then_dependent_action_fails_stop` 各检查计划、提交入口失败；另两项检查第二条报告及错误后成功报告。唯一同轮结构化错误报告与根接收事件不算继续业务；正确停下的 `F-stop-order` 为通过，但业务未完成仍为 `FAIL`。依赖业务续行的停止事实为失败。实际运行系统故障沿用原失败前缀证据，不假定最终消息一定存在。
+
+定向停止检查共 43 项、退出 0，原始材料为 `pr73-stop-final.jsonl/.log`；修前反例材料 `pr73-stop-before.jsonl/.log` 保留。候选汇总定向检查共 9 项、退出 0；`pr73-candidate-summary-precheck-final` 保存每种组合的输入、原始套件记录、独立预期及实际输出。有效证据加独立产品失败为 `FAIL`；无效账本加独立有效产品失败为 `INVALID_TEST_EXECUTION` 且保留局部失败；产品失败本身依赖无效材料时为 `INVALID_TEST_EXECUTION` 且不归因产品；有效且全通过为 `PASS`。
+
+统一运行写入 `candidate-result.json`，按结构字段提供 `evidence_validity`、`overall`、`local_product_failures`、`gaps` 及各自来源。先核对候选版本、套件和账本，再保留可独立成立的产品失败；不能因其他套件失败跳过账本检查。`runner_execution=COMPLETE` 只表示运行器已执行完全部步骤，不表示证据有效、候选完整通过或正式验收通过。四组合原始材料另存本轮 `candidate-combinations`。第五版最终统一运行已完成，下面第四版结果继续保留历史归属。
+
+第五版最终证据目录基名为 `issue66-gate2-candidate.4LPblyY0`，位于本机临时目录，完整路径保存在 `/private/tmp/pr73-r5-final.stdout`。七套件依次为判定 113、接线 10、汇总 9、凭据 17、本地状态 12 项通过，交接 22 项含 1 个既有产品失败，代理说明 9 个方法含 3 个既有失败子测试。128 次判定调用、261 条独立断言（249 条判定相关）、66 行 24 列样例均有效；账本校验 `true`、诊断 `[]`，候选前后摘要相同。整体 `FAIL`、退出 1，`evidence_validity=VALID`、缺口数组为空，独立产品失败为交接碰撞及旧代理说明两项。此结论仅负责本地确定性候选，不包括服务预检或正式验收。
+
+最终 `candidate-result.json` 的 SHA-256 为 `65c7334031f5c5c1c7bae1320819731afe6ea14e9a59876dc044b71792623c6b`，`judge-samples.jsonl` 为 `440168c6aa37022fef60c36d0459e6c1334d214e4f3e066d97613fefd0c8919e`。该轮记录运行前提交 `481c20c50658d4f150ccf10d7f4ce68841dcd94e` 与实际工作树文件摘要，不能将它写成最终推送提交。最后填报只修改两份说明，不改变程序、样例或产品，复用本轮实际检查；最终报告文件另以 `/private/tmp/pr73-r5-final-manifest.sha256` 冻结，不冒用填报前摘要。
+
+第五版首轮 `issue66-gate2-candidate.Xalmaqxa` 为 `INVALID_TEST_EXECUTION`、退出 2：新增六条调用后，运行器漏同步总调用、分类断言和完整事实断言计数。该轮两项独立产品失败仍保留，原始材料不覆盖。三处计数由 122/118/97 同步为 128/124/103；`/private/tmp/pr73-ledger-count-recheck.BiAfBNZk` 使用同一完整校验函数复判原账本为 `true`、退出 0，随后由上述最终独占轮次重新执行固定入口。
+
+新增定向及诊断证据根为 `/private/tmp`。`pr73-stop-final.jsonl` 的 SHA-256 为 `dafa9129ceeebfd566239d10c246c2a315ea715196c3e5d73cf465cd3ae7679c`，同名 `.log` 为 `2478757b4a2c671c1ebaa2db3416d255f21bdb870236308ded5cfcd4d4c47136`。`pr73-candidate-summary-precheck-final/suite-result.json` 为 `349127814e2e9b2f16c0236ff558921e65e3db53a135ccf98cb48c030f1fd3fa`；其 `candidate-combinations` 内四个方法目录的 `actual.json` 摘要分别为：`test_valid_candidate_with_independent_product_failure`：`1539b3401be64c228f2d6768b67ff12eb3e0e6cfa654a4dcdb5df93bf9e7e776`；`test_invalid_ledger_keeps_independent_product_failure`：`b1caedf0c3e4c869b16bf3c1f9f38cac16260b4ceba21b4594612c736f0309ae`；`test_invalid_material_cannot_attribute_product_failure`：`feb6afaf6bfb429cac36ec29d3c643d28884a9a1f281b5f2217e2985f0a1f073`；`test_valid_candidate_all_checks_pass`：`52f9aedd67a253fcc9f3e8881902dfe48f5c62997f9cbc27839d531c73e2081c`。
+
+## 第四版实际执行结果（历史）
 
 | 项目 | 实际结果 |
 | --- | --- |
 | 运行器 | `issue-66-local-candidate-runner-r19-2026-10-06`；证据目录 `issue66-gate2-candidate.iTkWhAuh`，退出 1，`runner_execution=COMPLETE`。 |
-| 本轮定位 | 每轮测试提交、候选 SHA-256 和唯一证据目录由运行器写入该轮 `metadata.txt`；本记录不内嵌自身摘要或运行目录。 |
+| 历史定位 | 此轮测试提交、候选 SHA-256 和唯一证据目录由运行器写入该轮 `metadata.txt`；不当作第五版候选摘要。 |
 | 七套件结果 | 判定器 109、接线 10、结构化记录 5、凭据 17、本地状态 12 项全部通过；交接 22 项含 1 个产品失败，代理约定 9 个方法含 3 个产品失败子测试。实际 JSON 与退出码均保留。 |
 | 失败身份 | `test_new_invocation_can_prepare_round_one_after_prior_terminal_validation`；以及 `test_opencode_example_and_common_closeout_follow_skill_handoff_chain` 的 `OpenCode 示例`、`共同收尾`、`禁止旧直接记录方式` 三个子测试。 |
 | 判定记录 | 122 条真实调用、245 条独立断言，其中 233 条判定相关断言。分类预期 118 条明确、4 条局部；事实预期 97 条明确、1 条部分、24 条未单独检查。实际返回分布为 `PASS=12`、`FAIL=59`、`INVALID_TEST_EXECUTION=48`、`BLOCKED=3`；负例正确拒绝属于自测通过。 |
 | 账本 | 60 行、24 列，无空字段，方法状态全部有效；`sample_ledger_status=VALID_JUDGE_AND_DIRECT_ASSERTION_RECORDS_60_SAMPLES_24_COLUMNS`。判定诊断为 `[]`，账本校验为 `true`、退出 0。 |
-| 总结 | 当前运行整体 `FAIL`，执行及账本有效；失败来自以上两类产品问题。正式评测未运行。 |
+| 总结 | 此历史运行整体 `FAIL`，执行及账本有效；失败来自以上两类产品问题。正式评测未运行。 |
 
 每条实际命令、标准输出、标准错误、退出码、原始判定返回、事件摘要、样例行及候选摘要均保存在运行器创建的唯一目录。该目录的原始材料只追加保留，不由本记录改写。
 
-本次最后填报只修改两份说明，不修改测试程序、样例或产品。复用 `iTkWhAuh` 中七套件结构化结果、实际程序文件哈希与账本检查；该轮摘要仅绑定填报前的候选，不能当作填报后摘要。最终候选由顶层另生成全文件摘要清单冻结；本记录不写入自身最终摘要，避免自引用。
+`iTkWhAuh` 绑定第四版候选。第五版改变停止判定、样例和汇总程序，需要对应新运行；不能将旧摘要、计数或通过结果当作第五版完整实测。最终候选由顶层另生成全文件摘要清单冻结；本记录不写入自身最终摘要，避免自引用。
 
 ## 第五节样例账本映射
 
-运行器生成 60 行 `samples.tsv`。本地样例编号只用于账本定位；每行记录独立预期、观察值、判定依据、计划族、源码方法的动态行号和最小原始证据指针。A–F、I 关联真实判定 JSONL；G、H 及 D5–D7 用 `direct-assertion`，观察状态写作 `assertion-matched`，不伪称判定器结果。计划族与采集器 `sample_family` 分列，不要求两套名称相同。
+运行器固定映射 66 行 `samples.tsv`；实际生成数量由新运行核验。本地样例编号只用于账本定位；每行记录独立预期、观察值、判定依据、计划族、源码方法的动态行号和最小原始证据指针。A–F、I 关联真实判定 JSONL；G、H 及 D5–D7 用 `direct-assertion`，观察状态写作 `assertion-matched`，不伪称判定器结果。计划族与采集器 `sample_family` 分列，不要求两套名称相同。
 
 | 族与数量 | 逐样例测试映射 |
 | --- | --- |
@@ -115,12 +131,12 @@ uv run --no-project --python 3.14.6 python -B \
 | C，5 | C1 `test_one_round_pass`；C2 `test_named_root_call_with_confirmed_zero_children_fails`；C3 `test_nested_foreign_relation_is_product_failure`；C4 `test_conflicting_formal_owners_for_child_are_invalid`；C5 `test_extra_off_root_formal_relation_fails`。C1 与 A1 共用同一个真实调用记录，并在两行分别保留计划样例身份。 |
 | D，7 | D1 `test_legal_whitespace_message_passes`；D2 `test_root_reconstruction_fails`；D3 `test_second_business_message_fails`；D4 `test_complete_run_with_no_validator_production_fails`；D5 `RecordHandoffTests.test_record_parses_the_same_buffer_that_was_digest_checked`；D6 `test_file_change_add_diff_preserves_utf8_and_line_endings` 检查真实对象形 `kind` 下，Unicode、CRLF/LF 及有无尾换行均按原字节保留；D7 `test_file_change_protocol_shape_bytes_lifecycle_delete_and_move_target` 检查缺失或非字符串 `diff`、开始/成功完成配对、增加/更新/删除、Add 不能证明排他创建、Update 差异不能证明结果字节、移动目标范围、伪造字段无效及未知类型缺口。 |
 | E，8 | E1 `test_compound_legal_read_and_single_exclusive_output_write_passes`；E2 `test_python_command_with_multiple_write_targets_fails`；E3 `test_same_byte_write_then_restore_still_fails_write_scope`；E4 `test_overwrite_existing_candidate_source_fails_write_scope`；E5 `test_outside_output_write_fails`；E6–E8 `test_pure_unknown_command_is_an_evidence_gap` 的未知命令、未调用函数内写操作、不可达分支写操作。后三者都把权限结论留作证据缺口。 |
-| F，11 | F1 `test_machine_failure_prefix_blocks`；F2 `test_correction_dispatch_between_record_start_and_completion_fails`；F3 `test_machine_failure_prefix_does_not_hide_prior_product_failure`；F4 `test_rebuild_started_before_terminal_record_completed_fails`；F5 `test_rebuild_without_completion_is_an_evidence_gap`；F6 `test_terminal_round_bookkeeping_fails`；F7 `test_unrecognized_failure_text_does_not_hide_zero_child_failure`；F8–F10 `test_failed_prepare_write_and_record_stop_dependent_actions` 的准备失败、验证写入失败和记录失败三种调用；F11 `test_machine_failure_prefix_does_not_hide_prior_product_failure` 的正式归属冲突仍保留先前已证实的提前重建产品失败。 |
+| F，17 | F1 `test_machine_failure_prefix_blocks`；F2 `test_correction_dispatch_between_record_start_and_completion_fails`；F3 `test_machine_failure_prefix_does_not_hide_prior_product_failure`；F4 `test_rebuild_started_before_terminal_record_completed_fails`；F5 `test_rebuild_without_completion_is_an_evidence_gap`；F6 `test_terminal_round_bookkeeping_fails`；F7 `test_unrecognized_failure_text_does_not_hide_zero_child_failure`；F8–F10 `test_failed_prepare_write_and_record_stop_dependent_actions` 的准备失败、验证写入失败和记录失败三种调用；F11 `test_machine_failure_prefix_does_not_hide_prior_product_failure` 的正式归属冲突仍保留先前已证实的提前重建产品失败；F12–F13 `test_internal_generator_failure_reports_once_and_stops` 的计划、提交失败后唯一错误报告；F14–F15 `test_internal_generator_failure_then_dependent_action_fails_stop` 的相同两种失败后依赖业务续行；F16 `test_internal_generator_failure_does_not_allow_second_report`；F17 `test_internal_generator_failure_does_not_allow_success_report`。 |
 | G，2 | G1 `test_credential_rejection_preserves_the_full_committed_artifact_set`；G2 `test_prepare_save_and_record_refusals_preserve_the_same_artifact_set`。 |
 | H，4 | H1、H2 `test_exact_result_read_set_rejects_an_extra_open`；H3、H4 `test_named_group_is_replaced_and_sibling_group_is_kept`。每对分别保存正例与负控观察。 |
 | I，13 | I1–I6 `test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted` 的 `missing=install,fixture,storage,pre,post,routing` 六个调用，按真实调用序号 1–6；I7 `test_truncated_record_output_is_invalid`；I8 `test_unsupported_message_shape_is_invalid`；I9 `test_non_monotonic_event_seq_invalidates_validator_evidence`；I10 `test_mismatched_call_id_cannot_bind_validator_command_completion`；I11 `test_mixed_evidence_set_ids_are_invalid`；I12–I13 同一方法直接调用 `judge.main()`，分别证明顶层评测响应缺失和截断都返回结构化 `INVALID_TEST_EXECUTION`，并把 `F-test-program`、`F-evidence-input` 记为无效。 |
 
-judge JSONL 采用 `issue66.sample-ledger.v1`；当前采集为 122 条真实判定调用、唯一 `sample_id=test_id#run-N`，保存 245 条独立断言，其中 233 条与判定结果关联。每条保留独立断言、真实返回、判定器摘要、夹具摘要、源码调用位置、完整 `raw_app_server_events`、事件数量和事件索引引用。运行器逐条解析原始事件，核对数组长度，以及每条引用的序号、方法、线程、轮次、项目类型、项目编号和调用编号；任何引用错位都会使账本失败。局部检查不得冒充整体结论，部分预期不从实际判定结果回填。运行器按断言 subject 精确映射到整体分类、唯一对应事实或记录声明的局部返回；不认识的 subject 或值不一致会使账本失败。`commands/judge-ledger-assertion-diagnostics.stdout` 保留失败的样例编号、subject、预期值、断言观察值和实际判定值，再按测试编号与调用序号关联样例。G、H、D5–D7 的直接断言有源码方法状态和原始测试日志指针，但不声称独立判定器结果。
+判定 JSONL 采用 `issue66.sample-ledger.v1`；第四版历史采集为 122 条真实判定调用、245 条独立断言（233 条判定相关）。第五版最终账本为 128 条调用、261 条断言（249 条判定相关），唯一编号继续为 `sample_id=test_id#run-N`。每条保留独立断言、真实返回、判定器摘要、夹具摘要、源码调用位置、完整 `raw_app_server_events`、事件数量和事件索引引用。运行器逐条解析原始事件，核对数组长度及引用的序号、方法、线程、轮次、项目类型、项目编号和调用编号；错位使账本失败。部分预期不从实际结果回填，局部检查不冒充整体结论。运行器按断言 `subject` 精确映射到分类、唯一事实或局部返回；未知字段或值不一致使账本失败。`commands/judge-ledger-assertion-diagnostics.stdout` 保存样例编号、预期、观察值和实际判定值，再按测试编号及调用序号关联。G、H、D5–D7 的直接断言有源码状态及日志指针，不伪称独立判定器结果。
 
 ## 复验决定和范围
 
@@ -134,9 +150,9 @@ judge JSONL 采用 `issue66.sample-ledger.v1`；当前采集为 122 条真实判
 | `S3-ASSET-COMPAT-1` | `test_stage3_idea_generator_agent_contract.py` 当前流程断言；调用方兼容证明仍指向 r15 的历史版本。 | 当前流程断言本轮执行并保留失败；历史调用方证明不与之混同。 |
 | `S3-RT-CODEX-1` | 需要已批准 Gate2、冻结候选、固定版本安装、服务与专用存储归属证明、请求前后受保护集合及原始 `app_server_events`。 | 未运行。当前目录没有正式评测材料。 |
 
-本地执行环境实际版本、测试提交、候选摘要、每条退出码、七套件实际计数和实际失败身份由最终本轮证据目录记录；候选摘要不写回候选文件，避免自引用。安装及请求构造预检由独立接线入口完成；正式 `/eval`、服务、存储及线程归属仍未核实。
+本地执行环境实际版本、测试提交、候选摘要、每条退出码、七套件实际计数和实际失败身份由最终本轮证据目录记录；候选摘要不写回候选文件，避免自引用。安装及请求构造预检由独立接线入口完成；服务诊断已有端口和实际配置，完整存储预检及正式线程归属仍未成立，正式 `/eval` 未执行。
 
-### R4 第 8 节逐用例依赖与复验决定
+### R5 第 8 节逐用例依赖与复验决定
 
 | 用例 | 产品依赖 | 样例与断言 | 解析和观察方式 | 环境依赖 | 本轮复验决定 |
 | --- | --- | --- | --- | --- | --- |
@@ -157,15 +173,17 @@ judge JSONL 采用 `issue66.sample-ledger.v1`；当前采集为 122 条真实判
 
 更改判定器、证据解析或样例时，只重跑声明依赖这些内容的判定器样例；凭据、交接、拒绝副作用或读取集合的改动重跑对应入口套件及共享准备依赖。正式产品入口、输入、运行环境或证据来源变化时按命中的用例复验。单纯提交 SHA 改变不自动触发全量复验；沿用的历史通过必须保留其产品/测试版本和影响判断。
 
-## R4 第七节最小预检记录
+## R5 第七节最小预检记录
 
 | 编号 | 计划要求 | 已核对的证据 | 结果 |
 | --- | --- | --- | --- |
-| 1 | 执行入口、固定程序、隔离、安装、实际配置及存储归属可核验 | APM 0.29.0 在独占消费者执行精确目标提交安装，退出 0，耗时 310.1 秒，证据目录 `issue66-install-preflight.p00XRJAK`。修正初态构造器路径后，`issue66-install-check-fixed-20261006` 退出 0：锁文件完整目标提交、技能与状态脚本原字节、三个代理 TOML 正文、初态摘要、禁止产物缺席、共识请求及前快照均核验成功，`formal_request_sent=false`。旧安装检查 `issue66-install-check-20261006` 退出 2，因测试构造器路径错误保留为 `CASE_NOT_STARTED`。项目 `direnv exec . printenv EVAL_PORT` 退出 1、未返回端口；共享来源指定的测试专用存储根尚未取得，实际进程配置、数据库与日志归属未核实。 | **部分完成**；安装、初态、请求与前快照已就绪；端口及专用存储来源缺口不能记作通过。 |
+| 1 | 执行入口、固定程序、隔离、安装、实际配置及存储归属可核验 | APM 0.29.0 在独占消费者执行精确目标提交安装，退出 0，耗时 310.1 秒，证据目录 `issue66-install-preflight.p00XRJAK`。`issue66-install-check-fixed-20261006` 退出 0：锁文件目标提交、技能与脚本字节、三个代理 TOML 正文、初态、禁止产物缺席、请求及前快照均核验成功，`formal_request_sent=false`。旧 `issue66-install-check-20261006` 退出 2，构造器路径错误保留为 `CASE_NOT_STARTED`。旧完整预检在仓库端口读取退出 1 后停止；2026-10-07 新诊断已取得指定项目端口及实际配置，详见下文。 | **部分完成**；安装、初态、请求及前快照已就绪；共享约定来源及现有接线缺口未解决。 |
 | 2 | 可信证据核对正式关系、子线程消息、实际工具调用、完成返回字段及关联 | 原始历史探测已可定位并离线重新解析：59 条事件，版本 `codex-cli 0.159.0-alpha.12.1`；21802/21803 共享线程、轮次及消息编号并有相同完整正文，21815 为根接收。`issue66-preflight-20261006/relationship-check.json` 的正式关系及委派对比均为真。原始响应 SHA-256 为 `57ff0300b3e269edbabd11fae6e24e6a62afebabb028dcbd7dca995b6b83ffc8`，原适配器输出为 `46406d63ea382759c958326f12e7ee68d8cd8f6d8168ab8cca89f81c99975316`。原探测未指定业务代理目标、未生产业务文件；不能据此宣称命名代理、生产或权限通过。工具及文件事件格式由固定版本源码、入口确定性证明及判定器反例承担，未增加完整文件监视前提。 | **部分完成**；可信关系及消息能力已复核；当前服务实际事件版本、正式业务生产及权限事实尚未形成。 |
-| 3 | 检查合法通过、产品违反、证据无效、外部失败，并确认缺字段不会被默认吞掉 | `issue66-gate2-candidate.iTkWhAuh` 判定器 109 项通过，122 条调用及独立断言覆盖三种合法完成、产品违反、缺失/截断/不支持/混版证据、外部失败前缀与正式安装入口绑定。七套件的 JSON 状态、60 行映射及前后摘要均已核验；两个已知产品问题如实保留。 | **已完成能力检查**；本地整体为 `FAIL`，执行及账本有效；不宣称完整环境预检通过。 |
+| 3 | 检查合法通过、产品违反、证据无效、外部失败，并确认缺字段不会被默认吞掉 | 第五版最终 `issue66-gate2-candidate.4LPblyY0` 的 113 项判定、128 条调用、66 行映射及前后摘要已核验；四组合检查通过，两个已知产品问题保留。首轮计数缺陷及修正复判见新增检查节。 | **已完成能力检查**；本地整体 `FAIL`，执行及账本有效；不宣称完整环境预检通过。 |
 
-预检结论：安装、初态、请求构造、前快照及历史消息关系已核验；服务端口、实际配置及专用存储来源仍缺失。未调用 `/eval`，未连接服务存储，未启动或检查用户进程。当前不是完整预检通过；正式业务生产和运行存储归属由后续冻结运行取得，不能提前填成通过。
+预检结论：安装、初态、请求构造、前快照及历史消息关系已核验。2026-10-07 只读诊断从指定项目目录取得实际端口，实际值保存在本地原始记录；已核对监听进程、应用服务后代、进程环境及实际配置。配置的 `sqlite_home`、`log_dir` 位于测试专用目录，未发现进程继承 `CODEX_SQLITE_HOME`；实际打开 `logs_2.sqlite`、`queue_1.sqlite` 两个数据库，没有打开日志文件。没有查询数据库内容、发送 `/eval` 或启停服务。尚缺共享来源指定的服务隔离约定文件；固定接线在仓库目录读取端口且要求唯一数据库及打开日志，与实际来源和文件形状不符。当前为 `CASE_NOT_STARTED`，不归因产品，也不是完整预检通过。
+
+只读诊断原始文件 `pr73-service-observation-20261007.json` 保存在本地，SHA-256 为 `5652af259b720e1bf5865ca24afedf149f9b62bd1227c1c58bcf009033ebb1d0`。不公开实际私有目录。上述接线缺口交测试设计审核者修订；不得伪造共享来源文件、放宽隔离或临场改用其他数据库。线上共识允许测试专用服务实例共享持久存储，配置覆盖写在该实例的 `config.toml`，不逐次评测注入；每次正式运行仍须新根线程及独占消费者、请求和输出。
 
 固定完整预检实际记录为 `issue66-service-preflight-20261006/verdict.json`：`classification=CASE_NOT_STARTED`、`formal_request_sent=false`，程序退出 2；命令 `12-eval-port` 退出 1、未返回端口，在安装和请求之前停止。专用存储来源尚未取得，不能以任意临时根目录替代。
 
@@ -197,4 +215,4 @@ Gate2 状态：未批准；Gate3 状态：未运行。
 
 完整正式执行材料已准备在 [安装与执行接线](issue-66-execution.md)、`issue-66-formal.sh` 及 `issue66_execution.py`；准备和必要预检不以 Gate2 批准为前提。只有独立审批明确批准并冻结候选后才执行正式 `/eval`。正式动作前核对批准评论绑定的候选摘要和 PR #73 当前 head；缺少批准、摘要或 head 不匹配、目标安装或夹具版本不符、服务/存储归属不清、证据关联不完整时停止。正式评测受真实机器失败前缀约束；不得把缺失观察记作通过，不自动重试，不删除失败证据。
 
-本记录及固定执行材料共同提供待审候选。目标版本安装、实际投影、初态、请求构造与前快照已预检；安装复验使用已有独占消费者，程序记录 `newly_created=false`，元数据曾误写为真之旧材料保留。未完成项为服务端口、共享来源指定的专用存储根及实际配置归属；正式运行后的快照、存储线程归属及真实生产、保存、记录和停止事实尚未形成。缺失环境前提交测试设计审核者处理，不改产品、不降低证明要求。
+本记录及固定执行材料共同提供待审候选。目标版本安装、实际投影、初态、请求构造与前快照已预检；安装复验使用已有独占消费者，程序记录 `newly_created=false`，元数据曾误写为真之旧材料保留。当前未完成项为指定服务隔离约定来源、端口读取目录和多数据库及日志采集接线的设计修订；只读诊断不替代完整预检。正式运行后的快照、存储线程归属及真实生产、保存、记录和停止事实尚未形成。提交测试设计审核者处理，不改产品、不降低证明要求。

@@ -2,6 +2,7 @@
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import unittest
 from pathlib import Path
@@ -12,6 +13,103 @@ spec.loader.exec_module(helper)
 
 
 class StructuredResultTests(unittest.TestCase):
+    def candidate_case(self, *, ledger_valid, suite_valid, product_fails,
+                       expected_overall, expected_failures, expected_validity):
+        # 预期按计划第六节四种组合固定，不从被测汇总程序取值。
+        class Case(unittest.TestCase):
+            def test_product(self):
+                if product_fails:
+                    self.fail("独立产品断言违反")
+        raw, _ = self.run_case(Case)
+        failures = [row for row in raw["tests"] if row["status"] != "ok"]
+        record = {"suite": "product_control", "owner": "product",
+                  "result": raw["classification"],
+                  "evidence_validity": "VALID" if suite_valid else "INVALID",
+                  "structured_status_source": "raw-suite.json#tests.status",
+                  "raw_event_source": "raw-suite.json#tests.events",
+                  "failures": failures}
+        value = {"candidate": {"validity": "VALID", "source": "candidate-files.sha256"},
+                 "ledger": {"validity": "VALID" if ledger_valid else "INVALID",
+                            "source": "samples.tsv;judge-samples.jsonl"},
+                 "suites": [record]}
+        parsed = subprocess.run(["jq", "-f", str(Path(__file__).parent /
+                                "runtime/issue66_candidate_classify.jq")],
+                                input=json.dumps(value), text=True,
+                                capture_output=True, check=True)
+        actual = json.loads(parsed.stdout)
+        expected = {"overall": expected_overall,
+                    "local_product_failure_count": expected_failures,
+                    "evidence_validity": expected_validity}
+        evidence_root = os.environ.get("EVIDENCE_DIR")
+        if evidence_root:
+            directory = Path(evidence_root) / "candidate-combinations" / self._testMethodName
+            directory.mkdir(parents=True, exist_ok=False)
+            for filename, content in (("raw-suite.json", raw), ("input.json", value),
+                                      ("independent-expected.json", expected),
+                                      ("actual.json", actual)):
+                (directory / filename).write_text(json.dumps(content, ensure_ascii=False,
+                                                             indent=2), encoding="utf-8")
+        self.assertEqual(actual["overall"], expected_overall)
+        self.assertEqual(actual["evidence_validity"], expected_validity)
+        self.assertEqual(len(actual["local_product_failures"]), expected_failures)
+        self.assertEqual(actual["runner_execution"], "COMPLETE")
+        self.assertIn("仅表示运行器已执行完全部步骤", actual["runner_execution_meaning"])
+        self.assertEqual(bool(actual["gaps"]), expected_validity == "INVALID")
+        if expected_failures:
+            self.assertEqual(actual["local_product_failures"][0]["test_id"], failures[0]["test_id"])
+            self.assertEqual(actual["local_product_failures"][0]["events"], failures[0]["events"])
+            self.assertEqual(actual["local_product_failures"][0]["raw_event_source"],
+                             record["raw_event_source"])
+        if product_fails and not suite_valid:
+            # 套件自称有效却声称通过，与原始失败相矛盾，仍不能归因产品。
+            contradictory = json.loads(json.dumps(value))
+            contradictory["suites"][0]["evidence_validity"] = "VALID"
+            contradictory["suites"][0]["result"] = "PASS"
+            control = subprocess.run(["jq", "-f", str(Path(__file__).parent /
+                                     "runtime/issue66_candidate_classify.jq")],
+                                     input=json.dumps(contradictory), text=True,
+                                     capture_output=True, check=True)
+            control_result = json.loads(control.stdout)
+            self.assertEqual(control_result["overall"], "INVALID_TEST_EXECUTION")
+            self.assertEqual(control_result["local_product_failures"], [])
+            if evidence_root:
+                (directory / "contradictory-input.json").write_text(
+                    json.dumps(contradictory, ensure_ascii=False, indent=2), encoding="utf-8")
+                (directory / "contradictory-actual.json").write_text(control.stdout, encoding="utf-8")
+        # 同一断言若归属测试程序，必须记执行无效，不能计作产品失败。
+        if product_fails:
+            value["suites"][0]["owner"] = "test_program"
+            value["suites"][0]["result"] = "INVALID_TEST_EXECUTION"
+            control = subprocess.run(["jq", "-f", str(Path(__file__).parent /
+                                     "runtime/issue66_candidate_classify.jq")],
+                                     input=json.dumps(value), text=True,
+                                     capture_output=True, check=True)
+            control_result = json.loads(control.stdout)
+            self.assertEqual(control_result["overall"], "INVALID_TEST_EXECUTION")
+            self.assertEqual(control_result["local_product_failures"], [])
+            if evidence_root:
+                (directory / "test-program-input.json").write_text(
+                    json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+                (directory / "test-program-actual.json").write_text(control.stdout, encoding="utf-8")
+
+    def test_valid_candidate_with_independent_product_failure(self):
+        self.candidate_case(ledger_valid=True, suite_valid=True, product_fails=True,
+                            expected_overall="FAIL", expected_failures=1, expected_validity="VALID")
+
+    def test_invalid_ledger_keeps_independent_product_failure(self):
+        self.candidate_case(ledger_valid=False, suite_valid=True, product_fails=True,
+                            expected_overall="INVALID_TEST_EXECUTION", expected_failures=1,
+                            expected_validity="INVALID")
+
+    def test_invalid_material_cannot_attribute_product_failure(self):
+        self.candidate_case(ledger_valid=False, suite_valid=False, product_fails=True,
+                            expected_overall="INVALID_TEST_EXECUTION", expected_failures=0,
+                            expected_validity="INVALID")
+
+    def test_valid_candidate_all_checks_pass(self):
+        self.candidate_case(ledger_valid=True, suite_valid=True, product_fails=False,
+                            expected_overall="PASS", expected_failures=0, expected_validity="VALID")
+
     def run_case(self, case):
         log = io.StringIO()
         result = unittest.TextTestRunner(stream=log, verbosity=2, resultclass=helper.Result).run(

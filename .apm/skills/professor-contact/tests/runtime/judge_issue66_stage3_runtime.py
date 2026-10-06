@@ -2790,6 +2790,7 @@ class Judge:
         rounds = getattr(self, "rounds", [])
         problems = []
         gaps = []
+        reports = []
         child_roles = {child: spawn["agent_type"]
                        for spawn, child in m.ordered_children() if child}
         failed_operations = []
@@ -2826,7 +2827,8 @@ class Judge:
                     failed_operations.append((record.get("index"),
                                               record.get("call_index"),
                                               thread, role, subcommand,
-                                              has_write, declined))
+                                              has_write, declined,
+                                              record.get("turn_id")))
                 elif result is None and subcommand is not None \
                         and record.get("index") is None:
                     gaps.append(f"event {record.get('call_index')}: {subcommand} "
@@ -2836,9 +2838,9 @@ class Judge:
             if self._spawn_output_is_failure(output):
                 failed_operations.append((output["index"], spawn["index"],
                                           m.root_id, None, "spawn_agent", False,
-                                          False))
+                                          False, None))
 
-        for finish, start, thread, role, operation, failed_write, declined \
+        for finish, start, thread, role, operation, failed_write, declined, turn_id \
                 in failed_operations:
             if finish is None:
                 continue
@@ -2859,8 +2861,35 @@ class Judge:
                                               and failed_write):
                         dependents.append(f"event {record['call_index']}: child command")
             if not declined and role in {GENERATOR_AGENT, VALIDATOR_AGENT}:
-                for message in m.assistant_messages.get(thread, []):
+                messages = m.assistant_messages.get(thread, [])
+                for message in messages:
                     if message["index"] > finish:
+                        # A tool failure is a command result, not an assistant
+                        # business message. The generator must report that
+                        # failure once to its caller; that report is not a
+                        # dependent generation/validation action. Keep the
+                        # failed command in the credential/business verdict.
+                        if role == GENERATOR_AGENT \
+                                and operation in {CHILD_PLAN, CHILD_FINALIZE} \
+                                and len(messages) == 1 \
+                                and message.get("turn_id") == turn_id:
+                            try:
+                                report = json.loads(message["bytes"])
+                            except (ValueError, UnicodeDecodeError):
+                                report = None
+                            if isinstance(report, dict) \
+                                    and report.get("result") == "error" \
+                                    and "program_root" in report \
+                                    and (report["program_root"] is None
+                                         or isinstance(report["program_root"], str)) \
+                                    and report.get("directions") == [] \
+                                    and isinstance(report.get("notes"), str) \
+                                    and report["notes"].strip():
+                                reports.append(
+                                    f"event {finish}: {operation} failed; "
+                                    f"event {message['index']}: unique error "
+                                    f"report on {thread}, turn {turn_id}")
+                                continue
                         dependents.append(f"event {message['index']}: child message")
             if dependents:
                 problems.append(
@@ -2932,7 +2961,7 @@ class Judge:
                      "stop boundaries cannot be fully checked", gaps)
         else:
             self.row("F-stop-order", "pass", "stop boundaries honored",
-                     [f"last record event {last_record}"])
+                     [f"last record event {last_record}"] + reports)
 
     def judge_terminal_state(self):
         state = self.state

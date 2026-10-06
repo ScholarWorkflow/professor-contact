@@ -8,7 +8,7 @@ readonly repository_slug='ScholarWorkflow/professor-contact'
 readonly uv_cache_dir='/private/tmp/issue66-uv-cache'
 readonly uv_expected='uv 0.12.11 (aarch64-apple-darwin)'
 readonly python_expected='Python 3.14.6'
-readonly runner_revision='issue-66-local-candidate-runner-r19-2026-10-06'
+readonly runner_revision='issue-66-local-candidate-runner-r20-2026-10-07'
 
 usage() {
   printf '用法：%s local\n' "$0" >&2
@@ -130,6 +130,7 @@ candidate_changes='.apm/skills/professor-contact/tests/runtime/judge_issue66_sta
 .apm/skills/professor-contact/tests/test_issue66_execution_wiring.py
 .apm/skills/professor-contact/tests/runtime/issue66_suite_result.py
 .apm/skills/professor-contact/tests/runtime/issue66_suite_classify.jq
+.apm/skills/professor-contact/tests/runtime/issue66_candidate_classify.jq
 .apm/skills/professor-contact/tests/test_issue66_suite_result.py
 test-plan/issue-66-formal.sh
 test-plan/issue-66-execution.md
@@ -151,6 +152,7 @@ candidate_files='.apm/agents/professor-contact-idea-generator.agent.md
 .apm/skills/professor-contact/tests/test_issue66_execution_wiring.py
 .apm/skills/professor-contact/tests/runtime/issue66_suite_result.py
 .apm/skills/professor-contact/tests/runtime/issue66_suite_classify.jq
+.apm/skills/professor-contact/tests/runtime/issue66_candidate_classify.jq
 .apm/skills/professor-contact/tests/test_issue66_suite_result.py
 test-plan/issue-66-formal.sh
 test-plan/issue-66-execution.md
@@ -207,7 +209,7 @@ run_suite() {
   local name="$1" pattern="$2" test_count="$3"
   local report="$evidence_dir/suite-$1.json"
   local rc=0 result='INVALID_TEST_EXECUTION' actual_test_count='NOT_PARSED'
-  local failures='0' identities='NONE'
+  local failures='0' identities='NONE' evidence_validity='INVALID'
   local owner='product'
   case "$name" in
     judge|execution_wiring|structured_result) owner='test_program' ;;
@@ -227,12 +229,19 @@ run_suite() {
     actual_test_count="$(jq -r '.tests_run' "$report")"
     failures="$(jq -r '.failures' "$report")"
     identities="$(jq -c '[.tests[] | select(.status != "ok") | {test_id,status,events}]' "$report")"
+    evidence_validity='VALID'
   fi
   printf '%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n' \
     "$name" "$result" "$test_count" "$actual_test_count" "$rc" \
     'structured-result' "$identities" "结构化记录：$failures 个断言失败。" >> "$suites_tsv"
   jq -n --arg suite "$name" --arg result "$result" --argjson exit_code "$rc" \
-    '{suite:$suite,result:$result,exit_code:$exit_code}' >> "$evidence_dir/suites.jsonl"
+    --arg owner "$owner" --arg validity "$evidence_validity" \
+    --arg status_source "suite-$name.json#tests.status" \
+    --arg raw_source "suite-$name.json#tests.events" \
+    --argjson failures "$(if [[ "$identities" == 'NONE' ]]; then printf '[]'; else printf '%s' "$identities"; fi)" \
+    '{suite:$suite,result:$result,exit_code:$exit_code,owner:$owner,
+      evidence_validity:$validity,structured_status_source:$status_source,
+      raw_event_source:$raw_source,failures:$failures}' >> "$evidence_dir/suites.jsonl"
   printf '%s：%s（%s 项，退出码 %d）\n' "$name" "$result" "$test_count" "$rc"
 }
 validate_judge_sample_ledger() {
@@ -328,7 +337,7 @@ validate_judge_sample_ledger() {
       "read_reuse",
       "evidence_channels"
     ] as $allowed_families
-    | length == 122
+    | length == 128
       and all(.[];
         . as $record
         | .schema_version == "issue66.sample-ledger.v1"
@@ -401,9 +410,9 @@ validate_judge_sample_ledger() {
         )
       )
       and ([.[].sample_id] | length == (unique | length))
-      and ([.[] | select(.expected.classification_status == "asserted")] | length == 118)
+      and ([.[] | select(.expected.classification_status == "asserted")] | length == 124)
       and ([.[] | select(.expected.classification_status == "not_asserted")] | length == 4)
-      and ([.[] | select(.expected.facts_status == "asserted")] | length == 97)
+      and ([.[] | select(.expected.facts_status == "asserted")] | length == 103)
       and ([.[] | select(.expected.facts_status == "partial")] | length == 1)
       and ([.[] | select(.expected.facts_status == "not_asserted")] | length == 24)
       and ([.[].sample_family[]] | unique) == ["evidence_channels",
@@ -709,6 +718,12 @@ R19-5-F8|classification=FAIL;fact:F-stop-order=fail|judge|test_failed_prepare_wr
 R19-5-F9|classification=FAIL;fact:F-stop-order=fail|judge|test_failed_prepare_write_and_record_stop_dependent_actions|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|failed validator write followed by save|2
 R19-5-F10|classification=FAIL;fact:F-stop-order=fail|judge|test_failed_prepare_write_and_record_stop_dependent_actions|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|failed record followed by rebuild|3
 R19-5-F11|classification=FAIL;fact:F-rebuild=fail;fact:F-attribution=invalid|judge|test_machine_failure_prefix_does_not_hide_prior_product_failure|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|independent early rebuild failure survives conflicting formal owners|2
+R19-5-F12|classification=FAIL;fact:F-stop-order=pass;fact:F-credential-chain=fail|judge|test_internal_generator_failure_reports_once_and_stops|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|internal plan failure, one error report, no dependent action|1
+R19-5-F13|classification=FAIL;fact:F-stop-order=pass;fact:F-credential-chain=fail|judge|test_internal_generator_failure_reports_once_and_stops|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|internal finalize failure, one error report, no dependent action|2
+R19-5-F14|classification=FAIL;fact:F-stop-order=fail;fact:F-credential-chain=fail|judge|test_internal_generator_failure_then_dependent_action_fails_stop|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|internal plan failure followed by dependent prepare|1
+R19-5-F15|classification=FAIL;fact:F-stop-order=fail;fact:F-credential-chain=fail|judge|test_internal_generator_failure_then_dependent_action_fails_stop|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|internal finalize failure followed by dependent prepare|2
+R19-5-F16|classification=FAIL;fact:F-stop-order=fail|judge|test_internal_generator_failure_does_not_allow_second_report|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|internal failure followed by duplicate error report|1
+R19-5-F17|classification=FAIL;fact:F-stop-order=fail|judge|test_internal_generator_failure_does_not_allow_success_report|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|internal failure followed by success report|1
 R19-5-G1|artifact_set=unchanged_on_refusal|credential|test_credential_rejection_preserves_the_full_committed_artifact_set|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_invocation_credential.py|credential rejection snapshot||direct-assertion
 R19-5-G2|artifact_set=unchanged_on_refusal|validation_handoff|test_prepare_save_and_record_refusals_preserve_the_same_artifact_set|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_validation_handoff.py|prepare save and record refusal snapshots||direct-assertion
 R19-5-H1|read_set=matches_independent_expected|credential|test_exact_result_read_set_rejects_an_extra_open|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_invocation_credential.py|real open positive control and out-of-set negative control||direct-assertion
@@ -730,7 +745,7 @@ R19-5-I12|missing_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evide
 R19-5-I13|truncated_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-input=invalid|judge|test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is truncated||direct-assertion
 SAMPLE_RECORDS
 
-  if [[ "$sample_row_count" -ne 60 ]]; then
+  if [[ "$sample_row_count" -ne 66 ]]; then
     sample_ledger_valid='false'
   fi
   while IFS= read -r tsv_line || [[ -n "$tsv_line" ]]; do
@@ -741,16 +756,16 @@ SAMPLE_RECORDS
       sample_ledger_valid='false'
     fi
   done < "$evidence_dir/samples.tsv"
-  if [[ "$sample_tsv_rows" -ne 61 ]]; then
+  if [[ "$sample_tsv_rows" -ne 67 ]]; then
     sample_ledger_valid='false'
   fi
   if [[ "$family_A" -ne 3 || "$family_B" -ne 7 || "$family_C" -ne 5 \
-    || "$family_D" -ne 7 || "$family_E" -ne 8 || "$family_F" -ne 11 \
+    || "$family_D" -ne 7 || "$family_E" -ne 8 || "$family_F" -ne 17 \
     || "$family_G" -ne 2 || "$family_H" -ne 4 || "$family_I" -ne 13 ]]; then
     sample_ledger_valid='false'
   fi
   if [[ "$sample_ledger_valid" == 'true' ]]; then
-    printf 'sample_ledger_status=VALID_JUDGE_AND_DIRECT_ASSERTION_RECORDS_60_SAMPLES_24_COLUMNS\n' >> "$evidence_dir/metadata.txt"
+    printf 'sample_ledger_status=VALID_JUDGE_AND_DIRECT_ASSERTION_RECORDS_66_SAMPLES_24_COLUMNS\n' >> "$evidence_dir/metadata.txt"
     return 0
   fi
   printf 'sample_ledger_status=INVALID_TEST_EXECUTION\n' >> "$evidence_dir/metadata.txt"
@@ -848,14 +863,37 @@ printf '证据目录：%s\n' "$evidence_dir"
 
 export ISSUE66_SAMPLE_LEDGER="$EVIDENCE_DIR/judge-samples.jsonl"
 : > "$ISSUE66_SAMPLE_LEDGER"
-run_suite judge test_issue66_runtime_judge.py 109
+run_suite judge test_issue66_runtime_judge.py 113
 unset ISSUE66_SAMPLE_LEDGER
 run_suite execution_wiring test_issue66_execution_wiring.py 10
-run_suite structured_result test_issue66_suite_result.py 5
+run_suite structured_result test_issue66_suite_result.py 9
 run_suite credential test_issue66_invocation_credential.py 17
 run_suite local_state test_issue66_stage3_local_state.py 12
 run_suite validation_handoff test_issue66_validation_handoff.py 22
 run_suite agent_contract test_stage3_idea_generator_agent_contract.py 9
+
+combination_check_rc=0
+while IFS= read -r method; do
+  combination_dir="$evidence_dir/candidate-combinations/$method"
+  capture "candidate-combination-$method" jq -e \
+    --slurpfile expected "$combination_dir/independent-expected.json" \
+    --slurpfile raw "$combination_dir/raw-suite.json" \
+    --slurpfile input "$combination_dir/input.json" '
+      .schema == "issue66-candidate-result-v1"
+      and .overall == $expected[0].overall
+      and .evidence_validity == $expected[0].evidence_validity
+      and (.local_product_failures | length) == $expected[0].local_product_failure_count
+      and .runner_execution == "COMPLETE"
+      and .runner_execution_meaning == "仅表示运行器已执行完全部步骤；不表示证据有效、候选通过或正式验收通过"
+      and $input[0].suites[0].result == $raw[0].classification
+      and $input[0].suites[0].failures == [$raw[0].tests[] | select(.status != "ok")]
+    ' "$combination_dir/actual.json" || combination_check_rc=1
+done <<'CANDIDATE_COMBINATIONS'
+test_valid_candidate_with_independent_product_failure
+test_invalid_ledger_keeps_independent_product_failure
+test_invalid_material_cannot_attribute_product_failure
+test_valid_candidate_all_checks_pass
+CANDIDATE_COMBINATIONS
 
 sample_ledger_rc=0
 write_sample_records || sample_ledger_rc=$?
@@ -865,26 +903,27 @@ write_candidate_manifest after "$candidate_manifest_after"
 capture_required candidate-summary-after shasum -a 256 "$candidate_manifest_after"
 candidate_summary_after=''
 read -r candidate_summary_after _ < "$evidence_dir/commands/candidate-summary-after.stdout"
-if [[ "$candidate_summary_after" != "$candidate_summary" ]]; then
-  printf 'INVALID_TEST_EXECUTION\t候选文件在执行期间发生变化。\n' > "$evidence_dir/outcome.txt"
-  printf '候选文件在执行期间发生变化；本次证据不能绑定到单一候选。\n' >&2
-  exit 2
-fi
-
-if jq -e -s 'any(.[]; .result == "INVALID_TEST_EXECUTION")' "$evidence_dir/suites.jsonl" > /dev/null; then
-  overall='INVALID_TEST_EXECUTION'
-  exit_code=2
-elif jq -e -s 'any(.[]; .result == "PRODUCT_FAIL")' "$evidence_dir/suites.jsonl" > /dev/null; then
-  overall='FAIL'
-  exit_code=1
-elif [[ "$sample_ledger_rc" -ne 0 ]]; then
-  overall='INVALID_TEST_EXECUTION'
-  exit_code=2
-else
-  overall='PASS'
-  exit_code=0
-fi
+candidate_validity='VALID'
+ledger_validity='VALID'
+[[ "$candidate_summary_after" == "$candidate_summary" ]] || candidate_validity='INVALID'
+[[ "$sample_ledger_rc" -eq 0 && "$combination_check_rc" -eq 0 ]] || ledger_validity='INVALID'
+jq -n --arg candidate_validity "$candidate_validity" --arg ledger_validity "$ledger_validity" \
+  --argjson sample_ledger_exit_code "$sample_ledger_rc" \
+  --argjson combination_check_exit_code "$combination_check_rc" \
+  --slurpfile suites "$evidence_dir/suites.jsonl" \
+  '{candidate:{validity:$candidate_validity,source:"candidate-files.sha256;candidate-files.after.sha256"},
+    ledger:{validity:$ledger_validity,source:"samples.tsv;judge-samples.jsonl;candidate-combinations/",
+            sample_ledger_exit_code:$sample_ledger_exit_code,
+            combination_check_exit_code:$combination_check_exit_code},suites:$suites}' \
+  > "$evidence_dir/candidate-summary-input.json"
+capture_required candidate-overall jq -f \
+  .apm/skills/professor-contact/tests/runtime/issue66_candidate_classify.jq \
+  "$evidence_dir/candidate-summary-input.json"
+cp "$evidence_dir/commands/candidate-overall.stdout" "$evidence_dir/candidate-result.json"
+overall="$(jq -r '.overall' "$evidence_dir/candidate-result.json")"
+exit_code="$(jq -r '.exit_code' "$evidence_dir/candidate-result.json")"
 printf 'candidate_verdict=%s\nrunner_execution=COMPLETE\n' "$overall" > "$evidence_dir/outcome.txt"
+printf 'runner_execution_meaning=仅表示运行器已执行完全部步骤；不表示证据有效、候选通过或正式验收通过\n' >> "$evidence_dir/outcome.txt"
 printf 'candidate_verdict=%s\n' "$overall" >> "$evidence_dir/metadata.txt"
 printf 'evidence_directory=%s\n' "$evidence_dir" >> "$evidence_dir/metadata.txt"
 printf '运行完成：%s；退出码 %d；证据目录：%s\n' "$overall" "$exit_code" "$evidence_dir"

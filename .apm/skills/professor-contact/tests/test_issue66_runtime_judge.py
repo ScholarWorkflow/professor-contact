@@ -1,7 +1,7 @@
 """Channel validation for the S3-RT-CODEX-1 runtime judge (issue #66).
 
 The judge is the frozen parsing/decision program for the runtime evidence
-(``issue-66-test-plan-r19-clarification-r4-2026-10-05`` §四/§五/§七). Each test
+(``issue-66-test-plan-r19-clarification-r5-2026-10-07`` §四/§五/§七). Each test
 builds ONE synthetic evidence set whose expected verdict is fixed by the
 frozen contract — never by the judge.  Sample families:
 
@@ -2317,6 +2317,71 @@ class WriteScopeTests(RuntimeJudgeTestCase):
 
 
 class OrderAndStopTests(RuntimeJudgeTestCase):
+    @staticmethod
+    def failed_generator_prefix(subcommand, *, continue_business=False):
+        fx = Fixture()
+        fx.spawn(judge.GENERATOR_AGENT, G1)
+        fx.generator_round(G1)
+        failure = next(index for index, event in enumerate(fx.events)
+                       if event["message"]["method"] == "item/completed"
+                       and event["message"]["params"].get("threadId") == G1
+                       and subcommand in event["message"]["params"]["item"].get("command", "")
+                       and "--invocation-file" in event["message"]["params"]["item"].get("command", ""))
+        fx.events = fx.events[:failure + 1]
+        item = fx.events[-1]["message"]["params"]["item"]
+        item["aggregatedOutput"] = json.dumps({
+            "status": "error", "reason_code": "validation_source_changed"})
+        if subcommand == judge.CHILD_FINALIZE:
+            item["exitCode"] = 1
+        report = json.dumps({
+            "result": "error", "program_root": "/tmp", "directions": [],
+            "notes": "validation_source_changed: runner stopped"})
+        fx.child_message(G1, report)
+        fx.complete_child(G1)
+        # The caller receives the same child result via a tool completion.
+        # This is not a second assistant message from the generator.
+        fx.events[-1]["message"]["params"]["item"]["output"][0]["text"] = report
+        if continue_business:
+            fx.prepare(1)
+        return fx
+
+    def test_internal_generator_failure_reports_once_and_stops(self):
+        for subcommand in (judge.CHILD_PLAN, judge.CHILD_FINALIZE):
+            with self.subTest(subcommand=subcommand):
+                fx = self.failed_generator_prefix(subcommand)
+                verdict = run(fx, state=None)
+                self.assertEqual(verdict["classification"], "FAIL", verdict)
+                self.assertEqual(facts(verdict)["F-stop-order"], "pass", verdict)
+                self.assertEqual(facts(verdict)["F-credential-chain"], "fail", verdict)
+
+    def test_internal_generator_failure_then_dependent_action_fails_stop(self):
+        for subcommand in (judge.CHILD_PLAN, judge.CHILD_FINALIZE):
+            with self.subTest(subcommand=subcommand):
+                fx = self.failed_generator_prefix(subcommand, continue_business=True)
+                verdict = run(fx, state=None)
+                self.assertEqual(verdict["classification"], "FAIL", verdict)
+                self.assertEqual(facts(verdict)["F-stop-order"], "fail", verdict)
+                self.assertEqual(facts(verdict)["F-credential-chain"], "fail", verdict)
+
+    def test_internal_generator_failure_does_not_allow_second_report(self):
+        fx = self.failed_generator_prefix(judge.CHILD_FINALIZE)
+        report = next(event for event in fx.events
+                      if event["message"]["params"]["item"].get("type") == "message")
+        fx.events.insert(fx.events.index(report) + 1, _json_copy(report))
+        verdict = run(fx, state=None)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-stop-order"], "fail", verdict)
+
+    def test_internal_generator_failure_does_not_allow_success_report(self):
+        fx = self.failed_generator_prefix(judge.CHILD_FINALIZE)
+        report = next(event for event in fx.events
+                      if event["message"]["params"]["item"].get("type") == "message")
+        report["message"]["params"]["item"]["content"][0]["text"] = json.dumps({
+            "result": "ok", "program_root": "/tmp", "directions": [], "notes": "done"})
+        verdict = run(fx, state=None)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-stop-order"], "fail", verdict)
+
     @staticmethod
     def declined_prefix(stage):
         fx = Fixture()

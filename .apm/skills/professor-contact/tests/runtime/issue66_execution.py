@@ -16,7 +16,7 @@ from pathlib import Path
 TARGET = "dfe430560b6e4d9d85c30b71b8c84bc621da7549"
 FIXTURE = "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
 ADAPTER = "skills-test-fixtures/codex-eval-adapter@16"
-PLAN = "issue-66-test-plan-r19-clarification-r4-2026-10-05"
+PLAN = "issue-66-test-plan-r19-clarification-r5-2026-10-07"
 HERE = Path(__file__).resolve().parent
 PROFESSOR = Path("教授研究/X分野/Example Professor")
 ARTIFACTS = {
