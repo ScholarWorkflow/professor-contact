@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PC68-R1 verifier: professor-local business consumption and root orchestration."""
 import argparse
+import hashlib
 import json
 import shlex
 from pathlib import Path
@@ -18,6 +19,7 @@ codex_final_result_source = final_source.codex_final_result_source
 
 ACTIONS = {"stage5-list-inputs", "stage5-partition-choices", "stage5-plan",
            "stage5-rebuild-overview"}
+OWNER_OBSERVATION_SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
 
 
 def command_action(command, manifest):
@@ -87,18 +89,178 @@ def is_owner_business_surface(text):
 
 
 def consumed_business_objects(stage5_calls):
-    """Fail closed until a supported per-call input observation is available.
+    """Read one r25 observation and plan result from each actual plan call.
 
-    ``commandExecution.command`` and ``aggregatedOutput`` do not contain the
-    bytes delivered to or read by the process. In particular, command text,
-    paths, embedded literals and later file contents cannot establish what a
-    specific invocation consumed. Keep this boundary explicit so repeated
-    invocations are never collapsed into one inferred packet.
+    The only accepted source is the strict JSON envelope emitted by the
+    existing owner-input parse action and the original ``stage5-plan`` call
+    in the *same* commandExecution. Command text, standalone stdout objects,
+    unrelated reads and later file contents are not substitutes. Each call is
+    kept as its own row so repeated invocations cannot collapse together.
     """
-    call_ids = [call.get("id") for call in stage5_calls
-                if isinstance(call, dict) and isinstance(call.get("id"), str)]
-    return [], verdict("BLOCKED_OBSERVABILITY", "owner_actual_input_unobservable",
-                       missing_call_ids=call_ids)
+    rows, seen_call_ids, missing_call_ids = [], set(), []
+    plan_calls = []
+    for call in stage5_calls:
+        if not isinstance(call, dict):
+            continue
+        command = call.get("command", "")
+        try:
+            parsed = command_action(command, {"program_root": _packet_program_root(call)})
+        except (ValueError, KeyError, TypeError):
+            parsed = None
+        action = parsed.get("action") if isinstance(parsed, dict) else _compound_action(command)
+        if action == "stage5-plan":
+            plan_calls.append(call)
+    if not plan_calls:
+        return [], verdict("BLOCKED_OBSERVABILITY", "owner_business_object_unobservable")
+
+    for call in sorted(plan_calls, key=lambda row: (row.get("start", -1), row.get("end", -1))):
+        call_id = call.get("id")
+        thread = call.get("thread")
+        generation = call.get("generation")
+        if not isinstance(call_id, str) or not call_id or call_id in seen_call_ids \
+                or not isinstance(thread, str) or not thread \
+                or not isinstance(generation, str) or not generation:
+            return [], verdict("INVALID_EVIDENCE", "owner_input_observation_association_invalid",
+                               observed_call_id=call_id, observed_thread=thread,
+                               observed_generation=generation)
+        seen_call_ids.add(call_id)
+        command = call.get("command", "")
+        try:
+            parsed = command_action(command, {"program_root": _packet_program_root(call)})
+        except (ValueError, KeyError, TypeError):
+            parsed = None
+        action = parsed.get("action") if isinstance(parsed, dict) else _compound_action(command)
+        if action != "stage5-plan":
+            return [], verdict("INVALID_EVIDENCE", "owner_input_observation_step_ambiguous",
+                               observed_call_id=call_id)
+        output = call.get("output")
+        if not isinstance(output, str) or not output.strip():
+            missing_call_ids.append(call_id)
+            continue
+        try:
+            envelope = _strict_json_object(output)
+        except (ValueError, TypeError):
+            # Output with unrelated diagnostics/reads or damaged JSON cannot
+            # be interpreted as an input observation.
+            if "pc68_actual_input_observation" not in output:
+                missing_call_ids.append(call_id)
+                continue
+            return [], verdict("INVALID_EVIDENCE", "owner_input_observation_malformed",
+                               observed_call_id=call_id)
+        if set(envelope) != {"pc68_actual_input_observation", "stage5_plan", "return_code",
+                             "stage5_invocation"}:
+            if "pc68_actual_input_observation" not in envelope:
+                missing_call_ids.append(call_id)
+                continue
+            if "stage5_invocation" not in envelope:
+                return [], verdict("BLOCKED_OBSERVABILITY", "owner_stage5_invocation_unobservable",
+                                   observed_call_id=call_id)
+            return [], verdict("INVALID_EVIDENCE", "owner_input_observation_shape_invalid",
+                               observed_call_id=call_id)
+        observation = envelope.get("pc68_actual_input_observation")
+        plan = envelope.get("stage5_plan")
+        if not isinstance(observation, dict) or observation.get("schema") != OWNER_OBSERVATION_SCHEMA \
+                or observation.get("source_step") != "owner_input_json_parse" \
+                or observation.get("business_step") != "stage5-plan" \
+                or not isinstance(observation.get("object"), dict) \
+                or not isinstance(plan, dict) or not isinstance(envelope.get("return_code"), int):
+            return [], verdict("INVALID_EVIDENCE", "owner_input_observation_shape_invalid",
+                               observed_call_id=call_id)
+        packet = observation["object"]
+        try:
+            invocation = _structured_stage5_invocation(envelope["stage5_invocation"])
+        except (ValueError, TypeError):
+            return [], verdict("INVALID_EVIDENCE", "owner_stage5_invocation_invalid",
+                               observed_call_id=call_id)
+        if invocation["action"] != "stage5-plan":
+            return [], verdict("INVALID_EVIDENCE", "owner_input_observation_step_ambiguous",
+                               observed_call_id=call_id)
+        pack = packet.get("email_pack")
+        program_root = packet.get("program_root")
+        if not isinstance(pack, str) or not pack or not isinstance(program_root, str) or not program_root:
+            return [], verdict("INVALID_EVIDENCE", "owner_input_observation_identity_missing",
+                               observed_call_id=call_id)
+        if plan.get("email_pack") not in (None, pack):
+            return [], verdict("FAIL_PRODUCT", "owner_plan_directory_changed",
+                               observed_call_id=call_id, observed_pack=plan.get("email_pack"),
+                               observed_input_pack=pack)
+        rows.append({"packet": packet, "plan": plan, "invocation": invocation, "call_id": call_id,
+                     "thread": thread, "generation": generation,
+                     "command": command, "return_code": envelope["return_code"],
+                     "start": call.get("start"), "end": call.get("end")})
+    if missing_call_ids:
+        return [], verdict("BLOCKED_OBSERVABILITY", "owner_actual_input_unobservable",
+                           missing_call_ids=missing_call_ids)
+    return rows, None
+
+
+def _packet_program_root(call):
+    """Only used to structurally parse direct commands without guessing flags."""
+    command = call.get("command", "") if isinstance(call, dict) else ""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return ""
+    for index, token in enumerate(tokens[:-1]):
+        if token == "--program-root":
+            return tokens[index + 1]
+    # Compound wrappers have no strict flag facts; their output still needs
+    # the observation envelope before it can be accepted.
+    return ""
+
+
+def _strict_json_object(text):
+    """Parse exactly one JSON object, rejecting duplicate keys and extra text."""
+    def unique_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate_json_key")
+            result[key] = value
+        return result
+
+    value = json.loads(text, object_pairs_hook=unique_pairs)
+    if not isinstance(value, dict):
+        raise ValueError("json_top_level_not_object")
+    return value
+
+
+def _structured_stage5_invocation(value):
+    """Parse the exact argv vector recorded at the installed CLI boundary.
+
+    The vector is emitted by the same command wrapper that passes it to the
+    existing contact_state.py process. Never recover these facts from the
+    shell command string: wrappers and ``python -c`` calls do not expose their
+    actual child argv there.
+    """
+    if not isinstance(value, dict) or set(value) != {"argv"}:
+        raise ValueError("stage5_invocation_shape_invalid")
+    argv = value.get("argv")
+    if not isinstance(argv, list) or not argv or any(not isinstance(arg, str) for arg in argv):
+        raise ValueError("stage5_invocation_argv_invalid")
+    scripts = [index for index, arg in enumerate(argv)
+               if Path(arg).name == "contact_state.py"]
+    if len(scripts) != 1:
+        raise ValueError("stage5_invocation_script_ambiguous")
+    action_index = scripts[0] + 1
+    if action_index >= len(argv) or argv[action_index] not in ACTIONS:
+        raise ValueError("stage5_invocation_action_invalid")
+    action = argv[action_index]
+    tail = argv[action_index + 1:]
+    if len(tail) % 2:
+        raise ValueError("stage5_invocation_arguments_invalid")
+    flags = {}
+    for offset in range(0, len(tail), 2):
+        flag, item = tail[offset], tail[offset + 1]
+        if not flag.startswith("--"):
+            raise ValueError("stage5_invocation_arguments_invalid")
+        if flag == "--owner":
+            flags.setdefault(flag, []).append(item)
+            continue
+        if flag in flags:
+            raise ValueError("stage5_invocation_arguments_invalid")
+        flags[flag] = item
+    return {"action": action, "flags": flags, "argv": list(argv)}
 
 
 def _choices_summary(observed, expected):
@@ -115,39 +277,177 @@ def _choices_summary(observed, expected):
 
 
 def owner_payload(rows, manifest):
-    """The r19 owner-local packet conditions for one formal child.
-
-    Source completeness and attribution first, then the frozen isolation
-    conditions: no ``choices_scope`` field, exact owner-local ``choices``
-    rows, no sibling marker anywhere in the serialized object, and an
-    ``email_id`` belonging to this owner when the object carries one.
-    """
-    if len(rows) > 1:
-        return None, verdict("INVALID_EVIDENCE", "owner_business_object_ambiguous",
-                             observed_candidates=len(rows))
+    """Validate every same-call packet and its directly associated plan result."""
     if not rows:
         return None, verdict("BLOCKED_OBSERVABILITY", "owner_business_object_unobservable")
-    row = rows[0]
-    pack = row["email_pack"]
-    owner = next((candidate for candidate in manifest["owners"] if candidate["email_pack"] == pack), None)
+    first = rows[0]
+    packet = first["packet"]
+    pack = packet["email_pack"]
+    owner = next((candidate for candidate in manifest["owners"]
+                  if candidate["email_pack"] == pack), None)
     if owner is None:
         return None, verdict("FAIL_PRODUCT", "unexpected_owner_pack", observed_pack=pack)
-    if "choices_scope" in row:
+    if first.get("generation") is None or first.get("thread") is None:
+        return None, verdict("INVALID_EVIDENCE", "owner_input_observation_association_invalid")
+    if packet.get("program_root") != manifest.get("program_root"):
+        return None, verdict("FAIL_PRODUCT", "owner_program_root_changed", observed_pack=pack)
+    if str(Path(pack).parent) != owner["professor_dir"]:
+        return None, verdict("FAIL_PRODUCT", "owner_professor_directory_changed",
+                             observed_pack=pack, observed_professor_dir=str(Path(pack).parent))
+    if "professor_dir" in packet and packet["professor_dir"] != owner["professor_dir"]:
+        return None, verdict("FAIL_PRODUCT", "owner_professor_directory_changed",
+                             observed_pack=pack, observed_professor_dir=packet["professor_dir"])
+    if "choices_scope" in packet:
         return None, verdict("FAIL_PRODUCT", "owner_input_carries_choices_scope", observed_pack=pack)
-    if "choices" not in row:
+    if "choices" not in packet:
         return None, verdict("FAIL_PRODUCT", "choices_transport_missing", observed_pack=pack)
-    if row["choices"] != owner["expected_choices_rows"]:
+    if packet["choices"] != owner["expected_choices_rows"]:
         return None, verdict("FAIL_PRODUCT", "owner_bundle_choices_changed", observed_pack=pack,
-                             choices_summary=_choices_summary(row["choices"], owner["expected_choices_rows"]))
-    text = json.dumps(row, ensure_ascii=False)
+                             choices_summary=_choices_summary(packet["choices"], owner["expected_choices_rows"]))
+    if "email_id" in packet and packet["email_id"] not in owner["email_ids"]:
+        return None, verdict("FAIL_PRODUCT", "owner_target_mismatch", observed_pack=pack,
+                             observed_email_id=packet["email_id"])
+    if packet.get("result") != owner.get("result"):
+        return None, verdict("FAIL_PRODUCT", "owner_result_path_changed", observed_pack=pack,
+                             observed_result=packet.get("result"))
+    if packet.get("mode") != "first":
+        return None, verdict("FAIL_PRODUCT", "owner_mode_changed", observed_pack=pack,
+                             observed_mode=packet.get("mode"))
+    for row in rows:
+        flags = row.get("invocation", {}).get("flags", {})
+        if flags.get("--email-pack") not in (None, pack):
+            return None, verdict("FAIL_PRODUCT", "owner_plan_directory_changed",
+                                 observed_call_id=row.get("call_id"),
+                                 observed_pack=flags.get("--email-pack"))
+        if "--choices-scope" in flags:
+            return None, verdict("FAIL_PRODUCT", "owner_plan_carries_choices_scope",
+                                 observed_call_id=row.get("call_id"))
+        if row["packet"] != packet:
+            return None, verdict("FAIL_PRODUCT", "owner_input_changed_between_calls",
+                                 observed_call_id=row.get("call_id"))
+        if row["thread"] != first["thread"] or row["generation"] != first["generation"]:
+            return None, verdict("INVALID_EVIDENCE", "owner_input_observation_association_ambiguous",
+                                 observed_call_id=row.get("call_id"))
+    first_invocation = first.get("invocation")
+    if not isinstance(first_invocation, dict) or first_invocation.get("action") != "stage5-plan":
+        return None, verdict("INVALID_EVIDENCE", "owner_stage5_invocation_invalid",
+                             observed_call_id=first.get("call_id"))
+    if any(flag in first_invocation.get("flags", {}) for flag in ("--result", "--choices")):
+        return None, verdict("FAIL_PRODUCT", "owner_initial_plan_carries_result_or_choices",
+                             observed_call_id=first.get("call_id"))
+    text = json.dumps([row["packet"] for row in rows] + [row["plan"] for row in rows],
+                      ensure_ascii=False)
     markers = [marker for marker in owner["sibling_exclusions"] if marker in text]
     if markers:
         return None, verdict("FAIL_PRODUCT", "owner_input_contains_sibling_data", observed_pack=pack,
                              observed_markers=markers)
-    if "email_id" in row and row["email_id"] not in owner["email_ids"]:
-        return None, verdict("FAIL_PRODUCT", "owner_target_mismatch", observed_pack=pack,
-                             observed_email_id=row["email_id"])
+    problem = _verify_owner_plan_package(rows, owner, manifest)
+    if problem:
+        return None, problem
     return pack, None
+
+
+def _truncated(value, maximum):
+    value = value or ""
+    if not isinstance(value, str) or len(value) <= maximum:
+        return value
+    return value[:maximum] + "…"
+
+
+def _expected_model_input(email):
+    gaps = []
+    for gap in email.get("gaps", []):
+        gaps.append({
+            "gap_id": gap["gap_id"], "item_key": gap["item_key"],
+            "paper_title": gap.get("paper_title"), "paper_year": gap.get("paper_year"),
+            "quote": _truncated(gap.get("quote"), 300),
+            "translation_zh": _truncated(gap.get("translation_zh"), 200),
+            "page": gap.get("page"), "status": gap.get("status"),
+            "email_use": gap.get("email_use"), "remaining_gap": gap.get("remaining_gap"),
+            "completed_part": gap.get("completed_part")
+                if gap.get("email_use") == "extension_context_only" else None,
+            "evidence": gap.get("evidence"), "confidence": gap.get("confidence"),
+        })
+    return {
+        "idea": email.get("idea"), "direction_ids": email.get("direction_ids") or [],
+        "directions": email.get("directions") or [],
+        "user_note": _truncated(email.get("user_note"), 800),
+        "papers": email.get("papers"), "gaps": gaps,
+        "red_lines": email.get("red_lines"),
+        "soft_materials": {"positioning": email.get("soft_materials", {}).get("positioning", [])},
+        "user_supplement": email.get("user_supplement") or "",
+        "allowed_sources": email.get("allowed_sources"),
+    }
+
+
+def _verify_owner_plan_package(rows, owner, manifest):
+    """Compare actual structured plan fields with the pre-run owner pack facts."""
+    pack_path = owner["email_pack"]
+    try:
+        raw = Path(pack_path).read_bytes()
+        expected_hash = manifest.get("pre_run_hashes", {}).get(pack_path)
+        if expected_hash and hashlib.sha256(raw).hexdigest() != expected_hash:
+            return verdict("INVALID_EVIDENCE", "owner_fixture_pack_changed", observed_pack=pack_path)
+        payload = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return verdict("INVALID_EVIDENCE", "owner_fixture_pack_unreadable", observed_pack=pack_path)
+    emails = payload.get("emails")
+    if not isinstance(emails, list) or any(not isinstance(email, dict) for email in emails):
+        return verdict("INVALID_EVIDENCE", "owner_fixture_pack_malformed", observed_pack=pack_path)
+    by_id = {email.get("email_id"): email for email in emails}
+    for index, observed in enumerate(rows):
+        target_id = observed["packet"].get("email_id")
+        selected_emails = [by_id[target_id]] if target_id in by_id else emails
+        expected_ids = [email.get("email_id") for email in selected_emails]
+        plan = observed["plan"]
+        if plan.get("email_pack") is not None and plan.get("email_pack") != pack_path:
+            return verdict("FAIL_PRODUCT", "owner_plan_directory_changed",
+                           observed_call_id=observed.get("call_id"), observed_pack=plan.get("email_pack"))
+        if "emails" in plan and plan.get("emails") != expected_ids:
+            return verdict("FAIL_PRODUCT", "owner_plan_email_ids_changed",
+                           observed_call_id=observed.get("call_id"), observed_emails=plan.get("emails"))
+        jobs = plan.get("jobs")
+        if index == 0 and (plan.get("status") != "ok" or not isinstance(jobs, list)
+                           or observed.get("return_code") != 0):
+            return verdict("FAIL_PRODUCT", "owner_initial_plan_changed",
+                           observed_call_id=observed.get("call_id"), observed_status=plan.get("status"))
+        if index == 0 and (plan.get("template") != observed["packet"].get("template")
+                           or plan.get("output_mode") != observed["packet"].get("mode")):
+            return verdict("FAIL_PRODUCT", "owner_initial_plan_business_data_changed",
+                           observed_call_id=observed.get("call_id"))
+        if index == 0:
+            professor = owner.get("professor")
+            expected_verify = {professor: "needs_recheck:missing"}
+            if professor is None or plan.get("verify") != expected_verify \
+                    or plan.get("needs_recheck_professors") != [professor]:
+                return verdict("FAIL_PRODUCT", "owner_initial_plan_verification_changed",
+                               observed_call_id=observed.get("call_id"),
+                               observed_verify=plan.get("verify"))
+        if jobs is None:
+            # Later calls may stop legally at the existing verification gate.
+            if plan.get("status") not in {"needs_input", "needs_refresh", "ok"}:
+                return verdict("FAIL_PRODUCT", "owner_plan_status_changed",
+                               observed_call_id=observed.get("call_id"), observed_status=plan.get("status"))
+            continue
+        if not isinstance(jobs, list) or len(jobs) != len(emails):
+            return verdict("FAIL_PRODUCT", "owner_plan_email_ids_changed",
+                           observed_call_id=observed.get("call_id"))
+        for job in jobs:
+            if not isinstance(job, dict) or job.get("kind") != "email":
+                return verdict("FAIL_PRODUCT", "owner_plan_business_data_changed",
+                               observed_call_id=observed.get("call_id"))
+            email_id = job.get("job_id", "").removeprefix("email:")
+            email = {row.get("email_id"): row for row in selected_emails}.get(email_id)
+            if email is None or job.get("job_id") != "email:" + str(email.get("email_id")):
+                return verdict("FAIL_PRODUCT", "owner_plan_email_ids_changed",
+                               observed_call_id=observed.get("call_id"), observed_job_id=job.get("job_id"))
+            expected = _expected_model_input(email)
+            actual = job.get("model_input")
+            if not isinstance(actual, dict) or any(key not in actual or actual.get(key) != value
+                                                   for key, value in expected.items()):
+                return verdict("FAIL_PRODUCT", "owner_plan_business_data_changed",
+                               observed_call_id=observed.get("call_id"), observed_email_id=email_id)
+    return None
 
 
 def final_result_rows(texts):
@@ -279,17 +579,23 @@ def receipt_payload_outcomes(receipt, professor_dir):
 
 def _plan_checks(parsed, manifest, expected_pack):
     flags = parsed["flags"]
-    if expected_pack is not None and flags.get("--email-pack") != expected_pack:
-        return verdict("FAIL_PRODUCT", "owner_plan_directory_changed", observed_call=parsed["command"])
+    if expected_pack is not None and flags.get("--email-pack") not in (None, expected_pack):
+        return verdict("FAIL_PRODUCT", "owner_plan_directory_changed", observed_call=parsed.get("command"))
     if "--choices-scope" in flags:
         return verdict("FAIL_PRODUCT", "owner_plan_carries_choices_scope")
-    if expected_pack is None or "--choices" not in flags:
+    if expected_pack is None:
         return None
-    # The path is observable as a command argument, but its bytes at this
-    # invocation's read time are not. Never reopen a temporary bundle after
-    # execution and treat its then-current contents as consumption evidence.
-    return verdict("BLOCKED_OBSERVABILITY", "owner_actual_input_unobservable",
-                   observed_call_id=parsed.get("id"))
+    rows, problem = consumed_business_objects([parsed])
+    if problem:
+        return problem
+    observed_pack = rows[0]["packet"].get("email_pack")
+    if observed_pack != expected_pack:
+        return verdict("FAIL_PRODUCT", "owner_plan_directory_changed",
+                       observed_call_id=parsed.get("id"), observed_pack=observed_pack)
+    if flags.get("--email-pack") not in (None, observed_pack):
+        return verdict("FAIL_PRODUCT", "owner_plan_directory_changed",
+                       observed_call_id=parsed.get("id"), observed_pack=flags.get("--email-pack"))
+    return None
 
 
 def _partition_payload(output):
@@ -684,7 +990,7 @@ def _verify_codex_events(response, adapter, manifest):
                     continue
                 call = {"id": item.get("id"), "start": command_starts[item_id], "end": seq,
                         "command": item.get("command", ""), "output": item.get("aggregatedOutput", ""),
-                        "thread": thread}
+                        "thread": thread, "generation": generation}
                 calls.append(call)
                 if thread in children:
                     business_calls.setdefault(thread, []).append(call)

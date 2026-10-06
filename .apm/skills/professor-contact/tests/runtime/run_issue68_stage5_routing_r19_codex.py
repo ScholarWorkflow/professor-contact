@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""PC68-R1 Codex entrypoint, blocked until r24 input evidence is supported.
-
-The current adapter records command execution and output but not the bytes
-each invocation actually received or read. This entry checks that prerequisite
-before service inspection or any formal request.
-"""
+"""PC68-R1 Codex entrypoint with the r25 per-call observation gate."""
 import argparse
 import json
 import shlex
@@ -21,7 +16,8 @@ import run_issue68_stage5_routing_r19 as bridge
 HERE = Path(__file__).resolve().parent
 FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
-CONTRACT_REVISION = "issue-68-runtime-evidence-r27-2026-10-06"
+CONTRACT_REVISION = "issue-68-runtime-evidence-r25-2026-10-06"
+OWNER_OBSERVATION_SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
 EXECUTION_KIND = "acceptance"
 HOST = "codex"
@@ -42,8 +38,13 @@ def load_contract():
         raise ValueError("contract_eval_server_revision_missing")
     codex = contract.get("codex", {})
     observation = codex.get("owner_business_input_observation")
-    if not isinstance(observation, dict) or observation.get("status") not in ("supported", "unsupported"):
+    if not isinstance(observation, dict) or observation.get("status") != "supported":
         raise ValueError("contract_actual_input_observation_status_missing")
+    if observation.get("schema") != OWNER_OBSERVATION_SCHEMA \
+            or observation.get("source") != "output.app_server_events.commandExecution.aggregatedOutput":
+        raise ValueError("contract_actual_input_observation_source_mismatch")
+    if contract.get("preflight", {}).get("second_gate_status") != "INCOMPLETE":
+        raise ValueError("contract_second_gate_status_mismatch")
     if not codex.get("owner_input_isolation"):
         raise ValueError("contract_owner_input_isolation_missing")
     if not codex.get("canonical_preservation"):
@@ -54,21 +55,31 @@ def load_contract():
 
 
 def actual_input_observation_preflight(contract):
-    """Return the gate that must pass before PC68-R1 can reach the service.
-
-    This code revision has no parser for an approved, per-call input
-    observation format. A contract claim alone cannot enable execution; the
-    implementation must be updated together with a supported source.
-    """
+    """Confirm the implemented source while preserving the incomplete gate 2."""
     observation = contract.get("codex", {}).get("owner_business_input_observation", {})
+    prompt = HERE / "prompts" / "issue68-stage5-root.txt"
+    prompt_supported = prompt.is_file() and OWNER_OBSERVATION_SCHEMA in prompt.read_text(encoding="utf-8")
+    source_supported = (
+        observation.get("status") == "supported"
+        and observation.get("schema") == OWNER_OBSERVATION_SCHEMA
+        and observation.get("source") == "output.app_server_events.commandExecution.aggregatedOutput"
+        and prompt_supported
+    )
+    second_gate_complete = contract.get("preflight", {}).get("second_gate_status") == "COMPLETE"
+    formal_allowed = source_supported and second_gate_complete \
+        and contract.get("preflight", {}).get("input_observation_gate", {}).get("formal_run_allowed") is True
     return {
-        "ready": False,
-        "state": "CASE_NOT_STARTED",
-        "reason_code": "actual_input_evidence_source_unavailable",
+        "ready": source_supported,
+        "state": "OBSERVATION_SOURCE_SUPPORTED" if source_supported else "CASE_NOT_STARTED",
+        "reason_code": None if source_supported else "actual_input_evidence_source_unavailable",
+        "formal_run_allowed": formal_allowed,
+        "formal_run_block_reason": None if formal_allowed else "second_gate_incomplete",
         "contract_revision": contract.get("revision"),
         "source_status": observation.get("status"),
         "source": observation.get("source"),
-        "detail": "runner has no supported per-call input observation parser",
+        "schema": observation.get("schema"),
+        "detail": ("r25 per-call parse observation is implemented; formal execution remains gated"
+                   if source_supported else "r25 observation prompt/parser source is not fully installed"),
     }
 
 
@@ -216,6 +227,8 @@ def main(argv=None):
         base.write_json(output / "input-evidence-preflight.json", input_preflight)
         if not input_preflight["ready"]:
             raise ValueError(input_preflight["reason_code"])
+        if not input_preflight["formal_run_allowed"]:
+            raise ValueError(input_preflight["formal_run_block_reason"])
         if args.fixture_sha != FIXTURE_SHA:
             raise ValueError("missing_or_wrong_frozen_fixture_arguments")
 
