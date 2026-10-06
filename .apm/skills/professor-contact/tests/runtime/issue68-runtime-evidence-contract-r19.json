@@ -145,16 +145,44 @@
     "owner_business_input_basis": "r25 方法使用 owner_input_file 原解析动作产生的只读对象副本，与同一 commandExecution 中原始 stage5-plan 结构化输出关联；历史命令文字和事后文件证据仍不接受。正式 PC68-R1 未运行，第二关口仍未完成。",
     "on_absent": "stop before formal PC68-R1",
     "retry": "none",
+    "retry_scope": "正式评估请求不得重试；支持安装的环境恢复尝试单独保留，用户本次授权续试不改变正式请求限制。",
+    "r31_install_retry_results": {
+      "candidate_baseline": "806066a",
+      "trigger": "用户明确要求重试安装",
+      "overall": "PREFLIGHT_INCOMPLETE",
+      "latest_attempt": 4,
+      "latest_install_exit_code": 1,
+      "latest_failure_classification": "ENVIRONMENT_TLS_CONNECTION_EOF",
+      "latest_failure": "原支持安装克隆ScholarWorkflow/knowledge-tools时Git HTTPS加密连接意外中断；安装事务未提交。",
+      "timeout_seconds_per_attempt": 600,
+      "formal_case_started": false,
+      "formal_run_allowed": false,
+      "installed_help_attempted": false,
+      "synthetic_eval_attempted": false,
+      "tls_verification_disabled": false,
+      "global_config_changed": false,
+      "producer_or_dependency_reference_changed": false,
+      "process_environment": "第二次REQUESTS_CA_BUNDLE=/etc/ssl/cert.pem；第三次另加GIT_SSL_CAINFO=/etc/ssl/cert.pem；第四次再使用GIT_CONFIG_COUNT=1、GIT_CONFIG_KEY_0=http.version、GIT_CONFIG_VALUE_0=HTTP/1.1。仅对应进程及其子进程，证书验证开启。",
+      "history": "四轮1.290、24.124、34.166、24.467秒均退出1；第一轮证书拒绝，后续连接意外中断。旧600秒超时保持原判定，不据本次诊断反推其具体原因。远程引用查询及完整浅克隆诊断成功不等于支持安装成功，诊断检出未用于安装。",
+      "evidence": [
+        "tests/runtime/evidence/issue68-r31-install-retry-20261007.json",
+        "tests/runtime/evidence/issue68-r31-install-trust-retry-20261007.json",
+        "tests/runtime/evidence/issue68-r31-install-recovered-retry-20261007.json",
+        "tests/runtime/evidence/issue68-r31-install-http1-retry-20261007.json"
+      ],
+      "review_record": "tests/runtime/evidence/issue68-r31-install-retry-review-20261007.md",
+      "review_status": "本次独立只读复核已完成，四轮安装及直接关联文档契约的检查范围完整，原始命令、退出码、日志与证据一致，独立诊断未替代安装，无新增必须修正问题。实现仍部分完成：支持安装未恢复、全部合法临时位置覆盖未证明。审核未安装、测试或重审代码，不授予第二关口或正式许可。先前完成度审核保留为历史。"
+    },
     "input_observation_gate": {
       "status": "READY_FOR_GATE2_REVIEW",
       "formal_run_allowed": false,
       "case": "PC68-R1",
       "reason_code": "second_gate_incomplete",
-      "action": "固定捕获器实现保存正常单次交接解析对象，由同对象执行原已安装首次计划；判定正反例检查完整分配包、目标、选择到真实读取和业务输出。第31版支持安装仍超时，正式合法位置覆盖尚未证明；当前只是待审候选，正式请求仍等待必要预检完成、第二关口完整通过和候选冻结。",
+      "action": "固定捕获器实现保存正常单次交接解析对象，由同对象执行原已安装首次计划；判定正反例检查完整分配包、目标、选择到真实读取和业务输出。第31版用户授权的最新安装重试在knowledge-tools克隆时发生加密连接意外中断，正式合法位置覆盖尚未证明；当前只是待审候选，正式请求仍等待必要预检完成、第二关口完整通过和候选冻结。",
       "synthetic_capture_manifest": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-command-event-preflight.json",
       "synthetic_capture_stdout": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-command-event-stdout.json",
       "raw_stdout_is_reparsed_by": "verify_issue68_stage5_routing_r19.consumed_business_objects",
-      "known_limit": "第03次证明普通命令实际输出与同次合成解析及转交关联；第30版两次和第31版一次支持安装均超时，安装入口摘要与帮助未完成；正式合法传递位置的请求前完整覆盖尚未证明，故整体最小预检未完成。正式教授业务及线程关系未运行。"
+      "known_limit": "历史第03次证明普通命令实际输出与同次合成解析及转交关联；第30版两次和第31版先前一次支持安装均超时，保留原判定。用户授权续试四次均在预算内退出1，最新因knowledge-tools的Git HTTPS加密连接意外中断；完整安装入口摘要与帮助仍未完成。正式合法传递位置的请求前完整覆盖尚未证明，故整体最小预检未完成。续试未发合成或正式评估请求，正式教授业务及线程关系未运行。"
     },
     "second_gate_status": "INCOMPLETE",
     "environment_entry": ".apm/skills/professor-contact/tests/runtime/preflight_issue68_environment_r30.py",
@@ -392,7 +420,7 @@
     "non_acceptance_boundary": "文件与子进程事实为本地真实操作，运行信封、线程与事件为合成材料；当前预检不发评估请求，不运行教授业务，不证明全部合法位置覆盖。",
     "plan_revision": 26,
     "extra_scopes": "lifecycle_extra_observation_roots：请求前固定额外独占目录；未覆盖合法位置不是产品失败",
-    "remaining": "六场景本地组合预检已交付；线程与运行事件为合成材料。正式合法传递位置在请求前的完整覆盖仍未证明，须测试设计审核者修订观察安排；支持安装仍超时。历史03/04仅复用原字段约定，不授予正式运行许可。",
+    "remaining": "六场景本地组合预检已交付；线程与运行事件为合成材料。正式合法传递位置在请求前的完整覆盖仍未证明，须测试设计审核者修订观察安排；用户授权的最新支持安装重试在knowledge-tools克隆时发生加密连接意外中断，完整安装及帮助仍未完成。旧超时原因不被新尝试改判。历史03/04仅复用原字段约定，不授予正式运行许可。",
     "protection": "比较全部既有观察目录、文件字节、符号链接；合法本次输出从实际结构化返回及固定输入取得，不按任意后缀推断归属"
   }
 }
