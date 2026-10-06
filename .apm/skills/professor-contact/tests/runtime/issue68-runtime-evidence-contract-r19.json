@@ -149,7 +149,7 @@
     "r31_install_retry_results": {
       "candidate_baseline": "806066a",
       "trigger": "用户明确要求重试安装",
-      "overall": "PREFLIGHT_INCOMPLETE",
+      "overall": "PRECHECK_READY",
       "latest_attempt": 5,
       "latest_install_exit_code": 0,
       "latest_failure_classification": null,
@@ -178,7 +178,7 @@
       "latest_install_scope": "仅在独立临时消费者中运行支持安装命令；未运行后续预检",
       "resolved_product_commit": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
       "installed_entrypoint_sha256_matches_source": true,
-      "full_preflight_status": "INCOMPLETE",
+      "full_preflight_status": "PRECHECK_READY",
       "latest_evidence": "tests/runtime/evidence/issue68-r31-install-only-retry-success-20261007.json",
       "latest_attempt_review_status": "完成；证据数据一致，锁文件摘要修正后确认无误，无其他必须修正问题",
       "latest_attempt_review_record": "tests/runtime/evidence/issue68-r31-install-only-retry-review-20261007.md"
@@ -188,11 +188,12 @@
       "formal_run_allowed": false,
       "case": "PC68-R1",
       "reason_code": "second_gate_incomplete",
-      "action": "固定捕获器实现保存正常单次交接解析对象，由同对象执行原已安装首次计划；判定正反例检查完整分配包、目标、选择到真实读取和业务输出。第05次独立临时消费者安装成功且源码摘要匹配；安装帮助和合成观察未运行，正式合法位置覆盖尚未证明。当前仍是待审候选，正式请求等待必要预检完成、第二关口完整通过和候选冻结。",
+      "action": "第03次完整环境预检通过：固定产品支持安装、已安装入口 --help 和一次纯合成命令解析及同对象转交均通过；服务实例与安装消费者前后保持不变。正式 PC68-R1 未运行，合法临时传递位置覆盖仍待证明，第二关口未通过。",
       "synthetic_capture_manifest": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-command-event-preflight.json",
       "synthetic_capture_stdout": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-command-event-stdout.json",
       "raw_stdout_is_reparsed_by": "verify_issue68_stage5_routing_r19.consumed_business_objects",
-      "known_limit": "历史第03次证明普通命令实际输出与同次合成解析及转交关联；第30版两次及第31版先前一次600秒安装超时均保留原判定，随后四次授权续试失败，第05次独立安装成功且固定提交和入口摘要匹配。第05次未运行帮助或完整环境预检；正式合法传递位置的请求前完整覆盖尚未证明，整体仍未通过第二关口。续试均未发正式评估请求，正式教授业务及线程关系未运行。"
+      "known_limit": "第31版完整环境预检第02次因支持安装在依赖解析阶段600秒超时而未完成；随后一次只读远程查询成功，第03次完整预检进入 PRECHECK_READY。该结果只证明固定版本支持安装、入口帮助和一次纯合成普通命令观察；正式合法临时传递位置的请求前完整覆盖尚未证明，正式 PC68-R1 未运行，第二关口仍未通过。",
+      "environment_preflight_status": "PRECHECK_READY"
     },
     "second_gate_status": "INCOMPLETE",
     "environment_entry": ".apm/skills/professor-contact/tests/runtime/preflight_issue68_environment_r30.py",
@@ -209,6 +210,51 @@
         ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r30-synthetic-observation-03.json",
         ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r30-precheck-validation.json"
       ]
+    },
+    "r31_environment_preflight_attempts": {
+      "overall": "PRECHECK_READY",
+      "latest_attempt": 3,
+      "history": [
+        {
+          "attempt": "pc68-r31-environment-preflight-02-20261007-01",
+          "state": "PREFLIGHT_INCOMPLETE",
+          "preflight_exit_code": 1,
+          "installation_exit_code": 124,
+          "installed_help_exit_code": null,
+          "observation_status": null,
+          "formal_case_started": false,
+          "second_gate_status": "INCOMPLETE",
+          "formal_run_allowed": false
+        },
+        {
+          "attempt": "pc68-r31-environment-preflight-03-20261007-01",
+          "state": "PRECHECK_READY",
+          "preflight_exit_code": 0,
+          "installation_exit_code": 0,
+          "installed_help_exit_code": 0,
+          "observation_status": "OBSERVATION_VERIFIED",
+          "formal_case_started": false,
+          "second_gate_status": "INCOMPLETE",
+          "formal_run_allowed": false
+        }
+      ],
+      "recovery_diagnostic": {
+        "argv": [
+          "git",
+          "ls-remote",
+          "https://github.com/ScholarWorkflow/base-skills.git",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "terminal_state": "success",
+        "returned_head": "0e08013b798cf4c7f937cc4c1d4d769ec4c6aa79",
+        "result_scope": "一次只读远程可达性检查；仅作为后续预检重试依据，不代替支持安装"
+      },
+      "evidence": "tests/runtime/evidence/issue68-r31-environment-preflight-retry-20261007.json",
+      "formal_case_started": false,
+      "second_gate_status": "INCOMPLETE",
+      "formal_run_allowed": false,
+      "remaining_gate_gap": "正式观察仍未证明请求前覆盖全部合法临时传递位置；第二关口完整批准及候选冻结尚未发生"
     }
   },
   "pc68_r1_steps": [
