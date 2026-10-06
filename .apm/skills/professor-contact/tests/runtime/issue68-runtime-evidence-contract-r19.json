@@ -1,5 +1,5 @@
 {
-  "revision": "issue-68-runtime-evidence-r26-2026-10-05",
+  "revision": "issue-68-runtime-evidence-r27-2026-10-06",
   "fixture_sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
   "fixture_contract": "skills-test-fixtures/codex-eval-adapter@16",
   "fixture_source": "skills-test-fixtures#33 merged as c738fa2f8bcbb16cd99d741332d5f59b062b6357",
@@ -22,15 +22,14 @@
       "missing or unknown phase",
       "non-message raw items"
     ],
-    "owner_business_input_source": "From each formal child's own commandExecution items whose recorded command text references both the producer CLI (contact_state.py) and any supported stage5 action word (stage5-partition-choices or stage5-plan), read the one-professor business object the child actually consumed: email_pack plus that owner's own choices rows. Strict flag parsing is not required: the real Codex child calls the CLI through python3 -c / wrapper compound expressions with the action words inside quoted strings, and the packet rides embedded as JSON or a Python literal in that same command text; both supported forms are decoded from the command text. Require exactly one attributable object per formal child.",
     "owner_business_input_exclusions": [
       "child task input delivered as item.type agent_message with an input_text NEW_TASK shell plus encrypted_content, which carries no plaintext business object",
       "output.child_thread_reads metadata-only snapshots",
       "items of other threads or other runtime generations",
       "business objects in command texts that do not invoke a supported stage5 CLI; echo/log and diagnostic examples are not consumption evidence"
     ],
-    "owner_input_isolation": "Each formal child's consumed object may carry only that owner's own bundle: no sibling sentinel, professor_dir, email_pack, email_id, choice row or path, and no choices_scope field or complete multi-professor choices/scope. A consumed object carrying any sibling marker or a choices_scope field is a product failure.",
-    "canonical_preservation": "The consumed choices must equal the manifest per-owner expected rows after parsing (exact value equality; serialization form, key order and whitespace are never a failure). professor_dir and email_id strings are preserved byte for byte, including characters such as 試験; translation, transcription or reconstruction is a product failure.",
+    "owner_input_isolation": "产品要求（当前未证明）：每个教授调用只能使用该教授自己的数据；不得含有兄弟教授数据或 choices_scope。命令文字和最终文件内容不能证明调用实际消费了什么。",
+    "canonical_preservation": "产品要求（当前未证明）：实际消费的 choices、professor_dir、email_pack 和 email_id 必须保持原值。必须依据该次调用的输入证据判断；事后文件读取和结果内容不构成该证据。",
     "partition_evidence": "The root must execute the supported stage5-partition-choices entry exactly once successfully on the root thread, with per-owner bundles matching the manifest partition record; a partition executed by a child, more than one successful root partition, or no successful root partition is a product failure. The successful root partition must also complete before any owner business call starts: an owner business command on a child thread that starts before the partition completed is a product failure (owner_business_precedes_partition). Discovery must not carry --emit-choices-scope and a plan must not carry --choices-scope.",
     "orchestration_surface": "Root orchestration (discovery, partition, rebuild) is recognized on two surfaces: a call whose command parses strictly under the frozen flag grammar keeps every flag fact, and a compound preparation command (python3 -c / wrapper expression whose action words are quoted string fragments) is attributed by the loose business-surface text shape plus its single stage5 action word. Output facts always come from the commandExecution aggregatedOutput on both surfaces. Compound commands provide no flags, so the --emit-choices-scope, --choices-scope and --program-root checks only cover strictly parsed calls. A compound text carrying two or more action words cannot be attributed to one orchestration step and is BLOCKED_OBSERVABILITY/root_orchestration_ambiguous; on a child thread only a strictly parsed partition, or a compound text whose single action word is stage5-partition-choices, proves partition_executed_by_owner. Require exactly one root stage5-rebuild-overview call after every formal owner result has a current-turn root consumption receipt; its start must be later than every receipt consumption point. Read its result only from that call commandExecution aggregatedOutput. Successful output has status=ok and overview_md, professors and emails, with no reason_code. soft_exit/fail returns status and reason_code plus its result-specific fields, and may have nonzero exit status. The selected root final answer must separately report the exact aggregate result object with all unchanged per-professor result objects; a faithfully reported needs_decision or error aggregate is valid and does not alter professor outcomes. Grouping property names are not frozen and examples such as results or overview are illustrative. Associate direct result objects by their product fields; never search nested diagnostics, prior turns, logs or history for substitute results.",
     "wait_consume_evidence": "The formal child set stays the shared adapter's spawnAgent relation: dispatch.thread_relations edges whose tool is spawnAgent and whose sender_thread_id equals the root thread id name the formal children, and identity diagnostics never create, rewrite, upgrade or downgrade ownership. The child_thread_id to child_agent_path binding comes only from the same run's subAgentActivity items (message.params.item.type is subAgentActivity and item.agentThreadId equals the child thread id): the item's agentPath is the association key only and never formal ownership. The root's only legal consumption receipt for one formal child is a root-thread rawResponseItem/completed agent_message item of the same runtime_generation and the current turn (message.params.turnId equals output.turn_id) whose item.recipient is /root and whose item.author equals that child's agent path; its input_text body must be exactly the Codex child completion shape — the header lines 'Message Type: FINAL_ANSWER', 'Task name: /root' and 'Sender: <child_agent_path>' (the Sender line must equal the child's agent path), then the 'Payload:' marker followed by exactly one JSON object carrying professor_dir, status and reason_code. The receipt's runtime_seq is the root's consumption point for that child's result and the stage5-rebuild-overview aggregate must not start before every owner's receipt consumption point (aggregate_precedes_result_consumption); a legal receipt whose payload outcome differs from the outcome the child itself returned on its own thread is FAIL_PRODUCT/root_receipt_payload_changed. collabAgentToolCall receiverThreadIds/agentsStates, the 'Wait completed.' wait message, subAgentActivity completed reports, child turn/completed events, requested_role and loaded_identity are diagnostics only and never consumption evidence. A child without an agentPath mapping or without a legal receipt stays BLOCKED_OBSERVABILITY with reason code root_result_consumption_unobservable and is never passed on the strength of the diagnostic surfaces; legal receipts carrying more than one distinct outcome triple stay INVALID_EVIDENCE/root_result_receipt_ambiguous; when no uniquely attributable receipt exists the verifier never guesses a PASS. The receipt's Payload JSON is read at its top level only and never recursively through nested objects: the object must carry professor_dir as a top-level field and the outcome triple comes from the top-level fields alone, so a receipt whose top level carries only a nested object (a diagnostic wrapper, for example) is never a consumption receipt. The child to agentPath mapping must be unique per formal child: a child with no agentPath mapping stays BLOCKED_OBSERVABILITY/root_result_consumption_unobservable (missing_agent_path_mapping), a child observed under more than one distinct agentPath is INVALID_EVIDENCE/child_agent_path_mapping_ambiguous regardless of how correct the surviving path's own receipt looks, and only a unique mapping binds receipts to that one agent path author.",
@@ -39,19 +38,44 @@
     "malformed_or_ambiguous_observation": "INVALID_EVIDENCE",
     "formal_ownership": "Use the shared adapter @16 formal topology only. Identity diagnostics cannot create, rewrite, upgrade or downgrade ownership.",
     "producer_verifier_uses": [
-      "shared adapter dispatch.thread_relations (spawnAgent formal children)",
-      "same-run subAgentActivity agentThreadId/agentPath as the child association key only",
-      "current-turn root agent_message FINAL_ANSWER receipts bound to the child agent path author, with the shaped Payload JSON (professor_dir, status, reason_code)",
-      "collabAgentToolCall receiverThreadIds/agentsStates, the Wait completed. message, subAgentActivity completed reports and child turn/completed as diagnostics only (never as root result consumption)",
-      "commandExecution id/command/aggregatedOutput",
-      "compound command texts attributed by the producer CLI plus a single stage5 action word",
-      "item lifecycle runtime_seq",
-      "current-root/current-turn raw final_answer output_text",
-      "formal child stage5 commandExecution plaintext business object",
-      "root partition command output",
-      "stage5-rebuild-overview commandExecution aggregatedOutput linked to a separate direct result object in the selected current-root final_answer; grouping names are not fixed and nested diagnostics/history are excluded"
+      "shared adapter dispatch.thread_relations（spawnAgent 正式线程关系）",
+      "commandExecution.id/command/aggregatedOutput（只证明观察到的命令和输出，不证明输入字节）",
+      "runtime_generation、thread_id、runtime_seq（运行、线程和顺序字段；缺少每次调用实际输入记录）",
+      "正式线程的逐次输入观察来源：当前不受支持，正式运行必须停止",
+      "root agent_message FINAL_ANSWER 回执及当前 root final_answer 输出",
+      "root partition 命令输出及 stage5-rebuild-overview aggregatedOutput"
     ],
-    "overview_result_reporting": "exactly one stage5-rebuild-overview must run on the root after every formal professor result is consumed. The associated source is only the call commandExecution aggregatedOutput. The selected current root final_answer must separately report the exact returned overview result alongside the unmodified result for every professor. Success returns status, overview_md, professors and emails without reason_code; soft_exit/fail returns status and reason_code with its applicable fields. A needs_decision or error aggregate can still PASS when faithfully reported and professor results remain unchanged. Grouping property names are not frozen; examples such as results and overview are illustrative. The verifier associates objects by their direct product-result shapes and never recursively extracts nested diagnostics, logs, history or earlier messages."
+    "overview_result_reporting": "exactly one stage5-rebuild-overview must run on the root after every formal professor result is consumed. The associated source is only the call commandExecution aggregatedOutput. The selected current root final_answer must separately report the exact returned overview result alongside the unmodified result for every professor. Success returns status, overview_md, professors and emails without reason_code; soft_exit/fail returns status and reason_code with its applicable fields. A needs_decision or error aggregate can still PASS when faithfully reported and professor results remain unchanged. Grouping property names are not frozen; examples such as results and overview are illustrative. The verifier associates objects by their direct product-result shapes and never recursively extracts nested diagnostics, logs, history or earlier messages.",
+    "owner_business_input_observation": {
+      "status": "unsupported",
+      "source": null,
+      "reason": "适配器 @16 的 app_server_events 只提供命令、输出和事件顺序，不提供每次调用实际收到或读取的输入内容。",
+      "available_surfaces": [
+        "commandExecution.id",
+        "commandExecution.command",
+        "commandExecution.aggregatedOutput",
+        "thread_id",
+        "runtime_generation",
+        "runtime_seq",
+        "child_thread_reads 元数据"
+      ],
+      "excluded_as_input_proof": [
+        "命令文字及其中的 JSON/Python 字面量",
+        "命令中的临时文件路径",
+        "测试准备阶段写入的文件",
+        "调用结束后的文件内容",
+        "manifest 预期值",
+        "最终业务结果",
+        "教授自述"
+      ],
+      "required_before_acceptance": [
+        "每次实际业务调用单独留存交付或读取的输入证据；相同输入的重复调用也分别留证",
+        "将输入证据关联到当前运行、正式线程、具体调用、所属教授和来源步骤",
+        "保留临时文件清理后仍可复查的输入字节或等价不可变记录",
+        "明确摘要算法，并让摘要覆盖被证明的输入字节",
+        "能分别识别合法读取、有效错配、必需观察缺失、损坏或归属冲突"
+      ]
+    }
   },
   "business_payload": [
     "email_pack",
@@ -68,9 +92,17 @@
     "capability_reuse_rule": "Reusable because r19 changes neither the request builder, the model, the root final-source selector, the fixture adapter nor the eval-server revision; r19 changes only the owner business-input and root orchestration oracle.",
     "isolation_entry": ".apm/skills/professor-contact/tests/runtime/check_issue68_eval_service_isolation_r14.py",
     "isolation_success": "ISOLATION_CONFIRMED",
-    "owner_business_input_basis": "The consumption surface and the partition surface are characterized jointly by the saved r15 formal attempt archive (codex/codex-response.json, two formal children, exactly one plaintext business object per child) and the r19 synthetic channel verification (test_issue68_runtime_r19.py). Whether Gate 2 requires a further non-acceptance probe before rerunning PC68-R1 is the reviewer's decision, not this contract's.",
+    "owner_business_input_basis": "当前无受支持的逐次输入证据来源。历史归档和旧合成测试依靠命令文字或事后文件内容，不能满足测试计划第24版。",
     "on_absent": "stop before formal PC68-R1",
-    "retry": "none"
+    "retry": "none",
+    "input_observation_gate": {
+      "status": "BLOCKED",
+      "formal_run_allowed": false,
+      "case": "PC68-R1",
+      "reason_code": "actual_input_evidence_source_unavailable",
+      "action": "在评估服务检查和正式请求前停止；不得自行替换证据来源"
+    },
+    "second_gate_status": "INCOMPLETE"
   },
   "formal_run_archive_requirements": {
     "before_request": [

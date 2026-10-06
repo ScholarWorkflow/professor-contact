@@ -7,7 +7,6 @@ from pathlib import Path
 
 import verify_issue68_stage5_routing as base
 import verify_issue68_stage5_routing_r13 as final_source
-import verify_issue68_stage5_routing_r18 as command_surface
 
 
 AGENT = base.AGENT
@@ -87,16 +86,19 @@ def is_owner_business_surface(text):
         action in text for action in ("stage5-partition-choices", "stage5-plan"))
 
 
-def consumed_business_objects(stage5_command_texts):
-    """Extract actual business inputs from the child's executed commands."""
-    consumed = command_surface._unique([row for text in stage5_command_texts
-                                        for row in command_surface.business_objects(text)])
-    if len(consumed) > 1:
-        return [], verdict("INVALID_EVIDENCE", "owner_business_object_ambiguous",
-                           observed_candidates=len(consumed))
-    if consumed:
-        return consumed, None
-    return [], verdict("BLOCKED_OBSERVABILITY", "owner_business_object_unobservable")
+def consumed_business_objects(stage5_calls):
+    """Fail closed until a supported per-call input observation is available.
+
+    ``commandExecution.command`` and ``aggregatedOutput`` do not contain the
+    bytes delivered to or read by the process. In particular, command text,
+    paths, embedded literals and later file contents cannot establish what a
+    specific invocation consumed. Keep this boundary explicit so repeated
+    invocations are never collapsed into one inferred packet.
+    """
+    call_ids = [call.get("id") for call in stage5_calls
+                if isinstance(call, dict) and isinstance(call.get("id"), str)]
+    return [], verdict("BLOCKED_OBSERVABILITY", "owner_actual_input_unobservable",
+                       missing_call_ids=call_ids)
 
 
 def _choices_summary(observed, expected):
@@ -283,15 +285,11 @@ def _plan_checks(parsed, manifest, expected_pack):
         return verdict("FAIL_PRODUCT", "owner_plan_carries_choices_scope")
     if expected_pack is None or "--choices" not in flags:
         return None
-    owner = next(candidate for candidate in manifest["owners"] if candidate["email_pack"] == expected_pack)
-    try:
-        transported = json.loads(Path(flags["--choices"]).read_text())
-    except (OSError, ValueError):
-        return verdict("BLOCKED_OBSERVABILITY", "transport_file_unobservable")
-    if transported != owner["expected_choices_rows"]:
-        return verdict("FAIL_PRODUCT", "owner_bundle_choices_changed", observed_pack=expected_pack,
-                       choices_summary=_choices_summary(transported, owner["expected_choices_rows"]))
-    return None
+    # The path is observable as a command argument, but its bytes at this
+    # invocation's read time are not. Never reopen a temporary bundle after
+    # execution and treat its then-current contents as consumption evidence.
+    return verdict("BLOCKED_OBSERVABILITY", "owner_actual_input_unobservable",
+                   observed_call_id=parsed.get("id"))
 
 
 def _partition_payload(output):
@@ -634,7 +632,7 @@ def _verify_codex_events(response, adapter, manifest):
         return verdict("FAIL_PRODUCT", "wrong_owner_count", formal_children=sorted(children))
     results = {}
     agent_paths, receipts = {}, []
-    command_starts, calls, root_texts, commands = {}, [], [], {}
+    command_starts, calls, root_texts, business_calls = {}, [], [], {}
     observability_gaps = []
     previous_seq = -1
     for event in events:
@@ -684,16 +682,18 @@ def _verify_codex_events(response, adapter, manifest):
                     # sibling child's proven failure keeps its precedence.
                     observability_gaps.append(("command_start_unobservable", thread, seq))
                     continue
+                call = {"id": item.get("id"), "start": command_starts[item_id], "end": seq,
+                        "command": item.get("command", ""), "output": item.get("aggregatedOutput", ""),
+                        "thread": thread}
+                calls.append(call)
                 if thread in children:
-                    commands.setdefault(thread, []).append(item.get("command", ""))
-                calls.append({"start": command_starts[item_id], "end": seq,
-                              "command": item.get("command", ""), "output": item.get("aggregatedOutput", ""),
-                              "thread": thread})
+                    business_calls.setdefault(thread, []).append(call)
     failures, invalids, blockers = [], [], []
     assigned, outcomes, consume_points = {}, {}, {}
     for child in sorted(children):
-        stage5_texts = [text for text in commands.get(child, []) if is_owner_business_surface(text)]
-        rows, problem = consumed_business_objects(stage5_texts)
+        stage5_calls = [call for call in business_calls.get(child, [])
+                        if is_owner_business_surface(call.get("command", ""))]
+        rows, problem = consumed_business_objects(stage5_calls)
         if not problem:
             pack, problem = owner_payload(rows, manifest)
         if problem:

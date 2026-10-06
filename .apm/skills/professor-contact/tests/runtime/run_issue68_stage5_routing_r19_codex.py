@@ -1,35 +1,9 @@
 #!/usr/bin/env python3
-"""PC68-R1 Codex-only formal entrypoint (Gate-2 r25).
+"""PC68-R1 Codex entrypoint, blocked until r24 input evidence is supported.
 
-r22 keeps the r13 request, the r12 request builder, the merged shared fixture
-adapter, the r13 root final-source selector, the r14 service/storage isolation
-enforcement and the r19 owner-local consumption and root partition oracle:
-every formal child must consume exactly its own one-professor packet (its own
-email_pack and choices rows, never a sibling marker or a choices_scope field)
-through its own stage5 command surface, and the root must run the
-deterministic stage5-partition-choices entry exactly once with bundles that
-match the manifest partition record. r22 binds the root result receipt to the
-frozen field chain: the child's agent path comes only from the same run's
-subAgentActivity items (agentThreadId to agentPath, an association key that
-never creates formal ownership), and the root's consumption receipt for one
-formal child is a current-turn root-thread agent_message whose author equals
-that child's agent path, whose recipient is /root, and whose body is exactly
-the FINAL_ANSWER completion shape (Message Type / Task name / Sender / Payload)
-whose Payload JSON names the owner's professor_dir with the same outcome the
-child itself returned; the receipt's runtime_seq is the consumption point the
-aggregate must not precede. collabAgentToolCall receiverThreadIds/agentsStates,
-the "Wait completed." wait message, subAgentActivity completed reports and
-child turn/completed events are diagnostics only and never evidence; the
-successful root partition must also complete before any owner business call
-starts. The contract freezes these conditions as owner_input_isolation,
-canonical_preservation and partition_evidence. EVAL_PORT has exactly
-one formal source, ``direnv exec`` per the r20 Project Consensus: when direnv is
-missing or its output is unusable the Executable precondition is unsatisfied
-and the entry refuses to start. Before the acceptance request the entry
-proves that the eval service comes from the frozen clean checkout and uses
-test-only persistent Codex storage, then verifies that the same service and
-storage boundary remain in place after the request. These checks are Recipe
-evidence, not product acceptance.
+The current adapter records command execution and output but not the bytes
+each invocation actually received or read. This entry checks that prerequisite
+before service inspection or any formal request.
 """
 import argparse
 import json
@@ -47,7 +21,7 @@ import run_issue68_stage5_routing_r19 as bridge
 HERE = Path(__file__).resolve().parent
 FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
-CONTRACT_REVISION = "issue-68-runtime-evidence-r26-2026-10-05"
+CONTRACT_REVISION = "issue-68-runtime-evidence-r27-2026-10-06"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
 EXECUTION_KIND = "acceptance"
 HOST = "codex"
@@ -67,8 +41,9 @@ def load_contract():
     if not contract.get("eval_server_revision"):
         raise ValueError("contract_eval_server_revision_missing")
     codex = contract.get("codex", {})
-    if not codex.get("owner_business_input_source"):
-        raise ValueError("contract_owner_business_input_source_missing")
+    observation = codex.get("owner_business_input_observation")
+    if not isinstance(observation, dict) or observation.get("status") not in ("supported", "unsupported"):
+        raise ValueError("contract_actual_input_observation_status_missing")
     if not codex.get("owner_input_isolation"):
         raise ValueError("contract_owner_input_isolation_missing")
     if not codex.get("canonical_preservation"):
@@ -76,6 +51,25 @@ def load_contract():
     if not codex.get("partition_evidence"):
         raise ValueError("contract_partition_evidence_missing")
     return contract
+
+
+def actual_input_observation_preflight(contract):
+    """Return the gate that must pass before PC68-R1 can reach the service.
+
+    This code revision has no parser for an approved, per-call input
+    observation format. A contract claim alone cannot enable execution; the
+    implementation must be updated together with a supported source.
+    """
+    observation = contract.get("codex", {}).get("owner_business_input_observation", {})
+    return {
+        "ready": False,
+        "state": "CASE_NOT_STARTED",
+        "reason_code": "actual_input_evidence_source_unavailable",
+        "contract_revision": contract.get("revision"),
+        "source_status": observation.get("status"),
+        "source": observation.get("source"),
+        "detail": "runner has no supported per-call input observation parser",
+    }
 
 
 def check_entry_uniqueness(argv0=None):
@@ -218,6 +212,10 @@ def main(argv=None):
                 raise ValueError("output_must_be_outside_source_roots")
         check_entry_uniqueness()
         contract = load_contract()
+        input_preflight = actual_input_observation_preflight(contract)
+        base.write_json(output / "input-evidence-preflight.json", input_preflight)
+        if not input_preflight["ready"]:
+            raise ValueError(input_preflight["reason_code"])
         if args.fixture_sha != FIXTURE_SHA:
             raise ValueError("missing_or_wrong_frozen_fixture_arguments")
 
