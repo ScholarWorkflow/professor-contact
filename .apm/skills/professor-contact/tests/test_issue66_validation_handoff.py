@@ -20,7 +20,10 @@ Exactly this implementation step, nothing more:
 Proof conventions follow the shared fixtures: real CLI runs, direct file
 reads for byte claims, no sleeps, no owner mocking.
 """
+import argparse
+import contextlib
 import hashlib
+import io
 import itertools
 import json
 import os
@@ -28,6 +31,7 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from test_stage2_resolved_direction import (
     parse, quote_id, run_cli, write_json)
@@ -699,6 +703,55 @@ class RecordHandoffTests(ValidationHandoffBase):
         self.assertEqual(state["validator"]["round"], 1)
         self.assertEqual(state["validator"]["render_sha256"],
                          saved["render_sha256"])
+
+    def test_record_parses_the_same_buffer_that_was_digest_checked(self):
+        issue = self.finding("候选 dir_A_1")
+        out, saved = self.committed_round1([issue])
+        validation_path = Path(out["validation_file"])
+        checked_bytes = validation_path.read_bytes()
+        replacement_bytes = self.validator_bytes()
+        self.assertNotEqual(checked_bytes, replacement_bytes)
+        self.assertEqual(hashlib.sha256(checked_bytes).hexdigest(),
+                         saved["validation_sha256"])
+
+        original_reader = contact_state.stage3_validation_evidence
+        observed_buffers = []
+
+        def replace_file_before_parse(path, professor_dir, state, *,
+                                      raw_input=None):
+            observed_buffers.append(raw_input)
+            path.write_bytes(replacement_bytes)
+            return original_reader(path, professor_dir, state,
+                                   raw_input=raw_input)
+
+        args = argparse.Namespace(
+            handoff_file=out["handoff_file"],
+            handoff_sha256=out["handoff_sha256"],
+            expected_validation_sha256=saved["validation_sha256"],
+            professor_dir=None,
+            validation_file=None,
+        )
+        stdout = io.StringIO()
+        with mock.patch.object(contact_state, "stage3_validation_evidence",
+                               side_effect=replace_file_before_parse):
+            with contextlib.redirect_stdout(stdout):
+                contact_state.cmd_stage3_record_validation(args)
+
+        recorded = json.loads(stdout.getvalue())
+        self.assertEqual(observed_buffers, [checked_bytes])
+        self.assertEqual(validation_path.read_bytes(), replacement_bytes)
+        self.assertEqual(recorded["validation_input_sha256"],
+                         saved["validation_sha256"])
+        self.assertEqual(recorded["raw_verdict"], "fail")
+        self.assertTrue(recorded["needs_correction"])
+        validator = self.load_state()["validator"]
+        self.assertEqual(validator["raw_verdict"], "fail")
+        pending_issues = [
+            issue for row in validator["pending"].values()
+            for issue in row["issues"]
+        ]
+        self.assertEqual([item["quote"] for item in pending_issues],
+                         [issue["quote"]])
 
     def test_record_refuses_a_render_that_moved_after_prepare(self):
         out, saved = self.committed_round1()

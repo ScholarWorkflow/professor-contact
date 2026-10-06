@@ -374,6 +374,18 @@ class RunModel:
         self.root_id = (response.get("output") or {}).get("thread_id")
         self.events = ((response.get("output") or {}).get(
             "app_server_events") or [])
+        self.invalid_sequence_indices = set()
+        sequence_values = [event.get("seq") if isinstance(event, dict) else None
+                           for event in self.events]
+        if self.events and (
+                any(isinstance(value, bool) or not isinstance(value, int)
+                    for value in sequence_values)
+                or any(right <= left for left, right in
+                       zip(sequence_values, sequence_values[1:]))):
+            self.invalid_sequence_indices = set(range(len(self.events)))
+            self.gaps.append(
+                "app_server_events seq values are missing, invalid, duplicated, "
+                "or out of order")
         self.run_completed = any(
             (e.get("message") or {}).get("method") == "turn/completed"
             for e in self.events)
@@ -452,6 +464,7 @@ class RunModel:
                         self.activity_completion_index[call_id] = index
         # -- command inputs and their actual completion returns -------------
         self.execs = {}
+        self.incomplete_execs = []
         pending_execs = {}
         for index, event in enumerate(self.events):
             message = event.get("message") or {}
@@ -461,6 +474,8 @@ class RunModel:
                 continue
             thread_id = params.get("threadId")
             if not thread_id:
+                self.incomplete_execs.append({"index": index,
+                                              "thread_id": None})
                 self.gaps.append(
                     f"event {index}: commandExecution without threadId")
                 continue
@@ -513,6 +528,11 @@ class RunModel:
                 record["truncated"] = bool(
                     record["output"] and TRUNCATION_MARKER in record["output"])
                 if not record["command"] or not record["item_id"]:
+                    self.incomplete_execs.append({
+                        "index": index, "thread_id": thread_id,
+                        "turn_id": record.get("turn_id"),
+                        "item_id": record.get("item_id"),
+                        "call_id": record.get("call_id")})
                     self.gaps.append(
                         f"event {index}: command completion cannot be tied to its input")
                 bucket.append(record)
@@ -521,6 +541,12 @@ class RunModel:
                     f"event {index}: commandExecution has no recognized completion state")
         for record in pending_execs.values():
             self.execs.setdefault(record["thread_id"], []).append(record)
+            self.incomplete_execs.append({
+                "index": record["call_index"],
+                "thread_id": record["thread_id"],
+                "turn_id": record.get("turn_id"),
+                "item_id": record.get("item_id"),
+                "call_id": record.get("call_id")})
             self.gaps.append(
                 f"event {record['call_index']}: commandExecution input has no completion")
         # -- actual patch/file change events; never commandActions -----------
@@ -1164,6 +1190,9 @@ class Judge:
         if parse_state != "ok" or not isinstance(payload, dict):
             gaps.append(f"{label}: structured return {parse_state}")
             return None
+        if "status" not in payload:
+            gaps.append(f"{label}: structured return misses status")
+            return None
         if payload.get("status") != "ok":
             problems.append(
                 f"{label}: structured return status is {payload.get('status')!r}")
@@ -1423,7 +1452,9 @@ class Judge:
             problems.append("the first commit (stage3-finalize) never ran "
                             "exactly once in the first generator child")
         self.first_finalize = first_finalize[0] if len(first_finalize) == 1 else None
-        self.credential_values = {"file": real_file, "sha": real_sha}
+        self.credential_values = {"file": real_file, "sha": real_sha,
+                                  "professor": captured.get("professor"),
+                                  "professor_dir": captured.get("professor_dir")}
         if problems:
             self.row("F-credential-chain", "fail",
                      "the captured credential values were not consumed "
@@ -1479,14 +1510,35 @@ class Judge:
             validation_file = prep_payload.get("validation_file")
             render_sha = prep_payload.get("render_sha256")
             prepared_round = prep_payload.get("round")
-            if not all((handoff_file, handoff_sha, output_file,
-                        validation_file, render_sha)) \
-                    or prepared_round != round_no:
+            prepare_fields = ("professor", "professor_dir", "round",
+                              "handoff_file", "handoff_sha256", "output_file",
+                              "validation_file", "render_sha256")
+            missing_prepare = [field for field in prepare_fields
+                               if field not in prep_payload
+                               or prep_payload[field] is None
+                               or prep_payload[field] == ""]
+            if missing_prepare:
+                gaps.append(
+                    f"round {round_no}: prepare return misses required fields "
+                    f"{missing_prepare}")
+                break
+            if type(prepared_round) is not int or prepared_round != round_no:
                 problems.append(
-                    f"round {round_no}: successful prepare return lacks or "
-                    "drifts in round/handoff/output/validation/render values")
+                    f"round {round_no}: prepare returned round "
+                    f"{prepared_round!r}")
                 break
             credential = getattr(self, "credential_values", {})
+            if prep_payload.get("professor") != credential.get("professor"):
+                problems.append(
+                    f"round {round_no}: prepare professor differs from the "
+                    "captured invocation source")
+            if self._path_identity(prep_payload.get("professor_dir"),
+                                   prepare.get("cwd")) != self._path_identity(
+                                       credential.get("professor_dir"),
+                                       prepare.get("cwd")):
+                problems.append(
+                    f"round {round_no}: prepare professor_dir differs from "
+                    "the captured invocation source")
             for flag, value in (("--invocation-file", credential.get("file")),
                                 ("--invocation-sha256", credential.get("sha"))):
                 if not value or self.flag_value(prepare["command"], flag) != value:
@@ -1526,9 +1578,30 @@ class Judge:
                 save, f"round {round_no} save", problems, gaps)
             if save_payload is None:
                 break
+            save_fields = ("professor", "professor_dir", "round",
+                           "render_sha256", "validation_file",
+                           "validation_sha256")
+            missing_save = [field for field in save_fields
+                            if field not in save_payload
+                            or save_payload[field] is None
+                            or save_payload[field] == ""]
+            if missing_save:
+                gaps.append(
+                    f"round {round_no}: save return misses required fields "
+                    f"{missing_save}")
+                break
             validation_sha = save_payload.get("validation_sha256")
             saved_file = save_payload.get("validation_file")
-            if not validation_sha or saved_file != validation_file \
+            if save_payload.get("professor") != prep_payload.get("professor") \
+                    or self._path_identity(save_payload.get("professor_dir"),
+                                           save.get("cwd")) != self._path_identity(
+                                               prep_payload.get("professor_dir"),
+                                               save.get("cwd")):
+                problems.append(
+                    f"round {round_no}: save return changed the prepared "
+                    "professor source")
+            if saved_file != validation_file \
+                    or type(save_payload.get("round")) is not int \
                     or save_payload.get("round") != round_no \
                     or save_payload.get("render_sha256") != render_sha:
                 problems.append(
@@ -1570,12 +1643,45 @@ class Judge:
                 record, f"round {round_no} record", problems, gaps)
             if record_payload is None:
                 break
-            if record_payload.get("round") != round_no \
+            record_fields = ("state_path", "round", "render_sha256",
+                             "validation_input_sha256", "needs_correction",
+                             "terminal")
+            missing_record = [field for field in record_fields
+                              if field not in record_payload
+                              or record_payload[field] is None
+                              or record_payload[field] == ""]
+            if missing_record:
+                gaps.append(
+                    f"round {round_no}: record return misses required fields "
+                    f"{missing_record}")
+                break
+            if not isinstance(record_payload.get("needs_correction"), bool) \
+                    or not isinstance(record_payload.get("terminal"), bool):
+                gaps.append(
+                    f"round {round_no}: record correction/terminal values "
+                    "are not boolean")
+                break
+            state_path = record_payload.get("state_path")
+            state_dir = (str(Path(state_path).parent)
+                         if isinstance(state_path, str) else None)
+            if self._path_identity(state_dir, record.get("cwd")) != \
+                    self._path_identity(prep_payload.get("professor_dir"),
+                                        record.get("cwd")):
+                problems.append(
+                    f"round {round_no}: record state_path belongs to a "
+                    "different professor directory")
+            if type(record_payload.get("round")) is not int \
+                    or record_payload.get("round") != round_no \
                     or record_payload.get("render_sha256") != render_sha \
                     or record_payload.get("validation_input_sha256") != validation_sha:
                 problems.append(
                     f"round {round_no}: record return does not summarize "
                     "the round/render/bytes returned by save")
+            if record_payload.get("terminal") is record_payload.get(
+                    "needs_correction"):
+                problems.append(
+                    f"round {round_no}: record terminal flag disagrees with "
+                    "needs_correction")
             rounds.append({
                 "round": round_no, "child": child, "prepare": prepare,
                 "save": save, "record": record, "output_file": output_file,
@@ -1742,6 +1848,13 @@ class Judge:
         turn_id = message.get("turn_id")
         if not turn_id:
             return None
+        if any(index in self.m.invalid_sequence_indices
+               for index in range(start + 1, finish)):
+            return None
+        if any(change.get("thread_id") == entry.get("child")
+               and start < change.get("index", -1) < finish
+               for change in self.m.incomplete_execs):
+            return None
         if any(change.get("thread_id") == entry.get("child")
                and start < change.get("index", -1) < finish
                for change in self.m.incomplete_file_changes):
@@ -1848,12 +1961,22 @@ class Judge:
         for entry in rounds:
             child = entry["child"]
             output_file = entry.get("output_file") or ""
-            _start, _finish, window = self._validator_window(entry)
+            start, finish, window = self._validator_window(entry)
             if window is None:
                 gaps.append(f"round {entry['round']}: no correlated validator "
                             "completion window")
                 continue
             execs, changes = window
+            if any(index in self.m.invalid_sequence_indices
+                   for index in range(start + 1, finish)):
+                gaps.append(f"round {entry['round']}: app_server_events seq "
+                            "does not establish a reliable call order")
+            for incomplete in self.m.incomplete_execs:
+                if incomplete.get("thread_id") == child \
+                        and start < incomplete.get("index", -1) < finish:
+                    gaps.append(
+                        f"round {entry['round']}: commandExecution item/call_id "
+                        "does not bind a started call to its completion")
             operation_count = 0
             turn_id = None
             for record in execs:

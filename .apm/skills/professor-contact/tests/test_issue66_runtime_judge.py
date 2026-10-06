@@ -20,8 +20,11 @@ frozen contract — never by the judge.  Sample families:
 - evidence channels (unsupported message shape, truncated save output,
   version-less credential → INVALID).
 """
+import ast
 import hashlib
+import inspect
 import json
+import os
 import shlex
 import sys
 import tempfile
@@ -273,7 +276,9 @@ class Fixture:
             "contact_state.py stage3-prepare-validation --invocation-file "
             f"{CREDENTIAL_FILE} --invocation-sha256 {CREDENTIAL_SHA} "
             f"--round {round_no}",
-            json.dumps({"status": "ok", "round": round_no,
+                json.dumps({"status": "ok", "round": round_no,
+                        "professor": PROFESSOR_NAME,
+                        "professor_dir": "/tmp/fixture",
                         "handoff_file": HANDOFF_FILE,
                         "handoff_sha256": sha,
                         "output_file": OUTPUT_FILE,
@@ -315,6 +320,8 @@ class Fixture:
             "contact_state.py stage3-save-validation --handoff-file "
             f"{HANDOFF_FILE} --handoff-sha256 {used_sha}",
             json.dumps({"status": "ok", "validation_sha256": sha,
+                        "professor": PROFESSOR_NAME,
+                        "professor_dir": "/tmp/fixture",
                         "validation_file": validation_file,
                         "round": round_no, "render_sha256": "render-digest"}),
             actions=[action("read", OUTPUT_FILE),
@@ -336,8 +343,9 @@ class Fixture:
             json.dumps({"status": "ok",
                         "validation_input_sha256": sha,
                         "needs_correction": needs_correction,
+                        "terminal": not needs_correction,
                         "round": round_no,
-                        "validation_file": RECORDED_FILE,
+                        "state_path": "/tmp/fixture/套磁候选状态.json",
                         "render_sha256": "render-digest"}),
             actions=[action("read", validation_file if not handoff_drift
                             else OUTPUT_FILE)])
@@ -379,12 +387,37 @@ class Fixture:
                     "identity_eligible_thread_ids": list(self.children)}}
 
     def response(self):
-        events = list(self.events)
+        events = []
+        for index, event in enumerate(self.events, start=1):
+            sequenced = dict(event)
+            sequenced.setdefault("seq", index)
+            events.append(sequenced)
         if self.include_turn_completed:
-            events.append({"message": {"method": "turn/completed"}})
+            events.append({"seq": len(events) + 1,
+                           "message": {"method": "turn/completed"}})
         return {"evidence_set_id": "issue66-fixture-run-1",
                 "output": {"thread_id": ROOT,
                            "app_server_events": events}}
+
+
+def mutate_command_return(fx, thread, subcommand, mutate):
+    for event in fx.events:
+        message = event.get("message", {})
+        params = message.get("params", {})
+        item = params.get("item", {})
+        if message.get("method") != "item/completed" \
+                or params.get("threadId") != thread \
+                or item.get("type") != "commandExecution" \
+                or subcommand not in item.get("command", ""):
+            continue
+        payload, state = judge.Judge._json_from_output(
+            item.get("aggregatedOutput"))
+        if state != "ok" or not isinstance(payload, dict):
+            raise AssertionError(f"cannot mutate {subcommand} return: {state}")
+        mutate(payload)
+        item["aggregatedOutput"] = json.dumps(payload, ensure_ascii=False)
+        return
+    raise AssertionError(f"missing {subcommand} return on {thread}")
 
 
 def legal_two_child(fx: Fixture, *, whitespace=False):
@@ -511,9 +544,282 @@ def valid_surfaces(fx: Fixture):
     return surfaces
 
 
+_SAMPLE_SCHEMA = "issue66.sample-ledger.v1"
+_SAMPLE_LEDGER_ENV = "ISSUE66_SAMPLE_LEDGER"
+_R19_SAMPLE_FAMILIES = {
+    "three_completion_paths", "source_handoff_values", "formal_relations",
+    "raw_messages", "file_permissions", "order_and_stops",
+    "refusal_side_effects", "read_reuse", "evidence_channels",
+}
+_ACTIVE_SAMPLE_TEST = None
+_INITIALIZED_LEDGER_PATHS = set()
+_TEST_SOURCE = Path(__file__).resolve()
+_TEST_AST = ast.parse(_TEST_SOURCE.read_text(encoding="utf-8"))
+_ASSERTION_CALLS = [node for node in ast.walk(_TEST_AST)
+                    if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in {"assertEqual", "assertNotEqual"}
+                    and len(node.args) >= 2]
+
+_CLASS_FAMILY = {
+    "LegalCompletionTests": ["three_completion_paths"],
+    "AttributionTests": ["formal_relations"],
+    "FoldedEvidenceTests": ["evidence_channels"],
+    "CredentialValueTests": ["source_handoff_values"],
+    "RawOriginalTests": ["raw_messages"],
+    "WriteScopeTests": ["file_permissions"],
+    "OrderAndStopTests": ["order_and_stops"],
+    "EvidenceChannelTests": ["evidence_channels"],
+}
+_TEST_FAMILY_OVERRIDES = {
+    "test_legal_whitespace_message_passes":
+        ["three_completion_paths", "raw_messages"],
+    "test_machine_failure_prefix_blocks":
+        ["formal_relations", "order_and_stops"],
+    "test_machine_failure_prefix_does_not_hide_prior_product_failure":
+        ["formal_relations", "order_and_stops"],
+    "test_routing_ownership_conflict_is_folded_as_invalid":
+        ["formal_relations", "evidence_channels"],
+    "test_routing_check_conflict_cannot_be_hidden_by_pass_summary":
+        ["formal_relations", "evidence_channels"],
+    "test_handoff_value_drift_fails": ["source_handoff_values"],
+    "test_prepare_return_for_another_round_fails":
+        ["source_handoff_values"],
+    "test_prepare_return_missing_output_path_is_invalid":
+        ["source_handoff_values", "evidence_channels"],
+    "test_prepare_professor_source_drift_fails":
+        ["source_handoff_values"],
+    "test_save_return_missing_round_is_invalid":
+        ["source_handoff_values", "evidence_channels"],
+    "test_record_return_state_path_drift_fails":
+        ["source_handoff_values"],
+    "test_record_return_missing_needs_correction_is_invalid":
+        ["source_handoff_values", "evidence_channels"],
+    "test_non_monotonic_event_seq_invalidates_validator_evidence":
+        ["raw_messages", "evidence_channels"],
+    "test_mismatched_call_id_cannot_bind_validator_command_completion":
+        ["raw_messages", "evidence_channels"],
+}
+
+
+def _json_copy(value):
+    """Return the exact JSON-compatible value used by a test assertion."""
+    return json.loads(json.dumps(value, ensure_ascii=False, default=repr))
+
+
+def _sample_families(test_id):
+    class_name, method_name = test_id.rsplit(".", 2)[-2:]
+    families = list(_TEST_FAMILY_OVERRIDES.get(
+        method_name, _CLASS_FAMILY.get(class_name, [])))
+    unknown = set(families) - _R19_SAMPLE_FAMILIES
+    if unknown:
+        raise AssertionError(f"unknown R19 sample families: {sorted(unknown)}")
+    return families or ["unclassified"]
+
+
+def _call_source(frame, name):
+    line = frame.f_lineno
+    matches = [node for node in _ASSERTION_CALLS
+               if node.func.attr == name
+               and node.lineno <= line <= getattr(node, "end_lineno", node.lineno)]
+    if not matches:
+        return None
+    node = min(matches, key=lambda item: item.end_lineno - item.lineno)
+    return node
+
+
+def _verdict_aliases(test_id):
+    class_name, method_name = test_id.rsplit(".", 2)[-2:]
+    test_class = next((node for node in _TEST_AST.body
+                       if isinstance(node, ast.ClassDef)
+                       and node.name == class_name), None)
+    method = next((node for node in test_class.body
+                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   and node.name == method_name), None) if test_class else None
+    aliases = set()
+    if method is None:
+        return aliases
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(method):
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, ast.AnnAssign):
+                targets, value = [node.target], node.value
+            else:
+                continue
+            names = {child.id for child in ast.walk(value)
+                     if isinstance(child, ast.Name)}
+            is_alias = names.intersection(aliases | {"verdict"})
+            is_facts_result = (isinstance(value, ast.Call)
+                               and isinstance(value.func, ast.Name)
+                               and value.func.id == "facts"
+                               and "verdict" in names)
+            if not (is_alias or is_facts_result):
+                continue
+            for target in targets:
+                for child in ast.walk(target):
+                    if isinstance(child, ast.Name) and child.id not in aliases:
+                        aliases.add(child.id)
+                        changed = True
+    return aliases
+
+
+def _expression_is_verdict_related(node, aliases):
+    return any((isinstance(child, ast.Name)
+                and child.id in aliases | {"verdict"})
+               or (isinstance(child, ast.Call)
+                   and isinstance(child.func, ast.Name)
+                   and child.func.id == "facts")
+               for child in ast.walk(node))
+
+
+def _assertion_capture(test_case, method_name, actual, expected):
+    if not test_case._sample_records:
+        return
+    frame = inspect.currentframe().f_back.f_back
+    node = _call_source(frame, method_name)
+    if node is None:
+        return
+    subject = ast.unparse(node.args[0])
+    expected_expression = ast.unparse(node.args[1])
+    entry = {
+        "operator": "equals" if method_name == "assertEqual" else "not_equals",
+        "subject": subject,
+        "expected_expression": expected_expression,
+        "expected_value": _json_copy(expected),
+        "observed_value": _json_copy(actual),
+        "source": {"file": _TEST_SOURCE.name, "line": node.lineno},
+        "verdict_related": _expression_is_verdict_related(
+            node.args[0], test_case._verdict_aliases),
+    }
+    record = test_case._sample_records[-1]
+    record["expected"]["assertions"].append(entry)
+    if not entry["verdict_related"]:
+        return
+    if record["expected"]["classification_status"] != "asserted":
+        record["expected"]["status"] = "partial"
+    if (isinstance(node.args[0], ast.Subscript)
+            and isinstance(node.args[0].value, ast.Name)
+            and node.args[0].value.id == "verdict"
+            and isinstance(node.args[0].slice, ast.Constant)
+            and node.args[0].slice.value == "classification"
+            and method_name == "assertEqual"):
+        record["expected"]["classification"] = _json_copy(expected)
+        record["expected"]["classification_status"] = "asserted"
+        record["expected"]["status"] = "available"
+    elif (isinstance(node.args[0], ast.Subscript)
+          and ((isinstance(node.args[0].value, ast.Name)
+                and node.args[0].value.id in test_case._verdict_aliases)
+               or (isinstance(node.args[0].value, ast.Call)
+                   and isinstance(node.args[0].value.func, ast.Name)
+                   and node.args[0].value.func.id == "facts"
+                   and any(isinstance(child, ast.Name)
+                           and child.id == "verdict"
+                           for child in ast.walk(node.args[0].value))))
+          and isinstance(node.args[0].slice, ast.Constant)
+          and isinstance(node.args[0].slice.value, str)
+          and node.args[0].slice.value.startswith("F-")
+          ):
+        fact_id = node.args[0].slice.value
+        if method_name == "assertEqual":
+            record["expected"].setdefault("facts", {})[fact_id] = \
+                _json_copy(expected)
+            record["expected"]["facts_status"] = "asserted"
+        else:
+            record["expected"].setdefault("fact_constraints", []).append({
+                "fact": fact_id,
+                "operator": entry["operator"],
+                "value": _json_copy(expected),
+            })
+            record["expected"]["facts_status"] = "partial"
+
+
+def _event_references(events):
+    refs = []
+    for position, event in enumerate(events, start=1):
+        message = event.get("message", {})
+        if not isinstance(message, dict):
+            continue
+        params = message.get("params", {})
+        item = params.get("item", {}) if isinstance(params, dict) else {}
+        if not isinstance(item, dict):
+            item = {}
+        if not item and message.get("method") != "rawResponseItem/completed":
+            continue
+        refs.append({
+            "array_index": position - 1,
+            "seq": event.get("seq", position),
+            "method": message.get("method"),
+            "thread_id": params.get("threadId") if isinstance(params, dict) else None,
+            "turn_id": params.get("turnId") if isinstance(params, dict) else None,
+            "item_type": item.get("type"),
+            "item_id": item.get("id"),
+            "call_id": item.get("call_id"),
+        })
+    return refs
+
+
+def _append_sample_records(records):
+    output = os.environ.get(_SAMPLE_LEDGER_ENV)
+    if not output or not records:
+        return
+    path = Path(output).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path_key = str(path.resolve())
+    if path_key not in _INITIALIZED_LEDGER_PATHS:
+        path.write_text("", encoding="utf-8")
+        _INITIALIZED_LEDGER_PATHS.add(path_key)
+    with path.open("a", encoding="utf-8") as stream:
+        for record in records:
+            stream.write(json.dumps(record, ensure_ascii=False,
+                                    sort_keys=True) + "\n")
+        stream.flush()
+
+
+def _record_judge_call(fx, verdict, response, callsite, fixture_inputs):
+    test_case = _ACTIVE_SAMPLE_TEST
+    if test_case is None:
+        return
+    test_case._sample_call_index += 1
+    ordinal = test_case._sample_call_index
+    test_id = test_case.id()
+    events = response["output"]["app_server_events"]
+    canonical_evidence = json.dumps(
+        fixture_inputs, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), default=repr).encode("utf-8")
+    record = {
+        "schema_version": _SAMPLE_SCHEMA,
+        "sample_id": f"{test_id}#run-{ordinal}",
+        "test_id": test_id,
+        "sample_family": _sample_families(test_id),
+        "expected": {"status": "unavailable",
+                     "classification_status": "not_asserted",
+                     "facts_status": "not_asserted", "assertions": []},
+        "actual": {"outcome": verdict.get("classification"),
+                   "result": verdict},
+        "judge_sha256": hashlib.sha256(
+            Path(judge.__file__).resolve().read_bytes()).hexdigest(),
+        "evidence_digest": hashlib.sha256(canonical_evidence).hexdigest(),
+        "evidence_ref": {
+            "kind": "synthetic_fixture",
+            "source_file": _TEST_SOURCE.name,
+            "run_call_line": callsite["line"],
+            "run_ordinal": ordinal,
+            "event_count": len(events),
+            "event_refs": _event_references(events),
+        },
+    }
+    test_case._sample_records.append(record)
+
+
 def run(fx: Fixture, *, state="default", delegation_override=None,
         adapter_override=None, surface_evidence=None,
         delegation_state="confirmed"):
+    callsite_frame = inspect.currentframe().f_back
+    callsite = {"line": callsite_frame.f_lineno,
+                "method": callsite_frame.f_code.co_name}
     tmp = Path(tempfile.mkdtemp())
     response_path = tmp / "response.json"
     adapter_path = tmp / "adapter.json"
@@ -551,6 +857,14 @@ def run(fx: Fixture, *, state="default", delegation_override=None,
         if state is not None:
             state_path.write_text(json.dumps(state, ensure_ascii=False),
                                   encoding="utf-8")
+    response = fx.response()
+    state_input = (state if isinstance(state, dict) or state is None else
+                   {"argument": state, "candidate_state_file_written": False})
+    fixture_inputs = {"response": response, "adapter": adapter,
+                      "candidate_state": state_input,
+                      "surface_evidence": surface_evidence}
+    response_path.write_text(json.dumps(response, ensure_ascii=False),
+                             encoding="utf-8")
     argv = ["--eval-response", str(response_path),
             "--adapter-output", str(adapter_path),
             "--candidate-state", str(state_path),
@@ -558,14 +872,43 @@ def run(fx: Fixture, *, state="default", delegation_override=None,
     for flag, path in surface_paths.items():
         argv.extend([flag, path])
     judge.main(argv)
-    return json.loads(output_path.read_text(encoding="utf-8"))
+    verdict = json.loads(output_path.read_text(encoding="utf-8"))
+    _record_judge_call(fx, verdict, response, callsite, fixture_inputs)
+    return verdict
 
 
 def facts(verdict):
     return {row["fact"]: row["verdict"] for row in verdict["facts"]}
 
 
-class LegalCompletionTests(unittest.TestCase):
+class RuntimeJudgeTestCase(unittest.TestCase):
+    def setUp(self):
+        global _ACTIVE_SAMPLE_TEST
+        super().setUp()
+        self._sample_records = []
+        self._sample_call_index = 0
+        self._verdict_aliases = _verdict_aliases(self.id())
+        _ACTIVE_SAMPLE_TEST = self
+
+    def tearDown(self):
+        global _ACTIVE_SAMPLE_TEST
+        try:
+            _append_sample_records(self._sample_records)
+        finally:
+            if _ACTIVE_SAMPLE_TEST is self:
+                _ACTIVE_SAMPLE_TEST = None
+            super().tearDown()
+
+    def assertEqual(self, first, second, msg=None):
+        _assertion_capture(self, "assertEqual", first, second)
+        return super().assertEqual(first, second, msg)
+
+    def assertNotEqual(self, first, second, msg=None):
+        _assertion_capture(self, "assertNotEqual", first, second)
+        return super().assertNotEqual(first, second, msg)
+
+
+class LegalCompletionTests(RuntimeJudgeTestCase):
     def test_one_round_pass(self):
         fx = Fixture()
         legal_two_child(fx)
@@ -601,7 +944,7 @@ class LegalCompletionTests(unittest.TestCase):
         self.assertEqual(verdict["classification"], "PASS", verdict)
 
 
-class AttributionTests(unittest.TestCase):
+class AttributionTests(RuntimeJudgeTestCase):
     def test_incomplete_run_without_relations_does_not_prove_zero_delegation(self):
         fx = Fixture()
         fx.include_turn_completed = False
@@ -762,7 +1105,7 @@ class AttributionTests(unittest.TestCase):
         self.assertEqual(facts(verdict)["F-routing-verifier"], "invalid")
 
 
-class FoldedEvidenceTests(unittest.TestCase):
+class FoldedEvidenceTests(RuntimeJudgeTestCase):
     def test_routing_check_conflict_cannot_be_hidden_by_pass_summary(self):
         fx = Fixture()
         legal_two_child(fx)
@@ -848,7 +1191,7 @@ class FoldedEvidenceTests(unittest.TestCase):
         self.assertEqual(facts(verdict)["F-evidence-version"], "gap", verdict)
 
 
-class CredentialValueTests(unittest.TestCase):
+class CredentialValueTests(RuntimeJudgeTestCase):
     def test_legal_capture_without_optional_business_inputs_passes(self):
         fx = Fixture()
         legal_two_child(fx)
@@ -1054,7 +1397,7 @@ class CredentialValueTests(unittest.TestCase):
         self.assertEqual(facts(verdict)["F-handoff-chain"], "fail")
 
 
-class RawOriginalTests(unittest.TestCase):
+class RawOriginalTests(RuntimeJudgeTestCase):
     def test_root_reconstruction_fails(self):
         fx = Fixture()
         legal_two_child_spine(fx)
@@ -1192,7 +1535,7 @@ class RawOriginalTests(unittest.TestCase):
                          "INVALID_TEST_EXECUTION", verdict)
 
 
-class WriteScopeTests(unittest.TestCase):
+class WriteScopeTests(RuntimeJudgeTestCase):
     @staticmethod
     def replace_validator_command(fx, command):
         found = 0
@@ -1236,6 +1579,49 @@ class WriteScopeTests(unittest.TestCase):
 
         self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail",
                          verdict)
+
+    def test_same_byte_write_then_restore_still_fails_write_scope(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        raw = msg_text().encode("utf-8")
+        source = (f"open({OUTPUT_FILE!r}, 'wb').write(b'temporary'); "
+                  f"open({OUTPUT_FILE!r}, 'wb').write({raw!r})")
+        self.assertEqual(self.replace_validator_command(
+            fx, "python3 -c " + shlex.quote(source)), 2)
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail",
+                         verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+
+    def test_overwrite_existing_candidate_source_fails_write_scope(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        source_path = f"/tmp/fixture/{MD_NAME}"
+        source = f"open({source_path!r}, 'wb').write(b'changed')"
+        self.assertEqual(self.replace_validator_command(
+            fx, "python3 -c " + shlex.quote(source)), 2)
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail",
+                         verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+
+    def test_nonexclusive_output_open_fails_even_when_bytes_match(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        raw = msg_text().encode("utf-8")
+        source = f"open({OUTPUT_FILE!r}, 'wb').write({raw!r})"
+        self.assertEqual(self.replace_validator_command(
+            fx, "python3 -c " + shlex.quote(source)), 2)
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail",
+                         verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
 
     def test_proven_unauthorized_write_survives_following_unknown_command(self):
         fx = Fixture()
@@ -1311,7 +1697,7 @@ class WriteScopeTests(unittest.TestCase):
         self.assertNotEqual(facts(verdict)["F-validator-write-scope"], "fail", verdict)
 
 
-class OrderAndStopTests(unittest.TestCase):
+class OrderAndStopTests(RuntimeJudgeTestCase):
     def test_correction_dispatch_between_record_start_and_completion_fails(self):
         fx = Fixture()
         legal_two_child_spine(fx)
@@ -1462,7 +1848,7 @@ class OrderAndStopTests(unittest.TestCase):
                          "INVALID_TEST_EXECUTION", verdict)
 
 
-class EvidenceChannelTests(unittest.TestCase):
+class EvidenceChannelTests(RuntimeJudgeTestCase):
     def test_truncated_record_output_is_invalid(self):
         fx = Fixture()
         legal_two_child(fx)
@@ -1525,6 +1911,118 @@ class EvidenceChannelTests(unittest.TestCase):
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-handoff-chain"], "fail")
+
+    def test_prepare_return_missing_output_path_is_invalid(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        mutate_command_return(
+            fx, ROOT, "stage3-prepare-validation",
+            lambda payload: payload.pop("output_file"))
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-handoff-chain"], "gap")
+
+    def test_prepare_professor_source_drift_fails(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        mutate_command_return(
+            fx, ROOT, "stage3-prepare-validation",
+            lambda payload: payload.update(professor_dir="/tmp/other"))
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-handoff-chain"], "fail")
+
+    def test_save_return_missing_round_is_invalid(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        mutate_command_return(
+            fx, ROOT, "stage3-save-validation",
+            lambda payload: payload.pop("round"))
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-handoff-chain"], "gap")
+
+    def test_record_return_state_path_drift_fails(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        mutate_command_return(
+            fx, ROOT, "stage3-record-validation",
+            lambda payload: payload.update(
+                state_path="/tmp/other/套磁候选状态.json"))
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-handoff-chain"], "fail")
+
+    def test_record_return_missing_needs_correction_is_invalid(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        mutate_command_return(
+            fx, ROOT, "stage3-record-validation",
+            lambda payload: payload.pop("needs_correction"))
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-handoff-chain"], "gap")
+
+    def test_non_monotonic_event_seq_invalidates_validator_evidence(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for index, event in enumerate(fx.events, start=1):
+            event["seq"] = index
+        call_events = [(index, event) for index, event in enumerate(fx.events)
+                       if event.get("message", {}).get("params", {}).get(
+                           "threadId") == V1
+                       and event.get("message", {}).get("params", {}).get(
+                           "item", {}).get("type") == "commandExecution"
+                       and "python3 -c" in event["message"]["params"][
+                           "item"].get("command", "")]
+        start_index, start_event = next(
+            (index, event) for index, event in call_events
+            if event.get("message", {}).get("method") == "item/started")
+        _complete_index, complete_event = next(
+            (index, event) for index, event in call_events
+            if event.get("message", {}).get("method") == "item/completed")
+        complete_event["seq"] = start_event["seq"]
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "gap")
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "gap")
+
+    def test_mismatched_call_id_cannot_bind_validator_command_completion(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for event in fx.events:
+            message = event.get("message", {})
+            params = message.get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == V1 \
+                    and message.get("method") == "item/completed" \
+                    and item.get("type") == "commandExecution" \
+                    and "python3 -c" in item.get("command", ""):
+                item["call_id"] = "different-call-id"
+                break
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "gap")
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "gap")
 
 
 if __name__ == "__main__":
