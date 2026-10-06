@@ -87,6 +87,11 @@ def prepare(program_root, installed_script, output_dir):
     broken = program_root / "教授研究" / "Z分野" / "无效样例" / helpers.contact_state.EMAIL_PACK
     broken.parent.mkdir(parents=True)
     broken.write_text(helpers.ISSUE59_MALFORMED_JSON, encoding="utf-8")
+    # A passive unrelated-request datum is sufficient to detect an overbroad
+    # cleanup. It does not start another request or teach cleanup behavior.
+    unrelated = program_root / ".pc68-unrelated-request" / "keep.json"
+    unrelated.parent.mkdir()
+    write_json(unrelated, {"request": "unrelated-synthetic-request", "preserve": True})
     canonical_choices = output_dir / "canonical-choices.json"
     write_json(canonical_choices, choices)
     owners = []
@@ -149,6 +154,7 @@ def prepare(program_root, installed_script, output_dir):
                                           "choices_rows": deepcopy(owner["expected_choices_rows"])}
                                          for owner in owners]},
                 "expected_aggregate_rows": 0, "pre_run_hashes": hashes,
+                "protected_other_request_files": [str(unrelated)],
                 "manual_patch": "no"}
     write_json(output_dir / "fixture-manifest.json", manifest)
     return manifest

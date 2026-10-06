@@ -1,0 +1,254 @@
+{
+  "schema": "issue68-r30-lifecycle-observation-projection-v1",
+  "kind": "redacted_actual_execution_projection",
+  "attempt": "pc68-r30-lifecycle-observation-04",
+  "formal_case_started": false,
+  "state": "SYNTHETIC_LIFECYCLE_READY",
+  "overall_environment_state": "PREFLIGHT_INCOMPLETE",
+  "scope": "bounded_root_file_operations_only",
+  "raw_sources": {
+    "request_sha256": "c0f098d5ce426d385f98c66174d475ea748820d4e6a4c65921882dec4b9fe1b9",
+    "response_sha256": "fba2995fe7ffabfef2bd298a78004a69cd3175c2127264aec63a3f453cbe5a56",
+    "entrypoint_sha256": "dce98777dd1cc05b2bf70644b268cced79df31a0f57f6b19a97560ac74cff288",
+    "helper_sha256": "718f84c3a7b51996b6adb06c07ee9d1a667b0af3084b3d084321d6e1eb276cef"
+  },
+  "observed_chain": {
+    "generation": 1,
+    "actual_read": {
+      "marker": "生命周期合成输入",
+      "value": "原编号::空 格",
+      "choices": [
+        2,
+        1,
+        2
+      ]
+    },
+    "before_absent": true,
+    "after_absent": true,
+    "protected_other_request_unchanged": true,
+    "operations": [
+      {
+        "generation": 1,
+        "start": 22402,
+        "end": 22403,
+        "command": "/bin/zsh -lc \"printf %s '{\\\"marker\\\": \\\"生命周期合成输入\\\", \\\"value\\\": \\\"原编号::空 格\\\", \\\"choices\\\": [2, 1, 2]}' > /private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json\"",
+        "output": null,
+        "exit_code": 0,
+        "operation": "write",
+        "paths": [
+          "/private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json"
+        ]
+      },
+      {
+        "generation": 1,
+        "start": 22409,
+        "end": 22410,
+        "command": "/bin/zsh -lc 'cat /private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json'",
+        "output": "{\"marker\": \"生命周期合成输入\", \"value\": \"原编号::空 格\", \"choices\": [2, 1, 2]}",
+        "exit_code": 0,
+        "operation": "read",
+        "paths": [
+          "/private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json"
+        ]
+      },
+      {
+        "generation": 1,
+        "start": 22416,
+        "end": 22417,
+        "command": "/bin/zsh -lc 'rm -- /private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json'",
+        "output": null,
+        "exit_code": 0,
+        "operation": "remove",
+        "paths": [
+          "/private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json"
+        ]
+      }
+    ]
+  },
+  "events": [
+    {
+      "runtime_seq": 22402,
+      "runtime_generation": 1,
+      "method": "item/started",
+      "item_type": "commandExecution",
+      "status": "inProgress",
+      "exit_code": null,
+      "command": "/bin/zsh -lc \"printf %s '{\\\"marker\\\": \\\"生命周期合成输入\\\", \\\"value\\\": \\\"原编号::空 格\\\", \\\"choices\\\": [2, 1, 2]}' > /private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json\"",
+      "root_alias": "synthetic-root-1",
+      "turn_alias": "synthetic-turn-1"
+    },
+    {
+      "runtime_seq": 22403,
+      "runtime_generation": 1,
+      "method": "item/completed",
+      "item_type": "commandExecution",
+      "status": "completed",
+      "exit_code": 0,
+      "command": "/bin/zsh -lc \"printf %s '{\\\"marker\\\": \\\"生命周期合成输入\\\", \\\"value\\\": \\\"原编号::空 格\\\", \\\"choices\\\": [2, 1, 2]}' > /private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json\"",
+      "root_alias": "synthetic-root-1",
+      "turn_alias": "synthetic-turn-1"
+    },
+    {
+      "runtime_seq": 22409,
+      "runtime_generation": 1,
+      "method": "item/started",
+      "item_type": "commandExecution",
+      "status": "inProgress",
+      "exit_code": null,
+      "command": "/bin/zsh -lc 'cat /private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json'",
+      "root_alias": "synthetic-root-1",
+      "turn_alias": "synthetic-turn-1"
+    },
+    {
+      "runtime_seq": 22410,
+      "runtime_generation": 1,
+      "method": "item/completed",
+      "item_type": "commandExecution",
+      "status": "completed",
+      "exit_code": 0,
+      "command": "/bin/zsh -lc 'cat /private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json'",
+      "root_alias": "synthetic-root-1",
+      "turn_alias": "synthetic-turn-1"
+    },
+    {
+      "runtime_seq": 22416,
+      "runtime_generation": 1,
+      "method": "item/started",
+      "item_type": "commandExecution",
+      "status": "inProgress",
+      "exit_code": null,
+      "command": "/bin/zsh -lc 'rm -- /private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json'",
+      "root_alias": "synthetic-root-1",
+      "turn_alias": "synthetic-turn-1"
+    },
+    {
+      "runtime_seq": 22417,
+      "runtime_generation": 1,
+      "method": "item/completed",
+      "item_type": "commandExecution",
+      "status": "completed",
+      "exit_code": 0,
+      "command": "/bin/zsh -lc 'rm -- /private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json'",
+      "root_alias": "synthetic-root-1",
+      "turn_alias": "synthetic-turn-1"
+    }
+  ],
+  "actual_configuration": {
+    "request_argv": [
+      "--json",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "workspace-write",
+      "--cd",
+      "/private/tmp/pc68-r30-lifecycle-observation-04/consumer",
+      "--model",
+      "gpt-6-luna",
+      "--config",
+      "model_reasoning_effort=\"low\"",
+      "--config",
+      "agents.max_concurrent_threads_per_session=2",
+      "--config",
+      "projects={\"/private/tmp/pc68-r30-lifecycle-observation-04/consumer\"={trust_level=\"trusted\"}}",
+      "--",
+      "这是纯合成环境预检。依次分别执行以下三条完整命令，每条独立执行一次；不要合并、改写或新增命令。禁止业务技能、代理委派、教授业务及其他文件修改。命令如下：\nprintf %s '{\"marker\": \"生命周期合成输入\", \"value\": \"原编号::空 格\", \"choices\": [2, 1, 2]}' > /private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json\ncat /private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json\nrm -- /private/tmp/pc68-r30-lifecycle-observation-04/consumer/request-owned-transfer.json"
+    ],
+    "requested_model": "gpt-6-luna",
+    "requested_configs": [
+      "model_reasoning_effort=\"low\"",
+      "agents.max_concurrent_threads_per_session=2",
+      "projects={\"/private/tmp/pc68-r30-lifecycle-observation-04/consumer\"={trust_level=\"trusted\"}}"
+    ],
+    "source": "request.json actual serialized request before send",
+    "service_reported_executor_version": "codex-cli 0.159.0-alpha.12.1",
+    "thread_start_effective": {
+      "approvalPolicy": "on-request",
+      "approvalsReviewer": "user",
+      "sandbox": {
+        "type": "workspaceWrite",
+        "writableRoots": [],
+        "networkAccess": false,
+        "excludeTmpdirEnvVar": false,
+        "excludeSlashTmp": false
+      }
+    },
+    "effective_model_status": "NOT_EXPOSED_BY_CURRENT_SERVICE",
+    "effective_model_source": "evals.py thread_start_effective exposes approvalPolicy, approvalsReviewer, sandbox only"
+  },
+  "integrity": {
+    "before": {
+      "root": "/private/tmp/pc68-r30-lifecycle-observation-04/consumer",
+      "present": true,
+      "entries": {
+        "protected-other-request.json": {
+          "kind": "file",
+          "sha256": "4677ed8d834868797c73ed0e5aae52105a94e06c49b0d7825ff6f88a65defad8",
+          "size": 43
+        }
+      }
+    },
+    "after": {
+      "root": "/private/tmp/pc68-r30-lifecycle-observation-04/consumer",
+      "present": true,
+      "entries": {
+        "protected-other-request.json": {
+          "kind": "file",
+          "sha256": "4677ed8d834868797c73ed0e5aae52105a94e06c49b0d7825ff6f88a65defad8",
+          "size": 43
+        }
+      }
+    },
+    "service_unchanged": true,
+    "helper_unchanged": true,
+    "entrypoint_unchanged": true
+  },
+  "association_checks": {
+    "global_sequence_strict": true,
+    "root_and_turn_matched": true,
+    "generation_type_and_value_matched": true,
+    "three_unique_paired_calls": true,
+    "write_before_actual_read_before_remove": true,
+    "actual_read_output_from_command": true
+  },
+  "redactions": [
+    "actual_thread_id",
+    "actual_turn_id",
+    "actual_command_id",
+    "process_id",
+    "local_service_storage_identity"
+  ],
+  "final_helper_reparse": {
+    "kind": "read_only_reparse_no_new_request",
+    "helper_sha256": "c5d8bd442e8a14e6fd7f89c30aaf21ee14540f5597277308cdd8cfa95388449e",
+    "raw_response_sha256": "fba2995fe7ffabfef2bd298a78004a69cd3175c2127264aec63a3f453cbe5a56",
+    "operations_unchanged": true,
+    "state": "SYNTHETIC_LIFECYCLE_READY",
+    "dependency_impact": "empty_quoted_commands_and_missing_or_malformed_event_boundaries_do_not_intersect_original_valid_root_three_operation_chain; no_new_request; no_business_lifecycle_proof_claimed"
+  },
+  "entrypoint": ".apm/skills/professor-contact/tests/runtime/preflight_issue68_lifecycle_observation_r30.py",
+  "source_byte_preservation": "tracked_entrypoint_is_original_executed_source_bytes",
+  "limitations": [
+    "bounded_root_operation_capability_only",
+    "no_professor_business_or_formal_acceptance",
+    "supported_product_installation_remains_incomplete",
+    "effective_model_not_exposed_by_current_service"
+  ],
+  "helper_reparse_history": [
+    {
+      "kind": "read_only_reparse_no_new_request",
+      "helper_sha256": "27d1cbc1a000d70b00edf4f585bf3887fc8bed72222b9dcba573bbd85b2f1e87",
+      "raw_response_sha256": "fba2995fe7ffabfef2bd298a78004a69cd3175c2127264aec63a3f453cbe5a56",
+      "operations_unchanged": true,
+      "state": "SYNTHETIC_LIFECYCLE_READY",
+      "dependency_impact": "stricter_integer_exit_code_accepts_original_integer_zero_calls; no_business_lifecycle_proof_claimed"
+    },
+    {
+      "kind": "read_only_reparse_no_new_request",
+      "helper_sha256": "c5d8bd442e8a14e6fd7f89c30aaf21ee14540f5597277308cdd8cfa95388449e",
+      "raw_response_sha256": "fba2995fe7ffabfef2bd298a78004a69cd3175c2127264aec63a3f453cbe5a56",
+      "operations_unchanged": true,
+      "state": "SYNTHETIC_LIFECYCLE_READY",
+      "dependency_impact": "empty_quoted_commands_and_missing_or_malformed_event_boundaries_do_not_intersect_original_valid_root_three_operation_chain; no_new_request; no_business_lifecycle_proof_claimed"
+    }
+  ],
+  "final_helper_source_sha256": "c5d8bd442e8a14e6fd7f89c30aaf21ee14540f5597277308cdd8cfa95388449e"
+}

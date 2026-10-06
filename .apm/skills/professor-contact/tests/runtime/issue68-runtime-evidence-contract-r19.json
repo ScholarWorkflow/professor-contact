@@ -32,7 +32,7 @@
     "partition_evidence": "The root must execute the supported stage5-partition-choices entry exactly once successfully on the root thread, with per-owner bundles matching the manifest partition record; a partition executed by a child, more than one successful root partition, or no successful root partition is a product failure. The successful root partition must also complete before any owner business call starts: an owner business command on a child thread that starts before the partition completed is a product failure (owner_business_precedes_partition). Discovery must not carry --emit-choices-scope and a plan must not carry --choices-scope.",
     "orchestration_surface": "Root orchestration (discovery, partition, rebuild) is recognized on two surfaces: a call whose command parses strictly under the frozen flag grammar keeps every flag fact, and a compound preparation command (python3 -c / wrapper expression whose action words are quoted string fragments) is attributed by the loose business-surface text shape plus its single stage5 action word. Output facts always come from the commandExecution aggregatedOutput on both surfaces. Compound commands provide no flags, so the --emit-choices-scope, --choices-scope and --program-root checks only cover strictly parsed calls. A compound text carrying two or more action words cannot be attributed to one orchestration step and is BLOCKED_OBSERVABILITY/root_orchestration_ambiguous; on a child thread only a strictly parsed partition, or a compound text whose single action word is stage5-partition-choices, proves partition_executed_by_owner. Require exactly one root stage5-rebuild-overview call after every formal owner result has a current-turn root consumption receipt; its start must be later than every receipt consumption point. Read its result only from that call commandExecution aggregatedOutput. Successful output has status=ok and overview_md, professors and emails, with no reason_code. soft_exit/fail returns status and reason_code plus its result-specific fields, and may have nonzero exit status. The selected root final answer must separately report the exact aggregate result object with all unchanged per-professor result objects; a faithfully reported needs_decision or error aggregate is valid and does not alter professor outcomes. Grouping property names are not frozen and examples such as results or overview are illustrative. Associate direct result objects by their product fields; never search nested diagnostics, prior turns, logs or history for substitute results.",
     "wait_consume_evidence": "The formal child set stays the shared adapter's spawnAgent relation: dispatch.thread_relations edges whose tool is spawnAgent and whose sender_thread_id equals the root thread id name the formal children, and identity diagnostics never create, rewrite, upgrade or downgrade ownership. The child_thread_id to child_agent_path binding comes only from the same run's subAgentActivity items (message.params.item.type is subAgentActivity and item.agentThreadId equals the child thread id): the item's agentPath is the association key only and never formal ownership. The root's only legal consumption receipt for one formal child is a root-thread rawResponseItem/completed agent_message item of the same runtime_generation and the current turn (message.params.turnId equals output.turn_id) whose item.recipient is /root and whose item.author equals that child's agent path; its input_text body must be exactly the Codex child completion shape — the header lines 'Message Type: FINAL_ANSWER', 'Task name: /root' and 'Sender: <child_agent_path>' (the Sender line must equal the child's agent path), then the 'Payload:' marker followed by exactly one JSON object carrying professor_dir, status and reason_code. The receipt's runtime_seq is the root's consumption point for that child's result and the stage5-rebuild-overview aggregate must not start before every owner's receipt consumption point (aggregate_precedes_result_consumption); a legal receipt whose payload outcome differs from the outcome the child itself returned on its own thread is FAIL_PRODUCT/root_receipt_payload_changed. collabAgentToolCall receiverThreadIds/agentsStates, the 'Wait completed.' wait message, subAgentActivity completed reports, child turn/completed events, requested_role and loaded_identity are diagnostics only and never consumption evidence. A child without an agentPath mapping or without a legal receipt stays BLOCKED_OBSERVABILITY with reason code root_result_consumption_unobservable and is never passed on the strength of the diagnostic surfaces; legal receipts carrying more than one distinct outcome triple stay INVALID_EVIDENCE/root_result_receipt_ambiguous; when no uniquely attributable receipt exists the verifier never guesses a PASS. The receipt's Payload JSON is read at its top level only and never recursively through nested objects: the object must carry professor_dir as a top-level field and the outcome triple comes from the top-level fields alone, so a receipt whose top level carries only a nested object (a diagnostic wrapper, for example) is never a consumption receipt. The child to agentPath mapping must be unique per formal child: a child with no agentPath mapping stays BLOCKED_OBSERVABILITY/root_result_consumption_unobservable (missing_agent_path_mapping), a child observed under more than one distinct agentPath is INVALID_EVIDENCE/child_agent_path_mapping_ambiguous regardless of how correct the surviving path's own receipt looks, and only a unique mapping binds receipts to that one agent path author.",
-    "terminal_precedence": "A proven FAIL_PRODUCT is never downgraded to a blocked or invalid terminal by another formal child's missing or ambiguous evidence.",
+    "terminal_precedence": "独立根调用的严格同代次、线程、轮次、编号和配对顺序原始事件已证明违规时保留FAIL_PRODUCT，不被教授缺证或当前根最终消息歧义遮蔽。最终消息歧义且无独立违规仍INVALID；事件代次/顺序/轮次损坏不得冒产品FAIL。任一教授已确证FAIL亦不得被其他教授缺证降级。",
     "missing_observation": "BLOCKED_OBSERVABILITY",
     "malformed_or_ambiguous_observation": "INVALID_EVIDENCE",
     "formal_ownership": "Use the shared adapter @16 formal topology only. Identity diagnostics cannot create, rewrite, upgrade or downgrade ownership.",
@@ -123,7 +123,9 @@
       },
       "gate_status": "第30版待审；第二关口INCOMPLETE，formal_run_allowed=false。关口前完成独立最小预检，正式PC68-R1等待审核及冻结。",
       "independent_command_event_validation": "合成预检通过 mcp__codex_app__read_thread 取得真实 commandExecution 项，核对命令、退出码、未截断输出、线程、轮次和项顺序，并将其输出摘要绑定到同一对象、调用 argv 和计划结果；正式运行仍由独立 commandExecution.command 字段核对固定捕获器路径及参数，并从 runner 创建的 manifest 校验动态消费者目录。捕获源码摘要来自仓库固定源码而非信封自报。"
-    }
+    },
+    "runtime_generation_association": "runtime_generation接受真实JSON整数及历史字符串；排除布尔值、空值及其他类型。当前输出、调用和事件的值及JSON类型必须严格相同，不把整数1、字符串1或布尔值true互相转换。",
+    "child_turn_association": "根事件绑定当前root turn；正式教授调用开始/完成须为自身同一非空turn，属于正式根子关系及同一runtime_generation（值及类型严格匹配）；教授turn不要求等于root turn。"
   },
   "business_payload": [
     "email_pack",
@@ -230,10 +232,10 @@
       "step": "R1-7-isolation-and-cleanup",
       "event": "执行前后文件快照、两教授目录及本次临时handoff清理",
       "input": "本次正式运行生成的handoff路径和教授目录基线",
-      "output": "路径归属、内容哈希差异、清理记录及隔离断言",
-      "association": "运行编号、request id、教授目录和本次临时文件创建/清理者",
-      "verdict": "兄弟目录被污染或别的请求数据被删除为FAIL_PRODUCT；快照/归属证据损坏为INVALID_EVIDENCE；无可读记录为BLOCKED。",
-      "stop": "不得删除或重写本次请求之外的数据"
+      "output": "codex/lifecycle.before.json、codex/lifecycle-evidence.json、manifest.lifecycle_evidence：前后完整文件快照、同次固定捕获读取和根实际完成操作的创建→读取→清理链；程序输入区及消费者文件SHA256/字节数/符号链接目标、受保护其他请求文件",
+      "association": "当前运行代次值及类型、正式根/教授线程、命令编号与顺序、真实分配返包的out_path/choices_path、固定捕获的实际路径与摘要；不从命令JSON推输入",
+      "verdict": "正式判定缺生命周期证据不可PASS；从原始事件重建事实并验证请求边界后检查实际传递路径创读清理。完整有效链才认可；教授状态/输出改写、传递文件残留或其他请求文件错删FAIL_PRODUCT；归属/快照损坏INVALID_EVIDENCE；缺创建/实际读取/清理BLOCKED_OBSERVABILITY。根可直接消费分配stdout，不强制cat完整out文件。已独立确证FAIL不被其他缺证遮蔽。",
+      "stop": "第04次仅普通有限格式真实观察已确认；任意脚本副作用仍未知，须审核其对本例的影响；支持安装未完成，总体INCOMPLETE。不得正式验收补能力，不改写产品业务迎合parser。"
     }
   ],
   "machine_terminal_mapping": {
@@ -257,7 +259,7 @@
   "terminal_aggregation": {
     "confirmed_failure_machine_state": "FAIL_PRODUCT",
     "confirmed_failure_formal_terminal": "FAIL",
-    "rule": "逐个教授线程保留其机器状态和正式分类。仅当证据已确认FAIL_PRODUCT时，总体可报告FAIL；其他教授线程的缺证、无效或不同终态不得把该FAIL降级。没有已确认FAIL_PRODUCT时不将不同教授线程的状态按自创顺序折叠，逐线程保留和分类。"
+    "rule": "逐教授保留真实业务status、reason_code、退出码与原始证据；六种测试终态用于整例，不额外要求逐教授测试终态。整例按本次实际执行及证据映射分类；已确证根代理或任一教授FAIL_PRODUCT时，整例保留FAIL，其他教授缺证、无效或不同业务状态不得降级。没有确证违规时按实际启动、缺证、无效、阻断及证明完成情况分类，不自行设置状态全序。"
   },
   "formal_runtime_environment": {
     "status": "CAPTURE_FROM_THIS_RUN_BEFORE_REQUEST",
@@ -335,7 +337,38 @@
       "codex/codex-request.json",
       "codex/installed-entrypoint.json",
       "codex/apm.lock.yaml",
-      "provenance.json"
+      "provenance.json",
+      "codex/lifecycle.before.json",
+      "codex/lifecycle-evidence.json",
+      "codex/fixture-manifest.json（lifecycle_evidence）"
     ]
+  },
+  "lifecycle_observation_preflight": {
+    "state": "SYNTHETIC_LIFECYCLE_READY",
+    "overall_environment_state": "PREFLIGHT_INCOMPLETE",
+    "formal_case_started": false,
+    "scope": "bounded_root_file_operations_only",
+    "evidence": "tests/runtime/evidence/issue68-r30-lifecycle-observation-04.json",
+    "entrypoint": "tests/runtime/preflight_issue68_lifecycle_observation_r30.py",
+    "executed_helper_sha256": "718f84c3a7b51996b6adb06c07ee9d1a667b0af3084b3d084321d6e1eb276cef",
+    "final_helper_sha256": "c5d8bd442e8a14e6fd7f89c30aaf21ee14540f5597277308cdd8cfa95388449e",
+    "final_helper_reparse": "同一raw响应只读重解析，无新请求，结果不变；两版源码来源分别保留",
+    "limitations": [
+      "任意脚本副作用仍未观测，审核者确认本例路线充分性",
+      "支持安装未完成",
+      "不是完整教授生命周期或正式验收证据"
+    ],
+    "intermediate_helper_sha256": "27d1cbc1a000d70b00edf4f585bf3887fc8bed72222b9dcba573bbd85b2f1e87"
+  },
+  "validation_evidence": {
+    "source": "tests/runtime/evidence/issue68-r30-review-fixes-validation.json",
+    "latest_candidate_checks": 123,
+    "runtime": 50,
+    "lifecycle": 50,
+    "recipe": 11,
+    "environment": 12,
+    "formal_case_started": false,
+    "overall_preflight_status": "PREFLIGHT_INCOMPLETE",
+    "counting_note": "不同轮次不累计，正式D1复用，R1未执行"
   }
 }

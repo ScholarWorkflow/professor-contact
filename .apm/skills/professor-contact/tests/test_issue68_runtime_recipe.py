@@ -1,11 +1,13 @@
 """PC68-R1 oracle/preflight regressions. Synthetic evidence is not host PASS."""
 import copy
+import hashlib
 import importlib.util
 import json
 import shlex
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 RUNTIME = Path(__file__).resolve().parent / "runtime"
@@ -212,7 +214,9 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
 
     def test_fixture_precheck_uses_the_actual_producer_plan(self):
         script = RUNTIME.parent.parent / "scripts" / "contact_state.py"
-        manifest = prepare.prepare(self.root / "program", script, self.root / "evidence")
+        original_run = prepare.subprocess.run
+        with patch.object(prepare.subprocess, "run", wraps=original_run) as producer_calls:
+            manifest = prepare.prepare(self.root / "program", script, self.root / "evidence")
         self.assertEqual(len(manifest["owners"]), 2)
         self.assertTrue(all(owner["expected_result"]["status"] == "needs_refresh" for owner in manifest["owners"]))
         self.assertEqual(manifest["manual_patch"], "no")
@@ -222,6 +226,29 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
         self.assertEqual(json.loads((evidence / "canonical-choices.json").read_text()),
                          manifest["expected_choices"])
         self.assertEqual(json.loads((evidence / "fixture-manifest.json").read_text()), manifest)
+        # Only prerequisite plans may execute during preparation. Root
+        # partitioning and owner handoff creation remain observed business.
+        calls = [call.args[0] for call in producer_calls.call_args_list]
+        self.assertEqual(len(calls), 4)
+        self.assertTrue(all(call[2] == "stage5-plan" for call in calls))
+        for index, owner in enumerate(manifest["owners"]):
+            first, prerequisite = calls[index * 2:index * 2 + 2]
+            self.assertEqual(first[first.index("--email-pack") + 1], owner["email_pack"])
+            self.assertNotIn("--result", first)
+            self.assertNotIn("--choices", first)
+            self.assertEqual(prerequisite[prerequisite.index("--result") + 1], owner["result"])
+            self.assertNotIn("--choices", prerequisite)
+        # This passive datum belongs to another request. It must exist before
+        # execution and be included in the integrity baseline, so later
+        # overbroad cleanup can be distinguished from legitimate cleanup.
+        protected = manifest["protected_other_request_files"]
+        self.assertEqual(len(protected), 1)
+        protected_file = Path(protected[0])
+        self.assertEqual(json.loads(protected_file.read_text()),
+                         {"request": "unrelated-synthetic-request", "preserve": True})
+        self.assertEqual(manifest["pre_run_hashes"][str(protected_file)],
+                         hashlib.sha256(protected_file.read_bytes()).hexdigest())
+        self.assertNotIn(protected[0], {owner["email_pack"] for owner in manifest["owners"]})
         # The actual root partition and professor handoffs belong to the
         # formal request, not preparation. Preparation keeps an independent
         # expectation and exercises only the installed producer's plan.

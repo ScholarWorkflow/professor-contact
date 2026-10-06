@@ -15,6 +15,7 @@ import run_issue68_stage5_routing as base
 import run_issue68_stage5_routing_r19 as bridge
 import verify_issue68_stage5_routing_r19 as input_verifier
 import bind_issue68_preflight_command_event_r29 as command_event_binder
+import issue68_lifecycle as lifecycle
 
 
 HERE = Path(__file__).resolve().parent
@@ -626,9 +627,11 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
     original_build_request = base.build_request
     original_urlopen = base.urllib.request.urlopen
     original_install_host = base.install_host
+    original_verify_codex = base.verify_codex
     request_path = Path(output) / "codex" / "codex-request.json"
     evidence_path = Path(output) / "runtime-environment-evidence.json"
     request_built = False
+    lifecycle_context = {}
 
     def install_host_with_capture(*install_args, **install_kwargs):
         directory, consumer, manifest = original_install_host(*install_args, **install_kwargs)
@@ -657,6 +660,7 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
             "manifest_path": str(manifest_path.resolve()),
         }
         manifest["owner_capture"] = capture_record
+        lifecycle_context.update(directory=directory, consumer=consumer, manifest=manifest)
         base.write_json(manifest_path, manifest)
         prompt_path = directory / "root-prompt.txt"
         prompt = prompt_path.read_text(encoding="utf-8")
@@ -709,17 +713,54 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
         base.write_json(Path(output) / "input-evidence-preflight.json", preflight)
         provenance["request_body_sha256"] = evidence["outgoing_request_body_sha256"]
         base.write_json(Path(output) / "provenance.json", provenance)
+        # Last read-only snapshot before the one actual request. The support
+        # script and installed consumer already exist at this boundary.
+        before = lifecycle.collect_before(lifecycle_context["manifest"], lifecycle_context["consumer"])
+        lifecycle.bind_before(before, saved)
+        lifecycle_context["before"] = before
+        base.write_json(lifecycle_context["directory"] / "lifecycle.before.json", before)
         return original_urlopen(request, timeout=timeout)
+
+    def verify_with_lifecycle(response, adapter, manifest):
+        evidence = lifecycle.collect_lifecycle(
+            lifecycle_context["before"], manifest, lifecycle_context["consumer"],
+            response, input_verifier)
+        manifest["lifecycle_boundary"] = {
+            "run_id": evidence["before"]["request_boundary"]["run_id"],
+            "request_artifact": str(request_path),
+            "before_artifact": str(lifecycle_context["directory"] / "lifecycle.before.json"),
+            "before_sha256": lifecycle._response_digest(evidence["before"]),
+            "after_sha256": lifecycle._response_digest(evidence["after"]),
+        }
+        base.write_json(lifecycle_context["directory"] / "lifecycle-evidence.json", evidence)
+        manifest["lifecycle_evidence"] = evidence
+        base.write_json(lifecycle_context["directory"] / "fixture-manifest.json", manifest)
+        lifecycle_context["collected"] = True
+        return original_verify_codex(response, adapter, manifest)
 
     base.build_request = build_request_with_evidence
     base.urllib.request.urlopen = verify_outgoing_request
     base.install_host = install_host_with_capture
+    base.verify_codex = verify_with_lifecycle
     try:
         return base.codex_host(args, output)
     finally:
-        base.build_request = original_build_request
-        base.urllib.request.urlopen = original_urlopen
-        base.install_host = original_install_host
+        try:
+            if "before" in lifecycle_context and not lifecycle_context.get("collected"):
+                response_path = lifecycle_context["directory"] / "codex-response.json"
+                try:
+                    response = json.loads(response_path.read_text()) if response_path.is_file() else {}
+                except (OSError, ValueError):
+                    response = {}
+                evidence = lifecycle.collect_lifecycle(
+                    lifecycle_context["before"], lifecycle_context["manifest"],
+                    lifecycle_context["consumer"], response, input_verifier)
+                base.write_json(lifecycle_context["directory"] / "lifecycle-evidence.json", evidence)
+        finally:
+            base.build_request = original_build_request
+            base.urllib.request.urlopen = original_urlopen
+            base.install_host = original_install_host
+            base.verify_codex = original_verify_codex
 
 
 def same_service(before, after):

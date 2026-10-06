@@ -29,6 +29,16 @@ OWNER_CAPTURE_SHA256 = "7e534f76b7ba837a415b9b9a38ecda4a0fb1fe62fbf6d5b257511931
 OWNER_CAPTURE_COMMAND_PREFIX = ["uv", "run", "--no-project", "python"]
 
 
+def _valid_generation(value):
+    # Current service generations are JSON integers. Keep historical string
+    # identifiers, but Python's True == 1 must never establish attribution.
+    return type(value) is int or (type(value) is str and bool(value))
+
+
+def _same_generation(left, right):
+    return _valid_generation(left) and type(left) is type(right) and left == right
+
+
 def _terminal_contract():
     """Load the single machine-to-formal mapping from the runtime contract."""
     contract_path = Path(__file__).resolve().parent / "issue68-runtime-evidence-contract-r19.json"
@@ -206,7 +216,7 @@ def consumed_business_objects(stage5_calls, manifest=None):
         generation = call.get("generation")
         if not isinstance(call_id, str) or not call_id or call_id in seen_call_ids \
                 or not isinstance(thread, str) or not thread \
-                or not isinstance(generation, str) or not generation:
+                or not _valid_generation(generation):
             return [], verdict("INVALID_EVIDENCE", "owner_input_observation_association_invalid",
                                observed_call_id=call_id, observed_thread=thread,
                                observed_generation=generation)
@@ -960,7 +970,7 @@ def _actual_root_partition(calls, manifest, root):
             continue
         call_id = call.get("id")
         if not isinstance(call_id, str) or not call_id or call_id in call_ids \
-                or not isinstance(call.get("generation"), str) or not call["generation"] \
+                or not _valid_generation(call.get("generation")) \
                 or not isinstance(call.get("start"), int) or not isinstance(call.get("end"), int) \
                 or call["end"] <= call["start"]:
             return None, verdict("INVALID_EVIDENCE", "root_partition_call_association_invalid")
@@ -1280,7 +1290,7 @@ def _classify(problem, failures, invalids, blockers):
         blockers.append(problem)
 
 
-def _verify_codex_events(response, adapter, manifest):
+def _verify_codex_events(response, adapter, manifest, final_problem=None):
     status = adapter.get("fixture_status")
     if status in ("INVALID_EVIDENCE", "HARNESS_ERROR", "HARNESS_CONTAMINATION"):
         return verdict("INVALID_EVIDENCE", "shared_adapter_rejected")
@@ -1290,6 +1300,8 @@ def _verify_codex_events(response, adapter, manifest):
         return verdict("INVALID_EVIDENCE", "unknown_shared_adapter_status")
     raw = response.get("output", {})
     root, generation = raw.get("thread_id"), raw.get("runtime_generation")
+    if not _valid_generation(generation):
+        return verdict("INVALID_EVIDENCE", "event_order_or_generation_invalid")
     events = raw.get("app_server_events")
     if not isinstance(events, list) or not root:
         return verdict("BLOCKED_OBSERVABILITY", "app_server_events_unobservable")
@@ -1297,10 +1309,6 @@ def _verify_codex_events(response, adapter, manifest):
     children = {child for edge in relations if edge.get("tool") == "spawnAgent"
                 and edge.get("sender_thread_id") == root
                 for child in edge.get("receiver_thread_ids", [])}
-    if not children:
-        return verdict("BLOCKED_OBSERVABILITY", "formal_delegation_unobservable")
-    if len(children) != 2:
-        return verdict("FAIL_PRODUCT", "wrong_owner_count", formal_children=sorted(children))
     results = {}
     agent_paths, receipts = {}, []
     command_starts, calls, root_texts, business_calls = {}, [], [], {}
@@ -1308,7 +1316,8 @@ def _verify_codex_events(response, adapter, manifest):
     previous_seq = -1
     for event in events:
         seq = event.get("runtime_seq")
-        if not isinstance(seq, int) or seq <= previous_seq or event.get("runtime_generation") != generation:
+        if not isinstance(seq, int) or seq <= previous_seq \
+                or not _same_generation(event.get("runtime_generation"), generation):
             return verdict("INVALID_EVIDENCE", "event_order_or_generation_invalid")
         previous_seq = seq
         message = event.get("message", {})
@@ -1344,7 +1353,7 @@ def _verify_codex_events(response, adapter, manifest):
         if thread in children | {root} and item.get("type") == "commandExecution":
             item_id = (thread, item.get("id"))
             if method == "item/started":
-                command_starts[item_id] = seq
+                command_starts[item_id] = (seq, params.get("turnId"))
             elif method == "item/completed":
                 if item_id not in command_starts:
                     # r24: a completed commandExecution without a started
@@ -1353,13 +1362,51 @@ def _verify_codex_events(response, adapter, manifest):
                     # sibling child's proven failure keeps its precedence.
                     observability_gaps.append(("command_start_unobservable", thread, seq))
                     continue
-                call = {"id": item.get("id"), "start": command_starts[item_id], "end": seq,
+                start_seq, start_turn = command_starts[item_id]
+                call = {"id": item.get("id"), "start": start_seq, "end": seq,
                         "command": item.get("command", ""), "output": item.get("aggregatedOutput", ""),
-                        "thread": thread, "generation": generation}
+                        "thread": thread, "generation": generation,
+                        "start_turn": start_turn, "end_turn": params.get("turnId")}
                 calls.append(call)
                 if thread in children:
                     business_calls.setdefault(thread, []).append(call)
     failures, invalids, blockers = [], [], []
+    # Inspect attributable positive command facts before missing child
+    # observations can terminate the run. Do not call the whole orchestration
+    # oracle here: absence of partition/rebuild/receipt events cannot prove
+    # a product failure while those observation surfaces are incomplete.
+    for call in calls:
+        try:
+            parsed = command_action(call.get("command", ""), manifest)
+        except (ValueError, TypeError):
+            continue
+        if not parsed:
+            continue
+        reason = parsed.get("problem")
+        if parsed["action"] == "stage5-list-inputs" \
+                and "--emit-choices-scope" in parsed.get("flags", {}):
+            reason = "discovery_emits_choices_scope"
+        elif parsed["action"] == "stage5-partition-choices" and call["thread"] != root:
+            reason = "partition_executed_by_owner"
+        if reason:
+            # Root commands must belong to the current root turn. A formally
+            # owned child has its own turn: the current-generation event pair
+            # must agree on that child's nonempty turn, not the root's turn.
+            # Only formal children or the root enter this calls collection.
+            turn = raw.get("turn_id") if call["thread"] == root else call["start_turn"]
+            if not isinstance(turn, str) or not turn \
+                    or call["start_turn"] != turn or call["end_turn"] != turn \
+                    or not isinstance(call["id"], str) or not call["id"]:
+                return verdict("INVALID_EVIDENCE", "command_turn_association_invalid")
+            failures.append(verdict("FAIL_PRODUCT", reason))
+    if failures:
+        return failures[0]
+    if final_problem:
+        return final_problem
+    if not children:
+        return verdict("BLOCKED_OBSERVABILITY", "formal_delegation_unobservable")
+    if len(children) != 2:
+        return verdict("FAIL_PRODUCT", "wrong_owner_count", formal_children=sorted(children))
     assigned, outcomes, consume_points = {}, {}, {}
     partition, partition_problem = _actual_root_partition(calls, manifest, root)
     if partition_problem:
@@ -1481,11 +1528,61 @@ def _judge_with_final_source(judge, final_text, *args):
         globals()["runtime_checks"] = original
 
 
-def verify_codex(response, adapter, manifest):
+def _verify_codex_business(response, adapter, manifest):
+    # A dependency rejection can precede any service events. Missing event
+    # generations at that boundary do not damage a stream that never existed.
+    if adapter.get("fixture_status") in ("INVALID_EVIDENCE", "HARNESS_ERROR", "HARNESS_CONTAMINATION"):
+        return _verify_codex_events(response, adapter, manifest)
+    if adapter.get("fixture_status") == "BLOCKED_DEPENDENCY":
+        raw = response.get("output") if isinstance(response, dict) else None
+        events = raw.get("app_server_events") if isinstance(raw, dict) else None
+        if events is not None and not isinstance(events, list):
+            return verdict("INVALID_EVIDENCE", "root_raw_events_malformed")
+        if events:
+            generation, previous_seq = raw.get("runtime_generation"), -1
+            for event in events:
+                seq = event.get("runtime_seq") if isinstance(event, dict) else None
+                if not isinstance(seq, int) or seq <= previous_seq \
+                        or not _same_generation(event.get("runtime_generation"), generation):
+                    return verdict("INVALID_EVIDENCE", "event_order_or_generation_invalid")
+                previous_seq = seq
+        return _verify_codex_events(response, adapter, manifest)
+    if isinstance(response, dict) and isinstance(response.get("output"), dict) \
+            and not _valid_generation(response["output"].get("runtime_generation")):
+        return verdict("INVALID_EVIDENCE", "event_order_or_generation_invalid")
     final_text, problem = codex_final_result_source(response)
     if problem:
-        return problem
+        if problem.get("verdict") != "BLOCKED_OBSERVABILITY" \
+                and problem.get("reason_code") != "root_final_message_ambiguous":
+            return problem
+        # Missing or duplicate final messages do not invalidate independent
+        # command facts. The event scan still validates generation, order and
+        # command attribution before collecting positive failures, then returns
+        # this source problem before any final-result or absence checks.
+        return _verify_codex_events(response, adapter, manifest, final_problem=problem)
     return _judge_with_final_source(_verify_codex_events, final_text, response, adapter, manifest)
+
+
+def verify_codex(response, adapter, manifest):
+    result = _verify_codex_business(response, adapter, manifest)
+    if result.get("verdict") == "FAIL_PRODUCT":
+        return result
+    evidence = manifest.get("lifecycle_evidence")
+    if evidence is None:
+        if result.get("verdict") == "PASS":
+            return verdict("BLOCKED_OBSERVABILITY", "request_lifecycle_evidence_missing")
+        return result
+    import issue68_lifecycle as lifecycle
+    import sys
+    proof = lifecycle.verify_bound_lifecycle(evidence, manifest, response, adapter, sys.modules[__name__])
+    if proof.get("verdict") == "FAIL_PRODUCT":
+        return proof
+    if result.get("verdict") in ("INVALID_EVIDENCE", "BLOCKED_DEPENDENCY"):
+        return result
+    if proof.get("verdict") != "PASS":
+        return proof
+    result["request_lifecycle"] = proof
+    return result
 
 
 def main():

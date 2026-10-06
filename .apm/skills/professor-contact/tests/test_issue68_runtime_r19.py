@@ -618,6 +618,228 @@ class OwnerObservationTests(unittest.TestCase):
                 self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
                 self.assertEqual(problem["reason_code"], reason)
 
+    def test_numeric_generation_binds_the_actual_owner_and_partition_calls(self):
+        call = self.call()
+        call["generation"] = 1
+        rows, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertIsNone(problem)
+        self.assertEqual(rows[0]["generation"], 1)
+        partition = self.partition_call()
+        partition["generation"] = 1
+        actual, problem = verifier._actual_root_partition([partition], self.manifest,
+                                                         "synthetic-root")
+        self.assertIsNone(problem)
+        self.assertEqual(actual["call"]["generation"], 1)
+        for missing in (None, True, False, "", 1.0):
+            with self.subTest(generation=missing):
+                call["generation"] = missing
+                _, problem = verifier.consumed_business_objects([call], self.manifest)
+                self.assertEqual(problem["verdict"], "INVALID_EVIDENCE")
+                partition["generation"] = missing
+                _, problem = verifier._actual_root_partition([partition], self.manifest,
+                                                             "synthetic-root")
+                self.assertEqual(problem["verdict"], "INVALID_EVIDENCE")
+
+    def incomplete_runtime(self, *, scope=False, generation=1):
+        """Valid attribution and root final source, missing child observations."""
+        events = []
+        def event(method, item, thread="synthetic-root"):
+            events.append({"runtime_seq": len(events) + 1, "runtime_generation": generation,
+                           "message": {"method": method, "params": {
+                               "threadId": thread, "turnId": "synthetic-turn",
+                               "item": item}}})
+        command = shlex.join(["uv", "run", "python", str(self.entrypoint),
+                              "stage5-list-inputs", "--program-root", str(self.root)]
+                             + (["--emit-choices-scope", str(self.root / "scope.json")]
+                                if scope else []))
+        item = {"type": "commandExecution", "id": "discovery", "command": command}
+        event("item/started", item)
+        event("item/completed", dict(item, aggregatedOutput="{}", exitCode=0))
+        # One child really executes the pinned same-parse capture; the other
+        # has no command observation. Missing sibling evidence must not hide
+        # the independently attributable root command violation.
+        partition = self.partition_call()
+        item = {"type": "commandExecution", "id": partition["id"],
+                "command": partition["command"]}
+        event("item/started", item)
+        event("item/completed", dict(item, aggregatedOutput=partition["output"], exitCode=0))
+        owner = self.call()
+        item = {"type": "commandExecution", "id": owner["id"], "command": owner["command"]}
+        event("item/started", item, "child-A")
+        event("item/completed", dict(item, aggregatedOutput=owner["output"], exitCode=0), "child-A")
+        event("rawResponseItem/completed", {"type": "message", "role": "assistant",
+                                            "phase": "final_answer", "content": [
+                                                {"type": "output_text", "text": "[]"}]})
+        response = {"output": {"thread_id": "synthetic-root", "turn_id": "synthetic-turn",
+                               "runtime_generation": generation, "termination_reason": "completed",
+                               "app_server_events": events}}
+        adapter = {"fixture_status": "FIXTURE_READY", "dispatch": {"thread_relations": [
+            {"tool": "spawnAgent", "sender_thread_id": "synthetic-root",
+             "receiver_thread_ids": ["child-A", "child-B"]}]}}
+        return response, adapter
+
+    def test_full_entry_preserves_observed_root_failure_over_child_gaps(self):
+        response, adapter = self.incomplete_runtime(scope=True)
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "discovery_emits_choices_scope"))
+
+    def test_full_entry_without_proven_failure_remains_blocked(self):
+        response, adapter = self.incomplete_runtime()
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual(result["verdict"], "BLOCKED_OBSERVABILITY")
+
+    def ambiguous_runtime(self, *, scope=False):
+        response, adapter = self.incomplete_runtime(scope=scope)
+        events = response["output"]["app_server_events"]
+        duplicate = json.loads(json.dumps(events[-1]))
+        duplicate["runtime_seq"] = events[-1]["runtime_seq"] + 1
+        events.append(duplicate)
+        return response, adapter
+
+    def test_full_entry_root_failure_survives_ambiguous_final_messages(self):
+        response, adapter = self.ambiguous_runtime(scope=True)
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "discovery_emits_choices_scope"))
+
+    def test_full_entry_ambiguous_final_without_positive_failure_is_invalid(self):
+        response, adapter = self.ambiguous_runtime()
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("INVALID_EVIDENCE", "root_final_message_ambiguous"))
+
+    def test_full_entry_ambiguous_final_cannot_hide_damaged_scope_attribution(self):
+        for change in ("generation", "order", "turn"):
+            response, adapter = self.ambiguous_runtime(scope=True)
+            events = response["output"]["app_server_events"]
+            if change == "generation":
+                events[0]["runtime_generation"] = "1"
+            elif change == "order":
+                events[1]["runtime_seq"] = events[0]["runtime_seq"]
+            else:
+                events[1]["message"]["params"]["turnId"] = "another-turn"
+            with self.subTest(change=change):
+                self.assertEqual(verifier.verify_codex(response, adapter, self.manifest)["verdict"],
+                                 "INVALID_EVIDENCE")
+
+    def test_full_entry_dependency_failure_without_runtime_events_is_blocked(self):
+        result = verifier.verify_codex({"output": {}},
+                                       {"fixture_status": "BLOCKED_DEPENDENCY"}, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("BLOCKED_DEPENDENCY", "shared_adapter_dependency_unavailable"))
+
+    def test_full_entry_dependency_label_cannot_hide_damaged_observed_generation(self):
+        for top_missing in (False, True):
+            response, adapter = self.incomplete_runtime()
+            adapter["fixture_status"] = "BLOCKED_DEPENDENCY"
+            if top_missing:
+                del response["output"]["runtime_generation"]
+            else:
+                response["output"]["app_server_events"][0]["runtime_generation"] = "1"
+            with self.subTest(top_missing=top_missing):
+                self.assertEqual(verifier.verify_codex(response, adapter, self.manifest)["verdict"],
+                                 "INVALID_EVIDENCE")
+
+    def test_full_entry_root_scope_failure_survives_missing_relations_and_final(self):
+        for missing_final in (False, True):
+            response, adapter = self.incomplete_runtime(scope=True)
+            adapter["dispatch"]["thread_relations"] = []
+            if missing_final:
+                response["output"]["app_server_events"] = [event for event in
+                    response["output"]["app_server_events"]
+                    if event["message"]["method"] != "rawResponseItem/completed"]
+            with self.subTest(missing_final=missing_final):
+                result = verifier.verify_codex(response, adapter, self.manifest)
+                self.assertEqual((result["verdict"], result["reason_code"]),
+                                 ("FAIL_PRODUCT", "discovery_emits_choices_scope"))
+
+    def test_full_entry_missing_relations_without_positive_violation_is_blocked(self):
+        response, adapter = self.incomplete_runtime()
+        adapter["dispatch"]["thread_relations"] = []
+        self.assertEqual(verifier.verify_codex(response, adapter, self.manifest)["verdict"],
+                         "BLOCKED_OBSERVABILITY")
+
+    def test_full_entry_damaged_events_do_not_prove_scope_failure_without_relations(self):
+        response, adapter = self.incomplete_runtime(scope=True)
+        adapter["dispatch"]["thread_relations"] = []
+        response["output"]["app_server_events"][1]["runtime_generation"] = "1"
+        self.assertEqual(verifier.verify_codex(response, adapter, self.manifest)["verdict"],
+                         "INVALID_EVIDENCE")
+
+    def test_full_entry_scope_failure_requires_current_turn_and_paired_start(self):
+        for change in ("start_turn", "end_turn", "missing_start", "unrelated_thread"):
+            response, adapter = self.incomplete_runtime(scope=True)
+            adapter["dispatch"]["thread_relations"] = []
+            events = response["output"]["app_server_events"]
+            if change == "start_turn":
+                events[0]["message"]["params"]["turnId"] = "previous-turn"
+            elif change == "end_turn":
+                events[1]["message"]["params"]["turnId"] = "previous-turn"
+            elif change == "missing_start":
+                del events[0]
+            else:
+                for event in events[:2]:
+                    event["message"]["params"]["threadId"] = "unrelated-thread"
+            with self.subTest(change=change):
+                result = verifier.verify_codex(response, adapter, self.manifest)
+                self.assertEqual(result["verdict"], "INVALID_EVIDENCE" if change.endswith("turn")
+                                 else "BLOCKED_OBSERVABILITY")
+
+    def test_full_entry_missing_final_without_positive_violation_stays_blocked(self):
+        response, adapter = self.incomplete_runtime()
+        response["output"]["app_server_events"] = [event for event in
+            response["output"]["app_server_events"]
+            if event["message"]["method"] != "rawResponseItem/completed"]
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("BLOCKED_OBSERVABILITY", "root_final_message_unobservable"))
+
+    def test_full_entry_formal_child_partition_uses_its_own_paired_turn(self):
+        for end_turn, expected in (("child-turn", "FAIL_PRODUCT"),
+                                   ("another-child-turn", "INVALID_EVIDENCE")):
+            response, adapter = self.incomplete_runtime()
+            for event in response["output"]["app_server_events"]:
+                params = event["message"]["params"]
+                if params["item"].get("id") == "partition-1":
+                    params["threadId"] = "child-A"
+                    params["turnId"] = ("child-turn" if event["message"]["method"] ==
+                                         "item/started" else end_turn)
+            with self.subTest(end_turn=end_turn):
+                result = verifier.verify_codex(response, adapter, self.manifest)
+                self.assertEqual(result["verdict"], expected)
+                if expected == "FAIL_PRODUCT":
+                    self.assertEqual(result["reason_code"], "partition_executed_by_owner")
+
+        # Matching child turn IDs cannot create ownership on their own.
+        adapter["dispatch"]["thread_relations"] = []
+        for event in response["output"]["app_server_events"]:
+            params = event["message"]["params"]
+            if params["item"].get("id") == "partition-1":
+                params["turnId"] = "child-turn"
+        self.assertEqual(verifier.verify_codex(response, adapter, self.manifest)["verdict"],
+                         "BLOCKED_OBSERVABILITY")
+
+    def test_full_entry_matching_old_root_turn_does_not_prove_current_violation(self):
+        response, adapter = self.incomplete_runtime(scope=True)
+        for event in response["output"]["app_server_events"][:2]:
+            event["message"]["params"]["turnId"] = "previous-root-turn"
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("INVALID_EVIDENCE", "command_turn_association_invalid"))
+
+    def test_full_entry_requires_generation_type_and_value_match(self):
+        for wrong in (None, True, "1", 2, 1.0):
+            response, adapter = self.incomplete_runtime(scope=True)
+            response["output"]["app_server_events"][0]["runtime_generation"] = wrong
+            with self.subTest(generation=wrong):
+                result = verifier.verify_codex(response, adapter, self.manifest)
+                self.assertEqual(result["verdict"], "INVALID_EVIDENCE")
+        response, adapter = self.incomplete_runtime()
+        del response["output"]["runtime_generation"]
+        self.assertEqual(verifier.verify_codex(response, adapter, self.manifest)["verdict"],
+                         "INVALID_EVIDENCE")
+
     def test_root_actual_return_compares_complete_independent_expectations(self):
         for field, value in (("email_pack", "wrong-pack"), ("email_id", "wrong-id"),
                              ("choices_rows", [])):
