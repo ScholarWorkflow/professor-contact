@@ -5,7 +5,8 @@ This is the single decision program required by the frozen test plan
 every required evidence surface into ONE verdict — formal delegation
 attribution, the invocation-credential value chain, the per-round
 prepare→validate→save→record handoff, the validator-produced raw bytes, the
-REAL file-operation observation (``commandActions``), the completion-order
+file-operation behavior proven by complete command inputs and completed
+``fileChange`` records, the completion-order
 stop boundaries, the terminal state, and the install/fixture/storage
 checks — and classifies per the frozen rules:
 
@@ -116,80 +117,247 @@ def stage3_command(command: str) -> str | None:
 
 
 def command_file_behavior(command: str, cwd: str | None):
-    """Classify only directly legible file operations from the tool input.
+    """Return every legible file operation and whether any part is unknown.
 
-    Return (kind, paths, exclusive). Unknown programs or shell composition are
-    deliberately left as an evidence gap; commandActions is not consulted.
+    Operations are ``(kind, absolute_path, exclusive_create)`` tuples. Shell
+    composition is split into commands so a later write cannot be hidden by an
+    earlier read. Unsupported pieces are reported separately; callers retain
+    already-proven writes while classifying the unsupported evidence as a gap.
+    ``commandActions`` is deliberately not consulted.
     """
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return "unknown", [], False
-    if not tokens:
-        return "unknown", [], False
-    if any(token in {";", "&&", "||", "|", ">>", ">", "<", "2>"}
-           for token in tokens):
-        # A plain output redirection is an explicit write, but is not an
-        # exclusive create and therefore cannot satisfy the allowed output.
-        paths = [token for token in tokens[1:]
-                 if token.startswith("/") and Path(token).suffix]
-        return ("write", paths, False) if paths else ("unknown", [], False)
-    executable = Path(tokens[0]).name
     base = Path(cwd or ".")
-    if executable in {"cat", "head", "tail", "jq", "rg", "grep", "ls",
-                      "pwd", "wc", "file"}:
-        paths = [str((base / token).resolve()) if not Path(token).is_absolute()
-                 else str(Path(token)) for token in tokens[1:]
-                 if not token.startswith("-")]
-        return "read", paths, False
-    if executable.startswith("python") or executable in {"uv", "pypy"}:
+    operations = []
+    unknown = False
+
+    def full_path(raw):
+        if not isinstance(raw, str) or not raw or raw == "-" \
+                or any(char in raw for char in ("$", "`", "*", "?")):
+            return None
+        path = Path(raw)
+        return str(path if path.is_absolute() else (base / path).resolve())
+
+    def add(kind, raw_path, exclusive=False):
+        nonlocal unknown
+        path = full_path(raw_path)
+        if path is None:
+            unknown = True
+            return False
+        operations.append((kind, path, exclusive))
+        return True
+
+    def dotted_name(node):
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            prefix = dotted_name(node.value)
+            return f"{prefix}.{node.attr}" if prefix else node.attr
+        return ""
+
+    def literal_path(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Call) and dotted_name(node.func) in {
+                "Path", "pathlib.Path"} and node.args \
+                and isinstance(node.args[0], ast.Constant) \
+                and isinstance(node.args[0].value, str):
+            return node.args[0].value
+        return None
+
+    def python_operations(argv):
+        nonlocal unknown
         try:
-            script_index = tokens.index("-c")
-            source = tokens[script_index + 1]
+            code_index = argv.index("-c")
+            source = argv[code_index + 1]
             tree = ast.parse(source)
         except (ValueError, IndexError, SyntaxError):
-            return "unknown", [], False
-        writes, reads = [], []
-        exclusive = True
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+            unknown = True
+            return
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+        recognized = set()
+        for node in calls:
+            func_name = dotted_name(node.func)
+            if func_name in {"Path", "pathlib.Path"}:
+                recognized.add(id(node))
+                if literal_path(node) is None:
+                    unknown = True
                 continue
-            func = node.func
-            name = (func.id if isinstance(func, ast.Name) else
-                    func.attr if isinstance(func, ast.Attribute) else "")
-            if name not in {"open", "write_text", "write_bytes", "read_text",
-                            "read_bytes", "read", "unlink", "rename", "replace"}:
+            if func_name == "open":
+                recognized.add(id(node))
+                path_node = node.args[0] if node.args else next(
+                    (kw.value for kw in node.keywords if kw.arg == "file"), None)
+                raw_path = literal_path(path_node)
+                mode_node = node.args[1] if len(node.args) > 1 else next(
+                    (kw.value for kw in node.keywords if kw.arg == "mode"), None)
+                mode = (mode_node.value if isinstance(mode_node, ast.Constant)
+                        and isinstance(mode_node.value, str) else "r"
+                        if mode_node is None else None)
+                if raw_path is None or mode is None:
+                    unknown = True
+                elif mode in {"r", "rb", "rt"}:
+                    add("read", raw_path)
+                elif mode in {"x", "xb", "x+"}:
+                    add("write", raw_path, True)
+                elif mode in {"w", "wb", "w+", "a", "ab", "a+"}:
+                    add("write", raw_path, False)
+                else:
+                    unknown = True
                 continue
-            path_node = node.args[0] if node.args else None
-            path = path_node.value if isinstance(path_node, ast.Constant) \
-                and isinstance(path_node.value, str) else None
-            if path is None:
-                return "unknown", [], False
-            full_path = str((base / path).resolve()) if not Path(path).is_absolute() \
-                else str(Path(path))
-            if name in {"read_text", "read_bytes", "read"}:
-                reads.append(full_path)
-                continue
-            mode_node = node.args[1] if name == "open" and len(node.args) > 1 else None
-            mode = mode_node.value if isinstance(mode_node, ast.Constant) else None
-            is_exclusive = mode == "xb"
-            if name == "open" and mode not in {"w", "a", "x", "wb", "ab", "xb"}:
-                if mode in {"r", "rb", "rt"}:
-                    reads.append(full_path)
+            if isinstance(node.func, ast.Attribute):
+                method = node.func.attr
+                receiver = node.func.value
+                if method == "write" and isinstance(receiver, ast.Call) \
+                        and dotted_name(receiver.func) == "open":
+                    recognized.add(id(node))
                     continue
-                return "unknown", [], False
-            if name in {"write_text", "write_bytes"}:
-                is_exclusive = False
-            if name in {"unlink", "rename", "replace"}:
-                is_exclusive = False
-            writes.append(full_path)
-            exclusive = exclusive and is_exclusive
-        if writes:
-            return "write", writes, exclusive
-        if reads:
-            return "read", reads, False
-        return "unknown", [], False
-    return "unknown", [], False
+                if method in {"read_text", "read_bytes", "write_text",
+                              "write_bytes", "unlink", "mkdir", "rmdir",
+                              "rename", "replace"}:
+                    raw_path = literal_path(receiver)
+                    recognized.add(id(node))
+                    if raw_path is None:
+                        unknown = True
+                    elif method in {"read_text", "read_bytes"}:
+                        add("read", raw_path)
+                    elif method in {"rename", "replace"}:
+                        target = literal_path(node.args[0]) if node.args else None
+                        if target is None:
+                            unknown = True
+                        else:
+                            add("write", raw_path)
+                            add("write", target)
+                    else:
+                        add("write", raw_path)
+                    continue
+            if func_name in {"os.remove", "os.unlink", "os.mkdir", "os.rmdir"}:
+                recognized.add(id(node))
+                raw_path = literal_path(node.args[0]) if node.args else None
+                if raw_path is None:
+                    unknown = True
+                else:
+                    add("write", raw_path)
+                continue
+            if func_name in {"os.rename", "os.replace"}:
+                recognized.add(id(node))
+                paths = [literal_path(arg) for arg in node.args[:2]]
+                if len(paths) != 2 or any(path is None for path in paths):
+                    unknown = True
+                else:
+                    for path in paths:
+                        add("write", path)
+                continue
+            if func_name in {"shutil.copy", "shutil.copy2",
+                             "shutil.copyfile", "shutil.move"}:
+                recognized.add(id(node))
+                paths = [literal_path(arg) for arg in node.args[:2]]
+                if len(paths) != 2 or any(path is None for path in paths):
+                    unknown = True
+                else:
+                    add("read", paths[0])
+                    if func_name == "shutil.move":
+                        add("write", paths[0])
+                    add("write", paths[1])
+                continue
+        if any(id(node) not in recognized for node in calls):
+            unknown = True
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                names = ({alias.name for alias in node.names}
+                         if isinstance(node, ast.Import) else
+                         {node.module or ""})
+                if not names <= {"os", "shutil", "pathlib"}:
+                    unknown = True
+
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return [], True
+    if not tokens:
+        return [], True
+
+    # Keep each shell command, but do not discard neighboring commands around
+    # separators. Empty commands and unsupported separators make the whole
+    # command incomplete evidence while known operations remain usable.
+    separators = {";", "&&", "||", "|", "&"}
+    segments = []
+    current = []
+    for token in tokens:
+        if token in separators:
+            if current:
+                segments.append(current)
+                current = []
+            else:
+                unknown = True
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+    elif tokens[-1] in separators:
+        unknown = True
+
+    for segment in segments:
+        argv = []
+        redirections = []
+        index = 0
+        while index < len(segment):
+            token = segment[index]
+            operator = token
+            if token in {"1", "2"} and index + 1 < len(segment) \
+                    and segment[index + 1] in {">", ">>", "<", "<<"}:
+                operator = segment[index + 1]
+                index += 1
+            if operator in {">", ">>", ">|", "<", "<<", "<>"}:
+                if index + 1 >= len(segment):
+                    unknown = True
+                    index += 1
+                    continue
+                target = segment[index + 1]
+                if operator == "<":
+                    redirections.append(("read", target, False))
+                elif operator == "<<":
+                    unknown = True
+                elif operator == "<>" or operator in {">>", ">|"}:
+                    redirections.append(("write", target, False))
+                    if operator == "<>":
+                        redirections.append(("read", target, False))
+                else:
+                    redirections.append(("write", target, False))
+                index += 2
+                continue
+            if operator in {"&>", "&>>"}:
+                if index + 1 >= len(segment):
+                    unknown = True
+                else:
+                    redirections.append(("write", segment[index + 1], False))
+                index += 2
+                continue
+            if token and all(char in ";&|<>" for char in token):
+                unknown = True
+            else:
+                argv.append(token)
+            index += 1
+        for kind, target, exclusive in redirections:
+            if not add(kind, target, exclusive):
+                unknown = True
+        if not argv:
+            continue
+        executable = Path(argv[0]).name
+        if executable in {"cat", "head", "tail", "jq", "rg", "grep", "ls",
+                          "pwd", "wc", "file"}:
+            for operand in argv[1:]:
+                if operand == "--":
+                    continue
+                if operand.startswith("-"):
+                    continue
+                if not add("read", operand):
+                    unknown = True
+        elif executable.startswith("python") or executable in {"uv", "pypy"}:
+            python_operations(argv)
+        else:
+            unknown = True
+    return operations, unknown
 
 
 class RunModel:
@@ -248,7 +416,12 @@ class RunModel:
             if item.get("type") == "function_call_output" \
                     and params.get("threadId") == self.root_id \
                     and item.get("call_id"):
-                self.spawn_outputs[item["call_id"]] = self._output_text(item)
+                self.spawn_outputs[item["call_id"]] = {
+                    "method": message.get("method"),
+                    "index": index,
+                    "text": self._output_text(item),
+                    "completed": message.get("method") in {
+                        "rawResponseItem/completed", "item/completed"}}
         # -- subAgentActivity: call_id -> agent thread ids ------------------
         self.activity_children = {}
         self.completed_activity_children = {}
@@ -352,11 +525,18 @@ class RunModel:
             item = params.get("item") or {}
             if item.get("type") != "fileChange":
                 continue
+            if message.get("method") != "item/completed":
+                continue
             thread_id = params.get("threadId")
+            turn_id = params.get("turnId")
+            item_id = item.get("id")
+            status = item.get("status")
             changes = item.get("changes")
-            if not thread_id or not isinstance(changes, list):
+            if status != "completed" or not thread_id or not turn_id \
+                    or not item_id or not isinstance(changes, list):
                 self.gaps.append(
-                    f"event {index}: fileChange lacks a thread or structured changes")
+                    f"event {index}: fileChange lacks completed status, item, "
+                    "turn, thread, or structured changes")
                 continue
             for change in changes:
                 if not isinstance(change, dict):
@@ -366,10 +546,12 @@ class RunModel:
                              or change.get("type"))
                 path = change.get("path")
                 self.file_changes.setdefault(thread_id, []).append({
-                    "index": index, "turn_id": params.get("turnId"),
-                    "item_id": item.get("id"), "path": path,
+                    "index": index, "turn_id": turn_id,
+                    "item_id": item_id, "status": status, "path": path,
                     "operation": operation,
-                    "completed": message.get("method") == "item/completed"})
+                    "diff": change.get("diff"),
+                    "content": change.get("content"),
+                    "completed": True})
         # -- assistant business messages per thread --------------------------
         self.assistant_messages = {}
         self.unsupported_shapes = {}
@@ -382,18 +564,20 @@ class RunModel:
                     or item.get("role") != "assistant":
                 continue
             thread_id = params.get("threadId")
+            turn_id = params.get("turnId")
+            item_id = item.get("id")
             raw = final_message_bytes(item)
-            if raw is None:
+            if raw is None or not thread_id or not turn_id or not item_id:
                 self.unsupported_shapes[thread_id] = \
                     self.unsupported_shapes.get(thread_id, 0) + 1
                 self.gaps.append(
-                    f"event {index}: unsupported message shape on "
-                    f"{thread_id}")
+                    f"event {index}: unsupported message shape or missing "
+                    f"identity fields on {thread_id}")
                 continue
             self.assistant_messages.setdefault(
                 thread_id, []).append({"index": index,
-                                       "turn_id": params.get("turnId"),
-                                       "item_id": item.get("id"),
+                                       "turn_id": turn_id,
+                                       "item_id": item_id,
                                        "bytes": raw})
 
     @staticmethod
@@ -432,6 +616,7 @@ class Judge:
         self.surfaces = surfaces          # install/fixture/routing/pre/post/storage
         self.rows: list[dict] = []
         self.attribution_invalid = False
+        self.attribution_incomplete = False
         self.first_finalize = None
 
     def row(self, fact_id, verdict, detail, evidence):
@@ -442,6 +627,91 @@ class Judge:
         return extract_flag_value(command, flag)
 
     # -- folded surfaces ---------------------------------------------------
+
+    def _routing_relation_integrity(self, routing, checks_by_name):
+        """Check routing.json's formal-edge summary against the adapter.
+
+        The topology verifier projects the formal graph into root child ids
+        and nested spawn rows.  Keep those observations in the unique verdict
+        and reject summaries that disagree with the source relation surface.
+        """
+        root_id = routing.get("root_thread_id")
+        direct_ids = routing.get("root_direct_spawn_child_ids")
+        nested = routing.get("nested_formal_spawns")
+        if not isinstance(direct_ids, list) or not isinstance(nested, list):
+            return "gap", ["routing.json lacks root child or nested relation observations"]
+        if not isinstance(root_id, str) or not root_id:
+            return "gap", ["routing.json has no observed root thread id"]
+        if self.m.root_id and root_id != self.m.root_id:
+            return "invalid", ["routing.json root thread id conflicts with the raw event stream"]
+        if any(not isinstance(child, str) or not child for child in direct_ids) \
+                or len(set(direct_ids)) != len(direct_ids):
+            return "invalid", ["routing.json root child ids are malformed or duplicated"]
+
+        def signature(row):
+            if not isinstance(row, dict):
+                return None
+            sender = row.get("sender_thread_id")
+            receivers = row.get("receiver_thread_ids")
+            if not isinstance(sender, str) or not sender \
+                    or not isinstance(receivers, list) or not receivers \
+                    or any(not isinstance(child, str) or not child
+                           for child in receivers):
+                return None
+            return sender, tuple(receivers)
+
+        actual_nested = [signature(row) for row in nested]
+        if any(row is None for row in actual_nested):
+            return "invalid", ["routing.json contains a malformed nested relation"]
+
+        ownership = checks_by_name.get("formal_ownership")
+        ownership_detail = ownership.get("detail") if ownership else None
+        if ownership and ownership.get("status") == "fail" \
+                or isinstance(ownership_detail, dict) and ownership_detail:
+            return "invalid", ["routing.json reports conflicting formal owners"]
+
+        nested_check = checks_by_name.get("no_nested_formal_spawn")
+        nested_detail = nested_check.get("detail") if nested_check else None
+        if nested_check and nested_check.get("status") == "pass" and nested \
+                or nested_check and nested_check.get("status") == "fail" and not nested:
+            return "invalid", ["nested relation rows conflict with the no-nested check"]
+        if isinstance(nested_detail, list):
+            detailed_nested = [signature(row) for row in nested_detail]
+            if any(row is None for row in detailed_nested) \
+                    or sorted(detailed_nested) != sorted(actual_nested):
+                return "invalid", ["nested relation check detail conflicts with routing.json rows"]
+
+        count_check = checks_by_name.get("root_direct_spawn_child_count")
+        count_detail = count_check.get("detail") if count_check else None
+        if isinstance(count_detail, dict) and "observed" in count_detail \
+                and count_detail["observed"] != len(direct_ids):
+            return "invalid", ["root child count detail conflicts with routing.json child ids"]
+
+        if not self.m.relation_surface_complete:
+            return "gap", ["adapter formal relation surface is missing"]
+        expected_direct = set()
+        expected_nested = []
+        for relation in self.m.relations:
+            if not isinstance(relation, dict):
+                return "invalid", ["adapter formal relation entry is malformed"]
+            if relation.get("tool") != "spawnAgent":
+                continue
+            sender = relation.get("sender_thread_id")
+            receivers = relation.get("receiver_thread_ids")
+            if not isinstance(sender, str) or not sender \
+                    or not isinstance(receivers, list) or not receivers \
+                    or any(not isinstance(child, str) or not child
+                           for child in receivers):
+                return "invalid", ["adapter formal relation shape is unsupported"]
+            if sender == root_id:
+                expected_direct.update(receivers)
+            else:
+                expected_nested.append((sender, tuple(receivers)))
+        if set(direct_ids) != expected_direct:
+            return "invalid", ["routing.json root child ids conflict with adapter formal relations"]
+        if sorted(actual_nested) != sorted(expected_nested):
+            return "invalid", ["routing.json nested rows conflict with adapter formal relations"]
+        return "ok", []
 
     def judge_folded_surfaces(self):
         install = self.surfaces.get("install")
@@ -507,14 +777,48 @@ class Judge:
                        and c.get("status") == "fail"]
                 unknown = [c for c in checks if not isinstance(c, dict)
                            or c.get("status") not in ("pass", "fail")]
-                if classification in ("FAIL", "FAIL_PRODUCT", "fail", "failed") \
-                        and bad:
-                    self.row("F-routing-verifier", "fail",
-                             "routing.json reports a product contract violation",
-                             [str(c.get("name")) for c in bad])
-                elif missing or unknown:
+                owner_check = by_name.get("formal_ownership")
+                owner_detail = owner_check.get("detail") if owner_check else None
+                owner_conflict = bool(owner_check and
+                                      owner_check.get("status") == "fail") \
+                    or isinstance(owner_detail, dict) and bool(owner_detail)
+                integrity, integrity_evidence = self._routing_relation_integrity(
+                    routing, by_name)
+                if classification in ("INVALID_TEST_EXECUTION", "INVALID",
+                                      "invalid") or owner_conflict:
+                    self.row("F-routing-verifier", "invalid",
+                             "routing evidence cannot establish formal ownership",
+                             integrity_evidence or [str(routing.get("reason_code")
+                                                        or classification)])
+                elif integrity == "invalid":
+                    self.row("F-routing-verifier", "invalid",
+                             "routing relation summary conflicts with formal evidence",
+                             integrity_evidence)
+                elif classification in ("FAIL", "FAIL_PRODUCT", "fail", "failed") \
+                        and bad and integrity == "ok":
+                    bad_names = {c.get("name") for c in bad}
+                    machine_prefix = any(
+                        row.get("fact") == "F-attribution"
+                        and row.get("verdict") == "machine_failure_prefix"
+                        for row in self.rows)
+                    if machine_prefix and bad_names <= {
+                            "root_direct_spawn_child_count"}:
+                        self.row("F-routing-verifier", "gap",
+                                 "root child count is incomplete after a confirmed machine failure",
+                                 [str(name) for name in sorted(bad_names)])
+                    elif not self.m.run_completed and bad_names <= {
+                            "root_direct_spawn_child_count"}:
+                        self.row("F-routing-verifier", "gap",
+                                 "root run is incomplete; the observed child count cannot establish a delegation violation",
+                                 [str(name) for name in sorted(bad_names)])
+                    else:
+                        self.row("F-routing-verifier", "fail",
+                                 "routing.json reports a product contract violation",
+                                 [str(c.get("name")) for c in bad])
+                elif integrity == "gap" or missing or unknown:
                     self.row("F-routing-verifier", "gap",
                              "routing.json lacks required formal or snapshot findings",
+                             integrity_evidence +
                              [f"missing={missing}", f"unknown={len(unknown)}"])
                 elif classification in ("PASS", "pass", "ok") and bad:
                     self.row("F-routing-verifier", "invalid",
@@ -524,11 +828,6 @@ class Judge:
                     self.row("F-routing-verifier", "pass",
                              "formal ownership, nesting and snapshot checks passed",
                              [str(c.get("name")) for c in checks])
-                elif classification in ("INVALID_TEST_EXECUTION",
-                                         "INVALID", "invalid"):
-                    self.row("F-routing-verifier", "invalid",
-                             "routing evidence cannot establish a valid run",
-                             [str(routing.get("reason_code") or classification)])
                 else:
                     self.row("F-routing-verifier", "gap",
                              f"routing.json classification: {classification}", [])
@@ -663,6 +962,18 @@ class Judge:
                     detail.append(
                         f"event {spawn['index']}: actual machine failure for "
                         f"call {call_id}")
+                elif not m.run_completed:
+                    if observed and observed != edge["receivers"]:
+                        invalid.append(
+                            f"call {call_id} observed child mapping disagrees "
+                            f"before completion: activity={sorted(observed)}, "
+                            f"formal={sorted(edge['receivers'])}")
+                    else:
+                        detail.append(
+                            f"event {spawn['index']}: formal relation for "
+                            f"{call_id} has no completed child activity in an "
+                            "incomplete root run")
+                        linked_sequence.append(spawn["agent_type"])
                 else:
                     problems.append(
                         f"root call {call_id} has no completed child activity")
@@ -693,7 +1004,7 @@ class Judge:
                 pass
             elif linked_sequence in legal:
                 pass
-            elif machine_prefix and legal_prefix:
+            elif (machine_prefix or not m.run_completed) and legal_prefix:
                 pass
             elif not problems and not invalid:
                 problems.append(
@@ -723,6 +1034,11 @@ class Judge:
             self.row("F-attribution", "machine_failure_prefix",
                      "spawn sequence stopped at a machine-level failure",
                      evidence)
+        elif not m.run_completed:
+            self.attribution_incomplete = True
+            self.row("F-attribution", "gap",
+                     "the root run is incomplete; delegation absence is not established",
+                     evidence)
         else:
             self.row("F-attribution", "pass",
                      "every formal child is owned by this root and maps to "
@@ -731,10 +1047,10 @@ class Judge:
 
     @staticmethod
     def _spawn_output_is_failure(output):
-        if not isinstance(output, str):
+        if not isinstance(output, dict) or output.get("completed") is not True:
             return False
-        lowered = output.lower()
-        return "failed" in lowered or "error" in lowered
+        return output.get("text", "").strip() == \
+            "collab spawn failed: no thread with id"
 
     # -- fix 2: credential value chain --------------------------------------
 
@@ -804,28 +1120,159 @@ class Judge:
         except json.JSONDecodeError:
             return None, "unparsable"
 
+    @staticmethod
+    def _flag_values(command, flag):
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            return None
+        values = []
+        for index, token in enumerate(tokens):
+            if token == flag:
+                values.append(tokens[index + 1] if index + 1 < len(tokens)
+                              and not tokens[index + 1].startswith("--") else None)
+            elif token.startswith(flag + "="):
+                values.append(token[len(flag) + 1:])
+        return values
+
+    @staticmethod
+    def _path_identity(value, cwd):
+        if not isinstance(value, str) or not value.strip():
+            return None
+        path = Path(value)
+        return str((path if path.is_absolute() else Path(cwd or ".") / path).resolve())
+
+    def _credential_source(self, record, payload, problems, gaps):
+        professor = payload.get("professor")
+        professor_dir = payload.get("professor_dir")
+        if not isinstance(professor, str) or not professor.strip():
+            gaps.append(f"event {record['index']}: capture return misses professor identity")
+        if not isinstance(professor_dir, str) or not professor_dir.strip():
+            gaps.append(f"event {record['index']}: capture return misses professor_dir")
+        else:
+            inputs = self._flag_values(record["command"], "--professor-dir")
+            if inputs is None:
+                gaps.append(f"event {record['call_index']}: capture source arguments are unparsable")
+            elif len(inputs) != 1 or not inputs[0]:
+                problems.append("capture command has missing or ambiguous --professor-dir")
+            elif self._path_identity(inputs[0], record.get("cwd")) \
+                    != self._path_identity(professor_dir, record.get("cwd")):
+                problems.append("capture return professor_dir differs from its command input")
+        for field in ("refresh_scope", "direction_id"):
+            if field not in payload:
+                gaps.append(f"event {record['index']}: capture return misses source metadata {field}")
+        requested_scope = self._flag_values(record["command"], "--refresh-scope")
+        if requested_scope is None:
+            gaps.append(f"event {record['call_index']}: refresh-scope input is unparsable")
+        elif len(requested_scope) > 1:
+            problems.append("capture command has duplicated --refresh-scope")
+        expected_scope = requested_scope[0] if requested_scope else "flagged"
+        if "refresh_scope" in payload and payload["refresh_scope"] != expected_scope:
+            problems.append("capture return refresh_scope differs from the actual command input")
+        requested_direction = self._flag_values(record["command"], "--direction-id")
+        if requested_direction is None:
+            gaps.append(f"event {record['call_index']}: direction-id input is unparsable")
+        elif len(requested_direction) > 1:
+            problems.append("capture command has duplicated --direction-id")
+        if requested_direction and "direction_id" in payload \
+                and payload["direction_id"] != requested_direction[0]:
+            problems.append("capture return direction_id differs from the actual command input")
+        return {"professor": professor, "professor_dir": professor_dir,
+                "refresh_scope": payload.get("refresh_scope"),
+                "direction_id": payload.get("direction_id"),
+                "profile_fingerprint": payload.get("profile_fingerprint")}
+
+    def _check_credential_consumer_source(self, record, payload, subcommand,
+                                          captured, problems, gaps):
+        label = f"event {record['index']}: {subcommand}"
+        professor = payload.get("professor")
+        if not isinstance(professor, str) or not professor.strip():
+            gaps.append(f"{label} return misses professor identity")
+        elif captured.get("professor") and professor != captured["professor"]:
+            problems.append(f"{label} professor differs from the captured source")
+        if subcommand == CHILD_PLAN:
+            reported_dir = payload.get("professor_dir")
+        else:
+            state_path = payload.get("state_path")
+            reported_dir = (str(Path(state_path).parent)
+                            if isinstance(state_path, str) and state_path.strip()
+                            else None)
+        if not isinstance(reported_dir, str) or not reported_dir.strip():
+            field = "professor_dir" if subcommand == CHILD_PLAN else "state_path"
+            gaps.append(f"{label} return misses {field}")
+        elif captured.get("professor_dir") and self._path_identity(
+                reported_dir, record.get("cwd")) != self._path_identity(
+                    captured["professor_dir"], record.get("cwd")):
+            problems.append(f"{label} professor path differs from the captured source")
+        if subcommand == CHILD_PLAN:
+            for field in ("refresh_scope", "direction_id"):
+                if field not in payload:
+                    gaps.append(f"{label} return misses source metadata {field}")
+                elif field in captured and payload[field] != captured[field]:
+                    problems.append(f"{label} source metadata {field} differs from capture")
+            profile_fingerprint = captured.get("profile_fingerprint")
+            if profile_fingerprint is not None:
+                if "profile_fingerprint" not in payload:
+                    gaps.append(f"{label} return misses profile source fingerprint")
+                elif payload["profile_fingerprint"] != profile_fingerprint:
+                    problems.append(f"{label} profile source fingerprint differs from capture")
+
     def judge_credential_chain(self):
         m = self.m
         children = self._generator_children()
         if not children:
-            machine_prefix = any(child is None
-                                 for _, child in m.ordered_children())
-            if machine_prefix:
-                self.row("F-credential-chain", "gap",
-                         "machine-level spawn failure before any generator "
-                         "child ran", [])
-            else:
-                self.row("F-credential-chain", "fail",
-                         "no stage3-plan/finalize exec in any generator "
-                         "child", [f"children: {children}"])
+            complete = (m.run_completed and m.relation_surface_complete
+                        and m.delegation_summary_complete
+                        and not any(child is None for _, child in m.ordered_children()))
+            self.row("F-credential-chain", "fail" if complete else "gap",
+                     "no attributable generator child is available for the "
+                     "invocation credential chain", [f"children: {children}"])
             return
-        capture = self._child_exec(children[0], "--capture-invocation")
-        if capture is None or stage3_command(capture["command"]) != "stage3-plan":
-            self.row("F-credential-chain", "fail",
-                     "the first stage3-plan did not capture an invocation "
-                     "credential", [])
+
+        captures = []
+        consumers = []
+        for child in children:
+            for record in m.execs.get(child, []):
+                subcommand = stage3_command(record["command"])
+                if subcommand not in {CHILD_PLAN, CHILD_FINALIZE}:
+                    continue
+                args = self._flag_values(record["command"], "--capture-invocation")
+                if args is None:
+                    self.row("F-credential-chain", "gap",
+                             "credential command arguments cannot be parsed",
+                             [f"event {record['call_index']}"])
+                    return
+                if args and subcommand == CHILD_PLAN:
+                    captures.append((child, record))
+                else:
+                    consumers.append((child, record, subcommand))
+        if not captures:
+            completed_children = {thread for rows in m.completed_activity_children.values()
+                                  for thread in rows}
+            complete = (m.run_completed and m.relation_surface_complete
+                        and m.delegation_summary_complete
+                        and all(child in completed_children for child in children))
+            self.row("F-credential-chain", "fail" if complete else "gap",
+                     "no stage3-plan captured an invocation credential",
+                     [f"generator children: {children}"])
             return
+        capture_child, capture = captures[0]
         problems, gaps = [], []
+        if capture_child != children[0]:
+            problems.append("the first generator child did not capture its invocation credential")
+        if len(captures) != 1:
+            problems.append(f"expected one invocation capture, observed {len(captures)}")
+        capture_args = self._flag_values(capture["command"], "--capture-invocation")
+        if len(capture_args or []) != 1 or not capture_args[0]:
+            problems.append("capture command has missing or duplicated --capture-invocation")
+        try:
+            capture_tokens = shlex.split(capture["command"])
+        except ValueError:
+            capture_tokens = []
+            gaps.append(f"event {capture['call_index']}: capture command is unparsable")
+        if any(self._flag_values(capture["command"], flag)
+               for flag in CREDENTIAL_FLAGS):
+            problems.append("capture command also supplied a credential")
         cap_payload = self._result_payload(
             capture, "first invocation capture", problems, gaps)
         if cap_payload is None:
@@ -833,73 +1280,81 @@ class Judge:
                      "the invocation credential capture did not return a "
                      "usable structured result", problems + gaps)
             return
-        if not isinstance(cap_payload.get("invocation_file"), str) \
-                or not cap_payload.get("invocation_file") \
-                or not isinstance(cap_payload.get("invocation_sha256"), str) \
-                or not cap_payload.get("invocation_sha256"):
-            self.row("F-credential-chain", "gap",
+        if "invocation_file" not in cap_payload \
+                or "invocation_sha256" not in cap_payload:
+            self.row("F-credential-chain", "fail" if problems else "gap",
                      "capture return misses invocation_file or "
                      "invocation_sha256",
-                     [f"event {capture['index']}"])
+                     problems + [f"event {capture['index']}"])
             return
         real_file = cap_payload["invocation_file"]
         real_sha = cap_payload["invocation_sha256"]
-        problems = []
-        gaps = []
+        if not isinstance(real_file, str) or not real_file.strip() \
+                or not isinstance(real_sha, str) or not real_sha.strip():
+            self.row("F-credential-chain", "gap",
+                     "capture return has no usable invocation file and digest",
+                     [f"event {capture['index']}"])
+            return
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", real_sha):
+            problems.append("capture return invocation_sha256 is not a "
+                            "64-character SHA-256 digest")
+        captured = self._credential_source(capture, cap_payload, problems, gaps)
         consumption = []
-        for child in children:
-            for record in m.execs.get(child, []):
-                subcommand = stage3_command(record["command"])
-                if subcommand not in {CHILD_PLAN, CHILD_FINALIZE}:
-                    continue
-                try:
-                    tokens = shlex.split(record["command"])
-                except ValueError:
-                    gaps.append(f"event {record['call_index']}: command input is unparsable")
-                    continue
-                if "--capture-invocation" in tokens:
-                    continue
-                consumption.append((child, record))
-                if self._exec_result(record) is False:
+        for child, record, subcommand in consumers:
+            try:
+                tokens = shlex.split(record["command"])
+            except ValueError:
+                gaps.append(f"event {record['call_index']}: command input is unparsable")
+                continue
+            consumption.append((child, record, subcommand))
+            if self._exec_result(record) is False:
+                problems.append(
+                    f"event {record['index']}: {subcommand} returned an unsuccessful result")
+                payload = None
+            elif self._exec_result(record) is None:
+                gaps.append(f"event {record['call_index']}: {subcommand} completion is missing")
+                payload = None
+            else:
+                payload, state = self._json_from_output(record.get("output"))
+                if state != "ok" or not isinstance(payload, dict):
+                    gaps.append(f"event {record['index']}: {subcommand} structured return {state}")
+                    payload = None
+                elif payload.get("status") != "ok":
                     problems.append(
-                        f"event {record['index']}: {subcommand} returned an unsuccessful result")
-                elif self._exec_result(record) is None:
-                    gaps.append(
-                        f"event {record['call_index']}: {subcommand} completion is missing")
-                else:
-                    payload, state = self._json_from_output(record.get("output"))
-                    if state != "ok" or not isinstance(payload, dict):
-                        gaps.append(
-                            f"event {record['index']}: {subcommand} structured return {state}")
-                    elif payload.get("status") != "ok":
-                        problems.append(
-                            f"event {record['index']}: {subcommand} structured return "
-                            f"status is {payload.get('status')!r}")
-                for flag, real in ((CREDENTIAL_FLAGS[0], real_file),
-                                   (CREDENTIAL_FLAGS[1], real_sha)):
-                    used = self.flag_value(record["command"], flag)
-                    if used is None:
-                        problems.append(
-                            f"event {record['call_index']}: {flag} missing")
-                    elif used != real:
-                        problems.append(
-                            f"event {record['index']}: {flag} value drifts "
-                            f"from the captured credential")
-                replayed = [f for f in SOURCE_FLAGS if f in tokens]
-                if replayed:
-                    problems.append(
-                        f"event {record['call_index']}: source parameters "
-                        f"replayed alongside the credential: {replayed}")
-        correction_plans = [r for child, r in consumption
+                        f"event {record['index']}: {subcommand} structured return "
+                        f"status is {payload.get('status')!r}")
+            for flag, real in ((CREDENTIAL_FLAGS[0], real_file),
+                               (CREDENTIAL_FLAGS[1], real_sha)):
+                values = self._flag_values(record["command"], flag)
+                if values is None:
+                    gaps.append(f"event {record['call_index']}: {flag} argument is unparsable")
+                elif len(values) != 1 or not values[0]:
+                    problems.append(f"event {record['call_index']}: {flag} is missing or duplicated")
+                elif values[0] != real:
+                    problems.append(f"event {record['index']}: {flag} value drifts from "
+                                    "the actual capture return")
+            replayed = [flag for flag in SOURCE_FLAGS if flag in tokens]
+            replayed.extend(flag for flag in SOURCE_FLAGS
+                            if any(token.startswith(flag + "=") for token in tokens))
+            if self._flag_values(record["command"], "--capture-invocation"):
+                problems.append(f"event {record['call_index']}: credential consumer "
+                                "also requested a new capture")
+            if replayed:
+                problems.append(f"event {record['call_index']}: source parameters "
+                                f"replayed alongside the credential: {replayed}")
+            if payload is not None:
+                self._check_credential_consumer_source(
+                    record, payload, subcommand, captured, problems, gaps)
+        correction_plans = [r for child, r, subcommand in consumption
                             if child == children[-1]
-                            and stage3_command(r["command"]) == CHILD_PLAN
+                            and subcommand == CHILD_PLAN
                             and self.flag_value(r["command"], "--validation-file")]
         if len(children) >= 2 and not correction_plans:
             problems.append("the correction round did not consume a "
                             "recorded validation file")
-        first_finalize = [r for child, r in consumption
+        first_finalize = [r for child, r, subcommand in consumption
                           if child == children[0]
-                          and stage3_command(r["command"]) == CHILD_FINALIZE]
+                          and subcommand == CHILD_FINALIZE]
         if len(first_finalize) != 1:
             problems.append("the first commit (stage3-finalize) never ran "
                             "exactly once in the first generator child")
@@ -916,7 +1371,8 @@ class Judge:
         else:
             self.row("F-credential-chain", "pass",
                      "first-round capture and verbatim credential "
-                     "consumption verified against actual return values",
+                     "consumption verified against the actual capture and "
+                     "professor/source returns",
                      [f"invocation_file={real_file}", f"{len(consumption)} "
                       f"consumption exec(s)"])
 
@@ -1190,6 +1646,28 @@ class Judge:
                     else value.value.encode("utf-8")
         return None
 
+    @staticmethod
+    def _filechange_added_bytes(change):
+        """Return complete bytes only for a self-contained added-file patch."""
+        content = change.get("content")
+        if isinstance(content, bytes):
+            return content
+        if isinstance(content, str):
+            return content.encode("utf-8")
+        if change.get("operation") not in {"add", "created", "create", "added"}:
+            return None
+        diff = change.get("diff")
+        if not isinstance(diff, str) or not diff:
+            return None
+        added = [line[1:] for line in diff.splitlines()
+                 if line.startswith("+") and not line.startswith("+++")]
+        if not added:
+            return None
+        raw = "\n".join(added).encode("utf-8")
+        if diff.endswith("\n") and "\\ No newline at end of file" not in diff:
+            raw += b"\n"
+        return raw
+
     def _production_evidence(self, entry, message):
         """True/False/None: link one validator turn to its real output write."""
         output_file = entry.get("output_file")
@@ -1201,7 +1679,10 @@ class Judge:
         if not turn_id:
             return None
         if any(not record.get("turn_id") for record in execs) \
-                or any(change.get("turn_id") != turn_id for change in changes):
+                or any(change.get("turn_id") != turn_id
+                       or not change.get("item_id")
+                       or change.get("status") != "completed"
+                       for change in changes):
             return None
         if any(record.get("turn_id") != turn_id for record in execs):
             return None
@@ -1209,21 +1690,22 @@ class Judge:
             return None
         writes = []
         for record in execs:
-            kind, paths, exclusive = command_file_behavior(
+            operations, unknown = command_file_behavior(
                 record.get("command", ""), record.get("cwd"))
-            if kind == "unknown":
+            if unknown:
                 return None
-            if kind != "write":
-                continue
-            if self._exec_result(record) is not True:
+            write_ops = [operation for operation in operations
+                         if operation[0] == "write"]
+            if write_ops and self._exec_result(record) is not True:
                 return None
-            for path in paths:
+            for _kind, path, exclusive in write_ops:
                 writes.append((Path(path), exclusive, record))
         for change in changes:
             if not change.get("completed") or not change.get("path"):
                 return None
             writes.append((Path(change["path"]),
-                           change.get("operation") in {"created", "create", "added"},
+                           change.get("operation") in {
+                               "add", "created", "create", "added"},
                            change))
         if not writes:
             return None
@@ -1234,8 +1716,12 @@ class Judge:
             return False
         if isinstance(observation, dict) and "command" in observation:
             raw = self._literal_written_bytes(observation["command"])
-            if raw is None or raw != message["bytes"]:
-                return False
+        else:
+            raw = self._filechange_added_bytes(observation)
+            if raw is None:
+                return None
+        if raw is None or raw != message["bytes"]:
+            return False
         return True
 
     def _root_source_rewrite(self, entry):
@@ -1257,13 +1743,11 @@ class Judge:
             if stage3_command(record["command"]) in {
                     ROOT_SAVE, ROOT_RECORD, ROOT_PREPARE}:
                 continue
-            kind, paths, _exclusive = command_file_behavior(
+            operations, _unknown = command_file_behavior(
                 record.get("command", ""), record.get("cwd"))
-            if kind == "unknown":
-                continue
-            if kind != "write":
-                continue
-            for path in paths:
+            for kind, path, _exclusive in operations:
+                if kind != "write":
+                    continue
                 if output_file and Path(path) == Path(output_file):
                     hits.append(f"event {record['index']}: {path}")
                 if validation_file \
@@ -1288,45 +1772,42 @@ class Judge:
                      "no validator child to judge the write scope on", [])
             return
         problems = []
+        gaps = []
         observed = []
         for entry in rounds:
             child = entry["child"]
             output_file = entry.get("output_file") or ""
             _start, _finish, window = self._validator_window(entry)
             if window is None:
-                self.row("F-validator-write-scope", "gap",
-                         f"round {entry['round']}: no correlated validator "
-                         "completion window", observed)
-                return
+                gaps.append(f"round {entry['round']}: no correlated validator "
+                            "completion window")
+                continue
             execs, changes = window
             operation_count = 0
             turn_id = None
             for record in execs:
-                turn_id = turn_id or record.get("turn_id")
-                if not record.get("turn_id") or record.get("turn_id") != turn_id:
-                    self.row("F-validator-write-scope", "gap",
-                             f"round {entry['round']}: command turn ids do not "
-                             "form one attributable validator turn", observed)
-                    return
-                if self._exec_result(record) is not True:
-                    self.row("F-validator-write-scope", "gap",
-                             f"round {entry['round']}: a tool call lacks a "
-                             "successful completion return", observed)
-                    return
-                kind, paths, exclusive = command_file_behavior(
-                    record.get("command", ""), record.get("cwd"))
-                if kind == "unknown":
-                    self.row("F-validator-write-scope", "gap",
-                             f"round {entry['round']}: command behavior is "
-                             "not clear from its complete input", observed +
-                             [f"event {record['call_index']}: command behavior unknown"])
-                    return
-                if kind == "read":
-                    observed.append(
-                        f"round {entry['round']} event {record['index']}: "
-                        f"read {paths}")
+                record_turn = record.get("turn_id")
+                turn_id = turn_id or record_turn
+                if not record_turn or record_turn != turn_id:
+                    gaps.append(f"round {entry['round']}: command turn ids do "
+                                "not form one attributable validator turn")
                     continue
-                for path in paths:
+                if self._exec_result(record) is not True:
+                    gaps.append(f"round {entry['round']}: a tool call lacks a "
+                                "successful completion return")
+                    continue
+                operations, unknown = command_file_behavior(
+                    record.get("command", ""), record.get("cwd"))
+                if unknown:
+                    gaps.append(f"round {entry['round']} event "
+                                f"{record['call_index']}: command behavior is "
+                                "not clear from its complete input")
+                for kind, path, exclusive in operations:
+                    if kind == "read":
+                        observed.append(
+                            f"round {entry['round']} event {record['index']}: "
+                            f"read {path}")
+                        continue
                     operation_count += 1
                     observed.append(
                         f"round {entry['round']} event {record['index']}: "
@@ -1345,13 +1826,13 @@ class Judge:
             for change in changes:
                 if not change.get("completed") or not change.get("path") \
                         or not change.get("turn_id") or change.get("turn_id") != turn_id:
-                    self.row("F-validator-write-scope", "gap",
-                             f"round {entry['round']}: fileChange cannot be "
-                             "attributed to the validator turn", observed)
-                    return
+                    gaps.append(f"round {entry['round']}: fileChange cannot be "
+                                "attributed to the validator turn")
+                    continue
                 operation_count += 1
                 path = change["path"]
-                exclusive = change.get("operation") in {"created", "create", "added"}
+                exclusive = change.get("operation") in {
+                    "add", "created", "create", "added"}
                 observed.append(
                     f"round {entry['round']} event {change['index']}: "
                     f"fileChange {change.get('operation')} {path}")
@@ -1364,10 +1845,8 @@ class Judge:
                         f"round {entry['round']} event {change['index']}: "
                         "output file change was not an exclusive create")
             if operation_count == 0:
-                self.row("F-validator-write-scope", "gap",
-                         f"round {entry['round']}: no actual file operation "
-                         "can be established from the tool inputs", observed)
-                return
+                gaps.append(f"round {entry['round']}: no actual file operation "
+                            "can be established from the tool inputs")
             if operation_count > 1:
                 problems.append(
                     f"round {entry['round']}: expected one exclusive output "
@@ -1376,6 +1855,10 @@ class Judge:
             self.row("F-validator-write-scope", "fail",
                      "the validator wrote outside its assigned output file",
                      problems)
+        elif gaps:
+            self.row("F-validator-write-scope", "gap",
+                     "validator file operations are not fully evidenced",
+                     gaps + observed)
         else:
             self.row("F-validator-write-scope", "pass",
                      "every real write operation in the validator windows "
@@ -1387,49 +1870,73 @@ class Judge:
         m = self.m
         rounds = getattr(self, "rounds", [])
         problems = []
+        gaps = []
         records = {entry["round"]: entry["record"] for entry in rounds}
         last_record = max((r["index"] for r in records.values()), default=-1)
-        # No completed-child spawn after the final record, except the legal
-        # correction generator dispatched by a needs_correction=true record.
+        # A dispatch is the root's function_call event. Check it even when the
+        # child never starts or completes, since an early attempt is observable.
         terminal_records = [entry for entry in rounds
                             if (entry["record_payload"] or {}).get(
                                 "needs_correction") is False]
         for spawn, child in m.ordered_children():
-            if child is None:
-                continue  # machine-failed spawns are judged by attribution
             if terminal_records and spawn["index"] > min(
                     entry["record"]["index"] for entry in terminal_records):
                 problems.append(
                     f"event {spawn['index']}: spawn after the terminal "
                     f"record (no third generator / no post-terminal "
                     f"validator)")
-        # The correction generator may only be dispatched after the round-1
-        # record completed with needs_correction=true.
-        if len(rounds) >= 2:
-            generator_children = self._generator_children()
-            if generator_children:
-                correction_child = generator_children[-1]
-                correction_spawn = next(
-                    (spawn for spawn, child in m.ordered_children()
-                     if child == correction_child), None)
-                record1 = rounds[0]["record"]
-                if correction_spawn is not None and \
-                        correction_spawn["index"] < record1["index"]:
+        # The second generator dispatch is checked as soon as it is observed;
+        # it need not have completed a second validator round. This also checks
+        # a machine-failed dispatch against the preceding record boundary.
+        generator_spawns = [spawn for spawn in m.spawns
+                            if spawn["agent_type"] == GENERATOR_AGENT]
+        if len(generator_spawns) >= 2:
+            record1 = records.get(1)
+            if record1 is None:
+                if m.run_completed:
                     problems.append(
-                        f"the correction generator spawned (event "
+                        "the correction generator was dispatched without a "
+                        "completed round-1 record")
+                else:
+                    gaps.append(
+                        "round-1 record completion is missing before the "
+                        "second generator dispatch")
+            else:
+                correction_spawn = generator_spawns[1]
+                if correction_spawn["index"] <= record1["index"]:
+                    problems.append(
+                        f"the correction generator started (event "
                         f"{correction_spawn['index']}) before the round-1 "
                         f"record completed (event {record1['index']})")
-                if correction_spawn is not None:
-                    needs = (rounds[0]["record_payload"] or {}).get(
-                        "needs_correction")
-                    if needs is not True:
-                        problems.append(
-                            f"the correction generator was dispatched "
-                            f"although round 1 needs_correction={needs!r}")
-        self.row("F-stop-order", "fail" if problems else "pass",
-                 "stop boundaries" + (" violated" if problems else
-                                      " honored"),
-                 problems or [f"last record event {last_record}"])
+                needs = (rounds[0]["record_payload"] or {}).get(
+                    "needs_correction") if rounds else None
+                if needs is not True:
+                    problems.append(
+                        f"the correction generator was dispatched although "
+                        f"round 1 needs_correction={needs!r}")
+        elif rounds and (rounds[0]["record_payload"] or {}).get(
+                "needs_correction") is True:
+            attribution = {row["fact"]: row["verdict"] for row in self.rows}.get(
+                "F-attribution")
+            if attribution != "machine_failure_prefix":
+                if m.run_completed:
+                    problems.append(
+                        "round 1 requested correction but no second "
+                        "generator dispatch was observed")
+                else:
+                    gaps.append(
+                        "round 1 requested correction but the run is "
+                        "incomplete before a second generator dispatch")
+
+        if problems:
+            self.row("F-stop-order", "fail", "stop boundaries violated",
+                     problems + gaps)
+        elif gaps:
+            self.row("F-stop-order", "gap",
+                     "stop boundaries cannot be fully checked", gaps)
+        else:
+            self.row("F-stop-order", "pass", "stop boundaries honored",
+                     [f"last record event {last_record}"])
 
     def judge_terminal_state(self):
         state = self.state
@@ -1506,42 +2013,102 @@ class Judge:
         last_record = max((r["index"] for r in records), default=-1)
         attribution = {row["fact"]: row["verdict"] for row in self.rows}.get(
             "F-attribution")
-        if attribution == "machine_failure_prefix" or last_record < 0 \
-                and not rebuilds:
-            self.row("F-rebuild", "gap",
-                     "the run stopped at a machine-level failure prefix; "
-                     "the terminal rebuild was never reached", [])
+        if last_record < 0:
+            if rebuilds:
+                record_attempts = [r for r in root_execs
+                                   if ROOT_RECORD in r["command"]]
+                if record_attempts or not m.run_completed:
+                    self.row("F-rebuild", "gap",
+                             "record completion does not establish the rebuild boundary",
+                             [f"record attempts={len(record_attempts)}"])
+                else:
+                    self.row("F-rebuild", "fail",
+                             "rebuild ran without a record call in a completed run",
+                             [f"rebuild start event {r.get('call_index')}"
+                              for r in rebuilds])
+            else:
+                self.row("F-rebuild", "gap",
+                         "no completed terminal record establishes the rebuild boundary",
+                         ["the run stopped before a record or the record evidence is incomplete"])
             return
+        if rounds := getattr(self, "rounds", []):
+            terminal = next((entry for entry in reversed(rounds)
+                             if (entry["record_payload"] or {}).get(
+                                 "needs_correction") is False), None)
+        else:
+            terminal = None
+        if terminal is None:
+            if rebuilds:
+                self.row("F-rebuild", "fail",
+                         "rebuild ran before a terminal correction record",
+                         [f"rebuild start event {r.get('call_index')}"
+                          for r in rebuilds])
+            elif attribution == "machine_failure_prefix":
+                self.row("F-rebuild", "gap",
+                         "the machine failure stopped the run before a terminal record and rebuild",
+                         [])
+            else:
+                self.row("F-rebuild", "gap",
+                         "no terminal record establishes whether rebuild was required",
+                         [])
+            return
+
+        terminal_record = terminal["record"]
         problems = []
+        gaps = []
+        if len(rebuilds) == 0 and not m.run_completed:
+            self.row("F-rebuild", "gap",
+                     "the run ended before rebuild completion was observed", [])
+            return
         if len(rebuilds) != 1:
-            problems.append(f"expected exactly one rebuild exec, saw "
-                            f"{len(rebuilds)}")
-        elif rebuilds[0]["index"] < last_record:
-            problems.append(
-                f"rebuild (event {rebuilds[0]['index']}) ran before the "
-                f"terminal record (event {last_record})")
+            if len(rebuilds) > 1 or m.run_completed:
+                problems.append(f"expected exactly one rebuild exec, saw "
+                                f"{len(rebuilds)}")
+            else:
+                gaps.append(f"rebuild count is incomplete: observed {len(rebuilds)}")
+        else:
+            rebuild = rebuilds[0]
+            if rebuild.get("call_index") is None:
+                gaps.append("rebuild start event is missing")
+            elif rebuild["call_index"] <= terminal_record["index"]:
+                problems.append(
+                    f"rebuild started at event {rebuild['call_index']} before "
+                    f"the terminal record completed at event "
+                    f"{terminal_record['index']}")
+            if rebuild.get("index") is None:
+                gaps.append("rebuild completion event is missing")
+            elif self._exec_result(rebuild) is False:
+                problems.append("rebuild command returned unsuccessfully")
+            elif self._exec_result(rebuild) is None:
+                gaps.append("rebuild completion status is missing")
         for thread_id, records_ in m.execs.items():
             for r in records_:
-                if CHILD_FINALIZE in r["command"] and r["index"] > last_record >= 0:
+                if CHILD_FINALIZE in r["command"] \
+                        and r.get("call_index") is not None \
+                        and r["call_index"] > terminal_record["index"]:
                     problems.append(
-                        f"finalize ran after the terminal record: event "
-                        f"{r['index']} on {thread_id[:8]}")
+                        f"finalize started after the terminal record: event "
+                        f"{r['call_index']} on {thread_id[:8]}")
         if problems:
             self.row("F-rebuild", "fail",
                      "terminal rebuild / no-finalize-after violated",
-                     problems)
+                     problems + gaps)
+        elif gaps:
+            self.row("F-rebuild", "gap",
+                     "terminal rebuild completion is not fully evidenced",
+                     gaps)
         else:
             self.row("F-rebuild", "pass",
                      "exactly one rebuild after the terminal record; no "
-                     "finalize afterwards",
+                  "finalize afterwards",
                      [f"rebuild event {rebuilds[0]['index']}"] if rebuilds
                      else [])
 
     # -- entry --------------------------------------------------------------
 
     def run(self) -> dict:
-        self.judge_folded_surfaces()
         self.judge_attribution()
+        self.judge_folded_surfaces()
         self.judge_credential_chain()
         self.judge_handoff_chain()
         self.judge_raw_original()
@@ -1563,6 +2130,10 @@ class Judge:
             classification = "INVALID_TEST_EXECUTION"
             reason = ("formal attribution conflicts or invalid evidence — "
                       "product failures cannot be derived")
+        elif self.attribution_incomplete:
+            classification = "INVALID_TEST_EXECUTION"
+            reason = ("root run incomplete — product failures cannot be derived "
+                      "from absent child evidence")
         elif failures:
             classification = "FAIL"
             reason = "; ".join(row["fact"] for row in failures)

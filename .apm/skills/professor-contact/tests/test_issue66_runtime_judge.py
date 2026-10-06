@@ -13,7 +13,7 @@ frozen contract — never by the judge.  Sample families:
 - raw production (legal whitespace message, root reconstruction, second
   business message, no validator production);
 - file permissions (real read + one exclusive write pass; protected-file
-  write and outside-output write fail) via real ``commandActions``;
+  write and outside-output write fail) via command behavior and file changes;
 - order and stops (rebuild before record, correction spawned before the
   round-1 record completed, dispatch after the terminal record, machine
   failure prefix honored → BLOCKED);
@@ -43,6 +43,9 @@ OUTPUT_FILE = "/tmp/fixture/validator-output.json"
 HANDOFF_FILE = "/tmp/fixture/handoff.json"
 HANDOFF_SHA = hashlib.sha256(b"handoff-bytes").hexdigest()
 RECORDED_FILE = "/tmp/fixture/recorded.json"
+CREDENTIAL_FILE = "/tmp/cap/x"
+CREDENTIAL_SHA = hashlib.sha256(b"fixture invocation credential").hexdigest()
+PROFESSOR_NAME = "fixture professor"
 
 PASS_STATE = {"validator": {"results": {
     "dir_A": {"result": "pass", "rounds": 1}}}}
@@ -97,16 +100,31 @@ def child_message(thread, text, turn_id=None):
         "content": [{"type": "output_text", "text": text}]}}}}
 
 
-def file_change_event(thread, path, operation="created", turn_id=None):
-    params = {"threadId": thread, "turnId": turn_id, "item": {"type": "fileChange",
-        "id": f"fc-{thread}-{Path(path).name}", "changes": [
-            {"path": path, "operation": operation}]}}
+def file_change_event(thread, path, operation="created", turn_id=None,
+                      content=None, status="completed"):
+    change = {"path": path, "kind": operation}
+    if content is not None:
+        raw = content if isinstance(content, bytes) else content.encode("utf-8")
+        text = raw.decode("utf-8")
+        lines = text.split("\n")
+        if raw.endswith(b"\n"):
+            lines = lines[:-1]
+        diff = (f"--- /dev/null\n+++ b/{Path(path).name}\n"
+                f"@@ -0,0 +1,{len(lines)} @@\n"
+                + "\n".join("+" + line for line in lines))
+        if raw.endswith(b"\n"):
+            diff += "\n"
+        change["diff"] = diff
+    params = {"threadId": thread, "turnId": turn_id, "item": {
+        "type": "fileChange", "id": f"fc-{thread}-{Path(path).name}",
+        "status": status, "changes": [change]}}
     if turn_id is not None:
         params["turnId"] = turn_id
     return {"message": {"method": "item/completed", "params": params}}
 
 
-def add_validator_file_change(fx, path, operation="created"):
+def add_validator_file_change(fx, path, operation="created", content=None,
+                              status="completed"):
     finish = next(index for index, event in enumerate(fx.events)
                   if event.get("message", {}).get("method") == "item/completed"
                   and event.get("message", {}).get("params", {}).get("item", {}).get("type")
@@ -114,7 +132,8 @@ def add_validator_file_change(fx, path, operation="created"):
                   and event["message"]["params"]["item"].get("kind") == "completed"
                   and event["message"]["params"]["item"].get("agentThreadId") == V1)
     fx.events.insert(finish, file_change_event(
-        V1, path, operation=operation, turn_id=fx.turn_id(V1)))
+        V1, path, operation=operation, turn_id=fx.turn_id(V1),
+        content=content, status=status))
 
 
 def spawn_events(index, call_id, agent_type, thread=None, machine_fail=False):
@@ -148,6 +167,7 @@ class Fixture:
         self.spawn_specs = []        # (call_id, agent_type, thread|None)
         self._counter = iter(range(1, 1000))
         self.state = PASS_STATE
+        self.include_turn_completed = True
 
     @staticmethod
     def turn_id(thread):
@@ -213,27 +233,37 @@ class Fixture:
                 "contact_state.py stage3-plan --professor-dir /tmp/fixture "
                 "--program-root /tmp/fixture --capture-invocation /tmp/cap",
                 json.dumps({"status": "ok",
-                            "invocation_file": "/tmp/cap/x",
-                            "invocation_sha256": "abc"}),
+                            "invocation_file": CREDENTIAL_FILE,
+                            "invocation_sha256": CREDENTIAL_SHA,
+                            "professor": PROFESSOR_NAME,
+                            "professor_dir": "/tmp/fixture",
+                            "refresh_scope": "flagged",
+                            "direction_id": None,
+                            "profile_fingerprint": None}),
                 actions=[action("read", f"/tmp/fixture/{PACK_NAME}")])
         if with_plan:
-            drift = "999" if credential_drift else "abc"
+            drift = "f" * 64 if credential_drift else CREDENTIAL_SHA
             extra = (f" --validation-file {RECORDED_FILE}"
                      if round_no == 2 else "")
             self.child_exec(
                 thread,
-                "contact_state.py stage3-plan --invocation-file /tmp/cap/x "
+                f"contact_state.py stage3-plan --invocation-file {CREDENTIAL_FILE} "
                 f"--invocation-sha256 {drift}{extra}",
-                '{"status": "ok"}',
+                json.dumps({"status": "ok", "professor": PROFESSOR_NAME,
+                            "professor_dir": "/tmp/fixture",
+                            "refresh_scope": "flagged", "direction_id": None,
+                            "profile_fingerprint": None}),
                 actions=[action("read", f"/tmp/fixture/{PACK_NAME}")])
         if with_finalize:
             self.child_exec(
                 thread,
-                "contact_state.py stage3-finalize --invocation-file "
-                "/tmp/cap/x --invocation-sha256 abc --results /tmp/results"
+                f"contact_state.py stage3-finalize --invocation-file "
+                f"{CREDENTIAL_FILE} --invocation-sha256 {CREDENTIAL_SHA} "
+                "--results /tmp/results"
                 + (f" --validation-file {RECORDED_FILE}"
                    if round_no == 2 else ""),
-                '{"status": "ok", "state_path": "/tmp/fixture/state"}',
+                json.dumps({"status": "ok", "professor": PROFESSOR_NAME,
+                            "state_path": "/tmp/fixture/state.json"}),
                 actions=[action("read", f"/tmp/fixture/{PACK_NAME}")])
         self.complete_child(thread)
 
@@ -241,7 +271,7 @@ class Fixture:
         sha = "drifted" if handoff_drift else HANDOFF_SHA
         self.root_exec(
             "contact_state.py stage3-prepare-validation --invocation-file "
-            "/tmp/cap/x --invocation-sha256 abc "
+            f"{CREDENTIAL_FILE} --invocation-sha256 {CREDENTIAL_SHA} "
             f"--round {round_no}",
             json.dumps({"status": "ok", "round": round_no,
                         "handoff_file": HANDOFF_FILE,
@@ -348,9 +378,11 @@ class Fixture:
                     "identity_eligible_thread_ids": list(self.children)}}
 
     def response(self):
+        events = list(self.events)
+        if self.include_turn_completed:
+            events.append({"message": {"method": "turn/completed"}})
         return {"output": {"thread_id": ROOT,
-                           "app_server_events": self.events + [
-                               {"message": {"method": "turn/completed"}}]}}
+                           "app_server_events": events}}
 
 
 def legal_two_child(fx: Fixture, *, whitespace=False):
@@ -394,16 +426,59 @@ def legal_two_child_spine(fx: Fixture):
     fx.record(1, sha=msg_sha(fail_text), needs_correction=True)
 
 
-def valid_surfaces():
-    route_checks = [
-        {"name": name, "status": "pass"}
-        for name in ("formal_ownership", "no_nested_formal_spawn",
-                     "root_direct_spawn_child_count",
-                     "pre_zero_write_snapshot", "post_matches_current")]
+def valid_surfaces(fx: Fixture):
+    """A routing.json-shaped projection of the fixture's formal graph."""
+    relations = [row for row in fx.relations
+                 if isinstance(row, dict) and row.get("tool") == "spawnAgent"]
+    owners = {}
+    direct_ids = set()
+    nested = []
+    for relation in relations:
+        sender = relation["sender_thread_id"]
+        receivers = relation["receiver_thread_ids"]
+        for child in receivers:
+            owners.setdefault(child, set()).add(sender)
+            if sender == ROOT:
+                direct_ids.add(child)
+        if sender != ROOT:
+            nested.append({"sender_thread_id": sender,
+                           "receiver_thread_ids": list(receivers)})
+    conflicts = {child: sorted(senders) for child, senders in owners.items()
+                 if len(senders) > 1}
+    route_checks = [{"name": "formal_ownership",
+                     "status": "fail" if conflicts else "pass",
+                     "detail": conflicts}]
+    if conflicts:
+        route_status, route_classification = "invalid", "INVALID_TEST_EXECUTION"
+    elif not relations:
+        route_checks.append({"name": "formal_spawn_relation_surface",
+                             "status": "fail"})
+        route_status, route_classification = "blocked", "BLOCKED_OBSERVABILITY"
+    else:
+        route_checks.append({"name": "no_nested_formal_spawn",
+                             "status": "fail" if nested else "pass",
+                             "detail": nested})
+        if nested:
+            route_status, route_classification = "fail", "FAIL_PRODUCT"
+        else:
+            count_pass = len(direct_ids) >= 2
+            route_checks.extend([
+                {"name": "root_direct_spawn_child_count",
+                 "status": "pass" if count_pass else "fail",
+                 "detail": {"observed": len(direct_ids), "required": 2}},
+                {"name": "pre_zero_write_snapshot", "status": "pass"},
+                {"name": "post_matches_current", "status": "pass"},
+            ])
+            route_status = "pass" if count_pass else "fail"
+            route_classification = "PASS" if count_pass else "FAIL_PRODUCT"
     return {
         "install": {"status": "pass", "checks": [
             {"name": "install_projection", "status": "pass"}]},
-        "routing": {"status": "pass", "classification": "PASS",
+        "routing": {"status": route_status,
+                    "classification": route_classification,
+                    "root_thread_id": ROOT,
+                    "root_direct_spawn_child_ids": sorted(direct_ids),
+                    "nested_formal_spawns": nested,
                     "checks": route_checks},
         "pre": {"status": "pass"},
         "post": {"status": "pass"},
@@ -435,7 +510,7 @@ def run(fx: Fixture, *, state="default", delegation_override=None,
         adapter["dispatch"]["thread_relations"] = relations
     adapter_path.write_text(json.dumps(adapter, ensure_ascii=False),
                             encoding="utf-8")
-    surface_evidence = (valid_surfaces() if surface_evidence is None
+    surface_evidence = (valid_surfaces(fx) if surface_evidence is None
                         else surface_evidence)
     for name, flag in surface_flags.items():
         if name in surface_evidence:
@@ -468,6 +543,16 @@ class LegalCompletionTests(unittest.TestCase):
         legal_two_child(fx)
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual([agent for _call_id, agent, _thread in fx.spawn_specs],
+                         [judge.GENERATOR_AGENT, judge.VALIDATOR_AGENT])
+        self.assertEqual(len(fx.relations), 2)
+        for relation in fx.relations:
+            self.assertEqual(relation["tool"], "spawnAgent")
+            self.assertIsInstance(relation["call_id"], str)
+            self.assertEqual(relation["sender_thread_id"], ROOT)
+            self.assertEqual(len(relation["receiver_thread_ids"]), 1)
+        self.assertEqual(facts(verdict)["F-attribution"], "pass")
+        self.assertEqual(facts(verdict)["F-routing-verifier"], "pass")
 
     def test_corrected_two_round_pass(self):
         fx = Fixture()
@@ -489,6 +574,25 @@ class LegalCompletionTests(unittest.TestCase):
 
 
 class AttributionTests(unittest.TestCase):
+    def test_incomplete_run_without_relations_does_not_prove_zero_delegation(self):
+        fx = Fixture()
+        fx.include_turn_completed = False
+        verdict = run(fx, state=None)
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-attribution"], "gap")
+
+    def test_incomplete_run_with_relation_but_no_child_completion_is_a_gap(self):
+        fx = Fixture()
+        fx.spawn(judge.GENERATOR_AGENT, G1)
+        fx.include_turn_completed = False
+        verdict = run(fx, state=None)
+        observed = facts(verdict)
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(observed["F-attribution"], "gap", verdict)
+        self.assertEqual(observed["F-routing-verifier"], "gap", verdict)
+
     def test_zero_real_delegation_is_a_product_failure(self):
         fx = Fixture()
         fx.root_exec("cat plan", '{"status": "ok"}')
@@ -505,6 +609,44 @@ class AttributionTests(unittest.TestCase):
                       delegation_override=([G1], fx.relations),
                       delegation_state="unconfirmed")
         self.assertEqual(verdict["classification"], "BLOCKED", verdict)
+
+    def test_unrecognized_failure_text_does_not_hide_zero_child_failure(self):
+        fx = Fixture()
+        fx.spawn(judge.GENERATOR_AGENT)
+        call_id = fx.spawn_specs[-1][0]
+        fx.events.append({"message": {"method": "rawResponseItem/completed",
+            "params": {"threadId": ROOT, "item": {
+                "type": "function_call_output", "call_id": call_id,
+                "output": [{"type": "input_text",
+                            "text": "validation command failed with an error"}]}}}})
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-attribution"], "fail", verdict)
+
+    def test_machine_failure_prefix_does_not_hide_prior_product_failure(self):
+        fx = Fixture()
+        legal_two_child_spine(fx)
+        for event in fx.events:
+            message = event.get("message", {})
+            params = message.get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == ROOT \
+                    and message.get("method") in {
+                        "item/started", "item/completed"} \
+                    and item.get("type") == "commandExecution" \
+                    and "stage3-record-validation" in item.get("command", ""):
+                item["command"] = item["command"].replace(
+                    HANDOFF_FILE, "/tmp/fixture/wrong-handoff.json")
+        fx.spawn(judge.GENERATOR_AGENT, None, machine_fail=True)
+
+        verdict = run(fx, state=None)
+
+        self.assertEqual(facts(verdict)["F-attribution"],
+                         "machine_failure_prefix", verdict)
+        self.assertEqual(facts(verdict)["F-handoff-chain"], "fail", verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
 
     def test_nested_foreign_relation_is_product_failure(self):
         fx = Fixture()
@@ -532,6 +674,7 @@ class AttributionTests(unittest.TestCase):
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-attribution"], "fail")
+        self.assertEqual(facts(verdict)["F-routing-verifier"], "gap")
 
     def test_named_root_call_with_missing_adapter_evidence_is_invalid(self):
         fx = Fixture()
@@ -542,6 +685,7 @@ class AttributionTests(unittest.TestCase):
         attribution = next(row for row in verdict["facts"]
                           if row["fact"] == "F-attribution")
         self.assertEqual(attribution["verdict"], "invalid")
+        self.assertNotEqual(facts(verdict)["F-attribution"], "fail")
 
     def test_extra_off_root_formal_relation_fails(self):
         fx = Fixture()
@@ -554,6 +698,7 @@ class AttributionTests(unittest.TestCase):
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-attribution"], "fail")
+        self.assertEqual(facts(verdict)["F-routing-verifier"], "fail")
 
     def test_conflicting_formal_owners_for_child_are_invalid(self):
         fx = Fixture()
@@ -570,13 +715,30 @@ class AttributionTests(unittest.TestCase):
         self.assertEqual(attribution["verdict"], "invalid")
         self.assertTrue(any("formal ownership conflict" in item
                             for item in attribution["evidence"]))
+        self.assertEqual(facts(verdict)["F-routing-verifier"], "invalid")
+
+    def test_routing_ownership_conflict_is_folded_as_invalid(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        surfaces = valid_surfaces(fx)
+        surfaces["routing"]["classification"] = "INVALID_TEST_EXECUTION"
+        surfaces["routing"]["status"] = "invalid"
+        ownership = next(row for row in surfaces["routing"]["checks"]
+                         if row["name"] == "formal_ownership")
+        ownership["status"] = "fail"
+        ownership["detail"] = {G1: [ROOT, "foreign-root"]}
+        verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-attribution"], "pass")
+        self.assertEqual(facts(verdict)["F-routing-verifier"], "invalid")
 
 
 class FoldedEvidenceTests(unittest.TestCase):
     def test_routing_check_conflict_cannot_be_hidden_by_pass_summary(self):
         fx = Fixture()
         legal_two_child(fx)
-        surfaces = valid_surfaces()
+        surfaces = valid_surfaces(fx)
         surfaces["routing"]["checks"][1]["status"] = "fail"
         verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
         self.assertEqual(verdict["classification"],
@@ -586,7 +748,7 @@ class FoldedEvidenceTests(unittest.TestCase):
     def test_install_check_status_is_folded_into_unique_verdict(self):
         fx = Fixture()
         legal_two_child(fx)
-        surfaces = valid_surfaces()
+        surfaces = valid_surfaces(fx)
         surfaces["install"]["checks"][0]["status"] = "fail"
         verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
         self.assertEqual(verdict["classification"],
@@ -598,7 +760,7 @@ class FoldedEvidenceTests(unittest.TestCase):
             with self.subTest(missing=missing):
                 fx = Fixture()
                 legal_two_child(fx)
-                surfaces = valid_surfaces()
+                surfaces = valid_surfaces(fx)
                 surfaces.pop(missing)
                 verdict = run(fx, state=PASS_STATE,
                               surface_evidence=surfaces)
@@ -607,6 +769,49 @@ class FoldedEvidenceTests(unittest.TestCase):
 
 
 class CredentialValueTests(unittest.TestCase):
+    def test_legal_capture_without_optional_business_inputs_passes(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        capture = next(event["message"]["params"]["item"]["command"]
+                       for event in fx.events
+                       if event.get("message", {}).get("method") == "item/started"
+                       and event.get("message", {}).get("params", {}).get("threadId") == G1
+                       and "--capture-invocation" in event.get("message", {}).get(
+                           "params", {}).get("item", {}).get("command", ""))
+        for optional in ("--profile", "--selection", "--skip-direction-ids",
+                         "--cross-direction-groups", "--direction-id"):
+            self.assertNotIn(optional, capture)
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual(facts(verdict)["F-credential-chain"], "pass")
+
+    def test_consumption_uses_actual_capture_return_path_and_digest(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        returned_file = "/tmp/fixture/returned-credential.json"
+        returned_sha = hashlib.sha256(b"actual returned credential").hexdigest()
+        for event in fx.events:
+            message = event.get("message", {})
+            params = message.get("params", {})
+            item = params.get("item", {})
+            if item.get("type") != "commandExecution":
+                continue
+            command = item.get("command", "")
+            if params.get("threadId") == G1 and "--capture-invocation" in command \
+                    and message.get("method") == "item/completed":
+                output, state = judge.Judge._json_from_output(item.get("aggregatedOutput"))
+                self.assertEqual(state, "ok")
+                output["invocation_file"] = returned_file
+                output["invocation_sha256"] = returned_sha
+                item["aggregatedOutput"] = json.dumps(output)
+            if CREDENTIAL_FILE in command:
+                item["command"] = command.replace(CREDENTIAL_FILE, returned_file)
+            if CREDENTIAL_SHA in command:
+                item["command"] = item["command"].replace(CREDENTIAL_SHA, returned_sha)
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual(facts(verdict)["F-credential-chain"], "pass")
+
     def test_credential_value_drift_fails(self):
         fx = Fixture()
         legal_four_child(fx, second_fails=True)
@@ -618,10 +823,75 @@ class CredentialValueTests(unittest.TestCase):
                     and "--validation-file" in item.get("command", "") \
                     and G2 in event["message"]["params"].get("threadId", ""):
                 item["command"] = item["command"].replace(
-                    "--invocation-sha256 abc", "--invocation-sha256 999")
+                    f"--invocation-sha256 {CREDENTIAL_SHA}",
+                    f"--invocation-sha256 {'f' * 64}")
         verdict = run(fx, state=TERMINAL2_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-credential-chain"], "fail")
+
+    def test_credential_file_path_drift_fails(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for event in fx.events:
+            params = event.get("message", {}).get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == G1 and item.get("type") == "commandExecution" \
+                    and "stage3-plan" in item.get("command", "") \
+                    and "--invocation-file" in item.get("command", ""):
+                item["command"] = item["command"].replace(
+                    CREDENTIAL_FILE, "/tmp/fixture/wrong-credential.json")
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-credential-chain"], "fail")
+
+    def test_complete_observation_without_capture_fails(self):
+        fx = Fixture()
+        fx.spawn(judge.GENERATOR_AGENT, G1)
+        fx.complete_child(G1)
+        verdict = run(fx, state=None)
+        self.assertEqual(facts(verdict)["F-credential-chain"], "fail")
+
+    def test_incomplete_observation_without_capture_is_a_gap(self):
+        fx = Fixture()
+        fx.spawn(judge.GENERATOR_AGENT, G1)
+        fx.include_turn_completed = False
+        verdict = run(fx, state=None)
+        self.assertEqual(facts(verdict)["F-credential-chain"], "gap")
+
+    def test_source_metadata_drift_fails(self):
+        fx = Fixture()
+        legal_four_child(fx, second_fails=True)
+        for event in fx.events:
+            message = event.get("message", {})
+            params = message.get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == G2 and item.get("type") == "commandExecution" \
+                    and message.get("method") == "item/completed" \
+                    and "--validation-file" in item.get("command", ""):
+                output, state = judge.Judge._json_from_output(item.get("aggregatedOutput"))
+                self.assertEqual(state, "ok")
+                output["professor_dir"] = "/tmp/other-professor"
+                item["aggregatedOutput"] = json.dumps(output)
+        verdict = run(fx, state=TERMINAL2_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-credential-chain"], "fail")
+
+    def test_missing_capture_value_is_a_gap(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for event in fx.events:
+            message = event.get("message", {})
+            params = message.get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == G1 and item.get("type") == "commandExecution" \
+                    and message.get("method") == "item/completed" \
+                    and "--capture-invocation" in item.get("command", ""):
+                output, state = judge.Judge._json_from_output(item.get("aggregatedOutput"))
+                self.assertEqual(state, "ok")
+                output.pop("invocation_file")
+                item["aggregatedOutput"] = json.dumps(output)
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(facts(verdict)["F-credential-chain"], "gap")
 
     def test_missing_first_commit_fails(self):
         fx = Fixture()
@@ -741,9 +1011,61 @@ class RawOriginalTests(unittest.TestCase):
                      event.get("message", {}).get("params", {}).get("item", {}).get("type")
                      == "commandExecution" and
                      "python3 -c" in event["message"]["params"]["item"].get("command", ""))))]
-        add_validator_file_change(fx, OUTPUT_FILE)
+        add_validator_file_change(fx, OUTPUT_FILE, content=msg_text())
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "PASS", verdict)
+
+    def test_file_change_without_contents_cannot_prove_raw_production(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        fx.events = [event for event in fx.events if not (
+            event.get("message", {}).get("params", {}).get("threadId") == V1
+            and event.get("message", {}).get("params", {}).get("item", {}).get("type")
+            == "commandExecution"
+            and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
+        add_validator_file_change(fx, OUTPUT_FILE)
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "gap")
+
+    def test_file_change_with_different_contents_fails_raw_integrity(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        fx.events = [event for event in fx.events if not (
+            event.get("message", {}).get("params", {}).get("threadId") == V1
+            and event.get("message", {}).get("params", {}).get("item", {}).get("type")
+            == "commandExecution"
+            and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
+        add_validator_file_change(fx, OUTPUT_FILE, content="different bytes")
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "fail")
+
+    def test_incomplete_file_change_cannot_prove_raw_production(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        fx.events = [event for event in fx.events if not (
+            event.get("message", {}).get("params", {}).get("threadId") == V1
+            and event.get("message", {}).get("params", {}).get("item", {}).get("type")
+            == "commandExecution"
+            and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
+        add_validator_file_change(fx, OUTPUT_FILE, content=msg_text(),
+                                 status="inProgress")
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "gap")
+
+    def test_message_without_item_identity_cannot_prove_original(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for event in fx.events:
+            params = event.get("message", {}).get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == V1 and item.get("type") == "message":
+                item.pop("id", None)
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "gap")
 
     def test_message_from_another_turn_cannot_be_attributed_to_production(self):
         fx = Fixture()
@@ -759,6 +1081,89 @@ class RawOriginalTests(unittest.TestCase):
 
 
 class WriteScopeTests(unittest.TestCase):
+    @staticmethod
+    def replace_validator_command(fx, command):
+        found = 0
+        for event in fx.events:
+            params = event.get("message", {}).get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == V1 \
+                    and item.get("type") == "commandExecution" \
+                    and item.get("command", "").startswith("python3 -c "):
+                item["command"] = command
+                found += 1
+        return found
+
+    def test_compound_read_and_allowed_write_then_unauthorized_write_fails(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        raw = msg_text().encode("utf-8")
+        allowed = f"open({OUTPUT_FILE!r}, 'xb').write({raw!r})"
+        unauthorized = "open('/tmp/fixture/protected.json', 'xb').write(b'x')"
+        command = "cat /tmp/fixture/" + MD_NAME + " && python3 -c " \
+            + shlex.quote(allowed) + " && python3 -c " \
+            + shlex.quote(unauthorized)
+        self.assertEqual(self.replace_validator_command(fx, command), 2)
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail",
+                         verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+
+    def test_python_command_with_multiple_write_targets_fails(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        raw = msg_text().encode("utf-8")
+        source = (f"open({OUTPUT_FILE!r}, 'xb').write({raw!r}); "
+                  "open('/tmp/fixture/extra.json', 'xb').write(b'x')")
+        self.assertEqual(self.replace_validator_command(
+            fx, "python3 -c " + shlex.quote(source)), 2)
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail",
+                         verdict)
+
+    def test_proven_unauthorized_write_survives_following_unknown_command(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        source = "open('/tmp/fixture/protected.json', 'xb').write(b'x')"
+        command = "python3 -c " + shlex.quote(source) \
+            + " && unknown-validator-tool --mode mutate"
+        self.assertEqual(self.replace_validator_command(fx, command), 2)
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail",
+                         verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+
+    def test_compound_legal_read_and_single_exclusive_output_write_passes(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        raw = msg_text().encode("utf-8")
+        writer = f"open({OUTPUT_FILE!r}, 'xb').write({raw!r})"
+        command = "cat /tmp/fixture/" + MD_NAME + " && python3 -c " \
+            + shlex.quote(writer)
+        self.assertEqual(self.replace_validator_command(fx, command), 2)
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "pass",
+                         verdict)
+
+    def test_pure_unknown_command_is_an_evidence_gap(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        command = "unknown-validator-tool --output " + OUTPUT_FILE
+        self.assertEqual(self.replace_validator_command(fx, command), 2)
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "gap",
+                         verdict)
+
     def test_protected_file_write_fails(self):
         fx = Fixture()
         legal_two_child(fx)
@@ -795,6 +1200,28 @@ class WriteScopeTests(unittest.TestCase):
 
 
 class OrderAndStopTests(unittest.TestCase):
+    def test_correction_dispatch_between_record_start_and_completion_fails(self):
+        fx = Fixture()
+        legal_two_child_spine(fx)
+        record_complete = next(index for index, event in enumerate(fx.events)
+            if event.get("message", {}).get("method") == "item/completed"
+            and event.get("message", {}).get("params", {}).get("threadId") == ROOT
+            and event["message"]["params"].get("item", {}).get("type")
+            == "commandExecution"
+            and judge.ROOT_RECORD in event["message"]["params"]["item"].get(
+                "command", ""))
+        completed_record = fx.events.pop(record_complete)
+        fx.spawn(judge.GENERATOR_AGENT, G2)
+        dispatch_events = fx.events[-2:]
+        del fx.events[-2:]
+        fx.events[record_complete:record_complete] = dispatch_events
+        fx.events.insert(record_complete + len(dispatch_events), completed_record)
+
+        verdict = run(fx, state=None)
+
+        self.assertEqual(facts(verdict)["F-stop-order"], "fail", verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+
     def test_correction_spawned_before_record_completes_fails(self):
         fx = Fixture()
         fx.generator_round(G1)
@@ -865,6 +1292,62 @@ class OrderAndStopTests(unittest.TestCase):
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-rebuild"], "fail")
+
+    def test_rebuild_started_before_terminal_record_completed_fails(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        record_start = next(index for index, event in enumerate(fx.events)
+            if event.get("message", {}).get("method") == "item/started"
+            and event.get("message", {}).get("params", {}).get("threadId") == ROOT
+            and event["message"]["params"].get("item", {}).get("type")
+            == "commandExecution"
+            and judge.ROOT_RECORD in event["message"]["params"]["item"].get(
+                "command", ""))
+        record_complete = next(index for index, event in enumerate(fx.events)
+            if event.get("message", {}).get("method") == "item/completed"
+            and event.get("message", {}).get("params", {}).get("threadId") == ROOT
+            and event["message"]["params"].get("item", {}).get("type")
+            == "commandExecution"
+            and judge.ROOT_RECORD in event["message"]["params"]["item"].get(
+                "command", ""))
+        rebuild_start = next(index for index, event in enumerate(fx.events)
+            if event.get("message", {}).get("method") == "item/started"
+            and event.get("message", {}).get("params", {}).get("threadId") == ROOT
+            and event["message"]["params"].get("item", {}).get("type")
+            == "commandExecution"
+            and judge.ROOT_REBUILD in event["message"]["params"]["item"].get(
+                "command", ""))
+        rebuild_complete = next(index for index, event in enumerate(fx.events)
+            if event.get("message", {}).get("method") == "item/completed"
+            and event.get("message", {}).get("params", {}).get("threadId") == ROOT
+            and event["message"]["params"].get("item", {}).get("type")
+            == "commandExecution"
+            and judge.ROOT_REBUILD in event["message"]["params"]["item"].get(
+                "command", ""))
+        record_events = (fx.events[record_start], fx.events[record_complete])
+        rebuild_events = (fx.events[rebuild_start], fx.events[rebuild_complete])
+        for index in sorted((record_start, record_complete,
+                             rebuild_start, rebuild_complete), reverse=True):
+            del fx.events[index]
+        fx.events[record_start:record_start] = [
+            record_events[0], rebuild_events[0],
+            record_events[1], rebuild_events[1]]
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(facts(verdict)["F-rebuild"], "fail", verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+
+    def test_rebuild_without_completion_is_an_evidence_gap(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        fx.events.pop()  # remove the rebuild completion, leaving its start
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(facts(verdict)["F-rebuild"], "gap", verdict)
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
 
 
 class EvidenceChannelTests(unittest.TestCase):

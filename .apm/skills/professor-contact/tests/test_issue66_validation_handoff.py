@@ -41,8 +41,17 @@ HANDOFF_VERSION = "stage3-handoff-v1"
 
 
 def artifact_snapshot(*roots):
-    """Capture existence, filesystem type, and complete bytes of test artifacts."""
+    """Capture existence, filesystem metadata and complete bytes of artifacts.
+
+    Access time is intentionally omitted because reading evidence may update it.
+    Directory metadata plus recursive entries also detects create/remove cycles.
+    """
     snapshot = {}
+
+    def metadata(info):
+        return (info.st_mode, info.st_size, info.st_mtime_ns,
+                info.st_ctime_ns, getattr(info, "st_birthtime_ns", None),
+                info.st_ino, info.st_nlink, info.st_uid, info.st_gid)
 
     def visit(path):
         path = Path(path)
@@ -54,15 +63,15 @@ def artifact_snapshot(*roots):
             return
         kind = stat.S_IFMT(info.st_mode)
         if stat.S_ISLNK(info.st_mode):
-            snapshot[key] = (kind, os.readlink(path))
+            snapshot[key] = ("symlink", metadata(info), os.readlink(path))
         elif stat.S_ISDIR(info.st_mode):
-            snapshot[key] = (kind,)
+            snapshot[key] = ("directory", metadata(info))
             for child in sorted(path.iterdir(), key=lambda item: item.name):
                 visit(child)
         elif stat.S_ISREG(info.st_mode):
-            snapshot[key] = (kind, path.read_bytes())
+            snapshot[key] = ("file", metadata(info), path.read_bytes())
         else:
-            snapshot[key] = (kind,)
+            snapshot[key] = ("other", kind, metadata(info))
 
     for root in roots:
         visit(root)
@@ -663,6 +672,92 @@ class RecordHandoffTests(ValidationHandoffBase):
         self.assertEqual(recorded["status"], "error")
         self.assertEqual(recorded["reason_code"], "validation_render_changed")
         self.assertIsNone(self.load_state().get("validator"))
+
+
+class DirectRejectionNoSideEffectsTests(ValidationHandoffBase):
+    """R4 §4 fix 6: each direct handoff entry refuses without file effects."""
+
+    def test_prepare_save_and_record_refusals_preserve_the_same_artifact_set(self):
+        self.commit_first()
+        round1 = self.handoff_round_dir(1)
+        round2 = self.handoff_round_dir(2)
+
+        def handoff_files(directory):
+            return (
+                directory,
+                directory / contact_state.STAGE3_HANDOFF_FILE,
+                directory / contact_state.STAGE3_VALIDATOR_OUTPUT_FILE,
+                directory / contact_state.STAGE3_VALIDATION_TARGET_FILE,
+            )
+
+        r1_dir, r1_metadata, r1_source, r1_target = handoff_files(round1)
+        r2_dir, r2_metadata, r2_source, r2_target = handoff_files(round2)
+        protected = (
+            self.root,
+            self.prof_dir / CANDIDATES_MD,
+            self.prof_dir / CANDIDATE_STATE,
+            Path(self.cap["invocation_file"]),
+            self.g1,
+            r1_dir, r1_metadata, r1_source, r1_target,
+            r2_dir, r2_metadata, r2_source, r2_target,
+        )
+        self.assertTrue((self.prof_dir / CANDIDATES_MD).is_file())
+        self.assertTrue((self.prof_dir / CANDIDATE_STATE).is_file())
+        self.assertTrue(Path(self.cap["invocation_file"]).is_file())
+        self.assertTrue(self.g1.is_dir())
+        self.assertFalse(r1_dir.exists())
+        self.assertFalse(r2_dir.exists())
+
+        # Invalid credential is refused at the prepare command itself. All
+        # round-one handoff files, including the expected absences, are listed.
+        before_prepare = artifact_snapshot(*protected)
+        prepare = parse(run_cli(
+            "stage3-prepare-validation",
+            "--invocation-file", self.cap["invocation_file"],
+            "--invocation-sha256", "0" * 64,
+            "--round", "1"))
+        self.assertEqual(artifact_snapshot(*protected), before_prepare,
+                         "rejected prepare changed bytes, metadata or existence")
+        self.assertEqual(prepare["status"], "error", prepare)
+        self.assertEqual(prepare["reason_code"], "invocation_sha256_mismatch",
+                         prepare)
+
+        # A valid prepare creates only the bound metadata. Calling save before
+        # the validator has produced its source must refuse without creating
+        # the target or changing any other protected artifact.
+        handoff = self.prepare(1)
+        self.assertEqual(handoff["status"], "ok",
+                         msg=json.dumps(handoff, ensure_ascii=False))
+        self.assertEqual(Path(handoff["handoff_file"]), r1_metadata)
+        self.assertEqual(Path(handoff["output_file"]), r1_source)
+        self.assertEqual(Path(handoff["validation_file"]), r1_target)
+        self.assertTrue(r1_metadata.is_file())
+        self.assertFalse(r1_source.exists())
+        self.assertFalse(r1_target.exists())
+
+        before_save = artifact_snapshot(*protected)
+        save = self.save(handoff)
+        self.assertEqual(artifact_snapshot(*protected), before_save,
+                         "rejected save changed bytes, metadata or existence")
+        self.assertEqual(save["status"], "error", save)
+        self.assertEqual(save["reason_code"], "invalid_validation_source", save)
+
+        # Now install valid source bytes and let save create the recorded
+        # target. A bad digest at the record command must preserve both files,
+        # the committed state, the original credential and existing results.
+        raw = self.validator_writes(handoff)
+        saved = self.save(handoff)
+        self.assertEqual(saved["status"], "ok",
+                         msg=json.dumps(saved, ensure_ascii=False))
+        self.assertEqual(r1_source.read_bytes(), raw)
+        self.assertEqual(r1_target.read_bytes(), raw)
+        before_record = artifact_snapshot(*protected)
+        record = self.record_handoff(handoff, "0" * 64)
+        self.assertEqual(artifact_snapshot(*protected), before_record,
+                         "rejected record changed bytes, metadata or existence")
+        self.assertEqual(record["status"], "error", record)
+        self.assertEqual(record["reason_code"], "validation_sha256_mismatch",
+                         record)
 
     def test_legacy_record_mode_stays_unchanged(self):
         self.commit_first()

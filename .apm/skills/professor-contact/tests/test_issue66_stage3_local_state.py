@@ -84,6 +84,7 @@ class OpenRecorder:
 
     def __init__(self):
         self.opened = []
+        self.reads = []
 
     @staticmethod
     def _normalize(path):
@@ -91,17 +92,30 @@ class OpenRecorder:
 
     def __enter__(self):
         self.opened = []
+        self.reads = []
         recorder = self
         orig_open = builtins.open
         orig_io_open = io.open
         orig_os_open = os.open
 
+        def record_open(file, mode):
+            path = recorder._normalize(file)
+            recorder.opened.append(path)
+            # A normal open defaults to read mode. "r" and "+" are the
+            # only text/binary mode markers that prove the caller can read.
+            if mode is None or "r" in str(mode) or "+" in str(mode):
+                recorder.reads.append(path)
+
         def wrapped_open(file, *args, **kwargs):
-            recorder.opened.append(recorder._normalize(file))
+            mode = kwargs.get("mode", args[0] if args else None)
+            record_open(file, mode)
             return orig_open(file, *args, **kwargs)
 
         def wrapped_os_open(path, *args, **kwargs):
             recorder.opened.append(recorder._normalize(path))
+            flags = kwargs.get("flags", args[0] if args else os.O_RDONLY)
+            if flags & os.O_ACCMODE != os.O_WRONLY:
+                recorder.reads.append(recorder._normalize(path))
             return orig_os_open(path, *args, **kwargs)
 
         self._orig = (orig_open, orig_io_open, orig_os_open)
@@ -118,6 +132,12 @@ class OpenRecorder:
 
     def was_opened(self, path):
         return self._normalize(path) in self.opened
+
+    def read_paths_under(self, root):
+        """Return the exact set of real read opens beneath one result folder."""
+        root = self._normalize(root)
+        return frozenset(path for path in self.reads
+                         if self._normalize(Path(path).parent) == root)
 
 
 @contextlib.contextmanager
