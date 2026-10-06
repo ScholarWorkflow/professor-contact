@@ -28,12 +28,21 @@ CASE = "PC68-R1"
 PREFLIGHT_DIR = HERE / "evidence"
 PREFLIGHT_MANIFEST = PREFLIGHT_DIR / "issue68-r29-synthetic-capture-preflight.json"
 PREFLIGHT_STDOUT = PREFLIGHT_DIR / "issue68-r29-synthetic-capture-stdout.json"
-REQUIRED_RUNTIME_TEXT = (
-    "codex_host_id", "model", "executor_version", "adapter_version",
-    "producer_revision", "fixture_revision", "eval_server_revision",
+REQUIRED_RUNTIME_FACTS = (
+    "model", "executor", "entrypoint", "isolation", "shared_assets", "service_version",
 )
-REQUIRED_SERVICE_FIELDS = (
-    "port", "pid", "start_time", "cwd", "command", "test_codex_home",
+PRE_SERVICE_RUNTIME_FACTS = tuple(
+    fact for fact in REQUIRED_RUNTIME_FACTS if fact != "service_version"
+)
+RUNTIME_BINDING_ARTIFACTS = (
+    "input-evidence-preflight.json",
+    "provenance.json",
+    "codex/codex-request.json",
+    "codex/installed-entrypoint.json",
+    "codex/apm.lock.yaml",
+    "eval-service-provenance.before.json",
+    "eval-service-provenance.after.json",
+    "runtime-environment-evidence.json",
 )
 
 
@@ -49,15 +58,12 @@ def load_contract():
         raise ValueError("contract_runner_is_not_this_entry")
     if contract.get("manual_patch") != "no":
         raise ValueError("contract_manual_patch_forbidden")
-    if not contract.get("eval_server_revision"):
-        raise ValueError("contract_eval_server_revision_missing")
     environment = contract.get("formal_runtime_environment")
     if not isinstance(environment, dict) or not isinstance(environment.get("actual_values"), dict):
         raise ValueError("contract_runtime_environment_fields_missing")
     actual_values = environment["actual_values"]
-    if any(key not in actual_values for key in REQUIRED_RUNTIME_TEXT) \
-            or not isinstance(actual_values.get("eval_service"), dict) \
-            or any(key not in actual_values["eval_service"] for key in REQUIRED_SERVICE_FIELDS):
+    if environment.get("required_facts") != list(REQUIRED_RUNTIME_FACTS) \
+            or set(actual_values) != set(REQUIRED_RUNTIME_FACTS):
         raise ValueError("contract_runtime_environment_fields_incomplete")
     codex = contract.get("codex", {})
     observation = codex.get("owner_business_input_observation")
@@ -66,8 +72,13 @@ def load_contract():
     if observation.get("schema") != OWNER_OBSERVATION_SCHEMA \
             or observation.get("source") != "output.app_server_events.commandExecution.aggregatedOutput":
         raise ValueError("contract_actual_input_observation_source_mismatch")
-    if contract.get("preflight", {}).get("second_gate_status") != "INCOMPLETE":
+    second_gate_status = contract.get("preflight", {}).get("second_gate_status")
+    if second_gate_status not in ("INCOMPLETE", "COMPLETE"):
         raise ValueError("contract_second_gate_status_mismatch")
+    gate_allowed = contract.get("preflight", {}).get("input_observation_gate", {}).get(
+        "formal_run_allowed") is True
+    if (second_gate_status == "COMPLETE") != gate_allowed:
+        raise ValueError("contract_second_gate_decision_mismatch")
     if not codex.get("owner_input_isolation"):
         raise ValueError("contract_owner_input_isolation_missing")
     if not codex.get("canonical_preservation"):
@@ -107,27 +118,76 @@ def _canonical_json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def _runtime_environment_missing(contract):
-    values = contract.get("formal_runtime_environment", {}).get("actual_values", {})
-    missing = [key for key in REQUIRED_RUNTIME_TEXT
-               if not isinstance(values.get(key), str) or not values[key].strip()]
-    if values.get("producer_revision") and values["producer_revision"] != contract.get("producer_revision"):
-        missing.append("producer_revision_must_match_frozen_target")
-    if values.get("fixture_revision") and values["fixture_revision"] != contract.get("fixture_sha"):
-        missing.append("fixture_revision_must_match_frozen_fixture")
-    if values.get("eval_server_revision") and values["eval_server_revision"] != contract.get("eval_server_revision"):
-        missing.append("eval_server_revision_must_match_frozen_target")
-    service = values.get("eval_service", {})
-    for key in REQUIRED_SERVICE_FIELDS:
-        value = service.get(key)
-        if value is None or (isinstance(value, str) and not value.strip()):
-            missing.append("eval_service." + key)
-    if service.get("port") is not None and (not isinstance(service["port"], int)
-                                             or not 1 <= service["port"] <= 65535):
-        missing.append("eval_service.port_invalid")
-    if service.get("pid") is not None and (not isinstance(service["pid"], int) or service["pid"] <= 0):
-        missing.append("eval_service.pid_invalid")
-    return missing
+def _is_recorded(value):
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (dict, list, tuple)):
+        return bool(value)
+    return True
+
+
+def _runtime_environment_missing(facts):
+    return [key for key in REQUIRED_RUNTIME_FACTS if not _is_recorded(facts.get(key))]
+
+
+def _register_runtime_fact(preflight, key, value, source_artifacts, **details):
+    if key not in REQUIRED_RUNTIME_FACTS or not _is_recorded(value):
+        raise ValueError("runtime_environment_fact_unobservable:" + key)
+    updated = dict(preflight)
+    facts = dict(updated.get("runtime_environment_facts", {}))
+    evidence = dict(updated.get("runtime_environment_evidence", {}))
+    facts[key] = value
+    evidence[key] = {"source_artifacts": list(source_artifacts), **details}
+    updated["runtime_environment_facts"] = facts
+    updated["runtime_environment_evidence"] = evidence
+    updated["runtime_environment_missing"] = _runtime_environment_missing(facts)
+    updated["formal_run_allowed"] = (
+        updated.get("service_preflight_allowed") is True
+        and not updated["runtime_environment_missing"]
+    )
+    return updated
+
+
+def _record_service_runtime_facts(preflight, service_snapshot):
+    version = service_snapshot.get("eval_server", {}).get("sha")
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError("eval_service_version_unobservable")
+    if service_snapshot.get("storage", {}).get("status") != "ISOLATION_CONFIRMED":
+        raise ValueError("eval_service_isolation_unconfirmed")
+    updated = _register_runtime_fact(
+        preflight, "service_version", version, ["eval-service-provenance.before.json"],
+        collection="read-only current clean checkout revision",
+    )
+    return _register_runtime_fact(
+        updated, "isolation", service_snapshot["storage"],
+        ["eval-service-provenance.before.json"],
+        collection="read-only service storage isolation inspection",
+    )
+
+
+def _record_codex_executor_fact(preflight):
+    dispatcher = base.codex_host
+    if getattr(dispatcher, "__name__", None) != "codex_host":
+        raise ValueError("codex_executor_branch_unverified")
+    dispatcher_source = Path(dispatcher.__code__.co_filename).resolve()
+    runner_source = Path(__file__).resolve()
+    executor = {
+        "execution_branch": "codex",
+        "dispatcher": dispatcher.__module__ + "." + dispatcher.__qualname__,
+        "source_evidence": [
+            {"path": str(dispatcher_source), "sha256": _sha256_file(dispatcher_source)},
+            {"path": str(runner_source), "sha256": _sha256_file(runner_source)},
+        ],
+        "version": None,
+        "version_note": "No separate runtime executor version is exposed by this runner; source hashes identify the executed branch.",
+    }
+    return _register_runtime_fact(
+        preflight, "executor", executor,
+        [str(dispatcher_source), str(runner_source)],
+        collection="active Codex dispatch branch and source hashes",
+    )
 
 
 def _synthetic_capture_preflight():
@@ -248,14 +308,18 @@ def actual_input_observation_preflight(contract):
     artifact, capture_problem = _synthetic_capture_preflight()
     capture_supported = artifact is not None and capture_problem is None
     second_gate_complete = contract.get("preflight", {}).get("second_gate_status") == "COMPLETE"
-    missing_runtime_values = _runtime_environment_missing(contract)
-    formal_allowed = source_supported and capture_supported and not missing_runtime_values and second_gate_complete \
-        and contract.get("preflight", {}).get("input_observation_gate", {}).get("formal_run_allowed") is True
+    gate_allowed = contract.get("preflight", {}).get("input_observation_gate", {}).get(
+        "formal_run_allowed") is True
+    service_preflight_allowed = (
+        source_supported and capture_supported and second_gate_complete and gate_allowed
+    )
+    runtime_values = {key: None for key in REQUIRED_RUNTIME_FACTS}
+    missing_runtime_values = list(REQUIRED_RUNTIME_FACTS)
     block_reasons = []
     if not second_gate_complete:
         block_reasons.append("second_gate_incomplete")
-    if missing_runtime_values:
-        block_reasons.append("runtime_environment_unrecorded")
+    elif not gate_allowed:
+        block_reasons.append("second_gate_decision_missing")
     return {
         "ready": source_supported and capture_supported,
         "state": "OBSERVATION_SOURCE_SUPPORTED" if source_supported and capture_supported else
@@ -263,12 +327,15 @@ def actual_input_observation_preflight(contract):
         "reason_code": None if source_supported and capture_supported else
                        ((capture_problem or {}).get("reason_code") if not capture_supported
                         else "actual_input_evidence_source_unavailable"),
-        "formal_run_allowed": formal_allowed,
-        "formal_run_block_reason": None if formal_allowed else
-                                  ("runtime_environment_unrecorded" if missing_runtime_values else
-                                   "second_gate_incomplete"),
+        "formal_run_allowed": False,
+        "formal_run_block_reason": ("second_gate_incomplete" if not second_gate_complete else
+                                    ("second_gate_decision_missing" if not gate_allowed else
+                                     "runtime_environment_capture_pending")),
         "formal_run_block_reasons": block_reasons,
+        "service_preflight_allowed": service_preflight_allowed,
         "runtime_environment_missing": missing_runtime_values,
+        "runtime_environment_facts": runtime_values,
+        "runtime_environment_evidence": {},
         "synthetic_capture": ({
             "result": artifact.get("result"),
             "stdout_sha256": artifact.get("stdout_sha256"),
@@ -390,12 +457,169 @@ def capture_service_instance(eval_root, port):
     }
 
 
-def capture_eval_service_provenance(eval_root, expected_revision):
+def capture_eval_service_provenance(eval_root, expected_revision=None):
+    """Read and validate the current clean service revision, then inspect it read-only."""
+    if expected_revision is None:
+        expected_revision = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=eval_root, text=True
+        ).strip()
+    if not expected_revision:
+        raise ValueError("eval_service_version_unobservable")
     revision = base.clean_revision(eval_root, expected_revision)
     port = resolve_eval_port(eval_root)
     service = capture_service_instance(eval_root, port)
     storage = isolation.capture_storage_isolation(service)
     return {"eval_server": revision, "service": service, "storage": storage}
+
+
+def _sha256_file(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _request_model(request):
+    command = request.get("command")
+    if not isinstance(command, str):
+        raise ValueError("codex_request_command_unobservable")
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise ValueError("codex_request_command_malformed") from exc
+    models = [argv[index + 1] for index, token in enumerate(argv[:-1]) if token == "--model"]
+    if len(models) != 1 or not models[0].strip():
+        raise ValueError("codex_request_model_unobservable")
+    return models[0]
+
+
+def _record_request_runtime_facts(preflight, output, request, service_snapshot, producer, fixture):
+    codex_dir = Path(output) / "codex"
+    request_path = codex_dir / "codex-request.json"
+    install_path = codex_dir / "installed-entrypoint.json"
+    lock_path = codex_dir / "apm.lock.yaml"
+    for path in (request_path, install_path, lock_path):
+        if not path.is_file():
+            raise ValueError("runtime_source_artifact_missing:" + path.name)
+
+    request_model = _request_model(request)
+    install = json.loads(install_path.read_text(encoding="utf-8"))
+    script = Path(install.get("script", "")).resolve()
+    if not script.is_file() or script.is_symlink():
+        raise ValueError("installed_entrypoint_unobservable")
+    entrypoint = {
+        "script": str(script),
+        "sha256": _sha256_file(script),
+        "cwd": install.get("cwd"),
+    }
+    if not _is_recorded(entrypoint["cwd"]):
+        raise ValueError("installed_entrypoint_cwd_unobservable")
+    shared_assets = {
+        "producer_revision": producer["sha"],
+        "fixture_revision": fixture["sha"],
+        "apm_lock_sha256": _sha256_file(lock_path),
+    }
+
+    service_sha = service_snapshot.get("eval_server", {}).get("sha")
+    before_path = Path(output) / "eval-service-provenance.before.json"
+    if not before_path.is_file() or not _is_recorded(service_sha):
+        raise ValueError("service_provenance_source_missing")
+
+    updated = _record_codex_executor_fact(preflight)
+    updated = _register_runtime_fact(
+        updated, "model", request_model, ["codex/codex-request.json"],
+        sha256=_sha256_file(request_path), collection="actual built Codex request",
+    )
+    updated = _register_runtime_fact(
+        updated, "entrypoint", entrypoint,
+        ["codex/installed-entrypoint.json", str(script)],
+        installed_entrypoint_sha256=_sha256_file(install_path),
+        collection="installed entrypoint and file bytes",
+    )
+    updated = _register_runtime_fact(
+        updated, "shared_assets", shared_assets,
+        ["provenance.json", "codex/apm.lock.yaml"],
+        apm_lock_sha256=shared_assets["apm_lock_sha256"],
+        collection="clean producer/fixture revisions and installed lockfile",
+    )
+    missing = _runtime_environment_missing(updated["runtime_environment_facts"])
+    if missing:
+        raise ValueError("runtime_environment_unrecorded:" + ",".join(missing))
+    if updated.get("service_preflight_allowed") is not True:
+        raise ValueError("second_gate_incomplete")
+    updated["formal_run_allowed"] = True
+    updated["request_artifact"] = {
+        "path": "codex/codex-request.json",
+        "sha256": _sha256_file(request_path),
+    }
+    updated["runtime_environment_evidence"]["isolation"] = {
+        **updated["runtime_environment_evidence"]["isolation"],
+        "sha256": _sha256_file(before_path),
+    }
+    updated["runtime_environment_evidence"]["service_version"] = {
+        **updated["runtime_environment_evidence"]["service_version"],
+        "sha256": _sha256_file(before_path),
+    }
+    return updated
+
+
+def _codex_host_with_runtime_capture(args, output, preflight, provenance,
+                                     service_snapshot, producer, fixture):
+    """Capture all six r25 runtime facts from this run before the request is sent."""
+    original_build_request = base.build_request
+    original_urlopen = base.urllib.request.urlopen
+    request_path = Path(output) / "codex" / "codex-request.json"
+    evidence_path = Path(output) / "runtime-environment-evidence.json"
+    request_built = False
+
+    def build_request_with_evidence(consumer, prompt):
+        nonlocal request_built
+        request = original_build_request(consumer, prompt)
+        base.write_json(request_path, request)
+        updated = _record_request_runtime_facts(
+            preflight, output, request, service_snapshot, producer, fixture
+        )
+        evidence = {
+            "schema": "issue-68-r29-runtime-environment-evidence-v1",
+            "runtime_environment_facts": updated["runtime_environment_facts"],
+            "runtime_environment_evidence": updated["runtime_environment_evidence"],
+            "request_artifact": updated["request_artifact"],
+            "service_snapshot_artifact": "eval-service-provenance.before.json",
+        }
+        base.write_json(evidence_path, evidence)
+        preflight.clear()
+        preflight.update(updated)
+        base.write_json(Path(output) / "input-evidence-preflight.json", preflight)
+        provenance["runtime_environment_facts"] = preflight["runtime_environment_facts"]
+        provenance["runtime_environment_evidence"] = preflight["runtime_environment_evidence"]
+        provenance["runtime_environment_evidence_artifact"] = "runtime-environment-evidence.json"
+        base.write_json(Path(output) / "provenance.json", provenance)
+        request_built = True
+        return request
+
+    def verify_outgoing_request(request, timeout=None):
+        if not request_built:
+            raise ValueError("runtime_environment_not_recorded_before_request")
+        try:
+            sent = json.loads(request.data.decode("utf-8"))
+            saved = json.loads(request_path.read_text(encoding="utf-8"))
+        except (AttributeError, UnicodeError, ValueError, OSError) as exc:
+            raise ValueError("outgoing_request_evidence_unreadable") from exc
+        if sent != saved:
+            raise ValueError("outgoing_request_changed_after_capture")
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        evidence["outgoing_request_body_sha256"] = hashlib.sha256(request.data).hexdigest()
+        base.write_json(evidence_path, evidence)
+        preflight["request_body_sha256"] = evidence["outgoing_request_body_sha256"]
+        base.write_json(Path(output) / "input-evidence-preflight.json", preflight)
+        provenance["request_body_sha256"] = evidence["outgoing_request_body_sha256"]
+        base.write_json(Path(output) / "provenance.json", provenance)
+        return original_urlopen(request, timeout=timeout)
+
+    base.build_request = build_request_with_evidence
+    base.urllib.request.urlopen = verify_outgoing_request
+    try:
+        return base.codex_host(args, output)
+    finally:
+        base.build_request = original_build_request
+        base.urllib.request.urlopen = original_urlopen
 
 
 def same_service(before, after):
@@ -431,17 +655,20 @@ def main(argv=None):
         base.write_json(output / "input-evidence-preflight.json", input_preflight)
         if not input_preflight["ready"]:
             raise ValueError(input_preflight["reason_code"])
-        if not input_preflight["formal_run_allowed"]:
+        if not input_preflight["service_preflight_allowed"]:
             raise ValueError(input_preflight["formal_run_block_reason"])
         if args.fixture_sha != FIXTURE_SHA:
             raise ValueError("missing_or_wrong_frozen_fixture_arguments")
+        if args.producer_sha != contract["producer_revision"]:
+            raise ValueError("missing_or_wrong_frozen_producer_arguments")
 
         producer = base.clean_revision(args.producer_root, args.producer_sha)
         fixture = base.clean_revision(args.fixture_root, FIXTURE_SHA)
-        service_before = capture_eval_service_provenance(
-            args.eval_direnv_root, contract["eval_server_revision"]
-        )
+        service_before = capture_eval_service_provenance(args.eval_direnv_root)
         base.write_json(output / "eval-service-provenance.before.json", service_before)
+        input_preflight = _record_service_runtime_facts(input_preflight, service_before)
+        base.write_json(output / "input-evidence-preflight.json", input_preflight)
+        service_version = service_before["eval_server"]["sha"]
         provenance = {
             "producer": producer,
             "fixture": fixture,
@@ -455,15 +682,19 @@ def main(argv=None):
             "entrypoint": Path(__file__).name,
             "single_request_no_retry": "yes",
             "contract_revision": contract["revision"],
+            "runtime_environment_facts": input_preflight["runtime_environment_facts"],
+            "runtime_environment_evidence": input_preflight["runtime_environment_evidence"],
         }
         base.write_json(output / "provenance.json", provenance)
 
         base.progress("只执行 Codex；服务来源和隔离已归档；单次正式请求，失败不重试、不换服务、不换模型、不改断言")
-        host = base.codex_host(args, output)
+        host = _codex_host_with_runtime_capture(
+            args, output, input_preflight, provenance, service_before, producer, fixture
+        )
         base.write_json(output / "codex-verdict.json", host)
 
         service_after = capture_eval_service_provenance(
-            args.eval_direnv_root, contract["eval_server_revision"]
+            args.eval_direnv_root, service_version
         )
         base.write_json(output / "eval-service-provenance.after.json", service_after)
         if not same_service(service_before, service_after):
@@ -478,7 +709,7 @@ def main(argv=None):
 
         base.clean_revision(args.producer_root, args.producer_sha)
         base.clean_revision(args.fixture_root, FIXTURE_SHA)
-        base.clean_revision(args.eval_direnv_root, contract["eval_server_revision"])
+        base.clean_revision(args.eval_direnv_root, service_version)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         result = (
             {"state": "CASE_NOT_STARTED", "reason_code": str(exc)}

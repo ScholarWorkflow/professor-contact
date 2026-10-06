@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare PC68-R1 business input; precheck with the installed producer CLI."""
+"""Prepare PC68-R1 business input and independent synthetic expectations."""
 import argparse
 import hashlib
 import importlib.util
@@ -10,6 +10,31 @@ from copy import deepcopy
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+
+# Fixed test specification. The owner binding is an independent oracle for
+# this synthetic request; never derive it from stage5-partition-choices.
+EXPECTED_OWNERS = (
+    {
+        "professor": "試験 教授",
+        "email_id": "試験 教授::DIR00001::DIR00001_1",
+        "transport_sentinel": "owner-0",
+        "choice": {
+            "first_choice": False,
+            "signature_name": "試験 太郎",
+            "learning": "比較手法の基礎知識の習得",
+        },
+    },
+    {
+        "professor": "佐藤 花子",
+        "email_id": "佐藤 花子::DIR00001::DIR00001_1",
+        "transport_sentinel": "owner-1",
+        "choice": {
+            "first_choice": False,
+            "signature_name": "試験 太郎",
+            "learning": "比較手法の基礎知識の習得",
+        },
+    },
+)
 
 
 def write_json(path, value):
@@ -32,55 +57,45 @@ def prepare(program_root, installed_script, output_dir):
     template.write_text("{{大学}}／{{研究科}}／{{先生名}}先生\n{{出身校}} {{氏名}}\n"
                         "{{入学年度}} {{入学月}} {{専攻}} {{学位}}\n{{兴趣段}}\n{{未来志向}}\n"
                         "{{学習中}}\n{{志望}}", encoding="utf-8")
-    choices, raw_results, owner_rows, owner_args = [], {}, {}, []
-    for index, row in enumerate(fixture["rows"]):
-        pack = fixture["packs"][row["professor"]]
+    fixture_rows = {row["professor"]: row for row in fixture["rows"]}
+    expected_professors = {spec["professor"] for spec in EXPECTED_OWNERS}
+    if set(fixture_rows) != expected_professors:
+        raise ValueError(f"synthetic fixture owners changed: {sorted(fixture_rows)}")
+
+    choices, raw_results, owner_specs = [], {}, []
+    for spec in EXPECTED_OWNERS:
+        row = fixture_rows[spec["professor"]]
+        if row["email_id"] != spec["email_id"]:
+            raise ValueError(f"synthetic fixture email id changed for {spec['professor']}: {row['email_id']}")
+        pack = fixture["packs"][spec["professor"]]
         canonical_dir = str(Path(row["professor_dir"]).resolve())
-        choice = dict(helpers.issue59_choices(row["email_id"]),
-                      professor_dir=canonical_dir, transport_sentinel=f"owner-{index}")
-        choices.append(choice)
-        owner_rows[index] = choice
-        owner_args += ["--owner", str(pack)]
-        result = helpers.issue59_write_results(program_root, f"raw-{index}.json", [row["email_id"]])
+        expected_row = {
+            "email_id": spec["email_id"],
+            **deepcopy(spec["choice"]),
+            "professor_dir": canonical_dir,
+            "transport_sentinel": spec["transport_sentinel"],
+        }
+        choices.append(deepcopy(expected_row))
+        result = helpers.issue59_write_results(
+            program_root, f"raw-{len(owner_specs)}.json", [spec["email_id"]])
         raw_results[canonical_dir] = str(result)
+        owner_specs.append({"spec": spec, "row": row, "pack": pack,
+                            "professor_dir": canonical_dir,
+                            "expected_choices_rows": [expected_row],
+                            "result": str(result)})
     choices.append({"email_id": "unselected::D::I", "transport_sentinel": "noise"})
     broken = program_root / "教授研究" / "Z分野" / "无效样例" / helpers.contact_state.EMAIL_PACK
     broken.parent.mkdir(parents=True)
     broken.write_text(helpers.ISSUE59_MALFORMED_JSON, encoding="utf-8")
     canonical_choices = output_dir / "canonical-choices.json"
     write_json(canonical_choices, choices)
-    # The root partitions the raw multi-professor choices once through the
-    # installed deterministic entry; each owner later receives only its own
-    # bundle rows from this partition, never the raw object or sibling data.
-    partition_out = output_dir / "partition-bundles.json"
-    partition = subprocess.run([sys.executable, str(installed_script), "stage5-partition-choices",
-                                "--program-root", str(program_root), "--choices", str(canonical_choices),
-                                *owner_args, "--out", str(partition_out)],
-                               capture_output=True, text=True, check=False)
-    (output_dir / "root-partition.stdout.json").write_text(partition.stdout, encoding="utf-8")
-    (output_dir / "root-partition.stderr.txt").write_text(partition.stderr, encoding="utf-8")
-    (output_dir / "root-partition.exit-code.txt").write_text(str(partition.returncode) + "\n")
-    partition_payload = json.loads(partition.stdout)
-    if partition.returncode != 0 or partition_payload.get("status") != "ok" \
-            or len(partition_payload.get("owners", [])) != len(fixture["rows"]):
-        raise ValueError(f"root partition did not answer one ok payload: {partition_payload}")
-    bundle_rows = {}
-    for index, row in enumerate(fixture["rows"]):
-        canonical_dir = str(Path(row["professor_dir"]).resolve())
-        entry = next((item for item in partition_payload["owners"]
-                      if item.get("professor_dir") == canonical_dir), None)
-        if entry is None:
-            raise ValueError(f"owner {index} missing from the partition output: {partition_payload}")
-        rows = entry.get("choices_rows")
-        if entry.get("partition", {}).get("status") != "ok" or rows != [owner_rows[index]]:
-            raise ValueError(f"owner {index} partition bundle deviates from the constructed rows: {entry}")
-        bundle_rows[index] = rows
-        write_json(output_dir / f"owner-{index}-bundle-choices.json", rows)
     owners = []
-    for index, row in enumerate(fixture["rows"]):
-        pack = fixture["packs"][row["professor"]]
-        canonical_dir = str(Path(row["professor_dir"]).resolve())
-        result = raw_results[canonical_dir]
+    for index, owner_spec in enumerate(owner_specs):
+        spec = owner_spec["spec"]
+        row = owner_spec["row"]
+        pack = owner_spec["pack"]
+        canonical_dir = owner_spec["professor_dir"]
+        result = owner_spec["result"]
         initial = subprocess.run([sys.executable, str(installed_script), "stage5-plan",
                                   "--program-root", str(program_root), "--email-pack", str(pack),
                                   "--template", str(template), "--mode", "first"],
@@ -94,8 +109,7 @@ def prepare(program_root, installed_script, output_dir):
             raise ValueError(f"owner {index} initial verification boundary changed: {initial_payload}")
         run = subprocess.run([sys.executable, str(installed_script), "stage5-plan",
                               "--program-root", str(program_root), "--email-pack", str(pack),
-                              "--result", str(result), "--choices",
-                              str(output_dir / f"owner-{index}-bundle-choices.json"),
+                              "--result", str(result),
                               "--template", str(template), "--mode", "first"],
                              capture_output=True, text=True, check=False)
         (output_dir / f"owner-{index}-plan.stdout.json").write_text(run.stdout, encoding="utf-8")
@@ -105,17 +119,18 @@ def prepare(program_root, installed_script, output_dir):
         if payload.get("status") != "needs_refresh" or run.returncode != 2:
             raise ValueError(f"owner {index} did not stop at the frozen verification gate: {payload}")
         siblings = []
-        for other, other_row in enumerate(fixture["rows"]):
+        for other_spec in owner_specs:
+            other = EXPECTED_OWNERS.index(other_spec["spec"])
+            other_row = other_spec["row"]
             if other == index:
                 continue
-            siblings += [str(fixture["packs"][other_row["professor"]].resolve()),
-                         str(Path(other_row["professor_dir"]).resolve()),
+            siblings += [str(other_spec["pack"].resolve()),
+                         other_spec["professor_dir"],
                          other_row["email_id"], f"owner-{other}"]
         siblings.append("choices_scope")
-        owners.append({"professor": row["professor"], "professor_dir": canonical_dir,
+        owners.append({"professor": spec["professor"], "professor_dir": canonical_dir,
                        "email_pack": str(pack.resolve()), "email_ids": [row["email_id"]],
-                       "expected_choices_rows": deepcopy(bundle_rows[index]),
-                       "expected_bundle_file": f"owner-{index}-bundle-choices.json",
+                       "expected_choices_rows": deepcopy(owner_spec["expected_choices_rows"]),
                        "sibling_exclusions": siblings,
                        "expected_result": payload, "initial_plan": initial_payload, "result": str(result)})
     business = {"choices": choices, "mode": "first", "template": str(template),
@@ -129,8 +144,7 @@ def prepare(program_root, installed_script, output_dir):
     manifest = {"schema": 1, "case": "PC68-R1", "program_root": str(program_root),
                 "owners": owners, "invalid_pack": str(broken.resolve()),
                 "expected_choices": choices,
-                "partition": {"bundle_file": "partition-bundles.json",
-                              "owners": [{"professor_dir": owner["professor_dir"], "status": "ok",
+                "partition": {"owners": [{"professor_dir": owner["professor_dir"], "status": "ok",
                                           "choices_rows": deepcopy(owner["expected_choices_rows"])}
                                          for owner in owners]},
                 "expected_aggregate_rows": 0, "pre_run_hashes": hashes,

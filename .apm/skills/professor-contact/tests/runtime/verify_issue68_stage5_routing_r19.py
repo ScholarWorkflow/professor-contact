@@ -325,6 +325,46 @@ def _choices_summary(observed, expected):
     return summary
 
 
+def _owner_invocation_argument_problem(row, packet):
+    """Require actual argv business arguments to come from this parse object."""
+    invocation = row.get("invocation")
+    if not isinstance(invocation, dict) or invocation.get("action") != "stage5-plan":
+        return verdict("INVALID_EVIDENCE", "owner_stage5_invocation_invalid",
+                       observed_call_id=row.get("call_id"))
+    flags = invocation.get("flags")
+    if not isinstance(flags, dict):
+        return verdict("INVALID_EVIDENCE", "owner_stage5_invocation_invalid",
+                       observed_call_id=row.get("call_id"))
+
+    required_arguments = (
+        ("--program-root", "program_root"),
+        ("--email-pack", "email_pack"),
+        ("--template", "template"),
+        ("--mode", "mode"),
+    )
+    for flag, field in required_arguments:
+        expected = packet.get(field)
+        if not isinstance(expected, str) or not expected:
+            return verdict("FAIL_PRODUCT", "owner_handoff_argument_missing",
+                           observed_call_id=row.get("call_id"), argument=flag,
+                           source_field=field)
+        if flags.get(flag) != expected:
+            return verdict("FAIL_PRODUCT", "owner_stage5_invocation_argument_changed",
+                           observed_call_id=row.get("call_id"), argument=flag,
+                           expected=expected, observed=flags.get(flag))
+
+    expected_email_id = packet.get("email_id")
+    has_email_id = "--email-id" in flags
+    if (expected_email_id is None and has_email_id) or (
+            expected_email_id is not None and
+            (not has_email_id or flags.get("--email-id") != expected_email_id)):
+        return verdict("FAIL_PRODUCT", "owner_stage5_invocation_argument_changed",
+                       observed_call_id=row.get("call_id"), argument="--email-id",
+                       expected=expected_email_id, observed=flags.get("--email-id"),
+                       observed_present=has_email_id)
+    return None
+
+
 def owner_payload(rows, manifest):
     """Validate every same-call packet and its directly associated plan result."""
     if not rows:
@@ -362,12 +402,18 @@ def owner_payload(rows, manifest):
     if packet.get("mode") != "first":
         return None, verdict("FAIL_PRODUCT", "owner_mode_changed", observed_pack=pack,
                              observed_mode=packet.get("mode"))
+    first_invocation = first.get("invocation")
+    if not isinstance(first_invocation, dict) or first_invocation.get("action") != "stage5-plan":
+        return None, verdict("INVALID_EVIDENCE", "owner_stage5_invocation_invalid",
+                             observed_call_id=first.get("call_id"))
+    if any(flag in first_invocation.get("flags", {}) for flag in ("--result", "--choices")):
+        return None, verdict("FAIL_PRODUCT", "owner_initial_plan_carries_result_or_choices",
+                             observed_call_id=first.get("call_id"))
     for row in rows:
         flags = row.get("invocation", {}).get("flags", {})
-        if flags.get("--email-pack") not in (None, pack):
-            return None, verdict("FAIL_PRODUCT", "owner_plan_directory_changed",
-                                 observed_call_id=row.get("call_id"),
-                                 observed_pack=flags.get("--email-pack"))
+        invocation_problem = _owner_invocation_argument_problem(row, row["packet"])
+        if invocation_problem:
+            return None, invocation_problem
         if "--choices-scope" in flags:
             return None, verdict("FAIL_PRODUCT", "owner_plan_carries_choices_scope",
                                  observed_call_id=row.get("call_id"))
@@ -377,13 +423,6 @@ def owner_payload(rows, manifest):
         if row["thread"] != first["thread"] or row["generation"] != first["generation"]:
             return None, verdict("INVALID_EVIDENCE", "owner_input_observation_association_ambiguous",
                                  observed_call_id=row.get("call_id"))
-    first_invocation = first.get("invocation")
-    if not isinstance(first_invocation, dict) or first_invocation.get("action") != "stage5-plan":
-        return None, verdict("INVALID_EVIDENCE", "owner_stage5_invocation_invalid",
-                             observed_call_id=first.get("call_id"))
-    if any(flag in first_invocation.get("flags", {}) for flag in ("--result", "--choices")):
-        return None, verdict("FAIL_PRODUCT", "owner_initial_plan_carries_result_or_choices",
-                             observed_call_id=first.get("call_id"))
     text = json.dumps([row["packet"] for row in rows] + [row["plan"] for row in rows],
                       ensure_ascii=False)
     markers = [marker for marker in owner["sibling_exclusions"] if marker in text]
@@ -449,6 +488,16 @@ def _verify_owner_plan_package(rows, owner, manifest):
         selected_emails = [by_id[target_id]] if target_id in by_id else emails
         expected_ids = [email.get("email_id") for email in selected_emails]
         plan = observed["plan"]
+        if index == 0:
+            required_fields = {
+                "status", "email_pack", "emails", "template", "output_mode",
+                "verify", "needs_recheck_professors", "jobs",
+            }
+            missing_fields = sorted(required_fields - set(plan))
+            if missing_fields:
+                return verdict("FAIL_PRODUCT", "owner_initial_plan_fields_missing",
+                               observed_call_id=observed.get("call_id"),
+                               missing_fields=missing_fields)
         if plan.get("email_pack") is not None and plan.get("email_pack") != pack_path:
             return verdict("FAIL_PRODUCT", "owner_plan_directory_changed",
                            observed_call_id=observed.get("call_id"), observed_pack=plan.get("email_pack"))

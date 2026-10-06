@@ -5,6 +5,7 @@
 """
 import importlib.util
 import json
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -97,10 +98,13 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertFalse(contract["preflight"]["input_observation_gate"]["formal_run_allowed"])
         self.assertEqual(contract["preflight"]["second_gate_status"], "INCOMPLETE")
         self.assertEqual(len(contract["pc68_r1_steps"]), 7)
-        actual_values = contract["formal_runtime_environment"]["actual_values"]
-        self.assertIsNone(actual_values["model"])
-        self.assertIsNone(actual_values["executor_version"])
-        self.assertIsNone(actual_values["eval_service"]["pid"])
+        runtime = contract["formal_runtime_environment"]
+        self.assertEqual(runtime["required_facts"], list(entry.REQUIRED_RUNTIME_FACTS))
+        self.assertEqual(set(runtime["actual_values"]), set(entry.REQUIRED_RUNTIME_FACTS))
+        self.assertTrue(all(value is None for value in runtime["actual_values"].values()))
+        self.assertIn("不是实际环境证明", runtime["actual_values_note"])
+        self.assertIn("active Codex dispatch branch", runtime["fact_sources"]["executor"])
+        self.assertIn("not the eval-server process", runtime["validation"])
 
     def test_contract_claim_alone_cannot_enable_the_runner(self):
         contract = entry.load_contract()
@@ -122,11 +126,99 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertTrue(gate["ready"])
         self.assertFalse(gate["formal_run_allowed"])
         self.assertIn("second_gate_incomplete", gate["formal_run_block_reasons"])
-        self.assertIn("runtime_environment_unrecorded", gate["formal_run_block_reasons"])
         self.assertGreater(len(gate["runtime_environment_missing"]), 0)
+        self.assertFalse(gate["service_preflight_allowed"])
         self.assertEqual(gate["synthetic_capture"]["result"], "CAPTURED_SYNTHETIC_ONLY")
         self.assertEqual(gate["synthetic_capture"]["verifier_parser"], "consumed_business_objects")
         self.assertFalse(gate["synthetic_capture"]["app_server_aggregatedOutput_proven"])
+
+    def test_gate_two_approval_allows_dynamic_capture_with_empty_optional_diagnostics(self):
+        contract = entry.load_contract()
+        contract["preflight"]["second_gate_status"] = "COMPLETE"
+        contract["preflight"]["input_observation_gate"]["formal_run_allowed"] = True
+        contract["formal_runtime_environment"]["optional_diagnostics"] = {}
+
+        gate = entry.actual_input_observation_preflight(contract)
+
+        self.assertTrue(gate["ready"])
+        self.assertTrue(gate["service_preflight_allowed"])
+        self.assertFalse(gate["formal_run_allowed"])
+        self.assertEqual(gate["formal_run_block_reason"], "runtime_environment_capture_pending")
+
+    def test_runtime_facts_are_collected_from_this_run_before_request(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir)
+            codex = output / "codex"
+            codex.mkdir()
+            script = codex / "contact_state.py"
+            script.write_text("synthetic entrypoint", encoding="utf-8")
+            entrypoint = {"script": str(script), "cwd": str(codex)}
+            (codex / "installed-entrypoint.json").write_text(
+                json.dumps(entrypoint), encoding="utf-8")
+            (codex / "apm.lock.yaml").write_text("synthetic lock", encoding="utf-8")
+            request = {"command": "codex --model synthetic-model --timeout 900", "timeout": 900}
+            (codex / "codex-request.json").write_text(json.dumps(request), encoding="utf-8")
+            service = {
+                "eval_server": {"sha": "synthetic-service-sha", "dirty": "no"},
+                "service": {"command": "python eval_server.py --port 4812", "port": "4812",
+                            "pid": 17, "start_time": "synthetic-start", "cwd": str(output)},
+                "storage": {"status": "ISOLATION_CONFIRMED", "codex_home": str(output / "test-codex")},
+            }
+            (output / "eval-service-provenance.before.json").write_text(
+                json.dumps(service), encoding="utf-8")
+            preflight = {
+                "service_preflight_allowed": True,
+                "runtime_environment_facts": {key: None for key in entry.REQUIRED_RUNTIME_FACTS},
+                "runtime_environment_evidence": {},
+            }
+            preflight = entry._record_service_runtime_facts(preflight, service)
+            producer = {"sha": "synthetic-producer-sha", "dirty": "no"}
+            fixture = {"sha": "synthetic-fixture-sha", "dirty": "no"}
+
+            captured = entry._record_request_runtime_facts(
+                preflight, output, request, service, producer, fixture)
+
+            self.assertTrue(captured["formal_run_allowed"])
+            facts = captured["runtime_environment_facts"]
+            self.assertEqual(facts["model"], "synthetic-model")
+            self.assertEqual(facts["service_version"], "synthetic-service-sha")
+            self.assertEqual(facts["entrypoint"]["sha256"], entry._sha256_file(script))
+            self.assertEqual(facts["shared_assets"]["fixture_revision"], "synthetic-fixture-sha")
+            self.assertEqual(facts["isolation"], service["storage"])
+            executor = facts["executor"]
+            self.assertEqual(executor["execution_branch"], "codex")
+            self.assertTrue(executor["dispatcher"].endswith(".codex_host"))
+            self.assertTrue(executor["source_evidence"])
+            self.assertNotIn("pid", executor)
+            self.assertNotIn("command", executor)
+            self.assertNotIn("port", executor)
+            self.assertEqual(set(captured["runtime_environment_evidence"]),
+                             set(entry.REQUIRED_RUNTIME_FACTS))
+
+    def test_live_service_version_is_read_and_change_fails_before_service_inspection(self):
+        root = Path("/synthetic/eval-server")
+        service = {"sha": "synthetic-current-sha", "dirty": "no"}
+        instance = {"command": "python eval_server.py --port 4812", "port": "4812",
+                    "pid": 17, "start_time": "synthetic-start", "cwd": str(root)}
+        storage = {"status": "ISOLATION_CONFIRMED"}
+        with mock.patch.object(entry.subprocess, "check_output", return_value="synthetic-current-sha\n") as git, \
+                mock.patch.object(entry.base, "clean_revision", return_value=service) as clean, \
+                mock.patch.object(entry, "resolve_eval_port", return_value="4812"), \
+                mock.patch.object(entry, "capture_service_instance", return_value=instance), \
+                mock.patch.object(entry.isolation, "capture_storage_isolation", return_value=storage):
+            snapshot = entry.capture_eval_service_provenance(root)
+        self.assertEqual(snapshot["eval_server"]["sha"], "synthetic-current-sha")
+        git.assert_called_once_with(["git", "rev-parse", "HEAD"], cwd=root, text=True)
+        clean.assert_called_once_with(root, "synthetic-current-sha")
+
+        with mock.patch.object(entry.subprocess, "check_output", return_value="synthetic-new-sha\n"), \
+                mock.patch.object(entry.base, "clean_revision",
+                                  side_effect=ValueError("wrong_revision_or_dirty_checkout")) as clean, \
+                mock.patch.object(entry, "resolve_eval_port") as port:
+            with self.assertRaisesRegex(ValueError, "wrong_revision_or_dirty_checkout"):
+                entry.capture_eval_service_provenance(root, expected_revision="synthetic-old-sha")
+        clean.assert_called_once_with(root, "synthetic-old-sha")
+        port.assert_not_called()
 
     def test_synthetic_file_preflight_captures_stdout_and_verifier_reparses_it(self):
         script = RUNTIME / "preflight_issue68_owner_input_observation_r29.py"
@@ -233,7 +325,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             self.assertEqual(json.loads((output / "final-verdict.json").read_text())["state"],
                              "CASE_NOT_STARTED")
             self.assertEqual(json.loads((output / "final-verdict.json").read_text())["reason_code"],
-                             "runtime_environment_unrecorded")
+                             "second_gate_incomplete")
             self.assertTrue(json.loads((output / "input-evidence-preflight.json").read_text())["ready"])
             self.assertFalse(json.loads((output / "input-evidence-preflight.json").read_text())["formal_run_allowed"])
             clean_revision.assert_not_called()
@@ -312,26 +404,32 @@ class OwnerObservationTests(unittest.TestCase):
         value.update(changes)
         return value
 
+    def _argv_for(self, packet):
+        argv = [
+            "python3", "/producer/scripts/contact_state.py", "stage5-plan",
+            "--program-root", packet["program_root"],
+            "--email-pack", packet["email_pack"],
+        ]
+        if packet.get("email_id") is not None:
+            argv.extend(["--email-id", packet["email_id"]])
+        argv.extend(["--template", packet["template"], "--mode", packet["mode"]])
+        return argv
+
     def call(self, observation=None, plan=None, *, call_id="cmd-1", output=None, return_code=0,
              invocation_argv=None, command=None):
-        argv = invocation_argv or [
-            "python3", "/producer/scripts/contact_state.py", "stage5-plan",
-            "--program-root", str(self.root), "--email-pack", str(self.pack),
-            "--template", str(self.template), "--mode", "first",
-        ]
+        packet = self.packet if observation is None else observation
+        argv = self._argv_for(packet) if invocation_argv is None else invocation_argv
         envelope = {
             "pc68_actual_input_observation": {
                 "schema": verifier.OWNER_OBSERVATION_SCHEMA,
                 "source_step": "owner_input_json_parse", "business_step": "stage5-plan",
-                "object": self.packet if observation is None else observation,
+                "object": packet,
             },
             "stage5_invocation": {"argv": argv},
             "stage5_plan": self.plan() if plan is None else plan,
             "return_code": return_code,
         }
-        command = command or ("python3 /producer/scripts/contact_state.py stage5-plan"
-                              f" --program-root {self.root} --email-pack {self.pack}"
-                              f" --template {self.template} --mode first")
+        command = command or shlex.join(argv)
         return {"id": call_id, "generation": "run-1", "thread": "owner-thread-1",
                 "start": 10, "end": 11, "command": command,
                 "output": json.dumps(envelope, ensure_ascii=False) if output is None else output}
@@ -347,6 +445,62 @@ class OwnerObservationTests(unittest.TestCase):
         owner_pack, problem = verifier.owner_payload(rows, self.manifest)
         self.assertIsNone(problem)
         self.assertEqual(owner_pack, str(self.pack))
+
+    def test_first_plan_invocation_arguments_must_match_the_same_parse_object(self):
+        correct_argv = self._argv_for(self.packet)
+        mutations = {}
+        for flag, replacement in (
+                ("--program-root", str(self.root / "wrong-root")),
+                ("--email-pack", str(self.prof / "other-pack.json")),
+                ("--email-id", "sibling::D::I"),
+                ("--template", str(self.root / "other-template.md")),
+                ("--mode", "both")):
+            changed = list(correct_argv)
+            changed[changed.index(flag) + 1] = replacement
+            mutations["wrong " + flag] = changed
+        for flag in ("--program-root", "--email-pack", "--email-id", "--template", "--mode"):
+            changed = list(correct_argv)
+            index = changed.index(flag)
+            del changed[index:index + 2]
+            mutations["missing " + flag] = changed
+
+        for label, argv in mutations.items():
+            with self.subTest(label=label):
+                rows, problem = verifier.consumed_business_objects([
+                    self.call(invocation_argv=argv)])
+                self.assertIsNone(problem)
+                owner_pack, problem = verifier.owner_payload(rows, self.manifest)
+                self.assertIsNone(owner_pack)
+                self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+                self.assertEqual(problem["reason_code"],
+                                 "owner_stage5_invocation_argument_changed")
+
+    def test_optional_email_id_is_omitted_from_both_packet_and_actual_argv(self):
+        packet = dict(self.packet)
+        del packet["email_id"]
+        rows, problem = verifier.consumed_business_objects([
+            self.call(observation=packet, invocation_argv=self._argv_for(packet))])
+        self.assertIsNone(problem)
+        owner_pack, problem = verifier.owner_payload(rows, self.manifest)
+        self.assertIsNone(problem)
+        self.assertEqual(owner_pack, str(self.pack))
+
+    def test_missing_required_initial_plan_fields_are_product_failures(self):
+        required_fields = (
+            "email_pack", "emails", "jobs", "verify", "needs_recheck_professors",
+            "template", "output_mode",
+        )
+        for field in required_fields:
+            with self.subTest(field=field):
+                plan = self.plan()
+                del plan[field]
+                rows, problem = verifier.consumed_business_objects([self.call(plan=plan)])
+                self.assertIsNone(problem)
+                owner_pack, problem = verifier.owner_payload(rows, self.manifest)
+                self.assertIsNone(owner_pack)
+                self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+                self.assertEqual(problem["reason_code"], "owner_initial_plan_fields_missing")
+                self.assertEqual(problem["missing_fields"], [field])
 
     def test_mismatch_to_assigned_partition_rows_is_product_failure(self):
         changed = dict(self.packet, choices=[{"email_id": "D-other::I-other"}])
@@ -423,9 +577,7 @@ class OwnerObservationTests(unittest.TestCase):
 
     def test_compound_initial_argv_rejects_result_or_choices(self):
         compound = "python3 -c 'run contact_state.py stage5-plan through the existing wrapper'"
-        base_argv = ["python3", "/producer/scripts/contact_state.py", "stage5-plan",
-                     "--program-root", str(self.root), "--email-pack", str(self.pack),
-                     "--template", str(self.template), "--mode", "first"]
+        base_argv = self._argv_for(self.packet)
         for forbidden_flag in ("--result", "--choices"):
             with self.subTest(forbidden_flag=forbidden_flag):
                 call = self.call(command=compound,

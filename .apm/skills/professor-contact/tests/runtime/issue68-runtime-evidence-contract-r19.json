@@ -5,8 +5,6 @@
   "fixture_contract": "skills-test-fixtures/codex-eval-adapter@16",
   "fixture_source": "skills-test-fixtures#33 merged as c738fa2f8bcbb16cd99d741332d5f59b062b6357",
   "eval_server_additional_patch_required": false,
-  "eval_server_revision": "3fdfa9387140cfc2e2aa3af415f85015f79706d2",
-  "eval_server_revision_role": "frozen expected service revision; the formal entry must prove the listening service process runs from this clean checkout before acceptance and remains the same instance after the request",
   "manual_patch": "no",
   "codex": {
     "shared_adapter_owns": [
@@ -117,7 +115,7 @@
   "preflight": {
     "capability_entry": ".apm/skills/professor-contact/tests/runtime/check_issue68_codex_final_source_r13.py",
     "capability_evidence_revision": "pr72-r13-preflight-exec-2026-10-04",
-    "capability_reuse_rule": "Reusable because r19 changes neither the request builder, the model, the root final-source selector, the fixture adapter nor the eval-server revision; r19 changes only the owner business-input and root orchestration oracle.",
+    "capability_reuse_rule": "Reusable because r19 changes neither the request builder, the model, the root final-source selector nor the fixture adapter; r19 changes only the owner business-input and root orchestration oracle. The live eval-service version is recorded and checked at execution; r25 does not freeze an exact eval-server SHA.",
     "isolation_entry": ".apm/skills/professor-contact/tests/runtime/check_issue68_eval_service_isolation_r14.py",
     "isolation_success": "ISOLATION_CONFIRMED",
     "owner_business_input_basis": "r25 方法使用 owner_input_file 原解析动作产生的只读对象副本，与同一 commandExecution 中原始 stage5-plan 结构化输出关联；历史命令文字和事后文件证据仍不接受。正式 PC68-R1 未运行，第二关口仍未完成。",
@@ -127,8 +125,8 @@
       "status": "SYNTHETIC_CAPTURE_PREFLIGHT_REQUIRED",
       "formal_run_allowed": false,
       "case": "PC68-R1",
-      "reason_code": "runtime_environment_unrecorded",
-      "action": "必须先有合成文件经普通命令工具捕获的stdout证据；实值未填且第二关口未完成时，在任何评估服务检查或正式请求前停止",
+      "reason_code": "second_gate_incomplete",
+      "action": "必须先有合成文件经普通命令工具捕获的stdout证据；第二关口未完成时，在任何评估服务检查、安装或正式请求前以CASE_NOT_STARTED停止。第二关口完成后，运行器从本次请求、安装入口、锁文件及只读取证中动态记录六项运行事实，再允许原请求发出。",
       "synthetic_capture_manifest": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-synthetic-capture-preflight.json",
       "synthetic_capture_stdout": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-synthetic-capture-stdout.json",
       "raw_stdout_is_reparsed_by": "verify_issue68_stage5_routing_r19.consumed_business_objects",
@@ -225,16 +223,30 @@
     "rule": "逐个教授线程保留其机器状态和正式分类。仅当证据已确认FAIL_PRODUCT时，总体可报告FAIL；其他教授线程的缺证、无效或不同终态不得把该FAIL降级。没有已确认FAIL_PRODUCT时不将不同教授线程的状态按自创顺序折叠，逐线程保留和分类。"
   },
   "formal_runtime_environment": {
-    "status": "REQUIRED_AT_EXECUTION",
+    "status": "CAPTURE_FROM_THIS_RUN_BEFORE_REQUEST",
+    "required_facts": [
+      "model",
+      "executor",
+      "entrypoint",
+      "isolation",
+      "shared_assets",
+      "service_version"
+    ],
     "actual_values": {
-      "codex_host_id": null,
       "model": null,
-      "executor_version": null,
-      "adapter_version": null,
+      "executor": null,
+      "entrypoint": null,
+      "isolation": null,
+      "shared_assets": null,
+      "service_version": null
+    },
+    "actual_values_note": "这些空值仅表示字段形状，不是实际环境证明，也不作为本次运行输入。运行器须从本次请求、安装产物及服务前只读快照采集实际值，并把来源与哈希写入本次运行的 runtime-environment-evidence.json、input-evidence-preflight.json 和 provenance.json。",
+    "optional_diagnostics": {
+      "host_id": null,
+      "adapter_revision": null,
       "producer_revision": null,
       "fixture_revision": null,
-      "eval_server_revision": null,
-      "eval_service": {
+      "service_process": {
         "port": null,
         "pid": null,
         "start_time": null,
@@ -243,20 +255,27 @@
         "test_codex_home": null
       }
     },
-    "pinned_values": {
-      "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
-      "fixture_revision": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
-      "eval_server_revision": "3fdfa9387140cfc2e2aa3af415f85015f79706d2"
-    },
-    "missing_or_invalid_action": "CASE_NOT_STARTED before eval service inspection, prompt dispatch, or request",
-    "validation": "Runner requires every actual field to be recorded; producer, fixture and eval-server revisions must equal pinned_values; eval service port/PID must be valid and every service field non-empty."
+  "fixed_plan_inputs": {
+    "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+    "shared_environment_revision": "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
+  },
+  "fact_sources": {
+    "model": "The --model value in this run's built codex/codex-request.json.",
+    "executor": "The active Codex dispatch branch identified by the invoked codex_host function and SHA-256 hashes of its source file and this runner; do not substitute the eval-server process or host ID.",
+    "entrypoint": "The installed-entrypoint.json record and SHA-256 of the installed contact_state.py file.",
+    "isolation": "The actual service storage-isolation object returned by the read-only isolation capture.",
+    "shared_assets": "The checked producer and fixture revisions plus the installed apm.lock.yaml SHA-256.",
+    "service_version": "The current clean eval-server checkout SHA captured before the request and rechecked after it; no exact SHA is frozen by r25."
+  },
+    "missing_or_invalid_action": "Gate 2 incomplete: CASE_NOT_STARTED before any eval-service inspection or request. After Gate 2 approval: CASE_NOT_STARTED before request if any of the six run-bound facts lacks its required source evidence.",
+  "validation": "Gate 2 incomplete remains a hard stop before service inspection. Once explicitly complete, the runner obtains the live eval-server SHA with read-only git rev-parse and confirms a clean checkout through the existing clean_revision function; r25 does not freeze an exact eval-server SHA. Before the request, each fact is collected independently from the source defined above. The executor record identifies the active Codex dispatch branch by code and source hashes; it is not the eval-server process and is not a host ID. The original request body must equal the saved built request. The after snapshot must identify the same service. Host ID, separate adapter revision and other diagnostics are optional and do not block when absent."
   },
   "formal_run_archive_requirements": {
     "before_request": [
-      "clean eval-server checkout at the frozen revision",
+      "clean eval-server checkout matching the recorded service_version",
       "resolved EVAL_PORT",
       "unique listening PID",
-      "listener cwd equal to the frozen eval-server checkout",
+      "listener cwd equal to the checked eval-server checkout",
       "listener command identifies eval_server.py and the same EVAL_PORT",
       "listener process start time",
       "service process CODEX_HOME exists and differs from the production default ~/.codex",
@@ -269,11 +288,16 @@
       "same listener cwd",
       "same listener process start time",
       "same storage-isolation evidence",
-      "eval-server checkout still clean at the frozen revision"
+      "eval-server checkout still clean at the recorded service_version"
     ],
     "artifacts": [
       "eval-service-provenance.before.json",
       "eval-service-provenance.after.json",
+      "runtime-environment-evidence.json",
+      "input-evidence-preflight.json",
+      "codex/codex-request.json",
+      "codex/installed-entrypoint.json",
+      "codex/apm.lock.yaml",
       "provenance.json"
     ]
   }
