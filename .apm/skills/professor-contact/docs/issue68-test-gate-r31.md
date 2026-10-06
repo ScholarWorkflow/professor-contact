@@ -48,7 +48,7 @@ R1固定为缺核验前提。已经发生的分配、读取、首次计划、结
 | 文件 | 职责 |
 | --- | --- |
 | `tests/runtime/preflight_issue68_environment_r30.py` | 关口前支持安装、只读服务隔离、单次纯合成评估请求；没有教授业务、分配和委派 |
-| `tests/runtime/preflight_issue68_synthetic_observation_r30.py` | 仅空白消费者单次合成普通命令观察；当前支持安装缺口不由此程序填补 |
+| `tests/runtime/preflight_issue68_synthetic_observation_r30.py` | 仅空白消费者单次合成普通命令观察；独立安装成功不等于本项完整环境预检已经通过 |
 | `tests/runtime/preflight_issue68_lifecycle_observation_r30.py` | 历史第04次有限命令能力检查，保留原始来源，不能独自承担第26版组合验证 |
 | `tests/runtime/test_preflight_issue68_environment_r30.py` | 环境预检解析的合法及反例验证 |
 | `tests/runtime/capture_issue68_owner_stage5_plan_r1.py` | 正常交接单次解析，只读复制同一个对象，调用原已安装计划程序，保存实际参数与原始输出 |
@@ -121,13 +121,14 @@ jq -e . .apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-con
 | 第31版安装重试第01次 | `tests/runtime/evidence/issue68-r31-install-retry-20261007.json`：1.290秒退出1，证书验证拒绝 | 未完整安装；未检查入口帮助、未发评估请求 |
 | 第31版安装重试第02次 | `tests/runtime/evidence/issue68-r31-install-trust-retry-20261007.json`：24.124秒退出1；系统证书配置后仍有两个依赖的加密连接意外中断 | 仅进程证书配置；安装事务未提交，保留失败依赖与诊断 |
 | 第31版安装重试第03次 | `tests/runtime/evidence/issue68-r31-install-recovered-retry-20261007.json`：34.166秒退出1；两个依赖远程引用查询成功，安装仍因 `knowledge-tools` 加密连接意外中断失败 | 查询成功仅支持新尝试，不代表安装成功 |
-| 第31版安装重试第04次 | `tests/runtime/evidence/issue68-r31-install-http1-retry-20261007.json`：24.467秒退出1；此前以 `HTTP/1.1` 完整浅克隆成功，原安装仍因 `knowledge-tools` 加密连接意外中断失败 | 诊断检出未用于安装；未改变产品或依赖引用，完整安装、入口帮助及评估检查仍未完成 |
+| 第31版安装重试第04次 | `tests/runtime/evidence/issue68-r31-install-http1-retry-20261007.json`：24.467秒退出1；此前以 `HTTP/1.1` 完整浅克隆成功，原安装仍因 `knowledge-tools` 加密连接意外中断失败 | 诊断检出未用于安装；未改变产品或依赖引用 |
+| 第31版安装重试第05次 | `tests/runtime/evidence/issue68-r31-install-only-retry-success-20261007.json`：38.838秒退出0；锁文件解析到固定产品提交，安装入口摘要与产品源一致 | 独立消费者中的支持安装成功；本次只安装，未运行入口帮助或合成评估，因此不代表完整环境预检通过。独立限定复核见 `tests/runtime/evidence/issue68-r31-install-only-retry-review-20261007.md` |
 | 第31版组合代码及验证 | `tests/runtime/evidence/issue68-r31-lifecycle-combination-validation.json` 保存61项组合、56项输入判定、11项执行步骤验证的独立命令、退出0及原日志来源 | 合成验证；不同轮次数量不相加，不代替正式验收或安装预检 |
 | 第31版组合最小预检 | `tests/runtime/evidence/issue68-r31-lifecycle-combination-precheck.json` 保存六场景预期及实际终态 | 正常链认可、残留与保护变化拒绝、错请求/缺实际使用/漏扫不通过；实际本地动作与合成线程事件的区别如上所述 |
 
 第30版检查原文及修正历史见 `tests/runtime/evidence/issue68-r30-precheck-validation.json`、`tests/runtime/evidence/issue68-r30-review-fixes-validation.json`；保留每轮失败及通过的原始计数、恢复日志的可见范围和源码摘要，不把历史129项或更早轮次写成当前检查。原丢失日志的恢复仅覆盖原工具可见部分，不能称完整原始日志，不重跑冒充旧轮次。第26版对损坏样例审核依据的撤回不改写这些历史尝试。
 
-本次安装续试由用户在候选 `806066a` 推送后授权；四次均沿用固定产品提交、原支持安装命令及600秒预算，每次使用新的独占消费者目录。第02次仅设置进程变量 `REQUESTS_CA_BUNDLE=/etc/ssl/cert.pem`，第03次另设置 `GIT_SSL_CAINFO=/etc/ssl/cert.pem`，第04次再通过 `GIT_CONFIG_COUNT=1`、`GIT_CONFIG_KEY_0=http.version`、`GIT_CONFIG_VALUE_0=HTTP/1.1` 选择该次进程的传输协议。这些仅用于环境恢复，证书验证保持开启，未修改全局配置、产品、依赖引用或正式许可。证书文件摘要及实际命令由各轮公共证据保存；真实本地路径和完整原日志留在各自原始目录，失败不覆盖。最新故障为安装 `knowledge-tools` 时的加密连接意外中断，原始错误为 `TLS unexpected EOF`；本次四轮均在600秒内退出1，不能改写先前超时的具体原因。本次未完整安装、未检查入口帮助、未运行合成或正式评估。归并范围与待审位置见 `tests/runtime/evidence/issue68-r31-install-retry-review-20261007.md`。
+前四次安装续试由用户在候选 `806066a` 推送后授权，均沿用固定产品提交、原支持安装命令及600秒预算；证书和传输设置仅作用于对应进程，证书验证保持开启。四次失败、恢复诊断、原始日志和独立审核结论见 `tests/runtime/evidence/issue68-r31-install-retry-review-20261007.md`，不覆盖先前超时。随后用户要求只重试安装。第05次在独立临时消费者中38.838秒退出0；锁文件固定到产品提交 `b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d`，已安装 `contact_state.py` 摘要与产品源相同。独立限定复核确认上述数据一致，并确认修正后的锁文件摘要正确，见 `tests/runtime/evidence/issue68-r31-install-only-retry-review-20261007.md`。完整命令和输出摘要见新增安装证据。该轮没有运行入口帮助、合成评估或正式业务，因此只确认本次支持安装成功，不能据此宣布完整预检完成。
 
 第03次实际请求模型为 `gpt-6-luna`、推理强度 `low`；服务工具为 `codex-cli 0.159.0-alpha.12.1`，本地准备工具 `codex-cli 0.160.1`；服务内部最终模型未公开，不宣称取得。第01、02次服务提交 `3fdfa9387140cfc2e2aa3af415f85015f79706d2` 仅为当次来源，不能充当本次实值。本轮实际配置、工具及服务前后摘要由新预检和正式请求分别记录。当前总体预检为未完成；任何新增证据都须先解析核对、定位对应证明后更新本记录。
 
@@ -344,8 +345,8 @@ R1为 `EXECUTE_CURRENT`：观察、判定、输入和产品调用说明变化直
 | `tests/test_issue68_lifecycle.py` | `6a18f5ff39bb344a6f2a76eed361dbe2ca8fc75466c357d5c36a04068c27d988` |
 | `tests/test_issue68_lifecycle_integration.py` | `a32a366e8eaec90ab6c5887320308ebe2fd97c1ad3ace76f49c7fb4c382cc5f1` |
 
-本轮环境预检实际主源码摘要前后均为 `3cc9cf5d2a62d1248ffa999cddb65d894a83d40f4e40dab1bfec942e1495a631`。执行时运行器摘要为 `6a0634c6d58d4e32631bafa3d8058130bb6fa0a889ed231cab2da2ddf5dd4a24`，结束时为 `ebf9d866a4ca7c5a7392fbbb0b93d8e07fcf30b176d3badb26f44f6070fd962a`；并行改动只同步测试版本标识，安装阶段已停止，没有执行新的观察请求。环境证据分别保存两份来源，不把最终源码冒充执行时源码。安装原始日志、诊断及结果摘要均在环境投影中可核对。
+本轮环境预检实际主源码摘要前后均为 `3cc9cf5d2a62d1248ffa999cddb65d894a83d40f4e40dab1bfec942e1495a631`。执行时运行器摘要为 `6a0634c6d58d4e32631bafa3d8058130bb6fa0a889ed231cab2da2ddf5dd4a24`，结束时为 `ebf9d866a4ca7c5a7392fbbb0b93d8e07fcf30b176d3badb26f44f6070fd962a`；并行改动只同步测试版本标识，安装阶段已停止，没有执行新的观察请求。环境证据分别保存两份来源，不把最终源码冒充执行时源码。第05次独立安装的原始日志、锁文件及结果摘要保存在 `/private/tmp/pc68-r31-environment-install-only-20261007-01`。
 
-本轮已交付第26版链接、组合判定、六场景预检、可移植性修正、安装终态及其独立来源，并追加用户授权的四次安装重试及恢复诊断。当前阻塞为：最新原支持安装在 `knowledge-tools` 克隆时发生加密连接意外中断，完整安装入口摘要与帮助尚未取得；正式观察尚未证明请求前覆盖全部合法临时传递位置，需测试设计审核者修订观察安排。后者是已知证明缺口，不能写作就绪，也不能留到正式运行后冒充偶发阻断。候选提交与推送仅固定可审核版本，不表示本地测试工程师全部完成、第二关口通过或可合并。正式运行许可保持关闭。
+本轮已交付第26版链接、组合判定、六场景预检、可移植性修正及其独立来源。前四次安装重试失败，第05次独立安装成功并与固定产品源码摘要一致；由于第05次只运行安装命令，安装帮助和完整预检中的合成观察仍待执行。正式观察也尚未证明请求前覆盖全部合法临时传递位置，需测试设计审核者修订观察安排。第二关口仍未完整通过，正式运行许可保持关闭；不得用安装成功、预检或候选推送代替正式验收。
 
 第二关口完整批准和唯一冻结记录由审核者指定。正式R1仍未执行，当前未启动；第三关口及合并未就绪。本地执行代理须在完整通过后执行当前R1，不能用本轮预检或候选推送代替正式验收。
