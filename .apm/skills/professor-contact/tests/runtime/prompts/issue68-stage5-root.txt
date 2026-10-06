@@ -1,4 +1,5 @@
 Use the installed professor-contact workflow to execute only Stage 5 for program root {{PROGRAM_ROOT}}.
+Before a formal PC68-R1 request starts, the runner must have recorded the actual Codex host id, model, executor and adapter versions, producer and fixture revisions, eval-server revision, and eval-service port/PID/start time/cwd/command/test CODEX_HOME. These values are execution-time evidence: never guess or copy expected values into the actual fields. If a required value is absent or conflicts with its frozen revision, stop as CASE_NOT_STARTED before inspecting the eval service or dispatching the request.
 Discover available professor-local Stage 5 inputs through the workflow's supported Stage 5 discovery path.
 Before delegating to any professor owner, run the workflow's deterministic Stage 5 partition entry (stage5-partition-choices) exactly once over the provided raw multi-professor choices; use each owner's assigned bundle for its business calls. Never split the choices yourself.
 Forward each owner's business inputs as a JSON object with email_pack, choices, mode, template and result, where choices holds only that owner's bundle rows. These are business fields, not native delegation API arguments.
@@ -13,6 +14,8 @@ For every professor business call, extend the existing one-time JSON parse of th
 ```
 
 Replace the empty observation and plan objects and zero with the unchanged decoded packet, the structured result from that invocation's actual stdout, and its actual exit code. Replace the example argv with the exact argument vector actually passed to the original CLI process; the vector must include all arguments, in order, as executed. The observation is a read-only copy of the parsed object, and every separate `stage5-plan` tool call must emit its own envelope. The first plan call must still omit `--result` and `--choices`; the verifier checks those flags from `stage5_invocation.argv`, not from the command tool's shell text. Its structured output must be the result returned by the original CLI using this same parsed object. Do not reopen `owner_input_file` or any choices/partition file to create the observation, do not add expected values or a claimed owner identity, and do not emit a separate diagnostic read or substitute business command. Keep the existing early-stop behavior when verification returns `needs_input` or `needs_refresh`.
+
+The r29 synthetic-file preflight is a separate non-acceptance check. It demonstrates that one ordinary command-tool stdout can preserve the parse copy, actual subprocess argv and structured result; its synthetic IDs do not prove formal Codex thread/event association. During PC68-R1, the harness must associate each envelope to the real runtime generation, formal professor thread, commandExecution id and professor directory. Do not claim eval `aggregatedOutput` proof from the synthetic preflight.
 
 Business input:
 {{BUSINESS_INPUT}}

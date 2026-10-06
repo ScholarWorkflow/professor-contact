@@ -1,5 +1,6 @@
 {
-  "revision": "issue-68-runtime-evidence-r25-2026-10-06",
+  "revision": "issue-68-runtime-evidence-r29-2026-10-06",
+  "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
   "fixture_sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
   "fixture_contract": "skills-test-fixtures/codex-eval-adapter@16",
   "fixture_source": "skills-test-fixtures#33 merged as c738fa2f8bcbb16cd99d741332d5f59b062b6357",
@@ -101,7 +102,7 @@
         "malformed_or_ambiguous_attribution": "INVALID_EVIDENCE",
         "command_text_unrelated_print_or_read_or_after_the_fact_file": "不得作为输入证据"
       },
-      "gate_status": "IMPLEMENTED_FOR_SYNTHETIC_PREFLIGHT_ONLY; second_gate_status remains INCOMPLETE"
+      "gate_status": "SYNTHETIC_CAPTURE_PREFLIGHT_IMPLEMENTED; formal Codex event association remains unverified; second_gate_status remains INCOMPLETE"
     }
   },
   "business_payload": [
@@ -123,13 +124,132 @@
     "on_absent": "stop before formal PC68-R1",
     "retry": "none",
     "input_observation_gate": {
-      "status": "SUPPORTED",
+      "status": "SYNTHETIC_CAPTURE_PREFLIGHT_REQUIRED",
       "formal_run_allowed": false,
       "case": "PC68-R1",
-      "reason_code": "second_gate_incomplete",
-      "action": "观察解析器和提示接线仅经合成预检；第二关口完成前在评估服务检查和正式请求前停止"
+      "reason_code": "runtime_environment_unrecorded",
+      "action": "必须先有合成文件经普通命令工具捕获的stdout证据；实值未填且第二关口未完成时，在任何评估服务检查或正式请求前停止",
+      "synthetic_capture_manifest": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-synthetic-capture-preflight.json",
+      "synthetic_capture_stdout": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-synthetic-capture-stdout.json",
+      "raw_stdout_is_reparsed_by": "verify_issue68_stage5_routing_r19.consumed_business_objects",
+      "known_limit": "仅证明本地合成文件读取、原stage5-plan子进程、标准输出留存及判定器读取；不证明Codex app_server event、正式教授线程、eval aggregatedOutput或外部服务"
     },
     "second_gate_status": "INCOMPLETE"
+  },
+  "pc68_r1_steps": [
+    {
+      "step": "R1-1-discover-and-partition",
+      "event": "root正式线程执行一次stage5-list-inputs及一次成功stage5-partition-choices",
+      "input": "冻结manifest、实际本地输入和显式用户选择；discovery不得带--emit-choices-scope",
+      "output": "两次原commandExecution.aggregatedOutput中的结构化结果和顺序字段",
+      "association": "同一runtime_generation、root thread、各commandExecution.id及开始/结束顺序",
+      "verdict": "实际分区不匹配、重复成功分区、owner线程执行分区或分区前启动owner业务调用为FAIL_PRODUCT；缺失/歧义按BLOCKED或INVALID分类",
+      "stop": "观察到产品失败即结束；无法证明根分区时不得继续把owner输入解释为已分区"
+    },
+    {
+      "step": "R1-2-formal-delegation",
+      "event": "共享适配器spawnAgent关系及两条正式教授线程",
+      "input": "冻结请求中的两位教授隔离任务",
+      "output": "适配器formal thread_relations及同run subAgentActivity agentPath映射",
+      "association": "root thread、runtime_generation、child thread、唯一agentPath",
+      "verdict": "正式教授线程不是恰好两条为FAIL_PRODUCT；关系/路径缺失为BLOCKED，重复路径映射歧义为INVALID_EVIDENCE；身份诊断不能替代所有权",
+      "stop": "所有权无法唯一关联时停止消费/归属判断"
+    },
+    {
+      "step": "R1-3-handoff-and-single-parse",
+      "event": "每个正式教授线程用原解析入口读取owner_input_file一次，并在原stage5-plan调用中输出v2观察包络",
+      "input": "该教授自己的root partition handoff JSON",
+      "output": "同一aggregatedOutput中的解析对象只读副本、精确stage5_invocation.argv、原CLI结构化JSON和退出码",
+      "association": "runtime_generation、正式child thread、commandExecution.id、email_pack父目录、owner_input_json_parse与stage5-plan",
+      "verdict": "同次对象与分区来源错配或含兄弟数据为FAIL_PRODUCT；未观察为BLOCKED；损坏/重复键/关联歧义为INVALID_EVIDENCE；事后重读/命令文字不算输入证明",
+      "stop": "在正式业务入口开始前若观察源缺失则CASE_NOT_STARTED；正式运行中缺失则BLOCKED并停止该输入证明"
+    },
+    {
+      "step": "R1-4-first-stage5-plan",
+      "event": "handoff对象驱动的该教授第一次原stage5-plan子进程调用",
+      "input": "第3步同次解析对象中的email_pack、program_root、路径与编号字段",
+      "output": "实际argv及结构化计划中的pack路径、email_id、verify状态、jobs/model_input",
+      "association": "与第3步观察使用同一commandExecution输出、调用id和教授目录；重复调用逐次单独关联",
+      "verdict": "首调argv有--result或--choices、pack/编号/业务数据错误或兄弟数据为FAIL_PRODUCT；合法needs_input或needs_refresh核验早停可接受，不声称后续choice消费",
+      "stop": "合法核验早停后将后续choice读取/提交标为NOT TESTED；不得要求绕过核验门"
+    },
+    {
+      "step": "R1-5-child-result-consumption",
+      "event": "每个child final结果及root当前turn对该结果的合法agent_message回执",
+      "input": "正式child结果三元组professor_dir/status/reason_code",
+      "output": "root线程当前turn的直接回执载荷及runtime顺序",
+      "association": "唯一child_thread到agentPath、root receipt author、当前turn和runtime_generation",
+      "verdict": "回执改写结果为FAIL_PRODUCT；回执缺失为BLOCKED；回执损坏或归属歧义为INVALID_EVIDENCE",
+      "stop": "未消费的child结果不能作为overview重建的前置完成项"
+    },
+    {
+      "step": "R1-6-root-overview-and-final-report",
+      "event": "root消费两位教授结果后至多一次stage5-rebuild-overview及当前root最终回答",
+      "input": "两位教授原始结果及同一请求的overview重建",
+      "output": "重建aggregatedOutput；最终回答分别保留教授结果和精确overview结果",
+      "association": "同一root thread/runtime_generation/current turn；rebuild开始顺序晚于两条消费回执",
+      "verdict": "重建次数/顺序/结果报告不符为FAIL_PRODUCT；结果来源或角色有歧义为INVALID_EVIDENCE；合法needs_decision/error总览按实际对象核对",
+      "stop": "未唯一绑定重建输出与最终报告时不得判PASS"
+    },
+    {
+      "step": "R1-7-isolation-and-cleanup",
+      "event": "执行前后文件快照、两教授目录及本次临时handoff清理",
+      "input": "本次正式运行生成的handoff路径和教授目录基线",
+      "output": "路径归属、内容哈希差异、清理记录及隔离断言",
+      "association": "运行编号、request id、教授目录和本次临时文件创建/清理者",
+      "verdict": "兄弟目录被污染或别的请求数据被删除为FAIL_PRODUCT；快照/归属证据损坏为INVALID_EVIDENCE；无可读记录为BLOCKED",
+      "stop": "不得删除或重写本次请求之外的数据"
+    }
+  ],
+  "machine_terminal_mapping": {
+    "PASS": "PASS",
+    "FAIL_PRODUCT": "FAIL",
+    "INVALID_TEST_EXECUTION": "INVALID_TEST_EXECUTION",
+    "INVALID_EVIDENCE": "INVALID_TEST_EXECUTION",
+    "BLOCKED_OBSERVABILITY": "BLOCKED",
+    "BLOCKED_DEPENDENCY": "BLOCKED",
+    "CASE_NOT_STARTED": "CASE_NOT_STARTED",
+    "NOT_TESTED": "NOT TESTED",
+    "HARNESS_ERROR": "INVALID_TEST_EXECUTION",
+    "HARNESS_CONTAMINATION": "INVALID_TEST_EXECUTION",
+    "FIXTURE_READY": "CONTINUE_VERIFICATION",
+    "HARNESS_DISPATCH_UNCONFIRMED": "CONTINUE_VERIFICATION",
+    "HARNESS_DISPATCH_MISMATCH": "CONTINUE_VERIFICATION",
+    "OBSERVATION_SOURCE_SUPPORTED": "CONTINUE_VERIFICATION",
+    "UNKNOWN": "INVALID_TEST_EXECUTION",
+    "unknown_machine_state": "INVALID_TEST_EXECUTION"
+  },
+  "terminal_aggregation": {
+    "confirmed_failure_machine_state": "FAIL_PRODUCT",
+    "confirmed_failure_formal_terminal": "FAIL",
+    "rule": "逐个教授线程保留其机器状态和正式分类。仅当证据已确认FAIL_PRODUCT时，总体可报告FAIL；其他教授线程的缺证、无效或不同终态不得把该FAIL降级。没有已确认FAIL_PRODUCT时不将不同教授线程的状态按自创顺序折叠，逐线程保留和分类。"
+  },
+  "formal_runtime_environment": {
+    "status": "REQUIRED_AT_EXECUTION",
+    "actual_values": {
+      "codex_host_id": null,
+      "model": null,
+      "executor_version": null,
+      "adapter_version": null,
+      "producer_revision": null,
+      "fixture_revision": null,
+      "eval_server_revision": null,
+      "eval_service": {
+        "port": null,
+        "pid": null,
+        "start_time": null,
+        "cwd": null,
+        "command": null,
+        "test_codex_home": null
+      }
+    },
+    "pinned_values": {
+      "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+      "fixture_revision": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+      "eval_server_revision": "3fdfa9387140cfc2e2aa3af415f85015f79706d2"
+    },
+    "missing_or_invalid_action": "CASE_NOT_STARTED before eval service inspection, prompt dispatch, or request",
+    "validation": "Runner requires every actual field to be recorded; producer, fixture and eval-server revisions must equal pinned_values; eval service port/PID must be valid and every service field non-empty."
   },
   "formal_run_archive_requirements": {
     "before_request": [

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PC68-R1 Codex entrypoint with the r25 per-call observation gate."""
 import argparse
+import hashlib
 import json
 import shlex
 import signal
@@ -11,17 +12,29 @@ from pathlib import Path
 import issue68_eval_service_isolation_r14 as isolation
 import run_issue68_stage5_routing as base
 import run_issue68_stage5_routing_r19 as bridge
+import verify_issue68_stage5_routing_r19 as input_verifier
 
 
 HERE = Path(__file__).resolve().parent
 FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
-CONTRACT_REVISION = "issue-68-runtime-evidence-r25-2026-10-06"
+CONTRACT_REVISION = "issue-68-runtime-evidence-r29-2026-10-06"
 OWNER_OBSERVATION_SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
+SYNTHETIC_PREFLIGHT_SCHEMA = "issue-68-r29-synthetic-capture-preflight-v1"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
 EXECUTION_KIND = "acceptance"
 HOST = "codex"
 CASE = "PC68-R1"
+PREFLIGHT_DIR = HERE / "evidence"
+PREFLIGHT_MANIFEST = PREFLIGHT_DIR / "issue68-r29-synthetic-capture-preflight.json"
+PREFLIGHT_STDOUT = PREFLIGHT_DIR / "issue68-r29-synthetic-capture-stdout.json"
+REQUIRED_RUNTIME_TEXT = (
+    "codex_host_id", "model", "executor_version", "adapter_version",
+    "producer_revision", "fixture_revision", "eval_server_revision",
+)
+REQUIRED_SERVICE_FIELDS = (
+    "port", "pid", "start_time", "cwd", "command", "test_codex_home",
+)
 
 
 def load_contract():
@@ -30,12 +43,22 @@ def load_contract():
         raise ValueError("contract_revision_mismatch")
     if contract.get("fixture_sha") != FIXTURE_SHA:
         raise ValueError("contract_fixture_mismatch")
+    if contract.get("producer_revision") != "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d":
+        raise ValueError("contract_producer_revision_mismatch")
     if contract.get("runner") != CONTRACT_RUNNER:
         raise ValueError("contract_runner_is_not_this_entry")
     if contract.get("manual_patch") != "no":
         raise ValueError("contract_manual_patch_forbidden")
     if not contract.get("eval_server_revision"):
         raise ValueError("contract_eval_server_revision_missing")
+    environment = contract.get("formal_runtime_environment")
+    if not isinstance(environment, dict) or not isinstance(environment.get("actual_values"), dict):
+        raise ValueError("contract_runtime_environment_fields_missing")
+    actual_values = environment["actual_values"]
+    if any(key not in actual_values for key in REQUIRED_RUNTIME_TEXT) \
+            or not isinstance(actual_values.get("eval_service"), dict) \
+            or any(key not in actual_values["eval_service"] for key in REQUIRED_SERVICE_FIELDS):
+        raise ValueError("contract_runtime_environment_fields_incomplete")
     codex = contract.get("codex", {})
     observation = codex.get("owner_business_input_observation")
     if not isinstance(observation, dict) or observation.get("status") != "supported":
@@ -51,11 +74,168 @@ def load_contract():
         raise ValueError("contract_canonical_preservation_missing")
     if not codex.get("partition_evidence"):
         raise ValueError("contract_partition_evidence_missing")
+    steps = contract.get("pc68_r1_steps")
+    expected_steps = [
+        "R1-1-discover-and-partition", "R1-2-formal-delegation",
+        "R1-3-handoff-and-single-parse", "R1-4-first-stage5-plan",
+        "R1-5-child-result-consumption", "R1-6-root-overview-and-final-report",
+        "R1-7-isolation-and-cleanup",
+    ]
+    if not isinstance(steps, list) or [step.get("step") for step in steps] != expected_steps:
+        raise ValueError("contract_pc68_r1_steps_incomplete")
+    terminal_mapping = contract.get("machine_terminal_mapping", {})
+    required_terminal_states = {
+        "PASS", "FAIL_PRODUCT", "INVALID_TEST_EXECUTION", "INVALID_EVIDENCE", "UNKNOWN",
+        "BLOCKED_OBSERVABILITY",
+        "BLOCKED_DEPENDENCY", "CASE_NOT_STARTED", "NOT_TESTED", "unknown_machine_state",
+        "FIXTURE_READY", "HARNESS_DISPATCH_UNCONFIRMED", "HARNESS_DISPATCH_MISMATCH",
+        "OBSERVATION_SOURCE_SUPPORTED",
+    }
+    if not required_terminal_states.issubset(terminal_mapping) or "conflict_priority" in terminal_mapping:
+        raise ValueError("contract_machine_terminal_mapping_incomplete")
+    if terminal_mapping != input_verifier._terminal_contract():
+        raise ValueError("contract_verifier_terminal_mapping_mismatch")
+    aggregation = contract.get("terminal_aggregation", {})
+    if aggregation.get("confirmed_failure_machine_state") != "FAIL_PRODUCT" \
+            or aggregation.get("confirmed_failure_formal_terminal") != "FAIL" \
+            or not isinstance(aggregation.get("rule"), str):
+        raise ValueError("contract_terminal_aggregation_rule_missing")
     return contract
 
 
+def _canonical_json(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _runtime_environment_missing(contract):
+    values = contract.get("formal_runtime_environment", {}).get("actual_values", {})
+    missing = [key for key in REQUIRED_RUNTIME_TEXT
+               if not isinstance(values.get(key), str) or not values[key].strip()]
+    if values.get("producer_revision") and values["producer_revision"] != contract.get("producer_revision"):
+        missing.append("producer_revision_must_match_frozen_target")
+    if values.get("fixture_revision") and values["fixture_revision"] != contract.get("fixture_sha"):
+        missing.append("fixture_revision_must_match_frozen_fixture")
+    if values.get("eval_server_revision") and values["eval_server_revision"] != contract.get("eval_server_revision"):
+        missing.append("eval_server_revision_must_match_frozen_target")
+    service = values.get("eval_service", {})
+    for key in REQUIRED_SERVICE_FIELDS:
+        value = service.get(key)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing.append("eval_service." + key)
+    if service.get("port") is not None and (not isinstance(service["port"], int)
+                                             or not 1 <= service["port"] <= 65535):
+        missing.append("eval_service.port_invalid")
+    if service.get("pid") is not None and (not isinstance(service["pid"], int) or service["pid"] <= 0):
+        missing.append("eval_service.pid_invalid")
+    return missing
+
+
+def _synthetic_capture_preflight():
+    """Verify the saved bytes that came back from the ordinary command tool."""
+    try:
+        artifact = json.loads(PREFLIGHT_MANIFEST.read_text(encoding="utf-8"))
+        stdout_bytes = PREFLIGHT_STDOUT.read_bytes()
+        stdout = stdout_bytes.decode("utf-8")
+    except (OSError, UnicodeError, ValueError):
+        return None, {"state": "CASE_NOT_STARTED", "reason_code": "synthetic_capture_preflight_missing"}
+    if artifact.get("schema") != SYNTHETIC_PREFLIGHT_SCHEMA \
+            or artifact.get("result") != "CAPTURED_SYNTHETIC_ONLY" \
+            or artifact.get("formal_case_started") is not False \
+            or artifact.get("eval_service_called") is not False \
+            or artifact.get("external_request_made") is not False:
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_preflight_record_invalid"}
+    if artifact.get("owner_input_read_count") != 1 \
+            or artifact.get("parsed_object") != artifact.get("observation_object"):
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_parse_copy_invalid"}
+    if artifact.get("stdout_capture_path") != str(PREFLIGHT_STDOUT.resolve()):
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_path_mismatch"}
+    if artifact.get("parsed_object_sha256") != hashlib.sha256(
+            _canonical_json(artifact.get("parsed_object")).encode("utf-8")).hexdigest() \
+            or artifact.get("observation_object_sha256") != hashlib.sha256(
+                _canonical_json(artifact.get("observation_object")).encode("utf-8")).hexdigest():
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_object_hash_invalid"}
+    if hashlib.sha256(stdout_bytes).hexdigest() != artifact.get("stdout_sha256") \
+            or stdout != artifact.get("raw_stdout"):
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_stdout_changed"}
+    event = artifact.get("synthetic_correlation", {})
+    argv = artifact.get("producer_argv")
+    if not isinstance(argv, list) or not argv or "--result" in argv or "--choices" in argv:
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_argv_invalid"}
+    plan_output = artifact.get("producer_structured_output", {})
+    packet = artifact.get("parsed_object", {})
+    fixture = artifact.get("synthetic_fixture", {})
+    fixture_pack = fixture.get("email_pack_content", {})
+    fixture_emails = fixture_pack.get("emails")
+    expected_id = packet.get("email_id")
+    if artifact.get("producer_return_code") != 0 \
+            or plan_output.get("status") != "ok" \
+            or plan_output.get("email_pack") != packet.get("email_pack") \
+            or plan_output.get("emails") != [expected_id] \
+            or plan_output.get("output_mode") != packet.get("mode") \
+            or not isinstance(fixture_emails, list) or len(fixture_emails) != 1:
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_producer_result_unexpected"}
+    email = fixture_emails[0]
+    verify_map = plan_output.get("verify")
+    jobs = plan_output.get("jobs")
+    if email.get("email_id") != expected_id \
+            or email.get("professor") != fixture.get("professor") \
+            or plan_output.get("needs_recheck_professors") != [fixture.get("professor")] \
+            or not isinstance(verify_map, dict) or not isinstance(verify_map.get(fixture.get("professor")), str) \
+            or not verify_map[fixture.get("professor")].startswith("needs_recheck:") \
+            or not isinstance(jobs, list) or len(jobs) != 1 \
+            or jobs[0].get("job_id") != "email:" + str(expected_id) \
+            or jobs[0].get("kind") != "email" or not isinstance(jobs[0].get("model_input"), dict):
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_plan_shape_unexpected"}
+    expected_model_input = input_verifier._expected_model_input(email)
+    actual_model_input = jobs[0]["model_input"]
+    if any(actual_model_input.get(key) != value for key, value in expected_model_input.items()):
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_plan_business_fields_mismatch"}
+    # This event is explicitly synthetic. It feeds the ordinary raw stdout
+    # bytes through the same verifier parser, without claiming app_server
+    # thread or aggregatedOutput provenance.
+    call = {
+        "id": event.get("commandExecution_id"),
+        "generation": event.get("runtime_generation"),
+        "thread": event.get("thread_id"),
+        "start": 1,
+        "end": 2,
+        "command": shlex.join(argv),
+        "output": stdout,
+    }
+    rows, problem = input_verifier.consumed_business_objects([call])
+    if problem or len(rows) != 1:
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_verifier_rejected_stdout",
+                      "detail": problem}
+    row = rows[0]
+    invocation = row.get("invocation", {})
+    invocation_flags = invocation.get("flags", {})
+    expected_flags = {
+        "--program-root": packet.get("program_root"),
+        "--email-pack": packet.get("email_pack"),
+        "--email-id": packet.get("email_id"),
+        "--template": packet.get("template"),
+        "--mode": packet.get("mode"),
+    }
+    if row.get("call_id") != event.get("commandExecution_id") \
+            or row.get("thread") != event.get("thread_id") \
+            or row.get("generation") != event.get("runtime_generation") \
+            or row.get("packet") != artifact.get("parsed_object") \
+            or row.get("invocation", {}).get("argv") != argv \
+            or invocation.get("action") != "stage5-plan" \
+            or any(invocation_flags.get(flag) != value for flag, value in expected_flags.items()) \
+            or any(flag in invocation_flags for flag in ("--result", "--choices")) \
+            or row.get("plan") != artifact.get("producer_structured_output") \
+            or row.get("return_code") != artifact.get("producer_return_code"):
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_verifier_association_mismatch"}
+    return artifact, None
+
+
 def actual_input_observation_preflight(contract):
-    """Confirm the implemented source while preserving the incomplete gate 2."""
+    """Check installed source and a real synthetic-file stdout capture.
+
+    The saved capture proves the local script/output/parser route only. It does
+    not establish app_server event association, model identity, or a formal run.
+    """
     observation = contract.get("codex", {}).get("owner_business_input_observation", {})
     prompt = HERE / "prompts" / "issue68-stage5-root.txt"
     prompt_supported = prompt.is_file() and OWNER_OBSERVATION_SCHEMA in prompt.read_text(encoding="utf-8")
@@ -65,21 +245,45 @@ def actual_input_observation_preflight(contract):
         and observation.get("source") == "output.app_server_events.commandExecution.aggregatedOutput"
         and prompt_supported
     )
+    artifact, capture_problem = _synthetic_capture_preflight()
+    capture_supported = artifact is not None and capture_problem is None
     second_gate_complete = contract.get("preflight", {}).get("second_gate_status") == "COMPLETE"
-    formal_allowed = source_supported and second_gate_complete \
+    missing_runtime_values = _runtime_environment_missing(contract)
+    formal_allowed = source_supported and capture_supported and not missing_runtime_values and second_gate_complete \
         and contract.get("preflight", {}).get("input_observation_gate", {}).get("formal_run_allowed") is True
+    block_reasons = []
+    if not second_gate_complete:
+        block_reasons.append("second_gate_incomplete")
+    if missing_runtime_values:
+        block_reasons.append("runtime_environment_unrecorded")
     return {
-        "ready": source_supported,
-        "state": "OBSERVATION_SOURCE_SUPPORTED" if source_supported else "CASE_NOT_STARTED",
-        "reason_code": None if source_supported else "actual_input_evidence_source_unavailable",
+        "ready": source_supported and capture_supported,
+        "state": "OBSERVATION_SOURCE_SUPPORTED" if source_supported and capture_supported else
+                 (capture_problem or {}).get("state", "CASE_NOT_STARTED"),
+        "reason_code": None if source_supported and capture_supported else
+                       ((capture_problem or {}).get("reason_code") if not capture_supported
+                        else "actual_input_evidence_source_unavailable"),
         "formal_run_allowed": formal_allowed,
-        "formal_run_block_reason": None if formal_allowed else "second_gate_incomplete",
+        "formal_run_block_reason": None if formal_allowed else
+                                  ("runtime_environment_unrecorded" if missing_runtime_values else
+                                   "second_gate_incomplete"),
+        "formal_run_block_reasons": block_reasons,
+        "runtime_environment_missing": missing_runtime_values,
+        "synthetic_capture": ({
+            "result": artifact.get("result"),
+            "stdout_sha256": artifact.get("stdout_sha256"),
+            "owner_input_read_count": artifact.get("owner_input_read_count"),
+            "same_object_used_for_argv_and_observation": True,
+            "verifier_parser": "consumed_business_objects",
+            "app_server_aggregatedOutput_proven": False,
+        } if artifact else None),
         "contract_revision": contract.get("revision"),
         "source_status": observation.get("status"),
         "source": observation.get("source"),
         "schema": observation.get("schema"),
-        "detail": ("r25 per-call parse observation is implemented; formal execution remains gated"
-                   if source_supported else "r25 observation prompt/parser source is not fully installed"),
+        "detail": ("Synthetic local command stdout was captured and re-read by the verifier; formal app_server, runtime values, and gate 2 remain unproven."
+                   if source_supported and capture_supported else
+                   "Observation source or synthetic capture preflight is not fully installed."),
     }
 
 

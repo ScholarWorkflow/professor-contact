@@ -22,6 +22,55 @@ ACTIONS = {"stage5-list-inputs", "stage5-partition-choices", "stage5-plan",
 OWNER_OBSERVATION_SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
 
 
+def _terminal_contract():
+    """Load the single machine-to-formal mapping from the runtime contract."""
+    contract_path = Path(__file__).resolve().parent / "issue68-runtime-evidence-contract-r19.json"
+    value = json.loads(contract_path.read_text(encoding="utf-8"))
+    mapping = value.get("machine_terminal_mapping")
+    if not isinstance(mapping, dict) or not isinstance(mapping.get("unknown_machine_state"), str):
+        raise ValueError("machine_terminal_mapping_invalid")
+    return mapping
+
+
+def formal_terminal(machine_state):
+    """Map every recognized verifier/adapter state using the runtime contract."""
+    try:
+        mapping = _terminal_contract()
+    except (OSError, ValueError, TypeError):
+        return "INVALID_TEST_EXECUTION"
+    return mapping.get(machine_state, mapping.get("unknown_machine_state", "INVALID_TEST_EXECUTION"))
+
+
+def combine_formal_terminals(machine_states):
+    """Keep each owner's terminal; only a confirmed product failure rolls up.
+
+    ``machine_states`` may be a mapping from owner identity to raw machine
+    state, or an ordered iterable of raw states. All non-failure states stay
+    attached to their owner and are never ranked against one another.
+    """
+    try:
+        mapping = _terminal_contract()
+    except (OSError, ValueError, TypeError):
+        return {"children": [], "overall_terminal": "INVALID_TEST_EXECUTION",
+                "confirmed_product_failure": False}
+    entries = machine_states.items() if isinstance(machine_states, dict) else enumerate(machine_states)
+    children = []
+    for child, state in entries:
+        machine_state = state if isinstance(state, str) else "unknown_machine_state"
+        terminal = mapping.get(machine_state, mapping["unknown_machine_state"])
+        children.append({"child": child, "machine_state": machine_state,
+                         "formal_terminal": terminal})
+    confirmed_product_failure = any(
+        row["machine_state"] == "FAIL_PRODUCT" and row["formal_terminal"] == "FAIL"
+        for row in children
+    )
+    return {
+        "children": children,
+        "confirmed_product_failure": confirmed_product_failure,
+        "overall_terminal": "FAIL" if confirmed_product_failure else None,
+    }
+
+
 def command_action(command, manifest):
     """Only a structured executed shell item can supply a stage5 CLI invocation.
 
@@ -1133,6 +1182,7 @@ def main():
         result = verify_codex(json.loads(args.events.read_text()), shared, manifest)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         result = verdict("INVALID_EVIDENCE", "unreadable_or_malformed_evidence", detail=str(exc))
+    result["formal_terminal"] = formal_terminal(result.get("verdict"))
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     return 0 if result.get("verdict") == "PASS" else 1
 

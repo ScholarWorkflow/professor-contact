@@ -1,10 +1,11 @@
-"""PC68-R1 r25 合成输入观察及运行入口预检。
+"""PC68-R1 r29 合成输入观察及运行入口预检。
 
 这些用例验证旧命令文字和事后文件读取不会再被当作逐次输入证据，
 并验证正式入口会在检查评估服务或发送请求前停止。它们不构成 PC68-R1 验收。
 """
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -84,7 +85,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         contract = entry.load_contract()
         observation = contract["codex"]["owner_business_input_observation"]
 
-        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r25-2026-10-06")
+        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r29-2026-10-06")
         self.assertEqual(observation["status"], "supported")
         self.assertEqual(observation["schema"], verify.OWNER_OBSERVATION_SCHEMA)
         self.assertEqual(observation["source"],
@@ -95,6 +96,11 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             self.assertIn(field, requirements)
         self.assertFalse(contract["preflight"]["input_observation_gate"]["formal_run_allowed"])
         self.assertEqual(contract["preflight"]["second_gate_status"], "INCOMPLETE")
+        self.assertEqual(len(contract["pc68_r1_steps"]), 7)
+        actual_values = contract["formal_runtime_environment"]["actual_values"]
+        self.assertIsNone(actual_values["model"])
+        self.assertIsNone(actual_values["executor_version"])
+        self.assertIsNone(actual_values["eval_service"]["pid"])
 
     def test_contract_claim_alone_cannot_enable_the_runner(self):
         contract = entry.load_contract()
@@ -115,7 +121,90 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
 
         self.assertTrue(gate["ready"])
         self.assertFalse(gate["formal_run_allowed"])
-        self.assertEqual(gate["formal_run_block_reason"], "second_gate_incomplete")
+        self.assertIn("second_gate_incomplete", gate["formal_run_block_reasons"])
+        self.assertIn("runtime_environment_unrecorded", gate["formal_run_block_reasons"])
+        self.assertGreater(len(gate["runtime_environment_missing"]), 0)
+        self.assertEqual(gate["synthetic_capture"]["result"], "CAPTURED_SYNTHETIC_ONLY")
+        self.assertEqual(gate["synthetic_capture"]["verifier_parser"], "consumed_business_objects")
+        self.assertFalse(gate["synthetic_capture"]["app_server_aggregatedOutput_proven"])
+
+    def test_synthetic_file_preflight_captures_stdout_and_verifier_reparses_it(self):
+        script = RUNTIME / "preflight_issue68_owner_input_observation_r29.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            artifact = root / "manifest.json"
+            stdout_capture = root / "stdout.json"
+            command_record = "uv run python synthetic-preflight.py | tee stdout.json"
+            result = subprocess.run(
+                ["uv", "--offline", "--cache-dir", "/private/tmp/issue68-uv-cache",
+                 "run", "python", str(script), "--artifact", str(artifact),
+                 "--stdout-capture", str(stdout_capture), "--command-record", command_record],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            stdout_capture.write_text(result.stdout, encoding="utf-8")
+            manifest = json.loads(artifact.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["owner_input_read_count"], 1)
+            self.assertEqual(manifest["parsed_object"], manifest["observation_object"])
+            plan = manifest["producer_structured_output"]
+            self.assertEqual(manifest["result"], "CAPTURED_SYNTHETIC_ONLY")
+            self.assertEqual(manifest["producer_return_code"], 0)
+            self.assertEqual(plan["status"], "ok")
+            self.assertEqual(plan["email_pack"], manifest["parsed_object"]["email_pack"])
+            self.assertEqual(plan["emails"], [manifest["parsed_object"]["email_id"]])
+            self.assertEqual(plan["output_mode"], "first")
+            self.assertEqual(plan["needs_recheck_professors"], ["合成教授"])
+            self.assertTrue(plan["verify"]["合成教授"].startswith("needs_recheck:"))
+            self.assertEqual(len(plan["jobs"]), 1)
+            self.assertEqual(plan["jobs"][0]["job_id"], "email:" + plan["emails"][0])
+            self.assertIsInstance(plan["jobs"][0]["model_input"], dict)
+            with mock.patch.object(entry, "PREFLIGHT_MANIFEST", artifact), \
+                    mock.patch.object(entry, "PREFLIGHT_STDOUT", stdout_capture):
+                checked, problem = entry._synthetic_capture_preflight()
+            self.assertIsNone(problem)
+            self.assertEqual(checked["stdout_sha256"], manifest["stdout_sha256"])
+            self.assertTrue(manifest["synthetic_correlation"]["is_synthetic"])
+
+    def test_machine_terminal_mapping_covers_states_and_conflicts(self):
+        contract = entry.load_contract()
+        mapping = contract["machine_terminal_mapping"]
+        aggregation = contract["terminal_aggregation"]
+        for machine_state, expected_terminal in mapping.items():
+            self.assertEqual(verify.formal_terminal(machine_state), expected_terminal,
+                             machine_state)
+        self.assertNotIn("conflict_priority", mapping)
+        self.assertEqual(aggregation["confirmed_failure_machine_state"], "FAIL_PRODUCT")
+        self.assertEqual(aggregation["confirmed_failure_formal_terminal"], "FAIL")
+        self.assertEqual(verify.formal_terminal("unrecognized-status"), "INVALID_TEST_EXECUTION")
+        mixed = verify.combine_formal_terminals({
+            "教授甲": "BLOCKED_OBSERVABILITY",
+            "教授乙": "INVALID_EVIDENCE",
+            "教授丙": "CASE_NOT_STARTED",
+        })
+        self.assertIsNone(mixed["overall_terminal"])
+        self.assertFalse(mixed["confirmed_product_failure"])
+        self.assertEqual(mixed["children"], [
+            {"child": "教授甲", "machine_state": "BLOCKED_OBSERVABILITY",
+             "formal_terminal": "BLOCKED"},
+            {"child": "教授乙", "machine_state": "INVALID_EVIDENCE",
+             "formal_terminal": "INVALID_TEST_EXECUTION"},
+            {"child": "教授丙", "machine_state": "CASE_NOT_STARTED",
+             "formal_terminal": "CASE_NOT_STARTED"},
+        ])
+        early_stop = verify.combine_formal_terminals({
+            "教授甲": "PASS", "教授乙": "NOT_TESTED",
+        })
+        self.assertIsNone(early_stop["overall_terminal"])
+        self.assertEqual([row["formal_terminal"] for row in early_stop["children"]],
+                         ["PASS", "NOT TESTED"])
+        proven_failure = verify.combine_formal_terminals({
+            "教授甲": "FAIL_PRODUCT", "教授乙": "BLOCKED_OBSERVABILITY",
+            "教授丙": "INVALID_EVIDENCE",
+        })
+        self.assertEqual(proven_failure["overall_terminal"], "FAIL")
+        self.assertTrue(proven_failure["confirmed_product_failure"])
+        self.assertEqual([row["formal_terminal"] for row in proven_failure["children"]],
+                         ["FAIL", "BLOCKED", "INVALID_TEST_EXECUTION"])
 
     def test_formal_entry_stops_before_service_inspection_or_request(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -144,7 +233,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             self.assertEqual(json.loads((output / "final-verdict.json").read_text())["state"],
                              "CASE_NOT_STARTED")
             self.assertEqual(json.loads((output / "final-verdict.json").read_text())["reason_code"],
-                             "second_gate_incomplete")
+                             "runtime_environment_unrecorded")
             self.assertTrue(json.loads((output / "input-evidence-preflight.json").read_text())["ready"])
             self.assertFalse(json.loads((output / "input-evidence-preflight.json").read_text())["formal_run_allowed"])
             clean_revision.assert_not_called()
