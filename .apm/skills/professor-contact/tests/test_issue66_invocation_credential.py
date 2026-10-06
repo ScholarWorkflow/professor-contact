@@ -26,6 +26,8 @@ reads for byte claims, no sleeps, no owner mocking.
 import hashlib
 import itertools
 import json
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -34,15 +36,48 @@ from test_stage2_resolved_direction import (
     parse, quote_id, run_cli, write_json)
 from test_stage3_direction_groups import (
     PROFESSOR, Stage3DirectionGroupBase, contact_state, result_file)
+from test_issue66_stage3_local_state import OpenRecorder, call_runner
 
 CANDIDATE_STATE = "套磁候选状态.json"
 CANDIDATES_MD = "套磁想法候选.md"
 GID_AB = contact_state.cross_group_id(["dir_A", "dir_B"])
 GID_AC = contact_state.cross_group_id(["dir_A", "dir_C"])
+# Frozen result-read expectations for the two distinct correction scopes.
+EXPECTED_DIRECTION_READS = frozenset({"dir_B"})
+EXPECTED_GROUP_READS = frozenset({GID_AB})
 CROSS_AB_ARG = '[["dir_A","dir_B"]]'
 CROSS_AC_ARG = '[["dir_A","dir_C"]]'
 BOTH_GROUPS_ARG = '[["dir_A","dir_B"],["dir_A","dir_C"]]'
 INVOCATION_VERSION = "stage3-invocation-v1"
+
+
+def artifact_snapshot(*roots):
+    """Capture existence, filesystem type, and complete bytes of test artifacts."""
+    snapshot = {}
+
+    def visit(path):
+        path = Path(path)
+        key = str(path)
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            snapshot[key] = ("absent",)
+            return
+        kind = stat.S_IFMT(info.st_mode)
+        if stat.S_ISLNK(info.st_mode):
+            snapshot[key] = (kind, os.readlink(path))
+        elif stat.S_ISDIR(info.st_mode):
+            snapshot[key] = (kind,)
+            for child in sorted(path.iterdir(), key=lambda item: item.name):
+                visit(child)
+        elif stat.S_ISREG(info.st_mode):
+            snapshot[key] = (kind, path.read_bytes())
+        else:
+            snapshot[key] = (kind,)
+
+    for root in roots:
+        visit(root)
+    return snapshot
 
 # Three active directions; dir_A/dir_B share paper P1, dir_C stands alone so a
 # second cross-direction group (A+C) can exist next to (A+B).
@@ -160,6 +195,13 @@ class InvocationCredentialBase(Stage3DirectionGroupBase):
 
     def load_validator_block(self):
         return self.load_state().get("validator") or {}
+
+    def assert_no_side_effects(self, operation, *protected_paths):
+        before = artifact_snapshot(*protected_paths)
+        result = operation()
+        self.assertEqual(artifact_snapshot(*protected_paths), before,
+                         "refused invocation changed a protected artifact")
+        return result
 
 
 class CaptureCredentialTests(InvocationCredentialBase):
@@ -281,11 +323,14 @@ class InvocationConsumptionTests(InvocationCredentialBase):
         ]
         for label, extra in cases:
             with self.subTest(case=label):
-                plan = self.credential_plan(cap, *extra)
+                plan = self.assert_no_side_effects(
+                    lambda: self.credential_plan(cap, *extra), self.root)
                 self.assertEqual(plan["status"], "error",
                                  msg=json.dumps(plan, ensure_ascii=False))
                 self.assertEqual(plan["reason_code"], "invalid_params")
-                fin = self.credential_finalize(cap, self.root / "results", *extra)
+                fin = self.assert_no_side_effects(
+                    lambda: self.credential_finalize(
+                        cap, self.root / "results", *extra), self.root)
                 self.assertEqual(fin["status"], "error")
                 self.assertEqual(fin["reason_code"], "invalid_params")
 
@@ -295,62 +340,70 @@ class InvocationConsumptionTests(InvocationCredentialBase):
                 ("file only", ("--invocation-file", cap["invocation_file"])),
                 ("sha only", ("--invocation-sha256", cap["invocation_sha256"]))):
             with self.subTest(case=label):
-                out = parse(run_cli("stage3-plan", *argv))
+                out = self.assert_no_side_effects(
+                    lambda: parse(run_cli("stage3-plan", *argv)), self.root)
                 self.assertEqual(out["status"], "error")
                 self.assertEqual(out["reason_code"], "invalid_params")
-                fin = parse(run_cli("stage3-finalize", *argv,
-                                    "--results", str(self.root / "results")))
+                fin = self.assert_no_side_effects(
+                    lambda: parse(run_cli(
+                        "stage3-finalize", *argv,
+                        "--results", str(self.root / "results"))), self.root)
                 self.assertEqual(fin["status"], "error")
                 self.assertEqual(fin["reason_code"], "invalid_params")
 
     def test_damaged_version_digest_and_ownership_fail_before_writes(self):
         cap, _ = self.capture()
         results = self.write_results("refused-results", self.all_docs())
-        before = {p: p.read_bytes() for p in sorted(results.iterdir())}
         template = json.loads(
             Path(cap["invocation_file"]).read_text(encoding="utf-8"))
         # Digest mismatch: real file, wrong expected sha.
-        out = parse(run_cli("stage3-plan",
-                            "--invocation-file", cap["invocation_file"],
-                            "--invocation-sha256", "0" * 64))
+        out = self.assert_no_side_effects(
+            lambda: parse(run_cli("stage3-plan",
+                                  "--invocation-file", cap["invocation_file"],
+                                  "--invocation-sha256", "0" * 64)), self.root)
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "invocation_sha256_mismatch")
-        fin = parse(run_cli("stage3-finalize",
-                            "--invocation-file", cap["invocation_file"],
-                            "--invocation-sha256", "0" * 64,
-                            "--results", str(results)))
+        fin = self.assert_no_side_effects(
+            lambda: parse(run_cli("stage3-finalize",
+                                  "--invocation-file", cap["invocation_file"],
+                                  "--invocation-sha256", "0" * 64,
+                                  "--results", str(results))), self.root)
         self.assertEqual(fin["status"], "error")
         self.assertEqual(fin["reason_code"], "invocation_sha256_mismatch")
         # Damaged bytes, matching digest of the damaged bytes.
         path, sha = self.write_credential({"version": INVOCATION_VERSION, "oops": True})
-        out = parse(run_cli("stage3-plan", "--invocation-file", path,
-                            "--invocation-sha256", sha))
+        out = self.assert_no_side_effects(
+            lambda: parse(run_cli("stage3-plan", "--invocation-file", path,
+                                  "--invocation-sha256", sha)), self.root)
         self.assertEqual(out["reason_code"], "invalid_invocation")
-        fin = parse(run_cli("stage3-finalize", "--invocation-file", path,
-                            "--invocation-sha256", sha,
-                            "--results", str(results)))
+        fin = self.assert_no_side_effects(
+            lambda: parse(run_cli("stage3-finalize", "--invocation-file", path,
+                                  "--invocation-sha256", sha,
+                                  "--results", str(results))), self.root)
         self.assertEqual(fin["reason_code"], "invalid_invocation")
         # Unsupported credential version.
         path, sha = self.write_credential({**template, "version": "stage3-invocation-v0"})
-        out = parse(run_cli("stage3-plan", "--invocation-file", path,
-                            "--invocation-sha256", sha))
+        out = self.assert_no_side_effects(
+            lambda: parse(run_cli("stage3-plan", "--invocation-file", path,
+                                  "--invocation-sha256", sha)), self.root)
         self.assertEqual(out["reason_code"], "invocation_version_unsupported")
         # Professor directory outside the credential's program root.
         foreign = {**template,
                    "professor_dir": str(self.root / "其他研究" / PROFESSOR)}
         path, sha = self.write_credential(foreign)
-        out = parse(run_cli("stage3-plan", "--invocation-file", path,
-                            "--invocation-sha256", sha))
+        out = self.assert_no_side_effects(
+            lambda: parse(run_cli("stage3-plan", "--invocation-file", path,
+                                  "--invocation-sha256", sha)), self.root)
         self.assertEqual(out["reason_code"], "invalid_professor_dir")
         # And the state runner needs one of the two identity sources.
-        out = parse(run_cli("stage3-plan"))
+        out = self.assert_no_side_effects(lambda: parse(run_cli("stage3-plan")),
+                                          self.root)
         self.assertEqual(out["reason_code"], "invalid_params")
-        fin = parse(run_cli("stage3-finalize", "--results", str(self.root / "r")))
+        fin = self.assert_no_side_effects(
+            lambda: parse(run_cli("stage3-finalize", "--results",
+                                  str(self.root / "r"))), self.root)
         self.assertEqual(fin["reason_code"], "invalid_params")
-        # Every refusal above happened before any write: the prepared result
-        # files are byte-identical and no candidate state was created.
-        after = {p: p.read_bytes() for p in sorted(results.iterdir())}
-        self.assertEqual(after, before)
+        # Snapshot assertions above cover the complete fixture tree after each refusal.
         self.assertFalse((self.prof_dir / CANDIDATE_STATE).exists())
 
     def test_profile_digest_guard_stops_stale_credentials(self):
@@ -435,7 +488,12 @@ class CredentialCorrectionTests(InvocationCredentialBase):
             "dir_A": (fix / result_file("candidates", "dir_A")).read_bytes(),
             "dir_C": (fix / result_file("candidates", "dir_C")).read_bytes()}
         before = self.load_state()
-        out = self.credential_finalize(cap, fix, "--validation-file", self.validation)
+        with OpenRecorder() as recorder:
+            out, code = call_runner(
+                "stage3-finalize", "--invocation-file", cap["invocation_file"],
+                "--invocation-sha256", cap["invocation_sha256"],
+                "--results", str(fix), "--validation-file", self.validation)
+        self.assertEqual(code, 0)
         self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
         self.assertEqual(out["corrected"], ["dir_B"])
         self.assertEqual(out["corrected_groups"], [])
@@ -444,6 +502,14 @@ class CredentialCorrectionTests(InvocationCredentialBase):
             {k: (fix / result_file("candidates", k)).read_bytes()
              for k in corrupt_before},
             corrupt_before, "out-of-set result files were never consumed")
+        self.assertEqual(EXPECTED_DIRECTION_READS, frozenset({"dir_B"}))
+        self.assertTrue(recorder.was_opened(
+            fix / result_file("candidates", "dir_B")),
+            "the in-scope direction result was opened through the real reader")
+        for direction_id in ("dir_A", "dir_C"):
+            self.assertFalse(recorder.was_opened(
+                fix / result_file("candidates", direction_id)),
+                f"out-of-scope direction result was opened: {direction_id}")
         after = self.load_state()
         by_did_before = {d["direction_id"]: d for d in before["directions"]}
         by_did_after = {d["direction_id"]: d for d in after["directions"]}
@@ -493,7 +559,12 @@ class CredentialCorrectionTests(InvocationCredentialBase):
         corrected["candidates"][0]["title"] = "候选 dir_A_1 修正版"
         fix = self.write_results("cred-fix-a", {"dir_A": corrected})
         before = self.load_state()
-        out2 = self.credential_finalize(cap, fix, "--validation-file", self.validation)
+        with OpenRecorder() as recorder:
+            out2, code = call_runner(
+                "stage3-finalize", "--invocation-file", cap["invocation_file"],
+                "--invocation-sha256", cap["invocation_sha256"],
+                "--results", str(fix), "--validation-file", self.validation)
+        self.assertEqual(code, 0)
         self.assertEqual(out2["status"], "ok", msg=json.dumps(out2, ensure_ascii=False))
         self.assertEqual(out2["corrected"], ["dir_A"])
         self.assertEqual(out2["corrected_groups"], [])
@@ -544,13 +615,24 @@ class CredentialCorrectionTests(InvocationCredentialBase):
         sibling = fix / result_file("candidates", GID_AC)
         sibling.write_bytes(b"{ corrupt sibling group")
         sibling_before = sibling.read_bytes()
-        out2 = self.credential_finalize(cap, fix, "--validation-file", self.validation)
+        with OpenRecorder() as recorder:
+            out2, code = call_runner(
+                "stage3-finalize", "--invocation-file", cap["invocation_file"],
+                "--invocation-sha256", cap["invocation_sha256"],
+                "--results", str(fix), "--validation-file", self.validation)
+        self.assertEqual(code, 0)
         self.assertEqual(out2["status"], "ok", msg=json.dumps(out2, ensure_ascii=False))
         self.assertEqual(out2["corrected"], [])
         self.assertEqual(out2["corrected_groups"], [GID_AB])
         self.assertEqual(out2["dropped_cross_direction"], [])
         self.assertEqual(sibling.read_bytes(), sibling_before,
                          "the out-of-work-set group result was never consumed")
+        self.assertEqual(EXPECTED_GROUP_READS, frozenset({GID_AB}))
+        self.assertTrue(recorder.was_opened(
+            fix / result_file("candidates", GID_AB)),
+            "the in-scope group result was opened through the real reader")
+        self.assertFalse(recorder.was_opened(sibling),
+                         "the corrupted sibling group result was never opened")
         after = self.load_state()
         groups = {g["group_id"]: g for g in after["cross_direction_groups"]}
         self.assertEqual([g["group_id"] for g in after["cross_direction_groups"]],

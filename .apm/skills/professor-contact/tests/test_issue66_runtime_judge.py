@@ -22,6 +22,7 @@ frozen contract — never by the judge.  Sample families:
 """
 import hashlib
 import json
+import shlex
 import sys
 import tempfile
 import unittest
@@ -72,20 +73,48 @@ def action(atype, path):
 
 
 def exec_item(index, thread, command, output=None, actions=None,
-              truncate=False, status="completed"):
+              truncate=False, status="completed", turn_id=None,
+              cwd="/tmp/fixture"):
     if output is not None and truncate:
         output = "Warning: truncated output (original 9999 lines)\n" + output
-    return {"message": {"method": "item/completed", "params": {
-        "threadId": thread, "item": {"type": "commandExecution",
-        "id": f"ce-{index}", "command": command,
-        "aggregatedOutput": output, "exitCode": 0, "status": status,
-        "commandActions": actions or []}}}}
+    params = {"threadId": thread, "turnId": turn_id,
+              "item": {"type": "commandExecution", "id": f"ce-{index}",
+                       "command": command, "cwd": cwd}}
+    started = {"message": {"method": "item/started", "params": {
+        **params, "item": {**params["item"], "status": "inProgress"}}}}
+    completed = {"message": {"method": "item/completed", "params": {
+        **params, "item": {**params["item"], "aggregatedOutput": output,
+                            "exitCode": 0 if status == "completed" else 1,
+                            "status": status, "commandActions": actions or []}}}}
+    return [started, completed]
 
 
-def child_message(thread, text):
+def child_message(thread, text, turn_id=None):
     return {"message": {"method": "rawResponseItem/completed", "params": {
-        "threadId": thread, "item": {"type": "message", "role": "assistant",
+        "threadId": thread, "turnId": turn_id,
+        "item": {"type": "message", "id": f"msg-{thread}",
+        "role": "assistant",
         "content": [{"type": "output_text", "text": text}]}}}}
+
+
+def file_change_event(thread, path, operation="created", turn_id=None):
+    params = {"threadId": thread, "turnId": turn_id, "item": {"type": "fileChange",
+        "id": f"fc-{thread}-{Path(path).name}", "changes": [
+            {"path": path, "operation": operation}]}}
+    if turn_id is not None:
+        params["turnId"] = turn_id
+    return {"message": {"method": "item/completed", "params": params}}
+
+
+def add_validator_file_change(fx, path, operation="created"):
+    finish = next(index for index, event in enumerate(fx.events)
+                  if event.get("message", {}).get("method") == "item/completed"
+                  and event.get("message", {}).get("params", {}).get("item", {}).get("type")
+                  == "subAgentActivity"
+                  and event["message"]["params"]["item"].get("kind") == "completed"
+                  and event["message"]["params"]["item"].get("agentThreadId") == V1)
+    fx.events.insert(finish, file_change_event(
+        V1, path, operation=operation, turn_id=fx.turn_id(V1)))
 
 
 def spawn_events(index, call_id, agent_type, thread=None, machine_fail=False):
@@ -106,9 +135,6 @@ def spawn_events(index, call_id, agent_type, thread=None, machine_fail=False):
     events.append({"message": {"method": "item/started", "params": {
         "threadId": ROOT, "item": {"type": "subAgentActivity",
         "id": call_id, "kind": "started", "agentThreadId": thread}}}})
-    events.append({"message": {"method": "item/completed", "params": {
-        "threadId": ROOT, "item": {"type": "subAgentActivity",
-        "id": call_id, "kind": "started", "agentThreadId": thread}}}})
     return events
 
 
@@ -123,21 +149,43 @@ class Fixture:
         self._counter = iter(range(1, 1000))
         self.state = PASS_STATE
 
+    @staticmethod
+    def turn_id(thread):
+        return {G1: "turn-gen-1", V1: "turn-val-1",
+                G2: "turn-gen-2", V2: "turn-val-2"}.get(thread,
+                                                             "root-turn-1")
+
     # -- low-level builders -------------------------------------------------
 
     def _next(self):
         return next(self._counter)
 
     def root_exec(self, command, output=None, actions=None, truncate=False):
-        self.events.append(exec_item(self._next(), ROOT, command, output,
-                                     actions, truncate))
+        self.events.extend(exec_item(self._next(), ROOT, command, output,
+                                     actions, truncate,
+                                     turn_id=self.turn_id(ROOT)))
 
     def child_exec(self, thread, command, output=None, actions=None):
-        self.events.append(exec_item(self._next(), thread, command, output,
-                                     actions))
+        self.events.extend(exec_item(self._next(), thread, command, output,
+                                     actions, turn_id=self.turn_id(thread)))
 
     def child_message(self, thread, text):
-        self.events.append(child_message(thread, text))
+        self.events.append(child_message(thread, text, self.turn_id(thread)))
+
+    def complete_child(self, thread):
+        spec = next((row for row in reversed(self.spawn_specs)
+                     if row[2] == thread), None)
+        if spec is None:
+            return
+        call_id, _agent_type, _thread = spec
+        self.events.append({"message": {"method": "item/completed", "params": {
+            "threadId": ROOT, "turnId": self.turn_id(ROOT),
+            "item": {"type": "subAgentActivity", "id": call_id,
+                     "kind": "completed", "agentThreadId": thread}}}})
+        self.events.append({"message": {"method": "item/completed", "params": {
+            "threadId": ROOT, "turnId": self.turn_id(ROOT),
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": [{"type": "input_text", "text": "completed"}]}}}})
 
     def spawn(self, agent_type, thread=None, machine_fail=False,
               call_id=None, reported_thread=None):
@@ -187,6 +235,7 @@ class Fixture:
                    if round_no == 2 else ""),
                 '{"status": "ok", "state_path": "/tmp/fixture/state"}',
                 actions=[action("read", f"/tmp/fixture/{PACK_NAME}")])
+        self.complete_child(thread)
 
     def prepare(self, round_no, *, handoff_drift=False):
         sha = "drifted" if handoff_drift else HANDOFF_SHA
@@ -197,34 +246,47 @@ class Fixture:
             json.dumps({"status": "ok", "round": round_no,
                         "handoff_file": HANDOFF_FILE,
                         "handoff_sha256": sha,
-                        "output_file": OUTPUT_FILE}),
+                        "output_file": OUTPUT_FILE,
+                        "validation_file": RECORDED_FILE,
+                        "render_sha256": "render-digest"}),
             actions=[action("read", f"/tmp/fixture/{STATE_NAME}")])
 
     def validator_round(self, thread, *, text=None, no_write=False,
                         protected_write=False, outside_write=False,
                         double_message=False):
+        text = text or msg_text()
         actions = [action("read", f"/tmp/fixture/{MD_NAME}")]
+        raw = text.encode("utf-8")
+        writer = (f"open({OUTPUT_FILE!r}, 'xb').write({raw!r})")
         if not no_write:
-            actions.append(action("write", OUTPUT_FILE))
+            self.child_exec(thread, "python3 -c " + shlex.quote(writer),
+                            output="", actions=actions)
+        else:
+            self.child_exec(thread, f"cat /tmp/fixture/{MD_NAME}",
+                            output="read", actions=actions)
         if protected_write:
-            actions.append(action("write", f"/tmp/fixture/{STATE_NAME}"))
+            self.events.append(file_change_event(
+                thread, f"/tmp/fixture/{STATE_NAME}",
+                turn_id=self.turn_id(thread)))
         if outside_write:
-            actions.append(action("write", "/tmp/fixture/别的文件.json"))
-        self.child_exec(thread, f"validator writes {OUTPUT_FILE}",
-                        actions=actions)
-        self.child_message(thread, text or msg_text())
+            self.events.append(file_change_event(
+                thread, "/tmp/fixture/别的文件.json",
+                turn_id=self.turn_id(thread)))
+        self.child_message(thread, text)
         if double_message:
             self.child_message(thread, "第二条业务消息")
+        self.complete_child(thread)
 
     def save(self, *, sha=None, handoff_drift=False, truncate=False,
-             validation_file="/tmp/fixture/recorded.json"):
+             validation_file="/tmp/fixture/recorded.json", round_no=1):
         sha = sha or msg_sha()
         used_sha = "drifted" if handoff_drift else HANDOFF_SHA
         self.root_exec(
             "contact_state.py stage3-save-validation --handoff-file "
             f"{HANDOFF_FILE} --handoff-sha256 {used_sha}",
             json.dumps({"status": "ok", "validation_sha256": sha,
-                        "validation_file": validation_file}),
+                        "validation_file": validation_file,
+                        "round": round_no, "render_sha256": "render-digest"}),
             actions=[action("read", OUTPUT_FILE),
                      action("write", validation_file)],
             truncate=truncate)
@@ -244,7 +306,9 @@ class Fixture:
             json.dumps({"status": "ok",
                         "validation_input_sha256": sha,
                         "needs_correction": needs_correction,
-                        "round": round_no}),
+                        "round": round_no,
+                        "validation_file": RECORDED_FILE,
+                        "render_sha256": "render-digest"}),
             actions=[action("read", validation_file if not handoff_drift
                             else OUTPUT_FILE)])
 
@@ -258,10 +322,11 @@ class Fixture:
     def root_reconstruction(self):
         """The root rebuilds the source itself: a root exec writes the
         output file inside the round window; the validator never writes."""
-        self.events.append(exec_item(
+        self.events.extend(exec_item(
             self._next(), ROOT,
             "python3 -c 'open(\"" + OUTPUT_FILE + "\", \"w\")'",
-            actions=[action("write", OUTPUT_FILE)]))
+            actions=[action("write", OUTPUT_FILE)],
+            turn_id=self.turn_id(ROOT)))
 
     def adapter(self):
         return {"dispatch": {"thread_relations": self.relations,
@@ -284,7 +349,8 @@ class Fixture:
 
     def response(self):
         return {"output": {"thread_id": ROOT,
-                           "app_server_events": self.events}}
+                           "app_server_events": self.events + [
+                               {"message": {"method": "turn/completed"}}]}}
 
 
 def legal_two_child(fx: Fixture, *, whitespace=False):
@@ -308,11 +374,11 @@ def legal_four_child(fx: Fixture, *, second_fails=False):
     fail_text = msg_text("候选 dir_A_1 修正版", verdict="fail")
     if second_fails:
         fx.validator_round(V2, text=fail_text)
-        fx.save(sha=msg_sha(fail_text))
+        fx.save(sha=msg_sha(fail_text), round_no=2)
         fx.record(2, sha=msg_sha(fail_text))
     else:
         fx.validator_round(V2, text=msg_text())
-        fx.save(sha=msg_sha())
+        fx.save(sha=msg_sha(), round_no=2)
         fx.record(2, sha=msg_sha())
     fx.rebuild()
 
@@ -328,16 +394,40 @@ def legal_two_child_spine(fx: Fixture):
     fx.record(1, sha=msg_sha(fail_text), needs_correction=True)
 
 
+def valid_surfaces():
+    route_checks = [
+        {"name": name, "status": "pass"}
+        for name in ("formal_ownership", "no_nested_formal_spawn",
+                     "root_direct_spawn_child_count",
+                     "pre_zero_write_snapshot", "post_matches_current")]
+    return {
+        "install": {"status": "pass", "checks": [
+            {"name": "install_projection", "status": "pass"}]},
+        "routing": {"status": "pass", "classification": "PASS",
+                    "checks": route_checks},
+        "pre": {"status": "pass"},
+        "post": {"status": "pass"},
+    }
+
+
 def run(fx: Fixture, *, state="default", delegation_override=None,
+        adapter_override=None, surface_evidence=None,
         delegation_state="confirmed"):
     tmp = Path(tempfile.mkdtemp())
     response_path = tmp / "response.json"
     adapter_path = tmp / "adapter.json"
     state_path = tmp / STATE_NAME
     output_path = tmp / "verdict.json"
+    surface_paths = {}
+    surface_flags = {"install": "--install-evidence",
+                     "routing": "--routing-evidence",
+                     "pre": "--pre-snapshot",
+                     "post": "--post-snapshot"}
     response_path.write_text(json.dumps(fx.response(), ensure_ascii=False),
                              encoding="utf-8")
     adapter = fx.adapter()
+    if adapter_override is not None:
+        adapter = adapter_override
     if delegation_override is not None:
         delegation_children, relations = delegation_override
         adapter["delegation"]["child_thread_ids"] = list(delegation_children)
@@ -345,14 +435,26 @@ def run(fx: Fixture, *, state="default", delegation_override=None,
         adapter["dispatch"]["thread_relations"] = relations
     adapter_path.write_text(json.dumps(adapter, ensure_ascii=False),
                             encoding="utf-8")
+    surface_evidence = (valid_surfaces() if surface_evidence is None
+                        else surface_evidence)
+    for name, flag in surface_flags.items():
+        if name in surface_evidence:
+            surface_path = tmp / f"{name}.json"
+            surface_path.write_text(
+                json.dumps(surface_evidence[name], ensure_ascii=False),
+                encoding="utf-8")
+            surface_paths[flag] = str(surface_path)
     if isinstance(state, dict) or state is None:
         if state is not None:
             state_path.write_text(json.dumps(state, ensure_ascii=False),
                                   encoding="utf-8")
-    judge.main(["--eval-response", str(response_path),
-                "--adapter-output", str(adapter_path),
-                "--candidate-state", str(state_path),
-                "--output", str(output_path)])
+    argv = ["--eval-response", str(response_path),
+            "--adapter-output", str(adapter_path),
+            "--candidate-state", str(state_path),
+            "--output", str(output_path)]
+    for flag, path in surface_paths.items():
+        argv.extend([flag, path])
+    judge.main(argv)
     return json.loads(output_path.read_text(encoding="utf-8"))
 
 
@@ -396,15 +498,15 @@ class AttributionTests(unittest.TestCase):
 
     def test_machine_failure_prefix_blocks(self):
         fx = Fixture()
-        fx.generator_round(G1)
         fx.spawn(judge.GENERATOR_AGENT, G1)
+        fx.generator_round(G1)
         fx.spawn(judge.VALIDATOR_AGENT, None, machine_fail=True)
         verdict = run(fx, state=None,
                       delegation_override=([G1], fx.relations),
                       delegation_state="unconfirmed")
         self.assertEqual(verdict["classification"], "BLOCKED", verdict)
 
-    def test_nested_foreign_relation_is_invalid(self):
+    def test_nested_foreign_relation_is_product_failure(self):
         fx = Fixture()
         legal_two_child(fx)
         fx.relations.append({"call_id": "call-foreign",
@@ -413,8 +515,8 @@ class AttributionTests(unittest.TestCase):
                              "status": "completed",
                              "tool": "spawnAgent"})
         verdict = run(fx, state=PASS_STATE)
-        self.assertEqual(verdict["classification"],
-                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-attribution"], "fail")
 
     def test_child_without_formal_relation_is_invalid(self):
         fx = Fixture()
@@ -423,6 +525,85 @@ class AttributionTests(unittest.TestCase):
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"],
                          "INVALID_TEST_EXECUTION", verdict)
+
+    def test_named_root_call_with_confirmed_zero_children_fails(self):
+        fx = Fixture()
+        fx.spawn(judge.GENERATOR_AGENT)
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-attribution"], "fail")
+
+    def test_named_root_call_with_missing_adapter_evidence_is_invalid(self):
+        fx = Fixture()
+        fx.spawn(judge.GENERATOR_AGENT)
+        verdict = run(fx, state=PASS_STATE, adapter_override={})
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        attribution = next(row for row in verdict["facts"]
+                          if row["fact"] == "F-attribution")
+        self.assertEqual(attribution["verdict"], "invalid")
+
+    def test_extra_off_root_formal_relation_fails(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        fx.relations.append({"call_id": "call-off-root",
+                             "sender_thread_id": "foreign-root",
+                             "receiver_thread_ids": ["foreign-child"],
+                             "status": "completed", "tool": "spawnAgent"})
+        fx.children.append("foreign-child")
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-attribution"], "fail")
+
+    def test_conflicting_formal_owners_for_child_are_invalid(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        fx.relations.append({"call_id": "call-conflict",
+                             "sender_thread_id": "foreign-root",
+                             "receiver_thread_ids": [G1],
+                             "status": "completed", "tool": "spawnAgent"})
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        attribution = next(row for row in verdict["facts"]
+                          if row["fact"] == "F-attribution")
+        self.assertEqual(attribution["verdict"], "invalid")
+        self.assertTrue(any("formal ownership conflict" in item
+                            for item in attribution["evidence"]))
+
+
+class FoldedEvidenceTests(unittest.TestCase):
+    def test_routing_check_conflict_cannot_be_hidden_by_pass_summary(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        surfaces = valid_surfaces()
+        surfaces["routing"]["checks"][1]["status"] = "fail"
+        verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-routing-verifier"], "invalid")
+
+    def test_install_check_status_is_folded_into_unique_verdict(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        surfaces = valid_surfaces()
+        surfaces["install"]["checks"][0]["status"] = "fail"
+        verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-install"], "invalid")
+
+    def test_required_routing_and_install_evidence_cannot_be_omitted(self):
+        for missing in ("routing", "install"):
+            with self.subTest(missing=missing):
+                fx = Fixture()
+                legal_two_child(fx)
+                surfaces = valid_surfaces()
+                surfaces.pop(missing)
+                verdict = run(fx, state=PASS_STATE,
+                              surface_evidence=surfaces)
+                self.assertEqual(verdict["classification"],
+                                 "INVALID_TEST_EXECUTION", verdict)
 
 
 class CredentialValueTests(unittest.TestCase):
@@ -449,12 +630,60 @@ class CredentialValueTests(unittest.TestCase):
         fx.generator_round(G1, with_finalize=False)
         fx.spawn(judge.VALIDATOR_AGENT, V1)
         fx.validator_round(V1)
-        fx.save(sha=msg_sha())
+        fx.save(sha=msg_sha(), round_no=2)
         fx.record(1, sha=msg_sha())
         fx.rebuild()
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-credential-chain"], "fail")
+
+    def test_finalize_in_second_child_does_not_replace_first_finalize(self):
+        fx = Fixture()
+        legal_four_child(fx, second_fails=True)
+        fx.events = [event for event in fx.events if not (
+            event.get("message", {}).get("params", {}).get("threadId") == G1
+            and event.get("message", {}).get("params", {}).get("item", {}).get("type")
+            == "commandExecution"
+            and "stage3-finalize" in event["message"]["params"]["item"].get("command", ""))]
+        verdict = run(fx, state=TERMINAL2_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-credential-chain"], "fail")
+
+    def test_unsuccessful_capture_return_cannot_bind_credentials(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        capture = next(event for event in fx.events
+                       if event.get("message", {}).get("params", {}).get("threadId") == G1
+                       and event.get("message", {}).get("params", {}).get("item", {}).get("type")
+                       == "commandExecution"
+                       and "--capture-invocation" in event["message"]["params"]["item"].get("command", ""))
+        capture = next(event for event in fx.events
+                       if event.get("message", {}).get("method") == "item/completed"
+                       and event.get("message", {}).get("params", {}).get("threadId") == G1
+                       and event.get("message", {}).get("params", {}).get("item", {}).get("type")
+                       == "commandExecution"
+                       and "--capture-invocation" in event["message"]["params"]["item"].get("command", ""))
+        item = capture["message"]["params"]["item"]
+        item["exitCode"] = 1
+        item["status"] = "failed"
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-credential-chain"], "fail")
+
+    def test_failed_save_return_cannot_be_followed_by_record_as_pass(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        save = next(event for event in fx.events
+                    if event.get("message", {}).get("method") == "item/completed"
+                    and event.get("message", {}).get("params", {}).get("threadId") == ROOT
+                    and event.get("message", {}).get("params", {}).get("item", {}).get("type")
+                    == "commandExecution"
+                    and "stage3-save-validation" in event["message"]["params"]["item"].get("command", ""))
+        save["message"]["params"]["item"]["exitCode"] = 1
+        save["message"]["params"]["item"]["status"] = "failed"
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-handoff-chain"], "fail")
 
 
 class RawOriginalTests(unittest.TestCase):
@@ -482,11 +711,48 @@ class RawOriginalTests(unittest.TestCase):
         fx = Fixture()
         legal_two_child(fx)
         for event in fx.events:
-            item = event["message"]["params"]["item"]
+            params = event["message"]["params"]
+            item = params["item"]
             if item.get("type") == "commandExecution" \
-                    and event["message"]["params"].get("threadId") == V1:
-                item["commandActions"] = [
-                    action("read", f"/tmp/fixture/{MD_NAME}")]
+                    and params.get("threadId") == V1:
+                item["command"] = f"cat /tmp/fixture/{MD_NAME}"
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+
+    def test_raw_text_blocks_are_concatenated_as_original_utf8_bytes(self):
+        blocks = [{"type": "output_text", "text": "  第一块\n"},
+                  {"type": "output_text", "text": "第二块  \n"}]
+        raw = judge.final_message_bytes({"content": blocks})
+        self.assertEqual(raw, "  第一块\n第二块  \n".encode("utf-8"))
+
+    def test_file_change_event_proves_production_without_command_actions(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for event in fx.events:
+            params = event.get("message", {}).get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == V1 and item.get("type") == "commandExecution":
+                item["commandActions"] = []
+        fx.events = [event for event in fx.events if not (
+            event.get("message", {}).get("params", {}).get("threadId") == V1
+            and (event.get("message", {}).get("params", {}).get("item", {}).get("type")
+                 == "fileChange" or (
+                     event.get("message", {}).get("params", {}).get("item", {}).get("type")
+                     == "commandExecution" and
+                     "python3 -c" in event["message"]["params"]["item"].get("command", ""))))]
+        add_validator_file_change(fx, OUTPUT_FILE)
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "PASS", verdict)
+
+    def test_message_from_another_turn_cannot_be_attributed_to_production(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for event in fx.events:
+            params = event.get("message", {}).get("params", {})
+            if params.get("threadId") == V1:
+                params["turnId"] = ("validator-turn" if params.get("item", {}).get("type")
+                                     == "commandExecution" else "other-turn")
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"],
                          "INVALID_TEST_EXECUTION", verdict)
@@ -496,12 +762,7 @@ class WriteScopeTests(unittest.TestCase):
     def test_protected_file_write_fails(self):
         fx = Fixture()
         legal_two_child(fx)
-        for event in fx.events:
-            item = event["message"]["params"]["item"]
-            if item.get("type") == "commandExecution" \
-                    and event["message"]["params"].get("threadId") == V1:
-                item["commandActions"].append(
-                    action("write", f"/tmp/fixture/{STATE_NAME}"))
+        add_validator_file_change(fx, f"/tmp/fixture/{STATE_NAME}")
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail")
@@ -509,14 +770,28 @@ class WriteScopeTests(unittest.TestCase):
     def test_outside_output_write_fails(self):
         fx = Fixture()
         legal_two_child(fx)
-        for event in fx.events:
-            item = event["message"]["params"]["item"]
-            if item.get("type") == "commandExecution" \
-                    and event["message"]["params"].get("threadId") == V1:
-                item["commandActions"].append(
-                    action("write", "/tmp/fixture/别的文件.json"))
+        add_validator_file_change(fx, "/tmp/fixture/别的文件.json")
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
+
+    def test_actual_file_change_outside_output_fails(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        add_validator_file_change(fx, "/tmp/fixture/elsewhere.json")
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail")
+
+    def test_command_actions_alone_do_not_establish_write_violation(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for event in fx.events:
+            params = event.get("message", {}).get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == V1 and item.get("type") == "commandExecution":
+                item["commandActions"] = [action("write", f"/tmp/fixture/{STATE_NAME}")]
+        verdict = run(fx, state=PASS_STATE)
+        self.assertNotEqual(facts(verdict)["F-validator-write-scope"], "fail", verdict)
 
 
 class OrderAndStopTests(unittest.TestCase):
@@ -535,7 +810,7 @@ class OrderAndStopTests(unittest.TestCase):
         fx.prepare(2)
         fx.spawn(judge.VALIDATOR_AGENT, V2)
         fx.validator_round(V2)
-        fx.save(sha=msg_sha())
+        fx.save(sha=msg_sha(), round_no=2)
         fx.record(2, sha=msg_sha())
         fx.rebuild()
         verdict = run(fx, state=TERMINAL2_STATE)
@@ -575,6 +850,21 @@ class OrderAndStopTests(unittest.TestCase):
             "dir_A": {"result": "fail_after_2_rounds", "rounds": 1}}}})
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-terminal-state"], "fail")
+
+    def test_terminal_state_round_count_matches_observed_validator_rounds(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        verdict = run(fx, state=TERMINAL2_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-terminal-state"], "fail")
+
+    def test_rebuild_after_terminal_record_is_exactly_once(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        fx.rebuild()
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-rebuild"], "fail")
 
 
 class EvidenceChannelTests(unittest.TestCase):

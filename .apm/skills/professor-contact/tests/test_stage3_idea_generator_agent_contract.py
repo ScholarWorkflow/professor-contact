@@ -10,6 +10,7 @@ import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 AGENT_PATH = REPO_ROOT / ".apm" / "agents" / "professor-contact-idea-generator.agent.md"
+SKILL_PATH = REPO_ROOT / ".apm" / "skills" / "professor-contact" / "SKILL.md"
 
 
 def _frontmatter_lines(text: str) -> list[str]:
@@ -23,10 +24,35 @@ def _frontmatter_lines(text: str) -> list[str]:
     return lines[1:end]
 
 
+def _section(text: str, start: str, end: str) -> str:
+    start_at = text.find(start)
+    if start_at < 0:
+        raise AssertionError(f"missing section start: {start}")
+    end_at = text.find(end, start_at + len(start))
+    if end_at < 0:
+        raise AssertionError(f"missing section end: {end}")
+    return text[start_at:end_at]
+
+
+def _assert_in_order(testcase, text: str, tokens: list[str], label: str) -> None:
+    positions = [text.find(token) for token in tokens]
+    testcase.assertTrue(
+        all(position >= 0 for position in positions),
+        f"{label} is missing handoff steps: "
+        f"{[token for token, position in zip(tokens, positions) if position < 0]}",
+    )
+    testcase.assertEqual(
+        positions, sorted(positions),
+        f"{label} must follow prepare → validator output_file → save → record",
+    )
+
+
 class Stage3IdeaGeneratorAgentContractTests(unittest.TestCase):
     def setUp(self):
         self.assertTrue(AGENT_PATH.exists(), f"missing agent document: {AGENT_PATH}")
+        self.assertTrue(SKILL_PATH.exists(), f"missing skill document: {SKILL_PATH}")
         self.text = AGENT_PATH.read_text(encoding="utf-8")
+        self.skill_text = SKILL_PATH.read_text(encoding="utf-8")
         self.frontmatter = _frontmatter_lines(self.text)
 
     def test_frontmatter_keys_are_unique(self):
@@ -86,6 +112,39 @@ class Stage3IdeaGeneratorAgentContractTests(unittest.TestCase):
             r"(?:最多|max)\s*2\s*(?:轮|round)",
             "the style correction loop must remain capped at two rounds",
         )
+
+    def test_opencode_example_and_common_closeout_follow_skill_handoff_chain(self):
+        tokens = [
+            "stage3-prepare-validation",
+            "output_file",
+            "stage3-save-validation",
+            "stage3-record-validation --handoff-file",
+            "--expected-validation-sha256",
+        ]
+        skill_chain = _section(
+            self.skill_text,
+            "**Stage 3 在 validator 记录之前不算完成**",
+            "**Stage 3 终态后重建程序级总览",
+        )
+        _assert_in_order(self, skill_chain, tokens, "SKILL 四步交接链")
+
+        agent_loop = _section(
+            self.text,
+            "### Step 3.6 — 白话校验循环",
+            "### Step 4 — Return value",
+        )
+        opencode = _section(agent_loop, "**OpenCode 分支", "**Codex 分支")
+        common_closeout = _section(self.text, "**共同收尾", "### Step 4")
+        with self.subTest(section="OpenCode 示例"):
+            _assert_in_order(self, opencode, tokens, "OpenCode 示例")
+        with self.subTest(section="共同收尾"):
+            _assert_in_order(self, common_closeout, tokens, "共同收尾")
+        with self.subTest(section="禁止旧直接记录方式"):
+            self.assertNotIn(
+                "stage3-record-validation --professor-dir",
+                opencode + common_closeout,
+                "Stage 3 handoff must record the saved handoff, not the legacy direct file mode",
+            )
 
     def test_validator_failure_uses_runner_correction_input(self):
         self.assertIn("--validation-file", self.text)

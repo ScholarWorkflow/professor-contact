@@ -24,6 +24,7 @@ import hashlib
 import itertools
 import json
 import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -37,6 +38,35 @@ CANDIDATE_STATE = "套磁候选状态.json"
 CANDIDATES_MD = "套磁想法候选.md"
 INVOCATION_VERSION = "stage3-invocation-v1"
 HANDOFF_VERSION = "stage3-handoff-v1"
+
+
+def artifact_snapshot(*roots):
+    """Capture existence, filesystem type, and complete bytes of test artifacts."""
+    snapshot = {}
+
+    def visit(path):
+        path = Path(path)
+        key = str(path)
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            snapshot[key] = ("absent",)
+            return
+        kind = stat.S_IFMT(info.st_mode)
+        if stat.S_ISLNK(info.st_mode):
+            snapshot[key] = (kind, os.readlink(path))
+        elif stat.S_ISDIR(info.st_mode):
+            snapshot[key] = (kind,)
+            for child in sorted(path.iterdir(), key=lambda item: item.name):
+                visit(child)
+        elif stat.S_ISREG(info.st_mode):
+            snapshot[key] = (kind, path.read_bytes())
+        else:
+            snapshot[key] = (kind,)
+
+    for root in roots:
+        visit(root)
+    return snapshot
 
 
 class ValidationHandoffBase(Stage3DirectionGroupBase):
@@ -90,10 +120,12 @@ class ValidationHandoffBase(Stage3DirectionGroupBase):
 
     def prepare_credential(self, payload, round_no):
         path, sha = self.write_credential(payload)
-        return parse(run_cli("stage3-prepare-validation",
-                             "--invocation-file", path,
-                             "--invocation-sha256", sha,
-                             "--round", str(round_no)))
+        return self.assert_no_side_effects(
+            lambda: parse(run_cli("stage3-prepare-validation",
+                                  "--invocation-file", path,
+                                  "--invocation-sha256", sha,
+                                  "--round", str(round_no))),
+            self.root, self.handoff_round_dir(round_no))
 
     def write_credential(self, payload):
         path = self.root / f"crafted-{next(self._seq)}.json"
@@ -154,6 +186,19 @@ class ValidationHandoffBase(Stage3DirectionGroupBase):
         """The committed render SHA the state currently binds."""
         return self.load_state()["cache"]["render"][CANDIDATES_MD]["sha256"]
 
+    def assert_no_side_effects(self, operation, *protected_paths):
+        before = artifact_snapshot(*protected_paths)
+        result = operation()
+        self.assertEqual(artifact_snapshot(*protected_paths), before,
+                         "refused handoff operation changed a protected artifact")
+        return result
+
+    def handoff_round_dir(self, round_no):
+        token = hashlib.sha256(
+            str(self.prof_dir.resolve()).encode("utf-8")).hexdigest()[:16]
+        return Path(tempfile.gettempdir()) / "professor-contact-stage3-handoff" \
+            / token / f"round-{round_no}"
+
     def recommit_changed_render(self, name):
         """A new committed render over the same credential, deterministically.
 
@@ -212,16 +257,21 @@ class PrepareHandoffTests(ValidationHandoffBase):
         template = json.loads(
             Path(self.cap["invocation_file"]).read_text(encoding="utf-8"))
         # Digest mismatch over the real credential bytes.
-        out = parse(run_cli("stage3-prepare-validation",
-                            "--invocation-file", self.cap["invocation_file"],
-                            "--invocation-sha256", "0" * 64, "--round", "1"))
+        out = self.assert_no_side_effects(
+            lambda: parse(run_cli("stage3-prepare-validation",
+                                  "--invocation-file", self.cap["invocation_file"],
+                                  "--invocation-sha256", "0" * 64,
+                                  "--round", "1")),
+            self.root, self.handoff_round_dir(1))
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "invocation_sha256_mismatch")
         # Damaged credential, digest of the damaged bytes.
-        out = self.prepare_credential({"version": INVOCATION_VERSION, "oops": True}, 1)
+        out = self.prepare_credential(
+            {"version": INVOCATION_VERSION, "oops": True}, 1)
         self.assertEqual(out["reason_code"], "invalid_invocation")
         # Unsupported credential version.
-        out = self.prepare_credential({**template, "version": "stage3-invocation-v0"}, 1)
+        out = self.prepare_credential(
+            {**template, "version": "stage3-invocation-v0"}, 1)
         self.assertEqual(out["reason_code"], "invocation_version_unsupported")
         # Professor directory outside the credential's program root.
         out = self.prepare_credential(
@@ -330,6 +380,56 @@ class PrepareHandoffTests(ValidationHandoffBase):
         self.assertEqual(Path(first["handoff_file"]).read_bytes(), handoff_bytes,
                          "the first handoff is immutable, never reused")
 
+    def test_new_invocation_can_prepare_round_one_after_prior_terminal_validation(self):
+        self.commit_first()
+        old_handoff = self.prepare(1)
+        self.assertEqual(old_handoff["status"], "ok",
+                         msg=json.dumps(old_handoff, ensure_ascii=False))
+        self.validator_writes(old_handoff)
+        saved = self.save(old_handoff)
+        self.assertEqual(saved["status"], "ok",
+                         msg=json.dumps(saved, ensure_ascii=False))
+        recorded = self.record_handoff(old_handoff, saved["validation_sha256"])
+        self.assertEqual(recorded["status"], "ok",
+                         msg=json.dumps(recorded, ensure_ascii=False))
+        self.assertFalse(recorded["needs_correction"])
+        self.assertTrue(recorded["terminal"])
+
+        old_handoff_dir = Path(old_handoff["handoff_file"]).parent
+        self.assertTrue(old_handoff_dir.is_dir(),
+                        "the prior round directory must remain in place")
+
+        next_cap = parse(run_cli(
+            "stage3-plan", "--professor-dir", self.prof_dir,
+            "--program-root", self.root,
+            "--capture-invocation", self.root / "invocation-next"))
+        self.assertEqual(next_cap["status"], "ok",
+                         msg=json.dumps(next_cap, ensure_ascii=False))
+        changed_a = self.generated_doc("dir_A", ["P1", "P2", None])
+        changed_a["candidates"][0]["title"] = "候选 dir_A_1 新调用"
+        next_results = self.write_results("new-invocation", {
+            "dir_A": changed_a,
+            "dir_B": self.generated_doc("dir_B", ["P1", "P3", None]),
+        })
+        finalized = parse(run_cli(
+            "stage3-finalize", "--results", next_results,
+            "--invocation-file", next_cap["invocation_file"],
+            "--invocation-sha256", next_cap["invocation_sha256"]))
+        self.assertEqual(finalized["status"], "ok",
+                         msg=json.dumps(finalized, ensure_ascii=False))
+
+        next_handoff = parse(run_cli(
+            "stage3-prepare-validation",
+            "--invocation-file", next_cap["invocation_file"],
+            "--invocation-sha256", next_cap["invocation_sha256"],
+            "--round", "1"))
+        self.assertEqual(next_handoff["status"], "ok",
+                         msg=json.dumps(next_handoff, ensure_ascii=False))
+        self.assertTrue(old_handoff_dir.is_dir(),
+                        "preparing a new invocation must retain the prior handoff")
+        self.assertTrue(Path(old_handoff["handoff_file"]).is_file())
+        self.assertEqual(next_handoff["round"], 1)
+
 
 class SaveHandoffTests(ValidationHandoffBase):
     """§6.3: metadata re-verification, byte-exact copy, failure discipline."""
@@ -365,7 +465,10 @@ class SaveHandoffTests(ValidationHandoffBase):
         def attempt(raw, label, reason="invalid_validation_json"):
             source.write_bytes(raw)
             with self.subTest(case=label):
+                before = artifact_snapshot(self.root, self.handoff_round_dir(1))
                 saved = self.save(out)
+                self.assertEqual(artifact_snapshot(self.root,
+                                                   self.handoff_round_dir(1)), before)
                 self.assertEqual(saved["status"], "error")
                 self.assertEqual(saved["reason_code"], reason)
                 # A failed save never deletes the validator's source.
@@ -436,7 +539,9 @@ class SaveHandoffTests(ValidationHandoffBase):
         out = self.prepare(1)
         self.validator_writes(out)
         # Wrong handoff digest.
-        saved = self.save(out, sha="0" * 64)
+        saved = self.assert_no_side_effects(
+            lambda: self.save(out, sha="0" * 64), self.root,
+            self.handoff_round_dir(1))
         self.assertEqual(saved["status"], "error")
         self.assertEqual(saved["reason_code"], "handoff_sha256_mismatch")
         metadata = json.loads(
@@ -445,16 +550,20 @@ class SaveHandoffTests(ValidationHandoffBase):
         tampered = {**metadata, "version": "stage3-handoff-v0"}
         path = self.root / "tampered-handoff.json"
         write_json(path, tampered)
-        saved = parse(run_cli("stage3-save-validation", "--handoff-file", path,
-                              "--handoff-sha256",
-                              hashlib.sha256(path.read_bytes()).hexdigest()))
+        saved = self.assert_no_side_effects(
+            lambda: parse(run_cli("stage3-save-validation", "--handoff-file", path,
+                                  "--handoff-sha256",
+                                  hashlib.sha256(path.read_bytes()).hexdigest())),
+            self.root, self.handoff_round_dir(1))
         self.assertEqual(saved["reason_code"], "invalid_handoff")
         # Broken credential binding inside the metadata.
         tampered = {**metadata, "invocation_sha256": "0" * 64}
         write_json(path, tampered)
-        saved = parse(run_cli("stage3-save-validation", "--handoff-file", path,
-                              "--handoff-sha256",
-                              hashlib.sha256(path.read_bytes()).hexdigest()))
+        saved = self.assert_no_side_effects(
+            lambda: parse(run_cli("stage3-save-validation", "--handoff-file", path,
+                                  "--handoff-sha256",
+                                  hashlib.sha256(path.read_bytes()).hexdigest())),
+            self.root, self.handoff_round_dir(1))
         self.assertEqual(saved["reason_code"], "invalid_handoff")
         self.assertFalse(Path(out["validation_file"]).exists())
 
@@ -548,7 +657,9 @@ class RecordHandoffTests(ValidationHandoffBase):
     def test_record_refuses_a_render_that_moved_after_prepare(self):
         out, saved = self.committed_round1()
         self.recommit_changed_render("挪动")
-        recorded = self.record_handoff(out, saved["validation_sha256"])
+        recorded = self.assert_no_side_effects(
+            lambda: self.record_handoff(out, saved["validation_sha256"]),
+            self.root, self.handoff_round_dir(1))
         self.assertEqual(recorded["status"], "error")
         self.assertEqual(recorded["reason_code"], "validation_render_changed")
         self.assertIsNone(self.load_state().get("validator"))
