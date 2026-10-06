@@ -26,10 +26,14 @@ Inputs (files only; the judge never talks to the network):
 - ``--candidate-state`` the professor's committed 套磁候选状态.json
 - ``--program-root``    the run's program root (Stage-4 absence check)
 - ``--install-evidence`` / ``--fixture-evidence`` / ``--pre-snapshot`` /
-  ``--post-snapshot``   optional: the producer verifier outputs, folded in
-- ``--routing-evidence`` optional: the legacy topology verifier output,
+  ``--post-snapshot``   required producer verifier outputs, folded in
+- ``--routing-evidence`` required legacy topology verifier output,
                         folded into the unique conclusion
-- ``--storage-evidence`` optional: the read-only storage ownership record
+- ``--storage-evidence`` required read-only storage ownership record
+
+Every evidence input must carry the same non-empty ``evidence_set_id``. The
+collector must bind the raw /eval response, adapter and verifier outputs to
+the same run before invoking this judge.
 
 Unknown event shapes and missing required surfaces are evidence gaps —
 never silent passes.
@@ -365,6 +369,8 @@ class RunModel:
 
     def __init__(self, response: dict, adapter: dict):
         self.gaps: list[str] = []
+        self.evidence_set_id = response.get("evidence_set_id")
+        self.adapter_evidence_set_id = adapter.get("evidence_set_id")
         self.root_id = (response.get("output") or {}).get("thread_id")
         self.events = ((response.get("output") or {}).get(
             "app_server_events") or [])
@@ -519,6 +525,7 @@ class RunModel:
                 f"event {record['call_index']}: commandExecution input has no completion")
         # -- actual patch/file change events; never commandActions -----------
         self.file_changes = {}
+        self.incomplete_file_changes = []
         for index, event in enumerate(self.events):
             message = event.get("message") or {}
             params = message.get("params") or {}
@@ -534,12 +541,18 @@ class RunModel:
             changes = item.get("changes")
             if status != "completed" or not thread_id or not turn_id \
                     or not item_id or not isinstance(changes, list):
+                self.incomplete_file_changes.append({
+                    "index": index, "thread_id": thread_id,
+                    "turn_id": turn_id, "item_id": item_id})
                 self.gaps.append(
                     f"event {index}: fileChange lacks completed status, item, "
                     "turn, thread, or structured changes")
                 continue
             for change in changes:
                 if not isinstance(change, dict):
+                    self.incomplete_file_changes.append({
+                        "index": index, "thread_id": thread_id,
+                        "turn_id": turn_id, "item_id": item_id})
                     self.gaps.append(f"event {index}: fileChange entry is not an object")
                     continue
                 operation = (change.get("operation") or change.get("kind")
@@ -713,52 +726,103 @@ class Judge:
             return "invalid", ["routing.json nested rows conflict with adapter formal relations"]
         return "ok", []
 
-    def judge_folded_surfaces(self):
-        install = self.surfaces.get("install")
-        if isinstance(install, dict) and isinstance(install.get("checks"), list):
-            checks = install["checks"]
-            bad = [c for c in checks if isinstance(c, dict) and
-                   (c.get("pass") is False or c.get("status") == "fail")]
-            unknown = [c for c in checks if not isinstance(c, dict) or
-                       c.get("pass") not in (True, False)
-                       and c.get("status") not in ("pass", "fail")]
-            if bad:
-                self.row("F-install", "invalid",
-                         "install evidence reports a failed prerequisite",
-                         [str(c.get("name")) for c in bad])
-            elif unknown or install.get("status") not in ("pass", "ok"):
-                self.row("F-install", "gap",
-                         "install evidence has incomplete or unknown check results",
-                         [str(install.get("status"))])
-            else:
-                self.row("F-install", "pass",
-                         "producer install checks folded into the verdict",
-                         [f"{len(checks)} checks all pass"])
+    def _fold_required_checks(self, surface_name, fact, required_names,
+                              description):
+        """Fold one required verifier output into the unique verdict.
+
+        The producer verifier owns each domain-specific comparison. This
+        layer still requires every frozen check and never treats absent or
+        unsupported output as success.
+        """
+        evidence = self.surfaces.get(surface_name)
+        if evidence is None:
+            self.row(fact, "gap", f"required {description} evidence is missing", [])
+            return
+        if not isinstance(evidence, dict):
+            self.row(fact, "invalid", f"{description} evidence has an unsupported shape",
+                     [type(evidence).__name__])
+            return
+        checks = evidence.get("checks")
+        if not isinstance(checks, list):
+            self.row(fact, "gap", f"{description} evidence has no structured checks", [])
+            return
+        named_checks = [item for item in checks
+                        if isinstance(item, dict)
+                        and isinstance(item.get("name"), str)]
+        by_name = {item["name"]: item for item in named_checks}
+        duplicate_names = sorted({item["name"] for item in named_checks
+                                  if sum(other["name"] == item["name"]
+                                         for other in named_checks) > 1})
+        missing = sorted(set(required_names) - set(by_name))
+        unsupported = [item for item in checks
+                       if not isinstance(item, dict)
+                       or item.get("status") not in ("pass", "fail")]
+        failed = [name for name, item in by_name.items()
+                  if item.get("status") == "fail"]
+        status = evidence.get("status")
+        if unsupported or duplicate_names:
+            self.row(fact, "invalid", f"{description} evidence has unsupported check rows",
+                     [f"rows={len(unsupported)}", f"duplicates={duplicate_names}"])
+        elif failed or status in ("fail", "invalid", "INVALID_TEST_EXECUTION"):
+            self.row(fact, "invalid", f"{description} prerequisite did not pass",
+                     failed or [f"status={status}"])
+        elif missing or status not in ("pass", "ok"):
+            self.row(fact, "gap", f"{description} evidence is incomplete",
+                     [f"missing={missing}", f"status={status!r}"])
         else:
-            self.row("F-install", "gap",
-                     "required install evidence or structured checks are missing",
-                     [])
+            self.row(fact, "pass", f"{description} checks folded into the verdict",
+                     list(required_names))
+
+    def judge_folded_surfaces(self):
+        evidence_ids = [(name, self.surfaces.get(name, {}).get("evidence_set_id")
+                         if isinstance(self.surfaces.get(name), dict) else None)
+                        for name in ("install", "fixture", "routing", "pre", "post", "storage")]
+        evidence_ids.extend((
+            ("eval-response", self.m.evidence_set_id),
+            ("adapter-output", self.m.adapter_evidence_set_id),
+        ))
+        missing_ids = [name for name, value in evidence_ids
+                       if not isinstance(value, str) or not value.strip()]
+        observed_ids = {value for _name, value in evidence_ids
+                        if isinstance(value, str) and value.strip()}
+        if missing_ids:
+            self.row("F-evidence-version", "gap",
+                     "run evidence identifiers are missing from one or more inputs",
+                     missing_ids)
+        elif len(observed_ids) > 1:
+            self.row("F-evidence-version", "invalid",
+                     "evidence inputs mix different run identifiers",
+                     [f"{name}={value}" for name, value in evidence_ids])
+        else:
+            self.row("F-evidence-version", "pass",
+                     "all inputs are bound to one run evidence set",
+                     [next(iter(observed_ids))])
+        self._fold_required_checks(
+            "install", "F-install",
+            ("locked_target_commit", "source_install_projection",
+             "request_config_matches_consensus"), "install")
         fixture = self.surfaces.get("fixture")
-        if fixture is not None:
-            if fixture.get("manual_patch") not in (None, "no"):
-                self.row("F-fixture", "fail",
-                         "fixture declares manual_patch other than 'no'",
-                         [f"manual_patch={fixture.get('manual_patch')}"])
-            else:
-                self.row("F-fixture", "pass",
-                         "fixture evidence folded in (manual_patch=no)",
-                         [])
-        storage = self.surfaces.get("storage")
-        if storage is not None:
-            status = storage.get("status")
-            if status == "ok":
-                self.row("F-storage-ownership", "pass",
-                         "storage ownership record folded in",
-                         [str(storage.get("rollout_dir", ""))[:120]])
-            else:
-                self.row("F-storage-ownership", "gap",
-                         "storage ownership record incomplete",
-                         [str(storage)[:160]])
+        self._fold_required_checks(
+            "fixture", "F-fixture",
+            ("no_manual_patch", "initial_input_digest",
+             "forbidden_outputs_absent"), "sample")
+        if isinstance(fixture, dict) and fixture.get("manual_patch") != "no":
+            self.rows[-1] = {
+                "fact": "F-fixture", "verdict": "invalid",
+                "summary": "sample evidence declares a manual patch",
+                "evidence": [f"manual_patch={fixture.get('manual_patch')}"]}
+        self._fold_required_checks(
+            "storage", "F-storage-ownership",
+            ("process_is_test_only", "config_is_test_only",
+             "database_is_test_only", "logs_are_test_only",
+             "database_path_resolved", "run_records_match_case", "read_only"),
+            "storage ownership")
+        self._fold_required_checks(
+            "pre", "F-pre-snapshot", ("pre_zero_write_snapshot",),
+            "pre-run snapshot")
+        self._fold_required_checks(
+            "post", "F-post-snapshot", ("post_matches_current",),
+            "post-run snapshot")
         routing = self.surfaces.get("routing")
         if isinstance(routing, dict):
             classification = routing.get("classification") or routing.get("status")
@@ -1678,6 +1742,10 @@ class Judge:
         turn_id = message.get("turn_id")
         if not turn_id:
             return None
+        if any(change.get("thread_id") == entry.get("child")
+               and start < change.get("index", -1) < finish
+               for change in self.m.incomplete_file_changes):
+            return None
         if any(not record.get("turn_id") for record in execs) \
                 or any(change.get("turn_id") != turn_id
                        or not change.get("item_id")
@@ -1708,7 +1776,10 @@ class Judge:
                                "add", "created", "create", "added"},
                            change))
         if not writes:
-            return None
+            # The correlated child, message, activity completion and complete
+            # run envelope establish an empty producer window. That is a
+            # confirmed product omission; an incomplete run remains a gap.
+            return False if self.m.run_completed else None
         if len(writes) != 1:
             return False
         path, exclusive, observation = writes[0]

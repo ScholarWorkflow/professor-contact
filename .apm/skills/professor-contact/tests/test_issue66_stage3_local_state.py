@@ -22,6 +22,7 @@ import itertools
 import json
 import os
 import shutil
+import stat
 import sys
 import threading
 import unittest
@@ -40,6 +41,40 @@ PROJECTIONS_FILE = "_contact_projections.json"
 CROSS_GROUP_ARG = '[["dir_A","dir_B"]]'
 CROSS_GID = contact_state.cross_group_id(["dir_A", "dir_B"])
 SECOND_PROFESSOR = "対照 教授"
+
+
+def artifact_snapshot(*roots):
+    """Capture absence, object metadata and full bytes for protected files."""
+    snapshot = {}
+
+    def metadata(info):
+        return (info.st_mode, info.st_size, info.st_mtime_ns,
+                info.st_ctime_ns, getattr(info, "st_birthtime_ns", None),
+                info.st_ino, info.st_nlink, info.st_uid, info.st_gid)
+
+    def visit(path):
+        path = Path(path)
+        key = str(path)
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            snapshot[key] = ("absent",)
+            return
+        kind = stat.S_IFMT(info.st_mode)
+        if stat.S_ISLNK(info.st_mode):
+            snapshot[key] = ("symlink", metadata(info), os.readlink(path))
+        elif stat.S_ISDIR(info.st_mode):
+            snapshot[key] = ("directory", metadata(info))
+            for child in sorted(path.iterdir(), key=lambda item: item.name):
+                visit(child)
+        elif stat.S_ISREG(info.st_mode):
+            snapshot[key] = ("file", metadata(info), path.read_bytes())
+        else:
+            snapshot[key] = ("other", kind, metadata(info))
+
+    for root in roots:
+        visit(root)
+    return snapshot
 
 # Twin-professor quotes: same display name / direction IDs / group ID as the
 # base fixture, different canonical professor directory (issue #66 R66-4).
@@ -387,13 +422,17 @@ class TestIssue66Stage3(Stage3DirectionGroupBase):
             md_path.read_text(encoding="utf-8") + "\n人工修改的一行\n",
             encoding="utf-8")
         manual_md = md_path.read_bytes()
-        before = self.snapshot(state_path, self.overview_path, self.registry_path)
-
-        out = self.stage3_finalize(self.write_a_results("s3-iso-3-reuse"))
+        results = self.write_a_results("s3-iso-3-reuse")
+        input_pack = self.prof_dir / "套磁候选输入.json"
+        protected = (self.root, md_path, state_path, input_pack, results,
+                     self.overview_path, self.registry_path)
+        before = artifact_snapshot(*protected)
+        out = self.stage3_finalize(results)
 
         self.assertEqual(out["status"], "needs_decision", out)
         self.assertEqual(out["reason_code"], "manual_markdown_changed")
-        self.assert_unchanged(before)
+        self.assertEqual(artifact_snapshot(*protected), before,
+                         "manual-conflict refusal changed protected artifacts")
         self.assertEqual(md_path.read_bytes(), manual_md)
 
     # -- S3-ISO-4 ---------------------------------------------------------
@@ -1155,13 +1194,18 @@ class CredentialEntryIsolationTests(Stage3DirectionGroupBase):
             md_path.read_text(encoding="utf-8") + "\n人工修改的一行\n",
             encoding="utf-8")
         manual_md = md_path.read_bytes()
-        before = self.snapshot(state_path, self.overview_path,
-                               self.registry_path)
+        results = self.write_a_results("cred-iso-3-reuse")
+        input_pack = self.prof_dir / "套磁候选输入.json"
+        protected = (self.root, md_path, state_path,
+                     Path(cap["invocation_file"]), input_pack, results,
+                     self.overview_path, self.registry_path)
+        before = artifact_snapshot(*protected)
         out2 = self.credential_finalize(
-            cap, self.write_a_results("cred-iso-3-reuse"))
+            cap, results)
         self.assertEqual(out2["status"], "needs_decision", out2)
         self.assertEqual(out2["reason_code"], "manual_markdown_changed")
-        self.assert_unchanged(before)
+        self.assertEqual(artifact_snapshot(*protected), before,
+                         "credential manual-conflict refusal changed protected artifacts")
         self.assertEqual(md_path.read_bytes(), manual_md)
 
     def test_s3_iso_4_commit_marker_via_credential_entry(self):

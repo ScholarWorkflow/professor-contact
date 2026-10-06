@@ -6,10 +6,11 @@ readonly fixture_tree_sha='c738fa2f8bcbb16cd99d741332d5f59b062b6357'
 readonly adapter_pin='skills-test-fixtures/codex-eval-adapter@16'
 readonly repository_slug='ScholarWorkflow/professor-contact'
 readonly uv_cache_dir='/private/tmp/issue66-uv-cache'
+readonly runner_revision='issue-66-local-candidate-runner-r6-2026-10-06'
 
 usage() {
   printf '用法：%s local\n' "$0" >&2
-  printf '本脚本只运行本地候选检查，不含正式评测入口。\n' >&2
+  printf 'Gate2 尚未批准；正式评测被禁用。本脚本只运行本地候选检查。\n' >&2
   exit 64
 }
 
@@ -28,9 +29,12 @@ tmp_root='/tmp'
 if [[ -n "$TMPDIR" ]]; then
   tmp_root="$TMPDIR"
 fi
+if [[ "$tmp_root" != '/' ]]; then
+  tmp_root="${tmp_root%/}"
+fi
 umask 077
 
-if ! evidence_dir="$(mktemp -d "$tmp_root/issue66-gate2-candidate.XXXXXXXX" 2>/dev/null)"; then
+if ! evidence_dir="$(mktemp -d "$tmp_root/issue66-gate2-candidate.XXXXXXXX")"; then
   printf '无法在临时目录创建唯一证据目录。\n' >&2
   exit 64
 fi
@@ -48,6 +52,22 @@ commands_tsv="$evidence_dir/commands.tsv"
 suites_tsv="$evidence_dir/suites.tsv"
 printf 'name\texit_code\tcommand\tstdout\tstderr\n' > "$commands_tsv"
 printf 'suite\tresult\ttest_count\texit_code\tdetail\n' > "$suites_tsv"
+printf 'mktemp -d %s/issue66-gate2-candidate.XXXXXXXX\n' "$tmp_root" \
+  > "$evidence_dir/commands/bootstrap-mktemp.command"
+printf '%s\n' "$evidence_dir" > "$evidence_dir/commands/bootstrap-mktemp.stdout"
+: > "$evidence_dir/commands/bootstrap-mktemp.stderr"
+printf 'bootstrap-mktemp\t0\t%s\t%s\t%s\n' \
+  "$(<"$evidence_dir/commands/bootstrap-mktemp.command")" \
+  "$evidence_dir/commands/bootstrap-mktemp.stdout" \
+  "$evidence_dir/commands/bootstrap-mktemp.stderr" >> "$commands_tsv"
+printf 'mkdir -p %s/commands\n' "$evidence_dir" \
+  > "$evidence_dir/commands/bootstrap-mkdir.command"
+: > "$evidence_dir/commands/bootstrap-mkdir.stdout"
+: > "$evidence_dir/commands/bootstrap-mkdir.stderr"
+printf 'bootstrap-mkdir\t0\t%s\t%s\t%s\n' \
+  "$(<"$evidence_dir/commands/bootstrap-mkdir.command")" \
+  "$evidence_dir/commands/bootstrap-mkdir.stdout" \
+  "$evidence_dir/commands/bootstrap-mkdir.stderr" >> "$commands_tsv"
 
 capture() {
   local name="$1"
@@ -86,11 +106,25 @@ capture_required() {
   [[ "$rc" -eq 0 ]] || stop "命令 $name 失败，退出码 $rc。"
 }
 
-candidate_files='.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py
+candidate_changes='.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py
 .apm/skills/professor-contact/tests/test_issue66_runtime_judge.py
 .apm/skills/professor-contact/tests/test_issue66_invocation_credential.py
 .apm/skills/professor-contact/tests/test_issue66_validation_handoff.py
 .apm/skills/professor-contact/tests/test_issue66_stage3_local_state.py
+test-plan/issue-66.md
+test-plan/issue-66-run.sh'
+
+candidate_files='.apm/agents/professor-contact-idea-generator.agent.md
+.apm/skills/professor-contact/SKILL.md
+.apm/skills/professor-contact/scripts/contact_state.py
+.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py
+.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py
+.apm/skills/professor-contact/tests/test_issue66_invocation_credential.py
+.apm/skills/professor-contact/tests/test_issue66_validation_handoff.py
+.apm/skills/professor-contact/tests/test_issue66_stage3_local_state.py
+.apm/skills/professor-contact/tests/test_stage2_resolved_direction.py
+.apm/skills/professor-contact/tests/test_stage3_direction_groups.py
+.apm/skills/professor-contact/tests/test_stage3_idea_generator_agent_contract.py
 test-plan/issue-66.md
 test-plan/issue-66-run.sh'
 
@@ -99,8 +133,9 @@ allowed_change() {
   local path=''
   while IFS= read -r path; do
     [[ "$candidate" == "$path" ]] && return 0
-  done <<< "$candidate_files"
-  [[ "$candidate" == .tmp_scripts/* ]]
+  done <<< "$candidate_changes"
+  [[ "$candidate" == '.tmp_scripts/2026-10-06_watch_pr73.sh' ]] && return 0
+  return 1
 }
 
 verify_changed_paths() {
@@ -151,7 +186,7 @@ run_suite() {
   local result='INVALID_TEST_EXECUTION'
   local detail='实际输出未满足预期条目数、退出码或已知失败特征。'
 
-  capture "suite-$name" uv run --python 3.14 python -B -m unittest discover \
+  capture "suite-$name" uv run --no-project --python 3.14 python -B -m unittest discover \
     -s .apm/skills/professor-contact/tests -p "$pattern" -v
   rc=$?
   combined="$(<"$evidence_dir/commands/suite-$name.stdout")"$'\n'"$(<"$evidence_dir/commands/suite-$name.stderr")"
@@ -177,14 +212,30 @@ run_suite() {
 }
 
 capture_required uv-version uv --version
-capture_required python-version uv run --python 3.14 python --version
+capture_required bash-version bash --version
+capture_required bash-syntax bash -n "$script_dir/issue-66-run.sh"
+capture shellcheck-probe bash -c 'command -v shellcheck'
+shellcheck_probe_rc=$?
+shellcheck_status='NOT_INSTALLED'
+if [[ "$shellcheck_probe_rc" -eq 0 ]]; then
+  shellcheck_status='PASS'
+  capture_required shellcheck-version shellcheck --version
+  capture_required shellcheck-script shellcheck "$script_dir/issue-66-run.sh"
+fi
+capture_required python-version uv run --no-project --python 3.14 python --version
 capture_required platform uname -a
 capture_required repository-root git -C "$repo_root" rev-parse --show-toplevel
 capture_required repository-origin git -C "$repo_root" remote get-url origin
+capture_required repository-status git -C "$repo_root" status --short --branch
 capture_required test-commit-sha git -C "$repo_root" rev-parse HEAD
 capture_required product-target-resolve git -C "$repo_root" rev-parse "$product_target_sha^{commit}"
 capture_required product-target-ancestor git -C "$repo_root" merge-base --is-ancestor \
   "$product_target_sha" "$(<"$evidence_dir/commands/test-commit-sha.stdout")"
+capture_required product-source-diff git -C "$repo_root" diff --name-only \
+  "$product_target_sha" "$(<"$evidence_dir/commands/test-commit-sha.stdout")" -- \
+  .apm/agents/professor-contact-idea-generator.agent.md \
+  .apm/skills/professor-contact/SKILL.md \
+  .apm/skills/professor-contact/scripts/contact_state.py
 capture_required diff-check git -C "$repo_root" diff HEAD --check
 
 resolved_root="$(<"$evidence_dir/commands/repository-root.stdout")"
@@ -195,6 +246,7 @@ resolved_product_sha="$(<"$evidence_dir/commands/product-target-resolve.stdout")
 [[ "$origin_url" == *"$repository_slug"* ]] || stop 'origin 未指向 ScholarWorkflow/professor-contact。'
 [[ "$resolved_product_sha" == "$product_target_sha" ]] || stop '无法解析固定产品目标提交。'
 [[ "$test_commit_sha" =~ ^[0-9a-f]{40}$ ]] || stop '无法记录当前测试提交 SHA。'
+[[ ! -s "$evidence_dir/commands/product-source-diff.stdout" ]] || stop '当前产品源与固定产品目标提交不同。'
 verify_changed_paths
 
 record_text="$(<"$script_dir/issue-66.md")"
@@ -217,9 +269,16 @@ read -r candidate_summary _ < "$evidence_dir/commands/candidate-summary.stdout"
   printf 'test_commit_sha=%s\n' "$test_commit_sha"
   printf 'fixture_tree_sha=%s\n' "$fixture_tree_sha"
   printf 'adapter_pin=%s\n' "$adapter_pin"
+  printf 'fixture_pin_source=runner_constant_and_candidate_record\n'
+  printf 'fixture_checkout=NOT_USED_BY_LOCAL_TESTS\n'
   printf 'uv_cache_dir=%s\n' "$UV_CACHE_DIR"
+  printf 'runner_revision=%s\n' "$runner_revision"
+  printf 'shellcheck_status=%s\n' "$shellcheck_status"
+  printf 'excluded_task_helper=.tmp_scripts/2026-10-06_watch_pr73.sh\n'
+  printf 'python_project_install=DISABLED_BY_UV_NO_PROJECT\n'
   printf 'candidate_summary_sha256=%s\n' "$candidate_summary"
   printf 'gate2_status=NOT_APPROVED\n'
+  printf 'formal_eval_mode=DISABLED_UNTIL_GATE2_APPROVAL\n'
   printf 'formal_s3_rt_codex_1=NOT_RUN\n'
 } > "$evidence_dir/metadata.txt"
 
@@ -227,7 +286,7 @@ printf '本地候选摘要：%s\n' "$candidate_summary"
 printf '产品目标提交：%s\n测试提交：%s\n' "$product_target_sha" "$test_commit_sha"
 printf '证据目录：%s\n' "$evidence_dir"
 
-run_suite judge test_issue66_runtime_judge.py 63 PASS '' 0
+run_suite judge test_issue66_runtime_judge.py 71 PASS '' 0
 run_suite credential test_issue66_invocation_credential.py 17 PASS '' 0
 run_suite local_state test_issue66_stage3_local_state.py 12 PASS '' 0
 run_suite validation_handoff test_issue66_validation_handoff.py 21 PRODUCT_FAIL \

@@ -134,7 +134,7 @@ class ValidationHandoffBase(Stage3DirectionGroupBase):
                                   "--invocation-file", path,
                                   "--invocation-sha256", sha,
                                   "--round", str(round_no))),
-            self.root, self.handoff_round_dir(round_no))
+            *self.handoff_artifacts(self.handoff_round_dir(round_no)))
 
     def write_credential(self, payload):
         path = self.root / f"crafted-{next(self._seq)}.json"
@@ -202,6 +202,28 @@ class ValidationHandoffBase(Stage3DirectionGroupBase):
                          "refused handoff operation changed a protected artifact")
         return result
 
+    def handoff_artifacts(self, round_dir):
+        round_dir = Path(round_dir)
+        return (
+            self.root,
+            round_dir,
+            round_dir / contact_state.STAGE3_HANDOFF_FILE,
+            round_dir / contact_state.STAGE3_VALIDATOR_OUTPUT_FILE,
+            round_dir / contact_state.STAGE3_VALIDATION_TARGET_FILE,
+        )
+
+    def assert_direct_refusal(self, operation, protected, reason,
+                              status="error"):
+        before = artifact_snapshot(*protected)
+        result = operation()
+        self.assertEqual(artifact_snapshot(*protected), before,
+                         "directly rejected handoff entry changed protected artifacts")
+        self.assertEqual(result.get("status"), status, result)
+        self.assertEqual(result.get("reason_code"), reason, result)
+        self.assertNotIn("validation_sha256", result)
+        self.assertNotIn("validation_input_sha256", result)
+        return result
+
     def handoff_round_dir(self, round_no):
         token = hashlib.sha256(
             str(self.prof_dir.resolve()).encode("utf-8")).hexdigest()[:16]
@@ -266,25 +288,27 @@ class PrepareHandoffTests(ValidationHandoffBase):
         template = json.loads(
             Path(self.cap["invocation_file"]).read_text(encoding="utf-8"))
         # Digest mismatch over the real credential bytes.
-        out = self.assert_no_side_effects(
+        out = self.assert_direct_refusal(
             lambda: parse(run_cli("stage3-prepare-validation",
                                   "--invocation-file", self.cap["invocation_file"],
                                   "--invocation-sha256", "0" * 64,
                                   "--round", "1")),
-            self.root, self.handoff_round_dir(1))
-        self.assertEqual(out["status"], "error")
-        self.assertEqual(out["reason_code"], "invocation_sha256_mismatch")
+            self.handoff_artifacts(self.handoff_round_dir(1)),
+            "invocation_sha256_mismatch")
         # Damaged credential, digest of the damaged bytes.
         out = self.prepare_credential(
             {"version": INVOCATION_VERSION, "oops": True}, 1)
+        self.assertEqual(out["status"], "error", out)
         self.assertEqual(out["reason_code"], "invalid_invocation")
         # Unsupported credential version.
         out = self.prepare_credential(
             {**template, "version": "stage3-invocation-v0"}, 1)
+        self.assertEqual(out["status"], "error", out)
         self.assertEqual(out["reason_code"], "invocation_version_unsupported")
         # Professor directory outside the credential's program root.
         out = self.prepare_credential(
             {**template, "professor_dir": str(self.root / "其他研究" / PROFESSOR)}, 1)
+        self.assertEqual(out["status"], "error", out)
         self.assertEqual(out["reason_code"], "invalid_professor_dir")
         # Nothing above wrote a handoff for this professor's round directory,
         # and the committed files are untouched by every refusal.
@@ -310,23 +334,27 @@ class PrepareHandoffTests(ValidationHandoffBase):
                          msg=json.dumps(plan, ensure_ascii=False))
         self.commit_first()
         profile.write_text("研究兴趣：第二版。\n", encoding="utf-8")
-        out = parse(run_cli("stage3-prepare-validation",
-                            "--invocation-file", plan["invocation_file"],
-                            "--invocation-sha256", plan["invocation_sha256"],
-                            "--round", "1"))
-        self.assertEqual(out["status"], "needs_refresh",
-                         msg=json.dumps(out, ensure_ascii=False))
-        self.assertEqual(out["reason_code"], "validation_source_changed")
+        out = self.assert_direct_refusal(
+            lambda: parse(run_cli(
+                "stage3-prepare-validation",
+                "--invocation-file", plan["invocation_file"],
+                "--invocation-sha256", plan["invocation_sha256"],
+                "--round", "1")),
+            self.handoff_artifacts(self.handoff_round_dir(1)),
+            "validation_source_changed", status="needs_refresh")
 
     def test_round_rules_come_from_committed_records(self):
         # No committed state yet: prepare reads the professor, nothing else.
-        out = self.prepare(1)
-        self.assertEqual(out["status"], "error")
-        self.assertEqual(out["reason_code"], "missing_candidate_state")
+        out = self.assert_direct_refusal(
+            lambda: self.prepare(1),
+            self.handoff_artifacts(self.handoff_round_dir(1)),
+            "missing_candidate_state")
         self.commit_first()
         # Round 2 without any recorded round is refused.
-        out = self.prepare(2)
-        self.assertEqual(out["reason_code"], "validation_round_sequence_invalid")
+        out = self.assert_direct_refusal(
+            lambda: self.prepare(2),
+            self.handoff_artifacts(self.handoff_round_dir(2)),
+            "validation_round_sequence_invalid")
         out1 = self.prepare(1)
         self.assertEqual(out1["status"], "ok", msg=json.dumps(out1, ensure_ascii=False))
         raw = self.validator_writes(out1, [self.finding("候选 dir_A_1")])
@@ -339,11 +367,15 @@ class PrepareHandoffTests(ValidationHandoffBase):
         self.assertEqual(recorded["round"], 1)
         self.assertTrue(recorded["needs_correction"])
         # Round 1 cannot be reopened over a recorded round…
-        out = self.prepare(1)
-        self.assertEqual(out["reason_code"], "validation_round_already_recorded")
+        self.assert_direct_refusal(
+            lambda: self.prepare(1),
+            self.handoff_artifacts(self.handoff_round_dir(1)),
+            "validation_round_already_recorded")
         # …and round 2 cannot bypass the owed correction.
-        out = self.prepare(2)
-        self.assertEqual(out["reason_code"], "validation_correction_required")
+        self.assert_direct_refusal(
+            lambda: self.prepare(2),
+            self.handoff_artifacts(self.handoff_round_dir(2)),
+            "validation_correction_required")
         # Commit the credential correction (Step 1 context) with the recorded file.
         cplan = self.credential_plan("--validation-file", saved["validation_file"])
         self.assertEqual(cplan["status"], "ok",
@@ -356,8 +388,10 @@ class PrepareHandoffTests(ValidationHandoffBase):
         self.assertEqual(fin["status"], "ok",
                          msg=json.dumps(fin, ensure_ascii=False))
         # Still no round 1; round 2 now matches the committed correction facts.
-        self.assertEqual(self.prepare(1)["reason_code"],
-                         "validation_round_already_recorded")
+        self.assert_direct_refusal(
+            lambda: self.prepare(1),
+            self.handoff_artifacts(self.handoff_round_dir(1)),
+            "validation_round_already_recorded")
         out2 = self.prepare(2)
         self.assertEqual(out2["status"], "ok",
                          msg=json.dumps(out2, ensure_ascii=False))
@@ -374,20 +408,23 @@ class PrepareHandoffTests(ValidationHandoffBase):
         recorded = self.record_handoff(out, saved["validation_sha256"])
         self.assertFalse(recorded["needs_correction"])
         # Round 1 recorded pass: the terminal record already exists.
-        out = self.prepare(2)
-        self.assertEqual(out["reason_code"], "validation_rounds_exhausted")
+        self.assert_direct_refusal(
+            lambda: self.prepare(2),
+            self.handoff_artifacts(self.handoff_round_dir(2)),
+            "validation_rounds_exhausted")
 
     def test_prepare_never_reuses_a_round_directory(self):
         self.commit_first()
         first = self.prepare(1)
         self.assertEqual(first["status"], "ok",
                          msg=json.dumps(first, ensure_ascii=False))
-        handoff_bytes = Path(first["handoff_file"]).read_bytes()
-        second = self.prepare(1)
+        second = self.assert_direct_refusal(
+            lambda: self.prepare(1),
+            self.handoff_artifacts(Path(first["handoff_file"]).parent),
+            "validation_handoff_collision")
         self.assertEqual(second["status"], "error")
-        self.assertEqual(second["reason_code"], "validation_handoff_collision")
-        self.assertEqual(Path(first["handoff_file"]).read_bytes(), handoff_bytes,
-                         "the first handoff is immutable, never reused")
+        self.assertTrue(Path(first["handoff_file"]).is_file(),
+                        "the first handoff is immutable, never reused")
 
     def test_new_invocation_can_prepare_round_one_after_prior_terminal_validation(self):
         self.commit_first()
@@ -474,12 +511,9 @@ class SaveHandoffTests(ValidationHandoffBase):
         def attempt(raw, label, reason="invalid_validation_json"):
             source.write_bytes(raw)
             with self.subTest(case=label):
-                before = artifact_snapshot(self.root, self.handoff_round_dir(1))
-                saved = self.save(out)
-                self.assertEqual(artifact_snapshot(self.root,
-                                                   self.handoff_round_dir(1)), before)
-                self.assertEqual(saved["status"], "error")
-                self.assertEqual(saved["reason_code"], reason)
+                self.assert_direct_refusal(
+                    lambda: self.save(out), self.handoff_artifacts(
+                        Path(out["handoff_file"]).parent), reason)
                 # A failed save never deletes the validator's source.
                 self.assertEqual(source.read_bytes(), raw)
         attempt(b"\xff\xfe not utf-8", "invalid utf-8")
@@ -516,21 +550,24 @@ class SaveHandoffTests(ValidationHandoffBase):
         shadow.write_bytes(raw)
         source.unlink()
         source.symlink_to(shadow)
-        saved = self.save(out)
-        self.assertEqual(saved["reason_code"], "invalid_validation_source")
+        self.assert_direct_refusal(
+            lambda: self.save(out), self.handoff_artifacts(
+                Path(out["handoff_file"]).parent), "invalid_validation_source")
         self.assertTrue(shadow.exists(), "a failed save keeps the source material")
         # Restore the real source; a dangling target symlink is refused too.
         source.unlink()
         source.write_bytes(raw)
         target.symlink_to(self.root / "missing.json")
-        saved = self.save(out)
-        self.assertEqual(saved["reason_code"], "validation_handoff_collision")
+        self.assert_direct_refusal(
+            lambda: self.save(out), self.handoff_artifacts(
+                Path(out["handoff_file"]).parent), "validation_handoff_collision")
         # A plain pre-existing target is refused without touching it.
         target.unlink()
         marker = "占位".encode("utf-8")
         target.write_bytes(marker)
-        saved = self.save(out)
-        self.assertEqual(saved["reason_code"], "validation_handoff_collision")
+        self.assert_direct_refusal(
+            lambda: self.save(out), self.handoff_artifacts(
+                Path(out["handoff_file"]).parent), "validation_handoff_collision")
         self.assertEqual(target.read_bytes(), marker)
         # The clean path still succeeds and creates the target exclusively.
         target.unlink()
@@ -539,8 +576,9 @@ class SaveHandoffTests(ValidationHandoffBase):
                          msg=json.dumps(saved, ensure_ascii=False))
         self.assertEqual(target.read_bytes(), raw)
         # And a second save can never overwrite the recorded target.
-        again = self.save(out)
-        self.assertEqual(again["reason_code"], "validation_handoff_collision")
+        again = self.assert_direct_refusal(
+            lambda: self.save(out), self.handoff_artifacts(
+                Path(out["handoff_file"]).parent), "validation_handoff_collision")
         self.assertEqual(target.read_bytes(), raw)
 
     def test_save_refuses_tampered_or_foreign_metadata(self):
@@ -550,7 +588,7 @@ class SaveHandoffTests(ValidationHandoffBase):
         # Wrong handoff digest.
         saved = self.assert_no_side_effects(
             lambda: self.save(out, sha="0" * 64), self.root,
-            self.handoff_round_dir(1))
+            *self.handoff_artifacts(self.handoff_round_dir(1))[1:])
         self.assertEqual(saved["status"], "error")
         self.assertEqual(saved["reason_code"], "handoff_sha256_mismatch")
         metadata = json.loads(
@@ -563,7 +601,7 @@ class SaveHandoffTests(ValidationHandoffBase):
             lambda: parse(run_cli("stage3-save-validation", "--handoff-file", path,
                                   "--handoff-sha256",
                                   hashlib.sha256(path.read_bytes()).hexdigest())),
-            self.root, self.handoff_round_dir(1))
+            *self.handoff_artifacts(self.handoff_round_dir(1)))
         self.assertEqual(saved["reason_code"], "invalid_handoff")
         # Broken credential binding inside the metadata.
         tampered = {**metadata, "invocation_sha256": "0" * 64}
@@ -572,7 +610,7 @@ class SaveHandoffTests(ValidationHandoffBase):
             lambda: parse(run_cli("stage3-save-validation", "--handoff-file", path,
                                   "--handoff-sha256",
                                   hashlib.sha256(path.read_bytes()).hexdigest())),
-            self.root, self.handoff_round_dir(1))
+            *self.handoff_artifacts(self.handoff_round_dir(1)))
         self.assertEqual(saved["reason_code"], "invalid_handoff")
         self.assertFalse(Path(out["validation_file"]).exists())
 
@@ -584,18 +622,14 @@ class SaveHandoffTests(ValidationHandoffBase):
         self.recommit_changed_render("改版")
         state_after_recommit = self.load_state()
         md_before = (self.prof_dir / CANDIDATES_MD).read_bytes()
-        saved = self.save(out)
-        self.assertEqual(saved["status"], "error")
-        self.assertEqual(saved["reason_code"], "validation_render_changed")
+        saved = self.assert_direct_refusal(
+            lambda: self.save(out), self.handoff_artifacts(
+                Path(out["handoff_file"]).parent), "validation_render_changed")
         self.assertFalse(Path(out["validation_file"]).exists())
-        # The refusal itself changed nothing: the source keeps the validator
-        # bytes, the committed state and the rendered Markdown keep the
-        # post-recommit values.
         self.assertEqual(Path(out["output_file"]).read_bytes(),
                          self.validator_bytes())
         self.assertEqual(self.load_state(), state_after_recommit)
-        self.assertEqual((self.prof_dir / CANDIDATES_MD).read_bytes(),
-                         md_before)
+        self.assertEqual((self.prof_dir / CANDIDATES_MD).read_bytes(), md_before)
 
 
 class RecordHandoffTests(ValidationHandoffBase):
@@ -612,27 +646,28 @@ class RecordHandoffTests(ValidationHandoffBase):
 
     def test_record_modes_are_mutually_exclusive(self):
         out, saved = self.committed_round1()
+        protected = self.handoff_artifacts(Path(out["handoff_file"]).parent)
         base = ["--handoff-file", out["handoff_file"],
                 "--handoff-sha256", out["handoff_sha256"],
                 "--expected-validation-sha256", saved["validation_sha256"]]
         # A partial handoff triple is refused.
-        partial = parse(run_cli("stage3-record-validation",
-                                "--handoff-file", out["handoff_file"]))
-        self.assertEqual(partial["status"], "error")
-        self.assertEqual(partial["reason_code"], "invalid_params")
+        self.assert_direct_refusal(
+            lambda: parse(run_cli("stage3-record-validation",
+                                  "--handoff-file", out["handoff_file"])),
+            protected, "invalid_params")
         # Handoff + legacy arguments mix is refused without precedence.
-        mixed = parse(run_cli("stage3-record-validation", *base,
-                              "--professor-dir", self.prof_dir))
-        self.assertEqual(mixed["status"], "error")
-        self.assertEqual(mixed["reason_code"], "invalid_params")
-        mixed2 = parse(run_cli("stage3-record-validation", *base,
-                               "--validation-file", saved["validation_file"]))
-        self.assertEqual(mixed2["status"], "error")
-        self.assertEqual(mixed2["reason_code"], "invalid_params")
+        self.assert_direct_refusal(
+            lambda: parse(run_cli("stage3-record-validation", *base,
+                                  "--professor-dir", self.prof_dir)),
+            protected, "invalid_params")
+        self.assert_direct_refusal(
+            lambda: parse(run_cli("stage3-record-validation", *base,
+                                  "--validation-file", saved["validation_file"])),
+            protected, "invalid_params")
         # Neither mode is also refused.
-        neither = parse(run_cli("stage3-record-validation"))
-        self.assertEqual(neither["status"], "error")
-        self.assertEqual(neither["reason_code"], "invalid_params")
+        self.assert_direct_refusal(
+            lambda: parse(run_cli("stage3-record-validation")),
+            protected, "invalid_params")
         state = self.load_state()
         self.assertIsNone(state.get("validator"))
 
@@ -640,12 +675,14 @@ class RecordHandoffTests(ValidationHandoffBase):
         out, saved = self.committed_round1([self.finding("候选 dir_A_1")])
         expected = saved["validation_sha256"]
         md_before = (self.prof_dir / CANDIDATES_MD).read_bytes()
-        wrong = parse(run_cli("stage3-record-validation",
-                              "--handoff-file", out["handoff_file"],
-                              "--handoff-sha256", out["handoff_sha256"],
-                              "--expected-validation-sha256", "0" * 64))
-        self.assertEqual(wrong["status"], "error")
-        self.assertEqual(wrong["reason_code"], "validation_sha256_mismatch")
+        wrong = self.assert_direct_refusal(
+            lambda: parse(run_cli(
+                "stage3-record-validation",
+                "--handoff-file", out["handoff_file"],
+                "--handoff-sha256", out["handoff_sha256"],
+                "--expected-validation-sha256", "0" * 64)),
+            self.handoff_artifacts(Path(out["handoff_file"]).parent),
+            "validation_sha256_mismatch")
         state = self.load_state()
         self.assertIsNone(state.get("validator"),
                           "a refused record writes nothing")
@@ -666,11 +703,10 @@ class RecordHandoffTests(ValidationHandoffBase):
     def test_record_refuses_a_render_that_moved_after_prepare(self):
         out, saved = self.committed_round1()
         self.recommit_changed_render("挪动")
-        recorded = self.assert_no_side_effects(
+        recorded = self.assert_direct_refusal(
             lambda: self.record_handoff(out, saved["validation_sha256"]),
-            self.root, self.handoff_round_dir(1))
-        self.assertEqual(recorded["status"], "error")
-        self.assertEqual(recorded["reason_code"], "validation_render_changed")
+            self.handoff_artifacts(Path(out["handoff_file"]).parent),
+            "validation_render_changed")
         self.assertIsNone(self.load_state().get("validator"))
 
 
@@ -682,25 +718,11 @@ class DirectRejectionNoSideEffectsTests(ValidationHandoffBase):
         round1 = self.handoff_round_dir(1)
         round2 = self.handoff_round_dir(2)
 
-        def handoff_files(directory):
-            return (
-                directory,
-                directory / contact_state.STAGE3_HANDOFF_FILE,
-                directory / contact_state.STAGE3_VALIDATOR_OUTPUT_FILE,
-                directory / contact_state.STAGE3_VALIDATION_TARGET_FILE,
-            )
-
-        r1_dir, r1_metadata, r1_source, r1_target = handoff_files(round1)
-        r2_dir, r2_metadata, r2_source, r2_target = handoff_files(round2)
-        protected = (
-            self.root,
-            self.prof_dir / CANDIDATES_MD,
-            self.prof_dir / CANDIDATE_STATE,
-            Path(self.cap["invocation_file"]),
-            self.g1,
-            r1_dir, r1_metadata, r1_source, r1_target,
-            r2_dir, r2_metadata, r2_source, r2_target,
-        )
+        r1_dir, r1_metadata, r1_source, r1_target = (
+            self.handoff_artifacts(round1)[1:])
+        r2_artifacts = self.handoff_artifacts(round2)[1:]
+        r2_dir = r2_artifacts[0]
+        protected = (*self.handoff_artifacts(round1), *r2_artifacts)
         self.assertTrue((self.prof_dir / CANDIDATES_MD).is_file())
         self.assertTrue((self.prof_dir / CANDIDATE_STATE).is_file())
         self.assertTrue(Path(self.cap["invocation_file"]).is_file())
@@ -708,19 +730,19 @@ class DirectRejectionNoSideEffectsTests(ValidationHandoffBase):
         self.assertFalse(r1_dir.exists())
         self.assertFalse(r2_dir.exists())
 
+        # Round 2 without a recorded round is refused by the prepare entry.
+        self.assert_direct_refusal(
+            lambda: self.prepare(2), protected,
+            "validation_round_sequence_invalid")
+
         # Invalid credential is refused at the prepare command itself. All
         # round-one handoff files, including the expected absences, are listed.
-        before_prepare = artifact_snapshot(*protected)
-        prepare = parse(run_cli(
-            "stage3-prepare-validation",
-            "--invocation-file", self.cap["invocation_file"],
-            "--invocation-sha256", "0" * 64,
-            "--round", "1"))
-        self.assertEqual(artifact_snapshot(*protected), before_prepare,
-                         "rejected prepare changed bytes, metadata or existence")
-        self.assertEqual(prepare["status"], "error", prepare)
-        self.assertEqual(prepare["reason_code"], "invocation_sha256_mismatch",
-                         prepare)
+        self.assert_direct_refusal(
+            lambda: parse(run_cli(
+                "stage3-prepare-validation",
+                "--invocation-file", self.cap["invocation_file"],
+                "--invocation-sha256", "0" * 64, "--round", "1")),
+            protected, "invocation_sha256_mismatch")
 
         # A valid prepare creates only the bound metadata. Calling save before
         # the validator has produced its source must refuse without creating
@@ -735,12 +757,11 @@ class DirectRejectionNoSideEffectsTests(ValidationHandoffBase):
         self.assertFalse(r1_source.exists())
         self.assertFalse(r1_target.exists())
 
-        before_save = artifact_snapshot(*protected)
-        save = self.save(handoff)
-        self.assertEqual(artifact_snapshot(*protected), before_save,
-                         "rejected save changed bytes, metadata or existence")
-        self.assertEqual(save["status"], "error", save)
-        self.assertEqual(save["reason_code"], "invalid_validation_source", save)
+        self.assert_direct_refusal(
+            lambda: self.save(handoff), protected, "invalid_validation_source")
+        self.assert_direct_refusal(
+            lambda: self.record_handoff(handoff, "0" * 64), protected,
+            "invalid_validation_source")
 
         # Now install valid source bytes and let save create the recorded
         # target. A bad digest at the record command must preserve both files,
@@ -751,13 +772,19 @@ class DirectRejectionNoSideEffectsTests(ValidationHandoffBase):
                          msg=json.dumps(saved, ensure_ascii=False))
         self.assertEqual(r1_source.read_bytes(), raw)
         self.assertEqual(r1_target.read_bytes(), raw)
-        before_record = artifact_snapshot(*protected)
-        record = self.record_handoff(handoff, "0" * 64)
-        self.assertEqual(artifact_snapshot(*protected), before_record,
-                         "rejected record changed bytes, metadata or existence")
-        self.assertEqual(record["status"], "error", record)
-        self.assertEqual(record["reason_code"], "validation_sha256_mismatch",
-                         record)
+        self.assert_direct_refusal(
+            lambda: self.record_handoff(handoff, "0" * 64), protected,
+            "validation_sha256_mismatch")
+
+        # The accepted record is now terminal. Reusing this round's handoff is
+        # a direct round refusal against the complete post-record baseline.
+        recorded = self.record_handoff(handoff, saved["validation_sha256"])
+        self.assertEqual(recorded["status"], "ok",
+                         msg=json.dumps(recorded, ensure_ascii=False))
+        self.assertFalse(recorded["needs_correction"])
+        self.assert_direct_refusal(
+            lambda: self.record_handoff(handoff, saved["validation_sha256"]),
+            protected, "validation_round_already_recorded")
 
     def test_legacy_record_mode_stays_unchanged(self):
         self.commit_first()

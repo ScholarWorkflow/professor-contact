@@ -359,7 +359,8 @@ class Fixture:
             turn_id=self.turn_id(ROOT)))
 
     def adapter(self):
-        return {"dispatch": {"thread_relations": self.relations,
+        return {"evidence_set_id": "issue66-fixture-run-1",
+                "dispatch": {"thread_relations": self.relations,
                              "agent_identity": []},
                 "delegation": {"state": "confirmed",
                                "child_thread_ids": list(self.children),
@@ -381,7 +382,8 @@ class Fixture:
         events = list(self.events)
         if self.include_turn_completed:
             events.append({"message": {"method": "turn/completed"}})
-        return {"output": {"thread_id": ROOT,
+        return {"evidence_set_id": "issue66-fixture-run-1",
+                "output": {"thread_id": ROOT,
                            "app_server_events": events}}
 
 
@@ -427,7 +429,7 @@ def legal_two_child_spine(fx: Fixture):
 
 
 def valid_surfaces(fx: Fixture):
-    """A routing.json-shaped projection of the fixture's formal graph."""
+    """Complete independent install, sample, storage, snapshot and route inputs."""
     relations = [row for row in fx.relations
                  if isinstance(row, dict) and row.get("tool") == "spawnAgent"]
     owners = {}
@@ -471,18 +473,42 @@ def valid_surfaces(fx: Fixture):
             ])
             route_status = "pass" if count_pass else "fail"
             route_classification = "PASS" if count_pass else "FAIL_PRODUCT"
-    return {
+    surfaces = {
         "install": {"status": "pass", "checks": [
-            {"name": "install_projection", "status": "pass"}]},
+            {"name": "locked_target_commit", "status": "pass"},
+            {"name": "source_install_projection", "status": "pass"},
+            {"name": "request_config_matches_consensus", "status": "pass"}]},
+        "fixture": {"status": "pass", "manual_patch": "no", "checks": [
+            {"name": "no_manual_patch", "status": "pass"},
+            {"name": "initial_input_digest", "status": "pass"},
+            {"name": "forbidden_outputs_absent", "status": "pass"}]},
         "routing": {"status": route_status,
                     "classification": route_classification,
                     "root_thread_id": ROOT,
                     "root_direct_spawn_child_ids": sorted(direct_ids),
                     "nested_formal_spawns": nested,
                     "checks": route_checks},
-        "pre": {"status": "pass"},
-        "post": {"status": "pass"},
+        "pre": {"status": "pass", "checks": [
+            {"name": "pre_zero_write_snapshot", "status": "pass"}]},
+        "post": {"status": "pass", "checks": [
+            {"name": "post_matches_current", "status": "pass"}]},
+        "storage": {"status": "ok", "process_id": "case-process-1",
+                    "rollout_dir": "/tmp/issue66/case-1",
+                    "config_path": "/tmp/issue66/case-1/config.toml",
+                    "database_path": "/tmp/issue66/case-1/state.sqlite",
+                    "log_path": "/tmp/issue66/case-1/server.log",
+                    "checks": [
+                        {"name": "process_is_test_only", "status": "pass"},
+                        {"name": "config_is_test_only", "status": "pass"},
+                        {"name": "database_is_test_only", "status": "pass"},
+                        {"name": "logs_are_test_only", "status": "pass"},
+                        {"name": "database_path_resolved", "status": "pass"},
+                        {"name": "run_records_match_case", "status": "pass"},
+                        {"name": "read_only", "status": "pass"}]},
     }
+    for evidence in surfaces.values():
+        evidence["evidence_set_id"] = "issue66-fixture-run-1"
+    return surfaces
 
 
 def run(fx: Fixture, *, state="default", delegation_override=None,
@@ -495,9 +521,11 @@ def run(fx: Fixture, *, state="default", delegation_override=None,
     output_path = tmp / "verdict.json"
     surface_paths = {}
     surface_flags = {"install": "--install-evidence",
+                     "fixture": "--fixture-evidence",
                      "routing": "--routing-evidence",
                      "pre": "--pre-snapshot",
-                     "post": "--post-snapshot"}
+                     "post": "--post-snapshot",
+                     "storage": "--storage-evidence"}
     response_path.write_text(json.dumps(fx.response(), ensure_ascii=False),
                              encoding="utf-8")
     adapter = fx.adapter()
@@ -755,8 +783,13 @@ class FoldedEvidenceTests(unittest.TestCase):
                          "INVALID_TEST_EXECUTION", verdict)
         self.assertEqual(facts(verdict)["F-install"], "invalid")
 
-    def test_required_routing_and_install_evidence_cannot_be_omitted(self):
-        for missing in ("routing", "install"):
+    def test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted(self):
+        expected_facts = {
+            "install": "F-install", "fixture": "F-fixture",
+            "storage": "F-storage-ownership", "pre": "F-pre-snapshot",
+            "post": "F-post-snapshot", "routing": "F-routing-verifier",
+        }
+        for missing, fact in expected_facts.items():
             with self.subTest(missing=missing):
                 fx = Fixture()
                 legal_two_child(fx)
@@ -766,6 +799,53 @@ class FoldedEvidenceTests(unittest.TestCase):
                               surface_evidence=surfaces)
                 self.assertEqual(verdict["classification"],
                                  "INVALID_TEST_EXECUTION", verdict)
+                self.assertEqual(facts(verdict)[fact], "gap", verdict)
+
+    def test_sample_provenance_failure_invalidates_the_run(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        surfaces = valid_surfaces(fx)
+        next(check for check in surfaces["fixture"]["checks"]
+             if check["name"] == "initial_input_digest")["status"] = "fail"
+        verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-fixture"], "invalid", verdict)
+
+    def test_storage_status_without_ownership_checks_is_a_gap(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        surfaces = valid_surfaces(fx)
+        surfaces["storage"].pop("checks")
+        verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-storage-ownership"], "gap", verdict)
+
+    def test_failed_post_snapshot_cannot_be_hidden_by_routing_pass(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        surfaces = valid_surfaces(fx)
+        surfaces["post"]["checks"][0]["status"] = "fail"
+        verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-post-snapshot"], "invalid", verdict)
+
+    def test_mixed_evidence_set_ids_are_invalid(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        surfaces = valid_surfaces(fx)
+        surfaces["storage"]["evidence_set_id"] = "another-run"
+        verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-evidence-version"], "invalid", verdict)
+
+    def test_missing_evidence_set_id_is_not_a_pass(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        surfaces = valid_surfaces(fx)
+        surfaces["pre"].pop("evidence_set_id")
+        verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-evidence-version"], "gap", verdict)
 
 
 class CredentialValueTests(unittest.TestCase):
@@ -876,6 +956,24 @@ class CredentialValueTests(unittest.TestCase):
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-credential-chain"], "fail")
 
+    def test_credential_return_bound_to_another_professor_fails(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for event in fx.events:
+            message = event.get("message", {})
+            params = message.get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == G1 and item.get("type") == "commandExecution" \
+                    and message.get("method") == "item/completed" \
+                    and "--capture-invocation" in item.get("command", ""):
+                output, state = judge.Judge._json_from_output(item.get("aggregatedOutput"))
+                self.assertEqual(state, "ok")
+                output["professor"] = "Other Professor"
+                item["aggregatedOutput"] = json.dumps(output)
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-credential-chain"], "fail")
+
     def test_missing_capture_value_is_a_gap(self):
         fx = Fixture()
         legal_two_child(fx)
@@ -977,7 +1075,7 @@ class RawOriginalTests(unittest.TestCase):
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
 
-    def test_missing_production_is_a_gap(self):
+    def test_complete_run_with_no_validator_production_fails(self):
         fx = Fixture()
         legal_two_child(fx)
         for event in fx.events:
@@ -987,8 +1085,22 @@ class RawOriginalTests(unittest.TestCase):
                     and params.get("threadId") == V1:
                 item["command"] = f"cat /tmp/fixture/{MD_NAME}"
         verdict = run(fx, state=PASS_STATE)
-        self.assertEqual(verdict["classification"],
-                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "fail", verdict)
+
+    def test_missing_run_completion_leaves_absent_production_as_a_gap(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for event in fx.events:
+            params = event["message"]["params"]
+            item = params["item"]
+            if item.get("type") == "commandExecution" \
+                    and params.get("threadId") == V1:
+                item["command"] = f"cat /tmp/fixture/{MD_NAME}"
+        fx.include_turn_completed = False
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(facts(verdict)["F-raw-original"], "gap", verdict)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
 
     def test_raw_text_blocks_are_concatenated_as_original_utf8_bytes(self):
         blocks = [{"type": "output_text", "text": "  第一块\n"},
@@ -1391,6 +1503,25 @@ class EvidenceChannelTests(unittest.TestCase):
                 item["command"] = item["command"].replace(
                     f"--handoff-file {HANDOFF_FILE}",
                     "--handoff-file /tmp/fixture/别的handoff.json")
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-handoff-chain"], "fail")
+
+    def test_prepare_return_for_another_round_fails(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for event in fx.events:
+            message = event.get("message", {})
+            params = message.get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == ROOT and item.get("type") == "commandExecution" \
+                    and message.get("method") == "item/completed" \
+                    and "stage3-prepare-validation" in item.get("command", ""):
+                output, state = judge.Judge._json_from_output(item.get("aggregatedOutput"))
+                self.assertEqual(state, "ok")
+                output["round"] = 2
+                item["aggregatedOutput"] = json.dumps(output)
+                break
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-handoff-chain"], "fail")

@@ -27,6 +27,7 @@ import hashlib
 import itertools
 import json
 import os
+import shutil
 import stat
 import tempfile
 import unittest
@@ -45,6 +46,8 @@ GID_AC = contact_state.cross_group_id(["dir_A", "dir_C"])
 # Frozen result-read expectations for the two distinct correction scopes.
 EXPECTED_DIRECTION_READS = frozenset({"dir_B"})
 EXPECTED_GROUP_READS = frozenset({GID_AB})
+EXPECTED_FILE_QUOTE_DIRECTIONS = frozenset({"dir_A", "dir_B", "dir_C"})
+EXPECTED_SKIP_CORRECTION_READS = frozenset({"dir_A"})
 CROSS_AB_ARG = '[["dir_A","dir_B"]]'
 CROSS_AC_ARG = '[["dir_A","dir_C"]]'
 BOTH_GROUPS_ARG = '[["dir_A","dir_B"],["dir_A","dir_C"]]'
@@ -57,6 +60,12 @@ def expected_result_read_paths(results_dir, direction_ids=(), group_ids=()):
     return frozenset(
         OpenRecorder._normalize(Path(results_dir) / result_file("candidates", key))
         for key in identities)
+
+
+def assert_result_read_set(testcase, recorder, results_dir, expected):
+    """Assert exact real result-file reads against frozen test expectations."""
+    testcase.assertEqual(recorder.read_paths_under(results_dir), expected,
+                         "actual result reads differ from the frozen expected set")
 
 
 def artifact_snapshot(*roots):
@@ -220,6 +229,18 @@ class InvocationCredentialBase(Stage3DirectionGroupBase):
                          "refused invocation changed a protected artifact")
         return result
 
+    def assert_direct_refusal(self, operation, protected, status, reason):
+        before = artifact_snapshot(*protected)
+        result = operation()
+        self.assertEqual(artifact_snapshot(*protected), before,
+                         "directly rejected entry changed protected artifacts")
+        self.assertEqual(result.get("status"), status, result)
+        self.assertEqual(result.get("reason_code"), reason, result)
+        self.assertNotIn("written", result)
+        if status != "ok":
+            self.assertNotIn("jobs", result)
+        return result
+
 
 class CaptureCredentialTests(InvocationCredentialBase):
     """§5.1: credential production."""
@@ -369,49 +390,85 @@ class InvocationConsumptionTests(InvocationCredentialBase):
                 self.assertEqual(fin["reason_code"], "invalid_params")
 
     def test_damaged_version_digest_and_ownership_fail_before_writes(self):
-        cap, _ = self.capture()
+        profile = self.root / "profile.md"
+        profile.write_text("研究兴趣：拒绝快照来源。\n", encoding="utf-8")
+        cap, _ = self.capture("--profile", profile)
         results = self.write_results("refused-results", self.all_docs())
+        committed = self.credential_finalize(cap, results)
+        self.assertEqual(committed["status"], "ok",
+                         msg=json.dumps(committed, ensure_ascii=False))
+        prepared = parse(run_cli(
+            "stage3-prepare-validation",
+            "--invocation-file", cap["invocation_file"],
+            "--invocation-sha256", cap["invocation_sha256"],
+            "--round", "1"))
+        self.assertEqual(prepared["status"], "ok",
+                         msg=json.dumps(prepared, ensure_ascii=False))
+        handoff = Path(prepared["handoff_file"])
+        output = Path(prepared["output_file"])
+        validation = Path(prepared["validation_file"])
+        # This direct-entry refusal matrix reuses one committed baseline and
+        # one complete protected set. Include absent validator paths as their
+        # own roots so the expected absence is compared for every invocation.
+        protected = (
+            self.root,
+            self.prof_dir / CANDIDATES_MD,
+            self.prof_dir / CANDIDATE_STATE,
+            Path(cap["invocation_file"]), results,
+            handoff.parent, handoff, output, validation,
+        )
+        self.addCleanup(shutil.rmtree, handoff.parent, ignore_errors=True)
+        self.assertTrue((self.prof_dir / CANDIDATES_MD).is_file())
+        self.assertTrue((self.prof_dir / CANDIDATE_STATE).is_file())
+        self.assertTrue(Path(cap["invocation_file"]).is_file())
+        self.assertTrue(results.is_dir())
+        self.assertTrue(handoff.is_file())
+        self.assertFalse(output.exists())
+        self.assertFalse(validation.exists())
         template = json.loads(
             Path(cap["invocation_file"]).read_text(encoding="utf-8"))
-        # Digest mismatch: real file, wrong expected sha.
-        out = self.assert_no_side_effects(
-            lambda: parse(run_cli("stage3-plan",
-                                  "--invocation-file", cap["invocation_file"],
-                                  "--invocation-sha256", "0" * 64)), self.root)
-        self.assertEqual(out["status"], "error")
-        self.assertEqual(out["reason_code"], "invocation_sha256_mismatch")
-        fin = self.assert_no_side_effects(
-            lambda: parse(run_cli("stage3-finalize",
-                                  "--invocation-file", cap["invocation_file"],
-                                  "--invocation-sha256", "0" * 64,
-                                  "--results", str(results))), self.root)
-        self.assertEqual(fin["status"], "error")
-        self.assertEqual(fin["reason_code"], "invocation_sha256_mismatch")
-        # Damaged bytes, matching digest of the damaged bytes.
-        path, sha = self.write_credential({"version": INVOCATION_VERSION, "oops": True})
-        out = self.assert_no_side_effects(
-            lambda: parse(run_cli("stage3-plan", "--invocation-file", path,
-                                  "--invocation-sha256", sha)), self.root)
-        self.assertEqual(out["reason_code"], "invalid_invocation")
-        fin = self.assert_no_side_effects(
-            lambda: parse(run_cli("stage3-finalize", "--invocation-file", path,
-                                  "--invocation-sha256", sha,
-                                  "--results", str(results))), self.root)
-        self.assertEqual(fin["reason_code"], "invalid_invocation")
+
+        def assert_plan_and_finalize(path, sha, status, reason):
+            self.assert_direct_refusal(
+                lambda: parse(run_cli(
+                    "stage3-plan", "--invocation-file", path,
+                    "--invocation-sha256", sha)),
+                protected, status, reason)
+            self.assert_direct_refusal(
+                lambda: parse(run_cli(
+                    "stage3-finalize", "--invocation-file", path,
+                    "--invocation-sha256", sha, "--results", results)),
+                protected, status, reason)
+
+        # Digest mismatch over the unchanged, genuine credential bytes.
+        assert_plan_and_finalize(
+            cap["invocation_file"], "0" * 64, "error",
+            "invocation_sha256_mismatch")
+        # Damaged bytes with their own correct digest.
+        damaged = self.root / "damaged-credential.json"
+        damaged.write_bytes(b"{ damaged credential")
+        damaged_sha = hashlib.sha256(damaged.read_bytes()).hexdigest()
+        assert_plan_and_finalize(
+            str(damaged), damaged_sha, "error", "invalid_invocation")
         # Unsupported credential version.
-        path, sha = self.write_credential({**template, "version": "stage3-invocation-v0"})
-        out = self.assert_no_side_effects(
-            lambda: parse(run_cli("stage3-plan", "--invocation-file", path,
-                                  "--invocation-sha256", sha)), self.root)
-        self.assertEqual(out["reason_code"], "invocation_version_unsupported")
+        path, sha = self.write_credential(
+            {**template, "version": "stage3-invocation-v0"})
+        assert_plan_and_finalize(
+            path, sha, "error", "invocation_version_unsupported")
         # Professor directory outside the credential's program root.
         foreign = {**template,
                    "professor_dir": str(self.root / "其他研究" / PROFESSOR)}
         path, sha = self.write_credential(foreign)
-        out = self.assert_no_side_effects(
-            lambda: parse(run_cli("stage3-plan", "--invocation-file", path,
-                                  "--invocation-sha256", sha)), self.root)
-        self.assertEqual(out["reason_code"], "invalid_professor_dir")
+        assert_plan_and_finalize(
+            path, sha, "error", "invalid_professor_dir")
+
+        # A genuine source change is checked through both direct entries after
+        # the original credential, state, results, and handoff are committed.
+        profile.write_text("研究兴趣：真实来源已变化。\n", encoding="utf-8")
+        assert_plan_and_finalize(
+            cap["invocation_file"], cap["invocation_sha256"],
+            "needs_refresh", "validation_source_changed")
+
         # And the state runner needs one of the two identity sources.
         out = self.assert_no_side_effects(lambda: parse(run_cli("stage3-plan")),
                                           self.root)
@@ -420,8 +477,9 @@ class InvocationConsumptionTests(InvocationCredentialBase):
             lambda: parse(run_cli("stage3-finalize", "--results",
                                   str(self.root / "r"))), self.root)
         self.assertEqual(fin["reason_code"], "invalid_params")
-        # Snapshot assertions above cover the complete fixture tree after each refusal.
-        self.assertFalse((self.prof_dir / CANDIDATE_STATE).exists())
+        # The direct-entry matrix began from a committed state and protected
+        # the candidate, state, credential, result, metadata, source and target.
+        self.assertTrue((self.prof_dir / CANDIDATE_STATE).is_file())
 
     def test_credential_rejection_preserves_the_full_committed_artifact_set(self):
         """Direct plan/finalize refusals leave every bound artifact unchanged."""
@@ -498,14 +556,27 @@ class InvocationConsumptionTests(InvocationCredentialBase):
         cap, _ = self.capture("--profile", profile)
         ok = self.credential_plan(cap)
         self.assertEqual(ok["status"], "ok", msg=json.dumps(ok, ensure_ascii=False))
+        prepared = parse(run_cli(
+            "stage3-prepare-validation",
+            "--invocation-file", cap["invocation_file"],
+            "--invocation-sha256", cap["invocation_sha256"],
+            "--round", "1"))
+        self.assertEqual(prepared["status"], "ok",
+                         msg=json.dumps(prepared, ensure_ascii=False))
+        handoff = Path(prepared["handoff_file"])
+        output = Path(prepared["output_file"])
+        target = Path(prepared["validation_file"])
+        self.addCleanup(shutil.rmtree, handoff.parent, ignore_errors=True)
+        protected = (self.root, state_path, self.prof_dir / CANDIDATES_MD,
+                     Path(cap["invocation_file"]), results, handoff.parent,
+                     handoff, output, target)
         profile.write_text("研究兴趣：第二版。\n", encoding="utf-8")
-        plan = self.credential_plan(cap)
-        self.assertEqual(plan["status"], "needs_refresh",
-                         msg=json.dumps(plan, ensure_ascii=False))
-        self.assertEqual(plan["reason_code"], "validation_source_changed")
-        fin = self.credential_finalize(cap, self.root / "unused-results")
-        self.assertEqual(fin["status"], "needs_refresh")
-        self.assertEqual(fin["reason_code"], "validation_source_changed")
+        self.assert_direct_refusal(
+            lambda: self.credential_plan(cap), protected,
+            "needs_refresh", "validation_source_changed")
+        self.assert_direct_refusal(
+            lambda: self.credential_finalize(cap, results), protected,
+            "needs_refresh", "validation_source_changed")
         self.assertEqual(state_path.read_bytes(), before)
 
 
@@ -598,8 +669,7 @@ class CredentialCorrectionTests(InvocationCredentialBase):
             corrupt_before, "out-of-set result files were never consumed")
         expected_reads = expected_result_read_paths(
             fix, direction_ids=EXPECTED_DIRECTION_READS)
-        self.assertEqual(recorder.read_paths_under(fix), expected_reads,
-                         "actual result reads must equal the independently fixed set")
+        assert_result_read_set(self, recorder, fix, expected_reads)
         self.assertTrue(recorder.was_opened(
             fix / result_file("candidates", "dir_B")),
             "the in-scope direction result was opened through the real reader")
@@ -630,16 +700,20 @@ class CredentialCorrectionTests(InvocationCredentialBase):
             results, direction_ids=EXPECTED_DIRECTION_READS)
         in_scope = results / result_file("candidates", "dir_B")
         out_of_scope = results / result_file("candidates", "dir_A")
+        out_of_scope.write_bytes(b"{ corrupt but unchanged after opening")
+        out_of_scope_before = out_of_scope.read_bytes()
 
         with OpenRecorder() as clean:
             in_scope.read_bytes()
-        self.assertEqual(clean.read_paths_under(results), expected)
+        assert_result_read_set(self, clean, results, expected)
 
         with OpenRecorder() as negative:
             in_scope.read_bytes()
             out_of_scope.read_bytes()
+        self.assertEqual(out_of_scope.read_bytes(), out_of_scope_before,
+                         "the negative control detects an open without a byte change")
         with self.assertRaises(AssertionError):
-            self.assertEqual(negative.read_paths_under(results), expected)
+            assert_result_read_set(self, negative, results, expected)
 
     def test_first_round_skip_and_group_request_are_records_not_requests(self):
         # Baseline: dir_B skipped, cross group A+B committed.
@@ -686,6 +760,11 @@ class CredentialCorrectionTests(InvocationCredentialBase):
         self.assertEqual(out2["corrected"], ["dir_A"])
         self.assertEqual(out2["corrected_groups"], [])
         self.assertEqual(out2["dropped_cross_direction"], [])
+        self.assertEqual(frozenset(out2["corrected"]),
+                         EXPECTED_SKIP_CORRECTION_READS)
+        expected_reads = expected_result_read_paths(
+            fix, direction_ids=EXPECTED_SKIP_CORRECTION_READS)
+        assert_result_read_set(self, recorder, fix, expected_reads)
         after = self.load_state()
         dir_b = next(d for d in after["directions"]
                      if d["direction_id"] == "dir_B")
@@ -694,6 +773,16 @@ class CredentialCorrectionTests(InvocationCredentialBase):
         self.assertEqual(after["cross_direction_groups"],
                          before["cross_direction_groups"],
                          "the unrequested group survives the correction")
+        before_directions = {row["direction_id"]: row
+                             for row in before["directions"]}
+        after_directions = {row["direction_id"]: row
+                            for row in after["directions"]}
+        replaced = frozenset(
+            did for did, row in before_directions.items()
+            if row != after_directions[did])
+        self.assertEqual(replaced, EXPECTED_SKIP_CORRECTION_READS)
+        self.assertEqual(after_directions["dir_B"], before_directions["dir_B"])
+        self.assert_validator_after_correction(before, after)
 
     def test_named_group_is_replaced_and_sibling_group_is_kept(self):
         results = self.write_results("two-groups", self.all_docs())
@@ -718,6 +807,8 @@ class CredentialCorrectionTests(InvocationCredentialBase):
         baseline_after_record = self.load_state()
         self.assertEqual(set(baseline_after_record["validator"]["pending"]),
                          {f"group:{GID_AB}"})
+        self.assertIn("dir_C", baseline_after_record["validator"]["results"])
+        self.assertIn(GID_AC, baseline_after_record["validator"]["groups"])
         before = baseline_after_record
         cplan = self.credential_plan(cap, "--validation-file", self.validation)
         self.assertEqual(cplan["status"], "ok", msg=json.dumps(cplan, ensure_ascii=False))
@@ -751,8 +842,7 @@ class CredentialCorrectionTests(InvocationCredentialBase):
                          "the out-of-work-set group result was never consumed")
         expected_reads = expected_result_read_paths(
             fix, group_ids=EXPECTED_GROUP_READS)
-        self.assertEqual(recorder.read_paths_under(fix), expected_reads,
-                         "actual result reads must equal the independently fixed set")
+        assert_result_read_set(self, recorder, fix, expected_reads)
         self.assertTrue(recorder.was_opened(
             fix / result_file("candidates", GID_AB)),
             "the in-scope group result was opened through the real reader")
@@ -787,6 +877,17 @@ class CredentialCorrectionTests(InvocationCredentialBase):
             if row != by_did_before[did])
         self.assertEqual(changed_directions, frozenset())
         self.assert_validator_after_correction(before, after)
+        self.assertEqual(after["validator"]["results"]["dir_C"],
+                         before["validator"]["results"]["dir_C"])
+        self.assertEqual(after["validator"]["groups"][GID_AC],
+                         before["validator"]["groups"][GID_AC])
+
+        # Negative control: the complete record comparison catches losing
+        # even one unaffected direction's validator record.
+        cleared = json.loads(json.dumps(after))
+        del cleared["validator"]["results"]["dir_C"]
+        with self.assertRaises(AssertionError):
+            self.assert_validator_after_correction(before, cleared)
 
     def test_render_text_quote_expands_scopes_under_credential(self):
         """File-level expansion (render text, not a candidate title) keeps
@@ -800,31 +901,77 @@ class CredentialCorrectionTests(InvocationCredentialBase):
         # so the scope comes from the rendered text, never from a caller guess.
         self.validator_output([self.finding("流式输入")])
         self.assertEqual(self.record()["needs_correction"], True)
+        baseline_after_record = self.load_state()
+        self.assertEqual(set(baseline_after_record["validator"]["pending"]),
+                         {f"direction:{did}"
+                          for did in EXPECTED_FILE_QUOTE_DIRECTIONS})
         cplan = self.credential_plan(cap, "--validation-file", self.validation)
         self.assertEqual(cplan["status"], "ok", msg=json.dumps(cplan, ensure_ascii=False))
         self.assertEqual(cplan["correction_scopes"],
                          ["direction:dir_A", "direction:dir_B", "direction:dir_C"])
+        self.assertEqual(
+            frozenset(job["direction_id"] for job in cplan["jobs"]),
+            EXPECTED_FILE_QUOTE_DIRECTIONS)
+        self.assertEqual([job["direction_id"] for job in cplan["jobs"]],
+                         sorted(EXPECTED_FILE_QUOTE_DIRECTIONS))
+
+        docs = {
+            "dir_A": self.generated_doc("dir_A", ["P1", "P2", None]),
+            "dir_B": self.generated_doc("dir_B", ["P1", "P3", None]),
+            "dir_C": self.generated_doc("dir_C", ["P4", "P4", None]),
+        }
+        for did, doc in docs.items():
+            doc["candidates"][0]["title"] += " 文件级修正版"
+        fix = self.write_results("file-quote-fix", docs)
+        with OpenRecorder() as recorder:
+            out, code = call_runner(
+                "stage3-finalize", "--invocation-file", cap["invocation_file"],
+                "--invocation-sha256", cap["invocation_sha256"],
+                "--results", str(fix), "--validation-file", self.validation)
+        self.assertEqual(code, 0)
+        self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
+        self.assertEqual(frozenset(out["corrected"]),
+                         EXPECTED_FILE_QUOTE_DIRECTIONS)
+        self.assertEqual(out["corrected_groups"], [])
+        expected_reads = expected_result_read_paths(
+            fix, direction_ids=EXPECTED_FILE_QUOTE_DIRECTIONS)
+        assert_result_read_set(self, recorder, fix, expected_reads)
+
+        after = self.load_state()
+        before_directions = {
+            row["direction_id"]: row
+            for row in baseline_after_record["directions"]}
+        after_directions = {row["direction_id"]: row for row in after["directions"]}
+        replaced = frozenset(
+            did for did, row in before_directions.items()
+            if row != after_directions[did])
+        self.assertEqual(replaced, EXPECTED_FILE_QUOTE_DIRECTIONS)
+        self.assertEqual(after["cross_direction_groups"],
+                         baseline_after_record["cross_direction_groups"])
+        self.assert_validator_after_correction(baseline_after_record, after)
 
     def test_credential_correction_requires_a_recorded_open_round(self):
         self.commit_baseline_with_group()
         state_path = self.prof_dir / CANDIDATE_STATE
         cap, _ = self.capture()
         # An unrecorded validation file never authorizes a credential correction.
-        before = state_path.read_bytes()
         self.validator_output([self.finding("候选 dir_A_1")])
-        plan = self.credential_plan(cap, "--validation-file", self.validation)
-        self.assertEqual(plan["status"], "error")
-        self.assertEqual(plan["reason_code"], "validation_evidence_not_recorded")
-        self.assertEqual(state_path.read_bytes(), before)
+        protected = (self.root, self.prof_dir / CANDIDATES_MD, state_path,
+                     Path(cap["invocation_file"]), self.validation)
+        self.assert_direct_refusal(
+            lambda: self.credential_plan(
+                cap, "--validation-file", self.validation),
+            protected, "error", "validation_evidence_not_recorded")
         # An empty work set (a recorded round without open findings) also stops.
         self.validator_output([])
         self.assertEqual(self.record()["needs_correction"], False)
         cap2, _ = self.capture()
-        before2 = state_path.read_bytes()
-        plan2 = self.credential_plan(cap2, "--validation-file", self.validation)
-        self.assertEqual(plan2["status"], "error")
-        self.assertEqual(plan2["reason_code"], "validation_evidence_not_recorded")
-        self.assertEqual(state_path.read_bytes(), before2)
+        protected2 = (self.root, self.prof_dir / CANDIDATES_MD, state_path,
+                      Path(cap2["invocation_file"]), self.validation)
+        self.assert_direct_refusal(
+            lambda: self.credential_plan(
+                cap2, "--validation-file", self.validation),
+            protected2, "error", "validation_evidence_not_recorded")
 
 
 class PlainGenerationCompatTests(InvocationCredentialBase):
