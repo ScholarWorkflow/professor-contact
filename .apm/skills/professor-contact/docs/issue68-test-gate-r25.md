@@ -1,8 +1,8 @@
-# Issue #68 / PR #72 Gate 2 候选记录 r32 — 测试计划第23版 单一权威测试实现
+# 历史记录：Issue #68 / PR #72 Gate 2 候选记录 r32
 
 记录版本：`issue68-r32-r23-candidate-2026-10-06`。
 
-本文件是当前单一测试候选记录，取代 r31 候选记录。测试计划见 [当前测试计划](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-5993806361)。第二关口记录为 PASS+COMPLETE；PC68-D1 完整入口机器判定 PASS；PC68-R1 已发出一次正式请求，机器判定为 `BLOCKED_OBSERVABILITY / formal_delegation_unobservable`，第三关口仍为 NOT READY。
+**本文件是测试计划第23版的历史记录，不能作为当前实现或验收依据。** 当前测试计划第24版的实现状态见 [第27版测试实现与预检记录](issue68-test-gate-r27.md)。第24版明确要求逐次证明实际读取或交付的输入；本文件中基于命令文字的消费判定已被撤销。
 
 ## 0. 版本绑定（全部固定到真实提交）
 
