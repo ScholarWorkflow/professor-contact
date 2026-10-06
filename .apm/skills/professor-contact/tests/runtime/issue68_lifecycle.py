@@ -1,8 +1,6 @@
-"""Read-only filesystem evidence for r25 R1-7.
+"""Same-request snapshots and actual use prove r26 R1-7 lifecycle.
 
-Snapshots prove preserved bytes and final absence, not a write/delete history.
-Completed bounded root file operations and the installed partition command
-can prove mutations. Unsupported or ambiguous root programs leave a gap.
+Bounded command operations remain diagnostics, not mandatory mutation evidence.
 """
 import hashlib
 import json
@@ -11,7 +9,7 @@ import time
 import uuid
 from pathlib import Path
 
-SCHEMA = "issue68-r30-lifecycle-v1"
+SCHEMA = "issue68-r31-lifecycle-v1"
 
 
 class MissingEventObservation(ValueError):
@@ -71,7 +69,7 @@ def snapshot_tree(root):
     root = Path(root).absolute()
     entries = {}
     if not root.exists():
-        return {"root": str(root), "present": False, "entries": entries}
+        return {"root": str(root), "present": False, "complete": True, "entries": entries}
     for path in sorted(root.rglob("*")):
         relative = str(path.relative_to(root))
         if path.is_symlink():
@@ -84,13 +82,16 @@ def snapshot_tree(root):
             entries[relative] = {"kind": "directory"}
         else:
             entries[relative] = {"kind": "other"}
-    return {"root": str(root), "present": True, "entries": entries}
+    return {"root": str(root), "present": True, "complete": True, "entries": entries}
 
 
 def collect_before(manifest, consumer):
-    return {"schema": SCHEMA, "phase": "before_request",
+    record = {"schema": SCHEMA, "phase": "before_request",
             "program": snapshot_tree(manifest["program_root"]),
             "consumer": snapshot_tree(consumer)}
+    for index, root in enumerate(manifest.get("lifecycle_extra_observation_roots", [])):
+        record["extra_" + str(index)] = snapshot_tree(root)
+    return record
 
 
 def bind_before(before, request):
@@ -172,7 +173,7 @@ def _response_digest(response):
 
 def collect_lifecycle(before, manifest, consumer, response, input_verifier, after=None):
     """Bind only validated same-call reads; never infer writes from shell text."""
-    reads, partitions, problems, operations = [], [], [], []
+    reads, partitions, problems, operations, business_outputs, attempted_handoffs = [], [], [], [], [], []
     root = response.get("output", {}).get("thread_id")
     try:
         commands = _commands(response)
@@ -194,7 +195,18 @@ def collect_lifecycle(before, manifest, consumer, response, input_verifier, afte
             continue
         if not action:
             continue
+        if action.get("action") == "stage5-rebuild-overview" and call["thread"] == root:
+            try:
+                returned_overview = json.loads(call.get("output") or "")
+                if returned_overview.get("overview_md"):
+                    business_outputs.append(returned_overview["overview_md"])
+            except (TypeError, ValueError, AttributeError):
+                pass
         if action.get("owner_capture"):
+            if action["owner_capture"].get("owner_input_file"):
+                attempted_handoffs.append({"path": action["owner_capture"]["owner_input_file"],
+                    **{key: call[key] for key in ("thread", "generation", "start", "end")},
+                    "command_id": call["id"]})
             rows, problem = input_verifier.consumed_business_objects([call], manifest)
             if problem:
                 problems.append(problem)
@@ -233,8 +245,9 @@ def collect_lifecycle(before, manifest, consumer, response, input_verifier, afte
                         operations.append({"operation": op, "paths": [flags[key]],
                             **{k: call[k] for k in ("id", "thread", "generation", "start", "end")},
                             "source": "installed_partition_read_write_before_emit"})
-    after = after if after is not None else {"phase": "after_request", "program": snapshot_tree(manifest["program_root"]),
-             "consumer": snapshot_tree(consumer)}
+    if after is None:
+        after = collect_before(manifest, consumer)
+        after["phase"] = "after_request"
     if "request_boundary" in before and "request_boundary" not in after:
         after["request_boundary"] = {**before["request_boundary"], "sequence": 2,
             "response_sha256": _response_digest(response), "monotonic_ns": time.monotonic_ns()}
@@ -244,13 +257,14 @@ def collect_lifecycle(before, manifest, consumer, response, input_verifier, afte
             "root_thread": root,
             "runtime_generation": response.get("output", {}).get("runtime_generation"),
             "reads": reads, "partition_returns": partitions,
+            "business_outputs": business_outputs,
+            "attempted_handoffs": attempted_handoffs,
             "input_problems": problems, "file_operations": operations,
             "lifecycle_capability": {"state": "INCOMPLETE",
-                "missing_facts": ["root_transfer_file_creation_observation",
-                                  "root_original_choices_file_read_observation",
-                                  "root_complete_partition_transfer_read_observation",
-                                  "request_owned_cleanup_operation_observation"],
-                "reason": "bounded_successful_root_file_operations_are_required"}}
+                "missing_facts": ["same_request_complete_directory_records",
+                                  "actual_transfer_formation_or_use",
+                                  "final_absence_and_protected_data_preservation"],
+                "reason": "same_request_complete_snapshots_and_actual_use_are_required"}}
     # Missing or damaged original events cannot attribute filesystem differences
     # to the root request, even if the recorded snapshots differ.
     boundary_problem = next((problem for problem in problems if problem["reason_code"] in
@@ -296,13 +310,15 @@ def verify_bound_lifecycle(evidence, manifest, response, adapter, input_verifier
             return invalid("lifecycle_consumer_association_invalid")
         rebuilt = collect_lifecycle(before, manifest, before["consumer"]["root"], response,
                                     input_verifier, after=after)
-        for key in ("reads", "partition_returns", "input_problems", "file_operations"):
+        for key in ("reads", "partition_returns", "input_problems", "file_operations", "business_outputs", "attempted_handoffs"):
             if evidence.get(key) != rebuilt[key]:
                 return invalid("lifecycle_raw_fact_mismatch")
         children = {child for edge in adapter.get("dispatch", {}).get("thread_relations", [])
                     if edge.get("tool") == "spawnAgent" and edge.get("sender_thread_id") == raw["thread_id"]
                     for child in edge.get("receiver_thread_ids", [])}
         if any(read["thread"] not in children for read in rebuilt["reads"]):
+            return invalid("lifecycle_owner_thread_association_invalid")
+        if any(attempt["thread"] not in children for attempt in rebuilt["attempted_handoffs"]):
             return invalid("lifecycle_owner_thread_association_invalid")
         proof = verify_lifecycle(evidence, manifest)
         if proof["verdict"] == "FAIL_PRODUCT":
@@ -324,7 +340,7 @@ def _subtree(snapshot, directory):
 
 
 def verify_lifecycle(evidence, manifest):
-    """Validate snapshots and directly attributable mutation/read chains."""
+    """Validate complete snapshots and directly attributable formation/use."""
     def result(kind, reason, **extra):
         return {"verdict": kind, "reason_code": reason, **extra}
     try:
@@ -333,14 +349,42 @@ def verify_lifecycle(evidence, manifest):
         before, after = evidence["before"], evidence["after"]
         if before.get("phase") != "before_request" or after.get("phase") != "after_request":
             raise ValueError("phase")
-        for scope in ("program", "consumer"):
+        scopes = ["program", "consumer"] + ["extra_" + str(index) for index, _ in
+                  enumerate(manifest.get("lifecycle_extra_observation_roots", []))]
+        for index, root in enumerate(manifest.get("lifecycle_extra_observation_roots", [])):
+            if before["extra_" + str(index)]["root"] != root:
+                raise ValueError("extra_root_association")
+        # These declarations classify newly created business output only;
+        # they never authorize changing a preexisting observed entry.
+        allowed_outputs = set(evidence.get("business_outputs", []))
+        allowed_outputs.update(owner["result"] for owner in manifest["owners"] if owner.get("result"))
+        actual_read_paths = {read["path"] for read in evidence["reads"]}
+        successful_transfer_paths = {partition[key]
+            for partition in evidence.get("partition_returns", [])
+            if isinstance(partition.get("actual_return"), dict)
+            and partition["actual_return"].get("status") == "ok"
+            and type(partition.get("exit_code")) is int and partition["exit_code"] == 0
+            for key in ("choices_path", "out_path") if partition.get(key)}
+        def location(path_string):
+            path = Path(path_string)
+            if not path.is_absolute() or ".." in path.parts:
+                raise ValueError("relative_transfer")
+            for scope in scopes:
+                if path.is_relative_to(Path(before[scope]["root"])):
+                    relative = path.relative_to(Path(before[scope]["root"]))
+                    if any(before[scope]["entries"].get(str(parent), {}).get("kind") == "symlink"
+                           for parent in relative.parents if str(parent) != "."):
+                        continue
+                    return scope, str(relative)
+            return None
+        for scope in scopes:
             if before[scope]["root"] != after[scope]["root"] or before[scope]["present"] is not True \
                     or type(after[scope]["present"]) is not bool or not Path(before[scope]["root"]).is_absolute():
                 raise ValueError("roots")
             if not after[scope]["present"]:
                 return result("FAIL_PRODUCT", "protected_request_tree_deleted", scope=scope)
             for snapshot in (before[scope], after[scope]):
-                if not isinstance(snapshot["entries"], dict):
+                if snapshot.get("complete") is not True or not isinstance(snapshot["entries"], dict):
                     raise ValueError("entries")
                 for name, entry in snapshot["entries"].items():
                     if not isinstance(name, str) or Path(name).is_absolute() or ".." in Path(name).parts:
@@ -365,12 +409,29 @@ def verify_lifecycle(evidence, manifest):
         if not manifest.get("protected_other_request_files"):
             raise ValueError("other_request_fixture_missing")
         for path in manifest["protected_other_request_files"]:
-            relative = str(Path(path).relative_to(Path(before["program"]["root"])))
-            original = before["program"]["entries"].get(relative)
+            found = location(path)
+            if found is None:
+                raise ValueError("protected_location_unobserved")
+            scope, relative = found
+            original = before[scope]["entries"].get(relative)
             if original is None:
                 raise ValueError("other_request_fixture_missing")
-            if after["program"]["entries"].get(relative) != original:
+            if after[scope]["entries"].get(relative) != original:
                 return result("FAIL_PRODUCT", "other_request_file_changed_or_deleted", path=path)
+        # Preserve every preexisting observed entry, including empty directories
+        # and other-request files not named individually in the sentinel list.
+        for scope in scopes:
+            for name, original in before[scope]["entries"].items():
+                path_string = str(Path(before[scope]["root"]) / name)
+                if after[scope]["entries"].get(name) != original:
+                    # Runtime output/transfer declarations cannot grant access
+                    # to another request's preexisting data. Preserve the prior
+                    # failure labels for successfully used transfer paths.
+                    if path_string in actual_read_paths:
+                        return result("FAIL_PRODUCT", "handoff_reused_preexisting_file", path=path_string)
+                    if path_string in successful_transfer_paths:
+                        return result("FAIL_PRODUCT", "transfer_overwrites_preexisting_request_data", path=path_string)
+                    return result("FAIL_PRODUCT", "other_request_file_changed_or_deleted", path=path_string)
         for read in evidence["reads"]:
             if read.get("professor_dir") not in {o["professor_dir"] for o in manifest["owners"]}:
                 return result("INVALID_EVIDENCE", "transfer_owner_association_invalid")
@@ -380,8 +441,10 @@ def verify_lifecycle(evidence, manifest):
                     or read["start"] >= read["end"]:
                 raise ValueError("read_association")
             path = Path(read["path"])
-            scope = "program" if path.is_relative_to(Path(after["program"]["root"])) else "consumer"
-            relative = str(path.relative_to(Path(after[scope]["root"])))
+            found = location(str(path))
+            if found is None:
+                return result("BLOCKED_OBSERVABILITY", "transfer_path_outside_observation_scope", path=str(path))
+            scope, relative = found
             if relative in before[scope]["entries"]:
                 return result("FAIL_PRODUCT", "handoff_reused_preexisting_file", path=str(path))
             if relative in after[scope]["entries"]:
@@ -390,9 +453,6 @@ def verify_lifecycle(evidence, manifest):
         return result("INVALID_EVIDENCE", "lifecycle_snapshot_or_association_invalid")
     try:
         partitions = evidence.get("partition_returns", [])
-        if len(partitions) != 1 or len(evidence["reads"]) != len(manifest["owners"]):
-            return result("BLOCKED_OBSERVABILITY", "transfer_creation_and_cleanup_unobservable")
-        partition = partitions[0]
         operations = evidence.get("file_operations", [])
         generation = evidence.get("runtime_generation")
         if isinstance(generation, bool) or not isinstance(generation, (str, int)) or str(generation) == "":
@@ -406,30 +466,55 @@ def verify_lifecycle(evidence, manifest):
         if any(not _same_generation(read.get("generation"), generation)
                for read in evidence["reads"]):
             raise ValueError("read_generation")
-        refs = [(read["path"], read["start"], read["end"], False) for read in evidence["reads"]]
-        if partition.get("choices_path"):
-            refs.append((partition["choices_path"], partition["start"], partition["end"], False))
-        if partition.get("out_path"):
-            # The command writes --out before emitting its actual return.
-            # Consuming that return does not require a second cat operation.
-            refs.append((partition["out_path"], partition["start"], partition["end"], True))
-        for path_string, read_start, read_end, same_partition_write in refs:
-            path = Path(path_string)
-            scope = "program" if path.is_relative_to(Path(after["program"]["root"])) else "consumer"
-            relative = str(path.relative_to(Path(after[scope]["root"])))
+        refs = [read["path"] for read in evidence["reads"]]
+        for attempt in evidence.get("attempted_handoffs", []):
+            if not _same_generation(attempt.get("generation"), generation) or \
+                    not attempt.get("command_id") or type(attempt.get("start")) is not int or \
+                    type(attempt.get("end")) is not int or attempt["start"] >= attempt["end"]:
+                raise ValueError("handoff_attempt_association")
+            # Only presence after the attributable delivery attempt establishes
+            # an undelivered remnant. An absent attempted path proves no use.
+            found = location(attempt["path"])
+            if found is None:
+                return result("BLOCKED_OBSERVABILITY", "transfer_path_outside_observation_scope", path=attempt["path"])
+            scope, relative = found
+            if relative in after[scope]["entries"]:
+                refs.append(attempt["path"])
+        successful = []
+        for partition in partitions:
+            if partition.get("actual_return", {}).get("status") != "ok" or \
+                    type(partition.get("exit_code")) is not int or partition["exit_code"] != 0:
+                continue
+            if partition.get("thread") != evidence["root_thread"] or \
+                    not _same_generation(partition.get("generation"), generation) or \
+                    type(partition.get("start")) is not int or type(partition.get("end")) is not int or \
+                    partition["start"] >= partition["end"] or not partition.get("command_id"):
+                raise ValueError("partition_association")
+            successful.append(partition)
+            refs.extend(partition[key] for key in ("choices_path", "out_path") if partition.get(key))
+        for path_string in refs:
+            found = location(path_string)
+            if found is None:
+                return result("BLOCKED_OBSERVABILITY", "transfer_path_outside_observation_scope", path=path_string)
+            scope, relative = found
             if relative in before[scope]["entries"]:
                 return result("FAIL_PRODUCT", "transfer_overwrites_preexisting_request_data", path=path_string)
             if relative in after[scope]["entries"]:
                 return result("FAIL_PRODUCT", "request_transfer_file_remains", path=path_string)
-            writes = [op for op in operations if op["operation"] == "write" and path_string in op["paths"]
-                      and (op["end"] < read_start or (same_partition_write and
-                           op["source"] == "installed_partition_read_write_before_emit" and
-                           op["start"] == read_start and op["end"] == read_end))]
-            removes = [op for op in operations if op["operation"] == "remove" and path_string in op["paths"]
-                       and op["start"] > read_end]
-            if not writes or not removes:
-                return result("BLOCKED_OBSERVABILITY", "transfer_creation_and_cleanup_unobservable",
-                              path=path_string)
+        if len(successful) != 1 or not successful[0].get("choices_path") or \
+                {read["professor_dir"] for read in evidence["reads"]} != \
+                {owner["professor_dir"] for owner in manifest["owners"]} or \
+                len(evidence["reads"]) != len(manifest["owners"]):
+            return result("BLOCKED_OBSERVABILITY", "transfer_creation_and_cleanup_unobservable")
+        allowed = set(allowed_outputs)
+        allowed.update(manifest.get("lifecycle_boundary", {}).get(key) for key in
+                       ("request_artifact", "before_artifact"))
+        for scope in scopes:
+            for name, entry in after[scope]["entries"].items():
+                path_string = str(Path(after[scope]["root"]) / name)
+                if name not in before[scope]["entries"] and entry["kind"] != "directory" and \
+                        path_string not in allowed:
+                    return result("BLOCKED_OBSERVABILITY", "new_file_request_ownership_unresolved", path=path_string)
         return result("PASS", "request_lifecycle_and_state_preservation_proven")
     except (KeyError, TypeError, ValueError, AttributeError):
         return result("INVALID_EVIDENCE", "lifecycle_operation_association_invalid")

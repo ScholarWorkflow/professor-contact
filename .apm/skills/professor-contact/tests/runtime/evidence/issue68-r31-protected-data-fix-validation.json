@@ -1,0 +1,132 @@
+{
+  "record_id": "issue68-r31-protected-data-fix-validation",
+  "execution_kind": "synthetic_preflight",
+  "role": "local_test_engineer",
+  "plan_revision": "issue-68-test-plan-r26-2026-10-07",
+  "affected_case": "PC68-R1",
+  "requirement": "AD68-5: observed preexisting other-request files, directories and bytes remain unchanged",
+  "formal_acceptance_executed": false,
+  "gate2_pass_claimed": false,
+  "product_modified": false,
+  "source_paths_base": ".apm/skills/professor-contact/tests",
+  "source_versions": {
+    "original_runtime": {
+      "path": "runtime/issue68_lifecycle.py",
+      "sha256": "a3d6ea3d3f6915c2ea41466e381b8545d5f00600623373cc7c17d9fc63ae5e09",
+      "digest_origin": "captured_before_changes"
+    },
+    "regression_unit_tests": {
+      "path": "test_issue68_lifecycle.py",
+      "sha256": "6a18f5ff39bb344a6f2a76eed361dbe2ca8fc75466c357d5c36a04068c27d988",
+      "digest_origin": "captured_final_unchanged_since_regressions_added"
+    },
+    "initial_regression_integration": {
+      "path": "test_issue68_lifecycle_integration.py",
+      "sha256": "ed2806cb98cb44594b1d942297bc5b7e01a1a1b830c5a46b73ddc7e9299e9c72",
+      "digest_origin": "reconstructed_from_final_by_reversing_only_the_recorded_two_line_owner_result_fixture_correction"
+    },
+    "corrected_integration": {
+      "path": "test_issue68_lifecycle_integration.py",
+      "sha256": "a32a366e8eaec90ab6c5887320308ebe2fd97c1ad3ace76f49c7fb4c382cc5f1",
+      "digest_origin": "captured_final_unchanged_since_fixture_correction"
+    },
+    "first_fix_runtime": {
+      "path": "runtime/issue68_lifecycle.py",
+      "sha256": "13eb5938f278c5bc2f967c9802bb963ea2dba6289361c1cc920c9bb01e933093",
+      "digest_origin": "reconstructed_from_final_by_reversing_only_the_recorded_allowed_outputs_variable_restoration"
+    },
+    "final_runtime": {
+      "path": "runtime/issue68_lifecycle.py",
+      "sha256": "f9fc8b13f26b2826127aaa371eaf6b93479cba279c2e7b4f929b487a2bb8329e",
+      "digest_origin": "captured_final"
+    }
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "purpose": "run_new_regressions_before_runtime_fix",
+      "source_versions": ["original_runtime", "regression_unit_tests", "initial_regression_integration"],
+      "command": "uv run python -m unittest test_issue68_lifecycle test_issue68_lifecycle_integration",
+      "exit_code": 2,
+      "tests_executed": 0,
+      "classification": "CASE_NOT_STARTED",
+      "private_log_basename": "before.log",
+      "private_log_sha256": "37394288b70707ee5209e73ee7dba3201da1d2ccc32b236e81283522cdeabd5c",
+      "summary": "Default package cache was not writable; no test began. Subsequent rounds used one disposable cache, with unchanged test entry and assertions."
+    },
+    {
+      "round": 2,
+      "purpose": "demonstrate_original_false_pass",
+      "source_versions": ["original_runtime", "regression_unit_tests", "initial_regression_integration"],
+      "command": "uv run python -m unittest test_issue68_lifecycle test_issue68_lifecycle_integration",
+      "cache": "disposable_private_cache",
+      "exit_code": 1,
+      "tests_executed": 66,
+      "failed_assertions": 13,
+      "errors": 0,
+      "elapsed_seconds": 7.174,
+      "classification": "EXPECTED_REGRESSION_FAILURE_WITH_ONE_FIXTURE_DEFECT",
+      "private_log_basename": "before-tests.log",
+      "private_log_sha256": "2b004e9c92584c6bbc37585eb45c50a7268b7cf945e24826ee6b5ed3d81cfcbf",
+      "summary": "Original runtime incorrectly accepted output-declared protected-data mutations and failed-partition path overwrites. Full entry wrongly returned PASS for overview-declared old-file rewrite and old-directory deletion. The owner-result full-entry fixture initially returned owner_result_path_changed because its handoff had not yet been aligned; that initial fixture result is not used as proof of the protected-data defect."
+    },
+    {
+      "round": 3,
+      "purpose": "confirm_owner_result_false_pass_after_fixture_alignment",
+      "source_versions": ["original_runtime", "regression_unit_tests", "corrected_integration"],
+      "command": "uv run python -m unittest test_issue68_lifecycle_integration.ComposedEntryTests.test_unmocked_entry_owner_result_cannot_authorize_existing_file_rewrite",
+      "cache": "disposable_private_cache",
+      "exit_code": 1,
+      "tests_executed": 1,
+      "failed_assertions": 1,
+      "errors": 0,
+      "elapsed_seconds": 0.542,
+      "classification": "EXPECTED_REGRESSION_FAILURE",
+      "private_log_basename": "before-owner-corrected.log",
+      "private_log_sha256": "0cdce835a152ad65265a2cb0a58ed80addf4dcc6e0634f5fd20d5ec02c3655a2",
+      "observed_entry_verdict": "PASS",
+      "expected_entry_verdict": "FAIL_PRODUCT",
+      "expected_reason_code": "other_request_file_changed_or_deleted",
+      "summary": "After aligning the handoff result and capture manifest with the declared owner result, the full entry still incorrectly accepted rewriting an unlisted preexisting other-request file."
+    },
+    {
+      "round": 4,
+      "purpose": "first_runtime_fix_and_adjacent_validation",
+      "source_versions": ["first_fix_runtime", "regression_unit_tests", "corrected_integration"],
+      "command": "uv run python -m unittest test_issue68_lifecycle test_issue68_lifecycle_integration test_issue68_runtime_r19 test_issue68_lifecycle_combination_precheck",
+      "cache": "disposable_private_cache",
+      "exit_code": 1,
+      "tests_executed": 126,
+      "failed_assertions": 0,
+      "errors": 30,
+      "elapsed_seconds": 23.016,
+      "classification": "TEST_PROGRAM_DEFECT",
+      "private_log_basename": "after-tests.log",
+      "private_log_sha256": "d8051acf5b8d421a128dee0e020bdffe5326c8d75ce29a685e9c7d1d1774f667",
+      "summary": "Removing the preexisting-entry exemption also removed allowed_outputs still used for new-file classification. Thirty checks raised NameError. Restored the variable solely for classifying new output; preexisting entries retained unconditional protection."
+    },
+    {
+      "round": 5,
+      "purpose": "final_runtime_fix_and_adjacent_validation",
+      "source_versions": ["final_runtime", "regression_unit_tests", "corrected_integration"],
+      "command": "uv run python -m unittest test_issue68_lifecycle test_issue68_lifecycle_integration test_issue68_runtime_r19 test_issue68_lifecycle_combination_precheck",
+      "cache": "disposable_private_cache",
+      "exit_code": 0,
+      "tests_executed": 126,
+      "failed_assertions": 0,
+      "errors": 0,
+      "elapsed_seconds": 24.239,
+      "classification": "PASS",
+      "private_log_basename": "after-tests-02.log",
+      "private_log_sha256": "01543272dd5fd28fe1aba800eae87b442171f0602c43396d49dd8edaacbd8b1d",
+      "summary": "All associated checks passed, including the complete entry positive chain, three new complete-entry protected-data negatives, declared-output file/directory mutations, failed-partition overwrites, valid new business output and preserved successful-transfer reuse reason codes."
+    }
+  ],
+  "fix": {
+    "preexisting_entries": "Compare every observed preexisting entry unconditionally; runtime output and transfer declarations cannot exempt it.",
+    "new_business_outputs": "Overview and owner result declarations remain available only for newly created output classification.",
+    "reason_code_compatibility": "Retain handoff_reused_preexisting_file and transfer_overwrites_preexisting_request_data for successfully used preexisting transfer paths.",
+    "failed_partition_overwrite": "A failed partition cannot exempt its choices_path or out_path from protected-data comparison.",
+    "public_evidence_policy": "Only repository-relative source paths, private log basenames, byte digests, counts and redacted findings are published. Complete private logs remain local."
+  }
+}

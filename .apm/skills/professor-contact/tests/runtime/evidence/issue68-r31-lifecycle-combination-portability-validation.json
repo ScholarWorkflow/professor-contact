@@ -1,0 +1,155 @@
+{
+  "execution_kind": "synthetic_combination_preflight",
+  "formal_case_started": false,
+  "state": "COMBINATION_VERIFIER_READY",
+  "plan_revision": "issue-68-test-plan-r26-2026-10-07",
+  "expected_verdict_source": "r26_lifecycle_minimum_validation_conditions",
+  "expected_verdicts": {
+    "legal": "PASS",
+    "residual": "FAIL_PRODUCT",
+    "protected_changed": "FAIL_PRODUCT",
+    "wrong_request": "INVALID_EVIDENCE",
+    "missing_use": "BLOCKED_OBSERVABILITY",
+    "incomplete_scan": "INVALID_EVIDENCE"
+  },
+  "fixed_entrypoint": "UV_CACHE_DIR=<private-cache> uv run tests/runtime/preflight_issue68_lifecycle_combination_r31.py <new-private-evidence-directory>",
+  "runtime_envelopes_and_topology": "synthetic_not_eval_or_professor_evidence",
+  "commands_and_filesystem": "actual_local_subprocess_results_and_complete_snapshots",
+  "lifecycle_source_sha256": "a3d6ea3d3f6915c2ea41466e381b8545d5f00600623373cc7c17d9fc63ae5e09",
+  "entrypoint_sha256": "4d5122a373aa775248d0f55d8ab53177bfc90d9fa74a2901952f3acb7b2890c5",
+  "cases": [
+    {
+      "scenario": "legal",
+      "proof": {
+        "verdict": "PASS",
+        "reason_code": "request_lifecycle_and_state_preservation_proven"
+      },
+      "same_parsed_object_used": true,
+      "mutation_operation_events": 0,
+      "command_exit_codes": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "scenario": "residual",
+      "proof": {
+        "verdict": "FAIL_PRODUCT",
+        "reason_code": "request_transfer_file_remains"
+      },
+      "same_parsed_object_used": true,
+      "mutation_operation_events": 0,
+      "command_exit_codes": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "scenario": "protected_changed",
+      "proof": {
+        "verdict": "FAIL_PRODUCT",
+        "reason_code": "other_request_file_changed_or_deleted"
+      },
+      "same_parsed_object_used": true,
+      "mutation_operation_events": 0,
+      "command_exit_codes": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "scenario": "wrong_request",
+      "proof": {
+        "verdict": "INVALID_EVIDENCE",
+        "reason_code": "lifecycle_request_boundary_invalid"
+      },
+      "same_parsed_object_used": true,
+      "mutation_operation_events": 0,
+      "command_exit_codes": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "scenario": "missing_use",
+      "proof": {
+        "verdict": "BLOCKED_OBSERVABILITY",
+        "reason_code": "transfer_creation_and_cleanup_unobservable"
+      },
+      "same_parsed_object_used": true,
+      "mutation_operation_events": 0,
+      "command_exit_codes": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "scenario": "incomplete_scan",
+      "proof": {
+        "verdict": "INVALID_EVIDENCE",
+        "reason_code": "lifecycle_snapshot_or_association_invalid"
+      },
+      "same_parsed_object_used": true,
+      "mutation_operation_events": 0,
+      "command_exit_codes": [
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "uncompleted": [
+    "formal_allowed_transfer_location_coverage",
+    "formal_PC68_R1_execution",
+    "second_gate_complete_approval"
+  ],
+  "historical_source_reuse": [],
+  "evidence_kind": "portability_fix_validation",
+  "original_summary_sha256": "76dd06ed93427210d8f9ea756cde40396cf39e0bac0ac2360a2a77f19356d580",
+  "optional_history_run": {
+    "state": "COMBINATION_VERIFIER_READY",
+    "entrypoint_sha256": "4d5122a373aa775248d0f55d8ab53177bfc90d9fa74a2901952f3acb7b2890c5",
+    "lifecycle_source_sha256": "a3d6ea3d3f6915c2ea41466e381b8545d5f00600623373cc7c17d9fc63ae5e09",
+    "historical_source_reuse": [
+      {
+        "attempt": "03",
+        "response_sha256": "30c74d96bd710558382ef1864b674754c7736789b28809ed44a3aa767e9835ff",
+        "command_count": 1,
+        "reused_fact": "command_id_output_thread_generation_and_sequence_field_convention_only"
+      },
+      {
+        "attempt": "04",
+        "response_sha256": "fba2995fe7ffabfef2bd298a78004a69cd3175c2127264aec63a3f453cbe5a56",
+        "command_count": 3,
+        "reused_fact": "command_id_output_thread_generation_and_sequence_field_convention_only"
+      }
+    ]
+  },
+  "optional_summary_sha256": "899f484dd1cdc09d9bf540504ca01dec7fb74227cb2b13a00928cd2a57944389",
+  "regression": {
+    "tests": 4,
+    "exit_code": 0,
+    "duration_seconds": 2.508,
+    "first_attempt": {
+      "exit_code": 1,
+      "cause": "new optional-history test fixture omitted runtime identity; corrected synthetic fixture",
+      "log_sha256": "cc0385bc52b7e0aa9692e8c47b929b72e5cd17682b6c0c8825cbdbfdf480e87b"
+    },
+    "passing_log_sha256": "b11b6ec06f11c5876e382e736259da6367b8f6ac2cfbe75b8cca6b3d24d9fdb4",
+    "test_source_sha256": "d58ad5722642507eff7d6ecbef3568420971075ed60527c5106fe15340f25cd1"
+  },
+  "existing_output_rejection": {
+    "exit_code": 2,
+    "summary_sha256_before_and_after": "76dd06ed93427210d8f9ea756cde40396cf39e0bac0ac2360a2a77f19356d580",
+    "all_file_digests_unchanged_verified_by": "test_main_without_history_and_refuses_existing_output",
+    "log_sha256": "6d4a4dbbfdd848859954fdcfbbb5c4ee3128955f8933751cdffe17ae3903b5bf"
+  },
+  "raw_run_log_sha256": "e9d4b419711acd1796229a8f39993bacc0f6f9f5ca08462ce3f20feb8508f3fc",
+  "optional_run_log_sha256": "9f4f954d7d1b8e8c8c5e21fc204499055258c829bc0e73d0429d22d0e2f8d99a",
+  "prior_combination_attempt_02": "preserved; this new source revision requires new version binding"
+}

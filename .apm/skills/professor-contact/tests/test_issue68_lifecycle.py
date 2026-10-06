@@ -30,6 +30,7 @@ class LifecycleEvidenceTests(unittest.TestCase):
 
     def evidence(self, reads=None):
         return {"schema": subject.SCHEMA, "before": copy.deepcopy(self.before),
+                "root_thread": "root", "runtime_generation": 1,
                 "after": {"phase": "after_request", "program": subject.snapshot_tree(self.program),
                           "consumer": subject.snapshot_tree(self.consumer)},
                 "reads": reads or [], "lifecycle_capability": {"state": "INCOMPLETE",
@@ -79,6 +80,42 @@ class LifecycleEvidenceTests(unittest.TestCase):
         self.other.write_text("changed")
         self.check(self.evidence(), "FAIL_PRODUCT", "other_request_file_changed_or_deleted")
 
+    def test_declared_business_output_cannot_exempt_existing_other_request_data(self):
+        for declaration in ("overview", "owner_result"):
+            for kind in ("file", "directory"):
+                for mutation in ("rewrite", "delete"):
+                    with self.subTest(declaration=declaration, kind=kind, mutation=mutation):
+                        path = self.program / (declaration + "-" + kind + "-" + mutation)
+                        if kind == "directory":
+                            path.mkdir()
+                        else:
+                            path.write_text("other request")
+                        self.before = subject.collect_before(self.manifest, self.consumer)
+                        if kind == "directory":
+                            path.rmdir()
+                        else:
+                            path.unlink()
+                        if mutation == "rewrite":
+                            path.write_text("claimed output")
+                        evidence = self.complete_evidence()
+                        if declaration == "overview":
+                            evidence["business_outputs"] = [str(path)]
+                        else:
+                            self.manifest["owners"][0]["result"] = str(path)
+                        self.check(evidence, "FAIL_PRODUCT", "other_request_file_changed_or_deleted")
+
+    def test_failed_partition_cannot_exempt_existing_other_request_data(self):
+        for key in ("choices_path", "out_path"):
+            with self.subTest(key=key):
+                path = self.program / (key + "-other-request.json")
+                path.write_text("other request")
+                self.before = subject.collect_before(self.manifest, self.consumer)
+                path.write_text("overwritten by failed partition")
+                evidence = self.complete_evidence()
+                evidence["partition_returns"][0].update({key: str(path),
+                    "actual_return": {"status": "error"}, "exit_code": 1})
+                self.check(evidence, "FAIL_PRODUCT", "other_request_file_changed_or_deleted")
+
     def test_preexisting_handoff_is_not_this_request_creation(self):
         path = self.consumer / "handoff.json"
         path.write_text("{}")
@@ -106,7 +143,8 @@ class LifecycleEvidenceTests(unittest.TestCase):
         evidence["runtime_generation"] = 1
         returned = {"status": "ok", "owners": [{"professor_dir": str(self.owner)}]}
         evidence["partition_returns"] = [{"out_path": partition, "choices_path": choices,
-            "actual_return": returned, "start": 4, "end": 5}]
+            "actual_return": returned, "start": 4, "end": 5, "exit_code": 0,
+            "command_id": "partition-call", "thread": "root", "generation": 1}]
         def op(kind, paths, start, output="", source="completed_command_with_successful_exit"):
             return {"operation": kind, "paths": paths, "thread": "root", "generation": 1,
                     "id": f"command-{start}", "start": start, "end": start + 1,
@@ -120,15 +158,15 @@ class LifecycleEvidenceTests(unittest.TestCase):
     def test_complete_attributable_chain_is_accepted(self):
         self.check(self.complete_evidence(), "PASS", "request_lifecycle_and_state_preservation_proven")
 
-    def test_absent_file_without_successful_cleanup_is_not_proof(self):
+    def test_absent_used_file_without_cleanup_command_is_proof(self):
         evidence = self.complete_evidence()
         evidence["file_operations"].pop()
-        self.check(evidence, "BLOCKED_OBSERVABILITY", "transfer_creation_and_cleanup_unobservable")
+        self.check(evidence, "PASS", "request_lifecycle_and_state_preservation_proven")
 
-    def test_cleanup_before_read_is_not_proof(self):
+    def test_auxiliary_remove_order_does_not_replace_real_read(self):
         evidence = self.complete_evidence()
         evidence["file_operations"][-1].update(start=10, end=11)
-        self.check(evidence, "BLOCKED_OBSERVABILITY", "transfer_creation_and_cleanup_unobservable")
+        self.check(evidence, "PASS", "request_lifecycle_and_state_preservation_proven")
 
     def test_wrong_root_operation_is_invalid(self):
         evidence = self.complete_evidence()
@@ -195,6 +233,90 @@ class LifecycleEvidenceTests(unittest.TestCase):
         evidence["file_operations"] = [op for op in evidence["file_operations"]
                                        if op["operation"] != "read"]
         self.check(evidence, "PASS", "request_lifecycle_and_state_preservation_proven")
+
+    def test_programmatic_creation_cleanup_needs_no_mutation_commands(self):
+        evidence = self.complete_evidence()
+        evidence["file_operations"] = []
+        self.check(evidence, "PASS", "request_lifecycle_and_state_preservation_proven")
+
+    def test_successful_partition_remnant_without_owner_read_fails(self):
+        evidence = self.complete_evidence()
+        evidence["reads"] = []
+        path = Path(evidence["partition_returns"][0]["out_path"])
+        path.write_text("{}")
+        evidence["after"]["consumer"] = subject.snapshot_tree(self.consumer)
+        self.check(evidence, "FAIL_PRODUCT", "request_transfer_file_remains")
+
+    def test_incomplete_directory_record_cannot_pass(self):
+        evidence = self.complete_evidence()
+        evidence["before"]["consumer"]["complete"] = False
+        self.check(evidence, "INVALID_EVIDENCE", "lifecycle_snapshot_or_association_invalid")
+
+    def test_unobserved_legal_location_is_observation_gap(self):
+        evidence = self.complete_evidence()
+        evidence["reads"][0]["path"] = str(Path(self.temp.name) / "outside.json")
+        self.check(evidence, "BLOCKED_OBSERVABILITY", "transfer_path_outside_observation_scope")
+
+    def test_missing_middle_use_cannot_pass(self):
+        evidence = self.complete_evidence()
+        evidence["reads"] = []
+        evidence["file_operations"] = []
+        self.check(evidence, "BLOCKED_OBSERVABILITY", "transfer_creation_and_cleanup_unobservable")
+
+    def test_failed_handoff_attempt_with_formed_file_is_failure(self):
+        evidence = self.complete_evidence()
+        evidence["reads"] = []
+        evidence["file_operations"] = []
+        path = self.consumer / "failed-handoff.json"
+        path.write_text("invalid JSON but actual request handoff")
+        evidence["attempted_handoffs"] = [{"path": str(path), "thread": "child-1",
+            "generation": 1, "command_id": "failed-delivery", "start": 12, "end": 13}]
+        evidence["after"]["consumer"] = subject.snapshot_tree(self.consumer)
+        self.check(evidence, "FAIL_PRODUCT", "request_transfer_file_remains")
+
+    def test_unattributed_new_file_prevents_complete_cleanup_claim(self):
+        evidence = self.complete_evidence()
+        (self.consumer / "unconsumed-transfer.json").write_text("{}")
+        evidence["after"]["consumer"] = subject.snapshot_tree(self.consumer)
+        self.check(evidence, "BLOCKED_OBSERVABILITY", "new_file_request_ownership_unresolved")
+
+    def test_extra_predeclared_isolated_location_is_supported(self):
+        extra = Path(self.temp.name) / "isolated-transfer"
+        extra.mkdir()
+        self.manifest["lifecycle_extra_observation_roots"] = [str(extra)]
+        self.before = subject.collect_before(self.manifest, self.consumer)
+        evidence = self.complete_evidence()
+        evidence["after"]["extra_0"] = subject.snapshot_tree(extra)
+        evidence["reads"][0]["path"] = str(extra / "handoff.json")
+        evidence["file_operations"] = []
+        self.check(evidence, "PASS", "request_lifecycle_and_state_preservation_proven")
+
+    def test_unlisted_other_request_file_is_protected(self):
+        protected = self.consumer / "another-request.data"
+        protected.write_text("preserve these bytes")
+        self.before = subject.collect_before(self.manifest, self.consumer)
+        evidence = self.complete_evidence()
+        protected.write_text("changed")
+        evidence["after"]["consumer"] = subject.snapshot_tree(self.consumer)
+        self.check(evidence, "FAIL_PRODUCT", "other_request_file_changed_or_deleted")
+
+    def test_other_request_empty_directory_is_protected(self):
+        protected = self.consumer / "another-request-directory"
+        protected.mkdir()
+        self.before = subject.collect_before(self.manifest, self.consumer)
+        evidence = self.complete_evidence()
+        protected.rmdir()
+        evidence["after"]["consumer"] = subject.snapshot_tree(self.consumer)
+        self.check(evidence, "FAIL_PRODUCT", "other_request_file_changed_or_deleted")
+
+    def test_symlink_destination_was_not_scanned(self):
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        (self.consumer / "link").symlink_to(outside)
+        self.before = subject.collect_before(self.manifest, self.consumer)
+        evidence = self.complete_evidence()
+        evidence["reads"][0]["path"] = str(self.consumer / "link" / "handoff.json")
+        self.check(evidence, "BLOCKED_OBSERVABILITY", "transfer_path_outside_observation_scope")
 
     def test_unused_partition_out_path_is_not_mandatory(self):
         evidence = self.complete_evidence()

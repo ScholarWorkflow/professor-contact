@@ -1,5 +1,5 @@
 {
-  "revision": "issue-68-runtime-evidence-r30-2026-10-06",
+  "revision": "issue-68-runtime-evidence-r31-2026-10-07",
   "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
   "fixture_sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
   "fixture_contract": "skills-test-fixtures/codex-eval-adapter@16",
@@ -150,11 +150,11 @@
       "formal_run_allowed": false,
       "case": "PC68-R1",
       "reason_code": "second_gate_incomplete",
-      "action": "固定捕获器保存正常单次交接解析对象，由同对象执行原已安装首次计划；关口前独立环境预检确认支持安装、服务隔离、实际普通命令输出和同对象转交，判定正反例检查完整分配包、目标、选择到真实读取和业务输出。正式请求仍等待第二关口完整通过和候选冻结。",
+      "action": "固定捕获器实现保存正常单次交接解析对象，由同对象执行原已安装首次计划；判定正反例检查完整分配包、目标、选择到真实读取和业务输出。第31版支持安装仍超时，正式合法位置覆盖尚未证明；当前只是待审候选，正式请求仍等待必要预检完成、第二关口完整通过和候选冻结。",
       "synthetic_capture_manifest": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-command-event-preflight.json",
       "synthetic_capture_stdout": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-command-event-stdout.json",
       "raw_stdout_is_reparsed_by": "verify_issue68_stage5_routing_r19.consumed_business_objects",
-      "known_limit": "第03次证明普通命令实际输出与同次合成解析及转交关联；两次支持安装超时，安装入口摘要与帮助未完成，故整体最小预检未完成。正式教授业务及线程关系未运行。"
+      "known_limit": "第03次证明普通命令实际输出与同次合成解析及转交关联；第30版两次和第31版一次支持安装均超时，安装入口摘要与帮助未完成；正式合法传递位置的请求前完整覆盖尚未证明，故整体最小预检未完成。正式教授业务及线程关系未运行。"
     },
     "second_gate_status": "INCOMPLETE",
     "environment_entry": ".apm/skills/professor-contact/tests/runtime/preflight_issue68_environment_r30.py",
@@ -232,10 +232,10 @@
       "step": "R1-7-isolation-and-cleanup",
       "event": "执行前后文件快照、两教授目录及本次临时handoff清理",
       "input": "本次正式运行生成的handoff路径和教授目录基线",
-      "output": "codex/lifecycle.before.json、codex/lifecycle-evidence.json、manifest.lifecycle_evidence：前后完整文件快照、同次固定捕获读取和根实际完成操作的创建→读取→清理链；程序输入区及消费者文件SHA256/字节数/符号链接目标、受保护其他请求文件",
+      "output": "同请求请求前完整目录记录、实际教授读取或固定产品成功分配返包、请求后完整记录及保护数据摘要；有限命令仅为辅助诊断",
       "association": "当前运行代次值及类型、正式根/教授线程、命令编号与顺序、真实分配返包的out_path/choices_path、固定捕获的实际路径与摘要；不从命令JSON推输入",
-      "verdict": "正式判定缺生命周期证据不可PASS；从原始事件重建事实并验证请求边界后检查实际传递路径创读清理。完整有效链才认可；教授状态/输出改写、传递文件残留或其他请求文件错删FAIL_PRODUCT；归属/快照损坏INVALID_EVIDENCE；缺创建/实际读取/清理BLOCKED_OBSERVABILITY。根可直接消费分配stdout，不强制cat完整out文件。已独立确证FAIL不被其他缺证遮蔽。",
-      "stop": "第04次仅普通有限格式真实观察已确认；任意脚本副作用仍未知，须审核其对本例的影响；支持安装未完成，总体INCOMPLETE。不得正式验收补能力，不改写产品业务迎合parser。"
+      "verdict": "实际使用证明形成及可读、前不存在且后缺席证明清理；无特定写删命令仍可通过。有效残留或保护改动判FAIL_PRODUCT；跨请求或漏扫判INVALID_EVIDENCE；缺实际使用、范围外路径、未归属新文件判BLOCKED_OBSERVABILITY。已形成未交付文件亦需核对，不因缺教授调用遮蔽独立产品失败。",
+      "stop": "默认观察业务目录与消费者；额外独占目录需请求前声明。六场景本地组合最小非验收预检已完成；正式合法传递位置完整覆盖仍待测试设计审核者确认或修订。正式许可保持关闭，不得正式教授运行补证。"
     }
   ],
   "machine_terminal_mapping": {
@@ -369,8 +369,30 @@
     "environment": 12,
     "formal_case_started": false,
     "overall_preflight_status": "PREFLIGHT_INCOMPLETE",
-    "counting_note": "不同轮次不累计，历史123和126项保留；当前129项为56+50+11+12，正式D1复用，R1未执行",
+    "counting_note": "此处129项为第30版历史轮次56+50+11+12；不代表第31版当前源码验证，不同轮次不累计。第31版各独立证据另列，正式D1复用，R1未执行",
     "runtime_source": "duplicate_started_identity.after",
     "lifecycle_source": "lifecycle_after_duplicate_start"
+  },
+  "lifecycle_combination": {
+    "schema": "issue68-r31-lifecycle-v1",
+    "candidate_procedure": "docs/issue68-test-gate-r31.md",
+    "current_precheck_evidence": "tests/runtime/evidence/issue68-r31-lifecycle-combination-final-validation.json",
+    "historical_validation_evidence": [
+      "tests/runtime/evidence/issue68-r31-lifecycle-combination-validation.json",
+      "tests/runtime/evidence/issue68-r31-lifecycle-combination-precheck.json",
+      "tests/runtime/evidence/issue68-r31-lifecycle-combination-portability-validation.json"
+    ],
+    "environment_evidence": "tests/runtime/evidence/issue68-r31-environment-precheck.json",
+    "protected_data_fix_evidence": "tests/runtime/evidence/issue68-r31-protected-data-fix-validation.json",
+    "completion_review_record": "tests/runtime/evidence/issue68-r31-completion-review.md",
+    "source_binding": {
+      "issue68_lifecycle.py": "f9fc8b13f26b2826127aaa371eaf6b93479cba279c2e7b4f929b487a2bb8329e",
+      "preflight_issue68_lifecycle_combination_r31.py": "4d5122a373aa775248d0f55d8ab53177bfc90d9fa74a2901952f3acb7b2890c5"
+    },
+    "non_acceptance_boundary": "文件与子进程事实为本地真实操作，运行信封、线程与事件为合成材料；当前预检不发评估请求，不运行教授业务，不证明全部合法位置覆盖。",
+    "plan_revision": 26,
+    "extra_scopes": "lifecycle_extra_observation_roots：请求前固定额外独占目录；未覆盖合法位置不是产品失败",
+    "remaining": "六场景本地组合预检已交付；线程与运行事件为合成材料。正式合法传递位置在请求前的完整覆盖仍未证明，须测试设计审核者修订观察安排；支持安装仍超时。历史03/04仅复用原字段约定，不授予正式运行许可。",
+    "protection": "比较全部既有观察目录、文件字节、符号链接；合法本次输出从实际结构化返回及固定输入取得，不按任意后缀推断归属"
   }
 }

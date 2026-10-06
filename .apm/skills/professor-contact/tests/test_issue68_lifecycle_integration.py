@@ -156,7 +156,7 @@ class BoundLifecycleTests(unittest.TestCase):
             result = verifier.verify_codex(response, adapter, self.manifest)
         self.assertEqual(result["reason_code"], "root_final_source_ambiguous")
 
-    def test_quoted_redirection_is_not_a_creation_observation(self):
+    def test_quoted_redirection_does_not_invalidate_successful_actual_use(self):
         evidence, response, adapter, oracle = self.bound_fixture()
         for event in response["output"]["app_server_events"][:2]:
             event["message"]["params"]["item"]["command"] = "printf 'x > /tmp/handoff.json'"
@@ -164,15 +164,15 @@ class BoundLifecycleTests(unittest.TestCase):
                                              response, oracle)
         self.manifest["lifecycle_boundary"]["after_sha256"] = lifecycle._response_digest(evidence["after"])
         result = self.bound_check(evidence, response, adapter, oracle)
-        self.assertEqual(result["verdict"], "BLOCKED_OBSERVABILITY")
+        self.assertEqual(result["verdict"], "PASS")
 
-    def test_false_exit_code_does_not_prove_file_creation(self):
+    def test_unrelated_false_exit_does_not_invalidate_actual_use(self):
         evidence, response, adapter, oracle = self.bound_fixture()
         response["output"]["app_server_events"][1]["message"]["params"]["item"]["exitCode"] = False
         evidence = lifecycle.collect_lifecycle(evidence["before"], self.manifest, self.consumer,
                                              response, oracle)
         self.manifest["lifecycle_boundary"]["after_sha256"] = lifecycle._response_digest(evidence["after"])
-        self.assertEqual(self.bound_check(evidence, response, adapter, oracle)["verdict"], "BLOCKED_OBSERVABILITY")
+        self.assertEqual(self.bound_check(evidence, response, adapter, oracle)["verdict"], "PASS")
 
     def test_deleted_program_with_valid_boundary_is_product_failure(self):
         evidence, response, adapter, oracle = self.bound_fixture()
@@ -264,6 +264,16 @@ class ComposedEntryTests(unittest.TestCase):
 
     def composed_fixture(self, *, cleanup=True, mutation=None):
         f = self.fixture
+        claimed_output = f.root / "unlisted-other-request-output"
+        if mutation in ("overview_rewrite", "owner_result_rewrite", "overview_directory_delete"):
+            if mutation == "overview_directory_delete":
+                claimed_output.mkdir()
+            else:
+                claimed_output.write_text("other request original bytes")
+            if mutation == "owner_result_rewrite":
+                self.manifest["owners"][0]["result"] = str(claimed_output)
+                self.packets[0]["result"] = str(claimed_output)
+                Path(self.manifest["owner_capture"]["manifest_path"]).write_text(json.dumps(self.manifest))
         request = {"input": "synthetic composed entry", "cwd": str(f.consumer)}
         before = lifecycle.bind_before(lifecycle.collect_before(self.manifest, f.consumer), request)
         # Boundary artifacts are outside the observed consumer/program trees.
@@ -293,8 +303,7 @@ class ComposedEntryTests(unittest.TestCase):
         partition_path = f.root / "partition.json"
         original_choices = [row for packet in self.packets for row in packet["choices"]]
         original_choices.append({"email_id": "unselected::noise", "transport_sentinel": "noise"})
-        command("printf '%s' " + shlex.quote(json.dumps(original_choices)) +
-                " > " + shlex.quote(str(choices_path)), execute=True)
+        choices_path.write_text(json.dumps(original_choices))
         discovered = [{"email_pack": owner["email_pack"], "status": "ok"}
                       for owner in self.manifest["owners"]]
         discovered.append({"email_pack": self.manifest["invalid_pack"], "status": "error"})
@@ -308,8 +317,7 @@ class ComposedEntryTests(unittest.TestCase):
         for index, (packet, handoff, owner) in enumerate(zip(
                 self.packets, self.handoffs, self.manifest["owners"])):
             child, path = "child-" + str(index), "/root/owner-" + str(index)
-            command("printf '%s' " + shlex.quote(json.dumps(packet, ensure_ascii=False)) +
-                    " > " + shlex.quote(str(handoff)), execute=True)
+            handoff.write_text(json.dumps(packet, ensure_ascii=False))
             argv = list(f.command_argv)
             argv[argv.index("--owner-input-file") + 1] = str(handoff)
             command(shlex.join(argv), thread=child, execute=True)
@@ -324,12 +332,18 @@ class ComposedEntryTests(unittest.TestCase):
                 "author": path, "content": [{"type": "input_text", "text": body}]})
         overview = {"status": "ok", "overview_md": str(f.root / "overview.md"),
                     "professors": 2, "emails": 0}
+        if mutation in ("overview_rewrite", "overview_directory_delete"):
+            overview["overview_md"] = str(claimed_output)
         command(product("stage5-rebuild-overview"), json.dumps(overview))
         if cleanup:
-            command("rm -f -- " + shlex.join([str(path) for path in
-                    [choices_path, partition_path, *self.handoffs]]), execute=True)
+            for path in [choices_path, partition_path, *self.handoffs]:
+                path.unlink()
         if mutation == "other":
             self.other.write_text("changed by synthetic request")
+        if mutation in ("overview_rewrite", "owner_result_rewrite"):
+            claimed_output.write_text("claimed output replaced other request")
+        if mutation == "overview_directory_delete":
+            claimed_output.rmdir()
         event("rawResponseItem/completed", {"type": "message", "role": "assistant",
             "phase": "final_answer", "content": [{"type": "output_text", "text": json.dumps([*outcomes, overview])}]})
         response = {"output": {"thread_id": root, "turn_id": "root-turn", "runtime_generation": 1,
@@ -351,7 +365,7 @@ class ComposedEntryTests(unittest.TestCase):
         self.assertEqual(result["verdict"], "PASS", result)
         self.assertEqual(result["request_lifecycle"]["verdict"], "PASS")
 
-    def test_unmocked_entry_missing_cleanup_observation_is_blocked(self):
+    def test_unmocked_entry_without_mutation_commands_still_passes(self):
         response, adapter = self.composed_fixture()
         events = response["output"]["app_server_events"]
         events[:] = [event for event in events if not event["message"]["params"]["item"].get("command", "").startswith("rm -f --")]
@@ -362,7 +376,7 @@ class ComposedEntryTests(unittest.TestCase):
         self.manifest["lifecycle_boundary"]["after_sha256"] = lifecycle._response_digest(evidence["after"])
         Path(self.manifest["owner_capture"]["manifest_path"]).write_text(json.dumps(self.manifest))
         result = verifier.verify_codex(response, adapter, self.manifest)
-        self.assertEqual(result["verdict"], "BLOCKED_OBSERVABILITY", result)
+        self.assertEqual(result["verdict"], "PASS", result)
 
     def test_unmocked_entry_actual_handoff_remnant_fails(self):
         response, adapter = self.composed_fixture(cleanup=False)
@@ -372,6 +386,24 @@ class ComposedEntryTests(unittest.TestCase):
 
     def test_unmocked_entry_actual_other_request_rewrite_fails(self):
         response, adapter = self.composed_fixture(mutation="other")
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "other_request_file_changed_or_deleted"), result)
+
+    def test_unmocked_entry_overview_cannot_authorize_existing_file_rewrite(self):
+        response, adapter = self.composed_fixture(mutation="overview_rewrite")
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "other_request_file_changed_or_deleted"), result)
+
+    def test_unmocked_entry_overview_cannot_authorize_existing_directory_deletion(self):
+        response, adapter = self.composed_fixture(mutation="overview_directory_delete")
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "other_request_file_changed_or_deleted"), result)
+
+    def test_unmocked_entry_owner_result_cannot_authorize_existing_file_rewrite(self):
+        response, adapter = self.composed_fixture(mutation="owner_result_rewrite")
         result = verifier.verify_codex(response, adapter, self.manifest)
         self.assertEqual((result["verdict"], result["reason_code"]),
                          ("FAIL_PRODUCT", "other_request_file_changed_or_deleted"), result)

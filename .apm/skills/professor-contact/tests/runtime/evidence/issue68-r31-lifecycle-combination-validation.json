@@ -1,0 +1,38 @@
+{
+  "schema": "issue68-test-engineer-validation-v1",
+  "plan_revision": 26,
+  "evidence_revision": "issue-68-runtime-evidence-r31-2026-10-07",
+  "product_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+  "formal_case_started": false,
+  "validation_kind": "deterministic_synthetic_non_acceptance",
+  "expected_results_source": "第26版临时文件证明方法与本轮判定最小验证补充：合法使用清理通过、有效残留或保护变化失败、错请求或漏扫无效、缺实际使用不通过",
+  "before_fix": {
+    "command": "UV_CACHE_DIR=/private/tmp/pc68-uv-cache uv run python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_issue68_lifecycle*.py'",
+    "exit_code": 1,
+    "tests": 54,
+    "failures": 6,
+    "local_log": "/private/tmp/pc68-r26-lifecycle-before.log",
+    "earlier_environment_attempt": "默认缓存无写权限退出2；改为独占临时缓存后执行，未改样例或判定"
+  },
+  "checks": [
+    {"command": "UV_CACHE_DIR=/private/tmp/pc68-uv-cache PYTHONPATH=.apm/skills/professor-contact/tests uv run python -m unittest test_issue68_lifecycle test_issue68_lifecycle_integration", "exit_code": 0, "tests": 61, "local_log": "/private/tmp/pc68-r26-lifecycle-final-explicit.log"},
+    {"command": "UV_CACHE_DIR=/private/tmp/pc68-uv-cache uv run python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_issue68_runtime_r19.py'", "exit_code": 0, "tests": 56, "local_log": "/private/tmp/pc68-r26-runtime-r19.log"},
+    {"command": "UV_CACHE_DIR=/private/tmp/pc68-uv-cache uv run python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_issue68_runtime_recipe.py'", "exit_code": 0, "tests": 11, "local_log": "/private/tmp/pc68-r26-recipe.log"}
+  ],
+  "concurrent_incomplete_attempt": {"exit_code": 1, "local_log": "/private/tmp/pc68-r26-lifecycle-final.log", "reason": "另一并行步骤刚建立组合预检测试模块，所依赖预检模块当时尚未建立；本步骤61项无失败。明确两个模块后复查，不修改其他步骤文件。"},
+  "source_sha256": {
+    "runtime/issue68_lifecycle.py": "a3d6ea3d3f6915c2ea41466e381b8545d5f00600623373cc7c17d9fc63ae5e09",
+    "test_issue68_lifecycle.py": "97add5ce5bc67047e4fbb23df2326b7c43fa9476ed52fe5954d9e70790aacf6f",
+    "test_issue68_lifecycle_integration.py": "328f81e566b46cfc656781e1d5afd46ae043687fbd7d7bf12321f405db95c2fb",
+    "runtime/run_issue68_stage5_routing_r19_codex.py": "ebf9d866a4ca7c5a7392fbbb0b93d8e07fcf30b176d3badb26f44f6070fd962a",
+    "runtime/issue68-runtime-evidence-contract-r19.json": "20183a26f351135ba812d45632f43f470ffe268ea2ff5e4a5d1315aca3d51439"
+  },
+  "composed_entry": "两教授合成完整事件经过原主判定入口与原输入判定，不替换解析或判定；程序化形成与清理传递文件，无专用创建或删除命令事件仍通过。这是判定接线验证，不是真实教授正式验收。",
+  "historical_capability_reuse": "第03次实际解析输出及同次命令关联、第04次完整目录与命令原始字段可作已有能力依据；不将有限命令识别视为第26版组合预检通过。",
+  "remaining": [
+    "新组合最小真实格式非验收预检待完成，应只做合成程序化形成、实际读取、清理及同请求完整记录，不运行教授业务",
+    "当前正式运行只默认覆盖程序区与消费者；额外独占观察目录必须请求前声明。尚未证明可覆盖本例全部合法传递位置，由审核者确认或修订，范围外路径仅为观察缺口",
+    "未归属的新文件阻止完整清理证明；不得按文件后缀或任意写命令推定它们都是请求传递文件",
+    "环境支持安装由另一独立步骤负责，此记录不授予安装通过或第二关口通过"
+  ]
+}
