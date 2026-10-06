@@ -5,6 +5,8 @@ cover only documented/runtime-neutral instructions; real Codex/OpenCode agent
 invocation remains a clean-consumer smoke-test responsibility.
 """
 from pathlib import Path
+import json
+import tomllib
 import unittest
 
 
@@ -104,6 +106,27 @@ class Stage3IdeaGeneratorAgentContractTests(unittest.TestCase):
             "Codex must describe caller-owned sibling orchestration rather than an invented API",
         )
         self.assertIn("professor-contact-style-validator", self.text)
+
+        # Source declaration and deterministic TOML string encoding only.
+        # This synthesized expected payload is not an installation artifact;
+        # the clean installer check owns the actual installed projection.
+        agent_body = self.text.split("---", 2)[2].strip("\n")
+        codex_projection = tomllib.loads(
+            f"developer_instructions = {json.dumps(agent_body)}\n"
+        )["developer_instructions"]
+        for marker in (
+            "也不读取任何其它教授的状态",
+            "绝不读写程序级",
+            "总览是 terminal 后由",
+        ):
+            with self.subTest(projection_marker=marker):
+                self.assertIn(marker, self.text)
+                self.assertIn(marker, codex_projection)
+        # R19 clarification R4 keeps the declared local dependency boundary;
+        # it withdraws complete child-input collection and derived gates.
+        self.assertIn("也不读取任何其它教授的状态", self.skill_text)
+        self.assertIn("不会阻塞、回滚或重判任何一次合法的教授本地提交",
+                      self.skill_text)
 
     def test_validation_result_is_runner_recorded_and_bounded(self):
         self.assertIn("stage3-record-validation", self.text)

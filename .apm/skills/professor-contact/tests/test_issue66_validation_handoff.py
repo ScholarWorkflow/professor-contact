@@ -31,12 +31,14 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from test_stage2_resolved_direction import (
     parse, quote_id, run_cli, write_json)
 from test_stage3_direction_groups import (
     PROFESSOR, QUOTES, Stage3DirectionGroupBase, contact_state, result_file)
+from test_issue66_stage3_local_state import OpenRecorder, call_runner
 
 CANDIDATE_STATE = "套磁候选状态.json"
 CANDIDATES_MD = "套磁想法候选.md"
@@ -200,11 +202,9 @@ class ValidationHandoffBase(Stage3DirectionGroupBase):
         return self.load_state()["cache"]["render"][CANDIDATES_MD]["sha256"]
 
     def assert_no_side_effects(self, operation, *protected_paths):
-        before = artifact_snapshot(*protected_paths)
-        result = operation()
-        self.assertEqual(artifact_snapshot(*protected_paths), before,
-                         "refused handoff operation changed a protected artifact")
-        return result
+        return self.run_observed_entry(
+            operation, protected_paths,
+            "refused handoff operation changed a protected artifact")
 
     def handoff_artifacts(self, round_dir):
         round_dir = Path(round_dir)
@@ -218,15 +218,38 @@ class ValidationHandoffBase(Stage3DirectionGroupBase):
 
     def assert_direct_refusal(self, operation, protected, reason,
                               status="error"):
-        before = artifact_snapshot(*protected)
-        result = operation()
-        self.assertEqual(artifact_snapshot(*protected), before,
-                         "directly rejected handoff entry changed protected artifacts")
+        result = self.run_observed_entry(
+            operation, protected,
+            "directly rejected handoff entry changed protected artifacts")
         self.assertEqual(result.get("status"), status, result)
         self.assertEqual(result.get("reason_code"), reason, result)
         self.assertNotIn("validation_sha256", result)
         self.assertNotIn("validation_input_sha256", result)
         return result
+
+    def run_observed_entry(self, operation, protected, snapshot_message):
+        before = artifact_snapshot(*protected)
+        with OpenRecorder() as recorder:
+            with mock.patch(
+                    __name__ + ".run_cli",
+                    side_effect=self._run_entry_in_process):
+                result = operation()
+        self.assertEqual(artifact_snapshot(*protected), before,
+                         snapshot_message)
+        writes = recorder.write_operations_under(*protected)
+        self.assertEqual(
+            writes, [],
+            "refused handoff entry attempted writes under protected paths: "
+            + repr(writes))
+        return result
+
+    @staticmethod
+    def _run_entry_in_process(*arguments):
+        """Call the real CLI dispatcher while the file observer is active."""
+        payload, returncode = call_runner(*arguments)
+        return SimpleNamespace(
+            stdout=json.dumps(payload, ensure_ascii=False),
+            stderr="", returncode=returncode)
 
     def handoff_round_dir(self, round_no):
         token = hashlib.sha256(

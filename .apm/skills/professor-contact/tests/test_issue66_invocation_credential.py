@@ -32,6 +32,8 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from test_stage2_resolved_direction import (
     parse, quote_id, run_cli, write_json)
@@ -222,6 +224,14 @@ class InvocationCredentialBase(Stage3DirectionGroupBase):
     def load_validator_block(self):
         return self.load_state().get("validator") or {}
 
+    def assert_validator_after_correction(self, before, after):
+        """Compare all recorded validation facts after clearing resolved work."""
+        expected = json.loads(json.dumps(before["validator"]))
+        expected["pending"] = {}
+        expected["render_sha256"] = (
+            after["cache"]["render"][CANDIDATES_MD]["sha256"])
+        self.assertEqual(after["validator"], expected)
+
     def assert_no_side_effects(self, operation, *protected_paths):
         before = artifact_snapshot(*protected_paths)
         result = operation()
@@ -231,7 +241,26 @@ class InvocationCredentialBase(Stage3DirectionGroupBase):
 
     def assert_direct_refusal(self, operation, protected, status, reason):
         before = artifact_snapshot(*protected)
-        result = operation()
+        # Run through the real entry point in this process so OpenRecorder can
+        # observe the actual file opens inside the refusal call window.
+        def in_process_cli(*argv):
+            payload, returncode = call_runner(*argv)
+            return SimpleNamespace(
+                stdout=json.dumps(payload, ensure_ascii=False),
+                stderr="", returncode=returncode)
+
+        with OpenRecorder() as recorder, mock.patch(
+                __name__ + ".run_cli", side_effect=in_process_cli):
+            result = operation()
+        protected_roots = [OpenRecorder._normalize(path) for path in protected]
+        observed_protected_reads = [
+            path for path in recorder.reads
+            if any(path == root or path.startswith(root + os.sep)
+                   for root in protected_roots)]
+        self.assertTrue(observed_protected_reads,
+                        "refusal call must perform an observed real protected read")
+        self.assertEqual(recorder.write_operations_under(*protected), [],
+                         "directly rejected entry performed a protected write")
         self.assertEqual(artifact_snapshot(*protected), before,
                          "directly rejected entry changed protected artifacts")
         self.assertEqual(result.get("status"), status, result)
@@ -489,6 +518,19 @@ class InvocationConsumptionTests(InvocationCredentialBase):
 
     def test_credential_rejection_preserves_the_full_committed_artifact_set(self):
         """Direct plan/finalize refusals leave every bound artifact unchanged."""
+        # Calibrate the observer separately from refusal calls: a real write
+        # followed by restoration must still leave two observed write opens.
+        calibration = self.root / "open-recorder-calibration.bin"
+        calibration_bytes = b"observer calibration baseline\n"
+        calibration.write_bytes(calibration_bytes)
+        with OpenRecorder() as calibration_recorder:
+            calibration.write_bytes(b"temporary observer calibration change\n")
+            calibration.write_bytes(calibration_bytes)
+        self.assertEqual(calibration.read_bytes(), calibration_bytes)
+        self.assertEqual(
+            len(calibration_recorder.write_operations_under(calibration)), 2,
+            "observer must detect writes even when the original bytes return")
+
         cap, _ = self.capture()
         results = self.write_results("refusal-baseline", self.all_docs())
         committed = self.credential_finalize(cap, results)
@@ -528,28 +570,42 @@ class InvocationConsumptionTests(InvocationCredentialBase):
         self.assertTrue(results.is_dir())
         self.assertTrue(Path(cap["invocation_file"]).is_file())
 
-        plan_before = artifact_snapshot(*protected)
-        plan = parse(run_cli("stage3-plan",
-                             "--invocation-file", cap["invocation_file"],
-                             "--invocation-sha256", "0" * 64))
-        self.assertEqual(artifact_snapshot(*protected), plan_before,
-                         "rejected plan changed bytes, metadata or existence")
-        self.assertEqual(plan["status"], "error", plan)
-        self.assertEqual(plan["reason_code"], "invocation_sha256_mismatch", plan)
-        self.assertNotIn("jobs", plan)
+        self.assert_direct_refusal(
+            lambda: parse(run_cli(
+                "stage3-plan", "--invocation-file", cap["invocation_file"],
+                "--invocation-sha256", "0" * 64)),
+            protected, "error", "invocation_sha256_mismatch")
 
-        finalize_before = artifact_snapshot(*protected)
-        finalize = parse(run_cli(
-            "stage3-finalize",
-            "--invocation-file", cap["invocation_file"],
-            "--invocation-sha256", "0" * 64,
-            "--results", results))
-        self.assertEqual(artifact_snapshot(*protected), finalize_before,
-                         "rejected finalize changed bytes, metadata or existence")
-        self.assertEqual(finalize["status"], "error", finalize)
-        self.assertEqual(finalize["reason_code"], "invocation_sha256_mismatch",
-                         finalize)
-        self.assertNotIn("written", finalize)
+        self.assert_direct_refusal(
+            lambda: parse(run_cli(
+                "stage3-finalize",
+                "--invocation-file", cap["invocation_file"],
+                "--invocation-sha256", "0" * 64,
+                "--results", results)),
+            protected, "error", "invocation_sha256_mismatch")
+
+        # Independent assertion controls: emulate only the forbidden effect,
+        # preserving the genuine refusal fields. Each must fail the protected
+        # write assertion even if the malicious operation restores all bytes.
+        for victim in (self.prof_dir / CANDIDATES_MD,
+                       Path(cap["invocation_file"]),
+                       self.prof_dir / CANDIDATE_STATE):
+            with self.subTest(forbidden_refusal_write=str(victim)):
+                original = victim.read_bytes()
+
+                def changed_then_refused():
+                    victim.read_bytes()
+                    victim.write_bytes(original + b"forbidden mutation")
+                    victim.write_bytes(original)
+                    return {"status": "error",
+                            "reason_code": "invocation_sha256_mismatch"}
+
+                with self.assertRaisesRegex(
+                        AssertionError, "performed a protected write"):
+                    self.assert_direct_refusal(
+                        changed_then_refused, protected, "error",
+                        "invocation_sha256_mismatch")
+                self.assertEqual(victim.read_bytes(), original)
 
     def test_profile_digest_guard_stops_stale_credentials(self):
         profile = self.root / "profile.md"
@@ -588,14 +644,6 @@ class InvocationConsumptionTests(InvocationCredentialBase):
 
 class CredentialCorrectionTests(InvocationCredentialBase):
     """§5.4/§5.5: the credential correction context and commit synthesis."""
-
-    def assert_validator_after_correction(self, before, after):
-        """Compare the entire recorded validation block across correction."""
-        expected = json.loads(json.dumps(before["validator"]))
-        expected["pending"] = {}
-        expected["render_sha256"] = (
-            after["cache"]["render"][CANDIDATES_MD]["sha256"])
-        self.assertEqual(after["validator"], expected)
 
     def commit_baseline_with_group(self):
         results = self.write_results("base", self.all_docs())
@@ -711,11 +759,15 @@ class CredentialCorrectionTests(InvocationCredentialBase):
 
         with OpenRecorder() as clean:
             in_scope.read_bytes()
+        self.assertTrue(clean.was_opened(in_scope),
+                        "positive control must observe a real in-scope open")
         assert_result_read_set(self, clean, results, expected)
 
         with OpenRecorder() as negative:
             in_scope.read_bytes()
             out_of_scope.read_bytes()
+        self.assertTrue(negative.was_opened(out_of_scope),
+                        "negative control must observe a real out-of-scope open")
         self.assertEqual(out_of_scope.read_bytes(), out_of_scope_before,
                          "the negative control detects an open without a byte change")
         with self.assertRaises(AssertionError):
@@ -997,21 +1049,36 @@ class PlainGenerationCompatTests(InvocationCredentialBase):
 
         self.validator_output([self.finding("候选 dir_B_1")])
         self.assertEqual(self.record()["round"], 1)
+        # The preservation baseline includes the recorded findings and all
+        # unrelated validation records, not the pre-validation generation.
+        before = self.load_state()
         corrected = self.generated_doc("dir_B", ["P1", "P3", None])
         corrected["candidates"][0]["title"] = "候选 dir_B_1 修正版"
         fix = self.write_results("exp-fix-b", {"dir_B": corrected})
-        out2 = parse(run_cli("stage3-finalize", "--professor-dir", self.prof_dir,
-                             "--results", str(fix), "--program-root", self.root,
-                             "--validation-file", self.validation))
+        with OpenRecorder() as recorder:
+            out2, code = call_runner(
+                "stage3-finalize", "--professor-dir", self.prof_dir,
+                "--results", str(fix), "--program-root", self.root,
+                "--validation-file", self.validation)
+        self.assertEqual(code, 0)
         self.assertEqual(out2["status"], "ok", msg=json.dumps(out2, ensure_ascii=False))
         self.assertEqual(out2["corrected"], ["dir_B"])
         self.assertEqual(out2["corrected_groups"], [])
+        assert_result_read_set(
+            self, recorder, fix,
+            expected_result_read_paths(fix, EXPECTED_DIRECTION_READS))
         # The behavior fix: unrequested groups are no longer removal requests.
         self.assertEqual(out2["dropped_cross_direction"], [])
         after = self.load_state()
         self.assertEqual(after["cross_direction_groups"],
                          before["cross_direction_groups"])
         by_did = {d["direction_id"]: d for d in after["directions"]}
+        before_did = {d["direction_id"]: d for d in before["directions"]}
+        self.assertEqual(
+            frozenset(did for did in before_did
+                      if before_did[did] != by_did[did]),
+            EXPECTED_DIRECTION_READS)
+        self.assert_validator_after_correction(before, after)
         self.assertEqual(by_did["dir_B"]["candidates"][0]["title"],
                          "候选 dir_B_1 修正版")
 

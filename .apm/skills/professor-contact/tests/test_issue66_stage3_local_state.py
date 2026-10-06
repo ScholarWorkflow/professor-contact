@@ -120,6 +120,7 @@ class OpenRecorder:
     def __init__(self):
         self.opened = []
         self.reads = []
+        self.writes = []
 
     @staticmethod
     def _normalize(path):
@@ -128,41 +129,81 @@ class OpenRecorder:
     def __enter__(self):
         self.opened = []
         self.reads = []
+        self.writes = []
         recorder = self
         orig_open = builtins.open
         orig_io_open = io.open
         orig_os_open = os.open
 
         def record_open(file, mode):
-            path = recorder._normalize(file)
+            try:
+                path = recorder._normalize(file)
+            except (TypeError, ValueError):
+                return
             recorder.opened.append(path)
             # A normal open defaults to read mode. "r" and "+" are the
             # only text/binary mode markers that prove the caller can read.
             if mode is None or "r" in str(mode) or "+" in str(mode):
                 recorder.reads.append(path)
+            if any(marker in str(mode) for marker in ("w", "a", "x", "+")):
+                recorder.writes.append(("open", path))
 
         def wrapped_open(file, *args, **kwargs):
             mode = kwargs.get("mode", args[0] if args else None)
+            result = orig_open(file, *args, **kwargs)
             record_open(file, mode)
-            return orig_open(file, *args, **kwargs)
+            return result
 
         def wrapped_os_open(path, *args, **kwargs):
-            recorder.opened.append(recorder._normalize(path))
+            result = orig_os_open(path, *args, **kwargs)
+            normalized = recorder._normalize(path)
+            recorder.opened.append(normalized)
             flags = kwargs.get("flags", args[0] if args else os.O_RDONLY)
             if flags & os.O_ACCMODE != os.O_WRONLY:
-                recorder.reads.append(recorder._normalize(path))
-            return orig_os_open(path, *args, **kwargs)
+                recorder.reads.append(normalized)
+            if (flags & os.O_ACCMODE) != os.O_RDONLY or flags & (
+                    os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+                recorder.writes.append(("os.open", normalized))
+            return result
 
-        self._orig = (orig_open, orig_io_open, orig_os_open)
+        mutation_names = ("replace", "rename", "unlink", "remove", "mkdir",
+                          "rmdir", "chmod", "chown", "utime", "truncate",
+                          "symlink", "link", "mknod")
+        original_mutations = {name: getattr(os, name)
+                              for name in mutation_names if hasattr(os, name)}
+
+        def wrap_mutation(name, original):
+            def wrapped(*args, **kwargs):
+                # A refused mkdir on an already existing handoff directory
+                # does not establish or modify a file. Record successful real
+                # mutations, rather than turning EEXIST into a write claim.
+                result = original(*args, **kwargs)
+                paths = args[:2] if name in {"replace", "rename", "link"} \
+                    else args[:1]
+                for path in paths:
+                    try:
+                        recorder.writes.append((f"os.{name}",
+                                                recorder._normalize(path)))
+                    except (TypeError, ValueError):
+                        continue
+                return result
+            return wrapped
+
+        self._orig = (orig_open, orig_io_open, orig_os_open,
+                      original_mutations)
         # pathlib.Path.open resolves through io.open, not builtins.open, so
         # both bindings must be wrapped to see every real text/binary open.
         builtins.open = wrapped_open
         io.open = wrapped_open
         os.open = wrapped_os_open
+        for name, original in original_mutations.items():
+            setattr(os, name, wrap_mutation(name, original))
         return self
 
     def __exit__(self, *exc_info):
-        builtins.open, io.open, os.open = self._orig
+        builtins.open, io.open, os.open, mutations = self._orig
+        for name, original in mutations.items():
+            setattr(os, name, original)
         return False
 
     def was_opened(self, path):
@@ -173,6 +214,13 @@ class OpenRecorder:
         root = self._normalize(root)
         return frozenset(path for path in self.reads
                          if self._normalize(Path(path).parent) == root)
+
+    def write_operations_under(self, *roots):
+        normalized_roots = [self._normalize(root) for root in roots]
+        return [operation for operation in self.writes
+                if any(operation[1] == root or
+                       operation[1].startswith(root + os.sep)
+                       for root in normalized_roots)]
 
 
 @contextlib.contextmanager

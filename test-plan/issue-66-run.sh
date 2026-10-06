@@ -8,7 +8,7 @@ readonly repository_slug='ScholarWorkflow/professor-contact'
 readonly uv_cache_dir='/private/tmp/issue66-uv-cache'
 readonly uv_expected='uv 0.12.11 (aarch64-apple-darwin)'
 readonly python_expected='Python 3.14.6'
-readonly runner_revision='issue-66-local-candidate-runner-r16-2026-10-06'
+readonly runner_revision='issue-66-local-candidate-runner-r19-2026-10-06'
 
 usage() {
   printf '用法：%s local\n' "$0" >&2
@@ -18,7 +18,7 @@ usage() {
 
 stop() {
   local message="$1"
-  printf 'PRECHECK_FAILED\t%s\n' "$message" > "$evidence_dir/outcome.txt"
+  printf 'CASE_NOT_STARTED\t%s\n' "$message" > "$evidence_dir/outcome.txt"
   printf '拒绝继续：%s\n证据目录：%s\n' "$message" "$evidence_dir" >&2
   exit 64
 }
@@ -125,6 +125,14 @@ candidate_changes='.apm/skills/professor-contact/tests/runtime/judge_issue66_sta
 .apm/skills/professor-contact/tests/test_issue66_invocation_credential.py
 .apm/skills/professor-contact/tests/test_issue66_validation_handoff.py
 .apm/skills/professor-contact/tests/test_issue66_stage3_local_state.py
+.apm/skills/professor-contact/tests/test_stage3_idea_generator_agent_contract.py
+.apm/skills/professor-contact/tests/runtime/issue66_execution.py
+.apm/skills/professor-contact/tests/test_issue66_execution_wiring.py
+.apm/skills/professor-contact/tests/runtime/issue66_suite_result.py
+.apm/skills/professor-contact/tests/runtime/issue66_suite_classify.jq
+.apm/skills/professor-contact/tests/test_issue66_suite_result.py
+test-plan/issue-66-formal.sh
+test-plan/issue-66-execution.md
 test-plan/issue-66.md
 test-plan/issue-66-run.sh'
 
@@ -139,6 +147,13 @@ candidate_files='.apm/agents/professor-contact-idea-generator.agent.md
 .apm/skills/professor-contact/tests/test_stage2_resolved_direction.py
 .apm/skills/professor-contact/tests/test_stage3_direction_groups.py
 .apm/skills/professor-contact/tests/test_stage3_idea_generator_agent_contract.py
+.apm/skills/professor-contact/tests/runtime/issue66_execution.py
+.apm/skills/professor-contact/tests/test_issue66_execution_wiring.py
+.apm/skills/professor-contact/tests/runtime/issue66_suite_result.py
+.apm/skills/professor-contact/tests/runtime/issue66_suite_classify.jq
+.apm/skills/professor-contact/tests/test_issue66_suite_result.py
+test-plan/issue-66-formal.sh
+test-plan/issue-66-execution.md
 test-plan/issue-66.md
 test-plan/issue-66-run.sh'
 
@@ -189,107 +204,37 @@ write_candidate_manifest() {
 }
 
 run_suite() {
-  local name="$1"
-  local pattern="$2"
-  local test_count="$3"
-  local expected="$4"
-  local failure_marker="$5"
-  local expected_failure_count="$6"
-  shift 6
-  local -a expected_failure_status_lines=("$@")
-  local -a actual_failure_status_lines=()
-  local rc=0
-  local combined=''
-  local line=''
-  local expected_line=''
-  local expected_index=0
-  local actual_test_count='NOT_PARSED'
-  local status_joined='NONE'
-  local status_entry=''
-  local failure_status_count=0
-  local failure_header_count=0
-  local error_header_count=0
-  local statuses_match='true'
-  local expected_hit=''
-  local -a expected_status_hits=()
-  local result='INVALID_TEST_EXECUTION'
-  local detail='实际输出未满足预期条目数、退出码、失败状态行、失败项数量或已知原因。'
-
-  for expected_line in "${expected_failure_status_lines[@]}"; do
-    expected_status_hits+=(0)
-  done
-
-  capture "suite-$name" uv run --no-project --python 3.14.6 python -B -m unittest discover \
-    -s .apm/skills/professor-contact/tests -p "$pattern" -v
+  local name="$1" pattern="$2" test_count="$3"
+  local report="$evidence_dir/suite-$1.json"
+  local rc=0 result='INVALID_TEST_EXECUTION' actual_test_count='NOT_PARSED'
+  local failures='0' identities='NONE'
+  local owner='product'
+  case "$name" in
+    judge|execution_wiring|structured_result) owner='test_program' ;;
+  esac
+  capture "suite-$name" uv run --no-project --python 3.14.6 python -B \
+    .apm/skills/professor-contact/tests/runtime/issue66_suite_result.py \
+    --directory .apm/skills/professor-contact/tests --pattern "$pattern" --report "$report"
   rc=$?
-  combined="$(<"$evidence_dir/commands/suite-$name.stdout")"$'\n'"$(<"$evidence_dir/commands/suite-$name.stderr")"
-
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$line" =~ ^Ran[[:space:]]+([0-9]+)[[:space:]]+tests? ]]; then
-      actual_test_count="${BASH_REMATCH[1]}"
-    fi
-    if [[ "$line" == *' ... FAIL' ]]; then
-      failure_status_count=$((failure_status_count + 1))
-      actual_failure_status_lines+=("$line")
-      expected_index=0
-      for expected_line in "${expected_failure_status_lines[@]}"; do
-        if [[ "$line" == "$expected_line" ]]; then
-          expected_status_hits[expected_index]=$((expected_status_hits[expected_index] + 1))
-        fi
-        expected_index=$((expected_index + 1))
-      done
-    fi
-    if [[ "$line" == 'FAIL: '* ]]; then
-      failure_header_count=$((failure_header_count + 1))
-    elif [[ "$line" == 'ERROR: '* ]]; then
-      error_header_count=$((error_header_count + 1))
-    fi
-  done < "$evidence_dir/commands/suite-$name.stderr"
-
-  if [[ "$expected" == 'PASS' ]]; then
-    if [[ "$rc" -eq 0 && "$actual_test_count" == "$test_count" && "$combined" == *"Ran $test_count tests"* && "$combined" == *'OK'* ]]; then
-      result='PASS'
-      detail='整份测试文件按预期通过。'
-    fi
-  elif [[ "$expected" == 'PRODUCT_FAIL' ]]; then
-    if [[ "$rc" -eq 1 \
-      && "$actual_test_count" == "$test_count" \
-      && "$combined" == *"Ran $test_count tests"* \
-      && -n "$failure_marker" \
-      && "$combined" == *"FAILED (failures=$expected_failure_count)"* \
-      && "$combined" == *"$failure_marker"* \
-      && "$failure_status_count" -eq "$expected_failure_count" \
-      && "$failure_header_count" -eq "$expected_failure_count" \
-      && "$error_header_count" -eq 0 \
-      && "${#expected_failure_status_lines[@]}" -eq "$expected_failure_count" ]]; then
-      for expected_hit in "${expected_status_hits[@]}"; do
-        if [[ "$expected_hit" -ne 1 ]]; then
-          statuses_match='false'
-        fi
-      done
-      if [[ "$statuses_match" == 'true' ]]; then
-        result='PRODUCT_FAIL'
-        detail="复现预期产品行为失败；${expected_failure_count} 个失败身份逐项匹配。"
-      fi
-    fi
+  if jq -e --argjson rc "$rc" --argjson count "$test_count" '
+      .schema == "issue66-suite-result-v1" and .exit_code == $rc
+      and .tests_run == $count and (.tests | length) == $count
+      and all(.tests[]; .test_id != null and .ordinal > 0)
+    ' "$report" > "$evidence_dir/commands/suite-$name-report-validation.stdout" \
+      2> "$evidence_dir/commands/suite-$name-report-validation.stderr"; then
+    result="$(jq -r --arg owner "$owner" -f \
+      .apm/skills/professor-contact/tests/runtime/issue66_suite_classify.jq "$report")"
+    actual_test_count="$(jq -r '.tests_run' "$report")"
+    failures="$(jq -r '.failures' "$report")"
+    identities="$(jq -c '[.tests[] | select(.status != "ok") | {test_id,status,events}]' "$report")"
   fi
-
-  if [[ "${#actual_failure_status_lines[@]}" -gt 0 ]]; then
-    status_joined=''
-    for status_entry in "${actual_failure_status_lines[@]}"; do
-      if [[ -n "$status_joined" ]]; then
-        status_joined+=$' || '
-      fi
-      status_joined+="$status_entry"
-    done
-  fi
-
   printf '%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n' \
     "$name" "$result" "$test_count" "$actual_test_count" "$rc" \
-    "${failure_marker:--}" "$status_joined" "$detail" >> "$suites_tsv"
+    'structured-result' "$identities" "结构化记录：$failures 个断言失败。" >> "$suites_tsv"
+  jq -n --arg suite "$name" --arg result "$result" --argjson exit_code "$rc" \
+    '{suite:$suite,result:$result,exit_code:$exit_code}' >> "$evidence_dir/suites.jsonl"
   printf '%s：%s（%s 项，退出码 %d）\n' "$name" "$result" "$test_count" "$rc"
 }
-
 validate_judge_sample_ledger() {
   capture "judge-ledger-assertion-diagnostics" jq -s '
     def fact_value($record; $fact):
@@ -307,7 +252,11 @@ validate_judge_sample_ledger() {
         ($subject | capture("^facts\\(verdict\\)\\[\u0027(?<fact>F-[A-Za-z0-9-]+)\u0027\\]$").fact)
       else null end;
     def assertion_actual($record; $assertion):
-      if $assertion.subject == "verdict[\u0027classification\u0027]" then $record.actual.result.classification
+      if $assertion.result_selector.kind == "path" then
+        $record.actual.result | getpath($assertion.result_selector.path)
+      elif $assertion.result_selector.kind == "fact" then
+        fact_value($record; $assertion.result_selector.fact)
+      elif $assertion.subject == "verdict[\u0027classification\u0027]" then $record.actual.result.classification
       else assertion_fact_id($record; $assertion.subject) as $fact
         | if $fact == null then null else fact_value($record; $fact) end
       end;
@@ -352,7 +301,11 @@ validate_judge_sample_ledger() {
         ($subject | capture("^facts\\(verdict\\)\\[\u0027(?<fact>F-[A-Za-z0-9-]+)\u0027\\]$").fact)
       else null end;
     def assertion_actual($record; $assertion):
-      if $assertion.subject == "verdict[\u0027classification\u0027]" then $record.actual.result.classification
+      if $assertion.result_selector.kind == "path" then
+        $record.actual.result | getpath($assertion.result_selector.path)
+      elif $assertion.result_selector.kind == "fact" then
+        fact_value($record; $assertion.result_selector.fact)
+      elif $assertion.subject == "verdict[\u0027classification\u0027]" then $record.actual.result.classification
       else assertion_fact_id($record; $assertion.subject) as $fact
         | if $fact == null then null else fact_value($record; $fact) end
       end;
@@ -375,7 +328,7 @@ validate_judge_sample_ledger() {
       "read_reuse",
       "evidence_channels"
     ] as $allowed_families
-    | length == 96
+    | length == 122
       and all(.[];
         . as $record
         | .schema_version == "issue66.sample-ledger.v1"
@@ -409,7 +362,7 @@ validate_judge_sample_ledger() {
               or (.expected.fact_constraints | type == "array" and length > 0))
             and any(.expected.assertions[]?;
               .verdict_related == true and
-                (.subject == "facts(verdict)[fact]"
+                (.result_selector.kind == "fact" or .subject == "facts(verdict)[fact]"
                   or (.subject | test("^facts\\(verdict\\)\\[\u0027F-[A-Za-z0-9-]+\u0027\\]$"))))
           end)
         and (.actual | type == "object" and (.outcome | nonempty)
@@ -419,23 +372,40 @@ validate_judge_sample_ledger() {
           . as $assertion | assertion_matches($record; $assertion))
         and (.judge_sha256 | digest)
         and (.evidence_digest | digest)
-        and (.evidence_ref | type == "object"
-          and .kind == "synthetic_fixture"
-          and (.source_file | nonempty)
-          and (.run_call_line | type == "number" and . > 0)
-          and (.run_ordinal | type == "number" and . > 0)
-          and (.event_count | type == "number" and . >= 0)
-          and (.event_refs | type == "array")
-          and (if .event_count == 0 then (.event_refs | length) == 0
-            else (.event_refs | length) > 0 end)
+        and (.evidence_ref as $ref
+          | ($ref | type == "object"
+            and .kind == "synthetic_fixture"
+            and (.source_file | nonempty)
+            and (.run_call_line | type == "number" and . > 0)
+            and (.run_ordinal | type == "number" and . > 0)
+            and (.event_count | type == "number" and . >= 0)
+            and (.event_refs | type == "array")
+            and (if .event_count == 0 then (.event_refs | length) == 0
+              else (.event_refs | length) > 0 end))
+          and ($ref.raw_app_server_events | type == "array"
+            and length == $ref.event_count)
+          and all($ref.event_refs[];
+            . as $event_ref
+            | ($ref.raw_app_server_events[$event_ref.array_index]) as $event
+            | ($event.message // {}) as $message
+            | ($message.params // {}) as $params
+            | (if ($params.item | type) == "object"
+               then $params.item else {} end) as $item
+            | ($event_ref.seq == ($event.seq // ($event_ref.array_index + 1)))
+              and ($event_ref.method == $message.method)
+              and ($event_ref.thread_id == $params.threadId)
+              and ($event_ref.turn_id == $params.turnId)
+              and ($event_ref.item_type == $item.type)
+              and ($event_ref.item_id == $item.id)
+              and ($event_ref.call_id == $item.call_id))
         )
       )
       and ([.[].sample_id] | length == (unique | length))
-      and ([.[] | select(.expected.classification_status == "asserted")] | length == 90)
-      and ([.[] | select(.expected.classification_status == "not_asserted")] | length == 6)
-      and ([.[] | select(.expected.facts_status == "asserted")] | length == 77)
+      and ([.[] | select(.expected.classification_status == "asserted")] | length == 118)
+      and ([.[] | select(.expected.classification_status == "not_asserted")] | length == 4)
+      and ([.[] | select(.expected.facts_status == "asserted")] | length == 97)
       and ([.[] | select(.expected.facts_status == "partial")] | length == 1)
-      and ([.[] | select(.expected.facts_status == "not_asserted")] | length == 18)
+      and ([.[] | select(.expected.facts_status == "not_asserted")] | length == 24)
       and ([.[].sample_family[]] | unique) == ["evidence_channels",
         "file_permissions", "formal_relations", "order_and_stops",
         "raw_messages", "source_handoff_values", "three_completion_paths"]
@@ -472,8 +442,6 @@ write_sample_records() {
   local map_rc=0
   local expected_class_from_plan=''
   local stderr_path=''
-  local line=''
-  local awaiting_wrapped_status='false'
   local test_status='NOT_FOUND'
   local test_status_count=0
   local actual_observation='GAP_NO_SINGLE_TEST_STATUS'
@@ -526,53 +494,8 @@ write_sample_records() {
       *) sample_ledger_valid='false' ;;
     esac
     stderr_path="$evidence_dir/commands/suite-$suite.stderr"
-    test_status='NOT_FOUND'
-    test_status_count=0
-    awaiting_wrapped_status='false'
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      if [[ "$line" == *".$test_name)"* ]]; then
-        awaiting_wrapped_status='true'
-        case "$line" in
-          *' ... ok')
-            test_status='ok'
-            test_status_count=$((test_status_count + 1))
-            awaiting_wrapped_status='false'
-            ;;
-          *' ... FAIL')
-            test_status='FAIL'
-            test_status_count=$((test_status_count + 1))
-            awaiting_wrapped_status='false'
-            ;;
-          *' ... ERROR')
-            test_status='ERROR'
-            test_status_count=$((test_status_count + 1))
-            awaiting_wrapped_status='false'
-            ;;
-        esac
-      elif [[ "$awaiting_wrapped_status" == 'true' ]]; then
-        case "$line" in
-          *' ... ok')
-            test_status='ok'
-            test_status_count=$((test_status_count + 1))
-            awaiting_wrapped_status='false'
-            ;;
-          *' ... FAIL')
-            test_status='FAIL'
-            test_status_count=$((test_status_count + 1))
-            awaiting_wrapped_status='false'
-            ;;
-          *' ... ERROR')
-            test_status='ERROR'
-            test_status_count=$((test_status_count + 1))
-            awaiting_wrapped_status='false'
-            ;;
-          test_*' ('*)
-            awaiting_wrapped_status='false'
-            ;;
-        esac
-      fi
-    done < "$stderr_path"
-
+    test_status_count="$(jq --arg method "$test_name" '[.tests[] | select(.method == $method)] | length' "$evidence_dir/suite-$suite.json")"
+    test_status="$(jq -r --arg method "$test_name" '[.tests[] | select(.method == $method)] | if length == 1 then .[0].status else "NOT_FOUND" end' "$evidence_dir/suite-$suite.json")"
     if [[ "$test_status_count" -eq 1 && "$test_status" == 'ok' ]]; then
       actual_observation="assertion-matched:${independent_expected}"
     elif [[ "$test_status_count" -eq 1 ]]; then
@@ -635,7 +558,7 @@ write_sample_records() {
         sample_ledger_valid='false'
         actual_result='{}'
       fi
-      raw_sample_pointer="commands/suite-$suite.stderr#$test_name;test-source=$source_pointer"
+      raw_sample_pointer="suite-$suite.json#tests.method=$test_name;commands/suite-$suite.stderr;test-source=$source_pointer"
     else
       capture "sample-map-$sample_id" jq -e -s -r \
         --arg suffix ".$test_name" --argjson ordinal "$call_ordinal" '
@@ -683,7 +606,7 @@ write_sample_records() {
           || "$actual_outcome" == 'NOT_MAPPED' ]]; then
           sample_ledger_valid='false'
         fi
-        raw_sample_pointer="commands/suite-$suite.stderr#$test_name;judge-samples.jsonl#$runtime_sample_id;fixture=$event_pointer;events=$event_refs"
+        raw_sample_pointer="commands/suite-$suite.stderr#$test_name;judge-samples.jsonl#$runtime_sample_id;fixture=$event_pointer;raw_app_server_events=judge-samples.jsonl#$runtime_sample_id.evidence_ref.raw_app_server_events;event_index_refs=$event_refs"
       else
         sample_ledger_valid='false'
         actual_observation='GAP_NO_UNIQUE_JUDGE_SAMPLE'
@@ -745,7 +668,7 @@ write_sample_records() {
     done
     printf '\n' >> "$evidence_dir/samples.tsv"
   done <<'SAMPLE_RECORDS'
-R19-5-A1|classification=PASS|judge|test_one_round_pass|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:599|legal one-round fixture
+R19-5-A1|classification=PASS;branch:correction_round=NOT TESTED|judge|test_one_round_pass|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:599|one-round pass; natural correction branch recorded NOT TESTED
 R19-5-A2|classification=PASS|judge|test_corrected_two_round_pass|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:615|legal corrected two-round fixture
 R19-5-A3|classification=PASS|judge|test_two_round_exhaustion_is_a_legal_pass|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:621|legal two-round exhaustion fixture
 R19-5-B1|classification=PASS|judge|test_consumption_uses_actual_capture_return_path_and_digest|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:898|capture return path and digest bound to consumption
@@ -765,11 +688,16 @@ R19-5-D2|classification=FAIL|judge|test_root_reconstruction_fails|.apm/skills/pr
 R19-5-D3|classification=FAIL|judge|test_second_business_message_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1101|second business message
 R19-5-D4|classification=FAIL|judge|test_complete_run_with_no_validator_production_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1108|missing validator production in complete run
 R19-5-D5|digest-and-state-from-first-buffer|validation_handoff|test_record_parses_the_same_buffer_that_was_digest_checked|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_validation_handoff.py|replace valid source after digest check; digest and recorded state use first buffer||direct-assertion
+R19-5-D6|add_diff_preserves_original_utf8_bytes|judge|test_file_change_add_diff_preserves_utf8_and_line_endings|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|Unicode, CRLF, LF, and trailing-newline bytes preserved||direct-assertion
+R19-5-D7|app_server_file_change_shape_lifecycle_delete_and_move_target|judge|test_file_change_protocol_shape_bytes_lifecycle_delete_and_move_target|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|Started/completed pairing and success, required string diff, add/delete/update, move_path scope, unsupported-kind and unsupported-field evidence gaps; Add cannot prove exclusive creation||direct-assertion
 R19-5-E1|classification=PASS|judge|test_compound_legal_read_and_single_exclusive_output_write_passes|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1327|legal read and exclusive output write
 R19-5-E2|classification=FAIL|judge|test_python_command_with_multiple_write_targets_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1256|multiple write targets
 R19-5-E3|classification=FAIL|judge|test_same_byte_write_then_restore_still_fails_write_scope|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1270|same-byte rewrite and restore
 R19-5-E4|classification=FAIL|judge|test_overwrite_existing_candidate_source_fails_write_scope|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1285|overwrite an existing candidate source
 R19-5-E5|classification=FAIL|judge|test_outside_output_write_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|write to a single non-designated target
+R19-5-E6|classification=INVALID_TEST_EXECUTION;fact:F-validator-write-scope=gap|judge|test_pure_unknown_command_is_an_evidence_gap|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|unrecognized command; write scope remains a gap
+R19-5-E7|classification=INVALID_TEST_EXECUTION;fact:F-validator-write-scope=gap|judge|test_pure_unknown_command_is_an_evidence_gap|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|write appears only inside an uncalled function; evidence is inconclusive|2
+R19-5-E8|classification=INVALID_TEST_EXECUTION;fact:F-validator-write-scope=gap|judge|test_pure_unknown_command_is_an_evidence_gap|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|write appears only in an unreachable branch; evidence is inconclusive|3
 R19-5-F1|classification=BLOCKED|judge|test_machine_failure_prefix_blocks|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:661|valid external failure prefix
 R19-5-F2|classification=FAIL|judge|test_correction_dispatch_between_record_start_and_completion_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1388|correction starts before record completion
 R19-5-F3|classification=FAIL|judge|test_machine_failure_prefix_does_not_hide_prior_product_failure|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:686|prior product failure survives later machine failure
@@ -780,6 +708,7 @@ R19-5-F7|classification=FAIL|judge|test_unrecognized_failure_text_does_not_hide_
 R19-5-F8|classification=FAIL;fact:F-stop-order=fail|judge|test_failed_prepare_write_and_record_stop_dependent_actions|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|failed prepare followed by validator dispatch|1
 R19-5-F9|classification=FAIL;fact:F-stop-order=fail|judge|test_failed_prepare_write_and_record_stop_dependent_actions|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|failed validator write followed by save|2
 R19-5-F10|classification=FAIL;fact:F-stop-order=fail|judge|test_failed_prepare_write_and_record_stop_dependent_actions|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|failed record followed by rebuild|3
+R19-5-F11|classification=FAIL;fact:F-rebuild=fail;fact:F-attribution=invalid|judge|test_machine_failure_prefix_does_not_hide_prior_product_failure|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|independent early rebuild failure survives conflicting formal owners|2
 R19-5-G1|artifact_set=unchanged_on_refusal|credential|test_credential_rejection_preserves_the_full_committed_artifact_set|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_invocation_credential.py|credential rejection snapshot||direct-assertion
 R19-5-G2|artifact_set=unchanged_on_refusal|validation_handoff|test_prepare_save_and_record_refusals_preserve_the_same_artifact_set|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_validation_handoff.py|prepare save and record refusal snapshots||direct-assertion
 R19-5-H1|read_set=matches_independent_expected|credential|test_exact_result_read_set_rejects_an_extra_open|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_invocation_credential.py|real open positive control and out-of-set negative control||direct-assertion
@@ -797,9 +726,11 @@ R19-5-I8|classification=INVALID_TEST_EXECUTION|judge|test_unsupported_message_sh
 R19-5-I9|classification=INVALID_TEST_EXECUTION|judge|test_non_monotonic_event_seq_invalidates_validator_evidence|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1666|non-monotonic event sequence
 R19-5-I10|classification=INVALID_TEST_EXECUTION|judge|test_mismatched_call_id_cannot_bind_validator_command_completion|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1693|mismatched call id
 R19-5-I11|classification=INVALID_TEST_EXECUTION|judge|test_mixed_evidence_set_ids_are_invalid|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|mixed evidence-set identifiers
+R19-5-I12|missing_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-input=invalid|judge|test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is missing||direct-assertion
+R19-5-I13|truncated_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-input=invalid|judge|test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is truncated||direct-assertion
 SAMPLE_RECORDS
 
-  if [[ "$sample_row_count" -ne 52 ]]; then
+  if [[ "$sample_row_count" -ne 60 ]]; then
     sample_ledger_valid='false'
   fi
   while IFS= read -r tsv_line || [[ -n "$tsv_line" ]]; do
@@ -810,16 +741,16 @@ SAMPLE_RECORDS
       sample_ledger_valid='false'
     fi
   done < "$evidence_dir/samples.tsv"
-  if [[ "$sample_tsv_rows" -ne 53 ]]; then
+  if [[ "$sample_tsv_rows" -ne 61 ]]; then
     sample_ledger_valid='false'
   fi
   if [[ "$family_A" -ne 3 || "$family_B" -ne 7 || "$family_C" -ne 5 \
-    || "$family_D" -ne 5 || "$family_E" -ne 5 || "$family_F" -ne 10 \
-    || "$family_G" -ne 2 || "$family_H" -ne 4 || "$family_I" -ne 11 ]]; then
+    || "$family_D" -ne 7 || "$family_E" -ne 8 || "$family_F" -ne 11 \
+    || "$family_G" -ne 2 || "$family_H" -ne 4 || "$family_I" -ne 13 ]]; then
     sample_ledger_valid='false'
   fi
   if [[ "$sample_ledger_valid" == 'true' ]]; then
-    printf 'sample_ledger_status=VALID_JUDGE_AND_DIRECT_ASSERTION_RECORDS_52_SAMPLES_24_COLUMNS\n' >> "$evidence_dir/metadata.txt"
+    printf 'sample_ledger_status=VALID_JUDGE_AND_DIRECT_ASSERTION_RECORDS_60_SAMPLES_24_COLUMNS\n' >> "$evidence_dir/metadata.txt"
     return 0
   fi
   printf 'sample_ledger_status=INVALID_TEST_EXECUTION\n' >> "$evidence_dir/metadata.txt"
@@ -831,6 +762,8 @@ capture_required bash-version bash --version
 capture_required jq-version jq --version
 capture_required rg-version rg --version
 capture_required git-version git --version
+capture codex-version codex --version
+capture opencode-version opencode --version
 capture_required shasum-probe shasum -a 256 /dev/null
 capture_required bash-syntax bash -n "$script_dir/issue-66-run.sh"
 capture shellcheck-probe bash -c 'command -v shellcheck'
@@ -915,18 +848,14 @@ printf '证据目录：%s\n' "$evidence_dir"
 
 export ISSUE66_SAMPLE_LEDGER="$EVIDENCE_DIR/judge-samples.jsonl"
 : > "$ISSUE66_SAMPLE_LEDGER"
-run_suite judge test_issue66_runtime_judge.py 90 PASS '' 0
+run_suite judge test_issue66_runtime_judge.py 109
 unset ISSUE66_SAMPLE_LEDGER
-run_suite credential test_issue66_invocation_credential.py 17 PASS '' 0
-run_suite local_state test_issue66_stage3_local_state.py 12 PASS '' 0
-run_suite validation_handoff test_issue66_validation_handoff.py 22 PRODUCT_FAIL \
-  'validation_handoff_collision' 1 \
-  'test_new_invocation_can_prepare_round_one_after_prior_terminal_validation (test_issue66_validation_handoff.PrepareHandoffTests.test_new_invocation_can_prepare_round_one_after_prior_terminal_validation) ... FAIL'
-run_suite agent_contract test_stage3_idea_generator_agent_contract.py 9 PRODUCT_FAIL \
-  'stage3-record-validation --professor-dir' 3 \
-  "  test_opencode_example_and_common_closeout_follow_skill_handoff_chain (test_stage3_idea_generator_agent_contract.Stage3IdeaGeneratorAgentContractTests.test_opencode_example_and_common_closeout_follow_skill_handoff_chain) (section='OpenCode 示例') ... FAIL" \
-  "  test_opencode_example_and_common_closeout_follow_skill_handoff_chain (test_stage3_idea_generator_agent_contract.Stage3IdeaGeneratorAgentContractTests.test_opencode_example_and_common_closeout_follow_skill_handoff_chain) (section='共同收尾') ... FAIL" \
-  "  test_opencode_example_and_common_closeout_follow_skill_handoff_chain (test_stage3_idea_generator_agent_contract.Stage3IdeaGeneratorAgentContractTests.test_opencode_example_and_common_closeout_follow_skill_handoff_chain) (section='禁止旧直接记录方式') ... FAIL"
+run_suite execution_wiring test_issue66_execution_wiring.py 10
+run_suite structured_result test_issue66_suite_result.py 5
+run_suite credential test_issue66_invocation_credential.py 17
+run_suite local_state test_issue66_stage3_local_state.py 12
+run_suite validation_handoff test_issue66_validation_handoff.py 22
+run_suite agent_contract test_stage3_idea_generator_agent_contract.py 9
 
 sample_ledger_rc=0
 write_sample_records || sample_ledger_rc=$?
@@ -942,13 +871,15 @@ if [[ "$candidate_summary_after" != "$candidate_summary" ]]; then
   exit 2
 fi
 
-suite_results="$(<"$suites_tsv")"
-if [[ "$sample_ledger_rc" -ne 0 || "$suite_results" == *'INVALID_TEST_EXECUTION'* ]]; then
+if jq -e -s 'any(.[]; .result == "INVALID_TEST_EXECUTION")' "$evidence_dir/suites.jsonl" > /dev/null; then
   overall='INVALID_TEST_EXECUTION'
   exit_code=2
-elif [[ "$suite_results" == *'PRODUCT_FAIL'* ]]; then
+elif jq -e -s 'any(.[]; .result == "PRODUCT_FAIL")' "$evidence_dir/suites.jsonl" > /dev/null; then
   overall='FAIL'
   exit_code=1
+elif [[ "$sample_ledger_rc" -ne 0 ]]; then
+  overall='INVALID_TEST_EXECUTION'
+  exit_code=2
 else
   overall='PASS'
   exit_code=0

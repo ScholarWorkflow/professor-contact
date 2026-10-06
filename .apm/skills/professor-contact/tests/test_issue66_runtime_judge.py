@@ -1,7 +1,7 @@
 """Channel validation for the S3-RT-CODEX-1 runtime judge (issue #66).
 
 The judge is the frozen parsing/decision program for the runtime evidence
-(``issue-66-test-plan-r19-clarification-r2-2026-10-05`` §五).  Each test
+(``issue-66-test-plan-r19-clarification-r4-2026-10-05`` §四/§五/§七). Each test
 builds ONE synthetic evidence set whose expected verdict is fixed by the
 frozen contract — never by the judge.  Sample families:
 
@@ -42,13 +42,19 @@ G1, V1, G2, V2 = ("gen-thread-0001", "val-thread-0001",
 MD_NAME = judge.CANDIDATES_MD_NAME
 STATE_NAME = judge.CANDIDATE_STATE_NAME
 PACK_NAME = judge.INPUT_PACK_NAME
-OUTPUT_FILE = "/tmp/fixture/validator-output.json"
-HANDOFF_FILE = "/tmp/fixture/handoff.json"
+OUTPUT_FILE = "/tmp/教授研究/甲/validator-output.json"
+HANDOFF_FILE = "/tmp/教授研究/甲/handoff.json"
 HANDOFF_SHA = hashlib.sha256(b"handoff-bytes").hexdigest()
-RECORDED_FILE = "/tmp/fixture/recorded.json"
+RECORDED_FILE = "/tmp/教授研究/甲/recorded.json"
 CREDENTIAL_FILE = "/tmp/cap/x"
-CREDENTIAL_SHA = hashlib.sha256(b"fixture invocation credential").hexdigest()
+CREDENTIAL_DOCUMENT = {"version": 1, "professor_dir": "/tmp/教授研究/甲",
+                       "program_root": "/tmp", "profile_path": None,
+                       "profile_sha256": None}
+CREDENTIAL_UTF8 = json.dumps(CREDENTIAL_DOCUMENT)
+CREDENTIAL_SHA = hashlib.sha256(CREDENTIAL_UTF8.encode("utf-8")).hexdigest()
 PROFESSOR_NAME = "fixture professor"
+CONSUMER_ROOT = "/tmp/issue66-consumer"
+INSTALLED_SCRIPT = CONSUMER_ROOT + "/.agents/skills/professor-contact/scripts/contact_state.py"
 
 PASS_STATE = {"validator": {"results": {
     "dir_A": {"result": "pass", "rounds": 1}}},
@@ -61,7 +67,7 @@ EXHAUSTED_STATE = {"validator": {"results": {
 
 def msg_text(title="候选 dir_A_1", verdict="pass"):
     return json.dumps({"result": "ok", "files": [{
-        "file": "/tmp/fixture/套磁想法候选.md", "artifact": "candidates",
+        "file": "/tmp/教授研究/甲/套磁想法候选.md", "artifact": "candidates",
         "verdict": verdict, "blocking": 0 if verdict == "pass" else 1,
         "minor": 0, "issues": [] if verdict == "pass" else
         [{"rule": "B5", "severity": "blocking",
@@ -81,7 +87,7 @@ def action(atype, path):
 
 def exec_item(index, thread, command, output=None, actions=None,
               truncate=False, status="completed", turn_id=None,
-              cwd="/tmp/fixture"):
+              cwd="/tmp/教授研究/甲"):
     if output is not None and truncate:
         output = "Warning: truncated output (original 9999 lines)\n" + output
     params = {"threadId": thread, "turnId": turn_id,
@@ -104,21 +110,18 @@ def child_message(thread, text, turn_id=None):
         "content": [{"type": "output_text", "text": text}]}}}}
 
 
-def file_change_event(thread, path, operation="created", turn_id=None,
-                      content=None, status="completed"):
-    change = {"path": path, "kind": operation}
+def file_change_event(thread, path, kind="add", turn_id=None,
+                      content=None, status="completed", move_path=None):
+    wire_kind = {"type": kind}
+    if kind == "update" and move_path is not None:
+        wire_kind["move_path"] = move_path
+    change = {"path": path, "kind": wire_kind}
     if content is not None:
-        raw = content if isinstance(content, bytes) else content.encode("utf-8")
-        text = raw.decode("utf-8")
-        lines = text.split("\n")
-        if raw.endswith(b"\n"):
-            lines = lines[:-1]
-        diff = (f"--- /dev/null\n+++ b/{Path(path).name}\n"
-                f"@@ -0,0 +1,{len(lines)} @@\n"
-                + "\n".join("+" + line for line in lines))
-        if raw.endswith(b"\n"):
-            diff += "\n"
-        change["diff"] = diff
+        text = (content.decode("utf-8") if isinstance(content, bytes)
+                else content)
+        change["diff"] = text
+    else:
+        change["diff"] = ""
     params = {"threadId": thread, "turnId": turn_id, "item": {
         "type": "fileChange", "id": f"fc-{thread}-{Path(path).name}",
         "status": status, "changes": [change]}}
@@ -127,17 +130,31 @@ def file_change_event(thread, path, operation="created", turn_id=None,
     return {"message": {"method": "item/completed", "params": params}}
 
 
-def add_validator_file_change(fx, path, operation="created", content=None,
-                              status="completed"):
+def file_change_events(thread, path, kind="add", turn_id=None,
+                       content=None, status="completed", move_path=None):
+    completed = file_change_event(
+        thread, path, kind=kind, turn_id=turn_id, content=content,
+        status=status, move_path=move_path)
+    complete_params = completed["message"]["params"]
+    started_params = {
+        **complete_params,
+        "item": {**complete_params["item"], "status": "inProgress"}}
+    started = {"message": {"method": "item/started",
+                            "params": started_params}}
+    return [started, completed]
+
+
+def add_validator_file_change(fx, path, kind="add", content=None,
+                              status="completed", move_path=None):
     finish = next(index for index, event in enumerate(fx.events)
                   if event.get("message", {}).get("method") == "item/completed"
                   and event.get("message", {}).get("params", {}).get("item", {}).get("type")
                   == "subAgentActivity"
                   and event["message"]["params"]["item"].get("kind") == "completed"
                   and event["message"]["params"]["item"].get("agentThreadId") == V1)
-    fx.events.insert(finish, file_change_event(
-        V1, path, operation=operation, turn_id=fx.turn_id(V1),
-        content=content, status=status))
+    fx.events[finish:finish] = file_change_events(
+        V1, path, kind=kind, turn_id=fx.turn_id(V1),
+        content=content, status=status, move_path=move_path)
 
 
 def spawn_events(index, call_id, agent_type, thread=None, machine_fail=False):
@@ -173,6 +190,10 @@ class Fixture:
         self.state = PASS_STATE
         self.include_turn_completed = True
         self.profile_fingerprint = None
+        self.active_round = 1
+
+    def round_path(self, path):
+        return path if self.active_round == 1 else path.replace(".json", f"-round-{self.active_round}.json")
 
     @staticmethod
     def turn_id(thread):
@@ -186,11 +207,15 @@ class Fixture:
         return next(self._counter)
 
     def root_exec(self, command, output=None, actions=None, truncate=False):
+        if command.startswith("contact_state.py "):
+            command = command.replace("contact_state.py", "uv run --no-project python " + INSTALLED_SCRIPT, 1)
         self.events.extend(exec_item(self._next(), ROOT, command, output,
                                      actions, truncate,
                                      turn_id=self.turn_id(ROOT)))
 
     def child_exec(self, thread, command, output=None, actions=None):
+        if command.startswith("contact_state.py "):
+            command = command.replace("contact_state.py", "uv run --no-project python " + INSTALLED_SCRIPT, 1)
         self.events.extend(exec_item(self._next(), thread, command, output,
                                      actions, turn_id=self.turn_id(thread)))
 
@@ -237,18 +262,18 @@ class Fixture:
         if with_capture:
             self.child_exec(
                 thread,
-                "contact_state.py stage3-plan --professor-dir /tmp/fixture "
-                "--program-root /tmp/fixture" + profile_arg
+                "contact_state.py stage3-plan --professor-dir /tmp/教授研究/甲 "
+                "--program-root /tmp" + profile_arg
                 + " --capture-invocation /tmp/cap",
                 json.dumps({"status": "ok",
                             "invocation_file": CREDENTIAL_FILE,
                             "invocation_sha256": CREDENTIAL_SHA,
                             "professor": PROFESSOR_NAME,
-                            "professor_dir": "/tmp/fixture",
+                            "professor_dir": "/tmp/教授研究/甲",
                             "refresh_scope": "flagged",
                             "direction_id": None,
                             "profile_fingerprint": self.profile_fingerprint}),
-                actions=[action("read", f"/tmp/fixture/{PACK_NAME}")])
+                actions=[action("read", f"/tmp/教授研究/甲/{PACK_NAME}")])
         if with_plan:
             drift = "f" * 64 if credential_drift else CREDENTIAL_SHA
             extra = (f" --validation-file {RECORDED_FILE}"
@@ -258,10 +283,10 @@ class Fixture:
                 f"contact_state.py stage3-plan --invocation-file {CREDENTIAL_FILE} "
                 f"--invocation-sha256 {drift}{extra}",
                 json.dumps({"status": "ok", "professor": PROFESSOR_NAME,
-                            "professor_dir": "/tmp/fixture",
+                            "professor_dir": "/tmp/教授研究/甲",
                             "refresh_scope": "flagged", "direction_id": None,
                             "profile_fingerprint": self.profile_fingerprint}),
-                actions=[action("read", f"/tmp/fixture/{PACK_NAME}")])
+                actions=[action("read", f"/tmp/教授研究/甲/{PACK_NAME}")])
         if with_finalize:
             self.child_exec(
                 thread,
@@ -271,11 +296,12 @@ class Fixture:
                 + (f" --validation-file {RECORDED_FILE}"
                    if round_no == 2 else ""),
                 json.dumps({"status": "ok", "professor": PROFESSOR_NAME,
-                            "state_path": "/tmp/fixture/state.json"}),
-                actions=[action("read", f"/tmp/fixture/{PACK_NAME}")])
+                            "state_path": "/tmp/教授研究/甲/state.json"}),
+                actions=[action("read", f"/tmp/教授研究/甲/{PACK_NAME}")])
         self.complete_child(thread)
 
     def prepare(self, round_no, *, handoff_drift=False):
+        self.active_round = round_no
         sha = "drifted" if handoff_drift else HANDOFF_SHA
         self.root_exec(
             "contact_state.py stage3-prepare-validation --invocation-file "
@@ -283,34 +309,35 @@ class Fixture:
             f"--round {round_no}",
                 json.dumps({"status": "ok", "round": round_no,
                         "professor": PROFESSOR_NAME,
-                        "professor_dir": "/tmp/fixture",
-                        "handoff_file": HANDOFF_FILE,
+                        "professor_dir": "/tmp/教授研究/甲",
+                        "handoff_file": self.round_path(HANDOFF_FILE),
                         "handoff_sha256": sha,
-                        "output_file": OUTPUT_FILE,
-                        "validation_file": RECORDED_FILE,
+                        "output_file": self.round_path(OUTPUT_FILE),
+                        "validation_file": self.round_path(RECORDED_FILE),
                         "render_sha256": "render-digest"}),
-            actions=[action("read", f"/tmp/fixture/{STATE_NAME}")])
+            actions=[action("read", f"/tmp/教授研究/甲/{STATE_NAME}")])
 
     def validator_round(self, thread, *, text=None, no_write=False,
                         protected_write=False, outside_write=False,
                         double_message=False):
         text = text or msg_text()
-        actions = [action("read", f"/tmp/fixture/{MD_NAME}")]
+        self.last_validator_verdict = json.loads(text)["files"][0]["verdict"]
+        actions = [action("read", f"/tmp/教授研究/甲/{MD_NAME}")]
         raw = text.encode("utf-8")
-        writer = (f"open({OUTPUT_FILE!r}, 'xb').write({raw!r})")
+        writer = (f"open({self.round_path(OUTPUT_FILE)!r}, 'xb').write({raw!r})")
         if not no_write:
             self.child_exec(thread, "python3 -c " + shlex.quote(writer),
                             output="", actions=actions)
         else:
-            self.child_exec(thread, f"cat /tmp/fixture/{MD_NAME}",
+            self.child_exec(thread, f"cat /tmp/教授研究/甲/{MD_NAME}",
                             output="read", actions=actions)
         if protected_write:
-            self.events.append(file_change_event(
-                thread, f"/tmp/fixture/{STATE_NAME}",
+            self.events.extend(file_change_events(
+                thread, f"/tmp/教授研究/甲/{STATE_NAME}",
                 turn_id=self.turn_id(thread)))
         if outside_write:
-            self.events.append(file_change_event(
-                thread, "/tmp/fixture/别的文件.json",
+            self.events.extend(file_change_events(
+                thread, "/tmp/教授研究/甲/别的文件.json",
                 turn_id=self.turn_id(thread)))
         self.child_message(thread, text)
         if double_message:
@@ -318,28 +345,31 @@ class Fixture:
         self.complete_child(thread)
 
     def save(self, *, sha=None, handoff_drift=False, truncate=False,
-             validation_file="/tmp/fixture/recorded.json", round_no=1):
+             validation_file="/tmp/教授研究/甲/recorded.json", round_no=1):
         sha = sha or msg_sha()
+        validation_file = self.round_path(validation_file)
         used_sha = "drifted" if handoff_drift else HANDOFF_SHA
         self.root_exec(
             "contact_state.py stage3-save-validation --handoff-file "
-            f"{HANDOFF_FILE} --handoff-sha256 {used_sha}",
+            f"{self.round_path(HANDOFF_FILE)} --handoff-sha256 {used_sha}",
             json.dumps({"status": "ok", "validation_sha256": sha,
                         "professor": PROFESSOR_NAME,
-                        "professor_dir": "/tmp/fixture",
+                        "professor_dir": "/tmp/教授研究/甲",
                         "validation_file": validation_file,
                         "round": round_no, "render_sha256": "render-digest"}),
-            actions=[action("read", OUTPUT_FILE),
+            actions=[action("read", self.round_path(OUTPUT_FILE)),
                      action("write", validation_file)],
             truncate=truncate)
 
     def record(self, round_no, sha=None, needs_correction=False,
                handoff_drift=False, digest_drift=False):
         sha = sha or msg_sha()
-        validation_file = RECORDED_FILE
-        file_used = "/tmp/fixture/别的文件.json" if handoff_drift \
-            else HANDOFF_FILE
+        validation_file = self.round_path(RECORDED_FILE)
+        file_used = "/tmp/教授研究/甲/别的文件.json" if handoff_drift \
+            else self.round_path(HANDOFF_FILE)
         expected = "drifted" if digest_drift else sha
+        outcome = ("pass" if getattr(self, "last_validator_verdict", "pass") == "pass"
+                   else "fail_after_2_rounds" if round_no == 2 else "fail")
         extra = '"needs_correction": true, ' if needs_correction else ""
         self.root_exec(
             "contact_state.py stage3-record-validation --handoff-file "
@@ -349,8 +379,10 @@ class Fixture:
                         "validation_input_sha256": sha,
                         "needs_correction": needs_correction,
                         "terminal": not needs_correction,
+                        "scopes": [{"scope": "direction:dir_A", "result": outcome,
+                                    "rounds": round_no, "blocking": int(outcome != "pass")}],
                         "round": round_no,
-                        "state_path": "/tmp/fixture/套磁候选状态.json",
+                        "state_path": "/tmp/教授研究/甲/套磁候选状态.json",
                         "render_sha256": "render-digest"}),
             actions=[action("read", validation_file if not handoff_drift
                             else OUTPUT_FILE)])
@@ -358,7 +390,7 @@ class Fixture:
     def rebuild(self):
         self.root_exec(
             "contact_state.py stage3-rebuild-overview --program-root "
-            "/tmp/fixture", '{"status": "ok"}')
+            "/tmp", '{"status": "ok"}')
 
     # -- standard chains ------------------------------------------------------
 
@@ -399,7 +431,12 @@ class Fixture:
             events.append(sequenced)
         if self.include_turn_completed:
             events.append({"seq": len(events) + 1,
-                           "message": {"method": "turn/completed"}})
+                           "message": {"method": "turn/completed",
+                                       "params": {
+                                           "threadId": ROOT,
+                                           "turn": {
+                                               "id": self.turn_id(ROOT),
+                                               "status": "completed"}}}})
         return {"evidence_set_id": "issue66-fixture-run-1",
                 "output": {"thread_id": ROOT,
                            "app_server_events": events}}
@@ -512,7 +549,8 @@ def valid_surfaces(fx: Fixture):
             route_status = "pass" if count_pass else "fail"
             route_classification = "PASS" if count_pass else "FAIL_PRODUCT"
     surfaces = {
-        "install": {"status": "pass", "checks": [
+        "install": {"status": "pass", "consumer_root": CONSUMER_ROOT, "target_commit": "dfe430560b6e4d9d85c30b71b8c84bc621da7549",
+                    "installed_commit": "dfe430560b6e4d9d85c30b71b8c84bc621da7549", "checks": [
             {"name": "locked_target_commit", "status": "pass"},
             {"name": "source_install_projection", "status": "pass"},
             {"name": "request_config_matches_consensus", "status": "pass"}]},
@@ -531,6 +569,7 @@ def valid_surfaces(fx: Fixture):
         "post": {"status": "pass", "checks": [
             {"name": "post_matches_current", "status": "pass"}]},
         "storage": {"status": "ok", "process_id": "case-process-1",
+                    "root_thread_id": ROOT, "thread_ids": [ROOT, *fx.children],
                     "rollout_dir": "/tmp/issue66/case-1",
                     "config_path": "/tmp/issue66/case-1/config.toml",
                     "database_path": "/tmp/issue66/case-1/state.sqlite",
@@ -546,6 +585,11 @@ def valid_surfaces(fx: Fixture):
     }
     for evidence in surfaces.values():
         evidence["evidence_set_id"] = "issue66-fixture-run-1"
+    credential_text = getattr(fx, "credential_utf8", CREDENTIAL_UTF8)
+    surfaces["fixture"]["credential_observation"] = {
+        "invocation_file": getattr(fx, "credential_file", CREDENTIAL_FILE),
+        "invocation_utf8": credential_text,
+        "profile_utf8": getattr(fx, "profile_utf8", None)}
     return surfaces
 
 
@@ -687,6 +731,45 @@ def _assertion_capture(test_case, method_name, actual, expected):
     node = _call_source(frame, method_name)
     if node is None:
         return
+    # Bind a result expression to the exact object returned by run(), rather
+    # than whichever run happened last. Direct judge.main() calls have their
+    # own assertions and must not be attached to a preceding synthetic run.
+    expression = node.args[0]
+    path = []
+    base = expression
+    while isinstance(base, ast.Subscript):
+        key = base.slice
+        if isinstance(key, ast.Constant):
+            path.insert(0, key.value)
+        elif isinstance(key, ast.Name) and key.id in frame.f_locals:
+            path.insert(0, frame.f_locals[key.id])
+        else:
+            break
+        base = base.value
+    result_object = None
+    selector = None
+    if (isinstance(base, ast.Call) and isinstance(base.func, ast.Name)
+            and base.func.id == "facts" and len(base.args) == 1
+            and isinstance(base.args[0], ast.Name)):
+        result_object = frame.f_locals.get(base.args[0].id)
+        if len(path) == 1:
+            selector = {"kind": "fact", "fact": path[0]}
+    elif isinstance(base, ast.Name):
+        candidate = frame.f_locals.get(base.id)
+        if isinstance(candidate, dict) and "classification" in candidate:
+            result_object = candidate
+            selector = {"kind": "path", "path": path}
+        elif base.id in test_case._verdict_aliases and path:
+            result_object = frame.f_locals.get("verdict")
+            fact_id = path[0] if str(path[0]).startswith("F-") else "F-attribution"
+            selector = {"kind": "fact", "fact": fact_id}
+    record = test_case._sample_records[-1]
+    if result_object is not None:
+        matching = [row for row in test_case._sample_records
+                    if row["actual"]["result"] is result_object]
+        if not matching:
+            return
+        record = matching[0]
     subject = ast.unparse(node.args[0])
     expected_expression = ast.unparse(node.args[1])
     entry = {
@@ -696,38 +779,22 @@ def _assertion_capture(test_case, method_name, actual, expected):
         "expected_value": _json_copy(expected),
         "observed_value": _json_copy(actual),
         "source": {"file": _TEST_SOURCE.name, "line": node.lineno},
-        "verdict_related": _expression_is_verdict_related(
+        "verdict_related": selector is not None or _expression_is_verdict_related(
             node.args[0], test_case._verdict_aliases),
+        "result_selector": selector,
     }
-    record = test_case._sample_records[-1]
     record["expected"]["assertions"].append(entry)
     if not entry["verdict_related"]:
         return
     if record["expected"]["classification_status"] != "asserted":
         record["expected"]["status"] = "partial"
-    if (isinstance(node.args[0], ast.Subscript)
-            and isinstance(node.args[0].value, ast.Name)
-            and node.args[0].value.id == "verdict"
-            and isinstance(node.args[0].slice, ast.Constant)
-            and node.args[0].slice.value == "classification"
+    if (selector == {"kind": "path", "path": ["classification"]}
             and method_name == "assertEqual"):
         record["expected"]["classification"] = _json_copy(expected)
         record["expected"]["classification_status"] = "asserted"
         record["expected"]["status"] = "available"
-    elif (isinstance(node.args[0], ast.Subscript)
-          and ((isinstance(node.args[0].value, ast.Name)
-                and node.args[0].value.id in test_case._verdict_aliases)
-               or (isinstance(node.args[0].value, ast.Call)
-                   and isinstance(node.args[0].value.func, ast.Name)
-                   and node.args[0].value.func.id == "facts"
-                   and any(isinstance(child, ast.Name)
-                           and child.id == "verdict"
-                           for child in ast.walk(node.args[0].value))))
-          and isinstance(node.args[0].slice, ast.Constant)
-          and isinstance(node.args[0].slice.value, str)
-          and node.args[0].slice.value.startswith("F-")
-          ):
-        fact_id = node.args[0].slice.value
+    elif selector is not None and selector["kind"] == "fact":
+        fact_id = selector["fact"]
         if method_name == "assertEqual":
             record["expected"].setdefault("facts", {})[fact_id] = \
                 _json_copy(expected)
@@ -814,6 +881,7 @@ def _record_judge_call(fx, verdict, response, callsite, fixture_inputs):
             "run_ordinal": ordinal,
             "event_count": len(events),
             "event_refs": _event_references(events),
+            "raw_app_server_events": _json_copy(events),
         },
     }
     test_case._sample_records.append(record)
@@ -925,11 +993,79 @@ class RuntimeJudgeTestCase(unittest.TestCase):
 
 
 class LegalCompletionTests(RuntimeJudgeTestCase):
+    @staticmethod
+    def replace_entry(fx, subcommand, executable, cwd=None):
+        for event in fx.events:
+            item = event.get("message", {}).get("params", {}).get("item", {})
+            command = item.get("command", "")
+            if subcommand in command and INSTALLED_SCRIPT in command:
+                item["command"] = command.replace("uv run --no-project python " + INSTALLED_SCRIPT, executable, 1)
+                if cwd is not None:
+                    item["cwd"] = cwd
+
+    def test_python_relative_installed_entry_passes(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        self.replace_entry(fx, "stage3-finalize", "python3 -B 'scripts/contact_state.py'", CONSUMER_ROOT + "/.agents/skills/professor-contact")
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual(facts(verdict)["F-entry-binding"], "pass")
+
+    def test_other_program_with_same_basename_cannot_supply_entry_proof(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        self.replace_entry(fx, "stage3-finalize", "uv run --no-project python /tmp/other/contact_state.py")
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-entry-binding"], "fail")
+
+    def test_later_unknown_entry_does_not_hide_completed_wrong_entry(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        self.replace_entry(fx, "stage3-finalize", "uv run --no-project python /tmp/other/contact_state.py")
+        fx.root_exec("wrapper " + INSTALLED_SCRIPT + " stage3-save-validation")
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-entry-binding"], "fail")
+        self.assertEqual(facts(verdict)["F-entry-observation"], "gap")
+
+    def test_script_name_inside_read_arguments_is_not_an_executed_entry(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        self.replace_entry(fx, "stage3-save-validation", "cat " + INSTALLED_SCRIPT)
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-entry-binding"], "invalid")
+
+    def test_missing_install_consumer_root_does_not_prove_entry_identity(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        surfaces = valid_surfaces(fx)
+        surfaces["install"].pop("consumer_root")
+        verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-entry-binding"], "invalid")
+
+    def test_shell_argument_text_cannot_prove_installed_entry_execution(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for event in fx.events:
+            item = event.get("message", {}).get("params", {}).get("item", {})
+            if "stage3-save-validation" in item.get("command", ""):
+                item["command"] = "bash -c " + shlex.quote(item["command"])
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-entry-binding"], "invalid")
+
     def test_one_round_pass(self):
         fx = Fixture()
         legal_two_child(fx)
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual(verdict["branch_statuses"][0]["classification"],
+                         "NOT TESTED", verdict)
+        self.assertEqual(verdict["branch_statuses"][0]["branch"],
+                         "correction_round", verdict)
         self.assertEqual([agent for _call_id, agent, _thread in fx.spawn_specs],
                          [judge.GENERATOR_AGENT, judge.VALIDATOR_AGENT])
         self.assertEqual(len(fx.relations), 2)
@@ -1025,7 +1161,7 @@ class AttributionTests(RuntimeJudgeTestCase):
                     and item.get("type") == "commandExecution" \
                     and "stage3-record-validation" in item.get("command", ""):
                 item["command"] = item["command"].replace(
-                    HANDOFF_FILE, "/tmp/fixture/wrong-handoff.json")
+                    HANDOFF_FILE, "/tmp/教授研究/甲/wrong-handoff.json")
         fx.spawn(judge.GENERATOR_AGENT, None, machine_fail=True)
 
         verdict = run(fx, state=None)
@@ -1034,6 +1170,59 @@ class AttributionTests(RuntimeJudgeTestCase):
                          "machine_failure_prefix", verdict)
         self.assertEqual(facts(verdict)["F-handoff-chain"], "fail", verdict)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
+
+        conflicted = Fixture()
+        legal_two_child(conflicted)
+        record_start = next(index for index, event in enumerate(conflicted.events)
+            if event.get("message", {}).get("method") == "item/started"
+            and event.get("message", {}).get("params", {}).get("threadId") == ROOT
+            and event["message"]["params"].get("item", {}).get("type")
+            == "commandExecution"
+            and judge.ROOT_RECORD in event["message"]["params"]["item"].get(
+                "command", ""))
+        record_complete = next(index for index, event in enumerate(conflicted.events)
+            if event.get("message", {}).get("method") == "item/completed"
+            and event.get("message", {}).get("params", {}).get("threadId") == ROOT
+            and event["message"]["params"].get("item", {}).get("type")
+            == "commandExecution"
+            and judge.ROOT_RECORD in event["message"]["params"]["item"].get(
+                "command", ""))
+        rebuild_start = next(index for index, event in enumerate(conflicted.events)
+            if event.get("message", {}).get("method") == "item/started"
+            and event.get("message", {}).get("params", {}).get("threadId") == ROOT
+            and event["message"]["params"].get("item", {}).get("type")
+            == "commandExecution"
+            and judge.ROOT_REBUILD in event["message"]["params"]["item"].get(
+                "command", ""))
+        rebuild_complete = next(index for index, event in enumerate(conflicted.events)
+            if event.get("message", {}).get("method") == "item/completed"
+            and event.get("message", {}).get("params", {}).get("threadId") == ROOT
+            and event["message"]["params"].get("item", {}).get("type")
+            == "commandExecution"
+            and judge.ROOT_REBUILD in event["message"]["params"]["item"].get(
+                "command", ""))
+        record_events = (conflicted.events[record_start],
+                         conflicted.events[record_complete])
+        rebuild_events = (conflicted.events[rebuild_start],
+                          conflicted.events[rebuild_complete])
+        for index in sorted((record_start, record_complete,
+                             rebuild_start, rebuild_complete), reverse=True):
+            del conflicted.events[index]
+        conflicted.events[record_start:record_start] = [
+            record_events[0], rebuild_events[0],
+            record_events[1], rebuild_events[1]]
+        conflicted.relations.append({
+            "call_id": "call-independent-failure-owner-conflict",
+            "sender_thread_id": "foreign-root",
+            "receiver_thread_ids": [G1],
+            "status": "completed", "tool": "spawnAgent"})
+
+        combined = run(conflicted, state=PASS_STATE)
+
+        self.assertEqual(combined["classification"], "FAIL", combined)
+        self.assertEqual(facts(combined)["F-rebuild"], "fail", combined)
+        self.assertEqual(facts(combined)["F-attribution"], "invalid", combined)
+        self.assertTrue(combined["evidence_gaps"], combined)
 
     def test_nested_foreign_relation_is_product_failure(self):
         fx = Fixture()
@@ -1160,6 +1349,28 @@ class FoldedEvidenceTests(RuntimeJudgeTestCase):
                                  "INVALID_TEST_EXECUTION", verdict)
                 self.assertEqual(facts(verdict)[fact], "gap", verdict)
 
+        for response_case in ("missing", "truncated"):
+            with self.subTest(eval_response=response_case):
+                temp = Path(tempfile.mkdtemp())
+                response_path = temp / "eval-response.json"
+                if response_case == "truncated":
+                    response_path.write_text('{"output":', encoding="utf-8")
+                adapter_path = temp / "adapter.json"
+                adapter_path.write_text("{}", encoding="utf-8")
+                output_path = temp / "verdict.json"
+                exit_code = judge.main([
+                    "--eval-response", str(response_path),
+                    "--adapter-output", str(adapter_path),
+                    "--output", str(output_path)])
+                verdict = json.loads(output_path.read_text(encoding="utf-8"))
+                self.assertEqual(exit_code, 2)
+                self.assertEqual(verdict["classification"],
+                                 "INVALID_TEST_EXECUTION", verdict)
+                self.assertEqual(facts(verdict)["F-test-program"], "invalid",
+                                 verdict)
+                self.assertEqual(facts(verdict)["F-evidence-input"], "invalid",
+                                 verdict)
+
     def test_sample_provenance_failure_invalidates_the_run(self):
         fx = Fixture()
         legal_two_child(fx)
@@ -1227,6 +1438,34 @@ class FoldedEvidenceTests(RuntimeJudgeTestCase):
 
 
 class CredentialValueTests(RuntimeJudgeTestCase):
+    def test_second_round_prepare_requires_its_own_completed_commit(self):
+        fx = Fixture()
+        legal_four_child(fx)
+        fx.events = [event for event in fx.events if not (
+            event.get("message", {}).get("params", {}).get("threadId") == G2
+            and judge.CHILD_FINALIZE in event.get("message", {}).get("params", {}).get("item", {}).get("command", ""))]
+        verdict = run(fx, state=TERMINAL2_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-handoff-chain"], "fail", verdict)
+
+    def test_credential_source_bytes_and_ownership_are_required(self):
+        for mutation, expected in (("missing", "INVALID_TEST_EXECUTION"),
+                                   ("bytes", "FAIL"), ("professor", "FAIL")):
+            with self.subTest(mutation=mutation):
+                fx = Fixture()
+                legal_two_child(fx)
+                surfaces = valid_surfaces(fx)
+                observation = surfaces["fixture"]["credential_observation"]
+                if mutation == "missing":
+                    del surfaces["fixture"]["credential_observation"]
+                elif mutation == "bytes":
+                    observation["invocation_utf8"] += " "
+                else:
+                    changed = {**CREDENTIAL_DOCUMENT, "professor_dir": "/tmp/教授研究/乙"}
+                    observation["invocation_utf8"] = json.dumps(changed)
+                verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+                self.assertEqual(verdict["classification"], expected, verdict)
+
     def test_legal_capture_without_optional_business_inputs_passes(self):
         fx = Fixture()
         legal_two_child(fx)
@@ -1245,11 +1484,16 @@ class CredentialValueTests(RuntimeJudgeTestCase):
 
     def test_consumption_uses_actual_capture_return_path_and_digest(self):
         fx = Fixture()
-        fx.profile_path = "/tmp/fixture/profile.md"
-        fx.profile_fingerprint = "a" * 64
+        fx.profile_path = "/tmp/教授研究/甲/profile.md"
+        fx.profile_utf8 = "实际资料原文\n"
+        fx.profile_fingerprint = hashlib.sha256(fx.profile_utf8.encode("utf-8")).hexdigest()
+        fx.credential_utf8 = json.dumps({**CREDENTIAL_DOCUMENT,
+                                      "profile_path": fx.profile_path,
+                                      "profile_sha256": fx.profile_fingerprint})
         legal_two_child(fx)
-        returned_file = "/tmp/fixture/returned-credential.json"
-        returned_sha = hashlib.sha256(b"actual returned credential").hexdigest()
+        returned_file = "/tmp/教授研究/甲/returned-credential.json"
+        returned_sha = hashlib.sha256(fx.credential_utf8.encode("utf-8")).hexdigest()
+        fx.credential_file = returned_file
         for event in fx.events:
             message = event.get("message", {})
             params = message.get("params", {})
@@ -1275,7 +1519,7 @@ class CredentialValueTests(RuntimeJudgeTestCase):
 
     def test_committed_profile_fingerprint_must_match_capture(self):
         fx = Fixture()
-        fx.profile_path = "/tmp/fixture/profile.md"
+        fx.profile_path = "/tmp/教授研究/甲/profile.md"
         fx.profile_fingerprint = "a" * 64
         legal_two_child(fx)
 
@@ -1312,7 +1556,7 @@ class CredentialValueTests(RuntimeJudgeTestCase):
                     and "stage3-plan" in item.get("command", "") \
                     and "--invocation-file" in item.get("command", ""):
                 item["command"] = item["command"].replace(
-                    CREDENTIAL_FILE, "/tmp/fixture/wrong-credential.json")
+                    CREDENTIAL_FILE, "/tmp/教授研究/甲/wrong-credential.json")
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-credential-chain"], "fail")
@@ -1383,17 +1627,14 @@ class CredentialValueTests(RuntimeJudgeTestCase):
                 item["aggregatedOutput"] = json.dumps(output)
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(facts(verdict)["F-credential-chain"], "gap")
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
 
     def test_missing_first_commit_fails(self):
         fx = Fixture()
-        fx.prepare(1)
-        fx.spawn(judge.GENERATOR_AGENT, G1)
-        fx.generator_round(G1, with_finalize=False)
-        fx.spawn(judge.VALIDATOR_AGENT, V1)
-        fx.validator_round(V1)
-        fx.save(sha=msg_sha(), round_no=2)
-        fx.record(1, sha=msg_sha())
-        fx.rebuild()
+        legal_two_child(fx)
+        fx.events = [event for event in fx.events if not (
+            event.get("message", {}).get("params", {}).get("threadId") == G1
+            and judge.CHILD_FINALIZE in event.get("message", {}).get("params", {}).get("item", {}).get("command", ""))]
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-credential-chain"], "fail")
@@ -1549,7 +1790,7 @@ class RawOriginalTests(RuntimeJudgeTestCase):
             item = params["item"]
             if item.get("type") == "commandExecution" \
                     and params.get("threadId") == V1:
-                item["command"] = f"cat /tmp/fixture/{MD_NAME}"
+                item["command"] = f"cat /tmp/教授研究/甲/{MD_NAME}"
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-raw-original"], "fail", verdict)
@@ -1562,7 +1803,7 @@ class RawOriginalTests(RuntimeJudgeTestCase):
             item = params["item"]
             if item.get("type") == "commandExecution" \
                     and params.get("threadId") == V1:
-                item["command"] = f"cat /tmp/fixture/{MD_NAME}"
+                item["command"] = f"cat /tmp/教授研究/甲/{MD_NAME}"
         fx.include_turn_completed = False
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(facts(verdict)["F-raw-original"], "gap", verdict)
@@ -1574,7 +1815,195 @@ class RawOriginalTests(RuntimeJudgeTestCase):
         raw = judge.final_message_bytes({"content": blocks})
         self.assertEqual(raw, "  第一块\n第二块  \n".encode("utf-8"))
 
-    def test_file_change_event_proves_production_without_command_actions(self):
+    def test_file_change_add_diff_preserves_utf8_and_line_endings(self):
+        cases = (
+            "中文第一行\n中文第二行\n",
+            "第一行\r\n第二行\r\n",
+            "第一行\n第二行",
+            "第一行\r\n第二行",
+        )
+        for content in cases:
+            with self.subTest(content=content):
+                events = file_change_events(
+                    "validator", OUTPUT_FILE, kind="add",
+                    turn_id="turn-1", content=content)
+                events[0]["seq"] = 1
+                events[1]["seq"] = 2
+                change = events[1]["message"]["params"]["item"]["changes"][0]
+                self.assertEqual(set(change), {"path", "kind", "diff"})
+                model = judge.RunModel({"output": {
+                    "thread_id": ROOT, "app_server_events": events}}, {})
+                observed_change = model.file_changes["validator"][0]
+                observed = judge.Judge._filechange_added_bytes(observed_change)
+                self.assertEqual(observed, content.encode("utf-8"))
+
+    def test_file_change_protocol_shape_bytes_lifecycle_delete_and_move_target(self):
+        events = file_change_events(
+            "validator", OUTPUT_FILE, kind="update", turn_id="turn-1",
+            content="@@ -1 +1 @@\n-old\n+new\n",
+            move_path="/tmp/教授研究/甲/moved-output.json")
+        events[0]["seq"] = 1
+        events[1]["seq"] = 2
+        model = judge.RunModel({"output": {
+            "thread_id": ROOT, "app_server_events": events}}, {})
+        observed_change = model.file_changes["validator"][0]
+        self.assertEqual(observed_change["operation"], "update")
+        self.assertEqual(observed_change["move_path"],
+                         "/tmp/教授研究/甲/moved-output.json")
+        self.assertIsNone(judge.Judge._filechange_added_bytes(observed_change))
+
+        for invalid_diff in ("missing", 17):
+            with self.subTest(invalid_diff=invalid_diff):
+                malformed = file_change_events(
+                    "validator", OUTPUT_FILE, kind="add", turn_id="turn-1",
+                    content="unobserved file bytes")
+                for event in malformed:
+                    change = event["message"]["params"]["item"]["changes"][0]
+                    if invalid_diff == "missing":
+                        change.pop("diff", None)
+                    else:
+                        change["diff"] = invalid_diff
+                parsed = judge.RunModel({"output": {
+                    "thread_id": ROOT, "app_server_events": malformed}}, {})
+                self.assertTrue(parsed.incomplete_file_changes)
+                self.assertEqual(parsed.file_changes, {})
+
+        for invalid_shape in ("kind-not-object", "null-move-path",
+                              "non-string-move-path"):
+            with self.subTest(invalid_shape=invalid_shape):
+                malformed = file_change_events(
+                    "validator", OUTPUT_FILE, kind="update",
+                    turn_id="turn-1", content="@@ -1 +1 @@\n-old\n+new\n",
+                    move_path="/tmp/教授研究/甲/moved.json")
+                for event in malformed:
+                    change = event["message"]["params"]["item"]["changes"][0]
+                    if invalid_shape == "kind-not-object":
+                        change["kind"] = "update"
+                    elif invalid_shape == "null-move-path":
+                        change["kind"]["move_path"] = None
+                    else:
+                        change["kind"]["move_path"] = 17
+                parsed = judge.RunModel({"output": {
+                    "thread_id": ROOT, "app_server_events": malformed}}, {})
+                self.assertTrue(parsed.incomplete_file_changes)
+                self.assertEqual(parsed.file_changes, {})
+
+        malformed_content = file_change_events(
+            "validator", OUTPUT_FILE, kind="add", turn_id="turn-1")
+        for event in malformed_content:
+            change = event["message"]["params"]["item"]["changes"][0]
+            change["content"] = "unobserved file bytes"
+            change.pop("diff", None)
+        parsed = judge.RunModel({"output": {
+            "thread_id": ROOT, "app_server_events": malformed_content}}, {})
+        self.assertTrue(parsed.incomplete_file_changes)
+        self.assertEqual(parsed.file_changes, {})
+
+        unpaired = judge.RunModel({"output": {
+            "thread_id": ROOT, "app_server_events": [events[1]]}}, {})
+        self.assertTrue(unpaired.incomplete_file_changes)
+        self.assertFalse(unpaired.file_changes["validator"][0]["completed"])
+
+        pending = judge.RunModel({"output": {
+            "thread_id": ROOT, "app_server_events": [events[0]]}}, {})
+        self.assertTrue(pending.incomplete_file_changes)
+        self.assertEqual(pending.file_changes, {})
+
+        for failure_status in ("failed", "declined"):
+            with self.subTest(file_change_completion=failure_status):
+                unsuccessful = file_change_events(
+                    "validator", OUTPUT_FILE, kind="add", turn_id="turn-1",
+                    content="must not count as produced")
+                unsuccessful[0]["seq"] = 1
+                unsuccessful[1]["seq"] = 2
+                unsuccessful[1]["message"]["params"]["item"]["status"] = \
+                    failure_status
+                parsed = judge.RunModel({"output": {
+                    "thread_id": ROOT,
+                    "app_server_events": unsuccessful}}, {})
+                self.assertTrue(parsed.incomplete_file_changes)
+                self.assertFalse(parsed.file_changes["validator"][0]["completed"])
+
+        moved = Fixture()
+        legal_two_child(moved)
+        moved.events = [event for event in moved.events if not (
+            event.get("message", {}).get("params", {}).get("threadId") == V1
+            and event.get("message", {}).get("params", {}).get("item", {}).get("type")
+            == "commandExecution"
+            and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
+        add_validator_file_change(
+            moved, OUTPUT_FILE, kind="update", content="@@ -1 +1 @@\n-old\n+new\n",
+            move_path="/tmp/教授研究/甲/moved-output.json")
+        moved_model = judge.RunModel(moved.response(), moved.adapter())
+        moved_judge = judge.Judge(moved_model, PASS_STATE, None, {})
+        moved_judge.rounds = [{"round": 1, "child": V1,
+                               "output_file": OUTPUT_FILE}]
+        moved_judge.judge_write_scope()
+        moved_scope = moved_judge.rows[-1]
+        self.assertEqual(moved_scope["fact"], "F-validator-write-scope")
+        self.assertEqual(moved_scope["verdict"], "fail", moved_scope)
+        self.assertTrue(any("/tmp/教授研究/甲/moved-output.json" in item
+                            for item in moved_scope["evidence"]))
+
+        unsupported = Fixture()
+        legal_two_child(unsupported)
+        unsupported.events = [event for event in unsupported.events if not (
+            event.get("message", {}).get("params", {}).get("threadId") == V1
+            and event.get("message", {}).get("params", {}).get("item", {}).get("type")
+            == "commandExecution"
+            and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
+        add_validator_file_change(
+            unsupported, OUTPUT_FILE, content=msg_text())
+        change = next(event for event in unsupported.events
+                      if event.get("message", {}).get("params", {}).get("item", {}).get("type")
+                      == "fileChange" and event.get("message", {}).get("method")
+                      == "item/completed")
+        change["message"]["params"]["item"]["changes"][0]["kind"] = {
+            "type": "rename"}
+        start_change = next(event for event in unsupported.events
+                            if event.get("message", {}).get("params", {}).get("item", {}).get("type")
+                            == "fileChange" and event.get("message", {}).get("method")
+                            == "item/started")
+        start_change["message"]["params"]["item"]["changes"][0]["kind"] = {
+            "type": "rename"}
+        unsupported_model = judge.RunModel(
+            unsupported.response(), unsupported.adapter())
+        self.assertTrue(unsupported_model.incomplete_file_changes)
+        unsupported_judge = judge.Judge(unsupported_model, PASS_STATE,
+                                        None, {})
+        unsupported_judge.rounds = [{"round": 1, "child": V1,
+                                     "output_file": OUTPUT_FILE}]
+        unsupported_judge.judge_write_scope()
+        self.assertEqual(unsupported_judge.rows[-1]["verdict"], "gap")
+
+        deleted_events = file_change_events(
+            "validator", OUTPUT_FILE, kind="delete", turn_id="turn-1",
+            content="old validator bytes")
+        deleted_model = judge.RunModel({"output": {
+            "thread_id": ROOT, "app_server_events": deleted_events}}, {})
+        deleted_change = deleted_model.file_changes["validator"][0]
+        self.assertEqual(deleted_change["operation"], "delete")
+        self.assertEqual(deleted_change["diff"], "old validator bytes")
+
+        deleted = Fixture()
+        legal_two_child(deleted)
+        deleted.events = [event for event in deleted.events if not (
+            event.get("message", {}).get("params", {}).get("threadId") == V1
+            and event.get("message", {}).get("params", {}).get("item", {}).get("type")
+            == "commandExecution"
+            and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
+        add_validator_file_change(
+            deleted, OUTPUT_FILE, kind="delete", content="old validator bytes")
+        deleted_model = judge.RunModel(deleted.response(), deleted.adapter())
+        deleted_judge = judge.Judge(deleted_model, PASS_STATE, None, {})
+        deleted_judge.rounds = [{"round": 1, "child": V1,
+                                 "output_file": OUTPUT_FILE}]
+        deleted_judge.judge_write_scope()
+        self.assertEqual(deleted_judge.rows[-1]["verdict"], "fail")
+        self.assertTrue(any("fileChange delete" in item
+                            for item in deleted_judge.rows[-1]["evidence"]))
+
+    def test_file_change_add_content_does_not_prove_exclusive_creation(self):
         fx = Fixture()
         legal_two_child(fx)
         for event in fx.events:
@@ -1591,9 +2020,11 @@ class RawOriginalTests(RuntimeJudgeTestCase):
                      "python3 -c" in event["message"]["params"]["item"].get("command", ""))))]
         add_validator_file_change(fx, OUTPUT_FILE, content=msg_text())
         verdict = run(fx, state=PASS_STATE)
-        self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "pass", verdict)
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "gap", verdict)
 
-    def test_file_change_without_contents_cannot_prove_raw_production(self):
+    def test_file_change_without_diff_cannot_prove_raw_production(self):
         fx = Fixture()
         legal_two_child(fx)
         fx.events = [event for event in fx.events if not (
@@ -1602,11 +2033,16 @@ class RawOriginalTests(RuntimeJudgeTestCase):
             == "commandExecution"
             and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
         add_validator_file_change(fx, OUTPUT_FILE)
+        for event in fx.events:
+            params = event.get("message", {}).get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == V1 and item.get("type") == "fileChange":
+                item["changes"][0].pop("diff", None)
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
         self.assertEqual(facts(verdict)["F-raw-original"], "gap")
 
-    def test_file_change_with_different_contents_fails_raw_integrity(self):
+    def test_file_change_with_different_add_content_fails_raw_integrity(self):
         fx = Fixture()
         legal_two_child(fx)
         fx.events = [event for event in fx.events if not (
@@ -1619,7 +2055,7 @@ class RawOriginalTests(RuntimeJudgeTestCase):
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-raw-original"], "fail")
 
-    def test_variable_body_write_is_an_evidence_gap_when_bytes_are_not_observed(self):
+    def test_literal_variable_body_exclusive_write_preserves_original(self):
         fx = Fixture()
         legal_two_child(fx)
         payload = msg_text().encode("utf-8")
@@ -1634,9 +2070,8 @@ class RawOriginalTests(RuntimeJudgeTestCase):
                     and "python3 -c" in item.get("command", ""):
                 item["command"] = command
         verdict = run(fx, state=PASS_STATE)
-        self.assertEqual(verdict["classification"],
-                         "INVALID_TEST_EXECUTION", verdict)
-        self.assertEqual(facts(verdict)["F-raw-original"], "gap", verdict)
+        self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "pass", verdict)
 
     def test_incomplete_file_change_cannot_prove_raw_production(self):
         fx = Fixture()
@@ -1696,8 +2131,8 @@ class WriteScopeTests(RuntimeJudgeTestCase):
         legal_two_child(fx)
         raw = msg_text().encode("utf-8")
         allowed = f"open({OUTPUT_FILE!r}, 'xb').write({raw!r})"
-        unauthorized = "open('/tmp/fixture/protected.json', 'xb').write(b'x')"
-        command = "cat /tmp/fixture/" + MD_NAME + " && python3 -c " \
+        unauthorized = "open('/tmp/教授研究/甲/protected.json', 'xb').write(b'x')"
+        command = "cat /tmp/教授研究/甲/" + MD_NAME + " && python3 -c " \
             + shlex.quote(allowed) + " && python3 -c " \
             + shlex.quote(unauthorized)
         self.assertEqual(self.replace_validator_command(fx, command), 2)
@@ -1713,7 +2148,7 @@ class WriteScopeTests(RuntimeJudgeTestCase):
         legal_two_child(fx)
         raw = msg_text().encode("utf-8")
         source = (f"open({OUTPUT_FILE!r}, 'xb').write({raw!r}); "
-                  "open('/tmp/fixture/extra.json', 'xb').write(b'x')")
+                  "open('/tmp/教授研究/甲/extra.json', 'xb').write(b'x')")
         self.assertEqual(self.replace_validator_command(
             fx, "python3 -c " + shlex.quote(source)), 2)
 
@@ -1740,7 +2175,7 @@ class WriteScopeTests(RuntimeJudgeTestCase):
     def test_overwrite_existing_candidate_source_fails_write_scope(self):
         fx = Fixture()
         legal_two_child(fx)
-        source_path = f"/tmp/fixture/{MD_NAME}"
+        source_path = f"/tmp/教授研究/甲/{MD_NAME}"
         source = f"open({source_path!r}, 'wb').write(b'changed')"
         self.assertEqual(self.replace_validator_command(
             fx, "python3 -c " + shlex.quote(source)), 2)
@@ -1768,7 +2203,7 @@ class WriteScopeTests(RuntimeJudgeTestCase):
     def test_proven_unauthorized_write_survives_following_unknown_command(self):
         fx = Fixture()
         legal_two_child(fx)
-        source = "open('/tmp/fixture/protected.json', 'xb').write(b'x')"
+        source = "open('/tmp/教授研究/甲/protected.json', 'xb').write(b'x')"
         command = "python3 -c " + shlex.quote(source) \
             + " && unknown-validator-tool --mode mutate"
         self.assertEqual(self.replace_validator_command(fx, command), 2)
@@ -1784,7 +2219,7 @@ class WriteScopeTests(RuntimeJudgeTestCase):
         legal_two_child(fx)
         raw = msg_text().encode("utf-8")
         writer = f"open({OUTPUT_FILE!r}, 'xb').write({raw!r})"
-        command = "cat /tmp/fixture/" + MD_NAME + " && python3 -c " \
+        command = "cat /tmp/教授研究/甲/" + MD_NAME + " && python3 -c " \
             + shlex.quote(writer)
         self.assertEqual(self.replace_validator_command(fx, command), 2)
 
@@ -1798,7 +2233,7 @@ class WriteScopeTests(RuntimeJudgeTestCase):
         legal_two_child(fx)
         raw = msg_text().encode("utf-8")
         source = ("from pathlib import Path\n"
-                  f"Path('/tmp/fixture/{MD_NAME}').read_text()\n"
+                  f"Path('/tmp/教授研究/甲/{MD_NAME}').read_text()\n"
                   f"open({OUTPUT_FILE!r}, 'xb').write({raw!r})")
         command = "python3 -c " + shlex.quote(source)
         self.assertEqual(self.replace_validator_command(fx, command), 2)
@@ -1815,13 +2250,39 @@ class WriteScopeTests(RuntimeJudgeTestCase):
 
         verdict = run(fx, state=PASS_STATE)
 
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
         self.assertEqual(facts(verdict)["F-validator-write-scope"], "gap",
                          verdict)
+
+        deferred = Fixture()
+        legal_two_child(deferred)
+        source = ("def write_later():\n"
+                  f"    open({OUTPUT_FILE!r}, 'xb').write(b'not run')\n")
+        self.assertEqual(self.replace_validator_command(
+            deferred, "python3 -c " + shlex.quote(source)), 2)
+        deferred_verdict = run(deferred, state=PASS_STATE)
+        self.assertEqual(deferred_verdict["classification"],
+                         "INVALID_TEST_EXECUTION", deferred_verdict)
+        self.assertEqual(facts(deferred_verdict)["F-validator-write-scope"],
+                         "gap", deferred_verdict)
+
+        unreachable = Fixture()
+        legal_two_child(unreachable)
+        source = ("if False:\n"
+                  f"    open({OUTPUT_FILE!r}, 'xb').write(b'not run')\n")
+        self.assertEqual(self.replace_validator_command(
+            unreachable, "python3 -c " + shlex.quote(source)), 2)
+        unreachable_verdict = run(unreachable, state=PASS_STATE)
+        self.assertEqual(unreachable_verdict["classification"],
+                         "INVALID_TEST_EXECUTION", unreachable_verdict)
+        self.assertEqual(facts(unreachable_verdict)["F-validator-write-scope"],
+                         "gap", unreachable_verdict)
 
     def test_protected_file_write_fails(self):
         fx = Fixture()
         legal_two_child(fx)
-        add_validator_file_change(fx, f"/tmp/fixture/{STATE_NAME}")
+        add_validator_file_change(fx, f"/tmp/教授研究/甲/{STATE_NAME}")
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail")
@@ -1829,14 +2290,14 @@ class WriteScopeTests(RuntimeJudgeTestCase):
     def test_outside_output_write_fails(self):
         fx = Fixture()
         legal_two_child(fx)
-        add_validator_file_change(fx, "/tmp/fixture/别的文件.json")
+        add_validator_file_change(fx, "/tmp/教授研究/甲/别的文件.json")
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
 
     def test_actual_file_change_outside_output_fails(self):
         fx = Fixture()
         legal_two_child(fx)
-        add_validator_file_change(fx, "/tmp/fixture/elsewhere.json")
+        add_validator_file_change(fx, "/tmp/教授研究/甲/elsewhere.json")
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail")
@@ -1848,7 +2309,7 @@ class WriteScopeTests(RuntimeJudgeTestCase):
             params = event.get("message", {}).get("params", {})
             item = params.get("item", {})
             if params.get("threadId") == V1 and item.get("type") == "commandExecution":
-                item["commandActions"] = [action("write", f"/tmp/fixture/{STATE_NAME}")]
+                item["commandActions"] = [action("write", f"/tmp/教授研究/甲/{STATE_NAME}")]
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "PASS", verdict)
         self.assertEqual(facts(verdict)["F-validator-write-scope"], "pass",
@@ -1856,6 +2317,93 @@ class WriteScopeTests(RuntimeJudgeTestCase):
 
 
 class OrderAndStopTests(RuntimeJudgeTestCase):
+    @staticmethod
+    def declined_prefix(stage):
+        fx = Fixture()
+        fx.spawn(judge.GENERATOR_AGENT, G1)
+        fx.generator_round(G1)
+        fx.prepare(1)
+        thread = ROOT
+        needle = judge.ROOT_PREPARE
+        if stage == "validator":
+            fx.spawn(judge.VALIDATOR_AGENT, V1)
+            writer = f"open({OUTPUT_FILE!r}, 'xb').write(b'blocked')"
+            fx.child_exec(V1, "python3 -c " + shlex.quote(writer), output="")
+            thread, needle = V1, "python3 -c"
+        for event in fx.events:
+            message = event.get("message", {})
+            params = message.get("params", {})
+            item = params.get("item", {})
+            if message.get("method") == "item/completed" \
+                    and params.get("threadId") == thread \
+                    and needle in item.get("command", ""):
+                item["status"] = "declined"
+                item["exitCode"] = None
+                item["aggregatedOutput"] = ""
+        if stage == "validator":
+            fx.complete_child(V1)
+        return fx
+
+    def test_declined_prepare_stopped_prefix_blocks(self):
+        fx = self.declined_prefix("prepare")
+        verdict = run(fx, state=None)
+        self.assertEqual(verdict["classification"], "BLOCKED", verdict)
+
+    def test_declined_validator_production_stopped_prefix_blocks(self):
+        fx = self.declined_prefix("validator")
+        verdict = run(fx, state=None)
+        self.assertEqual(verdict["classification"], "BLOCKED", verdict)
+
+    def test_declined_prepare_then_validator_dispatch_fails(self):
+        fx = self.declined_prefix("prepare")
+        fx.spawn(judge.VALIDATOR_AGENT, V1)
+        fx.complete_child(V1)
+        verdict = run(fx, state=None)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-stop-order"], "fail", verdict)
+
+    def test_declined_validator_then_save_fails(self):
+        fx = self.declined_prefix("validator")
+        fx.save()
+        verdict = run(fx, state=None)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-stop-order"], "fail", verdict)
+
+    def test_declined_validator_preserves_prior_root_reconstruction_failure(self):
+        fx = self.declined_prefix("validator")
+        prefix = "python3 -c " + shlex.quote(
+            f"open({OUTPUT_FILE!r}, 'xb').write(b'root-rebuilt')")
+        RawOriginalTests.prefix_root_stage3_command(
+            fx, judge.ROOT_PREPARE, prefix)
+        verdict = run(fx, state=None)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "fail", verdict)
+
+    def test_terminal_record_scopes_must_match_committed_results(self):
+        for mutation, expected in (("missing", "INVALID_TEST_EXECUTION"), ("drift", "FAIL")):
+            with self.subTest(mutation=mutation):
+                fx = Fixture()
+                legal_two_child(fx)
+                def alter(value):
+                    if mutation == "missing":
+                        value.pop("scopes")
+                    else:
+                        value["scopes"][0]["result"] = "fail_after_2_rounds"
+                mutate_command_return(fx, ROOT, judge.ROOT_RECORD, alter)
+                verdict = run(fx, state=PASS_STATE)
+                self.assertEqual(verdict["classification"], expected, verdict)
+
+    def test_equals_style_actual_handoff_arguments_are_accepted(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        for event in fx.events:
+            item = event.get("message", {}).get("params", {}).get("item", {})
+            command = item.get("command", "")
+            if judge.ROOT_SAVE in command:
+                item["command"] = command.replace("--handoff-file ", "--handoff-file=").replace("--handoff-sha256 ", "--handoff-sha256=")
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "PASS", verdict)
+
     def test_correction_dispatch_between_record_start_and_completion_fails(self):
         fx = Fixture()
         legal_two_child_spine(fx)
@@ -2007,6 +2555,29 @@ class OrderAndStopTests(RuntimeJudgeTestCase):
 
 
 class EvidenceChannelTests(RuntimeJudgeTestCase):
+    def test_record_return_optional_professor_and_target_cannot_drift(self):
+        for field, wrong in (("professor", "另一教授"),
+                             ("validation_file", "/tmp/教授研究/乙/recorded.json")):
+            with self.subTest(field=field):
+                fx = Fixture()
+                legal_two_child(fx)
+                mutate_command_return(fx, ROOT, judge.ROOT_RECORD,
+                                      lambda value: value.update({field: wrong}))
+                verdict = run(fx, state=PASS_STATE)
+                self.assertEqual(verdict["classification"], "FAIL", verdict)
+
+    def test_full_install_and_storage_binding_fields_cannot_be_omitted(self):
+        for surface, field in (("install", "target_commit"),
+                               ("storage", "database_path"),
+                               ("storage", "thread_ids")):
+            with self.subTest(surface=surface, field=field):
+                fx = Fixture()
+                legal_two_child(fx)
+                evidence = valid_surfaces(fx)
+                del evidence[surface][field]
+                verdict = run(fx, state=PASS_STATE, surface_evidence=evidence)
+                self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+
     def test_truncated_record_output_is_invalid(self):
         fx = Fixture()
         legal_two_child(fx)
@@ -2046,7 +2617,7 @@ class EvidenceChannelTests(RuntimeJudgeTestCase):
                     and params.get("threadId") == ROOT:
                 item["command"] = item["command"].replace(
                     f"--handoff-file {HANDOFF_FILE}",
-                    "--handoff-file /tmp/fixture/别的handoff.json")
+                    "--handoff-file /tmp/教授研究/甲/别的handoff.json")
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-handoff-chain"], "fail")
