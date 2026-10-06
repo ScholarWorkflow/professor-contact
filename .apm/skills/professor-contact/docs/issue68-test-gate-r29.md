@@ -14,7 +14,7 @@
 | 获批产品方向 | `issue-68-plan-r13-2026-10-06`，第 68 号议题评论 `6000673923`；范围批准见 PR #72 评论 `6000931583` |
 | 被测产品目标 | `ScholarWorkflow/professor-contact@b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d` |
 | 测试改动前基线 | `ScholarWorkflow/professor-contact@1c5023decdcfb22b5d196bf22640b3dab45a7b99` |
-| 新增测试实现提交 | `d753246107dbbbc3b5aad1ae267dd3e0edbc9f11` |
+| 新增测试实现提交 | `f08474bfb73389488a462619ae9a0913fc8338b0` |
 | 运行证据契约 | `.apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-contract-r19.json`，契约修订 `issue-68-runtime-evidence-r29-2026-10-06` |
 | 共享测试资产参考版本 | r25 读取时记为 `c738fa2f8bcbb16cd99d741332d5f59b062b6357`；当前实际检出位置与版本尚未核验 |
 
@@ -45,7 +45,7 @@ r25 指定观察教授原有 `owner_input_file` 解析所得对象，并由同�
 | `shared assets` | 从 producer/fixture 的干净 SHA 和 `apm.lock.yaml` 哈希记录 | 尚未采集；实际资产检出未核实 |
 | `service version` | 请求前后只读取得服务 `git rev-parse HEAD`，通过既有 `clean_revision` 校验并确认 `same_service`；不硬编码 eval SHA。listener 信息单独保留在 `eval-service-provenance.before/after.json` | 尚未采集；服务未读取或请求 |
 | 产品检出 | 产品仓库路径、干净状态、完整提交号；必须等于 `b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d` | 当前正式运行环境未核验 |
-| 测试实现 | 唯一候选完整提交号、入口与判定程序版本；须在第二关口审核后冻结 | 本轮候选 SHA 为 `37a1d8c58cfb59249818529d9b120a5b143cc17c`；此 SHA 待审核，不表示获批或正式运行通过 |
+| 测试实现 | 唯一候选完整提交号、入口与判定程序版本；须在第二关口审核后冻结 | 本轮候选 SHA 为 `f08474bfb73389488a462619ae9a0913fc8338b0`；此 SHA 待审核，不表示获批或正式运行通过 |
 | 输入与预期 | 第 2 节逐项列出的真实测试值、来源、前后文件状态及独立预期 | 未知 |
 | 运行路径 | 空输出目录、消费者目录、证据归档目录及互不重叠证明 | 未知 |
 
@@ -121,7 +121,7 @@ jq -e . .apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-con
 UV_CACHE_DIR=/tmp/pc68-uv-cache uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_runtime_r19.py
 ```
 
-本轮实现提交 `37a1d8c58cfb59249818529d9b120a5b143cc17c` 上，定向检查 20 项通过，结果 `OK`。无 `FAIL_PRODUCT` 的混合聚合断言包含 `CASE_NOT_STARTED` 子项，并确认该子项分类保留。合成采集预检还确认真实合成 CLI 返回 `status=ok`，runner 重读 stdout/manifest 后判为 `verified=true`、`reason=null`。这些检查只验证判定与本地合成观察路径，不是 `PC68-D1` 或 `PC68-R1` 正式验收。
+本轮实现提交 `f08474bfb73389488a462619ae9a0913fc8338b0` 上，定向检查 20 项通过，结果 `OK`。无 `FAIL_PRODUCT` 的混合聚合断言包含 `CASE_NOT_STARTED` 子项，并确认该子项分类保留。合成采集预检还确认真实合成 CLI 返回 `status=ok`，runner 重读 stdout/manifest 后判为 `verified=true`、`reason=null`。这些检查只验证判定与本地合成观察路径，不是 `PC68-D1` 或 `PC68-R1` 正式验收。
 
 实际 `model`、`executor`、`entrypoint`、`isolation`、`shared assets`、`service version` 尚未采集；真实 `app_server` 事件及正式教授线程关联也未核实。主机、适配器、进程号和端口不是独立必填项。契约为 `input_observation_gate.formal_run_allowed=false`、`reason_code=second_gate_incomplete`；runner 必须先返回 `CASE_NOT_STARTED`，不得读取或请求评估服务。实际文件中的 `eval_service_called=false`、`external_request_made=false`、`formal_case_started=false` 确认本次服务和正式用例均未运行。PC68-R1 仍未运行，第二关口仍为 `INCOMPLETE`。
 
@@ -313,8 +313,8 @@ runner 必须发现恰好七个固定外层方法。集合变化为 `INVALID_TES
 ## 11. 当前关口结论及限制
 
 - 测试计划 r25 是唯一当前依据，完整取代 r24；产品方向 r13 和产品目标 SHA 固定如第 1 节。
-- 契约 JSON 格式检查通过；本轮实现提交 `37a1d8c58cfb59249818529d9b120a5b143cc17c` 对应的 20 项定向单元检查和本地合成采集预检通过：真实合成 CLI 返回 `status=ok`，runner 落盘并重读 stdout/manifest 后判为 `verified=true`、`reason=null`。这些结果只证明本地合成调用路径。
+- 契约 JSON 格式检查通过；本轮实现提交 `f08474bfb73389488a462619ae9a0913fc8338b0` 对应的 20 项定向单元检查和本地合成采集预检通过：真实合成 CLI 返回 `status=ok`，runner 落盘并重读 stdout/manifest 后判为 `verified=true`、`reason=null`。这些结果只证明本地合成调用路径。
 - 实际 `model`、`executor`、`entrypoint`、`isolation`、`shared assets`、`service version` 尚未采集；真实 `app_server` 事件和正式教授线程/调用归属也未核验。Gate 2 仍为 `INCOMPLETE`；runner 必须先返回 `CASE_NOT_STARTED`，不得触碰评估服务。评估服务、正式请求和 `PC68-R1` 均未运行。
 - PC68-D1 历史记录曾在执行主机临时目录中可读，包含 43 个组件回执；该目录未随仓库移交。记录绑定旧产品与旧候选版本，只保留为历史 `PASS`，不能记成当前目标产品或当前候选通过。
-- 本轮测试实现候选完整 SHA 为 `37a1d8c58cfb59249818529d9b120a5b143cc17c`；须经第二关口审核后才能冻结并用于正式运行。
+- 本轮测试实现候选完整 SHA 为 `f08474bfb73389488a462619ae9a0913fc8338b0`；须经第二关口审核后才能冻结并用于正式运行。
 - 第 3 节的六项运行事实、产品和共享资产实际检出以及 PC68-R1 真实输入值均未采集；不得猜测。主机、适配器、进程号和端口不是独立必填。Gate 2 审核通过且必填事实固定前，不启动正式请求；本次未运行评估服务或发送请求。
