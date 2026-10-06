@@ -1,5 +1,5 @@
 {
-  "revision": "issue-68-runtime-evidence-r29-2026-10-06",
+  "revision": "issue-68-runtime-evidence-r30-2026-10-06",
   "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
   "fixture_sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
   "fixture_contract": "skills-test-fixtures/codex-eval-adapter@16",
@@ -121,7 +121,7 @@
         "malformed_or_ambiguous_attribution": "INVALID_EVIDENCE",
         "command_text_unrelated_print_or_read_or_after_the_fact_file": "不得作为输入证据"
       },
-      "gate_status": "OBSERVATION_METHOD_IMPLEMENTED_AND_BOUND_TO_A_REAL_COMMAND_EVENT; PC68-R1 remains CASE_NOT_STARTED until Gate 2 review, candidate freeze, and formal runtime capture.",
+      "gate_status": "第30版待审；第二关口INCOMPLETE，formal_run_allowed=false。关口前完成独立最小预检，正式PC68-R1等待审核及冻结。",
       "independent_command_event_validation": "合成预检通过 mcp__codex_app__read_thread 取得真实 commandExecution 项，核对命令、退出码、未截断输出、线程、轮次和项顺序，并将其输出摘要绑定到同一对象、调用 argv 和计划结果；正式运行仍由独立 commandExecution.command 字段核对固定捕获器路径及参数，并从 runner 创建的 manifest 校验动态消费者目录。捕获源码摘要来自仓库固定源码而非信封自报。"
     }
   },
@@ -148,13 +148,28 @@
       "formal_run_allowed": false,
       "case": "PC68-R1",
       "reason_code": "second_gate_incomplete",
-      "action": "第25版指定的观察方式已落实：固定捕获器在教授原有 JSON 单次解析后保留同一对象，由该对象驱动同次 stage5-plan 调用。合成预检已通过 mcp__codex_app__read_thread 取得真实普通 commandExecution 项，并将命令编号、线程、轮次、项顺序、退出码和未截断输出与该对象、调用 argv 及计划结果绑定。此项只证明观察方法和当前合成命令事件可关联；正式 PC68-R1 的 app_server 事件、线程关系和运行环境事实仍须在正式运行记录。第二关口审核并冻结单一候选前，不检查评估服务、不安装消费者、不发送正式请求。",
+      "action": "固定捕获器保存正常单次交接解析对象，由同对象执行原已安装首次计划；关口前独立环境预检确认支持安装、服务隔离、实际普通命令输出和同对象转交，判定正反例检查完整分配包、目标、选择到真实读取和业务输出。正式请求仍等待第二关口完整通过和候选冻结。",
       "synthetic_capture_manifest": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-command-event-preflight.json",
       "synthetic_capture_stdout": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-command-event-stdout.json",
       "raw_stdout_is_reparsed_by": "verify_issue68_stage5_routing_r19.consumed_business_objects",
-      "known_limit": "合成预检绑定了真实普通 commandExecution 输出事件，但没有产生正式 PC68-R1 业务运行记录、正式 app_server 线程关系或模型、执行器、入口、隔离、共享资产和服务版本事实；这些仅能由获批候选的一次正式 PC68-R1 运行采集。"
+      "known_limit": "第03次证明普通命令实际输出与同次合成解析及转交关联；两次支持安装超时，安装入口摘要与帮助未完成，故整体最小预检未完成。正式教授业务及线程关系未运行。"
     },
-    "second_gate_status": "INCOMPLETE"
+    "second_gate_status": "INCOMPLETE",
+    "environment_entry": ".apm/skills/professor-contact/tests/runtime/preflight_issue68_environment_r30.py",
+    "environment_scope": "第二关口完整通过前执行支持安装、只读服务隔离及一次纯合成普通命令请求；不运行教授业务、不委派、不启停服务，预检结果不授予正式许可。",
+    "synthetic_only_entry": ".apm/skills/professor-contact/tests/runtime/preflight_issue68_synthetic_observation_r30.py",
+    "r30_actual_results": {
+      "overall": "PREFLIGHT_INCOMPLETE",
+      "supported_installation": "第01次240秒、第02次600秒安装均超时退出124；已完成固定产品/共享版本及只读服务隔离，安装入口、摘要和帮助检查未完成。",
+      "synthetic_observation": "第03次空白消费者单次纯合成请求退出0，SYNTHETIC_OBSERVATION_READY；仅证明普通命令输出与同次解析及转交关联、前后完整性和服务不变。不能代替支持安装。",
+      "validation": "77项合成判定与接线检查通过，四个命令退出0；非正式验收。",
+      "evidence": [
+        ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r30-environment-preflight-01.json",
+        ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r30-environment-preflight-02.json",
+        ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r30-synthetic-observation-03.json",
+        ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r30-precheck-validation.json"
+      ]
+    }
   },
   "pc68_r1_steps": [
     {
@@ -289,8 +304,8 @@
       "shared_assets": "The checked producer and fixture revisions plus the installed apm.lock.yaml SHA-256.",
       "service_version": "The current clean eval-server checkout SHA captured before the request and rechecked after it; no exact SHA is frozen by r25."
     },
-    "missing_or_invalid_action": "Gate 2 incomplete: CASE_NOT_STARTED before any eval-service inspection or request. After Gate 2 approval: CASE_NOT_STARTED before request if any of the six run-bound facts lacks its required source evidence.",
-    "validation": "Gate 2 incomplete remains a hard stop before service inspection. Once explicitly complete, the runner obtains the live eval-server SHA with read-only git rev-parse and confirms a clean checkout through the existing clean_revision function; r25 does not freeze an exact eval-server SHA. Before the request, each fact is collected independently from the source defined above. The executor record identifies the active Codex dispatch branch by code and source hashes; it is not the eval-server process and is not a host ID. The original request body must equal the saved built request. The after snapshot must identify the same service. Host ID, separate adapter revision and other diagnostics are optional and do not block when absent."
+    "missing_or_invalid_action": "关口前独立环境预检可支持安装和只读服务检查；正式入口保持第二关口未完整通过即CASE_NOT_STARTED。审核后，任一本次必需环境事实缺证时在正式请求前停止。",
+    "validation": "独立预检入口在关口前只检查支持安装、服务/存储隔离、纯合成单次实际命令输出；不运行教授业务或改动服务。正式入口仅在第二关口完整通过后运行，再从本次请求、干净安装产物及只读服务前后快照记录六项实值。服务版本由当次干净检出读取，第25版不固定服务SHA。执行器取实际编码分支及源摘要，不取监听进程或主机编号。"
   },
   "formal_run_archive_requirements": {
     "before_request": [

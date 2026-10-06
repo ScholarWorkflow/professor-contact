@@ -217,19 +217,37 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
         self.assertTrue(all(owner["expected_result"]["status"] == "needs_refresh" for owner in manifest["owners"]))
         self.assertEqual(manifest["manual_patch"], "no")
         evidence = self.root / "evidence"
-        for name in ("canonical-choices.json", "partition-bundles.json", "root-partition.stdout.json",
-                     "root-partition.stderr.txt", "root-partition.exit-code.txt"):
+        for name in ("canonical-choices.json", "fixture-manifest.json", "root-prompt.txt"):
             self.assertTrue((evidence / name).is_file(), name)
-        self.assertEqual(json.loads((evidence / "root-partition.exit-code.txt").read_text()), 0)
+        self.assertEqual(json.loads((evidence / "canonical-choices.json").read_text()),
+                         manifest["expected_choices"])
+        self.assertEqual(json.loads((evidence / "fixture-manifest.json").read_text()), manifest)
+        # The actual root partition and professor handoffs belong to the
+        # formal request, not preparation. Preparation keeps an independent
+        # expectation and exercises only the installed producer's plan.
+        for name in ("partition-bundles.json", "root-partition.stdout.json",
+                     "root-partition.stderr.txt", "root-partition.exit-code.txt"):
+            self.assertFalse((evidence / name).exists(), name)
         self.assertNotIn("expected_scope", manifest)
         self.assertEqual([entry["status"] for entry in manifest["partition"]["owners"]], ["ok", "ok"])
+        self.assertNotIn("bundle_file", manifest["partition"])
         for index, owner in enumerate(manifest["owners"]):
             bundle = evidence / f"owner-{index}-bundle-choices.json"
-            self.assertTrue(bundle.is_file())
-            self.assertEqual(json.loads(bundle.read_text()), owner["expected_choices_rows"])
-            self.assertEqual(manifest["partition"]["owners"][index]["choices_rows"],
-                             owner["expected_choices_rows"])
-            self.assertEqual(manifest["partition"]["bundle_file"], "partition-bundles.json")
+            self.assertFalse(bundle.exists())
+            self.assertEqual(manifest["partition"]["owners"][index], {
+                "professor_dir": owner["professor_dir"], "status": "ok",
+                "email_pack": owner["email_pack"], "email_id": None,
+                "choices_rows": owner["expected_choices_rows"],
+            })
+            initial = json.loads((evidence / f"owner-{index}-initial-plan.stdout.json").read_text())
+            self.assertEqual(initial, owner["initial_plan"])
+            self.assertEqual(initial["status"], "ok")
+            self.assertEqual(initial["email_pack"], owner["email_pack"])
+            self.assertEqual(initial["verify"][owner["professor"]], "needs_recheck:missing")
+            self.assertEqual(json.loads((evidence / f"owner-{index}-initial-plan.exit-code.txt").read_text()), 0)
+            self.assertEqual(json.loads((evidence / f"owner-{index}-plan.stdout.json").read_text()),
+                             owner["expected_result"])
+            self.assertEqual(json.loads((evidence / f"owner-{index}-plan.exit-code.txt").read_text()), 2)
             sibling = manifest["owners"][1 - index]
             self.assertIn("choices_scope", owner["sibling_exclusions"])
             self.assertIn(f"owner-{1 - index}", owner["sibling_exclusions"])

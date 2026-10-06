@@ -550,7 +550,7 @@ def _owner_invocation_argument_problem(row, packet):
     return None
 
 
-def owner_payload(rows, manifest):
+def owner_payload(rows, manifest, actual_partition=None):
     """Validate every same-call packet and its directly associated plan result."""
     if not rows:
         return None, verdict("BLOCKED_OBSERVABILITY", "owner_business_object_unobservable")
@@ -563,6 +563,19 @@ def owner_payload(rows, manifest):
         return None, verdict("FAIL_PRODUCT", "unexpected_owner_pack", observed_pack=pack)
     if first.get("generation") is None or first.get("thread") is None:
         return None, verdict("INVALID_EVIDENCE", "owner_input_observation_association_invalid")
+    if actual_partition is None:
+        return None, verdict("BLOCKED_OBSERVABILITY", "root_partition_result_unobservable")
+    sources = [entry for entry in actual_partition
+               if entry.get("professor_dir") == owner["professor_dir"]]
+    if len(sources) != 1:
+        return None, verdict("INVALID_EVIDENCE", "owner_partition_source_ambiguous")
+    source = sources[0]
+    if source.get("status") != "ok":
+        return None, verdict("FAIL_PRODUCT", "owner_handoff_from_failed_partition")
+    if packet.get("email_pack") != source.get("email_pack"):
+        return None, verdict("FAIL_PRODUCT", "owner_pack_changed_from_partition", observed_pack=pack)
+    if packet.get("email_id") != source.get("email_id"):
+        return None, verdict("FAIL_PRODUCT", "owner_target_changed_from_partition", observed_pack=pack)
     if packet.get("program_root") != manifest.get("program_root"):
         return None, verdict("FAIL_PRODUCT", "owner_program_root_changed", observed_pack=pack)
     if str(Path(pack).parent) != owner["professor_dir"]:
@@ -575,9 +588,9 @@ def owner_payload(rows, manifest):
         return None, verdict("FAIL_PRODUCT", "owner_input_carries_choices_scope", observed_pack=pack)
     if "choices" not in packet:
         return None, verdict("FAIL_PRODUCT", "choices_transport_missing", observed_pack=pack)
-    if packet["choices"] != owner["expected_choices_rows"]:
+    if packet["choices"] != source.get("choices_rows"):
         return None, verdict("FAIL_PRODUCT", "owner_bundle_choices_changed", observed_pack=pack,
-                             choices_summary=_choices_summary(packet["choices"], owner["expected_choices_rows"]))
+                             choices_summary=_choices_summary(packet["choices"], source.get("choices_rows")))
     if "email_id" in packet and packet["email_id"] not in owner["email_ids"]:
         return None, verdict("FAIL_PRODUCT", "owner_target_mismatch", observed_pack=pack,
                              observed_email_id=packet["email_id"])
@@ -667,10 +680,16 @@ def _verify_owner_plan_package(rows, owner, manifest):
     emails = payload.get("emails")
     if not isinstance(emails, list) or any(not isinstance(email, dict) for email in emails):
         return verdict("INVALID_EVIDENCE", "owner_fixture_pack_malformed", observed_pack=pack_path)
-    by_id = {email.get("email_id"): email for email in emails}
+    ids = [email.get("email_id") for email in emails]
+    if any(not isinstance(email_id, str) or not email_id for email_id in ids) or len(set(ids)) != len(ids):
+        return verdict("INVALID_EVIDENCE", "owner_fixture_pack_malformed", observed_pack=pack_path)
+    by_id = {email["email_id"]: email for email in emails}
     for index, observed in enumerate(rows):
         target_id = observed["packet"].get("email_id")
-        selected_emails = [by_id[target_id]] if target_id in by_id else emails
+        if target_id is not None and target_id not in by_id:
+            return verdict("FAIL_PRODUCT", "owner_target_mismatch", observed_pack=pack_path,
+                           observed_email_id=target_id)
+        selected_emails = [by_id[target_id]] if target_id is not None else emails
         expected_ids = [email.get("email_id") for email in selected_emails]
         plan = observed["plan"]
         if index == 0:
@@ -712,9 +731,15 @@ def _verify_owner_plan_package(rows, owner, manifest):
                 return verdict("FAIL_PRODUCT", "owner_plan_status_changed",
                                observed_call_id=observed.get("call_id"), observed_status=plan.get("status"))
             continue
-        if not isinstance(jobs, list) or len(jobs) != len(emails):
+        if not isinstance(jobs, list) or len(jobs) != len(selected_emails):
             return verdict("FAIL_PRODUCT", "owner_plan_email_ids_changed",
                            observed_call_id=observed.get("call_id"))
+        job_ids = [job.get("job_id") if isinstance(job, dict) else None for job in jobs]
+        expected_job_ids = {"email:" + email_id for email_id in expected_ids}
+        if any(not isinstance(job_id, str) for job_id in job_ids) or \
+                len(set(job_ids)) != len(job_ids) or set(job_ids) != expected_job_ids:
+            return verdict("FAIL_PRODUCT", "owner_plan_email_ids_changed",
+                           observed_call_id=observed.get("call_id"), observed_job_ids=job_ids)
         for job in jobs:
             if not isinstance(job, dict) or job.get("kind") != "email":
                 return verdict("FAIL_PRODUCT", "owner_plan_business_data_changed",
@@ -889,17 +914,19 @@ def _partition_payload(output):
 
 
 def _owner_projection(entry):
-    """One partition owner as {professor_dir, status, choices_rows}.
+    """Project every frozen owner identity and complete allocated choices.
 
     The supported output form carries the status nested under ``partition``;
     the flat form describes the same value, so both project identically.
     """
     if not isinstance(entry, dict):
-        return {"professor_dir": None, "status": None, "choices_rows": None}
+        return {"professor_dir": None, "email_pack": None, "email_id": None,
+                "status": None, "choices_rows": None}
     status = entry.get("status")
     if status is None and isinstance(entry.get("partition"), dict):
         status = entry["partition"].get("status")
     return {"professor_dir": entry.get("professor_dir"), "status": status,
+            "email_pack": entry.get("email_pack"), "email_id": entry.get("email_id"),
             "choices_rows": entry.get("choices_rows")}
 
 
@@ -912,6 +939,61 @@ def _partition_rows(payload):
 
 def _dir_key(row):
     return str(row.get("professor_dir"))
+
+
+def _actual_root_partition(calls, manifest, root):
+    """Resolve this run's root return before relating any professor input.
+
+    Preparation expectations only check this actual return; they never serve
+    as the source of the professor handoff comparison.
+    """
+    partitions, call_ids = [], set()
+    for call in calls:
+        if call.get("thread") != root:
+            continue
+        try:
+            parsed = command_action(call.get("command", ""), manifest)
+        except (ValueError, TypeError):
+            parsed = None
+        action = parsed.get("action") if parsed else _compound_action(call.get("command", ""))
+        if action != "stage5-partition-choices":
+            continue
+        call_id = call.get("id")
+        if not isinstance(call_id, str) or not call_id or call_id in call_ids \
+                or not isinstance(call.get("generation"), str) or not call["generation"] \
+                or not isinstance(call.get("start"), int) or not isinstance(call.get("end"), int) \
+                or call["end"] <= call["start"]:
+            return None, verdict("INVALID_EVIDENCE", "root_partition_call_association_invalid")
+        call_ids.add(call_id)
+        if parsed and parsed.get("problem"):
+            return None, verdict("FAIL_PRODUCT", parsed["problem"])
+        output = call.get("output")
+        if not isinstance(output, str) or not output.strip():
+            return None, verdict("BLOCKED_OBSERVABILITY", "root_partition_result_unobservable")
+        try:
+            payload = _strict_json_object(output)
+        except (ValueError, TypeError):
+            return None, verdict("INVALID_EVIDENCE", "root_partition_result_malformed")
+        if payload.get("status") == "ok":
+            rows = _partition_rows(payload)
+            if rows is None or any(not isinstance(entry, dict) for entry in payload["owners"]):
+                return None, verdict("INVALID_EVIDENCE", "root_partition_result_malformed")
+            dirs = [row["professor_dir"] for row in rows]
+            if any(not isinstance(directory, str) for directory in dirs) or len(set(dirs)) != len(dirs):
+                return None, verdict("INVALID_EVIDENCE", "root_partition_owner_association_conflict")
+            partitions.append((call, rows))
+    if not partitions:
+        if call_ids:
+            return None, verdict("FAIL_PRODUCT", "root_partition_not_deterministic",
+                                 partition_commands=len(call_ids))
+        return None, verdict("BLOCKED_OBSERVABILITY", "root_partition_result_unobservable")
+    if len(partitions) != 1:
+        return None, verdict("FAIL_PRODUCT", "multiple_root_partitions")
+    call, observed = partitions[0]
+    expected = [_owner_projection(entry) for entry in manifest["partition"]["owners"]]
+    if sorted(observed, key=_dir_key) != sorted(expected, key=_dir_key):
+        return None, verdict("FAIL_PRODUCT", "root_partition_changed", observed_owners=observed)
+    return {"call": call, "owners": observed}, None
 
 
 def _compound_action(command):
@@ -1279,12 +1361,18 @@ def _verify_codex_events(response, adapter, manifest):
                     business_calls.setdefault(thread, []).append(call)
     failures, invalids, blockers = [], [], []
     assigned, outcomes, consume_points = {}, {}, {}
+    partition, partition_problem = _actual_root_partition(calls, manifest, root)
+    if partition_problem:
+        _classify(partition_problem, failures, invalids, blockers)
     for child in sorted(children):
         stage5_calls = [call for call in business_calls.get(child, [])
                         if is_owner_business_surface(call.get("command", ""))]
         rows, problem = consumed_business_objects(stage5_calls, manifest)
         if not problem:
-            pack, problem = owner_payload(rows, manifest)
+            pack, problem = owner_payload(rows, manifest,
+                                          partition["owners"] if partition else None)
+        if not problem and any(row["start"] < partition["call"]["end"] for row in rows):
+            problem = verdict("FAIL_PRODUCT", "owner_business_precedes_partition")
         if problem:
             _classify(problem, failures, invalids, blockers)
             continue

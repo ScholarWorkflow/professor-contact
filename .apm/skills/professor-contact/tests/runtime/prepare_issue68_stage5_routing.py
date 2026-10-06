@@ -145,6 +145,7 @@ def prepare(program_root, installed_script, output_dir):
                 "owners": owners, "invalid_pack": str(broken.resolve()),
                 "expected_choices": choices,
                 "partition": {"owners": [{"professor_dir": owner["professor_dir"], "status": "ok",
+                                          "email_pack": owner["email_pack"], "email_id": None,
                                           "choices_rows": deepcopy(owner["expected_choices_rows"])}
                                          for owner in owners]},
                 "expected_aggregate_rows": 0, "pre_run_hashes": hashes,

@@ -87,7 +87,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         contract = entry.load_contract()
         observation = contract["codex"]["owner_business_input_observation"]
 
-        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r29-2026-10-06")
+        self.assertEqual(contract["revision"], entry.CONTRACT_REVISION)
         self.assertEqual(observation["status"], "supported")
         self.assertEqual(observation["schema"], verify.OWNER_OBSERVATION_SCHEMA)
         self.assertEqual(observation["source"],
@@ -121,7 +121,8 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertTrue(all(value is None for value in runtime["actual_values"].values()))
         self.assertIn("不是实际环境证明", runtime["actual_values_note"])
         self.assertIn("active Codex dispatch branch", runtime["fact_sources"]["executor"])
-        self.assertIn("not the eval-server process", runtime["validation"])
+        self.assertIn("执行器取实际编码分支及源摘要", runtime["validation"])
+        self.assertIn("不取监听进程或主机编号", runtime["validation"])
 
     def test_contract_claim_alone_cannot_enable_the_runner(self):
         contract = entry.load_contract()
@@ -429,6 +430,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
 #!/usr/bin/env python3
 """Synthetic r25 checks for PC68-R1 per-call input observation."""
 import hashlib
+import copy
 import json
 import sys
 import tempfile
@@ -488,6 +490,13 @@ class OwnerObservationTests(unittest.TestCase):
             "expected_choices_rows": self.packet["choices"],
             "sibling_exclusions": ["乙教授", "sibling-pack", "choices_scope"],
         }], "pre_run_hashes": {str(self.pack): hashlib.sha256(self.pack.read_bytes()).hexdigest()}}
+        # Independent expectations and synthetic current-run root return are
+        # separate objects; neither is reconstructed from the professor read.
+        expected = {"professor_dir": str(self.prof), "email_pack": str(self.pack),
+                    "email_id": self.email["email_id"], "status": "ok",
+                    "choices_rows": copy.deepcopy(self.packet["choices"])}
+        self.manifest["partition"] = {"owners": [expected]}
+        self.actual_partition = copy.deepcopy([expected])
         artifact = Path(self.temp.name) / "fixture-manifest.json"
         self.manifest["owner_capture"] = {
             "consumer_root": str(self.consumer), "runtime_path": str(self.wrapper),
@@ -531,13 +540,160 @@ class OwnerObservationTests(unittest.TestCase):
         self.handoff_file.write_text(json.dumps(packet, ensure_ascii=False), encoding="utf-8")
         return self.call()
 
+    def judge_owner(self, rows):
+        return verifier.owner_payload(rows, self.manifest, self.actual_partition)
+
+    def add_second_email(self):
+        second = copy.deepcopy(self.email)
+        second["email_id"] = "D002::I002"
+        second["idea"] = {"id": "D002_2", "text": "第二封构想"}
+        value = json.loads(self.pack.read_text(encoding="utf-8"))
+        value["emails"].append(second)
+        self.pack.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        self.manifest["owners"][0]["email_ids"].append(second["email_id"])
+        self.manifest["pre_run_hashes"][str(self.pack)] = hashlib.sha256(self.pack.read_bytes()).hexdigest()
+        Path(self.manifest["owner_capture"]["manifest_path"]).write_text(
+            json.dumps(self.manifest), encoding="utf-8")
+        return second
+
+    def test_partition_comparison_includes_pack_and_optional_target(self):
+        expected = {"professor_dir": str(self.prof), "status": "ok",
+                    "email_pack": str(self.pack), "choices_rows": self.packet["choices"]}
+        for field, value in (("email_pack", "wrong-pack"), ("email_id", "different-id")):
+            changed = dict(expected, **{field: value})
+            with self.subTest(field=field):
+                self.assertNotEqual(verifier._owner_projection(expected),
+                                    verifier._owner_projection(changed))
+
+    def test_targeted_plan_jobs_only_cover_selected_email(self):
+        self.add_second_email()
+        rows, problem = verifier.consumed_business_objects([self.call()], self.manifest)
+        self.assertIsNone(problem)
+        self.assertIsNone(verifier._verify_owner_plan_package(rows, self.manifest["owners"][0],
+                                                            self.manifest))
+
+    def test_duplicate_jobs_cannot_hide_missing_batch_email(self):
+        self.add_second_email()
+        call = self.write_packet(lambda packet: packet.pop("email_id"))
+        call = self.rewrite_plan(call, lambda plan: plan["jobs"].__setitem__(
+            1, copy.deepcopy(plan["jobs"][0])))
+        rows, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertIsNone(problem)
+        problem = verifier._verify_owner_plan_package(rows, self.manifest["owners"][0], self.manifest)
+        self.assertIsNotNone(problem)
+        self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+        self.assertEqual(problem["reason_code"], "owner_plan_email_ids_changed")
+
+    def partition_call(self, owners=None):
+        return {"id": "partition-1", "generation": "synthetic-run", "thread": "synthetic-root",
+                "start": 0, "end": 1,
+                "command": shlex.join(["uv", "run", "python", str(self.entrypoint),
+                                       "stage5-partition-choices", "--program-root", str(self.root),
+                                       "--owner", str(self.pack), "--choices", str(self.root / "choices.json")]),
+                "output": json.dumps({"status": "ok", "owners": owners if owners is not None
+                                      else self.actual_partition}, ensure_ascii=False)}
+
+    def test_current_root_return_is_the_source_of_owner_comparison(self):
+        actual, problem = verifier._actual_root_partition([self.partition_call()], self.manifest,
+                                                         "synthetic-root")
+        self.assertIsNone(problem)
+        call = self.call()
+        rows, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertIsNone(problem)
+        self.handoff_file.unlink()
+        pack, problem = verifier.owner_payload(rows, self.manifest, actual["owners"])
+        self.assertIsNone(problem)
+        self.assertEqual(pack, str(self.pack))
+        # The packet still equals preparation expectations, but contradicts
+        # the previous actual step. This must never be accepted on that basis.
+        for field, value, reason in (
+                ("choices_rows", [{"email_id": self.email["email_id"], "first_choice": False}],
+                 "owner_bundle_choices_changed"),
+                ("email_pack", str(self.prof / "different-pack.json"), "owner_pack_changed_from_partition"),
+                ("email_id", None, "owner_target_changed_from_partition")):
+            changed = copy.deepcopy(actual["owners"])
+            changed[0][field] = value
+            with self.subTest(field=field):
+                _, problem = verifier.owner_payload(rows, self.manifest, changed)
+                self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+                self.assertEqual(problem["reason_code"], reason)
+
+    def test_root_actual_return_compares_complete_independent_expectations(self):
+        for field, value in (("email_pack", "wrong-pack"), ("email_id", "wrong-id"),
+                             ("choices_rows", [])):
+            changed = copy.deepcopy(self.actual_partition)
+            changed[0][field] = value
+            with self.subTest(field=field):
+                _, problem = verifier._actual_root_partition([self.partition_call(changed)],
+                                                             self.manifest, "synthetic-root")
+                self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+                self.assertEqual(problem["reason_code"], "root_partition_changed")
+
+    def test_missing_damaged_and_conflicting_root_returns_have_distinct_terminals(self):
+        cases = [("", "BLOCKED_OBSERVABILITY", "root_partition_result_unobservable"),
+                 ('{"status":', "INVALID_EVIDENCE", "root_partition_result_malformed"),
+                 (json.dumps({"status": "ok", "owners": self.actual_partition * 2}),
+                  "INVALID_EVIDENCE", "root_partition_owner_association_conflict")]
+        for output, terminal, reason in cases:
+            call = self.partition_call()
+            call["output"] = output
+            with self.subTest(reason=reason):
+                actual, problem = verifier._actual_root_partition([call], self.manifest, "synthetic-root")
+                self.assertIsNone(actual)
+                self.assertEqual(problem["verdict"], terminal)
+                self.assertEqual(problem["reason_code"], reason)
+        rows, problem = verifier.consumed_business_objects([self.call()], self.manifest)
+        self.assertIsNone(problem)
+        _, problem = verifier.owner_payload(rows, self.manifest)
+        self.assertEqual(problem["verdict"], "BLOCKED_OBSERVABILITY")
+
+    def test_repeated_partition_call_ids_are_invalid_not_multiple_business_calls(self):
+        call = self.partition_call()
+        _, problem = verifier._actual_root_partition([call, copy.deepcopy(call)], self.manifest,
+                                                     "synthetic-root")
+        self.assertEqual(problem["verdict"], "INVALID_EVIDENCE")
+        self.assertEqual(problem["reason_code"], "root_partition_call_association_invalid")
+        second = copy.deepcopy(call)
+        second.update(id="partition-2", start=2, end=3)
+        _, problem = verifier._actual_root_partition([call, second], self.manifest, "synthetic-root")
+        self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+        self.assertEqual(problem["reason_code"], "multiple_root_partitions")
+
+    def test_attributable_failed_partition_is_product_failure(self):
+        call = self.partition_call()
+        call["output"] = json.dumps({"status": "error", "reason_code": "synthetic-error"})
+        _, problem = verifier._actual_root_partition([call], self.manifest, "synthetic-root")
+        self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+        self.assertEqual(problem["reason_code"], "root_partition_not_deterministic")
+
+    def test_real_cli_output_wrong_pack_is_product_failure_but_forged_argv_is_invalid(self):
+        # Same valid observed input and capture metadata; an inconsistent
+        # business return is attributable to the product output.
+        call = self.rewrite_plan(self.call(), lambda plan: plan.__setitem__(
+            "email_pack", str(self.prof / "other-pack.json")))
+        _, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+        self.assertEqual(problem["reason_code"], "owner_plan_directory_changed")
+        # The pinned wrapper constructs argv from the same parse. Altering
+        # only this record cannot be a valid execution of that wrapper.
+        for flag, value in (("--email-pack", "other-pack.json"), ("--email-id", "changed-id")):
+            call = self.call()
+            envelope = json.loads(call["output"])
+            argv = envelope["stage5_invocation"]["argv"]
+            argv[argv.index(flag) + 1] = value
+            call["output"] = json.dumps(envelope)
+            with self.subTest(flag=flag):
+                _, problem = verifier.consumed_business_objects([call], self.manifest)
+                self.assertEqual(problem["verdict"], "INVALID_EVIDENCE")
+                self.assertEqual(problem["reason_code"], "owner_capture_child_argv_binding_mismatch")
+
     def test_fixed_capture_executes_same_parse_and_cli_then_survives_handoff_cleanup(self):
         call = self.call()
         rows, problem = verifier.consumed_business_objects([call], self.manifest)
         self.assertIsNone(problem)
         self.assertEqual(rows[0]["packet"], self.packet)
         self.handoff_file.unlink()
-        owner_pack, problem = verifier.owner_payload(rows, self.manifest)
+        owner_pack, problem = self.judge_owner(rows)
         self.assertIsNone(problem)
         self.assertEqual(owner_pack, str(self.pack))
 
@@ -578,7 +734,7 @@ class OwnerObservationTests(unittest.TestCase):
         rows, problem = verifier.consumed_business_objects([self.call()], self.manifest)
         self.assertIsNone(problem)
         rows[0]["plan"]["email_pack"] = None
-        _, problem = verifier.owner_payload(rows, self.manifest)
+        _, problem = self.judge_owner(rows)
         self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
         self.assertEqual(problem["reason_code"], "owner_plan_directory_changed")
 
@@ -587,7 +743,7 @@ class OwnerObservationTests(unittest.TestCase):
             0, {"email_id": self.email["email_id"], "first_choice": False}))
         rows, problem = verifier.consumed_business_objects([call], self.manifest)
         self.assertIsNone(problem)
-        _, problem = verifier.owner_payload(rows, self.manifest)
+        _, problem = self.judge_owner(rows)
         self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
         self.assertEqual(problem["reason_code"], "owner_bundle_choices_changed")
 
@@ -595,7 +751,7 @@ class OwnerObservationTests(unittest.TestCase):
         call = self.rewrite_plan(self.call(), lambda plan: plan.__setitem__("emails", ["D999::I999"]))
         rows, problem = verifier.consumed_business_objects([call], self.manifest)
         self.assertIsNone(problem)
-        _, problem = verifier.owner_payload(rows, self.manifest)
+        _, problem = self.judge_owner(rows)
         self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
         self.assertEqual(problem["reason_code"], "owner_plan_email_ids_changed")
 
@@ -606,7 +762,7 @@ class OwnerObservationTests(unittest.TestCase):
         call = self.rewrite_plan(self.call(), change_idea)
         rows, problem = verifier.consumed_business_objects([call], self.manifest)
         self.assertIsNone(problem)
-        _, problem = verifier.owner_payload(rows, self.manifest)
+        _, problem = self.judge_owner(rows)
         self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
         self.assertEqual(problem["reason_code"], "owner_plan_business_data_changed")
 
@@ -614,7 +770,7 @@ class OwnerObservationTests(unittest.TestCase):
         call = self.write_packet(lambda packet: packet.__setitem__("sibling_data", "乙教授"))
         rows, problem = verifier.consumed_business_objects([call], self.manifest)
         self.assertIsNone(problem)
-        _, problem = verifier.owner_payload(rows, self.manifest)
+        _, problem = self.judge_owner(rows)
         self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
         self.assertEqual(problem["reason_code"], "owner_input_contains_sibling_data")
 
@@ -624,7 +780,7 @@ class OwnerObservationTests(unittest.TestCase):
                 rows, problem = verifier.consumed_business_objects([self.call()], self.manifest)
                 self.assertIsNone(problem)
                 del rows[0]["plan"][field]
-                _, problem = verifier.owner_payload(rows, self.manifest)
+                _, problem = self.judge_owner(rows)
                 self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
                 self.assertEqual(problem["reason_code"], "owner_initial_plan_fields_missing")
                 self.assertIn(field, problem["missing_fields"])
