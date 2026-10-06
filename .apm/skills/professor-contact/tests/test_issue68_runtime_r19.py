@@ -817,6 +817,30 @@ class OwnerObservationTests(unittest.TestCase):
                 self.assertNotEqual(verifier.verify_codex(response, adapter, self.manifest)["verdict"],
                                     "FAIL_PRODUCT")
 
+    def assert_duplicate_start_cannot_prove_root_failure(self, fact):
+        response, adapter = self.independent_root_runtime(fact)
+        events = response["output"]["app_server_events"]
+        call_id = {"rebuild": "rebuild-1", "partition": "partition-1",
+                   "discovery": "discovery"}[fact]
+        start_index = next(index for index, event in enumerate(events)
+                           if event["message"]["method"] == "item/started"
+                           and event["message"]["params"]["item"].get("id") == call_id)
+        events.insert(start_index + 1, copy.deepcopy(events[start_index]))
+        for index, event in enumerate(events, 1):
+            event["runtime_seq"] = index
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("INVALID_EVIDENCE", "root_final_message_ambiguous"))
+
+    def test_independent_rebuild_failure_requires_unique_started_identity(self):
+        self.assert_duplicate_start_cannot_prove_root_failure("rebuild")
+
+    def test_independent_partition_failure_requires_unique_started_identity(self):
+        self.assert_duplicate_start_cannot_prove_root_failure("partition")
+
+    def test_independent_discovery_failure_requires_unique_started_identity(self):
+        self.assert_duplicate_start_cannot_prove_root_failure("discovery")
+
     def test_full_entry_ambiguous_final_cannot_hide_damaged_scope_attribution(self):
         for change in ("generation", "order", "turn"):
             response, adapter = self.ambiguous_runtime(scope=True)

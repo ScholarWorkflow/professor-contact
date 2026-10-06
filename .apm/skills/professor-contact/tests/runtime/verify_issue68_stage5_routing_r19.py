@@ -1290,7 +1290,7 @@ def _classify(problem, failures, invalids, blockers):
         blockers.append(problem)
 
 
-def _independent_root_return_failure(calls, manifest, root, turn):
+def _independent_root_return_failure(calls, manifest, root, turn, duplicate_starts=()):
     """Positive current-turn facts independent of child and final observations.
 
     Missing calls or unusable returns prove nothing here. Count only distinct,
@@ -1302,6 +1302,7 @@ def _independent_root_return_failure(calls, manifest, root, turn):
     attributed = [call for call in calls if call.get("thread") == root
                   and call.get("start_turn") == turn and call.get("end_turn") == turn
                   and isinstance(call.get("id"), str) and call["id"]
+                  and (call.get("thread"), call["id"]) not in duplicate_starts
                   and call.get("start_command") == call.get("command")]
     ids = [call["id"] for call in attributed]
     # Repeated identifiers damage pairing and cannot prove two executions.
@@ -1382,6 +1383,7 @@ def _verify_codex_events(response, adapter, manifest, final_problem=None):
     results = {}
     agent_paths, receipts = {}, []
     command_starts, calls, root_texts, business_calls = {}, [], [], {}
+    duplicate_starts = set()
     observability_gaps = []
     previous_seq = -1
     for event in events:
@@ -1423,6 +1425,8 @@ def _verify_codex_events(response, adapter, manifest, final_problem=None):
         if thread in children | {root} and item.get("type") == "commandExecution":
             item_id = (thread, item.get("id"))
             if method == "item/started":
+                if item_id in command_starts:
+                    duplicate_starts.add(item_id)
                 command_starts[item_id] = (seq, params.get("turnId"), item.get("command", ""))
             elif method == "item/completed":
                 if item_id not in command_starts:
@@ -1472,7 +1476,8 @@ def _verify_codex_events(response, adapter, manifest, final_problem=None):
             failures.append(verdict("FAIL_PRODUCT", reason))
     if failures:
         return failures[0]
-    independent_problem = _independent_root_return_failure(calls, manifest, root, raw.get("turn_id"))
+    independent_problem = _independent_root_return_failure(
+        calls, manifest, root, raw.get("turn_id"), duplicate_starts)
     if independent_problem:
         return independent_problem
     if final_problem:

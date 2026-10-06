@@ -353,14 +353,14 @@
   },
   "latest_candidate_validation": {
     "runtime": {
-      "tests": 53,
+      "tests": 56,
       "exit_code": 0,
-      "source": "remaining_root_facts.final"
+      "source": "duplicate_started_identity.after"
     },
     "lifecycle": {
       "tests": 50,
       "exit_code": 0,
-      "source": "lifecycle_after_remaining_root"
+      "source": "lifecycle_after_duplicate_start"
     },
     "recipe": {
       "tests": 11,
@@ -372,8 +372,8 @@
       "exit_code": 0,
       "source": "final_environment_check"
     },
-    "total_checks_this_candidate": 126,
-    "counting_note": "当前候选53项运行判定、50项生命周期、11项准备步骤和12项环境检查，不与历史123/120或其他轮次累加，不是正式证明或验收结论"
+    "total_checks_this_candidate": 129,
+    "counting_note": "当前129项为56+50+11+12；旧轮次不累计，正式验收未运行"
   },
   "lifecycle_after_final_ambiguity": {
     "tests": 50,
@@ -441,5 +441,55 @@
     "elapsed_seconds": 3.116,
     "source": "/private/tmp/pc68-r30-lifecycle-after-remaining-root.log",
     "captured_output": "WARN `--no-project` was provided, but no project was found\n..................................................\n----------------------------------------------------------------------\nRan 50 tests in 3.116s\n\nOK\n"
+  },
+  "historical_candidate_validation_126": {
+    "runtime": {
+      "tests": 53,
+      "exit_code": 0,
+      "source": "remaining_root_facts.final"
+    },
+    "lifecycle": {
+      "tests": 50,
+      "exit_code": 0,
+      "source": "lifecycle_after_remaining_root"
+    },
+    "recipe": {
+      "tests": 11,
+      "exit_code": 0,
+      "source": "final_recipe_check"
+    },
+    "environment": {
+      "tests": 12,
+      "exit_code": 0,
+      "source": "final_environment_check"
+    },
+    "total_checks_this_candidate": 126,
+    "counting_note": "当前候选53项运行判定、50项生命周期、11项准备步骤和12项环境检查，不与历史123/120或其他轮次累加，不是正式证明或验收结论",
+    "round_note": "重复开始事件修正前126项轮次，原样保留不累计"
+  },
+  "duplicate_started_identity": {
+    "before": {
+      "tests": 56,
+      "failures": 3,
+      "exit_code": 1,
+      "elapsed_seconds": 17.870,
+      "captured_output": "WARN `--no-project` was provided, but no project was found\n.......................FFF..............................\n======================================================================\nFAIL: test_independent_discovery_failure_requires_unique_started_identity (test_issue68_runtime_r19.OwnerObservationTests.test_independent_discovery_failure_requires_unique_started_identity)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 842, in test_independent_discovery_failure_requires_unique_started_identity\n    self.assert_duplicate_start_cannot_prove_root_failure(\"discovery\")\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 832, in assert_duplicate_start_cannot_prove_root_failure\n    self.assertEqual((result[\"verdict\"], result[\"reason_code\"]),\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                     (\"INVALID_EVIDENCE\", \"root_final_message_ambiguous\"))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Tuples differ: ('FAIL_PRODUCT', 'discovery_owner_set_changed') != ('INVALID_EVIDENCE', 'root_final_message_ambiguous')\n\nFirst differing element 0:\n'FAIL_PRODUCT'\n'INVALID_EVIDENCE'\n\n- ('FAIL_PRODUCT', 'discovery_owner_set_changed')\n+ ('INVALID_EVIDENCE', 'root_final_message_ambiguous')\n\n======================================================================\nFAIL: test_independent_partition_failure_requires_unique_started_identity (test_issue68_runtime_r19.OwnerObservationTests.test_independent_partition_failure_requires_unique_started_identity)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 839, in test_independent_partition_failure_requires_unique_started_identity\n    self.assert_duplicate_start_cannot_prove_root_failure(\"partition\")\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 832, in assert_duplicate_start_cannot_prove_root_failure\n    self.assertEqual((result[\"verdict\"], result[\"reason_code\"]),\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                     (\"INVALID_EVIDENCE\", \"root_final_message_ambiguous\"))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Tuples differ: ('FAIL_PRODUCT', 'multiple_root_partitions') != ('INVALID_EVIDENCE', 'root_final_message_ambiguous')\n\nFirst differing element 0:\n'FAIL_PRODUCT'\n'INVALID_EVIDENCE'\n\n- ('FAIL_PRODUCT', 'multiple_root_partitions')\n+ ('INVALID_EVIDENCE', 'root_final_message_ambiguous')\n\n======================================================================\nFAIL: test_independent_rebuild_failure_requires_unique_started_identity (test_issue68_runtime_r19.OwnerObservationTests.test_independent_rebuild_failure_requires_unique_started_identity)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 836, in test_independent_rebuild_failure_requires_unique_started_identity\n    self.assert_duplicate_start_cannot_prove_root_failure(\"rebuild\")\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^\n  File \"/private/tmp/worktrees/pc68-r30/.apm/skills/professor-contact/tests/test_issue68_runtime_r19.py\", line 832, in assert_duplicate_start_cannot_prove_root_failure\n    self.assertEqual((result[\"verdict\"], result[\"reason_code\"]),\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                     (\"INVALID_EVIDENCE\", \"root_final_message_ambiguous\"))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Tuples differ: ('FAIL_PRODUCT', 'multiple_aggregate_rebuilds') != ('INVALID_EVIDENCE', 'root_final_message_ambiguous')\n\nFirst differing element 0:\n'FAIL_PRODUCT'\n'INVALID_EVIDENCE'\n\n- ('FAIL_PRODUCT', 'multiple_aggregate_rebuilds')\n+ ('INVALID_EVIDENCE', 'root_final_message_ambiguous')\n\n----------------------------------------------------------------------\nRan 56 tests in 17.870s\n\nFAILED (failures=3)\n"
+    },
+    "after": {
+      "tests": 56,
+      "exit_code": 0,
+      "elapsed_seconds": 17.368,
+      "captured_output": "WARN `--no-project` was provided, but no project was found\n........................................................\n----------------------------------------------------------------------\nRan 56 tests in 17.368s\n\nOK\n"
+    },
+    "affected_case": "PC68-R1",
+    "no_new_eval_request": true,
+    "helper_unchanged": true,
+    "correction": "排除同线程同标识的重复开始事件，损坏配对不能形成独立产品失败"
+  },
+  "lifecycle_after_duplicate_start": {
+    "tests": 50,
+    "exit_code": 0,
+    "captured_output": "WARN `--no-project` was provided, but no project was found\n..................................................\n----------------------------------------------------------------------\nRan 50 tests in 3.110s\n\nOK\n",
+    "elapsed_seconds": 3.110
   }
 }
