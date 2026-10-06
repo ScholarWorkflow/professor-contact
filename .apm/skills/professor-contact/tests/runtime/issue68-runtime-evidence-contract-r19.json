@@ -46,10 +46,10 @@
     ],
     "overview_result_reporting": "exactly one stage5-rebuild-overview must run on the root after every formal professor result is consumed. The associated source is only the call commandExecution aggregatedOutput. The selected current root final_answer must separately report the exact returned overview result alongside the unmodified result for every professor. Success returns status, overview_md, professors and emails without reason_code; soft_exit/fail returns status and reason_code with its applicable fields. A needs_decision or error aggregate can still PASS when faithfully reported and professor results remain unchanged. Grouping property names are not frozen; examples such as results and overview are illustrative. The verifier associates objects by their direct product-result shapes and never recursively extracts nested diagnostics, logs, history or earlier messages.",
     "owner_business_input_observation": {
-      "status": "supported",
+      "status": "blocked",
       "schema": "issue-68-test-plan-r25-owner-input-v2",
       "source": "output.app_server_events.commandExecution.aggregatedOutput",
-      "method": "在教授代理原有 owner_input_file JSON 解析动作上只读复制同一个解码对象；同一命令工具调用使用该对象执行原有 stage5-plan，并将对象副本、启动该 CLI 进程时实际传入的 argv 数组及其结构化返回 JSON 放入单个严格 JSON 输出包络。argv 必须由发起原 CLI 子进程的捕获包装器在调用时原样记录，不能从 shell 命令文字还原。每个重复的 stage5-plan 调用分别输出自己的包络。",
+      "method": "固定捕获器在本次原 JSON 单次解析后保留同一个对象，并用该对象构造原 stage5-plan argv、执行原 CLI 一次、记录原始结构化 stdout、退出码及 stdout/stderr 摘要；verifier 还从独立 commandExecution.command 字段验证固定捕获器精确调用路径/参数，捕获源码摘要只取仓库固定源码。该本地路径不能证明根线程实际交付文件来源。",
       "association": [
         "output.runtime_generation",
         "commandExecution.thread_id（须属于共享适配器确认的正式教授线程）",
@@ -58,17 +58,34 @@
         "source_step=owner_input_json_parse 与 business_step=stage5-plan"
       ],
       "envelope": {
+        "pc68_fixed_capture": {
+          "schema": "issue-68-test-plan-r25-fixed-owner-capture-v1",
+          "capture_id": "固定捕获调用 UUID；本信封中的 CLI 调用和进程记录都必须与其一致",
+          "wrapper_sha256": "固定捕获器仓库源码 SHA-256，由 verifier 从仓库源文件校验",
+          "wrapper_arguments": "固定捕获器收到的实参数组",
+          "owner_input_file": "捕获器读取的本地候选文件路径；本字段不证明根线程交付来源",
+          "owner_input_sha256": "该文件首次读取原始字节的 SHA-256",
+          "owner_input_read_count": 1,
+          "parsed_object_sha256": "同一次单次解析对象的规范化 JSON SHA-256"
+        },
         "pc68_actual_input_observation": {
           "schema": "issue-68-test-plan-r25-owner-input-v2",
           "source_step": "owner_input_json_parse",
           "business_step": "stage5-plan",
-          "object": "该次原始 JSON 解析所得对象的只读副本"
+          "object": "该次原始 JSON 解析所得同一对象的只读副本"
         },
         "stage5_invocation": {
-          "argv": "发起原 contact_state.py 进程时实际传入的完整字符串参数数组，按原顺序记录"
+          "capture_id": "必须与 pc68_fixed_capture.capture_id 相同",
+          "argv": "固定捕获器启动原 contact_state.py 子进程时实际传入的完整有序字符串参数数组"
         },
-        "stage5_plan": "同一次命令调用内原始 stage5-plan CLI 标准输出解析出的结构化对象",
-        "return_code": "同一次原始 stage5-plan CLI 调用的退出码"
+        "stage5_raw_stdout": "原 contact_state.py 子进程同次调用的原始 UTF-8 标准输出字符串",
+        "stage5_process": {
+          "capture_id": "必须与 pc68_fixed_capture.capture_id 相同",
+          "stdout_sha256": "stage5_raw_stdout UTF-8 字节的 SHA-256",
+          "stderr_sha256": "同次子进程标准错误字节的 SHA-256"
+        },
+        "stage5_plan": "从 stage5_raw_stdout 解析出的同次结构化对象，必须与原 stdout JSON 对应",
+        "return_code": "同次原始 stage5-plan CLI 子进程退出码"
       },
       "reason": "r25 使用原解析动作与原业务入口同次留存可复查对象；实现仅建立待审方法，不代表正式输入已观测或第二关口已通过。",
       "available_surfaces": [
@@ -90,7 +107,8 @@
         "最终业务结果",
         "教授自述",
         "无关打印或无关文件读取",
-        "观察输出之外的命令文字、内嵌字面量或事后读取"
+        "观察输出之外的命令文字、内嵌字面量或事后读取",
+        "子线程 commandExecution.command 中的 --owner-input-file 路径和捕获信封自报路径，不能独立证明根线程交付来源。"
       ],
       "verdicts": {
         "valid_read_then_source_file_cleanup": "观察保留且包与同次计划关联正确时认可；不得重读清理后的文件",
@@ -98,9 +116,23 @@
         "wrong_initial_plan_pack_id_or_business_data_or_sibling_data": "FAIL_PRODUCT",
         "missing_same_call_observation": "BLOCKED_OBSERVABILITY 并在正式入口启动边界停止",
         "malformed_or_ambiguous_attribution": "INVALID_EVIDENCE",
-        "command_text_unrelated_print_or_read_or_after_the_fact_file": "不得作为输入证据"
+        "command_text_unrelated_print_or_read_or_after_the_fact_file": "不得作为输入证据",
+        "root_handoff_owner_input_path_unobservable": "BLOCKED_OBSERVABILITY / owner_handoff_input_path_unobservable；不得用内容相同的替代文件、子线程命令或信封自证路径来源。"
       },
-      "gate_status": "SYNTHETIC_CAPTURE_PREFLIGHT_IMPLEMENTED; formal Codex event association remains unverified; second_gate_status remains INCOMPLETE"
+      "gate_status": "BLOCKED_OBSERVABILITY / owner_handoff_input_path_unobservable; PC68-R1 cannot start until plan review approves a supported independent root-to-child handoff path source.",
+      "handoff_path_binding": {
+        "status": "blocked",
+        "required_fact": "根来源的交接记录必须独立给出精确 owner_input_file 路径，并将其绑定到正式接收子线程。",
+        "source": null,
+        "reason_code": "owner_handoff_input_path_unobservable",
+        "missing_supported_evidence": [
+          "dispatch.thread_relations 只关联 spawnAgent 的 sender/receiver thread id，不含交接文件路径。",
+          "subAgentActivity 只关联 child thread 与 agentPath，不含交接文件路径。",
+          "当前被接受的 commandExecution 只提供子线程自身 command 与 aggregatedOutput；子线程报告的路径或信封不能独立证明根线程实际交付了该路径。"
+        ],
+        "pending_review": "由测试计划审核者裁定受支持的根交接路径证据来源或修订证明方法；在裁定前 PC68-R1 不可启动。"
+      },
+      "independent_command_event_validation": "verifier 从独立 commandExecution.command 字段核对固定捕获器路径及参数，并从 runner 创建的 manifest 校验动态消费者目录；捕获源码摘要来自仓库固定源码而非信封自报。"
     }
   },
   "business_payload": [
@@ -122,15 +154,15 @@
     "on_absent": "stop before formal PC68-R1",
     "retry": "none",
     "input_observation_gate": {
-      "status": "SYNTHETIC_CAPTURE_PREFLIGHT_REQUIRED",
+      "status": "BLOCKED_OBSERVABILITY",
       "formal_run_allowed": false,
       "case": "PC68-R1",
-      "reason_code": "second_gate_incomplete",
-      "action": "必须先有合成文件经普通命令工具捕获的stdout证据；第二关口未完成时，在任何评估服务检查、安装或正式请求前以CASE_NOT_STARTED停止。第二关口完成后，运行器从本次请求、安装入口、锁文件及只读取证中动态记录六项运行事实，再允许原请求发出。",
+      "reason_code": "owner_handoff_input_path_unobservable",
+      "action": "本地合成捕获器仍证明 owner 本地 JSON 单次解析到同次 CLI 的路径，但当前适配器/事件字段没有独立记录根线程实际交付给该子线程的 owner_input_file 路径。必须在评估服务检查、安装或正式请求之前以 BLOCKED_OBSERVABILITY / owner_handoff_input_path_unobservable 停止；不得用子线程命令、信封或预期路径代替来源证据。待测试计划审核者裁定受支持的路径绑定方法后再评估是否可启动。",
       "synthetic_capture_manifest": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-synthetic-capture-preflight.json",
       "synthetic_capture_stdout": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-synthetic-capture-stdout.json",
       "raw_stdout_is_reparsed_by": "verify_issue68_stage5_routing_r19.consumed_business_objects",
-      "known_limit": "仅证明本地合成文件读取、原stage5-plan子进程、标准输出留存及判定器读取；不证明Codex app_server event、正式教授线程、eval aggregatedOutput或外部服务"
+      "known_limit": "thread_relations 仅有根/子线程 id，subAgentActivity 仅有 child/agentPath 关联；当前无可接受字段将根交接的精确 owner_input_file 路径独立绑定到接收子线程。合成预检不证明该事实。"
     },
     "second_gate_status": "INCOMPLETE"
   },
@@ -159,16 +191,16 @@
       "input": "该教授自己的root partition handoff JSON",
       "output": "同一aggregatedOutput中的解析对象只读副本、精确stage5_invocation.argv、原CLI结构化JSON和退出码",
       "association": "runtime_generation、正式child thread、commandExecution.id、email_pack父目录、owner_input_json_parse与stage5-plan",
-      "verdict": "同次对象与分区来源错配或含兄弟数据为FAIL_PRODUCT；未观察为BLOCKED；损坏/重复键/关联歧义为INVALID_EVIDENCE；事后重读/命令文字不算输入证明",
-      "stop": "在正式业务入口开始前若观察源缺失则CASE_NOT_STARTED；正式运行中缺失则BLOCKED并停止该输入证明"
+      "verdict": "同次对象与分区来源错配或含兄弟数据为FAIL_PRODUCT；未观察为BLOCKED；损坏/重复键/关联歧义为INVALID_EVIDENCE；事后重读/命令文字不算输入证明；根交接文件精确路径无法从独立受支持字段关联到接收子线程时，为 BLOCKED_OBSERVABILITY / owner_handoff_input_path_unobservable；同内容替代文件不能靠命令/信封自报路径排除。",
+      "stop": "在正式业务入口开始前若观察源缺失则CASE_NOT_STARTED；正式运行中缺失则BLOCKED并停止该输入证明；正式启动前还必须具备独立根→子路径绑定，否则在任何评估服务检查、安装或请求前以 BLOCKED_OBSERVABILITY 停止。"
     },
     {
       "step": "R1-4-first-stage5-plan",
       "event": "handoff对象驱动的该教授第一次原stage5-plan子进程调用",
       "input": "第3步同次解析对象中的email_pack、program_root、路径与编号字段",
       "output": "实际argv及结构化计划中的pack路径、email_id、verify状态、jobs/model_input",
-      "association": "与第3步观察使用同一commandExecution输出、调用id和教授目录；重复调用逐次单独关联",
-      "verdict": "首调argv有--result或--choices、pack/编号/业务数据错误或兄弟数据为FAIL_PRODUCT；合法needs_input或needs_refresh核验早停可接受，不声称后续choice消费",
+      "association": "与第3步观察使用同一commandExecution输出、调用id和教授目录；重复调用逐次单独关联；owner_input_file 精确路径必须另有根来源交接记录独立绑定到该 child thread，不能由 child command 或 envelope 自报。",
+      "verdict": "首调argv有--result或--choices、pack/编号/业务数据错误或兄弟数据为FAIL_PRODUCT；合法needs_input或needs_refresh核验早停可接受，不声称后续choice消费；缺少根交接路径绑定为 BLOCKED_OBSERVABILITY / owner_handoff_input_path_unobservable。",
       "stop": "合法核验早停后将后续choice读取/提交标为NOT TESTED；不得要求绕过核验门"
     },
     {
@@ -195,7 +227,7 @@
       "input": "本次正式运行生成的handoff路径和教授目录基线",
       "output": "路径归属、内容哈希差异、清理记录及隔离断言",
       "association": "运行编号、request id、教授目录和本次临时文件创建/清理者",
-      "verdict": "兄弟目录被污染或别的请求数据被删除为FAIL_PRODUCT；快照/归属证据损坏为INVALID_EVIDENCE；无可读记录为BLOCKED",
+      "verdict": "兄弟目录被污染或别的请求数据被删除为FAIL_PRODUCT；快照/归属证据损坏为INVALID_EVIDENCE；无可读记录为BLOCKED；若本次交接文件路径及创建/交付方没有独立可观察记录，来源归属为 BLOCKED_OBSERVABILITY，不能由子线程读取证据补齐。",
       "stop": "不得删除或重写本次请求之外的数据"
     }
   ],
@@ -255,20 +287,20 @@
         "test_codex_home": null
       }
     },
-  "fixed_plan_inputs": {
-    "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
-    "shared_environment_revision": "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
-  },
-  "fact_sources": {
-    "model": "The --model value in this run's built codex/codex-request.json.",
-    "executor": "The active Codex dispatch branch identified by the invoked codex_host function and SHA-256 hashes of its source file and this runner; do not substitute the eval-server process or host ID.",
-    "entrypoint": "The installed-entrypoint.json record and SHA-256 of the installed contact_state.py file.",
-    "isolation": "The actual service storage-isolation object returned by the read-only isolation capture.",
-    "shared_assets": "The checked producer and fixture revisions plus the installed apm.lock.yaml SHA-256.",
-    "service_version": "The current clean eval-server checkout SHA captured before the request and rechecked after it; no exact SHA is frozen by r25."
-  },
+    "fixed_plan_inputs": {
+      "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+      "shared_environment_revision": "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
+    },
+    "fact_sources": {
+      "model": "The --model value in this run's built codex/codex-request.json.",
+      "executor": "The active Codex dispatch branch identified by the invoked codex_host function and SHA-256 hashes of its source file and this runner; do not substitute the eval-server process or host ID.",
+      "entrypoint": "The installed-entrypoint.json record and SHA-256 of the installed contact_state.py file.",
+      "isolation": "The actual service storage-isolation object returned by the read-only isolation capture.",
+      "shared_assets": "The checked producer and fixture revisions plus the installed apm.lock.yaml SHA-256.",
+      "service_version": "The current clean eval-server checkout SHA captured before the request and rechecked after it; no exact SHA is frozen by r25."
+    },
     "missing_or_invalid_action": "Gate 2 incomplete: CASE_NOT_STARTED before any eval-service inspection or request. After Gate 2 approval: CASE_NOT_STARTED before request if any of the six run-bound facts lacks its required source evidence.",
-  "validation": "Gate 2 incomplete remains a hard stop before service inspection. Once explicitly complete, the runner obtains the live eval-server SHA with read-only git rev-parse and confirms a clean checkout through the existing clean_revision function; r25 does not freeze an exact eval-server SHA. Before the request, each fact is collected independently from the source defined above. The executor record identifies the active Codex dispatch branch by code and source hashes; it is not the eval-server process and is not a host ID. The original request body must equal the saved built request. The after snapshot must identify the same service. Host ID, separate adapter revision and other diagnostics are optional and do not block when absent."
+    "validation": "Gate 2 incomplete remains a hard stop before service inspection. Once explicitly complete, the runner obtains the live eval-server SHA with read-only git rev-parse and confirms a clean checkout through the existing clean_revision function; r25 does not freeze an exact eval-server SHA. Before the request, each fact is collected independently from the source defined above. The executor record identifies the active Codex dispatch branch by code and source hashes; it is not the eval-server process and is not a host ID. The original request body must equal the saved built request. The after snapshot must identify the same service. Host ID, separate adapter revision and other diagnostics are optional and do not block when absent."
   },
   "formal_run_archive_requirements": {
     "before_request": [

@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import shlex
+import uuid
 from pathlib import Path
 
 import verify_issue68_stage5_routing as base
@@ -20,6 +21,12 @@ codex_final_result_source = final_source.codex_final_result_source
 ACTIONS = {"stage5-list-inputs", "stage5-partition-choices", "stage5-plan",
            "stage5-rebuild-overview"}
 OWNER_OBSERVATION_SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
+OWNER_CAPTURE_SCHEMA = "issue-68-test-plan-r25-fixed-owner-capture-v1"
+OWNER_CAPTURE_NAME = "capture_issue68_owner_stage5_plan_r1.py"
+OWNER_CAPTURE_SOURCE = Path(__file__).resolve().parent / OWNER_CAPTURE_NAME
+# This digest is pinned to the fixed, repository-owned capture implementation.
+OWNER_CAPTURE_SHA256 = "7e534f76b7ba837a415b9b9a38ecda4a0fb1fe62fbf6d5b2575119319ff4eaa9"
+OWNER_CAPTURE_COMMAND_PREFIX = ["uv", "run", "--no-project", "python"]
 
 
 def _terminal_contract():
@@ -80,6 +87,9 @@ def command_action(command, manifest):
     ``--program-root`` to the manifest program root.
     """
     tokens = shlex.split(command)
+    capture = _owner_capture_command(tokens, manifest)
+    if capture is not None:
+        return {"action": "stage5-plan", "flags": {}, "owner_capture": capture}
     if len(tokens) == 3 and Path(tokens[0]).name in ("sh", "bash", "zsh") and tokens[1] in ("-c", "-lc"):
         tokens = shlex.split(tokens[2])
     found = [token for token in tokens if token in ACTIONS]
@@ -114,6 +124,33 @@ def command_action(command, manifest):
     return {"action": action, "flags": flags}
 
 
+def _owner_capture_command(tokens, manifest):
+    """Parse only the fixed direct wrapper invocation from command metadata."""
+    if not any(Path(token).name == OWNER_CAPTURE_NAME for token in tokens):
+        return None
+    record = (manifest or {}).get("owner_capture", {})
+    if not isinstance(record, dict):
+        raise ValueError("owner_capture_manifest_missing")
+    runtime_path = record.get("runtime_path")
+    entrypoint = record.get("installed_entrypoint")
+    expected_prefix = OWNER_CAPTURE_COMMAND_PREFIX + [runtime_path]
+    if not isinstance(runtime_path, str) or not isinstance(entrypoint, str) \
+            or tokens[:len(expected_prefix)] != expected_prefix:
+        raise ValueError("owner_capture_command_prefix_mismatch")
+    expected_tail_prefix = ["--action", "stage5-plan", "--owner-input-file"]
+    offset = len(expected_prefix)
+    if tokens[offset:offset + len(expected_tail_prefix)] != expected_tail_prefix \
+            or len(tokens) != offset + 6 \
+            or tokens[offset + 4] != "--contact-state" \
+            or tokens[offset + 5] != entrypoint:
+        raise ValueError("owner_capture_command_shape_invalid")
+    input_path = tokens[offset + 3]
+    if not Path(input_path).is_absolute():
+        raise ValueError("owner_capture_input_path_not_absolute")
+    return {"owner_input_file": input_path, "runtime_path": runtime_path,
+            "installed_entrypoint": entrypoint, "argv": list(tokens)}
+
+
 def is_business_surface(text):
     """Loose business-surface recognition over one command text.
 
@@ -128,7 +165,8 @@ def is_business_surface(text):
     """
     if not isinstance(text, str):
         return False
-    return "contact_state.py" in text and any(action in text for action in ACTIONS)
+    return OWNER_CAPTURE_NAME in text or (
+        "contact_state.py" in text and any(action in text for action in ACTIONS))
 
 
 def is_owner_business_surface(text):
@@ -137,7 +175,7 @@ def is_owner_business_surface(text):
         action in text for action in ("stage5-partition-choices", "stage5-plan"))
 
 
-def consumed_business_objects(stage5_calls):
+def consumed_business_objects(stage5_calls, manifest=None):
     """Read one r25 observation and plan result from each actual plan call.
 
     The only accepted source is the strict JSON envelope emitted by the
@@ -153,7 +191,7 @@ def consumed_business_objects(stage5_calls):
             continue
         command = call.get("command", "")
         try:
-            parsed = command_action(command, {"program_root": _packet_program_root(call)})
+            parsed = command_action(command, manifest or {"program_root": _packet_program_root(call)})
         except (ValueError, KeyError, TypeError):
             parsed = None
         action = parsed.get("action") if isinstance(parsed, dict) else _compound_action(command)
@@ -175,7 +213,7 @@ def consumed_business_objects(stage5_calls):
         seen_call_ids.add(call_id)
         command = call.get("command", "")
         try:
-            parsed = command_action(command, {"program_root": _packet_program_root(call)})
+            parsed = command_action(command, manifest or {"program_root": _packet_program_root(call)})
         except (ValueError, KeyError, TypeError):
             parsed = None
         action = parsed.get("action") if isinstance(parsed, dict) else _compound_action(command)
@@ -196,14 +234,18 @@ def consumed_business_objects(stage5_calls):
                 continue
             return [], verdict("INVALID_EVIDENCE", "owner_input_observation_malformed",
                                observed_call_id=call_id)
-        if set(envelope) != {"pc68_actual_input_observation", "stage5_plan", "return_code",
-                             "stage5_invocation"}:
+        if "stage5_invocation" not in envelope:
+            if "pc68_actual_input_observation" in envelope:
+                return [], verdict("BLOCKED_OBSERVABILITY", "owner_stage5_invocation_unobservable",
+                                   observed_call_id=call_id)
+            missing_call_ids.append(call_id)
+            continue
+        if set(envelope) != {"pc68_fixed_capture", "pc68_actual_input_observation",
+                             "stage5_invocation", "stage5_raw_stdout", "stage5_process",
+                             "stage5_plan", "return_code"}:
             if "pc68_actual_input_observation" not in envelope:
                 missing_call_ids.append(call_id)
                 continue
-            if "stage5_invocation" not in envelope:
-                return [], verdict("BLOCKED_OBSERVABILITY", "owner_stage5_invocation_unobservable",
-                                   observed_call_id=call_id)
             return [], verdict("INVALID_EVIDENCE", "owner_input_observation_shape_invalid",
                                observed_call_id=call_id)
         observation = envelope.get("pc68_actual_input_observation")
@@ -221,6 +263,17 @@ def consumed_business_objects(stage5_calls):
         except (ValueError, TypeError):
             return [], verdict("INVALID_EVIDENCE", "owner_stage5_invocation_invalid",
                                observed_call_id=call_id)
+        try:
+            command_proof = command_action(command, manifest or {})
+        except (ValueError, TypeError):
+            command_proof = None
+        if not isinstance(command_proof, dict) or not isinstance(command_proof.get("owner_capture"), dict):
+            return [], verdict("INVALID_EVIDENCE", "owner_fixed_capture_command_missing",
+                               observed_call_id=call_id)
+        capture_problem = _validate_fixed_capture(call, envelope, command_proof["owner_capture"],
+                                                  packet, manifest or {})
+        if capture_problem:
+            return [], capture_problem
         if invocation["action"] != "stage5-plan":
             return [], verdict("INVALID_EVIDENCE", "owner_input_observation_step_ambiguous",
                                observed_call_id=call_id)
@@ -229,7 +282,7 @@ def consumed_business_objects(stage5_calls):
         if not isinstance(pack, str) or not pack or not isinstance(program_root, str) or not program_root:
             return [], verdict("INVALID_EVIDENCE", "owner_input_observation_identity_missing",
                                observed_call_id=call_id)
-        if plan.get("email_pack") not in (None, pack):
+        if plan.get("email_pack") != pack:
             return [], verdict("FAIL_PRODUCT", "owner_plan_directory_changed",
                                observed_call_id=call_id, observed_pack=plan.get("email_pack"),
                                observed_input_pack=pack)
@@ -274,6 +327,132 @@ def _strict_json_object(text):
     return value
 
 
+def _is_sha256(value):
+    return isinstance(value, str) and len(value) == 64 and all(
+        char in "0123456789abcdef" for char in value)
+
+
+def _validate_fixed_capture(call, envelope, command_capture, packet, manifest):
+    """Bind output to the fixed wrapper and the independent command event."""
+    record = manifest.get("owner_capture", {})
+    if not isinstance(record, dict) or not OWNER_CAPTURE_SOURCE.is_file() \
+            or _sha256_file(OWNER_CAPTURE_SOURCE) != OWNER_CAPTURE_SHA256:
+        return verdict("INVALID_EVIDENCE", "owner_capture_source_not_pinned",
+                       observed_call_id=call.get("id"))
+    consumer_root = record.get("consumer_root")
+    expected_runtime = (Path(consumer_root) / ".pc68-test-support" / OWNER_CAPTURE_NAME
+                        if isinstance(consumer_root, str) else None)
+    runtime_path = record.get("runtime_path")
+    entrypoint = record.get("installed_entrypoint")
+    try:
+        manifest_artifact_matches = isinstance(record.get("manifest_path"), str) and \
+            json.loads(Path(record["manifest_path"]).read_text(encoding="utf-8")) == manifest
+    except (OSError, ValueError, TypeError):
+        manifest_artifact_matches = False
+    if expected_runtime is None or not isinstance(runtime_path, str) \
+            or Path(runtime_path).resolve() != expected_runtime.resolve() \
+            or Path(record.get("source_path", "")).resolve() != OWNER_CAPTURE_SOURCE.resolve() \
+            or record.get("source_sha256") != OWNER_CAPTURE_SHA256 \
+            or record.get("runtime_sha256") != OWNER_CAPTURE_SHA256 \
+            or not manifest_artifact_matches \
+            or not Path(runtime_path).is_file() or Path(runtime_path).is_symlink() \
+            or _sha256_file(runtime_path) != OWNER_CAPTURE_SHA256 \
+            or not isinstance(entrypoint, str) or not Path(entrypoint).is_file() \
+            or Path(entrypoint).is_symlink() \
+            or _sha256_file(entrypoint) != record.get("entrypoint_sha256"):
+        return verdict("INVALID_EVIDENCE", "owner_capture_manifest_mismatch",
+                       observed_call_id=call.get("id"))
+    if command_capture.get("runtime_path") != runtime_path \
+            or command_capture.get("installed_entrypoint") != entrypoint:
+        return verdict("INVALID_EVIDENCE", "owner_capture_command_binding_mismatch",
+                       observed_call_id=call.get("id"))
+
+    capture = envelope.get("pc68_fixed_capture")
+    invocation = envelope.get("stage5_invocation")
+    process = envelope.get("stage5_process")
+    raw_stdout = envelope.get("stage5_raw_stdout")
+    return_code = envelope.get("return_code")
+    if not isinstance(capture, dict) or set(capture) != {
+            "schema", "capture_id", "wrapper_sha256", "wrapper_arguments",
+            "owner_input_file", "owner_input_sha256", "owner_input_read_count",
+            "parsed_object_sha256"}:
+        return verdict("INVALID_EVIDENCE", "owner_capture_record_malformed",
+                       observed_call_id=call.get("id"))
+    capture_id = capture.get("capture_id")
+    try:
+        canonical_id = str(uuid.UUID(capture_id))
+    except (ValueError, TypeError, AttributeError):
+        canonical_id = None
+    if capture.get("schema") != OWNER_CAPTURE_SCHEMA or canonical_id != capture_id \
+            or capture.get("wrapper_sha256") != OWNER_CAPTURE_SHA256 \
+            or capture.get("owner_input_file") != command_capture.get("owner_input_file") \
+            or capture.get("owner_input_read_count") != 1 \
+            or not _is_sha256(capture.get("owner_input_sha256")) \
+            or capture.get("parsed_object_sha256") != _sha256_bytes(_canonical_json(packet).encode("utf-8")):
+        return verdict("INVALID_EVIDENCE", "owner_capture_output_binding_mismatch",
+                       observed_call_id=call.get("id"))
+    expected_wrapper_arguments = [
+        "--action", "stage5-plan", "--owner-input-file", command_capture["owner_input_file"],
+        "--contact-state", entrypoint,
+    ]
+    if capture.get("wrapper_arguments") != expected_wrapper_arguments:
+        return verdict("INVALID_EVIDENCE", "owner_capture_invocation_binding_mismatch",
+                       observed_call_id=call.get("id"))
+    if not isinstance(invocation, dict) or set(invocation) != {"capture_id", "argv"} \
+            or invocation.get("capture_id") != capture_id \
+            or not isinstance(process, dict) \
+            or set(process) != {"capture_id", "stdout_sha256", "stderr_sha256"} \
+            or process.get("capture_id") != capture_id \
+            or not _is_sha256(process.get("stdout_sha256")) \
+            or not _is_sha256(process.get("stderr_sha256")) \
+            or not isinstance(raw_stdout, str) or type(return_code) is not int:
+        return verdict("INVALID_EVIDENCE", "owner_capture_process_binding_mismatch",
+                       observed_call_id=call.get("id"))
+    stdout_bytes = raw_stdout.encode("utf-8")
+    if process["stdout_sha256"] != _sha256_bytes(stdout_bytes):
+        return verdict("INVALID_EVIDENCE", "owner_capture_stdout_hash_mismatch",
+                       observed_call_id=call.get("id"))
+    try:
+        parsed_stdout = _strict_json_object(raw_stdout)
+    except (ValueError, TypeError):
+        return verdict("INVALID_EVIDENCE", "owner_capture_raw_stdout_invalid",
+                       observed_call_id=call.get("id"))
+    if parsed_stdout != envelope.get("stage5_plan"):
+        return verdict("INVALID_EVIDENCE", "owner_capture_structured_output_mismatch",
+                       observed_call_id=call.get("id"))
+    try:
+        invocation_parsed = _structured_stage5_invocation(invocation)
+    except (ValueError, TypeError):
+        return verdict("INVALID_EVIDENCE", "owner_stage5_invocation_invalid",
+                       observed_call_id=call.get("id"))
+    argv = invocation_parsed["argv"]
+    if not argv or not Path(argv[0]).is_absolute() or len(argv) < 3 \
+            or str(Path(argv[1]).resolve()) != entrypoint or argv[2] != "stage5-plan":
+        return verdict("INVALID_EVIDENCE", "owner_capture_child_argv_mismatch",
+                       observed_call_id=call.get("id"))
+    expected_child_tail = ["stage5-plan", "--program-root", packet.get("program_root"),
+                           "--email-pack", packet.get("email_pack")]
+    if packet.get("email_id") is not None:
+        expected_child_tail.extend(["--email-id", packet.get("email_id")])
+    expected_child_tail.extend(["--template", packet.get("template"), "--mode", packet.get("mode")])
+    if argv[2:] != expected_child_tail:
+        return verdict("INVALID_EVIDENCE", "owner_capture_child_argv_binding_mismatch",
+                       observed_call_id=call.get("id"))
+    return None
+
+
+def _canonical_json(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _sha256_bytes(value):
+    return hashlib.sha256(value).hexdigest()
+
+
+def _sha256_file(path):
+    return _sha256_bytes(Path(path).read_bytes())
+
+
 def _structured_stage5_invocation(value):
     """Parse the exact argv vector recorded at the installed CLI boundary.
 
@@ -282,8 +461,13 @@ def _structured_stage5_invocation(value):
     shell command string: wrappers and ``python -c`` calls do not expose their
     actual child argv there.
     """
-    if not isinstance(value, dict) or set(value) != {"argv"}:
+    if not isinstance(value, dict) or set(value) != {"capture_id", "argv"}:
         raise ValueError("stage5_invocation_shape_invalid")
+    try:
+        if str(uuid.UUID(value.get("capture_id"))) != value.get("capture_id"):
+            raise ValueError("stage5_invocation_capture_id_invalid")
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("stage5_invocation_capture_id_invalid") from exc
     argv = value.get("argv")
     if not isinstance(argv, list) or not argv or any(not isinstance(arg, str) for arg in argv):
         raise ValueError("stage5_invocation_argv_invalid")
@@ -309,7 +493,8 @@ def _structured_stage5_invocation(value):
         if flag in flags:
             raise ValueError("stage5_invocation_arguments_invalid")
         flags[flag] = item
-    return {"action": action, "flags": flags, "argv": list(argv)}
+    return {"action": action, "flags": flags, "argv": list(argv),
+            "capture_id": value.get("capture_id")}
 
 
 def _choices_summary(observed, expected):
@@ -498,7 +683,7 @@ def _verify_owner_plan_package(rows, owner, manifest):
                 return verdict("FAIL_PRODUCT", "owner_initial_plan_fields_missing",
                                observed_call_id=observed.get("call_id"),
                                missing_fields=missing_fields)
-        if plan.get("email_pack") is not None and plan.get("email_pack") != pack_path:
+        if plan.get("email_pack") != pack_path:
             return verdict("FAIL_PRODUCT", "owner_plan_directory_changed",
                            observed_call_id=observed.get("call_id"), observed_pack=plan.get("email_pack"))
         if "emails" in plan and plan.get("emails") != expected_ids:
@@ -683,7 +868,7 @@ def _plan_checks(parsed, manifest, expected_pack):
         return verdict("FAIL_PRODUCT", "owner_plan_carries_choices_scope")
     if expected_pack is None:
         return None
-    rows, problem = consumed_business_objects([parsed])
+    rows, problem = consumed_business_objects([parsed], manifest)
     if problem:
         return problem
     observed_pack = rows[0]["packet"].get("email_pack")
@@ -1097,7 +1282,7 @@ def _verify_codex_events(response, adapter, manifest):
     for child in sorted(children):
         stage5_calls = [call for call in business_calls.get(child, [])
                         if is_owner_business_surface(call.get("command", ""))]
-        rows, problem = consumed_business_objects(stage5_calls)
+        rows, problem = consumed_business_objects(stage5_calls, manifest)
         if not problem:
             pack, problem = owner_payload(rows, manifest)
         if problem:

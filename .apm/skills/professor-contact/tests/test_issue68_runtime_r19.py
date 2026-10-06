@@ -87,14 +87,32 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         observation = contract["codex"]["owner_business_input_observation"]
 
         self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r29-2026-10-06")
-        self.assertEqual(observation["status"], "supported")
+        self.assertEqual(observation["status"], "blocked")
         self.assertEqual(observation["schema"], verify.OWNER_OBSERVATION_SCHEMA)
         self.assertEqual(observation["source"],
                          "output.app_server_events.commandExecution.aggregatedOutput")
+        self.assertEqual(observation["handoff_path_binding"]["status"], "blocked")
+        self.assertEqual(observation["handoff_path_binding"]["reason_code"],
+                         "owner_handoff_input_path_unobservable")
+        envelope = observation["envelope"]
+        self.assertEqual(set(envelope), {
+            "pc68_fixed_capture", "pc68_actual_input_observation", "stage5_invocation",
+            "stage5_raw_stdout", "stage5_process", "stage5_plan", "return_code"})
+        self.assertIn("capture_id", envelope["stage5_invocation"])
+        self.assertIn("capture_id", envelope["stage5_process"])
+        self.assertIn("wrapper_sha256", envelope["pc68_fixed_capture"])
+        self.assertIn("stdout_sha256", envelope["stage5_process"])
+        self.assertIn("stderr_sha256", envelope["stage5_process"])
+        self.assertIn("commandExecution.command", observation[
+            "independent_command_event_validation"])
         requirements = json.dumps(observation["verdicts"], ensure_ascii=False) + json.dumps(
             observation["excluded_as_input_proof"], ensure_ascii=False)
         for field in ("FAIL_PRODUCT", "BLOCKED_OBSERVABILITY", "INVALID_EVIDENCE", "调用结束后的文件内容"):
             self.assertIn(field, requirements)
+        gate = contract["preflight"]["input_observation_gate"]
+        self.assertEqual(gate["status"], "BLOCKED_OBSERVABILITY")
+        self.assertEqual(gate["reason_code"], "owner_handoff_input_path_unobservable")
+        self.assertFalse(gate["formal_run_allowed"])
         self.assertFalse(contract["preflight"]["input_observation_gate"]["formal_run_allowed"])
         self.assertEqual(contract["preflight"]["second_gate_status"], "INCOMPLETE")
         self.assertEqual(len(contract["pc68_r1_steps"]), 7)
@@ -115,16 +133,38 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         gate = entry.actual_input_observation_preflight(contract)
 
         self.assertFalse(gate["ready"])
-        self.assertEqual(gate["state"], "CASE_NOT_STARTED")
-        self.assertEqual(gate["reason_code"], "actual_input_evidence_source_unavailable")
+        self.assertEqual(gate["state"], "BLOCKED_OBSERVABILITY")
+        self.assertEqual(gate["reason_code"], "owner_handoff_input_path_unobservable")
+        self.assertFalse(gate["service_preflight_allowed"])
+
+    def test_arbitrary_supported_handoff_source_cannot_open_gate(self):
+        contract = entry.load_contract()
+        contract["codex"]["owner_business_input_observation"]["status"] = "supported"
+        contract["codex"]["owner_business_input_observation"]["handoff_path_binding"] = {
+            "status": "supported", "source": "unverified-claim:root-handoff-path"
+        }
+        contract["preflight"]["second_gate_status"] = "COMPLETE"
+        contract["preflight"]["input_observation_gate"]["formal_run_allowed"] = True
+
+        gate = entry.actual_input_observation_preflight(contract)
+
+        self.assertFalse(gate["ready"])
+        self.assertEqual(gate["state"], "BLOCKED_OBSERVABILITY")
+        self.assertEqual(gate["reason_code"], "owner_handoff_input_path_unobservable")
+        self.assertEqual(gate["formal_run_block_reason"],
+                         "owner_handoff_input_path_unobservable")
+        self.assertFalse(gate["service_preflight_allowed"])
 
     def test_r25_observation_support_does_not_complete_gate_two(self):
         contract = entry.load_contract()
 
         gate = entry.actual_input_observation_preflight(contract)
 
-        self.assertTrue(gate["ready"])
+        self.assertFalse(gate["ready"])
+        self.assertEqual(gate["state"], "BLOCKED_OBSERVABILITY")
+        self.assertEqual(gate["reason_code"], "owner_handoff_input_path_unobservable")
         self.assertFalse(gate["formal_run_allowed"])
+        self.assertIn("owner_handoff_input_path_unobservable", gate["formal_run_block_reasons"])
         self.assertIn("second_gate_incomplete", gate["formal_run_block_reasons"])
         self.assertGreater(len(gate["runtime_environment_missing"]), 0)
         self.assertFalse(gate["service_preflight_allowed"])
@@ -132,7 +172,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertEqual(gate["synthetic_capture"]["verifier_parser"], "consumed_business_objects")
         self.assertFalse(gate["synthetic_capture"]["app_server_aggregatedOutput_proven"])
 
-    def test_gate_two_approval_allows_dynamic_capture_with_empty_optional_diagnostics(self):
+    def test_gate_two_approval_cannot_bypass_unobservable_handoff_path(self):
         contract = entry.load_contract()
         contract["preflight"]["second_gate_status"] = "COMPLETE"
         contract["preflight"]["input_observation_gate"]["formal_run_allowed"] = True
@@ -140,10 +180,11 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
 
         gate = entry.actual_input_observation_preflight(contract)
 
-        self.assertTrue(gate["ready"])
-        self.assertTrue(gate["service_preflight_allowed"])
+        self.assertFalse(gate["ready"])
+        self.assertFalse(gate["service_preflight_allowed"])
         self.assertFalse(gate["formal_run_allowed"])
-        self.assertEqual(gate["formal_run_block_reason"], "runtime_environment_capture_pending")
+        self.assertEqual(gate["state"], "BLOCKED_OBSERVABILITY")
+        self.assertEqual(gate["formal_run_block_reason"], "owner_handoff_input_path_unobservable")
 
     def test_runtime_facts_are_collected_from_this_run_before_request(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -238,6 +279,22 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             manifest = json.loads(artifact.read_text(encoding="utf-8"))
             self.assertEqual(manifest["owner_input_read_count"], 1)
             self.assertEqual(manifest["parsed_object"], manifest["observation_object"])
+            self.assertEqual(manifest["fixed_capture_verification"]["state"], "PASS")
+            self.assertEqual(manifest["portable_path_normalization"]["state"],
+                             "VERIFIED_THEN_NORMALIZED")
+            self.assertTrue(manifest["captured_stdout_sha256"])
+            self.assertTrue(manifest["captured_parsed_object_sha256"])
+            self.assertNotIn("/Users/", json.dumps(manifest, ensure_ascii=False))
+            self.assertNotIn("/var/folders/", json.dumps(manifest, ensure_ascii=False))
+            self.assertNotIn("/private/var/folders/", json.dumps(manifest, ensure_ascii=False))
+            self.assertNotIn(".local/share/uv/python", json.dumps(manifest, ensure_ascii=False))
+            self.assertIn("/__pc68_synthetic__/", json.dumps(manifest, ensure_ascii=False))
+            self.assertEqual(manifest["fixed_capture_verification"]["verifier"],
+                             "consumed_business_objects")
+            self.assertEqual(manifest["capture_command_argv"][:4],
+                             ["uv", "run", "--no-project", "python"])
+            self.assertTrue(any(Path(token).name == verifier.OWNER_CAPTURE_NAME
+                                for token in manifest["capture_command_argv"]))
             plan = manifest["producer_structured_output"]
             self.assertEqual(manifest["result"], "CAPTURED_SYNTHETIC_ONLY")
             self.assertEqual(manifest["producer_return_code"], 0)
@@ -325,8 +382,10 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             self.assertEqual(json.loads((output / "final-verdict.json").read_text())["state"],
                              "CASE_NOT_STARTED")
             self.assertEqual(json.loads((output / "final-verdict.json").read_text())["reason_code"],
-                             "second_gate_incomplete")
-            self.assertTrue(json.loads((output / "input-evidence-preflight.json").read_text())["ready"])
+                             "owner_handoff_input_path_unobservable")
+            self.assertFalse(json.loads((output / "input-evidence-preflight.json").read_text())["ready"])
+            self.assertEqual(json.loads((output / "input-evidence-preflight.json").read_text())[
+                "state"], "BLOCKED_OBSERVABILITY")
             self.assertFalse(json.loads((output / "input-evidence-preflight.json").read_text())["formal_run_allowed"])
             clean_revision.assert_not_called()
             service.assert_not_called()
@@ -346,7 +405,9 @@ import verify_issue68_stage5_routing_r19 as verifier
 
 
 class OwnerObservationTests(unittest.TestCase):
+    """Synthetic evidence must execute the pinned wrapper through the real CLI."""
     def setUp(self):
+        import shutil
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name) / "program"
         self.prof = self.root / "教授研究" / "X分野" / "甲教授"
@@ -354,264 +415,130 @@ class OwnerObservationTests(unittest.TestCase):
         self.pack = self.prof / "邮件输入.json"
         self.template = self.root / "template.md"
         self.template.write_text("synthetic template", encoding="utf-8")
-        self.email = {
-            "email_id": "D001::I001", "professor": "甲教授",
-            "idea": {"id": "D001_1", "text": "合成研究构想"},
-            "direction_ids": ["D001"], "directions": [{"id": "D001", "name": "合成方向"}],
-            "user_note": "用户输入", "papers": [{"item_key": "P001", "title": "合成论文"}],
-            "gaps": [], "red_lines": [{"text": "不得编造"}],
-            "soft_materials": {"positioning": [{"text": "定位事实"}]},
-            "user_supplement": "补充事实", "allowed_sources": ["idea:D001_1"],
-        }
-        self.pack.write_text(json.dumps({"emails": [self.email]}, ensure_ascii=False), encoding="utf-8")
-        self.packet = {
-            "program_root": str(self.root), "professor_dir": str(self.prof),
-            "email_pack": str(self.pack), "email_id": self.email["email_id"],
-            "choices": [{"email_id": self.email["email_id"], "first_choice": True}],
-            "mode": "first", "template": str(self.template), "result": str(self.root / "raw.json"),
-        }
+        self.email = {"email_id": "D001::I001", "professor": "甲教授",
+                      "professor_dir": str(self.prof),
+                      "idea": {"id": "D001_1", "text": "合成研究构想"},
+                      "direction_ids": ["D001"], "directions": [{"id": "D001", "name": "合成方向"}],
+                      "user_note": "用户输入", "papers": [{"item_key": "P001", "title": "合成论文"}],
+                      "gaps": [], "red_lines": [{"text": "不得编造"}],
+                      "soft_materials": {"positioning": [{"text": "定位事实"}]},
+                      "user_supplement": "补充事实", "allowed_sources": ["idea:D001_1"]}
+        self.pack.write_text(json.dumps({"schema": 3, "kind": "professor-contact-email-input",
+                                         "professor": "甲教授", "professor_dir": str(self.prof),
+                                         "emails": [self.email]}, ensure_ascii=False), encoding="utf-8")
+        self.packet = {"program_root": str(self.root), "professor_dir": str(self.prof),
+                       "email_pack": str(self.pack), "email_id": self.email["email_id"],
+                       "choices": [{"email_id": self.email["email_id"], "first_choice": True}],
+                       "mode": "first", "template": str(self.template),
+                       "result": str(self.root / "raw.json")}
+        self.handoff_file = self.root / "owner-input.json"
+        self.handoff_file.write_text(json.dumps(self.packet, ensure_ascii=False), encoding="utf-8")
+        self.consumer = Path(self.temp.name) / "consumer"
+        self.consumer.mkdir()
+        self.entrypoint = self.consumer / ".agents/skills/professor-contact/scripts/contact_state.py"
+        self.entrypoint.parent.mkdir(parents=True)
+        source_entrypoint = RUNTIME.parent.parent / "scripts/contact_state.py"
+        shutil.copy2(source_entrypoint, self.entrypoint)
+        self.entrypoint = self.entrypoint.resolve()
+        self.wrapper = self.consumer / ".pc68-test-support" / verifier.OWNER_CAPTURE_NAME
+        self.wrapper.parent.mkdir()
+        shutil.copy2(verifier.OWNER_CAPTURE_SOURCE, self.wrapper)
+        self.command_argv = ["uv", "run", "--no-project", "python", str(self.wrapper),
+                             "--action", "stage5-plan", "--owner-input-file",
+                             str(self.handoff_file), "--contact-state", str(self.entrypoint)]
         self.manifest = {"program_root": str(self.root), "owners": [{
-            "professor": "甲教授",
-            "professor_dir": str(self.prof), "email_pack": str(self.pack),
-            "email_ids": [self.email["email_id"]],
-            "result": str(self.root / "raw.json"),
+            "professor": "甲教授", "professor_dir": str(self.prof), "email_pack": str(self.pack),
+            "email_ids": [self.email["email_id"]], "result": str(self.root / "raw.json"),
             "expected_choices_rows": self.packet["choices"],
             "sibling_exclusions": ["乙教授", "sibling-pack", "choices_scope"],
         }], "pre_run_hashes": {str(self.pack): hashlib.sha256(self.pack.read_bytes()).hexdigest()}}
-        self.handoff_file = self.root / "owner-input.json"
-        self.handoff_file.parent.mkdir(parents=True, exist_ok=True)
-        self.handoff_file.write_text(json.dumps(self.packet, ensure_ascii=False), encoding="utf-8")
+        artifact = Path(self.temp.name) / "fixture-manifest.json"
+        self.manifest["owner_capture"] = {
+            "consumer_root": str(self.consumer), "runtime_path": str(self.wrapper),
+            "installed_entrypoint": str(self.entrypoint),
+            "entrypoint_sha256": hashlib.sha256(self.entrypoint.read_bytes()).hexdigest(),
+            "source_path": str(verifier.OWNER_CAPTURE_SOURCE),
+            "source_sha256": verifier.OWNER_CAPTURE_SHA256,
+            "runtime_sha256": hashlib.sha256(self.wrapper.read_bytes()).hexdigest(),
+            "manifest_path": str(artifact),
+        }
+        artifact.write_text(json.dumps(self.manifest), encoding="utf-8")
 
     def tearDown(self):
         self.temp.cleanup()
 
-    def plan(self, **changes):
-        model_input = {
-            "idea": self.email["idea"], "direction_ids": self.email["direction_ids"],
-            "directions": self.email["directions"], "user_note": self.email["user_note"],
-            "papers": self.email["papers"], "gaps": [], "red_lines": self.email["red_lines"],
-            "soft_materials": {"positioning": self.email["soft_materials"]["positioning"]},
-            "user_supplement": self.email["user_supplement"],
-            "allowed_sources": self.email["allowed_sources"],
-        }
-        value = {"status": "ok", "email_pack": str(self.pack),
-                 "emails": [self.email["email_id"]],
-                 "template": str(self.template), "output_mode": "first",
-                 "verify": {"甲教授": "needs_recheck:missing"},
-                 "needs_recheck_professors": ["甲教授"],
-                 "jobs": [{"job_id": "email:" + self.email["email_id"],
-                           "kind": "email", "model_input": model_input}]}
-        value.update(changes)
-        return value
+    @staticmethod
+    def _canonical(value):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 
-    def _argv_for(self, packet):
-        argv = [
-            "python3", "/producer/scripts/contact_state.py", "stage5-plan",
-            "--program-root", packet["program_root"],
-            "--email-pack", packet["email_pack"],
-        ]
-        if packet.get("email_id") is not None:
-            argv.extend(["--email-id", packet["email_id"]])
-        argv.extend(["--template", packet["template"], "--mode", packet["mode"]])
-        return argv
+    def call(self, *, call_id="cmd-1", command=None):
+        completed = subprocess.run(self.command_argv, cwd=self.consumer, capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return {"id": call_id, "generation": "synthetic-run", "thread": "synthetic-owner",
+                "start": 1, "end": 2, "command": command or shlex.join(self.command_argv),
+                "output": completed.stdout}
 
-    def call(self, observation=None, plan=None, *, call_id="cmd-1", output=None, return_code=0,
-             invocation_argv=None, command=None):
-        packet = self.packet if observation is None else observation
-        argv = self._argv_for(packet) if invocation_argv is None else invocation_argv
-        envelope = {
-            "pc68_actual_input_observation": {
-                "schema": verifier.OWNER_OBSERVATION_SCHEMA,
-                "source_step": "owner_input_json_parse", "business_step": "stage5-plan",
-                "object": packet,
-            },
-            "stage5_invocation": {"argv": argv},
-            "stage5_plan": self.plan() if plan is None else plan,
-            "return_code": return_code,
-        }
-        command = command or shlex.join(argv)
-        return {"id": call_id, "generation": "run-1", "thread": "owner-thread-1",
-                "start": 10, "end": 11, "command": command,
-                "output": json.dumps(envelope, ensure_ascii=False) if output is None else output}
-
-    def test_same_parse_observation_is_accepted_after_handoff_file_cleanup(self):
-        rows, problem = verifier.consumed_business_objects([self.call()])
+    def test_fixed_capture_executes_same_parse_and_cli_then_survives_handoff_cleanup(self):
+        call = self.call()
+        rows, problem = verifier.consumed_business_objects([call], self.manifest)
         self.assertIsNone(problem)
         self.assertEqual(rows[0]["packet"], self.packet)
-        self.assertEqual(rows[0]["plan"]["email_pack"], str(self.pack))
-        # The serialized handoff source is deliberately gone before
-        # attribution; evidence comes from this call's captured parse object.
         self.handoff_file.unlink()
         owner_pack, problem = verifier.owner_payload(rows, self.manifest)
         self.assertIsNone(problem)
         self.assertEqual(owner_pack, str(self.pack))
 
-    def test_first_plan_invocation_arguments_must_match_the_same_parse_object(self):
-        correct_argv = self._argv_for(self.packet)
-        mutations = {}
-        for flag, replacement in (
-                ("--program-root", str(self.root / "wrong-root")),
-                ("--email-pack", str(self.prof / "other-pack.json")),
-                ("--email-id", "sibling::D::I"),
-                ("--template", str(self.root / "other-template.md")),
-                ("--mode", "both")):
-            changed = list(correct_argv)
-            changed[changed.index(flag) + 1] = replacement
-            mutations["wrong " + flag] = changed
-        for flag in ("--program-root", "--email-pack", "--email-id", "--template", "--mode"):
-            changed = list(correct_argv)
-            index = changed.index(flag)
-            del changed[index:index + 2]
-            mutations["missing " + flag] = changed
+    def test_echoed_valid_envelope_without_fixed_capture_command_is_invalid(self):
+        call = self.call()
+        call["command"] = "echo stage5-plan " + shlex.quote(call["output"])
+        rows, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertEqual(rows, [])
+        self.assertEqual(problem["verdict"], "INVALID_EVIDENCE")
+        self.assertEqual(problem["reason_code"], "owner_fixed_capture_command_missing")
 
-        for label, argv in mutations.items():
-            with self.subTest(label=label):
-                rows, problem = verifier.consumed_business_objects([
-                    self.call(invocation_argv=argv)])
-                self.assertIsNone(problem)
-                owner_pack, problem = verifier.owner_payload(rows, self.manifest)
-                self.assertIsNone(owner_pack)
-                self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
-                self.assertEqual(problem["reason_code"],
-                                 "owner_stage5_invocation_argument_changed")
+    def test_capture_call_binding_mismatch_is_invalid(self):
+        call = self.call()
+        envelope = json.loads(call["output"])
+        envelope["stage5_process"]["capture_id"] = "00000000-0000-4000-8000-000000000000"
+        call["output"] = json.dumps(envelope, ensure_ascii=False)
+        _, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertEqual(problem["verdict"], "INVALID_EVIDENCE")
 
-    def test_optional_email_id_is_omitted_from_both_packet_and_actual_argv(self):
-        packet = dict(self.packet)
-        del packet["email_id"]
-        rows, problem = verifier.consumed_business_objects([
-            self.call(observation=packet, invocation_argv=self._argv_for(packet))])
+    def test_absent_invocation_is_blocked_but_present_bad_argv_is_invalid(self):
+        call = self.call()
+        envelope = json.loads(call["output"])
+        del envelope["stage5_invocation"]
+        call["output"] = json.dumps(envelope, ensure_ascii=False)
+        _, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertEqual(problem["verdict"], "BLOCKED_OBSERVABILITY")
+        self.assertEqual(problem["reason_code"], "owner_stage5_invocation_unobservable")
+
+        call = self.call()
+        envelope = json.loads(call["output"])
+        envelope["stage5_invocation"] = {"capture_id": envelope["stage5_invocation"]["capture_id"]}
+        call["output"] = json.dumps(envelope, ensure_ascii=False)
+        _, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertEqual(problem["verdict"], "INVALID_EVIDENCE")
+        self.assertEqual(problem["reason_code"], "owner_stage5_invocation_invalid")
+
+    def test_null_email_pack_is_a_product_failure(self):
+        rows, problem = verifier.consumed_business_objects([self.call()], self.manifest)
         self.assertIsNone(problem)
-        owner_pack, problem = verifier.owner_payload(rows, self.manifest)
-        self.assertIsNone(problem)
-        self.assertEqual(owner_pack, str(self.pack))
-
-    def test_missing_required_initial_plan_fields_are_product_failures(self):
-        required_fields = (
-            "email_pack", "emails", "jobs", "verify", "needs_recheck_professors",
-            "template", "output_mode",
-        )
-        for field in required_fields:
-            with self.subTest(field=field):
-                plan = self.plan()
-                del plan[field]
-                rows, problem = verifier.consumed_business_objects([self.call(plan=plan)])
-                self.assertIsNone(problem)
-                owner_pack, problem = verifier.owner_payload(rows, self.manifest)
-                self.assertIsNone(owner_pack)
-                self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
-                self.assertEqual(problem["reason_code"], "owner_initial_plan_fields_missing")
-                self.assertEqual(problem["missing_fields"], [field])
-
-    def test_mismatch_to_assigned_partition_rows_is_product_failure(self):
-        changed = dict(self.packet, choices=[{"email_id": "D-other::I-other"}])
-        rows, problem = verifier.consumed_business_objects([self.call(observation=changed)])
-        self.assertIsNone(problem)
-        owner_pack, problem = verifier.owner_payload(rows, self.manifest)
-        self.assertIsNone(owner_pack)
-        self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
-        self.assertEqual(problem["reason_code"], "owner_bundle_choices_changed")
-
-    def test_wrong_plan_pack_or_business_fields_is_product_failure(self):
-        wrong_pack = self.plan(email_pack=str(self.root / "sibling-pack.json"))
-        rows, problem = verifier.consumed_business_objects([self.call(plan=wrong_pack)])
+        rows[0]["plan"]["email_pack"] = None
+        _, problem = verifier.owner_payload(rows, self.manifest)
         self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
         self.assertEqual(problem["reason_code"], "owner_plan_directory_changed")
 
-        wrong_job = self.plan()
-        wrong_job["jobs"][0]["job_id"] = "email:sibling-id"
-        rows, problem = verifier.consumed_business_objects([self.call(plan=wrong_job)])
-        self.assertIsNone(problem)
-        _, problem = verifier.owner_payload(rows, self.manifest)
-        self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
-        self.assertEqual(problem["reason_code"], "owner_plan_email_ids_changed")
-
-        wrong_model = self.plan()
-        wrong_model["jobs"][0]["model_input"]["idea"] = {"id": "sibling-id"}
-        rows, problem = verifier.consumed_business_objects([self.call(plan=wrong_model)])
-        self.assertIsNone(problem)
-        _, problem = verifier.owner_payload(rows, self.manifest)
-        self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
-        self.assertEqual(problem["reason_code"], "owner_plan_business_data_changed")
-
-    def test_missing_observation_and_unrelated_output_block(self):
-        plain_plan = json.dumps(self.plan(), ensure_ascii=False)
-        _, problem = verifier.consumed_business_objects([self.call(output=plain_plan)])
-        self.assertEqual(problem["verdict"], "BLOCKED_OBSERVABILITY")
-        self.assertEqual(problem["reason_code"], "owner_actual_input_unobservable")
-
-        unrelated = json.dumps({"read_file": str(self.pack), "value": self.packet}, ensure_ascii=False)
-        _, problem = verifier.consumed_business_objects([self.call(output=unrelated)])
-        self.assertEqual(problem["verdict"], "BLOCKED_OBSERVABILITY")
-
-    def test_damaged_or_ambiguous_observation_is_invalid(self):
-        _, problem = verifier.consumed_business_objects([self.call(output='{"pc68_actual_input_observation":')])
-        self.assertEqual(problem["verdict"], "INVALID_EVIDENCE")
-
-        duplicate_key = ('{"pc68_actual_input_observation":{},'
-                         '"pc68_actual_input_observation":{},"stage5_plan":{},"return_code":0}')
-        _, problem = verifier.consumed_business_objects([self.call(output=duplicate_key)])
-        self.assertEqual(problem["verdict"], "INVALID_EVIDENCE")
-
-    def test_repeated_calls_remain_separately_associated(self):
-        rows, problem = verifier.consumed_business_objects([
-            self.call(call_id="cmd-1"), self.call(call_id="cmd-2")])
-        self.assertIsNone(problem)
-        self.assertEqual([row["call_id"] for row in rows], ["cmd-1", "cmd-2"])
-
-        _, problem = verifier.consumed_business_objects([
-            self.call(call_id="same"), self.call(call_id="same")])
-        self.assertEqual(problem["verdict"], "INVALID_EVIDENCE")
-        self.assertEqual(problem["reason_code"], "owner_input_observation_association_invalid")
-
-    def test_legal_verification_early_stop_keeps_each_call_observed(self):
-        later = {"status": "needs_refresh", "reason_code": "verify_missing"}
-        rows, problem = verifier.consumed_business_objects([
-            self.call(call_id="cmd-1"),
-            self.call(plan=later, call_id="cmd-2", return_code=2),
-        ])
-        self.assertIsNone(problem)
-        self.assertEqual(len(rows), 2)
-        owner_pack, problem = verifier.owner_payload(rows, self.manifest)
-        self.assertIsNone(problem)
-        self.assertEqual(owner_pack, str(self.pack))
-
-    def test_compound_initial_argv_rejects_result_or_choices(self):
-        compound = "python3 -c 'run contact_state.py stage5-plan through the existing wrapper'"
-        base_argv = self._argv_for(self.packet)
-        for forbidden_flag in ("--result", "--choices"):
-            with self.subTest(forbidden_flag=forbidden_flag):
-                call = self.call(command=compound,
-                                 invocation_argv=base_argv + [forbidden_flag, "/tmp/synthetic.json"])
-                rows, problem = verifier.consumed_business_objects([call])
+    def test_first_plan_missing_jobs_or_status_is_a_product_failure(self):
+        for field in ("jobs", "status"):
+            with self.subTest(field=field):
+                rows, problem = verifier.consumed_business_objects([self.call()], self.manifest)
                 self.assertIsNone(problem)
-                self.assertEqual(rows[0]["invocation"]["flags"][forbidden_flag],
-                                 "/tmp/synthetic.json")
+                del rows[0]["plan"][field]
                 _, problem = verifier.owner_payload(rows, self.manifest)
                 self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
-                self.assertEqual(problem["reason_code"],
-                                 "owner_initial_plan_carries_result_or_choices")
-
-    def test_command_text_arguments_do_not_replace_structured_invocation_evidence(self):
-        call = self.call(
-            command="python3 -c 'contact_state.py stage5-plan --result fake --choices fake'",
-            output="",
-        )
-
-        rows, problem = verifier.consumed_business_objects([call])
-
-        self.assertEqual(rows, [])
-        self.assertEqual(problem["verdict"], "BLOCKED_OBSERVABILITY")
-        self.assertEqual(problem["reason_code"], "owner_actual_input_unobservable")
-
-        envelope_call = self.call(command=call["command"])
-        envelope = json.loads(envelope_call["output"])
-        del envelope["stage5_invocation"]
-        envelope_call["output"] = json.dumps(envelope, ensure_ascii=False)
-        rows, problem = verifier.consumed_business_objects([envelope_call])
-
-        self.assertEqual(rows, [])
-        self.assertEqual(problem["verdict"], "BLOCKED_OBSERVABILITY")
-        self.assertEqual(problem["reason_code"], "owner_stage5_invocation_unobservable")
+                self.assertEqual(problem["reason_code"], "owner_initial_plan_fields_missing")
+                self.assertIn(field, problem["missing_fields"])
 
 
 if __name__ == "__main__":

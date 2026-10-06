@@ -5,6 +5,7 @@ import hashlib
 import json
 import shlex
 import signal
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -20,7 +21,7 @@ FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
 CONTRACT_REVISION = "issue-68-runtime-evidence-r29-2026-10-06"
 OWNER_OBSERVATION_SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
-SYNTHETIC_PREFLIGHT_SCHEMA = "issue-68-r29-synthetic-capture-preflight-v1"
+SYNTHETIC_PREFLIGHT_SCHEMA = "issue-68-r29-fixed-capture-preflight-v1"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
 EXECUTION_KIND = "acceptance"
 HOST = "codex"
@@ -31,6 +32,9 @@ PREFLIGHT_STDOUT = PREFLIGHT_DIR / "issue68-r29-synthetic-capture-stdout.json"
 REQUIRED_RUNTIME_FACTS = (
     "model", "executor", "entrypoint", "isolation", "shared_assets", "service_version",
 )
+# No accepted event surface currently independently binds the root handoff path
+# to its receiving child thread. Add a source only with its verifier implementation.
+SUPPORTED_ROOT_HANDOFF_PATH_SOURCES = frozenset()
 PRE_SERVICE_RUNTIME_FACTS = tuple(
     fact for fact in REQUIRED_RUNTIME_FACTS if fact != "service_version"
 )
@@ -67,11 +71,16 @@ def load_contract():
         raise ValueError("contract_runtime_environment_fields_incomplete")
     codex = contract.get("codex", {})
     observation = codex.get("owner_business_input_observation")
-    if not isinstance(observation, dict) or observation.get("status") != "supported":
+    if not isinstance(observation, dict) or observation.get("status") not in ("supported", "blocked"):
         raise ValueError("contract_actual_input_observation_status_missing")
     if observation.get("schema") != OWNER_OBSERVATION_SCHEMA \
             or observation.get("source") != "output.app_server_events.commandExecution.aggregatedOutput":
         raise ValueError("contract_actual_input_observation_source_mismatch")
+    if observation.get("status") == "blocked":
+        binding = observation.get("handoff_path_binding", {})
+        if binding.get("status") != "blocked" \
+                or binding.get("reason_code") != "owner_handoff_input_path_unobservable":
+            raise ValueError("contract_actual_input_observation_block_reason_missing")
     second_gate_status = contract.get("preflight", {}).get("second_gate_status")
     if second_gate_status not in ("INCOMPLETE", "COMPLETE"):
         raise ValueError("contract_second_gate_status_mismatch")
@@ -190,8 +199,18 @@ def _record_codex_executor_fact(preflight):
     )
 
 
+def _portable_artifact_path(path):
+    resolved = Path(path).resolve()
+    repo_root = input_verifier.OWNER_CAPTURE_SOURCE.parents[5].resolve()
+    try:
+        relative = resolved.relative_to(repo_root)
+    except ValueError:
+        return "/__pc68_artifact__/" + resolved.name
+    return "/__pc68_repo__/" + relative.as_posix()
+
+
 def _synthetic_capture_preflight():
-    """Verify the saved bytes that came back from the ordinary command tool."""
+    """Verify the saved synthetic output came from a passing fixed-wrapper preflight."""
     try:
         artifact = json.loads(PREFLIGHT_MANIFEST.read_text(encoding="utf-8"))
         stdout_bytes = PREFLIGHT_STDOUT.read_bytes()
@@ -207,19 +226,36 @@ def _synthetic_capture_preflight():
     if artifact.get("owner_input_read_count") != 1 \
             or artifact.get("parsed_object") != artifact.get("observation_object"):
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_parse_copy_invalid"}
-    if artifact.get("stdout_capture_path") != str(PREFLIGHT_STDOUT.resolve()):
+    if artifact.get("stdout_capture_path") != _portable_artifact_path(PREFLIGHT_STDOUT):
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_path_mismatch"}
+    normalization = artifact.get("portable_path_normalization", {})
+    if normalization.get("state") != "VERIFIED_THEN_NORMALIZED" \
+            or normalization.get("placeholders") != {
+                "repository_root": "/__pc68_repo__",
+                "synthetic_run_root": "/__pc68_synthetic__",
+                "uv_python": "/__pc68_uv__/python",
+                "artifact_root": "/__pc68_artifact__",
+            }:
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_path_normalization_missing"}
     if artifact.get("parsed_object_sha256") != hashlib.sha256(
             _canonical_json(artifact.get("parsed_object")).encode("utf-8")).hexdigest() \
             or artifact.get("observation_object_sha256") != hashlib.sha256(
                 _canonical_json(artifact.get("observation_object")).encode("utf-8")).hexdigest():
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_object_hash_invalid"}
+    if not isinstance(artifact.get("captured_parsed_object_sha256"), str) \
+            or len(artifact["captured_parsed_object_sha256"]) != 64 \
+            or not isinstance(artifact.get("captured_stdout_sha256"), str) \
+            or len(artifact["captured_stdout_sha256"]) != 64:
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_original_hash_missing"}
     if hashlib.sha256(stdout_bytes).hexdigest() != artifact.get("stdout_sha256") \
             or stdout != artifact.get("raw_stdout"):
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_stdout_changed"}
     event = artifact.get("synthetic_correlation", {})
     argv = artifact.get("producer_argv")
-    if not isinstance(argv, list) or not argv or "--result" in argv or "--choices" in argv:
+    capture_argv = artifact.get("capture_command_argv")
+    manifest = artifact.get("runner_manifest")
+    if not isinstance(argv, list) or not argv or "--result" in argv or "--choices" in argv \
+            or not isinstance(capture_argv, list) or not isinstance(manifest, dict):
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_argv_invalid"}
     plan_output = artifact.get("producer_structured_output", {})
     packet = artifact.get("parsed_object", {})
@@ -250,24 +286,33 @@ def _synthetic_capture_preflight():
     actual_model_input = jobs[0]["model_input"]
     if any(actual_model_input.get(key) != value for key, value in expected_model_input.items()):
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_plan_business_fields_mismatch"}
-    # This event is explicitly synthetic. It feeds the ordinary raw stdout
-    # bytes through the same verifier parser, without claiming app_server
-    # thread or aggregatedOutput provenance.
-    call = {
-        "id": event.get("commandExecution_id"),
-        "generation": event.get("runtime_generation"),
-        "thread": event.get("thread_id"),
-        "start": 1,
-        "end": 2,
-        "command": shlex.join(argv),
-        "output": stdout,
-    }
-    rows, problem = input_verifier.consumed_business_objects([call])
-    if problem or len(rows) != 1:
-        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_verifier_rejected_stdout",
-                      "detail": problem}
-    row = rows[0]
-    invocation = row.get("invocation", {})
+    # The preflight runner executed and verified this exact wrapper while its
+    # temporary consumer files existed. The persisted artifact records that
+    # local result; it does not claim formal Codex event provenance.
+    if artifact.get("fixed_capture_verification") != {
+            "state": "PASS", "verifier": "consumed_business_objects",
+            "wrapper_sha256": input_verifier.OWNER_CAPTURE_SHA256}:
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_fixed_capture_verification_missing"}
+    try:
+        output_envelope = json.loads(stdout)
+        command_proof = input_verifier.command_action(shlex.join(capture_argv), manifest)
+        invocation = input_verifier._structured_stage5_invocation(output_envelope.get("stage5_invocation"))
+    except (ValueError, TypeError, AttributeError):
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_envelope_invalid"}
+    capture = output_envelope.get("pc68_fixed_capture", {})
+    process = output_envelope.get("stage5_process", {})
+    if not isinstance(command_proof, dict) or not isinstance(command_proof.get("owner_capture"), dict) \
+            or capture.get("schema") != input_verifier.OWNER_CAPTURE_SCHEMA \
+            or capture.get("wrapper_sha256") != input_verifier.OWNER_CAPTURE_SHA256 \
+            or capture.get("owner_input_read_count") != 1 \
+            or capture.get("parsed_object_sha256") != artifact.get("parsed_object_sha256") \
+            or output_envelope.get("pc68_actual_input_observation", {}).get("object") != packet \
+            or invocation.get("argv") != argv \
+            or invocation.get("capture_id") != capture.get("capture_id") \
+            or process.get("capture_id") != capture.get("capture_id") \
+            or output_envelope.get("stage5_plan") != plan_output \
+            or output_envelope.get("return_code") != artifact.get("producer_return_code"):
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_association_mismatch"}
     invocation_flags = invocation.get("flags", {})
     expected_flags = {
         "--program-root": packet.get("program_root"),
@@ -276,16 +321,15 @@ def _synthetic_capture_preflight():
         "--template": packet.get("template"),
         "--mode": packet.get("mode"),
     }
-    if row.get("call_id") != event.get("commandExecution_id") \
-            or row.get("thread") != event.get("thread_id") \
-            or row.get("generation") != event.get("runtime_generation") \
-            or row.get("packet") != artifact.get("parsed_object") \
-            or row.get("invocation", {}).get("argv") != argv \
+    if event.get("commandExecution_id") != "synthetic-command-fixed-capture" \
+            or event.get("thread_id") != "synthetic-professor-thread" \
+            or event.get("runtime_generation") != "synthetic-r29-fixed-capture-preflight" \
+            or packet != artifact.get("parsed_object") \
             or invocation.get("action") != "stage5-plan" \
             or any(invocation_flags.get(flag) != value for flag, value in expected_flags.items()) \
             or any(flag in invocation_flags for flag in ("--result", "--choices")) \
-            or row.get("plan") != artifact.get("producer_structured_output") \
-            or row.get("return_code") != artifact.get("producer_return_code"):
+            or output_envelope.get("stage5_plan") != artifact.get("producer_structured_output") \
+            or output_envelope.get("return_code") != artifact.get("producer_return_code"):
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_verifier_association_mismatch"}
     return artifact, None
 
@@ -299,10 +343,18 @@ def actual_input_observation_preflight(contract):
     observation = contract.get("codex", {}).get("owner_business_input_observation", {})
     prompt = HERE / "prompts" / "issue68-stage5-root.txt"
     prompt_supported = prompt.is_file() and OWNER_OBSERVATION_SCHEMA in prompt.read_text(encoding="utf-8")
+    path_binding = observation.get("handoff_path_binding", {})
+    path_source = path_binding.get("source")
+    path_binding_supported = (
+        path_binding.get("status") == "supported"
+        and isinstance(path_source, str)
+        and path_source in SUPPORTED_ROOT_HANDOFF_PATH_SOURCES
+    )
     source_supported = (
         observation.get("status") == "supported"
         and observation.get("schema") == OWNER_OBSERVATION_SCHEMA
         and observation.get("source") == "output.app_server_events.commandExecution.aggregatedOutput"
+        and path_binding_supported
         and prompt_supported
     )
     artifact, capture_problem = _synthetic_capture_preflight()
@@ -316,21 +368,27 @@ def actual_input_observation_preflight(contract):
     runtime_values = {key: None for key in REQUIRED_RUNTIME_FACTS}
     missing_runtime_values = list(REQUIRED_RUNTIME_FACTS)
     block_reasons = []
+    if not path_binding_supported:
+        block_reasons.append("owner_handoff_input_path_unobservable")
     if not second_gate_complete:
         block_reasons.append("second_gate_incomplete")
     elif not gate_allowed:
         block_reasons.append("second_gate_decision_missing")
+    blocked_for_path = not path_binding_supported
     return {
         "ready": source_supported and capture_supported,
-        "state": "OBSERVATION_SOURCE_SUPPORTED" if source_supported and capture_supported else
-                 (capture_problem or {}).get("state", "CASE_NOT_STARTED"),
-        "reason_code": None if source_supported and capture_supported else
-                       ((capture_problem or {}).get("reason_code") if not capture_supported
-                        else "actual_input_evidence_source_unavailable"),
+        "state": "BLOCKED_OBSERVABILITY" if blocked_for_path else
+                 ("OBSERVATION_SOURCE_SUPPORTED" if source_supported and capture_supported else
+                  (capture_problem or {}).get("state", "CASE_NOT_STARTED")),
+        "reason_code": "owner_handoff_input_path_unobservable" if blocked_for_path else
+                       (None if source_supported and capture_supported else
+                        ((capture_problem or {}).get("reason_code") if not capture_supported
+                         else "actual_input_evidence_source_unavailable")),
         "formal_run_allowed": False,
-        "formal_run_block_reason": ("second_gate_incomplete" if not second_gate_complete else
-                                    ("second_gate_decision_missing" if not gate_allowed else
-                                     "runtime_environment_capture_pending")),
+        "formal_run_block_reason": ("owner_handoff_input_path_unobservable" if blocked_for_path else
+                                    ("second_gate_incomplete" if not second_gate_complete else
+                                     ("second_gate_decision_missing" if not gate_allowed else
+                                      "runtime_environment_capture_pending"))),
         "formal_run_block_reasons": block_reasons,
         "service_preflight_allowed": service_preflight_allowed,
         "runtime_environment_missing": missing_runtime_values,
@@ -565,9 +623,47 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
     """Capture all six r25 runtime facts from this run before the request is sent."""
     original_build_request = base.build_request
     original_urlopen = base.urllib.request.urlopen
+    original_install_host = base.install_host
     request_path = Path(output) / "codex" / "codex-request.json"
     evidence_path = Path(output) / "runtime-environment-evidence.json"
     request_built = False
+
+    def install_host_with_capture(*install_args, **install_kwargs):
+        directory, consumer, manifest = original_install_host(*install_args, **install_kwargs)
+        if install_args[2] != "codex":
+            return directory, consumer, manifest
+        source = input_verifier.OWNER_CAPTURE_SOURCE
+        source_sha = _sha256_file(source)
+        if source_sha != input_verifier.OWNER_CAPTURE_SHA256:
+            raise ValueError("owner_capture_source_hash_mismatch")
+        runtime_dir = consumer / ".pc68-test-support"
+        runtime_dir.mkdir()
+        runtime_script = runtime_dir / input_verifier.OWNER_CAPTURE_NAME
+        shutil.copy2(source, runtime_script)
+        entrypoint = base.installed_script(consumer).resolve()
+        if entrypoint.is_symlink() or not entrypoint.is_file():
+            raise ValueError("owner_capture_installed_entrypoint_invalid")
+        manifest_path = directory / "fixture-manifest.json"
+        capture_record = {
+            "consumer_root": str(consumer.resolve()),
+            "runtime_path": str(runtime_script.resolve()),
+            "installed_entrypoint": str(entrypoint),
+            "entrypoint_sha256": _sha256_file(entrypoint),
+            "source_path": str(source.resolve()),
+            "source_sha256": source_sha,
+            "runtime_sha256": _sha256_file(runtime_script),
+            "manifest_path": str(manifest_path.resolve()),
+        }
+        manifest["owner_capture"] = capture_record
+        base.write_json(manifest_path, manifest)
+        prompt_path = directory / "root-prompt.txt"
+        prompt = prompt_path.read_text(encoding="utf-8")
+        prompt = prompt.replace("{{CAPTURE_SCRIPT}}", str(runtime_script.resolve()))
+        prompt = prompt.replace("{{CONTACT_STATE}}", str(entrypoint))
+        if "{{CAPTURE_SCRIPT}}" in prompt or "{{CONTACT_STATE}}" in prompt:
+            raise ValueError("owner_capture_prompt_binding_failed")
+        prompt_path.write_text(prompt, encoding="utf-8")
+        return directory, consumer, manifest
 
     def build_request_with_evidence(consumer, prompt):
         nonlocal request_built
@@ -615,11 +711,13 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
 
     base.build_request = build_request_with_evidence
     base.urllib.request.urlopen = verify_outgoing_request
+    base.install_host = install_host_with_capture
     try:
         return base.codex_host(args, output)
     finally:
         base.build_request = original_build_request
         base.urllib.request.urlopen = original_urlopen
+        base.install_host = original_install_host
 
 
 def same_service(before, after):

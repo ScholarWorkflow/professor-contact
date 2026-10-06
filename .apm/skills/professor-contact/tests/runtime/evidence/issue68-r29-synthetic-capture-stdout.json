@@ -9,33 +9,51 @@
     }
    ],
    "email_id": "合成教授::合成方向::合成构想",
-   "email_pack": "/var/folders/1y/9709mm1s6115w3fbssy9162h0000gn/T/pc68-r29-synthetic-xnfhim3q/program/教授研究/合成教授/邮件输入.json",
+   "email_pack": "/__pc68_synthetic__/program/教授研究/合成教授/邮件输入.json",
    "mode": "first",
-   "professor_dir": "/var/folders/1y/9709mm1s6115w3fbssy9162h0000gn/T/pc68-r29-synthetic-xnfhim3q/program/教授研究/合成教授",
-   "program_root": "/var/folders/1y/9709mm1s6115w3fbssy9162h0000gn/T/pc68-r29-synthetic-xnfhim3q/program",
-   "result": "/var/folders/1y/9709mm1s6115w3fbssy9162h0000gn/T/pc68-r29-synthetic-xnfhim3q/synthetic-result.json",
-   "template": "/var/folders/1y/9709mm1s6115w3fbssy9162h0000gn/T/pc68-r29-synthetic-xnfhim3q/synthetic-template.md"
+   "professor_dir": "/__pc68_synthetic__/program/教授研究/合成教授",
+   "program_root": "/__pc68_synthetic__/program",
+   "result": "/__pc68_synthetic__/synthetic-result.json",
+   "template": "/__pc68_synthetic__/synthetic-template.md"
   },
   "schema": "issue-68-test-plan-r25-owner-input-v2",
   "source_step": "owner_input_json_parse"
  },
+ "pc68_fixed_capture": {
+  "capture_id": "10ee4af9-8a7e-4997-a938-6c7d7e60e51f",
+  "owner_input_file": "/__pc68_synthetic__/owner_input.json",
+  "owner_input_read_count": 1,
+  "owner_input_sha256": "3332ddfdcc940812d67a3a8ea33b47cca61426d23a595d517fc257ae47bc97ba",
+  "parsed_object_sha256": "fd203cb6d3e762b964ca336e9279647b9fb03ae05dddbc0fe7a409776e3d26bb",
+  "schema": "issue-68-test-plan-r25-fixed-owner-capture-v1",
+  "wrapper_arguments": [
+   "--action",
+   "stage5-plan",
+   "--owner-input-file",
+   "/__pc68_synthetic__/owner_input.json",
+   "--contact-state",
+   "/__pc68_synthetic__/consumer/.agents/skills/professor-contact/scripts/contact_state.py"
+  ],
+  "wrapper_sha256": "7e534f76b7ba837a415b9b9a38ecda4a0fb1fe62fbf6d5b2575119319ff4eaa9"
+ },
  "return_code": 0,
  "stage5_invocation": {
   "argv": [
-   "/Users/rekidunois/.local/share/uv/python/cpython-3.14-macos-aarch64-none/bin/python3.14",
-   "/Users/rekidunois/.codex/worktrees/5e74/professor-contact/.apm/skills/professor-contact/scripts/contact_state.py",
+   "/__pc68_uv__/python",
+   "/__pc68_synthetic__/consumer/.agents/skills/professor-contact/scripts/contact_state.py",
    "stage5-plan",
    "--program-root",
-   "/var/folders/1y/9709mm1s6115w3fbssy9162h0000gn/T/pc68-r29-synthetic-xnfhim3q/program",
+   "/__pc68_synthetic__/program",
    "--email-pack",
-   "/var/folders/1y/9709mm1s6115w3fbssy9162h0000gn/T/pc68-r29-synthetic-xnfhim3q/program/教授研究/合成教授/邮件输入.json",
+   "/__pc68_synthetic__/program/教授研究/合成教授/邮件输入.json",
    "--email-id",
    "合成教授::合成方向::合成构想",
    "--template",
-   "/var/folders/1y/9709mm1s6115w3fbssy9162h0000gn/T/pc68-r29-synthetic-xnfhim3q/synthetic-template.md",
+   "/__pc68_synthetic__/synthetic-template.md",
    "--mode",
    "first"
-  ]
+  ],
+  "capture_id": "10ee4af9-8a7e-4997-a938-6c7d7e60e51f"
  },
  "stage5_plan": {
   "contact_evidence": {
@@ -50,7 +68,7 @@
     "web_lookup_required": true
    }
   },
-  "email_pack": "/var/folders/1y/9709mm1s6115w3fbssy9162h0000gn/T/pc68-r29-synthetic-xnfhim3q/program/教授研究/合成教授/邮件输入.json",
+  "email_pack": "/__pc68_synthetic__/program/教授研究/合成教授/邮件输入.json",
   "emails": [
    "合成教授::合成方向::合成构想"
   ],
@@ -151,9 +169,15 @@
   ],
   "output_mode": "first",
   "status": "ok",
-  "template": "/var/folders/1y/9709mm1s6115w3fbssy9162h0000gn/T/pc68-r29-synthetic-xnfhim3q/synthetic-template.md",
+  "template": "/__pc68_synthetic__/synthetic-template.md",
   "verify": {
    "合成教授": "needs_recheck:missing"
   }
- }
+ },
+ "stage5_process": {
+  "capture_id": "10ee4af9-8a7e-4997-a938-6c7d7e60e51f",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout_sha256": "62139eddfb0e2e58fe1f3ff415bd396b4b332253b199bc8b74117b288390a7bb"
+ },
+ "stage5_raw_stdout": "{\n \"contact_evidence\": {\n  \"合成教授\": {\n   \"provenance\": {},\n   \"reason_code\": \"contact_evidence_missing\",\n   \"recipient_email\": null,\n   \"single_source\": null,\n   \"snapshot_stale\": null,\n   \"source\": null,\n   \"status\": \"escalate\",\n   \"web_lookup_required\": true\n  }\n },\n \"email_pack\": \"/__pc68_synthetic__/program/教授研究/合成教授/邮件输入.json\",\n \"emails\": [\n  \"合成教授::合成方向::合成构想\"\n ],\n \"followup_template\": \"embedded\",\n \"jobs\": [\n  {\n   \"job_id\": \"email:合成教授::合成方向::合成构想\",\n   \"kind\": \"email\",\n   \"model_input\": {\n    \"allowed_sources\": [\n     \"idea:合成构想\"\n    ],\n    \"direction_ids\": [\n     \"合成方向\"\n    ],\n    \"directions\": [\n     {\n      \"direction_id\": \"合成方向\",\n      \"name_ja\": \"合成方向\",\n      \"name_zh\": \"合成方向\"\n     }\n    ],\n    \"gaps\": [],\n    \"idea\": {\n     \"id\": \"合成构想\",\n     \"idea_zh\": \"只用于本地预检\",\n     \"title\": \"合成构想\"\n    },\n    \"papers\": [],\n    \"profile_text\": null,\n    \"red_lines\": [],\n    \"rules\": {\n     \"exclusions\": \"禁方法名/模型名/算法名（标题内除外）、指标数字、数据集名、组件名、公式、限定语链、年份叙事\",\n     \"future_aspiration\": \"宽泛方向表述+背景技能，禁具体技术栈，不用其他方向原句\",\n     \"interest\": \"4 句、只写软层、总长 ≤180 日文字；①自定位（角色+信念，禁恭维）②点名+桥接（真实标题、共同主题逐篇成立）③宽泛例子（仅可用 gaps 里 status∈{open,partial,unknown} 的精确 gap；done_by_self 禁锚；partial 只谈 remaining_gap；引用教授原话式，不找碴）④固定句「このような<领域名词>は、まだ数多く存在すると感じております。」\",\n     \"learning\": \"2-3 个名词短语候选，贴近 profile 真实知识储备，交用户挑选\",\n     \"source_map\": \"每句必须给来源；③只能用 gap:<id>；④只能 template；所有 source_ids ⊆ allowed_sources\"\n    },\n    \"soft_materials\": {\n     \"positioning\": []\n    },\n    \"user_note\": \"\",\n    \"user_supplement\": \"\"\n   },\n   \"result_file\": \"email-97d462780eea.json\",\n   \"result_schema\": {\n    \"email_id\": \"合成教授::合成方向::合成构想\",\n    \"future_aspiration_ja\": \"…\",\n    \"interest_sentences_ja\": [\n     \"①自定位\",\n     \"②点名+桥接\",\n     \"③宽泛例子\",\n     \"④软收束\"\n    ],\n    \"kind\": \"email\",\n    \"learning_candidates\": [\n     \"候补1\",\n     \"候补2\"\n    ],\n    \"schema\": 1,\n    \"source_map\": [\n     {\n      \"output\": \"①\",\n      \"source_ids\": [\n       \"profile.interest\"\n      ]\n     },\n     {\n      \"output\": \"②\",\n      \"source_ids\": [\n       \"paper:<item_key>\"\n      ]\n     },\n     {\n      \"output\": \"③\",\n      \"source_ids\": [\n       \"gap:<gap_id>\"\n      ]\n     },\n     {\n      \"output\": \"④\",\n      \"source_ids\": [\n       \"template\"\n      ]\n     },\n     {\n      \"output\": \"future\",\n      \"source_ids\": [\n       \"idea:合成构想\"\n      ]\n     }\n    ]\n   }\n  }\n ],\n \"needs_recheck_professors\": [\n  \"合成教授\"\n ],\n \"output_mode\": \"first\",\n \"status\": \"ok\",\n \"template\": \"/__pc68_synthetic__/synthetic-template.md\",\n \"verify\": {\n  \"合成教授\": \"needs_recheck:missing\"\n }\n}\n"
 }
