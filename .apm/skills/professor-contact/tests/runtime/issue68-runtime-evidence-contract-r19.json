@@ -113,13 +113,16 @@
       "verdicts": {
         "valid_read_then_source_file_cleanup": "观察保留且包与同次计划关联正确时认可；不得重读清理后的文件",
         "observed_packet_mismatches_preceding_partition": "FAIL_PRODUCT",
-        "wrong_initial_plan_pack_id_or_business_data_or_sibling_data": "FAIL_PRODUCT",
+        "wrong_initial_plan_email_pack": "FAIL_PRODUCT",
+        "wrong_initial_plan_email_ids": "FAIL_PRODUCT",
+        "wrong_initial_plan_business_data": "FAIL_PRODUCT",
+        "initial_plan_contains_sibling_data": "FAIL_PRODUCT",
         "missing_same_call_observation": "BLOCKED_OBSERVABILITY 并在正式入口启动边界停止",
         "malformed_or_ambiguous_attribution": "INVALID_EVIDENCE",
         "command_text_unrelated_print_or_read_or_after_the_fact_file": "不得作为输入证据"
       },
-      "gate_status": "OBSERVATION_METHOD_IMPLEMENTED; PC68-R1 remains CASE_NOT_STARTED until Gate 2 review, candidate freeze, and required environment checks.",
-      "independent_command_event_validation": "verifier 从独立 commandExecution.command 字段核对固定捕获器路径及参数，并从 runner 创建的 manifest 校验动态消费者目录；捕获源码摘要来自仓库固定源码而非信封自报。"
+      "gate_status": "OBSERVATION_METHOD_IMPLEMENTED_AND_BOUND_TO_A_REAL_COMMAND_EVENT; PC68-R1 remains CASE_NOT_STARTED until Gate 2 review, candidate freeze, and formal runtime capture.",
+      "independent_command_event_validation": "合成预检通过 mcp__codex_app__read_thread 取得真实 commandExecution 项，核对命令、退出码、未截断输出、线程、轮次和项顺序，并将其输出摘要绑定到同一对象、调用 argv 和计划结果；正式运行仍由独立 commandExecution.command 字段核对固定捕获器路径及参数，并从 runner 创建的 manifest 校验动态消费者目录。捕获源码摘要来自仓库固定源码而非信封自报。"
     }
   },
   "business_payload": [
@@ -145,11 +148,11 @@
       "formal_run_allowed": false,
       "case": "PC68-R1",
       "reason_code": "second_gate_incomplete",
-      "action": "第25版指定的观察方式已落实：固定捕获器在教授原有 JSON 单次解析后保留同一对象，由该对象驱动同次 stage5-plan 调用；verifier 逐项绑定真实 argv、原始 stdout、结构化结果、退出码及独立 commandExecution 调用信息。合成预检只证明本地观察程序可用，不代表正式 app_server 关联已采集。第二关口审核并冻结单一候选前，不检查评估服务、不安装消费者、不发送正式请求。",
-      "synthetic_capture_manifest": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-synthetic-capture-preflight.json",
-      "synthetic_capture_stdout": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-synthetic-capture-stdout.json",
+      "action": "第25版指定的观察方式已落实：固定捕获器在教授原有 JSON 单次解析后保留同一对象，由该对象驱动同次 stage5-plan 调用。合成预检已通过 mcp__codex_app__read_thread 取得真实普通 commandExecution 项，并将命令编号、线程、轮次、项顺序、退出码和未截断输出与该对象、调用 argv 及计划结果绑定。此项只证明观察方法和当前合成命令事件可关联；正式 PC68-R1 的 app_server 事件、线程关系和运行环境事实仍须在正式运行记录。第二关口审核并冻结单一候选前，不检查评估服务、不安装消费者、不发送正式请求。",
+      "synthetic_capture_manifest": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-command-event-preflight.json",
+      "synthetic_capture_stdout": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-command-event-stdout.json",
       "raw_stdout_is_reparsed_by": "verify_issue68_stage5_routing_r19.consumed_business_objects",
-      "known_limit": "合成预检未产生正式 app_server 事件、线程关联或业务运行事实；这些仅能由获批候选的一次正式 PC68-R1 运行采集。"
+      "known_limit": "合成预检绑定了真实普通 commandExecution 输出事件，但没有产生正式 PC68-R1 业务运行记录、正式 app_server 线程关系或模型、执行器、入口、隔离、共享资产和服务版本事实；这些仅能由获批候选的一次正式 PC68-R1 运行采集。"
     },
     "second_gate_status": "INCOMPLETE"
   },

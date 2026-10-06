@@ -14,6 +14,7 @@ import issue68_eval_service_isolation_r14 as isolation
 import run_issue68_stage5_routing as base
 import run_issue68_stage5_routing_r19 as bridge
 import verify_issue68_stage5_routing_r19 as input_verifier
+import bind_issue68_preflight_command_event_r29 as command_event_binder
 
 
 HERE = Path(__file__).resolve().parent
@@ -21,14 +22,14 @@ FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
 CONTRACT_REVISION = "issue-68-runtime-evidence-r29-2026-10-06"
 OWNER_OBSERVATION_SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
-SYNTHETIC_PREFLIGHT_SCHEMA = "issue-68-r29-fixed-capture-preflight-v1"
+SYNTHETIC_PREFLIGHT_SCHEMA = "issue-68-r29-fixed-capture-preflight-v2"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
 EXECUTION_KIND = "acceptance"
 HOST = "codex"
 CASE = "PC68-R1"
 PREFLIGHT_DIR = HERE / "evidence"
-PREFLIGHT_MANIFEST = PREFLIGHT_DIR / "issue68-r29-synthetic-capture-preflight.json"
-PREFLIGHT_STDOUT = PREFLIGHT_DIR / "issue68-r29-synthetic-capture-stdout.json"
+PREFLIGHT_MANIFEST = PREFLIGHT_DIR / "issue68-r29-command-event-preflight.json"
+PREFLIGHT_STDOUT = PREFLIGHT_DIR / "issue68-r29-command-event-stdout.json"
 REQUIRED_RUNTIME_FACTS = (
     "model", "executor", "entrypoint", "isolation", "shared_assets", "service_version",
 )
@@ -212,10 +213,13 @@ def _synthetic_capture_preflight():
     except (OSError, UnicodeError, ValueError):
         return None, {"state": "CASE_NOT_STARTED", "reason_code": "synthetic_capture_preflight_missing"}
     if artifact.get("schema") != SYNTHETIC_PREFLIGHT_SCHEMA \
-            or artifact.get("result") != "CAPTURED_SYNTHETIC_ONLY" \
             or artifact.get("formal_case_started") is not False \
             or artifact.get("eval_service_called") is not False \
             or artifact.get("external_request_made") is not False:
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_preflight_record_invalid"}
+    if artifact.get("result") == "CAPTURED_SYNTHETIC_PENDING_COMMAND_EVENT":
+        return None, {"state": "BLOCKED_OBSERVABILITY", "reason_code": "ordinary_command_event_missing"}
+    if artifact.get("result") != "CAPTURED_SYNTHETIC_WITH_ACTUAL_COMMAND_EVENT":
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_preflight_record_invalid"}
     if artifact.get("owner_input_read_count") != 1 \
             or artifact.get("parsed_object") != artifact.get("observation_object"):
@@ -244,7 +248,6 @@ def _synthetic_capture_preflight():
     if hashlib.sha256(stdout_bytes).hexdigest() != artifact.get("stdout_sha256") \
             or stdout != artifact.get("raw_stdout"):
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_stdout_changed"}
-    event = artifact.get("synthetic_correlation", {})
     argv = artifact.get("producer_argv")
     capture_argv = artifact.get("capture_command_argv")
     manifest = artifact.get("runner_manifest")
@@ -280,13 +283,19 @@ def _synthetic_capture_preflight():
     actual_model_input = jobs[0]["model_input"]
     if any(actual_model_input.get(key) != value for key, value in expected_model_input.items()):
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_plan_business_fields_mismatch"}
-    # The preflight runner executed and verified this exact wrapper while its
-    # temporary consumer files existed. The persisted artifact records that
-    # local result; it does not claim formal Codex event provenance.
+    # The wrapper result is locally checked first, then bound to the actual
+    # ordinary commandExecution output captured from the Codex app thread.
     if artifact.get("fixed_capture_verification") != {
-            "state": "PASS", "verifier": "consumed_business_objects",
-            "wrapper_sha256": input_verifier.OWNER_CAPTURE_SHA256}:
+            "state": "PASS", "verifier": "same_object_invocation_and_plan",
+            "wrapper_sha256": input_verifier.OWNER_CAPTURE_SHA256,
+            "ordinary_command_event": "PASS",
+            "ordinary_commandExecution_output_proven": True}:
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_fixed_capture_verification_missing"}
+    preflight_script = HERE / "preflight_issue68_owner_input_observation_r29.py"
+    if artifact.get("preflight_script") != _portable_artifact_path(preflight_script) \
+            or artifact.get("preflight_script_sha256") != hashlib.sha256(
+                preflight_script.read_bytes()).hexdigest():
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_preflight_script_binding_invalid"}
     try:
         output_envelope = json.loads(stdout)
         command_proof = input_verifier.command_action(shlex.join(capture_argv), manifest)
@@ -315,24 +324,27 @@ def _synthetic_capture_preflight():
         "--template": packet.get("template"),
         "--mode": packet.get("mode"),
     }
-    if event.get("commandExecution_id") != "synthetic-command-fixed-capture" \
-            or event.get("thread_id") != "synthetic-professor-thread" \
-            or event.get("runtime_generation") != "synthetic-r29-fixed-capture-preflight" \
-            or packet != artifact.get("parsed_object") \
+    if packet != artifact.get("parsed_object") \
             or invocation.get("action") != "stage5-plan" \
             or any(invocation_flags.get(flag) != value for flag, value in expected_flags.items()) \
             or any(flag in invocation_flags for flag in ("--result", "--choices")) \
             or output_envelope.get("stage5_plan") != artifact.get("producer_structured_output") \
             or output_envelope.get("return_code") != artifact.get("producer_return_code"):
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_verifier_association_mismatch"}
+    event_problem = command_event_binder.validate_bound_event(
+        artifact, stdout, PREFLIGHT_MANIFEST, PREFLIGHT_STDOUT)
+    if event_problem:
+        state = "BLOCKED_OBSERVABILITY" if event_problem == "ordinary_command_event_missing" else "INVALID_TEST_EXECUTION"
+        return None, {"state": state, "reason_code": event_problem}
     return artifact, None
 
 
 def actual_input_observation_preflight(contract):
-    """Check installed source and a real synthetic-file stdout capture.
+    """Check the installed source and bind synthetic output to a real tool event.
 
-    The saved capture proves the local script/output/parser route only. It does
-    not establish app_server event association, model identity, or a formal run.
+    The saved capture proves the ordinary commandExecution event and local
+    same-object route only. It does not establish formal PC68-R1 association,
+    runtime identity, or a formal run.
     """
     observation = contract.get("codex", {}).get("owner_business_input_observation", {})
     prompt = HERE / "prompts" / "issue68-stage5-root.txt"
@@ -384,14 +396,19 @@ def actual_input_observation_preflight(contract):
             "stdout_sha256": artifact.get("stdout_sha256"),
             "owner_input_read_count": artifact.get("owner_input_read_count"),
             "same_object_used_for_argv_and_observation": True,
-            "verifier_parser": "consumed_business_objects",
-            "app_server_aggregatedOutput_proven": False,
+            "verifier_parser": "same_object_invocation_and_plan",
+            "commandExecution_id": artifact["ordinary_command_event"]["commandExecution_id"],
+            "thread_id": artifact["ordinary_command_event"]["thread_id"],
+            "turn_id": artifact["ordinary_command_event"]["turn_id"],
+            "turn_index": artifact["ordinary_command_event"]["turn_index"],
+            "item_index": artifact["ordinary_command_event"]["item_index"],
+            "ordinary_commandExecution_output_proven": True,
         } if artifact else None),
         "contract_revision": contract.get("revision"),
         "source_status": observation.get("status"),
         "source": observation.get("source"),
         "schema": observation.get("schema"),
-        "detail": ("Synthetic local command stdout was captured and re-read by the verifier; formal app_server association and runtime values remain unproven."
+        "detail": ("Synthetic output is bound to an actual Codex commandExecution event; formal PC68-R1 association and runtime values remain unproven."
                    if source_supported and capture_supported else
                    "Observation source or synthetic capture preflight is not fully installed."),
     }

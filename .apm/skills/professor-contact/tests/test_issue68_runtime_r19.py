@@ -30,6 +30,7 @@ def load(name):
 
 verify = load("verify_issue68_stage5_routing_r19")
 entry = load("run_issue68_stage5_routing_r19_codex")
+command_event_binder = load("bind_issue68_preflight_command_event_r29")
 
 
 class TestIssue68RuntimeR25Preflight(unittest.TestCase):
@@ -159,9 +160,14 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertIn("second_gate_incomplete", gate["formal_run_block_reasons"])
         self.assertGreater(len(gate["runtime_environment_missing"]), 0)
         self.assertFalse(gate["service_preflight_allowed"])
-        self.assertEqual(gate["synthetic_capture"]["result"], "CAPTURED_SYNTHETIC_ONLY")
-        self.assertEqual(gate["synthetic_capture"]["verifier_parser"], "consumed_business_objects")
-        self.assertFalse(gate["synthetic_capture"]["app_server_aggregatedOutput_proven"])
+        capture = gate["synthetic_capture"]
+        self.assertEqual(capture["result"], "CAPTURED_SYNTHETIC_WITH_ACTUAL_COMMAND_EVENT")
+        self.assertEqual(capture["verifier_parser"], "same_object_invocation_and_plan")
+        self.assertTrue(capture["ordinary_commandExecution_output_proven"])
+        self.assertTrue(capture["commandExecution_id"])
+        self.assertTrue(capture["thread_id"])
+        self.assertIsInstance(capture["turn_index"], int)
+        self.assertIsInstance(capture["item_index"], int)
 
     def test_gate_two_approval_allows_next_preflight_after_observation_check(self):
         contract = entry.load_contract()
@@ -251,17 +257,16 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         clean.assert_called_once_with(root, "synthetic-old-sha")
         port.assert_not_called()
 
-    def test_synthetic_file_preflight_captures_stdout_and_verifier_reparses_it(self):
+    def test_synthetic_file_preflight_waits_for_an_ordinary_command_event(self):
         script = RUNTIME / "preflight_issue68_owner_input_observation_r29.py"
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             artifact = root / "manifest.json"
             stdout_capture = root / "stdout.json"
-            command_record = "uv run python synthetic-preflight.py | tee stdout.json"
             result = subprocess.run(
                 ["uv", "--offline", "--cache-dir", "/private/tmp/issue68-uv-cache",
                  "run", "python", str(script), "--artifact", str(artifact),
-                 "--stdout-capture", str(stdout_capture), "--command-record", command_record],
+                 "--stdout-capture", str(stdout_capture)],
                 text=True, capture_output=True, check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -280,13 +285,14 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             self.assertNotIn(".local/share/uv/python", json.dumps(manifest, ensure_ascii=False))
             self.assertIn("/__pc68_synthetic__/", json.dumps(manifest, ensure_ascii=False))
             self.assertEqual(manifest["fixed_capture_verification"]["verifier"],
-                             "consumed_business_objects")
+                             "same_object_invocation_and_plan")
             self.assertEqual(manifest["capture_command_argv"][:4],
                              ["uv", "run", "--no-project", "python"])
             self.assertTrue(any(Path(token).name == verifier.OWNER_CAPTURE_NAME
                                 for token in manifest["capture_command_argv"]))
             plan = manifest["producer_structured_output"]
-            self.assertEqual(manifest["result"], "CAPTURED_SYNTHETIC_ONLY")
+            self.assertEqual(manifest["result"], "CAPTURED_SYNTHETIC_PENDING_COMMAND_EVENT")
+            self.assertEqual(manifest["ordinary_command_event"]["state"], "PENDING_EXTERNAL_CAPTURE")
             self.assertEqual(manifest["producer_return_code"], 0)
             self.assertEqual(plan["status"], "ok")
             self.assertEqual(plan["email_pack"], manifest["parsed_object"]["email_pack"])
@@ -300,9 +306,49 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             with mock.patch.object(entry, "PREFLIGHT_MANIFEST", artifact), \
                     mock.patch.object(entry, "PREFLIGHT_STDOUT", stdout_capture):
                 checked, problem = entry._synthetic_capture_preflight()
+            self.assertIsNone(checked)
+            self.assertEqual(problem["state"], "BLOCKED_OBSERVABILITY")
+            self.assertEqual(problem["reason_code"], "ordinary_command_event_missing")
+
+    def test_actual_command_event_binding_supplies_gate_evidence(self):
+        script = RUNTIME / "preflight_issue68_owner_input_observation_r29.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            artifact = root / "manifest.json"
+            stdout_capture = root / "stdout.json"
+            result = subprocess.run(
+                ["uv", "--offline", "--cache-dir", "/private/tmp/issue68-uv-cache",
+                 "run", "python", str(script), "--artifact", str(artifact),
+                 "--stdout-capture", str(stdout_capture)],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            stdout_capture.write_text(result.stdout, encoding="utf-8")
+            command = shlex.join(["uv", "run", "python", str(script), "--artifact", str(artifact),
+                                  "--stdout-capture", str(stdout_capture)])
+            bundle = {
+                "schema": "issue68-r29-command-event-source-v1",
+                "source": "mcp__codex_app__read_thread",
+                "context": {"thread_id": "test-thread", "turn_id": "test-turn",
+                            "turn_index": 0, "item_index": 1},
+                "event": {"type": "commandExecution", "id": "unit-command-event",
+                          "command": command, "cwd": str(command_event_binder.REPO_ROOT),
+                          "status": "completed", "exitCode": 0,
+                          "output": {"text": result.stdout, "truncated": False}},
+            }
+            raw_event = root / "raw-command-event.json"
+            raw_event.write_text(json.dumps(bundle), encoding="utf-8")
+            command_event_binder.bind(raw_event, artifact, stdout_capture)
+            manifest = json.loads(artifact.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["ordinary_command_event"]["status"], "VERIFIED")
+            self.assertEqual(manifest["ordinary_command_event"]["source"], "mcp__codex_app__read_thread")
+            with mock.patch.object(entry, "PREFLIGHT_MANIFEST", artifact), \
+                    mock.patch.object(entry, "PREFLIGHT_STDOUT", stdout_capture):
+                checked, problem = entry._synthetic_capture_preflight()
             self.assertIsNone(problem)
-            self.assertEqual(checked["stdout_sha256"], manifest["stdout_sha256"])
-            self.assertTrue(manifest["synthetic_correlation"]["is_synthetic"])
+            self.assertEqual(checked["result"], "CAPTURED_SYNTHETIC_WITH_ACTUAL_COMMAND_EVENT")
+            self.assertEqual(checked["ordinary_command_event"]["commandExecution_id"],
+                             "unit-command-event")
 
     def test_machine_terminal_mapping_covers_states_and_conflicts(self):
         contract = entry.load_contract()
@@ -468,6 +514,23 @@ class OwnerObservationTests(unittest.TestCase):
                 "start": 1, "end": 2, "command": command or shlex.join(self.command_argv),
                 "output": completed.stdout}
 
+    def rewrite_plan(self, call, update):
+        envelope = json.loads(call["output"])
+        plan = envelope["stage5_plan"]
+        update(plan)
+        raw_stdout = json.dumps(plan, ensure_ascii=False, separators=(",", ":"))
+        envelope["stage5_raw_stdout"] = raw_stdout
+        envelope["stage5_process"]["stdout_sha256"] = hashlib.sha256(
+            raw_stdout.encode("utf-8")).hexdigest()
+        call["output"] = json.dumps(envelope, ensure_ascii=False)
+        return call
+
+    def write_packet(self, update):
+        packet = json.loads(self.handoff_file.read_text(encoding="utf-8"))
+        update(packet)
+        self.handoff_file.write_text(json.dumps(packet, ensure_ascii=False), encoding="utf-8")
+        return self.call()
+
     def test_fixed_capture_executes_same_parse_and_cli_then_survives_handoff_cleanup(self):
         call = self.call()
         rows, problem = verifier.consumed_business_objects([call], self.manifest)
@@ -518,6 +581,42 @@ class OwnerObservationTests(unittest.TestCase):
         _, problem = verifier.owner_payload(rows, self.manifest)
         self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
         self.assertEqual(problem["reason_code"], "owner_plan_directory_changed")
+
+    def test_observed_input_choices_different_from_allocation_are_a_product_failure(self):
+        call = self.write_packet(lambda packet: packet["choices"].__setitem__(
+            0, {"email_id": self.email["email_id"], "first_choice": False}))
+        rows, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertIsNone(problem)
+        _, problem = verifier.owner_payload(rows, self.manifest)
+        self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+        self.assertEqual(problem["reason_code"], "owner_bundle_choices_changed")
+
+    def test_wrong_initial_plan_email_ids_are_a_product_failure(self):
+        call = self.rewrite_plan(self.call(), lambda plan: plan.__setitem__("emails", ["D999::I999"]))
+        rows, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertIsNone(problem)
+        _, problem = verifier.owner_payload(rows, self.manifest)
+        self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+        self.assertEqual(problem["reason_code"], "owner_plan_email_ids_changed")
+
+    def test_wrong_initial_plan_business_data_are_a_product_failure(self):
+        def change_idea(plan):
+            plan["jobs"][0]["model_input"]["idea"]["text"] = "不属于该邮件包的构想"
+
+        call = self.rewrite_plan(self.call(), change_idea)
+        rows, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertIsNone(problem)
+        _, problem = verifier.owner_payload(rows, self.manifest)
+        self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+        self.assertEqual(problem["reason_code"], "owner_plan_business_data_changed")
+
+    def test_sibling_business_data_in_the_observed_input_are_a_product_failure(self):
+        call = self.write_packet(lambda packet: packet.__setitem__("sibling_data", "乙教授"))
+        rows, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertIsNone(problem)
+        _, problem = verifier.owner_payload(rows, self.manifest)
+        self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+        self.assertEqual(problem["reason_code"], "owner_input_contains_sibling_data")
 
     def test_first_plan_missing_jobs_or_status_is_a_product_failure(self):
         for field in ("jobs", "status"):

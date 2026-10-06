@@ -20,10 +20,10 @@
   "source_step": "owner_input_json_parse"
  },
  "pc68_fixed_capture": {
-  "capture_id": "28a8a00f-0c0b-4626-b622-7e9031950187",
+  "capture_id": "6ca5ed8f-318e-407c-a16f-4cbdf54bfe52",
   "owner_input_file": "/__pc68_synthetic__/owner_input.json",
   "owner_input_read_count": 1,
-  "owner_input_sha256": "902c4207daa66d1c3a46823e266802b13cf91c901073f783018ad72de7c802cc",
+  "owner_input_sha256": "e95a16db337ffc0151023c636bb39b1e97715cab99f70aed2993abe77b39c9c7",
   "parsed_object_sha256": "fd203cb6d3e762b964ca336e9279647b9fb03ae05dddbc0fe7a409776e3d26bb",
   "schema": "issue-68-test-plan-r25-fixed-owner-capture-v1",
   "wrapper_arguments": [
@@ -53,7 +53,7 @@
    "--mode",
    "first"
   ],
-  "capture_id": "28a8a00f-0c0b-4626-b622-7e9031950187"
+  "capture_id": "6ca5ed8f-318e-407c-a16f-4cbdf54bfe52"
  },
  "stage5_plan": {
   "contact_evidence": {
@@ -175,7 +175,7 @@
   }
  },
  "stage5_process": {
-  "capture_id": "28a8a00f-0c0b-4626-b622-7e9031950187",
+  "capture_id": "6ca5ed8f-318e-407c-a16f-4cbdf54bfe52",
   "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "stdout_sha256": "62139eddfb0e2e58fe1f3ff415bd396b4b332253b199bc8b74117b288390a7bb"
  },

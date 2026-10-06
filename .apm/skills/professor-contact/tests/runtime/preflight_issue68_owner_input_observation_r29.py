@@ -18,7 +18,7 @@ RUNTIME = SCRIPT.parent
 CONTACT_STATE_SOURCE = REPO_ROOT / ".apm/skills/professor-contact/scripts/contact_state.py"
 CAPTURE_SOURCE = RUNTIME / "capture_issue68_owner_stage5_plan_r1.py"
 SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
-PREFLIGHT_SCHEMA = "issue-68-r29-fixed-capture-preflight-v1"
+PREFLIGHT_SCHEMA = "issue-68-r29-fixed-capture-preflight-v2"
 
 sys.path.insert(0, str(RUNTIME))
 import verify_issue68_stage5_routing_r19 as verifier
@@ -67,7 +67,7 @@ def portable_artifact_path(path):
     return "/__pc68_repo__/" + relative.as_posix()
 
 
-def run(artifact_path, stdout_capture_path, command_record):
+def run(artifact_path, stdout_capture_path):
     artifact_path = Path(artifact_path).resolve()
     stdout_capture_path = Path(stdout_capture_path).resolve()
     with tempfile.TemporaryDirectory(prefix="pc68-r29-synthetic-") as temp:
@@ -144,17 +144,36 @@ def run(artifact_path, stdout_capture_path, command_record):
             },
         }
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-        call = {
-            "id": "synthetic-command-fixed-capture", "generation": "synthetic-r29-fixed-capture-preflight",
-            "thread": "synthetic-professor-thread", "start": 1, "end": 2,
-            "command": shlex.join(capture_command), "output": completed.stdout,
+        parsed_command = verifier.command_action(shlex.join(capture_command), manifest)
+        if not isinstance(parsed_command, dict) or parsed_command.get("owner_capture") is None:
+            raise ValueError("fixed_capture_command_not_recognized")
+        packet_from_capture = envelope.get("pc68_actual_input_observation", {}).get("object")
+        plan = envelope.get("stage5_plan")
+        invocation_record = envelope.get("stage5_invocation")
+        invocation = verifier._structured_stage5_invocation(invocation_record)
+        capture = envelope.get("pc68_fixed_capture", {})
+        process = envelope.get("stage5_process", {})
+        row = {
+            "packet": packet_from_capture, "plan": plan,
+            "return_code": envelope.get("return_code"), "invocation": invocation,
+            "call_id": None,
         }
-        rows, problem = verifier.consumed_business_objects([call], manifest)
-        if problem or len(rows) != 1:
-            raise ValueError("fixed_capture_verifier_rejected:" + json.dumps(problem, ensure_ascii=False))
-        row = rows[0]
-        packet_from_capture = row["packet"]
-        plan = row["plan"]
+        invocation_problem = verifier._owner_invocation_argument_problem(row, packet_from_capture)
+        if invocation_problem:
+            raise ValueError("fixed_capture_invocation_rejected:" +
+                             json.dumps(invocation_problem, ensure_ascii=False))
+        if capture.get("owner_input_read_count") != 1 \
+                or capture.get("parsed_object_sha256") != sha256(canonical_json(packet_from_capture).encode("utf-8")) \
+                or packet_from_capture != json.loads(owner_input_file.read_text(encoding="utf-8")) \
+                or invocation.get("capture_id") != capture.get("capture_id") \
+                or process.get("capture_id") != capture.get("capture_id") \
+                or process.get("stdout_sha256") != sha256(envelope.get("stage5_raw_stdout", "").encode("utf-8")) \
+                or json.loads(envelope.get("stage5_raw_stdout", "{}")) != plan:
+            raise ValueError("fixed_capture_same_object_or_call_binding_invalid")
+        problem = verifier._verify_owner_plan_package([row], manifest["owners"][0], manifest)
+        if problem:
+            raise ValueError("fixed_capture_plan_verification_rejected:" +
+                             json.dumps(problem, ensure_ascii=False))
         replacements = path_replacements(root)
         captured_stdout_sha256 = sha256(completed.stdout.encode("utf-8"))
         captured_object_sha256 = envelope["pc68_fixed_capture"]["parsed_object_sha256"]
@@ -181,7 +200,7 @@ def run(artifact_path, stdout_capture_path, command_record):
         stdout_capture_path.parent.mkdir(parents=True, exist_ok=True)
         stdout_capture_path.write_text(portable_stdout, encoding="utf-8")
         artifact = {
-            "schema": PREFLIGHT_SCHEMA, "result": "CAPTURED_SYNTHETIC_ONLY",
+            "schema": PREFLIGHT_SCHEMA, "result": "CAPTURED_SYNTHETIC_PENDING_COMMAND_EVENT",
             "formal_case_started": False, "eval_service_called": False,
             "external_request_made": False, "producer_entrypoint": str(CONTACT_STATE_SOURCE.relative_to(REPO_ROOT)),
             "producer_argv": portable_envelope["stage5_invocation"]["argv"],
@@ -209,19 +228,16 @@ def run(artifact_path, stdout_capture_path, command_record):
                     "artifact_root": "/__pc68_artifact__",
                 },
             },
-            "command_record": command_record,
-            "synthetic_correlation": normalize_paths({
-                "runtime_generation": call["generation"], "thread_id": call["thread"],
-                "commandExecution_id": call["id"], "professor_dir": packet["professor_dir"],
-                "source_step": "owner_input_json_parse", "business_step": "stage5-plan",
-                "is_synthetic": True,
-            }, replacements),
-            "fixed_capture_verification": {"state": "PASS", "verifier": "consumed_business_objects",
+            "child_command_record": normalize_paths(shlex.join(capture_command), replacements),
+            "preflight_script": portable_artifact_path(SCRIPT),
+            "preflight_script_sha256": sha256_file(SCRIPT),
+            "fixed_capture_verification": {"state": "PASS", "verifier": "same_object_invocation_and_plan",
                                            "wrapper_sha256": verifier.OWNER_CAPTURE_SHA256},
+            "ordinary_command_event": {"state": "PENDING_EXTERNAL_CAPTURE"},
             "raw_stdout": portable_stdout,
             "limitations": [
-                "Synthetic IDs are test inputs, not Codex app_server event evidence.",
-                "This preflight does not prove formal commandExecution.aggregatedOutput or PC68-R1 behavior.",
+                "The business fixture is synthetic; this artifact alone is not ordinary command-tool event evidence.",
+                "Formal PC68-R1 behavior remains unproven.",
             ],
         }
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,9 +251,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--stdout-capture", type=Path, required=True)
-    parser.add_argument("--command-record", required=True)
     args = parser.parse_args(argv)
-    return run(args.artifact, args.stdout_capture, args.command_record)
+    return run(args.artifact, args.stdout_capture)
 
 
 if __name__ == "__main__":
