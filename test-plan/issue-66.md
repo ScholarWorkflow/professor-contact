@@ -2,7 +2,7 @@
 
 ## 计划与候选身份
 
-本记录唯一执行依据是 PR #73 评论 [6022078922](https://github.com/ScholarWorkflow/professor-contact/pull/73#issuecomment-6022078922) 所附完整计划 `issue-66-test-plan-r19-clarification-r5-2026-10-07`，逐项落实其中第 2–9 节的完整测试、预检、复验和历史要求。本版取代第四版评论 [5991701404](https://github.com/ScholarWorkflow/professor-contact/pull/73#issuecomment-5991701404)，补清内部命令失败后的唯一错误报告及本地候选汇总顺序。审核评论 [6009197999](https://github.com/ScholarWorkflow/professor-contact/pull/73#issuecomment-6009197999) 仅用于定位八类测试问题，不替代完整计划。第十三版实施方案及其批准不变。
+本记录以 PR #73 评论 [6022078922](https://github.com/ScholarWorkflow/professor-contact/pull/73#issuecomment-6022078922) 的 R5 计划为基础。当前 R6 候选保留原业务测试范围，按本地测试工程师的任务要求修正工作树位置，并删除对评测服务进程、配置文件、数据库和日志文件的本地检查。R6 仍待 Gate 2 审核，不表示原评论已批准本次修订。R5 是历史版本；它补充的业务判定和候选汇总规则仍沿用。
 
 | 项目 | 固定值或取值方式 |
 | --- | --- |
@@ -13,18 +13,18 @@
 | 夹具树 | `c738fa2f8bcbb16cd99d741332d5f59b062b6357` |
 | 适配约定 | `skills-test-fixtures/codex-eval-adapter@16` |
 | 测试提交 | 每次运行时执行 `git rev-parse HEAD`，写入该轮证据；不在计划中伪填提交号 |
-| 本地运行器 | [issue-66-run.sh](issue-66-run.sh)，修订标记 `issue-66-local-candidate-runner-r20-2026-10-07` |
+| 本地运行器 | [issue-66-run.sh](issue-66-run.sh)，修订标记 `issue-66-local-candidate-runner-r21-2026-10-07` |
 | 任务辅助脚本 | `.tmp_scripts/2026-10-06_watch_pr73.sh` 保留在工作树；只排除此单一文件，不计入候选摘要 |
 
-候选输入摘要在运行时对运行器固定清单逐文件计算，再对清单计算 SHA-256。运行器在套件前后各算一次；不把摘要写回本记录或运行器。每条命令的完整标准输出、标准错误、退出码和实际命令保存在唯一临时证据目录。每条样例在 `samples.tsv` 保存候选摘要、测试状态、动态源码位置及原始日志指针；判定器样例还关联真实 JSONL 返回、判定器摘要、事件摘要及事件引用。测试提交号和产品目标号分开记录。
+候选输入摘要在运行时对运行器固定清单逐文件计算，再对清单计算 SHA-256。运行器在套件前后各算一次；不把摘要写回本记录或运行器。每条命令的完整标准输出、标准错误、退出码和实际命令保存在唯一临时证据目录。每条样例在 `samples.tsv` 保存候选摘要、测试状态、动态源码位置及本地测试命令输出的引用；判定器样例还关联真实 JSONL 返回、判定器摘要、事件摘要及事件引用。这里的输出是本地测试命令的输出，不是评测服务日志。测试提交号和产品目标号分开记录。
 
 固定本地环境为 `uv 0.12.11` 与 Python `3.14.6`，解释器通过 `uv run --no-project --python 3.14.6` 选择，缓存目录为 `/private/tmp/issue66-uv-cache`。运行器捕获实际 `uv`、Python、Bash、`jq`、操作系统、Codex CLI、OpenCode 及可用时的 `shellcheck` 版本。它先核对仓库根、远端、目标提交祖先关系、产品源相对产品目标无差异、工作树变更范围、候选文件摘要和工具版本；测试前后均重新计算候选摘要。
 
 当前字段解析使用 `jq 1.8.2`，安装配置使用 `yq 4.53.3`。结构化运行直接依赖固定文件 `.apm/skills/professor-contact/tests/runtime/issue66_suite_result.py`、`.apm/skills/professor-contact/tests/runtime/issue66_suite_classify.jq`、`.apm/skills/professor-contact/tests/runtime/issue66_candidate_classify.jq` 和回归文件 `.apm/skills/professor-contact/tests/test_issue66_suite_result.py`；四者均纳入候选摘要，不依赖测试日志排版。
 
-## R5 第 2 节完整证明对应
+## R6 测试对应
 
-下表覆盖 R5 第 2 节列出的全部要求和用例；本轮复验受影响的确定性用例并准备安装与执行接线，不新增模型隔离运行。精确目标提交的真实 APM 安装已执行；服务只读诊断已有实际端口和配置，完整存储归属预检仍未通过，正式评测未执行。安装、输入及请求预检无需第二关口批准。
+下表继续对应 R5 第 2 节列出的业务要求和用例；本轮修订本地执行位置和服务取证范围。精确目标提交的真实 APM 安装已执行；R5 服务检查记录作为历史保存，当前正式评测未执行。安装、输入及请求预检无需第二关口批准。
 
 | 要求 | 负责用例 | 本轮负责的事实及实际调用链 | 测试、程序与证据来源 |
 | --- | --- | --- | --- |
@@ -40,7 +40,13 @@
 | `R66-10 / COMP66-1` | `S3-CORRECTION-1` | 修正集合由已记录问题决定；直接观察实际结果文件读取、返回集合、替换集合及未改校验记录。 | `test_exact_result_read_set_rejects_an_extra_open`、`test_named_group_is_replaced_and_sibling_group_is_kept`；`OpenRecorder` 转发打开调用，正负对照都实际打开文件。 |
 | `R66-10` | `S3-HANDOFF-1` | 准备、保存、记录三入口绑定原文和轮次；拒绝无副作用；批量归属及两轮终态。 | `test_issue66_validation_handoff.py` 全套与判定器保存/记录样例；调用窗口内操作记录、同集合字节快照、产品真实返回。 |
 | `R66-10` | `S3-ASSET-COMPAT-1` | 源技能及代理说明保持有限写权限、未指定输出只读、批量交接字段和各自运行时职责。 | `test_stage3_idea_generator_agent_contract.py`；Codex 正文按 TOML 投影方式解码；当前代理约定套件保留三项已知产品行为失败。 |
-| `R66-10 / COMP66-1` | `S3-RT-CODEX-1` | 正式安装后原生委派、实际凭据消费、校验者产文、根保存记录、权限、顺序、停止和一次终态重建。 | 需要已批准 Gate 2、正式安装与 `/eval` 原始事件；本轮禁止并未执行正式评测，不给此用例判 `PASS`。 |
+| `R66-10 / COMP66-1` | `S3-RT-CODEX-1` | 正式安装后原生委派、实际凭据消费、校验者产文、根保存记录、权限、顺序、停止和一次终态重建。 | 需要已批准 Gate 2、正式安装与 `/eval` 原始事件；评测配置负责使用独立 `CODEX_HOME`，本地测试不检查服务内部状态；本轮未执行正式评测，不给此用例判 `PASS`。 |
+
+## R6 范围修订
+
+`issue66_execution.py` 的命令默认在 `--repository` 指定的仓库工作树运行；读取端口时调用 `direnv exec . printenv EVAL_PORT`。因此测试工作树必须位于项目 `.envrc` 的目录树内，例如与 `professor-contact` 同属 `skill-repos-dev` 下的 `worktrees/<分支>`。Codex 默认放在 `~/.codex/worktrees/...` 的工作树不在该目录树内，执行 `direnv exec .` 时不会读到项目环境。R6 把工作树移到 `.envrc` 可见的位置；新位置已实测取得 `EVAL_PORT`。
+
+评测配置负责为评测服务指定独立 `CODEX_HOME`。本地接线从项目环境读取 `EVAL_PORT`；只有独立审批通过后的正式入口才调用 `/eval`。本地测试不检查服务进程、服务配置文件、数据库内容或服务日志，也不把这类结果送入判定器。R5 留下的相关诊断和缺口仍作为历史记录保留，不再阻止本地预检。
 
 `S3-ISO-1` 的范围检查只验证已指定本教授输入；不要求读取乙的业务正文，也不增加共享前置检查或持续监视。产品调用位置：`.apm/skills/professor-contact/scripts/contact_state.py` 中 `cmd_stage3_plan`、`cmd_stage3_finalize`、`cmd_stage3_prepare_validation`、`cmd_stage3_save_validation`、`cmd_stage3_record_validation`。说明来源：`.apm/skills/professor-contact/SKILL.md` 的 Stage 3 固定状态转移，以及 `.apm/agents/professor-contact-idea-generator.agent.md` 的 Stage 3 输入与运行时分支。代理约定测试从同一 Markdown 正文生成 Codex TOML 投影并核对教授边界；这不是实际干净安装或 Gate 3 运行的证据。
 
@@ -84,11 +90,11 @@ uv run --no-project --python 3.14.6 python -B \
 
 第 6 套件失败身份由结构化回调的 `test_id` 精确匹配 `test_issue66_validation_handoff.PrepareHandoffTests.test_new_invocation_can_prepare_round_one_after_prior_terminal_validation`，`status=failure`，行为断言标识为 `validation_handoff_collision`。
 
-第 7 套件失败必须属于同一方法 `test_opencode_example_and_common_closeout_follow_skill_handoff_chain`，三个失败事件的 `params.section` 分别为 `OpenCode 示例`、`共同收尾`、`禁止旧直接记录方式`。运行器通过 `runtime/issue66_suite_result.py` 的测试回调保存 JSON，由 `runtime/issue66_suite_classify.jq` 解析方法身份、事件类型、参数及计数，不凭日志排版、关键词或仅失败总数判断。完整日志仍原样保存；保留当前产品失败断言。
+第 7 套件失败必须属于同一方法 `test_opencode_example_and_common_closeout_follow_skill_handoff_chain`，三个失败事件的 `params.section` 分别为 `OpenCode 示例`、`共同收尾`、`禁止旧直接记录方式`。运行器通过 `runtime/issue66_suite_result.py` 的测试回调保存 JSON，由 `runtime/issue66_suite_classify.jq` 解析方法身份、事件类型、参数及计数，不凭测试输出排版、关键词或仅失败总数判断。套件原始输出仍原样保存；保留当前产品失败断言。
 
 执行中若条目数、退出码、失败身份、记录结构、样例映射或前后候选摘要任一不符，整轮记录为 `INVALID_TEST_EXECUTION`。确定性套件按记录如实为已知产品失败且所有执行证据有效时，候选整体为 `FAIL`。这两类本地结果都不是正式评测结论。
 
-## 第五版新增定向检查与统一运行
+## R5 第五版新增定向检查与统一运行（历史）
 
 停止检查新增四个方法、六条账本样例：`test_internal_generator_failure_reports_once_and_stops` 和 `test_internal_generator_failure_then_dependent_action_fails_stop` 各检查计划、提交入口失败；另两项检查第二条报告及错误后成功报告。唯一同轮结构化错误报告与根接收事件不算继续业务；正确停下的 `F-stop-order` 为通过，但业务未完成仍为 `FAIL`。依赖业务续行的停止事实为失败。实际运行系统故障沿用原失败前缀证据，不假定最终消息一定存在。
 
@@ -96,7 +102,7 @@ uv run --no-project --python 3.14.6 python -B \
 
 统一运行写入 `candidate-result.json`，按结构字段提供 `evidence_validity`、`overall`、`local_product_failures`、`gaps` 及各自来源。先核对候选版本、套件和账本，再保留可独立成立的产品失败；不能因其他套件失败跳过账本检查。`runner_execution=COMPLETE` 只表示运行器已执行完全部步骤，不表示证据有效、候选完整通过或正式验收通过。四组合原始材料另存本轮 `candidate-combinations`。第五版最终统一运行已完成，下面第四版结果继续保留历史归属。
 
-第五版最终证据目录基名为 `issue66-gate2-candidate.4LPblyY0`，位于本机临时目录，完整路径保存在 `/private/tmp/pr73-r5-final.stdout`。七套件依次为判定 113、接线 10、汇总 9、凭据 17、本地状态 12 项通过，交接 22 项含 1 个既有产品失败，代理说明 9 个方法含 3 个既有失败子测试。128 次判定调用、261 条独立断言（249 条判定相关）、66 行 24 列样例均有效；账本校验 `true`、诊断 `[]`，候选前后摘要相同。整体 `FAIL`、退出 1，`evidence_validity=VALID`、缺口数组为空，独立产品失败为交接碰撞及旧代理说明两项。此结论仅负责本地确定性候选，不包括服务预检或正式验收。
+R5 最终证据目录基名为 `issue66-gate2-candidate.4LPblyY0`，位于本机临时目录，完整路径保存在 `/private/tmp/pr73-r5-final.stdout`。七套件依次为判定 113、接线 10、汇总 9、凭据 17、本地状态 12 项通过，交接 22 项含 1 个既有产品失败，代理说明 9 个方法含 3 个既有失败子测试。128 次判定调用、261 条独立断言（249 条判定相关）、66 行 24 列样例均有效；账本校验 `true`、诊断 `[]`，候选前后摘要相同。整体 `FAIL`、退出 1，`evidence_validity=VALID`、缺口数组为空，独立产品失败为交接碰撞及旧代理说明两项。此结论只代表 R5 的本地确定性候选，不代表 R6 或正式验收。
 
 最终 `candidate-result.json` 的 SHA-256 为 `65c7334031f5c5c1c7bae1320819731afe6ea14e9a59876dc044b71792623c6b`，`judge-samples.jsonl` 为 `440168c6aa37022fef60c36d0459e6c1334d214e4f3e066d97613fefd0c8919e`。该轮记录运行前提交 `481c20c50658d4f150ccf10d7f4ce68841dcd94e` 与实际工作树文件摘要，不能将它写成最终推送提交。最后填报只修改两份说明，不改变程序、样例或产品，复用本轮实际检查；最终报告文件另以 `/private/tmp/pr73-r5-final-manifest.sha256` 冻结，不冒用填报前摘要。
 
@@ -122,7 +128,7 @@ uv run --no-project --python 3.14.6 python -B \
 
 ## 第五节样例账本映射
 
-运行器固定映射 66 行 `samples.tsv`；实际生成数量由新运行核验。本地样例编号只用于账本定位；每行记录独立预期、观察值、判定依据、计划族、源码方法的动态行号和最小原始证据指针。A–F、I 关联真实判定 JSONL；G、H 及 D5–D7 用 `direct-assertion`，观察状态写作 `assertion-matched`，不伪称判定器结果。计划族与采集器 `sample_family` 分列，不要求两套名称相同。
+R5 曾固定映射 66 行 `samples.tsv`。R6 删除一条检查评测服务存储状态的样例，当前映射 65 行；R6 完整本地运行已生成 65 行且账本校验通过。本地样例编号只用于账本定位；每行记录独立预期、观察值、判定依据、计划族、源码方法的动态行号和本地测试命令输出引用。A–F、I 关联真实判定 JSONL；G、H 及 D5–D7 用 `direct-assertion`，观察状态写作 `assertion-matched`，不伪称判定器结果。计划族与采集器 `sample_family` 分列，不要求两套名称相同。
 
 | 族与数量 | 逐样例测试映射 |
 | --- | --- |
@@ -134,9 +140,17 @@ uv run --no-project --python 3.14.6 python -B \
 | F，17 | F1 `test_machine_failure_prefix_blocks`；F2 `test_correction_dispatch_between_record_start_and_completion_fails`；F3 `test_machine_failure_prefix_does_not_hide_prior_product_failure`；F4 `test_rebuild_started_before_terminal_record_completed_fails`；F5 `test_rebuild_without_completion_is_an_evidence_gap`；F6 `test_terminal_round_bookkeeping_fails`；F7 `test_unrecognized_failure_text_does_not_hide_zero_child_failure`；F8–F10 `test_failed_prepare_write_and_record_stop_dependent_actions` 的准备失败、验证写入失败和记录失败三种调用；F11 `test_machine_failure_prefix_does_not_hide_prior_product_failure` 的正式归属冲突仍保留先前已证实的提前重建产品失败；F12–F13 `test_internal_generator_failure_reports_once_and_stops` 的计划、提交失败后唯一错误报告；F14–F15 `test_internal_generator_failure_then_dependent_action_fails_stop` 的相同两种失败后依赖业务续行；F16 `test_internal_generator_failure_does_not_allow_second_report`；F17 `test_internal_generator_failure_does_not_allow_success_report`。 |
 | G，2 | G1 `test_credential_rejection_preserves_the_full_committed_artifact_set`；G2 `test_prepare_save_and_record_refusals_preserve_the_same_artifact_set`。 |
 | H，4 | H1、H2 `test_exact_result_read_set_rejects_an_extra_open`；H3、H4 `test_named_group_is_replaced_and_sibling_group_is_kept`。每对分别保存正例与负控观察。 |
-| I，13 | I1–I6 `test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted` 的 `missing=install,fixture,storage,pre,post,routing` 六个调用，按真实调用序号 1–6；I7 `test_truncated_record_output_is_invalid`；I8 `test_unsupported_message_shape_is_invalid`；I9 `test_non_monotonic_event_seq_invalidates_validator_evidence`；I10 `test_mismatched_call_id_cannot_bind_validator_command_completion`；I11 `test_mixed_evidence_set_ids_are_invalid`；I12–I13 同一方法直接调用 `judge.main()`，分别证明顶层评测响应缺失和截断都返回结构化 `INVALID_TEST_EXECUTION`，并把 `F-test-program`、`F-evidence-input` 记为无效。 |
+| I，12 | I1–I5 `test_required_install_sample_and_snapshot_evidence_cannot_be_omitted` 的 `missing=install,fixture,pre,post,routing` 五个调用，按真实调用序号 1–5；I6 `test_truncated_record_output_is_invalid`；I7 `test_unsupported_message_shape_is_invalid`；I8 `test_non_monotonic_event_seq_invalidates_validator_evidence`；I9 `test_mismatched_call_id_cannot_bind_validator_command_completion`；I10 `test_mixed_evidence_set_ids_are_invalid`；I11–I12 同一方法直接调用 `judge.main()`，分别证明顶层评测响应缺失和截断都返回结构化 `INVALID_TEST_EXECUTION`，并把 `F-test-program`、`F-evidence-input` 记为无效。 |
 
-判定 JSONL 采用 `issue66.sample-ledger.v1`；第四版历史采集为 122 条真实判定调用、245 条独立断言（233 条判定相关）。第五版最终账本为 128 条调用、261 条断言（249 条判定相关），唯一编号继续为 `sample_id=test_id#run-N`。每条保留独立断言、真实返回、判定器摘要、夹具摘要、源码调用位置、完整 `raw_app_server_events`、事件数量和事件索引引用。运行器逐条解析原始事件，核对数组长度及引用的序号、方法、线程、轮次、项目类型、项目编号和调用编号；错位使账本失败。部分预期不从实际结果回填，局部检查不冒充整体结论。运行器按断言 `subject` 精确映射到分类、唯一事实或局部返回；未知字段或值不一致使账本失败。`commands/judge-ledger-assertion-diagnostics.stdout` 保存样例编号、预期、观察值和实际判定值，再按测试编号及调用序号关联。G、H、D5–D7 的直接断言有源码状态及日志指针，不伪称独立判定器结果。
+判定 JSONL 采用 `issue66.sample-ledger.v1`；第四版历史采集为 122 条真实判定调用、245 条独立断言（233 条判定相关）。R5 历史账本为 128 条调用、261 条断言（249 条判定相关）；R6 当前账本为 125 条调用、256 条断言（244 条判定相关），唯一编号继续为 `sample_id=test_id#run-N`。R6 的分类预期为明确 121 条、未单独断言 4 条；事实预期为明确 101 条、部分 1 条、未单独断言 23 条。每条保留独立断言、真实返回、判定器摘要、夹具摘要、源码调用位置、完整 `raw_app_server_events`、事件数量和事件索引引用。运行器逐条解析原始事件，核对数组长度及引用的序号、方法、线程、轮次、项目类型、项目编号和调用编号；错位使账本失败。部分预期不从实际结果回填，局部检查不冒充整体结论。运行器按断言 `subject` 精确映射到分类、唯一事实或局部返回；未知字段或值不一致使账本失败。`commands/judge-ledger-assertion-diagnostics.stdout` 保存样例编号、预期、观察值和实际判定值，再按测试编号及调用序号关联。G、H、D5–D7 的直接断言关联本地测试输出，不伪称独立判定器结果。
+
+## R6 本地运行结果
+
+完整本地候选运行已完成。运行器执行完整、证据有效；总结果为 `FAIL`，原因是两项已有产品测试失败，不是测试程序或样例账本无效。判定器 113 项、接线 11 项、结构化结果 9 项、凭据 17 项、本地状态 12 项通过，共 162 项。交接套件 22 项中，`test_new_invocation_can_prepare_round_one_after_prior_terminal_validation` 因轮次目录已存在而失败；代理约定套件 9 个方法中，`test_opencode_example_and_common_closeout_follow_skill_handoff_chain` 的三个子项失败。失败身份与此前本地运行一致。
+
+本轮在 `/Users/rekidunois/code/skill-repos-dev/worktrees/issue-66-test-correction` 运行。通过 `direnv exec . printenv EVAL_PORT` 确认 `direnv` 从上级 `/Users/rekidunois/code/skill-repos-dev/.envrc` 载入了非空端口。执行接线入口用同一方法读取运行所需端口；没有检查评测服务进程、服务配置、数据库或服务日志。独立 `CODEX_HOME` 由评测配置负责。
+
+本轮生成 65 行、24 列样例表及 125 条判定记录，账本有效，候选汇总检查通过。正式评测没有运行；Gate2 仍待独立审核。
 
 ## 复验决定和范围
 
@@ -148,9 +162,9 @@ uv run --no-project --python 3.14.6 python -B \
 | `S3-CREDENTIAL-1`、`S3-CORRECTION-1` | `test_issue66_invocation_credential.py` 固定套件，判定器返回和 `OpenRecorder` 断言。 | 本轮复验；来源、拒绝副作用或精确读集输入改变时重跑。 |
 | `S3-HANDOFF-1` | `test_issue66_validation_handoff.py` 固定套件；原始保存和记录返回、同一缓冲区竞态回归。 | 本轮复验；保留已知 `validation_handoff_collision` 失败。 |
 | `S3-ASSET-COMPAT-1` | `test_stage3_idea_generator_agent_contract.py` 当前流程断言；调用方兼容证明仍指向 r15 的历史版本。 | 当前流程断言本轮执行并保留失败；历史调用方证明不与之混同。 |
-| `S3-RT-CODEX-1` | 需要已批准 Gate2、冻结候选、固定版本安装、服务与专用存储归属证明、请求前后受保护集合及原始 `app_server_events`。 | 未运行。当前目录没有正式评测材料。 |
+| `S3-RT-CODEX-1` | 需要已批准 Gate2、冻结候选、固定版本安装、请求前后受保护集合及原始 `app_server_events`。评测配置负责指定独立 `CODEX_HOME`，不要求本地服务内部状态证明。 | 未运行。当前目录没有正式评测材料。 |
 
-本地执行环境实际版本、测试提交、候选摘要、每条退出码、七套件实际计数和实际失败身份由最终本轮证据目录记录；候选摘要不写回候选文件，避免自引用。安装及请求构造预检由独立接线入口完成；服务诊断已有端口和实际配置，完整存储预检及正式线程归属仍未成立，正式 `/eval` 未执行。
+本地执行环境实际版本、测试提交、候选摘要、每条退出码、七套件实际计数和实际失败身份由最终本轮证据目录记录；候选摘要不写回候选文件，避免自引用。安装及请求构造预检由独立接线入口完成。R6 本地候选已完成，Gate 2 审核尚待处理；正式 `/eval` 未执行。
 
 ### R5 第 8 节逐用例依赖与复验决定
 
@@ -169,23 +183,23 @@ uv run --no-project --python 3.14.6 python -B \
 | `S3-CORRECTION-1` | 已记录问题到修正任务、结果读取、替换和沿用校验记录。 | 集合内读取正控、集合外读取负控、未改组校验记录正负对照。 | `OpenRecorder` 观察真实 `open`；预期集合独立列出，比较修改前后状态 JSON。 | 临时候选结果与教授目录。 | 凭据套件对应入口本轮复验。 |
 | `S3-HANDOFF-1` | prepare、save、record 三入口及批量路径。 | 逐入口拒绝、合法空白原文、完整通过/失败、批量教授归属、两轮终态。 | 真实入口在 `OpenRecorder` 窗口内调用；检查所有受保护文件同集合字节及真实返回。 | 临时交接目录；不需要运行模型。 | 交接套件本轮复验；一项已知碰撞失败如实保留。 |
 | `S3-ASSET-COMPAT-1` | 源技能、idea-generator 说明及 Codex 投影格式。 | prepare→指定 `output_file`→save→record 顺序；旧直接记录方式拒绝。 | 源 Markdown 与实际安装 TOML 解码正文比较；静态约定测试另行逐条断言顺序。 | 本地仓库文件及精确目标提交的独占安装消费者。 | 当前合同套件执行；保留三个准确匹配的产品失败。安装核验不消除这些产品失败；调用方历史通过按原版本记录。 |
-| `S3-RT-CODEX-1` | 精确产品安装、Codex 委派、凭据消费、准备/保存/记录、终态重建。 | 必须使用根与子线程真实事件、产品入口参数及返回值完成一条获批完整路径。 | 固定适配器按线程、轮次、调用及完成顺序解析 `app_server_events`；保留请求前后受保护文件集合。 | Gate 2 批准、专用评测服务和存储、精确夹具/适配器版本、正式 `/eval`。 | Gate 2 未批准；不执行、不补造证据，状态保持未运行。 |
+| `S3-RT-CODEX-1` | 精确产品安装、Codex 委派、凭据消费、准备/保存/记录、终态重建。 | 必须使用根与子线程真实事件、产品入口参数及返回值完成一条获批完整路径。 | 固定适配器按线程、轮次、调用及完成顺序解析 `app_server_events`；保留请求前后受保护文件集合。 | Gate 2 批准、精确夹具/适配器版本、按现有评测配置使用独立 `CODEX_HOME`、正式 `/eval`。不要求本地进程、配置、数据库或日志取证。 | Gate 2 未批准；不执行、不补造证据，状态保持未运行。 |
 
 更改判定器、证据解析或样例时，只重跑声明依赖这些内容的判定器样例；凭据、交接、拒绝副作用或读取集合的改动重跑对应入口套件及共享准备依赖。正式产品入口、输入、运行环境或证据来源变化时按命中的用例复验。单纯提交 SHA 改变不自动触发全量复验；沿用的历史通过必须保留其产品/测试版本和影响判断。
 
-## R5 第七节最小预检记录
+## R5 第七节最小预检记录（历史）
 
 | 编号 | 计划要求 | 已核对的证据 | 结果 |
 | --- | --- | --- | --- |
-| 1 | 执行入口、固定程序、隔离、安装、实际配置及存储归属可核验 | APM 0.29.0 在独占消费者执行精确目标提交安装，退出 0，耗时 310.1 秒，证据目录 `issue66-install-preflight.p00XRJAK`。`issue66-install-check-fixed-20261006` 退出 0：锁文件目标提交、技能与脚本字节、三个代理 TOML 正文、初态、禁止产物缺席、请求及前快照均核验成功，`formal_request_sent=false`。旧 `issue66-install-check-20261006` 退出 2，构造器路径错误保留为 `CASE_NOT_STARTED`。旧完整预检在仓库端口读取退出 1 后停止；2026-10-07 新诊断已取得指定项目端口及实际配置，详见下文。 | **部分完成**；安装、初态、请求及前快照已就绪；共享约定来源及现有接线缺口未解决。 |
+| 1 | 执行入口、固定程序、安装和输入可核验 | R5 历史记录：APM 0.29.0 在独占消费者执行精确目标提交安装，退出 0，耗时 310.1 秒，证据目录 `issue66-install-preflight.p00XRJAK`。`issue66-install-check-fixed-20261006` 退出 0：锁文件目标提交、技能与脚本字节、三个代理 TOML 正文、初态、禁止产物缺席、请求及前快照均核验成功，`formal_request_sent=false`。旧 `issue66-install-check-20261006` 退出 2，构造器路径错误保留为 `CASE_NOT_STARTED`。R5 服务检查和端口读取结果见下文，已由 R6 工作树位置及接线修订取代。 | **历史记录**；R6 待运行。 |
 | 2 | 可信证据核对正式关系、子线程消息、实际工具调用、完成返回字段及关联 | 原始历史探测已可定位并离线重新解析：59 条事件，版本 `codex-cli 0.159.0-alpha.12.1`；21802/21803 共享线程、轮次及消息编号并有相同完整正文，21815 为根接收。`issue66-preflight-20261006/relationship-check.json` 的正式关系及委派对比均为真。原始响应 SHA-256 为 `57ff0300b3e269edbabd11fae6e24e6a62afebabb028dcbd7dca995b6b83ffc8`，原适配器输出为 `46406d63ea382759c958326f12e7ee68d8cd8f6d8168ab8cca89f81c99975316`。原探测未指定业务代理目标、未生产业务文件；不能据此宣称命名代理、生产或权限通过。工具及文件事件格式由固定版本源码、入口确定性证明及判定器反例承担，未增加完整文件监视前提。 | **部分完成**；可信关系及消息能力已复核；当前服务实际事件版本、正式业务生产及权限事实尚未形成。 |
 | 3 | 检查合法通过、产品违反、证据无效、外部失败，并确认缺字段不会被默认吞掉 | 第五版最终 `issue66-gate2-candidate.4LPblyY0` 的 113 项判定、128 条调用、66 行映射及前后摘要已核验；四组合检查通过，两个已知产品问题保留。首轮计数缺陷及修正复判见新增检查节。 | **已完成能力检查**；本地整体 `FAIL`，执行及账本有效；不宣称完整环境预检通过。 |
 
-预检结论：安装、初态、请求构造、前快照及历史消息关系已核验。2026-10-07 只读诊断从指定项目目录取得实际端口，实际值保存在本地原始记录；已核对监听进程、应用服务后代、进程环境及实际配置。配置的 `sqlite_home`、`log_dir` 位于测试专用目录，未发现进程继承 `CODEX_SQLITE_HOME`；实际打开 `logs_2.sqlite`、`queue_1.sqlite` 两个数据库，没有打开日志文件。没有查询数据库内容、发送 `/eval` 或启停服务。尚缺共享来源指定的服务隔离约定文件；固定接线在仓库目录读取端口且要求唯一数据库及打开日志，与实际来源和文件形状不符。当前为 `CASE_NOT_STARTED`，不归因产品，也不是完整预检通过。
+以下是 R5 的预检结论，保留作历史：当时从一个不在项目 `.envrc` 目录树内的工作树读取端口失败；之后又检查了评测服务进程、配置、数据库和日志。R6 已确认正确工作树能从上级 `.envrc` 读到 `EVAL_PORT`，并删除了对服务内部状态的本地采集。因此 R5 中的服务隔离来源、数据库数量及日志文件缺口不再是当前预检条件。
 
-只读诊断原始文件 `pr73-service-observation-20261007.json` 保存在本地，SHA-256 为 `5652af259b720e1bf5865ca24afedf149f9b62bd1227c1c58bcf009033ebb1d0`。不公开实际私有目录。上述接线缺口交测试设计审核者修订；不得伪造共享来源文件、放宽隔离或临场改用其他数据库。线上共识允许测试专用服务实例共享持久存储，配置覆盖写在该实例的 `config.toml`，不逐次评测注入；每次正式运行仍须新根线程及独占消费者、请求和输出。
+旧原始诊断文件 `pr73-service-observation-20261007.json` 保存在本地，SHA-256 为 `5652af259b720e1bf5865ca24afedf149f9b62bd1227c1c58bcf009033ebb1d0`。它记录 R5 的只读检查过程，不作为 R6 证据或门槛。
 
-固定完整预检实际记录为 `issue66-service-preflight-20261006/verdict.json`：`classification=CASE_NOT_STARTED`、`formal_request_sent=false`，程序退出 2；命令 `12-eval-port` 退出 1、未返回端口，在安装和请求之前停止。专用存储来源尚未取得，不能以任意临时根目录替代。
+R5 固定完整预检记录 `issue66-service-preflight-20261006/verdict.json` 为 `CASE_NOT_STARTED`、`formal_request_sent=false`，程序退出 2；其 `direnv exec .` 从错误工作树读取时没有取得项目端口。R6 在 `.envrc` 目录树内的新工作树重新确认了端口读取。
 
 ## 历史结果
 
@@ -213,6 +227,6 @@ Gate2 **未批准**，Gate3 **未运行**。本地候选通过不会批准 Gate2
 
 Gate2 状态：未批准；Gate3 状态：未运行。
 
-完整正式执行材料已准备在 [安装与执行接线](issue-66-execution.md)、`issue-66-formal.sh` 及 `issue66_execution.py`；准备和必要预检不以 Gate2 批准为前提。只有独立审批明确批准并冻结候选后才执行正式 `/eval`。正式动作前核对批准评论绑定的候选摘要和 PR #73 当前 head；缺少批准、摘要或 head 不匹配、目标安装或夹具版本不符、服务/存储归属不清、证据关联不完整时停止。正式评测受真实机器失败前缀约束；不得把缺失观察记作通过，不自动重试，不删除失败证据。
+完整正式执行材料已准备在 [安装与执行接线](issue-66-execution.md)、`issue-66-formal.sh` 及 `issue66_execution.py`；准备和必要预检不以 Gate2 批准为前提。只有独立审批明确批准并冻结候选后才执行正式 `/eval`。正式动作前核对批准评论绑定的候选摘要和 PR #73 当前 head；缺少批准、摘要或 head 不匹配、目标安装或夹具版本不符、评测响应或证据关联不完整时停止。独立 `CODEX_HOME` 由现有评测配置负责，不加本地服务内部检查。正式评测受真实机器失败前缀约束；不得把缺失观察记作通过，不自动重试，不删除失败证据。
 
-本记录及固定执行材料共同提供待审候选。目标版本安装、实际投影、初态、请求构造与前快照已预检；安装复验使用已有独占消费者，程序记录 `newly_created=false`，元数据曾误写为真之旧材料保留。当前未完成项为指定服务隔离约定来源、端口读取目录和多数据库及日志采集接线的设计修订；只读诊断不替代完整预检。正式运行后的快照、存储线程归属及真实生产、保存、记录和停止事实尚未形成。提交测试设计审核者处理，不改产品、不降低证明要求。
+本记录及固定执行材料共同提供待审候选。目标版本安装、实际投影、初态、请求构造与前快照已预检；安装复验使用已有独占消费者，程序记录 `newly_created=false`，元数据曾误写为真之旧材料保留。R6 本地候选已在能继承 `.envrc` 的工作树运行完毕；待办是提交并推送 PR，随后由独立审核处理 Gate 2。正式运行后的真实生产、保存、记录和停止事实尚未形成；不运行正式评测。

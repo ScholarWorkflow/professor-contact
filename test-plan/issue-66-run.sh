@@ -8,7 +8,7 @@ readonly repository_slug='ScholarWorkflow/professor-contact'
 readonly uv_cache_dir='/private/tmp/issue66-uv-cache'
 readonly uv_expected='uv 0.12.11 (aarch64-apple-darwin)'
 readonly python_expected='Python 3.14.6'
-readonly runner_revision='issue-66-local-candidate-runner-r20-2026-10-07'
+readonly runner_revision='issue-66-local-candidate-runner-r21-2026-10-07'
 
 usage() {
   printf '用法：%s local\n' "$0" >&2
@@ -254,9 +254,9 @@ validate_judge_sample_ledger() {
       elif $subject == "observed[\u0027F-attribution\u0027]" then "F-attribution"
       elif $subject == "observed[\u0027F-routing-verifier\u0027]" then "F-routing-verifier"
       elif $subject == "facts(verdict)[fact]"
-        and $record.test_id == "test_issue66_runtime_judge.FoldedEvidenceTests.test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted"
-        and $record.evidence_ref.run_ordinal >= 1 and $record.evidence_ref.run_ordinal <= 6 then
-        ["F-install", "F-fixture", "F-storage-ownership", "F-pre-snapshot", "F-post-snapshot", "F-routing-verifier"][$record.evidence_ref.run_ordinal - 1]
+        and $record.test_id == "test_issue66_runtime_judge.FoldedEvidenceTests.test_required_install_sample_and_snapshot_evidence_cannot_be_omitted"
+        and $record.evidence_ref.run_ordinal >= 1 and $record.evidence_ref.run_ordinal <= 5 then
+        ["F-install", "F-fixture", "F-pre-snapshot", "F-post-snapshot", "F-routing-verifier"][$record.evidence_ref.run_ordinal - 1]
       elif ($subject | test("^facts\\(verdict\\)\\[\u0027F-[A-Za-z0-9-]+\u0027\\]$")) then
         ($subject | capture("^facts\\(verdict\\)\\[\u0027(?<fact>F-[A-Za-z0-9-]+)\u0027\\]$").fact)
       else null end;
@@ -303,9 +303,9 @@ validate_judge_sample_ledger() {
       elif $subject == "observed[\u0027F-attribution\u0027]" then "F-attribution"
       elif $subject == "observed[\u0027F-routing-verifier\u0027]" then "F-routing-verifier"
       elif $subject == "facts(verdict)[fact]"
-        and $record.test_id == "test_issue66_runtime_judge.FoldedEvidenceTests.test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted"
-        and $record.evidence_ref.run_ordinal >= 1 and $record.evidence_ref.run_ordinal <= 6 then
-        ["F-install", "F-fixture", "F-storage-ownership", "F-pre-snapshot", "F-post-snapshot", "F-routing-verifier"][$record.evidence_ref.run_ordinal - 1]
+        and $record.test_id == "test_issue66_runtime_judge.FoldedEvidenceTests.test_required_install_sample_and_snapshot_evidence_cannot_be_omitted"
+        and $record.evidence_ref.run_ordinal >= 1 and $record.evidence_ref.run_ordinal <= 5 then
+        ["F-install", "F-fixture", "F-pre-snapshot", "F-post-snapshot", "F-routing-verifier"][$record.evidence_ref.run_ordinal - 1]
       elif ($subject | test("^facts\\(verdict\\)\\[\u0027F-[A-Za-z0-9-]+\u0027\\]$")) then
         ($subject | capture("^facts\\(verdict\\)\\[\u0027(?<fact>F-[A-Za-z0-9-]+)\u0027\\]$").fact)
       else null end;
@@ -337,7 +337,7 @@ validate_judge_sample_ledger() {
       "read_reuse",
       "evidence_channels"
     ] as $allowed_families
-    | length == 128
+    | length == 125
       and all(.[];
         . as $record
         | .schema_version == "issue66.sample-ledger.v1"
@@ -410,11 +410,11 @@ validate_judge_sample_ledger() {
         )
       )
       and ([.[].sample_id] | length == (unique | length))
-      and ([.[] | select(.expected.classification_status == "asserted")] | length == 124)
+      and ([.[] | select(.expected.classification_status == "asserted")] | length == 121)
       and ([.[] | select(.expected.classification_status == "not_asserted")] | length == 4)
-      and ([.[] | select(.expected.facts_status == "asserted")] | length == 103)
+      and ([.[] | select(.expected.facts_status == "asserted")] | length == 101)
       and ([.[] | select(.expected.facts_status == "partial")] | length == 1)
-      and ([.[] | select(.expected.facts_status == "not_asserted")] | length == 24)
+      and ([.[] | select(.expected.facts_status == "not_asserted")] | length == 23)
       and ([.[].sample_family[]] | unique) == ["evidence_channels",
         "file_permissions", "formal_relations", "order_and_stops",
         "raw_messages", "source_handoff_values", "three_completion_paths"]
@@ -730,22 +730,21 @@ R19-5-H1|read_set=matches_independent_expected|credential|test_exact_result_read
 R19-5-H2|extra_open=detected_without_byte_change|credential|test_exact_result_read_set_rejects_an_extra_open|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_invocation_credential.py|sentinel unchanged after observed open||direct-assertion
 R19-5-H3|dir_C_validator_record=preserved|credential|test_named_group_is_replaced_and_sibling_group_is_kept|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_invocation_credential.py|unmodified dir_C result preserved||direct-assertion
 R19-5-H4|cleared_dir_C_record=detected|credential|test_named_group_is_replaced_and_sibling_group_is_kept|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_invocation_credential.py|negative control deletes dir_C validator record||direct-assertion
-R19-5-I1|classification=INVALID_TEST_EXECUTION|judge|test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:816|subTest missing=install|1
-R19-5-I2|classification=INVALID_TEST_EXECUTION|judge|test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:816|subTest missing=fixture|2
-R19-5-I3|classification=INVALID_TEST_EXECUTION|judge|test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:816|subTest missing=storage|3
-R19-5-I4|classification=INVALID_TEST_EXECUTION|judge|test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:816|subTest missing=pre|4
-R19-5-I5|classification=INVALID_TEST_EXECUTION|judge|test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:816|subTest missing=post|5
-R19-5-I6|classification=INVALID_TEST_EXECUTION|judge|test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:816|subTest missing=routing|6
-R19-5-I7|classification=INVALID_TEST_EXECUTION|judge|test_truncated_record_output_is_invalid|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1539|truncated evidence output
-R19-5-I8|classification=INVALID_TEST_EXECUTION|judge|test_unsupported_message_shape_is_invalid|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1555|unsupported message shape
-R19-5-I9|classification=INVALID_TEST_EXECUTION|judge|test_non_monotonic_event_seq_invalidates_validator_evidence|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1666|non-monotonic event sequence
-R19-5-I10|classification=INVALID_TEST_EXECUTION|judge|test_mismatched_call_id_cannot_bind_validator_command_completion|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1693|mismatched call id
-R19-5-I11|classification=INVALID_TEST_EXECUTION|judge|test_mixed_evidence_set_ids_are_invalid|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|mixed evidence-set identifiers
-R19-5-I12|missing_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-input=invalid|judge|test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is missing||direct-assertion
-R19-5-I13|truncated_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-input=invalid|judge|test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is truncated||direct-assertion
+R19-6-I1|classification=INVALID_TEST_EXECUTION|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|subTest missing=install|1
+R19-6-I2|classification=INVALID_TEST_EXECUTION|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|subTest missing=fixture|2
+R19-6-I3|classification=INVALID_TEST_EXECUTION|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|subTest missing=pre|3
+R19-6-I4|classification=INVALID_TEST_EXECUTION|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|subTest missing=post|4
+R19-6-I5|classification=INVALID_TEST_EXECUTION|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|subTest missing=routing|5
+R19-6-I6|classification=INVALID_TEST_EXECUTION|judge|test_truncated_record_output_is_invalid|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1539|truncated evidence output
+R19-6-I7|classification=INVALID_TEST_EXECUTION|judge|test_unsupported_message_shape_is_invalid|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1555|unsupported message shape
+R19-6-I8|classification=INVALID_TEST_EXECUTION|judge|test_non_monotonic_event_seq_invalidates_validator_evidence|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1666|non-monotonic event sequence
+R19-6-I9|classification=INVALID_TEST_EXECUTION|judge|test_mismatched_call_id_cannot_bind_validator_command_completion|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1693|mismatched call id
+R19-6-I10|classification=INVALID_TEST_EXECUTION|judge|test_mixed_evidence_set_ids_are_invalid|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|mixed evidence-set identifiers
+R19-6-I11|missing_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-input=invalid|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is missing||direct-assertion
+R19-6-I12|truncated_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-input=invalid|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is truncated||direct-assertion
 SAMPLE_RECORDS
 
-  if [[ "$sample_row_count" -ne 66 ]]; then
+    if [[ "$sample_row_count" -ne 65 ]]; then
     sample_ledger_valid='false'
   fi
   while IFS= read -r tsv_line || [[ -n "$tsv_line" ]]; do
@@ -756,16 +755,16 @@ SAMPLE_RECORDS
       sample_ledger_valid='false'
     fi
   done < "$evidence_dir/samples.tsv"
-  if [[ "$sample_tsv_rows" -ne 67 ]]; then
+  if [[ "$sample_tsv_rows" -ne 66 ]]; then
     sample_ledger_valid='false'
   fi
   if [[ "$family_A" -ne 3 || "$family_B" -ne 7 || "$family_C" -ne 5 \
     || "$family_D" -ne 7 || "$family_E" -ne 8 || "$family_F" -ne 17 \
-    || "$family_G" -ne 2 || "$family_H" -ne 4 || "$family_I" -ne 13 ]]; then
+    || "$family_G" -ne 2 || "$family_H" -ne 4 || "$family_I" -ne 12 ]]; then
     sample_ledger_valid='false'
   fi
   if [[ "$sample_ledger_valid" == 'true' ]]; then
-    printf 'sample_ledger_status=VALID_JUDGE_AND_DIRECT_ASSERTION_RECORDS_66_SAMPLES_24_COLUMNS\n' >> "$evidence_dir/metadata.txt"
+    printf 'sample_ledger_status=VALID_JUDGE_AND_DIRECT_ASSERTION_RECORDS_65_SAMPLES_24_COLUMNS\n' >> "$evidence_dir/metadata.txt"
     return 0
   fi
   printf 'sample_ledger_status=INVALID_TEST_EXECUTION\n' >> "$evidence_dir/metadata.txt"
@@ -865,7 +864,7 @@ export ISSUE66_SAMPLE_LEDGER="$EVIDENCE_DIR/judge-samples.jsonl"
 : > "$ISSUE66_SAMPLE_LEDGER"
 run_suite judge test_issue66_runtime_judge.py 113
 unset ISSUE66_SAMPLE_LEDGER
-run_suite execution_wiring test_issue66_execution_wiring.py 10
+run_suite execution_wiring test_issue66_execution_wiring.py 11
 run_suite structured_result test_issue66_suite_result.py 9
 run_suite credential test_issue66_invocation_credential.py 17
 run_suite local_state test_issue66_stage3_local_state.py 12

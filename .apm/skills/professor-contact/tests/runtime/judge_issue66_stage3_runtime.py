@@ -1,13 +1,13 @@
 """Mechanical judge for the S3-RT-CODEX-1 runtime evidence (issue #66).
 
 This is the single decision program required by the current test plan
-(``issue-66-test-plan-r19-clarification-r4-2026-10-05`` §四/§五/§七).  It folds
+(``issue-66-test-plan-r19-clarification-r6-2026-10-07`` §四/§五/§七).  It folds
 every required evidence surface into ONE verdict — formal delegation
 attribution, the invocation-credential value chain, the per-round
 prepare→validate→save→record handoff, the validator-produced raw bytes, the
 file-operation behavior proven by complete command inputs and completed
 ``fileChange`` records, the completion-order
-stop boundaries, the terminal state, and the install/fixture/storage
+stop boundaries, the terminal state, and the install/fixture/snapshot
 checks — and classifies per the frozen rules:
 
 - attribution conflicts / version mixing / unsupported evidence shapes
@@ -29,8 +29,6 @@ Inputs (files only; the judge never talks to the network):
   ``--post-snapshot``   required producer verifier outputs, folded in
 - ``--routing-evidence`` required legacy topology verifier output,
                         folded into the unique conclusion
-- ``--storage-evidence`` required read-only storage ownership record
-
 Every evidence input must carry the same non-empty ``evidence_set_id``. The
 collector must bind the raw /eval response, adapter and verifier outputs to
 the same run before invoking this judge.
@@ -1087,7 +1085,7 @@ class Judge:
         self.m = model
         self.state = candidate_state
         self.program_root = program_root
-        self.surfaces = surfaces          # install/fixture/routing/pre/post/storage
+        self.surfaces = surfaces          # install/fixture/routing/pre/post
         self.rows: list[dict] = []
         self.attribution_invalid = False
         self.attribution_incomplete = False
@@ -1284,7 +1282,7 @@ class Judge:
     def judge_folded_surfaces(self):
         evidence_ids = [(name, self.surfaces.get(name, {}).get("evidence_set_id")
                          if isinstance(self.surfaces.get(name), dict) else None)
-                        for name in ("install", "fixture", "routing", "pre", "post", "storage")]
+                        for name in ("install", "fixture", "routing", "pre", "post")]
         evidence_ids.extend((
             ("eval-response", self.m.evidence_set_id),
             ("adapter-output", self.m.adapter_evidence_set_id),
@@ -1329,24 +1327,6 @@ class Judge:
                 "fact": "F-fixture", "verdict": "invalid",
                 "summary": "sample evidence declares a manual patch",
                 "evidence": [f"manual_patch={fixture.get('manual_patch')}"]}
-        self._fold_required_checks(
-            "storage", "F-storage-ownership",
-            ("process_is_test_only", "config_is_test_only",
-             "database_is_test_only", "logs_are_test_only",
-             "database_path_resolved", "run_records_match_case", "read_only"),
-            "storage ownership")
-        storage = self.surfaces.get("storage")
-        if isinstance(storage, dict):
-            required = ("process_id", "config_path", "database_path", "log_path", "rollout_dir", "root_thread_id", "thread_ids")
-            missing = [name for name in required if not storage.get(name)]
-            if missing:
-                self.row("F-storage-binding", "gap", "storage lacks actual process, paths or thread observations", missing)
-            elif storage["root_thread_id"] != self.m.root_id or not isinstance(storage["thread_ids"], list) \
-                    or any(not isinstance(thread, str) for thread in storage["thread_ids"]) \
-                    or not {self.m.root_id, *(child for _spawn, child in self.m.ordered_children() if child)} <= set(storage["thread_ids"]):
-                self.row("F-storage-binding", "invalid", "storage thread records do not belong to the observed run", [])
-            else:
-                self.row("F-storage-binding", "pass", "actual process, paths and threads are recorded for the run", list(required))
         self._fold_required_checks(
             "pre", "F-pre-snapshot", ("pre_zero_write_snapshot",),
             "pre-run snapshot")
@@ -3292,7 +3272,6 @@ def main(argv=None) -> int:
     parser.add_argument("--routing-evidence", default=None)
     parser.add_argument("--pre-snapshot", default=None)
     parser.add_argument("--post-snapshot", default=None)
-    parser.add_argument("--storage-evidence", default=None)
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
 
@@ -3312,7 +3291,6 @@ def main(argv=None) -> int:
         "routing": args.routing_evidence,
         "pre": args.pre_snapshot,
         "post": args.post_snapshot,
-        "storage": args.storage_evidence,
     }
     surfaces = {}
     for name, path in surface_paths.items():

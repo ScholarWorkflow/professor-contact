@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import shlex
-import sqlite3
 import subprocess
 import sys
 import time
@@ -16,7 +15,7 @@ from pathlib import Path
 TARGET = "dfe430560b6e4d9d85c30b71b8c84bc621da7549"
 FIXTURE = "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
 ADAPTER = "skills-test-fixtures/codex-eval-adapter@16"
-PLAN = "issue-66-test-plan-r19-clarification-r5-2026-10-07"
+PLAN = "issue-66-test-plan-r19-clarification-r6-2026-10-07"
 HERE = Path(__file__).resolve().parent
 PROFESSOR = Path("教授研究/X分野/Example Professor")
 ARTIFACTS = {
@@ -197,9 +196,6 @@ class Execution:
                     str((HERE / "judge_issue66_stage3_runtime.py").relative_to(self.repo))]
         if any(name not in pinned for name in required):
             raise RuntimeError("冻结材料未覆盖全部执行及判定文件")
-        if not self.a.service_contract or frozen.get("service_contract_sha256") != \
-                digest(Path(self.a.service_contract).read_bytes()):
-            raise RuntimeError("共享服务隔离来源未由同一冻结材料固定")
         for relative, expected in pinned.items():
             path = (self.repo / relative).resolve()
             if not path.is_relative_to(self.repo) or digest(path.read_bytes()) != expected:
@@ -293,13 +289,6 @@ class Execution:
         except (RuntimeError, OSError, UnicodeError, subprocess.CalledProcessError) as exc:
             fixture_value["credential_observation_gap"] = str(exc)
         write(self.out / "fixture.json", fixture_value)
-        try:
-            self.service(port, response, adapter)
-        except (RuntimeError, OSError, KeyError, ValueError, sqlite3.Error) as exc:
-            if not (self.out / "storage.json").exists():
-                write(self.out / "storage.json", {"evidence_set_id": self.identity,
-                      "status": "error", "checks": [], "gap": str(exc),
-                      "actual_observation_failed": True})
         candidate = self.program / PROFESSOR / "套磁候选状态.json"
         self.py("unique-judge", HERE / "judge_issue66_stage3_runtime.py",
             "--eval-response", self.out / "response.json",
@@ -309,7 +298,7 @@ class Execution:
             "--fixture-evidence", self.out / "fixture.json",
             "--routing-evidence", self.out / "routing.json",
             "--pre-snapshot", self.out / "pre.json", "--post-snapshot", self.out / "post.json",
-            "--storage-evidence", self.out / "storage.json", "--output", self.out / "verdict.json",
+            "--output", self.out / "verdict.json",
             required=False)
         verdict = jq(self.out / "verdict.json")
         return 0 if verdict["classification"] == "PASS" else 1
@@ -324,19 +313,18 @@ class Execution:
             write(self.out / "preflight.json", {"classification": "PREFLIGHT_ONLY",
                   "formal_request_sent": False, "evidence_set_id": self.identity,
                   "prepared": ["installation", "initial_input", "request", "snapshot"],
-                  "remaining": ["实际服务配置与存储归属", "真实业务生产/权限证据"]})
+                  "remaining": ["正式运行业务生产、保存及权限事实"]})
             return 0
         if self.a.mode == "formal":
             self.unlock()
         port = self.port()
-        self.service(port)
         self.install()
         self.prepare()
         if self.a.mode == "preflight":
             write(self.out / "preflight.json", {"classification": "PREFLIGHT_ONLY",
                   "formal_request_sent": False, "evidence_set_id": self.identity,
-                  "prepared": ["installation", "initial_input", "request", "snapshot", "storage"],
-                  "remaining": ["本轮业务文件生产及权限按正式运行实际事件判读", "正式运行存储线程归属"]})
+                  "prepared": ["installation", "initial_input", "request", "snapshot"],
+                  "remaining": ["正式运行业务文件生产、保存及权限事实"]})
             return 0
         return self.formal(port)
 
@@ -438,113 +426,12 @@ class Execution:
         self.initial = initial
         self.before = before
 
-    def service(self, port, response=None, adapter=None):
-        """仅查询现有进程及只读存储，不配置或管理服务生命周期。"""
-        if not self.a.service_contract:
-            raise RuntimeError("缺少共享环境已指定的服务专用存储根及来源文件")
-        contract = jq(self.a.service_contract)
-        root = Path(contract["service_isolation_root"]).resolve()
-        if not root.is_absolute() or root == Path("/") or not contract.get("authority"):
-            raise RuntimeError("共享环境服务隔离来源无效")
-        listener = self.run("service-listener", ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"])
-        ids = set(listener.stdout.decode().split())
-        if len(ids) != 1:
-            raise RuntimeError("评测端口不能唯一归属既有进程")
-        service_pid = next(iter(ids))
-        process = self.run("process-tree", ["ps", "-axo", "pid=,ppid=,command="], private=True)
-        rows = [line.strip().split(None, 2) for line in process.stdout.decode().splitlines()]
-        descendants = {service_pid}
-        for _ in range(len(rows)):
-            old = len(descendants)
-            descendants.update(row[0] for row in rows if len(row) == 3 and row[1] in descendants)
-            if len(descendants) == old:
-                break
-        candidates = [row[0] for row in rows if len(row) == 3 and row[0] in descendants
-                      and "app-server" in shlex.split(row[2])]
-        if len(candidates) != 1:
-            raise RuntimeError("既有服务未唯一关联实际应用服务进程")
-        pid = candidates[0]
-        actual_argv = next(shlex.split(row[2]) for row in rows if row[0] == pid)
-        if any(token in {"-c", "--config"} or token.startswith("--config=")
-               for token in actual_argv):
-            raise RuntimeError("实际进程带配置覆盖，当前采集未核清覆盖后的存储目录，停止且保留缺口")
-        env_result = self.run("actual-process-environment", ["ps", "eww", "-p", pid,
-                              "-o", "command="], private=True)
-        # 进程环境不是结构文档，只保留负责隔离证明的变量；不落凭据。
-        observed = {}
-        for token in shlex.split(env_result.stdout.decode()):
-            if "=" in token:
-                key, value = token.split("=", 1)
-                if key in {"CODEX_HOME", "CODEX_SQLITE_HOME", "XDG_STATE_HOME",
-                           "XDG_DATA_HOME", "XDG_CACHE_HOME"}:
-                    observed[key] = value
-        write(self.out / ("process-env-post.json" if response else "process-env-pre.json"), observed)
-        if not observed.get("CODEX_HOME"):
-            raise RuntimeError("实际应用服务未提供测试专用 CODEX_HOME；不回退用户目录")
-        home = Path(observed["CODEX_HOME"]).resolve()
-        config = home / "config.toml"
-        config_result = self.run("actual-config", ["yq", "-p=toml", "-o=json", ".", str(config)], private=True)
-        # 仅落必要目录覆盖；配置其余内容可能有凭据。
-        values = json.loads(config_result.stdout)
-        config_db = values.get("sqlite_home")
-        sqlhome = Path(config_db or observed.get("CODEX_SQLITE_HOME") or str(home)).resolve()
-        files = self.run("actual-open-storage", ["lsof", "-p", pid, "-Fn"])
-        paths = [Path(line[1:]).resolve() for line in files.stdout.decode().splitlines()
-                 if line.startswith("n/")]
-        databases = sorted(set(path for path in paths if path.suffix in {".sqlite", ".db"}))
-        logs = sorted(set(path for path in paths if path.suffix == ".log"))
-        if len(databases) != 1 or not logs:
-            raise RuntimeError("实际打开的数据库或日志路径不能按已知接口唯一核实")
-        database = databases[0]
-        rollout = home / "sessions"
-        actual_ids = []
-        records = []
-        if response is not None:
-            runtime_root = response.get("output", {}).get("thread_id")
-            wanted = {runtime_root, *adapter.get("delegation", {}).get("child_thread_ids", [])}
-            if None in wanted or not runtime_root:
-                raise RuntimeError("运行根线程证据缺失")
-            with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
-                connection.execute("PRAGMA query_only=ON")
-                columns = {row[1] for row in connection.execute("PRAGMA table_info(threads)")}
-                if not {"id", "rollout_path"} <= columns:
-                    raise RuntimeError("实际数据库缺少受支持线程归属字段")
-                for thread in sorted(wanted):
-                    found = connection.execute("SELECT id,rollout_path FROM threads WHERE id=?", (thread,)).fetchall()
-                    records.extend({"id": row[0], "rollout_path": row[1]} for row in found)
-                    if len(found) == 1 and Path(found[0][1]).resolve().is_relative_to(root):
-                        actual_ids.append(thread)
-            matched = set(actual_ids) == wanted
-        else:
-            runtime_root, matched = None, False
-        contained = lambda path: path.is_relative_to(root)
-        checks = [check("process_is_test_only", contained(home), observed),
-                  check("config_is_test_only", contained(config), str(config)),
-                  check("database_is_test_only", contained(database), str(database)),
-                  check("logs_are_test_only", all(contained(path) for path in logs), list(map(str, logs))),
-                  check("database_path_resolved", database.parent == sqlhome,
-                        {"config_sqlite_home": config_db, "inherited_CODEX_SQLITE_HOME": observed.get("CODEX_SQLITE_HOME"),
-                         "actual_database": str(database), "resolved_directory": str(sqlhome)}),
-                  check("run_records_match_case", matched, records),
-                  check("read_only", True, "sqlite mode=ro，query_only=ON；仅查询进程和打开文件")]
-        value = surface(self.identity, checks, process_id=int(pid), service_process_id=int(service_pid),
-                        config_path=str(config), database_path=str(database), log_path=str(logs[0]),
-                        rollout_dir=str(rollout), root_thread_id=runtime_root, thread_ids=actual_ids,
-                        service_contract_sha256=digest(Path(self.a.service_contract).read_bytes()))
-        write(self.out / ("storage.json" if response else "storage-preflight.json"), value)
-        prerequisites = [row for row in checks if row["name"] != "run_records_match_case"]
-        if any(row["status"] != "pass" for row in prerequisites):
-            raise RuntimeError("实际服务或存储隔离前提未核实")
-        return value
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("preflight", "formal", "installation-check"))
     parser.add_argument("--repository", required=True)
     parser.add_argument("--fixture-root", required=True)
     parser.add_argument("--evidence-dir", required=True)
-    parser.add_argument("--service-contract")
     parser.add_argument("--frozen-manifest")
     parser.add_argument("--consumer")
     args = parser.parse_args(argv)

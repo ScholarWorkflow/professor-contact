@@ -504,7 +504,7 @@ def legal_two_child_spine(fx: Fixture):
 
 
 def valid_surfaces(fx: Fixture):
-    """Complete independent install, sample, storage, snapshot and route inputs."""
+    """Complete independent install, sample, snapshot and route inputs."""
     relations = [row for row in fx.relations
                  if isinstance(row, dict) and row.get("tool") == "spawnAgent"]
     owners = {}
@@ -568,20 +568,6 @@ def valid_surfaces(fx: Fixture):
             {"name": "pre_zero_write_snapshot", "status": "pass"}]},
         "post": {"status": "pass", "checks": [
             {"name": "post_matches_current", "status": "pass"}]},
-        "storage": {"status": "ok", "process_id": "case-process-1",
-                    "root_thread_id": ROOT, "thread_ids": [ROOT, *fx.children],
-                    "rollout_dir": "/tmp/issue66/case-1",
-                    "config_path": "/tmp/issue66/case-1/config.toml",
-                    "database_path": "/tmp/issue66/case-1/state.sqlite",
-                    "log_path": "/tmp/issue66/case-1/server.log",
-                    "checks": [
-                        {"name": "process_is_test_only", "status": "pass"},
-                        {"name": "config_is_test_only", "status": "pass"},
-                        {"name": "database_is_test_only", "status": "pass"},
-                        {"name": "logs_are_test_only", "status": "pass"},
-                        {"name": "database_path_resolved", "status": "pass"},
-                        {"name": "run_records_match_case", "status": "pass"},
-                        {"name": "read_only", "status": "pass"}]},
     }
     for evidence in surfaces.values():
         evidence["evidence_set_id"] = "issue66-fixture-run-1"
@@ -911,8 +897,7 @@ def run(fx: Fixture, *, state="default", delegation_override=None,
                      "fixture": "--fixture-evidence",
                      "routing": "--routing-evidence",
                      "pre": "--pre-snapshot",
-                     "post": "--post-snapshot",
-                     "storage": "--storage-evidence"}
+                     "post": "--post-snapshot"}
     response_path.write_text(json.dumps(fx.response(), ensure_ascii=False),
                              encoding="utf-8")
     adapter = fx.adapter()
@@ -1331,10 +1316,10 @@ class FoldedEvidenceTests(RuntimeJudgeTestCase):
                          "INVALID_TEST_EXECUTION", verdict)
         self.assertEqual(facts(verdict)["F-install"], "invalid")
 
-    def test_required_install_sample_storage_and_snapshot_evidence_cannot_be_omitted(self):
+    def test_required_install_sample_and_snapshot_evidence_cannot_be_omitted(self):
         expected_facts = {
             "install": "F-install", "fixture": "F-fixture",
-            "storage": "F-storage-ownership", "pre": "F-pre-snapshot",
+            "pre": "F-pre-snapshot",
             "post": "F-post-snapshot", "routing": "F-routing-verifier",
         }
         for missing, fact in expected_facts.items():
@@ -1381,14 +1366,14 @@ class FoldedEvidenceTests(RuntimeJudgeTestCase):
         self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
         self.assertEqual(facts(verdict)["F-fixture"], "invalid", verdict)
 
-    def test_storage_status_without_ownership_checks_is_a_gap(self):
+    def test_service_storage_evidence_is_not_required_for_a_pass(self):
         fx = Fixture()
         legal_two_child(fx)
         surfaces = valid_surfaces(fx)
-        surfaces["storage"].pop("checks")
+        surfaces.pop("storage", None)
         verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
-        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
-        self.assertEqual(facts(verdict)["F-storage-ownership"], "gap", verdict)
+        self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertNotIn("F-storage-ownership", facts(verdict))
 
     def test_failed_post_snapshot_cannot_be_hidden_by_routing_pass(self):
         fx = Fixture()
@@ -1403,7 +1388,7 @@ class FoldedEvidenceTests(RuntimeJudgeTestCase):
         fx = Fixture()
         legal_two_child(fx)
         surfaces = valid_surfaces(fx)
-        surfaces["storage"]["evidence_set_id"] = "another-run"
+        surfaces["pre"]["evidence_set_id"] = "another-run"
         verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
         self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
         self.assertEqual(facts(verdict)["F-evidence-version"], "invalid", verdict)
@@ -2631,17 +2616,13 @@ class EvidenceChannelTests(RuntimeJudgeTestCase):
                 verdict = run(fx, state=PASS_STATE)
                 self.assertEqual(verdict["classification"], "FAIL", verdict)
 
-    def test_full_install_and_storage_binding_fields_cannot_be_omitted(self):
-        for surface, field in (("install", "target_commit"),
-                               ("storage", "database_path"),
-                               ("storage", "thread_ids")):
-            with self.subTest(surface=surface, field=field):
-                fx = Fixture()
-                legal_two_child(fx)
-                evidence = valid_surfaces(fx)
-                del evidence[surface][field]
-                verdict = run(fx, state=PASS_STATE, surface_evidence=evidence)
-                self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+    def test_full_install_target_commit_cannot_be_omitted(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        evidence = valid_surfaces(fx)
+        del evidence["install"]["target_commit"]
+        verdict = run(fx, state=PASS_STATE, surface_evidence=evidence)
+        self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
 
     def test_truncated_record_output_is_invalid(self):
         fx = Fixture()

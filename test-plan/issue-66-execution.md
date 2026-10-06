@@ -1,19 +1,19 @@
 # 第 66 号测试的安装与正式执行接线
 
-本文件是 `issue-66.md` 的固定执行部分，受同一候选及文件摘要约束。依据为第五版证明计划 `issue-66-test-plan-r19-clarification-r5-2026-10-07`（PR #73 评论 6022078922），取代第四版评论 5991701404。当前第二关口未批准；以下程序为待审实现，不构成执行批准。
+本文件是 `issue-66.md` 的固定执行部分，受同一候选及文件摘要约束。当前候选为 R6：`issue-66-test-plan-r19-clarification-r6-2026-10-07`，在 R5 基础上按本地测试工程师的工作要求修订测试工作树位置，并移除评测服务内部状态检查。R5 的服务、存储检查记载只保留为历史，不再作为当前门槛。当前第二关口未批准；以下程序为待审实现，不构成执行批准。
 
 ## 固定输入和入口
 
 产品完整提交固定为 `dfe430560b6e4d9d85c30b71b8c84bc621da7549`，共享环境完整提交固定为 `c738fa2f8bcbb16cd99d741332d5f59b062b6357`，适配约定为 `skills-test-fixtures/codex-eval-adapter@16`。测试提交从实际仓库 `git rev-parse HEAD` 取得，判定及接线文件按冻结材料的全文件 SHA-256 核对。判定入口为 `judge_issue66_stage3_runtime.py`；接线入口为 `issue66_execution.py`。
 
-在本工作树先执行 `pwd`，将输出原样代入 `REPOSITORY`。进入该目录后执行：
+测试工作树必须放在项目 `.envrc` 所在目录之下，例如 `<skill-repos-dev>/worktrees/<branch>`。执行器以 `--repository` 指定的工作树作为 `direnv exec .` 的工作目录，再读取 `EVAL_PORT`。Codex 默认的 `~/.codex/worktrees/...` 不在项目 `.envrc` 的目录树内，按这个目录运行会因找不到环境文件而失败。先在正确工作树执行 `pwd`，将输出原样代入 `REPOSITORY`，再运行：
 
 ```sh
 cd "$REPOSITORY"
 bash test-plan/issue-66-run.sh local
 ```
 
-运行器固定判定 113 项、接线 10 项、结构化记录 9 项、凭据 17 项、本地状态 12 项、交接 22 项、代理说明 9 个方法，共七套件。`tests/runtime/issue66_suite_result.py` 以测试回调保存方法、子测试参数、事件类型及计数，`tests/runtime/issue66_suite_classify.jq` 判定套件，`tests/runtime/issue66_candidate_classify.jq` 先检查证据有效性再汇总整体及独立产品失败；`test_issue66_suite_result.py` 验证四种组合，原始输入、独立预期及实际结果保存在 `candidate-combinations`。整体输出为 `candidate-result.json`，包含证据有效性、整体分类、局部失败与来源、缺口；`runner_execution=COMPLETE` 仅表示全部步骤执行完毕，不表示账本有效或候选、正式验收通过。日志原样保存，当前已知产品失败保留。接线检查覆盖请求构造、快照、历史保留、正式归属、预检不发请求、初态构造、冻结资产及符号链接拒绝，不代表服务或业务通过。
+R6 七套件实跑数量依次为判定器 113、接线 11、结构化记录 9、凭据 17、本地状态 12、交接 22、代理说明 9 个方法。前五套件通过，后两套保留既有产品失败。`tests/runtime/issue66_suite_result.py` 以测试回调保存方法、子测试参数、事件类型及计数，`tests/runtime/issue66_suite_classify.jq` 判定套件，`tests/runtime/issue66_candidate_classify.jq` 先检查证据有效性再汇总整体及独立产品失败；`test_issue66_suite_result.py` 验证四种组合，原始输入、独立预期及实际结果保存在 `candidate-combinations`。整体输出为 `candidate-result.json`，包含证据有效性、整体分类、局部失败与来源、缺口；`runner_execution=COMPLETE` 仅表示全部步骤执行完毕，不表示账本有效或候选、正式验收通过。各本地命令的原始输出仍原样保存。接线检查覆盖请求构造、快照、历史保留、正式归属、预检不发请求、初态构造、冻结资产及符号链接拒绝。
 
 安装、初态和请求可独立预检，无须端口或第二关口批准。夹具路径由项目指定的精确版本检出目录取得，必须提供绝对路径；证据目录为从未存在过的独占目录，程序拒绝覆盖。
 
@@ -36,46 +36,36 @@ apm install --target codex \
 
 请求构造使用共识指定的默认模型 `gpt-6-luna`、思考级别 `low` 和 `workspace-write`，不指定替代提供方。动态信任键按服务文档支持的完整 `projects` 内联表编码，包含空格或句点的路径不拆开。最多四个业务子线程加根线程，因此资源上限固定为五；业务并发和顺序仍由产品及判定负责。提示词仅要求现有输入的第三阶段，不诱导失败或增加模型次数。请求、提示词和摘要分别保留。
 
-## 现有服务的只读取证
+## 评测服务配置约定
 
-完整预检模式依次取得项目 `direnv exec . printenv EVAL_PORT`，查询该端口唯一监听进程和其实际应用服务子进程，读取实际进程环境及配置，随后执行安装与输入预检。程序不启动、停止或重启服务。
+完整预检只从项目 `.envrc` 读取 `EVAL_PORT`，然后检查安装、输入、请求和前快照；不会查询监听进程、服务进程环境、`config.toml`、数据库或日志文件。项目评测配置负责给服务实例设置独立的 `CODEX_HOME`。本地测试依赖这项现有配置约定，不再重复验证服务内部文件；评测配置本身属于评测环境配置，不属于本地测试结果。
 
 ```sh
 UV_CACHE_DIR=/private/tmp/issue66-uv-cache \
   bash test-plan/issue-66-formal.sh preflight \
-  --fixture-root "$FIXTURE_ROOT" --evidence-dir "$NEW_EVIDENCE_DIRECTORY" \
-  --service-contract "$SHARED_SERVICE_CONTRACT"
+  --fixture-root "$FIXTURE_ROOT" --evidence-dir "$NEW_EVIDENCE_DIRECTORY"
 ```
 
-`SHARED_SERVICE_CONTRACT` 必须来自项目指定的共享环境配置并由本候选审核固定，不得临时填一个通过标记。固定字段为 `service_isolation_root`（该测试专用服务存储的绝对根目录）和 `authority`（项目指定来源）。程序保存该文件实际摘要，冻结材料也必须核对同一摘要。**当前尚未取得这个来源文件**；实际进程与配置已经只读核对，但不能替代共享来源指定的约定。
-
-采集程序先以 `lsof` 定位监听进程，再以 `ps` 核对其应用服务后代。实际进程环境仅保存 `CODEX_HOME`、`CODEX_SQLITE_HOME` 和负责隔离的目录变量；其他环境内容不落盘。实际 `CODEX_HOME/config.toml` 用 `yq` 解析，不从用户目录猜默认配置。数据库目录优先按实际配置 `sqlite_home`，未指定时检查进程继承的 `CODEX_SQLITE_HOME`，再按实际测试专用 `CODEX_HOME` 解析。数据库及日志取实际打开文件，不能拿顶层旧数据库代替。
-
-服务根、配置、实际数据库和日志均须位于共享来源指定的测试专用根。正式运行后以 SQLite `mode=ro` 和 `query_only=ON` 查询实际 `threads.id/rollout_path`，只读取本次根和正式子线程记录；线程与运行日志必须归属本次实际响应及测试专用目录。实际架构或打开文件形状不支持已写采集时记录具体缺口并停止，不改配置、不启停服务、不扩大权限。
-
-2026-10-07 只读诊断：仓库内端口读取退出 1，指定项目目录读取成功，实际值保存在本地原始记录；已核对监听进程、服务后代、测试专用 `CODEX_HOME` 及实际配置的 `sqlite_home`、`log_dir`，未发现继承的 `CODEX_SQLITE_HOME`。实际打开 `logs_2.sqlite`、`queue_1.sqlite` 两个数据库，没有打开日志文件。固定接线仍从仓库读取端口并要求唯一数据库及打开日志，与实际来源和形状不符；本步仅更新计划常量，未改变采集行为。共享来源约定文件未取得，完整预检仍为 `CASE_NOT_STARTED`，不归因产品。原始诊断及 SHA-256 见主记录。没有查询数据库内容或发正式请求；这些缺口交测试设计审核者修订，不伪造来源、不放宽隔离。线上共识允许整个测试专用实例共享存储，覆盖只放实例配置，不逐次注入；正式运行仍须新根线程。`run_records_match_case` 是运行后事实，不提前填为通过。
-
-固定程序的实际完整预检证据为 `issue66-service-preflight-20261006`：程序退出 2、`CASE_NOT_STARTED`，命令 `12-eval-port` 退出 1、未返回端口，在安装和请求前停止。专用存储来源仍未取得，不以自行指定目录代替。
+2026-10-07 的 R5 只读诊断曾在错误工作树路径调用端口读取，随后读取进程、配置、数据库和日志并记录了未通过项。这些结果只说明当时的采集方法不适用；新路径已确认能从上级 `.envrc` 取得 `EVAL_PORT`。R6 删除上述服务内部检查，也不再要求 `SHARED_SERVICE_CONTRACT`。
 
 ## 冻结后的唯一正式执行
 
-正式执行只能在第二关口完整批准当前测试提交后进行。冻结材料 JSON 字段为 `plan`、`product_commit`、`test_commit`、`fixture_commit`、`gate2_comment_id`、`gate2_reviewer`、`service_contract_sha256` 和 `files`（仓库相对路径到 SHA-256 的映射）。至少覆盖本文件、正式脚本、执行接线和唯一判定程序；审核应固定全体测试文件及其直接依赖。正式模式查询真实远端批准评论，核对审核者、当前完整提交及同一计划，核对全部冻结文件，工作树必须无修改。没有冻结批准时停止，预检则始终无需批准。
+正式执行只能在第二关口完整批准当前测试提交后进行。冻结材料 JSON 字段为 `plan`、`product_commit`、`test_commit`、`fixture_commit`、`gate2_comment_id`、`gate2_reviewer` 和 `files`（仓库相对路径到 SHA-256 的映射）。至少覆盖本文件、正式脚本、执行接线和唯一判定程序；审核应固定全体测试文件及其直接依赖。正式模式查询真实远端批准评论，核对审核者、当前完整提交及同一计划，核对全部冻结文件，工作树必须无修改。没有冻结批准时停止，预检则始终无需批准。
 
 ```sh
 UV_CACHE_DIR=/private/tmp/issue66-uv-cache \
   bash test-plan/issue-66-formal.sh formal \
   --fixture-root "$FIXTURE_ROOT" --evidence-dir "$NEW_EVIDENCE_DIRECTORY" \
-  --service-contract "$SHARED_SERVICE_CONTRACT" \
   --frozen-manifest "$APPROVED_FROZEN_MANIFEST"
 ```
 
-程序固定顺序：版本及批准 → 项目端口 → 服务和存储隔离 → 全新正式安装 → 初态摘要及禁止产物 → 固定请求 → 前快照 → 一次既有服务 `POST /eval` → 原始响应 → 精确版本适配器 → 后快照 → 正式关系派生 → 实际凭据字节和资料字节 → 只读运行存储归属 → 唯一判定。每一步实际命令、目录、退出码、输出摘要及原始输出保存在 `commands`，一次请求编号保存在 `attempt.json`。
+程序固定顺序：版本及批准 → 项目端口 → 全新正式安装 → 初态摘要及禁止产物 → 固定请求 → 前快照 → 一次既有服务 `POST /eval` → 原始响应 → 精确版本适配器 → 后快照 → 正式关系派生 → 实际凭据字节和资料字节 → 唯一判定。每一步实际命令、目录、退出码、输出摘要及原始输出保存在 `commands`，一次请求编号保存在 `attempt.json`。
 
 原始响应及适配器输出分别保留为 `response-raw.json` 和 `adapter-raw.json`；加入同一 `evidence_set_id` 的派生副本不覆盖它们。捕获凭据从实际成功完成命令的结构化返回定位，读其真实 UTF-8 字节及固定初态资料字节，不从最终状态倒推捕获内容，不增加未设计的完整文件操作监视。正式关系按 `sender_thread_id` 归属，仅派生实际直属、嵌套及冲突关系；失败前缀尚未到达的生成/校验数量由唯一判定按实际阶段处理。
 
-统一判定一次性接入 `install.json`、`fixture.json`、`routing.json`、`pre.json`、`post.json`、`storage.json`、完整响应、适配器和实际候选状态及程序根。它负责整体分类、逐事实来源和缺口。根消息/子线程结果、原文生产、写权限、完成顺序及停止条件按完整原始事件处理；人工备注没有程序外通过权。失败前缀不调用旧验证器的未来完整终态检查。
+统一判定一次性接入 `install.json`、`fixture.json`、`routing.json`、`pre.json`、`post.json`、完整响应、适配器和实际候选状态及程序根。它负责整体分类、逐事实来源和缺口。根消息/子线程结果、原文生产、写权限、完成顺序及停止条件按完整原始事件处理；人工备注没有程序外通过权。失败前缀不调用旧验证器的未来完整终态检查。
 
-正式请求最多一次，无自动重试。不论成功、失败、无效还是外部阻断，全部原始材料保留；恢复事实及复验决定未成立时不另发请求。请求前前提失败为 `CASE_NOT_STARTED`；请求已发但原始响应不可解析或不能归属时保留 `INVALID_TEST_EXECUTION`，不把未知启动边界假称已开始或未开始。已有独立产品违反由统一判定保留，不被后续存储缺口覆盖。
+正式请求最多一次，无自动重试。不论成功、失败、无效还是外部阻断，全部原始材料保留；恢复事实及复验决定未成立时不另发请求。请求前前提失败为 `CASE_NOT_STARTED`；请求已发但原始响应不可解析或不能归属时保留 `INVALID_TEST_EXECUTION`，不把未知启动边界假称已开始或未开始。已有独立产品违反由统一判定保留。
 
 ## 已核对能力和剩余范围
 
@@ -87,4 +77,4 @@ UV_CACHE_DIR=/private/tmp/issue66-uv-cache \
 
 安装命令的真实预检退出 0，消费者证据基名为 `issue66-install-preflight.p00XRJAK`。首次安装检查 `issue66-install-check-20261006` 退出 2，判为 `CASE_NOT_STARTED`：已安装构造辅助将消费者视作生产仓库，拒绝其内部 `program`。保留旧失败，改用核对固定源字节的本仓库纯初态资产；没有重装或修补消费者。新独占尝试 `issue66-install-check-fixed-20261006` 退出 0，安装投影、初态、请求和前快照已核实，没有发送正式请求。
 
-新增三项回归在修复前运行 10 项，退出 1，三项报错；修复后同组运行 10 项，退出 0。原始输出分别为 `issue66-wiring-fix-before.stdout/.stderr` 和 `issue66-wiring-fix-after.stdout/.stderr`，均保留。随后将固定构造资产检查接入初态证据，并把复用消费者的 `newly_created` 更正为 `false`；同组最终检查 `issue66-wiring-fix-final.stdout/.stderr` 仍为 10 项、退出 0。真实安装复验记录原样保留，其中原 `newly_created=true` 为测试元数据错误，实际来源为已有消费者，不能据此声称新安装。实际服务配置、存储架构和正式业务取证尚未通过，待审程序写完不等于这些现实前提通过。完整用例对应、逐项复验依赖、历史失败和历史有效来源继续在同一候选 `issue-66.md` 登记，不以本文件代替未完成项。
+新增三项回归在修复前运行 10 项，退出 1，三项报错；修复后同组运行 10 项，退出 0。原始输出分别为 `issue66-wiring-fix-before.stdout/.stderr` 和 `issue66-wiring-fix-after.stdout/.stderr`，均保留。随后将固定构造资产检查接入初态证据，并把复用消费者的 `newly_created` 更正为 `false`；同组最终检查 `issue66-wiring-fix-final.stdout/.stderr` 仍为 10 项、退出 0。真实安装复验记录原样保留，其中原 `newly_created=true` 为测试元数据错误，实际来源为已有消费者，不能据此声称新安装。R5 对实际服务配置和存储架构的检查只作历史保留；R6 已移除这些本地检查，不把它们列为待办。正式业务事实须在 Gate 2 获批后的真实运行中判定。完整用例对应、逐项复验依赖、历史失败和历史有效来源继续在同一候选 `issue-66.md` 登记。

@@ -4,7 +4,7 @@ import shlex
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 PATH = Path(__file__).parent / 'runtime/issue66_execution.py'
 spec = importlib.util.spec_from_file_location('issue66_execution', PATH)
@@ -21,7 +21,7 @@ class ExecutionWiringTests(unittest.TestCase):
         return wiring.Execution(Namespace(repository=str(PATH.parents[5]),
             fixture_root=str(root), evidence_dir=str(root / 'evidence'),
             mode='installation-check', consumer=str(consumer),
-            frozen_manifest=None, service_contract=None))
+            frozen_manifest=None))
 
     def test_initial_builder_uses_verified_producer_asset_in_consumer_layout(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -108,13 +108,27 @@ class ExecutionWiringTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             args = Namespace(repository=str(PATH.parents[5]),fixture_root=directory,
                 evidence_dir=str(Path(directory)/'new'),mode='preflight',consumer=None,
-                frozen_manifest=None,service_contract=None)
+                frozen_manifest=None)
             execution = wiring.Execution(args)
+            service = Mock()
+            execution.service = service
             with patch.object(execution,'run'), patch.object(execution,'versions'), \
                  patch.object(execution,'verify_versions'), patch.object(execution,'port',return_value='1234'), \
-                 patch.object(execution,'service'), patch.object(execution,'install'), \
+                 patch.object(execution,'install'), \
                  patch.object(execution,'prepare'), patch.object(execution,'formal') as formal, \
                  patch.object(execution,'unlock') as unlock:
                 self.assertEqual(execution.execute(),0)
                 formal.assert_not_called()
                 unlock.assert_not_called()
+            service.assert_not_called()
+
+    def test_eval_port_lookup_runs_from_repository_worktree(self):
+        from subprocess import CompletedProcess
+        with tempfile.TemporaryDirectory() as directory:
+            execution = self.execution(directory)
+            with patch.object(execution, 'run', return_value=CompletedProcess(
+                    [], 0, b'4312\n', b'')) as run:
+                self.assertEqual(execution.port(), '4312')
+            run.assert_called_once_with('eval-port', [
+                'direnv', 'exec', '.', 'printenv', 'EVAL_PORT'])
+            self.assertEqual(execution.repo, PATH.parents[5].resolve())
