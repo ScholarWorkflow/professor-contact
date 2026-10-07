@@ -1,5 +1,5 @@
 {
-  "revision": "issue-68-runtime-evidence-r31-2026-10-07",
+  "revision": "issue-68-runtime-evidence-r32-2026-10-07",
   "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
   "fixture_sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
   "fixture_contract": "skills-test-fixtures/codex-eval-adapter@16",
@@ -424,7 +424,11 @@
       "provenance.json",
       "codex/lifecycle.before.json",
       "codex/lifecycle-evidence.json",
-      "codex/fixture-manifest.json（lifecycle_evidence）"
+      "codex/fixture-manifest.json（lifecycle_evidence）",
+      "codex/transfer-location-declaration.txt",
+      "codex/business-prompt.txt",
+      "codex/transfer-location-binding.json",
+      "codex/fixture-manifest.request.json"
     ]
   },
   "lifecycle_observation_preflight": {
@@ -455,12 +459,22 @@
     "overall_preflight_status": "PREFLIGHT_INCOMPLETE",
     "counting_note": "此处129项为第30版历史轮次56+50+11+12；不代表第31版当前源码验证，不同轮次不累计。第31版各独立证据另列，正式D1复用，R1未执行",
     "runtime_source": "duplicate_started_identity.after",
-    "lifecycle_source": "lifecycle_after_duplicate_start"
+    "lifecycle_source": "lifecycle_after_duplicate_start",
+    "r32_transfer_location": {
+      "evidence": "tests/runtime/evidence/issue68-r32-transfer-location-preflight.json",
+      "transfer_location_tests": 11,
+      "runtime_r19_tests": 56,
+      "lifecycle_tests": 70,
+      "runtime_recipe_tests": 11,
+      "all_exit_codes": 0,
+      "formal_PC68_R1_started": false,
+      "test_source_sha256": "ddd8b2449e24eff8ffc6718faa812dcb648128c0ab89bb8dcf79f88de3d3c790"
+    }
   },
   "lifecycle_combination": {
     "schema": "issue68-r31-lifecycle-v1",
-    "candidate_procedure": "docs/issue68-test-gate-r31.md",
-    "current_precheck_evidence": "tests/runtime/evidence/issue68-r31-lifecycle-combination-final-validation.json",
+    "candidate_procedure": "docs/issue68-test-gate-r32.md",
+    "current_precheck_evidence": "tests/runtime/evidence/issue68-r32-transfer-location-preflight.json",
     "historical_validation_evidence": [
       "tests/runtime/evidence/issue68-r31-lifecycle-combination-validation.json",
       "tests/runtime/evidence/issue68-r31-lifecycle-combination-precheck.json",
@@ -471,12 +485,105 @@
     "completion_review_record": "tests/runtime/evidence/issue68-r31-completion-review.md",
     "source_binding": {
       "issue68_lifecycle.py": "f9fc8b13f26b2826127aaa371eaf6b93479cba279c2e7b4f929b487a2bb8329e",
-      "preflight_issue68_lifecycle_combination_r31.py": "4d5122a373aa775248d0f55d8ab53177bfc90d9fa74a2901952f3acb7b2890c5"
+      "preflight_issue68_lifecycle_combination_r31.py": "4d5122a373aa775248d0f55d8ab53177bfc90d9fa74a2901952f3acb7b2890c5",
+      "issue68_transfer_location.py": "62de870ac12ad727bb9d65221a1aac918a68bd4bbe94bb9acb421872c19b913e",
+      "run_issue68_stage5_routing_r19_codex.py": "93e4a30c23d4de374142bb1a5b908837bbb703dd7a7f3ba501672851a24e5481",
+      "preflight_issue68_transfer_location_r32.py": "b6d513b4e13ba9701045e95cf4371dc563b34ad41ef3afda679a8412890af739"
     },
-    "non_acceptance_boundary": "文件与子进程事实为本地真实操作，运行信封、线程与事件为合成材料；当前预检不发评估请求，不运行教授业务，不证明全部合法位置覆盖。",
-    "plan_revision": 26,
-    "extra_scopes": "lifecycle_extra_observation_roots：请求前固定额外独占目录；未覆盖合法位置不是产品失败",
-    "remaining": "六场景本地组合预检已交付；线程与运行事件为合成材料。第05次隔离支持安装成功，固定产品提交和入口摘要匹配，但没有运行安装帮助或完整环境预检的合成观察。正式合法传递位置在请求前的完整覆盖仍未证明，须测试设计审核者修订观察安排。历史03/04仅复用原字段约定，不授予正式运行许可。",
-    "protection": "比较全部既有观察目录、文件字节、符号链接；合法本次输出从实际结构化返回及固定输入取得，不按任意后缀推断归属"
+    "non_acceptance_boundary": "合成预检含本地真实文件写入、读取、删除及完整扫描；运行、线程与代理事件为合成材料；不调用评估服务，不执行正式教授业务或PC68-R1",
+    "plan_revision": 27,
+    "extra_scopes": "manifest.transfer_location_root：独占绝对目录，绑定实际请求，并与业务目录及消费者一起执行请求前后完整观察；观察范围外位置归为 BLOCKED_OBSERVABILITY",
+    "remaining": "第32版位置声明、实际请求绑定与同根请求前后观察的七场景本地预检通过；真实教授线程中的根代理转交、实际业务读取和正式生命周期仍未证明。第二关口不完整，Gate 2未获批，正式PC68-R1未启动。",
+    "protection": "比较全部既有观察目录、文件字节、符号链接；合法本次输出从实际结构化返回及固定输入取得，不按任意后缀推断归属",
+    "prior_lifecycle_combination_evidence": "tests/runtime/evidence/issue68-r31-lifecycle-combination-final-validation.json"
+  },
+  "transfer_location_preflight": {
+    "schema": "issue-68-transfer-location-preflight-evidence-r32",
+    "state": "TRANSFER_LOCATION_PREFLIGHT_READY",
+    "current_precheck_evidence": "tests/runtime/evidence/issue68-r32-transfer-location-preflight.json",
+    "entrypoint": "tests/runtime/preflight_issue68_transfer_location_r32.py",
+    "command_template": "UV_CACHE_DIR=\"$PC68_UV_CACHE\" uv run --no-project python .apm/skills/professor-contact/tests/runtime/preflight_issue68_transfer_location_r32.py \"$PC68_LOCATION_PREFLIGHT_ROOT\"",
+    "exit_code": 0,
+    "plan_revision": 27,
+    "cases": [
+      {
+        "scenario": "success",
+        "verdict": "PASS",
+        "reason_code": "request_lifecycle_and_state_preservation_proven",
+        "expected_match": true
+      },
+      {
+        "scenario": "valid_remnant",
+        "verdict": "FAIL_PRODUCT",
+        "reason_code": "request_transfer_file_remains",
+        "expected_match": true
+      },
+      {
+        "scenario": "protected_data_changed",
+        "verdict": "FAIL_PRODUCT",
+        "reason_code": "other_request_file_changed_or_deleted",
+        "expected_match": true
+      },
+      {
+        "scenario": "wrong_request",
+        "verdict": "INVALID_EVIDENCE",
+        "reason_code": "lifecycle_request_boundary_invalid",
+        "expected_match": true
+      },
+      {
+        "scenario": "omitted_scan",
+        "verdict": "BLOCKED_OBSERVABILITY",
+        "reason_code": "transfer_path_outside_observation_scope",
+        "expected_match": true
+      },
+      {
+        "scenario": "missing_use",
+        "verdict": "BLOCKED_OBSERVABILITY",
+        "reason_code": "transfer_creation_and_cleanup_unobservable",
+        "expected_match": true
+      },
+      {
+        "scenario": "outside_scope",
+        "verdict": "BLOCKED_OBSERVABILITY",
+        "reason_code": "transfer_path_outside_observation_scope",
+        "expected_match": true
+      }
+    ],
+    "source_bindings": {
+      "tests/runtime/issue68_lifecycle.py": "f9fc8b13f26b2826127aaa371eaf6b93479cba279c2e7b4f929b487a2bb8329e",
+      "tests/runtime/issue68_transfer_location.py": "62de870ac12ad727bb9d65221a1aac918a68bd4bbe94bb9acb421872c19b913e",
+      "tests/runtime/run_issue68_stage5_routing_r19_codex.py": "93e4a30c23d4de374142bb1a5b908837bbb703dd7a7f3ba501672851a24e5481",
+      "tests/runtime/preflight_issue68_transfer_location_r32.py": "b6d513b4e13ba9701045e95cf4371dc563b34ad41ef3afda679a8412890af739",
+      "tests/test_issue68_transfer_location.py": "ddd8b2449e24eff8ffc6718faa812dcb648128c0ab89bb8dcf79f88de3d3c790"
+    },
+    "test_runs": [
+      {
+        "suite": "issue68_transfer_location",
+        "command": "UV_CACHE_DIR=\"$PC68_UV_CACHE\" uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_transfer_location.py",
+        "exit_code": 0,
+        "tests": 11
+      },
+      {
+        "suite": "issue68_runtime_r19",
+        "command": "UV_CACHE_DIR=\"$PC68_UV_CACHE\" uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_runtime_r19.py",
+        "exit_code": 0,
+        "tests": 56
+      },
+      {
+        "suite": "issue68_lifecycle",
+        "command": "UV_CACHE_DIR=\"$PC68_UV_CACHE\" uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_lifecycle*.py",
+        "exit_code": 0,
+        "tests": 70
+      },
+      {
+        "suite": "issue68_runtime_recipe",
+        "command": "UV_CACHE_DIR=\"$PC68_UV_CACHE\" uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_runtime_recipe.py",
+        "exit_code": 0,
+        "tests": 11
+      }
+    ],
+    "eval_service_called": false,
+    "formal_PC68_R1_started": false,
+    "gate_2_approved": false
   }
 }

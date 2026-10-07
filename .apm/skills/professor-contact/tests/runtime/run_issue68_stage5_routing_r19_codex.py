@@ -16,12 +16,13 @@ import run_issue68_stage5_routing_r19 as bridge
 import verify_issue68_stage5_routing_r19 as input_verifier
 import bind_issue68_preflight_command_event_r29 as command_event_binder
 import issue68_lifecycle as lifecycle
+import issue68_transfer_location as transfer_location
 
 
 HERE = Path(__file__).resolve().parent
 FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
-CONTRACT_REVISION = "issue-68-runtime-evidence-r31-2026-10-07"
+CONTRACT_REVISION = "issue-68-runtime-evidence-r32-2026-10-07"
 OWNER_OBSERVATION_SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
 SYNTHETIC_PREFLIGHT_SCHEMA = "issue-68-r29-fixed-capture-preflight-v2"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
@@ -434,6 +435,7 @@ def parse_args(argv=None):
     parser.add_argument("--fixture-sha", required=True)
     parser.add_argument("--eval-direnv-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--transfer-location-root", type=Path, required=True)
     args = parser.parse_args(argv)
     args.producer_root = args.producer_root.resolve()
     args.fixture_root = args.fixture_root.resolve()
@@ -630,13 +632,23 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
     original_verify_codex = base.verify_codex
     request_path = Path(output) / "codex" / "codex-request.json"
     evidence_path = Path(output) / "runtime-environment-evidence.json"
+    binding_path = Path(output) / "codex" / "transfer-location-binding.json"
     request_built = False
     lifecycle_context = {}
+    location_context = {}
 
     def install_host_with_capture(*install_args, **install_kwargs):
         directory, consumer, manifest = original_install_host(*install_args, **install_kwargs)
         if install_args[2] != "codex":
             return directory, consumer, manifest
+        program_root = manifest.get("program_root")
+        if not isinstance(program_root, (str, Path)) or not str(program_root):
+            raise ValueError("installed_program_root_missing")
+        location_context["root"] = transfer_location.validate_location_root(
+            args.transfer_location_root,
+            {"consumer": consumer, "program": program_root, "evidence_output": output},
+        )
+        args.transfer_location_root = location_context["root"]
         source = input_verifier.OWNER_CAPTURE_SOURCE
         source_sha = _sha256_file(source)
         if source_sha != input_verifier.OWNER_CAPTURE_SHA256:
@@ -649,6 +661,7 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
         if entrypoint.is_symlink() or not entrypoint.is_file():
             raise ValueError("owner_capture_installed_entrypoint_invalid")
         manifest_path = directory / "fixture-manifest.json"
+        manifest_snapshot_path = directory / "fixture-manifest.request.json"
         capture_record = {
             "consumer_root": str(consumer.resolve()),
             "runtime_path": str(runtime_script.resolve()),
@@ -660,29 +673,46 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
             "manifest_path": str(manifest_path.resolve()),
         }
         manifest["owner_capture"] = capture_record
+        transfer_location.bind_lifecycle_observation(
+            manifest, args.transfer_location_root)
+        manifest["transfer_location_manifest_snapshot"] = str(manifest_snapshot_path.resolve())
         lifecycle_context.update(directory=directory, consumer=consumer, manifest=manifest)
         base.write_json(manifest_path, manifest)
+        manifest_snapshot_path.write_bytes(manifest_path.read_bytes())
         prompt_path = directory / "root-prompt.txt"
         prompt = prompt_path.read_text(encoding="utf-8")
         prompt = prompt.replace("{{CAPTURE_SCRIPT}}", str(runtime_script.resolve()))
         prompt = prompt.replace("{{CONTACT_STATE}}", str(entrypoint))
         if "{{CAPTURE_SCRIPT}}" in prompt or "{{CONTACT_STATE}}" in prompt:
             raise ValueError("owner_capture_prompt_binding_failed")
-        prompt_path.write_text(prompt, encoding="utf-8")
+        business_prompt = prompt
+        request_prompts = transfer_location.save_request_prompts(
+            args.transfer_location_root, business_prompt, directory)
+        location_context.update(root=args.transfer_location_root,
+                                declaration=request_prompts["declaration"],
+                                business_prompt=request_prompts["business_prompt"])
+        prompt_path.write_text(request_prompts["combined_prompt"], encoding="utf-8")
         return directory, consumer, manifest
 
     def build_request_with_evidence(consumer, prompt):
         nonlocal request_built
         request = original_build_request(consumer, prompt)
         base.write_json(request_path, request)
+        binding = transfer_location.request_binding_record(
+            location_context["root"], location_context["declaration"],
+            location_context["business_prompt"], request_path,
+            Path(output) / "codex" / "fixture-manifest.request.json")
+        base.write_json(binding_path, binding)
         updated = _record_request_runtime_facts(
             preflight, output, request, service_snapshot, producer, fixture
         )
+        updated["transfer_location_binding"] = binding
         evidence = {
             "schema": "issue-68-r29-runtime-environment-evidence-v1",
             "runtime_environment_facts": updated["runtime_environment_facts"],
             "runtime_environment_evidence": updated["runtime_environment_evidence"],
             "request_artifact": updated["request_artifact"],
+            "transfer_location_binding": binding,
             "service_snapshot_artifact": "eval-service-provenance.before.json",
         }
         base.write_json(evidence_path, evidence)
@@ -692,6 +722,7 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
         provenance["runtime_environment_facts"] = preflight["runtime_environment_facts"]
         provenance["runtime_environment_evidence"] = preflight["runtime_environment_evidence"]
         provenance["runtime_environment_evidence_artifact"] = "runtime-environment-evidence.json"
+        provenance["transfer_location_binding"] = binding
         base.write_json(Path(output) / "provenance.json", provenance)
         request_built = True
         return request
@@ -707,11 +738,26 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
         if sent != saved:
             raise ValueError("outgoing_request_changed_after_capture")
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-        evidence["outgoing_request_body_sha256"] = hashlib.sha256(request.data).hexdigest()
+        request_body_sha256 = hashlib.sha256(request.data).hexdigest()
+        binding = transfer_location.request_binding_record(
+            location_context["root"], location_context["declaration"],
+            location_context["business_prompt"], request_path,
+            Path(output) / "codex" / "fixture-manifest.request.json",
+            request_body_sha256=request_body_sha256)
+        recorded_binding = evidence.get("transfer_location_binding")
+        if not isinstance(recorded_binding, dict) or {
+                key: value for key, value in binding.items() if key != "request_body_sha256"
+        } != recorded_binding:
+            raise ValueError("transfer_location_binding_changed_before_request")
+        base.write_json(binding_path, binding)
+        evidence["transfer_location_binding"] = binding
+        evidence["outgoing_request_body_sha256"] = request_body_sha256
         base.write_json(evidence_path, evidence)
-        preflight["request_body_sha256"] = evidence["outgoing_request_body_sha256"]
+        preflight["request_body_sha256"] = request_body_sha256
+        preflight["transfer_location_binding"] = binding
         base.write_json(Path(output) / "input-evidence-preflight.json", preflight)
-        provenance["request_body_sha256"] = evidence["outgoing_request_body_sha256"]
+        provenance["request_body_sha256"] = request_body_sha256
+        provenance["transfer_location_binding"] = binding
         base.write_json(Path(output) / "provenance.json", provenance)
         # Last read-only snapshot before the one actual request. The support
         # script and installed consumer already exist at this boundary.
@@ -779,6 +825,24 @@ def main(argv=None):
     pin()
     args = parse_args(argv)
     output = args.output_dir.resolve()
+    if getattr(args, "transfer_location_root", None) is not None:
+        try:
+            args.transfer_location_root = transfer_location.validate_location_root(
+                args.transfer_location_root,
+                {
+                    "product": args.producer_root,
+                    "shared_assets": args.fixture_root,
+                    "service": args.eval_direnv_root,
+                    "evidence_output": output,
+                    "runner_evidence": PREFLIGHT_DIR,
+                },
+            )
+        except ValueError as exc:
+            print(json.dumps({"state": "CASE_NOT_STARTED", "reason_code": str(exc)}))
+            return 2
+    else:
+        # 真实命令行入口要求提供此目录；这里仅兼容被替换解析器的旧测试。
+        args.transfer_location_root = None
     result = {"state": "CASE_NOT_STARTED", "reason_code": "bootstrap_failed"}
     if output.exists() and any(output.iterdir()):
         print(json.dumps({"state": "CASE_NOT_STARTED", "reason_code": "output_directory_not_empty"}))
@@ -798,6 +862,8 @@ def main(argv=None):
             raise ValueError(input_preflight["reason_code"])
         if not input_preflight["service_preflight_allowed"]:
             raise ValueError(input_preflight["formal_run_block_reason"])
+        if args.transfer_location_root is None:
+            raise ValueError("transfer_location_root_required")
         if args.fixture_sha != FIXTURE_SHA:
             raise ValueError("missing_or_wrong_frozen_fixture_arguments")
         if args.producer_sha != contract["producer_revision"]:
