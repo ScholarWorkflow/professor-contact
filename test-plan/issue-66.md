@@ -15,7 +15,7 @@
 
 每轮在独占证据目录记录产品及测试来源、计划修订号、判定程序来源、夹具与适配器来源、工具实际版本、工作目录、安装命令、模型和运行配置、运行编号。没有提交号的源码按未提交状态记录。日志、标准输出、标准错误、命令、退出码、结构化套件报告、实际测试身份与条目、样例账本及四类候选汇总输入和输出一并保存。软件版本和摘要只用于定位；不因与历史值不同而拒绝，也不把摘要相等作为业务通过条件。
 
-2026-10-07 已在 PR 当前来源提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 上运行完整候选，当前结果见“R7 本地候选实际结果”。来源 `2497dae2fffc02b0a66d33ea33b0405e128a9154` 的有效失败保留在历史记录。本地入口不提供正式 `/eval` 执行。
+2026-10-07 已在 PR 头部 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的工作树上运行完整候选；当时工作树包含本轮预检接线修正，后续已随提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 推送。当前结果见“R7 本地候选实际结果”。来源 `2497dae2fffc02b0a66d33ea33b0405e128a9154` 的有效失败保留在历史记录。本地入口不提供正式 `/eval` 执行。
 
 结构化运行记录本次实际使用的 `uv`、Python、Bash、`jq`、`rg`、`git`、`shasum` 及可用时的 `codex`、`opencode`、`shellcheck` 版本。套件身份和全部条目来自结构化回调；原始标准输出、标准错误和退出码同时留存，不按日志文本或历史版本作判定。
 
@@ -41,7 +41,7 @@
 
 ## R7 来源、运行方式与执行范围
 
-运行器在本仓库根目录执行七个确定性套件，不安装产品、不启动或连接评测服务，不发送 `/eval`。执行证据记录实际来源和配置字段：仓库根目录、来源提交、工作树状态、运行目录、计划修订号、各工具版本、`UV_CACHE_DIR`、每套件实际命令、测试身份与条目、结果、退出码、结构化汇总及运行编号。工作树有未提交内容照实记录，不按干净状态或路径名单拒绝。下节记录来源 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的当前候选；来源 `2497dae` 的失败见历史结果表。
+运行器在本仓库根目录执行七个确定性套件，不安装产品、不启动或连接评测服务，不发送 `/eval`。执行证据记录实际来源和配置字段：仓库根目录、来源提交、工作树状态、运行目录、计划修订号、各工具版本、`UV_CACHE_DIR`、每套件实际命令、测试身份与条目、结果、退出码、结构化汇总及运行编号。工作树有未提交内容照实记录，不按干净状态或路径名单拒绝。下节记录基线提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 上包含预检接线修正的候选；这些修正已推送至当前头部 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509`。来源 `2497dae` 的失败见历史结果表。
 
 正式包装脚本通过 `--product-source` 接收本轮实际产品来源，并将它交给执行器。正式配置记录实际产品、测试、夹具、适配器和工具来源及模型、思考级别、沙箱、工作目录、安装命令和运行编号；软件版本只作记录，不作相等门槛。安装只使用支持的安装命令和新建独占消费者，不比较锁文件提交或安装文件字节。
 
@@ -155,7 +155,7 @@ R5 最终证据目录基名为 `issue66-gate2-candidate.4LPblyY0`，位于本机
 
 ## R7 本地候选实际结果
 
-2026-10-07 在来源提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 上执行 `bash test-plan/issue-66-run.sh local`。证据目录基名为 `issue66-gate2-candidate.RGFhzJ3R`。`candidate-result.json` 记录 `evidence_validity=VALID`、`overall=PASS`、退出码 `0`、`runner_execution=COMPLETE`、`local_product_failures=[]`、`gaps=[]`。样例账本为 `VALID`，`sample_ledger_exit_code=0`，`combination_check_exit_code=0`。七套件全部通过，共 199 项：
+2026-10-07 在基线提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的工作树上执行 `bash test-plan/issue-66-run.sh local`；当时工作树包含本轮预检接线修正，现已随提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 推送。证据目录基名为 `issue66-gate2-candidate.RGFhzJ3R`。`candidate-result.json` 记录 `evidence_validity=VALID`、`overall=PASS`、退出码 `0`、`runner_execution=COMPLETE`、`local_product_failures=[]`、`gaps=[]`。样例账本为 `VALID`，`sample_ledger_exit_code=0`，`combination_check_exit_code=0`。七套件全部通过，共 199 项：
 
 | 套件 | 结果 | 实际条目数 |
 | --- | --- | ---: |
@@ -171,9 +171,9 @@ R5 最终证据目录基名为 `issue66-gate2-candidate.4LPblyY0`，位于本机
 
 ## R7 正式预检结果
 
-本轮正式预检没有完成，证据集编号为 `issue66-r7-preflight-2723996424c6485fb61efcb4808a8e55c1d71cdd`，分类为 `CASE_NOT_STARTED`，`formal_request_sent=false`。执行器从 PR 来源提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的干净源码归档安装产品；安装命令因下载依赖 `ScholarWorkflow/base-skills` 时 GitHub HTTPS 连接意外中断而退出 `1`，日志包含 `unexpected eof`。安装未完成，后续输入、请求构造及运行前快照均未执行，因此这次预检不能记作通过。原始命令和输出保存在本证据集的 `commands` 目录。
+本轮正式预检没有完成。最初证据集编号为 `issue66-r7-preflight-2723996424c6485fb61efcb4808a8e55c1d71cdd`，分类为 `CASE_NOT_STARTED`，`formal_request_sent=false`；从当时 PR 提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的干净源码归档安装时，依赖 `ScholarWorkflow/base-skills` 的 GitHub HTTPS 传输中断。推送修正后，又从提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 的干净源码副本重试：普通 HTTPS 证据集为 `issue66-r7-preflight-45b81f3458dbeb5ed3ea5855823cc0cef19ed509`；HTTP/1.1 证据集为 `issue66-r7-preflight-45b81f3-http11`，两次均为 `CASE_NOT_STARTED`、`formal_request_sent=false`。最后一次的 `base-skills` 下载提前结束，`browser-pdf-tools` 连接也中断，安装器报告两个依赖失败，未提交安装事务。`transport-context.json` 记录 HTTP/1.1 设置。安装未完成，后续输入、请求构造及运行前快照均未执行，因此预检不能记作通过。原始命令和输出保存在各证据集的 `commands` 目录。
 
-第一次执行还暴露出预检路径误读 `EVAL_PORT` 的接线问题；已修正为预检不读取正式请求端口，并增加接线回归。之后使用单次依赖下载重试，仍在同一个依赖下载处中断。没有发送正式请求，也没有运行 `/eval`。
+第一次执行还暴露出预检路径误读 `EVAL_PORT` 的接线问题；已修正为预检不读取正式请求端口，并增加接线回归。之后虽使用单次依赖下载并改用 HTTP/1.1 重试，安装仍因 GitHub 连接中断而未完成。没有发送正式请求，也没有运行 `/eval`。
 
 ### R5 第 8 节逐用例依赖与复验决定（历史）
 
@@ -235,7 +235,7 @@ R5 的 `issue66-service-preflight-20261006/verdict.json` 曾记录 `CASE_NOT_STA
 
 ## Gate 状态与停止条件
 
-Gate 2 **未通过**，Gate 3 **未运行**。当前来源 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的本地候选为 `PASS` 且证据有效；该结果不会批准 Gate 2，也不会触发正式运行。`local` 运行器只处理确定性检查。准备工作不发送正式请求、不启停服务、不读取服务进程、配置、数据库或日志。
+Gate 2 **未通过**，Gate 3 **未运行**。候选中验证过的接线修正已随提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 推送；本地候选为 `PASS` 且证据有效，但这不会批准 Gate 2，也不会触发正式运行。`local` 运行器只处理确定性检查。准备工作不发送正式请求、不启停服务、不读取服务进程、配置、数据库或日志。
 
 Gate2 状态：未批准；Gate3 状态：未运行。
 
