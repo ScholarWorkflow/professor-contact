@@ -268,7 +268,7 @@ Gate2 状态：未批准；Gate3 状态：未运行。
 | 要求 | 负责证明 | 必须观察的事实 | 当前证据状态 |
 | --- | --- | --- | --- |
 | `R66-10 / COMP66-1`：校验者只写调用方准备的指定输出文件 | `S3-WRITER-1`；`.apm/skills/professor-contact/tests/test_issue66_stage3_write_validation.py` | 单文件路径成功、批量候选映射成功、结果对象完整保留、输出逐字节相同、权限为 `0600`。 | 回归用例已新增，未运行；仅为候选材料。 |
-| 完整结果结构及输入先验检查 | `S3-WRITER-1` | `result` 为 `ok`；`files` 是非空数组；`notes` 是字符串；至少一项 `candidates`；每项的绝对 `file`、`artifact`、`verdict`、非负整数 `blocking`/`minor` 与 `issues` 结构一致。每条问题包含 `rule`、`severity`、`location`、`quote`、`suggestion`；严重级别、计数和 verdict 相符。拒绝重复 JSON 键、`Infinity`/`NaN`、顶层非对象、错误 `result`、字段类型错误、相对文件路径、未知 `artifact`/`verdict`、问题字段缺失或类型错误、非法严重级别/位置、超长引文和计数不一致。 | 表驱动拒绝用例要求结构化错误、非零退出且无目标文件；用例已写，未运行。 |
+| 完整结果结构及输入先验检查 | `S3-WRITER-1` | `result` 为 `ok`；`files` 是非空数组；`notes` 是字符串；至少一项 `candidates`；每项的绝对 `file`、`artifact`、`verdict`、非负整数 `blocking`/`minor` 与 `issues` 结构一致。每条问题包含 `rule`、`severity`、`location`、`quote`、`suggestion`；严重级别、计数和 verdict 相符。拒绝重复 JSON 键、`Infinity`/`NaN`、顶层非对象、缺失或错误 `result`/`files`/`notes`、字段缺失或类型错误、相对文件路径、未知 `artifact`/`verdict`、问题字段缺失或类型错误、非法严重级别/位置、超长引文和计数不一致。 | 表驱动拒绝用例要求结构化错误、非零退出且无目标文件；用例已写，未运行。 |
 | 单文件和批量一对一映射及准备路径绑定 | `S3-WRITER-1` 与 `S3-ASSET-COMPAT-1` | 单文件只用 `--output-file`，其值必须等于真实 `stage3-prepare-validation` 返回的 `output_file`；完整结果仅有一个候选项。批量只用 `--output-map-json`；所有映射项都须等于对应准备步骤返回的路径，并逐项对应完整结果中的候选稿；不得缺漏、重复、额外、相对或重复输出。 | 新增真实 prepare 返回路径的单文件集成回归；批量形状回归仍用合成映射。正式事件关联待判定器扩展，未运行。 |
 | 验证器原始结果与命令参数绑定 | `S3-WRITER-1`、`S3-ASSET-COMPAT-1`、`S3-RT-CODEX-1` | `--result-json` 必须恰为 validator 返回的完整 `result`、`files[]`、`notes` 对象，不得由调用者重建或拆分；正式事件应关联 validator 返回、完整命令参数、stdout、准备的目标、writer 文件和后续 save/record 路径。未提供 `output_file` 时，验证器保持只读并按原方式返回。 | 定向集成回归只证明实际 prepare 路径被传给 writer，并把测试构造的完整 JSON 字符串作为一个参数传入；它不证明该字符串来自真实 validator 返回。代理合同回归只证明说明文本包含传递规则与未传 `output_file` 的只读要求。真实值源关联仍待原生正式证据，当前不可判定。 |
 | 输出及逐字节成功证据 | `S3-WRITER-1` 与 `S3-ASSET-COMPAT-1` | 成功时保留实际退出码、stdout 原始字节和每个指定文件的原始字节；要求退出码 `0`、结果非空、单文件 stdout 字节与文件字节相等，批量每个文件字节均与同一 stdout 相等，且解析后每个文件保留完整 `result`、`files`、`notes` 及扩展字段。文件权限为 `0600`。调用者业务消息只能逐字复用成功 stdout。 | 写入回归和静态代理合同断言已新增，未运行。 |
@@ -297,7 +297,7 @@ python3 .agents/skills/professor-contact/scripts/contact_state.py stage3-write-v
 
 1. `test_single_write_preserves_complete_result_stdout_bytes_and_mode`：检查单文件完整对象、扩展字段、UTF-8 内容、非空 stdout、stdout 与文件逐字节一致、`0600`，且候选稿不被创建或改写。
 2. `test_batch_map_writes_the_same_complete_result_to_every_candidate`：检查两个候选项的一对一映射；每个文件均含完整对象，文件字节彼此相同且与 stdout 完全相同。
-3. `test_invalid_complete_result_json_is_rejected_without_output`：覆盖空输入、重复键、`Infinity`/`NaN`、顶层数组、错误 `result`、`notes` 类型错误、空或错误类型的 `files`、非对象文件条目、相对文件路径、没有候选稿、未知或非字符串 `artifact`/`verdict`、布尔/字符串/负数/浮点计数、错误 `issues` 类型、非对象 issue、缺少 suggestion、`rule`/`severity`/`quote`/`suggestion` 类型错误、非法严重级别/位置、超长引文及计数不匹配；每种情况都要求结构化错误、非零退出且没有目标文件。
+3. `test_invalid_complete_result_json_is_rejected_without_output`：覆盖空输入、重复键、`Infinity`/`NaN`、顶层数组、缺失或错误 `result`/`files`/`notes`、空或错误类型的 `files`、非对象文件条目、缺少 `file`/`artifact`/`verdict`/`blocking`/`minor`/`issues`、相对文件路径、没有候选稿、未知或非字符串 `artifact`/`verdict`、布尔/字符串/负数/浮点计数、错误 `issues` 类型、非对象 issue、缺少 `rule`/`severity`/`location`/`quote`/`suggestion`、问题字段类型错误、非法严重级别/位置、超长引文及计数不匹配；每种情况都要求结构化错误、非零退出且没有目标文件。
 4. `test_batch_map_invalidities_are_rejected_before_any_write`：覆盖缺项、候选重复、额外候选、输出重复、多余映射字段和相对输出路径；所有目标均保持不存在。
 5. `test_single_output_path_must_be_absolute_and_parent_must_exist`：单文件相对输出路径及父目录不存在时都返回结构化错误，不创建输出或父目录。
 6. `test_existing_target_or_symlink_is_not_replaced`：已有文件原始哨兵字节、符号链接及其目标均保持不变。

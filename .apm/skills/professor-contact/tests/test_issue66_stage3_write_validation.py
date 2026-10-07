@@ -126,6 +126,9 @@ class Stage3WriteValidationTests(unittest.TestCase):
             "infinite number": '{"result":"ok","files":[],"notes":"","extra":Infinity}',
             "NaN number": '{"result":"ok","files":[],"notes":"","extra":NaN}',
             "top-level list": "[]",
+            "missing result": json.dumps({
+                "files": [_entry("/tmp/candidate.md")], "notes": ""}),
+            "missing files": json.dumps({"result": "ok", "notes": ""}),
             "missing notes": '{"result":"ok","files":[]}',
             "notes is not a string": json.dumps({
                 "result": "ok", "files": [], "notes": 7}),
@@ -182,13 +185,6 @@ class Stage3WriteValidationTests(unittest.TestCase):
                 "result": "ok", "files": [{
                     **_entry("/tmp/candidate.md"), "issues": [None]}],
                 "notes": ""}),
-            "issue is missing suggestion": json.dumps({
-                "result": "ok", "files": [{
-                    **_entry("/tmp/candidate.md"), "minor": 1,
-                    "verdict": "pass_with_minor",
-                    "issues": [{"rule": "B5", "severity": "minor",
-                                "location": 1, "quote": "原文"}],
-                }], "notes": ""}),
             "unsupported issue severity": json.dumps({
                 "result": "ok", "files": [{
                     **_entry("/tmp/candidate.md"), "minor": 1,
@@ -224,10 +220,24 @@ class Stage3WriteValidationTests(unittest.TestCase):
                 "notes": "",
             }),
         }
+        for field in ("file", "artifact", "verdict", "blocking", "minor", "issues"):
+            incomplete_entry = _entry("/tmp/candidate.md")
+            del incomplete_entry[field]
+            invalid_results[f"missing file field {field}"] = json.dumps({
+                "result": "ok", "files": [incomplete_entry], "notes": ""})
+
         valid_issue = {
             "rule": "B5", "severity": "minor", "location": 1,
             "quote": "原文", "suggestion": "补充说明。",
         }
+        for field in ("rule", "severity", "location", "quote", "suggestion"):
+            incomplete_issue = {**valid_issue}
+            del incomplete_issue[field]
+            invalid_results[f"missing issue field {field}"] = json.dumps({
+                "result": "ok", "files": [{
+                    **_entry("/tmp/candidate.md"), "minor": 1,
+                    "verdict": "pass_with_minor", "issues": [incomplete_issue],
+                }], "notes": ""})
         for field in ("rule", "severity", "quote", "suggestion"):
             invalid_issue = {**valid_issue, field: None}
             invalid_results[f"issue {field} has wrong type"] = json.dumps({
