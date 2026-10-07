@@ -14,8 +14,9 @@ spec.loader.exec_module(helper)
 
 class StructuredResultTests(unittest.TestCase):
     def candidate_case(self, *, ledger_valid, suite_valid, product_fails,
-                       expected_overall, expected_failures, expected_validity):
-        # 预期按计划第六节四种组合固定，不从被测汇总程序取值。
+                       expected_overall, expected_failures, expected_validity,
+                       candidate_metadata=None):
+        # 预期按第七版计划第六节四种组合固定，不从汇总程序取值。
         class Case(unittest.TestCase):
             def test_product(self):
                 if product_fails:
@@ -28,7 +29,8 @@ class StructuredResultTests(unittest.TestCase):
                   "structured_status_source": "raw-suite.json#tests.status",
                   "raw_event_source": "raw-suite.json#tests.events",
                   "failures": failures}
-        value = {"candidate": {"validity": "VALID", "source": "candidate-files.sha256"},
+        value = {"candidate": {"validity": "VALID", "source": "actual product source",
+                               **(candidate_metadata or {})},
                  "ledger": {"validity": "VALID" if ledger_valid else "INVALID",
                             "source": "samples.tsv;judge-samples.jsonl"},
                  "suites": [record]}
@@ -109,6 +111,36 @@ class StructuredResultTests(unittest.TestCase):
     def test_valid_candidate_all_checks_pass(self):
         self.candidate_case(ledger_valid=True, suite_valid=True, product_fails=False,
                             expected_overall="PASS", expected_failures=0, expected_validity="VALID")
+
+    def test_software_source_version_and_digest_differences_do_not_invalidate_pass(self):
+        self.candidate_case(
+            ledger_valid=True, suite_valid=True, product_fails=False,
+            expected_overall="PASS", expected_failures=0, expected_validity="VALID",
+            candidate_metadata={
+                "validity": "SOFTWARE_DIGESTS_DIFFER",
+                "source": "ScholarWorkflow/professor-contact#current-source",
+                "requested_source": "ScholarWorkflow/professor-contact#requested-source",
+                "installed_source": "ScholarWorkflow/professor-contact#different-source",
+                "requested_version": "requested-version",
+                "installed_version": "actual-different-version",
+                "source_sha256": "source-digest-a",
+                "installed_sha256": "installed-digest-b",
+            })
+
+    def test_software_metadata_differences_keep_independent_product_failure(self):
+        self.candidate_case(
+            ledger_valid=True, suite_valid=True, product_fails=True,
+            expected_overall="FAIL", expected_failures=1, expected_validity="VALID",
+            candidate_metadata={
+                "validity": "SOFTWARE_VERSIONS_DIFFER",
+                "source": "ScholarWorkflow/professor-contact#current-source",
+                "requested_source": "ScholarWorkflow/professor-contact#requested-source",
+                "installed_source": "ScholarWorkflow/professor-contact#different-source",
+                "requested_version": "requested-version",
+                "installed_version": "actual-different-version",
+                "source_sha256": "source-digest-a",
+                "installed_sha256": "installed-digest-b",
+            })
 
     def run_case(self, case):
         log = io.StringIO()

@@ -549,11 +549,11 @@ def valid_surfaces(fx: Fixture):
             route_status = "pass" if count_pass else "fail"
             route_classification = "PASS" if count_pass else "FAIL_PRODUCT"
     surfaces = {
-        "install": {"status": "pass", "consumer_root": CONSUMER_ROOT, "target_commit": "dfe430560b6e4d9d85c30b71b8c84bc621da7549",
-                    "installed_commit": "dfe430560b6e4d9d85c30b71b8c84bc621da7549", "checks": [
-            {"name": "locked_target_commit", "status": "pass"},
-            {"name": "source_install_projection", "status": "pass"},
-            {"name": "request_config_matches_consensus", "status": "pass"}]},
+        "install": {"status": "ok", "consumer_root": CONSUMER_ROOT,
+                    "requested_product_source": "ScholarWorkflow/professor-contact#current",
+                    "installed_product_versions": ["recorded actual installation version"],
+                    "checks": [
+            {"name": "supported_install_entry_completed", "status": "pass"}]},
         "fixture": {"status": "pass", "manual_patch": "no", "checks": [
             {"name": "no_manual_patch", "status": "pass"},
             {"name": "initial_input_digest", "status": "pass"},
@@ -1316,6 +1316,23 @@ class FoldedEvidenceTests(RuntimeJudgeTestCase):
                          "INVALID_TEST_EXECUTION", verdict)
         self.assertEqual(facts(verdict)["F-install"], "invalid")
 
+    def test_software_source_version_and_digest_differences_do_not_invalidate_business_pass(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        surfaces = valid_surfaces(fx)
+        surfaces["install"].update({
+            "requested_product_source": "ScholarWorkflow/professor-contact#requested-source",
+            "installed_product_source": "ScholarWorkflow/professor-contact#different-installed-source",
+            "installed_product_versions": ["different-installed-version"],
+            "target_commit": "a" * 40,
+            "installed_commit": "b" * 40,
+            "source_sha256": "source-digest-a",
+            "installed_sha256": "installed-digest-b",
+        })
+        verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+        self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual(facts(verdict)["F-install"], "pass", verdict)
+
     def test_required_install_sample_and_snapshot_evidence_cannot_be_omitted(self):
         expected_facts = {
             "install": "F-install", "fixture": "F-fixture",
@@ -1391,7 +1408,7 @@ class FoldedEvidenceTests(RuntimeJudgeTestCase):
         surfaces["pre"]["evidence_set_id"] = "another-run"
         verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
         self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
-        self.assertEqual(facts(verdict)["F-evidence-version"], "invalid", verdict)
+        self.assertEqual(facts(verdict)["F-evidence-set"], "invalid", verdict)
 
     def test_missing_evidence_set_id_is_not_a_pass(self):
         fx = Fixture()
@@ -1400,7 +1417,7 @@ class FoldedEvidenceTests(RuntimeJudgeTestCase):
         surfaces["pre"].pop("evidence_set_id")
         verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
         self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
-        self.assertEqual(facts(verdict)["F-evidence-version"], "gap", verdict)
+        self.assertEqual(facts(verdict)["F-evidence-set"], "gap", verdict)
 
     def test_program_root_is_required_to_prove_stage4_outputs_absent(self):
         fx = Fixture()
@@ -2616,13 +2633,14 @@ class EvidenceChannelTests(RuntimeJudgeTestCase):
                 verdict = run(fx, state=PASS_STATE)
                 self.assertEqual(verdict["classification"], "FAIL", verdict)
 
-    def test_full_install_target_commit_cannot_be_omitted(self):
+    def test_install_requires_supported_entry_completion_evidence(self):
         fx = Fixture()
         legal_two_child(fx)
         evidence = valid_surfaces(fx)
-        del evidence["install"]["target_commit"]
+        evidence["install"]["checks"] = []
         verdict = run(fx, state=PASS_STATE, surface_evidence=evidence)
         self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-install"], "gap", verdict)
 
     def test_truncated_record_output_is_invalid(self):
         fx = Fixture()

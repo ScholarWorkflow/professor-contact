@@ -12,8 +12,12 @@ def suite_valid:
        else (.failures | length) == 0 end);
 . as $input
 | ([
-    (if .candidate.validity != "VALID" or (.candidate.source | source_present | not) then
-      {kind:"candidate", source:.candidate.source, reason:"候选版本或摘要无效"}
+    (if (.candidate | type) != "object"
+        or ((.candidate | if type == "object" then .source else null end)
+            | source_present | not) then
+      {kind:"candidate",
+       source:(.candidate | if type == "object" then .source else null end),
+       reason:"候选来源记录缺失"}
     else empty end),
     (if .ledger.validity != "VALID" or (.ledger.source | source_present | not) then
       {kind:"ledger", source:.ledger.source, reason:"样例账本或候选汇总自测记录无效",
@@ -29,8 +33,9 @@ def suite_valid:
     else empty end)
   ]) as $gaps
 | ([.suites[]?
-    | select($input.candidate.validity == "VALID"
-        and ($input.candidate.source | source_present)
+    | select(($input.candidate
+        | if type == "object" then .source else null end
+        | source_present)
         and suite_valid and .owner == "product"
         and (.structured_status_source | source_present)
         and (.raw_event_source | source_present))
@@ -49,5 +54,7 @@ def suite_valid:
    local_product_failures:$failures, gaps:$gaps,
    runner_execution:"COMPLETE",
    runner_execution_meaning:"仅表示运行器已执行完全部步骤；不表示证据有效、候选通过或正式验收通过",
-   evidence_sources:{candidate:$input.candidate.source, ledger:$input.ledger.source,
+   evidence_sources:{candidate:($input.candidate
+                       | if type == "object" then .source else null end),
+                     ledger:$input.ledger.source,
                      suites:[$input.suites[]? | .structured_status_source]}}

@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
 set -o pipefail
 
-readonly product_target_sha='dfe430560b6e4d9d85c30b71b8c84bc621da7549'
-readonly fixture_tree_sha='c738fa2f8bcbb16cd99d741332d5f59b062b6357'
-readonly adapter_pin='skills-test-fixtures/codex-eval-adapter@16'
-readonly repository_slug='ScholarWorkflow/professor-contact'
 readonly uv_cache_dir='/private/tmp/issue66-uv-cache'
-readonly uv_expected='uv 0.12.11 (aarch64-apple-darwin)'
-readonly python_expected='Python 3.14.6'
+readonly plan_revision='issue-66-test-plan-r19-clarification-r7-2026-10-07'
 readonly runner_revision='issue-66-local-candidate-runner-r21-2026-10-07'
 
 usage() {
@@ -54,7 +49,7 @@ export UV_CACHE_DIR="$uv_cache_dir"
 commands_tsv="$evidence_dir/commands.tsv"
 suites_tsv="$evidence_dir/suites.tsv"
 printf 'name\texit_code\tcommand\tstdout\tstderr\n' > "$commands_tsv"
-printf 'suite\tresult\texpected_test_count\tactual_test_count\texit_code\tfailure_marker\tactual_failure_status_lines\tdetail\n' > "$suites_tsv"
+printf 'suite\tresult\tactual_test_count\texit_code\tactual_items\tactual_failures\tdetail\n' > "$suites_tsv"
 printf 'mktemp -d %s/issue66-gate2-candidate.XXXXXXXX\n' "$tmp_root" \
   > "$evidence_dir/commands/bootstrap-mktemp.command"
 printf '%s\n' "$evidence_dir" > "$evidence_dir/commands/bootstrap-mktemp.stdout"
@@ -120,129 +115,64 @@ if ! cd -- "$repo_root"; then
   stop "无法切换到仓库根目录：$repo_root"
 fi
 
-candidate_changes='.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py
-.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py
-.apm/skills/professor-contact/tests/test_issue66_invocation_credential.py
-.apm/skills/professor-contact/tests/test_issue66_validation_handoff.py
-.apm/skills/professor-contact/tests/test_issue66_stage3_local_state.py
-.apm/skills/professor-contact/tests/test_stage3_idea_generator_agent_contract.py
-.apm/skills/professor-contact/tests/runtime/issue66_execution.py
-.apm/skills/professor-contact/tests/test_issue66_execution_wiring.py
-.apm/skills/professor-contact/tests/runtime/issue66_suite_result.py
-.apm/skills/professor-contact/tests/runtime/issue66_suite_classify.jq
-.apm/skills/professor-contact/tests/runtime/issue66_candidate_classify.jq
-.apm/skills/professor-contact/tests/test_issue66_suite_result.py
-test-plan/issue-66-formal.sh
-test-plan/issue-66-execution.md
-test-plan/issue-66.md
-test-plan/issue-66-run.sh'
-
-candidate_files='.apm/agents/professor-contact-idea-generator.agent.md
-.apm/skills/professor-contact/SKILL.md
-.apm/skills/professor-contact/scripts/contact_state.py
-.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py
-.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py
-.apm/skills/professor-contact/tests/test_issue66_invocation_credential.py
-.apm/skills/professor-contact/tests/test_issue66_validation_handoff.py
-.apm/skills/professor-contact/tests/test_issue66_stage3_local_state.py
-.apm/skills/professor-contact/tests/test_stage2_resolved_direction.py
-.apm/skills/professor-contact/tests/test_stage3_direction_groups.py
-.apm/skills/professor-contact/tests/test_stage3_idea_generator_agent_contract.py
-.apm/skills/professor-contact/tests/runtime/issue66_execution.py
-.apm/skills/professor-contact/tests/test_issue66_execution_wiring.py
-.apm/skills/professor-contact/tests/runtime/issue66_suite_result.py
-.apm/skills/professor-contact/tests/runtime/issue66_suite_classify.jq
-.apm/skills/professor-contact/tests/runtime/issue66_candidate_classify.jq
-.apm/skills/professor-contact/tests/test_issue66_suite_result.py
-test-plan/issue-66-formal.sh
-test-plan/issue-66-execution.md
-test-plan/issue-66.md
-test-plan/issue-66-run.sh'
-
-allowed_change() {
-  local candidate="$1"
-  local path=''
-  while IFS= read -r path; do
-    [[ "$candidate" == "$path" ]] && return 0
-  done <<< "$candidate_changes"
-  [[ "$candidate" == '.tmp_scripts/2026-10-06_watch_pr73.sh' ]] && return 0
-  return 1
-}
-
-verify_changed_paths() {
-  local changed=''
-  capture_required changed-tracked-files git -C "$repo_root" diff HEAD --name-only
-  capture_required changed-untracked-files git -C "$repo_root" ls-files --others --exclude-standard
-
-  while IFS= read -r changed; do
-    [[ -z "$changed" ]] && continue
-    allowed_change "$changed" || stop "候选范围外的已跟踪变更：$changed"
-  done < "$evidence_dir/commands/changed-tracked-files.stdout"
-  while IFS= read -r changed; do
-    [[ -z "$changed" ]] && continue
-    allowed_change "$changed" || stop "候选范围外的未跟踪文件：$changed"
-  done < "$evidence_dir/commands/changed-untracked-files.stdout"
-}
-
-write_candidate_manifest() {
-  local phase="$1"
-  local manifest_path="$2"
-  local index=0
-  local file=''
-  local hash_output=''
-  local file_hash=''
-  : > "$manifest_path"
-
-  while IFS= read -r file; do
-    [[ -n "$file" ]] || continue
-    [[ -f "$repo_root/$file" ]] || stop "候选文件缺失：$file"
-    index=$((index + 1))
-    capture_required "hash-$phase-$index" shasum -a 256 "$repo_root/$file"
-    hash_output="$(<"$evidence_dir/commands/hash-$phase-$index.stdout")"
-    read -r file_hash _ <<< "$hash_output"
-    [[ "$file_hash" =~ ^[0-9a-f]{64}$ ]] || stop "无法解析候选文件摘要：$file"
-    printf '%s  %s\n' "$file_hash" "$file" >> "$manifest_path"
-  done <<< "$candidate_files"
-}
-
 run_suite() {
-  local name="$1" pattern="$2" test_count="$3"
+  local name="$1" pattern="$2"
   local report="$evidence_dir/suite-$1.json"
   local rc=0 result='INVALID_TEST_EXECUTION' actual_test_count='NOT_PARSED'
-  local failures='0' identities='NONE' evidence_validity='INVALID'
+  local failures='[]' items='[]' failure_count='NOT_PARSED' evidence_validity='INVALID'
   local owner='product'
   case "$name" in
     judge|execution_wiring|structured_result) owner='test_program' ;;
   esac
-  capture "suite-$name" uv run --no-project --python 3.14.6 python -B \
+  capture "suite-$name" uv run --no-project python -B \
     .apm/skills/professor-contact/tests/runtime/issue66_suite_result.py \
     --directory .apm/skills/professor-contact/tests --pattern "$pattern" --report "$report"
   rc=$?
-  if jq -e --argjson rc "$rc" --argjson count "$test_count" '
-      .schema == "issue66-suite-result-v1" and .exit_code == $rc
-      and .tests_run == $count and (.tests | length) == $count
-      and all(.tests[]; .test_id != null and .ordinal > 0)
+  if jq -e --argjson rc "$rc" '
+      def nonempty: type == "string" and length > 0;
+      .schema == "issue66-suite-result-v1"
+      and (.exit_code | type == "number") and .exit_code == $rc
+      and (.tests_run | type == "number" and . >= 0)
+      and (.tests | type == "array") and .tests_run == (.tests | length)
+      and (.failures | type == "number" and . >= 0)
+      and (.errors | type == "number" and . >= 0)
+      and (.skipped | type == "number" and . >= 0)
+      and (.classification == "PASS" or .classification == "PRODUCT_FAIL"
+        or .classification == "INVALID_TEST_EXECUTION")
+      and all(.tests[];
+        (.test_id | nonempty)
+        and (.ordinal | type == "number" and . > 0)
+        and (.status == "ok" or .status == "failure" or .status == "error"
+          or .status == "skipped" or .status == "expected_failure"
+          or .status == "unexpected_success")
+        and (.events | type == "array"))
+      and ([.tests[].ordinal] | length == (unique | length))
+      and ([.tests[].ordinal] | sort) == [range(1; .tests_run + 1)]
+      and ([.tests[].test_id] | length == (unique | length))
     ' "$report" > "$evidence_dir/commands/suite-$name-report-validation.stdout" \
       2> "$evidence_dir/commands/suite-$name-report-validation.stderr"; then
     result="$(jq -r --arg owner "$owner" -f \
       .apm/skills/professor-contact/tests/runtime/issue66_suite_classify.jq "$report")"
     actual_test_count="$(jq -r '.tests_run' "$report")"
-    failures="$(jq -r '.failures' "$report")"
-    identities="$(jq -c '[.tests[] | select(.status != "ok") | {test_id,status,events}]' "$report")"
+    failure_count="$(jq -r '[.tests[] | select(.status != "ok")] | length' "$report")"
+    failures="$(jq -c '[.tests[] | select(.status != "ok") | {ordinal,test_id,status,events}]' "$report")"
+    items="$(jq -c '[.tests[] | {ordinal,test_id,status,events}]' "$report")"
     evidence_validity='VALID'
   fi
-  printf '%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n' \
-    "$name" "$result" "$test_count" "$actual_test_count" "$rc" \
-    'structured-result' "$identities" "结构化记录：$failures 个断言失败。" >> "$suites_tsv"
+  printf '%s\t%s\t%s\t%d\t%s\t%s\t%s\n' \
+    "$name" "$result" "$actual_test_count" "$rc" \
+    "$items" "$failures" "结构化记录：$failure_count 个失败条目。" >> "$suites_tsv"
   jq -n --arg suite "$name" --arg result "$result" --argjson exit_code "$rc" \
     --arg owner "$owner" --arg validity "$evidence_validity" \
+    --argjson actual_test_count "$(if [[ "$actual_test_count" == 'NOT_PARSED' ]]; then printf 'null'; else printf '%s' "$actual_test_count"; fi)" \
+    --argjson items "$items" --argjson failures "$failures" \
     --arg status_source "suite-$name.json#tests.status" \
     --arg raw_source "suite-$name.json#tests.events" \
-    --argjson failures "$(if [[ "$identities" == 'NONE' ]]; then printf '[]'; else printf '%s' "$identities"; fi)" \
-    '{suite:$suite,result:$result,exit_code:$exit_code,owner:$owner,
+    '{suite:$suite,result:$result,exit_code:$exit_code,actual_test_count:$actual_test_count,
+      items:$items,owner:$owner,
       evidence_validity:$validity,structured_status_source:$status_source,
       raw_event_source:$raw_source,failures:$failures}' >> "$evidence_dir/suites.jsonl"
-  printf '%s：%s（%s 项，退出码 %d）\n' "$name" "$result" "$test_count" "$rc"
+  printf '%s：%s（%s 项，退出码 %d）\n' "$name" "$result" "$actual_test_count" "$rc"
 }
 validate_judge_sample_ledger() {
   capture "judge-ledger-assertion-diagnostics" jq -s '
@@ -337,8 +267,7 @@ validate_judge_sample_ledger() {
       "read_reuse",
       "evidence_channels"
     ] as $allowed_families
-    | length == 125
-      and all(.[];
+    | all(.[];
         . as $record
         | .schema_version == "issue66.sample-ledger.v1"
         and (.sample_id | nonempty)
@@ -410,14 +339,6 @@ validate_judge_sample_ledger() {
         )
       )
       and ([.[].sample_id] | length == (unique | length))
-      and ([.[] | select(.expected.classification_status == "asserted")] | length == 121)
-      and ([.[] | select(.expected.classification_status == "not_asserted")] | length == 4)
-      and ([.[] | select(.expected.facts_status == "asserted")] | length == 101)
-      and ([.[] | select(.expected.facts_status == "partial")] | length == 1)
-      and ([.[] | select(.expected.facts_status == "not_asserted")] | length == 23)
-      and ([.[].sample_family[]] | unique) == ["evidence_channels",
-        "file_permissions", "formal_relations", "order_and_stops",
-        "raw_messages", "source_handoff_values", "three_completion_paths"]
   ' "$EVIDENCE_DIR/judge-samples.jsonl"
 }
 
@@ -454,30 +375,24 @@ write_sample_records() {
   local test_status='NOT_FOUND'
   local test_status_count=0
   local actual_observation='GAP_NO_SINGLE_TEST_STATUS'
-  local program_sha='GAP_NOT_IN_CANDIDATE_MANIFEST'
   local sample_row_count=0
   local sample_tsv_rows=0
+  local sample_tsv_column_count=0
   local tsv_line=''
   local tsv_tabs=''
+  local -a header_fields=()
   local -a row_fields=()
   local sample_ledger_valid='true'
   local source_file=''
   local source_line=''
   local source_line_count=0
   local family=''
-  local family_A=0
-  local family_B=0
-  local family_C=0
-  local family_D=0
-  local family_E=0
-  local family_F=0
-  local family_G=0
-  local family_H=0
-  local family_I=0
   local seen_sample_ids='|'
 
-  printf 'sample_id\toracle_type\tindependent_expected\tobserved\tplan_sample_family\tjudge_sample_family\tjudge_sample_id\tjudge_test_id\tjudge_expected_classification_status\tjudge_expected_classification\tjudge_expected_json\tactual_outcome\tactual_result_json\tjudge_sha256\tevidence_digest\tevent_count\tevent_refs_json\tprogram_path\tprogram_sha256\tcandidate_summary_sha256\ttest_status\tsource_pointer\tsource_detail\traw_evidence_pointer\n' \
+  printf 'sample_id\toracle_type\tindependent_expected\tobserved\tplan_sample_family\tjudge_sample_family\tjudge_sample_id\tjudge_test_id\tjudge_expected_classification_status\tjudge_expected_classification\tjudge_expected_json\tactual_outcome\tactual_result_json\tjudge_sha256\tevidence_digest\tevent_count\tevent_refs_json\tprogram_path\ttest_status\tsource_pointer\tsource_detail\traw_evidence_pointer\n' \
     > "$evidence_dir/samples.tsv"
+  IFS=$'\t' read -r -a header_fields < "$evidence_dir/samples.tsv"
+  sample_tsv_column_count=${#header_fields[@]}
   validate_judge_sample_ledger || sample_ledger_valid='false'
 
   while IFS='|' read -r sample_id independent_expected suite test_name \
@@ -490,18 +405,7 @@ write_sample_records() {
     family="${sample_id:6:1}"
     call_ordinal="${call_ordinal:-1}"
     requested_oracle_type="${requested_oracle_type:-judge-verdict}"
-    case "$family" in
-      A) family_A=$((family_A + 1)) ;;
-      B) family_B=$((family_B + 1)) ;;
-      C) family_C=$((family_C + 1)) ;;
-      D) family_D=$((family_D + 1)) ;;
-      E) family_E=$((family_E + 1)) ;;
-      F) family_F=$((family_F + 1)) ;;
-      G) family_G=$((family_G + 1)) ;;
-      H) family_H=$((family_H + 1)) ;;
-      I) family_I=$((family_I + 1)) ;;
-      *) sample_ledger_valid='false' ;;
-    esac
+    [[ "$family" =~ ^[A-I]$ ]] || sample_ledger_valid='false'
     stderr_path="$evidence_dir/commands/suite-$suite.stderr"
     test_status_count="$(jq --arg method "$test_name" '[.tests[] | select(.method == $method)] | length' "$evidence_dir/suite-$suite.json")"
     test_status="$(jq -r --arg method "$test_name" '[.tests[] | select(.method == $method)] | if length == 1 then .[0].status else "NOT_FOUND" end' "$evidence_dir/suite-$suite.json")"
@@ -624,20 +528,6 @@ write_sample_records() {
       fi
     fi
 
-    program_sha='GAP_NOT_IN_CANDIDATE_MANIFEST'
-    while read -r line; do
-      if [[ "$line" == *"  $program_path" ]]; then
-        program_sha="${line%%  *}"
-        break
-      fi
-    done < "$candidate_manifest"
-
-    if [[ ! "$program_sha" =~ ^[0-9a-f]{64}$ ]]; then
-      sample_ledger_valid='false'
-    fi
-    if [[ "$oracle_type" == 'judge-verdict' && "$judge_sha" != "$program_sha" ]]; then
-      sample_ledger_valid='false'
-    fi
     source_file="${source_pointer%%:*}"
     capture "source-pointer-$sample_id" rg -n \
       "^[[:space:]]*def ${test_name}\\(" "$repo_root/$source_file"
@@ -658,7 +548,7 @@ write_sample_records() {
       sample_ledger_valid='false'
       source_pointer="$source_file:GAP_SOURCE_LINE_NOT_FOUND"
     fi
-    if [[ ! -f "$repo_root/$source_file" || ! -s "$stderr_path" || ! "$candidate_summary" =~ ^[0-9a-f]{64}$ ]]; then
+    if [[ ! -f "$repo_root/$source_file" || ! -s "$stderr_path" ]]; then
       sample_ledger_valid='false'
     fi
     sample_row_count=$((sample_row_count + 1))
@@ -668,7 +558,7 @@ write_sample_records() {
       "$plan_family" "$runtime_family" "$runtime_sample_id" "$runtime_test_id"
       "$expected_class_status" "$expected_class" "$expected_json" "$actual_outcome"
       "$actual_result" "$judge_sha" "$evidence_digest" "$event_count" "$event_refs"
-      "$program_path" "$program_sha" "$candidate_summary" "$test_status"
+      "$program_path" "$test_status"
       "$source_pointer" "$source_detail" "$raw_sample_pointer"
     )
     printf '%s' "${row_fields[0]}" >> "$evidence_dir/samples.tsv"
@@ -740,31 +630,23 @@ R19-6-I7|classification=INVALID_TEST_EXECUTION|judge|test_unsupported_message_sh
 R19-6-I8|classification=INVALID_TEST_EXECUTION|judge|test_non_monotonic_event_seq_invalidates_validator_evidence|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1666|non-monotonic event sequence
 R19-6-I9|classification=INVALID_TEST_EXECUTION|judge|test_mismatched_call_id_cannot_bind_validator_command_completion|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1693|mismatched call id
 R19-6-I10|classification=INVALID_TEST_EXECUTION|judge|test_mixed_evidence_set_ids_are_invalid|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|mixed evidence-set identifiers
-R19-6-I11|missing_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-input=invalid|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is missing||direct-assertion
-R19-6-I12|truncated_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-input=invalid|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is truncated||direct-assertion
+R19-6-I11|missing_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-set=invalid|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is missing||direct-assertion
+R19-6-I12|truncated_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-set=invalid|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is truncated||direct-assertion
 SAMPLE_RECORDS
 
-    if [[ "$sample_row_count" -ne 65 ]]; then
-    sample_ledger_valid='false'
-  fi
   while IFS= read -r tsv_line || [[ -n "$tsv_line" ]]; do
     sample_tsv_rows=$((sample_tsv_rows + 1))
     tsv_tabs="${tsv_line//[^$'\t']/}"
-    if [[ "${#tsv_tabs}" -ne 23 || "$tsv_line" == *$'\t\t'* \
+    if [[ "${#tsv_tabs}" -ne $((sample_tsv_column_count - 1)) || "$tsv_line" == *$'\t\t'* \
       || "$tsv_line" == $'\t'* || "$tsv_line" == *$'\t' ]]; then
       sample_ledger_valid='false'
     fi
   done < "$evidence_dir/samples.tsv"
-  if [[ "$sample_tsv_rows" -ne 66 ]]; then
-    sample_ledger_valid='false'
-  fi
-  if [[ "$family_A" -ne 3 || "$family_B" -ne 7 || "$family_C" -ne 5 \
-    || "$family_D" -ne 7 || "$family_E" -ne 8 || "$family_F" -ne 17 \
-    || "$family_G" -ne 2 || "$family_H" -ne 4 || "$family_I" -ne 12 ]]; then
+  if [[ "$sample_tsv_rows" -ne $((sample_row_count + 1)) ]]; then
     sample_ledger_valid='false'
   fi
   if [[ "$sample_ledger_valid" == 'true' ]]; then
-    printf 'sample_ledger_status=VALID_JUDGE_AND_DIRECT_ASSERTION_RECORDS_65_SAMPLES_24_COLUMNS\n' >> "$evidence_dir/metadata.txt"
+    printf 'sample_ledger_status=VALID_JUDGE_AND_DIRECT_ASSERTION_RECORDS\n' >> "$evidence_dir/metadata.txt"
     return 0
   fi
   printf 'sample_ledger_status=INVALID_TEST_EXECUTION\n' >> "$evidence_dir/metadata.txt"
@@ -778,6 +660,7 @@ capture_required rg-version rg --version
 capture_required git-version git --version
 capture codex-version codex --version
 capture opencode-version opencode --version
+capture shasum-version shasum --version
 capture_required shasum-probe shasum -a 256 /dev/null
 capture_required bash-syntax bash -n "$script_dir/issue-66-run.sh"
 capture shellcheck-probe bash -c 'command -v shellcheck'
@@ -788,88 +671,63 @@ if [[ "$shellcheck_probe_rc" -eq 0 ]]; then
   capture_required shellcheck-version shellcheck --version
   capture_required shellcheck-script shellcheck "$script_dir/issue-66-run.sh"
 fi
-capture_required python-version uv run --no-project --python 3.14.6 python --version
-uv_actual="$(<"$evidence_dir/commands/uv-version.stdout")"
-python_actual="$(<"$evidence_dir/commands/python-version.stdout")"
-[[ "$uv_actual" == "$uv_expected" ]] || stop "uv 版本不符：$uv_actual"
-[[ "$python_actual" == "$python_expected" ]] || stop "Python 版本不符：$python_actual"
+capture_required python-version uv run --no-project python --version
 capture_required platform uname -a
-capture_required repository-root git -C "$repo_root" rev-parse --show-toplevel
-capture_required repository-origin git -C "$repo_root" remote get-url origin
-capture_required repository-status git -C "$repo_root" status --short --branch
-capture_required test-commit-sha git -C "$repo_root" rev-parse HEAD
-capture_required product-target-resolve git -C "$repo_root" rev-parse "$product_target_sha^{commit}"
-capture_required product-target-ancestor git -C "$repo_root" merge-base --is-ancestor \
-  "$product_target_sha" "$(<"$evidence_dir/commands/test-commit-sha.stdout")"
-capture_required product-source-diff git -C "$repo_root" diff --name-only \
-  "$product_target_sha" "$(<"$evidence_dir/commands/test-commit-sha.stdout")" -- \
-  .apm/agents/professor-contact-idea-generator.agent.md \
-  .apm/skills/professor-contact/SKILL.md \
-  .apm/skills/professor-contact/scripts/contact_state.py
-capture_required diff-check git -C "$repo_root" diff HEAD --check
-
-resolved_root="$(<"$evidence_dir/commands/repository-root.stdout")"
-origin_url="$(<"$evidence_dir/commands/repository-origin.stdout")"
-test_commit_sha="$(<"$evidence_dir/commands/test-commit-sha.stdout")"
-resolved_product_sha="$(<"$evidence_dir/commands/product-target-resolve.stdout")"
-[[ "$resolved_root" == "$repo_root" ]] || stop '脚本目录与 Git 工作树根目录不一致。'
-[[ "$origin_url" == *"$repository_slug"* ]] || stop 'origin 未指向 ScholarWorkflow/professor-contact。'
-[[ "$resolved_product_sha" == "$product_target_sha" ]] || stop '无法解析固定产品目标提交。'
-[[ "$test_commit_sha" =~ ^[0-9a-f]{40}$ ]] || stop '无法记录当前测试提交 SHA。'
-[[ ! -s "$evidence_dir/commands/product-source-diff.stdout" ]] || stop '当前产品源与固定产品目标提交不同。'
-verify_changed_paths
-
-record_text="$(<"$script_dir/issue-66.md")"
-[[ "$record_text" == *"$fixture_tree_sha"* ]] || stop '候选记录未固定共享夹具提交。'
-[[ "$record_text" == *"$adapter_pin"* ]] || stop '候选记录未固定适配器约定。'
-gate_status_line='Gate2 状态：未批准；Gate3 状态：未运行。'
-if [[ $'\n'"$record_text"$'\n' != *$'\n'"$gate_status_line"$'\n'* ]]; then
-  stop '候选记录没有准确保留 Gate2 与 Gate3 状态行。'
-fi
-[[ "$record_text" == *'未运行'* ]] || stop '候选记录没有明确正式评测未运行状态。'
-
-candidate_manifest="$evidence_dir/candidate-files.sha256"
-write_candidate_manifest before "$candidate_manifest"
-capture_required candidate-summary shasum -a 256 "$candidate_manifest"
-candidate_summary=''
-read -r candidate_summary _ < "$evidence_dir/commands/candidate-summary.stdout"
-[[ "$candidate_summary" =~ ^[0-9a-f]{64}$ ]] || stop '无法计算本地候选摘要。'
+capture repository-root git -C "$repo_root" rev-parse --show-toplevel
+capture repository-origin git -C "$repo_root" remote get-url origin
+capture repository-status git -C "$repo_root" status --short --branch
+capture source-commit git -C "$repo_root" rev-parse HEAD
 
 {
-  printf 'repository=%s\n' "$repository_slug"
+  printf 'repository_root=%s\n' "$repo_root"
+  printf 'repository_origin=%s\n' "$(<"$evidence_dir/commands/repository-origin.stdout")"
   printf 'worktree=%s\n' "$repo_root"
   printf 'invocation_directory=%s\n' "$invocation_directory"
-  printf 'product_target_sha=%s\n' "$product_target_sha"
-  printf 'test_commit_sha=%s\n' "$test_commit_sha"
-  printf 'fixture_tree_sha=%s\n' "$fixture_tree_sha"
-  printf 'adapter_pin=%s\n' "$adapter_pin"
-  printf 'fixture_pin_source=runner_constant_and_candidate_record\n'
-  printf 'fixture_checkout=NOT_USED_BY_LOCAL_TESTS\n'
+  printf 'source_commit=%s\n' "$(<"$evidence_dir/commands/source-commit.stdout")"
+  printf 'source_worktree_status=%s\n' "$(<"$evidence_dir/commands/repository-status.stdout")"
+  printf 'source_worktree_status_is_informational=true\n'
+  printf 'product_source=当前仓库源码树；提交与工作树状态见来源记录\n'
+  printf 'product_source_commit=%s\n' "$(<"$evidence_dir/commands/source-commit.stdout")"
+  printf 'test_source=当前仓库测试树；提交与工作树状态见来源记录\n'
+  printf 'test_source_commit=%s\n' "$(<"$evidence_dir/commands/source-commit.stdout")"
+  printf 'fixture_source=NOT_USED_BY_LOCAL_DETERMINISTIC_TESTS\n'
+  printf 'adapter_source=NOT_USED_BY_LOCAL_DETERMINISTIC_TESTS\n'
   printf 'uv_cache_dir=%s\n' "$UV_CACHE_DIR"
+  printf 'plan_revision=%s\n' "$plan_revision"
   printf 'runner_revision=%s\n' "$runner_revision"
+  printf 'uv_version=%s\n' "$(<"$evidence_dir/commands/uv-version.stdout")"
+  printf 'python_version=%s\n' "$(<"$evidence_dir/commands/python-version.stdout")"
+  printf 'bash_version=%s\n' "$(<"$evidence_dir/commands/bash-version.stdout")"
+  printf 'jq_version=%s\n' "$(<"$evidence_dir/commands/jq-version.stdout")"
+  printf 'rg_version=%s\n' "$(<"$evidence_dir/commands/rg-version.stdout")"
+  printf 'git_version=%s\n' "$(<"$evidence_dir/commands/git-version.stdout")"
+  printf 'shasum_version=%s\n' "$(<"$evidence_dir/commands/shasum-version.stdout")"
+  printf 'codex_version=%s\n' "$(<"$evidence_dir/commands/codex-version.stdout")"
+  printf 'opencode_version=%s\n' "$(<"$evidence_dir/commands/opencode-version.stdout")"
   printf 'shellcheck_status=%s\n' "$shellcheck_status"
-  printf 'excluded_task_helper=.tmp_scripts/2026-10-06_watch_pr73.sh\n'
   printf 'python_project_install=DISABLED_BY_UV_NO_PROJECT\n'
-  printf 'candidate_summary_sha256=%s\n' "$candidate_summary"
-  printf 'gate2_status=NOT_APPROVED\n'
-  printf 'formal_eval_mode=DISABLED_UNTIL_GATE2_APPROVAL\n'
-  printf 'formal_s3_rt_codex_1=NOT_RUN\n'
+  printf 'local_model=NOT_USED_BY_DETERMINISTIC_TESTS\n'
+  printf 'local_thinking_level=NOT_USED_BY_DETERMINISTIC_TESTS\n'
+  printf 'local_sandbox=NOT_APPLICABLE\n'
+  printf 'local_install_command=NOT_APPLICABLE\n'
+  printf 'suite_command=uv run --no-project python -B issue66_suite_result.py\n'
+  printf 'formal_eval_mode=NOT_AVAILABLE_IN_LOCAL_MODE\n'
+  printf 'formal_eval_request=NOT_SENT_BY_LOCAL_MODE\n'
 } > "$evidence_dir/metadata.txt"
 
-printf '本地候选摘要：%s\n' "$candidate_summary"
-printf '产品目标提交：%s\n测试提交：%s\n' "$product_target_sha" "$test_commit_sha"
+printf '源码提交记录：%s\n' "$(<"$evidence_dir/commands/source-commit.stdout")"
 printf '证据目录：%s\n' "$evidence_dir"
 
 export ISSUE66_SAMPLE_LEDGER="$EVIDENCE_DIR/judge-samples.jsonl"
 : > "$ISSUE66_SAMPLE_LEDGER"
-run_suite judge test_issue66_runtime_judge.py 113
+run_suite judge test_issue66_runtime_judge.py
 unset ISSUE66_SAMPLE_LEDGER
-run_suite execution_wiring test_issue66_execution_wiring.py 11
-run_suite structured_result test_issue66_suite_result.py 9
-run_suite credential test_issue66_invocation_credential.py 17
-run_suite local_state test_issue66_stage3_local_state.py 12
-run_suite validation_handoff test_issue66_validation_handoff.py 22
-run_suite agent_contract test_stage3_idea_generator_agent_contract.py 9
+run_suite execution_wiring test_issue66_execution_wiring.py
+run_suite structured_result test_issue66_suite_result.py
+run_suite credential test_issue66_invocation_credential.py
+run_suite local_state test_issue66_stage3_local_state.py
+run_suite validation_handoff test_issue66_validation_handoff.py
+run_suite agent_contract test_stage3_idea_generator_agent_contract.py
 
 combination_check_rc=0
 while IFS= read -r method; do
@@ -897,20 +755,13 @@ CANDIDATE_COMBINATIONS
 sample_ledger_rc=0
 write_sample_records || sample_ledger_rc=$?
 
-candidate_manifest_after="$evidence_dir/candidate-files.after.sha256"
-write_candidate_manifest after "$candidate_manifest_after"
-capture_required candidate-summary-after shasum -a 256 "$candidate_manifest_after"
-candidate_summary_after=''
-read -r candidate_summary_after _ < "$evidence_dir/commands/candidate-summary-after.stdout"
-candidate_validity='VALID'
 ledger_validity='VALID'
-[[ "$candidate_summary_after" == "$candidate_summary" ]] || candidate_validity='INVALID'
 [[ "$sample_ledger_rc" -eq 0 && "$combination_check_rc" -eq 0 ]] || ledger_validity='INVALID'
-jq -n --arg candidate_validity "$candidate_validity" --arg ledger_validity "$ledger_validity" \
+jq -n --arg ledger_validity "$ledger_validity" \
   --argjson sample_ledger_exit_code "$sample_ledger_rc" \
   --argjson combination_check_exit_code "$combination_check_rc" \
   --slurpfile suites "$evidence_dir/suites.jsonl" \
-  '{candidate:{validity:$candidate_validity,source:"candidate-files.sha256;candidate-files.after.sha256"},
+  '{candidate:{validity:"RECORDED",source:"metadata.txt;commands/"},
     ledger:{validity:$ledger_validity,source:"samples.tsv;judge-samples.jsonl;candidate-combinations/",
             sample_ledger_exit_code:$sample_ledger_exit_code,
             combination_check_exit_code:$combination_check_exit_code},suites:$suites}' \

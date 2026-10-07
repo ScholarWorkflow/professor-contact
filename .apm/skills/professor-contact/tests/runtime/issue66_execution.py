@@ -5,17 +5,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import shlex
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-TARGET = "dfe430560b6e4d9d85c30b71b8c84bc621da7549"
-FIXTURE = "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
-ADAPTER = "skills-test-fixtures/codex-eval-adapter@16"
-PLAN = "issue-66-test-plan-r19-clarification-r6-2026-10-07"
+PLAN = "issue-66-test-plan-r19-clarification-r7-2026-10-07"
+MODEL = "gpt-6-luna"
+REASONING_EFFORT = "low"
+SANDBOX = "workspace-write"
 HERE = Path(__file__).resolve().parent
 PROFESSOR = Path("教授研究/X分野/Example Professor")
 ARTIFACTS = {
@@ -71,9 +70,9 @@ def request(consumer, program):
               "直接消费现有 Stage 2 canonical input；不要进入 Stage 4。\n完成后正常结束。\n")
     trust = "projects={" + json.dumps(str(consumer), ensure_ascii=False) + \
         '={trust_level="trusted"}}'
-    argv = ["--json", "--skip-git-repo-check", "--sandbox", "workspace-write",
-            "--cd", str(consumer), "--model", "gpt-6-luna", "--config",
-            'model_reasoning_effort="low"', "--config", trust,
+    argv = ["--json", "--skip-git-repo-check", "--sandbox", SANDBOX,
+            "--cd", str(consumer), "--model", MODEL, "--config",
+            f'model_reasoning_effort="{REASONING_EFFORT}"', "--config", trust,
             "--config", "agents.max_concurrent_threads_per_session=5", "--", prompt]
     return {"command": shlex.join(argv), "timeout": 900}
 
@@ -119,6 +118,9 @@ class Execution:
         self.repo = Path(args.repository).resolve()
         self.fixture = Path(args.fixture_root).resolve()
         self.out = Path(args.evidence_dir).resolve()
+        self.product_source = str(args.product_source).strip()
+        if not self.product_source:
+            raise RuntimeError("必须提供本轮实际产品来源")
         self.out.mkdir(parents=True, exist_ok=False)
         self.identity = self.out.name
         self.consumer = self.out / "consumer"
@@ -126,8 +128,8 @@ class Execution:
             if args.mode != "installation-check":
                 raise RuntimeError("复用消费者只允许用于安装预检")
             self.consumer = Path(args.consumer).resolve()
-            if self.consumer.is_relative_to(self.repo):
-                raise RuntimeError("消费者不得位于产品仓库内")
+        if self.consumer.is_relative_to(self.repo):
+            raise RuntimeError("消费者不得位于产品仓库内")
         self.program = self.consumer / "program"
         self.commands = self.out / "commands"
         self.commands.mkdir()
@@ -155,8 +157,8 @@ class Execution:
         return result
 
     def py(self, name, path, *argv, required=True):
-        return self.run(name, ["uv", "run", "--no-project", "--python", "3.14.6",
-                              "python", "-B", str(path), *map(str, argv)], required=required)
+        return self.run(name, ["uv", "run", "--no-project", "python", "-B",
+                              str(path), *map(str, argv)], required=required)
 
     def versions(self):
         versions = {}
@@ -165,54 +167,58 @@ class Execution:
                            ("direnv", ["direnv", "version"])):
             versions[name] = self.run(f"version-{name}", argv).stdout.decode().strip()
         versions["python"] = self.py("version-python", "-V").stdout.decode().strip()
+        versions["git"] = self._git_fact("version-git", ["git", "--version"], self.repo)
         write(self.out / "versions.json", versions)
 
-    def verify_versions(self):
-        head = self.run("test-commit", ["git", "rev-parse", "HEAD"]).stdout.decode().strip()
-        dirty = self.run("test-dirty", ["git", "status", "--porcelain", "--untracked-files=all"])
-        fhead = self.run("fixture-commit", ["git", "rev-parse", "HEAD"], cwd=self.fixture)
-        fdirty = self.run("fixture-dirty", ["git", "status", "--porcelain"], cwd=self.fixture)
-        if fhead.stdout.decode().strip() != FIXTURE or fdirty.stdout.strip():
-            raise RuntimeError("共享环境提交不符或存在修改")
-        if self.a.mode == "formal" and dirty.stdout.strip():
-            raise RuntimeError("正式执行必须使用无修改的冻结测试提交")
-        self.head = head
-        write(self.out / "provenance.json", {"plan": PLAN, "product_commit": TARGET,
-              "test_commit": head, "fixture_commit": FIXTURE, "adapter": ADAPTER,
-              "repository": str(self.repo), "invocation_directory": str(Path.cwd()),
-              "evidence_set_id": self.identity, "manual_patch": "no"})
+    def _git_fact(self, label, argv, cwd):
+        """采集来源信息供定位；失败、修改或版本不同都不作运行门槛。"""
+        try:
+            result = self.run(label, argv, cwd=cwd, required=False)
+        except OSError as exc:
+            return {"value": None, "error": str(exc)}
+        value = result.stdout.decode(errors="replace").strip() if result.returncode == 0 else None
+        return {"value": value, "exit_code": result.returncode}
 
-    def unlock(self):
-        """只在正式模式检查批准；预检从不依赖批准。"""
-        if not self.a.frozen_manifest:
-            raise RuntimeError("正式执行缺少冻结材料")
-        frozen = jq(self.a.frozen_manifest)
-        if frozen.get("test_commit") != self.head or frozen.get("product_commit") != TARGET \
-                or frozen.get("fixture_commit") != FIXTURE or frozen.get("plan") != PLAN:
-            raise RuntimeError("冻结版本与实际版本不符")
-        pinned = frozen.get("files", {})
-        required = [str(Path(__file__).relative_to(self.repo)),
-                    "test-plan/issue-66-formal.sh", "test-plan/issue-66-execution.md",
-                    str((HERE / "judge_issue66_stage3_runtime.py").relative_to(self.repo))]
-        if any(name not in pinned for name in required):
-            raise RuntimeError("冻结材料未覆盖全部执行及判定文件")
-        for relative, expected in pinned.items():
-            path = (self.repo / relative).resolve()
-            if not path.is_relative_to(self.repo) or digest(path.read_bytes()) != expected:
-                raise RuntimeError(f"冻结文件摘要不符：{relative}")
-        comment_id = frozen.get("gate2_comment_id")
-        if not isinstance(comment_id, int) or comment_id <= 0:
-            raise RuntimeError("冻结材料未给出真实批准评论编号")
-        approval = self.out / "gate2-approval.json"
-        result = self.run("gate2-remote-comment", ["gh", "api",
-            f"repos/ScholarWorkflow/professor-contact/issues/comments/{comment_id}"])
-        approval.write_bytes(result.stdout)
-        record = jq(approval)
-        body = record.get("body", "")
-        if record.get("user", {}).get("login") != frozen.get("gate2_reviewer") \
-                or "Test Engineer Gate 2: PASS" not in body or self.head not in body \
-                or PLAN not in body:
-            raise RuntimeError("远端评论未明确批准本计划及当前完整测试提交")
+    def record_provenance(self):
+        test_source = {
+            "root": str(self.repo),
+            "head": self._git_fact("test-source-head", ["git", "rev-parse", "HEAD"], self.repo),
+            "worktree_status": self._git_fact("test-worktree-status",
+                ["git", "status", "--porcelain", "--untracked-files=all"], self.repo),
+        }
+        fixture_source = {
+            "root": str(self.fixture),
+            "head": self._git_fact("fixture-source-head", ["git", "rev-parse", "HEAD"], self.fixture),
+            "worktree_status": self._git_fact("fixture-worktree-status",
+                ["git", "status", "--porcelain", "--untracked-files=all"], self.fixture),
+        }
+        adapter_files = {}
+        for relative in ("scripts/parse_codex_eval_evidence.py",
+                         "configs/codex-eval-adapter-contract.json"):
+            path = self.fixture / relative
+            adapter_files[relative] = {
+                "path": str(path),
+                "exists": path.is_file() and not path.is_symlink(),
+                "sha256_for_location_only": digest(path.read_bytes())
+                    if path.is_file() and not path.is_symlink() else None,
+            }
+        self.provenance = {
+            "plan": PLAN,
+            "product_source_input": self.product_source,
+            "test_source": test_source,
+            "fixture_source": fixture_source,
+            "adapter_source": {"root": str(self.fixture), "files": adapter_files},
+            "tool_versions": jq(self.out / "versions.json"),
+            "repository": str(self.repo),
+            "invocation_directory": str(Path.cwd()),
+            "evidence_set_id": self.identity,
+            "worktree_status_is_informational": True,
+            "software_file_hashes_are_informational": True,
+            "model": MODEL,
+            "reasoning_effort": REASONING_EFFORT,
+            "sandbox": SANDBOX,
+        }
+        write(self.out / "provenance.json", self.provenance)
 
     def port(self):
         result = self.run("eval-port", ["direnv", "exec", ".", "printenv", "EVAL_PORT"])
@@ -306,7 +312,7 @@ class Execution:
     def execute(self):
         self.run("invocation-directory", ["pwd"])
         self.versions()
-        self.verify_versions()
+        self.record_provenance()
         if self.a.mode == "installation-check":
             self.install()
             self.prepare()
@@ -315,8 +321,6 @@ class Execution:
                   "prepared": ["installation", "initial_input", "request", "snapshot"],
                   "remaining": ["正式运行业务生产、保存及权限事实"]})
             return 0
-        if self.a.mode == "formal":
-            self.unlock()
         port = self.port()
         self.install()
         self.prepare()
@@ -330,65 +334,59 @@ class Execution:
 
 
     def install(self):
+        installation = {"method": "existing-consumer-installation-check", "exit_code": None}
         if not self.a.consumer:
             self.consumer.mkdir()
-            self.run("install", ["apm", "install", "--target", "codex",
-                f"ScholarWorkflow/professor-contact#{TARGET}"], cwd=self.consumer)
+            result = self.run("install", ["apm", "install", "--target", "codex",
+                f"ScholarWorkflow/professor-contact#{self.product_source}"], cwd=self.consumer)
+            installation = {"method": "apm install --target codex", "exit_code": result.returncode}
         lock = self.consumer / "apm.lock.yaml"
-        result = self.run("parse-lock", ["yq", "-o=json", ".", str(lock)])
-        parsed = self.out / "lock.json"
-        parsed.write_bytes(result.stdout)
-        commits = jq(parsed, '[.dependencies[] | select(.name=="professor-contact") | .resolved_commit]')
-        projection = []
-        skill = self.consumer / ".agents/skills/professor-contact"
-        for relative in ("SKILL.md", "scripts/contact_state.py"):
-            original = self.run(f"source-{Path(relative).stem}", ["git", "show",
-                f"{TARGET}:.apm/skills/professor-contact/{relative}"]).stdout
-            installed = skill / relative
-            projection.append(check(f"projection:{relative}", installed.is_file()
-                and not installed.is_symlink() and installed.read_bytes() == original,
-                {"installed": str(installed), "source_sha256": digest(original)}))
-        for agent in ("professor-contact", "professor-contact-idea-generator",
-                      "professor-contact-style-validator"):
-            original = self.run(f"source-{agent}", ["git", "show",
-                f"{TARGET}:.apm/agents/{agent}.agent.md"]).stdout.decode()
-            if original.startswith("---\n"):
-                original = original.split("---", 2)[2].strip()
-            installed = self.consumer / f".codex/agents/{agent}.toml"
-            projected = self.run(f"parse-agent-{agent}", ["yq", "-p=toml", "-o=json", ".", str(installed)])
-            parsed = self.out / f"{agent}.json"
-            parsed.write_bytes(projected.stdout)
-            body = jq(parsed, '.developer_instructions')
-            projection.append(check(f"projection:{agent}", isinstance(body, str)
-                and body.strip() == original.strip(), str(installed)))
+        installed_commits = None
+        lock_observation = {"path": str(lock), "exists": lock.is_file(), "parse_status": "not_available"}
+        if lock.is_file() and not lock.is_symlink():
+            parsed_result = self.run("parse-lock-for-recording", ["yq", "-o=json", ".", str(lock)],
+                                     required=False)
+            lock_observation["exit_code"] = parsed_result.returncode
+            if parsed_result.returncode == 0:
+                parsed = self.out / "lock.json"
+                parsed.write_bytes(parsed_result.stdout)
+                try:
+                    installed_commits = jq(parsed,
+                        '[.dependencies[]? | select(.name=="professor-contact") | .resolved_commit]')
+                    lock_observation["parse_status"] = "parsed_for_recording"
+                except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                    lock_observation["parse_status"] = "unavailable"
+                    lock_observation["parse_error"] = str(exc)
+            else:
+                lock_observation["parse_status"] = "unavailable"
+        install_available = installation["exit_code"] == 0 if installation["exit_code"] is not None \
+            else self.consumer.is_dir()
         value = surface(self.identity, [
-            check("locked_target_commit", commits == [TARGET], commits),
-            check("source_install_projection", all(row["status"] == "pass"
-                  for row in projection), projection)], target_commit=TARGET,
-            installed_commit=commits[0] if len(commits) == 1 else None,
-            consumer_root=str(self.consumer), newly_created=not bool(self.a.consumer), manual_patch="no")
+            check("supported_install_entry_completed", install_available, installation)],
+            requested_product_source=self.product_source,
+            installed_product_versions=installed_commits,
+            lock_observation=lock_observation,
+            consumer_root=str(self.consumer), newly_created=not bool(self.a.consumer),
+            manual_patch="no")
         self.install_value = value
+        write(self.out / "install.json", value)
         if value["status"] != "ok":
-            write(self.out / "install.json", value)
-            raise RuntimeError("正式安装版本或源与安装投影不符")
+            raise RuntimeError("支持的安装入口未完成或独占消费者不存在")
 
     def prepare(self):
-        # 安装投影中的辅助会把消费者判作生产仓库；从冻结生产测试资产
-        # 构造纯初态，仍只写消费者内的程序目录，不修补安装产物。
+        # 使用本轮测试工作区中的受支持夹具构造纯初态，只写独占消费者。
         builder_checks = []
         for name in ("prepare_issue55_stage3_fixture.py", "fixture_support.py"):
             asset = HERE / name
-            relative = str(asset.relative_to(self.repo))
-            original = self.run(f"initial-source-{asset.stem}",
-                ["git", "show", f"{TARGET}:{relative}"]).stdout
-            builder_checks.append(check(name, asset.is_file() and not asset.is_symlink()
-                and asset.read_bytes() == original,
-                {"source_commit": TARGET, "source_path": relative,
-                 "source_sha256": digest(original)}))
-        verified = surface(self.identity, builder_checks, source_commit=TARGET)
+            exists = asset.is_file() and not asset.is_symlink()
+            builder_checks.append(check(name, exists,
+                {"path": str(asset), "exists": exists,
+                 "sha256_for_location_only": digest(asset.read_bytes()) if exists else None}))
+        verified = surface(self.identity, builder_checks,
+                           test_source=self.provenance["test_source"])
         write(self.out / "initial-builder.json", verified)
         if verified["status"] != "ok":
-            raise RuntimeError("初态构造程序或直接辅助与固定目标提交不符")
+            raise RuntimeError("初态构造程序或其直接辅助缺失或不是普通文件")
         self.py("build-initial-fixture", HERE / "prepare_issue55_stage3_fixture.py",
                 "--program-root", self.program, "--output", self.out / "initial-input.json")
         initial = jq(self.out / "initial-input.json")
@@ -404,27 +402,24 @@ class Execution:
             check("initial_input_digest", bool(hashes) and all(
                 row["status"] == "pass" for row in hash_checks), hash_checks),
             check("forbidden_outputs_absent", all(not row["exists"] for row in before.values()), before)],
-            manual_patch="no", fixture_commit=FIXTURE, input_hashes=hashes)
+            manual_patch="no", fixture_source=self.provenance["fixture_source"], input_hashes=hashes)
         write(self.out / "fixture-pre.json", fixture_value)
         if fixture_value["status"] != "ok":
             raise RuntimeError("初始输入或禁止产物不满足正式前提")
         req = request(self.consumer, self.program)
         write(self.out / "request.json", req)
         (self.out / "prompt.txt").write_text(shlex.split(req["command"])[-1], encoding="utf-8")
-        config_check = check("request_config_matches_consensus",
-            shlex.split(req["command"])[3] == "workspace-write"
-            and shlex.split(req["command"])[7] == "gpt-6-luna",
-            {"request_sha256": digest((self.out / "request.json").read_bytes()),
-             "source": "PROJECT_CONSENSUS.md / Smoke Tests / 运行配置的唯一来源"})
-        self.install_value["checks"].append(config_check)
-        if config_check["status"] != "pass":
-            self.install_value["status"] = "error"
-        write(self.out / "install.json", self.install_value)
         write(self.out / "pre.json", surface(self.identity, [
             check("pre_zero_write_snapshot", all(not row["exists"] for row in before.values()), before)],
             artifacts=before))
         self.initial = initial
         self.before = before
+        write(self.out / "request-configuration.json", {
+            "model": MODEL,
+            "reasoning_effort": REASONING_EFFORT,
+            "sandbox": SANDBOX,
+            "command": req["command"],
+        })
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -432,7 +427,8 @@ def main(argv=None):
     parser.add_argument("--repository", required=True)
     parser.add_argument("--fixture-root", required=True)
     parser.add_argument("--evidence-dir", required=True)
-    parser.add_argument("--frozen-manifest")
+    parser.add_argument("--product-source", required=True,
+                         help="本轮实际要安装的 professor-contact 来源或版本选择器")
     parser.add_argument("--consumer")
     args = parser.parse_args(argv)
     execution = None

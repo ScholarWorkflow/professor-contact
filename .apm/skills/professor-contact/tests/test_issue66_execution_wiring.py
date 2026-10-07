@@ -1,9 +1,11 @@
 """确定性接线检查；不连接评测服务。"""
 import importlib.util
+import json
 import shlex
 import tempfile
 import unittest
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import Mock, patch
 
 PATH = Path(__file__).parent / 'runtime/issue66_execution.py'
@@ -13,15 +15,20 @@ spec.loader.exec_module(wiring)
 
 
 class ExecutionWiringTests(unittest.TestCase):
-    def execution(self, directory):
+    def execution(self, directory, product_source="refs/pr73-current"):
         from argparse import Namespace
         root = Path(directory)
         consumer = root / 'consumer'
         consumer.mkdir()
-        return wiring.Execution(Namespace(repository=str(PATH.parents[5]),
+        execution = wiring.Execution(Namespace(repository=str(PATH.parents[5]),
             fixture_root=str(root), evidence_dir=str(root / 'evidence'),
             mode='installation-check', consumer=str(consumer),
-            frozen_manifest=None))
+            product_source=product_source))
+        execution.provenance = {
+            'test_source': {'root': str(PATH.parents[5])},
+            'fixture_source': {'root': str(root)},
+        }
+        return execution
 
     def test_initial_builder_uses_verified_producer_asset_in_consumer_layout(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -35,17 +42,45 @@ class ExecutionWiringTests(unittest.TestCase):
             self.assertEqual(len(execution.initial['input_hashes']), 3)
             self.assertEqual(wiring.jq(execution.out / 'initial-builder.json', '.status'), 'ok')
 
-    def test_initial_builder_source_mismatch_stops_before_prepare(self):
-        from subprocess import CompletedProcess
+    def test_missing_initial_builder_stops_before_prepare(self):
         with tempfile.TemporaryDirectory() as directory:
             execution = self.execution(directory)
             execution.install_value = wiring.surface(execution.identity, [])
-            with patch.object(execution, 'run', return_value=CompletedProcess([], 0, b'wrong', b'')), \
-                 patch.object(execution, 'py') as call:
+            with patch.object(wiring, 'HERE', Path(directory)), patch.object(execution, 'py') as call:
                 with self.assertRaisesRegex(RuntimeError, '初态构造'):
                     execution.prepare()
             call.assert_not_called()
             self.assertFalse(execution.program.exists())
+
+    def test_install_uses_this_run_product_source_without_version_equality_gate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            from argparse import Namespace
+            root = Path(directory)
+            args = Namespace(repository=str(PATH.parents[5]), fixture_root=directory,
+                evidence_dir=str(root / 'evidence'), mode='formal', consumer=None,
+                product_source='refs/pr73-current')
+            execution = wiring.Execution(args)
+            with patch.object(execution, 'run', return_value=CompletedProcess([], 0, b'installed', b'')) as run:
+                execution.install()
+            run.assert_called_once_with('install', ['apm', 'install', '--target', 'codex',
+                'ScholarWorkflow/professor-contact#refs/pr73-current'], cwd=execution.consumer)
+            evidence = json.loads((execution.out / 'install.json').read_text())
+            self.assertEqual(evidence['status'], 'ok')
+            self.assertEqual(evidence['requested_product_source'], 'refs/pr73-current')
+            self.assertIsNone(evidence['installed_product_versions'])
+
+    def test_source_revision_and_dirty_status_are_recorded_without_rejection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            execution = self.execution(directory)
+            (execution.out / 'versions.json').write_text('{"uv":"uv actual"}')
+            failed = CompletedProcess(['git'], 128, b'', b'not a git checkout')
+            with patch.object(execution, 'run', return_value=failed), \
+                 patch.object(wiring, 'jq', return_value={'uv': 'uv actual'}):
+                execution.record_provenance()
+            record = json.loads((execution.out / 'provenance.json').read_text())
+            self.assertEqual(record['product_source_input'], 'refs/pr73-current')
+            self.assertIsNone(record['test_source']['head']['value'])
+            self.assertEqual(record['test_source']['worktree_status']['exit_code'], 128)
 
     def test_credential_observation_rejects_symlink_before_resolving(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -103,23 +138,21 @@ class ExecutionWiringTests(unittest.TestCase):
         self.assertEqual(result['root_direct_spawn_child_ids'], [])
         # 局部拓扑报告不负责业务是否委派；唯一判定仍会拒绝完整运行零委派。
 
-    def test_preflight_never_checks_approval_or_sends_request(self):
+    def test_preflight_never_checks_remote_approval_or_sends_request(self):
         from argparse import Namespace
         with tempfile.TemporaryDirectory() as directory:
             args = Namespace(repository=str(PATH.parents[5]),fixture_root=directory,
                 evidence_dir=str(Path(directory)/'new'),mode='preflight',consumer=None,
-                frozen_manifest=None)
+                product_source='refs/pr73-current')
             execution = wiring.Execution(args)
             service = Mock()
             execution.service = service
             with patch.object(execution,'run'), patch.object(execution,'versions'), \
-                 patch.object(execution,'verify_versions'), patch.object(execution,'port',return_value='1234'), \
-                 patch.object(execution,'install'), \
-                 patch.object(execution,'prepare'), patch.object(execution,'formal') as formal, \
-                 patch.object(execution,'unlock') as unlock:
+                 patch.object(execution,'record_provenance'), patch.object(execution,'port',return_value='1234'), \
+                 patch.object(execution,'service') as service, patch.object(execution,'install'), \
+                 patch.object(execution,'prepare'), patch.object(execution,'formal') as formal:
                 self.assertEqual(execution.execute(),0)
                 formal.assert_not_called()
-                unlock.assert_not_called()
             service.assert_not_called()
 
     def test_eval_port_lookup_runs_from_repository_worktree(self):

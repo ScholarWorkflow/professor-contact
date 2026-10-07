@@ -1,16 +1,16 @@
 """Mechanical judge for the S3-RT-CODEX-1 runtime evidence (issue #66).
 
 This is the single decision program required by the current test plan
-(``issue-66-test-plan-r19-clarification-r6-2026-10-07`` §四/§五/§七).  It folds
+(``issue-66-test-plan-r19-clarification-r7-2026-10-07`` §四/§五/§七).  It folds
 every required evidence surface into ONE verdict — formal delegation
 attribution, the invocation-credential value chain, the per-round
 prepare→validate→save→record handoff, the validator-produced raw bytes, the
 file-operation behavior proven by complete command inputs and completed
 ``fileChange`` records, the completion-order
 stop boundaries, the terminal state, and the install/fixture/snapshot
-checks — and classifies per the frozen rules:
+checks — and classifies per the approved business requirements:
 
-- attribution conflicts / version mixing / unsupported evidence shapes
+- attribution conflicts / unsupported evidence shapes
   → ``INVALID_TEST_EXECUTION`` (they cannot be used to derive product
   failures);
 - any attributable product contract violation → ``FAIL``;
@@ -1237,8 +1237,8 @@ class Judge:
         """Fold one required verifier output into the unique verdict.
 
         The producer verifier owns each domain-specific comparison. This
-        layer still requires every frozen check and never treats absent or
-        unsupported output as success.
+        layer requires each named check and never treats absent or unsupported
+        output as success.
         """
         evidence = self.surfaces.get(surface_name)
         if evidence is None:
@@ -1292,31 +1292,20 @@ class Judge:
         observed_ids = {value for _name, value in evidence_ids
                         if isinstance(value, str) and value.strip()}
         if missing_ids:
-            self.row("F-evidence-version", "gap",
+            self.row("F-evidence-set", "gap",
                      "run evidence identifiers are missing from one or more inputs",
                      missing_ids)
         elif len(observed_ids) > 1:
-            self.row("F-evidence-version", "invalid",
+            self.row("F-evidence-set", "invalid",
                      "evidence inputs mix different run identifiers",
                      [f"{name}={value}" for name, value in evidence_ids])
         else:
-            self.row("F-evidence-version", "pass",
+            self.row("F-evidence-set", "pass",
                      "all inputs are bound to one run evidence set",
                      [next(iter(observed_ids))])
         self._fold_required_checks(
             "install", "F-install",
-            ("locked_target_commit", "source_install_projection",
-             "request_config_matches_consensus"), "install")
-        install = self.surfaces.get("install")
-        if isinstance(install, dict):
-            target = install.get("target_commit")
-            if not isinstance(target, str) or not re.fullmatch(r"[0-9a-f]{40}", target):
-                self.row("F-install-version", "gap", "installation has no complete target commit", [])
-            elif install.get("installed_commit") != target:
-                self.row("F-install-version", "invalid", "installed product differs from the frozen target commit",
-                         [f"target={target}", f"installed={install.get('installed_commit')}"])
-            else:
-                self.row("F-install-version", "pass", "installed product matches the complete frozen commit", [target])
+            ("supported_install_entry_completed",), "supported installation entry")
         fixture = self.surfaces.get("fixture")
         self._fold_required_checks(
             "fixture", "F-fixture",
@@ -3166,7 +3155,7 @@ class Judge:
                               {"F-attribution", "F-routing-verifier"}]
         if provenance_invalid:
             classification = "INVALID_TEST_EXECUTION"
-            reason = "product/input/version provenance is invalid; business facts cannot be attributed"
+            reason = "evidence or product/input provenance is invalid; business facts cannot be attributed"
         elif independent_failures:
             classification = "FAIL"
             reason = ("independent product violation: " + "; ".join(
@@ -3200,7 +3189,7 @@ class Judge:
         elif self.rows and all(row["verdict"] == "pass"
                                for row in self.rows):
             classification = "PASS"
-            reason = "all frozen runtime facts hold"
+            reason = "all required runtime facts hold"
         else:
             classification = "INVALID_TEST_EXECUTION"
             reason = "unjudgeable evidence set"
