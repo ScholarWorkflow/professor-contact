@@ -22,7 +22,7 @@ import issue68_transfer_location as transfer_location
 HERE = Path(__file__).resolve().parent
 FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
-CONTRACT_REVISION = "issue-68-runtime-evidence-r32-2026-10-07"
+CONTRACT_REVISION = "issue-68-runtime-evidence-r33-2026-10-07"
 OWNER_OBSERVATION_SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
 SYNTHETIC_PREFLIGHT_SCHEMA = "issue-68-r29-fixed-capture-preflight-v2"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
@@ -78,13 +78,6 @@ def load_contract():
         raise ValueError("contract_actual_input_observation_source_mismatch")
     if observation.get("status") != "supported":
         raise ValueError("contract_actual_input_observation_status_unsupported")
-    second_gate_status = contract.get("preflight", {}).get("second_gate_status")
-    if second_gate_status not in ("INCOMPLETE", "COMPLETE"):
-        raise ValueError("contract_second_gate_status_mismatch")
-    gate_allowed = contract.get("preflight", {}).get("input_observation_gate", {}).get(
-        "formal_run_allowed") is True
-    if (second_gate_status == "COMPLETE") != gate_allowed:
-        raise ValueError("contract_second_gate_decision_mismatch")
     if not codex.get("owner_input_isolation"):
         raise ValueError("contract_owner_input_isolation_missing")
     if not codex.get("canonical_preservation"):
@@ -149,10 +142,6 @@ def _register_runtime_fact(preflight, key, value, source_artifacts, **details):
     updated["runtime_environment_facts"] = facts
     updated["runtime_environment_evidence"] = evidence
     updated["runtime_environment_missing"] = _runtime_environment_missing(facts)
-    updated["formal_run_allowed"] = (
-        updated.get("service_preflight_allowed") is True
-        and not updated["runtime_environment_missing"]
-    )
     return updated
 
 
@@ -359,12 +348,7 @@ def actual_input_observation_preflight(contract):
     )
     artifact, capture_problem = _synthetic_capture_preflight()
     capture_supported = artifact is not None and capture_problem is None
-    second_gate_complete = contract.get("preflight", {}).get("second_gate_status") == "COMPLETE"
-    gate_allowed = contract.get("preflight", {}).get("input_observation_gate", {}).get(
-        "formal_run_allowed") is True
-    service_preflight_allowed = (
-        source_supported and capture_supported and second_gate_complete and gate_allowed
-    )
+    technical_preflight_ready = source_supported and capture_supported
     runtime_values = {key: None for key in REQUIRED_RUNTIME_FACTS}
     missing_runtime_values = list(REQUIRED_RUNTIME_FACTS)
     block_reasons = []
@@ -372,10 +356,6 @@ def actual_input_observation_preflight(contract):
         block_reasons.append("actual_input_evidence_source_unavailable")
     if not capture_supported:
         block_reasons.append((capture_problem or {}).get("reason_code", "synthetic_capture_preflight_missing"))
-    if not second_gate_complete:
-        block_reasons.append("second_gate_incomplete")
-    elif not gate_allowed:
-        block_reasons.append("second_gate_decision_missing")
     return {
         "ready": source_supported and capture_supported,
         "state": ("OBSERVATION_SOURCE_SUPPORTED" if source_supported and capture_supported else
@@ -384,12 +364,8 @@ def actual_input_observation_preflight(contract):
         "reason_code": (None if source_supported and capture_supported else
                         ((capture_problem or {}).get("reason_code") if not capture_supported
                          else "actual_input_evidence_source_unavailable")),
-        "formal_run_allowed": False,
-        "formal_run_block_reason": ("second_gate_incomplete" if not second_gate_complete else
-                                    ("second_gate_decision_missing" if not gate_allowed else
-                                     "runtime_environment_capture_pending")),
-        "formal_run_block_reasons": block_reasons,
-        "service_preflight_allowed": service_preflight_allowed,
+        "technical_preflight_ready": technical_preflight_ready,
+        "technical_preflight_block_reasons": block_reasons,
         "runtime_environment_missing": missing_runtime_values,
         "runtime_environment_facts": runtime_values,
         "runtime_environment_evidence": {},
@@ -605,9 +581,8 @@ def _record_request_runtime_facts(preflight, output, request, service_snapshot, 
     missing = _runtime_environment_missing(updated["runtime_environment_facts"])
     if missing:
         raise ValueError("runtime_environment_unrecorded:" + ",".join(missing))
-    if updated.get("service_preflight_allowed") is not True:
-        raise ValueError("second_gate_incomplete")
-    updated["formal_run_allowed"] = True
+    if updated.get("technical_preflight_ready") is not True:
+        raise ValueError("technical_preflight_incomplete")
     updated["request_artifact"] = {
         "path": "codex/codex-request.json",
         "sha256": _sha256_file(request_path),
@@ -860,8 +835,9 @@ def main(argv=None):
         base.write_json(output / "input-evidence-preflight.json", input_preflight)
         if not input_preflight["ready"]:
             raise ValueError(input_preflight["reason_code"])
-        if not input_preflight["service_preflight_allowed"]:
-            raise ValueError(input_preflight["formal_run_block_reason"])
+        if not input_preflight["technical_preflight_ready"]:
+            reasons = input_preflight["technical_preflight_block_reasons"]
+            raise ValueError(reasons[0] if reasons else "technical_preflight_incomplete")
         if args.transfer_location_root is None:
             raise ValueError("transfer_location_root_required")
         if args.fixture_sha != FIXTURE_SHA:

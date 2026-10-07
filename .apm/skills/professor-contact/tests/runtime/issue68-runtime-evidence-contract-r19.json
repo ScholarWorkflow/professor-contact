@@ -1,5 +1,5 @@
 {
-  "revision": "issue-68-runtime-evidence-r32-2026-10-07",
+  "revision": "issue-68-runtime-evidence-r33-2026-10-07",
   "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
   "fixture_sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
   "fixture_contract": "skills-test-fixtures/codex-eval-adapter@16",
@@ -121,7 +121,7 @@
         "malformed_or_ambiguous_attribution": "INVALID_EVIDENCE",
         "command_text_unrelated_print_or_read_or_after_the_fact_file": "不得作为输入证据"
       },
-      "gate_status": "第30版待审；第二关口INCOMPLETE，formal_run_allowed=false。关口前完成独立最小预检，正式PC68-R1等待审核及冻结。",
+      "gate_status": "第31版待审；第二关口未完成。正式 PC68-R1 等待审核及冻结；是否启动由本地测试工程师按方案控制，运行器不读取授权字段。",
       "independent_command_event_validation": "合成预检通过 mcp__codex_app__read_thread 取得真实 commandExecution 项，核对命令、退出码、未截断输出、线程、轮次和项顺序，并将其输出摘要绑定到同一对象、调用 argv 和计划结果；正式运行仍由独立 commandExecution.command 字段核对固定捕获器路径及参数，并从 runner 创建的 manifest 校验动态消费者目录。捕获源码摘要来自仓库固定源码而非信封自报。"
     },
     "runtime_generation_association": "runtime_generation接受真实JSON整数及历史字符串；排除布尔值、空值及其他类型。当前输出、调用和事件的值及JSON类型必须严格相同，不把整数1、字符串1或布尔值true互相转换。",
@@ -185,7 +185,6 @@
     },
     "input_observation_gate": {
       "status": "READY_FOR_GATE2_REVIEW",
-      "formal_run_allowed": false,
       "case": "PC68-R1",
       "reason_code": "second_gate_incomplete",
       "action": "第03次完整环境预检通过：固定产品支持安装、已安装入口 --help 和一次纯合成命令解析及同对象转交均通过；服务实例与安装消费者前后保持不变。正式 PC68-R1 未运行，合法临时传递位置覆盖仍待证明，第二关口未通过。",

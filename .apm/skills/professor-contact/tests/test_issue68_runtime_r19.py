@@ -111,8 +111,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         gate = contract["preflight"]["input_observation_gate"]
         self.assertEqual(gate["status"], "READY_FOR_GATE2_REVIEW")
         self.assertEqual(gate["reason_code"], "second_gate_incomplete")
-        self.assertFalse(gate["formal_run_allowed"])
-        self.assertFalse(contract["preflight"]["input_observation_gate"]["formal_run_allowed"])
+        self.assertNotIn("formal_run_allowed", gate)
         self.assertEqual(contract["preflight"]["second_gate_status"], "INCOMPLETE")
         self.assertEqual(len(contract["pc68_r1_steps"]), 7)
         runtime = contract["formal_runtime_environment"]
@@ -135,9 +134,9 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertFalse(gate["ready"])
         self.assertEqual(gate["state"], "BLOCKED_OBSERVABILITY")
         self.assertEqual(gate["reason_code"], "actual_input_evidence_source_unavailable")
-        self.assertFalse(gate["service_preflight_allowed"])
+        self.assertFalse(gate["technical_preflight_ready"])
 
-    def test_observation_support_does_not_complete_gate_two(self):
+    def test_observation_support_passes_technical_preflight_without_gate_flag(self):
         contract = entry.load_contract()
 
         gate = entry.actual_input_observation_preflight(contract)
@@ -145,11 +144,10 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertTrue(gate["ready"])
         self.assertEqual(gate["state"], "OBSERVATION_SOURCE_SUPPORTED")
         self.assertIsNone(gate["reason_code"])
-        self.assertEqual(gate["formal_run_block_reason"], "second_gate_incomplete")
-        self.assertIn("second_gate_incomplete", gate["formal_run_block_reasons"])
-        self.assertFalse(gate["service_preflight_allowed"])
+        self.assertTrue(gate["technical_preflight_ready"])
+        self.assertEqual(gate["technical_preflight_block_reasons"], [])
 
-    def test_r25_observation_support_does_not_complete_gate_two(self):
+    def test_r25_observation_support_keeps_runtime_facts_separate_from_invocation(self):
         contract = entry.load_contract()
 
         gate = entry.actual_input_observation_preflight(contract)
@@ -157,10 +155,8 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertTrue(gate["ready"])
         self.assertEqual(gate["state"], "OBSERVATION_SOURCE_SUPPORTED")
         self.assertIsNone(gate["reason_code"])
-        self.assertFalse(gate["formal_run_allowed"])
-        self.assertIn("second_gate_incomplete", gate["formal_run_block_reasons"])
         self.assertGreater(len(gate["runtime_environment_missing"]), 0)
-        self.assertFalse(gate["service_preflight_allowed"])
+        self.assertTrue(gate["technical_preflight_ready"])
         capture = gate["synthetic_capture"]
         self.assertEqual(capture["result"], "CAPTURED_SYNTHETIC_WITH_ACTUAL_COMMAND_EVENT")
         self.assertEqual(capture["verifier_parser"], "same_object_invocation_and_plan")
@@ -170,18 +166,18 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertIsInstance(capture["turn_index"], int)
         self.assertIsInstance(capture["item_index"], int)
 
-    def test_gate_two_approval_allows_next_preflight_after_observation_check(self):
+    def test_preflight_readiness_does_not_depend_on_gate_status_or_flag(self):
         contract = entry.load_contract()
-        contract["preflight"]["second_gate_status"] = "COMPLETE"
-        contract["preflight"]["input_observation_gate"]["formal_run_allowed"] = True
+        contract["preflight"]["second_gate_status"] = "INCOMPLETE"
+        contract["preflight"]["input_observation_gate"].pop("formal_run_allowed", None)
 
         gate = entry.actual_input_observation_preflight(contract)
 
         self.assertTrue(gate["ready"])
-        self.assertTrue(gate["service_preflight_allowed"])
-        self.assertFalse(gate["formal_run_allowed"])
+        self.assertTrue(gate["technical_preflight_ready"])
+        self.assertNotIn("formal_run_allowed", gate)
         self.assertEqual(gate["state"], "OBSERVATION_SOURCE_SUPPORTED")
-        self.assertEqual(gate["formal_run_block_reason"], "runtime_environment_capture_pending")
+        self.assertGreater(len(gate["runtime_environment_missing"]), 0)
 
     def test_runtime_facts_are_collected_from_this_run_before_request(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -205,7 +201,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             (output / "eval-service-provenance.before.json").write_text(
                 json.dumps(service), encoding="utf-8")
             preflight = {
-                "service_preflight_allowed": True,
+                "technical_preflight_ready": True,
                 "runtime_environment_facts": {key: None for key in entry.REQUIRED_RUNTIME_FACTS},
                 "runtime_environment_evidence": {},
             }
@@ -216,7 +212,8 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             captured = entry._record_request_runtime_facts(
                 preflight, output, request, service, producer, fixture)
 
-            self.assertTrue(captured["formal_run_allowed"])
+            self.assertEqual(captured["runtime_environment_missing"], [])
+            self.assertNotIn("formal_run_allowed", captured)
             facts = captured["runtime_environment_facts"]
             self.assertEqual(facts["model"], "synthetic-model")
             self.assertEqual(facts["service_version"], "synthetic-service-sha")
@@ -392,7 +389,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertEqual([row["formal_terminal"] for row in proven_failure["children"]],
                          ["FAIL", "BLOCKED", "INVALID_TEST_EXECUTION"])
 
-    def test_formal_entry_stops_before_service_inspection_or_request(self):
+    def test_missing_transfer_location_stops_before_service_inspection_or_request(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             output = root / "output"
@@ -402,6 +399,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
                 eval_direnv_root=root / "eval-server",
                 output_dir=output,
                 fixture_sha=entry.FIXTURE_SHA,
+                transfer_location_root=None,
             )
             with mock.patch.object(entry, "pin"), \
                     mock.patch.object(entry, "parse_args", return_value=args), \
@@ -419,11 +417,14 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             self.assertEqual(json.loads((output / "final-verdict.json").read_text())["state"],
                              "CASE_NOT_STARTED")
             self.assertEqual(json.loads((output / "final-verdict.json").read_text())["reason_code"],
-                             "second_gate_incomplete")
+                             "transfer_location_root_required")
             self.assertTrue(json.loads((output / "input-evidence-preflight.json").read_text())["ready"])
             self.assertEqual(json.loads((output / "input-evidence-preflight.json").read_text())[
                 "state"], "OBSERVATION_SOURCE_SUPPORTED")
-            self.assertFalse(json.loads((output / "input-evidence-preflight.json").read_text())["formal_run_allowed"])
+            self.assertTrue(json.loads((output / "input-evidence-preflight.json").read_text())[
+                "technical_preflight_ready"])
+            self.assertNotIn("formal_run_allowed", json.loads(
+                (output / "input-evidence-preflight.json").read_text()))
             clean_revision.assert_not_called()
             service.assert_not_called()
             codex_host.assert_not_called()
