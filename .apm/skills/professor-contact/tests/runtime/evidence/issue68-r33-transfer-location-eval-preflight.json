@@ -2,8 +2,28 @@
   "schema": "issue68-r33-transfer-location-eval-preflight-v1",
   "plan_revision": "r28",
   "record_revision": "r33",
-  "final_preflight_state": "INVALID_TEST_EXECUTION",
-  "final_preflight_reason": "agent_or_delegation_event_observed",
+  "initial_preflight_state": "INVALID_TEST_EXECUTION",
+  "final_preflight_state": "PASS",
+  "final_preflight_reason": "single_request_marker_lifecycle_verified",
+  "offline_rejudgment": {
+    "kind": "REJUDGE_PRIOR_EVIDENCE",
+    "original_recorded_state": "INVALID_TEST_EXECUTION",
+    "state": "PASS",
+    "reason": "single_request_marker_lifecycle_verified",
+    "runner_sha256": "abab912f50a4d35df18369743c176bbb2761b4a2da19f445bd648070561e203d",
+    "method": "read-only REJUDGE_PRIOR_EVIDENCE using verify_probe, same_service, and snapshots_are_complete_empty_same_root",
+    "original_preflight_result_sha256": "55119453767f338da60f3d307dc6c0fbc20b4cfe948ab7ed60eb458f6c533ad2",
+    "request_body_sha256": "88283d916a7af0b61bb20e4eb7459ab3ad989e262e005834514000445a5665cc",
+    "response_body_sha256": "92fff452afbeddfaea2c530a8a664730aedec3e9a580325ab6c8233286ceb403",
+    "request_response_hashes_match": true,
+    "request_prompt_and_command_binding_verified": true,
+    "request_count": 1,
+    "new_requests_sent": 0,
+    "service_unchanged": true,
+    "consumer_unchanged": true,
+    "transfer_snapshots_complete_empty_same_root": true,
+    "raw_preflight_result_overwritten": false
+  },
   "second_gate_status": "INCOMPLETE",
   "formal_PC68_R1_started": false,
   "attempts": [
@@ -27,7 +47,9 @@
       "request_body_sha256": "88283d916a7af0b61bb20e4eb7459ab3ad989e262e005834514000445a5665cc",
       "response_body_sha256": "92fff452afbeddfaea2c530a8a664730aedec3e9a580325ab6c8233286ceb403",
       "raw_evidence_alias": "$PC68_R33_RUN02_RAW",
-      "preflight_result_sha256": "55119453767f338da60f3d307dc6c0fbc20b4cfe948ab7ed60eb458f6c533ad2"
+      "preflight_result_sha256": "55119453767f338da60f3d307dc6c0fbc20b4cfe948ab7ed60eb458f6c533ad2",
+      "offline_rejudged_state": "PASS",
+      "offline_rejudged_reason": "single_request_marker_lifecycle_verified"
     }
   ],
   "infrastructure_recovery_diagnostic": {
@@ -104,7 +126,7 @@
     "runner_sha256_after_correction": "abab912f50a4d35df18369743c176bbb2761b4a2da19f445bd648070561e203d",
     "test_sha256": "b3b13d96aada0f9251d8f99060fb576b2bb80c37358868094f62144fd3f66b65",
     "correction": "distinguish ordinary agentMessage events from collabAgentToolCall and subAgentActivity",
-    "live_evidence_reclassified": false,
+    "offline_rejudgment_applied": true,
     "live_request_repeated": false
   },
   "validation": {
