@@ -53,17 +53,90 @@ def request_configuration(request, response):
     consumer = str(Path(argv[argv.index("--cd") + 1]).resolve())
     if sandbox != "workspace-write":
         raise ValueError("actual_request_sandbox_mismatch")
+
+    root_thread = (response_output.get("thread_id")
+                   if isinstance(response_output, dict) else None)
+    generation = (response_output.get("runtime_generation")
+                  if isinstance(response_output, dict) else None)
+    events = (response_output.get("app_server_events")
+              if isinstance(response_output, dict) else None)
+    source = {
+        "path": "output.app_server_events",
+        "method": "thread/started",
+        "model_field": "message.params.thread.model",
+        "reasoning_effort_field": "message.params.thread.reasoningEffort",
+        "runtime_generation": generation,
+        "matching_event_count": 0,
+        "status": "NOT_OBSERVED_YET" if not response else
+                  "NOT_EXPOSED_BY_CURRENT_SERVICE",
+    }
+    matches = []
+    if isinstance(root_thread, str) and root_thread and generation is not None \
+            and isinstance(events, list):
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            event_generation = event.get("runtime_generation")
+            if (type(event_generation) is not type(generation)
+                    or event_generation != generation):
+                continue
+            message = event.get("message")
+            if not isinstance(message, dict) or message.get("method") != "thread/started":
+                continue
+            params = message.get("params")
+            thread = params.get("thread") if isinstance(params, dict) else None
+            if isinstance(thread, dict) and thread.get("id") == root_thread:
+                matches.append((event, thread))
+
+    source["matching_event_count"] = len(matches)
+    model = None
+    reasoning_effort = None
+    if len(matches) == 1:
+        event, thread = matches[0]
+        source.update({
+            "status": "UNIQUE_MATCH",
+            "runtime_seq": event.get("runtime_seq"),
+        })
+        if "model" in thread:
+            model = thread["model"]
+            model_status = ("OBSERVED" if isinstance(model, str) and model.strip()
+                            else "INVALID_SERVICE_REPORTED_VALUE")
+        else:
+            model_status = "NOT_EXPOSED_BY_CURRENT_SERVICE"
+        if "reasoningEffort" in thread:
+            reasoning_effort = thread["reasoningEffort"]
+            reasoning_status = (
+                "OBSERVED" if isinstance(reasoning_effort, str)
+                and reasoning_effort.strip() else "INVALID_SERVICE_REPORTED_VALUE")
+        else:
+            reasoning_status = "NOT_EXPOSED_BY_CURRENT_SERVICE"
+    else:
+        if len(matches) > 1:
+            source["status"] = "AMBIGUOUS_THREAD_STARTED_EVENT"
+            model_status = "AMBIGUOUS_THREAD_STARTED_EVENT"
+            reasoning_status = "AMBIGUOUS_THREAD_STARTED_EVENT"
+        else:
+            unavailable_status = ("NOT_OBSERVED_YET" if not response else
+                                  "NOT_EXPOSED_BY_CURRENT_SERVICE")
+            model_status = unavailable_status
+            reasoning_status = unavailable_status
+
     return {
         "request_argv": argv,
         "requested_model": models[0],
         "requested_configs": configs,
+        "requested_reasoning_effort": "low",
         "requested_sandbox": sandbox,
         "consumer_root": consumer,
         "request_timeout_seconds": request.get("timeout"),
         "source": "serialized request sent once to the current eval service",
         "service_reported_executor_version": response.get("version"),
         "thread_start_effective": effective,
-        "effective_model_status": "NOT_EXPOSED_BY_CURRENT_SERVICE",
+        "service_reported_effective_model": model,
+        "effective_model_status": model_status,
+        "service_reported_effective_reasoning_effort": reasoning_effort,
+        "effective_reasoning_effort_status": reasoning_status,
+        "effective_configuration_source": source,
     }
 
 

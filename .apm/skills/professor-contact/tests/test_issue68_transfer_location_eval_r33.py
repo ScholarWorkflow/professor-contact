@@ -1,5 +1,6 @@
 """Focused checks for the single-request transfer-location preflight."""
 import json
+import shlex
 import sys
 import tempfile
 import unittest
@@ -17,6 +18,154 @@ class TestIssue68TransferLocationEvalPreflight(unittest.TestCase):
         self.root = "/private/tmp/pc68-r33-transfer"
         self.command = "uv run --no-project python /private/tmp/probe.py"
         self.marker_sha = "a" * 64
+
+    def request(self):
+        argv = [
+            "--json", "--skip-git-repo-check", "--sandbox", "workspace-write",
+            "--cd", self.root, "--model", "gpt-6-luna",
+            "--config", 'model_reasoning_effort="low"',
+            "--config", "agents.max_concurrent_threads_per_session=2",
+            "--config", f'projects={json.dumps(self.root)}={{trust_level="trusted"}}',
+            "--", "synthetic marker preflight",
+        ]
+        return {"command": shlex.join(argv), "timeout": 900}
+
+    def test_configuration_before_eval_response_is_not_claimed_as_undisclosed(self):
+        facts = preflight.request_configuration(self.request(), {})
+
+        self.assertEqual(facts["effective_model_status"], "NOT_OBSERVED_YET")
+        self.assertEqual(facts["effective_reasoning_effort_status"], "NOT_OBSERVED_YET")
+        self.assertEqual(facts["effective_configuration_source"]["status"],
+                         "NOT_OBSERVED_YET")
+
+    def test_effective_values_come_from_unique_root_thread_started_event(self):
+        response = {"version": "eval-test", "output": {
+            "thread_id": "root-1", "runtime_generation": 4,
+            "app_server_events": [{
+                "runtime_seq": 7, "runtime_generation": 4,
+                "message": {"method": "thread/started", "params": {
+                    "thread": {"id": "root-1", "model": "gpt-5.6-luna",
+                               "reasoningEffort": "medium"},
+                }},
+            }],
+        }}
+
+        facts = preflight.request_configuration(self.request(), response)
+
+        self.assertEqual(facts["requested_model"], "gpt-6-luna")
+        self.assertEqual(facts["requested_reasoning_effort"], "low")
+        self.assertEqual(facts["service_reported_effective_model"], "gpt-5.6-luna")
+        self.assertEqual(facts["effective_model_status"], "OBSERVED")
+        self.assertEqual(facts["service_reported_effective_reasoning_effort"], "medium")
+        self.assertEqual(facts["effective_reasoning_effort_status"], "OBSERVED")
+        self.assertEqual(facts["effective_configuration_source"], {
+            "path": "output.app_server_events",
+            "method": "thread/started",
+            "model_field": "message.params.thread.model",
+            "reasoning_effort_field": "message.params.thread.reasoningEffort",
+            "runtime_generation": 4,
+            "matching_event_count": 1,
+            "status": "UNIQUE_MATCH",
+            "runtime_seq": 7,
+        })
+
+    def test_unmatched_thread_started_event_leaves_effective_values_unpublished(self):
+        response = {"output": {
+            "thread_id": "root-1", "runtime_generation": 4,
+            "app_server_events": [
+                {"runtime_seq": 1, "runtime_generation": 4,
+                 "message": {"method": "thread/started", "params": {
+                     "thread": {"id": "child-1", "model": "wrong-thread",
+                                 "reasoningEffort": "high"},
+                 }}},
+                {"runtime_seq": 2, "runtime_generation": 3,
+                 "message": {"method": "thread/started", "params": {
+                     "thread": {"id": "root-1", "model": "stale-generation",
+                                 "reasoningEffort": "high"},
+                 }}},
+            ],
+        }}
+
+        facts = preflight.request_configuration(self.request(), response)
+
+        self.assertIsNone(facts["service_reported_effective_model"])
+        self.assertEqual(facts["effective_model_status"], "NOT_EXPOSED_BY_CURRENT_SERVICE")
+        self.assertIsNone(facts["service_reported_effective_reasoning_effort"])
+        self.assertEqual(facts["effective_reasoning_effort_status"],
+                         "NOT_EXPOSED_BY_CURRENT_SERVICE")
+        self.assertEqual(facts["effective_configuration_source"]["matching_event_count"], 0)
+        self.assertEqual(facts["effective_configuration_source"]["status"],
+                         "NOT_EXPOSED_BY_CURRENT_SERVICE")
+
+    def test_missing_effective_field_is_not_copied_from_requested_value(self):
+        response = {"output": {
+            "thread_id": "root-1", "runtime_generation": 4,
+            "app_server_events": [{
+                "runtime_seq": 7, "runtime_generation": 4,
+                "message": {"method": "thread/started", "params": {
+                    "thread": {"id": "root-1", "model": "gpt-5.6-luna"},
+                }},
+            }],
+        }}
+
+        facts = preflight.request_configuration(self.request(), response)
+
+        self.assertEqual(facts["requested_model"], "gpt-6-luna")
+        self.assertEqual(facts["service_reported_effective_model"], "gpt-5.6-luna")
+        self.assertEqual(facts["effective_model_status"], "OBSERVED")
+        self.assertEqual(facts["requested_reasoning_effort"], "low")
+        self.assertIsNone(facts["service_reported_effective_reasoning_effort"])
+        self.assertEqual(facts["effective_reasoning_effort_status"],
+                         "NOT_EXPOSED_BY_CURRENT_SERVICE")
+
+    def test_empty_or_non_string_effective_fields_are_marked_invalid(self):
+        response = {"output": {
+            "thread_id": "root-1", "runtime_generation": 4,
+            "app_server_events": [{
+                "runtime_seq": 7, "runtime_generation": 4,
+                "message": {"method": "thread/started", "params": {
+                    "thread": {"id": "root-1", "model": "",
+                               "reasoningEffort": 2},
+                }},
+            }],
+        }}
+
+        facts = preflight.request_configuration(self.request(), response)
+
+        self.assertEqual(facts["service_reported_effective_model"], "")
+        self.assertEqual(facts["effective_model_status"],
+                         "INVALID_SERVICE_REPORTED_VALUE")
+        self.assertEqual(facts["service_reported_effective_reasoning_effort"], 2)
+        self.assertEqual(facts["effective_reasoning_effort_status"],
+                         "INVALID_SERVICE_REPORTED_VALUE")
+
+    def test_duplicate_root_thread_started_events_are_not_treated_as_unique(self):
+        thread_event = {
+            "runtime_generation": 4,
+            "message": {"method": "thread/started", "params": {
+                "thread": {"id": "root-1", "model": "gpt-5.6-luna",
+                            "reasoningEffort": "medium"},
+            }},
+        }
+        response = {"output": {
+            "thread_id": "root-1", "runtime_generation": 4,
+            "app_server_events": [
+                {"runtime_seq": 7, **thread_event},
+                {"runtime_seq": 8, **thread_event},
+            ],
+        }}
+
+        facts = preflight.request_configuration(self.request(), response)
+
+        self.assertIsNone(facts["service_reported_effective_model"])
+        self.assertEqual(facts["effective_model_status"],
+                         "AMBIGUOUS_THREAD_STARTED_EVENT")
+        self.assertIsNone(facts["service_reported_effective_reasoning_effort"])
+        self.assertEqual(facts["effective_reasoning_effort_status"],
+                         "AMBIGUOUS_THREAD_STARTED_EVENT")
+        self.assertEqual(facts["effective_configuration_source"]["matching_event_count"], 2)
+        self.assertEqual(facts["effective_configuration_source"]["status"],
+                         "AMBIGUOUS_THREAD_STARTED_EVENT")
 
     def proof(self, **updates):
         result = {
