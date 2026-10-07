@@ -86,29 +86,105 @@ class ExecutionWiringTests(unittest.TestCase):
             evidence = json.loads((execution.out / 'install.json').read_text())
             self.assertEqual(evidence['status'], 'ok')
             self.assertEqual(evidence['requested_product_source'], 'refs/pr73-current')
+            self.assertEqual(evidence['product_source_kind'], 'remote_selector')
+            self.assertNotIn('product_source_root', evidence)
+            self.assertEqual(evidence['checks'][0]['detail']['source_mode'], 'remote_selector')
             self.assertIsNone(evidence['installed_product_versions'])
 
-    def test_install_supports_a_local_project_source_in_an_isolated_root(self):
+    def test_absolute_local_project_source_is_rejected_before_install(self):
         with tempfile.TemporaryDirectory() as directory:
             from argparse import Namespace
             root = Path(directory)
-            source = root / 'product-source'
+            source = root / 'local-product'
             source.mkdir()
             (source / 'apm.yml').write_text('name: professor-contact\n', encoding='utf-8')
             args = Namespace(repository=str(PATH.parents[5]), fixture_root=directory,
                 evidence_dir=str(root / 'evidence'), mode='preflight', consumer=None,
                 product_source=str(source))
-            execution = wiring.Execution(args)
-            with patch.object(execution, 'run', return_value=CompletedProcess(
-                    [], 0, b'installed', b'')) as run:
-                execution.install()
-            run.assert_called_once_with('install', [
-                'apm', 'install', '--target', 'codex', '--parallel-downloads', '1',
-                '--root', str(execution.consumer)],
-                cwd=source.resolve())
-            evidence = json.loads((execution.out / 'install.json').read_text())
-            self.assertEqual(evidence['checks'][0]['detail']['source_mode'], 'local_project')
-            self.assertEqual(evidence['requested_product_source'], str(source))
+            with patch.object(wiring.Execution, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, '不接受本地路径'):
+                    wiring.Execution(args)
+            run.assert_not_called()
+            self.assertFalse((root / 'evidence').exists())
+
+    def test_relative_local_project_source_is_rejected_before_install(self):
+        with tempfile.TemporaryDirectory() as directory:
+            from argparse import Namespace
+            root = Path(directory)
+            source = root / 'local-product'
+            source.mkdir()
+            (source / 'apm.yml').write_text('name: professor-contact\n', encoding='utf-8')
+            args = Namespace(repository=str(PATH.parents[5]), fixture_root=directory,
+                evidence_dir=str(root / 'evidence'), mode='preflight', consumer=None,
+                product_source='local-product')
+            with patch.object(wiring.Path, 'cwd', return_value=root), \
+                    patch.object(wiring.Execution, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, '不接受本地路径'):
+                    wiring.Execution(args)
+            run.assert_not_called()
+            self.assertFalse((root / 'evidence').exists())
+
+    def test_existing_relative_local_path_is_rejected_even_without_apm_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            from argparse import Namespace
+            root = Path(directory)
+            (root / 'local-data').mkdir()
+            args = Namespace(repository=str(PATH.parents[5]), fixture_root=directory,
+                evidence_dir=str(root / 'evidence'), mode='preflight', consumer=None,
+                product_source='local-data')
+            with patch.object(wiring.Path, 'cwd', return_value=root), \
+                    patch.object(wiring.Execution, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, '不接受本地路径'):
+                    wiring.Execution(args)
+            run.assert_not_called()
+            self.assertFalse((root / 'evidence').exists())
+
+    def test_windows_relative_path_is_rejected_before_install(self):
+        with tempfile.TemporaryDirectory() as directory:
+            from argparse import Namespace
+            root = Path(directory)
+            args = Namespace(repository=str(PATH.parents[5]), fixture_root=directory,
+                evidence_dir=str(root / 'evidence'), mode='preflight', consumer=None,
+                product_source='local\\product')
+            with patch.object(wiring.Execution, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, '不接受本地路径'):
+                    wiring.Execution(args)
+            run.assert_not_called()
+            self.assertFalse((root / 'evidence').exists())
+
+    def test_dot_relative_and_file_url_sources_are_rejected_before_install(self):
+        with tempfile.TemporaryDirectory() as directory:
+            from argparse import Namespace
+            root = Path(directory)
+            for source in ('./local-product', 'file:///tmp/local-product'):
+                with self.subTest(source=source):
+                    args = Namespace(repository=str(PATH.parents[5]), fixture_root=directory,
+                        evidence_dir=str(root / 'evidence'), mode='preflight', consumer=None,
+                        product_source=source)
+                    with patch.object(wiring.Execution, 'run') as run:
+                        with self.assertRaisesRegex(RuntimeError, '不接受本地路径'):
+                            wiring.Execution(args)
+                    run.assert_not_called()
+                    self.assertFalse((root / 'evidence').exists())
+
+    def test_symlink_product_source_is_rejected_before_install(self):
+        with tempfile.TemporaryDirectory() as directory:
+            from argparse import Namespace
+            root = Path(directory)
+            source = root / 'local-product'
+            source.mkdir()
+            (source / 'apm.yml').write_text('name: professor-contact\n', encoding='utf-8')
+            link = root / 'product-link'
+            link.symlink_to(source, target_is_directory=True)
+            args = Namespace(repository=str(PATH.parents[5]), fixture_root=directory,
+                evidence_dir=str(root / 'evidence'), mode='preflight', consumer=None,
+                product_source='product-link')
+            with patch.object(wiring.Path, 'cwd', return_value=root), \
+                    patch.object(wiring.Execution, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, '不接受符号链接'):
+                    wiring.Execution(args)
+            run.assert_not_called()
+            self.assertFalse((root / 'evidence').exists())
 
     def test_source_revision_and_dirty_status_are_recorded_without_rejection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -120,6 +196,8 @@ class ExecutionWiringTests(unittest.TestCase):
                 execution.record_provenance()
             record = json.loads((execution.out / 'provenance.json').read_text())
             self.assertEqual(record['product_source_input'], 'refs/pr73-current')
+            self.assertEqual(record['product_source_kind'], 'remote_selector')
+            self.assertNotIn('product_source_root', record)
             self.assertIsNone(record['test_source']['head']['value'])
             self.assertEqual(record['test_source']['worktree_status']['exit_code'], 128)
 

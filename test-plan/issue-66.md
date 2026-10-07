@@ -181,9 +181,9 @@ R5 最终证据目录基名为 `issue66-gate2-candidate.4LPblyY0`，位于本机
 
 ## R7 正式预检结果
 
-本轮正式预检已完成。最新证据集编号为 `issue66-r7-preflight-now-45b81f3`，执行器来源为 PR 提交 `0896243702c959da8e4981bffacfe820b06719b6` 的干净源码归档。`install.json` 记录受支持的安装入口检查通过、退出码 `0`，锁文件解析成功；安装器报告 318 秒内安装 10 个依赖。`preflight.json` 记录 `PREFLIGHT_ONLY`、`formal_request_sent=false`，并确认安装、初始输入、请求构造和运行前快照均已准备。因此正式预检通过；这不代表 Gate 2 获批，也没有发送正式请求或运行 `/eval`。
+此前预检证据集 `issue66-r7-preflight-now-45b81f3` 的执行器来自 PR 提交 `0896243702c959da8e4981bffacfe820b06719b6` 的干净源码归档。复核原始 `install.json` 发现其 `requested_product_source` 是本地绝对路径，`product_source_kind` 与安装详情均为 `local_project`，安装命令使用 `--root <consumer>`。尽管命令退出码为 `0`、锁文件解析成功且安装器报告装入 10 个依赖，该安装方式违反共识，不是受支持的安装路径；该证据集不能证明预检通过，保留为历史记录。`preflight.json` 仍记录 `PREFLIGHT_ONLY`、`formal_request_sent=false` 和其他准备步骤。符合共识的远端来源选择器预检尚待重新执行；没有发送正式请求或运行 `/eval`。
 
-此前失败轮次保留为历史：最初证据集 `issue66-r7-preflight-2723996424c6485fb61efcb4808a8e55c1d71cdd` 因下载 `ScholarWorkflow/base-skills` 时 HTTPS 连接中断而为 `CASE_NOT_STARTED`；修复预检路径误读 `EVAL_PORT` 后，提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 的普通 HTTPS 与 HTTP/1.1 重试仍遇到依赖下载中断，证据集分别为 `issue66-r7-preflight-45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 和 `issue66-r7-preflight-45b81f3-http11`。最新独立证据集记录了成功结果；各轮原始命令和输出均保留在各自 `commands` 目录。
+此前失败轮次保留为历史：最初证据集 `issue66-r7-preflight-2723996424c6485fb61efcb4808a8e55c1d71cdd` 因下载 `ScholarWorkflow/base-skills` 时 HTTPS 连接中断而为 `CASE_NOT_STARTED`；修复预检路径误读 `EVAL_PORT` 后，提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 的普通 HTTPS 与 HTTP/1.1 重试仍遇到依赖下载中断，证据集分别为 `issue66-r7-preflight-45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 和 `issue66-r7-preflight-45b81f3-http11`。此前被误记为成功的本地路径预检也转为历史；各轮原始命令和输出均保留在各自 `commands` 目录。
 
 ### R5 第 8 节逐用例依赖与复验决定（历史）
 
@@ -251,4 +251,4 @@ Gate2 状态：未批准；Gate3 状态：未运行。
 
 正式执行材料见[安装与执行接线](issue-66-execution.md)、`issue-66-formal.sh` 及 `issue66_execution.py`。Gate 2 未通过时不得运行正式 `/eval`。R7 规定独立运行目录由正式评估配置负责，并禁止本地检查服务进程、配置、数据库或日志；无需为本地测试补做这些检查。当前未运行 `/eval` 的原因是 Gate 2 尚未通过。不得把本地未检查服务内部状态记为证据缺口或失败；不自动重试，不删除失败证据。
 
-本记录及执行材料说明 R7 的当前测试方式。早期安装与失败预检结果仅作历史；最新本地候选和最新正式预检的工具、配置字段、套件身份及结果均已记录。Gate 2 仍未通过，Gate 3 未运行，正式 `/eval` 未运行。本地候选通过不等于正式验收；正式运行后的真实生产、保存、记录和停止事实尚未形成。
+本记录及执行材料说明 R7 的当前测试方式。早期安装与失败预检结果仅作历史；最新本地候选的工具、配置字段、套件身份及结果均已记录，符合共识的远端来源选择器预检尚待执行。Gate 2 仍未通过，Gate 3 未运行，正式 `/eval` 未运行。本地候选通过不等于正式验收；正式运行后的真实生产、保存、记录和停止事实尚未形成。

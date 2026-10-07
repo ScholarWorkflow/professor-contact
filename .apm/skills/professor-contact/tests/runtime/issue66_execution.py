@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 PLAN = "issue-66-test-plan-r19-clarification-r7-2026-10-07"
 MODEL = "gpt-6-luna"
@@ -29,6 +29,35 @@ ARTIFACTS = {
 
 def digest(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+def validate_product_source_selector(value):
+    """只接受远端 ref 选择器，拒绝本地路径和经过符号链接的路径。"""
+    selector = str(value).strip()
+    if not selector:
+        raise RuntimeError("必须提供本轮实际产品来源")
+    if selector.startswith(("~", "./", "../", ".\\", "..\\")) \
+            or selector.lower().startswith(("file:", "git+file:")):
+        raise RuntimeError("--product-source 不接受本地路径；请提供 APM 支持的远端来源选择器")
+    if "\\" in selector:
+        raise RuntimeError("--product-source 不接受本地路径；请提供 APM 支持的远端来源选择器")
+    candidate = Path(selector).expanduser()
+    windows_candidate = PureWindowsPath(selector)
+    if candidate.is_absolute() or windows_candidate.drive or windows_candidate.root:
+        raise RuntimeError("--product-source 不接受本地路径；请提供 APM 支持的远端来源选择器")
+    if any(part in (".", "..") for part in candidate.parts) \
+            or any(part in (".", "..") for part in windows_candidate.parts):
+        raise RuntimeError("--product-source 不接受本地路径；请提供 APM 支持的远端来源选择器")
+
+    base = Path.cwd()
+    path = base
+    for part in candidate.parts:
+        path = path / part
+        if path.is_symlink():
+            raise RuntimeError("--product-source 不接受符号链接或本地路径；请提供 APM 支持的远端来源选择器")
+    if path.exists():
+        raise RuntimeError("--product-source 不接受本地路径；请提供 APM 支持的远端来源选择器")
+    return selector
 
 
 def write(path, value):
@@ -162,12 +191,7 @@ class Execution:
         self.repo = Path(args.repository).resolve()
         self.fixture = Path(args.fixture_root).resolve()
         self.out = Path(args.evidence_dir).resolve()
-        self.product_source = str(args.product_source).strip()
-        if not self.product_source:
-            raise RuntimeError("必须提供本轮实际产品来源")
-        source_path = Path(self.product_source).expanduser()
-        self.local_product_source = source_path.resolve() if source_path.is_absolute() \
-            and source_path.is_dir() and (source_path / "apm.yml").is_file() else None
+        self.product_source = validate_product_source_selector(args.product_source)
         self.out.mkdir(parents=True, exist_ok=False)
         self.identity = self.out.name
         self.consumer = self.out / "consumer"
@@ -263,8 +287,7 @@ class Execution:
         self.provenance = {
             "plan": PLAN,
             "product_source_input": self.product_source,
-            "product_source_kind": "local_project" if self.local_product_source else "remote_selector",
-            "product_source_root": str(self.local_product_source) if self.local_product_source else None,
+            "product_source_kind": "remote_selector",
             "test_source": test_source,
             "fixture_source": fixture_source,
             "adapter_source": {"root": str(self.fixture), "files": adapter_files},
@@ -472,18 +495,11 @@ class Execution:
         installation = {"method": "existing-consumer-installation-check", "exit_code": None}
         if not self.a.consumer:
             self.consumer.mkdir()
-            if self.local_product_source:
-                result = self.run("install", ["apm", "install", "--target", "codex",
-                    "--parallel-downloads", "1", "--root", str(self.consumer)],
-                    cwd=self.local_product_source)
-                installation = {"method": "apm install --target codex --parallel-downloads 1 --root <consumer>",
-                                "source_mode": "local_project", "exit_code": result.returncode}
-            else:
-                result = self.run("install", ["apm", "install", "--target", "codex",
-                    "--parallel-downloads", "1",
-                    f"ScholarWorkflow/professor-contact#{self.product_source}"], cwd=self.consumer)
-                installation = {"method": "apm install --target codex --parallel-downloads 1",
-                                "source_mode": "remote_selector", "exit_code": result.returncode}
+            result = self.run("install", ["apm", "install", "--target", "codex",
+                "--parallel-downloads", "1",
+                f"ScholarWorkflow/professor-contact#{self.product_source}"], cwd=self.consumer)
+            installation = {"method": "apm install --target codex --parallel-downloads 1",
+                            "source_mode": "remote_selector", "exit_code": result.returncode}
         lock = self.consumer / "apm.lock.yaml"
         installed_commits = None
         lock_observation = {"path": str(lock), "exists": lock.is_file(), "parse_status": "not_available"}
@@ -508,7 +524,7 @@ class Execution:
         value = surface(self.identity, [
             check("supported_install_entry_completed", install_available, installation)],
             requested_product_source=self.product_source,
-            product_source_kind="local_project" if self.local_product_source else "remote_selector",
+            product_source_kind="remote_selector",
             installed_product_versions=installed_commits,
             lock_observation=lock_observation,
             consumer_root=str(self.consumer), newly_created=not bool(self.a.consumer),
