@@ -5,7 +5,7 @@ Exactly this implementation step, nothing more:
         professor's committed state, derives the round decision from the
         recorded validator facts (never from the temp directory), and creates a
         one-time handoff (metadata + validator output path + saved target path)
-        in an exclusive per-professor/per-round system-temp directory.
+        in an exclusive per-professor/per-invocation/per-round system-temp directory.
 - §6.3  ``stage3-save-validation`` re-verifies the handoff (metadata digest,
         credential bytes, professor, round, render), then copies the regular
         source file's exact bytes — no re-serialization — to a target created
@@ -140,7 +140,7 @@ class ValidationHandoffBase(Stage3DirectionGroupBase):
                                   "--invocation-file", path,
                                   "--invocation-sha256", sha,
                                   "--round", str(round_no))),
-            *self.handoff_artifacts(self.handoff_round_dir(round_no)))
+            *self.handoff_artifacts(self.handoff_round_dir(round_no, path)))
 
     def write_credential(self, payload):
         path = self.root / f"crafted-{next(self._seq)}.json"
@@ -251,11 +251,14 @@ class ValidationHandoffBase(Stage3DirectionGroupBase):
             stdout=json.dumps(payload, ensure_ascii=False),
             stderr="", returncode=returncode)
 
-    def handoff_round_dir(self, round_no):
+    def handoff_round_dir(self, round_no, invocation_file=None):
         token = hashlib.sha256(
             str(self.prof_dir.resolve()).encode("utf-8")).hexdigest()[:16]
+        invocation_path = Path(invocation_file or self.cap["invocation_file"]).resolve()
+        invocation_token = hashlib.sha256(
+            str(invocation_path).encode("utf-8")).hexdigest()
         return Path(tempfile.gettempdir()) / "professor-contact-stage3-handoff" \
-            / token / f"round-{round_no}"
+            / token / invocation_token / f"round-{round_no}"
 
     def recommit_changed_render(self, name):
         """A new committed render over the same credential, deterministically.
@@ -344,11 +347,14 @@ class PrepareHandoffTests(ValidationHandoffBase):
         self.assertEqual(state["cache"]["render"][CANDIDATES_MD]["sha256"],
                          self.render_sha_now())
 
-    def handoff_round_dir(self, round_no):
+    def handoff_round_dir(self, round_no, invocation_file=None):
         token = hashlib.sha256(
             str(self.prof_dir.resolve()).encode("utf-8")).hexdigest()[:16]
+        invocation_path = Path(invocation_file or self.cap["invocation_file"]).resolve()
+        invocation_token = hashlib.sha256(
+            str(invocation_path).encode("utf-8")).hexdigest()
         return Path(tempfile.gettempdir()) / "professor-contact-stage3-handoff" \
-            / token / f"round-{round_no}"
+            / token / invocation_token / f"round-{round_no}"
 
     def test_prepare_rejects_a_stale_profile_digest(self):
         profile = self.root / "profile.md"
@@ -367,7 +373,8 @@ class PrepareHandoffTests(ValidationHandoffBase):
                 "--invocation-file", plan["invocation_file"],
                 "--invocation-sha256", plan["invocation_sha256"],
                 "--round", "1")),
-            self.handoff_artifacts(self.handoff_round_dir(1)),
+            self.handoff_artifacts(
+                self.handoff_round_dir(1, plan["invocation_file"])),
             "validation_source_changed", status="needs_refresh")
 
     def test_round_rules_come_from_committed_records(self):
@@ -445,6 +452,32 @@ class PrepareHandoffTests(ValidationHandoffBase):
         first = self.prepare(1)
         self.assertEqual(first["status"], "ok",
                          msg=json.dumps(first, ensure_ascii=False))
+
+        # A distinct captured-call path gets its own directory even when the
+        # credential bytes (and therefore invocation digest) are identical.
+        credential_bytes = Path(self.cap["invocation_file"]).read_bytes()
+        duplicate_credential = self.root / "invocation-identical-copy.json"
+        duplicate_credential.write_bytes(credential_bytes)
+        duplicate_sha = hashlib.sha256(credential_bytes).hexdigest()
+        self.assertEqual(duplicate_sha, self.cap["invocation_sha256"])
+        distinct_path_handoff = parse(run_cli(
+            "stage3-prepare-validation",
+            "--invocation-file", duplicate_credential,
+            "--invocation-sha256", duplicate_sha,
+            "--round", "1"))
+        self.assertEqual(distinct_path_handoff["status"], "ok",
+                         msg=json.dumps(distinct_path_handoff, ensure_ascii=False))
+        first_metadata = json.loads(Path(first["handoff_file"]).read_text(encoding="utf-8"))
+        second_metadata = json.loads(
+            Path(distinct_path_handoff["handoff_file"]).read_text(encoding="utf-8"))
+        self.assertEqual(second_metadata["invocation_sha256"],
+                         first_metadata["invocation_sha256"])
+        self.assertEqual(second_metadata["invocation_file"],
+                         str(duplicate_credential.resolve()))
+        self.assertNotEqual(distinct_path_handoff["handoff_file"], first["handoff_file"])
+        self.assertEqual(Path(distinct_path_handoff["handoff_file"]).parent,
+                         self.handoff_round_dir(1, duplicate_credential))
+
         second = self.assert_direct_refusal(
             lambda: self.prepare(1),
             self.handoff_artifacts(Path(first["handoff_file"]).parent),
@@ -502,6 +535,9 @@ class PrepareHandoffTests(ValidationHandoffBase):
                         "preparing a new invocation must retain the prior handoff")
         self.assertTrue(Path(old_handoff["handoff_file"]).is_file())
         self.assertEqual(next_handoff["round"], 1)
+        self.assertEqual(Path(next_handoff["handoff_file"]).parent,
+                         self.handoff_round_dir(1, next_cap["invocation_file"]))
+        self.assertNotEqual(Path(next_handoff["handoff_file"]).parent, old_handoff_dir)
 
 
 class SaveHandoffTests(ValidationHandoffBase):
