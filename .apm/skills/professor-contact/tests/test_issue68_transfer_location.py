@@ -5,6 +5,7 @@ import io
 import json
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -20,6 +21,41 @@ import run_issue68_stage5_routing_r19_codex as entry
 
 
 class TestIssue68TransferLocation(unittest.TestCase):
+    def prepare_fake_approval_config(self, consumer, _fixture_root, evidence_path):
+        values = {
+            "approval_policy": "on-request",
+            "approvals_reviewer": "auto_review",
+        }
+        config_path = Path(consumer) / ".codex" / "config.toml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            'approval_policy = "on-request"\napprovals_reviewer = "auto_review"\n',
+            encoding="utf-8")
+        record = {"status": "PREPARED", "values": values}
+        entry.base.write_json(evidence_path, record)
+        return record
+
+    def verify_fake_approval_config(self, consumer, setup_path, evidence_path,
+                                    _setup_artifact):
+        values = {
+            "approval_policy": "on-request",
+            "approvals_reviewer": "auto_review",
+        }
+        self.assertTrue(Path(setup_path).is_file())
+        config_path = Path(consumer) / ".codex" / "config.toml"
+        config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        self.assertEqual({key: config.get(key) for key in values}, values)
+        record = {
+            "status": "PRESERVED",
+            "requested_values": values,
+            "observed_values": values,
+            "statuses": {key: "MATCH" for key in values},
+            "config_sha256_after_install": hashlib.sha256(
+                config_path.read_bytes()).hexdigest(),
+        }
+        entry.base.write_json(evidence_path, record)
+        return record
+
     def test_valid_root_prompt_and_request_are_bound(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)
@@ -101,11 +137,57 @@ class TestIssue68TransferLocation(unittest.TestCase):
             directory = output / "codex"
             consumer = output / "consumers" / "codex"
             script = consumer / ".apm" / "skills" / "professor-contact" / "scripts" / "contact_state.py"
+            config_path = consumer / ".codex" / "config.toml"
+            approval_values = {
+                "approval_policy": "on-request",
+                "approvals_reviewer": "auto_review",
+            }
+            approval_callback_order = []
 
-            def install_host(_args, run_output, _host):
+            def prepare_approval_config(request_consumer, _fixture_root, evidence_path):
+                self.assertEqual(request_consumer, consumer)
+                self.assertFalse(config_path.exists())
+                config_path.parent.mkdir(parents=True)
+                config_path.write_text(
+                    'approval_policy = "on-request"\napprovals_reviewer = "auto_review"\n',
+                    encoding="utf-8")
+                record = {"status": "PREPARED", "values": approval_values}
+                entry.base.write_json(evidence_path, record)
+                approval_callback_order.append("before_codex_install")
+                return record
+
+            def verify_approval_config(request_consumer, setup_path, evidence_path,
+                                      setup_artifact):
+                self.assertEqual(request_consumer, consumer)
+                self.assertTrue(Path(setup_path).is_file())
+                self.assertEqual(setup_artifact,
+                                 "codex/project-approval-config-setup.json")
+                config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+                self.assertEqual({key: config.get(key) for key in approval_values},
+                                 approval_values)
+                self.assertIn("synthetic", config["mcp_servers"])
+                record = {
+                    "status": "PRESERVED",
+                    "requested_values": approval_values,
+                    "observed_values": approval_values,
+                    "statuses": {key: "MATCH" for key in approval_values},
+                    "config_sha256_after_install": "synthetic-config-sha256",
+                }
+                entry.base.write_json(evidence_path, record)
+                approval_callback_order.append("after_codex_install")
+                return record
+
+            def install_host(_args, run_output, _host, *,
+                             before_codex_install=None, after_codex_install=None):
                 self.assertEqual(run_output, output)
                 directory.mkdir()
                 consumer.mkdir(parents=True)
+                if before_codex_install is not None:
+                    before_codex_install(consumer, directory)
+                approval_callback_order.append("apm_install")
+                with config_path.open("a", encoding="utf-8") as config_file:
+                    config_file.write(
+                        '\n[mcp_servers.synthetic]\ncommand = "synthetic"\n')
                 program_root = consumer / "program"
                 program_root.mkdir()
                 script.parent.mkdir(parents=True)
@@ -114,6 +196,8 @@ class TestIssue68TransferLocation(unittest.TestCase):
                 manifest = {"program_root": str(program_root),
                             "lifecycle_extra_observation_roots": []}
                 entry.base.write_json(directory / "fixture-manifest.json", manifest)
+                if after_codex_install is not None:
+                    after_codex_install(consumer, directory)
                 return directory, consumer, manifest
 
             def codex_host(args, run_output):
@@ -122,7 +206,10 @@ class TestIssue68TransferLocation(unittest.TestCase):
                 prompt = (request_dir / "root-prompt.txt").read_text(encoding="utf-8")
                 return entry.base.build_request(request_consumer, prompt)
 
-            args = type("Args", (), {"transfer_location_root": root.resolve()})()
+            args = type("Args", (), {
+                "transfer_location_root": root.resolve(),
+                "fixture_root": temp / "fixture-root",
+            })()
             preflight = {"runtime_environment_facts": {}, "runtime_environment_evidence": {}}
             runtime_record = {
                 "runtime_environment_facts": {},
@@ -134,12 +221,20 @@ class TestIssue68TransferLocation(unittest.TestCase):
                     wraps=transfer_location.validate_location_root) as validate_root, \
                     mock.patch.object(entry.base, "install_host", side_effect=install_host), \
                     mock.patch.object(entry.base, "codex_host", side_effect=codex_host), \
+                    mock.patch.object(entry, "prepare_project_approval_configuration",
+                                      side_effect=prepare_approval_config), \
+                    mock.patch.object(entry, "verify_project_approval_configuration_after_install",
+                                      side_effect=verify_approval_config), \
                     mock.patch.object(entry, "_record_request_runtime_facts",
                                       return_value=runtime_record):
                 request = entry._codex_host_with_runtime_capture(
                     args, output, preflight, {}, {}, {}, {})
 
             self.assertEqual(validate_root.call_count, 1)
+            self.assertEqual(approval_callback_order, [
+                "before_codex_install", "apm_install", "after_codex_install"])
+            self.assertTrue((directory / "project-approval-config-setup.json").is_file())
+            self.assertTrue((directory / "project-approval-config-install-check.json").is_file())
             validated_path, protected_roots = validate_root.call_args.args
             self.assertEqual(validated_path, root.resolve())
             self.assertEqual(set(protected_roots), {"consumer", "program", "evidence_output"})
@@ -252,18 +347,33 @@ class TestIssue68TransferLocation(unittest.TestCase):
                 directory = output / "codex"
                 directory.mkdir()
 
-                def install_host(_args, _run_output, _host):
+                args = type("Args", (), {
+                    "transfer_location_root": root.resolve(),
+                    "fixture_root": temp / "fixture-root",
+                })()
+
+                def install_host(_args, _run_output, _host, *,
+                                 before_codex_install=None, after_codex_install=None):
+                    if before_codex_install is not None:
+                        before_codex_install(consumer, directory)
+                    if after_codex_install is not None:
+                        after_codex_install(consumer, directory)
                     return directory, consumer, {
                         "program_root": str(program_root),
                         "lifecycle_extra_observation_roots": [],
                     }
 
-                def codex_host(args, run_output):
-                    return entry.base.install_host(args, run_output, "codex")
+                def codex_host(request_args, run_output):
+                    return entry.base.install_host(request_args, run_output, "codex")
 
-                args = type("Args", (), {"transfer_location_root": root.resolve()})()
                 with mock.patch.object(entry.base, "install_host", side_effect=install_host), \
-                        mock.patch.object(entry.base, "codex_host", side_effect=codex_host):
+                        mock.patch.object(entry.base, "codex_host", side_effect=codex_host), \
+                        mock.patch.object(
+                            entry, "prepare_project_approval_configuration",
+                            side_effect=self.prepare_fake_approval_config), \
+                        mock.patch.object(
+                            entry, "verify_project_approval_configuration_after_install",
+                            side_effect=self.verify_fake_approval_config):
                     with self.assertRaisesRegex(
                             ValueError,
                             "transfer_location_root_overlaps_protected_root:" + blocked_by):

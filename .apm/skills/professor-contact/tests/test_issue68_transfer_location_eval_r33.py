@@ -14,7 +14,12 @@ import preflight_issue68_transfer_location_eval_r33 as preflight
 
 class TestIssue68TransferLocationEvalPreflight(unittest.TestCase):
     def setUp(self):
-        self.root = "/private/tmp/pc68-r33-transfer"
+        self.run_directory = tempfile.TemporaryDirectory(
+            prefix="pc68-r33-transfer-eval-preflight-", dir="/private/tmp")
+        self.addCleanup(self.run_directory.cleanup)
+        self.run_root = Path(self.run_directory.name)
+        self.root = str(self.run_root / "transfer")
+        Path(self.root).mkdir()
         self.command = "uv run --no-project python /private/tmp/probe.py"
         self.marker_sha = "a" * 64
 
@@ -31,13 +36,24 @@ class TestIssue68TransferLocationEvalPreflight(unittest.TestCase):
         self.assertEqual(facts["effective_project_approval_configuration"]["status"],
                          "NOT_OBSERVED_YET")
 
-    def test_marker_command_uses_the_normal_uv_cache(self):
+    def test_marker_command_uses_a_run_scoped_uv_cache_outside_observed_roots(self):
         command = preflight.build_marker_command("/private/tmp/marker_probe.py", self.root)
+        cache_dir = Path(self.root).resolve().parent / ".uv-cache"
+        tokens = preflight.command_tokens(command)
 
-        self.assertEqual(preflight.command_tokens(command)[:4], [
-            "uv", "run", "--no-project", "python",
+        self.assertEqual(tokens[:5], [
+            "uv", "--cache-dir", str(cache_dir), "run", "--no-project",
         ])
-        self.assertNotIn("--cache-dir", preflight.command_tokens(command))
+        self.assertEqual(cache_dir, self.run_root / ".uv-cache")
+        self.assertNotEqual(cache_dir, Path(self.root).resolve())
+        with tempfile.TemporaryDirectory(
+                prefix="pc68-r33-transfer-eval-preflight-", dir="/private/tmp") as other:
+            other_transfer = Path(other) / "transfer"
+            other_transfer.mkdir()
+            other_command = preflight.build_marker_command(
+                "/private/tmp/marker_probe.py", other_transfer)
+            other_cache = Path(preflight.command_tokens(other_command)[2])
+            self.assertNotEqual(cache_dir, other_cache)
 
     def test_request_keeps_approval_values_in_project_file_and_trust_only_in_cli(self):
         request = self.request()
@@ -47,7 +63,7 @@ class TestIssue68TransferLocationEvalPreflight(unittest.TestCase):
         self.assertEqual(facts["requested_configs"], [
             'model_reasoning_effort="low"',
             "agents.max_concurrent_threads_per_session=2",
-            'projects={"/private/tmp/pc68-r33-transfer"={trust_level="trusted"}}',
+            'projects={"' + self.root + '"={trust_level="trusted"}}',
         ])
         self.assertIsNone(facts["project_approval_configuration"])
         request["command"] = request["command"].replace(

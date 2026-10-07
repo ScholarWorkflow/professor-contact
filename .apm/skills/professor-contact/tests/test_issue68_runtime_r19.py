@@ -202,7 +202,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
                 "status": "PREPARED",
                 "shared_assets_revision": "synthetic-fixture-sha",
                 "helper": "scripts/prepare_codex_project_config.py",
-                "helper_sha256": "b" * 64,
+                "helper_sha256": entry.PROJECT_CONFIG_HELPER_SHA256,
                 "source": {
                     "commit": entry.PROJECT_CONFIG_SOURCE_COMMIT,
                     "document": entry.PROJECT_CONFIG_SOURCE_DOCUMENT,
@@ -216,6 +216,20 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             }
             (codex / "project-approval-config-setup.json").write_text(
                 json.dumps(approval_setup), encoding="utf-8")
+            config_sha256 = hashlib.sha256(config_bytes).hexdigest()
+            approval_install_check = {
+                "status": "PRESERVED",
+                "configuration_path": str(config_path.resolve()),
+                "setup_evidence_sha256": entry._sha256_file(
+                    codex / "project-approval-config-setup.json"),
+                "requested_values": entry.PROJECT_CONFIG_VALUES,
+                "observed_values": entry.PROJECT_CONFIG_VALUES,
+                "statuses": {key: "MATCH" for key in entry.PROJECT_CONFIG_VALUES},
+                "config_sha256_before_install": config_sha256,
+                "config_sha256_after_install": config_sha256,
+            }
+            (codex / "project-approval-config-install-check.json").write_text(
+                json.dumps(approval_install_check), encoding="utf-8")
             request = {"command": "codex --model synthetic-model --timeout 900", "timeout": 900}
             (codex / "codex-request.json").write_text(json.dumps(request), encoding="utf-8")
             service = {
@@ -251,6 +265,9 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
                 captured["project_approval_configuration"]["project_config"]["sha256"],
                 hashlib.sha256(config_bytes).hexdigest(),
             )
+            self.assertEqual(
+                captured["project_approval_configuration"]["install_preservation"]["status"],
+                "PRESERVED")
             executor = facts["executor"]
             self.assertEqual(executor["execution_branch"], "codex")
             self.assertTrue(executor["dispatcher"].endswith(".codex_host"))
@@ -312,11 +329,19 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             "status": "PREPARED",
             "project_config": {"values": entry.PROJECT_CONFIG_VALUES},
         }
+        install_check = {
+            "status": "PRESERVED",
+            "requested_values": entry.PROJECT_CONFIG_VALUES,
+            "observed_values": entry.PROJECT_CONFIG_VALUES,
+            "statuses": {key: "MATCH" for key in entry.PROJECT_CONFIG_VALUES},
+            "config_sha256_before_install": "a" * 64,
+            "config_sha256_after_install": "b" * 64,
+        }
         response = {"output": {"thread_start_effective": {
             "approvalPolicy": "on-request", "approvalsReviewer": "auto_review",
         }}}
 
-        record = entry._formal_approval_configuration_record(response, setup)
+        record = entry._formal_approval_configuration_record(response, setup, install_check)
 
         self.assertEqual(record["status"], "MATCH")
         self.assertEqual(record["effective_status"], "MATCH")
@@ -328,6 +353,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
                          "output.thread_start_effective.approvalPolicy")
         self.assertEqual(record["field_paths"]["approvals_reviewer"],
                          "output.thread_start_effective.approvalsReviewer")
+        self.assertEqual(record["install_preservation_status"], "PRESERVED")
         passed = entry._constrain_with_formal_approval_configuration(
             {"state": "CASE_STARTED", "verdict": "PASS"}, record)
         self.assertEqual(passed["verdict"], "PASS")
@@ -338,9 +364,16 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             "status": "PREPARED",
             "project_config": {"values": entry.PROJECT_CONFIG_VALUES},
         }
+        install_check = {
+            "status": "PRESERVED",
+            "requested_values": entry.PROJECT_CONFIG_VALUES,
+            "observed_values": entry.PROJECT_CONFIG_VALUES,
+            "statuses": {key: "MATCH" for key in entry.PROJECT_CONFIG_VALUES},
+        }
         business_pass = {"state": "CASE_STARTED", "verdict": "PASS", "reason_code": "complete"}
 
-        missing = entry._formal_approval_configuration_record({"output": {}}, setup)
+        missing = entry._formal_approval_configuration_record(
+            {"output": {}}, setup, install_check)
         blocked = entry._constrain_with_formal_approval_configuration(business_pass, missing)
         self.assertEqual((blocked["verdict"], blocked["reason_code"]),
                          ("BLOCKED_OBSERVABILITY", "effective_approval_configuration_unobservable"))
@@ -349,7 +382,8 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         mismatch_response = {"output": {"thread_start_effective": {
             "approvalPolicy": "never", "approvalsReviewer": "auto_review",
         }}}
-        mismatch = entry._formal_approval_configuration_record(mismatch_response, setup)
+        mismatch = entry._formal_approval_configuration_record(
+            mismatch_response, setup, install_check)
         blocked = entry._constrain_with_formal_approval_configuration(business_pass, mismatch)
         self.assertEqual((blocked["verdict"], blocked["reason_code"]),
                          ("BLOCKED_DEPENDENCY", "effective_approval_configuration_mismatch"))
@@ -357,7 +391,8 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         invalid_response = {"output": {"thread_start_effective": {
             "approvalPolicy": "on-request", "approvalsReviewer": None,
         }}}
-        invalid = entry._formal_approval_configuration_record(invalid_response, setup)
+        invalid = entry._formal_approval_configuration_record(
+            invalid_response, setup, install_check)
         rejected = entry._constrain_with_formal_approval_configuration(business_pass, invalid)
         self.assertEqual((rejected["verdict"], rejected["reason_code"]),
                          ("INVALID_EVIDENCE", "effective_approval_configuration_invalid"))
@@ -365,7 +400,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         malformed_setup = entry._formal_approval_configuration_record(
             {"output": {"thread_start_effective": {
                 "approvalPolicy": "on-request", "approvalsReviewer": "auto_review",
-            }}}, [])
+            }}}, [], install_check)
         rejected = entry._constrain_with_formal_approval_configuration(business_pass, malformed_setup)
         self.assertEqual((rejected["verdict"], rejected["reason_code"]),
                          ("INVALID_EVIDENCE", "effective_approval_configuration_invalid"))
@@ -373,7 +408,7 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         malformed_nested_setup = entry._formal_approval_configuration_record(
             {"output": {"thread_start_effective": {
                 "approvalPolicy": "on-request", "approvalsReviewer": "auto_review",
-            }}}, {"status": "PREPARED", "project_config": []})
+            }}}, {"status": "PREPARED", "project_config": []}, install_check)
         rejected = entry._constrain_with_formal_approval_configuration(
             business_pass, malformed_nested_setup)
         self.assertEqual((rejected["verdict"], rejected["reason_code"]),
@@ -385,6 +420,15 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertEqual(preserved["verdict"], "FAIL_PRODUCT")
         self.assertEqual(preserved["reason_code"], "product_assertion_failed")
         self.assertEqual(preserved["effective_approval_configuration"], mismatch)
+
+        absent_install_check = entry._formal_approval_configuration_record(
+            {"output": {"thread_start_effective": {
+                "approvalPolicy": "on-request", "approvalsReviewer": "auto_review",
+            }}}, setup)
+        rejected = entry._constrain_with_formal_approval_configuration(
+            business_pass, absent_install_check)
+        self.assertEqual((rejected["verdict"], rejected["reason_code"]),
+                         ("INVALID_EVIDENCE", "effective_approval_configuration_invalid"))
 
     def test_live_service_version_is_read_and_change_fails_before_service_inspection(self):
         root = Path("/synthetic/eval-server")
@@ -1295,6 +1339,152 @@ class OwnerObservationTests(unittest.TestCase):
                 self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
                 self.assertEqual(problem["reason_code"], "owner_initial_plan_fields_missing")
                 self.assertIn(field, problem["missing_fields"])
+
+    def test_install_preservation_check_accepts_apm_merge_and_records_both_hashes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            consumer = Path(temp_dir) / "consumer"
+            config = consumer / ".codex" / "config.toml"
+            config.parent.mkdir(parents=True)
+            before = (
+                b'approval_policy = "on-request"\n'
+                b'approvals_reviewer = "auto_review"\n'
+            )
+            after = before + (
+                b'\n[mcp_servers.chrome-devtools]\n'
+                b'command = "node"\nargs = []\n'
+            )
+            config.write_bytes(after)
+            setup = {
+                "status": "PREPARED",
+                "shared_assets_revision": entry.FIXTURE_SHA,
+                "helper": "scripts/prepare_codex_project_config.py",
+                "helper_sha256": entry.PROJECT_CONFIG_HELPER_SHA256,
+                "source": {
+                    "commit": entry.PROJECT_CONFIG_SOURCE_COMMIT,
+                    "document": entry.PROJECT_CONFIG_SOURCE_DOCUMENT,
+                    "sha256": entry.PROJECT_CONFIG_SOURCE_DOCUMENT_SHA256,
+                },
+                "project_config": {
+                    "path": str(config.resolve()),
+                    "sha256": hashlib.sha256(before).hexdigest(),
+                    "values": entry.PROJECT_CONFIG_VALUES,
+                },
+            }
+            setup_path = Path(temp_dir) / "setup.json"
+            setup_path.write_text(json.dumps(setup), encoding="utf-8")
+
+            record = entry.verify_project_approval_configuration_after_install(
+                consumer, setup_path, Path(temp_dir) / "install-check.json")
+
+            self.assertEqual(record["status"], "PRESERVED")
+            self.assertEqual(record["observed_values"], entry.PROJECT_CONFIG_VALUES)
+            self.assertEqual(record["config_sha256_before_install"],
+                             hashlib.sha256(before).hexdigest())
+            self.assertEqual(record["config_sha256_after_install"],
+                             hashlib.sha256(after).hexdigest())
+            self.assertNotEqual(record["config_sha256_before_install"],
+                                record["config_sha256_after_install"])
+            self.assertEqual(json.loads(
+                (Path(temp_dir) / "install-check.json").read_text())["status"],
+                "PRESERVED")
+
+    def test_install_preservation_check_blocks_when_apm_drops_an_approval_key(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            consumer = Path(temp_dir) / "consumer"
+            config = consumer / ".codex" / "config.toml"
+            config.parent.mkdir(parents=True)
+            before = (
+                b'approval_policy = "on-request"\n'
+                b'approvals_reviewer = "auto_review"\n'
+            )
+            after = b'approval_policy = "on-request"\n'
+            config.write_bytes(after)
+            setup = {
+                "status": "PREPARED",
+                "shared_assets_revision": entry.FIXTURE_SHA,
+                "helper": "scripts/prepare_codex_project_config.py",
+                "helper_sha256": entry.PROJECT_CONFIG_HELPER_SHA256,
+                "source": {
+                    "commit": entry.PROJECT_CONFIG_SOURCE_COMMIT,
+                    "document": entry.PROJECT_CONFIG_SOURCE_DOCUMENT,
+                    "sha256": entry.PROJECT_CONFIG_SOURCE_DOCUMENT_SHA256,
+                },
+                "project_config": {
+                    "path": str(config.resolve()),
+                    "sha256": hashlib.sha256(before).hexdigest(),
+                    "values": entry.PROJECT_CONFIG_VALUES,
+                },
+            }
+            setup_path = Path(temp_dir) / "setup.json"
+            setup_path.write_text(json.dumps(setup), encoding="utf-8")
+
+            record = entry.verify_project_approval_configuration_after_install(
+                consumer, setup_path, Path(temp_dir) / "install-check.json")
+
+            self.assertEqual(record["status"], "NOT_PRESERVED")
+            self.assertEqual(record["statuses"]["approvals_reviewer"], "MISSING")
+            with self.assertRaisesRegex(
+                    ValueError, "project_approval_configuration_not_preserved"):
+                entry.require_project_approval_configuration_preserved(record)
+            self.assertEqual(json.loads(
+                (Path(temp_dir) / "install-check.json").read_text())["status"],
+                "NOT_PRESERVED")
+
+    def test_codex_install_hooks_bracket_the_unchanged_apm_command(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output = root / "output"
+            output.mkdir()
+            entrypoint = root / "contact_state.py"
+            entrypoint.write_text("synthetic entrypoint", encoding="utf-8")
+            events = []
+            commands = []
+
+            def prepare_config(consumer, _directory):
+                events.append("before_install")
+                config = consumer / ".codex" / "config.toml"
+                config.parent.mkdir()
+                config.write_text(
+                    'approval_policy = "on-request"\n'
+                    'approvals_reviewer = "auto_review"\n',
+                    encoding="utf-8")
+
+            def fake_run(command, consumer, _log_dir, timeout=240, env=None):
+                events.append("install")
+                commands.append((command, timeout, env))
+                config = Path(consumer) / ".codex" / "config.toml"
+                self.assertIn('approvals_reviewer = "auto_review"',
+                              config.read_text(encoding="utf-8"))
+                config.write_text(
+                    config.read_text(encoding="utf-8")
+                    + '\n[mcp_servers.chrome-devtools]\ncommand = "node"\n',
+                    encoding="utf-8")
+                (Path(consumer) / "apm.lock.yaml").write_text("lock\n")
+                return 0
+
+            def check_config(consumer, _directory):
+                events.append("after_install")
+                self.assertIn(
+                    'approvals_reviewer = "auto_review"',
+                    (consumer / ".codex" / "config.toml").read_text(encoding="utf-8"))
+
+            with mock.patch.object(entry.base, "run", side_effect=fake_run), \
+                    mock.patch.object(entry.base, "installed_script", return_value=entrypoint), \
+                    mock.patch.object(entry.base, "prepare", return_value={"prepared": True}), \
+                    mock.patch.object(entry.base, "archive_config"):
+                entry.base.install_host(
+                    SimpleNamespace(producer_sha="synthetic-producer"), output, "codex",
+                    before_codex_install=prepare_config,
+                    after_codex_install=check_config,
+                )
+
+            self.assertEqual(events, ["before_install", "install", "after_install"])
+            self.assertEqual(commands, [(
+                ["apm", "install",
+                 "https://github.com/ScholarWorkflow/professor-contact.git#synthetic-producer",
+                 "--target", "codex", "--trust-transitive-mcp"],
+                240, None,
+            )])
 
 
 if __name__ == "__main__":

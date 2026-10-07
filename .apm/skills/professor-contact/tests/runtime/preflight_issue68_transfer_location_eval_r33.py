@@ -186,8 +186,11 @@ def command_tokens(command):
 
 
 def build_marker_command(marker_script, transfer_root):
+    transfer_root = Path(transfer_root).resolve()
+    cache_dir = transfer_root.parent / ".uv-cache"
     return shlex.join([
-        "uv", "run", "--no-project", "python", str(marker_script),
+        "uv", "--cache-dir", str(cache_dir), "run", "--no-project", "python",
+        str(marker_script),
         str(transfer_root), MARKER_NAME, MARKER_BYTES.hex(),
     ])
 
@@ -524,6 +527,12 @@ def main(argv=None):
         directory, consumer = output / "install", output / "consumer"
         directory.mkdir()
         consumer.mkdir()
+        project_config_setup_path = output / "project-approval-config-setup.json"
+        project_config_setup = runner.prepare_project_approval_configuration(
+            consumer, sources[1], project_config_setup_path)
+        project_config_facts = runner._project_approval_configuration_facts(
+            project_config_setup, "project-approval-config-setup.json")
+        result["project_approval_configuration_setup"] = project_config_facts
         install = [
             "apm", "install",
             f"https://github.com/ScholarWorkflow/professor-contact.git#{PRODUCER_SHA}",
@@ -534,6 +543,25 @@ def main(argv=None):
         runner.base.progress("通过受支持安装路径建立独立干净消费者")
         if runner.base.run(install, consumer, directory / "apm-install", timeout=600):
             raise ValueError("supported_install_failed")
+        project_config_install_check_path = (
+            output / "project-approval-config-install-check.json")
+        project_config_install_check = runner.verify_project_approval_configuration_after_install(
+            consumer, project_config_setup_path, project_config_install_check_path,
+            "project-approval-config-setup.json")
+        result["project_approval_configuration_install_check"] = {
+            **project_config_install_check,
+            "evidence_artifact": "project-approval-config-install-check.json",
+            "evidence_sha256": digest(project_config_install_check_path),
+        }
+        runner.require_project_approval_configuration_preserved(
+            project_config_install_check)
+        project_config_facts["install_preservation"] = {
+            "status": project_config_install_check["status"],
+            "artifact": "project-approval-config-install-check.json",
+            "sha256": digest(project_config_install_check_path),
+            "config_sha256_after_install": project_config_install_check[
+                "config_sha256_after_install"],
+        }
         entrypoint = runner.base.installed_script(consumer)
         source = sources[0] / ".apm/skills/professor-contact/scripts/contact_state.py"
         if digest(entrypoint) != digest(source):
@@ -546,12 +574,6 @@ def main(argv=None):
                 ["uv", "run", "--no-project", "python", str(entrypoint), "--help"],
                 consumer, directory / "entry-help", timeout=30):
             raise ValueError("installed_entry_not_executable")
-        project_config_setup_path = output / "project-approval-config-setup.json"
-        project_config_setup = runner.prepare_project_approval_configuration(
-            consumer, sources[1], project_config_setup_path)
-        project_config_facts = runner._project_approval_configuration_facts(
-            project_config_setup, "project-approval-config-setup.json")
-        result["project_approval_configuration_setup"] = project_config_facts
         consumer_before = installed_tree(consumer)
 
         transfer_root = validate_transfer_root(

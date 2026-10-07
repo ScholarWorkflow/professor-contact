@@ -120,17 +120,22 @@ def deterministic(args, output):
     return verdict("PASS", **details)
 
 
-def install_host(args, output, host):
+def install_host(args, output, host, *, before_codex_install=None,
+                after_codex_install=None):
     directory = output / host
     directory.mkdir()
     consumer = output / "consumers" / host
     consumer.mkdir(parents=True)
+    if host == "codex" and before_codex_install is not None:
+        before_codex_install(consumer, directory)
     command = ["apm", "install", f"https://github.com/ScholarWorkflow/professor-contact.git#{args.producer_sha}",
                "--target", host, "--trust-transitive-mcp"]
     write_json(directory / "install.json", {"command": command, "consumer": str(consumer),
                                             "newly_created": True, "manual_patch": "no"})
     if run(command, consumer, directory / "install", timeout=240):
         raise ValueError("consumer_install_failed")
+    if host == "codex" and after_codex_install is not None:
+        after_codex_install(consumer, directory)
     shutil.copy2(consumer / "apm.lock.yaml", directory / "apm.lock.yaml")
     script = installed_script(consumer)
     manifest = prepare(consumer / "program", script, directory)

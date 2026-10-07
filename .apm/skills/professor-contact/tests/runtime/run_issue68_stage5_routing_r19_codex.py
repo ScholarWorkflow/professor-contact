@@ -8,6 +8,7 @@ import signal
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import issue68_eval_service_isolation_r14 as isolation
@@ -45,6 +46,7 @@ RUNTIME_BINDING_ARTIFACTS = (
     "codex/installed-entrypoint.json",
     "codex/apm.lock.yaml",
     "codex/project-approval-config-setup.json",
+    "codex/project-approval-config-install-check.json",
     "codex/effective-project-approval-configuration.json",
     "eval-service-provenance.before.json",
     "eval-service-provenance.after.json",
@@ -667,6 +669,119 @@ def _project_approval_configuration_facts(
     }
 
 
+def verify_project_approval_configuration_after_install(
+    consumer, setup_evidence_path, evidence_path,
+    setup_evidence_artifact="project-approval-config-setup.json",
+):
+    """Verify APM preserved the shared helper's project-scoped approval values."""
+    consumer = Path(consumer).resolve()
+    setup_evidence_path = Path(setup_evidence_path)
+    evidence_path = Path(evidence_path)
+    config_path = consumer / ".codex" / "config.toml"
+    evidence = {
+        "schema": "issue-68-project-approval-config-install-check-v1",
+        "status": "INVALID_EVIDENCE",
+        "reason_code": None,
+        "setup_evidence_artifact": setup_evidence_artifact,
+        "setup_evidence_sha256": None,
+        "setup_status": None,
+        "shared_assets_revision": None,
+        "helper": None,
+        "helper_sha256": None,
+        "source": None,
+        "configuration_path": str(config_path),
+        "config_sha256_before_install": None,
+        "config_sha256_after_install": None,
+        "requested_values": dict(PROJECT_CONFIG_VALUES),
+        "observed_values": {key: None for key in PROJECT_CONFIG_VALUES},
+        "statuses": {key: "NOT_CHECKED" for key in PROJECT_CONFIG_VALUES},
+    }
+
+    def finish(status, reason_code=None):
+        evidence["status"] = status
+        evidence["reason_code"] = reason_code
+        base.write_json(evidence_path, evidence)
+        return evidence
+
+    try:
+        setup_bytes = setup_evidence_path.read_bytes()
+        evidence["setup_evidence_sha256"] = hashlib.sha256(setup_bytes).hexdigest()
+        setup = json.loads(setup_bytes)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return finish("INVALID_EVIDENCE", "project_approval_setup_evidence_unreadable")
+
+    setup_config = setup.get("project_config") if isinstance(setup, dict) else None
+    if not isinstance(setup_config, dict):
+        return finish("INVALID_EVIDENCE", "project_approval_setup_evidence_invalid")
+    evidence.update({
+        "setup_status": setup.get("status"),
+        "shared_assets_revision": setup.get("shared_assets_revision"),
+        "helper": setup.get("helper"),
+        "helper_sha256": setup.get("helper_sha256"),
+        "source": setup.get("source"),
+        "config_sha256_before_install": setup_config.get("sha256"),
+    })
+
+    try:
+        if ((consumer / ".codex").is_symlink() or config_path.is_symlink()):
+            return finish("INVALID_EVIDENCE", "project_approval_config_path_is_symlink")
+        resolved_config = config_path.resolve(strict=True)
+        config_bytes = resolved_config.read_bytes()
+        parsed_config = tomllib.loads(config_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return finish("INVALID_EVIDENCE", "installed_project_approval_config_unreadable")
+
+    evidence["configuration_path"] = str(resolved_config)
+    evidence["config_sha256_after_install"] = hashlib.sha256(config_bytes).hexdigest()
+    for key, expected_value in PROJECT_CONFIG_VALUES.items():
+        if key not in parsed_config:
+            evidence["statuses"][key] = "MISSING"
+        elif parsed_config[key] != expected_value:
+            evidence["statuses"][key] = "MISMATCH"
+        else:
+            evidence["statuses"][key] = "MATCH"
+        evidence["observed_values"][key] = parsed_config.get(key)
+
+    expected_source = {
+        "commit": PROJECT_CONFIG_SOURCE_COMMIT,
+        "document": PROJECT_CONFIG_SOURCE_DOCUMENT,
+        "sha256": PROJECT_CONFIG_SOURCE_DOCUMENT_SHA256,
+    }
+    setup_path = setup_config.get("path")
+    setup_sha = setup_config.get("sha256")
+    setup_valid = (
+        setup.get("status") == "PREPARED"
+        and setup.get("shared_assets_revision") == FIXTURE_SHA
+        and setup.get("helper") == "scripts/prepare_codex_project_config.py"
+        and setup.get("helper_sha256") == PROJECT_CONFIG_HELPER_SHA256
+        and setup.get("source") == expected_source
+        and setup_config.get("values") == PROJECT_CONFIG_VALUES
+        and isinstance(setup_path, str)
+        and Path(setup_path) == resolved_config
+        and isinstance(setup_sha, str)
+        and len(setup_sha) == 64
+        and all(char in "0123456789abcdef" for char in setup_sha)
+    )
+    if not setup_valid:
+        return finish("INVALID_EVIDENCE", "project_approval_setup_evidence_mismatch")
+    if not all(value == "MATCH" for value in evidence["statuses"].values()):
+        return finish("NOT_PRESERVED", "project_approval_values_not_preserved")
+    return finish("PRESERVED")
+
+
+def require_project_approval_configuration_preserved(install_check):
+    """Stop before request construction unless the installed file kept both keys."""
+    if (not isinstance(install_check, dict)
+            or install_check.get("status") != "PRESERVED"
+            or install_check.get("requested_values") != PROJECT_CONFIG_VALUES
+            or install_check.get("observed_values") != PROJECT_CONFIG_VALUES
+            or any(status != "MATCH"
+                   for status in install_check.get("statuses", {}).values())
+            or not install_check.get("config_sha256_after_install")):
+        raise ValueError("project_approval_configuration_not_preserved")
+    return install_check
+
+
 def _request_approval_configuration(response, effective):
     response_received = bool(response)
     statuses = {}
@@ -717,7 +832,8 @@ def _request_approval_configuration(response, effective):
     }
 
 
-def _formal_approval_configuration_record(response, setup_evidence):
+def _formal_approval_configuration_record(response, setup_evidence,
+                                         install_check_evidence=None):
     response_output = response.get("output") if isinstance(response, dict) else None
     effective = (response_output.get("thread_start_effective")
                  if isinstance(response_output, dict) else None)
@@ -729,10 +845,33 @@ def _formal_approval_configuration_record(response, setup_evidence):
         and isinstance(setup_config, dict)
         and setup_config.get("values") == PROJECT_CONFIG_VALUES
     )
+    install_check_ok = (
+        isinstance(install_check_evidence, dict)
+        and install_check_evidence.get("status") == "PRESERVED"
+        and install_check_evidence.get("requested_values") == PROJECT_CONFIG_VALUES
+        and install_check_evidence.get("observed_values") == PROJECT_CONFIG_VALUES
+        and all(status == "MATCH" for status in
+                install_check_evidence.get("statuses", {}).values())
+    )
     record["effective_status"] = record["status"]
     record["setup_status"] = "PREPARED" if setup_ok else "INVALID_SETUP_EVIDENCE"
-    record["status"] = record["effective_status"] if setup_ok else "INVALID_SETUP_EVIDENCE"
+    record["install_preservation_status"] = (
+        "PRESERVED" if install_check_ok else "INVALID_INSTALL_PRESERVATION_EVIDENCE")
+    record["status"] = (
+        record["effective_status"] if setup_ok and install_check_ok
+        else "INVALID_SETUP_EVIDENCE" if not setup_ok
+        else "INVALID_INSTALL_PRESERVATION_EVIDENCE")
     record["setup"] = _project_approval_configuration_facts(setup_evidence)
+    record["install_preservation"] = {
+        "status": install_check_evidence.get("status")
+        if isinstance(install_check_evidence, dict) else None,
+        "config_sha256_before_install": install_check_evidence.get(
+            "config_sha256_before_install")
+        if isinstance(install_check_evidence, dict) else None,
+        "config_sha256_after_install": install_check_evidence.get(
+            "config_sha256_after_install")
+        if isinstance(install_check_evidence, dict) else None,
+    }
     return record
 
 
@@ -777,7 +916,9 @@ def _record_request_runtime_facts(preflight, output, request, service_snapshot, 
     install_path = codex_dir / "installed-entrypoint.json"
     lock_path = codex_dir / "apm.lock.yaml"
     approval_config_path = codex_dir / "project-approval-config-setup.json"
-    for path in (request_path, install_path, lock_path, approval_config_path):
+    approval_install_check_path = codex_dir / "project-approval-config-install-check.json"
+    for path in (request_path, install_path, lock_path, approval_config_path,
+                 approval_install_check_path):
         if not path.is_file():
             raise ValueError("runtime_source_artifact_missing:" + path.name)
 
@@ -794,6 +935,8 @@ def _record_request_runtime_facts(preflight, output, request, service_snapshot, 
     if not _is_recorded(entrypoint["cwd"]):
         raise ValueError("installed_entrypoint_cwd_unobservable")
     approval_setup = json.loads(approval_config_path.read_text(encoding="utf-8"))
+    approval_install_check = json.loads(
+        approval_install_check_path.read_text(encoding="utf-8"))
     if approval_setup.get("status") != "PREPARED":
         raise ValueError("project_approval_configuration_not_prepared")
     approval_configuration = _project_approval_configuration_facts(approval_setup)
@@ -807,13 +950,28 @@ def _record_request_runtime_facts(preflight, output, request, service_snapshot, 
             not recorded_config_path.is_symlink()
             and recorded_config_path.resolve(strict=True)
             == (Path(install_cwd) / ".codex" / "config.toml").resolve(strict=True)
-            and _sha256_file(recorded_config_path)
-            == approval_configuration["project_config"].get("sha256")
         )
     except OSError:
         config_path_matches = False
     if not config_path_matches:
         raise ValueError("project_approval_configuration_readback_mismatch")
+    try:
+        installed_config_bytes = recorded_config_path.read_bytes()
+        installed_config = tomllib.loads(installed_config_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError("project_approval_configuration_readback_mismatch") from exc
+    installed_config_sha256 = hashlib.sha256(installed_config_bytes).hexdigest()
+    if (approval_install_check.get("status") != "PRESERVED"
+            or approval_install_check.get("configuration_path") != str(recorded_config_path.resolve())
+            or approval_install_check.get("setup_evidence_sha256")
+            != _sha256_file(approval_config_path)
+            or approval_install_check.get("config_sha256_after_install")
+            != installed_config_sha256
+            or approval_install_check.get("requested_values") != PROJECT_CONFIG_VALUES
+            or approval_install_check.get("observed_values") != PROJECT_CONFIG_VALUES
+            or any(installed_config.get(key) != value
+                   for key, value in PROJECT_CONFIG_VALUES.items())):
+        raise ValueError("project_approval_configuration_not_preserved")
     if (approval_configuration["project_config"]["values"] != PROJECT_CONFIG_VALUES
             or approval_configuration["shared_assets_revision"] != fixture.get("sha")
             or approval_configuration["source"].get("commit") != PROJECT_CONFIG_SOURCE_COMMIT
@@ -859,6 +1017,12 @@ def _record_request_runtime_facts(preflight, output, request, service_snapshot, 
     updated["project_approval_configuration"] = {
         **approval_configuration,
         "setup_evidence_sha256": _sha256_file(approval_config_path),
+        "install_preservation": {
+            "status": approval_install_check["status"],
+            "artifact": "codex/project-approval-config-install-check.json",
+            "sha256": _sha256_file(approval_install_check_path),
+            "config_sha256_after_install": installed_config_sha256,
+        },
     }
     updated["runtime_environment_evidence"]["isolation"] = {
         **updated["runtime_environment_evidence"]["isolation"],
@@ -888,13 +1052,19 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
     def record_approval_configuration(response):
         directory = lifecycle_context["directory"]
         setup_path = directory / "project-approval-config-setup.json"
+        install_check_path = directory / "project-approval-config-install-check.json"
         response_path = directory / "codex-response.json"
         record_path = directory / "effective-project-approval-configuration.json"
         try:
             setup_evidence = json.loads(setup_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             setup_evidence = {}
-        record = _formal_approval_configuration_record(response, setup_evidence)
+        try:
+            install_check_evidence = json.loads(install_check_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            install_check_evidence = {}
+        record = _formal_approval_configuration_record(
+            response, setup_evidence, install_check_evidence)
         record.update({
             "schema": "issue-68-formal-approval-configuration-v1",
             "artifact": "codex/effective-project-approval-configuration.json",
@@ -902,14 +1072,39 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
             "response_sha256": _sha256_file(response_path) if response_path.is_file() else None,
             "setup_evidence_artifact": "codex/project-approval-config-setup.json",
             "setup_evidence_sha256": _sha256_file(setup_path) if setup_path.is_file() else None,
+            "install_preservation_artifact": "codex/project-approval-config-install-check.json",
+            "install_preservation_sha256": (
+                _sha256_file(install_check_path) if install_check_path.is_file() else None),
         })
         base.write_json(record_path, record)
         return record
 
     def install_host_with_capture(*install_args, **install_kwargs):
-        directory, consumer, manifest = original_install_host(*install_args, **install_kwargs)
-        if install_args[2] != "codex":
-            return directory, consumer, manifest
+        host = install_args[2]
+        if host != "codex":
+            return original_install_host(*install_args, **install_kwargs)
+
+        def prepare_approval_config(consumer, directory):
+            approval_setup = prepare_project_approval_configuration(
+                consumer, args.fixture_root, directory / "project-approval-config-setup.json")
+            lifecycle_context["approval_setup"] = approval_setup
+
+        def verify_approval_config(consumer, directory):
+            install_check = verify_project_approval_configuration_after_install(
+                consumer,
+                directory / "project-approval-config-setup.json",
+                directory / "project-approval-config-install-check.json",
+                "codex/project-approval-config-setup.json",
+            )
+            lifecycle_context["approval_install_check"] = (
+                require_project_approval_configuration_preserved(install_check))
+
+        directory, consumer, manifest = original_install_host(
+            *install_args,
+            before_codex_install=prepare_approval_config,
+            after_codex_install=verify_approval_config,
+            **install_kwargs,
+        )
         program_root = manifest.get("program_root")
         if not isinstance(program_root, (str, Path)) or not str(program_root):
             raise ValueError("installed_program_root_missing")
@@ -918,13 +1113,21 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
             {"consumer": consumer, "program": program_root, "evidence_output": output},
         )
         args.transfer_location_root = location_context["root"]
-        approval_setup = prepare_project_approval_configuration(
-            consumer, args.fixture_root, directory / "project-approval-config-setup.json")
+        approval_setup = lifecycle_context["approval_setup"]
+        approval_install_check = lifecycle_context["approval_install_check"]
         base.archive_config(consumer, directory, "before")
         provenance["project_approval_configuration_setup"] = {
             **_project_approval_configuration_facts(approval_setup),
             "setup_evidence_sha256": _sha256_file(
                 directory / "project-approval-config-setup.json"),
+        }
+        provenance["project_approval_configuration_install_check"] = {
+            "artifact": "codex/project-approval-config-install-check.json",
+            "status": approval_install_check["status"],
+            "sha256": _sha256_file(
+                directory / "project-approval-config-install-check.json"),
+            "config_sha256_after_install": approval_install_check[
+                "config_sha256_after_install"],
         }
         base.write_json(Path(output) / "provenance.json", provenance)
         source = input_verifier.OWNER_CAPTURE_SOURCE
