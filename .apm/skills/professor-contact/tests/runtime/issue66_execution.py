@@ -121,6 +121,9 @@ class Execution:
         self.product_source = str(args.product_source).strip()
         if not self.product_source:
             raise RuntimeError("必须提供本轮实际产品来源")
+        source_path = Path(self.product_source).expanduser()
+        self.local_product_source = source_path.resolve() if source_path.is_absolute() \
+            and source_path.is_dir() and (source_path / "apm.yml").is_file() else None
         self.out.mkdir(parents=True, exist_ok=False)
         self.identity = self.out.name
         self.consumer = self.out / "consumer"
@@ -205,6 +208,8 @@ class Execution:
         self.provenance = {
             "plan": PLAN,
             "product_source_input": self.product_source,
+            "product_source_kind": "local_project" if self.local_product_source else "remote_selector",
+            "product_source_root": str(self.local_product_source) if self.local_product_source else None,
             "test_source": test_source,
             "fixture_source": fixture_source,
             "adapter_source": {"root": str(self.fixture), "files": adapter_files},
@@ -321,15 +326,17 @@ class Execution:
                   "prepared": ["installation", "initial_input", "request", "snapshot"],
                   "remaining": ["正式运行业务生产、保存及权限事实"]})
             return 0
-        port = self.port()
-        self.install()
-        self.prepare()
         if self.a.mode == "preflight":
+            self.install()
+            self.prepare()
             write(self.out / "preflight.json", {"classification": "PREFLIGHT_ONLY",
                   "formal_request_sent": False, "evidence_set_id": self.identity,
                   "prepared": ["installation", "initial_input", "request", "snapshot"],
                   "remaining": ["正式运行业务文件生产、保存及权限事实"]})
             return 0
+        port = self.port()
+        self.install()
+        self.prepare()
         return self.formal(port)
 
 
@@ -337,9 +344,18 @@ class Execution:
         installation = {"method": "existing-consumer-installation-check", "exit_code": None}
         if not self.a.consumer:
             self.consumer.mkdir()
-            result = self.run("install", ["apm", "install", "--target", "codex",
-                f"ScholarWorkflow/professor-contact#{self.product_source}"], cwd=self.consumer)
-            installation = {"method": "apm install --target codex", "exit_code": result.returncode}
+            if self.local_product_source:
+                result = self.run("install", ["apm", "install", "--target", "codex",
+                    "--parallel-downloads", "1", "--root", str(self.consumer)],
+                    cwd=self.local_product_source)
+                installation = {"method": "apm install --target codex --parallel-downloads 1 --root <consumer>",
+                                "source_mode": "local_project", "exit_code": result.returncode}
+            else:
+                result = self.run("install", ["apm", "install", "--target", "codex",
+                    "--parallel-downloads", "1",
+                    f"ScholarWorkflow/professor-contact#{self.product_source}"], cwd=self.consumer)
+                installation = {"method": "apm install --target codex --parallel-downloads 1",
+                                "source_mode": "remote_selector", "exit_code": result.returncode}
         lock = self.consumer / "apm.lock.yaml"
         installed_commits = None
         lock_observation = {"path": str(lock), "exists": lock.is_file(), "parse_status": "not_available"}
@@ -364,6 +380,7 @@ class Execution:
         value = surface(self.identity, [
             check("supported_install_entry_completed", install_available, installation)],
             requested_product_source=self.product_source,
+            product_source_kind="local_project" if self.local_product_source else "remote_selector",
             installed_product_versions=installed_commits,
             lock_observation=lock_observation,
             consumer_root=str(self.consumer), newly_created=not bool(self.a.consumer),

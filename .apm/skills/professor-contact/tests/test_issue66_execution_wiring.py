@@ -63,11 +63,34 @@ class ExecutionWiringTests(unittest.TestCase):
             with patch.object(execution, 'run', return_value=CompletedProcess([], 0, b'installed', b'')) as run:
                 execution.install()
             run.assert_called_once_with('install', ['apm', 'install', '--target', 'codex',
+                '--parallel-downloads', '1',
                 'ScholarWorkflow/professor-contact#refs/pr73-current'], cwd=execution.consumer)
             evidence = json.loads((execution.out / 'install.json').read_text())
             self.assertEqual(evidence['status'], 'ok')
             self.assertEqual(evidence['requested_product_source'], 'refs/pr73-current')
             self.assertIsNone(evidence['installed_product_versions'])
+
+    def test_install_supports_a_local_project_source_in_an_isolated_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            from argparse import Namespace
+            root = Path(directory)
+            source = root / 'product-source'
+            source.mkdir()
+            (source / 'apm.yml').write_text('name: professor-contact\n', encoding='utf-8')
+            args = Namespace(repository=str(PATH.parents[5]), fixture_root=directory,
+                evidence_dir=str(root / 'evidence'), mode='preflight', consumer=None,
+                product_source=str(source))
+            execution = wiring.Execution(args)
+            with patch.object(execution, 'run', return_value=CompletedProcess(
+                    [], 0, b'installed', b'')) as run:
+                execution.install()
+            run.assert_called_once_with('install', [
+                'apm', 'install', '--target', 'codex', '--parallel-downloads', '1',
+                '--root', str(execution.consumer)],
+                cwd=source.resolve())
+            evidence = json.loads((execution.out / 'install.json').read_text())
+            self.assertEqual(evidence['checks'][0]['detail']['source_mode'], 'local_project')
+            self.assertEqual(evidence['requested_product_source'], str(source))
 
     def test_source_revision_and_dirty_status_are_recorded_without_rejection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -148,10 +171,11 @@ class ExecutionWiringTests(unittest.TestCase):
             service = Mock()
             execution.service = service
             with patch.object(execution,'run'), patch.object(execution,'versions'), \
-                 patch.object(execution,'record_provenance'), patch.object(execution,'port',return_value='1234'), \
+                 patch.object(execution,'record_provenance'), patch.object(execution,'port') as port, \
                  patch.object(execution,'service') as service, patch.object(execution,'install'), \
                  patch.object(execution,'prepare'), patch.object(execution,'formal') as formal:
                 self.assertEqual(execution.execute(),0)
+                port.assert_not_called()
                 formal.assert_not_called()
             service.assert_not_called()
 
