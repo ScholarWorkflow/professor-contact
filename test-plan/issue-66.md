@@ -185,7 +185,7 @@ R5 最终证据目录基名为 `issue66-gate2-candidate.4LPblyY0`，位于本机
 
 随后针对 PR 当前提交 `e7d6c7ab4adafddff2aa69f83070892e17d504b6`，使用 APM 远端提交选择器进行了两次预检：`issue66-r7-preflight-pr73-e7d6c7a-20261007-122605` 与 `issue66-r7-preflight-pr73-e7d6c7a-20261007-122605-retry1`。两轮均为 `CASE_NOT_STARTED`、`formal_request_sent=false`。APM 已解析该精确提交并开始安装；依赖仓库克隆遇到 GitHub HTTPS TLS 连接提前结束，安装命令退出码为 `1`，安装事务未提交。两轮均未生成成功的安装或预检记录，因此符合共识的预检尚未完成；没有发送正式请求或运行 `/eval`。原始命令输出和判定保留在各自证据集中。
 
-按用户要求再次重试，第三轮使用同一远端提交选择器，证据集为 `issue66-r7-preflight-pr73-e7d6c7a-20261007-retry2`。APM 解析到同一精确提交，但安装命令在 1200 秒后超时；判定仍为 `CASE_NOT_STARTED`、`formal_request_sent=false`，没有生成成功的安装或预检记录。三轮远端安装尝试均未完成，因此符合共识的预检尚未完成；没有发送正式请求或运行 `/eval`。第三轮的超时判定与原始输入记录保留在该证据集中。
+按用户要求再次重试，第三轮安装命令使用远端选择器 `ScholarWorkflow/professor-contact#e7d6c7ab4adafddff2aa69f83070892e17d504b6`，证据集为 `issue66-r7-preflight-pr73-e7d6c7a-20261007-retry2`。命令在 1200 秒后超时；超时记录没有保存 APM 的提交解析输出，也没有生成成功的安装或预检记录。判定为 `CASE_NOT_STARTED`、`formal_request_sent=false`。三轮远端安装尝试均未完成，因此符合共识的预检尚未完成；没有发送正式请求或运行 `/eval`。第三轮的超时判定与原始输入记录保留在该证据集中。
 
 此前失败轮次保留为历史：最初证据集 `issue66-r7-preflight-2723996424c6485fb61efcb4808a8e55c1d71cdd` 因下载 `ScholarWorkflow/base-skills` 时 HTTPS 连接中断而为 `CASE_NOT_STARTED`；修复预检路径误读 `EVAL_PORT` 后，提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 的普通 HTTPS 与 HTTP/1.1 重试仍遇到依赖下载中断，证据集分别为 `issue66-r7-preflight-45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 和 `issue66-r7-preflight-45b81f3-http11`。此前被误记为成功的本地路径预检也转为历史；各轮原始命令和输出均保留在各自 `commands` 目录。
 
