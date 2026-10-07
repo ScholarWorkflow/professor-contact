@@ -12,7 +12,7 @@ import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PureWindowsPath
 
-PLAN = "issue-66-test-plan-r19-clarification-r7-2026-10-07"
+PLAN = "issue-66-test-plan-r20-stage3-write-validation-r8-2026-10-08"
 MODEL = "gpt-6-luna"
 REASONING_EFFORT = "low"
 SANDBOX = "workspace-write"

@@ -12,6 +12,7 @@ import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 AGENT_PATH = REPO_ROOT / ".apm" / "agents" / "professor-contact-idea-generator.agent.md"
+VALIDATOR_PATH = REPO_ROOT / ".apm" / "agents" / "professor-contact-style-validator.agent.md"
 SKILL_PATH = REPO_ROOT / ".apm" / "skills" / "professor-contact" / "SKILL.md"
 
 
@@ -52,8 +53,10 @@ def _assert_in_order(testcase, text: str, tokens: list[str], label: str) -> None
 class Stage3IdeaGeneratorAgentContractTests(unittest.TestCase):
     def setUp(self):
         self.assertTrue(AGENT_PATH.exists(), f"missing agent document: {AGENT_PATH}")
+        self.assertTrue(VALIDATOR_PATH.exists(), f"missing validator document: {VALIDATOR_PATH}")
         self.assertTrue(SKILL_PATH.exists(), f"missing skill document: {SKILL_PATH}")
         self.text = AGENT_PATH.read_text(encoding="utf-8")
+        self.validator_text = VALIDATOR_PATH.read_text(encoding="utf-8")
         self.skill_text = SKILL_PATH.read_text(encoding="utf-8")
         self.frontmatter = _frontmatter_lines(self.text)
 
@@ -135,6 +138,79 @@ class Stage3IdeaGeneratorAgentContractTests(unittest.TestCase):
             r"(?:最多|max)\s*2\s*(?:轮|round)",
             "the style correction loop must remain capped at two rounds",
         )
+
+    def test_fixed_writer_contract_and_caller_stop_before_save_on_error(self):
+        validator_write = _section(
+            self.validator_text,
+            "### E. Stage-3 原文落盘",
+            "## Return value",
+        )
+        for marker in (
+            "contact_state.py stage3-write-validation",
+            "--result-json",
+            "--output-file",
+            "--output-map-json",
+            "唯一一份",
+            "完整业务 JSON 对象",
+            "stdout",
+            "退出码为",
+            "逐字节相同",
+            "命令失败",
+            "error",
+            "停止",
+            "不得自行重建",
+            "排他方式",
+            "0600",
+            "保留已完成文件",
+        ):
+            with self.subTest(validator_contract=marker):
+                self.assertIn(marker, validator_write)
+
+        loop = _section(
+            self.text,
+            "### Step 3.6 — 白话校验循环",
+            "### Step 4 — Return value",
+        )
+        for marker in (
+            "stage3-write-validation",
+            "入口非零",
+            "结果缺失/不完整",
+            "立即按既有 error JSON",
+            "不运行 save、record 或修正轮",
+        ):
+            with self.subTest(caller_contract=marker):
+                self.assertIn(marker, loop)
+        _assert_in_order(
+            self, loop,
+            ["stage3-prepare-validation", "stage3-write-validation",
+             "stage3-save-validation", "stage3-record-validation"],
+            "固定写入后的 caller 顺序",
+        )
+        opencode = _section(loop, "**OpenCode 分支", "**Codex 分支")
+        for marker in (
+            "prepare 返回的完整绝对输出路径",
+            "prepare 已返回的所有输出路径",
+            "无重复的一对一映射",
+            "不能补造输出位置",
+            "不得重建或重序列化 validator JSON",
+        ):
+            with self.subTest(prepared_binding=marker):
+                self.assertIn(marker, opencode)
+
+    def test_validator_without_output_file_remains_read_only(self):
+        validator_write = _section(
+            self.validator_text,
+            "### E. Stage-3 原文落盘",
+            "## Return value",
+        )
+        hard_rules = _section(
+            self.validator_text,
+            "## Hard rules",
+            "## Return value",
+        )
+        self.assertIn("未传 `output_file` 时保持原有只读行为", validator_write)
+        self.assertIn("未传 `output_file` 的调用绝不 write/edit 任何文件", hard_rules)
+        self.assertIn("不调用写入入口", validator_write)
 
     def test_opencode_example_and_common_closeout_follow_skill_handoff_chain(self):
         tokens = [

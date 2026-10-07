@@ -1,8 +1,8 @@
-# Issue 66 本地测试候选记录（R7）
+# Issue 66 本地测试候选记录（R7 历史基线；R20 待审候选）
 
 ## 计划与候选身份
 
-本记录采用第七版测试计划 `issue-66-test-plan-r19-clarification-r7-2026-10-07`，取代此前关于产品、测试、夹具、适配器、工具版本、文件摘要及批准锁的执行限制。正式业务证明范围仍按本记录各用例表执行。R6 及更早记录只作历史；不得把历史来源、计数、失败名单或摘要当成本轮门槛。
+本记录前半部分保留第七版测试计划 `issue-66-test-plan-r19-clarification-r7-2026-10-07` 的历史执行材料。当前唯一待审候选为 `issue-66-test-plan-r20-stage3-write-validation-r8-2026-10-08`，只由本文件末尾 R20 增量和[执行步骤](issue-66-execution.md)定义；R7/R19 运行器和历史结果不属于 R20 证据。正式执行器计划标识须与此 R20 标识完全一致；本地七套件 R19 运行器不用于 R20 证据。R6 及更早记录只作历史；不得把历史来源、计数、失败名单或摘要当成本轮门槛。Gate 2 仍为 pending，Gate 3 和正式 `/eval` 未运行。
 
 | 执行时填写的字段 | 取值方式 |
 | --- | --- |
@@ -258,3 +258,59 @@ Gate2 状态：未批准；Gate3 状态：未运行。
 正式执行材料见[安装与执行接线](issue-66-execution.md)、`issue-66-formal.sh` 及 `issue66_execution.py`。Gate 2 未通过时不得运行正式 `/eval`。R7 规定独立运行目录由正式评估配置负责，并禁止本地检查服务进程、配置、数据库或日志；无需为本地测试补做这些检查。当前未运行 `/eval` 的原因是 Gate 2 尚未通过。不得把本地未检查服务内部状态记为证据缺口或失败；不自动重试，不删除失败证据。
 
 本记录及执行材料说明 R7 的当前测试方式。早期安装与失败预检结果仅作历史；最新本地候选和远端来源预检的工具、配置字段、套件身份及结果均已记录。符合共识的远端预检已按 PR 提交 `7ddd4a6eaaf50e718e40a1099989bded747b0c60` 完成；Gate 2 仍未通过，Gate 3 未运行，正式 `/eval` 未运行。本地候选与预检均不等于正式验收；正式运行后的真实生产、保存、记录和停止事实尚未形成。
+
+## R20 Stage-3 固定写入候选增量（候选，2026-10-08）
+
+本节在已批准的 Issue #66 实施计划 r15 上增加固定 Stage-3 校验结果写入的证明要求；它是新的测试计划候选 `issue-66-test-plan-r20-stage3-write-validation-r8-2026-10-08`，尚未通过 Gate 2 审核。上文 R7 的运行数据和历史结果仍是旧轮证据，不证明本候选的新命令或新回归用例。Gate 2 保持 **pending**，Gate 3 未运行，正式 `/eval` 未批准、未运行；本节不构成批准。
+
+### 需求到证明的新增映射
+
+| 要求 | 负责证明 | 必须观察的事实 | 当前证据状态 |
+| --- | --- | --- | --- |
+| `R66-10 / COMP66-1`：校验者只写调用方准备的指定输出文件 | `S3-WRITER-1`；`.apm/skills/professor-contact/tests/test_issue66_stage3_write_validation.py` | 单文件路径成功、批量候选映射成功、结果对象完整保留、输出逐字节相同、权限为 `0600`。 | 回归用例已新增，未运行；仅为候选材料。 |
+| 完整结果结构及输入先验检查 | `S3-WRITER-1` | `result` 为 `ok`；`files` 是非空数组；`notes` 是字符串；至少一项 `candidates`；每项的绝对 `file`、`artifact`、`verdict`、非负整数 `blocking`/`minor` 与 `issues` 结构一致。每条问题包含 `rule`、`severity`、`location`、`quote`、`suggestion`；严重级别、计数和 verdict 相符。拒绝重复 JSON 键、`Infinity`/`NaN`、顶层非对象、错误 `result`、字段类型错误、相对文件路径、未知 `artifact`/`verdict`、问题字段缺失或类型错误、非法严重级别/位置、超长引文和计数不一致。 | 表驱动拒绝用例要求结构化错误、非零退出且无目标文件；用例已写，未运行。 |
+| 单文件和批量一对一映射及准备路径绑定 | `S3-WRITER-1` 与 `S3-ASSET-COMPAT-1` | 单文件只用 `--output-file`，其值必须等于真实 `stage3-prepare-validation` 返回的 `output_file`；完整结果仅有一个候选项。批量只用 `--output-map-json`；所有映射项都须等于对应准备步骤返回的路径，并逐项对应完整结果中的候选稿；不得缺漏、重复、额外、相对或重复输出。 | 新增真实 prepare 返回路径的单文件集成回归；批量形状回归仍用合成映射。正式事件关联待判定器扩展，未运行。 |
+| 验证器原始结果与命令参数绑定 | `S3-WRITER-1`、`S3-ASSET-COMPAT-1`、`S3-RT-CODEX-1` | `--result-json` 必须恰为 validator 返回的完整 `result`、`files[]`、`notes` 对象，不得由调用者重建或拆分；正式事件应关联 validator 返回、完整命令参数、stdout、准备的目标、writer 文件和后续 save/record 路径。未提供 `output_file` 时，验证器保持只读并按原方式返回。 | 定向集成回归只证明实际 prepare 路径被传给 writer，并把测试构造的完整 JSON 字符串作为一个参数传入；它不证明该字符串来自真实 validator 返回。代理合同回归只证明说明文本包含传递规则与未传 `output_file` 的只读要求。真实值源关联仍待原生正式证据，当前不可判定。 |
+| 输出及逐字节成功证据 | `S3-WRITER-1` 与 `S3-ASSET-COMPAT-1` | 成功时保留实际退出码、stdout 原始字节和每个指定文件的原始字节；要求退出码 `0`、结果非空、单文件 stdout 字节与文件字节相等，批量每个文件字节均与同一 stdout 相等，且解析后每个文件保留完整 `result`、`files`、`notes` 及扩展字段。文件权限为 `0600`。调用者业务消息只能逐字复用成功 stdout。 | 写入回归和静态代理合同断言已新增，未运行。 |
+| 目标冲突与无效映射无副作用 | `S3-WRITER-1` | 已存在目标文件、符号链接、相同输出路径、单文件相对路径、缺父目录及映射不完整时，入口以结构化 `error` 非零结束；既有内容和链接目标逐字节不变，其他尚未创建的输出保持不存在，错误报告的 `completed_paths` 与事实一致。新增单文件路径用例断言相对路径与不存在的父目录都被拒绝且不产生文件。 | 冲突、映射及上述两种单文件路径拒绝用例已新增，未运行。 |
+| 写入失败后的部分副作用 | `S3-WRITER-1` | 注入第二个批量文件的部分写入失败：错误结果为 `validation_write_failed` 且退出非零；第一个已完成文件保留并列入 `completed_paths`；仅清理本次第二个未完成文件；不得回滚第一个文件，也不得留下不完整第二个文件。 | 已新增确定性故障注入用例，未运行。 |
+| 调用者停止顺序 | `S3-ASSET-COMPAT-1`；`test_stage3_idea_generator_agent_contract.py::Stage3IdeaGeneratorAgentContractTests.test_fixed_writer_contract_and_caller_stop_before_save_on_error` | 调用顺序为 prepare → 固定 writer → save → record。非零退出、`error`、缺失/不完整 stdout 或 stdout/文件字节不符时，调用者立即返回既有结构化错误；不得运行 save、record、修正轮或新 generator，不得自行重建或重新序列化正文。 | 静态代理合同用例已新增，未运行。 |
+| 正式原生运行证据 | `S3-RT-CODEX-1` | 只有 Gate 2 批准后才能取得。原始事件必须关联实际 `stage3-write-validation` 命令、validator 完整返回值、prepare 返回路径、完整 argv、退出码、成功 stdout、writer 文件原始字节与模式、后续 save/record 路径及调用顺序。错误分支必须证明停止行为。缺关联时判为证据无效或阻断；只有可归因的实际行为违反规则才判产品失败。 | **当前 Gate 2 阻断**：现有判定器只识别 `python -c` 命令行为，新固定命令会被判为 unknown；`fileChange Add` 不提供排他创建或权限位；执行器快照不包含临时 handoff 文件和权限。必须先扩展正式观测与判定接口，并由一次不发送 `/eval` 的原生能力预检证明命令、字节、模式和关联字段确实可见。不得用合成事件或历史 attempt #11 替代能力预检。 |
+
+固定入口模板如下。尖括号中的每个值都应作为单独、安全引用的完整参数传递；结果 JSON 不得拆字段或由调用者重建：
+
+```sh
+python3 .agents/skills/professor-contact/scripts/contact_state.py stage3-write-validation \
+  --output-file '<本轮 prepare 返回的指定绝对路径>' \
+  --result-json '<完整结果 JSON 单一参数>'
+```
+
+```sh
+python3 .agents/skills/professor-contact/scripts/contact_state.py stage3-write-validation \
+  --output-map-json '<完整的一对一 JSON 映射单一参数>' \
+  --result-json '<同一份完整结果 JSON 单一参数>'
+```
+
+### 新增本地回归用例与预期
+
+`test_issue66_stage3_write_validation.py` 新增九项确定性用例：
+
+1. `test_single_write_preserves_complete_result_stdout_bytes_and_mode`：检查单文件完整对象、扩展字段、UTF-8 内容、非空 stdout、stdout 与文件逐字节一致、`0600`，且候选稿不被创建或改写。
+2. `test_batch_map_writes_the_same_complete_result_to_every_candidate`：检查两个候选项的一对一映射；每个文件均含完整对象，文件字节彼此相同且与 stdout 完全相同。
+3. `test_invalid_complete_result_json_is_rejected_without_output`：覆盖空输入、重复键、`Infinity`/`NaN`、顶层数组、错误 `result`、`notes` 类型错误、空或错误类型的 `files`、非对象文件条目、相对文件路径、没有候选稿、未知或非字符串 `artifact`/`verdict`、布尔/字符串/负数/浮点计数、错误 `issues` 类型、非对象 issue、缺少 suggestion、`rule`/`severity`/`quote`/`suggestion` 类型错误、非法严重级别/位置、超长引文及计数不匹配；每种情况都要求结构化错误、非零退出且没有目标文件。
+4. `test_batch_map_invalidities_are_rejected_before_any_write`：覆盖缺项、候选重复、额外候选、输出重复、多余映射字段和相对输出路径；所有目标均保持不存在。
+5. `test_single_output_path_must_be_absolute_and_parent_must_exist`：单文件相对输出路径及父目录不存在时都返回结构化错误，不创建输出或父目录。
+6. `test_existing_target_or_symlink_is_not_replaced`：已有文件原始哨兵字节、符号链接及其目标均保持不变。
+7. `test_batch_target_conflict_leaves_all_targets_unchanged`：第二个目标已存在时，第一个目标不得创建，既有目标保持原字节，`completed_paths` 为空。
+8. `test_batch_write_error_keeps_completed_file_and_removes_own_partial_file`：第二个目标部分写入后注入错误；第一个完整文件保留，第二个不完整文件被清理，错误返回已完成路径。
+9. `Stage3WriterPreparedPathTests.test_writer_uses_prepare_output_path_and_complete_result_argument`：真实运行 prepare 并把它返回的 `output_file` 原样传给 writer；用测试构造的完整验证 JSON 作为一个参数传入，随后核对输出字节、权限和候选稿未改变。它不替代原生证据对真实 validator 返回值的绑定。
+
+代理说明静态回归新增 `test_fixed_writer_contract_and_caller_stop_before_save_on_error` 与 `test_validator_without_output_file_remains_read_only`，检查固定命令、完整结果、prepare 路径约束、批量映射、字节证据、写入权限、错误后停止及未提供 `output_file` 时的只读兼容。以上新增用例均未在本轮执行；它们没有给 Gate 2 提供通过证据。
+
+本地七套件运行器仍记录 R19 计划标记且没有包含新写入测试；它只对应历史候选，R20 不得调用它或复用它的结果。新鲜 `plan_reviewer` 审核通过后，R20 本地证据须单独保存下列定向测试的完整命令、逐项身份、原始 stdout/stderr、退出码及来源。
+
+历史正式尝试 #11 保持原判定：`INVALID_TEST_EXECUTION`。现有历史记录不支持“写入零字节”这一量化描述；可确认的是入口绑定无效、事件缺号，且 writer 生产范围无法归因，因此既不能写成产品通过，也不能据此给产品业务判失败。完整原始结论见[正式运行尝试记录](issue-66-runtime-attempts-20261007.md)。不得覆写、重跑或合并该历史记录。
+
+### R20 Gate 状态
+
+Gate 2：**pending，未批准**。Gate 3：**未运行**。正式 `/eval`：**未批准、未运行**。新增测试尚未执行。本候选存在明确的 Gate 2 阻断：当前正式判定器无法识别新命令，当前文件事件和快照也不能证明排他创建、输出模式或临时文件内容。计划审核者不能把这些要求作为待正式运行时才核对的事项。本地测试工程师必须先扩展原生观测与判定接口，并安排一次不发送 `/eval` 的能力预检，确认实际命令入口、完整参数、validator 返回值、prepare 返回路径、输出字节、权限和后续保存路径都可观察，且判定器能区分产品违反、证据缺失和无效执行。若环境无法提供其中任一事实，应先改写证明要求或保持 Gate 2 未批准；不得用合成事件或历史结果替代。任何本地用例通过都不能替代该预检或原生正式证据。

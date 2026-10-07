@@ -5237,6 +5237,14 @@ def _stage3_issue_scopes(issue: dict, body: str, scopes: list, path: Path) -> li
     return found
 
 
+def _stage3_validation_files(data: Any, path: Path) -> list:
+    """Return the raw Stage-3 validator file entries after the shared envelope check."""
+    if not isinstance(data, dict) or data.get("result") != "ok" \
+            or not isinstance(data.get("files"), list):
+        fail("invalid_validation_json", f"style-validator output unreadable: {path}")
+    return data["files"]
+
+
 def _stage3_candidates_entry(data: Any, path: Path, professor_dir: Path) -> tuple[dict, str, list]:
     """Shape-check raw style-validator JSON and return the one candidates entry
     bound to this professor's rendered document, with its verdict and issues.
@@ -5245,12 +5253,10 @@ def _stage3_candidates_entry(data: Any, path: Path, professor_dir: Path) -> tupl
     §6.5 the remaining ``files`` entries may belong to other professors of a
     batch call and are not this professor's precondition.
     """
-    if not isinstance(data, dict) or data.get("result") != "ok" \
-            or not isinstance(data.get("files"), list):
-        fail("invalid_validation_json", f"style-validator output unreadable: {path}")
+    files = _stage3_validation_files(data, path)
     target = (professor_dir / CANDIDATES_MD).resolve()
     matches = []
-    for entry in data["files"]:
+    for entry in files:
         if not isinstance(entry, dict) or entry.get("artifact") != "candidates":
             continue
         try:
@@ -5276,6 +5282,93 @@ def _stage3_candidates_entry(data: Any, path: Path, professor_dir: Path) -> tupl
     if verdict != "fail" and blocking:
         fail("invalid_validation_json", "blocking issues require verdict=fail")
     return entry, verdict, issues
+
+
+def _stage3_normalized_absolute_path(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        fail("invalid_validation_json", f"{label} must be a non-empty absolute path")
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        fail("invalid_validation_json", f"{label} must be an absolute path: {value!r}")
+    try:
+        return str(candidate.resolve(strict=False))
+    except (OSError, RuntimeError, ValueError):
+        fail("invalid_validation_json", f"{label} cannot be normalized: {value!r}")
+
+
+def _stage3_complete_write_result(data: Any, path: Path) -> list[tuple[str, dict]]:
+    """Validate the complete Stage-3 validator protocol without reading its files."""
+    files = _stage3_validation_files(data, path)
+    if not files:
+        fail("invalid_validation_json", "style-validator files must be a non-empty list")
+    if not isinstance(data.get("notes"), str):
+        fail("invalid_validation_json", "style-validator notes must be a string")
+
+    normalized_entries: list[tuple[str, dict]] = []
+    candidate_paths: set[str] = set()
+    for index, entry in enumerate(files):
+        label = f"style-validator files[{index}]"
+        if not isinstance(entry, dict):
+            fail("invalid_validation_json", f"{label} must be an object")
+        candidate_path = _stage3_normalized_absolute_path(entry.get("file"), f"{label}.file")
+        artifact = entry.get("artifact")
+        if artifact not in ("analysis", "candidates"):
+            fail("invalid_validation_json", f"{label}.artifact must be analysis|candidates")
+        verdict = entry.get("verdict")
+        if verdict not in ("pass", "pass_with_minor", "fail"):
+            fail("invalid_validation_json", f"{label}.verdict is invalid: {verdict!r}")
+        blocking_count = entry.get("blocking")
+        minor_count = entry.get("minor")
+        if isinstance(blocking_count, bool) or not isinstance(blocking_count, int) \
+                or blocking_count < 0 or isinstance(minor_count, bool) \
+                or not isinstance(minor_count, int) or minor_count < 0:
+            fail("invalid_validation_json", f"{label} blocking/minor counts must be non-negative integers")
+        issues = entry.get("issues")
+        if not isinstance(issues, list):
+            fail("invalid_validation_json", f"{label}.issues must be a list")
+        blocking_issues = 0
+        minor_issues = 0
+        for issue_index, issue in enumerate(issues):
+            issue_label = f"{label}.issues[{issue_index}]"
+            if not isinstance(issue, dict):
+                fail("invalid_validation_json", f"{issue_label} must be an object")
+            for field in ("rule", "severity", "quote", "suggestion"):
+                value = issue.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    fail("invalid_validation_json", f"{issue_label}.{field} must be a non-empty string")
+            location = issue.get("location")
+            if isinstance(location, bool) or not (
+                    (isinstance(location, int) and location > 0)
+                    or (isinstance(location, str) and location.strip() and len(location) <= 20)):
+                fail("invalid_validation_json",
+                     f"{issue_label}.location must be a positive line number or a non-empty string of at most 20 characters")
+            if len(issue["quote"]) > 40:
+                fail("invalid_validation_json", f"{issue_label}.quote must be at most 40 characters")
+            if issue["severity"] == "blocking":
+                blocking_issues += 1
+            elif issue["severity"] == "minor":
+                minor_issues += 1
+            else:
+                fail("invalid_validation_json", f"{issue_label}.severity must be blocking|minor")
+        if (blocking_count, minor_count) != (blocking_issues, minor_issues):
+            fail("invalid_validation_json", f"{label} counts do not match its issues")
+        if blocking_issues:
+            if verdict != "fail":
+                fail("invalid_validation_json", f"{label} blocking issues require verdict=fail")
+        elif verdict == "fail":
+            fail("invalid_validation_json", f"{label} fail verdict needs a blocking issue")
+        elif minor_issues and verdict != "pass_with_minor":
+            fail("invalid_validation_json", f"{label} minor issues require verdict=pass_with_minor")
+        elif not minor_issues and verdict != "pass":
+            fail("invalid_validation_json", f"{label} without issues must have verdict=pass")
+        if artifact == "candidates":
+            if candidate_path in candidate_paths:
+                fail("invalid_validation_json", f"duplicate candidates path: {candidate_path}")
+            candidate_paths.add(candidate_path)
+        normalized_entries.append((candidate_path, entry))
+    if not candidate_paths:
+        fail("invalid_validation_json", "style-validator output needs a candidates entry")
+    return normalized_entries
 
 
 def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict, *,
@@ -5865,6 +5958,163 @@ def cmd_stage3_prepare_validation(args) -> None:
         "output_file": str(output_file),
         "validation_file": str(validation_file),
     })
+
+
+def _stage3_json_object_pairs(pairs: list[tuple[str, Any]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _stage3_json_reject_constant(value: str):
+    raise ValueError(f"non-finite JSON number: {value}")
+
+
+def _stage3_created_file_identity(fd: int) -> tuple[int, int]:
+    info = os.fstat(fd)
+    return info.st_dev, info.st_ino
+
+
+def _stage3_cleanup_incomplete_write(path: Path, identity: tuple[int, int] | None) -> None:
+    if identity is None:
+        return
+    try:
+        info = os.lstat(path)
+        if (info.st_dev, info.st_ino) == identity:
+            os.unlink(path)
+    except OSError:
+        pass
+
+
+def _stage3_write_buffer(path: Path, data: bytes) -> None:
+    """Exclusively write and verify one buffer through the creating descriptor."""
+    descriptor = None
+    identity = None
+    try:
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+        identity = _stage3_created_file_identity(descriptor)
+        os.fchmod(descriptor, 0o600)
+        offset = 0
+        while offset < len(data):
+            written = os.write(descriptor, data[offset:])
+            if written <= 0:
+                raise OSError("write returned no bytes")
+            offset += written
+        os.fsync(descriptor)
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        actual = bytearray()
+        while len(actual) < len(data) + 1:
+            chunk = os.read(descriptor, min(65536, len(data) + 1 - len(actual)))
+            if not chunk:
+                break
+            actual.extend(chunk)
+        if bytes(actual) != data:
+            raise OSError("read-back bytes differ from the written buffer")
+        os.close(descriptor)
+        descriptor = None
+    except Exception:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        _stage3_cleanup_incomplete_write(path, identity)
+        raise
+
+
+def cmd_stage3_write_validation(args) -> None:
+    """Create the fixed Stage-3 validator handoff from its complete JSON result."""
+    if (args.output_file is None) == (args.output_map_json is None):
+        fail("invalid_params", "provide exactly one of --output-file or --output-map-json")
+    if args.result_json is None or not args.result_json:
+        fail("invalid_validation_json", "--result-json must contain the complete JSON result")
+    try:
+        data = json.loads(args.result_json,
+                          object_pairs_hook=_stage3_json_object_pairs,
+                          parse_constant=_stage3_json_reject_constant)
+    except (json.JSONDecodeError, ValueError) as exc:
+        fail("invalid_validation_json", f"--result-json is invalid: {exc}")
+    if not isinstance(data, dict):
+        fail("invalid_validation_json", "--result-json must be a JSON object")
+    entries = _stage3_complete_write_result(data, Path("--result-json"))
+    candidate_entries = [(candidate_path, entry) for candidate_path, entry in entries
+                         if entry.get("artifact") == "candidates"]
+
+    output_pairs: list[tuple[str, str]] = []
+    if args.output_file is not None:
+        if len(candidate_entries) != 1:
+            fail("invalid_params", "--output-file requires exactly one candidates entry")
+        output_pairs.append((candidate_entries[0][0], args.output_file))
+    else:
+        try:
+            mapping = json.loads(args.output_map_json,
+                                 object_pairs_hook=_stage3_json_object_pairs,
+                                 parse_constant=_stage3_json_reject_constant)
+        except (json.JSONDecodeError, ValueError) as exc:
+            fail("invalid_params", f"--output-map-json is invalid: {exc}")
+        if not isinstance(mapping, list) or not mapping:
+            fail("invalid_params", "--output-map-json must be a non-empty JSON list")
+        expected_paths = {candidate_path for candidate_path, _entry in candidate_entries}
+        mapped_paths = set()
+        for index, item in enumerate(mapping):
+            if not isinstance(item, dict) or set(item) != {"file", "output_file"}:
+                fail("invalid_params",
+                     f"--output-map-json[{index}] must contain only file and output_file")
+            candidate_path = _stage3_normalized_absolute_path(
+                item.get("file"), f"--output-map-json[{index}].file")
+            if candidate_path in mapped_paths:
+                fail("invalid_params", f"duplicate candidate path in output map: {candidate_path}")
+            if candidate_path not in expected_paths:
+                fail("invalid_params", f"output map contains an unrelated candidate path: {candidate_path}")
+            mapped_paths.add(candidate_path)
+            output_pairs.append((candidate_path, item.get("output_file")))
+        if mapped_paths != expected_paths:
+            missing = sorted(expected_paths - mapped_paths)
+            fail("invalid_params", "--output-map-json must map every candidates entry exactly once",
+                 missing_files=missing)
+
+    targets: list[Path] = []
+    normalized_targets = set()
+    for candidate_path, output_value in output_pairs:
+        target_value = _stage3_normalized_absolute_path(output_value, "output_file")
+        target = Path(output_value)
+        if target_value in normalized_targets:
+            fail("invalid_params", f"output paths must be unique: {output_value}")
+        normalized_targets.add(target_value)
+        if os.path.lexists(target):
+            fail("validation_handoff_collision", f"output target already exists: {output_value}",
+                 failed_path=output_value, completed_paths=[])
+        if not target.parent.is_dir():
+            fail("invalid_output_path", f"output parent directory must already exist: {target.parent}",
+                 failed_path=output_value, completed_paths=[])
+        targets.append(target)
+
+    try:
+        raw = (json.dumps(data, ensure_ascii=False, sort_keys=True, indent=1,
+                          allow_nan=False) + "\n").encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        fail("invalid_validation_json", f"validator result cannot be serialized as UTF-8: {exc}")
+    if not raw:
+        fail("invalid_validation_json", "validator result serialized to an empty buffer")
+
+    completed = []
+    for target in targets:
+        try:
+            _stage3_write_buffer(target, raw)
+        except OSError as exc:
+            fail("validation_write_failed", f"cannot write validator result: {exc}",
+                 failed_path=str(target), reason=str(exc), completed_paths=completed)
+        completed.append(str(target))
+
+    try:
+        sys.stdout.buffer.write(raw)
+        sys.stdout.buffer.flush()
+    except OSError as exc:
+        fail("validation_output_failed", f"cannot write validator result to stdout: {exc}",
+             failed_path=None, reason=str(exc), completed_paths=completed)
 
 
 def cmd_stage3_save_validation(args) -> None:
@@ -10527,6 +10777,16 @@ def build_parser() -> argparse.ArgumentParser:
                             "professor-local candidate states (derived projection; issue #66)")
     p.add_argument("--program-root", required=True)
     p.set_defaults(func=cmd_stage3_rebuild_overview)
+
+    p = sub.add_parser("stage3-write-validation",
+                       help="write the complete Stage-3 validator result to its specified handoff path")
+    p.add_argument("--output-file",
+                   help="one specified absolute output path for a single candidates entry")
+    p.add_argument("--output-map-json",
+                   help="JSON list mapping every candidates file path to its specified output_file")
+    p.add_argument("--result-json",
+                   help="the complete validator result object as one JSON command argument")
+    p.set_defaults(func=cmd_stage3_write_validation)
 
     p = sub.add_parser("stage3-prepare-validation",
                        help="issue #66 r13 §6.1: create this round's one-time validation "
