@@ -10,11 +10,17 @@
 bash test-plan/issue-66-run.sh local
 ```
 
-运行器不安装产品、不启动或连接评测服务、不发送 `/eval`。最近一轮候选以来源提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 为基线，在包含本轮预检接线修正的工作树上于 2026-10-07 完成；这些修正随后随提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 推送。来源 `2497dae2fffc02b0a66d33ea33b0405e128a9154` 的有效失败保留为历史，见[测试计划](issue-66.md)。Gate 2 仍未通过，Gate 3 和正式 `/eval` 均未运行。实际来源和配置字段记录在各轮证据目录：产品及测试来源、仓库路径、提交与工作树状态、计划和判定程序来源、夹具及适配器来源、工作目录、`UV_CACHE_DIR`、`uv`、Python、Bash、`jq`、`rg`、`git`、`shasum` 及可用工具版本。确定性套件不使用产品安装、夹具、适配器或模型时，记明未使用；不填造正式运行值。
+运行器不安装产品、不启动或连接评测服务、不发送 `/eval`。2026-10-07 已在 PR 当前头提交 `bbe44511e0acf5ae1365eb4727ab34c1b892e33c` 上复验候选，结构化结果、套件计数及文件摘要见下文；前一轮基线 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的结果保留为历史。来源 `2497dae2fffc02b0a66d33ea33b0405e128a9154` 的有效失败也保留为历史，见[测试计划](issue-66.md)。Gate 2 仍未通过，Gate 3 和正式 `/eval` 均未运行。实际来源和配置字段记录在各轮证据目录：产品及测试来源、仓库路径、提交与工作树状态、计划和判定程序来源、夹具及适配器来源、工作目录、`UV_CACHE_DIR`、`uv`、Python、Bash、`jq`、`rg`、`git`、`shasum` 及可用工具版本。确定性套件不使用产品安装、夹具、适配器或模型时，记明未使用；不填造正式运行值。
 
 逐套件保存实际命令、结构化身份和条目、结果、原始标准输出与标准错误、退出码。证据目录还保存 `suites.tsv`、`suites.jsonl`、`samples.tsv`、`judge-samples.jsonl`、四类 `candidate-combinations`、`candidate-result.json`、运行元数据及编号。条目数和失败身份来自当次回调，不按历史数量或失败名称判定。账本逐条比较独立业务预期与实际结果；四种候选汇总组合仍须自洽。`runner_execution=COMPLETE` 只说明执行步骤结束。
 
-本轮执行 `bash test-plan/issue-66-run.sh local`，证据目录基名为 `issue66-gate2-candidate.RGFhzJ3R`。`candidate-result.json` 记录 `evidence_validity=VALID`、`overall=PASS`、退出码 `0`、`runner_execution=COMPLETE`、`local_product_failures=[]`、`gaps=[]`；样例账本为 `VALID`，`sample_ledger_exit_code=0`，`combination_check_exit_code=0`。七套件全部通过，共 199 项：`judge` 114、`execution_wiring` 14、`structured_result` 11、`credential` 17、`local_state` 12、`validation_handoff` 22、`agent_contract` 9。该证据记录的基线提交为 `2723996424c6485fb61efcb4808a8e55c1d71cdd`，并如实记录了当时的工作树修改；这些修改已提交并推送。交接目录修复回归通过；代理约定只记录本轮通过结果，不推断此前失败的具体修复原因。详见[当前候选结果](issue-66.md#r7-本地候选实际结果)。此前来源 `2497dae2fffc02b0a66d33ea33b0405e128a9154` 的证据目录基名为 `issue66-gate2-candidate.vno2ISAS`，结论为有效 `FAIL`、退出码 `1`，作为历史保留；不在此重复其临时目录绝对路径。软件版本或摘要即使记录，也只作来源定位。
+### PR 当前头提交复验（最新）
+
+2026-10-07 在 PR 当前头提交 `bbe44511e0acf5ae1365eb4727ab34c1b892e33c` 执行 `bash test-plan/issue-66-run.sh local`，证据目录基名为 `issue66-gate2-candidate.Sw2XGr9j`。`candidate-result.json` 记录 `evidence_validity=VALID`、`overall=PASS`、退出码 `0`、`runner_execution=COMPLETE`、`local_product_failures=[]`、`gaps=[]`；样例账本为 `VALID`，`sample_ledger_exit_code=0`，`combination_check_exit_code=0`。七套件均为 `PASS` 且证据有效，共 199 项：`judge` 114、`execution_wiring` 14、`structured_result` 11、`credential` 17、`local_state` 12、`validation_handoff` 22、`agent_contract` 9。`candidate-result.json` 的 SHA-256 为 `91e23821c5567b4876d6f13cd77e3a8b6692c88818a5c2c85c0ddb50f723bb28`；`suites.jsonl` 的 SHA-256 为 `5369e3b7b2e04a29769532b9b2b9b20ad3d442285692b6f5a47ff5ce6318573b`。完整结果与逐套件有效性见[本地候选实际结果](issue-66.md#r7-本地候选实际结果)。Gate 2 未批准，Gate 3 与正式 `/eval` 未运行；候选通过不构成正式验收。
+
+### 前一轮候选（历史）
+
+此前执行 `bash test-plan/issue-66-run.sh local`，证据目录基名为 `issue66-gate2-candidate.RGFhzJ3R`。`candidate-result.json` 记录 `evidence_validity=VALID`、`overall=PASS`、退出码 `0`、`runner_execution=COMPLETE`、`local_product_failures=[]`、`gaps=[]`；样例账本为 `VALID`，`sample_ledger_exit_code=0`，`combination_check_exit_code=0`。七套件全部通过，共 199 项：`judge` 114、`execution_wiring` 14、`structured_result` 11、`credential` 17、`local_state` 12、`validation_handoff` 22、`agent_contract` 9。该证据记录的基线提交为 `2723996424c6485fb61efcb4808a8e55c1d71cdd`，并如实记录了当时的工作树修改；这些修改已提交并推送。交接目录修复回归通过；代理约定只记录该轮通过结果，不推断此前失败的具体修复原因。此前来源 `2497dae2fffc02b0a66d33ea33b0405e128a9154` 的证据目录基名为 `issue66-gate2-candidate.vno2ISAS`，结论为有效 `FAIL`、退出码 `1`，作为历史保留；不在此重复其临时目录绝对路径。软件版本或摘要即使记录，也只作来源定位。
 
 ## 安装和预检入口
 
@@ -57,6 +63,12 @@ R7 规定由正式评估配置负责建立独立运行目录。本地测试工�
 当前 Gate 2 未通过，Gate 3 未运行；不得运行正式 `/eval`。即使本地候选通过，也不会自动批准 Gate 2。
 
 只有 Gate 2 审核者明确通过后，执行责任人才能另行决定正式运行。正式评测使用正式评估配置建立的独立运行目录；本地执行不检查评估服务内部状态。正式请求前须按获批步骤记录实际产品来源、模型和运行配置、安装输入、原始响应关联方式、请求前后业务文件状态、正式根与子线程关系及判定结果。正式调用最多一次，不自动重试；失败、阻断及无效证据均保留原始材料。
+
+### 正式请求传输失败判定与单次尝试
+
+执行器只调用一次 `curl`，不重试。它在调用前独占写入 `attempt.json`，记录本轮请求摘要、请求体字节数和唯一尝试编号；调用后独占写入 `transport.json`，保留原始状态及上传计数输出、退出码、实际上传字节数和 HTTP 状态。两份记录均不覆盖。
+
+`formal_request_attempted=true` 只表示执行器已尝试启动这一次请求；`formal_request_sent=true` 只表示客户端报告至少上传了一个请求体字节。两者都不表示服务端已接受请求。请求体传输是本接线判断是否到达被测启动边界的依据：只有确认客户端进程未启动，或没有 HTTP 响应且上传为零字节，才判 `CASE_NOT_STARTED`。收到非成功 HTTP 状态、请求体已上传但没有成功响应，或上传量及响应无法确认，均判 `BLOCKED`；不记作产品 `FAIL` 或 `INVALID_TEST_EXECUTION`。HTTP 状态为 200、上传完整且客户端退出码为零后，才继续解析正式业务证据；传输成功本身不代表业务通过。测试程序、样例、证据归属或记录损坏仍按 `INVALID_TEST_EXECUTION` 处理。
 
 正式脚本通过相同入口接收必填 `--product-source`，不再要求 `--frozen-manifest` 或固定候选摘要。Gate 2 审核没有通过时，不执行以下模式：
 

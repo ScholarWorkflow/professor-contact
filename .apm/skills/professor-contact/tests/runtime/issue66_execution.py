@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import sys
 import time
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 PLAN = "issue-66-test-plan-r19-clarification-r7-2026-10-07"
@@ -52,6 +53,49 @@ def surface(identity, checks, **values):
     return {"evidence_set_id": identity, "status": "ok" if all(
         row["status"] == "pass" for row in checks) else "error",
         "checks": checks, **values}
+
+
+def _uploaded_bytes(value):
+    """解析 curl 的上传计数；无法确认时返回 None。"""
+    try:
+        count = Decimal(value)
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not count.is_finite() or count < 0 or count != count.to_integral_value():
+        return None
+    return int(count)
+
+
+def _curl_write_out(raw):
+    """解析状态码和上传字节；原始输出另行保留。"""
+    try:
+        value = raw.decode("ascii")
+    except (AttributeError, UnicodeDecodeError):
+        return {"http_status_raw": None, "http_status": None,
+                "request_body_uploaded_bytes": None}
+    status_raw, separator, uploaded_raw = value.partition("\t")
+    status = int(status_raw) if len(status_raw) == 3 and status_raw.isdigit() \
+        and status_raw != "000" else None
+    uploaded = _uploaded_bytes(uploaded_raw) if separator else None
+    return {"http_status_raw": status_raw or None, "http_status": status,
+            "request_body_uploaded_bytes": uploaded}
+
+
+def _transport_classification(exit_code, http_status, uploaded_bytes,
+                              expected_bytes):
+    """只在零上传且无响应时判用例未开始；其余传输失败均阻断。"""
+    if http_status is not None and http_status != 200:
+        return "BLOCKED"
+    if http_status is None and uploaded_bytes == 0:
+        return "CASE_NOT_STARTED"
+    if http_status == 200 and exit_code == 0 \
+            and uploaded_bytes == expected_bytes:
+        return None
+    return "BLOCKED"
+
+
+class CommandNotStarted(OSError):
+    """命令进程未启动，因此没有发出请求。"""
 
 
 def snapshot(program):
@@ -138,13 +182,24 @@ class Execution:
         self.commands.mkdir()
         self.counter = 0
         self.started = False
-        self.request_sent = False
+        self.formal_request_attempted = False
+        self.formal_request_sent = False
+        self.request_body_uploaded_bytes = None
+        self.request_body_bytes_expected = None
+        self.http_status = None
+        self.http_status_raw = None
+        self.transport_evidence = None
 
     def run(self, name, argv, *, cwd=None, required=True, private=False):
         self.counter += 1
         print(f"[{time.strftime('%H:%M:%S')}] {self.counter} {name}", flush=True)
-        result = subprocess.run(argv, cwd=cwd or self.repo, capture_output=True,
-                                timeout=1200, check=False)
+        try:
+            result = subprocess.run(argv, cwd=cwd or self.repo, capture_output=True,
+                                    timeout=1200, check=False)
+        except OSError as exc:
+            if name == "eval-once":
+                raise CommandNotStarted(str(exc)) from exc
+            raise
         prefix = self.commands / f"{self.counter:03}-{name}"
         write(prefix.with_suffix(".json"), {
             "argv": argv, "cwd": str(cwd or self.repo),
@@ -262,20 +317,81 @@ class Execution:
                 "profile_initial_sha256": original}
 
     def formal(self, port):
-        # 外部故障不重试；在任何网络调用之前占用本次唯一执行编号。
+        request_path = self.out / "request.json"
+        request_bytes = request_path.read_bytes()
+        self.request_body_bytes_expected = len(request_bytes)
+        self.formal_request_attempted = True
         write(self.out / "attempt.json", {"evidence_set_id": self.identity,
-              "start_time_unix": time.time(), "request_sha256": digest(
-                  (self.out / "request.json").read_bytes()), "maximum_attempts": 1})
-        self.request_sent = True
-        result = self.run("eval-once", ["curl", "--silent", "--show-error",
-            "--max-time", "930", "--request", "POST", f"http://127.0.0.1:{port}/eval",
+              "start_time_unix": time.time(), "request_sha256": digest(request_bytes),
+              "request_body_bytes_expected": self.request_body_bytes_expected,
+              "formal_request_attempted": True, "attempt_number": 1,
+              "maximum_attempts": 1})
+        argv = ["curl", "--silent", "--show-error", "--max-time", "930",
+            "--request", "POST", f"http://127.0.0.1:{port}/eval",
             "--header", "Content-Type: application/json", "--data-binary",
-            f"@{self.out / 'request.json'}", "--output", str(self.out / "response-raw.json"),
-            "--write-out", "%{http_code}"], required=False)
-        write(self.out / "transport.json", {"exit_code": result.returncode,
-              "http_status": result.stdout.decode().strip()})
-        if result.returncode or result.stdout.decode().strip() != "200":
-            raise RuntimeError("本次唯一评测请求的传输未成功；禁止自动重试")
+            f"@{request_path}", "--output", str(self.out / "response-raw.json"),
+            "--write-out", "%{http_code}\\t%{size_upload}"]
+        curl_process_started = True
+        try:
+            result = self.run("eval-once", argv, required=False)
+            write_out_raw = result.stdout
+            exit_code = result.returncode
+        except CommandNotStarted as exc:
+            curl_process_started = False
+            write_out_raw = b""
+            exit_code = None
+            transport_error = str(exc)
+        except subprocess.SubprocessError as exc:
+            # 超时等情形中进程已启动，但上传量和响应状态无法确认。
+            write_out_raw = getattr(exc, "stdout", None) or b""
+            exit_code = None
+            transport_error = str(exc)
+        parsed = _curl_write_out(write_out_raw)
+        if not curl_process_started:
+            parsed["request_body_uploaded_bytes"] = 0
+        self.request_body_uploaded_bytes = parsed["request_body_uploaded_bytes"]
+        self.formal_request_sent = None if self.request_body_uploaded_bytes is None \
+            else self.request_body_uploaded_bytes > 0
+        self.http_status = parsed["http_status"]
+        self.http_status_raw = parsed["http_status_raw"]
+        self.transport_evidence = {
+            "evidence_set_id": self.identity,
+            "formal_request_attempted": True,
+            "formal_request_sent": self.formal_request_sent,
+            "curl_process_started": curl_process_started,
+            "exit_code": exit_code,
+            "http_status_raw": self.http_status_raw,
+            "http_status": self.http_status,
+            "http_response_received": self.http_status is not None,
+            "request_body_bytes_expected": self.request_body_bytes_expected,
+            "request_body_uploaded_bytes": self.request_body_uploaded_bytes,
+            "request_body_fully_uploaded": self.request_body_uploaded_bytes ==
+                self.request_body_bytes_expected if self.request_body_uploaded_bytes is not None else None,
+            "curl_write_out_raw": write_out_raw.decode("utf-8", errors="replace"),
+        }
+        if "transport_error" in locals():
+            self.transport_evidence["transport_error"] = transport_error
+        write(self.out / "transport.json", self.transport_evidence)
+        classification = _transport_classification(exit_code, self.http_status,
+            self.request_body_uploaded_bytes, self.request_body_bytes_expected)
+        if classification:
+            reason = ("正式请求体确认零字节上传且未收到 HTTP 响应；用例未进入被测启动边界"
+                      if classification == "CASE_NOT_STARTED" else
+                      "正式请求的传输失败或无法确认；按外部阻断处理，不重试")
+            write(self.out / "verdict.json", {
+                "classification": classification,
+                "reason": reason,
+                "formal_request_attempted": True,
+                "formal_request_sent": self.formal_request_sent,
+                "request_body_bytes_expected": self.request_body_bytes_expected,
+                "request_body_uploaded_bytes": self.request_body_uploaded_bytes,
+                "http_status_raw": self.http_status_raw,
+                "http_status": self.http_status,
+                "transport_evidence": "transport.json",
+                "facts": [],
+            })
+            print(reason, file=sys.stderr)
+            return 2
         response = jq(self.out / "response-raw.json")
         self.started = bool(response.get("output", {}).get("thread_id")
                             and response.get("output", {}).get("turn_id"))
@@ -309,9 +425,19 @@ class Execution:
             "--fixture-evidence", self.out / "fixture.json",
             "--routing-evidence", self.out / "routing.json",
             "--pre-snapshot", self.out / "pre.json", "--post-snapshot", self.out / "post.json",
-            "--output", self.out / "verdict.json",
+            "--output", self.out / "judge-verdict.json",
             required=False)
-        verdict = jq(self.out / "verdict.json")
+        judge_verdict = jq(self.out / "judge-verdict.json")
+        verdict = {**judge_verdict,
+            "formal_request_attempted": True,
+            "formal_request_sent": self.formal_request_sent,
+            "request_body_bytes_expected": self.request_body_bytes_expected,
+            "request_body_uploaded_bytes": self.request_body_uploaded_bytes,
+            "http_status_raw": self.http_status_raw,
+            "http_status": self.http_status,
+            "transport_evidence": "transport.json",
+            "judge_verdict_evidence": "judge-verdict.json"}
+        write(self.out / "verdict.json", verdict)
         return 0 if verdict["classification"] == "PASS" else 1
 
     def execute(self):
@@ -322,7 +448,8 @@ class Execution:
             self.install()
             self.prepare()
             write(self.out / "preflight.json", {"classification": "PREFLIGHT_ONLY",
-                  "formal_request_sent": False, "evidence_set_id": self.identity,
+                  "formal_request_attempted": False, "formal_request_sent": False,
+                  "evidence_set_id": self.identity,
                   "prepared": ["installation", "initial_input", "request", "snapshot"],
                   "remaining": ["正式运行业务生产、保存及权限事实"]})
             return 0
@@ -330,7 +457,8 @@ class Execution:
             self.install()
             self.prepare()
             write(self.out / "preflight.json", {"classification": "PREFLIGHT_ONLY",
-                  "formal_request_sent": False, "evidence_set_id": self.identity,
+                  "formal_request_attempted": False, "formal_request_sent": False,
+                  "evidence_set_id": self.identity,
                   "prepared": ["installation", "initial_input", "request", "snapshot"],
                   "remaining": ["正式运行业务文件生产、保存及权限事实"]})
             return 0
@@ -455,8 +583,15 @@ def main(argv=None):
     except (RuntimeError, OSError, subprocess.SubprocessError, KeyError, ValueError) as exc:
         if execution and not (execution.out / "verdict.json").exists():
             write(execution.out / "verdict.json", {
-                "classification": "INVALID_TEST_EXECUTION" if execution.request_sent else "CASE_NOT_STARTED",
-                "reason": str(exc), "formal_request_sent": execution.request_sent,
+                "classification": "INVALID_TEST_EXECUTION"
+                    if execution.formal_request_attempted else "CASE_NOT_STARTED",
+                "reason": str(exc),
+                "formal_request_attempted": execution.formal_request_attempted,
+                "formal_request_sent": execution.formal_request_sent,
+                "request_body_bytes_expected": execution.request_body_bytes_expected,
+                "request_body_uploaded_bytes": execution.request_body_uploaded_bytes,
+                "http_status_raw": execution.http_status_raw,
+                "http_status": execution.http_status,
                 "evidence_set_id": execution.identity,
                 "facts": [{"fact": "F-execution-wiring", "verdict": "gap", "evidence": str(exc)}]})
         print(str(exc), file=sys.stderr)

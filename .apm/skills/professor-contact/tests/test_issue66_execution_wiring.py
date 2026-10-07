@@ -30,6 +30,24 @@ class ExecutionWiringTests(unittest.TestCase):
         }
         return execution
 
+    def formal_execution(self, directory):
+        execution = self.execution(directory)
+        wiring.write(execution.out / 'request.json', {'command': 'mock-only'})
+        return execution
+
+    def assert_transport_terminal(self, execution, expected):
+        verdict = json.loads((execution.out / 'verdict.json').read_text())
+        attempt = json.loads((execution.out / 'attempt.json').read_text())
+        transport = json.loads((execution.out / 'transport.json').read_text())
+        self.assertEqual(verdict['classification'], expected)
+        self.assertNotIn(verdict['classification'], ('FAIL', 'INVALID_TEST_EXECUTION'))
+        self.assertTrue(verdict['formal_request_attempted'])
+        self.assertEqual(verdict['formal_request_sent'], transport['formal_request_sent'])
+        self.assertEqual(attempt['maximum_attempts'], 1)
+        self.assertEqual(attempt['attempt_number'], 1)
+        self.assertTrue(attempt['formal_request_attempted'])
+        return verdict, transport
+
     def test_initial_builder_uses_verified_producer_asset_in_consumer_layout(self):
         with tempfile.TemporaryDirectory() as directory:
             execution = self.execution(directory)
@@ -189,3 +207,70 @@ class ExecutionWiringTests(unittest.TestCase):
             run.assert_called_once_with('eval-port', [
                 'direnv', 'exec', '.', 'printenv', 'EVAL_PORT'])
             self.assertEqual(execution.repo, PATH.parents[5].resolve())
+
+    def test_transport_failure_before_body_upload_is_case_not_started(self):
+        with tempfile.TemporaryDirectory() as directory:
+            execution = self.formal_execution(directory)
+            with patch.object(execution, 'run', return_value=CompletedProcess(
+                    ['curl'], 56, b'000\t0', b'connection ended before upload')) as run:
+                self.assertEqual(execution.formal('4312'), 2)
+            run.assert_called_once()
+            verdict, transport = self.assert_transport_terminal(execution, 'CASE_NOT_STARTED')
+            self.assertFalse(verdict['formal_request_sent'])
+            self.assertEqual(transport['request_body_uploaded_bytes'], 0)
+            self.assertFalse(transport['http_response_received'])
+
+    def test_curl_process_not_started_is_case_not_started(self):
+        with tempfile.TemporaryDirectory() as directory:
+            execution = self.formal_execution(directory)
+            with patch.object(execution, 'run', side_effect=wiring.CommandNotStarted(
+                    'curl could not start')) as run:
+                self.assertEqual(execution.formal('4312'), 2)
+            run.assert_called_once()
+            verdict, transport = self.assert_transport_terminal(execution, 'CASE_NOT_STARTED')
+            self.assertFalse(transport['curl_process_started'])
+            self.assertEqual(transport['request_body_uploaded_bytes'], 0)
+            self.assertFalse(transport['http_response_received'])
+            self.assertIn('transport_error', transport)
+
+    def test_transport_failure_after_body_upload_is_blocked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            execution = self.formal_execution(directory)
+            expected = (execution.out / 'request.json').stat().st_size
+            with patch.object(execution, 'run', return_value=CompletedProcess(
+                    ['curl'], 56, f'000\t{expected}'.encode(), b'connection ended after upload')) as run:
+                self.assertEqual(execution.formal('4312'), 2)
+            run.assert_called_once()
+            verdict, transport = self.assert_transport_terminal(execution, 'BLOCKED')
+            self.assertTrue(verdict['formal_request_sent'])
+            self.assertEqual(transport['request_body_uploaded_bytes'], expected)
+            self.assertFalse(transport['http_response_received'])
+            # 与零上传反例仅改变上传字节数，传输失败仍不能变成产品失败或无效执行。
+            self.assertEqual(wiring._transport_classification(56, None, 0, expected),
+                             'CASE_NOT_STARTED')
+            self.assertEqual(wiring._transport_classification(56, None, expected, expected),
+                             'BLOCKED')
+
+    def test_http_non_success_is_blocked_and_retains_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            execution = self.formal_execution(directory)
+            with patch.object(execution, 'run', return_value=CompletedProcess(
+                    ['curl'], 0, b'503\t0', b'')) as run:
+                self.assertEqual(execution.formal('4312'), 2)
+            run.assert_called_once()
+            verdict, transport = self.assert_transport_terminal(execution, 'BLOCKED')
+            self.assertEqual(verdict['http_status'], 503)
+            self.assertEqual(transport['http_status_raw'], '503')
+            self.assertTrue(transport['http_response_received'])
+
+    def test_unparseable_upload_is_blocked_conservatively(self):
+        with tempfile.TemporaryDirectory() as directory:
+            execution = self.formal_execution(directory)
+            with patch.object(execution, 'run', return_value=CompletedProcess(
+                    ['curl'], 56, b'000\tunknown', b'connection ended')) as run:
+                self.assertEqual(execution.formal('4312'), 2)
+            run.assert_called_once()
+            verdict, transport = self.assert_transport_terminal(execution, 'BLOCKED')
+            self.assertIsNone(verdict['formal_request_sent'])
+            self.assertIsNone(transport['request_body_uploaded_bytes'])
+            self.assertFalse(transport['http_response_received'])

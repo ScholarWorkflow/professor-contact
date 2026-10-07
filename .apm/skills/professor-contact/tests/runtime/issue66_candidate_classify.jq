@@ -1,11 +1,17 @@
 # 先判断完整候选证据，再保留不依赖无效材料的局部产品失败。
 def source_present: type == "string" and length > 0;
+def planned_suites:
+  ["judge", "execution_wiring", "structured_result", "credential",
+   "local_state", "validation_handoff", "agent_contract"];
 def suite_valid:
   .evidence_validity == "VALID"
   and (.owner == "product" or .owner == "test_program")
   and (.structured_status_source | source_present)
   and (.raw_event_source | source_present)
   and (.failures | type) == "array"
+  and (.actual_test_count | type == "number" and . > 0)
+  and (.items | type) == "array"
+  and (.items | length) == .actual_test_count
   and (.result == "PASS" or .result == "PRODUCT_FAIL")
   and (if .result == "PRODUCT_FAIL" then .owner == "product"
        and any(.failures[]; .status == "failure" or .status == "unexpected_success")
@@ -24,8 +30,12 @@ def suite_valid:
        sample_ledger_exit_code:.ledger.sample_ledger_exit_code,
        combination_check_exit_code:.ledger.combination_check_exit_code}
     else empty end),
-    (if (.suites | type) != "array" or (.suites | length) == 0 then
-      {kind:"suites", source:"suites.jsonl", reason:"套件记录缺失"}
+    (if (.suites | type) != "array" then
+      {kind:"suites", source:"suites.jsonl", reason:"七个计划套件记录必须齐全",
+       expected:planned_suites, actual:null}
+    elif ([.suites[] | .suite] | sort) != (planned_suites | sort) then
+      {kind:"suites", source:"suites.jsonl", reason:"七个计划套件身份必须各出现一次",
+       expected:planned_suites, actual:[.suites[] | .suite]}
     else empty end),
     (.suites[]? | if (suite_valid | not) then
       {kind:"suite", suite:.suite, source:.structured_status_source,

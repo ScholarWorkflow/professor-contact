@@ -15,7 +15,7 @@
 
 每轮在独占证据目录记录产品及测试来源、计划修订号、判定程序来源、夹具与适配器来源、工具实际版本、工作目录、安装命令、模型和运行配置、运行编号。没有提交号的源码按未提交状态记录。日志、标准输出、标准错误、命令、退出码、结构化套件报告、实际测试身份与条目、样例账本及四类候选汇总输入和输出一并保存。软件版本和摘要只用于定位；不因与历史值不同而拒绝，也不把摘要相等作为业务通过条件。
 
-2026-10-07 已在 PR 头部 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的工作树上运行完整候选；当时工作树包含本轮预检接线修正，后续已随提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 推送。当前结果见“R7 本地候选实际结果”。来源 `2497dae2fffc02b0a66d33ea33b0405e128a9154` 的有效失败保留在历史记录。本地入口不提供正式 `/eval` 执行。
+2026-10-07 先在提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的工作树上运行完整候选，随后在 PR 当前头提交 `bbe44511e0acf5ae1365eb4727ab34c1b892e33c` 复验。前一轮仍作为历史保留；当前头复验结果见“R7 本地候选实际结果”。来源 `2497dae2fffc02b0a66d33ea33b0405e128a9154` 的有效失败也保留在历史记录。本地入口不提供正式 `/eval` 执行。
 
 结构化运行记录本次实际使用的 `uv`、Python、Bash、`jq`、`rg`、`git`、`shasum` 及可用时的 `codex`、`opencode`、`shellcheck` 版本。套件身份和全部条目来自结构化回调；原始标准输出、标准错误和退出码同时留存，不按日志文本或历史版本作判定。
 
@@ -41,7 +41,7 @@
 
 ## R7 来源、运行方式与执行范围
 
-运行器在本仓库根目录执行七个确定性套件，不安装产品、不启动或连接评测服务，不发送 `/eval`。执行证据记录实际来源和配置字段：仓库根目录、来源提交、工作树状态、运行目录、计划修订号、各工具版本、`UV_CACHE_DIR`、每套件实际命令、测试身份与条目、结果、退出码、结构化汇总及运行编号。工作树有未提交内容照实记录，不按干净状态或路径名单拒绝。下节记录基线提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 上包含预检接线修正的候选；这些修正已推送至当前头部 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509`。来源 `2497dae` 的失败见历史结果表。
+运行器在本仓库根目录执行七个确定性套件，不安装产品、不启动或连接评测服务，不发送 `/eval`。执行证据记录实际来源和配置字段：仓库根目录、来源提交、工作树状态、运行目录、计划修订号、各工具版本、`UV_CACHE_DIR`、每套件实际命令、测试身份与条目、结果、退出码、结构化汇总及运行编号。工作树有未提交内容照实记录，不按干净状态或路径名单拒绝。下节保留提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的前一轮结果，并补记 PR 当前头提交 `bbe44511e0acf5ae1365eb4727ab34c1b892e33c` 的复验。来源 `2497dae` 的失败见历史结果表。
 
 正式包装脚本通过 `--product-source` 接收本轮实际产品来源，并将它交给执行器。正式配置记录实际产品、测试、夹具、适配器和工具来源及模型、思考级别、沙箱、工作目录、安装命令和运行编号；软件版本只作记录，不作相等门槛。安装只使用支持的安装命令和新建独占消费者，不比较锁文件提交或安装文件字节。
 
@@ -68,7 +68,7 @@ R7 规定由正式评估配置负责建立独立运行目录。本地测试工�
 
 从任意目录执行 `bash /仓库绝对路径/test-plan/issue-66-run.sh local`。运行器记录调用目录，再转到脚本所在仓库根目录；只接受 `local`。它不安装产品、不连接评测服务，也不发送 `/eval`。安装及正式执行接线见[执行说明](issue-66-execution.md)；正式执行须等待第二关口完整通过。
 
-七套件按计划顺序运行。每项实际测试身份、子测试参数、状态、事件、退出码、标准输出和标准错误均保存。条目数从结构化回调读取，不设固定总数或失败名单。运行器只检查报告字段之间自洽，包括报告结构、实际条目数与条目数组长度、顺序编号、唯一测试身份、结果字段及退出码；有效产品失败保留在汇总中，测试程序问题按无效执行记录。
+七个计划套件身份须各出现且只出现一次。每项实际测试身份、子测试参数、状态、事件、退出码、标准输出和标准错误均保存。条目数从结构化回调读取，不设固定总数或失败名单；每个套件至少有一条实际执行记录，实际条目数仍按本次执行动态记录，不设固定数量门槛。运行器只检查报告字段之间自洽，包括报告结构、实际条目数与条目数组长度、顺序编号、唯一测试身份、结果字段及退出码；有效产品失败保留在汇总中，测试程序问题按无效执行记录。
 
 ```sh
 uv run --no-project python -B \
@@ -155,19 +155,25 @@ R5 最终证据目录基名为 `issue66-gate2-candidate.4LPblyY0`，位于本机
 
 ## R7 本地候选实际结果
 
-2026-10-07 在基线提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的工作树上执行 `bash test-plan/issue-66-run.sh local`；当时工作树包含本轮预检接线修正，现已随提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 推送。证据目录基名为 `issue66-gate2-candidate.RGFhzJ3R`。`candidate-result.json` 记录 `evidence_validity=VALID`、`overall=PASS`、退出码 `0`、`runner_execution=COMPLETE`、`local_product_failures=[]`、`gaps=[]`。样例账本为 `VALID`，`sample_ledger_exit_code=0`，`combination_check_exit_code=0`。七套件全部通过，共 199 项：
+### PR 当前头提交复验（最新）
 
-| 套件 | 结果 | 实际条目数 |
-| --- | --- | ---: |
-| `judge` | `PASS` | 114 |
-| `execution_wiring` | `PASS` | 14 |
-| `structured_result` | `PASS` | 11 |
-| `credential` | `PASS` | 17 |
-| `local_state` | `PASS` | 12 |
-| `validation_handoff` | `PASS` | 22 |
-| `agent_contract` | `PASS` | 9 |
+2026-10-07 在 PR 当前头提交 `bbe44511e0acf5ae1365eb4727ab34c1b892e33c` 执行 `bash test-plan/issue-66-run.sh local`。证据目录基名为 `issue66-gate2-candidate.Sw2XGr9j`。`candidate-result.json` 记录 `evidence_validity=VALID`、`overall=PASS`、退出码 `0`、`runner_execution=COMPLETE`、`local_product_failures=[]`、`gaps=[]`。样例账本为 `VALID`，`sample_ledger_exit_code=0`，`combination_check_exit_code=0`。`candidate-result.json` 的 SHA-256 为 `91e23821c5567b4876d6f13cd77e3a8b6692c88818a5c2c85c0ddb50f723bb28`；`suites.jsonl` 的 SHA-256 为 `5369e3b7b2e04a29769532b9b2b9b20ad3d442285692b6f5a47ff5ce6318573b`。七套件均通过且各自证据有效，共 199 项：
 
-本轮交接套件 22 项通过，交接目录修复回归通过。代理约定套件 9 项通过；只记录本轮结果，不推断此前失败具体如何修复。Gate 2 未批准，Gate 3 未运行，正式 `/eval` 未运行。R7 规定正式评估配置负责独立运行目录，本地不检查服务内部状态。
+| 套件 | 结果 | 证据有效性 | 实际条目数 |
+| --- | --- | --- | ---: |
+| `judge` | `PASS` | `VALID` | 114 |
+| `execution_wiring` | `PASS` | `VALID` | 14 |
+| `structured_result` | `PASS` | `VALID` | 11 |
+| `credential` | `PASS` | `VALID` | 17 |
+| `local_state` | `PASS` | `VALID` | 12 |
+| `validation_handoff` | `PASS` | `VALID` | 22 |
+| `agent_contract` | `PASS` | `VALID` | 9 |
+
+这是 PR 当前头提交的本地确定性复验。Gate 2 未批准，Gate 3 未运行，正式 `/eval` 未运行；本地候选通过不代表正式验收。R7 规定正式评估配置负责独立运行目录，本地不检查服务内部状态。
+
+### 前一轮候选（历史）
+
+2026-10-07 在基线提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的工作树上执行同一候选命令；当时工作树包含预检接线修正，之后随提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 推送。证据目录基名为 `issue66-gate2-candidate.RGFhzJ3R`。`candidate-result.json` 记录 `evidence_validity=VALID`、`overall=PASS`、退出码 `0`、`runner_execution=COMPLETE`、`local_product_failures=[]`、`gaps=[]`。样例账本为 `VALID`，`sample_ledger_exit_code=0`，`combination_check_exit_code=0`；七套件通过，共 199 项：`judge` 114、`execution_wiring` 14、`structured_result` 11、`credential` 17、`local_state` 12、`validation_handoff` 22、`agent_contract` 9。该轮只作历史记录，不替代当前头提交复验。
 
 ## R7 正式预检结果
 
@@ -235,7 +241,7 @@ R5 的 `issue66-service-preflight-20261006/verdict.json` 曾记录 `CASE_NOT_STA
 
 ## Gate 状态与停止条件
 
-Gate 2 **未通过**，Gate 3 **未运行**。候选中验证过的接线修正已随提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 推送；本地候选为 `PASS` 且证据有效，但这不会批准 Gate 2，也不会触发正式运行。`local` 运行器只处理确定性检查。准备工作不发送正式请求、不启停服务、不读取服务进程、配置、数据库或日志。
+Gate 2 **未通过**，Gate 3 **未运行**。PR 当前头提交 `bbe44511e0acf5ae1365eb4727ab34c1b892e33c` 的本地候选为 `PASS` 且证据有效，但这不会批准 Gate 2，也不会触发正式运行。`local` 运行器只处理确定性检查。准备工作不发送正式请求、不启停服务、不读取服务进程、配置、数据库或日志。
 
 Gate2 状态：未批准；Gate3 状态：未运行。
 

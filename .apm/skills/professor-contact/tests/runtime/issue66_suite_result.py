@@ -55,7 +55,7 @@ class Result(unittest.TextTestResult):
 
     def report(self):
         invalid = bool(self.errors or self.skipped or self.expectedFailures)
-        classification = ("INVALID_TEST_EXECUTION" if invalid else
+        classification = ("INVALID_TEST_EXECUTION" if invalid or self.testsRun == 0 else
                           "PRODUCT_FAIL" if self.failures or self.unexpectedSuccesses else "PASS")
         return {"schema": "issue66-suite-result-v1", "tests_run": self.testsRun,
                 "failures": len(self.failures), "errors": len(self.errors),

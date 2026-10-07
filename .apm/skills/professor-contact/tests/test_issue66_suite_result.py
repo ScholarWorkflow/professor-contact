@@ -11,11 +11,14 @@ spec = importlib.util.spec_from_file_location("suite_result", Path(__file__).par
 helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
 
+PLANNED_SUITES = ("judge", "execution_wiring", "structured_result", "credential",
+                  "local_state", "validation_handoff", "agent_contract")
+
 
 class StructuredResultTests(unittest.TestCase):
     def candidate_case(self, *, ledger_valid, suite_valid, product_fails,
                        expected_overall, expected_failures, expected_validity,
-                       candidate_metadata=None):
+                       candidate_metadata=None, empty_suite=False, missing_suite=None):
         # 预期按第七版计划第六节四种组合固定，不从汇总程序取值。
         class Case(unittest.TestCase):
             def test_product(self):
@@ -23,17 +26,38 @@ class StructuredResultTests(unittest.TestCase):
                     self.fail("独立产品断言违反")
         raw, _ = self.run_case(Case)
         failures = [row for row in raw["tests"] if row["status"] != "ok"]
-        record = {"suite": "product_control", "owner": "product",
+        record = {"suite": "validation_handoff", "owner": "product",
                   "result": raw["classification"],
                   "evidence_validity": "VALID" if suite_valid else "INVALID",
+                  "actual_test_count": 0 if empty_suite else raw["tests_run"],
+                  "items": [] if empty_suite else raw["tests"],
                   "structured_status_source": "raw-suite.json#tests.status",
                   "raw_event_source": "raw-suite.json#tests.events",
                   "failures": failures}
+        suites = [record]
+        for suite_name in PLANNED_SUITES:
+            if suite_name == record["suite"]:
+                continue
+            items = [{"ordinal": ordinal,
+                      "test_id": f"candidate-fixture::{suite_name}::{ordinal}",
+                      "status": "ok", "events": []}
+                     for ordinal in range(1, raw["tests_run"] + 1)]
+            suites.append({"suite": suite_name,
+                           "owner": "test_program" if suite_name in
+                                   ("judge", "execution_wiring", "structured_result")
+                                   else "product",
+                           "result": "PASS", "evidence_validity": "VALID",
+                           "actual_test_count": len(items), "items": items,
+                           "structured_status_source": f"raw-suite.json#{suite_name}.tests.status",
+                           "raw_event_source": f"raw-suite.json#{suite_name}.tests.events",
+                           "failures": []})
+        if missing_suite:
+            suites = [item for item in suites if item["suite"] != missing_suite]
         value = {"candidate": {"validity": "VALID", "source": "actual product source",
                                **(candidate_metadata or {})},
                  "ledger": {"validity": "VALID" if ledger_valid else "INVALID",
                             "source": "samples.tsv;judge-samples.jsonl"},
-                 "suites": [record]}
+                 "suites": suites}
         parsed = subprocess.run(["jq", "-f", str(Path(__file__).parent /
                                 "runtime/issue66_candidate_classify.jq")],
                                 input=json.dumps(value), text=True,
@@ -62,11 +86,22 @@ class StructuredResultTests(unittest.TestCase):
             self.assertEqual(actual["local_product_failures"][0]["events"], failures[0]["events"])
             self.assertEqual(actual["local_product_failures"][0]["raw_event_source"],
                              record["raw_event_source"])
+        if empty_suite:
+            self.assertEqual(record["result"], "PASS")
+            self.assertEqual(record["evidence_validity"], "VALID")
+            self.assertEqual(record["actual_test_count"], 0)
+            self.assertEqual(record["items"], [])
+            self.assertEqual(actual["gaps"][0]["kind"], "suite")
+        if missing_suite:
+            self.assertNotIn(missing_suite, [item["suite"] for item in value["suites"]])
+            self.assertEqual(actual["gaps"][0]["kind"], "suites")
         if product_fails and not suite_valid:
             # 套件自称有效却声称通过，与原始失败相矛盾，仍不能归因产品。
             contradictory = json.loads(json.dumps(value))
-            contradictory["suites"][0]["evidence_validity"] = "VALID"
-            contradictory["suites"][0]["result"] = "PASS"
+            contradictory_suite = next(item for item in contradictory["suites"]
+                                       if item["suite"] == record["suite"])
+            contradictory_suite["evidence_validity"] = "VALID"
+            contradictory_suite["result"] = "PASS"
             control = subprocess.run(["jq", "-f", str(Path(__file__).parent /
                                      "runtime/issue66_candidate_classify.jq")],
                                      input=json.dumps(contradictory), text=True,
@@ -80,8 +115,10 @@ class StructuredResultTests(unittest.TestCase):
                 (directory / "contradictory-actual.json").write_text(control.stdout, encoding="utf-8")
         # 同一断言若归属测试程序，必须记执行无效，不能计作产品失败。
         if product_fails:
-            value["suites"][0]["owner"] = "test_program"
-            value["suites"][0]["result"] = "INVALID_TEST_EXECUTION"
+            product_suite = next(item for item in value["suites"]
+                                 if item["suite"] == record["suite"])
+            product_suite["owner"] = "test_program"
+            product_suite["result"] = "INVALID_TEST_EXECUTION"
             control = subprocess.run(["jq", "-f", str(Path(__file__).parent /
                                      "runtime/issue66_candidate_classify.jq")],
                                      input=json.dumps(value), text=True,
@@ -111,6 +148,17 @@ class StructuredResultTests(unittest.TestCase):
     def test_valid_candidate_all_checks_pass(self):
         self.candidate_case(ledger_valid=True, suite_valid=True, product_fails=False,
                             expected_overall="PASS", expected_failures=0, expected_validity="VALID")
+
+    def test_empty_suite_is_invalid_candidate_evidence(self):
+        # 相对正常通过样例，只把本次套件条目数改为空；伪造通过状态仍须判为无效。
+        self.candidate_case(ledger_valid=True, suite_valid=True, product_fails=False,
+                            expected_overall="INVALID_TEST_EXECUTION", expected_failures=0,
+                            expected_validity="INVALID", empty_suite=True)
+
+    def test_missing_planned_suite_is_invalid_candidate_evidence(self):
+        self.candidate_case(ledger_valid=True, suite_valid=True, product_fails=False,
+                            expected_overall="INVALID_TEST_EXECUTION", expected_failures=0,
+                            expected_validity="INVALID", missing_suite="agent_contract")
 
     def test_software_source_version_and_digest_differences_do_not_invalidate_pass(self):
         self.candidate_case(
@@ -211,3 +259,17 @@ class StructuredResultTests(unittest.TestCase):
         result = unittest.TextTestRunner(stream=log, resultclass=helper.Result).run(
             unittest.defaultTestLoader.loadTestsFromName("missing_issue66_module"))
         self.assertEqual(result.report()["classification"], "INVALID_TEST_EXECUTION")
+
+    def test_empty_suite_is_invalid(self):
+        log = io.StringIO()
+        result = unittest.TextTestRunner(stream=log, resultclass=helper.Result).run(
+            unittest.TestSuite())
+        value = result.report()
+        self.assertEqual(value["tests_run"], 0)
+        self.assertEqual(value["tests"], [])
+        self.assertEqual(value["classification"], "INVALID_TEST_EXECUTION")
+        filter_path = Path(__file__).parent / "runtime/issue66_suite_classify.jq"
+        mapped = subprocess.run(["jq", "-r", "--arg", "owner", "product",
+                                 "-f", str(filter_path)], input=json.dumps(value),
+                               text=True, capture_output=True, check=True)
+        self.assertEqual(mapped.stdout.strip(), "INVALID_TEST_EXECUTION")
