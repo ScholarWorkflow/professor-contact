@@ -5701,15 +5701,19 @@ def _require_stage3_handoff_round(state: dict, render_sha: str, requested_round:
              "the committed correction round does not carry the current render")
 
 
-def _stage3_handoff_directory(professor_dir: Path, round_no: int) -> Path:
-    """This professor's, this round's exclusive handoff directory (r13 §6.1).
+def _stage3_handoff_directory(
+        professor_dir: Path, invocation_file: str | Path, round_no: int) -> Path:
+    """This professor's, invocation's and round's exclusive handoff directory.
 
-    Keyed by the canonical professor directory digest under the system
-    temporary root, so two professors never share handoff files and a reused
-    round directory can never silently host a second handoff.
+    The canonical invocation credential path identifies the captured call:
+    separate calls may contain identical credential bytes, so their content
+    digest alone cannot distinguish them. A repeated prepare for the same
+    credential and round still resolves to the same directory and collides.
     """
-    token = sha256_text(str(Path(professor_dir).resolve()))[:16]
-    return Path(tempfile.gettempdir()) / STAGE3_HANDOFF_ROOT / token / f"round-{round_no}"
+    professor_token = sha256_text(str(Path(professor_dir).resolve()))[:16]
+    invocation_token = sha256_text(str(Path(invocation_file).resolve()))
+    return (Path(tempfile.gettempdir()) / STAGE3_HANDOFF_ROOT / professor_token /
+            invocation_token / f"round-{round_no}")
 
 
 def _load_stage3_handoff(args) -> dict:
@@ -5781,8 +5785,8 @@ def cmd_stage3_prepare_validation(args) -> None:
     Reads only the invocation credential, the professor's committed candidate
     state and the bound candidate document; commits and changes nothing.  The
     handoff metadata, the validator output path and the saved target path live
-    in a per-professor, per-round exclusive directory under the system
-    temporary root — never inside the professor state directory.
+    in a per-professor, per-invocation, per-round exclusive directory under the
+    system temporary root — never inside the professor state directory.
     """
     invocation = _read_stage3_invocation(args)
     if invocation is None:
@@ -5803,7 +5807,8 @@ def cmd_stage3_prepare_validation(args) -> None:
              f"candidate state unreadable: {professor_dir / CANDIDATE_STATE}")
     render_sha, _body = _stage3_bound_render(professor_dir, state)
     _require_stage3_handoff_round(state, render_sha, round_no)
-    directory = _stage3_handoff_directory(professor_dir, round_no)
+    directory = _stage3_handoff_directory(
+        professor_dir, args.invocation_file, round_no)
     output_file = directory / STAGE3_VALIDATOR_OUTPUT_FILE
     validation_file = directory / STAGE3_VALIDATION_TARGET_FILE
     handoff_file = directory / STAGE3_HANDOFF_FILE
@@ -5811,8 +5816,8 @@ def cmd_stage3_prepare_validation(args) -> None:
         directory.mkdir(parents=True)
     except FileExistsError:
         fail("validation_handoff_collision",
-             f"the handoff directory for this professor and round already exists; "
-             f"earlier round results are never reused: {directory}")
+             f"the handoff directory for this professor, invocation and round "
+             f"already exists; earlier round results are never reused: {directory}")
     except OSError as exc:
         fail("validation_handoff_collision", f"handoff directory is unusable: {exc}")
     for label, target in (("output_file", output_file),
