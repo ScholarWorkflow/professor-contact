@@ -10,15 +10,19 @@
 bash test-plan/issue-66-run.sh local
 ```
 
-运行器不安装产品、不启动或连接评测服务、不发送 `/eval`。2026-10-07 已在 PR 当前头提交 `bbe44511e0acf5ae1365eb4727ab34c1b892e33c` 上复验候选，结构化结果、套件计数及文件摘要见下文；前一轮基线 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的结果保留为历史。来源 `2497dae2fffc02b0a66d33ea33b0405e128a9154` 的有效失败也保留为历史，见[测试计划](issue-66.md)。Gate 2 仍未通过，Gate 3 和正式 `/eval` 均未运行。实际来源和配置字段记录在各轮证据目录：产品及测试来源、仓库路径、提交与工作树状态、计划和判定程序来源、夹具及适配器来源、工作目录、`UV_CACHE_DIR`、`uv`、Python、Bash、`jq`、`rg`、`git`、`shasum` 及可用工具版本。确定性套件不使用产品安装、夹具、适配器或模型时，记明未使用；不填造正式运行值。
+运行器不安装产品、不启动或连接评测服务、不发送 `/eval`。2026-10-07 在提交 `2d874c46f8a228ca390a17d2b9ff560db9b75578` 完成最新候选，结构化结果、套件计数及文件摘要见下文；此前提交 `bbe44511e0acf5ae1365eb4727ab34c1b892e33c` 与基线 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的结果保留为历史。来源 `2497dae2fffc02b0a66d33ea33b0405e128a9154` 的有效失败也保留为历史，见[测试计划](issue-66.md)。Gate 2 仍未通过，Gate 3 和正式 `/eval` 均未运行。实际来源和配置字段记录在各轮证据目录：产品及测试来源、仓库路径、提交与工作树状态、计划和判定程序来源、夹具及适配器来源、工作目录、`UV_CACHE_DIR`、`uv`、Python、Bash、`jq`、`rg`、`git`、`shasum` 及可用工具版本。确定性套件不使用产品安装、夹具、适配器或模型时，记明未使用；不填造正式运行值。
 
 逐套件保存实际命令、结构化身份和条目、结果、原始标准输出与标准错误、退出码。证据目录还保存 `suites.tsv`、`suites.jsonl`、`samples.tsv`、`judge-samples.jsonl`、四类 `candidate-combinations`、`candidate-result.json`、运行元数据及编号。条目数和失败身份来自当次回调，不按历史数量或失败名称判定。账本逐条比较独立业务预期与实际结果；四种候选汇总组合仍须自洽。`runner_execution=COMPLETE` 只说明执行步骤结束。
 
-### PR 当前头提交复验（最新）
+### 最新本地候选
 
-2026-10-07 在 PR 当前头提交 `bbe44511e0acf5ae1365eb4727ab34c1b892e33c` 执行 `bash test-plan/issue-66-run.sh local`，证据目录基名为 `issue66-gate2-candidate.Sw2XGr9j`。`candidate-result.json` 记录 `evidence_validity=VALID`、`overall=PASS`、退出码 `0`、`runner_execution=COMPLETE`、`local_product_failures=[]`、`gaps=[]`；样例账本为 `VALID`，`sample_ledger_exit_code=0`，`combination_check_exit_code=0`。七套件均为 `PASS` 且证据有效，共 199 项：`judge` 114、`execution_wiring` 14、`structured_result` 11、`credential` 17、`local_state` 12、`validation_handoff` 22、`agent_contract` 9。`candidate-result.json` 的 SHA-256 为 `91e23821c5567b4876d6f13cd77e3a8b6692c88818a5c2c85c0ddb50f723bb28`；`suites.jsonl` 的 SHA-256 为 `5369e3b7b2e04a29769532b9b2b9b20ad3d442285692b6f5a47ff5ce6318573b`。完整结果与逐套件有效性见[本地候选实际结果](issue-66.md#r7-本地候选实际结果)。Gate 2 未批准，Gate 3 与正式 `/eval` 未运行；候选通过不构成正式验收。
+2026-10-07 在提交 `2d874c46f8a228ca390a17d2b9ff560db9b75578` 执行 `bash test-plan/issue-66-run.sh local`，证据目录基名为 `issue66-gate2-candidate.spslDkEj`。`candidate-result.json` 记录 `evidence_validity=VALID`、`overall=PASS`、`exit_code=0`、`runner_execution=COMPLETE`、`local_product_failures=[]`、`gaps=[]`；`candidate-summary-input.json` 中 `ledger.validity=VALID`、`sample_ledger_exit_code=0`、`combination_check_exit_code=0`。七套件均为 `PASS` 且证据有效，共 207 项：`judge` 114、`execution_wiring` 19、`structured_result` 14、`credential` 17、`local_state` 12、`validation_handoff` 22、`agent_contract` 9。`candidate-result.json` 的 SHA-256 为 `91e23821c5567b4876d6f13cd77e3a8b6692c88818a5c2c85c0ddb50f723bb28`；`suites.jsonl` 的 SHA-256 为 `bc317c11939b6462689bf3a98ac32caa56fb7a6a31b2563f1b07fea4977fb61d`。完整结果与逐套件有效性见[本地候选实际结果](issue-66.md#r7-本地候选实际结果)。Gate 2 未批准，Gate 3 与正式 `/eval` 未运行；候选通过不构成正式验收。
 
-### 前一轮候选（历史）
+### 上一轮候选（历史）
+
+2026-10-07 在提交 `bbe44511e0acf5ae1365eb4727ab34c1b892e33c` 执行 `bash test-plan/issue-66-run.sh local`，证据目录基名为 `issue66-gate2-candidate.Sw2XGr9j`。`candidate-result.json` 记录 `evidence_validity=VALID`、`overall=PASS`、退出码 `0`、`runner_execution=COMPLETE`、`local_product_failures=[]`、`gaps=[]`；样例账本为 `VALID`，`sample_ledger_exit_code=0`，`combination_check_exit_code=0`。七套件全部通过，共 199 项：`judge` 114、`execution_wiring` 14、`structured_result` 11、`credential` 17、`local_state` 12、`validation_handoff` 22、`agent_contract` 9。`candidate-result.json` 的 SHA-256 为 `91e23821c5567b4876d6f13cd77e3a8b6692c88818a5c2c85c0ddb50f723bb28`；`suites.jsonl` 的 SHA-256 为 `5369e3b7b2e04a29769532b9b2b9b20ad3d442285692b6f5a47ff5ce6318573b`。该轮仅作历史记录。
+
+### 更早一轮候选（历史）
 
 此前执行 `bash test-plan/issue-66-run.sh local`，证据目录基名为 `issue66-gate2-candidate.RGFhzJ3R`。`candidate-result.json` 记录 `evidence_validity=VALID`、`overall=PASS`、退出码 `0`、`runner_execution=COMPLETE`、`local_product_failures=[]`、`gaps=[]`；样例账本为 `VALID`，`sample_ledger_exit_code=0`，`combination_check_exit_code=0`。七套件全部通过，共 199 项：`judge` 114、`execution_wiring` 14、`structured_result` 11、`credential` 17、`local_state` 12、`validation_handoff` 22、`agent_contract` 9。该证据记录的基线提交为 `2723996424c6485fb61efcb4808a8e55c1d71cdd`，并如实记录了当时的工作树修改；这些修改已提交并推送。交接目录修复回归通过；代理约定只记录该轮通过结果，不推断此前失败的具体修复原因。此前来源 `2497dae2fffc02b0a66d33ea33b0405e128a9154` 的证据目录基名为 `issue66-gate2-candidate.vno2ISAS`，结论为有效 `FAIL`、退出码 `1`，作为历史保留；不在此重复其临时目录绝对路径。软件版本或摘要即使记录，也只作来源定位。
 
