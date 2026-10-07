@@ -56,9 +56,13 @@ UV_CACHE_DIR="$UV_CACHE_DIR" \
 
 ### 本轮 R7 预检结果
 
-2026-10-07 曾完成的预检证据集编号为 `issue66-r7-preflight-now-45b81f3`，其输入来源是 PR 提交 `0896243702c959da8e4981bffacfe820b06719b6` 的干净源码归档。复核原始 `install.json` 发现 `requested_product_source` 是本地绝对路径，`product_source_kind` 和安装详情均为 `local_project`，安装命令使用 `--root <consumer>`。尽管退出码为 `0`、锁文件可解析且安装器报告装入 10 个依赖，该方法违反本地共识，不能作为受支持安装路径或有效预检通过证据；此轮只保留为历史记录。`preflight.json` 仍如实记录 `classification=PREFLIGHT_ONLY`、`formal_request_sent=false` 和其他准备步骤，但远端来源安装预检尚待重新执行。没有发送正式请求或运行 `/eval`。
+2026-10-07 曾完成的预检证据集编号为 `issue66-r7-preflight-now-45b81f3`，其输入来源是 PR 提交 `0896243702c959da8e4981bffacfe820b06719b6` 的干净源码归档。复核原始 `install.json` 发现 `requested_product_source` 是本地绝对路径，`product_source_kind` 和安装详情均为 `local_project`，安装命令使用 `--root <consumer>`。尽管退出码为 `0`、锁文件可解析且安装器报告装入 10 个依赖，该方法违反本地共识，不能作为受支持安装路径或有效预检通过证据；此轮只保留为历史记录。
 
-此前的失败尝试保留为历史：首次预检发现预检模式误读 `EVAL_PORT`，现已改为只有正式模式才读取端口，并增加接线回归；提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的尝试，以及提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 的普通 HTTPS、HTTP/1.1 重试，均因 GitHub 依赖下载中断而未完成。上述本地路径预检不能替代通过远端来源选择器的预检；各轮原始命令和输出保留在各自 `commands` 目录。
+随后针对 PR 当前提交 `e7d6c7ab4adafddff2aa69f83070892e17d504b6`，使用 APM 远端提交选择器进行了两次预检：`issue66-r7-preflight-pr73-e7d6c7a-20261007-122605` 与 `issue66-r7-preflight-pr73-e7d6c7a-20261007-122605-retry1`。两轮均为 `CASE_NOT_STARTED`、`formal_request_sent=false`。APM 已解析该精确提交并开始安装；依赖仓库克隆遇到 GitHub HTTPS TLS 连接提前结束，安装命令退出码为 `1`，安装事务未提交。两轮均未生成成功的安装或预检记录，因此符合共识的预检尚未完成；没有发送正式请求或运行 `/eval`。原始命令输出和判定保留在各自证据集中。
+
+按用户要求再次重试，第三轮使用同一远端提交选择器，证据集为 `issue66-r7-preflight-pr73-e7d6c7a-20261007-retry2`。APM 解析到同一精确提交，但安装命令在 1200 秒后超时；判定仍为 `CASE_NOT_STARTED`、`formal_request_sent=false`，没有生成成功的安装或预检记录。三轮远端安装尝试均未完成，因此符合共识的预检尚未完成；没有发送正式请求或运行 `/eval`。第三轮的超时判定与原始输入记录保留在该证据集中。
+
+此前的失败尝试也保留为历史：首次预检发现预检模式误读 `EVAL_PORT`，现已改为只有正式模式才读取端口，并增加接线回归；提交 `2723996424c6485fb61efcb4808a8e55c1d71cdd` 的尝试，以及提交 `45b81f3458dbeb5ed3ea5855823cc0cef19ed509` 的普通 HTTPS、HTTP/1.1 重试，均因 GitHub 依赖下载中断而未完成。上述本地路径预检不能替代通过远端来源选择器的预检；各轮原始命令和输出保留在各自 `commands` 目录。
 
 ## 正式配置负责服务隔离
 
