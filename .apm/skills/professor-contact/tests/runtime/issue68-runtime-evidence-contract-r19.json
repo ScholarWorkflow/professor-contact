@@ -1,11 +1,40 @@
 {
-  "revision": "issue-68-runtime-evidence-r33-2026-10-07",
+  "revision": "issue-68-runtime-evidence-r34-2026-10-08",
   "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
-  "fixture_sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+  "fixture_sha": "d160ecb403c0f9e9c153f4b8383302a4b67664ab",
   "fixture_contract": "skills-test-fixtures/codex-eval-adapter@16",
-  "fixture_source": "skills-test-fixtures#33 merged as c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+  "fixture_source": "skills-test-fixtures project-config helper d160ecb403c0f9e9c153f4b8383302a4b67664ab; normative section 7.7 remains c738fa2f8bcbb16cd99d741332d5f59b062b6357",
   "eval_server_additional_patch_required": false,
   "manual_patch": "no",
+  "project_approval_configuration": {
+    "preparation_status": "SUPPORTED_SHARED_HELPER",
+    "helper_path": "scripts/prepare_codex_project_config.py",
+    "helper_revision": "d160ecb403c0f9e9c153f4b8383302a4b67664ab",
+    "helper_sha256": "4bd798a8c29ae93e1c65a261d85b21302422a4a7b0089ec6c62a974d5b6f9032",
+    "normative_source": {
+      "commit": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+      "document": "docs/codex-opencode-smoke-wiring.md",
+      "sha256": "3388463b78473039f6497a9b2a5d564dd54443d7f5254dc35e3e1deb9d5f1955",
+      "section": "7.7"
+    },
+    "project_config_path": ".codex/config.toml",
+    "values": {
+      "approval_policy": "on-request",
+      "approvals_reviewer": "auto_review"
+    },
+    "effective_value_source": "output.thread_start_effective.approvalPolicy and output.thread_start_effective.approvalsReviewer",
+    "formal_response_artifact": "codex/effective-project-approval-configuration.json",
+    "formal_result_gate": {
+      "pass_requires": "Both effective values match the prepared project configuration.",
+      "missing_values": "BLOCKED_OBSERVABILITY",
+      "mismatched_values": "BLOCKED_DEPENDENCY",
+      "malformed_values": "INVALID_EVIDENCE",
+      "confirmed_product_failure": "Preserve FAIL_PRODUCT and attach the configuration evidence."
+    },
+    "trust_bootstrap": "The only project-scoped command-line override sets trust_level=trusted for the installed consumer.",
+    "approval_command_line_override": "none",
+    "cache_policy": "normal uv cache; no cache-dir override, cache clearing, or prewarming"
+  },
   "codex": {
     "shared_adapter_owns": [
       "formal V1/V2 spawn relation normalization into dispatch.thread_relations",
@@ -379,7 +408,7 @@
     },
     "fixed_plan_inputs": {
       "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
-      "shared_environment_revision": "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
+      "shared_environment_revision": "d160ecb403c0f9e9c153f4b8383302a4b67664ab"
     },
     "fact_sources": {
       "model": "The --model value in this run's built codex/codex-request.json.",
@@ -419,8 +448,10 @@
       "input-evidence-preflight.json",
       "codex/codex-request.json",
       "codex/installed-entrypoint.json",
-      "codex/apm.lock.yaml",
-      "provenance.json",
+    "codex/apm.lock.yaml",
+    "codex/project-approval-config-setup.json",
+    "codex/effective-project-approval-configuration.json",
+    "provenance.json",
       "codex/lifecycle.before.json",
       "codex/lifecycle-evidence.json",
       "codex/fixture-manifest.json（lifecycle_evidence）",

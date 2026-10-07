@@ -1,14 +1,14 @@
-# 第72号拉取请求完整测试方案第33版
+# 第72号拉取请求完整测试方案第34版
 
-方案编号：`issue-68-test-plan-r33-2026-10-07`。本版按2026年10月7日用户确认，沿用共享测试环境的项目配置入口启用自动审批；测试方案引用该来源，不另设逐请求审批覆盖。测试工程师负责执行步骤、环境接线与必要预检，本地执行代理负责正式执行。
+方案编号：`issue-68-test-plan-r34-2026-10-08`。本版落实第33版要求的共享项目配置准备方式及其固定依赖；继续引用既有配置规范，不另设逐请求审批覆盖。测试工程师负责执行步骤、环境接线与必要预检，本地执行代理负责正式执行。
 
-本版是唯一测试方案正文，完整取代第32版；不新增旧计划副本。历史运行结果、原始证据及审核记录保留。本文收齐当前要求，执行者无需拼接旧计划。本次只修正审批配置来源和职责边界，不修改产品、验收、产品计划、正式用例或业务通过条件。文档发布不代表实现已完成或独立批准。
+本版是唯一测试方案正文，完整取代第33版；不新增旧计划副本。历史运行结果、原始证据及审核记录保留。本文收齐当前要求，执行者无需拼接旧计划。本次补充共享配置准备入口、固定依赖及受影响预检记录，不修改产品、验收、产品计划、正式用例或业务通过条件。文档发布不代表实现已完成或独立批准。
 
 修订原因：第31版将独占临时缓存写成当前执行前提，却未核实该选择与共识环境准备规则的对应关系。该审核遗漏记为 `REVIEW_DEFECT`；没有错误判定实例时，不追溯撤销原第31版结论。本轮用户明确要求评估时使用自动审批，这是新的运行配置输入，命中PC68-R1及评估预检的配置、提示词与权限依赖，按测试规则第6.2节限定重审这些范围。原移除 `formal_run_allowed` 布尔许可门槛的决定继续有效。
 
 第32版自行选择逐请求审批覆盖，在议题及拉取请求重复配置，并冻结了独立权限说明、命令关联取证和接线细节。此次用户确认沿用共享环境项目配置入口；按项目共识“运行配置的唯一来源”及测试规则第2.1、3.2节修正。审批使用方式是运行前提；本例不负责证明审批系统自身正确，不增加审批专项证明或与业务验收无关的取证门槛。
 
-状态：第31版第二关口的历史 `PASS / COMPLETE` 保留其原提交 `8a8a2fa02288c463eefcc0d116fe306b35d664b3` 来源。本版为第33版设计候选；共享环境接线及受影响预检尚未落实，当前候选第二关口为 `NEEDS_MODIFICATION / INCOMPLETE`，正式 `PC68-R1` 不启动，第三关口和合并未就绪。本方案作者的修订不算独立审批。
+状态：第31版第二关口的历史 `PASS / COMPLETE` 保留其原提交 `8a8a2fa02288c463eefcc0d116fe306b35d664b3` 来源。本版记录共享配置准备入口及其固定版本。第34版受影响预检在支持安装阶段达到600秒上限，结果为 `CASE_NOT_STARTED`；没有发送评估请求，项目配置准备和实际生效值均未观测。当前第二关口保持 `INCOMPLETE`，正式 `PC68-R1` 不启动，第三关口和合并未就绪。本方案作者的修订不算独立审批。
 
 ## 1. 权威来源与版本
 
@@ -16,12 +16,13 @@
 | --- | --- |
 | 冻结验收 | `issue-68-gate1-r4-2026-10-05`，[第68号议题第四版](https://github.com/ScholarWorkflow/professor-contact/issues/68#issuecomment-5981562292)，决定人为 `RekiDunois` |
 | 获批产品计划 | `issue-68-plan-r13-2026-10-06`，[第十三版](https://github.com/ScholarWorkflow/professor-contact/issues/68#issuecomment-6000673923)，[范围批准](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-6008709709) |
-| 当前完整测试方案 | 本文，`issue-68-test-plan-r33-2026-10-07`；仓库唯一正文为 `docs/issue68-test-plan.md`，[第72号拉取请求分支上的当前正文](https://github.com/ScholarWorkflow/professor-contact/blob/codex/issue-68-stage5-per-professor/.apm/skills/professor-contact/docs/issue68-test-plan.md)。评论 [#6030951188](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-6030951188) 是历史第29版，不包含本版 |
+| 当前完整测试方案 | 本文，`issue-68-test-plan-r34-2026-10-08`；仓库唯一正文为 `docs/issue68-test-plan.md`，[第72号拉取请求分支上的当前正文](https://github.com/ScholarWorkflow/professor-contact/blob/codex/issue-68-stage5-per-professor/.apm/skills/professor-contact/docs/issue68-test-plan.md)。评论 [#6030951188](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-6030951188) 是历史第29版，不包含本版 |
 | 目标产品 | `b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d` |
-| 共享测试资产 | `c738fa2f8bcbb16cd99d741332d5f59b062b6357` |
-| 第31版历史测试实现来源（新接线未落实） | 配置提取预检器摘要 `665f69e82da803935f42c25ee42dfe1824fac592e419b05a0744e85845f161e7`、对应测试摘要 `479a8a74d5f8fce9b689844e04adbaae239eee79777a6135f7220764a5242778`；正式入口摘要 `755a932f95fcdb51ad6a93507aba8794330de03bab91107b9dd292b3158909ba`、对应测试摘要 `df4cfe300d3ad54fbe23330c0c71b3eca7d67d4931dd4aa379aa43321a1c658b`；证据合同摘要 `6c31a1fc408a12cee99dc823db0c62c7c699db568bc977a995e9b67e2a033acd`。56 项入口测试及 37 项配置与传递位置测试均通过 |
+| 共享测试资产（本次固定实现） | `d160ecb403c0f9e9c153f4b8383302a4b67664ab` |
+| 项目配置规范来源 | `c738fa2f8bcbb16cd99d741332d5f59b062b6357` 的 `docs/codex-opencode-smoke-wiring.md` 第7.7节 |
+| 第31版历史测试实现来源（不含本版新增接线） | 配置提取预检器摘要 `665f69e82da803935f42c25ee42dfe1824fac592e419b05a0744e85845f161e7`、对应测试摘要 `479a8a74d5f8fce9b689844e04adbaae239eee79777a6135f7220764a5242778`；正式入口摘要 `755a932f95fcdb51ad6a93507aba8794330de03bab91107b9dd292b3158909ba`、对应测试摘要 `df4cfe300d3ad54fbe23330c0c71b3eca7d67d4931dd4aa379aa43321a1c658b`；证据合同摘要 `6c31a1fc408a12cee99dc823db0c62c7c699db568bc977a995e9b67e2a033acd`。56 项入口测试及 37 项配置与传递位置测试均通过 |
 | 历史安装续试基线 | 当时候选 `806066a`；对应安装恢复证据保留，不作为当前测试实现版本 |
-| 第31版历史证据约定（按影响核对） | `tests/runtime/issue68-runtime-evidence-contract-r19.json`，修订 `issue-68-runtime-evidence-r33-2026-10-07`；生命周期组合结构沿用原版本，新增传递位置绑定证据并移除运行许可布尔值。不因环境接线变化自动改写未受影响的业务合同 |
+| 当前运行证据约定 | `tests/runtime/issue68-runtime-evidence-contract-r19.json`，修订 `issue-68-runtime-evidence-r34-2026-10-08`；保留未受影响的业务判定，仅增加固定共享配置准备来源 |
 | 规则来源 | 本次修订已读取工作区有效的 `PROJECT_CONSENSUS.md` 与 `Test Engineer Rule.md`；摘要分别为 `d71d4fe3d6988e64dcf3e9768c815a756f12dcfe923c874c617e7bef62973741`、`ad118037274d2d3f25efb26ddfc7d662df328d12ff6ac6b8b93f0a744104a308`。审批接线引用第3.1节共享环境来源，本轮用户确认沿用其项目配置入口 |
 
 本文所有仓库内路径以 `.apm/skills/professor-contact/` 为前缀。产品不修改；不重开验收和产品计划。仅补测试观察、判定、预检与完整步骤。独立工作树为当前第72号拉取请求的测试工作树，执行前在仓库根运行 `pwd`，用返回值设置 `PC68_TEST_ROOT`；公共记录仅使用变量，真实值留本地原始证据。独占传递目录由测试人员按第4.1节选择、预检并记录绝对路径；运行器会核实其为空目录、加入实际请求声明与来源记录，并将同一目录纳入请求前后观察。
@@ -63,13 +64,15 @@ R1固定为缺核验前提。已经发生的分配、读取、首次计划、结
 
 ### 3.1 评估请求的自动审批与权限处理
 
-本例使用自动审批，并沿用共享环境的项目配置入口。唯一接线来源为共享资产 `c738fa2f8bcbb16cd99d741332d5f59b062b6357` 的 [接线文档](https://github.com/RekiDunois/skills-test-fixtures/blob/c738fa2f8bcbb16cd99d741332d5f59b062b6357/docs/codex-opencode-smoke-wiring.md)第7.7节，仅引用其中项目审批配置入口、信任前提及生效配置证据约定；评估入口和映射继续引用服务 `3fdfa9387140cfc2e2aa3af415f85015f79706d2` 的 `README.md` 与 `docs/appserver-migration.md`。本方案、议题和拉取请求不重复定义审批参数，也不以命令行覆盖代替共享项目配置。默认模型与推理设置继续以项目共识为准。
+本例使用自动审批，并沿用共享环境的项目配置入口。配置规范来源为共享资产提交 `c738fa2f8bcbb16cd99d741332d5f59b062b6357` 的[接线文档](https://github.com/RekiDunois/skills-test-fixtures/blob/c738fa2f8bcbb16cd99d741332d5f59b062b6357/docs/codex-opencode-smoke-wiring.md)第7.7节；只引用其中的项目配置入口、信任前提及生效值证据约定。评估入口和字段映射继续引用服务提交 `3fdfa9387140cfc2e2aa3af415f85015f79706d2` 的 `README.md` 与 `docs/appserver-migration.md`。本方案、议题和拉取请求不重复定义审批参数，也不以命令行覆盖代替共享项目配置。默认模型与推理设置继续以项目共识为准。
+
+共享资产提交 `d160ecb403c0f9e9c153f4b8383302a4b67664ab` 新增 `scripts/prepare_codex_project_config.py`，文件摘要为 `4bd798a8c29ae93e1c65a261d85b21302422a4a7b0089ec6c62a974d5b6f9032`。该入口只从固定规范提交 `c738fa2f8bcbb16cd99d741332d5f59b062b6357` 的文档对象读取第7.7节，核对文档摘要后，在全新消费者中独占创建 `.codex/config.toml` 并回读核验；已有文件时停止，不改调用者主目录。此次将共享依赖固定到新增实现提交，规范内容仍绑定原文档提交；没有增加配置协议或审批系统探针，正式入口回归测试核对运行前提所要求的响应字段。
 
 本地测试工程师按这些来源编写实际步骤，保存共享环境来源、项目配置及实际生效配置证据。配置文件存在不等于已经生效；必要命令因沙箱权限受阻时，由实际运行代理按受支持方式申请升级，交自动审批处理。沿用正常缓存，不通过替换、清空或预热缓存规避权限限制。具体提示组织、脚本、工具字段及解析方式属于测试实现，不在本计划另行冻结。
 
 共享资产第7.7节同时包含审批专项用例；其固定探针、必须观察到审批、审批路由和跨命令升级关联证明不属于PC68-R1。本例只证明教授业务，审批是运行前提；正常缓存使审批没有发生时不增加阻断。保留运行原件及自然发生的受阻事实，不为证明自动审批另跑业务、追加探针或增加业务通过条件。拒绝或不可用阻止必要步骤时，按本文既有启动边界和六类终态处理；不能判为产品违约。
 
-干净消费者仍由固定产品提交经支持安装路径生成，不手工修改其代理、技能、包装器或配置。固定共享资产已记录项目审批配置约定，但本文尚无其与本产品干净安装组合完成的证据。测试工程师须核实共享环境是否已有支持的准备方式；不足时按共识在共享资产仓库补齐，记录受影响资产的新固定版本及依赖分析，再交受影响第二关口审核，不在本议题新造环境协议或手工补消费者。
+干净消费者仍由固定产品提交经支持安装路径生成，不手工修改其代理、技能、包装器或配置。固定共享实现提交新增的准备脚本用于创建项目配置；本地入口在正式干净安装及同一目录预检中调用它，并保存脚本摘要、规范来源、配置字节摘要与实际响应字段。目标配置文件存在不等于已经生效，只有服务响应实际公开的 `output.thread_start_effective.approvalPolicy` 和 `approvalsReviewer` 可证明该值。正式运行入口须保存这两个响应值及其原始响应摘要；只有两项均匹配时业务 `PASS` 才能保留。字段未公开时将其记为 `BLOCKED_OBSERVABILITY`，值不匹配时记为 `BLOCKED_DEPENDENCY`，响应值格式错误时记为 `INVALID_EVIDENCE`；已有直接成立的产品失败仍保留 `FAIL_PRODUCT` 并附上配置证据。本次共享依赖变更只为准备脚本增加新固定提交；产品提交、业务断言、评估服务和请求中的信任配置保持原值。
 
 预检只补上述运行前提尚缺的最小依据，优先引用有效文档、合同和既有证据；确需实际请求时纳入已有目录预检，不新增请求次数或审批关口。未变安装、观察和判定证明保留原来源；本次不要求改写全部测试程序、生命周期子进程或业务证据合同。本文后续命令供测试工程师落实执行步骤时核对，不能用第31版程序声称新接线已完成。
 
@@ -91,7 +94,7 @@ R1固定为缺核验前提。已经发生的分配、读取、首次计划、结
 | `tests/runtime/issue68_transfer_location.py`、`tests/test_issue68_transfer_location.py` | 检查独占绝对目录、声明单独留档与实际请求摘要、业务/消费者路径隔离及传递目录观察绑定；不调用评估服务 |
 | `tests/runtime/run_issue68_stage5_routing_r19.py` | 原流程接线，使用固定共享资产 |
 | `tests/runtime/prompts/issue68-stage5-root.txt` | 只保留业务任务及只读观察安排，不教学分配结果或教授工作步骤；位置声明单独保存并绑定到同一实际请求 |
-| `tests/test_issue68_runtime_r19.py` | 独立已知输入的判定正例、产品失败和无效/阻断反例 |
+| `tests/test_issue68_runtime_r19.py` | 独立已知输入的判定正例、产品失败和无效/阻断反例；正式响应有效审批配置门控 |
 
 ## 4. 关口前最小预检与命令
 
@@ -205,7 +208,7 @@ jq -e . .apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-con
 
 需要补充目录预检时，以下是已存在的固定入口及准备步骤。仅在证据确实不适用时由本地测试工程师执行；本次文档整合不执行这些命令。目录名是该测试程序的既有输入限制，不是新增产品要求。
 
-运行位置为包含本记录和预检程序的测试仓库根目录；先在三个已准备的本地检出目录中解析来源根路径，路径只保存在当前 shell。产品检出须固定在 `b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d`，共享夹具检出须固定在 `c738fa2f8bcbb16cd99d741332d5f59b062b6357`，评估服务检出须固定在 `3fdfa9387140cfc2e2aa3af415f85015f79706d2` 并使用其 `direnv` 环境；三者均须干净。`PC68_PRODUCT_CHECKOUT`、`PC68_SHARED_CHECKOUT` 和 `PC68_EVAL_CHECKOUT` 是本机已准备好的检出目录输入，不写入公开证据。运行下列准备命令时，当前目录必须是测试仓库根目录：
+运行位置为包含本记录和预检程序的测试仓库根目录；先在三个已准备的本地检出目录中解析来源根路径，路径只保存在当前 shell。产品检出须固定在 `b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d`，共享夹具须固定在本次实现提交 `d160ecb403c0f9e9c153f4b8383302a4b67664ab`，评估服务检出须固定在 `3fdfa9387140cfc2e2aa3af415f85015f79706d2` 并使用其 `direnv` 环境；三者均须干净。`PC68_PRODUCT_CHECKOUT`、`PC68_SHARED_CHECKOUT` 和 `PC68_EVAL_CHECKOUT` 是本机已准备好的检出目录输入，不写入公开证据。运行下列准备命令时，当前目录必须是测试仓库根目录：
 
 ```sh
 PC68_TEST_ROOT="$(pwd -P)"
@@ -217,7 +220,7 @@ PC68_SHARED_ROOT="$(cd "$PC68_SHARED_CHECKOUT" && pwd -P)"
 PC68_EVAL_ROOT="$(cd "$PC68_EVAL_CHECKOUT" && pwd -P)"
 test "$(git -C "$PC68_PRODUCT_ROOT" rev-parse HEAD)" = "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d"
 test -z "$(git -C "$PC68_PRODUCT_ROOT" status --porcelain)"
-test "$(git -C "$PC68_SHARED_ROOT" rev-parse HEAD)" = "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
+test "$(git -C "$PC68_SHARED_ROOT" rev-parse HEAD)" = "d160ecb403c0f9e9c153f4b8383302a4b67664ab"
 test -z "$(git -C "$PC68_SHARED_ROOT" status --porcelain)"
 test "$(direnv exec "$PC68_EVAL_ROOT" git -C "$PC68_EVAL_ROOT" rev-parse HEAD)" = "3fdfa9387140cfc2e2aa3af415f85015f79706d2"
 test -z "$(direnv exec "$PC68_EVAL_ROOT" git -C "$PC68_EVAL_ROOT" status --porcelain)"
@@ -258,7 +261,7 @@ jq '{state,reason,request_attempted,request_body_sha256,response_body_sha256,obs
 ```sh
 uv run --no-project python .apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r19_codex.py \
   --producer-root "$PC68_PRODUCT_ROOT" --producer-sha b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d \
-  --fixture-root "$PC68_SHARED_ROOT" --fixture-sha c738fa2f8bcbb16cd99d741332d5f59b062b6357 \
+  --fixture-root "$PC68_SHARED_ROOT" --fixture-sha d160ecb403c0f9e9c153f4b8383302a4b67664ab \
   --eval-direnv-root "$PC68_EVAL_ROOT" --output-dir "$PC68_OUTPUT_ROOT" \
   --transfer-location-root "$PC68_TRANSFER_ROOT"
 ```
@@ -475,15 +478,15 @@ R1为 `EXECUTE_CURRENT`：观察、判定、输入和产品调用说明变化直
 
 第32版历史新增位置声明、实际请求绑定、清单快照和同一传递目录的请求前后观察。合成预检证据见 `tests/runtime/evidence/issue68-r32-transfer-location-preflight.json`，七个场景符合本版预期，命令退出0；位置、运行器、预检及单测的源码摘要均随证据保存。定向测试11项、R19判定56项、生命周期70项、运行配方11项均退出0。该证据不含实际教授线程或正式请求。
 
-当前合成位置判定材料按未变源码和数据关系复用；第31版环境及第33版目录证据保留其历史来源和真实证明范围。它们不能单独证明共享项目审批配置已就绪，受影响前提须按第3.1、4.1节确认。新接线与必要预检未完成，正式 `PC68-R1` 未执行。
+当前合成位置判定材料按未变源码和数据关系复用；第31版环境及第33版目录证据保留其历史来源和真实证明范围。第34版受影响预检记录见 `tests/runtime/evidence/issue68-r34-project-approval-config-preflight.json`，状态为 `CASE_NOT_STARTED`：固定产品安装在600秒后退出124，日志停在解析 `base-skills` 依赖；安装标准错误为空。没有发送评估请求，配置准备入口未运行，审批策略和审核者的实际生效值未观测。原始记录别名为 `$PC68_R34_RUN01_RAW`。正式 `PC68-R1` 未执行。
 
 ## 10. 当前交接与完成条件
 
-本次按用户确认沿用共享项目配置入口，不改变验收第四版、实施计划第十三版、两个正式用例及其证明责任。D1继续 `REUSE_PRIOR_PASS`；未变判定代码的合成证据按原版本复用。共享项目配置的实际准备及生效依据尚缺，不能从旧请求离线补造；只补这项前提及其直接影响。正式R1仍为 `EXECUTE_CURRENT`，冻结后建立新的正式消费者。
+本次按用户确认沿用共享项目配置入口，不改变验收第四版、实施计划第十三版、两个正式用例及其证明责任。D1继续 `REUSE_PRIOR_PASS`；未变判定代码的合成证据按原版本复用。共享准备程序、正式响应实际生效值记录与 `PASS` 门控、59项入口测试和31项预检测试均已完成；受影响预检因支持安装超时未进入配置创建，实际生效依据仍缺，不能从旧请求离线补造。第34版预检结果及其限制记录于 `tests/runtime/evidence/issue68-r34-project-approval-config-preflight.json`。正式R1仍为 `EXECUTE_CURRENT`，冻结后建立新的正式消费者。
 
-下一负责者是本地测试工程师：按第3.1节引用的共享环境来源，核实支持的准备方式、完成受影响接线及最小预检，固定可执行步骤和实际证据来源，再交独立第二关口审核。共享资产能力不足时在该仓库补齐，不能在消费者手工修补或以逐请求审批覆盖替代。只验证受影响配置及结果分类，不扩大为审批专项测试或全部程序重写。历史56项和37项保留原版本结果，不冒称本轮执行；同一原始请求、响应、判定及离线重判保持不变。
+下一负责者为独立第二关口审核者，检查本版唯一方案、固定实现和新增原始失败记录；这项审核不把安装超时当作安装成功，也不授予正式运行许可。若冻结前仍要求配置准备及生效值证据，须先对安装阻断作独立诊断，再以新消费者继续受影响预检并保留本次失败材料。不得手工改消费者或以逐请求审批覆盖替代。历史56项和37项保留原版本结果，不冒称本轮执行；同一原始请求、响应、判定及离线重判保持不变。
 
-当前唯一方案为第33版，设计须经独立计划审核；第二关口为 `NEEDS_MODIFICATION / INCOMPLETE`，尚未冻结新接线，正式R1不启动。第31版历史 `PASS / COMPLETE` 只对其原提交有效，不沿用为新运行配置批准。审批未自然发生不是本例阻断；需要权限的步骤未完成时保留未完成事实，不能跳过步骤。
+当前唯一方案为第34版，待独立审核；第二关口保持 `INCOMPLETE`，新接线尚未冻结，正式R1不启动。第31版历史 `PASS / COMPLETE` 只对其原提交有效，不沿用为新运行配置批准。审批未自然发生不是本例阻断；需要权限的步骤未完成时保留未完成事实，不能跳过步骤。
 
 审核者按测试规则第3.3节检查本文与固定测试实现：唯一完整来源、需求对应、最小充分用例、命令和输入、隔离、直接证据、有效成功/有效失败/无法判断三类判定、预检版本及目录对应、终态唯一性和复验来源。完成后才给出独立第二关口结论和冻结版本；本方案不自行授予通过。
 

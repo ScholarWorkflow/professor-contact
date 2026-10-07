@@ -17,7 +17,7 @@ import run_issue68_stage5_routing as base
 import verify_issue68_stage5_routing_r19 as verifier
 
 
-FIXTURE_SHA = "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
+FIXTURE_SHA = "d160ecb403c0f9e9c153f4b8383302a4b67664ab"
 
 
 def verify_opencode(*args, **kwargs):

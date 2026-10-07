@@ -4,6 +4,7 @@
 并验证正式入口会在检查评估服务或发送请求前停止。它们不构成 PC68-R1 验收。
 """
 import importlib.util
+import hashlib
 import json
 import shlex
 import subprocess
@@ -190,6 +191,31 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             (codex / "installed-entrypoint.json").write_text(
                 json.dumps(entrypoint), encoding="utf-8")
             (codex / "apm.lock.yaml").write_text("synthetic lock", encoding="utf-8")
+            config_bytes = (
+                b'approval_policy = "on-request"\n'
+                b'approvals_reviewer = "auto_review"\n'
+            )
+            config_path = codex / ".codex" / "config.toml"
+            config_path.parent.mkdir()
+            config_path.write_bytes(config_bytes)
+            approval_setup = {
+                "status": "PREPARED",
+                "shared_assets_revision": "synthetic-fixture-sha",
+                "helper": "scripts/prepare_codex_project_config.py",
+                "helper_sha256": "b" * 64,
+                "source": {
+                    "commit": entry.PROJECT_CONFIG_SOURCE_COMMIT,
+                    "document": entry.PROJECT_CONFIG_SOURCE_DOCUMENT,
+                    "sha256": entry.PROJECT_CONFIG_SOURCE_DOCUMENT_SHA256,
+                },
+                "project_config": {
+                    "path": str(config_path),
+                    "sha256": hashlib.sha256(config_bytes).hexdigest(),
+                    "values": entry.PROJECT_CONFIG_VALUES,
+                },
+            }
+            (codex / "project-approval-config-setup.json").write_text(
+                json.dumps(approval_setup), encoding="utf-8")
             request = {"command": "codex --model synthetic-model --timeout 900", "timeout": 900}
             (codex / "codex-request.json").write_text(json.dumps(request), encoding="utf-8")
             service = {
@@ -220,6 +246,11 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             self.assertEqual(facts["entrypoint"]["sha256"], entry._sha256_file(script))
             self.assertEqual(facts["shared_assets"]["fixture_revision"], "synthetic-fixture-sha")
             self.assertEqual(facts["isolation"], service["storage"])
+            self.assertEqual(captured["project_approval_configuration"]["status"], "PREPARED")
+            self.assertEqual(
+                captured["project_approval_configuration"]["project_config"]["sha256"],
+                hashlib.sha256(config_bytes).hexdigest(),
+            )
             executor = facts["executor"]
             self.assertEqual(executor["execution_branch"], "codex")
             self.assertTrue(executor["dispatcher"].endswith(".codex_host"))
@@ -229,6 +260,131 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
             self.assertNotIn("port", executor)
             self.assertEqual(set(captured["runtime_environment_evidence"]),
                              set(entry.REQUIRED_RUNTIME_FACTS))
+
+    def test_project_approval_setup_uses_the_pinned_shared_helper_and_normal_cache(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fixture = root / "fixture"
+            helper = fixture / "scripts" / "prepare_codex_project_config.py"
+            helper.parent.mkdir(parents=True)
+            helper.write_text("# synthetic helper\n", encoding="utf-8")
+            consumer = root / "consumer"
+            consumer.mkdir()
+            config_path = consumer / ".codex" / "config.toml"
+            config_path.parent.mkdir()
+            config_bytes = (
+                b'approval_policy = "on-request"\n'
+                b'approvals_reviewer = "auto_review"\n'
+            )
+            config_path.write_bytes(config_bytes)
+            helper_result = {
+                "schema": 1,
+                "status": "PREPARED",
+                "source": {
+                    "commit": entry.PROJECT_CONFIG_SOURCE_COMMIT,
+                    "document": entry.PROJECT_CONFIG_SOURCE_DOCUMENT,
+                    "sha256": entry.PROJECT_CONFIG_SOURCE_DOCUMENT_SHA256,
+                },
+                "project_config": {
+                    "path": str(config_path.resolve()),
+                    "sha256": hashlib.sha256(config_bytes).hexdigest(),
+                    "values": entry.PROJECT_CONFIG_VALUES,
+                },
+            }
+            completed = SimpleNamespace(
+                returncode=0, stdout=json.dumps(helper_result), stderr="")
+            with mock.patch.object(
+                    entry, "_sha256_file", return_value=entry.PROJECT_CONFIG_HELPER_SHA256), \
+                    mock.patch.object(entry.subprocess, "run", return_value=completed) as run:
+                evidence = entry.prepare_project_approval_configuration(
+                    consumer, fixture, root / "setup.json")
+
+            command = run.call_args.args[0]
+            self.assertEqual(command[:4], ["uv", "run", "--no-project", "python"])
+            self.assertNotIn("--cache-dir", command)
+            self.assertEqual(command[4], str(helper.resolve()))
+            self.assertEqual(evidence["status"], "PREPARED")
+            self.assertEqual(evidence["project_config"]["values"], entry.PROJECT_CONFIG_VALUES)
+            self.assertEqual(json.loads((root / "setup.json").read_text())["status"], "PREPARED")
+
+    def test_formal_response_records_effective_project_approval_configuration(self):
+        setup = {
+            "status": "PREPARED",
+            "project_config": {"values": entry.PROJECT_CONFIG_VALUES},
+        }
+        response = {"output": {"thread_start_effective": {
+            "approvalPolicy": "on-request", "approvalsReviewer": "auto_review",
+        }}}
+
+        record = entry._formal_approval_configuration_record(response, setup)
+
+        self.assertEqual(record["status"], "MATCH")
+        self.assertEqual(record["effective_status"], "MATCH")
+        self.assertEqual(record["setup_status"], "PREPARED")
+        self.assertEqual(record["values"], {
+            "approval_policy": "on-request", "approvals_reviewer": "auto_review",
+        })
+        self.assertEqual(record["field_paths"]["approval_policy"],
+                         "output.thread_start_effective.approvalPolicy")
+        self.assertEqual(record["field_paths"]["approvals_reviewer"],
+                         "output.thread_start_effective.approvalsReviewer")
+        passed = entry._constrain_with_formal_approval_configuration(
+            {"state": "CASE_STARTED", "verdict": "PASS"}, record)
+        self.assertEqual(passed["verdict"], "PASS")
+        self.assertEqual(passed["effective_approval_configuration"], record)
+
+    def test_formal_approval_gate_blocks_missing_or_mismatched_config_and_keeps_product_failure(self):
+        setup = {
+            "status": "PREPARED",
+            "project_config": {"values": entry.PROJECT_CONFIG_VALUES},
+        }
+        business_pass = {"state": "CASE_STARTED", "verdict": "PASS", "reason_code": "complete"}
+
+        missing = entry._formal_approval_configuration_record({"output": {}}, setup)
+        blocked = entry._constrain_with_formal_approval_configuration(business_pass, missing)
+        self.assertEqual((blocked["verdict"], blocked["reason_code"]),
+                         ("BLOCKED_OBSERVABILITY", "effective_approval_configuration_unobservable"))
+        self.assertEqual(blocked["business_result"], business_pass)
+
+        mismatch_response = {"output": {"thread_start_effective": {
+            "approvalPolicy": "never", "approvalsReviewer": "auto_review",
+        }}}
+        mismatch = entry._formal_approval_configuration_record(mismatch_response, setup)
+        blocked = entry._constrain_with_formal_approval_configuration(business_pass, mismatch)
+        self.assertEqual((blocked["verdict"], blocked["reason_code"]),
+                         ("BLOCKED_DEPENDENCY", "effective_approval_configuration_mismatch"))
+
+        invalid_response = {"output": {"thread_start_effective": {
+            "approvalPolicy": "on-request", "approvalsReviewer": None,
+        }}}
+        invalid = entry._formal_approval_configuration_record(invalid_response, setup)
+        rejected = entry._constrain_with_formal_approval_configuration(business_pass, invalid)
+        self.assertEqual((rejected["verdict"], rejected["reason_code"]),
+                         ("INVALID_EVIDENCE", "effective_approval_configuration_invalid"))
+
+        malformed_setup = entry._formal_approval_configuration_record(
+            {"output": {"thread_start_effective": {
+                "approvalPolicy": "on-request", "approvalsReviewer": "auto_review",
+            }}}, [])
+        rejected = entry._constrain_with_formal_approval_configuration(business_pass, malformed_setup)
+        self.assertEqual((rejected["verdict"], rejected["reason_code"]),
+                         ("INVALID_EVIDENCE", "effective_approval_configuration_invalid"))
+
+        malformed_nested_setup = entry._formal_approval_configuration_record(
+            {"output": {"thread_start_effective": {
+                "approvalPolicy": "on-request", "approvalsReviewer": "auto_review",
+            }}}, {"status": "PREPARED", "project_config": []})
+        rejected = entry._constrain_with_formal_approval_configuration(
+            business_pass, malformed_nested_setup)
+        self.assertEqual((rejected["verdict"], rejected["reason_code"]),
+                         ("INVALID_EVIDENCE", "effective_approval_configuration_invalid"))
+
+        product_failure = {"state": "CASE_STARTED", "verdict": "FAIL_PRODUCT",
+                           "reason_code": "product_assertion_failed"}
+        preserved = entry._constrain_with_formal_approval_configuration(product_failure, mismatch)
+        self.assertEqual(preserved["verdict"], "FAIL_PRODUCT")
+        self.assertEqual(preserved["reason_code"], "product_assertion_failed")
+        self.assertEqual(preserved["effective_approval_configuration"], mismatch)
 
     def test_live_service_version_is_read_and_change_fails_before_service_inspection(self):
         root = Path("/synthetic/eval-server")

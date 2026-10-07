@@ -22,7 +22,7 @@ import issue68_transfer_location as transfer_location
 HERE = Path(__file__).resolve().parent
 FIXTURE_SHA = bridge.FIXTURE_SHA
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
-CONTRACT_REVISION = "issue-68-runtime-evidence-r33-2026-10-07"
+CONTRACT_REVISION = "issue-68-runtime-evidence-r34-2026-10-08"
 OWNER_OBSERVATION_SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
 SYNTHETIC_PREFLIGHT_SCHEMA = "issue-68-r29-fixed-capture-preflight-v2"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
@@ -44,10 +44,20 @@ RUNTIME_BINDING_ARTIFACTS = (
     "codex/codex-request.json",
     "codex/installed-entrypoint.json",
     "codex/apm.lock.yaml",
+    "codex/project-approval-config-setup.json",
+    "codex/effective-project-approval-configuration.json",
     "eval-service-provenance.before.json",
     "eval-service-provenance.after.json",
     "runtime-environment-evidence.json",
 )
+PROJECT_CONFIG_SOURCE_COMMIT = "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
+PROJECT_CONFIG_SOURCE_DOCUMENT = "docs/codex-opencode-smoke-wiring.md"
+PROJECT_CONFIG_SOURCE_DOCUMENT_SHA256 = "3388463b78473039f6497a9b2a5d564dd54443d7f5254dc35e3e1deb9d5f1955"
+PROJECT_CONFIG_HELPER_SHA256 = "4bd798a8c29ae93e1c65a261d85b21302422a4a7b0089ec6c62a974d5b6f9032"
+PROJECT_CONFIG_VALUES = {
+    "approval_policy": "on-request",
+    "approvals_reviewer": "auto_review",
+}
 
 
 def load_contract():
@@ -56,13 +66,39 @@ def load_contract():
         raise ValueError("contract_revision_mismatch")
     if contract.get("fixture_sha") != FIXTURE_SHA:
         raise ValueError("contract_fixture_mismatch")
+    environment = contract.get("formal_runtime_environment")
+    fixed_inputs = environment.get("fixed_plan_inputs", {}) if isinstance(environment, dict) else {}
+    if fixed_inputs.get("shared_environment_revision") != FIXTURE_SHA:
+        raise ValueError("contract_shared_environment_revision_mismatch")
+    approval_config = contract.get("project_approval_configuration")
+    if (not isinstance(approval_config, dict)
+            or approval_config.get("preparation_status") != "SUPPORTED_SHARED_HELPER"
+            or approval_config.get("helper_path") != "scripts/prepare_codex_project_config.py"
+            or approval_config.get("helper_revision") != FIXTURE_SHA
+            or approval_config.get("helper_sha256") != PROJECT_CONFIG_HELPER_SHA256
+            or approval_config.get("normative_source") != {
+                "commit": PROJECT_CONFIG_SOURCE_COMMIT,
+                "document": PROJECT_CONFIG_SOURCE_DOCUMENT,
+                "sha256": PROJECT_CONFIG_SOURCE_DOCUMENT_SHA256,
+                "section": "7.7",
+            }
+            or approval_config.get("project_config_path") != ".codex/config.toml"
+            or approval_config.get("values") != PROJECT_CONFIG_VALUES
+            or approval_config.get("effective_value_source") != (
+                "output.thread_start_effective.approvalPolicy and "
+                "output.thread_start_effective.approvalsReviewer")
+            or approval_config.get("trust_bootstrap") != (
+                "The only project-scoped command-line override sets trust_level=trusted "
+                "for the installed consumer.")
+            or approval_config.get("approval_command_line_override") != "none"
+            or "normal uv cache" not in approval_config.get("cache_policy", "")):
+        raise ValueError("contract_project_approval_configuration_mismatch")
     if contract.get("producer_revision") != "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d":
         raise ValueError("contract_producer_revision_mismatch")
     if contract.get("runner") != CONTRACT_RUNNER:
         raise ValueError("contract_runner_is_not_this_entry")
     if contract.get("manual_patch") != "no":
         raise ValueError("contract_manual_patch_forbidden")
-    environment = contract.get("formal_runtime_environment")
     if not isinstance(environment, dict) or not isinstance(environment.get("actual_values"), dict):
         raise ValueError("contract_runtime_environment_fields_missing")
     actual_values = environment["actual_values"]
@@ -515,6 +551,212 @@ def _sha256_file(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def prepare_project_approval_configuration(consumer, fixture_root, evidence_path):
+    """Use the pinned shared helper to create and verify project-scoped settings."""
+    consumer = Path(consumer).resolve()
+    fixture_root = Path(fixture_root).resolve()
+    helper = fixture_root / "scripts" / "prepare_codex_project_config.py"
+    if helper.is_symlink() or not helper.is_file():
+        raise ValueError("project_approval_configuration_helper_missing")
+    helper_sha256 = _sha256_file(helper)
+    command = [
+        "uv", "run", "--no-project", "python", str(helper),
+        "--consumer-root", str(consumer),
+    ]
+    evidence = {
+        "schema": "issue-68-project-approval-config-setup-v1",
+        "status": "NOT_STARTED",
+        "shared_assets_revision": FIXTURE_SHA,
+        "helper": "scripts/prepare_codex_project_config.py",
+        "helper_sha256": helper_sha256,
+        "command_argv": command,
+        "command_cwd": str(fixture_root),
+        "requested_values": PROJECT_CONFIG_VALUES,
+    }
+    if helper_sha256 != PROJECT_CONFIG_HELPER_SHA256:
+        evidence.update({"status": "SOURCE_MISMATCH"})
+        base.write_json(evidence_path, evidence)
+        raise ValueError("project_approval_configuration_helper_hash_mismatch")
+    try:
+        completed = subprocess.run(
+            command, cwd=fixture_root, capture_output=True, text=True,
+            timeout=120, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        evidence.update({"status": "FAILED", "error_type": type(exc).__name__})
+        base.write_json(evidence_path, evidence)
+        raise ValueError("project_approval_configuration_setup_failed") from exc
+    evidence.update({
+        "returncode": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+    })
+    if completed.returncode != 0:
+        evidence["status"] = "FAILED"
+        base.write_json(evidence_path, evidence)
+        raise ValueError("project_approval_configuration_setup_failed")
+    try:
+        helper_result = json.loads(completed.stdout)
+    except (TypeError, json.JSONDecodeError) as exc:
+        evidence["status"] = "INVALID_HELPER_OUTPUT"
+        base.write_json(evidence_path, evidence)
+        raise ValueError("project_approval_configuration_helper_output_invalid") from exc
+    expected_source = {
+        "commit": PROJECT_CONFIG_SOURCE_COMMIT,
+        "document": PROJECT_CONFIG_SOURCE_DOCUMENT,
+        "sha256": PROJECT_CONFIG_SOURCE_DOCUMENT_SHA256,
+    }
+    if (not isinstance(helper_result, dict)
+            or not isinstance(helper_result.get("project_config"), dict)
+            or helper_result.get("schema") != 1
+            or helper_result.get("status") != "PREPARED"
+            or helper_result.get("source") != expected_source
+            or helper_result["project_config"].get("values") != PROJECT_CONFIG_VALUES):
+        evidence.update({"status": "INVALID_HELPER_OUTPUT", "helper_result": helper_result})
+        base.write_json(evidence_path, evidence)
+        raise ValueError("project_approval_configuration_helper_output_invalid")
+    config_path = consumer / ".codex" / "config.toml"
+    try:
+        config_resolved = config_path.resolve(strict=True)
+        config_bytes = config_resolved.read_bytes()
+    except OSError as exc:
+        evidence.update({"status": "INVALID_HELPER_OUTPUT", "helper_result": helper_result})
+        base.write_json(evidence_path, evidence)
+        raise ValueError("project_approval_configuration_readback_missing") from exc
+    config_sha256 = hashlib.sha256(config_bytes).hexdigest()
+    helper_config = helper_result.get("project_config", {})
+    if (str(config_resolved) != helper_config.get("path")
+            or config_sha256 != helper_config.get("sha256")):
+        evidence.update({"status": "INVALID_HELPER_OUTPUT", "helper_result": helper_result})
+        base.write_json(evidence_path, evidence)
+        raise ValueError("project_approval_configuration_readback_mismatch")
+    evidence.update({
+        "status": "PREPARED",
+        "source": expected_source,
+        "project_config": {
+            "path": str(config_resolved),
+            "sha256": config_sha256,
+            "values": PROJECT_CONFIG_VALUES,
+        },
+        "helper_result": helper_result,
+    })
+    base.write_json(evidence_path, evidence)
+    return evidence
+
+
+def _project_approval_configuration_facts(
+    setup_evidence, artifact_path="codex/project-approval-config-setup.json"
+):
+    if not isinstance(setup_evidence, dict):
+        setup_evidence = {}
+    project_config = setup_evidence.get("project_config", {})
+    if not isinstance(project_config, dict):
+        project_config = {}
+    return {
+        "status": setup_evidence.get("status"),
+        "shared_assets_revision": setup_evidence.get("shared_assets_revision"),
+        "helper": setup_evidence.get("helper"),
+        "helper_sha256": setup_evidence.get("helper_sha256"),
+        "source": setup_evidence.get("source"),
+        "project_config": {
+            "path": project_config.get("path"),
+            "sha256": project_config.get("sha256"),
+            "values": project_config.get("values"),
+        },
+        "setup_evidence_artifact": artifact_path,
+    }
+
+
+def _request_approval_configuration(response, effective):
+    response_received = bool(response)
+    statuses = {}
+    values = {}
+    paths = {
+        "approval_policy": "output.thread_start_effective.approvalPolicy",
+        "approvals_reviewer": "output.thread_start_effective.approvalsReviewer",
+    }
+    fields = {
+        "approval_policy": "approvalPolicy",
+        "approvals_reviewer": "approvalsReviewer",
+    }
+    for key, field in fields.items():
+        if effective is None:
+            statuses[key] = "NOT_EXPOSED_BY_CURRENT_SERVICE" if response_received else "NOT_OBSERVED_YET"
+            values[key] = None
+        elif not isinstance(effective, dict):
+            statuses[key] = "INVALID_SERVICE_REPORTED_VALUE"
+            values[key] = None
+        elif field not in effective:
+            statuses[key] = "NOT_EXPOSED_BY_CURRENT_SERVICE"
+            values[key] = None
+        else:
+            value = effective[field]
+            values[key] = value
+            if not isinstance(value, str) or not value.strip():
+                statuses[key] = "INVALID_SERVICE_REPORTED_VALUE"
+            elif value != PROJECT_CONFIG_VALUES[key]:
+                statuses[key] = "MISMATCH"
+            else:
+                statuses[key] = "MATCH"
+    if all(statuses[key] == "MATCH" for key in fields):
+        combined = "MATCH"
+    elif "INVALID_SERVICE_REPORTED_VALUE" in statuses.values():
+        combined = "INVALID_SERVICE_REPORTED_VALUE"
+    elif "MISMATCH" in statuses.values():
+        combined = "MISMATCH"
+    elif not response_received:
+        combined = "NOT_OBSERVED_YET"
+    else:
+        combined = "NOT_EXPOSED_BY_CURRENT_SERVICE"
+    return {
+        "source": "output.thread_start_effective",
+        "values": values,
+        "statuses": statuses,
+        "field_paths": paths,
+        "status": combined,
+    }
+
+
+def _formal_approval_configuration_record(response, setup_evidence):
+    response_output = response.get("output") if isinstance(response, dict) else None
+    effective = (response_output.get("thread_start_effective")
+                 if isinstance(response_output, dict) else None)
+    record = _request_approval_configuration(response, effective)
+    setup_config = setup_evidence.get("project_config") if isinstance(setup_evidence, dict) else None
+    setup_ok = (
+        isinstance(setup_evidence, dict)
+        and setup_evidence.get("status") == "PREPARED"
+        and isinstance(setup_config, dict)
+        and setup_config.get("values") == PROJECT_CONFIG_VALUES
+    )
+    record["effective_status"] = record["status"]
+    record["setup_status"] = "PREPARED" if setup_ok else "INVALID_SETUP_EVIDENCE"
+    record["status"] = record["effective_status"] if setup_ok else "INVALID_SETUP_EVIDENCE"
+    record["setup"] = _project_approval_configuration_facts(setup_evidence)
+    return record
+
+
+def _constrain_with_formal_approval_configuration(result, approval_configuration):
+    business_result = dict(result)
+    result = {**business_result, "effective_approval_configuration": approval_configuration}
+    if business_result.get("verdict") != "PASS" or approval_configuration.get("status") == "MATCH":
+        return result
+
+    status = approval_configuration.get("status")
+    if status in ("NOT_OBSERVED_YET", "NOT_EXPOSED_BY_CURRENT_SERVICE"):
+        verdict, reason = "BLOCKED_OBSERVABILITY", "effective_approval_configuration_unobservable"
+    elif status == "MISMATCH":
+        verdict, reason = "BLOCKED_DEPENDENCY", "effective_approval_configuration_mismatch"
+    else:
+        verdict, reason = "INVALID_EVIDENCE", "effective_approval_configuration_invalid"
+    return {
+        **result,
+        "verdict": verdict,
+        "reason_code": reason,
+        "business_result": business_result,
+    }
+
+
 def _request_model(request):
     command = request.get("command")
     if not isinstance(command, str):
@@ -534,7 +776,8 @@ def _record_request_runtime_facts(preflight, output, request, service_snapshot, 
     request_path = codex_dir / "codex-request.json"
     install_path = codex_dir / "installed-entrypoint.json"
     lock_path = codex_dir / "apm.lock.yaml"
-    for path in (request_path, install_path, lock_path):
+    approval_config_path = codex_dir / "project-approval-config-setup.json"
+    for path in (request_path, install_path, lock_path, approval_config_path):
         if not path.is_file():
             raise ValueError("runtime_source_artifact_missing:" + path.name)
 
@@ -550,6 +793,32 @@ def _record_request_runtime_facts(preflight, output, request, service_snapshot, 
     }
     if not _is_recorded(entrypoint["cwd"]):
         raise ValueError("installed_entrypoint_cwd_unobservable")
+    approval_setup = json.loads(approval_config_path.read_text(encoding="utf-8"))
+    if approval_setup.get("status") != "PREPARED":
+        raise ValueError("project_approval_configuration_not_prepared")
+    approval_configuration = _project_approval_configuration_facts(approval_setup)
+    recorded_config_path_value = approval_configuration["project_config"].get("path")
+    install_cwd = install.get("cwd")
+    if not isinstance(recorded_config_path_value, str) or not isinstance(install_cwd, str):
+        raise ValueError("project_approval_configuration_readback_mismatch")
+    recorded_config_path = Path(recorded_config_path_value)
+    try:
+        config_path_matches = (
+            not recorded_config_path.is_symlink()
+            and recorded_config_path.resolve(strict=True)
+            == (Path(install_cwd) / ".codex" / "config.toml").resolve(strict=True)
+            and _sha256_file(recorded_config_path)
+            == approval_configuration["project_config"].get("sha256")
+        )
+    except OSError:
+        config_path_matches = False
+    if not config_path_matches:
+        raise ValueError("project_approval_configuration_readback_mismatch")
+    if (approval_configuration["project_config"]["values"] != PROJECT_CONFIG_VALUES
+            or approval_configuration["shared_assets_revision"] != fixture.get("sha")
+            or approval_configuration["source"].get("commit") != PROJECT_CONFIG_SOURCE_COMMIT
+            or approval_configuration["source"].get("sha256") != PROJECT_CONFIG_SOURCE_DOCUMENT_SHA256):
+        raise ValueError("project_approval_configuration_source_mismatch")
     shared_assets = {
         "producer_revision": producer["sha"],
         "fixture_revision": fixture["sha"],
@@ -587,6 +856,10 @@ def _record_request_runtime_facts(preflight, output, request, service_snapshot, 
         "path": "codex/codex-request.json",
         "sha256": _sha256_file(request_path),
     }
+    updated["project_approval_configuration"] = {
+        **approval_configuration,
+        "setup_evidence_sha256": _sha256_file(approval_config_path),
+    }
     updated["runtime_environment_evidence"]["isolation"] = {
         **updated["runtime_environment_evidence"]["isolation"],
         "sha256": _sha256_file(before_path),
@@ -612,6 +885,27 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
     lifecycle_context = {}
     location_context = {}
 
+    def record_approval_configuration(response):
+        directory = lifecycle_context["directory"]
+        setup_path = directory / "project-approval-config-setup.json"
+        response_path = directory / "codex-response.json"
+        record_path = directory / "effective-project-approval-configuration.json"
+        try:
+            setup_evidence = json.loads(setup_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            setup_evidence = {}
+        record = _formal_approval_configuration_record(response, setup_evidence)
+        record.update({
+            "schema": "issue-68-formal-approval-configuration-v1",
+            "artifact": "codex/effective-project-approval-configuration.json",
+            "response_artifact": "codex/codex-response.json",
+            "response_sha256": _sha256_file(response_path) if response_path.is_file() else None,
+            "setup_evidence_artifact": "codex/project-approval-config-setup.json",
+            "setup_evidence_sha256": _sha256_file(setup_path) if setup_path.is_file() else None,
+        })
+        base.write_json(record_path, record)
+        return record
+
     def install_host_with_capture(*install_args, **install_kwargs):
         directory, consumer, manifest = original_install_host(*install_args, **install_kwargs)
         if install_args[2] != "codex":
@@ -624,6 +918,15 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
             {"consumer": consumer, "program": program_root, "evidence_output": output},
         )
         args.transfer_location_root = location_context["root"]
+        approval_setup = prepare_project_approval_configuration(
+            consumer, args.fixture_root, directory / "project-approval-config-setup.json")
+        base.archive_config(consumer, directory, "before")
+        provenance["project_approval_configuration_setup"] = {
+            **_project_approval_configuration_facts(approval_setup),
+            "setup_evidence_sha256": _sha256_file(
+                directory / "project-approval-config-setup.json"),
+        }
+        base.write_json(Path(output) / "provenance.json", provenance)
         source = input_verifier.OWNER_CAPTURE_SOURCE
         source_sha = _sha256_file(source)
         if source_sha != input_verifier.OWNER_CAPTURE_SHA256:
@@ -755,9 +1058,17 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
         }
         base.write_json(lifecycle_context["directory"] / "lifecycle-evidence.json", evidence)
         manifest["lifecycle_evidence"] = evidence
+        approval_configuration = record_approval_configuration(response)
+        manifest["effective_project_approval_configuration"] = {
+            "artifact": "codex/effective-project-approval-configuration.json",
+            "sha256": _sha256_file(
+                lifecycle_context["directory"] / "effective-project-approval-configuration.json"),
+            "status": approval_configuration["status"],
+        }
         base.write_json(lifecycle_context["directory"] / "fixture-manifest.json", manifest)
         lifecycle_context["collected"] = True
-        return original_verify_codex(response, adapter, manifest)
+        result = original_verify_codex(response, adapter, manifest)
+        return _constrain_with_formal_approval_configuration(result, approval_configuration)
 
     base.build_request = build_request_with_evidence
     base.urllib.request.urlopen = verify_outgoing_request
@@ -773,10 +1084,19 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
                     response = json.loads(response_path.read_text()) if response_path.is_file() else {}
                 except (OSError, ValueError):
                     response = {}
+                approval_configuration = record_approval_configuration(response)
                 evidence = lifecycle.collect_lifecycle(
                     lifecycle_context["before"], lifecycle_context["manifest"],
                     lifecycle_context["consumer"], response, input_verifier)
                 base.write_json(lifecycle_context["directory"] / "lifecycle-evidence.json", evidence)
+                lifecycle_context["manifest"]["effective_project_approval_configuration"] = {
+                    "artifact": "codex/effective-project-approval-configuration.json",
+                    "sha256": _sha256_file(
+                        lifecycle_context["directory"] / "effective-project-approval-configuration.json"),
+                    "status": approval_configuration["status"],
+                }
+                base.write_json(lifecycle_context["directory"] / "fixture-manifest.json",
+                                lifecycle_context["manifest"])
         finally:
             base.build_request = original_build_request
             base.urllib.request.urlopen = original_urlopen

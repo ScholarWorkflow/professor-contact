@@ -17,7 +17,7 @@ import run_issue68_stage5_routing_r19_codex as runner
 from build_issue68_codex_request_r12 import build_request
 
 PRODUCER_SHA = "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d"
-FIXTURE_SHA = "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
+FIXTURE_SHA = "d160ecb403c0f9e9c153f4b8383302a4b67664ab"
 PROBE_SCHEMA = "issue68-r33-transfer-marker-v1"
 MARKER_NAME = ".issue68-r33-preflight-marker"
 MARKER_BYTES = b"issue68-r33-nonbusiness-transfer-marker\n"
@@ -38,21 +38,52 @@ def write_json(path, value):
                           encoding="utf-8")
 
 
-def request_configuration(request, response):
+def request_configuration(request, response, project_configuration=None):
     if not isinstance(response, dict):
         response = {}
     response_output = response.get("output")
     effective = (response_output.get("thread_start_effective")
                  if isinstance(response_output, dict) else None)
-    argv = shlex.split(request["command"])
-    models = [argv[index + 1] for index, token in enumerate(argv[:-1]) if token == "--model"]
-    configs = [argv[index + 1] for index, token in enumerate(argv[:-1]) if token == "--config"]
-    if models != ["gpt-6-luna"] or 'model_reasoning_effort="low"' not in configs:
+    command = request.get("command") if isinstance(request, dict) else None
+    if not isinstance(command, str):
+        raise ValueError("actual_request_command_unobservable")
+    argv = shlex.split(command)
+    if argv.count("--") != 1:
+        raise ValueError("actual_request_option_boundary_invalid")
+    option_argv = argv[:argv.index("--")]
+    if (option_argv.count("--cd") != 1 or option_argv.count("--sandbox") != 1
+            or option_argv.count("--model") != 1):
         raise ValueError("actual_request_configuration_mismatch")
-    sandbox = argv[argv.index("--sandbox") + 1]
-    consumer = str(Path(argv[argv.index("--cd") + 1]).resolve())
+    models = [option_argv[index + 1] for index, token in enumerate(option_argv[:-1])
+              if token == "--model"]
+    configs = [option_argv[index + 1] for index, token in enumerate(option_argv[:-1])
+               if token == "--config"]
+    consumer = str(Path(option_argv[option_argv.index("--cd") + 1]).resolve())
+    trust_override = 'projects={' + json.dumps(consumer) + '={trust_level="trusted"}}'
+    expected_configs = [
+        'model_reasoning_effort="low"',
+        "agents.max_concurrent_threads_per_session=2",
+        trust_override,
+    ]
+    forbidden_approval_flags = {
+        "--ask-for-approval", "--approval-policy", "--approvals-reviewer",
+        "--approve-for-me", "--dangerously-bypass-approvals-and-sandbox",
+    }
+    if (any(token in forbidden_approval_flags for token in option_argv)
+            or any(token.startswith(flag + "=") for token in option_argv
+                   for flag in forbidden_approval_flags)
+            or "-c" in option_argv
+            or any(token.startswith("--config=") for token in option_argv)):
+        raise ValueError("per_request_approval_override_forbidden")
+    if (models != ["gpt-6-luna"] or configs != expected_configs
+            or any("approval_policy" in config or "approvals_reviewer" in config
+                   for config in configs)):
+        raise ValueError("actual_request_configuration_mismatch")
+    sandbox = option_argv[option_argv.index("--sandbox") + 1]
     if sandbox != "workspace-write":
         raise ValueError("actual_request_sandbox_mismatch")
+
+    approval_configuration = runner._request_approval_configuration(response, effective)
 
     root_thread = (response_output.get("thread_id")
                    if isinstance(response_output, dict) else None)
@@ -137,6 +168,8 @@ def request_configuration(request, response):
         "service_reported_effective_reasoning_effort": reasoning_effort,
         "effective_reasoning_effort_status": reasoning_status,
         "effective_configuration_source": source,
+        "project_approval_configuration": project_configuration,
+        "effective_project_approval_configuration": approval_configuration,
     }
 
 
@@ -150,6 +183,13 @@ def command_tokens(command):
             and tokens[1] in ("-c", "-lc"):
         return shlex.split(tokens[2])
     return tokens
+
+
+def build_marker_command(marker_script, transfer_root):
+    return shlex.join([
+        "uv", "run", "--no-project", "python", str(marker_script),
+        str(transfer_root), MARKER_NAME, MARKER_BYTES.hex(),
+    ])
 
 
 def verify_probe(response, command, transfer_root, marker_name=MARKER_NAME,
@@ -506,6 +546,12 @@ def main(argv=None):
                 ["uv", "run", "--no-project", "python", str(entrypoint), "--help"],
                 consumer, directory / "entry-help", timeout=30):
             raise ValueError("installed_entry_not_executable")
+        project_config_setup_path = output / "project-approval-config-setup.json"
+        project_config_setup = runner.prepare_project_approval_configuration(
+            consumer, sources[1], project_config_setup_path)
+        project_config_facts = runner._project_approval_configuration_facts(
+            project_config_setup, "project-approval-config-setup.json")
+        result["project_approval_configuration_setup"] = project_config_facts
         consumer_before = installed_tree(consumer)
 
         transfer_root = validate_transfer_root(
@@ -518,11 +564,7 @@ def main(argv=None):
         marker_script = output / "marker_probe.py"
         marker_script.write_text(marker_probe_source(), encoding="utf-8")
         marker_sha = digest_bytes(MARKER_BYTES)
-        command = shlex.join([
-            "uv", "run", "--no-project", "--cache-dir", str(output / "uv-cache"),
-            "python", str(marker_script), str(transfer_root), MARKER_NAME,
-            MARKER_BYTES.hex(),
-        ])
+        command = build_marker_command(marker_script, transfer_root)
         prompt = (
             "这是一次无业务的传递目录预检。只执行下面这一条完整命令一次，不要修改或读取其他文件，"
             "不要委派代理、调用业务技能或处理教授数据。命令会在本次指定的独占目录中创建一个无业务含义的标记，"
@@ -536,7 +578,7 @@ def main(argv=None):
             request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         write_json(output / "request.json", request)
         (output / "request.body.json").write_bytes(request_bytes)
-        config = request_configuration(request, {})
+        config = request_configuration(request, {}, project_config_facts)
         config["request_body_sha256"] = digest_bytes(request_bytes)
         write_json(output / "actual-request-configuration.json", config)
         write_json(output / "transfer.before.json", before_location)
@@ -566,7 +608,8 @@ def main(argv=None):
             (output / "response.json").write_bytes(response_bytes)
             parsed = json.loads(response_bytes)
             result["response_body_sha256"] = digest_bytes(response_bytes)
-            actual_configuration = request_configuration(request, parsed)
+            actual_configuration = request_configuration(
+                request, parsed, project_config_facts)
             actual_configuration["request_body_sha256"] = digest_bytes(request_bytes)
             write_json(output / "actual-request-configuration.json", actual_configuration)
             result["request_configuration"] = actual_configuration
@@ -621,6 +664,11 @@ def main(argv=None):
                 before_location, after_location, transfer_root):
             result["state"] = "INVALID_TEST_EXECUTION"
             result["reason"] = "transfer_root_snapshots_not_complete_and_empty"
+        elif (result["state"] == "PASS"
+              and result.get("request_configuration", {}).get(
+                  "effective_project_approval_configuration", {}).get("status") != "MATCH"):
+            result["state"] = "BLOCKED"
+            result["reason"] = "effective_project_approval_configuration_not_verified"
         result["raw_evidence_directory"] = str(output)
         result["transfer_root"] = str(transfer_root)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:

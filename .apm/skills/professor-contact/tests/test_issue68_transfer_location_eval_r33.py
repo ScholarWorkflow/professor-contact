@@ -1,6 +1,5 @@
 """Focused checks for the single-request transfer-location preflight."""
 import json
-import shlex
 import sys
 import tempfile
 import unittest
@@ -20,15 +19,7 @@ class TestIssue68TransferLocationEvalPreflight(unittest.TestCase):
         self.marker_sha = "a" * 64
 
     def request(self):
-        argv = [
-            "--json", "--skip-git-repo-check", "--sandbox", "workspace-write",
-            "--cd", self.root, "--model", "gpt-6-luna",
-            "--config", 'model_reasoning_effort="low"',
-            "--config", "agents.max_concurrent_threads_per_session=2",
-            "--config", f'projects={json.dumps(self.root)}={{trust_level="trusted"}}',
-            "--", "synthetic marker preflight",
-        ]
-        return {"command": shlex.join(argv), "timeout": 900}
+        return preflight.build_request(self.root, "synthetic marker preflight")
 
     def test_configuration_before_eval_response_is_not_claimed_as_undisclosed(self):
         facts = preflight.request_configuration(self.request(), {})
@@ -37,6 +28,99 @@ class TestIssue68TransferLocationEvalPreflight(unittest.TestCase):
         self.assertEqual(facts["effective_reasoning_effort_status"], "NOT_OBSERVED_YET")
         self.assertEqual(facts["effective_configuration_source"]["status"],
                          "NOT_OBSERVED_YET")
+        self.assertEqual(facts["effective_project_approval_configuration"]["status"],
+                         "NOT_OBSERVED_YET")
+
+    def test_marker_command_uses_the_normal_uv_cache(self):
+        command = preflight.build_marker_command("/private/tmp/marker_probe.py", self.root)
+
+        self.assertEqual(preflight.command_tokens(command)[:4], [
+            "uv", "run", "--no-project", "python",
+        ])
+        self.assertNotIn("--cache-dir", preflight.command_tokens(command))
+
+    def test_request_keeps_approval_values_in_project_file_and_trust_only_in_cli(self):
+        request = self.request()
+
+        facts = preflight.request_configuration(request, {})
+
+        self.assertEqual(facts["requested_configs"], [
+            'model_reasoning_effort="low"',
+            "agents.max_concurrent_threads_per_session=2",
+            'projects={"/private/tmp/pc68-r33-transfer"={trust_level="trusted"}}',
+        ])
+        self.assertIsNone(facts["project_approval_configuration"])
+        request["command"] = request["command"].replace(
+            "-- ", '--config approval_policy="on-request" -- ')
+        with self.assertRaisesRegex(ValueError, "actual_request_configuration_mismatch"):
+            preflight.request_configuration(request, {})
+        for option in (
+            "--approve-for-me",
+            "--dangerously-bypass-approvals-and-sandbox",
+        ):
+            request = self.request()
+            request["command"] = request["command"].replace(
+                "-- ", f"{option} -- ")
+            with self.subTest(option=option):
+                with self.assertRaisesRegex(
+                    ValueError, "per_request_approval_override_forbidden"):
+                    preflight.request_configuration(request, {})
+
+    def test_effective_project_approval_values_are_read_from_response(self):
+        response = {"output": {"thread_start_effective": {
+            "approvalPolicy": "on-request",
+            "approvalsReviewer": "auto_review",
+        }}}
+
+        facts = preflight.request_configuration(self.request(), response)
+
+        approval = facts["effective_project_approval_configuration"]
+        self.assertEqual(approval["status"], "MATCH")
+        self.assertEqual(approval["values"], {
+            "approval_policy": "on-request",
+            "approvals_reviewer": "auto_review",
+        })
+        self.assertEqual(approval["statuses"], {
+            "approval_policy": "MATCH",
+            "approvals_reviewer": "MATCH",
+        })
+        self.assertEqual(approval["field_paths"], {
+            "approval_policy": "output.thread_start_effective.approvalPolicy",
+            "approvals_reviewer": "output.thread_start_effective.approvalsReviewer",
+        })
+
+    def test_missing_or_mismatched_effective_project_values_are_not_inferred(self):
+        response = {"output": {"thread_start_effective": {
+            "approvalPolicy": "on-request",
+            "approvalsReviewer": "user",
+        }}}
+
+        facts = preflight.request_configuration(self.request(), response)
+
+        approval = facts["effective_project_approval_configuration"]
+        self.assertEqual(approval["status"], "MISMATCH")
+        self.assertEqual(approval["values"]["approvals_reviewer"], "user")
+        missing = preflight.request_configuration(self.request(), {
+            "output": {"thread_start_effective": {"approvalPolicy": "on-request"}},
+        })["effective_project_approval_configuration"]
+        self.assertIsNone(missing["values"]["approvals_reviewer"])
+        self.assertEqual(missing["statuses"]["approvals_reviewer"],
+                         "NOT_EXPOSED_BY_CURRENT_SERVICE")
+        self.assertEqual(missing["status"], "NOT_EXPOSED_BY_CURRENT_SERVICE")
+
+    def test_invalid_effective_project_value_is_preserved_as_invalid(self):
+        response = {"output": {"thread_start_effective": {
+            "approvalPolicy": "on-request",
+            "approvalsReviewer": 3,
+        }}}
+
+        facts = preflight.request_configuration(self.request(), response)
+
+        approval = facts["effective_project_approval_configuration"]
+        self.assertEqual(approval["values"]["approvals_reviewer"], 3)
+        self.assertEqual(approval["statuses"]["approvals_reviewer"],
+                         "INVALID_SERVICE_REPORTED_VALUE")
+        self.assertEqual(approval["status"], "INVALID_SERVICE_REPORTED_VALUE")
 
     def test_effective_values_come_from_unique_root_thread_started_event(self):
         response = {"version": "eval-test", "output": {
