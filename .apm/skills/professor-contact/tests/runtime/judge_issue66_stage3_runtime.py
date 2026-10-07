@@ -1,12 +1,14 @@
 """Mechanical judge for the S3-RT-CODEX-1 runtime evidence (issue #66).
 
 This is the single decision program required by the current test plan
-(``issue-66-test-plan-r19-clarification-r7-2026-10-07`` §四/§五/§七).  It folds
+(``issue-66-test-plan-r21-stage3-write-validation-r9-2026-10-08`` §五/§六).
+It folds
 every required evidence surface into ONE verdict — formal delegation
 attribution, the invocation-credential value chain, the per-round
-prepare→validate→save→record handoff, the validator-produced raw bytes, the
-file-operation behavior proven by complete command inputs and completed
-``fileChange`` records, the completion-order
+prepare→validate→fixed-writer→save→record handoff, the validator-produced raw
+bytes and independent fixed-writer file observations, the file-operation
+behavior proven by complete command inputs and completed ``fileChange``
+records, the completion-order
 stop boundaries, the terminal state, and the install/fixture/snapshot
 checks — and classifies per the approved business requirements:
 
@@ -29,6 +31,8 @@ Inputs (files only; the judge never talks to the network):
   ``--post-snapshot``   required producer verifier outputs, folded in
 - ``--routing-evidence`` required legacy topology verifier output,
                         folded into the unique conclusion
+- ``--writer-evidence`` independent per-call fixed-writer file observations,
+                        folded into the same run conclusion
 Every evidence input must carry the same non-empty ``evidence_set_id``. The
 collector must bind the raw /eval response, adapter and verifier outputs to
 the same run before invoking this judge.
@@ -40,6 +44,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -60,6 +66,8 @@ ROOT_PREPARE = "stage3-prepare-validation"
 ROOT_SAVE = "stage3-save-validation"
 ROOT_RECORD = "stage3-record-validation"
 ROOT_REBUILD = "stage3-rebuild-overview"
+VALIDATOR_WRITE = "stage3-write-validation"
+WRITER_EVIDENCE_SCHEMA = "issue66.writer-observation.v1"
 CHILD_PLAN = "stage3-plan"
 CHILD_FINALIZE = "stage3-finalize"
 
@@ -1085,7 +1093,7 @@ class Judge:
         self.m = model
         self.state = candidate_state
         self.program_root = program_root
-        self.surfaces = surfaces          # install/fixture/routing/pre/post
+        self.surfaces = surfaces          # install/fixture/routing/pre/post/writer
         self.rows: list[dict] = []
         self.attribution_invalid = False
         self.attribution_incomplete = False
@@ -1282,7 +1290,7 @@ class Judge:
     def judge_folded_surfaces(self):
         evidence_ids = [(name, self.surfaces.get(name, {}).get("evidence_set_id")
                          if isinstance(self.surfaces.get(name), dict) else None)
-                        for name in ("install", "fixture", "routing", "pre", "post")]
+                        for name in ("install", "fixture", "routing", "pre", "post", "writer")]
         evidence_ids.extend((
             ("eval-response", self.m.evidence_set_id),
             ("adapter-output", self.m.adapter_evidence_set_id),
@@ -1687,6 +1695,22 @@ class Judge:
         if record.get("status") == "completed" and record.get("exit_code") == 0:
             return True
         return None
+
+    @classmethod
+    def _is_writer_error_message(cls, message):
+        """Recognize the fixed writer's structured error return message."""
+        raw = message.get("bytes") if isinstance(message, dict) else None
+        if not isinstance(raw, bytes):
+            return False
+        try:
+            payload = cls._strict_json_value(raw.decode("utf-8"))
+        except UnicodeDecodeError:
+            return False
+        return isinstance(payload, dict) \
+            and payload.get("status") == "error" \
+            and isinstance(payload.get("reason_code"), str) \
+            and bool(payload.get("reason_code")) \
+            and isinstance(payload.get("message"), str)
 
     def _result_payload(self, record, label, problems, gaps):
         if record is not None and record.get("status") == "declined":
@@ -2143,7 +2167,21 @@ class Judge:
                     f"round {round_no}: validator child has no correlated "
                     "completion event")
                 break
+            failed_writers = [record for record in m.execs.get(child, [])
+                              if self._writer_call(record) is not None
+                              and self._exec_result(record) is False
+                              and record.get("call_index", -1) < child_completion]
             save = self._root_exec(ROOT_SAVE, after=child_completion + 1)
+            if failed_writers:
+                if save is not None:
+                    problems.append(
+                        f"round {round_no}: root save was called after the "
+                        "fixed writer failed")
+                else:
+                    gaps.append(
+                        f"round {round_no}: fixed writer failed and the "
+                        "handoff correctly stopped before save")
+                break
             if save is None:
                 if self._declined_business_operations(child, child_completion):
                     gaps.append(f"round {round_no}: validator production was declined; save was not reached")
@@ -2308,6 +2346,520 @@ class Judge:
                       f"{r['prepare']['index']}→{r['record']['index']}"
                       for r in rounds])
         self.rounds = rounds
+
+    @staticmethod
+    def _writer_identity(value):
+        if not isinstance(value, dict) or set(value) != {
+                "thread_id", "turn_id", "item_id"}:
+            return None
+        fields = (value.get("thread_id"), value.get("turn_id"),
+                  value.get("item_id"))
+        return tuple(fields) if all(isinstance(item, str) and item
+                                    for item in fields) else None
+
+    @staticmethod
+    def _decode_writer_bytes(value):
+        if not isinstance(value, str):
+            return None
+        try:
+            raw = base64.b64decode(value, validate=True)
+        except (ValueError, binascii.Error):
+            return None
+        return raw if base64.b64encode(raw).decode("ascii") == value else None
+
+    @staticmethod
+    def _strict_json_value(text):
+        def unique_pairs(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate JSON member: {key}")
+                result[key] = value
+            return result
+
+        def reject_constant(value):
+            raise ValueError(f"non-finite JSON number: {value}")
+
+        try:
+            value = json.loads(text, object_pairs_hook=unique_pairs,
+                               parse_constant=reject_constant)
+        except (ValueError, TypeError):
+            return None
+        return value
+
+    @staticmethod
+    def _argv_values(command, flag):
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            return None
+        values = []
+        for index, token in enumerate(tokens):
+            if token == flag:
+                if index + 1 >= len(tokens) or tokens[index + 1].startswith("--"):
+                    values.append(None)
+                else:
+                    values.append(tokens[index + 1])
+            elif token.startswith(flag + "="):
+                values.append(token[len(flag) + 1:])
+        return values
+
+    def _writer_argument_check(self, entry, record, script):
+        problems, gaps = [], []
+        if self.installed_script is None or script != \
+                str(Path(self.installed_script).resolve()):
+            problems.append(f"round {entry['round']}: fixed writer did not use the installed consumer entry")
+        output_values = self._argv_values(record["command"], "--output-file")
+        map_values = self._argv_values(record["command"], "--output-map-json")
+        result_values = self._argv_values(record["command"], "--result-json")
+        if output_values is None or map_values is None or result_values is None:
+            gaps.append(f"round {entry['round']}: writer command argv cannot be parsed")
+            return problems, gaps, None
+        if len(output_values) != 1 or not output_values[0] \
+                or len(map_values) != 0 or len(result_values) != 1 \
+                or not result_values[0]:
+            problems.append(f"round {entry['round']}: writer command arguments are incomplete, duplicated, or use the wrong output mode")
+            return problems, gaps, None
+        if output_values[0] != entry.get("output_file"):
+            problems.append(f"round {entry['round']}: --output-file differs from prepare's output_file")
+        result_value = self._strict_json_value(result_values[0])
+        if not isinstance(result_value, dict) or not {
+                "result", "files", "notes"} <= set(result_value):
+            problems.append(f"round {entry['round']}: --result-json is not a complete result object")
+            result_value = None
+        return problems, gaps, result_value
+
+    @staticmethod
+    def _record_identity(record):
+        values = (record.get("thread_id"), record.get("turn_id"),
+                  record.get("item_id"))
+        return tuple(values) if all(isinstance(item, str) and item
+                                    for item in values) else None
+
+    @staticmethod
+    def _writer_call(record):
+        calls, uncertain = stage3_entry_calls(record.get("command", ""),
+                                               record.get("cwd"))
+        if uncertain or len(calls) != 1:
+            return None
+        subcommand, script = calls[0]
+        if subcommand != VALIDATOR_WRITE:
+            return None
+        return script
+
+    def _writer_events_in_window(self, entry, start, finish):
+        """Find raw writer command items, including incomplete lifecycle rows."""
+        candidates = []
+        for index in range(max(0, start + 1), min(finish, len(self.m.events))):
+            event = self.m.events[index]
+            message = event.get("message") or {}
+            params = message.get("params") or {}
+            item = params.get("item") or {}
+            if params.get("threadId") != entry.get("child") \
+                    or item.get("type") != "commandExecution":
+                continue
+            record = {"command": item.get("command") or "",
+                      "cwd": item.get("cwd") or params.get("cwd")}
+            if self._writer_call(record) is None:
+                continue
+            fields = (params.get("threadId"), params.get("turnId"),
+                      item.get("id"))
+            identity = tuple(fields) if all(
+                isinstance(value, str) and value for value in fields) else None
+            candidates.append((index, identity))
+        return candidates
+
+    def judge_writer_observations(self):
+        """Bind independent writer observations to native events and handoff.
+
+        ``writer-evidence`` has this compact shape::
+
+            {"schema":"issue66.writer-observation.v1",
+             "evidence_set_id":"...", "observations":[{
+              "round":1,
+              "writer_call":{"thread_id":"...","turn_id":"...",
+                             "item_id":"..."},
+              "command":"<complete native command input>",
+              "stdout_b64":"<raw stdout bytes>",
+              "output":{"path":"<prepared absolute path>",
+                "exists_before":false,"exists_after":true,
+                "mode":"0600","bytes_b64":"<file bytes>"},
+              "save_input":{"thread_id":"...","turn_id":"...",
+                "item_id":"...","path":"<source read by save>",
+                "bytes_b64":"<bytes read before save>"}}]}
+
+        For a failed writer call, ``output`` records the attempted prepared
+        path, ``exists_after`` may be false, and ``mode``/``bytes_b64`` are
+        null. ``save_input`` is null when save was correctly never reached.
+        The call identities are App Server commandExecution thread/turn/item
+        identities; text that merely mentions the command is not a call.
+        """
+        evidence = self.surfaces.get("writer")
+        self.writer_calls_by_round = {}
+        self.writer_actual_by_round = {}
+        self.writer_untrusted_rounds = set()
+
+        # Discover native writer calls before reading the independent surface.
+        # That way, a missing observation leaves raw-production judging at GAP
+        # when the native call exists, instead of turning an unobserved file
+        # into a product failure.
+        prepared = getattr(self, "prepared_rounds", [])
+        native_problems, native_gaps = [], []
+        all_exec_by_identity = {}
+        writer_records_by_identity = {}
+        for records in self.m.execs.values():
+            for record in records:
+                identity = self._record_identity(record)
+                if identity is not None:
+                    all_exec_by_identity.setdefault(identity, []).append(record)
+        for entry in prepared:
+            start, finish, window = self._validator_window(entry)
+            if window is None:
+                native_gaps.append(
+                    f"round {entry['round']}: validator command window is incomplete")
+                self.writer_untrusted_rounds.add(entry["round"])
+                continue
+            if any(index in self.m.invalid_sequence_indices
+                   for index in range(start + 1, finish)):
+                native_gaps.append(
+                    f"round {entry['round']}: event sequence does not establish a reliable writer call order")
+                self.writer_untrusted_rounds.add(entry["round"])
+                continue
+            execs, _changes = window
+            completed_writer_ids = {
+                self._record_identity(record) for record in execs
+                if self._writer_call(record) is not None
+                and self._record_identity(record) is not None}
+            incomplete_writer_items = [identity for _index, identity in
+                                       self._writer_events_in_window(
+                                           entry, start, finish)
+                                       if identity not in completed_writer_ids]
+            if incomplete_writer_items:
+                native_gaps.append(
+                    f"round {entry['round']}: fixed-writer lifecycle is incomplete or mismatched")
+                self.writer_untrusted_rounds.add(entry["round"])
+            for record in execs:
+                script = self._writer_call(record)
+                if script is None:
+                    if VALIDATOR_WRITE in record.get("command", ""):
+                        native_gaps.append(
+                            f"round {entry['round']}: fixed-writer invocation cannot be resolved")
+                    continue
+                self.writer_actual_by_round.setdefault(
+                    entry["round"], []).append(record)
+                identity = self._record_identity(record)
+                if identity is None:
+                    native_gaps.append(
+                        f"round {entry['round']}: fixed-writer item identity is missing")
+                    continue
+                writer_records_by_identity.setdefault(identity, []).append(
+                    (entry, record, script))
+
+        for identity, matches in writer_records_by_identity.items():
+            if len(matches) != 1:
+                native_gaps.append(
+                    f"native writer identity {identity} is not unique")
+                continue
+            entry, record, script = matches[0]
+            arg_problems, arg_gaps, result_value = \
+                self._writer_argument_check(entry, record, script)
+            native_problems.extend(arg_problems)
+            native_gaps.extend(arg_gaps)
+            result = self._exec_result(record)
+            if result is False:
+                native_problems.append(
+                    f"round {entry['round']}: fixed-writer command returned nonzero or failed")
+            elif result is None:
+                native_gaps.append(
+                    f"round {entry['round']}: native writer completion result is not established")
+            else:
+                native_stdout = record.get("output")
+                if not isinstance(native_stdout, str) or record.get("truncated"):
+                    native_gaps.append(
+                        f"round {entry['round']}: native writer stdout is missing or truncated")
+                else:
+                    stdout_value = self._strict_json_value(native_stdout)
+                    if not isinstance(stdout_value, dict) or not {
+                            "result", "files", "notes"} <= set(stdout_value):
+                        native_problems.append(
+                            f"round {entry['round']}: successful stdout is not a complete result object")
+                    elif isinstance(result_value, dict) \
+                            and stdout_value != result_value:
+                        native_problems.append(
+                            f"round {entry['round']}: --result-json semantics differ from writer stdout")
+
+        for entry in prepared:
+            actual_records = self.writer_actual_by_round.get(entry["round"], [])
+            if len(actual_records) > 1:
+                native_problems.append(
+                    f"round {entry['round']}: validator invoked the fixed writer "
+                    f"{len(actual_records)} times")
+            if not actual_records:
+                if entry["round"] in self.writer_untrusted_rounds:
+                    continue
+                if self.m.run_completed:
+                    native_problems.append(
+                        f"round {entry['round']}: validator completed without calling the fixed writer")
+                else:
+                    native_gaps.append(
+                        f"round {entry['round']}: fixed-writer call is not fully observed")
+
+        if not prepared:
+            native_gaps.append("no prepared validator round is available")
+        self.row("F-writer-command",
+                 "fail" if native_problems else "gap" if native_gaps else "pass",
+                 "native fixed-writer command, arguments, stdout and completion result",
+                 native_problems + native_gaps)
+
+        if evidence is None:
+            self.row("F-writer-evidence", "gap",
+                     "independent fixed-writer observation surface is missing",
+                     [])
+            return
+        if not isinstance(evidence, dict):
+            self.row("F-writer-evidence", "invalid",
+                     "writer evidence is not a JSON object", [])
+            return
+        if evidence.get("schema") != WRITER_EVIDENCE_SCHEMA:
+            self.row("F-writer-evidence", "invalid",
+                     "writer evidence schema is missing or unsupported",
+                     [str(evidence.get("schema"))])
+            return
+        observations = evidence.get("observations")
+        if not isinstance(observations, list):
+            self.row("F-writer-evidence", "invalid",
+                     "writer observations are not an array",
+                     [])
+            return
+
+        invalid, problems, gaps, observed = [], [], [], []
+        normalized = []
+        required_observation = {"round", "writer_call", "command",
+                                "stdout_b64", "output", "save_input"}
+        required_output = {"path", "exists_before", "exists_after",
+                           "mode", "bytes_b64"}
+        required_save = {"thread_id", "turn_id", "item_id", "path",
+                         "bytes_b64"}
+        for number, row in enumerate(observations, start=1):
+            prefix = f"writer observation {number}"
+            if not isinstance(row, dict) or set(row) != required_observation:
+                invalid.append(f"{prefix}: unsupported fields or shape")
+                continue
+            round_no = row.get("round")
+            identity = self._writer_identity(row.get("writer_call"))
+            stdout_bytes = self._decode_writer_bytes(row.get("stdout_b64"))
+            output = row.get("output")
+            if type(round_no) is not int or round_no < 1 or identity is None \
+                    or not isinstance(row.get("command"), str) \
+                    or not row.get("command") or stdout_bytes is None \
+                    or not isinstance(output, dict) \
+                    or set(output) != required_output:
+                invalid.append(f"{prefix}: required call, command, stdout, or output fields are malformed")
+                continue
+            output_bytes = self._decode_writer_bytes(output.get("bytes_b64"))
+            output_path = output.get("path")
+            before, after, mode = (output.get("exists_before"),
+                                   output.get("exists_after"),
+                                   output.get("mode"))
+            valid_mode = mode is None or isinstance(mode, str) \
+                and re.fullmatch(r"0[0-7]{3}", mode) is not None
+            if not isinstance(output_path, str) \
+                    or not Path(output_path).is_absolute() \
+                    or type(before) is not bool or type(after) is not bool \
+                    or not valid_mode \
+                    or (after and (mode is None or output_bytes is None)) \
+                    or (not after and (mode is not None
+                                       or output.get("bytes_b64") is not None)):
+                invalid.append(f"{prefix}: file existence, path, mode, or bytes are malformed")
+                continue
+            save_input = row.get("save_input")
+            save_bytes = None
+            save_identity = None
+            save_path = None
+            if save_input is not None:
+                if not isinstance(save_input, dict) \
+                        or set(save_input) != required_save:
+                    invalid.append(f"{prefix}: save input observation is malformed")
+                    continue
+                save_identity = self._writer_identity({
+                    "thread_id": save_input.get("thread_id"),
+                    "turn_id": save_input.get("turn_id"),
+                    "item_id": save_input.get("item_id")})
+                save_path = save_input.get("path")
+                save_bytes = self._decode_writer_bytes(
+                    save_input.get("bytes_b64"))
+                if save_identity is None or not isinstance(save_path, str) \
+                        or not Path(save_path).is_absolute() \
+                        or save_bytes is None:
+                    invalid.append(f"{prefix}: save input identity, path, or bytes are malformed")
+                    continue
+            normalized.append({"round": round_no, "identity": identity,
+                               "command": row["command"],
+                               "stdout_bytes": stdout_bytes,
+                               "output_path": output_path,
+                               "exists_before": before,
+                               "exists_after": after, "mode": mode,
+                               "output_bytes": output_bytes,
+                               "save_identity": save_identity,
+                               "save_path": save_path,
+                               "save_bytes": save_bytes})
+
+        duplicate_ids = sorted({item["identity"] for item in normalized
+                                if sum(other["identity"] == item["identity"]
+                                       for other in normalized) > 1})
+        if duplicate_ids:
+            invalid.append(f"duplicate writer observations for {duplicate_ids}")
+
+        seen_observation_ids = set()
+        for row in normalized:
+            prefix = f"round {row['round']} writer observation"
+            if row["round"] in self.writer_untrusted_rounds:
+                gaps.append(f"{prefix}: native ordering or call lifecycle is incomplete")
+                continue
+            identity = row["identity"]
+            matches = writer_records_by_identity.get(identity, [])
+            if len(matches) != 1:
+                if identity in all_exec_by_identity and not matches:
+                    gaps.append(f"{prefix}: native item does not execute the fixed writer")
+                else:
+                    invalid.append(f"{prefix}: thread/turn/item identity does not bind one native writer call")
+                continue
+            entry, record, script = matches[0]
+            if identity in seen_observation_ids:
+                continue
+            seen_observation_ids.add(identity)
+            if row["round"] != entry["round"] or record.get("thread_id") != entry["child"]:
+                invalid.append(f"{prefix}: round or validator thread conflicts with the handoff chain")
+                continue
+            if row["command"] != record.get("command"):
+                invalid.append(f"{prefix}: command text conflicts with its native item")
+                continue
+            if self._exec_result(record) is None:
+                gaps.append(f"{prefix}: native command has no determinate completion result")
+                continue
+            native_stdout = record.get("output")
+            if not isinstance(native_stdout, str) or record.get("truncated"):
+                gaps.append(f"{prefix}: native command stdout is missing or truncated")
+                continue
+            if row["stdout_bytes"] != native_stdout.encode("utf-8"):
+                invalid.append(f"{prefix}: stdout bytes conflict with the native completion")
+                continue
+            self.writer_calls_by_round[entry["round"]] = {
+                "entry": entry, "record": record,
+                "stdout_bytes": row["stdout_bytes"],
+                "output_bytes": row["output_bytes"],
+                "output_path": row["output_path"],
+                "exists_before": row["exists_before"],
+                "exists_after": row["exists_after"],
+                "mode": row["mode"],
+                "save_identity": row["save_identity"],
+                "save_path": row["save_path"],
+                "save_bytes": row["save_bytes"],
+                "script": script,
+            }
+
+        for entry in prepared:
+            round_no = entry["round"]
+            actual_records = self.writer_actual_by_round.get(round_no, [])
+            if not actual_records:
+                continue
+            identity = self._record_identity(actual_records[0])
+            if identity not in seen_observation_ids:
+                gaps.append(f"round {round_no}: independent file observation is missing or unbound")
+                continue
+            writer = self.writer_calls_by_round.get(round_no)
+            if writer is None:
+                continue
+            record = writer["record"]
+            result = self._exec_result(record)
+            output_file = entry.get("output_file")
+            output_values = self._argv_values(record["command"], "--output-file")
+            if output_values and len(output_values) == 1 \
+                    and output_values[0] is not None \
+                    and writer["output_path"] != output_values[0]:
+                invalid.append(f"round {round_no}: observed output path conflicts with the actual --output-file argument")
+                continue
+            if writer["output_path"] != output_file:
+                problems.append(f"round {round_no}: observed file path differs from prepare's output_file")
+
+            if result is True:
+                if writer["exists_before"]:
+                    problems.append(f"round {round_no}: assigned output existed before the fixed writer call")
+                if not writer["exists_after"]:
+                    problems.append(f"round {round_no}: fixed writer returned success without an output file")
+                if writer["exists_after"] and writer["mode"] != "0600":
+                    problems.append(f"round {round_no}: output mode is not 0600")
+                if writer["exists_after"] and writer["output_bytes"] != writer["stdout_bytes"]:
+                    problems.append(f"round {round_no}: output file bytes differ from writer stdout")
+            messages = self.m.assistant_messages.get(entry["child"], [])
+            if len(messages) != 1:
+                if self.m.unsupported_shapes.get(entry["child"]):
+                    gaps.append(
+                        f"round {round_no}: final validator message shape is unsupported")
+                elif self.m.run_completed:
+                    problems.append(
+                        f"round {round_no}: validator completed with "
+                        f"{len(messages)} final business messages, expected one")
+                else:
+                    gaps.append(
+                        f"round {round_no}: final validator message is not fully observed")
+            else:
+                message = messages[0]
+                if message.get("turn_id") != record.get("turn_id"):
+                    invalid.append(f"round {round_no}: final message turn does not bind to the writer call")
+                elif message.get("index", -1) <= record.get("index", -1):
+                    problems.append(f"round {round_no}: validator final message preceded fixed-writer completion")
+                elif result is True and writer["stdout_bytes"] != message.get("bytes"):
+                    problems.append(f"round {round_no}: final message bytes differ from fixed-writer stdout")
+
+            if result is False:
+                if writer["save_identity"] is not None:
+                    problems.append(
+                        f"round {round_no}: failed writer observation claims a save input")
+                continue
+
+            complete = next((item for item in getattr(self, "rounds", [])
+                             if item.get("round") == round_no), None)
+            if complete is None:
+                if result is True:
+                    gaps.append(f"round {round_no}: save input observation is not yet available")
+                continue
+            save = complete.get("save")
+            save_identity = self._record_identity(save) if save else None
+            if writer["save_identity"] is None:
+                gaps.append(f"round {round_no}: raw save-input bytes are missing")
+            elif save_identity != writer["save_identity"]:
+                invalid.append(f"round {round_no}: save-input observation does not bind the native save command")
+            else:
+                if writer["save_path"] != output_file:
+                    problems.append(f"round {round_no}: save consumed a path other than the prepared output_file")
+                if writer["save_bytes"] != writer["output_bytes"]:
+                    problems.append(f"round {round_no}: save input bytes differ from the writer output file")
+                save_payload = complete.get("save_payload") or {}
+                record_payload = complete.get("record_payload") or {}
+                observed_sha = sha256_bytes(writer["save_bytes"])
+                if save_payload.get("validation_sha256") != observed_sha:
+                    problems.append(f"round {round_no}: save return digest differs from the observed save input bytes")
+                if record_payload.get("validation_input_sha256") != observed_sha:
+                    problems.append(f"round {round_no}: record input digest differs from the observed save input bytes")
+            observed.append(f"round {round_no}: command item {identity[2]} → prepared path {output_file}")
+
+        if invalid:
+            self.row("F-writer-evidence", "invalid",
+                     "writer observation is malformed or cannot be associated with the native run",
+                     invalid + gaps + observed)
+        elif problems:
+            self.row("F-writer-evidence", "fail",
+                     "a directly observed fixed-writer contract was violated",
+                     problems + gaps + observed)
+        elif gaps:
+            self.row("F-writer-evidence", "gap",
+                     "writer command or raw file observation is incomplete",
+                     gaps + observed)
+        else:
+            self.row("F-writer-evidence", "pass",
+                     "fixed-writer arguments, file observation, final message and save input are bound byte-for-byte",
+                     observed)
 
     # -- fix 3: validator-produced original ---------------------------------
 
@@ -2502,79 +3054,29 @@ class Judge:
             return None
 
     def _production_evidence(self, entry, message):
-        """True/False/None: link one validator turn to its real output write."""
-        output_file = entry.get("output_file")
-        start, finish, window = self._validator_window(entry)
-        if window is None or not output_file:
+        """True/False/None: bind native writer, file observation and message."""
+        if entry.get("round") in getattr(self, "writer_untrusted_rounds", set()):
             return None
-        execs, changes = window
-        turn_id = message.get("turn_id")
-        if not turn_id:
+        writer = getattr(self, "writer_calls_by_round", {}).get(
+            entry.get("round"))
+        if writer is None:
+            if not getattr(self, "writer_actual_by_round", {}).get(
+                    entry.get("round")) and self.m.run_completed:
+                return False
             return None
-        if any(index in self.m.invalid_sequence_indices
-               for index in range(start + 1, finish)):
+        record = writer["record"]
+        if self._exec_result(record) is not True:
             return None
-        if any(change.get("thread_id") == entry.get("child")
-               and start < change.get("index", -1) < finish
-               for change in self.m.incomplete_execs):
+        if record.get("thread_id") != entry.get("child") \
+                or not record.get("turn_id") \
+                or message.get("turn_id") != record.get("turn_id"):
             return None
-        if any(change.get("thread_id") == entry.get("child")
-               and start < change.get("index", -1) < finish
-               for change in self.m.incomplete_file_changes):
-            return None
-        if any(not record.get("turn_id") for record in execs) \
-                or any(change.get("turn_id") != turn_id
-                       or not change.get("item_id")
-                       or change.get("status") != "completed"
-                       for change in changes):
-            return None
-        if any(record.get("turn_id") != turn_id for record in execs):
-            return None
-        if message.get("index", -1) <= start or message.get("index", -1) >= finish:
-            return None
-        writes = []
-        for record in execs:
-            operations, unknown = command_file_behavior(
-                record.get("command", ""), record.get("cwd"))
-            if unknown:
-                return None
-            write_ops = [operation for operation in operations
-                         if operation[0] == "write"]
-            if write_ops and self._exec_result(record) is not True:
-                return None
-            for _kind, path, exclusive in write_ops:
-                writes.append((Path(path), exclusive, record))
-        for change in changes:
-            if not change.get("completed") or not change.get("path"):
-                return None
-            operation = change.get("operation")
-            if operation not in {"add", "delete", "update"}:
-                return None
-            writes.append((Path(change["path"]), change.get("exclusive"), change))
-            move_path = change.get("move_path")
-            if move_path:
-                writes.append((Path(move_path), False, change))
-        if not writes:
-            # The correlated child, message, activity completion and complete
-            # run envelope establish an empty producer window. That is a
-            # confirmed product omission; an incomplete run remains a gap.
-            return False if self.m.run_completed else None
-        if len(writes) != 1:
+        if record.get("index") is None or message.get("index", -1) <= record["index"]:
             return False
-        path, exclusive, observation = writes[0]
-        if path != Path(output_file) or exclusive is False:
-            return False
-        if isinstance(observation, dict) and "command" in observation:
-            raw = self._literal_written_bytes(
-                observation["command"], output_file,
-                observation.get("cwd"))
-        else:
-            raw = self._filechange_added_bytes(observation)
-            if raw is None:
-                return None
+        raw = writer.get("output_bytes")
         if raw is None:
             return None
-        if raw != message["bytes"]:
+        if raw != writer.get("stdout_bytes") or raw != message.get("bytes"):
             return False
         return True
 
@@ -2638,6 +3140,8 @@ class Judge:
         for entry in rounds:
             child = entry["child"]
             output_file = entry.get("output_file") or ""
+            writer = getattr(self, "writer_calls_by_round", {}).get(
+                entry.get("round"))
             start, finish, window = self._validator_window(entry)
             if window is None:
                 gaps.append(f"round {entry['round']}: no correlated validator "
@@ -2663,6 +3167,48 @@ class Judge:
             operation_count = 0
             turn_id = None
             for record in execs:
+                if self._writer_call(record) is not None:
+                    turn_id = turn_id or record.get("turn_id")
+                    if writer is None or self._record_identity(record) != \
+                            self._record_identity(writer.get("record")):
+                        gaps.append(f"round {entry['round']}: fixed-writer file observation is not bound")
+                        continue
+                    operation_count += 1
+                    observed.append(
+                        f"round {entry['round']} event {record['index']}: "
+                        f"fixed writer observed {writer['output_path']} mode="
+                        f"{writer['mode']}")
+                    if Path(writer["output_path"]) != Path(output_file):
+                        problems.append(
+                            f"round {entry['round']}: fixed writer target "
+                            "differs from its prepared output")
+                    operations, unknown = command_file_behavior(
+                        record.get("command", ""), record.get("cwd"),
+                        ignored_stage3_subcommands={VALIDATOR_WRITE},
+                        expected_stage3_script=self.installed_script)
+                    if unknown:
+                        gaps.append(f"round {entry['round']} event "
+                                    f"{record['call_index']}: compound writer "
+                                    "command has unresolved neighboring behavior")
+                    for kind, path, exclusive in operations:
+                        if kind == "read":
+                            observed.append(
+                                f"round {entry['round']} event {record['index']}: "
+                                f"read {path}")
+                            continue
+                        operation_count += 1
+                        observed.append(
+                            f"round {entry['round']} event {record['index']}: "
+                            f"write {path} exclusive={exclusive}")
+                        if Path(path) != Path(output_file):
+                            problems.append(
+                                f"round {entry['round']} event {record['index']}: "
+                                f"write on {path} — outside assigned output file")
+                        elif not exclusive:
+                            problems.append(
+                                f"round {entry['round']} event {record['index']}: "
+                                "output file was not created exclusively")
+                    continue
                 record_turn = record.get("turn_id")
                 turn_id = turn_id or record_turn
                 if not record_turn or record_turn != turn_id:
@@ -2706,16 +3252,24 @@ class Judge:
                     gaps.append(f"round {entry['round']}: fileChange cannot be "
                                 "attributed to the validator turn")
                     continue
-                operation_count += 1
                 path = change["path"]
                 operation = change.get("operation")
                 if operation not in {"add", "delete", "update"}:
                     gaps.append(f"round {entry['round']}: unsupported fileChange kind")
                     continue
+                duplicate_writer_add = writer is not None \
+                    and Path(path) == Path(output_file) and operation == "add"
+                if not duplicate_writer_add:
+                    operation_count += 1
                 paths = [(path, change.get("exclusive"))]
                 if change.get("move_path"):
                     paths.append((change["move_path"], False))
                 for changed_path, exclusive in paths:
+                    if duplicate_writer_add \
+                            and Path(changed_path) == Path(output_file):
+                        # The independent writer observation proves existence,
+                        # mode and bytes; fileChange is only a duplicate view.
+                        continue
                     observed.append(
                         f"round {entry['round']} event {change['index']}: "
                         f"fileChange {operation} {changed_path}")
@@ -2796,7 +3350,9 @@ class Judge:
                     failed_operations.append((record.get("index"),
                                               record.get("call_index"),
                                               thread, role, subcommand,
-                                              has_write, declined,
+                                              has_write or (role == VALIDATOR_AGENT
+                                                            and subcommand == VALIDATOR_WRITE),
+                                              declined,
                                               record.get("turn_id")))
                 elif result is None and subcommand is not None \
                         and record.get("index") is None:
@@ -2834,10 +3390,20 @@ class Judge:
                 for message in messages:
                     if message["index"] > finish:
                         # A tool failure is a command result, not an assistant
-                        # business message. The generator must report that
-                        # failure once to its caller; that report is not a
-                        # dependent generation/validation action. Keep the
-                        # failed command in the credential/business verdict.
+                        # business message. The generator or validator may
+                        # report that failure once to its caller; that report
+                        # is not a dependent business action. Keep the failed
+                        # command in the product verdict.
+                        if role == VALIDATOR_AGENT \
+                                and operation == VALIDATOR_WRITE \
+                                and len(messages) == 1 \
+                                and messages[0].get("turn_id") == turn_id \
+                                and self._is_writer_error_message(messages[0]):
+                            reports.append(
+                                f"event {finish}: {operation} failed; event "
+                                f"{messages[0]['index']}: unique structured "
+                                f"error report on {thread}, turn {turn_id}")
+                            continue
                         if role == GENERATOR_AGENT \
                                 and operation in {CHILD_PLAN, CHILD_FINALIZE} \
                                 and len(messages) == 1 \
@@ -3133,6 +3699,7 @@ class Judge:
         self.judge_entry_binding()
         self.judge_credential_chain()
         self.judge_handoff_chain()
+        self.judge_writer_observations()
         self.judge_raw_original()
         self.judge_write_scope()
         self.judge_stop_order()
@@ -3259,6 +3826,7 @@ def main(argv=None) -> int:
     parser.add_argument("--install-evidence", default=None)
     parser.add_argument("--fixture-evidence", default=None)
     parser.add_argument("--routing-evidence", default=None)
+    parser.add_argument("--writer-evidence", default=None)
     parser.add_argument("--pre-snapshot", default=None)
     parser.add_argument("--post-snapshot", default=None)
     parser.add_argument("--output", required=True)
@@ -3278,6 +3846,7 @@ def main(argv=None) -> int:
         "install": args.install_evidence,
         "fixture": args.fixture_evidence,
         "routing": args.routing_evidence,
+        "writer": args.writer_evidence,
         "pre": args.pre_snapshot,
         "post": args.post_snapshot,
     }

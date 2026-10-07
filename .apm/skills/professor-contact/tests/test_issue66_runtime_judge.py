@@ -1,7 +1,7 @@
 """Channel validation for the S3-RT-CODEX-1 runtime judge (issue #66).
 
 The judge is the frozen parsing/decision program for the runtime evidence
-(``issue-66-test-plan-r19-clarification-r5-2026-10-07`` §四/§五/§七). Each test
+(``issue-66-test-plan-r21-stage3-write-validation-r9-2026-10-08`` §五/§六). Each test
 builds ONE synthetic evidence set whose expected verdict is fixed by the
 frozen contract — never by the judge.  Sample families:
 
@@ -21,6 +21,7 @@ frozen contract — never by the judge.  Sample families:
   version-less credential → INVALID).
 """
 import ast
+import base64
 import hashlib
 import inspect
 import json
@@ -191,6 +192,7 @@ class Fixture:
         self.include_turn_completed = True
         self.profile_fingerprint = None
         self.active_round = 1
+        self.writer_observations = []
 
     def round_path(self, path):
         return path if self.active_round == 1 else path.replace(".json", f"-round-{self.active_round}.json")
@@ -324,10 +326,23 @@ class Fixture:
         self.last_validator_verdict = json.loads(text)["files"][0]["verdict"]
         actions = [action("read", f"/tmp/教授研究/甲/{MD_NAME}")]
         raw = text.encode("utf-8")
-        writer = (f"open({self.round_path(OUTPUT_FILE)!r}, 'xb').write({raw!r})")
+        output_file = self.round_path(OUTPUT_FILE)
+        writer = fixed_writer_command(text, output_file)
         if not no_write:
-            self.child_exec(thread, "python3 -c " + shlex.quote(writer),
-                            output="", actions=actions)
+            self.child_exec(thread, writer, output=text, actions=actions)
+            item = self.events[-1]["message"]["params"]["item"]
+            self.writer_observations.append({
+                "round": self.active_round,
+                "writer_call": {"thread_id": thread,
+                                "turn_id": self.turn_id(thread),
+                                "item_id": item["id"]},
+                "command": writer,
+                "stdout_b64": base64.b64encode(raw).decode("ascii"),
+                "output": {"path": output_file, "exists_before": False,
+                           "exists_after": True, "mode": "0600",
+                           "bytes_b64": base64.b64encode(raw).decode("ascii")},
+                "save_input": None,
+            })
         else:
             self.child_exec(thread, f"cat /tmp/教授研究/甲/{MD_NAME}",
                             output="read", actions=actions)
@@ -360,6 +375,16 @@ class Fixture:
             actions=[action("read", self.round_path(OUTPUT_FILE)),
                      action("write", validation_file)],
             truncate=truncate)
+        if self.writer_observations and self.writer_observations[-1]["round"] == round_no:
+            item = self.events[-1]["message"]["params"]["item"]
+            raw = self.writer_observations[-1]["output"]["bytes_b64"]
+            self.writer_observations[-1]["save_input"] = {
+                "thread_id": ROOT,
+                "turn_id": self.turn_id(ROOT),
+                "item_id": item["id"],
+                "path": self.round_path(OUTPUT_FILE),
+                "bytes_b64": raw,
+            }
 
     def record(self, round_no, sha=None, needs_correction=False,
                handoff_drift=False, digest_drift=False):
@@ -395,13 +420,20 @@ class Fixture:
     # -- standard chains ------------------------------------------------------
 
     def root_reconstruction(self):
-        """The root rebuilds the source itself: a root exec writes the
-        output file inside the round window; the validator never writes."""
-        self.events.extend(exec_item(
+        """Insert a root output rewrite before the round's save operation."""
+        write_events = exec_item(
             self._next(), ROOT,
             "python3 -c 'open(\"" + OUTPUT_FILE + "\", \"w\")'",
             actions=[action("write", OUTPUT_FILE)],
-            turn_id=self.turn_id(ROOT)))
+            turn_id=self.turn_id(ROOT))
+        save_index = next((index for index, event in enumerate(self.events)
+                           if event.get("message", {}).get("method") == "item/started"
+                           and event.get("message", {}).get("params", {}).get("threadId") == ROOT
+                           and event.get("message", {}).get("params", {}).get("item", {}).get("type") == "commandExecution"
+                           and judge.ROOT_SAVE in event["message"]["params"]["item"].get("command", "")), None)
+        if save_index is None:
+            raise AssertionError("root reconstruction fixture needs a save command")
+        self.events[save_index:save_index] = write_events
 
     def adapter(self):
         return {"evidence_set_id": "issue66-fixture-run-1",
@@ -440,6 +472,35 @@ class Fixture:
         return {"evidence_set_id": "issue66-fixture-run-1",
                 "output": {"thread_id": ROOT,
                            "app_server_events": events}}
+
+
+def fixed_writer_command(result_text, output_file=OUTPUT_FILE):
+    return (f"uv run --no-project python {shlex.quote(INSTALLED_SCRIPT)} "
+            f"{judge.VALIDATOR_WRITE} --output-file "
+            f"{shlex.quote(output_file)} --result-json "
+            f"{shlex.quote(result_text)}")
+
+
+def replace_writer_command(fx, command, *, thread=V1, round_no=1,
+                           sync_observation=True):
+    observation = next((row for row in fx.writer_observations
+                        if row.get("round") == round_no
+                        and row.get("writer_call", {}).get("thread_id")
+                        == thread), None)
+    if observation is None:
+        raise AssertionError(f"missing writer observation for {thread} round {round_no}")
+    item_id = observation["writer_call"]["item_id"]
+    found = 0
+    for event in fx.events:
+        params = event.get("message", {}).get("params", {})
+        item = params.get("item", {})
+        if params.get("threadId") == thread and item.get("id") == item_id \
+                and item.get("type") == "commandExecution":
+            item["command"] = command
+            found += 1
+    if sync_observation:
+        observation["command"] = command
+    return found
 
 
 def mutate_command_return(fx, thread, subcommand, mutate):
@@ -568,6 +629,8 @@ def valid_surfaces(fx: Fixture):
             {"name": "pre_zero_write_snapshot", "status": "pass"}]},
         "post": {"status": "pass", "checks": [
             {"name": "post_matches_current", "status": "pass"}]},
+        "writer": {"schema": judge.WRITER_EVIDENCE_SCHEMA,
+                   "observations": _json_copy(fx.writer_observations)},
     }
     for evidence in surfaces.values():
         evidence["evidence_set_id"] = "issue66-fixture-run-1"
@@ -581,7 +644,7 @@ def valid_surfaces(fx: Fixture):
 
 _SAMPLE_SCHEMA = "issue66.sample-ledger.v1"
 _SAMPLE_LEDGER_ENV = "ISSUE66_SAMPLE_LEDGER"
-_R19_SAMPLE_FAMILIES = {
+_R9_SAMPLE_FAMILIES = {
     "three_completion_paths", "source_handoff_values", "formal_relations",
     "raw_messages", "file_permissions", "order_and_stops",
     "refusal_side_effects", "read_reuse", "evidence_channels",
@@ -603,6 +666,7 @@ _CLASS_FAMILY = {
     "CredentialValueTests": ["source_handoff_values"],
     "RawOriginalTests": ["raw_messages"],
     "WriteScopeTests": ["file_permissions"],
+    "WriterObservationTests": ["file_permissions", "evidence_channels"],
     "OrderAndStopTests": ["order_and_stops"],
     "EvidenceChannelTests": ["evidence_channels"],
 }
@@ -646,9 +710,9 @@ def _sample_families(test_id):
     class_name, method_name = test_id.rsplit(".", 2)[-2:]
     families = list(_TEST_FAMILY_OVERRIDES.get(
         method_name, _CLASS_FAMILY.get(class_name, [])))
-    unknown = set(families) - _R19_SAMPLE_FAMILIES
+    unknown = set(families) - _R9_SAMPLE_FAMILIES
     if unknown:
-        raise AssertionError(f"unknown R19 sample families: {sorted(unknown)}")
+        raise AssertionError(f"unknown r9 sample families: {sorted(unknown)}")
     return families or ["unclassified"]
 
 
@@ -896,6 +960,7 @@ def run(fx: Fixture, *, state="default", delegation_override=None,
     surface_flags = {"install": "--install-evidence",
                      "fixture": "--fixture-evidence",
                      "routing": "--routing-evidence",
+                     "writer": "--writer-evidence",
                      "pre": "--pre-snapshot",
                      "post": "--post-snapshot"}
     response_path.write_text(json.dumps(fx.response(), ensure_ascii=False),
@@ -1694,7 +1759,7 @@ class CredentialValueTests(RuntimeJudgeTestCase):
     def test_failed_prepare_write_and_record_stop_dependent_actions(self):
         cases = (
             (ROOT, "stage3-prepare-validation"),
-            (V1, "python3 -c"),
+            (V1, judge.VALIDATOR_WRITE),
             (ROOT, "stage3-record-validation"),
         )
         for thread, command_part in cases:
@@ -1733,16 +1798,11 @@ class RawOriginalTests(RuntimeJudgeTestCase):
 
     def test_root_reconstruction_fails(self):
         fx = Fixture()
-        legal_two_child_spine(fx)
-        # validator produced nothing; the root rebuilt the same bytes itself
-        fx.events = [e for e in fx.events
-                     if not (e["message"]["params"]["item"].get("type")
-                             == "commandExecution"
-                             and e["message"]["params"].get("threadId")
-                             == V1)]
+        legal_two_child(fx)
         fx.root_reconstruction()
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "fail", verdict)
 
     def test_composite_save_command_cannot_hide_a_root_rewrite(self):
         fx = Fixture()
@@ -1932,7 +1992,7 @@ class RawOriginalTests(RuntimeJudgeTestCase):
             event.get("message", {}).get("params", {}).get("threadId") == V1
             and event.get("message", {}).get("params", {}).get("item", {}).get("type")
             == "commandExecution"
-            and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
+            and judge.VALIDATOR_WRITE in event["message"]["params"]["item"].get("command", ""))]
         add_validator_file_change(
             moved, OUTPUT_FILE, kind="update", content="@@ -1 +1 @@\n-old\n+new\n",
             move_path="/tmp/教授研究/甲/moved-output.json")
@@ -1953,7 +2013,7 @@ class RawOriginalTests(RuntimeJudgeTestCase):
             event.get("message", {}).get("params", {}).get("threadId") == V1
             and event.get("message", {}).get("params", {}).get("item", {}).get("type")
             == "commandExecution"
-            and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
+            and judge.VALIDATOR_WRITE in event["message"]["params"]["item"].get("command", ""))]
         add_validator_file_change(
             unsupported, OUTPUT_FILE, content=msg_text())
         change = next(event for event in unsupported.events
@@ -1993,7 +2053,7 @@ class RawOriginalTests(RuntimeJudgeTestCase):
             event.get("message", {}).get("params", {}).get("threadId") == V1
             and event.get("message", {}).get("params", {}).get("item", {}).get("type")
             == "commandExecution"
-            and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
+            and judge.VALIDATOR_WRITE in event["message"]["params"]["item"].get("command", ""))]
         add_validator_file_change(
             deleted, OUTPUT_FILE, kind="delete", content="old validator bytes")
         deleted_model = judge.RunModel(deleted.response(), deleted.adapter())
@@ -2008,32 +2068,22 @@ class RawOriginalTests(RuntimeJudgeTestCase):
     def test_file_change_add_content_does_not_prove_exclusive_creation(self):
         fx = Fixture()
         legal_two_child(fx)
-        for event in fx.events:
-            params = event.get("message", {}).get("params", {})
-            item = params.get("item", {})
-            if params.get("threadId") == V1 and item.get("type") == "commandExecution":
-                item["commandActions"] = []
-        fx.events = [event for event in fx.events if not (
-            event.get("message", {}).get("params", {}).get("threadId") == V1
-            and (event.get("message", {}).get("params", {}).get("item", {}).get("type")
-                 == "fileChange" or (
-                     event.get("message", {}).get("params", {}).get("item", {}).get("type")
-                     == "commandExecution" and
-                     "python3 -c" in event["message"]["params"]["item"].get("command", ""))))]
+        # Keep the real completed command, but remove the independent file
+        # observation. FileChange Add alone cannot prove preexistence, mode,
+        # bytes, or that the validator produced the file.
+        fx.writer_observations = []
         add_validator_file_change(fx, OUTPUT_FILE, content=msg_text())
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
-        self.assertEqual(facts(verdict)["F-raw-original"], "pass", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "pass", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "gap", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "gap", verdict)
         self.assertEqual(facts(verdict)["F-validator-write-scope"], "gap", verdict)
 
     def test_file_change_without_diff_cannot_prove_raw_production(self):
         fx = Fixture()
         legal_two_child(fx)
-        fx.events = [event for event in fx.events if not (
-            event.get("message", {}).get("params", {}).get("threadId") == V1
-            and event.get("message", {}).get("params", {}).get("item", {}).get("type")
-            == "commandExecution"
-            and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
+        fx.writer_observations = []
         add_validator_file_change(fx, OUTPUT_FILE)
         for event in fx.events:
             params = event.get("message", {}).get("params", {})
@@ -2042,20 +2092,26 @@ class RawOriginalTests(RuntimeJudgeTestCase):
                 item["changes"][0].pop("diff", None)
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
-        self.assertEqual(facts(verdict)["F-raw-original"], "gap")
+        self.assertEqual(facts(verdict)["F-writer-command"], "pass", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "gap", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "gap", verdict)
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "gap", verdict)
 
     def test_file_change_with_different_add_content_fails_raw_integrity(self):
         fx = Fixture()
         legal_two_child(fx)
-        fx.events = [event for event in fx.events if not (
-            event.get("message", {}).get("params", {}).get("threadId") == V1
-            and event.get("message", {}).get("params", {}).get("item", {}).get("type")
-            == "commandExecution"
-            and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
+        # This is a product failure because the independent writer file
+        # observation contains bytes different from command stdout and the
+        # final validator message. The Add payload is only incidental here.
+        different = b"different bytes"
+        fx.writer_observations[0]["output"]["bytes_b64"] = \
+            base64.b64encode(different).decode("ascii")
         add_validator_file_change(fx, OUTPUT_FILE, content="different bytes")
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
-        self.assertEqual(facts(verdict)["F-raw-original"], "fail")
+        self.assertEqual(facts(verdict)["F-writer-command"], "pass", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "fail", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "fail", verdict)
 
     def test_literal_variable_body_exclusive_write_preserves_original(self):
         fx = Fixture()
@@ -2064,30 +2120,24 @@ class RawOriginalTests(RuntimeJudgeTestCase):
         source = (f"body = {payload!r}\n"
                   f"open({OUTPUT_FILE!r}, 'xb').write(body)")
         command = "python3 -c " + shlex.quote(source)
-        for event in fx.events:
-            params = event.get("message", {}).get("params", {})
-            item = params.get("item", {})
-            if params.get("threadId") == V1 \
-                    and item.get("type") == "commandExecution" \
-                    and "python3 -c" in item.get("command", ""):
-                item["command"] = command
+        replace_writer_command(fx, command)
         verdict = run(fx, state=PASS_STATE)
-        self.assertEqual(verdict["classification"], "PASS", verdict)
-        self.assertEqual(facts(verdict)["F-raw-original"], "pass", verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "fail", verdict)
 
     def test_incomplete_file_change_cannot_prove_raw_production(self):
         fx = Fixture()
         legal_two_child(fx)
-        fx.events = [event for event in fx.events if not (
-            event.get("message", {}).get("params", {}).get("threadId") == V1
-            and event.get("message", {}).get("params", {}).get("item", {}).get("type")
-            == "commandExecution"
-            and "python3 -c" in event["message"]["params"]["item"].get("command", ""))]
+        fx.writer_observations = []
         add_validator_file_change(fx, OUTPUT_FILE, content=msg_text(),
                                  status="inProgress")
         verdict = run(fx, state=PASS_STATE)
         self.assertEqual(verdict["classification"], "INVALID_TEST_EXECUTION", verdict)
-        self.assertEqual(facts(verdict)["F-raw-original"], "gap")
+        self.assertEqual(facts(verdict)["F-writer-command"], "pass", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "gap", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "gap", verdict)
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "gap", verdict)
 
     def test_message_without_item_identity_cannot_prove_original(self):
         fx = Fixture()
@@ -2114,19 +2164,283 @@ class RawOriginalTests(RuntimeJudgeTestCase):
                          "INVALID_TEST_EXECUTION", verdict)
 
 
-class WriteScopeTests(RuntimeJudgeTestCase):
+class WriterObservationTests(RuntimeJudgeTestCase):
     @staticmethod
-    def replace_validator_command(fx, command):
-        found = 0
+    def completed_writer(fx, *, round_no=1, thread=V1):
+        return next(row for row in fx.writer_observations
+                    if row["round"] == round_no
+                    and row["writer_call"]["thread_id"] == thread)
+
+    def test_complete_writer_observation_binds_native_call_and_handoff(self):
+        fx = Fixture()
+        legal_two_child(fx)
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "pass", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "pass", verdict)
+
+    def test_missing_or_malformed_observation_is_invalid_execution_evidence(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        missing = valid_surfaces(fx)
+        missing["writer"]["observations"] = []
+        verdict = run(fx, state=PASS_STATE, surface_evidence=missing)
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "pass", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "gap", verdict)
+
+        malformed_fx = Fixture()
+        legal_two_child(malformed_fx)
+        malformed = valid_surfaces(malformed_fx)
+        self.completed_writer(malformed_fx)["output"]["bytes_b64"] = "%%%"
+        malformed["writer"]["observations"] = _json_copy(
+            malformed_fx.writer_observations)
+        malformed_verdict = run(
+            malformed_fx, state=PASS_STATE, surface_evidence=malformed)
+        self.assertEqual(malformed_verdict["classification"],
+                         "INVALID_TEST_EXECUTION", malformed_verdict)
+        self.assertEqual(facts(malformed_verdict)["F-writer-command"],
+                         "pass", malformed_verdict)
+        self.assertEqual(facts(malformed_verdict)["F-writer-evidence"],
+                         "invalid", malformed_verdict)
+
+    def test_wrong_prepared_output_path_is_a_product_failure(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        wrong_path = "/tmp/教授研究/甲/other-output.json"
+        text = msg_text()
+        replace_writer_command(fx, fixed_writer_command(text, wrong_path))
+        self.completed_writer(fx)["output"]["path"] = wrong_path
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "fail", verdict)
+
+    def test_wrong_installed_script_is_not_accepted_as_fixed_writer(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        command = fixed_writer_command(msg_text()).replace(
+            INSTALLED_SCRIPT, "/tmp/another-consumer/contact_state.py", 1)
+        replace_writer_command(fx, command)
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
+
+    def test_incomplete_result_json_arguments_fail_without_rebuilding(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        incomplete = json.dumps({"result": "ok"}, ensure_ascii=False)
+        replace_writer_command(fx, fixed_writer_command(incomplete))
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
+
+    def test_semantically_different_result_json_and_stdout_fail(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        altered = json.loads(msg_text())
+        altered["notes"] = "different command input"
+        replace_writer_command(
+            fx, fixed_writer_command(json.dumps(altered, ensure_ascii=False)))
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "pass", verdict)
+
+    def test_confirmed_nonzero_writer_exit_is_a_product_failure(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        observation = self.completed_writer(fx)
+        call_id = observation["writer_call"]["item_id"]
         for event in fx.events:
             params = event.get("message", {}).get("params", {})
             item = params.get("item", {})
-            if params.get("threadId") == V1 \
-                    and item.get("type") == "commandExecution" \
-                    and item.get("command", "").startswith("python3 -c "):
-                item["command"] = command
-                found += 1
-        return found
+            if params.get("threadId") == V1 and item.get("id") == call_id \
+                    and event.get("message", {}).get("method") == "item/completed":
+                item["status"] = "failed"
+                item["exitCode"] = 1
+                item["aggregatedOutput"] = ""
+        observation["stdout_b64"] = base64.b64encode(b"").decode("ascii")
+        observation["output"].update({"exists_after": False, "mode": None,
+                                      "bytes_b64": None})
+        observation["save_input"] = None
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
+        self.assertEqual(facts(verdict)["F-stop-order"], "fail", verdict)
+
+    def test_output_exists_before_or_wrong_mode_is_a_product_failure(self):
+        for field, value in (("exists_before", True), ("mode", "0644")):
+            with self.subTest(field=field):
+                fx = Fixture()
+                legal_two_child(fx)
+                self.completed_writer(fx)["output"][field] = value
+
+                verdict = run(fx, state=PASS_STATE)
+
+                self.assertEqual(verdict["classification"], "FAIL", verdict)
+                self.assertEqual(facts(verdict)["F-writer-evidence"],
+                                 "fail", verdict)
+
+    def test_success_without_output_file_is_a_product_failure(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        observation = self.completed_writer(fx)
+        observation["output"].update({"exists_after": False, "mode": None,
+                                      "bytes_b64": None})
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "fail", verdict)
+
+    def test_actual_file_byte_mismatch_fails_but_missing_bytes_are_invalid(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        self.completed_writer(fx)["output"]["bytes_b64"] = base64.b64encode(
+            b"different file bytes").decode("ascii")
+        verdict = run(fx, state=PASS_STATE)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "fail", verdict)
+
+        missing_fx = Fixture()
+        legal_two_child(missing_fx)
+        self.completed_writer(missing_fx)["output"]["bytes_b64"] = None
+        missing_verdict = run(missing_fx, state=PASS_STATE)
+        self.assertEqual(missing_verdict["classification"],
+                         "INVALID_TEST_EXECUTION", missing_verdict)
+        self.assertEqual(facts(missing_verdict)["F-writer-evidence"],
+                         "invalid", missing_verdict)
+
+    def test_call_identity_and_round_mismatches_are_invalid_evidence(self):
+        for field, wrong in (("thread_id", "other-validator"),
+                             ("turn_id", "other-turn"),
+                             ("item_id", "other-item"),
+                             ("round", 2)):
+            with self.subTest(field=field):
+                fx = Fixture()
+                legal_two_child(fx)
+                observation = self.completed_writer(fx)
+                if field == "round":
+                    observation[field] = wrong
+                else:
+                    observation["writer_call"][field] = wrong
+
+                verdict = run(fx, state=PASS_STATE)
+
+                self.assertEqual(verdict["classification"],
+                                 "INVALID_TEST_EXECUTION", verdict)
+                self.assertEqual(facts(verdict)["F-writer-command"],
+                                 "pass", verdict)
+                self.assertEqual(facts(verdict)["F-writer-evidence"],
+                                 "invalid", verdict)
+
+    def test_observation_command_or_stdout_mismatch_is_invalid_evidence(self):
+        for field, value in (("command", "echo stage3-write-validation"),
+                             ("stdout_b64", base64.b64encode(
+                                 b"other stdout").decode("ascii"))):
+            with self.subTest(field=field):
+                fx = Fixture()
+                legal_two_child(fx)
+                self.completed_writer(fx)[field] = value
+
+                verdict = run(fx, state=PASS_STATE)
+
+                self.assertEqual(verdict["classification"],
+                                 "INVALID_TEST_EXECUTION", verdict)
+                self.assertEqual(facts(verdict)["F-writer-evidence"],
+                                 "invalid", verdict)
+
+        path_fx = Fixture()
+        legal_two_child(path_fx)
+        self.completed_writer(path_fx)["output"]["path"] = \
+            "/tmp/教授研究/甲/unobserved-target.json"
+        path_verdict = run(path_fx, state=PASS_STATE)
+        self.assertEqual(path_verdict["classification"],
+                         "INVALID_TEST_EXECUTION", path_verdict)
+        self.assertEqual(facts(path_verdict)["F-writer-evidence"],
+                         "invalid", path_verdict)
+
+    def test_fake_command_text_does_not_count_as_writer_invocation(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        fake = ("echo " + shlex.quote(
+            f"{INSTALLED_SCRIPT} {judge.VALIDATOR_WRITE} --output-file "
+            f"{OUTPUT_FILE} --result-json {msg_text()}"))
+        replace_writer_command(fx, fake)
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "gap", verdict)
+
+    def test_duplicate_observation_is_invalid_not_a_second_write(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        fx.writer_observations.append(_json_copy(fx.writer_observations[0]))
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "pass", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"],
+                         "invalid", verdict)
+
+    def test_final_message_and_save_input_bytes_are_checked_independently(self):
+        message_fx = Fixture()
+        legal_two_child(message_fx)
+        for event in message_fx.events:
+            item = event.get("message", {}).get("params", {}).get("item", {})
+            if item.get("type") == "message" and item.get("role") == "assistant":
+                item["content"][0]["text"] = "different final message"
+        message_verdict = run(message_fx, state=PASS_STATE)
+        self.assertEqual(message_verdict["classification"], "FAIL",
+                         message_verdict)
+        self.assertEqual(facts(message_verdict)["F-writer-evidence"],
+                         "fail", message_verdict)
+
+        save_fx = Fixture()
+        legal_two_child(save_fx)
+        save_bytes = base64.b64encode(b"different save input").decode("ascii")
+        self.completed_writer(save_fx)["save_input"]["bytes_b64"] = save_bytes
+        save_verdict = run(save_fx, state=PASS_STATE)
+        self.assertEqual(save_verdict["classification"], "FAIL", save_verdict)
+        self.assertEqual(facts(save_verdict)["F-writer-evidence"],
+                         "fail", save_verdict)
+
+    def test_save_input_call_identity_must_bind_the_native_save(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        self.completed_writer(fx)["save_input"]["item_id"] = "other-save-item"
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"],
+                         "invalid", verdict)
+
+
+class WriteScopeTests(RuntimeJudgeTestCase):
+    @staticmethod
+    def replace_validator_command(fx, command):
+        return replace_writer_command(fx, command)
 
     def test_compound_read_and_allowed_write_then_unauthorized_write_fails(self):
         fx = Fixture()
@@ -2158,6 +2472,7 @@ class WriteScopeTests(RuntimeJudgeTestCase):
 
         self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail",
                          verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
 
     def test_same_byte_write_then_restore_still_fails_write_scope(self):
         fx = Fixture()
@@ -2216,7 +2531,7 @@ class WriteScopeTests(RuntimeJudgeTestCase):
                          verdict)
         self.assertEqual(verdict["classification"], "FAIL", verdict)
 
-    def test_compound_legal_read_and_single_exclusive_output_write_passes(self):
+    def test_compound_legal_read_and_single_exclusive_output_write_without_fixed_writer_fails(self):
         fx = Fixture()
         legal_two_child(fx)
         raw = msg_text().encode("utf-8")
@@ -2229,6 +2544,8 @@ class WriteScopeTests(RuntimeJudgeTestCase):
 
         self.assertEqual(facts(verdict)["F-validator-write-scope"], "pass",
                          verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
 
     def test_path_read_text_is_read_only_in_a_legal_output_window(self):
         fx = Fixture()
@@ -2240,11 +2557,12 @@ class WriteScopeTests(RuntimeJudgeTestCase):
         command = "python3 -c " + shlex.quote(source)
         self.assertEqual(self.replace_validator_command(fx, command), 2)
         verdict = run(fx, state=PASS_STATE)
-        self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
         self.assertEqual(facts(verdict)["F-validator-write-scope"], "pass",
                          verdict)
 
-    def test_pure_unknown_command_is_an_evidence_gap(self):
+    def test_completed_non_writer_command_does_not_satisfy_fixed_writer(self):
         fx = Fixture()
         legal_two_child(fx)
         command = "unknown-validator-tool --output " + OUTPUT_FILE
@@ -2252,8 +2570,8 @@ class WriteScopeTests(RuntimeJudgeTestCase):
 
         verdict = run(fx, state=PASS_STATE)
 
-        self.assertEqual(verdict["classification"],
-                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
         self.assertEqual(facts(verdict)["F-validator-write-scope"], "gap",
                          verdict)
 
@@ -2264,8 +2582,10 @@ class WriteScopeTests(RuntimeJudgeTestCase):
         self.assertEqual(self.replace_validator_command(
             deferred, "python3 -c " + shlex.quote(source)), 2)
         deferred_verdict = run(deferred, state=PASS_STATE)
-        self.assertEqual(deferred_verdict["classification"],
-                         "INVALID_TEST_EXECUTION", deferred_verdict)
+        self.assertEqual(deferred_verdict["classification"], "FAIL",
+                         deferred_verdict)
+        self.assertEqual(facts(deferred_verdict)["F-writer-command"],
+                         "fail", deferred_verdict)
         self.assertEqual(facts(deferred_verdict)["F-validator-write-scope"],
                          "gap", deferred_verdict)
 
@@ -2276,8 +2596,10 @@ class WriteScopeTests(RuntimeJudgeTestCase):
         self.assertEqual(self.replace_validator_command(
             unreachable, "python3 -c " + shlex.quote(source)), 2)
         unreachable_verdict = run(unreachable, state=PASS_STATE)
-        self.assertEqual(unreachable_verdict["classification"],
-                         "INVALID_TEST_EXECUTION", unreachable_verdict)
+        self.assertEqual(unreachable_verdict["classification"], "FAIL",
+                         unreachable_verdict)
+        self.assertEqual(facts(unreachable_verdict)["F-writer-command"],
+                         "fail", unreachable_verdict)
         self.assertEqual(facts(unreachable_verdict)["F-validator-write-scope"],
                          "gap", unreachable_verdict)
 
@@ -2317,8 +2639,80 @@ class WriteScopeTests(RuntimeJudgeTestCase):
         self.assertEqual(facts(verdict)["F-validator-write-scope"], "pass",
                          verdict)
 
+    def test_same_path_file_change_add_is_duplicate_of_proven_writer(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        add_validator_file_change(fx, OUTPUT_FILE, content=msg_text())
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "pass",
+                         verdict)
+
+    def test_file_change_add_on_another_path_still_fails_write_scope(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        unauthorized_path = "/tmp/教授研究/甲/extra-output.json"
+        add_validator_file_change(fx, unauthorized_path, content=msg_text())
+
+        verdict = run(fx, state=PASS_STATE)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-validator-write-scope"], "fail",
+                         verdict)
+        scope = next(row for row in verdict["facts"]
+                     if row["fact"] == "F-validator-write-scope")
+        self.assertTrue(any(unauthorized_path in item
+                            for item in scope["evidence"]), verdict)
+
 
 class OrderAndStopTests(RuntimeJudgeTestCase):
+    @staticmethod
+    def failed_validator_writer_prefix(*, continue_with_save=False):
+        fx = Fixture()
+        fx.spawn(judge.GENERATOR_AGENT, G1)
+        fx.generator_round(G1)
+        fx.prepare(1)
+        fx.spawn(judge.VALIDATOR_AGENT, V1)
+        result_text = msg_text()
+        fx.child_exec(V1, fixed_writer_command(result_text), output="")
+        item = fx.events[-1]["message"]["params"]["item"]
+        item["status"] = "failed"
+        item["exitCode"] = 1
+        error_payload = {
+            "status": "error",
+            "reason_code": "validation_write_failed",
+            "message": "cannot create validation output",
+        }
+        writer_stdout = json.dumps(error_payload, ensure_ascii=False,
+                                   separators=(",", ":"))
+        item["aggregatedOutput"] = writer_stdout
+        fx.writer_observations.append({
+            "round": 1,
+            "writer_call": {"thread_id": V1,
+                            "turn_id": fx.turn_id(V1),
+                            "item_id": item["id"]},
+            "command": item["command"],
+            "stdout_b64": base64.b64encode(
+                writer_stdout.encode("utf-8")).decode("ascii"),
+            "output": {"path": OUTPUT_FILE, "exists_before": False,
+                       "exists_after": False, "mode": None,
+                       "bytes_b64": None},
+            "save_input": None,
+        })
+        # Preserve the same structured error while allowing presentation
+        # whitespace to differ from the failed command's captured stdout.
+        fx.child_message(V1, json.dumps(error_payload, ensure_ascii=False,
+                                        indent=2))
+        fx.complete_child(V1)
+        if continue_with_save:
+            fx.root_exec(
+                "contact_state.py stage3-save-validation --handoff-file "
+                f"{HANDOFF_FILE} --handoff-sha256 {HANDOFF_SHA}",
+                json.dumps({"status": "ok"}))
+        return fx
+
     @staticmethod
     def failed_generator_prefix(subcommand, *, continue_business=False):
         fx = Fixture()
@@ -2384,6 +2778,38 @@ class OrderAndStopTests(RuntimeJudgeTestCase):
         self.assertEqual(verdict["classification"], "FAIL", verdict)
         self.assertEqual(facts(verdict)["F-stop-order"], "fail", verdict)
 
+    def test_validator_writer_error_report_stops_before_save(self):
+        fx = self.failed_validator_writer_prefix()
+
+        verdict = run(fx, state=None)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "pass", verdict)
+        self.assertEqual(facts(verdict)["F-handoff-chain"], "gap", verdict)
+        self.assertEqual(facts(verdict)["F-stop-order"], "pass", verdict)
+        self.assertEqual(facts(verdict)["F-raw-original"], "gap", verdict)
+
+    def test_validator_writer_error_followed_by_save_fails_stop(self):
+        fx = self.failed_validator_writer_prefix(continue_with_save=True)
+
+        verdict = run(fx, state=None)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-handoff-chain"], "fail", verdict)
+        self.assertEqual(facts(verdict)["F-stop-order"], "fail", verdict)
+
+    def test_validator_writer_error_does_not_allow_success_report(self):
+        fx = self.failed_validator_writer_prefix()
+        report = next(event for event in fx.events
+                      if event["message"]["params"]["item"].get("type") == "message")
+        report["message"]["params"]["item"]["content"][0]["text"] = msg_text()
+
+        verdict = run(fx, state=None)
+
+        self.assertEqual(verdict["classification"], "FAIL", verdict)
+        self.assertEqual(facts(verdict)["F-stop-order"], "fail", verdict)
+
     @staticmethod
     def declined_prefix(stage):
         fx = Fixture()
@@ -2394,9 +2820,8 @@ class OrderAndStopTests(RuntimeJudgeTestCase):
         needle = judge.ROOT_PREPARE
         if stage == "validator":
             fx.spawn(judge.VALIDATOR_AGENT, V1)
-            writer = f"open({OUTPUT_FILE!r}, 'xb').write(b'blocked')"
-            fx.child_exec(V1, "python3 -c " + shlex.quote(writer), output="")
-            thread, needle = V1, "python3 -c"
+            fx.child_exec(V1, fixed_writer_command(msg_text()), output="")
+            thread, needle = V1, judge.VALIDATOR_WRITE
         for event in fx.events:
             message = event.get("message", {})
             params = message.get("params", {})
@@ -2779,7 +3204,7 @@ class EvidenceChannelTests(RuntimeJudgeTestCase):
                            "threadId") == V1
                        and event.get("message", {}).get("params", {}).get(
                            "item", {}).get("type") == "commandExecution"
-                       and "python3 -c" in event["message"]["params"][
+                       and judge.VALIDATOR_WRITE in event["message"]["params"][
                            "item"].get("command", "")]
         start_index, start_event = next(
             (index, event) for index, event in call_events
@@ -2806,7 +3231,7 @@ class EvidenceChannelTests(RuntimeJudgeTestCase):
             if params.get("threadId") == V1 \
                     and message.get("method") == "item/completed" \
                     and item.get("type") == "commandExecution" \
-                    and "python3 -c" in item.get("command", ""):
+                    and judge.VALIDATOR_WRITE in item.get("command", ""):
                 item["call_id"] = "different-call-id"
                 break
 

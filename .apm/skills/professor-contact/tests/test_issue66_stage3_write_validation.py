@@ -90,6 +90,131 @@ class Stage3WriteValidationTests(unittest.TestCase):
             self.assertFalse(analysis_path.exists())
             self.assertFalse(candidate_path.exists())
 
+    def test_single_write_accepts_each_legal_candidate_verdict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate_path = root / "candidate.md"
+            valid_issue = {
+                "rule": "B5", "severity": "minor", "location": 1,
+                "quote": "候选标题", "suggestion": "补充说明。",
+            }
+            blocking_issue = {
+                **valid_issue,
+                "severity": "blocking",
+                "suggestion": "修复阻断问题。",
+            }
+            cases = {
+                "pass": {"blocking": 0, "minor": 0, "issues": []},
+                "pass_with_minor": {
+                    "blocking": 0, "minor": 1, "issues": [valid_issue]},
+                "fail": {"blocking": 1, "minor": 0, "issues": [blocking_issue]},
+            }
+
+            for verdict, counts in cases.items():
+                with self.subTest(verdict=verdict):
+                    output_file = root / f"{verdict}.json"
+                    entry = {
+                        **_entry(candidate_path),
+                        **counts,
+                        "verdict": verdict,
+                    }
+                    result = _result(entry)
+                    result["notes"] = f"{verdict} 的完整校验结果"
+                    result["extension"] = {"keep": True, "verdict": verdict}
+
+                    process = _run_writer(
+                        output_file, json.dumps(result, ensure_ascii=False))
+
+                    self.assertEqual(
+                        process.returncode, 0,
+                        process.stderr.decode("utf-8", "replace"))
+                    written = output_file.read_bytes()
+                    self.assertTrue(written)
+                    self.assertEqual(process.stdout, written)
+                    self.assertEqual(json.loads(written), result)
+                    self.assertEqual(
+                        stat.S_IMODE(output_file.stat().st_mode), 0o600)
+
+    def test_write_buffer_uses_exclusive_create_and_same_descriptor_for_readback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output_file = Path(directory) / "validation.json"
+            expected = b"\x00stage-3 exact bytes\xff\n"
+
+            spec = importlib.util.spec_from_file_location(
+                "_issue66_contact_state_descriptor_test", RUNNER)
+            module = importlib.util.module_from_spec(spec)
+            self.assertIsNotNone(spec.loader)
+            spec.loader.exec_module(module)
+
+            real_open = os.open
+            real_fchmod = os.fchmod
+            real_write = os.write
+            real_fsync = os.fsync
+            real_lseek = os.lseek
+            real_read = os.read
+            calls = {
+                "open": [], "fchmod": [], "write": [], "fsync": [],
+                "lseek": [], "read": [],
+            }
+
+            def tracked_open(path, flags, mode=0o777):
+                descriptor = real_open(path, flags, mode)
+                calls["open"].append((Path(path), flags, mode, descriptor))
+                return descriptor
+
+            def tracked_fchmod(descriptor, mode):
+                calls["fchmod"].append((descriptor, mode))
+                return real_fchmod(descriptor, mode)
+
+            def tracked_write(descriptor, data):
+                calls["write"].append((descriptor, bytes(data)))
+                return real_write(descriptor, data)
+
+            def tracked_fsync(descriptor):
+                calls["fsync"].append(descriptor)
+                return real_fsync(descriptor)
+
+            def tracked_lseek(descriptor, offset, whence):
+                calls["lseek"].append((descriptor, offset, whence))
+                return real_lseek(descriptor, offset, whence)
+
+            def tracked_read(descriptor, size):
+                data = real_read(descriptor, size)
+                calls["read"].append((descriptor, data))
+                return data
+
+            with mock.patch.object(module.os, "open", side_effect=tracked_open):
+                with mock.patch.object(module.os, "fchmod", side_effect=tracked_fchmod):
+                    with mock.patch.object(module.os, "write", side_effect=tracked_write):
+                        with mock.patch.object(module.os, "fsync", side_effect=tracked_fsync):
+                            with mock.patch.object(module.os, "lseek", side_effect=tracked_lseek):
+                                with mock.patch.object(module.os, "read", side_effect=tracked_read):
+                                    module._stage3_write_buffer(output_file, expected)
+
+            self.assertEqual(len(calls["open"]), 1)
+            opened_path, flags, mode, descriptor = calls["open"][0]
+            self.assertEqual(opened_path, output_file)
+            self.assertEqual(flags, os.O_RDWR | os.O_CREAT | os.O_EXCL)
+            self.assertEqual(mode, 0o600)
+            self.assertEqual(calls["fchmod"], [(descriptor, 0o600)])
+            self.assertTrue(calls["write"])
+            self.assertTrue(calls["fsync"])
+            self.assertEqual(calls["lseek"], [(descriptor, 0, os.SEEK_SET)])
+            self.assertTrue(calls["read"])
+            descriptors_by_operation = {
+                "write": [fd for fd, _ in calls["write"]],
+                "fsync": calls["fsync"],
+                "read": [fd for fd, _ in calls["read"]],
+            }
+            for operation, descriptors in descriptors_by_operation.items():
+                self.assertTrue(
+                    all(fd == descriptor for fd in descriptors),
+                    f"{operation} did not use the creating descriptor: {calls[operation]!r}")
+            self.assertEqual(b"".join(data for _, data in calls["write"]), expected)
+            self.assertEqual(b"".join(data for _, data in calls["read"]), expected)
+            self.assertEqual(output_file.read_bytes(), expected)
+            self.assertEqual(stat.S_IMODE(output_file.stat().st_mode), 0o600)
+
     def test_batch_map_writes_the_same_complete_result_to_every_candidate(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

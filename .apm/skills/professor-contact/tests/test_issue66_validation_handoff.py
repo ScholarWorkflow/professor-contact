@@ -28,6 +28,8 @@ import itertools
 import json
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -148,17 +150,20 @@ class ValidationHandoffBase(Stage3DirectionGroupBase):
         return str(path), hashlib.sha256(path.read_bytes()).hexdigest()
 
     @staticmethod
-    def finding(quote):
-        return {"rule": "B5", "severity": "blocking", "location": "validator 自报位置",
+    def finding(quote, severity="blocking"):
+        return {"rule": "B5", "severity": severity, "location": "validator 自报位置",
                 "quote": quote, "suggestion": "首次出现时用日常语言解释。"}
 
     def validator_bytes(self, issues=(), verdict=None):
         """The validator's complete single business message as exact bytes."""
         blocking = [i for i in issues if i.get("severity") == "blocking"]
+        minor = [i for i in issues if i.get("severity") == "minor"]
+        if verdict is None:
+            verdict = "fail" if blocking else "pass_with_minor" if minor else "pass"
         payload = {"result": "ok", "files": [{
             "file": str(self.prof_dir / CANDIDATES_MD), "artifact": "candidates",
-            "verdict": verdict or ("fail" if blocking else "pass"),
-            "blocking": len(blocking), "minor": 0, "issues": list(issues)}],
+            "verdict": verdict, "blocking": len(blocking), "minor": len(minor),
+            "issues": list(issues)}],
             "notes": ""}
         return (json.dumps(payload, ensure_ascii=False, indent=1) + "\n").encode("utf-8")
 
@@ -169,6 +174,20 @@ class ValidationHandoffBase(Stage3DirectionGroupBase):
         fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "wb") as handle:
             handle.write(raw)
+        return raw
+
+    def fixed_writer_writes(self, out, result):
+        """Call the fixed writer and return its captured, persisted byte buffer."""
+        process = subprocess.run(
+            [sys.executable, str(Path(contact_state.__file__)),
+             "stage3-write-validation", "--output-file", out["output_file"],
+             "--result-json", json.dumps(result, ensure_ascii=False)],
+            capture_output=True, check=False)
+        self.assertEqual(process.returncode, 0,
+                         process.stderr.decode("utf-8", "replace"))
+        source = Path(out["output_file"])
+        raw = source.read_bytes()
+        self.assertEqual(process.stdout, raw)
         return raw
 
     def save(self, out, sha=None):
@@ -542,6 +561,51 @@ class PrepareHandoffTests(ValidationHandoffBase):
 
 class SaveHandoffTests(ValidationHandoffBase):
     """§6.3: metadata re-verification, byte-exact copy, failure discipline."""
+
+    def assert_fixed_writer_result_handoff(self, issues, verdict,
+                                           needs_correction):
+        self.commit_first()
+        out = self.prepare(1)
+        self.assertEqual(out["status"], "ok",
+                         msg=json.dumps(out, ensure_ascii=False))
+        source = Path(out["output_file"])
+        self.assertFalse(source.exists())
+
+        result = json.loads(self.validator_bytes(issues))
+        result["notes"] = f"完整 {verdict} 校验结果"
+        result["extension"] = {"retained": True, "verdict": verdict}
+        raw = self.fixed_writer_writes(out, result)
+        self.assertEqual(json.loads(raw), result)
+
+        saved = self.save(out)
+        self.assertEqual(saved["status"], "ok",
+                         msg=json.dumps(saved, ensure_ascii=False))
+        self.assertEqual(saved["validation_sha256"],
+                         hashlib.sha256(raw).hexdigest())
+        self.assertEqual(Path(saved["validation_file"]).read_bytes(), raw)
+        self.assertEqual(source.read_bytes(), raw)
+
+        recorded = self.record_handoff(out, saved["validation_sha256"])
+        self.assertEqual(recorded["status"], "ok",
+                         msg=json.dumps(recorded, ensure_ascii=False))
+        self.assertEqual(recorded["validation_input_sha256"],
+                         hashlib.sha256(raw).hexdigest())
+        self.assertEqual(recorded["raw_verdict"], verdict)
+        self.assertEqual(recorded["needs_correction"], needs_correction)
+        self.assertEqual(self.load_state()["validator"]["raw_verdict"], verdict)
+        self.assertEqual(Path(saved["validation_file"]).read_bytes(), raw)
+
+    def test_fixed_writer_pass_result_survives_save_and_record_byte_exactly(self):
+        self.assert_fixed_writer_result_handoff([], "pass", False)
+
+    def test_fixed_writer_pass_with_minor_result_survives_save_and_record(self):
+        issue = self.finding("候选 dir_A_1", severity="minor")
+        self.assert_fixed_writer_result_handoff(
+            [issue], "pass_with_minor", False)
+
+    def test_fixed_writer_fail_result_survives_save_and_record_byte_exactly(self):
+        issue = self.finding("候选 dir_A_1")
+        self.assert_fixed_writer_result_handoff([issue], "fail", True)
 
     def test_save_copies_the_exact_source_bytes(self):
         self.commit_first()

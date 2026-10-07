@@ -37,6 +37,13 @@ def _section(text: str, start: str, end: str) -> str:
     return text[start_at:end_at]
 
 
+def _section_to_end(text: str, start: str) -> str:
+    start_at = text.find(start)
+    if start_at < 0:
+        raise AssertionError(f"missing section start: {start}")
+    return text[start_at:]
+
+
 def _assert_in_order(testcase, text: str, tokens: list[str], label: str) -> None:
     positions = [text.find(token) for token in tokens]
     testcase.assertTrue(
@@ -154,7 +161,7 @@ class Stage3IdeaGeneratorAgentContractTests(unittest.TestCase):
             "完整业务 JSON 对象",
             "stdout",
             "退出码为",
-            "逐字节相同",
+            "成功 stdout 是完整结果原文并与指定文件中的字节完全相同",
             "命令失败",
             "error",
             "停止",
@@ -180,9 +187,14 @@ class Stage3IdeaGeneratorAgentContractTests(unittest.TestCase):
         ):
             with self.subTest(caller_contract=marker):
                 self.assertIn(marker, loop)
+        handoff_chain = _section(
+            loop,
+            "每轮原始 JSON 都按",
+            "两个分支的业务规则完全相同",
+        )
         _assert_in_order(
-            self, loop,
-            ["stage3-prepare-validation", "stage3-write-validation",
+            self, handoff_chain,
+            ["stage3-prepare-validation", "validator 固定入口写入",
              "stage3-save-validation", "stage3-record-validation"],
             "固定写入后的 caller 顺序",
         )
@@ -203,11 +215,7 @@ class Stage3IdeaGeneratorAgentContractTests(unittest.TestCase):
             "### E. Stage-3 原文落盘",
             "## Return value",
         )
-        hard_rules = _section(
-            self.validator_text,
-            "## Hard rules",
-            "## Return value",
-        )
+        hard_rules = _section_to_end(self.validator_text, "## Hard rules")
         self.assertIn("未传 `output_file` 时保持原有只读行为", validator_write)
         self.assertIn("未传 `output_file` 的调用绝不 write/edit 任何文件", hard_rules)
         self.assertIn("不调用写入入口", validator_write)

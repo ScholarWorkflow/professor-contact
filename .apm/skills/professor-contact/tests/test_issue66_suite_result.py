@@ -12,14 +12,15 @@ helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
 
 PLANNED_SUITES = ("judge", "execution_wiring", "structured_result", "credential",
-                  "local_state", "validation_handoff", "agent_contract")
+                  "local_state", "validation_handoff", "agent_contract",
+                  "write_validation")
 
 
 class StructuredResultTests(unittest.TestCase):
     def candidate_case(self, *, ledger_valid, suite_valid, product_fails,
                        expected_overall, expected_failures, expected_validity,
                        candidate_metadata=None, empty_suite=False, missing_suite=None):
-        # 预期按第七版计划第六节四种组合固定，不从汇总程序取值。
+        # 预期按第九版计划第六节四种组合固定，不从汇总程序取值。
         class Case(unittest.TestCase):
             def test_product(self):
                 if product_fails:
@@ -75,6 +76,15 @@ class StructuredResultTests(unittest.TestCase):
                                       ("actual.json", actual)):
                 (directory / filename).write_text(json.dumps(content, ensure_ascii=False,
                                                              indent=2), encoding="utf-8")
+            references = {
+                "raw_suite": "raw-suite.json#classification,tests",
+                "input": "input.json#candidate,ledger,suites",
+                "independent_expected": "independent-expected.json",
+                "actual": "actual.json#overall,evidence_validity,local_product_failures",
+                "classifier": ".apm/skills/professor-contact/tests/runtime/issue66_candidate_classify.jq",
+            }
+            (directory / "references.json").write_text(
+                json.dumps(references, ensure_ascii=False, indent=2), encoding="utf-8")
         self.assertEqual(actual["overall"], expected_overall)
         self.assertEqual(actual["evidence_validity"], expected_validity)
         self.assertEqual(len(actual["local_product_failures"]), expected_failures)
@@ -158,7 +168,7 @@ class StructuredResultTests(unittest.TestCase):
     def test_missing_planned_suite_is_invalid_candidate_evidence(self):
         self.candidate_case(ledger_valid=True, suite_valid=True, product_fails=False,
                             expected_overall="INVALID_TEST_EXECUTION", expected_failures=0,
-                            expected_validity="INVALID", missing_suite="agent_contract")
+                            expected_validity="INVALID", missing_suite="write_validation")
 
     def test_software_source_version_and_digest_differences_do_not_invalidate_pass(self):
         self.candidate_case(

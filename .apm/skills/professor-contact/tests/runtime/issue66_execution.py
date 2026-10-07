@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import shlex
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PureWindowsPath
 
-PLAN = "issue-66-test-plan-r20-stage3-write-validation-r8-2026-10-08"
+PLAN = "issue-66-test-plan-r21-stage3-write-validation-r9-2026-10-08"
+WRITER_EVIDENCE_SCHEMA = "issue66.writer-observation.v1"
+STAGE3_HANDOFF_ROOT = "professor-contact-stage3-handoff"
 MODEL = "gpt-6-luna"
 REASONING_EFFORT = "low"
 SANDBOX = "workspace-write"
@@ -29,6 +34,65 @@ ARTIFACTS = {
 
 def digest(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+def _b64(raw):
+    return base64.b64encode(raw).decode("ascii") if raw is not None else None
+
+
+def _lexical_path(path, cwd=None):
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = Path(cwd or Path.cwd()) / candidate
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    return candidate.resolve(strict=False)
+
+
+def _stage3_command(command, cwd=None):
+    """Parse only actual contact_state.py argv tokens, never command prose."""
+    try:
+        argv = shlex.split(command)
+    except (TypeError, ValueError):
+        return None
+    matches = []
+    for index, token in enumerate(argv[:-1]):
+        if Path(token).name != "contact_state.py" \
+                or not argv[index + 1].startswith("stage3-"):
+            continue
+        matches.append((argv[index + 1], str(_lexical_path(token, cwd)), argv))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _flag_values(argv, flag):
+    values = []
+    for index, token in enumerate(argv):
+        if token == flag:
+            values.append(argv[index + 1] if index + 1 < len(argv)
+                          and not argv[index + 1].startswith("--") else None)
+        elif token.startswith(flag + "="):
+            values.append(token[len(flag) + 1:])
+    return values
+
+
+def _json_output(raw):
+    if not isinstance(raw, str):
+        return None
+    start = raw.find("{")
+    if start < 0:
+        return None
+    try:
+        value = json.loads(raw[start:])
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _native_identity(params, item):
+    values = (params.get("threadId"), params.get("turnId"), item.get("id"))
+    if not all(isinstance(value, str) and value for value in values):
+        return None
+    return {"thread_id": values[0], "turn_id": values[1], "item_id": values[2]}
 
 
 def validate_product_source_selector(value):
@@ -192,13 +256,13 @@ class Execution:
         self.fixture = Path(args.fixture_root).resolve()
         self.out = Path(args.evidence_dir).resolve()
         self.product_source = validate_product_source_selector(args.product_source)
+        if args.consumer:
+            message = ("installation-check 必须创建全新消费者；不得传入 --consumer"
+                       if args.mode == "installation-check" else "不支持复用消费者")
+            raise RuntimeError(message)
         self.out.mkdir(parents=True, exist_ok=False)
         self.identity = self.out.name
         self.consumer = self.out / "consumer"
-        if args.consumer:
-            if args.mode != "installation-check":
-                raise RuntimeError("复用消费者只允许用于安装预检")
-            self.consumer = Path(args.consumer).resolve()
         if self.consumer.is_relative_to(self.repo):
             raise RuntimeError("消费者不得位于产品仓库内")
         self.program = self.consumer / "program"
@@ -213,6 +277,8 @@ class Execution:
         self.http_status = None
         self.http_status_raw = None
         self.transport_evidence = None
+        self.writer_preexisting_paths = None
+        self.writer_pre_snapshot_error = None
 
     def run(self, name, argv, *, cwd=None, required=True, private=False):
         self.counter += 1
@@ -342,6 +408,7 @@ class Execution:
     def formal(self, port):
         request_path = self.out / "request.json"
         request_bytes = request_path.read_bytes()
+        self.writer_preexisting_paths = self._snapshot_writer_handoff_paths()
         self.request_body_bytes_expected = len(request_bytes)
         self.formal_request_attempted = True
         write(self.out / "attempt.json", {"evidence_set_id": self.identity,
@@ -398,6 +465,9 @@ class Execution:
         classification = _transport_classification(exit_code, self.http_status,
             self.request_body_uploaded_bytes, self.request_body_bytes_expected)
         if classification:
+            write(self.out / "writer.json", self._writer_evidence(
+                native_calls=[], observations=[], gaps=[
+                    "正式响应未进入可观察的 Stage 3 原生调用"], save_input=None))
             reason = ("正式请求体确认零字节上传且未收到 HTTP 响应；用例未进入被测启动边界"
                       if classification == "CASE_NOT_STARTED" else
                       "正式请求的传输失败或无法确认；按外部阻断处理，不重试")
@@ -415,7 +485,14 @@ class Execution:
             })
             print(reason, file=sys.stderr)
             return 2
-        response = jq(self.out / "response-raw.json")
+        try:
+            response = jq(self.out / "response-raw.json")
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            write(self.out / "writer.json", self._writer_evidence(
+                native_calls=[], observations=[], gaps=[
+                    f"正式原始响应无法解析；writer 观察未完成：{exc}"], save_input=None))
+            raise
+        write(self.out / "writer.json", self.collect_writer_evidence(response))
         self.started = bool(response.get("output", {}).get("thread_id")
                             and response.get("output", {}).get("turn_id"))
         self.py("adapter", self.fixture / "scripts/parse_codex_eval_evidence.py",
@@ -443,6 +520,7 @@ class Execution:
         self.py("unique-judge", HERE / "judge_issue66_stage3_runtime.py",
             "--eval-response", self.out / "response.json",
             "--adapter-output", self.out / "adapter.json",
+            "--writer-evidence", self.out / "writer.json",
             "--candidate-state", candidate, "--program-root", self.program,
             "--install-evidence", self.out / "install.json",
             "--fixture-evidence", self.out / "fixture.json",
@@ -468,14 +546,9 @@ class Execution:
         self.versions()
         self.record_provenance()
         if self.a.mode == "installation-check":
-            self.install()
-            self.prepare()
-            write(self.out / "preflight.json", {"classification": "PREFLIGHT_ONLY",
-                  "formal_request_attempted": False, "formal_request_sent": False,
-                  "evidence_set_id": self.identity,
-                  "prepared": ["installation", "initial_input", "request", "snapshot"],
-                  "remaining": ["正式运行业务生产、保存及权限事实"]})
-            return 0
+            if not self.install():
+                return 2
+            return 0 if self.installation_writer_check() == "PASS" else 2
         if self.a.mode == "preflight":
             self.install()
             self.prepare()
@@ -491,15 +564,365 @@ class Execution:
         return self.formal(port)
 
 
+    def _writer_evidence(self, observations=None, **values):
+        return {"schema": WRITER_EVIDENCE_SCHEMA,
+                "evidence_set_id": self.identity,
+                "observations": observations or [], **values}
+
+    def _write_installation_not_started(self, reason):
+        value = self._writer_evidence(
+            controlled_call=None, native_calls=[], gaps=[reason], save_input=None,
+            classification="CASE_NOT_STARTED", reason=reason)
+        write(self.out / "writer.json", value)
+        write(self.out / "verdict.json", {
+            "classification": "CASE_NOT_STARTED", "reason": reason,
+            "formal_request_attempted": False, "formal_request_sent": False,
+            "evidence_set_id": self.identity, "save_input": None,
+            "writer_evidence": "writer.json"})
+        write(self.out / "preflight.json", {
+            "classification": "CASE_NOT_STARTED", "reason": reason,
+            "formal_request_attempted": False, "formal_request_sent": False,
+            "evidence_set_id": self.identity, "save_input": None,
+            "prepared": ["installation attempt"],
+            "remaining": ["安装成功后受控调用实际 Stage 3 writer"]})
+
+    def installation_writer_check(self):
+        """Call the installed writer on one isolated synthetic output only."""
+        script = self.consumer / ".agents/skills/professor-contact/scripts/contact_state.py"
+        try:
+            installed_source = script.resolve(strict=True)
+            source_is_owned = installed_source.is_relative_to(self.consumer.resolve())
+        except (OSError, RuntimeError, ValueError):
+            installed_source = None
+            source_is_owned = False
+        if script.is_symlink() or not script.is_file() or not source_is_owned:
+            reason = "APM 安装成功但实际安装的 contact_state.py 缺失或不是普通文件"
+            write(self.out / "writer.json", self._writer_evidence(
+                controlled_call=None, native_calls=[], gaps=[reason], save_input=None,
+                classification="BLOCKED", reason=reason))
+            write(self.out / "verdict.json", {
+                "classification": "BLOCKED", "reason": reason,
+                "formal_request_attempted": False, "formal_request_sent": False,
+                "evidence_set_id": self.identity, "save_input": None,
+                "writer_evidence": "writer.json"})
+            write(self.out / "preflight.json", {
+                "classification": "BLOCKED", "reason": reason,
+                "formal_request_attempted": False, "formal_request_sent": False,
+                "evidence_set_id": self.identity,
+                "prepared": ["installation"], "remaining": ["受控 writer 调用"]})
+            return "BLOCKED"
+
+        probe_dir = self.consumer / "issue66-writer-check"
+        try:
+            probe_dir.mkdir()
+        except OSError as exc:
+            reason = f"独占 writer 检查目录不可用：{exc}"
+            write(self.out / "writer.json", self._writer_evidence(
+                controlled_call=None, native_calls=[], gaps=[reason], save_input=None,
+                classification="BLOCKED", reason=reason))
+            write(self.out / "verdict.json", {
+                "classification": "BLOCKED", "reason": reason,
+                "formal_request_attempted": False, "formal_request_sent": False,
+                "evidence_set_id": self.identity, "save_input": None,
+                "writer_evidence": "writer.json"})
+            write(self.out / "preflight.json", {
+                "classification": "BLOCKED", "reason": reason,
+                "formal_request_attempted": False, "formal_request_sent": False,
+                "evidence_set_id": self.identity,
+                "prepared": ["installation"], "remaining": ["受控 writer 调用"]})
+            return "BLOCKED"
+
+        target = probe_dir / "validation.json"
+        result = {"result": "ok", "files": [{
+            "file": str(self.program / PROFESSOR / "套磁想法候选.md"),
+            "artifact": "candidates", "verdict": "pass",
+            "blocking": 0, "minor": 0, "issues": []}],
+            "notes": "独占安装检查的合成输入"}
+        argv = ["python3", str(script), "stage3-write-validation",
+                "--output-file", str(target), "--result-json",
+                json.dumps(result, ensure_ascii=False)]
+        exists_before = target.exists() or target.is_symlink()
+        source_bytes = installed_source.read_bytes()
+        call = {"source": str(installed_source),
+                "source_sha256": digest(source_bytes),
+                "argv": argv, "command": shlex.join(argv),
+                "cwd": str(self.consumer), "exit_code": None,
+                "stdout_b64": None, "stderr_b64": None,
+                "output": {"path": str(target),
+                           "exists_before": exists_before,
+                           "exists_after": False, "mode": None,
+                           "bytes_b64": None},
+                "command_log": None}
+        try:
+            completed = self.run("installation-writer-check", argv,
+                                 cwd=self.consumer, required=False)
+            stdout, stderr = completed.stdout, completed.stderr
+            call["exit_code"] = completed.returncode
+            call["stdout_b64"] = _b64(stdout)
+            call["stderr_b64"] = _b64(stderr)
+            call["command_log"] = {
+                "metadata": f"commands/{self.counter:03}-installation-writer-check.json",
+                "stdout": f"commands/{self.counter:03}-installation-writer-check.stdout",
+                "stderr": f"commands/{self.counter:03}-installation-writer-check.stderr"}
+        except (OSError, subprocess.SubprocessError) as exc:
+            stdout = getattr(exc, "stdout", None) or b""
+            stderr = getattr(exc, "stderr", None) or b""
+            call["stdout_b64"] = _b64(stdout)
+            call["stderr_b64"] = _b64(stderr)
+            call["error"] = str(exc)
+            call["command_log"] = None
+
+        exists_after = target.exists() or target.is_symlink()
+        output_bytes = None
+        mode = None
+        if exists_after and target.is_file() and not target.is_symlink():
+            output_bytes = target.read_bytes()
+            mode = format(stat.S_IMODE(target.stat().st_mode), "04o")
+        call["output"] = {"path": str(target),
+                          "exists_before": exists_before,
+                          "exists_after": exists_after, "mode": mode,
+                          "bytes_b64": _b64(output_bytes)}
+        if call["exit_code"] is None or call["exit_code"] != 0:
+            status = "BLOCKED"
+            reason = "受控 writer 命令未能以零退出码完成"
+        elif exists_before or not exists_after or mode != "0600" \
+                or output_bytes != stdout:
+            status = "FAIL"
+            reason = "受控 writer 的独占路径、0600 权限或逐字节输出检查失败"
+        else:
+            status = "PASS"
+            reason = "受控 writer 输出与独占文件逐字节一致，文件权限为 0600"
+        writer = self._writer_evidence(
+            controlled_call=call, native_calls=[], gaps=[], save_input=None,
+            classification=status, reason=reason)
+        write(self.out / "writer.json", writer)
+        classification = "PREFLIGHT_ONLY" if status == "PASS" else status
+        write(self.out / "verdict.json", {
+            "classification": classification, "reason": reason,
+            "formal_request_attempted": False, "formal_request_sent": False,
+            "evidence_set_id": self.identity, "save_input": None,
+            "writer_evidence": "writer.json"})
+        write(self.out / "preflight.json", {
+            "classification": classification, "reason": reason,
+            "formal_request_attempted": False, "formal_request_sent": False,
+            "evidence_set_id": self.identity, "save_input": None,
+            "prepared": ["installation", "controlled installed-writer call"],
+            "remaining": ["正式运行、原生委派、保存及记录事实"]})
+        return status
+
+    def _snapshot_writer_handoff_paths(self):
+        root = Path(tempfile.gettempdir()) / STAGE3_HANDOFF_ROOT
+        try:
+            if not root.exists() and not root.is_symlink():
+                return set()
+            if root.is_symlink() or not root.is_dir():
+                raise OSError("Stage 3 temporary handoff root is not a directory")
+            return {str(path.absolute()) for path in root.rglob("*")}
+        except OSError as exc:
+            self.writer_pre_snapshot_error = str(exc)
+            return None
+
+    def collect_writer_evidence(self, response):
+        """Collect only native Stage 3 call events and their actual temp files."""
+        gaps, native_calls, observations = [], [], []
+        output = response.get("output") if isinstance(response, dict) else None
+        raw_events = output.get("app_server_events") if isinstance(output, dict) else None
+        if not isinstance(raw_events, list):
+            return self._writer_evidence(native_calls=[], observations=[],
+                gaps=["raw app_server_events 缺失；writer 观察未开始"], save_input=None)
+
+        calls = []
+        for event_index, event in enumerate(raw_events):
+            if not isinstance(event, dict):
+                continue
+            message = event.get("message")
+            params = message.get("params") if isinstance(message, dict) else None
+            item = params.get("item") if isinstance(params, dict) else None
+            if not isinstance(params, dict) or not isinstance(item, dict) \
+                    or message.get("method") != "item/completed" \
+                    or item.get("type") != "commandExecution":
+                continue
+            command = item.get("command")
+            if not isinstance(command, str):
+                continue
+            parsed = _stage3_command(command, item.get("cwd") or params.get("cwd"))
+            if parsed is None:
+                if "contact_state.py" in command and "stage3-" in command:
+                    gaps.append(f"event {event_index}: Stage 3 command argv is ambiguous")
+                continue
+            subcommand, source, argv = parsed
+            if subcommand not in {"stage3-prepare-validation",
+                                  "stage3-write-validation",
+                                  "stage3-save-validation"}:
+                continue
+            identity = _native_identity(params, item)
+            raw_stdout = item.get("aggregatedOutput")
+            stdout_bytes = raw_stdout.encode("utf-8") if isinstance(raw_stdout, str) else None
+            call = {"event_index": event_index, "thread_id": params.get("threadId"),
+                    "turn_id": params.get("turnId"), "item_id": item.get("id"),
+                    "call_id": item.get("call_id"), "subcommand": subcommand,
+                    "source": source, "argv": argv, "command": command,
+                    "cwd": item.get("cwd") or params.get("cwd"),
+                    "status": item.get("status"), "exit_code": item.get("exitCode"),
+                    "stdout_b64": _b64(stdout_bytes), "identity": identity}
+            calls.append(call)
+            if subcommand == "stage3-write-validation":
+                native_calls.append({key: value for key, value in call.items()
+                                     if key != "identity"})
+
+        prepared = []
+        for call in calls:
+            if call["subcommand"] != "stage3-prepare-validation":
+                continue
+            payload = _json_output(
+                base64.b64decode(call["stdout_b64"]).decode("utf-8")
+                if call["stdout_b64"] else None)
+            if call["status"] != "completed" or call["exit_code"] != 0:
+                gaps.append(f"event {call['event_index']}: prepare command did not complete successfully")
+                continue
+            if not isinstance(payload, dict) or payload.get("status") != "ok":
+                continue
+            round_no = payload.get("round")
+            output_file = payload.get("output_file")
+            handoff_file = payload.get("handoff_file")
+            if type(round_no) is not int or round_no < 1 \
+                    or not isinstance(output_file, str) \
+                    or not isinstance(handoff_file, str):
+                gaps.append(f"event {call['event_index']}: prepare return misses writer paths or round")
+                continue
+            prepared.append({"round": round_no, "output_file": output_file,
+                             "handoff_file": handoff_file,
+                             "event_index": call["event_index"]})
+
+        def file_state(path_text):
+            path = Path(path_text)
+            lexical = str(path.absolute())
+            if self.writer_preexisting_paths is None:
+                return None, {"path": path_text, "exists_before": None,
+                    "exists_after": path.exists() or path.is_symlink(),
+                    "mode": None, "bytes_b64": None}
+            root = Path(tempfile.gettempdir()) / STAGE3_HANDOFF_ROOT
+            try:
+                normalized = str(path.resolve(strict=False))
+                inside_root = Path(normalized).is_relative_to(root.resolve(strict=False))
+            except (OSError, RuntimeError, ValueError):
+                inside_root = False
+                normalized = lexical
+            exists_before = lexical in self.writer_preexisting_paths
+            exists_after = path.exists() or path.is_symlink()
+            mode, raw = None, None
+            if exists_after and path.is_file() and not path.is_symlink():
+                try:
+                    raw = path.read_bytes()
+                    mode = format(stat.S_IMODE(path.stat().st_mode), "04o")
+                except OSError:
+                    raw = None
+            state = {"path": path_text, "exists_before": exists_before,
+                     "exists_after": exists_after, "mode": mode,
+                     "bytes_b64": _b64(raw)}
+            if not inside_root:
+                return None, state
+            return state, state
+
+        for writer in calls:
+            if writer["subcommand"] != "stage3-write-validation":
+                continue
+            values = _flag_values(writer["argv"], "--output-file")
+            if len(values) != 1 or not isinstance(values[0], str) or not values[0]:
+                gaps.append(f"event {writer['event_index']}: writer --output-file argv is missing or ambiguous")
+                continue
+            output_path = str(_lexical_path(values[0], writer["cwd"]))
+            matches = [entry for entry in prepared
+                       if str(_lexical_path(entry["output_file"])) == output_path
+                       and entry["event_index"] < writer["event_index"]]
+            if len(matches) != 1:
+                gaps.append(f"event {writer['event_index']}: writer output path does not bind one prior prepare return")
+                continue
+            entry = matches[0]
+            output_state, observed_state = file_state(entry["output_file"])
+            native_call = next((row for row in native_calls
+                                if row["event_index"] == writer["event_index"]), None)
+            if native_call is not None:
+                native_call["round"] = entry["round"]
+                native_call["output"] = observed_state
+            if output_state is None or not Path(output_state["path"]).is_absolute() \
+                    or output_state["exists_after"] and (
+                        output_state["mode"] is None
+                        or output_state["bytes_b64"] is None) \
+                    or writer["identity"] is None \
+                    or writer["stdout_b64"] is None:
+                gaps.append(f"round {entry['round']}: writer file or native output could not be observed reliably")
+                continue
+
+            handoff = Path(entry["handoff_file"])
+            handoff_output = None
+            try:
+                if not handoff.is_symlink() and handoff.is_file():
+                    metadata = json.loads(handoff.read_text(encoding="utf-8"))
+                    if metadata.get("round") == entry["round"]:
+                        handoff_output = metadata.get("output_file")
+            except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+                handoff_output = None
+            save_matches = []
+            for save in calls:
+                if save["subcommand"] != "stage3-save-validation" \
+                        or save["event_index"] <= writer["event_index"] \
+                        or save["thread_id"] != response.get("output", {}).get("thread_id"):
+                    continue
+                handoff_values = _flag_values(save["argv"], "--handoff-file")
+                if len(handoff_values) == 1 and handoff_values[0] \
+                        and str(_lexical_path(handoff_values[0], save["cwd"])) == \
+                            str(_lexical_path(entry["handoff_file"])):
+                    save_matches.append(save)
+            save_input = None
+            if len(save_matches) == 1 and handoff_output \
+                    and str(_lexical_path(handoff_output)) == \
+                        str(_lexical_path(entry["output_file"])):
+                save = save_matches[0]
+                saved_state, _ = file_state(entry["output_file"])
+                if save["identity"] and saved_state and saved_state["exists_after"] \
+                        and saved_state["bytes_b64"] is not None:
+                    save_input = {**save["identity"], "path": entry["output_file"],
+                                  "bytes_b64": saved_state["bytes_b64"]}
+            if len(save_matches) > 1:
+                gaps.append(f"round {entry['round']}: multiple native save calls match the writer handoff")
+            elif save_matches and save_input is None:
+                gaps.append(f"round {entry['round']}: save input bytes or handoff binding are unavailable")
+
+            observations.append({"round": entry["round"],
+                "writer_call": writer["identity"], "command": writer["command"],
+                "stdout_b64": writer["stdout_b64"], "output": output_state,
+                "save_input": save_input})
+        if self.writer_pre_snapshot_error:
+            gaps.append(f"writer temporary-file pre-snapshot unavailable: {self.writer_pre_snapshot_error}")
+        return self._writer_evidence(observations=observations,
+            native_calls=native_calls, gaps=gaps)
+
+
     def install(self):
-        installation = {"method": "existing-consumer-installation-check", "exit_code": None}
-        if not self.a.consumer:
+        argv = ["apm", "install", "--target", "codex", "--parallel-downloads", "1",
+                f"ScholarWorkflow/professor-contact#{self.product_source}"]
+        installation = {
+            "method": "apm install --target codex --parallel-downloads 1",
+            "source_mode": "remote_selector", "argv": argv,
+            "command": shlex.join(argv), "cwd": str(self.consumer),
+            "exit_code": None, "stdout_b64": None, "stderr_b64": None,
+            "command_log": None}
+        try:
             self.consumer.mkdir()
-            result = self.run("install", ["apm", "install", "--target", "codex",
-                "--parallel-downloads", "1",
-                f"ScholarWorkflow/professor-contact#{self.product_source}"], cwd=self.consumer)
-            installation = {"method": "apm install --target codex --parallel-downloads 1",
-                            "source_mode": "remote_selector", "exit_code": result.returncode}
+            result = self.run("install", argv, cwd=self.consumer, required=False)
+            installation.update({
+                "exit_code": result.returncode,
+                "stdout_b64": _b64(result.stdout),
+                "stderr_b64": _b64(result.stderr),
+                "command_log": {
+                    "metadata": f"commands/{self.counter:03}-install.json",
+                    "stdout": f"commands/{self.counter:03}-install.stdout",
+                    "stderr": f"commands/{self.counter:03}-install.stderr"}})
+        except (OSError, subprocess.SubprocessError) as exc:
+            installation["error"] = str(exc)
+            installation["stdout_b64"] = _b64(getattr(exc, "stdout", None) or b"")
+            installation["stderr_b64"] = _b64(getattr(exc, "stderr", None) or b"")
         lock = self.consumer / "apm.lock.yaml"
         installed_commits = None
         lock_observation = {"path": str(lock), "exists": lock.is_file(), "parse_status": "not_available"}
@@ -519,20 +942,24 @@ class Execution:
                     lock_observation["parse_error"] = str(exc)
             else:
                 lock_observation["parse_status"] = "unavailable"
-        install_available = installation["exit_code"] == 0 if installation["exit_code"] is not None \
-            else self.consumer.is_dir()
+        install_available = installation["exit_code"] == 0
         value = surface(self.identity, [
             check("supported_install_entry_completed", install_available, installation)],
             requested_product_source=self.product_source,
             product_source_kind="remote_selector",
             installed_product_versions=installed_commits,
             lock_observation=lock_observation,
-            consumer_root=str(self.consumer), newly_created=not bool(self.a.consumer),
+            consumer_root=str(self.consumer), newly_created=True,
             manual_patch="no")
         self.install_value = value
         write(self.out / "install.json", value)
         if value["status"] != "ok":
+            if self.a.mode == "installation-check":
+                self._write_installation_not_started(
+                    "APM 安装未成功；Stage 3 writer 命令未运行，save_input 为 null")
+                return False
             raise RuntimeError("支持的安装入口未完成或独占消费者不存在")
+        return True
 
     def prepare(self):
         # 使用本轮测试工作区中的受支持夹具构造纯初态，只写独占消费者。

@@ -2,7 +2,7 @@
 def source_present: type == "string" and length > 0;
 def planned_suites:
   ["judge", "execution_wiring", "structured_result", "credential",
-   "local_state", "validation_handoff", "agent_contract"];
+   "local_state", "validation_handoff", "agent_contract", "write_validation"];
 def suite_valid:
   .evidence_validity == "VALID"
   and (.owner == "product" or .owner == "test_program")
@@ -31,10 +31,10 @@ def suite_valid:
        combination_check_exit_code:.ledger.combination_check_exit_code}
     else empty end),
     (if (.suites | type) != "array" then
-      {kind:"suites", source:"suites.jsonl", reason:"七个计划套件记录必须齐全",
+      {kind:"suites", source:"suites.jsonl", reason:"八个计划套件记录必须齐全",
        expected:planned_suites, actual:null}
     elif ([.suites[] | .suite] | sort) != (planned_suites | sort) then
-      {kind:"suites", source:"suites.jsonl", reason:"七个计划套件身份必须各出现一次",
+      {kind:"suites", source:"suites.jsonl", reason:"八个计划套件身份必须各出现一次",
        expected:planned_suites, actual:[.suites[] | .suite]}
     else empty end),
     (.suites[]? | if (suite_valid | not) then

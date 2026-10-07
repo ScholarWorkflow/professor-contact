@@ -2,8 +2,8 @@
 set -o pipefail
 
 readonly uv_cache_dir='/private/tmp/issue66-uv-cache'
-readonly plan_revision='issue-66-test-plan-r19-clarification-r7-2026-10-07'
-readonly runner_revision='issue-66-local-candidate-runner-r21-2026-10-07'
+readonly plan_revision='issue-66-test-plan-r21-stage3-write-validation-r9-2026-10-08'
+readonly runner_revision='issue-66-local-candidate-runner-r22-stage3-write-validation-r9-2026-10-08'
 
 usage() {
   printf '用法：%s local\n' "$0" >&2
@@ -589,14 +589,14 @@ R19-5-D4|classification=FAIL|judge|test_complete_run_with_no_validator_productio
 R19-5-D5|digest-and-state-from-first-buffer|validation_handoff|test_record_parses_the_same_buffer_that_was_digest_checked|.apm/skills/professor-contact/scripts/contact_state.py|.apm/skills/professor-contact/tests/test_issue66_validation_handoff.py|replace valid source after digest check; digest and recorded state use first buffer||direct-assertion
 R19-5-D6|add_diff_preserves_original_utf8_bytes|judge|test_file_change_add_diff_preserves_utf8_and_line_endings|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|Unicode, CRLF, LF, and trailing-newline bytes preserved||direct-assertion
 R19-5-D7|app_server_file_change_shape_lifecycle_delete_and_move_target|judge|test_file_change_protocol_shape_bytes_lifecycle_delete_and_move_target|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|Started/completed pairing and success, required string diff, add/delete/update, move_path scope, unsupported-kind and unsupported-field evidence gaps; Add cannot prove exclusive creation||direct-assertion
-R19-5-E1|classification=PASS|judge|test_compound_legal_read_and_single_exclusive_output_write_passes|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1327|legal read and exclusive output write
+R19-5-E1|classification=FAIL;fact:F-validator-write-scope=pass;fact:F-writer-command=fail|judge|test_compound_legal_read_and_single_exclusive_output_write_without_fixed_writer_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|write scope is valid, but the validator bypassed the required fixed writer
 R19-5-E2|classification=FAIL|judge|test_python_command_with_multiple_write_targets_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1256|multiple write targets
 R19-5-E3|classification=FAIL|judge|test_same_byte_write_then_restore_still_fails_write_scope|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1270|same-byte rewrite and restore
 R19-5-E4|classification=FAIL|judge|test_overwrite_existing_candidate_source_fails_write_scope|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1285|overwrite an existing candidate source
 R19-5-E5|classification=FAIL|judge|test_outside_output_write_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|write to a single non-designated target
-R19-5-E6|classification=INVALID_TEST_EXECUTION;fact:F-validator-write-scope=gap|judge|test_pure_unknown_command_is_an_evidence_gap|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|unrecognized command; write scope remains a gap
-R19-5-E7|classification=INVALID_TEST_EXECUTION;fact:F-validator-write-scope=gap|judge|test_pure_unknown_command_is_an_evidence_gap|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|write appears only inside an uncalled function; evidence is inconclusive|2
-R19-5-E8|classification=INVALID_TEST_EXECUTION;fact:F-validator-write-scope=gap|judge|test_pure_unknown_command_is_an_evidence_gap|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|write appears only in an unreachable branch; evidence is inconclusive|3
+R19-5-E6|classification=FAIL;fact:F-writer-command=fail;fact:F-validator-write-scope=gap|judge|test_completed_non_writer_command_does_not_satisfy_fixed_writer|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|unrecognized command cannot satisfy the fixed writer requirement; write scope remains a gap
+R19-5-E7|classification=FAIL;fact:F-writer-command=fail;fact:F-validator-write-scope=gap|judge|test_completed_non_writer_command_does_not_satisfy_fixed_writer|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|write appears only inside an uncalled function; execution does not satisfy the fixed writer requirement|2
+R19-5-E8|classification=FAIL;fact:F-writer-command=fail;fact:F-validator-write-scope=gap|judge|test_completed_non_writer_command_does_not_satisfy_fixed_writer|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|write appears only in an unreachable branch; execution does not satisfy the fixed writer requirement|3
 R19-5-F1|classification=BLOCKED|judge|test_machine_failure_prefix_blocks|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:661|valid external failure prefix
 R19-5-F2|classification=FAIL|judge|test_correction_dispatch_between_record_start_and_completion_fails|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:1388|correction starts before record completion
 R19-5-F3|classification=FAIL|judge|test_machine_failure_prefix_does_not_hide_prior_product_failure|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py:686|prior product failure survives later machine failure
@@ -632,6 +632,13 @@ R19-6-I9|classification=INVALID_TEST_EXECUTION|judge|test_mismatched_call_id_can
 R19-6-I10|classification=INVALID_TEST_EXECUTION|judge|test_mixed_evidence_set_ids_are_invalid|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|mixed evidence-set identifiers
 R19-6-I11|missing_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-set=invalid|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is missing||direct-assertion
 R19-6-I12|truncated_response=INVALID_TEST_EXECUTION;F-test-program=invalid;F-evidence-set=invalid|judge|test_required_install_sample_and_snapshot_evidence_cannot_be_omitted|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|top-level eval response file is truncated||direct-assertion
+R21-9-E9|classification=PASS|judge|test_same_path_file_change_add_is_duplicate_of_proven_writer|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|same-path fileChange Add is a duplicate view of the proven fixed writer output|1
+R21-9-E10|classification=FAIL|judge|test_file_change_add_on_another_path_still_fails_write_scope|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|fileChange Add on an unauthorized path remains a product failure|1
+R21-9-F18|classification=BLOCKED|judge|test_machine_failure_prefix_blocks|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|valid machine failure prefix blocks before business completion|1
+R21-9-F19|classification=FAIL;fact:F-writer-command=fail;fact:F-writer-evidence=pass;fact:F-handoff-chain=gap;fact:F-stop-order=pass|judge|test_validator_writer_error_report_stops_before_save|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|nonzero fixed writer reports structured error once and correctly stops before save|1
+R21-9-F20|classification=FAIL;fact:F-handoff-chain=fail;fact:F-stop-order=fail|judge|test_validator_writer_error_followed_by_save_fails_stop|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|root save after fixed writer error violates the stop boundary|1
+R21-9-F21|classification=FAIL;fact:F-stop-order=fail|judge|test_validator_writer_error_does_not_allow_success_report|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|successful business message after fixed writer error violates the stop boundary|1
+R21-9-I13|classification=INVALID_TEST_EXECUTION|judge|test_duplicate_observation_is_invalid_not_a_second_write|.apm/skills/professor-contact/tests/runtime/judge_issue66_stage3_runtime.py|.apm/skills/professor-contact/tests/test_issue66_runtime_judge.py|duplicated fixed-writer observation invalidates evidence|1
 SAMPLE_RECORDS
 
   while IFS= read -r tsv_line || [[ -n "$tsv_line" ]]; do
@@ -728,6 +735,7 @@ run_suite credential test_issue66_invocation_credential.py
 run_suite local_state test_issue66_stage3_local_state.py
 run_suite validation_handoff test_issue66_validation_handoff.py
 run_suite agent_contract test_stage3_idea_generator_agent_contract.py
+run_suite write_validation test_issue66_stage3_write_validation.py
 
 combination_check_rc=0
 while IFS= read -r method; do
@@ -735,7 +743,8 @@ while IFS= read -r method; do
   capture "candidate-combination-$method" jq -e \
     --slurpfile expected "$combination_dir/independent-expected.json" \
     --slurpfile raw "$combination_dir/raw-suite.json" \
-    --slurpfile input "$combination_dir/input.json" '
+    --slurpfile input "$combination_dir/input.json" \
+    --slurpfile refs "$combination_dir/references.json" '
       .schema == "issue66-candidate-result-v1"
       and .overall == $expected[0].overall
       and .evidence_validity == $expected[0].evidence_validity
@@ -744,6 +753,11 @@ while IFS= read -r method; do
       and .runner_execution_meaning == "仅表示运行器已执行完全部步骤；不表示证据有效、候选通过或正式验收通过"
       and $input[0].suites[0].result == $raw[0].classification
       and $input[0].suites[0].failures == [$raw[0].tests[] | select(.status != "ok")]
+      and $refs[0].raw_suite == "raw-suite.json#classification,tests"
+      and $refs[0].input == "input.json#candidate,ledger,suites"
+      and $refs[0].independent_expected == "independent-expected.json"
+      and $refs[0].actual == "actual.json#overall,evidence_validity,local_product_failures"
+      and $refs[0].classifier == ".apm/skills/professor-contact/tests/runtime/issue66_candidate_classify.jq"
     ' "$combination_dir/actual.json" || combination_check_rc=1
 done <<'CANDIDATE_COMBINATIONS'
 test_valid_candidate_with_independent_product_failure
