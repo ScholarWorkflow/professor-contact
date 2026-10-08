@@ -2258,6 +2258,35 @@ class WriterObservationTests(RuntimeJudgeTestCase):
         self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
         self.assertEqual(facts(verdict)["F-writer-evidence"], "pass", verdict)
 
+    def test_boolean_count_cannot_match_integer_writer_argument(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        result_text = msg_text(verdict="fail")
+        replace_writer_command(fx, fixed_writer_command(result_text))
+        writer_item_id = self.completed_writer(fx)["writer_call"]["item_id"]
+
+        stdout_value = json.loads(result_text)
+        stdout_value["files"][0]["blocking"] = True
+        native_stdout = json.dumps(stdout_value, ensure_ascii=False)
+        for event in fx.events:
+            params = event.get("message", {}).get("params", {})
+            item = params.get("item", {})
+            if params.get("threadId") == V1 \
+                    and item.get("type") == "commandExecution" \
+                    and item.get("id") == writer_item_id \
+                    and event.get("message", {}).get("method") == "item/completed":
+                item["aggregatedOutput"] = native_stdout
+
+        model = judge.RunModel(fx.response(), fx.adapter())
+        evaluator = judge.Judge(model, PASS_STATE, None, {})
+        evaluator.prepared_rounds = [{"round": 1, "child": V1,
+                                      "output_file": OUTPUT_FILE}]
+        evaluator.judge_writer_observations()
+        writer_row = next(row for row in evaluator.rows
+                          if row["fact"] == "F-writer-command")
+
+        self.assertEqual(writer_row["verdict"], "fail", writer_row)
+
     def test_confirmed_nonzero_writer_exit_is_a_product_failure(self):
         fx = Fixture()
         legal_two_child(fx)

@@ -40,6 +40,92 @@ class ExecutionWiringTests(unittest.TestCase):
         wiring.write(execution.out / 'request.json', {'command': 'mock-only'})
         return execution
 
+    def collect_save_fixture(self, directory, *, save_overrides=None,
+                             save_remove_fields=(), save_exit_code=0,
+                             save_stdout=None, prepare_overrides=None,
+                             writer_stdout=None, prepare_exit_code=0,
+                             writer_exit_code=0):
+        """Use synthetic event objects shaped from the native command contract.
+
+        These cases exercise collector decisions only; they are not evidence
+        for which App Server event fields a live runtime emits.
+        """
+        execution = self.execution(directory)
+        root = Path(directory) / wiring.STAGE3_HANDOFF_ROOT
+        handoff_dir = root / 'fixture-round-1'
+        handoff_dir.mkdir(parents=True)
+        output_file = handoff_dir / 'validator-output.json'
+        handoff_file = handoff_dir / 'handoff.json'
+        validation_file = handoff_dir / 'saved-validation.json'
+        execution.writer_preexisting_paths = set()
+        raw_output = b'{"result":"pass","files":[],"notes":"fixture"}\n'
+        output_file.write_bytes(raw_output)
+        output_file.chmod(0o600)
+
+        handoff_sha = 'a' * 64
+        render_sha = 'b' * 64
+        prepare_payload = {
+            'status': 'ok', 'professor': 'Example Professor',
+            'professor_dir': str(Path(directory) / '教授研究' / '教授'),
+            'candidates_md': str(Path(directory) / '教授研究' / '教授' / '候选.md'),
+            'round': 1, 'render_sha256': render_sha,
+            'handoff_file': str(handoff_file), 'handoff_sha256': handoff_sha,
+            'output_file': str(output_file), 'validation_file': str(validation_file),
+        }
+        prepare_payload['professor_dir'] = str(Path(prepare_payload['professor_dir']).resolve())
+        prepare_payload['candidates_md'] = str(Path(prepare_payload['candidates_md']).resolve())
+        if prepare_overrides:
+            prepare_payload.update(prepare_overrides)
+        save_payload = {
+            'status': 'ok', 'professor': prepare_payload['professor'],
+            'professor_dir': prepare_payload['professor_dir'],
+            'round': 1, 'render_sha256': render_sha,
+            'validation_file': str(validation_file),
+            'validation_sha256': wiring.digest(raw_output),
+        }
+        if save_overrides:
+            save_payload.update(save_overrides)
+        for field in save_remove_fields:
+            save_payload.pop(field, None)
+
+        script = Path(directory) / 'scripts' / 'contact_state.py'
+        invocation = Path(directory) / 'invocation.json'
+        prepare_command = shlex.join([
+            'python3', str(script), 'stage3-prepare-validation',
+            '--invocation-file', str(invocation), '--invocation-sha256', 'c' * 64,
+            '--round', '1'])
+        writer_command = shlex.join([
+            'python3', str(script), 'stage3-write-validation',
+            '--output-file', str(output_file), '--result-json', '{}'])
+        save_command = shlex.join([
+            'python3', str(script), 'stage3-save-validation',
+            '--handoff-file', str(handoff_file), '--handoff-sha256', handoff_sha])
+
+        def event(thread, turn, item_id, command, stdout, exit_code=0):
+            return {'message': {'method': 'item/completed', 'params': {
+                'threadId': thread, 'turnId': turn, 'item': {
+                    'id': item_id, 'type': 'commandExecution', 'command': command,
+                    'cwd': str(directory), 'status': 'completed',
+                    'exitCode': exit_code, 'aggregatedOutput': stdout}}}}
+
+        prepare_stdout = json.dumps(prepare_payload, ensure_ascii=False, indent=1) + '\n'
+        if writer_stdout is None:
+            writer_stdout = raw_output.decode('utf-8')
+        if save_stdout is None:
+            save_stdout = json.dumps(save_payload, ensure_ascii=False, indent=1) + '\n'
+        response = {'output': {'thread_id': 'root-thread', 'turn_id': 'root-turn',
+            'app_server_events': [
+                event('root-thread', 'root-turn', 'prepare-item', prepare_command,
+                      prepare_stdout, prepare_exit_code),
+                event('validator-thread', 'validator-turn', 'writer-item',
+                      writer_command, writer_stdout, writer_exit_code),
+                event('root-thread', 'root-turn', 'save-item', save_command,
+                      save_stdout, save_exit_code),
+            ]}}
+        with patch.object(wiring.tempfile, 'gettempdir', return_value=directory):
+            evidence = execution.collect_writer_evidence(response)
+        return evidence, raw_output
+
     def assert_transport_terminal(self, execution, expected):
         verdict = json.loads((execution.out / 'verdict.json').read_text())
         attempt = json.loads((execution.out / 'attempt.json').read_text())
@@ -152,6 +238,69 @@ class ExecutionWiringTests(unittest.TestCase):
             port.assert_not_called()
             prepare.assert_not_called()
             formal.assert_not_called()
+
+    def test_installation_check_rejects_empty_incomplete_and_mismatched_json(self):
+        cases = ('empty', 'incomplete', 'semantic_mismatch', 'bad_result')
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                execution = self.fresh_execution(directory)
+                observed = {}
+
+                def fake_subprocess_run(argv, *, cwd, capture_output, timeout, check):
+                    if argv[0] == 'pwd':
+                        return CompletedProcess(argv, 0, b'/workspace\n', b'')
+                    if argv[0] == 'apm':
+                        script = Path(cwd) / '.agents/skills/professor-contact/scripts/contact_state.py'
+                        script.parent.mkdir(parents=True)
+                        script.write_text('# installed command test double\n', encoding='utf-8')
+                        return CompletedProcess(argv, 0, b'installed', b'')
+                    if argv[0] == 'python3':
+                        argument = json.loads(argv[argv.index('--result-json') + 1])
+                        if case == 'empty':
+                            raw = b''
+                        elif case == 'incomplete':
+                            raw = json.dumps({**argument, 'files': []},
+                                             ensure_ascii=False).encode('utf-8')
+                        elif case == 'bad_result':
+                            raw = json.dumps({**argument, 'result': 'bad'},
+                                             ensure_ascii=False).encode('utf-8')
+                        else:
+                            raw = json.dumps({**argument, 'notes': 'different result'},
+                                             ensure_ascii=False).encode('utf-8')
+                        target = Path(argv[argv.index('--output-file') + 1])
+                        target.write_bytes(raw)
+                        target.chmod(0o600)
+                        observed['bytes'] = raw
+                        return CompletedProcess(argv, 0, raw, b'')
+                    raise AssertionError(f'unexpected command: {argv!r}')
+
+                with patch.object(execution, 'versions'), \
+                     patch.object(execution, 'record_provenance'), \
+                     patch.object(execution, 'port') as port, \
+                     patch.object(execution, 'prepare') as prepare, \
+                     patch.object(execution, 'formal') as formal, \
+                     patch.object(wiring.subprocess, 'run', side_effect=fake_subprocess_run):
+                    self.assertEqual(execution.execute(), 2)
+
+                writer = json.loads((execution.out / 'writer.json').read_text())
+                call = writer['controlled_call']
+                output = call['output']
+                self.assertEqual(writer['classification'], 'FAIL')
+                self.assertEqual(call['exit_code'], 0)
+                self.assertFalse(output['exists_before'])
+                self.assertTrue(output['exists_after'])
+                self.assertEqual(output['mode'], '0600')
+                self.assertEqual(base64.b64decode(call['stdout_b64']), observed['bytes'])
+                self.assertEqual(base64.b64decode(output['bytes_b64']), observed['bytes'])
+                self.assertIn('完整 JSON', writer['reason'])
+                if case == 'bad_result':
+                    returned = wiring._strict_json_value(
+                        base64.b64decode(call['stdout_b64']))
+                    self.assertEqual(returned['result'], 'bad')
+                    self.assertFalse(wiring._complete_writer_result(returned))
+                port.assert_not_called()
+                prepare.assert_not_called()
+                formal.assert_not_called()
 
     def test_install_failure_is_case_not_started_and_never_calls_writer(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -520,3 +669,102 @@ class ExecutionWiringTests(unittest.TestCase):
             self.assertIsNone(verdict['formal_request_sent'])
             self.assertIsNone(transport['request_body_uploaded_bytes'])
             self.assertFalse(transport['http_response_received'])
+
+    def test_save_digest_binds_same_writer_bytes_and_keeps_timing_gap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence, raw = self.collect_save_fixture(directory)
+
+        self.assertEqual(len(evidence['observations']), 1)
+        observation = evidence['observations'][0]
+        self.assertEqual(observation['round'], 1)
+        self.assertEqual(observation['writer_call'], {
+            'thread_id': 'validator-thread', 'turn_id': 'validator-turn',
+            'item_id': 'writer-item'})
+        self.assertEqual(observation['save_input'], {
+            'thread_id': 'root-thread', 'turn_id': 'root-turn',
+            'item_id': 'save-item', 'path': observation['output']['path'],
+            'bytes_b64': base64.b64encode(raw).decode('ascii')})
+        self.assertEqual(base64.b64decode(observation['save_input']['bytes_b64']), raw)
+        self.assertTrue(any('save-time mode/timing is unavailable' in gap
+                            for gap in evidence['gaps']))
+
+    def test_save_input_is_null_when_source_snapshot_differs_from_writer_stdout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence, _raw = self.collect_save_fixture(directory,
+                writer_stdout='{"result":"different","files":[],"notes":"fixture"}\n')
+
+        self.assertEqual(len(evidence['observations']), 1)
+        self.assertIsNone(evidence['observations'][0]['save_input'])
+        self.assertTrue(any('source bytes differ from native writer stdout' in gap
+                            for gap in evidence['gaps']))
+
+    def test_save_input_is_null_when_save_evidence_is_incomplete_or_conflicts(self):
+        cases = (
+            ('missing digest', {}, ('validation_sha256',), 0, None),
+            ('digest mismatch', {'validation_sha256': 'f' * 64}, (), 0, None),
+            ('nonzero save', {}, (), 1, None),
+            ('boolean false save exit', {}, (), False, None),
+            ('incomplete stdout', {}, (), 0, '{"status":"ok"}\n'),
+            ('wrong round', {'round': 2}, (), 0, None),
+            ('wrong target path', {'validation_file': '/tmp/other-validation.json'}, (), 0, None),
+            ('wrong professor path type', {'professor_dir': []}, (), 0, None),
+        )
+        for label, overrides, removed, exit_code, stdout in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                evidence, _raw = self.collect_save_fixture(directory,
+                    save_overrides=overrides, save_remove_fields=removed,
+                    save_exit_code=exit_code, save_stdout=stdout)
+            self.assertEqual(len(evidence['observations']), 1)
+            self.assertIsNone(evidence['observations'][0]['save_input'])
+            self.assertTrue(any('cannot be bound' in gap for gap in evidence['gaps']))
+
+    def test_boolean_false_prepare_and_writer_exits_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence, _raw = self.collect_save_fixture(directory,
+                prepare_exit_code=False)
+        self.assertEqual(evidence['observations'], [])
+        self.assertTrue(any('prepare command did not complete successfully' in gap
+                            for gap in evidence['gaps']))
+
+        with tempfile.TemporaryDirectory() as directory:
+            evidence, _raw = self.collect_save_fixture(directory,
+                writer_exit_code=False)
+        self.assertEqual(len(evidence['observations']), 1)
+        self.assertIsNone(evidence['observations'][0]['save_input'])
+        self.assertTrue(any('writer did not complete successfully' in gap
+                            for gap in evidence['gaps']))
+
+    def test_prepare_bad_types_fail_closed_without_path_errors(self):
+        for professor in (9, None, '  '):
+            with self.subTest(professor=professor), tempfile.TemporaryDirectory() as directory:
+                evidence, _raw = self.collect_save_fixture(directory,
+                    prepare_overrides={'professor': professor})
+            self.assertEqual(evidence['observations'], [])
+            self.assertTrue(any('prepare return misses valid paths' in gap
+                                for gap in evidence['gaps']))
+
+    def test_non_string_event_cwd_fails_closed_without_path_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            execution = self.execution(directory)
+            response = {'output': {
+                'thread_id': 'root-thread', 'turn_id': 'root-turn',
+                'app_server_events': [{
+                    'message': {'method': 'item/completed', 'params': {
+                        'threadId': 'root-thread', 'turnId': 'root-turn',
+                        'item': {
+                            'id': 'bad-cwd-item', 'type': 'commandExecution',
+                            'command': 'python scripts/contact_state.py '
+                                       'stage3-prepare-validation --round 1',
+                            'cwd': ['not', 'a', 'path'],
+                            'status': 'completed', 'exitCode': 0,
+                            'aggregatedOutput': '{"status":"ok"}',
+                        },
+                    }},
+                }],
+            }}
+
+            evidence = execution.collect_writer_evidence(response)
+
+        self.assertEqual(evidence['observations'], [])
+        self.assertTrue(any('argv is ambiguous' in gap
+                            for gap in evidence['gaps']))

@@ -2388,6 +2388,97 @@ class Judge:
         return value
 
     @staticmethod
+    def _json_semantically_equal(left, right):
+        """Compare JSON values without Python's bool/int equality overlap."""
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, dict):
+            return left.keys() == right.keys() and all(
+                Judge._json_semantically_equal(left[key], right[key])
+                for key in left)
+        if isinstance(left, list):
+            return len(left) == len(right) and all(
+                Judge._json_semantically_equal(a, b)
+                for a, b in zip(left, right))
+        return left == right
+
+    @staticmethod
+    def _complete_writer_result(value):
+        """Validate the complete structured result passed to the fixed writer."""
+        if not isinstance(value, dict) or value.get("result") != "ok" \
+                or not isinstance(value.get("files"), list) \
+                or not value["files"] \
+                or not isinstance(value.get("notes"), str):
+            return False
+
+        candidates = set()
+        for entry in value["files"]:
+            if not isinstance(entry, dict):
+                return False
+            file_path = entry.get("file")
+            if not isinstance(file_path, str) or not file_path:
+                return False
+            candidate = Path(file_path)
+            if not candidate.is_absolute():
+                return False
+            try:
+                normalized_path = str(candidate.resolve(strict=False))
+            except (OSError, RuntimeError, ValueError):
+                return False
+
+            artifact = entry.get("artifact")
+            verdict = entry.get("verdict")
+            blocking = entry.get("blocking")
+            minor = entry.get("minor")
+            issues = entry.get("issues")
+            if artifact not in ("analysis", "candidates") \
+                    or verdict not in ("pass", "pass_with_minor", "fail") \
+                    or isinstance(blocking, bool) or not isinstance(blocking, int) \
+                    or blocking < 0 or isinstance(minor, bool) \
+                    or not isinstance(minor, int) or minor < 0 \
+                    or not isinstance(issues, list):
+                return False
+
+            blocking_issues = 0
+            minor_issues = 0
+            for issue in issues:
+                if not isinstance(issue, dict):
+                    return False
+                if any(not isinstance(issue.get(field), str)
+                       or not issue[field].strip()
+                       for field in ("rule", "severity", "quote", "suggestion")):
+                    return False
+                location = issue.get("location")
+                if isinstance(location, bool) or not (
+                        isinstance(location, int) and location > 0
+                        or isinstance(location, str) and location.strip()
+                        and len(location) <= 20):
+                    return False
+                if len(issue["quote"]) > 40:
+                    return False
+                if issue["severity"] == "blocking":
+                    blocking_issues += 1
+                elif issue["severity"] == "minor":
+                    minor_issues += 1
+                else:
+                    return False
+            if (blocking, minor) != (blocking_issues, minor_issues):
+                return False
+            if blocking_issues and verdict != "fail":
+                return False
+            if not blocking_issues and verdict == "fail":
+                return False
+            if not blocking_issues and minor_issues and verdict != "pass_with_minor":
+                return False
+            if not blocking_issues and not minor_issues and verdict != "pass":
+                return False
+            if artifact == "candidates":
+                if normalized_path in candidates:
+                    return False
+                candidates.add(normalized_path)
+        return bool(candidates)
+
+    @staticmethod
     def _argv_values(command, flag):
         try:
             tokens = shlex.split(command)
@@ -2423,8 +2514,7 @@ class Judge:
         if output_values[0] != entry.get("output_file"):
             problems.append(f"round {entry['round']}: --output-file differs from prepare's output_file")
         result_value = self._strict_json_value(result_values[0])
-        if not isinstance(result_value, dict) or not {
-                "result", "files", "notes"} <= set(result_value):
+        if not self._complete_writer_result(result_value):
             problems.append(f"round {entry['round']}: --result-json is not a complete result object")
             result_value = None
         return problems, gaps, result_value
@@ -2579,12 +2669,12 @@ class Judge:
                         f"round {entry['round']}: native writer stdout is missing or truncated")
                 else:
                     stdout_value = self._strict_json_value(native_stdout)
-                    if not isinstance(stdout_value, dict) or not {
-                            "result", "files", "notes"} <= set(stdout_value):
+                    if not self._complete_writer_result(stdout_value):
                         native_problems.append(
                             f"round {entry['round']}: successful stdout is not a complete result object")
                     elif isinstance(result_value, dict) \
-                            and stdout_value != result_value:
+                            and not self._json_semantically_equal(
+                                stdout_value, result_value):
                         native_problems.append(
                             f"round {entry['round']}: --result-json semantics differ from writer stdout")
 

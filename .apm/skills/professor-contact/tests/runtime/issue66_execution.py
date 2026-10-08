@@ -51,6 +51,8 @@ def _lexical_path(path, cwd=None):
 
 def _stage3_command(command, cwd=None):
     """Parse only actual contact_state.py argv tokens, never command prose."""
+    if cwd is not None and (not isinstance(cwd, str) or not cwd.strip()):
+        return None
     try:
         argv = shlex.split(command)
     except (TypeError, ValueError):
@@ -60,7 +62,11 @@ def _stage3_command(command, cwd=None):
         if Path(token).name != "contact_state.py" \
                 or not argv[index + 1].startswith("stage3-"):
             continue
-        matches.append((argv[index + 1], str(_lexical_path(token, cwd)), argv))
+        try:
+            source = str(_lexical_path(token, cwd))
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return None
+        matches.append((argv[index + 1], source, argv))
     return matches[0] if len(matches) == 1 else None
 
 
@@ -73,6 +79,119 @@ def _flag_values(argv, flag):
         elif token.startswith(flag + "="):
             values.append(token[len(flag) + 1:])
     return values
+
+
+def _strict_json_value(raw):
+    """Parse one complete JSON value, rejecting duplicate keys and extensions."""
+    if not isinstance(raw, (str, bytes)) or not raw:
+        return None
+
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"duplicate JSON key: {key}")
+            value[key] = item
+        return value
+
+    def reject_constant(value):
+        raise ValueError(f"invalid JSON constant: {value}")
+
+    try:
+        return json.loads(raw, object_pairs_hook=unique_object,
+                          parse_constant=reject_constant)
+    except (json.JSONDecodeError, TypeError, UnicodeDecodeError, ValueError):
+        return None
+
+
+def _complete_writer_result(value):
+    """Check the complete Stage-3 write result envelope and entry semantics."""
+    if not isinstance(value, dict) \
+            or value.get("result") != "ok" \
+            or not isinstance(value.get("files"), list) \
+            or not value["files"] \
+            or not isinstance(value.get("notes"), str):
+        return False
+
+    candidates = set()
+    for entry in value["files"]:
+        if not isinstance(entry, dict):
+            return False
+        file_path = entry.get("file")
+        if not isinstance(file_path, str) or not file_path:
+            return False
+        candidate = Path(file_path)
+        if not candidate.is_absolute():
+            return False
+        try:
+            normalized_path = str(candidate.resolve(strict=False))
+        except (OSError, RuntimeError, ValueError):
+            return False
+
+        artifact = entry.get("artifact")
+        verdict = entry.get("verdict")
+        blocking = entry.get("blocking")
+        minor = entry.get("minor")
+        issues = entry.get("issues")
+        if artifact not in ("analysis", "candidates") \
+                or verdict not in ("pass", "pass_with_minor", "fail") \
+                or isinstance(blocking, bool) or not isinstance(blocking, int) \
+                or blocking < 0 or isinstance(minor, bool) \
+                or not isinstance(minor, int) or minor < 0 \
+                or not isinstance(issues, list):
+            return False
+
+        blocking_issues = 0
+        minor_issues = 0
+        for issue in issues:
+            if not isinstance(issue, dict):
+                return False
+            if any(not isinstance(issue.get(field), str)
+                   or not issue[field].strip()
+                   for field in ("rule", "severity", "quote", "suggestion")):
+                return False
+            location = issue.get("location")
+            if isinstance(location, bool) or not (
+                    isinstance(location, int) and location > 0
+                    or isinstance(location, str) and location.strip()
+                    and len(location) <= 20):
+                return False
+            if len(issue["quote"]) > 40:
+                return False
+            if issue["severity"] == "blocking":
+                blocking_issues += 1
+            elif issue["severity"] == "minor":
+                minor_issues += 1
+            else:
+                return False
+        if (blocking, minor) != (blocking_issues, minor_issues):
+            return False
+        if blocking_issues and verdict != "fail":
+            return False
+        if not blocking_issues and verdict == "fail":
+            return False
+        if not blocking_issues and minor_issues and verdict != "pass_with_minor":
+            return False
+        if not blocking_issues and not minor_issues and verdict != "pass":
+            return False
+        if artifact == "candidates":
+            if normalized_path in candidates:
+                return False
+            candidates.add(normalized_path)
+    return bool(candidates)
+
+
+def _json_semantically_equal(left, right):
+    """Compare parsed JSON values without Python's bool/int equality overlap."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _json_semantically_equal(left[key], right[key]) for key in left)
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _json_semantically_equal(a, b) for a, b in zip(left, right))
+    return left == right
 
 
 def _json_output(raw):
@@ -682,16 +801,26 @@ class Execution:
                           "exists_before": exists_before,
                           "exists_after": exists_after, "mode": mode,
                           "bytes_b64": _b64(output_bytes)}
+        result_json_values = _flag_values(argv, "--result-json")
+        argument_result = (_strict_json_value(result_json_values[0])
+                           if len(result_json_values) == 1 else None)
+        stdout_result = _strict_json_value(stdout)
+        argument_is_complete = _complete_writer_result(argument_result)
+        stdout_is_complete = _complete_writer_result(stdout_result)
+        semantic_match = argument_is_complete and stdout_is_complete \
+            and _json_semantically_equal(argument_result, stdout_result)
         if call["exit_code"] is None or call["exit_code"] != 0:
             status = "BLOCKED"
             reason = "受控 writer 命令未能以零退出码完成"
         elif exists_before or not exists_after or mode != "0600" \
-                or output_bytes != stdout:
+                or not stdout or not output_bytes \
+                or not argument_is_complete or not stdout_is_complete \
+                or not semantic_match or output_bytes != stdout:
             status = "FAIL"
-            reason = "受控 writer 的独占路径、0600 权限或逐字节输出检查失败"
+            reason = "受控 writer 的完整 JSON、语义一致、独占路径、0600 权限或逐字节输出检查失败"
         else:
             status = "PASS"
-            reason = "受控 writer 输出与独占文件逐字节一致，文件权限为 0600"
+            reason = "受控 writer 参数与输出是语义一致的完整 JSON；输出与新建文件逐字节一致且权限为 0600"
         writer = self._writer_evidence(
             controlled_call=call, native_calls=[], gaps=[], save_input=None,
             classification=status, reason=reason)
@@ -723,13 +852,54 @@ class Execution:
             return None
 
     def collect_writer_evidence(self, response):
-        """Collect only native Stage 3 call events and their actual temp files."""
+        """Bind native save output to the exact writer source bytes it digested.
+
+        The post-response filesystem snapshot can corroborate bytes only when
+        they match the digest emitted by the successful save command. It does
+        not establish the source file's mode or state immediately before save.
+        """
         gaps, native_calls, observations = [], [], []
         output = response.get("output") if isinstance(response, dict) else None
         raw_events = output.get("app_server_events") if isinstance(output, dict) else None
         if not isinstance(raw_events, list):
             return self._writer_evidence(native_calls=[], observations=[],
                 gaps=["raw app_server_events 缺失；writer 观察未开始"], save_input=None)
+
+        root_thread = output.get("thread_id")
+        root_turn = output.get("turn_id")
+        if not isinstance(root_thread, str) or not root_thread \
+                or not isinstance(root_turn, str) or not root_turn:
+            gaps.append("正式响应缺少根线程或轮次身份；无法绑定 prepare 与 save")
+
+        def valid_sha256(value):
+            return isinstance(value, str) and len(value) == 64 \
+                and all(character in "0123456789abcdef" for character in value)
+
+        def valid_absolute_path(value):
+            if not isinstance(value, str) or not value:
+                return False
+            try:
+                candidate = Path(value)
+                return candidate.is_absolute() and candidate.resolve(strict=False).is_absolute()
+            except (OSError, RuntimeError, ValueError):
+                return False
+
+        def valid_professor(value):
+            return isinstance(value, str) and bool(value.strip())
+
+        def stdout_object(call):
+            encoded = call.get("stdout_b64")
+            if not isinstance(encoded, str):
+                return None
+            try:
+                return _strict_json_value(base64.b64decode(encoded, validate=True))
+            except (ValueError, TypeError):
+                return None
+
+        def completed_successfully(call):
+            exit_code = call.get("exit_code")
+            return call.get("status") == "completed" \
+                and type(exit_code) is int and exit_code == 0
 
         calls = []
         for event_index, event in enumerate(raw_events):
@@ -745,7 +915,9 @@ class Execution:
             command = item.get("command")
             if not isinstance(command, str):
                 continue
-            parsed = _stage3_command(command, item.get("cwd") or params.get("cwd"))
+            event_cwd = item.get("cwd") if item.get("cwd") is not None \
+                else params.get("cwd")
+            parsed = _stage3_command(command, event_cwd)
             if parsed is None:
                 if "contact_state.py" in command and "stage3-" in command:
                     gaps.append(f"event {event_index}: Stage 3 command argv is ambiguous")
@@ -774,25 +946,40 @@ class Execution:
         for call in calls:
             if call["subcommand"] != "stage3-prepare-validation":
                 continue
-            payload = _json_output(
-                base64.b64decode(call["stdout_b64"]).decode("utf-8")
-                if call["stdout_b64"] else None)
-            if call["status"] != "completed" or call["exit_code"] != 0:
+            payload = stdout_object(call)
+            if call["thread_id"] != root_thread \
+                    or call["turn_id"] != root_turn or call["identity"] is None:
+                gaps.append(f"event {call['event_index']}: prepare 缺少根线程/轮次/命令身份绑定")
+                continue
+            if not completed_successfully(call):
                 gaps.append(f"event {call['event_index']}: prepare command did not complete successfully")
                 continue
             if not isinstance(payload, dict) or payload.get("status") != "ok":
+                gaps.append(f"event {call['event_index']}: prepare stdout 不是完整成功对象")
                 continue
             round_no = payload.get("round")
             output_file = payload.get("output_file")
             handoff_file = payload.get("handoff_file")
+            validation_file = payload.get("validation_file")
+            handoff_sha = payload.get("handoff_sha256")
+            render_sha = payload.get("render_sha256")
+            professor = payload.get("professor")
+            professor_dir = payload.get("professor_dir")
+            candidates_md = payload.get("candidates_md")
             if type(round_no) is not int or round_no < 1 \
-                    or not isinstance(output_file, str) \
-                    or not isinstance(handoff_file, str):
-                gaps.append(f"event {call['event_index']}: prepare return misses writer paths or round")
+                    or any(not valid_absolute_path(value)
+                           for value in (output_file, handoff_file, validation_file,
+                                         professor_dir, candidates_md)) \
+                    or not valid_professor(professor) \
+                    or output_file == validation_file \
+                    or not valid_sha256(handoff_sha) or not valid_sha256(render_sha):
+                gaps.append(f"event {call['event_index']}: prepare return misses valid paths, round, or digests")
                 continue
             prepared.append({"round": round_no, "output_file": output_file,
-                             "handoff_file": handoff_file,
-                             "event_index": call["event_index"]})
+                "validation_file": validation_file, "handoff_file": handoff_file,
+                "handoff_sha256": handoff_sha, "render_sha256": render_sha,
+                "professor": professor, "professor_dir": professor_dir,
+                "event_index": call["event_index"], "identity": call["identity"]})
 
         def file_state(path_text):
             path = Path(path_text)
@@ -847,27 +1034,28 @@ class Execution:
                 native_call["output"] = observed_state
             if output_state is None or not Path(output_state["path"]).is_absolute() \
                     or output_state["exists_after"] and (
-                        output_state["mode"] is None
-                        or output_state["bytes_b64"] is None) \
-                    or writer["identity"] is None \
-                    or writer["stdout_b64"] is None:
+                        output_state["bytes_b64"] is None) \
+                    or writer["identity"] is None:
                 gaps.append(f"round {entry['round']}: writer file or native output could not be observed reliably")
                 continue
+            if not completed_successfully(writer):
+                gaps.append(f"round {entry['round']}: writer did not complete successfully; save input cannot be bound")
 
-            handoff = Path(entry["handoff_file"])
-            handoff_output = None
+            writer_stdout_bytes = None
             try:
-                if not handoff.is_symlink() and handoff.is_file():
-                    metadata = json.loads(handoff.read_text(encoding="utf-8"))
-                    if metadata.get("round") == entry["round"]:
-                        handoff_output = metadata.get("output_file")
-            except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
-                handoff_output = None
+                if isinstance(writer["stdout_b64"], str):
+                    writer_stdout_bytes = base64.b64decode(
+                        writer["stdout_b64"], validate=True)
+            except (ValueError, TypeError):
+                writer_stdout_bytes = None
+            if writer_stdout_bytes is None:
+                gaps.append(f"round {entry['round']}: writer stdout bytes are missing or cannot be strictly decoded")
+
             save_matches = []
             for save in calls:
                 if save["subcommand"] != "stage3-save-validation" \
                         or save["event_index"] <= writer["event_index"] \
-                        or save["thread_id"] != response.get("output", {}).get("thread_id"):
+                        or save["thread_id"] != root_thread:
                     continue
                 handoff_values = _flag_values(save["argv"], "--handoff-file")
                 if len(handoff_values) == 1 and handoff_values[0] \
@@ -875,19 +1063,61 @@ class Execution:
                             str(_lexical_path(entry["handoff_file"])):
                     save_matches.append(save)
             save_input = None
-            if len(save_matches) == 1 and handoff_output \
-                    and str(_lexical_path(handoff_output)) == \
-                        str(_lexical_path(entry["output_file"])):
+            if len(save_matches) == 1:
                 save = save_matches[0]
-                saved_state, _ = file_state(entry["output_file"])
-                if save["identity"] and saved_state and saved_state["exists_after"] \
-                        and saved_state["bytes_b64"] is not None:
+                save_handoff_hash = _flag_values(save["argv"], "--handoff-sha256")
+                save_payload = stdout_object(save)
+                source_bytes = None
+                if output_state and output_state.get("bytes_b64") is not None:
+                    try:
+                        source_bytes = base64.b64decode(
+                            output_state["bytes_b64"], validate=True)
+                    except (ValueError, TypeError):
+                        source_bytes = None
+                if source_bytes is not None and writer_stdout_bytes is not None \
+                        and source_bytes != writer_stdout_bytes:
+                    gaps.append(f"round {entry['round']}: post-response source bytes differ from native writer stdout; save input cannot be bound")
+                complete_save = isinstance(save_payload, dict) and all(
+                    field in save_payload for field in (
+                        "status", "professor", "professor_dir", "round",
+                        "render_sha256", "validation_file", "validation_sha256"))
+                complete_save = complete_save and \
+                    save_payload.get("status") == "ok" \
+                    and valid_professor(save_payload.get("professor")) \
+                    and valid_absolute_path(save_payload.get("professor_dir")) \
+                    and type(save_payload.get("round")) is int \
+                    and valid_sha256(save_payload.get("render_sha256")) \
+                    and valid_absolute_path(save_payload.get("validation_file")) \
+                    and valid_sha256(save_payload.get("validation_sha256"))
+                save_bound = completed_successfully(save) \
+                    and save["identity"] is not None \
+                    and completed_successfully(writer) \
+                    and save["turn_id"] == entry["identity"]["turn_id"] == root_turn \
+                    and len(save_handoff_hash) == 1 \
+                    and save_handoff_hash[0] == entry["handoff_sha256"] \
+                    and complete_save \
+                    and save_payload.get("round") == entry["round"] \
+                    and save_payload.get("validation_file") == entry["validation_file"] \
+                    and save_payload.get("render_sha256") == entry["render_sha256"] \
+                    and save_payload.get("professor") == entry["professor"] \
+                    and str(_lexical_path(save_payload["professor_dir"], save["cwd"])) \
+                        == str(_lexical_path(entry["professor_dir"], save["cwd"])) \
+                    and output_state is not None \
+                    and output_state.get("exists_after") is True \
+                    and source_bytes is not None \
+                    and writer_stdout_bytes is not None \
+                    and source_bytes == writer_stdout_bytes \
+                    and digest(source_bytes) == save_payload.get("validation_sha256")
+                if save_bound:
                     save_input = {**save["identity"], "path": entry["output_file"],
-                                  "bytes_b64": saved_state["bytes_b64"]}
+                                  "bytes_b64": _b64(source_bytes)}
+                    gaps.append(f"round {entry['round']}: save success proves a regular source was read, but save-time mode/timing is unavailable; the post-response snapshot cannot establish it")
+                else:
+                    gaps.append(f"round {entry['round']}: save return, handoff, identity, or source-byte digest cannot be bound")
             if len(save_matches) > 1:
                 gaps.append(f"round {entry['round']}: multiple native save calls match the writer handoff")
-            elif save_matches and save_input is None:
-                gaps.append(f"round {entry['round']}: save input bytes or handoff binding are unavailable")
+            elif not save_matches:
+                gaps.append(f"round {entry['round']}: no unique native save command matches the writer handoff")
 
             observations.append({"round": entry["round"],
                 "writer_call": writer["identity"], "command": writer["command"],
