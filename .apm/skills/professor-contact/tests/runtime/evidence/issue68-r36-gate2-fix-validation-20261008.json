@@ -3,8 +3,11 @@
   "date": "2026-10-08",
   "plan_revision": "issue-68-test-plan-r36-2026-10-08",
   "plan_sha256_at_test_run": "241416d3996c0af6fe84bf2187ee3fbacf48e66c4d72d8902033a30327573c03",
-  "plan_sha256_after_status_and_source_update": "da5277100a9de7f3596ed323d62c312006771cb6525d74edbd5d06809e877422",
+  "plan_sha256_before_candidate_commit_pin": "da5277100a9de7f3596ed323d62c312006771cb6525d74edbd5d06809e877422",
+  "plan_sha256_after_candidate_commit_pin": "173c947a3d03840a95e0fb587874509083e90d605987aa01aa68957c4d0a11fe",
   "source_base_commit": "f62c8fd6792022c3cecfe915226fa501e0be2605",
+  "committed_test_source_revision": "4c866becca95a14585332f506846d9e5b6a459e6",
+  "committed_test_source_matches_manifest": true,
   "test_results": [
     {
       "suite": "R19 verifier",
