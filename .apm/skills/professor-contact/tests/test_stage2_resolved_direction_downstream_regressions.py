@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from test_stage2_resolved_direction import ResolvedPipelineMixin, parse, run_cli, write_json
+from stage2_test_support import run_bound_stage2_plan
 
 
 class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest.TestCase):
@@ -172,14 +173,14 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
         downstream = first_direction["input_fingerprint"]
         self.assertNotEqual(provisional, downstream)
 
-        second_plan = parse(run_cli("stage2-plan", "--facts", str(facts_path)))
+        second_plan = parse(run_bound_stage2_plan(run_cli, facts_path))
         self.assertEqual(second_plan["directions"][0]["action"], "reuse")
         second = self.run_stage2_finalize(facts_path)
         self.assertEqual(second["status"], "ok")
         second_direction = self.load_pack()["directions"][0]
         self.assertEqual(second_direction["provisional_input_fingerprint"], provisional)
 
-        third_plan = parse(run_cli("stage2-plan", "--facts", str(facts_path)))
+        third_plan = parse(run_bound_stage2_plan(run_cli, facts_path))
         self.assertEqual(
             third_plan["directions"][0]["action"], "reuse",
             "second finalize corrupted provisional_input_fingerprint and broke Stage-2 reuse",

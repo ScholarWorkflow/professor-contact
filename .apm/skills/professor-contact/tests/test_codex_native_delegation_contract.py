@@ -274,6 +274,12 @@ class CodexNestedDelegatorContractTests(unittest.TestCase):
                     r"(?is)(?:task\s*\(|Task 委派|native Task)",
                     "OpenCode projection must keep its Task delegation path",
                 )
+                if owner == 'professor-contact-analyzer':
+                    # Authoritative routing line must name the child and wait;
+                    # arbitrary mentions elsewhere cannot certify this relation.
+                    body = read(opencode_agent_path(owner))
+                    gate = body.split('## Runtime routing gate (read first)', 1)[1].split('\n## ', 1)[0]
+                    self.assertRegex(gate, r'(?m)^.*`paper-analysis`.*OpenCode 原生 Task 委派.*等待 child 返回后继续')
 
     def test_downloader_stage1_payload_is_untouched_by_the_delegation_contract(self):
         branch = _codex_branch("professor-contact-downloader")

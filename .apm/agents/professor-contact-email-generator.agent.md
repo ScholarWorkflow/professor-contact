@@ -194,9 +194,19 @@ Stage 4's success result hands over **one professor-local email pack**: `<profes
 - Running those owner invocations sequentially is an orchestration choice, not a product contract; no concurrency or ordering guarantee is defined for two professors' Stage-5 transactions.
 - `stage5-record-validation` keeps its existing `--professor-dir` + `--validation-file` contract inside the same professor transaction and gains no `--email-id` flag (Issue #59 rules are unchanged).
 
+Alongside `choices`, the caller supplies `email_pack`: the absolute
+`<教授目录>/邮件输入.json` path from a successful Stage-4 `results[]` row. Pass it
+through unchanged as `--email-pack` on every Stage-5 call of that run — never a
+program-level path, never a path this agent guessed (see the professor-local
+section below).
+
+## Professor-local email pack (issue #67)
+
+Stage 5's only email fact source is the pack Stage 4 committed **inside that professor's directory**: `<教授目录>/邮件输入.json` (schema 3). The caller passes the exact absolute path from a successful Stage-4 `results[]` row as `--email-pack`, and every Stage-5 call of the same run (`stage5-plan` and the `stage5_immutable.py stage5-finalize` wrapper) uses that same path. Mixed Stage-4 results hand off only the successfully committed professors; a row whose `email_pack` is `null` has nothing to generate. When `--email-pack` is omitted the runner still resolves the historical program-level `教授研究/邮件输入.json`, which Stage 4 no longer writes: a missing file returns `needs_refresh` / `missing_email_pack` (re-run Stage 4), and an existing one is only a legacy migration source, never the new flow's authority. One local pack is never split into per-email fan-out and never re-aggregated into a second program-level fact file.
+
 ## Direction provenance (issue #8 email-pack v2)
 
-Every `emails[]` entry carries `direction_ids` (sorted canonical IDs) and `directions[]` (per-direction display names) — for cross-direction ideas both list ALL participants, and `email_id` is built from the canonical direction scope (`professor::A+B::idea`, A+B == B+A). The runner passes this provenance into the model input; never guess which evidence belongs to which direction, and never reconstruct direction identity from names or a legacy `collection_key`. For a multi-direction follow-up email the topic line uses the selected idea title, not one singular direction name.
+The local `邮件输入.json` is schema 3: every `emails[]` entry carries `direction_ids` (sorted canonical IDs) and `directions[]` (per-direction display names) — for cross-direction ideas both list ALL participants, and `email_id` is built from the canonical direction scope (`professor::A+B::idea`, A+B == B+A); `professor_dir` is a location, never part of the identity. The runner passes this provenance into the model input; never guess which evidence belongs to which direction, and never reconstruct direction identity from names or a legacy `collection_key`. For a multi-direction follow-up email the topic line uses the selected idea title, not one singular direction name.
 
 ## Immutable-template override (Issue #9)
 
@@ -211,6 +221,7 @@ skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage5_im
   --program-root <abs> --email-pack <abs professor_dir>/邮件输入.json \
   --mode both --result <result.json> --choices <choices.json> \
   --template <abs template> --followup-template <abs followup template> \
+  --email-pack <abs path from the Stage-4 success row> \
   [--polish-mode dynamic-fields-only] [--email-id ...]
 ```
 

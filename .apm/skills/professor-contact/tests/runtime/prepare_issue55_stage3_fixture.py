@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -23,37 +25,32 @@ FORBIDDEN_OUTPUTS = (
 )
 
 
-class FixtureBuildError(RuntimeError):
-    pass
+def _load_fixture_support():
+    module_path = Path(__file__).with_name("fixture_support.py").resolve()
+    digest = hashlib.sha256(str(module_path).encode("utf-8")).hexdigest()[:16]
+    name = f"professor_contact_fixture_support_{digest}"
+    module = sys.modules.get(name)
+    if module is not None:
+        return module
+    spec = importlib.util.spec_from_file_location(name, module_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _write_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+support = _load_fixture_support()
+FixtureBuildError = support.FixtureBuildError
+sha256 = support.file_sha256
+_write_json = support.write_json
 
 
 def _producer_root() -> Path:
-    return Path(__file__).resolve().parents[5]
+    return support.producer_root()
 
 
 def _prepare_root(root: Path) -> Path:
-    root = root.resolve()
-    producer = _producer_root()
-    if root == producer or root.is_relative_to(producer):
-        raise FixtureBuildError(f"fixture root must be outside producer checkout: {root}")
-    if root.exists():
-        if not root.is_dir():
-            raise FixtureBuildError(f"fixture root is not a directory: {root}")
-        if any(root.iterdir()):
-            raise FixtureBuildError(f"refusing to replace non-empty foreign directory: {root}")
-        root.rmdir()
-    root.parent.mkdir(parents=True, exist_ok=True)
-    root.mkdir()
-    return root
+    return support.prepare_root(root, description="fixture root").path
 
 
 def _stage2_input(professor_dir: Path) -> dict[str, Any]:
@@ -122,24 +119,27 @@ def _stage2_input(professor_dir: Path) -> dict[str, Any]:
 
 
 def build_fixture(program_root: Path, *, output: Path) -> dict[str, Any]:
-    root = _prepare_root(program_root)
+    root = support.resolved_outside_producer(program_root, description="fixture root")
     professor_dir = root / "教授研究" / "X分野" / PROFESSOR
     info = root / "info.json"
     profile = root / "套磁邮件" / "套磁信息.md"
     input_pack = professor_dir / "套磁候选输入.json"
+    manifest_path = support.ensure_new_output(
+        output,
+        reserved=[root, info, profile, input_pack])
 
+    support.prepare_root(root, description="fixture root")
     _write_json(info, {
         "schema_version": 1,
         "kind": "issue55-stage3-program",
         "program": "Synthetic Systems",
     })
-    profile.parent.mkdir(parents=True, exist_ok=True)
-    profile.write_text(
+    support.write_text(
+        profile,
         "# Synthetic applicant profile\n\n"
         "研究兴趣：适应信号处理、分布变化下的稳健性。\n"
         "经验：使用 Python 进行信号处理实验与可复现分析。\n"
         "希望探索：在变化环境中如何保持在线模型的稳定适应。\n",
-        encoding="utf-8",
     )
     _write_json(input_pack, _stage2_input(professor_dir))
 
@@ -164,9 +164,7 @@ def build_fixture(program_root: Path, *, output: Path) -> dict[str, Any]:
         "network_used": False,
         "runtime_fixture_started": False,
     }
-    output = Path(output).resolve()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(output, manifest)
+    support.write_json_exclusive(manifest_path, manifest)
     return manifest
 
 

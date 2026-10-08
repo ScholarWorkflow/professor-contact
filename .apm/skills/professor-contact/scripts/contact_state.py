@@ -13,6 +13,7 @@ only, no web/PDF/Zotero/model work on its side either).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -37,10 +38,10 @@ INPUT_PACK_SCHEMA = 2
 CANDIDATE_STATE_SCHEMA = 2
 SELECTION_SCHEMA = 2
 EMAIL_PACK_SCHEMA = 2
-# Issue #67 owns this professor-local Stage-4 container
-# (<professor_dir>/套磁选择.json + 邮件输入.json). Stage 5 consumes the producer's
-# constant instead of defining a second schema, and the legacy program-level
-# schema-2 container is not a Stage-5 fact source.
+# Issue #67: schema 3 marks a professor-local Stage-4 container
+# (<professor_dir>/套磁选择.json + 邮件输入.json). The legacy program-level
+# containers keep their schema-2 identity so migration can still tell them
+# apart instead of treating every file as the new authority.
 STAGE4_LOCAL_SCHEMA = 3
 DIRECTION_IDENTITY_VERSION = "direction-id-v1"
 STAGE3_GENERATOR_CONTRACT_VERSION = "stage3-ideas-v2"
@@ -103,8 +104,10 @@ STAGE2_PREFLIGHT_VERSION = "stage2-preflight-v1"
 # _resolved_directions.json binding to the facts' preflight proof. Packs
 # accepted under v1 semantics must re-prove through the slow path.
 STAGE2_RESOLUTION_SEMANTICS_VERSION = 2
-STAGE2_TARGET_FILE = Path("教授研究") / "套磁目标.json"
-STAGE1_SNAPSHOT_FILE = Path("教授研究") / "套磁阶段1候选.json"
+STAGE2_TARGET_FILE_NAME = "套磁目标.json"
+STAGE1_STATE_FILE_NAME = "套磁阶段1候选.json"
+STAGE1_STATE_SCHEMA_VERSION = 2
+STAGE1_STATE_KIND = "professor-contact-stage1"
 AUTHORSHIP_LEDGER_FILE = Path("教授研究") / "_署名对照.json"
 PAPER_ANALYSIS_SCOPES = ("relevant", "all")
 STAGE2_GUARD_KINDS = (("analysis", "analysis_file"), ("future_work", "sidecar_file"),
@@ -245,27 +248,72 @@ def emit(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1))
 
 
+class ProfessorBusinessFailure(Exception):
+    """Expected professor-scoped business failure inside a Stage-4 transaction.
+
+    It carries the machine payload a top-level `fail()`/`soft_exit()` would have
+    printed, so the caller can turn it into that professor's result row while
+    the single aggregate JSON stays the only output of the command."""
+
+    def __init__(self, payload: dict) -> None:
+        super().__init__(payload.get("reason_code") or "")
+        self.payload = payload
+
+
+_BUSINESS_CHANNEL: list = []
+
+
+@contextlib.contextmanager
+def professor_business_channel():
+    """Route expected business exits into ProfessorBusinessFailure.
+
+    A one-professor Stage-4 transaction must never print or end the process:
+    only the outer command emits the single machine result."""
+    _BUSINESS_CHANNEL.append(True)
+    try:
+        yield
+    finally:
+        _BUSINESS_CHANNEL.pop()
+
+
+def _business_channel_open() -> bool:
+    return bool(_BUSINESS_CHANNEL)
+
+
 def fail(reason_code: str, message: str = "", **extra) -> None:
     payload = {"status": "error", "reason_code": reason_code, "message": message}
     payload.update(extra)
+    if _business_channel_open():
+        raise ProfessorBusinessFailure(payload)
     emit(payload)
     sys.exit(1)
 
 
+def professor_dir_containment_error(professor_dir: Path, program_root: Path) -> str | None:
+    """Return `invalid_professor_dir` when a professor dir leaves the program."""
+    try:
+        allowed = (program_root / "教授研究").resolve()
+        actual = Path(professor_dir).resolve()
+        actual.relative_to(allowed)
+    except (OSError, ValueError):
+        return "invalid_professor_dir"
+    return None
+
+
 def require_professor_dir_under_program(professor_dir: Path, program_root: Path) -> None:
     """Prevent workflow state from being written outside the selected program."""
-    allowed = (program_root / "教授研究").resolve()
-    actual = professor_dir.resolve()
-    try:
-        actual.relative_to(allowed)
-    except ValueError:
-        fail("invalid_professor_dir", "professor_dir must be inside program_root/教授研究",
-             professor_dir=str(actual), allowed_root=str(allowed))
+    if professor_dir_containment_error(professor_dir, program_root) is None:
+        return
+    fail("invalid_professor_dir", "professor_dir must be inside program_root/教授研究",
+         professor_dir=str(Path(professor_dir).resolve()),
+         allowed_root=str((program_root / "教授研究").resolve()))
 
 
 def soft_exit(status: str, reason_code: str, **extra) -> None:
     payload = {"status": status, "reason_code": reason_code}
     payload.update(extra)
+    if _business_channel_open():
+        raise ProfessorBusinessFailure(payload)
     emit(payload)
     sys.exit(2)
 
@@ -3022,24 +3070,129 @@ def stage2_program_inputs(program_root: Path, professor_dir: Path, professor: st
     }
 
 
-def read_stage2_target(program_root: Path, professor: str) -> dict | None:
-    data, error = read_json_file(program_root / STAGE2_TARGET_FILE)
-    if error or not isinstance(data, dict) or not isinstance(data.get("targets"), list):
-        return None
-    for target in data["targets"]:
-        if isinstance(target, dict) and target.get("professor") == professor:
-            return target
-    return None
+def stage2_target_path(professor_dir: Path) -> Path:
+    """Professor-local Stage-0 authority for the professor owning ``professor_dir``."""
+    return Path(professor_dir) / STAGE2_TARGET_FILE_NAME
 
 
-def read_stage1_professor_entry(program_root: Path, professor: str) -> dict | None:
-    data, error = read_json_file(program_root / STAGE1_SNAPSHOT_FILE)
-    if error or not isinstance(data, dict) or not isinstance(data.get("professors"), list):
+def read_stage2_target(target_path: Path, program_root: Path, professor: str) -> dict | None:
+    """Read one professor's Stage-0 target, fail-closed to ``None``.
+
+    The retired program-level ``教授研究/套磁目标.json`` is not read here: the
+    caller passes the professor's own local target file.
+    """
+    data, error = read_json_file(Path(target_path))
+    if error or not isinstance(data, dict):
         return None
-    for entry in data["professors"]:
-        if isinstance(entry, dict) and entry.get("professor") == professor:
-            return entry
-    return None
+    if data.get("schema_version") != 2 or data.get("kind") != "professor-contact-target":
+        return None
+    if data.get("professor") != professor:
+        return None
+    professor_dir = str(data.get("professor_dir") or "")
+    if not professor_dir:
+        return None
+    declared = (Path(program_root) / professor_dir / STAGE2_TARGET_FILE_NAME).resolve()
+    if str(declared) != str(Path(target_path).resolve()):
+        return None
+    return data
+
+
+def stage1_state_path(professor_dir: Path) -> Path:
+    """Professor-local Stage-1 authority for the professor owning ``professor_dir``."""
+    return Path(professor_dir) / STAGE1_STATE_FILE_NAME
+
+
+def read_stage1_professor_entry(program_root: Path, professor_dir: Path, professor: str,
+                                target: dict | None) -> dict | None:
+    """Read one professor's own Stage-1 state, fail-closed to ``None``.
+
+    The professor-local file is the only authority consulted here, so another
+    professor's missing, corrupt or unmigrated state can never block this
+    professor. The stored identity fields must agree with the already-resolved
+    local target, otherwise the file is someone else's and is not used.
+    """
+    if not isinstance(target, dict):
+        return None
+    expected_dir = str(target.get("professor_dir") or "")
+    if not expected_dir:
+        return None
+    if str((program_root / expected_dir).resolve()) != str(Path(professor_dir).resolve()):
+        return None
+    state_path = stage1_state_path(professor_dir)
+    data, error = read_json_file(state_path)
+    if error or not isinstance(data, dict):
+        return None
+    if (data.get("schema_version") != STAGE1_STATE_SCHEMA_VERSION
+            or data.get("kind") != STAGE1_STATE_KIND):
+        return None
+    if "professors" in data:
+        return None
+    if data.get("professor") != professor:
+        return None
+    stored_dir = str(data.get("professor_dir") or "")
+    if str((program_root / stored_dir / STAGE1_STATE_FILE_NAME).resolve()) != str(state_path.resolve()):
+        return None
+    if str(Path(str(data.get("preview_path") or "")).parent) != stored_dir:
+        return None
+    target_preview = str((target or {}).get("preview_path") or "")
+    snapshot_preview = str(data.get("preview_path") or "")
+    if not target_preview or not snapshot_preview:
+        return None
+    if str((program_root / snapshot_preview).resolve()) != str((program_root / target_preview).resolve()):
+        return None
+    if not isinstance(data.get("directions"), list):
+        return None
+    return data
+
+
+def _canonical_under(program_root: Path, value) -> str | None:
+    """Resolved absolute path of a program-relative or absolute value."""
+    if value in (None, ""):
+        return None
+    path = Path(str(value))
+    if not path.is_absolute():
+        path = Path(program_root) / path
+    try:
+        return str(path.resolve())
+    except OSError:
+        return None
+
+
+def stage2_local_identity(program_root: Path, professor_dir: Path, professor: str,
+                          target: dict | None, snapshot_entry: dict | None) -> dict:
+    """Canonical transaction identity a Stage-2 proof must keep binding.
+
+    The digest covers the full bytes of the professor-local target file this
+    transaction opened, and the fingerprint is the exact Stage-1 input
+    fingerprint it matched; display name alone cannot tell two professors
+    apart, and partial business-field fingerprints cannot see target content
+    outside the selected projection (e.g. selection_history).
+    """
+    target_path = stage2_target_path(professor_dir)
+    try:
+        digest = sha256_bytes(Path(target_path).read_bytes())
+    except OSError:
+        digest = None
+    return {
+        "professor": professor,
+        "professor_dir": _canonical_under(program_root, (target or {}).get("professor_dir"))
+                         or str(Path(professor_dir).resolve()),
+        "preview_path": _canonical_under(program_root, (target or {}).get("preview_path")),
+        "target_state": str(Path(target_path).resolve()),
+        "target_state_sha256": digest,
+        "stage1_input_fingerprint": (snapshot_entry or {}).get("input_fingerprint"),
+    }
+
+
+def stage2_transaction_identity(ctx: "Stage2Context") -> tuple[dict | None, dict | None, dict]:
+    """Reopen the professor's local target and reread its exact Stage-1 entry."""
+    target = read_stage2_target(stage2_target_path(ctx.professor_dir), ctx.program_root,
+                                ctx.professor)
+    snapshot_entry = read_stage1_professor_entry(
+        ctx.program_root, ctx.professor_dir, ctx.professor, target)
+    identity = stage2_local_identity(ctx.program_root, ctx.professor_dir, ctx.professor,
+                                     target, snapshot_entry)
+    return target, snapshot_entry, identity
 
 
 def stage2_preflight_cheap_inputs(program_root: Path, professor_dir: Path, professor: str,
@@ -3065,6 +3218,8 @@ def stage2_preflight_cheap_inputs(program_root: Path, professor_dir: Path, profe
         "versions": stage2_preflight_versions(),
         "params": params,
         "current_year": current_year,
+        "identity": stage2_local_identity(program_root, professor_dir, professor,
+                                          target, snapshot_entry),
         "program_inputs": stage2_program_inputs(program_root, professor_dir, professor,
                                                 target, snapshot_entry),
         "selected_direction_ids": sorted((target or {}).get("selected_direction_ids") or []),
@@ -3317,12 +3472,23 @@ def cmd_stage2_preflight(args) -> None:
     params = stage2_preflight_params(args.paper_analysis, args.gap_scope,
                                      args.freshness_scope, args.max_relevant_papers)
     current_year = datetime.now().year
-    target = read_stage2_target(program_root, professor)
+    target = read_stage2_target(Path(args.target_file), program_root, professor)
     if target is None:
         fail("invalid_params",
              f"professor has no selected target state; run contact_targets.py resolve first: {professor}")
     professor_dir = program_root / str(target.get("professor_dir") or "")
-    snapshot_entry = read_stage1_professor_entry(program_root, professor)
+    snapshot_entry = read_stage1_professor_entry(program_root, professor_dir, professor, target)
+    if snapshot_entry is None:
+        # The professor-local Stage-1 state is a required preflight proof input
+        # (R64-20 exact-entry binding): missing, malformed or misowned state has
+        # no candidate universe to bind, so fail closed to the refresh lifecycle
+        # instead of the slow path, and never fall back to another professor's
+        # state or the retired program aggregate.
+        state_path = stage1_state_path(professor_dir)
+        soft_exit("needs_refresh",
+                  "missing_stage1_snapshot" if not state_path.is_file()
+                  else "invalid_stage1_snapshot",
+                  snapshot_path=str(state_path), professor=professor)
     pack_path = professor_dir / INPUT_PACK
     pack, _error = load_input_pack(professor_dir)
     cache_block = (pack or {}).get("cache")
@@ -3494,8 +3660,37 @@ def cmd_stage2_preflight(args) -> None:
     })
 
 
+def stage2_plan_bind_preflight(ctx: Stage2Context, preflight_file) -> tuple[dict, str | None]:
+    """Bind this plan to one professor-local Stage-2 transaction.
+
+    The plan sits between preflight and finalize, so it must carry the canonical
+    identity the preflight proof bound — reopen the same professor-local target,
+    reread the exact Stage-1 entry — and never rediscover the transaction from
+    the display name or emit jobs from inputs the proof never saw.
+    """
+    _target, _entry, identity = stage2_transaction_identity(ctx)
+    if not preflight_file:
+        fail("invalid_params", "stage2-plan requires --preflight-file")
+    plan, error = read_json_file(Path(preflight_file))
+    if (error or not isinstance(plan, dict) or plan.get("status") != "ok"
+            or not isinstance(plan.get("preflight_inputs"), dict)):
+        fail("invalid_params", f"preflight file unreadable or not a preflight payload: "
+                               f"{preflight_file}")
+    if plan.get("professor") != ctx.professor:
+        fail("invalid_params", "preflight file professor mismatch: "
+                               f"{plan.get('professor')!r} != {ctx.professor!r}")
+    plan_inputs = plan["preflight_inputs"]
+    if plan_inputs.get("identity") != identity:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=["identity"])
+    proof_id = sha256_obj({"professor": plan["professor"], "preflight_inputs": plan_inputs})
+    if plan.get("preflight_id") != proof_id:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=["preflight_proof_id"])
+    return identity, proof_id
+
+
 def cmd_stage2_plan(args) -> None:
     ctx = Stage2Context(Path(args.facts))
+    identity, proof_id = stage2_plan_bind_preflight(ctx, getattr(args, "preflight_file", None))
     jobs, reuse_list, process_list = [], [], []
     for plan in ctx.direction_plans:
         ckey = plan["did"]
@@ -3567,6 +3762,8 @@ def cmd_stage2_plan(args) -> None:
         "status": "ok",
         "professor": ctx.professor,
         "professor_dir": str(ctx.professor_dir),
+        "preflight_id": proof_id,
+        "transaction_identity": identity,
         "pack_path": str(ctx.pack_path),
         "params": {"gap_scope": ctx.gap_scope, "freshness_scope": ctx.freshness_scope},
         "directions": [{
@@ -4097,6 +4294,8 @@ def stage2_preflight_plan_drift(plan_inputs: dict, current: dict) -> list:
         drift.append("versions")
     if plan_inputs.get("current_year") != current["current_year"]:
         drift.append("current_year")
+    if plan_inputs.get("identity") != current["identity"]:
+        drift.append("identity")
     if plan_inputs.get("program_inputs") != current["program_inputs"]:
         drift.append("program_inputs")
     if plan_inputs.get("selected_direction_ids") != current["selected_direction_ids"]:
@@ -4120,8 +4319,8 @@ def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
     Stage 2 may run for a long time after the preflight decided to prepare
     evidence. Stage 0/1 state or papers.json can change underneath; finalize
     must never stamp results derived from a stale candidate universe as
-    current. Returns (plan, target, snapshot_entry); plan is None when the
-    caller did not pass a preflight file (legacy direct callers).
+    current. Returns (plan, target, snapshot_entry); a saved preflight proof is
+    required for every finalize invocation.
 
     The payload is also bound to the facts run it produced: ``preflight_id``
     must be the payload's self-consistent proof id and must equal the id the
@@ -4132,7 +4331,7 @@ def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
     earlier target state.
     """
     if not getattr(args, "preflight_file", None):
-        return None, None, None
+        fail("invalid_params", "stage2-finalize requires --preflight-file")
     plan, error = read_json_file(Path(args.preflight_file))
     if (error or not isinstance(plan, dict) or plan.get("status") != "ok"
             or not isinstance(plan.get("preflight_inputs"), dict)):
@@ -4146,8 +4345,9 @@ def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
     if not isinstance(params, dict) or params.get("gap_scope") != ctx.gap_scope or \
             params.get("freshness_scope") != ctx.freshness_scope:
         soft_exit("needs_refresh", "preflight_inputs_changed", drift=["params"])
-    target = read_stage2_target(ctx.program_root, ctx.professor)
-    snapshot_entry = read_stage1_professor_entry(ctx.program_root, ctx.professor)
+    target = read_stage2_target(stage2_target_path(ctx.professor_dir), ctx.program_root, ctx.professor)
+    snapshot_entry = read_stage1_professor_entry(ctx.program_root, ctx.professor_dir,
+                                                 ctx.professor, target)
     if target is None or snapshot_entry is None:
         soft_exit("needs_refresh", "preflight_inputs_changed",
                   drift=["target_or_snapshot_missing"])
@@ -5074,6 +5274,62 @@ def require_stage3_correction_invariants(old: dict, new: dict, path: Path,
                  f"{path}: candidate {cid} rewrote {touched} without a validator finding")
 
 
+def _stage3_selected_scope_keys(selection_path: Path, professor_dir: Path,
+                                by_ckey: dict) -> set:
+    """Selected-refresh scope from one explicit professor-local selection container.
+
+    An explicit ``--selection`` is ONE professor's own container (issue #67): the
+    container's top-level canonical ``professor_dir`` and every row's canonical
+    ``professor_dir`` must equal the current professor directory before any
+    direction is consumed. A missing, unresolvable or foreign identity fails the
+    refresh before task generation or any formal write — never silently skipped,
+    rebound to the container's directory, or accepted on the top-level check
+    alone. Direction reading keeps the exact machine relation (canonical
+    ``direction_ids`` first, deprecated ``direction_id`` / ``collection_key``
+    through the pack's unique mapping); the display name never filters rows."""
+    selection_data, sel_error = read_json_file(Path(selection_path))
+    if sel_error:
+        fail("invalid_params", f"selection file unreadable: {selection_path}")
+    if not isinstance(selection_data, dict):
+        fail("invalid_selection",
+             f"selection container must be an object: {selection_path}")
+    canonical = canonical_professor_dir(professor_dir)
+    container_dir = selection_data.get("professor_dir")
+    if not str(container_dir or "").strip() \
+            or canonical_professor_dir(container_dir) != canonical:
+        fail("selection_scope_mismatch",
+             f"selection container {selection_path} is bound to "
+             f"{container_dir or 'no professor_dir'}, not the current professor "
+             f"directory {professor_dir}")
+    rows = selection_data.get("selections")
+    if not isinstance(rows, list):
+        fail("invalid_selection",
+             f"selection container selections must be a list: {selection_path}")
+    selected_keys = set()
+    for index, sel in enumerate(rows):
+        if not isinstance(sel, dict):
+            fail("invalid_selection",
+                 f"selections[{index}] in {selection_path} must be an object")
+        row_dir = sel.get("professor_dir")
+        if not str(row_dir or "").strip() \
+                or canonical_professor_dir(row_dir) != canonical:
+            fail("selection_scope_mismatch",
+                 f"selections[{index}] in {selection_path} carries professor_dir "
+                 f"{row_dir or 'missing'}; a professor-local container may only hold "
+                 "rows bound to the same canonical directory")
+        scope = sel.get("direction_ids")
+        if isinstance(scope, list) and scope:
+            selected_keys.update(str(did) for did in scope if did)
+            continue
+        sel_did = sel.get("direction_id")
+        if not sel_did:
+            legacy = by_ckey.get(sel.get("collection_key"))
+            sel_did = direction_machine_id(legacy) if legacy is not None else None
+        if sel_did:
+            selected_keys.add(sel_did)
+    return selected_keys
+
+
 def cmd_stage3_plan(args) -> None:
     professor_dir = Path(args.professor_dir)
     program_root = Path(args.program_root) if args.program_root else professor_dir.parent.parent
@@ -5132,20 +5388,34 @@ def cmd_stage3_plan(args) -> None:
         (state or {}).get("generator_contract_version") != STAGE3_GENERATOR_CONTRACT_VERSION
     selected_keys = None
     if refresh_scope == "selected":
-        selection_path = args.selection or (Path(args.program_root) / "教授研究" / SELECTION_FILE)
-        selection_data, sel_error = read_json_file(Path(selection_path))
-        if sel_error:
-            fail("invalid_params", f"selection file unreadable: {selection_path}")
-        selected_keys = set()
-        for sel in selection_data.get("selections", []):
-            if sel.get("professor") != pack.get("professor"):
-                continue
-            sel_did = sel.get("direction_id")
-            if not sel_did:
-                legacy = by_ckey.get(sel.get("collection_key"))
-                sel_did = direction_machine_id(legacy) if legacy is not None else None
-            if sel_did:
-                selected_keys.add(sel_did)
+        if args.selection:
+            # An explicit --selection is one professor's own container: identity
+            # comes from canonical professor_dir, never the display name.
+            selected_keys = _stage3_selected_scope_keys(
+                Path(args.selection), professor_dir, by_ckey)
+        else:
+            selection_path = Path(args.program_root) / "教授研究" / SELECTION_FILE
+            selection_data, sel_error = read_json_file(Path(selection_path))
+            if sel_error:
+                fail("invalid_params", f"selection file unreadable: {selection_path}")
+            selected_keys = set()
+            for sel in selection_data.get("selections", []):
+                if sel.get("professor") != pack.get("professor"):
+                    continue
+                # Stage 4 records one canonical `direction_ids` scope per row (a
+                # cross-direction row carries every participating direction), so the
+                # selected refresh must read that list — `direction_id` / legacy
+                # `collection_key` stay accepted for older selection files.
+                scope = sel.get("direction_ids")
+                if isinstance(scope, list) and scope:
+                    selected_keys.update(str(did) for did in scope if did)
+                    continue
+                sel_did = sel.get("direction_id")
+                if not sel_did:
+                    legacy = by_ckey.get(sel.get("collection_key"))
+                    sel_did = direction_machine_id(legacy) if legacy is not None else None
+                if sel_did:
+                    selected_keys.add(sel_did)
     pack_fps = {direction_machine_id(d): d.get("input_fingerprint")
                 for d in pack_directions}
     input_fps = (state or {}).get("input_fingerprints", {})
@@ -5972,20 +6242,30 @@ def cmd_stage3_finalize(args) -> None:
     correction_dids = {key.split(":", 1)[1] for key in correction if key.startswith("direction:")}
     selected_keys = None
     if refresh_scope == "selected":
-        selection_path = args.selection or (Path(args.program_root) / "教授研究" / SELECTION_FILE)
-        selection_data, sel_error = read_json_file(Path(selection_path))
-        if sel_error:
-            fail("invalid_params", f"selection file unreadable: {selection_path}")
-        selected_keys = set()
-        for sel in selection_data.get("selections", []):
-            if sel.get("professor") != pack.get("professor"):
-                continue
-            sel_did = sel.get("direction_id")
-            if not sel_did:
-                legacy = by_ckey.get(sel.get("collection_key"))
-                sel_did = direction_machine_id(legacy) if legacy is not None else None
-            if sel_did:
-                selected_keys.add(sel_did)
+        if args.selection:
+            # An explicit --selection is one professor's own container: identity
+            # comes from canonical professor_dir, never the display name.
+            selected_keys = _stage3_selected_scope_keys(
+                Path(args.selection), professor_dir, by_ckey)
+        else:
+            selection_path = Path(args.program_root) / "教授研究" / SELECTION_FILE
+            selection_data, sel_error = read_json_file(Path(selection_path))
+            if sel_error:
+                fail("invalid_params", f"selection file unreadable: {selection_path}")
+            selected_keys = set()
+            for sel in selection_data.get("selections", []):
+                if sel.get("professor") != pack.get("professor"):
+                    continue
+                scope = sel.get("direction_ids")
+                if isinstance(scope, list) and scope:
+                    selected_keys.update(str(did) for did in scope if did)
+                    continue
+                sel_did = sel.get("direction_id")
+                if not sel_did:
+                    legacy = by_ckey.get(sel.get("collection_key"))
+                    sel_did = direction_machine_id(legacy) if legacy is not None else None
+                if sel_did:
+                    selected_keys.add(sel_did)
     results_dir = Path(args.results)
     decision = None
     if getattr(args, "decision_file", None):
@@ -6495,7 +6775,11 @@ def validate_stage4_selections(selects: Any, states: dict, packs: dict) -> None:
             fail("legacy_direction_identity",
                  f"selection[{index}] ({professor}) cannot be mapped to canonical direction_ids "
                  "through an exact machine relation; re-run stage 3 for this professor")
-        scope_key = (professor, tuple(direction_ids))
+        # The duplicate scope is formal identity: canonical professor_dir plus the
+        # machine-normalized direction set. Display text can never split or merge
+        # a scope, so rewriting it cannot bypass this check (issue #67 R67-G1-9).
+        scope_key = (canonical_professor_dir(select.get("professor_dir")),
+                     tuple(direction_ids))
         if scope_key in seen_scopes:
             fail("duplicate_selection",
                  f"duplicate professor+direction-scope selection: {professor}::{'+'.join(direction_ids)}")
@@ -6552,130 +6836,171 @@ def validate_stage4_selections(selects: Any, states: dict, packs: dict) -> None:
             seen_email_ids.add(email_id)
 
 
-def _prime_stage4_sources(entries: list, pack_cache: dict, state_cache: dict,
-                          primed: set) -> None:
-    """Load every involved professor's pack FIRST, then the candidate state
-    against that exact pack.
-
-    Order matters: normalize_candidate_state migrates v1 state through the
-    pack's collection_key → direction_id machine mapping, so a state read
-    without the pack would force a needless stage-3 rerun on exactly the
-    states that are machine-resolvable. The helper also serves the preserved
-    (not re-selected) entries of a partial rerun — without it their state
-    never enters state_cache and the compile loop would silently drop them
-    from the formal files."""
-    for select in entries:
-        professor_dir = Path(select.get("professor_dir") or "") \
-            if isinstance(select, dict) else Path("")
-        key = str(professor_dir)
-        if key in primed or not professor_dir.is_dir():
-            continue
-        primed.add(key)
-        pack, _pack_error = load_input_pack(professor_dir)
-        if pack is not None:
-            pack_cache[key] = pack
-        state, state_error = load_candidate_state(professor_dir, pack)
-        if state is None and state_error:
-            soft_exit("needs_refresh", state_error,
-                      professor=select.get("professor"),
-                      message="候选状态无法按机器身份精确迁移：重跑阶段 3 重建 v2 状态。未写入任何文件。")
-        if state is not None:
-            state_cache[key] = state
+def stage4_local_pair_paths(professor_dir: Path) -> tuple[Path, Path]:
+    """The professor-local Stage-4 pair owned by one canonical professor_dir."""
+    return (Path(professor_dir) / SELECTION_FILE, Path(professor_dir) / EMAIL_PACK)
 
 
-def cmd_stage4_finalize(args) -> None:
-    program_root = Path(args.program_root)
-    selection_input, error = read_json_file(Path(args.selection_input))
-    if error or not isinstance(selection_input, dict):
-        fail("invalid_params", f"selection input unreadable: {args.selection_input}")
-    current_profile_fp = profile_fingerprint(args.profile)
-    selects = selection_input.get("selections") or []
-    if not selects:
-        fail("invalid_params", "selection input has no selections")
-    selection_path = program_root / "教授研究" / SELECTION_FILE
-    old_selection, old_error = read_json_file(selection_path)
-    if old_error is not None and old_error != "not_found":
-        fail("invalid_selection", f"existing selection unreadable: {selection_path}: {old_error}")
-    if old_selection is not None and not isinstance(old_selection, dict):
-        fail("invalid_selection", f"existing selection must be an object: {selection_path}")
-    old_selections = (old_selection or {}).get("selections", [])
-    if not isinstance(old_selections, list):
-        fail("invalid_selection", f"existing selection.selections must be a list: {selection_path}")
-    pack_cache, state_cache = {}, {}
-    primed = set()
-    _prime_stage4_sources(selects, pack_cache, state_cache, primed)
-    # Resolve every selection entry's canonical direction_ids up front: the
-    # deprecated collection_key path goes through the pack's exact machine
-    # mapping, and anything ambiguous fails closed before any write.
+def canonical_professor_dir(value: Any) -> str:
+    """Canonical Stage-4 transaction identity (issue #67 R67-G1-9).
+
+    Display names can collide and one directory can be spelled in more than one
+    way, so grouping uses the resolved path while each machine row keeps the
+    caller-supplied path verbatim."""
+    raw = Path(str(value or ""))
+    try:
+        return str(raw.resolve())
+    except OSError:
+        return str(raw)
+
+
+def stage4_professor_row(professor: Any, professor_dir: Any, status: str,
+                         reason_code: str | None = None, **extra) -> dict:
+    row = {"professor": professor, "professor_dir": str(professor_dir or ""),
+           "status": status, "reason_code": reason_code,
+           "selection_file": None, "email_pack": None}
+    row.update(extra)
+    return row
+
+
+def _stage4_failure_row(row: dict, payload: dict) -> dict:
+    """Turn one expected business payload into that professor's failed row.
+
+    A failed row keeps selection_file/email_pack null: nothing was committed, and
+    a caller must not mistake a diagnostic path for written authority."""
+    failed = dict(row)
+    failed["status"] = payload.get("status") or "error"
+    for key, value in payload.items():
+        if key not in ("professor", "professor_dir"):
+            failed[key] = value
+    failed["selection_file"] = None
+    failed["email_pack"] = None
+    return failed
+
+
+def _stage4_professor_commit(program_root: Path, professor_dir: Path, selects: list,
+                             current_profile_fp: str | None, evidence: tuple,
+                             row: dict) -> dict:
+    """Run the whole Stage-4 transaction for ONE canonical professor_dir.
+
+    Only this professor's candidate state, input pack and professor-local prior
+    selection are read: an unrelated professor is never a prerequisite (issue #67
+    R67-G1-2). Inside this professor nothing is relaxed — the same exact identity,
+    fingerprint, gap-join and papers_override validation still fails the whole
+    professor through one pair-atomic write (R67-G1-3)."""
+    professor = row.get("professor")
+    if not str(professor_dir):
+        fail("invalid_selection", "该条目没有 professor_dir，无法建立教授事务边界。")
+    containment = professor_dir_containment_error(professor_dir, program_root)
+    if containment:
+        fail(containment, "越界 professor_dir：该教授零本地写入、零外部写入。",
+             allowed_root=str((program_root / "教授研究").resolve()))
+    selection_path, email_pack_path = stage4_local_pair_paths(professor_dir)
+    # A half-present local pair is a corrupt authority: never guess which file to
+    # trust and never mint the missing counterpart.
+    if selection_path.exists() != email_pack_path.exists():
+        fail("local_pair_incomplete",
+             f"professor-local Stage-4 pair is half-present in {professor_dir}; "
+             "resolve the pair before finalizing instead of guessing which half is authority")
+    canonical = canonical_professor_dir(professor_dir)
+    professor_pack, _pack_error = load_input_pack(professor_dir)
+    professor_state, state_error = load_candidate_state(professor_dir, professor_pack)
+    if professor_state is None and state_error:
+        soft_exit("needs_refresh", state_error,
+                  message="候选状态无法按机器身份精确迁移：重跑阶段 3 重建 v2 状态。该教授未写入任何文件。")
+    packs: dict = {}
+    states: dict = {}
+    for key in {str(select.get("professor_dir") or "") for select in selects} | {str(professor_dir)}:
+        if key:
+            packs[key] = professor_pack
+            states[key] = professor_state
+
+    prior_selection, prior_error = read_json_file(selection_path)
+    if prior_error not in (None, "not_found"):
+        fail("invalid_selection", f"existing local selection unreadable: {selection_path}: {prior_error}")
+    if prior_selection is not None and not isinstance(prior_selection, dict):
+        fail("invalid_selection", f"existing local selection must be an object: {selection_path}")
+    prior_rows = (prior_selection or {}).get("selections") or []
+    if not isinstance(prior_rows, list):
+        fail("invalid_selection", f"existing local selection.selections must be a list: {selection_path}")
+    for index, old in enumerate(prior_rows):
+        if not isinstance(old, dict):
+            # A non-object entry in the professor-local prior selection is a
+            # corrupt authority: fail closed without rewriting the pair, never
+            # silently drop the entry (R67-G1-3).
+            fail("invalid_selection",
+                 f"existing local selection contains a non-object entry at "
+                 f"index {index}: {selection_path}")
+        if canonical_professor_dir(old.get("professor_dir")) != canonical:
+            fail("local_selection_foreign_row",
+                 f"existing local selection in {professor_dir} carries a row bound to "
+                 f"{old.get('professor_dir')}; a professor-local container may not hold "
+                 "another professor's selection")
+        key = str(old.get("professor_dir") or "")
+        if key:
+            packs.setdefault(key, professor_pack)
+            states.setdefault(key, professor_state)
+
     resolved_selects = []
     for select in selects:
-        ids, identity_error = _selection_direction_ids(select, pack_cache)
+        ids, identity_error = _selection_direction_ids(select, packs)
         if identity_error or not ids:
             fail("legacy_direction_identity",
                  f"selection for {select.get('professor')} cannot be mapped to canonical "
                  "direction_ids through an exact machine relation; re-run stage 3 for this "
-                 "professor. No selection/email file was written.")
+                 "professor. This professor wrote no file.")
         resolved_selects.append({**select, "direction_ids": ids})
-    current_scope = {(s.get("professor"), tuple(s.get("direction_ids") or []))
+    # The container already fixes the professor: inside one canonical
+    # professor_dir the scope is only the direction set, so a display-name change
+    # neither preserves a stale row nor splits one scope into two (issue #67).
+    current_scope = {tuple(s.get("direction_ids") or [])
                      for s in resolved_selects}
-    # Preserved (not re-selected) entries migrate in memory through the same
-    # exact machine mapping; anything ambiguous fails closed BEFORE any write.
+    # Same-professor preserved directions are recompiled into the same local pair,
+    # so they share this professor's fail-closed outcome instead of being dropped.
     preserved = []
-    for old in old_selections:
+    for old in prior_rows:
         if not isinstance(old, dict):
             continue
-        _prime_stage4_sources([old], pack_cache, state_cache, primed)
-        ids, identity_error = _selection_direction_ids(old, pack_cache)
-        if ids and (old.get("professor"), tuple(ids)) in current_scope:
+        ids, identity_error = _selection_direction_ids(old, packs)
+        if ids and tuple(ids) in current_scope:
             continue
         if identity_error or not ids:
             fail("legacy_direction_identity",
-                 f"existing selection entry for {old.get('professor')} cannot be mapped to "
-                 "canonical direction_ids through an exact machine relation; re-run stage 3 "
-                 "for this professor. No selection/email file was written.",
-                 selection_file=str(selection_path))
-        preserved.append({**old, "direction_ids": ids})
-    # A preserved entry keeps its place in the formal files only if its source
-    # state still exists: silently recompiling the batch without it would drop
-    # an accepted selection the user never touched.
-    for entry in preserved:
-        if state_cache.get(str(Path(entry.get("professor_dir") or ""))) is None:
+                 f"existing local selection entry for {old.get('professor')} cannot be mapped "
+                 "to canonical direction_ids through an exact machine relation; re-run stage 3 "
+                 "for this professor. This professor wrote no file.")
+        if professor_state is None:
             soft_exit("needs_refresh", "candidate_state_missing",
-                      professor=entry.get("professor"),
-                      direction_ids=entry.get("direction_ids"),
-                      message="既有选择对应的候选状态缺失：先重跑阶段 3，再重新选择。未写入任何选择/邮件包。")
+                      direction_ids=ids,
+                      message="既有选择对应的候选状态缺失：先重跑阶段 3，再重新选择。该教授未写入任何选择/邮件包。")
+        preserved.append({**old, "direction_ids": ids})
+
     all_selects = preserved + resolved_selects
-    preserved_keys = {(p.get("professor"), tuple(p.get("direction_ids") or []))
+    preserved_keys = {tuple(p.get("direction_ids") or [])
                       for p in preserved}
+    skipped = []
 
     def record_skip(select_obj: dict, entry: dict) -> None:
-        # Backstop for preserved entries hitting any other uncompilable
-        # condition (unreadable pack, direction gone from state/pack): they
-        # must fail the batch instead of vanishing via skipped[].
-        if (select_obj.get("professor"),
-                tuple(select_obj.get("direction_ids") or [])) in preserved_keys:
+        if tuple(select_obj.get("direction_ids") or []) in preserved_keys:
             soft_exit("needs_refresh", "preserved_selection_uncompilable",
-                      professor=select_obj.get("professor"),
                       direction_ids=select_obj.get("direction_ids"),
-                      message="既有选择无法按当前候选状态/输入包重编译：先重跑阶段 3，再重新选择。未写入任何选择/邮件包。")
+                      message="既有选择无法按当前候选状态/输入包重编译：先重跑阶段 3，再重新选择。该教授未写入任何选择/邮件包。")
         skipped.append(entry)
 
-    validate_stage4_selections(all_selects, state_cache, pack_cache)
+    validate_stage4_selections(all_selects, states, packs)
     written_selections = []
     email_entries = []
-    skipped = []
-    evidence_artifact, evidence_error = load_contact_evidence(program_root)
-    evidence_snapshots = {}
+    evidence_artifact, evidence_error = evidence
+    evidence_snapshot = contact_evidence_snapshot(evidence_artifact, evidence_error, professor)
     for select in all_selects:
-        professor = select.get("professor")
-        professor_dir = Path(select.get("professor_dir") or "")
+        select_dir = Path(select.get("professor_dir") or "")
         direction_ids = select.get("direction_ids") or []
         scope = "+".join(direction_ids)
-        if not professor_dir.is_dir() or not direction_ids:
+        if not select_dir.is_dir() or not direction_ids:
             record_skip(select, {"professor": professor, "reason": "invalid_selection_input"})
             continue
-        state = state_cache.get(str(professor_dir))
-        pack = pack_cache.get(str(professor_dir))
+        state = states.get(str(select_dir))
+        pack = packs.get(str(select_dir))
         if state is None:
             record_skip(select, {"professor": professor, "direction_ids": direction_ids,
                                  "reason": "needs_stage3", "detail": "缺 套磁候选状态.json"})
@@ -6697,12 +7022,12 @@ def cmd_stage4_finalize(args) -> None:
             if state.get("input_fingerprints", {}).get(direction_ids[0]) != \
                     pack_direction.get("input_fingerprint"):
                 soft_exit("needs_refresh", "source_fingerprint_changed",
-                          professor=professor, direction_id=direction_ids[0],
-                          message="输入包已变化：先重跑阶段 3 刷新候选，再重新选择。未写入任何选择/邮件包。")
+                          direction_id=direction_ids[0],
+                          message="输入包已变化：先重跑阶段 3 刷新候选，再重新选择。该教授未写入任何选择/邮件包。")
             if state.get("profile_fingerprint") != current_profile_fp:
                 soft_exit("needs_refresh", "profile_changed",
-                          professor=professor, direction_id=direction_ids[0],
-                          message="profile 已变化：重跑阶段 3 后再选择。未写入任何选择/邮件包。")
+                          direction_id=direction_ids[0],
+                          message="profile 已变化：重跑阶段 3 后再选择。该教授未写入任何选择/邮件包。")
         else:
             pack_direction = next((d for d in pack.get("directions", [])
                                    if direction_machine_id(d) == direction_ids[0]), None)
@@ -6713,8 +7038,8 @@ def cmd_stage4_finalize(args) -> None:
                 continue
             if state.get("profile_fingerprint") != current_profile_fp:
                 soft_exit("needs_refresh", "profile_changed",
-                          professor=professor, direction_ids=direction_ids,
-                          message="profile 已变化：重跑阶段 3 后再选择。未写入任何选择/邮件包。")
+                          direction_ids=direction_ids,
+                          message="profile 已变化：重跑阶段 3 后再选择。该教授未写入任何选择/邮件包。")
         selected_ideas = []
         for idea_input in select.get("ideas", []):
             idea_id = idea_input.get("id")
@@ -6739,26 +7064,20 @@ def cmd_stage4_finalize(args) -> None:
                 continue
             participants = None
             if len(direction_ids) >= 2:
-                # Every participant must exact-join the current pack with the
-                # fingerprint recorded at stage 3; any drift fails the whole
-                # batch before a single file is written.
                 participants = _stage4_cross_group(pack, group_entry or {})
                 if participants is None:
                     soft_exit("needs_refresh", "cross_participant_changed",
-                              professor=professor, direction_ids=direction_ids, idea=idea_id,
-                              message="跨方向想法引用的参与方向已变化或指纹过期：先重跑阶段 3 刷新候选，再重新选择。未写入任何选择/邮件包。")
+                              direction_ids=direction_ids, idea=idea_id,
+                              message="跨方向想法引用的参与方向已变化或指纹过期：先重跑阶段 3 刷新候选，再重新选择。该教授未写入任何选择/邮件包。")
             idea_full = dict(idea)
             idea_full["red_lines"] = idea.get("red_lines") or []
             papers_override = validate_papers_override(
                 idea, idea_input.get("papers_override"),
                 f"{professor}::{scope}::{idea_id}")
-            if professor not in evidence_snapshots:
-                evidence_snapshots[professor] = contact_evidence_snapshot(
-                    evidence_artifact, evidence_error, professor)
             entry = compile_email_entry(
                 pack, state_direction, pack_direction, idea_full,
                 idea_input.get("note") or "", program_root, current_profile_fp,
-                papers_override, evidence_snapshots[professor],
+                papers_override, evidence_snapshot,
                 group_entry=group_entry if len(direction_ids) >= 2 else None,
                 participant_directions=participants)
             email_entries.append(entry)
@@ -6780,34 +7099,174 @@ def cmd_stage4_finalize(args) -> None:
             "ideas": [{"id": i.get("id"), "note": i.get("note") or "",
                        "papers_override": i.get("papers_override") or None}
                       for i in select.get("ideas", [])]})
-    if not written_selections:
-        fail("validation_failed", "no valid selections")
+    if skipped or not written_selections:
+        # R67-G1-3: inside ONE professor any entry failure fails the whole
+        # batch with zero writes -- a valid remainder must never be partially
+        # committed while another entry of the same professor failed. skipped
+        # carries the exact per-entry reason (missing input pack, needs_stage3,
+        # direction not in state/pack, ...) so the row stays actionable.
+        fail("validation_failed", "selection batch has uncompilable entries",
+             skipped=skipped)
     selection_doc = {
-        "schema": SELECTION_SCHEMA, "kind": SELECTION_KIND,
+        "schema": STAGE4_LOCAL_SCHEMA, "kind": SELECTION_KIND,
         "identity_version": DIRECTION_IDENTITY_VERSION,
-        "program_root": str(program_root), "generated_at": now_utc(),
-        "managed_by": MANAGED_BY,
+        "managed_by": MANAGED_BY, "program_root": str(program_root),
+        "professor": professor, "professor_dir": str(professor_dir),
+        "generated_at": now_utc(),
         "profile_fingerprint": current_profile_fp,
         "selections": written_selections}
-    email_pack_path = program_root / "教授研究" / EMAIL_PACK
-    email_pack = {
-        "schema": EMAIL_PACK_SCHEMA, "kind": EMAIL_PACK_KIND,
+    email_pack_doc = {
+        "schema": STAGE4_LOCAL_SCHEMA, "kind": EMAIL_PACK_KIND,
         "identity_version": DIRECTION_IDENTITY_VERSION,
-        "managed_by": MANAGED_BY, "generated_at": now_utc(),
-        "program_root": str(program_root),
+        "managed_by": MANAGED_BY, "program_root": str(program_root),
+        "professor": professor, "professor_dir": str(professor_dir),
+        "generated_at": now_utc(),
         "profile_fingerprint": current_profile_fp,
         "emails": email_entries}
-    atomic_json_many([(selection_path, selection_doc), (email_pack_path, email_pack)])
-    emit({
-        "status": "ok",
-        "selection_file": str(selection_path),
-        "email_pack": str(email_pack_path),
-        "selected_directions": [
-            f"{s['professor']} · {'+'.join(s.get('direction_ids') or [])}"
+    atomic_json_many([(selection_path, selection_doc), (email_pack_path, email_pack_doc)])
+    return stage4_professor_row(
+        professor, professor_dir, "ok", None,
+        selection_file=str(selection_path), email_pack=str(email_pack_path),
+        selected_directions=[
+            f"{professor} · {'+'.join(s.get('direction_ids') or [])}"
             for s in written_selections],
-        "emails_compiled": len(email_entries),
-        "skipped": skipped,
-    })
+        emails_compiled=len(email_entries), skipped=skipped)
+
+
+def stage4_professor_transaction(program_root: Path, professor_dir: Any, selects: list,
+                                 current_profile_fp: str | None,
+                                 evidence: tuple) -> dict:
+    """One professor's Stage-4 transaction as a machine row, with no process exit.
+
+    Expected professor-scoped business failures become that professor's row; an
+    unexpected programming error keeps propagating after `atomic_json_many()` has
+    rolled the current pair back, so it is never downgraded to a business row."""
+    professor_dir = Path(str(professor_dir))
+    professor = next((s.get("professor") for s in selects
+                      if isinstance(s, dict) and s.get("professor")), None)
+    row = stage4_professor_row(professor, professor_dir, "error")
+    try:
+        with professor_business_channel():
+            return _stage4_professor_commit(program_root, professor_dir, selects,
+                                            current_profile_fp, evidence, row)
+    except ProfessorBusinessFailure as failure:
+        return _stage4_failure_row(row, failure.payload)
+
+
+def cmd_stage4_finalize(args) -> None:
+    """Commit Stage-4 authority per professor and emit one aggregate machine result."""
+    program_root = Path(args.program_root)
+    selection_input, error = read_json_file(Path(args.selection_input))
+    if error or not isinstance(selection_input, dict):
+        fail("invalid_params", f"selection input unreadable: {args.selection_input}")
+    current_profile_fp = profile_fingerprint(args.profile)
+    selects = selection_input.get("selections") or []
+    if not isinstance(selects, list) or not selects:
+        fail("invalid_params", "selection input has no selections")
+    # Group by canonical professor_dir in first-appearance order: the display name
+    # is business content, never the transaction key (issue #67 R67-G1-9).
+    groups: dict = {}
+    for index, select in enumerate(selects):
+        if not isinstance(select, dict):
+            fail("invalid_selection", f"selections[{index}] must be an object")
+        if not str(select.get("professor") or "").strip() and \
+                not str(select.get("professor_dir") or "").strip():
+            fail("invalid_selection",
+                 f"selections[{index}] carries neither professor nor professor_dir")
+        key = canonical_professor_dir(select.get("professor_dir")) \
+            if str(select.get("professor_dir") or "").strip() else f"missing-professor-dir#{index}"
+        groups.setdefault(key, []).append(select)
+    evidence = load_contact_evidence(program_root)
+    results = []
+    for group in groups.values():
+        results.append(stage4_professor_transaction(
+            program_root, group[0].get("professor_dir"), group, current_profile_fp, evidence))
+    committed = [row for row in results if row["status"] == "ok"]
+    status = "ok" if len(committed) == len(results) else ("partial" if committed else "error")
+    emit({"status": status, "results": results})
+    if not committed:
+        sys.exit(1)
+
+
+STAGE4_MIGRATION_COMMITTED = ("migrated", "already_local", "not_applicable")
+
+
+def _stage4_migration_result(outcome: str, source: dict | None = None, **extra) -> None:
+    """Single machine result + exit code for one professor's migration attempt.
+
+    Only outcomes that leave a usable (or deliberately untouched) local pair exit
+    0; every other expected migration outcome is that professor's own failure and
+    the caller keeps routing the remaining professors."""
+    payload = {"status": outcome}
+    for key in ("professor", "professor_dir", "reason_code", "selection_file", "email_pack"):
+        payload[key] = (source or {}).get(key)
+    payload.update(extra)
+    emit(payload)
+    if outcome in STAGE4_MIGRATION_COMMITTED:
+        sys.exit(0)
+    sys.exit(1 if outcome == "error" else 2)
+
+
+def cmd_stage4_migrate_local(args) -> None:
+    """Scoped legacy migration: one canonical professor_dir, current facts only.
+
+    The legacy program-level selection is read as a row source for THIS professor
+    and is never modified; the legacy program-level email pack is never a source of
+    truth, so the local email facts are recompiled from current Stage-3 state/input
+    (issue #67 R67-G1-5 / R67-G1-11)."""
+    program_root = Path(args.program_root)
+    professor_dir = Path(str(args.professor_dir))
+    containment = professor_dir_containment_error(professor_dir, program_root)
+    if containment:
+        fail(containment, "professor_dir must be inside program_root/教授研究",
+             professor_dir=str(professor_dir),
+             allowed_root=str((program_root / "教授研究").resolve()))
+    selection_path, email_pack_path = stage4_local_pair_paths(professor_dir)
+    canonical = canonical_professor_dir(professor_dir)
+    if selection_path.exists() and email_pack_path.exists():
+        prior, prior_error = read_json_file(selection_path)
+        if prior_error or not isinstance(prior, dict):
+            fail("invalid_selection",
+                 f"existing local selection unreadable: {selection_path}: {prior_error}")
+        rows = prior.get("selections") or []
+        _stage4_migration_result(
+            "already_local",
+            {"professor": prior.get("professor"), "professor_dir": str(professor_dir),
+             "selection_file": str(selection_path), "email_pack": str(email_pack_path)},
+            migrated_rows=len(rows) if isinstance(rows, list) else 0,
+            message="完整 professor-local pair 已存在：byte-for-byte 保留，不覆盖。")
+    if selection_path.exists() or email_pack_path.exists():
+        _stage4_migration_result(
+            "local_pair_incomplete",
+            {"professor": None, "professor_dir": str(professor_dir),
+             "reason_code": "local_pair_incomplete"},
+            message="professor-local Stage-4 pair 只存在一个文件：整批 fail closed、零写入，"
+                    "不猜测哪一份更可信，也不生成另一半。")
+    legacy_path = program_root / "教授研究" / SELECTION_FILE
+    legacy, legacy_error = read_json_file(legacy_path)
+    legacy_rows = ((legacy or {}).get("selections") or []) if isinstance(legacy, dict) else []
+    scoped = [row for row in legacy_rows
+              if isinstance(row, dict)
+              and canonical_professor_dir(row.get("professor_dir")) == canonical]
+    if not scoped:
+        # An unreadable legacy file or another professor's rows are never this
+        # professor's prerequisite: normal local finalize compiles from facts.
+        _stage4_migration_result(
+            "not_applicable",
+            {"professor": None, "professor_dir": str(professor_dir),
+             "reason_code": "legacy_selection_unreadable"
+             if legacy_error not in (None, "not_found") else None},
+            migrated_rows=0,
+            message="该教授没有可迁移的 legacy 选择行：零迁移写入，直接按当前事实进入正常 local finalize。")
+    row = stage4_professor_transaction(program_root, professor_dir, scoped,
+                                        profile_fingerprint(args.profile),
+                                        load_contact_evidence(program_root))
+    if row["status"] == "ok":
+        _stage4_migration_result(
+            "migrated", row, migrated_rows=len(scoped),
+            message="已按当前候选状态/输入包重编译该教授的 local pair；"
+                    "legacy global 文件保持原 bytes，仅作历史兼容来源。")
+    _stage4_migration_result(row["status"], row)
 
 
 def find_boshu_analysis(program_root: Path) -> Path | None:
@@ -9569,11 +10028,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("stage2-plan")
     p.add_argument("--facts", required=True)
+    p.add_argument("--preflight-file", required=True,
+                   help="saved stage2-preflight stdout; the plan is bound to the same "
+                        "professor-local transaction identity before it emits jobs")
     p.set_defaults(func=lambda a: cmd_stage2_plan(a))
 
     p = sub.add_parser("stage2-preflight")
     p.add_argument("--program-root", required=True)
     p.add_argument("--professor", required=True)
+    p.add_argument("--target-file", required=True,
+                   help="authoritative professor-local Stage-0 target file")
     p.add_argument("--paper-analysis", default="relevant")
     p.add_argument("--gap-scope", default="selected_direction")
     p.add_argument("--freshness-scope", default="shortlist")
@@ -9585,7 +10049,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--results", required=True)
     p.add_argument("--decision-file")
     p.add_argument("--resolved-directions")
-    p.add_argument("--preflight-file",
+    p.add_argument("--preflight-file", required=True,
                    help="saved stage2-preflight stdout; re-verifies cheap inputs "
                         "before any write and seeds cache.preflight")
     p.set_defaults(func=cmd_stage2_finalize)
@@ -9623,7 +10087,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="JSON list of direction-ID lists, e.g. '[\"dir_A\",\"dir_B\"]'. "
                         "Explicit opt-in ONLY: each group gets one separate cross job; "
                         "absent/empty means no cross-direction work at all")
-    p.add_argument("--selection")
+    p.add_argument("--selection",
+                   help="selection container for --refresh-scope selected; the Stage-4 "
+                        "workflow passes <professor_dir>/套磁选择.json (issue #67)")
     p.add_argument("--program-root")
     p.add_argument("--validation-file",
                    help="raw style-validator JSON; forces text-only correction jobs for the scopes "
@@ -9641,18 +10107,30 @@ def build_parser() -> argparse.ArgumentParser:
                    help="comma-separated direction IDs the user explicitly skipped")
     p.add_argument("--cross-direction-groups",
                    help="JSON list of direction-ID lists；必须与 stage3-plan 的请求一致")
-    p.add_argument("--selection")
+    p.add_argument("--selection",
+                   help="selection container for --refresh-scope selected; the Stage-4 "
+                        "workflow passes <professor_dir>/套磁选择.json (issue #67)")
     p.add_argument("--program-root")
     p.add_argument("--decision-file")
     p.add_argument("--validation-file",
                    help="same raw style-validator JSON used by stage3-plan correction")
     p.set_defaults(func=cmd_stage3_finalize)
 
-    p = sub.add_parser("stage4-finalize")
+    p = sub.add_parser("stage4-finalize",
+                       help="commit professor-local Stage-4 authority per professor and emit "
+                            "one aggregate 教授-scoped result (issue #67)")
     p.add_argument("--program-root", required=True)
     p.add_argument("--selection-input", required=True)
     p.add_argument("--profile")
     p.set_defaults(func=cmd_stage4_finalize)
+
+    p = sub.add_parser("stage4-migrate-local",
+                       help="scoped legacy migration of ONE professor_dir into its "
+                            "professor-local Stage-4 pair; legacy files stay untouched")
+    p.add_argument("--program-root", required=True)
+    p.add_argument("--professor-dir", required=True)
+    p.add_argument("--profile")
+    p.set_defaults(func=cmd_stage4_migrate_local)
 
     p = sub.add_parser("stage5-plan")
     p.add_argument("--program-root", required=True)

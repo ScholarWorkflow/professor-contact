@@ -1,3 +1,4 @@
+from stage2_upstream_fixture import run_bound_stage2_finalize
 """Stage 2 early preflight cache gate regression tests (issue #11).
 
 The preflight must decide from persisted state alone whether an accepted
@@ -123,29 +124,32 @@ class PreflightBase(unittest.TestCase):
         self.facts_path.write_text(json.dumps(self.facts, ensure_ascii=False, indent=1),
                                    encoding="utf-8")
         self.target = {
-            "schema_version": 1, "kind": "professor-contact-targets",
-            "updated_at": "2026-01-01T00:00:00Z",
-            "targets": [{
-                "professor": PROFESSOR, "professor_dir": str(Path("教授研究") / "X分野" / PROFESSOR),
-                "preview_path": str(Path("教授研究") / "X分野" / PROFESSOR / "方向预筛.json"),
-                "preview_fingerprint": "pv-1", "preview_fingerprint_version": "v1",
-                "selected_direction_ids": ["DIR00001", "DIR00002"],
-                "directions": [
-                    {"direction_id": "DIR00001", "name_ja": "合成输入比较", "name_zh": "合成输入比较",
-                     "summary_zh": "比较合成输入",
-                     "members": [{"item_key": "AAAA1111", "preview_confidence": "high"},
-                                 {"item_key": "BBBB2222", "preview_confidence": "high"},
-                                 {"item_key": "CCCC3333", "preview_confidence": "low"}],
-                     "user_note": "我想比较两种合成输入的处理结果。"},
-                    {"direction_id": "DIR00002", "name_ja": "第二方向", "name_zh": "第二方向",
-                     "summary_zh": "第二条线索",
-                     "members": [{"item_key": "BBBB2222", "preview_confidence": "high"}],
-                     "user_note": "第二方向的用户笔记。"},
-                ]}]}
+            "schema_version": 2, "kind": "professor-contact-target",
+            "selected_at": "2026-01-01T00:00:00Z",
+            "professor": PROFESSOR, "professor_dir": str(Path("教授研究") / "X分野" / PROFESSOR),
+            "preview_path": str(Path("教授研究") / "X分野" / PROFESSOR / "方向预筛.json"),
+            "preview_fingerprint": "pv-1", "preview_fingerprint_version": "v1",
+            "selected_direction_ids": ["DIR00001", "DIR00002"],
+            "directions": [
+                {"direction_id": "DIR00001", "name_ja": "合成输入比较", "name_zh": "合成输入比较",
+                 "summary_zh": "比较合成输入",
+                 "members": [{"item_key": "AAAA1111", "preview_confidence": "high"},
+                             {"item_key": "BBBB2222", "preview_confidence": "high"},
+                             {"item_key": "CCCC3333", "preview_confidence": "low"}],
+                 "user_note": "我想比较两种合成输入的处理结果。"},
+                {"direction_id": "DIR00002", "name_ja": "第二方向", "name_zh": "第二方向",
+                 "summary_zh": "第二条线索",
+                 "members": [{"item_key": "BBBB2222", "preview_confidence": "high"}],
+                 "user_note": "第二方向的用户笔记。"},
+            ],
+            "selection_history": [],
+        }
+        self.target_file = self.prof_dir / "套磁目标.json"
         self._write_target()
         self.snapshot_entry = {
             "professor": PROFESSOR,
             "professor_dir": str(Path("教授研究") / "X分野" / PROFESSOR),
+            "preview_path": str(Path("教授研究") / "X分野" / PROFESSOR / "方向预筛.json"),
             "preview_fingerprint": "pv-1",
             "input_fingerprint": "stage1-fp-1",
             "built_at": "2026-01-01T00:00:00Z", "action": "noop",
@@ -194,14 +198,16 @@ class PreflightBase(unittest.TestCase):
     # -- fixture writers ----------------------------------------------------
 
     def _write_target(self):
-        path = self.root / "教授研究" / "套磁目标.json"
-        path.write_text(json.dumps(self.target, ensure_ascii=False, indent=1), encoding="utf-8")
+        self.target_file.write_text(
+            json.dumps(self.target, ensure_ascii=False, indent=1), encoding="utf-8")
 
     def _write_snapshot(self):
-        snapshot = {"schema_version": 1, "kind": "professor-contact-stage1",
-                    "updated_at": "2026-01-01T00:00:00Z", "professors": [self.snapshot_entry]}
-        path = self.root / "教授研究" / "套磁阶段1候选.json"
-        path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=1), encoding="utf-8")
+        state = dict(self.snapshot_entry)
+        state.update({"schema_version": 2, "kind": "professor-contact-stage1",
+                      "updated_at": "2026-01-01T00:00:00Z",
+                      "membership_claim": "non_final_candidates_only"})
+        path = self.prof_dir / "套磁阶段1候选.json"
+        path.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
 
     def _read_pack(self) -> dict:
         return json.loads((self.prof_dir / "套磁候选输入.json").read_text(encoding="utf-8"))
@@ -254,7 +260,7 @@ class PreflightBase(unittest.TestCase):
     def stage2_finalize(self):
         facts = self.facts_path
         results = self.write_stage2_results()
-        out = parse(run_cli("stage2-finalize", "--facts", facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "ok", out)
         return out
 
@@ -276,10 +282,12 @@ class PreflightBase(unittest.TestCase):
             param_overrides.get("gap_scope", "selected_direction"),
             param_overrides.get("freshness_scope", "shortlist"),
             param_overrides.get("max_relevant_papers"))
+        target = contact_state.read_stage2_target(self.target_file, self.root, PROFESSOR)
         meta = contact_state.stage2_preflight_metadata(
             program_root=self.root, professor_dir=self.prof_dir,
-            target=contact_state.read_stage2_target(self.root, PROFESSOR),
-            snapshot_entry=contact_state.read_stage1_professor_entry(self.root, PROFESSOR),
+            target=target,
+            snapshot_entry=contact_state.read_stage1_professor_entry(
+                self.root, self.prof_dir, PROFESSOR, target),
             pack_directions=pack["directions"], params=params,
             current_year=current_year if current_year is not None else YEAR,
             ctx=ctx, cache_entries=contact_state.load_freshness_cache(self.prof_dir))
@@ -304,6 +312,7 @@ class PreflightBase(unittest.TestCase):
     def preflight(self, **overrides):
         args = argparse.Namespace(
             program_root=str(self.root), professor=PROFESSOR,
+            target_file=str(self.target_file),
             paper_analysis=overrides.get("paper_analysis", "relevant"),
             gap_scope=overrides.get("gap_scope", "selected_direction"),
             freshness_scope=overrides.get("freshness_scope", "shortlist"),
@@ -334,6 +343,10 @@ class TestPreflightDecision(PreflightBase):
     def test_a_legacy_pack_falls_back_to_process(self):
         self.stage2_finalize()
         self.record_validation()
+        # Model an already persisted legacy artifact, not a no-proof writer.
+        pack = self._read_pack()
+        pack['cache'].pop('preflight')
+        self._write_pack(pack)
         payload = self.preflight()
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["action"], "process")
@@ -354,7 +367,7 @@ class TestPreflightDecision(PreflightBase):
 
     def test_c_target_note_change_invalidates_only_that_direction(self):
         self.build_accepted_state()
-        self.target["targets"][0]["directions"][0]["user_note"] = "改过之后的笔记。"
+        self.target["directions"][0]["user_note"] = "改过之后的笔记。"
         self._write_target()
         payload = self.preflight()
         self.assertEqual(payload["action"], "process")
@@ -366,8 +379,8 @@ class TestPreflightDecision(PreflightBase):
 
     def test_d_selection_add_invalidates_only_new_direction(self):
         self.build_accepted_state()
-        self.target["targets"][0]["selected_direction_ids"].append("DIR00003")
-        self.target["targets"][0]["directions"].append(
+        self.target["selected_direction_ids"].append("DIR00003")
+        self.target["directions"].append(
             {"direction_id": "DIR00003", "name_ja": "第三方向", "name_zh": "第三方向",
              "summary_zh": "第三条线索",
              "members": [{"item_key": "CCCC3333", "preview_confidence": "high"}],
@@ -414,7 +427,7 @@ class TestPreflightDecision(PreflightBase):
 
     def test_g_whole_preview_fingerprint_alone_does_not_invalidate(self):
         self.build_accepted_state()
-        self.target["targets"][0]["preview_fingerprint"] = "pv-2"
+        self.target["preview_fingerprint"] = "pv-2"
         self.snapshot_entry["preview_fingerprint"] = "pv-2"
         self._write_target()
         self._write_snapshot()
@@ -634,7 +647,10 @@ class TestPreflightDecision(PreflightBase):
         changed = self.direction(payload, "DIR00002")
         self.assertEqual(changed["action"], "process")
         self.assertIn("candidate_set_changed", changed["reason_codes"])
-        plan = parse(run_cli("stage2-plan", "--facts", self.facts_path))
+        proof_path = self.root / "partial-invalidation-preflight.json"
+        proof_path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        plan = parse(run_cli("stage2-plan", "--facts", self.facts_path,
+                             "--preflight-file", proof_path))
         self.assertEqual(plan["status"], "ok")
         by_key = {entry["direction_id"]: entry for entry in plan["directions"]}
         self.assertEqual(by_key["DIR00001"]["action"], "reuse")
@@ -649,7 +665,17 @@ class TestPreflightGuardrails(PreflightBase):
                 self.preflight(**overrides)
 
     def test_missing_target_state_is_a_hard_error(self):
-        (self.root / "教授研究" / "套磁目标.json").unlink()
+        """R64-5: the retired program-level table is not a Stage 2 fallback."""
+        self.target_file.unlink()
+        program_table = self.root / "教授研究" / "套磁目标.json"
+        program_table.write_text(json.dumps(
+            {"schema_version": 2, "kind": "professor-contact-target",
+             **{key: value for key, value in self.target.items()
+                if key not in ("schema_version", "kind")}},
+            ensure_ascii=False), encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            self.preflight()
+        program_table.unlink()
         with self.assertRaises(SystemExit):
             self.preflight()
 
@@ -684,6 +710,10 @@ class TestFinalizePreflightWiring(PreflightBase):
     def test_legacy_slow_path_seeds_metadata_for_next_run(self):
         self.stage2_finalize()
         self.record_validation()
+        # The legacy cache shape remains an input compatibility condition.
+        pack = self._read_pack()
+        pack['cache'].pop('preflight')
+        self._write_pack(pack)
         self.assertIn("legacy_pack_no_preflight", self.preflight()["reason_codes"])
         plan = self.save_preflight_file()
         self.bind_facts_to_plan(plan)
@@ -699,12 +729,15 @@ class TestFinalizePreflightWiring(PreflightBase):
         payload = self.preflight()
         self.assertEqual(payload["action"], "reuse_all", payload)
 
-    def test_finalize_without_preflight_file_stays_legacy(self):
+    def test_finalize_without_preflight_file_is_rejected_without_writing(self):
         self.stage2_finalize()
-        out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
-                            "--results", self.root / "results"))
-        self.assertEqual(out["status"], "ok", out)
-        self.assertNotIn("preflight", self._read_pack().get("cache", {}))
+        pack_path = self.prof_dir / '套磁候选输入.json'
+        before = pack_path.read_bytes()
+        result = run_cli("stage2-finalize", "--facts", self.facts_path,
+                         "--results", self.root / "results")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('--preflight-file', result.stderr)
+        self.assertEqual(pack_path.read_bytes(), before)
 
     def test_finalize_race_on_target_change_writes_nothing(self):
         self.build_accepted_state()
@@ -712,7 +745,7 @@ class TestFinalizePreflightWiring(PreflightBase):
         pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
         md_before = (self.prof_dir / "套磁候选分析.md").read_bytes()
         cache_before = (self.prof_dir / "论文分析" / "_freshness_cache.json").read_bytes()
-        self.target["targets"][0]["directions"][0]["user_note"] = "preflight 之后的修改。"
+        self.target["directions"][0]["user_note"] = "preflight 之后的修改。"
         self._write_target()
         out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
                             "--results", self.root / "results",
@@ -748,7 +781,7 @@ class TestFinalizePreflightWiring(PreflightBase):
         self.build_accepted_state()
         plan = self.save_preflight_file()
         pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
-        self.target["targets"][0]["selected_direction_ids"].pop()
+        self.target["selected_direction_ids"].pop()
         self._write_target()
         out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
                             "--results", self.root / "results",

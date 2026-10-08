@@ -23,6 +23,8 @@ spec_state.loader.exec_module(contact_state)
 BaseEnv = helpers.BaseEnv
 parse = helpers.parse
 run_cli = helpers.run_cli
+stage4_row = helpers.stage4_row
+stage4_rows = helpers.stage4_rows
 
 EVIDENCE_FILE = "教授研究/_联系方式证据.json"
 # Same freshness window the runner applies (contact_state.VERIFY_TTL_DAYS);
@@ -145,14 +147,14 @@ class TestContactEvidenceLadder(BaseEnv):
             "ideas": [{"id": "DIR00001_1"}]}]}, ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("stage4-finalize", "--program-root", self.root,
                             "--selection-input", sel_input))
-        self.assertEqual(out["status"], "ok", out)
-        pack = json.loads((self.root / "教授研究" / "邮件输入.json")
-                          .read_text(encoding="utf-8"))
+        row = stage4_row(out)
+        self.assertEqual(row["status"], "ok", out)
+        pack = json.loads(Path(row["email_pack"]).read_text(encoding="utf-8"))
         return pack["emails"][0]
 
     def compile_pack_two_professors(self, second_professor="佐藤 花子"):
-        """Compile a pack with a second target professor whose stage-3
-        state/pack is copied from the primary one."""
+        """Commit a second target professor whose stage-3 state/pack is copied
+        from the primary one, and return both professors' own local pack paths."""
         second_dir = self.root / "教授研究" / "Y分野" / second_professor
         second_dir.mkdir(parents=True, exist_ok=True)
         for name in ("套磁候选状态.json", "套磁候选输入.json"):
@@ -171,8 +173,12 @@ class TestContactEvidenceLadder(BaseEnv):
         ]}, ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("stage4-finalize", "--program-root", self.root,
                             "--selection-input", sel_input))
-        self.assertEqual(out["status"], "ok", out)
-        return second_dir
+        rows = {row["professor"]: row for row in stage4_rows(out)}
+        self.assertEqual(sorted(rows), sorted(["試験 教授", second_professor]), out)
+        for row in rows.values():
+            self.assertEqual(row["status"], "ok", out)
+        return {name: Path(row["email_pack"])
+                for name, row in rows.items()}
 
     def write_checker(self, check, rebuild_artifact=None, post_rebuild_check=None,
                       rebuild_error=False, check_error=False):
@@ -253,8 +259,11 @@ class TestContactEvidenceLadder(BaseEnv):
                         encoding="utf-8")
         return artifact
 
-    def plan_jobs(self):
-        return parse(run_cli("stage5-plan", "--program-root", self.root))
+    def plan_jobs(self, email_pack=None):
+        if email_pack is None:
+            return parse(run_cli("stage5-plan", "--program-root", self.root))
+        return parse(run_cli("stage5-plan", "--program-root", self.root,
+                             "--email-pack", email_pack))
 
     def decision(self, plan):
         return plan["contact_evidence"]["試験 教授"]
@@ -1036,7 +1045,7 @@ class TestContactEvidenceLadder(BaseEnv):
                 "signature_aliases_unavailable": False,
                 "current_email_blocked_by": ["professor_papers_unavailable"]}})
         self.write_schema2_artifact(professors=[fresh_record, blocked_record])
-        self.compile_pack_two_professors()
+        packs = self.compile_pack_two_professors()
         self.write_checker(self.check_report(
             "unavailable",
             professors=[
@@ -1044,7 +1053,11 @@ class TestContactEvidenceLadder(BaseEnv):
                 {"name": "佐藤 花子", "result": "unavailable",
                  "reasons": ["source_unreadable:papers_json:教授研究/Y分野/佐藤 花子/papers.json"]},
             ]))
-        plan = self.plan_jobs()
+        # Issue #67 handoff: each professor is planned from its OWN local pack, so
+        # professor B's unavailable evidence cannot reach professor A's decision.
+        plan = {"contact_evidence": {}}
+        for pack in packs.values():
+            plan["contact_evidence"].update(self.plan_jobs(pack)["contact_evidence"])
         fresh_decision = plan["contact_evidence"]["試験 教授"]
         self.assertEqual(fresh_decision["status"], "confirmed_cross_source")
         self.assertIsNone(fresh_decision["reason_code"])

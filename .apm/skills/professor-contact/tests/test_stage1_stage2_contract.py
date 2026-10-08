@@ -1,7 +1,24 @@
+import re
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
+
+# Analyzer commands whose input is the Stage-0 target of exactly one professor.
+TARGET_BOUND_COMMANDS = ("contact_targets.py", "contact_stage1.py", "stage2-preflight")
+RETIRED_PROGRAM_TABLE = "教授研究/套磁目标.json"
+PROHIBITION_MARKERS = ("绝不", "不读", "退役", "migrate")
+
+
+def bash_commands(text: str) -> list[str]:
+    """Every ```bash fenced command, joined across backslash continuations."""
+    commands = []
+    for block in re.findall(r"```bash\n(.*?)```", text, flags=re.S):
+        for chunk in re.split(r"\n\s*\n", block):
+            command = " ".join(line.rstrip("\\").strip() for line in chunk.splitlines())
+            if command.strip():
+                commands.append(command)
+    return commands
 
 
 class Stage1Stage2ContractTests(unittest.TestCase):
@@ -142,8 +159,9 @@ class Stage2PreflightContractTests(unittest.TestCase):
         self.assertIn("不碰 Zotero", gate_section)
         self.assertIn("不读 PDF 内容", gate_section)
         self.assertIn("不写任何 workflow state", gate_section)
-        # Preflight stdout is saved and passed back to finalize.
-        self.assertIn("/tmp/<教授名>_stage2_preflight.json", gate_section)
+        # Preflight stdout is saved and passed back to finalize, at this
+        # professor transaction's own transient location.
+        self.assertIn("<本教授事务临时目录>/stage2_preflight.json", gate_section)
         self.assertIn("--preflight-file", agent)
         self.assertIn("preflight_inputs_changed", agent)
 
@@ -170,10 +188,77 @@ class Stage2PreflightContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("Stage 2 初始化顺序固定且 preflight gate 不可绕过", agent)
-        self.assertIn("resolve → `contact_targets.py resolve` → `contact_stage1.py verify` → "
-                      "逐教授 `contact_state.py stage2-preflight`", agent)
+        self.assertIn("resolve → 逐教授 `contact_targets.py resolve --target-file", agent)
+        self.assertIn("`contact_stage1.py verify --target-file`", agent)
+        self.assertIn("逐教授 `contact_state.py stage2-preflight --target-file`", agent)
         self.assertIn("correctness-preserving", agent)
         self.assertIn("绝不生成新的科学事实", agent)
+
+    def test_issue64_t7_both_projections_pass_the_local_target_explicitly(self):
+        """G64-T4/T7 support (R64-17): analyzer input and handoff stay professor-local.
+
+        Every target-bound analyzer command names one professor's own local
+        target, and the returned handoff carries the professor's
+        target_states / stage1_snapshots maps — requirement r2 permits the
+        name-keyed outer shape in the unique-name scope, and the retired
+        program-level paths stay excluded (C65-03 owns that proof).
+        """
+        for target in ("professor-contact-codex", "professor-contact-opencode"):
+            with self.subTest(target=target):
+                agent = self._analyzer(target)
+                bound = [command for command in bash_commands(agent)
+                         if any(name in command for name in TARGET_BOUND_COMMANDS)]
+                self.assertTrue(bound, msg=target)
+                for command in bound:
+                    self.assertIn("--target-file", command, msg=command)
+                self.assertIn('"target_states": {', agent)
+                self.assertIn('"stage1_snapshots": {', agent)
+                self.assertNotIn('"transactions": [', agent)
+
+    def test_issue64_t7_program_level_table_is_only_a_prohibition(self):
+        """R64-5 (G64-T7): neither analyzer reads or reconstructs the retired table."""
+        for target in ("professor-contact-codex", "professor-contact-opencode"):
+            with self.subTest(target=target):
+                agent = self._analyzer(target)
+                mentioned = [line for line in agent.splitlines()
+                             if RETIRED_PROGRAM_TABLE in line]
+                self.assertTrue(mentioned, msg=target)
+                for line in mentioned:
+                    self.assertTrue(
+                        any(marker in line for marker in PROHIBITION_MARKERS),
+                        msg=line,
+                    )
+                self.assertIn("不自行推导路径", agent)
+
+    def test_issue64_t7_stage2_plan_commands_pass_the_saved_preflight_proof(self):
+        """The production plan hop consumes the proof saved by Step 2.6."""
+        expected_proof = "--preflight-file <本教授事务临时目录>/stage2_preflight.json"
+        for target in ("professor-contact-codex", "professor-contact-opencode"):
+            with self.subTest(target=target):
+                commands = [command for command in bash_commands(self._analyzer(target))
+                            if "contact_state.py stage2-plan" in command]
+                self.assertEqual(len(commands), 1, msg=commands)
+                self.assertIn("--facts /tmp/<教授名>_套磁_facts.json", commands[0])
+                self.assertIn(expected_proof, commands[0])
+
+    def test_issue64_t7_preflight_proof_save_is_per_professor_transaction(self):
+        """R64-17/R64-20 supplement (§6/§8.2): each professor transaction saves the
+        preflight proof at its own transient location and carries the actual path
+        in its transaction record, so two same-name professors in different
+        directories can never share, overwrite or delete one another's proof."""
+        for target in ("professor-contact-codex", "professor-contact-opencode"):
+            with self.subTest(target=target):
+                agent = self._analyzer(target)
+                # The display-name-keyed shared path is retired: professor B's
+                # preflight must not be able to overwrite professor A's proof.
+                self.assertNotIn("/tmp/<教授名>_stage2_preflight.json", agent, msg=target)
+                self.assertIn("<本教授事务临时目录>/stage2_preflight.json", agent, msg=target)
+                self.assertIn("不再根据教授展示名", agent, msg=target)
+
+    def _analyzer(self, target: str) -> str:
+        path = (ROOT.parents[2] / "packages" / target / ".apm" / "agents"
+                / "professor-contact-analyzer.agent.md")
+        return path.read_text(encoding="utf-8")
 
     def test_skill_contract_documents_the_preflight_gate(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

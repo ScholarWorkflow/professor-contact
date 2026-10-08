@@ -1,4 +1,5 @@
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import json
 import re
 import unittest
 
@@ -16,10 +17,92 @@ STAGE2_AGENT = (
     / "agents"
     / "professor-contact-analyzer.agent.md"
 )
+STAGE2_CODEX_AGENT = (
+    REPO_ROOT
+    / "packages"
+    / "professor-contact-codex"
+    / ".apm"
+    / "agents"
+    / "professor-contact-analyzer.agent.md"
+)
+TARGET_NAME = "套磁目标.json"
+STAGE1_STATE_NAME = "套磁阶段1候选.json"
+PROGRAM_STATE_DIR = "教授研究"
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _fenced(text: str, language: str | None = None) -> list[str]:
+    """Active result / command / payload blocks only.
+
+    Gate-2 evidence scope: prose, migration notes and prohibitions may name a
+    retired path without making the shipped handoff depend on it, so every
+    assertion below reads fenced blocks and nothing else.
+    """
+    tag = language if language is not None else "[a-zA-Z0-9]*"
+    return re.findall(rf"```{tag}\n(.*?)```", text, flags=re.DOTALL)
+
+
+def _bash_blocks(text: str) -> list[str]:
+    return _fenced(text, "(?:bash|shell|sh)")
+
+
+def _json_objects(text: str, key: str) -> list[dict]:
+    """Parse the fenced json blocks that carry `key` as a business field."""
+    found = []
+    for block in _fenced(text, "json"):
+        try:
+            payload = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and key in payload:
+            found.append(payload)
+    return found
+
+
+#: Characters that can never appear inside one of these state-file path references.
+_PATH_STOP = set(" \t\n\"'`(){}[],;|&，。；：（）「」、")
+
+
+def _task_prompt(text: str, agent_name: str) -> list[str]:
+    """Return the business prompt of each ``task(subagent_type: "<agent>", ...)``."""
+    pattern = re.compile(
+        r'task\(subagent_type:\s*"' + re.escape(agent_name) + r'"[^)]*?prompt:\s*"(?P<prompt>[^"]*)"'
+    )
+    return [match.group("prompt") for match in pattern.finditer(text)]
+
+
+def _parent_of_reference(token: str) -> str:
+    return PurePosixPath(token).parent.name.strip("<>")
+
+
+def _state_reference_scopes(text: str, filename: str) -> tuple[list[str], list[str], list[str]]:
+    """Split every mention of `filename` into local / program-level / unbound."""
+    local: list[str] = []
+    program: list[str] = []
+    unbound: list[str] = []
+    for match in re.finditer(re.escape(filename), text):
+        start = match.start()
+        if start == 0 or text[start - 1] != "/":
+            unbound.append(filename)
+            continue
+        cursor = start
+        while cursor > 0 and text[cursor - 1] not in _PATH_STOP:
+            cursor -= 1
+        token = text[cursor:start + len(filename)]
+        bucket = program if _parent_of_reference(token) == PROGRAM_STATE_DIR else local
+        bucket.append(token)
+    return local, program, unbound
+
+
+def _assert_professor_local(value: str, filename: str, case: str) -> None:
+    path = PurePosixPath(value)
+    assert path.name == filename, f"{case}: {value!r} is not a {filename} reference"
+    assert _parent_of_reference(value) != PROGRAM_STATE_DIR, (
+        f"{case}: {value!r} still points at the program-level {PROGRAM_STATE_DIR}/ authority"
+    )
 
 
 class Stage01CallerContractTests(unittest.TestCase):
@@ -30,6 +113,130 @@ class Stage01CallerContractTests(unittest.TestCase):
     PROJECT_CONSENSUS; these tests only prevent source-level caller contracts
     from drifting while the implementation is developed.
     """
+
+    #: Commands whose only Stage-0 authority input is one professor's local target.
+    TARGET_BOUND_COMMANDS = (
+        "contact_targets.py resolve",
+        "contact_stage1.py build",
+        "contact_stage1.py verify",
+        "stage2-preflight",
+    )
+    #: Sources owned by the Stage 0-1 caller contract.
+    STAGE01_SOURCES = (STAGE0_AGENT, STAGE1_AGENT, SKILL_PATH)
+
+    @staticmethod
+    def _clauses(text: str) -> list[str]:
+        """Sentences with backslash-continued command lines joined back together."""
+        return re.split(r"[。；\n]", text.replace("\\\n", " "))
+
+    def test_issue64_t7_every_target_bound_command_names_the_local_target_file(self):
+        """R64-6 caller side (G64-T7): no documented invocation may omit --target-file."""
+        for path in self.STAGE01_SOURCES:
+            text = _read(path)
+            for clause in self._clauses(text):
+                for command in self.TARGET_BOUND_COMMANDS:
+                    if command in clause:
+                        self.assertIn(
+                            "--target-file",
+                            clause,
+                            msg=f"{path.name}: {command} without an explicit local target: {clause}",
+                        )
+
+    #: Canonical professor-local identity a transaction record must carry (R64-17).
+    TRANSACTION_IDENTITY_FIELDS = ('"professor_dir"', '"preview_path"', '"target_state"')
+    #: Sources that carry the Stage 0 -> Stage 1 -> Stage 2 local-target handoff.
+    HANDOFF_SOURCES = (STAGE0_AGENT, STAGE1_AGENT, SKILL_PATH, STAGE2_AGENT, STAGE2_CODEX_AGENT)
+
+    @staticmethod
+    def _json_blocks(text: str) -> list[str]:
+        return re.findall(r"```json\n(.*?)```", text, flags=re.DOTALL)
+
+    def test_issue64_t4_caller_handoff_is_professor_local_transaction_records(self):
+        """G64-T4 support scoped by requirement r2: every handoff names one
+        explicit professor-local target per professor.
+
+        Stage-0 (unchanged upstream) keeps its `transactions` records with
+        canonical professor_dir + preview_path; the Stage-1 caller and the two
+        Stage-2 projections document the `target_states` / `stage1_snapshots`
+        maps that requirement r2 approved for the unique-name scope. The
+        same-name collision concern behind the old display-name-key ban is
+        out of scope for this round (requirement r2).
+        """
+        stage0 = _read(STAGE0_AGENT)
+        self.assertIn('"transactions"', stage0)
+        input_section = stage0.split('## Input', 1)[1].split('## ', 1)[0]
+        input_record = json.loads(self._json_blocks(input_section)[0])['transactions']
+        self.assertIsInstance(input_record, list)
+        self.assertTrue(input_record)
+        for record in input_record:
+            self.assertTrue({'professor_dir', 'preview_path'} <= record.keys())
+        pending_section = stage0.split('When returning `needs_input`', 1)[1]
+        pending = json.loads(self._json_blocks(pending_section)[0])['selection_request']
+        self.assertIsInstance(pending, list)
+        self.assertTrue(pending)
+        for record in pending:
+            self.assertTrue({'professor_dir', 'preview_path'} <= record.keys())
+
+        for path in (STAGE1_AGENT, SKILL_PATH, STAGE2_AGENT, STAGE2_CODEX_AGENT):
+            text = _read(path)
+            with self.subTest(source=str(path.relative_to(REPO_ROOT))):
+                self.assertIn('"target_states"', text)
+                if path is not SKILL_PATH:
+                    self.assertIn('"stage1_snapshots"', text)
+        downloader_text = _read(STAGE1_AGENT)
+        carriers = [json.loads(block) for block in self._json_blocks(downloader_text)
+                    if '"target_states"' in block]
+        self.assertTrue(carriers, msg="downloader: no target_states handoff example")
+        for carrier in carriers:
+            self.assertTrue({'target_states', 'stage1_snapshots'} <= carrier.keys(),
+                            msg="downloader handoff missing target/snapshot maps")
+
+    def test_issue64_t4_stage0_documents_bootstrap_and_revision_split(self):
+        """G64-T7 support (R64-4/8): `select` revises only; `bootstrap` establishes."""
+        stage0 = _read(STAGE0_AGENT)
+        skill = _read(SKILL_PATH)
+        for text in (stage0, skill):
+            self.assertRegex(
+                text,
+                r"(?is)bootstrap_required[\s\S]{0,160}(?:zero writes|零写入)",
+            )
+        self.assertRegex(
+            stage0,
+            r"(?is)only Stage-0 entry that establishes a professor.s first",
+        )
+
+    def test_issue64_t7_retired_program_table_only_appears_as_a_prohibition_or_migration_input(self):
+        retired = "教授研究/套磁目标.json"
+        prohibition = r'(?i)(?:绝不(?:回退)?读|不读|不得(?:读|写|读取)|Never (?:read|open|write))'
+        migration = r'(?:contact_targets\.py (?:bootstrap|migrate)|`bootstrap`)[\s\S]*(?:only|只在|纯迁移)'
+        for path in self.HANDOFF_SOURCES:
+            text = _read(path)
+            lines = [line for line in text.splitlines() if retired in line]
+            self.assertTrue(lines, msg=f"{path.name}: retired table never mentioned")
+            for line in lines:
+                self.assertTrue(
+                    re.search(prohibition, line) is not None or (
+                        path in self.STAGE01_SOURCES and (
+                            re.search(migration, line) is not None or (
+                                re.search(r'(?:only|只在|纯迁移)', line) is not None
+                                and re.search(r'contact_targets\.py (?:bootstrap|migrate)|`bootstrap`', line)
+                            ))),
+                    msg=f"{path.name}: {line}",
+                )
+
+    def test_issue64_t7_stage0_documents_one_professor_per_transaction_and_partial_results(self):
+        text = _read(STAGE0_AGENT)
+        self.assertIn("<教授目录>/套磁目标.json", text)
+        self.assertRegex(text, r"(?is)one[` ]+select[` ]+call is one professor-local transaction")
+        self.assertRegex(text, r"(?is)partial[\s\S]{0,300}(?:never|does not)[\s\S]{0,200}(?:roll back|rolls back)")
+
+    def test_issue64_t7_stage1_resolves_one_professor_per_invocation(self):
+        text = _read(STAGE1_AGENT)
+        self.assertRegex(
+            text,
+            r"(?is)one invocation resolves exactly one professor",
+        )
+        self.assertIn("missing_target_state", text)
 
     def test_stage0_exposes_structured_selection_for_noninteractive_callers(self):
         text = _read(STAGE0_AGENT)
@@ -352,6 +559,109 @@ class Stage01CallerContractTests(unittest.TestCase):
         for field in ("pdf_only:true", "item_keys=", "access_mode="):
             self.assertIn(field, payload.group("body"))
         self.assertNotIn("professors", payload.group("body"))
+
+    def test_issue65_shipped_professor_local_handoff_contract(self):
+        # C65-03: every active Stage 0-2 handoff block binds professor-local state.
+        # 1. Stage 0's active success result exposes the current professor-local
+        #    target, so the transaction identity is a canonical path, not a display name.
+        stage0_results = _json_objects(_read(STAGE0_AGENT), "transactions")
+        self.assertTrue(
+            stage0_results,
+            "Stage 0 has no parseable active result block carrying transactions",
+        )
+        for payload in stage0_results:
+            records = payload["transactions"]
+            self.assertIsInstance(records, list, f"transactions is not a record list: {records}")
+            self.assertTrue(records, "transactions is empty")
+            self.assertNotIn("target_state", payload, "one program-level target path is not a handoff")
+            for record in records:
+                self.assertTrue({'professor_dir', 'preview_path'} <= record.keys(),
+                                f"Stage 0 transaction lacks canonical identity: {record}")
+
+        # 2. The Stage-1 caller payload passes that local target as business input.
+        caller_payloads = _task_prompt(_read(SKILL_PATH), "professor-contact-downloader")
+        self.assertTrue(caller_payloads, "no active Stage-1 caller payload in SKILL.md")
+        for block in caller_payloads:
+            local, program, unbound = _state_reference_scopes(block, TARGET_NAME)
+            self.assertTrue(local, f"Stage-1 caller payload has no local target: {block}")
+            self.assertEqual(program, [], f"Stage-1 caller payload points at the program table: {block}")
+            self.assertEqual(unbound, [], f"Stage-1 caller target is display-name-only: {block}")
+            self.assertEqual(
+                _state_reference_scopes(block, STAGE1_STATE_NAME)[1],
+                [],
+                f"Stage-1 caller payload requires a program-wide Stage-1 authority: {block}",
+            )
+
+        # 3. The downloader's active Stage-1 commands bind the local target, and its
+        #    active return names the local Stage-1 owner.
+        downloader_text = _read(STAGE1_AGENT)
+        stage1_commands = [
+            block for block in _bash_blocks(downloader_text) if "contact_stage1.py" in block
+        ]
+        self.assertTrue(stage1_commands, "downloader has no active contact_stage1.py command")
+        for block in stage1_commands:
+            flags = re.findall(r'--target-file\s+"([^"]+)"', block)
+            self.assertTrue(flags, f"contact_stage1.py invoked without a local target: {block}")
+            for value in flags:
+                _assert_professor_local(value, TARGET_NAME, "downloader Stage-1 command")
+            self.assertEqual(
+                _state_reference_scopes(block, STAGE1_STATE_NAME)[1],
+                [],
+                f"downloader Stage-1 command reads the program-level snapshot: {block}",
+            )
+        returned = _json_objects(downloader_text, "stage1_snapshots")
+        self.assertTrue(returned, "downloader return has no per-professor stage1_snapshots field")
+        for payload in returned:
+            refs = payload["stage1_snapshots"]
+            self.assertIsInstance(refs, dict, f"downloader stage1_snapshots is not per-professor: {refs}")
+            self.assertTrue(refs, "downloader stage1_snapshots is empty")
+            for display, value in refs.items():
+                _assert_professor_local(
+                    value, STAGE1_STATE_NAME, f"downloader Stage-1 state for {display}"
+                )
+
+        # 4. Both shipped analyzer projections bind Stage 2 to the local target plus
+        #    the exact local Stage-1 state.
+        for agent in (STAGE2_AGENT, STAGE2_CODEX_AGENT):
+            with self.subTest(analyzer=str(agent.relative_to(REPO_ROOT))):
+                text = _read(agent)
+                active = _bash_blocks(text)
+                stage1_verify = [b for b in active if "contact_stage1.py" in b and "verify" in b]
+                preflight = [b for b in active if "stage2-preflight" in b]
+                self.assertTrue(
+                    stage1_verify, f"{agent.name}: no active contact_stage1.py verify command"
+                )
+                self.assertTrue(preflight, f"{agent.name}: no active stage2-preflight command")
+                for block in stage1_verify + preflight:
+                    flags = re.findall(r'--target-file\s+"([^"]+)"', block)
+                    self.assertTrue(
+                        flags, f"{agent.name}: Stage-2 command without a local target: {block}"
+                    )
+                    for value in flags:
+                        _assert_professor_local(value, TARGET_NAME, f"{agent.name} Stage-2 command")
+                    self.assertEqual(
+                        _state_reference_scopes(block, STAGE1_STATE_NAME)[1],
+                        [],
+                        f"{agent.name} Stage-2 command reads the program-level snapshot: {block}",
+                    )
+                self.assertEqual(
+                    _state_reference_scopes("\n".join(_fenced(text)), STAGE1_STATE_NAME)[1],
+                    [],
+                    f"{agent.name}: an active block still names the program-level Stage-1 state",
+                )
+                stage2_returns = _json_objects(text, "stage1_snapshots")
+                self.assertTrue(
+                    stage2_returns,
+                    f"{agent.name} return does not expose the consumed local Stage-1 state",
+                )
+                for payload in stage2_returns:
+                    refs = payload["stage1_snapshots"]
+                    self.assertIsInstance(refs, dict, f"stage1_snapshots is not per-professor: {refs}")
+                    self.assertTrue(refs, "stage1_snapshots is empty")
+                    for display, value in refs.items():
+                        _assert_professor_local(
+                            value, STAGE1_STATE_NAME, f"{agent.name} Stage-1 state for {display}"
+                        )
 
     def test_stage1_prompt_templates_make_access_mode_conditional(self):
         """The base delegation prompt must not contain an empty access_mode slot."""

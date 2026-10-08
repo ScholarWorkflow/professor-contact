@@ -17,6 +17,8 @@ from pathlib import Path
 
 from test_stage2_resolved_direction import (
     ResolvedPipelineMixin, parse, quote_id, run_cli, write_json)
+from _stage4_handoff_test_support import (
+    read_local_pack, read_local_selection, stage4_row)
 
 _SCRIPT = Path(__file__).parents[1] / "scripts" / "contact_state.py"
 _spec = importlib.util.spec_from_file_location("contact_state_cs", _SCRIPT)
@@ -174,19 +176,23 @@ class Stage3DirectionGroupBase(ResolvedPipelineMixin, unittest.TestCase):
         pack_path.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
 
     def stage4_finalize(self, selections, name="sel-input.json"):
+        """One invocation, one aggregate machine object (issue #67).
+
+        Each canonical professor owns exactly one ``results[]`` row; the
+        program-level pair is no longer written, so tests read the authority
+        through the row's own local paths."""
         sel_input = self.root / name
         sel_input.write_text(json.dumps({"selections": selections},
                                         ensure_ascii=False), encoding="utf-8")
         return parse(run_cli("stage4-finalize", "--program-root", self.root,
                              "--selection-input", sel_input))
 
-    def selection_doc(self):
-        return json.loads((self.root / "教授研究" / "套磁选择.json")
-                          .read_text(encoding="utf-8"))
-
-    def email_pack(self):
-        return json.loads((self.root / "教授研究" / "邮件输入.json")
-                          .read_text(encoding="utf-8"))
+    def assert_no_program_level_authority(self):
+        """R67-G1-5: Stage 4 must never revive the legacy program-level pair."""
+        for name in ("套磁选择.json", "邮件输入.json"):
+            path = self.root / "教授研究" / name
+            self.assertFalse(path.exists(),
+                             f"program-level {name} must not be written: {path}")
 
     @staticmethod
     def source_hash(entry):
@@ -614,15 +620,17 @@ class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
                "ideas": [{"id": "X1", "note": "主推"}]}
         out4 = self.stage4_finalize([sel])
         self.assertEqual(out4["status"], "ok", msg=json.dumps(out4, ensure_ascii=False))
-        self.assertEqual(out4["emails_compiled"], 1)
-        self.assertEqual(out4["skipped"], [])
+        row = stage4_row(out4)
+        self.assertEqual(row["status"], "ok", msg=json.dumps(out4, ensure_ascii=False))
+        self.assertEqual(row["emails_compiled"], 1)
+        self.assertEqual(row["skipped"], [])
 
-        selection = self.selection_doc()
-        self.assertEqual(selection["schema"], 2)
+        selection = read_local_selection(row)
+        self.assertEqual(selection["schema"], 3)
         self.assertEqual(selection["selections"][0]["direction_ids"],
                          ["dir_A", "dir_B"])
 
-        emails = {e["email_id"]: e for e in self.email_pack()["emails"]}
+        emails = {e["email_id"]: e for e in read_local_pack(row)["emails"]}
         cross_email = emails[f"{PROFESSOR}::dir_A+dir_B::X1"]
         self.assertEqual(cross_email["direction_ids"], ["dir_A", "dir_B"])
         self.assertEqual([d["direction_id"] for d in cross_email["directions"]],
@@ -646,11 +654,12 @@ class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
         out4b = self.stage4_finalize([sel_rev], name="sel-input-rev.json")
         self.assertEqual(out4b["status"], "ok")
         self.assertIn(f"{PROFESSOR}::dir_A+dir_B::X1",
-                      [e["email_id"] for e in self.email_pack()["emails"]])
+                      [e["email_id"] for e in read_local_pack(stage4_row(out4b))["emails"]])
+        self.assert_no_program_level_authority()
 
     def test_stage4_stale_cross_participant_needs_refresh_before_write(self):
-        """A changed participant fingerprint must fail the WHOLE stage-4 batch
-        before any selection/email file is written."""
+        """A changed participant fingerprint must fail this professor
+        before any of ITS local pair files is written."""
         results, cross_job = self._cross_request()
         self._write_cross_result(cross_job, [self._grounded_cross()],
                                  name="s3")
@@ -660,13 +669,18 @@ class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
         sel = {"professor": PROFESSOR, "professor_dir": str(self.prof_dir),
                "direction_ids": ["dir_A", "dir_B"], "ideas": [{"id": "X1"}]}
         out = self.stage4_finalize([sel])
-        self.assertEqual(out["status"], "needs_refresh", msg=json.dumps(out, ensure_ascii=False))
-        self.assertEqual(out["reason_code"], "cross_participant_changed")
-        self.assertFalse((self.root / "教授研究" / "套磁选择.json").exists())
-        self.assertFalse((self.root / "教授研究" / "邮件输入.json").exists())
+        self.assertEqual(out["status"], "error", msg=json.dumps(out, ensure_ascii=False))
+        row = stage4_row(out)
+        self.assertEqual(row["status"], "needs_refresh", msg=json.dumps(out, ensure_ascii=False))
+        self.assertEqual(row["reason_code"], "cross_participant_changed")
+        self.assertIsNone(row["selection_file"])
+        self.assertIsNone(row["email_pack"])
+        for filename in ("套磁选择.json", "邮件输入.json"):
+            self.assertFalse((self.prof_dir / filename).exists())
+        self.assert_no_program_level_authority()
 
     def test_stage4_unknown_idea_fails_closed_for_whole_batch(self):
-        """An unknown idea id next to a valid one must fail the whole batch
+        """An unknown idea id next to a valid one must fail this professor
         instead of silently writing only the valid selection."""
         results = self.write_results("s3", {
             "dir_A": self.generated_doc("dir_A", ["P1", "P2", None]),
@@ -677,9 +691,10 @@ class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
                "ideas": [{"id": "dir_A_1"}, {"id": "no_such_idea"}]}
         out = self.stage4_finalize([sel])
         self.assertEqual(out["status"], "error", msg=json.dumps(out, ensure_ascii=False))
-        self.assertEqual(out["reason_code"], "unknown_idea_id")
-        self.assertFalse((self.root / "教授研究" / "套磁选择.json").exists())
-        self.assertFalse((self.root / "教授研究" / "邮件输入.json").exists())
+        self.assertEqual(stage4_row(out)["reason_code"], "unknown_idea_id")
+        for filename in ("套磁选择.json", "邮件输入.json"):
+            self.assertFalse((self.prof_dir / filename).exists())
+        self.assert_no_program_level_authority()
 
     def test_stage4_ordinary_selection_joins_by_direction_id(self):
         results = self.write_results("s3", {
@@ -693,19 +708,22 @@ class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
                "ideas": [{"id": "dir_B_1"}]}
         out = self.stage4_finalize([sel])
         self.assertEqual(out["status"], "error")
-        self.assertEqual(out["reason_code"], "unknown_idea_id")
+        self.assertEqual(stage4_row(out)["reason_code"], "unknown_idea_id")
         sel_ok = {"professor": PROFESSOR, "professor_dir": str(self.prof_dir),
                   "direction_id": "dir_B",
                   "ideas": [{"id": "dir_B_1"}]}
         out_ok = self.stage4_finalize([sel_ok], name="sel-ok.json")
         self.assertEqual(out_ok["status"], "ok")
-        emails = self.email_pack()["emails"]
+        emails = read_local_pack(stage4_row(out_ok))["emails"]
         self.assertEqual([e["email_id"] for e in emails],
                          [f"{PROFESSOR}::dir_B::dir_B_1"])
         self.assertEqual(emails[0]["direction_ids"], ["dir_B"])
 
     def _select_a(self, name="sel-a.json"):
-        """Run professor A's stage-3 finalize, then select dir_A_1."""
+        """Run professor A's stage-3 finalize, then select dir_A_1.
+
+        Returns the committed results[] row so callers can read A's own local
+        pair rather than a shared program-level file."""
         results = self.write_results("s3", {
             "dir_A": self.generated_doc("dir_A", ["P1", "P2", None]),
             "dir_B": self.generated_doc("dir_B", ["P1", "P3", None])})
@@ -714,7 +732,7 @@ class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
                  "direction_id": "dir_A", "ideas": [{"id": "dir_A_1"}]}
         out = self.stage4_finalize([sel_a], name=name)
         self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
-        return sel_a
+        return stage4_row(out)
 
     def _select_b(self, prof_b, name):
         sel_b = {"professor": SECOND_PROFESSOR, "professor_dir": str(prof_b),
@@ -737,49 +755,73 @@ class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
                  "direction_id": "dir_A", "ideas": [{"id": "dir_A_1"}]}
         out = self.stage4_finalize([sel_a])
         self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
-        self.assertEqual(out["emails_compiled"], 1)
-        self.assertEqual(out["skipped"], [])
-        self.assertEqual([e["email_id"] for e in self.email_pack()["emails"]],
+        row = stage4_row(out)
+        self.assertEqual(row["emails_compiled"], 1)
+        self.assertEqual(row["skipped"], [])
+        self.assertEqual([e["email_id"] for e in read_local_pack(row)["emails"]],
                          [f"{PROFESSOR}::dir_A::dir_A_1"])
 
     def test_stage4_partial_other_professor_rerun_preserves_existing_selection_and_email(self):
         """Re-selecting only professor B must preserve professor A's accepted
-        selection and email entry — never silently drop it as needs_stage3."""
+        selection and email entry in A's own local pair — A is never a
+        prerequisite of B and never silently rewritten by B's transaction."""
         prof_b = self.build_second_professor()
-        self._select_a()
+        row_a = self._select_a()
+        a_pair = (Path(row_a["selection_file"]), Path(row_a["email_pack"]))
+        before = [path.read_bytes() for path in a_pair]
         out = self._select_b(prof_b, "sel-b.json")
         self.assertEqual(out["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
-        self.assertEqual(out["skipped"], [])
+        row_b = stage4_row(out)
+        self.assertEqual(row_b["status"], "ok", msg=json.dumps(out, ensure_ascii=False))
+        self.assertEqual(row_b["skipped"], [])
+        self.assertEqual([path.read_bytes() for path in a_pair], before,
+                         "professor A's local pair must stay byte-for-byte identical")
         self.assertEqual(
-            {s["professor"] for s in self.selection_doc()["selections"]},
-            {PROFESSOR, SECOND_PROFESSOR})
+            {s["professor"] for s in read_local_selection(row_a)["selections"]},
+            {PROFESSOR})
         self.assertEqual(
-            {e["email_id"] for e in self.email_pack()["emails"]},
-            {f"{PROFESSOR}::dir_A::dir_A_1", f"{SECOND_PROFESSOR}::dir_C::dir_C_1"})
-        preserved = next(s for s in self.selection_doc()["selections"]
-                         if s["professor"] == PROFESSOR)
+            {s["professor"] for s in read_local_selection(row_b)["selections"]},
+            {SECOND_PROFESSOR})
+        self.assertEqual(
+            {e["email_id"] for e in read_local_pack(row_a)["emails"]},
+            {f"{PROFESSOR}::dir_A::dir_A_1"})
+        self.assertEqual(
+            {e["email_id"] for e in read_local_pack(row_b)["emails"]},
+            {f"{SECOND_PROFESSOR}::dir_C::dir_C_1"})
+        preserved = read_local_selection(row_a)["selections"][0]
         self.assertEqual(preserved["direction_ids"], ["dir_A"])
         self.assertEqual([i["id"] for i in preserved["ideas"]], ["dir_A_1"])
+        self.assert_no_program_level_authority()
 
-    def test_stage4_preserved_entry_missing_or_unmigratable_state_is_zero_write(self):
-        """A preserved entry whose state is missing / un-migratable / without a
-        readable input pack must fail the batch before ANY write — the old
-        selection and email files stay byte-for-byte identical."""
-        prof_b = self.build_second_professor()
+    def test_stage4_same_professor_preserved_entry_needs_refresh_is_zero_write(self):
+        """A preserved entry of THIS professor whose state is missing / not
+        exactly migratable / without a readable input pack must fail this
+        professor before ANY write — its existing pair bytes stay identical.
+
+        Under issue #67 a fault belonging to another professor is never a
+        prerequisite, so the same faults are applied to the professor that owns
+        the preserved selection instead of to an unrelated one."""
         self._select_a()
-        selection_path = self.root / "教授研究" / "套磁选择.json"
-        email_path = self.root / "教授研究" / "邮件输入.json"
+        selection_path = self.prof_dir / "套磁选择.json"
+        email_path = self.prof_dir / "邮件输入.json"
         before = (selection_path.read_bytes(), email_path.read_bytes())
         state_path = self.prof_dir / "套磁候选状态.json"
         original_state = state_path.read_bytes()
         pack_path = self.prof_dir / "套磁候选输入.json"
 
-        # Phase 1: the preserved professor's candidate state is gone entirely.
+        def reselect(name, idea_id):
+            sel = {"professor": PROFESSOR, "professor_dir": str(self.prof_dir),
+                   "direction_id": "dir_B", "ideas": [{"id": idea_id}]}
+            out = self.stage4_finalize([sel], name=name)
+            self.assertEqual(out["status"], "error", msg=json.dumps(out, ensure_ascii=False))
+            return stage4_row(out)
+
+        # Phase 1: this professor's candidate state is gone entirely.
         state_path.unlink()
-        out = self._select_b(prof_b, "sel-b1.json")
-        self.assertEqual(out["status"], "needs_refresh",
-                         msg=json.dumps(out, ensure_ascii=False))
-        self.assertEqual(out["reason_code"], "candidate_state_missing")
+        row = reselect("sel-b1.json", "dir_B_1")
+        self.assertEqual(row["status"], "needs_refresh",
+                         msg=json.dumps(row, ensure_ascii=False))
+        self.assertEqual(row["reason_code"], "candidate_state_missing")
         self.assertEqual((selection_path.read_bytes(), email_path.read_bytes()), before)
 
         # Phase 2: the state exists but cannot be exactly migrated.
@@ -789,21 +831,22 @@ class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
              "directions": [{"collection_key": "ghost_key", "candidates": []}],
              "input_fingerprints": {"ghost_key": "stale"}},
             ensure_ascii=False), encoding="utf-8")
-        out2 = self._select_b(prof_b, "sel-b2.json")
-        self.assertEqual(out2["status"], "needs_refresh",
-                         msg=json.dumps(out2, ensure_ascii=False))
-        self.assertEqual(out2["reason_code"], "legacy_direction_identity")
+        row2 = reselect("sel-b2.json", "dir_B_1")
+        self.assertEqual(row2["status"], "needs_refresh",
+                         msg=json.dumps(row2, ensure_ascii=False))
+        self.assertEqual(row2["reason_code"], "legacy_direction_identity")
         self.assertEqual((selection_path.read_bytes(), email_path.read_bytes()), before)
 
         # Phase 3: state is fine but the input pack is unreadable — the
-        # preserved email entry cannot be recompiled, so the batch fails.
+        # preserved email entry cannot be recompiled, so this professor fails.
         state_path.write_bytes(original_state)
         pack_path.unlink()
-        out3 = self._select_b(prof_b, "sel-b3.json")
-        self.assertEqual(out3["status"], "needs_refresh",
-                         msg=json.dumps(out3, ensure_ascii=False))
-        self.assertEqual(out3["reason_code"], "preserved_selection_uncompilable")
+        row3 = reselect("sel-b3.json", "dir_B_1")
+        self.assertEqual(row3["status"], "needs_refresh",
+                         msg=json.dumps(row3, ensure_ascii=False))
+        self.assertEqual(row3["reason_code"], "preserved_selection_uncompilable")
         self.assertEqual((selection_path.read_bytes(), email_path.read_bytes()), before)
+        self.assert_no_program_level_authority()
 
 
 if __name__ == "__main__":

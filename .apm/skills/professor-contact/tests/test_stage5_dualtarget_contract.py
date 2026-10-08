@@ -277,6 +277,25 @@ class Stage5DualTargetContractTests(unittest.TestCase):
                       self._section(body, "### humanizer-ja stage-5 constraints",
                                     None))
 
+    def test_finalize_command_example_passes_the_professor_local_email_pack(self):
+        """Issue #67 R67-G1-7: the finalize example carries the same pack.
+
+        The prose requires every Stage-5 call of a run (stage5-plan and the
+        stage5_immutable.py stage5-finalize wrapper) to use the professor-local
+        `--email-pack` from the Stage-4 success row, so the concrete example
+        command must not be drawable without it -- omitting the flag would send
+        the wrapper to the retired program-level default path.
+        """
+        wrapper_section = self._section(self.generator_body,
+                                        "## Immutable-template override",
+                                        "## Targeted single-email scope")
+        command_start = wrapper_section.index("stage5_immutable.py stage5-finalize")
+        command_end = wrapper_section.index("```", command_start)
+        command_block = wrapper_section[command_start:command_end]
+        self.assertIn("--email-pack", command_block,
+                      "the stage5-finalize example command must pass the "
+                      "professor-local --email-pack explicitly")
+
     def test_legacy_stage5_contract_carries_supersession_banner(self):
         legacy = LEGACY_CONTRACT.read_text(encoding="utf-8")
         self.assertIn("superseded humanizer & calling rules", legacy)

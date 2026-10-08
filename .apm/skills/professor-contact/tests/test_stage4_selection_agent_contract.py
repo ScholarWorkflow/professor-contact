@@ -4,6 +4,7 @@ These tests guard the documented user-choice boundary only.  They do not claim
 to prove that Codex or OpenCode actually invoked a named agent; that belongs to
 the clean-consumer runtime smoke tests required by PROJECT_CONSENSUS.
 """
+import re
 from pathlib import Path
 import unittest
 
@@ -100,6 +101,134 @@ class Stage4SelectionAgentContractTests(unittest.TestCase):
             "omitting --profile is not a valid variant: with it absent the runner's "
             "current profile fingerprint is None and never matches a recorded one",
         )
+
+
+class Issue67Stage4SelectionContractTests(unittest.TestCase):
+    """Issue #67: the selection child works per canonical professor, never globally.
+
+    These are the documented-input halves of `PC67-DADJ`; the machine halves run in
+    `Issue67AdjacentStateTests`, and the actual delegation lives in the runtime
+    smoke cases.
+    """
+
+    def setUp(self):
+        self.assertTrue(AGENT_PATH.exists(), f"missing agent document: {AGENT_PATH}")
+        self.text = AGENT_PATH.read_text(encoding="utf-8")
+
+    def test_canonical_professor_dir_is_the_per_professor_read_and_map_unit(self):
+        for required in ("professor_dir", "canonical", "套磁候选状态.json",
+                         "每轮重新读盘"):
+            with self.subTest(required=required):
+                self.assertIn(required, self.text)
+        self.assertRegex(
+            self.text,
+            r"(?:显示名|同名|display).{0,40}(?:不|never)\S{0,20}(?:合并|merge|同一)",
+            "the same display name must not merge two canonical directories")
+
+    def test_pending_selection_row_carries_the_professor_directory(self):
+        self.assertIn("pending_selection", self.text)
+        self.assertRegex(
+            self.text,
+            r'"professor_dir"\s*:',
+            "every pending_selection entry must name the canonical professor_dir the "
+            "next turn has to write back")
+
+    def test_aggregate_result_is_consumed_row_by_row(self):
+        for required in ("results[]", "partial", "needs_refresh", "selection_file",
+                         "email_pack"):
+            with self.subTest(required=required):
+                self.assertIn(required, self.text)
+        self.assertRegex(
+            self.text,
+            r"(?:别的教授|其他教授).{0,40}(?:不|never)\S{0,16}(?:阻断|前置条件|撤销)",
+            "one professor's failure must neither block nor revoke another's commit")
+
+    def test_path_c_still_delegates_waits_and_writes_nothing_formally(self):
+        self.assertIn("OpenCode", self.text)
+        self.assertIn("question", self.text)
+        self.assertIn("重新委派本 agent", self.text)
+        self.assertRegex(
+            self.text,
+            r"重新委派本 agent.{0,40}显式传入.{0,20}selection",
+            "the next user turn must re-delegate this child with an explicit "
+            "selection instead of resuming the old child thread")
+        self.assertRegex(
+            self.text,
+            r"(?:零写盘|不写任何文件|零写入)",
+            "the missing-selection turn must stay free of formal writes")
+
+    def test_migration_is_orchestrated_before_finalize(self):
+        """Plan r19 order: bind -> migrate decision -> migrate-local -> finalize.
+
+        The migration step (and its command block) must precede the finalize
+        step in the documented execution flow. If finalize ran first it would
+        create the local pair and the subsequent migration could only observe
+        `already_local`, so the legacy row would be neither migrated nor
+        reviewed. Path A must also route through the migration decision
+        instead of jumping straight into `stage4-finalize`.
+        """
+        command_blocks = re.findall(r"```bash\n(.*?)```", self.text, re.S)
+        migrate_positions = [i for i, block in enumerate(command_blocks)
+                             if "contact_state.py stage4-migrate-local" in block]
+        finalize_positions = [i for i, block in enumerate(command_blocks)
+                              if "contact_state.py stage4-finalize" in block]
+        self.assertTrue(migrate_positions, "the migrate-local command block is required")
+        self.assertTrue(finalize_positions, "the finalize command block is required")
+        self.assertLess(
+            min(migrate_positions), min(finalize_positions),
+            "stage4-migrate-local must be orchestrated before stage4-finalize")
+        self.assertNotRegex(
+            self.text,
+            r"绑定成功[^。\n]*直接[^。\n]*`?stage4-finalize`?",
+            "path A must route through the migration decision, not straight "
+            "into finalize")
+
+    def test_legacy_program_pair_is_never_written_and_only_migrates_per_professor(self):
+        self.assertIn("stage4-migrate-local", self.text)
+        self.assertIn("already_local", self.text)
+        self.assertIn("local_pair_incomplete", self.text)
+        self.assertRegex(
+            self.text,
+            r"(?:程序级|教授研究/套磁选择\.json).{0,60}(?:绝不|never)\S{0,12}(?:写入|权威)",
+            "the program-level pair must stay a historical source, never authority")
+
+    def test_runner_comes_from_the_exact_installed_consumer_skill(self):
+        self.assertNotIn(
+            "skillrepo exec professor-contact",
+            self.text,
+            "a clean consumer must not resolve Stage-4 through an ambient registered "
+            "development checkout",
+        )
+        self.assertIn(
+            ".agents/skills/professor-contact/scripts/contact_state.py",
+            self.text,
+            "the Stage-4 command must execute the runner installed in this consumer",
+        )
+        self.assertRegex(
+            self.text,
+            r"(?:精确提交|exact[- ]SHA|当前 consumer).{0,80}(?:安装|installed).{0,80}runner",
+            "the command provenance rule must be explicit enough for a clean consumer",
+        )
+
+    def test_selection_professor_is_copied_from_the_professor_input_pack(self):
+        self.assertIn("套磁候选输入.json", self.text)
+        self.assertRegex(
+            self.text,
+            r"professor.{0,40}(?:原样|逐字|exact).{0,40}(?:复制|抄)",
+            "the display professor must come from the selected directory's input pack, "
+            "not from the directory basename or a guessed label",
+        )
+        self.assertRegex(
+            self.text,
+            r"路径 C.{0,80}(?:不要求|不读).{0,30}套磁候选输入\.json",
+            "the omitted-selection path must remain derivable from candidate state alone",
+        )
+
+    def test_agent_never_invents_or_auto_selects_for_a_professor(self):
+        self.assertRegex(
+            self.text,
+            r"(?:不得|禁止|绝不).{0,30}(?:默认|推荐|自动选第一项)",
+            "the child may not substitute its own recommendation for user choice")
 
 
 if __name__ == "__main__":
