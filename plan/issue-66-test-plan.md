@@ -1,6 +1,6 @@
 # 第66号议题／第73号拉取请求测试计划
 
-版本：`issue-66-test-plan-new-rules-r3-2026-10-09`。
+版本：`issue-66-test-plan-new-rules-r4.3-2026-10-09`。
 
 产品基线：`86b6c82197e1b0afdbc9c337b6c4892b37ddc78d`。本版在第二版精简范围上，按用户要求补齐正常工作流程及根对话后续命令的检查步骤；产品未改，历史结果保留原版本归属。
 
@@ -96,7 +96,7 @@
 
 ### 根对话后续命令的具体检查步骤
 
-采用既有评估服务响应及共享夹具当前适用的 `configs/codex-eval-adapter-contract.json`。本次只需要根线程编号、相应工具调用／完成结果、必要子代理结果及顺序；不要求完整运行轨迹，不新增采集器。现有适配约定把根编号放在 `output.thread_id`，事件放在 `output.app_server_events`，事件序号为 `runtime_seq`，原始事件中的线程编号为 `message.params.threadId`。这些是现有服务的观察约定，不是要求产品固定私有运行时字段。
+采用既有评估服务响应及共享夹具 `configs/codex-eval-adapter-contract.json` 的契约 `skills-test-fixtures/codex-eval-adapter@16`。本次只需要根线程编号、相应工具调用／完成结果、必要子代理结果及顺序；不要求完整运行轨迹，不新增采集器。现有适配约定把根编号放在 `output.thread_id`，事件放在 `output.app_server_events`，事件序号为 `runtime_seq`，原始事件中的线程编号为 `message.params.threadId`，子线程只读元数据放在 `output.child_thread_reads`。这些是当前服务和契约版本的观察约定，不是要求产品固定私有运行时字段。
 
 本地测试工程师在第二关步骤中固定实际响应文件与适用夹具版本。下例中的 `run_dir` 是按隔离步骤创建的仓库外运行目录，`eval-response.json` 是那一次正式请求的原始响应，不是另发请求获取的结果。对沿用上述约定的返回，可直接用 `jq` 取得根的现有调用及输出：
 
@@ -114,28 +114,32 @@ jq --arg root "$root_id" '
 
 这是直接查看已有结构化字段的命令，不是专用判定程序。只对照本目标涉及的准备、保存、记录、重建调用；命令可能位于执行工具的参数中，按实际工具载荷读取，不要求命令出现在某个预设顶层字段。不解析或执行日志里的代码，不把聊天正文中引用的命令当工具调用。其他适用返回形态按已有服务说明读取，不强行改造成此形态；缺少实际调用或完成输出时明确无法判断。
 
+按 `@16` 契约，先从正式委派关系得到可归属的子线程。旧式路径只认事件中 `item.type=collabAgentToolCall`、`item.tool=spawnAgent` 的正式关系，发送方来自 `senderThreadId`，子线程来自 `receiverThreadIds`。当前多代理路径还可能用三项证据组成同一正式关系：发送线程的 `rawResponseItem/completed` 事件中有结构化 `function_call`（`name=spawn_agent`、`namespace=collaboration`、非空 `call_id`），同一发送线程上 `item.id` 等于该 `call_id` 且 `agentThreadId` 给出唯一子线程的 `subAgentActivity`，以及 `output.child_thread_reads` 中对应子线程的成功只读结果。读取包装必须满足 `thread_id` 等于子线程、`parent_thread_id` 等于发送线程、`relation_kind=subAgentActivity.agentThreadId`，且 `result` 是对象、`error` 为 `null`；该结果的 `thread.id`、`thread.parentThreadId` 和 `thread.source.subAgent.thread_spawn.parent_thread_id` 必须与正式关系相符且唯一。单独的子线程读取、`subAgentActivity` 或任务名都不能建立委派关系。
+
+只对上述关系确定的子线程，把 `output.child_thread_reads` 成功结果中的 `thread.agentRole` 和 `thread.source.subAgent.thread_spawn.agent_role` 当作代理角色证据：一项存在时采用该值，两项都存在时必须相同。将其与消费者中唯一的同名合法代理定义对应，分别识别 `professor-contact-idea-generator` 和 `professor-contact-style-validator`。`agentPath` 可能只是委派任务名，不能拿来证明加载了哪个代理定义；两项角色字段冲突时记录证据矛盾，两项都没有时记为无法识别角色，不猜测也不补发请求。子线程的工具调用和完成结果按事件中的 `message.params.threadId` 对应到该子线程，再按 `runtime_seq` 排序；委派关系本身不代表子线程已完成。
+
 逐步对照如下：
 
-1. 用根线程编号选根的工具记录；用已有委派结果区分相应子代理。对子代理只取当前教授生成完成结果及校验写入结果，不读收到的提示词，不以根声称已完成代替调用结果。
+1. 用根线程编号选根的工具记录；按上文 `@16` 正式关系字段和子线程角色字段区分相应命名代理，再用 `message.params.threadId` 选取该子线程的工具记录。只取当前教授生成完成结果及校验写入结果，不读收到的提示词，不以根声称已完成代替调用结果。
 2. 将生成最终结果的 `invocations` 中本教授凭据，与根准备命令参数直接比较；用候选稿／状态的规范父目录对应教授，不以展示名猜配。准备成功结果返回的交接文件、摘要和轮次，随后与保存和记录参数比较。
 3. 将保存命令成功结果中的 `validation_sha256`，与记录命令的 `--expected-validation-sha256` 比较；记录结果中的 `validation_input_sha256` 应对应同一原文。校验输出与保存文件的字节比较按D组方法，不重新排版原文。
 4. 对应工具调用和结果按实际调用编号或项目编号配对，再按事件序号检查：生成保存完成早于准备，固定写入成功早于根保存，保存成功早于记录。如果命令最初只返回运行中的会话编号，以后续最终完成输出和退出结果为准，不能当成功。若多个入口同在一次工具调用中，以可见执行内容及各自完成结果确认顺序；无法分清就不推定顺序成立。
 5. 解析记录返回的 `needs_correction`、`terminal`，对照其完成后的实际委派和命令：无需修正没有新生成；需要修正且未终态才进入第二轮；第二轮终态后没有再生成、校验或记录。检查结束后的教授正式状态，及终态后的那一次总览命令。只判断本次实际分支。
 6. 命令参数、对应完成结果、完整校验正文等某一事实不可见时，说明具体缺项并记该事实无法判断，不以最终文件倒推过程，不补调用求通过，不重复模型采样。已取得的其他业务结果可以保留。
 
-本轮只补充流程及观察方法，没有运行以上命令处理正式测试输出。实际请求接线、输入、配置、运行目录、适用事件形态和清理步骤仍须在第二关补齐；本节不宣称完整执行步骤已获批准。
+以上是第三版的交接状态。第四版的实际请求接线、输入、配置、运行目录、适用事件形态和清理步骤见下文“执行步骤 R4.3”；此记录不代表第二关已批准。
 
 ## 执行准备与结果复用
 
-本文件是完整设计，本轮不运行正式测试。原1、2、6项并入A；3、4、5项并入B；7、8、12项生成兼容和14项代码轮次并入C；9、10、11项及12项校验兼容并入D；13项及14项实际代理行为并入E。目标保留，重复检查及不可见提示词要求删除。
+第三版按原编号将1、2、6项并入A；3、4、5项并入B；7、8、12项生成兼容和14项代码轮次并入C；9、10、11项及12项校验兼容并入D；13项及14项实际代理行为并入E。第四版沿用已审核的必测清单和检查方法，只补齐本地命令、既有测试名称、环境准备、输出及失败处理；R4.1补齐 `@16` 子线程正式关系和角色读取方式，R4.2补齐读取包装字段核对，R4.3将运行路径改为环境变量并补记A组源码核对结果，不增加检查或请求。
 
 本地测试工程师在本文件补齐实际断言或命令、合成输入、配置来源、输出位置、隔离清理、失败处理，提交第二关口。先核对[历史结果来源](https://github.com/ScholarWorkflow/professor-contact/pull/73#issuecomment-5981805377)、`test-plan/issue-66-results-history.md`、`test-plan/issue-66-runtime-attempts-20261007.md`；足以判断且行为未变的结果直接复用。旧212项通过不等于5组全通过，提交变化不使未变结果失效。
 
 历史测试程序有的已从本分支删除；引用有效结果，或只恢复／补写本清单缺少的必要断言，不恢复整套测试及判定平台作为前提。两文件故障使用标准框架，不建设专用故障工具。
 
-确定性检查在生产者仓库进行。模型运行从独立消费者开始，用支持的安装路径；有效安装复用，失效才重装，不复制或手工修补。Codex 使用既有评估服务，不启动、停止或重启；按工作区 `eval-server/README.md`、`eval-server/docs/appserver-migration.md` 接线，端口从 `direnv exec .` 取得，采用共享夹具版本化配置规定的默认模型和推理设置，不在请求重复覆盖。提示词只提出业务请求，不补写产品流程。
+确定性检查在生产者仓库进行。模型运行从独立消费者开始，用支持的安装路径；有效安装复用，失效才重装，不复制或手工修补。Codex 使用既有评估服务，不启动、停止或重启；按工作区 `eval-server/README.md`、`eval-server/docs/appserver-migration.md` 接线。`EVAL_SERVER_WORKSPACE` 指向已配置的评测服务工作区，端口通过 `direnv exec "$EVAL_SERVER_WORKSPACE" printenv EVAL_PORT` 取得。请求不传模型或推理强度覆盖，沿用评测环境默认设置；项目可信度仅用服务支持的项目配置输入。提示词只提出业务请求，不补写产品流程。
 
-临时输入、实际配置、必要原始输出放在仓库外独立 `/tmp` 目录，隔离会话、资料和输出，不连接生产资料或无关进程。正式计划和必要脱敏结果入库，不上传敏感原文。不新增来源认证、完整轨迹、逐调用账本或通用证据能力检查。
+临时输入、实际配置、必要原始输出放在仓库外独立临时目录；命令使用 `${TMPDIR:-/tmp}` 选择临时目录位置。目录隔离会话、资料和输出，不连接生产资料或无关进程。正式计划和必要脱敏结果入库，不上传敏感原文。不新增来源认证、完整轨迹、逐调用账本或通用证据能力检查。
 
 ## 失败、重试与完成
 
@@ -144,8 +148,89 @@ jq --arg root "$root_id" '
 - 结果区分通过、业务失败、无法判断、未执行。遗漏记录先取原记录，待补不直接判产品失败，也不批准缺失结果。
 - 第一关确认清单，第二关确认步骤可运行且无超范围要求，第三关确认当前有效结果。只复核受影响目标；必测全部有效通过、范围内缺陷处理后结束，本计划不作合并批准。
 
-## 当前交接
+## 执行步骤 R4.3
 
-设计状态：第三版独立审核通过，检查完整，见[设计审核记录](issue-66-test-plan-review.md)。第二关口：步骤待本地测试工程师补齐并审核。第三关口：本轮未执行，历史结果待确认复用。
+### 本地确定性检查（A—D）
 
-下一负责人是本地测试工程师：先确认5组已有结果覆盖什么，再落实缺少的必要检查和一次代理运行步骤。评论只链接本文件及当前版本。
+从 PR #73 当前分支仓库根目录开始。记录 `git rev-parse HEAD` 作为产品代码版本；测试代码和计划改动以本轮实际提交记录。先确认 `uv`、Python 3.12 可运行；依赖缓存和完整输出放在仓库外的独立目录。每个测试夹具使用系统临时目录并由标准测试框架清理；本地输出保留在运行目录，判断完成前不删除。此步骤不运行全仓测试。
+
+以下一次命令执行42项定向检查：A、B使用新增的本地状态测试；C使用现存修正、凭据及摘要测试；D使用新增的固定写入、保存和记录测试；另执行一个总览冲突和三个第四阶段读入回归。
+
+A组只读源码核对已完成：`contact_state.py` 第6919—6970行显示 `cmd_stage3_finalize` 从当前 `professor_dir` 读取输入包和候选状态；第7238行和第7276—7289行显示候选稿及状态文件均位于该教授目录，并在第7278行交由 `staged_pair_commit` 提交；第240行是该提交函数定义。第7268—7275行说明总览不由保存入口读取或写入，第7289行只将总览路径作为返回字段。结论：符合教授本地保存要求，总览不参与本地提交。
+
+```sh
+producer=$(pwd)
+run_dir=$(mktemp -d "${TMPDIR:-/tmp}/issue66-pr73-local.XXXXXX")
+git -C "$producer" rev-parse HEAD > "$run_dir/product-sha.txt"
+cd "$producer/.apm/skills/professor-contact/tests"
+set -o pipefail
+UV_CACHE_DIR="$run_dir/uv-cache" uv run --python 3.12 --no-project python -m unittest \
+  test_issue66_stage3_local_state \
+  test_issue66_validation_handoff \
+  test_stage3_validation_refine.Stage3ValidationIngestTests \
+  test_issue66_r12_validation_input_sha.Issue66RecordValidationInputShaTests \
+  test_contact_state.TestRunnerBasics.test_05e_overview_manual_edit_does_not_block_local_finalize \
+  test_stage3_direction_groups.Stage3DirectionGroupTests.test_stage4_ordinary_selection_joins_by_direction_id \
+  test_stage3_direction_groups.Stage3DirectionGroupTests.test_stage4_exactly_migrates_v1_candidate_state_with_pack_mapping_without_stage3_rerun \
+  test_stage3_direction_groups.Stage3DirectionGroupTests.test_stage4_partial_other_professor_rerun_preserves_existing_selection_and_email \
+  -v 2>&1 | tee "$run_dir/local-tests.log"
+test_exit=$?
+printf '%s\n' "$test_exit" > "$run_dir/local-tests.exit"
+exit "$test_exit"
+```
+
+预期为42项全通过，退出码为0。日志末尾的 `Ran` 数应为42，`local-tests.exit` 应为 `0`。命令或依赖错误、数量不符、断言失败时保留原日志，停止把该项记为通过；只修正已确认的步骤问题后重跑受影响检查，不运行全仓测试。此前本轮曾执行三组拆分命令，其中一次既有回归方法名写错并已定位；正式候选以本节合并命令的结果为准。
+
+### 一次正式运行（E）
+
+仅在第二关批准本节步骤后运行，最多发送一次 `/eval` 请求。正式运行不在生产者目录执行，不连接真实项目资料。使用 `${TMPDIR:-/tmp}` 在仓库外创建新的运行目录；其中的消费者必须位于生产者和所有工作树之外。消费者、程序资料和输出均为合成内容。
+
+```sh
+producer=$(pwd)
+run_dir=$(mktemp -d "${TMPDIR:-/tmp}/issue66-pr73-eval.XXXXXX")
+consumer="$run_dir/consumer"
+program_root="$consumer/fixture-program"
+producer_sha=$(git -C "$producer" rev-parse HEAD)
+mkdir -p "$consumer"
+cd "$consumer"
+apm --version > "$run_dir/apm-version.txt"
+apm install "ScholarWorkflow/professor-contact#$producer_sha" --target codex > "$run_dir/apm-install.log" 2>&1
+```
+
+执行 `apm --version` 并将版本写入运行记录；本轮准备时已确认为 `0.29.0`。安装必须从上面记录的精确提交选择器通过远端 APM 路径完成。安装失败即停止 E；不得改用本地路径、复制文件或手工修补。
+
+安装完成后，用本分支的既有合成夹具生成程序资料和清单；程序根放在消费者内，清单放在运行目录：
+
+```sh
+UV_CACHE_DIR="$run_dir/uv-cache" uv run --python 3.12 --no-project python \
+  "$producer/.apm/skills/professor-contact/tests/runtime/prepare_issue55_stage3_fixture.py" \
+  --program-root "$program_root" \
+  --output "$run_dir/fixture-manifest.json" > "$run_dir/fixture-build.json" 2>&1
+```
+
+读取现有提示词模板并只替换程序根路径，保存为 `$run_dir/eval-prompt.txt`。提示词必须仍只提出正常第三阶段业务请求，不得追加命令、委派指示或业务逻辑。以下命令构造一个请求；只给新消费者配置项目可信度，格式按评测服务支持的 `projects` 内联表，不使用带点号的动态路径键。其余模型、推理强度和审批配置均不覆盖：
+
+~~~sh
+UV_CACHE_DIR="$run_dir/uv-cache" uv run --python 3.12 --no-project python -c 'import sys; from pathlib import Path; template=Path(sys.argv[1]).read_text(encoding="utf-8"); root=sys.argv[2]; assert template.count("{{PROGRAM_ROOT}}") == 1; Path(sys.argv[3]).write_text(template.replace("{{PROGRAM_ROOT}}", root), encoding="utf-8")' "$producer/.apm/skills/professor-contact/tests/runtime/prompts/issue55-stage3-routing.txt" "$program_root" "$run_dir/eval-prompt.txt"
+prompt=$(< "$run_dir/eval-prompt.txt")
+command="--json --ephemeral --skip-git-repo-check --sandbox workspace-write --cd '$consumer' --config 'projects={\"$consumer\"={trust_level=\"trusted\"}}' -- '$prompt'"
+jq -n --arg command "$command" '{command:$command,timeout:300}' > "$run_dir/eval-request.json"
+: "${EVAL_SERVER_WORKSPACE:?请先将其设为已配置的评测服务工作区路径}"
+eval_port=$(direnv exec "$EVAL_SERVER_WORKSPACE" printenv EVAL_PORT)
+http_status=$(curl --silent --show-error --output "$run_dir/eval-response.json" --write-out '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$run_dir/eval-request.json" "http://127.0.0.1:$eval_port/eval")
+printf '%s\n' "$http_status" > "$run_dir/http-status.txt"
+~~~
+
+`eval_port` 只从现有工作区的 `direnv` 环境取得；不读取或检查服务进程、配置、数据库或日志。`curl` 只执行一次。完整响应原样写到 `$run_dir/eval-response.json`；不得启动、停止或重启服务。安装、夹具、提示词或请求构造任一步骤失败时，不发送 `/eval`。完成业务判读后删除已安装消费者及合成程序资料；保留请求、响应、状态码、安装版本与夹具清单于运行目录，直至本轮结果审核完成。不提交或上传运行目录。
+
+HTTP 状态不是200，响应不是有效 JSON，或缺少 `.output.thread_id`／`.output.app_server_events` 时，记录为无法判断并停止；保留该次请求和响应，不重试。状态结构完整时，按前文“根对话后续命令的具体检查步骤”用 `jq` 读取根线程工具事件和调用结果，再按E组逐项核对实际分支、教授状态、原文保存和终态后的总览。事件、调用或完整校验正文不可见的事实记为无法判断。业务结果失败时按失败记录，不为求通过重新采样。正式响应和合成资料保留在运行目录，完成判读后按项目共识处理；不得提交或上传运行目录。
+
+### 当前关口和结果状态
+
+第三版的必测清单及设计审核仍适用，见[设计审核记录](issue-66-test-plan-review.md)。R4.2执行步骤曾获第二关审核通过，只代表原步骤可执行且未扩大R3范围。R4.3仅改为可移植的临时目录和评测工作区输入，并补记已完成的源码核对；本次正式请求仍按R4.2批准的步骤执行，结果不代表第三关通过。
+
+A—D定向检查共42项全部通过，退出码0，耗时48.039秒。产品代码版本为 `fe1ac16194b3fd0890f02a8a3ad9c623aead5bc4`；完整日志保存在仓库外本次本地运行目录中的 `local-tests.log`，运行目录路径留在本地执行记录中。
+
+E组按R4.2批准步骤只发送一次正式请求，HTTP状态200，`curl`退出码0，响应包含根线程及146条应用服务事件，但 `output.child_thread_reads` 为空。根线程发出一次结构化 `spawn_agent` 调用，完成结果为运行时错误 `no rollout found`；没有子线程关系、角色读取或 Stage 3 业务结果。该次E组结果记为**无法判断**，不是产品通过或失败；不重试。原始请求和响应、状态码、APM版本及合成夹具清单保存在仓库外本次独立评测运行目录中，具体路径留在本地执行记录中，未纳入提交。
+
+因此第三关尚未通过，E组没有有效业务结论。本计划不作合并批准。版本为 `issue-66-test-plan-new-rules-r4.3-2026-10-09`。
