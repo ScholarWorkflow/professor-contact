@@ -811,7 +811,13 @@ def _assertion_capture(test_case, method_name, actual, expected):
             selector = {"kind": "path", "path": path}
         elif base.id in test_case._verdict_aliases and path:
             result_object = frame.f_locals.get("verdict")
-            fact_id = path[0] if str(path[0]).startswith("F-") else "F-attribution"
+            candidate_fact = (
+                candidate.get("fact") if isinstance(candidate, dict) else None
+            )
+            if isinstance(candidate_fact, str) and candidate_fact.startswith("F-"):
+                fact_id = candidate_fact
+            else:
+                fact_id = path[0] if str(path[0]).startswith("F-") else "F-attribution"
             selector = {"kind": "fact", "fact": fact_id}
     record = test_case._sample_records[-1]
     if result_object is not None:
