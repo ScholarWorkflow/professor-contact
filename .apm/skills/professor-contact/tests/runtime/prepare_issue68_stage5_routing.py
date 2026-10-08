@@ -121,7 +121,8 @@ def prepare(program_root, installed_script, output_dir):
         (output_dir / f"owner-{index}-plan.stderr.txt").write_text(run.stderr, encoding="utf-8")
         payload = json.loads(run.stdout)
         (output_dir / f"owner-{index}-plan.exit-code.txt").write_text(str(run.returncode) + "\n")
-        if payload.get("status") != "needs_refresh" or run.returncode != 2:
+        if payload.get("status") != "needs_refresh" \
+                or payload.get("reason_code") != "verify_missing" or run.returncode != 2:
             raise ValueError(f"owner {index} did not stop at the frozen verification gate: {payload}")
         siblings = []
         for other_spec in owner_specs:
@@ -131,13 +132,16 @@ def prepare(program_root, installed_script, output_dir):
                 continue
             siblings += [str(other_spec["pack"].resolve()),
                          other_spec["professor_dir"],
-                         other_row["email_id"], f"owner-{other}"]
+                         other_row["email_id"], str(Path(other_spec["result"]).resolve()),
+                         f"owner-{other}"]
         siblings.append("choices_scope")
         owners.append({"professor": spec["professor"], "professor_dir": canonical_dir,
                        "email_pack": str(pack.resolve()), "email_ids": [row["email_id"]],
                        "expected_choices_rows": deepcopy(owner_spec["expected_choices_rows"]),
                        "sibling_exclusions": siblings,
-                       "expected_result": payload, "initial_plan": initial_payload, "result": str(result)})
+                       "expected_result": {"status": "needs_refresh",
+                                           "reason_code": "verify_missing"},
+                       "initial_plan": initial_payload, "result": str(result)})
     business = {"choices": choices, "mode": "first", "template": str(template),
                 "raw_results_by_professor_dir": raw_results}
     prompt = (HERE / "prompts" / "issue68-stage5-root.txt").read_text(encoding="utf-8")

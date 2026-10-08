@@ -1,6 +1,16 @@
 {
-  "revision": "issue-68-runtime-evidence-r34-2026-10-08",
-  "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+  "revision": "issue-68-runtime-evidence-r37-2026-10-08",
+  "producer_revision": "faab365d0be2bb66f2f285fdaa2927631dbf33f8",
+  "uv_cache_policy": {
+    "schema": "issue-68-uv-cache-binding-r37-v1",
+    "directory": "PC68_OUTPUT_ROOT/uv-cache",
+    "manifest_key": "uv_cache_dir",
+    "root_prompt_placeholder": "{{UV_CACHE_DIR}}",
+    "binding_artifact": "codex/uv-cache-binding.json",
+    "request_binding": "同一绝对目录写入本次 fixture manifest，并替换 root prompt 的所有占位符；最终传出的 request.command 必须以绑定后的完整提示词作为末项参数，提示词含该路径且不含未替换占位符。不得把本机启动器环境变量当成跨 HTTP 的远程缓存证明。",
+    "environment_boundary": "测试机启动 uv run 时设置的 UV_CACHE_DIR 只约束本机启动器，不能跨 HTTP 传给评估服务；远程根提示词、教授捕获命令及 pc68_fixed_capture.uv_cache_dir 必须从 manifest.uv_cache_dir 绑定到本次 PC68_OUTPUT_ROOT/uv-cache。",
+    "lifecycle_evidence": "请求前记录路径、目录为空且可写、manifest/root prompt/request 摘要；请求后记录完整目录条目数量、文件数量、字节总数及清单摘要，删除目录并记录确认不存在。"
+  },
   "fixture_sha": "d160ecb403c0f9e9c153f4b8383302a4b67664ab",
   "fixture_contract": "skills-test-fixtures/codex-eval-adapter@16",
   "fixture_source": "skills-test-fixtures project-config helper d160ecb403c0f9e9c153f4b8383302a4b67664ab; normative section 7.7 remains c738fa2f8bcbb16cd99d741332d5f59b062b6357",
@@ -58,6 +68,7 @@
     ],
     "owner_input_isolation": "待第二关口审核：每个教授调用只能使用该教授自己的数据；不得含有兄弟教授数据或 choices_scope。依据同次调用观察到的解析对象和结构化计划输出判定。",
     "canonical_preservation": "待第二关口审核：实际解析对象中的 choices、professor_dir、email_pack 和 email_id 必须保持原值。事后文件读取、命令文字、无关输出和教授自述不构成输入证据。",
+    "owner_terminal_result_expectation": "fixture-manifest.expected_result 为每位教授的固定终态来源。本例首次捕获的 stage5-plan 输出必须是 status=ok 且该教授 verify=needs_recheck:missing；这不是教授终态。教授 child 最终结果必须投影并等于 {professor_dir: manifest owner path, status: needs_refresh, reason_code: verify_missing}；root 消费回执及最终消息必须保留同一三元组。",
     "partition_evidence": "The root must execute the supported stage5-partition-choices entry exactly once successfully on the root thread, with per-owner bundles matching the manifest partition record; a partition executed by a child, more than one successful root partition, or no successful root partition is a product failure. The successful root partition must also complete before any owner business call starts: an owner business command on a child thread that starts before the partition completed is a product failure (owner_business_precedes_partition). Discovery must not carry --emit-choices-scope and a plan must not carry --choices-scope.",
     "orchestration_surface": "Root orchestration (discovery, partition, rebuild) is recognized on two surfaces: a call whose command parses strictly under the frozen flag grammar keeps every flag fact, and a compound preparation command (python3 -c / wrapper expression whose action words are quoted string fragments) is attributed by the loose business-surface text shape plus its single stage5 action word. Output facts always come from the commandExecution aggregatedOutput on both surfaces. Compound commands provide no flags, so the --emit-choices-scope, --choices-scope and --program-root checks only cover strictly parsed calls. A compound text carrying two or more action words cannot be attributed to one orchestration step and is BLOCKED_OBSERVABILITY/root_orchestration_ambiguous; on a child thread only a strictly parsed partition, or a compound text whose single action word is stage5-partition-choices, proves partition_executed_by_owner. Require exactly one root stage5-rebuild-overview call after every formal owner result has a current-turn root consumption receipt; its start must be later than every receipt consumption point. Read its result only from that call commandExecution aggregatedOutput. Successful output has status=ok and overview_md, professors and emails, with no reason_code. soft_exit/fail returns status and reason_code plus its result-specific fields, and may have nonzero exit status. The selected root final answer must separately report the exact aggregate result object with all unchanged per-professor result objects; a faithfully reported needs_decision or error aggregate is valid and does not alter professor outcomes. Grouping property names are not frozen and examples such as results or overview are illustrative. Associate direct result objects by their product fields; never search nested diagnostics, prior turns, logs or history for substitute results.",
     "wait_consume_evidence": "The formal child set stays the shared adapter's spawnAgent relation: dispatch.thread_relations edges whose tool is spawnAgent and whose sender_thread_id equals the root thread id name the formal children, and identity diagnostics never create, rewrite, upgrade or downgrade ownership. The child_thread_id to child_agent_path binding comes only from the same run's subAgentActivity items (message.params.item.type is subAgentActivity and item.agentThreadId equals the child thread id): the item's agentPath is the association key only and never formal ownership. The root's only legal consumption receipt for one formal child is a root-thread rawResponseItem/completed agent_message item of the same runtime_generation and the current turn (message.params.turnId equals output.turn_id) whose item.recipient is /root and whose item.author equals that child's agent path; its input_text body must be exactly the Codex child completion shape — the header lines 'Message Type: FINAL_ANSWER', 'Task name: /root' and 'Sender: <child_agent_path>' (the Sender line must equal the child's agent path), then the 'Payload:' marker followed by exactly one JSON object carrying professor_dir, status and reason_code. The receipt's runtime_seq is the root's consumption point for that child's result and the stage5-rebuild-overview aggregate must not start before every owner's receipt consumption point (aggregate_precedes_result_consumption); a legal receipt whose payload outcome differs from the outcome the child itself returned on its own thread is FAIL_PRODUCT/root_receipt_payload_changed. collabAgentToolCall receiverThreadIds/agentsStates, the 'Wait completed.' wait message, subAgentActivity completed reports, child turn/completed events, requested_role and loaded_identity are diagnostics only and never consumption evidence. A child without an agentPath mapping or without a legal receipt stays BLOCKED_OBSERVABILITY with reason code root_result_consumption_unobservable and is never passed on the strength of the diagnostic surfaces; legal receipts carrying more than one distinct outcome triple stay INVALID_EVIDENCE/root_result_receipt_ambiguous; when no uniquely attributable receipt exists the verifier never guesses a PASS. The receipt's Payload JSON is read at its top level only and never recursively through nested objects: the object must carry professor_dir as a top-level field and the outcome triple comes from the top-level fields alone, so a receipt whose top level carries only a nested object (a diagnostic wrapper, for example) is never a consumption receipt. The child to agentPath mapping must be unique per formal child: a child with no agentPath mapping stays BLOCKED_OBSERVABILITY/root_result_consumption_unobservable (missing_agent_path_mapping), a child observed under more than one distinct agentPath is INVALID_EVIDENCE/child_agent_path_mapping_ambiguous regardless of how correct the surviving path's own receipt looks, and only a unique mapping binds receipts to that one agent path author.",
@@ -88,14 +99,15 @@
       ],
       "envelope": {
         "pc68_fixed_capture": {
-          "schema": "issue-68-test-plan-r25-fixed-owner-capture-v1",
+          "schema": "issue-68-test-plan-r37-fixed-owner-capture-v1",
           "capture_id": "固定捕获调用 UUID；本信封中的 CLI 调用和进程记录都必须与其一致",
           "wrapper_sha256": "固定捕获器仓库源码 SHA-256，由 verifier 从仓库源文件校验",
           "wrapper_arguments": "固定捕获器收到的实参数组",
           "owner_input_file": "捕获器在教授原有解析动作中实际读取的本地文件路径",
           "owner_input_sha256": "该文件首次读取原始字节的 SHA-256",
           "owner_input_read_count": 1,
-          "parsed_object_sha256": "同一次单次解析对象的规范化 JSON SHA-256"
+          "parsed_object_sha256": "同一次单次解析对象的规范化 JSON SHA-256",
+          "uv_cache_dir": "固定捕获器继承的 UV_CACHE_DIR；必须与本次请求 manifest.uv_cache_dir 一致"
         },
         "pc68_actual_input_observation": {
           "schema": "issue-68-test-plan-r25-owner-input-v2",
@@ -176,6 +188,7 @@
     "retry": "none",
     "retry_scope": "正式评估请求不得重试；支持安装的环境恢复尝试单独保留，用户本次授权续试不改变正式请求限制。",
     "r31_install_retry_results": {
+      "record_scope": "historical_r31_install_preflight_only",
       "candidate_baseline": "806066a",
       "trigger": "用户明确要求重试安装",
       "overall": "PRECHECK_READY",
@@ -206,6 +219,7 @@
       "latest_duration_seconds": 38.838,
       "latest_install_scope": "仅在独立临时消费者中运行支持安装命令；未运行后续预检",
       "resolved_product_commit": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+      "resolved_product_commit_is_historical": true,
       "installed_entrypoint_sha256_matches_source": true,
       "full_preflight_status": "PRECHECK_READY",
       "latest_evidence": "tests/runtime/evidence/issue68-r31-install-only-retry-success-20261007.json",
@@ -217,6 +231,15 @@
       "case": "PC68-R1",
       "reason_code": "second_gate_incomplete",
       "action": "第03次完整环境预检通过：固定产品支持安装、已安装入口 --help 和一次纯合成命令解析及同对象转交均通过；服务实例与安装消费者前后保持不变。正式 PC68-R1 未运行，合法临时传递位置覆盖仍待证明，第二关口未通过。",
+      "saved_capture_record_scope": "historical_r29_r25_capture_only",
+      "current_cache_capture_schema": "issue-68-test-plan-r37-fixed-owner-capture-v1",
+      "current_cache_capture_sha256": "b124f18a5f1635ae1500aeb15b601565d1eb4638b11dad184533272dbc8aec28",
+      "current_cache_capture_required_fields": [
+        "manifest.uv_cache_dir",
+        "root_command.UV_CACHE_DIR_prefix",
+        "pc68_fixed_capture.uv_cache_dir"
+      ],
+      "current_cache_capture_scope": "每次当前正式入口预检均以隔离临时消费者执行固定 r37 捕获器；只证明请求缓存目录字段绑定与捕获器 SHA/schema，不访问评估服务、不构成正式 R1 或第二关通过。",
       "synthetic_capture_manifest": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-command-event-preflight.json",
       "synthetic_capture_stdout": ".apm/skills/professor-contact/tests/runtime/evidence/issue68-r29-command-event-stdout.json",
       "raw_stdout_is_reparsed_by": "verify_issue68_stage5_routing_r19.consumed_business_objects",
@@ -240,6 +263,7 @@
       ]
     },
     "r31_environment_preflight_attempts": {
+      "record_scope": "historical_r31_environment_preflight_only",
       "overall": "PRECHECK_READY",
       "latest_attempt": 3,
       "history": [
@@ -288,12 +312,12 @@
   "pc68_r1_steps": [
     {
       "step": "R1-1-discover-and-partition",
-      "event": "root正式线程执行一次stage5-list-inputs及一次成功stage5-partition-choices",
-      "input": "冻结manifest、实际本地输入和显式用户选择；discovery不得带--emit-choices-scope",
+      "event": "root正式线程执行一次stage5-list-inputs，并一次调用完整分配全部正式 owner 的stage5-partition-choices",
+      "input": "冻结manifest、实际本地输入和仅用户提供的choices数组；根任务只保存用户提供的 choices 数组，不得保存包含 choices、mode、模板等字段的外层业务对象；discovery不得带--emit-choices-scope；发现路径必须原样沿用",
       "output": "两次原commandExecution.aggregatedOutput中的结构化结果和顺序字段",
       "association": "同一runtime_generation、root thread、各commandExecution.id及开始/结束顺序",
-      "verdict": "实际分区不匹配、重复成功分区、owner线程执行分区或分区前启动owner业务调用为FAIL_PRODUCT；缺失/歧义按BLOCKED或INVALID分类",
-      "stop": "观察到产品失败即结束；无法证明根分区时不得继续把owner输入解释为已分区"
+      "verdict": "实际分区不匹配、重复成功分区、分配不含全部owner、另行重试/重新分配/局部分配、路径改写、owner线程执行分区或分区前启动owner业务调用为FAIL_PRODUCT；缺失/歧义按BLOCKED或INVALID分类",
+      "stop": "一次完整分配后不得追加分配；观察到产品失败即结束；无法证明根分区时不得继续把owner输入解释为已分区"
     },
     {
       "step": "R1-2-formal-delegation",
@@ -319,35 +343,35 @@
       "input": "第3步同次解析对象中的email_pack、program_root、路径与编号字段",
       "output": "实际argv及结构化计划中的pack路径、email_id、verify状态、jobs/model_input",
       "association": "与第3步观察使用同一commandExecution输出、调用id、正式教授线程和教授目录；重复调用逐次单独关联。实际解析对象逐字段与根分配结果及独立预期比较。",
-      "verdict": "首调argv有--result或--choices、pack/编号/业务数据错误或兄弟数据为FAIL_PRODUCT；合法needs_input或needs_refresh核验早停可接受，不声称后续choice消费。",
-      "stop": "合法核验早停后将后续choice读取/提交标为NOT TESTED；不得要求绕过核验门"
+      "verdict": "首调argv有--result或--choices、pack/编号/业务数据错误、兄弟数据错误，或固定首次计划结果不匹配为FAIL_PRODUCT；首次计划CLI回执与教授最终结果必须分开判定。",
+      "stop": "本例固定首次计划返回status=ok且verify=needs_recheck:missing；随后将该核验状态映射为needs_refresh/verify_missing的教授工作流终态，不再执行带--result/--choices的计划调用或后续choice读取、重规划、渲染、提交、校验。"
     },
     {
       "step": "R1-5-child-result-consumption",
       "event": "每个child final结果及root当前turn对该结果的合法agent_message回执",
-      "input": "正式child结果三元组professor_dir/status/reason_code",
-      "output": "root线程当前turn的直接回执载荷及runtime顺序",
+      "input": "正式child结果三元组professor_dir/status/reason_code；本例固定为manifest.expected_result映射出的professor_dir、needs_refresh、verify_missing",
+      "output": "root线程当前turn实际消费的教授结果回执载荷及runtime顺序；必须分别关联两条正式教授线程的最终结果，并逐项等于各自manifest预期",
       "association": "唯一child_thread到agentPath、root receipt author、当前turn和runtime_generation",
-      "verdict": "回执改写结果为FAIL_PRODUCT；回执缺失为BLOCKED；回执损坏或归属歧义为INVALID_EVIDENCE",
+      "verdict": "child终态不等于manifest.expected_result投影，或root回执不等于child终态，为FAIL_PRODUCT；回执缺失为BLOCKED；回执损坏或归属歧义为INVALID_EVIDENCE",
       "stop": "未消费的child结果不能作为overview重建的前置完成项"
     },
     {
       "step": "R1-6-root-overview-and-final-report",
-      "event": "root消费两位教授结果后至多一次stage5-rebuild-overview及当前root最终回答",
+      "event": "root消费两位教授的最终结果及两条合法结果回执后，必须恰好一次stage5-rebuild-overview及当前root最终回答",
       "input": "两位教授原始结果及同一请求的overview重建",
       "output": "重建aggregatedOutput；最终回答分别保留教授结果和精确overview结果",
       "association": "同一root thread/runtime_generation/current turn；rebuild开始顺序晚于两条消费回执",
-      "verdict": "重建次数/顺序/结果报告不符为FAIL_PRODUCT；结果来源或角色有歧义为INVALID_EVIDENCE；合法needs_decision/error总览按实际对象核对",
+      "verdict": "未重建或重建次数/顺序/结果报告不符为FAIL_PRODUCT；结果来源或角色有歧义为INVALID_EVIDENCE；合法needs_decision/error总览按实际对象核对",
       "stop": "未唯一绑定重建输出与最终报告时不得判PASS"
     },
     {
       "step": "R1-7-isolation-and-cleanup",
       "event": "执行前后文件快照、两教授目录及本次临时handoff清理",
-      "input": "本次正式运行生成的handoff路径和教授目录基线",
-      "output": "同请求请求前完整目录记录、实际教授读取或固定产品成功分配返包、请求后完整记录及保护数据摘要；有限命令仅为辅助诊断",
-      "association": "当前运行代次值及类型、正式根/教授线程、命令编号与顺序、真实分配返包的out_path/choices_path、固定捕获的实际路径与摘要；不从命令JSON推输入",
-      "verdict": "实际使用证明形成及可读、前不存在且后缺席证明清理；无特定写删命令仍可通过。有效残留或保护改动判FAIL_PRODUCT；跨请求或漏扫判INVALID_EVIDENCE；缺实际使用、范围外路径、未归属新文件判BLOCKED_OBSERVABILITY。已形成未交付文件亦需核对，不因缺教授调用遮蔽独立产品失败。",
-      "stop": "默认观察业务目录与消费者；额外独占目录需请求前声明。六场景本地组合最小非验收预检已完成；正式合法传递位置完整覆盖仍待测试设计审核者确认或修订。正式许可保持关闭，不得正式教授运行补证。"
+      "input": "本次请求新建的 handoff 文件和 choices 传递文件路径、教授目录基线，以及 manifest.uv_cache_dir 绑定的 PC68_OUTPUT_ROOT/uv-cache",
+      "output": "同请求请求前完整目录记录、实际教授读取或固定产品成功分配返包、请求后完整记录及保护数据摘要；必须核对本次请求新建的 handoff 文件和 choices 传递文件是否已清理，并由 codex/uv-cache-binding.json 记录缓存路径、请求前空且可写、请求后的目录清单摘要及清理后不存在的确认；有限命令仅为辅助诊断",
+      "association": "当前运行代次值及类型、正式根/教授线程、命令编号与顺序、真实分配返包的out_path/choices_path、固定捕获的实际路径与摘要，以及 request/manifest/prompt 绑定的唯一缓存绝对路径；不从命令JSON推输入",
+      "verdict": "实际使用证明形成及可读、前不存在且后缺席证明清理；缓存须请求前为空且可写，请求后须记录目录状态并删除后确认路径不存在；无特定写删命令仍可通过。有效残留或保护改动判FAIL_PRODUCT；跨请求或漏扫判INVALID_EVIDENCE；缺实际使用、范围外路径、未归属新文件、缓存路径错绑或缺清理证明判BLOCKED_OBSERVABILITY。已形成未交付文件亦需核对，不因缺教授调用遮蔽独立产品失败。",
+      "stop": "旧R36无效记录（PC68-R1）必须保留，不覆盖或重判。仅当r37完整步骤、独立计划审核、Gate 2 PASS + COMPLETE及r37规定的全新预检（含环境与传递位置）均已完成并核验后，才允许在全新运行目录唯一一次执行PC68-R1；任一条件未满足时停止，不得以正式教授运行补证或重试。额外独占目录须请求前声明。"
     }
   ],
   "machine_terminal_mapping": {
@@ -407,7 +431,7 @@
       }
     },
     "fixed_plan_inputs": {
-      "producer_revision": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+      "producer_revision": "faab365d0be2bb66f2f285fdaa2927631dbf33f8",
       "shared_environment_revision": "d160ecb403c0f9e9c153f4b8383302a4b67664ab"
     },
     "fact_sources": {

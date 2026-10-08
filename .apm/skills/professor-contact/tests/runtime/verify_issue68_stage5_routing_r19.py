@@ -14,20 +14,60 @@ import verify_issue68_stage5_routing_r13 as final_source
 AGENT = base.AGENT
 verdict = base.verdict
 combine = base.combine
-owner_outcome = base.owner_outcome
 codex_final_result_source = final_source.codex_final_result_source
 
 
 ACTIONS = {"stage5-list-inputs", "stage5-partition-choices", "stage5-plan",
            "stage5-rebuild-overview"}
 OWNER_OBSERVATION_SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
-OWNER_CAPTURE_SCHEMA = "issue-68-test-plan-r25-fixed-owner-capture-v1"
+OWNER_CAPTURE_SCHEMA = "issue-68-test-plan-r37-fixed-owner-capture-v1"
 OWNER_CAPTURE_NAME = "capture_issue68_owner_stage5_plan_r1.py"
 OWNER_CAPTURE_SOURCE = Path(__file__).resolve().parent / OWNER_CAPTURE_NAME
+FIXED_OWNER_TERMINAL_RESULT = {
+    "status": "needs_refresh",
+    "reason_code": "verify_missing",
+}
 # This digest is pinned to the fixed, repository-owned capture implementation.
-OWNER_CAPTURE_SHA256 = "7e534f76b7ba837a415b9b9a38ecda4a0fb1fe62fbf6d5b2575119319ff4eaa9"
+OWNER_CAPTURE_SHA256 = "b124f18a5f1635ae1500aeb15b601565d1eb4638b11dad184533272dbc8aec28"
 OWNER_CAPTURE_COMMAND_PREFIX = ["uv", "run", "--no-project", "python"]
 DIRENV_UNLOADING_PREFIX = "\x1b[0mdirenv: unloading\n"
+
+
+class UVCacheBindingError(ValueError):
+    """A stage5 command does not use the request-declared cache path."""
+
+
+def _expected_owner_outcome(owner):
+    """Project the fixed manifest oracle to the terminal owner result triple."""
+    if not isinstance(owner, dict) or not isinstance(owner.get("professor_dir"), str):
+        return None
+    if owner.get("expected_result") != FIXED_OWNER_TERMINAL_RESULT:
+        return None
+    return {"professor_dir": owner["professor_dir"],
+            **FIXED_OWNER_TERMINAL_RESULT}
+
+
+def _manifest_owner_expectation_problem(manifest):
+    owners = (manifest or {}).get("owners")
+    if not isinstance(owners, list) or not owners:
+        return verdict("INVALID_EVIDENCE", "owner_expected_result_not_fixed")
+    if any(_expected_owner_outcome(owner) is None for owner in owners):
+        return verdict("INVALID_EVIDENCE", "owner_expected_result_not_fixed")
+    return None
+
+
+def owner_outcome(texts, owner):
+    """Require the child terminal result to match this fixture's frozen result."""
+    expected = _expected_owner_outcome(owner)
+    if expected is None:
+        return None, verdict("INVALID_EVIDENCE", "owner_expected_result_not_fixed")
+    actual, problem = base.owner_outcome(texts, owner)
+    if problem:
+        return actual, problem
+    if actual != expected:
+        return None, verdict("FAIL_PRODUCT", "owner_business_result_changed",
+                             expected_result=expected, observed_result=actual)
+    return actual, None
 
 
 def _valid_generation(value):
@@ -98,9 +138,6 @@ def command_action(command, manifest):
     ``--program-root`` to the manifest program root.
     """
     tokens = shlex.split(command)
-    capture = _owner_capture_command(tokens, manifest)
-    if capture is not None:
-        return {"action": "stage5-plan", "flags": {}, "owner_capture": capture}
     if len(tokens) == 3 and Path(tokens[0]).name in ("sh", "bash", "zsh") and tokens[1] in ("-c", "-lc"):
         tokens = shlex.split(tokens[2])
     found = [token for token in tokens if token in ACTIONS]
@@ -111,6 +148,11 @@ def command_action(command, manifest):
     if len(found) != 1 or any(token in (";", "&&", "||", "|") for token in tokens):
         raise ValueError("compound_or_multiple_stage5_commands")
     action = found[0]
+    tokens, uv_cache_dir = _strip_uv_cache_assignment(tokens, manifest)
+    capture = _owner_capture_command(tokens, manifest, uv_cache_dir)
+    if capture is not None:
+        return {"action": "stage5-plan", "flags": {}, "owner_capture": capture,
+                "uv_cache_dir": uv_cache_dir}
     index = tokens.index(action)
     if index == 0 or Path(tokens[index - 1]).name != "contact_state.py":
         raise ValueError("stage5_invocation_script_unobservable")
@@ -132,10 +174,30 @@ def command_action(command, manifest):
         flags[flag] = value
     if flags.get("--program-root") != manifest["program_root"]:
         return {"action": action, "problem": "wrong_program_root"}
-    return {"action": action, "flags": flags}
+    return {"action": action, "flags": flags, "uv_cache_dir": uv_cache_dir}
 
 
-def _owner_capture_command(tokens, manifest):
+def _strip_uv_cache_assignment(tokens, manifest):
+    """Remove the one allowed request-local env assignment before argv parsing."""
+    if not isinstance(tokens, list):
+        raise TypeError("stage5_command_tokens_invalid")
+    expected = (manifest or {}).get("uv_cache_dir")
+    if expected is not None and (not isinstance(expected, str) or not expected
+                                 or not Path(expected).is_absolute()):
+        raise UVCacheBindingError("uv_cache_dir_binding_mismatch")
+    misplaced = any(token.startswith("UV_CACHE_DIR=") for token in tokens[1:])
+    has_prefix = bool(tokens and tokens[0].startswith("UV_CACHE_DIR="))
+    observed = tokens[0].partition("=")[2] if has_prefix else None
+    if misplaced or (expected is None and has_prefix) or (
+            expected is not None and (not has_prefix or observed != expected)):
+        raise UVCacheBindingError("uv_cache_dir_binding_mismatch")
+    remaining = tokens[1:] if has_prefix else tokens
+    if expected is not None and remaining[:2] != ["uv", "run"]:
+        raise UVCacheBindingError("uv_cache_dir_binding_mismatch")
+    return remaining, observed
+
+
+def _owner_capture_command(tokens, manifest, uv_cache_dir=None):
     """Parse only the fixed direct wrapper invocation from command metadata."""
     if not any(Path(token).name == OWNER_CAPTURE_NAME for token in tokens):
         return None
@@ -159,7 +221,8 @@ def _owner_capture_command(tokens, manifest):
     if not Path(input_path).is_absolute():
         raise ValueError("owner_capture_input_path_not_absolute")
     return {"owner_input_file": input_path, "runtime_path": runtime_path,
-            "installed_entrypoint": entrypoint, "argv": list(tokens)}
+            "installed_entrypoint": entrypoint, "argv": list(tokens),
+            "uv_cache_dir": uv_cache_dir}
 
 
 def is_business_surface(text):
@@ -276,6 +339,9 @@ def consumed_business_objects(stage5_calls, manifest=None):
                                observed_call_id=call_id)
         try:
             command_proof = command_action(command, manifest or {})
+        except UVCacheBindingError:
+            return [], verdict("INVALID_EVIDENCE", "uv_cache_dir_binding_mismatch",
+                               observed_call_id=call_id)
         except (ValueError, TypeError):
             command_proof = None
         if not isinstance(command_proof, dict) or not isinstance(command_proof.get("owner_capture"), dict):
@@ -388,8 +454,14 @@ def _validate_fixed_capture(call, envelope, command_capture, packet, manifest):
         return verdict("INVALID_EVIDENCE", "owner_capture_manifest_mismatch",
                        observed_call_id=call.get("id"))
     if command_capture.get("runtime_path") != runtime_path \
-            or command_capture.get("installed_entrypoint") != entrypoint:
+            or command_capture.get("installed_entrypoint") != entrypoint \
+            or command_capture.get("uv_cache_dir") != manifest.get("uv_cache_dir"):
         return verdict("INVALID_EVIDENCE", "owner_capture_command_binding_mismatch",
+                       observed_call_id=call.get("id"))
+    expected_cache = manifest.get("uv_cache_dir")
+    if not isinstance(expected_cache, str) or not expected_cache \
+            or not Path(expected_cache).is_absolute():
+        return verdict("INVALID_EVIDENCE", "owner_capture_uv_cache_binding_mismatch",
                        observed_call_id=call.get("id"))
 
     capture = envelope.get("pc68_fixed_capture")
@@ -400,7 +472,7 @@ def _validate_fixed_capture(call, envelope, command_capture, packet, manifest):
     if not isinstance(capture, dict) or set(capture) != {
             "schema", "capture_id", "wrapper_sha256", "wrapper_arguments",
             "owner_input_file", "owner_input_sha256", "owner_input_read_count",
-            "parsed_object_sha256"}:
+            "parsed_object_sha256", "uv_cache_dir"}:
         return verdict("INVALID_EVIDENCE", "owner_capture_record_malformed",
                        observed_call_id=call.get("id"))
     capture_id = capture.get("capture_id")
@@ -413,8 +485,11 @@ def _validate_fixed_capture(call, envelope, command_capture, packet, manifest):
             or capture.get("owner_input_file") != command_capture.get("owner_input_file") \
             or capture.get("owner_input_read_count") != 1 \
             or not _is_sha256(capture.get("owner_input_sha256")) \
+            or capture.get("uv_cache_dir") != expected_cache \
             or capture.get("parsed_object_sha256") != _sha256_bytes(_canonical_json(packet).encode("utf-8")):
-        return verdict("INVALID_EVIDENCE", "owner_capture_output_binding_mismatch",
+        return verdict("INVALID_EVIDENCE", "owner_capture_uv_cache_binding_mismatch"
+                       if capture.get("uv_cache_dir") != expected_cache
+                       else "owner_capture_output_binding_mismatch",
                        observed_call_id=call.get("id"))
     expected_wrapper_arguments = [
         "--action", "stage5-plan", "--owner-input-file", command_capture["owner_input_file"],
@@ -622,6 +697,12 @@ def owner_payload(rows, manifest, actual_partition=None):
     if packet.get("result") != owner.get("result"):
         return None, verdict("FAIL_PRODUCT", "owner_result_path_changed", observed_pack=pack,
                              observed_result=packet.get("result"))
+    if "raw_results_by_professor_dir" in packet or "owners" in packet:
+        return None, verdict("FAIL_PRODUCT", "owner_input_contains_sibling_data",
+                             observed_pack=pack,
+                             observed_fields=[key for key in
+                                              ("raw_results_by_professor_dir", "owners")
+                                              if key in packet])
     if packet.get("mode") != "first":
         return None, verdict("FAIL_PRODUCT", "owner_mode_changed", observed_pack=pack,
                              observed_mode=packet.get("mode"))
@@ -1057,8 +1138,7 @@ def _final_result_role_ambiguity(source_matches, manifest, outcomes=None):
         if not isinstance(row, dict):
             continue
         for owner in manifest["owners"]:
-            expected = (outcomes or {}).get(owner["email_pack"],
-                        dict(owner["expected_result"], professor_dir=owner["professor_dir"]))
+            expected = (outcomes or {}).get(owner["email_pack"], _expected_owner_outcome(owner))
             if row.get("professor_dir") != owner["professor_dir"] or \
                     any(field not in row for field in ("status", "reason_code")):
                 continue
@@ -1135,6 +1215,9 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
     strictly parsed partition, or a compound text whose single action word is
     ``stage5-partition-choices``, proves ``partition_executed_by_owner``.
     """
+    expected_problem = _manifest_owner_expectation_problem(manifest)
+    if expected_problem:
+        return expected_problem
     discovery, partitions, plans, rebuilds = [], [], [], []
     owner_threads = owner_threads or {}
     for call in calls:
@@ -1143,6 +1226,9 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
             continue
         try:
             parsed = command_action(command, manifest)
+        except UVCacheBindingError:
+            return verdict("INVALID_EVIDENCE", "uv_cache_dir_binding_mismatch",
+                           observed_call_id=call.get("id"))
         except ValueError as exc:
             if not is_business_surface(command):
                 return verdict("BLOCKED_OBSERVABILITY", str(exc))
@@ -1258,8 +1344,7 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
     source_matches = [row for row in candidates if row == overview_result]
     for row in source_matches:
         for owner in manifest["owners"]:
-            expected = (outcomes or {}).get(owner["email_pack"],
-                        dict(owner["expected_result"], professor_dir=owner["professor_dir"]))
+            expected = (outcomes or {}).get(owner["email_pack"], _expected_owner_outcome(owner))
             if row.get("professor_dir") != owner["professor_dir"] or \
                     "status" not in row or "reason_code" not in row:
                 continue
@@ -1274,8 +1359,7 @@ def runtime_checks(calls, manifest, consumption_points, root_texts, root=None, o
     source_match = source_matches[0] if source_matches else None
     owner_candidates = [row for row in candidates if row is not source_match]
     for owner in manifest["owners"]:
-        expected = (outcomes or {}).get(owner["email_pack"],
-                    dict(owner["expected_result"], professor_dir=owner["professor_dir"]))
+        expected = (outcomes or {}).get(owner["email_pack"], _expected_owner_outcome(owner))
         consumed = [row for row in owner_candidates
                     if row.get("professor_dir") == owner["professor_dir"]]
         if not consumed:
@@ -1397,6 +1481,9 @@ def _independent_root_return_failure(calls, manifest, root, turn, duplicate_star
 
 
 def _verify_codex_events(response, adapter, manifest, final_problem=None):
+    expected_problem = _manifest_owner_expectation_problem(manifest)
+    if expected_problem:
+        return expected_problem
     status = adapter.get("fixture_status")
     if status in ("INVALID_EVIDENCE", "HARNESS_ERROR", "HARNESS_CONTAMINATION"):
         return verdict("INVALID_EVIDENCE", "shared_adapter_rejected")
@@ -1488,6 +1575,15 @@ def _verify_codex_events(response, adapter, manifest, final_problem=None):
     for call in calls:
         try:
             parsed = command_action(call.get("command", ""), manifest)
+        except UVCacheBindingError:
+            turn = raw.get("turn_id") if call.get("thread") == root else call.get("start_turn")
+            if not isinstance(turn, str) or not turn \
+                    or call.get("start_turn") != turn or call.get("end_turn") != turn \
+                    or not isinstance(call.get("id"), str) or not call.get("id"):
+                return verdict("INVALID_EVIDENCE", "command_turn_association_invalid")
+            invalids.append(verdict("INVALID_EVIDENCE", "uv_cache_dir_binding_mismatch",
+                                    observed_call_id=call.get("id")))
+            continue
         except (ValueError, TypeError):
             continue
         if not parsed:
@@ -1515,6 +1611,8 @@ def _verify_codex_events(response, adapter, manifest, final_problem=None):
         calls, manifest, root, raw.get("turn_id"), duplicate_starts)
     if independent_problem:
         return independent_problem
+    if invalids:
+        return invalids[0]
     if final_problem:
         return final_problem
     if not children:
@@ -1542,7 +1640,7 @@ def _verify_codex_events(response, adapter, manifest, final_problem=None):
             continue
         assigned[pack] = child
         owner = next(owner for owner in manifest["owners"] if owner["email_pack"] == pack)
-        outcome, problem = base.owner_outcome(results.get(child, []), owner)
+        outcome, problem = owner_outcome(results.get(child, []), owner)
         if problem:
             _classify(problem, failures, invalids, blockers)
             continue

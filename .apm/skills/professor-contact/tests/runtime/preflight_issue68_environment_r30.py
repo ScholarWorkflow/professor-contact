@@ -18,8 +18,8 @@ from pathlib import Path
 import run_issue68_stage5_routing_r19_codex as runner
 from build_issue68_codex_request_r12 import build_request
 
-PRODUCER_SHA = "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d"
-FIXTURE_SHA = "c738fa2f8bcbb16cd99d741332d5f59b062b6357"
+PRODUCER_SHA = runner.PRODUCER_REVISION
+FIXTURE_SHA = runner.FIXTURE_SHA
 OBSERVATION_SCHEMA = "issue68-r30-synthetic-read-v1"
 INSTALL_TIMEOUT_SECONDS = 600
 HERE = Path(__file__).resolve().parent

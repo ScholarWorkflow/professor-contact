@@ -23,6 +23,9 @@ def load(name):
 verify = load("verify_issue68_stage5_routing")
 build = load("build_issue68_codex_request")
 prepare = load("prepare_issue68_stage5_routing")
+if str(RUNTIME) not in sys.path:
+    sys.path.insert(0, str(RUNTIME))
+import verify_issue68_stage5_routing_r19 as routing_r19
 
 
 class TestIssue68RuntimeRecipe(unittest.TestCase):
@@ -212,13 +215,60 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
                          "agents.max_concurrent_threads_per_session=2", "--config",
                          'projects={' + json.dumps(str(self.root)) + '={trust_level="trusted"}}', "--", "固定业务输入"])
 
+    def test_cached_root_actions_preserve_exact_flags_after_cache_binding(self):
+        cache_dir = str(self.root / "uv-cache")
+        self.manifest["uv_cache_dir"] = cache_dir
+        entrypoint = "/installed/contact_state.py"
+        cases = (
+            ("stage5-list-inputs", ["--program-root", str(self.root),
+                                     "--emit-choices-scope", str(self.scope)]),
+            ("stage5-partition-choices", ["--program-root", str(self.root),
+                                          "--owner", "pack-A", "--owner", "pack-B",
+                                          "--choices", str(self.choices)]),
+            ("stage5-rebuild-overview", ["--program-root", str(self.root)]),
+        )
+        for action, flags in cases:
+            with self.subTest(action=action):
+                command = shlex.join([f"UV_CACHE_DIR={cache_dir}", "uv", "run", "--no-project",
+                                      "python", entrypoint, action, *flags])
+                parsed = routing_r19.command_action(command, self.manifest)
+                self.assertEqual(parsed["action"], action)
+                self.assertEqual(parsed["flags"]["--program-root"], str(self.root))
+                if action == "stage5-partition-choices":
+                    self.assertEqual(parsed["flags"]["--owner"], ["pack-A", "pack-B"])
+
+    def test_root_stage5_command_requires_declared_cache_and_uv_prefix(self):
+        self.manifest["uv_cache_dir"] = str(self.root / "uv-cache")
+        commands = (
+            shlex.join(["uv", "run", "--no-project", "python", "/installed/contact_state.py",
+                        "stage5-rebuild-overview", "--program-root", str(self.root)]),
+            shlex.join(["UV_CACHE_DIR=/wrong/cache", "uv", "run", "--no-project", "python",
+                        "/installed/contact_state.py", "stage5-rebuild-overview",
+                        "--program-root", str(self.root)]),
+            shlex.join(["UV_CACHE_DIR=" + self.manifest["uv_cache_dir"], "python",
+                        "/installed/contact_state.py", "stage5-rebuild-overview",
+                        "--program-root", str(self.root)]),
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(ValueError, "uv_cache_dir_binding_mismatch"):
+                    routing_r19.command_action(command, self.manifest)
+                result = routing_r19.runtime_checks(
+                    [{"id": "root-call", "thread": "root", "start": 1, "end": 2,
+                      "command": command, "output": "{}"}],
+                    self.manifest, [], [], root="root")
+                self.assertEqual((result["verdict"], result["reason_code"]),
+                                 ("INVALID_EVIDENCE", "uv_cache_dir_binding_mismatch"))
+
     def test_fixture_precheck_uses_the_actual_producer_plan(self):
         script = RUNTIME.parent.parent / "scripts" / "contact_state.py"
         original_run = prepare.subprocess.run
         with patch.object(prepare.subprocess, "run", wraps=original_run) as producer_calls:
             manifest = prepare.prepare(self.root / "program", script, self.root / "evidence")
         self.assertEqual(len(manifest["owners"]), 2)
-        self.assertTrue(all(owner["expected_result"]["status"] == "needs_refresh" for owner in manifest["owners"]))
+        self.assertTrue(all(owner["expected_result"] == {
+            "status": "needs_refresh", "reason_code": "verify_missing"
+        } for owner in manifest["owners"]))
         self.assertEqual(manifest["manual_patch"], "no")
         evidence = self.root / "evidence"
         for name in ("canonical-choices.json", "fixture-manifest.json", "root-prompt.txt"):
@@ -226,6 +276,15 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
         self.assertEqual(json.loads((evidence / "canonical-choices.json").read_text()),
                          manifest["expected_choices"])
         self.assertEqual(json.loads((evidence / "fixture-manifest.json").read_text()), manifest)
+        root_prompt = (evidence / "root-prompt.txt").read_text(encoding="utf-8")
+        self.assertIn("scalar `result` to `raw_results_by_professor_dir[the exact professor_dir]`",
+                      root_prompt)
+        self.assertIn("Never put `raw_results_by_professor_dir`, the outer context, the full owners array",
+                      root_prompt)
+        self.assertIn("Keep every `commandExecution` to one direct shell command", root_prompt)
+        self.assertIn("Do not chain commands with `&&`, `;`, `||`, or pipes", root_prompt)
+        self.assertIn("`overview` containing the complete parsed object", root_prompt)
+        self.assertIn("full allocation file", root_prompt)
         # Only prerequisite plans may execute during preparation. Root
         # partitioning and owner handoff creation remain observed business.
         calls = [call.args[0] for call in producer_calls.call_args_list]
@@ -272,8 +331,9 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
             self.assertEqual(initial["email_pack"], owner["email_pack"])
             self.assertEqual(initial["verify"][owner["professor"]], "needs_recheck:missing")
             self.assertEqual(json.loads((evidence / f"owner-{index}-initial-plan.exit-code.txt").read_text()), 0)
-            self.assertEqual(json.loads((evidence / f"owner-{index}-plan.stdout.json").read_text()),
-                             owner["expected_result"])
+            terminal_probe = json.loads((evidence / f"owner-{index}-plan.stdout.json").read_text())
+            self.assertEqual((terminal_probe["status"], terminal_probe["reason_code"]),
+                             ("needs_refresh", "verify_missing"))
             self.assertEqual(json.loads((evidence / f"owner-{index}-plan.exit-code.txt").read_text()), 2)
             sibling = manifest["owners"][1 - index]
             self.assertIn("choices_scope", owner["sibling_exclusions"])
@@ -281,6 +341,61 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
             self.assertIn(sibling["email_pack"], owner["sibling_exclusions"])
             self.assertIn(sibling["professor_dir"], owner["sibling_exclusions"])
             self.assertIn(sibling["email_ids"][0], owner["sibling_exclusions"])
+            self.assertIn(sibling["result"], owner["sibling_exclusions"])
+
+    def test_fixture_precheck_rejects_nonfixed_terminal_reason(self):
+        script = RUNTIME.parent.parent / "scripts" / "contact_state.py"
+        original_run = prepare.subprocess.run
+
+        def changed_reason(command, *args, **kwargs):
+            if "--result" in command:
+                return prepare.subprocess.CompletedProcess(
+                    command, 2,
+                    json.dumps({"status": "needs_refresh", "reason_code": "other_reason"}),
+                    "")
+            return original_run(command, *args, **kwargs)
+
+        with patch.object(prepare.subprocess, "run", side_effect=changed_reason):
+            with self.assertRaisesRegex(ValueError, "frozen verification gate"):
+                prepare.prepare(self.root / "program", script, self.root / "evidence")
+
+    def test_final_report_preserves_each_owner_result_and_the_complete_overview_error(self):
+        choices_by_dir = {
+            owner["professor_dir"]: {"email_id": "X", "professor_dir": owner["professor_dir"],
+                                     "sentinel": owner["professor"]}
+            for owner in self.manifest["owners"]
+        }
+        partition_owners = [{"professor_dir": owner["professor_dir"], "email_pack": owner["email_pack"],
+                             "email_id": "X", "status": "ok",
+                             "choices_rows": [choices_by_dir[owner["professor_dir"]]]}
+                            for owner in self.manifest["owners"]]
+        manifest = copy.deepcopy(self.manifest)
+        manifest["partition"] = {"owners": partition_owners}
+        overview = {"status": "error", "reason_code": "missing_email_pack",
+                    "email_pack": self.manifest["invalid_pack"],
+                    "message": "synthetic unreadable pack"}
+        owner_results = [dict(owner["expected_result"], professor_dir=owner["professor_dir"])
+                         for owner in manifest["owners"]]
+        calls = [
+            {"id": "discovery", "thread": "root", "start": 1, "end": 2,
+             "command": self.command("stage5-list-inputs"), "output": self.discovery()},
+            {"id": "partition", "thread": "root", "start": 3, "end": 4,
+             "command": self.command("stage5-partition-choices"),
+             "output": json.dumps({"status": "ok", "owners": partition_owners})},
+            {"id": "overview", "thread": "root", "start": 9, "end": 10,
+             "command": self.command("stage5-rebuild-overview"), "output": json.dumps(overview)},
+        ]
+        report = {"professor_results": owner_results, "overview": overview}
+        result = routing_r19.runtime_checks(
+            calls, manifest, [8], [json.dumps(report)], root="root")
+        self.assertEqual(result["verdict"], "PASS", result)
+
+        shortened = copy.deepcopy(report)
+        shortened["overview"].pop("message")
+        result = routing_r19.runtime_checks(
+            calls, manifest, [8], [json.dumps(shortened)], root="root")
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "root_overview_result_changed"))
 
     def test_combined_verdict_requires_both_pass_and_keeps_invalid_and_blocked(self):
         self.assertEqual(verify.combine([verify.verdict("PASS"), verify.verdict("PASS")])["verdict"], "PASS")

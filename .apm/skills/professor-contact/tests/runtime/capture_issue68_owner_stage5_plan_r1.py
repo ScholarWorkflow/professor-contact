@@ -9,6 +9,7 @@ the installed contact_state.py, and returns one bound JSON envelope.
 import argparse
 import hashlib
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -16,7 +17,7 @@ import subprocess
 
 
 SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
-CAPTURE_SCHEMA = "issue-68-test-plan-r25-fixed-owner-capture-v1"
+CAPTURE_SCHEMA = "issue-68-test-plan-r37-fixed-owner-capture-v1"
 CAPTURE_NAME = "capture_issue68_owner_stage5_plan_r1.py"
 TARGETS = (".agents", ".codex", ".opencode", ".apm")
 
@@ -126,6 +127,9 @@ def run(owner_input_file, contact_state, action):
             "owner_input_sha256": _sha256(raw_input),
             "owner_input_read_count": 1,
             "parsed_object_sha256": _sha256(_canonical(packet)),
+            # The verifier binds this inherited value to the request-local
+            # cache path declared in the immutable run manifest.
+            "uv_cache_dir": os.environ.get("UV_CACHE_DIR"),
         },
         "pc68_actual_input_observation": {
             "schema": SCHEMA,

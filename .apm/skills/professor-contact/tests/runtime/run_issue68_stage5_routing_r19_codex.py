@@ -3,12 +3,15 @@
 import argparse
 import hashlib
 import json
+import os
 import shlex
 import signal
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
+from functools import lru_cache
 from pathlib import Path
 
 import issue68_eval_service_isolation_r14 as isolation
@@ -22,10 +25,16 @@ import issue68_transfer_location as transfer_location
 
 HERE = Path(__file__).resolve().parent
 FIXTURE_SHA = bridge.FIXTURE_SHA
+PRODUCER_REVISION = "faab365d0be2bb66f2f285fdaa2927631dbf33f8"
 CONTRACT = HERE / "issue68-runtime-evidence-contract-r19.json"
-CONTRACT_REVISION = "issue-68-runtime-evidence-r34-2026-10-08"
+CONTRACT_REVISION = "issue-68-runtime-evidence-r37-2026-10-08"
+UV_CACHE_DIR_NAME = "uv-cache"
+UV_CACHE_PROMPT_PLACEHOLDER = "{{UV_CACHE_DIR}}"
+UV_CACHE_BINDING_SCHEMA = "issue-68-uv-cache-binding-r37-v1"
 OWNER_OBSERVATION_SCHEMA = "issue-68-test-plan-r25-owner-input-v2"
 SYNTHETIC_PREFLIGHT_SCHEMA = "issue-68-r29-fixed-capture-preflight-v2"
+HISTORICAL_R29_CAPTURE_SCHEMA = "issue-68-test-plan-r25-fixed-owner-capture-v1"
+HISTORICAL_R29_CAPTURE_SHA256 = "7e534f76b7ba837a415b9b9a38ecda4a0fb1fe62fbf6d5b2575119319ff4eaa9"
 CONTRACT_RUNNER = ".apm/skills/professor-contact/tests/runtime/" + Path(__file__).name
 EXECUTION_KIND = "acceptance"
 HOST = "codex"
@@ -48,6 +57,7 @@ RUNTIME_BINDING_ARTIFACTS = (
     "codex/project-approval-config-setup.json",
     "codex/project-approval-config-install-check.json",
     "codex/effective-project-approval-configuration.json",
+    "codex/uv-cache-binding.json",
     "eval-service-provenance.before.json",
     "eval-service-provenance.after.json",
     "runtime-environment-evidence.json",
@@ -66,10 +76,21 @@ def load_contract():
     contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
     if contract.get("revision") != CONTRACT_REVISION:
         raise ValueError("contract_revision_mismatch")
+    uv_cache_policy = contract.get("uv_cache_policy")
+    if (not isinstance(uv_cache_policy, dict)
+            or uv_cache_policy.get("schema") != UV_CACHE_BINDING_SCHEMA
+            or uv_cache_policy.get("directory") != f"PC68_OUTPUT_ROOT/{UV_CACHE_DIR_NAME}"
+            or uv_cache_policy.get("manifest_key") != "uv_cache_dir"
+            or uv_cache_policy.get("root_prompt_placeholder") != UV_CACHE_PROMPT_PLACEHOLDER
+            or uv_cache_policy.get("binding_artifact") != "codex/uv-cache-binding.json"
+            or "HTTP" not in uv_cache_policy.get("environment_boundary", "")):
+        raise ValueError("contract_uv_cache_policy_mismatch")
     if contract.get("fixture_sha") != FIXTURE_SHA:
         raise ValueError("contract_fixture_mismatch")
     environment = contract.get("formal_runtime_environment")
     fixed_inputs = environment.get("fixed_plan_inputs", {}) if isinstance(environment, dict) else {}
+    if fixed_inputs.get("producer_revision") != PRODUCER_REVISION:
+        raise ValueError("contract_fixed_producer_revision_mismatch")
     if fixed_inputs.get("shared_environment_revision") != FIXTURE_SHA:
         raise ValueError("contract_shared_environment_revision_mismatch")
     approval_config = contract.get("project_approval_configuration")
@@ -95,8 +116,21 @@ def load_contract():
             or approval_config.get("approval_command_line_override") != "none"
             or "normal uv cache" not in approval_config.get("cache_policy", "")):
         raise ValueError("contract_project_approval_configuration_mismatch")
-    if contract.get("producer_revision") != "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d":
+    if contract.get("producer_revision") != PRODUCER_REVISION:
         raise ValueError("contract_producer_revision_mismatch")
+    historical_install = contract.get("preflight", {}).get("r31_install_retry_results", {})
+    if (historical_install.get("record_scope") != "historical_r31_install_preflight_only"
+            or historical_install.get("resolved_product_commit_is_historical") is not True):
+        raise ValueError("historical_install_revision_not_marked")
+    historical_environment = contract.get("preflight", {}).get(
+        "r31_environment_preflight_attempts", {})
+    if historical_environment.get("record_scope") != "historical_r31_environment_preflight_only":
+        raise ValueError("historical_environment_preflight_scope_not_marked")
+    capture_gate = contract.get("preflight", {}).get("input_observation_gate", {})
+    if (capture_gate.get("saved_capture_record_scope") != "historical_r29_r25_capture_only"
+            or capture_gate.get("current_cache_capture_schema") != input_verifier.OWNER_CAPTURE_SCHEMA
+            or capture_gate.get("current_cache_capture_sha256") != input_verifier.OWNER_CAPTURE_SHA256):
+        raise ValueError("contract_current_capture_preflight_not_pinned")
     if contract.get("runner") != CONTRACT_RUNNER:
         raise ValueError("contract_runner_is_not_this_entry")
     if contract.get("manual_patch") != "no":
@@ -233,6 +267,151 @@ def _portable_artifact_path(path):
     return "/__pc68_repo__/" + relative.as_posix()
 
 
+@lru_cache(maxsize=1)
+def _current_r37_cache_capture_preflight():
+    """Execute the current pinned capture wrapper with a disposable cache."""
+    source = input_verifier.OWNER_CAPTURE_SOURCE
+    if not source.is_file() or _sha256_file(source) != input_verifier.OWNER_CAPTURE_SHA256:
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "r37_capture_source_not_pinned"}
+    cache_path = None
+    proof = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="pc68-r37-cache-capture-") as temporary:
+            root = Path(temporary)
+            program = root / "program"
+            professor_dir = program / "教授研究" / "X分野" / "甲教授"
+            professor_dir.mkdir(parents=True)
+            email_pack = professor_dir / "邮件输入.json"
+            template = program / "template.md"
+            template.write_text("synthetic template", encoding="utf-8")
+            email = {
+                "email_id": "D001::I001", "professor": "甲教授",
+                "professor_dir": str(professor_dir),
+                "idea": {"id": "D001_1", "text": "合成研究构想"},
+                "direction_ids": ["D001"],
+                "directions": [{"id": "D001", "name": "合成方向"}],
+                "user_note": "用户输入", "papers": [{"item_key": "P001", "title": "合成论文"}],
+                "gaps": [], "red_lines": [{"text": "不得编造"}],
+                "soft_materials": {"positioning": [{"text": "定位事实"}]},
+                "user_supplement": "补充事实", "allowed_sources": ["idea:D001_1"],
+            }
+            pack = {"schema": 3, "kind": "professor-contact-email-input",
+                    "professor": "甲教授", "professor_dir": str(professor_dir),
+                    "emails": [email]}
+            email_pack.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
+            packet = {
+                "program_root": str(program), "professor_dir": str(professor_dir),
+                "email_pack": str(email_pack), "email_id": email["email_id"],
+                "choices": [{"email_id": email["email_id"], "first_choice": True}],
+                "mode": "first", "template": str(template),
+                "result": str(program / "raw.json"),
+            }
+            owner_input = root / "owner-input.json"
+            owner_input.write_text(json.dumps(packet, ensure_ascii=False), encoding="utf-8")
+
+            consumer = root / "consumer"
+            consumer.mkdir()
+            entrypoint_source = source.parents[2] / "scripts" / "contact_state.py"
+            if not entrypoint_source.is_file():
+                return None, {"state": "INVALID_TEST_EXECUTION",
+                              "reason_code": "r37_synthetic_entrypoint_missing"}
+            entrypoint = consumer / ".agents" / "skills" / "professor-contact" / "scripts" / "contact_state.py"
+            entrypoint.parent.mkdir(parents=True)
+            shutil.copy2(entrypoint_source, entrypoint)
+            entrypoint = entrypoint.resolve()
+            runtime_path = consumer / ".pc68-test-support" / input_verifier.OWNER_CAPTURE_NAME
+            runtime_path.parent.mkdir(parents=True)
+            shutil.copy2(source, runtime_path)
+            runtime_path = runtime_path.resolve()
+
+            cache = root / UV_CACHE_DIR_NAME
+            cache.mkdir(mode=0o700)
+            cache_path = cache.resolve()
+            if list(cache.iterdir()):
+                return None, {"state": "INVALID_TEST_EXECUTION",
+                              "reason_code": "r37_synthetic_cache_not_empty"}
+            probe = cache / ".pc68-write-probe"
+            probe.write_text("writable", encoding="utf-8")
+            probe.unlink()
+
+            argv = [
+                "uv", "run", "--no-project", "python", str(runtime_path),
+                "--action", "stage5-plan", "--owner-input-file", str(owner_input),
+                "--contact-state", str(entrypoint),
+            ]
+            command = shlex.join([f"UV_CACHE_DIR={cache_path}", *argv])
+            completed = subprocess.run(
+                argv, cwd=consumer, capture_output=True, text=True, check=False,
+                timeout=90, env={**os.environ, "UV_CACHE_DIR": str(cache_path)},
+            )
+            if completed.returncode != 0:
+                return None, {"state": "INVALID_TEST_EXECUTION",
+                              "reason_code": "r37_synthetic_capture_command_failed",
+                              "exit_code": completed.returncode}
+            envelope = json.loads(completed.stdout)
+            capture = envelope.get("pc68_fixed_capture")
+            if not isinstance(capture, dict) \
+                    or capture.get("schema") != input_verifier.OWNER_CAPTURE_SCHEMA \
+                    or capture.get("wrapper_sha256") != input_verifier.OWNER_CAPTURE_SHA256 \
+                    or capture.get("uv_cache_dir") != str(cache_path):
+                return None, {"state": "INVALID_TEST_EXECUTION",
+                              "reason_code": "r37_synthetic_capture_cache_binding_invalid"}
+
+            manifest_path = root / "manifest.json"
+            manifest = {
+                "program_root": str(program), "uv_cache_dir": str(cache_path),
+                "owners": [{"professor": "甲教授", "professor_dir": str(professor_dir),
+                            "email_pack": str(email_pack), "email_ids": [email["email_id"]],
+                            "result": str(program / "raw.json"),
+                            "expected_choices_rows": packet["choices"]}],
+                "owner_capture": {
+                    "consumer_root": str(consumer), "runtime_path": str(runtime_path),
+                    "installed_entrypoint": str(entrypoint),
+                    "entrypoint_sha256": _sha256_file(entrypoint),
+                    "source_path": str(source),
+                    "source_sha256": input_verifier.OWNER_CAPTURE_SHA256,
+                    "runtime_sha256": _sha256_file(runtime_path),
+                    "manifest_path": str(manifest_path),
+                },
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            command_proof = input_verifier.command_action(command, manifest)
+            call = {
+                "id": "synthetic-r37-cache-capture", "thread": "synthetic-owner",
+                "generation": "synthetic-r37", "start": 1, "end": 2,
+                "command": command, "output": completed.stdout,
+            }
+            fixed_problem = input_verifier._validate_fixed_capture(
+                call, envelope, command_proof["owner_capture"], packet, manifest)
+            if fixed_problem:
+                return None, {"state": "INVALID_TEST_EXECUTION",
+                              "reason_code": "r37_synthetic_capture_verification_failed",
+                              "detail": fixed_problem.get("reason_code")}
+            proof = {
+                "state": "PASS", "capture_schema": capture["schema"],
+                "wrapper_sha256": capture["wrapper_sha256"],
+                "uv_cache_dir": str(cache_path),
+                "manifest_cache_path_matches": manifest["uv_cache_dir"] == str(cache_path),
+                "command_cache_prefix_matches": command_proof.get("uv_cache_dir") == str(cache_path),
+                "capture_field_matches_manifest": capture["uv_cache_dir"] == manifest["uv_cache_dir"],
+                "fixed_capture_verifier": "verify_issue68_stage5_routing_r19._validate_fixed_capture",
+                "formal_case_started": False, "eval_service_called": False,
+                "external_request_made": False,
+            }
+    except subprocess.TimeoutExpired:
+        return None, {"state": "INVALID_TEST_EXECUTION",
+                      "reason_code": "r37_synthetic_capture_command_timeout"}
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return None, {"state": "INVALID_TEST_EXECUTION",
+                      "reason_code": "r37_synthetic_capture_preflight_invalid",
+                      "detail": str(exc)}
+    if proof is None or cache_path is None or cache_path.exists():
+        return None, {"state": "INVALID_TEST_EXECUTION",
+                      "reason_code": "r37_synthetic_capture_cleanup_unconfirmed"}
+    proof["temporary_cache_removed"] = True
+    return proof, None
+
+
 def _synthetic_capture_preflight():
     """Verify the saved synthetic output came from a passing fixed-wrapper preflight."""
     try:
@@ -314,9 +493,13 @@ def _synthetic_capture_preflight():
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_plan_business_fields_mismatch"}
     # The wrapper result is locally checked first, then bound to the actual
     # ordinary commandExecution output captured from the Codex app thread.
+    owner_capture_record = manifest.get("owner_capture", {})
+    source_sha = owner_capture_record.get("source_sha256")
+    if source_sha not in (HISTORICAL_R29_CAPTURE_SHA256, input_verifier.OWNER_CAPTURE_SHA256):
+        return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_source_revision_unrecognized"}
     if artifact.get("fixed_capture_verification") != {
             "state": "PASS", "verifier": "same_object_invocation_and_plan",
-            "wrapper_sha256": input_verifier.OWNER_CAPTURE_SHA256,
+            "wrapper_sha256": source_sha,
             "ordinary_command_event": "PASS",
             "ordinary_commandExecution_output_proven": True}:
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_fixed_capture_verification_missing"}
@@ -333,11 +516,17 @@ def _synthetic_capture_preflight():
         return None, {"state": "INVALID_TEST_EXECUTION", "reason_code": "synthetic_capture_envelope_invalid"}
     capture = output_envelope.get("pc68_fixed_capture", {})
     process = output_envelope.get("stage5_process", {})
+    expected_capture_schema = (HISTORICAL_R29_CAPTURE_SCHEMA
+                               if source_sha == HISTORICAL_R29_CAPTURE_SHA256
+                               else input_verifier.OWNER_CAPTURE_SCHEMA)
     if not isinstance(command_proof, dict) or not isinstance(command_proof.get("owner_capture"), dict) \
-            or capture.get("schema") != input_verifier.OWNER_CAPTURE_SCHEMA \
-            or capture.get("wrapper_sha256") != input_verifier.OWNER_CAPTURE_SHA256 \
+            or capture.get("schema") != expected_capture_schema \
+            or capture.get("wrapper_sha256") != source_sha \
             or capture.get("owner_input_read_count") != 1 \
             or capture.get("parsed_object_sha256") != artifact.get("parsed_object_sha256") \
+            or manifest.get("uv_cache_dir") is not None \
+            or (source_sha == HISTORICAL_R29_CAPTURE_SHA256
+                and capture.get("uv_cache_dir") is not None) \
             or output_envelope.get("pc68_actual_input_observation", {}).get("object") != packet \
             or invocation.get("argv") != argv \
             or invocation.get("capture_id") != capture.get("capture_id") \
@@ -365,7 +554,16 @@ def _synthetic_capture_preflight():
     if event_problem:
         state = "BLOCKED_OBSERVABILITY" if event_problem == "ordinary_command_event_missing" else "INVALID_TEST_EXECUTION"
         return None, {"state": state, "reason_code": event_problem}
-    return artifact, None
+    verified = dict(artifact)
+    verified["_r29_capture_record_scope"] = (
+        "historical_r29_r25_capture_only"
+        if source_sha == HISTORICAL_R29_CAPTURE_SHA256
+        else "synthetic_r29_command_event_only_without_cache_proof"
+    )
+    verified["_r29_capture_schema"] = capture.get("schema")
+    verified["_r29_capture_sha256"] = source_sha
+    verified["_r29_capture_uv_cache_dir"] = capture.get("uv_cache_dir")
+    return verified, None
 
 
 def actual_input_observation_preflight(contract):
@@ -385,7 +583,13 @@ def actual_input_observation_preflight(contract):
         and prompt_supported
     )
     artifact, capture_problem = _synthetic_capture_preflight()
-    capture_supported = artifact is not None and capture_problem is None
+    current_capture, current_capture_problem = (None, None)
+    if artifact is not None and capture_problem is None:
+        current_capture, current_capture_problem = _current_r37_cache_capture_preflight()
+        if current_capture_problem is not None:
+            capture_problem = current_capture_problem
+    capture_supported = (artifact is not None and capture_problem is None
+                         and current_capture is not None)
     technical_preflight_ready = source_supported and capture_supported
     runtime_values = {key: None for key in REQUIRED_RUNTIME_FACTS}
     missing_runtime_values = list(REQUIRED_RUNTIME_FACTS)
@@ -419,6 +623,11 @@ def actual_input_observation_preflight(contract):
             "turn_index": artifact["ordinary_command_event"]["turn_index"],
             "item_index": artifact["ordinary_command_event"]["item_index"],
             "ordinary_commandExecution_output_proven": True,
+            "historical_capture_record_scope": artifact["_r29_capture_record_scope"],
+            "historical_capture_schema": artifact["_r29_capture_schema"],
+            "historical_capture_sha256": artifact["_r29_capture_sha256"],
+            "historical_capture_uv_cache_dir": artifact["_r29_capture_uv_cache_dir"],
+            "r37_cache_capture_verification": current_capture,
         } if artifact else None),
         "contract_revision": contract.get("revision"),
         "source_status": observation.get("status"),
@@ -460,6 +669,168 @@ def parse_args(argv=None):
 def overlaps(left, right):
     left, right = Path(left).resolve(), Path(right).resolve()
     return left == right or left.is_relative_to(right) or right.is_relative_to(left)
+
+
+def _prepare_run_uv_cache(output):
+    """Create and prove the empty request-local cache directory before setup."""
+    output = Path(output).resolve()
+    if output.is_symlink() or not output.is_dir():
+        raise ValueError("uv_cache_output_directory_invalid")
+    cache = output / UV_CACHE_DIR_NAME
+    try:
+        cache.mkdir(mode=0o700, exist_ok=False)
+    except FileExistsError as exc:
+        raise ValueError("uv_cache_directory_already_exists") from exc
+    if cache.is_symlink() or not cache.is_dir() or list(cache.iterdir()):
+        raise ValueError("uv_cache_directory_not_fresh_and_empty")
+    probe = cache / ".pc68-write-probe"
+    try:
+        with probe.open("x", encoding="utf-8") as stream:
+            stream.write("writable")
+        probe.unlink()
+    except OSError as exc:
+        raise ValueError("uv_cache_directory_not_writable") from exc
+    return cache.resolve()
+
+
+def _bind_uv_cache_prompt(manifest, prompt, cache_path):
+    """Bind the run cache to its manifest and every prompt placeholder."""
+    cache = Path(cache_path)
+    if cache.is_symlink() or not cache.is_dir():
+        raise ValueError("uv_cache_directory_invalid")
+    cache = cache.resolve()
+    if not cache.is_absolute():
+        raise ValueError("uv_cache_directory_not_absolute")
+    bound = str(cache)
+    recorded = manifest.get("uv_cache_dir")
+    if recorded not in (None, bound):
+        raise ValueError("uv_cache_manifest_binding_mismatch")
+    if not isinstance(prompt, str) or UV_CACHE_PROMPT_PLACEHOLDER not in prompt:
+        raise ValueError("uv_cache_prompt_placeholder_missing")
+    manifest["uv_cache_dir"] = bound
+    bound_prompt = prompt.replace(UV_CACHE_PROMPT_PLACEHOLDER, bound)
+    if UV_CACHE_PROMPT_PLACEHOLDER in bound_prompt:
+        raise ValueError("uv_cache_prompt_binding_incomplete")
+    return bound_prompt
+
+
+def _validate_uv_cache_request(request, prompt, cache_path):
+    """Prove that the HTTP request itself carries the bound prompt/path."""
+    command = request.get("command") if isinstance(request, dict) else None
+    if not isinstance(command, str):
+        raise ValueError("uv_cache_request_command_missing")
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise ValueError("uv_cache_request_command_invalid") from exc
+    cache_text = str(Path(cache_path).resolve())
+    if (not argv or argv[-1] != prompt or cache_text not in prompt
+            or UV_CACHE_PROMPT_PLACEHOLDER in command):
+        raise ValueError("uv_cache_request_binding_mismatch")
+    return argv
+
+
+def _uv_cache_inventory(cache_path):
+    """Summarize a cache tree without following or hashing its contents."""
+    cache = Path(cache_path)
+    if cache.is_symlink():
+        raise ValueError("uv_cache_directory_replaced_by_symlink")
+    if not cache.exists():
+        return {"state": "ABSENT", "entry_count": 0, "file_count": 0,
+                "directory_count": 0, "other_count": 0, "total_file_bytes": 0,
+                "entries_sha256": hashlib.sha256(b"[]").hexdigest()}
+    if not cache.is_dir():
+        raise ValueError("uv_cache_path_not_directory")
+    entries = []
+    for path in sorted(cache.rglob("*"), key=lambda item: item.relative_to(cache).as_posix()):
+        relative = path.relative_to(cache).as_posix()
+        if path.is_symlink():
+            entry = {"path": relative, "kind": "symlink"}
+        elif path.is_dir():
+            entry = {"path": relative, "kind": "directory"}
+        elif path.is_file():
+            entry = {"path": relative, "kind": "file", "size": path.stat().st_size}
+        else:
+            entry = {"path": relative, "kind": "other"}
+        entries.append(entry)
+    encoded = json.dumps(entries, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    files = [item for item in entries if item["kind"] == "file"]
+    directories = [item for item in entries if item["kind"] == "directory"]
+    other = [item for item in entries if item["kind"] in ("symlink", "other")]
+    return {
+        "state": "EMPTY" if not entries else "POPULATED",
+        "entry_count": len(entries),
+        "file_count": len(files),
+        "directory_count": len(directories),
+        "other_count": len(other),
+        "total_file_bytes": sum(item.get("size", 0) for item in files),
+        "entries_sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
+def _write_uv_cache_evidence(output, evidence):
+    output = Path(output)
+    directory = output / "codex"
+    path = directory / "uv-cache-binding.json"
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        raise ValueError("uv_cache_evidence_directory_invalid")
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError("uv_cache_evidence_artifact_invalid")
+    if not path.is_file():
+        path = output / "uv-cache-binding.pending.json"
+    base.write_json(path, evidence)
+    return path
+
+
+def _publish_uv_cache_evidence(output):
+    output = Path(output)
+    directory = output / "codex"
+    pending = output / "uv-cache-binding.pending.json"
+    target = directory / "uv-cache-binding.json"
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        raise ValueError("uv_cache_evidence_directory_invalid")
+    if target.is_symlink() or (target.exists() and not target.is_file()):
+        raise ValueError("uv_cache_evidence_artifact_invalid")
+    if target.is_file():
+        if pending.exists() or pending.is_symlink():
+            raise ValueError("uv_cache_evidence_pending_and_published")
+        return target
+    if pending.is_symlink() or not pending.is_file():
+        raise ValueError("uv_cache_evidence_pending_missing")
+    directory.mkdir(exist_ok=True)
+    pending.replace(target)
+    return target
+
+
+def _finalize_run_uv_cache(output, evidence):
+    """Record the final cache inventory, remove only this run's directory, and prove absence."""
+    output = Path(output).resolve()
+    cache = Path(evidence["cache_dir"])
+    expected = output / UV_CACHE_DIR_NAME
+    result = dict(evidence)
+    result["after_run"] = {"state": "UNAVAILABLE"}
+    error = None
+    deleted = False
+    if cache != expected or cache.is_symlink():
+        error = "uv_cache_cleanup_path_mismatch" if cache != expected else "uv_cache_directory_replaced_by_symlink"
+    else:
+        try:
+            result["after_run"] = _uv_cache_inventory(cache)
+            if cache.exists():
+                shutil.rmtree(cache)
+                deleted = True
+        except (OSError, ValueError) as exc:
+            error = str(exc)
+    confirmed_absent = not cache.exists() and not cache.is_symlink()
+    result["cleanup"] = {
+        "attempted": True,
+        "deleted": deleted,
+        "confirmed_absent": confirmed_absent,
+        "error": error,
+    }
+    _write_uv_cache_evidence(output, result)
+    _publish_uv_cache_evidence(output)
+    return result
 
 
 def resolve_eval_port(eval_root):
@@ -1105,6 +1476,7 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
             after_codex_install=verify_approval_config,
             **install_kwargs,
         )
+        _publish_uv_cache_evidence(output)
         program_root = manifest.get("program_root")
         if not isinstance(program_root, (str, Path)) or not str(program_root):
             raise ValueError("installed_program_root_missing")
@@ -1157,28 +1529,60 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
         transfer_location.bind_lifecycle_observation(
             manifest, args.transfer_location_root)
         manifest["transfer_location_manifest_snapshot"] = str(manifest_snapshot_path.resolve())
-        lifecycle_context.update(directory=directory, consumer=consumer, manifest=manifest)
-        base.write_json(manifest_path, manifest)
-        manifest_snapshot_path.write_bytes(manifest_path.read_bytes())
         prompt_path = directory / "root-prompt.txt"
         prompt = prompt_path.read_text(encoding="utf-8")
         prompt = prompt.replace("{{CAPTURE_SCRIPT}}", str(runtime_script.resolve()))
         prompt = prompt.replace("{{CONTACT_STATE}}", str(entrypoint))
         if "{{CAPTURE_SCRIPT}}" in prompt or "{{CONTACT_STATE}}" in prompt:
             raise ValueError("owner_capture_prompt_binding_failed")
-        business_prompt = prompt
+        business_prompt = _bind_uv_cache_prompt(
+            manifest, prompt, args.uv_cache_dir)
+        lifecycle_context.update(directory=directory, consumer=consumer, manifest=manifest)
+        base.write_json(manifest_path, manifest)
+        manifest_snapshot_path.write_bytes(manifest_path.read_bytes())
         request_prompts = transfer_location.save_request_prompts(
             args.transfer_location_root, business_prompt, directory)
         location_context.update(root=args.transfer_location_root,
                                 declaration=request_prompts["declaration"],
                                 business_prompt=request_prompts["business_prompt"])
         prompt_path.write_text(request_prompts["combined_prompt"], encoding="utf-8")
+        cache_evidence = args.uv_cache_evidence
+        cache_evidence["manifest_binding"] = {
+            "artifact": "codex/fixture-manifest.request.json",
+            "path": str(manifest_snapshot_path.resolve()),
+            "sha256": _sha256_file(manifest_snapshot_path),
+            "uv_cache_dir": manifest.get("uv_cache_dir"),
+        }
+        cache_evidence["root_prompt_binding"] = {
+            "artifact": "root-prompt.txt",
+            "path": str(prompt_path.resolve()),
+            "sha256": _sha256_file(prompt_path),
+            "placeholder_resolved": UV_CACHE_PROMPT_PLACEHOLDER not in prompt_path.read_text(
+                encoding="utf-8"),
+        }
+        _write_uv_cache_evidence(output, cache_evidence)
         return directory, consumer, manifest
 
     def build_request_with_evidence(consumer, prompt):
         nonlocal request_built
         request = original_build_request(consumer, prompt)
+        command_argv = _validate_uv_cache_request(
+            request, prompt, args.uv_cache_dir)
+        cache_state = _uv_cache_inventory(args.uv_cache_dir)
+        if cache_state["state"] != "EMPTY":
+            raise ValueError("uv_cache_not_empty_before_request")
         base.write_json(request_path, request)
+        cache_evidence = args.uv_cache_evidence
+        cache_evidence["request_binding"] = {
+            "artifact": "codex/codex-request.json",
+            "command_sha256": hashlib.sha256(request["command"].encode("utf-8")).hexdigest(),
+            "command_argument_count": len(command_argv),
+            "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            "cache_state_before_request": cache_state,
+            "dispatch_attempted": False,
+            "remote_cache_proof_from_local_launcher_environment": False,
+        }
+        _write_uv_cache_evidence(output, cache_evidence)
         binding = transfer_location.request_binding_record(
             location_context["root"], location_context["declaration"],
             location_context["business_prompt"], request_path,
@@ -1188,6 +1592,7 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
             preflight, output, request, service_snapshot, producer, fixture
         )
         updated["transfer_location_binding"] = binding
+        updated["uv_cache_binding_artifact"] = "codex/uv-cache-binding.json"
         evidence = {
             "schema": "issue-68-r29-runtime-environment-evidence-v1",
             "runtime_environment_facts": updated["runtime_environment_facts"],
@@ -1204,6 +1609,7 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
         provenance["runtime_environment_evidence"] = preflight["runtime_environment_evidence"]
         provenance["runtime_environment_evidence_artifact"] = "runtime-environment-evidence.json"
         provenance["transfer_location_binding"] = binding
+        provenance["uv_cache_binding_artifact"] = "codex/uv-cache-binding.json"
         base.write_json(Path(output) / "provenance.json", provenance)
         request_built = True
         return request
@@ -1218,6 +1624,15 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
             raise ValueError("outgoing_request_evidence_unreadable") from exc
         if sent != saved:
             raise ValueError("outgoing_request_changed_after_capture")
+        root_prompt = (lifecycle_context["directory"] / "root-prompt.txt").read_text(
+            encoding="utf-8")
+        outgoing_argv = _validate_uv_cache_request(sent, root_prompt, args.uv_cache_dir)
+        request_manifest = json.loads((Path(output) / "codex" /
+                                       "fixture-manifest.request.json").read_text(encoding="utf-8"))
+        if request_manifest.get("uv_cache_dir") != str(args.uv_cache_dir):
+            raise ValueError("uv_cache_manifest_binding_mismatch")
+        if _uv_cache_inventory(args.uv_cache_dir)["state"] != "EMPTY":
+            raise ValueError("uv_cache_not_empty_at_dispatch")
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
         request_body_sha256 = hashlib.sha256(request.data).hexdigest()
         binding = transfer_location.request_binding_record(
@@ -1240,6 +1655,12 @@ def _codex_host_with_runtime_capture(args, output, preflight, provenance,
         provenance["request_body_sha256"] = request_body_sha256
         provenance["transfer_location_binding"] = binding
         base.write_json(Path(output) / "provenance.json", provenance)
+        cache_evidence = args.uv_cache_evidence
+        cache_evidence["request_binding"]["request_body_sha256"] = request_body_sha256
+        cache_evidence["request_binding"]["dispatch_attempted"] = True
+        cache_evidence["request_binding"]["request_prompt_matches_saved_root_prompt"] = (
+            outgoing_argv[-1] == root_prompt)
+        _write_uv_cache_evidence(output, cache_evidence)
         # Last read-only snapshot before the one actual request. The support
         # script and installed consumer already exist at this boundary.
         before = lifecycle.collect_before(lifecycle_context["manifest"], lifecycle_context["consumer"])
@@ -1346,12 +1767,32 @@ def main(argv=None):
         print(json.dumps({"state": "CASE_NOT_STARTED", "reason_code": "output_directory_not_empty"}))
         return 2
     output.mkdir(parents=True, exist_ok=True)
+    args.uv_cache_evidence = None
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, base.stop_active)
     try:
         for source in (args.producer_root, args.fixture_root, args.eval_direnv_root):
             if overlaps(output, source):
                 raise ValueError("output_must_be_outside_source_roots")
+        args.uv_cache_dir = _prepare_run_uv_cache(output)
+        initial_cache_state = _uv_cache_inventory(args.uv_cache_dir)
+        if initial_cache_state["state"] != "EMPTY":
+            raise ValueError("uv_cache_not_empty_at_creation")
+        args.uv_cache_evidence = {
+            "schema": UV_CACHE_BINDING_SCHEMA,
+            "cache_dir": str(args.uv_cache_dir),
+            "creation": {
+                "state": "CREATED_EMPTY_WRITABLE",
+                "inventory": initial_cache_state,
+                "writability_probe": "created_and_removed_before_request",
+            },
+            "manifest_binding": None,
+            "root_prompt_binding": None,
+            "request_binding": None,
+            "cleanup": {"state": "PENDING"},
+            "remote_cache_proof_from_local_launcher_environment": False,
+        }
+        _write_uv_cache_evidence(output, args.uv_cache_evidence)
         check_entry_uniqueness()
         contract = load_contract()
         input_preflight = actual_input_observation_preflight(contract)
@@ -1430,6 +1871,15 @@ def main(argv=None):
         )
     finally:
         base.stop_active()
+        if args.uv_cache_evidence is not None:
+            cache_evidence = _finalize_run_uv_cache(output, args.uv_cache_evidence)
+            args.uv_cache_evidence = cache_evidence
+            if not cache_evidence["cleanup"]["confirmed_absent"]:
+                result = base.verdict(
+                    "INVALID_TEST_EXECUTION",
+                    "uv_cache_cleanup_unconfirmed",
+                    uv_cache_cleanup=cache_evidence["cleanup"],
+                )
         base.write_json(output / "final-verdict.json", result)
     base.progress("结束：" + (result.get("verdict") or result.get("state", "UNKNOWN")))
     return 0 if result.get("verdict") == "PASS" else 1

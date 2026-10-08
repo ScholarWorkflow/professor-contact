@@ -7,6 +7,16 @@ import preflight_issue68_environment_r30 as preflight
 
 
 class EnvironmentPreflightTests(unittest.TestCase):
+    def test_preflight_targets_the_r37_product_commit_used_by_formal_runner(self):
+        self.assertEqual(preflight.PRODUCER_SHA,
+                         "faab365d0be2bb66f2f285fdaa2927631dbf33f8")
+        self.assertEqual(preflight.PRODUCER_SHA, preflight.runner.PRODUCER_REVISION)
+
+    def test_preflight_targets_the_r37_shared_asset_commit_used_by_formal_runner(self):
+        self.assertEqual(preflight.FIXTURE_SHA,
+                         "d160ecb403c0f9e9c153f4b8383302a4b67664ab")
+        self.assertEqual(preflight.FIXTURE_SHA, preflight.runner.FIXTURE_SHA)
+
     def setUp(self):
         self.expected = {"marker": "synthetic", "value": "原编号"}
         self.command = "uv run --no-project python /private/tmp/synthetic/read.py"

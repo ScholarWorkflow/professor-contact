@@ -16,8 +16,9 @@ import issue68_lifecycle as lifecycle
 import run_issue68_stage5_routing_r19_codex as runner
 from build_issue68_codex_request_r12 import build_request
 
-PRODUCER_SHA = "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d"
+PRODUCER_SHA = runner.PRODUCER_REVISION
 FIXTURE_SHA = "d160ecb403c0f9e9c153f4b8383302a4b67664ab"
+RUN_ROOT_PREFIX = "pc68-r37-transfer-eval-preflight-"
 PROBE_SCHEMA = "issue68-r33-transfer-marker-v1"
 MARKER_NAME = ".issue68-r33-preflight-marker"
 MARKER_BYTES = b"issue68-r33-nonbusiness-transfer-marker\n"
@@ -411,7 +412,7 @@ def validate_transfer_root(path, protected_roots):
         raise ValueError("transfer_root_must_be_empty_directory")
     private_tmp = Path("/private/tmp").resolve()
     if (root.parent.parent != private_tmp
-            or not root.parent.name.startswith("pc68-r33-transfer-eval-preflight-")
+            or not root.parent.name.startswith(RUN_ROOT_PREFIX)
             or root.name != "transfer"):
         raise ValueError("transfer_root_requires_dedicated_private_tmp_run_directory")
     if any(runner.overlaps(root, other) for other in protected_roots):

@@ -6,6 +6,7 @@
 import importlib.util
 import hashlib
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -32,6 +33,66 @@ def load(name):
 verify = load("verify_issue68_stage5_routing_r19")
 entry = load("run_issue68_stage5_routing_r19_codex")
 command_event_binder = load("bind_issue68_preflight_command_event_r29")
+
+
+class TestOwnerTerminalResultExpectation(unittest.TestCase):
+    def setUp(self):
+        self.owner = {
+            "professor_dir": "/consumer/教授研究/試験 教授",
+            "expected_result": {"status": "needs_refresh", "reason_code": "verify_missing"},
+        }
+
+    def test_terminal_result_must_match_manifest_expected_status_and_reason(self):
+        expected = dict(self.owner["expected_result"], professor_dir=self.owner["professor_dir"])
+
+        outcome, problem = verify.owner_outcome([json.dumps(expected, ensure_ascii=False)], self.owner)
+
+        self.assertIsNone(problem)
+        self.assertEqual(outcome, expected)
+
+    def test_other_owner_terminal_status_or_reason_is_product_failure(self):
+        changed_results = (
+            {"status": "needs_input", "reason_code": "verify_missing"},
+            {"status": "needs_refresh", "reason_code": "other_reason"},
+        )
+        for changed in changed_results:
+            with self.subTest(changed=changed):
+                actual = dict(changed, professor_dir=self.owner["professor_dir"])
+                outcome, problem = verify.owner_outcome([json.dumps(actual, ensure_ascii=False)], self.owner)
+
+                self.assertIsNone(outcome)
+                self.assertEqual((problem["verdict"], problem["reason_code"]),
+                                 ("FAIL_PRODUCT", "owner_business_result_changed"))
+
+    def test_manifest_cannot_redefine_the_fixed_terminal_reason(self):
+        owner = {
+            "professor_dir": self.owner["professor_dir"],
+            "expected_result": {"status": "needs_refresh", "reason_code": "other_reason"},
+        }
+        actual = {"professor_dir": owner["professor_dir"],
+                  "status": "needs_refresh", "reason_code": "other_reason"}
+        outcome, problem = verify.owner_outcome([json.dumps(actual, ensure_ascii=False)], owner)
+
+        self.assertIsNone(outcome)
+        self.assertEqual((problem["verdict"], problem["reason_code"]),
+                         ("INVALID_EVIDENCE", "owner_expected_result_not_fixed"))
+
+    def test_initial_plan_envelope_is_not_a_terminal_owner_result(self):
+        initial_plan = {"status": "ok", "verify": {"試験 教授": "needs_recheck:missing"}}
+
+        outcome, problem = verify.owner_outcome([json.dumps(initial_plan, ensure_ascii=False)], self.owner)
+
+        self.assertIsNone(outcome)
+        self.assertEqual((problem["verdict"], problem["reason_code"]),
+                         ("FAIL_PRODUCT", "owner_business_result_missing"))
+
+    def test_root_prompt_separates_choices_array_from_context_object_and_terminal_result(self):
+        prompt = (RUNTIME / "prompts" / "issue68-stage5-root.txt").read_text(encoding="utf-8")
+
+        self.assertIn("Its `choices` value is the user's complete choices array", prompt)
+        self.assertIn("status=needs_refresh", prompt)
+        self.assertIn("reason_code=verify_missing", prompt)
+        self.assertIn("Do not run another plan call with `--result` or `--choices`", prompt)
 
 
 class TestIssue68RuntimeR25Preflight(unittest.TestCase):
@@ -84,11 +145,48 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
         self.assertEqual(problem["reason_code"], "owner_plan_carries_choices_scope")
 
-    def test_contract_records_the_r25_source_and_keeps_gate_two_incomplete(self):
+    def test_contract_pins_r37_source_and_keeps_gate_two_incomplete(self):
         contract = entry.load_contract()
         observation = contract["codex"]["owner_business_input_observation"]
 
         self.assertEqual(contract["revision"], entry.CONTRACT_REVISION)
+        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r37-2026-10-08")
+        self.assertEqual(contract["producer_revision"],
+                         "faab365d0be2bb66f2f285fdaa2927631dbf33f8")
+        self.assertEqual(contract["producer_revision"], entry.PRODUCER_REVISION)
+        self.assertEqual(contract["formal_runtime_environment"]["fixed_plan_inputs"][
+            "producer_revision"], entry.PRODUCER_REVISION)
+        self.assertIn("status: needs_refresh", contract["codex"]["owner_terminal_result_expectation"])
+        self.assertIn("reason_code: verify_missing", contract["codex"]["owner_terminal_result_expectation"])
+        historical_install = contract["preflight"]["r31_install_retry_results"]
+        self.assertEqual(historical_install["record_scope"],
+                         "historical_r31_install_preflight_only")
+        self.assertEqual(historical_install["resolved_product_commit"],
+                         "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d")
+        self.assertIs(historical_install["resolved_product_commit_is_historical"], True)
+        self.assertIs(historical_install["formal_run_allowed"], False)
+        historical_environment = contract["preflight"]["r31_environment_preflight_attempts"]
+        self.assertEqual(historical_environment["record_scope"],
+                         "historical_r31_environment_preflight_only")
+        self.assertIs(historical_environment["formal_run_allowed"], False)
+        self.assertTrue(all(attempt["formal_run_allowed"] is False
+                            for attempt in historical_environment["history"]))
+        steps = {step["step"]: step for step in contract["pc68_r1_steps"]}
+        root_partition = steps["R1-1-discover-and-partition"]
+        self.assertIn("只保存用户提供的 choices 数组", root_partition["input"])
+        self.assertIn("发现路径必须原样沿用", root_partition["input"])
+        self.assertIn("一次调用完整分配全部正式 owner", root_partition["event"])
+        self.assertIn("root线程当前turn实际消费的教授结果回执",
+                      steps["R1-5-child-result-consumption"]["output"])
+        self.assertIn("恰好一次", steps["R1-6-root-overview-and-final-report"]["event"])
+        cleanup = steps["R1-7-isolation-and-cleanup"]
+        self.assertIn("本次请求新建的 handoff 文件", cleanup["input"])
+        self.assertIn("旧R36无效记录", cleanup["stop"])
+        self.assertIn("独立计划审核", cleanup["stop"])
+        self.assertIn("Gate 2 PASS + COMPLETE", cleanup["stop"])
+        self.assertIn("全新预检", cleanup["stop"])
+        self.assertIn("唯一一次", cleanup["stop"])
+        self.assertNotIn("正式许可保持关闭", cleanup["stop"])
         self.assertEqual(observation["status"], "supported")
         self.assertEqual(observation["schema"], verify.OWNER_OBSERVATION_SCHEMA)
         self.assertEqual(observation["source"],
@@ -124,6 +222,107 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertIn("执行器取实际编码分支及源摘要", runtime["validation"])
         self.assertIn("不取监听进程或主机编号", runtime["validation"])
 
+    def test_formal_runner_binds_one_run_cache_to_manifest_and_request_prompt(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "output"
+            output.mkdir()
+            cache = entry._prepare_run_uv_cache(output)
+            manifest = {}
+            prompt = "Root instruction uses {{UV_CACHE_DIR}} and repeats {{UV_CACHE_DIR}}."
+
+            bound_prompt = entry._bind_uv_cache_prompt(manifest, prompt, cache)
+            request = entry.base.build_request(output, bound_prompt)
+            request_command = shlex.split(request["command"])
+
+            self.assertTrue(cache.is_absolute())
+            self.assertEqual(cache, (output / "uv-cache").resolve())
+            self.assertEqual(manifest["uv_cache_dir"], str(cache))
+            self.assertEqual(request_command[-1], bound_prompt)
+            self.assertIn(str(cache), request_command[-1])
+            self.assertNotIn("{{UV_CACHE_DIR}}", request_command[-1])
+            self.assertEqual(list(cache.iterdir()), [])
+            probe = cache / ".writable-probe"
+            probe.write_text("writable", encoding="utf-8")
+            probe.unlink()
+
+    def test_uv_cache_lifecycle_evidence_records_post_run_inventory_and_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "output"
+            output.mkdir()
+            cache = entry._prepare_run_uv_cache(output)
+            evidence = {
+                "schema": entry.UV_CACHE_BINDING_SCHEMA,
+                "cache_dir": str(cache),
+                "creation": entry._uv_cache_inventory(cache),
+            }
+            (cache / "remote-cache-entry").write_bytes(b"synthetic cache")
+
+            finalized = entry._finalize_run_uv_cache(output, evidence)
+
+            self.assertEqual(finalized["after_run"]["entry_count"], 1)
+            self.assertTrue(finalized["cleanup"]["confirmed_absent"])
+            self.assertFalse(cache.exists())
+            artifact = output / "codex" / "uv-cache-binding.json"
+            self.assertEqual(json.loads(artifact.read_text()), finalized)
+            self.assertFalse((output / "uv-cache-binding.pending.json").exists())
+
+    def test_uv_cache_evidence_is_staged_outside_codex_before_install(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "output"
+            output.mkdir()
+            evidence = {"schema": entry.UV_CACHE_BINDING_SCHEMA, "cache_dir": "/tmp/run/uv-cache"}
+            entrypoint = Path(temp_dir) / "contact_state.py"
+            entrypoint.write_text("synthetic entrypoint", encoding="utf-8")
+
+            def fake_run(_command, consumer, _log_dir, timeout=240, env=None):
+                (Path(consumer) / "apm.lock.yaml").write_text("lock\n")
+                return 0
+
+            staged = entry._write_uv_cache_evidence(output, evidence)
+
+            self.assertEqual(staged, output / "uv-cache-binding.pending.json")
+            self.assertFalse((output / "codex").exists())
+            self.assertEqual(json.loads(staged.read_text(encoding="utf-8")), evidence)
+
+            with mock.patch.object(entry.base, "run", side_effect=fake_run), \
+                    mock.patch.object(entry.base, "installed_script", return_value=entrypoint), \
+                    mock.patch.object(entry.base, "prepare", return_value={"prepared": True}), \
+                    mock.patch.object(entry.base, "archive_config"):
+                directory, _consumer, _manifest = entry.base.install_host(
+                    SimpleNamespace(producer_sha="synthetic-producer"), output, "codex")
+
+            self.assertEqual(directory, output / "codex")
+            published = entry._publish_uv_cache_evidence(output)
+
+            self.assertEqual(published, output / "codex" / "uv-cache-binding.json")
+            self.assertFalse(staged.exists())
+            self.assertEqual(json.loads(published.read_text(encoding="utf-8")), evidence)
+
+    def test_uv_cache_evidence_rejects_symlinked_codex_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "output"
+            output.mkdir()
+            outside = Path(temp_dir) / "outside"
+            outside.mkdir()
+            (output / "codex").symlink_to(outside, target_is_directory=True)
+
+            with self.assertRaisesRegex(ValueError, "uv_cache_evidence_directory_invalid"):
+                entry._write_uv_cache_evidence(output, {"schema": "synthetic"})
+
+    def test_uv_cache_policy_and_capture_schema_are_r37(self):
+        contract = entry.load_contract()
+        policy = contract["uv_cache_policy"]
+        capture = contract["codex"]["owner_business_input_observation"][
+            "envelope"]["pc68_fixed_capture"]
+
+        self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r37-2026-10-08")
+        self.assertEqual(policy["directory"], "PC68_OUTPUT_ROOT/uv-cache")
+        self.assertEqual(policy["manifest_key"], "uv_cache_dir")
+        self.assertEqual(policy["root_prompt_placeholder"], "{{UV_CACHE_DIR}}")
+        self.assertIn("HTTP", policy["environment_boundary"])
+        self.assertEqual(capture["schema"], "issue-68-test-plan-r37-fixed-owner-capture-v1")
+        self.assertIn("uv_cache_dir", capture)
+
     def test_contract_claim_alone_cannot_enable_the_runner(self):
         contract = entry.load_contract()
         contract["codex"]["owner_business_input_observation"] = {
@@ -147,6 +346,33 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertIsNone(gate["reason_code"])
         self.assertTrue(gate["technical_preflight_ready"])
         self.assertEqual(gate["technical_preflight_block_reasons"], [])
+
+    def test_preflight_separates_historical_r29_capture_from_current_r37_cache_capture(self):
+        gate = entry.actual_input_observation_preflight(entry.load_contract())
+
+        self.assertTrue(gate["ready"])
+        capture = gate["synthetic_capture"]
+        self.assertEqual(capture["historical_capture_record_scope"],
+                         "historical_r29_r25_capture_only")
+        self.assertEqual(capture["historical_capture_schema"],
+                         "issue-68-test-plan-r25-fixed-owner-capture-v1")
+        self.assertIsNone(capture["historical_capture_uv_cache_dir"])
+        current = capture["r37_cache_capture_verification"]
+        self.assertEqual(current["state"], "PASS")
+        self.assertEqual(current["capture_schema"], verify.OWNER_CAPTURE_SCHEMA)
+        self.assertEqual(current["wrapper_sha256"], verify.OWNER_CAPTURE_SHA256)
+        self.assertTrue(Path(current["uv_cache_dir"]).is_absolute())
+
+    def test_preflight_fails_closed_when_current_r37_cache_capture_fails(self):
+        with mock.patch.object(entry, "_current_r37_cache_capture_preflight",
+                               return_value=(None, {
+                                   "state": "INVALID_TEST_EXECUTION",
+                                   "reason_code": "r37_uv_cache_capture_invalid"})):
+            gate = entry.actual_input_observation_preflight(entry.load_contract())
+
+        self.assertFalse(gate["ready"])
+        self.assertEqual(gate["reason_code"], "r37_uv_cache_capture_invalid")
+        self.assertIn("r37_uv_cache_capture_invalid", gate["technical_preflight_block_reasons"])
 
     def test_r25_observation_support_keeps_runtime_facts_separate_from_invocation(self):
         contract = entry.load_contract()
@@ -674,6 +900,8 @@ class OwnerObservationTests(unittest.TestCase):
         self.handoff_file.write_text(json.dumps(self.packet, ensure_ascii=False), encoding="utf-8")
         self.consumer = Path(self.temp.name) / "consumer"
         self.consumer.mkdir()
+        self.uv_cache_dir = (Path(self.temp.name) / "uv-cache").resolve()
+        self.uv_cache_dir.mkdir()
         self.entrypoint = self.consumer / ".agents/skills/professor-contact/scripts/contact_state.py"
         self.entrypoint.parent.mkdir(parents=True)
         source_entrypoint = RUNTIME.parent.parent / "scripts/contact_state.py"
@@ -682,14 +910,16 @@ class OwnerObservationTests(unittest.TestCase):
         self.wrapper = self.consumer / ".pc68-test-support" / verifier.OWNER_CAPTURE_NAME
         self.wrapper.parent.mkdir()
         shutil.copy2(verifier.OWNER_CAPTURE_SOURCE, self.wrapper)
-        self.command_argv = ["uv", "run", "--no-project", "python", str(self.wrapper),
+        self.command_argv = [f"UV_CACHE_DIR={self.uv_cache_dir}", "uv", "run", "--no-project", "python", str(self.wrapper),
                              "--action", "stage5-plan", "--owner-input-file",
                              str(self.handoff_file), "--contact-state", str(self.entrypoint)]
-        self.manifest = {"program_root": str(self.root), "owners": [{
+        self.manifest = {"program_root": str(self.root), "uv_cache_dir": str(self.uv_cache_dir), "owners": [{
             "professor": "甲教授", "professor_dir": str(self.prof), "email_pack": str(self.pack),
             "email_ids": [self.email["email_id"]], "result": str(self.root / "raw.json"),
+            "expected_result": {"status": "needs_refresh", "reason_code": "verify_missing"},
             "expected_choices_rows": self.packet["choices"],
-            "sibling_exclusions": ["乙教授", "sibling-pack", "choices_scope"],
+            "sibling_exclusions": ["乙教授", "sibling-pack", "choices_scope",
+                                   str(self.root / "sibling-raw.json")],
         }], "pre_run_hashes": {str(self.pack): hashlib.sha256(self.pack.read_bytes()).hexdigest()}}
         # Independent expectations and synthetic current-run root return are
         # separate objects; neither is reconstructed from the professor read.
@@ -713,12 +943,17 @@ class OwnerObservationTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def uv_cache_command(self, argv):
+        return shlex.join([f"UV_CACHE_DIR={self.uv_cache_dir}", *argv])
+
     @staticmethod
     def _canonical(value):
         return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 
     def call(self, *, call_id="cmd-1", command=None):
-        completed = subprocess.run(self.command_argv, cwd=self.consumer, capture_output=True, text=True)
+        completed = subprocess.run(
+            self.command_argv[1:], cwd=self.consumer, capture_output=True, text=True,
+            env={**os.environ, "UV_CACHE_DIR": str(self.uv_cache_dir)})
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return {"id": call_id, "generation": "synthetic-run", "thread": "synthetic-owner",
                 "start": 1, "end": 2, "command": command or shlex.join(self.command_argv),
@@ -788,9 +1023,9 @@ class OwnerObservationTests(unittest.TestCase):
     def partition_call(self, owners=None):
         return {"id": "partition-1", "generation": "synthetic-run", "thread": "synthetic-root",
                 "start": 0, "end": 1,
-                "command": shlex.join(["uv", "run", "python", str(self.entrypoint),
-                                       "stage5-partition-choices", "--program-root", str(self.root),
-                                       "--owner", str(self.pack), "--choices", str(self.root / "choices.json")]),
+                "command": self.uv_cache_command(["uv", "run", "python", str(self.entrypoint),
+                                                   "stage5-partition-choices", "--program-root", str(self.root),
+                                                   "--owner", str(self.pack), "--choices", str(self.root / "choices.json")]),
                 "output": json.dumps({"status": "ok", "owners": owners if owners is not None
                                       else self.actual_partition}, ensure_ascii=False)}
 
@@ -849,10 +1084,10 @@ class OwnerObservationTests(unittest.TestCase):
                            "message": {"method": method, "params": {
                                "threadId": thread, "turnId": "synthetic-turn",
                                "item": item}}})
-        command = shlex.join(["uv", "run", "python", str(self.entrypoint),
-                              "stage5-list-inputs", "--program-root", str(self.root)]
-                             + (["--emit-choices-scope", str(self.root / "scope.json")]
-                                if scope else []))
+        command = self.uv_cache_command(["uv", "run", "python", str(self.entrypoint),
+                                         "stage5-list-inputs", "--program-root", str(self.root)]
+                                        + (["--emit-choices-scope", str(self.root / "scope.json")]
+                                           if scope else []))
         item = {"type": "commandExecution", "id": "discovery", "command": command}
         event("item/started", item)
         event("item/completed", dict(item, aggregatedOutput="{}", exitCode=0))
@@ -890,6 +1125,16 @@ class OwnerObservationTests(unittest.TestCase):
         result = verifier.verify_codex(response, adapter, self.manifest)
         self.assertEqual(result["verdict"], "BLOCKED_OBSERVABILITY")
 
+    def test_full_entry_rejects_manifest_with_nonfixed_terminal_reason(self):
+        self.manifest["owners"][0]["expected_result"] = {
+            "status": "needs_refresh", "reason_code": "other_reason"}
+        response, adapter = self.incomplete_runtime()
+
+        result = verifier.verify_codex(response, adapter, self.manifest)
+
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("INVALID_EVIDENCE", "owner_expected_result_not_fixed"))
+
     def ambiguous_runtime(self, *, scope=False):
         response, adapter = self.incomplete_runtime(scope=scope)
         events = response["output"]["app_server_events"]
@@ -922,8 +1167,8 @@ class OwnerObservationTests(unittest.TestCase):
                 "status": "ok", "inputs": [{"email_pack": str(self.pack), "status": "ok"}]})
         else:
             if fact == "rebuild":
-                command = shlex.join(["uv", "run", "python", str(self.entrypoint),
-                                      "stage5-rebuild-overview", "--program-root", str(self.root)])
+                command = self.uv_cache_command(["uv", "run", "python", str(self.entrypoint),
+                                                 "stage5-rebuild-overview", "--program-root", str(self.root)])
                 item = {"type": "commandExecution", "id": "rebuild-1", "command": command}
                 first = [{"runtime_generation": 1, "message": {"method": method, "params": {
                     "threadId": "synthetic-root", "turnId": "synthetic-turn", "item": value}}}
@@ -1365,7 +1610,12 @@ class OwnerObservationTests(unittest.TestCase):
 
     def test_echoed_valid_envelope_without_fixed_capture_command_is_invalid(self):
         call = self.call()
-        call["command"] = "echo stage5-plan " + shlex.quote(call["output"])
+        call["command"] = self.uv_cache_command([
+            "uv", "run", "--no-project", "python", str(self.entrypoint),
+            "stage5-plan", "--program-root", str(self.root),
+            "--email-pack", str(self.pack), "--email-id", self.email["email_id"],
+            "--template", str(self.template), "--mode", "first",
+        ])
         rows, problem = verifier.consumed_business_objects([call], self.manifest)
         self.assertEqual(rows, [])
         self.assertEqual(problem["verdict"], "INVALID_EVIDENCE")
@@ -1434,6 +1684,25 @@ class OwnerObservationTests(unittest.TestCase):
 
     def test_sibling_business_data_in_the_observed_input_are_a_product_failure(self):
         call = self.write_packet(lambda packet: packet.__setitem__("sibling_data", "乙教授"))
+        rows, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertIsNone(problem)
+        _, problem = self.judge_owner(rows)
+        self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
+        self.assertEqual(problem["reason_code"], "owner_input_contains_sibling_data")
+
+    def test_owner_packet_uses_one_result_path_and_rejects_the_global_result_map(self):
+        call = self.call()
+        rows, problem = verifier.consumed_business_objects([call], self.manifest)
+        self.assertIsNone(problem)
+        self.assertEqual(rows[0]["packet"]["result"], self.manifest["owners"][0]["result"])
+        self.assertNotIn("raw_results_by_professor_dir", rows[0]["packet"])
+
+        global_results = {
+            str(self.prof): self.manifest["owners"][0]["result"],
+            str(self.root / "乙教授"): str(self.root / "sibling-raw.json"),
+        }
+        call = self.write_packet(lambda packet: packet.__setitem__(
+            "raw_results_by_professor_dir", global_results))
         rows, problem = verifier.consumed_business_objects([call], self.manifest)
         self.assertIsNone(problem)
         _, problem = self.judge_owner(rows)
@@ -1596,7 +1865,6 @@ class OwnerObservationTests(unittest.TestCase):
                  "--target", "codex", "--trust-transitive-mcp"],
                 240, None,
             )])
-
 
 if __name__ == "__main__":
     unittest.main()

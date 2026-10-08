@@ -13,9 +13,14 @@ import preflight_issue68_transfer_location_eval_r33 as preflight
 
 
 class TestIssue68TransferLocationEvalPreflight(unittest.TestCase):
+    def test_preflight_targets_the_r37_product_commit_used_by_formal_runner(self):
+        self.assertEqual(preflight.PRODUCER_SHA,
+                         "faab365d0be2bb66f2f285fdaa2927631dbf33f8")
+        self.assertEqual(preflight.PRODUCER_SHA, preflight.runner.PRODUCER_REVISION)
+
     def setUp(self):
         self.run_directory = tempfile.TemporaryDirectory(
-            prefix="pc68-r33-transfer-eval-preflight-", dir="/private/tmp")
+            prefix=preflight.RUN_ROOT_PREFIX, dir="/private/tmp")
         self.addCleanup(self.run_directory.cleanup)
         self.run_root = Path(self.run_directory.name)
         self.root = str(self.run_root / "transfer")
@@ -47,7 +52,7 @@ class TestIssue68TransferLocationEvalPreflight(unittest.TestCase):
         self.assertEqual(cache_dir, self.run_root / ".uv-cache")
         self.assertNotEqual(cache_dir, Path(self.root).resolve())
         with tempfile.TemporaryDirectory(
-                prefix="pc68-r33-transfer-eval-preflight-", dir="/private/tmp") as other:
+                prefix=preflight.RUN_ROOT_PREFIX, dir="/private/tmp") as other:
             other_transfer = Path(other) / "transfer"
             other_transfer.mkdir()
             other_command = preflight.build_marker_command(
@@ -476,6 +481,18 @@ class TestIssue68TransferLocationEvalPreflight(unittest.TestCase):
 
     def test_transfer_root_requires_dedicated_private_tmp_run_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "transfer"
+            root.mkdir()
+            with self.assertRaisesRegex(ValueError, "dedicated_private_tmp"):
+                preflight.validate_transfer_root(root, [])
+
+    def test_run_directory_prefix_matches_r37_plan(self):
+        self.assertEqual(preflight.RUN_ROOT_PREFIX,
+                         "pc68-r37-transfer-eval-preflight-")
+
+    def test_stale_r33_run_directory_prefix_is_rejected(self):
+        with tempfile.TemporaryDirectory(
+                prefix="pc68-r33-transfer-eval-preflight-", dir="/private/tmp") as temporary:
             root = Path(temporary) / "transfer"
             root.mkdir()
             with self.assertRaisesRegex(ValueError, "dedicated_private_tmp"):

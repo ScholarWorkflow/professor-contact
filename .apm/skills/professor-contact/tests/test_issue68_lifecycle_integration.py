@@ -234,7 +234,7 @@ class ComposedEntryTests(unittest.TestCase):
         self.other.write_text('{"request":"other"}')
         self.manifest["protected_other_request_files"] = [str(self.other)]
         for owner in self.manifest["owners"]:
-            owner["expected_result"] = {"status": "needs_refresh", "reason_code": "needs_recheck"}
+            owner["expected_result"] = {"status": "needs_refresh", "reason_code": "verify_missing"}
         for packet in self.packets:
             packet.pop("email_id")
         for owner in self.manifest["partition"]["owners"]:
@@ -297,7 +297,7 @@ class ComposedEntryTests(unittest.TestCase):
             event("item/started", item, thread)
             event("item/completed", dict(item, aggregatedOutput=output, exitCode=0), thread)
         def product(action, *flags):
-            return shlex.join(["uv", "run", "python", str(f.entrypoint), action,
+            return shlex.join([f"UV_CACHE_DIR={f.uv_cache_dir}", "uv", "run", "python", str(f.entrypoint), action,
                                "--program-root", str(f.root), *flags])
         choices_path = f.root / "original-choices.json"
         partition_path = f.root / "partition.json"

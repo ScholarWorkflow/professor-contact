@@ -1,0 +1,99 @@
+{
+  "schema": "issue-68-pc68-r1-execution-attempts-v1",
+  "record_revision": "r37-pc68-r1-execution-attempts-2026-10-08",
+  "date": "2026-10-08",
+  "plan": {
+    "id": "issue-68-test-plan-r37-2026-10-08",
+    "sha256": "00c9cc4888d4d6e0529af9613cfab16ee7d171c70a052a8aeabe90aefc156fbf"
+  },
+  "planned_formal_request_id": "issue68-r37-pc68-r1-20261008-01",
+  "startup_attempts": [
+    {
+      "attempt_id": "issue68-r37-pc68-r1-bootstrap-20261008-01",
+      "case": "PC68-R1",
+      "state": "CASE_NOT_STARTED",
+      "reason_code": "output_codex_directory_already_exists",
+      "reason_detail_redacted": "The runner stopped with FileExistsError while creating the codex output directory.",
+      "output_root_alias": "PC68_R37_FORMAL_ATTEMPT01_RAW",
+      "formal_request_id_serialized": false,
+      "run_id_observed": false,
+      "formal_request_sent": false,
+      "formal_request_count": 0,
+      "request_boundary_crossed": false,
+      "formal_request_artifacts_absent": [
+        "case-started.json",
+        "codex/codex-request.json",
+        "codex/codex-response.json"
+      ],
+      "root_cause": "The R37 wrapper staged uv-cache-binding.json inside output/codex before base.install_host tried to create that directory; installation failed before any formal request could be sent.",
+      "resolution": "The wrapper now stages the evidence outside codex, creates codex through base.install_host, then publishes the evidence. Regression coverage exercises the install and publication sequence.",
+      "raw_artifacts_retained_locally": true,
+      "raw_artifacts_included_in_repository": false,
+      "raw_artifact_sha256": {
+        "final-verdict.json": "cf8d0c652211484c7c869b4f8234f267df82d1a9aebe2a72dc5f94c8b706e1c0",
+        "codex-verdict.json": "cf8d0c652211484c7c869b4f8234f267df82d1a9aebe2a72dc5f94c8b706e1c0",
+        "input-evidence-preflight.json": "c1311b0c5b1c230747480a0ef062c55923c7396c9f178db5fd197d4c3bf49d82",
+        "provenance.json": "b39c528fe6a5db5a5da0271caa2f433fec6e4b267d3b5532217be757c78ec182",
+        "eval-service-provenance.before.json": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+        "eval-service-provenance.after.json": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+        "codex/uv-cache-binding.json": "eb97742f43a19920058e3ad1d211df2f37c888265af7e7dfb793c3c12d11a4dc"
+      },
+      "request_count_basis": [
+        "Both runner verdict artifacts are CASE_NOT_STARTED with the output-directory creation error.",
+        "No case-started, request, or response artifact exists in the retained output directory.",
+        "The evaluation-service provenance before and after the attempt has the same SHA-256."
+      ]
+    }
+  ],
+  "formal_request_count": 1,
+  "planned_formal_request_id_status": "sent_once_no_retry_per_plan",
+  "retry_boundary": "The single planned formal request was sent once and failed. Do not retry or resend it under this plan; any future request requires a new plan revision and fresh independent reviews.",
+  "third_gate": "FAIL_PRODUCT / owner_result_path_changed; lifecycle proof separately BLOCKED_OBSERVABILITY",
+  "merge_ready": false,
+  "formal_request_attempts": [
+    {
+      "attempt_id": "issue68-r37-pc68-r1-20261008-01",
+      "output_root_alias": "PC68_R37_FORMAL_ATTEMPT02_RAW",
+      "case": "PC68-R1",
+      "state": "CASE_STARTED",
+      "formal_request_sent": true,
+      "formal_request_count": 1,
+      "request_boundary_crossed": true,
+      "final_verdict": "FAIL_PRODUCT",
+      "reason_code": "owner_result_path_changed",
+      "source_sha256": {
+        "final-verdict.json": "d82e77f6b74df6241cc41cfdec1b764c26c0c965d709725aefd151516dd84913",
+        "codex-verdict.json": "d82e77f6b74df6241cc41cfdec1b764c26c0c965d709725aefd151516dd84913",
+        "codex/codex-response.json": "72d82b4c3e078beb39fb4856b6564922054299de147d95927cb33985ba8d3715",
+        "codex/lifecycle-evidence.json": "0473b85332463cd88b3f6ae3b4f4be17347107f890f89c514cf0ab39ae50bcb9",
+        "codex/fixture-manifest.json": "ebe571b0274ed0abba4378603765e5686b1ad38000d72f0afb508acb48fd393a"
+      },
+      "execution_facts": {
+        "choices_file_contained_only_choices_array": true,
+        "discovered_professor_paths_preserved_exactly": true,
+        "complete_root_partition_calls": 1,
+        "owner_handoffs": 2,
+        "owner_handoff_result_scalar_missing": true,
+        "owner_handoffs_leaked_global_result_map": true,
+        "professor_terminal_results": [
+          {"status": "needs_refresh", "reason_code": "verify_missing"},
+          {"status": "needs_refresh", "reason_code": "verify_missing"}
+        ],
+        "overview_calls": 1,
+        "overview_result": {"status": "error", "reason_code": "missing_email_pack"},
+        "request_owned_transfer_files_removed": true,
+        "lifecycle_proof": {
+          "verdict": "BLOCKED_OBSERVABILITY",
+          "reason_code": "transfer_creation_and_cleanup_unobservable",
+          "partition_returns_observed": 0,
+          "owner_reads_observed": 2,
+          "handoffs_observed": 2,
+          "successful_cleanup_commands_observed": 1
+        }
+      },
+      "raw_artifacts_retained_locally": true,
+      "raw_artifacts_included_in_repository": false,
+      "retry_authorized": false
+    }
+  ]
+}
