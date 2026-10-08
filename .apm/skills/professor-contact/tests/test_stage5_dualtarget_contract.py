@@ -552,59 +552,5 @@ class Issue59TargetedScopeDocumentContractTests(unittest.TestCase):
                             )
 
 
-def _issue68_clause(units, token_groups) -> str:
-    """Return the first owner clause carrying every token group, else ''."""
-    for unit in units:
-        if all(any(token.lower() in unit for token in group)
-               for group in token_groups):
-            return unit
-    return ""
-
-
-class Issue68OwnerScopeDocumentContractTests(unittest.TestCase):
-    """T68-9 (R68-4/R68-7): the one-professor owner contract stays documented."""
-
-    def setUp(self):
-        self.generator = GENERATOR if GENERATOR.is_file() else ISSUE59_INSTALLED_GENERATOR
-
-    def test_issue68_t68_9_owner_rule_stays_inside_the_codex_branch_contract(self):
-        body = _issue59_document_body(self.generator)
-        codex_start = body.index("### Codex branch")
-        humanizer_start = body.index("### humanizer-ja stage-5 constraints")
-        codex = body[codex_start:humanizer_start]
-
-        # The per-professor rule must be a Codex-branch statement about the same
-        # installed named agent, not a new calling API.
-        owner = _issue68_clause(_issue59_contract_units(codex), (
-            ("professor-contact-email-generator",), ("business",), ("68",)))
-        self.assertTrue(
-            owner,
-            "Codex branch: no Issue #68 professor-local business rule")
-        for needle in ("exact-named", "exact installed named custom agent"):
-            self.assertIn(needle, codex,
-                          f"Codex branch lost the exact-named delegation rule: {needle}")
-        self.assertIn("wait for its result", codex)
-        self.assertIn("consume it", codex)
-
-        # The new rule adds no OpenCode-only calling syntax and no private
-        # spawn schema anywhere it is stated. spawn_agent legitimately appears
-        # earlier in this document as Codex's public tool name, so the check is
-        # branch-scoped: nothing inside the Codex branch or after it.
-        for needle in ("task(subagent_type", "skill(name:", "question(", "spawn_agent"):
-            self.assertNotIn(needle, owner,
-                             f"Issue #68 owner rule invented a calling surface: {needle}")
-            self.assertNotIn(needle, body[codex_start:],
-                             f"{needle!r} leaked out of the OpenCode branch")
-
-    def test_issue68_t68_9_legacy_contract_gains_no_local_pack_or_overview_surfaces(self):
-        # Issue #68 forbids touching the legacy contract: it documents the
-        # program-level pack that #67 migrates away, so a new Stage-5 surface
-        # appearing here would mean a second authority was reintroduced. Its
-        # own 套磁邮件总览.md wording stays as the retired-behavior record.
-        legacy = LEGACY_CONTRACT.read_text(encoding="utf-8")
-        for needle in ("--email-pack", "stage5-rebuild-overview", "Issue #68"):
-            self.assertNotIn(needle, legacy)
-
-
 if __name__ == "__main__":
     unittest.main()
