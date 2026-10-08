@@ -10,6 +10,25 @@ import uuid
 from pathlib import Path
 
 SCHEMA = "issue68-r31-lifecycle-v1"
+DIRENV_UNLOADING_PREFIX = "\x1b[0mdirenv: unloading\n"
+
+
+def _strict_json_command_output(text):
+    """Parse one command JSON value, allowing only the observed direnv prefix."""
+    if not isinstance(text, str):
+        raise TypeError("command_output_not_text")
+    if text.startswith(DIRENV_UNLOADING_PREFIX):
+        text = text[len(DIRENV_UNLOADING_PREFIX):]
+
+    def unique_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate_json_key")
+            result[key] = value
+        return result
+
+    return json.loads(text, object_pairs_hook=unique_pairs)
 
 
 class MissingEventObservation(ValueError):
@@ -231,7 +250,7 @@ def collect_lifecycle(before, manifest, consumer, response, input_verifier, afte
                 return_parse_state = "unobservable"
             else:
                 try:
-                    returned = json.loads(raw_return)
+                    returned = _strict_json_command_output(raw_return)
                     return_parse_state = "parsed"
                 except (TypeError, ValueError):
                     returned = None

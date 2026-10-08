@@ -266,6 +266,26 @@ class LifecycleEvidenceTests(unittest.TestCase):
             "verdict": "BLOCKED_OBSERVABILITY",
             "reason_code": "transfer_creation_and_cleanup_unobservable"})
 
+    def test_collector_accepts_known_direnv_prefix_before_partition_json(self):
+        returned = {"status": "ok", "owners": []}
+        result = self.collect_partition_output(
+            "\x1b[0mdirenv: unloading\n" + json.dumps(returned))
+        partition = result["partition_returns"][0]
+        self.assertEqual(partition["actual_return"], returned)
+        self.assertEqual(partition["actual_return_parse_state"], "parsed")
+        self.assertNotEqual(result["lifecycle_capability"]["proof"]["verdict"],
+                            "INVALID_EVIDENCE")
+
+    def test_collector_rejects_multiple_json_values_after_known_direnv_prefix(self):
+        result = self.collect_partition_output(
+            "\x1b[0mdirenv: unloading\n{" + '"status":"ok","owners":[]}' + "\n{}")
+        partition = result["partition_returns"][0]
+        self.assertIsNone(partition["actual_return"])
+        self.assertEqual(partition["actual_return_parse_state"], "invalid_json")
+        self.assertEqual(result["lifecycle_capability"]["proof"], {
+            "verdict": "INVALID_EVIDENCE",
+            "reason_code": "lifecycle_partition_return_unparseable"})
+
     def test_partition_stdout_does_not_require_extra_cat(self):
         evidence = self.complete_evidence()
         evidence["file_operations"] = [op for op in evidence["file_operations"]

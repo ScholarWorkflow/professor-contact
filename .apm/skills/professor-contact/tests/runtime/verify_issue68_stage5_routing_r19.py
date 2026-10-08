@@ -27,6 +27,7 @@ OWNER_CAPTURE_SOURCE = Path(__file__).resolve().parent / OWNER_CAPTURE_NAME
 # This digest is pinned to the fixed, repository-owned capture implementation.
 OWNER_CAPTURE_SHA256 = "7e534f76b7ba837a415b9b9a38ecda4a0fb1fe62fbf6d5b2575119319ff4eaa9"
 OWNER_CAPTURE_COMMAND_PREFIX = ["uv", "run", "--no-project", "python"]
+DIRENV_UNLOADING_PREFIX = "\x1b[0mdirenv: unloading\n"
 
 
 def _valid_generation(value):
@@ -332,6 +333,15 @@ def _strict_json_value(text):
         return result
 
     return json.loads(text, object_pairs_hook=unique_pairs)
+
+
+def _strict_json_command_output(text):
+    """Parse one command JSON result with only the known direnv prefix allowed."""
+    if not isinstance(text, str):
+        raise TypeError("command_output_not_text")
+    if text.startswith(DIRENV_UNLOADING_PREFIX):
+        text = text[len(DIRENV_UNLOADING_PREFIX):]
+    return _strict_json_value(text)
 
 
 def _strict_json_object(text):
@@ -963,6 +973,7 @@ def _actual_root_partition(calls, manifest, root):
     as the source of the professor handoff comparison.
     """
     partitions, call_ids = [], set()
+    failures, invalids, blockers = [], [], []
     for call in calls:
         if call.get("thread") != root:
             continue
@@ -978,37 +989,53 @@ def _actual_root_partition(calls, manifest, root):
                 or not _valid_generation(call.get("generation")) \
                 or not isinstance(call.get("start"), int) or not isinstance(call.get("end"), int) \
                 or call["end"] <= call["start"]:
-            return None, verdict("INVALID_EVIDENCE", "root_partition_call_association_invalid")
+            invalids.append(verdict("INVALID_EVIDENCE", "root_partition_call_association_invalid"))
+            continue
         call_ids.add(call_id)
         if parsed and parsed.get("problem"):
-            return None, verdict("FAIL_PRODUCT", parsed["problem"])
+            failures.append(verdict("FAIL_PRODUCT", parsed["problem"]))
+            continue
         output = call.get("output")
         if not isinstance(output, str) or not output.strip():
-            return None, verdict("BLOCKED_OBSERVABILITY", "root_partition_result_unobservable")
+            blockers.append(verdict("BLOCKED_OBSERVABILITY", "root_partition_result_unobservable"))
+            continue
         try:
-            payload = _strict_json_value(output)
+            payload = _strict_json_command_output(output)
         except (ValueError, TypeError):
-            return None, verdict("INVALID_EVIDENCE", "root_partition_result_malformed")
+            invalids.append(verdict("INVALID_EVIDENCE", "root_partition_result_malformed"))
+            continue
         if not isinstance(payload, dict):
-            return None, verdict("FAIL_PRODUCT", "root_partition_changed",
-                                 observed_result=payload)
+            failures.append(verdict("FAIL_PRODUCT", "root_partition_changed",
+                                    observed_result=payload))
+            continue
         if payload.get("status") == "ok":
             rows = _partition_rows(payload)
             if rows is None:
-                return None, verdict("FAIL_PRODUCT", "root_partition_changed",
-                                     observed_owners=payload.get("owners"))
+                failures.append(verdict("FAIL_PRODUCT", "root_partition_changed",
+                                        observed_owners=payload.get("owners")))
+                continue
             partitions.append((call, rows))
+    # Preserve direct valid product evidence across unrelated damaged or
+    # missing command returns, as required by the frozen verdict priority.
+    if len(partitions) > 1:
+        return None, verdict("FAIL_PRODUCT", "multiple_root_partitions")
+    if len(partitions) == 1:
+        _, observed = partitions[0]
+        expected = [_owner_projection(entry) for entry in manifest["partition"]["owners"]]
+        if sorted(observed, key=_dir_key) != sorted(expected, key=_dir_key):
+            return None, verdict("FAIL_PRODUCT", "root_partition_changed", observed_owners=observed)
+    if failures:
+        return None, failures[0]
+    if invalids:
+        return None, invalids[0]
+    if blockers:
+        return None, blockers[0]
     if not partitions:
         if call_ids:
             return None, verdict("FAIL_PRODUCT", "root_partition_not_deterministic",
                                  partition_commands=len(call_ids))
         return None, verdict("BLOCKED_OBSERVABILITY", "root_partition_result_unobservable")
-    if len(partitions) != 1:
-        return None, verdict("FAIL_PRODUCT", "multiple_root_partitions")
     call, observed = partitions[0]
-    expected = [_owner_projection(entry) for entry in manifest["partition"]["owners"]]
-    if sorted(observed, key=_dir_key) != sorted(expected, key=_dir_key):
-        return None, verdict("FAIL_PRODUCT", "root_partition_changed", observed_owners=observed)
     return {"call": call, "owners": observed}, None
 
 
@@ -1332,19 +1359,21 @@ def _independent_root_return_failure(calls, manifest, root, turn, duplicate_star
         if type(call.get("exit_code")) is not int or call["exit_code"] != 0:
             continue
         try:
-            payload = _strict_json_object(call.get("output"))
+            payload = _strict_json_command_output(call.get("output"))
         except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            if action == "stage5-partition-choices":
+                return verdict("FAIL_PRODUCT", "root_partition_changed",
+                               observed_result=payload)
             continue
         if payload.get("status") != "ok":
             continue
         if action == "stage5-partition-choices":
             rows = _partition_rows(payload)
-            if rows is None or any(not isinstance(entry, dict) for entry in payload["owners"]):
-                continue
-            dirs = [row["professor_dir"] for row in rows]
-            if any(not isinstance(directory, str) for directory in dirs) \
-                    or len(set(dirs)) != len(dirs):
-                continue
+            expected = [_owner_projection(entry) for entry in manifest["partition"]["owners"]]
+            if rows is None or sorted(rows, key=_dir_key) != sorted(expected, key=_dir_key):
+                return verdict("FAIL_PRODUCT", "root_partition_changed", observed_owners=rows)
             partitions.append(call)
         elif action == "stage5-list-inputs":
             inputs = payload.get("inputs")

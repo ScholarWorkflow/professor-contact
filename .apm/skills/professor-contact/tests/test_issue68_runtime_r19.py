@@ -1231,6 +1231,62 @@ class OwnerObservationTests(unittest.TestCase):
         _, problem = verifier.owner_payload(rows, self.manifest)
         self.assertEqual(problem["verdict"], "BLOCKED_OBSERVABILITY")
 
+    def test_known_direnv_prefix_keeps_one_partition_json_value_attributable(self):
+        call = self.partition_call()
+        call["output"] = "\x1b[0mdirenv: unloading\n" + call["output"]
+        actual, problem = verifier._actual_root_partition([call], self.manifest, "synthetic-root")
+        self.assertIsNone(problem)
+        self.assertEqual(actual["owners"], self.actual_partition)
+
+    def test_partition_output_with_multiple_json_values_is_ambiguous(self):
+        call = self.partition_call()
+        call["output"] = "\x1b[0mdirenv: unloading\n" + call["output"] + "\n{}"
+        actual, problem = verifier._actual_root_partition([call], self.manifest, "synthetic-root")
+        self.assertIsNone(actual)
+        self.assertEqual((problem["verdict"], problem["reason_code"]),
+                         ("INVALID_EVIDENCE", "root_partition_result_malformed"))
+
+    def test_partition_output_unknown_prefix_remains_invalid_evidence(self):
+        call = self.partition_call()
+        call["output"] = "unexpected wrapper output\n" + call["output"]
+        actual, problem = verifier._actual_root_partition([call], self.manifest, "synthetic-root")
+        self.assertIsNone(actual)
+        self.assertEqual((problem["verdict"], problem["reason_code"]),
+                         ("INVALID_EVIDENCE", "root_partition_result_malformed"))
+
+    def test_later_attributable_partition_failure_survives_earlier_malformed_output(self):
+        first = self.partition_call()
+        first["output"] = "{malformed"
+        second = self.partition_call()
+        second.update(id="partition-2", start=2, end=3)
+        changed = copy.deepcopy(self.actual_partition)
+        changed[0]["professor_dir"] = None
+        second["output"] = json.dumps({"status": "ok", "owners": changed}, ensure_ascii=False)
+        actual, problem = verifier._actual_root_partition([first, second], self.manifest,
+                                                         "synthetic-root")
+        self.assertIsNone(actual)
+        self.assertEqual((problem["verdict"], problem["reason_code"]),
+                         ("FAIL_PRODUCT", "root_partition_changed"))
+
+    def test_full_evaluator_keeps_later_partition_failure_over_bad_output_and_final_gap(self):
+        response, adapter = self.ambiguous_runtime()
+        events = response["output"]["app_server_events"]
+        events[3]["message"]["params"]["item"]["aggregatedOutput"] = "{malformed"
+        second = copy.deepcopy(events[2:4])
+        for event in second:
+            event["message"]["params"]["item"]["id"] = "partition-2"
+        changed = copy.deepcopy(self.actual_partition)
+        changed[0]["professor_dir"] = None
+        second[1]["message"]["params"]["item"]["aggregatedOutput"] = (
+            "\x1b[0mdirenv: unloading\n" +
+            json.dumps({"status": "ok", "owners": changed}, ensure_ascii=False))
+        events[4:4] = second
+        for index, event in enumerate(events, 1):
+            event["runtime_seq"] = index
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "root_partition_changed"))
+
     def test_repeated_partition_call_ids_are_invalid_not_multiple_business_calls(self):
         call = self.partition_call()
         _, problem = verifier._actual_root_partition([call, copy.deepcopy(call)], self.manifest,
