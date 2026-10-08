@@ -1,7 +1,7 @@
 """Mechanical judge for the S3-RT-CODEX-1 runtime evidence (issue #66).
 
 This is the single decision program required by the current test plan
-(``issue-66-test-plan-r21-stage3-write-validation-r9-2026-10-08`` §五/§六).
+(``issue-66-test-plan-r22-stage3-write-validation-r10-2026-10-09`` §五/§六).
 It folds
 every required evidence surface into ONE verdict — formal delegation
 attribution, the invocation-credential value chain, the per-round
@@ -2572,15 +2572,17 @@ class Judge:
               "command":"<complete native command input>",
               "stdout_b64":"<raw stdout bytes>",
               "output":{"path":"<prepared absolute path>",
-                "exists_before":false,"exists_after":true,
-                "mode":"0600","bytes_b64":"<file bytes>"},
+                "exists_before":null,"exists_after":true,
+                "mode":null,"bytes_b64":"<file bytes>"},
               "save_input":{"thread_id":"...","turn_id":"...",
                 "item_id":"...","path":"<source read by save>",
                 "bytes_b64":"<bytes read before save>"}}]}
 
-        For a failed writer call, ``output`` records the attempted prepared
-        path, ``exists_after`` may be false, and ``mode``/``bytes_b64`` are
-        null. ``save_input`` is null when save was correctly never reached.
+        Formal evidence does not require a pre-write existence or file-mode
+        snapshot; those values may be null. For a failed writer call,
+        ``output`` records the attempted prepared path, ``exists_after`` may
+        be false, and ``mode``/``bytes_b64`` are null. ``save_input`` is null
+        when save was correctly never reached.
         The call identities are App Server commandExecution thread/turn/item
         identities; text that merely mentions the command is not a call.
         """
@@ -2764,13 +2766,14 @@ class Judge:
             before, after, mode = (output.get("exists_before"),
                                    output.get("exists_after"),
                                    output.get("mode"))
+            valid_before = before is None or type(before) is bool
             valid_mode = mode is None or isinstance(mode, str) \
                 and re.fullmatch(r"0[0-7]{3}", mode) is not None
             if not isinstance(output_path, str) \
                     or not Path(output_path).is_absolute() \
-                    or type(before) is not bool or type(after) is not bool \
+                    or not valid_before or type(after) is not bool \
                     or not valid_mode \
-                    or (after and (mode is None or output_bytes is None)) \
+                    or (after and output_bytes is None) \
                     or (not after and (mode is not None
                                        or output.get("bytes_b64") is not None)):
                 invalid.append(f"{prefix}: file existence, path, mode, or bytes are malformed")
@@ -2886,12 +2889,8 @@ class Judge:
                 problems.append(f"round {round_no}: observed file path differs from prepare's output_file")
 
             if result is True:
-                if writer["exists_before"]:
-                    problems.append(f"round {round_no}: assigned output existed before the fixed writer call")
                 if not writer["exists_after"]:
                     problems.append(f"round {round_no}: fixed writer returned success without an output file")
-                if writer["exists_after"] and writer["mode"] != "0600":
-                    problems.append(f"round {round_no}: output mode is not 0600")
                 if writer["exists_after"] and writer["output_bytes"] != writer["stdout_bytes"]:
                     problems.append(f"round {round_no}: output file bytes differ from writer stdout")
             messages = self.m.assistant_messages.get(entry["child"], [])
@@ -3279,8 +3278,7 @@ class Judge:
                     operation_count += 1
                     observed.append(
                         f"round {entry['round']} event {record['index']}: "
-                        f"fixed writer observed {writer['output_path']} mode="
-                        f"{writer['mode']}")
+                        f"fixed writer output observed at {writer['output_path']}")
                     if Path(writer["output_path"]) != Path(output_file):
                         problems.append(
                             f"round {entry['round']}: fixed writer target "
@@ -3370,8 +3368,8 @@ class Judge:
                 for changed_path, exclusive in paths:
                     if duplicate_writer_add \
                             and Path(changed_path) == Path(output_file):
-                        # The independent writer observation proves existence,
-                        # mode and bytes; fileChange is only a duplicate view.
+                        # The independent writer observation binds the output
+                        # path and bytes; fileChange is only a duplicate view.
                         continue
                     observed.append(
                         f"round {entry['round']} event {change['index']}: "

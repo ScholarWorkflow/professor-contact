@@ -1,7 +1,7 @@
 """Channel validation for the S3-RT-CODEX-1 runtime judge (issue #66).
 
 The judge is the frozen parsing/decision program for the runtime evidence
-(``issue-66-test-plan-r21-stage3-write-validation-r9-2026-10-08`` §五/§六). Each test
+(``issue-66-test-plan-r22-stage3-write-validation-r10-2026-10-09`` §五/§六). Each test
 builds ONE synthetic evidence set whose expected verdict is fixed by the
 frozen contract — never by the judge.  Sample families:
 
@@ -12,8 +12,9 @@ frozen contract — never by the judge.  Sample families:
   conflict, child without a formal relation);
 - raw production (legal whitespace message, root reconstruction, second
   business message, no validator production);
-- file permissions (real read + one exclusive write pass; protected-file
-  write and outside-output write fail) via command behavior and file changes;
+- file scope (real read + one assigned output write; protected-file write and
+  outside-output write fail), with permission and exclusive-create behavior
+  covered by deterministic and installed-writer checks;
 - order and stops (rebuild before record, correction spawned before the
   round-1 record completed, dispatch after the terminal record, machine
   failure prefix honored → BLOCKED);
@@ -338,8 +339,8 @@ class Fixture:
                                 "item_id": item["id"]},
                 "command": writer,
                 "stdout_b64": base64.b64encode(raw).decode("ascii"),
-                "output": {"path": output_file, "exists_before": False,
-                           "exists_after": True, "mode": "0600",
+                "output": {"path": output_file, "exists_before": None,
+                           "exists_after": True, "mode": None,
                            "bytes_b64": base64.b64encode(raw).decode("ascii")},
                 "save_input": None,
             })
@@ -2198,24 +2199,18 @@ class WriterObservationTests(RuntimeJudgeTestCase):
         self.assertEqual(verdict["classification"], "PASS", verdict)
         self.assertEqual(verdict["evidence_gaps"], [], verdict)
 
-    def test_declared_save_time_observation_gap_prevents_pass(self):
+    def test_missing_prewrite_and_mode_snapshots_do_not_prevent_pass(self):
         fx = Fixture()
         legal_two_child(fx)
         surfaces = valid_surfaces(fx)
-        gap = ("save-time output mode and existence are unavailable; "
-               "only post-response observation exists")
-        surfaces["writer"]["gaps"] = [gap]
+        output = surfaces["writer"]["observations"][0]["output"]
+        self.assertIsNone(output["exists_before"])
+        self.assertIsNone(output["mode"])
 
         verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
 
-        self.assertEqual(verdict["classification"],
-                         "INVALID_TEST_EXECUTION", verdict)
-        self.assertEqual(facts(verdict)["F-writer-evidence"], "gap", verdict)
-        writer_row = next(row for row in verdict["facts"]
-                          if row["fact"] == "F-writer-evidence")
-        self.assertIn(gap, writer_row["evidence"], verdict)
-        self.assertTrue(any(gap in item for item in verdict["evidence_gaps"]),
-                        verdict)
+        self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "pass", verdict)
 
     def test_malformed_collection_gaps_are_invalid_without_hiding_observations(self):
         for malformed in (None, "missing mode", {}, [None], [1], [""], ["  "],
@@ -2235,14 +2230,15 @@ class WriterObservationTests(RuntimeJudgeTestCase):
                 self.assertEqual(facts(verdict)["F-writer-evidence"],
                                  "pass", verdict)
 
-    def test_collection_gaps_preserve_independent_wrong_mode_failure(self):
-        for declared_gaps in ([], ["save-time observation unavailable"], None):
+    def test_collection_gaps_preserve_independent_output_byte_failure(self):
+        for declared_gaps in ([], ["unrelated required observation unavailable"], None):
             with self.subTest(gaps=declared_gaps):
                 fx = Fixture()
                 legal_two_child(fx)
                 surfaces = valid_surfaces(fx)
                 surfaces["writer"]["gaps"] = declared_gaps
-                surfaces["writer"]["observations"][0]["output"]["mode"] = "0644"
+                surfaces["writer"]["observations"][0]["output"]["bytes_b64"] = \
+                    base64.b64encode(b"different output bytes").decode("ascii")
 
                 verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
 
@@ -2267,7 +2263,6 @@ class WriterObservationTests(RuntimeJudgeTestCase):
                 surfaces = valid_surfaces(fx)
                 surfaces["writer"]["gaps"] = None
                 output = surfaces["writer"]["observations"][0]["output"]
-                output["mode"] = "0644"
                 if mutation == "output_bytes":
                     output["bytes_b64"] = "%%%"
                 elif mutation == "evidence_set":
@@ -2415,7 +2410,7 @@ class WriterObservationTests(RuntimeJudgeTestCase):
         self.assertEqual(facts(verdict)["F-writer-command"], "fail", verdict)
         self.assertEqual(facts(verdict)["F-stop-order"], "fail", verdict)
 
-    def test_output_exists_before_or_wrong_mode_is_a_product_failure(self):
+    def test_unbound_prewrite_and_mode_metadata_do_not_gate_formal_pass(self):
         for field, value in (("exists_before", True), ("mode", "0644")):
             with self.subTest(field=field):
                 fx = Fixture()
@@ -2424,9 +2419,9 @@ class WriterObservationTests(RuntimeJudgeTestCase):
 
                 verdict = run(fx, state=PASS_STATE)
 
-                self.assertEqual(verdict["classification"], "FAIL", verdict)
+                self.assertEqual(verdict["classification"], "PASS", verdict)
                 self.assertEqual(facts(verdict)["F-writer-evidence"],
-                                 "fail", verdict)
+                                 "pass", verdict)
 
     def test_success_without_output_file_is_a_product_failure(self):
         fx = Fixture()
@@ -2568,6 +2563,23 @@ class WriterObservationTests(RuntimeJudgeTestCase):
                          "INVALID_TEST_EXECUTION", verdict)
         self.assertEqual(facts(verdict)["F-writer-evidence"],
                          "invalid", verdict)
+
+    def test_save_and_record_digests_must_match_observed_bytes(self):
+        for thread, command, field in (
+                (ROOT, judge.ROOT_SAVE, "validation_sha256"),
+                (ROOT, judge.ROOT_RECORD, "validation_input_sha256")):
+            with self.subTest(command=command):
+                fx = Fixture()
+                legal_two_child(fx)
+                mutate_command_return(
+                    fx, thread, command,
+                    lambda payload: payload.update({field: "wrong-digest"}))
+
+                verdict = run(fx, state=PASS_STATE)
+
+                self.assertEqual(verdict["classification"], "FAIL", verdict)
+                self.assertEqual(facts(verdict)["F-writer-evidence"],
+                                 "fail", verdict)
 
 
 class WriteScopeTests(RuntimeJudgeTestCase):

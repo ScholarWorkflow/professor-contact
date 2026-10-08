@@ -132,7 +132,8 @@ class ExecutionWiringTests(unittest.TestCase):
                              save_remove_fields=(), save_exit_code=0,
                              save_stdout=None, prepare_overrides=None,
                              writer_stdout=None, prepare_exit_code=0,
-                             writer_exit_code=0):
+                             writer_exit_code=0, output_exists=True,
+                             output_bytes=None):
         """Use synthetic event objects shaped from the native command contract.
 
         These cases exercise collector decisions only; they are not evidence
@@ -145,10 +146,10 @@ class ExecutionWiringTests(unittest.TestCase):
         output_file = handoff_dir / 'validator-output.json'
         handoff_file = handoff_dir / 'handoff.json'
         validation_file = handoff_dir / 'saved-validation.json'
-        execution.writer_preexisting_paths = set()
         raw_output = b'{"result":"pass","files":[],"notes":"fixture"}\n'
-        output_file.write_bytes(raw_output)
-        output_file.chmod(0o600)
+        if output_exists:
+            output_file.write_bytes(raw_output if output_bytes is None else output_bytes)
+            output_file.chmod(0o600)
 
         handoff_sha = 'a' * 64
         render_sha = 'b' * 64
@@ -315,6 +316,9 @@ class ExecutionWiringTests(unittest.TestCase):
             self.assertEqual(writer['schema'], 'issue66.writer-observation.v1')
             self.assertEqual(writer['classification'], 'PASS')
             self.assertEqual(call['source'], str(installed_script.resolve()))
+            self.assertEqual(call['argv'], writer_argv)
+            self.assertEqual(call['command'], shlex.join(writer_argv))
+            self.assertEqual(call['cwd'], str(execution.consumer))
             self.assertEqual(call['exit_code'], 0)
             self.assertFalse(output['exists_before'])
             self.assertTrue(output['exists_after'])
@@ -479,8 +483,7 @@ class ExecutionWiringTests(unittest.TestCase):
                     return {'classification': 'BLOCKED', 'facts': []}
                 raise AssertionError(f'unexpected JSON input: {path!r}')
 
-            with patch.object(execution, '_snapshot_writer_handoff_paths', return_value=set()), \
-                 patch.object(execution, 'py', side_effect=fake_py), \
+            with patch.object(execution, 'py', side_effect=fake_py), \
                  patch.object(wiring, 'jq', side_effect=fake_jq), \
                  patch.object(wiring.subprocess, 'run', side_effect=fake_subprocess_run):
                 self.assertEqual(execution.formal('4312'), 1)
@@ -758,23 +761,57 @@ class ExecutionWiringTests(unittest.TestCase):
             self.assertIsNone(transport['request_body_uploaded_bytes'])
             self.assertFalse(transport['http_response_received'])
 
-    def test_save_digest_binds_same_writer_bytes_and_keeps_timing_gap(self):
+    def test_save_digest_binds_writer_bytes_without_prewrite_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             evidence, raw = self.collect_save_fixture(directory)
 
         self.assertEqual(len(evidence['observations']), 1)
         observation = evidence['observations'][0]
         self.assertEqual(observation['round'], 1)
+        native_call = evidence['native_calls'][0]
+        self.assertEqual(native_call['thread_id'], 'validator-thread')
+        self.assertEqual(native_call['turn_id'], 'validator-turn')
+        self.assertEqual(native_call['item_id'], 'writer-item')
+        self.assertEqual(native_call['round'], 1)
+        self.assertEqual(native_call['status'], 'completed')
+        self.assertEqual(native_call['exit_code'], 0)
+        self.assertEqual(native_call['command'], observation['command'])
+        self.assertIn('--output-file', native_call['argv'])
+        self.assertEqual(native_call['argv'][
+            native_call['argv'].index('--output-file') + 1],
+            observation['output']['path'])
+        self.assertEqual(base64.b64decode(native_call['stdout_b64']), raw)
         self.assertEqual(observation['writer_call'], {
             'thread_id': 'validator-thread', 'turn_id': 'validator-turn',
             'item_id': 'writer-item'})
+        self.assertIsNone(observation['output']['exists_before'])
+        self.assertTrue(observation['output']['exists_after'])
+        self.assertIsNone(observation['output']['mode'])
+        self.assertEqual(base64.b64decode(observation['output']['bytes_b64']), raw)
         self.assertEqual(observation['save_input'], {
             'thread_id': 'root-thread', 'turn_id': 'root-turn',
             'item_id': 'save-item', 'path': observation['output']['path'],
             'bytes_b64': base64.b64encode(raw).decode('ascii')})
         self.assertEqual(base64.b64decode(observation['save_input']['bytes_b64']), raw)
-        self.assertTrue(any('save-time mode/timing is unavailable' in gap
-                            for gap in evidence['gaps']))
+        self.assertEqual(evidence['gaps'], [])
+
+    def test_missing_or_mismatched_post_response_bytes_cannot_bind_save_input(self):
+        cases = (
+            ('missing output', {'output_exists': False}, False),
+            ('different output bytes', {'output_bytes': b'{"result":"other"}\n'}, True),
+        )
+        for label, options, exists_after in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                evidence, _raw = self.collect_save_fixture(directory, **options)
+
+            self.assertEqual(len(evidence['observations']), 1)
+            output = evidence['observations'][0]['output']
+            self.assertEqual(output['exists_after'], exists_after)
+            self.assertIsNone(evidence['observations'][0]['save_input'])
+            self.assertTrue(evidence['gaps'])
+            if label == 'different output bytes':
+                self.assertTrue(any('source bytes differ from native writer stdout' in gap
+                                    for gap in evidence['gaps']))
 
     def test_save_input_is_null_when_source_snapshot_differs_from_writer_stdout(self):
         with tempfile.TemporaryDirectory() as directory:

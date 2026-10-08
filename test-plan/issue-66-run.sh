@@ -2,8 +2,8 @@
 set -o pipefail
 
 readonly uv_cache_dir='/private/tmp/issue66-uv-cache'
-readonly plan_revision='issue-66-test-plan-r21-stage3-write-validation-r9-2026-10-08'
-readonly runner_revision='issue-66-local-candidate-runner-r22-stage3-write-validation-r9-2026-10-08'
+readonly plan_revision='issue-66-test-plan-r22-stage3-write-validation-r10-2026-10-09'
+readonly runner_revision='issue-66-local-candidate-runner-r23-stage3-write-validation-r10-2026-10-09'
 
 usage() {
   printf '用法：%s local\n' "$0" >&2

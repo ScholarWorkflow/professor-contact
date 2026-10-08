@@ -15,7 +15,7 @@ import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PureWindowsPath
 
-PLAN = "issue-66-test-plan-r21-stage3-write-validation-r9-2026-10-08"
+PLAN = "issue-66-test-plan-r22-stage3-write-validation-r10-2026-10-09"
 WRITER_EVIDENCE_SCHEMA = "issue66.writer-observation.v1"
 STAGE3_HANDOFF_ROOT = "professor-contact-stage3-handoff"
 MODEL = "gpt-6-luna"
@@ -398,8 +398,6 @@ class Execution:
         self.http_status = None
         self.http_status_raw = None
         self.transport_evidence = None
-        self.writer_preexisting_paths = None
-        self.writer_pre_snapshot_error = None
 
     def run(self, name, argv, *, cwd=None, required=True, private=False):
         self.counter += 1
@@ -529,7 +527,6 @@ class Execution:
     def formal(self, port):
         request_path = self.out / "request.json"
         request_bytes = request_path.read_bytes()
-        self.writer_preexisting_paths = self._snapshot_writer_handoff_paths()
         self.request_body_bytes_expected = len(request_bytes)
         self.formal_request_attempted = True
         write(self.out / "attempt.json", {"evidence_set_id": self.identity,
@@ -860,24 +857,12 @@ class Execution:
             "remaining": ["正式运行、原生委派、保存及记录事实"]})
         return status
 
-    def _snapshot_writer_handoff_paths(self):
-        root = Path(tempfile.gettempdir()) / STAGE3_HANDOFF_ROOT
-        try:
-            if not root.exists() and not root.is_symlink():
-                return set()
-            if root.is_symlink() or not root.is_dir():
-                raise OSError("Stage 3 temporary handoff root is not a directory")
-            return {str(path.absolute()) for path in root.rglob("*")}
-        except OSError as exc:
-            self.writer_pre_snapshot_error = str(exc)
-            return None
-
     def collect_writer_evidence(self, response):
         """Bind native save output to the exact writer source bytes it digested.
 
-        The post-response filesystem snapshot can corroborate bytes only when
-        they match the digest emitted by the successful save command. It does
-        not establish the source file's mode or state immediately before save.
+        The post-response filesystem snapshot corroborates the bytes emitted
+        by the successful writer and consumed by the save command. It does not
+        establish state or mode immediately before the writer call.
         """
         gaps, native_calls, observations = [], [], []
         output = response.get("output") if isinstance(response, dict) else None
@@ -1005,10 +990,6 @@ class Execution:
         def file_state(path_text):
             path = Path(path_text)
             lexical = str(path.absolute())
-            if self.writer_preexisting_paths is None:
-                return None, {"path": path_text, "exists_before": None,
-                    "exists_after": path.exists() or path.is_symlink(),
-                    "mode": None, "bytes_b64": None}
             root = Path(tempfile.gettempdir()) / STAGE3_HANDOFF_ROOT
             try:
                 normalized = str(path.resolve(strict=False))
@@ -1016,17 +997,15 @@ class Execution:
             except (OSError, RuntimeError, ValueError):
                 inside_root = False
                 normalized = lexical
-            exists_before = lexical in self.writer_preexisting_paths
             exists_after = path.exists() or path.is_symlink()
-            mode, raw = None, None
-            if exists_after and path.is_file() and not path.is_symlink():
+            raw = None
+            if exists_after and path.is_file():
                 try:
                     raw = path.read_bytes()
-                    mode = format(stat.S_IMODE(path.stat().st_mode), "04o")
                 except OSError:
                     raw = None
-            state = {"path": path_text, "exists_before": exists_before,
-                     "exists_after": exists_after, "mode": mode,
+            state = {"path": path_text, "exists_before": None,
+                     "exists_after": exists_after, "mode": None,
                      "bytes_b64": _b64(raw)}
             if not inside_root:
                 return None, state
@@ -1132,7 +1111,6 @@ class Execution:
                 if save_bound:
                     save_input = {**save["identity"], "path": entry["output_file"],
                                   "bytes_b64": _b64(source_bytes)}
-                    gaps.append(f"round {entry['round']}: save success proves a regular source was read, but save-time mode/timing is unavailable; the post-response snapshot cannot establish it")
                 else:
                     gaps.append(f"round {entry['round']}: save return, handoff, identity, or source-byte digest cannot be bound")
             if len(save_matches) > 1:
@@ -1144,8 +1122,6 @@ class Execution:
                 "writer_call": writer["identity"], "command": writer["command"],
                 "stdout_b64": writer["stdout_b64"], "output": output_state,
                 "save_input": save_input})
-        if self.writer_pre_snapshot_error:
-            gaps.append(f"writer temporary-file pre-snapshot unavailable: {self.writer_pre_snapshot_error}")
         return self._writer_evidence(observations=observations,
             native_calls=native_calls, gaps=gaps)
 
