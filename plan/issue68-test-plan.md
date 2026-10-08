@@ -1,10 +1,10 @@
 # 第68号议题测试计划：按最新规则重建
 
-版本：`issue-68-test-plan-r40-2026-10-09`。
+版本：`issue-68-test-plan-r41-2026-10-09`。
 
-目标仓库：`ScholarWorkflow/professor-contact`；拉取请求：[第72号](https://github.com/ScholarWorkflow/professor-contact/pull/72)。本轮读取的提交：`d2df68a34d2ab191d742b133ed12b2b4d3dce2ed`。本文件是唯一完整测试计划，取代第三十九版及更早方案。旧评论、测试程序和证据约定不再提供执行步骤或额外通过条件。
+目标仓库：`ScholarWorkflow/professor-contact`；拉取请求：[第72号](https://github.com/ScholarWorkflow/professor-contact/pull/72)。本轮读取的产品提交：`72f20846e9810f5445c0c6a3891f3877b4cd0e21`。本文件是唯一完整测试计划，取代第四十版及更早方案。旧评论、测试程序和证据约定不再提供执行步骤或额外通过条件。
 
-本轮整理辛的执行准备材料，不运行产品测试，不授予正式运行许可，不宣告第二、第三关口通过。阶段2/3输入来源、阶段4教授本地邮件包来源和模型配置来源仍待确认；第4节不是可直接复现的完整运行手册。正式业务请求还须等待第二关口审核及后续明确授权。
+本轮已完成本地测试工程师负责的运行准备：在隔离消费者中按固定产品提交生成两位教授的合成阶段2/3前置资料、联系方式证据和各自的阶段4本地邮件包；两份邮件包均通过当前版本的阶段5计划预检。阶段2/3只作本轮输入准备，不作为新增验收项。唯一尚缺的外部输入是获批的版本化 `gpt-6-luna` 低推理强度配置来源。第二关口仍待专用审核；本轮不发送正式 `/eval` 请求，也不宣告第二、第三关口通过。
 
 ## 1. 正式依据与范围
 
@@ -41,9 +41,11 @@
 
 ### 3.1 确定性业务结果直接复用
 
-甲至庚采用仓库内保留的[历史确定性结果](../.apm/skills/professor-contact/tests/runtime/evidence/issue68-d1-r29-history.json)。记录的产品提交为 `35f2785b4d13783683860db910a36add2347bd29`，测试代码提交为 `e931ab22fbe492bdf0c4ecb74e906d2c23dfce23`，七组检查均通过，合计43个不同测试组件。数量只说明原记录内容，不作为新通过门槛。
+甲至庚的既有结果来源于仓库内保留的[历史确定性结果](../.apm/skills/professor-contact/tests/runtime/evidence/issue68-d1-r29-history.json)。记录的产品提交为 `35f2785b4d13783683860db910a36add2347bd29`，测试代码提交为 `e931ab22fbe492bdf0c4ecb74e906d2c23dfce23`，七组检查均通过，合计43个不同测试组件。这是历史版本的证据，不作为 `72f20846` 新增教授本地阶段4邮件包及其阶段5交接行为的验证，也不把43个组件设为本轮重建或重跑门槛。
 
-本轮已比较上述产品与当前提交的业务脚本：`contact_state.py` 仅修改参数帮助，`stage5_immutable.py` 仅修改说明文字；本地来源、分配、目标过滤、业务校验、提交、发现及总览算法未变。后续代理和技能说明修复影响辛，不使这些程序结果失效。用户删除测试代码不等于产品算法改变，不恢复已删测试、不为提交编号变化重跑、不新增判定程序。
+当前产品提交 `72f20846e9810f5445c0c6a3891f3877b4cd0e21` 已有一次针对性回归结果：`test_contact_state`、`test_stage4_selection_agent_contract`、`test_stage5_dualtarget_contract`、`test_stage5_immutable`、`test_issue67_gate2_r3` 五个模块共128项测试通过。该结果覆盖当前代码的确定性路径，但不证明模型生成的实际业务文件正确；因此辛仍保留一次正式正常路径运行。这个已通过的回归结果不是第四十一版新设的验收目标，计划文本本轮更新无需为此重跑测试。
+
+甲至庚继续沿用历史结果中仍适用的断言；新增的教授本地阶段4交易与邮件包交接由上述当前提交的针对性回归覆盖。后续代理和技能说明修复影响辛，不恢复用户删除的测试代码，不因提交编号变化重跑既有历史结果，也不新增判定程序。
 
 历史记录中的其他场景不进入本轮清单；43项不是必须重建或重跑的数量。需要核对结果时，用 `jq` 读取 `execution.producer.sha`、`final_verdict.verdict` 及 `proofs[]` 中对应组的结果；采用原标准测试报告，不重新认证其生成过程。
 
@@ -77,56 +79,200 @@
 
 ## 4. 执行步骤
 
-本节记录辛的一次正式运行准备草稿。阶段2/3输入来源、教授本地邮件包来源和4.1.5所述配置来源均未解决，因此当前不能按本节直接准备完整输入或发送请求；第二关口审核通过前不得将本节称为完整运行手册。本轮没有运行授权，且须取得后续明确授权后才可发送正式业务请求。不得调用已删除的第三十八版及更早运行器，也不得从旧评论拼接执行命令。
+本节记录辛的一次正式运行步骤。合成前置资料、教授本地邮件包和阶段5预检已在隔离消费者中按下列步骤生成并核对；配置来源仍缺失，因此目前不得发送正式请求。第二关口审核通过后，执行者仍须取得后续明确授权，才能发送唯一一次正式业务请求。不得调用已删除的第三十八版及更早运行器，也不得从旧评论拼接执行命令。
 
 ### 4.1 消费者与版本
 
-1. 目标产品版本固定为本计划记录的 `d2df68a34d2ab191d742b133ed12b2b4d3dce2ed`。计划文档后续提交不改变该产品代码版本；若第二关口前产品文件发生变化，先按本计划第3节只分析受影响范围，并更新产品版本及其适用性。
-2. 在仓库及其工作树之外创建唯一运行目录并设置变量：`PC68_RUN_ROOT="$(mktemp -d /private/tmp/pc68-r40-20261009-XXXXXX)"`、`PC68_CONSUMER="$PC68_RUN_ROOT/consumer"`、`PC68_PROGRAM="$PC68_CONSUMER/testdata/program"`、`PC68_PROFILE="$PC68_RUN_ROOT/profile/套磁邮件/套磁信息.md"`。创建空消费者、程序目录及 `$PC68_PROFILE` 的父目录；将 `$PC68_PROFILE` 写成只含合成申请人信息的文本文件；其下使用 `request.json`、`response.json`、`selection-input.json`。不得复用 R37 的原始运行目录，不得在产品仓库内放置临时输入或输出。
-3. 在空的 `$PC68_RUN_ROOT/consumer` 中通过正式安装入口创建消费者：`apm init`，然后运行 `apm install https://github.com/ScholarWorkflow/professor-contact.git#d2df68a34d2ab191d742b133ed12b2b4d3dce2ed --target codex --trust-transitive-mcp`。保存安装命令与退出码到运行目录。禁止使用本地路径、符号链接、手工复制或修补安装产物。
+1. 目标产品版本固定为本计划记录的 `72f20846e9810f5445c0c6a3891f3877b4cd0e21`。计划文档后续提交不改变该产品代码版本；若第二关口前产品文件发生变化，先按本计划第3节只分析受影响范围，并更新产品版本及其适用性。
+2. 在仓库及其工作树之外创建唯一运行目录并设置变量：`PC68_RUN_ROOT="$(mktemp -d /private/tmp/pc68-r41-20261009-XXXXXX)"`、`PC68_CONSUMER="$PC68_RUN_ROOT/consumer"`、`PC68_PROGRAM="$PC68_CONSUMER/testdata/program"`、`PC68_PROFILE="$PC68_RUN_ROOT/profile/套磁邮件/套磁信息.md"`、`PC68_TEMPLATE="$PC68_RUN_ROOT/profile/套磁邮件/套磁模板.md"`、`PC68_FOLLOWUP_TEMPLATE="$PC68_RUN_ROOT/profile/套磁邮件/套磁跟进模板.md"`、`PC68_SCRIPT="$PC68_CONSUMER/.agents/skills/professor-contact/scripts/contact_state.py"`、`PC68_CONTACT_TESTS="$PC68_CONSUMER/.agents/skills/professor-contact/tests"`、`PC68_CONTACT_EVIDENCE_SCRIPT="$PC68_CONSUMER/apm_modules/ScholarWorkflow/professor-research/.apm/skills/professor-collector/scripts/contact_evidence.py"`。设置 `UV_CACHE_DIR="$PC68_RUN_ROOT/uv-cache"` 并导出。创建空消费者、程序目录及各输入文件的父目录；申请人、研究资料和模板只使用本计划所列合成内容。`request.json`、`response.json`、`selection-input.json` 位于运行目录。不得复用 R37 的原始运行目录，不得在产品仓库内放置临时输入或输出。
+3. 在空的 `$PC68_RUN_ROOT/consumer` 中通过正式安装入口创建消费者：运行 `apm init -y --target codex`，然后运行 `apm install https://github.com/ScholarWorkflow/professor-contact.git#72f20846e9810f5445c0c6a3891f3877b4cd0e21 --target codex --trust-transitive-mcp`。保存安装命令与退出码到运行目录。安装后用 `yq` 逐项检查 `$PC68_CONSUMER/apm.lock.yaml`：
+
+   ```sh
+   yq '.dependencies[] | select(.name == "professor-contact") | .resolved_commit' "$PC68_CONSUMER/apm.lock.yaml"
+   yq '.dependencies[] | select(.name == "professor-research") | .resolved_commit' "$PC68_CONSUMER/apm.lock.yaml"
+   ```
+
+   两条输出必须分别为 `72f20846e9810f5445c0c6a3891f3877b4cd0e21` 和 `a9e7ffbc070dcfdc7b225e5e70de1b4576649ecd`。本轮实际安装锁定了这两个提交。禁止使用本地路径、符号链接、手工复制或修补安装产物。
 4. 使用现有评估服务及其测试专用 Codex 配置，不启停或重启服务。在已配置的 `eval-server` 仓库工作目录执行 `direnv exec . sh -c 'printf "%s\\n" "$EVAL_PORT"'` 取得端口；不得在计划、请求或提交中写入端口、个人绝对路径、密钥或服务进程信息。
 5. 配置来源在正式运行前必须由第二关口确认：当前 `PROJECT_CONSENSUS.md` 要求使用默认 Codex 配置中的 `gpt-6-luna`、低推理强度，并禁止在请求中重复覆盖；目前可见的 `skills-test-fixtures` 提交 `c738fa2f8bcbb16cd99d741332d5f59b062b6357` 的 `configs/codex-eval-adapter-contract.json` 属于自动审批基础设施用例，固定 `gpt-5.6-luna`，不能作为本业务用例配置。R37 的每请求模型覆盖也不沿用。必须先确认一个已批准的版本化配置文件能提供本业务要求的默认模型和推理强度，并记录文件路径、版本及实际生效值；若来源仍缺失或冲突，停在正式请求之前，记为配置阻塞，不改现有服务或配置，不通过命令行覆盖绕过。
 
 ### 4.2 合成业务输入
 
-1. 在 `$PC68_RUN_ROOT/consumer/testdata/program/教授研究/` 准备两位虚构教授：`山田太郎` 与 `佐藤花子`，分别位于 `工学/山田太郎/` 和 `社会情報/佐藤花子/`。各教授只准备一封邮件，方向及想法编号固定为 `DIR-A/idea-a` 与 `DIR-B/idea-b`，邮件编号分别为 `山田太郎::DIR-A::idea-a`、`佐藤花子::DIR-B::idea-b`。两位教授的研究材料必须明显不同：前者围绕地域交通需求变化，后者围绕沿岸灾害信息共享；不写入真实个人或学校资料。
-2. **输入准备阻塞：**本计划尚未指定获批的阶段2/3输入夹具，也未给出适用于这两位教授的准确生成命令。仓库中的 `prepare_issue55_stage3_fixture.py` 和 `prepare_issue57_stage2_fixture.py` 等夹具面向其他议题，本计划未批准将它们作为这次双教授输入的来源；本轮也不增加阶段2/3业务请求来生成输入。第二关口审核前，必须确认受支持的夹具或准备来源、适用版本及确切步骤，并将它们写入本节；若找不到符合本计划范围的来源，停止在正式请求之前，修订计划后重新审核。此项未解决前，以下输入要求是验收条件，不是可照做的生成步骤。
-3. 两个教授目录均须有正常 Stage 5 所需的申请人资料、项目 `info.json`、`boshu_analysis.json`、模板、教授本地 `_contact_verify.json`、本地阶段 4 邮件包和本地证据源。用上游 `professor-research` 的 `contact_evidence.py` 正常生成联系方式证据：在每位教授的 `_professor_candidates.json` 中放入与 `papers.json`、`_corresp_cache.json` 相符的虚构邮箱；对应论文年份使用当前年份前一年，联系人使用 `confidence: high` 及直接身份匹配，来源邮箱彼此一致。设置 `PC68_CONTACT_EVIDENCE_SCRIPT="$PC68_CONSUMER/apm_modules/ScholarWorkflow/professor-research/.apm/skills/professor-collector/scripts/contact_evidence.py"`；先执行 `uv run "$PC68_CONTACT_EVIDENCE_SCRIPT" "$PC68_PROGRAM"` 生成，再执行 `uv run "$PC68_CONTACT_EVIDENCE_SCRIPT" "$PC68_PROGRAM" --check`。仅接受两位目标教授均为 `fresh`、`confirmed_cross_source`、`current_email_blocked_by: []` 且当前邮箱分别为 `taro@example.edu`、`hanako@example.edu` 的输入。每位教授目录只放各自的 `套磁候选输入.json` 与 `套磁候选状态.json`；选择输入文件 `$PC68_RUN_ROOT/selection-input.json` 位于运行目录，结构如下：
-
-   ```json
-   {
-     "selections": [
-       {
-         "professor": "山田太郎",
-         "professor_dir": "<PC68_PROGRAM>/教授研究/工学/山田太郎",
-         "direction_ids": ["DIR-A"],
-         "ideas": [{"id": "idea-a"}]
-       },
-       {
-         "professor": "佐藤花子",
-         "professor_dir": "<PC68_PROGRAM>/教授研究/社会情報/佐藤花子",
-         "direction_ids": ["DIR-B"],
-         "ideas": [{"id": "idea-b"}]
-       }
-     ]
-   }
-   ```
-
-   生成该文件时运行：
+1. 在 `$PC68_RUN_ROOT/consumer/testdata/program/教授研究/` 准备两位虚构教授：`山田太郎` 与 `佐藤花子`，分别位于 `工学/山田太郎/` 和 `社会情報/佐藤花子/`。各教授只准备一封邮件；两位教授的方向及想法编号均为 `DIR00001/DIR00001_1`，邮件编号分别为 `山田太郎::DIR00001::DIR00001_1`、`佐藤花子::DIR00001::DIR00001_1`。身份由教授目录与邮件编号共同确定。研究材料必须明显不同：前者围绕地域交通需求变化，后者围绕沿岸灾害信息共享；不写入真实个人或学校资料。
+2. **合成前置资料来源及生成步骤：**阶段2/3仅用于构造本轮双教授输入，不作为新增验收项，也不发送阶段2/3代理请求。使用固定提交消费者内已有的 `$PC68_CONTACT_TESTS/test_contact_state.py::BaseEnv.stage3_run`；它通过同目录 `stage2_upstream_fixture.py::prepare_stage2_proof` 生成合法的阶段2前置证明，再以当前安装的 `$PC68_SCRIPT` 运行阶段2完成和阶段3候选完成。按以下过程创建合成申请人、项目信息和模板：
 
    ```sh
-   jq -n --arg root "$PC68_PROGRAM" '{selections:[{professor:"山田太郎",professor_dir:($root+"/教授研究/工学/山田太郎"),direction_ids:["DIR-A"],ideas:[{id:"idea-a"}]},{professor:"佐藤花子",professor_dir:($root+"/教授研究/社会情報/佐藤花子"),direction_ids:["DIR-B"],ideas:[{id:"idea-b"}]}]}' > "$PC68_RUN_ROOT/selection-input.json"
+   mkdir -p "$PC68_PROGRAM" "$(dirname "$PC68_PROFILE")"
+   jq -n '{university:"合成测试大学",department:"合成信息研究科",target:{intake_year:2027,intake_term:"april"}}' > "$PC68_PROGRAM/info.json"
+   jq -n '{exam_type:{degree:"博士前期課程",selection_name:"春季 合成选拔 合成信息专攻"}}' > "$PC68_PROGRAM/boshu_analysis.json"
+   cat > "$PC68_PROFILE" <<'EOF'
+   申请人：合成申请者
+   研究兴趣：面向公共服务的可靠信息处理。
+   经验：使用可复现的数据分析方法。
+   EOF
+   cat > "$PC68_TEMPLATE" <<'EOF'
+   {{大学}}／{{研究科}}／{{先生名}}先生
+   {{出身校}} {{氏名}}
+   {{入学年度}} {{入学月}} {{専攻}} {{学位}}
+   {{兴趣段}}
+   {{未来志向}}
+   {{学習中}}
+   {{志望}}
+   EOF
+   cat > "$PC68_FOLLOWUP_TEMPLATE" <<'EOF'
+   {{先生名}}先生
+   {{大学}} {{研究科}} {{学位}}
+   {{出身校}} {{氏名}}
+   {{初回送信日}}
+   {{研究主题}}
+   {{メールアドレス}}
+   EOF
    ```
 
-   阶段2/3输入来源问题按第2项处理，来源确认前不得声称候选输入和状态已准备完成。
-4. **教授本地邮件包来源阻塞：**当前目标版本的 `contact_state.py stage4-finalize` 将选择和邮件输入写入程序级 `$PC68_PROGRAM/教授研究/套磁选择.json` 与 `$PC68_PROGRAM/教授研究/邮件输入.json`；Stage 5 则只接受教授目录中的 `邮件输入.json` schema 3。当前尚未确认获批的入口能为两位教授生成所需本地包，故上述阶段4命令不能作为本次输入生成步骤。不得复制程序级邮件包或手工改写、伪造教授本地包。第二关口前须确认受支持的教授级生成入口及准确命令、适用版本，并核对每个包只声明一位教授且其 `contact_evidence.record_fingerprint` 与本地证据一致；若不存在符合范围的入口，停止在正式请求前，更新计划及产品版本后重新审核。
-5. 两份 `_contact_verify.json` 的 `items` 都须有 `email`、`roster`、`season`、`header`、`subject_batch`、`schedule`、`consent` 七项，七项 verdict 均为 `confirmed`；`items.email.value` 分别与本教授冻结邮箱一致，核验来源及时间满足正常有效期。Stage 5 首次计划必须返回 `verify: ok`，否则不发送辛请求，按 `needs_refresh`、`verify_missing` 或实际原因修正测试准备并保留准备记录。
+   把以下代码保存为 `$PC68_RUN_ROOT/prepare-stage3.py`，再用 `uv run --offline --no-project python "$PC68_RUN_ROOT/prepare-stage3.py" "$PC68_CONTACT_TESTS" "$PC68_SCRIPT" "$PC68_PROGRAM" "$PC68_PROFILE"` 执行。脚本只在唯一消费者和临时测试目录写入合成资料；每位教授分别调用已有夹具方法，返回状态不是 `ok` 时立即停止：
+
+   ```python
+   import json, shutil, sys
+   from pathlib import Path
+
+   tests, script, program, profile = map(Path, sys.argv[1:5])
+   sys.path.insert(0, str(tests))
+   import test_contact_state as fixture
+   fixture.SCRIPT = script
+
+   scenarios = [
+       ("山田太郎", "工学", "地域交通需求变化",
+        "Future work will adapt regional transit planning to changing local travel demand.",
+        "Synthetic regional transit demand adaptation",
+        "A synthetic study of changing regional travel demand."),
+       ("佐藤花子", "社会情報", "沿岸灾害信息共享",
+        "Future work will improve information sharing during coastal disaster response.",
+        "Synthetic coastal disaster information sharing",
+        "A synthetic study of information sharing for coastal disaster response."),
+   ]
+   for name, field, topic, quote, paper_title, paper_abstract in scenarios:
+       env = fixture.BaseEnv("runTest")
+       env.setUp()
+       try:
+           original_dir = env.prof_dir
+           env.root = program
+           env.prof_dir = program / "教授研究" / field / name
+           env.prof_dir.mkdir(parents=True, exist_ok=True)
+           shutil.copytree(original_dir / "论文分析", env.prof_dir / "论文分析", dirs_exist_ok=True)
+           env.gap_quotes = {"AAAA1111": quote, "BBBB2222": "A second synthetic line of work remains open."}
+           for paper in env.papers:
+               key = paper["item_key"]
+               if key not in env.gap_quotes:
+                   continue
+               old = Path(paper["analysis_file"])
+               analysis = env.prof_dir / "论文分析" / old.name
+               sidecar = json.loads(Path(paper["sidecar_file"]).read_text(encoding="utf-8"))
+               sidecar["analysis"] = str(analysis)
+               sidecar["items"][0]["quote"] = env.gap_quotes[key]
+               sidecar["items"][0]["id"] = fixture.quote_id(env.gap_quotes[key])
+               Path(str(analysis) + ".future_work.json").write_text(
+                   json.dumps(sidecar, ensure_ascii=False), encoding="utf-8")
+               paper["analysis_file"] = str(analysis)
+               paper["sidecar_file"] = str(analysis) + ".future_work.json"
+               if key in ("AAAA1111", "BBBB2222"):
+                   paper["title"] = paper_title
+                   paper["abstract"] = paper_abstract
+           write_facts = env.write_facts
+           def write_professor_facts():
+               path = write_facts()
+               data = json.loads(path.read_text(encoding="utf-8"))
+               data["professor"] = name
+               data["directions"][0]["name_ja"] = topic
+               data["directions"][0]["name_zh"] = topic
+               data["directions"][0]["user_note"] = "合成材料仅用于本地准备。"
+               data["papers"] = env.papers
+               path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+               return path
+           env.write_facts = write_professor_facts
+           def customize(candidate):
+               candidate["title"] = topic
+               candidate["one_liner"] = f"以合成资料讨论{topic}。"
+               candidate["research_question"] = f"如何用合成资料研究{topic}？"
+               candidate["points"] = [f"围绕{topic}构造本地测试内容。"]
+               candidate["fit_note"] = "只描述合成材料，不对应真实机构或个人。"
+               candidate["why_recommended"] = "与本次合成选择一致。"
+           result = env.stage3_run(profile=str(profile), candidate_extra=customize)
+           if result.get("status") != "ok":
+               raise SystemExit(f"{name} 的阶段3前置资料未生成：{result}")
+       finally:
+           env.tearDown()
+   ```
+
+   该来源和命令已在本计划固定提交的消费者中执行成功；它只产生阶段2/3合成输入，不改变甲至辛的必测清单。
+3. 设置 `PC68_YAMADA_DIR="$PC68_PROGRAM/教授研究/工学/山田太郎"`、`PC68_SATO_DIR="$PC68_PROGRAM/教授研究/社会情報/佐藤花子"`。阶段3候选生成后，在各自 `papers.json` 中追加一条当前年份前一年的合成论文：山田使用 `CE-YAMADA`、`10.1/ce-yamada`、`Taro Yamada`；佐藤使用 `CE-SATO`、`10.1/ce-sato`、`Hanako Sato`。例如山田执行 `jq --arg romaji "Taro Yamada" --arg key "CE-YAMADA" --arg doi "10.1/ce-yamada" '.professor.name_romaji=$romaji | .papers += [{item_key:$key,year:2025,doi:$doi}]' "$PC68_YAMADA_DIR/papers.json" > "$PC68_RUN_ROOT/yamada-papers.json" && mv "$PC68_RUN_ROOT/yamada-papers.json" "$PC68_YAMADA_DIR/papers.json"`；佐藤以 `PC68_SATO_DIR`、`Hanako Sato`、`CE-SATO`、`10.1/ce-sato` 执行同一命令。
+
+   在 `$PC68_PROGRAM/教授研究/` 下按以下合成来源写入 `_professor_candidates.json`、`_corresp_cache.json` 和 `_署名对照.json`：两位教授的官方候选邮箱分别是 `taro@example.edu`、`hanako@example.edu`，来源分别为 `https://example.test/faculty/ce-yamada`、`https://example.test/faculty/ce-sato`；`_corresp_cache.json` 的键分别为 `CE-YAMADA`、`CE-SATO`，每条记录的 `paper_year` 为 `2025`、`confidence` 为 `high`、`channel` 为 `correspondence`，`contacts` 中同名联系人使用同一邮箱、`confidence: high`、`channel: pdf_footnote`，`names` 与 `emails` 也各自只含对应教授和邮箱。使用以下 `jq` 命令生成这些输入：
+
+   ```sh
+   jq -n '[{name:"山田太郎",name_romaji:"Taro Yamada",email:"taro@example.edu",source:"https://example.test/faculty/ce-yamada",provenance:"合成测试教师资料"},{name:"佐藤花子",name_romaji:"Hanako Sato",email:"hanako@example.edu",source:"https://example.test/faculty/ce-sato",provenance:"合成测试教师资料"}]' > "$PC68_PROGRAM/教授研究/_professor_candidates.json"
+   jq -n '{"CE-YAMADA":{itemKey:"CE-YAMADA",paper_year:2025,doi:"10.1/ce-yamada",channel:"correspondence",confidence:"high",contacts:[{name:"山田太郎",email:"taro@example.edu",confidence:"high",channel:"pdf_footnote"}],names:["山田太郎"],emails:["taro@example.edu"]},"CE-SATO":{itemKey:"CE-SATO",paper_year:2025,doi:"10.1/ce-sato",channel:"correspondence",confidence:"high",contacts:[{name:"佐藤花子",email:"hanako@example.edu",confidence:"high",channel:"pdf_footnote"}],names:["佐藤花子"],emails:["hanako@example.edu"]}}' > "$PC68_PROGRAM/教授研究/_corresp_cache.json"
+   jq -n '{professors:{}}' > "$PC68_PROGRAM/教授研究/_署名对照.json"
+   ```
+
+   `_署名对照.json` 必须保持 `{"professors":{}}`。按该来源调用上游 `professor-research` 的联系方式证据程序：
+
+   ```sh
+   uv run --offline --no-project python "$PC68_CONTACT_EVIDENCE_SCRIPT" "$PC68_PROGRAM"
+   uv run --offline --no-project python "$PC68_CONTACT_EVIDENCE_SCRIPT" "$PC68_PROGRAM" --check > "$PC68_RUN_ROOT/contact-evidence-check.json"
+   jq -e '.result == "fresh" and .artifact_degraded == false and .reasons == [] and (.professors | length == 2) and all(.professors[]; .result == "fresh" and .reasons == [])' "$PC68_RUN_ROOT/contact-evidence-check.json"
+   jq -e '(.degraded == false) and (.global_degraded == false) and (.source_errors | length == 0) and (any(.professors[]; .professor.name == "山田太郎" and .verdict == "confirmed_cross_source" and .current_email == "taro@example.edu" and .evidence_status.current_email_blocked_by == [])) and (any(.professors[]; .professor.name == "佐藤花子" and .verdict == "confirmed_cross_source" and .current_email == "hanako@example.edu" and .evidence_status.current_email_blocked_by == []))' "$PC68_PROGRAM/教授研究/_联系方式证据.json"
+   ```
+
+   检查程序返回 `fresh`，两位教授均为 `confirmed_cross_source` 且 `current_email_blocked_by` 为空。把选择输入文件 `$PC68_RUN_ROOT/selection-input.json` 写在运行目录；方向编号同为 `DIR00001`、想法编号同为 `DIR00001_1`，但每行均带正确教授目录：
+
+   ```sh
+   jq -n --arg root "$PC68_PROGRAM" '{selections:[{professor:"山田太郎",professor_dir:($root+"/教授研究/工学/山田太郎"),direction_ids:["DIR00001"],ideas:[{id:"DIR00001_1"}]},{professor:"佐藤花子",professor_dir:($root+"/教授研究/社会情報/佐藤花子"),direction_ids:["DIR00001"],ideas:[{id:"DIR00001_1"}]}]}' > "$PC68_RUN_ROOT/selection-input.json"
+   ```
+
+   每位教授目录只保留其阶段3生成的 `套磁候选输入.json` 和 `套磁候选状态.json`，不手工复制或修改这些文件。
+4. **阶段4教授本地邮件包已按产品入口生成。**禁止复制程序级邮件包或手工改写教授本地包。使用当前安装版本的正式命令：
+
+   ```sh
+   uv run --offline --no-project python "$PC68_SCRIPT" stage4-finalize --program-root "$PC68_PROGRAM" --selection-input "$PC68_RUN_ROOT/selection-input.json" --profile "$PC68_PROFILE" > "$PC68_RUN_ROOT/stage4-result.json"
+   jq -e '.status == "ok" and (.results | length == 2) and all(.results[]; .status == "ok")' "$PC68_RUN_ROOT/stage4-result.json"
+   ```
+
+   用以下命令核对两份包的版本、所有者、唯一邮件编号和邮箱证据；不得把一个教授的包写入或作为另一教授的输入：
+
+   ```sh
+   jq -e --arg dir "$PC68_YAMADA_DIR" '.schema == 3 and .kind == "professor-contact-email-input" and .professor == "山田太郎" and .professor_dir == $dir and (.emails | length == 1) and .emails[0].email_id == "山田太郎::DIR00001::DIR00001_1" and .emails[0].contact_evidence.record.verdict == "confirmed_cross_source" and .emails[0].contact_evidence.record.current_email == "taro@example.edu" and .emails[0].contact_evidence.record.evidence_status.current_email_blocked_by == [] and (.emails[0].contact_evidence.record_fingerprint | type == "string" and length == 64)' "$PC68_YAMADA_DIR/邮件输入.json"
+   jq -e --arg dir "$PC68_SATO_DIR" '.schema == 3 and .kind == "professor-contact-email-input" and .professor == "佐藤花子" and .professor_dir == $dir and (.emails | length == 1) and .emails[0].email_id == "佐藤花子::DIR00001::DIR00001_1" and .emails[0].contact_evidence.record.verdict == "confirmed_cross_source" and .emails[0].contact_evidence.record.current_email == "hanako@example.edu" and .emails[0].contact_evidence.record.evidence_status.current_email_blocked_by == [] and (.emails[0].contact_evidence.record_fingerprint | type == "string" and length == 64)' "$PC68_SATO_DIR/邮件输入.json"
+   ```
+
+5. 两份 `_contact_verify.json` 的 `items` 均须有 `email`、`roster`、`season`、`header`、`subject_batch`、`schedule`、`consent` 七项，七项 verdict 都为 `confirmed`；`items.email.value` 分别为本教授冻结邮箱，核验时间为当前 UTC 时间，来源指纹须绑定当前 `info.json` 与 `boshu_analysis.json`。写入前设置 `PC68_VERIFIED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"`、`PC68_INFO_FP="$PC68_PROGRAM/info.json:$(stat -f %m "$PC68_PROGRAM/info.json")"`、`PC68_BOSHU_FP="$PC68_PROGRAM/boshu_analysis.json:$(stat -f %m "$PC68_PROGRAM/boshu_analysis.json")"`。用同一个 `jq` 函数分别生成两份文件：
+
+   ```sh
+   write_contact_verify() {
+     professor="$1"
+     email="$2"
+     destination="$3"
+     jq -n --arg verified_at "$PC68_VERIFIED_AT" --arg professor "$professor" --arg email "$email" --arg info_fp "$PC68_INFO_FP" --arg boshu_fp "$PC68_BOSHU_FP" '{verified_at:$verified_at,items:{email:{verdict:"confirmed",value:$email,sources:[{type:"synthetic"}]},roster:{verdict:"confirmed",value:$professor,sources:[{type:"synthetic"}]},season:{verdict:"confirmed",value:"spring 2027",sources:[{type:"synthetic"}]},header:{verdict:"confirmed",value:"synthetic header",sources:[{type:"synthetic"}]},subject_batch:{verdict:"confirmed",value:"synthetic subject",sources:[{type:"synthetic"}]},schedule:{verdict:"confirmed",value:"synthetic schedule",sources:[{type:"synthetic"}]},consent:{verdict:"confirmed",value:"synthetic consent",sources:[{type:"synthetic"}]},warnings:[]},source_fingerprints:{info_json:$info_fp,boshu_analysis:$boshu_fp}}' > "$destination"
+   }
+   write_contact_verify "山田太郎" "taro@example.edu" "$PC68_YAMADA_DIR/_contact_verify.json"
+   write_contact_verify "佐藤花子" "hanako@example.edu" "$PC68_SATO_DIR/_contact_verify.json"
+   ```
+
+   对两个本地邮件包分别运行阶段5计划预检，保留 JSON 输出并检查 `status` 和本教授的 `verify` 均为 `ok`：
+
+   ```sh
+   uv run --offline --no-project python "$PC68_SCRIPT" stage5-plan --program-root "$PC68_PROGRAM" --email-pack "$PC68_YAMADA_DIR/邮件输入.json" --email-id "山田太郎::DIR00001::DIR00001_1" --profile "$PC68_PROFILE" --template "$PC68_TEMPLATE" --followup-template "$PC68_FOLLOWUP_TEMPLATE" --mode both > "$PC68_RUN_ROOT/stage5-yamada.json"
+   jq -e '.status == "ok" and .verify["山田太郎"] == "ok"' "$PC68_RUN_ROOT/stage5-yamada.json"
+   uv run --offline --no-project python "$PC68_SCRIPT" stage5-plan --program-root "$PC68_PROGRAM" --email-pack "$PC68_SATO_DIR/邮件输入.json" --email-id "佐藤花子::DIR00001::DIR00001_1" --profile "$PC68_PROFILE" --template "$PC68_TEMPLATE" --followup-template "$PC68_FOLLOWUP_TEMPLATE" --mode both > "$PC68_RUN_ROOT/stage5-sato.json"
+   jq -e '.status == "ok" and .verify["佐藤花子"] == "ok"' "$PC68_RUN_ROOT/stage5-sato.json"
+   ```
+
+   若返回 `needs_refresh`、`verify_missing` 或其他问题，先修复准备材料并保留记录，不发送正式请求。
 6. 每位教授的用户选择完整且相互可区分：
 
    | 邮件编号 | `first_choice` | `signature_name` | `learning` | `initial_sent_date` | `email_address` |
    | --- | --- | --- | --- | --- | --- |
-   | `山田太郎::DIR-A::idea-a` | `true` | `测试申请者甲` | `地域交通规划` | `2026-10-01` | `taro@example.edu` |
-   | `佐藤花子::DIR-B::idea-b` | `false` | `测试申请者乙` | `沿岸防灾信息` | `2026-10-02` | `hanako@example.edu` |
+   | `山田太郎::DIR00001::DIR00001_1` | `true` | `测试申请者甲` | `地域交通规划` | `2026-10-01` | `taro@example.edu` |
+   | `佐藤花子::DIR00001::DIR00001_1` | `false` | `测试申请者乙` | `沿岸防灾信息` | `2026-10-02` | `hanako@example.edu` |
 
    两封结果应分别保留对应教授自己的方向、想法、署名、学习内容及邮箱；不能把另一位教授的这些内容作为参照输入给生成代理。
 
@@ -141,7 +287,7 @@
      "mode": "both",
      "choices": [
        {
-         "email_id": "山田太郎::DIR-A::idea-a",
+         "email_id": "山田太郎::DIR00001::DIR00001_1",
          "first_choice": true,
          "signature_name": "测试申请者甲",
          "learning": "地域交通规划",
@@ -149,7 +295,7 @@
          "email_address": "taro@example.edu"
        },
        {
-         "email_id": "佐藤花子::DIR-B::idea-b",
+         "email_id": "佐藤花子::DIR00001::DIR00001_1",
          "first_choice": false,
          "signature_name": "测试申请者乙",
          "learning": "沿岸防灾信息",
@@ -176,7 +322,7 @@
 
 这是唯一一次正式业务请求。请求已提交或状态不明后，不重发、不改提示、不换模型、配置、输入、consumer 或结果；先确认服务响应与是否已产生业务文件。已确认的业务失败保留原样并交实现负责人，后续只复验受影响项。服务未接收请求且能证明无业务副作用时，按项目约定记录为未执行或外部阻塞，仍须先修订计划并再次过第二关口；不得将配置问题改写成产品失败。预检只检查当前产品 SHA 的支持安装、输入有效性、既有配置来源和服务可调用性，不发送模拟业务请求，不启停服务。
 
-本轮只完成计划文本，不运行确定性产品测试或正式请求，不新增运行次数。第二关口仍待专用审核；通过后，执行者仍须等待正式请求授权。
+本轮完成运行准备文本及本地合成准备：隔离消费者安装锁定产品和上游提交；两位教授的阶段2/3前置资料、联系方式证据、核验文件和阶段4本地邮件包均已生成；阶段5预检两份均返回 `status: ok` 且对应 `verify: ok`。没有运行确定性验收套件，没有发送正式业务请求，也没有新增正式运行次数。第二关口仍待专用审核并确认获批配置来源；通过后，执行者仍须等待正式请求授权。
 
 ## 5. 失败处理与结束
 
@@ -190,13 +336,13 @@
 
 | 内容 | 状态 |
 | --- | --- |
-| 当前计划 | 第四十版；本文件 |
-| 计划设计审核 | 第四十版业务范围及辛的复验边界已获专用审核代理批准；本次整理的执行草稿待第二关口审核，见[设计复核记录](issue68-test-plan-r40-design-review.md) |
+| 当前计划 | 第四十一版；本文件 |
+| 计划设计审核 | 第四十版业务范围及辛的复验边界已获专用审核代理批准；第四十一版只补齐固定提交下的运行准备步骤和实测产物，不变更业务范围，待第二关口审核；见[设计复核记录](issue68-test-plan-r40-design-review.md) |
 | 甲至庚 | 引用有效历史通过，保留原版本与来源 |
-| 辛 | 一次正常业务产物复验待准备，未执行；取消旧提前停止运行及不可见提示词检查 |
-| 第二关口 | 阶段2/3输入、教授本地邮件包及配置来源均未解决；第4节不是完整运行手册，尚未通过，正式请求未授权 |
+| 辛 | 正式业务产物复验尚未执行；两位教授的合成前置资料、联系方式证据、教授本地邮件包及阶段5计划预检已完成；保留一次正常业务产物复验，不检查不可见提示词或已验证的等待能力 |
+| 第二关口 | 本地准备来源及命令已写入并实测；仍待专用审核与获批模型配置来源。正式请求未授权 |
 | 第三关口 | 辛的当前结果待补，尚未通过 |
 
-仅修改本计划，不恢复用户删除的测试代码，不修改产品，不执行确定性测试或正式请求。
+仓库内仅修改本计划；合成输入及预检输出留在隔离运行目录，不作为产品代码或验收测试提交。不恢复用户删除的测试代码，不修改产品，不执行确定性验收套件或正式请求。
 
-本轮修订依据：用户指出无法取得子代理真实提示词，要求重新考虑路径检查、删除对原生等待与返回能力的重复验证，并明确结果汇报的检查定义。第四十版据此修正辛及执行交接；甲至庚不变。历史回复已核对准确，删除其“未复制完整对象所以汇报失败”的依据。仅保留普通业务产物检查及同次结果对照，不增加新业务目标。
+本轮修订依据：用户明确本地测试工程师应完成计划内准备并推送拉取请求。第四十一版将先前列为待确认的阶段2/3前置资料和阶段4教授本地邮件包来源改为已执行的合成准备步骤，记录固定产品提交、联系方式证据及两份阶段5预检结果。业务目标和甲至辛矩阵不变。唯一未解决的准备事项仍是获批模型配置来源；正式 `/eval` 请求继续等待第二关口审核及明确授权。
