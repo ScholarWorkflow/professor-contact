@@ -6,6 +6,8 @@
 
 ## 当前事实与执行边界
 
+- 按用户要求，对来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 进行两次新的隔离安装重试。第一次证据目录为 `/private/tmp/issue66-r9-install-retry-gEnzlJCT/installation-check`；安装器在解析 `ScholarWorkflow/pdf-processing-core` 时超过 1200 秒，`install.json` 记录 `status=error`、安装调用退出码为 `null` 及超时错误，外层运行器退出码为 `2`。第二次在扩展网络权限的执行环境运行，证据目录为 `/private/tmp/issue66-r9-install-retry-elevated-UmYvpvXB/installation-check`；安装器 147.1 秒后以退出码 `1` 失败。原始输出显示 GitHub API 请求触发速率限制提示，随后 HTTPS 克隆 `ScholarWorkflow/professor-contact` 遇到 `curl 56`、OpenSSL `unexpected eof while reading`、响应数据未收完及 `early EOF`；安装事务未提交。两轮的 `writer.json` 与 `verdict.json` 均为 `CASE_NOT_STARTED`，没有受控 writer、`save_input` 或正式请求。两次重试的结构化记录和命令输出均保留在各自证据目录。
+
 - 本次只处理 `S3-WRITER-1`、`S3-ASSET-COMPAT-1`、`S3-HANDOFF-1`、`S3-RT-CODEX-1` 及其直接依赖。其他既有证明按计划复用，不重跑整套模型业务。
 - 第二关口的新增材料仍须独立审核和批准；第三关口当前来源没有通过记录。本轮不运行正式模型请求。
 - 先前三种 APM 网络路径均未完成安装：HTTPS 因依赖 `ScholarWorkflow/browser-pdf-tools` 的 TLS `unexpected eof while reading` 克隆失败并回滚；SSH 连接 22 端口被关闭；授权 HTTPS 重试在 `resolving` 停留 749.8 秒后中断。执行摘要记有该次中断的退出码 `130`，但旧目录 `/private/tmp/issue66-r9-preflight.9pzP6P` 没有单独保存每次顶层命令、分流标准输出与标准错误及进程退出码。该目录的顶层记录文件为 `candidate.md`、`install.log`、`install-ssh.log`、`install-escalated-retry.log`；失败安装还留下 `.agents/` 与 `.codex/` 部分文件树，日志记录了安装失败及删除 `apm.yml`。这些残留不算成功安装或可验证的独占消费者，旧尝试仍保留为记录不完整的预检事实。
