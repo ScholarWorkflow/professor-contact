@@ -2,9 +2,9 @@
 
 版本：`issue-68-test-plan-r40-2026-10-09`。
 
-目标仓库：`ScholarWorkflow/professor-contact`；拉取请求：[第72号](https://github.com/ScholarWorkflow/professor-contact/pull/72)。本轮读取的提交：`72dcd19ecb68b256cf558caa2d0441aabec74989`，产品内容与 `d434de9685eea3f7665f3afc727ece3edea5a184`相同。本文件是唯一完整测试计划，取代第三十九版及更早方案。旧评论、测试程序和证据约定不再提供执行步骤或额外通过条件。
+目标仓库：`ScholarWorkflow/professor-contact`；拉取请求：[第72号](https://github.com/ScholarWorkflow/professor-contact/pull/72)。本轮读取的提交：`d2df68a34d2ab191d742b133ed12b2b4d3dce2ed`。本文件是唯一完整测试计划，取代第三十九版及更早方案。旧评论、测试程序和证据约定不再提供执行步骤或额外通过条件。
 
-本轮工作是设计新计划，不运行测试，不授予正式运行许可，不宣告第二、第三关口通过。执行前由本地测试工程师在本文件补齐第4节所列步骤，再交第二关口审核。
+本轮整理辛的执行准备材料，不运行产品测试，不授予正式运行许可，不宣告第二、第三关口通过。阶段2/3输入来源、阶段4教授本地邮件包来源和模型配置来源仍待确认；第4节不是可直接复现的完整运行手册。正式业务请求还须等待第二关口审核及后续明确授权。
 
 ## 1. 正式依据与范围
 
@@ -75,19 +75,108 @@
 
 最终回复允许自然语言概括原因，不要求逐字复制 JSON、原因码或完整对象，不要求固定模板。某一事实没有被报告且影响用户判断是否完成、哪位教授有问题或总览能否使用，才是漏报；措辞不同不构成失败。现有结果或回复确实取不到时标为无法判断，不推测内部提示词、等待过程或返回内容。
 
-## 4. 执行步骤的交接
+## 4. 执行步骤
 
-本节说明本地测试工程师需要补齐的执行材料，不是已冻结的运行手册。不得调用已删除的第三十八版及更早运行器，也不得让执行者从旧评论拼接命令。
+本节记录辛的一次正式运行准备草稿。阶段2/3输入来源、教授本地邮件包来源和4.1.5所述配置来源均未解决，因此当前不能按本节直接准备完整输入或发送请求；第二关口审核通过前不得将本节称为完整运行手册。本轮没有运行授权，且须取得后续明确授权后才可发送正式业务请求。不得调用已删除的第三十八版及更早运行器，也不得从旧评论拼接执行命令。
 
-1. 固定辛实际复验使用的产品版本。默认当前提交及只改本计划的后继提交；出现产品修改时只分析它对清单的影响。复用仍适用的隔离安装、模型缓存、共享配置和预检；安装失效时才通过正式安装入口准备消费者，不能手工复制或修补产品。
-2. 在本文件给出消费者目录、版本、安装或复用记录、共享配置文件版本、必要变量来源及准备顺序。只准备辛所需状态；原始材料和实际配置保存在仓库外独立 `/tmp` 目录，不提交或公开。
-3. 在本文件固定两位教授的合成输入及普通用户请求。为各自合法结果文件选取能够在实际邮件中区别的业务内容，预先注明对应教授、目标邮件和观察点；补齐正常生成所需核验、选择及模板条件，使用正式支持的输入与配置，不绕过产品保护、不用旧提前停止提示。用户请求只含正常业务输入，不教根代理分配、交接、委派、总览或清理算法。
-4. 对缺失的场景材料，只用现有准备入口或常规文件操作补齐合成业务文件，并在本文件写清具体路径与命令。不得恢复整套旧测试程序，不新增专用采集器、来源关联器或判定设施；确需新增专用设施时先依最新测试规则说明现有方式为何不足并取得范围批准。
-5. 给出通过现有评估服务发送一次普通请求的具体命令及输出位置，从消费者目录启动；按服务文档使用完整执行参数，不直接在外壳调用 `codex`，不启停或重启服务。配置沿用共享文件来源和项目约定，不在测试提示中补产品行为。只有配置、依赖或命令变化实际影响可用性时补必要预检。
-6. 写明两位教授实际邮件、本地状态、业务接口结果、总览返回与根代理最后回复的读取位置；按第3.3节对照，不要求子代理真实提示词、逐调用输入或新的路径传递证明，不为观察而禁止产品清理。先检查现有结果是否足够；确实缺失时说明具体业务观察缺口并暂停受影响部分，不能让执行者自行发明采集设施。
-7. 将甲至庚的复用结果与辛的实际结果记在本文件后部或标准执行报告中，注明产品与测试版本、实际命令、输出位置、未完成项。对复验范围给出第二关口结论后再正式运行，不把本次设计审核当作执行批准。
+### 4.1 消费者与版本
 
-下一负责者是本地测试工程师，补齐上述具体步骤并提交第二关口；正式执行工程师随后按已确认步骤完成辛，不临场修改输入、方法或预期。本轮仅生成计划，没有发送正式请求，也没有消耗新的运行次数。
+1. 目标产品版本固定为本计划记录的 `d2df68a34d2ab191d742b133ed12b2b4d3dce2ed`。计划文档后续提交不改变该产品代码版本；若第二关口前产品文件发生变化，先按本计划第3节只分析受影响范围，并更新产品版本及其适用性。
+2. 在仓库及其工作树之外创建唯一运行目录并设置变量：`PC68_RUN_ROOT="$(mktemp -d /private/tmp/pc68-r40-20261009-XXXXXX)"`、`PC68_CONSUMER="$PC68_RUN_ROOT/consumer"`、`PC68_PROGRAM="$PC68_CONSUMER/testdata/program"`、`PC68_PROFILE="$PC68_RUN_ROOT/profile/套磁邮件/套磁信息.md"`。创建空消费者、程序目录及 `$PC68_PROFILE` 的父目录；将 `$PC68_PROFILE` 写成只含合成申请人信息的文本文件；其下使用 `request.json`、`response.json`、`selection-input.json`。不得复用 R37 的原始运行目录，不得在产品仓库内放置临时输入或输出。
+3. 在空的 `$PC68_RUN_ROOT/consumer` 中通过正式安装入口创建消费者：`apm init`，然后运行 `apm install https://github.com/ScholarWorkflow/professor-contact.git#d2df68a34d2ab191d742b133ed12b2b4d3dce2ed --target codex --trust-transitive-mcp`。保存安装命令与退出码到运行目录。禁止使用本地路径、符号链接、手工复制或修补安装产物。
+4. 使用现有评估服务及其测试专用 Codex 配置，不启停或重启服务。在已配置的 `eval-server` 仓库工作目录执行 `direnv exec . sh -c 'printf "%s\\n" "$EVAL_PORT"'` 取得端口；不得在计划、请求或提交中写入端口、个人绝对路径、密钥或服务进程信息。
+5. 配置来源在正式运行前必须由第二关口确认：当前 `PROJECT_CONSENSUS.md` 要求使用默认 Codex 配置中的 `gpt-6-luna`、低推理强度，并禁止在请求中重复覆盖；目前可见的 `skills-test-fixtures` 提交 `c738fa2f8bcbb16cd99d741332d5f59b062b6357` 的 `configs/codex-eval-adapter-contract.json` 属于自动审批基础设施用例，固定 `gpt-5.6-luna`，不能作为本业务用例配置。R37 的每请求模型覆盖也不沿用。必须先确认一个已批准的版本化配置文件能提供本业务要求的默认模型和推理强度，并记录文件路径、版本及实际生效值；若来源仍缺失或冲突，停在正式请求之前，记为配置阻塞，不改现有服务或配置，不通过命令行覆盖绕过。
+
+### 4.2 合成业务输入
+
+1. 在 `$PC68_RUN_ROOT/consumer/testdata/program/教授研究/` 准备两位虚构教授：`山田太郎` 与 `佐藤花子`，分别位于 `工学/山田太郎/` 和 `社会情報/佐藤花子/`。各教授只准备一封邮件，方向及想法编号固定为 `DIR-A/idea-a` 与 `DIR-B/idea-b`，邮件编号分别为 `山田太郎::DIR-A::idea-a`、`佐藤花子::DIR-B::idea-b`。两位教授的研究材料必须明显不同：前者围绕地域交通需求变化，后者围绕沿岸灾害信息共享；不写入真实个人或学校资料。
+2. **输入准备阻塞：**本计划尚未指定获批的阶段2/3输入夹具，也未给出适用于这两位教授的准确生成命令。仓库中的 `prepare_issue55_stage3_fixture.py` 和 `prepare_issue57_stage2_fixture.py` 等夹具面向其他议题，本计划未批准将它们作为这次双教授输入的来源；本轮也不增加阶段2/3业务请求来生成输入。第二关口审核前，必须确认受支持的夹具或准备来源、适用版本及确切步骤，并将它们写入本节；若找不到符合本计划范围的来源，停止在正式请求之前，修订计划后重新审核。此项未解决前，以下输入要求是验收条件，不是可照做的生成步骤。
+3. 两个教授目录均须有正常 Stage 5 所需的申请人资料、项目 `info.json`、`boshu_analysis.json`、模板、教授本地 `_contact_verify.json`、本地阶段 4 邮件包和本地证据源。用上游 `professor-research` 的 `contact_evidence.py` 正常生成联系方式证据：在每位教授的 `_professor_candidates.json` 中放入与 `papers.json`、`_corresp_cache.json` 相符的虚构邮箱；对应论文年份使用当前年份前一年，联系人使用 `confidence: high` 及直接身份匹配，来源邮箱彼此一致。设置 `PC68_CONTACT_EVIDENCE_SCRIPT="$PC68_CONSUMER/apm_modules/ScholarWorkflow/professor-research/.apm/skills/professor-collector/scripts/contact_evidence.py"`；先执行 `uv run "$PC68_CONTACT_EVIDENCE_SCRIPT" "$PC68_PROGRAM"` 生成，再执行 `uv run "$PC68_CONTACT_EVIDENCE_SCRIPT" "$PC68_PROGRAM" --check`。仅接受两位目标教授均为 `fresh`、`confirmed_cross_source`、`current_email_blocked_by: []` 且当前邮箱分别为 `taro@example.edu`、`hanako@example.edu` 的输入。每位教授目录只放各自的 `套磁候选输入.json` 与 `套磁候选状态.json`；选择输入文件 `$PC68_RUN_ROOT/selection-input.json` 位于运行目录，结构如下：
+
+   ```json
+   {
+     "selections": [
+       {
+         "professor": "山田太郎",
+         "professor_dir": "<PC68_PROGRAM>/教授研究/工学/山田太郎",
+         "direction_ids": ["DIR-A"],
+         "ideas": [{"id": "idea-a"}]
+       },
+       {
+         "professor": "佐藤花子",
+         "professor_dir": "<PC68_PROGRAM>/教授研究/社会情報/佐藤花子",
+         "direction_ids": ["DIR-B"],
+         "ideas": [{"id": "idea-b"}]
+       }
+     ]
+   }
+   ```
+
+   生成该文件时运行：
+
+   ```sh
+   jq -n --arg root "$PC68_PROGRAM" '{selections:[{professor:"山田太郎",professor_dir:($root+"/教授研究/工学/山田太郎"),direction_ids:["DIR-A"],ideas:[{id:"idea-a"}]},{professor:"佐藤花子",professor_dir:($root+"/教授研究/社会情報/佐藤花子"),direction_ids:["DIR-B"],ideas:[{id:"idea-b"}]}]}' > "$PC68_RUN_ROOT/selection-input.json"
+   ```
+
+   阶段2/3输入来源问题按第2项处理，来源确认前不得声称候选输入和状态已准备完成。
+4. **教授本地邮件包来源阻塞：**当前目标版本的 `contact_state.py stage4-finalize` 将选择和邮件输入写入程序级 `$PC68_PROGRAM/教授研究/套磁选择.json` 与 `$PC68_PROGRAM/教授研究/邮件输入.json`；Stage 5 则只接受教授目录中的 `邮件输入.json` schema 3。当前尚未确认获批的入口能为两位教授生成所需本地包，故上述阶段4命令不能作为本次输入生成步骤。不得复制程序级邮件包或手工改写、伪造教授本地包。第二关口前须确认受支持的教授级生成入口及准确命令、适用版本，并核对每个包只声明一位教授且其 `contact_evidence.record_fingerprint` 与本地证据一致；若不存在符合范围的入口，停止在正式请求前，更新计划及产品版本后重新审核。
+5. 两份 `_contact_verify.json` 的 `items` 都须有 `email`、`roster`、`season`、`header`、`subject_batch`、`schedule`、`consent` 七项，七项 verdict 均为 `confirmed`；`items.email.value` 分别与本教授冻结邮箱一致，核验来源及时间满足正常有效期。Stage 5 首次计划必须返回 `verify: ok`，否则不发送辛请求，按 `needs_refresh`、`verify_missing` 或实际原因修正测试准备并保留准备记录。
+6. 每位教授的用户选择完整且相互可区分：
+
+   | 邮件编号 | `first_choice` | `signature_name` | `learning` | `initial_sent_date` | `email_address` |
+   | --- | --- | --- | --- | --- | --- |
+   | `山田太郎::DIR-A::idea-a` | `true` | `测试申请者甲` | `地域交通规划` | `2026-10-01` | `taro@example.edu` |
+   | `佐藤花子::DIR-B::idea-b` | `false` | `测试申请者乙` | `沿岸防灾信息` | `2026-10-02` | `hanako@example.edu` |
+
+   两封结果应分别保留对应教授自己的方向、想法、署名、学习内容及邮箱；不能把另一位教授的这些内容作为参照输入给生成代理。
+
+### 4.3 请求与结果读取
+
+1. 正式输入是一条普通第五阶段用户请求，其业务对象固定如下；发送时把 `<PC68_PROGRAM>` 替换为本轮程序根绝对路径：
+
+   ```json
+   {
+     "folder_path": "<PC68_PROGRAM>",
+     "professors": ["山田太郎", "佐藤花子"],
+     "mode": "both",
+     "choices": [
+       {
+         "email_id": "山田太郎::DIR-A::idea-a",
+         "first_choice": true,
+         "signature_name": "测试申请者甲",
+         "learning": "地域交通规划",
+         "initial_sent_date": "2026-10-01",
+         "email_address": "taro@example.edu"
+       },
+       {
+         "email_id": "佐藤花子::DIR-B::idea-b",
+         "first_choice": false,
+         "signature_name": "测试申请者乙",
+         "learning": "沿岸防灾信息",
+         "initial_sent_date": "2026-10-02",
+         "email_address": "hanako@example.edu"
+       }
+     ]
+   }
+   ```
+
+   请求正文只要求分别根据两位教授自己的本地邮件包完成首封及无回复跟进邮件；不得指示委派、等待、教授分配、文件路径传递、总览重建、清理或内部工具调用，也不得把产品说明写成额外验收条件。
+2. 将上面的普通业务对象放入 `PC68_PROMPT`，用 `jq --arg` 生成请求文件：
+
+   ```sh
+   jq -n --arg consumer "$PC68_CONSUMER" --arg prompt "$PC68_PROMPT" '{command:("--json --ephemeral --skip-git-repo-check --sandbox workspace-write --cd "+($consumer|@sh)+" -- "+($prompt|@sh)),timeout:900}' > "$PC68_RUN_ROOT/request.json"
+   ```
+
+   使用现有评估服务的 `POST /eval`，响应写入 `$PC68_RUN_ROOT/response.json`。不直接执行 `codex`，不追加 `--model`、`--config`、信任、并发或沙箱覆盖参数。在已配置的 `eval-server` 仓库工作目录执行 `direnv exec . sh -c 'curl -sS -X POST "http://127.0.0.1:${EVAL_PORT}/eval" -H "Content-Type: application/json" --data-binary @"$1"' sh "$PC68_RUN_ROOT/request.json" > "$PC68_RUN_ROOT/response.json"` 提交一次请求并保留响应。
+3. 检查 `$PC68_RUN_ROOT/consumer/testdata/program/教授研究/工学/山田太郎/` 与 `$PC68_RUN_ROOT/consumer/testdata/program/教授研究/社会情報/佐藤花子/` 下各自的 `套磁邮件.md`、`套磁邮件.txt`、`套磁跟进邮件.md`、`套磁跟进邮件.txt`、`套磁邮件状态.json` 与 `_contact_verify.json`。从两位教授本地状态的 `emails[<本教授 email_id>]` 读取首封及 `followup` 条目的 `files`、`choices`、`model_result`、`validation`；用 `jq` 核对本地归属和完整文件路径，再人工对照邮件内容是否分别对应本人的合成研究材料及上述选择。
+4. 总览仅在两位教授结果消费完成后由普通产品入口独立读取：检查接口返回的 `overview_md`，并检查 `$PC68_RUN_ROOT/consumer/testdata/program/教授研究/套磁邮件总览.md`；记录 `stage5-rebuild-overview` 的实际返回 `status`、`overview_md`、`professors`、`emails`。根代理最后回复从同一次接口响应读取：`jq -r '[.output.events[] | select(.type == "item.completed" and .item.type == "agent_message")] | last | .item.text' "$PC68_RUN_ROOT/response.json"`，再按第3.3节逐项对照，不得把总览返回当作教授业务结果。
+5. `$PC68_RUN_ROOT/response.json` 保留本次接口响应供检查。业务输出以实际文件、教授状态及接口返回为准；不采集新 trace、完整调用链、子代理真实提示词或路径传递记录，不因观察而阻止产品清理。
+
+### 4.4 停止与重试
+
+这是唯一一次正式业务请求。请求已提交或状态不明后，不重发、不改提示、不换模型、配置、输入、consumer 或结果；先确认服务响应与是否已产生业务文件。已确认的业务失败保留原样并交实现负责人，后续只复验受影响项。服务未接收请求且能证明无业务副作用时，按项目约定记录为未执行或外部阻塞，仍须先修订计划并再次过第二关口；不得将配置问题改写成产品失败。预检只检查当前产品 SHA 的支持安装、输入有效性、既有配置来源和服务可调用性，不发送模拟业务请求，不启停服务。
+
+本轮只完成计划文本，不运行确定性产品测试或正式请求，不新增运行次数。第二关口仍待专用审核；通过后，执行者仍须等待正式请求授权。
 
 ## 5. 失败处理与结束
 
@@ -102,12 +191,12 @@
 | 内容 | 状态 |
 | --- | --- |
 | 当前计划 | 第四十版；本文件 |
-| 计划设计审核 | 第四十版修订及连带影响已获专用审核代理批准，覆盖检查完整；见[设计复核记录](issue68-test-plan-r40-design-review.md) |
+| 计划设计审核 | 第四十版业务范围及辛的复验边界已获专用审核代理批准；本次整理的执行草稿待第二关口审核，见[设计复核记录](issue68-test-plan-r40-design-review.md) |
 | 甲至庚 | 引用有效历史通过，保留原版本与来源 |
 | 辛 | 一次正常业务产物复验待准备，未执行；取消旧提前停止运行及不可见提示词检查 |
-| 第二关口 | 具体执行步骤待本地测试工程师补齐，尚未通过 |
+| 第二关口 | 阶段2/3输入、教授本地邮件包及配置来源均未解决；第4节不是完整运行手册，尚未通过，正式请求未授权 |
 | 第三关口 | 辛的当前结果待补，尚未通过 |
 
-仅新增本计划与必要设计审核记录，不恢复用户删除的测试代码，不修改产品，不执行正式测试。
+仅修改本计划，不恢复用户删除的测试代码，不修改产品，不执行确定性测试或正式请求。
 
 本轮修订依据：用户指出无法取得子代理真实提示词，要求重新考虑路径检查、删除对原生等待与返回能力的重复验证，并明确结果汇报的检查定义。第四十版据此修正辛及执行交接；甲至庚不变。历史回复已核对准确，删除其“未复制完整对象所以汇报失败”的依据。仅保留普通业务产物检查及同次结果对照，不增加新业务目标。
