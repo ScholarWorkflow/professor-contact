@@ -1,6 +1,6 @@
 {
   "schema": "issue-68-project-approval-preflight-continuation-v1",
-  "record_revision": "r36-continuation-2026-10-08",
+  "record_revision": "r37-preflight-continuation-2026-10-08",
   "plan_revision": "r36",
   "date": "2026-10-08",
   "previous_record": {
@@ -479,6 +479,135 @@
         "timeout_exit_code": 124,
         "invocation_method": "uv run --no-project python"
       }
+    },
+    {
+      "id": "R17",
+      "run_id": "a2894fc8-7f9f-4790-a0a0-930912fdee6a",
+      "result": "supported_install_and_project_config_preserved_marker_preflight_passed",
+      "raw_evidence_alias": "$PC68_R36_RUN17_RAW",
+      "evidence_alias": "$PC68_R36_RUN17_EVIDENCE",
+      "consumer_dir_alias": "$PC68_R36_RUN17_CONSUMER",
+      "transfer_root_alias": "$PC68_R36_RUN17_TRANSFER",
+      "install_command": [
+        "apm",
+        "install",
+        "https://github.com/ScholarWorkflow/professor-contact.git#b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+        "--target",
+        "codex",
+        "--trust-transitive-mcp"
+      ],
+      "apm_version": "0.29.0 (5ac6733)",
+      "apm_version_exit_code": 0,
+      "install_elapsed_seconds": 40.0,
+      "install_exit_code": 0,
+      "installed_dependencies": 10,
+      "installed_mcp_servers": 1,
+      "install_stdout_sha256": "ee421646acb474ed19883fcbc0505a9e49e659951aeafcfb7c895b2a858dd558",
+      "install_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "install_exit_code_file_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "apm_lock_sha256": "a3231e977916a41a5cc8b4702b82003e005508d6507bfe8314c1d9b55bf1e818",
+      "installation_script_sha256": "5d5347c18c5bd0df69b1377a02e39dc4048b0dd0d7c4246d105d102052f681d6",
+      "project_config_setup_status": "PREPARED",
+      "project_config_setup_sha256": "2336f13bc86f4a728d2991ce75d18cb4a87261fab3512a0187e86f4c7f2a56f9",
+      "project_config_helper_sha256": "4bd798a8c29ae93e1c65a261d85b21302422a4a7b0089ec6c62a974d5b6f9032",
+      "project_config_source_commit": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+      "config_sha256_before_install": "f76466364ef3afc04e1251a4bdbf294611d6c7d87df5fb0e0d6b69508892e4e1",
+      "config_sha256_after_install": "30121dfa3534f254f3d6cd2947b216e72af770bffc76e122a9117629eab3ae27",
+      "project_approval_preservation_status": "PRESERVED",
+      "project_approval_install_check_sha256": "999e955e27d177e681ec901d6ab0b894da433032a7b86f2e63e9630cbdbefd36",
+      "observed_project_approval_values": {
+        "approval_policy": "on-request",
+        "approvals_reviewer": "auto_review"
+      },
+      "request_attempted": true,
+      "eval_request_count": 1,
+      "request_file_sha256": "884322c6644c1c8a097446ff5d856af23e8c91d9b4bb22b305d394016dfa6e0f",
+      "request_body_sha256": "42b6f9d1f396c2498a20c7f6bfe4979e632d05c439eec4973829e87391303848",
+      "response_body_sha256": "cd759d889dfcd29cd7ef3c7e1165b1e52ef7978142476bb7628e4316b9befebe",
+      "actual_request_configuration_sha256": "92fddb54efb32fe1fe29739c6324646506452365bfde052ba1885dcb6eead8d8",
+      "command_events_sha256": "e1dd5138979c85887024e842d0ac4e6d62ef3b0f6dd4981b05bf40959a67a6fd",
+      "requested_model": "gpt-6-luna",
+      "requested_reasoning_effort": "low",
+      "requested_sandbox": "workspace-write",
+      "request_timeout_seconds": 900,
+      "effective_model_status": "OBSERVED",
+      "effective_reasoning_effort_status": "OBSERVED",
+      "effective_project_approval_configuration": {
+        "source": "output.thread_start_effective",
+        "values": {
+          "approval_policy": "on-request",
+          "approvals_reviewer": "auto_review"
+        },
+        "statuses": {
+          "approval_policy": "MATCH",
+          "approvals_reviewer": "MATCH"
+        },
+        "field_paths": {
+          "approval_policy": "output.thread_start_effective.approvalPolicy",
+          "approvals_reviewer": "output.thread_start_effective.approvalsReviewer"
+        },
+        "status": "MATCH"
+      },
+      "effective_configuration_source": {
+        "path": "output.app_server_events",
+        "method": "thread/started",
+        "model_field": "message.params.thread.model",
+        "reasoning_effort_field": "message.params.thread.reasoningEffort",
+        "runtime_generation": 1,
+        "matching_event_count": 1,
+        "status": "UNIQUE_MATCH",
+        "runtime_seq": 26857
+      },
+      "observation": {
+        "state": "PASS",
+        "reason": "single_request_marker_lifecycle_verified",
+        "matching_command_event_id": "exec-aa1b6909-bf73-4fd1-adbd-89d05ff09c25",
+        "command_start_seq": 26900,
+        "command_completion_seq": 26901,
+        "command_status": "completed",
+        "command_exit_code": 0,
+        "matching_command_event_count": 2,
+        "event_order_verified": true,
+        "operations": [
+          "create",
+          "read_and_verify",
+          "delete",
+          "confirm_absent"
+        ],
+        "read_matches": true,
+        "absent_after_delete": true,
+        "marker_sha256": "1c5ce462c28b8765e64581a1e935256e3708d3603caeed8a80cd99239a62a5d4"
+      },
+      "runtime_identity": {
+        "thread_id": "01a11a30-ff87-7800-b583-e799d8e29dbe",
+        "turn_id": "01a11a31-1411-74b1-b283-bc121e1c1927",
+        "runtime_generation": 1
+      },
+      "service_isolation_status": "ISOLATION_CONFIRMED",
+      "service_unchanged": true,
+      "service_before_sha256": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+      "service_after_sha256": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+      "consumer_unchanged": true,
+      "consumer_before_sha256": "9ff282f9b4510a630dec4dab26f1b39a7c0c17ac7a9e5e2aa3081e59f45c9c1d",
+      "consumer_after_sha256": "9ff282f9b4510a630dec4dab26f1b39a7c0c17ac7a9e5e2aa3081e59f45c9c1d",
+      "transfer_snapshots_complete_empty_same_root": true,
+      "transfer_before_sha256": "5dd36fb651d21ce9c658846bb8c7faee530f48e3e49b6705d841862ec09aa241",
+      "transfer_after_sha256": "5dd36fb651d21ce9c658846bb8c7faee530f48e3e49b6705d841862ec09aa241",
+      "preflight_result_sha256": "91275efe58aa4333cf2b76c8cef2bd658160d8759944f96f392f0887ff873c25",
+      "launcher_recovery": {
+        "prior_attempt_alias": "$PC68_R36_RUN17_LAUNCHER_FAILURE",
+        "prior_exit_code": 1,
+        "test_script_started": false,
+        "apm_started": false,
+        "eval_request_count": 0,
+        "error_excerpt_sha256": "37394288b70707ee5209e73ee7dba3201da1d2ccc32b236e81283522cdeabd5c",
+        "recovery": "writable temporary cache used only for local uv launcher; request command retained the required run-scoped cache",
+        "diagnostic_record_sha256": "2c0e8f9e5f72e5778faf0043b2724bd1f6c83bba68b321980e4c18d93437ec5d",
+        "prior_error_excerpt_alias": "$PC68_R36_RUN17_LAUNCHER_FAILURE_EXCERPT"
+      },
+      "second_gate_status": "INCOMPLETE",
+      "formal_PC68_R1_started": false,
+      "preflight_exit_code": 0
     }
   ],
   "configuration_order_probes": [
@@ -542,10 +671,10 @@
     "r14_installed_dependencies": 10,
     "r14_installed_mcp_servers": 1,
     "r14_eval_request_count": 0,
-    "final_preflight_state": "NOT TESTED",
-    "final_preflight_reason": "marker_command_not_observed",
+    "final_preflight_state": "PASS",
+    "final_preflight_reason": "single_request_marker_lifecycle_verified",
     "request_attempted": true,
-    "eval_request_count": 1,
+    "eval_request_count": 2,
     "second_gate_status": "INCOMPLETE",
     "formal_PC68_R1_started": false,
     "r11_timeout_policy_deviation": "Exceeded §4 600-second protection window by 110.7 seconds; manually interrupted, exit 130.",
@@ -560,14 +689,30 @@
     "r16_project_approval_configuration_preservation": "PRESERVED",
     "r16_installed_dependencies": 10,
     "r16_installed_mcp_servers": 1,
-    "r16_eval_request_count": 0
+    "r16_eval_request_count": 0,
+    "r17_supported_install": "SUCCEEDED",
+    "r17_project_approval_configuration_preservation": "PRESERVED",
+    "r17_installed_dependencies": 10,
+    "r17_installed_mcp_servers": 1,
+    "r17_install_elapsed_seconds": 40.0,
+    "r17_eval_request_count": 1,
+    "r17_preflight_result_sha256": "91275efe58aa4333cf2b76c8cef2bd658160d8759944f96f392f0887ff873c25",
+    "r17_request_body_sha256": "42b6f9d1f396c2498a20c7f6bfe4979e632d05c439eec4973829e87391303848",
+    "r17_response_body_sha256": "cd759d889dfcd29cd7ef3c7e1165b1e52ef7978142476bb7628e4316b9befebe",
+    "r17_observation_state": "PASS",
+    "r17_marker_reason": "single_request_marker_lifecycle_verified",
+    "user_authorized_install_attempts_r02_r17": 16,
+    "supported_install_successes_r08_r09_r10_r14_r16_r17": 6,
+    "r09_eval_request_count": 1
   },
   "retry_policy": {
     "installation": "User-authorized new-consumer retries with TLS verification enabled and no protocol fallback.",
-    "after_eval_request": "Do not resend after the synthetic request has been sent. R10-R16 are install-only retries; no evaluation-service request was sent. The R09 marker-command result remains NOT TESTED until a separately approved later preflight.",
+    "after_eval_request": "Do not resend within an attempt after its synthetic request has been sent. R09 remains NOT TESTED and was not repeated. A later user-authorized fresh post-R16 preflight ran as R17, sent exactly one new request, and passed. Do not repeat the R17 request; no formal PC68-R1 request was sent.",
     "cache_fix": "Use a run-scoped uv cache beside transfer/ under the unique run root, outside consumer and transfer snapshots.",
     "r11_protection_window_deviation": "R11 ran for 710.7 seconds, exceeding the plan §4 600-second protection window by 110.7 seconds. It was manually interrupted with exit 130, not terminated by the timeout wrapper. Preserve as a documented execution deviation; do not classify it as timeout exit 124.",
-    "r16_protection_window": "600 seconds, as specified in plan §4."
+    "r16_protection_window": "600 seconds, as specified in plan §4.",
+    "launcher_cache_recovery": "The initial R17 launcher stopped before script start because the default user uv cache was inaccessible. The exact error excerpt is preserved under the R17 local raw evidence alias; a writable temporary cache was used only for the local launcher retry, while the marker command retained its fixed run-scoped cache.",
+    "r17_protection_window": "600 seconds for the supported install; the fresh consumer install completed in 40.0 seconds."
   },
   "local_validation": {
     "working_directory_alias": "$PC68_TEST_ROOT",
@@ -810,14 +955,15 @@
   },
   "limitations": [
     "R09 proves supported installation, helper order, APM configuration preservation, and effective approval values. The response agentMessage reported a uv cache permission error and exit code 2, but no commandExecution event or raw uv stderr verifies that explanation; the generated command was not observed, so the machine result remains NOT TESTED.",
-    "R10 的配置助手状态和准备摘要已记录，但其助手原始标准输出、标准错误和退出文件未单独保存。R11–R16 均保留了可用的助手输出；R14、R16 是全新消费者安装成功并完成安装后项目值读回的记录。",
-    "R10–R16 均为安装重试，没有向评估服务发送请求。修正后的缓存命令及本地生命周期、目录位置预检尚未通过评估服务执行。",
+    "R10 的配置助手状态和准备摘要已记录，但其助手原始标准输出、标准错误和退出文件未单独保存。R11–R17 均保留了可用的助手输出；R14、R16、R17 是全新消费者安装成功并完成安装后项目值读回的记录。",
+    "R10–R16 是未发送评估请求的安装重试；R17 按用户后续授权发送一次新的标记预检请求并通过。R09 的旧请求不重发；本地生命周期和目录位置合成场景不构成正式业务证明。",
     "No formal PC68-R1 request or business data was sent. The second gate remains incomplete.",
     "R11 exceeded the §4 600-second installation protection window by 110.7 seconds and was manually interrupted with exit 130. Its raw log does not capture the APM version; no version is inferred.",
     "The lifecycle-combination and transfer-location preflight summaries retain plan_revision r26 and r27 respectively; they are reused compatible scenario evidence from unchanged source/behavior, not r36-bound approvals.",
     "Initial local validation failures are preserved and indexed under local_validation.prior_failed_attempts; their later corrected runs passed and the first results are not overwritten.",
     "R15 is a fresh-consumer install-only retry that stopped at 300 seconds, before the §4 600-second protection window. It is counted as an attempted installation and a timeout, but explicitly marked as a shorter-window execution deviation; R16 uses the full window. Its post-failure configuration values remain preserved.",
-    "R16 is a fresh-consumer install-only retry: APM 0.29.0 succeeded in 49.5 seconds, installing 10 dependencies and 1 MCP server. The post-install TOML readback preserved approval_policy=on-request and approvals_reviewer=auto_review; no evaluation request was sent."
+    "R16 is a fresh-consumer install-only retry: APM 0.29.0 succeeded in 49.5 seconds, installing 10 dependencies and 1 MCP server. The post-install TOML readback preserved approval_policy=on-request and approvals_reviewer=auto_review; no evaluation request was sent.",
+    "R17 只证明当前固定设置下的无业务标记目录操作及前后完整空目录观察；第二关口仍为 INCOMPLETE，正式 PC68-R1 未启动。"
   ],
   "excluded_invocations": [
     {
@@ -842,6 +988,17 @@
       "exit_code": 126,
       "apm_started": false,
       "exit_code_file_sha256": "703d2c10fa601276a4dd96193faed68902a642a44eb5b01b40d6fc8499e12822"
+    },
+    {
+      "id": "R17-local-launcher-default-cache-failure",
+      "raw_evidence_alias": "$PC68_R36_RUN17_LAUNCHER_FAILURE",
+      "result": "EXCLUDED_FROM_INSTALL_AND_EVAL_REQUEST_COUNTS",
+      "reason": "The initial local uv launcher could not open the protected default user cache before the preflight script started. No APM install or evaluation request ran. The next fresh run used a writable temporary cache only for the local launcher; the requested marker command retained its run-scoped cache.",
+      "exit_code": 1,
+      "apm_started": false,
+      "eval_request_count": 0,
+      "error_excerpt_sha256": "37394288b70707ee5209e73ee7dba3201da1d2ccc32b236e81283522cdeabd5c",
+      "diagnostic_record_sha256": "2c0e8f9e5f72e5778faf0043b2724bd1f6c83bba68b321980e4c18d93437ec5d"
     }
   ],
   "evidence_paths": {
@@ -858,6 +1015,13 @@
     "R15_launch_failure_exit": "$PC68_R36_RUN15_RAW/launch-failure.exit",
     "R16_raw": "$PC68_R36_RUN16_RAW",
     "R16_consumer": "$PC68_R36_RUN16_CONSUMER",
-    "transfer_preflight_rerun_raw": "$PC68_R36_TRANSFER_PREFLIGHT_RERUN_RAW"
+    "transfer_preflight_rerun_raw": "$PC68_R36_TRANSFER_PREFLIGHT_RERUN_RAW",
+    "R17_raw": "$PC68_R36_RUN17_RAW",
+    "R17_evidence": "$PC68_R36_RUN17_EVIDENCE",
+    "R17_consumer": "$PC68_R36_RUN17_CONSUMER",
+    "R17_transfer": "$PC68_R36_RUN17_TRANSFER",
+    "R17_launcher_failure": "$PC68_R36_RUN17_LAUNCHER_FAILURE",
+    "R17_unstarted_run_root": "$PC68_R36_RUN17_UNSTARTED_ROOT",
+    "R17_launcher_error_excerpt": "$PC68_R36_RUN17_LAUNCHER_FAILURE_EXCERPT"
   }
 }
