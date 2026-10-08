@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 RUNTIME = Path(__file__).resolve().parent / "runtime"
@@ -18,6 +19,7 @@ if str(RUNTIME) not in sys.path:
     sys.path.insert(0, str(RUNTIME))
 
 import verify_issue68_stage5_routing_r19 as verifier
+import run_issue68_stage5_routing_r19_codex as runner
 
 
 def load_capture():
@@ -146,6 +148,98 @@ class TestIssue68UvCacheR37(unittest.TestCase):
             with self.subTest(command=command):
                 with self.assertRaisesRegex(ValueError, "uv_cache_dir_binding_mismatch"):
                     verifier.command_action(command, self.manifest)
+
+    def run_main_with_cleanup_failure(self, host_result):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output = root / "output"
+            args = SimpleNamespace(
+                producer_root=root / "producer",
+                producer_sha="frozen-producer-revision",
+                fixture_root=root / "fixture",
+                fixture_sha=runner.FIXTURE_SHA,
+                eval_direnv_root=root / "eval-service",
+                output_dir=output,
+                transfer_location_root=root / "transfer-location",
+            )
+            contract = {
+                "revision": "synthetic-r37-contract",
+                "producer_revision": args.producer_sha,
+            }
+            preflight = {
+                "ready": True,
+                "technical_preflight_ready": True,
+                "technical_preflight_block_reasons": [],
+                "runtime_environment_facts": {},
+                "runtime_environment_evidence": {},
+            }
+            service = {
+                "eval_server": {"sha": "frozen-service-revision"},
+                "service": {"port": 4321, "pid": 12345, "start_time": "synthetic"},
+                "storage": {"status": "ISOLATION_CONFIRMED"},
+            }
+            with patch.object(runner, "pin"), \
+                    patch.object(runner, "parse_args", return_value=args), \
+                    patch.object(runner.transfer_location, "validate_location_root",
+                                 return_value=args.transfer_location_root), \
+                    patch.object(runner, "overlaps", return_value=False), \
+                    patch.object(runner, "check_entry_uniqueness"), \
+                    patch.object(runner, "load_contract", return_value=contract), \
+                    patch.object(runner, "actual_input_observation_preflight",
+                                 return_value=preflight), \
+                    patch.object(runner, "_record_service_runtime_facts",
+                                 return_value=preflight), \
+                    patch.object(runner, "capture_eval_service_provenance",
+                                 return_value=service), \
+                    patch.object(runner, "_codex_host_with_runtime_capture",
+                                 return_value=host_result), \
+                    patch.object(runner.signal, "signal"), \
+                    patch.object(runner.base, "stop_active"), \
+                    patch.object(runner.base, "progress"), \
+                    patch.object(runner.base, "clean_revision",
+                                 return_value={"sha": "synthetic-revision", "dirty": "no"}), \
+                    patch.object(runner.shutil, "rmtree",
+                                 side_effect=PermissionError("synthetic cleanup denied")):
+                exit_code = runner.main([])
+
+            final = json.loads((output / "final-verdict.json").read_text(encoding="utf-8"))
+            evidence = json.loads(
+                (output / "codex" / "uv-cache-binding.json").read_text(encoding="utf-8"))
+            return exit_code, final, evidence
+
+    def test_cleanup_failure_keeps_confirmed_product_failure_and_records_cleanup_error(self):
+        product_failure = {
+            "state": "CASE_STARTED",
+            "verdict": "FAIL_PRODUCT",
+            "reason_code": "owner_business_result_changed",
+            "professor_dir": "/synthetic/教授甲",
+        }
+
+        exit_code, final, evidence = self.run_main_with_cleanup_failure(product_failure)
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(final["verdict"], "FAIL_PRODUCT")
+        self.assertEqual(final["reason_code"], "owner_business_result_changed")
+        self.assertEqual(final["professor_dir"], "/synthetic/教授甲")
+        self.assertEqual(final["uv_cache_cleanup"], evidence["cleanup"])
+        self.assertFalse(evidence["cleanup"]["confirmed_absent"])
+        self.assertEqual(evidence["cleanup"]["error"], "synthetic cleanup denied")
+
+    def test_cleanup_failure_invalidates_non_product_terminal_result(self):
+        blocked_result = {
+            "state": "CASE_STARTED",
+            "verdict": "BLOCKED_OBSERVABILITY",
+            "reason_code": "owner_result_unobservable",
+        }
+
+        exit_code, final, evidence = self.run_main_with_cleanup_failure(blocked_result)
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(final["verdict"], "INVALID_TEST_EXECUTION")
+        self.assertEqual(final["reason_code"], "uv_cache_cleanup_unconfirmed")
+        self.assertEqual(final["uv_cache_cleanup"], evidence["cleanup"])
+        self.assertFalse(evidence["cleanup"]["confirmed_absent"])
+        self.assertEqual(evidence["cleanup"]["error"], "synthetic cleanup denied")
 
 
 if __name__ == "__main__":

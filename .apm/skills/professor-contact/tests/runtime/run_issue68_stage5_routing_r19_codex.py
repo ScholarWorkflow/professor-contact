@@ -1875,11 +1875,14 @@ def main(argv=None):
             cache_evidence = _finalize_run_uv_cache(output, args.uv_cache_evidence)
             args.uv_cache_evidence = cache_evidence
             if not cache_evidence["cleanup"]["confirmed_absent"]:
-                result = base.verdict(
-                    "INVALID_TEST_EXECUTION",
-                    "uv_cache_cleanup_unconfirmed",
-                    uv_cache_cleanup=cache_evidence["cleanup"],
-                )
+                if result.get("verdict") == "FAIL_PRODUCT":
+                    result = {**result, "uv_cache_cleanup": cache_evidence["cleanup"]}
+                else:
+                    result = base.verdict(
+                        "INVALID_TEST_EXECUTION",
+                        "uv_cache_cleanup_unconfirmed",
+                        uv_cache_cleanup=cache_evidence["cleanup"],
+                    )
         base.write_json(output / "final-verdict.json", result)
     base.progress("结束：" + (result.get("verdict") or result.get("state", "UNKNOWN")))
     return 0 if result.get("verdict") == "PASS" else 1
