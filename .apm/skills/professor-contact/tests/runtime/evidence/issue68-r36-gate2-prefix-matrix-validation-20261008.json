@@ -1,0 +1,59 @@
+{
+  "schema": "issue68-r36-gate2-prefix-matrix-validation-v1",
+  "date": "2026-10-08",
+  "plan_revision": "issue-68-test-plan-r36-2026-10-08",
+  "plan_sha256_at_test_run": "173c947a3d03840a95e0fb587874509083e90d605987aa01aa68957c4d0a11fe",
+  "plan_sha256_after_candidate_commit_pin": "add6f01fa03c42e650ee388004b2a519beb657113226728d21a53c454f40064b",
+  "source_base_commit": "51822296c91a15683e3636f02d5ef5d50b1002e7",
+  "committed_test_source_revision": "d35d42d5cc3b88014af8eff171f266f93d5051a7",
+  "committed_test_source_matches_manifest": true,
+  "source_manifest_sha256": {
+    ".apm/skills/professor-contact/tests/runtime/verify_issue68_stage5_routing_r19.py": "57570db77ee4eb7cbf3619262e6707468705b8d9cc01b720b3e350362ec83384",
+    ".apm/skills/professor-contact/tests/runtime/issue68_lifecycle.py": "bdaa8a65f65835d587978061740fb17405a07631f146eb28abae3faa33a6fefd",
+    ".apm/skills/professor-contact/tests/test_issue68_runtime_r19.py": "e0d92ba1091459f4879ad705bcc2dc67e681d6bf6283ad06cd05e5da719506d7",
+    ".apm/skills/professor-contact/tests/test_issue68_lifecycle.py": "6230d7bb529579b1f9bfc873966bfe0d91259096dfd5f9946b51b8b5d12d7b23",
+    ".apm/skills/professor-contact/tests/test_issue68_lifecycle_integration.py": "1b9808c15010230d560e0356a65be35552f875a2dacdf22ff9e6d983c3aa8b31",
+    ".apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-contract-r19.json": "b853ff0791078576d4464f026db003a232c487a1f6c770e229a417efcfc7a9a8",
+    ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r19_codex.py": "88896013563833ef8b839ec08fefc66635eb03a85107a1c30d615a54665d0b0d",
+    ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing.py": "c232b5782f6505a886c7d68f19048820395400ec3e8aefe11c90b0df09f6e0a3"
+  },
+  "test_results": [
+    {
+      "suite": "R19 verifier, lifecycle collector, and composed integration",
+      "command": [
+        "uv",
+        "run",
+        "--offline",
+        "--no-project",
+        "python",
+        "-m",
+        "unittest",
+        "test_issue68_runtime_r19",
+        "test_issue68_lifecycle",
+        "test_issue68_lifecycle_integration"
+      ],
+      "environment": {
+        "PYTHONPATH": ".apm/skills/professor-contact/tests",
+        "UV_CACHE_DIR": "temporary writable directory; absolute path omitted"
+      },
+      "test_count": 142,
+      "elapsed_seconds": 19.853,
+      "result": "PASS",
+      "exit_code": 0,
+      "captured_output": "WARN `--no-project` was provided, but no project was found\n..............................................................................................................................................\n----------------------------------------------------------------------\nRan 142 tests in 19.853s\n\nOK"
+    }
+  ],
+  "formal_pc68_r1_sent_during_validation": false,
+  "prior_gate2_review": {
+    "target_head": "51822296c91a15683e3636f02d5ef5d50b1002e7",
+    "decision": "NEEDS_MODIFICATION",
+    "review_completeness": "COMPLETE",
+    "blocking_issue": "Exact direnv-prefixed parser matrix and prefixed valid-business-result with missing lifecycle evidence priority coverage were incomplete."
+  },
+  "notes": [
+    "The candidate adds direct prefixed-input coverage for duplicate owner rows, top-level JSON null, one malformed JSON value, prefix-only output, and missing output in the business verifier and lifecycle collector, plus composed BLOCKED_OBSERVABILITY priority coverage.",
+    "The tests ran against source commit d35d42d5cc3b88014af8eff171f266f93d5051a7 and the unchanged r36 plan SHA recorded above.",
+    "This local validation does not approve Gate 2 and does not authorize another formal PC68-R1 request.",
+    "The original formal PC68-R1 attempt remains INVALID_TEST_EXECUTION / NOT_DETERMINED and is not reclassified by this validation."
+  ]
+}
