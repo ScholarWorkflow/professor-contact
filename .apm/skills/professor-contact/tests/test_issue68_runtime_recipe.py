@@ -277,14 +277,28 @@ class TestIssue68RuntimeRecipe(unittest.TestCase):
                          manifest["expected_choices"])
         self.assertEqual(json.loads((evidence / "fixture-manifest.json").read_text()), manifest)
         root_prompt = (evidence / "root-prompt.txt").read_text(encoding="utf-8")
-        self.assertIn("scalar `result` to `raw_results_by_professor_dir[the exact professor_dir]`",
-                      root_prompt)
-        self.assertIn("Never put `raw_results_by_professor_dir`, the outer context, the full owners array",
-                      root_prompt)
-        self.assertIn("Keep every `commandExecution` to one direct shell command", root_prompt)
-        self.assertIn("Do not chain commands with `&&`, `;`, `||`, or pipes", root_prompt)
-        self.assertIn("`overview` containing the complete parsed object", root_prompt)
-        self.assertIn("full allocation file", root_prompt)
+        business_prompt, business_input_text = root_prompt.split("Business input:\n", 1)
+        self.assertIn("issue-68-test-plan-r25-owner-input-v2", business_prompt)
+        self.assertIn("UV_CACHE_DIR='{{UV_CACHE_DIR}}' uv run --no-project python", business_prompt)
+        self.assertIn("status=needs_refresh", business_prompt)
+        self.assertIn("reason_code=verify_missing", business_prompt)
+        for business_instruction in (
+                "stage5-list-inputs", "stage5-partition-choices",
+                "scalar `result` to", "Never put `raw_results_by_professor_dir`",
+                "Keep every `commandExecution`", "professor_results",
+                "stage5-rebuild-overview", "full allocation file"):
+            with self.subTest(business_instruction=business_instruction):
+                self.assertNotIn(business_instruction, business_prompt)
+        business_input = json.loads(business_input_text)
+        expected_business_input = {
+            "choices": manifest["expected_choices"],
+            "mode": "first",
+            "template": str(Path(manifest["program_root"]) / "synthetic-template.md"),
+            "raw_results_by_professor_dir": {
+                owner["professor_dir"]: owner["result"] for owner in manifest["owners"]
+            },
+        }
+        self.assertEqual(business_input, expected_business_input)
         # Only prerequisite plans may execute during preparation. Root
         # partitioning and owner handoff creation remain observed business.
         calls = [call.args[0] for call in producer_calls.call_args_list]

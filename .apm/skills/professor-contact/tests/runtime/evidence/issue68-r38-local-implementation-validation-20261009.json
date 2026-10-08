@@ -1,0 +1,67 @@
+{
+  "schema": "issue68-r38-local-implementation-validation-v1",
+  "record_revision": "issue68-r38-local-implementation-validation-2026-10-09",
+  "execution_kind": "local_test_validation",
+  "plan_revision": "issue-68-test-plan-r38-2026-10-09",
+  "plan_sha256_at_test_execution": "a000a2682607e9d15d2d44c72b1d58e052cbfb69c498bd8a0e72b2ee41ca9f3f",
+  "candidate_base_commit": "50de2c90a0e581acca8abad82b75c325d429f064",
+  "candidate_commit_at_test_execution": null,
+  "source_sha256": {
+    "plan/issue68-test-plan.md": "a000a2682607e9d15d2d44c72b1d58e052cbfb69c498bd8a0e72b2ee41ca9f3f",
+    ".apm/skills/professor-contact/tests/runtime/prompts/issue68-stage5-root.txt": "55b6aed3b0d190340aa46826a034ea569ee54f7b3918b967c20fab765ed0109e",
+    ".apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-contract-r19.json": "8b001dc51df8548c5b6210923516ce1b4294c669b67a9b26ca108577ed364c20",
+    ".apm/skills/professor-contact/tests/runtime/prepare_issue68_stage5_routing.py": "aad74bdf6699502c2c2393ddbbcbcc1f87636b421991c61d18daa2407743dba4",
+    ".apm/skills/professor-contact/tests/runtime/capture_issue68_owner_stage5_plan_r1.py": "b124f18a5f1635ae1500aeb15b601565d1eb4638b11dad184533272dbc8aec28",
+    ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r19_codex.py": "b6f4668b9704bf0e56c9f84c4aa1b9132690d40408ab92f07bd68d2d73011f00",
+    ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r19.py": "075b39ba9dded5f0e868a2772b1df9db7e486b1aac89fd16ee989c13f7689cdd",
+    ".apm/skills/professor-contact/tests/runtime/verify_issue68_stage5_routing_r19.py": "076f172c3625ca2ee1de3d2357c494f722910503a02475abaf4d157aaa06ddc6",
+    ".apm/skills/professor-contact/tests/runtime/issue68_transfer_location.py": "62de870ac12ad727bb9d65221a1aac918a68bd4bbe94bb9acb421872c19b913e",
+    ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing.py": "c232b5782f6505a886c7d68f19048820395400ec3e8aefe11c90b0df09f6e0a3",
+    ".apm/skills/professor-contact/tests/runtime/verify_issue68_stage5_routing.py": "c02bbd96bea6504b8126afd17e6bdcfc9acc5a514f2d8b44a71b3e9c59188a78",
+    ".apm/skills/professor-contact/tests/test_contact_state.py": "a6904f26b207677428f8abcb4fb31cf06835b14b69dfc5484b1afa27b1187372",
+    ".apm/skills/professor-contact/tests/test_issue68_runtime_r19.py": "bf14afbcc707131f323cc0995c5b220c796dcd3d80cea678caba53b8fcf117ac",
+    ".apm/skills/professor-contact/tests/test_issue68_runtime_recipe.py": "565791dd275eb8da1e9f8cc74cf59819e843f9b67b1111b46964135f83bbfa94",
+    ".apm/skills/professor-contact/tests/test_issue68_uv_cache_r37.py": "b6eec70b8a0d58fac1e016577a9c337aa7d80a043b8227249b6dbade3ce0de23"
+  },
+  "test_run": {
+    "id": "issue68-r38-local-implementation-validation-2026-10-09",
+    "command": "UV_CACHE_DIR=$PC68_LOCAL_UV_CACHE_ROOT uv run --no-project python -m unittest test_issue68_runtime_r19 test_issue68_runtime_recipe test_issue68_uv_cache_r37",
+    "cache_path_alias": "PC68_LOCAL_UV_CACHE_ROOT; actual temporary path is retained only in the local execution context",
+    "working_directory": ".apm/skills/professor-contact/tests",
+    "modules": [
+      "test_issue68_runtime_r19",
+      "test_issue68_runtime_recipe",
+      "test_issue68_uv_cache_r37"
+    ],
+    "tests_run": 106,
+    "failures": 0,
+    "errors": 0,
+    "exit_code": 0,
+    "elapsed_seconds": 19.56,
+    "stdout_summary": "Ran 106 tests in 19.560s; OK",
+    "initial_warning": "uv reported --no-project with no project found; the test command exited successfully."
+  },
+  "impact_analysis": {
+    "changed_scope": "R38 prompt boundary, prompt regression assertions, and the current candidate plan path in the runtime evidence contract.",
+    "verified_relationships": [
+      "The prepared prompt keeps the fixed business input, fixed capture command and observation schema, request cache binding, and fixed early-stop oracle.",
+      "The prepared prompt no longer teaches result-path extraction, handoff construction, repeated allocation steps, fixed wrapper keys, command-by-command execution, or business cleanup.",
+      "The runtime evidence contract now names plan/issue68-test-plan.md as the current candidate procedure; historical R37 evidence records were not rewritten.",
+      "The existing runtime, capture, transfer-location, and cache-cleanup implementations are unchanged by this candidate."
+    ],
+    "validation_scope": "The three directly affected deterministic test modules were run against the source hashes above. This record does not establish an independent Gate 2 result.",
+    "reused_evidence": "The R37-T2 cache-cleanup validation remains historical evidence for unchanged cleanup code. It was not relabeled as R38 validation and was not rerun solely because the plan path changed."
+  },
+  "formal_execution_relation": {
+    "formal_requests_consumed": 1,
+    "formal_request_retried": false,
+    "formal_result_unchanged": "CASE_STARTED / FAIL_PRODUCT / owner_result_path_changed",
+    "external_preflight_or_acceptance_command_run": false,
+    "execution_boundary": "Only deterministic unittest modules ran; no external preflight command, new environment or installation, evaluation service, or formal acceptance request was used."
+  },
+  "pending": {
+    "fixed_product_commit": "Awaiting immutable repaired product commit from the product execution agent.",
+    "execution_recipe": "Not frozen; R38 requires the fixed product commit before completing plan/issue68-test-recipe.md.",
+    "formal_preflight_or_acceptance": "Not run; the current R38 plan does not authorize either."
+  }
+}

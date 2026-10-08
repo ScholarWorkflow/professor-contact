@@ -116,14 +116,19 @@ class TestIssue68UvCacheR37(unittest.TestCase):
             call, envelope, command_proof["owner_capture"], self.packet, self.manifest)
         return envelope, problem
 
-    def test_root_prompt_binds_every_uv_command_to_request_cache_placeholder(self):
+    def test_root_prompt_binds_fixed_capture_to_request_cache_without_business_steps(self):
         prompt = ROOT_PROMPT.read_text(encoding="utf-8")
         prefix = "UV_CACHE_DIR='{{UV_CACHE_DIR}}' uv run"
         self.assertIn(prefix, prompt)
-        self.assertIn("Every root and professor", prompt)
-        self.assertIn("discovery", prompt)
-        self.assertIn("choices partition", prompt)
-        self.assertIn("overview rebuild", prompt)
+        self.assertIn("--no-project python '{{CAPTURE_SCRIPT}}' --action stage5-plan", prompt)
+        self.assertIn("--contact-state '{{CONTACT_STATE}}'", prompt)
+        for business_instruction in (
+                "Every root and professor", "stage5-list-inputs",
+                "stage5-partition-choices", "raw_results_by_professor_dir",
+                "choices_rows", "stage5-rebuild-overview", "professor_results",
+                "Keep every `commandExecution`", "remove only this request"):
+            with self.subTest(business_instruction=business_instruction):
+                self.assertNotIn(business_instruction, prompt)
         bound = prompt.replace("{{UV_CACHE_DIR}}", "/tmp/pc68-request/uv-cache")
         self.assertNotIn("{{UV_CACHE_DIR}}", bound)
         self.assertIn("UV_CACHE_DIR='/tmp/pc68-request/uv-cache' uv run", bound)

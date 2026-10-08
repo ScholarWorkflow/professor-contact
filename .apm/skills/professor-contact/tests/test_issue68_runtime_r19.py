@@ -86,13 +86,21 @@ class TestOwnerTerminalResultExpectation(unittest.TestCase):
         self.assertEqual((problem["verdict"], problem["reason_code"]),
                          ("FAIL_PRODUCT", "owner_business_result_missing"))
 
-    def test_root_prompt_separates_choices_array_from_context_object_and_terminal_result(self):
+    def test_root_prompt_keeps_the_fixed_oracle_without_teaching_business_workflow(self):
         prompt = (RUNTIME / "prompts" / "issue68-stage5-root.txt").read_text(encoding="utf-8")
 
-        self.assertIn("Its `choices` value is the user's complete choices array", prompt)
+        self.assertIn("{{BUSINESS_INPUT}}", prompt)
+        self.assertIn("--action stage5-plan --owner-input-file", prompt)
         self.assertIn("status=needs_refresh", prompt)
         self.assertIn("reason_code=verify_missing", prompt)
-        self.assertIn("Do not run another plan call with `--result` or `--choices`", prompt)
+        self.assertIn("do not make another plan call with `--result` or `--choices`", prompt)
+        for business_instruction in (
+                "stage5-list-inputs", "stage5-partition-choices",
+                "raw_results_by_professor_dir", "choices_rows",
+                "professor_results", "stage5-rebuild-overview",
+                "remove only this request"):
+            with self.subTest(business_instruction=business_instruction):
+                self.assertNotIn(business_instruction, prompt)
 
 
 class TestIssue68RuntimeR25Preflight(unittest.TestCase):
@@ -145,12 +153,14 @@ class TestIssue68RuntimeR25Preflight(unittest.TestCase):
         self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
         self.assertEqual(problem["reason_code"], "owner_plan_carries_choices_scope")
 
-    def test_contract_pins_r37_source_and_keeps_gate_two_incomplete(self):
+    def test_contract_pins_r37_source_r38_plan_and_keeps_gate_two_incomplete(self):
         contract = entry.load_contract()
         observation = contract["codex"]["owner_business_input_observation"]
 
         self.assertEqual(contract["revision"], entry.CONTRACT_REVISION)
         self.assertEqual(contract["revision"], "issue-68-runtime-evidence-r37-2026-10-08")
+        self.assertEqual(contract["lifecycle_combination"]["candidate_procedure"],
+                         "plan/issue68-test-plan.md")
         self.assertEqual(contract["producer_revision"],
                          "faab365d0be2bb66f2f285fdaa2927631dbf33f8")
         self.assertEqual(contract["producer_revision"], entry.PRODUCER_REVISION)

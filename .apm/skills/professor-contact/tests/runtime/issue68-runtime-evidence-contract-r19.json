@@ -527,7 +527,7 @@
   },
   "lifecycle_combination": {
     "schema": "issue68-r31-lifecycle-v1",
-    "candidate_procedure": "docs/issue68-test-plan.md",
+    "candidate_procedure": "plan/issue68-test-plan.md",
     "current_precheck_evidence": "tests/runtime/evidence/issue68-r32-transfer-location-preflight.json",
     "historical_validation_evidence": [
       "tests/runtime/evidence/issue68-r31-lifecycle-combination-validation.json",
