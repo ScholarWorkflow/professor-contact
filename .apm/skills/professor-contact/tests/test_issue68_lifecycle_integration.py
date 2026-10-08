@@ -359,6 +359,30 @@ class ComposedEntryTests(unittest.TestCase):
         Path(self.manifest["owner_capture"]["manifest_path"]).write_text(json.dumps(self.manifest))
         return response, adapter
 
+    def test_prefixed_valid_business_result_without_lifecycle_is_blocked(self):
+        response, adapter = self.composed_fixture()
+        partition_completions = []
+        for event in response["output"]["app_server_events"]:
+            message = event.get("message", {})
+            if message.get("method") != "item/completed":
+                continue
+            item = message.get("params", {}).get("item", {})
+            if "stage5-partition-choices" in item.get("command", ""):
+                partition_completions.append(item)
+        self.assertEqual(len(partition_completions), 1)
+        partition_completions[0]["aggregatedOutput"] = (
+            "\x1b[0mdirenv: unloading\n" + partition_completions[0]["aggregatedOutput"])
+
+        self.manifest.pop("lifecycle_evidence")
+        Path(self.manifest["owner_capture"]["manifest_path"]).write_text(
+            json.dumps(self.manifest), encoding="utf-8")
+        business = verifier._verify_codex_business(response, adapter, self.manifest)
+        self.assertEqual(business["verdict"], "PASS", business)
+
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("BLOCKED_OBSERVABILITY", "request_lifecycle_evidence_missing"))
+
     def test_complete_unmocked_formal_entry_passes(self):
         response, adapter = self.composed_fixture()
         result = verifier.verify_codex(response, adapter, self.manifest)

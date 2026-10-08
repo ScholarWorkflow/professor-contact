@@ -276,6 +276,44 @@ class LifecycleEvidenceTests(unittest.TestCase):
         self.assertNotEqual(result["lifecycle_capability"]["proof"]["verdict"],
                             "INVALID_EVIDENCE")
 
+    def test_collector_prefixed_partition_input_matrix_keeps_parse_and_terminal_states(self):
+        prefix = "\x1b[0mdirenv: unloading\n"
+        owner_row = {"professor_dir": str(self.owner)}
+        duplicate_owner_rows = {"status": "ok", "owners": [owner_row, copy.deepcopy(owner_row)]}
+        valid_partition = {"status": "ok", "owners": []}
+        cases = [
+            ("valid_result", prefix + json.dumps(valid_partition),
+             valid_partition, "parsed", "BLOCKED_OBSERVABILITY",
+             "transfer_creation_and_cleanup_unobservable"),
+            ("duplicate_owner_rows", prefix + json.dumps(duplicate_owner_rows),
+             duplicate_owner_rows, "parsed", "BLOCKED_OBSERVABILITY",
+             "transfer_creation_and_cleanup_unobservable"),
+            ("top_level_json_null", prefix + "null",
+             None, "parsed", "BLOCKED_OBSERVABILITY",
+             "transfer_creation_and_cleanup_unobservable"),
+            ("single_malformed_json", prefix + '{"status":',
+             None, "invalid_json", "INVALID_EVIDENCE",
+             "lifecycle_partition_return_unparseable"),
+            ("prefix_without_json", prefix,
+             None, "invalid_json", "INVALID_EVIDENCE",
+             "lifecycle_partition_return_unparseable"),
+            ("missing_output", None,
+             None, "unobservable", "BLOCKED_OBSERVABILITY",
+             "lifecycle_partition_return_unobservable"),
+            ("empty_output", "",
+             None, "unobservable", "BLOCKED_OBSERVABILITY",
+             "lifecycle_partition_return_unobservable"),
+        ]
+        for name, output, expected_return, expected_parse_state, expected_verdict, expected_reason in cases:
+            with self.subTest(input=name):
+                result = self.collect_partition_output(output)
+                partition = result["partition_returns"][0]
+                self.assertEqual(partition["actual_return"], expected_return)
+                self.assertEqual(partition["actual_return_parse_state"], expected_parse_state)
+                self.assertEqual(result["lifecycle_capability"]["proof"], {
+                    "verdict": expected_verdict,
+                    "reason_code": expected_reason})
+
     def test_collector_rejects_multiple_json_values_after_known_direnv_prefix(self):
         result = self.collect_partition_output(
             "\x1b[0mdirenv: unloading\n{" + '"status":"ok","owners":[]}' + "\n{}")

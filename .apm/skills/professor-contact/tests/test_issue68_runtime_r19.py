@@ -1238,6 +1238,32 @@ class OwnerObservationTests(unittest.TestCase):
         self.assertIsNone(problem)
         self.assertEqual(actual["owners"], self.actual_partition)
 
+    def test_prefixed_partition_input_matrix_has_exact_business_terminals(self):
+        prefix = "\x1b[0mdirenv: unloading\n"
+        duplicate_owner_rows = self.actual_partition + copy.deepcopy(self.actual_partition)
+        cases = [
+            ("duplicate_owner_rows", prefix + json.dumps(
+                {"status": "ok", "owners": duplicate_owner_rows}, ensure_ascii=False),
+             "FAIL_PRODUCT", "root_partition_changed"),
+            ("top_level_json_null", prefix + "null",
+             "FAIL_PRODUCT", "root_partition_changed"),
+            ("single_malformed_json", prefix + '{"status":',
+             "INVALID_EVIDENCE", "root_partition_result_malformed"),
+            ("prefix_without_json", prefix,
+             "INVALID_EVIDENCE", "root_partition_result_malformed"),
+            ("missing_output", None,
+             "BLOCKED_OBSERVABILITY", "root_partition_result_unobservable"),
+        ]
+        for name, output, expected_verdict, expected_reason in cases:
+            call = self.partition_call()
+            call["output"] = output
+            with self.subTest(input=name):
+                actual, problem = verifier._actual_root_partition(
+                    [call], self.manifest, "synthetic-root")
+                self.assertIsNone(actual)
+                self.assertEqual((problem["verdict"], problem["reason_code"]),
+                                 (expected_verdict, expected_reason))
+
     def test_partition_output_with_multiple_json_values_is_ambiguous(self):
         call = self.partition_call()
         call["output"] = "\x1b[0mdirenv: unloading\n" + call["output"] + "\n{}"
