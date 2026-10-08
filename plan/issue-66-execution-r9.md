@@ -6,6 +6,10 @@
 
 ## 当前事实与执行边界
 
+- 本次第三轮恢复原安装命令，未加入 HTTP/1.1 设置，在新的隔离目录 `/private/tmp/issue66-r9-install-retry-original.u4YGZR6y/installation-check` 完成来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的安装及合成 writer 预检。安装日志记录 92.1 秒安装 10 项依赖，`install.json` 为 `status=ok`，`commands/013-install.json` 和外层运行器退出码均为 `0`。`writer.json` 为 `PASS`，受控调用退出码为 `0`，目标调用前不存在、调用后存在、权限为 `0600`，标准输出与文件原始字节相同，`gaps=[]`。`preflight.json` 与 `verdict.json` 均为 `PREFLIGHT_ONLY`，正式请求尝试和发送字段均为 `false`，`save_input` 为 `null`。这成为该产品来源的当前成功安装及受控预检证据；保存前文件状态和保存时点的第二关口缺口仍未解决，不能据此认定正式业务或关口通过。
+- 本次第二轮证据目录为 `/private/tmp/issue66-r9-install-retry-http1.Ulju408f/installation-check`，仅在该次进程环境设置 `GIT_CONFIG_COUNT=1`、`GIT_CONFIG_KEY_0=http.version`、`GIT_CONFIG_VALUE_0=HTTP/1.1`，保留证书校验。用户中断后会话句柄失效；顶层通过进程查询确认运行器、原安装命令及该证据目录所属子进程均不存在。该目录未生成 `install.json`、`writer.json`、`verdict.json` 或第 013 条安装命令记录，因此只记为中断后结果未知，不认定安装成功或失败，不补造退出码，保留已生成文件。
+- 用户确认安装失败属于网络问题并要求直接重试后，对来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 又进行了新的隔离安装预检。第一次证据目录为 `/private/tmp/issue66-r9-install-retry-new.Ha0i3NRM/installation-check`；安装器 69.3 秒后以退出码 `1` 失败，外层运行器退出码为 `2`。HTTPS 克隆依赖 `ScholarWorkflow/base-skills` 时出现安全连接 `unexpected eof while reading`，安装事务未提交。`install.json` 为 `status=error`；`writer.json` 与 `verdict.json` 均为 `CASE_NOT_STARTED`，没有受控 writer、`save_input` 或正式请求。该轮的原始命令、标准输出、标准错误及退出码保留在证据目录中。
+
 - 按用户要求，对来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 进行两次新的隔离安装重试。第一次证据目录为 `/private/tmp/issue66-r9-install-retry-gEnzlJCT/installation-check`；安装器在解析 `ScholarWorkflow/pdf-processing-core` 时超过 1200 秒，`install.json` 记录 `status=error`、安装调用退出码为 `null` 及超时错误，外层运行器退出码为 `2`。第二次在扩展网络权限的执行环境运行，证据目录为 `/private/tmp/issue66-r9-install-retry-elevated-UmYvpvXB/installation-check`；安装器 147.1 秒后以退出码 `1` 失败。原始输出显示 GitHub API 请求触发速率限制提示，随后 HTTPS 克隆 `ScholarWorkflow/professor-contact` 遇到 `curl 56`、OpenSSL `unexpected eof while reading`、响应数据未收完及 `early EOF`；安装事务未提交。两轮的 `writer.json` 与 `verdict.json` 均为 `CASE_NOT_STARTED`，没有受控 writer、`save_input` 或正式请求。两次重试的结构化记录和命令输出均保留在各自证据目录。
 
 - 本次只处理 `S3-WRITER-1`、`S3-ASSET-COMPAT-1`、`S3-HANDOFF-1`、`S3-RT-CODEX-1` 及其直接依赖。其他既有证明按计划复用，不重跑整套模型业务。
@@ -17,7 +21,7 @@
 - 原始事件字段复核使用正式第 11 次尝试 `issue66-formal-pr73-fba6b1e-20261007-11` 的未改写 `response-raw.json`。该轮结论仍为 `INVALID_TEST_EXECUTION`，不能作业务通过或失败证据；这里只复用其原始事件形状。文件记录 `codex-cli 0.159.0-alpha.12.1` 和 2097 个原生事件，其中 `commandExecution` 各有 36 个 `item/started` 与 `item/completed`。两类事件均带 `message.params.threadId`、`turnId` 和 `item`；事件时间字段分别为 `startedAtMs` 与 `completedAtMs`。完成项中的 `item` 实际含 `id`、`type`、`command`、`cwd`、`status`、`exitCode`、`aggregatedOutput`；`aggregatedOutput` 有字符串和 `null` 两种值。该轮 12 个 Stage 3 完成命令中，11 个以零退出码完成、1 个以非零退出码结束；两条保存调用中，一条成功返回 JSON `status="ok"` 与 `validation_sha256`，一条返回错误。以上只说明本机已观察到的字段和保存返回形状，版本号只作来源记录，不构成版本门槛。
 - 当时 `5f5af167c4fe2a0f596dd978f8616d566e8b0ff7` 的成功安装日志同时保留若干 APM 提示：`chrome-devtools` MCP 配置存在未知键、一个文件包含隐藏字符、OpenCode 目标包未安装、7 项依赖未固定、传递 MCP 需另行声明。该次 APM 安装命令返回 `0`，结构化安装状态为 `ok`；这些记录只属于当时的来源。
 - 本轮补强了 writer 结果和原生调用取证：结果对象需通过完整字段、类型及计数关系校验；参数 JSON 与标准输出按精确 JSON 类型比较；非字符串或无法解析的工作目录、空或缺失教授身份、布尔类型退出码都不能成为成功证据。`cwd` 含空字符时的拒绝行为另经只读探针确认。相应接线与判定器测试已纳入上述 260 项候选运行。
-- 任一关口的判定都以实际记录和原始材料为准。候选运行器显示执行完成不表示证据有效，也不表示产品通过。先前三条失败路径的原始调用记录仍有缺项；`5f5af167c4fe2a0f596dd978f8616d566e8b0ff7` 的早先成功预检只适用于当时来源；当前 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的隔离安装失败记录为 `CASE_NOT_STARTED`，两者均不构成正式业务通过。
+- 任一关口的判定都以实际记录和原始材料为准。候选运行器显示执行完成不表示证据有效，也不表示产品通过。先前三条失败路径的原始调用记录仍有缺项；`5f5af167c4fe2a0f596dd978f8616d566e8b0ff7` 的早先成功预检只适用于当时来源；来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的历史安装失败记录仍为 `CASE_NOT_STARTED`，本次第三轮成功预检为 `PREFLIGHT_ONLY`，这些均不构成正式业务通过。
 
 ## 计划范围与证明责任
 
@@ -139,7 +143,7 @@ jq -e -s 'length > 0 and all(.[]; type == "object"
 
 ## 第三步：真实安装及受控 writer 预检
 
-需要补做预检且能取得远端产品来源时，使用新的外置唯一目录及新消费者。下方是命令模板；本节末尾记录的是当时 PR 头 `5f5af167c4fe2a0f596dd978f8616d566e8b0ff7` 的先前成功预检，不能代替来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的隔离安装证据。该来源的安装失败记录见本手册开头。旧失败事实必须原样保留，不得覆盖或重命名为成功。
+需要补做预检且能取得远端产品来源时，使用新的外置唯一目录及新消费者。下方是命令模板；本节末尾记录的是当时 PR 头 `5f5af167c4fe2a0f596dd978f8616d566e8b0ff7` 的先前成功预检，不能代替其他来源的隔离安装证据。来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的当前成功安装及合成 writer 预检位于 `/private/tmp/issue66-r9-install-retry-original.u4YGZR6y/installation-check`，结论为 `PREFLIGHT_ONLY`；本次三轮事实及历史失败记录见本手册开头。旧失败事实必须原样保留，不得覆盖或重命名为成功。
 
 ```sh
 REPO="$(pwd -P)"
@@ -167,11 +171,11 @@ uv run --no-project python -B \
 TMPDIR=/private/tmp UV_CACHE_DIR=/private/tmp/issue66-uv-cache uv run --no-project python -B .apm/skills/professor-contact/tests/runtime/issue66_execution.py installation-check --repository /Users/rekidunois/.codex/worktrees/7bb3/professor-contact --fixture-root /Users/rekidunois/code/skill-repos-dev/skills-test-fixtures --evidence-dir /private/tmp/issue66-r9-install-final-20261008a --product-source 5f5af167c4fe2a0f596dd978f8616d566e8b0ff7
 ```
 
-该先前命令的执行器退出码为 `0`。对照 `/private/tmp/issue66-r9-install-final-20261008a/install.json`、`writer.json`、`preflight.json`、`verdict.json` 和 `commands/` 中的逐命令标准输出、标准错误及退出码记录；这些证据只适用于当时 PR 头 `5f5af167c4fe2a0f596dd978f8616d566e8b0ff7`。来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的本次安装失败及 `CASE_NOT_STARTED` 记录见本手册开头，不能由先前成功预检替代。更早失败尝试的命令和输出缺口仍须如实保留。该合成 writer 检查不运行正式评测，不构成原生委派或第三关口证据。
+该先前命令的执行器退出码为 `0`。对照 `/private/tmp/issue66-r9-install-final-20261008a/install.json`、`writer.json`、`preflight.json`、`verdict.json` 和 `commands/` 中的逐命令标准输出、标准错误及退出码记录；这些证据只适用于当时 PR 头 `5f5af167c4fe2a0f596dd978f8616d566e8b0ff7`。来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的本次第三轮已取得其自己的成功安装及合成 writer 预检；第一次失败和第二次结果未知的记录见本手册开头，各轮材料不能混用。更早失败尝试的命令和输出缺口仍须如实保留。合成 writer 检查不运行正式评测，不构成原生委派或第三关口证据。
 
 ## 第四步：第二关口材料独立审核
 
-在交测试审核者前，准备同一版本的完整材料：权威计划全文、r9 设计审核、此手册、所有新增/修改的测试与运行器、完整本地候选证据目录，以及真实 APM 安装尝试的原始命令、标准输出、标准错误、退出码和结论。先前三次失败尝试没有执行器生成的 `CASE_NOT_STARTED` 结构化记录；该旧缺项须如实保留，不得把有日志误写成通过。当时 PR 头 `5f5af167c4fe2a0f596dd978f8616d566e8b0ff7` 的先前成功预检材料见 `/private/tmp/issue66-r9-install-final-20261008a`；当前来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的安装失败材料见 `/private/tmp/issue66-r9-install-pr73-1a7040b-20261008-candidate2`。两者各自对应的来源和结论不得混用。若后续预检没有完成，也须保留对应的未完成事实和缺失项。
+在交测试审核者前，准备同一版本的完整材料：权威计划全文、r9 设计审核、此手册、所有新增/修改的测试与运行器、完整本地候选证据目录，以及真实 APM 安装尝试的原始命令、标准输出、标准错误、退出码和结论。先前三次失败尝试没有执行器生成的 `CASE_NOT_STARTED` 结构化记录；该旧缺项须如实保留，不得把有日志误写成通过。当时 PR 头 `5f5af167c4fe2a0f596dd978f8616d566e8b0ff7` 的先前成功预检材料见 `/private/tmp/issue66-r9-install-final-20261008a`；来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的历史安装失败材料见 `/private/tmp/issue66-r9-install-pr73-1a7040b-20261008-candidate2`，当前成功安装及合成 writer 预检材料见 `/private/tmp/issue66-r9-install-retry-original.u4YGZR6y/installation-check`。本次第一轮失败、第二轮中断后结果未知及第三轮成功材料均须一并提交；各轮对应的来源和结论不得混用。保存前文件状态和保存时点缺口仍须交独立审核处理，成功安装预检不表示第二关口已批准。若后续预检没有完成，也须保留对应的未完成事实和缺失项。
 
 审核者需覆盖四项计划范围、每项来源和执行入口、动态套件条目、样例账本、四种汇总组合、写入字节/权限观察与失败分流。只有独立审核确认第二关口全部材料可用并明确批准，才可进入正式执行。若审核发现问题，按责任归因修复后由新的独立审核者重新完整审核。
 
