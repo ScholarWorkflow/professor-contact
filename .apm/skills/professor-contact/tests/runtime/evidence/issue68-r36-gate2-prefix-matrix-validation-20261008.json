@@ -3,7 +3,7 @@
   "date": "2026-10-08",
   "plan_revision": "issue-68-test-plan-r36-2026-10-08",
   "plan_sha256_at_test_run": "173c947a3d03840a95e0fb587874509083e90d605987aa01aa68957c4d0a11fe",
-  "plan_sha256_after_candidate_commit_pin": "add6f01fa03c42e650ee388004b2a519beb657113226728d21a53c454f40064b",
+  "plan_sha256_after_candidate_commit_pin": "9fbcf6bbf7e705237b54f5e6f8f4f829d7fa238801deaecf8474fd13c52c9e4f",
   "source_base_commit": "51822296c91a15683e3636f02d5ef5d50b1002e7",
   "committed_test_source_revision": "d35d42d5cc3b88014af8eff171f266f93d5051a7",
   "committed_test_source_matches_manifest": true,
