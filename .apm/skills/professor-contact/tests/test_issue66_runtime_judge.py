@@ -2181,6 +2181,104 @@ class WriterObservationTests(RuntimeJudgeTestCase):
         self.assertEqual(facts(verdict)["F-writer-command"], "pass", verdict)
         self.assertEqual(facts(verdict)["F-writer-evidence"], "pass", verdict)
 
+    def test_explicit_empty_collection_gaps_accept_complete_evidence(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        surfaces = valid_surfaces(fx)
+        surfaces["writer"]["gaps"] = []
+
+        verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+
+        self.assertEqual(verdict["classification"], "PASS", verdict)
+        self.assertEqual(verdict["evidence_gaps"], [], verdict)
+
+    def test_declared_save_time_observation_gap_prevents_pass(self):
+        fx = Fixture()
+        legal_two_child(fx)
+        surfaces = valid_surfaces(fx)
+        gap = ("save-time output mode and existence are unavailable; "
+               "only post-response observation exists")
+        surfaces["writer"]["gaps"] = [gap]
+
+        verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+
+        self.assertEqual(verdict["classification"],
+                         "INVALID_TEST_EXECUTION", verdict)
+        self.assertEqual(facts(verdict)["F-writer-evidence"], "gap", verdict)
+        writer_row = next(row for row in verdict["facts"]
+                          if row["fact"] == "F-writer-evidence")
+        self.assertIn(gap, writer_row["evidence"], verdict)
+        self.assertTrue(any(gap in item for item in verdict["evidence_gaps"]),
+                        verdict)
+
+    def test_malformed_collection_gaps_are_invalid_without_hiding_observations(self):
+        for malformed in (None, "missing mode", {}, [None], [1], [""], ["  "],
+                          ["missing mode", {}]):
+            with self.subTest(gaps=malformed):
+                fx = Fixture()
+                legal_two_child(fx)
+                surfaces = valid_surfaces(fx)
+                surfaces["writer"]["gaps"] = malformed
+
+                verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+
+                self.assertEqual(verdict["classification"],
+                                 "INVALID_TEST_EXECUTION", verdict)
+                self.assertEqual(facts(verdict)["F-writer-collection-gaps"],
+                                 "invalid", verdict)
+                self.assertEqual(facts(verdict)["F-writer-evidence"],
+                                 "pass", verdict)
+
+    def test_collection_gaps_preserve_independent_wrong_mode_failure(self):
+        for declared_gaps in ([], ["save-time observation unavailable"], None):
+            with self.subTest(gaps=declared_gaps):
+                fx = Fixture()
+                legal_two_child(fx)
+                surfaces = valid_surfaces(fx)
+                surfaces["writer"]["gaps"] = declared_gaps
+                surfaces["writer"]["observations"][0]["output"]["mode"] = "0644"
+
+                verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+
+                self.assertEqual(verdict["classification"], "FAIL", verdict)
+                self.assertEqual(facts(verdict)["F-writer-evidence"],
+                                 "fail", verdict)
+                if declared_gaps is None:
+                    self.assertEqual(facts(verdict)["F-writer-collection-gaps"],
+                                     "invalid", verdict)
+                elif declared_gaps:
+                    self.assertEqual(facts(verdict)["F-writer-collection-gaps"],
+                                     "gap", verdict)
+                    self.assertTrue(any(declared_gaps[0] in item
+                                        for item in verdict["evidence_gaps"]),
+                                    verdict)
+
+    def test_collection_gap_exception_keeps_observation_and_source_invalidity(self):
+        for mutation in ("output_bytes", "evidence_set", "install"):
+            with self.subTest(mutation=mutation):
+                fx = Fixture()
+                legal_two_child(fx)
+                surfaces = valid_surfaces(fx)
+                surfaces["writer"]["gaps"] = None
+                output = surfaces["writer"]["observations"][0]["output"]
+                output["mode"] = "0644"
+                if mutation == "output_bytes":
+                    output["bytes_b64"] = "%%%"
+                elif mutation == "evidence_set":
+                    surfaces["writer"]["evidence_set_id"] = "another-run"
+                else:
+                    surfaces["install"]["checks"][0]["status"] = "fail"
+
+                verdict = run(fx, state=PASS_STATE, surface_evidence=surfaces)
+
+                self.assertEqual(verdict["classification"],
+                                 "INVALID_TEST_EXECUTION", verdict)
+                if mutation == "output_bytes":
+                    writer_row = next(row for row in verdict["facts"]
+                                      if row["fact"] == "F-writer-evidence")
+                    self.assertEqual(writer_row["verdict"], "invalid", verdict)
+                    self.assertIsNot(writer_row.get("independent"), True)
+
     def test_missing_or_malformed_observation_is_invalid_execution_evidence(self):
         fx = Fixture()
         legal_two_child(fx)

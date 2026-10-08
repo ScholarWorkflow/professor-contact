@@ -6,7 +6,10 @@
 
 ## 当前事实与执行边界
 
-- 按用户“就用安装成功的那个”的要求，本次准备预检复用 `/private/tmp/issue66-r9-install-retry-original.u4YGZR6y/installation-check` 的成功消费者，未重新安装。首轮 `/private/tmp/issue66-reuse-preflight.k0OwP1a6` 因运行缓存访问失败以退出码 `2` 停止，未启动准备；第二轮 `/private/tmp/issue66-reuse-preflight.PsbTU5bi/preflight` 调用一次初态准备程序，退出码 `0`，取得三份初态文件摘要、五种禁止业务产物均未写入的快照，以及请求、请求配置和提示词。该轮临时包装在重复独占写入 `installation-reuse.json` 时收尾失败，外层退出码 `1`，原错误和记录保留。随后 `/private/tmp/issue66-preflight-completion.sFwu3sEk/completion` 只读复核既有材料完成收尾，检查均通过、外层退出码 `0`，结论为 `PREFLIGHT_ONLY`；安装产物准备前后及当前摘要均一致，`reinstalled=false`、`initial_input_rebuilt=false`、`formal_request_attempted=false`、`formal_request_sent=false`。本次复用例外只适用于用户要求的准备预检，不改变正式消费者规则；保存前文件状态和保存时点缺口仍存在，第二关口未批准。
+- 当前测试实现部分完成，完整实现审核未完成，第二关口未批准，正式用例未执行；本次准备推送的是未完成候选。按用户纠正，审核须逐项检查全部测试实现对完整 r9 计划的符合性，不能只审核新增预检文档。普通代理 `full_test_implementation_review` 的首次全量尝试仍为部分完成，发现保存前观察缺失、`gaps` 缺口字段被吞、成功安装被禁止复用及临时脚本曾置于工作树内；其未检查范围仍待审核，不视为免审。
+- 本轮已修复判定器及关联测试两份文件：`/private/tmp/issue66-writer-gap-judge.ZbSwlmpy/suite-result-3.json` 记录 141 项通过、0 项失败、0 项错误，保存前观察缺口不再误判通过。首轮执行 140 项，其中 1 项失败及缓存访问失败记录保留。安装复用运行器和接线已修复，`/private/tmp/issue66-installation-reuse-wiring.lluFrNqE/suite-execution-wiring.json` 记录 38 项通过；现有成功安装和用户初态继续复用，本轮未重装或重新准备初态。临时脚本和原失败证据保留于原位置，不提交或推送。
+- `issue-dev` 及其补充说明现要求使用 `/Users/rekidunois/.codex/agents/implementation-reviewer.toml` 定义的专用审核代理 `implementation_reviewer`。真实启动返回 `unknown agent_type 'implementation_reviewer'`，专用审核尚未完成，不能以普通代理改名代替。待测试设计责任人确定可执行的保存前观察方案、必要基础设施提供正式支持，且本地测试工程师补齐实现后，再交专用审核者核对完整计划及全部相关产物；专用代理启动问题由审核运行环境责任人处理。
+- 按用户“就用安装成功的那个”的要求，本次准备预检复用 `/private/tmp/issue66-r9-install-retry-original.u4YGZR6y/installation-check` 的成功消费者，未重新安装。首轮 `/private/tmp/issue66-reuse-preflight.k0OwP1a6` 因运行缓存访问失败以退出码 `2` 停止，未启动准备；第二轮 `/private/tmp/issue66-reuse-preflight.PsbTU5bi/preflight` 调用一次初态准备程序，退出码 `0`，取得三份初态文件摘要、五种禁止业务产物均未写入的快照，以及请求、请求配置和提示词。该轮临时包装在重复独占写入 `installation-reuse.json` 时收尾失败，外层退出码 `1`，原错误和记录保留。随后 `/private/tmp/issue66-preflight-completion.sFwu3sEk/completion` 只读复核既有材料完成收尾，检查均通过、外层退出码 `0`，结论为 `PREFLIGHT_ONLY`；安装产物准备前后及当前摘要均一致，`reinstalled=false`、`initial_input_rebuilt=false`、`formal_request_attempted=false`、`formal_request_sent=false`。按照项目共识第28—29行，该成功安装及仍适用初态默认供后续预检和正式运行复用；后续证据目录仍须独占，正式业务须等待第二关口批准；保存前文件状态和保存时点缺口仍存在，第二关口未批准。
 - 本次第三轮恢复原安装命令，未加入 HTTP/1.1 设置，在新的隔离目录 `/private/tmp/issue66-r9-install-retry-original.u4YGZR6y/installation-check` 完成来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的安装及合成 writer 预检。安装日志记录 92.1 秒安装 10 项依赖，`install.json` 为 `status=ok`，`commands/013-install.json` 和外层运行器退出码均为 `0`。`writer.json` 为 `PASS`，受控调用退出码为 `0`，目标调用前不存在、调用后存在、权限为 `0600`，标准输出与文件原始字节相同，`gaps=[]`。`preflight.json` 与 `verdict.json` 均为 `PREFLIGHT_ONLY`，正式请求尝试和发送字段均为 `false`，`save_input` 为 `null`。这成为该产品来源的当前成功安装及受控预检证据；保存前文件状态和保存时点的第二关口缺口仍未解决，不能据此认定正式业务或关口通过。
 - 本次第二轮证据目录为 `/private/tmp/issue66-r9-install-retry-http1.Ulju408f/installation-check`，仅在该次进程环境设置 `GIT_CONFIG_COUNT=1`、`GIT_CONFIG_KEY_0=http.version`、`GIT_CONFIG_VALUE_0=HTTP/1.1`，保留证书校验。用户中断后会话句柄失效；顶层通过进程查询确认运行器、原安装命令及该证据目录所属子进程均不存在。该目录未生成 `install.json`、`writer.json`、`verdict.json` 或第 013 条安装命令记录，因此只记为中断后结果未知，不认定安装成功或失败，不补造退出码，保留已生成文件。
 - 用户确认安装失败属于网络问题并要求直接重试后，对来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 又进行了新的隔离安装预检。第一次证据目录为 `/private/tmp/issue66-r9-install-retry-new.Ha0i3NRM/installation-check`；安装器 69.3 秒后以退出码 `1` 失败，外层运行器退出码为 `2`。HTTPS 克隆依赖 `ScholarWorkflow/base-skills` 时出现安全连接 `unexpected eof while reading`，安装事务未提交。`install.json` 为 `status=error`；`writer.json` 与 `verdict.json` 均为 `CASE_NOT_STARTED`，没有受控 writer、`save_input` 或正式请求。该轮的原始命令、标准输出、标准错误及退出码保留在证据目录中。
@@ -39,7 +42,7 @@
 
 1. 在 `ScholarWorkflow/professor-contact` 仓库根目录确认工作目录、代码来源和当前计划标记。运行记录要保存产品来源、测试来源、实际提交、工作树状态、时间、工具版本、执行入口及证据编号。提交摘要、干净工作树或与计划来源相同都不是通过门槛。
 2. 本地夹具仓库使用已核对来源 `c738fa2f8bcbb16cd99d741332d5f59b062b6357`；适配器契约为 `skills-test-fixtures/codex-eval-adapter@16`。运行前以结构化记录确认实际夹具位置、来源、契约和适配器版本，并保留实际输出。不得手工复制或修补安装产物。
-3. 正式运行与安装预检均需在仓库和工作树之外使用新建的独占证据目录及消费者目录。消费者不能复用，也不能放在产品仓库内。产品来源必须是 APM 支持的远端版本或提交选择器；不得传本地路径。保存实际来源，不要求其与测试来源版本相等。
+3. 正式运行与安装预检均需在仓库和工作树之外使用新建的独占证据目录。消费者不能放在产品仓库内；已验证且仍适用的成功安装默认复用，仅在安装失效、相关版本或前提变化、用例要求新安装时重装。产品来源必须是 APM 支持的远端版本或提交选择器；不得传本地路径。保存实际来源，不要求其与测试来源版本相等。
 4. 使用已配置的评估服务和项目规定入口取得服务地址；不得启动、停止、重启服务，也不得读取服务内部配置、进程、数据库或日志。不得绕过规定入口直接请求模型服务。
 5. 本地运行器会记录 `uv`、Bash、`jq` 等实际使用工具的版本。若证据中出现 YAML、TOML 或 XML，再确认并记录对应 `yq` 或 `xmllint` 版本及解析输出。Python 命令使用 `uv run --no-project`，不安装项目依赖。
 
@@ -144,9 +147,9 @@ jq -e -s 'length > 0 and all(.[]; type == "object"
 
 ## 第三步：真实安装及受控 writer 预检
 
-本次已按用户要求复用成功消费者补齐准备预检，未重复执行下方安装模板。完整准备材料位于 `/private/tmp/issue66-reuse-preflight.PsbTU5bi/preflight`，只读收尾材料位于 `/private/tmp/issue66-preflight-completion.sFwu3sEk/completion`。审核时读取后者的 `preflight.json`、`completion-checks.json` 和 `references.json`，按引用核对原安装记录、初态摘要、禁止业务产物零写快照、请求配置和提示词。初态只准备一次，收尾没有重建初态或改写安装产物；原包装失败仍按退出码 `1` 保留，收尾退出码 `0` 只说明只读核对完成。该次结论为 `PREFLIGHT_ONLY`，没有尝试或发送正式请求。复用只适用于本次准备预检；正式运行仍按第五步建立新消费者。
+本次已按用户要求复用成功消费者补齐准备预检，未重复执行下方安装模板。完整准备材料位于 `/private/tmp/issue66-reuse-preflight.PsbTU5bi/preflight`，只读收尾材料位于 `/private/tmp/issue66-preflight-completion.sFwu3sEk/completion`。审核时读取后者的 `preflight.json`、`completion-checks.json` 和 `references.json`，按引用核对原安装记录、初态摘要、禁止业务产物零写快照、请求配置和提示词。初态只准备一次，收尾没有重建初态或改写安装产物；原包装失败仍按退出码 `1` 保留，收尾退出码 `0` 只说明只读核对完成。该次结论为 `PREFLIGHT_ONLY`，没有尝试或发送正式请求。后续预检和获批准的正式运行默认复用该成功安装及已有初态，引用原记录；第五步给出复用命令。
 
-需要补做预检且能取得远端产品来源时，使用新的外置唯一目录及新消费者。下方是命令模板；本节末尾记录的是当时 PR 头 `5f5af167c4fe2a0f596dd978f8616d566e8b0ff7` 的先前成功预检，不能代替其他来源的隔离安装证据。来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的当前成功安装及合成 writer 预检位于 `/private/tmp/issue66-r9-install-retry-original.u4YGZR6y/installation-check`，结论为 `PREFLIGHT_ONLY`；本次三轮事实及历史失败记录见本手册开头。旧失败事实必须原样保留，不得覆盖或重命名为成功。
+仅在原安装失效、相关版本或前提变化使其不再适用，或用例明确要求新安装时，使用新的外置唯一目录及新消费者进行安装准备。下方是命令模板；本节末尾记录的是当时 PR 头 `5f5af167c4fe2a0f596dd978f8616d566e8b0ff7` 的先前成功预检，不能代替其他来源的隔离安装证据。来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的当前成功安装及合成 writer 预检位于 `/private/tmp/issue66-r9-install-retry-original.u4YGZR6y/installation-check`，结论为 `PREFLIGHT_ONLY`；本次三轮事实及历史失败记录见本手册开头。旧失败事实必须原样保留，不得覆盖或重命名为成功。
 
 ```sh
 REPO="$(pwd -P)"
@@ -162,7 +165,7 @@ uv run --no-project python -B \
   --product-source '<APM支持的远端版本或提交选择器>'
 ```
 
-`--product-source` 仅填远端 ref 或提交选择器，不填本地路径，也不重复填写仓库名；程序将其绑定到 `ScholarWorkflow/professor-contact`。`--evidence-dir` 必须是尚不存在的新路径；程序在该证据目录下创建本次消费者和专用 `program`。不得传 `--consumer`、复用以往消费者、手工复制文件或修改安装投影。
+`--product-source` 仅填远端 ref 或提交选择器，不填本地路径，也不重复填写仓库名；程序将其绑定到 `ScholarWorkflow/professor-contact`。`--evidence-dir` 必须是尚不存在的新路径；程序在该证据目录下创建本次消费者和专用 `program`。`installation-check` 专用于必要的新安装准备；后续 `preflight` 和 `formal` 传入 `--consumer`、`--installation-evidence` 引用原成功安装，不再次安装。不得手工复制文件或修改安装投影。
 
 该模式的顺序是：记录来源和工具 → 调用受支持的 APM 安装入口 → 只有安装成功后才调用安装消费者内的 `contact_state.py stage3-write-validation` → 保存实际命令、参数、退出码、标准输出原始字节、目标路径、文件字节、文件模式和调用前后存在性 → 写出预检结论。它不调用评估服务、不产生原生委派，也不证明正式业务流程。
 
@@ -176,17 +179,41 @@ TMPDIR=/private/tmp UV_CACHE_DIR=/private/tmp/issue66-uv-cache uv run --no-proje
 
 该先前命令的执行器退出码为 `0`。对照 `/private/tmp/issue66-r9-install-final-20261008a/install.json`、`writer.json`、`preflight.json`、`verdict.json` 和 `commands/` 中的逐命令标准输出、标准错误及退出码记录；这些证据只适用于当时 PR 头 `5f5af167c4fe2a0f596dd978f8616d566e8b0ff7`。来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的本次第三轮已取得其自己的成功安装及合成 writer 预检；第一次失败和第二次结果未知的记录见本手册开头，各轮材料不能混用。更早失败尝试的命令和输出缺口仍须如实保留。合成 writer 检查不运行正式评测，不构成原生委派或第三关口证据。
 
+### 后续步骤复用成功安装与已有初态
+
+安装准备和后续业务运行分开。执行者依据批准产品来源及运行前提确认原安装仍适用；来源字段用于记录，不增加软件来源相等锁。复用记录保存原 `install.json` 完整内容和路径、新消费者标记为 `false`，不覆盖原安装证据。
+
+当前已有初态只读引用 `/private/tmp/issue66-reuse-preflight.PsbTU5bi/preflight`。运行器核对其三份输入摘要及禁止产物缺席，不调用初态构造程序、不写入消费者。初态或业务产物变化时，停止并按冻结步骤处理必要状态；不得自动删除、覆盖或重建。尚未构造初态的已安装消费者可在独占目录按原程序准备一次。原包装退出码 `1` 与只读收尾退出码 `0` 各保留原含义。
+
+```sh
+REPO="$(pwd)"
+REUSE_ROOT="$(mktemp -d /private/tmp/issue66-r9-reuse.XXXXXXXX)"
+uv run --no-project python -B \
+  .apm/skills/professor-contact/tests/runtime/issue66_execution.py preflight \
+  --repository "$REPO" \
+  --fixture-root /Users/rekidunois/code/skill-repos-dev/skills-test-fixtures \
+  --evidence-dir "$REUSE_ROOT/preflight" \
+  --product-source 1a7040b2640043d26dfe62dc08b10f09df173ffe \
+  --consumer /private/tmp/issue66-r9-install-retry-original.u4YGZR6y/installation-check/consumer \
+  --installation-evidence /private/tmp/issue66-r9-install-retry-original.u4YGZR6y/installation-check/install.json \
+  --preparation-evidence /private/tmp/issue66-reuse-preflight.PsbTU5bi/preflight
+```
+
+此命令是后续预检模板，本轮不再次运行既有预检，也不改写上述三处原材料。新输出记录 `installation-reuse.json`、`preparation-reuse.json`，请求仍未尝试或发送。
+
 ## 第四步：第二关口材料独立审核
 
 新增提交材料包括本次复用准备的两轮记录 `/private/tmp/issue66-reuse-preflight.k0OwP1a6`、`/private/tmp/issue66-reuse-preflight.PsbTU5bi`，以及只读收尾目录 `/private/tmp/issue66-preflight-completion.sFwu3sEk`。后者通过 `references.json` 关联成功安装、初态、请求、快照及原包装失败记录，通过 `completion-checks.json` 保存逐项核对结论。必须同时提交原失败和只读收尾，不能用收尾成功覆盖原退出码；新增准备证据也不能替代正式保存前文件状态或保存时点证据。
 
 在交测试审核者前，准备同一版本的完整材料：权威计划全文、r9 设计审核、此手册、所有新增/修改的测试与运行器、完整本地候选证据目录，以及真实 APM 安装尝试的原始命令、标准输出、标准错误、退出码和结论。先前三次失败尝试没有执行器生成的 `CASE_NOT_STARTED` 结构化记录；该旧缺项须如实保留，不得把有日志误写成通过。当时 PR 头 `5f5af167c4fe2a0f596dd978f8616d566e8b0ff7` 的先前成功预检材料见 `/private/tmp/issue66-r9-install-final-20261008a`；来源 `1a7040b2640043d26dfe62dc08b10f09df173ffe` 的历史安装失败材料见 `/private/tmp/issue66-r9-install-pr73-1a7040b-20261008-candidate2`，当前成功安装及合成 writer 预检材料见 `/private/tmp/issue66-r9-install-retry-original.u4YGZR6y/installation-check`。本次第一轮失败、第二轮中断后结果未知及第三轮成功材料均须一并提交；各轮对应的来源和结论不得混用。保存前文件状态和保存时点缺口仍须交独立审核处理，成功安装预检不表示第二关口已批准。若后续预检没有完成，也须保留对应的未完成事实和缺失项。
 
+完整计划第 59–61 行要求保存前的字节、模式和存在性证据；现公开的 `eval-server` 的 `README.md:3–4` 及 `docs/appserver-migration.md:63` 仅提供完整响应和唯一的 `POST /eval` 请求入口。夹具说明 `docs/codex-opencode-smoke-wiring.md:207–228` 及 `scripts/parse_codex_eval_evidence.py:410–443` 采用离线解析，没有同步观察入口。此缺口交回测试设计责任人明确可执行的取证方案，必要基础设施提供支持；本地测试工程师不能自行修改冻结提示词、产品或增加持续监视。正式运行暂停。
+
 审核者需覆盖四项计划范围、每项来源和执行入口、动态套件条目、样例账本、四种汇总组合、写入字节/权限观察与失败分流。只有独立审核确认第二关口全部材料可用并明确批准，才可进入正式执行。若审核发现问题，按责任归因修复后由新的独立审核者重新完整审核。
 
 ## 第五步：正式运行（本轮禁止执行）
 
-**本轮不得调用以下正式模式**。仅在第二关口完整审核通过后，由正式执行者建立全新的正式证据目录，并以本轮实际远端产品来源调用一次。正式模式读取既有评估服务端口，通过项目评估入口只发送一次请求；不得启动服务、绕过入口、自动重试或因结果不理想再次调用。正式模式会新建独占消费者并重新执行安装，因此安装或环境失败应先保存事实并停止。
+**本轮不得调用以下正式模式**。仅在第二关口完整审核通过后，由正式执行者建立全新的正式证据目录，并以本轮实际远端产品来源调用一次。正式模式读取既有评估服务端口，通过项目评估入口只发送一次请求；不得启动服务、绕过入口、自动重试或因结果不理想再次调用。正式模式复用已验证且仍适用的成功安装及初态，引用原安装和准备记录，不调用安装器或重建已有初态。只有安装失效、相关版本或前提变化使其不再适用，或用例要求新安装时，先单独完成第三步的安装准备。
 
 ```sh
 REPO="$(pwd -P)"
@@ -199,7 +226,10 @@ uv run --no-project python -B \
   --repository "$REPO" \
   --fixture-root "$FIXTURE_ROOT" \
   --evidence-dir "$FORMAL_ROOT/formal" \
-  --product-source '<已由第二关口批准的远端版本或提交选择器>'
+  --product-source '<已由第二关口批准且原安装仍适用的远端来源>' \
+  --consumer '<原成功消费者完整路径>' \
+  --installation-evidence '<原成功安装的install.json完整路径>' \
+  --preparation-evidence '<已有初态准备证据目录>'
 ```
 
 执行前再次确认该证据目录不存在、同一正式用例尚未发出请求、来源与批准记录一致。该程序把请求次数记录为 1 且最大次数为 1；一旦创建 `attempt.json` 或确认请求已尝试，就不得再次调用。零字节上传且无 HTTP 响应按 `CASE_NOT_STARTED` 保留；已尝试但传输未完成或无法确认按 `BLOCKED` 处理；不得重试。

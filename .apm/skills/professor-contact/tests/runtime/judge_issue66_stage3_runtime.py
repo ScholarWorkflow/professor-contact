@@ -2723,6 +2723,19 @@ class Judge:
             return
 
         invalid, problems, gaps, observed = [], [], [], []
+        declared_gaps = evidence.get("gaps", [])
+        if not isinstance(declared_gaps, list) or any(
+                not isinstance(gap, str) or not gap.strip()
+                for gap in declared_gaps):
+            self.row("F-writer-collection-gaps", "invalid",
+                     "writer collection gaps are not an array of nonempty strings",
+                     [repr(declared_gaps)])
+        else:
+            gaps.extend(declared_gaps)
+            if declared_gaps:
+                self.row("F-writer-collection-gaps", "gap",
+                         "the writer collector declared incomplete observations",
+                         declared_gaps)
         normalized = []
         required_observation = {"round", "writer_call", "command",
                                 "stdout_b64", "output", "save_input"}
@@ -2941,7 +2954,7 @@ class Judge:
         elif problems:
             self.row("F-writer-evidence", "fail",
                      "a directly observed fixed-writer contract was violated",
-                     problems + gaps + observed)
+                     problems + gaps + observed, independent=True)
         elif gaps:
             self.row("F-writer-evidence", "gap",
                      "writer command or raw file observation is incomplete",
@@ -3809,7 +3822,8 @@ class Judge:
         external_blockers = bool(machine_prefix or self.external_declines)
 
         provenance_invalid = [row for row in invalid_rows if row["fact"] not in
-                              {"F-attribution", "F-routing-verifier"}]
+                              {"F-attribution", "F-routing-verifier",
+                               "F-writer-collection-gaps"}]
         if provenance_invalid:
             classification = "INVALID_TEST_EXECUTION"
             reason = "evidence or product/input provenance is invalid; business facts cannot be attributed"

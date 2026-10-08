@@ -375,13 +375,15 @@ class Execution:
         self.fixture = Path(args.fixture_root).resolve()
         self.out = Path(args.evidence_dir).resolve()
         self.product_source = validate_product_source_selector(args.product_source)
-        if args.consumer:
-            message = ("installation-check 必须创建全新消费者；不得传入 --consumer"
-                       if args.mode == "installation-check" else "不支持复用消费者")
-            raise RuntimeError(message)
+        self.installation_evidence = getattr(args, "installation_evidence", None)
+        self.preparation_evidence = getattr(args, "preparation_evidence", None)
+        if args.consumer and not self.installation_evidence:
+            raise RuntimeError("复用消费者须通过 --installation-evidence 引用原安装记录")
+        if args.mode == "installation-check" and args.consumer:
+            raise RuntimeError("installation-check 用于新安装准备；已有安装进入 preflight 或 formal")
         self.out.mkdir(parents=True, exist_ok=False)
         self.identity = self.out.name
-        self.consumer = self.out / "consumer"
+        self.consumer = Path(args.consumer).resolve() if args.consumer else self.out / "consumer"
         if self.consumer.is_relative_to(self.repo):
             raise RuntimeError("消费者不得位于产品仓库内")
         self.program = self.consumer / "program"
@@ -669,7 +671,7 @@ class Execution:
                 return 2
             return 0 if self.installation_writer_check() == "PASS" else 2
         if self.a.mode == "preflight":
-            self.install()
+            self.prepare_installation()
             self.prepare()
             write(self.out / "preflight.json", {"classification": "PREFLIGHT_ONLY",
                   "formal_request_attempted": False, "formal_request_sent": False,
@@ -677,10 +679,29 @@ class Execution:
                   "prepared": ["installation", "initial_input", "request", "snapshot"],
                   "remaining": ["正式运行业务文件生产、保存及权限事实"]})
             return 0
-        port = self.port()
-        self.install()
+        self.prepare_installation()
         self.prepare()
+        port = self.port()
         return self.formal(port)
+
+    def prepare_installation(self):
+        """后续步骤引用成功安装，不再次调用安装入口。"""
+        if not self.a.consumer or not self.installation_evidence:
+            raise RuntimeError("先完成 installation-check，再提供消费者及原安装记录")
+        source = Path(self.installation_evidence).resolve()
+        original = jq(source)
+        if original.get("status") != "ok" or original.get("manual_patch") != "no" \
+                or Path(original.get("consumer_root", "")).resolve() != self.consumer \
+                or not self.consumer.is_dir():
+            raise RuntimeError("原安装记录未完成成功安装，或消费者不匹配、已失效")
+        self.install_value = surface(self.identity, [],
+            consumer_root=str(self.consumer), newly_created=False, manual_patch="no",
+            requested_product_source=self.product_source,
+            installation_evidence=str(source), original_installation=original)
+        write(self.out / "install.json", self.install_value)
+        write(self.out / "installation-reuse.json", {
+            "evidence_set_id": self.identity, "installation_evidence": str(source),
+            "consumer_root": str(self.consumer), "reinstalled": False})
 
 
     def _writer_evidence(self, observations=None, **values):
@@ -1193,6 +1214,45 @@ class Execution:
 
     def prepare(self):
         # 使用本轮测试工作区中的受支持夹具构造纯初态，只写独占消费者。
+        if self.preparation_evidence:
+            source = Path(self.preparation_evidence).resolve()
+            initial = jq(source / "initial-input.json")
+            fixture_value = jq(source / "fixture-pre.json")
+            if Path(initial.get("program_root", "")).resolve() != self.program \
+                    or fixture_value.get("status") != "ok":
+                raise RuntimeError("原初态准备记录与当前消费者不匹配或未完成")
+            write(self.out / "preparation-reuse.json", {
+                "evidence_set_id": self.identity, "preparation_evidence": str(source),
+                "initial_input_rebuilt": False})
+            write(self.out / "initial-input.json", initial)
+            write(self.out / "fixture-pre.json", {**fixture_value,
+                "evidence_set_id": self.identity, "preparation_evidence": str(source)})
+        elif self.program.exists():
+            raise RuntimeError("已有业务初态；须引用 --preparation-evidence，不得重建")
+        else:
+            self.build_initial()
+            initial = jq(self.out / "initial-input.json")
+        hashes = initial.get("input_hashes", {})
+        if not hashes or any(not (self.program / relative).is_file()
+                or digest((self.program / relative).read_bytes()) != expected
+                for relative, expected in hashes.items()):
+            raise RuntimeError("初态输入已变化；停止并按冻结步骤处理，不重建已有初态")
+        before = snapshot(self.program)
+        if any(row["exists"] for row in before.values()):
+            raise RuntimeError("禁止业务产物已存在；停止并按冻结步骤处理，不自动重置")
+        req = request(self.consumer, self.program)
+        write(self.out / "request.json", req)
+        (self.out / "prompt.txt").write_text(shlex.split(req["command"])[-1], encoding="utf-8")
+        write(self.out / "pre.json", surface(self.identity, [
+            check("pre_zero_write_snapshot", all(not row["exists"] for row in before.values()), before)],
+            artifacts=before))
+        self.initial = initial
+        self.before = before
+        write(self.out / "request-configuration.json", {
+            "model": MODEL, "reasoning_effort": REASONING_EFFORT,
+            "sandbox": SANDBOX, "command": req["command"]})
+
+    def build_initial(self):
         builder_checks = []
         for name in ("prepare_issue55_stage3_fixture.py", "fixture_support.py"):
             asset = HERE / name
@@ -1224,20 +1284,6 @@ class Execution:
         write(self.out / "fixture-pre.json", fixture_value)
         if fixture_value["status"] != "ok":
             raise RuntimeError("初始输入或禁止产物不满足正式前提")
-        req = request(self.consumer, self.program)
-        write(self.out / "request.json", req)
-        (self.out / "prompt.txt").write_text(shlex.split(req["command"])[-1], encoding="utf-8")
-        write(self.out / "pre.json", surface(self.identity, [
-            check("pre_zero_write_snapshot", all(not row["exists"] for row in before.values()), before)],
-            artifacts=before))
-        self.initial = initial
-        self.before = before
-        write(self.out / "request-configuration.json", {
-            "model": MODEL,
-            "reasoning_effort": REASONING_EFFORT,
-            "sandbox": SANDBOX,
-            "command": req["command"],
-        })
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1248,6 +1294,8 @@ def main(argv=None):
     parser.add_argument("--product-source", required=True,
                          help="本轮实际要安装的 professor-contact 来源或版本选择器")
     parser.add_argument("--consumer")
+    parser.add_argument("--installation-evidence", help="已有成功安装的 install.json")
+    parser.add_argument("--preparation-evidence", help="已有初态准备的证据目录；只读复用")
     args = parser.parse_args(argv)
     execution = None
     try:

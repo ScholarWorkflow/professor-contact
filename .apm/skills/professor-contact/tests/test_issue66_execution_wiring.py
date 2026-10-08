@@ -17,18 +17,106 @@ spec.loader.exec_module(wiring)
 
 class ExecutionWiringTests(unittest.TestCase):
     def fresh_execution(self, directory, product_source="refs/pr73-current",
-                        mode="installation-check", consumer=None):
+                        mode="installation-check", consumer=None,
+                        installation_evidence=None, preparation_evidence=None):
         from argparse import Namespace
         root = Path(directory)
         execution = wiring.Execution(Namespace(repository=str(PATH.parents[5]),
             fixture_root=str(root), evidence_dir=str(root / 'evidence'),
-            mode=mode, consumer=consumer,
+            mode=mode, consumer=consumer, installation_evidence=installation_evidence,
+            preparation_evidence=preparation_evidence,
             product_source=product_source))
         execution.provenance = {
             'test_source': {'root': str(PATH.parents[5])},
             'fixture_source': {'root': str(root)},
         }
         return execution
+
+    def test_existing_consumer_requires_original_installation_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, '原安装记录'):
+                self.fresh_execution(directory, mode='preflight', consumer=directory)
+
+    def test_preflight_and_formal_reuse_installation_without_reinstall(self):
+        for mode in ('preflight', 'formal'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                consumer = root / 'installed-consumer'
+                consumer.mkdir()
+                marker = consumer / 'installed.txt'
+                marker.write_bytes(b'unchanged installation')
+                original = root / 'original-install.json'
+                wiring.write(original, wiring.surface('original', [], status='ok',
+                    consumer_root=str(consumer.resolve()), manual_patch='no',
+                    requested_product_source='previous-selector'))
+                execution = self.fresh_execution(directory, mode=mode,
+                    consumer=str(consumer), installation_evidence=str(original))
+                with patch.object(execution, 'run'), patch.object(execution, 'versions'), \
+                     patch.object(execution, 'record_provenance'), \
+                     patch.object(execution, 'install') as install, \
+                     patch.object(execution, 'prepare') as prepare, \
+                     patch.object(execution, 'port', return_value=1234) as port, \
+                     patch.object(execution, 'formal', return_value=0) as formal:
+                    self.assertEqual(execution.execute(), 0)
+                install.assert_not_called()
+                prepare.assert_called_once()
+                if mode == 'formal':
+                    formal.assert_called_once_with(1234)
+                else:
+                    port.assert_not_called()
+                    formal.assert_not_called()
+                evidence = wiring.jq(execution.out / 'install.json')
+                self.assertFalse(evidence['newly_created'])
+                self.assertEqual(evidence['installation_evidence'], str(original.resolve()))
+                self.assertEqual(evidence['original_installation']['evidence_set_id'], 'original')
+                self.assertEqual(marker.read_bytes(), b'unchanged installation')
+
+    def test_invalid_installation_record_stops_without_install_or_business(self):
+        for status in ('error', 'wrong-consumer'):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                consumer = root / 'consumer'
+                consumer.mkdir()
+                original = root / 'original-install.json'
+                wiring.write(original, {'status': 'error' if status == 'error' else 'ok',
+                    'consumer_root': str(consumer if status == 'error' else root / 'other'),
+                    'manual_patch': 'no'})
+                execution = self.fresh_execution(directory, mode='preflight',
+                    consumer=str(consumer), installation_evidence=str(original))
+                with patch.object(execution, 'install') as install, \
+                     patch.object(execution, 'prepare') as prepare:
+                    with self.assertRaisesRegex(RuntimeError, '原安装记录'):
+                        execution.prepare_installation()
+                install.assert_not_called()
+                prepare.assert_not_called()
+
+    def test_existing_initial_state_is_read_only_and_never_rebuilt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = self.execution(directory)
+            original.prepare()
+            original_record = original.out / 'original-install.json'
+            wiring.write(original_record, {'status': 'ok', 'manual_patch': 'no',
+                'consumer_root': str(original.consumer)})
+            later = Path(directory) / 'later'
+            later.mkdir()
+            execution = self.fresh_execution(later, mode='preflight',
+                consumer=str(original.consumer), installation_evidence=str(original_record),
+                preparation_evidence=str(original.out))
+            before = {path: path.read_bytes() for path in original.consumer.rglob('*')
+                      if path.is_file()}
+            with patch.object(execution, 'build_initial') as build:
+                execution.prepare_installation()
+                execution.prepare()
+            build.assert_not_called()
+            self.assertEqual(before, {path: path.read_bytes()
+                for path in original.consumer.rglob('*') if path.is_file()})
+            self.assertFalse(wiring.jq(execution.out / 'preparation-reuse.json')
+                             ['initial_input_rebuilt'])
+            execution.preparation_evidence = None
+            with patch.object(execution, 'build_initial') as build:
+                with self.assertRaisesRegex(RuntimeError, '不得重建'):
+                    execution.prepare()
+            build.assert_not_called()
 
     def execution(self, directory, product_source="refs/pr73-current"):
         execution = self.fresh_execution(directory, product_source)
@@ -585,7 +673,7 @@ class ExecutionWiringTests(unittest.TestCase):
             execution.service = service
             with patch.object(execution,'run'), patch.object(execution,'versions'), \
                  patch.object(execution,'record_provenance'), patch.object(execution,'port') as port, \
-                 patch.object(execution,'service') as service, patch.object(execution,'install'), \
+                 patch.object(execution,'service') as service, patch.object(execution,'prepare_installation'), \
                  patch.object(execution,'prepare'), patch.object(execution,'formal') as formal:
                 self.assertEqual(execution.execute(),0)
                 port.assert_not_called()
