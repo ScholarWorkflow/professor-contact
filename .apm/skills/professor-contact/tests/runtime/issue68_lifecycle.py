@@ -225,18 +225,27 @@ def collect_lifecycle(before, manifest, consumer, response, input_verifier, afte
         elif action.get("action") == "stage5-partition-choices" and call["thread"] == root:
             # Keep the actual complete return. Command arguments may identify
             # a source path, but are never used as evidence of its contents.
-            try:
-                returned = json.loads(call.get("output") or "")
-            except (TypeError, ValueError):
+            raw_return = call.get("output")
+            if not isinstance(raw_return, str) or not raw_return.strip():
                 returned = None
+                return_parse_state = "unobservable"
+            else:
+                try:
+                    returned = json.loads(raw_return)
+                    return_parse_state = "parsed"
+                except (TypeError, ValueError):
+                    returned = None
+                    return_parse_state = "invalid_json"
             partitions.append({"command_id": call["id"], "thread": call["thread"],
                                "generation": call["generation"],
                                "start": call["start"], "end": call["end"],
                                "actual_return": returned,
+                               "actual_return_parse_state": return_parse_state,
                                "choices_path": action.get("flags", {}).get("--choices"),
                                "out_path": action.get("flags", {}).get("--out"),
                                "exit_code": call.get("exit_code")})
-            if returned and returned.get("status") == "ok" and type(call.get("exit_code")) is int and call["exit_code"] == 0:
+            if isinstance(returned, dict) and returned.get("status") == "ok" \
+                    and type(call.get("exit_code")) is int and call["exit_code"] == 0:
                 # Fixed product cmd_stage5_partition_choices reads choices
                 # before emitting this object and writes --out before emit.
                 flags = action.get("flags", {})
@@ -341,6 +350,7 @@ def _subtree(snapshot, directory):
 
 def verify_lifecycle(evidence, manifest):
     """Validate complete snapshots and directly attributable formation/use."""
+    missing_fact = object()
     def result(kind, reason, **extra):
         return {"verdict": kind, "reason_code": reason, **extra}
     try:
@@ -361,6 +371,7 @@ def verify_lifecycle(evidence, manifest):
         actual_read_paths = {read["path"] for read in evidence["reads"]}
         successful_transfer_paths = {partition[key]
             for partition in evidence.get("partition_returns", [])
+            if isinstance(partition, dict)
             if isinstance(partition.get("actual_return"), dict)
             and partition["actual_return"].get("status") == "ok"
             and type(partition.get("exit_code")) is int and partition["exit_code"] == 0
@@ -482,7 +493,21 @@ def verify_lifecycle(evidence, manifest):
                 refs.append(attempt["path"])
         successful = []
         for partition in partitions:
-            if partition.get("actual_return", {}).get("status") != "ok" or \
+            if not isinstance(partition, dict):
+                raise ValueError("partition_return_record")
+            parse_state = partition.get("actual_return_parse_state")
+            actual_return = partition.get("actual_return", missing_fact)
+            if parse_state == "invalid_json":
+                return result("INVALID_EVIDENCE", "lifecycle_partition_return_unparseable")
+            if parse_state == "unobservable":
+                return result("BLOCKED_OBSERVABILITY", "lifecycle_partition_return_unobservable")
+            if parse_state not in (None, "parsed"):
+                raise ValueError("partition_return_parse_state")
+            if actual_return is missing_fact:
+                raise ValueError("partition_return_missing")
+            if actual_return is None and parse_state is None:
+                return result("INVALID_EVIDENCE", "lifecycle_partition_return_parse_state_missing")
+            if not isinstance(actual_return, dict) or actual_return.get("status") != "ok" or \
                     type(partition.get("exit_code")) is not int or partition["exit_code"] != 0:
                 continue
             if partition.get("thread") != evidence["root_thread"] or \

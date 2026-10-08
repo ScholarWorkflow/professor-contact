@@ -1184,19 +1184,48 @@ class OwnerObservationTests(unittest.TestCase):
                 self.assertEqual(problem["verdict"], "FAIL_PRODUCT")
                 self.assertEqual(problem["reason_code"], "root_partition_changed")
 
+    def test_parseable_unassociated_owner_row_is_a_product_failure(self):
+        changed = copy.deepcopy(self.actual_partition)
+        changed[0]["professor_dir"] = None
+        call = self.partition_call(changed)
+        actual, problem = verifier._actual_root_partition([call], self.manifest, "synthetic-root")
+        self.assertIsNone(actual)
+        self.assertEqual((problem["verdict"], problem["reason_code"]),
+                         ("FAIL_PRODUCT", "root_partition_changed"))
+
+    def test_parseable_non_object_partition_result_is_a_product_failure(self):
+        call = self.partition_call()
+        call["output"] = "null"
+        actual, problem = verifier._actual_root_partition([call], self.manifest, "synthetic-root")
+        self.assertIsNone(actual)
+        self.assertEqual((problem["verdict"], problem["reason_code"]),
+                         ("FAIL_PRODUCT", "root_partition_changed"))
+
+    def test_full_evaluator_keeps_sourced_unassociated_partition_as_product_failure(self):
+        response, adapter = self.incomplete_runtime()
+        events = response["output"]["app_server_events"]
+        partition = copy.deepcopy(self.actual_partition)
+        partition[0]["professor_dir"] = None
+        events[3]["message"]["params"]["item"]["aggregatedOutput"] = json.dumps(
+            {"status": "ok", "owners": partition}, ensure_ascii=False)
+        result = verifier.verify_codex(response, adapter, self.manifest)
+        self.assertEqual((result["verdict"], result["reason_code"]),
+                         ("FAIL_PRODUCT", "root_partition_changed"))
+
     def test_missing_damaged_and_conflicting_root_returns_have_distinct_terminals(self):
         cases = [("", "BLOCKED_OBSERVABILITY", "root_partition_result_unobservable"),
                  ('{"status":', "INVALID_EVIDENCE", "root_partition_result_malformed"),
                  (json.dumps({"status": "ok", "owners": self.actual_partition * 2}),
-                  "INVALID_EVIDENCE", "root_partition_owner_association_conflict")]
+                  "FAIL_PRODUCT", "root_partition_changed")]
         for output, terminal, reason in cases:
             call = self.partition_call()
             call["output"] = output
             with self.subTest(reason=reason):
                 actual, problem = verifier._actual_root_partition([call], self.manifest, "synthetic-root")
-                self.assertIsNone(actual)
                 self.assertEqual(problem["verdict"], terminal)
                 self.assertEqual(problem["reason_code"], reason)
+                if terminal == "INVALID_EVIDENCE":
+                    self.assertIsNone(actual)
         rows, problem = verifier.consumed_business_objects([self.call()], self.manifest)
         self.assertIsNone(problem)
         _, problem = verifier.owner_payload(rows, self.manifest)

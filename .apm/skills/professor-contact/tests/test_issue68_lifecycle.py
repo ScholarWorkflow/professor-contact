@@ -47,6 +47,27 @@ class LifecycleEvidenceTests(unittest.TestCase):
         self.assertEqual(actual["verdict"], verdict)
         self.assertEqual(actual["reason_code"], reason)
 
+    def collect_partition_output(self, output):
+        events = []
+        item = {"type": "commandExecution", "id": "partition-call",
+                "command": "partition actual"}
+        for seq, method in enumerate(("item/started", "item/completed"), 1):
+            completed = dict(item)
+            if method == "item/completed":
+                completed.update(aggregatedOutput=output, exitCode=0)
+            events.append({"runtime_seq": seq, "runtime_generation": 1,
+                "message": {"method": method, "params": {"threadId": "root",
+                    "turnId": "turn", "item": completed}}})
+        response = {"output": {"thread_id": "root", "turn_id": "turn",
+                    "runtime_generation": 1, "app_server_events": events}}
+        action = {"action": "stage5-partition-choices", "flags": {
+            "--choices": str(self.consumer / "choices.json"),
+            "--out": str(self.consumer / "partition.json")}}
+        verifier = SimpleNamespace(command_action=lambda command, manifest: action,
+            consumed_business_objects=lambda calls, manifest: ([], None))
+        return subject.collect_lifecycle(self.before, self.manifest, self.consumer,
+                                         response, verifier)
+
     def test_unchanged_files_and_absent_transfer_do_not_prove_lifecycle(self):
         self.check(self.evidence([self.read()]), "BLOCKED_OBSERVABILITY",
                    "transfer_creation_and_cleanup_unobservable")
@@ -227,6 +248,23 @@ class LifecycleEvidenceTests(unittest.TestCase):
         self.assertEqual(evidence["reads"][0]["generation"], 1)
         self.assertEqual(evidence["partition_returns"][0]["actual_return"], returned)
         self.check(evidence, "BLOCKED_OBSERVABILITY", "transfer_creation_and_cleanup_unobservable")
+
+    def test_collector_distinguishes_unparseable_partition_output_from_json_null(self):
+        malformed = self.collect_partition_output("{malformed")
+        malformed_return = malformed["partition_returns"][0]
+        self.assertIsNone(malformed_return["actual_return"])
+        self.assertEqual(malformed_return["actual_return_parse_state"], "invalid_json")
+        self.assertEqual(malformed["lifecycle_capability"]["proof"], {
+            "verdict": "INVALID_EVIDENCE",
+            "reason_code": "lifecycle_partition_return_unparseable"})
+
+        null_result = self.collect_partition_output("null")
+        null_return = null_result["partition_returns"][0]
+        self.assertIsNone(null_return["actual_return"])
+        self.assertEqual(null_return["actual_return_parse_state"], "parsed")
+        self.assertEqual(null_result["lifecycle_capability"]["proof"], {
+            "verdict": "BLOCKED_OBSERVABILITY",
+            "reason_code": "transfer_creation_and_cleanup_unobservable"})
 
     def test_partition_stdout_does_not_require_extra_cat(self):
         evidence = self.complete_evidence()

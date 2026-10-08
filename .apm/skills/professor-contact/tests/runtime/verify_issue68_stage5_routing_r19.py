@@ -321,8 +321,8 @@ def _packet_program_root(call):
     return ""
 
 
-def _strict_json_object(text):
-    """Parse exactly one JSON object, rejecting duplicate keys and extra text."""
+def _strict_json_value(text):
+    """Parse exactly one JSON value, rejecting duplicate keys and extra text."""
     def unique_pairs(pairs):
         result = {}
         for key, value in pairs:
@@ -331,7 +331,12 @@ def _strict_json_object(text):
             result[key] = value
         return result
 
-    value = json.loads(text, object_pairs_hook=unique_pairs)
+    return json.loads(text, object_pairs_hook=unique_pairs)
+
+
+def _strict_json_object(text):
+    """Parse exactly one JSON object, rejecting duplicate keys and extra text."""
+    value = _strict_json_value(text)
     if not isinstance(value, dict):
         raise ValueError("json_top_level_not_object")
     return value
@@ -981,16 +986,17 @@ def _actual_root_partition(calls, manifest, root):
         if not isinstance(output, str) or not output.strip():
             return None, verdict("BLOCKED_OBSERVABILITY", "root_partition_result_unobservable")
         try:
-            payload = _strict_json_object(output)
+            payload = _strict_json_value(output)
         except (ValueError, TypeError):
             return None, verdict("INVALID_EVIDENCE", "root_partition_result_malformed")
+        if not isinstance(payload, dict):
+            return None, verdict("FAIL_PRODUCT", "root_partition_changed",
+                                 observed_result=payload)
         if payload.get("status") == "ok":
             rows = _partition_rows(payload)
-            if rows is None or any(not isinstance(entry, dict) for entry in payload["owners"]):
-                return None, verdict("INVALID_EVIDENCE", "root_partition_result_malformed")
-            dirs = [row["professor_dir"] for row in rows]
-            if any(not isinstance(directory, str) for directory in dirs) or len(set(dirs)) != len(dirs):
-                return None, verdict("INVALID_EVIDENCE", "root_partition_owner_association_conflict")
+            if rows is None:
+                return None, verdict("FAIL_PRODUCT", "root_partition_changed",
+                                     observed_owners=payload.get("owners"))
             partitions.append((call, rows))
     if not partitions:
         if call_ids:
