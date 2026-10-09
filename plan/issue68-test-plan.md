@@ -94,7 +94,7 @@
 
    两条输出必须分别为 `72f20846e9810f5445c0c6a3891f3877b4cd0e21` 和 `a9e7ffbc070dcfdc7b225e5e70de1b4576649ecd`。本轮实际安装锁定了这两个提交。禁止使用本地路径、符号链接、手工复制或修补安装产物。
 4. 使用现有评估服务及其测试专用 Codex 配置，不启停或重启服务。在已配置的 `eval-server` 仓库工作目录执行 `direnv exec . sh -c 'printf "%s\\n" "$EVAL_PORT"'` 取得端口；不得在计划、请求或提交中写入端口、个人绝对路径、密钥或服务进程信息。
-5. 配置来源在正式运行前必须由第二关口确认：当前 `PROJECT_CONSENSUS.md` 要求使用默认 Codex 配置中的 `gpt-6-luna`、低推理强度，并禁止在请求中重复覆盖；目前可见的 `skills-test-fixtures` 提交 `c738fa2f8bcbb16cd99d741332d5f59b062b6357` 的 `configs/codex-eval-adapter-contract.json` 属于自动审批基础设施用例，固定 `gpt-5.6-luna`，不能作为本业务用例配置。R37 的每请求模型覆盖也不沿用。必须先确认一个已批准的版本化配置文件能提供本业务要求的默认模型和推理强度，并记录文件路径、版本及实际生效值；若来源仍缺失或冲突，停在正式请求之前，记为配置阻塞，不改现有服务或配置，不通过命令行覆盖绕过。
+5. 配置来源在正式运行前必须由第二关口确认：当前 `PROJECT_CONSENSUS.md` 要求使用默认 Codex 配置中的 `gpt-6-luna`、低推理强度，并禁止在请求中重复覆盖；目前可见的 `RekiDunois/skills-test-fixtures` 提交 `c738fa2f8bcbb16cd99d741332d5f59b062b6357` 的 `configs/codex-eval-adapter-contract.json` 中，`.approval.case_baseline.frozen.model` 为 `gpt-5.6-luna`，对应的 `.approval.case_baseline.frozen.command_template` 声明低推理。这是审批适配器测试契约中的基线，不是本业务获批配置或运行时生效证明，不能作为本业务配置来源。R37 的每请求模型覆盖也不沿用。必须先确认一个获批、可追溯的配置来源能提供本业务要求的默认模型和推理强度，并记录文件路径、版本及实际生效值；若来源仍缺失或冲突，停在正式请求之前，记为配置阻塞，不改现有服务或配置，不通过命令行覆盖绕过。
 
 ### 4.2 合成业务输入
 
