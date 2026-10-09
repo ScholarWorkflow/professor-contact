@@ -3854,6 +3854,31 @@ class Issue67AdjacentStateTests(_Issue67Stage4Fixture):
     def job_directions(self, payload):
         return sorted({job["direction_id"] for job in payload["jobs"]})
 
+    def selected_scope_with_legacy_conflict(self, name):
+        self.add_direction_b()
+        committed = self.stage4([self.row(self.prof_dir)], name=f"{name}-local.json")
+        self.assertEqual(stage4_row(committed)["status"], "ok", committed)
+        self.write_legacy_program_pair(
+            [{"professor": "試験 教授", "professor_dir": str(self.prof_dir),
+              "direction_ids": ["DIR00002"], "collection_key": "DIR00002",
+              "ideas": [{"id": "DIR00002_1"}]}],
+            [])
+        self.make_state_stale()
+        paths = [
+            self.prof_dir / contact_state.CANDIDATE_STATE,
+            self.prof_dir / "套磁想法候选.md",
+            *self.pair(self.prof_dir),
+            self.research / self.SELECT,
+            self.research / self.PACK,
+        ]
+        for path in paths:
+            self.assertTrue(path.is_file(), f"missing protected input: {path}")
+        return paths, {path: path.read_bytes() for path in paths}
+
+    @staticmethod
+    def selected_scope_snapshot(paths):
+        return {path: path.read_bytes() for path in paths}
+
     # ---- R67-G1-6: the selected refresh scope is the local selection -------
 
     def test_01_stage3_selected_refresh_scopes_from_the_professor_local_selection(self):
@@ -3879,37 +3904,29 @@ class Issue67AdjacentStateTests(_Issue67Stage4Fixture):
         self.assertEqual(self.job_directions(everything), ["DIR00001", "DIR00002"])
 
     def test_02_selected_refresh_needs_an_explicit_selection_and_ignores_legacy(self):
-        self.add_direction_b()
-        # Without any selection container the scope cannot be invented: the run
-        # fails closed instead of silently refreshing every direction.
+        paths, before = self.selected_scope_with_legacy_conflict("adj2")
+        # The project-level legacy file points to DIR00002, but it is history
+        # only and cannot supply a missing explicit professor-local selection.
         missing = run_cli("stage3-plan", "--professor-dir", self.prof_dir,
                           "--program-root", self.root, "--refresh-scope", "selected")
         self.assertEqual(missing.returncode, 1, missing.stdout)
         payload = parse(missing)
         self.assertEqual(payload["reason_code"], "invalid_params")
         self.assertIn("selection file unreadable", payload["message"])
+        self.assertNotIn("jobs", payload)
+        self.assertEqual(self.selected_scope_snapshot(paths), before)
 
-        committed = self.stage4([self.row(self.prof_dir)], name="adj2.json")
-        self.assertEqual(stage4_row(committed)["status"], "ok", committed)
-        # A legacy global file that names the OTHER direction must not widen the
-        # local scope: the professor-local pair is the selection authority.
-        self.write_legacy_program_pair(
-            [{"professor": "試験 教授", "professor_dir": str(self.prof_dir),
-              "collection_key": "DIR00002", "ideas": [{"id": "DIR00002_1"}]}], [])
-        self.make_state_stale()
         scoped = parse(run_cli(
             "stage3-plan", "--professor-dir", self.prof_dir,
             "--program-root", self.root, "--refresh-scope", "selected",
             "--selection", self.prof_dir / self.SELECT))
         self.assertEqual(self.job_directions(scoped), ["DIR00001"], scoped)
+        self.assertEqual(self.selected_scope_snapshot(paths), before)
 
     def test_03_scoped_finalize_with_the_local_selection_keeps_other_directions(self):
-        self.add_direction_b()
-        committed = self.stage4([self.row(self.prof_dir)], name="adj3.json")
-        self.assertEqual(stage4_row(committed)["status"], "ok", committed)
-        self.make_state_stale()
+        paths, before = self.selected_scope_with_legacy_conflict("adj3")
         state_path = self.prof_dir / contact_state.CANDIDATE_STATE
-        before = json.loads(state_path.read_text(encoding="utf-8"))
+        before_state = json.loads(state_path.read_text(encoding="utf-8"))
 
         plan = parse(run_cli(
             "stage3-plan", "--professor-dir", self.prof_dir,
@@ -3921,6 +3938,16 @@ class Issue67AdjacentStateTests(_Issue67Stage4Fixture):
         source = self.root / "s3results" / result_file("candidates", "DIR00001")
         (results / result_file("candidates", "DIR00001")).write_text(
             source.read_text(encoding="utf-8"), encoding="utf-8")
+
+        missing = run_cli(
+            "stage3-finalize", "--professor-dir", self.prof_dir,
+            "--results", results, "--program-root", self.root,
+            "--refresh-scope", "selected")
+        self.assertEqual(missing.returncode, 1, missing.stdout)
+        missing_payload = parse(missing)
+        self.assertEqual(missing_payload["reason_code"], "invalid_params")
+        self.assertEqual(self.selected_scope_snapshot(paths), before)
+
         out = parse(run_cli(
             "stage3-finalize", "--professor-dir", self.prof_dir,
             "--results", results, "--program-root", self.root,
@@ -3930,12 +3957,17 @@ class Issue67AdjacentStateTests(_Issue67Stage4Fixture):
         recorded = {d["direction_id"]: d for d in after["directions"]}
         self.assertEqual(sorted(recorded), ["DIR00001", "DIR00002"])
         self.assertEqual(recorded["DIR00002"],
-                         {d["direction_id"]: d for d in before["directions"]}["DIR00002"],
+                         {d["direction_id"]: d for d in before_state["directions"]}["DIR00002"],
                          "the scoped-out direction keeps its recorded candidates")
-        # Stage 4's professor-local authority is untouched by the Stage-3 refresh.
-        self.assertEqual([s["direction_ids"] for s in json.loads(
-            (self.prof_dir / self.SELECT).read_text(encoding="utf-8"))["selections"]],
-                         [["DIR00001"]])
+        # Stage 4's professor-local pair and the unrelated project-level pair
+        # remain byte-for-byte unchanged by the Stage-3 refresh.
+        unchanged_paths = [
+            *self.pair(self.prof_dir),
+            self.research / self.SELECT,
+            self.research / self.PACK,
+        ]
+        self.assertEqual(self.selected_scope_snapshot(unchanged_paths),
+                         {path: before[path] for path in unchanged_paths})
 
     # ---- R67-G1-4/7: handoff follows the professor rows --------------------
 
