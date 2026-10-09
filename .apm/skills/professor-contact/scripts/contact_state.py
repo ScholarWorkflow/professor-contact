@@ -5426,33 +5426,37 @@ def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict, *,
 def stage3_correction_scopes(state: dict, evidence: dict) -> list:
     """Scopes a correction round may repair, from recorded evidence only.
 
-    Fails closed when the round was never recorded, when the render moved on, or
-    when a caller nominates a scope the validator did not fail.
+    The validator file supplied to a correction command is not authoritative:
+    the persisted pending rows are the record of which scopes and issues may be
+    repaired.  The current evidence is used only to bind the operation to the
+    same rendered revision.
     """
     validator = state.get("validator") if isinstance(state.get("validator"), dict) else {}
     recorded = validator.get("pending") if isinstance(validator.get("pending"), dict) else {}
-    if validator.get("render_sha256") != evidence["render_sha256"]:
+    if validator.get("render_sha256") != evidence.get("render_sha256"):
         fail("validation_evidence_not_recorded",
              "record this validator round with stage3-record-validation before planning a correction")
     if evidence["failed"] and not recorded:
         fail("validation_evidence_not_recorded",
              "the recorded round has no open findings on this render: re-run the style validator "
              "on the current render and record that round")
-    for key in recorded:
-        if key not in evidence["failed"]:
-            fail("validation_evidence_not_recorded",
-                 f"validator evidence no longer matches the recorded round: {key}")
     scopes = {}
-    for key, row in evidence["failed"].items():
-        if key == "global":
-            # File-level prose is runner-rendered preamble, so it belongs to
-            # every scope of this render rather than to a caller's guess.
-            for other_key, other in evidence["scopes"].items():
-                if other_key != "global":
-                    scopes.setdefault(other_key, {"scope": other, "candidate_ids": [],
-                                                  "issues": list(row["issues"])})
-            continue
-        scopes[key] = row
+    for key, row in recorded.items():
+        if not isinstance(row, dict):
+            fail("validation_evidence_not_recorded",
+                 f"recorded validator scope is malformed: {key}")
+        scope = row.get("scope")
+        issues = row.get("issues")
+        candidate_ids = row.get("candidate_ids")
+        if not isinstance(scope, dict) or scope_key(scope) != key \
+                or scope.get("kind") not in ("direction", "group") \
+                or not isinstance(issues, list) or not issues \
+                or not isinstance(candidate_ids, list) \
+                or row.get("render_sha256") != evidence["render_sha256"]:
+            fail("validation_evidence_not_recorded",
+                 f"recorded validator scope is malformed or stale: {key}")
+        scopes[key] = {"scope": scope, "candidate_ids": candidate_ids,
+                       "issues": issues}
     return [scopes[key] for key in sorted(scopes)]
 
 
@@ -10198,6 +10202,22 @@ def cmd_stage3_record_validation(args) -> None:
     at = now_utc()
     exhausted = round_no >= STAGE3_VALIDATION_MAX_ROUNDS
     summary = []
+    global_issues = (evidence["failed"].get("global") or {}).get("issues") or []
+    if global_issues:
+        rendered_scopes = {
+            key: scope for key, scope in evidence["scopes"].items()
+            if key != "global"
+        }
+        if not rendered_scopes:
+            fail("validation_evidence_not_recorded",
+                 "global validator issues cannot be assigned to a rendered direction or group")
+        for key, scope in rendered_scopes.items():
+            row = evidence["failed"].setdefault(
+                key, {"scope": scope, "candidate_ids": [], "issues": []})
+            row["issues"].extend(
+                {**issue, "scope": scope, "render_sha256": evidence["render_sha256"]}
+                for issue in global_issues
+            )
     for key, scope in sorted(evidence["scopes"].items()):
         if key == "global":
             continue

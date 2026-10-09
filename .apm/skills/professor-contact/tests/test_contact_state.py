@@ -1492,6 +1492,174 @@ def write_issue59_stage5_fixture(program_root, specs=(), *, extra_rows=(),
             "gap_id": quote_id(ISSUE59_GAP_QUOTE)}
 
 
+class Issue66RecordedValidationScopeTests(BaseEnv):
+    STATE = "套磁候选状态.json"
+    CANDIDATES_MD = "套磁想法候选.md"
+
+    def render_two_directions(self):
+        self.assertEqual(self.stage3_run()["status"], "ok")
+        second_results = self.add_second_direction()
+        committed = parse(run_cli(
+            "stage3-finalize", "--professor-dir", self.prof_dir,
+            "--results", second_results, "--program-root", self.root,
+            "--collection-key", "DIR00002"))
+        self.assertEqual(committed["status"], "ok", committed)
+
+    def prepare_validation(self, name):
+        invocation = parse(run_cli(
+            "stage3-plan", "--professor-dir", self.prof_dir,
+            "--program-root", self.root,
+            "--capture-invocation", self.root / name))
+        self.assertEqual(invocation["status"], "ok", invocation)
+        prepared = parse(run_cli(
+            "stage3-prepare-validation",
+            "--invocation-file", invocation["invocation_file"],
+            "--invocation-sha256", invocation["invocation_sha256"],
+            "--round", "1"))
+        self.assertEqual(prepared["status"], "ok", prepared)
+        handoff_dir = contact_state._stage3_handoff_directory(
+            self.prof_dir, invocation["invocation_file"], 1)
+        self.addCleanup(shutil.rmtree, handoff_dir, ignore_errors=True)
+        return invocation, prepared
+
+    @staticmethod
+    def validator_issue(quote, suggestion="按校验意见修正候选表述"):
+        return {"rule": "B5", "severity": "blocking", "location": "候选标题",
+                "quote": quote, "suggestion": suggestion}
+
+    def record_through_handoff(self, invocation, prepared, issues):
+        result = {
+            "result": "ok",
+            "files": [{
+                "file": str((self.prof_dir / self.CANDIDATES_MD).resolve()),
+                "artifact": "candidates", "verdict": "fail",
+                "blocking": len(issues), "minor": 0, "issues": issues,
+            }],
+            "notes": "确定性回归校验",
+        }
+        written = run_cli(
+            "stage3-write-validation", "--output-file", prepared["output_file"],
+            "--result-json", json.dumps(result, ensure_ascii=False))
+        self.assertEqual(written.returncode, 0, written.stderr)
+        saved = parse(run_cli(
+            "stage3-save-validation", "--handoff-file", prepared["handoff_file"],
+            "--handoff-sha256", prepared["handoff_sha256"]))
+        self.assertEqual(saved["status"], "ok", saved)
+        recorded = parse(run_cli(
+            "stage3-record-validation", "--handoff-file", prepared["handoff_file"],
+            "--handoff-sha256", prepared["handoff_sha256"],
+            "--expected-validation-sha256", saved["validation_sha256"]))
+        self.assertEqual(recorded["status"], "ok", recorded)
+        return saved, recorded
+
+    def render_quote(self, scope_key):
+        body = contact_state.split_frontmatter(
+            (self.prof_dir / self.CANDIDATES_MD).read_text(encoding="utf-8"))[1]
+        line_scopes = contact_state.stage3_render_line_scopes(body)
+        for line, scope in zip(body.splitlines(), line_scopes):
+            if (contact_state.scope_key(scope) == scope_key
+                    and isinstance(scope, dict) and scope.get("candidate_id")
+                    and line.strip()):
+                quote = line.strip()
+                if len(quote) <= 40:
+                    return quote
+        self.fail(f"no short rendered quote found for {scope_key}")
+
+    def correction_args(self, invocation, validation_file):
+        return ["--invocation-file", invocation["invocation_file"],
+                "--invocation-sha256", invocation["invocation_sha256"],
+                "--validation-file", validation_file]
+
+    def test_handoff_record_expands_global_blocker_to_rendered_objects(self):
+        self.render_two_directions()
+        body = contact_state.split_frontmatter(
+            (self.prof_dir / self.CANDIDATES_MD).read_text(encoding="utf-8"))[1]
+        line_scopes = contact_state.stage3_render_line_scopes(body)
+        quote = next(line.strip() for line, scope in zip(body.splitlines(), line_scopes)
+                     if scope is None and line.strip() and len(line.strip()) <= 40)
+        invocation, prepared = self.prepare_validation("global-blocker-call")
+        _saved, recorded = self.record_through_handoff(
+            invocation, prepared, [self.validator_issue(quote)])
+
+        self.assertTrue(recorded["needs_correction"], recorded)
+        self.assertFalse(recorded["terminal"], recorded)
+        self.assertEqual({row["scope"] for row in recorded["scopes"]},
+                         {"direction:DIR00001", "direction:DIR00002"}, recorded)
+        state = json.loads((self.prof_dir / self.STATE).read_text(encoding="utf-8"))
+        pending = state["validator"]["pending"]
+        self.assertEqual(set(pending), {"direction:DIR00001", "direction:DIR00002"})
+        for row in pending.values():
+            self.assertEqual(row["result"], "fail")
+            self.assertEqual(row["rounds"], 1)
+            self.assertEqual(row["issues"][0]["quote"], quote)
+
+    def test_rewritten_validation_file_cannot_expand_or_replace_recorded_correction(self):
+        self.render_two_directions()
+        original_issue = self.validator_issue(self.render_quote("direction:DIR00001"))
+        invocation, prepared = self.prepare_validation("recorded-scope-call")
+        saved, recorded = self.record_through_handoff(
+            invocation, prepared, [original_issue])
+        state_path = self.prof_dir / self.STATE
+        before_state = json.loads(state_path.read_text(encoding="utf-8"))
+        recorded_pending = before_state["validator"]["pending"]
+        recorded_issues = recorded_pending["direction:DIR00001"]["issues"]
+        recorded_candidate_ids = recorded_pending["direction:DIR00001"]["candidate_ids"]
+
+        validation_path = Path(saved["validation_file"])
+        changed = json.loads(validation_path.read_text(encoding="utf-8"))
+        changed_issue = dict(original_issue, suggestion="改写后的正式问题")
+        added_issue = self.validator_issue(
+            self.render_quote("direction:DIR00002"),
+            suggestion="额外方向的问题不得加入修正任务")
+        changed["files"][0]["issues"] = [changed_issue, added_issue]
+        changed["files"][0]["blocking"] = 2
+        validation_path.write_text(json.dumps(changed, ensure_ascii=False),
+                                   encoding="utf-8")
+        validation_file = str(validation_path)
+        args = self.correction_args(invocation, validation_file)
+
+        planned = parse(run_cli("stage3-plan", *args))
+        with self.subTest("stage3-plan"):
+            if planned["status"] == "error":
+                self.assertNotIn("jobs", planned)
+            else:
+                self.assertEqual(planned["correction_scopes"],
+                                 ["direction:DIR00001"], planned)
+                self.assertEqual([job["direction_id"] for job in planned["jobs"]],
+                                 ["DIR00001"], planned)
+                model_input = planned["jobs"][0]["model_input"]
+                self.assertEqual(model_input["validator_issues"], recorded_issues)
+                self.assertEqual(model_input["repairable_candidate_ids"],
+                                 recorded_candidate_ids)
+
+        correction_results = self.root / "recorded-scope-correction-results"
+        correction_results.mkdir()
+        for source_dir, direction_id in ((self.root / "s3results", "DIR00001"),
+                                         (self.root / "second-s3results", "DIR00002")):
+            source = source_dir / result_file("candidates", direction_id)
+            shutil.copyfile(source, correction_results / source.name)
+        state_before_finalize = state_path.read_bytes()
+        finalized = parse(run_cli(
+            "stage3-finalize", *args, "--results", correction_results))
+        with self.subTest("stage3-finalize"):
+            if finalized["status"] == "error":
+                self.assertEqual(state_path.read_bytes(), state_before_finalize)
+            else:
+                self.assertEqual(finalized["corrected"], ["DIR00001"], finalized)
+                after = json.loads(state_path.read_text(encoding="utf-8"))
+                before_directions = {row["direction_id"]: row
+                                     for row in before_state["directions"]}
+                after_directions = {row["direction_id"]: row
+                                    for row in after["directions"]}
+                self.assertEqual(after_directions["DIR00002"],
+                                 before_directions["DIR00002"])
+                self.assertEqual(
+                    [candidate["id"] for candidate in
+                     after_directions["DIR00001"]["candidates"]],
+                    [candidate["id"] for candidate in
+                     before_directions["DIR00001"]["candidates"]])
+
+
 class TestStage5(BaseEnv):
     def test_stage5_requires_user_template(self):
         self.prepare()
