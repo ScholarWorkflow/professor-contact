@@ -1,10 +1,10 @@
 # 第68号议题测试计划：按最新规则重建
 
-版本：`issue-68-test-plan-r45-2026-10-09`。
+版本：`issue-68-test-plan-r46-2026-10-09`。
 
-目标仓库：`ScholarWorkflow/professor-contact`；拉取请求：[第72号](https://github.com/ScholarWorkflow/professor-contact/pull/72)。本轮读取的产品提交：`72f20846e9810f5445c0c6a3891f3877b4cd0e21`。本文件是唯一完整测试计划，取代第四十版及更早方案。旧评论、测试程序和证据约定不再提供执行步骤或额外通过条件。
+目标仓库：`ScholarWorkflow/professor-contact`；拉取请求：[第72号](https://github.com/ScholarWorkflow/professor-contact/pull/72)。本轮读取的产品提交：`72f20846e9810f5445c0c6a3891f3877b4cd0e21`。本文件是第四十六版唯一完整候选；本轮修订获批后取代第四十五版，不自行授予执行许可。旧评论、测试程序和证据约定不再提供执行步骤或额外通过条件。
 
-第四十三版的预检通过，但申请人资料和模板当时位于运行目录的 `profile/` 下，正式请求以消费者目录为工作目录，二者位置不一致，旧结果不能证明正式请求可读取同一资料。第四十四版已将三份文件移入消费者工作目录，并在该位置重新生成两位教授的第三阶段前置资料、第四阶段本地邮件包，再执行两份第五阶段预检：第三阶段两位均成功，第四阶段总状态和两位教授结果均为 `ok`，第五阶段两份结果均为 `status: ok` 且对应 `verify: ok`。第四十五版补入版本化的评估项目配置文件，并规定把它复制到本轮隔离消费者的 `.codex/config.toml`；请求只为该消费者设置项目受信任状态，不用命令行覆盖模型或推理强度。本机默认值不再作为评估配置来源。阶段2/3只作本轮输入准备，不作为新增验收项。正式 `/eval` 仍未发送；第二关口须审核此配置文件及其加载方式，并在运行响应中核对实际生效值，现不宣告第二、第三关口通过。
+第四十三版的预检通过，但申请人资料和模板当时位于运行目录的 `profile/` 下，正式请求以消费者目录为工作目录，二者位置不一致，旧结果不能证明正式请求可读取同一资料。第四十四版已将三份文件移入消费者工作目录，并在该位置重新生成两位教授的第三阶段前置资料、第四阶段本地邮件包，再执行两份第五阶段预检：第三阶段两位均成功，第四阶段总状态和两位教授结果均为 `ok`，第五阶段两份结果均为 `status: ok` 且对应 `verify: ok`。阶段2/3只作本轮输入准备，不作为新增验收项。第四十六版纠正计划编写遗漏：本次执行步骤必须包括测试配置文件及加载方式，详见第4.1节第5项。推送前已发现远端第四十五版在 `fe9a2534505e8e5a78303bb36d970ea8c7eccc7e` 加入配置文件；本版直接引用该已有文件，不重复新建共享配置，消费者加载准备仍待落实。第二关口仍待审核；本轮不发送正式请求，也不宣告第二、第三关口通过。
 
 ## 1. 正式依据与范围
 
@@ -79,12 +79,12 @@
 
 ## 4. 执行步骤
 
-本节记录辛的一次正式运行步骤。第四十三版的申请人资料和模板位于消费者工作目录外；第四十四版已在消费者工作目录内重新生成合成前置资料及教授本地邮件包，并完成两份阶段5预检，均达到计划所列状态。第四十五版已加入版本化项目配置及其加载步骤，但实际服务是否按该文件生效仍待第二关口核对。第二关口审核通过后，执行者仍须取得后续明确授权，才能发送唯一一次正式业务请求。不得调用已删除的第三十八版及更早运行器，也不得从旧评论拼接执行命令。
+本节记录辛的一次正式运行步骤。第四十三版的申请人资料和模板位于消费者工作目录外；第四十四版已在消费者工作目录内重新生成合成前置资料及教授本地邮件包，并完成两份阶段5预检，均达到计划所列状态。本次测试配置文件已在远端第四十五版保存，尚待本地测试工程师按本版合入步骤接线，因此目前不得发送正式请求。第二关口审核通过后，执行者仍须取得后续明确授权，才能发送唯一一次正式业务请求。不得调用已删除的第三十八版及更早运行器，也不得从旧评论拼接执行命令。
 
 ### 4.1 消费者与版本
 
 1. 目标产品版本固定为本计划记录的 `72f20846e9810f5445c0c6a3891f3877b4cd0e21`。计划文档后续提交不改变该产品代码版本；若第二关口前产品文件发生变化，先按本计划第3节只分析受影响范围，并更新产品版本及其适用性。
-2. 在仓库及其工作树之外创建唯一运行目录并设置变量：`PC68_RUN_ROOT="$(mktemp -d /private/tmp/pc68-r45-20261009-XXXXXX)"`、`PC68_CONSUMER="$PC68_RUN_ROOT/consumer"`、`PC68_PROGRAM="$PC68_CONSUMER/testdata/program"`、`PC68_PROFILE="$PC68_CONSUMER/套磁邮件/套磁信息.md"`、`PC68_TEMPLATE="$PC68_CONSUMER/套磁邮件/套磁模板.md"`、`PC68_FOLLOWUP_TEMPLATE="$PC68_CONSUMER/套磁邮件/套磁跟进模板.md"`、`PC68_SCRIPT="$PC68_CONSUMER/.agents/skills/professor-contact/scripts/contact_state.py"`、`PC68_CONTACT_TESTS="$PC68_CONSUMER/.agents/skills/professor-contact/tests"`、`PC68_CONTACT_EVIDENCE_SCRIPT="$PC68_CONSUMER/apm_modules/ScholarWorkflow/professor-research/.apm/skills/professor-collector/scripts/contact_evidence.py"`、`PC68_REPO_ROOT="$(git rev-parse --show-toplevel)"`、`PC68_EVAL_CONFIG_SOURCE="$PC68_REPO_ROOT/plan/issue68-eval-codex-config.toml"`、`PC68_CONSUMER_CONFIG="$PC68_CONSUMER/.codex/config.toml"`。设置 `UV_CACHE_DIR="$PC68_RUN_ROOT/uv-cache"` 并导出。创建空消费者、程序目录及各输入文件的父目录；申请人、研究资料和模板只使用本计划所列合成内容。申请人资料和两份模板均置于 `$PC68_CONSUMER/套磁邮件/`，即正式请求的 `--cd "$PC68_CONSUMER"` 工作目录下；预检显式传入这些变量，正式请求按产品约定从调用方工作目录读取同一文件。`request.json`、`response.json`、`selection-input.json` 位于运行目录。不得复用 R37 的原始运行目录，不得在产品仓库内放置临时输入或输出。
+2. 在仓库及其工作树之外创建唯一运行目录并设置变量：`PC68_RUN_ROOT="$(mktemp -d /private/tmp/pc68-r44-20261009-XXXXXX)"`、`PC68_CONSUMER="$PC68_RUN_ROOT/consumer"`、`PC68_PROGRAM="$PC68_CONSUMER/testdata/program"`、`PC68_PROFILE="$PC68_CONSUMER/套磁邮件/套磁信息.md"`、`PC68_TEMPLATE="$PC68_CONSUMER/套磁邮件/套磁模板.md"`、`PC68_FOLLOWUP_TEMPLATE="$PC68_CONSUMER/套磁邮件/套磁跟进模板.md"`、`PC68_SCRIPT="$PC68_CONSUMER/.agents/skills/professor-contact/scripts/contact_state.py"`、`PC68_CONTACT_TESTS="$PC68_CONSUMER/.agents/skills/professor-contact/tests"`、`PC68_CONTACT_EVIDENCE_SCRIPT="$PC68_CONSUMER/apm_modules/ScholarWorkflow/professor-research/.apm/skills/professor-collector/scripts/contact_evidence.py"`。设置 `UV_CACHE_DIR="$PC68_RUN_ROOT/uv-cache"` 并导出。创建空消费者、程序目录及各输入文件的父目录；申请人、研究资料和模板只使用本计划所列合成内容。申请人资料和两份模板均置于 `$PC68_CONSUMER/套磁邮件/`，即正式请求的 `--cd "$PC68_CONSUMER"` 工作目录下；预检显式传入这些变量，正式请求按产品约定从调用方工作目录读取同一文件。`request.json`、`response.json`、`selection-input.json` 位于运行目录。不得复用 R37 的原始运行目录，不得在产品仓库内放置临时输入或输出。
 3. 在空的 `$PC68_RUN_ROOT/consumer` 中通过正式安装入口创建消费者：运行 `apm init -y --target codex`，然后运行 `apm install https://github.com/ScholarWorkflow/professor-contact.git#72f20846e9810f5445c0c6a3891f3877b4cd0e21 --target codex --trust-transitive-mcp`。保存安装命令与退出码到运行目录。安装后用 `yq` 逐项检查 `$PC68_CONSUMER/apm.lock.yaml`：
 
    ```sh
@@ -93,22 +93,32 @@
    ```
 
    两条输出必须分别为 `72f20846e9810f5445c0c6a3891f3877b4cd0e21` 和 `a9e7ffbc070dcfdc7b225e5e70de1b4576649ecd`。本轮实际安装锁定了这两个提交。禁止使用本地路径、符号链接、手工复制或修补安装产物。
-4. 将版本化配置文件作为本次评估请求的输入，复制到隔离消费者：
+4. 使用现有评估服务作为请求入口，不启停或重启服务。本次测试配置文件与加载步骤见下一项，服务自身配置不作为本次修改对象。在已配置的 `eval-server` 仓库工作目录执行 `direnv exec . sh -c 'printf "%s\\n" "$EVAL_PORT"'` 取得端口；不得在计划、请求或提交中写入端口、个人绝对路径、密钥或服务进程信息。
+5. **测试配置文件属于本计划的执行步骤**。本次模型和推理设置直接引用远端已提交的 [测试配置文件](issue68-eval-codex-config.toml)，文件版本为 `issue-68-eval-codex-config-r1-2026-10-09`，来源提交为 `fe9a2534505e8e5a78303bb36d970ea8c7eccc7e`。两项设置固定为：
 
-   ```sh
-   set -e
-   test ! -e "$PC68_CONSUMER_CONFIG"
-   mkdir -p "$(dirname "$PC68_CONSUMER_CONFIG")"
-   cp "$PC68_EVAL_CONFIG_SOURCE" "$PC68_CONSUMER_CONFIG"
-   cmp -s "$PC68_EVAL_CONFIG_SOURCE" "$PC68_CONSUMER_CONFIG"
-   yq -e -p toml '.model == "gpt-6-luna" and .model_reasoning_effort == "low"' "$PC68_EVAL_CONFIG_SOURCE"
-   yq -e -p toml '.model == "gpt-6-luna" and .model_reasoning_effort == "low"' "$PC68_CONSUMER_CONFIG"
-   shasum -a 256 "$PC68_EVAL_CONFIG_SOURCE" "$PC68_CONSUMER_CONFIG" > "$PC68_RUN_ROOT/eval-codex-config-sha256.txt"
+   ```toml
+   model = "gpt-6-luna"
+   model_reasoning_effort = "low"
    ```
 
-   版本化来源为 [`issue68-eval-codex-config.toml`](issue68-eval-codex-config.toml)，只含本次请求所需的模型和推理设置；按 [Codex 项目配置说明](https://learn.chatgpt.com/docs/config-file/config-basic)，项目配置仅在项目受信任时加载。运行副本与摘要保存在隔离目录，不修改个人默认值或测试数据配置。
-5. 使用现有评估服务，不启停或重启服务。在已配置的 `eval-server` 仓库工作目录执行 `direnv exec . sh -c 'printf "%s\\n" "$EVAL_PORT"'` 取得端口；不得在计划、请求或提交中写入端口、个人绝对路径、密钥或服务进程信息。
-6. Codex 只会在受信任项目中加载项目 `.codex/config.toml`。正式请求须通过一次性 `--config` 选项，只信任精确的 `$PC68_CONSUMER` 路径；不得用 `--model` 或其他 `--config` 覆盖配置文件中的模型及推理强度。第二关口审核版本化文件、复制校验和请求中的信任设置；正式响应须记录实际生效的 `gpt-6-luna`、`low`。若配置文件未加载或响应中的有效值不符，停止后续判断并按配置问题记录，不改用个人默认配置或 fixture 配置。
+   **当前准备状态：版本化文件已保存，消费者接线尚未完成**。推送前远端新增第四十五版配置，本版保留该文件并直接复用，不再要求另建共享文件。计划编写者负责明确引用与加载步骤，本地测试工程师负责落实消费者配置。执行者不寻找评估服务配置，不改服务启动配置或用户默认配置，不新增配置认证请求。
+
+   配置来源安排待确认：项目共识规定由 `skills-test-fixtures` 指定版本化测试配置，本候选引用的文件则保存在本拉取请求 `plan/` 下。两者保存位置与指定来源不同；本候选只提出复用已有配套文件，不宣称它已成为获批共享来源。验收决定人需确认此来源安排，或由共享测试资产负责人在共享资产中指定该固定文件；确认后只更新来源记录，不重复编写配置，不新增业务测试。
+
+   在包含上述提交的本测试计划仓库根运行 `pwd`，以返回路径设置 `PC68_RECIPE_ROOT`，再设置 `PC68_TEST_CONFIG_SOURCE="$PC68_RECIPE_ROOT/plan/issue68-eval-codex-config.toml"` 和 `PC68_TEST_CONFIG="$PC68_CONSUMER/.codex/config.toml"`。引用的是本次配套测试文件，不是消费者安装产物或个人默认配置。消费者已有正式安装生成的配置，不整份覆盖其中的代理、工具或其他安装内容；用现有 `yq` 仅合入两项模型设置，中间文件放运行目录：
+
+   ```sh
+   test -r "$PC68_TEST_CONFIG_SOURCE" && test -r "$PC68_TEST_CONFIG"
+   yq -p toml -e '.model == "gpt-6-luna" and .model_reasoning_effort == "low"' "$PC68_TEST_CONFIG_SOURCE"
+   yq eval-all -p toml -o toml '. as $item ireduce ({}; . * $item)' "$PC68_TEST_CONFIG" "$PC68_TEST_CONFIG_SOURCE" > "$PC68_RUN_ROOT/test-config-merged.toml"
+   yq -p toml -e '.model == "gpt-6-luna" and .model_reasoning_effort == "low"' "$PC68_RUN_ROOT/test-config-merged.toml"
+   cp "$PC68_RUN_ROOT/test-config-merged.toml" "$PC68_TEST_CONFIG"
+   ```
+
+   以上只准备隔离测试消费者的运行参数，不修改安装生成的代理、技能或工具启动定义。项目配置需要项目受信任才能加载，沿用共享测试资产 `docs/codex-opencode-smoke-wiring.md` 的已有仅授予项目信任的入口：第4.3节请求传入 `projects={...trust_level="trusted"...}`，只对本次隔离消费者生效。模型和推理强度仍从上述文件加载，不在请求参数重复覆盖。这条信任接线是配置加载前提，不是新增验收目标；不重做既有信任检查。
+
+   加载依据：[官方配置说明](https://developers.openai.com/codex/config-basic)：通过请求的工作目录加载受信任项目的 `.codex/config.toml`。现有评估服务命令映射已支持 `--config` 的项目信任参数；参考 `RekiDunois/eval-server@3fdfa9387140cfc2e2aa3af415f85015f79706d2` 的 `codex_appserver/commands.py`。本计划只引用该已有入口，不要求重新认证服务本身。上述配套文件缺失、合入失败或既有加载前提不成立时，停止并交本地测试工程师补准备，不能记作产品失败。
+
 
 ### 4.2 合成业务输入
 
@@ -332,11 +342,10 @@
    阶段4预检显式使用 `$PC68_PROFILE`；两次阶段5预检使用同一 `$PC68_PROFILE`、`$PC68_TEMPLATE` 和 `$PC68_FOLLOWUP_TEMPLATE`。正式请求的 `--cd "$PC68_CONSUMER"` 与产品默认查找位置一致。任何文件缺失或路径不一致时停止，不发送请求。确认后，将上面的普通业务对象和上一条所述资料使用要求放入 `PC68_PROMPT`，用 `jq --arg` 生成请求文件：
 
    ```sh
-   PC68_TRUST_CONFIG="$(jq -nr --arg path "$PC68_CONSUMER" '"projects={"+($path|@json)+"={trust_level=\"trusted\"}}"')"
-   jq -n --arg consumer "$PC68_CONSUMER" --arg prompt "$PC68_PROMPT" --arg trust_config "$PC68_TRUST_CONFIG" '{command:("--json --ephemeral --skip-git-repo-check --sandbox workspace-write --cd "+($consumer|@sh)+" --config "+($trust_config|@sh)+" -- "+($prompt|@sh)),timeout:900}' > "$PC68_RUN_ROOT/request.json"
+   jq -n --arg consumer "$PC68_CONSUMER" --arg prompt "$PC68_PROMPT" '("projects={"+($consumer|tojson)+"={trust_level=\"trusted\"}}") as $trust | {command:("--json --ephemeral --skip-git-repo-check --sandbox workspace-write --cd "+($consumer|@sh)+" --config "+($trust|@sh)+" -- "+($prompt|@sh)),timeout:900}' > "$PC68_RUN_ROOT/request.json"
    ```
 
-   使用现有评估服务的 `POST /eval`，响应写入 `$PC68_RUN_ROOT/response.json`。不直接执行 `codex`，不追加 `--model` 或模型、推理强度、并发或沙箱覆盖参数；唯一 `--config` 值是对本次精确消费者路径的项目受信任声明，使评估程序加载上述版本化项目配置。在已配置的 `eval-server` 仓库工作目录执行 `direnv exec . sh -c 'curl -sS -X POST "http://127.0.0.1:${EVAL_PORT}/eval" -H "Content-Type: application/json" --data-binary @"$1"' sh "$PC68_RUN_ROOT/request.json" > "$PC68_RUN_ROOT/response.json"` 提交一次请求并保留响应。
+   使用现有评估服务的 `POST /eval`，响应写入 `$PC68_RUN_ROOT/response.json`。不直接执行 `codex`，请求仅使用上一步已写明的项目信任参数加载消费者测试配置，不追加 `--model`、模型或推理的 `--config` 覆盖、并发或沙箱覆盖参数。在已配置的 `eval-server` 仓库工作目录执行 `direnv exec . sh -c 'curl -sS -X POST "http://127.0.0.1:${EVAL_PORT}/eval" -H "Content-Type: application/json" --data-binary @"$1"' sh "$PC68_RUN_ROOT/request.json" > "$PC68_RUN_ROOT/response.json"` 提交一次请求并保留响应。
 3. 检查 `$PC68_RUN_ROOT/consumer/testdata/program/教授研究/工学/山田太郎/` 与 `$PC68_RUN_ROOT/consumer/testdata/program/教授研究/社会情報/佐藤花子/` 下各自的 `套磁邮件.md`、`套磁邮件.txt`、`套磁跟进邮件.md`、`套磁跟进邮件.txt`、`套磁邮件状态.json` 与 `_contact_verify.json`。从两位教授本地状态的 `emails[<本教授 email_id>]` 读取首封及 `followup` 条目的 `files`、`choices`、`model_result`、`validation`；用 `jq` 核对本地归属和完整文件路径，再人工对照邮件内容是否分别对应本人的合成研究材料及上述选择。
 4. 总览仅在两位教授结果消费完成后由普通产品入口独立读取：检查接口返回的 `overview_md`，并检查 `$PC68_RUN_ROOT/consumer/testdata/program/教授研究/套磁邮件总览.md`；记录 `stage5-rebuild-overview` 的实际返回 `status`、`overview_md`、`professors`、`emails`。根代理最后回复从同一次接口响应读取：`jq -r '[.output.events[] | select(.type == "item.completed" and .item.type == "agent_message")] | last | .item.text' "$PC68_RUN_ROOT/response.json"`，再按第3.3节逐项对照，不得把总览返回当作教授业务结果。
 5. `$PC68_RUN_ROOT/response.json` 保留本次接口响应供检查。业务输出以实际文件、教授状态及接口返回为准；不采集新 trace、完整调用链、子代理真实提示词或路径传递记录，不因观察而阻止产品清理。
@@ -345,7 +354,7 @@
 
 这是唯一一次正式业务请求。请求已提交或状态不明后，不重发、不改提示、不换模型、配置、输入、consumer 或结果；先确认服务响应与是否已产生业务文件。已确认的业务失败保留原样并交实现负责人，后续只复验受影响项。服务未接收请求且能证明无业务副作用时，按项目约定记录为未执行或外部阻塞，仍须先修订计划并再次过第二关口；不得将配置问题改写成产品失败。预检只检查当前产品 SHA 的支持安装、输入有效性、既有配置来源和服务可调用性，不发送模拟业务请求，不启停服务。
 
-第四十四版已在隔离消费者内把三份申请人资料及模板放到正式请求工作目录，文件内容与原合成材料的摘要一致。使用锁定产品提交重新运行第三阶段前置资料生成，两位均成功；第四阶段总状态为 `ok`、两位教授结果均为 `ok`；两份第五阶段预检均为 `status: ok`，且对应 `verify: ok`。因此，预检与正式请求的工作目录和文件位置现已对齐。第四十五版新增的配置文件尚未用于正式运行；本次没有运行确定性验收套件，没有发送正式业务请求，也没有新增正式运行次数。第二关口仍待专用审核确认版本化配置及其加载步骤；正式运行后还须从同一响应核对有效模型和推理强度，执行者仍须等待正式请求授权。
+第四十四版已在隔离消费者内把三份申请人资料及模板放到正式请求工作目录，文件内容与原合成材料的摘要一致。使用锁定产品提交重新运行第三阶段前置资料生成，两位均成功；第四阶段总状态为 `ok`、两位教授结果均为 `ok`；两份第五阶段预检均为 `status: ok`，且对应 `verify: ok`。因此，预检与正式请求的工作目录和文件位置现已对齐。没有运行确定性验收套件，没有发送正式业务请求，也没有新增正式运行次数。第二关口仍待核对已有测试配置文件及上述接线；不要求认证评估服务自身配置；通过后，执行者仍须等待正式请求授权。
 
 ## 5. 失败处理与结束
 
@@ -359,13 +368,16 @@
 
 | 内容 | 状态 |
 | --- | --- |
-| 当前计划 | 第四十五版；本文件 |
-| 计划设计审核 | 第四十版业务范围及辛的复验边界已获专用审核代理批准；第四十一版补齐固定提交下的运行准备步骤和实测产物，第四十二版更新测试契约来源状态，第四十三版记录本机 Codex 默认设置并明确其不能证明评估服务的实际配置；第四十四版路径修正通过窄幅计划复核及实施符合性复核；第四十五版按用户要求增加版本化项目配置和单消费者信任加载步骤，待第二关口审核；见[设计复核记录](issue68-test-plan-r40-design-review.md) |
+| 当前计划 | 第四十六版待审；本文件 |
+| 计划设计审核 | 第四十版业务范围及辛的复验边界已获专用审核代理批准；第四十一版补齐固定提交下的运行准备步骤和实测产物，第四十二版更新测试契约来源状态，第四十三版记录本机 Codex 默认设置并明确其不能证明评估服务的实际配置；第四十四版路径修正保留；第四十六版补清已有测试配置引用及消费者加载步骤，待本轮独立复核，不改变验收范围；见[设计复核记录](issue68-test-plan-r40-design-review.md) |
 | 甲至庚 | 引用有效历史通过，保留原版本与来源 |
 | 辛 | 正式业务产物复验尚未执行；R44 新路径下阶段3准备、阶段4本地邮件包和两份阶段5计划预检均已完成并达到预期状态；保留一次正常业务产物复验，不检查不可见提示词或已验证的等待能力 |
-| 第二关口 | R44 路径对齐后的阶段4/5预检已通过；R45 已加入版本化项目配置文件和隔离消费者加载步骤，待专用审核。正式请求未授权，实际生效值待运行响应核对 |
+| 第二关口 | 第四十四版路径预检结果复用；配套测试配置已保存，消费者接线仍待完成，再交限定复核。正式请求未授权 |
 | 第三关口 | 辛的当前结果待补，尚未通过 |
 
-仓库内只新增版本化评估配置文件及其执行配方并修改本计划；合成输入、运行时配置副本、摘要及预检输出留在隔离运行目录，不作为产品代码或验收测试提交。不恢复用户删除的测试代码，不修改产品，不执行确定性验收套件或正式请求。
+仓库内仅修改本计划；合成输入及预检输出留在隔离运行目录，不作为产品代码或验收测试提交。不恢复用户删除的测试代码，不修改产品，不执行确定性验收套件或正式请求。
 
-本轮修订依据：用户明确本地测试工程师应完成计划内准备并推送拉取请求。第四十一版将先前列为待确认的阶段2/3前置资料和阶段4教授本地邮件包来源改为已执行的合成准备步骤，记录固定产品提交、联系方式证据及两份阶段5预检结果。第四十二版关于审批适配器测试契约的记录已撤销；第四十三版曾记录本机 Codex 默认值，但该本机设置没有证明评估服务的实际配置。第四十四版根据路径复核发现，旧预检把申请人资料和模板放在消费者工作目录之外；本版将它们移入正式请求工作目录，重跑第三至第五阶段本地准备和预检并通过。第四十五版按用户要求增加版本化的项目配置文件，并在请求中只为隔离消费者设置受信任状态，使项目配置文件而非个人默认值成为模型及推理设置来源。业务目标和甲至辛矩阵不变。正式 `/eval` 请求仍等待第二关口审核及明确授权。
+本轮修订依据：用户明确本地测试工程师应完成计划内准备并推送拉取请求。第四十一版将先前列为待确认的阶段2/3前置资料和阶段4教授本地邮件包来源改为已执行的合成准备步骤，记录固定产品提交、联系方式证据及两份阶段5预检结果。第四十二版关于审批适配器测试契约的记录已撤销；第四十三版改记本机 Codex 默认值已设置为 `gpt-6-luna`、低推理强度，但该本机设置没有证明评估服务的实际配置。第四十四版根据路径复核发现，旧预检把申请人资料和模板放在消费者工作目录之外；本版将它们移入正式请求工作目录，重跑第三至第五阶段本地准备和预检并通过。业务目标和甲至辛矩阵不变。正式 `/eval` 请求仍等待第二关口审核及明确授权。
+
+
+第四十六版修订说明：计划编写者此前未写清测试配置文件和加载步骤，又误把缺项表述为评估服务配置认证。推送前远端第四十五版已新增配套测试配置，本版保留并直接引用该文件，以两项设置合入消费者配置，保留安装代理及工具定义；撤销服务配置认证和为配置另建共享文件的要求。甲至辛目标、输入、预期及业务检查方式不变，已有资料路径准备和甲至庚结果继续复用。本轮只修订计划和审核记录，不修改实际配置、不运行预检或正式业务。下一负责人为本地测试工程师，按第4.1节接线并提交第二关口限定复核。
