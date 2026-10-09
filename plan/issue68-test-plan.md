@@ -199,12 +199,32 @@ direnv exec . sh -c 'curl -sS -X POST "http://127.0.0.1:${EVAL_PORT}/eval" -H "C
 
 ### 4.4 六个观察点
 
-同一次请求只检查以下六项。先确认响应提供可解析的结构化事件；失败时其后依赖响应的观察点均为无法判断，不从序列化文本猜测：
+同一次请求只检查以下六项。先确认响应是 JSON 对象，再优先判断已经出现的明确失败值，最后才检查成功判定所需字段：
 
 ```sh
-jq -e '.passed == true and .output.exit_code == 0 and (.output.app_server_events | type == "array")' \
+jq -e 'type == "object"' "$PC68_RUN_ROOT/response.json"
+
+jq '
+  {explicit_failure:
+    ((has("passed") and .passed == false)
+     or ((.output | type == "object")
+         and (.output | has("exit_code"))
+         and (.output.exit_code | type == "number")
+         and .output.exit_code != 0))}
+' "$PC68_RUN_ROOT/response.json" > "$PC68_RUN_ROOT/response-classification.json"
+
+jq -e '.explicit_failure == false' "$PC68_RUN_ROOT/response-classification.json"
+
+jq -e '
+  .passed == true
+  and (.output | type == "object")
+  and .output.exit_code == 0
+  and (.output.app_server_events | type == "array")
+' \
   "$PC68_RUN_ROOT/response.json"
 ```
+
+第一条因文件缺失或 JSON 不可解析而失败时，依赖响应的观察点记为无法判断。`response-classification.json` 的 `explicit_failure` 为 `true`，即已经读到 `.passed == false` 或数值型非零 `exit_code` 时，立即记为业务失败；后续字段缺失不得覆盖这个结论，也不得重发请求。只有没有明确失败，而最后一条又因成功判定所需字段缺失或无法解释而失败时，才记为无法判断。
 
 1. **根代理顺序与两次教授委派**。先在本次安装的当前源码中定位顺序合同，由人工按上下文确认两份文件均写明“发现与确定选择 → 按教授构建本地传递 → 调用并等待该教授代理 → 全部结束后至多重建一次总览”，且单教授采用同一顺序。这是一次窄范围静态检查，不运行第二次正式请求，也不恢复27项调用约定套件：
 
@@ -244,24 +264,36 @@ jq -e '.passed == true and .output.exit_code == 0 and (.output.app_server_events
    ' "$PC68_RUN_ROOT/spawn-check.json"
    ```
 
-2. **山田太郎结果**。以下四个业务文件必须存在且非空，状态必须是可解析对象；随后人工只核对首封、跟进邮件、状态中本次目标行与山田的固定研究资料、选择、日期和 `taro@example.edu` 对应：
+2. **山田太郎结果**。以下四个业务文件必须存在且非空；状态中本次目标行的首封和跟进校验结果都必须是正式成功值 `pass`，`pending`、`fail_after_2_rounds`、`skipped`、缺行或缺字段均不能通过。随后人工只核对该行与山田的固定研究资料、选择、日期和 `taro@example.edu` 对应：
 
    ```sh
    test -s "$PC68_YAMADA_DIR/套磁邮件.md"
    test -s "$PC68_YAMADA_DIR/套磁邮件.txt"
    test -s "$PC68_YAMADA_DIR/套磁跟进邮件.md"
    test -s "$PC68_YAMADA_DIR/套磁跟进邮件.txt"
-   jq -e 'type == "object"' "$PC68_YAMADA_DIR/套磁邮件状态.json"
+   jq -e --arg id '山田太郎::DIR00001::DIR00001_1' '
+     (.emails | type == "object")
+     and (.emails[$id] | type == "object")
+     and .emails[$id].validation.result == "pass"
+     and (.emails[$id].followup | type == "object")
+     and .emails[$id].followup.validation.result == "pass"
+   ' "$PC68_YAMADA_DIR/套磁邮件状态.json"
    ```
 
-3. **佐藤花子结果**。执行与山田相同的文件检查；随后人工只核对本次目标行与佐藤的固定研究资料、选择、日期和 `hanako@example.edu` 对应：
+3. **佐藤花子结果**。执行与山田相同的文件检查，并要求本次目标行的首封和跟进校验结果都为 `pass`；随后人工只核对该行与佐藤的固定研究资料、选择、日期和 `hanako@example.edu` 对应：
 
    ```sh
    test -s "$PC68_SATO_DIR/套磁邮件.md"
    test -s "$PC68_SATO_DIR/套磁邮件.txt"
    test -s "$PC68_SATO_DIR/套磁跟进邮件.md"
    test -s "$PC68_SATO_DIR/套磁跟进邮件.txt"
-   jq -e 'type == "object"' "$PC68_SATO_DIR/套磁邮件状态.json"
+   jq -e --arg id '佐藤花子::DIR00001::DIR00001_1' '
+     (.emails | type == "object")
+     and (.emails[$id] | type == "object")
+     and .emails[$id].validation.result == "pass"
+     and (.emails[$id].followup | type == "object")
+     and .emails[$id].followup.validation.result == "pass"
+   ' "$PC68_SATO_DIR/套磁邮件状态.json"
    ```
 
 4. **总览至多一次且包含两位结果**。只从结构化工具调用项计数，不解析完整调用链；文件存在时直接核对两位教授名。调用为0次或1次均符合“至多一次”，但0次且没有可判断的总览结果时记为业务失败：
@@ -336,10 +368,12 @@ jq -e '.passed == true and .output.exit_code == 0 and (.output.app_server_events
 
 | 内容 | 状态 |
 | --- | --- |
-| 当前计划 | 第五十七版；计划设计和第二关口均已通过；[设计复核](issue68-test-plan-r57-design-review.md)、[第二关口复核](issue68-test-plan-r57-gate2-review.md) |
+| 当前计划 | 第五十七版限定修订；计划设计和第二关口均已通过；[设计复核](issue68-test-plan-r57-design-review.md)、[第二关口复核](issue68-test-plan-r57-gate2-review.md) |
 | 实际规模 | 历史43项直接复用；自动化重跑0项；正式业务请求1次；六个观察点 |
 | 甲至庚 | 历史结果继续有效，不重跑 |
 | 辛 | 当前为无法判断；待一次正式正常业务请求 |
 | 第三关口 | 尚未通过 |
 
-第五十七版修订记录（2026-10-10）：保留第五十六版删除161项重复义务的决定，继续复用历史43项结果且只安排一次正式正常业务请求。补充当前安装源码中的单教授同序静态合同检查，不新增第二次请求；把清理检查从固定 `$PC68_CONSUMER/.tmp-stage5` 改为结构化事件中本次请求实际记录的传递路径，未记录或无法区分时明确记为无法判断；并为六个观察点补上直接命令。计划设计和第二关口均已通过，正式请求仍须取得明确授权。
+第五十七版修订记录（2026-10-10）：保留第五十六版删除161项重复义务的决定，继续复用历史43项结果且只安排一次正式正常业务请求。补充当前安装源码中的单教授同序静态合同检查，不新增第二次请求；把清理检查从固定 `$PC68_CONSUMER/.tmp-stage5` 改为结构化事件中本次请求实际记录的传递路径，未记录或无法区分时明确记为无法判断；并为六个观察点补上直接命令。该候选曾通过计划设计和第二关口；本次限定修订的结论以新的复核记录为准。正式请求仍须取得明确授权。
+
+第五十七版限定修订（2026-10-10）：状态文件检查改为对两位教授各自的本次目标行要求首封和跟进 `validation.result` 均为 `pass`，明确排除失败、待处理、跳过和未完成状态；响应检查先区分“字段不可解释”与“明确失败”，`.passed == false` 或非零 `exit_code` 不得记为无法判断。未改变必测清单、请求次数、重试规则或历史结果复用范围；计划设计限定复核和第二关口限定复核均已通过。
