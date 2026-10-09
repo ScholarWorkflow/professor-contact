@@ -55,3 +55,9 @@
 - 当前唯一有效计划修订为 `issue-68-test-plan-r53-2026-10-10`。第五十二版把只含关系和任务元数据的 `output.child_thread_reads` 错当成子任务业务正文来源；第五十三版已删除该依赖。
 - 本次只修订检查入口和证据对应关系，没有改变甲至庚的确定性目标、断言或已记录结果。因此五模块128项、请求构建器6项及调用契约27项结果继续有效，本轮未重跑。
 - 第五十三版计划设计和第二关口均已通过，记录见 `plan/issue68-test-plan-r53-design-review.md` 与 `plan/issue68-test-plan-r53-gate2-review.md`。替代正式 `/eval` 尚未发送；仍须取得明确请求授权后才可执行辛。当前辛仍为无法判断，第三关口未通过。
+
+## 实现符合性问题修正复验（2026-10-10）
+
+- 实现符合性审核发现阶段五代理文档错误地称缺少 `--email-pack` 时会回退到程序级历史包，与 R68-1、当前 runner 及其他阶段五文档冲突。现已改为明确要求教授本地包；缺参数返回 `invalid_params`，程序级历史文件不是阶段五输入，Issue #67 仍单独负责历史数据迁移。
+- 扩展现有 `test_stage5_handoff_is_the_explicit_professor_local_pack` 合同断言，要求阶段五代理文档同时说明缺参错误和禁止程序级回退；未增加验收目标。命令在 `.apm/skills/professor-contact/tests` 下执行：`UV_CACHE_DIR=/private/tmp/pc68-uv-cache uv run --offline --no-project python -m unittest discover -p 'test_stage3_stage4_caller_contract.py' -v`。27项全部通过，退出码 `0`；输出保存在 `/private/tmp/pc68-issue68-caller-contract-r53-remediation.log`。
+- 此项补充复验只验证被审核指出的文档合同修正，不替代甲至庚的既有回归结果，也不改变辛或第三关口状态。审核记录中 r53 计划与引用提交号不一致的问题尚待计划审核者确认；在确认前不改写审核记录或其结论。替代正式 `/eval` 仍未发送。
