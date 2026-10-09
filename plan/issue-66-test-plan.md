@@ -1,8 +1,8 @@
 # 第66号议题／第73号拉取请求测试计划
 
-版本：`issue-66-test-plan-new-rules-r4.9-2026-10-09`。
+版本：`issue-66-test-plan-new-rules-r4.10-2026-10-09`。
 
-产品基线：`86b6c82197e1b0afdbc9c337b6c4892b37ddc78d`。本版保留既有A—D结果及R4.8范围，新增完成报告源文件与安装件检查，并把E组步骤改为记录并固定产品同步后的实际提交。当前 PR 提交 `b4c6f46537241cb062c7088989adbd07f30553fb` 的校验代理尚未同步第十六版契约，新增契约检查在该源码上有两项失败；因此不得安装该旧版本或发送新的 `/eval` 请求。
+产品基线：`86b6c82197e1b0afdbc9c337b6c4892b37ddc78d`。本版保留既有A—D结果及R4.8范围，沿用R4.9新增的完成报告源文件与安装件检查，并按项目共识修正E组评测端口接线。R4.9复核的产品候选 `b4c6f46537241cb062c7088989adbd07f30553fb` 尚未同步第十六版契约，新增契约检查在该源码上有两项失败。R4.10审核后，PR 新增产品候选 `6aa2c8b23f9a723fff1b862851eb49b72a4c9a1d`；执行人仍须先按本版记录其完整提交值并完成源文件与安装件检查，检查通过前不得发送新的 `/eval` 请求。
 
 ## 依据与范围
 
@@ -138,13 +138,13 @@ jq --arg root "$root_id" '
 
 ## 执行准备与结果复用
 
-第三版按原编号将1、2、6项并入A；3、4、5项并入B；7、8、12项生成兼容和14项代码轮次并入C；9、10、11项及12项校验兼容并入D；13项及14项实际代理行为并入E。第四版沿用已审核的必测清单和检查方法，只补齐本地命令、既有测试名称、环境准备、输出及失败处理；R4.1补齐 `@16` 子线程正式关系和角色读取方式，R4.2补齐读取包装字段核对，R4.3将运行路径改为环境变量并补记A组源码核对结果，R4.4移除与夹具V2不兼容的 `--ephemeral`，使用评测进程已配置的独立 `CODEX_HOME`，只通过项目配置设置信任等级，保持产品代码及已选夹具不变。R4.5根据用户要求在保留R4.3和R4.4结果的基础上追加一次独立请求；R4.6根据R4.5仍返回HTTP 504的情况，只把新请求的超时值从300秒延长至1200秒，其他产品、夹具、提示词、配置和A—E目标不变。
+第三版按原编号将1、2、6项并入A；3、4、5项并入B；7、8、12项生成兼容和14项代码轮次并入C；9、10、11项及12项校验兼容并入D；13项及14项实际代理行为并入E。第四版沿用已审核的必测清单和检查方法，只补齐本地命令、既有测试名称、环境准备、输出及失败处理；R4.1补齐 `@16` 子线程正式关系和角色读取方式，R4.2补齐读取包装字段核对，R4.3曾将运行路径改为环境变量并补记A组源码核对结果，R4.4移除与夹具V2不兼容的 `--ephemeral`，使用评测进程已配置的独立 `CODEX_HOME`，只通过项目配置设置信任等级，保持产品代码及已选夹具不变。R4.5根据用户要求在保留R4.3和R4.4结果的基础上追加一次独立请求；R4.6根据R4.5仍返回HTTP 504的情况，只把新请求的超时值从300秒延长至1200秒，其他产品、夹具、提示词、配置和A—E目标不变。R4.10删除R4.3引入但不符合项目共识的评测服务路径变量；历史运行事实继续保留，当前执行只采用下文R4.10入口。
 
 本地测试工程师在本文件补齐实际断言或命令、合成输入、配置来源、输出位置、隔离清理、失败处理，提交第二关口。先核对[历史结果来源](https://github.com/ScholarWorkflow/professor-contact/pull/73#issuecomment-5981805377)、`test-plan/issue-66-results-history.md`、`test-plan/issue-66-runtime-attempts-20261007.md`；足以判断且行为未变的结果直接复用。旧212项通过不等于5组全通过，提交变化不使未变结果失效。
 
 历史测试程序有的已从本分支删除；引用有效结果，或只恢复／补写本清单缺少的必要断言，不恢复整套测试及判定平台作为前提。两文件故障使用标准框架，不建设专用故障工具。
 
-确定性检查在生产者仓库进行。模型运行从独立消费者开始，用支持的安装路径；有效安装复用，失效才重装，不复制或手工修补。Codex 使用既有评估服务，不启动、停止或重启；按工作区 `eval-server/README.md`、`eval-server/docs/appserver-migration.md` 接线。`EVAL_SERVER_WORKSPACE` 指向已配置的评测服务工作区，端口通过 `direnv exec "$EVAL_SERVER_WORKSPACE" printenv EVAL_PORT` 取得。评测进程启动时已使用独立 `CODEX_HOME`；请求不额外指定该目录或用户空间配置，只通过项目配置设置合成消费者的信任等级。请求不传模型或推理强度覆盖，沿用评测环境默认设置。提示词只提出业务请求，不补写产品流程。
+确定性检查在生产者仓库进行。模型运行从独立消费者开始，用支持的安装路径；有效安装复用，失效才重装，不复制或手工修补。Codex 使用既有评估服务，不启动、停止或重启；按工作区 `eval-server/README.md`、`eval-server/docs/appserver-migration.md` 接线。正式请求命令必须从已配置的评测服务工作区执行，并用 `direnv exec .` 向该次请求提供 `EVAL_PORT`；计划不另设评测服务路径变量，也不在正式请求外读取、保存或探测端口。评测进程启动时已使用独立 `CODEX_HOME`；请求不额外指定该目录或用户空间配置，只通过项目配置设置合成消费者的信任等级。请求不传模型或推理强度覆盖，沿用评测环境默认设置。提示词只提出业务请求，不补写产品流程。
 
 临时输入、实际配置、必要原始输出放在仓库外独立临时目录；命令使用 `${TMPDIR:-/tmp}` 选择临时目录位置。目录隔离会话、资料和输出，不连接生产资料或无关进程。正式计划和必要脱敏结果入库，不上传敏感原文。不新增来源认证、完整轨迹、逐调用账本或通用证据能力检查。
 
@@ -223,15 +223,9 @@ UV_CACHE_DIR="$run_dir/uv-cache" uv run --python 3.12 --no-project python -c 'im
 prompt=$(< "$run_dir/eval-prompt.txt")
 command="--json --skip-git-repo-check --sandbox workspace-write --cd '$consumer' --config 'projects={\"$consumer\"={trust_level=\"trusted\"}}' -- '$prompt'"
 jq -n --arg command "$command" '{command:$command,timeout:300}' > "$run_dir/eval-request.json"
-: "${EVAL_SERVER_WORKSPACE:?请先将其设为已配置的评测服务工作区路径}"
-eval_port=$(direnv exec "$EVAL_SERVER_WORKSPACE" printenv EVAL_PORT)
-curl_exit=0
-http_status=$(curl --silent --show-error --output "$run_dir/eval-response.json" --write-out '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$run_dir/eval-request.json" "http://127.0.0.1:$eval_port/eval") || curl_exit=$?
-printf '%s\n' "$http_status" > "$run_dir/http-status.txt"
-printf '%s\n' "$curl_exit" > "$run_dir/curl-exit.txt"
 ~~~
 
-`eval_port` 只从现有工作区的 `direnv` 环境取得；不读取或检查服务进程、配置、数据库或日志。R4.4的 `curl` 只执行一次。完整响应原样写到 `$run_dir/eval-response.json`；不得启动、停止或重启服务。安装、夹具、提示词或请求构造任一步骤失败时，不发送 `/eval`。完成状态分类后，删除 `$run_dir/consumer`（包括已安装内容和合成程序目录）；保留 `eval-request.json`、`eval-response.json`、HTTP状态及已记录的 `curl` 退出状态、APM版本、`fixture-manifest.json` 和已有运行记录（含产品提交信息），直至结果审核完成。不提交或上传运行目录。
+R4.4请求已经执行，本段只保留当时的请求准备事实，不再作为当前发送入口。当前正式请求只能采用下文R4.10步骤。R4.4的 `curl` 当时只执行一次；不读取或检查服务进程、配置、数据库或日志。完整响应原样写到 `$run_dir/eval-response.json`；不得启动、停止或重启服务。安装、夹具、提示词或请求构造任一步骤失败时，不发送 `/eval`。完成状态分类后，删除 `$run_dir/consumer`（包括已安装内容和合成程序目录）；保留 `eval-request.json`、`eval-response.json`、HTTP状态及已记录的 `curl` 退出状态、APM版本、`fixture-manifest.json` 和已有运行记录（含产品提交信息），直至结果审核完成。不提交或上传运行目录。
 
 HTTP状态不是200、响应不是有效JSON，或缺少 `.output.thread_id`／`.output.app_server_events` 时，记录为无法判断并停止；非200时不解析响应内容。保留该次请求和响应，不重试。状态结构完整时，按前文“根对话后续命令的具体检查步骤”用 `jq` 读取根线程工具事件和调用结果，再按E组逐项核对实际分支、教授状态、固定写入文件的保存记录和终态后的总览。必要事件、调用或文件不可见的事实记为无法判断；子代理最终消息没有重复完整校验正文不构成缺口。范围内流程目标失败时记业务失败；候选内容失败单独保留，不仅凭 `verdict=fail` 或 `fail_after_2_rounds` 判E组失败，也不为求通过重新采样。按上一段所列运行记录保留所需证据，不提交或上传运行目录。
 
@@ -289,19 +283,19 @@ E组事件记录含2380条应用服务事件及4条子线程读取，角色为�
 
 两轮旧子代理最终消息各少一个末尾换行符的事实继续保留，但它只说明旧消息载体与文件排版不同，不再属于新版失败条件。旧响应仍返回完整校验 JSON，不能证明第十六版规定的完成报告字段及“不含校验正文”；因此R4.8的E组结果记为**尚未执行**，不得由旧证据改判通过。候选内容的历史结论仍为 `fail_after_2_rounds`，剩余一项C10阻塞问题。A—D的42项有效通过结果继续复用。产品实现负责人须先按第十六版执行计划同步校验代理、Codex流程及实际安装内容；同步后只运行一次当前实现的E组，不重跑A—D。本记录不批准第三关口或合并。
 
-### R4.9：完成报告检查及同步后运行步骤
+### R4.10：完成报告检查、端口接线修正及同步后运行步骤
 
-日期：2026年10月9日。目标仍为第十六版完整执行计划规定的 Codex 流程。新增定向检查位于 `.apm/skills/professor-contact/tests/test_issue66_validator_report_contract.py`，覆盖成功报告、失败报告、缺省原因码、禁止把校验正文放进完成报告，以及未传 `output_file` 时保留旧只读返回。测试默认读取生产者代理源文件；设置 `PROFESSOR_CONTACT_VALIDATOR_AGENT` 后，会直接读取指定的 Codex 安装件 `.toml` 文件中的 `developer_instructions`。
+日期：2026年10月9日。目标仍为第十六版完整执行计划规定的 Codex 流程。R4.9新增的定向检查位于 `.apm/skills/professor-contact/tests/test_issue66_validator_report_contract.py`，覆盖成功报告、失败报告、缺省原因码、禁止把校验正文放进完成报告，以及未传 `output_file` 时保留旧只读返回。测试默认读取生产者代理源文件；设置 `PROFESSOR_CONTACT_VALIDATOR_AGENT` 后，会直接读取指定的 Codex 安装件 `.toml` 文件中的 `developer_instructions`。R4.10只修正评测端口接线，不增加A—E目标或正式请求次数。
 
-本次复核的 PR 提交为 `b4c6f46537241cb062c7088989adbd07f30553fb`。在 `.apm/skills/professor-contact/tests` 运行 `UV_CACHE_DIR=/private/tmp/issue66-validator-report-uv-cache uv run --python 3.12 --no-project python -B -m unittest test_issue66_validator_report_contract -v`，结果为3项中1项通过、2项失败，退出码1：旧只读返回兼容通过；新成功／失败完成报告和缺省 `validation_write_failed` 检查失败。失败原因是当前代理源文件未包含第十六版的新报告格式及缺省原因码，不是测试启动错误。故当前提交不是可安装的E组目标，尚无新的产品提交 SHA；未安装旧产品，也未发送 `/eval`。
+R4.9复核的 PR 提交为 `b4c6f46537241cb062c7088989adbd07f30553fb`。在 `.apm/skills/professor-contact/tests` 运行 `UV_CACHE_DIR=/private/tmp/issue66-validator-report-uv-cache uv run --python 3.12 --no-project python -B -m unittest test_issue66_validator_report_contract -v`，结果为3项中1项通过、2项失败，退出码1：旧只读返回兼容通过；新成功／失败完成报告和缺省 `validation_write_failed` 检查失败。失败原因是该代理源文件未包含第十六版的新报告格式及缺省原因码，不是测试启动错误。故该旧提交不是可安装的E组目标；未安装旧产品，也未发送 `/eval`。后续产品候选 `6aa2c8b23f9a723fff1b862851eb49b72a4c9a1d` 尚未由本地测试工程师执行下列源文件与安装件检查，不能预先视为有效E组目标。
 
-产品实现负责人将技能流程、校验代理及其 Codex 安装内容按第十六版同步并推送后，执行人须先核对源文件定向检查通过，并记录当时实际、干净且已推送的产品提交 SHA。以下步骤从生产者仓库根目录执行。该 SHA 写入运行记录，之后 APM 安装固定使用同一 SHA；不使用分支名、移动标签或本地路径。源文件检查失败时立即停止，不安装、不发送请求。
+产品实现负责人将技能流程、校验代理及其 Codex 安装内容按第十六版同步并推送后，执行人须先核对源文件定向检查通过，并记录当时实际、干净且已推送的产品提交 SHA。下列源检查、安装、夹具和请求文件准备步骤从生产者仓库根目录开始执行。该 SHA 写入运行记录，之后 APM 安装固定使用同一 SHA；不使用分支名、移动标签或本地路径。源文件检查失败时立即停止，不安装、不发送请求。
 
 ```sh
 set -eu
 set -o pipefail
 producer=$(pwd)
-run_dir=$(mktemp -d "${TMPDIR:-/tmp}/issue66-pr73-r49.XXXXXX")
+run_dir=$(mktemp -d "${TMPDIR:-/tmp}/issue66-pr73-r410.XXXXXX")
 consumer="$run_dir/consumer"
 git -C "$producer" status --porcelain > "$run_dir/producer-status.txt"
 test ! -s "$run_dir/producer-status.txt" || exit 1
@@ -360,17 +354,23 @@ prompt=$(< "$run_dir/eval-prompt.txt")
 command="--json --skip-git-repo-check --sandbox workspace-write --cd '$consumer' --config 'projects={\"$consumer\"={trust_level=\"trusted\"}}' -- '$prompt'"
 jq -n --arg command "$command" '{command:$command,timeout:1200}' > "$run_dir/eval-request.json"
 jq -e '.timeout == 1200 and (.command | type == "string" and length > 0)' "$run_dir/eval-request.json" > /dev/null
-: "${EVAL_SERVER_WORKSPACE:?请先将其设为已配置的评测服务工作区路径}"
-eval_port=$(direnv exec "$EVAL_SERVER_WORKSPACE" printenv EVAL_PORT)
-case "$eval_port" in
-  ''|*[!0-9]*) exit 1 ;;
-esac
+```
+
+保留上述 shell 中绝对路径形式的 `run_dir`，然后在已配置的评测服务工作区根目录执行以下正式请求块；此时 `.` 就是评测服务工作区。真实的 `curl` 必须由 `direnv exec .` 直接执行，使 `EVAL_PORT` 只在该命令环境中取得。不得新增评测服务路径变量，也不得在请求外读取、保存或探测端口。缺少 `direnv`、`curl` 或有效 `EVAL_PORT` 时，该次真实请求命令直接失败并记录退出状态。
+
+```sh
 curl_exit=0
-http_status=$(curl --silent --show-error --output "$run_dir/eval-response.json" --write-out '%{http_code}' \
-  -H 'Content-Type: application/json' --data-binary @"$run_dir/eval-request.json" \
-  "http://127.0.0.1:$eval_port/eval") || curl_exit=$?
+http_status=$(direnv exec . sh -c '
+  set -eu
+  case "${EVAL_PORT:-}" in
+    ""|*[!0-9]*) exit 1 ;;
+  esac
+  curl --silent --show-error --output "$1" --write-out "%{http_code}" \
+    -H "Content-Type: application/json" --data-binary @"$2" \
+    "http://127.0.0.1:${EVAL_PORT}/eval"
+' issue66-r410-eval "$run_dir/eval-response.json" "$run_dir/eval-request.json") || curl_exit=$?
 printf '%s\n' "$http_status" > "$run_dir/http-status.txt"
 printf '%s\n' "$curl_exit" > "$run_dir/curl-exit.txt"
 ```
 
-`curl` 只执行一次。HTTP状态非200、响应不是有效JSON或必要字段缺失时记为无法判断，不重试。状态结构完整时，按“根对话后续命令的具体检查步骤”及E组清单核对实际分支、完成报告、固定写入文件、保存与记录及最终教授状态。完成分类后删除 `$run_dir/consumer`；运行目录保留请求、原始响应、安装版本与日志、产品 SHA、定向测试日志、夹具清单、状态码和运行记录，不提交或上传。产品提交 SHA 的实际值及唯一一次请求结果待产品同步后补录；在此之前E组仍为**尚未执行**，不批准第三关口或合并。
+R4.10的 `curl` 只执行一次。HTTP状态非200、响应不是有效JSON或必要字段缺失时记为无法判断，不重试。状态结构完整时，按“根对话后续命令的具体检查步骤”及E组清单核对实际分支、完成报告、固定写入文件、保存与记录及最终教授状态。完成分类后删除 `$run_dir/consumer`；运行目录保留请求、原始响应、安装版本与日志、产品 SHA、定向测试日志、夹具清单、状态码和运行记录，不提交或上传。产品提交 SHA 的实际记录、源文件与安装件检查结果及唯一一次请求结果待本地测试工程师补录；在此之前E组仍为**尚未执行**，不批准第三关口或合并。
