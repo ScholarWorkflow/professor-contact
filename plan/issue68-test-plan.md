@@ -202,25 +202,34 @@ direnv exec . sh -c 'curl -sS -X POST "http://127.0.0.1:${EVAL_PORT}/eval" -H "C
 同一次请求只检查以下六项。先确认响应是 JSON 对象，再提取已有执行诊断；顶层执行信号只用于区分产品业务事实与环境或服务故障：
 
 ```sh
-jq -e 'type == "object"' "$PC68_RUN_ROOT/response.json"
+PC68_RESPONSE_OBJECT_OK=false
+PC68_RESPONSE_DIAGNOSTICS_OK=false
+PC68_RESPONSE_EVENTS_OK=false
 
-jq '
-  {passed: .passed,
-   exit_code: .output.exit_code,
-   termination_reason: .output.termination_reason,
-   top_error: .error,
-   output_error: .output.error,
-   stderr: .output.stderr}
-' "$PC68_RUN_ROOT/response.json" > "$PC68_RUN_ROOT/response-diagnostics.json"
+if jq -e 'type == "object"' "$PC68_RUN_ROOT/response.json"; then
+  PC68_RESPONSE_OBJECT_OK=true
 
-jq -e '
-  (.output | type == "object")
-  and (.output.app_server_events | type == "array")
-' \
-  "$PC68_RUN_ROOT/response.json"
+  if jq '
+    {passed: .passed,
+     exit_code: .output.exit_code,
+     termination_reason: .output.termination_reason,
+     top_error: .error,
+     output_error: .output.error,
+     stderr: .output.stderr}
+  ' "$PC68_RUN_ROOT/response.json" > "$PC68_RUN_ROOT/response-diagnostics.json"; then
+    PC68_RESPONSE_DIAGNOSTICS_OK=true
+  fi
+
+  if jq -e '
+    (.output | type == "object")
+    and (.output.app_server_events | type == "array")
+  ' "$PC68_RUN_ROOT/response.json"; then
+    PC68_RESPONSE_EVENTS_OK=true
+  fi
+fi
 ```
 
-第一条因文件缺失或 JSON 不可解析而失败时，只把依赖响应的观察部分记为无法判断，仍执行已经落盘的第2、3项和其他可独立读取的业务文件检查。`.passed == false` 或非零 `exit_code` 只表示本次执行没有正常完成，不能单独判为产品业务失败：结合 `termination_reason`、已有错误字段和 `stderr`，运行服务、协议、支持性、就绪、容量、模型或访问故障记为无法判断。只有现有结构化业务结果、教授状态或业务文件给出具体产品合同失败事实时，才记为业务失败。最后一条事件数组检查失败时，第1、4、5、6项中依赖事件的部分记为无法判断，但不得阻止第2、3项按实际文件分别判断，也不得重发请求。
+上述三个 `jq` 都位于条件判断中，失败只保留对应的 `false` 状态，不受前文 `set -eu` 影响而提前退出。无论三个状态为何，均先执行下文第2、3项，两位教授的文件与状态检查位于条件块之外。`PC68_RESPONSE_OBJECT_OK=false` 时，只把依赖响应的观察部分记为无法判断；`PC68_RESPONSE_DIAGNOSTICS_OK=true` 时，`.passed == false` 或非零 `exit_code` 仍只表示本次执行没有正常完成，不能单独判为产品业务失败：结合 `termination_reason`、已有错误字段和 `stderr`，运行服务、协议、支持性、就绪、容量、模型或访问故障记为无法判断。只有现有结构化业务结果、教授状态或业务文件给出具体产品合同失败事实时，才记为业务失败。`PC68_RESPONSE_EVENTS_OK=false` 时，不执行第1、4、5、6项中依赖事件的命令，把这些部分记为无法判断；其他可独立读取的业务文件照常检查，也不得重发请求。
 
 1. **根代理顺序与两次教授委派**。先在本次安装的当前源码中定位顺序合同，由人工按上下文确认两份文件均写明“发现与确定选择 → 按教授构建本地传递 → 调用并等待该教授代理 → 全部结束后至多重建一次总览”，且单教授采用同一顺序。这是一次窄范围静态检查，不运行第二次正式请求，也不恢复27项调用约定套件：
 
@@ -364,7 +373,7 @@ jq -e '
 
 | 内容 | 状态 |
 | --- | --- |
-| 当前计划 | 第五十七版执行分类限定修订；本项设计和第二关口均已通过；[设计复核](issue68-test-plan-r57-design-review.md)、[第二关口复核](issue68-test-plan-r57-gate2-review.md) |
+| 当前计划 | 第五十七版响应控制流限定修订；本项设计和第二关口均已通过；[设计复核](issue68-test-plan-r57-design-review.md)、[第二关口复核](issue68-test-plan-r57-gate2-review.md) |
 | 实际规模 | 历史43项直接复用；自动化重跑0项；正式业务请求1次；六个观察点 |
 | 甲至庚 | 历史结果继续有效，不重跑 |
 | 辛 | 当前为无法判断；待一次正式正常业务请求 |
@@ -375,3 +384,5 @@ jq -e '
 第五十七版限定修订（2026-10-10）：状态文件检查改为对两位教授各自的本次目标行要求首封和跟进 `validation.result` 均为 `pass`，明确排除失败、待处理、跳过和未完成状态。该候选当时采用的顶层失败分类已由下一段执行分类限定修订取代。未改变必测清单、请求次数、重试规则或历史结果复用范围。
 
 第五十七版执行分类限定修订（2026-10-10）：不再把 `.passed == false` 或非零 `exit_code` 单独等同于产品业务失败；使用已有 `termination_reason`、错误字段、`stderr` 和已产生的教授业务文件判断。环境或服务故障记为无法判断，只有具体产品业务失败事实才记为业务失败；顶层执行失败不阻止分别检查已经落盘的教授结果。未增加日志、测试、重试、调用链或来源证明；本项计划设计限定复核和第二关口限定复核均已通过。
+
+第五十七版响应控制流限定修订（2026-10-10）：响应对象、诊断提取和事件数组解析全部放入明确条件分支，解析失败只设置可用状态，不因 `set -eu` 提前退出；两位教授的文件与状态检查始终在条件块之外先执行。未改变结果分类、观察点、请求次数或重试规则；本项计划设计限定复核和第二关口限定复核均已通过。
