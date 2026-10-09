@@ -1,6 +1,6 @@
 # 第66号议题／第73号拉取请求测试计划
 
-版本：`issue-66-test-plan-new-rules-r4.3-2026-10-09`。
+版本：`issue-66-test-plan-new-rules-r4.4-2026-10-09`。
 
 产品基线：`86b6c82197e1b0afdbc9c337b6c4892b37ddc78d`。本版在第二版精简范围上，按用户要求补齐正常工作流程及根对话后续命令的检查步骤；产品未改，历史结果保留原版本归属。
 
@@ -127,28 +127,28 @@ jq --arg root "$root_id" '
 5. 解析记录返回的 `needs_correction`、`terminal`，对照其完成后的实际委派和命令：无需修正没有新生成；需要修正且未终态才进入第二轮；第二轮终态后没有再生成、校验或记录。检查结束后的教授正式状态，及终态后的那一次总览命令。只判断本次实际分支。
 6. 命令参数、对应完成结果、完整校验正文等某一事实不可见时，说明具体缺项并记该事实无法判断，不以最终文件倒推过程，不补调用求通过，不重复模型采样。已取得的其他业务结果可以保留。
 
-以上是第三版的交接状态。第四版的实际请求接线、输入、配置、运行目录、适用事件形态和清理步骤见下文“执行步骤 R4.3”；此记录不代表第二关已批准。
+以上是第三版的交接状态。第四版的实际请求接线、输入、配置、运行目录、适用事件形态和清理步骤见下文“执行步骤 R4.4”；此记录不代表第二关已批准。
 
 ## 执行准备与结果复用
 
-第三版按原编号将1、2、6项并入A；3、4、5项并入B；7、8、12项生成兼容和14项代码轮次并入C；9、10、11项及12项校验兼容并入D；13项及14项实际代理行为并入E。第四版沿用已审核的必测清单和检查方法，只补齐本地命令、既有测试名称、环境准备、输出及失败处理；R4.1补齐 `@16` 子线程正式关系和角色读取方式，R4.2补齐读取包装字段核对，R4.3将运行路径改为环境变量并补记A组源码核对结果，不增加检查或请求。
+第三版按原编号将1、2、6项并入A；3、4、5项并入B；7、8、12项生成兼容和14项代码轮次并入C；9、10、11项及12项校验兼容并入D；13项及14项实际代理行为并入E。第四版沿用已审核的必测清单和检查方法，只补齐本地命令、既有测试名称、环境准备、输出及失败处理；R4.1补齐 `@16` 子线程正式关系和角色读取方式，R4.2补齐读取包装字段核对，R4.3将运行路径改为环境变量并补记A组源码核对结果，R4.4移除与夹具V2不兼容的 `--ephemeral`，使用评测进程已配置的独立 `CODEX_HOME`，只通过项目配置设置信任等级，保持产品代码及已选夹具不变。
 
 本地测试工程师在本文件补齐实际断言或命令、合成输入、配置来源、输出位置、隔离清理、失败处理，提交第二关口。先核对[历史结果来源](https://github.com/ScholarWorkflow/professor-contact/pull/73#issuecomment-5981805377)、`test-plan/issue-66-results-history.md`、`test-plan/issue-66-runtime-attempts-20261007.md`；足以判断且行为未变的结果直接复用。旧212项通过不等于5组全通过，提交变化不使未变结果失效。
 
 历史测试程序有的已从本分支删除；引用有效结果，或只恢复／补写本清单缺少的必要断言，不恢复整套测试及判定平台作为前提。两文件故障使用标准框架，不建设专用故障工具。
 
-确定性检查在生产者仓库进行。模型运行从独立消费者开始，用支持的安装路径；有效安装复用，失效才重装，不复制或手工修补。Codex 使用既有评估服务，不启动、停止或重启；按工作区 `eval-server/README.md`、`eval-server/docs/appserver-migration.md` 接线。`EVAL_SERVER_WORKSPACE` 指向已配置的评测服务工作区，端口通过 `direnv exec "$EVAL_SERVER_WORKSPACE" printenv EVAL_PORT` 取得。请求不传模型或推理强度覆盖，沿用评测环境默认设置；项目可信度仅用服务支持的项目配置输入。提示词只提出业务请求，不补写产品流程。
+确定性检查在生产者仓库进行。模型运行从独立消费者开始，用支持的安装路径；有效安装复用，失效才重装，不复制或手工修补。Codex 使用既有评估服务，不启动、停止或重启；按工作区 `eval-server/README.md`、`eval-server/docs/appserver-migration.md` 接线。`EVAL_SERVER_WORKSPACE` 指向已配置的评测服务工作区，端口通过 `direnv exec "$EVAL_SERVER_WORKSPACE" printenv EVAL_PORT` 取得。评测进程启动时已使用独立 `CODEX_HOME`；请求不额外指定该目录或用户空间配置，只通过项目配置设置合成消费者的信任等级。请求不传模型或推理强度覆盖，沿用评测环境默认设置。提示词只提出业务请求，不补写产品流程。
 
 临时输入、实际配置、必要原始输出放在仓库外独立临时目录；命令使用 `${TMPDIR:-/tmp}` 选择临时目录位置。目录隔离会话、资料和输出，不连接生产资料或无关进程。正式计划和必要脱敏结果入库，不上传敏感原文。不新增来源认证、完整轨迹、逐调用账本或通用证据能力检查。
 
 ## 失败、重试与完成
 
-- E组最多一次正式模型请求，不自动重试。外部额度、连接、服务、线程、观察故障记无法判断并停止受影响事实，继续其他检查；恢复后需新尝试，先补齐原因、状态清理、保持不变参数及次数约定，再审核步骤。
+- 每个获批计划版本下，E组最多执行一次正式模型请求，不自动重试。R4.3请求已按当时步骤执行并记为无法判断；R4.4按夹具V2要求移除 `--ephemeral` 并作为独立修订，第二关通过后只追加一次请求，保留R4.3结果，不将本次视为同条件重试。若R4.4请求遇到外部额度、连接、服务、线程或观察故障，记为无法判断并停止受影响事实，不再重试。
 - 不因业务失败重新采样求通过。步骤错误停止并修正，产品问题交实现负责人；保留所有正式尝试，后续清理或网络错误不覆盖业务失败。
 - 结果区分通过、业务失败、无法判断、未执行。遗漏记录先取原记录，待补不直接判产品失败，也不批准缺失结果。
 - 第一关确认清单，第二关确认步骤可运行且无超范围要求，第三关确认当前有效结果。只复核受影响目标；必测全部有效通过、范围内缺陷处理后结束，本计划不作合并批准。
 
-## 执行步骤 R4.3
+## 执行步骤 R4.4
 
 ### 本地确定性检查（A—D）
 
@@ -181,16 +181,17 @@ exit "$test_exit"
 
 预期为42项全通过，退出码为0。日志末尾的 `Ran` 数应为42，`local-tests.exit` 应为 `0`。命令或依赖错误、数量不符、断言失败时保留原日志，停止把该项记为通过；只修正已确认的步骤问题后重跑受影响检查，不运行全仓测试。此前本轮曾执行三组拆分命令，其中一次既有回归方法名写错并已定位；正式候选以本节合并命令的结果为准。
 
-### 一次正式运行（E）
+### R4.4正式运行（E）
 
-仅在第二关批准本节步骤后运行，最多发送一次 `/eval` 请求。正式运行不在生产者目录执行，不连接真实项目资料。使用 `${TMPDIR:-/tmp}` 在仓库外创建新的运行目录；其中的消费者必须位于生产者和所有工作树之外。消费者、程序资料和输出均为合成内容。
+R4.4仅在第二关批准本节步骤后追加发送一次 `/eval` 请求。R4.3原始请求（含 `--ephemeral`）及“无法判断”结果保留为历史记录，不覆盖、不改写。正式运行不在生产者目录执行，不连接真实项目资料。使用 `${TMPDIR:-/tmp}` 在仓库外创建新的运行目录；其中的消费者必须位于生产者和所有工作树之外。消费者、程序资料和输出均为合成内容。
 
 ```sh
 producer=$(pwd)
 run_dir=$(mktemp -d "${TMPDIR:-/tmp}/issue66-pr73-eval.XXXXXX")
 consumer="$run_dir/consumer"
 program_root="$consumer/fixture-program"
-producer_sha=$(git -C "$producer" rev-parse HEAD)
+# 与R4.3保持相同的产品代码版本，只修正请求选项。
+producer_sha=fe1ac16194b3fd0890f02a8a3ad9c623aead5bc4
 mkdir -p "$consumer"
 cd "$consumer"
 apm --version > "$run_dir/apm-version.txt"
@@ -208,29 +209,33 @@ UV_CACHE_DIR="$run_dir/uv-cache" uv run --python 3.12 --no-project python \
   --output "$run_dir/fixture-manifest.json" > "$run_dir/fixture-build.json" 2>&1
 ```
 
-读取现有提示词模板并只替换程序根路径，保存为 `$run_dir/eval-prompt.txt`。提示词必须仍只提出正常第三阶段业务请求，不得追加命令、委派指示或业务逻辑。以下命令构造一个请求；只给新消费者配置项目可信度，格式按评测服务支持的 `projects` 内联表，不使用带点号的动态路径键。其余模型、推理强度和审批配置均不覆盖：
+读取现有提示词模板并只替换程序根路径，保存为 `$run_dir/eval-prompt.txt`。提示词必须仍只提出正常第三阶段业务请求，不得追加命令、委派指示或业务逻辑。评测进程启动时已使用独立 `CODEX_HOME`，本请求不设置或覆盖 `CODEX_HOME`；按夹具V2要求，命令不包含 `--ephemeral`。以下命令只通过 `--config` 给新消费者设置项目可信度，格式按评测服务支持的 `projects` 内联表，不使用带点号的动态路径键；不覆盖模型、推理强度或其他审批配置：
 
 ~~~sh
 UV_CACHE_DIR="$run_dir/uv-cache" uv run --python 3.12 --no-project python -c 'import sys; from pathlib import Path; template=Path(sys.argv[1]).read_text(encoding="utf-8"); root=sys.argv[2]; assert template.count("{{PROGRAM_ROOT}}") == 1; Path(sys.argv[3]).write_text(template.replace("{{PROGRAM_ROOT}}", root), encoding="utf-8")' "$producer/.apm/skills/professor-contact/tests/runtime/prompts/issue55-stage3-routing.txt" "$program_root" "$run_dir/eval-prompt.txt"
 prompt=$(< "$run_dir/eval-prompt.txt")
-command="--json --ephemeral --skip-git-repo-check --sandbox workspace-write --cd '$consumer' --config 'projects={\"$consumer\"={trust_level=\"trusted\"}}' -- '$prompt'"
+command="--json --skip-git-repo-check --sandbox workspace-write --cd '$consumer' --config 'projects={\"$consumer\"={trust_level=\"trusted\"}}' -- '$prompt'"
 jq -n --arg command "$command" '{command:$command,timeout:300}' > "$run_dir/eval-request.json"
 : "${EVAL_SERVER_WORKSPACE:?请先将其设为已配置的评测服务工作区路径}"
 eval_port=$(direnv exec "$EVAL_SERVER_WORKSPACE" printenv EVAL_PORT)
-http_status=$(curl --silent --show-error --output "$run_dir/eval-response.json" --write-out '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$run_dir/eval-request.json" "http://127.0.0.1:$eval_port/eval")
+curl_exit=0
+http_status=$(curl --silent --show-error --output "$run_dir/eval-response.json" --write-out '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$run_dir/eval-request.json" "http://127.0.0.1:$eval_port/eval") || curl_exit=$?
 printf '%s\n' "$http_status" > "$run_dir/http-status.txt"
+printf '%s\n' "$curl_exit" > "$run_dir/curl-exit.txt"
 ~~~
 
-`eval_port` 只从现有工作区的 `direnv` 环境取得；不读取或检查服务进程、配置、数据库或日志。`curl` 只执行一次。完整响应原样写到 `$run_dir/eval-response.json`；不得启动、停止或重启服务。安装、夹具、提示词或请求构造任一步骤失败时，不发送 `/eval`。完成业务判读后删除已安装消费者及合成程序资料；保留请求、响应、状态码、安装版本与夹具清单于运行目录，直至本轮结果审核完成。不提交或上传运行目录。
+`eval_port` 只从现有工作区的 `direnv` 环境取得；不读取或检查服务进程、配置、数据库或日志。R4.4的 `curl` 只执行一次。完整响应原样写到 `$run_dir/eval-response.json`；不得启动、停止或重启服务。安装、夹具、提示词或请求构造任一步骤失败时，不发送 `/eval`。完成状态分类后，删除 `$run_dir/consumer`（包括已安装内容和合成程序目录）；保留 `eval-request.json`、`eval-response.json`、HTTP状态及已记录的 `curl` 退出状态、APM版本、`fixture-manifest.json` 和已有运行记录（含产品提交信息），直至结果审核完成。不提交或上传运行目录。
 
-HTTP 状态不是200，响应不是有效 JSON，或缺少 `.output.thread_id`／`.output.app_server_events` 时，记录为无法判断并停止；保留该次请求和响应，不重试。状态结构完整时，按前文“根对话后续命令的具体检查步骤”用 `jq` 读取根线程工具事件和调用结果，再按E组逐项核对实际分支、教授状态、原文保存和终态后的总览。事件、调用或完整校验正文不可见的事实记为无法判断。业务结果失败时按失败记录，不为求通过重新采样。正式响应和合成资料保留在运行目录，完成判读后按项目共识处理；不得提交或上传运行目录。
+HTTP状态不是200、响应不是有效JSON，或缺少 `.output.thread_id`／`.output.app_server_events` 时，记录为无法判断并停止；非200时不解析响应内容。保留该次请求和响应，不重试。状态结构完整时，按前文“根对话后续命令的具体检查步骤”用 `jq` 读取根线程工具事件和调用结果，再按E组逐项核对实际分支、教授状态、原文保存和终态后的总览。事件、调用或完整校验正文不可见的事实记为无法判断。业务结果失败时按失败记录，不为求通过重新采样。按上一段所列运行记录保留所需证据，不提交或上传运行目录。
 
 ### 当前关口和结果状态
 
-第三版的必测清单及设计审核仍适用，见[设计审核记录](issue-66-test-plan-review.md)。R4.2执行步骤曾获第二关审核通过，只代表原步骤可执行且未扩大R3范围。R4.3仅改为可移植的临时目录和评测工作区输入，并补记已完成的源码核对；本次正式请求仍按R4.2批准的步骤执行，结果不代表第三关通过。
+第三版的必测清单及设计审核仍适用，见[设计审核记录](issue-66-test-plan-review.md)。R4.2和R4.3审核只适用于各自版本。R4.4根据评测环境已使用独立 `CODEX_HOME` 的说明移除 `--ephemeral`，只保留项目可信度配置；这是命令配置修订，不增加A—E目标。R4.4第二关审核已通过，允许追加一次请求；这不代表第三关通过。
 
 A—D定向检查共42项全部通过，退出码0，耗时48.039秒。产品代码版本为 `fe1ac16194b3fd0890f02a8a3ad9c623aead5bc4`；完整日志保存在仓库外本次本地运行目录中的 `local-tests.log`，运行目录路径留在本地执行记录中。
 
-E组按R4.2批准步骤只发送一次正式请求，HTTP状态200，`curl`退出码0，响应包含根线程及146条应用服务事件，但 `output.child_thread_reads` 为空。根线程发出一次结构化 `spawn_agent` 调用，完成结果为运行时错误 `no rollout found`；没有子线程关系、角色读取或 Stage 3 业务结果。该次E组结果记为**无法判断**，不是产品通过或失败；不重试。原始请求和响应、状态码、APM版本及合成夹具清单保存在仓库外本次独立评测运行目录中，具体路径留在本地执行记录中，未纳入提交。
+R4.3按当时获批步骤发送的一次请求返回HTTP状态200，`curl`退出码0，响应包含根线程及146条应用服务事件，但 `output.child_thread_reads` 为空。根线程发出一次结构化 `spawn_agent` 调用，完成结果为运行时错误 `no rollout found`；没有子线程关系、角色读取或 Stage 3 业务结果。该次E组结果仍记为**无法判断**，不是产品通过或失败。原始请求和响应、状态码、APM版本及合成夹具清单保存在仓库外原运行目录中，具体路径留在本地执行记录中，未纳入提交。
 
-因此第三关尚未通过，E组没有有效业务结论。本计划不作合并批准。版本为 `issue-66-test-plan-new-rules-r4.3-2026-10-09`。
+R4.4按第二关通过的修订步骤只发送一次请求，HTTP状态为504，`curl`退出码为0。按步骤，非200结果记为**无法判断**并停止；不据此判断任何Stage 3业务事实，也不重试。请求、原始响应、状态码、APM版本、产品提交及合成夹具清单保存在仓库外的新运行目录中，具体路径留在本地执行记录中，未纳入提交。
+
+因此第三关尚未通过，E组没有有效业务结论。本计划不作合并批准。版本为 `issue-66-test-plan-new-rules-r4.4-2026-10-09`。
