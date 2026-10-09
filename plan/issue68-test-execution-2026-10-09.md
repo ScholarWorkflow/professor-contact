@@ -31,6 +31,15 @@
 - 修正范围仅限测试夹具：`test_issue59_t59_1_email_id_is_resolved_before_any_other_check` 的五种缺陷输入现分别在独立根目录中重建完整基础夹具、结果、选择及人类化文本，再写入该子项缺陷数据。产品判断和预期断言未改动。这样每个子项的 `finalize` 与 `plan` 检查从新状态开始，不继承前一子项的人工修改标记。
 - 五模块回归命令为 `uv run --offline --no-project python -m unittest test_contact_state test_stage4_selection_agent_contract test_stage5_dualtarget_contract test_stage5_immutable test_issue67_gate2_r3`，在 `.apm/skills/professor-contact/tests` 下运行，使用仓库外的 `UV_CACHE_DIR`。新执行退出码 `0`，128项全部通过，用时64.655秒；完整输出在 `/private/tmp/pc68-issue68-suite-subagent-20261010/output-rerun.log`。另一次运行的测试本身也显示128项通过，但外层 zsh 收尾脚本使用只读变量导致外层退出码为1；以本条退出码为准。
 - 单独执行 `uv run --offline --no-project python -m unittest test_issue68_eval_request -v`，6项全部通过，退出码 `0`；包含构建出的准确参数列表不含 `--ephemeral` 的断言。输出在 `/private/tmp/pc68-issue68-suite-20261010-8CEWTv/request-builder-tests.log`。
+- 上述五模块回归与请求构建器测试所用测试源码提交为 `99d520f67a05b726bedf541c94cf94039b62a490`；固定产品源码提交为 `72f20846e9810f5445c0c6a3891f3877b4cd0e21`。测试源码、产品源码和输出路径均可分别核对。
 - 上述结果可替代计划中无法找到原始报告的“128项通过”记录；2026-10-09 的128项2失败记录仍保留为历史，不覆盖。测试证据只说明确定性用例和请求构建器测试通过，不证明正式代理业务通过。
 - 最新拉取请求审核要求辛在同一次正式运行内直接检查每位教授的委派、两份结果完成且被根代理读取、结果消费后至多调用一次总览，以及本请求传递文件清理。第五十版计划加入这些步骤；第五十一版补明准确的 `agent_type`、调用编号与子任务编号的关联检查。第五十一版计划设计审核已通过，第二关口尚未复核；本轮尚未发送替代 `/eval`，原计划还要求取得明确授权。
-- `test_stage3_stage4_caller_contract.py` 的既有27项子集结果仍有1项产品文档断言失败：缺少历史程序级 `教授研究/邮件输入.json` 仅作为旧格式迁移来源的说明。该项超出本地测试夹具修复范围，未修改产品文档；仍需交产品实现负责人处理。
+- 本节记录时，`test_stage3_stage4_caller_contract.py` 的27项子集有1项固定措辞断言失败，要求技能说明逐字包含历史程序级 `教授研究/邮件输入.json` 的旧格式迁移句子。该项未要求修改产品文档；后续断言修正及复验见下节。
+
+## 持续集成断言修正复验（2026-10-10）
+
+- 拉取请求当前头 `99d520f67a05b726bedf541c94cf94039b62a490` 的持续集成检查失败，失败项为 `test_program_level_stage4_files_are_documented_as_non_authority`。当前技能说明已写明程序级旧包仅作迁移行来源、不是当前事实源；历史执行计划没有冻结某句固定文案，因此无需改动产品文档。
+- 仅调整 `.apm/skills/professor-contact/tests/test_stage3_stage4_caller_contract.py` 的说明检查：在同一行确认程序级旧包、迁移行来源及非当前事实源语义，不再要求已失效的整句原文。首次定位误选到提及旧包但不含迁移说明的另一行，局部复验失败；随后将定位条件收窄到同一行同时含“程序级旧包”和“迁移行来源”。产品源码及业务预期未改。
+- 复验命令：`UV_CACHE_DIR=<仓库外缓存> uv run --offline --no-project python -m unittest discover -p 'test_stage3_stage4_caller_contract.py' -v`，在 `.apm/skills/professor-contact/tests` 下执行。最终27项全部通过，退出码 `0`；原始输出保存在仓库外临时目录，不随提交入库。
+- 本次修改不影响五模块128项回归和请求构建器6项测试，不重跑这些已有效结果。此前持续集成运行 `37960820880` 对应旧头提交；新提交推送后需读取新运行结果。
+- 第五十一版计划设计审核已通过；第二关口待复核。替代正式 `/eval` 仍未发送，尚须第二关口通过及明确请求授权；辛与第三关口未通过。

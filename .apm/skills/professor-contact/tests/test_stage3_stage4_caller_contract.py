@@ -344,8 +344,14 @@ class Issue67AdjacentCallerContractTests(unittest.TestCase):
 
     def test_program_level_stage4_files_are_documented_as_non_authority(self):
         self.assertIn("程序级同名 Stage-4 JSON 不再由本阶段写入", self.skill)
-        self.assertIn("历史程序级 `教授研究/邮件输入.json` 只作 legacy 迁移的行来源",
-                      self.skill)
+        legacy_pack_rule = next(
+            (line for line in self.skill.splitlines()
+             if "程序级旧包" in line and "迁移行来源" in line),
+            "",
+        )
+        self.assertTrue(legacy_pack_rule)
+        self.assertIn("迁移行来源", legacy_pack_rule)
+        self.assertIn("不作为当前事实源", legacy_pack_rule)
         self.assertIn("也不再被当作权威", self.documents["reference"])
         self.assertIn("本阶段绝不写入", self.documents["selection"])
 
