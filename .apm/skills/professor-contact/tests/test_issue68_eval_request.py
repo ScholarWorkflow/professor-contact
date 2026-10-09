@@ -74,10 +74,11 @@ class Issue68EvalRequestTests(unittest.TestCase):
 
         argv = shlex.split(request["command"])
         expected_prefix = [
-            "--json", "--ephemeral", "--skip-git-repo-check",
+            "--json", "--skip-git-repo-check",
             "--sandbox", "workspace-write", "--cd", str(self.consumer_root.resolve()),
         ]
         self.assertEqual(argv[:len(expected_prefix)], expected_prefix)
+        self.assertNotIn("--ephemeral", argv)
         config_index = len(expected_prefix)
         self.assertEqual(argv[config_index], "--config")
         self.assertEqual(argv[config_index + 2], "--")

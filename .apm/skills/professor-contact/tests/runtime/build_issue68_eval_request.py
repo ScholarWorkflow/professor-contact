@@ -107,7 +107,7 @@ def build_request(
         + '={trust_level="trusted"}}'
     )
     argv = [
-        "--json", "--ephemeral", "--skip-git-repo-check",
+        "--json", "--skip-git-repo-check",
         "--sandbox", "workspace-write", "--cd", str(consumer),
         "--config", trust_override,
         "--", rendered,
