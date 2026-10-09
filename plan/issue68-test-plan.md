@@ -1,8 +1,8 @@
 # 第68号议题测试计划：按最新规则重建
 
-版本：`issue-68-test-plan-r47-2026-10-09`。
+版本：`issue-68-test-plan-r46-2026-10-09`。
 
-目标仓库：`ScholarWorkflow/professor-contact`；拉取请求：[第72号](https://github.com/ScholarWorkflow/professor-contact/pull/72)。本轮读取的产品提交：`72f20846e9810f5445c0c6a3891f3877b4cd0e21`。本文件是当前唯一完整候选；第四十七版只修正第二关口指出的第4.3节正式提示输入缺口，不改变甲至辛业务目标、甲至庚结果复用或辛的检查边界。该修订待第二关口限定复核，不自行授予正式执行许可。旧评论、测试程序和证据约定不再提供执行步骤或额外通过条件。
+目标仓库：`ScholarWorkflow/professor-contact`；拉取请求：[第72号](https://github.com/ScholarWorkflow/professor-contact/pull/72)。本轮读取的产品提交：`72f20846e9810f5445c0c6a3891f3877b4cd0e21`。本文件是第四十六版唯一完整候选；本轮修订获批后取代第四十五版，不自行授予执行许可。旧评论、测试程序和证据约定不再提供执行步骤或额外通过条件。
 
 第四十三版的预检通过，但申请人资料和模板当时位于运行目录的 `profile/` 下，正式请求以消费者目录为工作目录，二者位置不一致，旧结果不能证明正式请求可读取同一资料。第四十四版已将三份文件移入消费者工作目录，并在该位置重新生成两位教授的第三阶段前置资料、第四阶段本地邮件包，再执行两份第五阶段预检：第三阶段两位均成功，第四阶段总状态和两位教授结果均为 `ok`，第五阶段两份结果均为 `status: ok` 且对应 `verify: ok`。阶段2/3只作本轮输入准备，不作为新增验收项。第四十六版纠正计划编写遗漏：本次执行步骤必须包括测试配置文件及加载方式，详见第4.1节第5项。推送前已发现远端第四十五版在 `fe9a2534505e8e5a78303bb36d970ea8c7eccc7e` 加入配置文件；本版直接引用该已有文件，不重复新建共享配置。2026-10-09，用户确认使用本拉取请求中的该文件作为本轮配置来源；隔离消费者配置接线和保留原配置检查、合成前置资料准备、联系方式证据生成、阶段4邮件包生成及两份阶段5计划预检均已完成，评估服务端口连通检查通过。第二关口仍待独立审核；本轮不发送正式请求，也不宣告第二、第三关口通过。
 
@@ -302,43 +302,35 @@
 
 ### 4.3 请求与结果读取
 
-1. 正式输入是一条普通第五阶段用户请求。以下是完整固定正文；只允许把其中的 `<PC68_PROGRAM>` 替换为本轮程序根绝对路径，其余文字、顺序和业务值保持不变。正文只说明业务对象、教授本地邮件包及合成资料和模板的使用要求：
+1. 正式输入是一条普通第五阶段用户请求，其业务对象固定如下；发送时把 `<PC68_PROGRAM>` 替换为本轮程序根绝对路径：
 
-   ```sh
-   cat > "$PC68_RUN_ROOT/prompt-template.txt" <<'PROMPT'
-请按以下普通第五阶段业务信息处理两位教授的套磁邮件。每位教授使用自己的本地邮件包，并结合本轮提供的合成申请人资料、首封模板和跟进模板完成相应邮件。
-
-{
-  "folder_path": "<PC68_PROGRAM>",
-  "professors": ["山田太郎", "佐藤花子"],
-  "mode": "both",
-  "choices": [
-    {
-      "email_id": "山田太郎::DIR00001::DIR00001_1",
-      "first_choice": true,
-      "signature_name": "测试申请者甲",
-      "learning": "地域交通规划",
-      "initial_sent_date": "2026-10-01",
-      "email_address": "taro@example.edu"
-    },
-    {
-      "email_id": "佐藤花子::DIR00001::DIR00001_1",
-      "first_choice": false,
-      "signature_name": "测试申请者乙",
-      "learning": "沿岸防灾信息",
-      "initial_sent_date": "2026-10-02",
-      "email_address": "hanako@example.edu"
-    }
-  ]
-}
-PROMPT
-   jq -R -s -r --arg program "$PC68_PROGRAM" 'split("<PC68_PROGRAM>") | join($program)' \
-     "$PC68_RUN_ROOT/prompt-template.txt" > "$PC68_RUN_ROOT/prompt.txt"
-   shasum -a 256 "$PC68_RUN_ROOT/prompt-template.txt" "$PC68_RUN_ROOT/prompt.txt" \
-     > "$PC68_RUN_ROOT/prompt.sha256"
+   ```json
+   {
+     "folder_path": "<PC68_PROGRAM>",
+     "professors": ["山田太郎", "佐藤花子"],
+     "mode": "both",
+     "choices": [
+       {
+         "email_id": "山田太郎::DIR00001::DIR00001_1",
+         "first_choice": true,
+         "signature_name": "测试申请者甲",
+         "learning": "地域交通规划",
+         "initial_sent_date": "2026-10-01",
+         "email_address": "taro@example.edu"
+       },
+       {
+         "email_id": "佐藤花子::DIR00001::DIR00001_1",
+         "first_choice": false,
+         "signature_name": "测试申请者乙",
+         "learning": "沿岸防灾信息",
+         "initial_sent_date": "2026-10-02",
+         "email_address": "hanako@example.edu"
+       }
+     ]
+   }
    ```
 
-   `prompt-template.txt` 是固定来源，`prompt.txt` 是仅替换程序根路径后的正式输入。保存两者及其摘要，生成请求时直接读取 `prompt.txt`；不得临场改写提示正文。正文不指示委派、等待、教授分配、路径传递、总览重建、清理或内部工具调用，也不把产品说明写成额外验收条件。
+   请求正文要求分别根据两位教授自己的本地邮件包，以及本轮提供的合成申请人资料、首封模板和跟进模板完成两类邮件；产品按当前工作目录的默认查找规则读取这些文件。这样正式请求实际使用与预检相同的资料和模板。不得指示委派、等待、教授分配、文件路径传递、总览重建、清理或内部工具调用，也不得把产品说明写成额外验收条件。
 2. 在生成正式请求前，确认三个资料路径与正式请求工作目录完全一致，并且文件存在且可读：
 
    ```sh
@@ -347,10 +339,10 @@ PROMPT
    test "$PC68_FOLLOWUP_TEMPLATE" = "$PC68_CONSUMER/套磁邮件/套磁跟进模板.md" && test -f "$PC68_FOLLOWUP_TEMPLATE" && test -r "$PC68_FOLLOWUP_TEMPLATE"
    ```
 
-   阶段4预检显式使用 `$PC68_PROFILE`；两次阶段5预检使用同一 `$PC68_PROFILE`、`$PC68_TEMPLATE` 和 `$PC68_FOLLOWUP_TEMPLATE`。正式请求的 `--cd "$PC68_CONSUMER"` 与产品默认查找位置一致。任何文件缺失或路径不一致时停止，不发送请求。确认后，从固定提示文件读取请求正文并生成请求文件：
+   阶段4预检显式使用 `$PC68_PROFILE`；两次阶段5预检使用同一 `$PC68_PROFILE`、`$PC68_TEMPLATE` 和 `$PC68_FOLLOWUP_TEMPLATE`。正式请求的 `--cd "$PC68_CONSUMER"` 与产品默认查找位置一致。任何文件缺失或路径不一致时停止，不发送请求。确认后，将上面的普通业务对象和上一条所述资料使用要求放入 `PC68_PROMPT`，用 `jq --arg` 生成请求文件：
 
    ```sh
-   jq -n --arg consumer "$PC68_CONSUMER" --rawfile prompt "$PC68_RUN_ROOT/prompt.txt" '("projects={"+($consumer|tojson)+"={trust_level=\"trusted\"}}") as $trust | {command:("--json --ephemeral --skip-git-repo-check --sandbox workspace-write --cd "+($consumer|@sh)+" --config "+($trust|@sh)+" -- "+($prompt|@sh)),timeout:900}' > "$PC68_RUN_ROOT/request.json"
+   jq -n --arg consumer "$PC68_CONSUMER" --arg prompt "$PC68_PROMPT" '("projects={"+($consumer|tojson)+"={trust_level=\"trusted\"}}") as $trust | {command:("--json --ephemeral --skip-git-repo-check --sandbox workspace-write --cd "+($consumer|@sh)+" --config "+($trust|@sh)+" -- "+($prompt|@sh)),timeout:900}' > "$PC68_RUN_ROOT/request.json"
    ```
 
    使用现有评估服务的 `POST /eval`，响应写入 `$PC68_RUN_ROOT/response.json`。不直接执行 `codex`，请求仅使用上一步已写明的项目信任参数加载消费者测试配置，不追加 `--model`、模型或推理的 `--config` 覆盖、并发或沙箱覆盖参数。在已配置的 `eval-server` 仓库工作目录执行 `direnv exec . sh -c 'curl -sS -X POST "http://127.0.0.1:${EVAL_PORT}/eval" -H "Content-Type: application/json" --data-binary @"$1"' sh "$PC68_RUN_ROOT/request.json" > "$PC68_RUN_ROOT/response.json"` 提交一次请求并保留响应。
@@ -376,11 +368,11 @@ PROMPT
 
 | 内容 | 状态 |
 | --- | --- |
-| 当前计划 | 第四十七版待第二关口限定复核；本文件 |
-| 计划设计审核 | 第四十版业务范围及辛的复验边界已获专用审核代理批准；第四十一版补齐固定提交下的运行准备步骤和实测产物，第四十二版更新测试契约来源状态，第四十三版记录本机 Codex 默认设置并明确其不能证明评估服务的实际配置；第四十四版路径修正保留；第四十六版配置引用及加载步骤的有限设计复核结论保留；第四十七版固定第4.3节正式提示和摘要读取步骤，等待第二关口限定复核，不改变验收范围；见[设计复核记录](issue68-test-plan-r40-design-review.md) |
+| 当前计划 | 第四十六版待审；本文件 |
+| 计划设计审核 | 第四十版业务范围及辛的复验边界已获专用审核代理批准；第四十一版补齐固定提交下的运行准备步骤和实测产物，第四十二版更新测试契约来源状态，第四十三版记录本机 Codex 默认设置并明确其不能证明评估服务的实际配置；第四十四版路径修正保留；第四十六版补清已有测试配置引用及消费者加载步骤，待本轮独立复核，不改变验收范围；见[设计复核记录](issue68-test-plan-r40-design-review.md) |
 | 甲至庚 | 引用有效历史通过，保留原版本与来源 |
 | 辛 | 正式业务产物复验尚未执行；R44 历史准备结果继续复用；2026-10-09 当前隔离消费者的合成准备、阶段4邮件包和两份阶段5计划预检均达到预期状态；保留一次正常业务产物复验，不检查不可见提示词或已验证的等待能力 |
-| 第二关口 | 配置来源、隔离消费者接线、保留原配置检查及本地阶段3/4/5预检已完成；端口连通检查通过；第四十七版已固定提示正文、生成方式和摘要记录。等待限定复核。正式请求未授权，尚未实测服务加载项目配置 |
+| 第二关口 | 配置来源、隔离消费者接线、保留原配置检查及本地阶段3/4/5预检已完成；端口连通检查通过，等待限定复核。正式请求未授权，尚未实测服务加载项目配置 |
 | 第三关口 | 辛的当前结果待补，尚未通过 |
 
 仓库内仅修改本计划；合成输入及预检输出留在隔离运行目录，不作为产品代码或验收测试提交。不恢复用户删除的测试代码，不修改产品，不执行确定性验收套件或正式请求。
@@ -391,7 +383,3 @@ PROMPT
 第四十六版修订说明：计划编写者此前未写清测试配置文件和加载步骤，又误把缺项表述为评估服务配置认证。推送前远端第四十五版已新增配套测试配置，本版保留并直接引用该文件，以两项设置合入消费者配置，保留安装代理及工具定义；撤销服务配置认证和为配置另建共享文件的要求。甲至辛目标、输入、预期及业务检查方式不变，已有资料路径准备和甲至庚结果继续复用。本段记录的是第四十六版计划修订当时的状态，不代表本轮后续操作。
 
 本轮执行记录（2026-10-09）：用户确认采用本拉取请求中的配置文件。隔离消费者通过 `apm init -y --target codex` 及固定提交的 `apm install` 创建；第一次安装遇到 HTTPS 连接中断，原命令重试成功。锁文件中的 `professor-contact` 和 `professor-research` 提交分别为 `72f20846e9810f5445c0c6a3891f3877b4cd0e21` 和 `a9e7ffbc070dcfdc7b225e5e70de1b4576649ecd`。使用版本化 TOML 文件合入两项配置，并以 TOML/JSON 解析比较确认安装原有配置未改变。此后在同一隔离消费者生成合成前置资料和联系方式证据，阶段4两位结果均为 `ok`，阶段5两份结果均为 `status: ok` 且各自 `verify: ok`；解析评估服务端口并确认 TCP 连接成功。运行目录保留安装命令、退出码、日志、阶段结果及配置比对文件。未运行确定性验收套件，未发送正式 `/eval`，也未实测服务加载项目配置。第二关口仍待限定复核，正式请求仍须另行明确授权。
-
-第四十七版修订依据：[第二关口审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/72#issuecomment-6080323109)指出，第4.3节要求把正文“放入”未赋值的 `PC68_PROMPT`，没有固定正式输入。依该记录，本版将完整普通业务提示、唯一允许的程序根路径替换、提示文件生成、摘要保留和从固定文件生成请求写入本节；业务对象、甲至辛检查和既有预检结果不变。提示模板摘要及本轮固定文件生成核对结果记于下方执行记录。没有重跑已完成的准备或确定性验收，没有发送正式 `/eval`。
-
-本轮提示固定输入核对（2026-10-09）：模板 `prompt-template.txt` 的 SHA-256 为 `2da8b43fe99f0d4481046bd13020f74374a90b155704b861cbd14eb86205f153`。使用含空格的合成程序路径生成提示后，确认唯一占位符已替换，生成的请求 JSON 保留完整提示正文及 `timeout: 900`。生成后的提示及请求文件保存在仓库外 `/private/tmp`。该核对只验证固定正文及请求文件生成步骤，不发送服务请求、不执行产品验收；正式运行仍待第二关口通过及单独明确授权。
