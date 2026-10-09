@@ -2465,11 +2465,12 @@ class TestStage5TargetedEmailScope(BaseEnv):
     # ---- cases ------------------------------------------------------------
 
     def test_issue59_t59_1_email_id_is_resolved_before_any_other_check(self):
-        fixture = write_issue59_stage5_fixture(self.root, [
+        fixture_specs = [
             {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
             {"professor": ISSUE59_PROFESSOR,
              "idea_id": ISSUE59_PEER_IDEA_ID, "evidence": "fresh"},
-            {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh"}], case=self)
+            {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh"}]
+        fixture = write_issue59_stage5_fixture(self.root, fixture_specs, case=self)
         results = self.write_results("issue59-1-raw.json", [ISSUE59_EMAIL_ID])
         choices = self.write_choices("issue59-1-choices.json", [ISSUE59_EMAIL_ID])
         humanized = self.humanized("issue59-1", results, choices)
@@ -2480,16 +2481,31 @@ class TestStage5TargetedEmailScope(BaseEnv):
                          "not-a-dict")
         for defect in both_surfaces + ("missing-email-id",
                                        "duplicate-unrelated-email-id"):
-            self.write_pack(self.defective_rows(fixture, defect))
+            defect_root = self.root / f"issue59-1-{defect}"
+            defect_fixture = write_issue59_stage5_fixture(
+                defect_root, fixture_specs, case=self)
+            defect_results = issue59_write_results(
+                defect_root, "issue59-1-raw.json", [ISSUE59_EMAIL_ID])
+            defect_choices = issue59_write_choices(
+                defect_root, "issue59-1-choices.json", [ISSUE59_EMAIL_ID])
+            defect_humanized = self.humanized(
+                "issue59-1", defect_results, defect_choices, root=defect_root)
+            defect_pack = issue59_local_pack_path(defect_root, ISSUE59_PROFESSOR)
+            pack = json.loads(defect_pack.read_text(encoding="utf-8"))
+            pack["emails"] = self.defective_rows(defect_fixture, defect)
+            defect_pack.write_text(
+                json.dumps(pack, ensure_ascii=False, indent=1), encoding="utf-8")
             with self.subTest(defect=defect, surface="finalize"):
-                self.assert_output_is_one_a(self.finalize(
-                    "--result", results, "--choices", choices, "--humanized", humanized,
-                    "--email-id", ISSUE59_EMAIL_ID))
+                output = self.finalize(
+                    "--result", defect_results, "--choices", defect_choices,
+                    "--humanized", defect_humanized,
+                    "--email-id", ISSUE59_EMAIL_ID, root=defect_root)
+                self.assert_output_is_one_a(output)
             if defect not in both_surfaces:
                 continue
             with self.subTest(defect=defect, surface="plan"):
                 self.assert_plan_jobs_are_one_a(
-                    self.plan("--email-id", ISSUE59_EMAIL_ID))
+                    self.plan("--email-id", ISSUE59_EMAIL_ID, root=defect_root))
 
         # Collision naming comes from identity metadata, so an unselected
         # same-professor peer's path is never resolved. Derive the expected
