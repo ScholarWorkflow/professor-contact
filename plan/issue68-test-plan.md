@@ -315,7 +315,7 @@
    test "$PC68_FOLLOWUP_TEMPLATE" = "$PC68_CONSUMER/套磁邮件/套磁跟进模板.md" && test -f "$PC68_FOLLOWUP_TEMPLATE" && test -r "$PC68_FOLLOWUP_TEMPLATE"
    ```
 
-   阶段4与阶段5预检显式使用同一组变量；正式请求的 `--cd "$PC68_CONSUMER"` 与产品默认查找位置一致。任何文件缺失或路径不一致时停止，不发送请求。确认后，将上面的普通业务对象和上一条所述资料使用要求放入 `PC68_PROMPT`，用 `jq --arg` 生成请求文件：
+   阶段4预检显式使用 `$PC68_PROFILE`；两次阶段5预检使用同一 `$PC68_PROFILE`、`$PC68_TEMPLATE` 和 `$PC68_FOLLOWUP_TEMPLATE`。正式请求的 `--cd "$PC68_CONSUMER"` 与产品默认查找位置一致。任何文件缺失或路径不一致时停止，不发送请求。确认后，将上面的普通业务对象和上一条所述资料使用要求放入 `PC68_PROMPT`，用 `jq --arg` 生成请求文件：
 
    ```sh
    jq -n --arg consumer "$PC68_CONSUMER" --arg prompt "$PC68_PROMPT" '{command:("--json --ephemeral --skip-git-repo-check --sandbox workspace-write --cd "+($consumer|@sh)+" -- "+($prompt|@sh)),timeout:900}' > "$PC68_RUN_ROOT/request.json"
