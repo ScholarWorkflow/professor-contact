@@ -18,3 +18,10 @@
 ## 结论
 
 辛的正常业务流程未完成，且运行时错误阻止了邮件生成与本地状态检查，故按第3.3节记录为**无法判断**，不能作为通过结果；第三关口尚未通过。唯一一次正式请求及其响应已保留在隔离运行目录，没有将原始响应或合成输入复制进仓库。选择分配产生的临时文件清理命令被执行器拒绝，仍留在该隔离目录。
+
+## 第四十九版后的本地回归
+
+- 产品源码固定为 `72f20846e9810f5445c0c6a3891f3877b4cd0e21`；测试代码和请求构建器使用当前提交 `ddb3d447d80c79ded7a743cf9d0fe4a9b70d474a`。此前计划记载的“128 项通过”原始报告未找到；以下是新复验，不能替代或追溯证明那次历史运行。
+- 在 `.apm/skills/professor-contact/tests` 中运行 `uv run --offline --no-project python -m unittest test_contact_state test_stage4_selection_agent_contract test_stage5_dualtarget_contract test_stage5_immutable test_issue67_gate2_r3`，`UV_CACHE_DIR` 使用仓库外独立临时缓存。结果为 128 项、2 项断言失败：`test_issue59_t59_1_email_id_is_resolved_before_any_other_check` 的两个子项均收到 `status: needs_decision`、`reason_code: manual_markdown_changed`，而断言预期 `status: ok`。原因尚未判定为产品问题或用例状态复用问题；本次套件未通过，相关业务结论为无法判断。原始输出保存在仓库外临时目录，未提交。
+- 为定位持续失败的 CI 检查，另运行 `uv run --offline --no-project python -m unittest discover -p 'test_stage3_stage4_caller_contract.py' -v`。27 项中 1 项失败：`test_program_level_stage4_files_are_documented_as_non_authority`，原因是技能说明缺少历史程序级 `教授研究/邮件输入.json` 仅作为旧格式迁移来源的说明。这是产品文档缺项，交实现负责人处理；本地测试工程师未修改产品文档。原始输出由执行器直接返回，未另存日志；本记录仅保留命令、退出结果与失败摘要。
+- 未发送替代正式 `/eval` 请求。第四十九版要求请求构建器修正后的第二关口重新通过，并取得明确授权；辛和第三关口仍未通过。
