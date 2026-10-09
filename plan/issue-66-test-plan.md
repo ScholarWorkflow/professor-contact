@@ -1,8 +1,8 @@
 # 第66号议题／第73号拉取请求测试计划
 
-版本：`issue-66-test-plan-new-rules-r4.8-2026-10-09`。
+版本：`issue-66-test-plan-new-rules-r4.9-2026-10-09`。
 
-产品基线：`86b6c82197e1b0afdbc9c337b6c4892b37ddc78d`。本版在第二版精简范围上，按用户要求补齐正常工作流程及根对话后续命令的检查步骤，并按2026年10月9日要求把校验文件确定为唯一正式原文；产品未改，历史结果保留原版本归属。
+产品基线：`86b6c82197e1b0afdbc9c337b6c4892b37ddc78d`。本版保留既有A—D结果及R4.8范围，新增完成报告源文件与安装件检查，并把E组步骤改为记录并固定产品同步后的实际提交。当前 PR 提交 `b4c6f46537241cb062c7088989adbd07f30553fb` 的校验代理尚未同步第十六版契约，新增契约检查在该源码上有两项失败；因此不得安装该旧版本或发送新的 `/eval` 请求。
 
 ## 依据与范围
 
@@ -20,7 +20,7 @@
 | B | 正式状态稳定重建总览，错误时不发布部分内容，旧身份兼容准确 | 甲乙同方向／组编号；总览删除；一个现存状态损坏；总览冲突或写入失败；旧身份匹配一个、零个、多个记录 | 行、教授链接及排序正确，只用已提交状态；错误时旧总览保留；一个匹配只迁移身份、保留候选，零个或多个匹配在写总览前拒绝 | 重建／兼容入口检查业务行和旧总览；源码确认写入目标，不比较所有教授文件快照 |
 | C | 凭据固定输入，修正只处理点名对象，保留旧行为及两轮上限 | 正常首轮及修正；混传来源、摘要／来源变化；新调用、同调用同轮重复准备、第二轮准备；问题指向首轮选择外方向、单组或文件；首轮通过、修正通过、第二轮失败；旧显式选择／跳过／修正 | 同凭据消费原输入，错误拒绝；路径按调用／轮次隔离，重复准备拒绝；修正来自问题，不重放首轮过滤，组问题不扩大，文件问题按渲染对象展开；保留无关候选及记录；首轮通过不修正，第二轮终态无第三轮；旧准入／筛选语义保留 | 凭据、计划、提交、记录入口的确定性检查；比较必要任务集合、状态字段和候选内容，不为修正组合追加模型请求 |
 | D | 固定写入、保存和记录传递同一校验原文，按教授准确消费，失败不推进状态 | 三种合法结论及特殊字符；单文件／批量映射；完整批量正文逐教授消费；错教授／凭据／轮次／摘要、候选稿变化、原文不完整；非法输入／映射、既有文件／符号链接、写入／读回失败、批量后项失败；旧无输出路径及旧记录入口 | 完整对象语义保留，输出与文件字节相同、权限 `0600`；保存不重排；记录消费本教授唯一条目并推进本教授轮次，乙异常不阻甲；错误不推进相关状态、不覆盖既有目标，批量只清理本次未完成文件；旧接口兼容 | 正式写入／保存／记录入口；`jq` 检查必要字段、直接比较字节、标准框架安排文件故障，详见下文 |
-| E | 根对话及命名子代理按实际结果推进流程 | 产品同步后一次正常第三阶段请求，受支持的干净消费者；只检查实际通过或修正分支 | 生成子代理完成候选保存；校验子代理调用固定写入，最终只返回规定的完成报告；根消费正确教授和本轮交接文件，依次准备、保存、记录；按记录结果修正或停止，终态后尽力重建一次总览；一轮通过、修正后通过或两轮仍失败均可成为合法终态，不要求候选内容一定通过 | 当前实现的评估服务中的必要调用、命令结果、固定写入文件及教授最终状态；按下文区分流程结果与内容结论，不读取或推断子代理收到的提示词，只发一次模型请求；既有运行只复用未受影响事实 |
+| E | 根对话及命名子代理按实际结果推进流程 | 产品同步后一次正常第三阶段请求，受支持的干净消费者；只检查实际通过或修正分支 | 生成子代理完成候选保存；校验子代理调用固定写入，最终只返回规定的完成报告；根消费正确教授和本轮交接文件，依次准备、保存、记录；按记录结果修正或停止，终态后尽力重建一次总览；一轮通过、修正后通过或两轮仍失败均可成为合法终态，不要求候选内容一定通过 | 固定写入报告契约定向测试；安装件报告检查；当前实现的评估服务中的必要调用、命令结果、固定写入文件及教授最终状态；按下文区分流程结果与内容结论，不读取或推断子代理收到的提示词，只发一次模型请求；既有运行只复用未受影响事实 |
 
 ## 检查方法及必要性
 
@@ -288,3 +288,89 @@ E组事件记录含2380条应用服务事件及4条子线程读取，角色为�
 本地测试工程师复用R4.6原始响应、两份固定写入文件及R4.7已经取得的观察，不发送新请求。该证据继续证明两轮固定写入成功、标准输出与指定文件逐字节相同、根随后保存并记录同一文件，以及生成、修正、停止和总览顺序。它也没有显示根从子代理最终消息重建校验文件。这些未变事实可以复用。
 
 两轮旧子代理最终消息各少一个末尾换行符的事实继续保留，但它只说明旧消息载体与文件排版不同，不再属于新版失败条件。旧响应仍返回完整校验 JSON，不能证明第十六版规定的完成报告字段及“不含校验正文”；因此R4.8的E组结果记为**尚未执行**，不得由旧证据改判通过。候选内容的历史结论仍为 `fail_after_2_rounds`，剩余一项C10阻塞问题。A—D的42项有效通过结果继续复用。产品实现负责人须先按第十六版执行计划同步校验代理、Codex流程及实际安装内容；同步后只运行一次当前实现的E组，不重跑A—D。本记录不批准第三关口或合并。
+
+### R4.9：完成报告检查及同步后运行步骤
+
+日期：2026年10月9日。目标仍为第十六版完整执行计划规定的 Codex 流程。新增定向检查位于 `.apm/skills/professor-contact/tests/test_issue66_validator_report_contract.py`，覆盖成功报告、失败报告、缺省原因码、禁止把校验正文放进完成报告，以及未传 `output_file` 时保留旧只读返回。测试默认读取生产者代理源文件；设置 `PROFESSOR_CONTACT_VALIDATOR_AGENT` 后，会直接读取指定的 Codex 安装件 `.toml` 文件中的 `developer_instructions`。
+
+本次复核的 PR 提交为 `b4c6f46537241cb062c7088989adbd07f30553fb`。在 `.apm/skills/professor-contact/tests` 运行 `UV_CACHE_DIR=/private/tmp/issue66-validator-report-uv-cache uv run --python 3.12 --no-project python -B -m unittest test_issue66_validator_report_contract -v`，结果为3项中1项通过、2项失败，退出码1：旧只读返回兼容通过；新成功／失败完成报告和缺省 `validation_write_failed` 检查失败。失败原因是当前代理源文件未包含第十六版的新报告格式及缺省原因码，不是测试启动错误。故当前提交不是可安装的E组目标，尚无新的产品提交 SHA；未安装旧产品，也未发送 `/eval`。
+
+产品实现负责人将技能流程、校验代理及其 Codex 安装内容按第十六版同步并推送后，执行人须先核对源文件定向检查通过，并记录当时实际、干净且已推送的产品提交 SHA。以下步骤从生产者仓库根目录执行。该 SHA 写入运行记录，之后 APM 安装固定使用同一 SHA；不使用分支名、移动标签或本地路径。源文件检查失败时立即停止，不安装、不发送请求。
+
+```sh
+set -eu
+set -o pipefail
+producer=$(pwd)
+run_dir=$(mktemp -d "${TMPDIR:-/tmp}/issue66-pr73-r49.XXXXXX")
+consumer="$run_dir/consumer"
+git -C "$producer" status --porcelain > "$run_dir/producer-status.txt"
+test ! -s "$run_dir/producer-status.txt" || exit 1
+product_sha=$(git -C "$producer" rev-parse HEAD)
+printf '%s\n' "$product_sha" > "$run_dir/product-sha.txt"
+cd "$producer/.apm/skills/professor-contact/tests"
+if UV_CACHE_DIR="$run_dir/uv-cache" uv run --python 3.12 --no-project python -B -m unittest \
+  test_issue66_validator_report_contract -v 2>&1 | tee "$run_dir/source-contract-tests.log"; then
+  test_exit=0
+else
+  test_exit=$?
+fi
+printf '%s\n' "$test_exit" > "$run_dir/source-contract-tests.exit"
+test "$test_exit" -eq 0 || exit 1
+```
+
+源文件检查成功后，再从干净消费者经受支持的 APM 路径安装该 SHA，并对实际安装的 Codex 代理文件运行同一组检查。安装失败、安装件缺失、定向检查失败或退出码非0时立即停止，不发送 `/eval`。
+
+```sh
+set -eu
+set -o pipefail
+mkdir -p "$consumer"
+cd "$consumer"
+apm --version > "$run_dir/apm-version.txt"
+apm install "ScholarWorkflow/professor-contact#$product_sha" --target codex > "$run_dir/apm-install.log" 2>&1
+validator_agent="$consumer/.codex/agents/professor-contact-style-validator.toml"
+test -f "$validator_agent" || exit 1
+cd "$producer/.apm/skills/professor-contact/tests"
+if PROFESSOR_CONTACT_VALIDATOR_AGENT="$validator_agent" \
+  UV_CACHE_DIR="$run_dir/uv-cache" uv run --python 3.12 --no-project python -B -m unittest \
+  test_issue66_validator_report_contract -v 2>&1 | tee "$run_dir/installed-contract-tests.log"; then
+  test_exit=0
+else
+  test_exit=$?
+fi
+printf '%s\n' "$test_exit" > "$run_dir/installed-contract-tests.exit"
+test "$test_exit" -eq 0 || exit 1
+```
+
+安装件检查通过后，复用R4.6已审核的 `issue55-stage3-pre` 合成夹具、提示词、项目配置、评估服务连接及事件检查步骤。准备与请求完整命令如下；产品 SHA 仍取上述记录值，`timeout` 固定为1200秒。任何准备步骤失败都不得发送请求。
+
+```sh
+set -eu
+set -o pipefail
+program_root="$consumer/fixture-program"
+UV_CACHE_DIR="$run_dir/uv-cache" uv run --python 3.12 --no-project python \
+  "$producer/.apm/skills/professor-contact/tests/runtime/prepare_issue55_stage3_fixture.py" \
+  --program-root "$program_root" \
+  --output "$run_dir/fixture-manifest.json" > "$run_dir/fixture-build.json" 2>&1
+test -s "$run_dir/fixture-manifest.json"
+UV_CACHE_DIR="$run_dir/uv-cache" uv run --python 3.12 --no-project python -c 'import sys; from pathlib import Path; template=Path(sys.argv[1]).read_text(encoding="utf-8"); root=sys.argv[2]; assert template.count("{{PROGRAM_ROOT}}") == 1; Path(sys.argv[3]).write_text(template.replace("{{PROGRAM_ROOT}}", root), encoding="utf-8")' \
+  "$producer/.apm/skills/professor-contact/tests/runtime/prompts/issue55-stage3-routing.txt" \
+  "$program_root" "$run_dir/eval-prompt.txt"
+test -s "$run_dir/eval-prompt.txt"
+prompt=$(< "$run_dir/eval-prompt.txt")
+command="--json --skip-git-repo-check --sandbox workspace-write --cd '$consumer' --config 'projects={\"$consumer\"={trust_level=\"trusted\"}}' -- '$prompt'"
+jq -n --arg command "$command" '{command:$command,timeout:1200}' > "$run_dir/eval-request.json"
+jq -e '.timeout == 1200 and (.command | type == "string" and length > 0)' "$run_dir/eval-request.json" > /dev/null
+: "${EVAL_SERVER_WORKSPACE:?请先将其设为已配置的评测服务工作区路径}"
+eval_port=$(direnv exec "$EVAL_SERVER_WORKSPACE" printenv EVAL_PORT)
+case "$eval_port" in
+  ''|*[!0-9]*) exit 1 ;;
+esac
+curl_exit=0
+http_status=$(curl --silent --show-error --output "$run_dir/eval-response.json" --write-out '%{http_code}' \
+  -H 'Content-Type: application/json' --data-binary @"$run_dir/eval-request.json" \
+  "http://127.0.0.1:$eval_port/eval") || curl_exit=$?
+printf '%s\n' "$http_status" > "$run_dir/http-status.txt"
+printf '%s\n' "$curl_exit" > "$run_dir/curl-exit.txt"
+```
+
+`curl` 只执行一次。HTTP状态非200、响应不是有效JSON或必要字段缺失时记为无法判断，不重试。状态结构完整时，按“根对话后续命令的具体检查步骤”及E组清单核对实际分支、完成报告、固定写入文件、保存与记录及最终教授状态。完成分类后删除 `$run_dir/consumer`；运行目录保留请求、原始响应、安装版本与日志、产品 SHA、定向测试日志、夹具清单、状态码和运行记录，不提交或上传。产品提交 SHA 的实际值及唯一一次请求结果待产品同步后补录；在此之前E组仍为**尚未执行**，不批准第三关口或合并。
