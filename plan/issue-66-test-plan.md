@@ -445,3 +445,24 @@ R4.10的 `curl` 只执行一次。HTTP状态非200、响应不是有效JSON或�
 第一轮生成、准备、固定写入、保存和记录均成功；同一调用凭据及方向范围对应首轮 `fail`、3个阻塞问题、`needs_correction=true`、`terminal=false`，按计划只触发一次纠正。第二轮同样按顺序成功，结果为 `pass_with_minor`、0个阻塞问题、`needs_correction=false`、`terminal=true`。两份校验完成报告均只含规定的 `result=ok`、`write_status=written` 和对应 `output_files`；报告路径与准备结果一致。每轮保存的交接路径及摘要匹配准备结果，记录入口的交接和校验摘要匹配同轮保存结果。两轮固定写入标准输出与 `validator-output.json`、以及固定写入文件与保存后 `validation-result.json` 的4次 `cmp` 均以退出码0通过。
 
 终态后只重建一次总览，结果为1名教授、1个方向、0个跨方向条目。最终教授状态为 `DIR00001=pass`、第2轮、`issues=[]`；`套磁选择.json` 和 `邮件输入.json` 均不存在。按已批准规则，E组业务流程结果为**通过**，最终内容结果为 `pass_with_minor`。A—D的42项通过结果按历史审核记录复用，没有重跑。完成分类后已删除消费者并确认不存在；本次运行证据保留在上述仓库外目录，不提交或上传。本记录不构成第三关结果审核或合并批准。
+
+#### R4.12 当前提交的A、C定向复测结果（2026年10月10日）
+
+按版本 `issue-66-test-plan-new-rules-r4.12-2026-10-10` 执行。测试断言提交为 `162843c1c843989fbf09b45fd808d5276c92b94d`，被检查的产品提交为 `f053d913afce47abed5abade9bf6e2737179f497`。运行目录为 `/private/tmp/issue66-pr73-r412.OMKPuO`，其中保留计划版本、两个提交 SHA、完整日志、退出码和依赖缓存；未将临时产物加入仓库。
+
+从 `.apm/skills/professor-contact/tests` 执行计划列出的六项命令：A组 `test_stage4_ordinary_selection_joins_by_direction_id`、`test_stage4_exactly_migrates_v1_candidate_state_with_pack_mapping_without_stage3_rerun`、`test_stage4_partial_other_professor_rerun_preserves_existing_selection_and_email`；C组 `test_01_stage3_selected_refresh_scopes_from_the_professor_local_selection`、`test_02_selected_refresh_needs_an_explicit_selection_and_ignores_legacy`、`test_03_scoped_finalize_with_the_local_selection_keeps_other_directions`。实际测试命令如下：
+
+```sh
+UV_CACHE_DIR="$run_dir/uv-cache" uv run --python 3.12 --no-project python -m unittest -v \
+  test_stage3_direction_groups.Stage3DirectionGroupTests.test_stage4_ordinary_selection_joins_by_direction_id \
+  test_stage3_direction_groups.Stage3DirectionGroupTests.test_stage4_exactly_migrates_v1_candidate_state_with_pack_mapping_without_stage3_rerun \
+  test_stage3_direction_groups.Stage3DirectionGroupTests.test_stage4_partial_other_professor_rerun_preserves_existing_selection_and_email \
+  test_contact_state.Issue67AdjacentStateTests.test_01_stage3_selected_refresh_scopes_from_the_professor_local_selection \
+  test_contact_state.Issue67AdjacentStateTests.test_02_selected_refresh_needs_an_explicit_selection_and_ignores_legacy \
+  test_contact_state.Issue67AdjacentStateTests.test_03_scoped_finalize_with_the_local_selection_keeps_other_directions \
+  2>&1 | tee "$run_dir/affected-tests.log"
+```
+
+测试输出为 `Ran 6 tests in 5.703s`、`OK`，退出码为0。运行出现 `--no-project` 未发现项目提示，不影响执行结果。
+
+当前结果确认A组第四阶段按方向读取指定教授通过。C组中，项目级旧版选择已存在且指向另一方向时，省略 `--selection` 的计划和提交调用均以 `invalid_params` 拒绝；没有生成任务，候选状态、候选稿、教授本地第四阶段选择及项目级旧文件均保持原字节。明确传入教授本地选择后，只选择 `DIR00001`；提交后未选的 `DIR00002` 候选记录保留。B、D、E组按影响分析复用原有效结果，没有重跑这些组或发送模型请求。持续集成中计划已指出的 `EarlyMachineOutputGateTests.test_every_json_agent_front_loads_single_message_protocol` 失败仍属实现负责人处理的合并阻塞项；本次只记录A、C受影响项的复测结果，不批准合并。
