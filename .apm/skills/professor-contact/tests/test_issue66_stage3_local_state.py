@@ -49,6 +49,11 @@ class Issue66LocalStateTests(Stage3DirectionGroupBase):
             self.overview_path.read_text(encoding="utf-8"))
         return body
 
+    @staticmethod
+    def _overview_business_lines(body):
+        """Compare the stable projection while excluding its render timestamp."""
+        return [line for line in body.splitlines() if not line.startswith("> ")]
+
     def _write_two_professors_with_matching_ids(self):
         """Commit two isolated professor states with identical machine IDs."""
         results_a = self.write_results("issue66-a", {
@@ -222,7 +227,10 @@ class Issue66LocalStateTests(Stage3DirectionGroupBase):
         self.overview_path.unlink()
         rebuilt = parse(run_cli("stage3-rebuild-overview", "--program-root", self.root))
         self.assertEqual(rebuilt["status"], "ok", rebuilt)
-        self.assertEqual(self._overview_body(), body)
+        self.assertEqual(
+            self._overview_business_lines(self._overview_body()),
+            self._overview_business_lines(body),
+        )
         self.assertEqual((state_a.read_bytes(), state_b.read_bytes()), state_bytes)
 
     def test_rebuild_overview_keeps_old_bytes_when_a_discovered_state_is_malformed(self):

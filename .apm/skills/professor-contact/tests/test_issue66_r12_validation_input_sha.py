@@ -25,6 +25,17 @@ def validator_entry(prof_dir, verdict, minor):
         "verdict": verdict, "blocking": 0, "minor": minor, "issues": []}]}
 
 
+def object_keys(value):
+    """Yield JSON object keys recursively without inspecting string values."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield key
+            yield from object_keys(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from object_keys(child)
+
+
 class Issue66RecordValidationInputShaTests(Stage3DirectionGroupBase):
     def test_record_validation_returns_input_bytes_sha(self):
         """A→hash(A), overwrite with B, second call→hash(B); state untouched."""
@@ -66,10 +77,12 @@ class Issue66RecordValidationInputShaTests(Stage3DirectionGroupBase):
                          "the first round's returned hash is immutable evidence")
 
         # Read-only observability: the field must never enter the state file.
-        state_text = state_path.read_text(encoding="utf-8")
-        self.assertNotIn("validation_input_sha256", state_text)
-        state = json.loads(state_text)
-        self.assertNotIn("validation_input_sha256", state.get("validator") or {})
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        transient_fields = {
+            "invocation_file", "handoff_file", "handoff_sha256",
+            "validation_input_sha256",
+        }
+        self.assertTrue(transient_fields.isdisjoint(set(object_keys(state))))
 
     def test_unreadable_validation_file_still_fails_closed(self):
         """A malformed input keeps the existing fail-closed channel (no hash)."""
