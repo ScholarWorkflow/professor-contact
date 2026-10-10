@@ -544,14 +544,25 @@ class TestRunnerBasics(BaseEnv):
         self.assertEqual(out["status"], "error")
         self.assertEqual(out["reason_code"], "invalid_result_json")
 
-    def test_05e_overview_manual_edit_blocks_before_md_write(self):
+    def test_05e_overview_manual_edit_does_not_block_local_finalize(self):
+        # Issue #66: the program overview is a derived projection owned by
+        # stage3-rebuild-overview. A manual overview edit (or any program-level
+        # projection problem) must NOT block, roll back or re-judge a legal
+        # professor-local Stage-3 commit, and finalize must not touch the
+        # overview or the projection registry at all.
         self.stage3_run()
         md_path = self.prof_dir / "套磁想法候选.md"
-        md_before = md_path.read_bytes()
+        state_path = self.prof_dir / "套磁候选状态.json"
         overview_path = self.root / "教授研究" / "套磁想法候选总览.md"
+        registry_path = self.root / "教授研究" / "_contact_projections.json"
         overview_path.write_text(
-            overview_path.read_text(encoding="utf-8").replace("推荐顺序", "手工改动"),
+            "# 套磁想法候选总览\n\n上一轮 rebuild 留下的聚合。\n", encoding="utf-8")
+        overview_before = overview_path.read_bytes()
+        registry_missing_before = not registry_path.exists()
+        overview_path.write_text(
+            overview_path.read_text(encoding="utf-8").replace("聚合", "手工改动"),
             encoding="utf-8")
+        overview_edited = overview_path.read_bytes()
         profile = self.root / "changed-profile.md"
         profile.write_text("兴趣发生变化\n", encoding="utf-8")
         results = self.root / "rerender-results"
@@ -564,9 +575,21 @@ class TestRunnerBasics(BaseEnv):
             "stage3-finalize", "--professor-dir", self.prof_dir,
             "--results", results, "--program-root", self.root,
             "--profile", profile))
-        self.assertEqual(out["status"], "needs_decision")
-        self.assertEqual(out["reason_code"], "manual_markdown_changed")
-        self.assertEqual(md_path.read_bytes(), md_before)
+        self.assertEqual(out["status"], "ok", out)
+        # The professor-local pair advanced to the new profile render…
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["profile_fingerprint"],
+                         contact_state.profile_fingerprint(str(profile)))
+        rendered = md_path.read_text(encoding="utf-8")
+        _, md_body = contact_state.split_frontmatter(rendered)
+        self.assertEqual(state["cache"]["render"]["套磁想法候选.md"]["sha256"],
+                         contact_state.sha256_text(md_body))
+        # …while the overview keeps the manual edit byte-for-byte and the
+        # registry is never created or touched by the local commit.
+        self.assertEqual(overview_path.read_bytes(), overview_edited)
+        self.assertNotEqual(overview_edited, overview_before)
+        self.assertTrue(registry_missing_before)
+        self.assertFalse(registry_path.exists())
 
     def test_06_email_pack_exact_join_only(self):
         self.stage3_run()
@@ -1467,6 +1490,283 @@ def write_issue59_stage5_fixture(program_root, specs=(), *, extra_rows=(),
             "checker_marker": checker_marker,
             "email_ids": [row["email_id"] for row in rows],
             "gap_id": quote_id(ISSUE59_GAP_QUOTE)}
+
+
+class Issue66RecordedValidationScopeTests(BaseEnv):
+    STATE = "套磁候选状态.json"
+    CANDIDATES_MD = "套磁想法候选.md"
+
+    def render_two_directions(self):
+        self.assertEqual(self.stage3_run()["status"], "ok")
+        second_results = self.add_second_direction()
+        committed = parse(run_cli(
+            "stage3-finalize", "--professor-dir", self.prof_dir,
+            "--results", second_results, "--program-root", self.root,
+            "--collection-key", "DIR00002"))
+        self.assertEqual(committed["status"], "ok", committed)
+
+        group_directions = ["DIR00001", "DIR00002"]
+        groups = json.dumps([group_directions])
+        cross_plan = parse(run_cli(
+            "stage3-plan", "--professor-dir", self.prof_dir,
+            "--program-root", self.root, "--cross-direction-groups", groups))
+        self.assertEqual(cross_plan["status"], "ok", cross_plan)
+        cross_job = next(job for job in cross_plan["jobs"]
+                         if job["kind"] == "cross_direction")
+        cross_gaps = cross_job["model_input"]["gaps"]
+        gap_refs = []
+        for direction_id in group_directions:
+            gap = next(row for row in cross_gaps
+                       if direction_id in row["direction_ids"])
+            gap_refs.append({"direction_id": direction_id,
+                             "item_key": gap["item_key"], "gap_id": gap["gap_id"]})
+        shared_paper = next(
+            paper for paper in cross_job["model_input"]["papers"]
+            if set(group_directions).issubset(paper["direction_ids"]))
+        cross_results = self.root / "two-directions-cross-results"
+        cross_results.mkdir()
+        (cross_results / cross_job["result_file"]).write_text(json.dumps(
+            {"schema": 2, "kind": "cross_candidates",
+             "group_id": cross_job["group_id"],
+             "direction_ids": group_directions,
+             "candidates": [{
+                 "id": "CROSS_1", "kind": "cross_direction",
+                 "direction_ids": group_directions, "origin": "generated",
+                 "title": "两种输入模式共用同一约束",
+                 "one_liner": "同一约束跨两个方向",
+                 "research_question": "同一约束能否同时服务两个方向",
+                 "points": [], "gap_refs": gap_refs, "anchor_notes": {},
+                 "papers": [{"item_key": shared_paper["item_key"],
+                             "direction_ids": group_directions,
+                             "role": "共同基座", "fit_note": "共享论文"}],
+                 "fit": "null", "red_lines": []}]},
+            ensure_ascii=False), encoding="utf-8")
+        cross_finalized = parse(run_cli(
+            "stage3-finalize", "--professor-dir", self.prof_dir,
+            "--results", cross_results, "--program-root", self.root,
+            "--cross-direction-groups", groups))
+        self.assertEqual(cross_finalized["status"], "ok", cross_finalized)
+        cross_state = json.loads(
+            (self.prof_dir / self.STATE).read_text(encoding="utf-8"))
+        cross_group = next(row for row in cross_state["cross_direction_groups"]
+                           if row["group_id"] == cross_job["group_id"])
+        self.assertEqual([candidate["id"] for candidate in cross_group["candidates"]],
+                         ["CROSS_1"])
+        body = contact_state.split_frontmatter(
+            (self.prof_dir / self.CANDIDATES_MD).read_text(encoding="utf-8"))[1]
+        line_scopes = contact_state.stage3_render_line_scopes(body)
+        rendered_objects = {contact_state.scope_key(scope) for scope in line_scopes
+                            if isinstance(scope, dict) and scope.get("candidate_id")}
+        self.assertIn(f"group:{cross_job['group_id']}", rendered_objects)
+        return cross_job["group_id"]
+
+    def prepare_validation(self, name):
+        invocation = parse(run_cli(
+            "stage3-plan", "--professor-dir", self.prof_dir,
+            "--program-root", self.root,
+            "--capture-invocation", self.root / name))
+        self.assertEqual(invocation["status"], "ok", invocation)
+        prepared = parse(run_cli(
+            "stage3-prepare-validation",
+            "--invocation-file", invocation["invocation_file"],
+            "--invocation-sha256", invocation["invocation_sha256"],
+            "--round", "1"))
+        self.assertEqual(prepared["status"], "ok", prepared)
+        handoff_dir = contact_state._stage3_handoff_directory(
+            self.prof_dir, invocation["invocation_file"], 1)
+        self.addCleanup(shutil.rmtree, handoff_dir, ignore_errors=True)
+        return invocation, prepared
+
+    @staticmethod
+    def validator_issue(quote, suggestion="按校验意见修正候选表述"):
+        return {"rule": "B5", "severity": "blocking", "location": "候选标题",
+                "quote": quote, "suggestion": suggestion}
+
+    def record_through_handoff(self, invocation, prepared, issues):
+        result = {
+            "result": "ok",
+            "files": [{
+                "file": str((self.prof_dir / self.CANDIDATES_MD).resolve()),
+                "artifact": "candidates", "verdict": "fail",
+                "blocking": len(issues), "minor": 0, "issues": issues,
+            }],
+            "notes": "确定性回归校验",
+        }
+        written = run_cli(
+            "stage3-write-validation", "--output-file", prepared["output_file"],
+            "--result-json", json.dumps(result, ensure_ascii=False))
+        self.assertEqual(written.returncode, 0, written.stderr)
+        saved = parse(run_cli(
+            "stage3-save-validation", "--handoff-file", prepared["handoff_file"],
+            "--handoff-sha256", prepared["handoff_sha256"]))
+        self.assertEqual(saved["status"], "ok", saved)
+        recorded = parse(run_cli(
+            "stage3-record-validation", "--handoff-file", prepared["handoff_file"],
+            "--handoff-sha256", prepared["handoff_sha256"],
+            "--expected-validation-sha256", saved["validation_sha256"]))
+        self.assertEqual(recorded["status"], "ok", recorded)
+        return saved, recorded
+
+    def render_quote(self, scope_key):
+        body = contact_state.split_frontmatter(
+            (self.prof_dir / self.CANDIDATES_MD).read_text(encoding="utf-8"))[1]
+        line_scopes = contact_state.stage3_render_line_scopes(body)
+        for line, scope in zip(body.splitlines(), line_scopes):
+            if (contact_state.scope_key(scope) == scope_key
+                    and isinstance(scope, dict) and scope.get("candidate_id")
+                    and line.strip()):
+                quote = line.strip()
+                if len(quote) <= 40:
+                    return quote
+        self.fail(f"no short rendered quote found for {scope_key}")
+
+    def correction_args(self, invocation, validation_file):
+        return ["--invocation-file", invocation["invocation_file"],
+                "--invocation-sha256", invocation["invocation_sha256"],
+                "--validation-file", validation_file]
+
+    def test_handoff_record_expands_global_blocker_to_rendered_objects(self):
+        group_id = self.render_two_directions()
+
+        body = contact_state.split_frontmatter(
+            (self.prof_dir / self.CANDIDATES_MD).read_text(encoding="utf-8"))[1]
+        line_scopes = contact_state.stage3_render_line_scopes(body)
+        quote = next(line.strip() for line, scope in zip(body.splitlines(), line_scopes)
+                     if scope is None and line.strip() and len(line.strip()) <= 40)
+        rendered_objects = {contact_state.scope_key(scope) for scope in line_scopes
+                            if isinstance(scope, dict) and scope.get("candidate_id")}
+        expected_objects = {"direction:DIR00001", "direction:DIR00002",
+                            f"group:{group_id}"}
+        self.assertEqual(rendered_objects, expected_objects)
+        invocation, prepared = self.prepare_validation("global-blocker-call")
+        issue = self.validator_issue(quote)
+        _saved, recorded = self.record_through_handoff(invocation, prepared, [issue])
+
+        self.assertTrue(recorded["needs_correction"], recorded)
+        self.assertFalse(recorded["terminal"], recorded)
+        self.assertEqual({row["scope"] for row in recorded["scopes"]},
+                         rendered_objects, recorded)
+        state = json.loads((self.prof_dir / self.STATE).read_text(encoding="utf-8"))
+        pending = state["validator"]["pending"]
+        self.assertEqual(set(pending), rendered_objects)
+        for row in pending.values():
+            self.assertEqual(row["result"], "fail")
+            self.assertEqual(row["rounds"], 1)
+            self.assertEqual(len(row["issues"]), 1)
+            saved_issue = row["issues"][0]
+            self.assertEqual({field: saved_issue[field] for field in issue}, issue)
+
+    def test_rewritten_validation_file_cannot_expand_or_replace_recorded_correction(self):
+        group_id = self.render_two_directions()
+
+        original_issue = self.validator_issue(self.render_quote("direction:DIR00001"))
+        invocation, prepared = self.prepare_validation("recorded-scope-call")
+        saved, recorded = self.record_through_handoff(
+            invocation, prepared, [original_issue])
+        state_path = self.prof_dir / self.STATE
+        before_state = json.loads(state_path.read_text(encoding="utf-8"))
+        recorded_pending = before_state["validator"]["pending"]
+        recorded_issues = recorded_pending["direction:DIR00001"]["issues"]
+        recorded_candidate_ids = recorded_pending["direction:DIR00001"]["candidate_ids"]
+        self.assertTrue(recorded_candidate_ids, recorded_pending)
+        before_dir1 = next(row for row in before_state["directions"]
+                           if row["direction_id"] == "DIR00001")
+        correction_candidate_id = recorded_candidate_ids[0]
+        before_candidate = next(
+            candidate for candidate in before_dir1["candidates"]
+            if candidate["id"] == correction_candidate_id)
+        corrected_title = f"校验修正：{before_candidate['title']}"
+        before_groups = {row["group_id"]: row
+                         for row in before_state["cross_direction_groups"]}
+        self.assertEqual(set(before_groups), {group_id})
+        self.assertEqual(set(before_state["validator"]["groups"]),
+                         {group_id})
+
+        validation_path = Path(saved["validation_file"])
+        changed = json.loads(validation_path.read_text(encoding="utf-8"))
+        changed_issue = dict(original_issue, suggestion="改写后的正式问题")
+        added_issue = self.validator_issue(
+            self.render_quote("direction:DIR00002"),
+            suggestion="额外方向的问题不得加入修正任务")
+        changed["files"][0]["issues"] = [changed_issue, added_issue]
+        changed["files"][0]["blocking"] = 2
+        validation_path.write_text(json.dumps(changed, ensure_ascii=False),
+                                   encoding="utf-8")
+        validation_file = str(validation_path)
+        args = self.correction_args(invocation, validation_file)
+
+        planned = parse(run_cli("stage3-plan", *args))
+        with self.subTest("stage3-plan"):
+            self.assertEqual(planned["status"], "ok", planned)
+            self.assertEqual(planned["correction_scopes"],
+                             ["direction:DIR00001"], planned)
+            self.assertEqual([job["direction_id"] for job in planned["jobs"]],
+                             ["DIR00001"], planned)
+            model_input = planned["jobs"][0]["model_input"]
+            self.assertEqual(model_input["validator_issues"], recorded_issues)
+            self.assertEqual(
+                {field: model_input["validator_issues"][0][field]
+                 for field in original_issue}, original_issue)
+            self.assertEqual(model_input["validator_issues"][0]["suggestion"],
+                             original_issue["suggestion"])
+            self.assertEqual(model_input["repairable_candidate_ids"],
+                             recorded_candidate_ids)
+
+        correction_results = self.root / "recorded-scope-correction-results"
+        correction_results.mkdir()
+        for source_dir, direction_id in ((self.root / "s3results", "DIR00001"),
+                                         (self.root / "second-s3results", "DIR00002")):
+            source = source_dir / result_file("candidates", direction_id)
+            destination = correction_results / source.name
+            if direction_id == "DIR00001":
+                result = json.loads(source.read_text(encoding="utf-8"))
+                candidate = next(
+                    row for row in result["candidates"]
+                    if row["id"] == correction_candidate_id)
+                candidate["title"] = corrected_title
+                destination.write_text(json.dumps(result, ensure_ascii=False),
+                                       encoding="utf-8")
+            else:
+                shutil.copyfile(source, destination)
+        finalized = parse(run_cli(
+            "stage3-finalize", *args, "--results", correction_results))
+        with self.subTest("stage3-finalize"):
+            self.assertEqual(finalized["status"], "ok", finalized)
+            self.assertEqual(finalized["corrected"], ["DIR00001"], finalized)
+            self.assertEqual(finalized["corrected_groups"], [], finalized)
+            after = json.loads(state_path.read_text(encoding="utf-8"))
+            before_directions = {row["direction_id"]: row
+                                 for row in before_state["directions"]}
+            after_directions = {row["direction_id"]: row
+                                for row in after["directions"]}
+            self.assertEqual(after_directions["DIR00002"],
+                             before_directions["DIR00002"])
+            self.assertEqual(after["cross_direction_groups"],
+                             before_state["cross_direction_groups"])
+            after_candidate = next(
+                candidate for candidate in after_directions["DIR00001"]["candidates"]
+                if candidate["id"] == correction_candidate_id)
+            self.assertEqual(after_candidate["title"], corrected_title)
+            self.assertNotEqual(after_candidate["title"], before_candidate["title"])
+            self.assertEqual(after_candidate["id"], correction_candidate_id)
+            after_body = contact_state.split_frontmatter(
+                (self.prof_dir / self.CANDIDATES_MD).read_text(encoding="utf-8"))[1]
+            after_scopes = contact_state.stage3_render_line_scopes(after_body)
+            after_groups = {contact_state.scope_key(scope) for scope in after_scopes
+                            if isinstance(scope, dict) and scope.get("candidate_id")
+                            and scope.get("kind") == "group"}
+            self.assertEqual(after_groups, {f"group:{group_id}"})
+            self.assertEqual(
+                [candidate["id"] for candidate in
+                 after_directions["DIR00001"]["candidates"]],
+                [candidate["id"] for candidate in
+                 before_directions["DIR00001"]["candidates"]])
+            self.assertEqual(after["validator"]["results"],
+                             {did: row for did, row in
+                              before_state["validator"]["results"].items()
+                              if did != "DIR00001"})
+            self.assertEqual(after["validator"]["groups"],
+                             before_state["validator"]["groups"])
 
 
 class TestStage5(BaseEnv):
@@ -3831,6 +4131,31 @@ class Issue67AdjacentStateTests(_Issue67Stage4Fixture):
     def job_directions(self, payload):
         return sorted({job["direction_id"] for job in payload["jobs"]})
 
+    def selected_scope_with_legacy_conflict(self, name):
+        self.add_direction_b()
+        committed = self.stage4([self.row(self.prof_dir)], name=f"{name}-local.json")
+        self.assertEqual(stage4_row(committed)["status"], "ok", committed)
+        self.write_legacy_program_pair(
+            [{"professor": "試験 教授", "professor_dir": str(self.prof_dir),
+              "direction_ids": ["DIR00002"], "collection_key": "DIR00002",
+              "ideas": [{"id": "DIR00002_1"}]}],
+            [])
+        self.make_state_stale()
+        paths = [
+            self.prof_dir / contact_state.CANDIDATE_STATE,
+            self.prof_dir / "套磁想法候选.md",
+            *self.pair(self.prof_dir),
+            self.research / self.SELECT,
+            self.research / self.PACK,
+        ]
+        for path in paths:
+            self.assertTrue(path.is_file(), f"missing protected input: {path}")
+        return paths, {path: path.read_bytes() for path in paths}
+
+    @staticmethod
+    def selected_scope_snapshot(paths):
+        return {path: path.read_bytes() for path in paths}
+
     # ---- R67-G1-6: the selected refresh scope is the local selection -------
 
     def test_01_stage3_selected_refresh_scopes_from_the_professor_local_selection(self):
@@ -3856,37 +4181,29 @@ class Issue67AdjacentStateTests(_Issue67Stage4Fixture):
         self.assertEqual(self.job_directions(everything), ["DIR00001", "DIR00002"])
 
     def test_02_selected_refresh_needs_an_explicit_selection_and_ignores_legacy(self):
-        self.add_direction_b()
-        # Without any selection container the scope cannot be invented: the run
-        # fails closed instead of silently refreshing every direction.
+        paths, before = self.selected_scope_with_legacy_conflict("adj2")
+        # The project-level legacy file points to DIR00002, but it is history
+        # only and cannot supply a missing explicit professor-local selection.
         missing = run_cli("stage3-plan", "--professor-dir", self.prof_dir,
                           "--program-root", self.root, "--refresh-scope", "selected")
         self.assertEqual(missing.returncode, 1, missing.stdout)
         payload = parse(missing)
         self.assertEqual(payload["reason_code"], "invalid_params")
         self.assertIn("selection file unreadable", payload["message"])
+        self.assertNotIn("jobs", payload)
+        self.assertEqual(self.selected_scope_snapshot(paths), before)
 
-        committed = self.stage4([self.row(self.prof_dir)], name="adj2.json")
-        self.assertEqual(stage4_row(committed)["status"], "ok", committed)
-        # A legacy global file that names the OTHER direction must not widen the
-        # local scope: the professor-local pair is the selection authority.
-        self.write_legacy_program_pair(
-            [{"professor": "試験 教授", "professor_dir": str(self.prof_dir),
-              "collection_key": "DIR00002", "ideas": [{"id": "DIR00002_1"}]}], [])
-        self.make_state_stale()
         scoped = parse(run_cli(
             "stage3-plan", "--professor-dir", self.prof_dir,
             "--program-root", self.root, "--refresh-scope", "selected",
             "--selection", self.prof_dir / self.SELECT))
         self.assertEqual(self.job_directions(scoped), ["DIR00001"], scoped)
+        self.assertEqual(self.selected_scope_snapshot(paths), before)
 
     def test_03_scoped_finalize_with_the_local_selection_keeps_other_directions(self):
-        self.add_direction_b()
-        committed = self.stage4([self.row(self.prof_dir)], name="adj3.json")
-        self.assertEqual(stage4_row(committed)["status"], "ok", committed)
-        self.make_state_stale()
+        paths, before = self.selected_scope_with_legacy_conflict("adj3")
         state_path = self.prof_dir / contact_state.CANDIDATE_STATE
-        before = json.loads(state_path.read_text(encoding="utf-8"))
+        before_state = json.loads(state_path.read_text(encoding="utf-8"))
 
         plan = parse(run_cli(
             "stage3-plan", "--professor-dir", self.prof_dir,
@@ -3898,6 +4215,16 @@ class Issue67AdjacentStateTests(_Issue67Stage4Fixture):
         source = self.root / "s3results" / result_file("candidates", "DIR00001")
         (results / result_file("candidates", "DIR00001")).write_text(
             source.read_text(encoding="utf-8"), encoding="utf-8")
+
+        missing = run_cli(
+            "stage3-finalize", "--professor-dir", self.prof_dir,
+            "--results", results, "--program-root", self.root,
+            "--refresh-scope", "selected")
+        self.assertEqual(missing.returncode, 1, missing.stdout)
+        missing_payload = parse(missing)
+        self.assertEqual(missing_payload["reason_code"], "invalid_params")
+        self.assertEqual(self.selected_scope_snapshot(paths), before)
+
         out = parse(run_cli(
             "stage3-finalize", "--professor-dir", self.prof_dir,
             "--results", results, "--program-root", self.root,
@@ -3907,12 +4234,17 @@ class Issue67AdjacentStateTests(_Issue67Stage4Fixture):
         recorded = {d["direction_id"]: d for d in after["directions"]}
         self.assertEqual(sorted(recorded), ["DIR00001", "DIR00002"])
         self.assertEqual(recorded["DIR00002"],
-                         {d["direction_id"]: d for d in before["directions"]}["DIR00002"],
+                         {d["direction_id"]: d for d in before_state["directions"]}["DIR00002"],
                          "the scoped-out direction keeps its recorded candidates")
-        # Stage 4's professor-local authority is untouched by the Stage-3 refresh.
-        self.assertEqual([s["direction_ids"] for s in json.loads(
-            (self.prof_dir / self.SELECT).read_text(encoding="utf-8"))["selections"]],
-                         [["DIR00001"]])
+        # Stage 4's professor-local pair and the unrelated project-level pair
+        # remain byte-for-byte unchanged by the Stage-3 refresh.
+        unchanged_paths = [
+            *self.pair(self.prof_dir),
+            self.research / self.SELECT,
+            self.research / self.PACK,
+        ]
+        self.assertEqual(self.selected_scope_snapshot(unchanged_paths),
+                         {path: before[path] for path in unchanged_paths})
 
     # ---- R67-G1-4/7: handoff follows the professor rows --------------------
 

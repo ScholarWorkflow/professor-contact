@@ -78,7 +78,7 @@ flowchart TD
 | 0 | `professor-contact` | normalized `方向预筛.json` | 逐教授 `<教授目录>/套磁目标.json`（每位被选教授一份） | 使用稳定 `direction_id`；一次 `select` 只提交一位教授；无 Stage 0 Markdown |
 | 1 | `professor-contact-downloader` | 该教授的 local target + preview + `papers.json` | `<教授目录>/套磁阶段1候选.json` | 一次只 `resolve`/`build --target-file` 一位教授；只写该教授自己那份，不读不写其他教授的状态，也不读程序级聚合；仅候选集；归属声明必须是 non-final |
 | 2 | `professor-contact-analyzer` + `paper-analysis` | 该教授的 local target + verified Stage 1 snapshot + 本地论文证据 | `_resolved_directions.json`、`套磁候选输入.json` | 全文 resolved direction 对 outreach 权威；input pack 是 Stage 3 唯一事实源 |
-| 3 | `professor-contact-idea-generator` | `套磁候选输入.json` + profile | `套磁候选状态.json` | 不读 Markdown / `_index.json` / sidecar；默认每方向 3–5 条 |
+| 3 | `professor-contact-idea-generator` | `套磁候选输入.json` + profile | `套磁候选状态.json` + `套磁想法候选.md`（教授本地事务）；总览由 `stage3-rebuild-overview` 从全部已提交状态重建 | 不读 Markdown / `_index.json` / sidecar；默认每方向 3–5 条；教授本地提交不被其它教授/总览/registry 异常阻塞，总览不反向进入 Stage 4 事实源；首轮成功 plan 经 `--capture-invocation` 捕获该轮独占调用凭据（返回 `invocations` 列表），finalize/凭据修正消费凭据（`--invocation-file`/`--invocation-sha256`，与来源参数互斥）；`selected` 范围必须使用显式教授本地 `--selection`，不回退到程序级选择文件 |
 | 4 | `professor-contact-selection` | `套磁候选状态.json` + 用户真实选择 | `<教授目录>/套磁选择.json`、`<教授目录>/邮件输入.json` | 以 canonical `professor_dir` 为事务边界逐教授提交，一次聚合 `results[]` 可 partial；exact `direction_id` / `(direction_id,item_key,gap_id)` join；该教授过期零写入，无关教授不阻断、不撤销已提交教授 |
 | 5 | `professor-contact-email-generator` | Stage 4 交出的 `<教授目录>/邮件输入.json` + profile/template/info/boshu + verify cache | 邮件 md/txt、跟进邮件、`套磁邮件状态.json`、总览 | 该教授的 `邮件输入.json` 是论文事实与冻结联系方式的事实源 |
 
@@ -200,13 +200,16 @@ flowchart LR
     PROFILE["用户 profile"]
     PLAN["stage3-plan<br/>按 direction_id 切最小 model_input"]
     MODEL["每方向 3–5 条候选"]
-    FIN["stage3-finalize"]
-    ST["套磁候选状态.json"]
-    MD["套磁想法候选.md / 总览<br/>只做人类投影"]
+    FIN["stage3-finalize<br/>教授本地事务<br/>MD 先装 / 状态最后装"]
+    ST["套磁候选状态.json<br/>教授级正式状态＝提交标记"]
+    MD["套磁想法候选.md<br/>教授本地投影"]
+    REB["stage3-rebuild-overview<br/>terminal 后一次 best-effort"]
+    OV["套磁想法候选总览.md<br/>程序级派生投影"]
 
     I --> PLAN
     PROFILE --> PLAN --> MODEL --> FIN --> ST
     FIN -.-> MD
+    ST --> REB -.-> OV
 ```
 
 约束：
@@ -215,6 +218,12 @@ flowchart LR
 - `gap_refs` 必须精确到 `(direction_id, item_key, gap_id)`。
 - cross-direction 候选是显式 opt-in；未传 `cross_direction_groups` 时不得偷偷生成跨方向 job 或 section。
 - profile 变化影响 Stage 3/4，而不要求重跑 Stage 2 学术事实。
+- **教授本地提交独立（issue #66）**：`stage3-finalize` 只读取/提交当前教授——候选状态与本地 Markdown 以一个本地事务写盘（Markdown 先安装、候选状态最后安装＝唯一提交标记；提交前普通失败恢复旧内容，提交后清理失败不回滚），绝不读写其它教授的状态、`套磁想法候选总览.md` 或 `_contact_projections.json`。其它教授状态异常、总览缺失/过期/被手改都不会阻塞、回滚或重判一次合法的教授本地提交。
+- **总览只是派生投影**：`stage3-rebuild-overview` 在 terminal 校验后由 terminal owner（OpenCode=idea-generator；Codex=root caller）best-effort 运行一次，从全部已提交教授级 `套磁候选状态.json` 派生 `套磁想法候选总览.md`（教授/方向/候选数/推荐顺序/链接全部来自状态；本地 Markdown 只贡献链接路径；排序以 resolved professor 目录身份为跨教授 tie-breaker，方向/组按机器身份稳定排序）。任一已发现状态 malformed 或 legacy 身份无法精确迁移（0 个或多个 canonical `direction_id` 匹配）时，写总览之前整体失败，绝不发布部分总览；手工改动总览（frontmatter 无效或 body hash 失配）→ rebuild fail closed。aggregate 失败不修改教授本地状态，也不把 Stage 3 改回未完成；`overview_md` 只是目标路径，不是 rebuild 成功证据。
+- **generator source-binding（issue-66-plan-r11 §4）**：每个 generator child 只解析一次 Stage 3 输入并形成固定 source tuple（`professor_dir`/`program_root`/resolved profile 路径/`refresh_scope`/skip/cross/修正轮 `validation_file`）；同一轮的 `stage3-plan` 与 `stage3-finalize` 必须用同一 tuple，存在 profile 时都显式传同一 `--profile <abs>`；plan 返回的 `profile_fingerprint` 为空或与该 profile 不一致 → child 当场返回 error，不写 result、不 finalize；runner 任一非成功返回（含 `validation_source_changed`）立即结束，不得换 source 重试。runner 的 `validation_source_changed` fail-closed 行为原样保留，无静默补救。
+- **调用凭据与凭据修正（r13 §5）**：首轮 `stage3-plan --capture-invocation <本轮独占临时目录>` 在成功计划后由 runner 从实际解析参数生成该轮独占调用凭据，返回 `invocation_file`+`invocation_sha256`（凭据生产失败 = 计划非成功）；`stage3-finalize` 与凭据修正轮用 `--invocation-file/--invocation-sha256` 消费同一凭据，与重传 professor/profile/root/scope/skip/cross/direction/selection 来源参数互斥（混传即拒绝）；带已记录 `validation_file` 的凭据计划/提交进入 runner 的修正上下文——修正工作集合只由已记录校验问题计算（方向集合 `D`、组集合 `G`），首轮的方向/刷新/跳过/组请求不再裁剪修正范围，修正提交在旧方向/旧组集合内替换、集合外对象与未涉及组原样保留（r13 §5.4–§5.6，旧显式修正入口同样获得未涉及组保留）。生成代理最终返回增加按教授目录排序的 `invocations` 列表（每项 `professor_dir`/`invocation_file`/`invocation_sha256`），caller 按候选稿/状态文件的规范父目录绑定本次教授，不以展示名建映射。
+- **校验原文文件交接（r16）**：每轮由循环持有者先运行 `stage3-prepare-validation --invocation-file/--invocation-sha256 --round {1,2}`，把返回的候选稿绝对路径、`artifact="candidates"` 和指定 `output_file` 交给命名校验子线程（不给状态、凭据、交接元数据或其他文件）。带 `output_file` 时，校验者只产出一份完整业务 JSON 对象（`result`、`files[]`、`notes`），将完整 JSON 作为一个独立且安全引用的 `--result-json` 参数交给固定入口 `.agents/skills/professor-contact/scripts/contact_state.py stage3-write-validation`，不得自行写文件。单候选使用 `--output-file <已准备的绝对输出路径>`；批量使用 `--output-map-json <完整映射 JSON>`，其中 `file` 与 `output_file` 必须逐一对应本轮全部候选稿，不得重复、遗漏、增加候选稿或复用输出路径。完整 JSON、映射和路径都须分别作为单一、安全引用的参数传入，不得让 shell 解释其内容。固定入口拒绝重复 JSON 键、非有限数字、无效结构、已存在的路径或符号链接；它先校验全部输入，只将完整结果序列化一次，再以排他创建、权限 `0600` 写入同一份完整结果，并从同一文件描述符回读核对。固定 writer 的成功 stdout 与各输出文件逐字节相同，这是 writer 的写入约定。**Codex 带 `output_file` 时，validator 最终消息只返回固定完成报告**：成功为 `{"result":"ok","write_status":"written","output_files":["<指定输出文件绝对路径>"]}`；失败为 `{"result":"error","write_status":"failed","output_files":["<本轮指定输出文件绝对路径>"],"reason_code":"<入口原因码；缺少时为 validation_write_failed>"}`，不得包含校验结论、问题或校验正文。`output_files` 必须覆盖所有指定输出路径，批量时按候选稿顺序排列。root 只核对固定报告的结构、状态、输出路径及失败原因码；成功后只用 `stage3-prepare-validation` 返回的 `handoff_file`/`handoff_sha256` 运行 save，再用 save 返回的 `validation_sha256` 运行 record。报告本身不作为校验结果，root 不从中提取或重建校验正文；报告缺失、结构或路径不符、或报告为失败时立即停止，不运行 save/record，固定写入文件是唯一正式校验原文。**OpenCode 保留现有行为**：validator 最终消息仍须与固定 writer 输出及指定文件逐字节相同。save 与 record 严格依次运行，由 runner 搬运并记录同一份原文字节；caller 不重构字段、翻译或重新定权。未传 `output_file` 的既有校验调用保持只读并沿用原返回方式。
+- **Codex caller 固定状态转移（r16 §7；root 的合法路径只有以下两条）**：路径为 `G1 成功 → prepare(1) → V1 固定 writer 写入成功且完成报告有效 → save(1) → record(1) → terminal → rebuild once → end`，或在 `record(1)` 返回 `needs_correction=true` 后进入 `G2 → prepare(2) → V2 固定 writer 写入成功且完成报告有效 → save(2) → record(2) → terminal → rebuild once → end`。G1/G2 或固定完成报告任一非成功，都在下一依赖动作前立即停止；不派发第三次 validator 或任何 retry generator。成功路径 root 直属 Stage-3 child 总数只能是 2 或 4，第 5 个即 caller contract violation；中途失败只能是合法路径的前缀，不算完成。Codex=root caller 在自己线程执行 prepare/save/record 并按上述循环派发命名子线程；OpenCode=生成代理持有校验循环，由它在自己线程按既有交接规则执行 prepare/save/record，不照搬 Codex 根与兄弟子线程结构；两个 runtime 都最多两轮校验。
 
 ## 8. Stage 4：真实用户选择与邮件包编译
 

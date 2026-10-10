@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 
-MODEL = "gpt-5.6-luna"
+MODEL = "gpt-6-luna"
 REASONING = "low"
 TIMEOUT = 900
 PROMPT_TOKEN = "{{PROGRAM_ROOT}}"
@@ -65,7 +65,7 @@ def build_request(*, consumer_root: Path, program_root: Path, prompt_template: P
 
     trust_override = f'projects."{consumer_root}".trust_level="trusted"'
     argv = [
-        "--json", "--ephemeral", "--skip-git-repo-check",
+        "--json", "--skip-git-repo-check",
         "--sandbox", "workspace-write", "--cd", str(consumer_root),
         "--model", model,
         "--config", f'model_reasoning_effort="{reasoning}"',
