@@ -5460,6 +5460,24 @@ def stage3_correction_scopes(state: dict, evidence: dict) -> list:
     return [scopes[key] for key in sorted(scopes)]
 
 
+def stage3_repairable_correction_directions(correction: dict,
+                                            directions: dict) -> set[str]:
+    """Directions with candidate state that a correction can replace.
+
+    Recorded scopes remain in ``correction`` even when their direction was
+    skipped. A skipped, candidate-less direction is still part of the recorded
+    validation scope, but it must not become a generator job or result input.
+    """
+    return {
+        key.split(":", 1)[1]
+        for key in correction
+        if key.startswith("direction:")
+        and isinstance(directions.get(key.split(":", 1)[1]), dict)
+        and directions[key.split(":", 1)[1]].get("stage3_status") == "ready"
+        and directions[key.split(":", 1)[1]].get("candidates")
+    }
+
+
 def carry_stage3_validator(old_validator: dict, processed_scopes: set, *,
                            correction: bool, render_sha: str | None) -> dict | None:
     """Rewrite the recorded validator block after the render is replaced.
@@ -6305,8 +6323,11 @@ def cmd_stage3_plan(args) -> None:
             if scope["kind"] == "direction":
                 did = scope["direction_id"]
                 current = state_directions.get(did)
-                if not current or current.get("stage3_status") != "ready" \
-                        or not current.get("candidates"):
+                if not current or not (
+                        (current.get("stage3_status") == "ready"
+                         and current.get("candidates"))
+                        or (current.get("stage3_status") == "skipped"
+                            and not current.get("candidates"))):
                     fail("missing_candidate_state", f"no reusable Stage-3 result for {did}")
                 if direction_id_arg and did != direction_id_arg:
                     fail("validation_scope_not_in_evidence",
@@ -6335,7 +6356,10 @@ def cmd_stage3_plan(args) -> None:
         if credential_correction and not correction:
             fail("validation_evidence_not_recorded",
                  "the credential correction needs a recorded round with open findings")
-    correction_dids = {key.split(":", 1)[1] for key in correction if key.startswith("direction:")}
+    # Keep every recorded direction scope in ``correction``. Only directions
+    # with ready candidates are sent through generation and replacement; a
+    # skipped direction stays candidate-less and is carried through unchanged.
+    correction_dids = stage3_repairable_correction_directions(correction, state_directions)
     scoped_dids = set()
     for direction in pack_directions:
         did = direction_machine_id(direction)
@@ -7140,8 +7164,11 @@ def cmd_stage3_finalize(args) -> None:
             if scope["kind"] == "direction":
                 did = scope["direction_id"]
                 current = old_directions.get(did)
-                if not current or current.get("stage3_status") != "ready" \
-                        or not current.get("candidates"):
+                if not current or not (
+                        (current.get("stage3_status") == "ready"
+                         and current.get("candidates"))
+                        or (current.get("stage3_status") == "skipped"
+                            and not current.get("candidates"))):
                     fail("missing_candidate_state", f"no reusable Stage-3 result for {did}")
                 if direction_id_arg and did != direction_id_arg:
                     fail("validation_scope_not_in_evidence",
@@ -7169,7 +7196,9 @@ def cmd_stage3_finalize(args) -> None:
         if credential_correction and not correction:
             fail("validation_evidence_not_recorded",
                  "the credential correction needs a recorded round with open findings")
-    correction_dids = {key.split(":", 1)[1] for key in correction if key.startswith("direction:")}
+    # Only ready, candidate-bearing scopes are replaced. Recorded skipped
+    # scopes remain authoritative but stay outside the correction work set.
+    correction_dids = stage3_repairable_correction_directions(correction, old_directions)
     selected_keys = None
     if refresh_scope == "selected":
         if not args.selection:
