@@ -1505,6 +1505,61 @@ class Issue66RecordedValidationScopeTests(BaseEnv):
             "--collection-key", "DIR00002"))
         self.assertEqual(committed["status"], "ok", committed)
 
+        group_directions = ["DIR00001", "DIR00002"]
+        groups = json.dumps([group_directions])
+        cross_plan = parse(run_cli(
+            "stage3-plan", "--professor-dir", self.prof_dir,
+            "--program-root", self.root, "--cross-direction-groups", groups))
+        self.assertEqual(cross_plan["status"], "ok", cross_plan)
+        cross_job = next(job for job in cross_plan["jobs"]
+                         if job["kind"] == "cross_direction")
+        cross_gaps = cross_job["model_input"]["gaps"]
+        gap_refs = []
+        for direction_id in group_directions:
+            gap = next(row for row in cross_gaps
+                       if direction_id in row["direction_ids"])
+            gap_refs.append({"direction_id": direction_id,
+                             "item_key": gap["item_key"], "gap_id": gap["gap_id"]})
+        shared_paper = next(
+            paper for paper in cross_job["model_input"]["papers"]
+            if set(group_directions).issubset(paper["direction_ids"]))
+        cross_results = self.root / "two-directions-cross-results"
+        cross_results.mkdir()
+        (cross_results / cross_job["result_file"]).write_text(json.dumps(
+            {"schema": 2, "kind": "cross_candidates",
+             "group_id": cross_job["group_id"],
+             "direction_ids": group_directions,
+             "candidates": [{
+                 "id": "CROSS_1", "kind": "cross_direction",
+                 "direction_ids": group_directions, "origin": "generated",
+                 "title": "两种输入模式共用同一约束",
+                 "one_liner": "同一约束跨两个方向",
+                 "research_question": "同一约束能否同时服务两个方向",
+                 "points": [], "gap_refs": gap_refs, "anchor_notes": {},
+                 "papers": [{"item_key": shared_paper["item_key"],
+                             "direction_ids": group_directions,
+                             "role": "共同基座", "fit_note": "共享论文"}],
+                 "fit": "null", "red_lines": []}]},
+            ensure_ascii=False), encoding="utf-8")
+        cross_finalized = parse(run_cli(
+            "stage3-finalize", "--professor-dir", self.prof_dir,
+            "--results", cross_results, "--program-root", self.root,
+            "--cross-direction-groups", groups))
+        self.assertEqual(cross_finalized["status"], "ok", cross_finalized)
+        cross_state = json.loads(
+            (self.prof_dir / self.STATE).read_text(encoding="utf-8"))
+        cross_group = next(row for row in cross_state["cross_direction_groups"]
+                           if row["group_id"] == cross_job["group_id"])
+        self.assertEqual([candidate["id"] for candidate in cross_group["candidates"]],
+                         ["CROSS_1"])
+        body = contact_state.split_frontmatter(
+            (self.prof_dir / self.CANDIDATES_MD).read_text(encoding="utf-8"))[1]
+        line_scopes = contact_state.stage3_render_line_scopes(body)
+        rendered_objects = {contact_state.scope_key(scope) for scope in line_scopes
+                            if isinstance(scope, dict) and scope.get("candidate_id")}
+        self.assertIn(f"group:{cross_job['group_id']}", rendered_objects)
+        return cross_job["group_id"]
+
     def prepare_validation(self, name):
         invocation = parse(run_cli(
             "stage3-plan", "--professor-dir", self.prof_dir,
@@ -1571,30 +1626,39 @@ class Issue66RecordedValidationScopeTests(BaseEnv):
                 "--validation-file", validation_file]
 
     def test_handoff_record_expands_global_blocker_to_rendered_objects(self):
-        self.render_two_directions()
+        group_id = self.render_two_directions()
+
         body = contact_state.split_frontmatter(
             (self.prof_dir / self.CANDIDATES_MD).read_text(encoding="utf-8"))[1]
         line_scopes = contact_state.stage3_render_line_scopes(body)
         quote = next(line.strip() for line, scope in zip(body.splitlines(), line_scopes)
                      if scope is None and line.strip() and len(line.strip()) <= 40)
+        rendered_objects = {contact_state.scope_key(scope) for scope in line_scopes
+                            if isinstance(scope, dict) and scope.get("candidate_id")}
+        expected_objects = {"direction:DIR00001", "direction:DIR00002",
+                            f"group:{group_id}"}
+        self.assertEqual(rendered_objects, expected_objects)
         invocation, prepared = self.prepare_validation("global-blocker-call")
-        _saved, recorded = self.record_through_handoff(
-            invocation, prepared, [self.validator_issue(quote)])
+        issue = self.validator_issue(quote)
+        _saved, recorded = self.record_through_handoff(invocation, prepared, [issue])
 
         self.assertTrue(recorded["needs_correction"], recorded)
         self.assertFalse(recorded["terminal"], recorded)
         self.assertEqual({row["scope"] for row in recorded["scopes"]},
-                         {"direction:DIR00001", "direction:DIR00002"}, recorded)
+                         rendered_objects, recorded)
         state = json.loads((self.prof_dir / self.STATE).read_text(encoding="utf-8"))
         pending = state["validator"]["pending"]
-        self.assertEqual(set(pending), {"direction:DIR00001", "direction:DIR00002"})
+        self.assertEqual(set(pending), rendered_objects)
         for row in pending.values():
             self.assertEqual(row["result"], "fail")
             self.assertEqual(row["rounds"], 1)
-            self.assertEqual(row["issues"][0]["quote"], quote)
+            self.assertEqual(len(row["issues"]), 1)
+            saved_issue = row["issues"][0]
+            self.assertEqual({field: saved_issue[field] for field in issue}, issue)
 
     def test_rewritten_validation_file_cannot_expand_or_replace_recorded_correction(self):
-        self.render_two_directions()
+        group_id = self.render_two_directions()
+
         original_issue = self.validator_issue(self.render_quote("direction:DIR00001"))
         invocation, prepared = self.prepare_validation("recorded-scope-call")
         saved, recorded = self.record_through_handoff(
@@ -1604,6 +1668,19 @@ class Issue66RecordedValidationScopeTests(BaseEnv):
         recorded_pending = before_state["validator"]["pending"]
         recorded_issues = recorded_pending["direction:DIR00001"]["issues"]
         recorded_candidate_ids = recorded_pending["direction:DIR00001"]["candidate_ids"]
+        self.assertTrue(recorded_candidate_ids, recorded_pending)
+        before_dir1 = next(row for row in before_state["directions"]
+                           if row["direction_id"] == "DIR00001")
+        correction_candidate_id = recorded_candidate_ids[0]
+        before_candidate = next(
+            candidate for candidate in before_dir1["candidates"]
+            if candidate["id"] == correction_candidate_id)
+        corrected_title = f"校验修正：{before_candidate['title']}"
+        before_groups = {row["group_id"]: row
+                         for row in before_state["cross_direction_groups"]}
+        self.assertEqual(set(before_groups), {group_id})
+        self.assertEqual(set(before_state["validator"]["groups"]),
+                         {group_id})
 
         validation_path = Path(saved["validation_file"])
         changed = json.loads(validation_path.read_text(encoding="utf-8"))
@@ -1620,44 +1697,76 @@ class Issue66RecordedValidationScopeTests(BaseEnv):
 
         planned = parse(run_cli("stage3-plan", *args))
         with self.subTest("stage3-plan"):
-            if planned["status"] == "error":
-                self.assertNotIn("jobs", planned)
-            else:
-                self.assertEqual(planned["correction_scopes"],
-                                 ["direction:DIR00001"], planned)
-                self.assertEqual([job["direction_id"] for job in planned["jobs"]],
-                                 ["DIR00001"], planned)
-                model_input = planned["jobs"][0]["model_input"]
-                self.assertEqual(model_input["validator_issues"], recorded_issues)
-                self.assertEqual(model_input["repairable_candidate_ids"],
-                                 recorded_candidate_ids)
+            self.assertEqual(planned["status"], "ok", planned)
+            self.assertEqual(planned["correction_scopes"],
+                             ["direction:DIR00001"], planned)
+            self.assertEqual([job["direction_id"] for job in planned["jobs"]],
+                             ["DIR00001"], planned)
+            model_input = planned["jobs"][0]["model_input"]
+            self.assertEqual(model_input["validator_issues"], recorded_issues)
+            self.assertEqual(
+                {field: model_input["validator_issues"][0][field]
+                 for field in original_issue}, original_issue)
+            self.assertEqual(model_input["validator_issues"][0]["suggestion"],
+                             original_issue["suggestion"])
+            self.assertEqual(model_input["repairable_candidate_ids"],
+                             recorded_candidate_ids)
 
         correction_results = self.root / "recorded-scope-correction-results"
         correction_results.mkdir()
         for source_dir, direction_id in ((self.root / "s3results", "DIR00001"),
                                          (self.root / "second-s3results", "DIR00002")):
             source = source_dir / result_file("candidates", direction_id)
-            shutil.copyfile(source, correction_results / source.name)
-        state_before_finalize = state_path.read_bytes()
+            destination = correction_results / source.name
+            if direction_id == "DIR00001":
+                result = json.loads(source.read_text(encoding="utf-8"))
+                candidate = next(
+                    row for row in result["candidates"]
+                    if row["id"] == correction_candidate_id)
+                candidate["title"] = corrected_title
+                destination.write_text(json.dumps(result, ensure_ascii=False),
+                                       encoding="utf-8")
+            else:
+                shutil.copyfile(source, destination)
         finalized = parse(run_cli(
             "stage3-finalize", *args, "--results", correction_results))
         with self.subTest("stage3-finalize"):
-            if finalized["status"] == "error":
-                self.assertEqual(state_path.read_bytes(), state_before_finalize)
-            else:
-                self.assertEqual(finalized["corrected"], ["DIR00001"], finalized)
-                after = json.loads(state_path.read_text(encoding="utf-8"))
-                before_directions = {row["direction_id"]: row
-                                     for row in before_state["directions"]}
-                after_directions = {row["direction_id"]: row
-                                    for row in after["directions"]}
-                self.assertEqual(after_directions["DIR00002"],
-                                 before_directions["DIR00002"])
-                self.assertEqual(
-                    [candidate["id"] for candidate in
-                     after_directions["DIR00001"]["candidates"]],
-                    [candidate["id"] for candidate in
-                     before_directions["DIR00001"]["candidates"]])
+            self.assertEqual(finalized["status"], "ok", finalized)
+            self.assertEqual(finalized["corrected"], ["DIR00001"], finalized)
+            self.assertEqual(finalized["corrected_groups"], [], finalized)
+            after = json.loads(state_path.read_text(encoding="utf-8"))
+            before_directions = {row["direction_id"]: row
+                                 for row in before_state["directions"]}
+            after_directions = {row["direction_id"]: row
+                                for row in after["directions"]}
+            self.assertEqual(after_directions["DIR00002"],
+                             before_directions["DIR00002"])
+            self.assertEqual(after["cross_direction_groups"],
+                             before_state["cross_direction_groups"])
+            after_candidate = next(
+                candidate for candidate in after_directions["DIR00001"]["candidates"]
+                if candidate["id"] == correction_candidate_id)
+            self.assertEqual(after_candidate["title"], corrected_title)
+            self.assertNotEqual(after_candidate["title"], before_candidate["title"])
+            self.assertEqual(after_candidate["id"], correction_candidate_id)
+            after_body = contact_state.split_frontmatter(
+                (self.prof_dir / self.CANDIDATES_MD).read_text(encoding="utf-8"))[1]
+            after_scopes = contact_state.stage3_render_line_scopes(after_body)
+            after_groups = {contact_state.scope_key(scope) for scope in after_scopes
+                            if isinstance(scope, dict) and scope.get("candidate_id")
+                            and scope.get("kind") == "group"}
+            self.assertEqual(after_groups, {f"group:{group_id}"})
+            self.assertEqual(
+                [candidate["id"] for candidate in
+                 after_directions["DIR00001"]["candidates"]],
+                [candidate["id"] for candidate in
+                 before_directions["DIR00001"]["candidates"]])
+            self.assertEqual(after["validator"]["results"],
+                             {did: row for did, row in
+                              before_state["validator"]["results"].items()
+                              if did != "DIR00001"})
+            self.assertEqual(after["validator"]["groups"],
+                             before_state["validator"]["groups"])
 
 
 class TestStage5(BaseEnv):
