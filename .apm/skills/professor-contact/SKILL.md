@@ -14,7 +14,7 @@ This skill is the **caller convention** for the 套磁 workflow (套磁 = contac
 ## Runtime routing gate (read first)
 
 - **当前 host 决定调用分支**：当前 host 是 Codex 就只走 Codex 原生 subagent workflow；当前 host 是 OpenCode 就只走 OpenCode 原生 Task。不得通过 CLI 是否安装、命令探测或模型自述改选另一分支。
-- **Codex 的定位与调用是一个动作**：Stage 请求本身就是 routing gate。若当前 Codex 通过程序化工具调用器暴露原生多代理能力，定位该能力并发起 exact named agent 调用属于同一个**真实委派动作**，**不是能力探测前置条件**；不得停在列举/检索结果上，也不得把入口未显示、OpenCode 语法不存在或先前运行失败当成“无法委派”。
+- **Codex 当前会话直接委派**：Stage 请求本身触发 routing gate。当前 Codex 必须直接使用本会话提供的原生委派工具，调用表格中指定的 exact named custom agent，并等待结果。已安装代理的定义位于 `.codex/agents/<name>.toml`，不是 `.agents/skills/<name>/SKILL.md`。不得先搜索 `ALL_TOOLS`、通用工具清单或 skill 目录来寻找委派入口；只有本轮真实委派调用返回错误，才可记录为运行时阻断。未发起委派调用时，不得报告委派工具不可用。
 - **先真实调用，再判断失败**：立即按下表选定 installed exact named agent，发起当前运行的原生调用并等待结果。只有该 exact named agent 的本轮调用实际返回 `machine-level failure`，才允许记录 runtime/feature blocker；父线程不得 inline/simulate child。
 - **等待到子代理结束**：一次等待调用返回只说明这次调用结束；若结果显示子代理仍在运行时继续等待，不得结束当前回合。拿到子代理最终结果后再汇报 Stage 结果。
 - **禁止跨执行器 shell fallback**：不得用 shell、`opencode run`、`codex exec`、curl 或另发 eval 请求代替原生委派；不得把 OpenCode `task(...)` 语法写进 Codex 调用。
