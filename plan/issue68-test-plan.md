@@ -262,6 +262,7 @@ fi
          and $item.namespace == "collaboration"
          and $item.name == "spawn_agent")
      | ($item.arguments | fromjson?) as $args
+     | select($args.agent_type == "professor-contact-email-generator")
      | {position: $position, agent_type: $args.agent_type, task_name: $args.task_name}
    ' "$PC68_RUN_ROOT/response.json"
    ```
