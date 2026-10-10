@@ -534,7 +534,7 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 
 #### Codex 下 Stage 1–5 顶层 routing matrix
 
-用户要求执行某个 Stage 本身就是 routing gate。Stage 1–4 顶层 caller 先委派下表中的 exact installed named custom agent；Stage 5 root 先按 5.11 完成完整 owner 集分配与单教授交接，再对每个可执行 owner 委派下表中的 agent。每次委派都等待结果后再继续；caller 不得因为能够运行 `contact_state.py` 就越过 Stage agent，也不得把 child instructions 复制到 root 自己执行。
+用户要求执行某个 Stage 本身就是 routing gate。Stage 1–4 顶层 caller 必须先把该 Stage 委派给下表中的 exact installed named custom agent，并等待结果后再继续；Stage 5 root 先按 5.11 完成完整 owner 集分配与单教授交接，再把该 Stage 委派给每个可执行 owner 的 agent，逐项等待结果后再继续。caller 不得因为能够运行 `contact_state.py` 就越过 Stage agent，也不得把 child instructions 复制到 root 自己执行。
 
 | Stage | 顶层 caller 必须先委派 | caller 必须等待 | caller 禁止 inline 的 owner 工作 |
 |---|---|---|---|
@@ -542,7 +542,7 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 | 2 | `professor-contact-analyzer` | 是 | Stage-2 evidence/analyzer business |
 | 3 | `professor-contact-idea-generator` | 是 | `stage3-plan`、candidate model generation、candidate result file、`stage3-finalize` |
 | 4 | `professor-contact-selection` | 是 | pending selection 模拟、默认选择、`stage4-finalize` |
-| 5（每个可执行 owner） | `professor-contact-email-generator` | 是 | `stage5-plan`、4句模型 payload、humanizer business、`stage5-finalize`、`email-validator` |
+| 5 | `professor-contact-email-generator` | 是 | `stage5-plan`、4句模型 payload、humanizer business、`stage5-finalize`、`email-validator` |
 
 **Stage 4 请求没有例外顺序（入口即生效的固定顺序）**：
 
