@@ -126,7 +126,7 @@ Stage 4's success result hands over **one professor-local email pack**: `<profes
   name returns `needs_input` (`professor_not_found` / `professor_ambiguous`)
   instead of a guess.
 - **One owner invocation = one professor transaction.** Running professors A and B means two exact-named `professor-contact-email-generator` invocations, each with its own pack path, result JSON, choices, `_contact_verify.json` and `套磁邮件状态.json`. B's missing, stale or malformed pack, cache or state is never a precondition of A, and B's failure never rolls back A's committed render. Each invocation consumes only that professor's Stage-5 business inputs.
-- **Root deterministic partition, then one-professor bundles (plan r13
+- **Root deterministic partition, then one-professor bundles (plan r17
   §3.3–3.6).** The formal choice identity is `(canonical professor_dir, email_id)`;
   the display field `professor` is display-only. A multi-professor request may
   carry A+B's raw `choices`; each owner's business calls use its partitioned
@@ -151,7 +151,11 @@ Stage 4's success result hands over **one professor-local email pack**: `<profes
   business object with actual `program_root` and supplied ordinary parameters
   into a separate `owner_input_file`. It never copies the raw choices path,
   complete partition path/object, entire `owners` list or other professor's
-  fields into the handoff. Explicit
+  fields into the handoff. The root delegates each legal owner by passing only
+  that owner's `owner_input_file` absolute path and that professor's business
+  constraints. It does not transcribe business fields into the task message or
+  include coordinator waiting, routing, or caller-facing instructions. The
+  child reads the file as its serialized business input. Explicit
   `professor_dir` rows enter their named owner only; a targeted owner's own
   unselected ids are excluded first; a full-professor batch id error stays
   that owner's `needs_input` / `choice_owner_invalid`; a legacy row without a
@@ -261,8 +265,7 @@ Stage 5 runs on both install targets with identical business rules; only the har
 
 - Keep the delegation non-recursive: the delegation payload carries only that stage's Input contract business fields, and never forwards the caller's own received routing instruction verbatim to the child; no coordinator may delegate to a named custom agent that has its own machine name; the same machine name may appear only once in a delegation chain (this agent's child is `professor-contact-email-validator`, never `professor-contact-email-generator`).
 - When a validator child is required, directly delegate to the installed named custom agent and wait for its result before continuing. A real machine-level delegation failure is a Codex runtime/feature blocker; the parent must not inline or simulate the child's work.
-- Top-level callers delegate Stage 5 to the installed named custom agent `professor-contact-email-generator`; inside Stage 5, delegate validator rounds to the installed named custom agent `professor-contact-email-validator` using Codex's documented native subagent/custom-agent delegation: delegate to the exact installed named custom agent and wait for its result, and consume it before continuing. Do not copy its instructions into the parent dialogue, do not claim its role as your own, do not assume spawn APIs, parameters or event fields that Codex documentation does not expose, never inline or simulate the child's work, and never substitute `exec_command` shell, `curl`, or another Codex/OpenCode/eval session for native delegation; never present unfinished validation as a completed Stage 5, and only a real machine-level/runtime delegation error may be recorded as a Codex runtime/feature blocker — never run the validation rounds yourself in this parent agent and never inline-simulate the validator. No undocumented runtime feature, fixed tool namespace, private spawn schema, or internal event/tool name is a prerequisite for ordinary delegation.
-- For several professors (Issue #68), the caller delegates **one exact-named `professor-contact-email-generator` owner invocation per professor**, each invocation consuming that professor's Stage-5 business inputs through its professor-local `--email-pack` path. Only the business payload of each owner invocation changes: the exact-named validator delegation, waiting for its result and consuming it stay exactly as documented above, and this rule adds no spawn parameters, no event schema and no OpenCode Task syntax to the Codex branch.
+- Inside Stage 5, delegate validator rounds to the installed named custom agent `professor-contact-email-validator` using Codex's documented native subagent/custom-agent delegation: select the exact installed named custom agent and wait for its result, then consume it before continuing. Do not copy its instructions into the parent dialogue, claim its role as your own, assume spawn APIs, parameters or event fields that Codex documentation does not expose, inline or simulate its work, or substitute shell, `curl`, or another Codex/OpenCode/eval session for native delegation. Never present unfinished validation as a completed Stage 5; only a real machine-level/runtime delegation error may be recorded as a Codex runtime/feature blocker. The parent must not run validation rounds itself or inline-simulate the validator. No undocumented runtime feature, fixed tool namespace, private spawn schema, or internal event/tool name is a prerequisite for ordinary delegation.
 - Use the installed, discoverable `humanizer-ja` Skill. Do not write OpenCode's native skill, Task, or interactive-prompt tool-call syntax into Codex flows.
 - Web verification uses Codex's official web search surface. Shell HTTP (`curl`, Python requests) may only reach the eval service, never substitute for the harness web capability.
 - When a required user decision (conflicting-address choice, `initial_sent_date`, first-choice/learning/signature, email confirmation) was not supplied by the caller, stop at the existing `needs_input`/unfinished boundary: never auto-pick the first option, never fabricate a date, learning field, signature or "confirmed" state, and never write the final email. Do not invent a continuation/resume protocol; hand the missing decision back to the caller/user explicitly.
