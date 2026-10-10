@@ -1,10 +1,10 @@
 # 第68号议题测试计划：按最新规则精简
 
-版本：`issue-68-test-plan-r58-2026-10-10`。
+版本：`issue-68-test-plan-r59-2026-10-10`。
 
-目标仓库：`ScholarWorkflow/professor-contact`；拉取请求：[第72号](https://github.com/ScholarWorkflow/professor-contact/pull/72)。本文件是唯一完整计划，取代第五十七版，不自行授予正式请求执行许可。
+目标仓库：`ScholarWorkflow/professor-contact`；拉取请求：[第72号](https://github.com/ScholarWorkflow/professor-contact/pull/72)。本文件是唯一完整计划，取代第五十八版，不自行授予正式请求执行许可。
 
-第五十五版按甲至辛写成8组，交付材料引用了三批自动化结果：历史 `P1` 至 `P7` 的7个证明方法、方法内43个组件结果；五模块128项；请求构建器6项；另有调用约定27项和1次正式业务运行。后面三批共161项不再作为本轮通过条件。第五十八版保持**自动化测试重跑0项，只执行1次正式业务请求**，同时补上历史证据到当前产品基线的逐组影响判断，并把两位教授的产物检查收敛为一个只接收教授目录的公共函数。
+第五十五版按甲至辛写成8组，交付材料引用了三批自动化结果：历史 `P1` 至 `P7` 的7个证明方法、方法内43个组件结果；五模块128项；请求构建器6项；另有调用约定27项和1次正式业务运行。后面三批共161项不再作为本轮通过条件。第五十九版保持**自动化测试重跑0项，只执行1次正式业务请求**，补上历史证据到当前产品基线的逐组影响判断，把两位教授的产物检查收敛为一个只接收教授目录的公共函数，并把交接与总览顺序恢复为对已有记录的直接人工观察。
 
 ## 1. 正式依据与范围
 
@@ -244,11 +244,6 @@ if jq -e 'type == "object"' "$PC68_RUN_ROOT/response.json"; then
   if jq -e '
     (.output | type == "object")
     and (.output.app_server_events | type == "array")
-    and ((.output.thread_id | type) == "string" and (.output.thread_id | length) > 0)
-    and ((.output.turn_id | type) == "string" and (.output.turn_id | length) > 0)
-    and (((.output.runtime_generation | type) == "number")
-         or ((.output.runtime_generation | type) == "string"
-             and (.output.runtime_generation | length) > 0))
   ' "$PC68_RUN_ROOT/response.json"; then
     PC68_RESPONSE_EVENTS_OK=true
   fi
@@ -265,70 +260,21 @@ fi
      "$PC68_CONSUMER/.agents/skills/professor-contact/docs/workflow-reference.md"
    ```
 
-   再给结构化事件保留数组位置和 `runtime_seq`，并按 `call_id` 配对两次 `spawn_agent` 调用与返回：
+   再直接列出本次响应中已有的两次 `spawn_agent` 调用参数；数组位置只用于人工查看先后，不建立新的事件账本：
 
    ```sh
-   PC68_ROOT_THREAD="$(jq -er '.output.thread_id' "$PC68_RUN_ROOT/response.json")"
-   PC68_TURN_ID="$(jq -er '.output.turn_id' "$PC68_RUN_ROOT/response.json")"
-   PC68_RUNTIME_GENERATION="$(jq -ce '.output.runtime_generation' "$PC68_RUN_ROOT/response.json")"
-
-   jq '
-     [.output.app_server_events | to_entries[]
-       | {event_index: .key,
-          runtime_seq: .value.runtime_seq,
-          runtime_generation: .value.runtime_generation,
-          method: .value.message.method,
-          thread_id: .value.message.params.threadId,
-          turn_id: .value.message.params.turnId,
-          item: .value.message.params.item}]
-   ' "$PC68_RUN_ROOT/response.json" > "$PC68_RUN_ROOT/event-ledger.json"
-
-   jq --arg root "$PC68_ROOT_THREAD" --arg turn "$PC68_TURN_ID" \
-      --argjson generation "$PC68_RUNTIME_GENERATION" '
-     [.[]
-       | select(.runtime_generation == $generation
-           and .thread_id == $root
-           and .turn_id == $turn
-           and .method == "rawResponseItem/completed"
-           and .item.type == "function_call"
-           and .item.namespace == "collaboration"
-           and .item.name == "spawn_agent")
-       | {event_index, runtime_seq, runtime_generation, thread_id, turn_id,
-          call_id: .item.call_id,
-          arguments: (.item.arguments | fromjson)}] as $calls
-     | [.[]
-       | select(.runtime_generation == $generation
-           and .thread_id == $root
-           and .turn_id == $turn
-           and .method == "rawResponseItem/completed"
-           and .item.type == "function_call_output")
-       | {event_index, runtime_seq, call_id: .item.call_id,
-          result: (.item.output | fromjson?)}] as $outputs
-     | [$calls[] as $call
-       | {event_index: $call.event_index,
-          runtime_seq: $call.runtime_seq,
-          runtime_generation: $call.runtime_generation,
-          thread_id: $call.thread_id,
-          turn_id: $call.turn_id,
-          call_id: $call.call_id,
-          arguments: $call.arguments,
-          result_event_index: ([$outputs[] | select(.call_id == $call.call_id) | .event_index] | first),
-          result: ([$outputs[] | select(.call_id == $call.call_id) | .result] | first)}]
-   ' "$PC68_RUN_ROOT/event-ledger.json" > "$PC68_RUN_ROOT/spawn-check.json"
-
-   jq -e '
-     length == 2
-     and ([.[].arguments.task_name] | unique | length == 2)
-     and all(.[].arguments; .agent_type == "professor-contact-email-generator")
-     and all(.[];
-       (.event_index | type == "number")
-       and (.result_event_index | type == "number")
-       and .result_event_index > .event_index)
-     and all(.[].result; (.agent_id | type == "string") and (.agent_id | length > 0))
-   ' "$PC68_RUN_ROOT/spawn-check.json"
+   jq -c '
+     .output.app_server_events | to_entries[]
+     | select(.value.message.method == "rawResponseItem/completed")
+     | .value.message.params.item as $item
+     | select($item.type == "function_call"
+         and $item.namespace == "collaboration"
+         and $item.name == "spawn_agent")
+     | {position: .key, arguments: ($item.arguments | fromjson?)}
+   ' "$PC68_RUN_ROOT/response.json"
    ```
 
-   **单教授交接的证明**不靠任务名猜测。对 `spawn-check.json` 的两行分别查看 `arguments.message`，再回到同一运行代、根线程和当前轮次中该调用之前创建或读取交接文件的完成事件。调用消息必须指向同一个绝对 `owner_input_file`；完成事件必须成功并直接给出该文件实际解析后的 JSON 对象，而不只是创建命令或提示词意图。用对象确认教授目录等于山田或佐藤之一，两个调用的文件路径不同，且对象内所有 `professor_dir` 和选择行都只属于这一位教授。执行记录分别写下调用事件和对象完成事件的 `event_index`，再写 `call_id/agent_id/professor_dir/owner_input_file` 并引用原事件，不另建交接判定器或证据账本。交接对象出现第二位教授目录或原始多教授选择对象时记为业务失败；结构化事件不能把调用、完成事件与实际解析对象唯一关联时记为无法判断。这样证明的是两次根线程当前轮次调用各自收到一个单教授对象，而不是仅证明调用了两个同类型任务。
+   人工直接对照两次调用参数；若参数引用交接文件，则对照响应中已有的交接内容。山田调用只包含山田的目录与选择，佐藤调用只包含佐藤的目录与选择，且两者不混用数据，即可通过。允许调用参数本身已经完整表达这些事实，不要求另行输出完整 JSON、配对调用返回、证明文件读取过程或建立专门证据文件。参数或已有交接内容混入另一位教授时记为业务失败；现有记录不足以分辨时记为无法判断。
 
 2. **两位教授结果使用同一个目录检查函数**。函数只接收教授目录，从该目录的 `邮件输入.json` 读取唯一 `email_id`，再检查四个业务文件和同目录状态行。它不接收教授姓名或预填邮件编号，避免两份复制脚本发生偏差：
 
@@ -376,41 +322,32 @@ fi
 
    两次调用都位于 `if` 条件中，一位失败不会让 `set -e` 提前退出，第二位仍会完成检查。随后分别人工核对山田与固定研究资料、选择、`2026-10-01`、`taro@example.edu` 对应，佐藤与固定研究资料、选择、`2026-10-02`、`hanako@example.edu` 对应。`pending`、`fail_after_2_rounds`、`skipped`、缺行或缺字段均不能通过。若文件缺失且响应诊断明确显示业务调用前的服务或环境故障，记为无法判断；已有文件内容或状态明确违反合同，记为业务失败。
 
-3. **证明根代理先消费两位结果，再生成总览**。使用三段结构化证据：`subAgentActivity` 给出的子线程与 `agentPath` 关联；根线程当前轮次收到的 `agent_message`，其 `recipient` 为 `/root`，正文是该 `agentPath` 的 `FINAL_ANSWER` 且顶层载荷含对应 `professor_dir/status/reason_code`；同一根线程、当前轮次的 `stage5-rebuild-overview` `commandExecution` 开始事件。先断言同一运行代内的总览开始事件恰好一次，再显示该运行代、根线程和当前轮次的三类原事件：
+3. **两份结果返回后才重建总览**。直接查看本次响应已有的教授返回记录和总览重建调用，只保留事件数组中的位置与相关记录供人工对照：
 
    ```sh
-   jq -e --arg root "$PC68_ROOT_THREAD" --arg turn "$PC68_TURN_ID" \
-      --argjson generation "$PC68_RUNTIME_GENERATION" '
-     [.[]
-       | select(.runtime_generation == $generation
-           and .thread_id == $root
-           and .turn_id == $turn
-           and .method == "item/started"
-           and .item.type == "commandExecution"
-           and ((.item.command // "") | contains("stage5-rebuild-overview")))]
-     | length == 1
-   ' "$PC68_RUN_ROOT/event-ledger.json"
-
-   jq -c --arg root "$PC68_ROOT_THREAD" --arg turn "$PC68_TURN_ID" \
-      --argjson generation "$PC68_RUNTIME_GENERATION" '
-     .[]
-     | select(.runtime_generation == $generation
-         and .thread_id == $root
-         and .turn_id == $turn)
-     | select(.item.type == "subAgentActivity"
-         or (.method == "rawResponseItem/completed"
-             and .item.type == "agent_message"
-             and .item.recipient == "/root")
-         or (.method == "item/started"
-             and .item.type == "commandExecution"
-             and ((.item.command // "") | contains("stage5-rebuild-overview"))))
-     | {event_index, runtime_seq, method, thread_id, turn_id, item}
-   ' "$PC68_RUN_ROOT/event-ledger.json"
+   jq -c '
+     .output.app_server_events | to_entries[]
+     | .value.message.params.item as $item
+     | select(
+         (.value.message.method == "rawResponseItem/completed"
+          and ($item.type == "function_call_output" or $item.type == "agent_message"))
+         or (.value.message.method == "item/started"
+             and $item.type == "commandExecution"
+             and (($item.command // "") | contains("stage5-rebuild-overview"))))
+     | {position: .key,
+        method: .value.message.method,
+        type: $item.type,
+        name: $item.name,
+        recipient: $item.recipient,
+        output: $item.output,
+        content: $item.content,
+        command: $item.command}
+   ' "$PC68_RUN_ROOT/response.json"
    ```
 
-   人工用同一运行代内的 `subAgentActivity` 把每个子线程关联到唯一 `agentPath`，再把两条当前轮次回执分别关联到山田、佐藤；在执行记录中写下两条回执和唯一总览开始事件的 `event_index`、`runtime_seq` 与总览调用标识。通过条件是：两位教授各有且只有一条可归属的消费回执，唯一总览开始值严格大于两条回执值中的较大者。该数值关系直接证明总览在两位结果被根代理消费之后才开始，而对全部开始事件计数证明本轮总览只调用一次。子代理自己的完成消息、`wait` 状态文字或最终回复中的教授名字都不能替代消费回执。事件缺少唯一关联、回执正文不满足上述形状，或同一运行代内 `runtime_seq` 不严格递增时记为无法判断。
+   人工从这些已有记录中确认山田和佐藤的两份结果都已经返回根代理，随后才出现一次 `stage5-rebuild-overview`。数组中的自然先后顺序足够，不另要求完整 JSON 输出、专门的消费回执、子线程归属、运行代或运行时序号。这里的“返回根代理”只表示根代理已经收到两份结果，不继续解释成需要证明模型内部如何处理结果。缺少任一教授返回、总览早于任一返回或总览出现多次时记为业务失败；现有记录无法辨认先后时记为无法判断。
 
-4. **总览恰好一次且包含两位结果**。第3项已要求一次可排序的实际调用；这里直接核对派生文件：
+4. **总览恰好一次且包含两位结果**。第3项已人工确认一次实际调用；这里直接核对派生文件：
 
    ```sh
    test -s "$PC68_PROGRAM/教授研究/套磁邮件总览.md"
@@ -467,13 +404,13 @@ fi
 - 安装或准备阶段的外部错误由代理停止并报告，人工决定重试或结束。业务结果不满意不得重试。
 - 结果只分通过、业务失败、无法判断和未执行。总览或清理失败单独记录，不覆盖已经成立的教授业务结果。
 - 甲至庚继续使用历史7个证明方法内43个组件的通过结果；复用依据是第3节逐组影响判断。辛只有六个观察点全部取得可判断结果且符合预期时才通过；随后交第三关口。
-- 原正式失败、第五十五版至第五十七版审核记录、128项、6项和27项的运行记录保留历史归属，但不作为第五十八版执行义务或通过条件。
+- 原正式失败、第五十五版至第五十八版审核记录、128项、6项和27项的运行记录保留历史归属，但不作为第五十九版执行义务或通过条件。
 
 ## 6. 当前状态
 
 | 内容 | 状态 |
 | --- | --- |
-| 当前计划 | 第五十八版；设计和第二关口均已通过；[设计复核](issue68-test-plan-r58-design-review.md)、[第二关口复核](issue68-test-plan-r58-gate2-review.md) |
+| 当前计划 | 第五十九版；设计和第二关口均已通过；[设计复核](issue68-test-plan-r59-design-review.md)、[第二关口复核](issue68-test-plan-r59-gate2-review.md) |
 | 实际规模 | 历史7个证明方法内43个组件按影响判断复用；自动化重跑0项；正式业务请求1次；六个观察点 |
 | 甲至庚 | 历史结果继续有效，不重跑 |
 | 辛 | 当前为无法判断；待一次正式正常业务请求 |
@@ -488,3 +425,5 @@ fi
 第五十七版响应控制流限定修订（2026-10-10）：响应对象、诊断提取和事件数组解析全部放入明确条件分支，解析失败只设置可用状态，不因 `set -eu` 提前退出；两位教授的文件与状态检查始终在条件块之外先执行。未改变结果分类、观察点、请求次数或重试规则；本项计划设计限定复核和第二关口限定复核均已通过。
 
 第五十八版修订（2026-10-10）：把历史证据准确表述为7个证明方法内43个组件，并补上从生产提交 `35f2785` 到产品基线 `6169c87` 的 `P1` 至 `P7` 影响判断；两位教授的产物与状态检查合并为同一个只接收教授目录的函数，两次调用分别保存结果，一位失败不会阻止另一位；单教授交接必须关联实际交接对象并证明只含一个教授目录；根代理消费以当前轮次 `agent_message` 回执为证据，总览 `commandExecution` 的开始 `runtime_seq` 必须大于两条消费回执。未增加正式请求、自动化重跑或重复回归。
+
+第五十九版修订（2026-10-10）：删除第五十八版为单教授交接和总览顺序增加的完整对象关联、调用返回配对、子线程归属、专门消费回执、运行代及运行时序号要求。单教授交接改为直接人工对照已有调用参数或交接内容；总览顺序改为直接人工对照两份已有返回记录均先于一次总览重建。收到结果只表示结果已经返回根代理，不延伸为证明模型内部如何处理结果。未增加正式请求、自动化重跑或重复回归。
