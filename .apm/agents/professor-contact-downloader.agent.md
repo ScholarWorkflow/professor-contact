@@ -38,7 +38,7 @@ You do NOT run a broad professor-level downloader. Stage 0 already persisted eac
 
 - `folder_path` — program root containing `info.json`, or a per-専攻 folder resolvable to it. REQUIRED.
 - `target_files` (optional) — comma-separated absolute paths of the professors' own `<教授目录>/套磁目标.json` files. 从 Stage 0 返回的 transactions 中，取本轮继续处理且 status 为 ok 的记录的 target_state，按现有 target_files 格式原样传入。 When supplied, these are exactly the professors in scope for this run, and every `resolve`/`build`/`verify` call carries one of them as `--target-file`.
-- `professors` (optional) — comma-separated professor names. Stage 1 runs one professor-local target at a time, so the caller's own scope is the set of `<教授目录>/套磁目标.json` files: with `target_files` supplied use exactly those, otherwise with `professors` supplied use exactly those professors' target files; when both are omitted, use every professor directory under `教授研究/` that already carries its own `套磁目标.json`. 从 Stage 0 返回的 transactions 中，取本轮继续处理且 status 为 ok 的记录的 target_state，按现有 target_files 格式原样传入。 A professor with no local target file is not silently skipped — report it as `missing_target_state`.
+- `professors` (optional) — comma-separated professor names. Stage 1 runs one professor-local target at a time, so the caller's own scope is the set of `<教授目录>/套磁目标.json` files: with `target_files` supplied use exactly those, otherwise with `professors` supplied use exactly those professors' target files; when both are omitted, use every professor directory under `教授研究/` that already carries its own `套磁目标.json`. 承接 Stage 0 结果时，从 Stage 0 返回的 transactions 中，取本轮继续处理且 status 为 ok 的记录的 target_state，按现有 target_files 格式原样传入。 A professor with no local target file is not silently skipped — report it as `missing_target_state`.
 - `named_papers_file` (optional) — absolute path to a JSON file mapping `direction_id` → array of user-named papers (Zotero item keys or exact paper titles). Use it when the user explicitly names papers that must be in a direction's candidates.
 - `access_mode` (optional): `"oa_only" | "allow_non_oa"` (exact values: `oa_only` and `allow_non_oa`) — the caller's current network-access decision for this run. If supplied, it must be exactly one of those values; the downloader does not infer, translate, cache, or otherwise reinterpret it.
 
@@ -185,7 +185,7 @@ Return only compact JSON:
 }
 ```
 
-`transactions` carries one entry per professor-local target this run processed, identified by that professor's canonical `professor_dir` + `preview_path` plus the `--target-file` it ran as `target_state`; the display `professor` field is for showing to the user only, since two professors in different directories can share it and a mapping keyed by that name would drop one of them. `candidate_count` = total expanded candidate keys across selected directions (union/deduplicated) over these records. `action` is the **post-fill** (or build-time, when no fill was needed) snapshot action of each record. `ok` — build succeeded and every candidate has usable full text (or the collector finished and the refreshed snapshot is `noop`); `partial` — the collector could not fill some missing keys or unresolved keys remain (they stay eligible/diagnosed for the next run).
+`target_states` 与 `stage1_snapshots` 分别按教授名映射本轮处理的教授本地目标文件路径与阶段 1 候选快照路径。`candidate_count` 是本轮已选方向扩展候选键的去重总数。`action` 表示补下后的候选快照动作；无需补下时，使用构建时的动作。`result` 为 `ok` 表示构建成功且所有候选都有可用全文，或收集代理完成后刷新快照的 `action` 为 `noop`；`partial` 表示仍有未能补下或无法解析的候选键，这些候选保留到下次处理，并在 `notes` 中说明。
 
 ## Hard rules
 
