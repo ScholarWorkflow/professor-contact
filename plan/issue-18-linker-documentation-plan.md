@@ -81,8 +81,8 @@ D1 的“不存在”结论仅对已读取的 `paper-analysis@19eb3e26` 仓库�
 **步骤 1：取得准确源分支。** 在独立的 `professor-contact` 源仓库进入 `docs/issue-18-remove-phantom-linker`，不要在 `worktrees/` 或 `apm-consumers/` 当成生产者编辑；不要基于主分支另开分支。先查看当前分支与提交：
 
 ```sh
-git fetch origin docs/issue-18-remove-phantom-linker
-git switch docs/issue-18-remove-phantom-linker
+git fetch origin main docs/issue-18-remove-phantom-linker
+git switch docs/issue-18-remove-phantom-linker || git switch --track origin/docs/issue-18-remove-phantom-linker
 git pull --ff-only origin docs/issue-18-remove-phantom-linker
 git status --short
 git rev-parse HEAD
@@ -100,7 +100,7 @@ git rev-parse HEAD
 - Zotero／分析链接格式、无文件时保持原样、聊天及套磁邮件禁链边界未删除。
 - 产品脚本、依赖清单、已有测试、索引与资料文件不在本次差异中。
 
-可用 `git diff --check` 做文档空白和补丁格式检查，`git diff -- .apm/skills/professor-contact/SKILL.md plan/issue-18-linker-documentation-plan.md` 查看内容。**这是对提交内容的人工核对，不增列产品测试用例或运行时验收。**
+可用 `git diff --check origin/main...HEAD` 做文档空白和补丁格式检查，`git diff origin/main...HEAD -- .apm/skills/professor-contact/SKILL.md plan/issue-18-linker-documentation-plan.md` 查看已提交的完整 PR 差异。**这是对提交内容的人工核对，不增列产品测试用例或运行时验收。**
 
 **步骤 5：提交与推送。** 本 PR 只提交链接约定文档及 `plan/` 下本计划等必要审核记录。仅向 `docs/issue-18-remove-phantom-linker` 推送；不修改 `main`、不新开 PR、不合并、不擅自转为准备审核状态。PR 描述和评论引用本计划当前版本及实际提交号，不在评论粘贴第二套完整方案。
 
@@ -110,7 +110,7 @@ git rev-parse HEAD
 
 依据第 18 号问题及 `Test Engineer Rule`，**本次必测产品清单为空**：没有新功能、没有产品行为改变、没有新的安装产物。因此不安排安装／重装干净消费者、Codex／OpenCode 冒烟、评估服务、回填／对账／去重测试、夹具建设或全仓回归。
 
-实施者只需人工核对第五码步骤中的文档差异及补丁格式，并记录“文档核对完成／未完成”；不得把该记录写成“产品测试通过”。如果后续获批改变真实业务行为，应先由验收决定人确认新必测目标，再按测试工程师规则在同一 `plan/` 中修订唯一有效计划，未获授权不能扩测。
+实施者只需人工核对步骤 4 中的文档差异及补丁格式，并记录“文档核对完成／未完成”；不得把该记录写成“产品测试通过”。如果后续获批改变真实业务行为，应先由验收决定人确认新必测目标，再按测试工程师规则在同一 `plan/` 中修订唯一有效计划，未获授权不能扩测。
 
 ## 七、停止条件及提交边界
 
