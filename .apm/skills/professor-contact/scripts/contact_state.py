@@ -9116,12 +9116,10 @@ def stage5_list_input_rows(program_root: Path) -> list:
             continue
         row["professor"] = professor
         row["professor_dir"] = professor_dir
-        contained = False
-        try:
-            require_professor_dir_under_program(Path(professor_dir), program_root)
+        contained = professor_dir_containment_error(
+            Path(professor_dir), program_root) is None
+        if contained:
             contained = Path(professor_dir).resolve() == pack_path.parent.resolve()
-        except SystemExit:
-            contained = False
         if not contained:
             row["reason_code"] = "invalid_professor_dir"
         else:

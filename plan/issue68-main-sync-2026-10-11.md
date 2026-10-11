@@ -21,4 +21,11 @@
 
 专用实现审核代理对上述两个父提交形成的暂存合并结果完成首次完整审核，覆盖第十七版全部产品交付及必要连接，包括此前未修改部分。结论为完整，未发现范围内缺失或业务偏差；甲至庚及辛的既有结果继续适用，没有待修正项。本轮审核只读，没有运行测试或增加证明材料；该结论不代表正式关口或合并批准。
 
+## 后续审核修正
+
+- 最新审核在 `8182d7e1db2f9be1064bc94ddc3551acbf56fad5` 上发现第五阶段只读发现的具体缺陷：目录越界时调用 `require_professor_dir_under_program()` 会先向 stdout 输出错误 JSON，随后发现命令再输出完整结果，导致一个调用包含两段 JSON。
+- `stage5_list_input_rows()` 改用纯检查 `professor_dir_containment_error()`；越界包仍只生成所属教授的 `invalid_professor_dir` 行，合法教授行保留，发现过程不写文件。
+- 新增直接回归 `TestStage5ListInputDiscovery.test_valid_and_escaped_packs_produce_one_json_document`。修复前单次 JSON 解析以 `JSONDecodeError: Extra data` 失败；修复后通过，验证单份 JSON、合法/越界教授各自结果以及输入文件字节不变。命令：`UV_CACHE_DIR=/tmp/uv-professor-contact-cache uv run --no-project python -m unittest test_contact_state.TestStage5ListInputDiscovery.test_valid_and_escaped_packs_produce_one_json_document`，结果 `Ran 1 test, OK`。
+- 本次只复查该缺陷直接影响的 AD68-3/P6 发现结果；未重跑正式第三关口，也未把清单外的路由静态断言纳入本轮测试范围。
+
 下一负责人：合并审核者核对最终合入内容及已有结果的适用性。本记录不授予合并批准。

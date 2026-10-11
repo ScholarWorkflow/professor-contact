@@ -1796,6 +1796,48 @@ class Issue66RecordedValidationScopeTests(BaseEnv):
                              before_state["validator"]["groups"])
 
 
+class TestStage5ListInputDiscovery(BaseEnv):
+    def test_valid_and_escaped_packs_produce_one_json_document(self):
+        research = self.root / "教授研究"
+        valid_dir = research / "X分野" / "有効 教授"
+        invalid_pack_dir = research / "Y分野" / "越界 教授"
+        outside_dir = self.root.parent / f"{self.root.name}-outside-professor"
+
+        def write_pack(directory, professor, professor_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / contact_state.EMAIL_PACK).write_text(json.dumps({
+                "schema": contact_state.STAGE4_LOCAL_SCHEMA,
+                "kind": contact_state.EMAIL_PACK_KIND,
+                "professor": professor,
+                "professor_dir": str(professor_dir),
+                "emails": [],
+            }, ensure_ascii=False), encoding="utf-8")
+
+        write_pack(valid_dir, "有効 教授", valid_dir)
+        write_pack(invalid_pack_dir, "越界 教授", outside_dir)
+        before = {
+            path.relative_to(self.root): path.read_bytes()
+            for path in self.root.rglob("*") if path.is_file()
+        }
+
+        result = raw_cli("stage5-list-inputs", "--program-root", self.root)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "ok", payload)
+        rows = {row["professor"]: row for row in payload["inputs"]}
+        self.assertEqual(rows["有効 教授"]["status"], "ok", payload)
+        self.assertIsNone(rows["有効 教授"]["reason_code"], payload)
+        self.assertEqual(rows["越界 教授"]["status"], "error", payload)
+        self.assertEqual(rows["越界 教授"]["reason_code"],
+                         "invalid_professor_dir", payload)
+        after = {
+            path.relative_to(self.root): path.read_bytes()
+            for path in self.root.rglob("*") if path.is_file()
+        }
+        self.assertEqual(after, before, "discovery must remain read-only")
+
+
 class TestStage5(BaseEnv):
     def test_stage5_requires_user_template(self):
         self.prepare()
