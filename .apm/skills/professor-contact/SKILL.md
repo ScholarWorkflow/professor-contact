@@ -11,21 +11,27 @@ This skill is the **caller convention** for the 套磁 workflow (套磁 = contac
 
 > **skill = how to call (this file). subagent = the isolated execution unit (where it runs).**
 
+## 运行器路径（先读）
+
+- `<professor-contact-skill-dir>` 指本次执行实际加载的已安装 `SKILL.md` 所在目录的绝对路径。确定性运行器统一使用 `python3 <professor-contact-skill-dir>/scripts/contact_state.py`；不得从当前工作目录、源码工作树或 Stage 0 业务资料目录推算运行器路径。Stage 5 的 `stage5-list-inputs`、`stage5-partition-choices`、`stage5-rebuild-overview` 均须直接使用该安装路径；这三个命令的 `--program-root` 仍指向用户的业务资料目录。
+
 ## Runtime routing gate (read first)
 
 - **当前 host 决定调用分支**：当前 host 是 Codex 就只走 Codex 原生 subagent workflow；当前 host 是 OpenCode 就只走 OpenCode 原生 Task。不得通过 CLI 是否安装、命令探测或模型自述改选另一分支。
-- **Codex 的定位与调用是一个动作**：Stage 请求本身就是 routing gate。若当前 Codex 通过程序化工具调用器暴露原生多代理能力，定位该能力并发起 exact named agent 调用属于同一个**真实委派动作**，**不是能力探测前置条件**；不得停在列举/检索结果上，也不得把入口未显示、OpenCode 语法不存在或先前运行失败当成“无法委派”。
-- **先真实调用，再判断失败**：立即按下表选定 installed exact named agent，发起当前运行的原生调用并等待结果。只有该 exact named agent 的本轮调用实际返回 `machine-level failure`，才允许记录 runtime/feature blocker；父线程不得 inline/simulate child。
+- **Codex 当前会话直接委派**：Stage 请求本身触发 routing gate。当前 Codex 的 Stage 1–4 必须直接使用本会话提供的原生委派方式，调用表格中指定的 exact named custom agent，并等待结果。Stage 5 完成共享 5.11 的准备后，按当前安装目标专属路由说明继续。已安装代理的定义位于 `.codex/agents/<name>.toml`，不是 `.agents/skills/<name>/SKILL.md`。
+- **先真实调用，再判断失败**：Stage 1–4 按表选定 installed exact named agent 并发起当前运行的原生调用；Stage 5 按 5.11 准备完成后，按当前安装目标专属路由说明委派。调用后均须等待结果；只有真实调用返回运行时错误才报告调用失败，父线程不得 inline/simulate child。
 - **等待到子代理结束**：一次等待调用返回只说明这次调用结束；若结果显示子代理仍在运行时继续等待，不得结束当前回合。拿到子代理最终结果后再汇报 Stage 结果。
 - **禁止跨执行器 shell fallback**：不得用 shell、`opencode run`、`codex exec`、curl 或另发 eval 请求代替原生委派；不得把 OpenCode `task(...)` 语法写进 Codex 调用。
+- **阶段 5 根代理调用顺序**：输入提取、完整 owner 集确定、一次分配、按教授目录关联、单教授交接、委派、等待并消费结果、总览重建、报告与清理统一按 5.11 的有序步骤执行；当前安装目标的专属说明只补充该目标的调用方式，不另定义处理顺序。
+- **阶段 5 缺少选择**：用户没提供 `choices` 时不制造空对象或默认决定、不调用分配；按 5.11 生成不含 `choices` 的单教授交接并正常委派。教授代理遵守既有交互边界，取得真实决定或返回 `needs_input`。
 
-| 入口 | Codex 第一项路由动作 |
+| 入口 | Codex 执行顺序 |
 |---|---|
 | Stage 1 | Stage 1 → `professor-contact-downloader` |
 | Stage 2 | Stage 2 → `professor-contact-analyzer` |
 | Stage 3 | Stage 3 → `professor-contact-idea-generator` |
 | Stage 4 | Stage 4 → `professor-contact-selection` |
-| Stage 5 | Stage 5 → `professor-contact-email-generator` |
+| Stage 5 | Stage 5 → 按 5.11 准备完整 owner 集与单教授交接 → 按安装目标专属说明逐位委派 |
 
 上述 child 返回前，不执行属于该 child 的业务工作。详细 payload、等待、非递归与交互边界仍以下文对应 runtime 分支为准。
 
@@ -92,7 +98,7 @@ Stage 0 does not require Zotero to be open. Later stages may still use Zotero as
 | 2 | `professor-contact-analyzer` | 用该教授 `<教授目录>/套磁目标.json` 作 `--target-file` 先 `contact_stage1.py verify --target-file` 校验 Stage 1 候选快照，再对每位教授跑 `contact_state.py stage2-preflight --target-file`：`reuse_all` 教授在 Zotero probe、PDF 读取、OCR、paper-analysis、handoff、模型 job 之前以 no-op 复用既有 `套磁候选输入.json` + `套磁候选分析.md` 结束（`chatgpt_result` 提供或 `kb_import=true` 时禁止 early exit）；仅对 process 教授以逐方向 `candidate_keys` 为读取/相关性/分析范围（可信度闸门只用 provisional members）；**full `paper-analysis` 覆盖候选集去重并集——每个 unique candidate 复用未变的有效 full analysis，否则跑一次 full pass（摘要级相关集与成本门只截断 gap/叙事，绝不截断 full analysis，issue #7 required flow #2）**→ 判定相关论文、署名、主线与 post-cost-gate 分析 scope 后，**总是先生成确定性的 ChatGPT handoff ZIP**。`chatgpt_handoff=continue` 时 ZIP 只是低成本 side effect，随后旧的本地 OCR/`paper-analysis` 路径语义不变；`wait` 时在任何新 OCR/`paper-analysis` 前软停止。提供匹配 result ZIP 后先严格本地导入成普通 analysis/sidecar，再继续既有 `stage2-resolve-plan → stage2-resolve-finalize → stage2-plan → stage2-finalize --preflight-file`（resolve 流水线对每个被选方向做权威性归属判定：移除误归类、新增他向支持、重命名、拆分/合并、写 `resolved_direction` 状态）。gap/runner/状态机仍完全本地 | `<教授名>/论文分析/_chatgpt_handoff/stage2-<id>.zip`（传输层）+ `<教授名>/论文分析/_resolved_directions.json`（方向权威归属）+ 原有 `<教授名>/套磁候选输入.json`（带 `resolved_directions` 字段与 `cache.preflight` 复用元数据，Stage 3 唯一事实源）/分析报告/_freshness_cache/index/sidecar |
 | 3 | `professor-contact-idea-generator` | **只读输入包 + profile**（不读任何 Markdown/_index/sidecar；输入包为 v2：professor 级 `papers[item_key]` 单一规范论文记录 + 各方向 `supporting_item_keys` 引用）：`stage3-plan --direction-id`（canonical 机器身份；`--collection-key` 仅为 v1 兼容并经输入包精确映射解析）按 `refresh_scope` 生成逐 resolved 方向独立 job（结果文件由 runner 返回安全名 `candidates-<id>-<hash>.json`；模型输入只含本方向切片，绝不发全方向并集），每方向 3-5 条可选候选（除非 `--skip-direction-ids` 显式跳过→持久化 `stage3_status:"skipped"`；refined 模式同样 3-5 条且恰好 1 条 `origin:"user_refined"` 的校准后用户想法）；候选为 v2 精确溯源：`kind:"direction"` + `direction_ids:[本方向]` + `gap_refs` 精确 `(direction_id,item_key,gap_id)` 三元组（在另一方向合法的 gap 配错 direction_id 一律拒绝）；**跨方向为显式 opt-in**：只有调用方传 `--cross-direction-groups '[["DIR_A","DIR_B"]]'`（≥2 个既有 direction ID、排序去重）才生成独立 `kind:"cross_direction"` job（组身份 `cross:<hash>`，缓存=参与方向指纹+profile+契约版本），默认无任何 cross job/模型调用/Markdown 节 → `stage3-finalize` 校验后写 v2 状态并渲染候选文件（按方向分节 + 仅显式组才有的「跨方向想法（显式标注）」节；未再请求的组确定性删除并报告 `group_not_requested`；finalize 只提交当前教授——本地状态 + 本地 Markdown 是同一个本地事务，Markdown 先安装、状态最后安装＝唯一提交标记，绝不读写 `套磁想法候选总览.md` / `_contact_projections.json`，也不读取任何其它教授的状态）；复用逐 direction_id 判定（指纹不含 collection_key/显示名：纯投影改名只重渲染）；profile 改动只失效阶段 3/4；白话校验结果另由 `stage3-record-validation` 从 validator 原始 JSON 写入独立字段（绑定渲染 SHA + 逐条 issue 的 direction_id/group_id 范围） | `<教授名>/套磁候选状态.json`（schema 2：逐方向 `direction_id` + `cross_direction_groups`） + `<教授名>/套磁想法候选.md`（runner 渲染） + `套磁想法候选总览.md`（terminal 后由 `stage3-rebuild-overview` 从全部已提交状态重建的派生投影） |
 | 4 | `professor-contact-selection` | 用户从**候选状态**（非 Markdown）挑选：selection 条目以 `direction_ids`（canonical，排序规范化）圈定作用域——普通方向 `[DIR]`、跨方向想法 `[DIR_A,DIR_B]`（与组的排序 ID 完全一致）；`stage4-finalize` 以 canonical `professor_dir` 为事务边界逐教授处理（同教授的多方向/跨方向想法仍在一个事务内，不同教授互不为前置条件），按 direction_id + 精确三元组 join（候选 id 只在其 direction 作用域内解析，跨作用域引用该教授整批 fail closed）并校验指纹（过期 `needs_refresh` 不落盘；组选取逐参与方向指纹校验，漂移 `cross_participant_changed`；v1 选择条目仅在有唯一 collection_key→direction_id 机器映射时可迁移，歧义 `legacy_direction_identity` 零写入；部分复选（只重选该教授的部分方向）保留该教授 local 选择文件中未涉及条目并整体重编译进该教授的 local pair——被保留条目的候选状态缺失/无法精确迁移/输入包不可读 → `candidate_state_missing`/`legacy_direction_identity`/`preserved_selection_uncompilable`，该教授任何写盘前零写入，绝不静默挤出既有选择；教授级 local pair 只存在一半 → `local_pair_incomplete` 零写入，既不覆盖已有文件也不生成另一半）→ 写该教授的 `<教授目录>/套磁选择.json`（schema 3，保留候选的 `direction_ids`/精确溯源）并**编译该教授的 local 邮件输入包**（`<教授目录>/邮件输入.json` schema 3：每条 email 携带 `direction_ids` + `directions[]` 显示名 provenance，`email_id = 教授::'+'.join(sorted(direction_ids))::想法ID`（A+B==B+A）；跨方向按参与方向切片并集编译——论文按 `item_key` 去重且各带 `direction_ids` 归属、gap 每行携带 `direction_id`；`cross_direction` 组信息与 `contact_evidence` 一起参与 `source_hash`；done_by_self 只作 extension_context_only；上游 `_联系方式证据.json` 记录连同 `record_fingerprint` 冻结进每条 email——阶段 5 的收件事实源） | `<教授目录>/套磁选择.json` + `<教授目录>/邮件输入.json`（schema 3，教授级唯一权威，自包含短证据＋冻结联系方式快照；一次调用只输出一个聚合 JSON `status=ok/partial/error` + `results[]` 逐教授结果，成功行的 `email_pack` 就是交给阶段 5 的那一份） |
-| 5 | `professor-contact-email-generator` | **只读邮件输入包**（+profile/模板/info/boshu/`_contact_verify.json`）：默认生成首封和无回复跟进两种输出；先运行不带 `--result`/`--choices` 的 `stage5-plan --mode both`，逐教授完成送信前核验并重跑，直到全部 `verify: ok`（`verify_missing`/普通 `needs_recheck` 是 5.9 待办，不是完成结果；需 Stage 4 修复的确定性 `needs_refresh` 才返回调用方）→ 模型只回首封的 4 句兴趣段+source_map+未来志向+学習中候选 →（可选）`humanizer-ja` 只润色模型动态字段（拼装前，5.6）→ 用户 choices（含初次发送日期；缺决定即停在既有 `needs_input` 边界，不代选、不编日期）→ `stage5_immutable.py stage5-finalize --mode both`（确定性模板拼装+保护串校验+渲染；仅在动态字段确被润色时传 `--polish-mode dynamic-fields-only`；整封成品与模板固定文字从不进入 humanizer）→ 首封和跟进各自过 validator 循环（validator 也只读 md+邮件包）并记录 `stage5-record-validation` | 每封选中邮件独立的 `套磁邮件.md`/`.txt` 与 `套磁跟进邮件.md`/`.txt`（单封用固定名，多封按方向与想法 ID 加后缀）+ `<教授名>/套磁邮件状态.json` + `套磁邮件总览.md` + `_contact_verify.json` |
+| 5 | `professor-contact-email-generator` | **只读该教授的本地邮件输入包**（`--email-pack <教授目录>/邮件输入.json`，Issue #68；+profile/模板/info/boshu/`_contact_verify.json`）：默认生成首封和无回复跟进两种输出；先运行不带 `--result`/`--choices` 的 `stage5-plan --mode both`，逐教授完成送信前核验并重跑，直到全部 `verify: ok`（`verify_missing`/普通 `needs_recheck` 是 5.9 待办，不是完成结果；需 Stage 4 修复的确定性 `needs_refresh` 才返回调用方）→ 模型只回首封的 4 句兴趣段+source_map+未来志向+学習中候选 →（可选）`humanizer-ja` 只润色模型动态字段（拼装前，5.6）→ 用户 choices（含初次发送日期；缺决定即停在既有 `needs_input` 边界，不代选、不编日期）→ `stage5_immutable.py stage5-finalize --mode both`（确定性模板拼装+保护串校验+渲染；仅在动态字段确被润色时传 `--polish-mode dynamic-fields-only`；整封成品与模板固定文字从不进入 humanizer）→ 首封和跟进各自过 validator 循环（validator 也只读 md+邮件包）并记录 `stage5-record-validation` | 每封选中邮件独立的 `套磁邮件.md`/`.txt` 与 `套磁跟进邮件.md`/`.txt`（单封用固定名，多封按方向与想法 ID 加后缀）+ `<教授名>/套磁邮件状态.json` + `_contact_verify.json`（一次 owner 调用只提交这一位教授；程序级 `套磁邮件总览.md` 是派生投影，由 `python3 <professor-contact-skill-dir>/scripts/contact_state.py stage5-rebuild-overview --program-root <业务资料目录绝对路径>` 单独重建，见 5.11） |
 
 
 ## Stage 2 ChatGPT handoff（只替换逐论文高耗分析）
@@ -216,7 +222,8 @@ Stage 0 交给下游的是**教授级事务记录数组**（`transactions`），
 | `gap_scope` | 2 | `relevant` / `selected_direction` / `all` | `selected_direction` | 只决定从哪些**已有有效 sidecar** 的论文选 gap；绝不触发额外 gap 提取 |
 | `freshness_scope` | 2 | `shortlist` / `full` | `shortlist` | `shortlist` 只判断稳定排序的 5–10 条 gap；`full` 判断候选池全部。独立于 gap_scope 可单独扩大 |
 | `refresh_scope` | 3 | `flagged` / `selected` / `all` | `flagged` | 只决定哪些方向（重新）生成候选；`flagged` 在 preview 工作流中=当前 Stage 2 输入包内的被选方向（旧参数名保留为兼容）；不调用阶段 2，不读 Zotero/sidecar/`_index.json`/Markdown |
-| `--email-id` | 5 | `邮件输入.json` 中真实、非空的单个 `email_id` | 未传=包内全部邮件 | **硬执行范围**：本次 plan/finalize 只处理这一封邮件，无关条目的损坏/陈旧状态既不阻断也不被读写；两次调用必须传同一个 id（详见 5.10） |
+| `--email-pack` | 5 | 阶段 4 落盘的 `<教授目录>/邮件输入.json` 绝对路径 | **无缺省**（缺失即 `invalid_params`） | Issue #68：该教授的本地邮件输入包是阶段 5 唯一事实源；不存在程序级回退包，pack 路径在同一次运行的 plan/finalize 必须一致（详见 5.11） |
+| `--email-id` | 5 | `邮件输入.json` 中真实、非空的单个 `email_id` | 未传=该教授包内全部邮件 | **硬执行范围**：本次 plan/finalize 只处理这一封邮件，无关条目的损坏/陈旧状态既不阻断也不被读写；两次调用必须传同一个 id（详见 5.10） |
 
 ### 缓存失效（稳定 reason_code）
 
@@ -287,6 +294,10 @@ Codex 自带的 typed spawn 参数。它是可选的 canonical JSON 输入，且
   内部兼容字段（例如 `subject`、`alma_mater`）不属于公共 API，caller 不得生成或
   宣传这些字段；Issue #43 不定义这些非公共字段的拒绝/兼容语义，因此也不把它们升级为
   caller acceptance gate。
+- 一次请求覆盖多位教授时，行可以带可选的 `professor_dir`（该教授的规范目录路径）
+  显式声明归属；不带的行是旧格式，由根代理的确定性分配入口计算归属（见 5.11）。
+  调用方不手工按教授切片；根代理保存用户原值并分配一次，教授代理只接收本教授
+  `choices_rows` 转成的业务 `choices` 列表，不接收原始多教授选择或完整分配文件。
 - **收件人只有一份权威**：`_contact_verify.json` 的 `items.email.value`（Step 2.5
   送信前核验结论）。`choices.email_address` 只是调用方对收件人的**明确答复**，
   用来确认这份权威：它与已核验地址一致（忽略大小写）才可通过；不一致 →
@@ -294,15 +305,20 @@ Codex 自带的 typed spawn 参数。它是可选的 canonical JSON 输入，且
   必须回 Step 2.5 把用户答复写入 `items.email`（`source: user_provided`、
   `verdict: confirmed`）再重跑。任何情况下 `choices` 都不能替换渲染出的收件邮箱。
 - **次序**：先跑不带 `--result`/`--choices` 的 `stage5-plan` 完成核验硬门禁；
-  所选教授全部 `verify: ok` 之前，runner 不读取 choices 文件（停住原因只会是
+  当前教授本次范围全部 `verify: ok` 之前，runner 不读取 choices 文件（停住原因只会是
   `verify_*` 或需 Stage 4 修复的裸 `contact_evidence_*`，不会是 choices 相关
   reason_code）。
 
-Caller 必须把 canonical JSON 原样写入一次性的临时 choices 文件并传给
-既有 runner 的 `--choices`。runner 继续负责必填字段/类型、缺失、重复/未知/id 集合、
-收件人权威、contact-evidence 和最终写盘校验；caller 不补默认值、不按数组位置或教授名
-重映射。缺少 choices 时，OpenCode 继续走 `question`；Codex 的
-non-interactive 调用返回既有 `needs_input` 边界，不代选、不最终写盘。
+业务 `choices` 是结构化值；所有第五阶段命令行 `--choices` 都是 JSON 文件路径，
+不接受内嵌对象或列表文本，也不按字符串外观猜输入形式。用户提供选择时，根代理用
+JSON 序列化工具保存原值，以参数列表将其绝对路径交给分配入口；解析 `owners` 后，
+按 `professor_dir` 检查各项 `partition.status`，将合法项的 `choices_rows` 直接赋给
+单教授交接对象的 `choices`。完整 `--out` 文件只由根代理读取。教授代理从自己的
+`owner_input_file` 取得值，在核验后允许消费选择时生成本教授选择文件，再把该绝对路径
+传给业务 runner 的 `--choices`。文件归属、存活及清理见前部输入规则和 5.11。
+runner 继续负责必填字段/类型、缺失、重复/未知/id 集合、收件人权威、contact-evidence
+和最终写盘校验；调用方不补默认值、不按数组位置或教授名重映射。缺少 `choices` 时，
+根代理不制造空选择，不调用分配，仍用不含该字段的单教授交接正常委派；业务代理按当前安装目标的既有交互边界返回真实 `needs_input`，不代选、不最终写盘。
 
 ### 5.1 只产兴趣段 + 未来志向句 + 学習中候选
 
@@ -367,7 +383,7 @@ non-interactive 调用返回既有 `needs_input` 边界，不代选、不最终�
 ### 5.8 产物
 
 - `<教授名>/套磁邮件.md` / `.txt` — 阶段 5首封邮件；无回复版本为同目录的 `套磁跟进邮件.md` / `.txt`。两类文件都包含独立的送信前核对表、humanizer 保护校验和 validator 记录；跟进文件额外记录首封 email_id 与初次发送日期。
-- `教授研究/套磁邮件总览.md` — 程序级聚合；`--email-id` 定向运行不重建它（既有文件按字节不动、缺失不凭空生成，`overview_md` 相应返回既有路径或 `null`，见 5.10）。
+- `教授研究/套磁邮件总览.md` — 程序级派生聚合，唯一阶段 5 写入者是 `python3 <professor-contact-skill-dir>/scripts/contact_state.py stage5-rebuild-overview --program-root <业务资料目录绝对路径>`；任何 finalize（定向或批量）都不创建、不更新它，也不因它陈旧/冲突/缺失而阻断该教授的提交（`overview_md` 只返回既有路径或 `null`，见 5.10、5.11）。人手改动聚合只在 rebuild 时返回 `needs_decision`，不影响逐教授事务。
 - 幂等：同方向重跑覆盖对应文件（受管 md 人手改动 → `needs_decision`）；`套磁邮件状态.json` 记录 render sha 与 validation 状态。
 - **阶段 5 不需要 Zotero**（纯本地文件；论文标题已在阶段 2 从 Zotero 取过）。
 
@@ -394,14 +410,39 @@ non-interactive 调用返回既有 `needs_input` 边界，不代选、不最终�
 
 ### 5.10 单封定向执行范围（`--email-id`）
 
-Issue #59：`--email-id` 是**硬执行范围**，不是过滤提示。同一次定向运行里 `stage5-plan` 与 `stage5_immutable.py stage5-finalize` 必须携带**同一个 `--email-id`**：一封有效邮件可以在无关条目状态陈旧、损坏或缺失的程序级 `邮件输入.json` 上单独跑通。
+Issue #59：`--email-id` 是**硬执行范围**，不是过滤提示。同一次定向运行里 `stage5-plan` 与 `stage5_immutable.py stage5-finalize` 必须携带**同一个 `--email-id`**（以及同一个 `--email-pack`）：一封有效邮件可以在无关条目状态陈旧、损坏或缺失的该教授本地 `邮件输入.json` 上单独跑通。
 
 - **身份解析最先**：runner 先用 `email_id` 选出本次范围，之后才做 `professor_dir`、contact evidence、`_contact_verify.json`、`套磁邮件状态.json`、result、choices、模板与写盘校验。找不到 → `invalid_params` / `email_id not found: <id>`；同一 `email_id` 命中多行 → `invalid_email_pack`。定向模式从不按数组位置、教授名或「第一封」猜测目标。
 - **无关行只是噪声**：非 dict 行、缺少 `email_id` 的行、未知 id 行、重复的未知 id 行一律不阻断也不处理；被选 id 自己重复或在 result/choices 中缺席仍然 fail closed。`validate_email_raw`、`require_user_choices`、`require_followup_choices`、`stage5_recipient_authority` 对被选行的约束一条不放松。
 - **教授级只读被选教授**：`professor_dir` 程序根约束、contact-evidence 新鲜度/指纹判定、`_contact_verify.json` 读取与 `needs_recheck` 都只作用于被选教授；绝不因为别的教授缺 cache、指纹陈旧或快照失配而阻断本次定向运行。
 - **输出命名不解析别的路径**：同教授邻居数量只从身份字段（`professor` 等）计算，绝不解析未选行的 `professor_dir`；文件名与 `test_stage5_multiple_emails_use_distinct_files` 既有约定一致。
-- **程序级总览不进入定向事务**：定向 finalize 不重建 `套磁邮件总览.md`，不检测投影冲突，也不写 `needs_decision`——一行表格不是程序级聚合。已存在的聚合按字节原样保留，结果里 `overview_md` 返回该既有路径；不存在则 `overview_md` 为 `null`，且绝不凭空造出一份残缺聚合。批量模式仍照旧重建聚合并照常报 `needs_decision`。
+- **程序级总览不进入阶段 5 事务**：finalize 从不重建 `套磁邮件总览.md`，不检测聚合的投影冲突，也不因此写 `needs_decision`——一行表格不是程序级聚合，残缺聚合也绝不凭空生成。已存在的聚合按字节原样保留，结果里 `overview_md` 返回该既有路径；不存在则为 `null`。聚合由 `python3 <professor-contact-skill-dir>/scripts/contact_state.py stage5-rebuild-overview --program-root <业务资料目录绝对路径>` 单独重建（见 5.11）。
 - **调用方契约**：`professor-contact-email-validator` 只校验本次渲染出的那对 `套磁邮件.md` / `套磁跟进邮件.md`；校验文件只写被选输出的 id；`stage5-record-validation` 沿用 `--professor-dir` + `--validation-file`，**不新增 `--email-id`**，因为它消费的本来就是调用方给的那几行。
+
+### 5.11 阶段 5 逐教授事务归属（Issue #68）
+
+当前方案以[第十七版完整计划](../../../../plan/issue68-implementation-plan.md)（`issue-68-plan-r17-2026-10-11`）为准；文件输入、单教授交接、委派顺序和清理均按本节执行，历史调用说明由本节覆盖。
+
+每位教授在每个阶段都有自己的正式状态文件；阶段 5 的事实源只可能是**该教授的本地邮件输入包** `<教授目录>/邮件输入.json`（阶段 4 `stage4-finalize` 落盘的 professor-local 容器，内部只声明一个 `professor` + `professor_dir`）。阶段 4 的成功结果把这个路径交给调用方，调用方再原样传给阶段 5。
+
+- **唯一事实源，无程序级回退**：`stage5-plan` / `stage5-finalize` 必须携带 `--email-pack <教授目录>/邮件输入.json`。缺参数 → `invalid_params`；该路径缺失或不可读 → 该教授 `needs_refresh` / `missing_email_pack`；包无法证明单一教授归属 → `invalid_email_pack`。绝不读取旧的程序级 `教授研究/邮件输入.json` 作为兜底，也不为它写第二套适配器或双读双写（迁移由 Issue #67 负责）。
+- **一次 owner 调用 = 一个教授事务**：A、B 两位教授 = 两次 exact named `professor-contact-email-generator` owner 调用，各自携带自己的 pack 路径、result JSON、choices、`_contact_verify.json` 与 `套磁邮件状态.json`。一次 child payload 绝不夹带另一位教授的 pack 或行。
+- **互不为前置**：B 的 pack/状态/核验缓存缺失或损坏既不阻断 A，也不被 A 读写；B 失败不回滚 A 已提交的渲染。批量模式（不带 `--email-id`）= 该教授包内全部邮件，仍只覆盖一位教授。
+- **并发不是产品契约**：多次 owner 调用的顺序、是否并行由调用方编排决定，runner 不提供并发保证，也不依赖并发才成立。
+- **两条入口**：紧接阶段 4 时，root 直接消费阶段 4 成功结果交付的确切 `email_pack` 路径。独立阶段 5 用只读命令 `python3 <professor-contact-skill-dir>/scripts/contact_state.py stage5-list-inputs --program-root <业务资料目录绝对路径>` 逐个发现教授本地包，逐行返回 `professor`、`professor_dir`、`email_pack`、`status`、`reason_code`：单个坏包只形成自己的失败行（不可读 `missing_email_pack`、无法证明单一归属 `invalid_email_pack`、目录越界或不对应容器 `invalid_professor_dir`），不阻止其它有效教授；它不读核验、状态、渲染、总览或程序级旧包，不写任何文件。`--professor` 只做唯一精确匹配，缺失或同名歧义返回 `needs_input`（`professor_not_found` / `professor_ambiguous`），不任选。
+- **根代理有序流程（第十三版计划第 3.3—3.7 节）**：依次完成以下步骤；运行时入口只决定正式委派的调用写法。
+  1. **先处理用户选择（仅有选择时）**：用户给的是含 `choices` 字段的业务对象时，用 JSON 解析器从实际对象读取 `.choices`，只把该值本身序列化到本请求独占目录中的原始选择文件；用户直接给列表或单行对象时，保存该值本身。不补字段、不翻译、不切片。调用前用窄形状保护确认文件顶层是数组，或是**不含 `choices` 字段**的对象，例如 `jq -e 'type == "array" or (type == "object" and (has("choices") | not))' <原始选择文件>`。保护失败时回到原始输入正确提取并保留原值；错误文件不得交给分配器。该保护只排除误存的外层包装，行字段仍由教授业务程序校验。原始选择不可读或非法 JSON 时保留实际 `invalid_result_json`；写入失败保留实际错误，不用旧文件或内嵌 JSON 重试。用户未提供 `choices` 时跳过此步，不制造空选择。
+  2. **确定本次完整 owner 集**：完成步骤 1 后，紧接阶段 4 时使用其成功结果给出的确切 `email_pack`；独立进入时运行只读 `stage5-list-inputs`，再按本次请求选定全部教授。`email_pack` 与 `professor_dir` 原样沿用结果字段。没有 `choices` 时从本步开始，仍须确定完整集合并为每位教授准备单教授交接。
+  3. **至多调用一次完整分配**：有选择时，以参数列表运行一次 `python3 <professor-contact-skill-dir>/scripts/contact_state.py stage5-partition-choices --program-root <实际业务资料目录绝对路径> --owner <email_pack> [email_id]… --choices <原始选择JSON文件绝对路径> --out <完整分配JSON文件绝对路径>`；该次调用含本次全部选中教授，每个规范目录恰好一个 `--owner`。路径逐字沿用来源字段，不改写、不拆分成逐教授调用、不追加目标 id 后重跑。根代理读取退出状态、结构化输出与完整 `--out` 对象；完整分配文件只由根代理解析，后续所有教授都使用这同一份分配结果。顶层错误、文件读取失败或没有合法分配时保留实际原因，不宣称成功。
+  4. **按目录关联并生成单教授交接**：有选择时 JSON 解析 `owners`，只能用完全相同的 `professor_dir` 关联本地包，不能按显示名、数组位置或编号猜测。逐项检查 `partition.status`；非 `ok` 项保留实际状态、`reason_code` 和相关字段，只停止该教授。成功项的 `choices_rows` 原样赋给对应业务对象的 `choices`，保持列表形状，不重新分配、不去重或删改行。每位教授的业务对象只含该教授的 `email_pack`、可选同一 `email_id`、`choices`（若有）、实际 `program_root` 及已提供且属于该教授的普通参数（如 `mode`、模板；`result` 也必须属于该教授）。无选择时按已确定的 owner 集形成同样的单教授对象，只省略 `choices`。程序化写入本请求独占目录里的对应 `owner_input_file`；该文件是业务对象的序列化副本。交给子任务的消息只包含该文件绝对路径和本教授业务约束，不把业务字段抄入消息，不包含等待、路由或 caller 指令。不得在对象或文件中带原始选择文件路径、完整分配文件、整个 `owners`、其他教授数据或跨教授范围。
+  5. **逐教授委派并消费结果**：最后一个合法 `owner_input_file` 写入后，下一动作按当前安装目标的专属路由说明逐个委派给 exact named `professor-contact-email-generator`；根代理等待每个已启动子任务结束并消费真实结构化结果。教授代理先用同一包和可选目标运行不带结果、选择的首次 `stage5-plan` 完成业务核验；允许消费选择后，才将本教授已解析的 `choices` 原样写入自己独占的选择文件，并把同一选择路径用于后续 `stage5-plan --choices` 和不可变模板最终提交的 `--choices`。不得读取根代理原始选择或完整分配文件。缺失、重复、字段、收件人和跟进日期仍由教授业务程序检查。
+  6. **重建总览并如实报告**：仅在所有已启动子任务结果都已返回并被消费后，才调用一次 `stage5-rebuild-overview`，单独保留并报告其真实结果。若存在合法 owner 但没有任何对应教授子任务实际启动，停止正常总览与完成报告；说明尚未进入教授核验、生成和校验，并执行第 7 步清理。若只启动了部分教授，等待所有已启动者后，按实际本地结果重建一次总览并逐位报告；未启动或失败的教授保留真实原因。若出现 `choices_missing`，先核对用户原始值、保存的原始选择、对应 `choices_rows` 与该教授 `owner_input_file`；若根代理提取、关联或序列化时丢失了用户已提供的正确 `email_id`，应报告为根代理输入准备错误，不能要求用户重复提供，也不能归因于用户输入不匹配。
+  7. **清理本请求文件**：结果交付后，根代理只清理自己确认属于本请求的原始选择、完整分配及 owner 交接文件；教授代理清理其选择与结果传递文件。每次请求使用独占目录和程序生成的不含教授姓名的文件名；读者仍需读取时保留文件。失败或取消时先结束仍在读取的子任务，再清理本请求明确归属的文件；不得搜索或删除其他请求文件。清理失败单独报告，不改变已产生的业务结果。
+- **保留确定性分配规则**：显式带 `professor_dir` 的行只进入其指向的教授，不属于本次选中集合的行不进任何交接；指定目标时本教授未选中的编号先排除（不产生 `choice_owner_invalid` 或字段错误）；整教授批量中本教授的错误编号只使其 `partition` 返回 `needs_input / choice_owner_invalid`，不改绑、不阻止其他教授。无目录旧行仅按选中包的实际执行范围计算候选：无候选为无关行，一个候选进入该教授并参与重复检查；多个候选才排除已被合法显式行满足的教授，剩一个则绑定，仍多个则各受影响项返回 `needs_input / choice_owner_ambiguous`，剩零个不改变已明确教授的结果，歧义行不广播。原始行顺序不改变归属，根代理不复制收件人或跟进日期等业务校验。
+- **教授侧只消费自身选择**：教授代理用 JSON 解析器读取自己的 `owner_input_file`，不读根代理原始选择或完整分配，不重新发现其他教授。第一次 `stage5-plan` 不带模型结果与选择，先完成核验；到既有流程允许消费选择时，将本教授已解码的 `choices` 值原样序列化为自己独占的选择文件，以参数列表传给后续 `stage5-plan --choices <本教授选择JSON文件绝对路径>` 与 `stage5_immutable.py stage5-finalize --choices <同一本教授选择JSON文件绝对路径>`，重规划及最终提交保留同一包、同一目标与同一选择。既有交互补齐时只用实际用户决定。缺失、重复、字段、收件人与跟进日期等检查不变，同教授整批全部合法才提交；错误夹入其他教授显式行时仅以 `invalid_params` 拒绝当前教授，不重新路由。教授代理返回完整结构化结果，保留实际 `professor_dir/status/reason_code` 及相关信息，未完成核验、缺输入、失败或部分结果不得改称成功。
+- **根代理对教授范围隔离**：本请求的分配或单教授交接失败时保留实际结构化原因，只停止对应教授；共享原始选择无法可靠读取时保留实际输入错误，不制造逐教授成功。
+- **聚合是派生投影**：`python3 <professor-contact-skill-dir>/scripts/contact_state.py stage5-rebuild-overview --program-root <业务资料目录绝对路径>` 枚举各教授本地 pack，精确 join 各自本地 `套磁邮件状态.json`，读取 `_contact_verify.json` 只为展示，然后写出 `教授研究/套磁邮件总览.md`。它不修改任何本地 pack、状态、邮件或核验缓存；删除聚合后可以重建；本地输入或状态畸形时 fail closed 且不覆盖既有聚合；聚合被人手改动只让 rebuild 返回 `needs_decision`，绝不阻断任何教授的 finalize。
+- **校验侧不变**：验证仍在该教授自己的事务内完成，`stage5-record-validation` 沿用 `--professor-dir` + `--validation-file`，不因 Issue #68 新增 `--email-id`（Issue #59 的参数与语义形状不变）。
 
 ## 输入前提：profile 与 套磁邮件/ 配置目录
 
@@ -467,11 +508,14 @@ task(subagent_type: "professor-contact-idea-generator", prompt: "folder_path: <.
 # 阶段 4：记录选择
 task(subagent_type: "professor-contact-selection", prompt: "folder_path: <...>\nselection: <可选，直接给选择，跳过交互>")
 
-# 阶段 5：默认同时生成首封邮件和无回复跟进邮件
-task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <...>\nmode: both\nchoices: <可选 canonical JSON；缺省由 question 取得>")
+# 阶段 5：严格按 5.11 的分支顺序准备选择、完整 owner 集和分配；缺 choices 时确定 owner 后跳过分配
+# 正式输入是对应教授业务对象及其 owner_input_file；下例用文件路径指向该对象的序列化副本，不在 prompt 手抄字段
+# 对每个可执行 owner 分别委派并等待、消费结果
+task(subagent_type: "professor-contact-email-generator", prompt: "owner_input_file: <本教授交接JSON文件绝对路径>")
 
-# 只生成首封或单独补生成跟进
-task(subagent_type: "professor-contact-email-generator", prompt: "folder_path: <...>\nmode: first|followup\nchoices: <可选 canonical JSON>")
+# 只生成首封或单独补生成跟进时，也按 5.11 为每个 owner 建立交接并使用同一委派方式
+# 已提供的 mode 等普通字段属于对应业务对象，并由 owner_input_file 序列化传递
+task(subagent_type: "professor-contact-email-generator", prompt: "owner_input_file: <本教授交接JSON文件绝对路径>")
 ```
 
 ### Codex 分支
@@ -490,7 +534,7 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 
 #### Codex 下 Stage 1–5 顶层 routing matrix
 
-用户要求执行某个 Stage 本身就是 routing gate。顶层 caller 必须先把该 Stage 委派给下表中的 exact installed named custom agent，并等待结果后再继续；caller 不得因为能够运行 `contact_state.py` 就越过 Stage agent，也不得把 child instructions 复制到 root 自己执行。
+用户要求执行某个 Stage 本身就是 routing gate。Stage 1–4 顶层 caller 必须先把该 Stage 委派给下表中的 exact installed named custom agent，并等待结果后再继续；Stage 5 root 先按 5.11 完成完整 owner 集分配与单教授交接，再按当前安装目标专属说明继续。caller 不得因为能够运行 `contact_state.py` 就越过 Stage agent，也不得把 child instructions 复制到 root 自己执行。
 
 | Stage | 顶层 caller 必须先委派 | caller 必须等待 | caller 禁止 inline 的 owner 工作 |
 |---|---|---|---|
@@ -498,7 +542,7 @@ Codex 侧这些代理以 named custom agent 形式安装（`.codex/agents/<name>
 | 2 | `professor-contact-analyzer` | 是 | Stage-2 evidence/analyzer business |
 | 3 | `professor-contact-idea-generator` | 是 | `stage3-plan`、candidate model generation、candidate result file、`stage3-finalize` |
 | 4 | `professor-contact-selection` | 是 | pending selection 模拟、默认选择、`stage4-finalize` |
-| 5 | `professor-contact-email-generator` | 是 | `stage5-plan`、4句模型 payload、humanizer business、`stage5-finalize`、`email-validator` |
+| 5 | 5.11 完成后按当前安装目标专属说明选择业务代理 | 是 | `stage5-plan`、4句模型 payload、humanizer business、`stage5-finalize`、`email-validator` |
 
 **Stage 4 请求没有例外顺序（入口即生效的固定顺序）**：
 
@@ -536,9 +580,7 @@ Codex 的 non-interactive 执行（`codex exec`）没有「暂停一个嵌套子
 
 缺 PDF 补齐时，Codex 侧直接委派 installed named custom agent `professor-collector` 并**等待其结果**再继续；若原生委派在机器/运行时层面失败，记为 Codex runtime/feature blocker，绝不由本父代理自行补下 PDF。输入保持收窄为 `folder_path` + `pdf_only:true` + `item_keys=<缺失 item keys>`，以及仅在 caller 显式提供合法值时追加同值 `access_mode=<oa_only|allow_non_oa>`。缺省时完全省略该字段；Codex non-interactive 成功路径必须显式接收真实用户决定。非法值只在 `pdf_fill_needed` 时于 collector spawn 前返回结构化 `error`；`noop`/`needs_resolution` 不消费或校验它。绝不同时传 `professors`，也绝不扩大下载范围。OpenCode 的 Task 委派写法只属于 OpenCode 分支；Codex 分支不复制 collector 的 agent body、不由父代理 inline 模拟 collector，也不直接调 `pdf_fill.py`/worker 绕过 collector。collector 返回后无条件对该教授重跑 `contact_stage1.py build --target-file <教授目录>/套磁目标.json`，empty runtime result 仍只允许一次相同输入重试，且 retry 保持 `access_mode` 同值或同样省略。
 
-#### Codex 下的 Stage 5：caller choices 作为业务输入
-
-调用方可以把完整的 canonical JSON `choices` 作为 Stage 5 业务输入交给 `professor-contact-email-generator`。它不是 Codex runtime 的委派参数，也不是新的长期状态文件：调用方只在本轮把 JSON 原样写入临时文件，随后通过现有 runner 的 `--choices <临时文件>` 传入；不得默认、翻译、按位置重排或重新映射字段。每行必须带真实的非空 `email_id`、布尔 `first_choice`、非空 `signature_name` 与 `learning`；`both`/`followup` 还必须带真实的 `initial_sent_date`，`first` 不要求该日期。caller-facing 公开字段只有这七个；历史 runner 内部兼容字段（如 `subject`、`alma_mater`）不属于公共 API，caller 不得生成或宣传，且 #43 不冻结其内部兼容/拒绝语义；`email_address` 只能确认 `_contact_verify.json` 里已核验的收件地址，不一致或抢先于核验即 `recipient_conflict`（详见 5.0）。缺少完整 `choices` 时返回 `needs_input` 且不写最终邮件；有 choices 时仍由 runner 负责收件人权威、contact-evidence、冲突与验证门禁，且门禁通过前根本不读 choices。
+Stage 5 的调用方式由当前安装目标专属说明提供；本共享技能只规定 5.11 的业务输入、逐教授交接、等待消费和总览顺序。
 
 
 ### Stage 3/4 编排边界（业务规则一份，runtime 调用方式分开）
@@ -622,14 +664,14 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 - `<教授名>/套磁候选输入.json` — 阶段 2：按方向组织的最小事实包（支撑论文——fulltext 论文带 runner 校验过的规范化 `paper_facts`（来自 `.facts.json` sidecar，含 `facts_state`，指纹不符即 fail closed）、gap shortlist 全证据、排除清单+原因、`completed_gap_blacklist`、版本关系、红线、user_note、narrative、`input_fingerprint`）。阶段 3 **唯一**事实源；不含 profile。`cache.preflight` 是 finalize 种入的 Stage 2 复用元数据（integrity sha、逐方向 target/candidate/accepted/freshness 指纹、artifact stat guards、参数/版本）——仅 cache，Stage 3–5 不读取、不受影响。
 - `<教授名>/论文分析/_freshness_cache.json` — 阶段 2：逐 gap freshness 缓存（status/model_evidence/candidate_paper_ids/gap_fingerprint/candidate_fingerprint/evaluated_at/confidence/completed_part/remaining_gap；无 TTL，指纹任一变化只失效受影响 gap）。
 - `<教授名>/套磁候选状态.json` — 阶段 3：规范化候选状态（candidate_meta 的 gap_ids 在此，不在 Markdown）；每方向带权威 `direction_id`（resolved ID）；显式跨方向想法存独立 `cross_direction` 列表（`direction_ids` 引用全部参与 resolved 方向、`owner_*` 记录生成方向、`direction_fingerprints` 冻结参与方向指纹）；profile/输入包指纹在此。
-- `<教授名>/邮件输入.json` — 阶段 4：该教授的 local 邮件输入包（schema 3，精确 join 的 gap 短证据、真实标题、红线+banned_phrases、allowed_sources、source_hash（`contact_evidence` 参与其中），自包含——阶段 5 与 validator 只读 Stage 4 交出的这一份，不读上游）；含上游 `教授研究/_联系方式证据.json` 的教授级 `contact_evidence` 冻结快照（verdict/current_email/provenance/`record_fingerprint`/record；无工件为 null）。它是阶段 5 的收件事实源：live `--check`/rebuild 只作指纹/freshness 验证，指纹不一致或快照缺失 → `needs_refresh` 重跑阶段 4 重冻结，绝不直接采用 live/rebuild 新地址。历史程序级 `教授研究/邮件输入.json` 只作 legacy 迁移的行来源，不再被本阶段写入或当作权威（Issue #67）。
+- `<教授名>/邮件输入.json` — 阶段 4：该教授的本地邮件输入包（schema 3，精确 join 的 gap 短证据、真实标题、红线+banned_phrases、allowed_sources、source_hash（`contact_evidence` 参与其中），自包含）；含上游 `教授研究/_联系方式证据.json` 的教授级 `contact_evidence` 冻结快照。阶段 5 与 validator 只读取 Stage 4 成功行交出的确切 `--email-pack` 路径；程序级旧包仅作迁移行来源，不作为当前事实源。
 - `<教授名>/套磁邮件状态.json` — 阶段 5：逐 email 保存首封的 model_result/choices/render sha/validation，以及 `followup` 子对象的文件、render sha/validation；另记 `contact_evidence` 决策（status/reason_code/chosen_email/evidence_email/provenance/web_lookup_required/snapshot_stale）。validator 结束后由 runner `stage5-record-validation --professor-dir <教授目录> --validation-file <validation.json>` 原子写入实际 `pass|fail_after_2_rounds|skipped` 结果。
 - `<教授名>/套磁想法候选.md` — 阶段 3（v2 模板）：按 resolved 方向分节（方向节开头带权威 `direction_id`，指路分析文件+共享红线一次 → 「你的草稿修正版」（保真/校准/基本方向）→ 每候选七件套（一句话大白话·强制启发链三段式「我的兴趣起手 → 教授的具体工作或原话 → 启发我探索的方向」，pivot 不得落在教授局限上（不足式表述只进「张力点」） / 研究问题行·求知式表述 / 要点式展开挂缺口编号+≤30 字摘录 / 五列支撑论文表：论文｜年份｜署名｜作用｜分析 / 贴合度 / 仅本候选红线 / 为何值得推吸收原匹配评估材料）→ 推荐优先级 2-3 行文字（兴趣契合作主推依据，能力匹配仅说明；纯交付物候选降为「配套承诺：」并入主候选）；显式跨方向想法（若有）单列「跨方向想法（显式标注）」末节并列出全部参与方向；写盘后过 `professor-contact-style-validator` 白话校验。原阶段 2 的想法级匹配评估材料整体搬到这里。
 - `教授研究/套磁想法候选总览.md` — 阶段 3 程序级聚合（跨教授，供异步挑选）；**派生投影**：只由 `stage3-rebuild-overview` 从全部已提交教授级 `套磁候选状态.json` 重建（删除后可仅凭已提交状态重建相同业务行/链接），不读取本地 Markdown 作机器事实，不读写 `_contact_projections.json`（历史 Stage-3 registry key 保留但不再消费）；人工修改 → rebuild fail closed（`manual_markdown_changed`）。
 - `教授研究/套磁选择.json` — 阶段 4：用户挑选结果（每方向选中的想法 + 支撑论文 item_keys），供阶段 5 消费。
 - `<教授名>/套磁邮件.md` / `.txt` — 阶段 5首封邮件；无回复版本为同目录的 `套磁跟进邮件.md` / `.txt`。两类文件均有独立的送信前核对表、humanizer 保护校验和 validator 记录；跟进文件额外记录首封 email_id 与初次发送日期。
 - `<教授名>/_contact_verify.json` — 阶段 5：教授级核验缓存（各项目 verdict＋来源＋时间戳＋info.json/boshu_analysis.json 指纹）；指纹变化或 >30 天才重核。同一教授多封邮件共享。
-- `教授研究/套磁邮件总览.md` — 阶段 5 聚合（教授/方向/**收件邮箱｜核验状态**/首封链接/跟进链接）。
+- `教授研究/套磁邮件总览.md` — 阶段 5 派生投影（教授/方向/**收件邮箱｜核验状态**/首封链接/跟进链接）：由 `python3 <professor-contact-skill-dir>/scripts/contact_state.py stage5-rebuild-overview --program-root <业务资料目录绝对路径>` 枚举各教授本地包、精确 join 其本地 `套磁邮件状态.json` 并读 `_contact_verify.json` 作展示后重建；任何 finalize 都不写它、也不被它的状态阻断（Issue #68，见 5.11）。
 
 ## 论文引用链接约定（本地 md 引用论文分析文件）
 

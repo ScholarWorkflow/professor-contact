@@ -1,0 +1,96 @@
+{
+  "schema": "issue-68-pc68-r1-execution-retry-v1",
+  "record_revision": "r36-pc68-r1-retry-2026-10-08",
+  "date": "2026-10-08",
+  "attempt_number": 3,
+  "retry_ordinal": 1,
+  "authorization": {
+    "source": "User instruction to retry when installation had not succeeded.",
+    "scope": "PC68-R1 with the frozen command, arguments, versions, and transfer location; fresh consumer and output directory.",
+    "same_frozen_conditions": true
+  },
+  "prior_attempt_record": {
+    "file": "issue68-r36-pc68-r1-execution-attempts-20261008.json",
+    "sha256": "b44fb453278b75eeba59771544010d7c0b1828740d9456e15b1e7a42781203f6",
+    "prior_state": "CASE_NOT_STARTED",
+    "prior_reason_code": "consumer_install_failed",
+    "prior_formal_request_count": 0
+  },
+  "plan": {
+    "id": "issue-68-test-plan-r36-2026-10-08",
+    "sha256": "241416d3996c0af6fe84bf2187ee3fbacf48e66c4d72d8902033a30327573c03",
+    "test_revision": "570b48ecfe4109016dcfd517a5a2f34fdea54b64",
+    "runner_sha256": "88896013563833ef8b839ec08fefc66635eb03a85107a1c30d615a54665d0b0d",
+    "install_runner_sha256": "c232b5782f6505a886c7d68f19048820395400ec3e8aefe11c90b0df09f6e0a3"
+  },
+  "fixed_versions": {
+    "producer": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+    "shared_assets": "d160ecb403c0f9e9c153f4b8383302a4b67664ab",
+    "eval_service": "3fdfa9387140cfc2e2aa3af415f85015f79706d2"
+  },
+  "result": {
+    "case": "PC68-R1",
+    "state": "INVALID_TEST_EXECUTION",
+    "runner_state": "CASE_STARTED",
+    "runner_verdict": "INVALID_EVIDENCE",
+    "reason_code": "root_partition_result_malformed",
+    "formal_request_count": 1,
+    "install_exit_code": 0,
+    "runner_exit_code": 1,
+    "codex_response_exit_code": 0,
+    "product_result": "NOT_DETERMINED",
+    "secondary_reason_codes": [
+      "lifecycle_operation_association_invalid"
+    ],
+    "runner_exit_code_source": "Executor session terminal status; no dedicated runner-exit-code file was emitted.",
+    "codex_response_exit_code_source": "codex/codex-response.json .output.exit_code"
+  },
+  "formal_request_count_basis": [
+    "The pinned runner provenance marks single_request_no_retry as yes; the executor session reports one formal dispatch.",
+    "The response and lifecycle evidence share runtime_generation=1; the response records one root thread start and one root turn start.",
+    "No request retry or execution-condition change occurred after dispatch."
+  ],
+  "isolation": {
+    "service_provenance_before_after_match": true,
+    "service_provenance_sha256": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+    "transfer_location_empty_before": true,
+    "transfer_location_empty_after": false,
+    "transfer_location_was_symlink": false,
+    "post_run_immediate_children": [
+      "owner-x.json",
+      "owner-y.json",
+      "partition-x.json",
+      "partition.json",
+      "raw-choices.json",
+      "uv-cache/"
+    ],
+    "post_run_recursive_item_count": 15,
+    "post_run_snapshot_complete": true
+  },
+  "evidence": {
+    "raw_run_artifacts_included_in_repository": false,
+    "raw_run_artifacts_retained_locally": true,
+    "run_artifact_sha256": {
+      "final_verdict": "1dcd8043105c05ec73b0b9b5b6ccd5f06facd8ab7c76704da1b516c032a7e855",
+      "provenance": "62936cd6e43f38c7e3b0249af71e2bcb99a0656b7fc9bc8103ff3a789d911051",
+      "input_preflight": "a3de43b13536cf30d6d52febc68f70c50ae564b49a399f94d378850781a4bfa9",
+      "request": "35685a568f60a941d7643b074b24c97bee7f91d06aef204741db415c983a2bce",
+      "response": "5cad983e399de1692972042566d63fdf76ab0d7074987291b8b5a1b3bd146a71",
+      "lifecycle_evidence": "390a8b10a026bb5c3c035ab33438690ddeffe1381f355ee4c249bad7be105233",
+      "install_stdout": "337bfdf20274f31c51f0d216cab933f182bb4fb17f574e9c11e4b774c4c2fef9",
+      "install_stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "install_exit_code": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "service_provenance_before_and_after": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34"
+    },
+    "capture_limitations": [
+      "Runner exit code 1 is reported from the executor session; the run bundle has no dedicated runner-exit-code file."
+    ]
+  },
+  "interpretation": "The top-level terminal verdict is INVALID_EVIDENCE because the root partition result was malformed. Lifecycle evidence also records lifecycle_operation_association_invalid. The frozen terminal mapping classifies this as INVALID_TEST_EXECUTION; it does not establish PASS or FAIL_PRODUCT.",
+  "next_step": {
+    "owner": "Independent test reviewer and plan owner",
+    "action": "Review the preserved invalid execution and determine whether a corrected, newly frozen execution is required. This record does not authorize another formal request."
+  },
+  "third_gate": "PENDING",
+  "merge_ready": false
+}

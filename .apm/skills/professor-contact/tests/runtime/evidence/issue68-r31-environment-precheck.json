@@ -1,0 +1,113 @@
+{
+  "schema": "issue68-r31-environment-precheck-v1",
+  "state": "PREFLIGHT_INCOMPLETE",
+  "reason": "supported_install_failed",
+  "execution_kind": "preflight",
+  "formal_case_started": false,
+  "second_gate_status": "INCOMPLETE",
+  "formal_run_allowed": false,
+  "attempt": "pc68-r31-environment-preflight-01",
+  "preflight_exit_code": 1,
+  "installation_exit_code": 124,
+  "installation_terminal_state": "timeout",
+  "prior_attempts_preserved": [
+    "pc68-r30-environment-preflight-01",
+    "pc68-r30-environment-preflight-02"
+  ],
+  "recovery_diagnostic": {
+    "argv": [
+      "git",
+      "ls-remote",
+      "https://github.com/ScholarWorkflow/base-skills.git",
+      "HEAD"
+    ],
+    "timeout_seconds": 30,
+    "started_unix": 1791310865.473675,
+    "exit_code": 0,
+    "state": "success",
+    "finished_unix": 1791310866.818319,
+    "stdout": "0e08013b798cf4c7f937cc4c1d4d769ec4c6aa79\tHEAD\n",
+    "scope": "末个已记录依赖的一次远程查询；成功仅是恢复迹象，不证明整个安装可用"
+  },
+  "producer": {
+    "sha": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+    "dirty": "no"
+  },
+  "shared_assets": {
+    "sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+    "dirty": "no"
+  },
+  "service_revision": {
+    "sha": "3fdfa9387140cfc2e2aa3af415f85015f79706d2",
+    "dirty": "no"
+  },
+  "after_integrity": {
+    "service_unchanged": true,
+    "producer": {
+      "sha": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+      "dirty": "no"
+    },
+    "shared_assets": {
+      "sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+      "dirty": "no"
+    }
+  },
+  "tool_versions": {
+    "apm": "Agent Package Manager (APM) CLI version 0.29.0 (5ac6733)",
+    "uv": "uv 0.12.11 (aarch64-apple-darwin)",
+    "codex": "codex-cli 0.160.1"
+  },
+  "installation_attempt": {
+    "argv": [
+      "apm",
+      "install",
+      "https://github.com/ScholarWorkflow/professor-contact.git#b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+      "--target",
+      "codex",
+      "--trust-transitive-mcp"
+    ],
+    "timeout_seconds": 600
+  },
+  "installation_stdout": "[!] A new version of APM is available: 0.33.0 (current: 0.29.0)\nRun apm self-update to upgrade\n\n[*] Created apm.yml\n[i] Targets set: codex (persisted to apm.yml)\n[*] Validating 1 package...\n[+] scholarworkflow/professor-contact#b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d\n[*] Updated apm.yml with 1 new package(s)\n[>] Installing 1 new package...\n[>] Resolving ScholarWorkflow/professor-contact...\n",
+  "installation_stderr": "",
+  "diagnosis": {
+    "stage": "dependency_resolution",
+    "attribution": "external_installation_timeout_not_product_failure",
+    "recovery_confirmed": false,
+    "subsequent_repeat_attempted": false,
+    "new_attempt_trigger": "单次最小远程诊断成功，继续原支持安装入口；本次超时后未再尝试"
+  },
+  "entrypoint": "tests/runtime/preflight_issue68_environment_r30.py",
+  "source_hashes_at_start": {
+    "official_cli_documentation": "https://learn.chatgpt.com/docs/developer-commands?surface=cli",
+    "service_sources": {
+      "eval_server.py": "568264a82738cb8eeebe17c8e1c5aee1eaf7337956645733db5bc35d59d96ea4",
+      "codex_appserver/evals.py": "c2c7f7aed39dbfff56d7dbdb5103140f12f9c2ba98ebf8b8dea3e2cb45a7f646"
+    },
+    "preflight_sources": {
+      "preflight_issue68_environment_r30.py": "3cc9cf5d2a62d1248ffa999cddb65d894a83d40f4e40dab1bfec942e1495a631",
+      "build_issue68_codex_request_r12.py": "b4b21024c5e25d0d51fa8d920187a02233f6d959ee4d3f5f5eda77600c2dbd3d",
+      "run_issue68_stage5_routing_r19_codex.py": "6a0634c6d58d4e32631bafa3d8058130bb6fa0a889ed231cab2da2ddf5dd4a24",
+      "issue68_eval_service_isolation_r14.py": "831a58ce1bf16bab8455dfa63d8d9c8ee9bc5102b89cd04653ee2c7e5ef4d1b3"
+    }
+  },
+  "source_hashes_at_finish": {
+    "preflight_issue68_environment_r30_py": "3cc9cf5d2a62d1248ffa999cddb65d894a83d40f4e40dab1bfec942e1495a631",
+    "run_issue68_stage5_routing_r19_codex_py": "ebf9d866a4ca7c5a7392fbbb0b93d8e07fcf30b176d3badb26f44f6070fd962a"
+  },
+  "source_change_scope": "主预检程序未变；并行测试实现修改了运行器。保留实际加载来源，不把最终摘要记作执行时摘要；本次在安装阶段停止，未发送观察请求",
+  "not_executed": [
+    "installed_entrypoint_help",
+    "synthetic_command_observation",
+    "formal_PC68_R1"
+  ],
+  "raw_evidence": {
+    "directory": "/private/tmp/pc68-r31-environment-preflight-01",
+    "diagnostic_directory": "/private/tmp/pc68-r31-environment-diagnostic-01",
+    "process_log": "/private/tmp/pc68-r31-environment-preflight-01.log",
+    "preflight_result_sha256": "43e92540f201a81b0dca7645b1dc5a27817df4aed170cbef31f4df7641d1045e",
+    "install_stdout_sha256": "fba0f20e3e62d79216e30a887a199fdfa7518b919fd1453ea64fb9466604aeb8",
+    "install_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "diagnostic_sha256": "bc1ad1988f23ac6c83f5aa1ab79f848738240eb7985e0fd50eed9ea265ec9b49"
+  }
+}

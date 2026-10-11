@@ -118,7 +118,9 @@ class TestStage5ImmutableTargetedScope(BaseEnv):
 
     def immutable_finalize(self, root, results, choices):
         return parse(run_wrapper(
-            "stage5-finalize", "--program-root", root, "--result", results,
+            "stage5-finalize", "--program-root", root,
+            "--email-pack", helpers.issue59_local_pack_path(
+                root, helpers.ISSUE59_PROFESSOR), "--result", results,
             "--choices", choices, "--email-id", helpers.ISSUE59_EMAIL_ID))
 
     def test_issue59_t59_6_wrapper_finalize_keeps_selected_email_scope(self):

@@ -1,0 +1,43 @@
+{
+  "schema": "issue68-r31-install-retry-v1",
+  "execution_kind": "installation_preflight",
+  "trigger": "用户明确要求重试安装",
+  "producer_sha": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+  "started_utc": "2026-10-06T18:42:44Z",
+  "elapsed_seconds": 1.29,
+  "install_exit_code": 1,
+  "terminal_state": "failure",
+  "formal_run_allowed": false,
+  "formal_case_started": false,
+  "second_gate_status": "INCOMPLETE",
+  "temporary_scope_coverage": "UNCONFIRMED",
+  "history_preserved": "issue68-r31-environment-precheck.json",
+  "attempts": [
+    {
+      "argv": [
+        "apm",
+        "install",
+        "https://github.com/ScholarWorkflow/professor-contact.git#b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+        "--target",
+        "codex",
+        "--trust-transitive-mcp"
+      ],
+      "cwd": "/private/tmp/pc68-r31-install-retry-20261007-01/consumer",
+      "timeout_seconds": 600,
+      "exit_code": 1,
+      "stdout": "/private/tmp/pc68-r31-install-retry-20261007-01/install/apm-install.stdout.txt",
+      "stderr": "/private/tmp/pc68-r31-install-retry-20261007-01/install/apm-install.stderr.txt"
+    }
+  ],
+  "runtime_sources_sha256": {
+    "run_issue68_stage5_routing.py": "9349b50c01ef430328285c0d5534be85dc94ead137bba5668e5a65388af049fc",
+    "run_issue68_stage5_routing_r19_codex.py": "ebf9d866a4ca7c5a7392fbbb0b93d8e07fcf30b176d3badb26f44f6070fd962a"
+  },
+  "installation_verification": "NOT_ATTEMPTED",
+  "failure_reason": "TLS verification failed: APM system trust store rejected certificate; all packages failed validation; no package was installed.",
+  "failure_classification": "ENVIRONMENT_TLS_CERTIFICATE_VALIDATION",
+  "stdout_sha256": "4c1193f6aca5d57e5d2f1ffdbe2bdd53007dd491c08a523eff34d3dd08e77d82",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "previous_timeout_not_reclassified": true,
+  "network_cause_of_historical_timeout": "NOT_PROVEN_BY_THIS_ATTEMPT"
+}

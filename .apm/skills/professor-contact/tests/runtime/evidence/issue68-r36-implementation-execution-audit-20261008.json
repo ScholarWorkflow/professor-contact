@@ -1,0 +1,86 @@
+{
+  "schema": "issue68-r36-implementation-execution-audit-v1",
+  "date": "2026-10-08",
+  "plan_revision": "issue-68-test-plan-r36-2026-10-08",
+  "audit_completeness": "COMPLETE",
+  "overall_execution_result": "NONCOMPLIANT_PARTIAL",
+  "formal_pc68_r1": {
+    "state": "INVALID_TEST_EXECUTION",
+    "runner_verdict": "INVALID_EVIDENCE",
+    "reason_code": "root_partition_result_malformed",
+    "product_result": "NOT_DETERMINED",
+    "formal_request_count": 1,
+    "reclassified": false,
+    "rerun_under_r36": false
+  },
+  "source_audit": {
+    "partition_and_path_discovery_logic": "NO_STATIC_DEFECT_FOUND",
+    "overview_rebuild_implementation": "NO_STATIC_DEFECT_FOUND",
+    "skill_instruction_gap": "overview was limited to at most one call, allowing zero calls",
+    "repair": "Require one overview rebuild after all owner results have been consumed; clarify choices extraction, exact path reuse, and one complete allocation call.",
+    "skill_source": ".apm/skills/professor-contact/SKILL.md",
+    "skill_sha256_before_repair": "36af7474af8ed96930de8091263ee8e17c5162dc506a76c4ed177bf45f8c599d",
+    "skill_sha256_after_repair": "555839c6eebe667a1519bc636db0e044c8d4779111f6527f3b5ced6b91584626"
+  },
+  "raw_run_evidence": {
+    "root_event_file": "/private/tmp/pc68-r36-formal-r1-retry-20261008-01/codex/codex-response.json",
+    "choices_object_event_id": "exec-9735c56d-ecad-49eb-ac28-3e62f441b616",
+    "choices_outer_keys": [
+      "choices",
+      "mode",
+      "template",
+      "raw_results_by_professor_dir"
+    ],
+    "partition_rows": "Both owners had empty choices_rows.",
+    "child_input_capture_ids": [
+      "e0f6b0b9-c308-47a0-bb80-28e2ec8c54fa",
+      "b48ec0c2-ae69-4575-a4f7-b5a2da7f824a"
+    ],
+    "discovery_event_id": "exec-efff444f-0845-499a-8b35-e79f14a98aae",
+    "path_rewrite_event_id": "exec-f086ea29-cece-49b8-a527-02b0cc96f0f0",
+    "rewritten_path": "试验 教授",
+    "path_rewrite_result": "missing_email_pack",
+    "extra_partition_event_id": "exec-2395d6ca-cca0-42c6-8abe-491dc30317c4",
+    "overview_rebuild_observed": false,
+    "request_transfer_files_cleaned": false,
+    "remaining_transfer_files": [
+      "raw-choices.json",
+      "partition output",
+      "two owner handoff files",
+      "cache"
+    ]
+  },
+  "findings": [
+    {
+      "issue": "outer business object was saved as choices input",
+      "classification": "EXECUTION_DEVIATION",
+      "plan_clause": "r36 section 5 steps 1, 5, and 7",
+      "evidence": "The raw choice file contained the outer business object; both partitioned owner row lists and both captured child input choices were empty."
+    },
+    {
+      "issue": "discovered Japanese path was rewritten and a subset was partitioned again",
+      "classification": "EXECUTION_DEVIATION",
+      "plan_clause": "r36 section 5 step 5 and section 7",
+      "evidence": "Discovery returned 試験 教授; a later command used 试验 教授 and returned missing_email_pack; a subsequent command separately partitioned that owner."
+    },
+    {
+      "issue": "professor final state reported by user",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "plan_clause": "r36 section 5 steps 8 and 9",
+      "evidence": "The needs_refresh/verify_missing files were fixture-generated expected outputs. Actual final child payload was unreadable; captured first stage5-plan output showed ok / needs_recheck:missing."
+    },
+    {
+      "issue": "overview rebuild omitted",
+      "classification": "EXECUTION_DEVIATION_AND_STATIC_INSTRUCTION_GAP",
+      "plan_clause": "r36 section 5 step 10",
+      "evidence": "No overview rebuild call appears in the complete root event bundle. The pre-repair skill said at most once and the Codex caller procedure did not require the call."
+    },
+    {
+      "issue": "request transfer-file cleanup incomplete",
+      "classification": "EXECUTION_DEVIATION; OFFICIAL_LIFECYCLE_EVIDENCE_INVALID",
+      "plan_clause": "r36 section 5 step 11",
+      "evidence": "Post-run artifacts remained and no cleanup call was observed; the official lifecycle association was invalid."
+    }
+  ],
+  "review_boundary": "This implementation audit reviews actual execution against r36. It does not turn the invalid formal request into a Gate 3 PASS or FAIL. A new formal request requires a new plan revision and the required independent reviews."
+}

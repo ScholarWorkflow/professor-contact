@@ -1,0 +1,59 @@
+{
+  "schema": "issue68-r36-gate2-fix-validation-v1",
+  "date": "2026-10-08",
+  "plan_revision": "issue-68-test-plan-r36-2026-10-08",
+  "plan_sha256_at_test_run": "241416d3996c0af6fe84bf2187ee3fbacf48e66c4d72d8902033a30327573c03",
+  "plan_sha256_before_candidate_commit_pin": "da5277100a9de7f3596ed323d62c312006771cb6525d74edbd5d06809e877422",
+  "plan_sha256_after_candidate_commit_pin": "173c947a3d03840a95e0fb587874509083e90d605987aa01aa68957c4d0a11fe",
+  "source_base_commit": "f62c8fd6792022c3cecfe915226fa501e0be2605",
+  "committed_test_source_revision": "4c866becca95a14585332f506846d9e5b6a459e6",
+  "committed_test_source_matches_manifest": true,
+  "test_results": [
+    {
+      "suite": "R19 verifier",
+      "command": [
+        "uv", "run", "--no-project", "python", "-m", "unittest", "discover",
+        "-s", ".apm/skills/professor-contact/tests",
+        "-p", "test_issue68_runtime_r19.py"
+      ],
+      "environment": {
+        "UV_CACHE_DIR": "temporary writable directory; absolute path omitted"
+      },
+      "test_count": 70,
+      "result": "PASS",
+      "result_source": "implementation-worker run report",
+      "raw_stdout_retained": false
+    },
+    {
+      "suite": "lifecycle and integration",
+      "command": [
+        "uv", "run", "--no-project", "python", "-m", "unittest", "discover",
+        "-s", ".apm/skills/professor-contact/tests",
+        "-p", "test_issue68_lifecycle*.py"
+      ],
+      "environment": {
+        "UV_CACHE_DIR": "temporary writable directory; absolute path omitted"
+      },
+      "test_count": 73,
+      "result": "PASS",
+      "result_source": "implementation-worker run report",
+      "raw_stdout_retained": false
+    }
+  ],
+  "source_manifest_sha256": {
+    ".apm/skills/professor-contact/tests/runtime/verify_issue68_stage5_routing_r19.py": "57570db77ee4eb7cbf3619262e6707468705b8d9cc01b720b3e350362ec83384",
+    ".apm/skills/professor-contact/tests/runtime/issue68_lifecycle.py": "bdaa8a65f65835d587978061740fb17405a07631f146eb28abae3faa33a6fefd",
+    ".apm/skills/professor-contact/tests/test_issue68_runtime_r19.py": "6eb400ac1535ecbef10c29e96064b2496a0fe29bd734fc40edb5eca0d09bb729",
+    ".apm/skills/professor-contact/tests/test_issue68_lifecycle.py": "f2f88e22497f1987e94fb7f0ecda57bb20791be57c0b9d502220098c5b7eb317",
+    ".apm/skills/professor-contact/tests/test_issue68_lifecycle_integration.py": "a32a366e8eaec90ab6c5887320308ebe2fd97c1ad3ace76f49c7fb4c382cc5f1",
+    ".apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-contract-r19.json": "b853ff0791078576d4464f026db003a232c487a1f6c770e229a417efcfc7a9a8",
+    ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r19_codex.py": "88896013563833ef8b839ec08fefc66635eb03a85107a1c30d615a54665d0b0d",
+    ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing.py": "c232b5782f6505a886c7d68f19048820395400ec3e8aefe11c90b0df09f6e0a3"
+  },
+  "formal_pc68_r1_sent_during_validation": false,
+  "notes": [
+    "The tests ran against the listed working-tree file contents, based on source commit f62c8fd6792022c3cecfe915226fa501e0be2605.",
+    "This record summarizes the implementation worker's test report; raw test stdout was not retained.",
+    "This validation record does not approve Gate 2 or authorize a formal PC68-R1 request."
+  ]
+}

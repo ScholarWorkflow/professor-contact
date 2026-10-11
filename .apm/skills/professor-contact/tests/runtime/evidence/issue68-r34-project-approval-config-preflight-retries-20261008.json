@@ -1,0 +1,180 @@
+{
+  "schema": "issue68-r34-project-approval-config-preflight-retries-v1",
+  "plan_revision": "r34",
+  "record_revision": "r34-retries-2026-10-08",
+  "execution_kind": "affected_preflight_retry_audit",
+  "date": "2026-10-08",
+  "retry_authorization": "The user explicitly authorized direct retries if installation continued to time out.",
+  "parent_record": {
+    "path": "tests/runtime/evidence/issue68-r34-project-approval-config-preflight.json",
+    "run_id": "5cb2642d-0a7b-4bfd-996a-edd47c4e8aac",
+    "raw_evidence_alias": "$PC68_R34_RUN01_RAW",
+    "preflight_state": "CASE_NOT_STARTED",
+    "second_gate_status": "INCOMPLETE"
+  },
+  "retry_policy": {
+    "consumer_isolation": "Each attempt used a fresh consumer and evidence directory.",
+    "cache": "Ordinary uv cache; no custom UV_CACHE_DIR.",
+    "source_changes": false,
+    "formal_case_started": false,
+    "formal_PC68_R1_started": false
+  },
+  "fixed_sources": {
+    "producer_sha": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+    "producer_dirty": "no",
+    "shared_assets_sha": "d160ecb403c0f9e9c153f4b8383302a4b67664ab",
+    "shared_assets_dirty": "no",
+    "service_sha": "3fdfa9387140cfc2e2aa3af415f85015f79706d2",
+    "service_dirty_before": "no",
+    "service_before_sha256": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34"
+  },
+  "read_only_diagnostics": [
+    {
+      "target": "ScholarWorkflow/base-skills",
+      "transport": "default git settings",
+      "result": "TLS connection ended unexpectedly during ls-remote"
+    },
+    {
+      "target": "ScholarWorkflow/base-skills",
+      "transport": "HTTP/1.1",
+      "result": "ls-remote succeeded",
+      "head": "0e08013b798cf4c7f937cc4c1d4d769ec4c6aa79"
+    },
+    {
+      "target": "ScholarWorkflow/pdf-processing-core",
+      "transport": "default git settings and HTTP/1.1",
+      "result": "ls-remote succeeded with the same HEAD",
+      "head": "9ad523a624d94eb2774a0082fde1f54c3ff02256"
+    },
+    {
+      "target": "ScholarWorkflow/base-skills",
+      "transport": "HTTP/1.1 shallow clone diagnostic",
+      "result": "Transfer stalled after approximately 4.4 MB; interrupted after more than one minute without progress",
+      "exit_code": 130,
+      "observed_error": "fetch-pack: unexpected disconnect while reading sideband packet"
+    }
+  ],
+  "attempts": [
+    {
+      "run_id": "a938fa99-444f-4d48-9c3c-86b1cd5ac250",
+      "raw_evidence_alias": "$PC68_R34_RUN02_RAW",
+      "transport": "HTTP/1.1",
+      "timeout_seconds": 600,
+      "elapsed_seconds": 600,
+      "dependency_at_stop": "ScholarWorkflow/base-skills",
+      "failure_class": "supported_install_timeout",
+      "exit_code": 124,
+      "last_stdout_line": "[>] Resolving ScholarWorkflow/base-skills...",
+      "preflight_result_sha256": "778dee578bd78dad14a922fb43f28ef5116348c2b247130409c8633ea2d10674",
+      "command_sha256": "3ad0a1ad6d78280c5bfb054e18d9b160cd463fc8c87ae3b65a156397b96f6e03",
+      "stdout_sha256": "81e646f2ad7d313e33b49f9866e4f86f46122c6f7fc6d4cce1eea77270650a8b",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exit_code_file_sha256": "ca2ebdf97d7469496b1f4b78958f9dc8447efdcb623953fee7b6996b762f6fff",
+      "service_before_sha256": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+      "request_attempted": false,
+      "eval_request_count": 0,
+      "project_config_preparation": "NOT_RUN_INSTALL_FAILED",
+      "effective_approval_configuration": "NOT_OBSERVED"
+    },
+    {
+      "run_id": "b8563c8c-1ec9-4abd-9c71-2ffeedd43b5a",
+      "raw_evidence_alias": "$PC68_R34_RUN03_RAW",
+      "transport": "default git settings",
+      "elapsed_seconds": 21.2,
+      "dependency_at_stop": "ScholarWorkflow/pdf-processing-core",
+      "failure_class": "supported_install_tls_failure",
+      "exit_code": 1,
+      "observed_error": "TLS connection ended unexpectedly while cloning the dependency",
+      "preflight_result_sha256": "9feb6d760590e793c3d7b4f475ac550a40e7cb6d1dbf03b82a7bf6f62f5d5a06",
+      "command_sha256": "ed42381e4aec5c073d3957f1f730aa3783b83bd0f92e39d807983e2331b825d2",
+      "stdout_sha256": "29c155bf87be9655e3710ef29d42dc3307990d3e43e923e0995e8e086b0fdec9",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exit_code_file_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "service_before_sha256": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+      "request_attempted": false,
+      "eval_request_count": 0,
+      "project_config_preparation": "NOT_RUN_INSTALL_FAILED",
+      "effective_approval_configuration": "NOT_OBSERVED"
+    },
+    {
+      "run_id": "dc4e0c6d-b85c-4439-8e41-3dcd2c9ce3b2",
+      "raw_evidence_alias": "$PC68_R34_RUN04_RAW",
+      "transport": "default git settings",
+      "elapsed_seconds": 52.4,
+      "dependency_at_stop": "ScholarWorkflow/base-skills",
+      "failure_class": "supported_install_tls_failure",
+      "exit_code": 1,
+      "observed_error": "TLS connection ended unexpectedly while cloning the dependency",
+      "preflight_result_sha256": "d5d724016347cedcf543d10860616b4def8e42ca4af6ceabc031728a2313a8a7",
+      "command_sha256": "02d59c006ea26da84cf174ad28a910d78a5f2f1d304aa88ccbfb9de5b9921e20",
+      "stdout_sha256": "753da3bb533061d8bd8cf6ff11223bcdb832275e8a9e74866c49d3bafdb0c029",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exit_code_file_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "service_before_sha256": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+      "request_attempted": false,
+      "eval_request_count": 0,
+      "project_config_preparation": "NOT_RUN_INSTALL_FAILED",
+      "effective_approval_configuration": "NOT_OBSERVED"
+    },
+    {
+      "run_id": "e91e7b61-727d-404a-8983-31df387fcee0",
+      "raw_evidence_alias": "$PC68_R34_RUN05_RAW",
+      "transport": "HTTP/1.1",
+      "timeout_seconds": 600,
+      "elapsed_seconds": 600,
+      "dependency_at_stop": "ScholarWorkflow/base-skills",
+      "failure_class": "supported_install_timeout",
+      "exit_code": 124,
+      "last_stdout_line": "[>] Resolving ScholarWorkflow/base-skills...",
+      "preflight_result_sha256": "a6655482c9896599419523c775207c7519845ca270a3c5694a80e2da3e2f7366",
+      "command_sha256": "9e215c499069102985fd3720599c7a4f071306ace778797bf7321fca805c1129",
+      "stdout_sha256": "40700975b26ae39a17937e832094ead470e8696f7ae9723f6180da9ed0f71236",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exit_code_file_sha256": "ca2ebdf97d7469496b1f4b78958f9dc8447efdcb623953fee7b6996b762f6fff",
+      "service_before_sha256": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+      "request_attempted": false,
+      "eval_request_count": 0,
+      "project_config_preparation": "NOT_RUN_INSTALL_FAILED",
+      "effective_approval_configuration": "NOT_OBSERVED"
+    },
+    {
+      "run_id": "ea452484-5e75-4be9-b6bb-8e77c95bb012",
+      "raw_evidence_alias": "$PC68_R34_RUN06_RAW",
+      "transport": "default git settings",
+      "elapsed_seconds": 24.4,
+      "dependency_at_stop": "ScholarWorkflow/base-skills",
+      "failure_class": "supported_install_tls_failure",
+      "exit_code": 1,
+      "observed_error": "TLS connection ended unexpectedly while cloning; two errors were reported",
+      "preflight_result_sha256": "bcabcca798251f4aa398bda0301976008c36268be3570ce9c3a81ecde597c447",
+      "command_sha256": "ebdf8c5e5c144e18f54e8131fae2a49400cfe2d4a39f4dfe4a0ad3054945ad54",
+      "stdout_sha256": "ca04e9fe28af5035f977071e6ce877d37948bd9822c5929c0d6427d956cd4283",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exit_code_file_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "service_before_sha256": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+      "request_attempted": false,
+      "eval_request_count": 0,
+      "project_config_preparation": "NOT_RUN_INSTALL_FAILED",
+      "effective_approval_configuration": "NOT_OBSERVED"
+    }
+  ],
+  "aggregate_result": {
+    "retry_count": 5,
+    "timed_out_count": 2,
+    "tls_failure_count": 3,
+    "preflight_state": "CASE_NOT_STARTED",
+    "preflight_reason": "supported_install_failed",
+    "request_attempted": false,
+    "eval_request_count": 0,
+    "project_config_preparation": "NOT_RUN_INSTALL_FAILED",
+    "effective_approval_configuration": "NOT_OBSERVED",
+    "service_after_capture": "NOT_CAPTURED_INSTALL_FAILED",
+    "second_gate_status": "INCOMPLETE",
+    "formal_PC68_R1_started": false
+  },
+  "limitations": [
+    "The installation failures occurred during local dependency transfer; read-only reference queries sometimes succeeded, but none of the fresh consumers completed the supported install.",
+    "The shared project configuration helper did not run, so the effective approval policy and reviewer remain unobserved.",
+    "No evaluation request or formal business run was sent. This evidence does not satisfy the second gate."
+  ]
+}

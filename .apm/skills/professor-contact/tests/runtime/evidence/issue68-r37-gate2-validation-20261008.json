@@ -1,0 +1,64 @@
+{
+  "schema": "issue68-r37-gate2-validation-v1",
+  "plan_revision": "issue-68-test-plan-r37-2026-10-08",
+  "candidate_product_commit": "faab365d0be2bb66f2f285fdaa2927631dbf33f8",
+  "execution_kind": "local_gate2_validation",
+  "test_run": {
+    "id": "issue68-r37-gate2-validation-20261008-01",
+    "command": "PYTHONPATH=.apm/skills/professor-contact/tests/runtime:.apm/skills/professor-contact/tests UV_CACHE_DIR=$PC68_LOCAL_UV_CACHE_ROOT uv run --offline --no-project python -m unittest test_issue68_runtime_r19 test_issue68_runtime_recipe test_issue68_uv_cache_r37 test_preflight_issue68_environment_r30 test_issue68_transfer_location_eval_r33 test_issue68_lifecycle test_issue68_lifecycle_integration",
+    "modules": [
+      "test_issue68_runtime_r19",
+      "test_issue68_runtime_recipe",
+      "test_issue68_uv_cache_r37",
+      "test_preflight_issue68_environment_r30",
+      "test_issue68_transfer_location_eval_r33",
+      "test_issue68_lifecycle",
+      "test_issue68_lifecycle_integration"
+    ],
+    "tests_run": 216,
+    "failures": 0,
+    "errors": 0,
+    "exit_code": 0,
+    "elapsed_seconds": 26.476,
+    "stdout_summary": "Ran 216 tests in 26.476s; OK",
+    "initial_warning": "uv reported --no-project with no project found; the command exited successfully."
+  },
+  "terminal_result_oracle": {
+    "fixed_expected_result": {
+      "status": "needs_refresh",
+      "reason_code": "verify_missing"
+    },
+    "preparation_behavior": "The local --result output must independently match the fixed status, reason_code, and exit code 2; only the fixed two-field expectation is stored in the manifest.",
+    "verifier_behavior": "The R19 verifier rejects any manifest owner expectation that differs from the fixed two-field result, then compares the child final and root receipt against the fixed top-level triple."
+  },
+  "plan_sha256_at_test_execution": "51d715b2476bc61271e6c6b0f787b4a22462098720ad8be3491081f5e1592ef9",
+  "plan_sha256_after_validation_record_reference": "573e69b72611d672c90c04ebbdca86c51726f842f5f7c04443be436c233d2538",
+  "source_sha256": {
+    ".apm/skills/professor-contact/SKILL.md": "555839c6eebe667a1519bc636db0e044c8d4779111f6527f3b5ced6b91584626",
+    ".apm/skills/professor-contact/docs/issue68-test-plan.md": "573e69b72611d672c90c04ebbdca86c51726f842f5f7c04443be436c233d2538",
+    ".apm/skills/professor-contact/tests/runtime/prepare_issue68_stage5_routing.py": "1565b6c4b1c658aa6a4fd51c3fddf251cc3414c37c39fefd864bf7b06b323547",
+    ".apm/skills/professor-contact/tests/runtime/capture_issue68_owner_stage5_plan_r1.py": "b124f18a5f1635ae1500aeb15b601565d1eb4638b11dad184533272dbc8aec28",
+    ".apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-contract-r19.json": "3807a4caed69cf80000e4bcc9a96e6411282f80100e9f6dab5284cb7ddc152bf",
+    ".apm/skills/professor-contact/tests/runtime/preflight_issue68_environment_r30.py": "3e70391b79a11da8800e313b77c99c8a0bf1e943795869b75c42360e92ebd309",
+    ".apm/skills/professor-contact/tests/runtime/preflight_issue68_transfer_location_eval_r33.py": "8fad0785d4d5f36d7bf91228d8fe0bca00ea669f9e21b2c072955e4e815250f6",
+    ".apm/skills/professor-contact/tests/runtime/prompts/issue68-stage5-root.txt": "7ac249295c11c2dbc48aa01d730b18fca949a0d337cc4f419bcfddf1629615f7",
+    ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r19_codex.py": "cae7ce338449d83623a2bd8ec123be9ce891bbf4dc44b107a78b68ad91e14292",
+    ".apm/skills/professor-contact/tests/runtime/verify_issue68_stage5_routing_r19.py": "6a9d56a29022af3dbf8758a400dada581d5749f537a9dee209750f7592ebf82f",
+    ".apm/skills/professor-contact/tests/runtime/test_preflight_issue68_environment_r30.py": "c841373cd2156373dc7857e736f40bf91b40d62952f693617c7e424517d78092",
+    ".apm/skills/professor-contact/tests/test_issue68_runtime_r19.py": "a3f541f635af61eef86c7e07e8a710723e2c5c15092b559b15d4fa1bb49263ac",
+    ".apm/skills/professor-contact/tests/test_issue68_runtime_recipe.py": "d7a90a29bdcf58dcb870e8b94d6b4dff0ea048284b91611d48b0fa04d781209b",
+    ".apm/skills/professor-contact/tests/test_issue68_uv_cache_r37.py": "6ab23706b73107bf0126db9cd590215af58fd78e9eb8062b1a3af91d1a2abe71",
+    ".apm/skills/professor-contact/tests/test_issue68_transfer_location_eval_r33.py": "f6caefd0a1ee31716f997b04861c3f83da6dca2c43a0ba8475e29411a55a24ab",
+    ".apm/skills/professor-contact/tests/test_issue68_lifecycle.py": "6230d7bb529579b1f9bfc873966bfe0d91259096dfd5f9946b51b8b5d12d7b23",
+    ".apm/skills/professor-contact/tests/test_issue68_lifecycle_integration.py": "6f8f4e0e7f02d22faaec0d9afab3dbd433a031a8d55d34c3545efbe48c70ce4f"
+  },
+  "development_history": [
+    {
+      "tests_run": 213,
+      "failures": 5,
+      "exit_code": 1,
+      "classification": "superseded fixture-contract run",
+      "resolution": "Updated synthetic manifests and orchestration command fixtures to include the R37 fixed terminal oracle and UV_CACHE_DIR binding; this run is not candidate validation."
+    }
+  ]
+}

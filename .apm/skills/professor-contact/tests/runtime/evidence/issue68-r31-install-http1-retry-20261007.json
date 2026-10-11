@@ -1,0 +1,116 @@
+{
+  "schema": "issue68-r31-install-http1-retry-v1",
+  "execution_kind": "installation_preflight",
+  "trigger": "用户明确要求重试安装",
+  "producer_sha": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+  "started_utc": "2026-10-06T18:48:04Z",
+  "elapsed_seconds": 24.467,
+  "install_exit_code": 1,
+  "terminal_state": "failure",
+  "formal_run_allowed": false,
+  "formal_case_started": false,
+  "second_gate_status": "INCOMPLETE",
+  "temporary_scope_coverage": "UNCONFIRMED",
+  "history_preserved": [
+    "issue68-r31-environment-precheck.json",
+    "issue68-r31-install-retry-20261007.json",
+    "issue68-r31-install-trust-retry-20261007.json",
+    "issue68-r31-install-recovered-retry-20261007.json"
+  ],
+  "environment_changes": {
+    "REQUESTS_CA_BUNDLE": "/etc/ssl/cert.pem",
+    "GIT_SSL_CAINFO": "/etc/ssl/cert.pem",
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "http.version",
+    "GIT_CONFIG_VALUE_0": "HTTP/1.1"
+  },
+  "environment_scope": "installation_child_process_only",
+  "ca_file": {
+    "path": "/etc/ssl/cert.pem",
+    "sha256": "9dae8d76e55cb08991f2b672d58999ea15560d910759c16b544f843bdffbb994"
+  },
+  "network_diagnostic": {
+    "argv": [
+      "git",
+      "-c",
+      "http.version=HTTP/1.1",
+      "clone",
+      "--depth=1",
+      "--branch=main",
+      "https://github.com/ScholarWorkflow/knowledge-tools.git",
+      "/private/tmp/pc68-r31-knowledge-clone-diagnostic-20261007"
+    ],
+    "exit_code": 0,
+    "environment_changes": {
+      "GIT_SSL_CAINFO": "/etc/ssl/cert.pem"
+    },
+    "tls_verification": "enabled",
+    "stdout": "/private/tmp/pc68-r31-knowledge-clone-diagnostic.stdout.txt",
+    "stderr": "/private/tmp/pc68-r31-knowledge-clone-diagnostic.stderr.txt",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "c6fe020e73358fcee837c69e13ba986d98487370cc0a7c200c6f9cf4239b31b2"
+  },
+  "attempts": [
+    {
+      "argv": [
+        "apm",
+        "install",
+        "https://github.com/ScholarWorkflow/professor-contact.git#b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+        "--target",
+        "codex",
+        "--trust-transitive-mcp"
+      ],
+      "cwd": "/private/tmp/pc68-r31-install-retry-20261007-04/consumer",
+      "timeout_seconds": 600,
+      "environment_changes": {
+        "REQUESTS_CA_BUNDLE": "/etc/ssl/cert.pem",
+        "GIT_SSL_CAINFO": "/etc/ssl/cert.pem",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.version",
+        "GIT_CONFIG_VALUE_0": "HTTP/1.1"
+      },
+      "exit_code": 1,
+      "stdout": "/private/tmp/pc68-r31-install-retry-20261007-04/install/apm-install.stdout.txt",
+      "stderr": "/private/tmp/pc68-r31-install-retry-20261007-04/install/apm-install.stderr.txt"
+    }
+  ],
+  "runtime_sources_sha256": {
+    "run_issue68_stage5_routing.py": "9349b50c01ef430328285c0d5534be85dc94ead137bba5668e5a65388af049fc",
+    "run_issue68_stage5_routing_r19_codex.py": "ebf9d866a4ca7c5a7392fbbb0b93d8e07fcf30b176d3badb26f44f6070fd962a"
+  },
+  "installation_verification": "NOT_ATTEMPTED",
+  "stdout_sha256": "f68c16dba5ea7a752e2edd161c8304079388eadbb1ec070ee79918c97c656636",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "failure_classification": "ENVIRONMENT_TLS_CONNECTION_EOF",
+  "failure_reason": "Supported installation failed only while cloning ScholarWorkflow/knowledge-tools over HTTPS: TLS connect error, unexpected eof while reading; no install transaction changes were committed.",
+  "successful_diagnostic_not_installation": true,
+  "initial_wrapper_launch": {
+    "argv": [
+      "uv",
+      "run",
+      "--no-project",
+      ".tmp_scripts/1007_install_http1_retry_r31.py"
+    ],
+    "exit_code": 2,
+    "reason": "default_uv_cache_write_permission_denied",
+    "installation_started": false
+  },
+  "wrapper_invocation": {
+    "argv": [
+      "uv",
+      "run",
+      "--no-project",
+      ".tmp_scripts/1007_install_http1_retry_r31.py"
+    ],
+    "environment_changes": {
+      "UV_CACHE_DIR": "/private/tmp/pc68-r31-http1-uv-cache"
+    },
+    "exit_code": 1
+  },
+  "network_cause_of_historical_timeout": "NOT_PROVEN_BY_THIS_ATTEMPT",
+  "tls_verification_disabled": false,
+  "global_git_config_changed": false,
+  "dependency_reference_changed": false,
+  "diagnostic_checkout_used_for_installation": false,
+  "automatic_fifth_attempt_started": false
+}

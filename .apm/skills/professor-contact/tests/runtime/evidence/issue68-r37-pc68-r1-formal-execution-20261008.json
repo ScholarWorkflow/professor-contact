@@ -1,0 +1,52 @@
+{
+  "schema": "issue-68-pc68-r1-formal-execution-v1",
+  "record_revision": "r37-pc68-r1-formal-execution-2026-10-08",
+  "plan_revision": "issue-68-test-plan-r37-2026-10-08",
+  "plan_sha256_at_request": "54c077b9cc3445091ecb9cc9b8473fcc24b11d4132dfaaa928858e7634235857",
+  "attempt_id": "issue68-r37-pc68-r1-20261008-01",
+  "output_root_alias": "PC68_R37_FORMAL_ATTEMPT02_RAW",
+  "formal_request_count": 1,
+  "request_sent": true,
+  "request_retried": false,
+  "terminal": {
+    "state": "CASE_STARTED",
+    "verdict": "FAIL_PRODUCT",
+    "reason_code": "owner_result_path_changed",
+    "merge_ready": false
+  },
+  "execution_facts": {
+    "choices_payload_was_only_the_user_choices_array": true,
+    "discovered_professor_paths_were_preserved_exactly": true,
+    "one_complete_root_partition_call_was_observed": true,
+    "owner_handoff_count": 2,
+    "owner_handoffs_had_result_scalar": false,
+    "owner_handoffs_included_global_result_map": true,
+    "professor_terminal_results": [
+      {"status": "needs_refresh", "reason_code": "verify_missing"},
+      {"status": "needs_refresh", "reason_code": "verify_missing"}
+    ],
+    "overview_call_count": 1,
+    "overview_result": {"status": "error", "reason_code": "missing_email_pack"},
+    "request_transfer_files_were_removed": true,
+    "root_final_report_included_complete_overview_object": false
+  },
+  "lifecycle": {
+    "verdict": "BLOCKED_OBSERVABILITY",
+    "reason_code": "transfer_creation_and_cleanup_unobservable",
+    "partition_returns_observed": 0,
+    "owner_reads_observed": 2,
+    "handoffs_observed": 2,
+    "successful_cleanup_commands_observed": 1,
+    "observation_gap": "The root combined file creation and the partition command in one shell execution; the lifecycle parser could not attribute the partition return."
+  },
+  "raw_artifacts_retained_locally": true,
+  "raw_artifacts_committed": false,
+  "raw_artifact_sha256": {
+    "final-verdict.json": "d82e77f6b74df6241cc41cfdec1b764c26c0c965d709725aefd151516dd84913",
+    "codex-verdict.json": "d82e77f6b74df6241cc41cfdec1b764c26c0c965d709725aefd151516dd84913",
+    "codex/codex-response.json": "72d82b4c3e078beb39fb4856b6564922054299de147d95927cb33985ba8d3715",
+    "codex/lifecycle-evidence.json": "0473b85332463cd88b3f6ae3b4f4be17347107f890f89c514cf0ab39ae50bcb9",
+    "codex/fixture-manifest.json": "ebe571b0274ed0abba4378603765e5686b1ad38000d72f0afb508acb48fd393a"
+  },
+  "retry_boundary": "The single formal request authorized by this plan has been consumed. Do not resend under this plan. Any future formal request requires a new plan revision and fresh independent reviews."
+}

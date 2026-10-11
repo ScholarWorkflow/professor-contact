@@ -1,0 +1,137 @@
+{
+  "schema": "issue68-r30-synthetic-observation-projection-v1",
+  "kind": "redacted_actual_execution_projection",
+  "attempt": "pc68-r30-synthetic-observation-03",
+  "formal_case_started": false,
+  "overall_environment_state": "PREFLIGHT_INCOMPLETE",
+  "installation_status": "NOT_ATTEMPTED_IN_THIS_RUN_PRIOR_SUPPORTED_INSTALL_TIMED_OUT",
+  "state": "SYNTHETIC_OBSERVATION_READY",
+  "source_hashes": {
+    "raw_response_sha256": "30c74d96bd710558382ef1864b674754c7736789b28809ed44a3aa767e9835ff",
+    "raw_request_sha256": "76e4bd2ac0d043b05e6b5c3b12d948423fd4f914908ed539c76e7be494c82dac",
+    "entrypoint_sha256": "b59d7f0a3ec20e93540e5ede3f59a9f2d7e74d73550621fa470423c75bda3259",
+    "preflight_sha256": "3cc9cf5d2a62d1248ffa999cddb65d894a83d40f4e40dab1bfec942e1495a631"
+  },
+  "observation": {
+    "status": "OBSERVATION_VERIFIED",
+    "reason": "actual_parse_and_same_object_forwarding",
+    "start_seq": 22328,
+    "end_seq": 22329,
+    "runtime_generation": 1,
+    "parsed_output": {
+      "schema": "issue68-r30-synthetic-read-v1",
+      "read_count": 1,
+      "object": {
+        "marker": "PC68环境预检合成输入",
+        "value": "原编号::空 格",
+        "choices": [
+          2,
+          1,
+          2
+        ]
+      },
+      "forwarded": {
+        "marker": "PC68环境预检合成输入",
+        "value": "原编号::空 格",
+        "choices": [
+          2,
+          1,
+          2
+        ]
+      },
+      "child_return_code": 0
+    }
+  },
+  "events": [
+    {
+      "runtime_seq": 22328,
+      "runtime_generation": 1,
+      "method": "item/started",
+      "item_type": "commandExecution",
+      "status": "inProgress",
+      "exit_code": null,
+      "command_alias": "synthetic-command-1",
+      "root_alias": "synthetic-root-1",
+      "turn_alias": "synthetic-turn-1"
+    },
+    {
+      "runtime_seq": 22329,
+      "runtime_generation": 1,
+      "method": "item/completed",
+      "item_type": "commandExecution",
+      "status": "completed",
+      "exit_code": 0,
+      "command_alias": "synthetic-command-1",
+      "root_alias": "synthetic-root-1",
+      "turn_alias": "synthetic-turn-1"
+    }
+  ],
+  "actual_configuration": {
+    "request_argv": [
+      "--json",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "workspace-write",
+      "--cd",
+      "/private/tmp/pc68-r30-synthetic-observation-03/consumer",
+      "--model",
+      "gpt-6-luna",
+      "--config",
+      "model_reasoning_effort=\"low\"",
+      "--config",
+      "agents.max_concurrent_threads_per_session=2",
+      "--config",
+      "projects={\"/private/tmp/pc68-r30-synthetic-observation-03/consumer\"={trust_level=\"trusted\"}}",
+      "--",
+      "这是环境预检。只执行下列完整命令一次，禁止其他命令、业务技能、代理委派、教授业务及任何文件修改。无需读取或改写脚本，不要打印预期对象代替命令。命令：\nuv run --no-project --cache-dir /private/tmp/pc68-r30-synthetic-observation-03/uv-cache python /private/tmp/pc68-r30-synthetic-observation-03/synthetic/read_once.py"
+    ],
+    "requested_model": "gpt-6-luna",
+    "requested_configs": [
+      "model_reasoning_effort=\"low\"",
+      "agents.max_concurrent_threads_per_session=2",
+      "projects={\"/private/tmp/pc68-r30-synthetic-observation-03/consumer\"={trust_level=\"trusted\"}}"
+    ],
+    "service_reported_executor_version": "codex-cli 0.159.0-alpha.12.1",
+    "thread_start_effective": {
+      "approvalPolicy": "on-request",
+      "approvalsReviewer": "user",
+      "sandbox": {
+        "type": "workspaceWrite",
+        "writableRoots": [],
+        "networkAccess": false,
+        "excludeTmpdirEnvVar": false,
+        "excludeSlashTmp": false
+      }
+    },
+    "effective_model_status": "NOT_EXPOSED_BY_CURRENT_SERVICE",
+    "effective_model_source": "evals.py thread_start_effective exposes approvalPolicy, approvalsReviewer, sandbox only"
+  },
+  "integrity": {
+    "fixed_before": {
+      "/private/tmp/pc68-r30-synthetic-observation-03/synthetic/input.json": "ed62714bbc60cf23fdd05b770ca90644cefbfff26ceb549e155dd1122d6b0c19",
+      "/private/tmp/pc68-r30-synthetic-observation-03/synthetic/read_once.py": "7bb25e0cc3dfb5bce049763fac322bad16369eb03fb8c218c28e07315a003306",
+      "/private/tmp/pc68-r30-synthetic-observation-03/synthetic/echo_argument.py": "8d5e5f3b97a73e150ae9a6e636608e704ffdce51e603baf18dfcd643482851af"
+    },
+    "fixed_after": {
+      "/private/tmp/pc68-r30-synthetic-observation-03/synthetic/input.json": "ed62714bbc60cf23fdd05b770ca90644cefbfff26ceb549e155dd1122d6b0c19",
+      "/private/tmp/pc68-r30-synthetic-observation-03/synthetic/read_once.py": "7bb25e0cc3dfb5bce049763fac322bad16369eb03fb8c218c28e07315a003306",
+      "/private/tmp/pc68-r30-synthetic-observation-03/synthetic/echo_argument.py": "8d5e5f3b97a73e150ae9a6e636608e704ffdce51e603baf18dfcd643482851af"
+    },
+    "consumer_empty": true,
+    "service_unchanged": true
+  },
+  "correlation": {
+    "root_and_turn_matched": true,
+    "command_id_matched": true,
+    "command_tokens_matched": true,
+    "unique_started_completed_pair": true,
+    "raw_command_output_parsed": true
+  },
+  "redactions": [
+    "actual_thread_id",
+    "actual_turn_id",
+    "actual_command_id",
+    "process_id",
+    "local_service_storage_identity"
+  ]
+}

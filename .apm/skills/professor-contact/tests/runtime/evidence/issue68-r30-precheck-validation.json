@@ -1,0 +1,39 @@
+{
+  "schema": "issue68-r30-precheck-validation-v1",
+  "execution_kind": "preflight",
+  "formal_cases_executed": [],
+  "checks": [
+    {
+      "command": "UV_CACHE_DIR=/private/tmp/pc68-r30-uv-cache UV_OFFLINE=1 uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_runtime_r19.py",
+      "tests": 34,
+      "exit_code": 0,
+      "raw_output": "WARN `--no-project` was provided, but no project was found\n..................................\n----------------------------------------------------------------------\nRan 34 tests in 4.419s\n\nOK\n"
+    },
+    {
+      "command": "UV_CACHE_DIR=/private/tmp/pc68-r30-uv-cache uv run --no-project -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_runtime_recipe.py -v",
+      "tests": 11,
+      "exit_code": 0,
+      "raw_output": "WARN `--no-project` was provided, but no project was found\ntest_background_task_and_missing_scope_flag_are_not_pass (test_issue68_runtime_recipe.TestIssue68RuntimeRecipe.test_background_task_and_missing_scope_flag_are_not_pass) ... ok\ntest_codex_pass_uses_formal_ownership_and_wait_results_without_identity_gate (test_issue68_runtime_recipe.TestIssue68RuntimeRecipe.test_codex_pass_uses_formal_ownership_and_wait_results_without_identity_gate) ... ok\ntest_combined_verdict_requires_both_pass_and_keeps_invalid_and_blocked (test_issue68_runtime_recipe.TestIssue68RuntimeRecipe.test_combined_verdict_requires_both_pass_and_keeps_invalid_and_blocked) ... ok\ntest_early_or_multiple_rebuild_is_a_product_failure (test_issue68_runtime_recipe.TestIssue68RuntimeRecipe.test_early_or_multiple_rebuild_is_a_product_failure) ... ok\ntest_fixture_precheck_uses_the_actual_producer_plan (test_issue68_runtime_recipe.TestIssue68RuntimeRecipe.test_fixture_precheck_uses_the_actual_producer_plan) ... ok\ntest_missing_terminal_surface_blocks_and_corrupt_event_order_is_invalid (test_issue68_runtime_recipe.TestIssue68RuntimeRecipe.test_missing_terminal_surface_blocks_and_corrupt_event_order_is_invalid) ... ok\ntest_observed_wrong_directory_or_success_is_failure_not_missing_evidence (test_issue68_runtime_recipe.TestIssue68RuntimeRecipe.test_observed_wrong_directory_or_success_is_failure_not_missing_evidence) ... ok\ntest_opencode_pass_uses_foreground_task_completion_and_execution_times (test_issue68_runtime_recipe.TestIssue68RuntimeRecipe.test_opencode_pass_uses_foreground_task_completion_and_execution_times) ... ok\ntest_request_tokens_freeze_workdir_trust_and_thread_limit (test_issue68_runtime_recipe.TestIssue68RuntimeRecipe.test_request_tokens_freeze_workdir_trust_and_thread_limit) ... ok\ntest_unfinished_input_result_is_consumed_exactly_without_inventing_reason_enum (test_issue68_runtime_recipe.TestIssue68RuntimeRecipe.test_unfinished_input_result_is_consumed_exactly_without_inventing_reason_enum) ... ok\ntest_wrong_owner_and_mutated_transport_are_product_failures (test_issue68_runtime_recipe.TestIssue68RuntimeRecipe.test_wrong_owner_and_mutated_transport_are_product_failures) ... ok\n\n----------------------------------------------------------------------\nRan 11 tests in 0.585s\n\nOK\n"
+    },
+    {
+      "command": "UV_CACHE_DIR=/private/tmp/pc68-r30-uv-cache UV_OFFLINE=1 uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests/runtime -p test_preflight_issue68_environment_r30.py",
+      "tests": 12,
+      "exit_code": 0,
+      "raw_output": "WARN `--no-project` was provided, but no project was found\n............\n----------------------------------------------------------------------\nRan 12 tests in 0.002s\n\nOK\n"
+    },
+    {
+      "command": "UV_CACHE_DIR=/private/tmp/pc68-r30-uv-cache UV_OFFLINE=1 uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_runtime_r18.py",
+      "tests": 20,
+      "exit_code": 0,
+      "raw_output": "Ran 20 tests in 0.031s\nOK\n",
+      "source": "top-level command result 93e535"
+    }
+  ],
+  "final_contract_integration_check": {
+    "command": "UV_CACHE_DIR=/private/tmp/pc68-r30-uv-cache uv run --no-project --python 3.13 -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_runtime_r19.py",
+    "tests": 34,
+    "exit_code": 0,
+    "raw_output": "WARN `--no-project` was provided, but no project was found\n..................................\n----------------------------------------------------------------------\nRan 34 tests in 4.600s\n\nOK\n",
+    "note": "输入观察状态恢复待审核；整体环境未完成及正式许可关闭保持，重复关联检查不新增证明数量。"
+  }
+}

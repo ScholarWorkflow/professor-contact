@@ -1,0 +1,103 @@
+{
+  "schema": "issue-68-pc68-r1-execution-result-v1",
+  "record_revision": "r36-pc68-r1-execution-2026-10-08",
+  "date": "2026-10-08",
+  "plan": {
+    "id": "issue-68-test-plan-r36-2026-10-08",
+    "sha256": "241416d3996c0af6fe84bf2187ee3fbacf48e66c4d72d8902033a30327573c03",
+    "test_revision": "570b48ecfe4109016dcfd517a5a2f34fdea54b64",
+    "runner_sha256": "88896013563833ef8b839ec08fefc66635eb03a85107a1c30d615a54665d0b0d",
+    "install_runner_sha256": "c232b5782f6505a886c7d68f19048820395400ec3e8aefe11c90b0df09f6e0a3"
+  },
+  "review_authorization": {
+    "second_gate": "PASS",
+    "source": "PR #72 review comment 6054493076",
+    "authorized_case": "PC68-R1"
+  },
+  "fixed_versions": {
+    "producer": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+    "shared_assets": "d160ecb403c0f9e9c153f4b8383302a4b67664ab",
+    "eval_service": "3fdfa9387140cfc2e2aa3af415f85015f79706d2"
+  },
+  "case_results": {
+    "PC68_D1": {
+      "status": "REUSE_PRIOR_PASS",
+      "rerun": false,
+      "scope": "Prior evidence only; not a result from this execution."
+    },
+    "PC68_R1": {
+      "status": "CASE_NOT_STARTED",
+      "reason_code": "consumer_install_failed",
+      "formal_request_count": 0,
+      "product_failure_observed": false
+    }
+  },
+  "startup_attempts": [
+    {
+      "number": 1,
+      "sandbox_mode": "default managed sandbox",
+      "python_entrypoint_started": false,
+      "exit_code": 2,
+      "failure": "uv cache initialization was blocked by filesystem permissions.",
+      "request_sent": false,
+      "raw_tool_bytes_preserved": false,
+      "public_error_text_redacted": true
+    },
+    {
+      "number": 2,
+      "sandbox_mode": "approved permission escalation",
+      "same_frozen_command_and_arguments": true,
+      "python_entrypoint_started": true,
+      "installer": "apm install for fixed producer revision",
+      "installer_timeout_seconds": 240,
+      "installer_exit_code": 124,
+      "runner_exit_code": 1,
+      "terminal_state": "CASE_NOT_STARTED",
+      "reason_code": "consumer_install_failed",
+      "request_sent": false
+    }
+  ],
+  "formal_eval_request_count": 0,
+  "request_count_basis": [
+    "The final runner verdict is CASE_NOT_STARTED / consumer_install_failed.",
+    "The consumer installation failed before the fixed runner could construct or send the formal request.",
+    "No formal request or response artifact was produced.",
+    "Evaluation service provenance before and after the run matches."
+  ],
+  "isolation": {
+    "service_provenance_before_after_match": true,
+    "transfer_location_empty_before_after": true,
+    "transfer_location_was_symlink": false
+  },
+  "timeout_interpretation": {
+    "formal_install_limit_seconds": 240,
+    "source": "The pinned install runner.",
+    "preflight_600_second_limit_applies_to_formal_install": false
+  },
+  "evidence": {
+    "raw_run_artifacts_included_in_repository": false,
+    "raw_run_artifacts_retained_locally": true,
+    "local_execution_attempt_record_sha256": "ca8f8da0b29ac928ca662fd78960fa1d278f0bf475f925629e89c84df8fca36a",
+    "local_run_artifacts_sha256": {
+      "final_verdict": "2666b044f60b31ad3898ea5c0271a286fcfa3179f9396f09d206e5cd75fc57bb",
+      "provenance": "6bbeeb9f3c5bff704bd0d0da71659f25e156c125ff65cb3b3fde418534fcd884",
+      "install_json": "425198ca7d9d19665e2387b37a22766ace1c11d88d76ecabd746b6def631be22",
+      "install_stdout": "61bd4449982d3a37ad1908553998bc24a0b21cc278924412e3b1ef2820128e88",
+      "install_stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "install_exit_code": "ca2ebdf97d7469496b1f4b78958f9dc8447efdcb623953fee7b6996b762f6fff",
+      "service_provenance_before_and_after": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34"
+    },
+    "capture_limitations": [
+      "The first invocation output is preserved locally as a transcription from the executor report, not as original terminal bytes.",
+      "The first tool response did not separate stdout and stderr.",
+      "The second full tool terminal stream was not saved; runner-specific installation outputs and exit code were saved."
+    ]
+  },
+  "next_step": {
+    "owner": "Local execution",
+    "condition": "The fixed APM dependency install is available within the pinned 240-second install limit.",
+    "action": "Continue PC68-R1 from the frozen plan on a fresh consumer and output directory, preserving this CASE_NOT_STARTED attempt; send at most one formal evaluation request."
+  },
+  "third_gate": "PENDING",
+  "merge_ready": false
+}

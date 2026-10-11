@@ -1,0 +1,25 @@
+请按以下普通第五阶段业务信息处理两位教授的套磁邮件。每位教授使用自己的本地邮件包，并结合本轮提供的合成申请人资料、首封模板和跟进模板完成相应邮件。
+
+{
+  "folder_path": "<PC68_PROGRAM>",
+  "professors": ["山田太郎", "佐藤花子"],
+  "mode": "both",
+  "choices": [
+    {
+      "email_id": "山田太郎::DIR00001::DIR00001_1",
+      "first_choice": true,
+      "signature_name": "测试申请者甲",
+      "learning": "地域交通规划",
+      "initial_sent_date": "2026-10-01",
+      "email_address": "taro@example.edu"
+    },
+    {
+      "email_id": "佐藤花子::DIR00001::DIR00001_1",
+      "first_choice": false,
+      "signature_name": "测试申请者乙",
+      "learning": "沿岸防灾信息",
+      "initial_sent_date": "2026-10-02",
+      "email_address": "hanako@example.edu"
+    }
+  ]
+}

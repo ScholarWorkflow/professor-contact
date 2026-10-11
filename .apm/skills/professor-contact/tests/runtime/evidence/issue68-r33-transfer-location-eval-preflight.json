@@ -1,0 +1,142 @@
+{
+  "schema": "issue68-r33-transfer-location-eval-preflight-v1",
+  "plan_revision": "r28",
+  "record_revision": "r33",
+  "initial_preflight_state": "INVALID_TEST_EXECUTION",
+  "final_preflight_state": "PASS",
+  "final_preflight_reason": "single_request_marker_lifecycle_verified",
+  "offline_rejudgment": {
+    "kind": "REJUDGE_PRIOR_EVIDENCE",
+    "original_recorded_state": "INVALID_TEST_EXECUTION",
+    "state": "PASS",
+    "reason": "single_request_marker_lifecycle_verified",
+    "runner_sha256": "abab912f50a4d35df18369743c176bbb2761b4a2da19f445bd648070561e203d",
+    "method": "read-only REJUDGE_PRIOR_EVIDENCE using verify_probe, same_service, and snapshots_are_complete_empty_same_root",
+    "original_preflight_result_sha256": "55119453767f338da60f3d307dc6c0fbc20b4cfe948ab7ed60eb458f6c533ad2",
+    "request_body_sha256": "88283d916a7af0b61bb20e4eb7459ab3ad989e262e005834514000445a5665cc",
+    "response_body_sha256": "92fff452afbeddfaea2c530a8a664730aedec3e9a580325ab6c8233286ceb403",
+    "request_response_hashes_match": true,
+    "request_prompt_and_command_binding_verified": true,
+    "request_count": 1,
+    "new_requests_sent": 0,
+    "service_unchanged": true,
+    "consumer_unchanged": true,
+    "transfer_snapshots_complete_empty_same_root": true,
+    "raw_preflight_result_overwritten": false
+  },
+  "second_gate_status": "INCOMPLETE",
+  "formal_PC68_R1_started": false,
+  "attempts": [
+    {
+      "run_id": "e31f5932-f01d-4600-b28e-9d47de92217c",
+      "state": "CASE_NOT_STARTED",
+      "request_attempted": false,
+      "reason": "supported_install_failed",
+      "failure_class": "github_transport_tls_eof",
+      "raw_evidence_alias": "$PC68_R33_RUN01_RAW",
+      "result_sha256": "ad85dd6565520e7e3addda9bb9c41cfa2fae823ef152d1a9b5ee99aa30558ade",
+      "install_stdout_sha256": "b5269d2f80ed776f68b3ffe92ef77d26f5a48897c604a30f0cc094247e25f3b3",
+      "install_exit_code": 1
+    },
+    {
+      "run_id": "50f0ee67-0ced-435a-bffb-2ba9c0ed475a",
+      "state": "INVALID_TEST_EXECUTION",
+      "reason": "agent_or_delegation_event_observed",
+      "request_attempted": true,
+      "eval_request_count": 1,
+      "request_body_sha256": "88283d916a7af0b61bb20e4eb7459ab3ad989e262e005834514000445a5665cc",
+      "response_body_sha256": "92fff452afbeddfaea2c530a8a664730aedec3e9a580325ab6c8233286ceb403",
+      "raw_evidence_alias": "$PC68_R33_RUN02_RAW",
+      "preflight_result_sha256": "55119453767f338da60f3d307dc6c0fbc20b4cfe948ab7ed60eb458f6c533ad2",
+      "offline_rejudged_state": "PASS",
+      "offline_rejudged_reason": "single_request_marker_lifecycle_verified"
+    }
+  ],
+  "infrastructure_recovery_diagnostic": {
+    "command": "git ls-remote https://github.com/ScholarWorkflow/zotero-tools.git HEAD",
+    "exit_code": 0,
+    "resolved_revision": "c48fdab8628bd2946c659f1ec78ef1b201c6670a",
+    "continued_only_unfinished_install_precheck": true
+  },
+  "execution": {
+    "producer_sha": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+    "producer_dirty": "no",
+    "fixture_repo_sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+    "fixture_repo_dirty": "no",
+    "fixture_type": "existing_loopback_eval_service",
+    "manual_patch": "no",
+    "service_sha": "3fdfa9387140cfc2e2aa3af415f85015f79706d2",
+    "service_dirty": "no",
+    "service_isolation": "ISOLATION_CONFIRMED",
+    "service_unchanged": true,
+    "consumer_installed_via_apm": true,
+    "consumer_unchanged": true,
+    "requested_model": "gpt-6-luna",
+    "requested_reasoning": "low",
+    "requested_sandbox": "workspace-write",
+    "effective_sandbox": {
+      "type": "workspaceWrite",
+      "writableRoots": [],
+      "networkAccess": false,
+      "excludeTmpdirEnvVar": false,
+      "excludeSlashTmp": false
+    },
+    "effective_model_status": "NOT_EXPOSED_BY_CURRENT_SERVICE",
+    "host_codex_version": "codex-cli 0.160.1",
+    "service_executor_version": "codex-cli 0.159.0-alpha.12.1",
+    "request_timeout_seconds": 900
+  },
+  "observed_marker_command": {
+    "runtime_generation": 1,
+    "start_seq": 23435,
+    "completion_seq": 23436,
+    "completion_status": "completed",
+    "exit_code": 0,
+    "probe_state": "PASS",
+    "operations": [
+      "create",
+      "read_and_verify",
+      "delete",
+      "confirm_absent"
+    ],
+    "read_matches": true,
+    "absent_after_delete": true,
+    "marker_sha256": "1c5ce462c28b8765e64581a1e935256e3708d3603caeed8a80cd99239a62a5d4"
+  },
+  "transfer_snapshots": {
+    "root_alias": "$PC68_R33_TRANSFER_ROOT",
+    "before_present": true,
+    "before_complete": true,
+    "before_entry_count": 0,
+    "after_present": true,
+    "after_complete": true,
+    "after_entry_count": 0,
+    "same_root": true
+  },
+  "event_diagnostics": {
+    "ordinary_root_agent_message_event_count": 57,
+    "delegation_event_count": 0,
+    "thread_relation_count": 0,
+    "invalidating_event_seq": 23406,
+    "invalidating_event_method": "item/started",
+    "invalidating_event_item_type": "agentMessage"
+  },
+  "verifier_correction": {
+    "runner_sha256_at_live_attempt": "0b5328a9abeedbd91a88a7892ce2405884ecf80b1ea16f4c797f12d44e7f1cd5",
+    "runner_sha256_after_correction": "abab912f50a4d35df18369743c176bbb2761b4a2da19f445bd648070561e203d",
+    "test_sha256": "b3b13d96aada0f9251d8f99060fb576b2bb80c37358868094f62144fd3f66b65",
+    "correction": "distinguish ordinary agentMessage events from collabAgentToolCall and subAgentActivity",
+    "offline_rejudgment_applied": true,
+    "live_request_repeated": false
+  },
+  "validation": {
+    "command": "UV_CACHE_DIR=\"$ISSUE68_UV_CACHE\" uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_issue68_transfer_location*.py'",
+    "focused_test_count": 31,
+    "focused_test_result": "PASS",
+    "preflight_help_exit_code": 0
+  },
+  "official_cli_documentation": [
+    "https://developers.openai.com/cookbook/examples/codex/build_iterative_repair_loops_with_codex",
+    "https://developers.openai.com/zh-Hans/docs/config-file/config-basic"
+  ]
+}

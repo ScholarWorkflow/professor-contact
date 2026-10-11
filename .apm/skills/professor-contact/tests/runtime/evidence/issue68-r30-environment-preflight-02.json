@@ -1,0 +1,54 @@
+{
+  "schema": "issue68-r30-environment-preflight-v1",
+  "state": "PREFLIGHT_INCOMPLETE",
+  "execution_kind": "preflight",
+  "formal_case_started": false,
+  "second_gate_status": "INCOMPLETE",
+  "formal_run_allowed": false,
+  "entrypoint_sha256": "3cc9cf5d2a62d1248ffa999cddb65d894a83d40f4e40dab1bfec942e1495a631",
+  "producer": {
+    "sha": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+    "dirty": "no"
+  },
+  "shared_assets": {
+    "sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+    "dirty": "no"
+  },
+  "service_revision": {
+    "sha": "3fdfa9387140cfc2e2aa3af415f85015f79706d2",
+    "dirty": "no"
+  },
+  "reason": "supported_install_failed",
+  "error_type": "ValueError",
+  "attempt": "pc68-r30-environment-preflight-02",
+  "installation_exit_code": 124,
+  "installation_attempt": {
+    "argv": [
+      "apm",
+      "install",
+      "https://github.com/ScholarWorkflow/professor-contact.git#b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+      "--target",
+      "codex",
+      "--trust-transitive-mcp"
+    ],
+    "timeout_seconds": 600
+  },
+  "observed": [
+    "clean_fixed_product_revision",
+    "clean_fixed_shared_revision",
+    "read_only_service_instance_and_storage_isolation"
+  ],
+  "not_executed": [
+    "installed_entrypoint_help",
+    "synthetic_command_observation",
+    "formal_PC68_R1"
+  ],
+  "diagnosis": {
+    "stage": "dependency_resolution",
+    "resolved_log_entries": 8,
+    "stderr_empty": true,
+    "network_children_present": true,
+    "network_connections_established": true,
+    "attribution": "external_installation_timeout_not_product_failure"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "schema": "issue68-r37-t2-cache-cleanup-validation-v1",
+  "record_revision": "issue68-r37-t2-cache-cleanup-validation-2026-10-09",
+  "finding": "R37-T2",
+  "plan_revision": "issue-68-test-plan-r37-2026-10-08",
+  "plan_sha256_at_test_execution": "20469e5bc926adb38499e473a824a3d7c08fc613be80ba28eb443cce8d87c334",
+  "base_commit": "f989d1119190670bcf5d524cf706c65bfd89daee",
+  "test_run": {
+    "id": "issue68-r37-t2-cache-cleanup-validation-20261009",
+    "command_template": "UV_CACHE_DIR=$PC68_T2_UV_CACHE uv run --no-project python .apm/skills/professor-contact/tests/test_issue68_uv_cache_r37.py",
+    "cache_path_alias": "PC68_T2_UV_CACHE; concrete paths are retained only in the local execution record",
+    "tests_run": 6,
+    "failures": 0,
+    "errors": 0,
+    "exit_code": 0,
+    "elapsed_seconds": 0.030,
+    "stdout_summary": "Ran 6 tests in 0.030s; OK",
+    "initial_warning": "uv reported --no-project with no project found; the command exited successfully.",
+    "cases": [
+      "test_cleanup_failure_keeps_confirmed_product_failure_and_records_cleanup_error",
+      "test_cleanup_failure_invalidates_non_product_terminal_result",
+      "test_owner_capture_records_and_verifies_inherited_cache_directory",
+      "test_owner_capture_with_missing_or_different_inherited_cache_is_invalid",
+      "test_owner_command_requires_exact_declared_cache_prefix",
+      "test_root_prompt_binds_every_uv_command_to_request_cache_placeholder"
+    ]
+  },
+  "source_sha256": {
+    ".apm/skills/professor-contact/docs/issue68-test-plan.md": "20469e5bc926adb38499e473a824a3d7c08fc613be80ba28eb443cce8d87c334",
+    ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r19_codex.py": "b6f4668b9704bf0e56c9f84c4aa1b9132690d40408ab92f07bd68d2d73011f00",
+    ".apm/skills/professor-contact/tests/test_issue68_uv_cache_r37.py": "ad3ca7383afe0fcb4c7876376ec254fdc76029eeca2790263a53825184a6a775"
+  },
+  "formal_execution_relation": {
+    "formal_requests_consumed": 1,
+    "formal_request_retried": false,
+    "formal_result_unchanged": "CASE_STARTED / FAIL_PRODUCT / owner_result_path_changed",
+    "scope": "Focused local regression only; it does not change the prior formal failure or establish a new PC68-R1 result or Gate 2 approval."
+  }
+}

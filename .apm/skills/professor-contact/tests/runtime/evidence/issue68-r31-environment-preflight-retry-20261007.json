@@ -1,0 +1,219 @@
+{
+  "schema": "issue68-r31-environment-preflight-retry-v1",
+  "execution_kind": "full_environment_preflight",
+  "attempts": [
+    {
+      "attempt": "pc68-r31-environment-preflight-02-20261007-01",
+      "trigger": "用户要求在独立安装成功后继续完整预检",
+      "preflight_exit_code": 1,
+      "state": "PREFLIGHT_INCOMPLETE",
+      "reason": "supported_install_failed",
+      "error_type": "ValueError",
+      "producer": {
+        "sha": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+        "dirty": "no"
+      },
+      "shared_assets": {
+        "sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+        "dirty": "no"
+      },
+      "service_revision": {
+        "sha": "3fdfa9387140cfc2e2aa3af415f85015f79706d2",
+        "dirty": "no"
+      },
+      "installation": {
+        "argv": [
+          "apm",
+          "install",
+          "https://github.com/ScholarWorkflow/professor-contact.git#b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+          "--target",
+          "codex",
+          "--trust-transitive-mcp"
+        ],
+        "timeout_seconds": 600,
+        "exit_code": 124,
+        "terminal_state": "timeout",
+        "last_recorded_progress": "Resolving ScholarWorkflow/base-skills...",
+        "stderr_empty": true
+      },
+      "observed": [
+        "fixed_clean_product",
+        "fixed_clean_shared_assets",
+        "read_only_service_provenance"
+      ],
+      "not_executed": [
+        "installed_entrypoint_help",
+        "synthetic_command_observation",
+        "formal_PC68_R1"
+      ],
+      "service_request_sent": false,
+      "formal_case_started": false,
+      "second_gate_status": "INCOMPLETE",
+      "formal_run_allowed": false,
+      "attribution": "external_dependency_resolution_timeout_not_product_failure",
+      "raw_evidence": {
+        "directory": "<private-tmp>/pc68-r31-environment-preflight-02-20261007-01",
+        "sha256": {
+          "preflight_result": "43e92540f201a81b0dca7645b1dc5a27817df4aed170cbef31f4df7641d1045e",
+          "process_stdout": "3de09a8232071436193e1e2350dc773b094c345462d7031641ab467db7009d9b",
+          "process_stderr": "b3584a461c0707e6643601eb0ca0fc5fe69f5ee8adc647696291d311a4e12fd7",
+          "install_exit_code": "ca2ebdf97d7469496b1f4b78958f9dc8447efdcb623953fee7b6996b762f6fff",
+          "install_stdout": "09db862cb216bd754037f367f2cb68b41dc07921394b9270566edf7e7c23a015",
+          "install_stderr": "e3b0c44298fc1c149af4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "service_before": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34"
+        }
+      }
+    },
+    {
+      "attempt": "pc68-r31-environment-preflight-03-20261007-01",
+      "trigger": "上次安装超时后只读远程查询成功，随后在全新隔离目录重跑固定完整入口",
+      "preflight_exit_code": 0,
+      "state": "PRECHECK_READY",
+      "scope": "supported installation, read-only service isolation, synthetic command output only",
+      "producer": {
+        "sha": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+        "dirty": "no"
+      },
+      "shared_assets": {
+        "sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+        "dirty": "no"
+      },
+      "service_revision": {
+        "sha": "3fdfa9387140cfc2e2aa3af415f85015f79706d2",
+        "dirty": "no"
+      },
+      "tool_versions": {
+        "apm": "Agent Package Manager (APM) CLI version 0.29.0 (5ac6733)",
+        "uv": "uv 0.12.11 (aarch64-apple-darwin)",
+        "codex": "codex-cli 0.160.1"
+      },
+      "installation": {
+        "argv": [
+          "apm",
+          "install",
+          "https://github.com/ScholarWorkflow/professor-contact.git#b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+          "--target",
+          "codex",
+          "--trust-transitive-mcp"
+        ],
+        "timeout_seconds": 600,
+        "exit_code": 0,
+        "reported_elapsed_seconds": 27.3,
+        "dependencies_installed": 10,
+        "mcp_servers_configured": 1,
+        "resolved_product_commit": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+        "installed_entrypoint_sha256": "5d5347c18c5bd0df69b1377a02e39dc4048b0dd0d7c4246d105d102052f681d6",
+        "source_entrypoint_sha256": "5d5347c18c5bd0df69b1377a02e39dc4048b0dd0d7c4246d105d102052f681d6",
+        "entrypoint_matches_source": true,
+        "lockfile_sha256": "47ecd92107ce44cea414e253b9df0bdcf9c24ae2b20c00230ceb0d1274a8302d"
+      },
+      "installed_entrypoint_help": {
+        "exit_code": 0,
+        "checked": true
+      },
+      "requested_configuration": {
+        "model": "gpt-6-luna",
+        "reasoning_effort": "low",
+        "service_executor_version": "codex-cli 0.159.0-alpha.12.1",
+        "effective_model_status": "NOT_EXPOSED_BY_CURRENT_SERVICE"
+      },
+      "observation": {
+        "status": "OBSERVATION_VERIFIED",
+        "reason": "actual_parse_and_same_object_forwarding",
+        "request_count": 1,
+        "command_id": "exec-bc035f73-7c60-4f27-a279-30a3b5953f12",
+        "thread_id": "01a112c5-8d37-7261-bba3-11a5aad476a2",
+        "turn_id": "01a112c5-93ef-76f0-a422-3d433ec3dc93",
+        "runtime_generation": 1,
+        "start_seq": 22561,
+        "end_seq": 22563,
+        "command_started_events": 1,
+        "command_completed_events": 1,
+        "completed_command_exit_code": 0,
+        "parsed_output": {
+          "schema": "issue68-r30-synthetic-read-v1",
+          "read_count": 1,
+          "object": {
+            "marker": "PC68环境预检合成输入",
+            "value": "原编号::空 格",
+            "choices": [
+              2,
+              1,
+              2
+            ]
+          },
+          "forwarded": {
+            "marker": "PC68环境预检合成输入",
+            "value": "原编号::空 格",
+            "choices": [
+              2,
+              1,
+              2
+            ]
+          },
+          "child_return_code": 0
+        },
+        "same_object_forwarded": true
+      },
+      "isolation_and_integrity": {
+        "service_unchanged": true,
+        "same_service_process": true,
+        "same_service_revision": true,
+        "service_port": "17902",
+        "installed_consumer_tree_entries_before": 3574,
+        "installed_consumer_tree_entries_after": 3574,
+        "installed_consumer_tree_unchanged": true,
+        "synthetic_input_before": "ed62714bbc60cf23fdd05b770ca90644cefbfff26ceb549e155dd1122d6b0c19",
+        "synthetic_input_after": "ed62714bbc60cf23fdd05b770ca90644cefbfff26ceb549e155dd1122d6b0c19",
+        "synthetic_input_unchanged": true,
+        "fixed_observation_scripts_unchanged": true
+      },
+      "formal_case_started": false,
+      "second_gate_status": "INCOMPLETE",
+      "formal_run_allowed": false,
+      "raw_evidence": {
+        "directory": "<private-tmp>/pc68-r31-environment-preflight-03-20261007-01",
+        "sha256": {
+          "preflight_result": "7fc710b73bc9cfa918decf531690542a674ce2e45fab0a451276f497660b3c82",
+          "process_stdout": "56979436d9114f040f887ae5a71eb3cd4237c483e7e537edb54fadbe9bbded04",
+          "process_stderr": "f55e9c714a55eb036de5983be970764f219ff6318b439b003cac49c9e7180cf8",
+          "install_command": "ce08994066e75ccbb616e6ff984bb7252cbf33d2b262488b1f7a1b92f51c474f",
+          "install_exit_code": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+          "install_stdout": "4c5ae2899b20160c36104ca7ea21e9828db3e7133f5f252da182ba9e01e6d10b",
+          "install_stderr": "e3b0c44298fc1c149af4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "help_exit_code": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+          "help_stdout": "c1ccc4ceec84d92ba39bcdcbc33d4ced0eab1b7d6d404e1e39e2cc50301d1603",
+          "help_stderr": "dd7241fb9634d51d4b90a8782d9a26dd3fe2ada28ad873374b2d9b28b76827ef",
+          "service_before": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+          "service_after": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+          "actual_request_configuration": "8e7ccf906f57ec5ffa16661b0af892d6b627bd5703fdd61650e26301ff3b3920",
+          "request": "895dcc1c4ba4f06cf97e89a405df35804b3c41b40707a56a0175e7433511819f",
+          "response": "75cfff78e67dcadf6b3cc0379e9b942466793a1fae384996652d5b3ef50c21ba",
+          "observation": "1d2ef52c7f058d832fefed650aea5065cac5e4563d36455ee517218444367a12",
+          "integrity": "a8bdf20d6f76cbc2e0232e114050c2d1bd02d34b748968a9de6ea13a5743d261",
+          "synthetic_manifest": "49dc13bfffd6c9c47c5e3b671b1ab096567c53b50ec6bf7ef1d61dac4f2695ad",
+          "tool_versions": "e74a330ac64c00f8093727ebfa5d878ddd60d5df5307e4f7ee41f887fb0e56d3"
+        }
+      }
+    }
+  ],
+  "recovery_diagnostic": {
+    "argv": [
+      "git",
+      "ls-remote",
+      "https://github.com/ScholarWorkflow/base-skills.git",
+      "HEAD"
+    ],
+    "exit_code": 0,
+    "terminal_state": "success",
+    "returned_head": "0e08013b798cf4c7f937cc4c1d4d769ec4c6aa79",
+    "result_scope": "一次只读远程可达性检查；仅作为后续预检重试依据，不代替支持安装"
+  },
+  "overall_preflight_status": "PRECHECK_READY",
+  "overall_preflight_attempt": 3,
+  "second_gate_status": "INCOMPLETE",
+  "formal_case_started": false,
+  "formal_run_allowed": false,
+  "remaining_gate_gap": "正式观察仍未证明请求前覆盖全部合法临时传递位置；第二关口完整批准及候选冻结尚未发生",
+  "final_boundary": "本记录覆盖支持安装、已安装入口帮助、一次纯合成普通命令观察及隔离完整性；不覆盖正式PC68-R1、教授业务或正式运行许可"
+}

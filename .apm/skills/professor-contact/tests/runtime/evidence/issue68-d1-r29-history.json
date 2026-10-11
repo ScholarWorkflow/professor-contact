@@ -1,0 +1,187 @@
+{
+  "schema": 1,
+  "kind": "historical_execution_projection",
+  "run_id": "pc68-d1-r29-20261006",
+  "source_redactions": [
+    "candidate_path",
+    "evidence_root",
+    "unused_runtime_pins",
+    "local_command_paths"
+  ],
+  "execution": {
+    "case": "PC68-D1",
+    "candidate_revision": "issue68-r29-r23-candidate-2026-10-06",
+    "test_code_sha": "e931ab22fbe492bdf0c4ecb74e906d2c23dfce23",
+    "verdict": "PASS",
+    "reason_code": null,
+    "runner_exit_code": 0,
+    "started_at": "2026-10-06T00:25:07+0800",
+    "finished_at": "2026-10-06T00:25:51+0800",
+    "producer": {
+      "sha": "35f2785b4d13783683860db910a36add2347bd29",
+      "dirty": "no"
+    },
+    "manual_patch": "no",
+    "execution_kind": "preflight",
+    "summary": {
+      "tests_run": 7,
+      "skipped": 0,
+      "expected_failures": 0,
+      "unexpected_successes": 0,
+      "failures": 0,
+      "errors": 0
+    },
+    "proofs": [
+      {
+        "proof": "P3",
+        "tests_run": 2,
+        "components": 2
+      },
+      {
+        "proof": "P7",
+        "tests_run": 20,
+        "components": 20
+      },
+      {
+        "proof": "P2",
+        "tests_run": 4,
+        "components": 4
+      },
+      {
+        "proof": "P6",
+        "tests_run": 4,
+        "components": 4
+      },
+      {
+        "proof": "P1",
+        "tests_run": 4,
+        "components": 4
+      },
+      {
+        "proof": "P4",
+        "tests_run": 2,
+        "components": 2
+      },
+      {
+        "proof": "P5",
+        "tests_run": 7,
+        "components": 7
+      }
+    ]
+  },
+  "proofs": [
+    {
+      "proof": "P3",
+      "components": [
+        "test_contact_state.TestStage5PerProfessorState.test_issue68_t68_5_local_batch_covers_one_professor_only",
+        "test_issue68_root_partition.TestStage5BatchStaysAtomic.test_r19_batch_with_one_missing_humanized_commits_nothing"
+      ],
+      "tests_run": 2,
+      "log": "test_issue68_t68_5_local_batch_covers_one_professor_only (test_contact_state.TestStage5PerProfessorState.test_issue68_t68_5_local_batch_covers_one_professor_only) ... ok\ntest_r19_batch_with_one_missing_humanized_commits_nothing (test_issue68_root_partition.TestStage5BatchStaysAtomic.test_r19_batch_with_one_missing_humanized_commits_nothing) ... ok\n\n----------------------------------------------------------------------\nRan 2 tests in 1.106s\n\nOK\n"
+    },
+    {
+      "proof": "P7",
+      "components": [
+        "test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_counterexample3_unique_candidate_legacy_row_is_a_duplicate",
+        "test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_counterexample4_multi_candidate_excludes_satisfied_owner",
+        "test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_undecided_multi_candidate_owner_returns_needs_input",
+        "test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_counterexample2_cross_professor_error_stays_with_its_owner",
+        "test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_counterexample5_invalid_explicit_dir_never_transfers_by_id",
+        "test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_foreign_rows_stay_noise_without_a_scope",
+        "test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_single_object_choices_and_default_scope_keep_working",
+        "test_issue68_choices_attribution.TestStage5ImmutableWrapperOwnerLocalChoices.test_issue68_r10_wrapper_attribution_matches_the_runner",
+        "test_issue68_root_partition.TestStage5RootPartition.test_r12_cx1_malformed_b_pack_does_not_block_a_bundle",
+        "test_issue68_root_partition.TestStage5RootPartition.test_r12_cx2_owner_bundles_hold_only_their_own_professor",
+        "test_issue68_root_partition.TestStage5RootPartition.test_r12_cx3_colliding_legacy_row_is_ambiguous_at_root",
+        "test_issue68_root_partition.TestStage5RootPartition.test_r12_cx3b_explicit_row_resolves_colliding_legacy_row",
+        "test_issue68_root_partition.TestStage5RootPartition.test_r12_cx4_targeted_bundle_excludes_unselected_same_professor_rows",
+        "test_issue68_root_partition.TestStage5RootPartition.test_r12_cx5_b_choice_error_does_not_degrade_a",
+        "test_issue68_root_partition.TestStage5RootPartition.test_r12_cx7_discovery_rows_drive_partition_and_bad_b_stays_alone",
+        "test_issue68_root_partition.TestStage5RootPartition.test_r12_owner_bundle_has_no_scope_and_no_sibling_state_paths",
+        "test_issue68_root_partition.TestStage5RootPartition.test_r12_partition_preserves_rows_and_reruns_deterministically",
+        "test_issue68_root_partition.TestStage5OwnerLocalBundleLoader.test_owner_local_legacy_exact_one_still_applies",
+        "test_issue68_root_partition.TestStage5OwnerLocalBundleLoader.test_sibling_explicit_row_in_owner_bundle_fails_closed",
+        "test_issue68_root_partition.TestStage5OwnerLocalBundleLoader.test_targeted_bundle_of_one_stays_exact"
+      ],
+      "tests_run": 20,
+      "log": "test_issue68_r10_counterexample3_unique_candidate_legacy_row_is_a_duplicate (test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_counterexample3_unique_candidate_legacy_row_is_a_duplicate)\nLegacy row with original_candidates={A} must bind A and fail A's ... ok\ntest_issue68_r10_counterexample4_multi_candidate_excludes_satisfied_owner (test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_counterexample4_multi_candidate_excludes_satisfied_owner)\nWith candidates={A,B}, the root partition excludes the explicitly ... ok\ntest_issue68_r10_undecided_multi_candidate_owner_returns_needs_input (test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_undecided_multi_candidate_owner_returns_needs_input)\nA legacy row whose id lives in two selected packs stays an ... ok\ntest_issue68_r10_counterexample2_cross_professor_error_stays_with_its_owner (test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_counterexample2_cross_professor_error_stays_with_its_owner)\nPlan r12 §3.3 rule 5: a wrong ``B_dir + A's id`` row fails only B's ... ok\ntest_issue68_r10_counterexample5_invalid_explicit_dir_never_transfers_by_id (test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_counterexample5_invalid_explicit_dir_never_transfers_by_id)\nA foreign explicit row inside an owner-local bundle is this owner's ... ok\ntest_issue68_r10_foreign_rows_stay_noise_without_a_scope (test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_foreign_rows_stay_noise_without_a_scope)\nP7: other professors' rows and unknown ids never block this owner ... ok\ntest_issue68_r10_single_object_choices_and_default_scope_keep_working (test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r10_single_object_choices_and_default_scope_keep_working) ... ok\ntest_issue68_r10_wrapper_attribution_matches_the_runner (test_issue68_choices_attribution.TestStage5ImmutableWrapperOwnerLocalChoices.test_issue68_r10_wrapper_attribution_matches_the_runner) ... ok\ntest_r12_cx1_malformed_b_pack_does_not_block_a_bundle (test_issue68_root_partition.TestStage5RootPartition.test_r12_cx1_malformed_b_pack_does_not_block_a_bundle)\n§7.1: B's malformed pack is B's own input-resolution failure; A's ... ok\ntest_r12_cx2_owner_bundles_hold_only_their_own_professor (test_issue68_root_partition.TestStage5RootPartition.test_r12_cx2_owner_bundles_hold_only_their_own_professor)\n§7.2/§7.6: with A+B rows in the raw choices, each owner's bundle ... ok\ntest_r12_cx3_colliding_legacy_row_is_ambiguous_at_root (test_issue68_root_partition.TestStage5RootPartition.test_r12_cx3_colliding_legacy_row_is_ambiguous_at_root)\n§7.3: a legacy row whose id lives in two selected packs is a root ... ok\ntest_r12_cx3b_explicit_row_resolves_colliding_legacy_row (test_issue68_root_partition.TestStage5RootPartition.test_r12_cx3b_explicit_row_resolves_colliding_legacy_row)\n§7.3: a legal explicit row satisfies its owner, so the colliding ... ok\ntest_r12_cx4_targeted_bundle_excludes_unselected_same_professor_rows (test_issue68_root_partition.TestStage5RootPartition.test_r12_cx4_targeted_bundle_excludes_unselected_same_professor_rows)\n§7.4: targeted X, raw choices also hold this professor's Y — the ... ok\ntest_r12_cx5_b_choice_error_does_not_degrade_a (test_issue68_root_partition.TestStage5RootPartition.test_r12_cx5_b_choice_error_does_not_degrade_a)\n§7.5: B's batch error id fails B's partition only; A's bundle stays ... ok\ntest_r12_cx7_discovery_rows_drive_partition_and_bad_b_stays_alone (test_issue68_root_partition.TestStage5RootPartition.test_r12_cx7_discovery_rows_drive_partition_and_bad_b_stays_alone)\n§7.7: standalone discovery keeps A/C rows beside a bad B container; ... ok\ntest_r12_owner_bundle_has_no_scope_and_no_sibling_state_paths (test_issue68_root_partition.TestStage5RootPartition.test_r12_owner_bundle_has_no_scope_and_no_sibling_state_paths)\nPlan r19 P7: one owner entry leaks nothing about its sibling. ... ok\ntest_r12_partition_preserves_rows_and_reruns_deterministically (test_issue68_root_partition.TestStage5RootPartition.test_r12_partition_preserves_rows_and_reruns_deterministically)\nPlan r19 P7: the partition entry only re-containers rows. ... ok\ntest_owner_local_legacy_exact_one_still_applies (test_issue68_root_partition.TestStage5OwnerLocalBundleLoader.test_owner_local_legacy_exact_one_still_applies)\nLegacy rows keep the owner's own exact-one business check: an ... ok\ntest_sibling_explicit_row_in_owner_bundle_fails_closed (test_issue68_root_partition.TestStage5OwnerLocalBundleLoader.test_sibling_explicit_row_in_owner_bundle_fails_closed)\nA sibling row that reaches an owner-local bundle is this owner's ... ok\ntest_targeted_bundle_of_one_stays_exact (test_issue68_root_partition.TestStage5OwnerLocalBundleLoader.test_targeted_bundle_of_one_stays_exact)\nTargeted X with only X's row keeps #59: single-email isolation and ... ok\n\n----------------------------------------------------------------------\nRan 20 tests in 7.565s\n\nOK\n"
+    },
+    {
+      "proof": "P2",
+      "components": [
+        "test_contact_state.TestStage5PerProfessorState.test_issue68_t68_3_other_professor_files_never_gate_this_one",
+        "test_contact_state.TestStage5PerProfessorState.test_issue68_t68_4_this_professor_stays_fail_closed",
+        "test_contact_state.TestStage5PerProfessorState.test_issue68_unselected_malformed_local_row_is_noise",
+        "test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r11_targeted_run_filters_unselected_explicit_rows"
+      ],
+      "tests_run": 4,
+      "log": "test_issue68_t68_3_other_professor_files_never_gate_this_one (test_contact_state.TestStage5PerProfessorState.test_issue68_t68_3_other_professor_files_never_gate_this_one) ... ok\ntest_issue68_t68_4_this_professor_stays_fail_closed (test_contact_state.TestStage5PerProfessorState.test_issue68_t68_4_this_professor_stays_fail_closed)\n#68 moved the pack authority, not A's own validation strength (#59). ... ok\ntest_issue68_unselected_malformed_local_row_is_noise (test_contact_state.TestStage5PerProfessorState.test_issue68_unselected_malformed_local_row_is_noise) ... ok\ntest_issue68_r11_targeted_run_filters_unselected_explicit_rows (test_issue68_choices_attribution.TestStage5ChoicesAttribution.test_issue68_r11_targeted_run_filters_unselected_explicit_rows)\nR11 §3.3 rule 2 + counterexamples: in a targeted run the ... ok\n\n----------------------------------------------------------------------\nRan 4 tests in 4.618s\n\nOK\n"
+    },
+    {
+      "proof": "P6",
+      "components": [
+        "test_issue68_choices_attribution.TestStage5ListInputs.test_issue68_r10_list_input_reason_codes",
+        "test_issue68_choices_attribution.TestStage5ListInputs.test_issue68_r10_list_inputs_discovers_local_packs_independently",
+        "test_issue68_choices_attribution.TestStage5ListInputs.test_issue68_r10_list_inputs_professor_filter_and_ambiguity",
+        "test_issue68_choices_attribution.TestStage5ListInputs.test_issue68_r19_scope_emission_is_not_supported"
+      ],
+      "tests_run": 4,
+      "log": "test_issue68_r10_list_input_reason_codes (test_issue68_choices_attribution.TestStage5ListInputs.test_issue68_r10_list_input_reason_codes) ... ok\ntest_issue68_r10_list_inputs_discovers_local_packs_independently (test_issue68_choices_attribution.TestStage5ListInputs.test_issue68_r10_list_inputs_discovers_local_packs_independently) ... ok\ntest_issue68_r10_list_inputs_professor_filter_and_ambiguity (test_issue68_choices_attribution.TestStage5ListInputs.test_issue68_r10_list_inputs_professor_filter_and_ambiguity) ... ok\ntest_issue68_r19_scope_emission_is_not_supported (test_issue68_choices_attribution.TestStage5ListInputs.test_issue68_r19_scope_emission_is_not_supported)\nPlan r19: discovery stays pure read-only. ... ok\n\n----------------------------------------------------------------------\nRan 4 tests in 1.060s\n\nOK\n"
+    },
+    {
+      "proof": "P1",
+      "components": [
+        "test_contact_state.TestStage5PerProfessorState.test_issue68_t68_1_local_pack_is_the_only_stage5_fact_source",
+        "test_contact_state.TestStage5PerProfessorState.test_issue68_t68_1b_missing_local_pack_never_falls_back_to_global",
+        "test_contact_state.TestStage5PerProfessorState.test_issue68_t68_1c_local_pack_must_prove_one_professor",
+        "test_contact_state.TestStage5PerProfessorState.test_issue68_t68_2_legacy_global_pack_cannot_change_local_result"
+      ],
+      "tests_run": 4,
+      "log": "test_issue68_t68_1_local_pack_is_the_only_stage5_fact_source (test_contact_state.TestStage5PerProfessorState.test_issue68_t68_1_local_pack_is_the_only_stage5_fact_source) ... ok\ntest_issue68_t68_1b_missing_local_pack_never_falls_back_to_global (test_contact_state.TestStage5PerProfessorState.test_issue68_t68_1b_missing_local_pack_never_falls_back_to_global) ... ok\ntest_issue68_t68_1c_local_pack_must_prove_one_professor (test_contact_state.TestStage5PerProfessorState.test_issue68_t68_1c_local_pack_must_prove_one_professor) ... ok\ntest_issue68_t68_2_legacy_global_pack_cannot_change_local_result (test_contact_state.TestStage5PerProfessorState.test_issue68_t68_2_legacy_global_pack_cannot_change_local_result) ... ok\n\n----------------------------------------------------------------------\nRan 4 tests in 2.345s\n\nOK\n"
+    },
+    {
+      "proof": "P4",
+      "components": [
+        "test_contact_state.TestStage5PerProfessorState.test_issue68_t68_6_second_professor_failure_keeps_first_commit",
+        "test_contact_state.TestStage5PerProfessorState.test_issue68_validation_updates_only_the_named_local_state"
+      ],
+      "tests_run": 2,
+      "log": "test_issue68_t68_6_second_professor_failure_keeps_first_commit (test_contact_state.TestStage5PerProfessorState.test_issue68_t68_6_second_professor_failure_keeps_first_commit) ... ok\ntest_issue68_validation_updates_only_the_named_local_state (test_contact_state.TestStage5PerProfessorState.test_issue68_validation_updates_only_the_named_local_state) ... ok\n\n----------------------------------------------------------------------\nRan 2 tests in 0.885s\n\nOK\n"
+    },
+    {
+      "proof": "P5",
+      "components": [
+        "test_contact_state.TestStage5PerProfessorState.test_issue68_t68_7_finalize_never_touches_the_aggregate",
+        "test_stage5_overview.TestStage5OverviewRebuild.test_issue68_rebuild_never_reads_or_writes_shared_registry",
+        "test_stage5_overview.TestStage5OverviewRebuild.test_issue68_t68_7_legacy_program_pack_contributes_no_rows",
+        "test_stage5_overview.TestStage5OverviewRebuild.test_issue68_t68_7_malformed_local_input_fails_closed_without_overwrite",
+        "test_stage5_overview.TestStage5OverviewRebuild.test_issue68_t68_7_manual_aggregate_edit_blocks_only_the_rebuild",
+        "test_stage5_overview.TestStage5OverviewRebuild.test_issue68_t68_7_rebuild_is_deterministic_after_deletion",
+        "test_stage5_overview.TestStage5OverviewRebuild.test_issue68_t68_7_rebuild_joins_each_professor_local_state"
+      ],
+      "tests_run": 7,
+      "log": "test_issue68_t68_7_finalize_never_touches_the_aggregate (test_contact_state.TestStage5PerProfessorState.test_issue68_t68_7_finalize_never_touches_the_aggregate) ... ok\ntest_issue68_rebuild_never_reads_or_writes_shared_registry (test_stage5_overview.TestStage5OverviewRebuild.test_issue68_rebuild_never_reads_or_writes_shared_registry) ... ok\ntest_issue68_t68_7_legacy_program_pack_contributes_no_rows (test_stage5_overview.TestStage5OverviewRebuild.test_issue68_t68_7_legacy_program_pack_contributes_no_rows) ... ok\ntest_issue68_t68_7_malformed_local_input_fails_closed_without_overwrite (test_stage5_overview.TestStage5OverviewRebuild.test_issue68_t68_7_malformed_local_input_fails_closed_without_overwrite) ... ok\ntest_issue68_t68_7_manual_aggregate_edit_blocks_only_the_rebuild (test_stage5_overview.TestStage5OverviewRebuild.test_issue68_t68_7_manual_aggregate_edit_blocks_only_the_rebuild) ... ok\ntest_issue68_t68_7_rebuild_is_deterministic_after_deletion (test_stage5_overview.TestStage5OverviewRebuild.test_issue68_t68_7_rebuild_is_deterministic_after_deletion) ... ok\ntest_issue68_t68_7_rebuild_joins_each_professor_local_state (test_stage5_overview.TestStage5OverviewRebuild.test_issue68_t68_7_rebuild_joins_each_professor_local_state) ... ok\n\n----------------------------------------------------------------------\nRan 7 tests in 4.655s\n\nOK\n"
+    }
+  ],
+  "final_verdict": {
+    "state": "CASE_STARTED",
+    "verdict": "PASS",
+    "reason_code": null,
+    "tests_run": 7,
+    "skipped": 0,
+    "expected_failures": 0,
+    "unexpected_successes": 0,
+    "failures": 0,
+    "errors": 0,
+    "discovered_methods": [
+      "test_stage5_batch_without_email_id_never_crosses_professor_owner",
+      "test_stage5_choices_attribution_uses_canonical_directory_and_email_id",
+      "test_stage5_email_id_scope_is_local_and_unrelated_local_rows_are_noise",
+      "test_stage5_list_inputs_discovers_local_packs_independently",
+      "test_stage5_local_pack_is_authoritative_and_global_fallback_is_forbidden",
+      "test_stage5_multi_professor_partial_results_keep_owner_state_isolated",
+      "test_stage5_rebuild_overview_reads_owner_outputs_only_and_is_idempotent"
+    ]
+  },
+  "current_execution": false
+}
