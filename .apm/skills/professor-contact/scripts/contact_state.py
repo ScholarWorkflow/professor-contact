@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import types
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -242,6 +243,61 @@ def atomic_json_many(items: list[tuple[Path, Any]]) -> None:
                 backup.unlink()
         for path, temporary in staged:
             temporary.unlink(missing_ok=True)
+
+
+def staged_pair_commit(items: list[tuple[Path, str]]) -> None:
+    """Replace a small set of text files as one local transaction (issue #66).
+
+    All files are staged first, then installed in list order with one atomic
+    replace each — the LAST install is the business commit point. An ordinary
+    exception before the final install restores every previous file's old
+    bytes (absence included), so no reader ever observes a state that the
+    transaction later rolls back. Once the final install returned, the
+    transaction is committed: remaining cleanup is best-effort and a cleanup
+    error never rolls business files back or re-frames the result as
+    uncommitted. Hard-crash durability between two replaces is out of scope.
+    """
+    staged: list[tuple[Path, Path]] = []
+    installed: list[Path] = []
+    backups: dict[Path, bytes | None] = {}
+    try:
+        for path, text in items:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
+            staged.append((path, Path(temporary)))
+        for path, temporary in staged:
+            backups[path] = path.read_bytes() if path.exists() else None
+            os.replace(temporary, path)
+            installed.append(path)
+    except BaseException:
+        for path in reversed(installed):
+            old = backups.get(path)
+            try:
+                if old is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    fd, temporary = tempfile.mkstemp(
+                        prefix=f".{path.name}.restore.", dir=path.parent)
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(old)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temporary, path)
+            except OSError:
+                pass
+        for _, temporary in staged:
+            temporary.unlink(missing_ok=True)
+        raise
+    else:
+        for _, temporary in staged:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def emit(payload: dict) -> None:
@@ -745,6 +801,96 @@ def load_candidate_state(professor_dir: Path, pack: dict | None) -> tuple[dict |
     if error or not isinstance(raw, dict):
         return None, error or "invalid_candidate_state"
     return normalize_candidate_state(raw, pack)
+
+
+def _strict_candidate_shape(state: dict) -> str | None:
+    """Machine-shape proof over the fields the aggregate consumes (issue #66).
+
+    normalize_candidate_state stamps v2 identity fields without a deep
+    structural pass — the Stage-4 behavior #66 must not change — so an
+    on-disk state whose directions/candidates/groups are structurally
+    corrupt would otherwise reach the overview renderer and publish garbage
+    rows (r10 §3.7 requires every committed state to fail closed BEFORE the
+    overview write). The compatibility/migration owner proves the shape
+    here; renderer and rebuild stay pure consumers. Corrupt values are
+    never treated as empty: the candidate list (and a group's member list)
+    must be present and well-typed, or the state fails closed.
+    """
+    directions = state.get("directions")
+    if not isinstance(directions, list):
+        return "invalid_candidate_state"
+    for row in directions:
+        if not isinstance(row, dict):
+            return "invalid_candidate_state"
+        did = row.get("direction_id")
+        if not (isinstance(did, str) and did.strip()):
+            return "invalid_candidate_state"
+        candidates = row.get("candidates")
+        if not isinstance(candidates, list) or \
+                any(not isinstance(c, dict) for c in candidates):
+            return "invalid_candidate_state"
+    groups = state.get("cross_direction_groups")
+    if groups is not None and not isinstance(groups, list):
+        return "invalid_candidate_state"
+    for row in groups or []:
+        if not isinstance(row, dict):
+            return "invalid_candidate_state"
+        gid = row.get("group_id")
+        if not (isinstance(gid, str) and gid.strip()):
+            return "invalid_candidate_state"
+        direction_ids = row.get("direction_ids")
+        if not isinstance(direction_ids, list) or \
+                any(not isinstance(item, str) for item in direction_ids):
+            return "invalid_candidate_state"
+        candidates = row.get("candidates")
+        if not isinstance(candidates, list) or \
+                any(not isinstance(c, dict) for c in candidates):
+            return "invalid_candidate_state"
+    return None
+
+
+def strict_candidate_state(professor_dir: Path) -> tuple[dict | None, str | None]:
+    """Compatibility/migration owner for aggregate consumers (issue #66 r5).
+
+    Loads one professor's candidate state with strict legacy identity proof:
+    every collection_key the legacy state actually references must resolve to
+    exactly ONE canonical direction_id in the same professor's normalized
+    input pack (0 or >1 matches → legacy_direction_identity) before any
+    migration runs, and the canonical state's machine shape is proven
+    structurally before it may feed the aggregate. Aggregate rebuild only
+    consumes the canonical state returned here and never re-implements the
+    collection_key mapping itself; the pack supplies identity migration only,
+    never candidate facts. Stage 4's existing normalize behavior is untouched.
+    """
+    raw, error = read_json_file(Path(professor_dir) / CANDIDATE_STATE)
+    if error == "not_found":
+        return None, None
+    if error or not isinstance(raw, dict):
+        return None, error or "invalid_candidate_state"
+    if raw.get("schema") == CANDIDATE_STATE_SCHEMA:
+        canonical, canonical_error = normalize_candidate_state(raw, None)
+    else:
+        pack, pack_error = load_input_pack(professor_dir)
+        if pack is None:
+            return None, pack_error or "missing_input_pack"
+        pack_directions = pack.get("directions") or []
+        for entry in raw.get("directions") or []:
+            if not isinstance(entry, dict):
+                return None, "invalid_candidate_state"
+            ckey = entry.get("collection_key")
+            if not (isinstance(ckey, str) and ckey.strip()):
+                continue
+            matches = sorted({direction_machine_id(d) for d in pack_directions
+                              if isinstance(d, dict) and d.get("collection_key") == ckey})
+            if len(matches) != 1:
+                return None, "legacy_direction_identity"
+        canonical, canonical_error = normalize_candidate_state(raw, pack)
+    if canonical is None:
+        return None, canonical_error
+    shape_error = _strict_candidate_shape(canonical)
+    if shape_error:
+        return None, shape_error
+    return canonical, None
 
 
 def stage5_output_peers(email: dict, all_emails: list, professor_dir: Path,
@@ -4972,6 +5118,21 @@ def _parse_cross_groups(raw: Any, pack_directions: list) -> list[dict]:
 CANDIDATE_META_PREFIX = "<!-- candidate_meta: "
 STAGE3_SCOPE_PREFIX = "<!-- stage3_scope: "
 STAGE3_VALIDATION_MAX_ROUNDS = 2
+# Issue #66 r13 §5.1: the runner-generated per-invocation credential. It
+# freezes the first-round parse (sources + first-round controls) so a
+# correction sub-thread never re-derives professor/profile/scope arguments.
+STAGE3_INVOCATION_VERSION = "stage3-invocation-v1"
+STAGE3_INVOCATION_FILE = "stage3-invocation.json"
+# Issue #66 r13 §6: the mechanical validation-evidence handoff. The validator
+# writes its one raw output file; the root saves those exact bytes to the
+# recorded target and records that same file. All three files live in the
+# per-professor, per-invocation, per-round handoff directory under the system
+# temporary root — never inside the professor state directory.
+STAGE3_HANDOFF_VERSION = "stage3-handoff-v1"
+STAGE3_HANDOFF_ROOT = "professor-contact-stage3-handoff"
+STAGE3_HANDOFF_FILE = "handoff.json"
+STAGE3_VALIDATOR_OUTPUT_FILE = "validator-output.json"
+STAGE3_VALIDATION_TARGET_FILE = "validation-result.json"
 
 
 def _stage3_marker_payload(text: str, prefix: str) -> dict:
@@ -5076,21 +5237,26 @@ def _stage3_issue_scopes(issue: dict, body: str, scopes: list, path: Path) -> li
     return found
 
 
-def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict) -> dict:
-    """Normalize raw style-validator JSON into bound, machine-scoped evidence.
-
-    This is the only Stage-3 validator handoff: the runner reads the validator's
-    own output, binds it to the exact rendered revision, and routes each finding
-    to the canonical scope whose rendered text contains the quoted fragment.  A
-    caller never translates ``files[].verdict`` into ``results[]``.
-    """
-    data, error = read_json_file(path)
-    if error or not isinstance(data, dict) or data.get("result") != "ok" \
+def _stage3_validation_files(data: Any, path: Path) -> list:
+    """Return the raw Stage-3 validator file entries after the shared envelope check."""
+    if not isinstance(data, dict) or data.get("result") != "ok" \
             or not isinstance(data.get("files"), list):
         fail("invalid_validation_json", f"style-validator output unreadable: {path}")
+    return data["files"]
+
+
+def _stage3_candidates_entry(data: Any, path: Path, professor_dir: Path) -> tuple[dict, str, list]:
+    """Shape-check raw style-validator JSON and return the one candidates entry
+    bound to this professor's rendered document, with its verdict and issues.
+
+    Shared by the record entry (r13 §6.4) and the save entry (r13 §6.3); per
+    §6.5 the remaining ``files`` entries may belong to other professors of a
+    batch call and are not this professor's precondition.
+    """
+    files = _stage3_validation_files(data, path)
     target = (professor_dir / CANDIDATES_MD).resolve()
     matches = []
-    for entry in data["files"]:
+    for entry in files:
         if not isinstance(entry, dict) or entry.get("artifact") != "candidates":
             continue
         try:
@@ -5115,6 +5281,120 @@ def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict) -> 
         fail("invalid_validation_json", "fail verdict needs at least one blocking issue")
     if verdict != "fail" and blocking:
         fail("invalid_validation_json", "blocking issues require verdict=fail")
+    return entry, verdict, issues
+
+
+def _stage3_normalized_absolute_path(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        fail("invalid_validation_json", f"{label} must be a non-empty absolute path")
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        fail("invalid_validation_json", f"{label} must be an absolute path: {value!r}")
+    try:
+        return str(candidate.resolve(strict=False))
+    except (OSError, RuntimeError, ValueError):
+        fail("invalid_validation_json", f"{label} cannot be normalized: {value!r}")
+
+
+def _stage3_complete_write_result(data: Any, path: Path) -> list[tuple[str, dict]]:
+    """Validate the complete Stage-3 validator protocol without reading its files."""
+    files = _stage3_validation_files(data, path)
+    if not files:
+        fail("invalid_validation_json", "style-validator files must be a non-empty list")
+    if not isinstance(data.get("notes"), str):
+        fail("invalid_validation_json", "style-validator notes must be a string")
+
+    normalized_entries: list[tuple[str, dict]] = []
+    candidate_paths: set[str] = set()
+    for index, entry in enumerate(files):
+        label = f"style-validator files[{index}]"
+        if not isinstance(entry, dict):
+            fail("invalid_validation_json", f"{label} must be an object")
+        candidate_path = _stage3_normalized_absolute_path(entry.get("file"), f"{label}.file")
+        artifact = entry.get("artifact")
+        if artifact not in ("analysis", "candidates"):
+            fail("invalid_validation_json", f"{label}.artifact must be analysis|candidates")
+        verdict = entry.get("verdict")
+        if verdict not in ("pass", "pass_with_minor", "fail"):
+            fail("invalid_validation_json", f"{label}.verdict is invalid: {verdict!r}")
+        blocking_count = entry.get("blocking")
+        minor_count = entry.get("minor")
+        if isinstance(blocking_count, bool) or not isinstance(blocking_count, int) \
+                or blocking_count < 0 or isinstance(minor_count, bool) \
+                or not isinstance(minor_count, int) or minor_count < 0:
+            fail("invalid_validation_json", f"{label} blocking/minor counts must be non-negative integers")
+        issues = entry.get("issues")
+        if not isinstance(issues, list):
+            fail("invalid_validation_json", f"{label}.issues must be a list")
+        blocking_issues = 0
+        minor_issues = 0
+        for issue_index, issue in enumerate(issues):
+            issue_label = f"{label}.issues[{issue_index}]"
+            if not isinstance(issue, dict):
+                fail("invalid_validation_json", f"{issue_label} must be an object")
+            for field in ("rule", "severity", "quote", "suggestion"):
+                value = issue.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    fail("invalid_validation_json", f"{issue_label}.{field} must be a non-empty string")
+            location = issue.get("location")
+            if isinstance(location, bool) or not (
+                    (isinstance(location, int) and location > 0)
+                    or (isinstance(location, str) and location.strip() and len(location) <= 20)):
+                fail("invalid_validation_json",
+                     f"{issue_label}.location must be a positive line number or a non-empty string of at most 20 characters")
+            if len(issue["quote"]) > 40:
+                fail("invalid_validation_json", f"{issue_label}.quote must be at most 40 characters")
+            if issue["severity"] == "blocking":
+                blocking_issues += 1
+            elif issue["severity"] == "minor":
+                minor_issues += 1
+            else:
+                fail("invalid_validation_json", f"{issue_label}.severity must be blocking|minor")
+        if (blocking_count, minor_count) != (blocking_issues, minor_issues):
+            fail("invalid_validation_json", f"{label} counts do not match its issues")
+        if blocking_issues:
+            if verdict != "fail":
+                fail("invalid_validation_json", f"{label} blocking issues require verdict=fail")
+        elif verdict == "fail":
+            fail("invalid_validation_json", f"{label} fail verdict needs a blocking issue")
+        elif minor_issues and verdict != "pass_with_minor":
+            fail("invalid_validation_json", f"{label} minor issues require verdict=pass_with_minor")
+        elif not minor_issues and verdict != "pass":
+            fail("invalid_validation_json", f"{label} without issues must have verdict=pass")
+        if artifact == "candidates":
+            if candidate_path in candidate_paths:
+                fail("invalid_validation_json", f"duplicate candidates path: {candidate_path}")
+            candidate_paths.add(candidate_path)
+        normalized_entries.append((candidate_path, entry))
+    if not candidate_paths:
+        fail("invalid_validation_json", "style-validator output needs a candidates entry")
+    return normalized_entries
+
+
+def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict, *,
+                               raw_input: bytes | None = None) -> dict:
+    """Normalize raw style-validator JSON into bound, machine-scoped evidence.
+
+    This is the only Stage-3 validator handoff: the runner reads the validator's
+    own output, binds it to the exact rendered revision, and routes each finding
+    to the canonical scope whose rendered text contains the quoted fragment.  A
+    caller never translates ``files[].verdict`` into ``results[]``.  The handoff
+    mode (r13 §6.4) passes the already digest-checked byte buffer as
+    ``raw_input`` so the digest is proven over the exact bytes parsed here —
+    never a snapshot re-opened afterwards.
+    """
+    if raw_input is None:
+        try:
+            raw_input = path.read_bytes()
+        except (OSError, ValueError):
+            fail("invalid_validation_json", f"style-validator output unreadable: {path}")
+    input_sha = sha256_bytes(raw_input)
+    try:
+        data = json.loads(raw_input.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        data = None
+    _entry, verdict, issues = _stage3_candidates_entry(data, path, professor_dir)
+    blocking = [i for i in issues if i.get("severity") == "blocking"]
     render_sha, body = _stage3_bound_render(professor_dir, state)
     scopes = stage3_render_line_scopes(body)
     rendered = {}
@@ -5135,6 +5415,7 @@ def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict) -> 
     return {
         "verdict": verdict,
         "render_sha256": render_sha,
+        "validation_input_sha256": input_sha,
         "scopes": rendered,
         "failed": failed,
         "issues": issues,
@@ -5145,34 +5426,56 @@ def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict) -> 
 def stage3_correction_scopes(state: dict, evidence: dict) -> list:
     """Scopes a correction round may repair, from recorded evidence only.
 
-    Fails closed when the round was never recorded, when the render moved on, or
-    when a caller nominates a scope the validator did not fail.
+    The validator file supplied to a correction command is not authoritative:
+    the persisted pending rows are the record of which scopes and issues may be
+    repaired.  The current evidence is used only to bind the operation to the
+    same rendered revision.
     """
     validator = state.get("validator") if isinstance(state.get("validator"), dict) else {}
     recorded = validator.get("pending") if isinstance(validator.get("pending"), dict) else {}
-    if validator.get("render_sha256") != evidence["render_sha256"]:
+    if validator.get("render_sha256") != evidence.get("render_sha256"):
         fail("validation_evidence_not_recorded",
              "record this validator round with stage3-record-validation before planning a correction")
     if evidence["failed"] and not recorded:
         fail("validation_evidence_not_recorded",
              "the recorded round has no open findings on this render: re-run the style validator "
              "on the current render and record that round")
-    for key in recorded:
-        if key not in evidence["failed"]:
-            fail("validation_evidence_not_recorded",
-                 f"validator evidence no longer matches the recorded round: {key}")
     scopes = {}
-    for key, row in evidence["failed"].items():
-        if key == "global":
-            # File-level prose is runner-rendered preamble, so it belongs to
-            # every scope of this render rather than to a caller's guess.
-            for other_key, other in evidence["scopes"].items():
-                if other_key != "global":
-                    scopes.setdefault(other_key, {"scope": other, "candidate_ids": [],
-                                                  "issues": list(row["issues"])})
-            continue
-        scopes[key] = row
+    for key, row in recorded.items():
+        if not isinstance(row, dict):
+            fail("validation_evidence_not_recorded",
+                 f"recorded validator scope is malformed: {key}")
+        scope = row.get("scope")
+        issues = row.get("issues")
+        candidate_ids = row.get("candidate_ids")
+        if not isinstance(scope, dict) or scope_key(scope) != key \
+                or scope.get("kind") not in ("direction", "group") \
+                or not isinstance(issues, list) or not issues \
+                or not isinstance(candidate_ids, list) \
+                or row.get("render_sha256") != evidence["render_sha256"]:
+            fail("validation_evidence_not_recorded",
+                 f"recorded validator scope is malformed or stale: {key}")
+        scopes[key] = {"scope": scope, "candidate_ids": candidate_ids,
+                       "issues": issues}
     return [scopes[key] for key in sorted(scopes)]
+
+
+def stage3_repairable_correction_directions(correction: dict,
+                                            directions: dict) -> set[str]:
+    """Directions with candidate state that a correction can replace.
+
+    Recorded scopes remain in ``correction`` even when their direction was
+    skipped. A skipped, candidate-less direction is still part of the recorded
+    validation scope, but it must not become a generator job or result input.
+    """
+    return {
+        key.split(":", 1)[1]
+        for key in correction
+        if key.startswith("direction:")
+        and isinstance(directions.get(key.split(":", 1)[1]), dict)
+        and directions[key.split(":", 1)[1]].get("stage3_status") == "ready"
+        and directions[key.split(":", 1)[1]].get("candidates")
+    }
 
 
 def carry_stage3_validator(old_validator: dict, processed_scopes: set, *,
@@ -5328,9 +5631,610 @@ def _stage3_selected_scope_keys(selection_path: Path, professor_dir: Path,
         if sel_did:
             selected_keys.add(sel_did)
     return selected_keys
+# --- Issue #66 r13 §5: per-invocation credential production/consumption ----
+
+def _write_stage3_invocation(directory: str, payload: dict) -> tuple[str, str]:
+    """Create this invocation's credential file exclusively (r13 §5.1).
+
+    The caller owns a per-invocation temporary directory; the credential file
+    inside it must be created with O_EXCL so a reused directory can never
+    silently overwrite an earlier credential.  The returned digest is the
+    SHA-256 of the exact bytes written; the file is never modified afterwards.
+    """
+    dir_path = Path(directory)
+    if dir_path.exists() and not dir_path.is_dir():
+        fail("invalid_params",
+             f"--capture-invocation must name a directory: {directory}")
+    try:
+        dir_path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        fail("invalid_params", f"--capture-invocation is unusable: {exc}")
+    data = (json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1)
+            + "\n").encode("utf-8")
+    target = dir_path / STAGE3_INVOCATION_FILE
+    try:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        fail("invalid_params",
+             f"--capture-invocation file already exists (the directory must be "
+             f"exclusive to this invocation): {target}")
+    except OSError as exc:
+        fail("invalid_params", f"--capture-invocation is unusable: {exc}")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return str(target), sha256_bytes(data)
+
+
+STAGE3_INVOCATION_SOURCE_PARAMS = ("professor_dir", "program_root", "profile",
+                                   "refresh_scope", "skip_direction_ids",
+                                   "cross_direction_groups", "direction_id",
+                                   "collection_key", "selection")
+
+
+def _read_stage3_invocation(args) -> dict | None:
+    """Load + verify the invocation credential, or return None (r13 §5.2).
+
+    Refuses the credential mode outright when any first-round source/control
+    parameter is re-supplied (mutual exclusion, no precedence), when only one
+    half of the file/digest pair is given, when the file is damaged, when the
+    version is unsupported, or when the digest does not match the bytes this
+    invocation actually read — all before any candidate or state write.
+    """
+    file_arg = getattr(args, "invocation_file", None)
+    sha_arg = getattr(args, "invocation_sha256", None)
+    if bool(file_arg) != bool(sha_arg):
+        fail("invalid_params",
+             "--invocation-file and --invocation-sha256 must be used together")
+    if not file_arg:
+        return None
+    if getattr(args, "capture_invocation", None):
+        fail("invalid_params",
+             "--capture-invocation produces a first-round credential and cannot "
+             "be combined with --invocation-file")
+    replayed = [name for name in STAGE3_INVOCATION_SOURCE_PARAMS
+                if getattr(args, name, None) is not None]
+    if replayed:
+        fail("invalid_params",
+             f"--invocation-file is mutually exclusive with {replayed}; the "
+             "credential alone carries the first-round sources and controls")
+    try:
+        raw = Path(file_arg).read_bytes()
+    except (OSError, ValueError):
+        fail("invalid_invocation", f"invocation file unreadable: {file_arg}")
+    if sha_arg != sha256_bytes(raw):
+        fail("invocation_sha256_mismatch",
+             f"invocation digest does not match the bytes read: {file_arg}")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("invalid_invocation", f"invocation file is not valid JSON: {file_arg}")
+    if not isinstance(payload, dict):
+        fail("invalid_invocation", f"invocation file must hold a JSON object: {file_arg}")
+    if payload.get("version") != STAGE3_INVOCATION_VERSION:
+        fail("invocation_version_unsupported",
+             f"invocation version {payload.get('version')!r} is not supported "
+             f"(expected {STAGE3_INVOCATION_VERSION!r}); re-run the first-round "
+             "stage3-plan to produce a fresh credential")
+    professor_dir = payload.get("professor_dir")
+    program_root = payload.get("program_root")
+    for name, value in (("professor_dir", professor_dir), ("program_root", program_root)):
+        if not isinstance(value, str) or not value.strip():
+            fail("invalid_invocation", f"invocation {name} is missing or not a path")
+    # Directory ownership: the credential binds the professor to its program.
+    require_professor_dir_under_program(Path(professor_dir), Path(program_root))
+    return payload
+
+
+def _require_invocation_source(invocation: dict) -> None:
+    """The recorded profile digest must still match the real input (r13 §5.2)."""
+    recorded_sha = invocation.get("profile_sha256")
+    if profile_fingerprint(invocation.get("profile_path")) != recorded_sha:
+        soft_exit("needs_refresh", "validation_source_changed",
+                  message="调用凭据记录的资料摘要与实际资料不符：重新执行首轮 "
+                          "stage3-plan 生成新凭据；未修改任何文件。")
+
+
+def _stage3_args_from_invocation(args, invocation: dict, correction: bool):
+    """Rebuild this call's parsed parameters from one verified credential.
+
+    Plain generation replays the recorded first-round controls exactly as they
+    were parsed ("未传入" stays absent).  A credential correction keeps those
+    controls as records only: no re-applied skip, no replayed group request,
+    no first-round direction limit — the work set comes from the recorded
+    validation round (r13 §5.4).
+    """
+    overrides = {
+        "professor_dir": invocation["professor_dir"],
+        "program_root": invocation["program_root"],
+        "profile": invocation.get("profile_path"),
+        "refresh_scope": invocation.get("refresh_scope"),
+        "selection": invocation.get("selection"),
+    }
+    if correction:
+        overrides.update({
+            "direction_id": None,
+            "collection_key": None,
+            "skip_direction_ids": None,
+            "cross_direction_groups": None,
+        })
+    else:
+        overrides.update({
+            "direction_id": invocation.get("direction_id"),
+            "collection_key": invocation.get("collection_key"),
+            "skip_direction_ids": invocation.get("skip_direction_ids_argument"),
+            "cross_direction_groups": invocation.get("cross_direction_groups_argument"),
+        })
+    return types.SimpleNamespace(**{**vars(args), **overrides})
+
+
+# --- Issue #66 r13 §6: validation handoff prepare/save/record ---------------
+
+def _require_stage3_handoff_round(state: dict, render_sha: str, requested_round: int) -> None:
+    """The requested validation round must match the committed record facts.
+
+    r13 §6.1: the round decision reuses the record entry's own facts — the
+    committed ``validator`` block — never the emptiness of a temporary
+    directory.  A caller cannot reopen round 1 over a recorded round, cannot
+    start round 2 without a previous round whose open findings were corrected
+    and committed under the existing correction constraints, and cannot pass
+    ``round=2`` to bypass an owed correction.
+    """
+    validator = state.get("validator") if isinstance(state.get("validator"), dict) else {}
+    raw_round = validator.get("round")
+    if isinstance(raw_round, bool) or not isinstance(raw_round, int):
+        raw_round = 0
+    pending = validator.get("pending") if isinstance(validator.get("pending"), dict) else {}
+    if requested_round == 1:
+        if raw_round >= 1:
+            fail("validation_round_already_recorded",
+                 f"this professor already has a recorded Stage-3 validator round "
+                 f"{raw_round}; a first validation round cannot be prepared again")
+        return
+    if raw_round == 0:
+        fail("validation_round_sequence_invalid",
+             "round 2 needs a recorded previous round whose findings were corrected")
+    if raw_round >= STAGE3_VALIDATION_MAX_ROUNDS:
+        fail("validation_rounds_exhausted",
+             f"Stage-3 style validation is bounded to {STAGE3_VALIDATION_MAX_ROUNDS} rounds; "
+             "the terminal record already exists")
+    if validator.get("raw_verdict") != "fail":
+        fail("validation_rounds_exhausted",
+             "the previous validator round recorded no correction: the terminal "
+             "record already exists")
+    if pending:
+        fail("validation_correction_required",
+             "complete the recorded Stage-3 correction with stage3-plan/finalize "
+             "--validation-file before preparing round 2")
+    if validator.get("render_sha256") != render_sha:
+        fail("validation_round_sequence_invalid",
+             "the committed correction round does not carry the current render")
+
+
+def _stage3_handoff_directory(
+        professor_dir: Path, invocation_file: str | Path, round_no: int) -> Path:
+    """This professor's, invocation's and round's exclusive handoff directory.
+
+    The canonical invocation credential path identifies the captured call:
+    separate calls may contain identical credential bytes, so their content
+    digest alone cannot distinguish them. A repeated prepare for the same
+    credential and round still resolves to the same directory and collides.
+    """
+    professor_token = sha256_text(str(Path(professor_dir).resolve()))[:16]
+    invocation_token = sha256_text(str(Path(invocation_file).resolve()))
+    return (Path(tempfile.gettempdir()) / STAGE3_HANDOFF_ROOT / professor_token /
+            invocation_token / f"round-{round_no}")
+
+
+def _load_stage3_handoff(args) -> dict:
+    """Load + verify the handoff metadata and its invocation credential.
+
+    Shared by save (r13 §6.3) and record (r13 §6.4): the metadata digest is
+    checked against the exact bytes read, every binding must be present, and
+    the referenced invocation credential must still be the same bytes with a
+    supported version and matching professor ownership.  The caller never
+    supplies source, target or professor through other parameters.
+    """
+    try:
+        raw = Path(args.handoff_file).read_bytes()
+    except (OSError, ValueError):
+        fail("invalid_handoff", f"handoff file unreadable: {args.handoff_file}")
+    if args.handoff_sha256 != sha256_bytes(raw):
+        fail("handoff_sha256_mismatch",
+             f"handoff digest does not match the bytes read: {args.handoff_file}")
+    try:
+        metadata = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("invalid_handoff", f"handoff file is not valid JSON: {args.handoff_file}")
+    if not isinstance(metadata, dict):
+        fail("invalid_handoff", f"handoff file must hold a JSON object: {args.handoff_file}")
+    if metadata.get("version") != STAGE3_HANDOFF_VERSION:
+        fail("invalid_handoff",
+             f"handoff version {metadata.get('version')!r} is not supported "
+             f"(expected {STAGE3_HANDOFF_VERSION!r})")
+    for name in ("professor_dir", "program_root", "candidates_md", "invocation_file",
+                 "invocation_sha256", "output_file", "validation_file", "render_sha256"):
+        value = metadata.get(name)
+        if not isinstance(value, str) or not value.strip():
+            fail("invalid_handoff", f"handoff {name} is missing or not a path")
+    round_no = metadata.get("round")
+    if isinstance(round_no, bool) or round_no not in (1, 2):
+        fail("invalid_handoff", f"handoff round must be 1 or 2: {round_no!r}")
+    try:
+        credential_raw = Path(metadata["invocation_file"]).read_bytes()
+    except (OSError, ValueError):
+        fail("invalid_handoff",
+             f"handoff invocation credential unreadable: {metadata['invocation_file']}")
+    if metadata["invocation_sha256"] != sha256_bytes(credential_raw):
+        fail("invalid_handoff",
+             f"handoff invocation credential no longer matches its recorded digest: "
+             f"{metadata['invocation_file']}")
+    try:
+        credential = json.loads(credential_raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("invalid_handoff", "handoff invocation credential is not valid JSON")
+    if not isinstance(credential, dict) \
+            or credential.get("version") != STAGE3_INVOCATION_VERSION:
+        fail("invalid_handoff", "handoff invocation credential version is not supported")
+    if credential.get("professor_dir") != metadata["professor_dir"] \
+            or credential.get("program_root") != metadata["program_root"]:
+        fail("invalid_handoff",
+             "handoff professor/program bindings do not match the invocation credential")
+    require_professor_dir_under_program(Path(metadata["professor_dir"]),
+                                        Path(metadata["program_root"]))
+    if Path(metadata["candidates_md"]).resolve() != \
+            (Path(metadata["professor_dir"]) / CANDIDATES_MD).resolve():
+        fail("invalid_handoff",
+             "handoff candidates_md is not this professor's rendered candidate document")
+    return metadata
+
+
+def cmd_stage3_prepare_validation(args) -> None:
+    """r13 §6.1: prepare this round's one-time validation handoff.
+
+    Reads only the invocation credential, the professor's committed candidate
+    state and the bound candidate document; commits and changes nothing.  The
+    handoff metadata, the validator output path and the saved target path live
+    in a per-professor, per-invocation, per-round exclusive directory under the
+    system temporary root — never inside the professor state directory.
+    """
+    invocation = _read_stage3_invocation(args)
+    if invocation is None:
+        fail("invalid_params",
+             "stage3-prepare-validation needs an invocation credential "
+             "(--invocation-file + --invocation-sha256)")
+    _require_invocation_source(invocation)
+    professor_dir = Path(invocation["professor_dir"])
+    program_root = Path(invocation["program_root"])
+    require_professor_dir_under_program(professor_dir, program_root)
+    round_no = args.round
+    pack, pack_error = load_input_pack(professor_dir)
+    if pack is None:
+        fail("missing_input_pack", f"{professor_dir / INPUT_PACK}: {pack_error}")
+    state, state_error = load_candidate_state(professor_dir, pack)
+    if state_error or state is None:
+        fail("missing_candidate_state",
+             f"candidate state unreadable: {professor_dir / CANDIDATE_STATE}")
+    render_sha, _body = _stage3_bound_render(professor_dir, state)
+    _require_stage3_handoff_round(state, render_sha, round_no)
+    directory = _stage3_handoff_directory(
+        professor_dir, args.invocation_file, round_no)
+    output_file = directory / STAGE3_VALIDATOR_OUTPUT_FILE
+    validation_file = directory / STAGE3_VALIDATION_TARGET_FILE
+    handoff_file = directory / STAGE3_HANDOFF_FILE
+    try:
+        directory.mkdir(parents=True)
+    except FileExistsError:
+        fail("validation_handoff_collision",
+             f"the handoff directory for this professor, invocation and round "
+             f"already exists; earlier round results are never reused: {directory}")
+    except OSError as exc:
+        fail("validation_handoff_collision", f"handoff directory is unusable: {exc}")
+    for label, target in (("output_file", output_file),
+                          ("validation_file", validation_file),
+                          ("handoff_file", handoff_file)):
+        if target.is_symlink() or target.exists():
+            fail("validation_handoff_collision",
+                 f"{label} already exists; the handoff directory must stay exclusive "
+                 f"to this professor, invocation and round: {target}")
+    metadata = {
+        "version": STAGE3_HANDOFF_VERSION,
+        "professor_dir": str(professor_dir.resolve()),
+        "program_root": str(program_root.resolve()),
+        "candidates_md": str((professor_dir / CANDIDATES_MD).resolve()),
+        "invocation_file": str(Path(args.invocation_file).resolve()),
+        "invocation_sha256": args.invocation_sha256,
+        "round": round_no,
+        "render_sha256": render_sha,
+        "output_file": str(output_file),
+        "validation_file": str(validation_file),
+    }
+    data = (json.dumps(metadata, ensure_ascii=False, sort_keys=True, indent=1)
+            + "\n").encode("utf-8")
+    try:
+        fd = os.open(handoff_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except OSError as exc:
+        fail("validation_handoff_collision", f"handoff file cannot be created: {exc}")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        handoff_file.unlink(missing_ok=True)
+        raise
+    emit({
+        "status": "ok",
+        "professor": pack.get("professor"),
+        "professor_dir": str(professor_dir),
+        "candidates_md": str((professor_dir / CANDIDATES_MD).resolve()),
+        "round": round_no,
+        "render_sha256": render_sha,
+        "handoff_file": str(handoff_file),
+        "handoff_sha256": sha256_bytes(data),
+        "output_file": str(output_file),
+        "validation_file": str(validation_file),
+    })
+
+
+def _stage3_json_object_pairs(pairs: list[tuple[str, Any]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _stage3_json_reject_constant(value: str):
+    raise ValueError(f"non-finite JSON number: {value}")
+
+
+def _stage3_created_file_identity(fd: int) -> tuple[int, int]:
+    info = os.fstat(fd)
+    return info.st_dev, info.st_ino
+
+
+def _stage3_cleanup_incomplete_write(path: Path, identity: tuple[int, int] | None) -> None:
+    if identity is None:
+        return
+    try:
+        info = os.lstat(path)
+        if (info.st_dev, info.st_ino) == identity:
+            os.unlink(path)
+    except OSError:
+        pass
+
+
+def _stage3_write_buffer(path: Path, data: bytes) -> None:
+    """Exclusively write and verify one buffer through the creating descriptor."""
+    descriptor = None
+    identity = None
+    try:
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+        identity = _stage3_created_file_identity(descriptor)
+        os.fchmod(descriptor, 0o600)
+        offset = 0
+        while offset < len(data):
+            written = os.write(descriptor, data[offset:])
+            if written <= 0:
+                raise OSError("write returned no bytes")
+            offset += written
+        os.fsync(descriptor)
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        actual = bytearray()
+        while len(actual) < len(data) + 1:
+            chunk = os.read(descriptor, min(65536, len(data) + 1 - len(actual)))
+            if not chunk:
+                break
+            actual.extend(chunk)
+        if bytes(actual) != data:
+            raise OSError("read-back bytes differ from the written buffer")
+        os.close(descriptor)
+        descriptor = None
+    except Exception:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        _stage3_cleanup_incomplete_write(path, identity)
+        raise
+
+
+def cmd_stage3_write_validation(args) -> None:
+    """Create the fixed Stage-3 validator handoff from its complete JSON result."""
+    if (args.output_file is None) == (args.output_map_json is None):
+        fail("invalid_params", "provide exactly one of --output-file or --output-map-json")
+    if args.result_json is None or not args.result_json:
+        fail("invalid_validation_json", "--result-json must contain the complete JSON result")
+    try:
+        data = json.loads(args.result_json,
+                          object_pairs_hook=_stage3_json_object_pairs,
+                          parse_constant=_stage3_json_reject_constant)
+    except (json.JSONDecodeError, ValueError) as exc:
+        fail("invalid_validation_json", f"--result-json is invalid: {exc}")
+    if not isinstance(data, dict):
+        fail("invalid_validation_json", "--result-json must be a JSON object")
+    entries = _stage3_complete_write_result(data, Path("--result-json"))
+    candidate_entries = [(candidate_path, entry) for candidate_path, entry in entries
+                         if entry.get("artifact") == "candidates"]
+
+    output_pairs: list[tuple[str, str]] = []
+    if args.output_file is not None:
+        if len(candidate_entries) != 1:
+            fail("invalid_params", "--output-file requires exactly one candidates entry")
+        output_pairs.append((candidate_entries[0][0], args.output_file))
+    else:
+        try:
+            mapping = json.loads(args.output_map_json,
+                                 object_pairs_hook=_stage3_json_object_pairs,
+                                 parse_constant=_stage3_json_reject_constant)
+        except (json.JSONDecodeError, ValueError) as exc:
+            fail("invalid_params", f"--output-map-json is invalid: {exc}")
+        if not isinstance(mapping, list) or not mapping:
+            fail("invalid_params", "--output-map-json must be a non-empty JSON list")
+        expected_paths = {candidate_path for candidate_path, _entry in candidate_entries}
+        mapped_paths = set()
+        for index, item in enumerate(mapping):
+            if not isinstance(item, dict) or set(item) != {"file", "output_file"}:
+                fail("invalid_params",
+                     f"--output-map-json[{index}] must contain only file and output_file")
+            candidate_path = _stage3_normalized_absolute_path(
+                item.get("file"), f"--output-map-json[{index}].file")
+            if candidate_path in mapped_paths:
+                fail("invalid_params", f"duplicate candidate path in output map: {candidate_path}")
+            if candidate_path not in expected_paths:
+                fail("invalid_params", f"output map contains an unrelated candidate path: {candidate_path}")
+            mapped_paths.add(candidate_path)
+            output_pairs.append((candidate_path, item.get("output_file")))
+        if mapped_paths != expected_paths:
+            missing = sorted(expected_paths - mapped_paths)
+            fail("invalid_params", "--output-map-json must map every candidates entry exactly once",
+                 missing_files=missing)
+
+    targets: list[Path] = []
+    normalized_targets = set()
+    for candidate_path, output_value in output_pairs:
+        target_value = _stage3_normalized_absolute_path(output_value, "output_file")
+        target = Path(output_value)
+        if target_value in normalized_targets:
+            fail("invalid_params", f"output paths must be unique: {output_value}")
+        normalized_targets.add(target_value)
+        if os.path.lexists(target):
+            fail("validation_handoff_collision", f"output target already exists: {output_value}",
+                 failed_path=output_value, completed_paths=[])
+        if not target.parent.is_dir():
+            fail("invalid_output_path", f"output parent directory must already exist: {target.parent}",
+                 failed_path=output_value, completed_paths=[])
+        targets.append(target)
+
+    try:
+        raw = (json.dumps(data, ensure_ascii=False, sort_keys=True, indent=1,
+                          allow_nan=False) + "\n").encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        fail("invalid_validation_json", f"validator result cannot be serialized as UTF-8: {exc}")
+    if not raw:
+        fail("invalid_validation_json", "validator result serialized to an empty buffer")
+
+    completed = []
+    for target in targets:
+        try:
+            _stage3_write_buffer(target, raw)
+        except OSError as exc:
+            fail("validation_write_failed", f"cannot write validator result: {exc}",
+                 failed_path=str(target), reason=str(exc), completed_paths=completed)
+        completed.append(str(target))
+
+    try:
+        sys.stdout.buffer.write(raw)
+        sys.stdout.buffer.flush()
+    except OSError as exc:
+        fail("validation_output_failed", f"cannot write validator result to stdout: {exc}",
+             failed_path=None, reason=str(exc), completed_paths=completed)
+
+
+def cmd_stage3_save_validation(args) -> None:
+    """r13 §6.3: copy the validator's raw output bytes to the recorded target.
+
+    Source, target, professor and round all come from the verified handoff
+    metadata; the caller cannot pass content, another source or another
+    target.  One read of the regular (non-symlink) source fixes the byte
+    buffer that is validated, then written unchanged — no re-serialization,
+    no field sorting, no whitespace edits — to a target created exclusively.
+    A normal failure removes only a target this entry created itself and
+    never deletes the source, the credential or committed professor files.
+    """
+    metadata = _load_stage3_handoff(args)
+    professor_dir = Path(metadata["professor_dir"])
+    round_no = metadata["round"]
+    pack, pack_error = load_input_pack(professor_dir)
+    if pack is None:
+        fail("missing_input_pack", f"{professor_dir / INPUT_PACK}: {pack_error}")
+    state, state_error = load_candidate_state(professor_dir, pack)
+    if state_error or state is None:
+        fail("missing_candidate_state",
+             f"candidate state unreadable: {professor_dir / CANDIDATE_STATE}")
+    render_sha, _body = _stage3_bound_render(professor_dir, state)
+    if render_sha != metadata["render_sha256"]:
+        fail("validation_render_changed",
+             "the committed candidate render changed since this handoff was prepared; "
+             "re-run stage3-prepare-validation on the current render")
+    _require_stage3_handoff_round(state, render_sha, round_no)
+    source = Path(metadata["output_file"])
+    target = Path(metadata["validation_file"])
+    if source.is_symlink() or not source.is_file():
+        fail("invalid_validation_source",
+             f"the validator output must be this round's regular source file: {source}")
+    if target.is_symlink() or target.exists():
+        fail("validation_handoff_collision",
+             f"the validation target already exists: {target}")
+    try:
+        raw = source.read_bytes()
+    except (OSError, ValueError):
+        fail("invalid_validation_source", f"validator output unreadable: {source}")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("invalid_validation_json",
+             f"validator output is not complete UTF-8 JSON: {source}")
+    _entry, _verdict, _issues = _stage3_candidates_entry(data, source, professor_dir)
+    if not isinstance(data.get("notes"), str):
+        fail("invalid_validation_json",
+             f"validator output must hold the complete result/files/notes structure: {source}")
+    created = False
+    try:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException as exc:
+        # A normal failure removes only the unfinished target this entry
+        # created; sources, credentials and committed files stay untouched.
+        if created:
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if isinstance(exc, OSError):
+            fail("validation_handoff_collision",
+                 f"validation target cannot be created: {exc}")
+        raise
+    emit({
+        "status": "ok",
+        "professor": pack.get("professor"),
+        "professor_dir": str(professor_dir),
+        "round": round_no,
+        "render_sha256": render_sha,
+        "validation_file": str(target),
+        "validation_sha256": sha256_bytes(raw),
+    })
 
 
 def cmd_stage3_plan(args) -> None:
+    invocation = _read_stage3_invocation(args)
+    if invocation is None and not getattr(args, "professor_dir", None):
+        fail("invalid_params",
+             "stage3-plan needs --professor-dir or an invocation credential "
+             "(--invocation-file + --invocation-sha256)")
+    credential_correction = invocation is not None and \
+        bool(getattr(args, "validation_file", None))
+    if getattr(args, "capture_invocation", None) and \
+            getattr(args, "validation_file", None):
+        fail("invalid_params",
+             "--capture-invocation records a first-round plan; correction plans "
+             "reuse the original invocation credential")
+    if invocation is not None:
+        _require_invocation_source(invocation)
+        args = _stage3_args_from_invocation(args, invocation,
+                                            correction=credential_correction)
     professor_dir = Path(args.professor_dir)
     program_root = Path(args.program_root) if args.program_root else professor_dir.parent.parent
     require_professor_dir_under_program(professor_dir, program_root)
@@ -5388,34 +6292,14 @@ def cmd_stage3_plan(args) -> None:
         (state or {}).get("generator_contract_version") != STAGE3_GENERATOR_CONTRACT_VERSION
     selected_keys = None
     if refresh_scope == "selected":
-        if args.selection:
-            # An explicit --selection is one professor's own container: identity
-            # comes from canonical professor_dir, never the display name.
-            selected_keys = _stage3_selected_scope_keys(
-                Path(args.selection), professor_dir, by_ckey)
-        else:
-            selection_path = Path(args.program_root) / "教授研究" / SELECTION_FILE
-            selection_data, sel_error = read_json_file(Path(selection_path))
-            if sel_error:
-                fail("invalid_params", f"selection file unreadable: {selection_path}")
-            selected_keys = set()
-            for sel in selection_data.get("selections", []):
-                if sel.get("professor") != pack.get("professor"):
-                    continue
-                # Stage 4 records one canonical `direction_ids` scope per row (a
-                # cross-direction row carries every participating direction), so the
-                # selected refresh must read that list — `direction_id` / legacy
-                # `collection_key` stay accepted for older selection files.
-                scope = sel.get("direction_ids")
-                if isinstance(scope, list) and scope:
-                    selected_keys.update(str(did) for did in scope if did)
-                    continue
-                sel_did = sel.get("direction_id")
-                if not sel_did:
-                    legacy = by_ckey.get(sel.get("collection_key"))
-                    sel_did = direction_machine_id(legacy) if legacy is not None else None
-                if sel_did:
-                    selected_keys.add(sel_did)
+        if not args.selection:
+            selection_path = professor_dir / SELECTION_FILE
+            fail("invalid_params",
+                 f"selection file unreadable without explicit --selection: {selection_path}")
+        # Selected refresh is bound to the explicit professor-local Stage-4
+        # container. Never fall back to the legacy program-level file.
+        selected_keys = _stage3_selected_scope_keys(
+            Path(args.selection), professor_dir, by_ckey)
     pack_fps = {direction_machine_id(d): d.get("input_fingerprint")
                 for d in pack_directions}
     input_fps = (state or {}).get("input_fingerprints", {})
@@ -5439,8 +6323,11 @@ def cmd_stage3_plan(args) -> None:
             if scope["kind"] == "direction":
                 did = scope["direction_id"]
                 current = state_directions.get(did)
-                if not current or current.get("stage3_status") != "ready" \
-                        or not current.get("candidates"):
+                if not current or not (
+                        (current.get("stage3_status") == "ready"
+                         and current.get("candidates"))
+                        or (current.get("stage3_status") == "skipped"
+                            and not current.get("candidates"))):
                     fail("missing_candidate_state", f"no reusable Stage-3 result for {did}")
                 if direction_id_arg and did != direction_id_arg:
                     fail("validation_scope_not_in_evidence",
@@ -5453,6 +6340,11 @@ def cmd_stage3_plan(args) -> None:
                 gid = scope["group_id"]
                 if gid not in state_groups or not (state_groups[gid].get("candidates") or []):
                     fail("missing_candidate_state", f"no reusable Stage-3 group result for {gid}")
+                if credential_correction and (
+                        contract_changed or profile_changed
+                        or not _cross_group_fresh(state_groups[gid], pack_fps,
+                                                  current_profile_fp)):
+                    soft_exit("needs_refresh", "validation_source_changed", group_id=gid)
                 correction[f"group:{gid}"] = row
         if direction_id_arg and f"direction:{direction_id_arg}" not in correction:
             fail("validation_scope_not_in_evidence",
@@ -5461,11 +6353,22 @@ def cmd_stage3_plan(args) -> None:
             gid = key.split(":", 1)[1]
             cross_groups.append({"group_id": gid,
                                  "direction_ids": list(state_groups[gid].get("direction_ids") or [])})
-    correction_dids = {key.split(":", 1)[1] for key in correction if key.startswith("direction:")}
+        if credential_correction and not correction:
+            fail("validation_evidence_not_recorded",
+                 "the credential correction needs a recorded round with open findings")
+    # Keep every recorded direction scope in ``correction``. Only directions
+    # with ready candidates are sent through generation and replacement; a
+    # skipped direction stays candidate-less and is carried through unchanged.
+    correction_dids = stage3_repairable_correction_directions(correction, state_directions)
     scoped_dids = set()
     for direction in pack_directions:
         did = direction_machine_id(direction)
         if getattr(args, "validation_file", None) and did not in correction_dids:
+            continue
+        if credential_correction:
+            # r13 §5.4: the credential correction work set is exactly D — the
+            # first-round refresh/selection/scope filters must not shrink it.
+            scoped_dids.add(did)
             continue
         if direction_id_arg and did != direction_id_arg:
             continue
@@ -5652,6 +6555,33 @@ def cmd_stage3_plan(args) -> None:
                                     "repairable_candidate_ids 里的跨方向候选文字，kind、"
                                     "direction_ids、gap_refs、papers 引用等机器事实原样保留。",
             })
+    # r13 §5.1: after every input check passed and the plan succeeded, freeze
+    # THIS invocation's parsed parameters into an exclusive credential file.
+    # A capture failure fails the plan: no ok payload is emitted at all.
+    invocation_result = {}
+    capture_dir = getattr(args, "capture_invocation", None)
+    if capture_dir:
+        credential = {
+            "version": STAGE3_INVOCATION_VERSION,
+            "professor_dir": str(professor_dir.resolve()),
+            "program_root": str(program_root.resolve()),
+            "profile_path": str(Path(args.profile).resolve()) if args.profile else None,
+            "profile_sha256": current_profile_fp,
+            "refresh_scope": args.refresh_scope,
+            "direction_id": args.direction_id,
+            "collection_key": args.collection_key,
+            "collection_key_direction_id": direction_id_arg,
+            "skip_direction_ids_argument": args.skip_direction_ids,
+            "skipped_direction_ids": list(skip_ids),
+            "cross_direction_groups_argument": args.cross_direction_groups,
+            "cross_direction_groups": [
+                {"group_id": g["group_id"], "direction_ids": list(g["direction_ids"])}
+                for g in cross_groups],
+            "selection": str(Path(args.selection).resolve()) if args.selection else None,
+        }
+        file_path, file_sha = _write_stage3_invocation(capture_dir, credential)
+        invocation_result = {"invocation_file": file_path,
+                             "invocation_sha256": file_sha}
     emit({
         "status": "ok",
         "professor": pack.get("professor"),
@@ -5677,6 +6607,7 @@ def cmd_stage3_plan(args) -> None:
                                     for g in cross_groups],
         "jobs": jobs + cross_jobs,
         "write_needed": bool(jobs + cross_jobs),
+        **invocation_result,
     })
 
 
@@ -6151,6 +7082,17 @@ def render_candidates_overview(entries: list, program_root: Path,
 
 
 def cmd_stage3_finalize(args) -> None:
+    invocation = _read_stage3_invocation(args)
+    if invocation is None and not getattr(args, "professor_dir", None):
+        fail("invalid_params",
+             "stage3-finalize needs --professor-dir or an invocation credential "
+             "(--invocation-file + --invocation-sha256)")
+    credential_correction = invocation is not None and \
+        bool(getattr(args, "validation_file", None))
+    if invocation is not None:
+        _require_invocation_source(invocation)
+        args = _stage3_args_from_invocation(args, invocation,
+                                            correction=credential_correction)
     professor_dir = Path(args.professor_dir)
     program_root = Path(args.program_root) if args.program_root else professor_dir.parent.parent
     require_professor_dir_under_program(professor_dir, program_root)
@@ -6200,11 +7142,15 @@ def cmd_stage3_finalize(args) -> None:
     profile_changed = bool(state) and current_profile_fp != old_profile_fp
     contract_changed = bool(state) and \
         (state or {}).get("generator_contract_version") != STAGE3_GENERATOR_CONTRACT_VERSION
+    if getattr(args, "validation_file", None) and profile_changed:
+        # r13 §5.5-5: correction prose never rebinds the recorded profile.
+        soft_exit("needs_refresh", "validation_source_changed")
     old_directions = {d.get("direction_id"): d
                       for d in (state or {}).get("directions", []) if isinstance(d, dict)}
+    old_group_list = [g for g in (state or {}).get("cross_direction_groups", [])
+                      if isinstance(g, dict)]
     old_groups = {(g.get("group_id") if isinstance(g, dict) else None): g
-                  for g in (state or {}).get("cross_direction_groups", [])
-                  if isinstance(g, dict)}
+                  for g in old_group_list}
     old_fps = (state or {}).get("input_fingerprints", {})
     pack_fps = {direction_machine_id(d): d.get("input_fingerprint")
                 for d in pack_directions}
@@ -6218,8 +7164,11 @@ def cmd_stage3_finalize(args) -> None:
             if scope["kind"] == "direction":
                 did = scope["direction_id"]
                 current = old_directions.get(did)
-                if not current or current.get("stage3_status") != "ready" \
-                        or not current.get("candidates"):
+                if not current or not (
+                        (current.get("stage3_status") == "ready"
+                         and current.get("candidates"))
+                        or (current.get("stage3_status") == "skipped"
+                            and not current.get("candidates"))):
                     fail("missing_candidate_state", f"no reusable Stage-3 result for {did}")
                 if direction_id_arg and did != direction_id_arg:
                     fail("validation_scope_not_in_evidence",
@@ -6231,6 +7180,11 @@ def cmd_stage3_finalize(args) -> None:
                 gid = scope["group_id"]
                 if gid not in old_groups or not (old_groups[gid].get("candidates") or []):
                     fail("missing_candidate_state", f"no reusable Stage-3 group result for {gid}")
+                if credential_correction and (
+                        contract_changed or profile_changed
+                        or not _cross_group_fresh(old_groups[gid], pack_fps,
+                                                  current_profile_fp)):
+                    soft_exit("needs_refresh", "validation_source_changed", group_id=gid)
                 correction[f"group:{gid}"] = row
         if direction_id_arg and f"direction:{direction_id_arg}" not in correction:
             fail("validation_scope_not_in_evidence",
@@ -6239,33 +7193,21 @@ def cmd_stage3_finalize(args) -> None:
             gid = key.split(":", 1)[1]
             cross_groups.append({"group_id": gid,
                                  "direction_ids": list(old_groups[gid].get("direction_ids") or [])})
-    correction_dids = {key.split(":", 1)[1] for key in correction if key.startswith("direction:")}
+        if credential_correction and not correction:
+            fail("validation_evidence_not_recorded",
+                 "the credential correction needs a recorded round with open findings")
+    # Only ready, candidate-bearing scopes are replaced. Recorded skipped
+    # scopes remain authoritative but stay outside the correction work set.
+    correction_dids = stage3_repairable_correction_directions(correction, old_directions)
     selected_keys = None
     if refresh_scope == "selected":
-        if args.selection:
-            # An explicit --selection is one professor's own container: identity
-            # comes from canonical professor_dir, never the display name.
-            selected_keys = _stage3_selected_scope_keys(
-                Path(args.selection), professor_dir, by_ckey)
-        else:
-            selection_path = Path(args.program_root) / "教授研究" / SELECTION_FILE
-            selection_data, sel_error = read_json_file(Path(selection_path))
-            if sel_error:
-                fail("invalid_params", f"selection file unreadable: {selection_path}")
-            selected_keys = set()
-            for sel in selection_data.get("selections", []):
-                if sel.get("professor") != pack.get("professor"):
-                    continue
-                scope = sel.get("direction_ids")
-                if isinstance(scope, list) and scope:
-                    selected_keys.update(str(did) for did in scope if did)
-                    continue
-                sel_did = sel.get("direction_id")
-                if not sel_did:
-                    legacy = by_ckey.get(sel.get("collection_key"))
-                    sel_did = direction_machine_id(legacy) if legacy is not None else None
-                if sel_did:
-                    selected_keys.add(sel_did)
+        if not args.selection:
+            selection_path = professor_dir / SELECTION_FILE
+            fail("invalid_params",
+                 f"selection file unreadable without explicit --selection: {selection_path}")
+        # Plan and finalize consume the same explicit professor-local selection.
+        selected_keys = _stage3_selected_scope_keys(
+            Path(args.selection), professor_dir, by_ckey)
     results_dir = Path(args.results)
     decision = None
     if getattr(args, "decision_file", None):
@@ -6278,6 +7220,11 @@ def cmd_stage3_finalize(args) -> None:
     for direction in pack_directions:
         did = direction_machine_id(direction)
         if getattr(args, "validation_file", None) and did not in correction_dids:
+            continue
+        if credential_correction:
+            # r13 §5.4: the credential correction work set is exactly D — the
+            # first-round refresh/selection/scope filters must not shrink it.
+            scoped_dids.add(did)
             continue
         if direction_id_arg and did != direction_id_arg:
             continue
@@ -6350,8 +7297,11 @@ def cmd_stage3_finalize(args) -> None:
     # Cross-direction groups: only EXPLICITLY requested groups exist (issue #8
     # §6). A group survives when its recorded participant fingerprints + profile
     # still match; otherwise it needs the result file its plan job pointed at.
-    # Groups from earlier runs that are no longer requested are dropped and
-    # reported — never silently kept.
+    # Plain generation still drops earlier groups that are no longer requested
+    # and reports them — never silently keeps them. A correction (credential or
+    # explicit) instead replaces in place inside the OLD group list and
+    # preserves every uninvolved group: an unrequested group is never a
+    # removal request (r13 §5.5).
     final_groups, dropped_groups = [], []
     for group in cross_groups:
         old_group = old_groups.get(group["group_id"])
@@ -6374,18 +7324,29 @@ def cmd_stage3_finalize(args) -> None:
         final_groups.append({
             "group_id": group["group_id"],
             "direction_ids": list(group["direction_ids"]),
-            "direction_fingerprints": {pid: pack_fps.get(pid)
-                                       for pid in group["direction_ids"]},
-            "profile_fingerprint": current_profile_fp,
+            # r13 §5.5-5: correction prose never rebinds a group's recorded
+            # source fingerprints; only a real (re)generation does.
+            "direction_fingerprints": (
+                old_group.get("direction_fingerprints") if group_row is not None
+                else {pid: pack_fps.get(pid) for pid in group["direction_ids"]}),
+            "profile_fingerprint": (
+                old_group.get("profile_fingerprint") if group_row is not None
+                else current_profile_fp),
             "candidates": checked["candidates"],
         })
     requested_ids = {g["group_id"] for g in cross_groups}
-    for group_id, group in old_groups.items():
-        if group_id in requested_ids:
-            continue
-        dropped_groups.append({"group_id": group_id,
-                               "direction_ids": group.get("direction_ids") or [],
-                               "reason": "group_not_requested"})
+    if correction:
+        # r13 §5.5-2/3: the identity set and the list order stay exactly as
+        # before; each old group is either replaced in place or kept as-is.
+        kept = {g["group_id"]: g for g in final_groups}
+        final_groups = [kept.get(g.get("group_id"), g) for g in old_group_list]
+    else:
+        for group_id, group in old_groups.items():
+            if group_id in requested_ids:
+                continue
+            dropped_groups.append({"group_id": group_id,
+                                   "direction_ids": group.get("direction_ids") or [],
+                                   "reason": "group_not_requested"})
     all_group_candidates = [c for g in final_groups for c in g.get("candidates") or []]
     cross_ids = [c.get("id") for c in all_group_candidates]
     if len(set(cross_ids)) != len(cross_ids):
@@ -6427,7 +7388,14 @@ def cmd_stage3_finalize(args) -> None:
         clone["candidates"] = [dict(c, _participants=participants)
                                for c in clone.get("candidates") or []]
         cross_md_groups.append(clone)
-    input_fps = dict(pack_fps)
+    if correction:
+        # r13 §5.5-2: objects outside the correction work set keep their
+        # recorded source fingerprints — correction prose never re-binds them.
+        input_fps = {did: (pack_fps.get(did) if did in scoped_dids
+                           else old_fps.get(did, pack_fps.get(did)))
+                     for did in pack_fps}
+    else:
+        input_fps = dict(pack_fps)
     state_fingerprint = sha256_obj({"professor": professor, "directions": input_fps,
                                     "profile": current_profile_fp})
     md_path = professor_dir / CANDIDATES_MD
@@ -6435,45 +7403,12 @@ def cmd_stage3_finalize(args) -> None:
     body = render_candidates_md(professor, category, md_entries,
                                 current_profile_fp, state_fingerprint, professor_dir,
                                 cross_groups=cross_md_groups)
-    projections = load_projections(program_root)
-    overview_entries = []
-    for d in updated_directions:
-        overview_entries.append({
-            "professor": professor, "name_ja": d.get("name_ja"),
-            "candidates": d.get("candidates") or [],
-            "priority": d.get("priority"),
-            "_candidates_md_rel": rel_path(md_path, program_root / "教授研究")})
-    overview_cross = [{"professor": professor, "group_id": g["group_id"],
-                       "direction_ids": g["direction_ids"],
-                       "candidates": g.get("candidates") or [],
-                       "_candidates_md_rel": rel_path(md_path, program_root / "教授研究")}
-                      for g in cross_md_groups]
-    overview_body = render_candidates_overview(overview_entries, program_root,
-                                               cross_groups=overview_cross)
-    overview_path = program_root / "教授研究" / CANDIDATES_OVERVIEW
     md_conflict = managed_conflict(
         md_path, body, old_render.get(CANDIDATES_MD, {}).get("sha256"), decision)
     if md_conflict:
         soft_exit("needs_decision", md_conflict["reason_code"], target=md_conflict.get("target"),
                   options=["overwrite", "keep_manual", "promote"])
-    overview_conflict = projection_conflict(overview_path, overview_body, projections,
-                                            CANDIDATES_OVERVIEW)
-    if overview_conflict:
-        soft_exit("needs_decision", overview_conflict["reason_code"],
-                  target=overview_conflict.get("target"))
-    md_result = managed_write(md_path, body, state_fingerprint,
-                              old_render.get(CANDIDATES_MD, {}).get("sha256"), decision)
-    if md_result.get("needs_decision"):
-        soft_exit("needs_decision", md_result["reason_code"], target=md_result.get("target"),
-                  options=["overwrite", "keep_manual", "promote"])
-    overview_result = projection_write(overview_path, overview_body, projections,
-                                       CANDIDATES_OVERVIEW)
-    if overview_result.get("needs_decision"):
-        soft_exit("needs_decision", overview_result.get("reason_code"),
-                  target=overview_result.get("target"))
-    projections.setdefault("render", {})[CANDIDATES_OVERVIEW] = {
-        "sha256": overview_result.get("sha256")}
-    save_projections(program_root, projections)
+    body_sha = sha256_text(body)
     new_state = {
         "schema": CANDIDATE_STATE_SCHEMA, "kind": CANDIDATE_STATE_KIND,
         "identity_version": DIRECTION_IDENTITY_VERSION,
@@ -6485,15 +7420,31 @@ def cmd_stage3_finalize(args) -> None:
         "input_fingerprints": input_fps,
         "directions": updated_directions,
         "cross_direction_groups": final_groups,
-        "cache": {"render": {CANDIDATES_MD: {"sha256": md_result.get("sha256")}}},
+        "cache": {"render": {CANDIDATES_MD: {"sha256": body_sha}}},
     }
     if isinstance((state or {}).get("validator"), dict):
         retained = carry_stage3_validator(
             state["validator"], processed_scopes,
-            correction=bool(correction), render_sha=md_result.get("sha256"))
+            correction=bool(correction), render_sha=body_sha)
         if retained:
             new_state["validator"] = retained
-    atomic_json(professor_dir / CANDIDATE_STATE, new_state)
+    # Local transaction (issue #66 r10 §2): stage both files, install the
+    # local Markdown first, and install the candidate state LAST — the state
+    # replace is the only business commit point. The program level is NOT part
+    # of this transaction: finalize never reads or writes 套磁想法候选总览.md /
+    # _contact_projections.json, so another professor's state, a stale or
+    # missing overview, or a corrupt projection registry can never block or
+    # re-judge this commit. The derived overview is rebuilt from committed
+    # states by `stage3-rebuild-overview` after terminal validation.
+    state_path = professor_dir / CANDIDATE_STATE
+    try:
+        staged_pair_commit([
+            (md_path, render_frontmatter(state_fingerprint, body_sha) + body),
+            (state_path, json.dumps(new_state, ensure_ascii=False, sort_keys=True,
+                                    indent=1) + "\n"),
+        ])
+    except Exception as exc:
+        fail("local_pair_commit_failed", str(exc), target=str(state_path))
     emit({
         "status": "ok", "professor": professor,
         "state_path": str(professor_dir / CANDIDATE_STATE),
@@ -6505,8 +7456,9 @@ def cmd_stage3_finalize(args) -> None:
                         "candidates": len(d.get("candidates") or [])}
                        for d in updated_directions],
         "skipped_direction_ids": skipped_out,
-        "corrected": sorted(key.split(":", 1)[1] for key in correction
-                            if key.startswith("direction:")),
+        # r13 §5.5: the reported correction set is what this run actually
+        # replaced — never a scope the admission filters kept out.
+        "corrected": sorted(correction_dids & scoped_dids),
         "corrected_groups": sorted(key.split(":", 1)[1] for key in correction
                                    if key.startswith("group:")),
         "cross_direction_groups": [{"group_id": g["group_id"],
@@ -6514,7 +7466,101 @@ def cmd_stage3_finalize(args) -> None:
                                      "candidates": len(g.get("candidates") or [])}
                                     for g in final_groups],
         "dropped_cross_direction": dropped_groups,
-        "reused": reused, "md_sha256": md_result.get("sha256"),
+        "reused": reused, "md_sha256": body_sha,
+    })
+
+
+def cmd_stage3_rebuild_overview(args) -> None:
+    """Rebuild the program-level candidates overview from committed states.
+
+    The overview is a human-facing projection derived ONLY from committed
+    professor-local candidate states (issue #66 r10 §3): the local Markdown
+    contributes a link path and never machine facts; `_contact_projections.json`
+    is not read and not written; manual-edit protection is projection-local
+    (frontmatter render_sha256 must match the current body, otherwise the
+    rebuild fails closed with manual_markdown_changed and nothing changes).
+    Any discovered state that is malformed or cannot be exactly identity-
+    migrated fails the whole rebuild BEFORE the overview write — no partial
+    overview is ever published.
+    """
+    program_root = Path(args.program_root)
+    research_root = (program_root / "教授研究").resolve()
+    if not research_root.is_dir():
+        fail("invalid_params", f"program_root has no 教授研究 directory: {program_root}")
+    discovered: dict[str, Path] = {}
+    for state_path in sorted(research_root.rglob(CANDIDATE_STATE)):
+        try:
+            parent = state_path.parent.resolve()
+            relative = parent.relative_to(research_root)
+        except (OSError, ValueError):
+            fail("state_outside_program_root", str(state_path),
+                 message="discovered candidate state resolves outside the 教授研究 root")
+        discovered.setdefault(relative.as_posix(), parent)
+    records = []
+    for identity in sorted(discovered):
+        professor_dir = discovered[identity]
+        state, state_error = strict_candidate_state(professor_dir)
+        if state is None and state_error is None:
+            # The state vanished between discovery and read: this professor
+            # currently has no committed state and contributes no rows.
+            continue
+        if state_error:
+            fail(state_error,
+                 "candidate state cannot be included in the program overview",
+                 professor_identity=identity, professor_dir=str(professor_dir))
+        records.append((identity, professor_dir, state))
+    direction_entries, cross_entries = [], []
+    for identity, professor_dir, state in records:
+        display = state.get("professor") or identity
+        md_rel = rel_path(professor_dir / CANDIDATES_MD, research_root)
+        for row in sorted((state.get("directions") or []),
+                          key=lambda item: str(item.get("direction_id") or "")):
+            direction_entries.append({
+                "professor": display, "name_ja": row.get("name_ja"),
+                "candidates": row.get("candidates") or [],
+                "priority": row.get("priority"),
+                "_candidates_md_rel": md_rel})
+        for row in sorted((state.get("cross_direction_groups") or []),
+                          key=lambda item: str(item.get("group_id") or "")):
+            cross_entries.append({
+                "professor": display, "group_id": row.get("group_id"),
+                "direction_ids": row.get("direction_ids") or [],
+                "candidates": row.get("candidates") or [],
+                "_candidates_md_rel": md_rel})
+    body = render_candidates_overview(direction_entries, research_root,
+                                      cross_groups=cross_entries)
+    overview_path = research_root / CANDIDATES_OVERVIEW
+    if overview_path.is_file():
+        try:
+            existing_text = overview_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            fail("overview_unreadable", str(exc), target=str(overview_path))
+        header, existing_body = split_frontmatter(existing_text)
+        if not isinstance(header, dict) or header.get("managed_by") != MANAGED_BY or \
+                header.get("render_sha256") != sha256_text(existing_body):
+            soft_exit("needs_decision", "manual_markdown_changed",
+                      target=str(overview_path))
+    body_sha = sha256_text(body)
+    projection_fingerprint = sha256_obj({"projection": CANDIDATES_OVERVIEW,
+                                         "body": body_sha})
+    try:
+        atomic_write(overview_path,
+                     render_frontmatter(projection_fingerprint, body_sha) + body)
+    except Exception as exc:
+        fail("overview_write_failed", str(exc), target=str(overview_path))
+    emit({
+        "status": "ok",
+        "overview_md": str(overview_path),
+        "sha256": body_sha,
+        "professor_count": len(records),
+        "direction_rows": len(direction_entries),
+        "cross_direction_rows": len(cross_entries),
+        "professors": [{"professor_identity": identity,
+                        "professor": state.get("professor"),
+                        "directions": len(state.get("directions") or []),
+                        "cross_direction_groups":
+                            len(state.get("cross_direction_groups") or [])}
+                       for identity, _, state in records],
     })
 
 
@@ -9530,8 +10576,44 @@ def cmd_stage3_record_validation(args) -> None:
     verdict per machine scope is derived from the validator's own findings, and
     the record is bound to the rendered revision it describes.  Nothing in the
     written state can be asserted by a caller.
+
+    The handoff mode (r13 §6.4, ``--handoff-file`` + ``--handoff-sha256`` +
+    ``--expected-validation-sha256``) takes the professor and validation path
+    from the verified handoff metadata and digest-checks the exact byte buffer
+    it then parses — the legacy ``--professor-dir`` + ``--validation-file``
+    calls keep their behavior unchanged, and the two modes are mutually
+    exclusive.
     """
-    professor_dir = Path(args.professor_dir)
+    handoff_triple = (getattr(args, "handoff_file", None),
+                      getattr(args, "handoff_sha256", None),
+                      getattr(args, "expected_validation_sha256", None))
+    handoff_mode = any(handoff_triple)
+    if handoff_mode and not all(handoff_triple):
+        fail("invalid_params",
+             "--handoff-file, --handoff-sha256 and --expected-validation-sha256 "
+             "must be used together")
+    legacy_pair = (getattr(args, "professor_dir", None),
+                   getattr(args, "validation_file", None))
+    if bool(legacy_pair[0]) != bool(legacy_pair[1]):
+        fail("invalid_params",
+             "stage3-record-validation needs --professor-dir and --validation-file together")
+    if handoff_mode and any(legacy_pair):
+        fail("invalid_params",
+             "the handoff mode is mutually exclusive with --professor-dir and "
+             "--validation-file; the handoff metadata alone carries both")
+    if not handoff_mode and not all(legacy_pair):
+        fail("invalid_params",
+             "stage3-record-validation needs --professor-dir + --validation-file, "
+             "or the handoff mode (--handoff-file + --handoff-sha256 + "
+             "--expected-validation-sha256)")
+    metadata = None
+    if handoff_mode:
+        metadata = _load_stage3_handoff(args)
+        professor_dir = Path(metadata["professor_dir"])
+        validation_path = Path(metadata["validation_file"])
+    else:
+        professor_dir = Path(args.professor_dir)
+        validation_path = Path(args.validation_file)
     pack, _ = load_input_pack(professor_dir)
     state, state_error = load_candidate_state(professor_dir, pack)
     if state_error or state is None:
@@ -9550,8 +10632,37 @@ def cmd_stage3_record_validation(args) -> None:
             "complete the recorded Stage-3 correction with stage3-plan/finalize "
             "--validation-file before recording another validator round",
         )
-    evidence = stage3_validation_evidence(Path(args.validation_file), professor_dir, state)
+    raw_input = None
+    if handoff_mode:
+        # r13 §6.4: the render and round must still match the verified handoff,
+        # and the digest must hold over the exact bytes parsed below — never
+        # over one snapshot while another file is opened for the record.
+        render_sha, _body = _stage3_bound_render(professor_dir, state)
+        if render_sha != metadata["render_sha256"]:
+            fail("validation_render_changed",
+                 "the committed candidate render changed since this handoff was "
+                 "prepared; re-run stage3-prepare-validation")
+        _require_stage3_handoff_round(state, render_sha, metadata["round"])
+        if validation_path.is_symlink() or not validation_path.is_file():
+            fail("invalid_validation_source",
+                 f"the recorded validation file must be this round's regular "
+                 f"target file: {validation_path}")
+        try:
+            raw_input = validation_path.read_bytes()
+        except (OSError, ValueError):
+            fail("invalid_validation_json",
+                 f"style-validator output unreadable: {validation_path}")
+        if sha256_bytes(raw_input) != args.expected_validation_sha256:
+            fail("validation_sha256_mismatch",
+                 f"the recorded validation bytes do not match the digest returned by "
+                 f"stage3-save-validation: {validation_path}")
+    evidence = stage3_validation_evidence(validation_path, professor_dir, state,
+                                          raw_input=raw_input)
     round_no = raw_round + 1
+    if metadata is not None and round_no != metadata["round"]:
+        fail("validation_round_sequence_invalid",
+             f"the recorded round {round_no} does not match the handoff round "
+             f"{metadata['round']}")
     if round_no > STAGE3_VALIDATION_MAX_ROUNDS:
         fail("validation_rounds_exhausted",
              f"Stage-3 style validation is bounded to {STAGE3_VALIDATION_MAX_ROUNDS} rounds; "
@@ -9562,6 +10673,22 @@ def cmd_stage3_record_validation(args) -> None:
     at = now_utc()
     exhausted = round_no >= STAGE3_VALIDATION_MAX_ROUNDS
     summary = []
+    global_issues = (evidence["failed"].get("global") or {}).get("issues") or []
+    if global_issues:
+        rendered_scopes = {
+            key: scope for key, scope in evidence["scopes"].items()
+            if key != "global"
+        }
+        if not rendered_scopes:
+            fail("validation_evidence_not_recorded",
+                 "global validator issues cannot be assigned to a rendered direction or group")
+        for key, scope in rendered_scopes.items():
+            row = evidence["failed"].setdefault(
+                key, {"scope": scope, "candidate_ids": [], "issues": []})
+            row["issues"].extend(
+                {**issue, "scope": scope, "render_sha256": evidence["render_sha256"]}
+                for issue in global_issues
+            )
     for key, scope in sorted(evidence["scopes"].items()):
         if key == "global":
             continue
@@ -9602,6 +10729,7 @@ def cmd_stage3_record_validation(args) -> None:
     emit({"status": "ok", "state_path": str(professor_dir / CANDIDATE_STATE),
           "round": round_no, "raw_verdict": evidence["verdict"],
           "render_sha256": evidence["render_sha256"], "scopes": summary,
+          "validation_input_sha256": evidence["validation_input_sha256"],
           "needs_correction": bool(pending),
           "terminal": not pending})
 
@@ -10075,7 +11203,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_stage2_refine_finalize)
 
     p = sub.add_parser("stage3-plan")
-    p.add_argument("--professor-dir", required=True)
+    p.add_argument("--professor-dir",
+                   help="required without an invocation credential; mutually "
+                        "exclusive with --invocation-file")
     p.add_argument("--profile")
     p.add_argument("--refresh-scope", choices=REFRESH_SCOPES)
     p.add_argument("--direction-id", help="只处理输入包中的一个方向（canonical 机器身份）")
@@ -10094,10 +11224,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--validation-file",
                    help="raw style-validator JSON; forces text-only correction jobs for the scopes "
                         "the recorded round actually failed (--direction-id may only narrow them)")
+    p.add_argument("--capture-invocation", metavar="DIR",
+                   help="first-round only: write this invocation's exclusive credential "
+                        "file into the per-invocation directory and return its path+sha256")
+    p.add_argument("--invocation-file", metavar="FILE",
+                   help="consume a captured invocation credential (with --invocation-sha256); "
+                        "mutually exclusive with re-supplied professor/profile/root/scope/"
+                        "skip/group/direction/selection source parameters")
+    p.add_argument("--invocation-sha256", metavar="SHA256",
+                   help="SHA-256 of the exact credential file bytes")
     p.set_defaults(func=cmd_stage3_plan)
 
     p = sub.add_parser("stage3-finalize")
-    p.add_argument("--professor-dir", required=True)
+    p.add_argument("--professor-dir",
+                   help="required without an invocation credential; mutually "
+                        "exclusive with --invocation-file")
     p.add_argument("--results", required=True)
     p.add_argument("--profile")
     p.add_argument("--refresh-scope", choices=REFRESH_SCOPES)
@@ -10114,7 +11255,51 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--decision-file")
     p.add_argument("--validation-file",
                    help="same raw style-validator JSON used by stage3-plan correction")
+    p.add_argument("--invocation-file", metavar="FILE",
+                   help="consume a captured invocation credential (with --invocation-sha256); "
+                        "mutually exclusive with re-supplied professor/profile/root/scope/"
+                        "skip/group/direction/selection source parameters")
+    p.add_argument("--invocation-sha256", metavar="SHA256",
+                   help="SHA-256 of the exact credential file bytes")
     p.set_defaults(func=cmd_stage3_finalize)
+
+    p = sub.add_parser("stage3-rebuild-overview",
+                       help="rebuild the program-level candidates overview from committed "
+                            "professor-local candidate states (derived projection; issue #66)")
+    p.add_argument("--program-root", required=True)
+    p.set_defaults(func=cmd_stage3_rebuild_overview)
+
+    p = sub.add_parser("stage3-write-validation",
+                       help="write the complete Stage-3 validator result to its specified handoff path")
+    p.add_argument("--output-file",
+                   help="one specified absolute output path for a single candidates entry")
+    p.add_argument("--output-map-json",
+                   help="JSON list mapping every candidates file path to its specified output_file")
+    p.add_argument("--result-json",
+                   help="the complete validator result object as one JSON command argument")
+    p.set_defaults(func=cmd_stage3_write_validation)
+
+    p = sub.add_parser("stage3-prepare-validation",
+                       help="issue #66 r13 §6.1: create this round's one-time validation "
+                            "handoff (metadata, validator output path, saved target path) "
+                            "from this professor's invocation credential and committed state")
+    p.add_argument("--invocation-file", metavar="FILE", required=True,
+                   help="the captured invocation credential of the committed round")
+    p.add_argument("--invocation-sha256", metavar="SHA256", required=True,
+                   help="SHA-256 of the exact credential file bytes")
+    p.add_argument("--round", type=int, required=True, choices=(1, 2),
+                   help="the validation round to prepare; must match the professor's "
+                        "recorded validator facts, never the temp directory state")
+    p.set_defaults(func=cmd_stage3_prepare_validation)
+
+    p = sub.add_parser("stage3-save-validation",
+                       help="issue #66 r13 §6.3: copy the validator's raw output bytes, "
+                            "unchanged, from the handoff's source file to its recorded target")
+    p.add_argument("--handoff-file", metavar="FILE", required=True,
+                   help="the handoff metadata file returned by stage3-prepare-validation")
+    p.add_argument("--handoff-sha256", metavar="SHA256", required=True,
+                   help="SHA-256 of the exact handoff metadata bytes")
+    p.set_defaults(func=cmd_stage3_save_validation)
 
     p = sub.add_parser("stage4-finalize",
                        help="commit professor-local Stage-4 authority per professor and emit "
@@ -10213,8 +11398,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_stage2_record_validation)
 
     p = sub.add_parser("stage3-record-validation")
-    p.add_argument("--professor-dir", required=True)
-    p.add_argument("--validation-file", required=True)
+    p.add_argument("--professor-dir", required=False,
+                   help="legacy mode together with --validation-file; mutually "
+                        "exclusive with the handoff mode")
+    p.add_argument("--validation-file", required=False,
+                   help="legacy mode together with --professor-dir; mutually "
+                        "exclusive with the handoff mode")
+    p.add_argument("--handoff-file", metavar="FILE",
+                   help="handoff mode (issue #66 r13 §6.4) together with --handoff-sha256 "
+                        "and --expected-validation-sha256: professor and validation path "
+                        "come from the verified handoff metadata")
+    p.add_argument("--handoff-sha256", metavar="SHA256",
+                   help="SHA-256 of the exact handoff metadata bytes")
+    p.add_argument("--expected-validation-sha256",
+                   metavar="SHA256",
+                   help="digest returned by stage3-save-validation; proven over the exact "
+                        "bytes this record parses")
     p.set_defaults(func=cmd_stage3_record_validation)
 
     p = sub.add_parser("migrate-v3")
