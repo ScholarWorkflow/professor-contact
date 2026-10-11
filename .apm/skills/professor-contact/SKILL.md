@@ -679,8 +679,8 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 
 - **有分析文件 → 引用升级**：`（[zotero](zotero://select/library/items/<KEY>)）` 后追加 `｜[分析](<相对路径>)`，链接文案固定「分析」，相对路径以**引用文档所在目录**为基准。判定「有分析文件」= `<教授名>/论文分析/_index.json` 的 `papers[key].file` 非空；路径一律从 index `file` 原文派生（子目录名可能有空格差异，不得手写）。
 - **没有分析文件 → 保持原样**：只留 zotero:// 链接。绝不凭空猜测分析文件路径。
-- **不加 [分析] 的边界**：Zotero 内部 note（跨应用无锚点）、聊天回复、套磁邮件正文（模板+红线约束不放链接）、该教授没有 `论文分析/` 目录（事后可 `--backfill` 补）。
-- 批量补链/校验/去重用 `skill(name: "paper-analysis-linker")` 的稳定命令 `paper-analysis-link`（`--backfill --dry-run` 预览 → 幂等真跑；`--map` 对账；`--dedup` 清重复分析文件）。Provider: `ScholarWorkflow/paper-analysis`; install with `uv tool install git+https://github.com/ScholarWorkflow/paper-analysis.git`; preflight with `command -v paper-analysis-link`。
+- **不加 [分析] 的边界**：Zotero 内部 note（跨应用无锚点）、聊天回复、套磁邮件正文（模板+红线约束不放链接）、该教授没有 `论文分析/` 目录。
+- **已有链接能力**：现有 `contact_state.py` 的 `citation_render`、阶段 2 论文一览和阶段 3 支撑论文渲染会直接从真实论文身份与分析路径生成链接。当前没有已实现的独立批量补链、只读对账或重复文件清理命令；不得调用文档中曾提到但尚未交付的 `paper-analysis-linker` 或 `paper-analysis-link`。
 
 ## Behavior notes for callers
 
