@@ -491,7 +491,7 @@ task(subagent_type: "professor-contact", prompt: "folder_path: <program-root or 
 # 阶段 1：方向候选集 + 定向补 PDF（全部候选已有 PDF 时自动 no-op；默认只使用合法来源）
 # 每次 Stage-1 正式状态只属于该教授自己那份 <教授目录>/套磁阶段1候选.json；target_files 传 Stage 0 返回的逐教授 local target
 # 有本轮显式网络访问决定时，追加同值的 access_mode 行；缺省时不要写该行
-task(subagent_type: "professor-contact-downloader", prompt: "folder_path: <...>\ntarget_files: <逗号分隔的 <教授目录>/套磁目标.json 绝对路径，取 Stage 0 返回的 target_states 值>\nprofessors: <可选，逗号分隔精确教授名>\nnamed_papers_file: <可选，用户点名论文 JSON 绝对路径>")
+task(subagent_type: "professor-contact-downloader", prompt: "folder_path: <...>\ntarget_files: <逗号分隔的 <教授目录>/套磁目标.json 绝对路径。从 Stage 0 返回的 transactions 中，取本轮继续处理且 status 为 ok 的记录的 target_state，按现有 target_files 格式原样传入。>\nprofessors: <可选，逗号分隔精确教授名>\nnamed_papers_file: <可选，用户点名论文 JSON 绝对路径>")
 # 仅当 caller 显式提供合法值时，向该 prompt 追加这一行；缺省时不要追加：
 # access_mode: <oa_only|allow_non_oa>
 
@@ -631,7 +631,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 | `folder_path` | yes | 程序根（含 info.json）或 per-専攻 子文件夹。 |
 | `profile_path` | no | profile 文件绝对路径；缺省自动向上搜 `套磁邮件/套磁信息.md`。 |
 | `professors` | no | 限定只处理这些教授（逗号分隔 kanji 名）。Stage 1/2 一次调用只吃一位教授的 `--target-file <教授目录>/套磁目标.json`，名单决定枚举哪几份 local target 依次跑；缺省=遍历 `教授研究/` 下已带有自己 `套磁目标.json` 的全部教授。名单中的教授没有 local target → resolver 返回 `professor_not_selected`/`missing_target_state`（needs_input）。 |
-| `target_files` | no | 仅阶段 1：逗号分隔的 `<教授目录>/套磁目标.json` 绝对路径，取自 Stage 0 返回的 `target_states` 值。给出时这些就是本轮的逐教授范围，每次 build/verify 只传其中一份；每位教授的 Stage-1 正式状态只写在自己那份 `<教授目录>/套磁阶段1候选.json`，identity 与当前 target 不一致时 product fail closed，绝不回退程序级聚合或借用别人的状态。 |
+| `target_files` | no | 仅阶段 1：逗号分隔的 `<教授目录>/套磁目标.json` 绝对路径。从 Stage 0 返回的 transactions 中，取本轮继续处理且 status 为 ok 的记录的 target_state，按现有 target_files 格式原样传入。给出时这些就是本轮的逐教授范围，每次 build/verify 只传其中一份；每位教授的 Stage-1 正式状态只写在自己那份 `<教授目录>/套磁阶段1候选.json`，identity 与当前 target 不一致时 product fail closed，绝不回退程序级聚合或借用别人的状态。 |
 | `named_papers_file` | no | 仅阶段 1：JSON 文件绝对路径，`{"directions": {"<direction_id>": ["<item_key 或精确标题>", ...]}}`，把用户显式点名的论文并入对应方向候选集（`user_named` 理由）。 |
 | `access_mode` | no | 仅阶段 1：caller 从真实用户取得的本轮网络访问决定；显式值严格为 `"oa_only" | "allow_non_oa"`，在 `pdf_fill_needed` 时以同名同值原样转发，缺省则完全省略。`noop` / `needs_resolution` 不消费或校验；非法值在 collector spawn 前结构化 fail closed。 |
 | `paper_analysis` | no | 仅阶段 2：`relevant`（只跑相关论文——user_note 点名 ∪ 术语/语义匹配，缺省）或 `all`（方向全部成员论文，强制全量）。相关集 >10 篇时 analyzer 会先问确认。 |
