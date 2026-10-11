@@ -1,0 +1,5 @@
+# issue-68-eval-codex-config-r1-2026-10-09
+# 仅将两项模型设置合入隔离消费者的 .codex/config.toml，供第五阶段评估使用。
+# 评估请求只信任该消费者项目，不覆盖这里的模型和推理设置。
+model = "gpt-6-luna"
+model_reasoning_effort = "low"

@@ -275,6 +275,8 @@ class Issue67AdjacentCallerContractTests(unittest.TestCase):
     SKILL = SKILL_PATH
     REFERENCE = REPO_ROOT / ".apm" / "skills" / "professor-contact" / \
         "docs" / "workflow-reference.md"
+    EMAIL_GENERATOR = REPO_ROOT / ".apm" / "agents" / \
+        "professor-contact-email-generator.agent.md"
     SELECTION_AGENT = REPO_ROOT / ".apm" / "agents" / \
         "professor-contact-selection.agent.md"
 
@@ -282,6 +284,7 @@ class Issue67AdjacentCallerContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.documents = {}
         for label, path in (("skill", cls.SKILL), ("reference", cls.REFERENCE),
+                            ("email_generator", cls.EMAIL_GENERATOR),
                             ("selection", cls.SELECTION_AGENT)):
             if not path.exists():
                 raise AssertionError(f"missing caller document: {path}")
@@ -344,14 +347,27 @@ class Issue67AdjacentCallerContractTests(unittest.TestCase):
 
     def test_program_level_stage4_files_are_documented_as_non_authority(self):
         self.assertIn("程序级同名 Stage-4 JSON 不再由本阶段写入", self.skill)
-        self.assertIn("历史程序级 `教授研究/邮件输入.json` 只作 legacy 迁移的行来源",
-                      self.skill)
+        legacy_pack_rule = next(
+            (line for line in self.skill.splitlines()
+             if "程序级旧包" in line and "迁移行来源" in line),
+            "",
+        )
+        self.assertTrue(legacy_pack_rule)
+        self.assertIn("迁移行来源", legacy_pack_rule)
+        self.assertIn("不作为当前事实源", legacy_pack_rule)
         self.assertIn("也不再被当作权威", self.documents["reference"])
         self.assertIn("本阶段绝不写入", self.documents["selection"])
 
     def test_stage5_handoff_is_the_explicit_professor_local_pack(self):
         self.assertIn("由 caller 以 `--email-pack` 显式传入", self.skill)
         self.assertIn("`--email-pack`", self.documents["reference"])
+        stage5 = self.documents["email_generator"].split(
+            "## Professor-local email pack", 1
+        )[1].split("\n## ", 1)[0]
+        self.assertIn("If `--email-pack` is omitted", stage5)
+        self.assertIn("the runner returns `invalid_params`", stage5)
+        self.assertIn("never resolves or reads the historical program-level", stage5)
+        self.assertIn("`教授研究/邮件输入.json` as a fallback", stage5)
 
     def test_migration_is_one_professor_per_invocation(self):
         line = self._line("reference", "`stage4-migrate-local --program-root")

@@ -1,0 +1,179 @@
+{
+  "schema": "issue68-r37-preflight-validation-v1",
+  "plan_revision": "issue-68-test-plan-r37-2026-10-08",
+  "candidate_product_commit": "faab365d0be2bb66f2f285fdaa2927631dbf33f8",
+  "shared_fixture_commit": "d160ecb403c0f9e9c153f4b8383302a4b67664ab",
+  "eval_service_commit": "3fdfa9387140cfc2e2aa3af415f85015f79706d2",
+  "formal_PC68_R1_started": false,
+  "second_gate_status_at_preflight": "INCOMPLETE",
+  "private_paths_redacted": true,
+  "raw_evidence_aliases": {
+    "PC68_R37_ENV01_RAW": "environment attempt 01 retained locally",
+    "PC68_R37_ENV02_RAW": "environment attempt 02 retained locally",
+    "PC68_R37_ENV03_RAW": "environment attempt 03 retained locally",
+    "PC68_R37_TRANSFER01_RAW": "transfer attempt 01 command result retained locally; no result file was emitted",
+    "PC68_R37_TRANSFER02_RAW": "transfer attempt 02 retained locally"
+  },
+  "implementation_sources": {
+    "preflight_issue68_environment_r30.py": "0f20998829704e3f683c989b2469cf91a2d817ac8c66f5baf6d0ee4f5d329c2e",
+    "test_preflight_issue68_environment_r30.py": "c150beeb20ee0b14eb4ef9f35560730f9d690f70eb5f3067b5430425b7e5a3dc",
+    "preflight_issue68_transfer_location_eval_r33.py": "ea091867d8c5e798ffde72642c0b64de89479c75940ee7dfc5b18b9e721897cc",
+    "test_issue68_transfer_location_eval_r33.py": "e5372ec50581c48835978cff2eaa666a757fc60c5d8e6fcabb4d022270f9e45c"
+  },
+  "environment_attempts": [
+    {
+      "id": "R37-env-01",
+      "alias": "PC68_R37_ENV01_RAW",
+      "state": "PREFLIGHT_INCOMPLETE",
+      "observed_failure": "wrong_revision_or_dirty_checkout",
+      "producer": {"sha": "faab365d0be2bb66f2f285fdaa2927631dbf33f8", "dirty": "no"},
+      "shared_assets_input_sha": "d160ecb403c0f9e9c153f4b8383302a4b67664ab",
+      "shared_assets_observed": null,
+      "prior_preflight_expectation": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+      "request_attempted": false,
+      "formal_case_started": false,
+      "raw_artifact_sha256": {
+        "preflight-result.json": "c04c9bfcf73e750e4650fbea44cad7444327d1d47af806f821cf6eeb13b33e46"
+      },
+      "resolution": "Updated the R30 fixture pin to the shared revision used by the R37 runner. This attempt remains an incomplete historical result."
+    },
+    {
+      "id": "R37-env-02",
+      "alias": "PC68_R37_ENV02_RAW",
+      "state": "PREFLIGHT_INCOMPLETE",
+      "producer": {"sha": "faab365d0be2bb66f2f285fdaa2927631dbf33f8", "dirty": "no"},
+      "shared_assets": {"sha": "d160ecb403c0f9e9c153f4b8383302a4b67664ab", "dirty": "no"},
+      "eval_service": {"sha": "3fdfa9387140cfc2e2aa3af415f85015f79706d2", "dirty": "no"},
+      "failed_stage": "supported_install",
+      "install_exit_code": 1,
+      "observed_failure": "TLS certificate verification failed; no install transaction committed",
+      "request_attempted": false,
+      "formal_case_started": false,
+      "tls_verification_enabled": true,
+      "process_scoped_ca_override_used": false,
+      "raw_artifact_sha256": {
+        "preflight-result.json": "6174da57d551dd78451e2209d89d1b1e854159efca48b6414f853745a4f43825",
+        "apm-install.stdout.txt": "a6f51c7d433f99c5e81088dd0be9024d333d8f60c358a1cd5168d693280b23ec",
+        "apm-install.exit-code.txt": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+        "command.json": "0a00ff99109c957fd0bb3335c31908c4098ce539787a1d5601ee315793abccb8"
+      },
+      "resolution": "Retried in a new consumer with process-scoped system CA bundle settings; TLS verification remained enabled. The failed attempt is preserved."
+    },
+    {
+      "id": "R37-env-03",
+      "alias": "PC68_R37_ENV03_RAW",
+      "state": "PRECHECK_READY",
+      "reason_code": null,
+      "producer": {"sha": "faab365d0be2bb66f2f285fdaa2927631dbf33f8", "dirty": "no"},
+      "shared_assets": {"sha": "d160ecb403c0f9e9c153f4b8383302a4b67664ab", "dirty": "no"},
+      "eval_service": {"sha": "3fdfa9387140cfc2e2aa3af415f85015f79706d2", "dirty": "no"},
+      "install_exit_code": 0,
+      "installed_entrypoint_sha256": "5d5347c18c5bd0df69b1377a02e39dc4048b0dd0d7c4246d105d102052f681d6",
+      "installed_lock_sha256": "9bb0178801f85ce2b979a2adf5d1d852868a883652473a195e1b2798603861ba",
+      "entrypoint_help_exit_code": 0,
+      "synthetic_observation": {
+        "status": "OBSERVATION_VERIFIED",
+        "reason": "actual_parse_and_same_object_forwarding",
+        "command_id": "exec-6737e321-284c-49de-8222-f469fd529096",
+        "thread_id": "01a11ba9-2610-7af2-bd4a-05ebb992aa38",
+        "turn_id": "01a11ba9-3a21-7d92-9c59-875f0c0796b9",
+        "runtime_generation": 1,
+        "start_seq": 28671,
+        "end_seq": 28672,
+        "read_count": 1,
+        "parsed_object_equals_forwarded_object": true,
+        "child_return_code": 0
+      },
+      "integrity": {
+        "service_unchanged": true,
+        "consumer_before_equals_after": true,
+        "input_before_equals_after": true,
+        "fixed_scripts_before_equals_after": true
+      },
+      "request_attempted": true,
+      "request_kind": "one synthetic ordinary-command observation",
+      "formal_case_started": false,
+      "formal_run_allowed": false,
+      "second_gate_status": "INCOMPLETE",
+      "tls_verification_enabled": true,
+      "process_scoped_ca_override_used": true,
+      "raw_artifact_sha256": {
+        "preflight-result.json": "93b36327f7cb826d989dffc6b2758eb477e4363d4f179c40b0ac6cd6c2855a08",
+        "observation.json": "fe2b3aea5db83b79c9a6c58121246caf45d63f9a94a15d36404b855a1f8e48f5",
+        "integrity.json": "a774ad46004dd1702216021870c57690121da007c19a12ae109425d1025b51ff",
+        "request.json": "9b5c3a9a6a130e9115fe92058adea8b1c5027acf0e5c7d258fbd998c6e8aba94",
+        "response.json": "cb29f01e75357723edadb1f7bd6dac343e1affe48366ce1334fe608faa35f988"
+      },
+      "scope_note": "PRECHECK_READY confirms only the defined environment and synthetic observation prerequisites. It is not Gate 2 approval or PC68-R1 evidence."
+    }
+  ],
+  "transfer_attempts": [
+    {
+      "id": "R37-transfer-01",
+      "alias": "PC68_R37_TRANSFER01_RAW",
+      "state": "CASE_NOT_STARTED",
+      "reason": "transfer_root_requires_dedicated_private_tmp_run_directory",
+      "request_attempted": false,
+      "formal_case_started": false,
+      "result_artifact": "none emitted; observed from command response",
+      "resolution": "Updated the R33 validator to accept the R37 run-root prefix specified by the plan. This attempt is retained as a failed pre-request attempt."
+    },
+    {
+      "id": "R37-transfer-02",
+      "alias": "PC68_R37_TRANSFER02_RAW",
+      "state": "PASS",
+      "reason": "single_request_marker_lifecycle_verified",
+      "producer": {"sha": "faab365d0be2bb66f2f285fdaa2927631dbf33f8", "dirty": "no"},
+      "shared_assets": {"sha": "d160ecb403c0f9e9c153f4b8383302a4b67664ab", "dirty": "no"},
+      "eval_service": {"sha": "3fdfa9387140cfc2e2aa3af415f85015f79706d2", "dirty": "no"},
+      "request_attempted": true,
+      "request_kind": "one marker-only transfer-directory preflight request",
+      "formal_case_started": false,
+      "formal_PC68_R1_started": false,
+      "request_body_sha256": "a3379948087cb8d8056699c8fe6f64358f00434695641bdab78c7557739f1de7",
+      "response_body_sha256": "62b5d5c2426d41df034b421b7858d751fa1d4646dcd981e8ec556646880330ca",
+      "run_id": "a023ac49-a6d8-45e5-8e38-5dbab7f11191",
+      "request_configuration": {
+        "requested_model": "gpt-6-luna",
+        "requested_reasoning_effort": "low",
+        "requested_sandbox": "workspace-write",
+        "effective_model_status": "OBSERVED",
+        "effective_reasoning_effort_status": "OBSERVED",
+        "project_approval_policy": "on-request",
+        "project_approvals_reviewer": "auto_review",
+        "project_approval_configuration_status": "MATCH"
+      },
+      "marker_operation": {
+        "command_id": "exec-ef861893-fb38-4720-b68e-4aca43d6a4c9",
+        "thread_id": "01a11baa-efd7-7483-8d7a-4d091c39a554",
+        "turn_id": "01a11baa-f00d-7930-b16b-624af8d891c3",
+        "runtime_generation": 1,
+        "start_seq": 28777,
+        "end_seq": 28778,
+        "exit_code": 0,
+        "operations": ["create", "read_and_verify", "delete", "confirm_absent"],
+        "read_matches": true,
+        "absent_after_delete": true,
+        "marker_sha256": "1c5ce462c28b8765e64581a1e935256e3708d3603caeed8a80cd99239a62a5d4"
+      },
+      "integrity": {
+        "service_unchanged": true,
+        "consumer_before_equals_after": true,
+        "transfer_before_empty": true,
+        "transfer_after_empty": true
+      },
+      "raw_artifact_sha256": {
+        "preflight-result.json": "ba90493d93d5d553791c34c2fd2d470c5d1eb188545f0ef64ffc1a96af174799",
+        "request.json": "1f4d5070eaf6c85ce496486e3eb054c7425fcc2c8909f1dd48b9ca0f1bb7550d",
+        "response.json": "62b5d5c2426d41df034b421b7858d751fa1d4646dcd981e8ec556646880330ca",
+        "command-events.json": "5a3a63243f1826e5b680dce8438936b5797d1ca751c2b430047553db0a9c9bd1",
+        "transfer.before.json": "f2844cf489e41aedba8fb7c4596089278fcace1b0d1f5cf8cef2097fed549496",
+        "transfer.after.json": "f2844cf489e41aedba8fb7c4596089278fcace1b0d1f5cf8cef2097fed549496",
+        "consumer.before.json": "e3125f4591ad3c84f15723661bcf417486575d2183fc5c8b8e0bd74de83ba6e2",
+        "consumer.after.json": "e3125f4591ad3c84f15723661bcf417486575d2183fc5c8b8e0bd74de83ba6e2",
+        "service.before.json": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34",
+        "service.after.json": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34"
+      }
+    }
+  ]
+}

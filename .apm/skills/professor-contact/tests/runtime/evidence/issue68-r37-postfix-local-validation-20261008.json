@@ -1,0 +1,52 @@
+{
+  "schema": "issue68-r37-postfix-local-validation-v1",
+  "record_revision": "issue68-r37-postfix-local-validation-2026-10-08",
+  "plan_revision": "issue-68-test-plan-r37-2026-10-08",
+  "plan_sha256_at_test_execution": "7456e3dd4296b1d5bd19cba491ef46fffaf500ed6a51696db71340a6c74f68fc",
+  "test_run": {
+    "id": "issue68-r37-postfix-local-validation-20261008",
+    "command": "PYTHONPATH=.apm/skills/professor-contact/tests/runtime:.apm/skills/professor-contact/tests UV_CACHE_DIR=$PC68_LOCAL_UV_CACHE_ROOT uv run --offline --no-project python -m unittest test_issue68_runtime_r19 test_issue68_runtime_recipe test_issue68_uv_cache_r37 test_preflight_issue68_environment_r30 test_issue68_transfer_location_eval_r33 test_issue68_lifecycle test_issue68_lifecycle_integration",
+    "cache_path_alias": "PC68_LOCAL_UV_CACHE_ROOT; actual path retained in the local execution record",
+    "modules": [
+      "test_issue68_runtime_r19",
+      "test_issue68_runtime_recipe",
+      "test_issue68_uv_cache_r37",
+      "test_preflight_issue68_environment_r30",
+      "test_issue68_transfer_location_eval_r33",
+      "test_issue68_lifecycle",
+      "test_issue68_lifecycle_integration"
+    ],
+    "tests_run": 223,
+    "failures": 0,
+    "errors": 0,
+    "exit_code": 0,
+    "elapsed_seconds": 24.444,
+    "stdout_summary": "Ran 223 tests in 24.444s; OK",
+    "initial_warning": "uv reported --no-project with no project found; the command exited successfully."
+  },
+  "source_sha256": {
+    ".apm/skills/professor-contact/SKILL.md": "555839c6eebe667a1519bc636db0e044c8d4779111f6527f3b5ced6b91584626",
+    ".apm/skills/professor-contact/docs/issue68-test-plan.md": "7456e3dd4296b1d5bd19cba491ef46fffaf500ed6a51696db71340a6c74f68fc",
+    ".apm/skills/professor-contact/tests/runtime/capture_issue68_owner_stage5_plan_r1.py": "b124f18a5f1635ae1500aeb15b601565d1eb4638b11dad184533272dbc8aec28",
+    ".apm/skills/professor-contact/tests/runtime/issue68-runtime-evidence-contract-r19.json": "3807a4caed69cf80000e4bcc9a96e6411282f80100e9f6dab5284cb7ddc152bf",
+    ".apm/skills/professor-contact/tests/runtime/preflight_issue68_environment_r30.py": "0f20998829704e3f683c989b2469cf91a2d817ac8c66f5baf6d0ee4f5d329c2e",
+    ".apm/skills/professor-contact/tests/runtime/preflight_issue68_transfer_location_eval_r33.py": "ea091867d8c5e798ffde72642c0b64de89479c75940ee7dfc5b18b9e721897cc",
+    ".apm/skills/professor-contact/tests/runtime/prompts/issue68-stage5-root.txt": "bec3d0b6141c88ef0c2262423021b768251fe91aa8fcd2864033e9be846fe018",
+    ".apm/skills/professor-contact/tests/runtime/run_issue68_stage5_routing_r19_codex.py": "81854834e72c27585d6200d9e92d8d5cc3228b6ba1ddc92f1f5dd64412aaebb1",
+    ".apm/skills/professor-contact/tests/runtime/prepare_issue68_stage5_routing.py": "aad74bdf6699502c2c2393ddbbcbcc1f87636b421991c61d18daa2407743dba4",
+    ".apm/skills/professor-contact/tests/runtime/verify_issue68_stage5_routing_r19.py": "076f172c3625ca2ee1de3d2357c494f722910503a02475abaf4d157aaa06ddc6",
+    ".apm/skills/professor-contact/tests/runtime/test_preflight_issue68_environment_r30.py": "c150beeb20ee0b14eb4ef9f35560730f9d690f70eb5f3067b5430425b7e5a3dc",
+    ".apm/skills/professor-contact/tests/test_issue68_runtime_r19.py": "7a0fbe50799ae177fab6679d2605378e85b777a5b131572dd2502fc6395b2567",
+    ".apm/skills/professor-contact/tests/test_issue68_runtime_recipe.py": "453d8c82bbea2994b08d948066a22d3cfc2f42fd17c0fae1f90d7a4335f764b6",
+    ".apm/skills/professor-contact/tests/test_issue68_uv_cache_r37.py": "6ab23706b73107bf0126db9cd590215af58fd78e9eb8062b1a3af91d1a2abe71",
+    ".apm/skills/professor-contact/tests/test_issue68_transfer_location_eval_r33.py": "e5372ec50581c48835978cff2eaa666a757fc60c5d8e6fcabb4d022270f9e45c",
+    ".apm/skills/professor-contact/tests/test_issue68_lifecycle.py": "6230d7bb529579b1f9bfc873966bfe0d91259096dfd5f9946b51b8b5d12d7b23",
+    ".apm/skills/professor-contact/tests/test_issue68_lifecycle_integration.py": "6f8f4e0e7f02d22faaec0d9afab3dbd433a031a8d55d34c3545efbe48c70ce4f"
+  },
+  "formal_execution_relation": {
+    "formal_requests_consumed": 1,
+    "formal_request_retried": false,
+    "formal_result_unchanged": "CASE_STARTED / FAIL_PRODUCT / owner_result_path_changed",
+    "scope": "Local regression validates code paths and evaluator behavior only; it is not a new formal PC68-R1 execution or evidence that the repaired candidate passed that case."
+  }
+}

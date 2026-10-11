@@ -1,0 +1,47 @@
+{
+  "schema": "issue68-r30-environment-preflight-v1",
+  "execution_kind": "preflight",
+  "formal_case_started": false,
+  "second_gate_status": "INCOMPLETE",
+  "formal_run_allowed": false,
+  "producer": {
+    "sha": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+    "dirty": "no"
+  },
+  "shared_assets": {
+    "sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+    "dirty": "no"
+  },
+  "service_revision": {
+    "sha": "3fdfa9387140cfc2e2aa3af415f85015f79706d2",
+    "dirty": "no"
+  },
+  "state": "PREFLIGHT_INCOMPLETE",
+  "reason": "supported_install_failed",
+  "error_type": "ValueError",
+  "entrypoint_sha256": "60b7900edf3c06979363da8f5db3adbbca17a02d551847fc34842d056ba5dafc",
+  "installation_exit_code": 124,
+  "attempt": "pc68-r30-environment-preflight-01",
+  "observed": [
+    "clean_fixed_product_revision",
+    "clean_fixed_shared_revision",
+    "read_only_service_instance_and_storage_isolation"
+  ],
+  "not_executed": [
+    "installed_entrypoint_help",
+    "synthetic_command_observation",
+    "formal_PC68_R1"
+  ],
+  "installation_attempt": {
+    "command": [
+      "apm",
+      "install",
+      "https://github.com/ScholarWorkflow/professor-contact.git#b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+      "--target",
+      "codex",
+      "--trust-transitive-mcp"
+    ],
+    "timeout_seconds": 240,
+    "exit_code": 124
+  }
+}

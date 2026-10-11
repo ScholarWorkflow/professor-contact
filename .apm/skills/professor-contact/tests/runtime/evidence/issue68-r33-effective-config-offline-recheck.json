@@ -1,0 +1,65 @@
+{
+  "schema": "issue68-r33-effective-config-offline-recheck-v1",
+  "plan_revision": "issue-68-test-plan-r30-2026-10-07",
+  "evidence_kind": "OFFLINE_RECHECK_PRIOR_RESPONSE",
+  "source_record": "tests/runtime/evidence/issue68-r33-transfer-location-eval-preflight.json",
+  "source_hashes": {
+    "request_body_sha256": "88283d916a7af0b61bb20e4eb7459ab3ad989e262e005834514000445a5665cc",
+    "response_body_sha256": "92fff452afbeddfaea2c530a8a664730aedec3e9a580325ab6c8233286ceb403",
+    "pair_verified": true
+  },
+  "event_source": {
+    "container": "output.app_server_events",
+    "event_method": "thread/started",
+    "unique_root_event": true,
+    "matching_event_count": 1,
+    "runtime_generation": 1,
+    "runtime_seq": 23390,
+    "model_field": "message.params.thread.model",
+    "reasoning_effort_field": "message.params.thread.reasoningEffort",
+    "model_status": "OBSERVED",
+    "reasoning_effort_status": "OBSERVED",
+    "thread_identifier_recorded": false
+  },
+  "configuration": {
+    "requested_model": {
+      "value": "gpt-6-luna",
+      "status": "OBSERVED"
+    },
+    "service_reported_effective_model": {
+      "value": "gpt-6-luna",
+      "status": "OBSERVED"
+    },
+    "requested_reasoning_effort": {
+      "value": "low",
+      "status": "OBSERVED"
+    },
+    "service_reported_effective_reasoning_effort": {
+      "value": "low",
+      "status": "OBSERVED"
+    }
+  },
+  "history_preservation": {
+    "original_effective_model_status": "NOT_EXPOSED_BY_CURRENT_SERVICE",
+    "supplementary_offline_observation_supersedes_status": true,
+    "original_record_overwritten": false,
+    "original_judgment": "INVALID_TEST_EXECUTION",
+    "existing_offline_rejudgment": "PASS",
+    "judgments_changed": false,
+    "prior_request_count": 1,
+    "new_requests_sent": 0
+  },
+  "implementation_validation": {
+    "preflight_source_sha256": "665f69e82da803935f42c25ee42dfe1824fac592e419b05a0744e85845f161e7",
+    "test_source_sha256": "479a8a74d5f8fce9b689844e04adbaae239eee79777a6135f7220764a5242778",
+    "focused_test_count": 37,
+    "focused_test_result": "PASS",
+    "exit_code": 0,
+    "formal_test_run": false
+  },
+  "gate_status": {
+    "second_gate_status": "INCOMPLETE",
+    "second_gate_frozen": false,
+    "formal_PC68_R1_started": false
+  }
+}

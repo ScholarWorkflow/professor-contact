@@ -462,7 +462,9 @@ class TestRunnerBasics(BaseEnv):
                             "--program-root", self.root))
         self.assertEqual(out["status"], "needs_refresh")
         self.assertEqual(out["reason_code"], "missing_input_pack")
-        out5 = parse(run_cli("stage5-plan", "--program-root", self.root))
+        out5 = parse(run_cli(
+            "stage5-plan", "--program-root", self.root,
+            "--email-pack", self.prof_dir / contact_state.EMAIL_PACK))
         self.assertEqual(out5["status"], "needs_refresh")
         self.assertEqual(out5["reason_code"], "missing_email_pack")
         self.assertFalse((self.prof_dir / "套磁想法候选.md").exists())
@@ -1360,19 +1362,16 @@ def write_issue59_overview(program_root):
 
 
 def write_issue59_stale_overview(program_root):
-    """A managed aggregate whose body no longer matches its recorded render sha.
-
-    Batch Stage 5 must surface that as ``needs_decision`` before writing
-    anything; a targeted run must never open the aggregate at all.
-    """
+    """A managed aggregate with a manual body edit after its recorded render sha."""
     body = ("# 套磁邮件总览\n\n> 2026-01-01T00:00:00Z ｜ 由 contact_state 渲染\n\n"
             "| 教授 | 方向（ja/zh） | 收件邮箱 | 核验 | 首封邮件 | 跟进邮件 | "
             "首封纯文本 | 跟进纯文本 |\n|---|---|---|---|---|---|---|---|\n")
     sha = contact_state.sha256_text(body)
     key = contact_state.EMAIL_OVERVIEW
     path = Path(program_root) / "教授研究" / key
+    edited_body = body.replace("2026-01-01T00:00:00Z", "手工修改")
     path.write_text(contact_state.render_frontmatter(
-        contact_state.sha256_obj({"projection": key, "body": sha}), sha) + body,
+        contact_state.sha256_obj({"projection": key, "body": sha}), sha) + edited_body,
         encoding="utf-8")
     (Path(program_root) / "教授研究" / contact_state.PROJECTIONS_FILE).write_text(
         json.dumps({"render": {key: {"sha256": "0" * 64}}}), encoding="utf-8")
@@ -1383,10 +1382,9 @@ def write_issue59_stage5_fixture(program_root, specs=(), *, extra_rows=(),
                                  overview=None, case=None):
     """Materialize the Stage 4 → Stage 5 handoff directly under ``program_root``.
 
-    No Stage 2/3/4 runner is involved: every ``邮件输入.json`` row, every
-    per-professor ``_contact_verify.json`` / ``套磁邮件状态.json`` and the
-    program aggregate come from this writer, so one valid target can sit
-    beside any amount of unrelated or invalid state.
+    No Stage 2/3/4 runner is involved: each professor-local ``邮件输入.json``
+    and each per-professor ``_contact_verify.json`` / ``套磁邮件状态.json``
+    comes from this writer; the program aggregate is seeded only when requested.
 
     Each spec is a dict of ``professor`` / ``direction_id`` / ``idea_id`` /
     ``field`` / ``dir`` / ``verified``
@@ -1468,28 +1466,57 @@ def write_issue59_stage5_fixture(program_root, specs=(), *, extra_rows=(),
             program_root, professor_dir, spec["professor"],
             days_ago=1 if spec["verified"] == "fresh" else ISSUE59_STALE_DAYS)
 
-    pack_path = research / contact_state.EMAIL_PACK
-    pack_path.write_text(json.dumps({
-        "schema": contact_state.EMAIL_PACK_SCHEMA,
-        "kind": contact_state.EMAIL_PACK_KIND,
-        "identity_version": contact_state.DIRECTION_IDENTITY_VERSION,
-        "managed_by": contact_state.MANAGED_BY,
-        "generated_at": contact_state.now_utc(),
-        "program_root": str(program_root),
-        "profile_fingerprint": None,
-        "emails": rows + list(extra_rows)}, ensure_ascii=False, indent=1),
-        encoding="utf-8")
+    rows_by_professor = {}
+    for row in rows:
+        rows_by_professor.setdefault(row["professor"], []).append(row)
+    primary_professor = ISSUE59_PROFESSOR if ISSUE59_PROFESSOR in dirs else next(iter(dirs))
+    rows_by_professor.setdefault(primary_professor, []).extend(extra_rows)
+    packs = {}
+    for professor, owner_rows in rows_by_professor.items():
+        professor_dir = dirs[professor]
+        pack_path = professor_dir / contact_state.EMAIL_PACK
+        pack_path.write_text(json.dumps({
+            "schema": contact_state.STAGE4_LOCAL_SCHEMA,
+            "kind": contact_state.EMAIL_PACK_KIND,
+            "identity_version": contact_state.DIRECTION_IDENTITY_VERSION,
+            "managed_by": contact_state.MANAGED_BY,
+            "generated_at": contact_state.now_utc(),
+            "program_root": str(program_root),
+            "professor": professor,
+            "professor_dir": str(professor_dir),
+            "profile_fingerprint": None,
+            "emails": owner_rows}, ensure_ascii=False, indent=1),
+            encoding="utf-8")
+        packs[professor] = pack_path
     if overview == "conflict":
         write_issue59_stale_overview(program_root)
     elif overview == "seed":
         write_issue59_overview(program_root)
-    return {"program_root": program_root, "pack": pack_path, "rows": rows,
+    return {"program_root": program_root,
+            "pack": packs[primary_professor], "packs": packs, "rows": rows,
             "dirs": dirs, "verify": verified_dirs,
             "overview": (research / contact_state.EMAIL_OVERVIEW
                          if overview else None),
             "checker_marker": checker_marker,
             "email_ids": [row["email_id"] for row in rows],
             "gap_id": quote_id(ISSUE59_GAP_QUOTE)}
+
+
+def issue59_local_pack_path(program_root, professor=ISSUE59_PROFESSOR):
+    """Return the sole Stage-4 local pack that owns ``professor``."""
+    research = Path(program_root) / "教授研究"
+    matches = []
+    for path in research.rglob(contact_state.EMAIL_PACK):
+        try:
+            pack = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if pack.get("professor") == professor:
+            matches.append(path)
+    if len(matches) != 1:
+        raise AssertionError(
+            f"expected one local email pack for {professor!r}, found {matches!r}")
+    return matches[0]
 
 
 class Issue66RecordedValidationScopeTests(BaseEnv):
@@ -2005,7 +2032,7 @@ class TestStage5(BaseEnv):
         self.assertEqual(out["status"], "ok", out)
         self.assertEqual(len(out["emails"]), 2)
         overview_path = self.root / "教授研究" / contact_state.EMAIL_OVERVIEW
-        self.assertEqual(out["overview_md"], str(overview_path), out)
+        self.assertIsNone(out["overview_md"], out)
         md_paths = {Path(row["md"]) for row in out["emails"]}
         txt_paths = {Path(row["txt"]) for row in out["emails"]}
         self.assertEqual(len(md_paths), 2)
@@ -2036,6 +2063,9 @@ class TestStage5(BaseEnv):
         self.assertEqual(persisted["emails"][first_id], a_state)
         self.assertIn(second_id, persisted["emails"])
 
+        rebuilt = parse(run_cli("stage5-rebuild-overview", "--program-root", self.root))
+        self.assertEqual(rebuilt["status"], "ok", rebuilt)
+        self.assertEqual(rebuilt["overview_md"], str(overview_path), rebuilt)
         overview = overview_path.read_text(encoding="utf-8")
         self.assertEqual(overview.count("[.md]("), 2)
         state = json.loads((self.prof_dir / "套磁邮件状态.json").read_text(encoding="utf-8"))
@@ -2285,11 +2315,8 @@ class TestStage5(BaseEnv):
             self.assertFalse(surface.exists())
         self.assertFalse((self.prof_dir / "套磁邮件状态.json").exists())
 
-        # Batch boundary subcase: the gate is whole-batch, not per email —
-        # after professor A passes, a later sibling professor B with no verify
-        # cache must still stop the run before the choices file is read.  The
-        # professor attribution proves the runner really got past A, so the
-        # stop cannot come from leftover state on A.
+        # A legacy cross-professor batch cannot be placed in A's local pack;
+        # ownership validation must stop before the missing choices file is read.
         g1 = self.prepare()
         pack_path = self.email_pack
         pack = json.loads(pack_path.read_text(encoding="utf-8"))
@@ -2322,8 +2349,8 @@ class TestStage5(BaseEnv):
         out = parse(run_cli("stage5-finalize", "--program-root", self.root,
                             "--result", batch_raw_path, "--humanized-map", batch_map_path,
                             "--choices", batch_choices_path))
-        self.assertEqual(out["status"], "needs_refresh", out)
-        self.assertEqual(out.get("professor"), "第二 教授", out)
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "invalid_email_pack", out)
         for surface in self.final_surfaces("first"):
             self.assertFalse(surface.exists())
         for ext in ("md", "txt"):
@@ -2643,16 +2670,17 @@ class TestStage5TargetedEmailScope(BaseEnv):
                               idea_id=ISSUE59_IDEAS[email_id])
 
     def write_pack(self, rows):
-        """Replace 邮件输入.json so exactly one unrelated defect is visible."""
-        path = self.root / "教授研究" / contact_state.EMAIL_PACK
+        """Replace A's professor-local pack so one unrelated defect is visible."""
+        path = issue59_local_pack_path(self.root, ISSUE59_PROFESSOR)
         pack = json.loads(path.read_text(encoding="utf-8"))
         pack["emails"] = list(rows)
         path.write_text(json.dumps(pack, ensure_ascii=False, indent=1), encoding="utf-8")
         return pack
 
     def defective_rows(self, fixture, defect):
-        """The fixture's own pack rows plus the named defect and nothing else."""
-        rows = copy.deepcopy(fixture["rows"])
+        """A's local rows plus one unrelated defect, never another owner's row."""
+        rows = [copy.deepcopy(row) for row in fixture["rows"]
+                if row["professor"] == ISSUE59_PROFESSOR]
         if defect == "not-a-dict":
             return rows + ["not-a-dict"]
         if defect == "duplicate-unrelated-email-id":
@@ -2677,12 +2705,16 @@ class TestStage5TargetedEmailScope(BaseEnv):
         return self.write_json(name, mapping)
 
     def plan(self, *arguments, root=None):
-        return parse(run_cli("stage5-plan", "--program-root", root or self.root,
-                             *arguments))
+        root = root or self.root
+        if "--email-pack" not in arguments:
+            arguments = ("--email-pack", issue59_local_pack_path(root), *arguments)
+        return parse(run_cli("stage5-plan", "--program-root", root, *arguments))
 
     def finalize(self, *arguments, root=None):
-        return parse(run_cli("stage5-finalize", "--program-root", root or self.root,
-                             *arguments))
+        root = root or self.root
+        if "--email-pack" not in arguments:
+            arguments = ("--email-pack", issue59_local_pack_path(root), *arguments)
+        return parse(run_cli("stage5-finalize", "--program-root", root, *arguments))
 
     def humanized(self, name, results, choices, root=None):
         """The render input finalize needs: A's own plan draft, unedited."""
@@ -2733,9 +2765,12 @@ class TestStage5TargetedEmailScope(BaseEnv):
     # ---- cases ------------------------------------------------------------
 
     def test_issue59_t59_1_email_id_is_resolved_before_any_other_check(self):
-        fixture = write_issue59_stage5_fixture(self.root, [
+        fixture_specs = [
             {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
-            {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh"}], case=self)
+            {"professor": ISSUE59_PROFESSOR,
+             "idea_id": ISSUE59_PEER_IDEA_ID, "evidence": "fresh"},
+            {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh"}]
+        fixture = write_issue59_stage5_fixture(self.root, fixture_specs, case=self)
         results = self.write_results("issue59-1-raw.json", [ISSUE59_EMAIL_ID])
         choices = self.write_choices("issue59-1-choices.json", [ISSUE59_EMAIL_ID])
         humanized = self.humanized("issue59-1", results, choices)
@@ -2746,16 +2781,31 @@ class TestStage5TargetedEmailScope(BaseEnv):
                          "not-a-dict")
         for defect in both_surfaces + ("missing-email-id",
                                        "duplicate-unrelated-email-id"):
-            self.write_pack(self.defective_rows(fixture, defect))
+            defect_root = self.root / f"issue59-1-{defect}"
+            defect_fixture = write_issue59_stage5_fixture(
+                defect_root, fixture_specs, case=self)
+            defect_results = issue59_write_results(
+                defect_root, "issue59-1-raw.json", [ISSUE59_EMAIL_ID])
+            defect_choices = issue59_write_choices(
+                defect_root, "issue59-1-choices.json", [ISSUE59_EMAIL_ID])
+            defect_humanized = self.humanized(
+                "issue59-1", defect_results, defect_choices, root=defect_root)
+            defect_pack = issue59_local_pack_path(defect_root, ISSUE59_PROFESSOR)
+            pack = json.loads(defect_pack.read_text(encoding="utf-8"))
+            pack["emails"] = self.defective_rows(defect_fixture, defect)
+            defect_pack.write_text(
+                json.dumps(pack, ensure_ascii=False, indent=1), encoding="utf-8")
             with self.subTest(defect=defect, surface="finalize"):
-                self.assert_output_is_one_a(self.finalize(
-                    "--result", results, "--choices", choices, "--humanized", humanized,
-                    "--email-id", ISSUE59_EMAIL_ID))
+                output = self.finalize(
+                    "--result", defect_results, "--choices", defect_choices,
+                    "--humanized", defect_humanized,
+                    "--email-id", ISSUE59_EMAIL_ID, root=defect_root)
+                self.assert_output_is_one_a(output)
             if defect not in both_surfaces:
                 continue
             with self.subTest(defect=defect, surface="plan"):
                 self.assert_plan_jobs_are_one_a(
-                    self.plan("--email-id", ISSUE59_EMAIL_ID))
+                    self.plan("--email-id", ISSUE59_EMAIL_ID, root=defect_root))
 
         # Collision naming comes from identity metadata, so an unselected
         # same-professor peer's path is never resolved. Derive the expected
@@ -2795,7 +2845,7 @@ class TestStage5TargetedEmailScope(BaseEnv):
              "evidence": "fresh"}], case=self)
         malformed_rows = copy.deepcopy(malformed["rows"])
         del malformed_rows[1]["email_id"]
-        malformed_pack = malformed_root / "教授研究" / contact_state.EMAIL_PACK
+        malformed_pack = issue59_local_pack_path(malformed_root)
         pack = json.loads(malformed_pack.read_text(encoding="utf-8"))
         pack["emails"] = malformed_rows
         malformed_pack.write_text(
@@ -3029,15 +3079,16 @@ class TestStage5TargetedEmailScope(BaseEnv):
     def test_issue59_t59_5_batch_mode_still_validates_every_pack_row(self):
         fixture = write_issue59_stage5_fixture(self.root, [
             {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
-            {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh"}], case=self)
-        both = fixture["email_ids"]
+            {"professor": ISSUE59_PROFESSOR,
+             "idea_id": ISSUE59_PEER_IDEA_ID, "evidence": "fresh"}], case=self)
+        both = [row["email_id"] for row in fixture["rows"]]
         results = self.write_results("issue59-5-raw.json", both)
         choices = self.write_choices("issue59-5-choices.json", both)
         drafts = self.plan("--result", results, "--choices", choices)
         self.assertEqual(drafts["status"], "ok", drafts)
         humanized = self.humanized_map("issue59-5-map.json", drafts["drafts"])
 
-        # Only B's professor_dir escapes the program root.
+        # The second row in A's own local pack escapes the program root.
         self.write_pack(self.defective_rows(fixture, "outside-root-professor-dir"))
         for surface in ("plan", "finalize"):
             with self.subTest(surface=surface):
@@ -3051,19 +3102,17 @@ class TestStage5TargetedEmailScope(BaseEnv):
                 self.assertFalse(
                     self.outside_root.exists(),
                     f"{surface}: invalid B path created files outside program_root")
-        b_dir = fixture["dirs"][ISSUE59_OTHER_PROFESSOR]
-        for professor_dir in (self.prof_dir, b_dir):
-            self.assertFalse((professor_dir / "套磁邮件.md").exists())
-            self.assertFalse((professor_dir / "套磁邮件.txt").exists())
-            self.assertFalse((professor_dir / contact_state.EMAIL_STATE).exists())
+        for name in ("套磁邮件.md", "套磁邮件.txt", contact_state.EMAIL_STATE):
+            self.assertFalse((self.prof_dir / name).exists())
 
-        # AC59-7 also freezes the batch aggregate compatibility path that this
-        # PR moved under the new targeted/batch branch.  Reuse the existing
-        # managed-conflict fixture rather than adding a new top-level case.
+        # Overview rebuilding is independent from professor-local email
+        # commits: a manual edit preserves the old overview without rolling
+        # back the professor's completed email files.
         conflict_root = self.root / "batch-overview-conflict"
         conflict_fixture = write_issue59_stage5_fixture(conflict_root, [
             {"professor": ISSUE59_PROFESSOR, "evidence": "fresh"},
-            {"professor": ISSUE59_OTHER_PROFESSOR, "evidence": "fresh"}],
+            {"professor": ISSUE59_PROFESSOR,
+             "idea_id": ISSUE59_PEER_IDEA_ID, "evidence": "fresh"}],
             overview="conflict", case=self)
         conflict_results = issue59_write_results(
             conflict_root, "issue59-5-conflict-raw.json",
@@ -3091,18 +3140,26 @@ class TestStage5TargetedEmailScope(BaseEnv):
             conflict_root / "教授研究" / contact_state.PROJECTIONS_FILE)
         overview_before = conflict_overview.read_bytes()
         projection_before = projection_registry.read_bytes()
-        conflict = self.finalize(
+        committed = self.finalize(
             "--result", conflict_results, "--choices", conflict_choices,
             "--humanized-map", conflict_humanized, root=conflict_root)
-        self.assertEqual(conflict["status"], "needs_decision", conflict)
-        self.assertEqual(conflict["reason_code"], "manual_markdown_changed", conflict)
-        self.assertEqual(conflict["target"], str(conflict_overview), conflict)
+        self.assertEqual(committed["status"], "ok", committed)
+        self.assertEqual(committed["overview_md"], str(conflict_overview), committed)
         self.assertEqual(conflict_overview.read_bytes(), overview_before)
         self.assertEqual(projection_registry.read_bytes(), projection_before)
-        for professor_dir in conflict_fixture["dirs"].values():
-            self.assertFalse((professor_dir / "套磁邮件.md").exists())
-            self.assertFalse((professor_dir / "套磁邮件.txt").exists())
-            self.assertFalse((professor_dir / contact_state.EMAIL_STATE).exists())
+        professor_dir = conflict_fixture["dirs"][ISSUE59_PROFESSOR]
+        self.assertEqual(len(committed["emails"]), 2, committed)
+        self.assertTrue(all(Path(row["md"]).is_file()
+                            for row in committed["emails"]))
+        self.assertTrue((professor_dir / contact_state.EMAIL_STATE).is_file())
+
+        rebuild = parse(run_cli(
+            "stage5-rebuild-overview", "--program-root", conflict_root))
+        self.assertEqual(rebuild["status"], "needs_decision", rebuild)
+        self.assertEqual(rebuild["reason_code"], "manual_markdown_changed", rebuild)
+        self.assertEqual(rebuild["target"], str(conflict_overview), rebuild)
+        self.assertEqual(conflict_overview.read_bytes(), overview_before)
+        self.assertEqual(projection_registry.read_bytes(), projection_before)
 
 
 class _ForeignAuthorityGuard:
@@ -4262,8 +4319,8 @@ class Issue67AdjacentStateTests(_Issue67Stage4Fixture):
         # so a Stage-5 run only works when the caller passes the exact local pack
         # it received from results[].
         default = self.stage5()
-        self.assertEqual(default["status"], "needs_refresh", default)
-        self.assertEqual(default["reason_code"], "missing_email_pack")
+        self.assertEqual(default["status"], "error", default)
+        self.assertEqual(default["reason_code"], "invalid_params")
         handed_off = self.stage5("--email-pack", row_a["email_pack"])
         self.assertEqual(handed_off["status"], "ok", handed_off)
         self.assertNotEqual(handed_off.get("reason_code"), "missing_email_pack")

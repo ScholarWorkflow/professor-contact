@@ -1,0 +1,121 @@
+{
+  "execution_kind": "synthetic_combination_preflight",
+  "formal_case_started": false,
+  "state": "COMBINATION_VERIFIER_READY",
+  "plan_revision": "issue-68-test-plan-r26-2026-10-07",
+  "expected_verdict_source": "r26_lifecycle_minimum_validation_conditions",
+  "expected_verdicts": {
+    "legal": "PASS",
+    "residual": "FAIL_PRODUCT",
+    "protected_changed": "FAIL_PRODUCT",
+    "wrong_request": "INVALID_EVIDENCE",
+    "missing_use": "BLOCKED_OBSERVABILITY",
+    "incomplete_scan": "INVALID_EVIDENCE"
+  },
+  "fixed_entrypoint": "UV_CACHE_DIR=<private-cache> uv run tests/runtime/preflight_issue68_lifecycle_combination_r31.py <new-private-evidence-directory>",
+  "runtime_envelopes_and_topology": "synthetic_not_eval_or_professor_evidence",
+  "commands_and_filesystem": "actual_local_subprocess_results_and_complete_snapshots",
+  "lifecycle_source_sha256": "f9fc8b13f26b2826127aaa371eaf6b93479cba279c2e7b4f929b487a2bb8329e",
+  "entrypoint_sha256": "4d5122a373aa775248d0f55d8ab53177bfc90d9fa74a2901952f3acb7b2890c5",
+  "cases": [
+    {
+      "scenario": "legal",
+      "proof": {
+        "verdict": "PASS",
+        "reason_code": "request_lifecycle_and_state_preservation_proven"
+      },
+      "same_parsed_object_used": true,
+      "mutation_operation_events": 0,
+      "command_exit_codes": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "scenario": "residual",
+      "proof": {
+        "verdict": "FAIL_PRODUCT",
+        "reason_code": "request_transfer_file_remains"
+      },
+      "same_parsed_object_used": true,
+      "mutation_operation_events": 0,
+      "command_exit_codes": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "scenario": "protected_changed",
+      "proof": {
+        "verdict": "FAIL_PRODUCT",
+        "reason_code": "other_request_file_changed_or_deleted"
+      },
+      "same_parsed_object_used": true,
+      "mutation_operation_events": 0,
+      "command_exit_codes": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "scenario": "wrong_request",
+      "proof": {
+        "verdict": "INVALID_EVIDENCE",
+        "reason_code": "lifecycle_request_boundary_invalid"
+      },
+      "same_parsed_object_used": true,
+      "mutation_operation_events": 0,
+      "command_exit_codes": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "scenario": "missing_use",
+      "proof": {
+        "verdict": "BLOCKED_OBSERVABILITY",
+        "reason_code": "transfer_creation_and_cleanup_unobservable"
+      },
+      "same_parsed_object_used": true,
+      "mutation_operation_events": 0,
+      "command_exit_codes": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "scenario": "incomplete_scan",
+      "proof": {
+        "verdict": "INVALID_EVIDENCE",
+        "reason_code": "lifecycle_snapshot_or_association_invalid"
+      },
+      "same_parsed_object_used": true,
+      "mutation_operation_events": 0,
+      "command_exit_codes": [
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "uncompleted": [
+    "formal_allowed_transfer_location_coverage",
+    "formal_PC68_R1_execution",
+    "second_gate_complete_approval"
+  ],
+  "historical_source_reuse": [],
+  "source_directory": "/private/tmp/pc68-r31-lifecycle-combination-final-20261007-01",
+  "executed_command": "UV_CACHE_DIR=/private/tmp/pc68-r31-final-uv-cache uv run --no-project python .apm/skills/professor-contact/tests/runtime/preflight_issue68_lifecycle_combination_r31.py /private/tmp/pc68-r31-lifecycle-combination-final-20261007-01",
+  "exit_code": 0,
+  "environment_verifier_check": {
+    "command": "uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests/runtime -p test_preflight_issue68_environment_r30.py",
+    "exit_code": 0,
+    "tests": 12,
+    "local_log": "/private/tmp/pc68-r31-environment-unit-final.log"
+  }
+}

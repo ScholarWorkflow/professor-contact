@@ -1,0 +1,86 @@
+{
+  "schema": "issue68-r34-project-approval-config-preflight-v1",
+  "plan_revision": "r34",
+  "record_revision": "r34",
+  "execution_kind": "affected_preflight",
+  "run_id": "5cb2642d-0a7b-4bfd-996a-edd47c4e8aac",
+  "preflight_state": "CASE_NOT_STARTED",
+  "preflight_reason": "supported_install_failed",
+  "formal_case_started": false,
+  "formal_PC68_R1_started": false,
+  "second_gate_status": "INCOMPLETE",
+  "request_attempted": false,
+  "eval_request_count": 0,
+  "execution": {
+    "producer_sha": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+    "producer_dirty": "no",
+    "shared_assets_sha": "d160ecb403c0f9e9c153f4b8383302a4b67664ab",
+    "shared_assets_dirty": "no",
+    "normative_config_source_sha": "c738fa2f8bcbb16cd99d741332d5f59b062b6357",
+    "service_sha": "3fdfa9387140cfc2e2aa3af415f85015f79706d2",
+    "service_dirty_before": "no",
+    "consumer_installed_via_apm": false,
+    "project_config_preparation": "NOT_RUN_INSTALL_FAILED",
+    "effective_approval_configuration": "NOT_OBSERVED"
+  },
+  "attempt": {
+    "failure_class": "supported_install_timeout",
+    "reported_error_type": "ValueError",
+    "timeout_seconds": 600,
+    "exit_code": 124,
+    "last_stdout_line": "[>] Resolving ScholarWorkflow/base-skills...",
+    "stderr_empty": true,
+    "raw_evidence_alias": "$PC68_R34_RUN01_RAW",
+    "preflight_result_sha256": "bc518267138619ad3c6436f87b067568fb3457bb35992a3f6486c44aeffe4333",
+    "install_stdout_sha256": "a43bebfa038fcb04c2547bb13efd9bdd741e35ba7a865d00ed05ed3eefc7735b",
+    "install_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "install_exit_code_file_sha256": "ca2ebdf97d7469496b1f4b78958f9dc8447efdcb623953fee7b6996b762f6fff",
+    "service_before_sha256": "526477c568445e86d08a6c2f7a98d75a01df37becfc3cf2a60bdc87da1c1da34"
+  },
+  "preflight_attempt_sources_sha256": {
+    "preflight_issue68_transfer_location_eval_r33.py": "23ddfaf36f835b6d022b2bcc991b00da7e9cd78df08da222ad530d539efcadc7",
+    "build_issue68_codex_request_r12.py": "b4b21024c5e25d0d51fa8d920187a02233f6d959ee4d3f5f5eda77600c2dbd3d",
+    "run_issue68_stage5_routing_r19_codex.py": "f45114df5c6807b913afa7fc7688314989cb3fc52ec881cedc770dbfb3e5fa60",
+    "issue68_lifecycle.py": "f9fc8b13f26b2826127aaa371eaf6b93479cba279c2e7b4f929b487a2bb8329e",
+    "issue68_transfer_location.py": "62de870ac12ad727bb9d65221a1aac918a68bd4bbe94bb9acb421872c19b913e",
+    "issue68_eval_service_isolation_r14.py": "831a58ce1bf16bab8455dfa63d8d9c8ee9bc5102b89cd04653ee2c7e5ef4d1b3"
+  },
+  "final_candidate_sources_sha256": {
+    "preflight_issue68_transfer_location_eval_r33.py": "b7c285a0e3a21e11a2bb0e54eab4a6e263cad34a4cbd21fd28cda809df1a1889",
+    "run_issue68_stage5_routing_r19_codex.py": "67c7f8aaf74ab6137d260073a43bd9bca7561e85ee122712d6ad8790b22d304c",
+    "issue68-runtime-evidence-contract-r19.json": "b853ff0791078576d4464f026db003a232c487a1f6c770e229a417efcfc7a9a8",
+    "test_issue68_transfer_location_eval_r33.py": "f9774d6933454224b945775729286cb6d9db8417e95c3a8285fd716607dff4b9",
+    "test_issue68_runtime_r19.py": "13b85d36a0ab2349576fe744c853ddd2de996741295ce64a6778a2cdcf6d01ae",
+    "run_issue68_stage5_routing_r19.py": "075b39ba9dded5f0e868a2772b1df9db7e486b1aac89fd16ee989c13f7689cdd",
+    "issue68-test-plan.md": "7fd0eaaf5102f88085b9c39ec947d36769fee5c84181c368af140f208d0f31a5"
+  },
+  "source_revision_note": "安装超时发生在最终候选补入命令行拒绝选项及正式响应审批配置门之前；安装未完成，未现场执行请求构造或发送。以下定向测试绑定最终候选摘要。",
+  "validation": {
+    "focused_transfer_preflight_tests": {
+      "command": "uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_transfer_location_eval_r33.py",
+      "count": 31,
+      "result": "PASS",
+      "test_source_sha256": "f9774d6933454224b945775729286cb6d9db8417e95c3a8285fd716607dff4b9",
+      "implementation_source_sha256": "b7c285a0e3a21e11a2bb0e54eab4a6e263cad34a4cbd21fd28cda809df1a1889"
+    },
+    "runtime_entry_tests": {
+      "command": "uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_runtime_r19.py",
+      "count": 59,
+      "result": "PASS",
+      "test_source_sha256": "13b85d36a0ab2349576fe744c853ddd2de996741295ce64a6778a2cdcf6d01ae",
+      "implementation_source_sha256": "67c7f8aaf74ab6137d260073a43bd9bca7561e85ee122712d6ad8790b22d304c"
+    },
+    "shared_config_helper_tests": {
+      "command": "uv run --no-project python -m unittest tests/test_prepare_codex_project_config.py",
+      "count": 8,
+      "result": "PASS",
+      "shared_assets_sha": "d160ecb403c0f9e9c153f4b8383302a4b67664ab",
+      "helper_source_sha256": "4bd798a8c29ae93e1c65a261d85b21302422a4a7b0089ec6c62a974d5b6f9032"
+    }
+  },
+  "limitations": [
+    "The supported installation did not finish; the project configuration helper was not run.",
+    "No evaluation request or formal business run was sent.",
+    "The effective approval policy and reviewer remain unobserved; this record does not satisfy the second gate."
+  ]
+}

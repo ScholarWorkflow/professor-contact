@@ -1,0 +1,99 @@
+{
+  "schema": "issue68-r31-install-trust-retry-v1",
+  "execution_kind": "installation_preflight",
+  "trigger": "用户明确要求重试安装",
+  "producer_sha": "b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+  "started_utc": "2026-10-06T18:44:17Z",
+  "elapsed_seconds": 24.124,
+  "install_exit_code": 1,
+  "terminal_state": "failure",
+  "formal_run_allowed": false,
+  "formal_case_started": false,
+  "second_gate_status": "INCOMPLETE",
+  "temporary_scope_coverage": "UNCONFIRMED",
+  "history_preserved": [
+    "issue68-r31-environment-precheck.json",
+    "issue68-r31-install-retry-20261007.json"
+  ],
+  "environment_changes": {
+    "REQUESTS_CA_BUNDLE": "/etc/ssl/cert.pem"
+  },
+  "environment_scope": "installation_child_process_only",
+  "ca_file": {
+    "path": "/etc/ssl/cert.pem",
+    "sha256": "9dae8d76e55cb08991f2b672d58999ea15560d910759c16b544f843bdffbb994"
+  },
+  "network_diagnostic": {
+    "argv": [
+      "curl",
+      "-vI",
+      "--max-time",
+      "20",
+      "https://api.github.com"
+    ],
+    "exit_code": 0,
+    "ca_file": "/etc/ssl/cert.pem",
+    "tls_verification": "OK",
+    "issuer": "Sectigo Public Server Authentication CA DV E36",
+    "http_status": 200,
+    "log_sha256": "f888995c4abb651b88ec6530a2036690b0fefd7c72a0c19e674b17ebeac6d7bf"
+  },
+  "attempts": [
+    {
+      "argv": [
+        "apm",
+        "install",
+        "https://github.com/ScholarWorkflow/professor-contact.git#b39a4252e3ce473f8cdeedd2e12b0cf86d6f597d",
+        "--target",
+        "codex",
+        "--trust-transitive-mcp"
+      ],
+      "cwd": "/private/tmp/pc68-r31-install-retry-20261007-02/consumer",
+      "timeout_seconds": 600,
+      "environment_changes": {
+        "REQUESTS_CA_BUNDLE": "/etc/ssl/cert.pem"
+      },
+      "exit_code": 1,
+      "stdout": "/private/tmp/pc68-r31-install-retry-20261007-02/install/apm-install.stdout.txt",
+      "stderr": "/private/tmp/pc68-r31-install-retry-20261007-02/install/apm-install.stderr.txt"
+    }
+  ],
+  "runtime_sources_sha256": {
+    "run_issue68_stage5_routing.py": "9349b50c01ef430328285c0d5534be85dc94ead137bba5668e5a65388af049fc",
+    "run_issue68_stage5_routing_r19_codex.py": "ebf9d866a4ca7c5a7392fbbb0b93d8e07fcf30b176d3badb26f44f6070fd962a"
+  },
+  "installation_verification": "NOT_ATTEMPTED",
+  "stdout_sha256": "0d5b26b75a70a09c3df461a09e7dd0af4ba682c9d5bfd176128b38755919269c",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "failure_classification": "ENVIRONMENT_GIT_TLS_UNEXPECTED_EOF",
+  "failure_reason": "Certificate bundle permitted APM resolution and package integration, but Git HTTPS cloning of pdf-processing-core and knowledge-tools failed with TLS unexpected EOF; transaction was not committed.",
+  "failed_dependencies": [
+    "ScholarWorkflow/pdf-processing-core",
+    "ScholarWorkflow/knowledge-tools"
+  ],
+  "installation_transaction_committed": false,
+  "launcher_attempts": [
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--no-project",
+        "python",
+        ".tmp_scripts/1007_install_trust_retry_r31.py"
+      ],
+      "exit_code": 2,
+      "installation_started": false,
+      "reason": "uv default cache access denied"
+    },
+    {
+      "environment_changes": {
+        "UV_CACHE_DIR": "/private/tmp/pc68-r31-install-trust-uv-cache"
+      },
+      "exit_code": 1,
+      "installation_started": true
+    }
+  ],
+  "historical_timeout_cause": "NOT_PROVEN_BY_THIS_ATTEMPT",
+  "tls_validation_disabled": false,
+  "protocol_fallback_enabled": false
+}

@@ -1,0 +1,128 @@
+{
+  "schema": "issue-68-transfer-location-preflight-summary-r32",
+  "execution_kind": "synthetic_local_preflight",
+  "state": "PRECHECK_CASES_MATCHED",
+  "plan_revision": "issue-68-test-plan-r27-2026-10-07",
+  "output_directory": "$PC68_LOCATION_PREFLIGHT_ROOT",
+  "synthetic_workspace": "$PC68_LOCATION_PREFLIGHT_ROOT-synthetic-workspace",
+  "filesystem_actions": "real local synthetic writes, reads, and removals",
+  "runtime_thread_agent_events": "synthetic records; not formal runtime evidence",
+  "eval_service_called": false,
+  "formal_PC68_R1_started": false,
+  "source_sha256": {
+    "lifecycle": "f9fc8b13f26b2826127aaa371eaf6b93479cba279c2e7b4f929b487a2bb8329e",
+    "transfer_location": "62de870ac12ad727bb9d65221a1aac918a68bd4bbe94bb9acb421872c19b913e",
+    "preflight": "b6d513b4e13ba9701045e95cf4371dc563b34ad41ef3afda679a8412890af739",
+    "runner": "93e4a30c23d4de374142bb1a5b908837bbb703dd7a7f3ba501672851a24e5481",
+    "test_issue68_transfer_location.py": "ddd8b2449e24eff8ffc6718faa812dcb648128c0ab89bb8dcf79f88de3d3c790"
+  },
+  "cases": [
+    {
+      "scenario": "success",
+      "verdict": "PASS",
+      "reason_code": "request_lifecycle_and_state_preservation_proven",
+      "expected_match": true
+    },
+    {
+      "scenario": "valid_remnant",
+      "verdict": "FAIL_PRODUCT",
+      "reason_code": "request_transfer_file_remains",
+      "expected_match": true
+    },
+    {
+      "scenario": "protected_data_changed",
+      "verdict": "FAIL_PRODUCT",
+      "reason_code": "other_request_file_changed_or_deleted",
+      "expected_match": true
+    },
+    {
+      "scenario": "wrong_request",
+      "verdict": "INVALID_EVIDENCE",
+      "reason_code": "lifecycle_request_boundary_invalid",
+      "expected_match": true
+    },
+    {
+      "scenario": "omitted_scan",
+      "verdict": "BLOCKED_OBSERVABILITY",
+      "reason_code": "transfer_path_outside_observation_scope",
+      "expected_match": true
+    },
+    {
+      "scenario": "missing_use",
+      "verdict": "BLOCKED_OBSERVABILITY",
+      "reason_code": "transfer_creation_and_cleanup_unobservable",
+      "expected_match": true
+    },
+    {
+      "scenario": "outside_scope",
+      "verdict": "BLOCKED_OBSERVABILITY",
+      "reason_code": "transfer_path_outside_observation_scope",
+      "expected_match": true
+    }
+  ],
+  "uncompleted": [
+    "formal_PC68_R1_execution",
+    "Gate_2_approval"
+  ],
+  "command_template": "UV_CACHE_DIR=\"$PC68_UV_CACHE\" uv run --no-project python .apm/skills/professor-contact/tests/runtime/preflight_issue68_transfer_location_r32.py \"$PC68_LOCATION_PREFLIGHT_ROOT\"",
+  "exit_code": 0,
+  "transfer_location_preflight_state": "TRANSFER_LOCATION_PREFLIGHT_READY",
+  "formal_case_started": false,
+  "source_bindings": {
+    "tests/runtime/issue68_lifecycle.py": "f9fc8b13f26b2826127aaa371eaf6b93479cba279c2e7b4f929b487a2bb8329e",
+    "tests/runtime/issue68_transfer_location.py": "62de870ac12ad727bb9d65221a1aac918a68bd4bbe94bb9acb421872c19b913e",
+    "tests/runtime/run_issue68_stage5_routing_r19_codex.py": "93e4a30c23d4de374142bb1a5b908837bbb703dd7a7f3ba501672851a24e5481",
+    "tests/runtime/preflight_issue68_transfer_location_r32.py": "b6d513b4e13ba9701045e95cf4371dc563b34ad41ef3afda679a8412890af739",
+    "tests/test_issue68_transfer_location.py": "ddd8b2449e24eff8ffc6718faa812dcb648128c0ab89bb8dcf79f88de3d3c790"
+  },
+  "test_runs": [
+    {
+      "suite": "issue68_transfer_location",
+      "command": "UV_CACHE_DIR=\"$PC68_UV_CACHE\" uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_transfer_location.py",
+      "exit_code": 0,
+      "tests": 11
+    },
+    {
+      "suite": "issue68_runtime_r19",
+      "command": "UV_CACHE_DIR=\"$PC68_UV_CACHE\" uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_runtime_r19.py",
+      "exit_code": 0,
+      "tests": 56
+    },
+    {
+      "suite": "issue68_lifecycle",
+      "command": "UV_CACHE_DIR=\"$PC68_UV_CACHE\" uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_lifecycle*.py",
+      "exit_code": 0,
+      "tests": 70
+    },
+    {
+      "suite": "issue68_runtime_recipe",
+      "command": "UV_CACHE_DIR=\"$PC68_UV_CACHE\" uv run --no-project python -m unittest discover -s .apm/skills/professor-contact/tests -p test_issue68_runtime_recipe.py",
+      "exit_code": 0,
+      "tests": 11
+    }
+  ],
+  "path_redactions": [
+    "PC68_UV_CACHE",
+    "PC68_LOCATION_PREFLIGHT_ROOT",
+    "合成工作目录"
+  ],
+  "success_observation": {
+    "location": "$PC68_LOCATION_PREFLIGHT_ROOT-synthetic-workspace/success/selected-transfer",
+    "before_complete": true,
+    "before_entries": {},
+    "after_complete": true,
+    "after_entries": {},
+    "same_root_and_snapshot": true,
+    "same_request": true,
+    "write_count": 3,
+    "removal_count": 3,
+    "actual_read": {
+      "operation": "real_local_synthetic_read",
+      "relative_path": "synthetic-handoff.json",
+      "sha256": "866c1bbb6446c9cf5d47bdcf6dd043cf3d75f31767527d120124c0f80fbaeb9d",
+      "size": 516,
+      "in_declared_root": true,
+      "same_parsed_object": true
+    }
+  }
+}
