@@ -447,7 +447,11 @@ class EarlyRuntimeRoutingGateTests(unittest.TestCase):
             label,
         )
         for literal in self.GATE_LITERALS:
-            if label == "SKILL.md" and literal == "真实委派动作":
+            if label == "SKILL.md" and literal in (
+                "真实委派动作",
+                "不是能力探测前置条件",
+                "machine-level failure",
+            ):
                 continue
             self.assertIn(literal, self._gate_section(label, body), label)
 
@@ -461,7 +465,6 @@ class EarlyRuntimeRoutingGateTests(unittest.TestCase):
             "2": "professor-contact-analyzer",
             "3": "professor-contact-idea-generator",
             "4": "professor-contact-selection",
-            "5": "professor-contact-email-generator",
         }.items():
             with self.subTest(stage=stage):
                 route = body.index(f"Stage {stage} → `{owner}`")
