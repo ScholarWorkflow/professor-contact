@@ -79,6 +79,40 @@ class TestStage5ImmutableTemplates(BaseEnv):
         self.assertIn("过稿: humanizer-ja(dynamic-fields-only)", md)
         self.assertNotIn("过稿: humanizer-ja(business)", md)
 
+    def test_documented_templates_save_both_drafts_without_instructions(self):
+        g1 = self.prepare()
+        choices = {**self.choices(), "initial_sent_date": "2026年10月1日"}
+        raw, choice = self.write_inputs(g1, choices)
+        template = self.root / "documented-template.md"
+        followup = self.root / "documented-followup.md"
+        template.write_text(
+            "# 套磁模板\n\n> 使用 {{}} 填写。\n\n```text\n"
+            "{{大学}}／{{研究科}}／{{先生名}}先生\n{{出身校}}出身の{{氏名}}です。\n"
+            "{{入学年度}} {{入学月}} {{専攻}} {{学位}}\n{{兴趣段}}\n"
+            "{{未来志向}}\n{{学習中}}\n{{志望}}\n```\n\n## 使用说明\n{{示例}}\n",
+            encoding="utf-8")
+        followup.write_text(
+            "# 跟进模板\n\n说明使用 {{}}。\n\n## 邮件正文\n\n"
+            "{{先生名}}先生\n{{大学}} {{研究科}} {{学位}}\n"
+            "{{出身校}}出身の{{氏名}}です。\n{{初回送信日}}\n"
+            "{{研究主题}}\n{{メールアドレス}}\n\n## 使用说明\n{{示例}}\n",
+            encoding="utf-8")
+        original = {path: path.read_bytes() for path in (template, followup)}
+        result = run_wrapper(
+            "stage5-finalize", "--program-root", self.root, "--email-pack", self.email_pack,
+            "--mode", "both", "--result", raw, "--choices", choice,
+            "--template", template, "--followup-template", followup)
+        out = parse(result)
+        self.assertEqual(result.returncode, 0, out)
+        self.assertEqual(out["status"], "ok", out)
+        for name in ("套磁邮件.txt", "套磁跟进邮件.txt"):
+            body = (self.prof_dir / name).read_text(encoding="utf-8")
+            self.assertIn("総合大学出身の試験 太郎です。", body)
+            for unwanted in ("出身出身", "{{", "使用说明", "```", "# 套磁", "# 跟进"):
+                self.assertNotIn(unwanted, body)
+        for path, contents in original.items():
+            self.assertEqual(path.read_bytes(), contents)
+
     def test_full_body_humanized_argument_is_ignored(self):
         g1 = self.prepare()
         raw, choice = self.write_inputs(g1)
