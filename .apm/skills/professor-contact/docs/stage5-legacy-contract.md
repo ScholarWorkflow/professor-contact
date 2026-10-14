@@ -109,8 +109,32 @@ If `folder_path` missing → return the error JSON.
 对本次要生成的每位教授执行。产出两级东西：①教授级缓存 `<教授研究>/<分类>/<教授名>/_contact_verify.json` ②每封 套磁邮件.md 头部的「送信前核对」表（Step 7 写盘时内嵌）。**本步不产生任何模型创作内容、不改邮件文本**——只把「这封信发给谁、参加冬入/该专攻的依据是什么」钉在纸面上。8 个固定项目，每项给三级结论 `confirmed` / `not_found(⚠)` / `unverified` ＋来源。
 
 #### 0) 缓存命中检查
-- `read("<教授研究>/<分类>/<教授名>/_contact_verify.json")`。命中且未失效 → 直接复用各 verdict 跳到第 8) 步组装核对表。失效条件（任一触发即全量重核）：`source_fingerprints` 与当前 info.json / boshu_analysis.json 的 path:mtime 不一致；`verified_at` 距今 >30 天。
-- 核验是**教授级**的：同一教授多封邮件共享一份缓存与核验结果，但每封 md 各自内嵌完整核对表。
+- 以首次不带 `--result`、`--choices` 的 `stage5-plan` 结果为准；顶层 `status: ok` 不表示核验通过。按本次被选教授读取 `verify`、`verify_diagnostics` 和 `verify_write_hints`：`verify: ok` 才可复用缓存并继续；`needs_recheck:<reason>` 才进入本节的真实重核。
+- `verify_write_hints[教授名].source_fingerprints.info_json` 与 `.boshu_analysis` 是 runner 按实际源文件路径和整数 Unix 秒生成的完整规范值，`verified_at_format` 固定为 `%Y-%m-%dT%H:%M:%SZ`。只能照抄本次 plan 的提示；不得自行拼路径、计算 `mtime`、改写格式或用 `:missing` 代替缺失源。若 `verify_write_hints[教授名]` 整体为 `null`，表示至少一个源不可用，不得写缓存；首次 plan 即停止该教授并返回 `needs_refresh`。已有缓存时保留 `missing_source` 诊断；无缓存时保留 runner 原有的 `missing` 优先顺序。不做注定失败的重核。
+- `verify_diagnostics[教授名]` 给出原始 `reason`、首个失败的 `failed_field` 和 `diagnostic_kind`。完成真实重核后，须重写完整教授级缓存并用同一 `email_pack` 和可选 `--email-id` 重跑初始 plan；只有新的 `verify: ok` 才能继续。`verified_at` 必须在本次事实核验完成后生成，不能只刷新旧时间或指纹。
+- 初始 plan 新增字段的形状如下；示例字符串只说明结构，真实指纹必须照抄当前教授的提示。源不可用时，`verify_write_hints[教授名]` 为 `null`，不输出半份提示：
+```json
+{
+  "verify_write_hints": {
+    "<教授名>": {
+      "source_fingerprints": {
+        "info_json": "<实际源文件路径>:<整数 Unix 秒>",
+        "boshu_analysis": "<实际源文件路径>:<整数 Unix 秒>"
+      },
+      "verified_at_format": "%Y-%m-%dT%H:%M:%SZ"
+    }
+  },
+  "verify_diagnostics": {
+    "<教授名>": {
+      "reason": "<原有 reason 或 null>",
+      "failed_field": "<首个失败字段或 null>",
+      "diagnostic_kind": "<分类或 null>"
+    }
+  }
+}
+```
+- 核验缓存仍受 30 天有效期限制；任一源指纹不匹配或时间超过 30 天都必须重新核验。核验是**教授级**的：同一教授多封邮件共享一份缓存与核验结果，但每封 md 各自内嵌完整核对表。
+- 在本次教授调用内记录已处理失败标识：`(professor_dir, reason, failed_field, info_json 当前规范指纹或 null, boshu_analysis 当前规范指纹或 null)`。完整重核并重跑初始 plan 后，若该标识与本轮已处理过的任一标识相同，立即停止该教授；这样源指纹在两种状态间来回变化时也会停下。只返回现有合法终态：源或证据不可用用 `needs_refresh`，缺少用户确认用 `needs_input`；结果中带上最新 `reason`、字段和简短阻塞说明。不得再次写入相同输入的缓存，也不得继续网页核验、生成模型结果或提交邮件。标识变化时按新失败的既有修复方式处理。
 
 #### 1) 教员在册判定（roster）
 - 检索范围：程序根下**全部要项相关 extraction 文本**——`find <program_root> -path "*extraction*" -name "text.md"`（募集要項全文＋学域指南/别册都要扫；有的学校教员一览在单独 PDF 里）。
@@ -147,11 +171,14 @@ If `folder_path` missing → return the error JSON.
    - **本项写下的 `items.email.value` 是整条流程唯一的收件人权威**（送信时点）。调用方在 `choices.email_address` 里给出的地址只能**确认**它：一致（忽略大小写）才继续，不一致 → `recipient_conflict`；缓存还没有已核验地址时给出地址 → 同样 `recipient_conflict`，必须回到本第 7) 步把用户答复写成 `verdict: confirmed` + `source: user_provided` 再重跑。任何分支都不会拿 choices 里的地址去覆盖渲染出的收件邮箱，也不存在第二份收件人权威。
 
 #### 8) 写缓存 + 组装核对表
-- 重写 `_contact_verify.json`：
+- 完成全部必需项目的实际核验后，重写 `_contact_verify.json`。两个 `source_fingerprints` 字符串只能原样抄自本次 `verify_write_hints[教授名].source_fingerprints`；`null` 提示表示源不可用，禁止写缓存并按上方停止规则处理。核验完成后将当前 UTC 时间写入 `verified_at`，格式必须与提示中的 `verified_at_format` 完全一致（秒精度、字面量 `Z`）；示例值为 `2026-10-14T07:20:00Z`。不得仅修改旧缓存的时间或指纹来续期：
 ```json
 {
-  "professor": "<kanji 名>", "category": "<分类>", "verified_at": "<ISO-8601 UTC>",
-  "source_fingerprints": {"info_json": "<path:mtime>", "boshu_analysis": "<path:mtime>"},
+  "professor": "<kanji 名>", "category": "<分类>", "verified_at": "2026-10-14T07:20:00Z",
+  "source_fingerprints": {
+    "info_json": "<本次提示的实际源文件路径>:<整数 Unix 秒>",
+    "boshu_analysis": "<本次提示的实际源文件路径>:<整数 Unix 秒>"
+  },
   "items": {
     "email":         {"verdict": "confirmed", "value": "", "sources": [{"level": 1, "url": "", "note": ""}]},
     "roster":        {"verdict": "confirmed", "value": "<学域>/<分野>/<职衔> @要项P.<n>", "sources": []},
