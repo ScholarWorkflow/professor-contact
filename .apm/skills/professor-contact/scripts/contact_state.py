@@ -124,6 +124,7 @@ PROFILE_INPUT_CHARS = 2000
 INTEREST_HARD_CAP = 200
 INTEREST_SOFT_CAP = 180
 VERIFY_TTL_DAYS = 30
+VERIFY_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 CLOSING_RE = re.compile(r"^このような.+は、まだ数多く存在すると感じております。$")
 BATCH_RE = re.compile(r"(冬季|夏季|[123]次募集|海外特別入試)")
 EXT_EVIDENCE_RE = re.compile(
@@ -137,7 +138,7 @@ DEFAULT_FOLLOWUP_TEMPLATE = None
 
 
 def now_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).strftime(VERIFY_TIMESTAMP_FORMAT)
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -8808,7 +8809,49 @@ def email_item_is_evidence_seeded(items: dict) -> bool:
         for source in sources)
 
 
-def verify_state(professor_dir: Path, sources: dict, decision: dict | None = None) -> dict:
+def current_source_fingerprints(sources: dict) -> dict:
+    """Return the current canonical fingerprints, or the first unavailable field."""
+    fingerprints = {}
+    for field, source_key in (("info_json", "info_path"),
+                              ("boshu_analysis", "boshu_path")):
+        source_path = sources.get(source_key)
+        if not isinstance(source_path, str) or not source_path:
+            return {"source_fingerprints": fingerprints,
+                    "failed_field": f"source_fingerprints.{field}"}
+        try:
+            mtime = int(Path(source_path).stat().st_mtime)
+        except (OSError, ValueError, TypeError, OverflowError):
+            return {"source_fingerprints": fingerprints,
+                    "failed_field": f"source_fingerprints.{field}"}
+        fingerprints[field] = f"{source_path}:{mtime}"
+    return {"source_fingerprints": fingerprints, "failed_field": None}
+
+
+def _fingerprint_failure_kind(recorded: Any, source_path: str) -> str:
+    """Distinguish an incompatible representation from a changed mtime."""
+    if not isinstance(recorded, str):
+        return "format_incompatible"
+    prefix = f"{source_path}:"
+    if not recorded.startswith(prefix):
+        return "format_incompatible"
+    raw_mtime = recorded[len(prefix):]
+    try:
+        parsed_mtime = int(raw_mtime)
+    except (ValueError, OverflowError):
+        return "format_incompatible"
+    if str(parsed_mtime) != raw_mtime:
+        return "format_incompatible"
+    return "recorded_mtime_mismatch"
+
+
+def _verify_diagnostic_failure(path: Path, data: Any, reason: str,
+                               failed_field: str, diagnostic_kind: str) -> dict:
+    return {"ok": False, "reason": reason, "path": str(path), "data": data,
+            "failed_field": failed_field, "diagnostic_kind": diagnostic_kind}
+
+
+def verify_state(professor_dir: Path, sources: dict, decision: dict | None = None,
+                 fingerprint_state: dict | None = None) -> dict:
     path = professor_dir / VERIFY_FILE
     data, error = read_json_file(path)
     if error:
@@ -8854,29 +8897,33 @@ def verify_state(professor_dir: Path, sources: dict, decision: dict | None = Non
         return {"ok": False, "reason": "invalid_cache", "path": str(path), "data": data}
     if items["email"].get("verdict") == "confirmed" and not str(items["email"].get("value") or "").strip():
         return {"ok": False, "reason": "email_value_missing", "path": str(path), "data": data}
-    fps = data.get("source_fingerprints") or {}
-    info_path = sources.get("info_path")
-    boshu_path = sources.get("boshu_path")
-    if not info_path or not boshu_path:
-        return {"ok": False, "reason": "missing_source", "path": str(path), "data": data}
-    def mtime(p):
-        try:
-            return f"{p}:{int(Path(p).stat().st_mtime)}"
-        except OSError:
-            return f"{p}:missing"
-    if fps.get("info_json") != mtime(info_path):
-        return {"ok": False, "reason": "stale_fingerprint", "path": str(path), "data": data}
-    if fps.get("boshu_analysis") != mtime(boshu_path):
-        return {"ok": False, "reason": "stale_fingerprint", "path": str(path), "data": data}
+    fingerprint_state = fingerprint_state or current_source_fingerprints(sources)
+    if fingerprint_state.get("failed_field"):
+        return _verify_diagnostic_failure(
+            path, data, "missing_source", fingerprint_state["failed_field"],
+            "source_unavailable")
+    current_fingerprints = fingerprint_state["source_fingerprints"]
+    fps = data.get("source_fingerprints")
+    if not isinstance(fps, dict):
+        fps = {}
+    for field, source_key in (("info_json", "info_path"),
+                              ("boshu_analysis", "boshu_path")):
+        if fps.get(field) == current_fingerprints[field]:
+            continue
+        return _verify_diagnostic_failure(
+            path, data, "stale_fingerprint", f"source_fingerprints.{field}",
+            _fingerprint_failure_kind(fps.get(field), sources[source_key]))
     verified_at = data.get("verified_at") or ""
     try:
         if not isinstance(verified_at, str):
             raise ValueError("verified_at must be a string")
-        then = datetime.strptime(verified_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        then = datetime.strptime(verified_at, VERIFY_TIMESTAMP_FORMAT).replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) - then > timedelta(days=VERIFY_TTL_DAYS):
-            return {"ok": False, "reason": "expired", "path": str(path), "data": data}
+            return _verify_diagnostic_failure(
+                path, data, "expired", "verified_at", "age_expired")
     except ValueError:
-        return {"ok": False, "reason": "bad_timestamp", "path": str(path), "data": data}
+        return _verify_diagnostic_failure(
+            path, data, "bad_timestamp", "verified_at", "format_incompatible")
     return {"ok": True, "reason": None, "path": str(path), "data": data}
 
 
@@ -9366,13 +9413,17 @@ def cmd_stage5_plan(args) -> None:
         program_root, list(dict.fromkeys(
             e.get("professor") for e in emails if e.get("professor"))))
     decisions = contact_evidence_decisions(emails, resolved_evidence)
+    initial_read_only_plan = not getattr(args, "result", None) and \
+        not getattr(args, "choices", None)
+    fingerprint_state = (current_source_fingerprints(sources)
+                         if initial_read_only_plan else None)
     verify_checks = {}
     for email in emails:
         professor_dir = Path(email.get("professor_dir") or program_root)
         key = email.get("professor")
         if key in verify_checks:
             continue
-        check = verify_state(professor_dir, sources, decisions.get(key))
+        check = verify_state(professor_dir, sources, decisions.get(key), fingerprint_state)
         decision = decisions.get(key)
         if check["ok"] and decision is not None and \
                 decision.get("status") == "needs_refresh":
@@ -9434,7 +9485,7 @@ def cmd_stage5_plan(args) -> None:
                         "future_aspiration": "宽泛方向表述+背景技能，禁具体技术栈，不用其他方向原句",
                         "learning": "2-3 个名词短语候选，贴近 profile 真实知识储备，交用户挑选",
                         "source_map": "每句必须给来源；③只能用 gap:<id>；④只能 template；所有 source_ids ⊆ allowed_sources"}}})
-        emit({
+        payload = {
             "status": "ok", "email_pack": str(pack_path),
             "emails": [e.get("email_id") for e in emails],
             "verify": {p: ("ok" if v["ok"] else f"needs_recheck:{v['reason']}")
@@ -9446,7 +9497,25 @@ def cmd_stage5_plan(args) -> None:
             "followup_template": (find_followup_template_path(
                 program_root, getattr(args, "followup_template", None)) or "embedded"),
             "jobs": jobs,
-        })
+        }
+        if initial_read_only_plan:
+            fingerprints = fingerprint_state["source_fingerprints"]
+            hint = None if fingerprint_state["failed_field"] else {
+                "source_fingerprints": fingerprints,
+                "verified_at_format": VERIFY_TIMESTAMP_FORMAT,
+            }
+            payload["verify_write_hints"] = {
+                professor: hint for professor in verify_checks
+            }
+            payload["verify_diagnostics"] = {
+                professor: {
+                    "reason": check.get("reason"),
+                    "failed_field": check.get("failed_field"),
+                    "diagnostic_kind": check.get("diagnostic_kind"),
+                }
+                for professor, check in verify_checks.items()
+            }
+        emit(payload)
         return
     result_path = Path(args.result)
     results, rerror = read_json_file(result_path)
