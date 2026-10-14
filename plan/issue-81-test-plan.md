@@ -4,7 +4,7 @@
 
 - Requirement revision：第 81 号议题，2026-10-14 原始需求，https://github.com/ScholarWorkflow/professor-contact/issues/81。
 - Implementation Plan：`issue-81-plan-r2-2026-10-14`，见 [issue-81-implementation-plan.md](issue-81-implementation-plan.md)。
-- Test Plan revision：`issue-81-test-r7-2026-10-14`；唯一正式测试计划。
+- Test Plan revision：`issue-81-test-r8-2026-10-14`；唯一正式测试计划。
 - 目标仓库基线：`3f66656c4e82c9f0235b6dd0937ae5b2333c48f9`；未来实际被测产品版本以实施后的精确提交为准，须在执行记录中注明。
 - 本次开始时拉取请求头提交 `28cc98f6272702ed0c14e08a2706f2472101e141` 只含计划文档；产品实现提交尚未提供。本次仅补测试资产，正式测试前仍须在干净生产者工作树记录实现后的产品提交，并确认 A—C 测试和 D 消费者均使用该提交。
 - D 使用的合成夹具固定为 `RekiDunois/skills-test-fixtures` 提交 `fa3a03ed66be22e7191264462716e046c8b18e72`，Codex 配置文件为 `configs/codex-consumer.toml`；精确版本与配置摘要须随执行记录保存。
@@ -109,7 +109,7 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 7. **D 正式请求**：正式请求提示固定写入 `$PC81_RUN_ROOT/prompt.txt`，不改写其中的路径：
 
    ```text
-   请使用已安装的 professor-contact 工作流，对程序目录 <PC81_PROGRAM_ROOT> 下唯一的合成邮件包 <PC81_EMAIL_PACK> 执行阶段 5 首封邮件模式，模板路径为 <PC81_TEMPLATE>。按正常阶段 5 根代理流程，通过 Codex 原生委派处理这一位教授。没有提供用户选择，不得编造。不要创建或恢复上游源文件；遵循已安装工作流的停止规则，并报告教授代理的实际结果。
+   请使用已安装的 professor-contact 工作流，对程序目录 <PC81_PROGRAM_ROOT> 中的教授邮件包 <PC81_EMAIL_PACK> 使用模板 <PC81_TEMPLATE> 执行阶段 5 首封邮件模式。本次未提供用户选择。
    ```
 
    将上文三个占位符替换为该次绝对路径并保存为 `$PC81_RUN_ROOT/prompt.txt`。以下命令通过标准库 `shlex.join` 构造评估请求；`command` 只包含 `codex exec` 后的参数，`timeout` 固定为 900 秒：
@@ -222,4 +222,4 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 - 不跑全部阶段 0—5、全部浏览器/模型供应商、全部教授及所有邮箱证据分支。
 - 不修改产品保护或用户数据来让 D 获得通过结果。
 
-**r7 相对 r6 保持 A—D 业务目标不变，记录并清理评估环境包装命令失败的分支。第二关仍待审核；未获批准的额外测试不得进入必测清单。**
+**r8 相对 r7 保持 A—D 业务目标不变，将 D 请求提示限定为输入事实和任务描述。第二关待复审；未获批准的额外测试不得进入必测清单。**
