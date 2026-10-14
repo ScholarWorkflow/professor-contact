@@ -9673,7 +9673,7 @@ def validate_email_raw(email: dict, raw: Any) -> list:
 # Issue #43 freezes the caller-facing choices contract, but does not redefine
 # pre-existing runner-internal compatibility fields. Keep renderer defaults
 # here; public caller declarations are owned by the Stage-5 docs/projections.
-DEFAULT_ALMA_MATER = "総合大学出身"
+DEFAULT_ALMA_MATER = "総合大学"
 
 def require_user_choices(email_id: str, choices: Any) -> dict:
     if not isinstance(choices, dict):
@@ -9788,6 +9788,56 @@ def humanized_paths(args, emails: list[dict], exact: bool = True) -> dict[str, P
     return paths
 
 
+def email_template_body(template_text: str) -> str:
+    """Select the email body without copying Markdown instructions into mail.
+
+    Plain templates are unchanged. Markdown templates may delimit the body
+    with a body heading or a single text fence; trailing instruction sections
+    are document metadata. Never guess between multiple body sections/blocks.
+    """
+    fences = []
+    headings = []
+    opened = None
+    offset = 0
+    for line in template_text.splitlines(keepends=True):
+        marker = re.fullmatch(r" {0,3}(`{3,}|~{3,})([^\r\n]*)\r?\n?", line)
+        if opened:
+            start, content_start, delimiter = opened
+            if (marker and marker[1][0] == delimiter[0]
+                    and len(marker[1]) >= len(delimiter) and not marker[2].strip()):
+                fences.append((start, offset + len(line), content_start, offset))
+                opened = None
+        elif marker:
+            opened = (offset, offset + len(line), marker[1])
+        else:
+            heading = re.fullmatch(r"(#{1,6})[ \t]+([^\r\n]+)\r?\n?", line)
+            if heading:
+                headings.append((offset, offset + len(line), len(heading[1]),
+                                 heading[2].strip().rstrip("# ：:")))
+        offset += len(line)
+    if opened:
+        fail("template_error", "unclosed email template code fence")
+
+    body_names = {"正文", "邮件正文", "本文", "メール本文"}
+    note_names = {"说明", "模板说明", "使用说明", "占位符说明", "注意事项"}
+    sections = [row for row in headings if row[3] in body_names]
+    if len(sections) > 1:
+        fail("template_error", "multiple email body sections; keep one body section")
+    start, end = 0, len(template_text)
+    if sections:
+        _, start, level, _ = sections[0]
+        end = next((row[0] for row in headings if row[0] >= start and row[2] <= level), end)
+    else:
+        end = next((row[0] for row in headings if row[3] in note_names), end)
+    blocks = [row for row in fences if start <= row[0] and row[1] <= end]
+    if len(blocks) > 1:
+        fail("template_error", "multiple email body code blocks; use a body heading to select one")
+    if blocks:
+        return template_text[blocks[0][2]:blocks[0][3]]
+    body = template_text[start:end]
+    return body.strip("\r\n") + "\n" if sections or end < len(template_text) else body
+
+
 def assemble_draft(email: dict, raw: dict, choices: dict,
                    sources: dict, template_text: str) -> tuple[str, list, list]:
     values = header_values(sources, email)
@@ -9801,10 +9851,10 @@ def assemble_draft(email: dict, raw: dict, choices: dict,
     values["未来志向"] = raw.get("future_aspiration_ja") or ""
     subject = choices.get("subject") or subject_line(values)
     values["subject"] = subject
-    body = template_text
+    body = email_template_body(template_text)
     for key, value in values.items():
         body = body.replace("{{" + key + "}}", value or "")
-    leftover = re.findall(r"\{\{[^}]+\}\}", body)
+    leftover = re.findall(r"\{\{[^}]*\}\}", body)
     if leftover:
         fail("template_error", f"unresolved placeholders after fill: {leftover}")
     draft = f"Subject: {subject}\n\n{body}"
@@ -9836,10 +9886,10 @@ def assemble_followup_draft(email: dict, choices: dict, sources: dict,
         email.get("email_id"), choices, verify)
     subject = choices.get("followup_subject") or f"Re: {choices.get('subject') or subject_line(values)}"
     values["subject"] = subject
-    body = template_text
+    body = email_template_body(template_text)
     for key, value in values.items():
         body = body.replace("{{" + key + "}}", value or "")
-    leftover = re.findall(r"\{\{[^}]+\}\}", body)
+    leftover = re.findall(r"\{\{[^}]*\}\}", body)
     if leftover:
         fail("template_error", f"unresolved follow-up placeholders after fill: {leftover}")
     draft = f"Subject: {subject}\n\n{body}"
