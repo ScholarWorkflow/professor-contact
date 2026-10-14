@@ -1850,8 +1850,13 @@ class TestStage5(BaseEnv):
         payload = parse(result)
         self.assertEqual(payload["reason_code"], "template_error")
 
-    def prepare(self):
+    def prepare(self, *, with_contact_evidence=True):
         self.stage3_run()
+        if with_contact_evidence:
+            # Seed the handoff before Stage 4 freezes its contact snapshot.
+            # Pin a per-case checker instead of discovering a real sibling repo.
+            issue59_write_evidence(self.root, {"試験 教授": self.prof_dir})
+            self.checker_marker = install_issue59_checker(self, self.root)
         sel_input = self.root / "sel_input.json"
         sel_input.write_text(json.dumps({"selections": [{
             "professor": "試験 教授", "professor_dir": str(self.prof_dir),

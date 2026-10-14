@@ -83,7 +83,10 @@ else:
 
 
 class TestContactEvidenceLadder(BaseEnv):
-    prepare = helpers.TestStage5.prepare
+    def prepare(self):
+        # This class owns the missing/stale/invalid evidence and checker variants.
+        return helpers.TestStage5.prepare(self, with_contact_evidence=False)
+
     raw_result = helpers.TestStage5.raw_result
     choices = helpers.TestStage5.choices
 
