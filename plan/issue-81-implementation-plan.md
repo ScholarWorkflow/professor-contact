@@ -9,7 +9,7 @@
 - 上游仓库版本：不涉及上游代码修改；不改变 `professor-research` 的联系方式证据格式。
 - Codex 核对来源：[官方 Codex 仓库及说明](https://github.com/openai/codex)、[现有 CLI 参考链接](https://developers.openai.com/codex/cli/reference)（读取时转至通用开发者命令页）；当前问题不涉及 Codex 命令、原生委派、安装方式或工具参数。核对范围仅限这些未变更的调用边界，业务缓存的 JSON 格式以本仓库契约及 runner 为依据，不从 Codex 文档推导。
 - 项目约束：[Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/rekidunois/Plan-Reviewer-Rule-3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253)。
-- Proposed review status: pending。**没有取得 Plan conclusion: APPROVED 前，不实施核心修复**；本文件不自行宣称任何审核或测试通过。
+- Review status: **APPROVED**，以 [正式方案批准记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6164176706) 为准；该批准授权实施计划，不替代测试结果或合并审核。
 - 正式测试设计单独保存在 [issue-81-test-plan.md](issue-81-test-plan.md)，审核、补充执行步骤和测试结果归测试规则管理。
 
 ## 2. 需求、已知事实及边界
@@ -150,8 +150,8 @@ R3. 对相同输入、同一未消除的核验失败，完成修复尝试后若�
 
 - 不知道用户机器上是否确实存在坏缓存；这不是方案的必要前提，真实故障归因不在本次目标内。
 - 仅有 `path:mtime` 无法区分实际文件内容被改动、时间被触碰或历史缓存值写错；本次按既有元数据契约做安全拒绝，不保证识别更细原因。
-- `verify_write_hints` 和 `verify_diagnostics` 是本次提议的新增只读输出，提交前尚无实现与执行结果；属于实施顺序前置条件，不得当作已存在事实。
+- `verify_write_hints` 和 `verify_diagnostics` 已在产品提交 `5412e5385975db2bcc6daf0740e0a2a3cf3d2445` 实现；测试计划记录 A—C 通过、D 无法判断。D 的缺源诊断及停止行为尚无可判断的运行证据，详见 [第三关执行记录](issue-81-test-plan.md#第三关执行记录)。
 - 相对 r1 本次补充的是缺失源的确定行为、状态键中的 `null`、只读输出的 JSON 结构及无法取 `stat()` 时的保守拒绝；未增加必测业务目标或修改两端代理路由。
 - 如实现发现上游路径选择或现有代理结果消费有影响本方案的真实新事实，先暂停对应修改并按 Plan Reviewer Rule 重开受影响决定；未受影响部分继续保留。
 
-**交接标记：实施前待正式计划审核；测试关口与合并关口均未批准。**
+**状态记录：实施计划已正式批准并已执行；测试计划第一、二关通过，第三关 A—C 通过、D 无法判断。测试结论不替代合并审核。**
