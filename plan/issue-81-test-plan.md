@@ -9,6 +9,7 @@
 - 产品实现提交为 `5412e5385975db2bcc6daf0740e0a2a3cf3d2445`。A—C 在该提交的干净生产者工作树执行；D 消费者通过 APM 安装的也是该提交。执行结果和固定版本记录见“第三关执行记录”。
 - D 使用的合成夹具固定为 `RekiDunois/skills-test-fixtures` 提交 `fa3a03ed66be22e7191264462716e046c8b18e72`，Codex 配置文件为 `configs/codex-consumer.toml`；精确版本与配置摘要须随执行记录保存。
 - 环境预检：`uv 0.12.22`、Python `3.14.6`、APM `0.29.0`、Codex CLI `0.162.0-alpha.17.2`、`yq v4.54.1`、`jq-1.8.2`、`direnv 2.37.1`、`curl 8.7.1`。Python 版本由 `UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python --version` 确认；A—D 的 `uv run` 均复用同一离线缓存目录 `/private/tmp/pc81-uv-cache`，不另建空缓存。以上为正式执行前的预检；本轮实际版本与配置摘要见下方记录。
+- 第十版本地测试准备预检（2026-10-14）：上列命令和版本本轮均复核可用，离线 Python 缓存目录存在且 Python `3.14.6` 可启动；`codex exec --help` 显示 `--sandbox <SANDBOX_MODE>`，与步骤 7 的启动参数一致。测试计划、A—C 单元测试模块和 D 夹具准备器均存在；固定夹具提交 `fa3a03ed66be22e7191264462716e046c8b18e72` 中的 `configs/codex-consumer.toml` 包含 `sandbox_mode = "workspace-write"`。评估环境 `.envrc` 与 `EVAL_PORT` 可用（本轮未连接评估服务）。本轮未运行 A—C 测试、D 夹具准备器、`contact_state.py` 命令或评估请求。D 仍待第十版第二关限定复审后由本地执行工程师正式运行。
 - 测试与证据边界遵守 [Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253) 和 [Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)。
 - 第一关：**通过，沿用既有结论**，以 [第一关审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6164440577) 为准。第二关：**第九版已通过，第十版权限启动参数调整待限定复审**，沿用[第九版未受影响的第二关结论](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6166845322)；本计划不自行宣布第十版通过。第三关历史执行结果：A—C 通过，D 无法判断；第十版尚未运行，具体记录如下。
 
@@ -31,6 +32,7 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 4. **A—C 准确命令**：在产品提交已固定且干净的生产者工作树中创建本轮独立运行目录，从测试目录执行。第 4—9 步的代码块在同一个 shell 中按顺序运行，以保留 `PC81_*` 变量；需要切换目录的命令放在子 shell 中，不改变主 shell 的当前目录。A—D 命令都复用预检过的离线 Python 缓存 `/private/tmp/pc81-uv-cache`：
 
    ```sh
+   set -eu
    PC81_RUN_ROOT="$(mktemp -d /private/tmp/issue81-tests-XXXXXX)"
    PC81_PRODUCER_ROOT="$(pwd)"
    PC81_TEST_DIR="$PC81_PRODUCER_ROOT/.apm/skills/professor-contact/tests"
