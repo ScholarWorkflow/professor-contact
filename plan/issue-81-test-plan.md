@@ -1,13 +1,16 @@
-# 第 81 号议题：唯一测试计划（待审核）
+# 第 81 号议题：唯一测试计划（第二关步骤待审核）
 
 ## 版本与状态
 
 - Requirement revision：第 81 号议题，2026-10-14 原始需求，https://github.com/ScholarWorkflow/professor-contact/issues/81。
 - Implementation Plan：`issue-81-plan-r2-2026-10-14`，见 [issue-81-implementation-plan.md](issue-81-implementation-plan.md)。
-- Test Plan revision：`issue-81-test-r2-2026-10-14`；唯一正式测试计划，先行草案。
+- Test Plan revision：`issue-81-test-r3-2026-10-14`；唯一正式测试计划。
 - 目标仓库基线：`3f66656c4e82c9f0235b6dd0937ae5b2333c48f9`；未来实际被测产品版本以实施后的精确提交为准，须在执行记录中注明。
+- 本次开始时拉取请求头提交 `28cc98f6272702ed0c14e08a2706f2472101e141` 只含计划文档；产品实现提交尚未提供。本次仅补测试资产，正式测试前仍须在干净生产者工作树记录实现后的产品提交，并确认 A—C 测试和 D 消费者均使用该提交。
+- D 使用的合成夹具固定为 `RekiDunois/skills-test-fixtures` 提交 `fa3a03ed66be22e7191264462716e046c8b18e72`，Codex 配置文件为 `configs/codex-consumer.toml`；精确版本与配置摘要须随执行记录保存。
+- 环境预检：`uv 0.12.22`、Python `3.14.6`、APM `0.29.0`、Codex CLI `0.162.0-alpha.17.2`、`yq v4.54.1`、`jq-1.8.2`、`direnv 2.37.1`、`curl 8.7.1`。Python 版本由 `UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python --version` 确认；其余为版本信息查询。以上只是环境预检，不是产品测试结果。正式执行时仍记录实际版本和配置。
 - 测试与证据边界遵守 [Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253) 和 [Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)。
-- 第一关、第二关、第三关状态：**均待审核/待执行**。本计划没有通过任何关口的含义。
+- 第一关：**通过**，以 [测试计划第一关审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6164440577) 为准。第二关：步骤已补齐，**待审核，未批准**。第三关：**未执行**。本版不代表第二关或第三关通过。
 
 ## 必测业务目标：本次验收范围的上限
 
@@ -23,12 +26,111 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 ## 实施与执行的实际分工
 
 1. **计划审核先行**：只有实施计划按 Plan Reviewer Rule 被正式审核为 `APPROVED` 后，产品实现者才修改代码与代理指令；测试计划由有权人员确认本页 A—D 的范围（第一关）。
-2. **产品测试代码**：本地工程师在 `.apm/skills/professor-contact/tests/` 新增或扩充一份针对第 81 号议题的 `unittest` 测试，复用 `test_contact_state.py` 的合成邮件包/源文件辅助，不接触真人资料。A—C 应使用实际 `stage5-plan` 路径；不得以手写目标返回值替代产品执行。
-3. **本地测试工程师补完第二关步骤**：在实施后的本文件继续补上确定的产品提交、测试方法、各运行根路径、所用 Python 与 Codex 配置及版本、安装复用依据、准确命令、准备及清理顺序、产物位置、外部失败允许的重试条件。D 开始前仅确认现有评估服务/工具记录能够观察本案必要的 `stage5-plan`、Step 2.5 与 finalize 调用；若无法区分是否反复调用，暂停 D 并记录无法判断，不增加专用追踪工具或推定通过。**这些工作由测试工程师完成，不能让执行者临场猜测配置或新增业务样例**。没有完整步骤不得开启正式 D。
-4. **A—C 的预定执行入口**：在目标仓库的 `.apm/skills/professor-contact/tests` 目录，通过 `python3 -m unittest -v test_issue81_verify_cache_contract` 运行本议题正式测试模块（实施者可将同名模块中的逻辑合入既有测试文件；测试工程师须把最终实际方法名更新回本唯一计划）。结果包含准确执行数、失败情况、退出码与对应产品版本。临时文件须使用独立 `/tmp`，不得落在正式用户资料或直接提交到 Git。
-5. **D 的环境与入口**：从确切产品提交 SHA 按已支持的安装步骤准备位于生产者仓库及 worktree **之外**的干净消费者，优先复用仍有效的干净安装；从正式生产入口触发 Stage 5，让 root 依现有 Codex 原生委派规则调用并等待教授 owner，不直接冒充 child 输入；配置按本项目有效的 `skills-test-fixtures` 版本与评估服务文档填写。使用现有 `eval-server`，**不启动、停止或重启服务，不直接在 shell 运行 `codex`**；从消费者目录启动，给评估请求的 `command` 字段提供 `codex exec` 后的完整参数，并使 `--cd` 指向消费者。缺少依赖或运行入口不可用时记无法判断，不修改消费者以求通过。
-6. **失败、重试与停止**：A—C 的真实断言不满足记业务失败；D 若依既定方法能观察业务结果，不得用代理“自述完成”替代产物及终态；不要求完整调用链，只检查本轮源缺失时的相关命令有没有重复执行。D 仅因确定的外部服务或传输故障可以按测试工程师在正式执行前写定的次数及隔离重置方式重试；**业务结果不满意不重采样**，已确认的服务不可达不连续重试。保留每次正式尝试与必要输出，不能用成功覆盖旧失败。
-7. **第三关与结果归档**：每项只分为通过、业务失败、无法判断、未执行，说明测试与产品版本；结果输出、实际配置、环境诊断保存在独立 `/tmp` 目录，仓库只提交可复用的脱敏测试代码与必要摘要。只有受本次代码变更影响的检查需要重验，未受影响结果依规则复用。
+2. **测试代码**：本地测试工程师新增 `.apm/skills/professor-contact/tests/test_issue81_verify_cache_contract.py`，A—C 共三个测试方法，复用 `test_contact_state.py` 的合成夹具，并以实际 `contact_state.py stage5-plan` 输出作断言。B 方法包含四个子场景；C 方法包含修改整数修改时间和 31 天缓存两个子场景。不会接触真人资料，也不增加 D 以外的正式 Codex 场景。
+3. **D 合成资料准备器**：新增 `.apm/skills/professor-contact/tests/runtime/prepare_issue81_missing_source_fixture.py`。它只在指定消费者下生成单教授合成包、模板、8 项缓存及准备记录；先用已安装 runner 读取完整源的写入提示并确认缓存可复用，再仅移走 `boshu_analysis.json`，确认 `missing_source`、准确字段、`null` 写入提示及诊断。若任一前置结果不符即停止，不发送正式请求。
+4. **A—C 准确命令**：在产品提交已固定且干净的生产者工作树中创建本轮独立运行目录，从测试目录执行：
+
+   ```sh
+   PC81_RUN_ROOT="$(mktemp -d /private/tmp/issue81-tests-XXXXXX)"
+   PC81_PRODUCER_ROOT="$(pwd)"
+   PC81_TEST_DIR="$PC81_PRODUCER_ROOT/.apm/skills/professor-contact/tests"
+   set +e
+   (cd "$PC81_TEST_DIR" && \
+     PC81_RUN_ROOT="$PC81_RUN_ROOT" \
+     UV_CACHE_DIR="$PC81_RUN_ROOT/uv-cache" \
+     uv run --offline --no-project python -m unittest -v \
+       test_issue81_verify_cache_contract) \
+     > "$PC81_RUN_ROOT/unittest.log" 2>&1
+   PC81_TEST_EXIT=$?
+   set -e
+   printf '%s\n' "$PC81_TEST_EXIT" > "$PC81_RUN_ROOT/exit-code.txt"
+   ```
+
+   以该次进程退出码和日志记录测试数、失败、产品 SHA、`uv` 与 Python 版本。单元测试使用标准库；临时项目由 `TemporaryDirectory` 自动清除，日志仅保留在独立运行目录。
+5. **D 固定版本、安装与配置**：D 必须等产品实现提交和第二关通过。用全新 `$PC81_RUN_ROOT`，生产者仓库、其 worktree、消费者、夹具仓库互不嵌套；按下列步骤核对精确提交并安装：
+
+   ```sh
+   set -eu
+   PC81_RUN_ROOT="$(mktemp -d /private/tmp/issue81-eval-XXXXXX)"
+   PC81_PRODUCER_ROOT="/绝对路径/干净的生产者工作树"
+   PC81_PRODUCT_SHA="实施后的产品提交 SHA"
+   test "$(git -C "$PC81_PRODUCER_ROOT" rev-parse HEAD)" = "$PC81_PRODUCT_SHA"
+   test -z "$(git -C "$PC81_PRODUCER_ROOT" status --porcelain)"
+   PC81_FIXTURES_ROOT="$PC81_RUN_ROOT/skills-test-fixtures"
+   git clone https://github.com/RekiDunois/skills-test-fixtures.git "$PC81_FIXTURES_ROOT"
+   git -C "$PC81_FIXTURES_ROOT" fetch origin fa3a03ed66be22e7191264462716e046c8b18e72
+   git -C "$PC81_FIXTURES_ROOT" checkout --detach fa3a03ed66be22e7191264462716e046c8b18e72
+   test "$(git -C "$PC81_FIXTURES_ROOT" rev-parse HEAD)" = fa3a03ed66be22e7191264462716e046c8b18e72
+   test -z "$(git -C "$PC81_FIXTURES_ROOT" status --porcelain)"
+   PC81_CONSUMER="$PC81_RUN_ROOT/consumer"
+   mkdir -p "$PC81_CONSUMER"
+   cd "$PC81_CONSUMER"
+   apm init -y --target codex
+   apm install "https://github.com/ScholarWorkflow/professor-contact.git#$PC81_PRODUCT_SHA" --target codex --trust-transitive-mcp
+   PC81_EXPECTED_SHA="$PC81_PRODUCT_SHA" yq -e '.dependencies[] | select(.name == "professor-contact") | .resolved_commit == strenv(PC81_EXPECTED_SHA)' apm.lock.yaml
+   ```
+
+   仅合并隔离消费者中的项目配置和固定夹具配置，保留安装生成的其余设置：
+
+   ```sh
+   set -eu
+   PC81_TEST_CONFIG="$PC81_CONSUMER/.codex/config.toml"
+   yq eval-all -p toml -o toml '. as $item ireduce ({}; . * $item)' \
+     "$PC81_TEST_CONFIG" "$PC81_FIXTURES_ROOT/configs/codex-consumer.toml" \
+     > "$PC81_RUN_ROOT/config.toml"
+   yq -p toml -e '.model == "gpt-6-luna" and .model_reasoning_effort == "low" and .sandbox_mode == "workspace-write"' \
+     "$PC81_RUN_ROOT/config.toml"
+   cp "$PC81_RUN_ROOT/config.toml" "$PC81_TEST_CONFIG"
+   ```
+
+   记录实际 Codex/APM/`yq` 版本及配置文件副本。不得覆盖个人配置；所需项目授权若未预先存在，停止并记无法判断。
+
+6. **D 资料准备与前置检查**：在干净消费者内用实施提交附带的准备器，输出全部放在本轮运行目录：
+
+   ```sh
+   set -eu
+   PC81_PROGRAM_ROOT="$PC81_CONSUMER/testdata/program"
+   uv run --offline --no-project python \
+     "$PC81_PRODUCER_ROOT/.apm/skills/professor-contact/tests/runtime/prepare_issue81_missing_source_fixture.py" \
+     --consumer-root "$PC81_CONSUMER" \
+     --program-root "$PC81_PROGRAM_ROOT" \
+     --output-dir "$PC81_RUN_ROOT/preflight"
+   PC81_EMAIL_PACK="$(jq -r '.email_pack' "$PC81_RUN_ROOT/preflight/fixture-manifest.json")"
+   PC81_TEMPLATE="$(jq -r '.template' "$PC81_RUN_ROOT/preflight/fixture-manifest.json")"
+   jq -e --arg program "$PC81_PROGRAM_ROOT" --arg pack "$PC81_EMAIL_PACK" \
+     '.program_root == $program and .email_pack == $pack' \
+     "$PC81_RUN_ROOT/preflight/fixture-manifest.json"
+   test ! -e "$PC81_PROGRAM_ROOT/boshu_analysis.json"
+   ```
+
+   准备器会使用已安装的 `contact_state.py` 依次保存完整源的首次计划、有效缓存计划和缺源首次计划。缺源计划必须是 `needs_recheck:missing_source`，`verify_write_hints[教授]` 为 `null`，诊断字段为 `source_fingerprints.boshu_analysis` / `source_unavailable`。其余业务文件与缓存保留。准备失败时停止，不发送 Codex 请求。
+
+7. **D 正式请求**：正式请求提示固定写入 `$PC81_RUN_ROOT/prompt.txt`，不改写其中的路径：
+
+   ```text
+   请使用已安装的 professor-contact 工作流，对程序目录 <PC81_PROGRAM_ROOT> 下唯一的合成邮件包 <PC81_EMAIL_PACK> 执行阶段 5 首封邮件模式，模板路径为 <PC81_TEMPLATE>。按正常阶段 5 根代理流程，通过 Codex 原生委派处理这一位教授。没有提供用户选择，不得编造。不要创建或恢复上游源文件；遵循已安装工作流的停止规则，并报告教授代理的实际结果。
+   ```
+
+   将上文三个占位符替换为该次绝对路径并保存为 `$PC81_RUN_ROOT/prompt.txt`。以下命令通过标准库 `shlex.join` 构造评估请求；`command` 只包含 `codex exec` 后的参数，`timeout` 固定为 900 秒：
+
+   ```sh
+   UV_CACHE_DIR="$PC81_RUN_ROOT/uv-cache" uv run --offline --no-project python -c 'import json, pathlib, shlex, sys; consumer, prompt_file, output = sys.argv[1:]; argv = ["--json", "--skip-git-repo-check", "--cd", consumer, "--", pathlib.Path(prompt_file).read_text(encoding="utf-8").strip()]; pathlib.Path(output).write_text(json.dumps({"command": shlex.join(argv), "timeout": 900}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")' "$PC81_CONSUMER" "$PC81_RUN_ROOT/prompt.txt" "$PC81_RUN_ROOT/request.json"
+   jq -e '.timeout == 900 and (.command | startswith("--json "))' "$PC81_RUN_ROOT/request.json"
+   ```
+
+   不传 `--ephemeral`、模型、推理、沙箱、信任或 MCP 覆盖。执行前确认这个消费者已具备现有 Codex 项目授权；如授权不存在则停止，不写个人设置。
+
+   只向当前已配置的评估服务发送一次：
+
+   ```sh
+   direnv exec . sh -c 'curl -sS -X POST "http://127.0.0.1:${EVAL_PORT}/eval" -H "Content-Type: application/json" --data-binary @"$1" -o "$2" -w "%{http_code}\n" > "$3"' sh "$PC81_RUN_ROOT/request.json" "$PC81_RUN_ROOT/response.json" "$PC81_RUN_ROOT/http-status.txt"
+   ```
+
+   从评估服务现有记录读取结果，不启动、停止或重启服务，也不直接在 shell 执行 `codex`。保存请求、完整响应、服务记录、固定配置、三份准备计划和所有环境诊断到 `$PC81_RUN_ROOT`。
+
+8. **D 唯一观察点**：从现有结构化响应、owner 最终 JSON，以及本轮现有 `commandExecution` 事件的 `command`、`cwd`、`exitCode`、`output.text` 检查这一位 owner：正式结果为 `needs_refresh`、原因 `missing_source`、字段 `source_fingerprints.boshu_analysis`；其初始 `stage5-plan` 保留为 `needs_recheck:missing_source`、写入提示为 `null`，且其余诊断字段与计划相符；owner 只执行这一份缺源初始计划，没有在源未变时重复 Step 2.5 或重跑计划，没有生成邮件结果、调用 `stage5-finalize`，目标目录没有首封 `.md`、`.txt` 或状态文件。按解析后的结构字段、命令事件和实际文件判断，不以自然语言自述代替。若现有记录不能区分上述调用，记无法判断；不新增采集器、不宣称通过。
+
+9. **失败、重试、清理与结果**：A—C 各执行一次；环境或解释器无法启动则记无法判断，不因业务断言失败而重跑。D 正式 `/eval` 最多一次；传输、服务、配额、模型或记录不完整时按现有响应记无法判断或未执行，不重发请求。业务结果不符记业务失败。保留失败响应；消费者、配置、请求和输出都留在独立 `/private/tmp/issue81-*` 下，不复制用户资料、不写回生产者仓库。结果只分为通过、业务失败、无法判断、未执行，并记录实现 SHA、夹具 SHA、版本、配置摘要与执行码。
 
 ## 禁止新增的测试要求
 
@@ -38,4 +140,4 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 - 不跑全部阶段 0—5、全部浏览器/模型供应商、全部教授及所有邮箱证据分支。
 - 不修改产品保护或用户数据来让 D 获得通过结果。
 
-**r2 相对 r1 只纠正 D 的缺源初始条件、所需观察点和正式 Codex 入口，A—C 不变。后续版本更新本文件，评论只引用当前版本；未获批准的额外测试不得进入必测清单。**
+**r3 相对 r2 保持 A—D 业务目标不变，落实 A—C 测试模块及 D 的夹具、配置、请求和停止步骤，并反映第一关已通过。第二关仍待审核；未获批准的额外测试不得进入必测清单。**
