@@ -3,7 +3,6 @@
 import argparse
 import importlib.util
 import json
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -21,20 +20,6 @@ spec.loader.exec_module(helpers)
 PROFESSOR = helpers.ISSUE59_PROFESSOR
 
 
-def run_plan(runner, program_root, email_pack, template):
-    result = subprocess.run(
-        [sys.executable, str(runner), "stage5-plan",
-         "--program-root", str(program_root), "--email-pack", str(email_pack),
-         "--template", str(template), "--mode", "first"],
-        text=True, capture_output=True, check=False)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr or result.stdout)
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"stage5-plan returned invalid JSON: {exc}") from exc
-
-
 def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=1) + "\n",
                     encoding="utf-8")
@@ -50,10 +35,6 @@ def main():
     consumer_root = args.consumer_root.resolve()
     program_root = args.program_root.resolve()
     output_dir = args.output_dir.resolve()
-    runner = (consumer_root / ".agents" / "skills" / "professor-contact"
-              / "scripts" / "contact_state.py")
-    if not runner.is_file():
-        raise RuntimeError(f"installed runner not found: {runner}")
     if not consumer_root.is_dir() or not program_root.is_relative_to(consumer_root):
         raise RuntimeError("synthetic program root must be inside the clean consumer")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -68,44 +49,30 @@ def main():
         fixture = helpers.write_issue59_stage5_fixture(program_root, case=test_case)
         verify_path = fixture["verify"][PROFESSOR]
         cached = json.loads(verify_path.read_text(encoding="utf-8"))
-        verify_path.unlink()
-
-        first_plan = run_plan(runner, program_root, fixture["pack"], template)
-        if first_plan["verify"].get(PROFESSOR) != "needs_recheck:missing":
-            raise RuntimeError("complete-source setup did not start with a missing verify cache")
-        hint = first_plan["verify_write_hints"][PROFESSOR]
-        if not hint or set(hint["source_fingerprints"]) != {
-                "info_json", "boshu_analysis"}:
-            raise RuntimeError("complete-source plan did not provide both write hints")
-        if not all(hint["source_fingerprints"].values()):
-            raise RuntimeError("complete-source plan returned an incomplete write hint")
-
-        cached["verified_at"] = helpers.contact_state.now_utc()
-        cached["source_fingerprints"] = hint["source_fingerprints"]
-        write_json(verify_path, cached)
-        valid_plan = run_plan(runner, program_root, fixture["pack"], template)
-        if valid_plan["verify"].get(PROFESSOR) != "ok":
-            raise RuntimeError("synthetic complete cache was not reusable")
+        expected_fingerprints = {
+            "info_json": (
+                f"{program_root / 'info.json'}:"
+                f"{int((program_root / 'info.json').stat().st_mtime)}"),
+            "boshu_analysis": (
+                f"{program_root / 'boshu_analysis.json'}:"
+                f"{int((program_root / 'boshu_analysis.json').stat().st_mtime)}"),
+        }
+        if set(cached.get("items", {})) != {
+                "email", "roster", "season", "header", "subject_batch",
+                "schedule", "consent", "warnings"}:
+            raise RuntimeError("synthetic verify cache does not contain all eight items")
+        if cached.get("source_fingerprints") != expected_fingerprints:
+            raise RuntimeError("synthetic verify cache does not match source path/mtime")
+        if not cached.get("verified_at", "").endswith("Z"):
+            raise RuntimeError("synthetic verify cache timestamp is not canonical UTC")
 
         boshu_path = program_root / "boshu_analysis.json"
         boshu_path.unlink()
-        missing_source_plan = run_plan(runner, program_root, fixture["pack"], template)
-        if missing_source_plan["verify"].get(PROFESSOR) != \
-                "needs_recheck:missing_source":
-            raise RuntimeError("missing source did not produce needs_recheck:missing_source")
-        if missing_source_plan["verify_write_hints"].get(PROFESSOR) is not None:
-            raise RuntimeError("missing source unexpectedly produced a write hint")
-        diagnostic = missing_source_plan["verify_diagnostics"][PROFESSOR]
-        if diagnostic != {
-                "reason": "missing_source",
-                "failed_field": "source_fingerprints.boshu_analysis",
-                "diagnostic_kind": "source_unavailable"}:
-            raise RuntimeError(f"missing source diagnostic differed: {diagnostic!r}")
-
-        write_json(output_dir / "complete-source-initial-plan.json", first_plan)
-        write_json(output_dir / "complete-cache-plan.json", valid_plan)
-        write_json(output_dir / "missing-source-initial-plan.json",
-                   missing_source_plan)
+        if (boshu_path.exists() or not verify_path.is_file()
+                or not Path(fixture["pack"]).is_file()
+                or not (program_root / "info.json").is_file()):
+            raise RuntimeError(
+                "fixture did not retain the cache, email pack, and other source after removal")
         write_json(output_dir / "fixture-manifest.json", {
             "program_root": str(program_root),
             "email_pack": str(fixture["pack"]),
@@ -113,8 +80,6 @@ def main():
             "template": str(template),
             "verify_cache": str(verify_path),
             "missing_source": str(boshu_path),
-            "missing_source_plan": str(
-                output_dir / "missing-source-initial-plan.json"),
         })
     finally:
         test_case.doCleanups()

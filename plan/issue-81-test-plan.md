@@ -4,11 +4,11 @@
 
 - Requirement revision：第 81 号议题，2026-10-14 原始需求，https://github.com/ScholarWorkflow/professor-contact/issues/81。
 - Implementation Plan：`issue-81-plan-r2-2026-10-14`，见 [issue-81-implementation-plan.md](issue-81-implementation-plan.md)。
-- Test Plan revision：`issue-81-test-r3-2026-10-14`；唯一正式测试计划。
+- Test Plan revision：`issue-81-test-r7-2026-10-14`；唯一正式测试计划。
 - 目标仓库基线：`3f66656c4e82c9f0235b6dd0937ae5b2333c48f9`；未来实际被测产品版本以实施后的精确提交为准，须在执行记录中注明。
 - 本次开始时拉取请求头提交 `28cc98f6272702ed0c14e08a2706f2472101e141` 只含计划文档；产品实现提交尚未提供。本次仅补测试资产，正式测试前仍须在干净生产者工作树记录实现后的产品提交，并确认 A—C 测试和 D 消费者均使用该提交。
 - D 使用的合成夹具固定为 `RekiDunois/skills-test-fixtures` 提交 `fa3a03ed66be22e7191264462716e046c8b18e72`，Codex 配置文件为 `configs/codex-consumer.toml`；精确版本与配置摘要须随执行记录保存。
-- 环境预检：`uv 0.12.22`、Python `3.14.6`、APM `0.29.0`、Codex CLI `0.162.0-alpha.17.2`、`yq v4.54.1`、`jq-1.8.2`、`direnv 2.37.1`、`curl 8.7.1`。Python 版本由 `UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python --version` 确认；其余为版本信息查询。以上只是环境预检，不是产品测试结果。正式执行时仍记录实际版本和配置。
+- 环境预检：`uv 0.12.22`、Python `3.14.6`、APM `0.29.0`、Codex CLI `0.162.0-alpha.17.2`、`yq v4.54.1`、`jq-1.8.2`、`direnv 2.37.1`、`curl 8.7.1`。Python 版本由 `UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python --version` 确认；A—D 的 `uv run` 均复用同一离线缓存目录 `/private/tmp/pc81-uv-cache`，不另建空缓存。其余为版本信息查询。以上只是环境预检，不是产品测试结果。正式执行时仍记录实际版本和配置。
 - 测试与证据边界遵守 [Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253) 和 [Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)。
 - 第一关：**通过**，以 [测试计划第一关审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6164440577) 为准。第二关：步骤已补齐，**待审核，未批准**。第三关：**未执行**。本版不代表第二关或第三关通过。
 
@@ -27,8 +27,8 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 
 1. **计划审核先行**：只有实施计划按 Plan Reviewer Rule 被正式审核为 `APPROVED` 后，产品实现者才修改代码与代理指令；测试计划由有权人员确认本页 A—D 的范围（第一关）。
 2. **测试代码**：本地测试工程师新增 `.apm/skills/professor-contact/tests/test_issue81_verify_cache_contract.py`，A—C 共三个测试方法，复用 `test_contact_state.py` 的合成夹具，并以实际 `contact_state.py stage5-plan` 输出作断言。B 方法包含四个子场景；C 方法包含修改整数修改时间和 31 天缓存两个子场景。不会接触真人资料，也不增加 D 以外的正式 Codex 场景。
-3. **D 合成资料准备器**：新增 `.apm/skills/professor-contact/tests/runtime/prepare_issue81_missing_source_fixture.py`。它只在指定消费者下生成单教授合成包、模板、8 项缓存及准备记录；先用已安装 runner 读取完整源的写入提示并确认缓存可复用，再仅移走 `boshu_analysis.json`，确认 `missing_source`、准确字段、`null` 写入提示及诊断。若任一前置结果不符即停止，不发送正式请求。
-4. **A—C 准确命令**：在产品提交已固定且干净的生产者工作树中创建本轮独立运行目录，从测试目录执行：
+3. **D 合成资料准备器**：新增 `.apm/skills/professor-contact/tests/runtime/prepare_issue81_missing_source_fixture.py`。它只在指定消费者下生成单教授合成包、模板和 8 项缓存；通过检查合成文件、8 个缓存项目及源路径/整数修改时间确认夹具已写好，然后仅移走 `boshu_analysis.json` 并确认旧缓存仍在。准备器不调用 `stage5-plan` 或其他产品入口；缺源后的首次 plan、`missing_source`、准确字段和 `null` 写入提示只在 D 的正式 Codex 消费者运行中观察。准备失败时停止，不发送正式请求。
+4. **A—C 准确命令**：在产品提交已固定且干净的生产者工作树中创建本轮独立运行目录，从测试目录执行。第 4—9 步的代码块在同一个 shell 中按顺序运行，以保留 `PC81_*` 变量；需要切换目录的命令放在子 shell 中，不改变主 shell 的当前目录。A—D 命令都复用预检过的离线 Python 缓存 `/private/tmp/pc81-uv-cache`：
 
    ```sh
    PC81_RUN_ROOT="$(mktemp -d /private/tmp/issue81-tests-XXXXXX)"
@@ -37,7 +37,7 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    set +e
    (cd "$PC81_TEST_DIR" && \
      PC81_RUN_ROOT="$PC81_RUN_ROOT" \
-     UV_CACHE_DIR="$PC81_RUN_ROOT/uv-cache" \
+     UV_CACHE_DIR=/private/tmp/pc81-uv-cache \
      uv run --offline --no-project python -m unittest -v \
        test_issue81_verify_cache_contract) \
      > "$PC81_RUN_ROOT/unittest.log" 2>&1
@@ -46,7 +46,7 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    printf '%s\n' "$PC81_TEST_EXIT" > "$PC81_RUN_ROOT/exit-code.txt"
    ```
 
-   以该次进程退出码和日志记录测试数、失败、产品 SHA、`uv` 与 Python 版本。单元测试使用标准库；临时项目由 `TemporaryDirectory` 自动清除，日志仅保留在独立运行目录。
+   以该次进程退出码和日志记录测试数、失败、产品 SHA、`uv` 与 Python 版本。单元测试使用标准库；临时项目由 `TemporaryDirectory` 自动清除，日志仅保留在独立运行目录。离线解释器无法启动时记为无法判断，不临时下载或换解释器。
 5. **D 固定版本、安装与配置**：D 必须等产品实现提交和第二关通过。用全新 `$PC81_RUN_ROOT`，生产者仓库、其 worktree、消费者、夹具仓库互不嵌套；按下列步骤核对精确提交并安装：
 
    ```sh
@@ -54,6 +54,8 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    PC81_RUN_ROOT="$(mktemp -d /private/tmp/issue81-eval-XXXXXX)"
    PC81_PRODUCER_ROOT="/绝对路径/干净的生产者工作树"
    PC81_PRODUCT_SHA="实施后的产品提交 SHA"
+   PC81_EVAL_ENV_ROOT="/Users/rekidunois/code/skill-repos-dev"
+   test -f "$PC81_EVAL_ENV_ROOT/.envrc"
    test "$(git -C "$PC81_PRODUCER_ROOT" rev-parse HEAD)" = "$PC81_PRODUCT_SHA"
    test -z "$(git -C "$PC81_PRODUCER_ROOT" status --porcelain)"
    PC81_FIXTURES_ROOT="$PC81_RUN_ROOT/skills-test-fixtures"
@@ -64,10 +66,9 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    test -z "$(git -C "$PC81_FIXTURES_ROOT" status --porcelain)"
    PC81_CONSUMER="$PC81_RUN_ROOT/consumer"
    mkdir -p "$PC81_CONSUMER"
-   cd "$PC81_CONSUMER"
-   apm init -y --target codex
-   apm install "https://github.com/ScholarWorkflow/professor-contact.git#$PC81_PRODUCT_SHA" --target codex --trust-transitive-mcp
-   PC81_EXPECTED_SHA="$PC81_PRODUCT_SHA" yq -e '.dependencies[] | select(.name == "professor-contact") | .resolved_commit == strenv(PC81_EXPECTED_SHA)' apm.lock.yaml
+   (cd "$PC81_CONSUMER" && apm init -y --target codex)
+   (cd "$PC81_CONSUMER" && apm install "https://github.com/ScholarWorkflow/professor-contact.git#$PC81_PRODUCT_SHA" --target codex --trust-transitive-mcp)
+   PC81_EXPECTED_SHA="$PC81_PRODUCT_SHA" yq -e '.dependencies[] | select(.name == "professor-contact") | .resolved_commit == strenv(PC81_EXPECTED_SHA)' "$PC81_CONSUMER/apm.lock.yaml"
    ```
 
    仅合并隔离消费者中的项目配置和固定夹具配置，保留安装生成的其余设置：
@@ -90,7 +91,7 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    ```sh
    set -eu
    PC81_PROGRAM_ROOT="$PC81_CONSUMER/testdata/program"
-   uv run --offline --no-project python \
+   UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python \
      "$PC81_PRODUCER_ROOT/.apm/skills/professor-contact/tests/runtime/prepare_issue81_missing_source_fixture.py" \
      --consumer-root "$PC81_CONSUMER" \
      --program-root "$PC81_PROGRAM_ROOT" \
@@ -103,7 +104,7 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    test ! -e "$PC81_PROGRAM_ROOT/boshu_analysis.json"
    ```
 
-   准备器会使用已安装的 `contact_state.py` 依次保存完整源的首次计划、有效缓存计划和缺源首次计划。缺源计划必须是 `needs_recheck:missing_source`，`verify_write_hints[教授]` 为 `null`，诊断字段为 `source_fingerprints.boshu_analysis` / `source_unavailable`。其余业务文件与缓存保留。准备失败时停止，不发送 Codex 请求。
+   准备器只写合成文件并检查夹具结构：缓存有 8 个项目、源路径和整数修改时间与合成文件相符，移走的只有 `boshu_analysis.json`，旧缓存及邮件输入仍保留。它不运行 `contact_state.py`。缺源计划的 `needs_recheck:missing_source`、`verify_write_hints[教授] == null` 及诊断字段 `source_fingerprints.boshu_analysis` / `source_unavailable` 由下面 D 正式运行中的初始 `stage5-plan` 观察；准备阶段不得预先调用目标产品入口。如果夹具准备失败则停止，不发送 Codex 请求。
 
 7. **D 正式请求**：正式请求提示固定写入 `$PC81_RUN_ROOT/prompt.txt`，不改写其中的路径：
 
@@ -114,7 +115,7 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    将上文三个占位符替换为该次绝对路径并保存为 `$PC81_RUN_ROOT/prompt.txt`。以下命令通过标准库 `shlex.join` 构造评估请求；`command` 只包含 `codex exec` 后的参数，`timeout` 固定为 900 秒：
 
    ```sh
-   UV_CACHE_DIR="$PC81_RUN_ROOT/uv-cache" uv run --offline --no-project python -c 'import json, pathlib, shlex, sys; consumer, prompt_file, output = sys.argv[1:]; argv = ["--json", "--skip-git-repo-check", "--cd", consumer, "--", pathlib.Path(prompt_file).read_text(encoding="utf-8").strip()]; pathlib.Path(output).write_text(json.dumps({"command": shlex.join(argv), "timeout": 900}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")' "$PC81_CONSUMER" "$PC81_RUN_ROOT/prompt.txt" "$PC81_RUN_ROOT/request.json"
+   UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python -c 'import json, pathlib, shlex, sys; consumer, prompt_file, output = sys.argv[1:]; argv = ["--json", "--skip-git-repo-check", "--cd", consumer, "--", pathlib.Path(prompt_file).read_text(encoding="utf-8").strip()]; pathlib.Path(output).write_text(json.dumps({"command": shlex.join(argv), "timeout": 900}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")' "$PC81_CONSUMER" "$PC81_RUN_ROOT/prompt.txt" "$PC81_RUN_ROOT/request.json"
    jq -e '.timeout == 900 and (.command | startswith("--json "))' "$PC81_RUN_ROOT/request.json"
    ```
 
@@ -123,14 +124,95 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    只向当前已配置的评估服务发送一次：
 
    ```sh
-   direnv exec . sh -c 'curl -sS -X POST "http://127.0.0.1:${EVAL_PORT}/eval" -H "Content-Type: application/json" --data-binary @"$1" -o "$2" -w "%{http_code}\n" > "$3"' sh "$PC81_RUN_ROOT/request.json" "$PC81_RUN_ROOT/response.json" "$PC81_RUN_ROOT/http-status.txt"
+   printf 'not_run\n' > "$PC81_RUN_ROOT/curl-exit-code.txt"
+   direnv_rc=0
+   direnv exec "$PC81_EVAL_ENV_ROOT" sh -c 'curl_rc=0; curl -sS -X POST "http://127.0.0.1:${EVAL_PORT}/eval" -H "Content-Type: application/json" --data-binary @"$1" -o "$2" -w "%{http_code}\n" > "$3" || curl_rc=$?; printf "%s\n" "$curl_rc" > "$4"' sh "$PC81_RUN_ROOT/request.json" "$PC81_RUN_ROOT/response.raw.tmp" "$PC81_RUN_ROOT/http-status.txt" "$PC81_RUN_ROOT/curl-exit-code.txt" || direnv_rc=$?
+   printf '%s\n' "$direnv_rc" > "$PC81_RUN_ROOT/direnv-exit-code.txt"
    ```
 
-   从评估服务现有记录读取结果，不启动、停止或重启服务，也不直接在 shell 执行 `codex`。保存请求、完整响应、服务记录、固定配置、三份准备计划和所有环境诊断到 `$PC81_RUN_ROOT`。
+   从评估服务现有记录读取结果，不启动、停止或重启服务，也不直接在 shell 执行 `codex`。`response.raw.tmp` 只作为本轮筛选输入；下一段命令无论成功或失败都会删除它，不重发请求：
 
-8. **D 唯一观察点**：从现有结构化响应、owner 最终 JSON，以及本轮现有 `commandExecution` 事件的 `command`、`cwd`、`exitCode`、`output.text` 检查这一位 owner：正式结果为 `needs_refresh`、原因 `missing_source`、字段 `source_fingerprints.boshu_analysis`；其初始 `stage5-plan` 保留为 `needs_recheck:missing_source`、写入提示为 `null`，且其余诊断字段与计划相符；owner 只执行这一份缺源初始计划，没有在源未变时重复 Step 2.5 或重跑计划，没有生成邮件结果、调用 `stage5-finalize`，目标目录没有首封 `.md`、`.txt` 或状态文件。按解析后的结构字段、命令事件和实际文件判断，不以自然语言自述代替。若现有记录不能区分上述调用，记无法判断；不新增采集器、不宣称通过。
+   ```sh
+   if test "$(cat "$PC81_RUN_ROOT/direnv-exit-code.txt")" != 0; then
+     jq -n --arg exit "$(cat "$PC81_RUN_ROOT/direnv-exit-code.txt")" \
+       '{direnv_exit_code:($exit|tonumber),outcome:"eval_environment_error"}' \
+       > "$PC81_RUN_ROOT/evidence.json"
+   elif test "$(cat "$PC81_RUN_ROOT/curl-exit-code.txt")" = not_run; then
+     jq -n '{outcome:"eval_environment_error"}' > "$PC81_RUN_ROOT/evidence.json"
+   elif test "$(cat "$PC81_RUN_ROOT/curl-exit-code.txt")" != 0; then
+     jq -n --arg http "$(cat "$PC81_RUN_ROOT/http-status.txt")" \
+       --arg curl "$(cat "$PC81_RUN_ROOT/curl-exit-code.txt")" \
+       '{http_status:$http,curl_exit_code:($curl|tonumber),outcome:"transport_error"}' \
+       > "$PC81_RUN_ROOT/evidence.json"
+   elif jq -e --arg http "$(cat "$PC81_RUN_ROOT/http-status.txt")" '
+     if (has("passed") | not)
+       or (has("version") | not)
+       or (.passed | type != "boolean")
+       or (.output | type != "object")
+       or (.output.exit_code | type != "number")
+       or (.output.termination_reason | type != "string")
+       or (.output.thread_id | type != "string")
+       or (.output.app_server_events | type != "array")
+     then error("required eval response structure missing")
+     else
+       .output.thread_id as $root_thread
+       | .output.app_server_events as $events
+       | [$events[]
+           | select(.direction == "recv"
+               and .message.method == "item/completed"
+               and .message.params.item.type == "commandExecution"
+               and ((.message.params.threadId | type) == "string")
+               and ((.message.params.item.command // "") | contains("contact_state.py")))] as $commands
+       | ($commands | map(.message.params.threadId) | unique) as $command_threads
+       | ($command_threads | map(select(. != $root_thread))) as $owner_threads
+       | {
+           http_status: $http,
+           passed,
+           version,
+           api_error: (.error // null),
+           eval: {
+             exit_code: .output.exit_code,
+             termination_reason: .output.termination_reason,
+             product_commands: [$commands[]
+               | {
+                   runtime_seq,
+                   thread_id: .message.params.threadId,
+                   command: .message.params.item.command,
+                   cwd: .message.params.item.cwd,
+                   exitCode: .message.params.item.exitCode,
+                   aggregatedOutput: (if (.message.params.item.command | contains("stage5-plan"))
+                     then .message.params.item.aggregatedOutput else null end)
+                 }],
+             owner_final_messages: [$owner_threads[] as $thread_id
+               | ($events
+                   | map(select(.direction == "recv"
+                       and .message.method == "item/completed"
+                       and .message.params.threadId == $thread_id
+                       and .message.params.item.type == "agentMessage"))
+                   | sort_by(.runtime_seq)
+                   | last) as $final
+               | {
+                   thread_id: $thread_id,
+                   runtime_seq: ($final.runtime_seq // null),
+                   text: ($final.message.params.item.text // null)
+                 }]
+           }
+         }
+     end' "$PC81_RUN_ROOT/response.raw.tmp" > "$PC81_RUN_ROOT/evidence.json"; then
+     :
+   else
+     jq -n --arg http "$(cat "$PC81_RUN_ROOT/http-status.txt")" \
+       '{http_status:$http,outcome:"invalid_or_unusable_response"}' \
+       > "$PC81_RUN_ROOT/evidence.json"
+   fi
+   rm -f "$PC81_RUN_ROOT/response.raw.tmp"
+   ```
 
-9. **失败、重试、清理与结果**：A—C 各执行一次；环境或解释器无法启动则记无法判断，不因业务断言失败而重跑。D 正式 `/eval` 最多一次；传输、服务、配额、模型或记录不完整时按现有响应记无法判断或未执行，不重发请求。业务结果不符记业务失败。保留失败响应；消费者、配置、请求和输出都留在独立 `/private/tmp/issue81-*` 下，不复制用户资料、不写回生产者仓库。结果只分为通过、业务失败、无法判断、未执行，并记录实现 SHA、夹具 SHA、版本、配置摘要与执行码。
+   仅在 `$PC81_RUN_ROOT` 保存本次请求、`direnv`/HTTP/`curl` 状态、固定配置副本、按非 root 命令线程筛出的 owner 最终业务消息、初始 `stage5-plan` 输出、相关原始执行事件的必要字段（`runtime_seq`、`thread_id`、`command`、`cwd`、`exitCode`；只有 `stage5-plan` 事件保留 `aggregatedOutput`）、目标邮件目录检查结果和必要的版本号。评估服务原始命令事件的输出字段为 `aggregatedOutput`，不是 `output.text`；owner 最终消息从相同 `thread_id` 的原始 `agentMessage` 事件取得，不使用只含 root 线程的兼容事件列表。筛选命令校验 `passed`、`version`、`output.exit_code`、`output.termination_reason`、`output.thread_id` 和 `output.app_server_events`；必需结构缺失时 `jq -e` 失败并记录 `invalid_or_unusable_response`。按 `runtime_seq` 和 `thread_id` 区分调用。不复制完整响应、完整服务记录或无关环境诊断；不新增采集器。环境包装失败时只记录 `direnv` 退出码；传输失败时只记录 HTTP 状态与 `curl` 退出码；响应无法解析或不含所需结构时只记录状态及 `invalid_or_unusable_response`，随后删除原始临时文件。
+
+8. **D 唯一观察点**：从 `owner_final_messages` 中与该教授命令事件同一 `thread_id` 的最终业务 JSON，以及相同线程的 `commandExecution` 记录检查：正式结果为 `needs_refresh`、原因 `missing_source`、字段 `source_fingerprints.boshu_analysis`；其初始 `stage5-plan` 保留为 `needs_recheck:missing_source`、写入提示为 `null`，且其余诊断字段与计划相符；owner 只执行这一份缺源初始计划，没有在源未变时重复 Step 2.5 或重跑计划，没有生成邮件结果、调用 `stage5-finalize`，目标目录没有首封 `.md`、`.txt` 或状态文件。按筛选后的结构字段、`runtime_seq`、`thread_id`、`command`、`cwd`、`exitCode`、`aggregatedOutput` 和实际文件判断，不以自然语言自述代替。若现有记录不能区分上述调用，记无法判断；不新增采集器、不宣称通过。
+
+9. **失败、重试、清理与结果**：A—C 各执行一次；环境或解释器无法启动则记无法判断，不因业务断言失败而重跑。D 正式 `/eval` 最多一次；环境包装、传输、服务、配额、模型或记录不完整时按现有状态记无法判断或未执行，不重发请求。业务结果不符记业务失败。仅保留失败所需的 `direnv`/HTTP/`curl` 状态及筛选后的简短错误字段，不保留完整失败响应；消费者、配置、请求和筛选后的证据都留在独立 `/private/tmp/issue81-*` 下，不复制用户资料、不写回生产者仓库。结果只分为通过、业务失败、无法判断、未执行，并记录实现 SHA、夹具 SHA、版本、配置摘要与执行码。
 
 ## 禁止新增的测试要求
 
@@ -140,4 +222,4 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 - 不跑全部阶段 0—5、全部浏览器/模型供应商、全部教授及所有邮箱证据分支。
 - 不修改产品保护或用户数据来让 D 获得通过结果。
 
-**r3 相对 r2 保持 A—D 业务目标不变，落实 A—C 测试模块及 D 的夹具、配置、请求和停止步骤，并反映第一关已通过。第二关仍待审核；未获批准的额外测试不得进入必测清单。**
+**r7 相对 r6 保持 A—D 业务目标不变，记录并清理评估环境包装命令失败的分支。第二关仍待审核；未获批准的额外测试不得进入必测清单。**
