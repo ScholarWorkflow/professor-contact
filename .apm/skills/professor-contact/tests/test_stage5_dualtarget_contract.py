@@ -231,10 +231,10 @@ class Stage5DualTargetContractTests(unittest.TestCase):
         body = self.generator_body
         for needle in (
             "run `contact_state.py stage5-plan` without `--result` and without `--choices`",
-            "complete Step 2.5 and write the full professor-level `_contact_verify.json`",
-            "until every selected professor reports `verify: ok`",
-            "ordinary `verify_missing` / `needs_recheck` is work for Step 2.5",
-            "return to Step 2.5, refresh the cache",
+            "For this selected professor, read `verify`, `verify_diagnostics` and `verify_write_hints`",
+            "If `verify_write_hints[professor]` is `null`, a source is unavailable: stop immediately with `needs_refresh`",
+            "Within this professor's invocation, keep the set of processed failure identifiers",
+            "**Hard gate:** do not create result JSON, consume choices, call `stage5_immutable.py stage5-finalize`, or spawn a validator",
         ):
             self.assertIn(needle, body)
         start = body.index("stage5-plan` (no result/choices)")
