@@ -4,7 +4,7 @@
 
 - Requirement revision：第 81 号议题，2026-10-14 原始需求，https://github.com/ScholarWorkflow/professor-contact/issues/81。
 - Implementation Plan：`issue-81-plan-r2-2026-10-14`，见 [issue-81-implementation-plan.md](issue-81-implementation-plan.md)。
-- Test Plan revision：`issue-81-test-r8-2026-10-14`；唯一正式测试计划。
+- Test Plan revision：`issue-81-test-r9-2026-10-14`；唯一正式测试计划。
 - 目标仓库基线：`3f66656c4e82c9f0235b6dd0937ae5b2333c48f9`；未来实际被测产品版本以实施后的精确提交为准，须在执行记录中注明。
 - 本次开始时拉取请求头提交 `28cc98f6272702ed0c14e08a2706f2472101e141` 只含计划文档；产品实现提交尚未提供。本次仅补测试资产，正式测试前仍须在干净生产者工作树记录实现后的产品提交，并确认 A—C 测试和 D 消费者均使用该提交。
 - D 使用的合成夹具固定为 `RekiDunois/skills-test-fixtures` 提交 `fa3a03ed66be22e7191264462716e046c8b18e72`，Codex 配置文件为 `configs/codex-consumer.toml`；精确版本与配置摘要须随执行记录保存。
@@ -34,6 +34,15 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    PC81_RUN_ROOT="$(mktemp -d /private/tmp/issue81-tests-XXXXXX)"
    PC81_PRODUCER_ROOT="$(pwd)"
    PC81_TEST_DIR="$PC81_PRODUCER_ROOT/.apm/skills/professor-contact/tests"
+   test -z "$(git -C "$PC81_PRODUCER_ROOT" status --porcelain)"
+   {
+     printf 'product_sha='
+     git -C "$PC81_PRODUCER_ROOT" rev-parse HEAD
+     printf 'uv='
+     uv --version
+     printf 'python='
+     UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python --version
+   } > "$PC81_RUN_ROOT/versions.txt"
    set +e
    (cd "$PC81_TEST_DIR" && \
      PC81_RUN_ROOT="$PC81_RUN_ROOT" \
@@ -46,7 +55,7 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    printf '%s\n' "$PC81_TEST_EXIT" > "$PC81_RUN_ROOT/exit-code.txt"
    ```
 
-   以该次进程退出码和日志记录测试数、失败、产品 SHA、`uv` 与 Python 版本。单元测试使用标准库；临时项目由 `TemporaryDirectory` 自动清除，日志仅保留在独立运行目录。离线解释器无法启动时记为无法判断，不临时下载或换解释器。
+   以该次进程退出码和日志记录测试数、失败；`versions.txt` 保存产品 SHA、`uv` 与 Python 版本。单元测试使用标准库；临时项目由 `TemporaryDirectory` 自动清除，日志仅保留在独立运行目录。离线解释器无法启动时记为无法判断，不临时下载或换解释器。
 5. **D 固定版本、安装与配置**：D 必须等产品实现提交和第二关通过。用全新 `$PC81_RUN_ROOT`，生产者仓库、其 worktree、消费者、夹具仓库互不嵌套；按下列步骤核对精确提交并安装：
 
    ```sh
@@ -54,7 +63,8 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    PC81_RUN_ROOT="$(mktemp -d /private/tmp/issue81-eval-XXXXXX)"
    PC81_PRODUCER_ROOT="/绝对路径/干净的生产者工作树"
    PC81_PRODUCT_SHA="实施后的产品提交 SHA"
-   PC81_EVAL_ENV_ROOT="/Users/rekidunois/code/skill-repos-dev"
+   # 工作树位于项目父目录的 worktree/<name> 下；沿两级上级找到现有评估环境。
+   PC81_EVAL_ENV_ROOT="$(cd "$PC81_PRODUCER_ROOT/../.." && pwd)"
    test -f "$PC81_EVAL_ENV_ROOT/.envrc"
    test "$(git -C "$PC81_PRODUCER_ROOT" rev-parse HEAD)" = "$PC81_PRODUCT_SHA"
    test -z "$(git -C "$PC81_PRODUCER_ROOT" status --porcelain)"
@@ -64,6 +74,22 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    git -C "$PC81_FIXTURES_ROOT" checkout --detach fa3a03ed66be22e7191264462716e046c8b18e72
    test "$(git -C "$PC81_FIXTURES_ROOT" rev-parse HEAD)" = fa3a03ed66be22e7191264462716e046c8b18e72
    test -z "$(git -C "$PC81_FIXTURES_ROOT" status --porcelain)"
+   {
+     printf 'product_sha='
+     git -C "$PC81_PRODUCER_ROOT" rev-parse HEAD
+     printf 'fixture_sha='
+     git -C "$PC81_FIXTURES_ROOT" rev-parse HEAD
+     printf 'uv='
+     uv --version
+     printf 'python='
+     UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python --version
+     printf 'apm='
+     apm --version
+     printf 'codex='
+     codex --version
+     printf 'yq='
+     yq --version
+   } > "$PC81_RUN_ROOT/versions.txt"
    PC81_CONSUMER="$PC81_RUN_ROOT/consumer"
    mkdir -p "$PC81_CONSUMER"
    (cd "$PC81_CONSUMER" && apm init -y --target codex)
@@ -84,7 +110,7 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    cp "$PC81_RUN_ROOT/config.toml" "$PC81_TEST_CONFIG"
    ```
 
-   记录实际 Codex/APM/`yq` 版本及配置文件副本。不得覆盖个人配置；所需项目授权若未预先存在，停止并记无法判断。
+   `versions.txt` 记录实际产品/夹具提交 SHA、`uv`、Python、Codex、APM 和 `yq` 版本；同时保存配置文件副本。不得覆盖个人配置；所需项目授权若未预先存在，停止并记无法判断。
 
 6. **D 资料准备与前置检查**：在干净消费者内用实施提交附带的准备器，输出全部放在本轮运行目录：
 
@@ -126,7 +152,7 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    ```sh
    printf 'not_run\n' > "$PC81_RUN_ROOT/curl-exit-code.txt"
    direnv_rc=0
-   direnv exec "$PC81_EVAL_ENV_ROOT" sh -c 'curl_rc=0; curl -sS -X POST "http://127.0.0.1:${EVAL_PORT}/eval" -H "Content-Type: application/json" --data-binary @"$1" -o "$2" -w "%{http_code}\n" > "$3" || curl_rc=$?; printf "%s\n" "$curl_rc" > "$4"' sh "$PC81_RUN_ROOT/request.json" "$PC81_RUN_ROOT/response.raw.tmp" "$PC81_RUN_ROOT/http-status.txt" "$PC81_RUN_ROOT/curl-exit-code.txt" || direnv_rc=$?
+   direnv exec "$PC81_EVAL_ENV_ROOT" sh -c 'curl_rc=0; curl --connect-timeout 10 --max-time 930 -sS -X POST "http://127.0.0.1:${EVAL_PORT}/eval" -H "Content-Type: application/json" --data-binary @"$1" -o "$2" -w "%{http_code}\n" > "$3" || curl_rc=$?; printf "%s\n" "$curl_rc" > "$4"' sh "$PC81_RUN_ROOT/request.json" "$PC81_RUN_ROOT/response.raw.tmp" "$PC81_RUN_ROOT/http-status.txt" "$PC81_RUN_ROOT/curl-exit-code.txt" || direnv_rc=$?
    printf '%s\n' "$direnv_rc" > "$PC81_RUN_ROOT/direnv-exit-code.txt"
    ```
 
@@ -143,6 +169,10 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
      jq -n --arg http "$(cat "$PC81_RUN_ROOT/http-status.txt")" \
        --arg curl "$(cat "$PC81_RUN_ROOT/curl-exit-code.txt")" \
        '{http_status:$http,curl_exit_code:($curl|tonumber),outcome:"transport_error"}' \
+       > "$PC81_RUN_ROOT/evidence.json"
+   elif test "$(cat "$PC81_RUN_ROOT/http-status.txt")" != 200; then
+     jq -n --arg http "$(cat "$PC81_RUN_ROOT/http-status.txt")" \
+       '{http_status:$http,outcome:"http_error"}' \
        > "$PC81_RUN_ROOT/evidence.json"
    elif jq -e --arg http "$(cat "$PC81_RUN_ROOT/http-status.txt")" '
      if (has("passed") | not)
@@ -210,7 +240,19 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 
    仅在 `$PC81_RUN_ROOT` 保存本次请求、`direnv`/HTTP/`curl` 状态、固定配置副本、按非 root 命令线程筛出的 owner 最终业务消息、初始 `stage5-plan` 输出、相关原始执行事件的必要字段（`runtime_seq`、`thread_id`、`command`、`cwd`、`exitCode`；只有 `stage5-plan` 事件保留 `aggregatedOutput`）、目标邮件目录检查结果和必要的版本号。评估服务原始命令事件的输出字段为 `aggregatedOutput`，不是 `output.text`；owner 最终消息从相同 `thread_id` 的原始 `agentMessage` 事件取得，不使用只含 root 线程的兼容事件列表。筛选命令校验 `passed`、`version`、`output.exit_code`、`output.termination_reason`、`output.thread_id` 和 `output.app_server_events`；必需结构缺失时 `jq -e` 失败并记录 `invalid_or_unusable_response`。按 `runtime_seq` 和 `thread_id` 区分调用。不复制完整响应、完整服务记录或无关环境诊断；不新增采集器。环境包装失败时只记录 `direnv` 退出码；传输失败时只记录 HTTP 状态与 `curl` 退出码；响应无法解析或不含所需结构时只记录状态及 `invalid_or_unusable_response`，随后删除原始临时文件。
 
-8. **D 唯一观察点**：从 `owner_final_messages` 中与该教授命令事件同一 `thread_id` 的最终业务 JSON，以及相同线程的 `commandExecution` 记录检查：正式结果为 `needs_refresh`、原因 `missing_source`、字段 `source_fingerprints.boshu_analysis`；其初始 `stage5-plan` 保留为 `needs_recheck:missing_source`、写入提示为 `null`，且其余诊断字段与计划相符；owner 只执行这一份缺源初始计划，没有在源未变时重复 Step 2.5 或重跑计划，没有生成邮件结果、调用 `stage5-finalize`，目标目录没有首封 `.md`、`.txt` 或状态文件。按筛选后的结构字段、`runtime_seq`、`thread_id`、`command`、`cwd`、`exitCode`、`aggregatedOutput` 和实际文件判断，不以自然语言自述代替。若现有记录不能区分上述调用，记无法判断；不新增采集器、不宣称通过。
+8. **D 唯一观察点**：请求结果可解析且夹具清单存在时，从清单读取教授目录并在该目录检查产物：
+
+   ```sh
+   PC81_PROFESSOR_DIR="$(jq -r '.professor_dir' "$PC81_RUN_ROOT/preflight/fixture-manifest.json")"
+   if test -d "$PC81_PROFESSOR_DIR"; then
+     find "$PC81_PROFESSOR_DIR" -maxdepth 1 -type f \( -name '*.md' -o -name '*.txt' -o -name '套磁邮件状态.json' \) -print > "$PC81_RUN_ROOT/target-mail-files.txt"
+     if test -s "$PC81_RUN_ROOT/target-mail-files.txt"; then printf 'present\n'; else printf 'absent\n'; fi > "$PC81_RUN_ROOT/target-mail-check.txt"
+   else
+     printf 'directory_missing\n' > "$PC81_RUN_ROOT/target-mail-check.txt"
+   fi
+   ```
+
+   随后从 `owner_final_messages` 中与该教授命令事件同一 `thread_id` 的最终业务 JSON，以及相同线程的 `commandExecution` 记录检查：正式结果为 `needs_refresh`、原因 `missing_source`、字段 `source_fingerprints.boshu_analysis`；其初始 `stage5-plan` 保留为 `needs_recheck:missing_source`、写入提示为 `null`，且其余诊断字段与计划相符；owner 只执行这一份缺源初始计划，没有在源未变时重复 Step 2.5 或重跑计划，没有生成邮件结果、调用 `stage5-finalize`，`target-mail-check.txt` 为 `absent` 且 `target-mail-files.txt` 为空。按筛选后的结构字段、`runtime_seq`、`thread_id`、`command`、`cwd`、`exitCode`、`aggregatedOutput` 和实际文件判断，不以自然语言自述代替。若现有记录不能区分上述调用，记无法判断；不新增采集器、不宣称通过。
 
 9. **失败、重试、清理与结果**：A—C 各执行一次；环境或解释器无法启动则记无法判断，不因业务断言失败而重跑。D 正式 `/eval` 最多一次；环境包装、传输、服务、配额、模型或记录不完整时按现有状态记无法判断或未执行，不重发请求。业务结果不符记业务失败。仅保留失败所需的 `direnv`/HTTP/`curl` 状态及筛选后的简短错误字段，不保留完整失败响应；消费者、配置、请求和筛选后的证据都留在独立 `/private/tmp/issue81-*` 下，不复制用户资料、不写回生产者仓库。结果只分为通过、业务失败、无法判断、未执行，并记录实现 SHA、夹具 SHA、版本、配置摘要与执行码。
 
@@ -222,4 +264,4 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 - 不跑全部阶段 0—5、全部浏览器/模型供应商、全部教授及所有邮箱证据分支。
 - 不修改产品保护或用户数据来让 D 获得通过结果。
 
-**r8 相对 r7 保持 A—D 业务目标不变，将 D 请求提示限定为输入事实和任务描述。第二关待复审；未获批准的额外测试不得进入必测清单。**
+**r9 相对 r8 保持 A—D 业务目标不变，将评估环境改为从工作树位置推导，补齐执行版本、提交号和 D 目标目录检查的证据命令，并设置请求时限及非 200 HTTP 分流。第二关待复审；未获批准的额外测试不得进入必测清单。**
