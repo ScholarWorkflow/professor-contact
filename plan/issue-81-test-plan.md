@@ -1,17 +1,18 @@
-# 第 81 号议题：唯一测试计划（第十版待第二关限定复审）
+# 第 81 号议题：唯一测试计划（第十一版待第二关限定复审）
 
 ## 版本与状态
 
 - Requirement revision：第 81 号议题，2026-10-14 原始需求，https://github.com/ScholarWorkflow/professor-contact/issues/81。
 - Implementation Plan：`issue-81-plan-r2-2026-10-14`，见 [issue-81-implementation-plan.md](issue-81-implementation-plan.md)。
-- Test Plan revision：`issue-81-test-r10-2026-10-14`；唯一正式测试计划。
+- Test Plan revision：`issue-81-test-r11-2026-10-14`；唯一正式测试计划。
 - 目标仓库基线：`3f66656c4e82c9f0235b6dd0937ae5b2333c48f9`；实际被测产品提交见下方执行记录。
 - 产品实现提交为 `5412e5385975db2bcc6daf0740e0a2a3cf3d2445`。A—C 在该提交的干净生产者工作树执行；D 消费者通过 APM 安装的也是该提交。执行结果和固定版本记录见“第三关执行记录”。
 - D 使用的合成夹具固定为 `RekiDunois/skills-test-fixtures` 提交 `fa3a03ed66be22e7191264462716e046c8b18e72`，Codex 配置文件为 `configs/codex-consumer.toml`；精确版本与配置摘要须随执行记录保存。
 - 环境预检：`uv 0.12.22`、Python `3.14.6`、APM `0.29.0`、Codex CLI `0.162.0-alpha.17.2`、`yq v4.54.1`、`jq-1.8.2`、`direnv 2.37.1`、`curl 8.7.1`。Python 版本由 `UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python --version` 确认；A—D 的 `uv run` 均复用同一离线缓存目录 `/private/tmp/pc81-uv-cache`，不另建空缓存。以上为正式执行前的预检；本轮实际版本与配置摘要见下方记录。
-- 第十版本地测试准备预检（2026-10-14）：上列命令和版本本轮均复核可用，离线 Python 缓存目录存在且 Python `3.14.6` 可启动；`codex exec --help` 显示 `--sandbox <SANDBOX_MODE>`，与步骤 7 的启动参数一致。测试计划、A—C 单元测试模块和 D 夹具准备器均存在；固定夹具提交 `fa3a03ed66be22e7191264462716e046c8b18e72` 中的 `configs/codex-consumer.toml` 包含 `sandbox_mode = "workspace-write"`。评估环境 `.envrc` 与 `EVAL_PORT` 可用（本轮未连接评估服务）。本轮未运行 A—C 测试、D 夹具准备器、`contact_state.py` 命令或评估请求。D 仍待第十版第二关限定复审后由本地执行工程师正式运行。
+- 第十版本地测试准备预检（2026-10-14）：上列命令和版本本轮均复核可用，离线 Python 缓存目录存在且 Python `3.14.6` 可启动；`codex exec --help` 显示 `--sandbox <SANDBOX_MODE>`。测试计划、A—C 单元测试模块和 D 夹具准备器均存在；固定夹具提交 `fa3a03ed66be22e7191264462716e046c8b18e72` 中的 `configs/codex-consumer.toml` 包含 `sandbox_mode = "workspace-write"`。评估环境 `.envrc` 与 `EVAL_PORT` 可用（本轮未连接评估服务）。本轮未运行 A—C 测试、D 夹具准备器、`contact_state.py` 命令或评估请求。D 仍待第二关限定复审后由本地执行工程师正式运行。
+- 第十一版计划修订：`sandbox_mode` 仅作为发给评估服务的 `codex exec` 命令参数；消费者项目配置副本移除该键，避免重复设置。第十一版仅修订 D 的配置和请求构造，仍待第二关限定复审；本轮未连接评估服务或运行正式测试。
 - 测试与证据边界遵守 [Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253) 和 [Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)。
-- 第一关：**通过，沿用既有结论**，以 [第一关审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6164440577) 为准。第二关：**第九版已通过，第十版权限启动参数调整待限定复审**，沿用[第九版未受影响的第二关结论](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6166845322)；本计划不自行宣布第十版通过。第三关历史执行结果：A—C 通过，D 无法判断；第十版尚未运行，具体记录如下。
+- 第一关：**通过，沿用既有结论**，以 [第一关审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6164440577) 为准。第二关：**第九版已通过；第十版启动参数和第十一版配置去重修订待限定复审**，沿用[第九版未受影响的第二关结论](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6166845322)；本计划不自行宣布第十一版通过。第三关历史执行结果：A—C 通过，D 无法判断；第十、十一版均未运行，具体记录如下。
 
 ## 必测业务目标：本次验收范围的上限
 
@@ -104,17 +105,20 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    ```sh
    set -eu
    PC81_TEST_CONFIG="$PC81_CONSUMER/.codex/config.toml"
-   yq eval-all -p toml -o toml '. as $item ireduce ({}; . * $item)' \
+   PC81_SANDBOX_MODE="$(yq -p toml -r '.sandbox_mode' "$PC81_FIXTURES_ROOT/configs/codex-consumer.toml")"
+   test "$PC81_SANDBOX_MODE" = workspace-write
+   yq eval-all -p toml -o toml '. as $item ireduce ({}; . * $item) | del(.sandbox_mode)' \
      "$PC81_TEST_CONFIG" "$PC81_FIXTURES_ROOT/configs/codex-consumer.toml" \
      > "$PC81_RUN_ROOT/config.toml"
-   yq -p toml -e '.model == "gpt-6-luna" and .model_reasoning_effort == "low" and .sandbox_mode == "workspace-write"' \
+   yq -p toml -e '.model == "gpt-6-luna" and .model_reasoning_effort == "low" and has("sandbox_mode") == false' \
      "$PC81_RUN_ROOT/config.toml"
    cp "$PC81_RUN_ROOT/config.toml" "$PC81_TEST_CONFIG"
+   printf 'eval_sandbox_mode=%s\n' "$PC81_SANDBOX_MODE" >> "$PC81_RUN_ROOT/versions.txt"
    ```
 
-   `versions.txt` 记录实际产品/夹具提交 SHA、`uv`、Python、Codex、APM 和 `yq` 版本；同时保存配置文件副本。不得覆盖个人配置；所需项目授权若未预先存在，停止并记无法判断。
+   `versions.txt` 记录实际产品/夹具提交 SHA、`uv`、Python、Codex、APM、`yq` 版本和评估请求使用的 `sandbox_mode`；同时保存不含 `sandbox_mode` 的项目配置文件副本。不得覆盖个人配置；所需项目授权若未预先存在，停止并记无法判断。
 
-   **隔离消费者写入前提**：本次只在消费者内生成教授交接文件，所需沙盒范围为 `workspace-write`。固定夹具配置已经提供 `sandbox_mode = "workspace-write"`；但是 Codex 对未受信任项目可能跳过项目级 `.codex/config.toml`。参照 [knowledge-tools PR #5 的正式执行说明](https://github.com/ScholarWorkflow/knowledge-tools/blob/feat/personal-knowledge-runtime/tests/PR5-TEST-RECIPE.md) 第 7 节，第 7 步在评估请求里直接使用**同一份生成配置文件所记载的沙盒值**作为 `--sandbox` 的值，避免因项目配置尚未加载而退回只读。该命令行参数只确定沙盒写入范围，**不授予项目信任，也不保证其它项目级配置已加载**。不新增独立权限配置、不设置 `trust_level`、不修改个人配置，不使用 `danger-full-access`。项目不受信任而导致已安装技能或代理不可用时按现有环境阻断记无法判断，不靠增加权限或改提示词绕过。
+   **隔离消费者写入前提**：本次只在消费者内生成教授交接文件，所需沙盒范围为 `workspace-write`。固定夹具的 `configs/codex-consumer.toml` 是该值的唯一来源；它只用于确定发给评估服务的 `codex exec` 命令参数，不复制到消费者项目配置。评估服务执行时，Codex 对未受信任项目可能跳过项目级 `.codex/config.toml`，所以请求中的 `--sandbox` 显式指定写入范围。参照 [knowledge-tools PR #5 的正式执行说明](https://github.com/ScholarWorkflow/knowledge-tools/blob/feat/personal-knowledge-runtime/tests/PR5-TEST-RECIPE.md) 第 7 节。该命令参数只确定沙盒写入范围，**不授予项目信任，也不保证其它项目级配置已加载**。不新增独立权限配置、不设置 `trust_level`、不修改个人配置，不使用 `danger-full-access`。项目不受信任而导致已安装技能或代理不可用时按现有环境阻断记无法判断，不靠增加权限或改提示词绕过。
 
 6. **D 资料准备与前置检查**：在干净消费者内用实施提交附带的准备器，输出全部放在本轮运行目录：
 
@@ -142,16 +146,15 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    请使用已安装的 professor-contact 工作流，对程序目录 <PC81_PROGRAM_ROOT> 中的教授邮件包 <PC81_EMAIL_PACK> 使用模板 <PC81_TEMPLATE> 执行阶段 5 首封邮件模式。本次未提供用户选择。
    ```
 
-   将上文三个占位符替换为该次绝对路径并保存为 `$PC81_RUN_ROOT/prompt.txt`。以下命令通过标准库 `shlex.join` 构造评估请求；`command` 只包含 `codex exec` 后的参数，`timeout` 固定为 900 秒：
+   将上文三个占位符替换为该次绝对路径并保存为 `$PC81_RUN_ROOT/prompt.txt`。以下步骤只在本机通过标准库 `shlex.join` 构造评估请求；`command` 字段包含 `codex exec` 的参数，由评估服务远端执行，本机不运行该命令。`timeout` 固定为 900 秒：
 
    ```sh
-   PC81_SANDBOX_MODE="$(yq -p toml -r '.sandbox_mode' "$PC81_RUN_ROOT/config.toml")"
    test "$PC81_SANDBOX_MODE" = workspace-write
    UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python -c 'import json, pathlib, shlex, sys; consumer, prompt_file, output, sandbox_mode = sys.argv[1:]; argv = ["--json", "--skip-git-repo-check", "--sandbox", sandbox_mode, "--cd", consumer, "--", pathlib.Path(prompt_file).read_text(encoding="utf-8").strip()]; pathlib.Path(output).write_text(json.dumps({"command": shlex.join(argv), "timeout": 900}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")' "$PC81_CONSUMER" "$PC81_RUN_ROOT/prompt.txt" "$PC81_RUN_ROOT/request.json" "$PC81_SANDBOX_MODE"
    jq -e '.timeout == 900 and (.command | startswith("--json ") and contains("--sandbox workspace-write "))' "$PC81_RUN_ROOT/request.json"
    ```
 
-   只把已批准配置中的沙盒值通过 Codex 支持的 `--sandbox` 参数传入本次运行；不在命令中另设模型、推理、信任或 MCP 覆盖，也不传 `--ephemeral`。`--cd` 仍准确指向隔离消费者。执行前确认这个消费者已有所需的 Codex 项目授权；如授权不存在则停止，不写个人设置。显式沙盒值不能代替项目信任或产品核验结果。
+   只把固定夹具配置中的沙盒值通过 Codex 支持的 `--sandbox` 参数发送给评估服务；消费者项目配置不再重复设置该值。不在命令中另设模型、推理、信任或 MCP 覆盖，也不传 `--ephemeral`。`--cd` 仍准确指向隔离消费者。执行前确认这个消费者已有所需的 Codex 项目授权；如授权不存在则停止，不写个人设置。显式沙盒值不能代替项目信任或产品核验结果。
 
    只向当前已配置的评估服务发送一次：
 
@@ -260,7 +263,7 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 
    随后从 `owner_final_messages` 中与该教授命令事件同一 `thread_id` 的最终业务 JSON，以及相同线程的 `commandExecution` 记录检查：正式结果为 `needs_refresh`、原因 `missing_source`、字段 `source_fingerprints.boshu_analysis`；其初始 `stage5-plan` 保留为 `needs_recheck:missing_source`、写入提示为 `null`，且其余诊断字段与计划相符；owner 只执行这一份缺源初始计划，没有在源未变时重复 Step 2.5 或重跑计划，没有生成邮件结果、调用 `stage5-finalize`，`target-mail-check.txt` 为 `absent` 且 `target-mail-files.txt` 为空。按筛选后的结构字段、`runtime_seq`、`thread_id`、`command`、`cwd`、`exitCode`、`aggregatedOutput` 和实际文件判断，不以自然语言自述代替。若现有记录不能区分上述调用，记无法判断；不新增采集器、不宣称通过。
 
-9. **失败、重试、清理与结果**：A—C 各执行一次；环境或解释器无法启动则记无法判断，不因业务断言失败而重跑。D 每次获批的固定方案正式 `/eval` 最多一次；环境包装、传输、服务、配额、模型、写入权限或记录不完整时按现有状态记无法判断或未执行，不在同一尝试内重发请求。旧版 D 的无法判断记录保持不变；第十版启动参数变化属于方案修订，先经第二关限定复审，再由本地执行工程师在独立目录进行**一次新的正式尝试**，不得将它记作相同配置的重试或覆盖旧记录。业务结果不符记业务失败。仅保留失败所需的 `direnv`/HTTP/`curl` 状态及筛选后的简短错误字段，不保留完整失败响应；消费者、配置、请求和筛选后的证据都留在独立 `/private/tmp/issue81-*` 下，不复制用户资料、不写回生产者仓库。结果只分为通过、业务失败、无法判断、未执行，并记录实现 SHA、夹具 SHA、版本、配置摘要与执行码。
+9. **失败、重试、清理与结果**：A—C 各执行一次；环境或解释器无法启动则记无法判断，不因业务断言失败而重跑。D 每次获批的固定方案正式 `/eval` 最多一次；环境包装、传输、服务、配额、模型、写入权限或记录不完整时按现有状态记无法判断或未执行，不在同一尝试内重发请求。旧版 D 的无法判断记录保持不变；第十、十一版启动参数与配置接线变化属于方案修订，第二关限定复审通过后，再由本地执行工程师在独立目录进行**一次新的正式尝试**，不得将它记作相同配置的重试或覆盖旧记录。业务结果不符记业务失败。仅保留失败所需的 `direnv`/HTTP/`curl` 状态及筛选后的简短错误字段，不保留完整失败响应；消费者、配置、请求和筛选后的证据都留在独立 `/private/tmp/issue81-*` 下，不复制用户资料、不写回生产者仓库。结果只分为通过、业务失败、无法判断、未执行，并记录实现 SHA、夹具 SHA、版本、配置摘要与执行码。
 
 ## 第三关执行记录
 
@@ -278,4 +281,4 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 - 不跑全部阶段 0—5、全部浏览器/模型供应商、全部教授及所有邮箱证据分支。
 - 不修改产品保护或用户数据来让 D 获得通过结果。
 
-**r10 相对 r9 只改 D 的启动权限接线：从固定夹具合并后的配置读取 `sandbox_mode`，把同一值传给既有 Codex `--sandbox` 参数，保留 `--cd` 与现有评估服务入口；说明该参数不自动授予项目信任。A—D 业务目标、固定输入、提示词、观察点、证据提取、产品实现及 A—C 既有通过结果不变。用户提供的后续服务日志摘录中，根代理报告创建临时交接文件的写入授权被拒、未委派教授代理；该描述不等于底层权限判定，本版只修正有事实依据的启动配置差异。第十版第二关需限定复审，第三关 D 仍为无法判断；不新增测试，不改写历史结果。**
+**r11 相对 r10 只修订 D 的配置和评估请求构造：从固定夹具配置读取 `sandbox_mode`，从消费者项目配置中移除该键，只把该值放入发给评估服务的 Codex `--sandbox` 参数；明确 `command` 由评估端执行，本机只构造请求。保留 `--cd` 与现有评估入口，不授予项目信任。A—D 业务目标、固定输入、提示词、观察点、证据提取、产品实现及 A—C 既有通过结果不变。第十一版第二关需限定复审，第三关 D 仍为无法判断；不新增测试，不改写历史结果。**
