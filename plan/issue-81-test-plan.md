@@ -1,16 +1,16 @@
-# 第 81 号议题：唯一测试计划（第二关步骤待审核）
+# 第 81 号议题：唯一测试计划（第二关已通过）
 
 ## 版本与状态
 
 - Requirement revision：第 81 号议题，2026-10-14 原始需求，https://github.com/ScholarWorkflow/professor-contact/issues/81。
 - Implementation Plan：`issue-81-plan-r2-2026-10-14`，见 [issue-81-implementation-plan.md](issue-81-implementation-plan.md)。
 - Test Plan revision：`issue-81-test-r9-2026-10-14`；唯一正式测试计划。
-- 目标仓库基线：`3f66656c4e82c9f0235b6dd0937ae5b2333c48f9`；未来实际被测产品版本以实施后的精确提交为准，须在执行记录中注明。
-- 本次开始时拉取请求头提交 `28cc98f6272702ed0c14e08a2706f2472101e141` 只含计划文档；产品实现提交尚未提供。本次仅补测试资产，正式测试前仍须在干净生产者工作树记录实现后的产品提交，并确认 A—C 测试和 D 消费者均使用该提交。
+- 目标仓库基线：`3f66656c4e82c9f0235b6dd0937ae5b2333c48f9`；实际被测产品提交见下方执行记录。
+- 产品实现提交为 `5412e5385975db2bcc6daf0740e0a2a3cf3d2445`。A—C 在该提交的干净生产者工作树执行；D 消费者通过 APM 安装的也是该提交。执行结果和固定版本记录见“第三关执行记录”。
 - D 使用的合成夹具固定为 `RekiDunois/skills-test-fixtures` 提交 `fa3a03ed66be22e7191264462716e046c8b18e72`，Codex 配置文件为 `configs/codex-consumer.toml`；精确版本与配置摘要须随执行记录保存。
-- 环境预检：`uv 0.12.22`、Python `3.14.6`、APM `0.29.0`、Codex CLI `0.162.0-alpha.17.2`、`yq v4.54.1`、`jq-1.8.2`、`direnv 2.37.1`、`curl 8.7.1`。Python 版本由 `UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python --version` 确认；A—D 的 `uv run` 均复用同一离线缓存目录 `/private/tmp/pc81-uv-cache`，不另建空缓存。其余为版本信息查询。以上只是环境预检，不是产品测试结果。正式执行时仍记录实际版本和配置。
+- 环境预检：`uv 0.12.22`、Python `3.14.6`、APM `0.29.0`、Codex CLI `0.162.0-alpha.17.2`、`yq v4.54.1`、`jq-1.8.2`、`direnv 2.37.1`、`curl 8.7.1`。Python 版本由 `UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python --version` 确认；A—D 的 `uv run` 均复用同一离线缓存目录 `/private/tmp/pc81-uv-cache`，不另建空缓存。以上为正式执行前的预检；本轮实际版本与配置摘要见下方记录。
 - 测试与证据边界遵守 [Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253) 和 [Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)。
-- 第一关：**通过**，以 [测试计划第一关审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6164440577) 为准。第二关：步骤已补齐，**待审核，未批准**。第三关：**未执行**。本版不代表第二关或第三关通过。
+- 第一关：**通过**，以 [测试计划第一关审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6164440577) 为准。第二关：**通过**，以 [测试计划第二关审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6166845322) 为准。第三关已执行；A—C 通过，D 无法判断，具体记录如下。
 
 ## 必测业务目标：本次验收范围的上限
 
@@ -255,6 +255,14 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
    随后从 `owner_final_messages` 中与该教授命令事件同一 `thread_id` 的最终业务 JSON，以及相同线程的 `commandExecution` 记录检查：正式结果为 `needs_refresh`、原因 `missing_source`、字段 `source_fingerprints.boshu_analysis`；其初始 `stage5-plan` 保留为 `needs_recheck:missing_source`、写入提示为 `null`，且其余诊断字段与计划相符；owner 只执行这一份缺源初始计划，没有在源未变时重复 Step 2.5 或重跑计划，没有生成邮件结果、调用 `stage5-finalize`，`target-mail-check.txt` 为 `absent` 且 `target-mail-files.txt` 为空。按筛选后的结构字段、`runtime_seq`、`thread_id`、`command`、`cwd`、`exitCode`、`aggregatedOutput` 和实际文件判断，不以自然语言自述代替。若现有记录不能区分上述调用，记无法判断；不新增采集器、不宣称通过。
 
 9. **失败、重试、清理与结果**：A—C 各执行一次；环境或解释器无法启动则记无法判断，不因业务断言失败而重跑。D 正式 `/eval` 最多一次；环境包装、传输、服务、配额、模型或记录不完整时按现有状态记无法判断或未执行，不重发请求。业务结果不符记业务失败。仅保留失败所需的 `direnv`/HTTP/`curl` 状态及筛选后的简短错误字段，不保留完整失败响应；消费者、配置、请求和筛选后的证据都留在独立 `/private/tmp/issue81-*` 下，不复制用户资料、不写回生产者仓库。结果只分为通过、业务失败、无法判断、未执行，并记录实现 SHA、夹具 SHA、版本、配置摘要与执行码。
+
+## 第三关执行记录
+
+- 产品提交：`5412e5385975db2bcc6daf0740e0a2a3cf3d2445`。执行时生产者工作树干净，路径为项目父目录下的 `worktree/issue-81-implementation-20261014`。
+- A—C：结果**通过**。运行目录 `/private/tmp/issue81-tests-FJIPI7`；命令退出码 `0`，以下 3 个测试方法均通过：`test_a_actual_plan_hints_seed_a_reusable_complete_cache`、`test_b_noncanonical_values_keep_the_reason_and_report_the_field`、`test_c_changed_mtime_and_31_day_cache_remain_rejected`。版本：`uv 0.12.22`、Python `3.14.6`。日志与版本记录保存在该目录。
+- D 固定输入：夹具提交 `fa3a03ed66be22e7191264462716e046c8b18e72`；运行目录 `/private/tmp/issue81-eval-qZWvLG`；安装产品提交与上列一致。版本：`uv 0.12.22`、Python `3.14.6`、APM `0.29.0`、Codex CLI `0.162.0-alpha.17.2`、`yq v4.54.1`、`jq-1.8.2`、`direnv 2.37.1`、`curl 8.7.1`。消费者配置 SHA-256：`923ef5e3e57b6f0af179ceb0ee65aee1ca79bbb4d32de5c1526f53ea9c927c82`。登录状态检查退出码为 `0`。
+- D 请求只发送一次；HTTP `200`、`curl` 退出码 `0`、评估结果 `passed: true`、进程退出码 `0`、终止原因 `completed`。已筛选的产品事件只有一条 `stage5-list-inputs`：`runtime_seq=27065`、事件线程 `01a13a20-fef5-7c81-8e5e-4baac36eeb33`、退出码 `0`。没有 `stage5-plan` 事件，也没有可用的非根 owner 最终消息。目标邮件目录检查为 `absent`，文件数为 `0`。
+- D 结果：**无法判断**。现有筛选记录未提供预期的初始 `stage5-plan` 输出、owner 业务 JSON 或对应的停止过程，无法判断缺源诊断及停止规则；不宣称通过，不重发请求。原始响应已按计划删除，保留的筛选结果及执行码位于上述独立运行目录。
 
 ## 禁止新增的测试要求
 
