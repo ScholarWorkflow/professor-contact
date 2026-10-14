@@ -1,4 +1,4 @@
-# 第 81 号议题：唯一测试计划（第十一版待第二关限定复审）
+# 第 81 号议题：唯一测试计划（第十一版已通过第二关限定复审）
 
 ## 版本与状态
 
@@ -9,10 +9,10 @@
 - 产品实现提交为 `5412e5385975db2bcc6daf0740e0a2a3cf3d2445`。A—C 在该提交的干净生产者工作树执行；D 消费者通过 APM 安装的也是该提交。执行结果和固定版本记录见“第三关执行记录”。
 - D 使用的合成夹具固定为 `RekiDunois/skills-test-fixtures` 提交 `fa3a03ed66be22e7191264462716e046c8b18e72`，Codex 配置文件为 `configs/codex-consumer.toml`；精确版本与配置摘要须随执行记录保存。
 - 环境预检：`uv 0.12.22`、Python `3.14.6`、APM `0.29.0`、Codex CLI `0.162.0-alpha.17.2`、`yq v4.54.1`、`jq-1.8.2`、`direnv 2.37.1`、`curl 8.7.1`。Python 版本由 `UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python --version` 确认；A—D 的 `uv run` 均复用同一离线缓存目录 `/private/tmp/pc81-uv-cache`，不另建空缓存。以上为正式执行前的预检；本轮实际版本与配置摘要见下方记录。
-- 第十版本地测试准备预检（2026-10-14）：上列命令和版本本轮均复核可用，离线 Python 缓存目录存在且 Python `3.14.6` 可启动；`codex exec --help` 显示 `--sandbox <SANDBOX_MODE>`。测试计划、A—C 单元测试模块和 D 夹具准备器均存在；固定夹具提交 `fa3a03ed66be22e7191264462716e046c8b18e72` 中的 `configs/codex-consumer.toml` 包含 `sandbox_mode = "workspace-write"`。评估环境 `.envrc` 与 `EVAL_PORT` 可用（本轮未连接评估服务）。本轮未运行 A—C 测试、D 夹具准备器、`contact_state.py` 命令或评估请求。D 仍待第二关限定复审后由本地执行工程师正式运行。
-- 第十一版计划修订：`sandbox_mode` 仅作为发给评估服务的 `codex exec` 命令参数；消费者项目配置副本移除该键，避免重复设置。第十一版仅修订 D 的配置和请求构造，仍待第二关限定复审；本轮未连接评估服务或运行正式测试。
+- 第十版本地测试准备预检（2026-10-14，历史记录）：上列命令和版本本轮均复核可用，离线 Python 缓存目录存在且 Python `3.14.6` 可启动；`codex exec --help` 显示 `--sandbox <SANDBOX_MODE>`。测试计划、A—C 单元测试模块和 D 夹具准备器均存在；固定夹具提交 `fa3a03ed66be22e7191264462716e046c8b18e72` 中的 `configs/codex-consumer.toml` 包含 `sandbox_mode = "workspace-write"`。评估环境 `.envrc` 与 `EVAL_PORT` 可用（本轮未连接评估服务）。本轮未运行 A—C 测试、D 夹具准备器、`contact_state.py` 命令或评估请求；当时 D 仍待第二关限定复审。
+- 第十一版计划修订：`sandbox_mode` 仅作为发给评估服务的 `codex exec` 命令参数；消费者项目配置副本移除该键，避免重复设置。第十一版仅修订 D 的配置和请求构造；该修订已通过第二关限定复审（[审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6170152859)）。
 - 测试与证据边界遵守 [Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253) 和 [Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)。
-- 第一关：**通过，沿用既有结论**，以 [第一关审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6164440577) 为准。第二关：**第九版已通过；第十版启动参数和第十一版配置去重修订待限定复审**，沿用[第九版未受影响的第二关结论](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6166845322)；本计划不自行宣布第十一版通过。第三关历史执行结果：A—C 通过，D 无法判断；第十、十一版均未运行，具体记录如下。
+- 第一关：**通过，沿用既有结论**，以 [第一关审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6164440577) 为准。第二关：第九版结论继续沿用；第十版重复设置问题见[限定复审记录](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6169418834)，第十一版修订已通过[第二关限定复审](https://github.com/ScholarWorkflow/professor-contact/pull/82#issuecomment-6170152859)。第三关历史执行结果：A—C 通过，D 无法判断；第十一版评估前置检查记录如下。
 
 ## 必测业务目标：本次验收范围的上限
 
@@ -272,6 +272,7 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 - D 固定输入：夹具提交 `fa3a03ed66be22e7191264462716e046c8b18e72`；运行目录 `/private/tmp/issue81-eval-qZWvLG`；安装产品提交与上列一致。版本：`uv 0.12.22`、Python `3.14.6`、APM `0.29.0`、Codex CLI `0.162.0-alpha.17.2`、`yq v4.54.1`、`jq-1.8.2`、`direnv 2.37.1`、`curl 8.7.1`。消费者配置 SHA-256：`923ef5e3e57b6f0af179ceb0ee65aee1ca79bbb4d32de5c1526f53ea9c927c82`。登录状态检查退出码为 `0`。
 - D 请求只发送一次；HTTP `200`、`curl` 退出码 `0`、评估结果 `passed: true`、进程退出码 `0`、终止原因 `completed`。已筛选的产品事件只有一条 `stage5-list-inputs`：`runtime_seq=27065`、事件线程 `01a13a20-fef5-7c81-8e5e-4baac36eeb33`、退出码 `0`。没有 `stage5-plan` 事件，也没有可用的非根 owner 最终消息。目标邮件目录检查为 `absent`，文件数为 `0`。
 - D 结果：**无法判断**。现有筛选记录未提供预期的初始 `stage5-plan` 输出、owner 业务 JSON 或对应的停止过程，无法判断缺源诊断及停止规则；不宣称通过，不重发请求。原始响应已按计划删除，保留的筛选结果及执行码位于上述独立运行目录。
+- D（r11 新尝试，2026-10-14）：**无法判断（评估未执行）**。候选实现提交为 `5412e5385975db2bcc6daf0740e0a2a3cf3d2445`，PR 当前头为 `d94f9efe4b2dda77d6069607ce9ff190013127a2`。隔离运行目录为 `/private/tmp/issue81-eval-foeXjl`，新消费者目录为 `/private/tmp/issue81-eval-foeXjl/consumer`。预检命令 `codex --version` 返回 `0.162.0-alpha.17.2`；`codex login status` 退出码为 `0`。按 D 第 5 步，在评估环境的 Codex 用户配置中只读检查该消费者路径的 `projects.<path>.trust_level`，结果为 `not_configured`。该消费者尚未获项目授权，因此按计划停止；没有安装 APM 包、克隆夹具、构造请求或发送 `/eval`，没有改写任何用户配置。预检结果见独立文件 `/private/tmp/issue81-eval-foeXjl/preflight-evidence.json`。旧版 D 的正式尝试记录保持不变。
 
 ## 禁止新增的测试要求
 
@@ -281,4 +282,4 @@ B 的四种输入是议题明确列出的写入不一致表现；C 的元数据�
 - 不跑全部阶段 0—5、全部浏览器/模型供应商、全部教授及所有邮箱证据分支。
 - 不修改产品保护或用户数据来让 D 获得通过结果。
 
-**r11 相对 r10 只修订 D 的配置和评估请求构造：从固定夹具配置读取 `sandbox_mode`，从消费者项目配置中移除该键，只把该值放入发给评估服务的 Codex `--sandbox` 参数；明确 `command` 由评估端执行，本机只构造请求。保留 `--cd` 与现有评估入口，不授予项目信任。A—D 业务目标、固定输入、提示词、观察点、证据提取、产品实现及 A—C 既有通过结果不变。第十一版第二关需限定复审，第三关 D 仍为无法判断；不新增测试，不改写历史结果。**
+**r11 相对 r10 只修订 D 的配置和评估请求构造：从固定夹具配置读取 `sandbox_mode`，从消费者项目配置中移除该键，只把该值放入发给评估服务的 Codex `--sandbox` 参数；明确 `command` 由评估端执行，本机只构造请求。保留 `--cd` 与现有评估入口，不授予项目信任。A—D 业务目标、固定输入、提示词、观察点、证据提取、产品实现及 A—C 既有通过结果不变。第十一版第二关限定复审已通过（见 issuecomment-6170152859）；第三关 D 仍为无法判断；不新增测试，不改写历史结果。**
