@@ -3,11 +3,12 @@
 ## 1. 版本、依据与状态
 
 - Requirement revision：[Issue #87](https://github.com/ScholarWorkflow/professor-contact/issues/87)，截至 2026-10-15T12:04:27Z 的正式需求；本计划不修改需求的业务边界。
-- Plan revision：`issue87-narrative-example-contract-r1-2026-10-15`。本文件是该拉取请求的唯一现行实施及直接测试计划，后续语义修订原位更新并提高版本。
+- Plan revision：`issue87-narrative-example-contract-r2-2026-10-15`。本文件是该拉取请求的唯一现行实施及直接测试计划；本次只补入测试实现和执行准备，不改变 r1 已审核通过的业务目标、预期结果或范围。
 - Target repository：`ScholarWorkflow/professor-contact`；取证与分支基线：`main@2a8601facb9f3bec96da6ac22c79586ca79560d7`。
 - 适用项目规则：[Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/rekidunois/Plan-Reviewer-Rule-3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253)。
 - Codex 官方资料：[子代理及自定义代理](https://developers.openai.com/codex/subagents)、[命令行参考](https://developers.openai.com/codex/cli/reference)，核对日期 2026-10-15。本改动只涉及仓库维护的代理说明示例和确定性运行器示例，不改变 Codex 原生代理配置、委派方式或命令参数。官方文档不规定产品专用的 `positioning[].text` / `refs` 对应关系；该约束来自本仓库的正式需求和运行器。
-- Proposed review status：`pending`。需要正式 Plan Reviewer 对 P1–P4 审核并给出 `Plan conclusion: APPROVED`，随后才开始产品与测试修改。本次计划提交不代表代码修复、测试通过或可合并。
+- 第一关：`APPROVED`，依据 PR #88 评论 [issuecomment-6192062638](https://github.com/ScholarWorkflow/professor-contact/pull/88#issuecomment-6192062638)，审核版本为 r1、提交 `82f88e6a11b2aa73d91f72c1a8bcbb4342f4fb33`。
+- 当前状态：测试代码与执行步骤已按 r1 准备；第二关的步骤审核待完成。尚未修改产品示例，尚未运行正式测试；本次准备不代表测试通过或可合并。
 - 本分支关联 Issue #87；合并本拉取请求时关闭议题，后续实现与测试仍在同一拉取请求上提交。
 
 ## 2. 已确认需求、现状与来源
@@ -52,12 +53,12 @@
 
 ### 3.2 测试修改的执行约定
 
-1. **原始检查先行**：从 Codex/OpenCode 的 `narrative` 小节现有 JSON 代码块分别解析示例；从 `stage2-plan` 的 `narrative` job 取得第三份 `result_schema`。对每个 `positioning` 块按 `P→paper`、`L→later`、`G→gap` 从其**原始** `text` 提取引用，逐项确认与原始 `refs` 集合相等、`refs` 无重复。不得先覆写示例、放宽检验或修改产品校验器。
-2. **反例证明测试会失败**：在测试内以独立拷贝构造代表性错误：一份 `refs` 多出无占位符的 `later` 引用；一份 `text` 有 `G` 占位符而 `refs` 缺少 `gap`。原始检查必须拒绝这些错误；不需以模型或外部代理触发。
-3. **只绑定合成标识**：原始检查通过后，对原示例作拷贝，用 `BaseEnv` 中的合法 `item_key` 和真实合成 `gap_id`，分别替换 `text` 内的 `{{P:ITEMKEY}}`、`{{G:GAPID}}` 和 `refs` 中的 `paper:ITEMKEY`、`gap:GAPID`。若当前示例含 `L`，同样只可绑定到 `model_input.later_papers` 的合法标识，不能擅自从其他池借值。保留示例自己的叙事句子和引用对应关系，**绝不将 fixture 的完整 `text` 或 `refs` 复制进示例**。
-4. 将示例中的说明性方向字段绑定到合成方向的 `DIR00001`，保留源示例采用的是 `direction_id` 还是 `collection_key`；`gap_notes` 的说明性 `gap_id` 绑定到当前合成 gap；格式占位值 `kind="para|bullet"` 实例化为现有校验认可的 `para`。这一步仅为合法输入实例化，不改变生产示例、业务校验或输出格式。
-5. 沿用现有 `run_bound_stage2_plan` / `run_bound_stage2_finalize` 和合成的上游 Stage 0/1/2 预检证明，让正常例子通过 `stage2-finalize`。检查最终 `套磁候选输入.json` 的叙事包含绑定后的引用及原示例的三个具体例子字段。需确认 `status=ok`，不能仅以 JSON 可解析替代 runner 的业务结果。
-6. 改测试时维持原测试文件的三个来源入口；可在测试文件内部重组现有 `check_example` 等辅助函数，不要求固定私有辅助函数名，也不新增通用判定程序或单独测试服务。
+1. **先读原样例**：Codex 与 OpenCode 示例从各自说明文件的 `` `narrative:<教授>:<方向>` `` 小节首个 `json` 代码块用标准库 `json` 解析；运行器示例从 `run_bound_stage2_plan` 返回的 `kind="narrative"` 任务记录读取 `result_schema`。在任何标识替换前，对每个 `positioning` 块用 `{{([PLG]):...}}` 提取占位符；`P` 表示论文、`L` 表示后续论文、`G` 表示研究缺口，并据此转成“类型、标识”集合；确认该集合等于 `refs` 集合且 `refs` 列表无重复。不得先覆写 `text`/`refs`、放宽检查或修改产品校验器。
+2. **验证检查会拒绝两类错误**：在同一个测试文件里构造一个合法的最小合成样例副本，再分别构造“`refs` 多出无占位符的 `later` 引用”和“`text` 有 `G` 占位符但 `refs` 缺少 `gap`”两个副本；直接调用同一原始契约检查，确认两者都被拒绝。无需运行模型或外部代理。
+3. **仅绑定来自同一任务输入的合成标识**：对原始检查通过的样例做深拷贝；从叙事任务记录的 `model_input.papers[0].item_key`、`model_input.gaps[0].gap_id` 取得 `P/G` 的合法值。只有样例实际含 `L` 时，才从 `model_input.later_papers[0].item_key` 绑定 `L`；没有合法值时保留失败，不从其他数据池借值。只替换占位符和 `refs` 中的说明性标识，保留原示例叙事句子，不把合成输入中的完整 `text` 或 `refs` 覆盖进示例。
+4. 将示例中的 `direction_id` 或 `collection_key` 绑定到同一任务记录的 `model_input.direction_id`，保留原字段名称；将 `gap_notes[].gap_id` 绑定到该任务记录中的合成研究缺口；仅把格式占位值 `kind="para|bullet"` 实例化为 `para`。不改变产品示例或业务校验。
+5. 用 `BaseEnv.write_stage2_results` 建立当前隔离的合成第二阶段输入，再将绑定后的示例写入该临时 `narrative.json`，经既有 `run_bound_stage2_finalize` 执行。检查运行器返回 `status="ok"`，并在 `套磁候选输入.json` 检查保存的 `text`、`refs` 及三个具体例子字段。保留现有第一至第三阶段的预检准备入口，不补造身份或预检证明。
+6. 维持既有测试文件和三个来源入口；在该文件中添加检查辅助方法与反例，不新增通用判定程序、服务、依赖或独立脚本。
 
 ## 4. 正式测试计划（依据 Test Engineer Rule）
 
@@ -69,16 +70,24 @@
 | 错误不能被合成夹具掩盖 | 原始检查入口接收“多一个 refs”或“少一个 refs”的合成错误副本 | 检查拒绝错误副本，说明校验发生在绑定合法标识之前 | 同一测试文件中的直接反例检查 |
 | 合法示例仍可完成已有业务 | 三份原样例经合法的合成 `paper/gap/方向` 标识绑定，保留三项具体例子字段 | 当前 runner 返回 `status=ok`；产物保留叙事引用、三个字段；两种方向字段写法仍由原校验兼容 | 同一测试文件的现有 `stage2-finalize` 执行与产物检查 |
 
-**本地执行路径**：从目标仓库运行下面命令（该文件以同目录测试辅助模块作导入，不需要启动 Codex、OpenCode、模型、浏览器或 Zotero）：
+**准备与环境**：从仓库根目录确认 `python3` 可用，并确认以下既有文件存在：`.apm/skills/professor-contact/tests/test_contact_state.py`、`.apm/skills/professor-contact/tests/stage2_upstream_fixture.py`、`.apm/skills/professor-contact/tests/gate2_evidence.py`、`.apm/skills/professor-contact/tests/issue64_test_support.py`、`.apm/skills/professor-contact/tests/_stage4_handoff_test_support.py`，以及 `.apm/skills/professor-contact/scripts/contact_state.py`、`.apm/skills/professor-contact/scripts/contact_targets.py`、`.apm/skills/professor-contact/scripts/contact_stage1.py`。测试仅使用 `Python` 标准库和仓库已有模块，无需安装额外依赖、配置模型接口、启动服务或访问真实用户目录。`BaseEnv` 为每个用例创建独立的临时目录；既有预检辅助模块在该目录生成合成输入，测试结束自动清理。
+
+**有限预检命令**：可以运行 `python3 --version`、`python3 -m unittest --help`，并用 `ls -l <上述文件路径>` 核对运行时、标准测试框架和本地依赖是否就位。不得用目标测试命令、`run_bound_stage2_plan`、`stage2-finalize` 或其他产品入口作预检。
+
+**正式执行命令**：第二关通过后，在仓库根目录依次执行以下命令。测试结果和每次必要的失败记录写到独立系统临时目录；测试自身的教授、论文、研究缺口、上游状态及产品输出均留在临时目录中。
 
 ```bash
 cd .apm/skills/professor-contact/tests
-python3 -m unittest -v test_stage2_narrative_example_contract
+run_dir="$(mktemp -d "${TMPDIR:-/tmp}/issue87-narrative-example-contract.XXXXXX")"
+set -o pipefail
+python3 -m unittest -v test_stage2_narrative_example_contract 2>&1 | tee "$run_dir/attempt-01.log"
 ```
 
-以测试工程师当前环境实际执行结果为准；本文件未运行上述命令。此文件内的测试在系统临时目录使用合成教授、论文、gap 与预检状态；不得接入真实用户目录。正式尝试记录当前代码提交、命令、通过/业务失败/无法判断/未执行与必要错误输出，临时运行内容保存在仓库外独立目录，不上传敏感或原始运行资料。
+执行记录至少写明实际产品提交、测试文件提交、命令、结果分类（通过/业务失败/无法判断/未执行）、必要错误摘要和日志路径；不保存真实个人数据或完整无关输出。本地测试准备阶段**不运行**上面的正式命令。
 
-**失败处理**：原始例子集合不一致是本议题内的业务失败，应修正相应发布示例；实例化后出现 `unknown_reference_id`，先检查是否将示例标识绑定到了正确的合成 `papers` / `gaps`；不得放宽正式 `validate_narrative_entry`。如上游预检或本地依赖中断而未形成可判断结果，标记无法判断，修复环境后仅重跑受影响项。没有外部模型请求和带副作用的服务调用，本计划不安排外部故障正式重试；业务失败不以重复采样消除。
+**有限预检结果（本次准备）**：`python3 --version` 返回 `Python 3.14.7`；`python3 -m unittest --help` 成功显示标准测试框架用法；上述测试辅助模块与三个运行器脚本均存在。已检查现有 `BaseEnv` 与预检辅助代码使用合成数据及临时目录，不依赖真实用户状态。未执行正式测试、计划运行器或产品入口。缺少输入：无。正式测试仍待第二关审核及本地执行工程师运行。
+
+**失败处理**：原始例子集合不一致是本议题内的业务失败，应修正相应发布示例；实例化后出现 `unknown_reference_id`，先检查是否将示例标识绑定到了同一任务输入的合成论文 `papers` 或研究缺口 `gaps`；不得放宽正式的 `validate_narrative_entry` 校验。如上游预检或本地依赖中断而未形成可判断结果，标记无法判断；修复环境后只运行受影响项，并按该次环境变化记录，不覆盖已确认的业务失败。没有外部模型请求和带副作用的服务调用，本计划不安排外部故障正式重试；业务失败不以重复采样消除。
 
 ## 5. 影响、兼容、风险与反例
 
