@@ -266,7 +266,8 @@ class BaseEnv(unittest.TestCase):
             second["user_note"] = "我想比较第二种合成输入的处理结果。"
             facts["directions"].append(second)
 
-        facts = self.write_facts(add_second_direction)
+        facts_path = self.write_facts(add_second_direction)
+        facts = json.loads(facts_path.read_text(encoding="utf-8"))
         results = self.root / "results"
         self.write_stage2_results(results, directions=facts["directions"])
 
@@ -285,11 +286,11 @@ class BaseEnv(unittest.TestCase):
                     "教授从", "第二方向教授从", 1))
         narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
 
-        plan = parse(self.run_bound_stage2_plan(facts))
+        plan = parse(self.run_bound_stage2_plan(facts_path))
         self.assertEqual(plan["status"], "ok", plan)
-        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
+        out = parse(run_bound_stage2_finalize(run_cli, facts_path, "--results", results))
         self.assertEqual(out["status"], "ok", out)
-        return facts
+        return facts_path
 
     def stage3_run(self, profile=None, candidate_extra=None):
         facts = self.write_facts()
@@ -944,8 +945,10 @@ class TestRunnerBasics(BaseEnv):
         pack = json.loads(pack_path.read_text(encoding="utf-8"))
         self.assertEqual(pack["validator"]["results"]["DIR00001"]["result"], "pass")
         self.assertEqual(pack["validator"]["results"]["DIR00001"]["rounds"], 1)
-        self.assertIn("把句子写得更直接。",
-                      json.dumps(pack["validator"], ensure_ascii=False))
+        stored_issues = pack["validator"]["results"]["DIR00001"]["issues"]
+        self.assertEqual(
+            [{key: stored_issue.get(key) for key in issue} for stored_issue in stored_issues],
+            [issue])
         self.assertNotIn("validator_not_accepted",
                          self.stage2_preflight_direction()["reason_codes"])
         refine = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,

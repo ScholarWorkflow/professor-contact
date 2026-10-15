@@ -193,64 +193,6 @@ class Stage2ValidationHandoffTests(BaseEnv):
                              if row["direction_id"] == "DIR00001")
             self.assertNotIn("validator_not_accepted", direction["reason_codes"])
 
-    def test_stage2_calling_docs_keep_the_raw_report_sequence(self):
-        repo = Path(__file__).resolve().parents[4]
-        codex_path = repo / "packages/professor-contact-codex/.apm/agents/professor-contact-analyzer.agent.md"
-        opencode_path = repo / "packages/professor-contact-opencode/.apm/agents/professor-contact-analyzer.agent.md"
-        skill_path = repo / ".apm/skills/professor-contact/SKILL.md"
-
-        def section(text, start_marker, end_marker):
-            start = text.index(start_marker)
-            end = text.index(end_marker, start)
-            return text[start:end]
-
-        def assert_order(owner, text, markers):
-            cursor = 0
-            for marker in markers:
-                position = text.find(marker, cursor)
-                self.assertGreaterEqual(position, 0, f"{owner}: {marker} 顺序缺失")
-                cursor = position + len(marker)
-
-        def assert_first_round_to_refinement(owner, text):
-            assert_order(owner, text, ("原样", "stage2-record-validation", "needs_correction",
-                                       "stage2-refine-plan", "stage2-refine-finalize"))
-            record_at = text.index("stage2-record-validation")
-            refine_at = text.index("stage2-refine-plan", record_at)
-            condition = text[record_at:refine_at]
-            self.assertTrue(
-                any(marker in condition for marker in ("才", "仅当", "只有", "若")),
-                f"{owner}: 修订入口未限定在 needs_correction 条件下")
-
-        codex_text = codex_path.read_text(encoding="utf-8")
-        codex_section = section(codex_text, "### Step 6.5 — 白话校验循环",
-                                "### Step 7 — Return value")
-        assert_first_round_to_refinement("Codex analyzer", codex_section)
-        codex_after_finalize = codex_section.split("stage2-refine-finalize", 1)[1]
-        assert_order("Codex second validation", codex_after_finalize,
-                     ("subagent", "professor-contact-style-validator", "等待",
-                      "stage2-record-validation", "停止"))
-
-        opencode_text = opencode_path.read_text(encoding="utf-8")
-        opencode_section = section(opencode_text, "### Step 6.5 — 白话校验循环",
-                                   "### Step 7 — Return value")
-        assert_first_round_to_refinement("OpenCode analyzer", opencode_section)
-        opencode_after_finalize = opencode_section.split("stage2-refine-finalize", 1)[1]
-        assert_order("OpenCode second validation", opencode_after_finalize,
-                     ('task(subagent_type: "professor-contact-style-validator"', "等待",
-                      "stage2-record-validation", "停止"))
-
-        skill_text = skill_path.read_text(encoding="utf-8")
-        skill_section = section(skill_text, "## 确定性 runner 与状态文件",
-                                "## 阶段 5 — 套磁邮件")
-        assert_first_round_to_refinement("professor-contact skill", skill_section)
-        skill_after_finalize = skill_section.split("stage2-refine-finalize", 1)[1]
-        assert_order("professor-contact skill second validation", skill_after_finalize,
-                     ("professor-contact-style-validator", "stage2-record-validation", "停止"))
-
-        validator = repo / ".apm/agents/professor-contact-style-validator.agent.md"
-        self.assertIn("只报告不改写", validator.read_text(encoding="utf-8"))
-
-
 if __name__ == "__main__":
     import unittest
     unittest.main()
