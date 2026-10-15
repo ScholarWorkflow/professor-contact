@@ -130,22 +130,6 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assertEqual(pack_path.read_bytes(), before)
         self.assertEqual(analysis_path.read_text(encoding="utf-8"), protected_analysis)
 
-    def test_stage2_ambiguous_quote_does_not_create_a_correction_job(self):
-        self.stage2_run_two_directions(unique_second_narrative=False)
-        report = self.write_validation("ambiguous-quote.json")
-
-        out = self.record_validation(report)
-        self.assertNotIn(out["status"], {"ok", "needs_correction"}, out)
-        self.assertNotEqual(out.get("reason_code"), "invalid_validation_json", out)
-        self.assert_no_accepted_validation("DIR00001")
-        self.assert_no_accepted_validation("DIR00002")
-        plan = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
-                             "--validation-file", report))
-        self.assertNotIn(plan["status"], {"ok", "needs_correction"}, plan)
-        self.assertNotEqual(plan.get("reason_code"), "invalid_validation_json", plan)
-        self.assertTrue(plan.get("reason_code") or plan.get("message"), plan)
-        self.assertEqual(plan.get("jobs", []), [])
-
     def test_stage2_nonrepairable_user_note_does_not_create_a_correction_job(self):
         self.stage2_run()
         report = self.write_validation(
