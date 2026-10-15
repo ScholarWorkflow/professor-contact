@@ -141,6 +141,8 @@ flowchart TD
 
 ## 7. Skills CLI 安装入口
 
-根目录 `package.json` 另提供 Skills CLI 安装入口，固定使用 `skills@1.7.2` 的 `skills experimental_sync`。清单显式选择六个工作流技能：本仓库的 `professor-contact`、`professor-research` 中的 `professor-collector` 与 `professor-topic-clustering`、`paper-analysis`，以及 `base-skills` 中的 `humanizer-ja` 与 `vision-tools`。来源跟随清单中配置的 `main` 或 `master` 分支。
+根目录 `package.json` 另提供 Skills CLI 安装入口，固定使用 `skills@1.7.2` 的 `skills experimental_sync`。清单包含 67 个不重复技能：六个入口技能，以及 collector、topic clustering、paper analysis 正常使用的间接依赖。除 Zotero 的 `zotero-save`、`zotero-collections`、`zotero-read`、`zotero-paper-tagger`，`scihub-ask`，摘要与浏览器共享技能、两个搜索技能外，浏览器来源还选择 50 个当前出版社适配技能，供 collector 按论文域名路由。旧的 `sd-download` 已并入 `elsevier-download`，没有选择；其他未被当前工作流调用的 `sd-*` 工具也不在清单中。所有条目均列在 `package.json`，并按上游仓库分组去重。
 
-这份清单只投影所选 `.apm/skills/<skill>` 目录，不会递归安装本文件第 1 节列出的 APM 依赖图，也不提供 `.apm/agents`、MCP 或宿主服务。`professor-contact-style-validator` 属于自定义代理，不在 Skills CLI 技能目录清单内。需要完整代理与 MCP 环境时，仍使用 APM 安装路径。
+来源目录均为对应仓库中的 `.apm/skills`；分支随 `package.json` 中来源 URL 指定（`paper-analysis`、`zotero-tools`、`source-access-skills` 使用 `master`，其余使用 `main`）。Skills CLI 只复制被选中的技能目录和目录内文件，不会递归读取 `apm.yml`，也不复制技能目录外的共享文件。`source-access-skills` 是私有仓库，安装者需要已有 GitHub 访问权限。
+
+这份清单不安装本文件第 1 节中的其他 APM 包、`.apm/agents`、MCP 配置、运行时工具包或宿主服务。`professor-contact-style-validator` 属于自定义代理，不在 Skills CLI 技能目录清单内。Skills CLI 入口因此只补充技能目录；要获得完整代理与 MCP 环境，仍使用 APM 安装路径。
