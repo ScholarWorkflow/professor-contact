@@ -557,24 +557,32 @@ runner 校验全部 result JSON（gap ID ∈ 待判集、candidate_paper_ids ⊆
 
 ### Step 6.5 — 白话校验循环（professor-contact-style-validator）
 
-`套磁候选分析.md` 由 stage2-finalize 渲染写盘后，用 OpenCode 原生 Task 委派白话校验器：
+`套磁候选分析.md` 由 `stage2-finalize` 渲染写盘后，用 OpenCode 原生 Task 委派白话校验器，并等待结果：
 
 ```
 task(subagent_type: "professor-contact-style-validator",
      prompt: "files: <该教授 套磁候选分析.md 绝对路径>\nartifact: analysis")
 ```
 
-- 校验器**只报告不改写**（pass/fail + blocking/minor 清单）。发现 blocking 时，不得直接编辑 `套磁候选分析.md`；先把结果 JSON 交给 runner，再为每个失败方向执行局部结构化修订：
+- 校验器**只报告不改写**，返回完整的原始 `result + files[] + notes`。把第 1 轮报告原样保存为 `validation-round-1.json`；不得摘抄、重排或改写字段，也不得补造 `results[]`、`direction_id` 或 `rounds`。
+- 每次校验返回后，先且只先运行记录入口：
+  ```bash
+  python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-record-validation \
+    --professor-dir <教授目录> --validation-file <validation-round-1.json>
+  ```
+  runner 从原始报告、当前受管正文及已接受输入包推导规范方向和校验轮次。记录失败、报告陈旧或返回值不是可继续状态时，停止当前校验循环并如实报告；不得自行修补报告或继续修订。
+- **只有第 1 轮记录结果明确为 `needs_correction` 时**，才把同一份已记录的 `validation-round-1.json` 交给修订入口，为 runner 指定的失败方向生成局部结构化修订：
   ```bash
   python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-refine-plan \
-    --professor-dir <教授目录> --validation-file <validation.json>
+    --professor-dir <教授目录> --validation-file <validation-round-1.json>
   # 模型只读取每个 job 的 model_input，并写 narrative-rewrite-<方向>.json
   python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-refine-finalize \
     --professor-dir <教授目录> --results <rewrite results 目录> \
-    --validation-file <validation.json>
+    --validation-file <validation-round-1.json>
   ```
-  若原 facts 文件仍在，也可把两条命令的 `--professor-dir` 换成同一份 `--facts <原 facts.json>`，runner 会先核对 input fingerprint；原 facts 不在时必须使用 `--professor-dir` 的 pack-only 路径。`stage2-refine-finalize` 只替换结构化 `narrative.positioning/gap_notes`，保留 freshness、gap、用户笔记和论文事实；成功后清除旧 validator 结果，必须重新校验。最多 2 轮；仍 fail → 保留第 2 轮产物并在返回 `notes` 记「白话校验未通过：<要点>」。
-- 校验结果写成结构化 JSON 后，必须运行 `stage2-record-validation --professor-dir <教授目录> --validation-file <validation.json>`；非法 direction ID、result、rounds 或 issues 不写入，且不会覆盖阶段 2 的 `partial`、论文失败或 freshness 状态。
+  若原 facts 文件仍在，也可把两条命令的 `--professor-dir` 换成同一份 `--facts <原 facts.json>`，runner 会先核对 input fingerprint；原 facts 不在时必须使用 `--professor-dir` 的 pack-only 路径。`stage2-refine-finalize` 只替换结构化 `narrative.positioning/gap_notes`，保留 freshness、gap、用户笔记和论文事实。
+- 修订成功后，重新用 OpenCode 原生 Task 委派同一校验器并等待；将新报告原样保存为 `validation-round-2.json`，再运行 `stage2-record-validation --professor-dir <教授目录> --validation-file <validation-round-2.json>`。第 1 轮 `pass` 或 `pass_with_minor` 记录后结束；第 2 轮记录后无论结论如何都停止，若为 `fail_after_2_rounds` 则保留失败并在返回 `notes` 说明。不得产生第 3 轮修订。
+- 记录入口负责校验报告格式、方向归属和轮次；它不会覆盖阶段 2 的 `partial`、论文失败或 freshness 状态。任何记录失败均不得继续修订。
 - 校验依据见 `professor-contact-style-validator` 的规则节（AGENTS.md 输出文风规定 + 术语首现解释 + 黑话禁用词 + 形容词结论禁令）。
 
 **教授 writer scope 收尾（强制 finally）**：完成该教授全部写入/runner/validator 路径后，或任一 acquire 后的 early return/error 前，进入 `finally`，调用 4.5.E 的 `local-lease-release`。release 失败要记进 notes/reason，不得假装无 lease；正常情况下下一位教授再独立 acquire 自己的 token。

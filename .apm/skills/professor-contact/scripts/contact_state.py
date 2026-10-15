@@ -3586,7 +3586,20 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
     }
 
 
-def stage2_validator_accepts(pack: dict | None, direction_ids: list) -> str | None:
+def stage2_pack_state_fingerprint(pack: dict) -> str:
+    return sha256_obj({
+        "professor": pack.get("professor"),
+        "directions": {direction_machine_id(d): d.get("input_fingerprint")
+                       for d in pack.get("directions") or []},
+    })
+
+
+def stage2_pack_content_fingerprint(pack: dict) -> str:
+    return sha256_obj({key: value for key, value in pack.items() if key != "validator"})
+
+
+def stage2_validator_accepts(pack: dict | None, direction_ids: list,
+                             professor_dir: Path | None = None) -> str | None:
     """Return a validator-not-accepted reason, or None when reuse may proceed.
 
     Keeps the existing validator contract: only recorded terminal results
@@ -3597,6 +3610,33 @@ def stage2_validator_accepts(pack: dict | None, direction_ids: list) -> str | No
     results = validator.get("results") if isinstance(validator, dict) else None
     if not isinstance(results, dict):
         return "validator_not_accepted"
+    if isinstance(validator, dict) and validator.get("schema") == 2:
+        render_sha = validator.get("render_sha256")
+        recorded_round = validator.get("round")
+        if validator.get("phase") != "terminal" \
+                or isinstance(recorded_round, bool) or recorded_round not in (1, 2) \
+                or validator.get("pack_sha256") != stage2_pack_content_fingerprint(pack):
+            return "validator_not_accepted"
+        cache = pack.get("cache") if isinstance(pack, dict) else None
+        render = cache.get("render") if isinstance(cache, dict) else None
+        cached = render.get(ANALYSIS_MD) if isinstance(render, dict) else None
+        if not isinstance(render_sha, str) or not render_sha \
+                or not isinstance(cached, dict) or cached.get("sha256") != render_sha:
+            return "validator_not_accepted"
+        if professor_dir is not None:
+            path = professor_dir / ANALYSIS_MD
+            if path.is_symlink():
+                return "validator_not_accepted"
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                return "validator_not_accepted"
+            header, body = split_frontmatter(content)
+            body_sha = sha256_text(body)
+            if not isinstance(header, dict) or header.get("managed_by") != MANAGED_BY \
+                    or header.get("render_sha256") != body_sha or body_sha != render_sha \
+                    or header.get("state_fingerprint") != stage2_pack_state_fingerprint(pack):
+                return "validator_not_accepted"
     for direction_id in direction_ids:
         row = results.get(direction_id)
         if not isinstance(row, dict) or row.get("result") not in ("pass", "skipped"):
@@ -3783,7 +3823,7 @@ def cmd_stage2_preflight(args) -> None:
                     reason = stage2_artifact_guard_reason(guard if isinstance(guard, dict) else {})
                     if reason:
                         reasons.append(reason)
-        validator_reason = stage2_validator_accepts(pack, validator_ids)
+        validator_reason = stage2_validator_accepts(pack, validator_ids, professor_dir)
         if validator_reason:
             reasons.append(validator_reason)
         reasons = sorted(set(reasons))
@@ -10499,6 +10539,259 @@ def load_validator_results(path: Path, allowed_ids: set, id_field: str) -> dict:
     return output
 
 
+def stage2_bound_render(professor_dir: Path, pack: dict) -> tuple[str, str]:
+    """Return the managed analysis body only when pack and file prove the same render."""
+    cache = pack.get("cache") if isinstance(pack, dict) else None
+    render = cache.get("render") if isinstance(cache, dict) else None
+    entry = render.get(ANALYSIS_MD) if isinstance(render, dict) else None
+    recorded = entry.get("sha256") if isinstance(entry, dict) else None
+    path = professor_dir / ANALYSIS_MD
+    if path.is_symlink():
+        fail("validation_render_stale", f"{path}: managed analysis must not be a symlink")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        fail("validation_render_missing", f"{path}: {exc}")
+    header, body = split_frontmatter(content)
+    current = sha256_text(body)
+    expected_title = f"# 套磁候选分析 — {pack.get('professor')}"
+    if not isinstance(header, dict) or header.get("managed_by") != MANAGED_BY \
+            or header.get("render_sha256") != current or current != recorded \
+            or header.get("state_fingerprint") != stage2_pack_state_fingerprint(pack) \
+            or not body.splitlines() or body.splitlines()[0] != expected_title:
+        fail("validation_render_stale",
+             f"{path}: validator evidence must bind the current managed analysis render")
+    return current, body
+
+
+def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
+                            require_repairable: bool = True) -> dict:
+    """Read and validate the raw style-validator report for this managed analysis."""
+    try:
+        raw = path.read_bytes()
+    except (OSError, ValueError) as exc:
+        fail("invalid_validation_json", f"style-validator output unreadable: {path}: {exc}")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("invalid_validation_json", f"style-validator output is not valid UTF-8 JSON: {path}")
+    if not isinstance(data, dict) or data.get("result") != "ok" \
+            or not isinstance(data.get("files"), list) or not data["files"] \
+            or not isinstance(data.get("notes"), str):
+        fail("invalid_validation_json",
+             f"style-validator output needs result=ok, non-empty files and string notes: {path}")
+
+    try:
+        target = str((professor_dir / ANALYSIS_MD).resolve(strict=False))
+    except (OSError, RuntimeError, ValueError):
+        fail("invalid_validation_json", "managed analysis target cannot be normalized")
+    matches = []
+    for index, entry in enumerate(data["files"]):
+        label = f"style-validator files[{index}]"
+        if not isinstance(entry, dict):
+            fail("invalid_validation_json", f"{label} must be an object")
+        candidate_path = _stage3_normalized_absolute_path(entry.get("file"), f"{label}.file")
+        artifact = entry.get("artifact")
+        if artifact not in ("analysis", "candidates"):
+            fail("invalid_validation_json", f"{label}.artifact must be analysis|candidates")
+        verdict = entry.get("verdict")
+        if verdict not in ("pass", "pass_with_minor", "fail"):
+            fail("invalid_validation_json", f"{label}.verdict is invalid: {verdict!r}")
+        blocking_count, minor_count = entry.get("blocking"), entry.get("minor")
+        if isinstance(blocking_count, bool) or not isinstance(blocking_count, int) \
+                or blocking_count < 0 or isinstance(minor_count, bool) \
+                or not isinstance(minor_count, int) or minor_count < 0:
+            fail("invalid_validation_json",
+                 f"{label} blocking/minor counts must be non-negative integers")
+        issues = entry.get("issues")
+        if not isinstance(issues, list):
+            fail("invalid_validation_json", f"{label}.issues must be a list")
+        blocking, minor = 0, 0
+        for issue_index, issue in enumerate(issues):
+            issue_label = f"{label}.issues[{issue_index}]"
+            if not isinstance(issue, dict):
+                fail("invalid_validation_json", f"{issue_label} must be an object")
+            for field in ("rule", "severity", "quote", "suggestion"):
+                value = issue.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    fail("invalid_validation_json",
+                         f"{issue_label}.{field} must be a non-empty string")
+            location = issue.get("location")
+            if isinstance(location, bool) or not (
+                    (isinstance(location, int) and location > 0)
+                    or (isinstance(location, str) and location.strip()
+                        and len(location) <= 20)):
+                fail("invalid_validation_json",
+                     f"{issue_label}.location must be a positive line number or a short string")
+            if len(issue["quote"]) > 40:
+                fail("invalid_validation_json", f"{issue_label}.quote must be at most 40 characters")
+            if issue["severity"] == "blocking":
+                blocking += 1
+            elif issue["severity"] == "minor":
+                minor += 1
+            else:
+                fail("invalid_validation_json",
+                     f"{issue_label}.severity must be blocking|minor")
+        if (blocking, minor) != (blocking_count, minor_count):
+            fail("invalid_validation_json", f"{label} counts do not match its issues")
+        if blocking and verdict != "fail":
+            fail("invalid_validation_json", f"{label} blocking issues require verdict=fail")
+        if not blocking and verdict == "fail":
+            fail("invalid_validation_json", f"{label} fail verdict needs a blocking issue")
+        if not blocking and minor and verdict != "pass_with_minor":
+            fail("invalid_validation_json", f"{label} minor issues require verdict=pass_with_minor")
+        if not blocking and not minor and verdict != "pass":
+            fail("invalid_validation_json", f"{label} without issues must have verdict=pass")
+        if candidate_path == target:
+            matches.append(entry)
+    if len(matches) != 1 or matches[0].get("artifact") != "analysis":
+        fail("invalid_validation_json",
+             f"validator output must contain exactly one analysis result for {target}")
+
+    entry = matches[0]
+    render_sha, body = stage2_bound_render(professor_dir, pack)
+    try:
+        rendered_file = (professor_dir / ANALYSIS_MD).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        fail("validation_render_missing", f"{professor_dir / ANALYSIS_MD}: {exc}")
+    current_header, current_body = split_frontmatter(rendered_file)
+    body_start = rendered_file.find(current_body)
+    if not isinstance(current_header, dict) or current_header.get("managed_by") != MANAGED_BY \
+            or current_header.get("state_fingerprint") != stage2_pack_state_fingerprint(pack) \
+            or current_header.get("render_sha256") != render_sha \
+            or current_body != body or sha256_text(current_body) != render_sha:
+        fail("validation_render_stale",
+             "managed analysis changed while the style-validator report was being read")
+    if body_start < 0:
+        fail("validation_render_stale", "managed analysis body could not be located in its file")
+    line_offset = rendered_file[:body_start].count("\n")
+    direction_rows = pack.get("directions")
+    if not isinstance(direction_rows, list) or not direction_rows:
+        fail("validation_direction_ambiguous", "input pack has no canonical directions")
+    lines = body.splitlines()
+    heading_indices = [i for i, line in enumerate(lines) if line.startswith("## 方向 ")]
+    if len(heading_indices) != len(direction_rows):
+        fail("validation_render_identity_mismatch",
+             "managed analysis direction headings do not match the input pack")
+    sections = {}
+    for index, direction in enumerate(direction_rows):
+        expected = f"## 方向 {index + 1}：{direction.get('name_ja')}（{direction.get('name_zh') or ''}）"
+        line_index = heading_indices[index]
+        if lines[line_index] != expected:
+            fail("validation_render_identity_mismatch",
+                 "managed analysis direction order or names do not match the input pack")
+        end = heading_indices[index + 1] if index + 1 < len(heading_indices) else len(lines)
+        did = direction_machine_id(direction)
+        if not isinstance(did, str) or not did or did in sections:
+            fail("validation_direction_ambiguous",
+                 "input pack does not contain unique canonical direction IDs")
+        sections[did] = (line_index, end, direction)
+
+    blocking_by_direction: dict[str, list] = {}
+    issues_by_direction: dict[str, list] = {}
+    for issue in entry["issues"]:
+        quote = issue["quote"]
+        hits = [i for i, line in enumerate(lines) if quote in line]
+        location = issue["location"]
+        if isinstance(location, int):
+            hits = [i for i in hits if i + 1 + line_offset == location]
+        if issue["severity"] != "blocking" and len(hits) != 1:
+            continue
+        if len(hits) != 1:
+            fail("validation_quote_ambiguous" if hits else "validation_quote_not_in_render",
+                 f"blocking quote must identify exactly one line in the managed render: {quote!r}")
+        hit = hits[0]
+        if issue["severity"] == "blocking" and lines[hit].count(quote) != 1:
+            fail("validation_quote_ambiguous",
+                 f"blocking quote appears more than once on its rendered line: {quote!r}")
+        owners = [(did, start, end, direction)
+                  for did, (start, end, direction) in sections.items()
+                  if start < hit < end]
+        if len(owners) != 1 and issue["severity"] != "blocking":
+            continue
+        if len(owners) != 1:
+            fail("validation_direction_ambiguous",
+                 f"blocking quote is not inside exactly one rendered direction: {quote!r}")
+        did, start, end, direction = owners[0]
+        issues_by_direction.setdefault(did, []).append(issue)
+        if issue["severity"] != "blocking":
+            continue
+        repairable = False
+        narrative = direction.get("narrative") if isinstance(direction.get("narrative"), dict) else {}
+        for block in narrative.get("positioning") or []:
+            if not isinstance(block, dict):
+                continue
+            for field in ("text", "concrete_object", "input_example", "output_example"):
+                value = block.get(field)
+                if isinstance(value, str) and quote in value:
+                    repairable = True
+        for note in (narrative.get("gap_notes") or {}).values():
+            if not isinstance(note, dict):
+                continue
+            if any(isinstance(note.get(field), str) and quote in note[field]
+                   for field in ("summary", "explanation")):
+                repairable = True
+        if not repairable and require_repairable:
+            fail("validation_issue_not_repairable",
+                 f"blocking quote is outside repairable positioning or gap_notes prose: {quote!r}")
+        blocking_by_direction.setdefault(did, []).append(issue)
+
+    return {"validation_sha256": sha256_bytes(raw), "render_sha256": render_sha,
+            "verdict": entry["verdict"], "notes": data["notes"],
+            "issues": entry["issues"], "issues_by_direction": issues_by_direction,
+            "blocking_by_direction": blocking_by_direction}
+
+
+def stage2_require_recorded_validation(ctx, validation_path: Path) -> tuple[dict, dict, list[str]]:
+    """Authorize refinement only from the exact raw report and open recorded findings."""
+    pack = ctx.pack if isinstance(ctx.pack, dict) else {}
+    validator = pack.get("validator") if isinstance(pack.get("validator"), dict) else {}
+    if validator.get("schema") != 2:
+        fail("validation_evidence_not_recorded",
+             "record the raw style-validator report with stage2-record-validation first")
+    recorded_round = validator.get("round")
+    if isinstance(recorded_round, bool) or recorded_round not in (1, 2):
+        fail("validation_evidence_not_recorded", "recorded Stage-2 validation round is malformed")
+    try:
+        raw = validation_path.read_bytes()
+    except (OSError, ValueError) as exc:
+        fail("validation_evidence_not_recorded", f"{validation_path}: {exc}")
+    if sha256_bytes(raw) != validator.get("validation_sha256"):
+        fail("validation_evidence_not_recorded",
+             "stage2 refinement must use the exact raw report previously recorded")
+    render_sha, _body = stage2_bound_render(ctx.professor_dir, pack)
+    if render_sha != validator.get("render_sha256") \
+            or stage2_pack_content_fingerprint(pack) != validator.get("pack_sha256"):
+        fail("validation_evidence_not_recorded",
+             "the managed render or input pack changed after validation was recorded")
+    pending = validator.get("pending")
+    results = validator.get("results")
+    if not isinstance(pending, dict) or not isinstance(results, dict):
+        fail("validation_evidence_not_recorded", "recorded Stage-2 validation state is malformed")
+    allowed = {direction_machine_id(d) for d in pack.get("directions", [])}
+    corrected = validator.get("correction_applied_direction_ids")
+    if not isinstance(corrected, list) or any(not isinstance(did, str) or did not in allowed
+                                               for did in corrected):
+        fail("validation_evidence_not_recorded", "recorded correction direction set is malformed")
+    unresolved = [did for did in pending if did not in set(corrected)]
+    for did, issues in pending.items():
+        if did not in allowed or not isinstance(issues, list) or not issues:
+            fail("validation_evidence_not_recorded", f"recorded findings are malformed for {did}")
+    phase = validator.get("phase")
+    if phase not in ("needs_correction", "awaiting_second_validation", "terminal"):
+        fail("validation_evidence_not_recorded", "recorded Stage-2 validation phase is invalid")
+    if (phase in ("needs_correction", "awaiting_second_validation") and recorded_round != 1) \
+            or (phase == "awaiting_second_validation" and not pending):
+        fail("validation_evidence_not_recorded", "recorded Stage-2 phase and round do not agree")
+    if phase == "needs_correction" and not unresolved:
+        fail("validation_evidence_not_recorded", "recorded correction phase has no open directions")
+    if phase == "awaiting_second_validation" and unresolved:
+        fail("validation_evidence_not_recorded", "recorded correction is not complete")
+    if phase == "terminal":
+        unresolved = []
+    return validator, pending, unresolved
+
+
 def stage2_pack_matches_facts(ctx: Stage2Context) -> None:
     """Do not apply a validator rewrite to facts newer than the accepted pack."""
     if not ctx.pack:
@@ -10547,9 +10840,9 @@ def cmd_stage2_refine_plan(args) -> None:
     ctx = stage2_refine_context(args)
     dids = [direction_machine_id(d) for d in ctx.pack.get("directions", [])]
     allowed = set(dids)
-    validation = load_validator_results(Path(args.validation_file), allowed, "direction_id")
-    failed = {key: value for key, value in validation.items()
-              if value["result"] == "fail_after_2_rounds"}
+    validator, pending, failed_ids = stage2_require_recorded_validation(
+        ctx, Path(args.validation_file))
+    failed = {did: pending[did] for did in failed_ids}
     scope_did = getattr(args, "direction_id", None)
     if getattr(args, "collection_key", None) and not scope_did:
         matches = [d for d in ctx.pack.get("directions", [])
@@ -10571,6 +10864,7 @@ def cmd_stage2_refine_plan(args) -> None:
         plan = plans.get(did)
         if not direction or not plan or not isinstance(direction.get("narrative"), dict):
             fail("invalid_result_json", f"input pack has no reusable narrative for {did}")
+        issues = failed[did]
         jobs.append({
             "job_id": f"narrative-rewrite:{ctx.professor}:{did}",
             "kind": "narrative-rewrite",
@@ -10588,23 +10882,28 @@ def cmd_stage2_refine_plan(args) -> None:
             "model_input": {
                 "direction_id": did,
                 "current_narrative": direction["narrative"],
-                "issues": failed[did]["issues"],
+                "issues": issues,
                 "allowed_material": stage2_validation_material(ctx, plan, direction),
                 "rules": "返回完整的当前方向 narrative，未命中的 block 和 gap_notes 原样保留，只重写 validator 指出的文字。保留且只使用允许的 paper/later/gap 引用。不得修改 freshness 状态、用户笔记、论文事实或红线。每个 positioning block 必须有 concrete_object、input_example、output_example；text 中占位符集合必须与 refs 完全相等。用最日常中文解释术语，不能把 item_key 写进 text。"},
         })
+    reason = None
+    if not jobs:
+        reason = ("awaiting_second_validation"
+                  if validator.get("phase") == "awaiting_second_validation"
+                  else "no_failed_directions")
     emit({"status": "ok", "professor": ctx.professor,
           "validation_file": str(Path(args.validation_file)),
           "directions": sorted(failed), "jobs": jobs,
-          "write_needed": bool(jobs)})
+          "write_needed": bool(jobs), "reason_code": reason})
 
 
 def cmd_stage2_refine_finalize(args) -> None:
     ctx = stage2_refine_context(args)
     dids = [direction_machine_id(d) for d in ctx.pack.get("directions", [])]
     allowed = set(dids)
-    validation = load_validator_results(Path(args.validation_file), allowed, "direction_id")
-    failed = {key for key, value in validation.items()
-              if value["result"] == "fail_after_2_rounds"}
+    validator, pending, failed_ids = stage2_require_recorded_validation(
+        ctx, Path(args.validation_file))
+    failed = set(failed_ids)
     scope_did = getattr(args, "direction_id", None)
     if getattr(args, "collection_key", None) and not scope_did:
         matches = [d for d in ctx.pack.get("directions", [])
@@ -10668,12 +10967,21 @@ def cmd_stage2_refine_finalize(args) -> None:
     updated_pack["generated_at"] = now_utc()
     updated_pack["directions"] = pack_directions
     updated_pack["cache"] = {"render": {ANALYSIS_MD: {"sha256": md_result["sha256"]}}}
-    # The previous validator result describes the old complete document.
-    updated_pack.pop("validator", None)
+    updated_validator = dict(validator)
+    applied = set(updated_validator.get("correction_applied_direction_ids") or [])
+    applied.update(rewrites)
+    updated_validator["correction_applied_direction_ids"] = sorted(applied)
+    still_open = set(pending) - applied
+    updated_validator["phase"] = "needs_correction" if still_open else "awaiting_second_validation"
+    updated_validator["render_sha256"] = md_result["sha256"]
+    updated_validator["pack_sha256"] = stage2_pack_content_fingerprint(updated_pack)
+    updated_validator["updated_at"] = now_utc()
+    updated_pack["validator"] = updated_validator
     atomic_json(ctx.pack_path, updated_pack)
     emit({"status": "ok", "professor": ctx.professor,
           "rewritten": sorted(rewrites), "analysis_md": str(md_path),
-          "md_sha256": md_result["sha256"], "validator_reset": True})
+          "md_sha256": md_result["sha256"], "validator_reset": False,
+          "round_retained": True, "phase": updated_validator["phase"]})
 
 
 def cmd_stage2_record_validation(args) -> None:
@@ -10681,13 +10989,82 @@ def cmd_stage2_record_validation(args) -> None:
     pack, error = load_input_pack(professor_dir)
     if error or pack is None:
         fail("missing_input_pack", f"input pack unreadable: {professor_dir / INPUT_PACK}")
-    allowed = {direction_machine_id(d) for d in pack.get("directions", [])}
-    results = load_validator_results(Path(args.validation_file), allowed, "direction_id")
+    previous = pack.get("validator") if isinstance(pack.get("validator"), dict) else {}
+    previous_round = previous.get("round", 0)
+    if isinstance(previous_round, bool) or not isinstance(previous_round, int) or previous_round < 0:
+        fail("validation_evidence_not_recorded", "existing Stage-2 validator round is malformed")
+    round_no = 1
+    previous_pending = previous.get("pending") if isinstance(previous.get("pending"), dict) else {}
+    state_error = None
+    if previous.get("schema") == 2:
+        if previous_round >= 2:
+            state_error = ("validation_rounds_exhausted",
+                           "Stage-2 style validation is bounded to two rounds; "
+                           "the terminal record already exists")
+        else:
+            corrected = previous.get("correction_applied_direction_ids")
+            if previous_round != 1 or previous.get("phase") != "awaiting_second_validation" \
+                    or not isinstance(corrected, list) \
+                    or any(not isinstance(did, str) for did in corrected) \
+                    or set(previous_pending) - set(corrected):
+                state_error = ("validation_correction_required",
+                               "complete all recorded Stage-2 correction jobs before "
+                               "recording the second round")
+            else:
+                round_no = 2
+
+    evidence = stage2_validation_report(Path(args.validation_file), professor_dir, pack,
+                                        require_repairable=(state_error is None and round_no == 1))
+    if state_error:
+        fail(*state_error)
+    if round_no == 2:
+        old_render, _body = stage2_bound_render(professor_dir, pack)
+        if old_render != previous.get("render_sha256") \
+                or stage2_pack_content_fingerprint(pack) != previous.get("pack_sha256"):
+            fail("validation_evidence_not_recorded",
+                 "the managed render or input pack changed after Stage-2 correction")
+    directions = pack.get("directions", [])
+    results = {}
+    at = now_utc()
+    for direction in directions:
+        did = direction_machine_id(direction)
+        issues = evidence["issues_by_direction"].get(did, [])
+        blocking = evidence["blocking_by_direction"].get(did, [])
+        result = ("fail_after_2_rounds" if round_no == 2 else "needs_correction") \
+            if blocking else "pass"
+        results[did] = {"result": result, "rounds": round_no, "issues": issues,
+                        "validated_at": at}
+    pending = {did: issues for did, issues in evidence["blocking_by_direction"].items()}
+    phase = "needs_correction" if round_no == 1 and pending else "terminal"
+    if round_no == 2:
+        phase = "terminal"
     updated = dict(pack)
-    updated["validator"] = {"results": results, "updated_at": now_utc()}
+    validator = {
+        "schema": 2,
+        "round": round_no,
+        "phase": phase,
+        "render_sha256": evidence["render_sha256"],
+        "validation_render_sha256": evidence["render_sha256"],
+        "validation_sha256": evidence["validation_sha256"],
+        "pack_sha256": None,
+        "raw_verdict": evidence["verdict"],
+        "notes": evidence["notes"],
+        "issues": evidence["issues"],
+        "results": results,
+        "pending": pending,
+        "correction_applied_direction_ids": sorted(
+            previous.get("correction_applied_direction_ids") or []) if round_no == 2 else [],
+        "updated_at": at,
+    }
+    updated["validator"] = validator
+    validator["pack_sha256"] = stage2_pack_content_fingerprint(updated)
     atomic_json(professor_dir / INPUT_PACK, updated)
-    emit({"status": "ok", "pack_path": str(professor_dir / INPUT_PACK),
-          "updated": sorted(results)})
+    status = "needs_correction" if phase == "needs_correction" else "ok"
+    emit({"status": status, "pack_path": str(professor_dir / INPUT_PACK),
+          "updated": sorted(results), "round": round_no,
+          "raw_verdict": evidence["verdict"], "render_sha256": evidence["render_sha256"],
+          "needs_correction": bool(pending and round_no == 1),
+          "terminal": phase == "terminal"})
 
 
 def cmd_stage3_record_validation(args) -> None:
