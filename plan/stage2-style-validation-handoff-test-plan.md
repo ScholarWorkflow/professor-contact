@@ -38,7 +38,7 @@ A、B 覆盖正式成功路径与两轮上限；C 只检查已确认的拒绝与
 
 ## 3. 测试实现与执行交接
 
-1. **受影响测试代码与准备修正**：现有 `.apm/skills/professor-contact/tests/test_contact_state.py` 把阶段 2 的校验报告改为原始 `result + files[] + notes`；`test_stage2_style_validation_handoff.py` 覆盖两轮终态、过期输入、不可修订区及历史接受。下列既有准备继续适用；清单内测试准备已完成，正式运行仅采用第 5 项列出的 8 个测试，正式用例仍未运行：
+1. **受影响测试代码与准备修正**：现有 `.apm/skills/professor-contact/tests/test_contact_state.py` 把阶段 2 的校验报告改为原始 `result + files[] + notes`；`test_stage2_style_validation_handoff.py` 覆盖两轮终态、过期输入、不可修订区及历史接受。下列既有准备继续适用；清单内测试准备已完成，正式运行仅采用第 5 项列出的 8 个测试；本轮执行结果见第 4 节：
    - **路径（A、B）**：`stage2_preflight_direction` 的 `--target-file` 指向上游夹具创建的 `套磁目标.json`；未修改产品入口。
    - **叙事与局部修改（B）**：双方向样例中新增的无占位符叙事段使用 `refs=[]`；`test_13_stage2_validator_rewrite_round_trips_structured_narrative` 将目标方向的完整 `positioning` 列表交给 `stage2-refine-finalize`，仅修改命中段，保留其他段与 `gap_notes`。
    - **双方向夹具（B）**：`stage2_run_two_directions` 保留 `write_facts()` 返回的路径供正式入口读取，另从文件解析 JSON 对象并读取 `directions`；仍复用 B 项现有样例，不增加用例。
