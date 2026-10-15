@@ -3885,7 +3885,7 @@ def cmd_stage2_plan(args) -> None:
             "result_schema": {"schema": 1, "kind": "narrative", "directions": [
                 {"direction_id": ckey, "positioning": [
                     {"kind": "para|bullet", "text": "…{{P:ITEMKEY}}…{{G:GAPID}}…",
-                     "refs": ["paper:ITEMKEY"],
+                     "refs": ["paper:ITEMKEY", "gap:GAPID"],
                      "concrete_object": "用于比较两种处理方式的合成样本",
                      "input_example": "输入一组固定的合成样本",
                      "output_example": "得到两种处理方式各自的评估结果"}],
