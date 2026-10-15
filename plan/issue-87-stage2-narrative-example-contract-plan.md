@@ -3,12 +3,13 @@
 ## 1. 版本、依据与状态
 
 - Requirement revision：[Issue #87](https://github.com/ScholarWorkflow/professor-contact/issues/87)，截至 2026-10-15T12:04:27Z 的正式需求；本计划不修改需求的业务边界。
-- Plan revision：`issue87-narrative-example-contract-r3-2026-10-15`。本文件是该拉取请求的唯一现行实施及直接测试计划；r3 仅更正实施计划与测试计划的审核依据及关口状态，业务目标、预期结果、执行步骤和范围均沿用 r2。
+- Plan revision：`issue87-narrative-example-contract-r7-2026-10-15`。本文件是该拉取请求的唯一现行实施及直接测试计划；本次纳入远端已记录的正式关口依据，并记录本地执行、审核和 rebase 后的提交状态，不改变 r1 已审核通过的业务目标、预期结果或范围。
 - Target repository：`ScholarWorkflow/professor-contact`；取证与分支基线：`main@2a8601facb9f3bec96da6ac22c79586ca79560d7`。
 - 适用项目规则：[Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/rekidunois/Plan-Reviewer-Rule-3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253)。
 - Codex 官方资料：[子代理及自定义代理](https://developers.openai.com/codex/subagents)、[命令行参考](https://developers.openai.com/codex/cli/reference)，核对日期 2026-10-15。本改动只涉及仓库维护的代理说明示例和确定性运行器示例，不改变 Codex 原生代理配置、委派方式或命令参数。官方文档不规定产品专用的 `positioning[].text` / `refs` 对应关系；该约束来自本仓库的正式需求和运行器。
-- 实施计划审核：`APPROVED`（P1–P4），依据 [实施计划审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/88#issuecomment-6192062638)，审核对象为 r1、提交 `82f88e6a11b2aa73d91f72c1a8bcbb4342f4fb33`；测试第一关：`PASS`（必测清单），依据 [测试关口审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/88#issuecomment-6192906371)，审核对象为 r2、提交 `2c594141eb84626479236ed707022e6b1c07e96f`。
-- 测试第二关：`PASS`（执行步骤），依据同一 [测试关口审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/88#issuecomment-6192906371)；第三关：未就绪。测试代码与执行步骤已准备；三处产品示例尚未修复，正式测试尚未运行，不代表测试通过或可合并。
+- 实施计划审核：`APPROVED`（P1–P4），依据 [实施计划审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/88#issuecomment-6192062638)，审核对象为 r1、提交 `82f88e6a11b2aa73d91f72c1a8bcbb4342f4fb33`。
+- 测试第一关：`PASS`（必测清单），依据 [测试关口审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/88#issuecomment-6192906371)，审核对象为 r2、提交 `2c594141eb84626479236ed707022e6b1c07e96f`。第二关：`PASS`（r2 执行步骤；同一记录）；r4 经追加的 `uv run` 命令复核后也通过，测试范围未变。第三关：`PASS`（r5 正式结果复核，结论记录于本版）。
+- 当前状态：三处产品示例已按批准范围提交；第二、第三关已通过，正式测试 4 项全部通过。合并审核待完成；PR 仍为草稿，不代表已获准合并。
 - 本分支关联 Issue #87；合并本拉取请求时关闭议题，后续实现与测试仍在同一拉取请求上提交。
 
 ## 2. 已确认需求、现状与来源
@@ -70,9 +71,9 @@
 | 错误不能被合成夹具掩盖 | 原始检查入口接收“多一个 refs”或“少一个 refs”的合成错误副本 | 检查拒绝错误副本，说明校验发生在绑定合法标识之前 | 同一测试文件中的直接反例检查 |
 | 合法示例仍可完成已有业务 | 三份原样例经合法的合成 `paper/gap/方向` 标识绑定，保留三项具体例子字段 | 当前 runner 返回 `status=ok`；产物保留叙事引用、三个字段；两种方向字段写法仍由原校验兼容 | 同一测试文件的现有 `stage2-finalize` 执行与产物检查 |
 
-**准备与环境**：从仓库根目录确认 `python3` 可用，并确认以下既有文件存在：`.apm/skills/professor-contact/tests/test_contact_state.py`、`.apm/skills/professor-contact/tests/stage2_upstream_fixture.py`、`.apm/skills/professor-contact/tests/gate2_evidence.py`、`.apm/skills/professor-contact/tests/issue64_test_support.py`、`.apm/skills/professor-contact/tests/_stage4_handoff_test_support.py`，以及 `.apm/skills/professor-contact/scripts/contact_state.py`、`.apm/skills/professor-contact/scripts/contact_targets.py`、`.apm/skills/professor-contact/scripts/contact_stage1.py`。测试仅使用 `Python` 标准库和仓库已有模块，无需安装额外依赖、配置模型接口、启动服务或访问真实用户目录。`BaseEnv` 为每个用例创建独立的临时目录；既有预检辅助模块在该目录生成合成输入，测试结束自动清理。
+**准备与环境**：从仓库根目录通过 `UV_CACHE_DIR=/private/tmp/issue87-uv-cache uv run --no-project --python python3 python3 --version` 确认 Python 可用，并确认以下既有文件存在：`.apm/skills/professor-contact/tests/test_contact_state.py`、`.apm/skills/professor-contact/tests/stage2_upstream_fixture.py`、`.apm/skills/professor-contact/tests/gate2_evidence.py`、`.apm/skills/professor-contact/tests/issue64_test_support.py`、`.apm/skills/professor-contact/tests/_stage4_handoff_test_support.py`，以及 `.apm/skills/professor-contact/scripts/contact_state.py`、`.apm/skills/professor-contact/scripts/contact_targets.py`、`.apm/skills/professor-contact/scripts/contact_stage1.py`。测试仅使用 `Python` 标准库和仓库已有模块，无需安装额外依赖、配置模型接口、启动服务或访问真实用户目录。`BaseEnv` 为每个用例创建独立的临时目录；既有预检辅助模块在该目录生成合成输入，测试结束自动清理。
 
-**有限预检命令**：可以运行 `python3 --version`、`python3 -m unittest --help`，并用 `ls -l <上述文件路径>` 核对运行时、标准测试框架和本地依赖是否就位。不得用目标测试命令、`run_bound_stage2_plan`、`stage2-finalize` 或其他产品入口作预检。
+**有限预检命令**：可以运行 `UV_CACHE_DIR=/private/tmp/issue87-uv-cache uv run --no-project --python python3 python3 --version`、`UV_CACHE_DIR=/private/tmp/issue87-uv-cache uv run --no-project --python python3 -m unittest --help`，并用 `ls -l <上述文件路径>` 核对运行时、标准测试框架和本地依赖是否就位。`UV_CACHE_DIR` 将 uv 缓存放在当前允许写入的临时目录。不得用目标测试命令、`run_bound_stage2_plan`、`stage2-finalize` 或其他产品入口作预检。
 
 **正式执行命令**：第二关通过后，在仓库根目录依次执行以下命令。测试结果和每次必要的失败记录写到独立系统临时目录；测试自身的教授、论文、研究缺口、上游状态及产品输出均留在临时目录中。
 
@@ -80,12 +81,14 @@
 cd .apm/skills/professor-contact/tests
 run_dir="$(mktemp -d "${TMPDIR:-/tmp}/issue87-narrative-example-contract.XXXXXX")"
 set -o pipefail
-python3 -m unittest -v test_stage2_narrative_example_contract 2>&1 | tee "$run_dir/attempt-01.log"
+UV_CACHE_DIR=/private/tmp/issue87-uv-cache uv run --no-project --python python3 -m unittest -v test_stage2_narrative_example_contract 2>&1 | tee "$run_dir/attempt-01.log"
 ```
 
 执行记录至少写明实际产品提交、测试文件提交、命令、结果分类（通过/业务失败/无法判断/未执行）、必要错误摘要和日志路径；不保存真实个人数据或完整无关输出。本地测试准备阶段**不运行**上面的正式命令。
 
-**有限预检结果（本次准备）**：`python3 --version` 返回 `Python 3.14.7`；`python3 -m unittest --help` 成功显示标准测试框架用法；上述测试辅助模块与三个运行器脚本均存在。已检查现有 `BaseEnv` 与预检辅助代码使用合成数据及临时目录，不依赖真实用户状态。未执行正式测试、计划运行器或产品入口。缺少输入：无。第二关已通过；正式测试仍待产品修复和本地执行工程师运行。
+**有限预检结果（测试执行前）**：`UV_CACHE_DIR=/private/tmp/issue87-uv-cache uv run --no-project --python python3 python3 --version` 返回 `Python 3.14.6`；`UV_CACHE_DIR=/private/tmp/issue87-uv-cache uv run --no-project --python python3 -m unittest --help` 成功显示标准测试框架用法；上述测试辅助模块与三个运行器脚本均存在。首次未指定 `UV_CACHE_DIR` 的 uv 调用因默认缓存目录无写入权限而失败，改用允许写入的临时缓存后，两条有限预检命令均成功。已检查现有 `BaseEnv` 与预检辅助代码使用合成数据及临时目录，不依赖真实用户状态。该预检阶段未运行正式测试、计划运行器或产品入口。缺少输入：无。
+
+**正式测试执行记录**：测试执行时的产品提交为 `030621e3076db6f2ee848c79211200ef1d1afbdf`，测试文件提交为 `2c594141eb84626479236ed707022e6b1c07e96f`。在 rebase 前工作目录 `.apm/skills/professor-contact/tests` 执行 `UV_CACHE_DIR=/private/tmp/issue87-uv-cache uv run --no-project --python python3 -m unittest -v test_stage2_narrative_example_contract`，退出码 `0`，4 项通过（1.418 秒）。日志：`/var/folders/1y/9709mm1s6115w3fbssy9162h0000gn/T/issue87-narrative-example-contract.AhteQ2/attempt-01.log`。结果分类：通过；未见失败。rebase 后产品提交为 `f159c0ad3bbc7d8ae315511adfc127996a5ee955`；核对显示三处产品文件及测试文件与执行时版本内容相同，因此复用原结果，无需重跑。**第三关测试结果审核：PASS**；审核确认三项必测目标均由指定测试覆盖并通过，没有未完成测试项或已知失败。合并审核仍待完成。
 
 **失败处理**：原始例子集合不一致是本议题内的业务失败，应修正相应发布示例；实例化后出现 `unknown_reference_id`，先检查是否将示例标识绑定到了同一任务输入的合成论文 `papers` 或研究缺口 `gaps`；不得放宽正式的 `validate_narrative_entry` 校验。如上游预检或本地依赖中断而未形成可判断结果，标记无法判断；修复环境后只运行受影响项，并按该次环境变化记录，不覆盖已确认的业务失败。没有外部模型请求和带副作用的服务调用，本计划不安排外部故障正式重试；业务失败不以重复采样消除。
 
@@ -111,4 +114,4 @@ python3 -m unittest -v test_stage2_narrative_example_contract 2>&1 | tee "$run_d
 6. **运行仅本次必测项**：执行第 4 节的已有测试文件；有业务失败就修复改动范围内的根因，不改期望值求通过。留下脱敏的实际版本、测试命令、结果与尚未完成项目；未执行不得写成已通过。
 7. **审查与完成**：提交本 PR 上的产品、测试变更，先完成适用的正式测试关口，再按 Merge Reviewer Rule 审是否可合并。仅审核通过后解除草稿并申请合并。合并本 PR 时由正文的 `Closes #87` 关闭 Issue；不提前手动关闭。
 
-**后续实施者边界**：本次只有一份在 `plan/` 下维护的正式方案；PR 评论仅引用本文件及其版本。此 PR 当前仍是草稿，后续实现不得转到另一拉取请求，也不得将尚未完成的第三关冒充通过。
+**后续实施者边界**：本次只有一份在 `plan/` 下维护的正式方案；PR 评论仅引用本文件及其版本。此 PR 当前仍是草稿，后续实现不得转到另一拉取请求，也不得将尚未完成的合并审核冒充通过。
