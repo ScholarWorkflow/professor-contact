@@ -43,7 +43,7 @@ A、B 覆盖正式成功路径与两轮上限；C 只检查已确认的拒绝与
    - **叙事与局部修改（B）**：双方向样例中新增的无占位符叙事段使用 `refs=[]`；`test_13_stage2_validator_rewrite_round_trips_structured_narrative` 将目标方向的完整 `positioning` 列表交给 `stage2-refine-finalize`，仅修改命中段，保留其他段与 `gap_notes`。
    - **双方向夹具（B、C）**：`stage2_run_two_directions` 保留 `write_facts()` 返回的路径供正式入口读取，另从文件解析 JSON 对象并读取 `directions`；仍复用原有 B、C 样例，不增加用例。
    - **规范方向身份（B）**：双方向样例让规范 `direction_id`（`DIR00001`、`DIR00002`）与旧 `collection_key`（`legacy-alpha`、`legacy-beta`）不同；通过现有 Stage 0／2 夹具及正式入口形成输入包，没有直接伪造已接受输入包。修订请求、任务和回写按 `direction_id` 路由，并比较另一方向及目标方向的非叙事字段。
-   - **拒绝状态（C）**：陈旧正文与变化输入包的断言按第 2.1 节接受 `error` 或 `needs_refresh`，要求明确原因并检查没有输入包写入或错误任务；陈旧正文测试也检查目标文件不受管时拒绝且不改写。模糊引文和不可修订用户笔记场景要求修订计划明确阻塞、有原因且 `jobs` 为空，不固定唯一状态名。原始 `results[]` 格式错误仍只接受 `error/invalid_validation_json`；`needs_decision` 不加入上述两条断言。
+   - **拒绝状态（C）**：陈旧正文与变化输入包的断言按第 2.1 节接受 `error` 或 `needs_refresh`，要求明确原因并检查没有输入包写入或错误任务；相关的 `stage2-refine-plan` 检查也排除 `reason_code=invalid_validation_json`。陈旧正文测试也检查目标文件不受管时拒绝且不改写。模糊引文和不可修订用户笔记场景要求修订计划明确阻塞、有原因且 `jobs` 为空，不固定唯一状态名。上述报告拒绝及修订计划检查均排除 `reason_code=invalid_validation_json`，确认样例已按原始 `files[]` 协议解析后识别场景；原始 `results[]` 格式错误仍只接受 `error/invalid_validation_json`；`needs_decision` 不加入上述两条断言。
    - **问题保存断言（A）**：轻微问题断言现在读取 JSON 中对应方向的 `issues`，逐项核对原问题对象的 `rule/severity/location/quote/suggestion` 字段及关系；不搜索序列化文本，也不判断建议措辞。
    - **调用说明检查（E）**：已移除 `test_stage2_calling_docs_keep_the_raw_report_sequence` 的词语、条件词和出现顺序断言。E 只按本节第 5 项人工语义核对；Codex `spawn_agent` 与 OpenCode 原生 `task` 的正式委派、等待要求保持不变，不增加真实工具调用、日志认证或冒烟。
    - **边界与覆盖**：仅在合成教授目录调用正式 `contact_state.py`，不通过测试夹具伪造正式方向或轮次。第 5 项列出的 9 个程序用例覆盖 A～D，E 使用同一计划中的人工核对；没有新增测试平台或业务目标。
@@ -86,5 +86,5 @@ A、B 覆盖正式成功路径与两轮上限；C 只检查已确认的拒绝与
 
 - **产品实施**：仍待 `contact_state.py`、两种 analyzer 安装投影与主技能说明的修改。
 - **正式执行**：A～E 均未执行；没有新增的通过结果。
-- **测试资产**：双方向夹具的数据读取、A 的结构化问题保存断言和 E 的文字匹配断言调整已完成；未运行正式用例。
+- **测试资产**：双方向夹具的数据读取、A 的结构化问题保存断言、E 的文字匹配断言调整，以及 C 项对 `invalid_validation_json` 回退结果的排除断言已完成；未运行正式用例。
 - **修订复核与第二关**：首轮独立只读复核发现状态描述、预检记录位置和 E 执行记录位置需要修正；修正后待同一审核者复核。本轮资产修正不重开未受影响的第一关清单，也不代表第二关通过。
