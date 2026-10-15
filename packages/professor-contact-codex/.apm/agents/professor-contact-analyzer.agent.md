@@ -525,10 +525,13 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-plan \
   {"schema": 1, "kind": "narrative", "directions": [
     {"collection_key": "...",
      "positioning": [{"kind": "para|bullet", "text": "...{{P:ITEMKEY}}...{{G:GAPID}}...",
-                      "refs": ["paper:ITEMKEY", "gap:GAPID", "later:ITEMKEY"]}],
+                      "refs": ["paper:ITEMKEY", "gap:GAPID", "later:ITEMKEY"],
+                      "concrete_object": "用于比较两种处理方式的合成样本",
+                      "input_example": "输入一组固定的合成样本",
+                      "output_example": "得到两种处理方式各自的评估结果"}],
      "gap_notes": [{"gap_id": "...", "summary": "一句话概括", "explanation": "大白话≤3句"}]}]}
   ```
-  规则：占位符集合必须与 refs 集合精确相等；只引用 facts 里存在的 ID；**叙事不断言 gap_status**（状态由 runner 渲染的 freshness 卡承载）；论文小总结只在叙事里出现一次。
+  规则：占位符集合必须与 refs 集合精确相等；只引用 facts 里存在的 ID；**叙事不断言 gap_status**（状态由 runner 渲染的 freshness 卡承载）；论文小总结只在叙事里出现一次。每个定位段必须提供 `concrete_object`（具体对象）、`input_example`（输入例子）、`output_example`（输出例子），均为非空字符串，且只能依据对应任务的 `papers` / `gaps`；上面的合成样本仅作格式示例，实际内容按证据填写。
 
 **6.3 跑 `stage2-finalize`**：
 

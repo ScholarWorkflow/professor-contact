@@ -3884,7 +3884,11 @@ def cmd_stage2_plan(args) -> None:
             "result_file": "narrative.json",
             "result_schema": {"schema": 1, "kind": "narrative", "directions": [
                 {"direction_id": ckey, "positioning": [
-                    {"kind": "para|bullet", "text": "…{{P:ITEMKEY}}…{{G:GAPID}}…", "refs": ["paper:ITEMKEY"]}],
+                    {"kind": "para|bullet", "text": "…{{P:ITEMKEY}}…{{G:GAPID}}…",
+                     "refs": ["paper:ITEMKEY"],
+                     "concrete_object": "用于比较两种处理方式的合成样本",
+                     "input_example": "输入一组固定的合成样本",
+                     "output_example": "得到两种处理方式各自的评估结果"}],
                  "gap_notes": [{"gap_id": "", "summary": "一句话概括", "explanation": "大白话≤3句"}]}]},
             "model_input": {
                 "direction_id": ckey,
