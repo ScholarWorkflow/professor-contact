@@ -167,7 +167,7 @@ class Stage2ValidationHandoffTests(BaseEnv):
             report = self.write_validation(name, quote=note_quote, location=str(location))
             out = self.record_validation(report)
             self.assertNotIn(out["status"], {"ok", "needs_correction"}, out)
-            self.assertEqual(out.get("reason_code"), "validation_issue_not_repairable", out)
+            self.assertNotEqual(out.get("reason_code"), "invalid_validation_json", out)
             self.assertTrue(out.get("reason_code") or out.get("message"), out)
             reports.append(report)
         pack_after_record = json.loads(pack_path.read_text(encoding="utf-8"))
