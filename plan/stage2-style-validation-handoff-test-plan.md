@@ -5,9 +5,9 @@
 - **需求版本**：2026-10-15 确认的第 2 阶段文字校验交接缺陷修复目标；以本拉取请求及已批准实施计划第 2.1 节为准。
 - **实施计划**：`stage2-style-validation-handoff-r1-2026-10-15`，见 [同目录实施计划](stage2-style-validation-handoff-implementation-plan.md)；[2026-10-15 实施计划审核](https://github.com/ScholarWorkflow/professor-contact/pull/86#issuecomment-6191759713)已给出 `Plan conclusion: APPROVED`。
 - **测试计划版本**：`stage2-style-validation-handoff-test-r9-2026-10-16`；本文件是本次修复唯一正式测试计划。
-- **仓库及设计基线**：`ScholarWorkflow/professor-contact`，`main@2a8601facb9f3bec96da6ac22c79586ca79560d7`；首次制定计划时的拉取请求提交为 `b7dd74837bfc5ed8618aca669fcf7de5623628d7`；本轮修订前基线为 PR head `d680e613e7a21e3b263df76a193aa867943eef3e`。测试准备提交为 `6b279e0d432b69d9d8511bafecf09fa3b01fa869`；实际被测产品提交为 `45cf751`。
+- **仓库及设计基线**：`ScholarWorkflow/professor-contact`，`main@2a8601facb9f3bec96da6ac22c79586ca79560d7`；首次制定计划时的拉取请求提交为 `b7dd74837bfc5ed8618aca669fcf7de5623628d7`；本轮修订前基线为 PR head `d680e613e7a21e3b263df76a193aa867943eef3e`。测试准备提交为 `6b279e0d432b69d9d8511bafecf09fa3b01fa869`；首轮被测产品提交为 `45cf751`，完成只读核对修正后的重测提交为 `3d68602`。
 - **依据**：[测试工程师规则](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)、[项目共识](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)、已批准实施计划第 2～4 节；校验器原始交接格式见 `.apm/agents/professor-contact-style-validator.agent.md`。
-- **状态**：C 项重复引文歧义独立测试已按验收决定移除，A～E 编号及验收范围未变；未受影响的第一关清单结论继续复用。测试计划 r9 已于 PR 评论 [#6197756604](https://github.com/ScholarWorkflow/professor-contact/pull/86#issuecomment-6197756604) 通过第二关。2026-10-16 正式执行后，A～D 指定的 8 个用例全部通过：首轮运行 7 项通过、1 项暴露目标不匹配错误分类；修正提交 `45cf751` 后只重跑该项并通过。E 文档语义核对通过。测试日志与 E 核对记录位于 `/private/tmp/pc86-stage2-style-handoff.HdrM5V/` 和 `/private/tmp/pc86-stage2-style-handoff.rDJEmx/`。第三关执行已完成；本状态不表示拉取请求获准合并。
+- **状态**：C 项独立重复引文测试仍按验收决定移除；现有用户笔记保护用例增加了正文与笔记重句，并用数字字符串行号指向笔记行，A～E 编号及验收范围未变。未受影响的第一关清单结论继续复用。测试计划 r9 已于 PR 评论 [#6197756604](https://github.com/ScholarWorkflow/professor-contact/pull/86#issuecomment-6197756604) 通过第二关。2026-10-16 首轮正式执行后，A～D 指定的 8 个用例中 7 项通过、1 项暴露目标不匹配错误分类；修正提交 `45cf751` 后只重跑该项并通过。只读完成核对随后发现字符串行号未用于消歧、且命中用户笔记时可能误判可修订；同一 C 用例强化后，按原 8 个选择器重跑全部通过。E 文档语义核对通过。测试日志和 E 核对记录位于 `/private/tmp/pc86-stage2-style-handoff.HdrM5V/`、`/private/tmp/pc86-stage2-style-handoff.rDJEmx/` 与 `/private/tmp/pc86-stage2-style-followup.2VcGvl/`。第三关执行已完成；本状态不表示拉取请求获准合并。
 
 ## 2. 本轮唯一必测清单
 
@@ -43,11 +43,11 @@ A、B 覆盖正式成功路径与两轮上限；C 只检查已确认的拒绝与
    - **叙事与局部修改（B）**：双方向样例中新增的无占位符叙事段使用 `refs=[]`；`test_13_stage2_validator_rewrite_round_trips_structured_narrative` 将目标方向的完整 `positioning` 列表交给 `stage2-refine-finalize`，仅修改命中段，保留其他段与 `gap_notes`。
    - **双方向夹具（B）**：`stage2_run_two_directions` 保留 `write_facts()` 返回的路径供正式入口读取，另从文件解析 JSON 对象并读取 `directions`；仍复用 B 项现有样例，不增加用例。
    - **规范方向身份（B）**：双方向样例让规范 `direction_id`（`DIR00001`、`DIR00002`）与旧 `collection_key`（`legacy-alpha`、`legacy-beta`）不同；通过现有 Stage 0／2 夹具及正式入口形成输入包，没有直接伪造已接受输入包。修订请求、任务和回写按 `direction_id` 路由，并比较另一方向及目标方向的非叙事字段。
-   - **拒绝状态与受保护内容（C）**：陈旧正文与变化输入包的断言按第 2.1 节接受 `error` 或 `needs_refresh`，要求明确原因并检查没有输入包写入或错误任务；相关的 `stage2-refine-plan` 检查也排除 `reason_code=invalid_validation_json`。陈旧正文测试也检查目标文件不受管时拒绝且不改写。不可修订用户笔记用例分别在 `stage2-record-validation` 与 `stage2-refine-plan` 前后比较 `套磁候选输入.json` 的 `directions` 和 `套磁候选分析.md` 正文；记录入口返回明确的 `reason_code` 或 `message`，修订计划明确阻塞、有原因且 `jobs` 为空，不固定唯一状态名。允许顶层独立 `validator` 区域记录失败信息，不要求整个输入包逐字节相同。上述报告拒绝及修订计划检查均排除 `reason_code=invalid_validation_json`，确认样例已按原始 `files[]` 协议解析后识别场景；原始 `results[]` 格式错误仍只接受 `error/invalid_validation_json`；`needs_decision` 不加入上述两条断言。
+   - **拒绝状态与受保护内容（C）**：陈旧正文与变化输入包的断言按第 2.1 节接受 `error` 或 `needs_refresh`，要求明确原因并检查没有输入包写入或错误任务；相关的 `stage2-refine-plan` 检查也排除 `reason_code=invalid_validation_json`。陈旧正文测试也检查目标文件不受管时拒绝且不改写。不可修订用户笔记用例令同一句引文同时出现在可修改定位正文和受保护笔记中，并用数字字符串行号指向笔记；在 `stage2-record-validation` 与 `stage2-refine-plan` 前后比较 `套磁候选输入.json` 的 `directions` 和 `套磁候选分析.md` 正文。记录入口必须明确拒绝该命中位置，修订计划明确阻塞、有原因且 `jobs` 为空，不固定唯一状态名。允许顶层独立 `validator` 区域记录失败信息，不要求整个输入包逐字节相同。上述报告拒绝及修订计划检查均排除 `reason_code=invalid_validation_json`，确认样例已按原始 `files[]` 协议解析后识别场景；原始 `results[]` 格式错误仍只接受 `error/invalid_validation_json`；`needs_decision` 不加入上述两条断言。
    - **问题保存断言（A）**：轻微问题断言现在读取 JSON 中对应方向的 `issues`，逐项核对原问题对象的 `rule/severity/location/quote/suggestion` 字段及关系；不搜索序列化文本，也不判断建议措辞。
    - **调用说明检查（E）**：已移除 `test_stage2_calling_docs_keep_the_raw_report_sequence` 的词语、条件词和出现顺序断言。E 只按本节第 5 项人工语义核对；Codex `spawn_agent` 与 OpenCode 原生 `task` 的正式委派、等待要求保持不变，不增加真实工具调用、日志认证或冒烟。
    - **边界与覆盖**：仅在合成教授目录调用正式 `contact_state.py`，不通过测试夹具伪造正式方向或轮次。第 5 项列出的 8 个程序用例覆盖 A～D，E 使用同一计划中的人工核对；没有新增测试平台或业务目标。
-2. **正式运行前版本确认（已完成）**：被测产品提交为 `45cf751`，测试准备提交为 `6b279e0d432b69d9d8511bafecf09fa3b01fa869`。按下列 8 个选择器执行 A～D，E 按本节人工核对；没有扩大用例范围。
+2. **正式运行前版本确认（已完成）**：首轮被测产品提交为 `45cf751`，测试准备提交为 `6b279e0d432b69d9d8511bafecf09fa3b01fa869`。完成边界修正后，在 `3d68602` 按相同 8 个选择器重跑 A～D；E 沿用本节人工核对；没有扩大用例范围。
 3. **准备顺序和配置来源**：从目标工作树仓库根目录确认 `git rev-parse --show-toplevel`；设置 `PC86_RUN_ROOT` 为 `/private/tmp` 下新建的独立目录；切换到 `.apm/skills/professor-contact/tests`。只需本地 Python 标准库和仓库内测试辅助模块，无外部服务、账户或密钥。按预检结果复用 `UV_CACHE_DIR=/private/tmp/pc81-uv-cache`，命令使用 `uv run --offline --no-project`，不联网安装依赖。
 4. **有限环境预检记录（2026-10-16）**：复核结果为 `uv 0.12.22`、计划命令使用的 `uv run` Python `3.14.6`；`unittest`、`issue64_test_support`、`stage2_upstream_fixture`、`test_contact_state`、`test_stage2_style_validation_handoff` 可导入；`/private/tmp` 与 `/private/tmp/pc81-uv-cache` 可写。命令及输出记录在独立目录 `/private/tmp/pc86-preflight-20261016.eeskjs/preflight.txt`。仅检查版本、模块导入及目录写入能力，未调用必测命令、正式用例、产品入口或业务请求。默认 UV 缓存目录此前确认不可写，后续命令继续使用已检查可写的 `/private/tmp/pc81-uv-cache`。
 5. **A～D 正式命令与 E 人工核对记录**：在测试资产修正完成、产品修复提交及第二关确认后，从目标工作树根目录执行以下命令。本轮实际产品／测试提交号及 `PC86_RUN_ROOT` 已记录；日志仅保存在独立 `/private/tmp` 目录；不因文档或提交号变化重跑未受影响的有效通过结果。
@@ -83,8 +83,8 @@ A、B 覆盖正式成功路径与两轮上限；C 只检查已确认的拒绝与
 
 ## 4. 本轮执行记录
 
-- **产品实施**：已提交并推送，产品提交 `a1cc974`；目标不匹配原因码修正提交 `45cf751`。
-- **A～D 程序用例**：在 `/private/tmp/pc86-stage2-style-handoff.HdrM5V/unittest.log` 的首轮运行中，8 项里 7 项通过，陈旧正文用例发现目标不匹配被错误分类为 `invalid_validation_json`。修正后只重跑该项，在 `/private/tmp/pc86-stage2-style-handoff.rDJEmx/unittest.log` 通过；其余 7 项未重复执行。最终 8 项均有通过结果。
+- **产品实施**：已提交并推送，产品提交为 `a1cc974`、`45cf751` 和完成核对后提交的 `3d68602`。
+- **A～D 程序用例**：在 `/private/tmp/pc86-stage2-style-handoff.HdrM5V/unittest.log` 的首轮运行中，8 项里 7 项通过，陈旧正文用例发现目标不匹配被错误分类为 `invalid_validation_json`。修正后只重跑该项，在 `/private/tmp/pc86-stage2-style-handoff.rDJEmx/unittest.log` 通过。完成核对又发现数字字符串行号未用于消歧、用户笔记与叙事引文重合时可能误判可修订；更新现有 C 用例后，按 `/private/tmp/pc86-stage2-style-followup.2VcGvl/unittest-final.log` 重跑原 8 个选择器，全部通过。
 - **E 文档核对**：通过。核对结论、版本和段落位置记于 `/private/tmp/pc86-stage2-style-handoff.rDJEmx/manual-e-review.md`。
 - **环境**：复用 2026-10-16 有限预检，`uv 0.12.22`、Python `3.14.6`；正式用例使用离线缓存 `/private/tmp/pc81-uv-cache`。日志与人工记录均未入库。
-- **测试资产与审核状态**：r9 已按验收决定移除重复引文歧义测试，并保留用户笔记保护用例；第一关结论沿用，第二关已通过，第三关执行完成。拉取请求仍保持草稿，未作合并决定。
+- **测试资产与审核状态**：r9 未增加独立重复引文测试或测试选择器；现有用户笔记保护用例改为同一句同时位于叙事和笔记，并以数字字符串行号指向笔记，仍检查明确拒绝及零误写。第一关结论沿用，第二关已通过，第三关执行完成。拉取请求仍保持草稿，未作合并决定。
