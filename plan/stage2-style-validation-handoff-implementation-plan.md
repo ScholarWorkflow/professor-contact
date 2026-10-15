@@ -7,7 +7,7 @@
 - Target repository：`ScholarWorkflow/professor-contact`；核查基线 `main@2a8601facb9f3bec96da6ac22c79586ca79560d7`。
 - 外部依赖版本：不修改外部仓库、模型接口、浏览器或 Zotero 协议；实际安装时使用本仓库已有的 Codex / OpenCode 代理投影。
 - 规则：[Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/rekidunois/Plan-Reviewer-Rule-3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253)。
-- **计划审核状态**：已于 PR 评论 [#6191759713](https://github.com/ScholarWorkflow/professor-contact/pull/86#issuecomment-6191759713) 获 `Plan conclusion: APPROVED`。实施提交为 `a1cc974`、`45cf751` 和完成核对后的 `3d68602`；正式执行结果记录于同目录测试计划 r9。本项计划审核不代表拉取请求已获合并许可。
+- **计划审核状态**：已于 PR 评论 [#6191759713](https://github.com/ScholarWorkflow/professor-contact/pull/86#issuecomment-6191759713) 获 `Plan conclusion: APPROVED`。实施提交为 `a1cc974`、`45cf751`、`3d68602` 和来源匹配修正 `cb445f9`；正式执行结果记录于同目录测试计划 r9。本项计划审核不代表拉取请求已获合并许可。
 - 取证性质：已核对上述代码基线与正式代理说明；尚无用户本机那次“两处术语”校验的原始文件或可复用运行记录。因此只确认可由源码证明的接口冲突，不推定本地那次运行的全部细节。
 
 ## 2. 目标、现状与影响范围
