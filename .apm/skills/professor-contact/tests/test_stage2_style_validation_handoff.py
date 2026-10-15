@@ -72,8 +72,44 @@ class Stage2ValidationHandoffTests(BaseEnv):
         return results
 
     def test_stage2_second_blocking_round_is_terminal(self):
-        self.stage2_run()
-        first = self.write_validation("first-round.json")
+        facts = self.write_facts()
+        results = self.root / "results"
+        self.write_stage2_results(results)
+        narrative_path = results / "narrative.json"
+        narrative = json.loads(narrative_path.read_text(encoding="utf-8"))
+        block = narrative["directions"][0]["positioning"][0]
+        block["text"] = block["text"].replace(
+            "起研究合成输入比较；",
+            "起研究合成输入比较，并由后续论文 {{L:CCCC3333}} 展示处理路径；",
+            1)
+        block["refs"].append("later:CCCC3333")
+        narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
+        plan = parse(self.run_bound_stage2_plan(facts))
+        self.assertEqual(plan["status"], "ok", plan)
+        finalized_stage2 = parse(run_bound_stage2_finalize(
+            run_cli, facts, "--results", results))
+        self.assertEqual(finalized_stage2["status"], "ok", finalized_stage2)
+
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        pack = json.loads(pack_path.read_text(encoding="utf-8"))
+        direction = next(row for row in pack["directions"]
+                         if row["direction_id"] == "DIR00001")
+        self.assertNotIn("CCCC3333", direction["supporting_item_keys"], direction)
+        self.assertIn("{{L:CCCC3333}}", direction["narrative"]["positioning"][0]["text"])
+        self.assertIn("later:CCCC3333", direction["narrative"]["positioning"][0]["refs"])
+        later_title = next(paper["title"] for paper in self.papers
+                           if paper["item_key"] == "CCCC3333")
+        analysis_lines = (self.prof_dir / "套磁候选分析.md").read_text(
+            encoding="utf-8").splitlines()
+        title_lines = [line for line in analysis_lines if later_title in line]
+        self.assertEqual(len(title_lines), 1, title_lines)
+        title_line = title_lines[0]
+        self.assertIn("教授从", title_line)
+        direction.pop("narrative_later_papers", None)
+        pack_path.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
+        first = self.write_validation(
+            "first-round.json", quote=later_title,
+            location=str(analysis_lines.index(title_line) + 1))
         recorded = self.record_validation(first)
         self.assertEqual(recorded["status"], "needs_correction", recorded)
 
@@ -85,6 +121,8 @@ class Stage2ValidationHandoffTests(BaseEnv):
         finalized = parse(run_cli("stage2-refine-finalize", "--professor-dir", self.prof_dir,
                                   "--results", results, "--validation-file", first))
         self.assertEqual(finalized["status"], "ok", finalized)
+        self.assertIn(later_title, (self.prof_dir / "套磁候选分析.md").read_text(
+            encoding="utf-8"))
         self.assert_direction_not_accepted("DIR00001")
 
         second = self.write_validation("second-round.json", quote="教授先从")

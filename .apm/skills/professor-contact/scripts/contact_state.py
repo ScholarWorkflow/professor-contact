@@ -1732,6 +1732,15 @@ class Stage2PackRefineContext:
                     self.papers.setdefault(key, {
                         "item_key": key, "title": gap.get("paper_title"),
                         "year": gap.get("paper_year"), "authorship": gap.get("authorship")})
+            saved_later_papers = direction.get("narrative_later_papers")
+            if isinstance(saved_later_papers, dict):
+                for key, paper in saved_later_papers.items():
+                    if isinstance(key, str) and isinstance(paper, dict):
+                        self.papers.setdefault(key, {
+                            "item_key": key, "title": paper.get("title"),
+                            "year": paper.get("year"),
+                            "authorship": paper.get("authorship"),
+                            "analysis_file": paper.get("analysis_file")})
             for key in self.narrative_later_keys_for(direction):
                 self.papers.setdefault(key, {"item_key": key, "title": "后续论文"})
             gaps = [dict(gap) for gap in direction.get("gap_shortlist", [])]
@@ -4327,6 +4336,19 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
         }
         supporting_keys.append(key)
     note = direction.get("user_note") or ""
+    narrative_later_papers = {}
+    for block in narrative.get("positioning", []):
+        if not isinstance(block, dict):
+            continue
+        for kind, key in PLACEHOLDER_RE.findall(block.get("text") or ""):
+            if kind != "L" or key in narrative_later_papers:
+                continue
+            paper = ctx.papers.get(key)
+            if paper:
+                narrative_later_papers[key] = {
+                    "item_key": key, "title": paper.get("title"),
+                    "year": paper.get("year"), "authorship": paper.get("authorship"),
+                    "analysis_file": paper.get("analysis_file")}
     pack_direction = {
         "direction_id": plan["did"],
         "collection_key": direction.get("collection_key"),
@@ -4346,6 +4368,7 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
         "completed_gap_blacklist": blacklist,
         "version_families": ctx.families,
         "authorship_line": (direction.get("credibility") or {}).get("authorship_line"),
+        "narrative_later_papers": narrative_later_papers,
         "narrative": narrative,
     }
     return pack_direction, papers
@@ -10582,6 +10605,65 @@ def stage2_bound_render(professor_dir: Path, pack: dict) -> tuple[str, str]:
     return current, body
 
 
+def stage2_rendered_later_papers(body: str, professor_dir: Path,
+                                 direction: dict) -> dict:
+    """Recover later-paper citation data from the verified managed render."""
+    narrative = direction.get("narrative")
+    if not isinstance(narrative, dict):
+        narrative = {}
+    positioning = narrative.get("positioning")
+    if not isinstance(positioning, list):
+        positioning = []
+    later_keys = {
+        key for block in positioning
+        if isinstance(block, dict)
+        for kind, key in PLACEHOLDER_RE.findall(block.get("text") or "")
+        if kind == "L"
+    }
+    rendered = {}
+    citation_re = re.compile(
+        r"\[([^\]\n]*)\]\(zotero://select/library/items/([^)]+)\)"
+        r"(?:｜\[分析\]\(([^)\n]+)\))?(?:（([^）]*)）)?")
+    for match in citation_re.finditer(body):
+        label, key, analysis_path, year = match.groups()
+        if key not in later_keys:
+            continue
+        title = (label[1:-1] if year is not None and label.startswith("《")
+                 and label.endswith("》") else label)
+        paper = rendered.setdefault(key, {"item_key": key, "title": title})
+        if analysis_path and not paper.get("analysis_file"):
+            paper["analysis_file"] = professor_dir / analysis_path
+        if year and not paper.get("year"):
+            paper["year"] = year
+
+    saved = direction.get("narrative_later_papers")
+    if isinstance(saved, dict):
+        for key in later_keys:
+            stored = saved.get(key)
+            if not isinstance(stored, dict):
+                continue
+            paper = rendered.setdefault(key, {"item_key": key})
+            for field, value in stored.items():
+                if value is not None and not (field == "title" and value == "后续论文"):
+                    paper[field] = value
+    return rendered
+
+
+def stage2_restore_pack_later_papers(ctx: Stage2PackRefineContext) -> None:
+    """Restore old-pack L citation data before pure-pack renders or repair plans."""
+    _, body = stage2_bound_render(ctx.professor_dir, ctx.pack)
+    for direction in ctx.pack.get("directions", []):
+        for key, paper in stage2_rendered_later_papers(
+                body, ctx.professor_dir, direction).items():
+            existing = ctx.papers.get(key)
+            restored = dict(paper)
+            if isinstance(existing, dict):
+                for field, value in existing.items():
+                    if value is not None and not (field == "title" and value == "后续论文"):
+                        restored[field] = value
+            ctx.papers[key] = restored
+
+
 def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
                             require_repairable: bool = True) -> dict:
     """Read and validate the raw style-validator report for this managed analysis."""
@@ -10759,9 +10841,14 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
         positioning_block = None
         positioning_rows_match = positioning_start >= 0
         positioning_cursor = positioning_start
+        later_papers = {}
         if positioning_rows_match:
             projected = direction_papers(pack, direction)
             paper_lookup = {paper["item_key"]: paper for paper in projected}
+            fallback_papers = dict(pack_paper_index(pack))
+            later_papers = stage2_rendered_later_papers(body, professor_dir, direction)
+            for key, paper in later_papers.items():
+                fallback_papers.setdefault(key, paper)
             gap_no = {gap["gap_id"]: gap["no"]
                       for gap in direction.get("gap_shortlist", [])}
             seen = {}
@@ -10771,7 +10858,7 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
                     break
                 rendered_lines = render_positioning_block(
                     block, paper_lookup, gap_no, professor_dir, seen,
-                    pack_paper_index(pack))
+                    fallback_papers)
                 rendered_lines = rendered_markdown_block_lines(rendered_lines)
                 row_end = positioning_cursor + len(rendered_lines)
                 if row_end > len(lines) or lines[positioning_cursor:row_end] != rendered_lines:
@@ -10790,6 +10877,13 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
                 value = positioning_block.get(field)
                 if isinstance(value, str) and quote in value:
                     repairable = True
+            later_keys = {value for kind, value in PLACEHOLDER_RE.findall(
+                positioning_block.get("text") or "") if kind == "L"}
+            repairable = repairable or any(
+                isinstance(later_papers.get(key), dict)
+                and isinstance(later_papers[key].get("title"), str)
+                and quote in later_papers[key]["title"]
+                for key in later_keys)
 
         gap_heading_lines = [i for i in section_lines if lines[i] == "### 可延伸方向"]
         if len(gap_heading_lines) == 1 and hit > gap_heading_lines[0]:
@@ -10937,7 +11031,9 @@ def stage2_refine_context(args):
         ctx = Stage2Context(Path(args.facts))
         stage2_pack_matches_facts(ctx)
         return ctx
-    return Stage2PackRefineContext(Path(args.professor_dir))
+    ctx = Stage2PackRefineContext(Path(args.professor_dir))
+    stage2_restore_pack_later_papers(ctx)
+    return ctx
 
 
 def cmd_stage2_refine_plan(args) -> None:

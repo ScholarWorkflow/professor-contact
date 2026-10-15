@@ -264,14 +264,37 @@ class PreflightBase(unittest.TestCase):
         self.assertEqual(out["status"], "ok", out)
         return out
 
-    def record_validation(self, result="pass", rounds=1, keys=("DIR00001", "DIR00002")):
-        validation = {"results": [{"direction_id": key, "result": result,
-                                   "rounds": rounds, "issues": []} for key in keys]}
+    def record_validation(self, keys=("DIR00001", "DIR00002")):
+        # `keys` remains a call-site convenience for the direction set under
+        # test. The validator report is file-scoped, so its single analysis
+        # entry covers the complete rendered document and all current pack
+        # directions rather than fabricating per-direction report rows.
+        pack = self._read_pack()
+        direction_ids = {contact_state.direction_machine_id(row)
+                         for row in pack["directions"]}
+        self.assertEqual(set(keys), direction_ids)
+        validation = {
+            "result": "ok",
+            "files": [{
+                "file": str((self.prof_dir / contact_state.ANALYSIS_MD).resolve()),
+                "artifact": "analysis", "verdict": "pass", "blocking": 0,
+                "minor": 0, "issues": [],
+            }],
+            "notes": "",
+        }
         path = self.root / "validation.json"
         path.write_text(json.dumps(validation, ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("stage2-record-validation", "--professor-dir", self.prof_dir,
                             "--validation-file", path))
         self.assertEqual(out["status"], "ok", out)
+
+    def seed_validator_results(self, result, rounds, keys=("DIR00001", "DIR00002")):
+        """Prepare persisted historical results without posing them as a new report."""
+        pack = self._read_pack()
+        pack["validator"] = {"results": {
+            key: {"result": result, "rounds": rounds, "issues": []} for key in keys
+        }}
+        self._write_pack(pack)
 
     def seed_preflight_meta(self, current_year=None, **param_overrides):
         """Seed cache.preflight the way stage2-finalize does with a preflight file."""
@@ -304,8 +327,8 @@ class PreflightBase(unittest.TestCase):
 
     def build_accepted_state(self):
         self.stage2_finalize()
-        self.record_validation()
         self.seed_preflight_meta()
+        self.record_validation()
 
     # -- preflight invocation ------------------------------------------------
 
@@ -627,11 +650,11 @@ class TestPreflightDecision(PreflightBase):
         self.assertEqual(payload["action"], "process")
         self.assertIn("validator_not_accepted",
                       self.direction(payload, "DIR00001")["reason_codes"])
-        self.record_validation(result="fail_after_2_rounds", rounds=2)
+        self.seed_validator_results("fail_after_2_rounds", rounds=2)
         payload = self.preflight()
         self.assertIn("validator_not_accepted",
                       self.direction(payload, "DIR00001")["reason_codes"])
-        self.record_validation(result="skipped", rounds=0)
+        self.seed_validator_results("skipped", rounds=0)
         payload = self.preflight()
         self.assertEqual(payload["action"], "reuse_all", payload)
 
@@ -721,6 +744,7 @@ class TestFinalizePreflightWiring(PreflightBase):
                             "--results", self.root / "results",
                             "--preflight-file", plan))
         self.assertEqual(out["status"], "ok", out)
+        self.seed_validator_results("pass", rounds=1)
         pack = self._read_pack()
         self.assertIn("preflight", pack["cache"])
         self.assertEqual(pack["cache"]["preflight"]["accepted_directions_sha256"],
@@ -824,7 +848,8 @@ class TestFinalizePreflightWiring(PreflightBase):
                           for d in self._read_pack()["directions"]}, fps)
 
     def test_record_validation_preserves_preflight_cache(self):
-        self.build_accepted_state()
+        self.stage2_finalize()
+        self.seed_preflight_meta()
         self.record_validation()
         pack = self._read_pack()
         self.assertIn("preflight", pack["cache"])

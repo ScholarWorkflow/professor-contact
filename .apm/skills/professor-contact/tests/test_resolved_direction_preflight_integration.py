@@ -173,6 +173,7 @@ class TestSemanticsVersionBump(ResolvedPreflightBase):
         self.assertEqual(out["status"], "ok", out)
         self.assertEqual(self._read_meta()["resolution_semantics_version"],
                          contact_state.STAGE2_RESOLUTION_SEMANTICS_VERSION)
+        self.seed_validator_results("pass", rounds=1)
         self.assertEqual(self.preflight()["action"], "reuse_all", self.preflight())
 
 
