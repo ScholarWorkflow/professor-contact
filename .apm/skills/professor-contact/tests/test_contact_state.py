@@ -187,7 +187,7 @@ class BaseEnv(unittest.TestCase):
         path.write_text(json.dumps(facts, ensure_ascii=False, indent=1), encoding="utf-8")
         return path
 
-    def write_stage2_results(self, results: Path, gap_overrides=None):
+    def write_stage2_results(self, results: Path, gap_overrides=None, directions=None):
         results.mkdir(parents=True, exist_ok=True)
         overrides = gap_overrides or {}
         rows = []
@@ -197,21 +197,30 @@ class BaseEnv(unittest.TestCase):
                    "confidence": "high"}
             row.update(overrides.get(key, {}))
             rows.append(row)
-        (results / "freshness-DIR00001.json").write_text(json.dumps({
-            "schema": 1, "kind": "freshness", "collection_key": "DIR00001",
-            "results": rows}, ensure_ascii=False), encoding="utf-8")
+        directions = directions or [{"collection_key": "DIR00001"}]
+        for direction in directions:
+            direction_id = direction.get("direction_id") or direction["collection_key"]
+            (results / f"freshness-{direction_id}.json").write_text(json.dumps({
+                "schema": 1, "kind": "freshness", "direction_id": direction_id,
+                "collection_key": direction["collection_key"], "results": rows},
+                ensure_ascii=False), encoding="utf-8")
         g1 = quote_id(self.gap_quotes["AAAA1111"])
+        positioning = [{"kind": "para",
+                        "text": "教授从 {{P:AAAA1111}} 起研究合成输入比较；{{G:" + g1 + "}} 是延伸点。",
+                        "refs": ["paper:AAAA1111", "gap:" + g1],
+                        "concrete_object": "合成输入与第二种模式",
+                        "input_example": "输入一组固定的合成样本",
+                        "output_example": "系统给出两种处理结果"}]
+        gap_notes = [{"gap_id": g1, "summary": "扩展到第二种输入模式",
+                      "explanation": "研究计划比较另一种合成场景。"}]
+        narrative_directions = [{
+            "direction_id": direction.get("direction_id") or direction["collection_key"],
+            "collection_key": direction["collection_key"],
+            "positioning": copy.deepcopy(positioning),
+            "gap_notes": copy.deepcopy(gap_notes),
+        } for direction in directions]
         (results / "narrative.json").write_text(json.dumps({
-            "schema": 1, "kind": "narrative", "directions": [{
-                "collection_key": "DIR00001",
-                 "positioning": [{"kind": "para",
-                                   "text": "教授从 {{P:AAAA1111}} 起研究合成输入比较；{{G:" + g1 + "}} 是延伸点。",
-                                  "refs": ["paper:AAAA1111", "gap:" + g1],
-                                   "concrete_object": "合成输入与第二种模式",
-                                   "input_example": "输入一组固定的合成样本",
-                                   "output_example": "系统给出两种处理结果"}],
-                 "gap_notes": [{"gap_id": g1, "summary": "扩展到第二种输入模式",
-                                "explanation": "研究计划比较另一种合成场景。"}]}]},
+            "schema": 1, "kind": "narrative", "directions": narrative_directions},
             ensure_ascii=False), encoding="utf-8")
 
     def run_bound_stage2_plan(self, facts: Path):
@@ -230,7 +239,7 @@ class BaseEnv(unittest.TestCase):
     def stage2_preflight_direction(self, direction_id="DIR00001"):
         out = parse(run_cli(
             "stage2-preflight", "--program-root", self.root,
-            "--professor", "試験 教授", "--target-file", self.prof_dir / "套磁目標.json",
+            "--professor", "試験 教授", "--target-file", self.prof_dir / "套磁目标.json",
             "--paper-analysis", "relevant", "--gap-scope", "selected_direction",
             "--freshness-scope", "shortlist"))
         self.assertEqual(out["status"], "ok", out)
@@ -238,10 +247,20 @@ class BaseEnv(unittest.TestCase):
                     if row["direction_id"] == direction_id)
 
     def stage2_run_two_directions(self, unique_second_narrative=True,
-                                  include_unaffected_positioning=False):
+                                  include_unaffected_positioning=False,
+                                  distinct_direction_ids=False):
         def add_second_direction(facts):
+            first = facts["directions"][0]
+            if distinct_direction_ids:
+                first["collection_key"] = "legacy-alpha"
+                first["direction_id"] = "DIR00001"
             second = copy.deepcopy(facts["directions"][0])
-            second["collection_key"] = "DIR00002"
+            second["collection_key"] = (
+                "legacy-beta" if distinct_direction_ids else "DIR00002")
+            if distinct_direction_ids:
+                second["direction_id"] = "DIR00002"
+            else:
+                second.pop("direction_id", None)
             second["name_ja"] = "第二合成方向"
             second["name_zh"] = "第二合成方向"
             second["user_note"] = "我想比较第二种合成输入的处理结果。"
@@ -249,28 +268,21 @@ class BaseEnv(unittest.TestCase):
 
         facts = self.write_facts(add_second_direction)
         results = self.root / "results"
-        self.write_stage2_results(results)
-
-        first_freshness = json.loads(
-            (results / "freshness-DIR00001.json").read_text(encoding="utf-8"))
-        second_freshness = copy.deepcopy(first_freshness)
-        second_freshness["collection_key"] = "DIR00002"
-        (results / "freshness-DIR00002.json").write_text(
-            json.dumps(second_freshness, ensure_ascii=False), encoding="utf-8")
+        self.write_stage2_results(results, directions=facts["directions"])
 
         narrative_path = results / "narrative.json"
         narrative = json.loads(narrative_path.read_text(encoding="utf-8"))
+        first_narrative, second_narrative = narrative["directions"]
         if include_unaffected_positioning:
-            untouched = copy.deepcopy(narrative["directions"][0]["positioning"][0])
+            untouched = copy.deepcopy(first_narrative["positioning"][0])
             untouched["text"] = "另一段合成定位用于确认局部修订。"
-            narrative["directions"][0]["positioning"].append(untouched)
-        second_narrative = copy.deepcopy(narrative["directions"][0])
-        second_narrative["collection_key"] = "DIR00002"
+            untouched["refs"] = []
+            first_narrative["positioning"].append(copy.deepcopy(untouched))
+            second_narrative["positioning"].append(untouched)
         if unique_second_narrative:
             second_narrative["positioning"][0]["text"] = (
                 second_narrative["positioning"][0]["text"].replace(
                     "教授从", "第二方向教授从", 1))
-        narrative["directions"].append(second_narrative)
         narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
 
         plan = parse(self.run_bound_stage2_plan(facts))
@@ -973,7 +985,9 @@ class TestRunnerBasics(BaseEnv):
         self.assertEqual(state_path.read_bytes(), old)
 
     def test_13_stage2_validator_rewrite_round_trips_structured_narrative(self):
-        facts = self.stage2_run_two_directions(include_unaffected_positioning=True)
+        facts = self.stage2_run_two_directions(
+            include_unaffected_positioning=True, distinct_direction_ids=True)
+        target_direction_id = "DIR00002"
         validation_path = self.root / "stage2-rewrite-validation.json"
         issue = {"rule": "A1", "severity": "blocking", "location": "第二方向教授",
                  "quote": "第二方向教授", "suggestion": "改用日常语言解释。"}
@@ -1000,13 +1014,16 @@ class TestRunnerBasics(BaseEnv):
         before_pack = json.loads(pack_path.read_text(encoding="utf-8"))
         pack = copy.deepcopy(before_pack)
         direction = next(d for d in pack["directions"]
-                         if d["collection_key"] == "DIR00002")
+                         if d["direction_id"] == target_direction_id)
         narrative = direction["narrative"]
-        block = dict(narrative["positioning"][0])
-        block["text"] = block["text"].replace("第二方向教授从", "第二方向教授先从")
+        positioning = copy.deepcopy(narrative["positioning"])
+        positioning[0]["text"] = positioning[0]["text"].replace(
+            "第二方向教授从", "第二方向教授先从")
         rewrite = {
-            "schema": 1, "kind": "narrative-rewrite", "collection_key": "DIR00002",
-            "positioning": [block],
+            "schema": 1, "kind": "narrative-rewrite",
+            "direction_id": target_direction_id,
+            "collection_key": direction["collection_key"],
+            "positioning": positioning,
             "gap_notes": [{"gap_id": gap_id, "summary": value["summary"],
                            "explanation": value["explanation"]}
                           for gap_id, value in narrative["gap_notes"].items()]
@@ -1024,9 +1041,10 @@ class TestRunnerBasics(BaseEnv):
                       self.stage2_preflight_direction("DIR00002")["reason_codes"])
         updated_pack = json.loads(pack_path.read_text(encoding="utf-8"))
         before_second = next(d for d in before_pack["directions"]
-                             if d["collection_key"] == "DIR00002")
+                             if d["direction_id"] == target_direction_id)
         updated_second = next(d for d in updated_pack["directions"]
-                              if d["collection_key"] == "DIR00002")
+                              if d["direction_id"] == target_direction_id)
+        self.assertNotEqual(updated_second["direction_id"], updated_second["collection_key"])
         self.assertIn("教授先从", updated_second["narrative"]["positioning"][0]["text"])
         self.assertEqual(before_second["narrative"]["gap_notes"],
                          updated_second["narrative"]["gap_notes"])
@@ -1035,8 +1053,8 @@ class TestRunnerBasics(BaseEnv):
         self.assertIn("validator", updated_pack)
         for before_direction in before_pack["directions"]:
             after_direction = next(d for d in updated_pack["directions"]
-                                   if d["collection_key"] == before_direction["collection_key"])
-            if before_direction["collection_key"] == "DIR00002":
+                                   if d["direction_id"] == before_direction["direction_id"])
+            if before_direction["direction_id"] == target_direction_id:
                 self.assertEqual(
                     {key: value for key, value in before_direction.items() if key != "narrative"},
                     {key: value for key, value in after_direction.items() if key != "narrative"})

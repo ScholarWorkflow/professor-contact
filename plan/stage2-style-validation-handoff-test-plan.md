@@ -4,10 +4,10 @@
 
 - **需求版本**：2026-10-15 确认的第 2 阶段文字校验交接缺陷修复目标；以本拉取请求及已批准实施计划第 2.1 节为准。
 - **实施计划**：`stage2-style-validation-handoff-r1-2026-10-15`，见 [同目录实施计划](stage2-style-validation-handoff-implementation-plan.md)；[2026-10-15 实施计划审核](https://github.com/ScholarWorkflow/professor-contact/pull/86#issuecomment-6191759713)已给出 `Plan conclusion: APPROVED`。
-- **测试计划版本**：`stage2-style-validation-handoff-test-r3-2026-10-15`；本文件是本次修复唯一正式测试计划。
-- **仓库及设计基线**：`ScholarWorkflow/professor-contact`，`main@2a8601facb9f3bec96da6ac22c79586ca79560d7`；首次制定计划时的拉取请求提交为 `b7dd74837bfc5ed8618aca669fcf7de5623628d7`；现有测试资产已提交至 `ed46ea386e5aa24915a212d4347fcc9e5a7c510c`。本次修订仅更新测试计划；产品修复尚未提交，实际被测产品提交待实施后填写。
+- **测试计划版本**：`stage2-style-validation-handoff-test-r4-2026-10-15`；本文件是本次修复唯一正式测试计划。
+- **仓库及设计基线**：`ScholarWorkflow/professor-contact`，`main@2a8601facb9f3bec96da6ac22c79586ca79560d7`；首次制定计划时的拉取请求提交为 `b7dd74837bfc5ed8618aca669fcf7de5623628d7`；本轮测试准备以拉取请求提交 `0c37a4e5e38e006736c0ab75127e36b90df5928c` 为基线。产品修复尚未提交，实际被测产品提交待实施后填写。
 - **依据**：[测试工程师规则](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)、[项目共识](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)、已批准实施计划第 2～4 节；校验器原始交接格式见 `.apm/agents/professor-contact-style-validator.agent.md`。
-- **状态**：A～E 必测目标保持不变。本轮复核发现现有测试资产仍有路径、合成叙事、方向身份及拒绝状态断言问题，修正要求见第 3 节；不得据此前的准备复审声称现有步骤已可直接通过第二关。第一、第二关待有权审核者依当前文件确认；第三关尚未执行。产品修复尚未进入 PR；不宣称测试通过、实施完成或准许合并。
+- **状态**：A～E 必测目标保持不变。第 3 节所列路径、合成叙事、规范方向身份及拒绝状态断言修正已落实到测试资产；当前仅完成静态核对与有限环境预检，未运行正式用例。第一、第二关待有权审核者依当前文件确认；第三关尚未执行。产品修复尚未进入 PR；不宣称测试通过、实施完成或准许合并。
 
 ## 2. 本轮唯一必测清单
 
@@ -38,17 +38,17 @@ A、B 覆盖正式成功路径与两轮上限；C 只检查已确认的拒绝与
 
 ## 3. 测试实现与执行交接
 
-1. **受影响测试代码与本轮待落实修正**：现有 `.apm/skills/professor-contact/tests/test_contact_state.py` 已把阶段 2 的校验报告改为原始 `result + files[] + notes`；`test_stage2_style_validation_handoff.py` 已增加两轮终态、过期输入、方向歧义、不可修订区、历史接受及调用说明的检查。**下列项目仍须由本地测试工程师在正式运行前修正既有测试资产；本轮仅修订正式计划，不宣称测试代码已修复：**
-   - **路径错误（A、B）**：`stage2_preflight_direction` 的 `--target-file` 由 `套磁目標.json` 改为上游夹具实际创建的 `套磁目标.json`；不修改产品入口。
-   - **合法叙事与局部修改（B）**：`stage2_run_two_directions(include_unaffected_positioning=True)` 中新增的无占位符叙事段设 `refs=[]`，保持 `refs` 与正文引用标记一致；`test_13_stage2_validator_rewrite_round_trips_structured_narrative` 交给 `stage2-refine-finalize` 的 `positioning` 必须是该方向的**完整**叙事段列表，只改变命中的目标段，其他段和 `gap_notes` 保持原样。按原有断言比较未命中段与事实字段，不增加另一套检查。
-   - **规范方向身份（B）**：同一双方向合成样例至少让被修订方向的 `direction_id` 与旧 `collection_key` 具有**不同但合法**的值，并按正式 Stage 0／2 输入及已接受解析关系生成状态；不得直接伪造已接受的输入包。断言修订任务及回写使用规范 `direction_id`，另一方向不变。该改动用于发现误用旧 `collection_key` 的现有 B 项风险，不另建身份认证设施。
-   - **拒绝状态（C）**：`test_stage2_report_for_stale_render_is_rejected_without_pack_write` 和 `test_stage2_refinement_rejects_changed_input_pack` 的状态断言按第 2.1 节接受 `error` 或 `needs_refresh`，同时断言有明确原因、零错误任务／越界写入；原始 `results[]` 格式错误仍只接受 `error/invalid_validation_json`。`needs_decision` 不加入上述两条断言。C 项已列明的目标文件不符，可合入现有 C 测试的代表场景核对，沿用当前入口与选择器，不新增独立测试平台或第六项业务目标。
-   - **调用说明（E）**：继续静态检查现有两种环境的原生委派约定及本次第 6.5 步顺序。已有 Codex `spawn_agent`、OpenCode 原生 `task` 要求不变；不要求额外验证真实工具调用、增加日志认证或新增冒烟。
-   - **边界与交付**：只在合成教授目录调用仓库正式 `contact_state.py`，不通过测试夹具自造正式方向或轮次。修订后对照 A～E 复核选择器仍能覆盖已确认目标，只有必要时更新同一份第 5 步命令。
-2. **正式运行前填写版本**：产品实施完成并进入本分支后，记录产品提交号和测试提交号；确认下列选择器仍指向计划 A～E 的检查，再运行。修订前的 PR 头 `ed46ea386e5aa24915a212d4347fcc9e5a7c510c` 尚无产品修复，现有测试也有第 1 项列出的待修改处，因此这些用例尚未运行，没有可填写的产品通过版本。
+1. **受影响测试代码与准备修正**：现有 `.apm/skills/professor-contact/tests/test_contact_state.py` 把阶段 2 的校验报告改为原始 `result + files[] + notes`；`test_stage2_style_validation_handoff.py` 覆盖两轮终态、过期输入、方向歧义、不可修订区、历史接受及调用说明。本轮已落实以下测试资产修正，正式用例仍未运行：
+   - **路径（A、B）**：`stage2_preflight_direction` 的 `--target-file` 指向上游夹具创建的 `套磁目标.json`；未修改产品入口。
+   - **叙事与局部修改（B）**：双方向样例中新增的无占位符叙事段使用 `refs=[]`；`test_13_stage2_validator_rewrite_round_trips_structured_narrative` 将目标方向的完整 `positioning` 列表交给 `stage2-refine-finalize`，仅修改命中段，保留其他段与 `gap_notes`。
+   - **规范方向身份（B）**：双方向样例让规范 `direction_id`（`DIR00001`、`DIR00002`）与旧 `collection_key`（`legacy-alpha`、`legacy-beta`）不同；通过现有 Stage 0／2 夹具及正式入口形成输入包，没有直接伪造已接受输入包。修订请求、任务和回写按 `direction_id` 路由，并比较另一方向及目标方向的非叙事字段。
+   - **拒绝状态（C）**：陈旧正文与变化输入包的断言按第 2.1 节接受 `error` 或 `needs_refresh`，要求明确原因并检查没有输入包写入或错误任务；陈旧正文测试也检查目标文件不受管时拒绝且不改写。模糊引文和不可修订用户笔记场景要求修订计划明确阻塞、有原因且 `jobs` 为空，不固定唯一状态名。原始 `results[]` 格式错误仍只接受 `error/invalid_validation_json`；`needs_decision` 不加入上述两条断言。
+   - **调用说明（E）**：继续静态检查两种环境的原生委派约定及第 6.5 步顺序；Codex `spawn_agent` 与 OpenCode 原生 `task` 要求不变，不增加真实工具调用、日志认证或冒烟要求。
+   - **边界与覆盖**：仅在合成教授目录调用正式 `contact_state.py`，不通过测试夹具伪造正式方向或轮次。现有选择器仍覆盖 A～E，没有新增测试平台或第六项业务目标。
+2. **正式运行前填写版本**：产品实施完成并进入本分支后，记录产品提交号和测试准备提交号；确认下列选择器仍指向计划 A～E 的检查，再运行。当前 PR 头 `0c37a4e5e38e006736c0ab75127e36b90df5928c` 尚无产品修复，因此这些用例尚未运行，没有可填写的产品通过版本。
 3. **准备顺序和配置来源**：从目标工作树仓库根目录确认 `git rev-parse --show-toplevel`；设置 `PC86_RUN_ROOT` 为 `/private/tmp` 下新建的独立目录；切换到 `.apm/skills/professor-contact/tests`。只需本地 Python 标准库和仓库内测试辅助模块，无外部服务、账户或密钥。按预检结果复用 `UV_CACHE_DIR=/private/tmp/pc81-uv-cache`，命令使用 `uv run --offline --no-project`，不联网安装依赖。
-4. **有限环境预检记录（2026-10-15）**：`uv 0.12.22`；`Python 3.14.6`；`unittest`、测试所需标准库以及 `issue64_test_support`、`stage2_upstream_fixture`、`test_contact_state` 可导入；`/private/tmp` 可写。未调用必测命令、产品入口或业务请求。默认 UV 缓存目录不可写，因此后续命令固定使用上述 `/private/tmp` 缓存目录。
-5. **A～E 待执行命令**：**只在第 1 项测试资产修正、产品修复提交及第二关确认后**，从目标工作树根目录执行以下命令。执行工程师记录实际产品／测试提交号及 `PC86_RUN_ROOT`，输出仅保存在独立 `/private/tmp` 目录；不因文档或提交号变化重跑未受影响的有效通过结果。
+4. **有限环境预检记录（2026-10-15）**：复核结果为 `uv 0.12.22`、`Python 3.14.6`；`unittest`、测试所需标准库以及 `issue64_test_support`、`stage2_upstream_fixture`、`test_contact_state`、`test_stage2_style_validation_handoff` 可导入；`/private/tmp` 与 `/private/tmp/pc81-uv-cache` 可写。只做版本、模块导入和目录写入能力检查，未调用必测命令、产品入口或业务请求。默认 UV 缓存目录不可写，因此后续命令固定使用上述 `/private/tmp` 缓存目录。
+5. **A～E 待执行命令**：**只在第 1 项测试资产修正完成、产品修复提交及第二关确认后**，从目标工作树根目录执行以下命令。执行工程师记录实际产品／测试提交号及 `PC86_RUN_ROOT`，输出仅保存在独立 `/private/tmp` 目录；不因文档或提交号变化重跑未受影响的有效通过结果。
 
    ```sh
    PC86_REPO="$(git rev-parse --show-toplevel)"
@@ -77,11 +77,10 @@ A、B 覆盖正式成功路径与两轮上限；C 只检查已确认的拒绝与
 
    `test_contact_state.TestRunnerBasics.test_13...` exercises `--facts` for planning and `--professor-dir` for finalization; the other affected cases use the same local fixture. The helper's `TemporaryDirectory` gives each case a disposable synthetic professor directory. No real library, browser, account, or user data is read.
 6. **失败处理和结果位置**：保留 `$PC86_RUN_ROOT/unittest.log`。目标命令已启动且断言不符时记录业务失败，不因结果不满意重跑；运行时、导入或命令启动失败时记“无法判断／未执行”，先修复环境，再只补做受影响项。测试夹具在每个用例结束后清理；临时输出不入库。
-7. **关口交接**：A～E 清单范围不变；旧准备复审不能替代第 1 项所列修正的落地核验。第一关（清单范围）与第二关（步骤可执行性）仍待有权审核者在本修订版上确认；第三关未开始。测试工程师先修正现有测试代码并核对选择器，执行工程师随后使用确认的同一入口记录产品版本及逐项结果。
+7. **关口交接**：A～E 清单范围不变；测试资产修正已完成并经静态核对，第一关（清单范围）与第二关（步骤可执行性）仍待有权审核者在本修订版上确认；第三关未开始。执行工程师须在产品修复完成并经第二关确认后，使用同一入口记录产品版本及逐项结果。
 
 ## 4. 当前未完成项
 
 - **产品实施**：仍待 `contact_state.py`、两种 analyzer 安装投影与主技能说明的修改。
-- **测试资产修正**：第 3 节第 1 项列出的现有测试夹具、输入与断言待本地测试工程师落实；未运行证明其有效。
 - **正式执行**：A～E 均未执行；没有新增的通过结果。
-- **独立审核**：第一、第二关审核仍待有权审核者确认；本轮未开展独立子代理计划复核，不将旧准备审核或本文修订写成关口批准。
+- **独立计划审核**：第一、第二关审核仍待有权审核者确认；准备完整性复核也不作为关口批准。

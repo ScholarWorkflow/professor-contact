@@ -47,7 +47,7 @@ class Stage2ValidationHandoffTests(BaseEnv):
         pack_path = self.prof_dir / "套磁候选输入.json"
         pack = json.loads(pack_path.read_text(encoding="utf-8"))
         direction = next(d for d in pack["directions"]
-                         if d["collection_key"] == direction_id)
+                         if d["direction_id"] == direction_id)
         narrative = direction["narrative"]
         block = copy.deepcopy(narrative["positioning"][0])
         self.assertIn(before, block["text"])
@@ -55,7 +55,8 @@ class Stage2ValidationHandoffTests(BaseEnv):
         rewrite = {
             "schema": 1,
             "kind": "narrative-rewrite",
-            "collection_key": direction_id,
+            "direction_id": direction_id,
+            "collection_key": direction["collection_key"],
             "positioning": [block],
             "gap_notes": [
                 {"gap_id": gap_id, "summary": value["summary"],
@@ -101,16 +102,29 @@ class Stage2ValidationHandoffTests(BaseEnv):
 
     def test_stage2_report_for_stale_render_is_rejected_without_pack_write(self):
         self.stage2_run()
-        report = self.write_validation("stale-render.json", verdict="pass", quote=None)
         pack_path = self.prof_dir / "套磁候选输入.json"
         before = pack_path.read_bytes()
         analysis_path = self.prof_dir / "套磁候选分析.md"
+        original_analysis = analysis_path.read_text(encoding="utf-8")
+
+        wrong_target = self.write_validation("wrong-target.json", verdict="pass", quote=None)
+        report_data = json.loads(wrong_target.read_text(encoding="utf-8"))
+        report_data["files"][0]["file"] = str(self.prof_dir / "not-managed.md")
+        wrong_target.write_text(json.dumps(report_data, ensure_ascii=False), encoding="utf-8")
+        out = self.record_validation(wrong_target)
+        self.assertIn(out["status"], {"error", "needs_refresh"}, out)
+        self.assertTrue(out.get("reason_code") or out.get("message"), out)
+        self.assertEqual(pack_path.read_bytes(), before)
+        self.assertEqual(analysis_path.read_text(encoding="utf-8"), original_analysis)
+
+        report = self.write_validation("stale-render.json", verdict="pass", quote=None)
         analysis_path.write_text(analysis_path.read_text(encoding="utf-8") +
                                 "\n合成的人工修改。\n", encoding="utf-8")
         protected_analysis = analysis_path.read_text(encoding="utf-8")
 
         out = self.record_validation(report)
-        self.assertEqual(out["status"], "error", out)
+        self.assertIn(out["status"], {"error", "needs_refresh"}, out)
+        self.assertTrue(out.get("reason_code") or out.get("message"), out)
         self.assertEqual(pack_path.read_bytes(), before)
         self.assertEqual(analysis_path.read_text(encoding="utf-8"), protected_analysis)
 
@@ -124,7 +138,9 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assert_no_accepted_validation("DIR00002")
         plan = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
                              "--validation-file", report))
-        self.assertTrue(plan["status"] != "ok" or plan["jobs"] == [], plan)
+        self.assertNotIn(plan["status"], {"ok", "needs_correction"}, plan)
+        self.assertTrue(plan.get("reason_code") or plan.get("message"), plan)
+        self.assertEqual(plan.get("jobs", []), [])
 
     def test_stage2_nonrepairable_user_note_does_not_create_a_correction_job(self):
         self.stage2_run()
@@ -137,7 +153,9 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assert_no_accepted_validation("DIR00001")
         plan = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
                              "--validation-file", report))
-        self.assertTrue(plan["status"] != "ok" or plan["jobs"] == [], plan)
+        self.assertNotIn(plan["status"], {"ok", "needs_correction"}, plan)
+        self.assertTrue(plan.get("reason_code") or plan.get("message"), plan)
+        self.assertEqual(plan.get("jobs", []), [])
 
     def test_stage2_refinement_rejects_changed_input_pack(self):
         self.stage2_run()
@@ -152,7 +170,9 @@ class Stage2ValidationHandoffTests(BaseEnv):
         before = pack_path.read_bytes()
         out = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
                             "--validation-file", report))
-        self.assertEqual(out["status"], "error", out)
+        self.assertIn(out["status"], {"error", "needs_refresh"}, out)
+        self.assertTrue(out.get("reason_code") or out.get("message"), out)
+        self.assertEqual(out.get("jobs", []), [])
         self.assertEqual(pack_path.read_bytes(), before)
 
     def test_stage2_preflight_accepts_legacy_pass_and_skipped_records(self):
