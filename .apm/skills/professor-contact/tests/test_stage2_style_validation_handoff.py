@@ -6,6 +6,7 @@ from pathlib import Path
 from test_contact_state import (
     BaseEnv,
     parse,
+    run_bound_stage2_finalize,
     run_cli,
     stage2_style_validation_report,
 )
@@ -131,19 +132,31 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assertEqual(analysis_path.read_text(encoding="utf-8"), protected_analysis)
 
     def test_stage2_nonrepairable_user_note_does_not_create_a_correction_job(self):
-        self.stage2_run()
+        facts = self.write_facts()
+        results = self.root / "results"
+        self.write_stage2_results(results)
+        narrative_path = results / "narrative.json"
+        narrative = json.loads(narrative_path.read_text(encoding="utf-8"))
+        note_quote = "我想比较两种合成输入的处理结果"
+        narrative["directions"][0]["positioning"][0]["text"] += note_quote
+        narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
+        plan = parse(self.run_bound_stage2_plan(facts))
+        self.assertEqual(plan["status"], "ok", plan)
+        finalized = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
+        self.assertEqual(finalized["status"], "ok", finalized)
         pack_path = self.prof_dir / "套磁候选输入.json"
         analysis_path = self.prof_dir / "套磁候选分析.md"
         protected_pack = json.loads(pack_path.read_text(encoding="utf-8"))
         protected_directions = copy.deepcopy(protected_pack["directions"])
         protected_analysis = analysis_path.read_text(encoding="utf-8")
+        note_line = protected_analysis.splitlines().index(f"> {note_quote}。") + 1
         report = self.write_validation(
-            "nonrepairable-note.json", quote="我想比较两种合成输入的处理结果",
-            location="用户笔记（原文）")
+            "nonrepairable-note.json", quote=note_quote,
+            location=str(note_line))
 
         out = self.record_validation(report)
         self.assertNotIn(out["status"], {"ok", "needs_correction"}, out)
-        self.assertNotEqual(out.get("reason_code"), "invalid_validation_json", out)
+        self.assertEqual(out.get("reason_code"), "validation_issue_not_repairable", out)
         self.assertTrue(out.get("reason_code") or out.get("message"), out)
         pack_after_record = json.loads(pack_path.read_text(encoding="utf-8"))
         self.assertEqual(pack_after_record["directions"], protected_directions)

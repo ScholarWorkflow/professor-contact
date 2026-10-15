@@ -10699,8 +10699,13 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
         quote = issue["quote"]
         hits = [i for i, line in enumerate(lines) if quote in line]
         location = issue["location"]
-        if isinstance(location, int):
-            hits = [i for i in hits if i + 1 + line_offset == location]
+        line_location = location if isinstance(location, int) else None
+        if isinstance(location, str):
+            location_text = location.strip()
+            if location_text.isascii() and location_text.isdigit():
+                line_location = int(location_text)
+        if line_location is not None:
+            hits = [i for i in hits if i + 1 + line_offset == line_location]
         if issue["severity"] != "blocking" and len(hits) != 1:
             continue
         if len(hits) != 1:
@@ -10724,19 +10729,65 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
             continue
         repairable = False
         narrative = direction.get("narrative") if isinstance(direction.get("narrative"), dict) else {}
-        for block in narrative.get("positioning") or []:
-            if not isinstance(block, dict):
-                continue
-            for field in ("text", "concrete_object", "input_example", "output_example"):
-                value = block.get(field)
-                if isinstance(value, str) and quote in value:
-                    repairable = True
-        for note in (narrative.get("gap_notes") or {}).values():
-            if not isinstance(note, dict):
-                continue
-            if any(isinstance(note.get(field), str) and quote in note[field]
-                   for field in ("summary", "explanation")):
-                repairable = True
+        section_lines = [i for i in range(start, end)]
+        authorship_lines = [i for i in section_lines if lines[i].startswith("<署名線：")]
+        paper_heading_lines = [i for i in section_lines if lines[i] == "### 论文一览"]
+        subheading_lines = [i for i in section_lines if lines[i].startswith("### ")]
+        positioning_line = (bool(subheading_lines) and len(paper_heading_lines) == 1
+                            and subheading_lines[0] + 4 < hit < paper_heading_lines[0])
+        if positioning_line:
+            for block in narrative.get("positioning") or []:
+                if not isinstance(block, dict):
+                    continue
+                for field in ("text", "concrete_object", "input_example", "output_example"):
+                    value = block.get(field)
+                    if isinstance(value, str) and quote in value:
+                        repairable = True
+
+        gap_heading_lines = [i for i in section_lines if lines[i] == "### 可延伸方向"]
+        if len(gap_heading_lines) == 1 and hit > gap_heading_lines[0]:
+            gap_notes = narrative.get("gap_notes") if isinstance(narrative.get("gap_notes"), dict) else {}
+            gap_rows = [i for i in section_lines
+                        if i > gap_heading_lines[0]
+                        and lines[i].startswith("1. 【作者 future work】")]
+            for gap_index, gap in enumerate(direction.get("gap_shortlist") or []):
+                if gap_index >= len(gap_rows):
+                    break
+                row_start = gap_rows[gap_index]
+                row_end = gap_rows[gap_index + 1] if gap_index + 1 < len(gap_rows) else end
+                note = gap_notes.get(gap.get("gap_id"), {})
+                if not isinstance(note, dict):
+                    continue
+                summary = note.get("summary")
+                if isinstance(summary, str):
+                    quote_positions = []
+                    search_from = 0
+                    while True:
+                        quote_position = summary.find(quote, search_from)
+                        if quote_position < 0:
+                            break
+                        quote_positions.append(quote_position)
+                        search_from = quote_position + len(quote)
+                    if any(row_start + summary[:position].count("\n") == hit
+                           for position in quote_positions):
+                        repairable = True
+                explanation = note.get("explanation")
+                if isinstance(explanation, str):
+                    explanation_lines = [
+                        i for i in range(row_start, row_end)
+                        if lines[i].startswith("- 大白话：")]
+                    quote_positions = []
+                    search_from = 0
+                    while True:
+                        quote_position = explanation.find(quote, search_from)
+                        if quote_position < 0:
+                            break
+                        quote_positions.append(quote_position)
+                        search_from = quote_position + len(quote)
+                    if len(explanation_lines) == 1 and any(
+                            explanation_lines[0] + explanation[:position].count("\n") == hit
+                            for position in quote_positions):
+                        repairable = True
         if not repairable and require_repairable:
             fail("validation_issue_not_repairable",
                  f"blocking quote is outside repairable positioning or gap_notes prose: {quote!r}")
