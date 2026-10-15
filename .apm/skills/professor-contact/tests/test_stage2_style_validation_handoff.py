@@ -135,10 +135,19 @@ class Stage2ValidationHandoffTests(BaseEnv):
         facts = self.write_facts()
         results = self.root / "results"
         self.write_stage2_results(results)
+        note_quote = "我想比较两种合成输入的处理结果"
+        facts_data = json.loads(facts.read_text(encoding="utf-8"))
+        next(paper for paper in facts_data["papers"]
+             if paper["item_key"] == "AAAA1111")["title"] = note_quote
+        facts.write_text(json.dumps(facts_data, ensure_ascii=False), encoding="utf-8")
         narrative_path = results / "narrative.json"
         narrative = json.loads(narrative_path.read_text(encoding="utf-8"))
-        note_quote = "我想比较两种合成输入的处理结果"
-        narrative["directions"][0]["positioning"][0]["text"] += note_quote
+        narrative["directions"][0]["positioning"].append({
+            "kind": "para", "text": note_quote, "refs": [],
+            "concrete_object": "两种合成输入",
+            "input_example": "输入两种固定的合成样本",
+            "output_example": "比较两种处理结果",
+        })
         narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
         plan = parse(self.run_bound_stage2_plan(facts))
         self.assertEqual(plan["status"], "ok", plan)
@@ -150,24 +159,28 @@ class Stage2ValidationHandoffTests(BaseEnv):
         protected_directions = copy.deepcopy(protected_pack["directions"])
         protected_analysis = analysis_path.read_text(encoding="utf-8")
         note_line = protected_analysis.splitlines().index(f"> {note_quote}。") + 1
-        report = self.write_validation(
-            "nonrepairable-note.json", quote=note_quote,
-            location=str(note_line))
-
-        out = self.record_validation(report)
-        self.assertNotIn(out["status"], {"ok", "needs_correction"}, out)
-        self.assertEqual(out.get("reason_code"), "validation_issue_not_repairable", out)
-        self.assertTrue(out.get("reason_code") or out.get("message"), out)
+        citation_line = next(index + 1 for index, line in enumerate(protected_analysis.splitlines())
+                             if note_quote in line and "zotero://" in line)
+        reports = []
+        for name, location in (("nonrepairable-note.json", note_line),
+                               ("nonrepairable-citation.json", citation_line)):
+            report = self.write_validation(name, quote=note_quote, location=str(location))
+            out = self.record_validation(report)
+            self.assertNotIn(out["status"], {"ok", "needs_correction"}, out)
+            self.assertEqual(out.get("reason_code"), "validation_issue_not_repairable", out)
+            self.assertTrue(out.get("reason_code") or out.get("message"), out)
+            reports.append(report)
         pack_after_record = json.loads(pack_path.read_text(encoding="utf-8"))
         self.assertEqual(pack_after_record["directions"], protected_directions)
         self.assertEqual(analysis_path.read_text(encoding="utf-8"), protected_analysis)
-        self.assert_no_accepted_validation("DIR00001")
-        plan = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
-                             "--validation-file", report))
-        self.assertNotIn(plan["status"], {"ok", "needs_correction"}, plan)
-        self.assertNotEqual(plan.get("reason_code"), "invalid_validation_json", plan)
-        self.assertTrue(plan.get("reason_code") or plan.get("message"), plan)
-        self.assertEqual(plan.get("jobs", []), [])
+        for report in reports:
+            self.assert_no_accepted_validation("DIR00001")
+            plan = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
+                                 "--validation-file", report))
+            self.assertNotIn(plan["status"], {"ok", "needs_correction"}, plan)
+            self.assertNotEqual(plan.get("reason_code"), "invalid_validation_json", plan)
+            self.assertTrue(plan.get("reason_code") or plan.get("message"), plan)
+            self.assertEqual(plan.get("jobs", []), [])
         pack_after_plan = json.loads(pack_path.read_text(encoding="utf-8"))
         self.assertEqual(pack_after_plan["directions"], protected_directions)
         self.assertEqual(analysis_path.read_text(encoding="utf-8"), protected_analysis)

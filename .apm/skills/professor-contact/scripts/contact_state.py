@@ -10730,15 +10730,21 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
         repairable = False
         narrative = direction.get("narrative") if isinstance(direction.get("narrative"), dict) else {}
         section_lines = [i for i in range(start, end)]
-        authorship_lines = [i for i in section_lines if lines[i].startswith("<署名線：")]
         paper_heading_lines = [i for i in section_lines if lines[i] == "### 论文一览"]
-        subheading_lines = [i for i in section_lines if lines[i].startswith("### ")]
-        positioning_line = (bool(subheading_lines) and len(paper_heading_lines) == 1
-                            and subheading_lines[0] + 4 < hit < paper_heading_lines[0])
-        if positioning_line:
-            for block in narrative.get("positioning") or []:
-                if not isinstance(block, dict):
-                    continue
+        positioning_heading_lines = [i for i in section_lines
+                                     if lines[i] == "### 方向定位"]
+        positioning = narrative.get("positioning")
+        if not isinstance(positioning, list):
+            positioning = []
+        positioning_start = (positioning_heading_lines[0] + 6
+                             if len(positioning_heading_lines) == 1 else -1)
+        positioning_layout_matches = (
+            positioning_start >= 0 and len(paper_heading_lines) == 1
+            and paper_heading_lines[0] == positioning_start + len(positioning) + 1)
+        if (positioning_layout_matches and
+                positioning_start <= hit < positioning_start + len(positioning)):
+            block = positioning[hit - positioning_start]
+            if isinstance(block, dict):
                 for field in ("text", "concrete_object", "input_example", "output_example"):
                     value = block.get(field)
                     if isinstance(value, str) and quote in value:
