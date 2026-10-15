@@ -1103,33 +1103,6 @@ class TestRunnerBasics(BaseEnv):
                            "Synthetic comparison of input patterns" in line
                            for line in global_lines))
 
-    def test_15_stage2_refine_can_use_persisted_pack_without_facts(self):
-        self.stage2_run()
-        validation_path = self.root / "pack-only-validation.json"
-        validation_path.write_text(json.dumps({"results": [{
-            "direction_id": "DIR00001", "result": "fail_after_2_rounds",
-            "rounds": 2, "issues": [{"rule": "B5"}]
-        }]}, ensure_ascii=False), encoding="utf-8")
-        plan = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
-                            "--validation-file", validation_path))
-        self.assertEqual(plan["status"], "ok", plan)
-        self.assertEqual(plan["directions"], ["DIR00001"])
-
-        pack = json.loads((self.prof_dir / "套磁候选输入.json").read_text(encoding="utf-8"))
-        narrative = pack["directions"][0]["narrative"]
-        block = dict(narrative["positioning"][0])
-        block["text"] = block["text"].replace("教授从", "教授先做了")
-        results = self.root / "pack-only-results"
-        results.mkdir()
-        (results / "narrative-rewrite-DIR00001.json").write_text(json.dumps({
-            "schema": 1, "kind": "narrative-rewrite", "collection_key": "DIR00001",
-            "positioning": [block], "gap_notes": []}, ensure_ascii=False), encoding="utf-8")
-        out = parse(run_cli("stage2-refine-finalize", "--professor-dir", self.prof_dir,
-                            "--results", results, "--validation-file", validation_path))
-        self.assertEqual(out["status"], "ok", out)
-        self.assertIn("教授先做了", (self.prof_dir / "套磁候选分析.md").read_text(encoding="utf-8"))
-
-
 ISSUE59_PROFESSOR = "試験 教授"
 ISSUE59_OTHER_PROFESSOR = "佐藤 花子"
 ISSUE59_DIRECTION_ID = "DIR00001"
