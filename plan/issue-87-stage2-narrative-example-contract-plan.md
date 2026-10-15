@@ -3,12 +3,12 @@
 ## 1. 版本、依据与状态
 
 - Requirement revision：[Issue #87](https://github.com/ScholarWorkflow/professor-contact/issues/87)，截至 2026-10-15T12:04:27Z 的正式需求；本计划不修改需求的业务边界。
-- Plan revision：`issue87-narrative-example-contract-r2-2026-10-15`。本文件是该拉取请求的唯一现行实施及直接测试计划；本次只补入测试实现和执行准备，不改变 r1 已审核通过的业务目标、预期结果或范围。
+- Plan revision：`issue87-narrative-example-contract-r3-2026-10-15`。本文件是该拉取请求的唯一现行实施及直接测试计划；r3 仅更正实施计划与测试计划的审核依据及关口状态，业务目标、预期结果、执行步骤和范围均沿用 r2。
 - Target repository：`ScholarWorkflow/professor-contact`；取证与分支基线：`main@2a8601facb9f3bec96da6ac22c79586ca79560d7`。
 - 适用项目规则：[Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/rekidunois/Plan-Reviewer-Rule-3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253)。
 - Codex 官方资料：[子代理及自定义代理](https://developers.openai.com/codex/subagents)、[命令行参考](https://developers.openai.com/codex/cli/reference)，核对日期 2026-10-15。本改动只涉及仓库维护的代理说明示例和确定性运行器示例，不改变 Codex 原生代理配置、委派方式或命令参数。官方文档不规定产品专用的 `positioning[].text` / `refs` 对应关系；该约束来自本仓库的正式需求和运行器。
-- 第一关：`APPROVED`，依据 PR #88 评论 [issuecomment-6192062638](https://github.com/ScholarWorkflow/professor-contact/pull/88#issuecomment-6192062638)，审核版本为 r1、提交 `82f88e6a11b2aa73d91f72c1a8bcbb4342f4fb33`。
-- 当前状态：测试代码与执行步骤已按 r1 准备；第二关的步骤审核待完成。尚未修改产品示例，尚未运行正式测试；本次准备不代表测试通过或可合并。
+- 实施计划审核：`APPROVED`（P1–P4），依据 [实施计划审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/88#issuecomment-6192062638)，审核对象为 r1、提交 `82f88e6a11b2aa73d91f72c1a8bcbb4342f4fb33`；测试第一关：`PASS`（必测清单），依据 [测试关口审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/88#issuecomment-6192906371)，审核对象为 r2、提交 `2c594141eb84626479236ed707022e6b1c07e96f`。
+- 测试第二关：`PASS`（执行步骤），依据同一 [测试关口审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/88#issuecomment-6192906371)；第三关：未就绪。测试代码与执行步骤已准备；三处产品示例尚未修复，正式测试尚未运行，不代表测试通过或可合并。
 - 本分支关联 Issue #87；合并本拉取请求时关闭议题，后续实现与测试仍在同一拉取请求上提交。
 
 ## 2. 已确认需求、现状与来源
@@ -85,7 +85,7 @@ python3 -m unittest -v test_stage2_narrative_example_contract 2>&1 | tee "$run_d
 
 执行记录至少写明实际产品提交、测试文件提交、命令、结果分类（通过/业务失败/无法判断/未执行）、必要错误摘要和日志路径；不保存真实个人数据或完整无关输出。本地测试准备阶段**不运行**上面的正式命令。
 
-**有限预检结果（本次准备）**：`python3 --version` 返回 `Python 3.14.7`；`python3 -m unittest --help` 成功显示标准测试框架用法；上述测试辅助模块与三个运行器脚本均存在。已检查现有 `BaseEnv` 与预检辅助代码使用合成数据及临时目录，不依赖真实用户状态。未执行正式测试、计划运行器或产品入口。缺少输入：无。正式测试仍待第二关审核及本地执行工程师运行。
+**有限预检结果（本次准备）**：`python3 --version` 返回 `Python 3.14.7`；`python3 -m unittest --help` 成功显示标准测试框架用法；上述测试辅助模块与三个运行器脚本均存在。已检查现有 `BaseEnv` 与预检辅助代码使用合成数据及临时目录，不依赖真实用户状态。未执行正式测试、计划运行器或产品入口。缺少输入：无。第二关已通过；正式测试仍待产品修复和本地执行工程师运行。
 
 **失败处理**：原始例子集合不一致是本议题内的业务失败，应修正相应发布示例；实例化后出现 `unknown_reference_id`，先检查是否将示例标识绑定到了同一任务输入的合成论文 `papers` 或研究缺口 `gaps`；不得放宽正式的 `validate_narrative_entry` 校验。如上游预检或本地依赖中断而未形成可判断结果，标记无法判断；修复环境后只运行受影响项，并按该次环境变化记录，不覆盖已确认的业务失败。没有外部模型请求和带副作用的服务调用，本计划不安排外部故障正式重试；业务失败不以重复采样消除。
 
@@ -111,4 +111,4 @@ python3 -m unittest -v test_stage2_narrative_example_contract 2>&1 | tee "$run_d
 6. **运行仅本次必测项**：执行第 4 节的已有测试文件；有业务失败就修复改动范围内的根因，不改期望值求通过。留下脱敏的实际版本、测试命令、结果与尚未完成项目；未执行不得写成已通过。
 7. **审查与完成**：提交本 PR 上的产品、测试变更，先完成适用的正式测试关口，再按 Merge Reviewer Rule 审是否可合并。仅审核通过后解除草稿并申请合并。合并本 PR 时由正文的 `Closes #87` 关闭 Issue；不提前手动关闭。
 
-**后续实施者边界**：本次只有一份在 `plan/` 下维护的正式方案；PR 评论仅引用本文件及其版本。此 PR 提交计划之后仍是草稿，后续实现不得转到另一拉取请求，也不得将本计划的审核待定状态冒充通过。
+**后续实施者边界**：本次只有一份在 `plan/` 下维护的正式方案；PR 评论仅引用本文件及其版本。此 PR 当前仍是草稿，后续实现不得转到另一拉取请求，也不得将尚未完成的第三关冒充通过。
