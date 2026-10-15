@@ -2,6 +2,7 @@
 __pycache__/
 .DS_Store
 .venv/
+node_modules/
 *.py[cod]
 *.skillrepo-backup-*
 *.skillrepo-tmp-*

@@ -4,6 +4,27 @@
 
 当前仓库同时面向 `opencode` 与 `codex`；两个 runtime 的委派方式不同，但共享同一套 Stage 0–5 业务状态与机器事实源。
 
+## 安装
+
+### 使用 Skills CLI 安装套磁工作流技能
+
+需要 Node.js `>=22.20.0` 和 npm。在仓库根目录运行：
+
+```sh
+npm install
+npm run skills:install
+```
+
+`package.json` 将 Skills CLI 固定为 `1.7.2`，安装命令使用该版本支持的 `skills experimental_sync`。清单包含 67 个不重复技能：六个工作流入口 `professor-contact`、`professor-collector`、`professor-topic-clustering`、`paper-analysis`、`humanizer-ja`、`vision-tools`，以及它们正常调用的 Zotero 读写/分类/打标、摘要抓取、Sci-Hub、搜索和浏览器下载依赖。浏览器下载清单含 `browser-pdf-core`、`browser-pdf-download`、`chrome-devtools` 和上游当前的 50 个出版社下载适配技能；`sd-download` 是已合并的旧适配器，不再使用。完整清单以 `package.json` 的 `skills` 字段为准，按上游仓库分组，避免同名技能重复覆盖。
+
+每个来源指向相应仓库的 `.apm/skills` 目录；Skills CLI 只安装列出的技能目录及目录内的 `SKILL.md`、脚本和相对资源，不会自动复制目录外的共享文件。来源跟随清单指定的 GitHub 分支：`paper-analysis`、`zotero-tools` 和 `source-access-skills` 使用 `master`，其他来源使用 `main`。`source-access-skills` 是私有仓库，安装者需要已有 GitHub 访问权限；安装时获取所选分支的最新内容。
+
+此入口不递归读取 `apm.yml`，也不安装 `.apm/agents`、MCP 配置、其他 APM 包或运行时工具包。`professor-contact` 的阶段流程需要配套的自定义代理和 MCP；例如 `professor-contact-style-validator` 是代理，不是 skill。要安装完整运行环境，请使用下方的 APM 方式。
+
+### 使用 APM 安装完整项目依赖
+
+原有 APM 安装方式继续可用：在仓库根目录运行 `apm install`。依赖与目标仍由根目录的 `apm.yml` 声明；需要 OpenCode/Codex agent、MCP 配置或其他 APM 包时，使用这条路径。
+
 ## 当前流程
 
 ```mermaid

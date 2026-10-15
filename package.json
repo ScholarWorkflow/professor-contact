@@ -1,0 +1,99 @@
+{
+  "name": "professor-contact-skills",
+  "private": true,
+  "description": "Install professor-contact and its selected workflow skills with the Skills CLI.",
+  "engines": {
+    "node": ">=22.20.0"
+  },
+  "scripts": {
+    "skills:install": "skills experimental_sync"
+  },
+  "devDependencies": {
+    "skills": "1.7.2"
+  },
+  "skills": [
+    {
+      "source": "https://github.com/ScholarWorkflow/professor-contact/tree/main/.apm/skills/professor-contact",
+      "skills": ["professor-contact"]
+    },
+    {
+      "source": "https://github.com/ScholarWorkflow/professor-research/tree/main/.apm/skills",
+      "skills": ["professor-collector", "professor-topic-clustering"]
+    },
+    {
+      "source": "https://github.com/ScholarWorkflow/paper-analysis/tree/master/.apm/skills",
+      "skills": ["paper-analysis"]
+    },
+    {
+      "source": "https://github.com/ScholarWorkflow/base-skills/tree/main/.apm/skills",
+      "skills": ["humanizer-ja", "scihub-ask", "vision-tools", "zotero-save"]
+    },
+    {
+      "source": "https://github.com/ScholarWorkflow/zotero-tools/tree/master/.apm/skills",
+      "skills": ["zotero-collections", "zotero-paper-tagger", "zotero-read"]
+    },
+    {
+      "source": "https://github.com/ScholarWorkflow/browser-pdf-tools/tree/main/.apm/skills",
+      "skills": [
+        "aaai-ojs-download",
+        "abstract-fetch",
+        "acm-download",
+        "aimsciences-download",
+        "aip-download",
+        "anlp-download",
+        "asha-download",
+        "bowdoin-download",
+        "bristol-pure-download",
+        "browser-pdf-core",
+        "browser-pdf-download",
+        "chrome-devtools",
+        "copernicus-download",
+        "degruyterbrill-download",
+        "doiserbia-download",
+        "elsevier-download",
+        "europepmc-download",
+        "figshare-download",
+        "fujipress-download",
+        "hal-download",
+        "harvard-dash-download",
+        "hdl-download",
+        "ieee-download",
+        "ijcte-download",
+        "indecs-download",
+        "infoscience-download",
+        "iopscience-download",
+        "iospress-download",
+        "ipsj-ixsq-download",
+        "iucr-download",
+        "jgaa-download",
+        "jocg-download",
+        "jps-download",
+        "jstage-download",
+        "mdpi-download",
+        "mitpress-download",
+        "nature-download",
+        "ntnuopen-download",
+        "opg-optica-download",
+        "oup-download",
+        "peerj-download",
+        "preprints-download",
+        "rug-pure-download",
+        "sagepub-download",
+        "scholarpedia-download",
+        "scitepress-download",
+        "springer-download",
+        "tandfonline-download",
+        "timreview-download",
+        "ubn-download",
+        "ump-ojs-download",
+        "utm-ojs-download",
+        "wiley-download",
+        "worldscientific-download"
+      ]
+    },
+    {
+      "source": "https://github.com/StudyCoachWorkflow/source-access-skills/tree/master/.apm/skills",
+      "skills": ["duckduckgo-search", "yahoo-japan-search"]
+    }
+  ]
+}
