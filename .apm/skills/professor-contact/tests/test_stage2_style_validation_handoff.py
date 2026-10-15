@@ -132,6 +132,11 @@ class Stage2ValidationHandoffTests(BaseEnv):
 
     def test_stage2_nonrepairable_user_note_does_not_create_a_correction_job(self):
         self.stage2_run()
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        analysis_path = self.prof_dir / "套磁候选分析.md"
+        protected_pack = json.loads(pack_path.read_text(encoding="utf-8"))
+        protected_directions = copy.deepcopy(protected_pack["directions"])
+        protected_analysis = analysis_path.read_text(encoding="utf-8")
         report = self.write_validation(
             "nonrepairable-note.json", quote="我想比较两种合成输入的处理结果",
             location="用户笔记（原文）")
@@ -139,6 +144,10 @@ class Stage2ValidationHandoffTests(BaseEnv):
         out = self.record_validation(report)
         self.assertNotIn(out["status"], {"ok", "needs_correction"}, out)
         self.assertNotEqual(out.get("reason_code"), "invalid_validation_json", out)
+        self.assertTrue(out.get("reason_code") or out.get("message"), out)
+        pack_after_record = json.loads(pack_path.read_text(encoding="utf-8"))
+        self.assertEqual(pack_after_record["directions"], protected_directions)
+        self.assertEqual(analysis_path.read_text(encoding="utf-8"), protected_analysis)
         self.assert_no_accepted_validation("DIR00001")
         plan = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
                              "--validation-file", report))
@@ -146,6 +155,9 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assertNotEqual(plan.get("reason_code"), "invalid_validation_json", plan)
         self.assertTrue(plan.get("reason_code") or plan.get("message"), plan)
         self.assertEqual(plan.get("jobs", []), [])
+        pack_after_plan = json.loads(pack_path.read_text(encoding="utf-8"))
+        self.assertEqual(pack_after_plan["directions"], protected_directions)
+        self.assertEqual(analysis_path.read_text(encoding="utf-8"), protected_analysis)
 
     def test_stage2_refinement_rejects_changed_input_pack(self):
         self.stage2_run()

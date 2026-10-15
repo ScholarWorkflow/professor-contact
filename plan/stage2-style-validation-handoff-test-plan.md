@@ -4,10 +4,10 @@
 
 - **需求版本**：2026-10-15 确认的第 2 阶段文字校验交接缺陷修复目标；以本拉取请求及已批准实施计划第 2.1 节为准。
 - **实施计划**：`stage2-style-validation-handoff-r1-2026-10-15`，见 [同目录实施计划](stage2-style-validation-handoff-implementation-plan.md)；[2026-10-15 实施计划审核](https://github.com/ScholarWorkflow/professor-contact/pull/86#issuecomment-6191759713)已给出 `Plan conclusion: APPROVED`。
-- **测试计划版本**：`stage2-style-validation-handoff-test-r8-2026-10-15`；本文件是本次修复唯一正式测试计划。
-- **仓库及设计基线**：`ScholarWorkflow/professor-contact`，`main@2a8601facb9f3bec96da6ac22c79586ca79560d7`；首次制定计划时的拉取请求提交为 `b7dd74837bfc5ed8618aca669fcf7de5623628d7`；本轮按用户要求删减以 PR head `e7ff67f33699ca76763d03bcc7b454b94f79cb85` 为修订前基线。产品修复尚未提交，实际被测产品提交待实施后填写。
+- **测试计划版本**：`stage2-style-validation-handoff-test-r9-2026-10-16`；本文件是本次修复唯一正式测试计划。
+- **仓库及设计基线**：`ScholarWorkflow/professor-contact`，`main@2a8601facb9f3bec96da6ac22c79586ca79560d7`；首次制定计划时的拉取请求提交为 `b7dd74837bfc5ed8618aca669fcf7de5623628d7`；本轮修订前基线为 PR head `d680e613e7a21e3b263df76a193aa867943eef3e`。产品修复尚未提交，实际被测产品提交待实施后填写。
 - **依据**：[测试工程师规则](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)、[项目共识](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)、已批准实施计划第 2～4 节；校验器原始交接格式见 `.apm/agents/professor-contact-style-validator.agent.md`。
-- **状态**：按验收决定人要求移除 C 项中的重复引文歧义独立测试，A～E 编号及其他范围不变；未受影响的第一关清单结论继续复用。第 3 节所列其余测试资产待符合性复核，第二关仍待有权审核者确认。已有有限环境预检按适用范围复用，A～E 均未正式执行，第三关尚未开始。产品修复尚未进入 PR；不宣称测试通过、实施完成或准许合并。
+- **状态**：按验收决定人要求移除 C 项中的重复引文歧义独立测试，A～E 编号及其他范围不变；未受影响的第一关清单结论继续复用。r9 仅补足保留的用户笔记保护用例：记录入口检查明确拒绝原因，记录与修订计划入口前后比较受保护方向数据及分析正文。修改后的测试资产待符合性复核，第二关仍待有权审核者确认。已有有限环境预检按适用范围复用，A～E 均未正式执行，第三关尚未开始。产品修复尚未进入 PR；不宣称测试通过、实施完成或准许合并。
 
 ## 2. 本轮唯一必测清单
 
@@ -43,13 +43,13 @@ A、B 覆盖正式成功路径与两轮上限；C 只检查已确认的拒绝与
    - **叙事与局部修改（B）**：双方向样例中新增的无占位符叙事段使用 `refs=[]`；`test_13_stage2_validator_rewrite_round_trips_structured_narrative` 将目标方向的完整 `positioning` 列表交给 `stage2-refine-finalize`，仅修改命中段，保留其他段与 `gap_notes`。
    - **双方向夹具（B）**：`stage2_run_two_directions` 保留 `write_facts()` 返回的路径供正式入口读取，另从文件解析 JSON 对象并读取 `directions`；仍复用 B 项现有样例，不增加用例。
    - **规范方向身份（B）**：双方向样例让规范 `direction_id`（`DIR00001`、`DIR00002`）与旧 `collection_key`（`legacy-alpha`、`legacy-beta`）不同；通过现有 Stage 0／2 夹具及正式入口形成输入包，没有直接伪造已接受输入包。修订请求、任务和回写按 `direction_id` 路由，并比较另一方向及目标方向的非叙事字段。
-   - **拒绝状态（C）**：陈旧正文与变化输入包的断言按第 2.1 节接受 `error` 或 `needs_refresh`，要求明确原因并检查没有输入包写入或错误任务；相关的 `stage2-refine-plan` 检查也排除 `reason_code=invalid_validation_json`。陈旧正文测试也检查目标文件不受管时拒绝且不改写。不可修订用户笔记场景要求修订计划明确阻塞、有原因且 `jobs` 为空，不固定唯一状态名。上述报告拒绝及修订计划检查均排除 `reason_code=invalid_validation_json`，确认样例已按原始 `files[]` 协议解析后识别场景；原始 `results[]` 格式错误仍只接受 `error/invalid_validation_json`；`needs_decision` 不加入上述两条断言。
+   - **拒绝状态与受保护内容（C）**：陈旧正文与变化输入包的断言按第 2.1 节接受 `error` 或 `needs_refresh`，要求明确原因并检查没有输入包写入或错误任务；相关的 `stage2-refine-plan` 检查也排除 `reason_code=invalid_validation_json`。陈旧正文测试也检查目标文件不受管时拒绝且不改写。不可修订用户笔记用例分别在 `stage2-record-validation` 与 `stage2-refine-plan` 前后比较 `套磁候选输入.json` 的 `directions` 和 `套磁候选分析.md` 正文；记录入口返回明确的 `reason_code` 或 `message`，修订计划明确阻塞、有原因且 `jobs` 为空，不固定唯一状态名。允许顶层独立 `validator` 区域记录失败信息，不要求整个输入包逐字节相同。上述报告拒绝及修订计划检查均排除 `reason_code=invalid_validation_json`，确认样例已按原始 `files[]` 协议解析后识别场景；原始 `results[]` 格式错误仍只接受 `error/invalid_validation_json`；`needs_decision` 不加入上述两条断言。
    - **问题保存断言（A）**：轻微问题断言现在读取 JSON 中对应方向的 `issues`，逐项核对原问题对象的 `rule/severity/location/quote/suggestion` 字段及关系；不搜索序列化文本，也不判断建议措辞。
    - **调用说明检查（E）**：已移除 `test_stage2_calling_docs_keep_the_raw_report_sequence` 的词语、条件词和出现顺序断言。E 只按本节第 5 项人工语义核对；Codex `spawn_agent` 与 OpenCode 原生 `task` 的正式委派、等待要求保持不变，不增加真实工具调用、日志认证或冒烟。
    - **边界与覆盖**：仅在合成教授目录调用正式 `contact_state.py`，不通过测试夹具伪造正式方向或轮次。第 5 项列出的 8 个程序用例覆盖 A～D，E 使用同一计划中的人工核对；没有新增测试平台或业务目标。
-2. **正式运行前填写版本**：产品实施完成并进入本分支后，记录产品提交号和测试准备提交号；确认下列选择器覆盖 A～D，E 的人工核对按本节执行，再开始正式检查。本轮修订前基线 `2f07fd24f75b8bf9b954d50a8ebfc3775221988c` 尚无产品修复，因此没有可填写的产品通过版本。
+2. **正式运行前填写版本**：产品实施完成并进入本分支后，记录产品提交号和测试准备提交号；确认下列选择器覆盖 A～D，E 的人工核对按本节执行，再开始正式检查。本轮修订前基线 `d680e613e7a21e3b263df76a193aa867943eef3e` 尚无产品修复，因此没有可填写的产品通过版本。
 3. **准备顺序和配置来源**：从目标工作树仓库根目录确认 `git rev-parse --show-toplevel`；设置 `PC86_RUN_ROOT` 为 `/private/tmp` 下新建的独立目录；切换到 `.apm/skills/professor-contact/tests`。只需本地 Python 标准库和仓库内测试辅助模块，无外部服务、账户或密钥。按预检结果复用 `UV_CACHE_DIR=/private/tmp/pc81-uv-cache`，命令使用 `uv run --offline --no-project`，不联网安装依赖。
-4. **有限环境预检记录（2026-10-15）**：本轮修改后复核结果为 `uv 0.12.22`、`Python 3.14.6`；`unittest`、`issue64_test_support`、`stage2_upstream_fixture`、`test_contact_state`、`test_stage2_style_validation_handoff` 可导入；`/private/tmp` 与 `/private/tmp/pc81-uv-cache` 可写。命令及输出记录在独立目录 `/private/tmp/pc86-preflight-20261015/preflight.txt`。只做版本、模块导入和目录写入能力检查，未调用必测命令、正式用例、产品入口或业务请求。默认 UV 缓存目录不可写，因此后续命令固定使用上述 `/private/tmp` 缓存目录。
+4. **有限环境预检记录（2026-10-16）**：复核结果为 `uv 0.12.22`、计划命令使用的 `uv run` Python `3.14.6`；`unittest`、`issue64_test_support`、`stage2_upstream_fixture`、`test_contact_state`、`test_stage2_style_validation_handoff` 可导入；`/private/tmp` 与 `/private/tmp/pc81-uv-cache` 可写。命令及输出记录在独立目录 `/private/tmp/pc86-preflight-20261016.eeskjs/preflight.txt`。仅检查版本、模块导入及目录写入能力，未调用必测命令、正式用例、产品入口或业务请求。默认 UV 缓存目录此前确认不可写，后续命令继续使用已检查可写的 `/private/tmp/pc81-uv-cache`。
 5. **A～D 待执行命令与 E 人工核对**：**只在第 1 项测试资产修正完成、产品修复提交及第二关确认后**，从目标工作树根目录执行以下命令。执行工程师记录实际产品／测试提交号及 `PC86_RUN_ROOT`，输出仅保存在独立 `/private/tmp` 目录；不因文档或提交号变化重跑未受影响的有效通过结果。
 
    ```sh
@@ -85,5 +85,5 @@ A、B 覆盖正式成功路径与两轮上限；C 只检查已确认的拒绝与
 
 - **产品实施**：仍待 `contact_state.py`、两种 analyzer 安装投影与主技能说明的修改。
 - **正式执行**：A～E 均未执行；没有新增的通过结果。
-- **测试资产**：双方向夹具的数据读取、A 的结构化问题保存断言、E 的文字匹配断言调整，以及 C 项对 `invalid_validation_json` 回退结果的排除断言已完成；未运行正式用例。
-- **修订复核与第二关**：按验收决定人要求删除重复引文歧义测试，代码与正式执行命令已同步精简。仅复核本次删除的直接影响和仍未完成的第二关内容，第一关未受影响结论复用；第二关尚未通过。
+- **测试资产**：双方向夹具的数据读取、A 的结构化问题保存断言、E 的语义人工核对、C 项对 `invalid_validation_json` 回退结果的排除断言，以及用户笔记保护用例的明确原因和受保护内容前后比较已准备；未运行正式用例。
+- **修订复核与第二关**：按验收决定人要求删除重复引文歧义测试，代码与正式执行命令已同步精简。r9 只补充仍保留的用户笔记保护用例及对应 Recipe；第一关未受影响结论复用，第二关等待本次实现符合性复核和有权审核者确认。
