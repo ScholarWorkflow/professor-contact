@@ -148,6 +148,13 @@ class Stage2ValidationHandoffTests(BaseEnv):
             "input_example": "输入两种固定的合成样本",
             "output_example": "比较两种处理结果",
         })
+        multiline_quote = "续行叙事可修订"
+        narrative["directions"][0]["positioning"].append({
+            "kind": "para", "text": f"条目首行叙述。\n{multiline_quote}", "refs": [],
+            "concrete_object": "两种合成输入",
+            "input_example": "输入两种固定的合成样本",
+            "output_example": "比较两种处理结果",
+        })
         narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
         plan = parse(self.run_bound_stage2_plan(facts))
         self.assertEqual(plan["status"], "ok", plan)
@@ -183,6 +190,22 @@ class Stage2ValidationHandoffTests(BaseEnv):
             self.assertEqual(plan.get("jobs", []), [])
         pack_after_plan = json.loads(pack_path.read_text(encoding="utf-8"))
         self.assertEqual(pack_after_plan["directions"], protected_directions)
+        self.assertEqual(analysis_path.read_text(encoding="utf-8"), protected_analysis)
+
+        multiline_line = next(
+            index + 1 for index, line in enumerate(protected_analysis.splitlines())
+            if line.startswith(f"{multiline_quote}；具体对象："))
+        report = self.write_validation(
+            "repairable-multiline-positioning.json", quote=multiline_quote,
+            location=str(multiline_line))
+        out = self.record_validation(report)
+        self.assertEqual(out["status"], "needs_correction", out)
+        plan = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
+                             "--validation-file", report))
+        self.assertEqual(plan["status"], "ok", plan)
+        self.assertEqual([job["direction_id"] for job in plan["jobs"]], ["DIR00001"])
+        pack_after_multiline = json.loads(pack_path.read_text(encoding="utf-8"))
+        self.assertEqual(pack_after_multiline["directions"], protected_directions)
         self.assertEqual(analysis_path.read_text(encoding="utf-8"), protected_analysis)
 
     def test_stage2_refinement_rejects_changed_input_pack(self):

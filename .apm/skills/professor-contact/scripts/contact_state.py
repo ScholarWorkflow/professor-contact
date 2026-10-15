@@ -4191,6 +4191,41 @@ def citation_render(item_key: str, paper: dict, professor_dir: Path,
     return f"[《{title}》](zotero://select/library/items/{item_key})（{year}）"
 
 
+def rendered_markdown_block_lines(text: str) -> list[str]:
+    """Split one rendered list item into the physical rows Markdown exposes."""
+    lines = text.splitlines()
+    if not lines:
+        return [""]
+    if text.endswith(("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e",
+                      "\x85", "\u2028", "\u2029")):
+        lines.append("")
+    return lines
+
+
+def render_positioning_block(block: dict, paper_lookup: dict, gap_no: dict,
+                             professor_dir: Path, seen: dict,
+                             fallback_papers: dict | None = None) -> str:
+    """Render one structured positioning block exactly as the analysis view does."""
+    text = block["text"]
+    fallback_papers = fallback_papers or {}
+
+    def replace(match):
+        kind, value = match.group(1), match.group(2)
+        if kind == "G":
+            number = gap_no.get(value)
+            return f"future work #{number}" if number else "future work（本轮未选，见排除清单）"
+        paper = paper_lookup.get(value) or fallback_papers.get(value) or {
+            "title": None, "year": None, "analysis_file": None}
+        return citation_render(value, paper, professor_dir, seen)
+
+    text = PLACEHOLDER_RE.sub(replace, text)
+    examples = "；具体对象：{}；输入：{}；输出：{}。".format(
+        block.get("concrete_object", ""), block.get("input_example", ""),
+        block.get("output_example", ""))
+    prefix = "- " if block.get("kind") == "bullet" else ""
+    return f"{prefix}{text}{examples}"
+
+
 def redact_item_keys(text: str, papers: dict) -> str:
     """Keep deterministic human-facing red lines free of internal item keys."""
     rendered = text
@@ -4384,25 +4419,8 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
         paper_lookup = {p["item_key"]: p for p in projected[direction_machine_id(d)]}
         gap_no = {g["gap_id"]: g["no"] for g in d.get("gap_shortlist", [])}
         for block in narrative.get("positioning", []):
-            text = block["text"]
-
-            def replace(match, seen=seen, paper_lookup=paper_lookup, gap_no=gap_no):
-                kind, value = match.group(1), match.group(2)
-                if kind == "G":
-                    number = gap_no.get(value)
-                    return f"future work #{number}" if number else "future work（本轮未选，见排除清单）"
-                paper = paper_lookup.get(value) or {"title": ctx.papers.get(value, {}).get("title"),
-                                                    "year": ctx.papers.get(value, {}).get("year"),
-                                                    "analysis_file": ctx.papers.get(value, {}).get("analysis_file")}
-                return citation_render(value, paper, ctx.professor_dir, seen)
-
-            text = PLACEHOLDER_RE.sub(replace, text)
-            examples = "；具体对象：{}；输入：{}；输出：{}。".format(
-                block.get("concrete_object", ""), block.get("input_example", ""),
-                block.get("output_example", ""))
-            text += examples
-            prefix = "- " if block.get("kind") == "bullet" else ""
-            lines.append(f"{prefix}{text}")
+            lines.append(render_positioning_block(
+                block, paper_lookup, gap_no, ctx.professor_dir, seen, ctx.papers))
         lines.append("")
         lines.append("### 论文一览")
         lines.append("")
@@ -10738,17 +10756,40 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
             positioning = []
         positioning_start = (positioning_heading_lines[0] + 6
                              if len(positioning_heading_lines) == 1 else -1)
+        positioning_block = None
+        positioning_rows_match = positioning_start >= 0
+        positioning_cursor = positioning_start
+        if positioning_rows_match:
+            projected = direction_papers(pack, direction)
+            paper_lookup = {paper["item_key"]: paper for paper in projected}
+            gap_no = {gap["gap_id"]: gap["no"]
+                      for gap in direction.get("gap_shortlist", [])}
+            seen = {}
+            for block in positioning:
+                if not isinstance(block, dict) or not isinstance(block.get("text"), str):
+                    positioning_rows_match = False
+                    break
+                rendered_lines = render_positioning_block(
+                    block, paper_lookup, gap_no, professor_dir, seen,
+                    pack_paper_index(pack))
+                rendered_lines = rendered_markdown_block_lines(rendered_lines)
+                row_end = positioning_cursor + len(rendered_lines)
+                if row_end > len(lines) or lines[positioning_cursor:row_end] != rendered_lines:
+                    positioning_rows_match = False
+                    break
+                if positioning_cursor <= hit < row_end:
+                    positioning_block = block
+                positioning_cursor = row_end
         positioning_layout_matches = (
-            positioning_start >= 0 and len(paper_heading_lines) == 1
-            and paper_heading_lines[0] == positioning_start + len(positioning) + 1)
-        if (positioning_layout_matches and
-                positioning_start <= hit < positioning_start + len(positioning)):
-            block = positioning[hit - positioning_start]
-            if isinstance(block, dict):
-                for field in ("text", "concrete_object", "input_example", "output_example"):
-                    value = block.get(field)
-                    if isinstance(value, str) and quote in value:
-                        repairable = True
+            positioning_rows_match and len(paper_heading_lines) == 1
+            and positioning_cursor < len(lines)
+            and lines[positioning_cursor] == ""
+            and paper_heading_lines[0] == positioning_cursor + 1)
+        if positioning_layout_matches and positioning_block is not None:
+            for field in ("text", "concrete_object", "input_example", "output_example"):
+                value = positioning_block.get(field)
+                if isinstance(value, str) and quote in value:
+                    repairable = True
 
         gap_heading_lines = [i for i in section_lines if lines[i] == "### 可延伸方向"]
         if len(gap_heading_lines) == 1 and hit > gap_heading_lines[0]:
