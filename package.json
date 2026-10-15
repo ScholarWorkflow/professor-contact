@@ -1,0 +1,40 @@
+{
+  "name": "professor-contact-skills",
+  "private": true,
+  "description": "Install professor-contact and its selected workflow skills with the Skills CLI.",
+  "engines": {
+    "node": ">=22.20.0"
+  },
+  "scripts": {
+    "skills:install": "skills experimental_sync"
+  },
+  "devDependencies": {
+    "skills": "1.7.2"
+  },
+  "skills": [
+    {
+      "source": "https://github.com/ScholarWorkflow/professor-contact/tree/main/.apm/skills/professor-contact",
+      "skills": ["professor-contact"]
+    },
+    {
+      "source": "https://github.com/ScholarWorkflow/professor-research/tree/main/.apm/skills/professor-collector",
+      "skills": ["professor-collector"]
+    },
+    {
+      "source": "https://github.com/ScholarWorkflow/professor-research/tree/main/.apm/skills/professor-topic-clustering",
+      "skills": ["professor-topic-clustering"]
+    },
+    {
+      "source": "https://github.com/ScholarWorkflow/paper-analysis/tree/master/.apm/skills/paper-analysis",
+      "skills": ["paper-analysis"]
+    },
+    {
+      "source": "https://github.com/ScholarWorkflow/base-skills/tree/main/.apm/skills/humanizer-ja",
+      "skills": ["humanizer-ja"]
+    },
+    {
+      "source": "https://github.com/ScholarWorkflow/base-skills/tree/main/.apm/skills/vision-tools",
+      "skills": ["vision-tools"]
+    }
+  ]
+}

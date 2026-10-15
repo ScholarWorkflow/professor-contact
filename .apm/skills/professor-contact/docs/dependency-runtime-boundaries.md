@@ -138,3 +138,9 @@ flowchart TD
 4. **宿主环境不可用**：Zotero、Chrome、网络、登录态等服务未就绪。
 
 不要把第 2–4 类问题重新伪装成业务状态机默认值，也不要为了让 non-interactive eval 通过而在生产 contract 中自动选择网络访问、用户选择或外部服务状态。
+
+## 7. Skills CLI 安装入口
+
+根目录 `package.json` 另提供 Skills CLI 安装入口，固定使用 `skills@1.7.2` 的 `skills experimental_sync`。清单显式选择六个工作流技能：本仓库的 `professor-contact`、`professor-research` 中的 `professor-collector` 与 `professor-topic-clustering`、`paper-analysis`，以及 `base-skills` 中的 `humanizer-ja` 与 `vision-tools`。来源跟随清单中配置的 `main` 或 `master` 分支。
+
+这份清单只投影所选 `.apm/skills/<skill>` 目录，不会递归安装本文件第 1 节列出的 APM 依赖图，也不提供 `.apm/agents`、MCP 或宿主服务。`professor-contact-style-validator` 属于自定义代理，不在 Skills CLI 技能目录清单内。需要完整代理与 MCP 环境时，仍使用 APM 安装路径。

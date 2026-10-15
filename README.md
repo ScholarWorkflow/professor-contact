@@ -4,6 +4,25 @@
 
 当前仓库同时面向 `opencode` 与 `codex`；两个 runtime 的委派方式不同，但共享同一套 Stage 0–5 业务状态与机器事实源。
 
+## 安装
+
+### 使用 Skills CLI 安装套磁工作流技能
+
+需要 Node.js `>=22.20.0` 和 npm。在仓库根目录运行：
+
+```sh
+npm install
+npm run skills:install
+```
+
+`package.json` 将 Skills CLI 固定为 `1.7.2`，安装命令使用该版本支持的 `skills experimental_sync`。安装清单选择六个被工作流直接调用的技能：`professor-contact`、`professor-collector`、`professor-topic-clustering`、`paper-analysis`、`humanizer-ja` 和 `vision-tools`。每个来源都指向对应仓库内的单个 `.apm/skills/<skill>` 目录；安装器会把完整目录（包括 `SKILL.md`、脚本和相对资源）放进项目的 `.agents/skills/<skill>`。来源跟随各自配置的 GitHub 分支（`paper-analysis` 使用 `master`，其余使用 `main`），安装时获取该分支的最新内容。
+
+此入口只安装技能目录，不递归读取 `apm.yml`，也不安装 `.apm/agents`、MCP 配置或其他 APM 包。`professor-contact` 的阶段流程需要配套的自定义代理和 MCP；例如 `professor-contact-style-validator` 是代理，不是 skill。要安装完整运行环境，请使用下方的 APM 方式。
+
+### 使用 APM 安装完整项目依赖
+
+原有 APM 安装方式继续可用：在仓库根目录运行 `apm install`。依赖与目标仍由根目录的 `apm.yml` 声明；需要 OpenCode/Codex agent、MCP 配置或其他 APM 包时，使用这条路径。
+
 ## 当前流程
 
 ```mermaid
