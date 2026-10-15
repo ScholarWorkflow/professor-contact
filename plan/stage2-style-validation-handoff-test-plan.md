@@ -4,10 +4,10 @@
 
 - **需求版本**：2026-10-15 确认的第 2 阶段文字校验交接缺陷修复目标；以本拉取请求及已批准实施计划第 2.1 节为准。
 - **实施计划**：`stage2-style-validation-handoff-r1-2026-10-15`，见 [同目录实施计划](stage2-style-validation-handoff-implementation-plan.md)；[2026-10-15 实施计划审核](https://github.com/ScholarWorkflow/professor-contact/pull/86#issuecomment-6191759713)已给出 `Plan conclusion: APPROVED`。
-- **测试计划版本**：`stage2-style-validation-handoff-test-r1-2026-10-15`；本文件是本次修复唯一正式测试计划。
-- **仓库及设计基线**：`ScholarWorkflow/professor-contact`，`main@2a8601facb9f3bec96da6ac22c79586ca79560d7`；制定计划时的拉取请求提交为 `b7dd74837bfc5ed8618aca669fcf7de5623628d7`。该提交尚无产品修复；实际被测产品提交由实施后执行记录填写。
+- **测试计划版本**：`stage2-style-validation-handoff-test-r2-2026-10-15`；本文件是本次修复唯一正式测试计划。
+- **仓库及设计基线**：`ScholarWorkflow/professor-contact`，`main@2a8601facb9f3bec96da6ac22c79586ca79560d7`；制定计划时的拉取请求提交为 `b7dd74837bfc5ed8618aca669fcf7de5623628d7`。测试资产准备基于 PR 提交 `2df992d731e06538618453382db3395cb9fe1f91`；该提交仍不含产品修复，实际被测产品提交待实施后填写。
 - **依据**：[测试工程师规则](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)、[项目共识](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)、已批准实施计划第 2～4 节；校验器原始交接格式见 `.apm/agents/professor-contact-style-validator.agent.md`。
-- **状态**：测试计划工程师提交，第一关（必测清单）及第二关（可执行步骤）待独立审核；第三关（实际结果）未开始。本计划不宣称测试通过、实施完成或准许合并。
+- **状态**：测试准备符合性复审完成，A～E 对应测试资产与步骤覆盖完整；首次审核发现的缺口已修订并复查。第一关（必测清单）及第二关（可执行步骤）仍待有权审核者审核；第三关（实际结果）未开始。产品修复尚未进入 PR，因此本轮未运行测试。本计划不宣称测试通过、实施完成或准许合并。
 
 ## 2. 本轮唯一必测清单
 
@@ -25,16 +25,43 @@ A、B 覆盖正式成功路径与两轮上限；C 只检查已确认的拒绝与
 
 ## 3. 测试实现与执行交接
 
-1. **产品提交后补齐执行步骤**：本地测试工程师在本文件内补充本轮产品提交号、受影响测试方法、可直接执行的命令、必要的运行目录和输出位置；随后提交第一、第二关审核。执行前不把尚未实现的入口或测试名称写成已经可运行。
-2. **复用已有设施**：生产者仓库现有 `.apm/skills/professor-contact/tests/test_contact_state.py` 含合成教授、`stage2_run`、`run_cli` 和叙事修订测试。优先修改原先自行构造 `results[]` 的第 2 阶段用例，并补足 A～D 未覆盖的直接行为；正式可复用测试代码留在本仓库。报告使用符合校验器声明格式的合成原文，不替产品补造方向、轮次或修订决定。
-3. **只运行受影响检查**：A～D 优先使用现有 `unittest` 和真实 `contact_state.py` 命令入口；E 使用正式文件核对。未改变的用例及已有有效通过结果依测试规则复用，不为本次计划另跑全部第 2～5 阶段、模型调用或两套运行环境的完整冒烟。
-4. **隔离与输出**：使用临时合成教授目录，不连接真实论文库、浏览器、账号或用户资料。临时输入、测试日志及必要输出保存在仓库外独立 `/tmp` 运行目录；运行记录注明实际产品提交、测试提交、命令与逐项结果。只保留判断 A～E 所需的结果，不增加独立判定器或过程证明。
-5. **失败与重试**：本计划的程序检查不需要外部模型或网络。断言到达目标入口后发现业务结果不符，记录业务失败，不因结果不满意重跑；依赖或命令无法启动时记“无法判断／未执行”，修复环境后仅补做受影响项。若将来实施确需外部调用，先由本地测试工程师在本文件说明对应配置、可重试故障、次数、停止和状态清理，再进行第二关审核；不得临场扩大测试。
-6. **审查与结果**：第一关核对 A～E 是否等于本轮业务验收上限；第二关在实现、测试代码和执行命令齐备后核对可执行性与范围；第三关依据相同目标的当前有效结果分别记录“通过／业务失败／无法判断／未执行”。测试计划提交本身不表示任何关口通过。
+1. **受影响测试代码**：已在 `.apm/skills/professor-contact/tests/test_contact_state.py` 更新原先手工构造 `results[]` 的阶段 2 测试，使用校验器原始 `result + files[] + notes` 对象；新增 `test_stage2_style_validation_handoff.py` 覆盖两轮终态、第二轮前后预检接受状态、过期正文和输入包保护、方向歧义（检查两个方向均未被误记为通过）、不可修订区域、历史 `pass/skipped` 接受及调用说明。修订回归逐字段比较被指出方向的缺口注释和未命中叙事块。三份调用说明依次检查原样交接、首次记录、仅在 `needs_correction` 时修订、修订后通过对应运行环境原生委派重新校验、第二次记录和停止；Codex 段核对原生子代理名称与等待，OpenCode 段核对 `task` 指定校验器与等待。夹具只使用合成教授与仓库真实 `contact_state.py` 命令入口，不补造方向或轮次。
+2. **正式运行前填写版本**：产品实施完成并进入本分支后，记录产品提交号和测试提交号；确认下列选择器仍指向计划 A～E 的检查，再运行。当前 PR 头 `2df992d731e06538618453382db3395cb9fe1f91` 尚无产品修复，因此这些用例尚未运行，也没有可填写的产品通过版本。
+3. **准备顺序和配置来源**：从目标工作树仓库根目录确认 `git rev-parse --show-toplevel`；设置 `PC86_RUN_ROOT` 为 `/private/tmp` 下新建的独立目录；切换到 `.apm/skills/professor-contact/tests`。只需本地 Python 标准库和仓库内测试辅助模块，无外部服务、账户或密钥。按预检结果复用 `UV_CACHE_DIR=/private/tmp/pc81-uv-cache`，命令使用 `uv run --offline --no-project`，不联网安装依赖。
+4. **有限环境预检记录（2026-10-15）**：`uv 0.12.22`；`Python 3.14.6`；`unittest`、测试所需标准库以及 `issue64_test_support`、`stage2_upstream_fixture`、`test_contact_state` 可导入；`/private/tmp` 可写。未调用必测命令、产品入口或业务请求。默认 UV 缓存目录不可写，因此后续命令固定使用上述 `/private/tmp` 缓存目录。
+5. **A～E 执行命令**：在目标工作树根目录执行以下命令。`PC86_RUN_ROOT` 与实际产品提交号由执行工程师填写；测试输出仅保存在独立 `/private/tmp` 目录。
+
+   ```sh
+   PC86_REPO="$(git rev-parse --show-toplevel)"
+   PC86_TEST_DIR="$PC86_REPO/.apm/skills/professor-contact/tests"
+   PC86_RUN_ROOT="$(mktemp -d /private/tmp/pc86-stage2-style-handoff.XXXXXX)"
+   cd "$PC86_TEST_DIR"
+   if UV_CACHE_DIR=/private/tmp/pc81-uv-cache uv run --offline --no-project python -m unittest -v \
+     test_contact_state.TestRunnerBasics.test_11_stage2_validator_is_persisted_separately \
+     test_contact_state.TestRunnerBasics.test_11a_stage2_validator_pass_with_minor_is_accepted \
+     test_contact_state.TestRunnerBasics.test_13_stage2_validator_rewrite_round_trips_structured_narrative \
+     test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_second_blocking_round_is_terminal \
+     test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_report_for_stale_render_is_rejected_without_pack_write \
+     test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_ambiguous_quote_does_not_create_a_correction_job \
+     test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_nonrepairable_user_note_does_not_create_a_correction_job \
+     test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_refinement_rejects_changed_input_pack \
+     test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_preflight_accepts_legacy_pass_and_skipped_records \
+     test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_calling_docs_keep_the_raw_report_sequence \
+     > "$PC86_RUN_ROOT/unittest.log" 2>&1; then
+     cat "$PC86_RUN_ROOT/unittest.log"
+   else
+     PC86_EXIT_CODE=$?
+     cat "$PC86_RUN_ROOT/unittest.log"
+     exit "$PC86_EXIT_CODE"
+   fi
+   ```
+
+   `test_contact_state.TestRunnerBasics.test_13...` exercises `--facts` for planning and `--professor-dir` for finalization; the other affected cases use the same local fixture. The helper's `TemporaryDirectory` gives each case a disposable synthetic professor directory. No real library, browser, account, or user data is read.
+6. **失败处理和结果位置**：保留 `$PC86_RUN_ROOT/unittest.log`。目标命令已启动且断言不符时记录业务失败，不因结果不满意重跑；运行时、导入或命令启动失败时记“无法判断／未执行”，先修复环境，再只补做受影响项。测试夹具在每个用例结束后清理；临时输出不入库。
+7. **关口交接**：测试准备符合性复审已确认 A～E 覆盖完整；第一关（A～E 范围）与第二关（步骤和测试实现可执行性）仍待有权审核者完成；第三关未开始。后续本地执行工程师仅按上述选择器运行，并填写实际产品提交号及逐项结果。
 
 ## 4. 当前未完成项
 
 - **产品实施**：仍待 `contact_state.py`、两种 analyzer 安装投影与主技能说明的修改。
-- **本地测试工程师**：按本文件第 3 节补齐受影响测试和明确执行步骤，并提交测试审核。
-- **正式执行**：A～E 均未执行或复核；没有新增的通过结果。
-- **独立计划复核**：本次编写未启动独立子代理；计划仍待有权审核者检查，不把作者自查作为批准。
+- **正式执行**：A～E 均未执行；没有新增的通过结果。
+- **独立审核**：测试准备符合性复审已确认覆盖完整；第一、第二关审核仍待有权审核者完成，本文件不将准备工作表述为关口批准。
