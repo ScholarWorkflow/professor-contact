@@ -10644,9 +10644,15 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
             fail("invalid_validation_json", f"{label} without issues must have verdict=pass")
         if candidate_path == target:
             matches.append(entry)
-    if len(matches) != 1 or matches[0].get("artifact") != "analysis":
+    if not matches:
+        fail("validation_target_mismatch",
+             f"validator output does not contain the current managed analysis: {target}")
+    if len(matches) != 1:
         fail("invalid_validation_json",
              f"validator output must contain exactly one analysis result for {target}")
+    if matches[0].get("artifact") != "analysis":
+        fail("validation_target_mismatch",
+             f"validator output marks the managed analysis as another artifact: {target}")
 
     entry = matches[0]
     render_sha, body = stage2_bound_render(professor_dir, pack)
