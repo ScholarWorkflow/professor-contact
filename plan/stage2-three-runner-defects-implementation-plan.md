@@ -207,16 +207,97 @@ test-r4 已提交测试实现，test-r5 补充下述两处准备修正：下表�
 
 **替代与合并关系**：`test_resolve_finalize_unchanged_when_no_result` 改名并改预期为 `test_resolve_finalize_rejects_missing_new_result`（旧 `status=ok / unchanged` 断言按 R3 删除）；`test_stage2_resolved_direction.py` 与预检文件中的旧结果目录 `self.root/resolve_results`、`self.root/results` 全部换成本轮独立目录；`ResolvedPreflightBase.write_resolve_result()/resolve_finalize()` 与 `ResolvedPipelineMixin.run_resolve` 各自完成迁移，后者被 10 个受影响文件里 28 个测试方法复用（`test_stage2_resolved_direction.py` 15 个）。没有受本次接口或共用准备变化影响的历史结果继续复用。
 
-**执行条件、环境与完整命令**：产品和本节的受影响测试实现入库、第一/第二关完成复核后才执行。环境已于 2026-10-17 预检确认：`PYTHON=/run/current-system/sw/bin/python3`（Python 3.14.7，仅标准库；`contact_state.py` 只依赖标准库），备用包装为 `uv run --no-project --python python3`，同一次运行只用其中一种，不新装依赖。工作目录为目标仓库的 `.apm/skills/professor-contact/tests/`；每次正式执行先建立本次独占的仓库外目录 `/tmp/pc91-tests.XXXXXXXX/`，逐项目标保存标准输出、错误输出与退出码。命令模板（`<选择器>` 取上文对应目标的全名，可一次传多个）：
+**执行条件、环境与完整命令**：产品和本节的受影响测试实现入库、第一/第二关完成复核后才执行。环境已于 2026-10-17 预检确认：`PYTHON=/run/current-system/sw/bin/python3`（Python 3.14.7，仅标准库；`contact_state.py` 只依赖标准库），备用包装为 `uv run --no-project --python python3`，同一次运行只用其中一种，不新装依赖。工作目录为目标仓库的 `.apm/skills/professor-contact/tests/`；正式执行先建立本次独占的仓库外目录 `/tmp/pc91-tests.XXXXXXXX/`，逐项目标保存标准输出、错误输出与退出码。
+
+下面是 T1—T5 五条可直接复制执行的命令（选择器取自上文已确认的 60 个全名，未新增用例或设施）：
 
 ```bash
 cd .apm/skills/professor-contact/tests
 PYTHON=/run/current-system/sw/bin/python3
 RUN_DIR=$(mktemp -d /tmp/pc91-tests.XXXXXXXX)
-"$PYTHON" -m unittest -v <选择器>... >"$RUN_DIR/T1.out" 2>"$RUN_DIR/T1.err"; echo $? >"$RUN_DIR/T1.rc"
+
+# T1
+"$PYTHON" -m unittest -v \
+  test_stage2_resolved_direction_downstream_regressions.ResolvedDirectionDownstreamRegressionTests.test_member_reference_persistence_and_refine_sources \
+  test_stage2_resolved_direction_downstream_regressions.ResolvedDirectionDownstreamRegressionTests.test_refined_membership_changes_stage3_input_fingerprint \
+  test_stage2_resolved_direction_downstream_regressions.ResolvedDirectionDownstreamRegressionTests.test_split_materializes_candidate_outside_relevant_set \
+  test_stage2_resolved_direction_downstream_regressions.ResolvedDirectionDownstreamRegressionTests.test_reused_split_preserves_materialized_child_membership \
+  test_stage2_resolved_direction_downstream_regressions.ResolvedDirectionDownstreamRegressionTests.test_stage2_reuse_keeps_provisional_fingerprint_across_repeated_finalize \
+  test_stage2_resolved_direction_downstream_regressions.ResolvedDirectionDownstreamRegressionTests.test_membership_resolution_requires_valid_fulltext_facts \
+  >"$RUN_DIR/T1.out" 2>"$RUN_DIR/T1.err"; echo $? >"$RUN_DIR/T1.rc"
+
+# T2
+"$PYTHON" -m unittest -v \
+  test_stage2_resolved_direction_downstream_regressions.ResolvedDirectionDownstreamRegressionTests.test_resolved_reference_inheritance_and_source_mapping \
+  test_stage2_resolved_direction.Stage2SplitEndToEndTests.test_split_creates_second_authoritative_direction_and_stage3_jobs \
+  test_stage2_resolved_direction.Stage2SplitEndToEndTests.test_merge_keeps_only_target_direction_and_stage3_job \
+  test_stage2_resolved_direction.Stage2SplitEndToEndTests.test_merge_chain_is_rejected \
+  test_stage2_resolved_direction.Stage2SplitReuseChainTests.test_split_first_apply_then_reuse_then_stage3_jobs \
+  test_stage2_resolved_direction.StructuralResolutionEvidenceGateTests.test_merge_resolution_rejected_when_both_directions_lack_valid_fulltext_facts \
+  test_stage2_resolved_direction.StructuralResolutionEvidenceGateTests.test_rename_resolution_rejected_without_valid_fulltext_facts \
+  test_stage2_resolved_direction.ResolveAcceptanceBoundaryTests.test_finalize_rejects_sidecar_with_unaccepted_material_proposal \
+  test_stage2_resolved_direction.ResolveAcceptanceBoundaryTests.test_finalize_rejects_partially_kept_provisional_sidecar \
+  test_stage2_resolved_direction.ResolveAcceptanceBoundaryTests.test_resolve_accept_command_validates_keys_and_staleness \
+  test_stage2_resolved_direction.MergeCandidateDetectionTests.test_detect_merge_candidates \
+  test_stage2_resolved_direction_acceptance_boundary.ResolvedDirectionAcceptanceBoundaryTests.test_stage2_finalize_rejects_unaccepted_material_proposal \
+  test_stage2_resolved_direction_acceptance_boundary.ResolvedDirectionAcceptanceBoundaryTests.test_partial_keep_provisional_does_not_accept_other_pending_direction \
+  test_stage2_resolved_direction_merge_fulltext_regression.FullTextMergeRegression.test_disjoint_preview_clusters_can_be_merge_candidates_from_fulltext \
+  >"$RUN_DIR/T2.out" 2>"$RUN_DIR/T2.err"; echo $? >"$RUN_DIR/T2.rc"
+
+# T3
+"$PYTHON" -m unittest -v \
+  test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_resolve_run_isolation_and_missing_results \
+  test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_keep_provisional_exempts_only_the_named_direction \
+  test_stage2_resolved_direction.ResolvedDirectionPlanTests.test_resolve_plan_emits_jobs_for_each_direction \
+  test_stage2_resolved_direction.ResolvedDirectionPlanTests.test_resolve_plan_detects_removal_candidates \
+  test_stage2_resolved_direction.ResolvedDirectionPlanTests.test_resolve_plan_no_changes_when_all_match \
+  test_stage2_resolved_direction.ResolvedDirectionFinalizeTests.test_resolve_finalize_rejects_missing_new_result \
+  test_stage2_resolved_direction.ResolvedDirectionFinalizeTests.test_resolve_finalize_applies_removal \
+  test_stage2_resolved_direction.ResolvedDirectionFinalizeTests.test_resolve_finalize_rejects_invalid_removal \
+  test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests.test_finalize_applies_resolved_directions_to_pack \
+  test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests.test_finalize_stamps_resolved_subfield_on_unchanged_directions \
+  test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests.test_finalize_fails_closed_on_stale_resolved_file \
+  test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests.test_finalize_fails_closed_on_cross_professor_resolved_file \
+  test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests.test_finalize_fails_closed_on_missing_direction_entry \
+  test_stage2_resolved_direction.ResolvedReuseTests.test_resolve_plan_reuses_unchanged_directions \
+  test_stage2_resolved_direction.ResolvedReuseTests.test_resolve_plan_reprocesses_when_facts_change \
+  test_stage2_resolved_direction.ResolvedReuseTests.test_resolve_finalize_preserves_reused_entries_without_results \
+  test_stage2_resolved_direction.UserKeptProvisionalTests.test_user_kept_provisional_still_writes_explicit_resolved_direction \
+  test_stage2_resolved_direction.UserKeptProvisionalTests.test_user_kept_provisional_is_reused_until_resolve_input_changes \
+  test_stage2_resolved_direction.CandidateUnionEvidenceTests.test_fingerprint_sensitive_to_candidate_outside_relevant_set \
+  test_stage2_resolve_fingerprint_scope_regression.ResolveFingerprintScopeRegression.test_analysis_markdown_edit_does_not_invalidate_resolved_direction_when_facts_unchanged \
+  test_stage2_resolve_fingerprint_scope_regression.ResolveFingerprintScopeRegression.test_other_direction_profile_change_invalidates_target_resolution \
+  test_stage2_resolve_fingerprint_scope_regression.ResolveFingerprintScopeRegression.test_cross_direction_facts_validity_change_invalidates_target_resolution \
+  test_stage2_resolved_direction_fresh_review_regressions.FreshResolvedDirectionReviewRegressions.test_cross_cluster_addition_can_cross_disjoint_candidate_sets \
+  test_stage2_resolved_direction_fresh_review_regressions.FreshResolvedDirectionReviewRegressions.test_cross_direction_facts_change_invalidates_target_resolution \
+  test_stage2_resolved_direction_fresh_review_regressions.FreshResolvedDirectionReviewRegressions.test_resolve_finalize_rejects_result_for_wrong_collection_key \
+  test_stage2_resolved_direction_fresh_review_regressions.FreshResolvedDirectionReviewRegressions.test_non_split_resolution_cannot_drift_resolved_id_from_collection_key \
+  test_stage2_resolved_direction_fresh_review_regressions.FreshResolvedDirectionReviewRegressions.test_new_material_resolution_is_not_reused_before_user_acceptance \
+  test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_reused_direction_ignores_stale_result_file \
+  test_build_issue29_stage2_fixture.BuildIssue29Stage2FixtureTests.test_material_pending_builds_the_canonical_proposed_state \
+  >"$RUN_DIR/T3.out" 2>"$RUN_DIR/T3.err"; echo $? >"$RUN_DIR/T3.rc"
+
+# T4
+"$PYTHON" -m unittest -v \
+  test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_repeated_quote_locations_and_ambiguous_report \
+  >"$RUN_DIR/T4.out" 2>"$RUN_DIR/T4.err"; echo $? >"$RUN_DIR/T4.rc"
+
+# T5
+"$PYTHON" -m unittest -v \
+  test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle \
+  test_resolved_direction_preflight_integration.TestSemanticsVersionBump.test_old_semantics_pack_cannot_reuse_all_and_re_arms_after_one_run \
+  test_resolved_direction_preflight_integration.TestResolvedSetReuse.test_accepted_split_reuses_all_with_identical_stage3_visibility \
+  test_resolved_direction_preflight_integration.TestResolvedSetReuse.test_dropping_the_split_child_from_the_pack_blocks_reuse \
+  test_resolved_direction_preflight_integration.TestResolvedSetReuse.test_accepted_merge_reuses_all_and_keeps_single_stage3_direction \
+  test_resolved_direction_preflight_integration.TestResolutionEvidenceUniverse.test_candidate_fulltext_change_misses_early_gate_and_re_triggers_resolution \
+  test_resolved_direction_preflight_integration.TestResolutionEvidenceUniverse.test_analysis_markdown_edit_does_not_re_burn_accepted_resolve_jobs \
+  test_resolved_direction_preflight_integration.TestResolvedProofBinding.test_accept_refuses_sidecar_from_earlier_generation \
+  test_resolved_direction_preflight_integration.TestResolvedProofBinding.test_finalize_refuses_stale_generation_sidecar_with_zero_writes \
+  test_resolved_direction_preflight_integration.TestResolvedProofBinding.test_recovery_restamps_sidecar_for_the_new_generation \
+  >"$RUN_DIR/T5.out" 2>"$RUN_DIR/T5.err"; echo $? >"$RUN_DIR/T5.rc"
 ```
 
-T1—T5 分别以上面的选择器清单替换 `<选择器>` 并写入 `T1`—`T5` 对应文件；缺方法或依赖属于尚未准备好，不能记业务失败或通过。
+`echo $?` 取的是紧跟其前的 `unittest` 退出码；缺方法或依赖属于尚未准备好，不能记业务失败或通过。
 
 **业务产物检查**：在现有 unittest 中以 Python JSON 解析后的必要字段与关系断言；Markdown/报告仅在清单要求保持原样时比较内容或摘要。fixture 文件、报告和必要失败输出留在该项临时目录，运行记录只需版本、命令、T1—T5 逐项结果和未完成原因；不新增判定器、manifest、全环境快照、来源认证或逐调用证据设施。代理说明同步在实现 diff 里静态核对 3.2/3.3/3.4 的实际交接段落，不要求运行两套 harness 或重复安装验收。
 

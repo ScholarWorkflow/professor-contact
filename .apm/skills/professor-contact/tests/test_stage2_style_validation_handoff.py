@@ -20,6 +20,17 @@ from test_contact_state import (
     stage2_style_validation_report,
 )
 
+# The T5 fixture produces its one accepted member change through the real
+# resolve chain (plan §3.1.6/§5.1 T5.1); only that module's top-level helper
+# functions are reused, never its TestCase classes.
+from test_stage2_resolved_direction import (
+    finalize_resolve,
+    make_facts_sidecar,
+    new_resolve_results_dir,
+    plan_resolve,
+    write_resolve_results,
+)
+
 # T4 (plan §3.2): one quote that must be locatable on three physical lines.
 _T4_REPEAT_QUOTE = "合成输入对照句"
 # A quote that occurs exactly once, addressed by the legacy short-text location.
@@ -29,6 +40,10 @@ _T4_LEGACY_TEXT_QUOTE = "唯一合成句用于旧文本定位"
 # in membership, then two-direction corrections on the re-rendered version.
 _T5_MEMBER_KEYS = ["AAAA1111", "BBBB2222"]
 _T5_LEGACY_KEY = "CCCC3333"
+# The one member change accepted through the formal resolve entry: an ORIGINAL
+# member of the second direction is removed with current full-text evidence
+# (plan §3.1.1/§3.1.6, §5.1 T5.1).
+_T5_ACCEPTED_REMOVAL_KEY = "BBBB2222"
 _T5_LEGACY_QUOTE = "旧版第一处待改文字"
 _T5_LEGACY_REVISED = "旧版第一处已改文字"
 _T5_LEGACY_FINAL = "旧版第一处最终文字"
@@ -168,7 +183,14 @@ class Stage2ValidationHandoffTests(BaseEnv):
     def _t4_two_direction_body(self):
         """Normally generated managed body with the repeat quote on three lines."""
         def add_second_direction(facts):
-            second = copy.deepcopy(facts["directions"][0])
+            # Plan §3.1.1/§5.1 T4: the formal members come only from the
+            # direction's original `provisional_member_keys`; the product must
+            # not fall back to `member_keys`. The synthetic T4 facts therefore
+            # state that source explicitly for both directions (the second one
+            # inherits it through the deep copy below).
+            first = facts["directions"][0]
+            first["provisional_member_keys"] = list(first["member_keys"])
+            second = copy.deepcopy(first)
             second["collection_key"] = "DIR00002"
             second["name_ja"] = "第二合成方向"
             second["name_zh"] = "第二合成方向"
@@ -221,6 +243,10 @@ class Stage2ValidationHandoffTests(BaseEnv):
             first["member_keys"] = list(_T5_MEMBER_KEYS)
             first["provisional_member_keys"] = list(_T5_MEMBER_KEYS)
             first["relevant_keys"] = list(_T5_MEMBER_KEYS) + [_T5_LEGACY_KEY]
+            # Plan §3.1.1: an accepted membership change needs CURRENT
+            # full-text evidence, so the member the accepted decision removes
+            # gets the real future-work/facts sidecar pair.
+            self._t5_add_fulltext_evidence(facts, _T5_ACCEPTED_REMOVAL_KEY)
             second = copy.deepcopy(first)
             second["collection_key"] = "DIR00002"
             second["name_ja"] = "第二合成方向"
@@ -228,6 +254,69 @@ class Stage2ValidationHandoffTests(BaseEnv):
             second["user_note"] = "第二方向的合成输入笔记。"
             facts["directions"].append(second)
         return self.write_facts(customise)
+
+    def _t5_add_fulltext_evidence(self, facts, item_key):
+        """Give one original member a currently valid ``.facts.json`` sidecar.
+
+        ``BaseEnv.setUp`` already wrote the paper's future-work sidecar, so
+        only the sibling facts sidecar (plus the source PDF it fingerprints)
+        is missing. Nothing here touches authoritative runner state.
+        """
+        paper = next(row for row in facts["papers"] if row["item_key"] == item_key)
+        analysis = Path(paper["analysis_file"])
+        pdf = self.root / f"{item_key}.pdf"
+        pdf.write_bytes(b"%PDF-1.4\nsynthetic full-text body\n")
+        make_facts_sidecar(analysis, pdf, [self.gap_quotes[item_key]])
+        paper["pdf_file"] = str(pdf)
+        paper["facts_file"] = str(analysis) + ".facts.json"
+        return paper
+
+    def _t5_accept_member_removal(self, facts_path, direction_id="DIR00002"):
+        """Accept ONE member removal through the formal resolve entry points.
+
+        Plan §3.1.6/§5.1 T5.1: the old-semantics pack re-run must keep applying
+        the current facts round's accepted decision. The decision is therefore
+        produced by the real chain — ``stage2-resolve-plan`` with its own round
+        directory, a complete ``refined`` result file, ``stage2-resolve-finalize``
+        and ``stage2-resolve-accept`` — never by editing state directly.
+        """
+        facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+        direction = next(row for row in facts["directions"]
+                         if row["collection_key"] == direction_id)
+        results_dir = new_resolve_results_dir(self.root, "t5-resolve-run")
+        plan = plan_resolve(facts_path, results_dir)
+        self.assertEqual(plan["status"], "ok", plan)
+        refined = {
+            "resolved_direction_id": direction_id,
+            "provisional_direction_id": direction_id,
+            "name_ja": direction.get("name_ja") or "",
+            "name_zh": direction.get("name_zh") or "",
+            "resolution_type": "refined",
+            "papers_to_add": [],
+            "papers_to_remove": [_T5_ACCEPTED_REMOVAL_KEY],
+            "paper_justifications": {
+                _T5_ACCEPTED_REMOVAL_KEY: "全文事实显示该论文不属于本方向。"},
+            "split_target": None,
+            "merge_target": None,
+            "user_note": direction.get("user_note") or "",
+        }
+        write_resolve_results(results_dir, plan, {direction_id: refined}, facts_path)
+        finalized = finalize_resolve(facts_path, results_dir)
+        self.assertEqual(finalized["status"], "ok", finalized)
+        proposed = next(row for row in finalized["directions"]
+                        if row["provisional_direction_id"] == direction_id)
+        self.assertEqual(proposed["resolution_type"], "refined", proposed)
+        self.assertEqual(proposed["papers_to_remove"], [_T5_ACCEPTED_REMOVAL_KEY],
+                         proposed)
+        accepted = parse(run_cli("stage2-resolve-accept", "--facts", facts_path,
+                                 "--ckeys", direction_id))
+        self.assertEqual(accepted["status"], "ok", accepted)
+        resolved_path = Path(accepted["resolved_directions_path"])
+        payload = json.loads(resolved_path.read_text(encoding="utf-8"))
+        entry = next(row for row in payload["directions"]
+                     if row["provisional_direction_id"] == direction_id)
+        self.assertEqual(entry["acceptance"], "accepted", entry)
+        return resolved_path
 
     def _t5_write_narrative(self, results, gap_notes=True):
         notes = []
@@ -419,6 +508,11 @@ class Stage2ValidationHandoffTests(BaseEnv):
         """Isolated env holding the synthetic old-semantics pack and its terminal record."""
         env = self._fresh_stage2_env()
         facts_path, results = env._t5_generate_pack()
+        # Plan §3.1.6/§5.1 T5.1: this facts round carries one member change the
+        # user accepted through the formal resolve entry, so the ordinary
+        # finalize below can be checked for "rebuild the original members and
+        # keep applying the accepted decision".
+        resolved_path = env._t5_accept_member_removal(facts_path)
         meta = env._t5_inject_legacy_member(facts_path)
         legacy_first = env.write_validation_issues(
             "t5-legacy-round1.json",
@@ -444,6 +538,7 @@ class Stage2ValidationHandoffTests(BaseEnv):
         validator = env._t5_pack()["validator"]
         return env, {"facts": facts_path, "results": results,
                      "reports": (legacy_first, legacy_second),
+                     "resolved_directions": resolved_path,
                      "validator_sha256": validator["validation_sha256"],
                      "render_sha256": validator["render_sha256"]}
 
@@ -935,16 +1030,28 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assertFalse(plan["write_needed"], plan)
 
         # -- ordinary finalize rebuilds the authoritative members from the current
-        #    facts, re-renders the document, and must not certify the old terminal
-        #    record for the new business version.
+        #    facts, keeps applying this round's accepted decision, re-renders the
+        #    document, and must not certify the old terminal record for the new
+        #    business version.
         finalized = parse(run_cli("stage2-finalize", "--facts", facts_path,
-                                  "--preflight-file", proof_path, "--results", results))
+                                  "--preflight-file", proof_path, "--results", results,
+                                  "--resolved-directions",
+                                  legacy["resolved_directions"]))
         self.assertEqual(finalized["status"], "ok", finalized)
         new_pack = legacy_env._t5_pack()
         new_direction = legacy_env._pack_direction(new_pack, "DIR00001")
         self.assertEqual(sorted(new_direction["supporting_item_keys"]),
                          sorted(_T5_MEMBER_KEYS), new_direction)
         self.assertNotIn(_T5_LEGACY_KEY, legacy_env._t5_document_member_keys()["DIR00001"])
+        # Plan §3.1.1/§3.1.6: the accepted removal is a formal-member change
+        # only — the rebuilt second direction keeps exactly the remaining
+        # original member, and `relevant_keys` must not restore the removed
+        # paper as a member.
+        second_direction = legacy_env._pack_direction(new_pack, "DIR00002")
+        self.assertEqual(sorted(second_direction["supporting_item_keys"]),
+                         ["AAAA1111"], second_direction)
+        self.assertNotIn(_T5_ACCEPTED_REMOVAL_KEY,
+                         legacy_env._t5_document_member_keys()["DIR00002"])
         legacy_env._assert_t5_render_binding()
         self.assertNotEqual(legacy_env._t5_document()["sha256"], legacy_document)
         carried = new_pack.get("validator") or {}

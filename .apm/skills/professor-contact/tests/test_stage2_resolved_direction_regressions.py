@@ -262,6 +262,41 @@ class ResolvedDirectionRegressionTests(ResolvedPipelineMixin, unittest.TestCase)
         self.assertEqual(_file_bytes_or_none(sidecar_path), sidecar_before)
         self.assertEqual(_file_bytes_or_none(pack_path), pack_before)
 
+        # A SHORT file name is not this round's file either: the model wrote a
+        # plausible abbreviation of the direction id (`resolve-A.json` instead
+        # of the full `resolve-dir_A.json`) with schema-complete content and
+        # this round's identity. Only a short-name file exists, so the result
+        # is as missing as an empty directory, and the rejection must name the
+        # full expected path.
+        short_name = "resolve-A.json"
+        self.assertNotEqual(short_name, result_file)
+        short_result = resolve_result(second_jobs[0], {
+            "resolved_direction_id": ckey,
+            "provisional_direction_id": ckey,
+            "name_ja": "Signal Processing",
+            "name_zh": "信号处理",
+            "resolution_type": "unchanged",
+            "papers_to_add": [],
+            "papers_to_remove": [],
+            "paper_justifications": {},
+            "split_target": None,
+            "merge_target": None,
+            "user_note": "",
+        }, second_plan["resolve_run_id"])
+        self.assertEqual(short_result["resolve_run_id"], second_plan["resolve_run_id"])
+        self.assertEqual(short_result["direction_id"], ckey)
+        write_json(round_two / short_name, short_result)
+        self.assertTrue((round_two / short_name).is_file())
+        self.assertFalse((round_two / result_file).exists(),
+                         "the full expected name is still absent in this round")
+        short_named = finalize_resolve(facts_path, round_two)
+        self.assertEqual(short_named["status"], "error",
+                         msg=json.dumps(short_named, ensure_ascii=False))
+        self.assertEqual(short_named["reason_code"], "result_missing")
+        self.assertIn(str(round_two / result_file), short_named["message"])
+        self.assertEqual(_file_bytes_or_none(sidecar_path), sidecar_before)
+        self.assertEqual(_file_bytes_or_none(pack_path), pack_before)
+
         # A copy of ROUND 1's file is the wrong round: still a whole-batch failure.
         (round_two / result_file).write_bytes((round_one / result_file).read_bytes())
         stale = finalize_resolve(facts_path, round_two)

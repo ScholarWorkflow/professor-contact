@@ -72,13 +72,19 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
         return {entry["gap_id"]: entry.get("item_key")
                 for entry in job["model_input"]["allowed_material"]["gaps"]}
 
-    def _run_stage2_finalize_with_narratives(self, facts_path, narratives):
+    def _run_stage2_finalize_with_narratives(self, facts_path, narratives, *,
+                                             gap_note_items=None):
         """Formal `stage2-plan` → results → `stage2-finalize` with test narratives.
 
         Same pipeline as `ResolvedPipelineMixin.run_stage2_finalize`, except the
         test controls the narrative text of named directions so a direction can
         carry a real `{{P:item_key}}` reference (or a marker a style-validator
         report can quote verbatim). Unnamed directions get a plain block.
+        `gap_note_items` maps a direction id to one of its OWN member item keys;
+        that member's real gap of this round (`model_input.gaps` of the same
+        narrative job: gap_id, quote and its translation) becomes the direction's
+        original research-gap note, so a later refinement has an unchanged note
+        to copy. The member must keep its gap in the materialised direction.
         """
         plan_payload = parse(run_bound_stage2_plan(run_cli, facts_path))
         self.assertEqual(plan_payload["status"], "ok",
@@ -104,7 +110,18 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
                 "kind": "para", "text": f"Positioning for {did}", "refs": [],
                 "concrete_object": "合成方向对象", "input_example": "输入一组合成样本",
                 "output_example": "得到一组合成结果"}
-            directions.append({"direction_id": did, "positioning": [block], "gap_notes": []})
+            notes = []
+            noted_item = (gap_note_items or {}).get(did)
+            if noted_item is not None:
+                member_gaps = [gap for gap in job["model_input"]["gaps"]
+                               if gap.get("item_key") == noted_item]
+                self.assertTrue(member_gaps,
+                                msg=f"{did}: no real gap of {noted_item} in this round")
+                notes.append({"gap_id": member_gaps[0]["gap_id"],
+                              "summary": member_gaps[0]["quote"],
+                              "explanation": member_gaps[0]["translation_zh"]})
+            directions.append({"direction_id": did, "positioning": [block],
+                               "gap_notes": notes})
         write_json(results_dir / "narrative.json",
                    {"schema": 1, "kind": "narrative", "directions": directions})
         sidecar_path = self.prof_dir / "论文分析" / self.RESOLVED_SIDECAR
@@ -169,7 +186,28 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
         return parse(run_cli(*arguments))
 
     def _refine_finalize(self, report_path, jobs, blocks, *, facts_path=None, gap_notes=None):
-        """Write one complete rewrite per open job and run the formal finalizer."""
+        """Write one complete rewrite per open job and run the formal finalizer.
+
+        A narrative-rewrite result carries the WHOLE narrative (plan 5.1: keep
+        the unchanged facts, gaps, freshness and user notes), so a direction the
+        caller does not name in `gap_notes` copies every research-gap note of its
+        own original narrative: the formal refine plan hands this round that
+        narrative in `model_input.current_narrative.gap_notes` (gap_id ->
+        summary/explanation) as read from the current input pack. Only the
+        positioning text named by the report is rewritten; no note is invented
+        and no other direction's notes are mixed in. An explicit
+        `gap_notes[direction_id]` still overrides that direction.
+        """
+        def original_gap_notes(job):
+            """This round's own gap notes for one job, as the rewrite payload list."""
+            narrative = (job.get("model_input") or {}).get("current_narrative") or {}
+            notes = narrative.get("gap_notes")
+            if not isinstance(notes, dict):
+                return []
+            return [{"gap_id": gap_id, "summary": note["summary"],
+                     "explanation": note["explanation"]}
+                    for gap_id, note in notes.items()]
+
         results_dir = self.root / "refine-results"
         results_dir.mkdir(parents=True, exist_ok=True)
         for job in jobs:
@@ -180,7 +218,7 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
                 "direction_id": did,
                 "collection_key": did,
                 "positioning": [blocks[did]],
-                "gap_notes": (gap_notes or {}).get(did, []),
+                "gap_notes": (gap_notes or {}).get(did, original_gap_notes(job)),
             })
         arguments = ["stage2-refine-finalize"]
         if facts_path is not None:
@@ -476,7 +514,8 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
             "input_example": "输入一份合成论文参考范围",
             "output_example": "得到一份保留参考范围的修订稿",
         }
-        self._run_stage2_finalize_with_narratives(facts_path, {"dir_A": front_block})
+        self._run_stage2_finalize_with_narratives(facts_path, {"dir_A": front_block},
+                                                  gap_note_items={"dir_A": member_keys[0]})
 
         pack = self.load_pack()
         by_id = self._pack_directions(pack)
@@ -559,7 +598,14 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
 
         # 6) A normal refinement through the facts entry renders the P
         #    reference as the real title and leaves membership, gaps and L
-        #    permission untouched.
+        #    permission untouched. The rewrite replaces the WHOLE narrative, so
+        #    dir_A's original research-gap note must come through unchanged.
+        original_gap_notes = front_pack["narrative"]["gap_notes"]
+        self.assertTrue(original_gap_notes,
+                        "the fixture must give dir_A an original research-gap note")
+        self.assertTrue(
+            set(original_gap_notes) <= {gap["gap_id"] for gap in front_pack["gap_shortlist"]},
+            "the original gap note must stay in dir_A's own rendered shortlist")
         rewritten_block = {
             "kind": "para",
             "text": "T1修订稿：{{P:" + reference_key + "}} 仍作参考引用。",
@@ -582,9 +628,13 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
         self.assertEqual(after.get("narrative_later_papers"),
                          front_pack.get("narrative_later_papers"))
         self.assertEqual(after["narrative"]["positioning"][0]["text"], rewritten_block["text"])
+        self.assertEqual(after["narrative"]["gap_notes"], original_gap_notes,
+                         "the refinement cleared research-gap notes the report did not name")
         analysis_after = (self.prof_dir / self.ANALYSIS_MD).read_text(encoding="utf-8")
         self.assertIn(f"[{reference_title}](zotero://select/library/items/{reference_key})",
                       analysis_after)
+        for note in original_gap_notes.values():
+            self.assertIn(f"- 大白话：{note['explanation']}", analysis_after)
         self.assertNotIn(marker, analysis_after)
 
         # 7) Independent fixture: an accepted pack plus genuinely changed paper
@@ -797,6 +847,15 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
                       msg="the merge source gap must migrate with its paper")
         merged_gap_id = next(gap_id for gap_id, item_key in target_gap_index.items()
                              if item_key == state["merge_source"])
+        # The split source's original narrative already carries a research-gap
+        # note of the member that stays in the source; the whole-narrative
+        # rewrite must copy it over unchanged.
+        source_gap_notes = by_id["dir_A"]["narrative"]["gap_notes"]
+        self.assertTrue(source_gap_notes,
+                        "the fixture must give the split source an original research-gap note")
+        self.assertTrue(
+            set(source_gap_notes) <= {gap["gap_id"] for gap in by_id["dir_A"]["gap_shortlist"]},
+            "the original gap note must stay in the source's own rendered shortlist")
         rewritten_a = {
             "kind": "para",
             "text": "T2拆分源修订：{{P:" + state["split_moved"] + "}} 与 {{P:"
@@ -839,12 +898,19 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
                          pack["resolved_directions"]["directions"])
         self.assertEqual(by_id_after["dir_B"]["narrative"]["positioning"][0]["text"],
                          rewritten_b["text"])
+        # The reported target keeps exactly its own updated note; the untouched
+        # source direction must still carry its original note instead of [].
+        self.assertEqual(set(by_id_after["dir_B"]["narrative"]["gap_notes"]), {merged_gap_id})
+        self.assertEqual(by_id_after["dir_A"]["narrative"]["gap_notes"], source_gap_notes,
+                         "the refinement cleared research-gap notes the report did not name")
         analysis = (self.prof_dir / self.ANALYSIS_MD).read_text(encoding="utf-8")
         self.assertIn(f"[{state['merge_source_title']}]"
                       f"(zotero://select/library/items/{state['merge_source']})", analysis)
         self.assertIn(f"[Merge Source Reference]"
                       f"(zotero://select/library/items/{state['merge_source_reference']})",
                       analysis)
+        for note in source_gap_notes.values():
+            self.assertIn(f"- 大白话：{note['explanation']}", analysis)
 
         # 6) Only the vanished source's original-facts field changes (red_lines
         #    enters the original fingerprint but not the resolve fingerprint):
@@ -1005,7 +1071,8 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
             "output_example": "得到一份被丢弃的源叙事",
         }
         self._run_stage2_finalize_with_narratives(
-            facts_path, {"dir_A": block_a, "dir_B": block_b, "dir_C": block_c})
+            facts_path, {"dir_A": block_a, "dir_B": block_b, "dir_C": block_c},
+            gap_note_items={"dir_A": keys["split_source"]})
 
         pack = self.load_pack()
         state = dict(keys)
