@@ -1,6 +1,6 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- Test revision：contact-evidence-level-t2；对应 [执行计划 r2](implementation-plan.md)。
+- Test revision：contact-evidence-level-t3；对应 [执行计划 r3](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
 - 状态：设计与第一/第二关待审，第三关未执行。这里只准备计划，没有运行测试、补造结果或宣称修复完成。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
@@ -12,7 +12,7 @@
 | T1 | 同一既有夹具覆盖固定卡 evidence/completed_part/remaining_gap 及禁锚区 evidence 中已知编号，可信标题/链接已在当前材料；另一个缺可信题名的引用 | 正式 finalize 输出题名/链接，上述机器字段/候选编号与事实不变，其他说明原意、作者 quote/translation、用户笔记不变；缺题名明确失败且不生成伪引用 | 既有 runner CLI 测试夹具，检查 Markdown 与 pack 必要字段 |
 | T2 | 当前受管正文上的固定区 blocking 与混合固定/叙事 blocking 原始报告 | 第一轮失败确实登记；原始报告不改、非通过；refine-plan 无 jobs、明确交源/生成器处理，refine-finalize 不写；同内容重试不能清轮数。修复正式生成内容后普通 finalize 产生新正文，旧 PASS/失败不冒充新结果 | 既有 Stage2ValidationHandoffTests 的报告/正文夹具和 record/refine/finalize CLI |
 | T3 | 纯 narrative 第一次失败→现有合法修订→第二次仍失败（可用第二轮新固定卡阻挡覆盖其归属）；及已绑定报告对应的正文/pack被改 | 纯文字修订仍可完成且第二次终态不继续第三轮；不允许用过期报告改事实或覆盖手改文件 | 复用该模块已有 second_blocking_round_is_terminal、stale_render、changed_input_pack 对应测试；只调整受新登记分类影响的断言 |
-| T4 | 同一方向含 fulltext、abstract（有 analysis_file）、未确认（有 PDF）记录；再覆盖 OCR-only fulltext 且 facts unavailable；旧包缺字段/渲染版本后当前 facts 补级别并走叙事复用路径；同渲染版本下仅当前成功索引相关论文的 level 改变，从正常 preflight 进入更新（不得直接喂新 facts 绕过 early exit） | 正确三类计数及总数；abstract 不冒充全文、unknown 不冒充摘要、OCR 不被 facts_state降级；当前级别刷新规范包和受管显示，pack-only 重绘保持相同值；同版本索引变化不误 reuse_all，刷新统计而不产生额外有效论文分析/归属/时效模型任务 | 复用既有 BaseEnv/preflight/finalize 夹具，检查规范 papers、Markdown计数与任务列表/调用记录；不调用真实模型 |
+| T4 | 同一方向含 fulltext、abstract（有 analysis_file）、未确认（有 PDF）记录；再覆盖 OCR-only fulltext 且 facts unavailable；旧包缺字段/渲染版本后从当前成功索引补级别并复用已接受叙事；同渲染版本下仅当前成功索引相关论文的 level 改变，旧临时 facts 已不存在，从正常 preflight 进入正式受保护展示刷新入口（不得直接喂新/伪造 facts 绕过 early exit） | 正确三类计数及总数；abstract 不冒充全文、unknown 不冒充摘要、OCR 不被 facts_state降级；当前级别刷新规范包和受管显示，pack-only 重绘保持相同值；同版本索引变化不误 reuse_all，刷新统计而不产生额外有效论文分析/归属/时效模型任务、不重签旧 resolved proof，accepted assignment 与模型指纹保持；已有业务依据漂移时不走展示刷新，缺必要持久输入/写前漂移时如实停止且不写，不要求坏旧包恢复成功 | 复用既有 BaseEnv/preflight/pack-only 渲染及写入保护夹具，检查规范 papers、Markdown计数与任务列表/调用记录；不调用真实模型 |
 
 T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装、全教授流程或完整测试模块回归；本次未改安装和模型业务。报告中“四位教授”与“10+1”是缺陷背景，不能强制采集私人材料或追加四次模型验收。
 
