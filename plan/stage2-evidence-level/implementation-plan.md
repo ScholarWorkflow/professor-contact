@@ -1,7 +1,7 @@
 # Stage 2 固定证据展示、失败登记与分析级别修复
 
 - Requirement revision：2026-10-17 用户要求为此前 U1、U5 两项修复建立独立计划 PR（北京时间）；依据用户提供的《PR91未覆盖问题报告_20261016.md》。报告中的私人实际数据与失败次数不是本计划已复验结果。
-- Plan revision：contact-evidence-level-r3；Proposed review status: pending。
+- Plan revision：contact-evidence-level-r4；Proposed review status: pending。
 - 目标：ScholarWorkflow/professor-contact，源码基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。本 PR 当前只提交计划；实现、测试执行和合并均未完成。
 - 唯一测试计划：[test-plan.md](test-plan.md)。按 [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)执行。
 
@@ -26,7 +26,8 @@ U5：全文/摘要统计取实际成功分析的级别，不能用分析文件�
 5. 已有分析级别与 facts 可用性不同：analyzer L263–274 允许 OCR-only fulltext 分析而 facts unavailable。不能用 facts_state 反推分析级别。
 6. analyzer 的 [Step 2.6 L142–159](https://github.com/ScholarWorkflow/professor-contact/blob/305bc08f8b186672108cffbba0293d249bc8b4b2/packages/professor-contact-codex/.apm/agents/professor-contact-analyzer.agent.md#L142-L159) 在 reuse_all 时不进入 facts 准备或 finalize；因此仅在 finalize 比较 level 或增加渲染版本，无法发现同版本下成功分析索引的级别变化。
 7. `Stage2PackRefineContext` L1707–1765 已提供临时 facts 过期后的持久包展示上下文，但它不是完整业务 facts；普通 finalize 仍依赖 facts，不能将该上下文伪装成 facts 重验/重签旧 resolved 结果。
-8. 普通 finalize L5020–5080 可能不重绘、继承旧 validator；升级展示和级别后必须只使受影响生成物失效，不能重新绑定旧 PASS。PR91 §3.4.1 已设计实质变化/等价重写区分，可复用同一实现，不另建历史系统。
+8. preflight cheap inputs L3352–3381 不读取分析索引，`_artifact_guards_for_keys` L3411–3444 只登记已有路径且已存在的文件；现状不能仅凭“旧 guards 未变”排除新增分析/sidecar 或索引换址，不能直接据此批准仅展示刷新。
+9. 普通 finalize L5020–5080 可能不重绘、继承旧 validator；升级展示和级别后必须只使受影响生成物失效，不能重新绑定旧 PASS。PR91 §3.4.1 已设计实质变化/等价重写区分，可复用同一实现，不另建历史系统。
 
 ## 3. 实施方案
 
@@ -46,21 +47,20 @@ U5：全文/摘要统计取实际成功分析的级别，不能用分析文件�
 - 生成器/正式源修复后，通过正常 Stage 2 finalize（业务源变化）或 §3.3 受保护展示刷新（仅展示变化）重建受影响受管正文，旧报告留在原路径。只有校验依据实质变化才失效旧 validator，并对新业务版本重新开始校验；相同正文或仅时间戳变化不能清零两轮限制。正常 narrative refine 的正文变化不属于重开版本，必须保留原第一轮/问题直到第二轮。
 - 同步主 SKILL.md、两个 analyzer 安装投影的 Stage 2 分支说明；style-validator 保持现有文字标准，不通过屏蔽固定卡或放宽 C8 求通过。两种 harness 只同步已有业务交接，不新增委派机制。
 
-### 3.3 分析级别贯通与兼容
+### 3.3 分析级别贯通、分流与兼容
 
-- Stage 2 analyzer 在已有本地/外部导入成功分析流程收敛后的 facts.papers[] 增传 `analysis_level`，取当前成功分析索引对应记录的 level（fulltext/abstract）；不因有 PDF、facts valid 或路径存在而推断。失败/未完成/陈旧分析传 null；不得为补这一字段重跑模型。同步两个 analyzer 的 facts 样例与 SKILL 正式说明。
-- runner 接收枚举 fulltext/abstract/null；非法枚举明确报输入错误。缺字段的旧 facts 按 null 读取，旧包按“未确认”显示，不阻断原本可继续的独立业务，也不假造已有结果。
-- 保留 `paper_digest` 及由它派生的 direction/freshness 模型摘要原语义，`analysis_level` 不加入其中，避免只补级别就重发模型任务。规范论文字段 `_CANONICAL_PAPER_FIELDS`、`build_direction_pack`、`_canonical_record`、fresh/reused/resolved records 合并以及 pack-only context 均保存该值。同一 item_key 的规范合并继续检验一致性，不允许旧记录优先覆盖当前值。level 改变应触发受影响渲染/缓存失效；旧 pack 缺字段即使内部 narrative 复用，也从当前成功索引（普通业务流程中经 facts 传递）刷新该字段，不能永远命中旧统计。
-- 保持现有 projected direction papers 的统计集合不变，只按 fulltext、abstract、null 三类计数，第三类显示“级别未确认”，总数为三类合计。此处“全文级”表示成功分析的输入级别，不表示 facts sidecar 有效性；权限和成员判断仍使用既有 facts 校验。
-- 缓存入口闭合：在已有 pack/cache 元数据保存私有渲染版本；reuse_all 前按本次相关论文投影当前成功索引的有效 fulltext/abstract/null，比较已展示级别，同版本 level 变化也不可 early exit。preflight 先沿用已有 cheap business inputs/漂移判定区分：分析依据、候选/方向或其他业务依据实质变化走原有处理流程；业务依据未变且仅 level/渲染版本变化走受保护展示刷新；均未变才 reuse_all。不能把业务变化压成展示变化，也不能为级别补齐重跑有效论文分析、归属或时效判断。同步两个 analyzer 分流说明。
-- 仅展示刷新在既有 runner 提供最小正式入口，复用 `Stage2PackRefineContext`、既有 renderer、教授写入 lease/原子 JSON 与 managed_write。输入为已接受的持久 pack（规范论文、方向、现有模型结果、引用元数据）、本次相关成功分析索引投影和当前持久 preflight 业务输入；不依赖旧 /tmp facts，亦不从旧包重建完整 facts、不重签旧 resolved proof。只更新 analysis_level、相应展示/缓存版本及渲染绑定，保留 accepted assignment、事实判断、叙事、freshness 结果和模型指纹；不生成新模型 jobs，不借 process 分支重跑这些有效结果。
-- 刷新写前沿用现有教授/pack/正文归属、受管摘要与输入漂移检查：确认仍是预检所读的已接受包、业务输入及相关索引投影，漂移则不写并报告需重新处理；正文有手改则按 managed_write 拒绝覆盖。正文或校验依据实质变化按 §3.2 失效旧 validator，不能沿用旧 PASS；等价重写不清轮数。渲染版本/级别投影不进 paper_digest 或 resolve/freshness 模型指纹。所需持久包、引用元数据或有效业务绑定不足时明确无法刷新并交正常处理，保留现状；不伪造缺失资料、不要求恢复所有旧坏包、不新增认证框架。未知旧级别按 null 展示，无需批量补分析。
-- 旧生成物不批量迁移/删除；下次受影响 Stage 2 按上述业务处理/展示刷新分流重建并遵守 managed_write 人工修改保护。未改变的事实、叙事、freshness 结果复用，不能因文档 SHA 变化全量重跑。
+1. **级别来源与统计。** Stage 2 analyzer 在正常成功分析/导入后，从教授 `论文分析/_index.json` 的相关论文记录读取实际 level，并在 facts.papers[] 增传 `analysis_level`（fulltext/abstract/null）；失败、未完成、陈旧或缺失级别为 null，非法枚举报输入错误。不从文件存在、PDF 或 facts_state 推断；OCR-only 成功全文仍为 fulltext。保持原 projected direction papers 集合，只统计全文/摘要/未确认三类及合计，不新增去重。同步两个 analyzer 和 SKILL。
+2. **只保存必要的当前接受基线。** 正常业务处理成功写 pack 时，扩充既有 cache.preflight.resolution_evidence_guards/方向 artifact_guards 的缺失状态，加上有限索引选择状态，保存本次实际消费的分析来源投影，从当前正式 sources 采集并与该 accepted pack 同次成功落盘，不能把进入预检时的旧投影当新接受基线。范围沿用现有 stage2_candidate_universe/selected_candidate_union，即所有被选方向候选并集（覆盖方向相关/缺口及 resolution 来源），不能仅看最终入选论文。每个相关 key 的 analysis/future_work/facts/pdf 类型都明确保存无路径、路径不存在或存在状态；已有路径保留规范路径和现有文件 guard/已得摘要。读取当前索引的对应记录/路径（含 file、future_work_sidecar、facts_sidecar 及关联输入映射），仅记录实际分析/事实证据路径及成功/可用状态；不比较整条索引 JSON，generated_at、kb_entry_id 等管理字段不构成业务变化，纯展示 level 单列。索引解析及既有 Step 6.7 的 analysis_file 派生 .facts.json/.future_work.json 探测规则用于构造当前同一清单（即使索引未填 sidecar，派生路径也保存缺失占位），使新增路径、原缺失路径出现、删除、换址或同址 guard 变化均能被看见。无法由持久输入确定某一来源时标为不可比较，不能省略后当作未变。不遍历无关目录，不读 PDF 正文或新增全文件哈希扫描，不建立通用来源认证系统。
+3. **先判业务变化，再判展示变化。** preflight 在 reuse_all 前重读上述当前投影，并比较已接受基线及现有业务 inputs/guards。来源 key/type 集合、存在状态、路径、成功资格/业务字段或文件 guard 任一变化，或旧基线缺失/不完整、当前索引不可读、来源映射不明确，均不能证明事实输入未变，返回原 process 路径并明确原因。未知→fulltext 若伴新增分析或 facts，必须 process；只有完整可比较且业务依据全未变、差异仅 level 或私有 render version 时，才进入仅展示刷新；全部未变才可 reuse_all。原 process 保留既有按实际变化选择处理与复用规则，不要求所有模型无差别重跑。两种 analyzer 同步分流，不得将“旧 validator 未通过”本身当作分析依据变化。
+4. **仅展示的正式入口。** 在既有 runner 复用 `Stage2PackRefineContext`、renderer、教授 lease/原子 JSON 与 managed_write，读取已接受 pack 的规范论文、方向、模型结果和引用元数据，以及本次只读索引/预检投影。不依赖旧 /tmp facts，不重建完整历史 facts，不重签旧 resolved proof。只更新 analysis_level、展示/缓存版本与渲染绑定，并同步因这些字段实际受影响的 accepted_directions_sha256 等包完整性摘要，避免下次误报 pack_integrity_mismatch；不调用依赖完整 facts 的 stage2_preflight_metadata 伪造接受元数据。保留 accepted assignment、事实判断、叙事、freshness 结果和模型指纹；不产生新分析/归属/时效任务。成功刷新不能把业务变化的当前来源冒充新的接受基线；业务来源基线仅由正常处理成功建立，展示刷新只保留已验证相等的业务部分并推进展示部分。
+5. **写前再核同一输入。** 沿用教授/pack/正文归属、受管摘要和输入漂移检查，重新读取与预检相同的业务来源及 level 投影，确认仍为该 accepted pack、相同业务基线和本轮 level；任一漂移不写并交重新处理。手改正文按 managed_write 保护。正文/校验依据实质变化按 §3.2 失效旧 validator，不借新绑定沿用旧 PASS；等价重写不清轮数。不新增锁、journal 或认证框架。
+6. **字段与旧数据。** `_CANONICAL_PAPER_FIELDS`、build_direction_pack、_canonical_record、fresh/reused/resolved records 与 pack-only context 保存级别，同 key 一致合并，当前正式来源不得被旧记录覆盖。`paper_digest` 及 resolve/freshness 模型摘要不加入 level、render version 或展示投影。旧包缺 level 可显示未确认；旧包缺可比较业务基线走原 process，不从历史 Markdown/临时 facts 猜造基线。资料不足导致正常流程不能完成时真实报告停止，保留原数据，不强制所有坏旧包成功。只在受影响的下一次调用按上述分流更新，不批量迁移或为文档 SHA 重跑。
+
 
 ## 4. 顺序、安全和替代方案
 
 1. 实现者先核最新基线及 PR91 是否已落地，保留其位置解析/摘要/轮次/成员保护；只整合本计划涉及的交接。
-2. 先贯通可信级别与固定证据引用元数据，再改渲染和最小失效判断；接着修改登记与 refine 分流，最后同步两个 analyzer、SKILL 及受影响现有测试。
+2. 先贯通可信级别与固定证据引用元数据，补齐现有 guards 的缺失/来源状态及接受基线，再按 §3.3 分流改展示刷新；接着修改登记与 refine 分流，最后同步两个 analyzer、SKILL 及受影响现有测试。
 3. 替代方案“开放所有固定区给模型改写”会改事实，排除；“只屏蔽校验或直接删除依据”掩盖缺陷，排除；选定方案在 runner 确定性展示、记录器保留失败，原 owner 处理问题。
 4. 不新增并发锁或跨文件 journal，沿用已有教授写入 lease、原子 JSON 和 managed_write 保护；不自动覆盖人工文档、不重置用户选择、不改变成员归属。
 5. 关键反例：abstract 有分析文件仍不能计 fulltext；OCR fulltext facts unavailable 仍可计全文输入级；旧包无级别应显式未知；固定+叙事混合阻挡不允许模型越权；同一未修复报告不能清轮数；正常 narrative 修订不应重开第一轮。
