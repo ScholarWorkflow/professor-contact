@@ -3,7 +3,7 @@
 ## 1. 任务、版本与当前状态
 
 - **Requirement revision**：2026-10-16 用户确认《第二阶段运行器问题报告》的三项修复；同日要求进一步明确拆分源方向的正式成员、参考论文的持久保存与读取、每轮归属结果隔离。四项修改是实现这三项原始要求的必要条件，不扩大 Stage 3—5 产品行为。
-- **Plan revision**：`stage2-three-runner-defects-r3-2026-10-16`；本文件是本拉取请求唯一有效的完整实施与测试计划。执行方案 r3 已获 [正式复审批准](https://github.com/ScholarWorkflow/professor-contact/pull/91#issuecomment-6218616598)（固定提交 `352426a129c5d0b374704f68e637d0ad3cf1a4c2`）；本次只同步第 5 节测试计划 `stage2-three-runner-defects-test-r4-2026-10-17` 与交接状态，不改执行方案。测试第一关已有正式通过记录；第二关待本次修订复核、第三关未执行，作者不自行宣称通过。
+- **Plan revision**：`stage2-three-runner-defects-r3-2026-10-16`；本文件是本拉取请求唯一有效的完整实施与测试计划。执行方案 r3 已获 [正式复审批准](https://github.com/ScholarWorkflow/professor-contact/pull/91#issuecomment-6218616598)（固定提交 `352426a129c5d0b374704f68e637d0ad3cf1a4c2`）；本次只同步第 5 节测试计划 `stage2-three-runner-defects-test-r5-2026-10-17` 与交接状态，不改执行方案。测试第一关已有正式通过记录；第二关待本次修订复核、第三关未执行，作者不自行宣称通过。
 - **Target repository / 基线**：`ScholarWorkflow/professor-contact`；计划取证提交 `main@58a2ae7e110f2f75cbd17fe40dca814c2b2d0777`；创建本 PR 时的实际 `main@305bc08f8b186672108cffbba0293d249bc8b4b2`。实施时以最新有效基线工作并记录提交，按源码及正式约定的实际差异定向检查影响。
 - **任务依据**：用户提供的《第二阶段运行器问题报告_2026-10-16.md》（本机运行副本的代码、历史回执和诊断）；本仓库上述基线的 [运行器](https://github.com/ScholarWorkflow/professor-contact/blob/58a2ae7e110f2f75cbd17fe40dca814c2b2d0777/.apm/skills/professor-contact/scripts/contact_state.py)、[Stage 2 正式技能约定](https://github.com/ScholarWorkflow/professor-contact/blob/58a2ae7e110f2f75cbd17fe40dca814c2b2d0777/.apm/skills/professor-contact/SKILL.md)、[文字校验代理](https://github.com/ScholarWorkflow/professor-contact/blob/58a2ae7e110f2f75cbd17fe40dca814c2b2d0777/.apm/agents/professor-contact-style-validator.agent.md)。
 - **项目规则**：[Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/rekidunois/Plan-Reviewer-Rule-3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253)、[Merge Reviewer Rule](https://app.notion.com/p/rekidunois/Merge-Reviewer-Rule-3ea0101a85f381c2b870e7fdf4b55b19)。
@@ -107,9 +107,9 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-resolve-fi
 - **prohibited_side_effect**：不得把“相关”当“正式归属”，不自动接受缺席的模型输出，不跳过人工采纳、不将旧报告改写为通过、不使用用户生产目录测试、不增加全仓运行/模型采样/跨仓安装作为本次默认必测项目。
 - **故障边界**：本轮缺结果、旧 `resolve_run_id`、原始正式成员证据缺失、旧缓存来源不可证明、校验位置不唯一时，均须在写入本教授权威状态前拒绝；合法 pending、accepted 和用户显式沿用保留；同教授方向仍按现有整批写入边界执行，并发锁及无关缺陷不顺手重构。
 
-## 5. 唯一完整测试计划（test-r4，第一关已通过，第二关待复核）
+## 5. 唯一完整测试计划（test-r5，第一关已通过，第二关待复核）
 
-**测试版本**：`stage2-three-runner-defects-test-r4-2026-10-17`，对应已批准的执行方案 r3 第 3.1—3.4 节。2026-10-16 用户要求同步测试计划，2026-10-17 由本地测试工程师落实测试实现：补齐直接受 `--results-dir`／`resolve_run_id`／缺结果拒绝影响的旧用例和共用准备，实现 T1—T5 的五个方法，并把真实选择器、Python 路径、临时目录与完整命令写入第 5.2 节。保留原 T1—T5 的业务目标、场景和验收标准，不新增测试项。使用现有 `unittest`、CLI 和合成临时教授目录；无新增测试服务或通用判定器。第 5.1 节是唯一 recipe，第 5.2 节是最终选择器及执行交接；没有独立同题测试文件，也不改写已完成 PR #86 的历史测试计划。
+**测试版本**：`stage2-three-runner-defects-test-r5-2026-10-17`，对应已批准的执行方案 r3 第 3.1—3.4 节。2026-10-16 用户要求同步测试计划，2026-10-17 由本地测试工程师在 test-r4 落实测试实现：补齐直接受 `--results-dir`／`resolve_run_id`／缺结果拒绝影响的旧用例和共用准备，实现 T1—T5 的六个测试方法（T3 两个），并把真实选择器、Python 路径、临时目录与完整命令写入第 5.2 节。test-r5 仅澄清 T5 缺失原始成员来源场景的测试准备与拒绝判定，并交接 T4/T5 共用测试环境的初始化修复。保留原 T1—T5 的业务目标、场景和验收标准，不新增测试项。使用现有 `unittest`、CLI 和合成临时教授目录；无新增测试服务或通用判定器。第 5.1 节是唯一 recipe，第 5.2 节是最终选择器及执行交接；没有独立同题测试文件，也不改写已完成 PR #86 的历史测试计划。
 
 | 业务目标 | 输入或场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- |
@@ -152,13 +152,13 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-resolve-fi
 
 **T5 recipe：业务重绘与同周期两轮限制**（对应 3.1.6/7、3.4.1）
 
-1. 以合成旧语义包表示相关论文误入成员，并有与其正文正确绑定的已完成两轮终态；保留两份旧原始报告文件。当前 facts 和有效 accepted 决定可用、无需新 narrative jobs、名称不变。通过 `stage2-preflight` 及普通 `stage2-plan/finalize` 纠正成员：旧包不能 `reuse_all`，新 Markdown/渲染摘要与新包一致，旧终态不能认证新正文。用新事务路径上的新报告调用 `stage2-record-validation` 应从 round 1 正常记录，而非 rounds_exhausted；旧原始报告内容不变。原始成员依据缺失的独立夹具须在权威写入前拒绝。
+1. 以合成旧语义包表示相关论文误入成员，并有与其正文正确绑定的已完成两轮终态；保留两份旧原始报告文件。当前 facts 和有效 accepted 决定可用、无需新 narrative jobs、名称不变。通过 `stage2-preflight` 及普通 `stage2-plan/finalize` 纠正成员：旧包不能 `reuse_all`，新 Markdown/渲染摘要与新包一致，旧终态不能认证新正文。用新事务路径上的新报告调用 `stage2-record-validation` 应从 round 1 正常记录，而非 rounds_exhausted；旧原始报告内容不变。原始成员依据缺失的独立夹具只从已成功生成包的合法事实中移除 `member_keys` 和 `provisional_member_keys`，其余事实与既有权威产物保持不变；用现有 `stage2-preflight`、`stage2-plan` 对修改后的事实取得有效前置证明和实际所需结果清单，复用该夹具已有的完整 freshness/narrative 结果，只补足本轮实际必需的结果。不得另建仅含 `narrative.json` 的残缺结果目录，使失败提前落在 `result_missing` 等无关问题上。`stage2-finalize` 必须明确因缺少原始正式成员来源而拒绝，且权威输入包、正文零写入；只检查 `status != ok` 或存在任意 `reason_code` 不足以判通过。前置证明不符、结果缺失或结果格式不合法导致的拒绝均不算该项通过；不另外要求完整调用链证明或增加独立测试。
 2. 在上述新版本第一轮报告中指出两个方向的可修订问题。按 `--direction-id` 只修第一个后，仍为 round 1/needs_correction，未完成方向继续有任务，提前第二轮记录被拒绝；修完剩余方向后才是 awaiting_second_validation。新第二轮报告记录后进入既有终态；复用原“第二轮仍阻断”场景确认停止、不能开第三轮。每次只断言本次改变的正文、pending/correction IDs、round/phase 与相应绑定；不新建历史校验账本。
 3. 对照合法不变包：真正 reuse_all 不写时间戳或重置 validator。再直接调用普通 `stage2-finalize`，传相同 facts、有效归属文件及对应结果目录/预检证明，确保实际执行了无新业务内容的普通 finalize，而非只停在 preflight。其仅重写生成时间/缓存时，在旧绑定有效的前提下保留 round/phase/问题及修订记录，并与新包正确绑定；若实现选择等价状态完全不写，原绑定和状态保持也满足目标，仍须完成该调用。沿用一个已有未完成纠错状态观察即可，不把每个 phase 做排列组合。另一个明确旧绑定已失效的代表输入不得借元数据重写恢复通过，按证据错误拒绝。普通 finalize 不得套用“正文变化即无限清零”，文字修订始终受步骤 2 的两轮限制。
 
 ### 5.2 最终测试选择器、执行与结果交接
 
-test-r4 已落实测试实现：下表五个名称是**已经写入本分支的选择器**（T3 有两个方法），不是待实现名称，也不是已运行的结果；本次接口迁移处理的旧方法远多于五个，完整清单与命令见本节末尾的“实际执行选择”。选择器与实现位置仍然一一对应；若后续改名，先在本节按同一 T 编号更新真实选择器，不增加目标或重复跑覆盖相同结果的旧方法。
+test-r4 已提交测试实现，test-r5 补充下述两处准备修正：下表五个目标列出**已经写入本分支的选择器**（T3 有两个方法），不是待实现名称，也不是已运行的结果；本次接口迁移处理的旧方法远多于五个，完整清单与命令见本节末尾的“实际执行选择”。选择器与实现位置仍然一一对应；若后续改名，先在本节按同一 T 编号更新真实选择器，不增加目标或重复跑覆盖相同结果的旧方法。
 
 | 目标 | 已实现 unittest 选择器 | 实现位置与复用 |
 | --- | --- | --- |
@@ -167,6 +167,11 @@ test-r4 已落实测试实现：下表五个名称是**已经写入本分支的�
 | T3 | `test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_resolve_run_isolation_and_missing_results`；`test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_keep_provisional_exempts_only_the_named_direction` | 使用现有正式 CLI/helper，复用 accepted/pending/keep-provisional 准备；不得只测内部函数代替命令结果。 |
 | T4 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_repeated_quote_locations_and_ambiguous_report` | 复用原始报告与受管正文夹具及其正式 record CLI。 |
 | T5 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` | 复用 preflight、record/refine 及第二轮终态 helper，加入本节的重绘和部分修订观察点。 |
+
+**T4/T5 已实现测试的接线修正（本地测试工程师，属于现有目标）**：
+
+- `test_stage2_style_validation_handoff.py` 的 `_fresh_stage2_env()` 当前以不存在的 `_isolated_stage2_fixture` 初始化 `unittest.TestCase`，运行到该帮助函数会因不存在的方法名报错。改为传本实例已有的 `self._testMethodName` 创建相同类的独立环境，只调用其 `setUp()` 并在外层注册一次 `tearDown()`；不能在帮助函数内执行该实例的测试方法。T4 的含糊位置报告与 T5 的旧包/缺来源/不变包均使用该帮助函数，必须完成这项直接接线修正；不新增测试目标或单独验证测试框架。
+- `test_stage2_style_validation_handoff.py` 的 `_t5_assert_missing_member_source_rejected()` 当前另建只含叙事结果的 `gap_free_results`，且只断言有任意错误。按第 5.1 节 T5 第 1 步，保留可用的完整结果及当前事实的前置证明，以原始成员来源缺失对应的明确拒绝和权威文件零写入作为判断；不改变生产保护或用例预期去迎合实现。上述两处由本地测试工程师改现有帮助函数/方法即可，T1—T5 清单及实际选择器不变。
 
 **T3 的既有测试迁移（属于原目标，不新增 T6）**：本地测试工程师须同步调整受 `--results-dir`/`resolve_run_id`/缺失拒绝直接影响的旧用例和共用准备，不能只实现上表新选择器。依据当前 `4aac295265acabbc63b39df4ea6c153285d296f7` 的 `test_stage2_resolved_direction.py`：
 
@@ -217,7 +222,7 @@ T1—T5 分别以上面的选择器清单替换 `<选择器>` 并写入 `T1`—`
 
 **失败、重试与复用**：没有外部服务或模型调用，不安排外部采样重试。确认业务失败后保留失败，交产品负责人；隔离目录/权限/依赖缺失标无法判断，修正实际环境问题后只重试受影响项，不改输入、断言或绕过保护求通过。保留每次正式结果及必要复验记录；已有仍适用的结果按目标复用，不因计划或提交 SHA 改变重跑。方法、输入或预期确需修订时先更新本节并复核直接影响，再执行。超出 T1—T5 的检查须另获用户批准，未修改的候选评分、共享论文阈值、其他阶段、PR #86/#90 已完成验收不重新打开。
 
-**当前交付状态**：测试设计和 recipe 已同步 r3；[test-r1 正式审核](https://github.com/ScholarWorkflow/professor-contact/pull/91#issuecomment-6219350308) 已确认第一关通过、第二关需修改、第三关未执行。test-r2 补齐主测试文件与共用 helper 的旧接口迁移；test-r3 进一步点明独立预检结果生成函数、直接 plan/finalize 调用文件和需要保留的业务断言；test-r4 由本地测试工程师落实测试实现：10 个测试文件完成旧调用迁移，T1—T5 五个方法已写入，真实选择器、Python 路径与完整命令已补入本节，`test_build_issue29_stage2_fixture.py` 的漏项已补齐。测试资产提交为 `d027de0`（同一 PR 分支，产品代码未改）。第一关沿用既有通过结论；第二关待复核（步骤可执行性要等第 2—4 节产品实现入库后确认）；第三关未执行，未运行任何测试；准备资产与静态核对不替代正式执行记录或自授 PASS。
+**当前交付状态**：测试设计和 recipe 已同步执行方案 r3；[test-r1 正式审核](https://github.com/ScholarWorkflow/professor-contact/pull/91#issuecomment-6219350308) 已确认第一关通过、第二关需修改、第三关未执行。test-r2 补齐主测试文件与共用 helper 的旧接口迁移；test-r3 进一步点明独立预检结果生成函数、直接 plan/finalize 调用文件和需要保留的业务断言；test-r4 由本地测试工程师落实测试实现：10 个测试文件完成旧调用迁移，T1—T5 六个方法已写入，真实选择器、Python 路径与完整命令已补入本节，`test_build_issue29_stage2_fixture.py` 的漏项已补齐。测试资产提交为 `d027de0`（同一 PR 分支，产品代码未改）；test-r5 仅澄清 T5 缺失来源场景并交接 T4/T5 两处测试准备错误，已提交的测试实现尚待本地测试工程师按上文修正。第一关沿用既有通过结论；第二关待复核（上述准备修正及步骤对产品实现的可执行性仍待确认）；第三关未执行，未运行任何测试；准备资产与静态核对不替代正式执行记录或自授 PASS。
 
 ## 6. 实施次序、交接与合并条件
 
@@ -231,6 +236,6 @@ T1—T5 分别以上面的选择器清单替换 `<选择器>` 并写入 `T1`—`
 ## 7. 修订状态与未完成事项
 
 - 执行方案 r3 在 `352426a129c5d0b374704f68e637d0ad3cf1a4c2` 已由 [2026-10-16 正式复审](https://github.com/ScholarWorkflow/professor-contact/pull/91#issuecomment-6218616598) 给出 `Plan conclusion: APPROVED`，取代 r2 的待修改结论。该外部记录只批准执行方案，不代表测试或合并通过；本轮不改第 2—4 节方案。
-- 用户随后明确要求同步测试计划，本次在唯一文件第 5 节维护 `stage2-three-runner-defects-test-r4-2026-10-17`：test-r2 完成旧调用、结果夹具和断言迁移交接，test-r3 补齐第 5.2 节独立结果生成函数与其它直接调用文件的迁移说明，test-r4 由本地测试工程师落实测试实现并把真实选择器、Python 路径、临时目录与完整命令写入第 5.2 节，含 test-r3 点名的 `test_build_issue29_stage2_fixture.py` 漏项。测试资产在提交 `d027de0`；未修改产品代码、教授业务数据或计划第 2—4 节方案，未执行任何正式用例或安装。
-- 下一责任人为测试计划审核者与产品实现者：保留已通过的第一关，复核第 5.2 节已落实的旧用例迁移、实际方法与命令（步骤可执行性待产品实现入库后确认）；按第 2—4 节提交产品实现后，由本地执行工程师按第 5.2 节命令记录第三关结果，之后单独进行合并审核。未受影响的执行方案批准不因测试文档更新自动作废。PR 保持 Draft，测试与合并状态为 **pending / NOT_READY**。
+- 用户随后明确要求同步测试计划，当前唯一文件第 5 节为 `stage2-three-runner-defects-test-r5-2026-10-17`：test-r2 完成旧调用、结果夹具和断言迁移交接，test-r3 补齐第 5.2 节独立结果生成函数与其它直接调用文件的迁移说明，test-r4 由本地测试工程师落实测试实现并把真实选择器、Python 路径、临时目录与完整命令写入第 5.2 节，含 test-r3 点名的 `test_build_issue29_stage2_fixture.py` 漏项。测试资产在提交 `d027de0`；test-r5 补充 T5 缺来源用例应沿用完整有效结果、识别真实拒绝原因，并明确修复 `_fresh_stage2_env()` 的无效测试方法名；不新增用例、命令、证明材料或测试目标。未修改产品代码、教授业务数据或计划第 2—4 节方案，未执行任何正式用例或安装。
+- 下一责任人为本地测试工程师、测试计划审核者与产品实现者：本地测试工程师修正本次第 5.2 节点明的 T4/T5 测试帮助函数和 T5 拒绝检查；保留已通过的第一关，测试计划审核者复核第二关的直接受影响步骤（产品实现入库后再核实依赖实现的可执行性）；按第 2—4 节提交产品实现后，由本地执行工程师按第 5.2 节命令记录第三关结果，之后单独进行合并审核。未受影响的执行方案批准不因测试文档更新自动作废。PR 保持 Draft，测试与合并状态为 **pending / NOT_READY**。
 
