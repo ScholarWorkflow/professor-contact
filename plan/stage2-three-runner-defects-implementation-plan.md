@@ -3,14 +3,19 @@
 ## 1. 任务、版本与当前状态
 
 - **Requirement revision**：2026-10-16 用户确认《第二阶段运行器问题报告》的三项修复；同日要求进一步明确拆分源方向的正式成员、参考论文的持久保存与读取、每轮归属结果隔离。四项修改是实现这三项原始要求的必要条件，不扩大 Stage 3—5 产品行为。
-- **Plan revision**：`stage2-three-runner-defects-r2-2026-10-16`；本文件是本拉取请求唯一有效的完整实施与测试计划。`Proposed review status: pending`。计划作者不自行宣称任何审核关口通过。
+- **Plan revision**：`stage2-three-runner-defects-r3-2026-10-16`；本文件是本拉取请求唯一有效的完整实施与测试计划。`Proposed review status: pending`。计划作者不自行宣称任何审核关口通过。
 - **Target repository / 基线**：`ScholarWorkflow/professor-contact`；计划取证提交 `main@58a2ae7e110f2f75cbd17fe40dca814c2b2d0777`；创建本 PR 时的实际 `main@305bc08f8b186672108cffbba0293d249bc8b4b2`。实施时以最新有效基线工作并记录提交，按源码及正式约定的实际差异定向检查影响。
 - **任务依据**：用户提供的《第二阶段运行器问题报告_2026-10-16.md》（本机运行副本的代码、历史回执和诊断）；本仓库上述基线的 [运行器](https://github.com/ScholarWorkflow/professor-contact/blob/58a2ae7e110f2f75cbd17fe40dca814c2b2d0777/.apm/skills/professor-contact/scripts/contact_state.py)、[Stage 2 正式技能约定](https://github.com/ScholarWorkflow/professor-contact/blob/58a2ae7e110f2f75cbd17fe40dca814c2b2d0777/.apm/skills/professor-contact/SKILL.md)、[文字校验代理](https://github.com/ScholarWorkflow/professor-contact/blob/58a2ae7e110f2f75cbd17fe40dca814c2b2d0777/.apm/agents/professor-contact-style-validator.agent.md)。
 - **项目规则**：[Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/rekidunois/Plan-Reviewer-Rule-3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253)、[Merge Reviewer Rule](https://app.notion.com/p/rekidunois/Merge-Reviewer-Rule-3ea0101a85f381c2b870e7fdf4b55b19)。
 - **本轮主分支变化分析**：在本计划起点之后，`main` 合入 [PR #90](https://github.com/ScholarWorkflow/professor-contact/pull/90)（`305bc08f`），修改 Stage 2 摘要导出路由、其单元测试和 Codex/OpenCode analyzer 的工具调用说明；未修改本计划三项缺陷所在的 `contact_state.py`、style-validator 或直接测试。与本计划交叉的只有两份 analyzer 文件：后续实现同步第 2 阶段校验说明时，必须保留 #90 已合入的 `--zotero-read-skill-dir` 导出调用要求。该提交没有改变本计划对成员、校验位置、缺失结果的核心修复选择；分支后续同步主分支时按此检查冲突。
 - **证据边界**：报告记录了先前运行中的结果和运行副本 SHA，但报告本身没有再次执行写状态的复现命令；本次已核对仓库基线源码具有对应分支。没有读取用户机器上的原始回执和本地开发副本，不能以本计划声称真实数据已经修复或回归测试已通过。修复和验收均使用仓库内合成隔离数据。
 
-**`r2` 修订依据**：针对首次计划审核的四个实际问题（拆分校验使用参考集、参考论文资料不能在无临时事实时恢复、旧缓存重算后可能不重绘 Markdown、旧同名结果可冒充本轮输出）补齐实施位置与失败处理。审核状态仍为 `Proposed review status: pending`；实施与测试均未开始。四处源码证据分别见目标 `main@305bc08f` 的 `contact_state.py` 第 2655—2658、1719—1752、4999—5034、2550—2580 行，以及 Codex/OpenCode 两份 analyzer 当前使用的固定临时结果目录。
+**已有修订背景（`r2`）**：针对首次计划审核的四个实际问题（拆分校验使用参考集、参考论文资料不能在无临时事实时恢复、旧缓存重算后可能不重绘 Markdown、旧同名结果可冒充本轮输出）补齐实施位置与失败处理。审核状态仍为 `Proposed review status: pending`；实施与测试均未开始。四处源码证据分别见目标 `main@305bc08f` 的 `contact_state.py` 第 2655—2658、1719—1752、4999—5034、2550—2580 行，以及 Codex/OpenCode 两份 analyzer 当前使用的固定临时结果目录。
+
+
+**`r3` 修订依据与授权边界**：用户同日要求“那你直接补充，另外，让计划足够完善，别忘了看 nix 共识”，承接补齐三处正常调用链的建议。本轮合并 [r2 审核的三项意见](https://github.com/ScholarWorkflow/professor-contact/pull/91#issuecomment-6217929666)：重绘后的校验生命周期、带 `--facts` 的修订兼容、拆分/合并参考范围。该记录对 `r2@e6096564` 的结论是 `NEEDS_MODIFICATION`（P1 PASS，P2—P4 待修改）；不把旧关口或作者自查移作 r3 批准，也不把计划中的历史授权描述当作独立用户证据。
+
+**Nix 共识适用边界**：已对照 [Nix skill 交付规则](https://app.notion.com/p/rekidunois/Nix-skill-3fb0101a85f38185b17adb417590e50e)（2026-10-16 更新）。本次保持 APM、uv/PEP 723 原入口和单一业务来源，正式命令从实际安装的 skill 根目录取资源，保留 #90 导出接线；同步现有投影不另维护第二份业务实现。不新增 Nix 输出、安装器、配置迁移或跨文件 journal，不把此规则变成本 PR 的新增 Nix 交付/真实安装全业务验收。只检查变更直接影响的入口和场景，适用历史证据可复用；文档或 SHA 改动不触发无关重跑，不宣称未验证平台已就绪。
 
 ## 2. 冻结需求与当前原因
 
@@ -29,10 +34,10 @@
 1. **正式成员的唯一来源**：`provisional_member_keys` 是原始正式成员；`relevant_keys` 只是可供分析、future-work、gap 与 `{{P:key}}` 叙事引用的论文范围。`build_direction_pack` 按本轮 facts 的 `provisional_member_keys` 去重建立初始 `supporting_item_keys`，禁止从 `relevant_keys/member_keys/named_keys` 兜底补成员。`cmd_stage2_finalize` 仅应用当前有效、已 `accepted` 的 `papers_to_add/papers_to_remove`；用户显式 `--keep-provisional` 时维持原成员。没有合法的初始来源则写盘前报错；未经用户接受的变更不得物化。
 2. **拆分的前后两处非空检查**：`validate_resolve_results` 在 `split_from` 下按 `source_members=set(provisional_member_keys)`、`moved=set(papers_to_add)` 验证 `source_members - moved` 非空，替换原本错误的 `direction_relevant_keys - papers_to_add` 检查。`papers_to_add` 中属于教授级候选并集、但非源正式成员的全文救回论文，仍可合法进入新子方向，不算从源方向移出的成员。`cmd_stage2_finalize` 完成拆分物化后再次核对源方向最终 `supporting_item_keys` 非空，失败时 `invalid_resolved_directions` 且零权威写入。合并时源方向本来要消失，不适用该非空条件；原有新增/移除全文事实验证保持不变。
 3. **参考资料继续写入同一输入包**：保持 `套磁候选输入.json` 的 schema 2、教授级唯一 `papers[item_key]`，不新增数据库或重复论文实体。每个 `directions[]` 持久保存 `relevant_keys`（引用范围）和 `supporting_item_keys`（正式成员）。`build_direction_pack` 输出两者；`cmd_stage2_finalize` 构造规范 `papers_map` 时按每个最终方向 `supporting_item_keys ∪ relevant_keys` 收集现有规范论文记录（`title/year/authorship/analysis_file/pdf_available/facts_state/facts_error/paper_facts` 等既有字段），以本轮可信 `ctx.papers`/有效事实为优先；旧缓存只可补足经核对的值。合法 `P` 引用若无许可或可信标题必须在写入前报错，不能退化显示 `item_key`，更不能将引用论文加进正式成员。原有 `L` 引用仍由 `narrative_later_papers` 保持，不把它混入本方向正式成员。
-4. **脱离临时 facts 的读取**：`Stage2PackRefineContext.__init__` 从 `pack["papers"]` 恢复可信标题/年份/署名/分析路径，从本方向保存的 `relevant_keys` 恢复允许的 `P` 引用范围；`supporting_item_keys` 继续单独供正式成员。使 `stage2_validation_material`、`stage2_validation_report`、`render_analysis_md`、`stage2-refine-plan/finalize` 从输入包得到同一资料和许可。旧包确无 `relevant_keys` 时，仅在纯读取兼容路径以旧 `supporting_item_keys` 为最小许可；涉及错误成员的重建必须从当前 facts 的参考集与原始成员重新建立，不以旧缓存倒推许可。`narrative_later_papers` 的现有读取与标题校验不改。
-5. **原有归属与下游权限**：继续按 `refined → split_from → merged_into` 三段应用获批准决定，完整迁移拆分、合并的正式成员和 gap，保留全文救回、合法共享论文与已物化拆分子方向重跑不清空；每个最终方向 `input_fingerprint.final_supporting_keys` 都由最后的权威成员计算。`direction_papers` 和 Stage 3 `_direction_slices` 仍只用本方向 `supporting_item_keys` 与既有 gap 范围授权论文，`papers_map` 新存的参考论文不能因此进入 Stage 3—5 成员或扩大其引用权限。
+4. **脱离临时 facts 的读取**：`Stage2PackRefineContext.__init__` 从 `pack["papers"]` 恢复可信标题/年份/署名/分析路径，从本方向保存的 `relevant_keys` 恢复允许的 `P` 引用范围；`supporting_item_keys` 继续单独供正式成员。使 `stage2_validation_material`、`stage2_validation_report`、`render_analysis_md`、`stage2-refine-plan/finalize` 从输入包得到同一资料和许可。旧包确无 `relevant_keys` 时，仅在纯读取兼容路径以旧 `supporting_item_keys` 为最小许可；涉及错误成员的重建必须从当前 facts 的参考集与原始成员重新建立，不以旧缓存倒推许可。`narrative_later_papers` 的现有读取与标题校验不改。带 `--facts` 的入口同样必须可用，原事实校验与最终方向修订上下文按第 3.4.2 节分离。
+5. **原有归属与下游权限**：继续按 `refined → split_from → merged_into` 三段应用获批准决定，完整迁移拆分、合并的正式成员和 gap，保留全文救回、合法共享论文与已物化拆分子方向重跑不清空；每个最终方向 `input_fingerprint.final_supporting_keys` 都由最后的权威成员计算；参考范围按第 3.4.3 节同步物化，不因成员迁移隐式授权。`direction_papers` 和 Stage 3 `_direction_slices` 仍只用本方向 `supporting_item_keys` 与既有 gap 范围授权论文，`papers_map` 新存的参考论文不能因此进入 Stage 3—5 成员或扩大其引用权限。
 6. **旧缓存中叙事复用与成员复用分开**：提升 `STAGE2_RESOLUTION_SEMANTICS_VERSION`，旧包不得在 `stage2-preflight` 命中 `reuse_all`。`Stage2Context._prepare_directions` 可能因叙事指纹一致仍设置内部 `reuse`：此时只允许复用合法 narrative/freshness，不得继续沿用旧 `supporting_item_keys`。`cmd_stage2_finalize` 用本轮事实中的原始正式成员重建底表，再物化匹配当前 resolve 指纹且已接受的决定；原始成员或获准依据缺失则写入前拒绝，不能把旧污染数据解释为许可。有效 accepted 仍可按原指纹复用，避免重复询问用户。
-7. **成员变化强制重新渲染**：旧实现仅以 `needed_keys || !ctx.pack || display_changed` 判断是否重绘。新增比较旧/新最终方向集合、正式成员与影响分析文档的已验证参考标题；只要展示所依赖的内容发生变化，即使 `needed_keys=[]`、名称未变，也重新 `render_analysis_md`，更新受管 `render_sha256` 并走既有 `managed_conflict/managed_write` 人工修改保护。真正 `reuse_all`、展示内容不变仍不改时间戳。不得生成与 Markdown 不一致的新版权威输入包。
+7. **成员变化强制重新渲染**：旧实现仅以 `needed_keys || !ctx.pack || display_changed` 判断是否重绘。新增比较旧/新最终方向集合、正式成员与影响分析文档的已验证参考标题；只要展示所依赖的内容发生变化，即使 `needed_keys=[]`、名称未变，也重新 `render_analysis_md`，更新受管 `render_sha256` 并走既有 `managed_conflict/managed_write` 人工修改保护。真正 `reuse_all`、展示内容不变仍不改时间戳。不得生成与 Markdown 不一致的新版权威输入包；同一事务按第 3.4.1 节处理 validator，不能仅重绘后照搬旧终态。
 8. **历史数据保护**：只针对本教授受影响的生成物写入，不自动删除或重置历史缓存。发现来源不能证明的旧异常 accepted 时，先备份并按主 `SKILL.md` 原有重置流程交用户决定，不自动认可。原有前置证明、事务顺序、受管 Markdown 保护均须保留。
 
 ### 3.2 R2：收敛位置约定与记录器的真实识别能力
@@ -64,6 +69,34 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-resolve-fi
   --facts "$facts_file" --results "$run_dir"
 ```
 
+
+### 3.4 三处正常调用链的完整衔接
+
+以下修改仍归属 R1/R2 的既有组包和修订入口，不建立校验历史系统、引用授权框架或新指纹体系。
+
+#### 3.4.1 普通 finalize 的重绘与两轮文字校验
+
+- **入口区分**：`cmd_stage2_finalize` 是成员/参考/显示等业务状态重新物化；`cmd_stage2_refine_finalize` 是已记录第一轮问题后的文字修订。后者会改变正文但必须保留本轮 `round=1` 和修订证据；通过 `--direction-id` 定向修订后仍有未完成方向时保持 `needs_correction`，全部完成才进入 `awaiting_second_validation`，之后只能记录第二轮；不能采用“正文 hash 变了就清零”的通用规则。
+- **普通 finalize 的失效条件**：最终方向、成员、参考许可/可信材料或渲染正文等校验依据有实质变化时，旧 validator 不再复制到新包；由新包的正常第一轮 `stage2-record-validation` 开始一次新业务版本的校验。旧终态（含已用两轮）不得锁死新版本，也不得被当作新版本已通过。先完成资料/许可检查、受管文件保护和新摘要计算，成功写入的包、Markdown、validator 状态必须一致；拒绝/人工冲突时沿用现有失败边界，不先抹掉旧状态。
+- **不变时复用**：真正 `reuse_all` 不写时间戳、不重置校验。如果普通 finalize 仅重写生成时间或缓存元数据，且方向映射、校验材料与受管正文未变，先验证旧记录对旧包及实际受管正文的绑定有效（含非终态，不能以仅接受 terminal 的 `stage2_validator_accepts` 代替），再保留原轮次/phase/问题与修订证据（包括尚待修订状态）；旧绑定无效须按现有证据错误拒绝，不可借重写恢复通过。仅对已确认等价的新包更新其现有 `pack_sha256` 绑定，正文摘要仍须与实际文件一致。不能只比较成员数或无新 jobs，更不能重新绑定 hash 来认可实质变化。
+- **原始报告保护**：不改写或删除既有原始报告。调用者在新业务版本的事务临时目录保存新的第一/第二轮报告并交给记录器；同一校验周期继续使用现有第一轮→定向修订→第二轮上限，终态与超轮拒绝不变。不额外引入历史数据库、epoch 或持久运行清单。
+- **源码交接点**：修改 [普通 finalize 的旧 validator 继承](https://github.com/ScholarWorkflow/professor-contact/blob/305bc08f8b186672108cffbba0293d249bc8b4b2/.apm/skills/professor-contact/scripts/contact_state.py#L5024-L5080)，衔接 [摘要校验](https://github.com/ScholarWorkflow/professor-contact/blob/305bc08f8b186672108cffbba0293d249bc8b4b2/.apm/skills/professor-contact/scripts/contact_state.py#L3604-L3651) 与 [修订后保留轮次、原始报告记录](https://github.com/ScholarWorkflow/professor-contact/blob/305bc08f8b186672108cffbba0293d249bc8b4b2/.apm/skills/professor-contact/scripts/contact_state.py#L11224-L11325)。同步主技能和两份 analyzer 的新版本报告路径/轮次交接说明，不改变文字标准。
+
+#### 3.4.2 两种 refine 入口使用同一个最终输入包
+
+- **先核对来源，后使用最终方向**：将 `stage2_pack_matches_facts` 和 `stage2_refine_context` 列入修改点。传入 `--facts` 时先用 `Stage2Context` 核对教授身份、原始方向集合及事实新旧关系；通过后与 `--professor-dir` 一样构造 accepted pack 的最终方向上下文。`stage2-refine-plan` 的 jobs、`stage2_validation_material`、`stage2-refine-finalize` 的 narrative/gap/P/L 校验与渲染均使用最终方向 ID、最终 gap 和持久化参考资料，不能仍按原始 facts 找拆分子方向或已消失的合并源。
+- **比较正确的证据**：未消失的原始方向优先用 `provisional_input_fingerprint` 与当前原事实指纹比较，不再把面向下游的最终 `input_fingerprint` 当原事实指纹。已合并而不再独立存在的源方向不能只用 resolve 指纹替代原事实指纹（后者还包含参考集、红线和论文摘要等）。普通 finalize 在包内既有 `resolved_directions.directions[]` 原始来源→目标映射行增加 `provisional_input_fingerprint`，直接保存本轮原始 `ctx.direction_plans` 中 `plan["fingerprint"]`（可复用已有 `provisional_fingerprints`，但须包含被合并删除的源且值来自本轮原始 plan）；读取时逐个与原始 facts plan 比较，同时核对目标/源关系。没有消失的方向仍用其方向字段，映射中也有值时须一致；不增加新指纹算法或独立来源账本。拆分子方向从其原始源及已有拆分关系核对，不要求 facts 凭空提供子方向。原始方向新增、缺失、指纹变化或映射不能自洽时返回 `needs_refresh/source_fingerprint_changed`，不得静默忽略用户明确提供的 facts。
+- **旧包兼容有界**：仅对没有已物化归属、同一原始方向身份且确无 provisional 字段的旧包，允许原公开指纹作原事实指纹比较。已物化归属却缺少可核对的来源证据则要求刷新，不伪造指纹、不从正式成员反推来源。无 facts 的纯 pack 读取继续按原契约工作，不强制保存临时 facts。
+- **直接影响**：指纹来源来自 [最终成员指纹与原始来源保存](https://github.com/ScholarWorkflow/professor-contact/blob/305bc08f8b186672108cffbba0293d249bc8b4b2/.apm/skills/professor-contact/scripts/contact_state.py#L4967-L5065)；读取/任务/修订的连续链见 [11042—11145 行](https://github.com/ScholarWorkflow/professor-contact/blob/305bc08f8b186672108cffbba0293d249bc8b4b2/.apm/skills/professor-contact/scripts/contact_state.py#L11042-L11145)。仅修比较和上下文衔接，保留现有 Stage 3 最终成员指纹语义，不新增来源认证层。
+
+#### 3.4.3 最终方向的参考范围继承
+
+- **原始与 refined 方向**：以该方向本轮 facts 的 `relevant_keys` 为参考范围；正式成员增删不自动增删 `P` 引用许可。参考集与正式成员分别去重和校验，不拿教授级 `papers` 的存在当许可。
+- **拆分**：源方向保留原参考集，包括已移到子方向但仍可供源方向分析的论文；这不保留其正式成员资格。首次创建子方向时以获准子方向最终正式成员（含合法全文救回）建立子方向参考范围，保持原子方向 pack-only 的最小合法范围，不继承源方向全部参考。已物化子方向无变化重跑保留其有效参考集；源决定变化须按当前批准拆分重新建立，不用过期范围兜底。
+- **合并**：目标参考范围为本次参与合并的目标与源方向有效参考集的去重并集，和正式成员/gap 一起在源方向删除前物化；不带入未参与方向。保留既有目标 narrative，不自动拼接源 narrative；后续修订只在该最终范围内引用。
+- **读取与资料**：各最终方向均显式保存 `relevant_keys`（空列表也表示空许可），`papers` 只收集正式成员与参考所需的唯一规范记录。读取函数和 `narrative_scope`/validation material 不得用 truthy 判断把显式空列表回退到成员；仅字段确实缺失的旧包采用第 3.1.4 节最小兼容，格式错误仍拒绝。`P` 的可信标题和最终许可在写入前核对；`L`、gap 继续各自现有权限，不以本段扩大。
+- **源码交接点**：[拆分创建、合并迁移](https://github.com/ScholarWorkflow/professor-contact/blob/305bc08f8b186672108cffbba0293d249bc8b4b2/.apm/skills/professor-contact/scripts/contact_state.py#L4841-L4965)、[pack-only 上下文](https://github.com/ScholarWorkflow/professor-contact/blob/305bc08f8b186672108cffbba0293d249bc8b4b2/.apm/skills/professor-contact/scripts/contact_state.py#L1710-L1752) 及第 3.1 节组包/论文收集共同实现；禁止只补序列化字段而遗漏真实修订读取。
+
 ## 4. 方案取舍与限制
 
 - **选择**：在现有 `contact_state.py` 的事实/组包、校验和状态写入入口修复根因；对外保留现有 JSON 路径、`direction_id` 身份、受管文件与阶段职责。只在 Stage 2 的实际契约边界同步模型说明。
@@ -80,15 +113,15 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-resolve-fi
 
 | 业务目标 | 输入或场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- |
-| T1：正式成员与参考持久化 | 初始成员 6 篇、参考集多 `GTQBNPED`，仅已接受 `D6XQCHTP` 新增；另方向合法加入 `GTQBNPED`，该参考论文只用于 `{{P:key}}` 且无 gap/后续引用。清除临时 facts 后走 `--professor-dir` 修订读取入口。 | 前方向恰好 7 篇、无 `GTQBNPED`；另方向保留获批成员；`papers[item_key]` 保存参考论文唯一可信标题、`directions[].relevant_keys` 保存引用许可；无 facts 仍能渲染和修订 `P` 引用，Stage 3 成员范围未放宽，最终指纹使用 7 篇正式成员。 | 扩展 `test_stage2_resolved_direction_downstream_regressions.py`，检查最终输入包、受管 Markdown、pack-only 修订正式入口及既有 Stage 3 论文范围。 |
-| T2：合法归属保持、拆分源非空 | 合法 `refined/split_from/merged_into`、共享论文、已接受拆分子方向无变化重跑和全文救回；另有源方向唯一正式成员被全部移走，但 `relevant_keys` 仍包含参考论文的拆分提案。 | 合法成员与 gap 迁移、共享身份和 accepted 复用正确；源正式成员将被移空的拆分被拒绝且不写新接受状态，参考论文不能作为剩余成员。 | 复用并定向扩展 `test_stage2_resolved_direction_downstream_regressions.py` 和 `test_stage2_resolved_direction_acceptance_boundary.py` 正式入口断言。 |
+| T1：正式成员与参考持久化 | 初始成员 6 篇、参考集多 `GTQBNPED`，仅已接受 `D6XQCHTP` 新增；另方向合法加入 `GTQBNPED`，该参考论文只用于 `{{P:key}}` 且无 gap/后续引用。同一已物化包分别经原 facts 校验和无 facts 的 `--professor-dir` 修订入口读取；另给真正变化的原事实。 | 前方向恰好 7 篇、无 `GTQBNPED`；另方向保留获批成员；`papers[item_key]` 保存参考论文唯一可信标题、`directions[].relevant_keys` 保存引用许可；无 facts 仍能渲染和修订 `P` 引用，Stage 3 成员范围未放宽，最终指纹使用 7 篇正式成员；两入口使用相同最终方向和参考资料，原事实未变可修订，真正过期事实仍拒绝。 | 扩展 `test_stage2_resolved_direction_downstream_regressions.py`，检查最终输入包、受管 Markdown、pack-only 修订正式入口及既有 Stage 3 论文范围。 |
+| T2：合法归属保持、拆分源非空 | 合法 `refined/split_from/merged_into`、共享论文、已接受拆分子方向无变化重跑和全文救回；另有源方向唯一正式成员被全部移走，但 `relevant_keys` 仍包含参考论文的拆分提案。 | 合法成员与 gap 迁移、共享身份和 accepted 复用正确；源正式成员将被移空的拆分被拒绝且不写新接受状态，参考论文不能作为剩余成员；按 3.4.3 断言源/子/合并目标参考集和可信标题，拆分子方向与合并后目标在两种 refine 入口均可定位，不再要求消失的源为最终方向。 | 复用并定向扩展 `test_stage2_resolved_direction_downstream_regressions.py` 和 `test_stage2_resolved_direction_acceptance_boundary.py` 正式入口断言。 |
 | T3：每轮结果隔离、缺失和合法复用 | 同方向连续两轮：第一轮有正确 JSON，第二轮新目录缺文件或只有短名；复制上一轮同名文件到第二轮；最后生成当前 `resolve_run_id` 的正确文件。覆盖同批其他方向已接受、待选提案和显式 `--keep-provisional`。 | 第二轮缺文件报 `result_missing`，旧同名文件的轮次不符报 `invalid_result_json`，失败时整批权威状态不变；补齐正确文件才成功；已有 accepted 直接复用、proposed 仍待选，显式沿用无模型文件仍合法。 | 扩展 `test_stage2_resolved_direction_regressions.py` 和既有接受边界测试，仅核对正式 CLI 回执及权威文件前后差异。 |
 | T4：重复引文的定位与拒绝 | 同一阻塞 `quote` 出现在受管正文三个物理行，原始 style-validator 报告对三行分别给出准确行号；另有仅填“第57行及多处”的原始报告副本。 | 三条准确记录逐一归到其真实方向并进入正常修订状态；含糊格式返回可操作的定位错误，不记入校验状态，也不修改正文/输入包；不得选任意单处。 | 扩展 `test_stage2_style_validation_handoff.py` 的 `stage2-record-validation` 正式入口与前后文件检查。 |
-| T5：旧包修复后同步重绘 | 旧语义版本输入包被 `relevant_keys` 扩大正式成员；本轮原始成员和有效 accepted 决策可用、旧受管 Markdown 存在，`needed_keys=[]` 且名称未变；对照合法新版本无变化包。 | 旧包预检不能 `reuse_all`；重算正式成员并更新分析 Markdown 与渲染摘要，不能留下新输入包/旧文档；原始成员来源无法证明则零写入拒绝；合法无变化包仍复用。 | 使用现有 `stage2-preflight`、`stage2-plan/finalize` 与受管 Markdown 的检查方式定向扩展预检测试。 |
+| T5：旧包修复后同步重绘 | 旧语义版本输入包被 `relevant_keys` 扩大正式成员；本轮原始成员和有效 accepted 决策可用、旧受管 Markdown 存在，`needed_keys=[]` 且名称未变；旧包含已用两轮的 terminal validator；对照合法新版本无变化包，以及同周期第一轮问题后的文字修订。 | 旧包预检不能 `reuse_all`；重算正式成员并更新分析 Markdown 与渲染摘要，不能留下新输入包/旧文档；原始成员来源无法证明则零写入拒绝；旧校验不能认证新正文，新版本可从第一轮开始且历史报告保留；同周期文字修订仍保留第一轮并受第二轮上限约束；合法无变化包仍复用校验，元数据重写不导致摘要失配或轮次重置。 | 使用现有 `stage2-preflight`、`stage2-plan/finalize` 与受管 Markdown 的检查方式定向扩展预检测试。 |
 
 **测试准备**：每轮 resolve job 在新建独立目录下准备结果，模拟旧轮次结果仅用于验证应拒绝。产品单元测试放在 `.apm/skills/professor-contact/tests/`，沿用仓库中 `BaseEnv`、`ResolvedPipelineMixin` 等合成夹具，在系统独立临时目录中创建教授、方向、论文事实、预检证明与结果目录。只用当前生产 CLI 正式入口，不伪造产物后绕过正式校验。不得连接真实 Zotero、浏览器、教授业务目录或用户缓存。无需引入独立测试仓库、运行模型或修改机器范围的配置。
 
-**拟执行入口**：测试工程师完成第一、第二关后，从仓库根进入现有测试目录，运行相应 `python3 -m unittest -v` 指定模块：`test_stage2_resolved_direction_regressions`、`test_stage2_resolved_direction_downstream_regressions`、`test_stage2_resolved_direction_acceptance_boundary`、`test_stage2_style_validation_handoff`，以及承载 T5 的已有预检测试模块。所需 `uv run --no-project --python python3` 包装、临时输出目录、安装版本和直接可复制命令，由本地测试工程师在此唯一文件中确认后冻结，不以本计划初稿声称已执行。只保留正式业务结果所需字段、退出码和必要错误，不采集完整运行时轨迹。
+**拟执行入口与范围**：测试工程师完成第一、第二关后，从现有测试目录以 `python3 -m unittest -v <模块.类.方法>` 运行承载 T1—T5 的受影响方法。上表模块名仅指定现有夹具/用例修改位置，不要求整模块重跑；例如与本修复无关的新增候选评分、合并候选共享论文阈值不纳入默认必测。把 3.4 的观察点并入 T1/T2/T5 的现有场景，必要时分别检查两入口的差异边界，不把每个归属×入口×校验轮次做笛卡尔组合，不另加全流程测试。测试工程师在此唯一文件冻结实际方法名、所需 `uv run --no-project --python python3` 包装、隔离目录与可复制命令；尚未有测试实现，本文不虚构方法名或声称已执行。仅当修改直接影响共享准备入口时，说明具体影响并在 T1—T5 已批准目标内选择对应既有方法；超出清单须另获用户批准，未受影响结果复用。只保留业务结果字段、退出码和必要错误，不采集完整运行轨迹。
 
 **失败及复用**：异常业务输出就是业务失败，不以改输入或重试换取通过；环境/外部工具阻断标记无法判断。先排除隔离/权限错误，再仅重测受影响项；未受影响的历史有效通过记录由第三关决定复用。没有授权外部服务正式重试，本次预计无需外部调用。测试工程师不得扩展为整套 0—5 阶段联调或逐个代理行为认证。
 
@@ -96,13 +129,13 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-resolve-fi
 
 1. **计划审核**：由独立审核者在当前基线及必要的目标版本上审 P1—P4，取得正式 `Plan conclusion: APPROVED`。若证据揭示另一个成员归属入口，先把新增关键事实及直接影响修订进本文件再复审；作者不得把此初稿标为批准。
 2. **先修 R3 状态与结果入口**：在 `contact_state.py` 加入 `--results-dir`、`resolve_run_id` 和缺文件/错轮次拒绝；在 `validate_resolve_results` 中先处理显式 `--keep-provisional`，其余方向保持 accepted/pending 复用并整批先检查后写盘。同步两份 analyzer 的每轮独立 `mktemp -d` 结果目录与主 `SKILL.md` 调用契约。
-3. **修 R1、引用持久化和旧包重绘**：`build_direction_pack` 从 `provisional_member_keys` 建成员并保存 `relevant_keys`；`cmd_stage2_finalize` 保存两类论文、校验拆分非空和最终指纹；`Stage2PackRefineContext`/`stage2_validation_material` 从规范 `papers` 及参考范围恢复标题许可；提升归属语义版本，阻断旧正式成员复用，确保成员变动时受管 Markdown 重绘。
+3. **修 R1、引用持久化和旧包重绘**：`build_direction_pack` 从 `provisional_member_keys` 建成员并保存 `relevant_keys`；`cmd_stage2_finalize` 保存两类论文、校验拆分非空和最终指纹；`Stage2PackRefineContext`/`stage2_validation_material` 从规范 `papers` 及参考范围恢复标题许可；提升归属语义版本，阻断旧正式成员复用，确保成员变动时受管 Markdown 重绘；按第 3.4 节一起衔接 validator 生命周期、原事实校验与最终方向上下文、拆分/合并参考范围。
 4. **修 R2 并同步调用说明**：更新 Stage 2 原始报告读取与行号定位，调整同仓 style-validator 的 Stage 2 位置要求及 Codex/OpenCode analyzer 交接说明；不改变 Stage 3 校验。
 5. **测试工程师关口与实现**：依据第 5 节确认第一关必测清单、补齐第二关可执行方案；在本拉取请求分支提交受影响测试与产品实现，按规定在隔离环境执行并记录第三关结果。只核对该次变更影响到的既有行为。
 6. **合并审核**：按 Merge Reviewer Rule 对“正式需求 → 已批准计划 → 本分支实现 → 生产调用路径 → 第三关结果”审核；`READY + COMPLETE` 后再由用户另行决定是否合并。此请求在实现、验证、审核完成前保持 `Draft`。所有后续实施继续提交到**同一个拉取请求分支**；不拆成另一个 PR，也不把计划正文散落在评论中。
 
 ## 7. 修订状态与未完成事项
 
-- 本 PR 当前 **仅包含计划文件**；`r2` 依据本轮用户请求更新唯一实施与测试计划，尚未修改运行器、代理技能说明、测试或任何教授业务状态。
-- 本轮已将首次审核的四项问题合入 `r2` 候选；尚未取得独立复审批准、测试第一/第二/第三关或合并审核结论，未运行回归测试。当前 `Plan conclusion`、`Test Engineer Gate 3`、`Merge conclusion` 均为 **pending / NOT_READY**，不得宣称方案已被审核批准或产品已修复。
-- 没有可供本会话调用的独立子代理复核工具；作者自查不替代独立计划审核。下一责任人为计划审核者，之后为产品实现者和本地测试工程师。
+- 本 PR 当前仅包含唯一计划文件；`r3` 补齐第 3.4 节三处正常调用链并收窄原第 5 节测试范围，未修改运行器、代理说明、测试或教授业务状态，未执行测试/安装。
+- 已有正式审核只针对 `r2@e6096564`，结论为 `NEEDS_MODIFICATION`；本次候选独立静态复核用于发现遗漏，不冒充正式 Plan Reviewer 或 Test Engineer 关口批准。当前 r3 的 `Plan conclusion`、测试第一/第二/第三关、`Merge conclusion` 均待相应责任人给出结论，状态为 **pending / NOT_READY**。
+- 下一责任人为独立计划审核者（只复审本次改动和直接影响，结合唯一全文）；随后由产品实现者按批准计划落实，测试工程师在本文件补齐实际方法与执行命令。不得将本次补计划描述为产品已修复、验证通过或可合并。
