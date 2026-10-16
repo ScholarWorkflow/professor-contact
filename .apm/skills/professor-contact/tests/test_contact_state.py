@@ -98,6 +98,23 @@ def parse(result):
         raise AssertionError(f"stdout not JSON: {result.stdout!r}\nstderr: {result.stderr!r}")
 
 
+def stage2_style_validation_report(analysis_md: Path, verdict="pass", issues=None,
+                                   notes=""):
+    issues = issues or []
+    return {
+        "result": "ok",
+        "files": [{
+            "file": str(analysis_md),
+            "artifact": "analysis",
+            "verdict": verdict,
+            "blocking": sum(issue["severity"] == "blocking" for issue in issues),
+            "minor": sum(issue["severity"] == "minor" for issue in issues),
+            "issues": issues,
+        }],
+        "notes": notes,
+    }
+
+
 def make_sidecar(analysis: Path, quotes: list, page: int = 8) -> Path:
     items = [{"id": quote_id(q), "quote": q, "translation_zh": f"中译：{q[:24]}",
               "source": "Conclusion", "page": page} for q in quotes]
@@ -170,7 +187,7 @@ class BaseEnv(unittest.TestCase):
         path.write_text(json.dumps(facts, ensure_ascii=False, indent=1), encoding="utf-8")
         return path
 
-    def write_stage2_results(self, results: Path, gap_overrides=None):
+    def write_stage2_results(self, results: Path, gap_overrides=None, directions=None):
         results.mkdir(parents=True, exist_ok=True)
         overrides = gap_overrides or {}
         rows = []
@@ -180,21 +197,30 @@ class BaseEnv(unittest.TestCase):
                    "confidence": "high"}
             row.update(overrides.get(key, {}))
             rows.append(row)
-        (results / "freshness-DIR00001.json").write_text(json.dumps({
-            "schema": 1, "kind": "freshness", "collection_key": "DIR00001",
-            "results": rows}, ensure_ascii=False), encoding="utf-8")
+        directions = directions or [{"collection_key": "DIR00001"}]
+        for direction in directions:
+            direction_id = direction.get("direction_id") or direction["collection_key"]
+            (results / f"freshness-{direction_id}.json").write_text(json.dumps({
+                "schema": 1, "kind": "freshness", "direction_id": direction_id,
+                "collection_key": direction["collection_key"], "results": rows},
+                ensure_ascii=False), encoding="utf-8")
         g1 = quote_id(self.gap_quotes["AAAA1111"])
+        positioning = [{"kind": "para",
+                        "text": "教授从 {{P:AAAA1111}} 起研究合成输入比较；{{G:" + g1 + "}} 是延伸点。",
+                        "refs": ["paper:AAAA1111", "gap:" + g1],
+                        "concrete_object": "合成输入与第二种模式",
+                        "input_example": "输入一组固定的合成样本",
+                        "output_example": "系统给出两种处理结果"}]
+        gap_notes = [{"gap_id": g1, "summary": "扩展到第二种输入模式",
+                      "explanation": "研究计划比较另一种合成场景。"}]
+        narrative_directions = [{
+            "direction_id": direction.get("direction_id") or direction["collection_key"],
+            "collection_key": direction["collection_key"],
+            "positioning": copy.deepcopy(positioning),
+            "gap_notes": copy.deepcopy(gap_notes),
+        } for direction in directions]
         (results / "narrative.json").write_text(json.dumps({
-            "schema": 1, "kind": "narrative", "directions": [{
-                "collection_key": "DIR00001",
-                 "positioning": [{"kind": "para",
-                                   "text": "教授从 {{P:AAAA1111}} 起研究合成输入比较；{{G:" + g1 + "}} 是延伸点。",
-                                  "refs": ["paper:AAAA1111", "gap:" + g1],
-                                   "concrete_object": "合成输入与第二种模式",
-                                   "input_example": "输入一组固定的合成样本",
-                                   "output_example": "系统给出两种处理结果"}],
-                 "gap_notes": [{"gap_id": g1, "summary": "扩展到第二种输入模式",
-                                "explanation": "研究计划比较另一种合成场景。"}]}]},
+            "schema": 1, "kind": "narrative", "directions": narrative_directions},
             ensure_ascii=False), encoding="utf-8")
 
     def run_bound_stage2_plan(self, facts: Path):
@@ -209,6 +235,62 @@ class BaseEnv(unittest.TestCase):
         out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(out["status"], "ok", out)
         return out
+
+    def stage2_preflight_direction(self, direction_id="DIR00001"):
+        out = parse(run_cli(
+            "stage2-preflight", "--program-root", self.root,
+            "--professor", "試験 教授", "--target-file", self.prof_dir / "套磁目标.json",
+            "--paper-analysis", "relevant", "--gap-scope", "selected_direction",
+            "--freshness-scope", "shortlist"))
+        self.assertEqual(out["status"], "ok", out)
+        return next(row for row in out["directions"]
+                    if row["direction_id"] == direction_id)
+
+    def stage2_run_two_directions(self, unique_second_narrative=True,
+                                  include_unaffected_positioning=False,
+                                  distinct_direction_ids=False):
+        def add_second_direction(facts):
+            first = facts["directions"][0]
+            if distinct_direction_ids:
+                first["collection_key"] = "legacy-alpha"
+                first["direction_id"] = "DIR00001"
+            second = copy.deepcopy(facts["directions"][0])
+            second["collection_key"] = (
+                "legacy-beta" if distinct_direction_ids else "DIR00002")
+            if distinct_direction_ids:
+                second["direction_id"] = "DIR00002"
+            else:
+                second.pop("direction_id", None)
+            second["name_ja"] = "第二合成方向"
+            second["name_zh"] = "第二合成方向"
+            second["user_note"] = "我想比较第二种合成输入的处理结果。"
+            facts["directions"].append(second)
+
+        facts_path = self.write_facts(add_second_direction)
+        facts = json.loads(facts_path.read_text(encoding="utf-8"))
+        results = self.root / "results"
+        self.write_stage2_results(results, directions=facts["directions"])
+
+        narrative_path = results / "narrative.json"
+        narrative = json.loads(narrative_path.read_text(encoding="utf-8"))
+        first_narrative, second_narrative = narrative["directions"]
+        if include_unaffected_positioning:
+            untouched = copy.deepcopy(first_narrative["positioning"][0])
+            untouched["text"] = "另一段合成定位用于确认局部修订。"
+            untouched["refs"] = []
+            first_narrative["positioning"].append(copy.deepcopy(untouched))
+            second_narrative["positioning"].append(untouched)
+        if unique_second_narrative:
+            second_narrative["positioning"][0]["text"] = (
+                second_narrative["positioning"][0]["text"].replace(
+                    "教授从", "第二方向教授从", 1))
+        narrative_path.write_text(json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
+
+        plan = parse(self.run_bound_stage2_plan(facts_path))
+        self.assertEqual(plan["status"], "ok", plan)
+        out = parse(run_bound_stage2_finalize(run_cli, facts_path, "--results", results))
+        self.assertEqual(out["status"], "ok", out)
+        return facts_path
 
     def stage3_run(self, profile=None, candidate_extra=None):
         facts = self.write_facts()
@@ -821,23 +903,58 @@ class TestRunnerBasics(BaseEnv):
                           "completed_part": "已完成旧场景", "remaining_gap": "还需新场景"}})
         pack_path = self.prof_dir / "套磁候选输入.json"
         validation_path = self.root / "stage2-validation.json"
-        validation_path.write_text(json.dumps({"results": [{
-            "direction_id": "DIR00001", "result": "fail_after_2_rounds",
-            "rounds": 2, "issues": [{"rule": "A1"}]}]}, ensure_ascii=False), encoding="utf-8")
+        report = stage2_style_validation_report(self.prof_dir / "套磁候选分析.md")
+        validation_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("stage2-record-validation", "--professor-dir", self.prof_dir,
                             "--validation-file", validation_path))
         self.assertEqual(out["status"], "ok", out)
         pack = json.loads(pack_path.read_text(encoding="utf-8"))
-        self.assertEqual(pack["validator"]["results"]["DIR00001"]["result"], "fail_after_2_rounds")
+        self.assertEqual(pack["validator"]["results"]["DIR00001"]["result"], "pass")
+        self.assertEqual(pack["validator"]["results"]["DIR00001"]["rounds"], 1)
         self.assertEqual(pack["directions"][0]["gap_shortlist"][0]["status"], "partial")
+        self.assertNotIn("validator_not_accepted",
+                         self.stage2_preflight_direction()["reason_codes"])
+        refine = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
+                               "--validation-file", validation_path))
+        self.assertEqual(refine["status"], "ok", refine)
+        self.assertEqual(refine["jobs"], [])
         old = pack_path.read_bytes()
         validation_path.write_text(json.dumps({"results": [{
-            "collection_key": "NO_SUCH_DIRECTION", "result": "pass", "rounds": 1, "issues": []
+            "direction_id": "DIR00001", "result": "pass", "rounds": 1, "issues": []
         }]}, ensure_ascii=False), encoding="utf-8")
         bad = parse(run_cli("stage2-record-validation", "--professor-dir", self.prof_dir,
                             "--validation-file", validation_path))
         self.assertEqual(bad["status"], "error")
+        self.assertEqual(bad["reason_code"], "invalid_validation_json")
         self.assertEqual(pack_path.read_bytes(), old)
+
+    def test_11a_stage2_validator_pass_with_minor_is_accepted(self):
+        self.stage2_run()
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        validation_path = self.root / "stage2-minor-validation.json"
+        issue = {"rule": "C1", "severity": "minor", "location": "教授从",
+                 "quote": "教授从", "suggestion": "把句子写得更直接。"}
+        report = stage2_style_validation_report(
+            self.prof_dir / "套磁候选分析.md", "pass_with_minor", [issue],
+            notes="合成轻微问题")
+        validation_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+
+        out = parse(run_cli("stage2-record-validation", "--professor-dir", self.prof_dir,
+                            "--validation-file", validation_path))
+        self.assertEqual(out["status"], "ok", out)
+        pack = json.loads(pack_path.read_text(encoding="utf-8"))
+        self.assertEqual(pack["validator"]["results"]["DIR00001"]["result"], "pass")
+        self.assertEqual(pack["validator"]["results"]["DIR00001"]["rounds"], 1)
+        stored_issues = pack["validator"]["results"]["DIR00001"]["issues"]
+        self.assertEqual(
+            [{key: stored_issue.get(key) for key in issue} for stored_issue in stored_issues],
+            [issue])
+        self.assertNotIn("validator_not_accepted",
+                         self.stage2_preflight_direction()["reason_codes"])
+        refine = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
+                               "--validation-file", validation_path))
+        self.assertEqual(refine["status"], "ok", refine)
+        self.assertEqual(refine["jobs"], [])
 
     def test_12_stage3_validator_is_persisted_separately(self):
         self.stage3_run()
@@ -871,52 +988,102 @@ class TestRunnerBasics(BaseEnv):
         self.assertEqual(state_path.read_bytes(), old)
 
     def test_13_stage2_validator_rewrite_round_trips_structured_narrative(self):
-        self.stage2_run()
+        facts = self.stage2_run_two_directions(
+            include_unaffected_positioning=True, distinct_direction_ids=True)
+        target_direction_id = "DIR00002"
         validation_path = self.root / "stage2-rewrite-validation.json"
-        validation_path.write_text(json.dumps({"results": [{
-            "direction_id": "DIR00001", "result": "fail_after_2_rounds",
-            "rounds": 2, "issues": [{"rule": "B5", "quote": "术语"}]
-        }]}, ensure_ascii=False), encoding="utf-8")
-        self.assertEqual(parse(run_cli(
+        issue = {"rule": "A1", "severity": "blocking", "location": "第二方向教授",
+                 "quote": "第二方向教授", "suggestion": "改用日常语言解释。"}
+        report = stage2_style_validation_report(
+            self.prof_dir / "套磁候选分析.md", "fail", [issue])
+        validation_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+        recorded = parse(run_cli(
             "stage2-record-validation", "--professor-dir", self.prof_dir,
-            "--validation-file", validation_path))["status"], "ok")
+            "--validation-file", validation_path))
+        self.assertEqual(recorded["status"], "needs_correction", recorded)
 
-        facts = self.write_facts()
         plan = parse(run_cli("stage2-refine-plan", "--facts", facts,
                             "--validation-file", validation_path))
         self.assertEqual(plan["status"], "ok")
         self.assertEqual(len(plan["jobs"]), 1)
+        self.assertEqual(plan["jobs"][0]["direction_id"], "DIR00002")
         model_input = plan["jobs"][0]["model_input"]
         self.assertIn("current_narrative", model_input)
-        self.assertEqual(model_input["issues"][0]["rule"], "B5")
+        self.assertEqual(model_input["issues"][0]["rule"], issue["rule"])
+        self.assertEqual(model_input["issues"][0]["quote"], issue["quote"])
+        self.assertEqual(model_input["issues"][0]["suggestion"], issue["suggestion"])
 
         pack_path = self.prof_dir / "套磁候选输入.json"
-        pack = json.loads(pack_path.read_text(encoding="utf-8"))
-        narrative = pack["directions"][0]["narrative"]
-        block = dict(narrative["positioning"][0])
-        block["text"] = block["text"].replace("教授从", "教授先做了")
+        before_pack = json.loads(pack_path.read_text(encoding="utf-8"))
+        pack = copy.deepcopy(before_pack)
+        direction = next(d for d in pack["directions"]
+                         if d["direction_id"] == target_direction_id)
+        narrative = direction["narrative"]
+        positioning = copy.deepcopy(narrative["positioning"])
+        positioning[0]["text"] = positioning[0]["text"].replace(
+            "第二方向教授从", "第二方向教授先从")
         rewrite = {
-            "schema": 1, "kind": "narrative-rewrite", "collection_key": "DIR00001",
-            "positioning": [block],
+            "schema": 1, "kind": "narrative-rewrite",
+            "direction_id": target_direction_id,
+            "collection_key": direction["collection_key"],
+            "positioning": positioning,
             "gap_notes": [{"gap_id": gap_id, "summary": value["summary"],
                            "explanation": value["explanation"]}
                           for gap_id, value in narrative["gap_notes"].items()]
         }
         results = self.root / "rewrite-results"
         results.mkdir()
-        (results / "narrative-rewrite-DIR00001.json").write_text(
+        (results / "narrative-rewrite-DIR00002.json").write_text(
             json.dumps(rewrite, ensure_ascii=False), encoding="utf-8")
         cache_before = (self.prof_dir / "论文分析" / "_freshness_cache.json").read_bytes()
-        out = parse(run_cli("stage2-refine-finalize", "--facts", facts,
+        out = parse(run_cli("stage2-refine-finalize", "--professor-dir", self.prof_dir,
                             "--results", results, "--validation-file", validation_path))
         self.assertEqual(out["status"], "ok", out)
-        self.assertEqual(out["rewritten"], ["DIR00001"])
+        self.assertEqual(out["rewritten"], ["DIR00002"])
+        self.assertIn("validator_not_accepted",
+                      self.stage2_preflight_direction("DIR00002")["reason_codes"])
         updated_pack = json.loads(pack_path.read_text(encoding="utf-8"))
-        self.assertIn("教授先做了", updated_pack["directions"][0]["narrative"]["positioning"][0]["text"])
-        self.assertNotIn("validator", updated_pack)
+        before_second = next(d for d in before_pack["directions"]
+                             if d["direction_id"] == target_direction_id)
+        updated_second = next(d for d in updated_pack["directions"]
+                              if d["direction_id"] == target_direction_id)
+        self.assertNotEqual(updated_second["direction_id"], updated_second["collection_key"])
+        self.assertIn("教授先从", updated_second["narrative"]["positioning"][0]["text"])
+        self.assertEqual(before_second["narrative"]["gap_notes"],
+                         updated_second["narrative"]["gap_notes"])
+        self.assertEqual(before_second["narrative"]["positioning"][1:],
+                         updated_second["narrative"]["positioning"][1:])
+        self.assertIn("validator", updated_pack)
+        for before_direction in before_pack["directions"]:
+            after_direction = next(d for d in updated_pack["directions"]
+                                   if d["direction_id"] == before_direction["direction_id"])
+            if before_direction["direction_id"] == target_direction_id:
+                self.assertEqual(
+                    {key: value for key, value in before_direction.items() if key != "narrative"},
+                    {key: value for key, value in after_direction.items() if key != "narrative"})
+            else:
+                self.assertEqual(before_direction, after_direction)
         self.assertEqual(cache_before,
                          (self.prof_dir / "论文分析" / "_freshness_cache.json").read_bytes())
-        self.assertIn("教授先做了", (self.prof_dir / "套磁候选分析.md").read_text(encoding="utf-8"))
+        self.assertIn("教授先从", (self.prof_dir / "套磁候选分析.md").read_text(encoding="utf-8"))
+
+        second_validation_path = self.root / "stage2-second-validation.json"
+        second_report = stage2_style_validation_report(
+            self.prof_dir / "套磁候选分析.md")
+        second_validation_path.write_text(json.dumps(second_report, ensure_ascii=False),
+                                          encoding="utf-8")
+        second = parse(run_cli("stage2-record-validation", "--professor-dir", self.prof_dir,
+                               "--validation-file", second_validation_path))
+        self.assertEqual(second["status"], "ok", second)
+        final_pack = json.loads(pack_path.read_text(encoding="utf-8"))
+        self.assertEqual(final_pack["validator"]["results"]["DIR00002"]["result"], "pass")
+        self.assertEqual(final_pack["validator"]["results"]["DIR00002"]["rounds"], 2)
+        self.assertNotIn("validator_not_accepted",
+                         self.stage2_preflight_direction("DIR00002")["reason_codes"])
+        second_plan = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
+                                    "--validation-file", second_validation_path))
+        self.assertEqual(second_plan["status"], "ok", second_plan)
+        self.assertEqual(second_plan["jobs"], [])
 
     def test_14_global_red_line_does_not_leak_item_key(self):
         def extra(facts):
@@ -935,33 +1102,6 @@ class TestRunnerBasics(BaseEnv):
         self.assertTrue(any("AAAA1111" not in line and
                            "Synthetic comparison of input patterns" in line
                            for line in global_lines))
-
-    def test_15_stage2_refine_can_use_persisted_pack_without_facts(self):
-        self.stage2_run()
-        validation_path = self.root / "pack-only-validation.json"
-        validation_path.write_text(json.dumps({"results": [{
-            "direction_id": "DIR00001", "result": "fail_after_2_rounds",
-            "rounds": 2, "issues": [{"rule": "B5"}]
-        }]}, ensure_ascii=False), encoding="utf-8")
-        plan = parse(run_cli("stage2-refine-plan", "--professor-dir", self.prof_dir,
-                            "--validation-file", validation_path))
-        self.assertEqual(plan["status"], "ok", plan)
-        self.assertEqual(plan["directions"], ["DIR00001"])
-
-        pack = json.loads((self.prof_dir / "套磁候选输入.json").read_text(encoding="utf-8"))
-        narrative = pack["directions"][0]["narrative"]
-        block = dict(narrative["positioning"][0])
-        block["text"] = block["text"].replace("教授从", "教授先做了")
-        results = self.root / "pack-only-results"
-        results.mkdir()
-        (results / "narrative-rewrite-DIR00001.json").write_text(json.dumps({
-            "schema": 1, "kind": "narrative-rewrite", "collection_key": "DIR00001",
-            "positioning": [block], "gap_notes": []}, ensure_ascii=False), encoding="utf-8")
-        out = parse(run_cli("stage2-refine-finalize", "--professor-dir", self.prof_dir,
-                            "--results", results, "--validation-file", validation_path))
-        self.assertEqual(out["status"], "ok", out)
-        self.assertIn("教授先做了", (self.prof_dir / "套磁候选分析.md").read_text(encoding="utf-8"))
-
 
 ISSUE59_PROFESSOR = "試験 教授"
 ISSUE59_OTHER_PROFESSOR = "佐藤 花子"
