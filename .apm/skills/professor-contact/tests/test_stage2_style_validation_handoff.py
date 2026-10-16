@@ -495,11 +495,11 @@ class Stage2ValidationHandoffTests(BaseEnv):
         out = parse(run_cli("stage2-finalize", "--facts", facts_path,
                             "--preflight-file", proof_path, "--results", results))
         self.assertNotEqual(out["status"], "ok", out)
-        # Only a refusal that is NOT one of the unrelated failures (stale proof,
-        # missing/invalid result, bad parameters) can pass this check.
-        unrelated = {"invalid_params", "result_missing", "invalid_result_json",
-                     "preflight_inputs_changed", "resolved_directions_proof_mismatch",
-                     "missing_input_pack", "invalid_facts", "missing_candidate_state"}
+        # Only a refusal that is NOT one of the failures plan §5.1 T5.1 names as
+        # inconclusive can pass: bad parameters, a stale/mismatched preflight
+        # proof, a missing result, or an invalid result file.
+        unrelated = {"invalid_params", "preflight_inputs_changed",
+                     "result_missing", "invalid_result_json"}
         self.assertNotIn(out.get("reason_code"), unrelated, out)
         detail = " ".join(str(out.get(field) or "")
                           for field in ("message", "detail", "hint")).lower()
