@@ -5,6 +5,7 @@ from pathlib import Path
 
 from test_contact_state import (
     BaseEnv,
+    contact_state,
     parse,
     run_bound_stage2_finalize,
     run_cli,
@@ -99,14 +100,16 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assertIn("later:CCCC3333", direction["narrative"]["positioning"][0]["refs"])
         later_title = next(paper["title"] for paper in self.papers
                            if paper["item_key"] == "CCCC3333")
+        saved_later_paper = direction.get("narrative_later_papers", {}).get("CCCC3333")
+        self.assertIsInstance(saved_later_paper, dict)
+        self.assertEqual(saved_later_paper.get("title"), later_title)
+        self.assertNotIn("CCCC3333", contact_state.pack_paper_index(pack))
         analysis_lines = (self.prof_dir / "套磁候选分析.md").read_text(
             encoding="utf-8").splitlines()
         title_lines = [line for line in analysis_lines if later_title in line]
         self.assertEqual(len(title_lines), 1, title_lines)
         title_line = title_lines[0]
         self.assertIn("教授从", title_line)
-        direction.pop("narrative_later_papers", None)
-        pack_path.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
         first = self.write_validation(
             "first-round.json", quote=later_title,
             location=str(analysis_lines.index(title_line) + 1))
@@ -138,6 +141,78 @@ class Stage2ValidationHandoffTests(BaseEnv):
                                    "--validation-file", second))
         self.assertEqual(third_plan["status"], "ok", third_plan)
         self.assertEqual(third_plan["jobs"], [])
+
+        missing_env = self.__class__("test_stage2_second_blocking_round_is_terminal")
+        missing_env.setUp()
+        try:
+            missing_facts = missing_env.write_facts()
+            missing_results = missing_env.root / "missing-title-results"
+            missing_env.write_stage2_results(missing_results)
+            missing_narrative_path = missing_results / "narrative.json"
+            missing_narrative = json.loads(
+                missing_narrative_path.read_text(encoding="utf-8"))
+            missing_block = missing_narrative["directions"][0]["positioning"][0]
+            missing_block["text"] = missing_block["text"].replace(
+                "起研究合成输入比较；",
+                "起研究合成输入比较，并由后续论文 {{L:CCCC3333}} 展示处理路径；",
+                1)
+            missing_block["refs"].append("later:CCCC3333")
+            missing_narrative_path.write_text(
+                json.dumps(missing_narrative, ensure_ascii=False), encoding="utf-8")
+            missing_plan = parse(missing_env.run_bound_stage2_plan(missing_facts))
+            self.assertEqual(missing_plan["status"], "ok", missing_plan)
+            missing_finalized = parse(run_bound_stage2_finalize(
+                run_cli, missing_facts, "--results", missing_results))
+            self.assertEqual(missing_finalized["status"], "ok", missing_finalized)
+
+            missing_pack_path = missing_env.prof_dir / "套磁候选输入.json"
+            missing_pack = json.loads(
+                missing_pack_path.read_text(encoding="utf-8"))
+            missing_direction = next(
+                row for row in missing_pack["directions"]
+                if row["direction_id"] == "DIR00001")
+            self.assertIn("CCCC3333", missing_direction.get(
+                "narrative_later_papers", {}))
+            del missing_direction["narrative_later_papers"]
+            paper_index = contact_state.pack_paper_index(missing_pack)
+            paper_index.pop("CCCC3333", None)
+            self.assertNotIn("CCCC3333", paper_index)
+            missing_pack_path.write_text(
+                json.dumps(missing_pack, ensure_ascii=False), encoding="utf-8")
+
+            gap_quote = "研究计划比较另一种合成场景"
+            missing_analysis_path = missing_env.prof_dir / "套磁候选分析.md"
+            missing_analysis_lines = missing_analysis_path.read_text(
+                encoding="utf-8").splitlines()
+            gap_line = next(index + 1 for index, line in enumerate(missing_analysis_lines)
+                            if gap_quote in line)
+            missing_report = missing_env.write_validation(
+                "missing-later-title.json", quote=gap_quote,
+                location=str(gap_line))
+            recorded_missing = missing_env.record_validation(missing_report)
+            self.assertEqual(recorded_missing["status"], "needs_correction",
+                             recorded_missing)
+
+            before_refine_pack = json.loads(
+                missing_pack_path.read_text(encoding="utf-8"))
+            protected_directions = copy.deepcopy(before_refine_pack["directions"])
+            before_refine_analysis = missing_analysis_path.read_bytes()
+            missing_title = parse(run_cli(
+                "stage2-refine-plan", "--professor-dir", missing_env.prof_dir,
+                "--validation-file", missing_report))
+            self.assertNotIn(missing_title.get("status"),
+                             {"ok", "needs_correction"}, missing_title)
+            title_error = " ".join(str(missing_title.get(field, ""))
+                                   for field in ("reason_code", "message", "detail"))
+            self.assertTrue("title" in title_error.casefold() or "标题" in title_error,
+                            missing_title)
+            self.assertFalse(missing_title.get("jobs"), missing_title)
+            after_refine_pack = json.loads(
+                missing_pack_path.read_text(encoding="utf-8"))
+            self.assertEqual(after_refine_pack["directions"], protected_directions)
+            self.assertEqual(missing_analysis_path.read_bytes(), before_refine_analysis)
+        finally:
+            missing_env.tearDown()
 
     def test_stage2_report_for_stale_render_is_rejected_without_pack_write(self):
         self.stage2_run()

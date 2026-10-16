@@ -1741,8 +1741,6 @@ class Stage2PackRefineContext:
                             "year": paper.get("year"),
                             "authorship": paper.get("authorship"),
                             "analysis_file": paper.get("analysis_file")})
-            for key in self.narrative_later_keys_for(direction):
-                self.papers.setdefault(key, {"item_key": key, "title": "后续论文"})
             gaps = [dict(gap) for gap in direction.get("gap_shortlist", [])]
             gaps.extend(dict(gap) for gap in direction.get("gaps_excluded", []))
             supporting_keys = list(direction.get("supporting_item_keys") or [])
@@ -4379,6 +4377,8 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
                        state_fingerprint: str) -> str:
     professor = ctx.professor
     pack_directions = pack.get("directions") or []
+    for direction in pack_directions:
+        stage2_require_later_paper_titles(ctx, direction, pack)
     projected = {direction_machine_id(d): direction_papers(pack, d)
                  for d in pack_directions}
     full = sum(1 for papers in projected.values() for p in papers
@@ -5015,6 +5015,9 @@ def cmd_stage2_finalize(args) -> None:
         for gap_id, record in statuses.items():
             if isinstance(record, dict) and not record.get("cache_hit"):
                 cache_entries[gap_id] = {k: v for k, v in record.items() if k != "cache_hit"}
+    render_pack = {"papers": papers_map, "directions": pack_directions}
+    for direction in pack_directions:
+        stage2_require_later_paper_titles(ctx, direction, render_pack)
     # A display-only rename must re-render the analysis Markdown with the new
     # names WITHOUT triggering Stage-2 model work (the fingerprint excludes
     # display names on purpose).
@@ -5026,8 +5029,7 @@ def cmd_stage2_finalize(args) -> None:
     md_path = ctx.professor_dir / ANALYSIS_MD
     md_result = None
     if needed_keys or not ctx.pack or display_changed:
-        body = render_analysis_md(ctx, {"papers": papers_map, "directions": pack_directions},
-                                  state_fingerprint)
+        body = render_analysis_md(ctx, render_pack, state_fingerprint)
         md_result = managed_write(md_path, body, state_fingerprint,
                                   old_render.get(ANALYSIS_MD, {}).get("sha256"), decision)
         if md_result.get("needs_decision"):
@@ -10606,9 +10608,37 @@ def stage2_bound_render(professor_dir: Path, pack: dict) -> tuple[str, str]:
     return current, body
 
 
+def stage2_trusted_paper_title(paper: dict | None, item_key: str) -> str | None:
+    """Return a usable title only when a structured source contains one."""
+    if not isinstance(paper, dict):
+        return None
+    title = paper.get("title")
+    if not isinstance(title, str):
+        return None
+    title = title.strip()
+    if not title or title in ("后续论文", item_key):
+        return None
+    return title
+
+
+def stage2_merge_later_paper_source(target: dict, source: dict | None,
+                                   item_key: str) -> None:
+    if not isinstance(source, dict):
+        return
+    for field, value in source.items():
+        if value is None:
+            continue
+        if field == "title":
+            title = stage2_trusted_paper_title(source, item_key)
+            if title is not None:
+                target[field] = title
+        else:
+            target[field] = value
+
+
 def stage2_rendered_later_papers(body: str, professor_dir: Path,
-                                 direction: dict) -> dict:
-    """Recover later-paper citation data from the verified managed render."""
+                                 direction: dict, pack: dict | None = None) -> dict:
+    """Recover later-paper metadata without treating link labels as title facts."""
     narrative = direction.get("narrative")
     if not isinstance(narrative, dict):
         narrative = {}
@@ -10621,48 +10651,66 @@ def stage2_rendered_later_papers(body: str, professor_dir: Path,
         for kind, key in PLACEHOLDER_RE.findall(block.get("text") or "")
         if kind == "L"
     }
-    rendered = {}
+    rendered = {key: {"item_key": key} for key in later_keys}
     citation_re = re.compile(
         r"\[([^\]\n]*)\]\(zotero://select/library/items/([^)]+)\)"
         r"(?:｜\[分析\]\(([^)\n]+)\))?(?:（([^）]*)）)?")
     for match in citation_re.finditer(body):
-        label, key, analysis_path, year = match.groups()
+        _label, key, analysis_path, year = match.groups()
         if key not in later_keys:
             continue
-        title = (label[1:-1] if year is not None and label.startswith("《")
-                 and label.endswith("》") else label)
-        paper = rendered.setdefault(key, {"item_key": key, "title": title})
+        paper = rendered[key]
         if analysis_path and not paper.get("analysis_file"):
             paper["analysis_file"] = professor_dir / analysis_path
         if year and not paper.get("year"):
             paper["year"] = year
 
+    canonical_papers = pack_paper_index(pack or {})
     saved = direction.get("narrative_later_papers")
-    if isinstance(saved, dict):
-        for key in later_keys:
-            stored = saved.get(key)
-            if not isinstance(stored, dict):
-                continue
-            paper = rendered.setdefault(key, {"item_key": key})
-            for field, value in stored.items():
-                if value is not None and not (field == "title" and value == "后续论文"):
-                    paper[field] = value
+    for key in later_keys:
+        paper = rendered[key]
+        stage2_merge_later_paper_source(paper, canonical_papers.get(key), key)
+        stage2_merge_later_paper_source(
+            paper, saved.get(key) if isinstance(saved, dict) else None, key)
     return rendered
 
 
-def stage2_restore_pack_later_papers(ctx: Stage2PackRefineContext) -> None:
+def stage2_restore_pack_later_papers(
+        ctx: Stage2Context | Stage2PackRefineContext) -> None:
     """Restore old-pack L citation data before pure-pack renders or repair plans."""
     _, body = stage2_bound_render(ctx.professor_dir, ctx.pack)
     for direction in ctx.pack.get("directions", []):
         for key, paper in stage2_rendered_later_papers(
-                body, ctx.professor_dir, direction).items():
+                body, ctx.professor_dir, direction, ctx.pack).items():
             existing = ctx.papers.get(key)
             restored = dict(paper)
             if isinstance(existing, dict):
-                for field, value in existing.items():
-                    if value is not None and not (field == "title" and value == "后续论文"):
-                        restored[field] = value
+                stage2_merge_later_paper_source(restored, existing, key)
             ctx.papers[key] = restored
+
+
+def stage2_require_later_paper_titles(ctx, direction: dict,
+                                     pack: dict | None = None) -> None:
+    """Resolve each L reference from structured sources or fail before writing."""
+    sources_pack = pack if isinstance(pack, dict) else ctx.pack
+    canonical_papers = pack_paper_index(sources_pack or {})
+    saved = direction.get("narrative_later_papers")
+    for key in Stage2PackRefineContext.narrative_later_keys_for(direction):
+        existing = ctx.papers.get(key)
+        candidates = [existing,
+                      saved.get(key) if isinstance(saved, dict) else None,
+                      canonical_papers.get(key)]
+        title = next((value for candidate in candidates
+                      if (value := stage2_trusted_paper_title(candidate, key)) is not None),
+                     None)
+        if title is None:
+            fail("missing_later_paper_title",
+                 f"cannot render or refine later-paper reference {key}: "
+                 "no trusted title is available "
+                 "in the input pack or supported paper facts", item_key=key)
+        paper = dict(existing) if isinstance(existing, dict) else {"item_key": key}
+        paper["title"] = title
+        ctx.papers[key] = paper
 
 
 def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
@@ -10847,9 +10895,9 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
             projected = direction_papers(pack, direction)
             paper_lookup = {paper["item_key"]: paper for paper in projected}
             fallback_papers = dict(pack_paper_index(pack))
-            later_papers = stage2_rendered_later_papers(body, professor_dir, direction)
+            later_papers = stage2_rendered_later_papers(body, professor_dir, direction, pack)
             for key, paper in later_papers.items():
-                fallback_papers.setdefault(key, paper)
+                fallback_papers[key] = paper
             gap_no = {gap["gap_id"]: gap["no"]
                       for gap in direction.get("gap_shortlist", [])}
             seen = {}
@@ -11031,8 +11079,8 @@ def stage2_refine_context(args):
     if args.facts:
         ctx = Stage2Context(Path(args.facts))
         stage2_pack_matches_facts(ctx)
-        return ctx
-    ctx = Stage2PackRefineContext(Path(args.professor_dir))
+    else:
+        ctx = Stage2PackRefineContext(Path(args.professor_dir))
     stage2_restore_pack_later_papers(ctx)
     return ctx
 
@@ -11065,6 +11113,7 @@ def cmd_stage2_refine_plan(args) -> None:
         plan = plans.get(did)
         if not direction or not plan or not isinstance(direction.get("narrative"), dict):
             fail("invalid_result_json", f"input pack has no reusable narrative for {did}")
+        stage2_require_later_paper_titles(ctx, direction)
         issues = failed[did]
         jobs.append({
             "job_id": f"narrative-rewrite:{ctx.professor}:{did}",
@@ -11121,6 +11170,14 @@ def cmd_stage2_refine_finalize(args) -> None:
         emit({"status": "ok", "rewritten": [], "write_needed": False,
               "reason_code": "no_failed_directions"})
         return
+
+    directions = {direction_machine_id(direction): direction
+                  for direction in ctx.pack.get("directions", [])}
+    for did in sorted(failed):
+        direction = directions.get(did)
+        if direction is None:
+            fail("invalid_result_json", f"input pack has no reusable direction for {did}")
+        stage2_require_later_paper_titles(ctx, direction)
 
     results_dir = Path(args.results)
     rewrites = {}
