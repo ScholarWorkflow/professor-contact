@@ -73,6 +73,99 @@ def write_json(path: Path, payload):
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
 
+# ---------------------------------------------------------------------------
+# One resolve round = one exclusive results directory + one round identity.
+# `stage2-resolve-plan` requires `--results-dir`, stamps a `resolve_run_id`
+# into every emitted job, and `stage2-resolve-finalize` only accepts result
+# files that belong to that same round. Every helper below therefore hands the
+# SAME directory to plan and finalize, and allocates a fresh one per round.
+# ---------------------------------------------------------------------------
+
+def new_resolve_results_dir(root, prefix: str = "resolve-run") -> Path:
+    """Allocate a fresh, exclusive, absolute results directory for one round."""
+    root = Path(root)
+    for index in range(1000):
+        candidate = root / f"{prefix}.{index:02d}"
+        if not candidate.exists():
+            candidate.mkdir(parents=True)
+            return candidate.resolve()
+    raise AssertionError(f"no free {prefix} directory under {root}")
+
+
+def plan_resolve(facts_path, results_dir, *extra_arguments):
+    """Formal `stage2-resolve-plan` bound to this round's results directory."""
+    return parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path),
+                         "--results-dir", str(results_dir), *map(str, extra_arguments)))
+
+
+def finalize_resolve(facts_path, results_dir):
+    """Formal `stage2-resolve-finalize` reading the same round directory."""
+    return parse(run_cli("stage2-resolve-finalize", "--facts", str(facts_path),
+                         "--results", str(results_dir)))
+
+
+def facts_directions(facts_path) -> dict:
+    """collection_key -> direction entry of the facts file under test."""
+    payload = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+    return {entry["collection_key"]: entry for entry in payload.get("directions") or []}
+
+
+def unchanged_resolved(direction) -> dict:
+    """The complete `unchanged` payload a model would return for `direction`."""
+    ckey = direction["collection_key"]
+    return {
+        "resolved_direction_id": ckey,
+        "provisional_direction_id": ckey,
+        "name_ja": direction.get("name_ja") or "",
+        "name_zh": direction.get("name_zh") or "",
+        "resolution_type": "unchanged",
+        "papers_to_add": [],
+        "papers_to_remove": [],
+        "paper_justifications": {},
+        "split_target": None,
+        "merge_target": None,
+        "user_note": direction.get("user_note") or "",
+    }
+
+
+def resolve_result(job, resolved, resolve_run_id) -> dict:
+    """One model result file bound to exactly this round's job identity."""
+    return {
+        "schema": 1,
+        "kind": "resolve",
+        "direction_id": job["direction_id"],
+        "resolve_run_id": resolve_run_id,
+        "resolved": resolved,
+    }
+
+
+def write_resolve_results(results_dir, plan_payload, resolve_results, facts_path, *,
+                          skip=(), resolve_run_id=None) -> dict:
+    """Write this round's simulated model results for every emitted job.
+
+    `resolve_results` maps collection key -> `resolved` payload for directions
+    whose business content a test cares about; every other emitted job gets a
+    complete synthesized `unchanged` payload, because a missing file is no
+    longer a legal way to express "nothing changed". `skip` deliberately leaves
+    a file absent (the missing-result case), and `resolve_run_id` overrides the
+    round identity (the stale-round case).
+    """
+    run_id = resolve_run_id or plan_payload["resolve_run_id"]
+    directions = facts_directions(facts_path)
+    written = {}
+    for job in plan_payload.get("jobs") or []:
+        ckey = job["direction_id"]
+        if ckey in skip:
+            continue
+        resolved = (resolve_results or {}).get(ckey)
+        if resolved is None:
+            resolved = unchanged_resolved(directions[ckey])
+        path = Path(results_dir) / job["result_file"]
+        write_json(path, resolve_result(job, resolved, run_id))
+        written[ckey] = path
+    return written
+
+
 class ResolvedDirectionPlanTests(unittest.TestCase):
     """Tests for stage2-resolve-plan command."""
 
@@ -134,8 +227,8 @@ class ResolvedDirectionPlanTests(unittest.TestCase):
         }
         facts_path = self.root / "facts.json"
         write_json(facts_path, facts)
-        result = run_cli("stage2-resolve-plan", "--facts", str(facts_path))
-        payload = parse(result)
+        results_dir = new_resolve_results_dir(self.root)
+        payload = plan_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(len(payload["jobs"]), 1)
         self.assertEqual(payload["jobs"][0]["kind"], "resolve")
@@ -178,8 +271,8 @@ class ResolvedDirectionPlanTests(unittest.TestCase):
         }
         facts_path = self.root / "facts.json"
         write_json(facts_path, facts)
-        result = run_cli("stage2-resolve-plan", "--facts", str(facts_path))
-        payload = parse(result)
+        results_dir = new_resolve_results_dir(self.root)
+        payload = plan_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "ok")
         # P2 should be flagged for removal (chemistry vs signal processing)
         self.assertTrue(len(payload["candidates"]["removals"]) > 0)
@@ -222,8 +315,8 @@ class ResolvedDirectionPlanTests(unittest.TestCase):
         }
         facts_path = self.root / "facts.json"
         write_json(facts_path, facts)
-        result = run_cli("stage2-resolve-plan", "--facts", str(facts_path))
-        payload = parse(result)
+        results_dir = new_resolve_results_dir(self.root)
+        payload = plan_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "ok")
         # No removals expected since both papers match signal processing
         self.assertEqual(len(payload["candidates"]["removals"]), 0)
@@ -253,8 +346,8 @@ class ResolvedDirectionFinalizeTests(unittest.TestCase):
                 "analysis_file": str(analysis), "sidecar_file": str(analysis) + ".future_work.json",
                 "facts_file": str(analysis) + ".facts.json", "pdf_file": str(pdf)}
 
-    def test_resolve_finalize_unchanged_when_no_result(self):
-        """stage2-resolve-finalize should produce unchanged resolution when no result file."""
+    def test_resolve_finalize_rejects_missing_new_result(self):
+        """A new resolve job with no result file must fail, never default to accepted."""
         papers = [
             self._make_paper_with_facts("P1", "Adaptive Signal Processing",
                                         ["signal", "processing"],
@@ -286,14 +379,21 @@ class ResolvedDirectionFinalizeTests(unittest.TestCase):
         }
         facts_path = self.root / "facts.json"
         write_json(facts_path, facts)
-        results_dir = self.root / "results"
-        results_dir.mkdir()
-        result = run_cli("stage2-resolve-finalize", "--facts", str(facts_path), "--results", str(results_dir))
-        payload = parse(result)
-        self.assertEqual(payload["status"], "ok")
-        self.assertEqual(len(payload["directions"]), 1)
-        self.assertEqual(payload["directions"][0]["resolution_type"], "unchanged")
-        self.assertFalse(payload["needs_user_choice"])
+        # The plan really emits a job for this direction, and the round
+        # directory stays empty: no file may be invented into an accepted
+        # "unchanged" resolution.
+        results_dir = new_resolve_results_dir(self.root)
+        plan_payload = plan_resolve(facts_path, results_dir)
+        self.assertEqual(plan_payload["status"], "ok")
+        self.assertEqual([job["direction_id"] for job in plan_payload["jobs"]], ["dir_A"])
+        payload = finalize_resolve(facts_path, results_dir)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["reason_code"], "result_missing")
+        self.assertIn(str(results_dir / "resolve-dir_A.json"), payload["message"])
+        sidecar = self.prof_dir / "论文分析" / "_resolved_directions.json"
+        self.assertFalse(sidecar.exists(),
+                         "a missing result must not write accepted resolved state")
+        self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
 
     def test_resolve_finalize_applies_removal(self):
         """stage2-resolve-finalize should apply paper removal from valid result."""
@@ -331,11 +431,11 @@ class ResolvedDirectionFinalizeTests(unittest.TestCase):
         }
         facts_path = self.root / "facts.json"
         write_json(facts_path, facts)
-        results_dir = self.root / "results"
-        results_dir.mkdir()
-        # Write a resolve result that removes P2
+        results_dir = new_resolve_results_dir(self.root)
+        plan_payload = plan_resolve(facts_path, results_dir)
+        # Write a resolve result that removes P2, bound to this round's job.
         resolve_result = {
-            "schema": 1, "kind": "resolve", "collection_key": "dir_A",
+            "schema": 1, "kind": "resolve", "direction_id": "dir_A",
             "resolved": {
                 "resolved_direction_id": "dir_A",
                 "provisional_direction_id": "dir_A",
@@ -350,9 +450,8 @@ class ResolvedDirectionFinalizeTests(unittest.TestCase):
                 "user_note": "",
             },
         }
-        write_json(results_dir / "resolve-dir_A.json", resolve_result)
-        result = run_cli("stage2-resolve-finalize", "--facts", str(facts_path), "--results", str(results_dir))
-        payload = parse(result)
+        write_resolve_results(results_dir, plan_payload, {"dir_A": resolve_result["resolved"]}, facts_path)
+        payload = finalize_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["directions"][0]["resolution_type"], "refined")
         self.assertIn("P2", payload["directions"][0]["papers_to_remove"])
@@ -391,11 +490,13 @@ class ResolvedDirectionFinalizeTests(unittest.TestCase):
         }
         facts_path = self.root / "facts.json"
         write_json(facts_path, facts)
-        results_dir = self.root / "results"
-        results_dir.mkdir()
-        # Try to remove a non-provisional paper (P99 doesn't exist in provisional)
+        results_dir = new_resolve_results_dir(self.root)
+        plan_payload = plan_resolve(facts_path, results_dir)
+        # Try to remove a non-provisional paper (P99 doesn't exist in
+        # provisional). The result is otherwise a well-formed, current-round
+        # file so the rejection is decided by the membership rule.
         resolve_result = {
-            "schema": 1, "kind": "resolve", "collection_key": "dir_A",
+            "schema": 1, "kind": "resolve", "direction_id": "dir_A",
             "resolved": {
                 "resolved_direction_id": "dir_A",
                 "provisional_direction_id": "dir_A",
@@ -410,9 +511,8 @@ class ResolvedDirectionFinalizeTests(unittest.TestCase):
                 "user_note": "",
             },
         }
-        write_json(results_dir / "resolve-dir_A.json", resolve_result)
-        result = run_cli("stage2-resolve-finalize", "--facts", str(facts_path), "--results", str(results_dir))
-        payload = parse(result)
+        write_resolve_results(results_dir, plan_payload, {"dir_A": resolve_result["resolved"]}, facts_path)
+        payload = finalize_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "error")
         self.assertEqual(payload["reason_code"], "invalid_result_json")
 
@@ -468,18 +568,23 @@ class ResolvedPipelineMixin:
         prepare_stage2_proof(run_cli, facts_path)
         return facts_path
 
-    def run_resolve(self, facts_path, resolve_results):
-        """resolve-plan → write per-direction resolve results → resolve-finalize."""
-        plan_payload = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+    def run_resolve(self, facts_path, resolve_results, *, missing=(), results_dir=None,
+                    resolve_run_id=None):
+        """One resolve round: plan → write THIS round's results → finalize.
+
+        Allocates an exclusive results directory per round, hands the same
+        directory to `stage2-resolve-finalize`, and fills every emitted job
+        with a complete result carrying that round's `resolve_run_id` (a
+        missing file is no longer a legal "nothing changed" input). `missing`
+        names directions whose file is deliberately left absent, and
+        `results_dir` / `resolve_run_id` let a test re-enter or forge a round.
+        """
+        results_dir = results_dir or new_resolve_results_dir(self.root)
+        plan_payload = plan_resolve(facts_path, results_dir)
         self.assertEqual(plan_payload["status"], "ok")
-        results_dir = self.root / "resolve_results"
-        results_dir.mkdir(exist_ok=True)
-        for ckey, resolved in resolve_results.items():
-            write_json(results_dir / f"resolve-{ckey}.json", {
-                "schema": 1, "kind": "resolve", "collection_key": ckey, "resolved": resolved})
-        finalize_payload = parse(run_cli("stage2-resolve-finalize",
-                                         "--facts", str(facts_path),
-                                         "--results", str(results_dir)))
+        write_resolve_results(results_dir, plan_payload, resolve_results, facts_path,
+                              skip=missing, resolve_run_id=resolve_run_id)
+        finalize_payload = finalize_resolve(facts_path, results_dir)
         self.assertEqual(finalize_payload["status"], "ok",
                          msg=json.dumps(finalize_payload, ensure_ascii=False))
         return plan_payload, finalize_payload
@@ -738,8 +843,8 @@ class MergeCandidateDetectionTests(unittest.TestCase):
         }
         facts_path = self.root / "facts.json"
         write_json(facts_path, facts)
-        result = run_cli("stage2-resolve-plan", "--facts", str(facts_path))
-        payload = parse(result)
+        results_dir = new_resolve_results_dir(self.root)
+        payload = plan_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "ok")
         # Both directions share papers and have high profile overlap, should flag merge
         self.assertTrue(len(payload["candidates"]["merges"]) > 0)
@@ -914,29 +1019,25 @@ class Stage2SplitEndToEndTests(ResolvedPipelineMixin, unittest.TestCase):
             self.make_direction("dir_B", ["P2"]),
             self.make_direction("dir_C", ["P3"]),
         ])
-        results_dir = self.root / "resolve_results"
-        results_dir.mkdir()
-        write_json(results_dir / "resolve-dir_A.json", {
-            "schema": 1, "kind": "resolve", "collection_key": "dir_A",
-            "resolved": {"resolved_direction_id": "dir_A", "provisional_direction_id": "dir_A",
-                         "name_ja": "A", "name_zh": "甲", "resolution_type": "unchanged",
-                         "papers_to_add": [], "papers_to_remove": [], "paper_justifications": {},
-                         "split_target": None, "merge_target": None, "user_note": ""}})
-        write_json(results_dir / "resolve-dir_B.json", {
-            "schema": 1, "kind": "resolve", "collection_key": "dir_B",
-            "resolved": {"resolved_direction_id": "dir_B", "provisional_direction_id": "dir_B",
-                         "name_ja": "B", "name_zh": "乙", "resolution_type": "merged_into",
-                         "papers_to_add": [], "papers_to_remove": [], "paper_justifications": {},
-                         "split_target": None, "merge_target": "dir_C", "user_note": ""}})
-        write_json(results_dir / "resolve-dir_C.json", {
-            "schema": 1, "kind": "resolve", "collection_key": "dir_C",
-            "resolved": {"resolved_direction_id": "dir_C", "provisional_direction_id": "dir_C",
-                         "name_ja": "C", "name_zh": "丙", "resolution_type": "merged_into",
-                         "papers_to_add": [], "papers_to_remove": [], "paper_justifications": {},
-                         "split_target": None, "merge_target": "dir_A", "user_note": ""}})
-        result = run_cli("stage2-resolve-finalize", "--facts", str(facts_path),
-                         "--results", str(results_dir))
-        payload = parse(result)
+        results_dir = new_resolve_results_dir(self.root)
+        plan_payload = plan_resolve(facts_path, results_dir)
+        self.assertEqual(plan_payload["status"], "ok",
+                         msg=json.dumps(plan_payload, ensure_ascii=False))
+        write_resolve_results(results_dir, plan_payload, {
+            "dir_A": {"resolved_direction_id": "dir_A", "provisional_direction_id": "dir_A",
+                      "name_ja": "A", "name_zh": "甲", "resolution_type": "unchanged",
+                      "papers_to_add": [], "papers_to_remove": [], "paper_justifications": {},
+                      "split_target": None, "merge_target": None, "user_note": ""},
+            "dir_B": {"resolved_direction_id": "dir_B", "provisional_direction_id": "dir_B",
+                      "name_ja": "B", "name_zh": "乙", "resolution_type": "merged_into",
+                      "papers_to_add": [], "papers_to_remove": [], "paper_justifications": {},
+                      "split_target": None, "merge_target": "dir_C", "user_note": ""},
+            "dir_C": {"resolved_direction_id": "dir_C", "provisional_direction_id": "dir_C",
+                      "name_ja": "C", "name_zh": "丙", "resolution_type": "merged_into",
+                      "papers_to_add": [], "papers_to_remove": [], "paper_justifications": {},
+                      "split_target": None, "merge_target": "dir_A", "user_note": ""},
+        }, facts_path)
+        payload = finalize_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "error")
         self.assertEqual(payload["reason_code"], "invalid_result_json")
         self.assertIn("merge chain", payload["message"])
@@ -969,14 +1070,14 @@ class CandidateUnionEvidenceTests(ResolvedPipelineMixin, unittest.TestCase):
         direction["relevant_keys"] = ["P1"]  # abstract gate dropped P2
         facts_path = self.write_facts(papers, [direction])
 
-        before = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        before = plan_resolve(facts_path, new_resolve_results_dir(self.root))
         self.assertEqual(before["directions"][0]["action"], "process")
         # Evidence must cover BOTH candidates even though only P1 is relevant.
         evidence_keys = {p["item_key"] for p in before["jobs"][0]["model_input"]["paper_evidence"]}
         self.assertEqual(evidence_keys, {"P1", "P2"})
 
         self.run_resolve(facts_path, {})
-        after = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        after = plan_resolve(facts_path, new_resolve_results_dir(self.root))
         self.assertEqual(after["directions"][0]["action"], "reuse")
 
         # Change the non-relevant candidate's facts sidecar: the resolution
@@ -985,7 +1086,7 @@ class CandidateUnionEvidenceTests(ResolvedPipelineMixin, unittest.TestCase):
         analysis = self.prof_dir / "论文分析" / "P2.md"
         make_facts_sidecar(analysis, self.root / "P2.pdf", ["Future work B."],
                            topic_terms=["制御", "ロボット"])
-        third = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        third = plan_resolve(facts_path, new_resolve_results_dir(self.root))
         self.assertEqual(third["directions"][0]["action"], "process",
                          "a facts change on a non-relevant candidate must invalidate "
                          "the resolved state (candidate-union evidence scope)")
@@ -1094,14 +1195,16 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
         ]
         facts_path = self.write_facts(papers, [self.make_direction("dir_A", ["P1"])])
 
-        first = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        first_dir = new_resolve_results_dir(self.root)
+        first = plan_resolve(facts_path, first_dir)
         self.assertEqual(first["status"], "ok")
         self.assertEqual(first["directions"][0]["action"], "process")
         self.assertTrue(first["write_needed"])
 
         self.run_resolve(facts_path, {})  # writes the sidecar with fingerprints
 
-        second = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        second_dir = new_resolve_results_dir(self.root)
+        second = plan_resolve(facts_path, second_dir)
         self.assertEqual(second["status"], "ok")
         self.assertEqual(second["directions"][0]["action"], "reuse")
         self.assertEqual(second["jobs"], [])
@@ -1120,7 +1223,8 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
         make_facts_sidecar(analysis, self.root / "P1.pdf", ["Future work."],
                            topic_terms=["信号", "処理", "新項目"])
 
-        second = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        second_dir = new_resolve_results_dir(self.root)
+        second = plan_resolve(facts_path, second_dir)
         self.assertEqual(second["directions"][0]["action"], "process")
         self.assertTrue(second["write_needed"])
 
@@ -1137,6 +1241,7 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
                             ["More experiments."]),
         ]
         facts_path = self.write_facts(papers, [self.make_direction("dir_A", ["P1", "P2"])])
+        results_dir = new_resolve_results_dir(self.root)
         _, first = self.run_resolve(facts_path, {
             "dir_A": {
                 "resolved_direction_id": "dir_A",
@@ -1147,16 +1252,15 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
                 "paper_justifications": {"P2": "Topic mismatch"},
                 "split_target": None, "merge_target": None, "user_note": "",
             },
-        })
+        }, results_dir=results_dir)
         self.assertTrue(first["needs_user_choice"])
 
-        # Second run with an empty results dir BEFORE the user chose: the
-        # entry is still only a proposal and keeps asking for the choice.
-        results_dir = self.root / "resolve_results"
+        # Second run with this round's directory emptied BEFORE the user
+        # chose: the entry is still only a proposal and keeps asking for the
+        # choice.
         for stale in results_dir.glob("resolve-*.json"):
             stale.unlink()
-        pending_rerun = parse(run_cli("stage2-resolve-finalize",
-                                      "--facts", str(facts_path), "--results", str(results_dir)))
+        pending_rerun = finalize_resolve(facts_path, results_dir)
         self.assertEqual(pending_rerun["status"], "ok",
                          msg=json.dumps(pending_rerun, ensure_ascii=False))
         pending_entry = next(d for d in pending_rerun["directions"]
@@ -1180,8 +1284,7 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
         sidecar = json.loads((self.prof_dir / "论文分析" / "_resolved_directions.json")
                              .read_text(encoding="utf-8"))
         self.assertEqual(sidecar["directions"][0].get("acceptance"), "accepted")
-        accepted_rerun = parse(run_cli("stage2-resolve-finalize",
-                                       "--facts", str(facts_path), "--results", str(results_dir)))
+        accepted_rerun = finalize_resolve(facts_path, results_dir)
         self.assertEqual(accepted_rerun["status"], "ok",
                          msg=json.dumps(accepted_rerun, ensure_ascii=False))
         accepted_entry = next(d for d in accepted_rerun["directions"]
@@ -1250,7 +1353,8 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
         return facts_path, papers
 
     def _keep_provisional(self, facts_path, ckey):
-        results_dir = self.root / "resolve_results"
+        results_dir = new_resolve_results_dir(self.root)
+        plan_resolve(facts_path, results_dir)
         return parse(run_cli("stage2-resolve-finalize",
                              "--facts", str(facts_path),
                              "--results", str(results_dir),
@@ -1296,7 +1400,7 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
         facts_path, papers = self._material_proposal_setup()
         self._keep_provisional(facts_path, "dir_A")
 
-        plan = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        plan = plan_resolve(facts_path, new_resolve_results_dir(self.root))
         self.assertEqual(plan["status"], "ok", msg=json.dumps(plan, ensure_ascii=False))
         actions = {row["direction_id"]: row["action"] for row in plan["directions"]}
         self.assertEqual(
@@ -1306,7 +1410,7 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
 
         make_facts_sidecar(Path(papers[1]["analysis_file"]), self.root / "P2.pdf",
                            ["Future work B."], topic_terms=["electro", "catalysis"])
-        changed = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        changed = plan_resolve(facts_path, new_resolve_results_dir(self.root))
         self.assertEqual(changed["status"], "ok", msg=json.dumps(changed, ensure_ascii=False))
         actions = {row["direction_id"]: row["action"] for row in changed["directions"]}
         self.assertEqual(
@@ -1356,11 +1460,12 @@ class StructuralResolutionEvidenceGateTests(ResolvedPipelineMixin, unittest.Test
         for paper in papers:
             self._break_facts_join(paper)
 
-        results_dir = self.root / "resolve_results"
-        results_dir.mkdir()
-        write_json(results_dir / "resolve-dir_A.json", {
-            "schema": 1, "kind": "resolve", "collection_key": "dir_A",
-            "resolved": {
+        results_dir = new_resolve_results_dir(self.root)
+        plan_payload = plan_resolve(facts_path, results_dir)
+        self.assertEqual(plan_payload["status"], "ok",
+                         msg=json.dumps(plan_payload, ensure_ascii=False))
+        write_resolve_results(results_dir, plan_payload, {
+            "dir_A": {
                 "resolved_direction_id": "dir_A",
                 "provisional_direction_id": "dir_A",
                 "name_ja": "信号処理",
@@ -1373,10 +1478,8 @@ class StructuralResolutionEvidenceGateTests(ResolvedPipelineMixin, unittest.Test
                 "merge_target": "dir_B",
                 "user_note": "",
             },
-        })
-        payload = parse(run_cli("stage2-resolve-finalize",
-                                "--facts", str(facts_path),
-                                "--results", str(results_dir)))
+        }, facts_path)
+        payload = finalize_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "error", msg=json.dumps(payload, ensure_ascii=False))
         self.assertEqual(payload["reason_code"], "invalid_result_json")
         self.assertIn("full-text", payload["message"])
@@ -1389,11 +1492,12 @@ class StructuralResolutionEvidenceGateTests(ResolvedPipelineMixin, unittest.Test
                                            name_zh="信号处理", summary="signal processing")])
         self._break_facts_join(paper)
 
-        results_dir = self.root / "resolve_results"
-        results_dir.mkdir()
-        write_json(results_dir / "resolve-dir_A.json", {
-            "schema": 1, "kind": "resolve", "collection_key": "dir_A",
-            "resolved": {
+        results_dir = new_resolve_results_dir(self.root)
+        plan_payload = plan_resolve(facts_path, results_dir)
+        self.assertEqual(plan_payload["status"], "ok",
+                         msg=json.dumps(plan_payload, ensure_ascii=False))
+        write_resolve_results(results_dir, plan_payload, {
+            "dir_A": {
                 "resolved_direction_id": "dir_A",
                 "provisional_direction_id": "dir_A",
                 "name_ja": "適応信号処理",
@@ -1406,10 +1510,8 @@ class StructuralResolutionEvidenceGateTests(ResolvedPipelineMixin, unittest.Test
                 "merge_target": None,
                 "user_note": "",
             },
-        })
-        payload = parse(run_cli("stage2-resolve-finalize",
-                                "--facts", str(facts_path),
-                                "--results", str(results_dir)))
+        }, facts_path)
+        payload = finalize_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "error", msg=json.dumps(payload, ensure_ascii=False))
         self.assertEqual(payload["reason_code"], "invalid_result_json")
         self.assertIn("full-text", payload["message"])
@@ -1526,7 +1628,8 @@ class ResolveAcceptanceBoundaryTests(ResolvedPipelineMixin, unittest.TestCase):
         })
         self.assertTrue(proposal["needs_user_choice"])
 
-        results_dir = self.root / "resolve_results"
+        results_dir = new_resolve_results_dir(self.root)
+        plan_resolve(facts_path, results_dir)
         kept = parse(run_cli("stage2-resolve-finalize", "--facts", str(facts_path),
                              "--results", str(results_dir), "--keep-provisional", "dir_A"))
         self.assertEqual(kept["status"], "ok", msg=json.dumps(kept, ensure_ascii=False))

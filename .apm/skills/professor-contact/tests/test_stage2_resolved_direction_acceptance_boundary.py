@@ -9,7 +9,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from test_stage2_resolved_direction import ResolvedPipelineMixin, parse, run_cli
+from test_stage2_resolved_direction import (
+    ResolvedPipelineMixin,
+    new_resolve_results_dir,
+    parse,
+    plan_resolve,
+    run_cli,
+)
 
 
 class ResolvedDirectionAcceptanceBoundaryTests(ResolvedPipelineMixin, unittest.TestCase):
@@ -102,12 +108,17 @@ class ResolvedDirectionAcceptanceBoundaryTests(ResolvedPipelineMixin, unittest.T
         )
         self.assertTrue(resolve_finalize["needs_user_choice"])
 
-        empty_results = self.root / "keep_results"
-        empty_results.mkdir()
+        # The explicit keep-provisional decision is taken in a NEW resolve round:
+        # allocate that round's exclusive results directory, plan the round, and
+        # hand the SAME directory to finalize. dir_A is named explicitly; dir_B
+        # keeps no model file and must stay pending.
+        keep_round = new_resolve_results_dir(self.root)
+        keep_plan = plan_resolve(facts_path, keep_round)
+        self.assertEqual(keep_plan["status"], "ok", msg=json.dumps(keep_plan, ensure_ascii=False))
         keep_payload = parse(run_cli(
             "stage2-resolve-finalize",
             "--facts", str(facts_path),
-            "--results", str(empty_results),
+            "--results", str(keep_round),
             "--keep-provisional", "dir_A",
         ))
         self.assertEqual(keep_payload["status"], "ok", msg=json.dumps(keep_payload, ensure_ascii=False))
