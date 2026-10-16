@@ -41,7 +41,7 @@ Return exactly one final assistant business message whose entire body is a JSON 
 
 ## Authoritative base contract
 
-At startup, read `.apm/skills/professor-contact/docs/stage5-legacy-contract.md` as the ordinary Stage 5 reference resource and follow all of its rules for:
+At startup, read `docs/stage5-legacy-contract.md` relative to the `professor-contact` skill root: the directory containing the actually loaded, installed `SKILL.md` for this invocation (`<professor-contact-skill-dir>`). Resolve this resource from that skill root, not from the current working directory, the agent file's directory, or a source checkout. Use it as the ordinary Stage 5 reference resource and follow all of its rules for:
 
 - input boundaries and allowed facts;
 - Stage 2.5 pre-send verification;
