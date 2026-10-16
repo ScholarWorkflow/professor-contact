@@ -7,6 +7,7 @@ re-render with a bounded correction lifecycle.
 """
 import copy
 import json
+import shutil
 from pathlib import Path
 
 from test_contact_state import (
@@ -97,8 +98,14 @@ class Stage2ValidationHandoffTests(BaseEnv):
     # -- helpers shared by the T4/T5 scenarios (plan §5.1) -------------------
 
     def _fresh_stage2_env(self):
-        """One independent BaseEnv instance for an isolated synthetic state."""
-        env = self.__class__("_isolated_stage2_fixture")
+        """One independent BaseEnv instance for an isolated synthetic state.
+
+        ``unittest.TestCase`` refuses a method name the class does not define,
+        so the container reuses this instance's real test name and only runs its
+        ``setUp()``; the inner test method itself is never executed here, and its
+        teardown is registered once on the outer test.
+        """
+        env = self.__class__(self._testMethodName)
         env.setUp()
         self.addCleanup(env.tearDown)
         return env
@@ -440,28 +447,66 @@ class Stage2ValidationHandoffTests(BaseEnv):
                      "validator_sha256": validator["validation_sha256"],
                      "render_sha256": validator["render_sha256"]}
 
-    def _t5_assert_missing_member_source_rejected(self):
-        """Plan §3.1.1: no legal original-member source fails before any write."""
+    def _t5_missing_member_source_state(self):
+        """Legal current-facts pack with ONLY the original member source removed.
+
+        Plan §5.1 T5.1 (test-r5): every other fact and existing authoritative
+        artifact stays as generated, the modified facts are re-bound through the
+        formal ``stage2-preflight``/``stage2-plan`` pair, and the complete
+        freshness/narrative results of the legal run are reused, filling only
+        what this round's plan still asks for. That keeps the refusal from
+        landing on a stale proof, a missing result or a format error.
+        """
         env = self._fresh_stage2_env()
-        facts_path, _generated = env._t5_generate_pack()
-        proof_path, _receipt = env._t5_preflight(facts_path, "t5-missing-members-preflight.json")
-        gap_free_results = env.root / "t5-missing-members-results"
-        gap_free_results.mkdir()
-        env._t5_write_narrative(gap_free_results, gap_notes=False)
+        facts_path, generated_results = env._t5_generate_pack()
         facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
         for direction in facts["directions"]:
             direction.pop("member_keys", None)
             direction.pop("provisional_member_keys", None)
         Path(facts_path).write_text(json.dumps(facts, ensure_ascii=False, indent=1),
                                     encoding="utf-8")
+        proof_path, _receipt = env._t5_preflight(facts_path,
+                                                 "t5-missing-members-preflight.json")
+        results = env.root / "t5-missing-members-results"
+        results.mkdir()
+        for existing in sorted(generated_results.glob("*.json")):
+            shutil.copyfile(existing, results / existing.name)
+        plan = parse(run_cli("stage2-plan", "--facts", facts_path,
+                             "--preflight-file", proof_path))
+        self.assertEqual(plan["status"], "ok", plan)
+        for job in plan["jobs"]:
+            if (results / job["result_file"]).exists():
+                continue
+            if job["kind"] == "narrative":
+                env._t5_write_narrative(results)
+            elif job["kind"] == "freshness":
+                env.write_stage2_results(results, directions=facts["directions"])
+            else:
+                self.fail(f"unexpected stage2 job kind in the T5 fixture: {job}")
+        return env, facts_path, proof_path, results
+
+    def _t5_assert_missing_member_source_rejected(self):
+        """Plan §3.1.1: no legal original-member source fails before any write."""
+        env, facts_path, proof_path, results = self._t5_missing_member_source_state()
         pack_path = env.prof_dir / "套磁候选输入.json"
         analysis_path = env.prof_dir / contact_state.ANALYSIS_MD
         pack_before = pack_path.read_bytes()
         analysis_before = analysis_path.read_bytes()
         out = parse(run_cli("stage2-finalize", "--facts", facts_path,
-                            "--preflight-file", proof_path, "--results", gap_free_results))
+                            "--preflight-file", proof_path, "--results", results))
         self.assertNotEqual(out["status"], "ok", out)
-        self.assertTrue(out.get("reason_code") or out.get("message"), out)
+        # Only a refusal that is NOT one of the unrelated failures (stale proof,
+        # missing/invalid result, bad parameters) can pass this check.
+        unrelated = {"invalid_params", "result_missing", "invalid_result_json",
+                     "preflight_inputs_changed", "resolved_directions_proof_mismatch",
+                     "missing_input_pack", "invalid_facts", "missing_candidate_state"}
+        self.assertNotIn(out.get("reason_code"), unrelated, out)
+        detail = " ".join(str(out.get(field) or "")
+                          for field in ("message", "detail", "hint")).lower()
+        self.assertTrue(
+            any(marker in detail for marker in
+                ("provisional_member_keys", "member_keys", "member", "成员")),
+            f"refusal does not name the missing original member source: {out}")
         self.assertEqual(pack_path.read_bytes(), pack_before)
         self.assertEqual(analysis_path.read_bytes(), analysis_before)
 
