@@ -156,15 +156,15 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-resolve-fi
 2. 在上述新版本第一轮报告中指出两个方向的可修订问题。按 `--direction-id` 只修第一个后，仍为 round 1/needs_correction，未完成方向继续有任务，提前第二轮记录被拒绝；修完剩余方向后才是 awaiting_second_validation。新第二轮报告记录后进入既有终态；复用原“第二轮仍阻断”场景确认停止、不能开第三轮。每次只断言本次改变的正文、pending/correction IDs、round/phase 与相应绑定；不新建历史校验账本。
 3. 对照合法不变包：真正 reuse_all 不写时间戳或重置 validator。再直接调用普通 `stage2-finalize`，传相同 facts、有效归属文件及对应结果目录/预检证明，确保实际执行了无新业务内容的普通 finalize，而非只停在 preflight。其仅重写生成时间/缓存时，在旧绑定有效的前提下保留 round/phase/问题及修订记录，并与新包正确绑定；若实现选择等价状态完全不写，原绑定和状态保持也满足目标，仍须完成该调用。沿用一个已有未完成纠错状态观察即可，不把每个 phase 做排列组合。另一个明确旧绑定已失效的代表输入不得借元数据重写恢复通过，按证据错误拒绝。普通 finalize 不得套用“正文变化即无限清零”，文字修订始终受步骤 2 的两轮限制。
 
-### 5.2 拟定测试选择器、执行与结果交接
+### 5.2 最终测试选择器、执行与结果交接
 
-本轮仅改计划，以下五个名称是**待实现或合并进既有方法的测试选择器**，不是仓库已经存在或已运行的结果，也不是本次接口迁移只需处理五个新方法。测试工程师可在对应既有类内复用/扩展已有方法而合并选择器；若采用不同名称，应先在本节按同一 T 编号更新真实选择器，不增加目标或重复跑覆盖相同结果的旧方法。
+test-r4 已落实测试实现：下表五个名称是**已经写入本分支的选择器**（T3 有两个方法），不是待实现名称，也不是已运行的结果；本次接口迁移处理的旧方法远多于五个，完整清单与命令见本节末尾的“实际执行选择”。选择器与实现位置仍然一一对应；若后续改名，先在本节按同一 T 编号更新真实选择器，不增加目标或重复跑覆盖相同结果的旧方法。
 
-| 目标 | 拟定 unittest 选择器 | 实现位置与复用 |
+| 目标 | 已实现 unittest 选择器 | 实现位置与复用 |
 | --- | --- | --- |
 | T1 | `test_stage2_resolved_direction_downstream_regressions.ResolvedDirectionDownstreamRegressionTests.test_member_reference_persistence_and_refine_sources` | 复用成员/下游指纹夹具，加入 5.1 的两入口对照与正式 refine 成功路径。 |
 | T2 | `test_stage2_resolved_direction_downstream_regressions.ResolvedDirectionDownstreamRegressionTests.test_resolved_reference_inheritance_and_source_mapping` | 复用拆分物化/子方向重跑/合并夹具；非空接受边界可复用 acceptance_boundary 的既有 helper，不要求整模块。 |
-| T3 | `test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_resolve_run_isolation_and_missing_results` | 使用现有正式 CLI/helper，复用 accepted/pending/keep-provisional 准备；不得只测内部函数代替命令结果。 |
+| T3 | `test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_resolve_run_isolation_and_missing_results`；`test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_keep_provisional_exempts_only_the_named_direction` | 使用现有正式 CLI/helper，复用 accepted/pending/keep-provisional 准备；不得只测内部函数代替命令结果。 |
 | T4 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_repeated_quote_locations_and_ambiguous_report` | 复用原始报告与受管正文夹具及其正式 record CLI。 |
 | T5 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` | 复用 preflight、record/refine 及第二轮终态 helper，加入本节的重绘和部分修订观察点。 |
 
@@ -200,7 +200,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-resolve-fi
 - 新：`test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle`
 - 迁移后旧方法：`test_resolved_direction_preflight_integration.TestSemanticsVersionBump.test_old_semantics_pack_cannot_reuse_all_and_re_arms_after_one_run`、`test_resolved_direction_preflight_integration.TestResolvedSetReuse.test_accepted_split_reuses_all_with_identical_stage3_visibility`、`…test_dropping_the_split_child_from_the_pack_blocks_reuse`、`…test_accepted_merge_reuses_all_and_keeps_single_stage3_direction`、`test_resolved_direction_preflight_integration.TestResolutionEvidenceUniverse.test_candidate_fulltext_change_misses_early_gate_and_re_triggers_resolution`、`…test_analysis_markdown_edit_does_not_re_burn_accepted_resolve_jobs`、`test_resolved_direction_preflight_integration.TestResolvedProofBinding.test_accept_refuses_sidecar_from_earlier_generation`、`…test_finalize_refuses_stale_generation_sidecar_with_zero_writes`、`…test_recovery_restamps_sidecar_for_the_new_generation`
 
-**替代与合并关系**：`test_resolve_finalize_unchanged_when_no_result` 改名并改预期为 `test_resolve_finalize_rejects_missing_new_result`（旧 `status=ok / unchanged` 断言按 R3 删除）；`test_stage2_resolved_direction.py` 与预检文件中的旧结果目录 `self.root/resolve_results`、`self.root/results` 全部换成本轮独立目录；`ResolvedPreflightBase.write_resolve_result()/resolve_finalize()` 与 `ResolvedPipelineMixin.run_resolve` 各自完成迁移，后者被 13 个旧方法复用。没有受本次接口或共用准备变化影响的历史结果继续复用。
+**替代与合并关系**：`test_resolve_finalize_unchanged_when_no_result` 改名并改预期为 `test_resolve_finalize_rejects_missing_new_result`（旧 `status=ok / unchanged` 断言按 R3 删除）；`test_stage2_resolved_direction.py` 与预检文件中的旧结果目录 `self.root/resolve_results`、`self.root/results` 全部换成本轮独立目录；`ResolvedPreflightBase.write_resolve_result()/resolve_finalize()` 与 `ResolvedPipelineMixin.run_resolve` 各自完成迁移，后者被 10 个受影响文件里 28 个测试方法复用（`test_stage2_resolved_direction.py` 15 个）。没有受本次接口或共用准备变化影响的历史结果继续复用。
 
 **执行条件、环境与完整命令**：产品和本节的受影响测试实现入库、第一/第二关完成复核后才执行。环境已于 2026-10-17 预检确认：`PYTHON=/run/current-system/sw/bin/python3`（Python 3.14.7，仅标准库；`contact_state.py` 只依赖标准库），备用包装为 `uv run --no-project --python python3`，同一次运行只用其中一种，不新装依赖。工作目录为目标仓库的 `.apm/skills/professor-contact/tests/`；每次正式执行先建立本次独占的仓库外目录 `/tmp/pc91-tests.XXXXXXXX/`，逐项目标保存标准输出、错误输出与退出码。命令模板（`<选择器>` 取上文对应目标的全名，可一次传多个）：
 
