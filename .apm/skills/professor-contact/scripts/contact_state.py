@@ -4245,7 +4245,7 @@ def redact_item_keys(text: str, papers: dict) -> str:
 
 
 def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
-                         narrative: dict) -> tuple[dict, dict]:
+                         narrative: dict | None) -> tuple[dict, dict]:
     """Build one v2 pack direction plus its canonical paper records.
 
     Returns (direction, papers) — the caller merges `papers` into the
@@ -4337,7 +4337,8 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
         supporting_keys.append(key)
     note = direction.get("user_note") or ""
     narrative_later_papers = {}
-    for block in narrative.get("positioning", []):
+    narrative_data = narrative if isinstance(narrative, dict) else {}
+    for block in narrative_data.get("positioning", []):
         if not isinstance(block, dict):
             continue
         for kind, key in PLACEHOLDER_RE.findall(block.get("text") or ""):
