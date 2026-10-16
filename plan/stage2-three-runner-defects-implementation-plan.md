@@ -4,9 +4,10 @@
 
 - **Requirement revision**：2026-10-16 用户对《第二阶段运行器问题报告》的三项问题明确要求修复，并要求在草稿拉取请求中保存执行计划；以下预期限定为报告的三项行为和既有正式约定。
 - **Plan revision**：`stage2-three-runner-defects-r1-2026-10-16`；本文件是本拉取请求唯一有效的完整实施与测试计划。`Proposed review status: pending`。计划作者不自行宣称任何审核关口通过。
-- **Target repository / Base SHA**：`ScholarWorkflow/professor-contact`；`main@58a2ae7e110f2f75cbd17fe40dca814c2b2d0777`（2026-10-16 核对）。实施时记录实际提交，如主分支变化，按改变的源码和正式约定定向检查影响。
+- **Target repository / 基线**：`ScholarWorkflow/professor-contact`；计划取证提交 `main@58a2ae7e110f2f75cbd17fe40dca814c2b2d0777`；创建本 PR 时的实际 `main@305bc08f8b186672108cffbba0293d249bc8b4b2`。实施时以最新有效基线工作并记录提交，按源码及正式约定的实际差异定向检查影响。
 - **任务依据**：用户提供的《第二阶段运行器问题报告_2026-10-16.md》（本机运行副本的代码、历史回执和诊断）；本仓库上述基线的 [运行器](https://github.com/ScholarWorkflow/professor-contact/blob/58a2ae7e110f2f75cbd17fe40dca814c2b2d0777/.apm/skills/professor-contact/scripts/contact_state.py)、[Stage 2 正式技能约定](https://github.com/ScholarWorkflow/professor-contact/blob/58a2ae7e110f2f75cbd17fe40dca814c2b2d0777/.apm/skills/professor-contact/SKILL.md)、[文字校验代理](https://github.com/ScholarWorkflow/professor-contact/blob/58a2ae7e110f2f75cbd17fe40dca814c2b2d0777/.apm/agents/professor-contact-style-validator.agent.md)。
 - **项目规则**：[Project Consensus](https://app.notion.com/p/rekidunois/Project-Consensus-3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/rekidunois/Plan-Reviewer-Rule-3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/rekidunois/Test-Engineer-Rule-3d80101a85f380d8a8f5ce528141e253)、[Merge Reviewer Rule](https://app.notion.com/p/rekidunois/Merge-Reviewer-Rule-3ea0101a85f381c2b870e7fdf4b55b19)。
+- **本轮主分支变化分析**：在本计划起点之后，`main` 合入 [PR #90](https://github.com/ScholarWorkflow/professor-contact/pull/90)（`305bc08f`），修改 Stage 2 摘要导出路由、其单元测试和 Codex/OpenCode analyzer 的工具调用说明；未修改本计划三项缺陷所在的 `contact_state.py`、style-validator 或直接测试。与本计划交叉的只有两份 analyzer 文件：后续实现同步第 2 阶段校验说明时，必须保留 #90 已合入的 `--zotero-read-skill-dir` 导出调用要求。该提交没有改变本计划对成员、校验位置、缺失结果的核心修复选择；分支后续同步主分支时按此检查冲突。
 - **证据边界**：报告记录了先前运行中的结果和运行副本 SHA，但报告本身没有再次执行写状态的复现命令；本次已核对仓库基线源码具有对应分支。没有读取用户机器上的原始回执和本地开发副本，不能以本计划声称真实数据已经修复或回归测试已通过。修复和验收均使用仓库内合成隔离数据。
 
 ## 2. 冻结需求与当前原因
