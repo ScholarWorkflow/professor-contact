@@ -600,7 +600,7 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.write_analysis("AAAA1111")
         self.write_analysis("CCCC3333", ocr=True)
         self.write_index({
-            "AAAA1111": {"level": "fulltext", "facts_state": "failed"},
+            "AAAA1111": {"level": "fulltext", "facts_state": "unavailable"},
             "BBBB2222": {"level": "abstract", "facts_state": "unavailable"},
             "CCCC3333": {"level": "fulltext", "facts_state": "unavailable", "ocr": True},
         })
@@ -748,7 +748,8 @@ class AnalysisLevelTests(EvidenceLevelEnv):
             (self.prof_dir / "论文分析" / "_index.json").read_text(encoding="utf-8"))["papers"])
         analysis = self.prof_dir / "论文分析" / "CCCC3333.md"
         self.assertFalse(analysis.exists())
-        # The analysis, its facts sidecar and its index record all appear now.
+        # The analysis, its OCR carrier and its index record appear; the
+        # facts sidecar stays missing, which the index records as unavailable.
         self.update_sources(
             {"AAAA1111": "fulltext", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
             {"AAAA1111": {"level": "fulltext"},
