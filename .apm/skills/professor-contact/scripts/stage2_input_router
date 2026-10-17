@@ -50,6 +50,10 @@ def bind_exporter(argv: list[str], exporter: str) -> list[str]:
     while index < len(argv):
         arg = argv[index]
         if arg == "--zotero-read-skill-dir":
+            if index + 1 >= len(argv):
+                # A value-less locator is malformed input: keep the original
+                # argv so the router's own argparse reports the missing value.
+                return list(argv)
             index += 2
             continue
         if arg.startswith("--zotero-read-skill-dir="):

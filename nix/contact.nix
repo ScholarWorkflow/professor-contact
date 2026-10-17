@@ -14,11 +14,12 @@
 #
 # The APM sources under ../.apm/ and ../packages/professor-contact-codex/.apm/
 # remain the only business source.  This file adds the bounded install-time
-# binding: the seven same-directory entries get the fixed interpreter, the
-# router entry gets one locked Zotero exporter, the handoff entry exports the
-# locked helper interpreter, and the Codex Stage-5 routing appendix is added to
-# the generated SKILL.md and coordinator instructions.  It never keeps a second
-# copy of the business body and never rewrites the source orchestration rules.
+# binding: the seven same-directory entries are installed with the fixed
+# interpreter in their shebang, the router entry gets one locked Zotero exporter,
+# the handoff entry exports the locked helper interpreter, and the Codex
+# Stage-5 routing appendix is added to the generated SKILL.md and coordinator
+# instructions.  It never keeps a second copy of the business body and never
+# rewrites the source orchestration rules.
 
 let
   inherit (pkgs) lib;
