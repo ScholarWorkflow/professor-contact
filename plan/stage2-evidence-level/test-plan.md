@@ -351,6 +351,6 @@ exit "$status"
 4. **IR-40(b)**：恢复 `assert_source_owner_handoff` 里 refine-finalize 前后的 pack 字节比较（该断言覆盖 §1 T2「refine-finalize 不写」），`rewritten` 零值断言保留；两者并存。
 5. **IR-41**：删除具体用例里与辅助函数重复的 `validator` 结果断言，保留 `round == 1` 与正文断言。
 6. **N2**：本轮新增或改动的断言（来源新增用例的索引检查、refine-finalize 的 pack 字节比较、T1 的夹具守卫与快照比较）与既有的零 `rewritten` 断言（自 `79cd8d5` 起存在）均记为待第三关首次运行——前者未执行到，后者同样未执行到。
-7. **IR-40(a) 收尾**：T1 里同一组机器字段曾被比较两次，现合并为一处与渲染前快照比较（保留该用例中唯一的 `status`、positioning、`gap_notes`、`collection_key` 断言）；测试代码只改断言与快照，选择器仍 18、新增用例仍 14，产品与既有测试未改。定稿文件模块运行 `/tmp/contact-evidence-level.a9aRbOyN`（`module.txt`，`Ran 14 tests`、3 通过 / 11 业务失败）；两条被修改的断言与新增断言仍在首次失败点之后，均未执行到，待第三关首次运行。
+7. **IR-40(a) 收尾**：T1 里同一组机器字段曾被比较两次，现合并为一处与渲染前快照比较（保留该用例中唯一的 `status`、positioning、`gap_notes`、`collection_key` 断言）；测试代码只改断言与快照，选择器仍 18、新增用例仍 14，产品与既有测试未改。定稿文件模块运行 `/tmp/contact-evidence-level.WVDwWZxd`（`module.txt`，`Ran 14 tests`、3 通过 / 11 业务失败）；两条被修改的断言与新增断言仍在首次失败点之后，均未执行到，待第三关首次运行。
 
 该复核结论不代表第二关、第三关或合并批准。
