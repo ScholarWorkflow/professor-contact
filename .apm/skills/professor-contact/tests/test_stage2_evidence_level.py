@@ -602,7 +602,10 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertIn("摘要级 0 篇", summary)
 
     def test_display_only_level_change_refreshes_without_model_work(self):
-        self.accepted_run(indexed=("AAAA1111", "BBBB2222"))
+        # Complete accepted baseline: every direction candidate (including the
+        # OCR-only fulltext) already has its index record and analysis file, so
+        # the only change below is the recorded level of AAAA1111 and BBBB2222.
+        self.accepted_run()
         facts_path = self.root / "facts.json"
         pack_before = self.pack()
         freshness_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
@@ -616,7 +619,7 @@ class AnalysisLevelTests(EvidenceLevelEnv):
                              "CCCC3333": "fulltext"},
                             {"AAAA1111": {"level": "abstract"},
                              "BBBB2222": {"level": "abstract"},
-                             "CCCC3333": {"level": "fulltext"}})
+                             "CCCC3333": {"level": "fulltext", "ocr": True}})
         preflight = self.stage2_preflight()
         self.assertEqual(preflight["action"], "refresh_display", preflight)
         preflight_path = self.write_preflight_file(preflight)

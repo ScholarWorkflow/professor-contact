@@ -1,8 +1,8 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- Test revision：contact-evidence-level-t10；对应 [执行计划 r4](implementation-plan.md)。
+- Test revision：contact-evidence-level-t11；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
-- 状态：第一关 PASS（t6 复核记录）；t7 的测试代码与完整命令已落实，独立实现符合性审核四轮共提出 IR-01—IR-09 并已全部处置（§6），处置后准备期复核在未实现的产品上得到 7 通过 / 11 业务失败（§5）。第二关待复核，第三关未执行；这里不宣称任何业务修复完成或测试通过。
+- 状态：第一关 PASS（t6 复核记录）；t7 的测试代码与完整命令已落实，独立实现符合性审核五轮共提出 IR-01—IR-09 并已全部处置（§6），处置后准备期复核在未实现的产品上得到 7 通过 / 11 业务失败（§5）。第二关待复核，第三关未执行；这里不宣称任何业务修复完成或测试通过。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
 ## 1. 唯一必测清单
@@ -35,7 +35,7 @@ T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装
 | T2 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_nonrepairable_user_note_does_not_create_a_correction_job` | 既有禁止区域报告拒绝与零修订任务断言继续成立 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_counts_follow_the_recorded_analysis_level` | 同一方向集合内三类计数与规范包级别一致；失败分析（文件与索引仍留 fulltext）计未确认，OCR-only 全文（有分析/OCR 文件、无 facts）仍计全文 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_legacy_records_without_level_count_as_unconfirmed` | 缺 analysis_level 的旧记录即使有分析文件也计未确认 |
-| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_display_only_level_change_refreshes_without_model_work` | 仅 level 变化判为展示刷新；刷新后统计更新、旧 PASS 不再被接受、assignment/叙事/模型指纹保留、无新增任务、下次预检不误报包完整性 |
+| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_display_only_level_change_refreshes_without_model_work` | 完整接受基线下仅 level 变化判为展示刷新；刷新后统计与规范包级别更新、旧 PASS 不再被接受、assignment/叙事/模型指纹保留、无新增任务、下次预检不误报包完整性 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_source_change_routes_back_to_the_process_path` | 原缺 facts 路径出现、分析路径新增时走原 process |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_deleted_analysis_source_also_routes_back_to_process` | 分析依据被删除时同样走原 process |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_replaced_analysis_source_routes_back_to_process` | 分析文件换址（索引路径与旧文件同时变化）时走原 process |
@@ -93,12 +93,12 @@ echo "exit=$? run_root=$RUN_ROOT"
 准备期复核（本地测试工程师，非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），命令为上面 §3 的命令，结果目录 `/tmp/contact-evidence-level.M5wh17Uv`（`recipe.txt`），退出码 1，`Ran 18 tests`、`FAILED (failures=11)`。
 
 - 通过 7 项：T3 四项（`NarrativeRoundBoundTests` 一项与三个既有保护选择器）、T2 两项（既有禁止区域选择器与 `test_forbidden_user_note_and_paper_table_keep_their_rejection`）、T4 一项（缺基线走 process）。
-- 业务失败 11 项：T1 两项、T2 三项、T4 六项，逐项为 T1 的固定卡展示与缺题名、T2 的固定区登记三项、T4 的 `test_counts_...`、`test_legacy_...`、`test_display_only_...`、`test_source_change_...`、`test_deleted_analysis_source_...`、`test_replaced_analysis_source_...`。
+- 业务失败 11 项：T1 两项、T2 三项、T4 六项。展示刷新用例的失败依据是：完整接受基线（含 OCR-only 论文的索引记录与文件）下只改了两篇的级别，产品仍返回 `reuse_all`。逐项为 T1 的固定卡展示与缺题名、T2 的固定区登记三项、T4 的 `test_counts_...`、`test_legacy_...`、`test_display_only_...`、`test_source_change_...`、`test_deleted_analysis_source_...`、`test_replaced_analysis_source_...`。
 - 失败分类依据：计数用例现以同一方向集合内的真实输入验证（失败分析保留文件与旧索引级别、OCR-only 全文有分析/OCR 文件无 facts）；来源用例的分析路径、facts 路径、索引记录与文件存在状态均已真实变化；相同夹具下 7 项通过，产品仍按文件存在统计或返回 `reuse_all`，属于业务失败。
 - 早期记录按要求保留：`/tmp/contact-evidence-level.oa4NuJoS` 与 `/tmp/contact-evidence-level.h3SBpUMF` 中因夹具未真正改变输入而作废的来源变化项不计入本轮分类。
 - 该记录只用于确认选择器可执行、判定 T3 已成立和暴露产品缺口，不替代第三关正式执行，也不作为任何通过结论。
 
-修订边界：t10 按第四轮定向复核把 OCR-only 论文纳入被统计方向集合、让 OCR 索引路径指向真实文件、使新增来源从基线完全缺失开始，并把统计预期改为由同一组规范包级别推出；不改变 t6 已批准的 T1—T4 范围与预期结果。执行计划 r4 已获[正式批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516)，本次不重开其未受影响关口。
+修订边界：t11 按第五轮定向复核让展示刷新用例使用含 OCR-only 论文的完整接受基线，使该场景只含级别变化；不改变 t6 已批准的 T1—T4 范围与预期结果。执行计划 r4 已获[正式批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516)，本次不重开其未受影响关口。
 
 交接：T1/T2/T4 的 11 项业务失败交产品实现负责人修复，实现落地后由本地测试工程师同步受影响选择器并做第二关复核材料，再由本地执行工程师按第三关正式执行；T3 与既有禁止区域结论在当前产品版本已成立，无需重跑。
 
@@ -159,3 +159,9 @@ echo "exit=$? run_root=$RUN_ROOT"
 | §2/§5 描述 | 计数与来源用例的描述、失败分类按真实输入与预期更新 |
 
 第四轮审核版本 `db73fc1`；处置后提交见 PR 分支。本审核结论不代表第二关、第三关或合并批准。
+
+### 第五轮定向复核（对照 `3595a2c`）
+
+第五轮结论为**部分完成**：IR-01、IR-03—IR-09 已闭合，IR-02 的计数部分已落实，但展示刷新夹具仍混入来源新增（基线不含 OCR-only 论文的索引记录，更新时又写入该记录），不满足「仅 level 变化」前提。处置：展示刷新用例改用含 CCCC3333 索引记录与文件的完整接受基线，刷新时保持其路径与文件状态不变，只改 AAAA1111、BBBB2222 的级别；§2、§5 描述同步。
+
+第五轮审核版本 `3595a2c`；处置后提交见 PR 分支。本审核结论不代表第二关、第三关或合并批准。
