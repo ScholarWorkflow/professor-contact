@@ -228,11 +228,11 @@ echo "exit=$? run_root=$RUN_ROOT"
 
 第十一轮结论为**部分完成**：只剩 IR-02 三处说明性偏差——§1/§2 与测试注释仍写「原缺 facts 路径出现」（夹具实际保持 facts sidecar 缺失）；计数夹具把缺 sidecar 的论文记为 `failed`（分析器规则为 `unavailable`）；§5 把完整运行归到 `469aa83`。处置：三处说明与夹具状态按真实文件与规则更正，§5 运行提交改为 `7a28bd6`。
 
-第十一轮审核版本 `7a28bd6`；处置后提交见 PR 分支。第十二轮（对照 `b7b4f6b`，提交 `10497ff` 之后的修正）结论为**完整**，原文见 `/tmp/contact-evidence-level.pc92prep/reviewer-verdict-round12.md`；该系列审核为外部 CLI 逐轮复核，与 §7 的 DSH 子代理审核是两套独立编号。本审核结论不代表第二关、第三关或合并批准。
+第十一轮审核版本 `7a28bd6`；处置后提交见 PR 分支。第十二轮（对照 `b7b4f6b`，提交 `10497ff` 之后的修正）结论为**完整**，原文见 `/tmp/contact-evidence-level.pc92prep/reviewer-verdict-cli-round12.md`（该外部 CLI 系列共 12 轮，其结论已被 §7 的 DSH 审核补充）；该系列审核为外部 CLI 逐轮复核，与 §7 的 DSH 子代理审核是两套独立编号。本审核结论不代表第二关、第三关或合并批准。
 
 ## 7. DSH 子代理实现符合性审核处置（IR-10—IR-26）
 
-由 DSH 的 `subagent` 以 `implementation_reviewer` 角色完成的审核（首次覆盖全部准备产物）结论为**部分完成**，提出九项；处置如下。此前 §6 记录的 IR-01—IR-09 为外部 CLI 逐轮审核的编号，两套编号不混用。
+由 DSH 的 `subagent` 以 `implementation_reviewer` 角色完成的审核（首次覆盖全部准备产物）结论为**部分完成**，提出九项；处置如下。此前 §6 记录的 IR-01—IR-09 为外部 CLI 逐轮审核的编号，两套编号不混用。四轮 DSH 审核的结论要点另存于 `/tmp/contact-evidence-level.pc92prep/reviewer-verdict-dsh-round1.md` 至 `…round4.md`（本地测试工程师整理的结论摘要，完整原文在会话消息中）。
 
 | 问题 | 处置 |
 |---|---|
