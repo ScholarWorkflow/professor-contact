@@ -1,8 +1,9 @@
 # professor-contact Nix 测试计划
 
-- Test plan revision: TP3（2026-10-17；随执行计划 R3 补核 Stage 5 同目录入口，N1–N4 不变），关联 [执行计划 R3](implementation-plan.md)。
-- Proposed review status: pending；Gate1 必测清单、Gate2 recipe、Gate3 结果均待独立审核。当前没有实现，全部未执行，不声明 PASS。
+- Test plan revision: TP4（2026-10-17；N1–N4 目标、预期与检查方式沿用 TP3 不变，补齐 N3 安装态命令与固定解释器断言、N4.1 selection 准备与判定链、N4.2 PR90 复用命令，并记录本机有限预检），关联 [执行计划 R3](implementation-plan.md)。
+- Proposed review status: pending；Gate1 必测清单、Gate2 recipe、Gate3 结果均待独立审核。当前没有实现，N1–N4 全部未执行，不声明 PASS。
 - 产品基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`；执行时记录真正待验实现SHA与锁定依赖。只验本次 aarch64-darwin / Codex 安装和必要入口，不扩 Stage0–5 业务回归。
+- 本轮（本地测试工程师）交付：N3 的命令与新增断言、N4.1 与 N4.2 的可直接执行准备及判定命令、仓库外预检记录。未修改产品代码，未构建、未安装、未运行任何正式用例。
 
 ## 1. 必测清单（上限）
 
@@ -22,6 +23,14 @@
 准备单个仓库外临时目录，例如 `RUN=$(mktemp -d /tmp/contact-nix.XXXXXX)`；consumer=`$RUN/consumer`，业务样本=`$RUN/data`，输出=`$RUN/output`；分别mkdir。保持现有HOME，不抹掉Nix认证；必要时独立CODEX_HOME，使用既有eval配置/账号，不读eval自身配置查信任列表。测试服务如需Zotero必须使用已授权的独立测试库和loopback端点，不能读取生产库。缺平台、collector/knowledge实际包、服务/模型配置就标对应项未执行/无法判断，其余独立项继续。
 
 只N2要求一次新安装；后续全部用同一个有效consumer。文档更新不重装；重试仅重置本项可变样本，不清用户目录或全局缓存。
+
+本轮补入的固定输入：
+
+- 共享夹具固定为 `skills-test-fixtures@8cecafc694e4591dee47372f38903e5ac2b689fe`，与 [PR90 recipe](../pr90-macos-real-abstract-export-recipe.md) 同一 pin；按该 recipe 第 2 节取得该 pin 的检出（已有同 rev 且干净的检出可直接复用，否则 clone 到 `$RUN` 后 `checkout --detach`），执行时断言 `git rev-parse HEAD` 等于该 pin。该提交已确认含 `configs/codex-consumer.toml`、`configs/codex-nested-delegation-consumer.toml`、`configs/codex-eval-adapter-contract.json`（`skills-test-fixtures/codex-eval-adapter@19`）、`scripts/prepare_shared_test_assets_macos.sh`、`scripts/start_zotero_test_fixture_macos.sh`、`scripts/parse_codex_eval_evidence.py`。
+- 消费者 Codex 配置只有一个来源：把该 pin 的 `configs/codex-nested-delegation-consumer.toml` 合并进 `$RUN/consumer/.codex/config.toml`（保留其中的 `model="gpt-6-luna"`、`model_reasoning_effort="low"`、`sandbox_mode="workspace-write"` 与 `[features.multi_agent_v2] enabled=true`，并保留安装生成的其它设置）。该 pin 规定当前请求只带运行目录、提示词与输出兼容参数，**不通过 CLI 覆盖模型、推理、sandbox、trust 或 MCP 环境，也不使用 `--ephemeral`**；因此 N4.1 的请求不带 `--model`/`model_reasoning_effort`/`--sandbox`/`--config`。这与 N4.1 之前的 TP3 文字「在 command 中传 `--sandbox workspace-write --cd <consumer>`」有一处执行面差异：有效沙盒仍由项目配置文件的 `sandbox_mode="workspace-write"` 提供，范围不变，只是不再由 CLI 重复覆盖；差异记在此处，不改必测目标与预期。
+- 信任是环境前置，不是请求参数：受控 eval 服务的 `CODEX_HOME/config.toml` 必须已信任 `$RUN/consumer` 这一绝对路径（项目配置不能自授信）。因此创建 `$RUN` 后、进入 N4 之前，把与该次 `--cd` 同源的**规范化** consumer 路径交给环境负责人——例如 `RUN_CANON="$(cd -P "$RUN" && pwd)"`，交出的就是 `$RUN_CANON/consumer`（macOS 上 `/tmp` 会规范化为 `/private/tmp`），由其在既有受控服务配置里保证该路径受信任；N4.1 的 `--cd` 必须使用同一拼写。Recipe 不修改服务、HOME/CODEX_HOME、认证或信任设置，也不读 eval 自身配置去核信任清单。若临时路径无法被既有信任覆盖，先与授权人确认一个可预先信任的固定 consumer 路径再开始，不自行改服务配置。项目配置或已安装角色未生效时（例如加载不到 `professor-contact-selection`），N4.1 记受阻/未执行并报出该前置，**不加入 CLI trust/sandbox 覆盖绕过**。
+- 2026-10-17 本机有限预检（只确认命令与输入可用，未调用任何被测入口、产品入口或业务请求）：`nix (Nix) 2.34.8`；`nix eval --impure --raw --expr builtins.currentSystem` = `aarch64-darwin`；`python3 3.14.7`；`jq 1.8.2`；`yq v4.54.1`；`uv 0.12.22`；`git 2.55.0`；在既有 eval-server 检出目录内执行 `direnv exec . printenv EVAL_PORT` 返回 `17902`（该目录自身没有 `.envrc`，`EVAL_PORT` 由其上级 `.envrc` 提供，`HARNESS_WORKSPACE` 取该检出目录）；`/Applications/Zotero.app` 存在；夹具 pin 在本地仓库可解析。记录保存在仓库外 `/tmp/pr93-te-precheck/`（`tools.txt`、`eval-port.txt`、`zotero-app.txt`、`fixtures.txt`）。
+- 本轮无 Nix 包可构建：执行计划 R3 的实现尚未交付，N1–N4 均不能开始。
 
 ## 3. Recipe
 
@@ -43,6 +52,19 @@ printf 'keep\n' > "$RUN/consumer/.agents/skills/unrelated-sentinel/marker"
 人工比对完整源目录与安装树；允许差异仅R3必要的七个同目录薄入口、固定运行环境与原文附录。检查 `scripts/stage5_immutable` 在安装树中存在、调用同目录 `stage5_immutable.py`，生成的 email-generator 角色从安装 skill 根目录以该入口调用 `stage5-finalize`，不再依赖 `skillrepo exec` 或开发 checkout；只核此静态调用关系，不增加 Stage 5 邮件业务执行。检查 `.agents/skills/professor-contact/scripts/_stage2_chatgpt_handoff_impl.py`、stage5_immutable.py、docs/stage5-legacy-contract.md存在，Stage5路由附录实际进入SKILL与coordinator正文；检查sentinel仍为keep。读依赖元数据确认collector/ contact-evidence、paper、Zotero、humanizer、vision、pdfx的llm-ocr-refresh、KB所选包真实递归安装；不同payload冲突不能记录成成功。
 
 只核此环境具体生成的必要MCP表与上游正式输出相符，不重验共享installer保护全矩阵。模型/网络/审批保持既有设置。build/eval/apply分别记录，eval成功不能替代build。
+
+N2 另外记录 handoff 薄入口的固定运行环境，供 N3 直接使用（只核这一条调用关系，不展开七个入口的运行矩阵）：
+
+```sh
+SKILL="$RUN/consumer/.agents/skills/professor-contact"
+THIN="$SKILL/scripts/stage2_chatgpt_handoff"
+grep -n 'CONTACT_PAPER_PYTHON' "$THIN" > "$RUN/output/n2-handoff-binding.txt"
+FIXED_PYTHON="$(sed -n '1s/^#!//p' "$THIN")"
+test -x "$FIXED_PYTHON"
+printf '%s\n' "$FIXED_PYTHON" > "$RUN/output/n3-fixed-python.txt"
+```
+
+`n2-handoff-binding.txt` 必须显示该入口把 `CONTACT_PAPER_PYTHON` 绑定到运行时包的固定解释器，并与 `n3-fixed-python.txt` 为同一路径。实现若用 shebang 以外的方式绑定，则记录实际绑定路径与它使用的解释器，并在结果中注明实际值，不猜默认值。
 
 ### N3：实际本地入口
 
@@ -67,18 +89,181 @@ jq读取status为ok、教授为安装样本教授，options中方向ID为dir_fix
 
 确认NIXTEST1选中该PDF，不触发摘要导出；文件路径/空格通过argv传递。该项检查安装入口，不检查PDF抽取准确性。
 
-handoff内部固定Python前缀及facts同目录适配是N3的一部分：执行工程师从现有 `test_stage2_chatgpt_handoff*.py` 中选出直接覆盖该适配的既有 `test_stage2_chatgpt_handoff.HandoffTests.test_future_work_selection_is_finalized_locally_via_uv_run`，复用其合法facts/future-work数据，补覆盖本次新增固定Python后端的对应调用断言并写明安装路径；保留旧uv默认断言，新增的固定Python断言仅覆盖本次适配，不把fake helper结果当真实导出验收。不要以扩大到全部handoff suite代替定位。安装态执行该既有fixture的准确命令尚待实现后补入，故这一小段Gate2待补，不能声称步骤已完全可执行。
+handoff 部分的安装态命令（在安装树内执行，读取的是安装后的 `$SKILL/scripts/stage2_chatgpt_handoff.py`，复用同一合法 facts/future-work 数据）：
+
+```sh
+FIXED_PYTHON="$(cat "$RUN/output/n3-fixed-python.txt")"
+# 测试夹具自带的假 uv 会 exec python3；安装包不提供隐式 PATH，所以给本次测试加一个只含该解释器的 PATH 前缀
+mkdir -p "$RUN/pathbin"
+ln -sf "$FIXED_PYTHON" "$RUN/pathbin/python3"
+export PATH="$RUN/pathbin:$PATH"
+cd "$SKILL/tests"
+{
+  env -u CONTACT_PAPER_PYTHON "$FIXED_PYTHON" -B -m unittest -v \
+    test_stage2_chatgpt_handoff.HandoffTests.test_future_work_selection_is_finalized_locally_via_uv_run
+  CONTACT_PAPER_PYTHON="$FIXED_PYTHON" "$FIXED_PYTHON" -B -m unittest -v \
+    test_stage2_chatgpt_handoff.HandoffTests.test_future_work_selection_is_finalized_locally_via_configured_python_backend
+} 2>&1 | tee "$RUN/output/n3-handoff-unittest.log"
+```
+
+预期两条都实际执行并且 `ok`：第一条保留原 uv 默认后端断言（`uv run` 启动 `future_work.py` 与同目录 `facts.py`）；第二条绑定固定解释器后，`_run_future_work` 用 `[固定解释器, script, ...]` 启动两个 helper，fake uv 日志中没有这两次调用，facts 仍解析为同一 paper 安装的相邻脚本。第二条显示 `skipped` 记为未执行，不能写成通过。第二条断言只覆盖本次固定解释器适配，不把 fake helper 结果当真实导出验收；不扩大到全部 handoff suite。该断言的证明力如实限定为「绑定后不再经过 uv」——它不排除实现改用其它方式启动同一脚本；安装态真正绑定的固定解释器路径由 N2 的薄入口记录核对，两项合起来覆盖「helper 用固定环境」与「原 uv 默认路径保留」。
 
 ### N4：角色和真实导出
 
-1. 用原有eval服务及其README调用方式，在command中传 `--sandbox workspace-write --cd <本consumer绝对路径>`，配置使用既有gpt-6-luna/low默认profile。从当前会话实际原生调用安装的 `professor-contact-selection`，只传 `folder_path` 指向临时样本、缺selection；等待其按原合同返回needs_input/pending_selection（需现有有效Stage3 fixture，不能额外创造业务事实兜底）。检查一次该角色实际结果即可，不循环调用8角色、不测试整套委派拓扑。精确fixture准备与eval请求JSON沿用已有效的contact selection recipe；本计划尚未取得该recipe定位，Gate2在执行前必须补上路径/版本/准备命令，不把它留给用户猜。
-2. 真实摘要导出沿用 [PR90 macOS recipe](../pr90-macos-real-abstract-export-recipe.md) 已批准的独立Zotero测试库/服务准备与已存在有摘要无PDF的单条item key。只执行该recipe的服务准备与一条router导出，替换本项入口为安装的 `$SKILL/scripts/stage2_input_router`；不执行该recipe的其它APM重装/完整测试。papers.json包含该已知测试key且不含pdf/ocr路径。预期router行返回 carrier=abstract_json、level=abstract、status=ok，并写出包含该key、预置标题/摘要的规范化文件；jq检查真实产物。传递recipe既有ZOTERO_HTTP_URL/ZOTERO_MCP_URL；不绕过正式Zotero脚本、不得mock代替真实导出。服务不具备时该子项记未执行，不能拿N3 PDF路由充数。
+#### N4.1 安装角色一次真实 Codex 调用
+
+准备现有第 53 号 Stage-4 fixture（安装树内的既有入口，合成数据，不读取真实教授资料）：
+
+```sh
+RUNTIME="$SKILL/tests/runtime"
+VERIFY="$RUNTIME/verify_issue32_e2e.py"
+PROGRAM="$RUN/data/selection-program"
+PROFILE="$RUN/data/selection-profile"
+PY="$(cat "$RUN/output/n3-fixed-python.txt")"
+"$PY" -c 'import sys' || { echo "n3-fixed-python.txt 不是可用解释器：按 N2 记录的实际绑定值更正后重跑"; exit 1; }
+"$PY" "$RUNTIME/prepare_issue53_stage4_fixture.py" \
+  --program-root "$PROGRAM" --profile-root "$PROFILE" \
+  --output "$RUN/output/selection-fixture.json"
+"$PY" "$VERIFY" stage4-snapshot --program-root "$PROGRAM" \
+  --output "$RUN/output/selection-pre-snapshot.json"
+jq -e 'all(.artifacts[]; .exists == false)' "$RUN/output/selection-pre-snapshot.json"
+```
+
+样例必须放在消费者之外（`$RUN/data/`）：`tests/runtime/fixture_support.py::producer_root()` 取 `parents[5]`，在安装树里正是消费者根，样例放进消费者会被 `resolved_outside_producer` 直接拒绝。本用例预期零写入，沙盒只需可读，因此不必放进 `--cd` 工作区。
+
+渲染固定提示词（第 53 号 prompt 的 `<PROGRAM_ROOT>` 占位符）：
+
+```sh
+"$PY" - "$RUNTIME/prompts/issue53-stage4-missing-selection.txt" \
+  "$RUN/output/selection-prompt.txt" "$PROGRAM" <<'PY'
+from pathlib import Path
+import sys
+src, out, root = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]).resolve()
+text = src.read_text(encoding="utf-8")
+if text.count("<PROGRAM_ROOT>") != 1:
+    raise SystemExit("prompt must contain exactly one <PROGRAM_ROOT>")
+out.write_text(text.replace("<PROGRAM_ROOT>", str(root)), encoding="utf-8")
+PY
+```
+
+合并该 pin 的版本化夹具配置并记录生效配置（模型、推理、sandbox 与 V2 委派开关全部来自这一个文件）：
+
+```sh
+FIXTURES="${FIXTURES:?set skills-test-fixtures checkout absolute path}"
+test "$(git -C "$FIXTURES" rev-parse HEAD)" = 8cecafc694e4591dee47372f38903e5ac2b689fe
+mkdir -p "$RUN/consumer/.codex"
+if [ -f "$RUN/consumer/.codex/config.toml" ]; then
+  yq eval-all -p toml -o toml '. as $item ireduce ({}; . * $item)' \
+    "$RUN/consumer/.codex/config.toml" "$FIXTURES/configs/codex-nested-delegation-consumer.toml" \
+    > "$RUN/output/consumer-codex-config.toml"
+else
+  cp "$FIXTURES/configs/codex-nested-delegation-consumer.toml" \
+    "$RUN/output/consumer-codex-config.toml"
+fi
+yq -p toml -e '
+  .model == "gpt-6-luna" and .model_reasoning_effort == "low"
+  and .sandbox_mode == "workspace-write" and .features.multi_agent_v2.enabled == true
+' "$RUN/output/consumer-codex-config.toml"
+cp "$RUN/output/consumer-codex-config.toml" "$RUN/consumer/.codex/config.toml"
+```
+
+构造唯一 `/eval` 请求：按该 pin 的当前接线，`command` 只带运行目录、提示词与输出兼容参数，所有设置来自上一步的项目配置；`--sandbox`、`--model`、`--ephemeral`、`--config`（含 trust）都不出现（该 pin 把这些 CLI 覆盖列为历史接线，并规定项目不可自授信、配置未加载时记受阻）。`--cd` 用规范化路径（下面的 resolve 结果），必须与交给环境负责人登记的信任路径同一拼写。第 53 号既有请求构造器 `build_issue53_eval_request.py` 固定 `gpt-5.6-luna` 与 dotted trust 写法，属同一类历史接线，因此本项只复用它的 fixture、prompt 与判定器：
+
+```sh
+"$PY" - "$RUN/consumer" "$RUN/output/selection-prompt.txt" "$RUN/output/selection-request.json" <<'PY'
+import json, shlex, sys
+from pathlib import Path
+consumer = Path(sys.argv[1]).resolve()
+prompt = Path(sys.argv[2]).read_text(encoding="utf-8")
+argv = [
+    "--json", "--skip-git-repo-check",
+    "--cd", str(consumer),
+    "--", prompt,
+]
+Path(sys.argv[3]).write_text(
+    json.dumps({"command": shlex.join(argv), "timeout": 900}, ensure_ascii=False, indent=1) + "\n",
+    encoding="utf-8",
+)
+PY
+shasum -a 256 "$RUN/output/selection-fixture.json" "$RUN/output/selection-pre-snapshot.json" \
+  "$RUN/output/selection-prompt.txt" "$RUN/output/selection-request.json" \
+  "$RUN/output/consumer-codex-config.toml" > "$RUN/output/selection-input-sha256.txt"
+```
+
+执行唯一正式请求并判定（`case-started.txt` 紧接请求之前；此前失败均记未开始）：
+
+```sh
+HARNESS_WORKSPACE="${HARNESS_WORKSPACE:?set existing eval-server checkout absolute path}"
+EVAL_PORT="$(direnv exec "$HARNESS_WORKSPACE" printenv EVAL_PORT)"
+test -n "$EVAL_PORT"
+touch "$RUN/output/selection-case-started.txt"
+curl -sS --max-time 930 -o "$RUN/output/selection-eval-response.json" \
+  -w '%{http_code}\n' -H 'Content-Type: application/json' \
+  --data-binary @"$RUN/output/selection-request.json" \
+  "http://127.0.0.1:$EVAL_PORT/eval" > "$RUN/output/selection-eval-http-status.txt"
+"$PY" "$VERIFY" stage4-snapshot --program-root "$PROGRAM" \
+  --output "$RUN/output/selection-post-snapshot.json"
+"$PY" "$FIXTURES/scripts/parse_codex_eval_evidence.py" \
+  --contract "$FIXTURES/configs/codex-eval-adapter-contract.json" \
+  --eval-response "$RUN/output/selection-eval-response.json" \
+  --consumer-root "$RUN/consumer" \
+  --expected-agent professor-contact-selection \
+  --output "$RUN/output/selection-adapter.json"
+"$PY" "$VERIFY" stage4-needs-input --program-root "$PROGRAM" \
+  --eval-response "$RUN/output/selection-eval-response.json" \
+  --adapter-output "$RUN/output/selection-adapter.json" \
+  --pre-snapshot "$RUN/output/selection-pre-snapshot.json" \
+  --post-snapshot "$RUN/output/selection-post-snapshot.json" \
+  --output "$RUN/output/selection-verdict.json"
+jq -e '.status == "pass" and .classification == "PASS"' "$RUN/output/selection-verdict.json"
+```
+
+预期：root 原生委派安装的 `professor-contact-selection`，child 只返回一个业务 JSON，`result=needs_input` 且 `pending_selection` 与 fixture 当前候选状态逐字段一致（`kind="direction"`、`direction_ids=["DIR00001"]`，候选按 fixture 顺序为 `idea-001`、`idea-002`，由判定器从当前状态推导）；程序级 `教授研究/套磁选择.json`、`教授研究/邮件输入.json` 零写入（post 快照全 absent）。HTTP 非 2xx、适配器不可观察或快照不一致分别按阻塞/无效记录，不冒充产品失败：拿不到正式委派关系时判定器返回 blocked/BLOCKED_OBSERVABILITY，本项按未完成记录并写明缺的具体委派面，不改判为产品失败；项目配置或已安装角色因未受信任而未加载时同样记受阻，并报出「受控服务需预先信任该 consumer 绝对路径」这一环境前置。检查一次实际结果即可，不循环调用 8 个角色、不测试整套委派拓扑。
+
+#### N4.2 真实摘要导出（复用 PR90 recipe）
+
+按 [PR90 recipe](../pr90-macos-real-abstract-export-recipe.md) 第 2 节（夹具 checkout、`prepare_shared_test_assets_macos.sh`、启动独立 Zotero 测试夹具）与第 3 节（写入一条有摘要无 PDF 的合成 item 并取 `ITEM_KEY`）原样执行，并传递该节导出的 `ZOTERO_HTTP_URL`/`ZOTERO_MCP_URL`；不执行第 1 节的 APM 重装，也不执行该 recipe 的其它测试。第 1 节里被第 2、3 节引用的变量改按本次 Nix 消费者取值：
+
+```sh
+CONSUMER="$RUN/consumer"
+mkdir -p "$RUN/evidence"
+ZOTERO_READ_SKILL="$CONSUMER/.agents/skills/zotero-read"
+test -f "$ZOTERO_READ_SKILL/scripts/new-session.sh" \
+  || { echo "缺少已安装 zotero-read 的 scripts/new-session.sh，本子项记未执行"; exit 1; }
+```
+
+安装的技能目录名与 N2 记录不一致时按实际路径设置 `ZOTERO_READ_SKILL`；缺该脚本时本子项记未执行并记录具体缺项，不自行发明会话创建方式。第 4 节改用本次安装的薄入口（Nix 入口自带锁定 exporter，因此不再传 `--zotero-read-skill-dir`，也不 mock）：
+
+```sh
+OUT="$RUN/output/abstract-export"
+mkdir -p "$OUT/exports"
+jq -n --arg key "$ITEM_KEY" '[{item_key:$key}]' > "$RUN/data/abstract-papers.json"
+"$SKILL/scripts/stage2_input_router" \
+  --papers "$RUN/data/abstract-papers.json" --output-dir "$OUT/exports" \
+  > "$OUT/routes.json" 2> "$OUT/router.stderr"
+jq -e --arg key "$ITEM_KEY" '
+  .status == "ok" and (.routes|length) == 1 and
+  (.routes[0] | .item_key == $key and .status == "ok" and
+    .carrier == "abstract_json" and .level == "abstract")
+' "$OUT/routes.json" > /dev/null
+jq -e --arg key "$ITEM_KEY" --arg title "$EXPECTED_TITLE" --arg abstract "$EXPECTED_ABSTRACT" '
+  .schema == 1 and .kind == "paper-analysis-input" and .source == "zotero" and
+  .level == "abstract" and .item_key == $key and
+  .metadata.title == $title and (.abstract|type) == "string" and
+  (.abstract|length) > 0 and .abstract == $abstract
+' "$OUT/exports/$key.json" > /dev/null
+```
+
+papers.json 只有该 key、不含 `pdf_path`/`ocr_path`。预期 router 行 `carrier=abstract_json`、`level=abstract`、`status=ok`，并写出与预置标题/摘要逐字节一致的规范化文件。服务不具备时该子项记未执行，不能拿 N3 的 PDF 路由充数，也不得用 mock 或空摘要代替。
 
 ## 4. 结果、重试和关闭
 
-当前N1–N4全部未执行；Gate1/Gate2 pending。上述明确标出的recipe空缺由测试执行工程师在正式执行前补入本文件，审核只补核该处与连带影响，不增加测试目标。执行计划可以先进入draft评审，不谎称这些未来操作已经完成。
+当前N1–N4全部未执行；Gate1/Gate2 pending。TP3 明确标出的两处 recipe 空缺已在本版补入：N3 的安装态执行命令与固定解释器断言、N4.1 的 selection fixture／请求／判定链；审核只补核这两处与连带影响，不增加测试目标。执行计划可以先进入draft评审，不谎称这些未来操作已经完成。
 
 记录每项产品SHA、依赖pin、实际命令、结果、必要输出位置以及复用证据即可。引用共享agent-env TP1.1/Gate1/Gate2和上游已验结果，不自授PASS。未运行的OCR/真实论文分析/KB写入/下载/全套磁流程不能宣称通过。
 
-网络拉取或外部服务短暂故障恢复后允许同参数重试一次；业务断言失败先修复，不重复采样。Zotero只读导出，确认本次输出目录隔离后再重试，保留旧失败记录；不修改全局安全设置。没有新信息的持续外部故障停止受影响项。运行完成且无子线程使用后，只删除本次临时可变fixture，结果保留给审核；不终止用户进程、不清生产库。
+本轮为 N3 增加了一条安装态断言（`.apm/skills/professor-contact/tests/test_stage2_chatgpt_handoff.py::HandoffTests.test_future_work_selection_is_finalized_locally_via_configured_python_backend`）：它以 `CONTACT_PAPER_PYTHON` 是否存在为前置——未绑定时该项不适用（普通检出与 CI 显示 skipped），只有安装薄入口绑定固定解释器后才执行，保证本纯计划 PR 的 CI 不被尚未实现的适配点染红。因此 N3 记录必须显示该条实际执行（`... ok`）；只出现 `skipped` 时记未执行。
 
+评估与夹具记录：保存 `/eval` 请求 JSON、事后响应、生效的 `consumer-codex-config.toml`、适配器输出与 `selection-verdict.json`；Zotero 子项保存 `routes.json`、导出文件与夹具 `fixture.env` 位置。敏感原始材料只留受控访问位置。预检记录在仓库外 `/tmp/pr93-te-precheck/`。
+
+网络拉取或外部服务短暂故障恢复后允许同参数重试一次；业务断言失败先修复，不重复采样。Zotero只读导出，确认本次输出目录隔离后再重试，保留旧失败记录；不修改全局安全设置。没有新信息的持续外部故障停止受影响项。运行完成且无子线程使用后，只删除本次临时可变fixture，结果保留给审核；不终止用户进程、不清生产库。

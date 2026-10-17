@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import stat
 import tempfile
 import unittest
@@ -330,6 +331,37 @@ class HandoffTests(unittest.TestCase):
         self.assertIn(f"run {self.future} validate", uv_calls)
         self.assertIn(f"run {self.future} finalize", uv_calls)
         self.assertIn(f"run {self.facts_script} finalize", uv_calls)
+
+    @unittest.skipUnless(
+        os.environ.get("CONTACT_PAPER_PYTHON"),
+        "Nix 安装态专用：安装薄入口把 CONTACT_PAPER_PYTHON 绑定到固定解释器后执行；"
+        "未绑定时该项不适用，记为未执行而不是通过",
+    )
+    def test_future_work_selection_is_finalized_locally_via_configured_python_backend(self):
+        # N3: the Nix install binds CONTACT_PAPER_PYTHON to the fixed
+        # interpreter, and _run_future_work must then start both paper-analysis
+        # helpers (future_work.py and the facts.py sibling resolved from the
+        # same install) through that interpreter instead of `uv run`.  The
+        # helper invocations themselves are observable through the fake-uv log:
+        # an implementation that ignores the binding still calls `uv` and is
+        # recorded there.
+        fixed_python = os.environ["CONTACT_PAPER_PYTHON"]
+        self.assertTrue(Path(fixed_python).is_file(), fixed_python)
+        bundle = self._build([self._pdf_job(key="FW", rel="论文分析/A/FW.md")])
+        job = self._manifest(bundle)["jobs"][0]
+        result = self._result_zip(
+            bundle,
+            [{"job_id": job["job_id"], "item_key": "FW", "input_sha256": job["input_sha256"], "status": "ok"}],
+        )
+        out = self._import(bundle, result)
+        self.assertEqual(out["status"], "imported")
+        sidecar = Path(str(self.prof / "论文分析/A/FW.md") + ".future_work.json")
+        self.assertTrue(sidecar.is_file())
+        self.assertEqual(json.loads(sidecar.read_text())["analysis"], "FW.md")
+        self.assertTrue(Path(str(self.prof / "论文分析/A/FW.md") + ".facts.json").is_file())
+        uv_calls = self.uv_log.read_text(encoding="utf-8") if self.uv_log.exists() else ""
+        self.assertNotIn(f"run {self.future}", uv_calls)
+        self.assertNotIn(f"run {self.facts_script}", uv_calls)
 
     def test_wait_pdf_missing_future_work_payload_is_not_fully_imported(self):
         bundle = self._build([self._pdf_job()])
