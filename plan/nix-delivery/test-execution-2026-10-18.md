@@ -1,10 +1,10 @@
 # professor-contact Nix 交付执行记录（N1–N4）
 
-- 产品提交：`a9999284`（PR #93 head；`CONTACT_REF=github:ScholarWorkflow/professor-contact/<head SHA>`），内容 = 实现 `48172e4` + `origin/main`（PR #91）合并
+- 产品提交（`CONTACT_REF`）：`a9999284`（合并提交，内容 = 实现 `48172e4` + `origin/main`（PR #91）合并）；分支 HEAD `c89cc39` 只在其上追加本记录文件
 - 早前被验提交：`af6bf55c4e3afd456832be0289338c454ec37cc2`（N1–N4 首轮全绿）与 `48172e4fee7b273febdda81c152b0a8ce2773932`（审核跟随修改后全绿）；见第 5、6 节
 - 依据：[执行计划 R3](implementation-plan.md)、[测试计划 TP5.1](test-plan.md)、Test Engineer Rule、Project Consensus
 - 运行目录（仓库外）：合并后 `/tmp/contact-nix.Zc1wnW`（consumer=`$RUN/consumer`，样本=`$RUN/data`，输出=`$RUN/output`，夹具=`$RUN/evidence`）；`48172e4` 用 `/tmp/contact-nix.1ilKkF`；首轮 `af6bf55` 用 `/tmp/contact-nix.27Uu6n`
-- 本轮执行：N1、N2、N3、N4.2 在合并后提交重跑；N4.1 按未受影响复用 `af6bf55` 结果（依据见 4.1）；未执行项见第 4 节
+- 本轮执行：N1、N2、N3、N4.2 在合并后提交重跑；N4.1 按未受影响复用 `af6bf55` 结果（依据见第 2 节 N4.1）；未执行项见第 4 节
 - 证据位置：`$RUN/output/`（`n1-*`、`n2-*`、`n3-*`、`routes.json`、`abstract-export/`）、`$RUN/evidence/`（fixture、item key、endpoint）
 
 ## 1. 依赖与固定版本
@@ -101,12 +101,6 @@ CONTACT_PAPER_PYTHON="$FIXED_PYTHON" "$FIXED_PYTHON" -B -m unittest -v \
 
 未采纳的建议 2（SKILL.md 两处裸相对 `scripts/contact_state`）：该形态在基线 `d7d3024` 即为相对路径（原 `python3 scripts/contact_state.py`），属既有约定，本次不扩大改动范围。
 
-## 6. 环境记录
-
-- Nix 2.34.8（`aarch64-darwin`）、python3 3.14.7、jq 1.8.2、yq 4.54.1、uv 0.12.22；既有 eval 服务监听 `127.0.0.1:17902`（未启动/停止）；`/Applications/Zotero.app` 存在。
-- N1–N4 命令按 TP5.1 原样执行；只在会话文件沙箱仍生效的早期本地迭代中使用过独立 `XDG_CACHE_HOME`，正式运行使用默认 Nix 缓存与默认 `HOME`，未改认证或全局安全设置。
-- 未修改产品以迎合测试；未因提交编号变化重跑未受影响项（N4.1 复用并给出逐字节依据）。
-
 ## 6. main 同步（PR #91）与影响分析
 
 `origin/main`（`07957d1`，PR #91 stage-2 runner fixes）与本分支只在两个 analyzer 的 Stage-2 `resolve-plan` 命令块冲突；解决方式为两侧都保留：main 新增的 `run_dir=$(mktemp -d …)` 与 `--results-dir "$run_dir"`，加上本分支的同目录入口前缀。合并后 `git diff` 无冲突标记，且未再出现 `python3 …/scripts/<name>.py`、`skillrepo exec …` 形式的可执行命令。
@@ -122,3 +116,9 @@ CONTACT_PAPER_PYTHON="$FIXED_PYTHON" "$FIXED_PYTHON" -B -m unittest -v \
 - 首次审核（对象 `fb9a232`，含实现 `af6bf55`）：结论「完整」，无阻断项/无需修项，3 条建议；三处跟随修改与一条未采纳理由见第 5 节。
 - 定向复核（对象 `fb9a232..3c02bf9`）：结论「完整」，逐行确认三处跟随修改只在 R3 允许范围、router 缺值分支仍 fail closed 且保留原 stdout/stderr/退出码、记录如实；3 条观察（记录措辞、既有 `--zotero-read-skill-dir` 后接 flag 的既有边界、夹具 starter 日志片段）均不阻断。
 - 合并 `origin/main` 后由同一审核角色做最后一次极小复核（范围：两个冲突块的解决与记录更新）。
+
+## 8. 环境记录
+
+- Nix 2.34.8（`aarch64-darwin`）、python3 3.14.7、jq 1.8.2、yq 4.54.1、uv 0.12.22；既有 eval 服务监听 `127.0.0.1:17902`（未启动/停止）；`/Applications/Zotero.app` 存在。
+- N1–N4 命令按 TP5.1 原样执行；只在会话文件沙箱仍生效的早期本地迭代中使用过独立 `XDG_CACHE_HOME`，正式运行使用默认 Nix 缓存与默认 `HOME`，未改认证或全局安全设置。
+- 未修改产品以迎合测试；未因提交编号变化重跑未受影响项（N4.1 复用并给出逐字节依据）。
