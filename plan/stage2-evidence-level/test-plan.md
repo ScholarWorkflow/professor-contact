@@ -1,8 +1,8 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- Test revision：contact-evidence-level-t27；对应 [执行计划 r4](implementation-plan.md)。
+- Test revision：contact-evidence-level-t28；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
-- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言（见修订记录）。第二关待复核，第三关未执行。最新准备期复核为 7 通过 / 11 业务失败（§5，测试提交 `0d5606b` 加本轮修正），此前记录只按其实际版本引用；审核处置仅适用于各自记录版本（§6、§7）。
+- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围（见修订记录）。第二关待复核，第三关未执行。最新准备期复核为 7 通过 / 11 业务失败（§5，测试提交 `0d5606b` 加本轮修正），此前记录只按其实际版本引用；审核处置仅适用于各自记录版本（§6、§7）。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
 ## 1. 唯一必测清单
@@ -22,7 +22,7 @@ T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装
 
 | 项 | 选择器 | 该用例断言的计划行为 |
 |---|---|---|
-| T1 | `test_stage2_evidence_level.FixedEvidenceDisplayTests.test_fixed_evidence_renders_trusted_references_without_touching_machine_fields` | 固定卡 evidence/completed_part/remaining_gap 与禁锚区 evidence 显示可信题名/链接，可见文本不再出现原始编号；非空 `candidate_paper_ids` 与 pack 机器字段、quote、翻译、用户笔记逐字不变 |
+| T1 | `test_stage2_evidence_level.FixedEvidenceDisplayTests.test_fixed_evidence_renders_trusted_references_without_touching_machine_fields` | 固定卡 evidence/completed_part/remaining_gap 与禁锚区 evidence 显示可信题名/链接，可见文本不再出现原始编号（由既有的逐槽位 `assertNotIn` 保证）；非空 `candidate_paper_ids`、原始 `evidence`、`gap_id`、quote、翻译、用户笔记逐字不变 |
 | T1 | `test_stage2_evidence_level.FixedEvidenceDisplayTests.test_fixed_evidence_without_trusted_title_fails_instead_of_inventing_one` | 缺可信题名时受影响生成明确失败，不写伪引用 |
 | T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job` | 固定区 blocking 第一轮登记为 needs_correction，refine-plan 零 jobs 并交源/生成器，refine-finalize 不写；原始报告字节不变；随后模拟修正题名与来源证据，经普通 stage2-plan/finalize 生成新正文；新报告登记前旧失败不被接受，新报告确认为 PASS 后才接受新正文，轮次按新业务版本重新从第一轮计，原失败报告保持原字节 |
 | T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_mixed_fixed_and_narrative_blocking_creates_no_rewrite_job` | 混合固定/叙事 blocking 同样零 rewrite jobs，不把固定区交给模型 |
@@ -123,7 +123,7 @@ exit "$status"
   - T1 两项：展示用例首个断言失败在固定卡「后续论文依据」行仍含 `AAAA1111`（未做题名/链接替换），禁锚区与候选引用断言在该次运行中未执行，不据此判断；缺可信题名用例仍返回 `status=ok` 并生成分析文件（未拒绝）。
   - T2 三项：三项 `record` 均返回 `status=error`（产品尚未允许登记），其中 `test_repeating_...` 的日志给出 `reason_code=validation_issue_not_repairable`；因此 refine 分流与修复后重新校验无法进行。
   - T4 六项：`test_counts_...` 为 `全文级 3 篇`（按文件存在统计，未按记录级别）；`test_legacy_...` 为 `全文级 2 篇`（同上）；`test_display_only_...` 与三个来源变化用例为 `reuse_all`（未实现展示刷新与来源变化识别）。
-- 该记录只用于确认选择器可执行、判定 T3 已成立和暴露产品缺口，不替代第三关正式执行，也不作为任何通过结论。
+- 该记录只用于确认选择器可执行、判定 T3 已成立和暴露产品缺口；本轮两处修改过的断言（T1 候选引用保留、T4 展示刷新计数）在本次运行中未被执行，待产品实现后由第三关首次真正运行。本记录不替代第三关正式执行，也不作为任何通过结论。
 - 历史记录（旧测试代码，只按其版本引用）：`/tmp/contact-evidence-level.XcpOlvbX`（提交 `70e8eef`，18 项、7 通过 / 11 失败）、`/tmp/contact-evidence-level.oWwoE7gZ`（提交 `70e8eef`，同类）、`/tmp/contact-evidence-level.VgZ9JU6w`（提交 `dca3160`，同类）、`/tmp/contact-evidence-level.h3SBpUMF` 与 `/tmp/contact-evidence-level.M5wh17Uv`（提交 `3595a2c`，同类）。其中 `oa4NuJoS` 与 `h3SBpUMF` 的来源变化项曾因夹具未真正改变预检输入而作废，原日志保留。
 
 修订边界：t19 按 DSH 子代理的实现符合性审核（IR-10—IR-18）改用展示后仍存在的固定区引文、让计数与展示刷新夹具自洽、保留机器字段与来源元数据，并补齐 §1 覆盖关系与接口假设；t20 按第二轮 DSH 复核（IR-19—IR-21）把 §3 命令改为逐条 18 个选择器、补齐 §2 与 §1 的描述并整理审核记录；t21 按第三轮 DSH 复核（IR-22—IR-26）同步文档标签、删除过期复跑说明并限定 §5 的归因范围；t24 按第六轮 DSH 复核的两项可选观察清理措辞（指明实际失败的断言、§7 第四轮小结指向 §5 说明）并同步 DSH 摘要指针；t22 按第四轮 DSH 复核（IR-27、IR-28）修正状态行编号范围与夹具改动范围的记载，另外采纳三条说明性观察（§5 的 T2 归因限定、补记 `oWwoE7gZ` 运行、DSH 结论摘要落盘并在 §6/§7 指向），并整理 §3 列表排版。四次修订都不改变 t6 已批准的 T1—T4 范围与预期结果与测试代码语义。执行计划 r4 已获[正式批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516)，本次不重开其未受影响关口。
@@ -157,7 +157,15 @@ exit "$status"
 1. **T4 展示刷新的计数断言**：`test_display_only_level_change_refreshes_without_model_work` 中，被统计方向集合在刷新后为 AAAA1111 摘要、BBBB2222 摘要、CCCC3333 全文（OCR-only 不因缺 facts 降级），断言由 `全文级 0 篇` 改为 **`全文级 1 篇`**，与执行计划 §3.3.1 的三类计数和图例位置一致。
 2. **T1 候选引用断言**：原先用空列表比较，无法发现实现清空非空候选列表。现在夹具给待查证缺口写入**非空** `candidate_paper_ids`（包内论文 CCCC3333，不能引用缺口自身），断言渲染前后逐字保留，并按渲染前的原始记录再比较一次；同时要求可见文本不再出现原始编号。
 
-未新增用例名称、选择器、采集器或运行链；选择器仍为 18，新增用例仍为 14。产品代码与既有测试未改。本轮按 §3 复跑 18 项（`/tmp/contact-evidence-level.kj3p7J2l`，7 通过 / 11 业务失败），确认两处修正可执行且失败原因是产品未实现。该复核结论不代表第二关、第三关或合并批准。
+未新增用例名称、选择器、采集器或运行链；选择器仍为 18，新增用例仍为 14。产品代码与既有测试未改。本轮按 §3 复跑 18 项（`/tmp/contact-evidence-level.kj3p7J2l`，7 通过 / 11 业务失败）。该运行可证明的是：T1 夹具的非空候选写入与渲染前取值被产品校验接受（finalize 返回 `ok`，用例继续执行到固定卡展示断言），失败原因均为产品未实现。**两条被修改的断言在该次运行中未被执行**——T1 展示用例停在固定卡首行断言、T4 展示刷新用例停在 preflight 分流断言，它们要等产品实现后由第三关首次真正运行；现有材料中没有任何这两条断言的执行结果，也不据此判实现错误或通过。该复核结论不代表第二关、第三关或合并批准。
+
+### t28 定向修订记录（IR-32—IR-34 处置）
+
+1. **IR-32 记录措辞**：t27 记录与 §5 改为只声明实际执行范围——该次运行证明 T1 夹具的非空候选写入与渲染前取值通过产品校验（finalize 返回 `ok`、用例继续执行），但两条被修改的断言（T1 候选引用保留、T4 展示刷新计数 全文 1／摘要 2）在本次运行中未被执行，待产品实现后由第三关首次真正运行。
+2. **IR-33 重复断言**：删除固定卡循环里被前一行的 `assertNotIn("CCCC3333", visible)` 完全蕴含的可见文本检查；候选相关的检查移到能独立失败的位置——断言语义就是该缺口的原始 `evidence` 文本与 `gap_id` 在渲染后逐字不变。
+3. **IR-34 前置证明绑定**：渲染前的候选记录不再取"第一条非空行"，改为先按 `evidence == FIXED_EVIDENCE` 定位被测缺口的 `gap_id`，再取该行并断言其 `evidence`，使前置证明由被测缺口决定。
+
+未新增用例名称、选择器、采集器或运行链；选择器仍 18，新增用例仍 14；产品代码与既有测试未改。本轮模块运行仍为 14 项、3 通过 / 11 业务失败（失败原因与 §5 分组一致）；两条被修改的断言仍未执行到，按 IR-32 的口径记为待第三关首次运行。该复核结论不代表第二关、第三关或合并批准。
 
 ## 6. 实现符合性审核处置
 

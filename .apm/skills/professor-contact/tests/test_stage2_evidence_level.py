@@ -106,8 +106,12 @@ class EvidenceLevelEnv(BaseEnv):
         narrative = json.loads((results / "narrative.json").read_text(encoding="utf-8"))
         statuses = json.loads((results / "freshness-DIR00001.json").read_text(
             encoding="utf-8"))["results"]
+        gap_id = next(row["gap_id"] for row in statuses
+                      if row.get("evidence") == FIXED_EVIDENCE)
         candidate_row = next(row for row in statuses
-                             if row.get("candidate_paper_ids"))
+                             if row["gap_id"] == gap_id)
+        self.assertEqual(candidate_row["evidence"], FIXED_EVIDENCE,
+                         "the candidate proof must belong to the gap under test")
         before = {
             "papers": copy.deepcopy(batch["papers"]),
             "narrative": copy.deepcopy(narrative),
@@ -224,9 +228,6 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
             visible = line.replace(link, "")
             self.assertNotIn("AAAA1111", visible, slot)
             self.assertNotIn("CCCC3333", visible, slot)
-            for key in FIXED_CANDIDATES:
-                self.assertNotIn(f"（{key}", visible,
-                                 "the raw machine reference must be replaced")
 
         blacklist = self.direction()["completed_gap_blacklist"]
         self.assertEqual(len(blacklist), 1, blacklist)
@@ -241,7 +242,9 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         # Machine fields and candidate references keep the exact model values,
         # and the author's own text, translation, quote and user note survive.
         gap = self.shortlist_gap("AAAA1111")
-        self.assertEqual(gap["evidence"], FIXED_EVIDENCE)
+        self.assertEqual(gap["evidence"], FIXED_EVIDENCE,
+                         "the raw evidence text must survive the display step")
+        self.assertEqual(gap["gap_id"], gap_id)
         self.assertEqual(gap["completed_part"], COMPLETED_PART)
         self.assertEqual(gap["remaining_gap"], REMAINING_GAP)
         self.assertEqual(gap["candidate_paper_ids"], list(FIXED_CANDIDATES),
