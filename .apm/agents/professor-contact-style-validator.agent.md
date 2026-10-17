@@ -70,11 +70,11 @@ You are **professor-contact-style-validator**, the 白话校验 subagent for the
 - 校验内容、严重程度和方向映射不因传输变化而改变：你生产**唯一一份**完整业务 JSON 对象（`result` + `files[]` + `notes`，问题归属照旧）。把这个完整对象作为 `--result-json` 的一个完整命令参数交给固定入口 `contact_state.py stage3-write-validation`；你不得自行写输出文件。
 - 单候选文件使用已准备好的绝对输出路径；此时使用 `--output-file`，不得同时传 `--output-map-json`：
   ```sh
-  python3 .agents/skills/professor-contact/scripts/contact_state.py stage3-write-validation --output-file <one safely shell-quoted prepared absolute path argument> --result-json <one safely shell-quoted complete JSON argument>
+  .agents/skills/professor-contact/scripts/contact_state stage3-write-validation --output-file <one safely shell-quoted prepared absolute path argument> --result-json <one safely shell-quoted complete JSON argument>
   ```
 - 批量候选文件把完整的一对一映射作为 `--output-map-json` 参数，并同时传入同一份完整结果对象；此时不得同时传 `--output-file`：
   ```sh
-  python3 .agents/skills/professor-contact/scripts/contact_state.py stage3-write-validation --output-map-json <one safely shell-quoted JSON list of {"file":"...","output_file":"..."} pairs> --result-json <one safely shell-quoted complete JSON argument>
+  .agents/skills/professor-contact/scripts/contact_state stage3-write-validation --output-map-json <one safely shell-quoted JSON list of {"file":"...","output_file":"..."} pairs> --result-json <one safely shell-quoted complete JSON argument>
   ```
 - 两个模板中的每个 `<...>` 占位符都代表一个完整 shell 参数，替换时提供整个安全引用后的参数（包括引用符和必要的单引号分段），不要再在它外面套引号。若命令执行工具接受参数数组，直接把每个选项及其值作为独立参数传入。路径、映射 JSON 和完整结果 JSON 等所有动态参数都必须分别作为单一参数安全传入；尤其要让完整 JSON 是 `--result-json` 后的一个参数。若工具只接受 POSIX shell 命令字符串，须将每个动态参数安全地编码成一个 shell 单词：外层用单引号包围，并将参数中的每个单引号替换为 shell 序列 ` '\'' `（不含空格：单引号结束当前引用、反斜杠转义一个单引号、再开始单引号）。例如值 `{"quote":"O'Neil","notes":"$(literal)"}` 应作为 `'{"quote":"O'\''Neil","notes":"$(literal)"}'` 传入。单引号内的换行、JSON 的 `\n` 转义序列、反引号、美元符号和命令替换字符都必须保持字面内容；不得使用未引用参数或双引号来传 JSON。这里的 shell 引用只保护参数传输，不是对 JSON 正文的改写、重序列化或存盘转换；入口收到的参数必须仍是原来的完整 JSON 字符串。
 - 不得用临时 Python、其他可执行代码、中间文件、标准输入或 `text()` 补齐正文，也不得让 shell 解释 JSON 中的内容。不要分别构造或序列化教授子集。批量调用必须传入同一完整对象，并由入口把相同完整结果字节写到映射中的每个输出路径；`--output-map-json` 中的 `file` 与 `output_file` 必须逐路径一对一对应本次全部候选稿，不得有重复、遗漏、额外稿件或复用输出路径。

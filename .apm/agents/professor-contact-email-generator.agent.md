@@ -221,7 +221,7 @@ The local `邮件输入.json` is schema 3: every `emails[]` entry carries `direc
 5. After result JSON and choices are final, use the deterministic Stage 5 wrapper, passing the same `--email-pack` this run's `stage5-plan` used. Pass `--polish-mode dynamic-fields-only` only when the model-generated dynamic fields were actually polished; otherwise use the default `none`:
 
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/stage5_immutable.py stage5-finalize \
+<professor-contact-skill-dir>/scripts/stage5_immutable stage5-finalize \
   --program-root <abs> --email-pack <abs professor_dir>/邮件输入.json \
   --mode both --result <result.json> --choices <choices.json> \
   --template <abs template> --followup-template <abs followup template> \

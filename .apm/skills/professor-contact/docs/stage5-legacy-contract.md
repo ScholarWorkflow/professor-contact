@@ -97,7 +97,7 @@ If `folder_path` missing → return the error JSON.
 2. 若调用 prompt 没有 `mode`，本 agent 按 `mode: both` 执行；只有用户明确说只要首封/只生成首信时才使用 `first`。
 3. 跑**初始** plan（不带 `--result`，也不带 `--choices`；choices 要等核验门禁全绿才允许被读取）：
 ```bash
-   skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage5-plan \
+   <professor-contact-skill-dir>/scripts/contact_state stage5-plan \
    --program-root <abs> --profile <profile abs> --mode both [--email-id ...]
 ```
    （模板查找链：`<调用方工作目录>/套磁邮件/套磁模板.md` → `<program_root>/../套磁邮件/` → 内嵌黄金骨架；agent 找到模板后用 `--template <abs>` 传给 runner。）
@@ -238,7 +238,7 @@ If `folder_path` missing → return the error JSON.
 
 ### Step 6 — stage5-finalize（校验 + 写盘）
 ```bash
-   skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage5-finalize \
+   <professor-contact-skill-dir>/scripts/contact_state stage5-finalize \
    --program-root <abs> --mode both --result <raw result> --humanized-map <map.json> --choices <choices.json> [--email-id ...]
 ```
 - `--humanized-map` 格式为 `{ "<email_id>": "/absolute/path/to/initial.txt", "<email_id>::followup": "/absolute/path/to/followup.txt" }`；每个输出必须有独立文件。runner 先校验所有 raw result、核验门禁、choices 必填字段/类型/ID 映射、收件人权威一致性、humanized、保护串、红线、占位符、核验缓存和手改冲突，任一输出失败时整批不写盘。
@@ -260,7 +260,7 @@ task(subagent_type: "professor-contact-email-validator",
 
 校验结束后，必须把 validator 的结构化结果写入 `/tmp/.../validation.json`。首封结果用 `email_id`，跟进结果额外用 `output_id: "<email_id>::followup"`，例如 `{"results":[{"email_id":"...","output_id":"...::followup","result":"pass","rounds":1,"issues":[]}]}`，再运行：
 ```bash
-skillrepo exec professor-contact .apm/skills/professor-contact/scripts/contact_state.py stage5-record-validation \
+<professor-contact-skill-dir>/scripts/contact_state stage5-record-validation \
   --professor-dir <教授目录> --validation-file <validation.json>
 ```
 只有该命令成功后，才可把返回 JSON 中对应邮件的 `validation` 填为实际结果；runner 会原子更新 `套磁邮件状态.json`。

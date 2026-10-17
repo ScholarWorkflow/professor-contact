@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Same-directory entry for ``stage2_chatgpt_handoff.py`` (professor-contact).
+
+Installed copies invoke the deterministic runners through these same-directory
+entries, so one install can pin the interpreter of the real runner chain (the
+Nix staging rewrites this shebang) without changing any public ``.py``
+interface. The entry resolves the adjacent original script from its own
+location, forwards argv unchanged and replaces itself with that script, which
+keeps stdout, stderr and the exit code of the original runner.
+
+It also exports the interpreter of the installed paper-analysis helpers as
+``CONTACT_PAPER_PYTHON`` when this install pins one; an install that pins
+nothing leaves the variable unset, so the handoff helper keeps its ``uv run``
+default backend for the PEP 723 scripts.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+from pathlib import Path
+
+TARGET = Path(__file__).resolve().parent / "stage2_chatgpt_handoff.py"
+
+
+def fixed_paper_python() -> str:
+    """Interpreter for the paper-analysis helpers, or ``""`` for the uv default.
+
+    The Nix staging substitutes the locked pdfx interpreter for the empty
+    default below; a checkout or APM install keeps it empty, so the handoff
+    helper still starts the PEP 723 scripts through ``uv run``.
+    """
+    return ""  # CONTACT_PAPER_PYTHON: empty keeps the non-Nix uv default
+
+
+def main() -> None:
+    interpreter = sys.executable or shutil.which("python3") or "python3"
+    env = dict(os.environ)
+    fixed = fixed_paper_python()
+    if fixed:
+        env["CONTACT_PAPER_PYTHON"] = fixed
+    os.execve(interpreter, [interpreter, str(TARGET), *sys.argv[1:]], env)
+
+
+if __name__ == "__main__":
+    main()

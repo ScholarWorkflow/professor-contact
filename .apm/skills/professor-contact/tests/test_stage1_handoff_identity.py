@@ -496,9 +496,9 @@ class Stage1HandoffIdentityTests(unittest.TestCase):
 
         downloader_text = STAGE1_AGENT.read_text(encoding="utf-8")
         stage1_commands = [
-            block for block in _bash_blocks(downloader_text) if "contact_stage1.py" in block
+            block for block in _bash_blocks(downloader_text) if "scripts/contact_stage1" in block
         ]
-        self.assertTrue(stage1_commands, "downloader has no active contact_stage1.py command")
+        self.assertTrue(stage1_commands, "downloader has no active contact_stage1 entry command")
         for block in stage1_commands:
             flags = re.findall(r'--target-file\s+"([^"]+)"', block)
             self.assertTrue(flags, f"Stage-1 command omits explicit local target: {block}")
@@ -530,7 +530,7 @@ class Stage1HandoffIdentityTests(unittest.TestCase):
                 verify_blocks = [
                     block
                     for block in active
-                    if "contact_stage1.py" in block and "verify" in block
+                    if "scripts/contact_stage1" in block and "verify" in block
                 ]
                 preflight_blocks = [block for block in active if "stage2-preflight" in block]
                 self.assertTrue(verify_blocks, f"{agent.name}: no active Stage-1 verify command")

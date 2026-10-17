@@ -169,9 +169,9 @@ class Issue67Stage4SelectionContractTests(unittest.TestCase):
         """
         command_blocks = re.findall(r"```bash\n(.*?)```", self.text, re.S)
         migrate_positions = [i for i, block in enumerate(command_blocks)
-                             if "contact_state.py stage4-migrate-local" in block]
+                             if "scripts/contact_state stage4-migrate-local" in block]
         finalize_positions = [i for i, block in enumerate(command_blocks)
-                              if "contact_state.py stage4-finalize" in block]
+                              if "scripts/contact_state stage4-finalize" in block]
         self.assertTrue(migrate_positions, "the migrate-local command block is required")
         self.assertTrue(finalize_positions, "the finalize command block is required")
         self.assertLess(
@@ -200,7 +200,7 @@ class Issue67Stage4SelectionContractTests(unittest.TestCase):
             "development checkout",
         )
         self.assertIn(
-            ".agents/skills/professor-contact/scripts/contact_state.py",
+            ".agents/skills/professor-contact/scripts/contact_state",
             self.text,
             "the Stage-4 command must execute the runner installed in this consumer",
         )

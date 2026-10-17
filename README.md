@@ -25,6 +25,38 @@ npm run skills:install
 
 原有 APM 安装方式继续可用：在仓库根目录运行 `apm install`。依赖与目标仍由根目录的 `apm.yml` 声明；需要 OpenCode/Codex agent、MCP 配置或其他 APM 包时，使用这条路径。
 
+### 使用 Nix 安装（aarch64-darwin / Codex）
+
+仓库新增 Nix 交付入口，只面向 `aarch64-darwin` 与 Codex；Linux 与 OpenCode 仍用上面的 Skills CLI 或 APM 方式。它把完整 skill、八个原生角色、Stage 5 路由附录与七个固定运行入口装进一个消费者项目，业务正文仍以 `.apm/` 源为唯一来源，不在 `nix/` 保存第二份。
+
+```sh
+RUN=$(mktemp -d /tmp/contact-nix.XXXXXX); CONSUMER="$RUN/consumer"; mkdir -p "$CONSUMER"
+nix build "$CONTACT_REF#professor-contact-runtime" --out-link "$RUN/runtime"
+nix build "$CONTACT_REF#professor-contact" --out-link "$RUN/package"
+nix build "$CONTACT_REF#professor-contact-environment" --out-link "$RUN/environment"
+"$RUN/environment/bin/agent-env" apply --project "$CONSUMER"
+```
+
+`CONTACT_REF` 是本仓库的实际提交，例如 `github:ScholarWorkflow/professor-contact/<40 位 SHA>`；不要用开发 checkout 的路径输入代替。固定输出：
+
+| 输出 | 内容 |
+| --- | --- |
+| `packages.aarch64-darwin.professor-contact-runtime` | 固定解释器的完整自有资源（`scripts/`、`docs/`、`tests/`、隐藏辅助文件），普通 derivation，不冒充 agent 安装 |
+| `packages.aarch64-darwin.professor-contact` | `id = "professor-contact"` 的 agent 包，默认 `enableHarnesses = [ "codex" ]`；`professor-contact.override { enableHarnesses = []; }` 可按包关闭投影 |
+| `packages.aarch64-darwin.professor-contact-environment` | `mkProject` 环境，`roots = [ professor-contact ]`，提供 `bin/agent-env`，下游可与其他顶层包组合 |
+
+依赖按上游实际发布提交固定：`agent-env-nix` 固定共享安装器，`paper-analysis`、`zotero-tools`、`base-skills`（`humanizer-ja`、`vision-tools`）、`pdf-processing-core`（`pdfx-agent` 与固定 Python）与 `knowledge-tools` 的 `extraction-to-knowledge` 递归闭包；`vision-tools` 与 paper-analysis 复用同一次求值，避免同名不同 payload。
+
+安装只调用共享 `agent-env apply --project`：skill 复制到 `<consumer>/.agents/skills/professor-contact/`，八个角色写到 `<consumer>/.codex/agents/*.toml`，MCP 表按共享保护机制合并进 `<consumer>/.codex/config.toml`；其它来源的 skill、无关配置与手改内容保持不动。
+
+七个固定运行入口在 `<consumer>/.agents/skills/professor-contact/scripts/`：`contact_targets`、`contact_stage1`、`contact_state`、`stage2_chatgpt_handoff`、`stage2_zotero_rpc`、`stage2_input_router`、`stage5_immutable`。每个入口以自身第一行的固定解释器执行同目录的原名 `.py` 脚本并原样转发 argv，stdout、stderr 与退出码不变；原 `.py` 公共入口继续保留。Nix 安装里 `stage2_input_router` 把调用方的 `--zotero-read-skill-dir` 绑定为锁定的 `<zotero-tools>/bin/zotero-item-export`（改用既有 `--exporter`），`stage2_chatgpt_handoff` 导出 `CONTACT_PAPER_PYTHON`，让 paper-analysis 的 `future_work.py` 与相邻 `facts.py` 用同一固定解释器而不是 `uv run`。
+
+角色最小调用：从消费者目录启动 Codex，由 root 会话委派已安装的 `professor-contact`（Stage 0），随后 `professor-contact-downloader`、`professor-contact-analyzer`、`professor-contact-idea-generator`、`professor-contact-selection`、`professor-contact-email-generator`、`professor-contact-email-validator`、`professor-contact-style-validator` 按各自 contract 执行；Stage 5 的路由附录同时进入生成的 `SKILL.md` 与 coordinator 角色正文。
+
+外部服务仍由宿主按各 owner 文档提供：Zotero HTTP/MCP 端点、浏览器下载链、模型服务与 `KB_SERVER_PATH`。安装本身不启动服务、不发邮件、不写用户业务状态。
+
+未交付与未验证路径：`professor-research` 还没有可固定的 `professor-collector` Nix 包，因此本环境不含 contact 的 Stage 1 缺 PDF 补齐边与 Stage 5 contact-evidence freshness 上游边，等该生产者发布后按其实际提交补入（不得填占位 SHA）；Zotero、浏览器与知识库服务本身未随本包验证；PR91/92 的下载链修复与 paper-analysis 跨页引文不在本包范围。
+
 ## 当前流程
 
 ```mermaid

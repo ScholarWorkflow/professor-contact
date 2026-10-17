@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+"""Same-directory entry for ``contact_targets.py`` (professor-contact).
+
+Installed copies invoke the deterministic runners through these same-directory
+entries, so one install can pin the interpreter of the real runner chain (the
+Nix staging rewrites this shebang) without changing any public ``.py``
+interface. The entry resolves the adjacent original script from its own
+location, forwards argv unchanged and replaces itself with that script, which
+keeps stdout, stderr and the exit code of the original runner.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+from pathlib import Path
+
+TARGET = Path(__file__).resolve().parent / "contact_targets.py"
+
+
+def main() -> None:
+    interpreter = sys.executable or shutil.which("python3") or "python3"
+    os.execv(interpreter, [interpreter, str(TARGET), *sys.argv[1:]])
+
+
+if __name__ == "__main__":
+    main()

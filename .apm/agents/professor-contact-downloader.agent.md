@@ -55,7 +55,7 @@ Resolve `<program_root>` from `info.json`. Do not probe Zotero yourself.
 For **each** professor-local target file in scope, run one resolve — one invocation resolves exactly one professor and reads only that file plus that professor's `方向预筛.json`:
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
+<professor-contact-skill-dir>/scripts/contact_targets \
   resolve --program-root "<program_root>" \
   --target-file "<program_root>/<教授目录>/套磁目标.json" \
   --professors "<optional single name>"
@@ -72,7 +72,7 @@ Never scan for a Zotero note named `套磁候选`, even as fallback. Never read 
 ### 3. Build the Stage 1 candidate snapshot (deterministic, local)
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_stage1.py \
+<professor-contact-skill-dir>/scripts/contact_stage1 \
   build --program-root "<program_root>" \
   --target-file "<program_root>/<教授目录>/套磁目标.json" \
   [--named-file "<named_papers_file absolute path>"]
@@ -147,7 +147,7 @@ absent from the Task prompt.
 The collector updates `papers.json`, which instantly makes the pre-fill snapshot stale. Re-run the deterministic build so the persisted snapshot reflects the **post-fill** readiness:
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_stage1.py \
+<professor-contact-skill-dir>/scripts/contact_stage1 \
   build --program-root "<program_root>" \
   --target-file "<program_root>/<教授目录>/套磁目标.json" \
   [--named-file "<named_papers_file absolute path>"]

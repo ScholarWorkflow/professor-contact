@@ -116,9 +116,9 @@ class Stage01CallerContractTests(unittest.TestCase):
 
     #: Commands whose only Stage-0 authority input is one professor's local target.
     TARGET_BOUND_COMMANDS = (
-        "contact_targets.py resolve",
-        "contact_stage1.py build",
-        "contact_stage1.py verify",
+        "scripts/contact_targets resolve",
+        "scripts/contact_stage1 build",
+        "scripts/contact_stage1 verify",
         "stage2-preflight",
     )
     #: Sources owned by the Stage 0-1 caller contract.
@@ -281,9 +281,9 @@ class Stage01CallerContractTests(unittest.TestCase):
         """
         placeholder = "<professor-contact-skill-dir>"
         expected_helpers = {
-            STAGE0_AGENT: ("contact_targets.py",),
-            STAGE1_AGENT: ("contact_targets.py", "contact_stage1.py"),
-            SKILL_PATH: ("contact_targets.py",),
+            STAGE0_AGENT: ("contact_targets",),
+            STAGE1_AGENT: ("contact_targets", "contact_stage1"),
+            SKILL_PATH: ("contact_targets",),
         }
         for path, helpers in expected_helpers.items():
             text = _read(path)
@@ -292,7 +292,7 @@ class Stage01CallerContractTests(unittest.TestCase):
             self.assertNotIn(".apm/skills/", commands)
             for helper in helpers:
                 self.assertIn(
-                    f"python3 {placeholder}/scripts/{helper}",
+                    f"{placeholder}/scripts/{helper}",
                     commands,
                     f"{path.name}: {helper} must be invoked from this skill's installed directory",
                 )
@@ -317,10 +317,10 @@ class Stage01CallerContractTests(unittest.TestCase):
         commands = self._command_blocks(text)
         self.assertNotIn("skillrepo exec", commands)
         self.assertNotIn(".apm/skills/", commands)
-        for helper in ("contact_targets.py", "contact_stage1.py", "contact_state.py",
-                       "stage2_input_router.py", "stage2_chatgpt_handoff.py"):
+        for helper in ("contact_targets", "contact_stage1", "contact_state",
+                       "stage2_input_router", "stage2_chatgpt_handoff"):
             self.assertIn(
-                f"python3 {placeholder}/scripts/{helper}",
+                f"{placeholder}/scripts/{helper}",
                 commands,
                 f"analyzer: {helper} must be invoked from this skill's installed directory",
             )
@@ -363,7 +363,7 @@ class Stage01CallerContractTests(unittest.TestCase):
         self.assertRegex(text, r"(?is)(?:retry once|重试一次)[\s\S]{0,300}(?:same|相同)")
         self.assertRegex(
             text,
-            r"(?is)(?:refresh|re-run|rebuild|重新)[\s\S]{0,500}contact_stage1\.py[\s\S]{0,200}\bbuild\b",
+            r"(?is)(?:refresh|re-run|rebuild|重新)[\s\S]{0,500}scripts/contact_stage1[\s\S]{0,200}\bbuild\b",
         )
 
     def test_stage1_source_keeps_noop_and_resolution_fail_closed(self):
@@ -596,12 +596,12 @@ class Stage01CallerContractTests(unittest.TestCase):
         #    active return names the local Stage-1 owner.
         downloader_text = _read(STAGE1_AGENT)
         stage1_commands = [
-            block for block in _bash_blocks(downloader_text) if "contact_stage1.py" in block
+            block for block in _bash_blocks(downloader_text) if "scripts/contact_stage1" in block
         ]
-        self.assertTrue(stage1_commands, "downloader has no active contact_stage1.py command")
+        self.assertTrue(stage1_commands, "downloader has no active contact_stage1 entry command")
         for block in stage1_commands:
             flags = re.findall(r'--target-file\s+"([^"]+)"', block)
-            self.assertTrue(flags, f"contact_stage1.py invoked without a local target: {block}")
+            self.assertTrue(flags, f"contact_stage1 entry invoked without a local target: {block}")
             for value in flags:
                 _assert_professor_local(value, TARGET_NAME, "downloader Stage-1 command")
             self.assertEqual(
@@ -626,10 +626,10 @@ class Stage01CallerContractTests(unittest.TestCase):
             with self.subTest(analyzer=str(agent.relative_to(REPO_ROOT))):
                 text = _read(agent)
                 active = _bash_blocks(text)
-                stage1_verify = [b for b in active if "contact_stage1.py" in b and "verify" in b]
+                stage1_verify = [b for b in active if "scripts/contact_stage1" in b and "verify" in b]
                 preflight = [b for b in active if "stage2-preflight" in b]
                 self.assertTrue(
-                    stage1_verify, f"{agent.name}: no active contact_stage1.py verify command"
+                    stage1_verify, f"{agent.name}: no active contact_stage1 entry verify command"
                 )
                 self.assertTrue(preflight, f"{agent.name}: no active stage2-preflight command")
                 for block in stage1_verify + preflight:

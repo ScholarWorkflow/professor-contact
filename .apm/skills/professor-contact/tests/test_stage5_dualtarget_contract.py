@@ -289,7 +289,7 @@ class Stage5DualTargetContractTests(unittest.TestCase):
         wrapper_section = self._section(self.generator_body,
                                         "## Immutable-template override",
                                         "## Targeted single-email scope")
-        command_start = wrapper_section.index("stage5_immutable.py stage5-finalize")
+        command_start = wrapper_section.index("scripts/stage5_immutable stage5-finalize")
         command_end = wrapper_section.index("```", command_start)
         command_block = wrapper_section[command_start:command_end]
         self.assertIn("--email-pack", command_block,

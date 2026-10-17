@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 # Analyzer commands whose input is the Stage-0 target of exactly one professor.
-TARGET_BOUND_COMMANDS = ("contact_targets.py", "contact_stage1.py", "stage2-preflight")
+TARGET_BOUND_COMMANDS = ("scripts/contact_targets", "scripts/contact_stage1", "stage2-preflight")
 RETIRED_PROGRAM_TABLE = "教授研究/套磁目标.json"
 PROHIBITION_MARKERS = ("绝不", "不读", "退役", "migrate")
 
@@ -236,7 +236,7 @@ class Stage2PreflightContractTests(unittest.TestCase):
         for target in ("professor-contact-codex", "professor-contact-opencode"):
             with self.subTest(target=target):
                 commands = [command for command in bash_commands(self._analyzer(target))
-                            if "contact_state.py stage2-plan" in command]
+                            if "scripts/contact_state stage2-plan" in command]
                 self.assertEqual(len(commands), 1, msg=commands)
                 self.assertIn("--facts /tmp/<教授名>_套磁_facts.json", commands[0])
                 self.assertIn(expected_proof, commands[0])
