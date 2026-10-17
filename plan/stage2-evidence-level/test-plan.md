@@ -1,8 +1,8 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- Test revision：contact-evidence-level-t15；对应 [执行计划 r4](implementation-plan.md)。
+- Test revision：contact-evidence-level-t16；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
-- 状态：第一关 PASS（t6 复核记录）；t7 的测试代码与完整命令已落实，独立实现符合性审核九轮共提出 IR-01—IR-09 并已全部处置（§6），处置后准备期复核在未实现的产品上得到 7 通过 / 11 业务失败（§5）。第二关待复核，第三关未执行；这里不宣称任何业务修复完成或测试通过。
+- 状态：第一关 PASS（t6 复核记录）；t7 的测试代码与完整命令已落实，独立实现符合性审核十轮共提出 IR-01—IR-09 并已全部处置（§6），处置后准备期复核在未实现的产品上得到 7 通过 / 11 业务失败（§5）。第二关待复核，第三关未执行；这里不宣称任何业务修复完成或测试通过。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
 ## 1. 唯一必测清单
@@ -90,15 +90,15 @@ echo "exit=$? run_root=$RUN_ROOT"
 
 记录格式保持简单：实际提交、T1—T4逐项通过/业务失败/无法判断/未执行、实际命令与输出位置、复用结果来源、剩余问题及负责人。原始日志和临时数据在仓库外，公开提交仅必要脱敏摘要。
 
-准备期复核（本地测试工程师，非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），命令为上面 §3 的命令，结果目录 `/tmp/contact-evidence-level.VgZ9JU6w`（`recipe.txt`），退出码 1，`Ran 18 tests`、`FAILED (failures=11)`。
+准备期复核（本地测试工程师，非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），命令为上面 §3 的命令，结果目录 `/tmp/contact-evidence-level.cpOoF7rN`（`recipe.txt`），退出码 1，`Ran 18 tests`、`FAILED (failures=11)`。
 
 - 通过 7 项：T3 四项（`NarrativeRoundBoundTests` 一项与三个既有保护选择器）、T2 两项（既有禁止区域选择器与 `test_forbidden_user_note_and_paper_table_keep_their_rejection`）、T4 一项（缺基线走 process）。
 - 业务失败 11 项：T1 两项（固定卡展示、缺题名失败）、T2 三项、T4 六项（`test_counts_...`、`test_legacy_...`、`test_display_only_...`、`test_source_change_...`、`test_deleted_analysis_source_...`、`test_replaced_analysis_source_...`）。这些用例的输入已按真实索引契约与 §4 接口假设改变，产品仍按文件存在统计或返回 `reuse_all`。
-- 运行记录对应关系：当前提交上的 §3 完整运行见 `/tmp/contact-evidence-level.VgZ9JU6w`（`recipe.txt`，`Ran 18 tests`、7 通过 / 11 失败）；此前 `/tmp/contact-evidence-level.M5wh17Uv` 是提交 `3595a2c` 上的 18 项完整结果，即上面的 7 通过 / 11 失败；后续三轮只改了展示刷新与来源用例的夹具（提交 `c61c26a`、`2d00061`、`10497ff`），展示刷新选择器在这些提交上单独运行仍为 `'reuse_all' != 'refresh_display'`，其余 17 项按未受影响复用 M5 记录。新增模块单独运行 `Ran 14 tests`、`FAILED (failures=11)`（14 个新增用例中 3 项通过、11 项失败），与上述分类一致；这 14 项是上面 18 项的子集，两项运行都在当前测试版本 `dca3160` 上取得。
+- 运行记录对应关系：本节数字来自当前测试提交 `469aa83` 上的完整 18 项运行 `/tmp/contact-evidence-level.cpOoF7rN`（`recipe.txt`）。此前各版记录保留：`/tmp/contact-evidence-level.VgZ9JU6w`（提交 `dca3160`，18 项、7 通过 / 11 失败）、`/tmp/contact-evidence-level.h3SBpUMF`（提交 `3595a2c`，同类）、`/tmp/contact-evidence-level.M5wh17Uv`（提交 `3595a2c`，同类）。夹具在 `c61c26a`、`2d00061`、`10497ff`、`dca3160`、`469aa83` 上只改了展示刷新与来源用例，未受影响选择器按上述记录复用，不重复运行。
 - 作废的早期记录：`/tmp/contact-evidence-level.oa4NuJoS` 与 `/tmp/contact-evidence-level.h3SBpUMF` 中因夹具未真正改变预检输入而作废的来源变化项不计入本轮分类，原日志保留。
-- 该记录只用于确认选择器可执行、判定 T3 已成立和暴露产品缺口- 该记录只用于确认选择器可执行、判定 T3 已成立和暴露产品缺口，不替代第三关正式执行，也不作为任何通过结论。
+- 该记录只用于确认选择器可执行、判定 T3 已成立和暴露产品缺口，不替代第三关正式执行，也不作为任何通过结论。
 
-修订边界：t15 按第九轮定向复核补齐 pack-only 刷新后的固定卡机器字段与禁锚区可见文本断言，并补清运行记录路径与重复文字；不改变 t6 已批准的 T1—T4 范围与预期结果。执行计划 r4 已获[正式批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516)，本次不重开其未受影响关口。
+修订边界：t16 按第十轮定向复核补齐固定卡列表长度比较、让声明的 sidecar 状态与真实文件一致，并清理重复文字与版本指向；不改变 t6 已批准的 T1—T4 范围与预期结果。执行计划 r4 已获[正式批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516)，本次不重开其未受影响关口。
 
 交接：T1/T2/T4 的 11 项业务失败交产品实现负责人修复，实现落地后由本地测试工程师同步受影响选择器并做第二关复核材料，再由本地执行工程师按第三关正式执行；T3 与既有禁止区域结论在当前产品版本已成立，无需重跑。
 
@@ -189,3 +189,9 @@ echo "exit=$? run_root=$RUN_ROOT"
 第九轮结论为**部分完成**：IR-01、IR-03—IR-09 闭合，IR-02 只剩 T4 刷新用例的机器字段断言与 §5 记录细节。处置：刷新用例新增固定卡机器字段逐项比较（`status`/`evidence`/`completed_part`/`remaining_gap`/`quote`/`translation_zh`/`confidence`/`evaluated_at`/`candidate_paper_ids`/`item_key`/`gap_id`）、禁锚区完整比较与禁锚区行「链接之外不含编号」断言；§5 补清 14 项模块运行与 18 项完整运行的关系。
 
 第九轮审核版本 `dca3160`；处置后提交见 PR 分支。本审核结论不代表第二关、第三关或合并批准。
+
+### 第十轮定向复核（对照 `469aa83`）
+
+第十轮结论为**部分完成**：IR-01、IR-03—IR-09 闭合，IR-02 只剩三处细节——`gap_shortlist` 用 `zip` 比较但未比较长度；索引声明的 `future_work_state: valid` 与 `facts_state: valid` 没有对应真实文件；§5 有一句重复文字且记录版本指向含糊。处置：补列表长度断言；`accept_run`/`index_entry` 按分析器真实规则记录状态（有效 future-work sidecar 必须落盘，OCR-only 记为 `failed` 且无 sidecar 路径），新增来源用例改为按真实「缺失 facts」状态声明；§5 按提交逐条写明运行记录并删除重复句。
+
+第十轮审核版本 `469aa83`；处置后提交见 PR 分支。本审核结论不代表第二关、第三关或合并批准。
