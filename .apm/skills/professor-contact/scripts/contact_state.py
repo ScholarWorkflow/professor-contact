@@ -1000,10 +1000,15 @@ def direction_relevant_keys(direction: dict) -> list:
 
     An explicitly empty `relevant_keys` list is a real (empty) licence and must
     stay empty; only a genuinely missing field falls back to the Stage-1
-    member set for legacy inputs.
+    member set for legacy inputs. A present-but-malformed value is rejected
+    instead of being read as "missing".
     """
-    relevant = direction.get("relevant_keys")
-    if isinstance(relevant, list):
+    if "relevant_keys" in direction:
+        relevant = direction.get("relevant_keys")
+        if not isinstance(relevant, list):
+            fail("invalid_facts",
+                 f"direction {facts_direction_id(direction)} has a malformed relevant_keys "
+                 "value (must be a list); refusing to treat it as a missing legacy field")
         return list(relevant)
     return list(direction.get("member_keys") or [])
 
@@ -1038,10 +1043,16 @@ def pack_direction_relevant_keys(direction: dict) -> list:
 
     A v3 pack always stores `relevant_keys` explicitly (an empty list is an
     empty `P` licence). A legacy pack without the field keeps its members as
-    the minimal read-only scope.
+    the minimal read-only scope; a present-but-malformed value is rejected
+    because falling back to members would silently widen the citation licence.
     """
-    relevant = direction.get("relevant_keys")
-    if isinstance(relevant, list):
+    if "relevant_keys" in direction:
+        relevant = direction.get("relevant_keys")
+        if not isinstance(relevant, list):
+            fail("invalid_input_pack",
+                 f"direction {direction_machine_id(direction)} has a malformed relevant_keys "
+                 "value (must be a list); refusing to fall back to its members",
+                 direction=direction_machine_id(direction))
         return list(relevant)
     return list(direction.get("supporting_item_keys") or [])
 
@@ -5387,6 +5398,32 @@ def cmd_stage2_finalize(args) -> None:
     # Reference-scope papers (P citations) join the same map so a later render
     # or refine keeps one trusted title record even without the temp facts.
     old_papers = pack_paper_index(ctx.pack or {})
+
+    def _current_paper_record(key: str) -> dict | None:
+        """Current-facts record, filled from the old pack only where facts lack it.
+
+        Plan 3.1.3: the current facts are the trusted source for every
+        displayed/consumed paper field; the old cache may only fill values the
+        current facts do not state, and never overrides a current value.
+        """
+        paper = ctx.papers.get(key)
+        if paper is None:
+            return None
+        previous = old_papers.get(key)
+        record = dict(previous) if isinstance(previous, dict) else {}
+        record["item_key"] = key
+        for field, value in (("title", paper.get("title")), ("year", paper.get("year")),
+                             ("authorship", paper.get("authorship")),
+                             ("analysis_file", paper.get("analysis_file"))):
+            if value is not None:
+                record[field] = value
+        record["pdf_available"] = bool(paper.get("has_pdf"))
+        facts_record, facts_state, facts_error = ctx.facts_for(key)
+        record["facts_state"] = facts_state
+        record["facts_error"] = facts_error
+        record["paper_facts"] = facts_record
+        return record
+
     papers_map: dict = {}
     for d in pack_directions:
         paper_keys = list(d.get("supporting_item_keys") or []) \
@@ -5394,8 +5431,8 @@ def cmd_stage2_finalize(args) -> None:
         for key in paper_keys:
             if key in papers_map:
                 continue
-            record = fresh_papers.get(key) or resolved_papers.get(key) \
-                or old_papers.get(key)
+            record = fresh_papers.get(key) or _current_paper_record(key) \
+                or resolved_papers.get(key) or old_papers.get(key)
             if record is None:
                 record = _canonical_record(key)
             if isinstance(record, dict):
@@ -5473,8 +5510,10 @@ def cmd_stage2_finalize(args) -> None:
     # when NOTHING the validator certified changed — no new model work, no
     # membership/reference/narrative re-render and no old-semantics rebuild —
     # and its recorded pack/render binding still describes the actual files.
-    # Otherwise it silently expires: the new business version starts again at
-    # round 1, while the raw old reports stay untouched on disk.
+    # A changed business version silently expires the old certification (the
+    # new version starts at round 1, raw old reports stay untouched); with NO
+    # business change an invalid old binding is an evidence error and must be
+    # rejected before writing, never "restored" by re-binding the hashes.
     old_validator = (ctx.pack or {}).get("validator")
     if isinstance(old_validator, dict) and old_validator.get("schema") == 2:
         current_document = None
@@ -5485,12 +5524,18 @@ def cmd_stage2_finalize(args) -> None:
         header, document_body = split_frontmatter(document_text)
         if isinstance(header, dict) and header.get("managed_by") == MANAGED_BY:
             current_document = sha256_text(document_body)
+        business_changed = bool(needed_keys) or pack_needs_rebuild or render_changed
         binding_valid = (
-            not needed_keys and not pack_needs_rebuild and not render_changed
-            and current_document == old_validator.get("render_sha256")
+            current_document == old_validator.get("render_sha256")
             and old_validator.get("pack_sha256")
             == stage2_pack_content_fingerprint(ctx.pack or {}))
-        if binding_valid:
+        if not business_changed:
+            if not binding_valid:
+                fail("validation_render_stale",
+                     "the recorded Stage-2 validation no longer binds the current managed "
+                     "render/input pack and no business change explains it; re-record a "
+                     "raw validator report too against the current files",
+                     target=str(md_path))
             carried = dict(old_validator)
             carried["pack_sha256"] = stage2_pack_content_fingerprint(pack)
             pack["validator"] = carried
@@ -11520,6 +11565,23 @@ def stage2_pack_matches_facts(ctx: Stage2Context) -> None:
                   direction=direction_id, problem=problem,
                   pack_path=str(ctx.pack_path))
 
+    # Identity first: facts from another professor (or another professor
+    # directory) must never drive a refinement of this accepted pack.
+    facts_professor = ctx.facts.get("professor")
+    pack_professor = ctx.pack.get("professor")
+    if facts_professor != pack_professor:
+        soft_exit("needs_refresh", "source_fingerprint_changed",
+                  problem="professor_mismatch", facts_professor=facts_professor,
+                  pack_professor=pack_professor, pack_path=str(ctx.pack_path))
+    pack_dir_value = ctx.pack.get("professor_dir")
+    if isinstance(pack_dir_value, str) and pack_dir_value:
+        if _canonical_directory(ctx.professor_dir) != _canonical_directory(pack_dir_value):
+            soft_exit("needs_refresh", "source_fingerprint_changed",
+                      problem="professor_dir_mismatch",
+                      facts_professor_dir=str(ctx.professor_dir),
+                      pack_professor_dir=pack_dir_value,
+                      pack_path=str(ctx.pack_path))
+
     for plan in ctx.direction_plans:
         did = plan["did"]
         final = accepted.get(did)
@@ -11553,6 +11615,30 @@ def stage2_pack_matches_facts(ctx: Stage2Context) -> None:
             _refresh(did, "missing_provisional_source_fingerprint")
         if recorded != plan["fingerprint"]:
             _refresh(did, "original_facts_changed")
+
+    plan_ids = {plan["did"] for plan in ctx.direction_plans}
+    # Every final direction that is not backed by a current provisional plan
+    # must be an already-materialized split child whose source row is still in
+    # the current facts selection and still declares this child.
+    for child_id, child in accepted.items():
+        if child_id in plan_ids:
+            continue
+        subfield = child.get("resolved_direction") or {}
+        source_id = subfield.get("provisional_direction_id")
+        if subfield.get("resolution_type") != "split_from" \
+                or subfield.get("split_target") != child_id \
+                or not isinstance(source_id, str) or source_id not in plan_ids:
+            _refresh(child_id, "unexpected_final_direction")
+        source_row = rows.get(source_id) or {}
+        if source_row.get("resolution_type") != "split_from" \
+                or source_row.get("split_target") != child_id:
+            _refresh(child_id, "unexpected_split_child")
+    # Every resolution mapping row must belong to a provisional direction that
+    # still exists in the current facts selection; a removed direction makes
+    # the old pack unmatchable and requires a refresh.
+    for source_id in rows:
+        if source_id not in plan_ids:
+            _refresh(source_id, "unexpected_resolved_source")
 
 
 def stage2_validation_material(ctx, direction: dict) -> dict:
@@ -11717,8 +11803,14 @@ def cmd_stage2_refine_finalize(args) -> None:
         "professor": ctx.professor,
         "directions": {direction_machine_id(d): d.get("input_fingerprint")
                        for d in pack_directions}})
-    body = render_analysis_md(ctx, {**ctx.pack, "directions": pack_directions},
-                              state_fingerprint)
+    render_pack = {**ctx.pack, "directions": pack_directions}
+    # The rewrite must obey the same pre-write reference contract as the
+    # ordinary finalize: every {{P:key}} needs the direction's persisted
+    # licence and a trusted title in the canonical pack/facts, never a raw
+    # item_key fallback in the managed Markdown.
+    for direction in pack_directions:
+        stage2_require_paper_reference_titles(ctx.papers, render_pack, direction)
+    body = render_analysis_md(ctx, render_pack, state_fingerprint)
     old_render = ((ctx.pack or {}).get("cache") or {}).get("render", {})
     decision = None
     if getattr(args, "decision_file", None):
