@@ -305,17 +305,18 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         self.assertFalse(plan["write_needed"], plan)
         self.assertNotIn(plan.get("reason_code"),
                          {"no_failed_directions", "awaiting_second_validation"}, plan)
-        handoff_text = " ".join(str(plan.get(field, ""))
-                                for field in ("reason_code", "message", "detail"))
-        self.assertTrue(handoff_text.strip(), plan)
-        # The handoff must say who owns the fix and what has to happen, not just
-        # mention the words "source" or "generator".
+        # One result field must name the responsible party AND what it has to do,
+        # so an unrelated "source error" string cannot pass as a handoff.
         owners = ("source", "generator", "源", "生成器", "生成方", "数据准备")
         actions = ("fix", "repair", "regenerate", "修复", "修正", "重新生成",
                    "重做", "处理", "补齐")
-        folded = handoff_text.casefold()
-        self.assertTrue(any(token in folded for token in owners), plan)
-        self.assertTrue(any(token in folded for token in actions), plan)
+        complete = [str(plan.get(field, ""))
+                    for field in ("reason_code", "message", "detail")
+                    if any(token in str(plan.get(field, "")).casefold()
+                           for token in owners)
+                    and any(token in str(plan.get(field, "")).casefold()
+                            for token in actions)]
+        self.assertTrue(complete, plan)
         results = self.root / "empty-rewrites"
         results.mkdir(exist_ok=True)
         finalized = self.refine_finalize(report, results)
