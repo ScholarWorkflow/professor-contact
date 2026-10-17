@@ -40,6 +40,10 @@ REMAINING_GAP = "AAAA1111 仍需第二组"
 BLACKLIST_EVIDENCE = "CCCC3333 已接住输入模式比较"
 BLACKLIST_COMPLETION = "CCCC3333"
 REPAIRABLE_QUOTE = "起研究合成输入比较"
+# T1 replaces the item key inside the fixed-card text with the trusted title and
+# link, so the T2/T3 report quotes must not contain the key itself.
+FIXED_EVIDENCE_QUOTE = "无更晚论文实现该点"
+COMPLETED_PART_QUOTE = "只做了第一组"
 FORBIDDEN_QUOTE = "我想比较两种合成输入的处理结果"
 
 
@@ -228,7 +232,8 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         self.assertEqual(gap["evidence"], FIXED_EVIDENCE)
         self.assertEqual(gap["completed_part"], COMPLETED_PART)
         self.assertEqual(gap["remaining_gap"], REMAINING_GAP)
-        self.assertNotIn("candidate_paper_ids", gap)
+        self.assertEqual(gap["candidate_paper_ids"], [],
+                         "candidate references must survive the display step")
         self.assertEqual(blacklist[0]["evidence"], BLACKLIST_EVIDENCE)
         self.assertEqual(blacklist[0]["completed_by_item_key"], BLACKLIST_COMPLETION)
         self.assertEqual(blacklist[0]["quote_trunc"],
@@ -275,8 +280,13 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         self.assertNotEqual(finalized.get("status"), "ok", finalized)
         self.assertTrue(finalized.get("reason_code") or finalized.get("message"), finalized)
         self.assertFalse((self.prof_dir / "套磁候选分析.md").exists())
-        for invented in ("该论文", "后续论文", "相关论文"):
-            self.assertNotIn(invented, json.dumps(finalized, ensure_ascii=False))
+        # The failure must not fabricate a citation anywhere in the result: a
+        # diagnosis sentence may name the slot, but never a link or an invented
+        # title (the only trusted title here is absent).
+        result = json.dumps(finalized, ensure_ascii=False)
+        self.assertNotIn("zotero://", result)
+        for invented in ("[该论文]", "[后续论文]", "[相关论文]"):
+            self.assertNotIn(invented, result)
 
 
 class FixedEvidenceFailureTests(EvidenceLevelEnv):
@@ -285,17 +295,18 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
     def fixed_region_report(self, name="fixed-region.json"):
         """A blocking finding on the model-written evidence of a fixed card."""
         return self.write_report(name, [blocking_issue(
-            FIXED_EVIDENCE, self.find_line(FIXED_EVIDENCE))])
+            FIXED_EVIDENCE_QUOTE, self.find_line(FIXED_EVIDENCE_QUOTE))])
 
     def mixed_report(self, name="mixed.json"):
         """One report holding both a fixed-card and a repairable narrative finding."""
         return self.write_report(name, [
             blocking_issue(REPAIRABLE_QUOTE, self.find_line(REPAIRABLE_QUOTE)),
-            blocking_issue(FIXED_EVIDENCE, self.find_line(FIXED_EVIDENCE)),
+            blocking_issue(FIXED_EVIDENCE_QUOTE, self.find_line(FIXED_EVIDENCE_QUOTE)),
         ])
 
     def assert_source_owner_handoff(self, report):
         """refine-plan hands a fixed-card failure over without a model job."""
+        report_before = report.read_bytes()
         self.assertEqual(self.record(report)["status"], "needs_correction")
         pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
         analysis_before = self.analysis_text()
@@ -323,6 +334,11 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         self.assertFalse(finalized.get("rewritten"), finalized)
         self.assertEqual((self.prof_dir / "套磁候选输入.json").read_bytes(), pack_before)
         self.assertEqual(self.analysis_text(), analysis_before)
+        self.assertEqual(report.read_bytes(), report_before,
+                         "the raw validator report must stay unchanged")
+        validator = self.pack()["validator"]
+        self.assertNotIn(validator["results"]["DIR00001"]["result"],
+                         {"pass", "skipped", "fail_after_2_rounds"}, validator)
 
     def test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job(self):
         facts = self.write_facts()
@@ -408,7 +424,7 @@ class NarrativeRoundBoundTests(EvidenceLevelEnv):
                          [REPAIRABLE_QUOTE], validator)
 
         second = self.write_report("round2-fixed-card.json", [blocking_issue(
-            COMPLETED_PART, self.find_line(COMPLETED_PART))])
+            COMPLETED_PART_QUOTE, self.find_line(COMPLETED_PART_QUOTE))])
         again = self.record(second)
         self.assertEqual(again["status"], "ok", again)
         self.assertEqual(again["round"], 2, again)
@@ -417,7 +433,7 @@ class NarrativeRoundBoundTests(EvidenceLevelEnv):
         self.assertEqual(terminal["result"], "fail_after_2_rounds", terminal)
         self.assertEqual(terminal["rounds"], 2, terminal)
         self.assertEqual([issue["quote"] for issue in terminal["issues"]],
-                         [COMPLETED_PART], terminal)
+                         [COMPLETED_PART_QUOTE], terminal)
         self.assertEqual(self.refine_plan(second)["jobs"], [])
 
 
@@ -458,9 +474,9 @@ class AnalysisLevelTests(EvidenceLevelEnv):
     def ocr_path(self, key):
         return self.prof_dir / "论文分析" / "_ocr" / f"{key}.txt"
 
-    def write_future_work_sidecar(self, key):
+    def write_future_work_sidecar(self, key, analysis=None):
         """The declared `valid` future-work sidecar must really exist."""
-        analysis = self.prof_dir / "论文分析" / f"{key}.md"
+        analysis = analysis or self.prof_dir / "论文分析" / f"{key}.md"
         sidecar = Path(str(analysis) + ".future_work.json")
         if not sidecar.exists():
             sidecar.write_text(json.dumps({
@@ -521,9 +537,13 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         facts["papers"] = [paper for paper in facts["papers"]
                            if paper["item_key"] not in set(delete)]
         for entry in add:
+            previous = next((paper for paper in facts["papers"]
+                             if paper["item_key"] == entry["item_key"]), None)
+            merged = copy.deepcopy(previous) if previous else {}
+            merged.update(copy.deepcopy(entry))
             facts["papers"] = [paper for paper in facts["papers"]
                                if paper["item_key"] != entry["item_key"]]
-            facts["papers"].append(copy.deepcopy(entry))
+            facts["papers"].append(merged)
         for paper in facts["papers"]:
             paper["analysis_level"] = levels.get(paper["item_key"])
         (self.root / "facts.json").write_text(
@@ -531,7 +551,7 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         return self.write_index(entries)
 
     def accepted_run(self, level="fulltext", indexed=("AAAA1111", "BBBB2222", "CCCC3333"),
-                     ocr_only=()):
+                     ocr_only=(), facts_extra=None):
         """One accepted pack with a terminal pass validator and a full baseline.
 
         ``indexed`` names the papers the accepted baseline records with an
@@ -550,13 +570,22 @@ class AnalysisLevelTests(EvidenceLevelEnv):
             else:
                 self.write_future_work_sidecar(key)
         self.write_index(entries)
-        facts = self.write_facts()
+        facts = self.write_facts(facts_extra) if facts_extra else self.write_facts()
         self.render_fixture(facts)
         passed = self.record(self.write_report("pass.json", [], verdict="pass"))
         self.assertEqual(passed["status"], "ok", passed)
         replayed = self.stage2_preflight()
         self.assertEqual(replayed["action"], "reuse_all", replayed)
         return facts
+
+    def declare_analysis(self, key, analysis, level, facts_state="unavailable",
+                         ocr=False):
+        """Make one index entry match the artifacts really on disk."""
+        entry = {"level": level, "facts_state": facts_state, "analysis": analysis,
+                 "ocr": ocr}
+        if not ocr:
+            self.write_future_work_sidecar(key, analysis=analysis)
+        return entry
 
     def write_preflight_file(self, preflight):
         path = self.root / "preflight.json"
@@ -585,9 +614,10 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         ccc = self.prof_dir / "论文分析" / "CCCC3333.md"
 
         def levels(facts):
-            recorded = {"AAAA1111": None, "CCCC3333": "fulltext"}
+            recorded = {"AAAA1111": None, "BBBB2222": "abstract",
+                        "CCCC3333": "fulltext"}
             for paper in facts["papers"]:
-                paper["analysis_level"] = recorded.get(paper["item_key"])
+                paper["analysis_level"] = recorded[paper["item_key"]]
                 if paper["item_key"] == "CCCC3333":
                     paper["analysis_file"] = str(ccc)
 
@@ -644,10 +674,12 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertIn("摘要级 0 篇", summary)
 
     def test_display_only_level_change_refreshes_without_model_work(self):
-        # Complete accepted baseline: every direction candidate (including the
-        # OCR-only fulltext) already has its index record and analysis file, so
-        # the only change below is the recorded level of AAAA1111 and BBBB2222.
-        self.accepted_run(ocr_only=("CCCC3333",))
+        # Complete accepted baseline: the counted direction set already holds
+        # the OCR-only fulltext with its index record, analysis and OCR files,
+        # so the only change below is the recorded level of AAAA1111/BBBB2222.
+        self.accepted_run(ocr_only=("CCCC3333",),
+                          facts_extra=self.direction_papers_only(
+                              "AAAA1111", "BBBB2222", "CCCC3333"))
         facts_path = self.root / "facts.json"
         pack_before = self.pack()
         freshness_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
@@ -715,6 +747,7 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertEqual(levels_after, {"AAAA1111": "abstract",
                                         "BBBB2222": "abstract",
                                         "CCCC3333": "fulltext"}, levels_after)
+        self.assertEqual(sorted(pack_after["papers"]), ["AAAA1111", "BBBB2222", "CCCC3333"])
         # Business state, model fingerprints and recorded assignment survive.
         self.assertEqual(pack_after["directions"][0]["narrative"],
                          pack_before["directions"][0]["narrative"])
@@ -734,8 +767,11 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertNotIn("pack_integrity_mismatch", after["reason_codes"], after)
         self.assertNotEqual(hashlib.sha256(managed_body(self.analysis_text()).encode(
             "utf-8")).hexdigest(), pack_before["validator"]["render_sha256"])
-        # No model task was created by the display-only step.
+        # No model task was created by the display-only step: the freshness
+        # cache and the recorded validator are untouched, so no re-analysis,
+        # assignment or freshness job was queued.
         self.assertEqual(freshness_path.read_text(encoding="utf-8"), freshness_before)
+        self.assertEqual(pack_after.get("validator"), pack_before.get("validator"))
 
     def assert_routes_back_to_process(self, preflight):
         self.assertEqual(preflight["action"], "process", preflight)
@@ -759,6 +795,8 @@ class AnalysisLevelTests(EvidenceLevelEnv):
             add=({"item_key": "CCCC3333", "has_pdf": True,
                   "analysis_file": str(analysis)},))
         self.write_analysis("CCCC3333", ocr=True)
+        index = json.loads((self.prof_dir / "论文分析" / "_index.json").read_text(
+            encoding="utf-8"))
         self.assertTrue(analysis.exists())
         self.assertTrue(self.ocr_path("CCCC3333").exists())
         self.assert_routes_back_to_process(self.stage2_preflight())
@@ -783,13 +821,15 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         new_analysis = self.prof_dir / "论文分析" / "CCCC3333-v2.md"
         new_analysis.write_text("# analysis v2\n", encoding="utf-8")
         old_analysis.unlink()
+        Path(str(old_analysis) + ".future_work.json").unlink(missing_ok=True)
         self.update_sources(
             {"AAAA1111": "fulltext", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
             {"AAAA1111": {"level": "fulltext"},
              "BBBB2222": {"level": "fulltext"},
-             "CCCC3333": {"level": "fulltext", "analysis": new_analysis}},
+             "CCCC3333": self.declare_analysis("CCCC3333", new_analysis, "fulltext")},
             add=({"item_key": "CCCC3333", "has_pdf": True,
                   "analysis_file": str(new_analysis)},))
+        self.assertTrue(Path(str(new_analysis) + ".future_work.json").exists())
         index = json.loads((self.prof_dir / "论文分析" / "_index.json").read_text(
             encoding="utf-8"))
         self.assertEqual(index["papers"]["CCCC3333"]["file"], str(new_analysis))
