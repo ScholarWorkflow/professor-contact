@@ -606,7 +606,18 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assertEqual(analysis_path.read_bytes(), analysis_before)
 
     def test_stage2_second_blocking_round_is_terminal(self):
-        facts = self.write_facts()
+        def later_reference_only(facts):
+            # Plan §3.1.1: in this scenario CCCC3333 is only the
+            # `{{L:CCCC3333}}` later reference rendered inside DIR00001. The
+            # original formal members therefore exclude it, while `papers`
+            # keeps its record for the reference. `provisional_member_keys` is
+            # the single explicit original-member source.
+            first = facts["directions"][0]
+            members = [key for key in first["member_keys"] if key != "CCCC3333"]
+            first["member_keys"] = members
+            first["provisional_member_keys"] = list(members)
+
+        facts = self.write_facts(later_reference_only)
         results = self.root / "results"
         self.write_stage2_results(results)
         narrative_path = results / "narrative.json"
@@ -678,7 +689,7 @@ class Stage2ValidationHandoffTests(BaseEnv):
         missing_env = self.__class__("test_stage2_second_blocking_round_is_terminal")
         missing_env.setUp()
         try:
-            missing_facts = missing_env.write_facts()
+            missing_facts = missing_env.write_facts(later_reference_only)
             missing_results = missing_env.root / "missing-title-results"
             missing_env.write_stage2_results(missing_results)
             missing_narrative_path = missing_results / "narrative.json"

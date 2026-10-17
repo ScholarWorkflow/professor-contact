@@ -105,17 +105,27 @@ def finalize_resolve(facts_path, results_dir):
 
 
 def facts_directions(facts_path) -> dict:
-    """collection_key -> direction entry of the facts file under test."""
+    """direction identity -> direction entry of the facts file under test.
+
+    The authoritative identity is `direction_id`; the Zotero projection
+    `collection_key` is metadata only. Legacy facts that predate the field fall
+    back to `collection_key`, which is the identity the product then uses.
+    """
     payload = json.loads(Path(facts_path).read_text(encoding="utf-8"))
-    return {entry["collection_key"]: entry for entry in payload.get("directions") or []}
+    return {(entry.get("direction_id") or entry["collection_key"]): entry
+            for entry in payload.get("directions") or []}
 
 
 def unchanged_resolved(direction) -> dict:
-    """The complete `unchanged` payload a model would return for `direction`."""
-    ckey = direction["collection_key"]
+    """The complete `unchanged` payload a model would return for `direction`.
+
+    The resolved identities follow the direction's formal identity: its
+    `direction_id` when stated, otherwise the legacy `collection_key`.
+    """
+    did = direction.get("direction_id") or direction["collection_key"]
     return {
-        "resolved_direction_id": ckey,
-        "provisional_direction_id": ckey,
+        "resolved_direction_id": did,
+        "provisional_direction_id": did,
         "name_ja": direction.get("name_ja") or "",
         "name_zh": direction.get("name_zh") or "",
         "resolution_type": "unchanged",
