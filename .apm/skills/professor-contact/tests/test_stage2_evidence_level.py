@@ -311,23 +311,19 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
         analysis_before = self.analysis_text()
         plan = self.refine_plan(report)
-        self.assertEqual(plan["status"], "ok", plan)
-        self.assertEqual(plan["jobs"], [], plan)
-        self.assertFalse(plan["write_needed"], plan)
+        self.assertEqual(plan.get("jobs"), [], plan)
+        self.assertFalse(plan.get("write_needed"), plan)
         self.assertNotIn(plan.get("reason_code"),
                          {"no_failed_directions", "awaiting_second_validation"}, plan)
-        # One result field must name the responsible party AND what it has to do,
-        # so an unrelated "source error" string cannot pass as a handoff.
+        # Check owner and required action together, without mandating that
+        # the business handoff serialize both into one particular field.
         owners = ("source", "generator", "源", "生成器", "生成方", "数据准备")
         actions = ("fix", "repair", "regenerate", "修复", "修正", "重新生成",
                    "重做", "处理", "补齐")
-        complete = [str(plan.get(field, ""))
-                    for field in ("reason_code", "message", "detail")
-                    if any(token in str(plan.get(field, "")).casefold()
-                           for token in owners)
-                    and any(token in str(plan.get(field, "")).casefold()
-                            for token in actions)]
-        self.assertTrue(complete, plan)
+        details = " ".join(str(plan.get(field, ""))
+                           for field in ("reason_code", "message", "detail"))
+        self.assertTrue(any(owner in details.casefold() for owner in owners), plan)
+        self.assertTrue(any(action in details.casefold() for action in actions), plan)
         results = self.root / "empty-rewrites"
         results.mkdir(exist_ok=True)
         finalized = self.refine_finalize(report, results)
@@ -349,6 +345,35 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         self.assertNotIn(validator["results"]["DIR00001"]["result"],
                          {"pass", "skipped", "fail_after_2_rounds"}, validator)
         self.assertIn(REPAIRABLE_QUOTE, self.analysis_text())
+
+        # A real source correction is followed by the ordinary Stage-2 path,
+        # not narrative refine. The old failure cannot approve the new body.
+        old_body = managed_body(self.analysis_text())
+        facts_data = json.loads(facts.read_text(encoding="utf-8"))
+        next(paper for paper in facts_data["papers"] if paper["item_key"] == "AAAA1111")[
+            "title"] = "Synthetic comparison of input patterns (corrected)"
+        facts.write_text(json.dumps(facts_data, ensure_ascii=False), encoding="utf-8")
+        corrected_results = self.root / "corrected-results"
+        self.write_stage2_results(corrected_results, gap_overrides={
+            "AAAA1111": {"status": "partial",
+                         "evidence": "核对后确认第二组比较仍待完成（AAAA1111）",
+                         "completed_part": COMPLETED_PART,
+                         "remaining_gap": REMAINING_GAP},
+            "BBBB2222": {"status": "done_by_self", "evidence": BLACKLIST_EVIDENCE,
+                         "candidate_paper_ids": [BLACKLIST_COMPLETION]},
+        })
+        new_plan = parse(run_bound_stage2_plan(run_cli, facts))
+        self.assertEqual(new_plan["status"], "ok", new_plan)
+        rebuilt = parse(run_bound_stage2_finalize(
+            run_cli, facts, "--results", corrected_results))
+        self.assertEqual(rebuilt["status"], "ok", rebuilt)
+        self.assertNotEqual(managed_body(self.analysis_text()), old_body)
+        self.assertIn("核对后确认第二组比较仍待完成", self.analysis_text())
+        self.assertNotIn(FIXED_EVIDENCE_QUOTE, self.analysis_text())
+        preflight = self.stage2_preflight()
+        row = next(row for row in preflight["directions"]
+                   if row["direction_id"] == "DIR00001")
+        self.assertIn("validator_not_accepted", row["reason_codes"], row)
 
     def test_mixed_fixed_and_narrative_blocking_creates_no_rewrite_job(self):
         facts = self.write_facts()
@@ -623,14 +648,13 @@ class AnalysisLevelTests(EvidenceLevelEnv):
 
         facts = self.write_facts(levels, self.direction_papers_only(
             "AAAA1111", "BBBB2222", "CCCC3333"))
-        # AAAA1111 is a failed analysis: its file and the index still carry the
-        # old fulltext string, so its recorded level is unknown. CCCC3333 is a
-        # successful OCR-only fulltext with an OCR carrier but no PDF-grounded
-        # facts. Only the recorded level may drive the counts.
+        # AAAA1111 has an orphaned analysis file but no successful index entry:
+        # a file alone cannot establish its level. CCCC3333 is a successful
+        # OCR-only fulltext with an OCR carrier but no PDF-grounded facts.
+        # A missing facts sidecar by itself does not mean analysis failed.
         self.write_analysis("AAAA1111")
         self.write_analysis("CCCC3333", ocr=True)
         self.write_index({
-            "AAAA1111": {"level": "fulltext", "facts_state": "unavailable"},
             "BBBB2222": {"level": "abstract", "facts_state": "unavailable"},
             "CCCC3333": {"level": "fulltext", "facts_state": "unavailable", "ocr": True},
         })
@@ -780,6 +804,15 @@ class AnalysisLevelTests(EvidenceLevelEnv):
     def test_source_change_routes_back_to_the_process_path(self):
         # The accepted baseline has no index record and no file for CCCC3333.
         self.accepted_run(indexed=("AAAA1111", "BBBB2222"))
+        # First plan a legitimate display-only level update. Before writing,
+        # a previously absent analysis source appears: the plan is now stale.
+        self.update_sources(
+            {"AAAA1111": "abstract", "BBBB2222": "fulltext", "CCCC3333": None},
+            {"AAAA1111": {"level": "abstract"},
+             "BBBB2222": {"level": "fulltext"}})
+        level_only = self.stage2_preflight()
+        self.assertEqual(level_only["action"], "refresh_display", level_only)
+        stale_preflight_file = self.write_preflight_file(level_only)
         self.assertNotIn("CCCC3333", json.loads(
             (self.prof_dir / "论文分析" / "_index.json").read_text(encoding="utf-8"))["papers"])
         analysis = self.prof_dir / "论文分析" / "CCCC3333.md"
@@ -799,10 +832,35 @@ class AnalysisLevelTests(EvidenceLevelEnv):
             encoding="utf-8"))
         self.assertTrue(analysis.exists())
         self.assertTrue(self.ocr_path("CCCC3333").exists())
+        pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
+        analysis_before = self.analysis_text()
+        refused = self.refresh_display(stale_preflight_file)
+        self.assertNotEqual(refused.get("status"), "ok", refused)
+        self.assertEqual((self.prof_dir / "套磁候选输入.json").read_bytes(), pack_before)
+        self.assertEqual(self.analysis_text(), analysis_before)
         self.assert_routes_back_to_process(self.stage2_preflight())
 
     def test_deleted_analysis_source_also_routes_back_to_process(self):
         self.accepted_run()
+        # A user edit between the approved display preflight and its write
+        # cannot be overwritten by the display-refresh entry.
+        self.update_sources(
+            {"AAAA1111": "abstract", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
+            {"AAAA1111": {"level": "abstract"},
+             "BBBB2222": {"level": "fulltext"},
+             "CCCC3333": {"level": "fulltext"}})
+        level_only = self.stage2_preflight()
+        self.assertEqual(level_only["action"], "refresh_display", level_only)
+        preflight_file = self.write_preflight_file(level_only)
+        analysis_path = self.prof_dir / "套磁候选分析.md"
+        analysis_path.write_text(self.analysis_text() + "\n用户手动补充的说明。\n",
+                                 encoding="utf-8")
+        protected_analysis = self.analysis_text()
+        pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
+        refused = self.refresh_display(preflight_file)
+        self.assertNotEqual(refused.get("status"), "ok", refused)
+        self.assertEqual(self.analysis_text(), protected_analysis)
+        self.assertEqual((self.prof_dir / "套磁候选输入.json").read_bytes(), pack_before)
         # The analysis file and the index record for CCCC3333 are gone.
         self.update_sources({"AAAA1111": "fulltext", "BBBB2222": "fulltext"},
                             {"AAAA1111": {"level": "fulltext"},
