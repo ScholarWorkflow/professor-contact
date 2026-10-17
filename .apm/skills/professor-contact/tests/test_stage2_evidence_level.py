@@ -18,10 +18,12 @@ Every fixture is synthetic and professor-local; no real user directory, model,
 PDF or network call is involved.
 """
 import copy
+import hashlib
 import json
 
 from test_contact_state import (
     BaseEnv,
+    contact_state,
     parse,
     run_bound_stage2_finalize,
     run_bound_stage2_plan,
@@ -38,6 +40,19 @@ BLACKLIST_EVIDENCE = "CCCC3333 已接住输入模式比较"
 BLACKLIST_COMPLETION = "CCCC3333"
 REPAIRABLE_QUOTE = "起研究合成输入比较"
 FORBIDDEN_QUOTE = "我想比较两种合成输入的处理结果"
+
+
+def managed_body(rendered: str) -> str:
+    """The managed Markdown body below the frontmatter, exactly as hashed."""
+    _header, body = contact_state.split_frontmatter(rendered)
+    return body
+
+
+def papers_of(pack: dict) -> dict:
+    """Canonical paper records without the display-only analysis level."""
+    return {key: {field: value for field, value in paper.items()
+                  if field != "analysis_level"}
+            for key, paper in pack["papers"].items()}
 
 
 def validation_report(analysis_md, issues, verdict="fail", notes=""):
@@ -202,6 +217,8 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         self.assertIn(titles[BLACKLIST_COMPLETION], blacklist_line)
         self.assertIn(f"zotero://select/library/items/{BLACKLIST_COMPLETION}",
                       blacklist_line)
+        self.assertNotIn(BLACKLIST_COMPLETION, blacklist_line.replace(
+            f"zotero://select/library/items/{BLACKLIST_COMPLETION}", ""))
 
         # Machine fields and candidate references keep the exact model values,
         # and the author's own text, translation, quote and user note survive.
@@ -224,15 +241,20 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
 
         # Same comparison against the pre-render snapshot: the display step
         # changed neither the machine facts nor the author's own material.
-        rendered = self.pack()
+        accepted = self.direction()
         gap = self.shortlist_gap("AAAA1111")
         self.assertEqual(gap["status"], "partial")
         self.assertEqual(gap["evidence"], FIXED_EVIDENCE)
         self.assertEqual(gap["completed_part"], COMPLETED_PART)
         self.assertEqual(gap["remaining_gap"], REMAINING_GAP)
-        source_gap = {(row.get("item_key"), row.get("gap_id")): row
-                      for row in baseline["narrative"]["directions"][0]["positioning"]}
-        self.assertTrue(source_gap, baseline["narrative"])
+        source_positioning = baseline["narrative"]["directions"][0]["positioning"]
+        self.assertEqual([row["text"] for row in source_positioning],
+                         [row["text"] for row in accepted["narrative"]["positioning"]])
+        self.assertEqual(baseline["narrative"]["directions"][0]["gap_notes"],
+                         accepted["narrative"]["gap_notes"])
+        self.assertEqual(baseline["user_note"], accepted["user_note"])
+        self.assertEqual(baseline["narrative"]["directions"][0]["collection_key"],
+                         accepted["collection_key"])
 
     def test_fixed_evidence_without_trusted_title_fails_instead_of_inventing_one(self):
         def drop_title(facts):
@@ -395,12 +417,13 @@ class NarrativeRoundBoundTests(EvidenceLevelEnv):
 class AnalysisLevelTests(EvidenceLevelEnv):
     """T4 — analysis level counts, display-only refresh and source-change routing."""
 
-    def index_entry(self, key, level, facts_state="unavailable"):
+    def index_entry(self, key, level, facts_state="unavailable", ocr=False):
         """One real `论文分析/_index.json` paper record (analyzer Step 7 shape)."""
         return {
             "file": str(self.prof_dir / "论文分析" / f"{key}.md"),
             "level": level,
-            "ocr_file": None,
+            "ocr_file": (str(self.prof_dir / "论文分析" / "_ocr" / f"{key}.txt")
+                         if ocr else None),
             "future_work_sidecar": str(self.prof_dir / "论文分析" / f"{key}.md.future_work.json"),
             "future_work_state": "valid",
             "facts_sidecar": None,
@@ -409,46 +432,61 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         }
 
     def write_index(self, entries):
-        """Write the Stage-2 analysis index; only real fields are used."""
+        """Write the Stage-2 analysis index; the caller controls every field."""
         index = {
             "schema": 2, "future_work_schema": 1, "professor": "試験 教授",
             "direction": {"collection_key": "DIR00001", "name_ja": "合成输入比较"},
-            "papers": {key: self.index_entry(key, value["level"], value["facts_state"])
+            "papers": {key: self.index_entry(key, value.get("level"),
+                                             value.get("facts_state", "unavailable"),
+                                             value.get("ocr", False))
                        for key, value in entries.items()},
         }
         (self.prof_dir / "论文分析" / "_index.json").write_text(
             json.dumps(index, ensure_ascii=False), encoding="utf-8")
         return index
 
-    def write_analysis(self, key):
+    def write_analysis(self, key, ocr=False):
         """A real analysis file so an index-only level change is not a source change."""
         path = self.prof_dir / "论文分析" / f"{key}.md"
         if not path.exists():
             path.write_text("# analysis\n", encoding="utf-8")
+        if ocr:
+            ocr_path = self.prof_dir / "论文分析" / "_ocr" / f"{key}.txt"
+            ocr_path.parent.mkdir(parents=True, exist_ok=True)
+            ocr_path.write_text("synthetic OCR text\n", encoding="utf-8")
         return path
 
-    def update_sources(self, levels, entries=None, delete=(), add=()):
-        """Change the facts and the index that preflight actually reads."""
+    def remove_analysis(self, key):
+        path = self.prof_dir / "论文分析" / f"{key}.md"
+        if path.exists():
+            path.unlink()
+        return path
+
+    def update_sources(self, levels, entries, delete=(), add=(), ocr=()):
+        """Change the index and the artifacts that preflight actually reads.
+
+        ``delete`` removes the key from both the facts catalog and the index and
+        deletes its analysis file; ``add`` replaces or appends the facts record
+        for a key that was previously absent or missing its artifacts; ``ocr``
+        gives a key an OCR carrier file next to its analysis file.
+        """
         facts = json.loads((self.root / "facts.json").read_text(encoding="utf-8"))
-        by_key = {paper["item_key"]: paper for paper in facts["papers"]}
+        for key in ocr:
+            self.write_analysis(key, ocr=True)
+        for key in delete:
+            self.remove_analysis(key)
+        facts["papers"] = [paper for paper in facts["papers"]
+                           if paper["item_key"] not in set(delete)]
+        for entry in add:
+            self.write_analysis(entry["item_key"])
+            facts["papers"] = [paper for paper in facts["papers"]
+                               if paper["item_key"] != entry["item_key"]]
+            facts["papers"].append(copy.deepcopy(entry))
         for paper in facts["papers"]:
             paper["analysis_level"] = levels.get(paper["item_key"])
-        for key in delete:
-            paper = by_key.get(key)
-            if paper is not None:
-                paper["has_pdf"] = False
-                paper.pop("analysis_file", None)
-                paper.pop("sidecar_file", None)
-        for entry in add:
-            paper = copy.deepcopy(by_key[entry["item_key"]])
-            paper.update(entry)
-            paper["analysis_level"] = levels.get(entry["item_key"])
-            facts["papers"].append(paper)
         (self.root / "facts.json").write_text(
             json.dumps(facts, ensure_ascii=False, indent=1), encoding="utf-8")
-        recorded = entries or {key: {"level": levels.get(key), "facts_state": "unavailable"}
-                               for key in levels}
-        return self.write_index(recorded)
+        return self.write_index(entries)
 
     def accepted_run(self):
         """One accepted pack with a terminal pass validator and a full baseline."""
@@ -474,6 +512,12 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         return next(line for line in self.analysis_text().splitlines()
                     if "数据来源" in line)
 
+    def direction_action(self, direction_id="DIR00001"):
+        preflight = self.stage2_preflight()
+        row = next(item for item in preflight["directions"]
+                   if item["direction_id"] == direction_id)
+        return preflight, row
+
     def test_counts_follow_the_recorded_analysis_level(self):
         def levels(facts):
             recorded = {"AAAA1111": None, "CCCC3333": "fulltext"}
@@ -481,13 +525,16 @@ class AnalysisLevelTests(EvidenceLevelEnv):
                 paper["analysis_level"] = recorded.get(paper["item_key"])
 
         facts = self.write_facts(levels)
-        # Failed analysis keeps the old fulltext string in the index; the OCR-only
-        # fulltext paper has no facts. Neither may drive the counts.
+        # The failed analysis still has its analysis file and the old fulltext
+        # string in the index; the successful OCR-only fulltext has a real
+        # analysis + OCR file but no PDF-grounded facts.
+        self.write_analysis("AAAA1111")
         self.write_index({
             "AAAA1111": {"level": "fulltext", "facts_state": "failed"},
             "BBBB2222": {"level": "abstract", "facts_state": "unavailable"},
-            "CCCC3333": {"level": "fulltext", "facts_state": "failed"},
+            "CCCC3333": {"level": "fulltext", "facts_state": "failed", "ocr": True},
         })
+        self.write_analysis("CCCC3333", ocr=True)
         results = self.root / "results"
         self.write_stage2_results(results)
         plan = parse(run_bound_stage2_plan(run_cli, facts))
@@ -499,11 +546,15 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertIn("摘要级 1 篇", summary)
         self.assertIn("未确认 1 篇", summary)
         papers = self.pack()["papers"]
+        # A failed analysis with a residual fulltext level counts as unconfirmed,
+        # even though its analysis file still exists.
         self.assertEqual(papers["AAAA1111"]["analysis_level"], None, papers["AAAA1111"])
+        self.assertTrue(papers["AAAA1111"]["analysis_file"])
         self.assertEqual(papers["BBBB2222"]["analysis_level"], "abstract")
+        # A successful OCR-only fulltext stays fulltext even without facts.
         self.assertEqual(papers["CCCC3333"]["analysis_level"], "fulltext")
         self.assertEqual(papers["CCCC3333"]["facts_state"], "unavailable")
-        self.assertNotEqual(papers["CCCC3333"]["facts_state"], "valid")
+        self.assertTrue(papers["CCCC3333"]["analysis_file"])
 
     def test_legacy_records_without_level_count_as_unconfirmed(self):
         facts = self.write_facts()
@@ -525,65 +576,117 @@ class AnalysisLevelTests(EvidenceLevelEnv):
 
     def test_display_only_level_change_refreshes_without_model_work(self):
         self.accepted_run()
-        self.update_sources({"AAAA1111": "abstract", "BBBB2222": "abstract",
-                             "CCCC3333": "fulltext"})
+        facts_path = self.root / "facts.json"
         pack_before = self.pack()
-        preflight = self.stage2_preflight()
-        direction = next(row for row in preflight["directions"]
-                         if row["direction_id"] == "DIR00001")
+        freshness_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
+        freshness_before = freshness_path.read_text(encoding="utf-8")
+        # Precondition of the planned scenario: the recorded PASS binds the body
+        # that is on disk now, so only a real content change can invalidate it.
+        body_before = managed_body(self.analysis_text())
+        self.assertEqual(pack_before["validator"]["render_sha256"],
+                         hashlib.sha256(body_before.encode("utf-8")).hexdigest())
+        self.update_sources({"AAAA1111": "abstract", "BBBB2222": "abstract",
+                             "CCCC3333": "fulltext"},
+                            {"AAAA1111": {"level": "abstract"},
+                             "BBBB2222": {"level": "abstract"},
+                             "CCCC3333": {"level": "fulltext"}})
+        preflight, _display_row = self.direction_action()
         self.assertEqual(preflight["action"], "refresh_display", preflight)
         self.assertNotIn("reuse_all", json.dumps(preflight, ensure_ascii=False))
-        self.assertEqual(direction["action"], "refresh_display", direction)
         preflight_path = self.write_preflight_file(preflight)
+        # The planned display refresh consumes the accepted pack and the index
+        # only; /tmp facts is gone by then.
+        facts_path.unlink()
         refreshed = self.refresh_display(preflight_path)
         self.assertEqual(refreshed["status"], "ok", refreshed)
         self.assertTrue(refreshed.get("display_refreshed"), refreshed)
         summary = self.summary_line()
         self.assertIn("全文级 1 篇", summary)
         self.assertIn("摘要级 1 篇", summary)
+        # Same pack-only refresh: the fixed cards keep their trusted references.
+        analysis = self.analysis_text()
+        titles = {paper["item_key"]: paper["title"] for paper in self.papers}
+        for slot in ("后续论文依据", "已做部分", "剩余缺口"):
+            line = next(line for line in analysis.splitlines()
+                        if line.startswith(f"- {slot}："))
+            self.assertIn(titles["AAAA1111"], line, slot)
+            self.assertIn("zotero://select/library/items/AAAA1111", line, slot)
+            self.assertNotIn("AAAA1111", line.replace(
+                "zotero://select/library/items/AAAA1111", ""), slot)
+        blacklist_line = next(line for line in analysis.splitlines()
+                              if "已被" in line and "接住" in line)
+        self.assertIn(titles[BLACKLIST_COMPLETION], blacklist_line)
+        self.assertIn(f"zotero://select/library/items/{BLACKLIST_COMPLETION}",
+                      blacklist_line)
         pack_after = self.pack()
-        self.assertEqual(pack_after["validator"], pack_before["validator"])
-        self.assertNotEqual(pack_after["validator"]["render_sha256"],
-                            pack_after["cache"]["render"]["套磁候选分析.md"]["sha256"])
+        # Business state, model fingerprints and recorded assignment survive.
+        self.assertEqual(pack_after["directions"][0]["narrative"],
+                         pack_before["directions"][0]["narrative"])
         self.assertEqual(pack_after["directions"][0]["supporting_item_keys"],
                          pack_before["directions"][0]["supporting_item_keys"])
         self.assertEqual(pack_after["directions"][0]["input_fingerprint"],
                          pack_before["directions"][0]["input_fingerprint"])
-        self.assertEqual(pack_after["directions"][0]["narrative"],
-                         pack_before["directions"][0]["narrative"])
-        self.assertEqual([paper.get("analysis_level") for paper in
-                          pack_after["papers"].values()].count("fulltext"), 1)
-        freshness_before = (self.prof_dir / "_freshness_cache.json").read_text(
-            encoding="utf-8")
-        after = self.stage2_preflight()
+        self.assertEqual(pack_after["directions"][0]["named_keys"],
+                         pack_before["directions"][0]["named_keys"])
+        self.assertEqual(papers_of(pack_after), papers_of(pack_before))
+        # One display-only refresh rewrote the body, so the recorded PASS bound
+        # to the old body must no longer be accepted, and the accepted pack must
+        # stay internally consistent (no stale pack-integrity mismatch).
+        after, _row = self.direction_action()
+        self.assertEqual(after["action"], "process", after)
+        self.assertIn("validator_not_accepted", _row["reason_codes"], _row)
         self.assertNotIn("pack_integrity_mismatch", after["reason_codes"], after)
-        self.assertEqual(after["action"], "reuse_all", after)
-        self.assertEqual((self.prof_dir / "_freshness_cache.json").read_text(
-            encoding="utf-8"), freshness_before)
-        self.assertIn("｜[分析](论文分析/AAAA1111.md)", self.analysis_text())
+        self.assertNotEqual(hashlib.sha256(managed_body(self.analysis_text()).encode(
+            "utf-8")).hexdigest(), pack_before["validator"]["render_sha256"])
+        # No model task was created by the display-only step.
+        self.assertEqual(freshness_path.read_text(encoding="utf-8"), freshness_before)
+
+    def assert_routes_back_to_process(self, preflight):
+        self.assertEqual(preflight["action"], "process", preflight)
+        self.assertTrue(preflight["reason_codes"], preflight)
+        self.assertNotIn("refresh_display", json.dumps(preflight, ensure_ascii=False))
 
     def test_source_change_routes_back_to_the_process_path(self):
-        facts = self.accepted_run()
+        self.accepted_run()
+        # The previously missing analysis + facts paths for CCCC3333 appear.
         self.update_sources(
             {"AAAA1111": "fulltext", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
-            delete=("CCCC3333",),
+            {"AAAA1111": {"level": "fulltext"},
+             "BBBB2222": {"level": "fulltext"},
+             "CCCC3333": {"level": "fulltext", "facts_state": "valid"}},
             add=({"item_key": "CCCC3333", "has_pdf": True,
                   "analysis_file": str(self.prof_dir / "论文分析" / "CCCC3333.md"),
                   "sidecar_file": str(
-                      self.prof_dir / "论文分析" / "CCCC3333.md.future_work.json")},))
-        preflight = self.stage2_preflight()
-        self.assertEqual(preflight["action"], "process", preflight)
-        self.assertTrue(preflight["reason_codes"], preflight)
-        self.assertNotIn("refresh_display", json.dumps(preflight, ensure_ascii=False))
+                      self.prof_dir / "论文分析" / "CCCC3333.md.future_work.json"),
+                  "facts_file": str(
+                      self.prof_dir / "论文分析" / "CCCC3333.md.facts.json")},))
+        self.assert_routes_back_to_process(self.stage2_preflight())
 
     def test_deleted_analysis_source_also_routes_back_to_process(self):
         self.accepted_run()
-        self.update_sources({"AAAA1111": "fulltext", "BBBB2222": "fulltext",
-                             "CCCC3333": "fulltext"}, delete=("CCCC3333",))
-        preflight = self.stage2_preflight()
-        self.assertEqual(preflight["action"], "process", preflight)
-        self.assertTrue(preflight["reason_codes"], preflight)
-        self.assertNotIn("refresh_display", json.dumps(preflight, ensure_ascii=False))
+        # The analysis file and the index record for CCCC3333 are gone.
+        self.update_sources({"AAAA1111": "fulltext", "BBBB2222": "fulltext"},
+                            {"AAAA1111": {"level": "fulltext"},
+                             "BBBB2222": {"level": "fulltext"}},
+                            delete=("CCCC3333",))
+        self.assertFalse((self.prof_dir / "论文分析" / "CCCC3333.md").exists())
+        self.assertNotIn("CCCC3333", json.loads(
+            (self.prof_dir / "论文分析" / "_index.json").read_text(encoding="utf-8"))["papers"])
+        self.assert_routes_back_to_process(self.stage2_preflight())
+
+    def test_replaced_analysis_source_routes_back_to_process(self):
+        self.accepted_run()
+        # Same key, different artifact path: a replacement, not a level change.
+        moved = self.prof_dir / "论文分析" / "CCCC3333-v2.md"
+        moved.write_text("# analysis v2\n", encoding="utf-8")
+        self.update_sources(
+            {"AAAA1111": "fulltext", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
+            {"AAAA1111": {"level": "fulltext"},
+             "BBBB2222": {"level": "fulltext"},
+             "CCCC3333": {"level": "fulltext"}},
+            add=({"item_key": "CCCC3333", "has_pdf": True,
+                  "analysis_file": str(moved)},))
+        self.assert_routes_back_to_process(self.stage2_preflight())
 
     def test_pack_without_a_comparable_baseline_is_not_refreshed_as_display_only(self):
         self.accepted_run()
