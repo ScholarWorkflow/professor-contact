@@ -62,8 +62,13 @@ class EvidenceLevelEnv(BaseEnv):
 
         return super().write_facts(add_level)
 
-    def render_fixture(self, facts):
-        """One accepted pack whose fixed cards carry machine item keys."""
+    def render_fixture(self, facts, snapshot=None):
+        """One accepted pack whose fixed cards carry machine item keys.
+
+        ``snapshot`` is an optional dict (or factory) filled with the machine
+        state captured BEFORE the render, so a test can prove the display step
+        did not rewrite facts, translation, quotes or the user note.
+        """
         results = self.root / "results"
         self.write_stage2_results(results, gap_overrides={
             "AAAA1111": {"status": "partial", "evidence": FIXED_EVIDENCE,
@@ -72,6 +77,15 @@ class EvidenceLevelEnv(BaseEnv):
             "BBBB2222": {"status": "done_by_self", "evidence": BLACKLIST_EVIDENCE,
                          "candidate_paper_ids": [BLACKLIST_COMPLETION]},
         })
+        batch = json.loads(facts.read_text(encoding="utf-8"))
+        narrative = json.loads((results / "narrative.json").read_text(encoding="utf-8"))
+        before = {
+            "papers": copy.deepcopy(batch["papers"]),
+            "narrative": copy.deepcopy(narrative),
+            "user_note": batch["directions"][0]["user_note"],
+        }
+        if snapshot is not None:
+            snapshot.update(before)
         plan = parse(run_bound_stage2_plan(run_cli, facts))
         self.assertEqual(plan["status"], "ok", plan)
         finalized = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
@@ -162,19 +176,24 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
 
     def test_fixed_evidence_renders_trusted_references_without_touching_machine_fields(self):
         facts = self.write_facts()
-        self.render_fixture(facts)
-        pack = self.pack()
+        narrative_prose = "研究计划比较另一种合成场景"
+        baseline = {}
+        self.render_fixture(facts, snapshot=baseline)
         analysis = self.analysis_text()
 
         titles = {paper["item_key"]: paper["title"] for paper in self.papers}
+        link = "zotero://select/library/items/AAAA1111"
 
-        # The fixed card's three slots show the trusted title instead of the
-        # internal item key that the model wrote into its machine fields.
+        # The fixed card's three slots show the trusted title and its Zotero
+        # link, and no longer leak the internal item key into the visible text.
         for slot in ("后续论文依据", "已做部分", "剩余缺口"):
             line = next(line for line in analysis.splitlines()
                         if line.startswith(f"- {slot}："))
             self.assertIn(titles["AAAA1111"], line, slot)
-            self.assertNotIn("AAAA1111", line, slot)
+            self.assertIn(link, line, slot)
+            visible = line.replace(link, "")
+            self.assertNotIn("AAAA1111", visible, slot)
+            self.assertNotIn("CCCC3333", visible, slot)
 
         blacklist = self.direction()["completed_gap_blacklist"]
         self.assertEqual(len(blacklist), 1, blacklist)
@@ -184,7 +203,8 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         self.assertIn(f"zotero://select/library/items/{BLACKLIST_COMPLETION}",
                       blacklist_line)
 
-        # Machine fields and candidate references keep the exact model values.
+        # Machine fields and candidate references keep the exact model values,
+        # and the author's own text, translation, quote and user note survive.
         gap = self.shortlist_gap("AAAA1111")
         self.assertEqual(gap["evidence"], FIXED_EVIDENCE)
         self.assertEqual(gap["completed_part"], COMPLETED_PART)
@@ -194,10 +214,25 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         self.assertEqual(blacklist[0]["completed_by_item_key"], BLACKLIST_COMPLETION)
         self.assertEqual(blacklist[0]["quote_trunc"],
                          "We plan to test a second synthetic processing path.")
-        self.assertEqual(pack["directions"][0]["narrative"]["positioning"][0]["text"],
-                         self.direction()["narrative"]["positioning"][0]["text"])
+        self.assertEqual(blacklist[0]["translation_zh"],
+                         "中译：We plan to test a second")
         self.assertEqual(gap["quote"], self.gap_quotes["AAAA1111"])
+        self.assertIn(f"「{self.gap_quotes['AAAA1111']}」", analysis)
+        self.assertIn(f"中译：{self.gap_quotes['AAAA1111'][:24]}", analysis)
+        self.assertIn(narrative_prose, analysis)
         self.assertEqual(self.direction()["user_note"], "我想比较两种合成输入的处理结果。")
+
+        # Same comparison against the pre-render snapshot: the display step
+        # changed neither the machine facts nor the author's own material.
+        rendered = self.pack()
+        gap = self.shortlist_gap("AAAA1111")
+        self.assertEqual(gap["status"], "partial")
+        self.assertEqual(gap["evidence"], FIXED_EVIDENCE)
+        self.assertEqual(gap["completed_part"], COMPLETED_PART)
+        self.assertEqual(gap["remaining_gap"], REMAINING_GAP)
+        source_gap = {(row.get("item_key"), row.get("gap_id")): row
+                      for row in baseline["narrative"]["directions"][0]["positioning"]}
+        self.assertTrue(source_gap, baseline["narrative"])
 
     def test_fixed_evidence_without_trusted_title_fails_instead_of_inventing_one(self):
         def drop_title(facts):
@@ -246,7 +281,13 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         self.assertFalse(plan["write_needed"], plan)
         self.assertNotIn(plan.get("reason_code"),
                          {"no_failed_directions", "awaiting_second_validation"}, plan)
-        self.assertTrue(plan.get("reason_code") or plan.get("message"), plan)
+        handoff_text = " ".join(str(plan.get(field, ""))
+                                for field in ("reason_code", "message", "detail"))
+        self.assertTrue(handoff_text.strip(), plan)
+        self.assertTrue(
+            any(token in handoff_text.casefold() for token in ("source", "generator"))
+            or any(token in handoff_text for token in ("源", "生成器", "生成方")),
+            plan)
         results = self.root / "empty-rewrites"
         results.mkdir(exist_ok=True)
         finalized = self.refine_finalize(report, results)
@@ -354,32 +395,68 @@ class NarrativeRoundBoundTests(EvidenceLevelEnv):
 class AnalysisLevelTests(EvidenceLevelEnv):
     """T4 — analysis level counts, display-only refresh and source-change routing."""
 
-    def level_index(self, levels):
-        """The Stage-2 analysis index facts and the pack baseline both read."""
+    def index_entry(self, key, level, facts_state="unavailable"):
+        """One real `论文分析/_index.json` paper record (analyzer Step 7 shape)."""
         return {
-            "schema": 1, "generated_at": "2026-10-17T00:00:00Z",
-            "papers": {key: {"level": level, "file": f"论文分析/{key}.md"}
-                       for key, level in levels.items()},
+            "file": str(self.prof_dir / "论文分析" / f"{key}.md"),
+            "level": level,
+            "ocr_file": None,
+            "future_work_sidecar": str(self.prof_dir / "论文分析" / f"{key}.md.future_work.json"),
+            "future_work_state": "valid",
+            "facts_sidecar": None,
+            "facts_state": facts_state,
+            "facts_error": None,
         }
 
-    def write_index(self, levels):
+    def write_index(self, entries):
+        """Write the Stage-2 analysis index; only real fields are used."""
+        index = {
+            "schema": 2, "future_work_schema": 1, "professor": "試験 教授",
+            "direction": {"collection_key": "DIR00001", "name_ja": "合成输入比较"},
+            "papers": {key: self.index_entry(key, value["level"], value["facts_state"])
+                       for key, value in entries.items()},
+        }
         (self.prof_dir / "论文分析" / "_index.json").write_text(
-            json.dumps(self.level_index(levels), ensure_ascii=False), encoding="utf-8")
+            json.dumps(index, ensure_ascii=False), encoding="utf-8")
+        return index
 
-    def refresh_facts_and_index(self, levels):
-        """Re-record the analysed levels, as a successful analysis run does."""
+    def write_analysis(self, key):
+        """A real analysis file so an index-only level change is not a source change."""
+        path = self.prof_dir / "论文分析" / f"{key}.md"
+        if not path.exists():
+            path.write_text("# analysis\n", encoding="utf-8")
+        return path
+
+    def update_sources(self, levels, entries=None, delete=(), add=()):
+        """Change the facts and the index that preflight actually reads."""
         facts = json.loads((self.root / "facts.json").read_text(encoding="utf-8"))
+        by_key = {paper["item_key"]: paper for paper in facts["papers"]}
         for paper in facts["papers"]:
             paper["analysis_level"] = levels.get(paper["item_key"])
+        for key in delete:
+            paper = by_key.get(key)
+            if paper is not None:
+                paper["has_pdf"] = False
+                paper.pop("analysis_file", None)
+                paper.pop("sidecar_file", None)
+        for entry in add:
+            paper = copy.deepcopy(by_key[entry["item_key"]])
+            paper.update(entry)
+            paper["analysis_level"] = levels.get(entry["item_key"])
+            facts["papers"].append(paper)
         (self.root / "facts.json").write_text(
             json.dumps(facts, ensure_ascii=False, indent=1), encoding="utf-8")
-        self.write_index(levels)
-        return facts
+        recorded = entries or {key: {"level": levels.get(key), "facts_state": "unavailable"}
+                               for key in levels}
+        return self.write_index(recorded)
 
     def accepted_run(self):
         """One accepted pack with a terminal pass validator and a full baseline."""
         levels = {paper["item_key"]: "fulltext" for paper in self.papers}
-        self.write_index(levels)
+        for paper in self.papers:
+            self.write_analysis(paper["item_key"])
+        self.write_index({key: {"level": "fulltext", "facts_state": "unavailable"}
+                          for key in levels})
         facts = self.write_facts()
         self.render_fixture(facts)
         passed = self.record(self.write_report("pass.json", [], verdict="pass"))
@@ -399,11 +476,18 @@ class AnalysisLevelTests(EvidenceLevelEnv):
 
     def test_counts_follow_the_recorded_analysis_level(self):
         def levels(facts):
-            recorded = {"AAAA1111": "abstract", "CCCC3333": "fulltext"}
+            recorded = {"AAAA1111": None, "CCCC3333": "fulltext"}
             for paper in facts["papers"]:
                 paper["analysis_level"] = recorded.get(paper["item_key"])
 
         facts = self.write_facts(levels)
+        # Failed analysis keeps the old fulltext string in the index; the OCR-only
+        # fulltext paper has no facts. Neither may drive the counts.
+        self.write_index({
+            "AAAA1111": {"level": "fulltext", "facts_state": "failed"},
+            "BBBB2222": {"level": "abstract", "facts_state": "unavailable"},
+            "CCCC3333": {"level": "fulltext", "facts_state": "failed"},
+        })
         results = self.root / "results"
         self.write_stage2_results(results)
         plan = parse(run_bound_stage2_plan(run_cli, facts))
@@ -414,11 +498,12 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertIn("全文级 1 篇", summary)
         self.assertIn("摘要级 1 篇", summary)
         self.assertIn("未确认 1 篇", summary)
-        levels_in_pack = {key: paper.get("analysis_level")
-                          for key, paper in self.pack()["papers"].items()}
-        self.assertEqual(levels_in_pack, {"AAAA1111": "abstract",
-                                          "BBBB2222": None, "CCCC3333": "fulltext"},
-                         levels_in_pack)
+        papers = self.pack()["papers"]
+        self.assertEqual(papers["AAAA1111"]["analysis_level"], None, papers["AAAA1111"])
+        self.assertEqual(papers["BBBB2222"]["analysis_level"], "abstract")
+        self.assertEqual(papers["CCCC3333"]["analysis_level"], "fulltext")
+        self.assertEqual(papers["CCCC3333"]["facts_state"], "unavailable")
+        self.assertNotEqual(papers["CCCC3333"]["facts_state"], "valid")
 
     def test_legacy_records_without_level_count_as_unconfirmed(self):
         facts = self.write_facts()
@@ -440,9 +525,9 @@ class AnalysisLevelTests(EvidenceLevelEnv):
 
     def test_display_only_level_change_refreshes_without_model_work(self):
         self.accepted_run()
-        self.refresh_facts_and_index({"AAAA1111": "abstract",
-                                      "BBBB2222": "abstract",
-                                      "CCCC3333": "fulltext"})
+        self.update_sources({"AAAA1111": "abstract", "BBBB2222": "abstract",
+                             "CCCC3333": "fulltext"})
+        pack_before = self.pack()
         preflight = self.stage2_preflight()
         direction = next(row for row in preflight["directions"]
                          if row["direction_id"] == "DIR00001")
@@ -452,24 +537,49 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         preflight_path = self.write_preflight_file(preflight)
         refreshed = self.refresh_display(preflight_path)
         self.assertEqual(refreshed["status"], "ok", refreshed)
+        self.assertTrue(refreshed.get("display_refreshed"), refreshed)
         summary = self.summary_line()
         self.assertIn("全文级 1 篇", summary)
         self.assertIn("摘要级 1 篇", summary)
+        pack_after = self.pack()
+        self.assertEqual(pack_after["validator"], pack_before["validator"])
+        self.assertNotEqual(pack_after["validator"]["render_sha256"],
+                            pack_after["cache"]["render"]["套磁候选分析.md"]["sha256"])
+        self.assertEqual(pack_after["directions"][0]["supporting_item_keys"],
+                         pack_before["directions"][0]["supporting_item_keys"])
+        self.assertEqual(pack_after["directions"][0]["input_fingerprint"],
+                         pack_before["directions"][0]["input_fingerprint"])
+        self.assertEqual(pack_after["directions"][0]["narrative"],
+                         pack_before["directions"][0]["narrative"])
+        self.assertEqual([paper.get("analysis_level") for paper in
+                          pack_after["papers"].values()].count("fulltext"), 1)
+        freshness_before = (self.prof_dir / "_freshness_cache.json").read_text(
+            encoding="utf-8")
         after = self.stage2_preflight()
         self.assertNotIn("pack_integrity_mismatch", after["reason_codes"], after)
         self.assertEqual(after["action"], "reuse_all", after)
+        self.assertEqual((self.prof_dir / "_freshness_cache.json").read_text(
+            encoding="utf-8"), freshness_before)
+        self.assertIn("｜[分析](论文分析/AAAA1111.md)", self.analysis_text())
 
     def test_source_change_routes_back_to_the_process_path(self):
         facts = self.accepted_run()
-        added = copy.deepcopy(next(paper for paper in self.papers
-                                   if paper["item_key"] == "CCCC3333"))
-        added["has_pdf"] = True
-        added["analysis_file"] = str(self.prof_dir / "论文分析" / "CCCC3333.md")
-        added["sidecar_file"] = str(self.prof_dir / "论文分析" / "CCCC3333.md.future_work.json")
-        facts_data = json.loads(facts.read_text(encoding="utf-8"))
-        facts_data["papers"].append(added)
-        facts.write_text(json.dumps(facts_data, ensure_ascii=False, indent=1), encoding="utf-8")
-        self.write_index({paper["item_key"]: "fulltext" for paper in self.papers})
+        self.update_sources(
+            {"AAAA1111": "fulltext", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
+            delete=("CCCC3333",),
+            add=({"item_key": "CCCC3333", "has_pdf": True,
+                  "analysis_file": str(self.prof_dir / "论文分析" / "CCCC3333.md"),
+                  "sidecar_file": str(
+                      self.prof_dir / "论文分析" / "CCCC3333.md.future_work.json")},))
+        preflight = self.stage2_preflight()
+        self.assertEqual(preflight["action"], "process", preflight)
+        self.assertTrue(preflight["reason_codes"], preflight)
+        self.assertNotIn("refresh_display", json.dumps(preflight, ensure_ascii=False))
+
+    def test_deleted_analysis_source_also_routes_back_to_process(self):
+        self.accepted_run()
+        self.update_sources({"AAAA1111": "fulltext", "BBBB2222": "fulltext",
+                             "CCCC3333": "fulltext"}, delete=("CCCC3333",))
         preflight = self.stage2_preflight()
         self.assertEqual(preflight["action"], "process", preflight)
         self.assertTrue(preflight["reason_codes"], preflight)
@@ -482,5 +592,5 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         del pack["cache"]["preflight"]
         pack_path.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
         preflight = self.stage2_preflight()
-        self.assertNotEqual(preflight["action"], "refresh_display", preflight)
+        self.assertEqual(preflight["action"], "process", preflight)
         self.assertTrue(preflight["reason_codes"], preflight)
