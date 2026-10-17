@@ -4,7 +4,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from test_stage2_resolved_direction import ResolvedPipelineMixin, parse, run_cli, write_json
+from test_stage2_resolved_direction import (
+    ResolvedPipelineMixin,
+    finalize_resolve,
+    new_resolve_results_dir,
+    plan_resolve,
+    write_json,
+)
 
 
 class FreshResolvedDirectionReviewRegressions(ResolvedPipelineMixin, unittest.TestCase):
@@ -53,7 +59,8 @@ class FreshResolvedDirectionReviewRegressions(ResolvedPipelineMixin, unittest.Te
         )
         facts_path = self.write_facts(papers, [dir_a, dir_b])
 
-        payload = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        results_dir = new_resolve_results_dir(self.root)
+        payload = plan_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "ok", msg=json.dumps(payload, ensure_ascii=False))
         additions = {(row["item_key"], row["target_direction"])
                      for row in payload["candidates"]["additions"]}
@@ -128,7 +135,8 @@ class FreshResolvedDirectionReviewRegressions(ResolvedPipelineMixin, unittest.Te
         ]
         p2_facts.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
 
-        rerun = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        results_dir = new_resolve_results_dir(self.root)
+        rerun = plan_resolve(facts_path, results_dir)
         self.assertEqual(rerun["status"], "ok", msg=json.dumps(rerun, ensure_ascii=False))
         actions = {row["direction_id"]: row["action"] for row in rerun["directions"]}
         self.assertEqual(
@@ -148,12 +156,20 @@ class FreshResolvedDirectionReviewRegressions(ResolvedPipelineMixin, unittest.Te
             [self.make_direction("dir_A", ["P1"], name_ja="信号処理",
                                  name_zh="信号处理", summary="signal processing")],
         )
-        results_dir = self.root / "wrong_identity_results"
-        results_dir.mkdir()
-        write_json(results_dir / "resolve-dir_A.json", {
+        # This round's plan owns an exclusive results directory; the file below
+        # keeps its intentionally wrong direction identity and only gains this
+        # round's resolve_run_id, so the rejection is still decided by the
+        # job/direction binding rather than by the new round checks.
+        results_dir = new_resolve_results_dir(self.root)
+        plan_payload = plan_resolve(facts_path, results_dir)
+        self.assertEqual(plan_payload["status"], "ok", msg=json.dumps(plan_payload, ensure_ascii=False))
+        jobs = [row for row in plan_payload["jobs"] if row["direction_id"] == "dir_A"]
+        self.assertEqual(len(jobs), 1, msg=json.dumps(plan_payload, ensure_ascii=False))
+        write_json(results_dir / jobs[0]["result_file"], {
             "schema": 1,
             "kind": "resolve",
             "collection_key": "dir_WRONG",
+            "resolve_run_id": plan_payload["resolve_run_id"],
             "resolved": {
                 "resolved_direction_id": "dir_A",
                 "provisional_direction_id": "dir_WRONG",
@@ -169,9 +185,7 @@ class FreshResolvedDirectionReviewRegressions(ResolvedPipelineMixin, unittest.Te
             },
         })
 
-        payload = parse(run_cli(
-            "stage2-resolve-finalize", "--facts", str(facts_path),
-            "--results", str(results_dir)))
+        payload = finalize_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "error", msg=json.dumps(payload, ensure_ascii=False))
         self.assertEqual(payload["reason_code"], "invalid_result_json")
 
@@ -186,12 +200,20 @@ class FreshResolvedDirectionReviewRegressions(ResolvedPipelineMixin, unittest.Te
             [self.make_direction("dir_A", ["P1"], name_ja="信号処理",
                                  name_zh="信号处理", summary="signal processing")],
         )
-        results_dir = self.root / "drifted_resolved_id_results"
-        results_dir.mkdir()
-        write_json(results_dir / "resolve-dir_A.json", {
+        # The file carries this round's real job identity (direction_id +
+        # resolve_run_id) and keeps its intentionally drifted
+        # resolved.resolved_direction_id, so the rejection is still decided by
+        # the non-split identity rule.
+        results_dir = new_resolve_results_dir(self.root)
+        plan_payload = plan_resolve(facts_path, results_dir)
+        self.assertEqual(plan_payload["status"], "ok", msg=json.dumps(plan_payload, ensure_ascii=False))
+        jobs = [row for row in plan_payload["jobs"] if row["direction_id"] == "dir_A"]
+        self.assertEqual(len(jobs), 1, msg=json.dumps(plan_payload, ensure_ascii=False))
+        write_json(results_dir / jobs[0]["result_file"], {
             "schema": 1,
             "kind": "resolve",
-            "collection_key": "dir_A",
+            "direction_id": "dir_A",
+            "resolve_run_id": plan_payload["resolve_run_id"],
             "resolved": {
                 "resolved_direction_id": "dir_OTHER",
                 "provisional_direction_id": "dir_A",
@@ -207,9 +229,7 @@ class FreshResolvedDirectionReviewRegressions(ResolvedPipelineMixin, unittest.Te
             },
         })
 
-        payload = parse(run_cli(
-            "stage2-resolve-finalize", "--facts", str(facts_path),
-            "--results", str(results_dir)))
+        payload = finalize_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "error", msg=json.dumps(payload, ensure_ascii=False))
         self.assertEqual(payload["reason_code"], "invalid_result_json")
 
@@ -250,7 +270,9 @@ class FreshResolvedDirectionReviewRegressions(ResolvedPipelineMixin, unittest.Te
         })
         self.assertTrue(first_finalize["needs_user_choice"])
 
-        rerun_plan = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        # A re-plan is a new round: it gets its own exclusive results directory.
+        results_dir = new_resolve_results_dir(self.root)
+        rerun_plan = plan_resolve(facts_path, results_dir)
         self.assertEqual(rerun_plan["status"], "ok")
         self.assertNotEqual(
             rerun_plan["directions"][0]["action"], "reuse",

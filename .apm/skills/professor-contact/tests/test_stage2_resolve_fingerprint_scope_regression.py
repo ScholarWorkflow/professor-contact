@@ -4,7 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from test_stage2_resolved_direction import ResolvedPipelineMixin, parse, run_cli
+from test_stage2_resolved_direction import (
+    ResolvedPipelineMixin,
+    new_resolve_results_dir,
+    plan_resolve,
+)
 
 
 class ResolveFingerprintScopeRegression(ResolvedPipelineMixin, unittest.TestCase):
@@ -49,7 +53,9 @@ class ResolveFingerprintScopeRegression(ResolvedPipelineMixin, unittest.TestCase
         analysis = Path(papers[1]["analysis_file"])
         analysis.write_text(analysis.read_text(encoding="utf-8") + "\nEditorial note only.\n", encoding="utf-8")
 
-        rerun = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        # Each plan round needs its own exclusive results directory.
+        results_dir = new_resolve_results_dir(self.root)
+        rerun = plan_resolve(facts_path, results_dir)
         self.assertEqual(rerun["status"], "ok", msg=json.dumps(rerun, ensure_ascii=False))
         actions = {row["direction_id"]: row["action"] for row in rerun["directions"]}
         self.assertEqual(
@@ -101,7 +107,9 @@ class ResolveFingerprintScopeRegression(ResolvedPipelineMixin, unittest.TestCase
         by_key["dir_B"]["summary_zh"] = "signal processing adaptive filtering sensor network"
         facts_path.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
-        rerun = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        # Each plan round needs its own exclusive results directory.
+        results_dir = new_resolve_results_dir(self.root)
+        rerun = plan_resolve(facts_path, results_dir)
         self.assertEqual(rerun["status"], "ok", msg=json.dumps(rerun, ensure_ascii=False))
         actions = {row["direction_id"]: row["action"] for row in rerun["directions"]}
         self.assertEqual(
@@ -151,7 +159,9 @@ class ResolveFingerprintScopeRegression(ResolvedPipelineMixin, unittest.TestCase
         sidecar_payload["items"] = []
         p2_sidecar.write_text(json.dumps(sidecar_payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
-        rerun = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        # Each plan round needs its own exclusive results directory.
+        results_dir = new_resolve_results_dir(self.root)
+        rerun = plan_resolve(facts_path, results_dir)
         self.assertEqual(rerun["status"], "ok", msg=json.dumps(rerun, ensure_ascii=False))
         actions = {row["direction_id"]: row["action"] for row in rerun["directions"]}
         self.assertEqual(
