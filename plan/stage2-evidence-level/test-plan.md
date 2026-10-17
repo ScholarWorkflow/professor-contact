@@ -120,9 +120,9 @@ echo "exit=$? run_root=$RUN_ROOT"
 - 通过 7 项：T3 四项（`NarrativeRoundBoundTests` 一项与三个既有保护选择器）、T2 两项（既有禁止区域选择器与 `test_forbidden_user_note_and_paper_table_keep_their_rejection`）、T4 一项（缺基线走 process）。
 - 业务失败 11 项，按实际失败原因分组：
   - T1 两项：展示用例首个断言失败在固定卡「后续论文依据」行仍含 `AAAA1111`（未做题名/链接替换），禁锚区断言在该次运行中未执行，不据此判断；缺可信题名用例仍返回 `status=ok` 并生成分析文件（未拒绝）。
-  - T2 三项：固定区 blocking 的 `record` 返回 `error` / `validation_issue_not_repairable`（产品尚未允许登记），因此 refine 分流无法进行。
+  - T2 三项：三项 `record` 均返回 `status=error`（产品尚未允许登记），其中 `test_repeating_...` 的日志给出 `reason_code=validation_issue_not_repairable`；因此 refine 分流无法进行。
   - T4 六项：`test_counts_...` 为 `全文级 3 篇`（按文件存在统计，未按记录级别）；`test_legacy_...` 为 `全文级 2 篇`（同上）；`test_display_only_...` 与三个来源变化用例为 `reuse_all`（未实现展示刷新与来源变化识别）。
-- 运行记录对应关系：本节数字来自测试提交 `70e8eef`（`c4afa17` 未改测试代码）、按 §3 逐条 18 个选择器执行的完整运行 `/tmp/contact-evidence-level.XcpOlvbX`（`recipe.txt`）。此前各版记录保留：`/tmp/contact-evidence-level.VgZ9JU6w`（提交 `dca3160`，18 项、7 通过 / 11 失败）、`/tmp/contact-evidence-level.h3SBpUMF`（提交 `3595a2c`，同类）、`/tmp/contact-evidence-level.M5wh17Uv`（提交 `3595a2c`，同类）。夹具在 `c61c26a`、`2d00061`、`10497ff`、`469aa83` 上只改了展示刷新与来源用例；`dca3160` 另改了 T2 责任交接断言，该改动已被其后按 §3 完整 18 项执行的 `XcpOlvbX` 记录覆盖。未受影响选择器按上述记录复用，不重复运行。
+- 运行记录对应关系：本节数字来自测试提交 `70e8eef`（`c4afa17` 未改测试代码）、按 §3 逐条 18 个选择器执行的完整运行 `/tmp/contact-evidence-level.XcpOlvbX`（`recipe.txt`）。此前各版记录保留：`/tmp/contact-evidence-level.oWwoE7gZ`（提交 `70e8eef`，18 项、7 通过 / 11 失败）、`/tmp/contact-evidence-level.VgZ9JU6w`（提交 `dca3160`，同类）、`/tmp/contact-evidence-level.h3SBpUMF`（提交 `3595a2c`，同类）、`/tmp/contact-evidence-level.M5wh17Uv`（提交 `3595a2c`，同类）。夹具在 `c61c26a`、`2d00061`、`10497ff`、`469aa83` 上只改了展示刷新与来源用例；`dca3160` 另改了 T2 责任交接断言，该改动已被其后按 §3 完整 18 项执行的 `XcpOlvbX` 记录覆盖。未受影响选择器按上述记录复用，不重复运行。
 - 作废的早期记录：`/tmp/contact-evidence-level.oa4NuJoS` 与 `/tmp/contact-evidence-level.h3SBpUMF` 中因夹具未真正改变预检输入而作废的来源变化项不计入本轮分类，原日志保留。
 - 该记录只用于确认选择器可执行、判定 T3 已成立和暴露产品缺口，不替代第三关正式执行，也不作为任何通过结论。
 
