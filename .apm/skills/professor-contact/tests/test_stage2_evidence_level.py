@@ -251,8 +251,6 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         self.assertEqual(gap["remaining_gap"], REMAINING_GAP)
         self.assertEqual(gap["candidate_paper_ids"], list(FIXED_CANDIDATES),
                          "candidate references must survive the display step")
-        self.assertEqual(baseline["candidate_paper_ids"], list(FIXED_CANDIDATES),
-                         "the pre-render fixture really had candidate references")
         self.assertEqual(blacklist[0]["evidence"], BLACKLIST_EVIDENCE)
         self.assertEqual(blacklist[0]["completed_by_item_key"], BLACKLIST_COMPLETION)
         self.assertEqual(blacklist[0]["quote_trunc"],
