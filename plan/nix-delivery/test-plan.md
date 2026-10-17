@@ -1,6 +1,6 @@
 # professor-contact Nix 测试计划
 
-- Test plan revision: TP2（2026-10-17；仅同步 scripts 固定入口路径，N1–N4 不变），关联 [执行计划 R2](implementation-plan.md)。
+- Test plan revision: TP3（2026-10-17；随执行计划 R3 补核 Stage 5 同目录入口，N1–N4 不变），关联 [执行计划 R3](implementation-plan.md)。
 - Proposed review status: pending；Gate1 必测清单、Gate2 recipe、Gate3 结果均待独立审核。当前没有实现，全部未执行，不声明 PASS。
 - 产品基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`；执行时记录真正待验实现SHA与锁定依赖。只验本次 aarch64-darwin / Codex 安装和必要入口，不扩 Stage0–5 业务回归。
 
@@ -40,7 +40,7 @@ printf 'keep\n' > "$RUN/consumer/.agents/skills/unrelated-sentinel/marker"
 
 读 `$RUN/package/agent-env.json`（jq）及 `.codex/agents/*.toml`（TOML parser），确认professor-contact及七个stage角色唯一、analyzer为Codex源。用flake输出的 `professor-contact.override { enableHarnesses = []; }` 的 `passthru.agentEnv.enableHarnesses` 求值为空列表即可，不再启动第二套服务。命令为 `export CONTACT_REF; nix eval --json --impure --expr 'let f = builtins.getFlake (builtins.getEnv "CONTACT_REF"); in (f.packages.aarch64-darwin.professor-contact.override { enableHarnesses = []; }).passthru.agentEnv.enableHarnesses'`，预期 `[]`。
 
-人工比对完整源目录与安装树；允许差异仅R2必要同目录薄入口、固定运行环境与原文附录。检查 `.agents/skills/professor-contact/scripts/_stage2_chatgpt_handoff_impl.py`、stage5_immutable.py、docs/stage5-legacy-contract.md存在，Stage5路由附录实际进入SKILL与coordinator正文；检查sentinel仍为keep。读依赖元数据确认collector/ contact-evidence、paper、Zotero、humanizer、vision、pdfx的llm-ocr-refresh、KB所选包真实递归安装；不同payload冲突不能记录成成功。
+人工比对完整源目录与安装树；允许差异仅R3必要的七个同目录薄入口、固定运行环境与原文附录。检查 `scripts/stage5_immutable` 在安装树中存在、调用同目录 `stage5_immutable.py`，生成的 email-generator 角色从安装 skill 根目录以该入口调用 `stage5-finalize`，不再依赖 `skillrepo exec` 或开发 checkout；只核此静态调用关系，不增加 Stage 5 邮件业务执行。检查 `.agents/skills/professor-contact/scripts/_stage2_chatgpt_handoff_impl.py`、stage5_immutable.py、docs/stage5-legacy-contract.md存在，Stage5路由附录实际进入SKILL与coordinator正文；检查sentinel仍为keep。读依赖元数据确认collector/ contact-evidence、paper、Zotero、humanizer、vision、pdfx的llm-ocr-refresh、KB所选包真实递归安装；不同payload冲突不能记录成成功。
 
 只核此环境具体生成的必要MCP表与上游正式输出相符，不重验共享installer保护全矩阵。模型/网络/审批保持既有设置。build/eval/apply分别记录，eval成功不能替代build。
 
