@@ -1,10 +1,11 @@
 # professor-contact Nix 交付执行记录（N1–N4）
 
-- 产品提交：`af6bf55c4e3afd456832be0289338c454ec37cc2`（PR #93 head，`CONTACT_REF=github:ScholarWorkflow/professor-contact/af6bf55c4e3afd456832be0289338c454ec37cc2`）
+- 产品提交：`48172e4fee7b273febdda81c152b0a8ce2773932`（PR #93 head，`CONTACT_REF=github:ScholarWorkflow/professor-contact/48172e4fee7b273febdda81c152b0a8ce2773932`）
+- 前一被验提交：`af6bf55c4e3afd456832be0289338c454ec37cc2`（N1–N4 首轮全绿；本提交只做实现符合性审核后的三处跟随修改，见第 5 节）
 - 依据：[执行计划 R3](implementation-plan.md)、[测试计划 TP5.1](test-plan.md)、Test Engineer Rule、Project Consensus
-- 运行目录（仓库外）：`/tmp/contact-nix.27Uu6n`；consumer=`$RUN/consumer`，样本=`$RUN/data`，输出=`$RUN/output`
-- 本轮执行：N1、N2、N3、N4.1、N4.2 全部实际执行；未执行项见第 4 节
-- 证据位置：`$RUN/output/`（`n1-*`、`n2-*`、`n3-*`、`routes.json`、`selection-*`、`abstract-export/`）、`$RUN/evidence/`（fixture、item key、endpoint）
+- 运行目录（仓库外）：最终提交 `/tmp/contact-nix.1ilKkF`（consumer=`$RUN/consumer`，样本=`$RUN/data`，输出=`$RUN/output`，夹具=`$RUN/evidence`）；首轮 `/tmp/contact-nix.27Uu6n`
+- 本轮执行：N1、N2、N3、N4.2 在最终提交重跑；N4.1 按未受影响复用首轮结果（依据见 4.1）；未执行项见第 4 节
+- 证据位置：`$RUN/output/`（`n1-*`、`n2-*`、`n3-*`、`routes.json`、`abstract-export/`）、`$RUN/evidence/`（fixture、item key、endpoint）
 
 ## 1. 依赖与固定版本
 
@@ -20,7 +21,7 @@
 
 `zotero-tools` 保留其自有 lock（nixpkgs `55bfb4d7…`、agent-env-nix `ba2d0fe4…`），与 professor-research 叶子包的做法一致，避免同名不同 payload。
 
-## 2. 逐项结果
+## 2. 逐项结果（最终提交 48172e4）
 
 ### N1 构建与元数据：PASS
 
@@ -30,7 +31,7 @@ nix build "$CONTACT_REF#professor-contact" --out-link "$RUN/package"
 nix build "$CONTACT_REF#professor-contact-environment" --out-link "$RUN/environment"
 ```
 
-三个输出在 aarch64-darwin 实际构建成功（exit 0，2026-10-18 01:39，日志 `/tmp/pr93-run/formal-n1.log`）。
+三个输出在 aarch64-darwin 实际构建成功（exit 0，2026-10-18 02:06，日志 `/tmp/pr93-run/final-n1.log`）。
 
 - `$RUN/package/agent-env.json`：`id=professor-contact`、`version=0.1.0`、1 个 skill、8 个角色（`professor-contact`、`-analyzer`、`-downloader`、`-idea-generator`、`-selection`、`-email-generator`、`-email-validator`、`-style-validator`）、6 个直接依赖、1 个 runtimePackage。
 - 角色 TOML 全部按 `name`/`description`/`developer_instructions` 解析通过，8 个名字唯一；analyzer 来自 `packages/professor-contact-codex/.apm/agents/`（正文含 Codex 原生委派契约）。
@@ -47,7 +48,7 @@ printf 'keep\n' > "$RUN/consumer/.agents/skills/unrelated-sentinel/marker"
 
 - `agent-env: apply completed.`；`$RUN/consumer/.agents/skills/` 得到 12 个受管 skill，无关 `unrelated-sentinel/marker` 仍为 `keep`。
 - `$RUN/consumer/.codex/agents/` 得到 12 个角色 TOML（professor-contact 8 个 + paper-analysis 1 个 + pdfx 3 个）。
-- 安装树与源目录 `diff -r`：差异仅为 R3 允许的三类——`SKILL.md`（追加 Stage 5 路由附录）、`docs/stage5-routing.instructions.md`（随资源复制的附录原文）、七个同目录薄入口（固定解释器与两处绑定）；其余正文逐字节相同（记录 `$RUN/output/n2-static-diff.txt`）。
+- 安装树与源目录 `diff -r`：差异仅为 R3 允许的三类——`SKILL.md`（追加 Stage 5 路由附录）、`docs/stage5-routing.instructions.md`（随资源复制的附录原文）、七个同目录薄入口（固定解释器与两处绑定）；其余正文逐字节相同（`$RUN/output/n2-static-diff.txt`，源侧 `__pycache__` 为本地未跟踪产物，不在安装树）。
 - `scripts/_stage2_chatgpt_handoff_impl.py`、`scripts/stage5_immutable.py`、`scripts/stage5_immutable`、`docs/stage5-legacy-contract.md` 均存在；Stage 5 路由附录实际进入安装 `SKILL.md` 与 coordinator `developer_instructions`；email-generator 角色的 `stage5-finalize` 调用为 `<professor-contact-skill-dir>/scripts/stage5_immutable stage5-finalize`，不含 `skillrepo exec`。
 - 固定运行环境记录：`$RUN/output/n2-handoff-binding.txt` 显示 `CONTACT_PAPER_PYTHON` 绑定到 `/nix/store/447smjkzgapdxqrcdg8r8kf8j1a1jrxc-python3-3.14.7-env/bin/python3`，与该入口第一行 shebang 及 `n3-fixed-python.txt` 为同一路径。
 
@@ -66,23 +67,22 @@ CONTACT_PAPER_PYTHON="$FIXED_PYTHON" "$FIXED_PYTHON" -B -m unittest -v \
 
 两条都实际执行并 `ok`（第二条不是 `skipped`）：未绑定时仍走 `uv run`，绑定后 `_run_future_work` 用 `[固定解释器, script, …]` 启动 `future_work.py` 与相邻 `facts.py`，fake uv 日志中没有这两次调用（`$RUN/output/n3-handoff-unittest.log`）。该断言只证明「绑定后不再经过 uv」，实际绑定的解释器路径由 N2 的薄入口记录核对。
 
-### N4.1 安装角色一次真实 Codex 调用：PASS
+### N4.1 安装角色一次真实 Codex 调用：PASS（复用首轮，未受影响）
 
-- 夹具：`tests/runtime/prepare_issue53_stage4_fixture.py` 生成第 53 号 Stage-4 合成程序；pre 快照 `套磁选择.json`/`邮件输入.json` 均 absent。
-- 生效配置只有一个来源：`$RUN/consumer/.codex/config.toml` 合并 pin 的 `configs/codex-nested-delegation-consumer.toml`，`model=gpt-6-luna`、`model_reasoning_effort=low`、`sandbox_mode=workspace-write`、`features.multi_agent_v2.enabled=true`，并保留安装写入的 MCP 表。
-- 唯一 `/eval` 请求（既有 eval 服务 `127.0.0.1:17902`，不启动/停止服务）：`--json --skip-git-repo-check --sandbox workspace-write --cd <consumer> -- <prompt>`；HTTP 200（2026-10-18 01:42）。
-- 判定：`$RUN/output/selection-verdict.json` `status=pass`、`classification=PASS`；适配器确认正式委派关系（`formal_spawn_relation`，1 个 child thread，`expected_agent=professor-contact-selection`），child 返回单一业务 JSON（`result=needs_input`，`pending_selection` 为 `DIR00001`、候选 `idea-001`/`idea-002`）；post 快照两个程序级文件仍 absent（零写入）。
+首轮在 `af6bf55` 上执行：夹具 `tests/runtime/prepare_issue53_stage4_fixture.py` 生成第 53 号 Stage-4 合成程序（pre 快照两个程序级文件均 absent）；`$RUN/consumer/.codex/config.toml` 合并 pin 的 `configs/codex-nested-delegation-consumer.toml`（`model=gpt-6-luna`、`model_reasoning_effort=low`、`sandbox_mode=workspace-write`、`features.multi_agent_v2.enabled=true`，保留安装写入的 MCP 表）；唯一 `/eval` 请求（既有服务 `127.0.0.1:17902`）HTTP 200；`selection-verdict.json` `status=pass`、`classification=PASS`；适配器确认正式委派关系 `formal_spawn_relation`（1 个 child thread，`expected_agent=professor-contact-selection`），child 返回 `needs_input`（`DIR00001`，候选 `idea-001`/`idea-002`），post 快照程序级文件仍 absent。
+
+复用依据：最终提交与首轮之间，安装态 `professor-contact-selection.toml` 逐字节相同（两轮 SHA-256 均为 `f6519195780aaa0eaab7bbf1ffc17f2f414ebd9460e708ca36c2c1823c70a01d`，`$RUN/output/n4.1-selection-toml-sha256.txt`）；本项不经过 router、analyzer 或文档。首轮证据保留在 `/tmp/contact-nix.27Uu6n/output/selection-*`。
 
 ### N4.2 真实摘要导出（复用 PR90 recipe）：PASS
 
-- 夹具：`skills-test-fixtures@8cecafc…` 检出干净；`prepare_shared_test_assets_macos.sh` 一次通过；`start_zotero_test_fixture_macos.sh` 启动隔离实例（`FIXTURE_KIND=zotero`、`FIXTURE_RUN_ID` 匹配、pin 匹配、checkout 干净），端点 `http://127.0.0.1:24120/mcp`。
-- 合成条目：经 Zotero MCP `write_item` 写入一条有摘要无 PDF 的 `journalArticle`，`ITEM_KEY=QEYWFKEW`（标题 `Contact PR90 isolated abstract paper`）。
+- 夹具：最终运行目录内新 clone 的 `skills-test-fixtures@8cecafc…`（pin 与干净检查通过）；`prepare_shared_test_assets_macos.sh` 复用共享资产缓存；`start_zotero_test_fixture_macos.sh` 启动隔离实例（`FIXTURE_KIND=zotero`、`FIXTURE_RUN_ID` 匹配、pin 匹配、checkout 干净），端点 `http://127.0.0.1:24120/mcp`。
+- 合成条目：经 Zotero MCP `write_item` 写入一条有摘要无 PDF 的 `journalArticle`，`ITEM_KEY=CHZ62RYD`。
 - 导出：安装态 `scripts/stage2_input_router --papers … --output-dir …`（不传 `--zotero-read-skill-dir`，入口绑定锁定 `bin/zotero-item-export`），router exit 0、stderr 为空；路由 `carrier=abstract_json`、`level=abstract`、`status=ok`；导出文件 `.schema=1`、`.kind=paper-analysis-input`、`.source=zotero`、标题与摘要与预置值逐字节一致（`abstract_length=83`），摘要非空（`$RUN/output/abstract-export/export-summary.json`）。
 - 结束后只用 starter 的 `stop` 收尾，并保留该 fixture 的 run 目录副本（`$RUN/evidence/fixture-logs/`）。
 
 ## 3. 附带的仓库回归
 
-- 命令：`python3 -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_*.py'`（与 CI 相同），1016 条 `OK`，1 条 `skipped`（即未绑定 `CONTACT_PAPER_PYTHON` 时不适用的安装态用例）。
+- 命令：`python3 -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_*.py'`（与 CI 相同），两轮均为 1016 条 `OK`、1 条 `skipped`（即未绑定 `CONTACT_PAPER_PYTHON` 时不适用的安装态用例）。
 - 因 R3 改变源调用前缀，15 个既有源契约用例（18 个 case）的期望字符串由 `python3 …/scripts/<name>.py` 改为 `<…>/scripts/<name>`、`skillrepo exec …` 改为安装目录入口、`zotero-mcp-session` 改为 `bash "<zotero-read-skill-dir>/scripts/new-session.sh"`；断言强度不变，仅改绑到新入口形态。改动前这些用例在同一份代码上 18/18 失败，改绑后全绿。
 
 ## 4. 未执行与受限项
@@ -91,8 +91,18 @@ CONTACT_PAPER_PYTHON="$FIXED_PYTHON" "$FIXED_PYTHON" -B -m unittest -v \
 - 未验证：Zotero/浏览器/知识库服务自身的完整业务链、OCR 与真实论文分析、KB 写入、邮件生成与发送；这些不在 N1–N4 范围。
 - 本记录不声明 Gate3 通过或可合并；第三关口由测试计划负责人按 TP5.1 审核。
 
-## 5. 环境记录
+## 5. 实现符合性审核与跟随修改
+
+首轮审核（对象 `fb9a232`，含实现 `af6bf55`）结论「完整」，无阻断项、无需修项，3 条建议。最终提交 `48172e4` 做了三处跟随修改（都不改变业务语义）：
+
+1. analyzer 源中补上直接调用 `pdfx`/`vision-glance` 时的安装形态选择说明（与既有 future-work/facts 说明同形），落实 R3「在唯一源中说明按已加载依赖的安装形态选择该 owner 的现有固定入口」。
+2. 入口文档措辞限定为「按 `<skill-dir>/scripts/<name>` 直接执行时固定解释器」（README 与 `nix/contact.nix` 注释），对应审核建议 1。
+3. router 入口在 `--zotero-read-skill-dir` 缺值时原样保留 argv，让 router 自己的 argparse 报告缺参（对应审核建议 3）。
+
+未采纳的建议 2（SKILL.md 两处裸相对 `scripts/contact_state`）：该形态在基线 `d7d3024` 即为相对路径（原 `python3 scripts/contact_state.py`），属既有约定，本次不扩大改动范围。
+
+## 6. 环境记录
 
 - Nix 2.34.8（`aarch64-darwin`）、python3 3.14.7、jq 1.8.2、yq 4.54.1、uv 0.12.22；既有 eval 服务监听 `127.0.0.1:17902`（未启动/停止）；`/Applications/Zotero.app` 存在。
 - N1–N4 命令按 TP5.1 原样执行；只在会话文件沙箱仍生效的早期本地迭代中使用过独立 `XDG_CACHE_HOME`，正式运行使用默认 Nix 缓存与默认 `HOME`，未改认证或全局安全设置。
-- 未修改产品以迎合测试；未因提交编号变化重跑已成立项。
+- 未修改产品以迎合测试；未因提交编号变化重跑未受影响项（N4.1 复用并给出逐字节依据）。
