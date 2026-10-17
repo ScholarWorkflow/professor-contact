@@ -104,7 +104,14 @@ STAGE2_PREFLIGHT_VERSION = "stage2-preflight-v1"
 # resolution-evidence (candidate-union) artifact guards, and the
 # _resolved_directions.json binding to the facts' preflight proof. Packs
 # accepted under v1 semantics must re-prove through the slow path.
-STAGE2_RESOLUTION_SEMANTICS_VERSION = 2
+# v3: authoritative membership comes ONLY from provisional_member_keys plus
+# accepted add/remove decisions; analysis references (`relevant_keys`) are
+# persisted next to members in the input pack and never become members. Packs
+# accepted under v2 may carry reference papers in `supporting_item_keys`, so
+# they must be rebuilt (membership re-derived from the current facts) instead
+# of reused; preflight therefore misses them and their old validator record no
+# longer certifies the rebuilt body.
+STAGE2_RESOLUTION_SEMANTICS_VERSION = 3
 STAGE2_TARGET_FILE_NAME = "套磁目标.json"
 STAGE1_STATE_FILE_NAME = "套磁阶段1候选.json"
 STAGE1_STATE_SCHEMA_VERSION = 2
@@ -989,10 +996,65 @@ def candidate_fingerprint(candidates: list) -> str:
 
 
 def direction_relevant_keys(direction: dict) -> list:
-    relevant = direction.get("relevant_keys")
-    if relevant:
+    """The analysis reference scope of a facts direction.
+
+    An explicitly empty `relevant_keys` list is a real (empty) licence and must
+    stay empty; only a genuinely missing field falls back to the Stage-1
+    member set for legacy inputs. A present-but-malformed value is rejected
+    instead of being read as "missing".
+    """
+    if "relevant_keys" in direction:
+        relevant = direction.get("relevant_keys")
+        if not isinstance(relevant, list):
+            fail("invalid_facts",
+                 f"direction {facts_direction_id(direction)} has a malformed relevant_keys "
+                 "value (must be a list); refusing to treat it as a missing legacy field")
         return list(relevant)
     return list(direction.get("member_keys") or [])
+
+
+def direction_provisional_member_keys(direction: dict) -> list | None:
+    """The ORIGINAL formal members of a facts direction (R1 single source).
+
+    `provisional_member_keys` is the explicit Stage-1 origin list. Legacy facts
+    that predate the field carry the same Stage-1 membership in `member_keys`;
+    that list is accepted ONLY as the whole original set — never merged with or
+    topped up from the analysis reference scope (`relevant_keys`) or user
+    `named_keys`, so a reference paper can never silently become a member.
+    Returns None when neither source states the original membership; callers
+    must fail before writing.
+    """
+    keys = direction.get("provisional_member_keys")
+    if not isinstance(keys, list):
+        keys = direction.get("member_keys")
+    if not isinstance(keys, list):
+        return None
+    seen: set = set()
+    out: list = []
+    for key in keys:
+        if isinstance(key, str) and key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def pack_direction_relevant_keys(direction: dict) -> list:
+    """The persisted analysis reference scope of a pack direction.
+
+    A v3 pack always stores `relevant_keys` explicitly (an empty list is an
+    empty `P` licence). A legacy pack without the field keeps its members as
+    the minimal read-only scope; a present-but-malformed value is rejected
+    because falling back to members would silently widen the citation licence.
+    """
+    if "relevant_keys" in direction:
+        relevant = direction.get("relevant_keys")
+        if not isinstance(relevant, list):
+            fail("invalid_input_pack",
+                 f"direction {direction_machine_id(direction)} has a malformed relevant_keys "
+                 "value (must be a list); refusing to fall back to its members",
+                 direction=direction_machine_id(direction))
+        return list(relevant)
+    return list(direction.get("supporting_item_keys") or [])
 
 
 def direction_candidate_keys(direction: dict) -> list:
@@ -1705,7 +1767,15 @@ class Stage2Context:
 
 
 class Stage2PackRefineContext:
-    """Read-only context for repairing an accepted pack when /tmp facts expired."""
+    """Read-only context for repairing an accepted pack when /tmp facts expired.
+
+    Everything the refine entry needs is recovered from the accepted input
+    pack itself: the professor-level canonical `papers` map supplies trusted
+    titles/year/authorship/analysis paths, while each direction's persisted
+    `relevant_keys` restores its `P` citation licence (an explicit empty list
+    stays empty; only a legacy direction without the field falls back to its
+    members). `supporting_item_keys` remains the separate formal membership.
+    """
 
     def __init__(self, professor_dir: Path):
         self.professor_dir = professor_dir
@@ -1716,16 +1786,12 @@ class Stage2PackRefineContext:
         self.professor = self.pack.get("professor") or fail("invalid_facts", "input pack.professor missing")
         self.current_year = datetime.now().year
         self.papers = {}
+        for key, record in pack_paper_index(self.pack).items():
+            if isinstance(key, str) and isinstance(record, dict):
+                self.papers[key] = dict(record)
         self.direction_plans = []
         for direction in self.pack.get("directions", []):
             did = direction_machine_id(direction)
-            for paper in direction_papers(self.pack, direction):
-                key = paper.get("item_key")
-                if key:
-                    self.papers.setdefault(key, {
-                        "item_key": key, "title": paper.get("title"),
-                        "year": paper.get("year"), "authorship": paper.get("authorship"),
-                        "analysis_file": paper.get("analysis_file")})
             for gap in direction.get("gap_shortlist", []) + direction.get("gaps_excluded", []):
                 key = gap.get("item_key")
                 if key:
@@ -1736,17 +1802,20 @@ class Stage2PackRefineContext:
             if isinstance(saved_later_papers, dict):
                 for key, paper in saved_later_papers.items():
                     if isinstance(key, str) and isinstance(paper, dict):
-                        self.papers.setdefault(key, {
-                            "item_key": key, "title": paper.get("title"),
-                            "year": paper.get("year"),
-                            "authorship": paper.get("authorship"),
-                            "analysis_file": paper.get("analysis_file")})
+                        existing = self.papers.get(key)
+                        restored = dict(paper)
+                        if isinstance(existing, dict):
+                            for field, value in existing.items():
+                                if value is not None:
+                                    restored[field] = value
+                        self.papers[key] = restored
             gaps = [dict(gap) for gap in direction.get("gap_shortlist", [])]
             gaps.extend(dict(gap) for gap in direction.get("gaps_excluded", []))
             supporting_keys = list(direction.get("supporting_item_keys") or [])
+            relevant_keys = pack_direction_relevant_keys(direction)
             self.direction_plans.append({
                 "did": did,
-                "direction": {"relevant_keys": supporting_keys,
+                "direction": {"relevant_keys": relevant_keys,
                                "member_keys": supporting_keys,
                                "named_keys": list(direction.get("named_keys") or [])},
                 "ranked": [gap for gap in gaps if gap.get("gap_id")],
@@ -2245,12 +2314,44 @@ def _detect_merge_candidates(ctx: Stage2Context) -> list[dict]:
     return merges
 
 
+def _canonical_directory(value) -> Path | None:
+    """Canonical absolute path of a directory argument (None when unreadable)."""
+    try:
+        return Path(value).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def stage2_resolve_run_id(professor_dir: Path, facts: dict, results_dir: Path) -> str:
+    """Identity of ONE resolve round: professor + preflight proof + results dir.
+
+    Plan and finalize compute the same value from the same three inputs, so a
+    result file from another round (a copied previous file, a fixed shared /tmp
+    directory, another professor) can never pass the finalizer's check. The id
+    only constrains temporary job outputs and is never part of the resolve
+    reuse fingerprint or the accepted cache.
+    """
+    proof, _error = _facts_preflight_proof(facts)
+    professor_canonical = _canonical_directory(professor_dir) or professor_dir
+    results_canonical = _canonical_directory(results_dir) or results_dir
+    return sha256_obj({
+        "professor_dir": str(professor_canonical),
+        "preflight_id": proof,
+        "results_dir": str(results_canonical),
+    })
+
+
 def cmd_stage2_resolve_plan(args) -> None:
     """Plan the direction resolution step: detect splits/merges/additions/removals.
 
     This is a deterministic pre-flight that uses full-text facts to suggest
     corrections to provisional directions. The actual resolution is performed
     by the model in the resolve job, which has access to the full context.
+
+    One round = one exclusive results directory. `--results-dir` is required:
+    every emitted job's `result_file` must be absent from it before the round
+    starts (a leftover would be consumed as this round's model output), and the
+    round identity `resolve_run_id` binds this plan's jobs to that directory.
 
     Reuse: an existing `_resolved_directions.json` entry whose per-direction
     `input_fingerprint` (the SHA of the direction's canonical resolve
@@ -2261,6 +2362,14 @@ def cmd_stage2_resolve_plan(args) -> None:
     re-resolved. Editorial-only analysis Markdown edits do not affect the
     resolve model_input and keep accepted state reusable.
     """
+    raw_results_dir = getattr(args, "results_dir", None)
+    if not raw_results_dir or not Path(raw_results_dir).expanduser().is_absolute():
+        fail("invalid_params",
+             f"stage2-resolve-plan requires an absolute --results-dir: {raw_results_dir!r}")
+    results_dir = _canonical_directory(raw_results_dir)
+    if results_dir is None or not results_dir.is_dir():
+        fail("invalid_params",
+             f"--results-dir must be an existing directory: {raw_results_dir!r}")
     ctx = Stage2Context(Path(args.facts))
     # The resolution evidence universe is the professor-level candidate union:
     # reuse fingerprints must hash the same universe the resolve jobs score.
@@ -2306,6 +2415,9 @@ def cmd_stage2_resolve_plan(args) -> None:
                 "schema": 1,
                 "kind": "resolve",
                 "direction_id": ckey,
+                # Must be echoed verbatim from this plan: the finalizer only
+                # accepts files produced for ITS round directory/proof.
+                "resolve_run_id": "<this plan's resolve_run_id>",
                 "resolved": {
                     "resolved_direction_id": "<stable ID, same as direction_id unless split>",
                     "provisional_direction_id": ckey,
@@ -2325,10 +2437,33 @@ def cmd_stage2_resolve_plan(args) -> None:
             "model_input": _build_resolve_model_input(ctx, plan, evidence),
         })
 
+    # One round owns its result files: every expected file must be absent
+    # before the round starts, otherwise a leftover from another round could be
+    # consumed as this round's model output. File names must also be unique.
+    expected_files = [job["result_file"] for job in resolve_jobs]
+    collisions = sorted({name for name in expected_files if expected_files.count(name) > 1})
+    if collisions:
+        fail("invalid_params",
+             f"resolve result file names collide inside this round: {collisions}")
+    existing_files = sorted(name for name in set(expected_files)
+                            if (results_dir / name).exists())
+    if existing_files:
+        fail("invalid_params",
+             "this resolve round's results directory already contains expected result "
+             "files; allocate a new round directory instead: "
+             f"{[str(results_dir / name) for name in existing_files]}",
+             results_dir=str(results_dir), existing_result_files=existing_files)
+
+    resolve_run_id = stage2_resolve_run_id(ctx.professor_dir, ctx.facts, results_dir)
+    for job in resolve_jobs:
+        job["result_schema"]["resolve_run_id"] = resolve_run_id
+
     emit({
         "status": "ok",
         "professor": ctx.professor,
         "professor_dir": str(ctx.professor_dir),
+        "results_dir": str(results_dir),
+        "resolve_run_id": resolve_run_id,
         "has_material_changes": has_material_changes,
         # Traceability: the preflight proof this resolve round is bound to
         # (issue #11 binding, extended to the resolve pipeline in issue #7).
@@ -2486,8 +2621,17 @@ def _current_resolve_fingerprint(ctx: Stage2Context, plan: dict, evidence: dict)
 
 def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
                              reused: dict[str, dict] | None = None,
-                             pending: dict[str, dict] | None = None) -> dict[str, dict]:
+                             pending: dict[str, dict] | None = None,
+                             expected_run_id: str | None = None,
+                             keep_provisional: list[str] | None = None) -> dict[str, dict]:
     """Validate resolve result JSON files. Returns ckey -> resolved direction.
+
+    One round = one results directory + one `resolve_run_id`. A direction that
+    still needs this round's model output MUST have its complete result file in
+    `results_dir`; a missing file is `result_missing` (with the full expected
+    path) and a copied file from another round is `invalid_result_json` — the
+    old silently-accepted "unchanged" default is gone. Every required file is
+    validated before the caller writes anything, so a batch fails as a whole.
 
     `reused` carries previously ACCEPTED sidecar entries whose per-direction
     input_fingerprint still matches the current facts; when a direction has no
@@ -2499,11 +2643,17 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
     material change written before the user's Stage-2 choice). With no new
     result file the pending entry is carried as-is — still proposed, still
     reported as needing user choice — never silently promoted or reset.
+
+    `keep_provisional` names the directions the user explicitly decided to
+    keep provisional. Their accepted `decision=user_kept_provisional` entry is
+    built BEFORE the remaining file checks, so they need no model file; every
+    other direction still has to satisfy this round's result contract.
     Enforces:
-    - schema/kind correctness
+    - schema/kind correctness and this round's `resolve_run_id`
     - resolution_type ∈ {unchanged, renamed, split_from, merged_into, refined}
-    - split_from requires a NEW split_target ID and moves papers via
-      papers_to_add (⊆ relevant keys, source keeps ≥1 paper)
+    - split_from requires a NEW split_target ID and moves ORIGINAL formal
+      members via papers_to_add (the source keeps ≥1 provisional member; a
+      relevant-only reference paper can never stand in for a member)
     - merged_into requires merge_target pointing at another direction in this
       professor's plans; merge chains (target is itself merged_into) fail
     - papers_to_remove ⊆ provisional_member_keys
@@ -2519,6 +2669,7 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
     """
     reused = reused or {}
     pending = pending or {}
+    keep_provisional = list(keep_provisional or [])
     resolved = {}
     direction_lookup = {plan["did"]: plan for plan in ctx.direction_plans}
     # papers_to_add may come from anywhere in the professor-level candidate
@@ -2532,9 +2683,13 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
         ckey = plan["did"]
         current_fingerprint = _current_resolve_fingerprint(ctx, plan, evidence)
 
-        def _unchanged_default() -> dict:
+        if ckey in keep_provisional:
+            # The user's explicit decision supersedes any model proposal for
+            # this direction and needs no model file; it is applied FIRST so a
+            # missing file elsewhere cannot drop it, while every other
+            # direction still has to provide its own result.
             direction = plan["direction"]
-            return {
+            resolved[ckey] = {
                 "resolved_direction_id": ckey,
                 "provisional_direction_id": ckey,
                 "name_ja": direction.get("name_ja") or "",
@@ -2546,10 +2701,12 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
                 "split_target": None,
                 "merge_target": None,
                 "user_note": direction.get("user_note") or "",
+                "decision": "user_kept_provisional",
                 "input_fingerprint": current_fingerprint,
                 "acceptance": "accepted",
                 "reused": False,
             }
+            continue
 
         prior = reused.get(ckey)
         if prior:
@@ -2565,18 +2722,27 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
             continue
         result_path = results_dir / f"resolve-{filename_component(ckey)}.json"
         if not result_path.is_file():
-            # No new result: an accepted resolution stays cached, a pending
-            # proposal stays pending (and keeps reporting needs_user_choice).
+            # Only a fingerprint-matching pending proposal may pass without a
+            # new file (it keeps waiting for the user's Stage-2 choice). A
+            # direction that still needs this round's model output fails as a
+            # whole — the old silently-accepted "unchanged" default is banned.
             if prior_pending := pending.get(ckey):
                 resolved[ckey] = dict(prior_pending)
                 continue
-            resolved[ckey] = _unchanged_default()
-            continue
+            fail("result_missing",
+                 f"no resolve result for direction {ckey!r} in this round: {result_path}",
+                 path=str(result_path), direction=ckey)
         data, error = read_json_file(result_path)
         if error:
-            fail("result_missing", f"{result_path}: {error}")
+            fail("invalid_result_json", f"{result_path}: {error}")
         if not isinstance(data, dict) or data.get("schema") != 1 or data.get("kind") != "resolve":
             fail("invalid_result_json", f"{result_path}: schema/kind must be 1/resolve")
+        if expected_run_id is not None and data.get("resolve_run_id") != expected_run_id:
+            # A copied previous-round file (or another professor's run) carries
+            # a different round identity; it may never stand in for this round.
+            fail("invalid_result_json",
+                 f"{result_path}: resolve_run_id {data.get('resolve_run_id')!r} does not "
+                 f"match this round {expected_run_id!r}")
         # A result file is bound to the exact job identity: the file may only
         # speak for the direction the job was emitted for (top-level
         # direction_id AND resolved.provisional_direction_id). Otherwise a
@@ -2652,10 +2818,14 @@ def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
             if not papers_to_add:
                 fail("invalid_result_json",
                      f"{result_path}: split_from requires papers_to_add (papers moved to the new direction)")
-            relevant = set(direction_relevant_keys(plan["direction"]))
-            if not (relevant - set(papers_to_add)):
+            # The source keeps its ORIGINAL formal members minus the moved
+            # ones: a relevant-only reference paper is not a member and can
+            # never stand in for an emptied provisional membership.
+            source_members = set(direction_provisional_member_keys(plan["direction"]) or [])
+            if not (source_members - set(papers_to_add)):
                 fail("invalid_result_json",
-                     f"{result_path}: split_from would leave the source direction {ckey} with no papers")
+                     f"{result_path}: split_from would leave the source direction {ckey} with no "
+                     "original formal members")
         else:
             if split_target is not None:
                 fail("invalid_result_json",
@@ -2874,33 +3044,12 @@ def cmd_stage2_resolve_finalize(args) -> None:
     pending = {ckey: entry for ckey, entry in existing_by_ckey.items()
                if plan_fingerprints.get(ckey) == entry.get("input_fingerprint")
                and entry.get("acceptance") == "proposed"}
-    resolved = validate_resolve_results(ctx, results_dir, reused, pending)
-
-    # Apply the user's explicit keep-provisional decisions LAST so they
-    # supersede any model proposal for those directions: identity, name and
-    # membership stay provisional, and the entry is ACCEPTED — it reuses
-    # without re-prompting until its resolve fingerprint changes. This keeps
-    # one authoritative state per direction instead of the legacy "omit
-    # --resolved-directions and keep a pending proposal forever" fallback.
-    for ckey in keep_provisional:
-        direction = plans_by_ckey[ckey]["direction"]
-        resolved[ckey] = {
-            "resolved_direction_id": ckey,
-            "provisional_direction_id": ckey,
-            "name_ja": direction.get("name_ja") or "",
-            "name_zh": direction.get("name_zh") or "",
-            "resolution_type": "unchanged",
-            "papers_to_add": [],
-            "papers_to_remove": [],
-            "paper_justifications": {},
-            "split_target": None,
-            "merge_target": None,
-            "user_note": direction.get("user_note") or "",
-            "decision": "user_kept_provisional",
-            "input_fingerprint": plan_fingerprints[ckey],
-            "acceptance": "accepted",
-            "reused": False,
-        }
+    # The round identity must be the one this plan's jobs carried: same
+    # professor directory, same facts/preflight proof, same results directory.
+    expected_run_id = stage2_resolve_run_id(ctx.professor_dir, ctx.facts, results_dir)
+    resolved = validate_resolve_results(ctx, results_dir, reused, pending,
+                                        expected_run_id=expected_run_id,
+                                        keep_provisional=keep_provisional)
 
     # Check for material changes that require user confirmation. Already-applied
     # (reused) resolutions must NOT re-prompt the user on every re-run.
@@ -2992,6 +3141,8 @@ def cmd_stage2_resolve_finalize(args) -> None:
         "new_splits": new_splits,
         "material_changes": material_changes,
         "needs_user_choice": bool(material_changes),
+        "results_dir": str(results_dir),
+        "resolve_run_id": expected_run_id,
     })
 
 
@@ -3833,6 +3984,13 @@ def cmd_stage2_preflight(args) -> None:
         validator_reason = stage2_validator_accepts(pack, validator_ids, professor_dir)
         if validator_reason:
             reasons.append(validator_reason)
+        # A pack produced under older membership semantics was certified by
+        # that old body: its validator record can neither prove the rebuilt
+        # document nor re-arm the early gate, so the direction takes the slow
+        # path explicitly instead of borrowing the stale acceptance.
+        if meta is not None and meta.get("resolution_semantics_version") != \
+                STAGE2_RESOLUTION_SEMANTICS_VERSION:
+            reasons.append("validator_not_accepted")
         reasons = sorted(set(reasons))
         direction_results.append({
             "direction_id": direction_id, "action": "reuse" if not reasons else "process",
@@ -4082,8 +4240,31 @@ def narrative_scope(ctx: Stage2Context, ckey: str) -> dict:
     return {"papers": set(), "later": set(), "gaps": set()}
 
 
+def stage2_pack_scope(ctx, did: str) -> dict:
+    """Reference/gap scope of one FINAL pack direction.
+
+    The refinement entry validates against the accepted pack direction, so a
+    split child or merge target uses its own persisted `relevant_keys` and
+    migrated gaps instead of the provisional facts direction's scope.
+    """
+    for direction in (ctx.pack or {}).get("directions", []) or []:
+        if direction_machine_id(direction) != did:
+            continue
+        gaps = list(direction.get("gap_shortlist") or []) + list(direction.get("gaps_excluded") or [])
+        return {
+            "papers": {key for key in pack_direction_relevant_keys(direction)
+                       if isinstance(key, str) and key},
+            "later": set(Stage2PackRefineContext.narrative_later_keys_for(direction)),
+            "gaps": {gap.get("gap_id") for gap in gaps
+                     if isinstance(gap, dict) and isinstance(gap.get("gap_id"), str)},
+        }
+    return {"papers": set(), "later": set(), "gaps": set()}
+
+
 def validate_narrative_entry(ctx: Stage2Context, path: Path, entry: dict,
-                             expected_did: str | None = None) -> tuple[str, dict]:
+                             expected_did: str | None = None, *,
+                             scope: dict | None = None,
+                             allowed_directions: set | None = None) -> tuple[str, dict]:
     if not isinstance(entry, dict):
         fail("invalid_result_json", f"{path}: narrative entry must be an object")
     did = entry.get("direction_id") or entry.get("collection_key")
@@ -4091,8 +4272,11 @@ def validate_narrative_entry(ctx: Stage2Context, path: Path, entry: dict,
         fail("invalid_result_json", f"{path}: expected direction {expected_did}, got {did}")
     if not isinstance(did, str) or not did.strip():
         fail("invalid_result_json", f"{path}: direction_id must be a non-empty string")
-    scope = narrative_scope(ctx, did)
-    if not any(plan["did"] == did for plan in ctx.direction_plans):
+    if scope is None:
+        scope = narrative_scope(ctx, did)
+    if allowed_directions is None:
+        allowed_directions = {plan["did"] for plan in ctx.direction_plans}
+    if did not in allowed_directions:
         fail("invalid_result_json", f"{path}: unexpected direction {did}")
     positioning = entry.get("positioning")
     if not isinstance(positioning, list) or not positioning:
@@ -4311,12 +4495,28 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
             "candidate_paper_ids": gap.get("candidate_paper_ids") or [],
             "quote_trunc": truncate(gap["quote"], 80),
             "reason": "low_rank（本轮未选，不代表不重要）"})
+    # R1: authoritative membership starts from the ORIGINAL provisional members
+    # only. `relevant_keys` is the analysis reference scope (P citations,
+    # future work, gaps) and can never add a member; accepted add/remove
+    # decisions are applied later by cmd_stage2_finalize.
+    direction = plan["direction"]
+    original_members = direction_provisional_member_keys(direction)
+    if original_members is None:
+        fail("invalid_facts",
+             f"direction {plan['did']} has no original formal member source "
+             "(provisional_member_keys/member_keys missing); Stage 2 cannot rebuild "
+             "authoritative membership from the analysis reference set")
+    relevant_keys = []
+    seen_relevant: set = set()
+    for key in direction_relevant_keys(direction):
+        if isinstance(key, str) and key not in seen_relevant:
+            seen_relevant.add(key)
+            relevant_keys.append(key)
     supporting_keys = []
     papers = {}
-    direction = plan["direction"]
-    relevant_keys = direction_relevant_keys(direction)
-    ordered = sorted(relevant_keys, key=lambda k: (
-        0 if k in (direction.get("named_keys") or []) else 1,
+    named = set(direction.get("named_keys") or [])
+    ordered = sorted(original_members, key=lambda k: (
+        0 if k in named else 1,
         -(ctx.papers[k].get("year") or 0) if k in ctx.papers else 0, k))
     for key in ordered:
         paper = ctx.papers.get(key)
@@ -4333,6 +4533,25 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
             "paper_facts": facts_record,
         }
         supporting_keys.append(key)
+    # Reference-scope papers live in the SAME professor-level canonical map so
+    # a P citation keeps one trusted record (title/year/authorship/analysis
+    # path) after the temporary facts expire. They never enter members.
+    for key in sorted(relevant_keys):
+        if key in papers:
+            continue
+        paper = ctx.papers.get(key)
+        if not paper:
+            continue
+        facts_record, facts_state, facts_error = ctx.facts_for(key)
+        papers[key] = {
+            "item_key": key, "title": paper.get("title"), "year": paper.get("year"),
+            "authorship": paper.get("authorship"),
+            "analysis_file": paper.get("analysis_file"),
+            "pdf_available": bool(paper.get("has_pdf")),
+            "facts_state": facts_state,
+            "facts_error": facts_error,
+            "paper_facts": facts_record,
+        }
     note = direction.get("user_note") or ""
     narrative_later_papers = {}
     narrative_data = narrative if isinstance(narrative, dict) else {}
@@ -4359,6 +4578,9 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
         "red_lines": direction.get("red_lines") or [],
         "named_keys": list(direction.get("named_keys") or []),
         "supporting_item_keys": supporting_keys,
+        # Persisted analysis reference scope (an explicit empty list is an
+        # empty P licence). Kept strictly separate from authoritative members.
+        "relevant_keys": relevant_keys,
         "resolved_addition_keys": [],
         "gap_pool_count": len(plan["pool"]),
         "gap_shortlist": [
@@ -4441,10 +4663,14 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
         seen = {}
         narrative = d.get("narrative") or {}
         paper_lookup = {p["item_key"]: p for p in projected[direction_machine_id(d)]}
+        # Reference-scope records (relevant_keys) live in the same canonical
+        # map; they may be cited through {{P:key}} without being members.
+        reference_lookup = pack_paper_index(pack)
         gap_no = {g["gap_id"]: g["no"] for g in d.get("gap_shortlist", [])}
         for block in narrative.get("positioning", []):
             lines.append(render_positioning_block(
-                block, paper_lookup, gap_no, ctx.professor_dir, seen, ctx.papers))
+                block, paper_lookup, gap_no, ctx.professor_dir, seen,
+                {**ctx.papers, **reference_lookup}))
         lines.append("")
         lines.append("### 论文一览")
         lines.append("")
@@ -4603,6 +4829,147 @@ def stage2_finalize_preflight_plan(args, ctx: Stage2Context):
     return plan, target, snapshot_entry
 
 
+def stage2_pack_requires_membership_rebuild(pack: dict | None) -> bool:
+    """True when the accepted pack predates the current membership semantics.
+
+    Packs accepted under v2 semantics may carry an analysis reference paper in
+    `supporting_item_keys`; they must rebuild authoritative membership from the
+    current facts (original provisional members + accepted decisions) instead
+    of copying the old members. A pack without the persisted reference scope
+    cannot prove that separation either, so it is rebuilt as well.
+    """
+    if not isinstance(pack, dict) or not pack.get("directions"):
+        return False
+    cache = pack.get("cache")
+    meta = cache.get("preflight") if isinstance(cache, dict) else None
+    if not isinstance(meta, dict):
+        return True
+    if meta.get("resolution_semantics_version") != STAGE2_RESOLUTION_SEMANTICS_VERSION:
+        return True
+    for direction in pack.get("directions") or []:
+        if not isinstance(direction, dict):
+            return True
+        if not isinstance(direction.get("relevant_keys"), list):
+            return True
+    return False
+
+
+def stage2_old_pack_gap_statuses(entry: dict) -> dict:
+    """Freshness-status records recovered from an old pack entry's gap rows.
+
+    A membership rebuild reuses the old direction's narrative/freshness work
+    (no new model job), so the rebuilt pack must keep the gap statuses the old
+    pack already recorded instead of resetting them to "unknown".
+    """
+    statuses = {}
+    for gap in list(entry.get("gap_shortlist") or []) + list(entry.get("gaps_excluded") or []):
+        gap_id = gap.get("gap_id") if isinstance(gap, dict) else None
+        if not isinstance(gap_id, str):
+            continue
+        statuses[gap_id] = {
+            "gap_id": gap_id, "item_key": gap.get("item_key"),
+            "status": gap.get("status") or "unknown",
+            "model_evidence": gap.get("evidence"),
+            "candidate_paper_ids": list(gap.get("candidate_paper_ids") or []),
+            "evaluated_at": gap.get("evaluated_at"),
+            "confidence": gap.get("confidence") or "low",
+            "completed_part": gap.get("completed_part"),
+            "remaining_gap": gap.get("remaining_gap"),
+        }
+    return statuses
+
+
+def stage2_render_state(pack: dict) -> dict:
+    """The exact pack content the managed analysis Markdown displays.
+
+    Used to decide whether a finalized pack must re-render: a membership,
+    reference-licence, narrative, gap, name or trusted-title change is visible
+    even when no new model job was needed, while a metadata-only rewrite stays
+    unchanged.
+    """
+    directions_state = []
+    referenced: set = set()
+    for direction in pack.get("directions") or []:
+        narrative = direction.get("narrative") if isinstance(direction.get("narrative"), dict) else {}
+        refs = set()
+        for block in narrative.get("positioning") or []:
+            if isinstance(block, dict):
+                for kind, key in PLACEHOLDER_RE.findall(block.get("text") or ""):
+                    if kind in ("P", "L"):
+                        refs.add(key)
+        referenced.update(refs)
+        referenced.update(direction.get("supporting_item_keys") or [])
+        referenced.update(pack_direction_relevant_keys(direction))
+        referenced.update(direction.get("named_keys") or [])
+        directions_state.append({
+            "direction_id": direction_machine_id(direction),
+            "name_ja": direction.get("name_ja"),
+            "name_zh": direction.get("name_zh"),
+            "supporting_item_keys": list(direction.get("supporting_item_keys") or []),
+            "relevant_keys": pack_direction_relevant_keys(direction),
+            "named_keys": list(direction.get("named_keys") or []),
+            "credibility": direction.get("credibility") or {},
+            "red_lines": direction.get("red_lines") or [],
+            "user_note": direction.get("user_note") or "",
+            "gap_shortlist": [
+                {key: gap.get(key) for key in ("gap_id", "item_key", "paper_title", "paper_year",
+                                               "authorship", "quote", "translation_zh", "source",
+                                               "page", "status", "evidence", "confidence",
+                                               "completed_part", "remaining_gap", "no")}
+                for gap in direction.get("gap_shortlist") or []],
+            "gaps_excluded": [
+                {key: gap.get(key) for key in ("gap_id", "item_key", "paper_title", "status")}
+                for gap in direction.get("gaps_excluded") or []],
+            "completed_gap_blacklist": direction.get("completed_gap_blacklist") or [],
+            "narrative": narrative,
+            "narrative_later_papers": direction.get("narrative_later_papers") or {},
+            "resolved_direction": direction.get("resolved_direction") or {},
+        })
+    papers = pack_paper_index(pack)
+    # `pdf_available` feeds the managed header's full-text/abstract counts, so a
+    # PDF-availability change is display-relevant even when the analysis path
+    # stays the same.
+    papers_state = {
+        key: {field: (papers.get(key) or {}).get(field)
+              for field in ("title", "year", "authorship", "analysis_file",
+                            "pdf_available")}
+        for key in sorted(referenced)
+    }
+    return {"directions": directions_state, "papers": papers_state}
+
+
+def stage2_require_paper_reference_titles(fallback_papers: dict, pack: dict,
+                                          direction: dict) -> None:
+    """Refuse a `{{P:key}}` citation the direction is not licensed to make.
+
+    The persisted `relevant_keys` is the citation licence (an explicit empty
+    list licenses nothing); a reference must also resolve to a trusted title
+    from the canonical pack or the current facts. It is never acceptable to
+    fall back to showing the raw item_key.
+    """
+    allowed = set(pack_direction_relevant_keys(direction))
+    canonical = pack_paper_index(pack)
+    narrative = direction.get("narrative") if isinstance(direction.get("narrative"), dict) else {}
+    referenced = set()
+    for block in narrative.get("positioning") or []:
+        if isinstance(block, dict):
+            for kind, key in PLACEHOLDER_RE.findall(block.get("text") or ""):
+                if kind == "P":
+                    referenced.add(key)
+    for key in sorted(referenced):
+        if key not in allowed:
+            fail("missing_paper_reference_license",
+                 f"direction {direction_machine_id(direction)} renders {{{{P:{key}}}}} but "
+                 "that paper is outside its persisted analysis reference scope (relevant_keys)",
+                 item_key=key, direction=direction_machine_id(direction))
+        record = canonical.get(key) if isinstance(canonical.get(key), dict) else fallback_papers.get(key)
+        if stage2_trusted_paper_title(record, key) is None:
+            fail("missing_paper_reference_title",
+                 f"direction {direction_machine_id(direction)} renders {{{{P:{key}}}}} but no "
+                 "trusted title is available in the input pack or supported paper facts",
+                 item_key=key, direction=direction_machine_id(direction))
+
+
 def cmd_stage2_finalize(args) -> None:
     ctx = Stage2Context(Path(args.facts))
     preflight_plan, preflight_target, preflight_snapshot = \
@@ -4695,19 +5062,32 @@ def cmd_stage2_finalize(args) -> None:
     old_directions = {direction_machine_id(e): e
                       for e in (ctx.pack or {}).get("directions", [])}
     old_render = ((ctx.pack or {}).get("cache") or {}).get("render", {})
+    # A pack accepted under older membership semantics must rebuild its
+    # authoritative membership from the current facts: only the narrative /
+    # freshness work may be reused, never the old `supporting_item_keys`.
+    pack_needs_rebuild = stage2_pack_requires_membership_rebuild(ctx.pack)
     pack_directions = []
     fresh_papers: dict = {}
     for plan in ctx.direction_plans:
-        if plan["reuse"]:
-            reused_entry = old_directions[plan["did"]]
+        old_entry = old_directions.get(plan["did"])
+        if plan["reuse"] and not pack_needs_rebuild:
+            reused_entry = old_entry
             # collection_key is projection metadata: refresh it from the facts
             # so a projection-only rename carries without touching fingerprints.
             reused_entry["collection_key"] = plan["direction"].get("collection_key")
             pack_directions.append(reused_entry)
         else:
-            built, papers = build_direction_pack(
-                ctx, plan, statuses_by_direction.get(plan["did"], {}),
-                narratives[plan["did"]])
+            if plan["reuse"]:
+                # Old-semantics rebuild: keep the accepted narrative/freshness
+                # work of this direction, rebuild members and references from
+                # the current facts, then apply the accepted decisions below.
+                old_narrative = (old_entry or {}).get("narrative")
+                statuses = stage2_old_pack_gap_statuses(old_entry or {})
+                narrative = old_narrative if isinstance(old_narrative, dict) else None
+            else:
+                statuses = statuses_by_direction.get(plan["did"], {})
+                narrative = narratives[plan["did"]]
+            built, papers = build_direction_pack(ctx, plan, statuses, narrative)
             pack_directions.append(built)
             fresh_papers.update(papers)
 
@@ -4862,10 +5242,19 @@ def cmd_stage2_finalize(args) -> None:
                                             if b.get("item_key") not in split_set]
             split_named = [k for k in d.get("named_keys", []) if k in split_set]
             d["named_keys"] = [k for k in d.get("named_keys", []) if k not in split_set]
+            # Re-verify the emptied-source boundary after materialization. The
+            # resolve validator already rejected such a proposal; this second
+            # check keeps a hand-edited/legacy sidecar from producing a source
+            # entry with no formal members (zero authoritative writes).
+            if not d["supporting_item_keys"]:
+                fail("invalid_resolved_directions",
+                     f"split_from leaves the source direction {did} with no formal members",
+                     direction=did, split_target=split_id)
             provisional_fingerprints[split_id] = provisional_fingerprints.get(did) \
                 or d.get("input_fingerprint")
             existing_child = _find_pack_direction(split_id)
-            if existing_child is not None and did in reused_ckeys:
+            if existing_child is not None and did in reused_ckeys \
+                    and not pack_needs_rebuild:
                 # The child was materialized by an earlier finalize and the
                 # source hit Stage-2 reuse: keep the accepted child membership
                 # exactly as-is. Rebuilding it from the reuse (already-pruned)
@@ -4896,6 +5285,11 @@ def cmd_stage2_finalize(args) -> None:
                 "red_lines": [r for r in d.get("red_lines", []) if r.get("scope") != "global"],
                 "named_keys": split_named,
                 "supporting_item_keys": moved_keys,
+                # A brand-new split child starts with the minimal legal
+                # reference scope: exactly its approved final members (a legal
+                # full-text rescue included). It never inherits the source's
+                # extra references.
+                "relevant_keys": sorted(set(moved_keys)),
                 "resolved_addition_keys": sorted(split_set),
                 "gap_pool_count": len(moved_shortlist) + len(moved_excluded),
                 "gap_shortlist": [dict(g, no=index + 1) for index, g in enumerate(moved_shortlist)],
@@ -4953,6 +5347,13 @@ def cmd_stage2_finalize(args) -> None:
             for b in d.get("completed_gap_blacklist", []):
                 if not any(q.get("gap_id") == b.get("gap_id") for q in target.get("completed_gap_blacklist", [])):
                     target.setdefault("completed_gap_blacklist", []).append(dict(b))
+            # The merge target's reference scope is the deduplicated union of
+            # the participants' current reference scopes; only this merge's
+            # directions join (an uninvolved direction never leaks in), and the
+            # scope stays independent from the merged membership.
+            merged_relevant = set(pack_direction_relevant_keys(target)) \
+                | set(pack_direction_relevant_keys(d))
+            target["relevant_keys"] = sorted(merged_relevant)
             target_rd = target.get("resolved_direction") or {}
             merged_from = list(target_rd.get("merged_from") or [])
             merged_from.append(did)
@@ -4998,14 +5399,44 @@ def cmd_stage2_finalize(args) -> None:
     state_fingerprint = sha256_obj({"professor": ctx.professor, "directions": fingerprints})
     # Professor-level canonical papers (issue #8 §3.3): one record per item_key,
     # resolved from fresh builds > resolution-admitted records > old snapshots.
+    # Reference-scope papers (P citations) join the same map so a later render
+    # or refine keeps one trusted title record even without the temp facts.
     old_papers = pack_paper_index(ctx.pack or {})
+
+    def _current_paper_record(key: str) -> dict | None:
+        """Current-facts record, filled from the old pack only where facts lack it.
+
+        Plan 3.1.3: the current facts are the trusted source for every
+        displayed/consumed paper field; the old cache may only fill values the
+        current facts do not state, and never overrides a current value.
+        """
+        paper = ctx.papers.get(key)
+        if paper is None:
+            return None
+        previous = old_papers.get(key)
+        record = dict(previous) if isinstance(previous, dict) else {}
+        record["item_key"] = key
+        for field, value in (("title", paper.get("title")), ("year", paper.get("year")),
+                             ("authorship", paper.get("authorship")),
+                             ("analysis_file", paper.get("analysis_file"))):
+            if value is not None:
+                record[field] = value
+        record["pdf_available"] = bool(paper.get("has_pdf"))
+        facts_record, facts_state, facts_error = ctx.facts_for(key)
+        record["facts_state"] = facts_state
+        record["facts_error"] = facts_error
+        record["paper_facts"] = facts_record
+        return record
+
     papers_map: dict = {}
     for d in pack_directions:
-        for key in d.get("supporting_item_keys") or []:
+        paper_keys = list(d.get("supporting_item_keys") or []) \
+            + list(d.get("relevant_keys") or [])
+        for key in paper_keys:
             if key in papers_map:
                 continue
-            record = fresh_papers.get(key) or resolved_papers.get(key) \
-                or old_papers.get(key)
+            record = fresh_papers.get(key) or _current_paper_record(key) \
+                or resolved_papers.get(key) or old_papers.get(key)
             if record is None:
                 record = _canonical_record(key)
             if isinstance(record, dict):
@@ -5018,17 +5449,16 @@ def cmd_stage2_finalize(args) -> None:
     render_pack = {"papers": papers_map, "directions": pack_directions}
     for direction in pack_directions:
         stage2_require_later_paper_titles(ctx, direction, render_pack)
-    # A display-only rename must re-render the analysis Markdown with the new
-    # names WITHOUT triggering Stage-2 model work (the fingerprint excludes
-    # display names on purpose).
-    display_changed = any(
-        (old := old_directions.get(direction_machine_id(d))) is not None
-        and (old.get("name_ja") != d.get("name_ja")
-             or old.get("name_zh") != d.get("name_zh"))
-        for d in pack_directions)
+        stage2_require_paper_reference_titles(ctx.papers, render_pack, direction)
+    # A display-only rename, a membership/reference correction or a changed
+    # narrative/gap display must re-render the analysis Markdown WITHOUT
+    # requiring new model work. Compare the exact displayed content so a
+    # metadata-only rewrite (timestamp/cache) stays a no-render no-op.
+    render_changed = ctx.pack is None or stage2_render_state(
+        render_pack) != stage2_render_state(ctx.pack)
     md_path = ctx.professor_dir / ANALYSIS_MD
     md_result = None
-    if needed_keys or not ctx.pack or display_changed:
+    if needed_keys or not ctx.pack or render_changed:
         body = render_analysis_md(ctx, render_pack, state_fingerprint)
         md_result = managed_write(md_path, body, state_fingerprint,
                                   old_render.get(ANALYSIS_MD, {}).get("sha256"), decision)
@@ -5049,6 +5479,12 @@ def cmd_stage2_finalize(args) -> None:
         "cache": {"render": {ANALYSIS_MD: {"sha256": (md_result or {}).get("sha256") or old_render.get(ANALYSIS_MD, {}).get("sha256")}}},
     }
     if resolved_directions:
+        # Each raw source→target row stores the ORIGINAL facts fingerprint of
+        # its provisional direction, so the facts-bound refine entry can prove
+        # this accepted pack (including an already-merged source, which owns no
+        # final direction entry) still matches the current facts.
+        raw_provisional_fingerprints = {
+            plan["did"]: plan["fingerprint"] for plan in ctx.direction_plans}
         pack["resolved_directions"] = {
             "schema": RESOLVED_DIRECTION_SCHEMA,
             "applied_at": now_utc(),
@@ -5060,12 +5496,13 @@ def cmd_stage2_finalize(args) -> None:
                     "split_target": rd.get("split_target"),
                     "merge_target": rd.get("merge_target"),
                     "input_fingerprint": rd.get("input_fingerprint"),
+                    "provisional_input_fingerprint":
+                        raw_provisional_fingerprints.get(ckey)
+                        or provisional_fingerprints.get(ckey),
                 }
                 for ckey, rd in resolved_directions.items()
             ],
         }
-    if ctx.pack and not needed_keys and ctx.pack.get("validator"):
-        pack["validator"] = ctx.pack["validator"]
     if preflight_plan is not None:
         pack["cache"]["preflight"] = stage2_preflight_metadata(
             program_root=ctx.program_root, professor_dir=ctx.professor_dir,
@@ -5073,6 +5510,39 @@ def cmd_stage2_finalize(args) -> None:
             pack_directions=pack_directions,
             params=preflight_plan["preflight_inputs"]["params"],
             current_year=ctx.current_year, ctx=ctx, cache_entries=cache_entries)
+    # Validator lifecycle (plan 3.4.1): the old record is carried over only
+    # when NOTHING the validator certified changed — no new model work, no
+    # membership/reference/narrative re-render and no old-semantics rebuild —
+    # and its recorded pack/render binding still describes the actual files.
+    # A changed business version silently expires the old certification (the
+    # new version starts at round 1, raw old reports stay untouched); with NO
+    # business change an invalid old binding is an evidence error and must be
+    # rejected before writing, never "restored" by re-binding the hashes.
+    old_validator = (ctx.pack or {}).get("validator")
+    if isinstance(old_validator, dict) and old_validator.get("schema") == 2:
+        current_document = None
+        try:
+            document_text = md_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            document_text = ""
+        header, document_body = split_frontmatter(document_text)
+        if isinstance(header, dict) and header.get("managed_by") == MANAGED_BY:
+            current_document = sha256_text(document_body)
+        business_changed = bool(needed_keys) or pack_needs_rebuild or render_changed
+        binding_valid = (
+            current_document == old_validator.get("render_sha256")
+            and old_validator.get("pack_sha256")
+            == stage2_pack_content_fingerprint(ctx.pack or {}))
+        if not business_changed:
+            if not binding_valid:
+                fail("validation_render_stale",
+                     "the recorded Stage-2 validation no longer binds the current managed "
+                     "render/input pack and no business change explains it; re-record a "
+                     "raw validator report too against the current files",
+                     target=str(md_path))
+            carried = dict(old_validator)
+            carried["pack_sha256"] = stage2_pack_content_fingerprint(pack)
+            pack["validator"] = carried
     atomic_json(ctx.pack_path, pack)
     save_freshness_cache(ctx.professor_dir, cache_entries)
     # NOTE: stage2-finalize deliberately does NOT touch the sidecar's
@@ -10713,6 +11183,36 @@ def stage2_require_later_paper_titles(ctx, direction: dict,
         ctx.papers[key] = paper
 
 
+def stage2_parse_report_location(location) -> tuple[int | None, str | None]:
+    """Physical line addressed by a Stage-2 report `location`, if unambiguous.
+
+    Supported Stage-2 notations: a positive integer, a pure ASCII decimal
+    string, and the exact form `第N行`. A vague multi-position notation
+    (`第57行及多处`, `多处`, …) must never be silently expanded to one of the
+    matched lines; the caller rejects it with an actionable error. Any other
+    short text stays a legacy short location and is only usable when the quote
+    itself hits exactly one rendered line.
+    """
+    if isinstance(location, bool):
+        return None, None
+    if isinstance(location, int):
+        return (location if location > 0 else None), None
+    if not isinstance(location, str):
+        return None, None
+    text = location.strip()
+    if text.isascii() and text.isdigit():
+        number = int(text)
+        return (number if number > 0 else None), None
+    matches = re.fullmatch(r"第\s*([0-9]+)\s*行", text)
+    if matches:
+        number = int(matches.group(1))
+        return (number if number > 0 else None), None
+    if re.fullmatch(r"第\s*[0-9]+\s*行\s*(及|等|和|、|,|，)?\s*多\s*处", text) \
+            or text in ("多处", "多个位置", "多处位置", "多处及多处"):
+        return None, "validation_location_ambiguous"
+    return None, None
+
+
 def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
                             require_repairable: bool = True) -> dict:
     """Read and validate the raw style-validator report for this managed analysis."""
@@ -10847,12 +11347,13 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
     for issue in entry["issues"]:
         quote = issue["quote"]
         hits = [i for i, line in enumerate(lines) if quote in line]
-        location = issue["location"]
-        line_location = location if isinstance(location, int) else None
-        if isinstance(location, str):
-            location_text = location.strip()
-            if location_text.isascii() and location_text.isdigit():
-                line_location = int(location_text)
+        line_location, location_error = stage2_parse_report_location(issue["location"])
+        if location_error:
+            fail(location_error,
+                 "the style-validator report names a vague multi-position location "
+                 f"({issue['location']!r}); re-run the check so every occurrence is reported "
+                 "as its own issue with its actual line number (按实际行号逐条重做校验). "
+                 f"quote={quote!r}")
         if line_location is not None:
             hits = [i for i in hits if i + 1 + line_offset == line_location]
         if issue["severity"] != "blocking" and len(hits) != 1:
@@ -11040,38 +11541,138 @@ def stage2_require_recorded_validation(ctx, validation_path: Path) -> tuple[dict
 
 
 def stage2_pack_matches_facts(ctx: Stage2Context) -> None:
-    """Do not apply a validator rewrite to facts newer than the accepted pack."""
+    """Do not apply a validator rewrite to facts newer than the accepted pack.
+
+    Compares the ORIGINAL facts fingerprint saved with the accepted pack
+    (`provisional_input_fingerprint` on the final direction or on its
+    provisional→target mapping row), never the downstream `input_fingerprint`:
+    the latter is the resolved-member hash Stage 3 consumes and no longer
+    represents the original facts state. A disappeared direction is only legal
+    as an already-merged source whose mapping row proves its provenance; a
+    genuinely changed fact (including one of a merged-away source) requires a
+    refresh instead of silently serving the pack-only path.
+    """
     if not ctx.pack:
         fail("missing_input_pack", f"input pack unreadable: {ctx.pack_path}")
     accepted = {direction_machine_id(d): d for d in ctx.pack.get("directions", [])}
-    for plan in ctx.direction_plans:
-        old = accepted.get(plan["did"])
-        if not old or old.get("input_fingerprint") != plan["fingerprint"]:
+    rows = {}
+    resolved_block = ctx.pack.get("resolved_directions")
+    has_resolution_rows = isinstance(resolved_block, dict) and isinstance(
+        resolved_block.get("directions"), list)
+    if has_resolution_rows:
+        for row in resolved_block.get("directions") or []:
+            if isinstance(row, dict) and isinstance(row.get("provisional_direction_id"), str):
+                rows[row["provisional_direction_id"]] = row
+
+    def _refresh(direction_id: str, problem: str) -> None:
+        soft_exit("needs_refresh", "source_fingerprint_changed",
+                  direction=direction_id, problem=problem,
+                  pack_path=str(ctx.pack_path))
+
+    # Identity first: facts from another professor (or another professor
+    # directory) must never drive a refinement of this accepted pack.
+    facts_professor = ctx.facts.get("professor")
+    pack_professor = ctx.pack.get("professor")
+    if facts_professor != pack_professor:
+        soft_exit("needs_refresh", "source_fingerprint_changed",
+                  problem="professor_mismatch", facts_professor=facts_professor,
+                  pack_professor=pack_professor, pack_path=str(ctx.pack_path))
+    pack_dir_value = ctx.pack.get("professor_dir")
+    if isinstance(pack_dir_value, str) and pack_dir_value:
+        if _canonical_directory(ctx.professor_dir) != _canonical_directory(pack_dir_value):
             soft_exit("needs_refresh", "source_fingerprint_changed",
-                      direction=plan["did"], pack_path=str(ctx.pack_path))
+                      problem="professor_dir_mismatch",
+                      facts_professor_dir=str(ctx.professor_dir),
+                      pack_professor_dir=pack_dir_value,
+                      pack_path=str(ctx.pack_path))
+
+    for plan in ctx.direction_plans:
+        did = plan["did"]
+        final = accepted.get(did)
+        row = rows.get(did)
+        if final is not None:
+            recorded = final.get("provisional_input_fingerprint")
+            if not isinstance(recorded, str):
+                resolved_subfield = final.get("resolved_direction") or {}
+                if has_resolution_rows or resolved_subfield.get("resolution_type") not in (
+                        None, "unchanged"):
+                    # Materialized ownership without a provable original source
+                    # cannot be compared by the public downstream fingerprint.
+                    _refresh(did, "missing_provisional_source_fingerprint")
+                recorded = final.get("input_fingerprint")
+            row_recorded = (row or {}).get("provisional_input_fingerprint")
+            if isinstance(row_recorded, str) and row_recorded != recorded:
+                _refresh(did, "direction_source_fingerprint_mismatch")
+            if recorded != plan["fingerprint"]:
+                _refresh(did, "original_facts_changed")
+            continue
+        # The provisional direction disappeared from the final pack: it must be
+        # an already-merged source whose mapping row keeps the original facts
+        # fingerprint and the surviving target.
+        if row is None or row.get("resolution_type") != "merged_into":
+            _refresh(did, "missing_resolved_source_mapping")
+        target = row.get("merge_target")
+        if not isinstance(target, str) or target not in accepted:
+            _refresh(did, "missing_merge_target")
+        recorded = row.get("provisional_input_fingerprint")
+        if not isinstance(recorded, str):
+            _refresh(did, "missing_provisional_source_fingerprint")
+        if recorded != plan["fingerprint"]:
+            _refresh(did, "original_facts_changed")
+
+    plan_ids = {plan["did"] for plan in ctx.direction_plans}
+    # Every final direction that is not backed by a current provisional plan
+    # must be an already-materialized split child whose source row is still in
+    # the current facts selection and still declares this child.
+    for child_id, child in accepted.items():
+        if child_id in plan_ids:
+            continue
+        subfield = child.get("resolved_direction") or {}
+        source_id = subfield.get("provisional_direction_id")
+        if subfield.get("resolution_type") != "split_from" \
+                or subfield.get("split_target") != child_id \
+                or not isinstance(source_id, str) or source_id not in plan_ids:
+            _refresh(child_id, "unexpected_final_direction")
+        source_row = rows.get(source_id) or {}
+        if source_row.get("resolution_type") != "split_from" \
+                or source_row.get("split_target") != child_id:
+            _refresh(child_id, "unexpected_split_child")
+    # Every resolution mapping row must belong to a provisional direction that
+    # still exists in the current facts selection; a removed direction makes
+    # the old pack unmatchable and requires a refresh.
+    for source_id in rows:
+        if source_id not in plan_ids:
+            _refresh(source_id, "unexpected_resolved_source")
 
 
-def stage2_validation_material(ctx: Stage2Context, plan: dict, direction: dict) -> dict:
-    paper_keys = set(direction.get("named_keys") or [])
-    paper_keys.update(direction_relevant_keys(direction))
-    paper_keys.update(ctx.narrative_later_keys(plan))
+def stage2_validation_material(ctx, direction: dict) -> dict:
+    """The P/later/gap material one final pack direction exposes to a rewrite.
+
+    Read from the ACCEPTED PACK direction (not the provisional facts direction):
+    a refinement of a split child or merge target must see that final
+    direction's reference licence, trusted paper records and migrated gaps.
+    """
+    canonical = pack_paper_index(ctx.pack or {})
+    paper_keys = set(pack_direction_relevant_keys(direction))
+    paper_keys.update(Stage2PackRefineContext.narrative_later_keys_for(direction))
     papers = []
     for key in sorted(paper_keys):
-        paper = ctx.papers.get(key)
+        paper = canonical.get(key) or ctx.papers.get(key)
         if not paper:
             continue
         papers.append({"item_key": key, "title": paper.get("title"),
                        "year": paper.get("year"), "authorship": paper.get("authorship")})
-    pack_gaps = {(gap.get("item_key"), gap.get("gap_id")): gap
-                 for gap in direction.get("gap_shortlist", []) + direction.get("gaps_excluded", [])}
     gaps = []
-    for gap in plan["ranked"]:
-        accepted = pack_gaps.get((gap["item_key"], gap["gap_id"]), {})
-        gaps.append({"gap_id": gap["gap_id"], "item_key": gap["item_key"],
-                     "paper_title": gap.get("paper_title"), "paper_year": gap.get("paper_year"),
+    for gap in list(direction.get("gap_shortlist") or []) + list(direction.get("gaps_excluded") or []):
+        if not isinstance(gap, dict) or not isinstance(gap.get("gap_id"), str):
+            continue
+        gaps.append({"gap_id": gap.get("gap_id"), "item_key": gap.get("item_key"),
+                     "paper_title": gap.get("paper_title"),
+                     "paper_year": gap.get("paper_year"),
                      "quote": truncate(gap.get("quote"), QUOTE_INPUT_CHARS),
-                     "translation_zh": truncate(gap.get("translation_zh"), TRANSLATION_INPUT_CHARS),
-                     "status": accepted.get("status"), "evidence": accepted.get("evidence")})
+                     "translation_zh": truncate(gap.get("translation_zh"),
+                                                TRANSLATION_INPUT_CHARS),
+                     "status": gap.get("status"), "evidence": gap.get("evidence")})
     return {"papers": papers, "gaps": gaps}
 
 
@@ -11106,12 +11707,13 @@ def cmd_stage2_refine_plan(args) -> None:
         failed = {key: value for key, value in failed.items() if key == scope_did}
 
     old_directions = {direction_machine_id(d): d for d in ctx.pack.get("directions", [])}
-    plans = {plan["did"]: plan for plan in ctx.direction_plans}
     jobs = []
     for did in sorted(failed):
         direction = old_directions.get(did)
-        plan = plans.get(did)
-        if not direction or not plan or not isinstance(direction.get("narrative"), dict):
+        # The FINAL pack direction is the refinement unit: a split child or a
+        # merge target has no provisional facts plan, while a vanished merged
+        # source has no final direction at all.
+        if not direction or not isinstance(direction.get("narrative"), dict):
             fail("invalid_result_json", f"input pack has no reusable narrative for {did}")
         stage2_require_later_paper_titles(ctx, direction)
         issues = failed[did]
@@ -11133,7 +11735,7 @@ def cmd_stage2_refine_plan(args) -> None:
                 "direction_id": did,
                 "current_narrative": direction["narrative"],
                 "issues": issues,
-                "allowed_material": stage2_validation_material(ctx, plan, direction),
+                "allowed_material": stage2_validation_material(ctx, direction),
                 "rules": "返回完整的当前方向 narrative，未命中的 block 和 gap_notes 原样保留，只重写 validator 指出的文字。保留且只使用允许的 paper/later/gap 引用。不得修改 freshness 状态、用户笔记、论文事实或红线。每个 positioning block 必须有 concrete_object、input_example、output_example；text 中占位符集合必须与 refs 完全相等。用最日常中文解释术语，不能把 item_key 写进 text。"},
         })
     reason = None
@@ -11191,7 +11793,9 @@ def cmd_stage2_refine_finalize(args) -> None:
         data_did = data.get("direction_id") or data.get("collection_key")
         if data_did != did:
             fail("invalid_result_json", f"{path}: unexpected direction {data_did}")
-        _, rewrites[did] = validate_narrative_entry(ctx, path, data, expected_did=did)
+        _, rewrites[did] = validate_narrative_entry(
+            ctx, path, data, expected_did=did,
+            scope=stage2_pack_scope(ctx, did), allowed_directions=allowed)
 
     pack_directions = []
     for direction in ctx.pack.get("directions", []):
@@ -11203,8 +11807,14 @@ def cmd_stage2_refine_finalize(args) -> None:
         "professor": ctx.professor,
         "directions": {direction_machine_id(d): d.get("input_fingerprint")
                        for d in pack_directions}})
-    body = render_analysis_md(ctx, {**ctx.pack, "directions": pack_directions},
-                              state_fingerprint)
+    render_pack = {**ctx.pack, "directions": pack_directions}
+    # The rewrite must obey the same pre-write reference contract as the
+    # ordinary finalize: every {{P:key}} needs the direction's persisted
+    # licence and a trusted title in the canonical pack/facts, never a raw
+    # item_key fallback in the managed Markdown.
+    for direction in pack_directions:
+        stage2_require_paper_reference_titles(ctx.papers, render_pack, direction)
+    body = render_analysis_md(ctx, render_pack, state_fingerprint)
     old_render = ((ctx.pack or {}).get("cache") or {}).get("render", {})
     decision = None
     if getattr(args, "decision_file", None):
@@ -11892,6 +12502,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("stage2-resolve-plan")
     p.add_argument("--facts", required=True)
+    p.add_argument("--results-dir", required=True,
+                   help="absolute, existing, empty results directory exclusive to this "
+                        "resolve round; every emitted job writes its result_file here and "
+                        "the plan's resolve_run_id binds the round to it")
     p.set_defaults(func=lambda a: cmd_stage2_resolve_plan(a))
 
     p = sub.add_parser("stage2-resolve-finalize")

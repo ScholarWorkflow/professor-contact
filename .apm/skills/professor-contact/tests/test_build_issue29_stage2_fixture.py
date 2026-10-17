@@ -204,8 +204,14 @@ class BuildIssue29Stage2FixtureTests(unittest.TestCase):
         self.assertEqual(sidecar["directions"][0]["acceptance"], "proposed")
         self.assertEqual(sidecar["directions"][0]["provisional_direction_id"], "dir_A")
 
+        # One resolve round owns one exclusive absolute results directory,
+        # created outside the fixture tree; the plan call requires it even when
+        # this test only observes the planned action.
+        results_dir = Path(tempfile.mkdtemp(prefix="issue29-resolve-run-"))
+        self.addCleanup(shutil.rmtree, results_dir, ignore_errors=True)
         payload = _runner_json(_run_runner(
-            "stage2-resolve-plan", "--facts", root / "facts.json"))
+            "stage2-resolve-plan", "--facts", root / "facts.json",
+            "--results-dir", results_dir))
         self.assertEqual(payload["status"], "ok", payload)
         # A pending material proposal stays unaccepted, so the resolve job
         # keeps being re-planned until the explicit user decision lands.

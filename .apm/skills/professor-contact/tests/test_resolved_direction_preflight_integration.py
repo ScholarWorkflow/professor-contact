@@ -31,7 +31,9 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import contact_state  # noqa: E402
 from test_stage2_preflight import PreflightBase, make_sidecar, parse, quote_id, run_cli  # noqa: E402
-from test_stage2_resolved_direction import make_facts_sidecar  # noqa: E402
+from test_stage2_resolved_direction import (  # noqa: E402
+    finalize_resolve, make_facts_sidecar, new_resolve_results_dir, plan_resolve,
+    write_resolve_results)
 
 
 class ResolvedPreflightBase(PreflightBase):
@@ -40,6 +42,11 @@ class ResolvedPreflightBase(PreflightBase):
     def setUp(self):
         super().setUp()
         self.with_candidate_fulltext = False
+        # One resolve round = one exclusive results directory + one round
+        # identity; `new_results_dir()` rotates both.
+        self._results_dir = None
+        self._resolve_plan = None
+        self._resolve_results = {}
         self.cccc_quote = "Future work will broaden the synthetic comparison corpus."
         self.add_valid_facts("AAAA1111", ["synthetic", "comparison", "input"],
                              self.gap_quotes["AAAA1111"])
@@ -105,10 +112,36 @@ class ResolvedPreflightBase(PreflightBase):
 
     @property
     def results_dir(self) -> Path:
-        return self.root / "results"
+        """The current resolve round's exclusive results directory."""
+        if self._results_dir is None:
+            self.new_results_dir()
+        return self._results_dir
+
+    def new_results_dir(self) -> Path:
+        """Start a new resolve round: exclusive directory plus its own identity.
+
+        `stage2-resolve-plan` requires a pre-existing absolute results directory
+        that holds no expected result file yet, so every new round allocates a
+        fresh one and re-plans into it; `stage2-resolve-finalize` then reads the
+        very same directory. The ordinary `stage2-finalize`
+        freshness/narrative results directory is a different one and stays put.
+        """
+        self._results_dir = new_resolve_results_dir(self.root)
+        self._resolve_plan = None
+        self._resolve_results = {}
+        return self._results_dir
+
+    def resolve_plan(self):
+        """This round's `stage2-resolve-plan` receipt, planned at most once."""
+        if self._resolve_plan is None:
+            out = plan_resolve(self.facts_path, self.results_dir)
+            self.assertEqual(out["status"], "ok", out)
+            self._resolve_plan = out
+        return self._resolve_plan
 
     def start_round(self):
         """Run preflight, save its payload, and bind the facts run to its proof."""
+        self.new_results_dir()
         plan = self.preflight()
         self.assertEqual(plan["action"], "process", plan)
         plan_path = self.root / "stage2-preflight.json"
@@ -117,14 +150,19 @@ class ResolvedPreflightBase(PreflightBase):
         return plan_path
 
     def write_resolve_result(self, ckey, resolved):
-        self.results_dir.mkdir(parents=True, exist_ok=True)
-        (self.results_dir / f"resolve-{ckey}.json").write_text(json.dumps(
-            {"schema": 1, "kind": "resolve", "collection_key": ckey,
-             "resolved": resolved}, ensure_ascii=False, indent=1), encoding="utf-8")
+        """Simulate this round's model result, keeping the `resolved` decision.
+
+        The round's plan receipt supplies the expected `result_file` names and
+        the `resolve_run_id` every file must echo. Directions this test does not
+        name still receive a complete synthesized `unchanged` result, because a
+        missing file is no longer a legal "nothing changed" input.
+        """
+        self._resolve_results[ckey] = resolved
+        write_resolve_results(self.results_dir, self.resolve_plan(),
+                              self._resolve_results, self.facts_path)
 
     def resolve_finalize(self):
-        out = parse(run_cli("stage2-resolve-finalize", "--facts", self.facts_path,
-                            "--results", self.results_dir))
+        out = finalize_resolve(self.facts_path, self.results_dir)
         self.assertEqual(out["status"], "ok", out)
         return out
 
@@ -276,8 +314,9 @@ class TestResolutionEvidenceUniverse(ResolvedPreflightBase):
         self.assertIn("artifact_changed", payload["reason_codes"], payload)
 
         # The affected resolution is re-judged: the changed topic terms are
-        # part of every resolve model_input over the candidate union.
-        out = parse(run_cli("stage2-resolve-plan", "--facts", self.facts_path))
+        # part of every resolve model_input over the candidate union. The
+        # observation call still needs its own round results directory.
+        out = plan_resolve(self.facts_path, self.new_results_dir())
         self.assertEqual(out["status"], "ok", out)
         self.assertTrue(out["write_needed"], out)
         actions = {d["direction_id"]: d["action"] for d in out["directions"]}
@@ -305,11 +344,12 @@ class TestResolutionEvidenceUniverse(ResolvedPreflightBase):
 
         # An editorial Markdown edit may cost the early exit (the analysis
         # artifact guard flips) but must NOT re-burn accepted resolve jobs:
-        # the resolve model_input never hashed analysis Markdown prose.
+        # the resolve model_input never hashed analysis Markdown prose. This
+        # observation call plans a fresh round into its own directory.
         analysis = Path(self.facts["papers"][0]["analysis_file"])
         analysis.write_text(analysis.read_text(encoding="utf-8") + "\n手改段落\n",
                             encoding="utf-8")
-        out = parse(run_cli("stage2-resolve-plan", "--facts", self.facts_path))
+        out = plan_resolve(self.facts_path, self.new_results_dir())
         self.assertEqual(out["status"], "ok", out)
         self.assertFalse(out["write_needed"], out)
         self.assertTrue(all(d["action"] == "reuse" for d in out["directions"]), out)
@@ -336,6 +376,9 @@ class TestResolvedProofBinding(ResolvedPreflightBase):
         """A later invocation observes changed target state: a new proof id."""
         self.target["directions"][0]["user_note"] = "later invocation note"
         self._write_target()
+        # A new proof generation is a new resolve round: its own results
+        # directory, so no earlier round's file can stand in for this one.
+        self.new_results_dir()
         plan = self.preflight()
         self.assertEqual(plan["action"], "process", plan)
         plan_path = self.root / "later-preflight.json"

@@ -4,7 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from test_stage2_resolved_direction import ResolvedPipelineMixin, parse, run_cli
+from test_stage2_resolved_direction import (
+    ResolvedPipelineMixin,
+    new_resolve_results_dir,
+    plan_resolve,
+)
 
 
 class FullTextMergeRegression(ResolvedPipelineMixin, unittest.TestCase):
@@ -49,7 +53,8 @@ class FullTextMergeRegression(ResolvedPipelineMixin, unittest.TestCase):
         )
         facts_path = self.write_facts(papers, [dir_a, dir_b])
 
-        payload = parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path)))
+        results_dir = new_resolve_results_dir(self.root)
+        payload = plan_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "ok", msg=json.dumps(payload, ensure_ascii=False))
         merge_pairs = {
             frozenset((row["direction_a"], row["direction_b"]))
