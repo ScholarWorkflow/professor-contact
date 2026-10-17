@@ -39,6 +39,9 @@ COMPLETED_PART = "AAAA1111 只做了第一组"
 REMAINING_GAP = "AAAA1111 仍需第二组"
 BLACKLIST_EVIDENCE = "CCCC3333 已接住输入模式比较"
 BLACKLIST_COMPLETION = "CCCC3333"
+# A NON-empty machine candidate list (package paper, not the gap paper itself):
+# the display step must carry it verbatim.
+FIXED_CANDIDATES = ("CCCC3333",)
 REPAIRABLE_QUOTE = "起研究合成输入比较"
 # T1 replaces the item key inside the fixed-card text with the trusted title and
 # link, so the T2/T3 report quotes must not contain the key itself.
@@ -94,16 +97,22 @@ class EvidenceLevelEnv(BaseEnv):
         self.write_stage2_results(results, gap_overrides={
             "AAAA1111": {"status": "partial", "evidence": FIXED_EVIDENCE,
                          "completed_part": COMPLETED_PART,
-                         "remaining_gap": REMAINING_GAP},
+                         "remaining_gap": REMAINING_GAP,
+                         "candidate_paper_ids": list(FIXED_CANDIDATES)},
             "BBBB2222": {"status": "done_by_self", "evidence": BLACKLIST_EVIDENCE,
                          "candidate_paper_ids": [BLACKLIST_COMPLETION]},
         })
         batch = json.loads(facts.read_text(encoding="utf-8"))
         narrative = json.loads((results / "narrative.json").read_text(encoding="utf-8"))
+        statuses = json.loads((results / "freshness-DIR00001.json").read_text(
+            encoding="utf-8"))["results"]
+        candidate_row = next(row for row in statuses
+                             if row.get("candidate_paper_ids"))
         before = {
             "papers": copy.deepcopy(batch["papers"]),
             "narrative": copy.deepcopy(narrative),
             "user_note": batch["directions"][0]["user_note"],
+            "candidate_paper_ids": list(candidate_row["candidate_paper_ids"]),
         }
         if snapshot is not None:
             snapshot.update(before)
@@ -215,6 +224,9 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
             visible = line.replace(link, "")
             self.assertNotIn("AAAA1111", visible, slot)
             self.assertNotIn("CCCC3333", visible, slot)
+            for key in FIXED_CANDIDATES:
+                self.assertNotIn(f"（{key}", visible,
+                                 "the raw machine reference must be replaced")
 
         blacklist = self.direction()["completed_gap_blacklist"]
         self.assertEqual(len(blacklist), 1, blacklist)
@@ -232,8 +244,10 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         self.assertEqual(gap["evidence"], FIXED_EVIDENCE)
         self.assertEqual(gap["completed_part"], COMPLETED_PART)
         self.assertEqual(gap["remaining_gap"], REMAINING_GAP)
-        self.assertEqual(gap["candidate_paper_ids"], [],
+        self.assertEqual(gap["candidate_paper_ids"], list(FIXED_CANDIDATES),
                          "candidate references must survive the display step")
+        self.assertEqual(baseline["candidate_paper_ids"], list(FIXED_CANDIDATES),
+                         "the pre-render fixture really had candidate references")
         self.assertEqual(blacklist[0]["evidence"], BLACKLIST_EVIDENCE)
         self.assertEqual(blacklist[0]["completed_by_item_key"], BLACKLIST_COMPLETION)
         self.assertEqual(blacklist[0]["quote_trunc"],
@@ -747,7 +761,7 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertEqual(refreshed["status"], "ok", refreshed)
         self.assertTrue(refreshed.get("display_refreshed"), refreshed)
         summary = self.summary_line()
-        self.assertIn("全文级 0 篇", summary)
+        self.assertIn("全文级 1 篇", summary)
         self.assertIn("摘要级 2 篇", summary)
         # Same pack-only refresh: the fixed cards keep their trusted references.
         analysis = self.analysis_text()
