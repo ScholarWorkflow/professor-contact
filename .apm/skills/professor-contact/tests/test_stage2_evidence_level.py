@@ -657,7 +657,24 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertIn(titles[BLACKLIST_COMPLETION], blacklist_line)
         self.assertIn(f"zotero://select/library/items/{BLACKLIST_COMPLETION}",
                       blacklist_line)
+        self.assertNotIn(BLACKLIST_COMPLETION, blacklist_line.replace(
+            f"zotero://select/library/items/{BLACKLIST_COMPLETION}", ""))
         pack_after = self.pack()
+        # The pack-only refresh keeps the fixed cards' machine fields: only the
+        # display-only analysis level and the render binding may move.
+        real_fields = ("status", "evidence", "completed_part", "remaining_gap",
+                       "quote", "translation_zh", "confidence", "evaluated_at",
+                       "candidate_paper_ids", "item_key", "gap_id")
+        for before_gap, after_gap in zip(pack_before["directions"][0]["gap_shortlist"],
+                                         pack_after["directions"][0]["gap_shortlist"]):
+            self.assertEqual({field: before_gap.get(field) for field in real_fields},
+                             {field: after_gap.get(field) for field in real_fields},
+                             before_gap.get("item_key"))
+        self.assertEqual(pack_after["directions"][0]["completed_gap_blacklist"],
+                         pack_before["directions"][0]["completed_gap_blacklist"])
+        self.assertEqual(
+            [row.get("gap_id") for row in pack_after["directions"][0]["gaps_excluded"]],
+            [row.get("gap_id") for row in pack_before["directions"][0]["gaps_excluded"]])
         # The canonical pack now carries the refreshed levels that the counts read.
         levels_after = {key: paper.get("analysis_level")
                         for key, paper in pack_after["papers"].items()}
