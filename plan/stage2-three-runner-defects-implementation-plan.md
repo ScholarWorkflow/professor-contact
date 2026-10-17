@@ -313,7 +313,7 @@ RUN_DIR=$(mktemp -d /tmp/pc91-tests.XXXXXXXX)
 
 **实现符合性审核结论（2026-10-17，复核版本 `2493693`）**：专用 implementation_reviewer 对 P6 定向复核后给出**完整**：上一轮问题 1—5 与 A/B 均已处理完，P6 已按最小修正完成，未发现剩余产品符合性缺口；`pdf_available` 参与重绘比较带来的保守额外重绘/校验失效被视为可接受取舍。产品侧无剩余未完成项；测试计划第二关（含 T5 旧绑定用例判定宽严）、第三关和合并审核仍由相应负责人按正式规则完成。本结论不代表测试关口或合并批准，PR 继续保持 Draft。
 
-**T5 旧绑定断言修正（2026-10-17，test-r5 第二关定向复审）**：按第二关 NEEDS_MODIFICATION 的唯一一项，由本地测试工程师只修改 `test_business_rerender_and_bounded_correction_lifecycle` 中 T5.3c 的 finalize 断言：固定 `status=error`、`reason_code=validation_render_stale`，并在调用前后比较 `套磁候选输入.json` 与已被人工改动的 `套磁候选分析.md` 字节；未新增测试方法、选择器或判定器，未修改产品代码（产品版本仍为 `254fd06`）。有限预检：`py_compile`、模块导入、目标方法可被收集（未执行）。本地执行工程师按第 5.2 节同一选择器定向执行该受影响方法：结果目录 `/tmp/pc91-t5c.NJBoJloj`，1 个方法 OK，退出码 0；T5 其余 9 个方法与此前结果按未受影响复用。测试第二关与第三关的结论由测试计划审核者按本记录复核。
+**T5 旧绑定断言修正（2026-10-17，test-r5 第二关定向复审）**：按第二关 NEEDS_MODIFICATION 的唯一一项，由本地测试工程师只修改 `test_business_rerender_and_bounded_correction_lifecycle` 中 T5.3c 的 finalize 断言：固定 `status=error`、`reason_code=validation_render_stale`，并在调用前后比较 `套磁候选输入.json` 与已被人工改动的 `套磁候选分析.md` 字节；未新增测试方法、选择器或判定器，未修改产品代码（产品版本仍为 `254fd06`）。有限预检：`py_compile` rc=0、模块导入 rc=0、目标方法可被 `unittest` 收集 rc=0（命令输出与 pyc 在仓库外 `/tmp/pc91-preflight-20261017`；未执行用例）。本地执行工程师按第 5.2 节同一选择器定向执行该受影响方法：结果目录 `/tmp/pc91-t5c.NJBoJloj`，1 个方法 OK，退出码 0；T5 其余 9 个方法与此前结果按未受影响复用。专用 implementation_reviewer 对该测试准备资产定向审核结论为**完整**（版本 `7f300fa`，产品未改，未发现超范围或可让错误通过的断言路径）。测试第二关与第三关的结论由测试计划审核者按本记录复核。
 
 ## 6. 实施次序、交接与合并条件
 
