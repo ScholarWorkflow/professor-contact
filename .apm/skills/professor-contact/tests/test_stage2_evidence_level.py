@@ -497,17 +497,24 @@ class AnalysisLevelTests(EvidenceLevelEnv):
             json.dumps(facts, ensure_ascii=False, indent=1), encoding="utf-8")
         return self.write_index(entries)
 
-    def accepted_run(self, level="fulltext", indexed=("AAAA1111", "BBBB2222", "CCCC3333")):
+    def accepted_run(self, level="fulltext", indexed=("AAAA1111", "BBBB2222", "CCCC3333"),
+                     ocr_only=()):
         """One accepted pack with a terminal pass validator and a full baseline.
 
         ``indexed`` names the papers the accepted baseline records with an
         analysis artifact; keys outside it have no index record and no file, so a
-        later appearance is a genuinely new source.
+        later appearance is a genuinely new source. ``ocr_only`` names the keys
+        that already own an OCR carrier file and index path in that baseline.
         """
         for key in indexed:
             self.write_analysis(key)
-        self.write_index({key: {"level": level, "facts_state": "unavailable"}
-                          for key in indexed})
+        entries = {}
+        for key in indexed:
+            entries[key] = {"level": level, "facts_state": "unavailable",
+                            "ocr": key in ocr_only}
+            if key in ocr_only:
+                self.write_analysis(key, ocr=True)
+        self.write_index(entries)
         facts = self.write_facts()
         self.render_fixture(facts)
         passed = self.record(self.write_report("pass.json", [], verdict="pass"))
@@ -605,7 +612,7 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         # Complete accepted baseline: every direction candidate (including the
         # OCR-only fulltext) already has its index record and analysis file, so
         # the only change below is the recorded level of AAAA1111 and BBBB2222.
-        self.accepted_run()
+        self.accepted_run(ocr_only=("CCCC3333",))
         facts_path = self.root / "facts.json"
         pack_before = self.pack()
         freshness_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
