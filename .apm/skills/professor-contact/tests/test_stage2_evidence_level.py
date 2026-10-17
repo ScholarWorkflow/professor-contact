@@ -339,7 +339,9 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
     def test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job(self):
         facts = self.write_facts()
         self.render_fixture(facts)
-        self.assert_source_owner_handoff(self.fixed_region_report())
+        first_report = self.fixed_region_report()
+        original_report = first_report.read_bytes()
+        self.assert_source_owner_handoff(first_report)
         validator = self.pack()["validator"]
         self.assertEqual(validator["round"], 1, validator)
         self.assertNotIn(validator["results"]["DIR00001"]["result"],
@@ -374,6 +376,23 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         row = next(row for row in preflight["directions"]
                    if row["direction_id"] == "DIR00001")
         self.assertIn("validator_not_accepted", row["reason_codes"], row)
+
+        # A new validation report must be recorded against the newly generated
+        # body before the repaired source can be accepted. Old failure evidence
+        # remains untouched and cannot act as the new PASS.
+        new_report = self.write_report("corrected-pass.json", [], verdict="pass")
+        self.assertNotEqual(new_report.read_bytes(), original_report)
+        passed = self.record(new_report)
+        self.assertEqual(passed["status"], "ok", passed)
+        self.assertEqual(passed["round"], 1, passed)
+        recorded = self.pack()["validator"]
+        self.assertEqual(recorded["results"]["DIR00001"]["result"], "pass", recorded)
+        self.assertEqual(first_report.read_bytes(), original_report)
+        checked = self.stage2_preflight()
+        checked_row = next(row for row in checked["directions"]
+                           if row["direction_id"] == "DIR00001")
+        self.assertNotIn("validator_not_accepted", checked_row["reason_codes"],
+                         checked_row)
 
     def test_mixed_fixed_and_narrative_blocking_creates_no_rewrite_job(self):
         facts = self.write_facts()
@@ -820,13 +839,12 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         # The analysis, its OCR carrier and its index record appear; the
         # facts sidecar stays missing, which the index records as unavailable.
         self.update_sources(
-            {"AAAA1111": "fulltext", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
-            {"AAAA1111": {"level": "fulltext"},
+            {"AAAA1111": "abstract", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
+            {"AAAA1111": {"level": "abstract"},
              "BBBB2222": {"level": "fulltext"},
              "CCCC3333": {"level": "fulltext", "facts_state": "unavailable",
                           "analysis": analysis, "ocr": True}},
-            add=({"item_key": "CCCC3333", "has_pdf": True,
-                  "analysis_file": str(analysis)},))
+            add=({"item_key": "CCCC3333", "analysis_file": str(analysis)},))
         self.write_analysis("CCCC3333", ocr=True)
         index = json.loads((self.prof_dir / "论文分析" / "_index.json").read_text(
             encoding="utf-8"))
@@ -841,35 +859,47 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assert_routes_back_to_process(self.stage2_preflight())
 
     def test_deleted_analysis_source_also_routes_back_to_process(self):
+        # Source deletion has its own untouched accepted baseline. Keep facts
+        # and every surviving paper's index record unchanged; only CCCC3333's
+        # analysis file and index record disappear.
         self.accepted_run()
-        # A user edit between the approved display preflight and its write
-        # cannot be overwritten by the display-refresh entry.
-        self.update_sources(
-            {"AAAA1111": "abstract", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
-            {"AAAA1111": {"level": "abstract"},
-             "BBBB2222": {"level": "fulltext"},
-             "CCCC3333": {"level": "fulltext"}})
-        level_only = self.stage2_preflight()
-        self.assertEqual(level_only["action"], "refresh_display", level_only)
-        preflight_file = self.write_preflight_file(level_only)
-        analysis_path = self.prof_dir / "套磁候选分析.md"
-        analysis_path.write_text(self.analysis_text() + "\n用户手动补充的说明。\n",
-                                 encoding="utf-8")
-        protected_analysis = self.analysis_text()
-        pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
-        refused = self.refresh_display(preflight_file)
-        self.assertNotEqual(refused.get("status"), "ok", refused)
-        self.assertEqual(self.analysis_text(), protected_analysis)
-        self.assertEqual((self.prof_dir / "套磁候选输入.json").read_bytes(), pack_before)
-        # The analysis file and the index record for CCCC3333 are gone.
-        self.update_sources({"AAAA1111": "fulltext", "BBBB2222": "fulltext"},
-                            {"AAAA1111": {"level": "fulltext"},
-                             "BBBB2222": {"level": "fulltext"}},
-                            delete=("CCCC3333",))
+        self.remove_analysis("CCCC3333")
+        self.write_index({"AAAA1111": {"level": "fulltext"},
+                          "BBBB2222": {"level": "fulltext"}})
         self.assertFalse((self.prof_dir / "论文分析" / "CCCC3333.md").exists())
         self.assertNotIn("CCCC3333", json.loads(
             (self.prof_dir / "论文分析" / "_index.json").read_text(encoding="utf-8"))["papers"])
         self.assert_routes_back_to_process(self.stage2_preflight())
+
+        # A separate temporary professor fixture checks user edits between a
+        # valid display-only preflight and the write, independently of deletion.
+        manual_env = self.__class__(self._testMethodName)
+        manual_env.setUp()
+        try:
+            manual_env.accepted_run()
+            manual_env.update_sources(
+                {"AAAA1111": "abstract", "BBBB2222": "fulltext",
+                 "CCCC3333": "fulltext"},
+                {"AAAA1111": {"level": "abstract"},
+                 "BBBB2222": {"level": "fulltext"},
+                 "CCCC3333": {"level": "fulltext"}})
+            level_only = manual_env.stage2_preflight()
+            manual_env.assertEqual(level_only["action"], "refresh_display",
+                                   level_only)
+            preflight_file = manual_env.write_preflight_file(level_only)
+            analysis_path = manual_env.prof_dir / "套磁候选分析.md"
+            analysis_path.write_text(
+                manual_env.analysis_text() + "\n用户手动补充的说明。\n",
+                encoding="utf-8")
+            protected_analysis = analysis_path.read_bytes()
+            pack_path = manual_env.prof_dir / "套磁候选输入.json"
+            protected_pack = pack_path.read_bytes()
+            refused = manual_env.refresh_display(preflight_file)
+            manual_env.assertNotEqual(refused.get("status"), "ok", refused)
+            manual_env.assertEqual(analysis_path.read_bytes(), protected_analysis)
+            manual_env.assertEqual(pack_path.read_bytes(), protected_pack)
+        finally:
+            manual_env.tearDown()
 
     def test_replaced_analysis_source_routes_back_to_process(self):
         self.accepted_run()
