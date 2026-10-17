@@ -472,17 +472,19 @@ class AnalysisLevelTests(EvidenceLevelEnv):
             path.unlink()
         return path
 
-    def update_sources(self, levels, entries, delete=(), add=(), ocr=()):
+    def update_sources(self, levels, entries, delete=(), add=()):
         """Change the facts, the index and the artifact files preflight can see.
 
         ``delete`` removes the key from the facts catalog and the index and
         deletes its analysis file; ``add`` REPLACES that key's facts record with
         the given one (used to make a previously missing source appear with its
-        real artifact paths); ``ocr`` gives a key an OCR carrier file.
+        real artifact paths).
+
+        Existing artifact files are never rewritten here: a display-only refresh
+        must keep every guard byte-identical, so the OCR carrier is only declared
+        through the index entry (``ocr`` in ``entries``), not re-created.
         """
         facts = json.loads((self.root / "facts.json").read_text(encoding="utf-8"))
-        for key in ocr:
-            self.write_analysis(key, ocr=True)
         for key in delete:
             self.remove_analysis(key)
         facts["papers"] = [paper for paper in facts["papers"]
