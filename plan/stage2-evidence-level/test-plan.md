@@ -1,6 +1,6 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- Test revision：contact-evidence-level-t20；对应 [执行计划 r4](implementation-plan.md)。
+- Test revision：contact-evidence-level-t21；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
 - 状态：第一关 PASS（t6 复核记录）；测试代码与完整命令已落实，实现符合性审核两套编号（外部 CLI 的 IR-01—IR-09 记于 §6，DSH 子代理的 IR-10—IR-21 记于 §7）均已处置，处置后准备期复核在未实现的产品上得到 7 通过 / 11 业务失败（§5）。第二关待复核，第三关未执行；这里不宣称任何业务修复完成或测试通过。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
@@ -94,7 +94,6 @@ echo "exit=$? run_root=$RUN_ROOT"
 - 上面 18 个选择器与 §2 的选择器表一一对应（T1 两项、T2 四项、T3 一项、T4 七项、既有 T2 一项、既有 T3 三项）；`Ran 18 tests` 是本 recipe 的预期项数。
 - 也可按项复跑：把某一行单独取出执行；`-v` 输出逐用例结果。分项结果由这些断言判定，没有额外 JSON oracle。
 
-- 也可按项复跑：把类名或方法名单独替换为 §2 中该项的选择器；`-v` 输出逐用例结果。分项结果由这些断言判定，没有额外 JSON oracle。
 - 准备顺序：`git status` 确认 checkout 干净 → 进入 tests 目录 → 建 run 目录 → 运行上面命令。没有安装、外部服务、模型或 Zotero 需求；`BaseEnv` 的临时目录已提供隔离。
 - 失败处理：产品断言失败原样保留；命令或环境错误记无法判断并只重试受影响命令；未执行不得填 PASS；已确认失败不得被后续清理覆盖。
 
@@ -120,14 +119,14 @@ echo "exit=$? run_root=$RUN_ROOT"
 
 - 通过 7 项：T3 四项（`NarrativeRoundBoundTests` 一项与三个既有保护选择器）、T2 两项（既有禁止区域选择器与 `test_forbidden_user_note_and_paper_table_keep_their_rejection`）、T4 一项（缺基线走 process）。
 - 业务失败 11 项，按实际失败原因分组：
-  - T1 两项：固定卡与禁锚区仍渲染原始 item key（未做题名/链接替换）；缺可信题名时未拒绝，仍生成分析文件。
+  - T1 两项：展示用例首个断言失败在固定卡「后续论文依据」行仍含 `AAAA1111`（未做题名/链接替换），禁锚区断言在该次运行中未执行，不据此判断；缺可信题名用例仍返回 `status=ok` 并生成分析文件（未拒绝）。
   - T2 三项：固定区 blocking 的 `record` 返回 `error` / `validation_issue_not_repairable`（产品尚未允许登记），因此 refine 分流无法进行。
   - T4 六项：`test_counts_...` 为 `全文级 3 篇`（按文件存在统计，未按记录级别）；`test_legacy_...` 为 `全文级 2 篇`（同上）；`test_display_only_...` 与三个来源变化用例为 `reuse_all`（未实现展示刷新与来源变化识别）。
-- 运行记录对应关系：本节数字来自当前测试提交上、按 §3 逐条 18 个选择器执行的完整运行 `/tmp/contact-evidence-level.XcpOlvbX`（`recipe.txt`）。此前各版记录保留：`/tmp/contact-evidence-level.VgZ9JU6w`（提交 `dca3160`，18 项、7 通过 / 11 失败）、`/tmp/contact-evidence-level.h3SBpUMF`（提交 `3595a2c`，同类）、`/tmp/contact-evidence-level.M5wh17Uv`（提交 `3595a2c`，同类）。夹具在 `c61c26a`、`2d00061`、`10497ff`、`dca3160`、`469aa83` 上只改了展示刷新与来源用例，未受影响选择器按上述记录复用，不重复运行。
+- 运行记录对应关系：本节数字来自测试提交 `70e8eef`（`c4afa17` 未改测试代码）、按 §3 逐条 18 个选择器执行的完整运行 `/tmp/contact-evidence-level.XcpOlvbX`（`recipe.txt`）。此前各版记录保留：`/tmp/contact-evidence-level.VgZ9JU6w`（提交 `dca3160`，18 项、7 通过 / 11 失败）、`/tmp/contact-evidence-level.h3SBpUMF`（提交 `3595a2c`，同类）、`/tmp/contact-evidence-level.M5wh17Uv`（提交 `3595a2c`，同类）。夹具在 `c61c26a`、`2d00061`、`10497ff`、`dca3160`、`469aa83` 上只改了展示刷新与来源用例，未受影响选择器按上述记录复用，不重复运行。
 - 作废的早期记录：`/tmp/contact-evidence-level.oa4NuJoS` 与 `/tmp/contact-evidence-level.h3SBpUMF` 中因夹具未真正改变预检输入而作废的来源变化项不计入本轮分类，原日志保留。
 - 该记录只用于确认选择器可执行、判定 T3 已成立和暴露产品缺口，不替代第三关正式执行，也不作为任何通过结论。
 
-修订边界：t19 按 DSH 子代理的实现符合性审核（IR-10—IR-18）改用展示后仍存在的固定区引文、让计数与展示刷新夹具自洽、保留机器字段与来源元数据，并补齐 §1 覆盖关系与接口假设；不改变 t6 已批准的 T1—T4 范围与预期结果。执行计划 r4 已获[正式批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516)，本次不重开其未受影响关口。
+修订边界：t19 按 DSH 子代理的实现符合性审核（IR-10—IR-18）改用展示后仍存在的固定区引文、让计数与展示刷新夹具自洽、保留机器字段与来源元数据，并补齐 §1 覆盖关系与接口假设；t20 按第二轮 DSH 复核（IR-19—IR-21）把 §3 命令改为逐条 18 个选择器、补齐 §2 与 §1 的描述并整理审核记录；t21 按第三轮 DSH 复核（IR-22—IR-26）同步文档标签、删除过期复跑说明并限定 §5 的归因范围。三次修订都不改变 t6 已批准的 T1—T4 范围与预期结果与测试代码语义。执行计划 r4 已获[正式批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516)，本次不重开其未受影响关口。
 
 交接：T1/T2/T4 的 11 项业务失败交产品实现负责人修复，实现落地后由本地测试工程师同步受影响选择器并做第二关复核材料，再由本地执行工程师按第三关正式执行；T3 与既有禁止区域结论在当前产品版本已成立，无需重跑。
 
@@ -231,7 +230,7 @@ echo "exit=$? run_root=$RUN_ROOT"
 
 第十一轮审核版本 `7a28bd6`；处置后提交见 PR 分支。第十二轮（对照 `b7b4f6b`，提交 `10497ff` 之后的修正）结论为**完整**，原文见 `/tmp/contact-evidence-level.pc92prep/reviewer-verdict-round12.md`；该系列审核为外部 CLI 逐轮复核，与 §7 的 DSH 子代理审核是两套独立编号。本审核结论不代表第二关、第三关或合并批准。
 
-## 7. DSH 子代理实现符合性审核处置（IR-10—IR-18）
+## 7. DSH 子代理实现符合性审核处置（IR-10—IR-26）
 
 由 DSH 的 `subagent` 以 `implementation_reviewer` 角色完成的审核（首次覆盖全部准备产物）结论为**部分完成**，提出九项；处置如下。此前 §6 记录的 IR-01—IR-09 为外部 CLI 逐轮审核的编号，两套编号不混用。
 
@@ -251,7 +250,7 @@ echo "exit=$? run_root=$RUN_ROOT"
 
 ### §7 第二轮 DSH 复核（对照 `70e8eef`）
 
-第二轮结论为**部分完成**：IR-10—IR-15、IR-17、IR-18 闭合，IR-16 的断言已落地但描述未同步；另发现 IR-19（阻断）、IR-20、IR-21。处置如下。
+第二轮结论为**部分完成**：IR-10—IR-15、IR-17、IR-18 闭合，IR-16 的断言已落地但描述未同步；另发现 IR-19（阻断）、IR-20、IR-21。处置如下；IR-16 的描述残留由 IR-20（§2 两行）与 IR-21（§1 覆盖表）修正，随本轮一并闭合。
 
 | 问题 | 处置 |
 |---|---|
@@ -260,3 +259,17 @@ echo "exit=$? run_root=$RUN_ROOT"
 | IR-21（轻）§1 覆盖表缺 T4 不重签 proof | 覆盖表该行补明「本夹具无 resolved 方向与 proof，按依据不适用；改为断言 validator 记录与 freshness 缓存不被重写」 |
 
 本轮改动只涉及测试计划文档；测试代码未变，§5 的准备期结果按 §3 完整命令重跑后仍为 7 通过 / 11 失败（`/tmp/contact-evidence-level.XcpOlvbX`）。本审核结论不代表第二关、第三关或合并批准。
+
+### §7 第三轮 DSH 复核（对照 `c4afa17`）
+
+第三轮结论为**部分完成**：IR-19、IR-20、IR-21 全部闭合（18 条选择器与 §2 一一对应、可由 `unittest` 解析为 18 项；§2/§1 新增描述与断言一致；不适用依据成立），另提出五处文档同步问题 IR-22—IR-26。处置如下。
+
+| 问题 | 处置 |
+|---|---|
+| IR-22 §7 标题与修订边界标签过期 | §7 标题改为「IR-10—IR-26」；修订边界补齐 t20、t21 的改动范围，并写明三次修订都不改变 T1—T4 范围与测试代码语义 |
+| IR-23 §3 复跑说明重复且旧条过期 | 删除仍教人替换类名的那条旧说明，只保留「按 §2 单行取出执行」 |
+| IR-24 §7 未记录 IR-16 闭合 | 第二轮小结补明：IR-16 的描述残留由 IR-20（§2 两行）与 IR-21（§1 覆盖表）修正并闭合 |
+| IR-25 §5 未写测试提交 | §5 运行记录写明测试提交 `70e8eef`（`c4afa17` 未改测试代码） |
+| IR-26 §5 的 T1 归因超出日志可见范围 | T1 归因限定为日志可见内容：展示用例失败在固定卡「后续论文依据」行仍含编号，禁锚区断言在该次运行中未执行；缺题名用例仍返回 `status=ok` |
+
+本轮只改测试计划文档，测试代码与 §5 的准备期结果未变（`/tmp/contact-evidence-level.XcpOlvbX`，7 通过 / 11 失败）。本审核结论不代表第二关、第三关或合并批准。
