@@ -315,6 +315,8 @@ RUN_DIR=$(mktemp -d /tmp/pc91-tests.XXXXXXXX)
 
 **T5 旧绑定断言修正（2026-10-17，test-r5 第二关定向复审）**：按第二关 NEEDS_MODIFICATION 的唯一一项，由本地测试工程师只修改 `test_business_rerender_and_bounded_correction_lifecycle` 中 T5.3c 的 finalize 断言：固定 `status=error`、`reason_code=validation_render_stale`，并在调用前后比较 `套磁候选输入.json` 与已被人工改动的 `套磁候选分析.md` 字节；未新增测试方法、选择器或判定器，未修改产品代码（产品版本仍为 `254fd06`）。有限预检：`py_compile` rc=0、模块导入 rc=0、目标方法可被 `unittest` 收集 rc=0（命令输出与 pyc 在仓库外 `/tmp/pc91-preflight-20261017`；未执行用例）。本地执行工程师按第 5.2 节同一选择器定向执行该受影响方法：结果目录 `/tmp/pc91-t5c.NJBoJloj`，1 个方法 OK，退出码 0；T5 其余 9 个方法与此前结果按未受影响复用。专用 implementation_reviewer 对该测试准备资产定向审核结论为**完整**（版本 `7f300fa`，产品未改，未发现超范围或可让错误通过的断言路径）。测试第二关与第三关的结论由测试计划审核者按本记录复核。
 
+**CI 测试适配（2026-10-17，合并审核 NOT_READY 处置）**：合并审核（2026-10-17T12:24:36Z）指出 CI run 39031320790 有 1 项失败、1 项错误，均为现有测试对新契约的适配缺口。本地测试工程师按最小修正只改两处现有测试：① `test_stage2_second_blocking_round_is_terminal` 在该测试内把 `CCCC3333` 从原始正式成员中排除（保留其 `papers` 记录供 `{{L:CCCC3333}}`），主路径与 `missing_env` 共用该定制；② `test_stage2_resolved_direction.py` 的 `facts_directions`/`unchanged_resolved` 改按 `direction_id`（缺失时回退 `collection_key`），`write_resolve_results` 仍按 job 的正式身份查找。未改产品代码（仍 `254fd06`）、断言、60 个正式选择器或测试目标。本地执行工程师复验：两个原失败方法 2 个 OK、退出码 0；受影响两个测试模块 16 个测试 OK、退出码 0；结果目录 `/tmp/pc91-ci-fix.phMrlSNG`。测试适配提交 `8856748`；专用 implementation_reviewer 对该适配资产定向审核结论为**完整**（未发现放宽断言、业务目标变化、同类调用点遗漏或超范围改动）。测试第二关、第三关与合并审核的结论仍由相应负责人按本记录复核。
+
 ## 6. 实施次序、交接与合并条件
 
 1. **计划审核**：由独立审核者在当前基线及必要的目标版本上审 P1—P4，取得正式 `Plan conclusion: APPROVED`。若证据揭示另一个成员归属入口，先把新增关键事实及直接影响修订进本文件再复审；作者不得把此初稿标为批准。
