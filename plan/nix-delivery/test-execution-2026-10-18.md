@@ -1,10 +1,10 @@
 # professor-contact Nix 交付执行记录（N1–N4）
 
-- 产品提交：`48172e4fee7b273febdda81c152b0a8ce2773932`（PR #93 head，`CONTACT_REF=github:ScholarWorkflow/professor-contact/48172e4fee7b273febdda81c152b0a8ce2773932`）
-- 前一被验提交：`af6bf55c4e3afd456832be0289338c454ec37cc2`（N1–N4 首轮全绿；本提交只做实现符合性审核后的三处跟随修改，见第 5 节）
+- 产品提交：`a9999284`（PR #93 head；`CONTACT_REF=github:ScholarWorkflow/professor-contact/<head SHA>`），内容 = 实现 `48172e4` + `origin/main`（PR #91）合并
+- 早前被验提交：`af6bf55c4e3afd456832be0289338c454ec37cc2`（N1–N4 首轮全绿）与 `48172e4fee7b273febdda81c152b0a8ce2773932`（审核跟随修改后全绿）；见第 5、6 节
 - 依据：[执行计划 R3](implementation-plan.md)、[测试计划 TP5.1](test-plan.md)、Test Engineer Rule、Project Consensus
-- 运行目录（仓库外）：最终提交 `/tmp/contact-nix.1ilKkF`（consumer=`$RUN/consumer`，样本=`$RUN/data`，输出=`$RUN/output`，夹具=`$RUN/evidence`）；首轮 `/tmp/contact-nix.27Uu6n`
-- 本轮执行：N1、N2、N3、N4.2 在最终提交重跑；N4.1 按未受影响复用首轮结果（依据见 4.1）；未执行项见第 4 节
+- 运行目录（仓库外）：合并后 `/tmp/contact-nix.Zc1wnW`（consumer=`$RUN/consumer`，样本=`$RUN/data`，输出=`$RUN/output`，夹具=`$RUN/evidence`）；`48172e4` 用 `/tmp/contact-nix.1ilKkF`；首轮 `af6bf55` 用 `/tmp/contact-nix.27Uu6n`
+- 本轮执行：N1、N2、N3、N4.2 在合并后提交重跑；N4.1 按未受影响复用 `af6bf55` 结果（依据见 4.1）；未执行项见第 4 节
 - 证据位置：`$RUN/output/`（`n1-*`、`n2-*`、`n3-*`、`routes.json`、`abstract-export/`）、`$RUN/evidence/`（fixture、item key、endpoint）
 
 ## 1. 依赖与固定版本
@@ -21,7 +21,7 @@
 
 `zotero-tools` 保留其自有 lock（nixpkgs `55bfb4d7…`、agent-env-nix `ba2d0fe4…`），与 professor-research 叶子包的做法一致，避免同名不同 payload。
 
-## 2. 逐项结果（最终提交 48172e4）
+## 2. 逐项结果（合并后提交 a9999284）
 
 ### N1 构建与元数据：PASS
 
@@ -31,7 +31,7 @@ nix build "$CONTACT_REF#professor-contact" --out-link "$RUN/package"
 nix build "$CONTACT_REF#professor-contact-environment" --out-link "$RUN/environment"
 ```
 
-三个输出在 aarch64-darwin 实际构建成功（exit 0，2026-10-18 02:06，日志 `/tmp/pr93-run/final-n1.log`）。
+三个输出在 aarch64-darwin 实际构建成功（exit 0，2026-10-18 02:21，日志 `/tmp/pr93-run/merged-n1.log`）；合并进来的 PR #91 runner 内容（`results-dir`）确认进入安装树。
 
 - `$RUN/package/agent-env.json`：`id=professor-contact`、`version=0.1.0`、1 个 skill、8 个角色（`professor-contact`、`-analyzer`、`-downloader`、`-idea-generator`、`-selection`、`-email-generator`、`-email-validator`、`-style-validator`）、6 个直接依赖、1 个 runtimePackage。
 - 角色 TOML 全部按 `name`/`description`/`developer_instructions` 解析通过，8 个名字唯一；analyzer 来自 `packages/professor-contact-codex/.apm/agents/`（正文含 Codex 原生委派契约）。
@@ -75,14 +75,14 @@ CONTACT_PAPER_PYTHON="$FIXED_PYTHON" "$FIXED_PYTHON" -B -m unittest -v \
 
 ### N4.2 真实摘要导出（复用 PR90 recipe）：PASS
 
-- 夹具：最终运行目录内新 clone 的 `skills-test-fixtures@8cecafc…`（pin 与干净检查通过）；`prepare_shared_test_assets_macos.sh` 复用共享资产缓存；`start_zotero_test_fixture_macos.sh` 启动隔离实例（`FIXTURE_KIND=zotero`、`FIXTURE_RUN_ID` 匹配、pin 匹配、checkout 干净），端点 `http://127.0.0.1:24120/mcp`。
-- 合成条目：经 Zotero MCP `write_item` 写入一条有摘要无 PDF 的 `journalArticle`，`ITEM_KEY=CHZ62RYD`。
+- 夹具：合并后运行目录内新 clone 的 `skills-test-fixtures@8cecafc…`（pin 与干净检查通过）；`prepare_shared_test_assets_macos.sh` 复用共享资产缓存（`fixture_repo_sha=8cecafc…`、`fixture_repo_dirty=no`）；`start_zotero_test_fixture_macos.sh` 启动隔离实例（`FIXTURE_KIND=zotero`、`FIXTURE_RUN_ID` 匹配、pin 匹配、checkout 干净），端点 `http://127.0.0.1:24120/mcp`。
+- 合成条目：经 Zotero MCP `write_item` 写入一条有摘要无 PDF 的 `journalArticle`，`ITEM_KEY=IWBGDZU5`（`48172e4` 轮的 `CHZ62RYD` 记录保留在 `/tmp/contact-nix.1ilKkF`）。
 - 导出：安装态 `scripts/stage2_input_router --papers … --output-dir …`（不传 `--zotero-read-skill-dir`，入口绑定锁定 `bin/zotero-item-export`），router exit 0、stderr 为空；路由 `carrier=abstract_json`、`level=abstract`、`status=ok`；导出文件 `.schema=1`、`.kind=paper-analysis-input`、`.source=zotero`、标题与摘要与预置值逐字节一致（`abstract_length=83`），摘要非空（`$RUN/output/abstract-export/export-summary.json`）。
 - 结束后只用 starter 的 `stop` 收尾，并保留该 fixture 的 run 目录副本（`$RUN/evidence/fixture-logs/`）。
 
 ## 3. 附带的仓库回归
 
-- 命令：`python3 -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_*.py'`（与 CI 相同），两轮均为 1016 条 `OK`、1 条 `skipped`（即未绑定 `CONTACT_PAPER_PYTHON` 时不适用的安装态用例）。
+- 命令：`python3 -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_*.py'`（与 CI 相同）：合并 `origin/main` 后 1022 条 `OK`、1 条 `skipped`（即未绑定 `CONTACT_PAPER_PYTHON` 时不适用的安装态用例）；`af6bf55`/`48172e4` 两轮各 1016 条 `OK`、1 条 `skipped`。
 - 因 R3 改变源调用前缀，15 个既有源契约用例（18 个 case）的期望字符串由 `python3 …/scripts/<name>.py` 改为 `<…>/scripts/<name>`、`skillrepo exec …` 改为安装目录入口、`zotero-mcp-session` 改为 `bash "<zotero-read-skill-dir>/scripts/new-session.sh"`；断言强度不变，仅改绑到新入口形态。改动前这些用例在同一份代码上 18/18 失败，改绑后全绿。
 
 ## 4. 未执行与受限项
@@ -106,3 +106,19 @@ CONTACT_PAPER_PYTHON="$FIXED_PYTHON" "$FIXED_PYTHON" -B -m unittest -v \
 - Nix 2.34.8（`aarch64-darwin`）、python3 3.14.7、jq 1.8.2、yq 4.54.1、uv 0.12.22；既有 eval 服务监听 `127.0.0.1:17902`（未启动/停止）；`/Applications/Zotero.app` 存在。
 - N1–N4 命令按 TP5.1 原样执行；只在会话文件沙箱仍生效的早期本地迭代中使用过独立 `XDG_CACHE_HOME`，正式运行使用默认 Nix 缓存与默认 `HOME`，未改认证或全局安全设置。
 - 未修改产品以迎合测试；未因提交编号变化重跑未受影响项（N4.1 复用并给出逐字节依据）。
+
+## 6. main 同步（PR #91）与影响分析
+
+`origin/main`（`07957d1`，PR #91 stage-2 runner fixes）与本分支只在两个 analyzer 的 Stage-2 `resolve-plan` 命令块冲突；解决方式为两侧都保留：main 新增的 `run_dir=$(mktemp -d …)` 与 `--results-dir "$run_dir"`，加上本分支的同目录入口前缀。合并后 `git diff` 无冲突标记，且未再出现 `python3 …/scripts/<name>.py`、`skillrepo exec …` 形式的可执行命令。
+
+影响分析（按 R3「PR91/92 合并后只分析受影响文件并更新 pin」）：
+
+- PR #91 只改了七个入口对应脚本中的 `contact_state.py`（内容变化，入口接口与 staging 替换点不变），另加 SKILL.md、两个 analyzer、style-validator 与测试；`flake.nix`/`flake.lock`/七个入口/`nix/contact.nix` 的依赖 pin 不需要更新。
+- 因此重新执行 N1（构建与元数据）、N2（安装与静态比对）、N3（安装态入口）与 N4.2（真实导出）；N4.1 复用依据仍然成立（两轮安装态 `professor-contact-selection.toml` 逐字节相同，SHA-256 均为 `f6519195780aaa0eaab7bbf1ffc17f2f414ebd9460e708ca36c2c1823c70a01d`）。
+- 合并后仓库回归 1022 OK / 1 skipped。
+
+## 7. 实现符合性审核记录
+
+- 首次审核（对象 `fb9a232`，含实现 `af6bf55`）：结论「完整」，无阻断项/无需修项，3 条建议；三处跟随修改与一条未采纳理由见第 5 节。
+- 定向复核（对象 `fb9a232..3c02bf9`）：结论「完整」，逐行确认三处跟随修改只在 R3 允许范围、router 缺值分支仍 fail closed 且保留原 stdout/stderr/退出码、记录如实；3 条观察（记录措辞、既有 `--zotero-read-skill-dir` 后接 flag 的既有边界、夹具 starter 日志片段）均不阻断。
+- 合并 `origin/main` 后由同一审核角色做最后一次极小复核（范围：两个冲突块的解决与记录更新）。
