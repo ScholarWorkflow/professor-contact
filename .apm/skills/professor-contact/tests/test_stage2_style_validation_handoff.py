@@ -1257,26 +1257,18 @@ class Stage2ValidationHandoffTests(BaseEnv):
                                        stale_env._physical_line_of(_T5_LEGACY_QUOTE))])
         recorded = stale_env.record_validation(stale_report)
         self.assertEqual(recorded["status"], "needs_correction", recorded)
-        stale_validator = stale_env._t5_pack()["validator"]
         stale_pack_path = stale_env.prof_dir / "套磁候选输入.json"
         stale_pack_before = stale_pack_path.read_bytes()
         analysis_path = stale_env.prof_dir / contact_state.ANALYSIS_MD
         analysis_path.write_text(analysis_path.read_text(encoding="utf-8") +
                                  "\n合成的人工修改。\n", encoding="utf-8")
+        analysis_before = analysis_path.read_bytes()
         out = parse(run_cli("stage2-finalize", "--facts", stale_facts,
                             "--preflight-file", stale_proof, "--results", stale_results))
-        if out["status"] == "ok":
-            after = stale_env._t5_pack().get("validator") or {}
-            self.assertFalse(
-                after.get("validation_sha256") == stale_validator["validation_sha256"]
-                and after.get("phase") == "needs_correction"
-                and after.get("render_sha256") == stale_validator["render_sha256"], after)
-            self.assertFalse(
-                after.get("validation_sha256") == stale_validator["validation_sha256"]
-                and after.get("render_sha256") == stale_env._t5_document()["sha256"], after)
-        else:
-            self.assertTrue(out.get("reason_code") or out.get("message"), out)
-            self.assertEqual(stale_pack_path.read_bytes(), stale_pack_before)
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out.get("reason_code"), "validation_render_stale", out)
+        self.assertEqual(stale_pack_path.read_bytes(), stale_pack_before)
+        self.assertEqual(analysis_path.read_bytes(), analysis_before)
         protected = stale_pack_path.read_bytes()
         refused = parse(run_cli("stage2-refine-plan", "--professor-dir", stale_env.prof_dir,
                                 "--validation-file", stale_report))
