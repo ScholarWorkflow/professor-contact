@@ -20,6 +20,7 @@ PDF or network call is involved.
 import copy
 import hashlib
 import json
+from pathlib import Path
 
 from test_contact_state import (
     BaseEnv,
@@ -306,10 +307,14 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         handoff_text = " ".join(str(plan.get(field, ""))
                                 for field in ("reason_code", "message", "detail"))
         self.assertTrue(handoff_text.strip(), plan)
-        self.assertTrue(
-            any(token in handoff_text.casefold() for token in ("source", "generator"))
-            or any(token in handoff_text for token in ("源", "生成器", "生成方")),
-            plan)
+        # The handoff must say who owns the fix and what has to happen, not just
+        # mention the words "source" or "generator".
+        owners = ("source", "generator", "源", "生成器", "生成方", "数据准备")
+        actions = ("fix", "repair", "regenerate", "修复", "修正", "重新生成",
+                   "重做", "处理", "补齐")
+        folded = handoff_text.casefold()
+        self.assertTrue(any(token in folded for token in owners), plan)
+        self.assertTrue(any(token in folded for token in actions), plan)
         results = self.root / "empty-rewrites"
         results.mkdir(exist_ok=True)
         finalized = self.refine_finalize(report, results)
@@ -417,16 +422,17 @@ class NarrativeRoundBoundTests(EvidenceLevelEnv):
 class AnalysisLevelTests(EvidenceLevelEnv):
     """T4 — analysis level counts, display-only refresh and source-change routing."""
 
-    def index_entry(self, key, level, facts_state="unavailable", ocr=False):
+    def index_entry(self, key, level, facts_state="unavailable", ocr=False,
+                    analysis=None, facts=None):
         """One real `论文分析/_index.json` paper record (analyzer Step 7 shape)."""
+        analysis_path = analysis or self.prof_dir / "论文分析" / f"{key}.md"
         return {
-            "file": str(self.prof_dir / "论文分析" / f"{key}.md"),
+            "file": str(analysis_path),
             "level": level,
-            "ocr_file": (str(self.prof_dir / "论文分析" / "_ocr" / f"{key}.txt")
-                         if ocr else None),
-            "future_work_sidecar": str(self.prof_dir / "论文分析" / f"{key}.md.future_work.json"),
+            "ocr_file": (str(Path(str(analysis_path) + ".ocr.txt")) if ocr else None),
+            "future_work_sidecar": str(Path(str(analysis_path) + ".future_work.json")),
             "future_work_state": "valid",
-            "facts_sidecar": None,
+            "facts_sidecar": facts,
             "facts_state": facts_state,
             "facts_error": None,
         }
@@ -436,10 +442,10 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         index = {
             "schema": 2, "future_work_schema": 1, "professor": "試験 教授",
             "direction": {"collection_key": "DIR00001", "name_ja": "合成输入比较"},
-            "papers": {key: self.index_entry(key, value.get("level"),
-                                             value.get("facts_state", "unavailable"),
-                                             value.get("ocr", False))
-                       for key, value in entries.items()},
+            "papers": {key: self.index_entry(
+                key, value.get("level"), value.get("facts_state", "unavailable"),
+                value.get("ocr", False), value.get("analysis"), value.get("facts"))
+                for key, value in entries.items()},
         }
         (self.prof_dir / "论文分析" / "_index.json").write_text(
             json.dumps(index, ensure_ascii=False), encoding="utf-8")
@@ -463,12 +469,12 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         return path
 
     def update_sources(self, levels, entries, delete=(), add=(), ocr=()):
-        """Change the index and the artifacts that preflight actually reads.
+        """Change the facts, the index and the artifact files preflight can see.
 
-        ``delete`` removes the key from both the facts catalog and the index and
-        deletes its analysis file; ``add`` replaces or appends the facts record
-        for a key that was previously absent or missing its artifacts; ``ocr``
-        gives a key an OCR carrier file next to its analysis file.
+        ``delete`` removes the key from the facts catalog and the index and
+        deletes its analysis file; ``add`` REPLACES that key's facts record with
+        the given one (used to make a previously missing source appear with its
+        real artifact paths); ``ocr`` gives a key an OCR carrier file.
         """
         facts = json.loads((self.root / "facts.json").read_text(encoding="utf-8"))
         for key in ocr:
@@ -478,7 +484,6 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         facts["papers"] = [paper for paper in facts["papers"]
                            if paper["item_key"] not in set(delete)]
         for entry in add:
-            self.write_analysis(entry["item_key"])
             facts["papers"] = [paper for paper in facts["papers"]
                                if paper["item_key"] != entry["item_key"]]
             facts["papers"].append(copy.deepcopy(entry))
@@ -532,7 +537,7 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.write_index({
             "AAAA1111": {"level": "fulltext", "facts_state": "failed"},
             "BBBB2222": {"level": "abstract", "facts_state": "unavailable"},
-            "CCCC3333": {"level": "fulltext", "facts_state": "failed", "ocr": True},
+            "CCCC3333": {"level": "fulltext", "facts_state": "unavailable", "ocr": True},
         })
         self.write_analysis("CCCC3333", ocr=True)
         results = self.root / "results"
@@ -590,9 +595,8 @@ class AnalysisLevelTests(EvidenceLevelEnv):
                             {"AAAA1111": {"level": "abstract"},
                              "BBBB2222": {"level": "abstract"},
                              "CCCC3333": {"level": "fulltext"}})
-        preflight, _display_row = self.direction_action()
+        preflight = self.stage2_preflight()
         self.assertEqual(preflight["action"], "refresh_display", preflight)
-        self.assertNotIn("reuse_all", json.dumps(preflight, ensure_ascii=False))
         preflight_path = self.write_preflight_file(preflight)
         # The planned display refresh consumes the accepted pack and the index
         # only; /tmp facts is gone by then.
@@ -619,6 +623,12 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertIn(f"zotero://select/library/items/{BLACKLIST_COMPLETION}",
                       blacklist_line)
         pack_after = self.pack()
+        # The canonical pack now carries the refreshed levels that the counts read.
+        levels_after = {key: paper.get("analysis_level")
+                        for key, paper in pack_after["papers"].items()}
+        self.assertEqual(levels_after, {"AAAA1111": "abstract",
+                                        "BBBB2222": "abstract",
+                                        "CCCC3333": "fulltext"}, levels_after)
         # Business state, model fingerprints and recorded assignment survive.
         self.assertEqual(pack_after["directions"][0]["narrative"],
                          pack_before["directions"][0]["narrative"])
@@ -644,22 +654,38 @@ class AnalysisLevelTests(EvidenceLevelEnv):
     def assert_routes_back_to_process(self, preflight):
         self.assertEqual(preflight["action"], "process", preflight)
         self.assertTrue(preflight["reason_codes"], preflight)
-        self.assertNotIn("refresh_display", json.dumps(preflight, ensure_ascii=False))
 
     def test_source_change_routes_back_to_the_process_path(self):
         self.accepted_run()
-        # The previously missing analysis + facts paths for CCCC3333 appear.
+        # CCCC3333 had no analysis and no facts when the pack was accepted; both
+        # paths appear now, which the accepted baseline cannot explain as display.
+        facts_path = self.root / "facts.json"
+        facts_data = json.loads(facts_path.read_text(encoding="utf-8"))
+        facts_data["papers"] = [paper for paper in facts_data["papers"]
+                                if paper["item_key"] != "CCCC3333"]
+        facts_path.write_text(json.dumps(facts_data, ensure_ascii=False, indent=1),
+                              encoding="utf-8")
+        analysis = self.prof_dir / "论文分析" / "CCCC3333.md"
+        facts_sidecar = self.prof_dir / "论文分析" / "CCCC3333.md.facts.json"
+        # The accepted pack knew CCCC3333 without any analysis artifact at all.
+        analysis.unlink()
+        self.assertFalse(analysis.exists())
+        analysis.write_text("# late analysis\n", encoding="utf-8")
+        facts_sidecar.write_text(json.dumps(
+            {"schema": 1, "kind": "facts", "status": "ok"}, ensure_ascii=False),
+            encoding="utf-8")
         self.update_sources(
             {"AAAA1111": "fulltext", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
             {"AAAA1111": {"level": "fulltext"},
              "BBBB2222": {"level": "fulltext"},
-             "CCCC3333": {"level": "fulltext", "facts_state": "valid"}},
+             "CCCC3333": {"level": "fulltext", "facts_state": "valid",
+                          "analysis": analysis, "facts": str(facts_sidecar)}},
             add=({"item_key": "CCCC3333", "has_pdf": True,
-                  "analysis_file": str(self.prof_dir / "论文分析" / "CCCC3333.md"),
-                  "sidecar_file": str(
-                      self.prof_dir / "论文分析" / "CCCC3333.md.future_work.json"),
-                  "facts_file": str(
-                      self.prof_dir / "论文分析" / "CCCC3333.md.facts.json")},))
+                  "analysis_file": str(analysis),
+                  "sidecar_file": str(analysis) + ".future_work.json",
+                  "facts_file": str(facts_sidecar)},))
+        self.assertTrue(analysis.exists())
+        self.assertTrue(facts_sidecar.exists())
         self.assert_routes_back_to_process(self.stage2_preflight())
 
     def test_deleted_analysis_source_also_routes_back_to_process(self):
@@ -676,16 +702,23 @@ class AnalysisLevelTests(EvidenceLevelEnv):
 
     def test_replaced_analysis_source_routes_back_to_process(self):
         self.accepted_run()
-        # Same key, different artifact path: a replacement, not a level change.
-        moved = self.prof_dir / "论文分析" / "CCCC3333-v2.md"
-        moved.write_text("# analysis v2\n", encoding="utf-8")
+        # Same key, moved analysis file: the index path changes and the old file
+        # is gone, so this is a replacement rather than a level-only change.
+        old_analysis = self.prof_dir / "论文分析" / "CCCC3333.md"
+        new_analysis = self.prof_dir / "论文分析" / "CCCC3333-v2.md"
+        new_analysis.write_text("# analysis v2\n", encoding="utf-8")
+        old_analysis.unlink()
         self.update_sources(
             {"AAAA1111": "fulltext", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
             {"AAAA1111": {"level": "fulltext"},
              "BBBB2222": {"level": "fulltext"},
-             "CCCC3333": {"level": "fulltext"}},
+             "CCCC3333": {"level": "fulltext", "analysis": new_analysis}},
             add=({"item_key": "CCCC3333", "has_pdf": True,
-                  "analysis_file": str(moved)},))
+                  "analysis_file": str(new_analysis)},))
+        index = json.loads((self.prof_dir / "论文分析" / "_index.json").read_text(
+            encoding="utf-8"))
+        self.assertEqual(index["papers"]["CCCC3333"]["file"], str(new_analysis))
+        self.assertFalse(old_analysis.exists())
         self.assert_routes_back_to_process(self.stage2_preflight())
 
     def test_pack_without_a_comparable_baseline_is_not_refreshed_as_display_only(self):
