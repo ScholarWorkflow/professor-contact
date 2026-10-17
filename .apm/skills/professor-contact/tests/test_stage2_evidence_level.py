@@ -426,21 +426,51 @@ class AnalysisLevelTests(EvidenceLevelEnv):
 
     def index_entry(self, key, level, facts_state="unavailable", ocr=False,
                     analysis=None, facts=None):
-        """One real `论文分析/_index.json` paper record (analyzer Step 7 shape)."""
+        """One real `论文分析/_index.json` paper record (analyzer Step 7 shape).
+
+        The recorded state follows the analyzer's own rules: a paper with a
+        valid future-work sidecar records ``valid`` + its path, while an OCR-only
+        paper records ``failed`` + the without-PDF reason and no sidecar path.
+        """
         analysis_path = analysis or self.prof_dir / "论文分析" / f"{key}.md"
+        sidecar = Path(str(analysis_path) + ".future_work.json")
+        if ocr:
+            future_state, future_error, sidecar_path = (
+                "failed", "future_work_unavailable_without_pdf_handoff", None)
+        else:
+            future_state, future_error, sidecar_path = "valid", None, str(sidecar)
+        facts_error = None
+        if facts_state != "valid":
+            facts_error = ("facts_unavailable_without_pdf_handoff" if ocr
+                           else "missing_facts_sidecar")
         return {
             "file": str(analysis_path),
             "level": level,
             "ocr_file": (str(self.ocr_path(key)) if ocr else None),
-            "future_work_sidecar": str(Path(str(analysis_path) + ".future_work.json")),
-            "future_work_state": "valid",
+            "future_work_sidecar": sidecar_path,
+            "future_work_state": future_state,
+            "future_work_error": future_error,
             "facts_sidecar": facts,
             "facts_state": facts_state,
-            "facts_error": None,
+            "facts_error": facts_error,
         }
 
     def ocr_path(self, key):
         return self.prof_dir / "论文分析" / "_ocr" / f"{key}.txt"
+
+    def write_future_work_sidecar(self, key):
+        """The declared `valid` future-work sidecar must really exist."""
+        analysis = self.prof_dir / "论文分析" / f"{key}.md"
+        sidecar = Path(str(analysis) + ".future_work.json")
+        if not sidecar.exists():
+            sidecar.write_text(json.dumps({
+                "schema": 1, "extractor_version": "future-work-v1",
+                "analysis": analysis.name, "status": "ok", "items": [
+                    {"id": f"fw-{key}", "quote": self.gap_quotes["AAAA1111"],
+                     "translation_zh": "中译：合成证据", "source": "Conclusion",
+                     "page": 8}],
+            }, ensure_ascii=False, indent=1), encoding="utf-8")
+        return sidecar
 
     def write_index(self, entries):
         """Write the Stage-2 analysis index; the caller controls every field."""
@@ -517,6 +547,8 @@ class AnalysisLevelTests(EvidenceLevelEnv):
                             "ocr": key in ocr_only}
             if key in ocr_only:
                 self.write_analysis(key, ocr=True)
+            else:
+                self.write_future_work_sidecar(key)
         self.write_index(entries)
         facts = self.write_facts()
         self.render_fixture(facts)
@@ -665,6 +697,8 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         real_fields = ("status", "evidence", "completed_part", "remaining_gap",
                        "quote", "translation_zh", "confidence", "evaluated_at",
                        "candidate_paper_ids", "item_key", "gap_id")
+        self.assertEqual(len(pack_after["directions"][0]["gap_shortlist"]),
+                         len(pack_before["directions"][0]["gap_shortlist"]))
         for before_gap, after_gap in zip(pack_before["directions"][0]["gap_shortlist"],
                                          pack_after["directions"][0]["gap_shortlist"]):
             self.assertEqual({field: before_gap.get(field) for field in real_fields},
@@ -713,25 +747,19 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertNotIn("CCCC3333", json.loads(
             (self.prof_dir / "论文分析" / "_index.json").read_text(encoding="utf-8"))["papers"])
         analysis = self.prof_dir / "论文分析" / "CCCC3333.md"
-        facts_sidecar = self.prof_dir / "论文分析" / "CCCC3333.md.facts.json"
         self.assertFalse(analysis.exists())
         # The analysis, its facts sidecar and its index record all appear now.
         self.update_sources(
             {"AAAA1111": "fulltext", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
             {"AAAA1111": {"level": "fulltext"},
              "BBBB2222": {"level": "fulltext"},
-             "CCCC3333": {"level": "fulltext", "facts_state": "valid",
-                          "analysis": analysis, "facts": str(facts_sidecar)}},
+             "CCCC3333": {"level": "fulltext", "facts_state": "unavailable",
+                          "analysis": analysis, "ocr": True}},
             add=({"item_key": "CCCC3333", "has_pdf": True,
-                  "analysis_file": str(analysis),
-                  "sidecar_file": str(analysis) + ".future_work.json",
-                  "facts_file": str(facts_sidecar)},))
-        analysis.write_text("# late analysis\n", encoding="utf-8")
-        facts_sidecar.write_text(json.dumps(
-            {"schema": 1, "kind": "facts", "status": "ok"}, ensure_ascii=False),
-            encoding="utf-8")
+                  "analysis_file": str(analysis)},))
+        self.write_analysis("CCCC3333", ocr=True)
         self.assertTrue(analysis.exists())
-        self.assertTrue(facts_sidecar.exists())
+        self.assertTrue(self.ocr_path("CCCC3333").exists())
         self.assert_routes_back_to_process(self.stage2_preflight())
 
     def test_deleted_analysis_source_also_routes_back_to_process(self):
