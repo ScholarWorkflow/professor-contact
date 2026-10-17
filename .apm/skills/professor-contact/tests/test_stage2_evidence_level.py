@@ -69,11 +69,12 @@ def blocking_issue(quote, location, rule="A1"):
 class EvidenceLevelEnv(BaseEnv):
     """BaseEnv plus the rendering fixture shared by T1, T2 and T4."""
 
-    def write_facts(self, extra=None, level="fulltext"):
+    def write_facts(self, *extras, level="fulltext"):
+        """Base facts with an analysis level, then every caller extra in order."""
         def add_level(facts):
             for paper in facts["papers"]:
                 paper["analysis_level"] = level
-            if extra:
+            for extra in extras:
                 extra(facts)
 
         return super().write_facts(add_level)
@@ -429,13 +430,16 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         return {
             "file": str(analysis_path),
             "level": level,
-            "ocr_file": (str(Path(str(analysis_path) + ".ocr.txt")) if ocr else None),
+            "ocr_file": (str(self.ocr_path(key)) if ocr else None),
             "future_work_sidecar": str(Path(str(analysis_path) + ".future_work.json")),
             "future_work_state": "valid",
             "facts_sidecar": facts,
             "facts_state": facts_state,
             "facts_error": None,
         }
+
+    def ocr_path(self, key):
+        return self.prof_dir / "论文分析" / "_ocr" / f"{key}.txt"
 
     def write_index(self, entries):
         """Write the Stage-2 analysis index; the caller controls every field."""
@@ -457,7 +461,7 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         if not path.exists():
             path.write_text("# analysis\n", encoding="utf-8")
         if ocr:
-            ocr_path = self.prof_dir / "论文分析" / "_ocr" / f"{key}.txt"
+            ocr_path = self.ocr_path(key)
             ocr_path.parent.mkdir(parents=True, exist_ok=True)
             ocr_path.write_text("synthetic OCR text\n", encoding="utf-8")
         return path
@@ -493,13 +497,17 @@ class AnalysisLevelTests(EvidenceLevelEnv):
             json.dumps(facts, ensure_ascii=False, indent=1), encoding="utf-8")
         return self.write_index(entries)
 
-    def accepted_run(self):
-        """One accepted pack with a terminal pass validator and a full baseline."""
-        levels = {paper["item_key"]: "fulltext" for paper in self.papers}
-        for paper in self.papers:
-            self.write_analysis(paper["item_key"])
-        self.write_index({key: {"level": "fulltext", "facts_state": "unavailable"}
-                          for key in levels})
+    def accepted_run(self, level="fulltext", indexed=("AAAA1111", "BBBB2222", "CCCC3333")):
+        """One accepted pack with a terminal pass validator and a full baseline.
+
+        ``indexed`` names the papers the accepted baseline records with an
+        analysis artifact; keys outside it have no index record and no file, so a
+        later appearance is a genuinely new source.
+        """
+        for key in indexed:
+            self.write_analysis(key)
+        self.write_index({key: {"level": level, "facts_state": "unavailable"}
+                          for key in indexed})
         facts = self.write_facts()
         self.render_fixture(facts)
         passed = self.record(self.write_report("pass.json", [], verdict="pass"))
@@ -523,23 +531,37 @@ class AnalysisLevelTests(EvidenceLevelEnv):
                    if item["direction_id"] == direction_id)
         return preflight, row
 
+    def direction_papers_only(self, *keys):
+        """Keep only these papers in the counted direction set (paper list view)."""
+        def narrow(facts):
+            direction = facts["directions"][0]
+            direction["member_keys"] = list(keys)
+            direction["relevant_keys"] = list(keys)
+        return narrow
+
     def test_counts_follow_the_recorded_analysis_level(self):
+        ccc = self.prof_dir / "论文分析" / "CCCC3333.md"
+
         def levels(facts):
             recorded = {"AAAA1111": None, "CCCC3333": "fulltext"}
             for paper in facts["papers"]:
                 paper["analysis_level"] = recorded.get(paper["item_key"])
+                if paper["item_key"] == "CCCC3333":
+                    paper["analysis_file"] = str(ccc)
 
-        facts = self.write_facts(levels)
-        # The failed analysis still has its analysis file and the old fulltext
-        # string in the index; the successful OCR-only fulltext has a real
-        # analysis + OCR file but no PDF-grounded facts.
+        facts = self.write_facts(levels, self.direction_papers_only(
+            "AAAA1111", "BBBB2222", "CCCC3333"))
+        # AAAA1111 is a failed analysis: its file and the index still carry the
+        # old fulltext string, so its recorded level is unknown. CCCC3333 is a
+        # successful OCR-only fulltext with an OCR carrier but no PDF-grounded
+        # facts. Only the recorded level may drive the counts.
         self.write_analysis("AAAA1111")
+        self.write_analysis("CCCC3333", ocr=True)
         self.write_index({
             "AAAA1111": {"level": "fulltext", "facts_state": "failed"},
             "BBBB2222": {"level": "abstract", "facts_state": "unavailable"},
             "CCCC3333": {"level": "fulltext", "facts_state": "unavailable", "ocr": True},
         })
-        self.write_analysis("CCCC3333", ocr=True)
         results = self.root / "results"
         self.write_stage2_results(results)
         plan = parse(run_bound_stage2_plan(run_cli, facts))
@@ -551,18 +573,18 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertIn("摘要级 1 篇", summary)
         self.assertIn("未确认 1 篇", summary)
         papers = self.pack()["papers"]
-        # A failed analysis with a residual fulltext level counts as unconfirmed,
-        # even though its analysis file still exists.
-        self.assertEqual(papers["AAAA1111"]["analysis_level"], None, papers["AAAA1111"])
-        self.assertTrue(papers["AAAA1111"]["analysis_file"])
-        self.assertEqual(papers["BBBB2222"]["analysis_level"], "abstract")
-        # A successful OCR-only fulltext stays fulltext even without facts.
-        self.assertEqual(papers["CCCC3333"]["analysis_level"], "fulltext")
-        self.assertEqual(papers["CCCC3333"]["facts_state"], "unavailable")
-        self.assertTrue(papers["CCCC3333"]["analysis_file"])
+        self.assertEqual(papers["AAAA1111"]["analysis_file"], str(
+            self.prof_dir / "论文分析" / "AAAA1111.md"))
+        self.assertIsNone(papers["AAAA1111"].get("analysis_level"), papers["AAAA1111"])
+        self.assertEqual(papers["BBBB2222"].get("analysis_level"), "abstract")
+        # OCR-only fulltext keeps its fulltext level even without facts.
+        self.assertEqual(papers["CCCC3333"].get("analysis_level"), "fulltext",
+                         papers.get("CCCC3333"))
+        self.assertEqual(papers["CCCC3333"].get("facts_state"), "unavailable",
+                         papers.get("CCCC3333"))
 
     def test_legacy_records_without_level_count_as_unconfirmed(self):
-        facts = self.write_facts()
+        facts = self.write_facts(self.direction_papers_only("AAAA1111", "BBBB2222"))
         facts_data = json.loads(facts.read_text(encoding="utf-8"))
         for paper in facts_data["papers"]:
             paper.pop("analysis_level", None)
@@ -575,12 +597,12 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         finalized = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertEqual(finalized["status"], "ok", finalized)
         summary = self.summary_line()
-        self.assertIn(f"未确认 {len(self.papers)} 篇", summary)
-        self.assertNotIn("全文级 1 篇", summary)
-        self.assertNotIn("摘要级 1 篇", summary)
+        self.assertIn("未确认 2 篇", summary)
+        self.assertIn("全文级 0 篇", summary)
+        self.assertIn("摘要级 0 篇", summary)
 
     def test_display_only_level_change_refreshes_without_model_work(self):
-        self.accepted_run()
+        self.accepted_run(indexed=("AAAA1111", "BBBB2222"))
         facts_path = self.root / "facts.json"
         pack_before = self.pack()
         freshness_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
@@ -605,8 +627,8 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertEqual(refreshed["status"], "ok", refreshed)
         self.assertTrue(refreshed.get("display_refreshed"), refreshed)
         summary = self.summary_line()
-        self.assertIn("全文级 1 篇", summary)
-        self.assertIn("摘要级 1 篇", summary)
+        self.assertIn("全文级 0 篇", summary)
+        self.assertIn("摘要级 2 篇", summary)
         # Same pack-only refresh: the fixed cards keep their trusted references.
         analysis = self.analysis_text()
         titles = {paper["item_key"]: paper["title"] for paper in self.papers}
@@ -656,24 +678,14 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertTrue(preflight["reason_codes"], preflight)
 
     def test_source_change_routes_back_to_the_process_path(self):
-        self.accepted_run()
-        # CCCC3333 had no analysis and no facts when the pack was accepted; both
-        # paths appear now, which the accepted baseline cannot explain as display.
-        facts_path = self.root / "facts.json"
-        facts_data = json.loads(facts_path.read_text(encoding="utf-8"))
-        facts_data["papers"] = [paper for paper in facts_data["papers"]
-                                if paper["item_key"] != "CCCC3333"]
-        facts_path.write_text(json.dumps(facts_data, ensure_ascii=False, indent=1),
-                              encoding="utf-8")
+        # The accepted baseline has no index record and no file for CCCC3333.
+        self.accepted_run(indexed=("AAAA1111", "BBBB2222"))
+        self.assertNotIn("CCCC3333", json.loads(
+            (self.prof_dir / "论文分析" / "_index.json").read_text(encoding="utf-8"))["papers"])
         analysis = self.prof_dir / "论文分析" / "CCCC3333.md"
         facts_sidecar = self.prof_dir / "论文分析" / "CCCC3333.md.facts.json"
-        # The accepted pack knew CCCC3333 without any analysis artifact at all.
-        analysis.unlink()
         self.assertFalse(analysis.exists())
-        analysis.write_text("# late analysis\n", encoding="utf-8")
-        facts_sidecar.write_text(json.dumps(
-            {"schema": 1, "kind": "facts", "status": "ok"}, ensure_ascii=False),
-            encoding="utf-8")
+        # The analysis, its facts sidecar and its index record all appear now.
         self.update_sources(
             {"AAAA1111": "fulltext", "BBBB2222": "fulltext", "CCCC3333": "fulltext"},
             {"AAAA1111": {"level": "fulltext"},
@@ -684,6 +696,10 @@ class AnalysisLevelTests(EvidenceLevelEnv):
                   "analysis_file": str(analysis),
                   "sidecar_file": str(analysis) + ".future_work.json",
                   "facts_file": str(facts_sidecar)},))
+        analysis.write_text("# late analysis\n", encoding="utf-8")
+        facts_sidecar.write_text(json.dumps(
+            {"schema": 1, "kind": "facts", "status": "ok"}, ensure_ascii=False),
+            encoding="utf-8")
         self.assertTrue(analysis.exists())
         self.assertTrue(facts_sidecar.exists())
         self.assert_routes_back_to_process(self.stage2_preflight())

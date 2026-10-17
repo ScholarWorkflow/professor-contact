@@ -1,8 +1,8 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- Test revision：contact-evidence-level-t9；对应 [执行计划 r4](implementation-plan.md)。
+- Test revision：contact-evidence-level-t10；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
-- 状态：第一关 PASS（t6 复核记录）；t7 的测试代码与完整命令已落实，独立实现符合性审核三轮共提出 IR-01—IR-09 并已全部处置（§6），处置后准备期复核在未实现的产品上得到 7 通过 / 11 业务失败（§5）。第二关待复核，第三关未执行；这里不宣称任何业务修复完成或测试通过。
+- 状态：第一关 PASS（t6 复核记录）；t7 的测试代码与完整命令已落实，独立实现符合性审核四轮共提出 IR-01—IR-09 并已全部处置（§6），处置后准备期复核在未实现的产品上得到 7 通过 / 11 业务失败（§5）。第二关待复核，第三关未执行；这里不宣称任何业务修复完成或测试通过。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
 ## 1. 唯一必测清单
@@ -33,7 +33,7 @@ T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装
 | T3 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_report_for_stale_render_is_rejected_without_pack_write` | 正文被改后旧报告被拒绝且零写入 |
 | T3 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_refinement_rejects_changed_input_pack` | 输入包变化后旧报告被拒绝、无修订任务 |
 | T2 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_nonrepairable_user_note_does_not_create_a_correction_job` | 既有禁止区域报告拒绝与零修订任务断言继续成立 |
-| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_counts_follow_the_recorded_analysis_level` | 三类计数与规范包级别一致；索引失败残留 fulltext、OCR-only fulltext 无 facts 均按实际记录计数 |
+| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_counts_follow_the_recorded_analysis_level` | 同一方向集合内三类计数与规范包级别一致；失败分析（文件与索引仍留 fulltext）计未确认，OCR-only 全文（有分析/OCR 文件、无 facts）仍计全文 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_legacy_records_without_level_count_as_unconfirmed` | 缺 analysis_level 的旧记录即使有分析文件也计未确认 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_display_only_level_change_refreshes_without_model_work` | 仅 level 变化判为展示刷新；刷新后统计更新、旧 PASS 不再被接受、assignment/叙事/模型指纹保留、无新增任务、下次预检不误报包完整性 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_source_change_routes_back_to_the_process_path` | 原缺 facts 路径出现、分析路径新增时走原 process |
@@ -90,15 +90,15 @@ echo "exit=$? run_root=$RUN_ROOT"
 
 记录格式保持简单：实际提交、T1—T4逐项通过/业务失败/无法判断/未执行、实际命令与输出位置、复用结果来源、剩余问题及负责人。原始日志和临时数据在仓库外，公开提交仅必要脱敏摘要。
 
-准备期复核（本地测试工程师，非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），命令为上面 §3 的命令，结果目录 `/tmp/contact-evidence-level.vYplkLmF`（`recipe.txt`），退出码 1，`Ran 18 tests`、`FAILED (failures=11)`。
+准备期复核（本地测试工程师，非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），命令为上面 §3 的命令，结果目录 `/tmp/contact-evidence-level.M5wh17Uv`（`recipe.txt`），退出码 1，`Ran 18 tests`、`FAILED (failures=11)`。
 
-- 通过 7 项：T3 四项（`NarrativeRoundBoundTests` 一项与三个既有保护选择器）、T2 两项（既有禁止区域选择器与 `test_forbidden_user_note_and_paper_table_keep_their_rejection`）、T4 一项（缺基线走 process）。按 §2 归属统计为 T2 两项、T3 四项、T4 一项。
-- 业务失败 11 项：T1 两项、T2 三项、T4 六项（`test_counts_...`、`test_legacy_...`、`test_display_only_...`、`test_source_change_...`、`test_deleted_analysis_source_...`、`test_replaced_analysis_source_...`）。
-- 失败分类依据：这 11 项的输入已按真实索引契约与 §4 接口假设改变（分析/OCR/facts 路径与存在状态、正文位置、索引记录），相同夹具下 T3、缺基线等 7 项通过，说明夹具可运行；产品在这些输入上仍返回旧计数或 `reuse_all`，属于业务失败，不是环境或夹具问题。
-- 早期记录按要求保留：`/tmp/contact-evidence-level.oa4NuJoS`（17 项、7 通过 / 10 失败）中来源变化两项因夹具未真正改变预检输入而作废，`/tmp/contact-evidence-level.h3SBpUMF`（18 项、7 通过 / 11 失败）中新增与替换两项因同类问题在本轮作废；作废项不计入本轮分类。
+- 通过 7 项：T3 四项（`NarrativeRoundBoundTests` 一项与三个既有保护选择器）、T2 两项（既有禁止区域选择器与 `test_forbidden_user_note_and_paper_table_keep_their_rejection`）、T4 一项（缺基线走 process）。
+- 业务失败 11 项：T1 两项、T2 三项、T4 六项，逐项为 T1 的固定卡展示与缺题名、T2 的固定区登记三项、T4 的 `test_counts_...`、`test_legacy_...`、`test_display_only_...`、`test_source_change_...`、`test_deleted_analysis_source_...`、`test_replaced_analysis_source_...`。
+- 失败分类依据：计数用例现以同一方向集合内的真实输入验证（失败分析保留文件与旧索引级别、OCR-only 全文有分析/OCR 文件无 facts）；来源用例的分析路径、facts 路径、索引记录与文件存在状态均已真实变化；相同夹具下 7 项通过，产品仍按文件存在统计或返回 `reuse_all`，属于业务失败。
+- 早期记录按要求保留：`/tmp/contact-evidence-level.oa4NuJoS` 与 `/tmp/contact-evidence-level.h3SBpUMF` 中因夹具未真正改变输入而作废的来源变化项不计入本轮分类。
 - 该记录只用于确认选择器可执行、判定 T3 已成立和暴露产品缺口，不替代第三关正式执行，也不作为任何通过结论。
 
-修订边界：t9 按第三轮定向复核修正夹具（真实 OCR 输入、索引路径可控、来源增删换址）与断言（规范包级别、责任交互动词、去掉方向级 action 约束），并更正结果归属；不改变 t6 已批准的 T1—T4 范围与预期结果。执行计划 r4 已获[正式批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516)，本次不重开其未受影响关口。
+修订边界：t10 按第四轮定向复核把 OCR-only 论文纳入被统计方向集合、让 OCR 索引路径指向真实文件、使新增来源从基线完全缺失开始，并把统计预期改为由同一组规范包级别推出；不改变 t6 已批准的 T1—T4 范围与预期结果。执行计划 r4 已获[正式批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516)，本次不重开其未受影响关口。
 
 交接：T1/T2/T4 的 11 项业务失败交产品实现负责人修复，实现落地后由本地测试工程师同步受影响选择器并做第二关复核材料，再由本地执行工程师按第三关正式执行；T3 与既有禁止区域结论在当前产品版本已成立，无需重跑。
 
@@ -147,3 +147,15 @@ echo "exit=$? run_root=$RUN_ROOT"
 | IR-09 方向级 action | §4 假设 2 去掉方向级 `action` 要求；用例只断言顶层 `action` 与原因字段，不再对序列化结果作关键词排除 |
 
 第三轮审核版本 `a1ca141`；处置后提交见 PR 分支。本审核结论不代表第二关、第三关或合并批准。
+
+### 第四轮定向复核（对照 `db73fc1`）
+
+第四轮结论为**部分完成**：IR-01、IR-04—IR-09 已闭合；IR-02、IR-03 需继续修正。处置如下。
+
+| 问题 | 处置 |
+|---|---|
+| IR-02 OCR 输入与统计预期 | `ocr_file` 指向夹具真实写出的 `论文分析/_ocr/<key>.txt`；计数用例把 OCR-only 论文放进同一方向集合（`member_keys`/`relevant_keys`），并按规范包级别预期全文 1、摘要 1、未确认 1；旧记录用例预期该集合两篇未确认；刷新用例预期全文 0、摘要 2 |
+| IR-03 新增来源基线 | `accepted_run(indexed=...)` 允许基线不含某篇论文；新增用例的基线索引与文件都没有 CCCC3333，变更阶段才写入索引记录、分析文件与 facts 路径 |
+| §2/§5 描述 | 计数与来源用例的描述、失败分类按真实输入与预期更新 |
+
+第四轮审核版本 `db73fc1`；处置后提交见 PR 分支。本审核结论不代表第二关、第三关或合并批准。
