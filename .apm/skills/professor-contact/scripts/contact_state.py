@@ -4926,9 +4926,13 @@ def stage2_render_state(pack: dict) -> dict:
             "resolved_direction": direction.get("resolved_direction") or {},
         })
     papers = pack_paper_index(pack)
+    # `pdf_available` feeds the managed header's full-text/abstract counts, so a
+    # PDF-availability change is display-relevant even when the analysis path
+    # stays the same.
     papers_state = {
         key: {field: (papers.get(key) or {}).get(field)
-              for field in ("title", "year", "authorship", "analysis_file")}
+              for field in ("title", "year", "authorship", "analysis_file",
+                            "pdf_available")}
         for key in sorted(referenced)
     }
     return {"directions": directions_state, "papers": papers_state}
