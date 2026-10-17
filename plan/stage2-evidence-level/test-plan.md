@@ -1,8 +1,8 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- Test revision：contact-evidence-level-t30；对应 [执行计划 r4](implementation-plan.md)。
+- Test revision：contact-evidence-level-t31；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
-- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言，并在定稿文件上补一次模块运行（见修订记录）。第二关待复核，第三关未执行。最新准备期复核为 7 通过 / 11 业务失败（§5，测试提交 `0d5606b` 加本轮修正），此前记录只按其实际版本引用；审核处置仅适用于各自记录版本（§6、§7）。
+- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八轮复核（IR-37 残留、IR-38 残留、IR-40）再改准两次运行的版本指向，并把重复读取改为与渲染前快照比较（见修订记录）。第二关待复核，第三关未执行。最新准备期复核为 7 通过 / 11 业务失败（§5，测试提交 `36c630a`），此前记录只按其实际版本引用；审核处置仅适用于各自记录版本（§6、§7）。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
 ## 1. 唯一必测清单
@@ -331,14 +331,23 @@ exit "$status"
 
 1. **IR-35（阻断）**：t28 在 T1 用例里直接读局部名 `gap_id`，产品实现到位后会在该断言抛 `NameError`。现在 `render_fixture` 把该缺口的 `gap_id` 写进渲染前快照，用例改为与 `baseline["gap_id"]` 比较；并清理了因此产生的重复行。静态名称核对确认模块内已无未绑定的读取。
 2. **IR-36(a)**：§5 运行记录写明该 18 项记录对应提交 `36c630a`（`0d5606b` 加 t27 两处修正），不再写成当前版本。
-3. **IR-36(b) / IR-37**：t28 提到的模块运行补上结果目录 `/tmp/contact-evidence-level.aiT3QOLQ`（`module.txt`）与命令 `python3 -m unittest -v test_stage2_evidence_level`；该次运行用的是 t28 提交后、t29 清理前的文件（比定稿多一行），项数、通过数与失败分组不受影响。t29 定稿文件另跑一次：`/tmp/contact-evidence-level.jhhvqtu4`（`module.txt`），同样 `Ran 14 tests`、3 通过 / 11 业务失败。两次运行都没有执行到两条被修改的断言。
+3. **IR-36(b) / IR-37**：t28 提到的模块运行补上结果目录 `/tmp/contact-evidence-level.aiT3QOLQ`（`module.txt`）与命令 `python3 -m unittest -v test_stage2_evidence_level`；该次运行用的是 t28 提交后、t29 清理前的文件（比定稿多一行），项数、通过数与失败分组不受影响。另一次模块运行 `/tmp/contact-evidence-level.jhhvqtu4`（`module.txt`）用的是 t30 文件（即删除 IR-39 那两行之后的版本，提交 `a02f5c9`），同样 `Ran 14 tests`、3 通过 / 11 业务失败；t29 定稿文件（`6df795b`）没有对应的模块运行记录。两次运行都没有执行到两条被修改的断言。
 
 未新增用例名称、选择器、采集器或运行链；选择器仍 18，新增用例仍 14；产品代码与既有测试未改。该复核结论不代表第二关、第三关或合并批准。
 
 ### t30 定向修订记录（IR-37—IR-39 处置）
 
-1. **IR-37**：t28/t29 记录里的模块运行改为写明版本——`/tmp/contact-evidence-level.aiT3QOLQ`（`module.txt`）用的是 t28 提交后、t29 清理前的文件；t29 定稿文件另跑一次为 `/tmp/contact-evidence-level.jhhvqtu4`（`module.txt`），两次都是 `Ran 14 tests`、3 通过 / 11 业务失败，均未执行到两条被修改的断言。
+1. **IR-37**：t28/t29 记录里的模块运行改为写明版本——`/tmp/contact-evidence-level.aiT3QOLQ`（`module.txt`）用的是 t28 提交后、t29 清理前的文件；另一次 `/tmp/contact-evidence-level.jhhvqtu4`（`module.txt`）用的是 t30 文件（提交 `a02f5c9`），两次都是 `Ran 14 tests`、3 通过 / 11 业务失败，均未执行到两条被修改的断言；t29 定稿文件没有对应运行。
 2. **IR-38**：§5 运行记录的提交指向改为 `36c630a`（`0d5606b` 加 t27 两处修正），不再用会随文档版本漂移的措辞。
 3. **IR-39**：删除被新守卫蕴含、无法独立失败的 `baseline["candidate_paper_ids"]` 比较；候选引用「可独立失败」由渲染后的 `gap["candidate_paper_ids"]` 断言承担，渲染前的非空前提由 `render_fixture` 的守卫承担。
 
 未新增用例名称、选择器、采集器或运行链；选择器仍 18，新增用例仍 14；产品代码与既有测试未改。该复核结论不代表第二关、第三关或合并批准。
+
+### t31 定向修订记录（IR-37 残留、IR-38 残留、IR-40）
+
+1. **IR-37 残留**：`/tmp/contact-evidence-level.jhhvqtu4`（`module.txt`）的 traceback 行号与 t30 文件（`a02f5c9`）逐条相同、与 t29 文件相差 2 行，说明它跑的是 t30 代码；记录改为写明这一点，并注明 t29 定稿文件（`6df795b`）没有对应运行。
+2. **IR-38 残留**：状态行不再写「加本轮修正」，直接写测试提交 `36c630a`。
+3. **IR-40**：T1 里重复读取同一 pack 的那组断言改为与 `render_fixture` 的渲染前快照比较（快照新增 `evidence`／`completed_part`／`remaining_gap`），使该比较可独立失败；`assert_source_owner_handoff` 里与 pack 字节重复的那条改成断言 `refine-finalize` 零重写，另把来源新增用例里未使用的索引变量改为对索引记录的实际检查。
+4. 测试代码只改上述断言与快照，选择器仍 18、新增用例仍 14，产品与既有测试未改。清理过程中的模块运行 `/tmp/contact-evidence-level.Y3LIHYbj`（`module.txt`）与清理完成后对定稿文件的一次 `/tmp/contact-evidence-level.pze8ESEN`（`module.txt`）均为 `Ran 14 tests`、3 通过 / 11 业务失败；两条被修改的断言以及新增的快照比较仍在首次失败点之后，均未执行到。
+
+该复核结论不代表第二关、第三关或合并批准。

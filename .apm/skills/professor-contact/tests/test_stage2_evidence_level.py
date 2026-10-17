@@ -119,6 +119,9 @@ class EvidenceLevelEnv(BaseEnv):
             "user_note": batch["directions"][0]["user_note"],
             "gap_id": candidate_row["gap_id"],
             "candidate_paper_ids": list(candidate_row["candidate_paper_ids"]),
+            "evidence": candidate_row["evidence"],
+            "completed_part": candidate_row.get("completed_part"),
+            "remaining_gap": candidate_row.get("remaining_gap"),
         }
         if snapshot is not None:
             snapshot.update(before)
@@ -268,9 +271,9 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         accepted = self.direction()
         gap = self.shortlist_gap("AAAA1111")
         self.assertEqual(gap["status"], "partial")
-        self.assertEqual(gap["evidence"], FIXED_EVIDENCE)
-        self.assertEqual(gap["completed_part"], COMPLETED_PART)
-        self.assertEqual(gap["remaining_gap"], REMAINING_GAP)
+        self.assertEqual(gap["evidence"], baseline["evidence"])
+        self.assertEqual(gap["completed_part"], baseline["completed_part"])
+        self.assertEqual(gap["remaining_gap"], baseline["remaining_gap"])
         source_positioning = baseline["narrative"]["directions"][0]["positioning"]
         self.assertEqual([row["text"] for row in source_positioning],
                          [row["text"] for row in accepted["narrative"]["positioning"]])
@@ -325,7 +328,6 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         """refine-plan hands a fixed-card failure over without a model job."""
         report_before = report.read_bytes()
         self.assertEqual(self.record(report)["status"], "needs_correction")
-        pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
         analysis_before = self.analysis_text()
         plan = self.refine_plan(report)
         self.assertEqual(plan.get("jobs"), [], plan)
@@ -345,7 +347,6 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         results.mkdir(exist_ok=True)
         finalized = self.refine_finalize(report, results)
         self.assertFalse(finalized.get("rewritten"), finalized)
-        self.assertEqual((self.prof_dir / "套磁候选输入.json").read_bytes(), pack_before)
         self.assertEqual(self.analysis_text(), analysis_before)
         self.assertEqual(report.read_bytes(), report_before,
                          "the raw validator report must stay unchanged")
@@ -865,6 +866,9 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.write_analysis("CCCC3333", ocr=True)
         index = json.loads((self.prof_dir / "论文分析" / "_index.json").read_text(
             encoding="utf-8"))
+        self.assertIn("CCCC3333", index["papers"],
+                      "the appearing source must be recorded in the index")
+        self.assertEqual(index["papers"]["CCCC3333"]["file"], str(analysis))
         self.assertTrue(analysis.exists())
         self.assertTrue(self.ocr_path("CCCC3333").exists())
         pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
