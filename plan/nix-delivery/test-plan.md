@@ -1,9 +1,9 @@
 # professor-contact Nix 测试计划
 
-- Test plan revision: TP4（2026-10-17；N1–N4 目标、预期与检查方式沿用 TP3 不变，补齐 N3 安装态命令与固定解释器断言、N4.1 selection 准备与判定链、N4.2 PR90 复用命令，并记录本机有限预检），关联 [执行计划 R3](implementation-plan.md)。
-- Proposed review status: pending；Gate1 必测清单、Gate2 recipe、Gate3 结果均待独立审核。当前没有实现，N1–N4 全部未执行，不声明 PASS。
+- Test plan revision: TP5（2026-10-18；按 PR #93 第二关口审核意见补齐 N3 的 PDF 样本准备步骤，N1–N4 目标、预期与检查方式不变，沿用 TP4 的安装态命令、N4.1 selection 准备与判定链、N4.2 PR90 复用命令与本机有限预检），关联 [执行计划 R3](implementation-plan.md)。
+- Proposed review status: pending；Gate1 必测清单已由第二关口审核判 PASS，Gate2 步骤、Gate3 结果均待审核。当前没有实现，N1–N4 全部未执行，不声明 PASS。
 - 产品基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`；执行时记录真正待验实现SHA与锁定依赖。只验本次 aarch64-darwin / Codex 安装和必要入口，不扩 Stage0–5 业务回归。
-- 本轮（本地测试工程师）交付：N3 的命令与新增断言、N4.1 与 N4.2 的可直接执行准备及判定命令、仓库外预检记录。未修改产品代码，未构建、未安装、未运行任何正式用例。
+- 本轮（本地测试工程师）交付：N3 的 PDF 样本生成与 papers.json 命令（第二关口唯一待修项）、TP4 已有的 N3 命令与新增断言、N4.1 与 N4.2 的可直接执行准备及判定命令、仓库外预检记录。未修改产品代码，未构建、未安装、未运行任何正式用例。
 
 ## 1. 必测清单（上限）
 
@@ -64,7 +64,7 @@ test -x "$FIXED_PYTHON"
 printf '%s\n' "$FIXED_PYTHON" > "$RUN/output/n3-fixed-python.txt"
 ```
 
-`n2-handoff-binding.txt` 必须显示该入口把 `CONTACT_PAPER_PYTHON` 绑定到运行时包的固定解释器，并与 `n3-fixed-python.txt` 为同一路径。实现若用 shebang 以外的方式绑定，则记录实际绑定路径与它使用的解释器，并在结果中注明实际值，不猜默认值。
+`n2-handoff-binding.txt` 必须显示该入口把 `CONTACT_PAPER_PYTHON` 绑定到运行时包的固定解释器，并与 `n3-fixed-python.txt` 为同一路径。现阶段只有计划、没有实现，入口第一行是否就是所需 Python 在安装后核对：实现若用 shebang 以外的方式绑定，则记录实际绑定路径与它使用的解释器，并在结果中注明实际值，不猜默认值，也不预先断言该绑定形式必然失败。
 
 ### N3：实际本地入口
 
@@ -81,13 +81,46 @@ SKILL="$RUN/consumer/.agents/skills/professor-contact"
 
 jq读取status为ok、教授为安装样本教授，options中方向ID为dir_fixture、paper_count=1。预期业务值固定；不能根据失败输出更改期望。
 
-再用现有上游小型PDF fixture绝对路径写 `[ {"item_key":"NIXTEST1","pdf_path":"<fixture绝对路径>"} ]` 到papers.json，执行：
+PDF 样本自己生成，不依赖真实论文或上游检出：在临时运行目录里写一个小型单页合成 PDF，路径带空格以覆盖 argv 传递，然后用它的绝对路径写 papers.json（该项只看 router 是否选中已有 PDF，不解析 PDF 正文）：
+
+```sh
+PDF_DIR="$RUN/data/pdf sample"
+mkdir -p "$PDF_DIR"
+PDF_PATH="$(python3 - "$PDF_DIR/nix fixture paper.pdf" <<'PY'
+from pathlib import Path
+import sys
+pdf = Path(sys.argv[1])
+pdf.write_bytes(
+    b"%PDF-1.4\n"
+    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+    b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\n"
+    b"trailer<</Root 1 0 R>>\n%%EOF\n"
+)
+print(pdf.resolve())
+PY
+)"
+test -s "$PDF_PATH"
+jq -n --arg pdf "$PDF_PATH" '[{item_key:"NIXTEST1", pdf_path:$pdf}]' > "$RUN/data/papers.json"
+jq -e --arg pdf "$PDF_PATH" 'length == 1 and .[0].item_key == "NIXTEST1" and .[0].pdf_path == $pdf' \
+  "$RUN/data/papers.json" > /dev/null
+```
+
+（`python3` 用系统解释器即可：这一步只写测试样本；`PDF_PATH` 取 `resolve()` 后的规范化绝对路径，与 router 输出里的 `paper` 字段同一写法。）
+
+执行：
 
 ```sh
 "$SKILL/scripts/stage2_input_router" --papers "$RUN/data/papers.json" --output-dir "$RUN/output/router" > "$RUN/output/routes.json"
+jq -e --arg pdf "$PDF_PATH" '
+  .status == "ok" and (.routes|length) == 1 and
+  (.routes[0] | .item_key == "NIXTEST1" and .status == "ok" and .carrier == "pdf" and
+    .level == "fulltext" and .paper == $pdf and .gap_only_allowed == true)
+' "$RUN/output/routes.json" > /dev/null
+test ! -e "$RUN/output/router/NIXTEST1.json"
 ```
 
-确认NIXTEST1选中该PDF，不触发摘要导出；文件路径/空格通过argv传递。该项检查安装入口，不检查PDF抽取准确性。
+确认NIXTEST1选中该PDF，不触发摘要导出（`$RUN/output/router` 下不出现该 key 的 JSON，也不调用 exporter）；文件路径/空格通过argv传递。该项检查安装入口，不检查PDF抽取准确性。
 
 handoff 部分的安装态命令（在安装树内执行，读取的是安装后的 `$SKILL/scripts/stage2_chatgpt_handoff.py`，复用同一合法 facts/future-work 数据）：
 
@@ -189,6 +222,8 @@ shasum -a 256 "$RUN/output/selection-fixture.json" "$RUN/output/selection-pre-sn
   "$RUN/output/selection-prompt.txt" "$RUN/output/selection-request.json" \
   "$RUN/output/consumer-codex-config.toml" > "$RUN/output/selection-input-sha256.txt"
 ```
+
+该摘要文件只是本次准备的输入记录，不是通过条件，也不进入判定：判定以 `stage4-needs-input` 的输出为准。
 
 执行唯一正式请求并判定（`case-started.txt` 紧接请求之前；此前失败均记未开始）：
 
