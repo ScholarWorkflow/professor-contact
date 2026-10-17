@@ -2,7 +2,7 @@
 
 - Test revision：contact-evidence-level-t7；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
-- 状态：第一关 PASS（t6 复核记录）；T1—T4 的测试代码与完整命令已落实到本文件 §3，准备期复核在未实现的产品上得到 4 通过 / 9 业务失败（§5），第二关待独立复核，第三关未执行。这里不宣称任何业务修复完成或测试通过。
+- 状态：第一关 PASS（t6 复核记录）；t7 的测试代码与完整命令已落实，独立实现符合性审核提出 8 项问题（IR-01—IR-08）已全部处置（§4、§6），处置后准备期复核在未实现的产品上得到 7 通过 / 10 业务失败（§5）。第二关待复核，第三关未执行；这里不宣称任何业务修复完成或测试通过。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
 ## 1. 唯一必测清单
@@ -29,11 +29,15 @@ T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装
 | T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_repeating_the_same_fixed_card_report_does_not_clear_the_round` | 同内容重试不能清轮数，也不写入通过结果 |
 | T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_forbidden_user_note_and_paper_table_keep_their_rejection` | 用户笔记、论文一览仍被拒绝，无 correction jobs，正文与 pack 不变 |
 | T3 | `test_stage2_evidence_level.NarrativeRoundBoundTests.test_narrative_correction_rounds_stay_bound_and_terminal_state_is_recorded_once` | 纯叙事第一轮→合法修订→第二轮固定卡阻挡登记为 fail_after_2_rounds，不继续第三轮、不再发修订 |
+| T3 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_second_blocking_round_is_terminal` | 既有轮次终止结论继续成立（第二轮终态、第三次 plan 零 jobs） |
+| T3 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_report_for_stale_render_is_rejected_without_pack_write` | 正文被改后旧报告被拒绝且零写入 |
+| T3 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_refinement_rejects_changed_input_pack` | 输入包变化后旧报告被拒绝、无修订任务 |
 | T3 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_nonrepairable_user_note_does_not_create_a_correction_job` | 既有禁止区域报告拒绝与零修订任务断言继续成立 |
-| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_counts_follow_the_recorded_analysis_level` | 全文/摘要/未确认三类计数与规范包级别一致，不从文件存在推断 |
+| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_counts_follow_the_recorded_analysis_level` | 三类计数与规范包级别一致；索引失败残留 fulltext、OCR-only fulltext 无 facts 均按实际记录计数 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_legacy_records_without_level_count_as_unconfirmed` | 缺 analysis_level 的旧记录即使有分析文件也计未确认 |
-| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_display_only_level_change_refreshes_without_model_work` | 仅 level 变化由 preflight 判为展示刷新，刷新后统计更新、旧 PASS 不再被接受、下次预检不误报包完整性 |
-| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_source_change_routes_back_to_the_process_path` | 新增分析依据走原 process，不被当作 display-only |
+| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_display_only_level_change_refreshes_without_model_work` | 仅 level 变化判为展示刷新；刷新后统计更新、旧 PASS 不再被接受、assignment/叙事/模型指纹保留、无新增任务、下次预检不误报包完整性 |
+| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_source_change_routes_back_to_the_process_path` | 原缺 facts 路径出现、分析路径新增时走原 process |
+| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_deleted_analysis_source_also_routes_back_to_process` | 分析依据被删除时同样走原 process |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_pack_without_a_comparable_baseline_is_not_refreshed_as_display_only` | 旧包缺可比较业务基线走原 process |
 
 ## 3. 可执行 recipe
@@ -41,29 +45,42 @@ T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装
 - 执行目录：`<producer checkout>/.apm/skills/professor-contact/tests`（选择器按模块名解析，必须在 tests 目录内运行）。
 - Python：仓库现有 `python3`；本次准备基线 Python 3.14.7。
 - 输出目录：新建 `/tmp/contact-evidence-level.XXXXXXXX`；日志、退出码和临时数据只放该目录，不入库、不推送。
-- 命令（一次运行覆盖 T1—T4 与 T2 既有选择器）：
+- 命令（一次运行覆盖 T1—T4 与 T2/T3 既有选择器）：
 
 ```bash
-mkdir -p <run-root>
-cd <producer checkout>/.apm/skills/professor-contact/tests
+# CHECKOUT 与 RUN_ROOT 是本命令仅有的两个变量，执行者按当前环境赋值。
+# CHECKOUT：本次受测的 producer checkout 根目录（其下有 .apm/skills/professor-contact/tests）。
+# RUN_ROOT：本次运行独占的仓库外目录，不存在时由下面第一行创建。
+CHECKOUT=/path/to/producer-checkout
+RUN_ROOT=$(mktemp -d /tmp/contact-evidence-level.XXXXXXXX)
+mkdir -p "$RUN_ROOT"
+cd "$CHECKOUT/.apm/skills/professor-contact/tests" || exit 2
 python3 -m unittest -v \
   test_stage2_evidence_level.FixedEvidenceDisplayTests \
   test_stage2_evidence_level.FixedEvidenceFailureTests \
   test_stage2_evidence_level.NarrativeRoundBoundTests \
   test_stage2_evidence_level.AnalysisLevelTests \
+  test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_second_blocking_round_is_terminal \
+  test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_report_for_stale_render_is_rejected_without_pack_write \
+  test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_refinement_rejects_changed_input_pack \
   test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_nonrepairable_user_note_does_not_create_a_correction_job \
-  > <run-root>/recipe.txt 2>&1
-echo "exit=$?"
+  > "$RUN_ROOT/recipe.txt" 2>&1
+echo "exit=$? run_root=$RUN_ROOT"
 ```
 
-- 也可按项复跑：把类名单独替换为该项选择器；`-v` 输出逐用例结果。分项结果由这些断言判定，没有额外 JSON oracle。
+- 也可按项复跑：把类名或方法名单独替换为 §2 中该项的选择器；`-v` 输出逐用例结果。分项结果由这些断言判定，没有额外 JSON oracle。
 - 准备顺序：`git status` 确认 checkout 干净 → 进入 tests 目录 → 建 run 目录 → 运行上面命令。没有安装、外部服务、模型或 Zotero 需求；`BaseEnv` 的临时目录已提供隔离。
 - 失败处理：产品断言失败原样保留；命令或环境错误记无法判断并只重试受影响命令；未执行不得填 PASS；已确认失败不得被后续清理覆盖。
 
 ## 4. 准备记录与接口交接
 
-- 已准备：新建 `test_stage2_evidence_level.py`（T1—T4 共 12 个新增用例）与 T2 既有选择器组成上述 recipe；未改动产品、既有测试和共享夹具，未操作用户教授目录。
-- 接口假设（实现方需对齐，不一致时由测试计划工程师按执行计划调整，不改名迁就）：仅展示刷新入口取 `stage2-refresh-display --professor-dir <dir> --preflight-file <file>`，输出 `status`、`display_refreshed`、`pack_path`、`md_sha256`；preflight 对仅 level 变化返回 `action=refresh_display` 及同值的方向级 `action`，无法比较或来源变化时仍返回 `process` 和具体 `reason_codes`；缺可信题名走明确失败结果（`status != ok` 且有 `reason_code`/`message`）。
+- 已准备：新建 `test_stage2_evidence_level.py`（T1—T4 共 13 个新增用例）与 T2/T3 既有选择器组成上述 recipe；未改动产品、既有测试和共享夹具，未操作用户教授目录。仓库外材料：`/tmp/contact-evidence-level.pc92prep/` 含 `recipe.txt`（准备期输出）、`reviewer-handoff.md`、`reviewer-verdict.md`、`reviewer-run.log` 和三个只读探针脚本 `probe_current.py`、`probe_round2.py`、`probe_packkeys.py`。
+- 接口假设（实现方需对齐，不一致时由测试计划工程师按执行计划调整，不改名迁就；这些假设是执行计划 r4 §3.2、§3.3 的实现接口，不是新增验收要求）：
+  1. 仅展示刷新入口取 `stage2-refresh-display --professor-dir <dir> --preflight-file <file>`，成功时 `status=ok` 且 `display_refreshed=true`。
+  2. preflight 对仅 level 变化返回 `action=refresh_display` 及同值的方向级 `action`；来源出现、删除、替换或基线不可比较时返回 `action=process` 并给出具体 `reason_codes`。
+  3. 固定区阻挡的责任交接结果里，`reason_code`/`message`/`detail` 至少一处明确写出源或生成器（英文 `source`/`generator` 或中文「源／生成器／生成方」），且不出现 `no_failed_directions`、`awaiting_second_validation`。
+  4. 展示刷新后旧 validator 记录保持原样（仍绑定旧正文），重绘后的正文 SHA 与 validator 的 `render_sha256` 不同；刷新前预检已接受当前业务基线与来源可见状态，使刷新后再次预检回到 `reuse_all` 且不报 `pack_integrity_mismatch`。
+  5. 缺可信题名走明确失败结果（`status != ok` 且有 `reason_code`/`message`）。
 - 未改动范围：U2/U3/U4、Stage 3—5、安装与 Nix/APM、真实模型或教授流程均未纳入，也未借此要求全仓回归。
 
 ## 5. 复核与结果
@@ -72,8 +89,30 @@ echo "exit=$?"
 
 记录格式保持简单：实际提交、T1—T4逐项通过/业务失败/无法判断/未执行、实际命令与输出位置、复用结果来源、剩余问题及负责人。原始日志和临时数据在仓库外，公开提交仅必要脱敏摘要。
 
-准备期复核（本地测试工程师，非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态）、测试提交 f910dbd，命令为上面 §3 的命令，日志 `/tmp/contact-evidence-level.pc92prep/recipe.txt`，退出码 1，`Ran 13 tests`、`FAILED (failures=9)`。通过 4 项：T3 的 `NarrativeRoundBoundTests.test_narrative_correction_rounds_stay_bound_and_terminal_state_is_recorded_once`、T2 的 `test_forbidden_user_note_and_paper_table_keep_their_rejection`、T4 的 `test_pack_without_a_comparable_baseline_is_not_refreshed_as_display_only`。业务失败 9 项，全部属于待实现的 T1/T2/T4 目标行为：T1 两项、T2 三项、T4 四项。该记录只用于确认选择器可执行、判定 T3 结论和暴露产品缺口，不替代第三关正式执行，也不作为任何通过结论。
+准备期复核（本地测试工程师，非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态）、测试提交 `79cd8d5`，命令为上面 §3 的命令，结果目录 `/tmp/contact-evidence-level.oa4NuJoS`（`recipe.txt`），退出码 1，`Ran 17 tests`、`FAILED (failures=10)`。
+
+- 通过 7 项：T3 的 5 个选择器（新增 `NarrativeRoundBoundTests` 一项与 4 个既有选择器全部 ok）、T2 的 `test_forbidden_user_note_and_paper_table_keep_their_rejection`、T4 的 `test_pack_without_a_comparable_baseline_is_not_refreshed_as_display_only`。
+- 业务失败 10 项，全部属于待实现的 T1/T2/T4 目标行为：T1 两项、T2 三项、T4 五项（`test_counts_...`、`test_legacy_...`、`test_display_only_...`、`test_source_change_...`、`test_deleted_analysis_source_...`）。
+- 失败分类依据：这 10 项在测试输入已按 §2 变更（索引级别、来源可见状态、正文位置）的前提下，产品仍返回旧行为或旧计数，属于业务失败，不是环境或夹具问题；`test_pack_without_a_comparable_baseline...` 与 T3 各项在相同夹具下通过，说明夹具本身可运行。
+- 该记录只用于确认选择器可执行、判定 T3 已成立和暴露产品缺口，不替代第三关正式执行，也不作为任何通过结论。
 
 修订边界：t7 落实测试代码与完整选择器，不改变 t6 已批准的 T1—T4 范围与预期结果。执行计划 r4 已获[正式批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516)，本次不重开其未受影响关口。
 
-交接：T1/T2/T4 的 9 项业务失败交产品实现负责人修复，实现落地后由本地测试工程师同步受影响选择器并做第二关复核材料，再由本地执行工程师按第三关正式执行；T3 与既有禁止区域结论在当前产品版本已成立，无需重跑。
+交接：T1/T2/T4 的 10 项业务失败交产品实现负责人修复，实现落地后由本地测试工程师同步受影响选择器并做第二关复核材料，再由本地执行工程师按第三关正式执行；T3 与既有禁止区域结论在当前产品版本已成立，无需重跑。
+
+## 6. 实现符合性审核处置
+
+独立 `implementation_reviewer`（本地 CLI，只读）对本角色产物首轮结论为**部分完成**，提出 IR-01—IR-08；处置如下。
+
+| 问题 | 处置 |
+|---|---|
+| IR-01 T3 漏纳入计划指定的既有保护用例 | 已把 §1 T3 要求的三项既有选择器（`second_blocking_round_is_terminal`、`report_for_stale_render_is_rejected_without_pack_write`、`refinement_rejects_changed_input_pack`）补入 §2 与 §3；本轮 4 个既有选择器全部通过，无需改断言 |
+| IR-02 T4 多项明列行为没有对应断言 | 已在既有 T4 场景补齐：索引失败残留 fulltext 计未确认、OCR-only fulltext 无 facts 仍计全文、刷新后旧 PASS 不再被接受、assignment/叙事/指纹保留、无新增任务、来源新增与删除分流；§2 描述改为与实际断言一致 |
+| IR-03 来源变化用例没有改变 preflight 可见的输入 | `update_sources` 现在同时改写 `facts.json` 与真实 `论文分析/_index.json`（schema 2 记录）并落地分析文件，使新增、删除、换址对预检可见；新增删除场景用例 |
+| IR-04 T1 没有检查展示和原文保留 | 三个固定卡行补断言 Zotero 链接与可见文本不含编号，黑名单行补链接断言；用渲染前快照比较 quote、translation、gap_notes、叙事与用户笔记 |
+| IR-05 T2 责任交接断言允许无关错误通过 | `assert_source_owner_handoff` 增加语义断言：交接文字必须指明源或生成器责任，且不得是 `no_failed_directions`／`awaiting_second_validation`（已写入 §4 接口假设 3） |
+| IR-06 旧基线用例没有要求 `process` | 改为断言 `action == "process"` 且 `reason_codes` 非空 |
+| IR-07 recipe 使用未解释的 shell 占位符 | §3 改为可直接复制执行的命令，只保留 `CHECKOUT`、`RUN_ROOT` 两个显式变量并在行内说明来源 |
+| IR-08 缺少交接列出的探针脚本 | 三个只读探针脚本已放入 `/tmp/contact-evidence-level.pc92prep/`（`probe_current.py`、`probe_round2.py`、`probe_packkeys.py`），§4 已列出路径 |
+
+首轮审核版本为未提交工作树（`HEAD=f910dbd`）；处置后产物提交为 `79cd8d5` 及其后续修正提交。本审核结论不代表第二关、第三关或合并批准。
