@@ -113,6 +113,13 @@ class EvidenceLevelEnv(BaseEnv):
         self.assertEqual(candidate_row["candidate_paper_ids"],
                          list(FIXED_CANDIDATES),
                          "the pre-render fixture really carries candidate references")
+        self.assertEqual(candidate_row["evidence"], FIXED_EVIDENCE,
+                         "the pre-render fixture really carries the fixed evidence text")
+        self.assertEqual(candidate_row["completed_part"], COMPLETED_PART)
+        self.assertEqual(candidate_row["remaining_gap"], REMAINING_GAP)
+        self.assertEqual(batch["directions"][0]["user_note"],
+                         "我想比较两种合成输入的处理结果。",
+                         "the pre-render fixture really carries the user note")
         before = {
             "papers": copy.deepcopy(batch["papers"]),
             "narrative": copy.deepcopy(narrative),
@@ -247,11 +254,11 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         # Machine fields and candidate references keep the exact model values,
         # and the author's own text, translation, quote and user note survive.
         gap = self.shortlist_gap("AAAA1111")
-        self.assertEqual(gap["evidence"], FIXED_EVIDENCE,
-                         "the raw evidence text must survive the display step")
         self.assertEqual(gap["gap_id"], baseline["gap_id"])
-        self.assertEqual(gap["completed_part"], COMPLETED_PART)
-        self.assertEqual(gap["remaining_gap"], REMAINING_GAP)
+        self.assertEqual(gap["evidence"], baseline["evidence"],
+                         "the raw evidence text must survive the display step")
+        self.assertEqual(gap["completed_part"], baseline["completed_part"])
+        self.assertEqual(gap["remaining_gap"], baseline["remaining_gap"])
         self.assertEqual(gap["candidate_paper_ids"], list(FIXED_CANDIDATES),
                          "candidate references must survive the display step")
         self.assertEqual(blacklist[0]["evidence"], BLACKLIST_EVIDENCE)
@@ -264,7 +271,7 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         self.assertIn(f"「{self.gap_quotes['AAAA1111']}」", analysis)
         self.assertIn(f"中译：{self.gap_quotes['AAAA1111'][:24]}", analysis)
         self.assertIn(narrative_prose, analysis)
-        self.assertEqual(self.direction()["user_note"], "我想比较两种合成输入的处理结果。")
+        self.assertEqual(self.direction()["user_note"], baseline["user_note"])
 
         # Same comparison against the pre-render snapshot: the display step
         # changed neither the machine facts nor the author's own material.
@@ -329,6 +336,7 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         report_before = report.read_bytes()
         self.assertEqual(self.record(report)["status"], "needs_correction")
         analysis_before = self.analysis_text()
+        pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
         plan = self.refine_plan(report)
         self.assertEqual(plan.get("jobs"), [], plan)
         self.assertFalse(plan.get("write_needed"), plan)
@@ -347,6 +355,8 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         results.mkdir(exist_ok=True)
         finalized = self.refine_finalize(report, results)
         self.assertFalse(finalized.get("rewritten"), finalized)
+        self.assertEqual((self.prof_dir / "套磁候选输入.json").read_bytes(), pack_before,
+                         "refine-finalize must not write the input pack")
         self.assertEqual(self.analysis_text(), analysis_before)
         self.assertEqual(report.read_bytes(), report_before,
                          "the raw validator report must stay unchanged")
@@ -362,8 +372,6 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         self.assert_source_owner_handoff(first_report)
         validator = self.pack()["validator"]
         self.assertEqual(validator["round"], 1, validator)
-        self.assertNotIn(validator["results"]["DIR00001"]["result"],
-                         {"pass", "skipped", "fail_after_2_rounds"}, validator)
         self.assertIn(REPAIRABLE_QUOTE, self.analysis_text())
 
         # A real source correction is followed by the ordinary Stage-2 path,

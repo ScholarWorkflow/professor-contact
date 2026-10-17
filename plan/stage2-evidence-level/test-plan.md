@@ -343,11 +343,14 @@ exit "$status"
 
 未新增用例名称、选择器、采集器或运行链；选择器仍 18，新增用例仍 14；产品代码与既有测试未改。该复核结论不代表第二关、第三关或合并批准。
 
-### t31 定向修订记录（IR-37 残留、IR-38 残留、IR-40）
+### t31 定向修订记录（IR-37 残留、IR-38 残留、IR-40、IR-41）
 
-1. **IR-37 残留**：`/tmp/contact-evidence-level.jhhvqtu4`（`module.txt`）的 traceback 行号与 t30 文件（`a02f5c9`）逐条相同、与 t29 文件相差 2 行，说明它跑的是 t30 代码；记录改为写明这一点，并注明 t29 定稿文件（`6df795b`）没有对应运行。
+1. **IR-37 残留**：`/tmp/contact-evidence-level.jhhvqtu4`（`module.txt`）的 traceback 行号与 t30 文件（`a02f5c9`）逐条相同、与 t29 文件位于被删两行之下的 12 处相差 2 行，说明它跑的是 t30 代码；记录改为写明这一点，并注明 t29 定稿文件（`6df795b`）没有对应运行。第一次 traceback（228 行）在两个版本同为此行，不适用该差值。
 2. **IR-38 残留**：状态行不再写「加本轮修正」，直接写测试提交 `36c630a`。
-3. **IR-40**：T1 里重复读取同一 pack 的那组断言改为与 `render_fixture` 的渲染前快照比较（快照新增 `evidence`／`completed_part`／`remaining_gap`），使该比较可独立失败；`assert_source_owner_handoff` 里与 pack 字节重复的那条改成断言 `refine-finalize` 零重写，另把来源新增用例里未使用的索引变量改为对索引记录的实际检查。
-4. 测试代码只改上述断言与快照，选择器仍 18、新增用例仍 14，产品与既有测试未改。清理过程中的模块运行 `/tmp/contact-evidence-level.Y3LIHYbj`（`module.txt`）与清理完成后对定稿文件的一次 `/tmp/contact-evidence-level.pze8ESEN`（`module.txt`）均为 `Ran 14 tests`、3 通过 / 11 业务失败；两条被修改的断言以及新增的快照比较仍在首次失败点之后，均未执行到。
+3. **IR-40(a)**：采用「守卫 + 渲染后断言」写法——`render_fixture` 为 `evidence`／`completed_part`／`remaining_gap`／`user_note` 增加显式前置守卫（夹具确实带这些机器文本），T1 用例改为把渲染后的同名字段与渲染前快照比较，不再与夹具常量重复比较；是否保留 `user_note` 同类条目一并处理。
+4. **IR-40(b)**：恢复 `assert_source_owner_handoff` 里 refine-finalize 前后的 pack 字节比较（该断言覆盖 §1 T2「refine-finalize 不写」），`rewritten` 零值断言保留；两者并存。
+5. **IR-41**：删除具体用例里与辅助函数重复的 `validator` 结果断言，保留 `round == 1` 与正文断言。
+6. **N2**：本轮新增但未执行的断言（来源新增用例的索引检查、refine-finalize 的零 rewritten 与 pack 字节比较、T1 快照比较）一并记为待第三关首次运行。
+7. 测试代码只改上述断言与快照，选择器仍 18、新增用例仍 14，产品与既有测试未改。定稿文件模块运行 `/tmp/contact-evidence-level.n549XkhO`（`module.txt`，`Ran 14 tests`、3 通过 / 11 业务失败）；两条被修改的断言与新增断言仍在首次失败点之后，均未执行到，待第三关首次运行。
 
 该复核结论不代表第二关、第三关或合并批准。
