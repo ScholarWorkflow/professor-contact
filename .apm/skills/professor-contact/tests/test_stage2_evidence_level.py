@@ -110,12 +110,14 @@ class EvidenceLevelEnv(BaseEnv):
                       if row.get("evidence") == FIXED_EVIDENCE)
         candidate_row = next(row for row in statuses
                              if row["gap_id"] == gap_id)
-        self.assertEqual(candidate_row["evidence"], FIXED_EVIDENCE,
-                         "the candidate proof must belong to the gap under test")
+        self.assertEqual(candidate_row["candidate_paper_ids"],
+                         list(FIXED_CANDIDATES),
+                         "the pre-render fixture really carries candidate references")
         before = {
             "papers": copy.deepcopy(batch["papers"]),
             "narrative": copy.deepcopy(narrative),
             "user_note": batch["directions"][0]["user_note"],
+            "gap_id": candidate_row["gap_id"],
             "candidate_paper_ids": list(candidate_row["candidate_paper_ids"]),
         }
         if snapshot is not None:
@@ -244,7 +246,7 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         gap = self.shortlist_gap("AAAA1111")
         self.assertEqual(gap["evidence"], FIXED_EVIDENCE,
                          "the raw evidence text must survive the display step")
-        self.assertEqual(gap["gap_id"], gap_id)
+        self.assertEqual(gap["gap_id"], baseline["gap_id"])
         self.assertEqual(gap["completed_part"], COMPLETED_PART)
         self.assertEqual(gap["remaining_gap"], REMAINING_GAP)
         self.assertEqual(gap["candidate_paper_ids"], list(FIXED_CANDIDATES),
