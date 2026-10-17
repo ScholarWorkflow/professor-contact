@@ -448,15 +448,21 @@ For each flagged direction:
 
 **A. 跑 `stage2-resolve-plan`**（纯确定性，零模型）：
 ```bash
+run_dir=$(mktemp -d "<本教授事务目录>/resolve-run.XXXXXXXX")
 python3 <professor-contact-skill-dir>/scripts/contact_state.py \
-  stage2-resolve-plan --facts /tmp/<教授名>_套磁_facts.json
+  stage2-resolve-plan --facts /tmp/<教授名>_套磁_facts.json \
+  --results-dir "$run_dir"
 ```
+
+`--results-dir` 必填：必须是已存在的绝对目录，且本轮预期结果文件都尚不存在（否则 `invalid_params`）；每次重新 plan 都新开一个 `resolve-run.XXXXXXXX` 目录，换轮必须换目录。回执返回本轮 `resolve_run_id`，并在每个 job 的 `result_schema.resolve_run_id` 里给出必须原样回填的值；本轮所有模型结果只能写进这个目录，`stage2-resolve-finalize` 也只读它。
 
 返回 `candidates.{additions,removals,splits,merges}` 列表与每个方向一个 `resolve:<教授>:<方向>` job；job 的 `model_input` 含该方向逐篇的 `paper_evidence`（含 `facts_state`/`topic_terms`/`affinity_scores`）、`gap_evidence`、自动检测到的 `removal/addition/split/merge` 候选，以及规则。**注意**：方向是**逐个独立 resolve**的——同一篇论文可在多个被选方向被同时分析，runner 不因共享论文合并方向。
 
 **B. 写每个方向的 resolve result**（一个 `resolve-<方向>.json`）：
 ```json
 {"schema": 1, "kind": "resolve", "collection_key": "...",
+ "direction_id": "<job.direction_id>",
+ "resolve_run_id": "<plan 回执的 resolve_run_id，原样回填>",
  "resolved": {
    "resolved_direction_id": "<稳定 ID，provisional 即 collection_key；split 源方向仍保持原 ID>",
    "provisional_direction_id": "...",
@@ -474,7 +480,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py \
 **Result 与方向身份强绑定（runner 强制）**：`collection_key` 与 `resolved.provisional_direction_id` 都必须等于该 result 对应 job 的方向 ID，`resolution_type != split_from` 时 `resolved_direction_id` 也必须等于它——runner 对任何不符一律 `invalid_result_json` 拒绝（Stage 3 按 `collection_key` 生成 job，两个"权威 ID"并存会让 fingerprint/audit 全部漂移）。唯一允许引入新 ID 的地方是 `split_target`。
 
 判定规则：
-- 每篇候选 = provisional member + Stage 1 扩召；含全文级 facts 即可判定归属。
+- 每篇候选 = provisional member + Stage 1 扩召；含全文级 facts 即可判定归属。方向的原始正式成员只有 `provisional_member_keys`（旧式 facts 用其 Stage-1 `member_keys`）这一处来源；`relevant_keys` 只是分析引用范围（`{{P:key}}`、future work、gap），参考论文不能因为“相关”进入 `supporting_item_keys`，已 accepted 的增删决定才会改变正式成员。
 - **归属证据范围是教授级被选方向 candidate union**（全教授被选方向 candidate_keys 的去重并集）：各方向 Stage 1 的 candidate 集可能不相交，但 paper_evidence、affinity 与 `papers_to_add` 校验都覆盖 union——P2 provisional 在 dir_B、Stage 1 没把 P2 扩召进 dir_A，只要全文 facts 显示 P2 最支持 dir_A，dir_A 的 resolve job 就能看到并新增它（acceptance #2 的跨 preview 误聚类修正不依赖 Stage 1 恰好扩召过）。
 - 含 facts 论文按 `topic_terms` 与方向画像（name_ja/name_zh/summary_zh）的词面/语义重叠判定归属；不含 facts 的论文**保留** provisional 归属（没全文证据不下放）。**这不是提示词约定而是 runner 强制约束**：`stage2-resolve-finalize` 对任何 membership 变更（`papers_to_add`/`papers_to_remove`，含 split 移动的论文）逐一校验 `facts_state=valid`，abstract-only/legacy/证据链断裂的论文一律 `invalid_result_json` 拒绝——模型输出不能成为这条安全边界。
 - **移除**：仅当 facts 明确显示该论文不属于本方向（topic 完全不沾、gap 也不来）。**绝不**因为论文是 abstract-only 就移除。
@@ -489,8 +495,10 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py \
 ```bash
 python3 <professor-contact-skill-dir>/scripts/contact_state.py \
   stage2-resolve-finalize --facts /tmp/<教授名>_套磁_facts.json \
-  --results /tmp/<教授名>_stage2_resolve_results
+  --results "$run_dir"
 ```
+
+本轮 plan 发过 job 的方向必须有完整结果文件：缺文件返回 `result_missing` 并附完整预期路径，复制上一轮同名文件、只写 `resolve-<短名>.json` 或用别的教授/目录的结果都会 `invalid_result_json`；失败时整批 `_resolved_directions.json`、输入包和新 accepted 缓存都零写入，绝不构造默认 `unchanged/accepted`。显式 `--keep-provisional` 点名的方向不受本轮文件要求约束，其余方向仍逐一检查。
 
 runner 校验：result schema/kind 正确、**`collection_key`/`provisional_direction_id` 与 job 方向一致、非 split 的 `resolved_direction_id` == collection_key（identity 绑定，见 B）**、`resolution_type` 合法、`papers_to_remove` 全是 provisional member、`papers_to_add` 全在教授级 candidate union、membership 变更论文 `facts_state=valid`、split/merge 结构约束（见 B）、**结构性 material change 的全文证据 gate**——`merged_into` 需要通过 `_authoritative_merge_basis`（双方都有 facts-valid 论文且 topic terms 收敛，阈值独立于 detector hint），`renamed` 与无 membership 变更的 `refined` 要求方向内至少一篇当前 `facts_state=valid` 的论文；零全文证据时的 authoritative 重构一律 `invalid_result_json` fail closed（unchanged/provisional 不需要证据）；每个条目写逐方向 `input_fingerprint`（version 4 = 该方向 resolve job **规范化 model_input 的 SHA**：教授级 candidate union 每篇论文的 metadata + **有效** facts_state/facts_error/topic terms + 对全部方向的 affinity 分数 + 跨方向候选证据 + 本方向画像/gap evidence + resolve 规则文本——发 job 与算指纹用同一个 `_build_resolve_model_input`，按构造一致，因此任何真正改变 job 输入的变化——包括**其他方向**的 profile 或 facts 有效性变化——都会失效本方向缓存；**不 hash** analysis Markdown 正文、abstract/month 等摘要级字段——编辑性改动不烧 resolve job）。**acceptance 生命周期**：条目带 `acceptance` 字段——`unchanged` 直接 `accepted`；material change（renamed/split_from/merged_into/refined）写为 `proposed`，在用户做出 Stage-2 选择**之前**只是提案：`stage2-resolve-plan` 对 proposed 方向总是 `action=process`（重新 resolve、再次提示），resolve-finalize 无新 result 时原样保留提案并继续报 `needs_user_choice`——未接受的提案**绝不**被当成已接受缓存。**acceptance 是 runner 强制的机器边界**：把条目变为 accepted 只有两条 deterministic 路径——`stage2-resolve-accept --ckeys <dir,...>`（用户采纳提案，见 D）与 `stage2-resolve-finalize --keep-provisional`（沿用 provisional，见 D）；`stage2-finalize` 只应用**全部条目都已 accepted** 的 sidecar（任何 proposed 条目 → `resolved_directions_not_accepted` fail closed），且 finalize 自己**绝不**翻转 acceptance（用户「沿用 provisional」的决定用 `--keep-provisional` 持久化为 accepted，见 D）。返回 `material_changes` 清单与 `needs_user_choice=true` 仅当存在未接受的 material change（已 accepted 的 resolution 重跑不再重复提示）。**preflight proof 盖章**：resolve-finalize 把 facts 记录的 `stage2_preflight.preflight_id` 原样写入 sidecar 的 `stage2_preflight` 字段（emit 回显 `stage2_preflight_id`）；facts 带该块但 malformed → `resolved_directions_proof_mismatch` fail closed——`stage2-finalize` 与 `stage2-resolve-accept` 靠这个字段拒绝另一代 facts/preflight 的 sidecar。`write_needed=false`（全部方向 reuse）时可直接跳过 B/C，把现有 `_resolved_directions.json` 原样传给 stage2-finalize。
 
@@ -505,7 +513,7 @@ runner 校验：result schema/kind 正确、**`collection_key`/`provisional_dire
 
 **稳定 resolved ID 策略（split child continuity）**：resolved direction ID 是用户确认过的稳定标识。fingerprint 变化触发 re-resolve 后，模型可能为同一概念 split 提出不同的 `split_target`——validator 只要求新 ID 不冲突，**绝不静默替换**已物化的 child：新 ID 会作为新的 material proposal 走用户确认（用户能看到旧 child 与新提案），未采纳前输入包保留旧 child 条目。因此 Stage 3/4 已选方向的 ID 只在用户明确采纳新提案时才会变化；不要为了「保持 ID」把 prior accepted 身份塞进 resolve model_input——那会让 fingerprint 依赖它自己盖章的输出，造成 reuse 无法收敛。
 
-**E. resolved 状态复用（acceptance #5）**：`stage2-resolve-plan` 每次都会读现有 `_resolved_directions.json`——某方向的逐方向 `input_fingerprint`（= 该方向 resolve job 规范化 model_input 的 SHA，见 C）与当前 facts 仍匹配**且条目 `acceptance=accepted`** → 该方向 `action=reuse`，**不发** resolve job；只有 fingerprint 变化、从未 resolve 过、或提案仍 pending（`proposed`）的方向重新 resolve。resolve 的证据域是教授级 candidate union 且 job 输入包含跨方向 affinity/候选证据，所以 union 内**任一**候选论文的 metadata/facts 变化（含他方向 pool 的 sidecar 改动导致 facts join 断裂）、以及其他方向的 profile/membership 变化，都会失效各方向的已接受缓存并触发 re-resolve——这正是跨方向误聚类修正不被缓存挡住的保证；而 analysis Markdown 编辑等不影响 resolve 输入的改动**不**触发 re-resolve。`stage2-finalize --resolved-directions` 对 sidecar fail closed：schema/kind 不对、professor 不匹配、任一方向 fingerprint 与当前 facts 不符（`resolved_directions_stale` / `resolved_directions_professor_mismatch`）、任何条目仍是 `proposed`（`resolved_directions_not_accepted`）、或 sidecar 的 preflight proof 与 facts 记录不一致（`resolved_directions_proof_mismatch` → `needs_refresh`，写盘前拒绝）→ 直接 error/needs_refresh，绝不静默应用旧文件、别的教授的文件、另一代 facts/preflight 的文件、或未经用户确认的提案。**#11 early preflight 证明的就是这套 authoritative state**：`cache.preflight` 现在记录逐 provisional 方向的 `resolved_direction_ids`/`merged_into` 映射与逐 resolved 条目的 accepted+freshness 指纹（split child 以自己的 stable resolved ID 保有 early reuse，merged 源方向凭 provenance mapping 继续可证明，都不会陷入 `preflight_record_missing` 循环）；candidate-union `resolution_evidence_guards` 覆盖任何可能进入归属判断的候选论文 artifact；`STAGE2_RESOLUTION_SEMANTICS_VERSION` 升到 2 使旧语义 pack 必须重走慢路径重新证明——因此 `reuse_all` 等价于「resolved state 仍可信」，而不是只证明旧的一对一 provisional 布局。
+**E. resolved 状态复用（acceptance #5）**：`stage2-resolve-plan` 每次都会读现有 `_resolved_directions.json`——某方向的逐方向 `input_fingerprint`（= 该方向 resolve job 规范化 model_input 的 SHA，见 C）与当前 facts 仍匹配**且条目 `acceptance=accepted`** → 该方向 `action=reuse`，**不发** resolve job；只有 fingerprint 变化、从未 resolve 过、或提案仍 pending（`proposed`）的方向重新 resolve。resolve 的证据域是教授级 candidate union 且 job 输入包含跨方向 affinity/候选证据，所以 union 内**任一**候选论文的 metadata/facts 变化（含他方向 pool 的 sidecar 改动导致 facts join 断裂）、以及其他方向的 profile/membership 变化，都会失效各方向的已接受缓存并触发 re-resolve——这正是跨方向误聚类修正不被缓存挡住的保证；而 analysis Markdown 编辑等不影响 resolve 输入的改动**不**触发 re-resolve。`stage2-finalize --resolved-directions` 对 sidecar fail closed：schema/kind 不对、professor 不匹配、任一方向 fingerprint 与当前 facts 不符（`resolved_directions_stale` / `resolved_directions_professor_mismatch`）、任何条目仍是 `proposed`（`resolved_directions_not_accepted`）、或 sidecar 的 preflight proof 与 facts 记录不一致（`resolved_directions_proof_mismatch` → `needs_refresh`，写盘前拒绝）→ 直接 error/needs_refresh，绝不静默应用旧文件、别的教授的文件、另一代 facts/preflight 的文件、或未经用户确认的提案。**#11 early preflight 证明的就是这套 authoritative state**：`cache.preflight` 现在记录逐 provisional 方向的 `resolved_direction_ids`/`merged_into` 映射与逐 resolved 条目的 accepted+freshness 指纹（split child 以自己的 stable resolved ID 保有 early reuse，merged 源方向凭 provenance mapping 继续可证明，都不会陷入 `preflight_record_missing` 循环）；candidate-union `resolution_evidence_guards` 覆盖任何可能进入归属判断的候选论文 artifact；`STAGE2_RESOLUTION_SEMANTICS_VERSION` 升到 3 使旧语义 pack（或缺少持久化 `relevant_keys` 的 pack）必须重走慢路径重新证明：普通 finalize 按当前 facts 重建正式成员、重新渲染受管正文，并且不沿用旧 validator 认证（新业务版本从第一轮校验重新开始，旧原始报告文件保留）；仅当没有新模型任务、成员/引用/叙事/标题均未变且旧 pack/render 绑定仍有效时，才保留原轮次、phase、问题与修订证据并更新 `pack_sha256` 绑定。因此 `reuse_all` 等价于「resolved state 仍可信」，而不是只证明旧的一对一 provisional 布局。
 
 **F. 跑 `stage2-plan`**（纯确定性）：
 ```bash
@@ -567,6 +575,8 @@ task(subagent_type: "professor-contact-style-validator",
 ```
 
 - 校验器**只报告不改写**，返回完整的原始 `result + files[] + notes`。把第 1 轮报告原样保存为 `validation-round-1.json`；不得摘抄、重排或改写字段，也不得补造 `results[]`、`direction_id` 或 `rounds`。
+- Stage 2 位置约定：报告每条 `issues[]` 的 `location` 必须能唯一定位受管正文的实际物理行（含 frontmatter 偏移），支持正整数、纯 ASCII 十进制行号字符串和精确写法“第N行”；短文本片段只在 `quote` 恰好命中当前正文一行时兼容。同一引文命中多行时，每一处分别输出一条并填该处行号，不得用“第N行及多处”“多处”统称多个位置——记录器会以 `validation_location_ambiguous` 拒绝并要求按实际行号逐条重做，期间不写校验状态、不改正文或输入包。协调代理不得手工改写原始报告；报告含糊只能由校验器在同一受管文本上重新给出合规报告。
+- 普通 `stage2-finalize` 重建了成员/引用或重新渲染正文时，旧 validator 认证不会带入新业务版本：新版本从第 1 轮重新记录，旧原始报告文件保留不动；同一业务版本内仍受第 1 轮 → 修订 → 第 2 轮上限约束。
 - 每次校验返回后，先且只先运行记录入口：
   ```bash
   python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-record-validation \
