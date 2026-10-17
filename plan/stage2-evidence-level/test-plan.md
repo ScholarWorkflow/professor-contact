@@ -1,8 +1,8 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- Test revision：contact-evidence-level-t24；对应 [执行计划 r4](implementation-plan.md)。
+- Test revision：contact-evidence-level-t25；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
-- 状态：第一关 PASS（t6 复核记录）；测试代码与完整命令已落实，实现符合性审核两套编号（外部 CLI 的 IR-01—IR-09 记于 §6；DSH 子代理的 IR 系列从 IR-10 起，逐轮记于 §7，编号以 §7 各轮小节为准）均已处置，处置后准备期复核在未实现的产品上得到 7 通过 / 11 业务失败（§5）。第二关待复核，第三关未执行；这里不宣称任何业务修复完成或测试通过。
+- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变）；t25 已针对第二关反馈修订测试代码与执行步骤，第二关待复核，第三关未执行。旧测试代码的准备期复核为 7 通过 / 11 业务失败（§5），不作为 t25 修改部分的执行结果；此前审核处置仅适用于各自记录版本（§6、§7），不冒充本次独立复核或业务通过。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
 ## 1. 唯一必测清单
@@ -12,7 +12,7 @@
 | T1 | 同一既有夹具覆盖固定卡 evidence/completed_part/remaining_gap 及禁锚区 evidence 中已知编号，可信标题/链接已在当前材料；另一个缺可信题名的引用 | 正式 finalize 输出题名/链接，上述机器字段/候选编号与事实不变，其他说明原意、作者 quote/translation、用户笔记不变；缺题名明确失败且不生成伪引用 | 既有 runner CLI 测试夹具，检查 Markdown 与 pack 必要字段 |
 | T2 | 当前受管正文上的固定区 blocking 与混合固定/叙事 blocking 原始报告；复用现有用户笔记/论文一览禁止区域报告 | 合法固定区第一轮失败确实登记；禁止区域报告继续拒绝且无 correction jobs；原始报告不改、非通过；refine-plan 无 jobs、明确交源/生成器处理，refine-finalize 不写；同内容重试不能清轮数。修复正式生成内容后普通 finalize 产生新正文，旧 PASS/失败不冒充新结果 | 既有 Stage2ValidationHandoffTests 的报告/正文夹具和 record/refine/finalize CLI |
 | T3 | 纯 narrative 第一次失败→现有合法修订→第二次仍失败（可用第二轮新固定卡阻挡覆盖其归属）；及已绑定报告对应的正文/pack被改 | 纯文字修订仍可完成且第二次终态不继续第三轮；不允许用过期报告改事实或覆盖手改文件 | 复用该模块已有 second_blocking_round_is_terminal、stale_render、changed_input_pack 对应测试；只调整受新登记分类影响的断言 |
-| T4 | 复用同一方向的 fulltext、abstract（有分析文件）、未确认（分析失败：记录级别为空，索引里残留旧 fulltext 字符串）及 OCR-only fulltext/facts unavailable 夹具，并将 §2 已有缺 analysis_level 兼容样例归入本项（有分析文件/PDF 仍为未确认，不复制样例）；有完整接受基线且 /tmp facts 已不存在，原正文已有有效绑定 validator PASS，仅 level/render 变更由正式 preflight→展示刷新，同一场景复用 T1 已知引用及正式 pack 中可信题名/链接；在同一来源夹具中依次作新增、删除、替换分析依据（含原缺分析路径出现、facts sidecar 保持缺失），并保留旧缺基线情形 | 三类计数/规范包一致，失败记录即使残留 fulltext、旧记录缺 analysis_level 即使有分析文件/PDF，均归未确认；同一 pack-only 刷新输出的固定卡 evidence/completed_part/remaining_gap 与禁锚区 evidence 均显示可信题名/链接，原始机器字段及候选编号不变；纯展示刷新使正文实质变化后，旧 validator PASS 不再被接受，不运行模型校验；等价重写仍不清轮数。纯展示后再预检不因过期包完整性摘要误 process，保留 assignment/模型指纹、不重签 proof、不额外生成分析/归属/时效任务；新增/删除/替换、无法比较的旧基线走原 process，不能误当 display-only；复用已有写前漂移/手改保护检查，不写不确定结果 | 既有 BaseEnv/preflight/pack-only 渲染及 guard 夹具，检查分流原因、pack/Markdown及任务记录；只覆盖这些直接反例，不交叉穷举，不跑真实模型 |
+| T4 | 复用同一方向的 fulltext、abstract（有分析文件）、未确认（存在旧分析文件，但没有成功分析索引记录，也没有有效级别）及 OCR-only fulltext/facts unavailable 夹具，并将 §2 已有缺 analysis_level 兼容样例归入本项（有分析文件/PDF 仍为未确认，不复制样例）；有完整接受基线且 /tmp facts 已不存在，原正文已有有效绑定 validator PASS，仅 level/render 变更由正式 preflight→展示刷新，同一场景复用 T1 已知引用及正式 pack 中可信题名/链接；在同一来源夹具中依次作新增、删除、替换分析依据（含原缺分析路径出现、facts sidecar 保持缺失），并保留旧缺基线情形 | 三类计数/规范包一致，无成功分析索引记录即使残留分析文件、旧记录缺 analysis_level 即使有分析文件/PDF，均归未确认；同一 pack-only 刷新输出的固定卡 evidence/completed_part/remaining_gap 与禁锚区 evidence 均显示可信题名/链接，原始机器字段及候选编号不变；纯展示刷新使正文实质变化后，旧 validator PASS 不再被接受，不运行模型校验；等价重写仍不清轮数。预检后来源变动或受管正文被人工修改时，展示刷新必须拒绝写入；纯展示后再预检不因过期包完整性摘要误 process，保留 assignment/模型指纹、不重签 proof、不额外生成分析/归属/时效任务；新增/删除/替换、无法比较的旧基线走原 process，不能误当 display-only；复用已有写前漂移/手改保护检查，不写不确定结果 | 既有 BaseEnv/preflight/pack-only 渲染及 guard 夹具，检查分流原因、pack/Markdown及任务记录；只覆盖这些直接反例，不交叉穷举，不跑真实模型 |
 
 T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装、全教授流程或完整测试模块回归；本次未改安装和模型业务。报告中“四位教授”与“10+1”是缺陷背景，不能强制采集私人材料或追加四次模型验收。
 
@@ -24,7 +24,7 @@ T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装
 |---|---|---|
 | T1 | `test_stage2_evidence_level.FixedEvidenceDisplayTests.test_fixed_evidence_renders_trusted_references_without_touching_machine_fields` | 固定卡 evidence/completed_part/remaining_gap 与禁锚区 evidence 显示可信题名/链接；pack 机器字段、候选编号、quote、用户笔记逐字不变 |
 | T1 | `test_stage2_evidence_level.FixedEvidenceDisplayTests.test_fixed_evidence_without_trusted_title_fails_instead_of_inventing_one` | 缺可信题名时受影响生成明确失败，不写伪引用 |
-| T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job` | 固定区 blocking 第一轮登记为 needs_correction，refine-plan 零 jobs 并交源/生成器，refine-finalize 不写；原始报告字节不变、失败不写成通过 |
+| T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job` | 固定区 blocking 第一轮登记为 needs_correction，refine-plan 零 jobs 并交源/生成器，refine-finalize 不写；原始报告字节不变；随后模拟源数据修正并经普通 stage2-plan/finalize 生成新正文，旧失败不得被当作新 PASS |
 | T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_mixed_fixed_and_narrative_blocking_creates_no_rewrite_job` | 混合固定/叙事 blocking 同样零 rewrite jobs，不把固定区交给模型 |
 | T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_repeating_the_same_fixed_card_report_does_not_clear_the_round` | 同内容重试不能清轮数，也不写入通过结果 |
 | T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_forbidden_user_note_and_paper_table_keep_their_rejection` | 用户笔记、论文一览仍被拒绝，无 correction jobs，正文与 pack 不变 |
@@ -34,11 +34,11 @@ T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装
 | T3 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_report_for_stale_render_is_rejected_without_pack_write` | 正文被改后旧报告被拒绝且零写入 |
 | T3 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_refinement_rejects_changed_input_pack` | 输入包变化后旧报告被拒绝、无修订任务 |
 | T2 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_nonrepairable_user_note_does_not_create_a_correction_job` | 既有禁止区域报告拒绝与零修订任务断言继续成立 |
-| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_counts_follow_the_recorded_analysis_level` | 同一方向集合内三类计数与规范包级别一致；失败分析（文件与索引仍留 fulltext）计未确认，OCR-only 全文（有分析/OCR 文件、无 facts）仍计全文 |
+| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_counts_follow_the_recorded_analysis_level` | 同一方向集合内三类计数与规范包级别一致；没有成功分析索引记录（即使残留分析文件）计未确认，OCR-only 全文（有分析/OCR 文件、无 facts）仍计全文 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_legacy_records_without_level_count_as_unconfirmed` | 缺 analysis_level 的旧记录即使有分析文件也计未确认 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_display_only_level_change_refreshes_without_model_work` | 完整接受基线下（被统计方向集合已含 OCR-only 论文）仅 level 变化判为展示刷新；刷新后统计与规范包级别更新、旧 PASS 不再被接受、assignment/叙事/模型指纹保留、validator 记录与 freshness 缓存字节不变、下次预检不误报包完整性 |
-| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_source_change_routes_back_to_the_process_path` | 原缺分析路径出现（facts sidecar 仍缺失）时走原 process |
-| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_deleted_analysis_source_also_routes_back_to_process` | 分析依据被删除时同样走原 process |
+| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_source_change_routes_back_to_the_process_path` | 预检先确认仅 level 变化可刷新，再新增原缺分析路径（facts sidecar 仍缺失）；旧预检不能再用于写入，重新预检走原 process |
+| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_deleted_analysis_source_also_routes_back_to_process` | 预检后人工修改受管正文时拒绝刷新、保留人工内容；删除分析依据后走原 process |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_replaced_analysis_source_routes_back_to_process` | 分析文件换址（索引路径与旧文件同时变化）时走原 process |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_pack_without_a_comparable_baseline_is_not_refreshed_as_display_only` | 旧包缺可比较业务基线走原 process |
 
@@ -47,10 +47,10 @@ T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装
 | §1 预期 | 覆盖方式 |
 |---|---|
 | T2 原始报告不改 | `assert_source_owner_handoff` 比较报告字节；`test_repeating_...` 断言重复登记不写通过结果 |
-| T2 修复生成内容后普通 finalize 产生新正文、旧 PASS/失败不冒充 | T4 展示刷新用例断言旧 PASS 在验证入口被拒绝（`validator_not_accepted`）；轮次终态不冒充新结果由本 recipe 的既有 `test_stage2_second_blocking_round_is_terminal` 覆盖 |
+| T2 修复生成内容后普通 finalize 产生新正文、旧 PASS/失败不冒充 | T2 `test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job` 在固定区失败后修改源资料，重走普通 stage2-plan/finalize，检查新正文生成及旧校验失效；T4 另检查仅展示刷新时旧 PASS 不可复用 |
 | T4 等价重写仍不清轮数 | T3 用例断言 `round_retained`、`round == 1`、`phase == awaiting_second_validation` |
 | T4 不重签旧 resolved proof | 本夹具无 resolved 方向、无 resolved proof，该项不适用于 T4 场景，按依据不设断言；展示刷新用例改为断言 `validator` 记录与 freshness 缓存不被重写 |
-| T4 复用写前漂移/手改保护 | 产品已有的写前漂移与 `managed_write` 手改保护由 `test_stage2_style_validation_handoff` 的 `stale_render`／`changed_input_pack` 选择器覆盖（本 recipe 已纳入），不重复证明 |
+| T4 复用写前漂移/手改保护 | T4 来源新增用例在 level-only 预检后才添加来源，并以旧预检调用正式展示刷新，确认拒绝写入；T4 删除来源用例在预检后人工修改受管正文，确认拒绝覆盖。既有 `stale_render`／`changed_input_pack` 选择器继续检验原有登记与文字修订保护 |
 | T4 不额外生成分析/归属/时效任务 | 展示刷新用例断言 freshness 缓存字节不变且 validator 记录不变；无新任务记录即无新任务 |
 
 ## 3. 可执行 recipe
@@ -88,7 +88,9 @@ python3 -m unittest -v \
   test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_refinement_rejects_changed_input_pack \
   test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_nonrepairable_user_note_does_not_create_a_correction_job \
   > "$RUN_ROOT/recipe.txt" 2>&1
-echo "exit=$? run_root=$RUN_ROOT"
+status=$?
+echo "exit=$status run_root=$RUN_ROOT"
+exit "$status"
 ```
 
 - 上面 18 个选择器与 §2 的选择器表一一对应（T1 两项、T2 四项、T3 一项、T4 七项、既有 T2 一项、既有 T3 三项）；`Ran 18 tests` 是本 recipe 的预期项数。
@@ -102,10 +104,10 @@ echo "exit=$? run_root=$RUN_ROOT"
 - 接口假设（实现方需对齐，不一致时由测试计划工程师按执行计划调整，不改名迁就；这些假设是执行计划 r4 §3.2、§3.3 的实现接口，不是新增验收要求）：
   1. 仅展示刷新入口取 `stage2-refresh-display --professor-dir <dir> --preflight-file <file>`，成功时 `status=ok` 且 `display_refreshed=true`。
   2. preflight 顶层 `action` 对仅 level 变化返回 `refresh_display`，对来源出现、删除、替换或基线不可比较返回 `process` 并给出具体 `reason_codes`；方向级返回形状不作断言。
-  3. 固定区阻挡的责任交接结果里，`reason_code`/`message`/`detail` 至少一处同时写出责任方（源／生成器／生成方／数据准备）与应做的动作（修复／修正／重新生成／处理／补齐等），且不出现 `no_failed_directions`、`awaiting_second_validation`。
+  3. 固定区阻挡的责任交接结果中，合并阅读 `reason_code`、`message`、`detail` 应能确认责任方（源／生成器／生成方／数据准备）及应做的动作（修复／修正／重新生成／处理／补齐等）；允许分在不同字段，不强制具体字段布局。结果不得误报 `no_failed_directions`、`awaiting_second_validation`。
   4. 展示刷新后重绘的正文与旧 validator 的 `render_sha256` 绑定不同，旧 PASS 在验证入口被拒绝（预检给出 `validator_not_accepted`）；包内不得出现 `pack_integrity_mismatch`，方向级 `action` 与 validator 的存储形式不作断言。
   5. 接受基线按来源 key 与类型记录路径、存在状态和成功/可用状态，使新增、删除、换址在预检可见；缺可信题名走明确失败结果（`status != ok` 且有 `reason_code`/`message`）。
-  6. 固定区阻挡的 `stage2-refine-plan` 以成功结果返回：`status == "ok"`、`jobs == []`、`write_needed == false`，责任说明写在 `reason_code`/`message`/`detail` 之一；`stage2-refine-finalize` 返回零 `rewritten` 且不改动 pack 与正文。
+  6. 固定区阻挡的 `stage2-refine-plan` 要返回明确的可处理交接结果：`jobs == []`、不要求写入（`write_needed` 不为 true），责任及动作可分列于返回字段，`status` 的具体字符串不作额外限制；`stage2-refine-finalize` 返回零 `rewritten` 且不改动 pack 与正文。
 - 未改动范围：U2/U3/U4、Stage 3—5、安装与 Nix/APM、真实模型或教授流程均未纳入，也未借此要求全仓回归。
 
 ## 5. 复核与结果
@@ -114,20 +116,31 @@ echo "exit=$? run_root=$RUN_ROOT"
 
 记录格式保持简单：实际提交、T1—T4逐项通过/业务失败/无法判断/未执行、实际命令与输出位置、复用结果来源、剩余问题及负责人。原始日志和临时数据在仓库外，公开提交仅必要脱敏摘要。
 
-准备期复核（本地测试工程师，非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），命令为上面 §3 的命令，结果目录 `/tmp/contact-evidence-level.XcpOlvbX`（`recipe.txt`），退出码 1，`Ran 18 tests`、`FAILED (failures=11)`。
+历史准备期复核（旧测试代码，非第三关正式执行；t25 改动部分尚未复跑）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），命令为上面 §3 的命令，结果目录 `/tmp/contact-evidence-level.XcpOlvbX`（`recipe.txt`），退出码 1，`Ran 18 tests`、`FAILED (failures=11)`。
 
 - 通过 7 项：T3 四项（`NarrativeRoundBoundTests` 一项与三个既有保护选择器）、T2 两项（既有禁止区域选择器与 `test_forbidden_user_note_and_paper_table_keep_their_rejection`）、T4 一项（缺基线走 process）。
 - 业务失败 11 项，按实际失败原因分组：
   - T1 两项：展示用例首个断言失败在固定卡「后续论文依据」行仍含 `AAAA1111`（未做题名/链接替换），禁锚区断言在该次运行中未执行，不据此判断；缺可信题名用例仍返回 `status=ok` 并生成分析文件（未拒绝）。
   - T2 三项：三项 `record` 均返回 `status=error`（产品尚未允许登记），其中 `test_repeating_...` 的日志给出 `reason_code=validation_issue_not_repairable`；因此 refine 分流无法进行。
-  - T4 六项：`test_counts_...` 为 `全文级 3 篇`（按文件存在统计，未按记录级别）；`test_legacy_...` 为 `全文级 2 篇`（同上）；`test_display_only_...` 与三个来源变化用例为 `reuse_all`（未实现展示刷新与来源变化识别）。
+  - T4 六项：旧版 `test_counts_...` 为 `全文级 3 篇`（按文件存在统计，未按记录级别）；`test_legacy_...` 为 `全文级 2 篇`（同上）；`test_display_only_...` 与三个来源变化用例为 `reuse_all`（未实现展示刷新与来源变化识别）。
 - 运行记录对应关系：本节数字来自测试提交 `70e8eef`（`c4afa17` 未改测试代码）、按 §3 逐条 18 个选择器执行的完整运行 `/tmp/contact-evidence-level.XcpOlvbX`（`recipe.txt`）。此前各版记录保留：`/tmp/contact-evidence-level.oWwoE7gZ`（提交 `70e8eef`，18 项、7 通过 / 11 失败）、`/tmp/contact-evidence-level.VgZ9JU6w`（提交 `dca3160`，同类）、`/tmp/contact-evidence-level.h3SBpUMF`（提交 `3595a2c`，同类）、`/tmp/contact-evidence-level.M5wh17Uv`（提交 `3595a2c`，同类）。夹具在 `c61c26a`、`2d00061`、`10497ff`、`469aa83` 上只改了展示刷新与来源用例；`dca3160` 另改了 T2 责任交接断言；包含该改动的版本已按 §3 跑过完整 18 项（`XcpOlvbX`），但该方法在该次运行中于首次登记断言处（`record` 返回 `status=error`）即失败，交接与 refine 部分未被执行，因此记录中没有它的结果，T2 分类也不依赖它。未受影响选择器按上述记录复用，不重复运行。
 - 作废的早期记录：`/tmp/contact-evidence-level.oa4NuJoS` 与 `/tmp/contact-evidence-level.h3SBpUMF` 中因夹具未真正改变预检输入而作废的来源变化项不计入本轮分类，原日志保留。
 - 该记录只用于确认选择器可执行、判定 T3 已成立和暴露产品缺口，不替代第三关正式执行，也不作为任何通过结论。
 
 修订边界：t19 按 DSH 子代理的实现符合性审核（IR-10—IR-18）改用展示后仍存在的固定区引文、让计数与展示刷新夹具自洽、保留机器字段与来源元数据，并补齐 §1 覆盖关系与接口假设；t20 按第二轮 DSH 复核（IR-19—IR-21）把 §3 命令改为逐条 18 个选择器、补齐 §2 与 §1 的描述并整理审核记录；t21 按第三轮 DSH 复核（IR-22—IR-26）同步文档标签、删除过期复跑说明并限定 §5 的归因范围；t24 按第六轮 DSH 复核的两项可选观察清理措辞（指明实际失败的断言、§7 第四轮小结指向 §5 说明）并同步 DSH 摘要指针；t22 按第四轮 DSH 复核（IR-27、IR-28）修正状态行编号范围与夹具改动范围的记载，另外采纳三条说明性观察（§5 的 T2 归因限定、补记 `oWwoE7gZ` 运行、DSH 结论摘要落盘并在 §6/§7 指向），并整理 §3 列表排版。四次修订都不改变 t6 已批准的 T1—T4 范围与预期结果与测试代码语义。执行计划 r4 已获[正式批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516)，本次不重开其未受影响关口。
 
-交接：T1/T2/T4 的 11 项业务失败交产品实现负责人修复，实现落地后由本地测试工程师同步受影响选择器并做第二关复核材料，再由本地执行工程师按第三关正式执行；T3 与既有禁止区域结论在当前产品版本已成立，无需重跑。
+交接：旧准备期记录中的 T1/T2/T4 业务失败交产品实现负责人；t25 修正了相关测试输入与方法，变更后的用例须在实现落地后获得有效结果。由本地测试工程师提交第二关可执行性复核材料，确认后由本地执行工程师按第三关正式执行；未改变的 T3 与既有禁止区域结论在同一产品版本可复用。
+
+### t25 修订记录
+
+本轮依据第二关反馈，仅修改原有 T1—T4 范围内的测试方法和执行步骤：
+
+1. T4 未确认样例移除自相矛盾的成功 `level=fulltext` 索引记录，保留已存在的分析文件，直接检查“没有成功索引记录不能仅凭文件计全文”。未发明新的分析失败状态字段，也未把 `facts_state` 当分析结果。
+2. T2 固定区阻挡用例追加“修正源资料 → 普通 Stage 2 生成新正文 → 旧校验不被接受”的既定要求。责任方和动作分字段检验，避免强制未获批准的返回字段布局。
+3. T4 既有来源新增/删除用例内复用已接受包，覆盖“预检后来源变化、人工修改正文 → 展示刷新拒绝写入”；保留现有来源分流测试，不增加选择器。
+4. 执行命令保存并向调用方返回单元测试真实退出码；失败日志仍留在独立 `/tmp` 目录。
+
+新增测试数仍为 14，选择器仍为 18，均属于第一关批准的 T1—T4。未改变业务目标、未修改产品代码、未执行本轮正式测试；t24 及之前的审核和准备期运行只按其实际版本引用。第二关待修订复核，第三关未执行。本对话没有可用的独立子代理审核能力，未声称独立批准。
 
 ## 6. 实现符合性审核处置
 
