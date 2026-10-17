@@ -83,6 +83,7 @@ If `folder_path` missing → return the error JSON.
 
 ## Tools
 1. `skill` — load **`zotero-read` FIRST**（`skill(name: "zotero-read")`）for `get_item_details` / `get_item_abstract` / `get_content`（Zotero 只是论文元数据/摘要/PDF 附件的数据源，不做方向成员扫描）。OCR 用到 `skill(name: "vision-tools")`（glance --ocr，含 VISION_CHAIN 兜底 + [?] 规则）与 `skill(name: "llm-ocr-refresh")`（复用判据/图描述约定；**只借机制，不写回教科书 text.md、不同步知识库**）。`kb_import=true` 时加载 `skill(name: "kb-importer")`（拿 v2 描述文件契约和 `kb_import.mjs` 调用约定）。
+   - 从本次实际加载的 `zotero-read/SKILL.md` 的父目录取得绝对 `<zotero-read-skill-dir>`（不从 cwd、业务目录或开发 checkout 推算，不写死 `.apm`）；所有 router 调用传 `--zotero-read-skill-dir "<zotero-read-skill-dir>"`，由 router 以 argv 数组执行公开入口 `uv run "<zotero-read-skill-dir>/scripts/zotero_item_export.py"`，不依赖 PATH 上的 `zotero-item-export`，也不把整串 `uv run …` 塞入只接受单 executable 的 `--exporter`。
 2. Delegation — delegate only to the installed named agents described below and wait for their results.
 3. bash — **`<professor-contact-skill-dir>` = 本 skill 在当前 workspace 中的安装目录（即安装投影里本 skill 的 `SKILL.md` 与其 `scripts/` 所在目录；consumer 安装投影为 `.agents/skills/professor-contact/`）。下列确定性 runner 一律 `python3 <professor-contact-skill-dir>/scripts/…` 在该目录内执行，绝不经 user-global registry wrapper（`skillrepo exec`）、开发 checkout 或 workspace 外路径执行**：`python3 <professor-contact-skill-dir>/scripts/contact_targets.py resolve ...`（deterministic target resolver；stdout 只消费 compact JSON）；`python3 <professor-contact-skill-dir>/scripts/contact_state.py <子命令>`（runner）；`python3 <professor-contact-skill-dir>/scripts/stage2_input_router.py ...`（normalized abstract fallback）；`python3 <professor-contact-skill-dir>/scripts/stage2_chatgpt_handoff.py build|import|local-lease-acquire|local-lease-release ...`（纯确定性 ZIP transport + Stage-2 单 writer 协调；stdout 只消费 compact JSON）；已安装 `paper-analysis` 的绝对 `future_work.py` 仅运行 `prepare/merge-ocr/validate/finalize` 确定性 helper，且**一律按 `uv run "<absolute future_work.py>" ...` 调用，绝不把脚本本身当可执行文件**；handoff import 的 facts finalize 自动使用与该 `future_work.py` 同目录安装的 `facts.py`（两者必须来自同一 paper-analysis 安装，不得混用版本）；一切真实 Zotero HTTP/MCP 访问（含 Step 2.7 的 connectivity probe）一律经 `python3 <professor-contact-skill-dir>/scripts/stage2_zotero_rpc.py` 的 `probe`/`mcp`/`http` 子命令（Step 2.7 Transport boundary），绝不用 curl 直连 Zotero；PDF 质量判定/首页提取；`python3` JSON；`shasum -a 256`（仅用于 facts 指纹核对）；`date`。**handoff build/import/lease 自身绝不 spawn 模型、vision、OCR 或网络。**
 4. `question` — prompt the user to open Zotero when offline；cost gate（Step 5.4）。
@@ -261,7 +262,7 @@ For each flagged direction:
    - handoff carrier 只为 portable 外部执行选**已存在文件**，不触发新 OCR：
      1. 当前有 PDF → bundle 直接带原 PDF，`carrier=pdf, level=fulltext`。即使质量判定显示扫描/坏页也**不要先 OCR**；外部可按 job/future-work prepare 的 OCR 页提示处理。
      2. 无 PDF、但已有可复用 `_ocr/*.txt` → `carrier=ocr, level=fulltext`（只复用既有文件）。
-     3. 两者都无 → 仅对这些 keys 调一次 `stage2_input_router.py` 的 normalized abstract exporter 分支，得到 `carrier=abstract_json, level=abstract`；不读取/回显 JSON 正文。
+     3. 两者都无 → 仅对这些 keys 调一次 `stage2_input_router.py --zotero-read-skill-dir "<zotero-read-skill-dir>"` 的 normalized abstract exporter 分支，得到 `carrier=abstract_json, level=abstract`；不读取/回显 JSON 正文。
    - `analysis_relpath` 必须是普通 paper-analysis 本来会写入的教授目录相对路径：upgrade job 复用 index 现有 `file` 的相对路径；新 job 按 paper-analysis 当前保存规则 `<论文分析>/<第一作者>/<净化标题>.md` 计算。绝不把 handoff 结果放到第二套专用分析目录。
    - `research_direction` 只含 `{collection_key,name_ja,name_zh,user_note}`；**绝不 profile**。
    - **PDF fulltext 的 future-work 契约是强制项**：对 `carrier=pdf` 必须先运行 `uv run "<paper-analysis future_work.py absolute path>" prepare "<pdf>" --debug-dir "<tmp>"`。这是确定性 helper，不做 OCR/模型；必须把该 debug 目录里的 `prepare.json` + `candidates.json` 绝对路径写入 job。builder 会拒绝缺 prepare/candidates 的 PDF fulltext job，避免 wait 导入后再落回 legacy/gap-only。
@@ -328,9 +329,10 @@ For each flagged direction:
    - `wait` 路径永远不能到这里，除非 caller 后来明确改为 `continue`。
 
 6. **本地 route → `paper-analysis full`（只处理 execution pass 剩余 jobs，批量并发 ≤3；local-writer lease 必须仍持有）**：
-   - route 调用契约保持原样，继续一次批量调用：
+   - 使用已加载的 `zotero-read` 实际安装目录，继续一次批量调用：
      ```bash
      python3 <professor-contact-skill-dir>/scripts/stage2_input_router.py \
+       --zotero-read-skill-dir "<zotero-read-skill-dir>" \
        --papers /tmp/<教授名>_<collection_key>_paper_routes.json \
        --output-dir /tmp/professor-contact-paper-inputs/<教授名>/<collection_key>
      ```

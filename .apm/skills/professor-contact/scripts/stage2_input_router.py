@@ -50,7 +50,8 @@ def route_existing(item_key: str, ocr_path: str | None, pdf_path: str | None) ->
     return None
 
 
-def export_missing(item_keys: Iterable[str], output_dir: Path, executable: str = "zotero-item-export") -> dict[str, PaperInput]:
+def export_missing(item_keys: Iterable[str], output_dir: Path, executable: str | None = None, *,
+                 zotero_read_skill_dir: Path | None = None) -> dict[str, PaperInput]:
     keys = list(dict.fromkeys(key.strip() for key in item_keys if key and key.strip()))
     if not keys:
         return {}
@@ -77,7 +78,18 @@ def export_missing(item_keys: Iterable[str], output_dir: Path, executable: str =
     if not clean_keys:
         return routed
 
-    command = [executable, *clean_keys, "--output-dir", str(output_dir)]
+    if executable is not None:
+        exporter_argv = [executable]  # Legacy override remains one executable.
+    else:
+        skill_dir = Path(zotero_read_skill_dir).expanduser() if zotero_read_skill_dir else None
+        script = skill_dir / "scripts" / "zotero_item_export.py" if skill_dir else None
+        if script is None or not script.is_absolute() or not script.is_file():
+            reason = "exporter unavailable: provide the loaded zotero-read skill directory with scripts/zotero_item_export.py"
+            routed.update({key: PaperInput(key, None, None, None, "error", reason) for key in clean_keys})
+            return routed
+        exporter_argv = ["uv", "run", str(script)]
+
+    command = [*exporter_argv, *clean_keys, "--output-dir", str(output_dir)]
     try:
         result = subprocess.run(command, text=True, capture_output=True, check=False)
     except OSError as exc:
@@ -113,7 +125,8 @@ def export_missing(item_keys: Iterable[str], output_dir: Path, executable: str =
     return routed
 
 
-def route_batch(papers: list[dict], output_dir: Path, executable: str = "zotero-item-export") -> list[PaperInput]:
+def route_batch(papers: list[dict], output_dir: Path, executable: str | None = None, *,
+                zotero_read_skill_dir: Path | None = None) -> list[PaperInput]:
     results: dict[str, PaperInput] = {}
     missing: list[str] = []
     for paper in papers:
@@ -123,7 +136,8 @@ def route_batch(papers: list[dict], output_dir: Path, executable: str = "zotero-
             results[key] = existing
         else:
             missing.append(key)
-    results.update(export_missing(missing, output_dir, executable=executable))
+    results.update(export_missing(missing, output_dir, executable=executable,
+                                 zotero_read_skill_dir=zotero_read_skill_dir))
     return [results[str(paper["item_key"])] for paper in papers]
 
 
@@ -137,14 +151,18 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--papers", type=Path, required=True, help="JSON array with item_key/ocr_path/pdf_path")
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--exporter", default="zotero-item-export")
+    exporter = parser.add_mutually_exclusive_group()
+    exporter.add_argument("--zotero-read-skill-dir", type=Path,
+                          help="Absolute directory of the currently loaded zotero-read SKILL.md")
+    exporter.add_argument("--exporter", help="Override with one executable (not a shell command)")
     return parser
 
 
 def main() -> None:
     args = _parser().parse_args()
     papers = json.loads(args.papers.read_text(encoding="utf-8"))
-    routes = route_batch(papers, args.output_dir, executable=args.exporter)
+    routes = route_batch(papers, args.output_dir, executable=args.exporter,
+                         zotero_read_skill_dir=args.zotero_read_skill_dir)
     print(json.dumps({"status": "ok" if all(r.status == "ok" for r in routes) else "partial", "routes": [dict(asdict(r), gap_only_allowed=r.gap_only_allowed) for r in routes]}, ensure_ascii=False, separators=(",", ":")))
 
 

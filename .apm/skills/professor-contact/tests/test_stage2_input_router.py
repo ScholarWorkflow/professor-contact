@@ -1,10 +1,12 @@
 import importlib.util
 import json
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "stage2_input_router.py"
@@ -72,6 +74,46 @@ class Stage2InputRouterTests(unittest.TestCase):
         self.assertNotIn("SECRET ABSTRACT BODY", prompt)
         self.assertFalse(routes[0].gap_only_allowed)
 
+    def test_loaded_skill_uses_uv_argv_and_preserves_partial_batch(self):
+        skill_dir = self.root / "installed skills" / "zotero-read"
+        script = skill_dir / "scripts" / "zotero_item_export.py"
+        script.parent.mkdir(parents=True)
+        script.touch()
+        self.out.mkdir()
+        (self.out / "B.json").write_text("stale", encoding="utf-8")
+
+        def export(command, **kwargs):
+            self.assertEqual(command, ["uv", "run", str(script), "A", "B", "--output-dir", str(self.out.resolve())])
+            self.assertFalse((self.out / "B.json").exists())
+            (self.out / "A.json").write_text("{}", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 1, json.dumps({
+                "status": "partial", "errors": [{"item_key": "B", "reason": "no abstract"}]}), "")
+
+        with mock.patch.object(router.subprocess, "run", side_effect=export) as run:
+            routes = router.route_batch(
+                [{"item_key": "A"}, {"item_key": "B"}, {"item_key": "A"}],
+                self.out, zotero_read_skill_dir=skill_dir)
+        run.assert_called_once()
+        self.assertEqual([r.status for r in routes], ["ok", "error", "ok"])
+        self.assertEqual(routes[0].carrier, "abstract_json")
+        self.assertEqual(routes[1].reason, "no abstract")
+
+    def test_missing_or_relative_skill_is_error_without_path_fallback(self):
+        for skill_dir in (None, Path("relative/zotero-read"), self.root / "missing"):
+            with self.subTest(skill_dir=skill_dir), mock.patch.object(router.subprocess, "run") as run:
+                route = router.route_batch([{"item_key": "A"}], self.out,
+                                           zotero_read_skill_dir=skill_dir)[0]
+                run.assert_not_called()
+                self.assertEqual(route.status, "error")
+                self.assertIsNone(route.paper)
+                self.assertIn("exporter unavailable", route.reason)
+
+    def test_local_carrier_does_not_require_exporter_configuration(self):
+        with mock.patch.object(router.subprocess, "run") as run:
+            route = router.route_batch([{"item_key": "A", "pdf_path": str(self.pdf)}], self.out)[0]
+        run.assert_not_called()
+        self.assertEqual(route.carrier, "pdf")
+
     def test_export_failure_is_explicit_and_cannot_build_prompt(self):
         failed = self.root / "failed-exporter"
         failed.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
@@ -115,6 +157,12 @@ class Stage2InputRouterTests(unittest.TestCase):
         self.assertTrue(route.gap_only_allowed)
 
     def test_agent_execution_contract_uses_router_and_forbids_raw_item_key_fallback(self):
+        for target in ("opencode", "codex"):
+            agent = AGENT.parents[3] / f"professor-contact-{target}" / ".apm" / "agents" / AGENT.name
+            text = agent.read_text(encoding="utf-8")
+            self.assertIn('`zotero-read/SKILL.md` 的父目录', text)
+            self.assertIn('stage2_input_router.py --zotero-read-skill-dir "<zotero-read-skill-dir>"', text)
+            self.assertIn('--zotero-read-skill-dir "<zotero-read-skill-dir>" \\', text)
         text = AGENT.read_text(encoding="utf-8")
         self.assertIn("stage2_input_router.py", text)
         self.assertIn("--papers /tmp/<教授名>_<collection_key>_paper_routes.json", text)
