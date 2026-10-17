@@ -1,6 +1,6 @@
 # professor-contact Nix 交付执行计划
 
-- Plan revision: R1（2026-10-16）
+- Plan revision: R2（2026-10-17；收简固定入口，不新增技能 bin 目录或通用命令分派层）
 - Proposed review status: pending
 - Requirement revision: 用户本轮授权的五项 Nix 计划交付；[Nix skill 交付规则](https://app.notion.com/p/3fb0101a85f38185b17adb417590e50e)，2026-10-16 12:19 UTC 版本。
 - Target repository revision: `305bc08f8b186672108cffbba0293d249bc8b4b2`（main）。此 PR 只有执行/测试计划，没有实现或测试结果。
@@ -47,7 +47,7 @@ professor-topic-clustering 的 preview 是既有输入边界，contact 不负责
 
 ### 4.1 单源完整文件
 
-从 `.apm/skills/professor-contact/` 完整复制（含隐藏辅助文件及 docs；不抽取 SKILL.md 充数）。使用构建时私有 staging 添加 bin/ 固定入口，源树不改为 Nix 专属副本。生成角色读取 `.apm/agents/` 的七个文件：professor-contact、downloader、idea-generator、selection、email-generator、email-validator、style-validator；analyzer 只取 `packages/professor-contact-codex/.apm/agents/`，不混入 OpenCode analyzer。
+从 `.apm/skills/professor-contact/` 完整复制（含隐藏辅助文件及 docs；不抽取 SKILL.md 充数）。保留现有 scripts/、docs/ 布局，在构建时私有 staging 固定必要入口的运行环境；不新增技能 bin/ 目录，不维护 Nix 专属业务副本。生成角色读取 `.apm/agents/` 的七个文件：professor-contact、downloader、idea-generator、selection、email-generator、email-validator、style-validator；analyzer 只取 `packages/professor-contact-codex/.apm/agents/`，不混入 OpenCode analyzer。
 
 读取 YAML frontmatter 的 name/description，正文作 developer_instructions。源中 OpenCode model/temperature/permission 不照搬为 Codex 安全配置，也不发明映射；保留正文的读写/网络/非递归业务限制。未知需要的 Codex字段须交共享层 owner，不静默丢弃已批准功能。
 
@@ -55,16 +55,16 @@ professor-topic-clustering 的 preview 是既有输入边界，contact 不负责
 
 ### 4.2 安装位置与运行环境
 
-自有 bin 名：`contact-targets`、`contact-stage1`、`contact-state`、`stage2-input-router`、`stage2-chatgpt-handoff`、`stage2-zotero-rpc`。shell launcher 从自身安装位置取 skill root，用固定 Python 执行原 scripts，参数 argv 原样转交。内部 imports `_stage2_chatgpt_handoff_impl.py`、`stage5_immutable.py` 等随完整资源保留。configure_opencode_depth.py 仅保留资源，不在 Codex 激活时运行。
+保持原 `scripts/*.py`、相邻 imports 与资源位置。只为实际被 skill/role 调用的六个自有脚本提供同目录、同 basename 的薄入口（例如 `scripts/contact_targets` → `scripts/contact_targets.py`、`scripts/stage2_input_router` → `scripts/stage2_input_router.py`；其余为 contact_stage1、contact_state、stage2_chatgpt_handoff、stage2_zotero_rpc）。入口从自身位置解析相邻原脚本并原样传递 argv；不增加另一个命令族、子命令分派器或 bin/ 目录。configure_opencode_depth.py 只保留资源，不在 Codex 激活时运行。
 
-先在唯一源 skill/role 中统一采用上述 producer-owned 安装相对入口，并为非 Nix 保留等价 Python/uv 后端；原直接脚本接口继续有效。Nix 仅固定这些共同 launcher 的解释器/环境，角色正文原样生成，不在 Nix 副本改写业务命令或编排。用户参数、scope、顺序与委派不变。源入口匹配失败时明确中止构建，不宽泛替换全部 python/uv 字样。
+在唯一源 skill/role 中仅把上述六个脚本的调用前缀调整为同目录薄入口，保留参数、scope、顺序与委派。源入口的非 Nix 后端沿用原 Python/uv；Nix 在 staging 固定该入口的解释器与直接程序路径。原 `.py` 接口继续保留，源角色正文原样生成，不在 Nix 副本改写业务命令或编排。只改 shebang 而仍执行 `python3 script.py` 不会固定解释器，不能作为替代。源入口匹配失败明确中止构建，不宽泛替换全部 python/uv 字样。
 
-- router 共用 launcher 的非 Nix 后端原样传递 loaded-skill 参数；Nix 后端把该 locator 绑定为同一锁定 Zotero包固定 `${zoteroTools}/bin/zotero-item-export`，使用既有 `--exporter`，不与互斥的 `--zotero-read-skill-dir` 同传；显式 --exporter 保持原单 executable override 语义。该差异只在launcher，源analyzer始终调用同一入口。
-- handoff 源运行适配点 `_run_future_work` 增加仅由共用 launcher 注入的可选 `CONTACT_PAPER_PYTHON` 单 executable；设置时以 `[该固定Python, script, *args]` 调用，未设置仍用原 `[uv, run, script, *args]`。Nix launcher绑定固定pdfx Python；script参数继续为已安装 paper-analysis 的 scripts/future_work.py，facts仍同目录解析，所有验证/状态/错误/租约逻辑不改。环境取固定 pdfcore `nix/pdfx.nix` 的现有 `python` 返回值，不强制上游增加新 public python 属性。不要让 `.py` 走可执行位或把 shell 串塞进 argv。
-- analyzer 的直接helper/质量/vision/session调用经共用 `bin/paper-helper`、`bin/pdfx`、`bin/vision-glance`、`bin/zotero-session`：源launcher保留原uv/既有工具后端，Nix只绑定paper-analysis已安装bin/future-work、bin/facts、bin/pdfx及上游固定app/session bin；paper-helper只接受现有future-work/facts二选一子命令并原样转交其余argv，不做业务分派。Stage5 checker 仍从实际 sibling skill 解析，并由固定 Python执行；不得从开发 checkout兜底冒充安装成功。
-- KB 既有脚本调用改为知识库 owner 的已安装固定 launcher；不由 contact 自建 KB server/审批配置。
+- router 的同目录薄入口在非 Nix 情况原样传递 loaded-skill 参数；Nix 情况把该 locator 绑定为锁定 Zotero 包已有 `${zoteroTools}/bin/zotero-item-export`，使用既有 `--exporter`，不与互斥的 `--zotero-read-skill-dir` 同传；显式 `--exporter` 保留原单 executable override 语义。只适配既有 locator/executable 选择，不处理业务输入。上游 store 包已有 bin 是其正式接口，不等于要求 contact 技能生成 bin。
+- handoff 源适配点 `_run_future_work` 保留 R1 方案限定的可选 `CONTACT_PAPER_PYTHON` 单 executable：由 Nix 薄入口注入时，以 `[固定Python, script, *args]` 调用；未设置仍用 `[uv, run, script, *args]`。固定 Python 取 pdfcore `nix/pdfx.nix` 现有 `python` 返回值，不要求上游新加 public 属性。script 仍是安装后的 paper-analysis `scripts/future_work.py`，facts 仍同目录解析，所有验证/状态/错误/租约逻辑不改；不把 shell 串塞进 argv，不要求 0644 helper 可执行。
+- analyzer 直接调用 paper helper、pdfx、vision 时，Nix 使用已加载 paper-analysis 安装根的 `bin/future-work`、`bin/facts`、`bin/pdfx`、`bin/vision-glance`（固定版本的 `nix/paper-analysis.nix` 已公开）；Zotero session 使用已加载 zotero-read 安装根的 `scripts/new-session.sh`（上游 `nix/skill-resources.nix` 已固定其 bash/curl/coreutils）。不由 contact 再包装 `paper-helper`、`pdfx`、`vision-glance`、`zotero-session`。在唯一源中说明按已加载依赖的安装形态选择该 owner 的现有固定入口，非 Nix 保留原 `uv run`/既有入口；未来工作和 facts 始终来自同一 paper 安装。Nix 不改写这段源语义。Stage5 checker 仍从实际 sibling skill 解析，以自有固定 Python 运行，不从开发 checkout 兜底。
+- KB 既有调用使用知识库 owner 的已安装固定 launcher，不由 contact 自建 KB server 或审批配置。
 
-自有 wrapper 需要的解释器、coreutils、必要下游程序通过固定路径闭包引用；`runtimePackages` 只保留这些对象，不假装它自动提供 shell PATH/PYTHONPATH。普通 JSON/date/shasum等角色辅助命令统一走源 `bin/run-python`（Python原参数）与 `bin/run-tool`（固定允许的date/shasum等现有辅助工具名+原参数）；Nix绑定Python/coreutils/Perl实际提供者，非Nix沿用原宿主工具。该入口不改业务、不开放新的任意shell工具框架；PATH只对该次子进程生效，不声称改变Codex全局环境。
+`runtimePackages` 只保留必要解释器和直接程序闭包，不提供隐式 PATH/PYTHONPATH。删除 R1 的 `bin/run-python`、`bin/run-tool` 统一改写要求：现有角色中的临时 JSON/date/shasum 等辅助命令保持原有调用，不为本次 Nix 交付新增通用运行器，也不承诺替 Codex 会话提供全局 shell 环境。由自有产品脚本实际启动的子进程，才在上述已定位入口按固定路径绑定真实直接依赖；实现若发现另一条必需调用仍缺固定运行环境，报告具体调用与最小适配，不把全部辅助命令重写作为默认任务。
 
 ### 4.3 安装与服务边界
 
@@ -76,9 +76,12 @@ Zotero/Chrome/登录态/模型服务与 KB_SERVER_PATH 等真实服务仍由宿�
 
 1. 核 main 变化对本计划入口的影响，完成自有资源/runner固定层与 package定义；保留待交依赖接口，不伪造通过。
 2. collector、knowledge producer给出上述实际可组合输出后固定提交，统一共享包身份，完成完整环境及 README。
-3. 独立按P1–P4核此计划；执行实现及测试须取得对应批准。测试只按 TP1 的安装/必要最小动作，不跑套磁全流程、共享安装器全回归或整仓旧测试。
+3. 独立按P1–P4核此计划；执行实现及测试须取得对应批准。测试只按 TP2 的安装/必要最小动作，不跑套磁全流程、共享安装器全回归或整仓旧测试。
 4. README 分别标明固定输出、aarch64-darwin build证据、实际安装、角色最小调用、外部服务及未验证路径。只有完成的具体包/路径可称就绪。
+
+本次修订只影响 §4 固定入口布局及相应 N3/N4 命令；N1–N4 目标、共享安装、资源/角色与业务边界不变。R2 仍待独立计划审核，不因修订自授批准。
 
 关键不变量：安装不改用户业务状态；原角色仅入口和载体变；资源从安装目录解析；多根依赖不按顺序覆盖；helper与对应事实文件来自同一安装。代表性风险分别用固定wrapper、同版本对象、共享冲突处理、保留原同目录facts推导解决。源变动造成绑定失配就阻该构建，不能默认删掉安全/业务段落。
 
 实施负责人为 contact producer；collector/knowledge缺的公开输出由各producer负责；MCP和配置保护由共享层负责。PR91/92合并后只分析受影响文件并更新pin，不因SHA变动自动重跑已成立的安装证据。此计划不授权合并、不声明方案已获审核通过。
+
