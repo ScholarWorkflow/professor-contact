@@ -45,7 +45,7 @@ nix build "$CONTACT_REF#professor-contact-environment" --out-link "$RUN/environm
 | `packages.aarch64-darwin.professor-contact` | `id = "professor-contact"` 的 agent 包，默认 `enableHarnesses = [ "codex" ]`；`professor-contact.override { enableHarnesses = []; }` 可按包关闭投影 |
 | `packages.aarch64-darwin.professor-contact-environment` | `mkProject` 环境，`roots = [ professor-contact ]`，提供 `bin/agent-env`，下游可与其他顶层包组合 |
 
-依赖按上游实际发布提交固定：`agent-env-nix` 固定共享安装器，`paper-analysis`、`zotero-tools`、`base-skills`（`humanizer-ja`、`vision-tools`）、`pdf-processing-core`（`pdfx-agent` 与固定 Python）与 `knowledge-tools` 的 `extraction-to-knowledge` 递归闭包；`vision-tools` 与 paper-analysis 复用同一次求值，避免同名不同 payload。
+依赖按上游实际发布提交固定：`agent-env-nix` 固定共享安装器，`paper-analysis`、`zotero-tools`、`base-skills`（`humanizer-ja`、`vision-tools`）、`pdf-processing-core`（`pdfx-agent` 与固定 Python）、`knowledge-tools` 的 `extraction-to-knowledge` 递归闭包，以及 `professor-research` 的 `professor-collector`（Stage 1 缺 PDF 补齐与 Stage 5 contact-evidence freshness 的上游 owner）。`vision-tools` 与 paper-analysis 复用同一次求值；collector 保留其生产者自己的真实递归依赖（其 browser 输入的 base/source skill 实例与 Zotero owner lock），contact 不重写这些实例。
 
 安装只调用共享 `agent-env apply --project`：skill 复制到 `<consumer>/.agents/skills/professor-contact/`，八个角色写到 `<consumer>/.codex/agents/*.toml`，MCP 表按共享保护机制合并进 `<consumer>/.codex/config.toml`；其它来源的 skill、无关配置与手改内容保持不动。
 
@@ -55,7 +55,7 @@ nix build "$CONTACT_REF#professor-contact-environment" --out-link "$RUN/environm
 
 外部服务仍由宿主按各 owner 文档提供：Zotero HTTP/MCP 端点、浏览器下载链、模型服务与 `KB_SERVER_PATH`。安装本身不启动服务、不发邮件、不写用户业务状态。
 
-未交付与未验证路径：`professor-research` 还没有可固定的 `professor-collector` Nix 包，因此本环境不含 contact 的 Stage 1 缺 PDF 补齐边与 Stage 5 contact-evidence freshness 上游边，等该生产者发布后按其实际提交补入（不得填占位 SHA）；Zotero、浏览器与知识库服务本身未随本包验证；PR91/92 的下载链修复与 paper-analysis 跨页引文不在本包范围。
+未验证路径：`professor-collector` 自身在 professor-research 的 T4 业务失败仍保留在该 producer 侧，本包只声明其安装与 helper 归属已就绪，不外推为 collector 全链通过；Zotero、浏览器与知识库服务本身未随本包验证；PR91/92 的下载链修复与 paper-analysis 跨页引文不在本包范围。
 
 ## 当前流程
 

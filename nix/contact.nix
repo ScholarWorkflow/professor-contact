@@ -8,6 +8,7 @@
 , humanizerJa
 , visionTools
 , extractionToKnowledge
+, professorCollector
 }:
 
 # Nix delivery for the professor-contact Codex skill (aarch64-darwin).
@@ -169,11 +170,10 @@ let
   # --------------------------------------------------------------- packaging
 
   # Direct dependencies are exactly the delivered producer objects named by the
-  # approved plan.  professor-research has not published a Nix package for
-  # professor-collector yet (its PR #35 is still a plan), so contact's Stage-1
-  # missing-PDF fill and Stage-5 contact-evidence checker edge cannot be pinned
-  # here; no revision may be fabricated, and the environment stays the closure
-  # of the packages below until that producer output exists.
+  # approved plan.  professor-collector comes from professor-research's own
+  # package output and keeps that producer's real recursive closure (its
+  # browser-pdf-tools input instance for the base/source skills and the Zotero
+  # owner lock); contact does not re-evaluate or rewrite those dependencies.
   agentDependencies = [
     paperAnalysis
     zoteroTools
@@ -181,6 +181,7 @@ let
     visionTools
     pdfxAgent
     extractionToKnowledge
+    professorCollector
   ];
 
   package = mkAgentPackage {

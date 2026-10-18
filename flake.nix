@@ -45,9 +45,19 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.agent-env-nix.follows = "agent-env-nix";
     };
+
+    # professor-collector ships from professor-research's own flake output and
+    # keeps that producer's real dependency instance: its browser-pdf-tools
+    # input supplies the base/source skill packages, and zotero-tools keeps its
+    # owner lock.  Only the two inputs this repository already pins are aligned.
+    professor-research = {
+      url = "github:ScholarWorkflow/professor-research/6e46f2961ba213c896b536bbbaa7de838b1070d4";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.agent-env-nix.follows = "agent-env-nix";
+    };
   };
 
-  outputs = { self, nixpkgs, agent-env-nix, pdf-processing-core, base-skills, paper-analysis, zotero-tools, knowledge-tools }:
+  outputs = { self, nixpkgs, agent-env-nix, pdf-processing-core, base-skills, paper-analysis, zotero-tools, knowledge-tools, professor-research }:
     let
       system = "aarch64-darwin";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -71,6 +81,7 @@
         humanizerJa = base-skills.packages.${system}.humanizer-ja;
         visionTools = base-skills.packages.${system}.vision-tools;
         extractionToKnowledge = knowledgePackages.extraction-to-knowledge;
+        professorCollector = professor-research.packages.${system}.professor-collector;
       };
     in
     {
