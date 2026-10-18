@@ -1,12 +1,12 @@
 # 边界二：Stage 3 校验交接原语搬移 测试执行记录（2026-10-19）
 
-- 测试计划：[test-plan.md](test-plan.md)，第 3 版（第 1 版取得第一、二关口 PASS；第 3 版把仓库 CI 移出业务必测清单、补齐驱动脚本复制步骤并启用 `set -e`）。
+- 测试计划：[test-plan.md](test-plan.md)，第 4 版（第 1 版取得第一、二关口 PASS；第 3 版把仓库 CI 移出业务必测清单、补齐驱动脚本复制步骤并启用 `set -e`）。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 3 版（`Plan conclusion: APPROVED`）。
 - 对照基准：`779fb692ed5ded163ab0eb5b415aef698135f54e`。
 - 被测提交：`fab297d46e07d664450be798f77d2344b88fda5d`；执行期间产品与测试代码处于该提交、未改动（其后的提交只改 `plan/` 下文档，`.apm/` 下字节未变）。
 - 环境：本地 macOS，Python 3.14.7；只使用标准库与既有夹具。仓库 CI 使用工作流固定的 Python 3.12。
 - 说明：`/tmp/pc-bnd2-check/status.txt` 是空文件（执行期工作树状态改由本文件文字记录），每个编号的退出码记录在对应日志与 `diff` 结果里。
-- 原始输出（仓库外）：`/tmp/pc-bnd2-check/`；本文件只记录命令、方法与结果。
+- 原始输出（仓库外）：`/tmp/pc-bnd2-check/`（本轮实际目录，点名到目录而非通配）；本文件只记录命令、方法与结果。
 
 ## 逐项结果
 
@@ -16,15 +16,17 @@
 | T2 | 通过 | 同一对比：合法对象解析结果相同、重复键与 `NaN`/`Infinity` 同为 `ValueError`、数组两侧同为列表、坏 UTF-8 异常类型相同 |
 | T3 | 通过 | 同一对比：生成态与修正态两种 invocation 参数映射逐字段相同，且 invocation 字典未被改动 |
 | T4 | 通过 | 同一对比：五份渲染文档（含同一标记重复出现）的作用域列表逐项相同；`scope_key` 四例相同；路径归一化四类输入结果/错误 JSON/退出码相同；轮次守卫 7 组状态（覆盖 6 个失败原因码与正常 round 2）判定相同；runner 侧 `stage3_render_line_scopes` 的签名两侧都不含 `fail` |
-| T5 | 通过 | `Ran 55 tests in 206.556s`，`OK`，退出码 0（`test_stage3_validation_refine`、`test_issue66_validation_handoff`、`test_issue66_stage3_local_state`、`test_stage3_direction_groups`） |
-| 既有仓库检查 | 通过 | 仓库 CI 在 head `62faf7c` 上跑全量 `unittest discover`：运行 `39151049255`，7m44s，检查项 `test` pass，结论 success。该 head 相对被测提交只多**一个**文档提交，产品与测试字节未变（`git diff fab297d 62faf7c -- .apm/` 为空）。按测试计划第 3 版，这项不属于本批业务必测项，只作既有检查结果引用 |
+| T5 | 通过 | 按第 4 版清单只跑 18 个目标：`Ran 18 tests in 42.103s`，`OK`，退出码 0（`test_issue66_validation_handoff` 整模块 12 项——该模块每个用例都以被移动的交接原语为主要目的——加 `test_stage3_validation_refine` 的 6 个具名方法）。更早的 `Ran 55 tests in 206.556s`（四个整模块）是本次命令的超集，保留作历史证据 |
+| 既有仓库检查 | 通过 | 仓库 CI 在 head `62faf7c` 上跑全量 `unittest discover`：运行 `39151049255`，7m44s，检查项 `test` pass，结论 success。该 head 相对被测提交只多**一个**文档提交，产品与测试字节未变（`git diff fab297d 62faf7c -- .apm/` 为空）。按测试计划第 4 版，这项不属于本批业务必测项，只作既有检查结果引用 |
 
 ## 执行方法与命令
 
-1. 取出基准修订的 runner 及它依赖的两个兄弟模块到仓库外目录：
+1. 取出基准修订的 runner 及它依赖的两个兄弟模块到仓库外目录，并把驱动脚本复制进本轮目录：
 
    ```sh
+   set -e
    RUN=$(mktemp -d /tmp/pc-bnd2-XXXXXX)
+   cp /tmp/pc-bnd2-check/handoff_probe.py "$RUN/handoff_probe.py"
    for name in contact_state _stage3_render _contact_io; do
      git show 779fb692ed5ded163ab0eb5b415aef698135f54e:.apm/skills/professor-contact/scripts/$name.py > "$RUN/base/$name.py"
    done
@@ -43,9 +45,16 @@
 3. T5：既有 Stage 3 校验交接用例。
 
    ```sh
-   cd .apm/skills/professor-contact/tests
-   python3 -m unittest test_stage3_validation_refine test_issue66_validation_handoff \
-     test_issue66_stage3_local_state test_stage3_direction_groups -v
+   set -e
+   cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-handoff/.apm/skills/professor-contact/tests
+   python3 -m unittest test_issue66_validation_handoff \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_issue_in_second_direction_repairs_only_that_scope \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_cross_direction_issue_routes_to_the_exact_group_id \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_raw_validator_handoff_fail_closed \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_correction_cannot_skip_or_add_scopes \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_second_validator_round_requires_completed_correction \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_round_and_terminal_result_are_derived_not_supplied \
+     -v
    ```
 
 4. 搬移核对：基准修订 15 个行区间（3 个常量 + 14 个函数）与新模块正文在反向套用 11 处文档化改动（7 处签名加 `fail`、4 处模块内互调传参）后逐字节相同。
