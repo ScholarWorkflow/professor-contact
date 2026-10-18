@@ -518,7 +518,7 @@ PR #92 合并复审 [issuecomment-6248851590](https://github.com/ScholarWorkflow
 
 复验（当前版本）：
 
-- §3 的 17 个选择器完整复跑：`/tmp/contact-evidence-level.xa9UbsfO/recipe.txt`，`Ran 17 tests`、`OK`、退出码 0。
+- §3 的 17 个选择器完整复跑：`/tmp/contact-evidence-level.xa9UbsfO/recipe.txt`，`Ran 17 tests`、`OK`、退出码 0；变基到当时远端 tip（`8fd761a`）后的提交 `e55e469` 上再跑一次同一组选择器，`/tmp/contact-evidence-level.QW2xummd/recipe.txt`（`Ran 17 tests`、`OK`、退出码 0）。
 - 全仓 `python3 -m unittest discover -p "test_*.py"`：`Ran 1035 tests`、`OK (skipped=1)`、退出码 0（`/tmp/contact-evidence-level.UiagMtvI/full-suite-mergefix2.txt`）。
 - 写前复proof 的定向探针（仓库外只读探针，非必测项）：在 T4 夹具上把 `stage2_local_writer_scope` 包一层，在**取得租约之后**改动一个被绑定的业务输入（教授本地 target 的 `user_note`），刷新入口返回 `needs_refresh/display_refresh_stale`、`drift=["business_inputs_changed"]`、退出码 2，且输入包与受管正文字节不变（`/tmp/contact-evidence-level.UiagMtvI/probe_inlease_recheck.py`）。
 - t37 的定向记录（测试工程师）另见 `/tmp/contact-evidence-level.VUfUAYLu/`；t35／t36 旧记录仍按其版本引用。
