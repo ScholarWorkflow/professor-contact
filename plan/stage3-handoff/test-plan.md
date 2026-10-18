@@ -69,7 +69,7 @@
 ## 驱动脚本要点（T1–T4）
 
 - 用 `importlib.util.spec_from_file_location` 按路径加载传入的 runner，模块名带唯一后缀。
-- **签名适配**：基准修订里这六个函数不需要 `fail`，改动修订把它们改成关键字参数。驱动用一个适配函数判断签名（`inspect.signature` 是否含 `fail` 参数），需要时传 `fail=runner.fail`，并对两侧使用同一适配逻辑；这份适配只存在于仓库外驱动里，不进产品。
+- **签名适配**：基准修订里这七个函数（`_stage3_marker_payload`、`stage3_render_line_scopes`、`_stage3_issue_scopes`、`_stage3_validation_files`、`_stage3_normalized_absolute_path`、`_stage3_complete_write_result`、`_require_stage3_handoff_round`）不需要 `fail`，改动修订把它们改成关键字参数。驱动用一个适配函数判断签名（`inspect.signature` 是否含 `fail` 参数），需要时传 `fail=runner.fail`，并对两侧使用同一适配逻辑；这份适配只存在于仓库外驱动里，不进产品。
 - 失败调用：用 `contextlib.redirect_stdout` 捕获输出、`try/except SystemExit` 记录退出码；业务通道内的失败用 `with runner.professor_business_channel()` 包裹并捕获 `runner.ProfessorBusinessFailure`。
 - 输出只含相对路径、文件内容、权限模式（`stat` 的 `st_mode & 0o777`）、异常类型名与错误 JSON 文本，便于两侧直接 `diff`。
 - T1 的身份/清理验证采用执行版写法：直接调用 `_stage3_created_file_identity` 与 `_stage3_cleanup_incomplete_write` 覆盖“身份一致删除／不一致保留／None 保留”三个分支（比“写入中途替换身份”的注入更清晰且不依赖时序）；集成侧的失败清理由 T5 的批量写/回读失败用例承担。

@@ -6,7 +6,7 @@
 - 被测提交：`fab297d46e07d664450be798f77d2344b88fda5d`；执行期间产品与测试代码处于该提交、未改动（其后的提交只改 `plan/` 下文档，`.apm/` 下字节未变）。
 - 环境：本地 macOS，Python 3.14.7；只使用标准库与既有夹具。仓库 CI 使用工作流固定的 Python 3.12。
 - 说明：执行时工作树 `git status --porcelain` 为空；`/tmp/pc-bnd2-check/status.txt` 是空文件（状态改由本文件文字记录），每个编号的退出码记录在对应日志与 `diff` 结果里。
-- 原始输出（仓库外）：`/tmp/pc-bnd2-check/`（本轮实际目录）；证据文件 `base5.json`／`head5.json`（最终）、`base2.json`／`head2.json`（同构目录复跑）、历史尝试 `base3.json`／`head3.json`、`base4.json`／`head4.json`，日志 `t5-final.log`、`t5-18tests.log`；本文件只记录命令、方法与结果。
+- 原始输出（仓库外）：`/tmp/pc-bnd2-check/`（本轮实际目录）；证据文件 `base5.json`／`head5.json`（最终）、`base.json`／`head.json`（第 2 步命令的输出名，首次对照，10 个键，不作结论依据）、`base2.json`／`head2.json`（同构目录复跑，与首次对照逐字节相同）、历史尝试 `base3.json`／`head3.json`、`base4.json`／`head4.json`，日志 `t5-final.log`、`t5-18tests.log`；本文件只记录命令、方法与结果。
 
 ## 逐项结果
 
@@ -15,7 +15,7 @@
 | T1 | 通过 | `base5.json` 与 `head5.json` 逐字段相同：小块与 76800 B 写入的摘要、权限 384（0o600）、无 `.` 残留；对已存在路径写入两侧同为 `FileExistsError` 且原文件摘要不变；身份一致删除、身份不一致保留、None 保留三分支一致。集成失败清理由 T5 的 `test_issue66_validation_handoff` 批量写/回读失败用例覆盖 |
 | T2 | 通过 | 同一对比：合法对象解析结果相同、重复键与 `NaN`/`Infinity` 同为 `ValueError`、数组两侧同为列表、坏 UTF-8 异常类型相同 |
 | T3 | 通过 | 同一对比：生成态与修正态两种 invocation 参数映射逐字段相同，且 invocation 字典未被改动 |
-| T4 | 通过 | 同一对比：五份渲染文档（含同一标记重复出现）的作用域列表逐项相同；`scope_key` 四例相同；路径归一化四类输入结果/错误 JSON/退出码相同；轮次守卫 7 组状态（覆盖 5 个失败分支（4 个不同原因码）与正常 round 2）判定相同；runner 侧 `stage3_render_line_scopes` 的签名两侧都不含 `fail` |
+| T4 | 通过 | 同一对比：五份渲染文档（含同一标记重复出现）的作用域列表逐项相同；`scope_key` 四例相同；路径归一化四类输入结果/错误 JSON/退出码相同；轮次守卫 7 组状态（5 个失败分支覆盖 4 个不同原因码，2 条正常路径为 round 1 未记录与 round 2 正常）判定相同；runner 侧 `stage3_render_line_scopes` 的签名两侧都不含 `fail` |
 | T5 | 通过 | 按第 4 版清单只跑 18 个目标：`Ran 18 tests in 42.103s`，`OK`，退出码 0（`test_issue66_validation_handoff` 整模块 12 项——该模块每个用例都以被移动的交接原语为主要目的——加 `test_stage3_validation_refine` 的 6 个具名方法）。更早的 `Ran 55 tests in 206.556s`（四个整模块）是本次命令的超集，保留作历史证据 |
 | 既有仓库检查 | 通过 | 仓库 CI 在 head `62faf7c` 上跑全量 `unittest discover`：运行 `39151049255`，7m44s，检查项 `test` pass，结论 success。该 head 相对被测提交只多**一个**文档提交，产品与测试字节未变（`git diff fab297d 62faf7c -- .apm/` 为空）。按测试计划第 4 版，这项不属于本批业务必测项，只作既有检查结果引用 |
 
