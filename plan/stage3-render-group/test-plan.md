@@ -5,7 +5,7 @@
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 1 版。
 - 需求来源：负责人 2026-10-18 授权的三批要求第 3 批；原文见执行计划。
 - Target repository revision: 工作分支 `refactor/stage3-render-group`（从 `ffa91aedf94aaf146f9cf1899f3fe4395cfaddad` 拉出）实施后的提交；对照基准同为 `ffa91aedf94aaf146f9cf1899f3fe4395cfaddad`。
-- Test plan revision: 第 4 版。
+- Test plan revision: 第 5 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
 - Proposed review status: pending。
 
@@ -26,6 +26,7 @@
 
 1. 准备：确认工作树只有本批改动、Python 可用，取出基准修订的 runner 副本，并把上一轮实际使用的对比脚本复制进本轮目录。
    ```sh
+   set -e
    cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-render-group
    git status --porcelain
    python3 --version
@@ -34,15 +35,17 @@
    cp /tmp/pc-batch3-IZjWB0/compare_stage3_render.py "$RUN/compare_stage3_render.py"
    ```
    最后一条是必须的：脚本自带输入构造与断言，不能在临时目录里凭提纲重写。若 `/tmp/pc-batch3-IZjWB0/compare_stage3_render.py` 已被清理，先按执行记录里记录的该轮运行目录找回同一脚本（记录中给出 `/tmp/pc-batch3-*/` 与产出文件名），仍找不到时停止并交计划所有人，不得临时改写比较方法。
-2. T1、T2：运行仓库外对比脚本。脚本沿用上一轮实际使用的 `/tmp/pc-batch3-IZjWB0/compare_stage3_render.py`（若该目录已清理，按本节末的要点重建同形脚本），先放入本轮临时目录再运行；两个参数依次是基准 runner 文件与工作树 runner。
+2. T1、T2：运行仓库外对比脚本。第 1 步已把上一轮实际使用的 `/tmp/pc-batch3-IZjWB0/compare_stage3_render.py` 复制进本轮目录；两个参数依次是基准 runner 文件与工作树 runner。脚本自身在任一检查失败时以非 0 退出，`set -e` 同时保证准备步骤失败不会带着空目录继续。
    ```sh
+   set -e
    uv run --no-project "$RUN/compare_stage3_render.py" "$RUN/base_contact_state.py" \
      .apm/skills/professor-contact/scripts/contact_state.py
    ```
    预期：每一项打印 `OK  <标签>`，共 11 行（2 行前置检查 `runner exposes render_candidates_md` / `render_candidates_overview`、T1 三行、T2 六行），末尾 `ALL CHECKS PASS`，退出码 0；任何 `FAIL` 都会让脚本非 0 退出。
 3. T3：只跑清单列出的 7 个方法。
    ```sh
-   cd .apm/skills/professor-contact/tests
+   set -e
+   cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-render-group/.apm/skills/professor-contact/tests
    python3 -m unittest \
      test_stage3_direction_groups.Stage3DirectionGroupTests.test_ideas_grouped_per_direction_share_paper_identity \
      test_stage3_validation_refine.Stage3ValidationIngestTests.test_issue_in_second_direction_repairs_only_that_scope \
@@ -56,6 +59,7 @@
    预期：`Ran 7 tests`、全部 `ok`。此前记录的整模块运行（47 项）是这 7 项的超集，多出的用例属清单外（Stage 4 选择、旧状态迁移、写入失败恢复、refined 模式状态语义、跨方向任务生成与缓存、Stage 5 合同等），不构成本批通过条件，也不要求删除测试文件。
 4. T4：只跑清单列出的 2 个方法。
    ```sh
+   set -e
    cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-render-group/.apm/skills/professor-contact/tests
    python3 -m unittest \
      test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker \
@@ -92,13 +96,18 @@
 | 全仓本地回归 | 仓库 CI 已在 PR 上执行全量 discover，按 `Test Engineer Rule.md` 第 6 节直接引用，不重复执行 |
 | 共享错误通道、事务／回滚、Stage3 提交与校验交接、Stage4/5 证据处理 | 本批不动这些区域，属另行常规审核的范围 |
 
+## 自检
+
+提交审核前逐条核对（与仓库 `plan/test-plan-checklist.md` 同一口径）：必测项只引用能证明本批行为的方法；CI 不在必测清单；每个临时脚本都有确切来源与复制命令；命令块启用 `set -e`；失败注入到达目标分支；计划文字与执行记录用同一套标签。
+
 ## 修订记录
 
 - 第 1 版：首次提交测试计划审核。
 - 第 2 版：第 1 版取得第一、二关口 PASS（无 blocker）；本版只落实该轮的非阻断观察，不改变业务目标：T1 增加一次 `profile_fp=None` 且空跨方向组的降级对比、T2 的私有 helper 检查补齐 `_render_idea_block`、第 2 步写出确切调用命令与脚本实际输出标签、第 4 步补全 `cd`。
+- 第 5 版：按与边界一/边界二相同的口径整理——第 1–4 步的命令块统一启用 `set -e`（准备步骤失败不再带着空目录继续），第 2 步不再提“按要点重建脚本”（脚本由第 1 步的 `cp` 取得），并新增“自检”小节。需求与必测编号不变。
 - 第 4 版：按测试计划第 3 版复核的三项意见修正——① T3 再收窄为 7 个只断言渲染结果/渲染绑定/标记定位的方法（去掉 `test_refined_mode_requires_3_5_selectable_with_user_refined` 与 `test_explicit_cross_group_generates_separate_job_and_section`，它们分别以 refined 状态语义、跨方向任务生成与缓存复用为通过条件）；② 把仓库 CI 从业务必测清单移出，改为“既有仓库检查”单独引用；③ 第 1 步补 `cp` 复制对比脚本的明确命令，并写明脚本缺失时的找回方式与停止条件。
 - 第 3 版：按正常审核的两项意见修正——① T3、T4 从“4 个文件 47 项 / 2 个文件 24 项全部通过”收窄为清单列出的 9 个与 2 个方法，移除整模块带入的 Stage 4 选择、旧状态迁移、写入失败恢复与 Stage 5 合同等清单外条件，并去掉与 T1 重复的红线去重/可信度警告渲染检查；② 补上 T1、T2 对比脚本的取得位置（上一轮实际使用的 `/tmp/pc-batch3-IZjWB0/compare_stage3_render.py`）与放入本轮临时目录的步骤。收窄后保留的方法都包含在此前 47/24 项通过记录中，不触发重跑；产品与测试代码未变。
 
 ## 审核状态
 
-测试计划第 4 版为当前唯一版本；第 1 版已取得第一、二关口 PASS（无 blocker），第 2 版只做检查方式细化，第 3 版按正常审核收窄 T3/T4 的检查入口与通过条件并补齐对比脚本准备说明；第 4 版再收窄 T3 到 7 项、把 CI 移出必测清单、补齐脚本复制命令，必测编号与预期结果未变，本版仅按审核意见细化检查方式与命令表述，未增删必测项、未改变预期结果。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 5 版为当前唯一版本；第 1 版已取得第一、二关口 PASS（无 blocker），第 2 版只做检查方式细化，第 3 版按正常审核收窄 T3/T4 的检查入口与通过条件并补齐对比脚本准备说明；第 4 版再收窄 T3 到 7 项、把 CI 移出必测清单、补齐脚本复制命令，必测编号与预期结果未变，本版仅按审核意见细化检查方式与命令表述，未增删必测项、未改变预期结果。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
