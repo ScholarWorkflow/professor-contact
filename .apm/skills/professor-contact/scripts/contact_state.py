@@ -3812,16 +3812,24 @@ def stage2_preflight_projection_keys(pack: dict | None, recorded: dict | None,
     return sorted(keys)
 
 
+def _projection_record_unreadable(record) -> bool:
+    """True when one projection entry states that its index record is unusable."""
+    return isinstance(record, dict) and record.get("record_state") == "unreadable"
+
+
 def stage2_projection_diff(accepted: dict | None, current: dict | None) -> tuple[list, list]:
     """Split the difference between two projections into (source, level) changes.
 
     A source change is any indexed/unindexed flip or any declared path /
     existence / state movement; only a bare `level` difference is display-only.
     An index that cannot be parsed on either side is never a comparable basis,
-    and a broken index always takes the ordinary process path. An index that is
-    simply absent on both sides stays comparable: the carriers are then proven
-    through the pack-derived sibling paths, so an appearing or vanishing sidecar
-    is still a source change instead of a silent "unchanged".
+    and a broken index always takes the ordinary process path. A per-key record
+    that is not an object is not the absence of a record: it can prove nothing,
+    so an unreadable record on either side is a source change even when both
+    sides look identical. An index that is simply absent on both sides stays
+    comparable: the carriers are then proven through the pack-derived sibling
+    paths, so an appearing or vanishing sidecar is still a source change instead
+    of a silent "unchanged".
     """
     if not isinstance(accepted, dict) or not isinstance(current, dict):
         return ["analysis_projection_unavailable"], []
@@ -3838,6 +3846,9 @@ def stage2_projection_diff(accepted: dict | None, current: dict | None) -> tuple
     source_changes, level_changes = [], []
     for key in sorted(set(accepted_keys) | set(current_keys)):
         before, after = accepted_keys.get(key), current_keys.get(key)
+        if _projection_record_unreadable(before) or _projection_record_unreadable(after):
+            source_changes.append(key)
+            continue
         if before == after:
             continue
         if not isinstance(before, dict) or not isinstance(after, dict):
@@ -4877,6 +4888,39 @@ def stage2_direction_reference_keys(direction: dict, known_keys=None) -> set:
     return keys
 
 
+def stage2_display_slot_keys(direction: dict, known_keys=None) -> set:
+    """Item keys the renderer really converts inside this direction's texts.
+
+    The fixed-slot display converts a bare token only after the formal reference
+    information confirms it (see `stage2_direction_reference_keys`), and the
+    anchor-banned card always prints the completed paper as a trusted link. The
+    render state must compare exactly those printed reference titles, so this
+    returns the confirmed tokens that really appear in the machine texts plus
+    every blacklist completion key.
+    """
+    confirmed = stage2_direction_reference_keys(direction, known_keys)
+    keys: set = set()
+
+    def collect(value) -> None:
+        if isinstance(value, str):
+            keys.update(key for key in ITEM_KEY_RE.findall(value)
+                        if key in confirmed)
+
+    for gap in direction.get("gap_shortlist") or []:
+        if not isinstance(gap, dict):
+            continue
+        for field in ("evidence", "completed_part", "remaining_gap"):
+            collect(gap.get(field))
+    for item in direction.get("completed_gap_blacklist") or []:
+        if not isinstance(item, dict):
+            continue
+        collect(item.get("evidence"))
+        completed = item.get("completed_by_item_key")
+        if isinstance(completed, str) and completed:
+            keys.add(completed)
+    return keys
+
+
 def stage2_referenced_item_keys(direction: dict, known_keys=None) -> list[str]:
     """Item keys the human-facing fixed-evidence slots of one direction print.
 
@@ -5537,6 +5581,7 @@ def stage2_render_state(pack: dict) -> dict:
     """
     directions_state = []
     referenced: set = set()
+    papers = pack_paper_index(pack)
     for direction in pack.get("directions") or []:
         narrative = direction.get("narrative") if isinstance(direction.get("narrative"), dict) else {}
         refs = set()
@@ -5549,6 +5594,10 @@ def stage2_render_state(pack: dict) -> dict:
         referenced.update(direction.get("supporting_item_keys") or [])
         referenced.update(pack_direction_relevant_keys(direction))
         referenced.update(direction.get("named_keys") or [])
+        # The fixed slots print the trusted title of every reference they really
+        # convert (confirmed tokens in the machine texts plus the anchor-banned
+        # completion paper): those titles are visible content too.
+        referenced.update(stage2_display_slot_keys(direction, papers))
         directions_state.append({
             "direction_id": direction_machine_id(direction),
             "name_ja": direction.get("name_ja"),
@@ -5573,7 +5622,6 @@ def stage2_render_state(pack: dict) -> dict:
             "narrative_later_papers": direction.get("narrative_later_papers") or {},
             "resolved_direction": direction.get("resolved_direction") or {},
         })
-    papers = pack_paper_index(pack)
     # `pdf_available` feeds the managed header's full-text/abstract counts, so a
     # PDF-availability change is display-relevant even when the analysis path
     # stays the same.
