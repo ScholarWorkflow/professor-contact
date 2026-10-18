@@ -4896,7 +4896,9 @@ def stage2_display_slot_keys(direction: dict, known_keys=None) -> set:
     anchor-banned card always prints the completed paper as a trusted link. The
     render state must compare exactly those printed reference titles, so this
     returns the confirmed tokens that really appear in the machine texts plus
-    every blacklist completion key.
+    every blacklist completion key. Only the fields the renderer really prints
+    are scanned: `completed_part` / `remaining_gap` exist on every gap but are
+    shown for a `partial` gap only.
     """
     confirmed = stage2_direction_reference_keys(direction, known_keys)
     keys: set = set()
@@ -4909,8 +4911,11 @@ def stage2_display_slot_keys(direction: dict, known_keys=None) -> set:
     for gap in direction.get("gap_shortlist") or []:
         if not isinstance(gap, dict):
             continue
-        for field in ("evidence", "completed_part", "remaining_gap"):
-            collect(gap.get(field))
+        collect(gap.get("evidence"))
+        if gap.get("status") != "partial":
+            continue
+        collect(gap.get("completed_part"))
+        collect(gap.get("remaining_gap"))
     for item in direction.get("completed_gap_blacklist") or []:
         if not isinstance(item, dict):
             continue
@@ -5582,6 +5587,16 @@ def stage2_render_state(pack: dict) -> dict:
     directions_state = []
     referenced: set = set()
     papers = pack_paper_index(pack)
+    # The renderer confirms a printed reference through the persisted display
+    # references, the canonical pack papers and the current facts. The pack-only
+    # state compares the first two (the current facts must never be backfilled
+    # into the accepted snapshot), and every current-facts key the renderer can
+    # print was persisted into `display_references` when this pack was accepted.
+    known_references = set(papers)
+    persisted_references = pack.get("display_references")
+    if isinstance(persisted_references, dict):
+        known_references.update(key for key in persisted_references
+                                if isinstance(key, str) and key)
     for direction in pack.get("directions") or []:
         narrative = direction.get("narrative") if isinstance(direction.get("narrative"), dict) else {}
         refs = set()
@@ -5597,7 +5612,7 @@ def stage2_render_state(pack: dict) -> dict:
         # The fixed slots print the trusted title of every reference they really
         # convert (confirmed tokens in the machine texts plus the anchor-banned
         # completion paper): those titles are visible content too.
-        referenced.update(stage2_display_slot_keys(direction, papers))
+        referenced.update(stage2_display_slot_keys(direction, known_references))
         directions_state.append({
             "direction_id": direction_machine_id(direction),
             "name_ja": direction.get("name_ja"),
