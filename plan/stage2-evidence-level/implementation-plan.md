@@ -1,8 +1,8 @@
 # Stage 2 固定证据展示、失败登记与分析级别修复
 
 - Requirement revision：2026-10-17 用户要求为此前 U1、U5 两项修复建立独立计划 PR（北京时间）；依据用户提供的《PR91未覆盖问题报告_20261016.md》。报告中的私人实际数据与失败次数不是本计划已复验结果。
-- Plan revision：contact-evidence-level-r4；Proposed review status: pending。
-- 目标：ScholarWorkflow/professor-contact，源码基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。本 PR 当前只提交计划；实现、测试执行和合并均未完成。
+- Plan revision：contact-evidence-level-r5；Proposed review status: pending（本轮 §3.4 入口对齐修订待审）。
+- 目标：ScholarWorkflow/professor-contact，源码基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。PR 当前核对版本 `ac301e17d3db42288f44042f58e43bc1c4023d69` 已有 U1/U5 产品实现及 t36 有效测试记录；本轮仅更新计划和 PR 说明，§3.4 入口对齐尚未实施，合并审核未进行。
 - 唯一测试计划：[test-plan.md](test-plan.md)。按 [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)执行。
 
 ## 1. 范围与验收目标
@@ -57,11 +57,31 @@ U5：全文/摘要统计取实际成功分析的级别，不能用分析文件�
 6. **字段与旧数据。** `_CANONICAL_PAPER_FIELDS`、build_direction_pack、_canonical_record、fresh/reused/resolved records 与 pack-only context 保存级别，同 key 一致合并，当前正式来源不得被旧记录覆盖。`paper_digest` 及 resolve/freshness 模型摘要不加入 level、render version 或展示投影。旧包缺 level 可显示未确认；旧包缺可比较业务基线走原 process，不从历史 Markdown/临时 facts 猜造基线。资料不足导致正常流程不能完成时真实报告停止，保留原数据，不强制所有坏旧包成功。只在受影响的下一次调用按上述分流更新，不批量迁移或为文档 SHA 重跑。
 
 
+### 3.4 与已合并 PR93 的固定入口对齐（r5 新增，待实施）
+
+**触发与权限。** 用户 2026-10-18 要求在 PR92 说明并将详细修改加入执行计划；本轮只授权计划/说明编辑，不据此实施产品、修改测试或运行测试。PR93 已合并为 `b29fd5e68e3c7d4414f231e665a3b54872f6e498`。本节是 r4 的有界兼容修订，不改 U1/U5 正式目标。
+
+**决策及实际依据。** 对 PR92 当前完整 diff 和三个受影响调用文档核对后，新增 `stage2-refresh-display` 命令仍显式使用系统 `python3 .../contact_state.py`，而 PR93 已将既有安装调用统一到同目录薄入口。Nix [role 转换及 runtime](https://github.com/ScholarWorkflow/professor-contact/blob/b29fd5e68e3c7d4414f231e665a3b54872f6e498/nix/contact.nix) 只剥离 frontmatter/前导空白、复制完整 skill 树并固定七个入口的 shebang，不替换 analyzer 的业务正文；`runtimePackages` 不是命令 PATH 接线。因此必须在正式调用源修正，不能期待 Nix 自动改写。既有 [scripts/contact_state](https://github.com/ScholarWorkflow/professor-contact/blob/b29fd5e68e3c7d4414f231e665a3b54872f6e498/.apm/skills/professor-contact/scripts/contact_state) 通过当前解释器 `os.execv` 原样转发全部参数到相邻 `contact_state.py`；新子命令无需新入口、新 flake 输出或新增依赖。
+
+**精确修改点与责任。** 产品调用文档 owner 在整合上述 PR93 已落地修改时，只对齐本 PR 新增入口，不把整个文件退回旧基线：
+
+1. `packages/professor-contact-codex/.apm/agents/professor-contact-analyzer.agent.md`，Step 2.6 的 `action=refresh_display` 命令（当前 head L158）：把 `python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-refresh-display` 改为 `<professor-contact-skill-dir>/scripts/contact_state stage2-refresh-display`。
+2. `packages/professor-contact-opencode/.apm/agents/professor-contact-analyzer.agent.md`，同一 Step 2.6 分支（当前 head L166）：做同样的同目录入口对齐。PR93 已同步此投影的原有 runner 命令；保留其 OpenCode/APM 原生委派及既有安装行为，不把 Codex 路由规则带入，不宣称新增 Nix OpenCode 支持。
+3. `.apm/skills/professor-contact/SKILL.md`，阶段 2 early preflight gate 的刷新入口示例（当前 head L238）：使用完整的 `<professor-contact-skill-dir>/scripts/contact_state stage2-refresh-display --professor-dir <教授目录> --preflight-file <该次 payload>`。Stage 表中只写子命令名的交接说明保持语义；不将 runner 实现名或历史记录中的 `.py` 字样全局替换。
+
+三个调用点都保留现有 `--professor-dir`、`--preflight-file` 参数及原事务 payload、成功/错误分支和返回消费，不加入 shell wrapper、fallback 或新业务逻辑。`contact_state.py` 仍为唯一 runner 业务实现，保留其 `.py` 公共接口与非 Nix 直接调用能力；现有薄入口在非 Nix 安装中保留原解释器选择，Nix 仅在安装阶段固定解释器。
+
+**影响、反例与替代。** 意图是让新刷新分支和已交付的既有命令一致，经安装根的固定入口执行。若仍显式调用系统 `python3`，即使复制了新子命令也会绕过 Nix 固定解释器；选定的源调用修正直接消除此反例。另一方向是在 Nix 增加正文字符串重写，但这把业务调用适配转移到交付层且易遗漏，因此不采用。本项入口对齐不额外修改 `nix/contact.nix`、`flake.nix`/锁文件、七入口清单、runtime 包或依赖闭包（正常整合 PR93 已有文件除外），也不新增第二份业务正文；不修改 Python 子命令实现、业务 schema、lease、managed-write、两轮限制、展示刷新分流或模型任务范围。无数据迁移、清理或新外部副作用。
+
+**顺序与观察入口。** 实施者先整合 PR93 的实际源入口改动，再修改上述三个新增调用点；沿已有主技能和两个 analyzer 的 `refresh_display` 分支静态核对安装根定位、参数与返回分支即可定位影响。本节不新增测试项、测试命令或证据设施，不自动重装或重跑。t36 现有第一至第三关记录保留；未来产品入口变化不能自动由旧 PASS 覆盖，届时按 Test Engineer Rule 只复核受影响入口及既有证据适用性，未受影响结果直接复用。
+
+**修订审核范围。** r4 [正式批准记录](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516) 保留为历史依据。r5 只请求审核固定入口的新事实/变更点与兼容影响：P1 的来源与版本、P2 的调用源 owner、P3 的 Nix/非 Nix 兼容和禁止副作用、P4 的三处修改与整合顺序；§3.1—3.3 的业务机制不变，可按影响分析复用 r4 相关结论，不重开完整业务设计。当前作者仅标记 pending，正式 Gate 结论由 reviewer 记录；下一负责人为计划审核者，批准并取得实施授权后才交产品实现者。
+
 ## 4. 顺序、安全和替代方案
 
 1. 实现者先核最新基线及 PR91 是否已落地，保留其位置解析/摘要/轮次/成员保护；只整合本计划涉及的交接。
-2. 先贯通可信级别与固定证据引用元数据，补齐现有 guards 的缺失/来源状态及接受基线，再按 §3.3 分流改展示刷新；接着修改登记与 refine 分流，最后同步两个 analyzer、SKILL 及受影响现有测试。
+2. 原 U1/U5 实施顺序：先贯通可信级别与固定证据引用元数据，补齐现有 guards 的缺失/来源状态及接受基线，再按 §3.3 分流改展示刷新；接着修改登记与 refine 分流，最后同步两个 analyzer、SKILL 及受影响现有测试。
 3. 替代方案“开放所有固定区给模型改写”会改事实，排除；“只屏蔽校验或直接删除依据”掩盖缺陷，排除；选定方案在 runner 确定性展示、记录器保留失败，原 owner 处理问题。
 4. 不新增并发锁或跨文件 journal，沿用已有教授写入 lease、原子 JSON 和 managed_write 保护；不自动覆盖人工文档、不重置用户选择、不改变成员归属。
 5. 关键反例：abstract 有分析文件仍不能计 fulltext；OCR fulltext facts unavailable 仍可计全文输入级；旧包无级别应显式未知；固定+叙事混合阻挡不允许模型越权；同一未修复报告不能清轮数；正常 narrative 修订不应重开第一轮。
-6. 实现结束交付实际提交、受影响路径和测试计划对应结果。计划当前未实施，测试关口待审/未执行，不自授 APPROVED 或 PASS。
+6. 后续 §3.4 实施者交付实际提交及受影响源入口；审核者按影响分析判断既有结果适用性。已有 t36 记录只对应其记载版本，不自授本轮 Plan APPROVED、未来实现 PASS 或合并批准。
