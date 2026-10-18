@@ -33,7 +33,7 @@ nix build "$CONTACT_REF#professor-contact-environment" --out-link "$RUN/environm
 
 三个输出在 aarch64-darwin 实际构建成功（exit 0，2026-10-18 16:06，日志 `/tmp/pr93-run/collector-n1.log`）；合并进来的 PR #91 runner 内容（`results-dir`）确认进入安装树。
 
-- `$RUN/package/agent-env.json`：`id=professor-contact`、`version=0.1.0`、1 个 skill、8 个角色（`professor-contact`、`-analyzer`、`-downloader`、`-idea-generator`、`-selection`、`-email-generator`、`-email-validator`、`-style-validator`）、6 个直接依赖、1 个 runtimePackage。
+- `$RUN/package/agent-env.json`：`id=professor-contact`、`version=0.1.0`、1 个 skill、8 个角色（`professor-contact`、`-analyzer`、`-downloader`、`-idea-generator`、`-selection`、`-email-generator`、`-email-validator`、`-style-validator`）、7 个直接依赖（含 `professor-research-collector`）、1 个 runtimePackage。
 - 角色 TOML 全部按 `name`/`description`/`developer_instructions` 解析通过，8 个名字唯一；analyzer 来自 `packages/professor-contact-codex/.apm/agents/`（正文含 Codex 原生委派契约）。
 - 包级 override 求值：`(professor-contact.override { enableHarnesses = []; }).passthru.agentEnv.enableHarnesses` = `[]`；默认 = `["codex"]`。
 - environment manifest 的完整递归闭包（17 个包、72 个 skill、15 个角色）：`professor-contact`、`paper-analysis`、`zotero-tools`、`zotero-save`、`humanizer-ja`、`vision-tools`、`scholar-workflow-pdfx-agent`、`extraction-to-knowledge`、`kb-importer`、`personal-knowledge-runtime`、`professor-research-collector`（含 `professor-collector`、`professor-contact-evidence` 两个 skill 与三个角色）、`browser-core`、`academic-pdf-downloads`、`abstract-fetch`、`scihub-tools`、`source-access-duckduckgo-search`、`source-access-yahoo-japan-search`。MCP 五个 server 各只有一个 owner：`chrome-devtools` ← `browser-core`、`duckduckgo` ← `source-access-duckduckgo-search`、`personal-knowledge` ← `personal-knowledge-runtime`、`scihub` ← `scihub-tools`、`yahoo-japan-search` ← `source-access-yahoo-japan-search`。同名不同 payload 的冲突由 `mkProject` 拒绝，本次求值未出现。
@@ -46,7 +46,7 @@ printf 'keep\n' > "$RUN/consumer/.agents/skills/unrelated-sentinel/marker"
 "$RUN/environment/bin/agent-env" apply --project "$RUN/consumer"
 ```
 
-- `agent-env: apply completed.`；`$RUN/consumer/.agents/skills/` 得到 72 个受管 skill（含 `professor-collector`、`professor-contact-evidence` 与 browser/source 递归闭包），无关 `unrelated-sentinel/marker` 仍为 `keep`。
+- `agent-env: apply completed.`；`$RUN/consumer/.agents/skills/` 得到 72 个受管 skill（含 `professor-collector`、`professor-contact-evidence` 与 browser/source 递归闭包）加 1 个无关 sentinel；`unrelated-sentinel/marker` 仍为 `keep`。
 - `$RUN/consumer/.codex/agents/` 得到 15 个角色 TOML（professor-contact 8 个 + paper-analysis 1 个 + pdfx 3 个 + collector 3 个）。
 - collector 兄弟资源与 contact 侧 locator：安装树含 `.agents/skills/professor-collector/scripts/contact_evidence.py`；用安装态 `contact_state.py` 的 `upstream_check_script()` 实测解析到该路径（Stage 5 的 contact-evidence freshness 上游边已就位）。
 - 安装写入的 `.codex/config.toml` 含五个 MCP 表（`chrome-devtools`、`duckduckgo`、`personal-knowledge`、`scihub`、`yahoo-japan-search`），与 manifest 的 owner 一一对应。
@@ -73,7 +73,7 @@ CONTACT_PAPER_PYTHON="$FIXED_PYTHON" "$FIXED_PYTHON" -B -m unittest -v \
 
 首轮在 `af6bf55` 上执行：夹具 `tests/runtime/prepare_issue53_stage4_fixture.py` 生成第 53 号 Stage-4 合成程序（pre 快照两个程序级文件均 absent）；`$RUN/consumer/.codex/config.toml` 合并 pin 的 `configs/codex-nested-delegation-consumer.toml`（`model=gpt-6-luna`、`model_reasoning_effort=low`、`sandbox_mode=workspace-write`、`features.multi_agent_v2.enabled=true`，保留安装写入的 MCP 表）；唯一 `/eval` 请求（既有服务 `127.0.0.1:17902`）HTTP 200；`selection-verdict.json` `status=pass`、`classification=PASS`；适配器确认正式委派关系 `formal_spawn_relation`（1 个 child thread，`expected_agent=professor-contact-selection`），child 返回 `needs_input`（`DIR00001`，候选 `idea-001`/`idea-002`），post 快照程序级文件仍 absent。
 
-复用依据：最终提交与首轮之间，安装态 `professor-contact-selection.toml` 逐字节相同（两轮 SHA-256 均为 `f6519195780aaa0eaab7bbf1ffc17f2f414ebd9460e708ca36c2c1823c70a01d`，`$RUN/output/n4.1-selection-toml-sha256.txt`）；本项不经过 router、analyzer 或文档。首轮证据保留在 `/tmp/contact-nix.27Uu6n/output/selection-*`。
+复用依据：三轮 consumer（`af6bf55` 的 `/tmp/contact-nix.27Uu6n`、`48172e4` 的 `/tmp/contact-nix.1ilKkF`、合并后的 `/tmp/contact-nix.Zc1wnW`）的安装态 `professor-contact-selection.toml` 逐字节相同（四个 consumer 的 SHA-256 均为 `f6519195780aaa0eaab7bbf1ffc17f2f414ebd9460e708ca36c2c1823c70a01d`，`/tmp/contact-nix.Zc1wnW/output/n4.1-selection-toml-sha256.txt` 记录 `27Uu6n`/`1ilKkF`/`Zc1wnW`/`F9MLsw` 四行）；本项不经过 router、analyzer 或文档。首轮证据保留在 `/tmp/contact-nix.27Uu6n/output/selection-*`。
 
 ### N4.2 真实摘要导出（复用 PR90 recipe）：PASS
 
@@ -135,5 +135,5 @@ CONTACT_PAPER_PYTHON="$FIXED_PYTHON" "$FIXED_PYTHON" -B -m unittest -v \
 - 包身份：collector `id=professor-research-collector`、version 0.1.0，导出 `professor-collector` 与 `professor-contact-evidence` 两个 skill 及 `professor-collector`、`professor-collection-preparer`、`professor-worker` 三个角色；与 contact 侧既有闭包无同名不同 payload（`mkProject` 求值通过）。
 - 重跑：N1（三输出构建、包元数据、override、完整闭包与 MCP 归属）与 N2（新 consumer 安装、完整资源、contact-evidence 兄弟 locator、静态比对、handoff 绑定）在 `5032a28` 上通过；证据 `/tmp/contact-nix.F9MLsw`。
 - 资源可用性（安装资源检查，不是 collector 业务验收）：以安装态固定解释器运行解析到的 `<consumer>/.agents/skills/professor-collector/scripts/contact_evidence.py <空程序根> --check`，exit 0 并返回结构化 JSON `{"result":"unavailable","reasons":["artifact_missing"],…}`，说明该兄弟资源在固定解释器下可直接执行；未运行 collector 的下载/补齐业务。
-- 复用：N3（安装态入口）与 N4.1/N4.2（角色调用与真实导出）的入口、业务输入与配置未因该接线改变，按 TP5.1「仅在实际入口、payload 或配置受影响时定向复核」沿用既有记录。
+- 复用：N3（安装态入口）与 N4.1/N4.2（角色调用与真实导出）的实际入口与 payload 逐字节未变（contact 四个入口、contact skill 树与 `professor-contact-selection.toml` 均与接线前一致）；consumer 侧 `.codex/config.toml` 随递归闭包新增 4 个传递依赖的 MCP 表，但不属于这些用例的入口或业务输入。按 TP5.1「仅在实际入口、payload 或配置受影响时定向复核」沿用既有记录。
 - 边界：professor-research 侧 collector 的 T4 业务失败仍保留在该 producer；本包只声明其安装与 helper 归属就绪，不外推为 collector 全链通过。
