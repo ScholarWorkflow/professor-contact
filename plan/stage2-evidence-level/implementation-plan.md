@@ -2,7 +2,7 @@
 
 - Requirement revision：2026-10-17 用户要求为此前 U1、U5 两项修复建立独立计划 PR（北京时间）；依据用户提供的《PR91未覆盖问题报告_20261016.md》。报告中的私人实际数据与失败次数不是本计划已复验结果。
 - Plan revision：contact-evidence-level-r5；Proposed review status: pending（本轮 §3.4 入口对齐修订待审）。
-- 目标：ScholarWorkflow/professor-contact，源码基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。PR 当前核对版本 `ac301e17d3db42288f44042f58e43bc1c4023d69` 已有 U1/U5 产品实现及 t36 有效测试记录；本轮仅更新计划和 PR 说明，§3.4 入口对齐尚未实施，合并审核未进行。
+- 目标：ScholarWorkflow/professor-contact，源码基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。PR 当前核对版本 `ac301e17d3db42288f44042f58e43bc1c4023d69` 已有 U1/U5 产品实现及 t36 有效测试记录；本轮仅更新计划和 PR 说明，§3.4 入口对齐尚未实施，已有 [正式合并审核](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6248142152)（2026-10-18 09:17 UTC，基于 `ac301e17` / r4）结论 NOT_READY：五项既有计划的实现缺陷待产品负责人修正；本轮文档修改未修复这些问题，r5 §3.4 入口对齐仍待审、待实施。
 - 唯一测试计划：[test-plan.md](test-plan.md)。按 [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)执行。
 
 ## 1. 范围与验收目标
