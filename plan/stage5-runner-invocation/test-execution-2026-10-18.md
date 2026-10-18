@@ -22,7 +22,7 @@ python3 -m unittest test_stage5_immutable test_stage5_fixture_isolation test_sta
 | --- | --- | --- |
 | T1 | 通过 | `TestStage5ImmutableTemplates.test_finalize_without_full_body_humanizer_preserves_fixed_segments`、`test_dynamic_field_polish_provenance_is_explicit`、`test_first_and_followup_are_both_rendered_from_stable_templates` |
 | T2 | 通过 | `TestStage5AuditProvenanceInput.test_direct_runner_keeps_the_legacy_business_audit_label` |
-| T3 | 通过 | `TestWrapperKeepsInstalledLayoutLocator.test_changed_audit_marker_fails_closed_before_writing_user_files` |
+| T3 | 通过 | `TestWrapperKeepsInstalledLayoutLocator.test_changed_audit_marker_fails_closed_before_writing_user_files`：断言非 0 退出、既有失败 JSON、且教授目录没有 md/txt/state。该用例不看“整个程序根零写入”：plan 阶段按既有契约可能已触发上游证据重建并写 `<program_root>/教授研究/_联系方式证据.json` |
 | T4 | 通过 | `TestStage5AuditProvenanceInput.test_caller_supplied_internal_audit_option_never_decides_the_label` |
 | T5 | 通过 | `TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker` |
 | T6 | 通过 | `TestStage5ImmutableTargetedScope.test_issue59_t59_6_wrapper_finalize_keeps_selected_email_scope`、`test_stage5_fixture_isolation` 的两个用例、`TestStage5DualTargetContractTests.test_generator_wrapper_instructions_reject_full_body_inputs`、`test_issue59_t59_7_targeted_scope_documents_hold_selected_output_scope` |

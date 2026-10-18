@@ -7,7 +7,7 @@
   > 解除 Stage5 复制整份源码的机制，走常规审核。它目前把 contact_state.py 改写后复制到临时目录执行。之后若主脚本导入相邻模块，临时副本可能找不到这些模块。需要用明确的内部调用方式替代，同时保持审计标记、解释器、二次校验和写入顺序。这批影响实际执行机制，不能算纯搬文件。
 
 - Requirement revision: 第 1 版（负责人 2026-10-18 授权的三批 Stage 重构要求第 2 批，原文见下）。
-- Canonical Plan revision: 第 2 版。
+- Canonical Plan revision: 第 3 版。
 - Target repository revision: `74bd29b572c1b3f68f230a554f57d0202e54cde8`（main）；工作分支 `refactor/stage5-runner-invocation` 从该提交拉出。
 - Relevant upstream/runtime revision: N/A；不涉及外部仓库、代理入口或安装布局变化。被引用的已交付 Nix 计划见 [plan/nix-delivery/implementation-plan.md](../../plan/nix-delivery/implementation-plan.md)。
 - Proposed review status: pending。
@@ -79,7 +79,7 @@
 
 - 内部参数名与取值集合：`--audit-provenance` ∈ {`business`, `none`, `dynamic-fields-only`}，默认 `business`，不出现在公开帮助里。
 - wrapper 的对照关系：`--polish-mode none` → `none`；`--polish-mode dynamic-fields-only` → `dynamic-fields-only`；不传 `--polish-mode` 等同 `none`。
-- 失败关闭的触发条件与 JSON 形状不变；失败时不得改写任何用户文件。
+- 失败关闭的触发条件与 JSON 形状不变；失败时 **wrapper 自身**不写用户文件：不调用 finalize、不写教授级 md/txt/state，草稿与映射只落在它自己的临时目录。`stage5-plan` 按既有顺序在标记校验之前运行，它可能触发上游 owner 的确定性本地证据重建并写 `<program_root>/教授研究/_联系方式证据.json`；那是既有行为（今天用临时副本时同样发生），不由标记校验失败触发，也不由本批引入。绝对化的“失败前用户目录零写入”与“保留 plan 在前的既有顺序”不能同时成立，本计划只承诺前者被限定后的版本。
 - 写入顺序、解释器、stdout/stderr 回放顺序、退出码传递不变。
 - `PROFESSOR_CONTACT_EVIDENCE_SCRIPT` 的解析规则不变：显式设置时优先，未设置时由真实 runner 位置解析。
 
@@ -95,7 +95,7 @@
 ## 影响
 
 - **intended_change**：finalize 的审计来源由 runner 的显式内部输入决定；wrapper 不再改写 runner 源码，也不再写临时 runner 副本；checker locator 改由真实脚本位置解析。
-- **preserved_behavior**：直调 `contact_state.py stage5-finalize` 的渲染字节（含 business 标签）；wrapper 默认与 `--polish-mode dynamic-fields-only` 两种输出的标签与模板保护；`stage5-plan`、草稿校验、映射写入、stdout/stderr 回放、退出码；`--humanized`/`--humanized-map` 仍被 wrapper 忽略；`--email-id` 定向范围；`PROFESSOR_CONTACT_EVIDENCE_SCRIPT` 的解析优先级与临时目录清理。
+- **preserved_behavior**：直调 `contact_state.py stage5-finalize` 的渲染字节（含 business 标签）；wrapper 默认与 `--polish-mode dynamic-fields-only` 两种输出的标签与模板保护；`stage5-plan`、草稿校验、映射写入、stdout/stderr 回放、退出码；plan 阶段的上游证据检查与确定性本地重建行为（含它可能写 `<program_root>/教授研究/_联系方式证据.json`）；`--humanized`/`--humanized-map` 仍被 wrapper 忽略；`--email-id` 定向范围；`PROFESSOR_CONTACT_EVIDENCE_SCRIPT` 的解析优先级与临时目录清理。
 - **approved_behavior_change**：无。本批不改变任何已支持输入的行为：新参数只出现在内部通道，公开 CLI 与 `--polish-mode` 语义不变；wrapper 对旧参数的处理方式不变。具体依据与残留差异见下节“失败路径说明”。
 - **prohibited_side_effect**：改写渲染正文、模板、state/投影 sha；改动公开 CLI 或新增公开参数；把 finalize 改成进程内调用；改变解释器选择与安装布局；在失败路径写用户目录；为测试方便修改 owner 或产品契约。
 - **unresolved impact**：无影响方案成立的项目。两项已记录的残留差异（见“失败路径说明”）都不改变正式 requirement、owner、核心机制、兼容约定或正式可观察业务结果；仓库外是否有人解析临时副本文件名属于未知但非 contract 的事项，方案不依赖该事实。
@@ -112,14 +112,15 @@
 
 1. 直调 runner 不带内部参数时，渲染出的 md 与今天逐字节相同。
 2. wrapper 三种 polish 取值下的标签取值与今天相同。
-3. `business` 后缀完整字面量在 runner 源码中恰好出现一次；否则 wrapper 在写任何用户文件之前失败关闭。
+3. `business` 后缀完整字面量在 runner 源码中恰好出现一次；否则 wrapper 在调用 finalize 之前失败关闭，且除 plan 阶段既有的上游证据重建外不写用户文件。
 4. finalize 子进程仍由 `sys.executable` 启动，且执行的是真实脚本路径（`sys.path[0]` 为真实 `scripts/` 目录）。
 5. 写入顺序仍是 plan → 草稿 → 映射 → 校验 → finalize。
 6. 已安装布局（`professor-collector` 与 `professor-contact` 为 sibling skill）下，finalize 仍能解析到 `contact_evidence.py`；显式设置的 `PROFESSOR_CONTACT_EVIDENCE_SCRIPT` 仍然优先。
 
 代表性反例：
 
-- runner 的 `business` 标签被拆成多段拼接，字面量计数变成 0：wrapper 失败关闭并返回既有失败码，不写用户文件——预期行为。
+- runner 的 `business` 标签被拆成多段拼接，字面量计数变成 0：wrapper 在调用 finalize 之前失败关闭并返回既有失败码；不写教授级 md/txt/state，也不产生临时 runner 副本。
+- 程序根里 `教授研究/_联系方式证据.json` 缺失或其内容变化：plan 阶段的 `resolve_contact_evidence` 会按既有契约跑上游确定性本地重建并写该文件（`cmd_stage5_plan` 9981、重建入口 `run_contact_evidence_rebuild` 9017），随后即使标记校验失败，这次写入也不会被撤销。该路径在今天的临时副本机制下同样存在、顺序也相同，因此本批既不放宽也不收紧它；计划因此只承诺 wrapper 自身零写入，不承诺整个调用链零写入。
 - 调用方显式传 `--audit-provenance business`：wrapper 丢弃该选项，按自己声明的 polish 取值（不传时为 `none`）渲染；调用方的取值不得覆盖 wrapper 的声明。
 - 同一进程并发调用 wrapper：每次调用各自建临时目录，只有草稿与映射写入其中，互不共享路径。
 - 真实 runner 与 wrapper 不在同一目录（测试把两者复制到安装布局再执行）：wrapper 以自身相邻的 runner 路径调用，行为与今天一致。
@@ -140,7 +141,8 @@
 
 - 第 1 版：首次提交计划审核。
 - 第 2 版：按第 1 轮计划审核的 P3 blocker 修正影响栏——取消“新增拒绝行为”的设计，调用方自带的内部参数改为按既有 `--humanized` 方式丢弃；把残留可观察差异移入“失败路径说明”，`approved_behavior_change` 记为无，并更正 `tests/test_stage5_dualtarget_contract.py` 与 `stage5_immutable.py` 的引用位置。同时合入非阻断观察：模块 docstring 与测试注释同步、只读校验范围的取舍说明、失败文案中的脚本名差异。P1/P2/P4 与 owner、核心机制、冻结契约均未变化。
+- 第 3 版：按正常审核提出的“失败时零写入承诺不成立”修正：把“失败时不得改写任何用户文件”限定为 wrapper 自身零写入，并在冻结契约、安全条件、preserved_behavior 与反例中明确写出 `stage5-plan` 按既有顺序可能触发上游确定性本地证据重建、写 `<program_root>/教授研究/_联系方式证据.json`（`cmd_stage5_plan` 9981 → `run_contact_evidence_rebuild` 9017）；该路径在今天的临时副本机制下同样存在，本批不放宽也不收紧。同步修正测试计划对 T3 的表述。P1/P2 与 owner、核心机制、冻结契约其余内容未变；P4 的改动清单未变。
 
 ## 审核状态
 
-计划第 2 版为当前唯一计划，状态为待审核（第 1 轮结论 `NEEDS_MODIFICATION`，仅 P3 一项 blocker，已按上节修正）。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
+计划第 3 版为当前唯一计划。第 1 轮结论 `NEEDS_MODIFICATION`（仅 P3 一项 blocker）已按第 2 版修正并取得 `APPROVED`；第 3 版只修正“零写入”承诺的适用范围与相应记录，未改方案、owner 与冻结契约。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
