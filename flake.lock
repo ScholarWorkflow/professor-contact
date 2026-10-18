@@ -253,17 +253,17 @@
         "source-access-skills": "source-access-skills"
       },
       "locked": {
-        "lastModified": 1792162717,
-        "narHash": "sha256-EX/5ZjiJnHS3eKl3rLnSfHKw44LN3MbmCQoA9aLvPHs=",
+        "lastModified": 1792314250,
+        "narHash": "sha256-wXqv6I98eyzbV2/E9SgJn59y4ViA9mZ92YHl1gPuDmo=",
         "owner": "ScholarWorkflow",
         "repo": "browser-pdf-tools",
-        "rev": "1bcc0973a5b1ab3f2fc0406cb29073382a18b8e2",
+        "rev": "0a1ad04a3118bc9ac6e8dfe82f9fa53534fe5635",
         "type": "github"
       },
       "original": {
         "owner": "ScholarWorkflow",
         "repo": "browser-pdf-tools",
-        "rev": "1bcc0973a5b1ab3f2fc0406cb29073382a18b8e2",
+        "rev": "0a1ad04a3118bc9ac6e8dfe82f9fa53534fe5635",
         "type": "github"
       }
     },
@@ -513,17 +513,17 @@
         "zotero-tools": "zotero-tools"
       },
       "locked": {
-        "lastModified": 1792256669,
-        "narHash": "sha256-b1aqnem2haB+0EXkjYeXk8gzyZ3NKqEH/NCmEAVdaME=",
+        "lastModified": 1792315906,
+        "narHash": "sha256-N7LaGG3PmK3QuluoQVnSuH8Mg1N4qmXvX8+eGPr9I0Y=",
         "owner": "ScholarWorkflow",
         "repo": "professor-research",
-        "rev": "6e46f2961ba213c896b536bbbaa7de838b1070d4",
+        "rev": "bb27533540715c44039c108302f11d3e00d6b62e",
         "type": "github"
       },
       "original": {
         "owner": "ScholarWorkflow",
         "repo": "professor-research",
-        "rev": "6e46f2961ba213c896b536bbbaa7de838b1070d4",
+        "rev": "bb27533540715c44039c108302f11d3e00d6b62e",
         "type": "github"
       }
     },
