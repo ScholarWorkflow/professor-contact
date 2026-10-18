@@ -5087,8 +5087,20 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
             lines.append("")
             for item in d["completed_gap_blacklist"]:
                 completed = item.get("completed_by_item_key")
-                completed_render = stage2_display_link(completed, references) \
-                    or "（完成论文见证据）"
+                completed_render = stage2_display_link(completed, references)
+                if completed_render is None:
+                    if completed:
+                        # A real completion key without trusted metadata stops
+                        # the render exactly like the other fixed-evidence
+                        # slots; only an absent key keeps the existing pointer.
+                        fail("missing_fixed_evidence_title",
+                             f"cannot render the anchor-banned completion reference "
+                             f"{completed}: no trusted title exists in the input pack, "
+                             "the paper facts or the persisted display references. The "
+                             "Stage-2 data owner must refresh that metadata; the "
+                             "reference is neither guessed nor dropped.",
+                             item_key=completed, where="禁锚区完成论文")
+                    completed_render = "（完成论文见证据）"
                 evidence_render = stage2_display_text(
                     item.get("evidence"), references, "禁锚区依据")
                 lines.append(f"- {item['quote_trunc']}——《{item['paper_title']}》（{item.get('paper_year')}）→ 已被 {completed_render} 接住（依据：{evidence_render}）。")

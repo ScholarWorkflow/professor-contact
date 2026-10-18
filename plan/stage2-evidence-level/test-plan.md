@@ -120,6 +120,7 @@ exit "$status"
 - 执行中出现的问题与处置：正式执行时 T1 的两条断言与 T2 的一处夹具被判定为**测试步骤本身不成立**（译文切片末尾空格与侧车 `.strip()` 冲突、`gap_notes` 快照 list 与规范 dict 形状不符、freshness 缓存命中使修正后的来源证据不被消费），按 Test Engineer Rule §5 停止受影响项并交本地测试工程师修订（t35）；修订后按同一 §3 命令完整复跑，17 项通过。原始失败日志保留在 `/tmp/contact-evidence-level.UiagMtvI/`（`recipe-baseline.txt`、`step1.txt`、`step3.txt`、`recipe-wip1.txt`），t35 的中间失败记录在 `/tmp/contact-evidence-level.UyFv3Iyi/recipe-t35.txt`。
 - 范围外回归（执行工程师自选的完整性检查，不是必测项）：在产品实现完成、t35 测试修订之前的版本上运行 `python3 -m unittest discover -p "test_*.py"`，`Ran 1028 tests`、`FAILED (failures=2)`，两项正是上面 T1/T2 的测试步骤缺陷，没有其他产品回归；t35 只改测试模块与本节，未再全量复跑。
 - 复用来源：无，本轮是对当前产品版本首次执行必测项。
+- 实现符合性审核处置后的复验：`implementation_reviewer` 首次审核（受审版本 `165906a`）结论为**完整**，其中 IR-02 按 §3.1 收紧禁锚区完成论文引用后，按同一 §3 命令再跑一次 17 个选择器，结果目录 `/tmp/contact-evidence-level.kB35xlUV/recipe.txt`，`Ran 17 tests`、`OK`；同时运行 `python3 -m unittest discover -p "test_*.py"`，`Ran 1028 tests`、`OK`。上面第一次记录（`OnXaAyhx`）仍是同一必测清单的有效结果，两次结果一致。处置明细见 §8。
 - 未完成项：无。本记录是第三关结果，不代表第二关、合并批准或可合并；合并审核按 `Merge Reviewer Rule.md` 由下一负责人执行。
 
 准备期复核（非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），测试提交 `0fe84ab`，命令为 §3 的 17 个选择器，结果目录 `/tmp/contact-evidence-level.p49ZBXq2`（`recipe.txt`），退出码 1，`Ran 17 tests`、`FAILED (failures=11)`。
@@ -401,3 +402,14 @@ exit "$status"
 验证：按上述两个选择器运行 `python3 -m unittest -v test_stage2_evidence_level.FixedEvidenceDisplayTests.test_fixed_evidence_renders_trusted_references_without_touching_machine_fields test_stage2_evidence_level.FixedEvidenceFailureTests.test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job`，`Ran 2 tests`、`OK`，退出码 0；结果目录 `/tmp/contact-evidence-level.UyFv3Iyi`（`recipe-t35-run2.txt`）。该运行只验证修订后的两条用例可执行且通过，不是第三关完整运行；t35 定稿后本地执行工程师已按 §3 的 17 个选择器完整复跑并全部通过，见 §5。
 
 本轮只改测试代码与测试计划；`scripts/contact_state.py`、`SKILL.md` 与两个 analyzer 投影等产品文件及其他测试模块本轮未改。
+
+## 8. 本地执行交付的实现符合性审核处置（2026-10-18）
+
+独立 `implementation_reviewer` 对本地执行工程师在计划 r4 下全部应交付产物的**首次实现符合性审核**（受审版本 `165906a`，产品实现 `8f31296`）结论为**完整**；提出两项，处置如下。本节编号属于本轮审核，不与 §6、§7 的 IR 编号混用。
+
+| 问题 | 处置 |
+|---|---|
+| IR-01（中）同一方向的混合报告里，可修订的叙事阻挡在本轮也失去模型修订机会 | **不改产品。** 执行计划 §3.2 原文即「只要本轮含合法固定证据卡阻挡（**包括混合报告**），refine-plan 返回明确的『需修复源数据或生成器』结果、零 rewrite jobs；refine-finalize 同样拒绝写入。调用方停止自动修订/校验循环」，第二关已批准的 `test_mixed_fixed_and_narrative_blocking_creates_no_rewrite_job` 也断言零 jobs、零写入。混合轮的叙事侧恢复路径与固定区一致：源 owner 修好来源后按正常 Stage 2 重新生成正文，再对新正文重新登记校验。若计划负责人希望把这条恢复路径写成明文，属口径补充，按 Test Engineer Rule §7 交计划负责人裁定；本轮不据此扩大范围。 |
+| IR-02（轻）禁锚区「完成论文」引用缺可信题名时仍是软降级 | **已按 §3.1 收紧并复验。** 渲染禁锚区行时，`completed_by_item_key` 存在真实 item key 而 pack／论文事实／`display_references` 都取不到可信题名时，与三个固定槽位一样 `fail("missing_fixed_evidence_title")` 停止生成；只有该 key 本身缺省（既有夹具形态）才保留原「（完成论文见证据）」兜底。复验：`test_stage2_evidence_level` 13 项通过，随后按 §3 完整复跑 17 个选择器（`/tmp/contact-evidence-level.kB35xlUV/recipe.txt`，`Ran 17 tests`、`OK`）并运行全仓 `python3 -m unittest discover -p "test_*.py"`（`Ran 1028 tests`、`OK`）。 |
+
+处理 IR-02 的产品修改后，必测项已按 §3 重新执行并取得当前版本的通过结果（§5 的两份记录结果一致）；未受影响的选择器结果直接复用。本审核结论不代表第二关、第三关最终批准或合并批准；下一步由合并审核负责人按 `Merge Reviewer Rule.md` 执行。
