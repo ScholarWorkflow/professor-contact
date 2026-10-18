@@ -44,6 +44,46 @@ nix build "$CONTACT_REF#professor-contact-environment" --out-link "$RUN/environm
 | `packages.aarch64-darwin.professor-contact-runtime` | 固定解释器的完整自有资源（`scripts/`、`docs/`、`tests/`、隐藏辅助文件），普通 derivation，不冒充 agent 安装 |
 | `packages.aarch64-darwin.professor-contact` | `id = "professor-contact"` 的 agent 包，默认 `enableHarnesses = [ "codex" ]`；`professor-contact.override { enableHarnesses = []; }` 可按包关闭投影 |
 | `packages.aarch64-darwin.professor-contact-environment` | `mkProject` 环境，`roots = [ professor-contact ]`，提供 `bin/agent-env`，下游可与其他顶层包组合 |
+| `packages.aarch64-darwin.professor-contact-activate` | 固定 `bin/professor-contact-activate` 入口，按 environment store 路径与项目物理路径缓存成功安装 |
+
+#### direnv / devShell 自动激活
+
+共享依赖 [agent-env-nix #4](https://github.com/RekiDunois/agent-env-nix/pull/4) 已合并，本仓库固定到真实合并提交 `91861b4f028eda1dbeb41481dcc48cd7c4a60874`。入口直接调用 `lib.mkCachedActivation { inherit pkgs; environment = products.project; name = "professor-contact-activate"; }`，本仓库不再维护重复包装脚本与行为测试。
+
+已有 direnv 的消费者可以把下面的 `flake.nix` 放在自己的项目根目录，`.envrc` 使用 `use flake`。消费者只调用固定 store 入口，不需要复制脚本。示例中的 contact main 须已包含本功能；本 PR 合并前应将 input 指向本 PR 的实际完整提交 SHA。新共享接线的验证边界见下方测试计划，不把旧产品的 Darwin 结果作为本次实测。
+
+```nix
+{
+  inputs = {
+    contact.url = "github:ScholarWorkflow/professor-contact/main";
+    nixpkgs.follows = "contact/nixpkgs";
+  };
+
+  outputs = { contact, nixpkgs, ... }:
+    let
+      system = "aarch64-darwin";
+      pkgs = nixpkgs.legacyPackages.${system};
+      activate = contact.packages.${system}.professor-contact-activate;
+    in {
+      devShells.${system}.default = pkgs.mkShell {
+        packages = [ activate ];
+        shellHook = ''
+          "${activate}/bin/professor-contact-activate" --project "$PWD" || exit $?
+        '';
+      };
+    };
+}
+```
+
+`main` 由消费者的 `flake.lock` 锁定，更新 input 后才会取新版本。入口默认使用当前目录，也接受 `--project DIRECTORY`。它用 environment 的 store 输出路径和项目的物理路径（`pwd -P`）记录成功：首次、environment 变化或项目移动后调用原有 `agent-env apply --project`；同版本同路径只检查成功标记，不扫描/复制技能。该缓存不验证安装文件是否仍然完整；手动删除或修改安装产物后，在 devShell 中运行 `professor-contact-activate --force` 重新 apply（仍遵守共享安装器的保护规则）。
+
+项目根目录的 `.agent-env-applied` 是本入口的成功标记，只有 apply 成功才原子写入；再次 apply 前删除旧标记，所以失败后下次会重试。标记若是符号链接或非普通文件会报错。请在消费者的 `.gitignore` 加入 `/.agent-env-applied` 和 `/.agent-env-apply.lock/`，不要提交或手动伪造标记。
+
+同一项目通过 `.agent-env-apply.lock` 串行激活；并发调用会立即报错，请待前一次结束后重试。正常退出会清锁；若进程被强杀或机器崩溃，确认没有激活进程后才手动删除遗留锁目录。直接调用原有 `agent-env apply/remove` 不参与这个锁，也不会更新成功标记；不要与本入口并发运行，之后再次使用缓存入口前应使用 `--force` 重建成功状态。路径含换行符不支持。以上仅新增缓存包装层，不改变原有 environment 接口或 APM 安装。
+
+共享 marker/锁按项目而非命令名区分；同一项目需要多个 root 时，应先组合为一个 `mkProject` environment，再包装一次。不要逐个激活独立 environment 来累加技能，它们会相互替换。旧 contact 专用 `.professor-contact-applied` 不作为共享缓存成功证据；升级后第一次重新 apply 是预期行为，不复制或改名旧 marker 来跳过安装。旧入口与新入口的锁名不同，也不得并发运行。
+
+通用缓存行为由 agent-env-nix 的共享测试负责；本仓库只核对接线与消费边界。当前实施及验证范围见 [执行计划](plan/cached-nix-activation/implementation-plan.md) 和 [测试计划](plan/cached-nix-activation/test-plan.md)。旧产品的 Darwin/direnv 已执行记录保留，不能作为本次新共享接线通过的证明。
 
 依赖按上游实际发布提交固定：`agent-env-nix` 固定共享安装器，`paper-analysis`、`zotero-tools`、`base-skills`（`humanizer-ja`、`vision-tools`）、`pdf-processing-core`（`pdfx-agent` 与固定 Python）、`knowledge-tools` 的 `extraction-to-knowledge` 递归闭包，以及 `professor-research` 的 `professor-collector`（Stage 1 缺 PDF 补齐与 Stage 5 contact-evidence freshness 的上游 owner）。`vision-tools` 与 paper-analysis 复用同一次求值；collector 保留其生产者自己的真实递归依赖（其 browser 输入的 base/source skill 实例与 Zotero owner lock），contact 不重写这些实例。
 

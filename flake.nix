@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/6510408d147d8c5e6d76043e899e9251756f6a75";
 
     agent-env-nix = {
-      url = "github:RekiDunois/agent-env-nix/2158e933aab6c845ae1ceb1228458d624f8777d5";
+      url = "github:RekiDunois/agent-env-nix/91861b4f028eda1dbeb41481dcc48cd7c4a60874";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -89,6 +89,11 @@
         professor-contact-runtime = products.runtime;
         professor-contact = products.package;
         professor-contact-environment = products.project;
+        professor-contact-activate = agent-env-nix.lib.mkCachedActivation {
+          inherit pkgs;
+          environment = products.project;
+          name = "professor-contact-activate";
+        };
       };
     };
 }
