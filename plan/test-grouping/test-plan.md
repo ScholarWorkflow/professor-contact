@@ -5,7 +5,7 @@
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 2 版（`Plan conclusion: APPROVED`）。
 - 需求来源：负责人 2026-10-18“其余边界”中的“测试分组／CI：可以另评估快审，但不能只按 test_stageN 文件名筛选”。
 - 对照基准与目标修订：`6e624e0`（`origin/main`）；本批工作分支 `refactor-test-grouping`。
-- Test plan revision: 第 1 版。
+- Test plan revision: 第 2 版。
 - 测试范围依据：`Test Engineer Rule.md`；提交前按共用清单 `plan/test-plan-checklist.md` 自检（该清单随 PR #98 引入，本分支从 `main` 拉出、不把它当作已存在的文件；自检小节已逐条写明）。
 - Proposed review status: pending。
 
@@ -13,7 +13,7 @@
 
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
-| T1 | 覆盖校验能挡住“漏归类／重复／不存在”，并接受正确清单 | 正确清单；三种坏清单：① 从某片删掉一个模块；② 把某模块同时放进两片；③ 某片加一个不存在的模块名 | 正确清单退出码 0 并打印 `OK: 78 test modules across 4 shards`；三种坏清单都非零退出并给出对应 `ERROR:` 行；每次注入后恢复清单并复跑通过 | 仓库根 `python scripts/check_test_shards.py`；注入通过临时改写 `plan/test-grouping/shards.json` 再恢复（改动前后都用 `git diff` 确认清单回到原样） |
+| T1 | 覆盖校验能挡住“漏归类／重复／不存在／空分片”，并接受正确清单 | 正确清单；四种坏清单：① 从某片删掉一个模块；② 把某模块同时放进两片；③ 某片加一个不存在的模块名；④ 把某片的模块列表置空 | 正确清单退出码 0 且 stdout 含 `OK: 78 test modules across 4 shards`；四种坏清单都非零退出，且 stderr **分别**含 `not covered by any shard`／`listed in both`／`no such test module`／`lists no modules`；每次注入后恢复清单并复跑通过 | 仓库根 `python scripts/check_test_shards.py`；注入用带 `try/finally` 的片段临时改写 `plan/test-grouping/shards.json` 并在结束时恢复，最后用 `git diff --exit-code` 确认清单回到原样；**逐例断言对应错误子串**，不只比退出码 |
 | T2 | 四个分片的并集等于全套、且各自通过 | 四片各自的模块列表 | 四片都 `OK`；四片 `Ran N tests` 之和 = `unittest` 收集数（1025）；无重复执行 | `python scripts/check_test_shards.py --print <shard>` 取列表，在 `tests/` 目录逐片 `python -m unittest <列表>` |
 | T3 | 工作流结构保持单一 `test` 门禁 | `.github/workflows/ci.yml` | `shards` 任务为 4 组合 matrix、`fail-fast: false`、每片先跑覆盖校验再跑本片；`test` 聚合任务 `needs: [shards]`、`if: always()`、`needs.shards.result != success` 即失败 | 读取工作流文本逐条核对；CI 跑起来后核对检查项名（`shards (shardN)` 与 `test`） |
 | T4 | 每个分片命令可独立在本地执行 | 四片的命令（从 `tests/` 目录） | 都能独立跑通，不依赖其它分片产生的文件 | 同 T2 |
@@ -42,27 +42,35 @@
    manifest = Path("plan/test-grouping/shards.json")
    backup = manifest.read_text(encoding="utf-8")
    def check():
-       return subprocess.run([sys.executable, "scripts/check_test_shards.py"],
-                             capture_output=True, text=True).returncode
-   data = json.loads(backup)
+       proc = subprocess.run([sys.executable, "scripts/check_test_shards.py"],
+                             capture_output=True, text=True)
+       return proc.returncode, proc.stdout, proc.stderr
+   code, out, _ = check()
+   assert code == 0 and "OK: 78 test modules across 4 shards" in out
    cases = {
-       "missing": lambda d: d["shards"][0]["modules"].pop(0),
-       "duplicate": lambda d: d["shards"][1]["modules"].append(d["shards"][0]["modules"][0]),
-       "nonexistent": lambda d: d["shards"][2]["modules"].append("test_does_not_exist"),
+       "missing": ("not covered by any shard", lambda d: d["shards"][0]["modules"].pop(0)),
+       "duplicate": ("listed in both",
+                     lambda d: d["shards"][1]["modules"].append(d["shards"][0]["modules"][0])),
+       "nonexistent": ("no such test module",
+                       lambda d: d["shards"][2]["modules"].append("test_does_not_exist")),
+       "empty_shard": ("lists no modules",
+                       lambda d: d["shards"][3].__setitem__("modules", [])),
    }
-   for name, mutate in cases.items():
-       broken = json.loads(backup)
-       mutate(broken)
-       manifest.write_text(json.dumps(broken, ensure_ascii=False), encoding="utf-8")
-       code = check()
-       print(name, "->", code)
-       assert code != 0, name
-   manifest.write_text(backup, encoding="utf-8")
-   assert check() == 0
+   try:
+       for name, (needle, mutate) in cases.items():
+           broken = json.loads(backup)
+           mutate(broken)
+           manifest.write_text(json.dumps(broken, ensure_ascii=False), encoding="utf-8")
+           code, _, err = check()
+           print(name, "->", code, "|", needle in err)
+           assert code != 0 and needle in err, name
+   finally:
+       manifest.write_text(backup, encoding="utf-8")
+   assert check()[0] == 0
    PY
    git diff --exit-code -- plan/test-grouping/shards.json
    ```
-   预期：正确清单退出 0；`missing`／`duplicate`／`nonexistent` 三次注入都非零退出；恢复后再次为 0；`git diff --exit-code` 无输出。
+   预期：正确清单退出 0 且 stdout 含 `OK: 78 test modules across 4 shards`；`missing`／`duplicate`／`nonexistent`／`empty_shard` 四次注入都非零退出且 stderr 含各自对应的错误子串（见 T1 行）；恢复后再次为 0；`git diff --exit-code` 无输出。
 3. T2/T4：逐片跑并记录计数与墙钟。
    ```sh
    set -e
@@ -105,7 +113,8 @@
 ## 修订记录
 
 - 第 1 版：首次提交测试计划审核。
+- 第 2 版：按第一关口的 B1 把 T1 从“只比退出码”改为**逐例断言对应错误子串**（`not covered by any shard`／`listed in both`／`no such test module`），并补第四个注入“某片模块列表置空”（`lists no modules`）；片段加 `try/finally` 保证断言失败也会恢复清单；正确清单那次同时断言 stdout 的 `OK: 78 test modules across 4 shards`。
 
 ## 审核状态
 
-测试计划第 1 版为当前唯一版本，状态为待审核。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 2 版为当前唯一版本。第 1 版第二关口 PASS、第一关口有 1 项 blocker（B1），已按上节修正。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。

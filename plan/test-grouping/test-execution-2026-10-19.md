@@ -1,6 +1,6 @@
 # 测试分组与 CI 分片 测试执行记录（2026-10-19）
 
-- 测试计划：[test-plan.md](test-plan.md)，第 1 版。
+- 测试计划：[test-plan.md](test-plan.md)，第 2 版。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 2 版（`Plan conclusion: APPROVED`）。
 - 对照基准：`6e624e0`（`origin/main`）。
 - 被测提交：`fd3ea8d`（实现提交；其后如仅改文档，产品与测试字节不变）。
@@ -10,7 +10,7 @@
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
-| T1 | 通过 | 正确清单：`OK: 78 test modules across 4 shards`、退出码 0；三种坏清单注入后分别退出 1（漏归类／重复／不存在），每次都能给出对应 `ERROR:` 行；恢复清单后再次退出 0，`git diff --exit-code -- plan/test-grouping/shards.json` 无输出 |
+| T1 | 通过 | 正确清单：退出码 0 且 stdout 为 `OK: 78 test modules across 4 shards`；四种坏清单逐例断言错误子串——`missing` → 1／`ERROR: not covered by any shard: test_contact_state`、`duplicate` → 1／`ERROR: test_contact_state listed in both shard1 and shard2`、`nonexistent` → 1／`ERROR: shard3: no such test module: test_does_not_exist.py`、`empty_shard` → 1／`ERROR: shard4 lists no modules`；恢复后再次退出 0，`git diff --exit-code -- plan/test-grouping/shards.json` 无输出（日志 `/tmp/pc-tg-check/t1-injections.log`） |
 | T2 | 通过 | 四片各自 `OK`（其中一片 `OK (skipped=1)`）；四片 `Ran` 之和 = **1025**，与 `countTestCases()` 的 1025 一致；无重复执行 |
 | T3 | 通过 | 工作流含 `fail-fast: false`、`matrix.shard: [shard1..shard4]`、每片先 `python scripts/check_test_shards.py` 再从 `tests/` 跑本片；聚合任务 `needs: [shards]`、`if: always()`、`needs.shards.result != "success"` 即失败 |
 | T4 | 通过 | 四片命令都在本地独立跑通，互不依赖；墙钟 shard1 121s、shard2 129s、shard3 122s、shard4 124s |
@@ -18,7 +18,7 @@
 
 ## 执行方法与命令
 
-1. 覆盖校验与三种坏清单注入（片段见测试计划第 2 步）：正确 → 0；漏归类 → 1；重复 → 1；不存在 → 1；恢复 → 0。
+1. 覆盖校验与四种坏清单注入（片段见测试计划第 2 步，含 `try/finally` 与逐例错误子串断言）：正确 → 0（stdout 含 `OK: 78 test modules across 4 shards`）；漏归类 → 1（`not covered by any shard`）；重复 → 1（`listed in both`）；不存在 → 1（`no such test module`）；空分片 → 1（`lists no modules`）；恢复 → 0。
 2. 逐片运行（从 `tests/` 目录，模块列表由 `--print` 提供）：
 
    ```sh
@@ -42,6 +42,8 @@
 
 - 第一版测量取自主检出（旧修订 `74bd29b`），与声明的目标 `6e624e0` 不符（计划审核 B1 指出）：在目标修订的 worktree 上重跑两个脚本，数字改为 1025 项 / 416.2s / 156 类 / 1033 方法 / stage5 29，并写明两个计数口径与脚本重名键限制。
 - 计时脚本的 stdout 混入了某个用例打印的 JSON，直接 `json.loads` 会失败：改为从最后一个 `{"total_seconds"` 起解析（`/tmp/pc-tg-timing.clean.json`）。
+- 测试计划第 1 版审核指出 T1 只比退出码、验不到自己声明的 `ERROR:` 行（任何其它失败也会非零退出）：改为逐例断言错误子串，并补“某片置空”这一注入；重跑后四种注入都命中各自消息。
+- 计时口径差异：`shards.json` 的 104.0s 是各模块测试耗时之和，本地分片墙钟 121–129s 还包含 discover/导入开销（最大/最小 ≈ 1.06），两个数字不矛盾。
 - 以上属测量与测试资产问题，产品与测试代码未改。
 
 ## 兼容性门禁
