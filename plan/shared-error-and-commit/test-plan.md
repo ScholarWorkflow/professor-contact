@@ -17,7 +17,7 @@
 | T1 | 错误通道的退出码与 stdout 不变 | 同一驱动脚本分别加载基准修订与改动修订的 runner：调用 `emit`；在通道关闭时调用 `fail`、`soft_exit` | `emit` 输出文本逐字节相同；`fail` 的 stdout JSON 相同且退出码 1；`soft_exit` 的 stdout JSON 相同且退出码 2 | 仓库外驱动脚本，两次运行各输出一份规范化 JSON（stdout 文本 + 退出码），逐字段比较 |
 | T2 | 业务通道仍把失败转成同一异常类型 | 驱动脚本进入 `professor_business_channel()` 后分别调用 `fail` 与 `soft_exit` | 两次都不打印、不退出；抛出的异常类型名与 payload 相同；`type(exc) is contact_state.ProfessorBusinessFailure` 为真；通道关闭后行为回到 T1 | 同 T1 驱动脚本 |
 | T3 | 原子写与两个事务的回滚行为不变 | 驱动脚本在各自临时目录里：`atomic_write` 写文本；`atomic_json` 写对象；`atomic_json_many` 成功一次、**部分安装后**失败一次；`staged_pair_commit` 成功一次、**首个文件安装后**失败一次。两个目标都预先存在时，`atomic_json_many` 的替换顺序是「备份文件一 → 安装文件一 → 备份文件二 → 安装文件二」，注入点是**第四次** `os.replace`（此时文件一已完整安装为新内容）；`staged_pair_commit` 的注入点是第二次（文件一已安装） | 成功时文件字节与今天相同、无 `.<name>.*` 残留；失败时已安装的新文件被删除并恢复旧字节、第二个文件保持旧内容、无残留、异常类型与 `os.replace` 调用次数相同 | 同 T1 驱动脚本（只打印相对路径与内容，避免临时目录前缀差异）；`os.replace` 在 `finally` 恢复。只注入第二次替换无法证明 `atomic_json_many` 的“已安装后回滚”，不要退回该写法 |
-| T4 | 既有业务路径不受影响（只选**以本批行为为主要目的**的方法） | ① 事务回滚与提交点：`test_issue66_stage3_local_state.Issue66LocalStateTests.test_local_finalize_restores_both_files_when_state_install_fails`、`test_staged_pair_keeps_committed_files_when_cleanup_fails`；② `os.replace` 故障注入：`test_contact_state.Issue67ProfessorLocalStage4Tests.test_03_second_file_install_failure_rolls_the_pair_back`、`test_12_fatal_after_a_commit_keeps_a_and_fresh_retry_uses_current_facts`、`test_contact_state.Issue67AdjacentStateTests.test_05_fatal_run_without_aggregate_success_gives_the_caller_nothing`；③ 业务通道把失败转成该教授的 result row：`test_issue67_gate2_r3.Issue67Gate2R3IdentityTests.test_same_canonical_scope_with_different_display_names_is_duplicate`、`test_stage3_direction_groups.Stage3DirectionGroupTests.test_stage4_same_professor_preserved_entry_needs_refresh_is_zero_write` | 7 个方法全部通过 | 只运行这 7 个方法（见第 3 步命令）。不整模块运行：`test_issue66_stage3_local_state` 另 4 项是受管文件冲突与总览重建、`test_issue67_gate2_r3` 另 5 项是选择契约、`test_stage3_direction_groups` 另 17 项是方向分组与迁移，都不以本批行为为主要目的，不作为通过条件 |
+| T4 | 既有业务路径不受影响（只选**以本批行为为主要目的**的方法） | ① 事务回滚与提交点：`test_issue66_stage3_local_state.Issue66LocalStateTests.test_local_finalize_restores_both_files_when_state_install_fails`、`test_staged_pair_keeps_committed_files_when_cleanup_fails`；② `os.replace` 故障注入（`atomic_json_many` / `staged_pair_commit` 的安装与回滚）：`test_contact_state.Issue67ProfessorLocalStage4Tests.test_03_second_file_install_failure_rolls_the_pair_back`、`test_12_fatal_after_a_commit_keeps_a_and_fresh_retry_uses_current_facts`、`test_contact_state.Issue67AdjacentStateTests.test_05_fatal_run_without_aggregate_success_gives_the_caller_nothing` | 5 个方法全部通过 | 只运行这 5 个方法（见第 3 步命令）。业务通道把失败转成 result row 的行为由 T2 的驱动直接覆盖（通道内 `fail`/`soft_exit` 抛同一异常、通道外回到打印+退出），不再靠 issue #67 的归属类用例间接证明；`test_issue66_stage3_local_state` 另 4 项（受管文件冲突与总览重建）、`test_issue67_gate2_r3` 全部 6 项（选择与身份契约）、`test_stage3_direction_groups` 全部 19 项（方向分组与迁移）都不以本批行为为主要目的，不作为通过条件 |
 
 **既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的全量 `unittest discover` 由仓库工作流照常执行，其结果单独引用，不作为本批业务必测项，也不因本批而扩张或缩减；合并要求继续按仓库规则执行。
 
@@ -46,7 +46,7 @@
    diff -u "$RUN/base.json" "$RUN/head.json" && echo "T1-T3 IDENTICAL"
    ```
    预期：两条驱动命令都退出 0（否则 `set -e` 立即中止），`diff` 无输出并打印 `T1-T3 IDENTICAL`。
-3. T4：只跑清单列出的 7 个方法。
+3. T4：只跑清单列出的 5 个方法。
    ```sh
    set -e
    cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-shared-error-and-commit/.apm/skills/professor-contact/tests
@@ -56,11 +56,9 @@
      test_contact_state.Issue67ProfessorLocalStage4Tests.test_03_second_file_install_failure_rolls_the_pair_back \
      test_contact_state.Issue67ProfessorLocalStage4Tests.test_12_fatal_after_a_commit_keeps_a_and_fresh_retry_uses_current_facts \
      test_contact_state.Issue67AdjacentStateTests.test_05_fatal_run_without_aggregate_success_gives_the_caller_nothing \
-     test_issue67_gate2_r3.Issue67Gate2R3IdentityTests.test_same_canonical_scope_with_different_display_names_is_duplicate \
-     test_stage3_direction_groups.Stage3DirectionGroupTests.test_stage4_same_professor_preserved_entry_needs_refresh_is_zero_write \
      -v
    ```
-   预期：`Ran 7 tests`、全部 `ok`。此前记录的 95 项运行是本次命令的超集（含两个只断言文档文本的合同文件与三个模块的其余用例），多出的部分不构成本批通过条件，也不要求删除测试文件。
+   预期：`Ran 5 tests`、全部 `ok`（在 head 上实测 `Ran 5 tests in 7.842s`）。此前记录的 95 项运行是本次命令的超集（含两个只断言文档文本的合同文件与三个模块的其余用例），多出的部分不构成本批通过条件，也不要求删除测试文件。
 4. 既有仓库检查：把改动推送到 PR 后引用仓库 CI 的全量结果（不属于本批必测项）；CI 未通过时按第 6 步处理。
 5. 记录：保存命令、实际提交 SHA、逐项结果与必要输出片段到 `/tmp` 运行目录，并把方法与结果写入 `test-execution-<日期>.md`。
 6. 失败处理：
@@ -74,7 +72,7 @@
 - 所有路径都相对传入的工作目录，输出只含相对路径与文件内容；两份结果因此可以直接 `diff`。
 - 用 `contextlib.redirect_stdout(io.StringIO())` 捕获 `emit`/`fail`/`soft_exit` 的 stdout 文本，用 `try/except SystemExit` 记录退出码。
 - 业务通道：`with runner.professor_business_channel():` 内分别调用 `fail` 与 `soft_exit`（两次独立的通道块），捕获 `runner.ProfessorBusinessFailure`，记录 `type(exc).__name__`、`exc.payload`、`str(exc)`、捕获到的 stdout 与 `type(exc) is runner.ProfessorBusinessFailure`。
-- 事务失败注入：临时替换 `os.replace`，只在第二次调用时抛 `OSError`（安装期失败），并在 `finally` 恢复；记录失败后每个文件的存在性与字节、异常类型与 `os.replace` 调用次数。**不要**用“父路径是普通文件”制造失败——那会在暂存期抛错、回滚分支为空，等于没有覆盖回滚。
+- 事务失败注入：临时替换 `os.replace` 并在 `finally` 恢复。**`atomic_json_many` 注入第四次调用**（两个目标都预先存在时序列为「备份一 → 安装一 → 备份二 → 安装二」，第四次失败时文件一已完整安装为新内容）；**`staged_pair_commit` 注入第二次调用**（文件一已安装）。记录失败后每个文件的存在性与字节、异常类型与 `os.replace` 调用次数。**不要**用“父路径是普通文件”制造失败（那会在暂存期抛错、回滚分支为空），也不要退回“只注入第二次”的写法（`atomic_json_many` 此时尚未安装任何新文件，证明不了部分安装后的回滚）。
 - 成功场景：`atomic_json_many` 与 `staged_pair_commit` 各跑一次成功用例，记录文件字节，并列出工作目录里所有以 `.` 开头的残留临时文件（预期为空）。
 - 断言：两份 JSON 的 `emit`、`fail`、`soft_exit`、`business`、`atomic`、`json`、`json_many`、`pair_commit` 各键逐字段相等。
 
@@ -95,12 +93,12 @@
 
 ## 自检
 
-提交审核前逐条核对（与仓库 `plan/test-plan-checklist.md` 同一口径）：必测项只引用能证明本批行为的方法；CI 不在必测清单；每个临时脚本都有确切来源与复制命令；命令块启用 `set -e`；失败注入到达目标分支；计划文字与执行记录用同一套标签。
+提交审核前逐条核对（与共用清单 `plan/test-plan-checklist.md` 同一口径；该清单随 PR #98 引入，本分支不把它当作已存在的文件）：① 必测项只引用能证明本批行为的方法；② CI 不在必测清单；③ 每个临时脚本都有确切来源与复制命令；④ 命令块启用 `set -e`；⑤ 失败注入到达目标分支；⑥ 计划文字与执行记录用同一套标签；⑦ 编号与版本一致。
 
 ## 修订记录
 
 - 第 1 版：首次提交测试计划审核。
-- 第 4 版：按负责人“同一类问题要一次清干净”的要求再收窄 T4——从“三个整模块 + 两个类”改为**7 个以本批行为为主要目的的方法**（事务回滚/提交点 2、`os.replace` 故障注入 3、业务通道转 result row 2），并在行内写明被排除的同文件用例与理由。
+- 第 4 版：按负责人“同一类问题要一次清干净”的要求再收窄 T4——从“三个整模块 + 两个类”改为**5 个以本批行为为主要目的的方法**（事务回滚/提交点 2、`os.replace` 故障注入 3）；业务通道转 row 由 T2 驱动直接覆盖，不再靠 issue #67 归属类用例间接证明。第 5 版（本轮）：按独立审查把剩下的 2 个归属类用例也移出，并在行内写明被排除文件的理由。
 - 第 3 版：按第 2 版审核的四个 blocker 修正——B1 第 1 步补 `cp` 复制驱动脚本的明确命令与缺失时的处理；B2 第 2 步启用 `set -e` 并要求两条驱动命令都成功后才比较；B3 `atomic_json_many` 的注入点从第二次 `os.replace` 改为第四次（两个目标都预先存在时此时文件一已完整安装），`staged_pair_commit` 保持第二次；B4 把仓库 CI 移出业务必测清单改为“既有仓库检查”，并从 T4 命令移除只断言文档文本的两个合同文件。
 - 第 2 版：按第一、二关口的三个 blocker 修正——B1 把 T3 的失败注入从“暂存期 mkdir 失败”改为“安装期第二次 `os.replace` 抛错”，并写明判据；B2 第 1 步补取基准修订的 `_stage3_render.py`；B3 把 T4 的检查入口与命令对齐（加入 `test_stage3_direction_groups` 与 `test_contact_state` 的两个 Issue67 运行时类，并说明两个合同文件不承担运行时覆盖）。同时按非阻断意见在驱动里补通道内 `soft_exit` 与 `atomic_json_many` 成功用例、更新执行计划版本指针。
 
