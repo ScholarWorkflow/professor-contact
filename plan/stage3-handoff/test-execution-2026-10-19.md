@@ -5,8 +5,8 @@
 - 对照基准：`779fb692ed5ded163ab0eb5b415aef698135f54e`。
 - 被测提交：`fab297d46e07d664450be798f77d2344b88fda5d`；执行期间产品与测试代码处于该提交、未改动（其后的提交只改 `plan/` 下文档，`.apm/` 下字节未变）。
 - 环境：本地 macOS，Python 3.14.7；只使用标准库与既有夹具。仓库 CI 使用工作流固定的 Python 3.12。
-- 说明：`/tmp/pc-bnd2-check/status.txt` 是空文件（执行期工作树状态改由本文件文字记录），每个编号的退出码记录在对应日志与 `diff` 结果里。
-- 原始输出（仓库外）：`/tmp/pc-bnd2-check/`（本轮实际目录，点名到目录而非通配）；本文件只记录命令、方法与结果。
+- 说明：执行时工作树 `git status --porcelain` 为空；`/tmp/pc-bnd2-check/status.txt` 是空文件（状态改由本文件文字记录），每个编号的退出码记录在对应日志与 `diff` 结果里。
+- 原始输出（仓库外）：`/tmp/pc-bnd2-check/`（本轮实际目录）；证据文件 `base5.json`／`head5.json`（最终）、`base2.json`／`head2.json`（同构目录复跑）、历史尝试 `base3.json`／`head3.json`、`base4.json`／`head4.json`，日志 `t5-final.log`、`t5-18tests.log`；本文件只记录命令、方法与结果。
 
 ## 逐项结果
 
@@ -21,24 +21,31 @@
 
 ## 执行方法与命令
 
-1. 取出基准修订的 runner 及它依赖的两个兄弟模块到仓库外目录，并把驱动脚本复制进本轮目录：
+1. 准备本轮运行目录（本轮沿用 `/tmp/pc-bnd2-check`，驱动 `handoff_probe.py` 已在其中，不需要再复制；换新目录时按测试计划第 1 步 `cp` 过去），取出基准修订的 runner 及它依赖的两个兄弟模块，并把工作树里的 runner 与全部 `_*.py` 复制成同构目录：
 
    ```sh
    set -e
-   RUN=$(mktemp -d /tmp/pc-bnd2-XXXXXX)
-   cp /tmp/pc-bnd2-check/handoff_probe.py "$RUN/handoff_probe.py"
+   cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-handoff
+   git status --porcelain                   # 执行时为空
+   RUN=/tmp/pc-bnd2-check
+   test -f "$RUN/handoff_probe.py"
+   mkdir -p "$RUN/base" "$RUN/head"
    for name in contact_state _stage3_render _contact_io; do
      git show 779fb692ed5ded163ab0eb5b415aef698135f54e:.apm/skills/professor-contact/scripts/$name.py > "$RUN/base/$name.py"
    done
+   cp .apm/skills/professor-contact/scripts/contact_state.py .apm/skills/professor-contact/scripts/_*.py "$RUN/head/"
    ```
 
-2. T1–T4：同一驱动脚本分别以基准副本与工作树 runner 为参数运行，打印前把工作目录前缀替换为 `<WORK>`，再逐字段比较：
+2. T1–T4：同一驱动脚本分别以基准副本与工作树 runner 为参数运行（打印前把工作目录前缀替换为 `<WORK>`），再逐字段比较：
 
    ```sh
-   uv run --no-project "$RUN/handoff_probe.py" "$RUN/base/contact_state.py" "$RUN/base-work5" > "$RUN/base5.json"
-   uv run --no-project "$RUN/handoff_probe.py" .apm/skills/professor-contact/scripts/contact_state.py "$RUN/head-work5" > "$RUN/head5.json"
-   diff -u "$RUN/base5.json" "$RUN/head5.json"
+   set -e
+   uv run --no-project "$RUN/handoff_probe.py" "$RUN/base/contact_state.py" "$RUN/base-work" > "$RUN/base.json"
+   uv run --no-project "$RUN/handoff_probe.py" .apm/skills/professor-contact/scripts/contact_state.py "$RUN/head-work" > "$RUN/head.json"
+   diff -u "$RUN/base.json" "$RUN/head.json" && echo "T1-T4 IDENTICAL"
    ```
+
+   本文件表格里的证据文件是 `base5.json`／`head5.json`（同一条命令在注入修正后换名重跑，`diff` 同样无输出）；更早的 `base3.json`／`head3.json`（空断言版本）与 `base4.json`／`head4.json`（工作目录未归一化）保留作历史尝试。
 
    驱动用一个签名适配器（`inspect.signature` 判断是否含 `fail` 参数）让同一份脚本驱动改动前后的 runner；适配器不吞异常、两侧同逻辑。
 
