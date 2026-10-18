@@ -1,6 +1,6 @@
 # 第三批：Stage 3 纯渲染组抽成独立模块 测试执行记录（2026-10-18）
 
-- 测试计划：[test-plan.md](test-plan.md)，第 1 版。
+- 测试计划：[test-plan.md](test-plan.md)，第 2 版（第 1 版取得第一、二关口 PASS；第 2 版只按审核意见细化检查方式，未增删编号）。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 1 版（`Plan conclusion: APPROVED`，P1–P4 全 PASS）。
 - 对照基准：`ffa91aedf94aaf146f9cf1899f3fe4395cfaddad`（本批从它拉出，含批次二改动）。
 - 被测提交：`68647a56eb54d245bc68012d07eb233e1023e411`；执行时 `git status --porcelain` 为空。
@@ -15,7 +15,7 @@
 | T2 | 通过 | 同一脚本输出两个公开函数的签名一致与四个私有 helper 仍可按原名取到；退出码 0 |
 | T3 | 通过 | `Ran 47 tests in 172.558s`，`OK`，退出码 0 |
 | T4 | 通过 | `Ran 24 tests in 27.150s`，`OK`，退出码 0 |
-| T5 | 通过 | 仓库 CI 在 PR 提交上跑全量 `unittest discover`，检查项 `test` 为 pass（见 PR 检查项） |
+| T5 | 通过 | 仓库 CI 在最终 head `cab7dd2f35f6e4ce75b8fcb6c065a47ba93e6665` 上跑全量 `unittest discover`：运行 `39141520964`，5m46s，检查项 `test` pass。该 head 相对被测提交只多两个文档提交，`.apm/` 下产品与测试字节未变（`git diff 68647a5 HEAD -- .apm/` 为空） |
 
 ## 执行方法与命令
 

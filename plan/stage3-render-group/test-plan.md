@@ -36,7 +36,7 @@
    uv run --no-project "$RUN/compare_stage3_render.py" "$RUN/base_contact_state.py" \
      .apm/skills/professor-contact/scripts/contact_state.py
    ```
-   预期：每一项打印 `OK  <标签>`（T1 三行、T2 六行），末尾 `ALL CHECKS PASS`，退出码 0；任何 `FAIL` 都会让脚本非 0 退出。
+   预期：每一项打印 `OK  <标签>`，共 11 行（2 行前置检查 `runner exposes render_candidates_md` / `render_candidates_overview`、T1 三行、T2 六行），末尾 `ALL CHECKS PASS`，退出码 0；任何 `FAIL` 都会让脚本非 0 退出。
 3. T3：在校验范围相关用例上执行。
    ```sh
    cd .apm/skills/professor-contact/tests
