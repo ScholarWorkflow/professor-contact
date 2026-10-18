@@ -1,6 +1,6 @@
 # Cached Nix activation — test plan t4
 
-Scope: [implementation plan r4](implementation-plan.md), current product contact `f327f54220d321eb0fce3b3908f86c4ab0914745` with merged shared pin and direct factory wiring. Candidate review status; no formal gate or merge approval asserted. The goal/check text and steps below are unchanged from t4; only the result status was fact-synced on 2026-10-19 from the [execution record](test-execution-2026-10-19.md).
+Scope: [implementation plan r4](implementation-plan.md), current product contact `f327f54220d321eb0fce3b3908f86c4ab0914745` with merged shared pin and direct factory wiring. Candidate review status; no formal gate or merge approval asserted. The 2026-10-19 result sync below changes no goal, check or step text relative to t4; it only fact-syncs the result status from the [execution record](test-execution-2026-10-19.md).
 
 ## Goals and sufficient checks
 
@@ -9,7 +9,7 @@ Scope: [implementation plan r4](implementation-plan.md), current product contact
 | Shared ownership / same consumer entrypoint | Inspect exact `mkCachedActivation` arguments and merged API; old outputs unchanged; no local implementation/testing duplication. | Source inspection matches merged lib/default.nix and factory. |
 | Resolved, correctly locked dependency | Verify #4 merged/main SHA, source hash and timestamp; only top-level shared node changes; all other nodes/edges remain equal. | Merge `91861b4f028eda1dbeb41481dcc48cd7c4a60874`; exact-tree hash metadata verified. |
 | Shared cache/lock behavior | Reuse upstream's bounded factory/runtime evidence and inspect unchanged interface/semantics; preserve migration and direct apply/remove guidance. | Upstream results reused within their scope; no repeated shared tests. |
-| Real Darwin packaging / README consumer (only remaining execution goal) | Build current product → verify `bin/professor-contact-activate` is executable → one isolated README/direnv activation → observe `.agent-env-applied` and `.agents/skills/professor-contact/SKILL.md`. Build includes evaluation; no separate drvPath pass required. | PASS for current product `f327f54220d321eb0fce3b3908f86c4ab0914745`, executed 2026-10-19 as steps 1–5 below; commands, exit results and observed outputs are in the [execution record](test-execution-2026-10-19.md). Original-product results still apply only to that product/unaffected behavior. |
+| Real Darwin packaging / README consumer (only remaining execution goal) | Build current product → verify `bin/professor-contact-activate` is executable → one isolated README/direnv activation → observe `.agent-env-applied` and `.agents/skills/professor-contact/SKILL.md`. Build includes evaluation; no separate drvPath pass required. | PASS for current product `f327f54220d321eb0fce3b3908f86c4ab0914745`, executed 2026-10-19 following the bounded substitutions in steps 1–5 below; commands, exit results and observed outputs are in the [execution record](test-execution-2026-10-19.md). Original-product results still apply only to that product/unaffected behavior. |
 
 ## Existing checks, metadata and historical diagnosis
 
