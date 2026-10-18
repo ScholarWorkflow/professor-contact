@@ -1,6 +1,6 @@
-# Cached Nix activation — implementation plan r3
+# Cached Nix activation — implementation plan r4
 
-Status: candidate for independent review. Upstream merge dependency is resolved; formal plan and merge conclusions are not asserted here. Supersedes r2's temporary waiting state.
+Status: candidate for independent review. Upstream merge dependency is resolved; formal plan and merge conclusions are not asserted here. This documentation-only revision narrows the remaining integration check; product remains `f327f54220d321eb0fce3b3908f86c4ab0914745`.
 
 ## Requirement and baseline
 
@@ -21,12 +21,12 @@ Status: candidate for independent review. Upstream merge dependency is resolved;
 
 The merged Git tree `06f46141427da736ff366a86082b50c9d3d77996` was verified against the exact local Git index tree and archived without checkout artifacts. Nix recursive hash of that archive is `sha256-/VgkCnSU4Giw+7P68NMgMnYQ+SHJY45Q8YYxETKqA+w=`; merge committer time supplies `lastModified = 1792341743`. This is actual merged-source metadata, not a branch pin or guessed hash. A direct Nix GitHub prefetch returned HTTP 404; no credentials or access settings were changed.
 
-A direct contact drvPath evaluation reached the shared factory but was blocked by the existing pdf-processing-core input not being available in the cloud cache. This is not a full evaluation pass. The old input pin blocked activation by design; that specific blocker is now removed, while new integration remains unproven.
+A prior contact drvPath evaluation reached the shared factory, then exited 1 with an unavailable cached pdf-processing-core input under offline mode and a one-second timeout. Keep this as historical diagnostic evidence, not a current network diagnosis or an independent remaining pass condition. The scoped build below already includes evaluation. The old pending input-pin blocker is removed; current-product build and real activation remain unexecuted.
 
 The common marker is not an integrity scan. Manual changes and direct `agent-env apply/remove` require forced guarded reapplication; installer protection still applies. Updating the shared source pin can change derivation identities even with unchanged installer code; old Darwin store paths must not be presented as new-output evidence.
 
 ## Handoff
 
-Independent review covers the exact five-file pin/wiring/docs diff, including the narrow lock change and unchanged factory API. After review publish normally to the same draft PR using the expected head; do not merge. [Test plan t3](test-plan.md) distinguishes current static/source checks, blocked evaluation and historical reuse. No automatic Mac activation, business rerun or additional test machinery.
+This revision changes only the two plans and PR description, based on published product `f327f54220d321eb0fce3b3908f86c4ab0914745`; no product, lock or test files change. After independent review publish normally to the same draft PR using the expected head; do not merge. [Test plan t4](test-plan.md) keeps one remaining integration sequence: build the current product, verify the named executable, and activate once in an isolated README-style direnv consumer, observing the shared marker and contact SKILL.md. Reuse existing shared tests; do not add a standalone drvPath rerun. Actual execution requires separately arranged environment/steps authorization; no Mac activation or business rerun in this documentation task.
 
 Historical [r2/t2](https://github.com/ScholarWorkflow/professor-contact/tree/20e044fb52f71d98d894775147242d51c9a07dfe/plan/cached-nix-activation) and the original execution record remain available; do not overwrite their product-specific results.
