@@ -131,7 +131,7 @@ t35 第三关正式执行记录（2026-10-18，本地执行工程师）：产品
 - 范围外回归（执行工程师自选的完整性检查，不是必测项）：在产品实现完成、t35 测试修订之前的版本上运行 `python3 -m unittest discover -p "test_*.py"`，`Ran 1028 tests`、`FAILED (failures=2)`，两项正是上面 T1/T2 的测试步骤缺陷，没有其他产品回归；t35 只改测试模块与本节，未再全量复跑。
 - 复用来源：无，本轮是对当前产品版本首次执行必测项。
 - 实现符合性审核处置后的复验：`implementation_reviewer` 首次审核（受审版本 `165906a`）结论为**完整**，其中 IR-02 按 §3.1 收紧禁锚区完成论文引用（产品改动提交 `cd39c70`；两次复验都在该提交的同一工作树内容上执行，其后 `git status` 无产品差异）后，按同一 §3 命令再跑一次 17 个选择器，结果目录 `/tmp/contact-evidence-level.kB35xlUV/recipe.txt`，`Ran 17 tests`、`OK`；同时运行 `python3 -m unittest discover -p "test_*.py"`，`Ran 1028 tests`、`OK`。上面第一次记录（`OnXaAyhx`）仍是同一必测清单的有效结果，两次结果一致。处置明细见 §8。
-- 合并审核处置后的复验（2026-10-18）：5 项实现缺陷修正后，按 §3 的 17 个选择器完整复跑 `/tmp/contact-evidence-level.ojprDR8c/recipe.txt`（`Ran 17 tests`、`OK`），并运行 `python3 -m unittest discover -p "test_*.py"`（`Ran 1028 tests`、`OK`，`/tmp/contact-evidence-level.UiagMtvI/full-suite-mergefix.txt`）；处置明细见 §9。
+- 合并审核处置后的复验（2026-10-18）：5 项实现缺陷修正后，按 §3 的 17 个选择器完整复跑 `/tmp/contact-evidence-level.ojprDR8c/recipe.txt`（`Ran 17 tests`、`OK`）；变基到当前远端 tip（`fc23d6a`）后的提交 `c9c311c` 上再跑一次同一组选择器，`/tmp/contact-evidence-level.Q3dhhdqi/recipe.txt`（`Ran 17 tests`、`OK`），并运行 `python3 -m unittest discover -p "test_*.py"`（`Ran 1028 tests`、`OK`，`/tmp/contact-evidence-level.UiagMtvI/full-suite-mergefix.txt`）；处置明细见 §9。
 - t35 未完成项：无。这是 t35 第三关结果，不代表 t36 新场景已经通过或可合并；合并审核按 `Merge Reviewer Rule.md` 由下一负责人执行。
 
 - **t36 变更及第三关执行结果（2026-10-18，本地执行工程师）**：仅原 T1 选择器 `test_fixed_evidence_without_trusted_title_fails_instead_of_inventing_one` 新增独立临时教授输入——固定证据卡所用题名全部保留，只删除禁锚区 `completed_by_item_key` 所指论文的可信题名，正文中的固定证据与禁锚区 evidence 本身均不包含该缺题名编号；检查生成因该完成论文引用缺题名而明确失败、不写受管分析文档。按第 36 版定向审核指定的最小范围只执行该选择器：
