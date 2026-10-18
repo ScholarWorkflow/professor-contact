@@ -5589,14 +5589,19 @@ def stage2_render_state(pack: dict) -> dict:
     papers = pack_paper_index(pack)
     # The renderer confirms a printed reference through the persisted display
     # references, the canonical pack papers and the current facts. The pack-only
-    # state compares the first two (the current facts must never be backfilled
-    # into the accepted snapshot), and every current-facts key the renderer can
-    # print was persisted into `display_references` when this pack was accepted.
-    known_references = set(papers)
+    # state reads the first two (the current facts must never be backfilled into
+    # the accepted snapshot), and every current-facts key the renderer can print
+    # was persisted into `display_references` when this pack was accepted.
     persisted_references = pack.get("display_references")
-    if isinstance(persisted_references, dict):
-        known_references.update(key for key in persisted_references
-                                if isinstance(key, str) and key)
+    if not isinstance(persisted_references, dict):
+        persisted_references = {}
+    known_references = set(papers)
+    known_references.update(key for key in persisted_references
+                            if isinstance(key, str) and key)
+    # Keys the FIXED SLOTS print as a trusted link: only their title is visible
+    # there, so only the title is compared for a key that is not also a citation
+    # or a listed paper.
+    slot_references: set = set()
     for direction in pack.get("directions") or []:
         narrative = direction.get("narrative") if isinstance(direction.get("narrative"), dict) else {}
         refs = set()
@@ -5612,7 +5617,7 @@ def stage2_render_state(pack: dict) -> dict:
         # The fixed slots print the trusted title of every reference they really
         # convert (confirmed tokens in the machine texts plus the anchor-banned
         # completion paper): those titles are visible content too.
-        referenced.update(stage2_display_slot_keys(direction, known_references))
+        slot_references.update(stage2_display_slot_keys(direction, known_references))
         directions_state.append({
             "direction_id": direction_machine_id(direction),
             "name_ja": direction.get("name_ja"),
@@ -5639,13 +5644,17 @@ def stage2_render_state(pack: dict) -> dict:
         })
     # `pdf_available` feeds the managed header's full-text/abstract counts, so a
     # PDF-availability change is display-relevant even when the analysis path
-    # stays the same.
-    papers_state = {
-        key: {field: (papers.get(key) or {}).get(field)
-              for field in ("title", "year", "authorship", "analysis_file",
-                            "pdf_available")}
-        for key in sorted(referenced)
-    }
+    # stays the same. Every value comes from the pack's own snapshot, merged in
+    # the renderer's priority order (persisted display reference first, canonical
+    # paper record over it), so a reference key that only lives in
+    # `display_references` is compared through its printed title instead of
+    # degrading to an all-None record.
+    listed_fields = ("title", "year", "authorship", "analysis_file", "pdf_available")
+    papers_state = {}
+    for key in sorted(referenced | slot_references):
+        record = {**(persisted_references.get(key) or {}), **(papers.get(key) or {})}
+        fields = listed_fields if key in referenced else ("title",)
+        papers_state[key] = {field: record.get(field) for field in fields}
     return {"directions": directions_state, "papers": papers_state,
             "display_counts": stage2_display_counts(pack)}
 
