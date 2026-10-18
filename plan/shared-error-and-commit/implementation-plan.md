@@ -63,12 +63,12 @@
 ### 冻结的契约
 
 - `fail` / `soft_exit` 的 stdout JSON 字段、`indent=1`、`sort_keys=True`、`ensure_ascii=False` 与退出码 1／2 不变；业务通道内改抛异常的行为不变。
-- `ProfessorBusinessFailure` 的类对象在进程内唯一；payload 与 `args` 不变；别名后 `contact_state.ProfessorBusinessFailure` 与模块内是同一个对象。
+- 同一次主脚本加载中，`contact_state.ProfessorBusinessFailure` 与内部模块指向同一个异常类；分别加载两个主脚本时，各自创建异常类和通道状态；`payload` 与 `args` 不变。
 - `emit` 的输出文本逐字节不变。
 - `atomic_write` / `atomic_json` 的文件字节、`newline=""`、`fsync`、隐藏临时文件名模式（`.<name>.*`）与失败清理不变。
 - `atomic_json_many` / `staged_pair_commit` 的暂存顺序、安装顺序、失败回滚顺序与异常传播不变；“最后一次安装是提交点”的语义不变。
 - `_BUSINESS_CHANNEL` 的压栈／出栈与嵌套语义不变；一个模块实例对应一份通道状态，与今天一个 runner 实例对应一份的状态等价。
-- 新模块缺失时 runner 在导入期以 `RuntimeError` 响亮失败（与 `_stage3_render` 同一形状），不会带着半套别名继续运行。
+- 相邻模块缺失时，主脚本在导入阶段失败，异常原样传播（沿用 `_stage3_render` 的加载方式），不会带着半套别名继续运行。
 - `require_professor_dir_under_program`、`managed_write` 等调用方的名字与行为不变。
 
 ### 替代方向与取舍
