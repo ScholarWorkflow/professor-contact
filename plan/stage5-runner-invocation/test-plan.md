@@ -2,7 +2,7 @@
 
 ## 版本、来源与状态
 
-- 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 3 版。
+- 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 4 版。
 - Test plan revision: 第 4 版。
 - 需求来源：负责人 2026-10-18 授权的三批 Stage 重构要求第 2 批；原文见执行计划。
 - Target repository revision: 工作分支 `refactor/stage5-runner-invocation`（从 `74bd29b572c1b3f68f230a554f57d0202e54cde8` 拉出）实施后的提交。
