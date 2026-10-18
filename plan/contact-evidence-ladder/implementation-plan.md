@@ -73,7 +73,7 @@
 | 方向 | 不采用的原因 |
 | --- | --- |
 | 新建 `_contact_evidence_ladder.py` | 与边界三的模块职责重叠；两个模块都要注入同一批辅助函数，反而增加耦合面 |
-| 把 `VERIFY_TTL_DAYS` 一起搬进模块 | 它同时服务校验缓存（5 处使用中多数在证据之外），搬走会造成职责错位 |
+| 把 `VERIFY_TTL_DAYS` 一起搬进模块 | 块外仅 8795 一处真实使用（校验缓存路径），块内两处文档串与一处真实使用（8505）；搬走会造成职责错位 |
 | 复制 `sha256_obj`／`compact_name` 实现 | 出现第二份实现，序列化或归一化规则分叉不会被现有测试发现 |
 | 给 `contact_evidence_snapshot` 直接加必填关键字参数 | 8074 与 3 个测试文件的既有直调会 `TypeError`（测试明确禁止改断言） |
 | 连上游定位/检查/重建一起重排 | 已在边界三落地并获批，本批不重开 |
@@ -111,7 +111,7 @@
 1. **计划审核**：本文件取得 `Plan conclusion: APPROVED`。
 2. **本地执行代理**：
    - `scripts/_contact_evidence.py`：追加 8 个函数与 2 个常量；六个函数加关键字注入（`contact_evidence_record`、`contact_evidence_snapshot`、`contact_evidence_freshness_reason`、`_evaluate_record_ladder`、`evaluate_contact_evidence`、`contact_evidence_decisions`）；补运行期导入 `from datetime import datetime, timedelta, timezone`（`Any` 仅注解，已由 `from __future__ import annotations` 覆盖）；更新模块 docstring（注入面从 `read_json_file`／`compact_name` 扩为 `read_json_file`／`compact_name`／`sha256_obj`／`verify_ttl_days`）。
-   - `scripts/contact_state.py`：删除被搬走的定义与 2 个常量；5 个函数与 2 个常量加别名；对 `contact_evidence_snapshot`、`evaluate_contact_evidence`、`contact_evidence_decisions` 加同签名薄包装（内部注入 `compact_name`／`sha256_obj`／`verify_ttl_days`）；**3 处组外调用点不改**。
+   - `scripts/contact_state.py`：删除被搬走的定义与 2 个常量；5 个函数与 2 个常量加别名；对 `contact_evidence_snapshot`（注入 `compact_name`＋`sha256_obj`）、`evaluate_contact_evidence`（注入三者）、`contact_evidence_decisions`（注入三者）加同签名薄包装；**3 处组外调用点不改**。
    - 夹具无需改动。
 3. **测试准备与审核**：测试工程师按 `Test Engineer Rule.md` 准备测试资产（见同目录 `test-plan.md`，按共用清单 `plan/test-plan-checklist.md` 自检；该清单随 PR #98 引入，本分支暂不存在）。
 4. **正式执行**：测试计划获批后执行受影响测试并记录结果。
