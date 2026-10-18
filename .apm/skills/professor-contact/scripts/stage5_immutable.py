@@ -8,13 +8,14 @@ boundary. Full-body humanized inputs are ignored. Optional humanizer use is
 limited to model-generated dynamic fields before this wrapper is called.
 
 The legacy runner hard-codes a full-body humanizer provenance label. Rather than
-forking the large state runner, immutable finalization executes a temporary copy
-whose only source change is that audit label. The caller declares whether no
-polish happened or dynamic fields alone were polished.
+forking the large state runner, immutable finalization declares the audit source
+through the runner's internal ``--audit-provenance`` input, so the finalize child
+is always the real ``contact_state.py`` in its own install location. The caller
+declares whether no polish happened or dynamic fields alone were polished.
 
 Issue #68 does not give this wrapper a pack authority of its own: the caller's
 professor-local ``--email-pack`` is forwarded unchanged to the internal
-``stage5-plan`` and to the temporary finalize runner, so the wrapper never scans
+``stage5-plan`` and to the finalize runner, so the wrapper never scans
 professor directories from an ``email_id`` and no program-level default exists to
 fall back on. Plan r13 keeps the wrapper inside one owner's transaction: it
 inherits only the current owner's ``email_pack``, the unchanged JSON file path
@@ -25,9 +26,7 @@ rebuilds any cross-professor attribution data.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -35,7 +34,6 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 RUNNER = HERE / "contact_state.py"
-UPSTREAM_SCRIPT_ENV = "PROFESSOR_CONTACT_EVIDENCE_SCRIPT"
 
 _PLAN_OPTIONS = {
     "--program-root", "--email-pack", "--email-id", "--profile", "--template",
@@ -59,7 +57,10 @@ def _wrapper_options(args: list[str]) -> tuple[str, list[str]]:
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg in {"--humanized", "--humanized-map"}:
+        if arg in {"--humanized", "--humanized-map", "--audit-provenance"}:
+            # Legacy full-body inputs and the runner's internal audit-source
+            # input are never caller inputs of this wrapper; drop them and its
+            # own declared polish mode below decides the rendered label.
             if i + 1 >= len(args):
                 raise SystemExit(f"missing value for {arg}")
             i += 2
@@ -97,43 +98,19 @@ def _plan_args(finalize_args: list[str]) -> list[str]:
     return out
 
 
-def _provenance_label(polish_mode: str) -> str:
-    if polish_mode == "none":
-        return "none"
-    return "humanizer-ja(dynamic-fields-only)"
+def _verify_provenance_needle() -> None:
+    """Fail closed when the runner's audit-label contract changed.
 
-
-def _runner_with_provenance(root: Path, polish_mode: str) -> Path:
+    The wrapper no longer patches a source copy; it declares the audit source
+    through the runner's own ``--audit-provenance`` input. This read-only check
+    keeps the previous guard: the legacy business label must still be the one
+    literal the runner renders when no polish mode is declared.
+    """
     source = RUNNER.read_text(encoding="utf-8")
     if source.count(_PROVENANCE_NEEDLE) != 1:
         raise RuntimeError(
-            "contact_state.py provenance marker changed; refusing an unverified patch")
-    source = source.replace(
-        _PROVENANCE_NEEDLE,
-        f" ｜ 过稿: {_provenance_label(polish_mode)}",
-        1,
-    )
-    path = root / "contact_state_stage5_immutable.py"
-    path.write_text(source, encoding="utf-8")
-    return path
-
-
-def _child_env_with_checker() -> dict[str, str] | None:
-    """Env for the temporary finalize-runner copy. The copy's __file__ lives
-    in a scratch directory, so the installed-layout checker locator cannot
-    resolve from there; pin the checker resolved from the real runner's own
-    location via the documented injection point. Returns None (no change)
-    when an explicit locator is already set or none can be resolved."""
-    if os.environ.get(UPSTREAM_SCRIPT_ENV, "").strip():
-        return None
-    spec = importlib.util.spec_from_file_location(
-        "contact_state_locator_for_stage5_wrapper", RUNNER)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    checker = module.upstream_check_script()
-    if checker is None:
-        return None
-    return {**os.environ, UPSTREAM_SCRIPT_ENV: str(checker)}
+            "contact_state.py provenance marker changed; refusing to declare "
+            "an unverified audit label")
 
 
 def _immutable_finalize(args: list[str]) -> int:
@@ -175,7 +152,7 @@ def _immutable_finalize(args: list[str]) -> int:
         map_path = root / "immutable-map.json"
         map_path.write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
         try:
-            finalize_runner = _runner_with_provenance(root, polish_mode)
+            _verify_provenance_needle()
         except RuntimeError as exc:
             print(json.dumps({
                 "status": "error", "reason_code": "stage5_provenance_patch_failed",
@@ -183,10 +160,10 @@ def _immutable_finalize(args: list[str]) -> int:
             }, ensure_ascii=False))
             return 1
         proc = subprocess.run(
-            [sys.executable, str(finalize_runner), *clean,
-             "--humanized-map", str(map_path.resolve())],
+            [sys.executable, str(RUNNER), *clean,
+             "--humanized-map", str(map_path.resolve()),
+             "--audit-provenance", polish_mode],
             text=True, capture_output=True, check=False,
-            env=_child_env_with_checker() or os.environ,
         )
         sys.stdout.write(proc.stdout)
         sys.stderr.write(proc.stderr)

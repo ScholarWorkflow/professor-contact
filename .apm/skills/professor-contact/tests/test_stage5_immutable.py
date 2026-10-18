@@ -182,10 +182,9 @@ class TestStage5ImmutableTargetedScope(BaseEnv):
 
 
 
-# The wrapper executes a temporary copy of the runner; the copy's __file__
-# lives in a scratch directory, so the installed-layout checker locator must
-# be resolved from the real runner's location and pinned for the child via
-# the documented injection point.
+# The wrapper executes the runner in the installed layout, so the checker
+# locator resolves from the real runner's own __file__ and no locator
+# injection is needed for the child.
 WRAPPER_CHECKER_STUB = (
     "import json, sys\n"
     "if '--check' in sys.argv:\n"
@@ -204,8 +203,9 @@ def _fresh_timestamp():
 class TestWrapperKeepsInstalledLayoutLocator(unittest.TestCase):
     """stage5-finalize through the wrapper must still certify contact-evidence
     freshness from the APM shared install layout (issue #31 completion
-    criterion 3): the temp-copy runner must not lose the sibling
-    professor-collector checker just because its __file__ is a scratch dir."""
+    criterion 3): the finalize child is the real runner in that layout, so it
+    keeps resolving the sibling professor-collector checker from its own
+    __file__."""
 
     def setUp(self):
         self._saved_env = os.environ.get(CHECKER_ENV)
@@ -374,3 +374,97 @@ class TestWrapperKeepsInstalledLayoutLocator(unittest.TestCase):
             self.assertIsNone(decision.get("reason_code"), decision)
         self.assertNotIn("contact_evidence_check_unavailable",
                          json.dumps(state, ensure_ascii=False))
+
+    def test_changed_audit_marker_fails_closed_before_writing_user_files(self):
+        """The wrapper's read-only audit-label check still fails closed."""
+        env = self._compile_fixture()
+        g1 = helpers.quote_id(env.gap_quotes["AAAA1111"])
+        raw = self.consumer / "fixture" / "raw.json"
+        raw.write_text(json.dumps(env.raw_result(g1), ensure_ascii=False),
+                       encoding="utf-8")
+        choice = self.consumer / "fixture" / "choices.json"
+        choice.write_text(json.dumps(env.choices(), ensure_ascii=False),
+                          encoding="utf-8")
+        installed_runner = self.wrapper.parent / "contact_state.py"
+        source = installed_runner.read_text(encoding="utf-8")
+        needle = " ｜ 过稿: humanizer-ja(business)"
+        self.assertEqual(source.count(needle), 1)
+        installed_runner.write_text(source.replace(needle, " ｜ 过稿: tampered"),
+                                    encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(self.wrapper), "stage5-finalize",
+             "--program-root", str(env.root),
+             "--email-pack", str(env.email_pack),
+             "--template", str(env.root / "synthetic-template.md"),
+             "--result", str(raw),
+             "--choices", str(choice), "--polish-mode", "none"],
+            text=True, capture_output=True, check=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "error", payload)
+        self.assertEqual(payload["reason_code"],
+                         "stage5_provenance_patch_failed", payload)
+        for name in ("套磁邮件.md", "套磁邮件.txt", "套磁邮件状态.json"):
+            self.assertFalse((env.prof_dir / name).exists(), name)
+
+
+class TestStage5AuditProvenanceInput(BaseEnv):
+    """The audit label comes from the runner's internal input, not a rewrite."""
+
+    prepare = helpers.TestStage5.prepare
+    raw_result = helpers.TestStage5.raw_result
+    choices = helpers.TestStage5.choices
+
+    def write_inputs(self, g1):
+        raw = self.root / "raw.json"
+        raw.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False),
+                       encoding="utf-8")
+        choice = self.root / "choices.json"
+        choice.write_text(json.dumps(self.choices(), ensure_ascii=False),
+                          encoding="utf-8")
+        return raw, choice
+
+    def test_direct_runner_keeps_the_legacy_business_audit_label(self):
+        g1 = self.prepare()
+        raw, choice = self.write_inputs(g1)
+        template, _ = helpers.stage5_templates(self.root)
+        plan = parse(helpers.raw_cli(
+            "stage5-plan", "--program-root", self.root,
+            "--email-pack", self.email_pack, "--template", template,
+            "--result", raw, "--choices", choice))
+        self.assertEqual(plan["status"], "ok", plan)
+        mapping = {}
+        for index, row in enumerate(plan["drafts"]):
+            draft_path = self.root / f"direct-draft-{index}.txt"
+            draft_path.write_text(row["draft"], encoding="utf-8")
+            mapping[row["output_id"]] = str(draft_path)
+        map_path = self.root / "direct-map.json"
+        map_path.write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(RUNNER), "stage5-finalize",
+             "--program-root", str(self.root),
+             "--email-pack", str(self.email_pack),
+             "--template", template,
+             "--result", str(raw), "--choices", str(choice),
+             "--humanized-map", str(map_path)],
+            text=True, capture_output=True, check=False)
+        out = parse(result)
+        self.assertEqual(result.returncode, 0, out)
+        md = (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8")
+        self.assertIn(" ｜ 过稿: humanizer-ja(business)", md)
+        self.assertNotIn(" ｜ 过稿: none", md)
+        self.assertNotIn(" ｜ 过稿: humanizer-ja(dynamic-fields-only)", md)
+
+    def test_caller_supplied_internal_audit_option_never_decides_the_label(self):
+        g1 = self.prepare()
+        raw, choice = self.write_inputs(g1)
+        result = run_wrapper("stage5-finalize", "--program-root", self.root,
+                             "--email-pack", self.email_pack,
+                             "--result", raw, "--choices", choice,
+                             "--audit-provenance", "business")
+        out = parse(result)
+        self.assertEqual(result.returncode, 0, out)
+        self.assertEqual(out["status"], "ok", out)
+        md = (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8")
+        self.assertIn(" ｜ 过稿: none", md)
+        self.assertNotIn(" ｜ 过稿: humanizer-ja(business)", md)

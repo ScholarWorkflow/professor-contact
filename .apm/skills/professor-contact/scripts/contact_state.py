@@ -95,6 +95,17 @@ GAP_STATUSES = ("open", "partial", "done_by_self", "unknown")
 ANCHORABLE = ("open", "partial", "unknown")
 AUTHORSHIP_RANK = {"corresponding": 15, "solo": 15, "first": 12, "pending": 5}
 SIDECAR_EXTRACTOR_VERSIONS = ("future-work-v1", "legacy-markdown-v0")
+# Stage-5 audit provenance suffixes. The business entry is the legacy
+# full-body-humanizer label; the immutable wrapper declares the other two
+# through the internal --audit-provenance input instead of rewriting this
+# file's source. Each entry is the complete rendered suffix, and the wrapper
+# verifies the business literal is still the single occurrence before it
+# delegates, so splitting these strings silently would fail closed.
+STAGE5_AUDIT_PROVENANCE = {
+    "business": " ｜ 过稿: humanizer-ja(business)",
+    "none": " ｜ 过稿: none",
+    "dynamic-fields-only": " ｜ 过稿: humanizer-ja(dynamic-fields-only)",
+}
 FACTS_SCHEMA = 1
 FACTS_KIND = "paper-analysis-facts"
 FACTS_GENERATOR_VERSIONS = ("facts-v1",)
@@ -10600,6 +10611,7 @@ def render_fact_check_card(email: dict, pack_path: Path, professor_dir: Path) ->
 
 
 def cmd_stage5_finalize(args) -> None:
+    audit_suffix = STAGE5_AUDIT_PROVENANCE[args.audit_provenance]
     program_root = Path(args.program_root)
     mode = stage5_mode(args)
     pack_path, pack, all_emails, emails = stage5_local_pack(args, program_root)
@@ -10772,7 +10784,7 @@ def cmd_stage5_finalize(args) -> None:
             lines = [
                 f"# {heading} — {email.get('professor')}（{email.get('name_ja')}）",
                 "",
-                f"> {now_utc()} ｜ 类型：{'首封' if kind == 'initial' else '无回复跟进'} ｜ profile：{'有' if pack.get('profile_fingerprint') else '无'} ｜ 模板：{template_name} ｜ 方向：{email.get('name_zh') or email.get('name_ja')} ｜ 过稿: humanizer-ja(business)",
+                f"> {now_utc()} ｜ 类型：{'首封' if kind == 'initial' else '无回复跟进'} ｜ profile：{'有' if pack.get('profile_fingerprint') else '无'} ｜ 模板：{template_name} ｜ 方向：{email.get('name_zh') or email.get('name_ja')}{audit_suffix}",
                 "",
             ]
             if kind == "followup":
@@ -12722,6 +12734,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="生成首封、首封+跟进，或只生成跟进邮件")
     p.add_argument("--profile")
     p.add_argument("--decision-file")
+    p.add_argument("--audit-provenance",
+                   choices=tuple(STAGE5_AUDIT_PROVENANCE), default="business",
+                   help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_stage5_finalize)
 
     p = sub.add_parser("stage5-partition-choices",
