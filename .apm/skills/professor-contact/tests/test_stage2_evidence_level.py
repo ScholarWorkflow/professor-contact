@@ -1171,6 +1171,9 @@ class AnalysisLevelTests(EvidenceLevelEnv):
 
     def test_refresh_rechecks_year_at_entry_and_inside_lease(self):
         for entering_lease in (False, True):
+            # The two time points describe where the year crosses relative to
+            # the write protection; no wall-clock sample is collected.
+            point = "写入保护内" if entering_lease else "入口点"
             environment = self.__class__(self._testMethodName)
             environment.setUp()
             try:
@@ -1185,7 +1188,7 @@ class AnalysisLevelTests(EvidenceLevelEnv):
                 year = preflight["preflight_inputs"]["current_year"]
                 self.assertEqual(
                     environment.pack()["cache"]["preflight"]["current_year"], year,
-                    "the eligible preflight must carry the accepted business year")
+                    f"{point}：可刷新的预检必须带已接受的业务年份")
                 pack_path = environment.prof_dir / "套磁候选输入.json"
                 pack_before = pack_path.read_bytes()
                 analysis_before = environment.analysis_text()
@@ -1225,22 +1228,25 @@ class AnalysisLevelTests(EvidenceLevelEnv):
                             contact_state, "stage2_local_writer_scope", spy_scope)
                     with lease_patch:
                         payload, code = environment.run_refresh_entry(preflight_path)
-                self.assertEqual(code, 2, payload)
-                self.assertEqual(payload.get("status"), "needs_refresh", payload)
+                # One standard `-v` failure report carries the exercised time
+                # point, whether the real write protection was entered and what
+                # the entry returned; no extra print, result file or checker.
+                diagnostic = {"时点": point, "写入保护标记": bool(entered),
+                              "返回": payload}
+                self.assertEqual(code, 2, diagnostic)
+                self.assertEqual(payload.get("status"), "needs_refresh", diagnostic)
                 self.assertEqual(payload.get("reason_code"),
-                                 "display_refresh_stale", payload)
+                                 "display_refresh_stale", diagnostic)
                 signals = set(payload.get("reason_codes") or []) \
                     | set(payload.get("drift") or [])
-                self.assertTrue(signals & set(YEAR_MISMATCH_SIGNALS),
-                                (entering_lease, payload))
+                self.assertTrue(signals & set(YEAR_MISMATCH_SIGNALS), diagnostic)
                 if entering_lease:
-                    self.assertEqual(entered, [True],
-                                     "the in-lease branch must enter the real lease")
+                    self.assertEqual(entered, [True], diagnostic)
                 else:
-                    self.assertEqual(entered, [],
-                                     "a cross-year entry must not enter the lease")
-                self.assertEqual(pack_path.read_bytes(), pack_before)
-                self.assertEqual(environment.analysis_text(), analysis_before)
+                    self.assertEqual(entered, [], diagnostic)
+                self.assertEqual(pack_path.read_bytes(), pack_before, diagnostic)
+                self.assertEqual(environment.analysis_text(), analysis_before,
+                                 diagnostic)
             finally:
                 environment.tearDown()
 
