@@ -6,7 +6,7 @@
 - 需求来源：负责人 2026-10-18 授权的“其余边界”，原文见执行计划。
 - 对照基准：`b3972a2cdf5cd60a5bc6dea006c10cfb6516a3d6`（本批从它拉出）。
 - Target repository revision: 工作分支 `refactor/shared-error-and-commit` 实施后的提交。
-- Test plan revision: 第 2 版。
+- Test plan revision: 第 3 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要保持的目标与本次直接改变的失败行为。
 - Proposed review status: pending。
 
@@ -16,40 +16,45 @@
 | --- | --- | --- | --- | --- |
 | T1 | 错误通道的退出码与 stdout 不变 | 同一驱动脚本分别加载基准修订与改动修订的 runner：调用 `emit`；在通道关闭时调用 `fail`、`soft_exit` | `emit` 输出文本逐字节相同；`fail` 的 stdout JSON 相同且退出码 1；`soft_exit` 的 stdout JSON 相同且退出码 2 | 仓库外驱动脚本，两次运行各输出一份规范化 JSON（stdout 文本 + 退出码），逐字段比较 |
 | T2 | 业务通道仍把失败转成同一异常类型 | 驱动脚本进入 `professor_business_channel()` 后分别调用 `fail` 与 `soft_exit` | 两次都不打印、不退出；抛出的异常类型名与 payload 相同；`type(exc) is contact_state.ProfessorBusinessFailure` 为真；通道关闭后行为回到 T1 | 同 T1 驱动脚本 |
-| T3 | 原子写与两个事务的回滚行为不变 | 驱动脚本在各自临时目录里：`atomic_write` 写文本；`atomic_json` 写对象；`atomic_json_many` 成功一次、**安装期**失败一次；`staged_pair_commit` 成功一次、**安装期**失败一次。安装期失败用临时替换 `os.replace`、只在第二次调用时抛 `OSError` 制造：`atomic_json_many` 此时首个文件已建立备份、`staged_pair_commit` 此时首个文件已安装，因此都会走到回滚分支 | 成功时文件字节与今天相同、无 `.<name>.*` 残留；失败时已安装文件恢复旧字节、未安装文件保持原样、无残留、异常类型与 `os.replace` 调用次数相同 | 同 T1 驱动脚本（只打印相对路径与内容，避免临时目录前缀差异）；`os.replace` 在 `finally` 恢复 |
-| T4 | 既有业务路径不受影响 | 逐教授失败行（Stage 4 finalize，`professor_business_channel` 把异常转成该教授的 result row）、Stage 3 本地事务提交、issue67 的 `os.replace` 故障注入（`stage4-migrate-local` / 相邻状态路径）、Stage 3 的 `soft_exit` 转 row | 全部通过 | 逐教授失败行与 `soft_exit` 转 row 由 `test_issue67_gate2_r3`、`test_stage3_direction_groups` 覆盖；故障注入与迁移路径由 `test_contact_state.Issue67ProfessorLocalStage4Tests`、`test_contact_state.Issue67AdjacentStateTests` 覆盖；Stage 3 本地事务提交由 `test_issue66_stage3_local_state` 覆盖；另跑 `test_stage4_selection_agent_contract`、`test_stage3_stage4_caller_contract` 两个合同文件（它们只断言正文文本，不承担上述运行时覆盖） |
-| T5 | 未改动区域的既有门禁 | 仓库 CI 对 PR 提交跑全量 `unittest discover` | 全量通过 | 直接引用 PR 的 CI 运行结果，不在本地重复全仓回归 |
+| T3 | 原子写与两个事务的回滚行为不变 | 驱动脚本在各自临时目录里：`atomic_write` 写文本；`atomic_json` 写对象；`atomic_json_many` 成功一次、**部分安装后**失败一次；`staged_pair_commit` 成功一次、**首个文件安装后**失败一次。两个目标都预先存在时，`atomic_json_many` 的替换顺序是「备份文件一 → 安装文件一 → 备份文件二 → 安装文件二」，注入点是**第四次** `os.replace`（此时文件一已完整安装为新内容）；`staged_pair_commit` 的注入点是第二次（文件一已安装） | 成功时文件字节与今天相同、无 `.<name>.*` 残留；失败时已安装的新文件被删除并恢复旧字节、第二个文件保持旧内容、无残留、异常类型与 `os.replace` 调用次数相同 | 同 T1 驱动脚本（只打印相对路径与内容，避免临时目录前缀差异）；`os.replace` 在 `finally` 恢复。只注入第二次替换无法证明 `atomic_json_many` 的“已安装后回滚”，不要退回该写法 |
+| T4 | 既有业务路径不受影响 | 逐教授失败行（Stage 4 finalize，`professor_business_channel` 把异常转成该教授的 result row）、Stage 3 本地事务提交、issue67 的 `os.replace` 故障注入（`stage4-migrate-local` / 相邻状态路径）、Stage 3 的 `soft_exit` 转 row | 全部通过 | 逐教授失败行与 `soft_exit` 转 row 由 `test_issue67_gate2_r3`、`test_stage3_direction_groups` 覆盖；故障注入与迁移路径由 `test_contact_state.Issue67ProfessorLocalStage4Tests`、`test_contact_state.Issue67AdjacentStateTests` 覆盖；Stage 3 本地事务提交由 `test_issue66_stage3_local_state` 覆盖。**不运行**只断言文档/正文文本的 `test_stage4_selection_agent_contract` 与 `test_stage3_stage4_caller_contract`：它们不承担本批运行时行为的覆盖，不作为本批通过条件 |
+
+**既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的全量 `unittest discover` 由仓库工作流照常执行，其结果单独引用，不作为本批业务必测项，也不因本批而扩张或缩减；合并要求继续按仓库规则执行。
 
 ## 执行步骤
 
 准备与执行都在工作树 `/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-shared-error-and-commit` 内进行；驱动脚本与运行产物放仓库外 `/tmp`（本次用 `mktemp -d /tmp/pc-bnd1-XXXXXX`）。
 
-1. 准备：确认工作树只有本批改动、Python 可用，并取出基准修订的 Runner 副本。
+1. 准备：确认工作树只有本批改动、Python 可用，取出基准修订的 Runner 与兄弟模块，并把上一轮实际使用的驱动脚本复制进本轮目录。
    ```sh
+   set -e
    cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-shared-error-and-commit
    git status --porcelain
    python3 --version
    RUN=$(mktemp -d /tmp/pc-bnd1-XXXXXX)
    git show b3972a2cdf5cd60a5bc6dea006c10cfb6516a3d6:.apm/skills/professor-contact/scripts/contact_state.py > "$RUN/base_contact_state.py"
    git show b3972a2cdf5cd60a5bc6dea006c10cfb6516a3d6:.apm/skills/professor-contact/scripts/_stage3_render.py > "$RUN/_stage3_render.py"
+   cp /tmp/pc-bnd1-DyNATS/contract_probe.py "$RUN/contract_probe.py"
    ```
+   末条是必须的：驱动自带输入构造与断言；来源缺失时按执行记录里记录的该轮目录找回同一脚本，仍找不到就停止并交计划所有人，不得凭提纲重写比较方法。
    第二条是必须的：基准修订已含批次三，runner 在导入期就按 `Path(__file__).with_name("_stage3_render.py")` 加载兄弟模块；只放 `contact_state.py` 会在加载基线时 `FileNotFoundError`。工作树侧的 runner 兄弟模块在原位，无需处理。
-2. T1、T2、T3：分别以基准 runner 与工作树 runner 为参数运行同一驱动脚本，各产出一份规范化结果，再比较。
+2. T1、T2、T3：分别以基准 runner 与工作树 runner 为参数运行同一驱动脚本，各产出一份规范化结果，再比较。`set -e` 保证任一侧运行失败立即中止，不会出现“两侧都失败、输出都为空、`diff` 仍然成功”的假结论。
    ```sh
+   set -e
    uv run --no-project "$RUN/contract_probe.py" "$RUN/base_contact_state.py" "$RUN/base-work" > "$RUN/base.json"
    uv run --no-project "$RUN/contract_probe.py" .apm/skills/professor-contact/scripts/contact_state.py "$RUN/head-work" > "$RUN/head.json"
    diff -u "$RUN/base.json" "$RUN/head.json" && echo "T1-T3 IDENTICAL"
    ```
-   预期：`diff` 无输出并打印 `T1-T3 IDENTICAL`。
-3. T4：既有业务用例。
+   预期：两条驱动命令都退出 0（否则 `set -e` 立即中止），`diff` 无输出并打印 `T1-T3 IDENTICAL`。
+3. T4：既有业务用例（只列承担本批运行时覆盖的文件与类）。
    ```sh
-   cd .apm/skills/professor-contact/tests
-   python3 -m unittest test_stage4_selection_agent_contract test_stage3_stage4_caller_contract \
-     test_issue66_stage3_local_state test_issue67_gate2_r3 test_stage3_direction_groups \
+   set -e
+   cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-shared-error-and-commit/.apm/skills/professor-contact/tests
+   python3 -m unittest test_issue66_stage3_local_state test_issue67_gate2_r3 test_stage3_direction_groups \
      test_contact_state.Issue67ProfessorLocalStage4Tests test_contact_state.Issue67AdjacentStateTests -v
    ```
-   预期：全部 `ok`，无 `FAIL`/`ERROR`。
-4. T5：把改动推送到 PR 后引用仓库 CI 的全量结果；CI 未通过时按第 6 步处理。
+   预期：全部 `ok`，无 `FAIL`/`ERROR`。此前记录的 95 项运行（含两个只断言文档文本的合同文件）是本次命令的超集，多出的部分不构成本批通过条件。
+4. 既有仓库检查：把改动推送到 PR 后引用仓库 CI 的全量结果（不属于本批必测项）；CI 未通过时按第 6 步处理。
 5. 记录：保存命令、实际提交 SHA、逐项结果与必要输出片段到 `/tmp` 运行目录，并把方法与结果写入 `test-execution-<日期>.md`。
 6. 失败处理：
    - T1–T3 出现差异：按差异定位到具体函数与字段，判定为产品缺陷交实现负责人修正后重跑 T1–T3。
@@ -81,11 +86,16 @@
 | 全仓本地回归 | 仓库 CI 已在 PR 上执行全量 discover，按 `Test Engineer Rule.md` 第 6 节直接引用 |
 | Stage3 提交与校验交接、Stage4/5 证据处理 | 属另外的常规审核 PR |
 
+## 自检
+
+提交审核前逐条核对（与仓库 `plan/test-plan-checklist.md` 同一口径）：必测项只引用能证明本批行为的方法；CI 不在必测清单；每个临时脚本都有确切来源与复制命令；命令块启用 `set -e`；失败注入到达目标分支；计划文字与执行记录用同一套标签。
+
 ## 修订记录
 
 - 第 1 版：首次提交测试计划审核。
+- 第 3 版：按第 2 版审核的四个 blocker 修正——B1 第 1 步补 `cp` 复制驱动脚本的明确命令与缺失时的处理；B2 第 2 步启用 `set -e` 并要求两条驱动命令都成功后才比较；B3 `atomic_json_many` 的注入点从第二次 `os.replace` 改为第四次（两个目标都预先存在时此时文件一已完整安装），`staged_pair_commit` 保持第二次；B4 把仓库 CI 移出业务必测清单改为“既有仓库检查”，并从 T4 命令移除只断言文档文本的两个合同文件。
 - 第 2 版：按第一、二关口的三个 blocker 修正——B1 把 T3 的失败注入从“暂存期 mkdir 失败”改为“安装期第二次 `os.replace` 抛错”，并写明判据；B2 第 1 步补取基准修订的 `_stage3_render.py`；B3 把 T4 的检查入口与命令对齐（加入 `test_stage3_direction_groups` 与 `test_contact_state` 的两个 Issue67 运行时类，并说明两个合同文件不承担运行时覆盖）。同时按非阻断意见在驱动里补通道内 `soft_exit` 与 `atomic_json_many` 成功用例、更新执行计划版本指针。
 
 ## 审核状态
 
-测试计划第 2 版为当前唯一版本。第 1 版的三个 blocker 已在本版修正，业务目标与必测编号未变。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 3 版为当前唯一版本。第 1 版的三个 blocker 已按第 2 版修正；第 3 版按第 2 版审核的四个 blocker 修正范围、步骤与注入点，必测编号由 T1–T5 收为 T1–T4（仓库 CI 移出必测清单、作为既有检查单独引用）。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
