@@ -11,8 +11,8 @@
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
-| T1 | 通过 | 对比脚本输出 `T1 render_candidates_md byte-identical -> base=3465B head=3465B`、`T1 render_candidates_overview byte-identical -> base=346B head=346B`，退出码 0 |
-| T2 | 通过 | 同一脚本输出两个公开函数的签名一致与三个私有 helper 仍可按原名取到；退出码 0 |
+| T1 | 通过 | 对比脚本输出 `T1 render_candidates_md byte-identical -> base=3465B head=3465B`、`T1 render_candidates_md without profile byte-identical -> base=2370B head=2370B`、`T1 render_candidates_overview byte-identical -> base=346B head=346B`，退出码 0 |
+| T2 | 通过 | 同一脚本输出两个公开函数的签名一致与四个私有 helper 仍可按原名取到；退出码 0 |
 | T3 | 通过 | `Ran 47 tests in 172.558s`，`OK`，退出码 0 |
 | T4 | 通过 | `Ran 24 tests in 27.150s`，`OK`，退出码 0 |
 | T5 | 通过 | 仓库 CI 在 PR 提交上跑全量 `unittest discover`，检查项 `test` 为 pass（见 PR 检查项） |
@@ -34,7 +34,7 @@
      .apm/skills/professor-contact/scripts/contact_state.py
    ```
 
-   输入覆盖：两个方向条目（一个 `verdict: 勉强`）＋方向级红线去重＋`refined` 变体＋`priority`；一个含两名参与者的跨方向组；候选级红线（含空串与重复）＋`gap_refs`（含 `done_by_self`）＋`_pack_papers`（含 `_analysis_rel` 与缺失两种情况）；总览的方向行与跨方向行。两个渲染函数各比较一次完整输出字符串。
+   输入覆盖：两个方向条目（一个 `verdict: 勉强`）＋方向级红线去重＋`refined` 变体＋`priority`；一个含两名参与者的跨方向组；候选级红线（含空串与重复）＋`gap_refs`（含 `done_by_self`）＋`_pack_papers`（含 `_analysis_rel` 与缺失两种情况）；总览的方向行与跨方向行；另一次 `profile_fp=None` 且空跨方向组的降级调用。两个渲染函数各比较一次完整输出字符串，降级调用再比较一次。
 
 3. T3：Stage 3 渲染与校验定位回归。
 
