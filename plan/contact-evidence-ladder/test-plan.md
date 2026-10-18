@@ -6,7 +6,7 @@
 - 需求来源：负责人 2026-10-18 授权“Stage4/5 证据处理”的后半（快照与决策阶梯）；原文见执行计划。
 - 对照基准：`cdd01f7f2c03be822adbb5a4117c7e65a89d6c82`。
 - Target repository revision: 工作分支 `refactor-evidence-ladder` 实施后的提交。
-- Test plan revision: 第 1 版。
+- Test plan revision: 第 2 版。
 - 测试范围依据：`Test Engineer Rule.md`；提交前按共用清单 `plan/test-plan-checklist.md` 自检（该清单随 PR #98 引入，本分支不把它当作已存在的文件；自检小节已逐条写明）。
 - Proposed review status: pending。
 
@@ -15,7 +15,7 @@
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
 | T1 | `contact_evidence_snapshot` 的内容、sha 绑定与三位置签名不变 | 同一驱动分别加载基准与改动版：五种 artifact（正常记录、冲突记录、`paper_only`、降级 artifact、查不到的教授）与一次“无 artifact + 错误码”；另比较 runner 侧签名 | 六种情况的返回字典逐字段相同；runner 侧签名逐字相同（三位置参数） | 仓库外驱动 `ladder_probe.py`，两侧放**同构目录**后逐字段 `diff` |
-| T2 | 决策阶梯的判定与字段不变 | 21 组状态矩阵：4 种 `state`（fresh／stale／unavailable／None）× 3 种 `checker_error`（None／script_missing／script_failed）× 2 种 `rebuild_ran`，外加 2 种 `artifact_error` 与 1 组降级快照 | 每组返回的完整决策对象（`status`／`reason_code`／`web_lookup_required`／`recipient_email`／`sources` 等）逐字段相同 | 同 T1 |
+| T2 | 决策阶梯的判定与字段不变 | 共 32 组：① 24 组状态矩阵（4 种 `state`：fresh／stale／unavailable／None × 3 种 `checker_error`：None／script_missing／script_failed × 2 种 `rebuild_ran`）；② 2 种 `artifact_error`（不可读／缺失）；③ 1 组 **artifact 级** `degraded` 标志（结果为 accept；逐记录降级升级由 T5 覆盖）；④ **5 条 verdict 分支**：`insufficient` → `contact_evidence_insufficient`、`confirmed_cross_source` 且 `current_email=None` → `contact_evidence_ambiguous`、verdict 不在 `CONTACT_EVIDENCE_VERDICTS`（`bogus`）→ `contact_evidence_invalid_record`、`paper_only` → `contact_evidence_paper_only`、`conflict` → `contact_evidence_conflict` | 每组返回的完整决策对象（`status`／`reason_code`／`web_lookup_required`／`recipient_email`／`sources` 等）逐字段相同 | 同 T1 |
 | T3 | `contact_evidence_decisions` 的逐教授路由与返回键不变 | 三条 email（同一教授重复一次 + 一个无证据的教授）与一份 `resolved` 字典 | 决策字典的键集合与每个值逐字段相同（同一教授只出现一次） | 同 T1 |
 | T4 | `contact_evidence_freshness_reason` 的 30 天边界不变 | 8 种输入：当天、29 天前、30 天前、31 天前、未来时间、`None`、非时间字符串、数字 | 返回值（`None` 或原因串）逐项相同 | 同 T1 |
 | T5 | 既有证据入口不受影响 | 阶梯判定与快照的既有用例 | 全部通过 | `test_contact_evidence_ladder`（整模块 40 项：该文件每个用例都以阶梯判定或快照为主要目的）与 `test_stage5_fixture_isolation`（模块 2 项：显式注入的 checker 与快照隔离），共 42 项 |
@@ -46,15 +46,17 @@
    set -e
    uv run --no-project "$RUN/ladder_probe.py" "$RUN/base/contact_state.py" "$RUN/base-work" > "$RUN/base.json"
    uv run --no-project "$RUN/ladder_probe.py" "$RUN/head/contact_state.py" "$RUN/head-work" > "$RUN/head.json"
-   diff -u <(jq 'del(.injection_sites)' "$RUN/base.json") <(jq 'del(.injection_sites)' "$RUN/head.json") \
-     && echo "T1-T4 IDENTICAL"
+   jq 'del(.injection_sites)' "$RUN/base.json" > "$RUN/base.filtered.json"
+   jq 'del(.injection_sites)' "$RUN/head.json" > "$RUN/head.filtered.json"
+   diff -u "$RUN/base.filtered.json" "$RUN/head.filtered.json" && echo "T1-T4 IDENTICAL"
    ```
-   预期：两条驱动命令都退出 0（否则 `set -e` 立即中止），`diff` 无输出并打印 `T1-T4 IDENTICAL`。**`injection_sites` 是唯一被排除的键**：它是本批已批准的签名变化（三个别名新增关键字参数，见执行计划“unresolved impact”），单独核对：
+   预期：两条驱动命令都退出 0（否则 `set -e` 立即中止），`diff` 无输出并打印 `T1-T4 IDENTICAL`。过滤后的中间文件用 `jq` 生成、不依赖进程替换，POSIX shell 下同样可执行。**`injection_sites` 是唯一被排除的键**：它是本批已批准的签名变化（三个别名新增关键字参数，见执行计划“unresolved impact”），两侧各自单独核对：
    ```sh
    set -e
+   jq -c '.injection_sites' "$RUN/base.json"
    jq -c '.injection_sites' "$RUN/head.json"
    ```
-   预期：`contact_evidence_record` 为 `["compact_name"]`，`contact_evidence_freshness_reason` 为 `["verify_ttl_days"]`，`_evaluate_record_ladder` 为三者，其余五个（含三个包装）为空数组。
+   预期：基准侧 8 个名字全部为空数组；改动侧 `contact_evidence_record` 为 `["compact_name"]`、`contact_evidence_freshness_reason` 为 `["verify_ttl_days"]`、`_evaluate_record_ladder` 为三者，其余五个（含三个包装）为空数组。
 3. T5：只跑清单列出的两个入口。
    ```sh
    set -e
@@ -92,7 +94,8 @@
 ## 修订记录
 
 - 第 1 版：首次提交测试计划审核。
+- 第 2 版：按第一关口的 B1 补上三条此前零覆盖的阶梯分支（`insufficient`／`ambiguous`／`invalid_record`，另加 `paper_only` 与 `conflict` 共 5 条 verdict 分支），矩阵计数由“21 组”更正为 32 组，说明“降级”案例实际打的是 artifact 级标志（逐记录降级由 T5 覆盖），并把过滤步骤改成写临时文件（不依赖进程替换），基准侧的 `injection_sites` 也改为显式断言全空。
 
 ## 审核状态
 
-测试计划第 1 版为当前唯一版本，状态为待审核。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 2 版为当前唯一版本。第 1 版第二关口 PASS、第一关口有 1 项 blocker（B1），已按上节修正。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
