@@ -1,9 +1,9 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- 测试计划版本：`contact-evidence-level-t36`（T1—T4 的必测清单、17 个选择器及断言未变）；对应[执行计划第 5 版](implementation-plan.md)。
+- 测试计划版本：`contact-evidence-level-t37`（T1—T4 的必测清单与 17 个执行选择器未变；t37 只修订 T4 展示刷新用例中与计划冲突的一条断言及其描述）；对应[执行计划第 5 版](implementation-plan.md)。
 - 需求版本：2026-10-17 确认的 U1/U5；测试准备时的产品基线为 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
-- 当前状态（受审集成提交 `6d8f80a`）：第一关通过、第二关通过；第三关按 §10 当前集成版本 17/17 的执行记录通过（`/tmp/contact-evidence-level.sn3UGj6n/recipe.txt`）。旧版合并审核在 `ac301e1` 提出 5 项实现缺陷，修复与复验记录见 §9；执行计划第 5 版的入口对齐已批准并实施，见 §10。当前集成版本的合并复审尚未完成，拉取请求仍为草稿；本记录不构成合并批准。
-- 历史修订记录：t32 按用户授权删除错误提示字符串限制和重复的禁止区域用例（当前 13 个新增用例、17 个执行选择器；此前运行结果只对应旧版本）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八、九轮复核（IR-37 残留、IR-38 残留、IR-40(a)(b)、IR-41）再改准运行的版本指向，把固定卡比较改为「夹具守卫 + 与渲染前快照比较」、恢复 refine-finalize 的 pack 字节守卫，并删除与辅助函数重复的断言；t33 按第二关意见把「旧包缺可比较基线」用例改为断言顶层 `legacy_pack_no_preflight` 与方向级无 `validator_not_accepted`；t34 把状态行与 §5 的「最新记录」绑定到测试提交 `0fe84ab` 并在该提交上重跑同一组 17 个选择器；t35 在第三关正式执行中修订 T1 译文断言、T1 `gap_notes` 比较形状与 T2 freshness 夹具（见修订记录）。t35 第三关已于产品与测试版本 `8f31296` 正式执行：§3 的 17 个选择器全部通过（`Ran 17 tests`、`OK`，结果目录 `/tmp/contact-evidence-level.OnXaAyhx/recipe.txt`，逐项结论见 §5）；执行中 T1、T2 曾因测试步骤本身不成立被本地执行工程师按 Test Engineer Rule §5 停止并交接，t35 修订后完整复跑通过。§5 的 6 通过 / 11 业务失败只对应测试提交 `0fe84ab`（实现前），不代表当前版本；审核处置仅适用于各自记录版本（§6、§7）。t36 只补充 T1 禁锚区完成论文引用缺可信题名的独立夹具，不新增选择器；该新分支已由本地执行工程师按第 36 版定向审核指定的最小范围执行并通过（`Ran 1 test`、`OK`，退出码 0，日志 `/tmp/contact-evidence-level.Gic8ynUG/recipe-t36.txt`，见 §5），其余 16 个未受影响选择器直接复用 t35 的通过结果。
+- 当前状态：第一关通过、第二关通过；第三关在合并复审修正后的版本上重新取得 17/17 有效记录（`/tmp/contact-evidence-level.xa9UbsfO/recipe.txt`，全仓 `Ran 1035 tests`、`OK (skipped=1)`）。旧版合并审核（受审 `ac301e1`）的 5 项实现缺陷修复与复验见 §9；执行计划第 5 版的入口对齐见 §10；合并复审（受审 `8fd761a`）的 2 项缺陷与配套 t37 测试步骤修订见 §11 与 t37 记录。修正后的提交尚未取得新的复审结论，拉取请求仍为草稿；本记录不构成合并批准。
+- 历史修订记录：t32 按用户授权删除错误提示字符串限制和重复的禁止区域用例（当前 13 个新增用例、17 个执行选择器；此前运行结果只对应旧版本）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八、九轮复核（IR-37 残留、IR-38 残留、IR-40(a)(b)、IR-41）再改准运行的版本指向，把固定卡比较改为「夹具守卫 + 与渲染前快照比较」、恢复 refine-finalize 的 pack 字节守卫，并删除与辅助函数重复的断言；t33 按第二关意见把「旧包缺可比较基线」用例改为断言顶层 `legacy_pack_no_preflight` 与方向级无 `validator_not_accepted`；t34 把状态行与 §5 的「最新记录」绑定到测试提交 `0fe84ab` 并在该提交上重跑同一组 17 个选择器；t35 在第三关正式执行中修订 T1 译文断言、T1 `gap_notes` 比较形状与 T2 freshness 夹具（见修订记录）。t35 第三关已于产品与测试版本 `8f31296` 正式执行：§3 的 17 个选择器全部通过（`Ran 17 tests`、`OK`，结果目录 `/tmp/contact-evidence-level.OnXaAyhx/recipe.txt`，逐项结论见 §5）；执行中 T1、T2 曾因测试步骤本身不成立被本地执行工程师按 Test Engineer Rule §5 停止并交接，t35 修订后完整复跑通过。§5 的 6 通过 / 11 业务失败只对应测试提交 `0fe84ab`（实现前），不代表当前版本；审核处置仅适用于各自记录版本（§6、§7）。t36 只补充 T1 禁锚区完成论文引用缺可信题名的独立夹具，不新增选择器；该新分支已由本地执行工程师按第 36 版定向审核指定的最小范围执行并通过（`Ran 1 test`、`OK`，退出码 0，日志 `/tmp/contact-evidence-level.Gic8ynUG/recipe-t36.txt`，见 §5），其余 16 个未受影响选择器直接复用 t35 的通过结果。；t37 按合并复审阻断项 1 与执行计划 r5 §3.2／§3.3.5 修订 T4 展示刷新用例的旧认证断言（改为断言旧认证正式失效、新正文可重新登记第一轮），范围与选择器数量不变。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
 ## 当前测试审核与执行状态（2026-10-18，受审 `6d8f80a`）
@@ -56,7 +56,7 @@ T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装
 | T2 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_nonrepairable_user_note_does_not_create_a_correction_job` | 既有禁止区域报告拒绝与零修订任务断言继续成立 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_counts_follow_the_recorded_analysis_level` | 同一方向集合内三类计数与规范包级别一致；没有成功分析索引记录（即使残留分析文件）计未确认，OCR-only 全文（有分析/OCR 文件、无 facts）仍计全文 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_legacy_records_without_level_count_as_unconfirmed` | 缺 analysis_level 的旧记录即使有分析文件也计未确认 |
-| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_display_only_level_change_refreshes_without_model_work` | 完整接受基线下（被统计方向集合已含 OCR-only 论文，刷新后计全文 1、摘要 2）仅 level 变化判为展示刷新；刷新后统计与规范包级别更新、旧 PASS 不再被接受、assignment/叙事/模型指纹保留、validator 记录与 freshness 缓存字节不变、下次预检不误报包完整性 |
+| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_display_only_level_change_refreshes_without_model_work` | 完整接受基线下（被统计方向集合已含 OCR-only 论文，刷新后计全文 1、摘要 2）仅 level 变化判为展示刷新；刷新后统计与规范包级别更新、旧 PASS 不再被接受、assignment/叙事/模型指纹保留、旧认证在正文实质变化时正式失效（刷新后不再携带绑定旧正文的认证，新正文可重新登记第一轮 PASS）、freshness 缓存字节不变、下次预检不误报包完整性 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_source_change_routes_back_to_the_process_path` | 在仅既有论文 AAAA1111 的级别变化使预检允许刷新后，只新增 CCCC3333 的索引/分析文件/关联输入（facts sidecar 仍缺失），AAAA1111、BBBB2222 的级别和来源保持不变；旧预检执行刷新必须拒绝写入，输入包与正文原字节不变；重新预检走原 process |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_deleted_analysis_source_also_routes_back_to_process` | 独立接受基线只删除 CCCC3333 的分析文件与索引记录，不删论文事实目录项，不改其他论文级别，预检应走 process；另用独立临时教授目录在仅 level 变化预检通过后人工修改受管正文，旧预检刷新须拒绝写入，输入包与人工正文原字节不变 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_replaced_analysis_source_routes_back_to_process` | 分析文件换址（索引路径与旧文件同时变化）时走原 process |
@@ -69,9 +69,9 @@ T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装
 | T2 原始报告不改 | `assert_source_owner_handoff` 比较报告字节；`test_repeating_...` 断言重复登记不写通过结果 |
 | T2 修复生成内容后普通 finalize 产生新正文、旧 PASS/失败不冒充 | T2 `test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job`：保留首份失败报告字节 → 修正题名和固定证据 → 正常 stage2-plan/finalize 生成不同正文 → 新校验登记之前旧失败不能放行 → 为新正文创建新的 PASS 报告并调用 stage2-record-validation → 确认第一轮 PASS、旧报告仍不变，预检不再提示 validator_not_accepted。仅验证本轮业务修复的恢复路径，不运行真实模型 |
 | T4 等价重写仍不清轮数 | T3 用例断言 `round_retained`、`round == 1`、`phase == awaiting_second_validation` |
-| T4 不重签旧 resolved proof | 本夹具无 resolved 方向、无 resolved proof，该项不适用于 T4 场景，按依据不设断言；展示刷新用例改为断言 `validator` 记录与 freshness 缓存不被重写 |
+| T4 不重签旧 resolved proof | 本夹具无 resolved 方向、无 resolved proof，该项不适用于 T4 场景，按依据不设断言；展示刷新用例改为断言 freshness 缓存不被重写，并按 §3.3.5 断言旧认证随正文实质变化正式失效、新正文从第一轮重新登记 |
 | T4 复用写前漂移/手改保护 | 来源新增用例：保存仅 level 变化预检 → 只让原本缺失的 CCCC3333 来源出现，保持已有论文级别和来源不变 → 用旧预检刷新，确认拒绝且 pack/正文原字节不变 → 新预检 process。来源删除用例：用独立基线只删除 CCCC3333 的分析文件及索引记录，其他输入不变，确认 process；同一个测试方法再创建全新独立临时教授目录，仅人工修改受管正文，确认旧预检刷新拒绝覆盖。既有 stale_render/changed_input_pack 选择器继续检查原登记与文字修订保护 |
-| T4 不额外生成分析/归属/时效任务 | 展示刷新用例断言 freshness 缓存字节不变且 validator 记录不变；无新任务记录即无新任务 |
+| T4 不额外生成分析/归属/时效任务 | 展示刷新用例断言 freshness 缓存字节不变且刷新步骤不产生模型任务；无新任务记录即无新任务。刷新后新正文重新登记第一轮 PASS 只是校验记录，不是新的分析/归属/时效任务 |
 
 ## 3. 可执行 recipe
 
@@ -124,7 +124,7 @@ exit "$status"
   1. 仅展示刷新入口取 `stage2-refresh-display --professor-dir <dir> --preflight-file <file>`，成功时 `status=ok` 且 `display_refreshed=true`。
   2. preflight 顶层 `action` 对仅 level 变化返回 `refresh_display`，对来源出现、删除、替换或基线不可比较返回 `process` 并给出具体 `reason_codes`；方向级返回形状不作断言。
   3. 固定区阻挡的责任交接结果中，合并阅读 `reason_code`、`message`、`detail` 应能确认责任方（源／生成器／生成方／数据准备）及应做的动作（修复／修正／重新生成／处理／补齐等）；允许分在不同字段，不强制具体字段布局。结果不得误报 `no_failed_directions`、`awaiting_second_validation`。
-  4. 展示刷新后重绘的正文与旧 validator 的 `render_sha256` 绑定不同，旧 PASS 在验证入口被拒绝（预检给出 `validator_not_accepted`）；包内不得出现 `pack_integrity_mismatch`，方向级 `action` 与 validator 的存储形式不作断言。
+  4. 展示刷新后重绘的正文与旧 validator 的 `render_sha256` 绑定不同，旧 PASS 在验证入口被拒绝（预检给出 `validator_not_accepted`）；包内不得出现 `pack_integrity_mismatch`，方向级 `action` 与 validator 的存储形式不作断言。t37 按 §3.3.5 只增加行为检查：刷新后 pack 不再携带绑定旧正文的认证，新正文可重新登记第一轮；具体存储形式仍不作断言。
   5. 接受基线按来源 key 与类型记录路径、存在状态和成功/可用状态，使新增、删除、换址在预检可见；缺可信题名走明确失败结果（`status != ok` 且有 `reason_code`/`message`）。
   6. 固定区阻挡的 `stage2-refine-plan` 要返回明确的可处理交接结果：`jobs == []`、不要求写入（`write_needed` 不为 true），责任及动作可分列于返回字段，`status` 的具体字符串不作额外限制；`stage2-refine-finalize` 返回零 `rewritten` 且不改动 pack 与正文。
 - 未改动范围：U2/U3/U4、Stage 3—5、安装与 Nix/APM、真实模型或教授流程均未纳入，也未借此要求全仓回归。
@@ -429,6 +429,32 @@ t35 第三关正式执行记录（2026-10-18，本地执行工程师）：产品
 
 本轮只改测试代码与测试计划；`scripts/contact_state.py`、`SKILL.md` 与两个 analyzer 投影等产品文件及其他测试模块本轮未改。
 
+### t37 定向修订记录（合并复审阻断项 1：展示刷新后的旧认证失效）
+
+PR #92 合并复审 [issuecomment-6248851590](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6248851590) 对提交 `8fd761a` 给出 NOT_READY，阻断项 1 要求：展示刷新确实改变受管正文与校验依据时，必须正式使旧 `validator` 失效，让新正文能重新登记第一轮；原始报告留在原路径；等价重写不得清零轮次；禁止用重绑定旧通过记录代替重新校验。该要求与执行计划 r5 §3.3.5（“正文/校验依据实质变化按 §3.2 失效旧 validator，不借新绑定沿用旧 PASS；等价重写不清轮数”）及 §3.2（“只有校验依据实质变化才失效旧 validator，并对新业务版本重新开始校验”）原文一致，也与测试计划 §1 T4 的“旧 validator PASS 不再被接受”相符。
+
+本轮发现 T4 展示刷新用例 `AnalysisLevelTests.test_display_only_level_change_refreshes_without_model_work` 末尾的一条断言与上述计划冲突：原 `self.assertEqual(pack_after.get("validator"), pack_before.get("validator"))` 要求刷新后旧 PASS 记录逐字保留并继续随包携带，实际上要求实现保留旧认证；它既违反 §3.3.5，也超出 §4 假设 4 的“validator 的存储形式不作断言”。在本地执行工程师的产品修正上该断言必然失败（`None != {...}`），因此按测试步骤缺陷处理，不改产品、不放宽预期。
+
+修订内容（只动这一个用例的末尾，第 844—854 行）：
+
+1. 删除上述逐字相等断言，改为 `self.assertFalse(pack_after.get("validator"), pack_after.get("validator"))`：展示变化后的 pack 不再携带绑定旧正文的认证；若实现把旧认证重绑到新正文（保留 `validator`），该断言直接失败。
+2. 在同一选择器内补一条最小行为检查：用既有的 `self.write_report("pass-after-refresh.json", [], verdict="pass")` 为新正文创建 PASS 报告并调用 `self.record(...)`，断言 `status == "ok"`、`round == 1`。这证明旧认证没有被复用、新正文从第一轮重新登记；若实现保留或重绑旧记录，`stage2-record-validation` 会因已有 schema 2 的终止记录而失败或进入第二轮，该检查随之失败。
+3. 注释写明：展示刷新不生成模型任务；展示变化是新校验版本，旧认证在此正式失效，新正文从第一轮重新登记。
+4. 原有断言全部保留：刷新前 validator 与正文 `render_sha256` 绑定、freshness 缓存字节不变、预检 `action=process` 且方向级 `validator_not_accepted`、包内无 `pack_integrity_mismatch`、刷新后正文哈希不再等于旧绑定、固定卡/黑名单可信引用、机器字段与 assignment/叙事/模型指纹逐字不变、规范包级别与统计一致。
+
+同步：§2 的 T4 行与 §1 覆盖关系两处原写“validator 记录不变/不被重写”，与新断言冲突，按计划原文改为“旧认证随正文实质变化正式失效、新正文重新登记第一轮；freshness 缓存仍字节不变”；§4 假设 4 补一句行为检查说明（存储形式仍不作断言）；状态行与 Test revision 同步到 t37。
+
+受影响选择器：仅 `test_stage2_evidence_level.AnalysisLevelTests.test_display_only_level_change_refreshes_without_model_work`。范围未变：仍是 13 个新增用例、17 个执行选择器，T1—T4 目标与预期结果、§3 命令不变；未改产品文件（`scripts/contact_state.py`、`SKILL.md`、两个 analyzer 投影）与其他测试模块，未新增/删除用例或选择器。
+
+验证（真实运行，仓库外目录 `/tmp/contact-evidence-level.VUfUAYLu`）：
+
+- 修订前基线（同一选择器）：`python3 -m unittest -v test_stage2_evidence_level.AnalysisLevelTests.test_display_only_level_change_refreshes_without_model_work`，退出码 1，`Ran 1 test`、`FAILED (failures=1)`，失败点即旧断言 `None != {...}`（`baseline-single.txt`）。
+- 修订后同一选择器：退出码 0，`Ran 1 test`、`OK`（`after-single.txt`）。
+- 整个模块：`python3 -m unittest -v test_stage2_evidence_level`，退出码 0，`Ran 13 tests`、`OK`（`module.txt`）。
+- 受影响既有选择器：`python3 -m unittest -v test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_second_blocking_round_is_terminal`，退出码 0，`Ran 1 test`、`OK`（`handoff.txt`）。
+
+以上是受影响选择器的定向复验，不是第三关正式执行；§3 的 17 个选择器完整复跑与 §5 正式记录由本地执行工程师在产品与测试定稿后补，本记录不代写运行结果，也不作为合并批准。
+
 ## 8. 本地执行交付的实现符合性审核处置（2026-10-18）
 
 独立 `implementation_reviewer` 对本地执行工程师在计划 r4 下全部应交付产物的**首次实现符合性审核**（受审版本 `165906a`，产品实现 `8f31296`）结论为**完整**；提出两项，处置如下。本节编号属于本轮审核，不与 §6、§7 的 IR 编号混用。
@@ -478,3 +504,21 @@ t35 第三关正式执行记录（2026-10-18，本地执行工程师）：产品
 - 上游产品改动已进入本分支，故按 Test Engineer Rule 对必测项重新取证：§3 的 17 个选择器完整执行 `/tmp/contact-evidence-level.sn3UGj6n/recipe.txt`，`Ran 17 tests`、`OK`、退出码 0。
 - 全仓 `python3 -m unittest discover -p "test_*.py"`：`Ran 1035 tests`、`OK (skipped=1)`、退出码 0（`/tmp/contact-evidence-level.UiagMtvI/full-suite-merged.txt`；项数较合并前的 1028 增加，是上游 main 带入的新测试模块）。
 - 此前 t35／t36 记录仍按其版本引用；本节是当前版本（合并提交 `3f4d275` 及其后的记录提交）的第三关结果，不代表合并批准。
+
+## 11. 合并复审处置（2026-10-18，本地执行工程师）
+
+[合并复审](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6248851590)（受审 `8fd761a`）结论 NOT_READY，两项阻断性实现缺陷均交产品实现者，已按执行计划 r5 §3.2／§3.3.4—5 原文修正：
+
+| 项 | 处置 |
+|---|---|
+| 1 展示刷新后旧校验记录使重新校验流程卡住 | `stage2-refresh-display` 现在区分展示是否真的变化：受管正文实质变化时**正式失效旧 `validator`**（不再随包携带、也不重绑），新正文可从第一轮重新登记，原始报告文件不动；无展示变化时（只有未参与渲染的候选 key 级别变化）**不重绘正文**，保留认证与其渲染绑定并只把 `pack_sha256` 重绑到新包内容，轮次不清零；写入前发现受管正文被手改仍返回 `needs_decision/manual_markdown_changed`，不覆盖。 |
+| 2 取得写入保护后未再次复核全部业务输入 | 刷新的**全部业务判定与写入都在既有的教授 writer lease 内重做**：持锁后重新读取 target/Stage 1 状态、重跑 `stage2_preflight_assess()`（论文目录与署名视图、方向映射、时效缓存、来源守卫、validator 之外的业务门）与 `stage2_preflight_cheap_inputs()`，并与取得租约前的决定逐项比对；任一变化 → `needs_refresh/display_refresh_stale`（drift `business_inputs_changed`／`target_or_snapshot_changed`）且零写入。未新增锁、通用扫描或证明框架。 |
+
+配套测试步骤修订（t37，见该节）：T4 展示刷新用例原先断言"`pack["validator"]` 逐字保留"，与 §3.3.5 及 §4 假设 4（存储形式不作断言）冲突，已由本地测试工程师改为断言刷新后不再携带绑定旧正文的认证、且新正文可重新登记第一轮；其余断言与范围不变（仍 13 个新增用例、17 个执行选择器）。
+
+复验（当前版本）：
+
+- §3 的 17 个选择器完整复跑：`/tmp/contact-evidence-level.xa9UbsfO/recipe.txt`，`Ran 17 tests`、`OK`、退出码 0。
+- 全仓 `python3 -m unittest discover -p "test_*.py"`：`Ran 1035 tests`、`OK (skipped=1)`、退出码 0（`/tmp/contact-evidence-level.UiagMtvI/full-suite-mergefix2.txt`）。
+- 写前复proof 的定向探针（仓库外只读探针，非必测项）：在 T4 夹具上把 `stage2_local_writer_scope` 包一层，在**取得租约之后**改动一个被绑定的业务输入（教授本地 target 的 `user_note`），刷新入口返回 `needs_refresh/display_refresh_stale`、`drift=["business_inputs_changed"]`、退出码 2，且输入包与受管正文字节不变（`/tmp/contact-evidence-level.UiagMtvI/probe_inlease_recheck.py`）。
+- t37 的定向记录（测试工程师）另见 `/tmp/contact-evidence-level.VUfUAYLu/`；t35／t36 旧记录仍按其版本引用。

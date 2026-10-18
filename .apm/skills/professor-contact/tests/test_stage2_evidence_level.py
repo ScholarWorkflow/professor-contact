@@ -842,10 +842,16 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertNotEqual(hashlib.sha256(managed_body(self.analysis_text()).encode(
             "utf-8")).hexdigest(), pack_before["validator"]["render_sha256"])
         # No model task was created by the display-only step: the freshness
-        # cache and the recorded validator are untouched, so no re-analysis,
-        # assignment or freshness job was queued.
+        # cache is untouched, so no re-analysis, assignment or freshness job
+        # was queued. A display change is a new validation version: the old
+        # certification is formally expired here, so the refreshed body cannot
+        # carry the old PASS, and it registers again from round 1 below.
         self.assertEqual(freshness_path.read_text(encoding="utf-8"), freshness_before)
-        self.assertEqual(pack_after.get("validator"), pack_before.get("validator"))
+        self.assertFalse(pack_after.get("validator"), pack_after.get("validator"))
+        rerecorded = self.record(self.write_report("pass-after-refresh.json", [],
+                                                   verdict="pass"))
+        self.assertEqual(rerecorded["status"], "ok", rerecorded)
+        self.assertEqual(rerecorded["round"], 1, rerecorded)
 
     def assert_routes_back_to_process(self, preflight):
         self.assertEqual(preflight["action"], "process", preflight)

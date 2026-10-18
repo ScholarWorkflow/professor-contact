@@ -6094,6 +6094,54 @@ def stage2_local_writer_scope(professor_dir: Path):
             pass
 
 
+def stage2_refresh_levels(pack: dict, projection: dict) -> tuple[dict, dict]:
+    """The display-only level each canonical pack paper records after a refresh."""
+    current_keys = projection.get("keys") if isinstance(projection.get("keys"), dict) else {}
+    papers, levels = {}, {}
+    for key, record in pack_paper_index(pack).items():
+        updated_record = dict(record)
+        entry = current_keys.get(key)
+        level = entry.get("level") if isinstance(entry, dict) else None
+        if level is not None and level not in ANALYSIS_LEVELS:
+            fail("invalid_analysis_index",
+                 f"the analysis index records an invalid level for {key}: {level!r}; "
+                 "expected one of fulltext|abstract or null",
+                 item_key=key)
+        updated_record["analysis_level"] = level
+        papers[key] = updated_record
+        levels[key] = level
+    return papers, levels
+
+
+def stage2_refresh_business_reasons(assessment: dict) -> list[str]:
+    """Business reasons that must stop a display refresh.
+
+    The recorded validator is deliberately not one of them: the refresh itself
+    expires a certification it can no longer prove (a display change is a new
+    validation version, which must be recorded from round 1 again), and a
+    hand-edited managed body is refused by `managed_write` with
+    `needs_decision/manual_markdown_changed` instead of being overwritten.
+    """
+    reasons = list(assessment.get("reason_codes") or [])
+    for row in assessment.get("directions") or []:
+        reasons.extend(reason for reason in (row.get("reason_codes") or [])
+                       if reason != "validator_not_accepted")
+    return sorted(set(reasons))
+
+
+def stage2_managed_body_sha(professor_dir: Path) -> str | None:
+    """SHA-256 of the managed analysis body currently on disk, or None."""
+    path = Path(professor_dir) / ANALYSIS_MD
+    if path.is_symlink():
+        return None
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    _header, body = split_frontmatter(content)
+    return sha256_text(body)
+
+
 def cmd_stage2_refresh_display(args) -> None:
     """Refresh only the display projection of one accepted pack.
 
@@ -6165,14 +6213,14 @@ def cmd_stage2_refresh_display(args) -> None:
                   drift=["preflight_inputs_changed"],
                   message="预检绑定的目标/Stage 1 候选/参数已经变化；"
                           "按正常 Stage 2 流程重新处理。未修改任何文件。")
-    if assessment["reason_codes"] or any(row["reason_codes"] for row in assessment["directions"]):
+    business_reasons = stage2_refresh_business_reasons(assessment)
+    if business_reasons:
         soft_exit("needs_refresh", "display_refresh_stale",
                   drift=["business_inputs_changed"],
-                  reason_codes=assessment["reason_codes"],
+                  reason_codes=business_reasons,
                   directions=assessment["directions"],
-                  message="预检之后业务依据（论文目录/署名视图/方向映射/时效缓存/来源守卫/"
-                          "validator 验收）已经变化；按正常 Stage 2 流程重新处理。"
-                          "未修改任何文件。")
+                  message="预检之后业务依据（论文目录/署名视图/方向映射/时效缓存/来源守卫）"
+                          "已经变化；按正常 Stage 2 流程重新处理。未修改任何文件。")
     recorded_projection = preflight.get("analysis_projection")
     current = assessment["analysis_projection"]
     if not isinstance(recorded_projection, dict) or not isinstance(current, dict) \
@@ -6193,28 +6241,6 @@ def cmd_stage2_refresh_display(args) -> None:
         soft_exit("needs_refresh", "legacy_pack_no_preflight",
                   message="已接受输入包没有可比较的分析来源基线；按正常 Stage 2 流程重新处理。"
                           "未修改任何文件。")
-    updated = dict(pack)
-    papers = {}
-    levels = {}
-    current_keys = current.get("keys") if isinstance(current.get("keys"), dict) else {}
-    for key, record in pack_paper_index(pack).items():
-        record = dict(record)
-        entry = current_keys.get(key)
-        level = entry.get("level") if isinstance(entry, dict) else None
-        if level is not None and level not in ANALYSIS_LEVELS:
-            fail("invalid_analysis_index",
-                 f"the analysis index records an invalid level for {key}: {level!r}; "
-                 "expected one of fulltext|abstract or null",
-                 item_key=key)
-        record["analysis_level"] = level
-        papers[key] = record
-        levels[key] = record["analysis_level"]
-    updated["papers"] = papers
-    updated["cache"] = dict(cache)
-    updated["cache"]["preflight"] = {
-        **meta, "analysis_projection": current,
-        "display_refresh_version": STAGE2_DISPLAY_REFRESH_VERSION}
-
     projection_keys = assessment["projection_keys"]
     analysis_paths = assessment["projection_analysis_paths"]
     md_path = professor_dir / ANALYSIS_MD
@@ -6226,37 +6252,103 @@ def cmd_stage2_refresh_display(args) -> None:
             decision = decision_data.get("decision")
 
     with stage2_local_writer_scope(professor_dir):
-        # Inside the lease, re-prove the exact state this write relies on: the
-        # accepted pack and the analysis sources must still be the ones the
-        # checks above proved.
-        ctx = Stage2PackRefineContext(professor_dir)
-        if stage2_pack_content_fingerprint(ctx.pack) != stage2_pack_content_fingerprint(pack):
+        # Inside the lease, re-prove the WHOLE decision on the bytes this write
+        # is based on: the same business inputs (target/Stage-1 binding, papers
+        # catalog, authorship view, direction mapping, freshness cache, source
+        # guards), the same accepted pack and the same analysis projection.
+        target_now = read_stage2_target(stage2_target_path(professor_dir),
+                                        program_root, professor)
+        snapshot_now = (read_stage1_professor_entry(program_root, professor_dir, professor,
+                                                    target_now)
+                        if target_now is not None else None)
+        if snapshot_now is None:
+            soft_exit("needs_refresh", "display_refresh_stale",
+                      drift=["target_or_snapshot_changed"],
+                      message="写入前教授 target/Stage 1 状态不可读或已变化；"
+                              "按正常 Stage 2 流程重新处理。未修改任何文件。")
+        assessment_now = stage2_preflight_assess(program_root, professor_dir, professor,
+                                                 target_now, snapshot_now, params, current_year)
+        inputs_now = stage2_preflight_cheap_inputs(program_root, professor_dir, professor,
+                                                   target_now, snapshot_now, params,
+                                                   current_year)
+        if inputs_now != current_inputs or stage2_refresh_business_reasons(assessment_now):
+            soft_exit("needs_refresh", "display_refresh_stale",
+                      drift=["business_inputs_changed"],
+                      reason_codes=stage2_refresh_business_reasons(assessment_now),
+                      message="取得教授写入保护后业务依据已变化；按正常 Stage 2 流程重新处理。"
+                              "未修改任何文件。")
+        pack_now = assessment_now["pack"]
+        if not isinstance(pack_now, dict)                 or stage2_pack_content_fingerprint(pack_now) != stage2_pack_content_fingerprint(pack):
             soft_exit("needs_refresh", "display_refresh_stale",
                       drift=["accepted_pack_changed"],
                       message="写入前已接受输入包再次变化；按正常 Stage 2 流程重新处理。"
                               "未修改任何文件。")
-        if stage2_analysis_projection(professor_dir, projection_keys,
-                                      analysis_paths) != current:
+        current_now = assessment_now["analysis_projection"]
+        if not isinstance(current_now, dict) or current_now != current:
             soft_exit("needs_refresh", "display_refresh_stale",
                       drift=["analysis_sources_changed"],
                       message="写入前分析来源再次变化；按正常 Stage 2 流程重新处理。"
                               "未修改任何文件。")
-        ctx.pack = updated
-        state_fingerprint = stage2_pack_state_fingerprint(updated)
-        body = render_analysis_md(ctx, updated, state_fingerprint)
-        md_result = managed_write(md_path, body, state_fingerprint,
-                                  (old_render.get(ANALYSIS_MD) or {}).get("sha256"), decision)
-        if md_result.get("needs_decision"):
-            soft_exit("needs_decision", md_result["reason_code"],
-                      target=md_result.get("target"),
-                      existing_sha256=md_result.get("existing_sha256"),
-                      new_sha256=md_result.get("new_sha256"),
-                      options=["overwrite（覆盖为状态版本）", "keep_manual（保留手改，不作为流程输入）"])
-        updated["cache"]["render"] = {ANALYSIS_MD: {"sha256": md_result["sha256"]}}
+
+        papers, levels = stage2_refresh_levels(pack_now, current_now)
+        accepted_levels = {key: (record or {}).get("analysis_level")
+                           for key, record in pack_paper_index(pack_now).items()}
+        display_changed = any(accepted_levels.get(key) != level
+                              for key, level in levels.items())
+        updated = dict(pack_now)
+        updated["papers"] = papers
+        updated["cache"] = dict(pack_now.get("cache") or {})
+        updated["cache"]["preflight"] = {
+            **meta, "analysis_projection": current_now,
+            "display_refresh_version": STAGE2_DISPLAY_REFRESH_VERSION}
+        if display_changed:
+            ctx = Stage2PackRefineContext(professor_dir)
+            if stage2_pack_content_fingerprint(ctx.pack)                     != stage2_pack_content_fingerprint(pack_now):
+                soft_exit("needs_refresh", "display_refresh_stale",
+                          drift=["accepted_pack_changed"],
+                          message="写入前已接受输入包再次变化；按正常 Stage 2 流程重新处理。"
+                                  "未修改任何文件。")
+            ctx.pack = updated
+            state_fingerprint = stage2_pack_state_fingerprint(updated)
+            body = render_analysis_md(ctx, updated, state_fingerprint)
+            md_result = managed_write(md_path, body, state_fingerprint,
+                                      (old_render.get(ANALYSIS_MD) or {}).get("sha256"),
+                                      decision)
+            if md_result.get("needs_decision"):
+                soft_exit("needs_decision", md_result["reason_code"],
+                          target=md_result.get("target"),
+                          existing_sha256=md_result.get("existing_sha256"),
+                          new_sha256=md_result.get("new_sha256"),
+                          options=["overwrite（覆盖为状态版本）",
+                                   "keep_manual（保留手改，不作为流程输入）"])
+            updated["cache"]["render"] = {ANALYSIS_MD: {"sha256": md_result["sha256"]}}
+            # The managed body materially changed, so the recorded certification
+            # no longer proves it: the old validator is formally expired here
+            # instead of being carried or re-bound, which lets the new body be
+            # recorded again from round 1 (the raw report files stay untouched).
+            updated.pop("validator", None)
+            md_sha256 = md_result["sha256"]
+        else:
+            # Nothing the managed Markdown shows changed: keep the certified body
+            # byte-identical, refuse a hand-edited one, and only advance the
+            # display projection, keeping the recorded rounds intact.
+            certified = (old_render.get(ANALYSIS_MD) or {}).get("sha256")
+            if stage2_managed_body_sha(professor_dir) != certified:
+                soft_exit("needs_decision", "manual_markdown_changed",
+                          target=str(md_path),
+                          options=["overwrite（覆盖为状态版本）",
+                                   "keep_manual（保留手改，不作为流程输入）"])
+            validator = updated.get("validator")
+            if isinstance(validator, dict):
+                carried = dict(validator)
+                carried["pack_sha256"] = stage2_pack_content_fingerprint(updated)
+                updated["validator"] = carried
+            md_sha256 = certified
         atomic_json(professor_dir / INPUT_PACK, updated)
     emit({"status": "ok", "professor": pack.get("professor"),
           "display_refreshed": True, "pack_path": str(professor_dir / INPUT_PACK),
-          "analysis_md": str(md_path), "md_sha256": md_result["sha256"],
+          "analysis_md": str(md_path), "md_sha256": md_sha256,
+          "display_changed": display_changed,
           "level_changes": sorted(level_changes), "levels": levels,
           "reason_codes": []})
 
