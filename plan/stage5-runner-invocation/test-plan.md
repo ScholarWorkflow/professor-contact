@@ -3,11 +3,11 @@
 ## 版本、来源与状态
 
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 4 版。
-- Test plan revision: 第 5 版。
+- Test plan revision: 第 6 版。
 - 需求来源：负责人 2026-10-18 授权的三批 Stage 重构要求第 2 批；原文见执行计划。
 - Target repository revision: 工作分支 `refactor/stage5-runner-invocation`（从 `74bd29b572c1b3f68f230a554f57d0202e54cde8` 拉出）实施后的提交。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本次修改明确要达到的目标与本次直接改变的成功、失败、兼容行为。
-- Proposed review status: pending（等待测试计划审核）。
+- Proposed review status: pending（本文件登记候选修订；各关口结论以 PR 中对应版本的审核记录为准）。
 - 唯一规范来源：本文件。
 
 ## 必测清单
@@ -62,13 +62,22 @@
 - 测试只使用合成数据与临时目录；`install_issue59_checker` 注入的 `PROFESSOR_CONTACT_EVIDENCE_SCRIPT` 由既有夹具在用例结束时恢复，本次不新增环境变量。
 - 预检只确认命令可用、工作树干净、必需文件存在；不预先执行业务目标命令求结果。
 
+## 已完成的源码核对
+
+以下检查对应执行计划 R1–R3 的原有目标，直接复用[第 4 版审核中的源码观察](https://github.com/ScholarWorkflow/professor-contact/pull/97#issuecomment-6252474789)及[第 5 版复核](https://github.com/ScholarWorkflow/professor-contact/pull/97#issuecomment-6252740514)。所引源码固定在 `5330751beecf1a01348d58fc830f278cc8ffbfd6`；该部分产品代码与原被测提交 `ad674f2c` 相同。
+
+| 需求目标 | 输入 / 场景 | 预期结果 | 检查方式与已确认结果 |
+| --- | --- | --- | --- |
+| R1、R2：解除临时源码副本执行，改为明确内部调用 | wrapper 发起 `stage5-finalize` | 不再改写 runner 源码后写入临时目录执行；直接运行安装位置中的真实 runner，并通过内部参数传入审计来源 | 已只读核对[真实脚本定位](https://github.com/ScholarWorkflow/professor-contact/blob/5330751beecf1a01348d58fc830f278cc8ffbfd6/.apm/skills/professor-contact/scripts/stage5_immutable.py#L35-L36)及[校验与最终调用](https://github.com/ScholarWorkflow/professor-contact/blob/5330751beecf1a01348d58fc830f278cc8ffbfd6/.apm/skills/professor-contact/scripts/stage5_immutable.py#L101-L167)：`RUNNER` 指向 wrapper 同目录的 `contact_state.py`，源码读取只用于标记校验；临时 runner 源码的改写、写入及执行已删除，finalize 直接使用该真实路径与 `--audit-provenance`。结果符合预期。 |
+| R3：保持解释器与写入顺序 | wrapper 的正常 finalize 路径 | 子进程仍由 `sys.executable` 启动；顺序保持 `stage5-plan` → 草稿文件 → 映射文件 → 标记校验 → `stage5-finalize` | 已只读核对[执行顺序与两处子进程调用](https://github.com/ScholarWorkflow/professor-contact/blob/5330751beecf1a01348d58fc830f278cc8ffbfd6/.apm/skills/professor-contact/scripts/stage5_immutable.py#L116-L167)：plan 与 finalize 都使用 `sys.executable`，草稿、映射、校验及最终调用按上述顺序执行。结果符合预期。 |
+
+本节登记已经完成的观察，无需新增运行或补采材料。引用的函数与源码位置只用于定位本次实现，不固定为长期契约，也不要求为已删除的复制流程保留测试。T1–T6 及第 2 步的 11 个运行入口不变，既有结果继续复用。
+
 ## 不纳入本清单的范围
 
 | 未纳入项 | 原因 |
 | --- | --- |
 | 相邻模块可被 finalize 子进程导入 | 本批只解除复制这一前提；runner 目前没有相邻业务模块，真正验证在第三批抽 Stage3 渲染模块时进行 |
-| 解释器选择与 wrapper 内部写入顺序 | 需求 R3 的两项保持没有业务可观察出口：解释器与命令形状由步骤 2 的运行本身证明可用，“真实脚本路径”一侧面由 T5 覆盖，写入顺序由 T3 的零写入与成功用例的产物覆盖，不单设观察点 |
-| 临时副本文件不再产生 | 属于内部实现细节；对外行为由 T1/T2/T5 覆盖，不单独建立观察点 |
 | `stage5-plan` 的其余行为、Stage 2/3/4 业务回归 | 本次未修改，按 CI 既有门禁覆盖，不新增清单项 |
 | 仓库外消费者是否解析过临时副本文件名 | 不是正式 contract，无法在本仓观察；按执行计划的 unresolved impact 记录 |
 
@@ -80,6 +89,10 @@
 - 第 4 版：随执行计划第 3 版修正 T3 的预期表述——“不写任何用户文件”限定为“除 plan 阶段既有的上游证据重建外不写用户文件（教授目录无 md/txt/state）”，并注明断言不把“整个程序根零写入”当预期。用例本身的断言未改，仍只看教授目录的产物文件。
 - 第 5 版：按正常审核意见收窄第 2 步——从“运行三个完整模块、26 项全过”改为只运行清单已引用的 11 个入口，并同步收窄通过条件；明确 26 项日志是这 11 项的超集，多出的 15 项旧合同检查不计入本批结果（不要求删除测试文件，也不新增断言或重跑）。第 4 步对仓库 CI 的引用保持不变。
 
+- 第 6 版（2026-10-19 01:18:58 +08:00（北京时间））：按负责人“测试计划你直接维护”的指示，补入 R1–R3 已完成的源码核对及固定版本引用，移除“解释器与顺序”“临时副本删除”两条排除表述，关闭第 5 版复核指出的记录缺项。T1–T6、11 个测试入口、通过条件与既有执行记录保持不变；本次仅修订计划，复用原结果。
+
 ## 审核状态
 
-测试计划第 5 版为当前唯一版本；第 2 版已取得第一关口与第二关口 PASS（无 blocker），第 3、4 版只落实审核意见中的表述与断言归属；第 5 版按正常审核意见收窄第 2 步的检查入口与通过条件，必测编号与预期结果未变，结果仍复用被测提交 `ad674f2c` 的记录（11 项是 26 项日志的子集）。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 6 版为当前唯一版本。[第 5 版复核](https://github.com/ScholarWorkflow/professor-contact/pull/97#issuecomment-6252740514)已确认第二关口通过、T1–T6 的既有通过结果有效；其唯一未完成项是正式计划缺少源码核对引用。本版已在“已完成的源码核对”补齐该项，并移除两条排除表述。
+
+本次仅修改测试计划，产品代码、测试代码、工作流及必测预期未变。继续复用被测提交 `ad674f2c265380de54c997e1fe04ef192aeab3af` 的[执行记录](test-execution-2026-10-18.md)（所选 11 项包含在原 26 项通过结果中）及[既有 CI 结果](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39136220794)。本版各关口的正式结论见 PR 中对应版本的审核记录。
