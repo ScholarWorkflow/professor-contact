@@ -1,6 +1,6 @@
 # Cached Nix activation — test plan t4
 
-Scope: [implementation plan r4](implementation-plan.md), current product contact `f327f54220d321eb0fce3b3908f86c4ab0914745` with merged shared pin and direct factory wiring. This revision changes documentation only. Candidate review status; no formal gate or merge approval asserted.
+Scope: [implementation plan r4](implementation-plan.md), current product contact `f327f54220d321eb0fce3b3908f86c4ab0914745` with merged shared pin and direct factory wiring. Candidate review status; no formal gate or merge approval asserted. The goal/check text and steps below are unchanged from t4; only the result status was fact-synced on 2026-10-19 from the [execution record](test-execution-2026-10-19.md).
 
 ## Goals and sufficient checks
 
@@ -9,7 +9,7 @@ Scope: [implementation plan r4](implementation-plan.md), current product contact
 | Shared ownership / same consumer entrypoint | Inspect exact `mkCachedActivation` arguments and merged API; old outputs unchanged; no local implementation/testing duplication. | Source inspection matches merged lib/default.nix and factory. |
 | Resolved, correctly locked dependency | Verify #4 merged/main SHA, source hash and timestamp; only top-level shared node changes; all other nodes/edges remain equal. | Merge `91861b4f028eda1dbeb41481dcc48cd7c4a60874`; exact-tree hash metadata verified. |
 | Shared cache/lock behavior | Reuse upstream's bounded factory/runtime evidence and inspect unchanged interface/semantics; preserve migration and direct apply/remove guidance. | Upstream results reused within their scope; no repeated shared tests. |
-| Real Darwin packaging / README consumer (only remaining execution goal) | Build current product → verify `bin/professor-contact-activate` is executable → one isolated README/direnv activation → observe `.agent-env-applied` and `.agents/skills/professor-contact/SKILL.md`. Build includes evaluation; no separate drvPath pass required. | NOT RUN for current product. Original-product results apply only to that product/unaffected behavior. Execution is separately arranged after required authorization. |
+| Real Darwin packaging / README consumer (only remaining execution goal) | Build current product → verify `bin/professor-contact-activate` is executable → one isolated README/direnv activation → observe `.agent-env-applied` and `.agents/skills/professor-contact/SKILL.md`. Build includes evaluation; no separate drvPath pass required. | PASS for current product `f327f54220d321eb0fce3b3908f86c4ab0914745`, executed 2026-10-19 as steps 1–5 below; commands, exit results and observed outputs are in the [execution record](test-execution-2026-10-19.md). Original-product results still apply only to that product/unaffected behavior. |
 
 ## Existing checks, metadata and historical diagnosis
 
@@ -29,7 +29,7 @@ Scope: [implementation plan r4](implementation-plan.md), current product contact
 
 ## Remaining work and stop conditions
 
-The upstream merge/pin wait is resolved. The only remaining execution goal is the single current-product integration sequence below. No standalone drvPath result is needed in addition to build; shared seven-method and factory results remain reused, without new execution. This document update does not run or grant PASS to any pending step.
+The upstream merge/pin wait is resolved. The only remaining execution goal was the single current-product integration sequence below; it was executed once on 2026-10-19 for `f327f54220d321eb0fce3b3908f86c4ab0914745` with no failed step and no retry, and its results are in the [execution record](test-execution-2026-10-19.md). No standalone drvPath result is needed in addition to build; shared seven-method and factory results remain reused, without new execution.
 
 Use only the **Darwin build and isolated direnv recipe** section of [original t1 at 47a7fe0](https://github.com/ScholarWorkflow/professor-contact/blob/47a7fe0831418178871d29218e2dc26be9c6119a/plan/cached-nix-activation/test-plan.md), with these bounded substitutions and observations:
 
@@ -39,6 +39,6 @@ Use only the **Darwin build and isolated direnv recipe** section of [original t1
 4. Run exactly one real README-style direnv activation in that isolated consumer, replacing t1's old-marker assertion with `direnv exec . sh -c 'test -f .agent-env-applied && test -f .agents/skills/professor-contact/SKILL.md'`. Retain the existing `--project "$PWD"` shellHook. Do not reuse/copy the old contact marker.
 5. Record the exact product SHA, run path, commands and exit results, named executable and both observed files. Success means every step in this sequence succeeds. No second activation/cache matrix, old offline wrapper tests or business workflow is added.
 
-Only t1's isolated integration steps are reused; its old one-retry permission is not carried forward, and this document's stop rules govern. Only t1's isolated integration recipe is reused: do not restore `nix/test-activate.py`, its old offline recipe or contact-owned behavior tests. Existing shared seven-method/factory evidence covers those semantics. All current-product integration steps remain NOT RUN; arrange the suitable environment and required step authorization separately before executing. This documentation task does not start the Mac or install anything.
+Only t1's isolated integration steps are reused; its old one-retry permission is not carried forward, and this document's stop rules govern. Only t1's isolated integration recipe is reused: do not restore `nix/test-activate.py`, its old offline recipe or contact-owned behavior tests. Existing shared seven-method/factory evidence covers those semantics. All current-product integration steps were NOT RUN before 2026-10-19; they are now recorded as executed for `f327f54220d321eb0fce3b3908f86c4ab0914745` in the [execution record](test-execution-2026-10-19.md), with the shared evidence still reused rather than rerun.
 
 Stop at access/dependency failure and preserve evidence; no automatic retry, environment switch, installing software, dependency replacement or broadening scope. Product/recipe failure requires a targeted correction and impact review. Independent reviewers own implementation/test-plan conclusions and formal gates.
