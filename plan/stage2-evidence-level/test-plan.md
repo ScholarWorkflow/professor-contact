@@ -120,7 +120,7 @@ exit "$status"
 - 执行中出现的问题与处置：正式执行时 T1 的两条断言与 T2 的一处夹具被判定为**测试步骤本身不成立**（译文切片末尾空格与侧车 `.strip()` 冲突、`gap_notes` 快照 list 与规范 dict 形状不符、freshness 缓存命中使修正后的来源证据不被消费），按 Test Engineer Rule §5 停止受影响项并交本地测试工程师修订（t35）；修订后按同一 §3 命令完整复跑，17 项通过。原始失败日志保留在 `/tmp/contact-evidence-level.UiagMtvI/`（`recipe-baseline.txt`、`step1.txt`、`step3.txt`、`recipe-wip1.txt`），t35 的中间失败记录在 `/tmp/contact-evidence-level.UyFv3Iyi/recipe-t35.txt`。
 - 范围外回归（执行工程师自选的完整性检查，不是必测项）：在产品实现完成、t35 测试修订之前的版本上运行 `python3 -m unittest discover -p "test_*.py"`，`Ran 1028 tests`、`FAILED (failures=2)`，两项正是上面 T1/T2 的测试步骤缺陷，没有其他产品回归；t35 只改测试模块与本节，未再全量复跑。
 - 复用来源：无，本轮是对当前产品版本首次执行必测项。
-- 实现符合性审核处置后的复验：`implementation_reviewer` 首次审核（受审版本 `165906a`）结论为**完整**，其中 IR-02 按 §3.1 收紧禁锚区完成论文引用后，按同一 §3 命令再跑一次 17 个选择器，结果目录 `/tmp/contact-evidence-level.kB35xlUV/recipe.txt`，`Ran 17 tests`、`OK`；同时运行 `python3 -m unittest discover -p "test_*.py"`，`Ran 1028 tests`、`OK`。上面第一次记录（`OnXaAyhx`）仍是同一必测清单的有效结果，两次结果一致。处置明细见 §8。
+- 实现符合性审核处置后的复验：`implementation_reviewer` 首次审核（受审版本 `165906a`）结论为**完整**，其中 IR-02 按 §3.1 收紧禁锚区完成论文引用（产品改动提交 `cd39c70`；两次复验都在该提交的同一工作树内容上执行，其后 `git status` 无产品差异）后，按同一 §3 命令再跑一次 17 个选择器，结果目录 `/tmp/contact-evidence-level.kB35xlUV/recipe.txt`，`Ran 17 tests`、`OK`；同时运行 `python3 -m unittest discover -p "test_*.py"`，`Ran 1028 tests`、`OK`。上面第一次记录（`OnXaAyhx`）仍是同一必测清单的有效结果，两次结果一致。处置明细见 §8。
 - 未完成项：无。本记录是第三关结果，不代表第二关、合并批准或可合并；合并审核按 `Merge Reviewer Rule.md` 由下一负责人执行。
 
 准备期复核（非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），测试提交 `0fe84ab`，命令为 §3 的 17 个选择器，结果目录 `/tmp/contact-evidence-level.p49ZBXq2`（`recipe.txt`），退出码 1，`Ran 17 tests`、`FAILED (failures=11)`。
