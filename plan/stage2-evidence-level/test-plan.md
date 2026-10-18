@@ -1,8 +1,8 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- Test revision：contact-evidence-level-t31；对应 [执行计划 r4](implementation-plan.md)。
+- Test revision：contact-evidence-level-t32；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
-- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八、九轮复核（IR-37 残留、IR-38 残留、IR-40(a)(b)、IR-41）再改准运行的版本指向，把固定卡比较改为「夹具守卫 + 与渲染前快照比较」、恢复 refine-finalize 的 pack 字节守卫，并删除与辅助函数重复的断言（见修订记录）。第二关待复核，第三关未执行。最新准备期复核为 7 通过 / 11 业务失败（§5，测试提交 `36c630a`），此前记录只按其实际版本引用；审核处置仅适用于各自记录版本（§6、§7）。
+- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变）；t32 按用户授权删除错误提示字符串限制和重复的禁止区域用例（当前 13 个新增用例、17 个执行选择器；此前运行结果只对应旧版本）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八、九轮复核（IR-37 残留、IR-38 残留、IR-40(a)(b)、IR-41）再改准运行的版本指向，把固定卡比较改为「夹具守卫 + 与渲染前快照比较」、恢复 refine-finalize 的 pack 字节守卫，并删除与辅助函数重复的断言（见修订记录）。第二关待复核，第三关未执行。最新准备期复核为 7 通过 / 11 业务失败（§5，测试提交 `36c630a`），此前记录只按其实际版本引用；审核处置仅适用于各自记录版本（§6、§7）。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
 ## 1. 唯一必测清单
@@ -27,7 +27,6 @@ T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装
 | T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job` | 固定区 blocking 第一轮登记为 needs_correction，refine-plan 零 jobs 并交源/生成器，refine-finalize 不写；原始报告字节不变；随后模拟修正题名与来源证据，经普通 stage2-plan/finalize 生成新正文；新报告登记前旧失败不被接受，新报告确认为 PASS 后才接受新正文，轮次按新业务版本重新从第一轮计，原失败报告保持原字节 |
 | T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_mixed_fixed_and_narrative_blocking_creates_no_rewrite_job` | 混合固定/叙事 blocking 同样零 rewrite jobs，不把固定区交给模型 |
 | T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_repeating_the_same_fixed_card_report_does_not_clear_the_round` | 同内容重试不能清轮数，也不写入通过结果 |
-| T2 | `test_stage2_evidence_level.FixedEvidenceFailureTests.test_forbidden_user_note_and_paper_table_keep_their_rejection` | 用户笔记、论文一览仍被拒绝，无 correction jobs，正文与 pack 不变 |
 | T2/T3 引文约定 | T2/T3 的 blocking 引文取展示替换后仍存在的片段（`无更晚论文实现该点`、`只做了第一组`），不含 item key，否则 T1 落地后 `find_line` 会找不到行 | 测试文件常量 `FIXED_EVIDENCE_QUOTE`、`COMPLETED_PART_QUOTE` |
 | T3 | `test_stage2_evidence_level.NarrativeRoundBoundTests.test_narrative_correction_rounds_stay_bound_and_terminal_state_is_recorded_once` | 纯叙事第一轮→合法修订→第二轮固定卡阻挡登记为 fail_after_2_rounds，不继续第三轮、不再发修订 |
 | T3 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_second_blocking_round_is_terminal` | 既有轮次终止结论继续成立（第二轮终态、第三次 plan 零 jobs） |
@@ -74,7 +73,6 @@ python3 -m unittest -v \
   test_stage2_evidence_level.FixedEvidenceFailureTests.test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job \
   test_stage2_evidence_level.FixedEvidenceFailureTests.test_mixed_fixed_and_narrative_blocking_creates_no_rewrite_job \
   test_stage2_evidence_level.FixedEvidenceFailureTests.test_repeating_the_same_fixed_card_report_does_not_clear_the_round \
-  test_stage2_evidence_level.FixedEvidenceFailureTests.test_forbidden_user_note_and_paper_table_keep_their_rejection \
   test_stage2_evidence_level.NarrativeRoundBoundTests.test_narrative_correction_rounds_stay_bound_and_terminal_state_is_recorded_once \
   test_stage2_evidence_level.AnalysisLevelTests.test_counts_follow_the_recorded_analysis_level \
   test_stage2_evidence_level.AnalysisLevelTests.test_legacy_records_without_level_count_as_unconfirmed \
@@ -93,14 +91,14 @@ echo "exit=$status run_root=$RUN_ROOT"
 exit "$status"
 ```
 
-- 上面 18 个选择器与 §2 的选择器表一一对应（T1 两项、T2 四项、T3 一项、T4 七项、既有 T2 一项、既有 T3 三项）；`Ran 18 tests` 是本 recipe 的预期项数。
+- 上面 17 个选择器与 §2 的选择器表一一对应（T1 两项、T2 三项、T3 一项、T4 七项、既有 T2 一项、既有 T3 三项）；`Ran 17 tests` 是本 recipe 的预期项数。
 - 也可按项复跑：把某一行单独取出执行；`-v` 输出逐用例结果。分项结果由这些断言判定，没有额外 JSON oracle。
 - 准备顺序：`git status` 确认 checkout 干净 → 进入 tests 目录 → 建 run 目录 → 运行上面命令。没有安装、外部服务、模型或 Zotero 需求；`BaseEnv` 的临时目录已提供隔离。
 - 失败处理：产品断言失败原样保留；命令或环境错误记无法判断并只重试受影响命令；未执行不得填 PASS；已确认失败不得被后续清理覆盖。
 
 ## 4. 准备记录与接口交接
 
-- 已准备：新建 `test_stage2_evidence_level.py`（T1—T4 共 14 个新增用例）与 T2/T3 既有选择器组成上述 recipe；未改动产品、既有测试和共享夹具，未操作用户教授目录。仓库外材料：`/tmp/contact-evidence-level.pc92prep/` 含 `recipe.txt`（准备期输出）、`reviewer-handoff.md`、`reviewer-verdict.md`、`reviewer-run.log` 和三个只读探针脚本 `probe_current.py`、`probe_round2.py`、`probe_packkeys.py`。
+- 已准备：`test_stage2_evidence_level.py`（T1—T4 当前共 13 个新增用例）与 T2/T3 既有选择器组成上述 recipe；未改动产品、既有测试和共享夹具，未操作用户教授目录。仓库外材料：`/tmp/contact-evidence-level.pc92prep/` 含 `recipe.txt`（准备期输出）、`reviewer-handoff.md`、`reviewer-verdict.md`、`reviewer-run.log` 和三个只读探针脚本 `probe_current.py`、`probe_round2.py`、`probe_packkeys.py`。
 - 接口假设（实现方需对齐，不一致时由测试计划工程师按执行计划调整，不改名迁就；这些假设是执行计划 r4 §3.2、§3.3 的实现接口，不是新增验收要求）：
   1. 仅展示刷新入口取 `stage2-refresh-display --professor-dir <dir> --preflight-file <file>`，成功时 `status=ok` 且 `display_refreshed=true`。
   2. preflight 顶层 `action` 对仅 level 变化返回 `refresh_display`，对来源出现、删除、替换或基线不可比较返回 `process` 并给出具体 `reason_codes`；方向级返回形状不作断言。
@@ -116,7 +114,7 @@ exit "$status"
 
 记录格式保持简单：实际提交、T1—T4逐项通过/业务失败/无法判断/未执行、实际命令与输出位置、复用结果来源、剩余问题及负责人。原始日志和临时数据在仓库外，公开提交仅必要脱敏摘要。
 
-准备期复核（非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），测试提交为 `36c630a`（`0d5606b` 加 t27 两处修正），命令为上面 §3 的 18 个选择器，结果目录 `/tmp/contact-evidence-level.kj3p7J2l`（`recipe.txt`），退出码 1，`Ran 18 tests`、`FAILED (failures=11)`。
+准备期复核（非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），测试提交为 `36c630a`（`0d5606b` 加 t27 两处修正），命令为当时 §3 的 18 个选择器（当前 §3 已精简为 17 项），结果目录 `/tmp/contact-evidence-level.kj3p7J2l`（`recipe.txt`），退出码 1，`Ran 18 tests`、`FAILED (failures=11)`。
 
 - 通过 7 项：T3 四项（`NarrativeRoundBoundTests` 一项与三个既有保护选择器）、T2 两项（既有禁止区域选择器与 `test_forbidden_user_note_and_paper_table_keep_their_rejection`）、T4 一项（缺基线走 process）。
 - 业务失败 11 项，按实际失败原因分组：
@@ -354,3 +352,9 @@ exit "$status"
 7. **IR-40(a) 收尾**：T1 里同一组机器字段曾被比较两次，现合并为一处与渲染前快照比较（保留该用例中唯一的 `status`、positioning、`gap_notes`、`collection_key` 断言）；测试代码只改断言与快照，选择器仍 18、新增用例仍 14，产品与既有测试未改。定稿文件模块运行 `/tmp/contact-evidence-level.WVDwWZxd`（`module.txt`，`Ran 14 tests`、3 通过 / 11 业务失败）；两条被修改的断言与新增断言仍在首次失败点之后，均未执行到，待第三关首次运行。
 
 该复核结论不代表第二关、第三关或合并批准。
+
+### t32 用户授权的测试精简记录
+
+1. T1 缺可信题名用例只检查明确失败、有原因且不生成受管分析文档；删除扫描整个错误提示是否含 `zotero://` 及占位文字的断言，允许错误消息引用已有的真实链接。
+2. 删除与既有 `test_stage2_nonrepairable_user_note_does_not_create_a_correction_job` 重复的新增 T2 用例，保留既有禁止区域检查。移除对应的 §2 行与 §3 选择器。
+3. 当前 13 个新增用例、4 个既有选择器，§3 共 17 项；T1—T4 业务目标未变。§5、§6、§7 的 14／18 项与 7 通过／11 失败是旧提交的历史记录，未改写。此次未运行正式测试，第二关复核待完成、第三关未执行；产品与既有测试未改。
