@@ -2,7 +2,7 @@
 
 - Test revision：contact-evidence-level-t35；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
-- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变）；t32 按用户授权删除错误提示字符串限制和重复的禁止区域用例（当前 13 个新增用例、17 个执行选择器；此前运行结果只对应旧版本）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八、九轮复核（IR-37 残留、IR-38 残留、IR-40(a)(b)、IR-41）再改准运行的版本指向，把固定卡比较改为「夹具守卫 + 与渲染前快照比较」、恢复 refine-finalize 的 pack 字节守卫，并删除与辅助函数重复的断言；t33 按第二关意见把「旧包缺可比较基线」用例改为断言顶层 `legacy_pack_no_preflight` 与方向级无 `validator_not_accepted`；t34 把状态行与 §5 的「最新记录」绑定到测试提交 `0fe84ab` 并在该提交上重跑同一组 17 个选择器；t35 在第三关正式执行中修订 T1 译文断言、T1 `gap_notes` 比较形状与 T2 freshness 夹具（见修订记录）。第三关正式执行中：T1、T2 曾因测试步骤本身不成立被本地执行工程师按 Test Engineer Rule §5 停止并交接，t35 修订后两个受影响选择器定向验证通过（`Ran 2 tests`、`OK`，结果目录 `/tmp/contact-evidence-level.UyFv3Iyi`，`recipe-t35-run2.txt`），该定向运行不是第三关完整结果；第三关 17 个选择器的正式运行记录与逐项结论待本地执行工程师补记（§5）。§5 的 6 通过 / 11 业务失败只对应测试提交 `0fe84ab`（实现前），不代表当前版本；审核处置仅适用于各自记录版本（§6、§7）。
+- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变）；t32 按用户授权删除错误提示字符串限制和重复的禁止区域用例（当前 13 个新增用例、17 个执行选择器；此前运行结果只对应旧版本）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八、九轮复核（IR-37 残留、IR-38 残留、IR-40(a)(b)、IR-41）再改准运行的版本指向，把固定卡比较改为「夹具守卫 + 与渲染前快照比较」、恢复 refine-finalize 的 pack 字节守卫，并删除与辅助函数重复的断言；t33 按第二关意见把「旧包缺可比较基线」用例改为断言顶层 `legacy_pack_no_preflight` 与方向级无 `validator_not_accepted`；t34 把状态行与 §5 的「最新记录」绑定到测试提交 `0fe84ab` 并在该提交上重跑同一组 17 个选择器；t35 在第三关正式执行中修订 T1 译文断言、T1 `gap_notes` 比较形状与 T2 freshness 夹具（见修订记录）。第三关已于产品与测试版本 `8f31296` 正式执行：§3 的 17 个选择器全部通过（`Ran 17 tests`、`OK`，结果目录 `/tmp/contact-evidence-level.OnXaAyhx/recipe.txt`，逐项结论见 §5）；执行中 T1、T2 曾因测试步骤本身不成立被本地执行工程师按 Test Engineer Rule §5 停止并交接，t35 修订后完整复跑通过。§5 的 6 通过 / 11 业务失败只对应测试提交 `0fe84ab`（实现前），不代表当前版本；审核处置仅适用于各自记录版本（§6、§7）。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
 ## 1. 唯一必测清单
@@ -114,7 +114,13 @@ exit "$status"
 
 记录格式保持简单：实际提交、T1—T4逐项通过/业务失败/无法判断/未执行、实际命令与输出位置、复用结果来源、剩余问题及负责人。原始日志和临时数据在仓库外，公开提交仅必要脱敏摘要。
 
-第三关正式执行记录（待补）：t35 修订后由本地执行工程师按 §3 的 17 个选择器运行，补记实际产品与测试版本、命令、退出码、结果目录及 T1—T4 逐项结论。t35 修订记录中的两个受影响选择器定向验证只证明修订后可执行，不替代本记录，也不作为第三关或合并结论。
+第三关正式执行记录（2026-10-18，本地执行工程师）：产品与测试版本 `8f31296`（分支 `pr92-local-execution-20261018`；本提交含 `contact_state.py`、`SKILL.md`、两个 analyzer 投影、t35 修订后的测试模块与本节）；命令为 §3 的 17 个选择器原样执行；结果目录 `/tmp/contact-evidence-level.OnXaAyhx/recipe.txt`，退出码 0，`Ran 17 tests`、`OK`。
+
+- 逐项结论：T1 两项通过；T2 四项通过（固定区登记与交源、混合阻挡零修订任务、同报告不清轮数、既有禁止区域保护）；T3 四项通过（两轮终止一项 + 三个既有保护选择器）；T4 七项通过（三类计数、旧记录兼容、仅展示刷新、来源新增/删除/替换分流、旧包缺基线走 process）。17 项全部是当前产品版本的通过结果，没有业务失败、无法判断或未执行项。
+- 执行中出现的问题与处置：正式执行时 T1 的两条断言与 T2 的一处夹具被判定为**测试步骤本身不成立**（译文切片末尾空格与侧车 `.strip()` 冲突、`gap_notes` 快照 list 与规范 dict 形状不符、freshness 缓存命中使修正后的来源证据不被消费），按 Test Engineer Rule §5 停止受影响项并交本地测试工程师修订（t35）；修订后按同一 §3 命令完整复跑，17 项通过。原始失败日志保留在 `/tmp/contact-evidence-level.UiagMtvI/`（`recipe-baseline.txt`、`step1.txt`、`step3.txt`、`recipe-wip1.txt`），t35 的中间失败记录在 `/tmp/contact-evidence-level.UyFv3Iyi/recipe-t35.txt`。
+- 范围外回归（执行工程师自选的完整性检查，不是必测项）：在产品实现完成、t35 测试修订之前的版本上运行 `python3 -m unittest discover -p "test_*.py"`，`Ran 1028 tests`、`FAILED (failures=2)`，两项正是上面 T1/T2 的测试步骤缺陷，没有其他产品回归；t35 只改测试模块与本节，未再全量复跑。
+- 复用来源：无，本轮是对当前产品版本首次执行必测项。
+- 未完成项：无。本记录是第三关结果，不代表第二关、合并批准或可合并；合并审核按 `Merge Reviewer Rule.md` 由下一负责人执行。
 
 准备期复核（非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），测试提交 `0fe84ab`，命令为 §3 的 17 个选择器，结果目录 `/tmp/contact-evidence-level.p49ZBXq2`（`recipe.txt`），退出码 1，`Ran 17 tests`、`FAILED (failures=11)`。
 
@@ -392,6 +398,6 @@ exit "$status"
 
 受影响选择器：T1 的 `test_fixed_evidence_renders_trusted_references_without_touching_machine_fields`、T2 的 `test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job`。范围未变：仍是既有的 13 个新增用例、17 个执行选择器，T1—T4 业务目标、预期结果与 §3 命令不变。
 
-验证：按上述两个选择器运行 `python3 -m unittest -v test_stage2_evidence_level.FixedEvidenceDisplayTests.test_fixed_evidence_renders_trusted_references_without_touching_machine_fields test_stage2_evidence_level.FixedEvidenceFailureTests.test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job`，`Ran 2 tests`、`OK`，退出码 0；结果目录 `/tmp/contact-evidence-level.UyFv3Iyi`（`recipe-t35-run2.txt`）。该运行只验证修订后的两条用例可执行且通过，不是第三关完整运行，也不替代 §5 的正式执行记录。第三关正式执行记录（§3 的 17 个选择器、实际产品与测试版本、逐项结论）由本地执行工程师补记，见 §5。
+验证：按上述两个选择器运行 `python3 -m unittest -v test_stage2_evidence_level.FixedEvidenceDisplayTests.test_fixed_evidence_renders_trusted_references_without_touching_machine_fields test_stage2_evidence_level.FixedEvidenceFailureTests.test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job`，`Ran 2 tests`、`OK`，退出码 0；结果目录 `/tmp/contact-evidence-level.UyFv3Iyi`（`recipe-t35-run2.txt`）。该运行只验证修订后的两条用例可执行且通过，不是第三关完整运行；t35 定稿后本地执行工程师已按 §3 的 17 个选择器完整复跑并全部通过，见 §5。
 
-本轮只改测试代码与测试计划；`scripts/contact_state.py`、`SKILL.md` 与两个 analyzer 投影等产品文件及其他测试模块本轮未改；未提交、未推送。
+本轮只改测试代码与测试计划；`scripts/contact_state.py`、`SKILL.md` 与两个 analyzer 投影等产品文件及其他测试模块本轮未改。
