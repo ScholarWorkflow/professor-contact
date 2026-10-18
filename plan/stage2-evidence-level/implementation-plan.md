@@ -1,8 +1,8 @@
 # Stage 2 固定证据展示、失败登记与分析级别修复
 
 - Requirement revision：2026-10-17 用户要求为此前 U1、U5 两项修复建立独立计划 PR（北京时间）；依据用户提供的《PR91未覆盖问题报告_20261016.md》。报告中的私人实际数据与失败次数不是本计划已复验结果。
-- Plan revision：contact-evidence-level-r5；Proposed review status: pending（本轮 §3.4 入口对齐修订待审）。
-- 目标：ScholarWorkflow/professor-contact，源码基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。PR 当前核对版本 `ac301e17d3db42288f44042f58e43bc1c4023d69` 已有 U1/U5 产品实现及 t36 有效测试记录；本轮仅更新计划和 PR 说明，§3.4 入口对齐尚未实施，已有 [正式合并审核](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6248142152)（2026-10-18 09:17 UTC，基于 `ac301e17` / r4）结论 NOT_READY：五项既有计划的实现缺陷待产品负责人修正；本轮文档修改未修复这些问题，r5 §3.4 入口对齐仍待审、待实施。
+- Plan revision：contact-evidence-level-r6；Proposed review status: pending（2026-10-18 七项修复的四块收敛方案待审）。
+- 目标：ScholarWorkflow/professor-contact。原 U1/U5 源码基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`；本轮目标基线 `e1e8e48a0f4bee8e5d22acd61813dccd53ac9632`（r5 / t37）。r5 §3.4 已获[批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6248571193)并完成入口对齐，见测试计划 §10。当前[正式合并复审](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6250097095)为 NOT_READY，公开列出三项；本轮七项来自用户提供的逐项问题材料，不将其冒称该审核列出七项。用户 2026-10-18 授权更新两份计划；本轮仅修订文档，七项修复尚未实施、未执行测试，旧 PASS 只适用于其记录版本，不能授予 r6 批准或修复后的通过结论。
 - 唯一测试计划：[test-plan.md](test-plan.md)。按 [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)执行。
 
 ## 1. 范围与验收目标
@@ -34,7 +34,8 @@ U5：全文/摘要统计取实际成功分析的级别，不能用分析文件�
 ### 3.1 固定证据展示
 
 - runner 使用当前可信论文元数据及 `candidate_paper_ids` 解析已知 item key，在固定卡 evidence、completed_part、remaining_gap 及禁锚区 evidence 的既有人读展示出口统一显示题名及 Zotero 链接；编号仅留机器字段或链接目标。保留原 model_evidence 和候选引用列表，不改变 freshness 判定、不删整段依据。
-- 已知编号出现在说明句时只做等价引用替换，保留其余文字含义；不改作者 quote、translation、status；completed_part、remaining_gap 和 evidence 仅转换展示引用，其原始机器字段逐字保留，不改结论和原意。仅对上述生成出口作确定性格式化，不做全文清洗，不改用户笔记或作者引文。未知编号或引用缺可信题名不能猜标题/静默删除，明确报告所缺元数据并停止受影响生成，交 Stage 2 数据准备者补齐后重试。
+- 已知编号出现在说明句时只做等价引用替换，保留其余文字含义；不改作者 quote、translation、status；completed_part、remaining_gap 和 evidence 仅转换展示引用，其原始机器字段逐字保留，不改结论和原意。仅对上述生成出口作确定性格式化，不做全文清洗，不改用户笔记或作者引文。明确属于论文引用但缺可信题名时不能猜标题/静默删除，明确报告所缺元数据并停止受影响生成，交 Stage 2 数据准备者补齐后重试。普通日期、数字及无引用含义的文字不因匹配八位字符就被当成引用。
+- 引用识别和展示同属 Stage 2 固定证据出口：`stage2_referenced_item_keys` / `stage2_collect_display_references` 与 `stage2_display_text` 使用一致的正式引用信息（规范论文映射、候选引用及完成论文引用），不能仅靠 `ITEM_KEY_RE` 判定任意八位文本。先保护经可信元数据核对、题名和目标均正确的已有论文链接，避免替换其地址或产生嵌套链接；裸 key 只有能由上述引用信息确认才转换。明确引用缺题名仍 fail closed，不能因引用收集漏掉它而降为普通文本。只做该出口的兼容修复，不全局修改 `ITEM_KEY_RE`，不改变机器 evidence、schema、freshness cache、Stage 3—5，也不要求模型改成 `{{P:...}}`。
 - 固定卡术语需要解释时由已有 narrative.gap_notes.explanation 承担独立说明；不将作者原句/译文变成可自由重写字段。固定模板的措辞缺陷交 runner 实现者，事实或译文错误交其原 producer，用户笔记保持用户所有。
 - 新鲜构建和 pack-only 重渲染都从输入包的可信引用元数据取得同样展示。将上述展示出口实际引用的题名/年份持久保存或复用已有可用论文映射；仅有事实关联不扩大 supporting_item_keys 或 narrative 的 P/L 引用许可。缺少旧元数据要求从正式 Stage 2 准备刷新，不能从正文反解析。
 
@@ -49,39 +50,32 @@ U5：全文/摘要统计取实际成功分析的级别，不能用分析文件�
 
 ### 3.3 分析级别贯通、分流与兼容
 
-1. **级别来源与统计。** Stage 2 analyzer 在正常成功分析/导入后，从教授 `论文分析/_index.json` 的相关论文记录读取实际 level，并在 facts.papers[] 增传 `analysis_level`（fulltext/abstract/null）；失败、未完成、陈旧或缺失级别为 null，非法枚举报输入错误。不从文件存在、PDF 或 facts_state 推断；OCR-only 成功全文仍为 fulltext。保持原 projected direction papers 集合，只统计全文/摘要/未确认三类及合计，不新增去重。同步两个 analyzer 和 SKILL。
-2. **只保存必要的当前接受基线。** 正常业务处理成功写 pack 时，扩充既有 cache.preflight.resolution_evidence_guards/方向 artifact_guards 的缺失状态，加上有限索引选择状态，保存本次实际消费的分析来源投影，从当前正式 sources 采集并与该 accepted pack 同次成功落盘，不能把进入预检时的旧投影当新接受基线。范围沿用现有 stage2_candidate_universe/selected_candidate_union，即所有被选方向候选并集（覆盖方向相关/缺口及 resolution 来源），不能仅看最终入选论文。每个相关 key 的 analysis/future_work/facts/pdf 类型都明确保存无路径、路径不存在或存在状态；已有路径保留规范路径和现有文件 guard/已得摘要。读取当前索引的对应记录/路径（含 file、future_work_sidecar、facts_sidecar 及关联输入映射），仅记录实际分析/事实证据路径及成功/可用状态；不比较整条索引 JSON，generated_at、kb_entry_id 等管理字段不构成业务变化，纯展示 level 单列。索引解析及既有 Step 6.7 的 analysis_file 派生 .facts.json/.future_work.json 探测规则用于构造当前同一清单（即使索引未填 sidecar，派生路径也保存缺失占位），使新增路径、原缺失路径出现、删除、换址或同址 guard 变化均能被看见。无法由持久输入确定某一来源时标为不可比较，不能省略后当作未变。不遍历无关目录，不读 PDF 正文或新增全文件哈希扫描，不建立通用来源认证系统。
+1. **级别来源与统计。** Stage 2 analyzer 在正常成功分析/导入后，从教授 `论文分析/_index.json` 的相关论文记录读取实际 level，并在 facts.papers[] 增传 `analysis_level`（fulltext/abstract/null）；失败、未完成、陈旧或缺失级别为 null，非法枚举报输入错误。不从文件存在、PDF 或 facts_state 推断；OCR-only 成功全文仍为 fulltext。保持现有成员规则，按各方向 `supporting_item_keys` 的正式成员统计全文/摘要/未确认三类及合计；引用范围与规范 `papers` 映射不等于统计集合，不新增去重。同步两个 analyzer 和 SKILL。
+2. **只保存必要的当前接受基线。** 正常业务处理成功写 pack 时，扩充既有 cache.preflight.resolution_evidence_guards/方向 artifact_guards 的缺失状态，加上有限索引选择状态，保存本次实际消费的分析来源投影，从当前正式 sources 采集并与该 accepted pack 同次成功落盘，不能把进入预检时的旧投影当新接受基线。范围沿用现有 stage2_candidate_universe/selected_candidate_union，即所有被选方向候选并集（覆盖方向相关/缺口及 resolution 来源），不能仅看最终入选论文。每个相关 key 的 analysis/future_work/facts/pdf 类型都明确保存无路径、路径不存在或存在状态；已有路径保留规范路径和现有文件 guard/已得摘要。读取当前索引的对应记录/路径（含 file、future_work_sidecar、facts_sidecar 及关联输入映射），仅记录实际分析/事实证据路径及成功/可用状态；不比较整条索引 JSON，generated_at、kb_entry_id 等管理字段不构成业务变化，纯展示 level 单列。索引解析及既有 Step 6.7 的 analysis_file 派生 .facts.json/.future_work.json 探测规则用于构造当前同一清单（索引未声明 sidecar 字段时，派生路径也保存缺失占位），使新增路径、原缺失路径出现、删除、换址或同址 guard 变化均能被看见。当前来源解析统一区分没有该 key 记录、相关记录为非对象（不可比较）、记录未声明字段、字段明确为空、已声明路径但文件 missing、present。只有无记录或未声明字段时才按既有兼容/派生规则选已确认来源；当前明确空路径不得由旧 pack/accepted projection 路径回填，sidecar 的显式空与未声明也不得混同。`stage2_artifact_guard_reason` 对 missing 路径重新检查是否出现，对 no_path 交同一当前来源投影判断是否出现路径，present 保留既有 stat guard；出现或无法确认均不得放行展示刷新。校验只限本次相关 key，不全库扫描。索引两侧都不存在且旧持久映射完整可比较的既有兼容路径保留；相关记录损坏不能当作无记录。无法由持久输入确定某一来源时标为不可比较，不能省略后当作未变。不遍历无关目录，不读 PDF 正文或新增全文件哈希扫描，不建立通用来源认证系统。
 3. **先判业务变化，再判展示变化。** preflight 在 reuse_all 前重读上述当前投影，并比较已接受基线及现有业务 inputs/guards。来源 key/type 集合、存在状态、路径、成功资格/业务字段或文件 guard 任一变化，或旧基线缺失/不完整、当前索引不可读、来源映射不明确，均不能证明事实输入未变，返回原 process 路径并明确原因。未知→fulltext 若伴新增分析或 facts，必须 process；只有完整可比较且业务依据全未变、差异仅 level 或私有 render version 时，才进入仅展示刷新；全部未变才可 reuse_all。原 process 保留既有按实际变化选择处理与复用规则，不要求所有模型无差别重跑。两种 analyzer 同步分流，不得将“旧 validator 未通过”本身当作分析依据变化。
 4. **仅展示的正式入口。** 在既有 runner 复用 `Stage2PackRefineContext`、renderer、教授 lease/原子 JSON 与 managed_write，读取已接受 pack 的规范论文、方向、模型结果和引用元数据，以及本次只读索引/预检投影。不依赖旧 /tmp facts，不重建完整历史 facts，不重签旧 resolved proof。只更新 analysis_level、展示/缓存版本与渲染绑定，并同步因这些字段实际受影响的 accepted_directions_sha256 等包完整性摘要，避免下次误报 pack_integrity_mismatch；不调用依赖完整 facts 的 stage2_preflight_metadata 伪造接受元数据。保留 accepted assignment、事实判断、叙事、freshness 结果和模型指纹；不产生新分析/归属/时效任务。成功刷新不能把业务变化的当前来源冒充新的接受基线；业务来源基线仅由正常处理成功建立，展示刷新只保留已验证相等的业务部分并推进展示部分。
-5. **写前再核同一输入。** 沿用教授/pack/正文归属、受管摘要和输入漂移检查，重新读取与预检相同的业务来源及 level 投影，确认仍为该 accepted pack、相同业务基线和本轮 level；任一漂移不写并交重新处理。手改正文按 managed_write 保护。正文/校验依据实质变化按 §3.2 失效旧 validator，不借新绑定沿用旧 PASS；等价重写不清轮数。不新增锁、journal 或认证框架。
-6. **字段与旧数据。** `_CANONICAL_PAPER_FIELDS`、build_direction_pack、_canonical_record、fresh/reused/resolved records 与 pack-only context 保存级别，同 key 一致合并，当前正式来源不得被旧记录覆盖。`paper_digest` 及 resolve/freshness 模型摘要不加入 level、render version 或展示投影。旧包缺 level 可显示未确认；旧包缺可比较业务基线走原 process，不从历史 Markdown/临时 facts 猜造基线。资料不足导致正常流程不能完成时真实报告停止，保留原数据，不强制所有坏旧包成功。只在受影响的下一次调用按上述分流更新，不批量迁移或为文档 SHA 重跑。
+5. **写前再核同一输入。** 沿用教授/pack/正文归属、受管摘要和输入漂移检查，重新读取与预检相同的业务来源及 level 投影，确认仍为该 accepted pack、相同业务基线和本轮 level；刷新入口及取得既有 writer lease 后、写入前，都重新读取与正常预检同口径的当前业务年份（当前实现为 `datetime.now().year`），与 payload 年份比较，不复用 payload 年份冒充当前年份。跨年或任一漂移均零写入并要求重新预检，由新预检决定后续分流。手改正文按 managed_write 保护。正常 finalize 与展示刷新共用 renderer 拥有的实际展示语义：比较最终可见内容（包括正式成员聚合计数、实际引用题名等），排除生成时间及非实质受管包装；不比较全 `papers` 或逐论文 level 作为重绘充分条件。旧侧使用已接受快照，不能用当前 ctx 的题名/元数据回填旧快照掩盖变化；新侧使用当前规范记录。仅未展示字段变化，或成员级别交换但最终可见内容/统计等价时，保持正文和校验轮次；可见内容实质变化按 §3.2 失效旧 validator，不借新绑定沿用旧 PASS。展示等价不替代旧报告/正文/包绑定合法性检查：只允许保留本来合法的记录，不能修复或洗白旧失效认证；正常 narrative refine 仍保留既有两轮生命周期。不新增锁、journal 或认证框架。
+6. **字段与旧数据。** `_CANONICAL_PAPER_FIELDS`、build_direction_pack、_canonical_record、fresh/reused/resolved records 与 pack-only context 保存级别，同 key 一致合并，当前正式来源不得被旧记录覆盖。在 runner 内集中当前 paper 的构造/更新入口，供 `build_direction_pack` 的正式成员与 relevant 两分支、`_canonical_record` 及 `_current_paper_record` 共用；从旧包取记录也必须经过当前字段更新。当前 `stage2_analysis_level(paper)` 的 null 是有效覆盖值，必须清除旧 fulltext/abstract，不能用 truthy fallback 保留旧级别。仍保持 schema 2、成员资格及引用许可，不新增另一套 paper 模型。`paper_digest` 及 resolve/freshness 模型摘要不加入 level、render version 或展示投影。旧包缺 level 可显示未确认；旧包缺可比较业务基线走原 process，不从历史 Markdown/临时 facts 猜造基线。资料不足导致正常流程不能完成时真实报告停止，保留原数据，不强制所有坏旧包成功。只在受影响的下一次调用按上述分流更新，不批量迁移或为文档 SHA 重跑。
 
 
-### 3.4 与已合并 PR93 的固定入口对齐（r5 新增，待实施）
+### 3.4 已完成的 PR93 固定入口兼容
 
-**触发与权限。** 用户 2026-10-18 要求在 PR92 说明并将详细修改加入执行计划；本轮只授权计划/说明编辑，不据此实施产品、修改测试或运行测试。PR93 已合并为 `b29fd5e68e3c7d4414f231e665a3b54872f6e498`。本节是 r4 的有界兼容修订，不改 U1/U5 正式目标。
+r5 的入口对齐已在本轮基线中完成，历史[批准记录](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6248571193)及测试计划 §10 的整合/执行记录保留。Codex/OpenCode analyzer Step 2.6 与主 SKILL 的 `refresh_display` 分支均使用同目录 `scripts/contact_state`，原 `--professor-dir`、`--preflight-file`、payload 与返回消费保持不变。本轮七项不要求再次对齐、重装或重跑入口测试。
 
-**决策及实际依据。** 对 PR92 当前完整 diff 和三个受影响调用文档核对后，新增 `stage2-refresh-display` 命令仍显式使用系统 `python3 .../contact_state.py`，而 PR93 已将既有安装调用统一到同目录薄入口。Nix [role 转换及 runtime](https://github.com/ScholarWorkflow/professor-contact/blob/b29fd5e68e3c7d4414f231e665a3b54872f6e498/nix/contact.nix) 只剥离 frontmatter/前导空白、复制完整 skill 树并固定七个入口的 shebang，不替换 analyzer 的业务正文；`runtimePackages` 不是命令 PATH 接线。因此必须在正式调用源修正，不能期待 Nix 自动改写。既有 [scripts/contact_state](https://github.com/ScholarWorkflow/professor-contact/blob/b29fd5e68e3c7d4414f231e665a3b54872f6e498/.apm/skills/professor-contact/scripts/contact_state) 通过当前解释器 `os.execv` 原样转发全部参数到相邻 `contact_state.py`；新子命令无需新入口、新 flake 输出或新增依赖。
-
-**精确修改点与责任。** 产品调用文档 owner 在整合上述 PR93 已落地修改时，只对齐本 PR 新增入口，不把整个文件退回旧基线：
-
-1. `packages/professor-contact-codex/.apm/agents/professor-contact-analyzer.agent.md`，Step 2.6 的 `action=refresh_display` 命令（当前 head L158）：把 `python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-refresh-display` 改为 `<professor-contact-skill-dir>/scripts/contact_state stage2-refresh-display`。
-2. `packages/professor-contact-opencode/.apm/agents/professor-contact-analyzer.agent.md`，同一 Step 2.6 分支（当前 head L166）：做同样的同目录入口对齐。PR93 已同步此投影的原有 runner 命令；保留其 OpenCode/APM 原生委派及既有安装行为，不把 Codex 路由规则带入，不宣称新增 Nix OpenCode 支持。
-3. `.apm/skills/professor-contact/SKILL.md`，阶段 2 early preflight gate 的刷新入口示例（当前 head L238）：使用完整的 `<professor-contact-skill-dir>/scripts/contact_state stage2-refresh-display --professor-dir <教授目录> --preflight-file <该次 payload>`。Stage 表中只写子命令名的交接说明保持语义；不将 runner 实现名或历史记录中的 `.py` 字样全局替换。
-
-三个调用点都保留现有 `--professor-dir`、`--preflight-file` 参数及原事务 payload、成功/错误分支和返回消费，不加入 shell wrapper、fallback 或新业务逻辑。`contact_state.py` 仍为唯一 runner 业务实现，保留其 `.py` 公共接口与非 Nix 直接调用能力；现有薄入口在非 Nix 安装中保留原解释器选择，Nix 仅在安装阶段固定解释器。
-
-**影响、反例与替代。** 意图是让新刷新分支和已交付的既有命令一致，经安装根的固定入口执行。若仍显式调用系统 `python3`，即使复制了新子命令也会绕过 Nix 固定解释器；选定的源调用修正直接消除此反例。另一方向是在 Nix 增加正文字符串重写，但这把业务调用适配转移到交付层且易遗漏，因此不采用。本项入口对齐不额外修改 `nix/contact.nix`、`flake.nix`/锁文件、七入口清单、runtime 包或依赖闭包（正常整合 PR93 已有文件除外），也不新增第二份业务正文；不修改 Python 子命令实现、业务 schema、lease、managed-write、两轮限制、展示刷新分流或模型任务范围。无数据迁移、清理或新外部副作用。
-
-**顺序与观察入口。** 实施者先整合 PR93 的实际源入口改动，再修改上述三个新增调用点；沿已有主技能和两个 analyzer 的 `refresh_display` 分支静态核对安装根定位、参数与返回分支即可定位影响。本节不新增测试项、测试命令或证据设施，不自动重装或重跑。t36 现有第一至第三关记录保留；未来产品入口变化不能自动由旧 PASS 覆盖，届时按 Test Engineer Rule 只复核受影响入口及既有证据适用性，未受影响结果直接复用。
-
-**修订审核范围。** r4 [正式批准记录](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6228535516) 保留为历史依据。r5 只请求审核固定入口的新事实/变更点与兼容影响：P1 的来源与版本、P2 的调用源 owner、P3 的 Nix/非 Nix 兼容和禁止副作用、P4 的三处修改与整合顺序；§3.1—3.3 的业务机制不变，可按影响分析复用 r4 相关结论，不重开完整业务设计。当前作者仅标记 pending，正式 Gate 结论由 reviewer 记录；下一负责人为计划审核者，批准并取得实施授权后才交产品实现者。
+保留 PR93 薄入口向相邻 `contact_state.py` 原样转交参数的边界：runner 仍是唯一业务实现，非 Nix 直接 `.py` 调用能力与原解释器选择不变；不改 Nix/runtime/依赖、七入口清单，不新增 wrapper、fallback 或第二份业务正文。已整合 PR91 的位置解析、规范 papers、成员保护与 validator 生命周期继续保留。
 
 ## 4. 顺序、安全和替代方案
 
 1. 实现者先核最新基线及 PR91 是否已落地，保留其位置解析/摘要/轮次/成员保护；只整合本计划涉及的交接。
-2. 原 U1/U5 实施顺序：先贯通可信级别与固定证据引用元数据，补齐现有 guards 的缺失/来源状态及接受基线，再按 §3.3 分流改展示刷新；接着修改登记与 refine 分流，最后同步两个 analyzer、SKILL 及受影响现有测试。
+2. 本轮由 runner 产品实现者按四个逻辑步骤修复，不要求拆文件或四个提交：
+   - A（问题 1/2）：按 §3.3.6 合并当前 paper 构造/更新职责，贯通新增正式成员及复用记录的当前级别，含 null 覆盖。
+   - B（问题 3，依赖 A）：按 §3.3.5 由 renderer 给出共享展示比较语义，普通 finalize 与 refresh 共用，分开处理展示变化和旧绑定合法性。
+   - C（问题 4/5/7）：按 §3.3.2—5 收敛相关来源准入，修正 missing/no_path/显式空/坏记录与两处当前年份复核，保留旧无索引兼容和既有 lease。
+   - D（问题 6）：按 §3.1 在固定 evidence 引用收集与展示出口完成兼容修复，保留可信已有链接及非引用文本。
 3. 替代方案“开放所有固定区给模型改写”会改事实，排除；“只屏蔽校验或直接删除依据”掩盖缺陷，排除；选定方案在 runner 确定性展示、记录器保留失败，原 owner 处理问题。
 4. 不新增并发锁或跨文件 journal，沿用已有教授写入 lease、原子 JSON 和 managed_write 保护；不自动覆盖人工文档、不重置用户选择、不改变成员归属。
 5. 关键反例：abstract 有分析文件仍不能计 fulltext；OCR fulltext facts unavailable 仍可计全文输入级；旧包无级别应显式未知；固定+叙事混合阻挡不允许模型越权；同一未修复报告不能清轮数；正常 narrative 修订不应重开第一轮。
-6. 后续 §3.4 实施者交付实际提交及受影响源入口；审核者按影响分析判断既有结果适用性。已有 t36 记录只对应其记载版本，不自授本轮 Plan APPROVED、未来实现 PASS 或合并批准。
+6. 现实替代是给各分支分别补字段、另写刷新专用 level 比较及正则替换；这样容易再次漏分支、误清轮次或破坏已有链接，因此选择复用上述职责各自的内部入口，而非新增公共 API/框架。代表性反例包括旧 known→当前 null、成员级别交换但聚合未变、仅相关论文级别改变、旧快照题名与当前题名不同、missing 文件出现、显式删除路径、无索引历史包、跨年等待 lease 和 evidence 已带合法链接；这些只用于解释方案边界，不自动转成新增测试矩阵。
+7. 版本化依据：本轮 [contact_state.py](https://github.com/ScholarWorkflow/professor-contact/blob/e1e8e48a0f4bee8e5d22acd61813dccd53ac9632/.apm/skills/professor-contact/scripts/contact_state.py) 的 L4982—5019、L5588—5614、L5901—5924 对应 A；L5067—5079、L5376—5436、L5959—5960、L6314—6353 对应 B；L3590—3612、L3627—3723、L6194—6200、L6291—6297 对应 C；L4796—4887 对应 D。上述为实现现状证据，正式目标仍为 §1 U1/U5；内部 helper 名称、状态布局与比较表示不升级为新 contract。
+8. r6 只请求复核上述四块及直接连带影响：P1 的当前源码依据，P2 的构造/renderer/来源 owner，P3 的兼容、轮次与失败保护，P4 的修改点与顺序。r4/r5 未受影响的固定区交源、成员归属、入口兼容结论可按影响分析引用历史批准，不由作者自行复制为 r6 PASS。下一负责人为计划审核者；批准并取得实施授权后交产品实现者。测试负责人按唯一测试计划判断已有证据复用及必要最小修订，本轮未修产品、未执行测试、不授予合并批准。
+
