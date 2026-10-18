@@ -17,7 +17,7 @@ No model, email, browser, Zotero, knowledge-store or full Stage 0–5 run is req
 
 - Baseline ae890491: four offline unittest methods, `bash -n`, and Nix parsing succeeded. GitHub [test job 117697931665](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39135110431/job/117697931665) completed **success**, not running; this is the existing regression suite, not the new wrapper suite.
 - CDPATH candidate: `python3 nix/test-activate.py -v` completed five methods successfully on Linux with host Bash/GNU coreutils; includes the original four methods unchanged plus the targeted counterexample. Bash syntax and both Nix parse checks passed. The local execution record is `/tmp/contact96-cdpath-tests.log`; temporary raw records are not committed.
-- Darwin export build and real direnv activation: **not executed**. Neither parsing, offline substitution nor CI establishes that result. These remain the only outstanding integration checks, subject to access/authorization for a suitable environment.
+- Darwin export build and real direnv activation: **executed 2026-10-18** on aarch64-darwin for commit `4d59c05` by the local execution engineer; build log, activation exit results, run paths and observed outputs are in the [execution record](test-execution-2026-10-18.md). Fact sync only; the third-gate conclusion stays with the reviewer.
 - Subsequent unrelated SHA/docs changes do not invalidate unaffected results. CDPATH changes directly affect project resolution; cache/failure implementations remain unchanged. No automatic full-chain rerun.
 
 ## Offline recipe
@@ -34,9 +34,9 @@ git diff --check
 
 The five-method result above is already recorded; these commands describe reproduction, not an instruction to rerun unaffected checks at every revision. No real installer is called by the offline suite.
 
-## Pending Darwin build and isolated direnv recipe
+## Darwin build and isolated direnv recipe (executed 2026-10-18, see the [execution record](test-execution-2026-10-18.md))
 
-Owner: the assigned execution engineer, after a suitable aarch64-darwin environment is authorized and the plan/steps are reviewed. This document does not authorize connecting a computer, installing dependencies or using a real user project. Use the existing Nix and direnv setup; record their actual versions and exact producer SHA. If missing or unavailable, report the affected item as unexecuted rather than install or change the host automatically.
+Owner: the assigned execution engineer, after a suitable aarch64-darwin environment is authorized and the plan/steps are reviewed. This document does not authorize connecting a computer, installing dependencies or using a real user project. Use the existing Nix and direnv setup; record their actual versions and exact producer SHA. If missing or unavailable, report the affected item as unexecuted rather than install or change the host automatically. Execution status: completed on 2026-10-18 with the existing setup and an isolated `/tmp` consumer, without touching a user project; actual versions, commands, exit results and observed outputs are in the [execution record](test-execution-2026-10-18.md).
 
 Preparation: set `CONTACT_SHA` to the exact reviewed 40-character PR head for this run. Create a fresh `/tmp` run directory outside producer/worktrees. Reuse immutable Nix caches. Use the README's consumer flake exactly, with its `contact` input locked to this SHA by the override below; `.envrc` contains `use flake`. No copied installer, local-path producer input, patched consumer artifact or business services.
 
