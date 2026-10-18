@@ -1,11 +1,11 @@
 # 第三批：Stage 3 纯渲染组抽成独立模块 测试执行记录（2026-10-18）
 
-- 测试计划：[test-plan.md](test-plan.md)，第 2 版（第 1 版取得第一、二关口 PASS；第 2 版只按审核意见细化检查方式，未增删编号）。
+- 测试计划：[test-plan.md](test-plan.md)，第 5 版（第 1 版取得第一、二关口 PASS；第 2 版只按审核意见细化检查方式，未增删编号）。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 1 版（`Plan conclusion: APPROVED`，P1–P4 全 PASS）。
 - 对照基准：`ffa91aedf94aaf146f9cf1899f3fe4395cfaddad`（本批从它拉出，含批次二改动）。
 - 被测提交：`68647a56eb54d245bc68012d07eb233e1023e411`；执行时 `git status --porcelain` 为空。
 - 环境：本地 macOS，Python 3.14.7；只使用标准库与既有夹具，未新增依赖。仓库 CI 使用工作流固定的 Python 3.12。
-- 原始输出（仓库外）：`/tmp/pc-batch3-*/`；本文件只记录命令、方法与结果。
+- 原始输出（仓库外）：`/tmp/pc-batch3-IZjWB0/`（本轮实际目录，点名到目录而非通配）；本文件只记录命令、方法与结果。
 
 ## 逐项结果
 
@@ -19,10 +19,12 @@
 
 ## 执行方法与命令
 
-1. 取出基准修订的 runner 到仓库外目录：
+1. 取出基准修订的 runner 到仓库外目录，并把对比脚本复制进本轮目录：
 
    ```sh
-   RUN=$(mktemp -d /tmp/pc-batch3-XXXXXX)
+   set -e
+   RUN=/tmp/pc-batch3-IZjWB0
+   cp /tmp/pc-batch3-IZjWB0/compare_stage3_render.py "$RUN/compare_stage3_render.py"
    git show ffa91aedf94aaf146f9cf1899f3fe4395cfaddad:.apm/skills/professor-contact/scripts/contact_state.py > "$RUN/base_contact_state.py"
    ```
 
@@ -39,22 +41,35 @@
 3. T3：按第 5 版清单跑 7 个方法；在 head `00f307e` 上重跑得到 `Ran 7 tests in 26.222s`、`OK`，此前的四模块运行（47 项）作为超集证据保留。
 
    ```sh
-   cd .apm/skills/professor-contact/tests
-   python3 -m unittest test_stage3_direction_groups test_stage3_validation_refine \
-     test_issue66_stage3_local_state test_issue61_direction_credibility_warning -v
+   set -e
+   cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-render-group/.apm/skills/professor-contact/tests
+   python3 -m unittest \
+     test_stage3_direction_groups.Stage3DirectionGroupTests.test_ideas_grouped_per_direction_share_paper_identity \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_issue_in_second_direction_repairs_only_that_scope \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_cross_direction_issue_routes_to_the_exact_group_id \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_evidence_must_bind_the_current_render \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_replay_after_a_replaced_render_fails_closed \
+     test_issue66_stage3_local_state.Issue66LocalStateTests.test_rebuild_overview_uses_professor_local_states_and_rebuilds_deleted_projection \
+     test_issue61_direction_credibility_warning.DirectionCredibilityWarningTests.test_warning_is_part_of_the_sha_bound_render \
+     -v
    ```
 
 4. T4：按第 5 版清单跑 2 个方法；在 head `00f307e` 上重跑得到 `Ran 2 tests in 2.754s`、`OK`。
 
    ```sh
-   python3 -m unittest test_stage5_immutable test_stage5_dualtarget_contract -v
+   set -e
+   cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-render-group/.apm/skills/professor-contact/tests
+   python3 -m unittest \
+     test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker \
+     test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling \
+     -v
    ```
 
    这两组用例覆盖“测试按文件路径加载 runner”（导入 `test_contact_state` 时执行 runner）与“把 runner 复制进假安装布局再执行 wrapper / 加载 locator”；若夹具漏复制 `_stage3_render.py`，复制出的 runner 会在导入阶段直接失败。
 
 ## 清单入口与执行日志的对应
 
-测试计划第 4 版把本批的本地通过条件收窄为清单引用的 7 个 T3 方法与 2 个 T4 方法。它们都包含在前面记录的整模块运行里（T3 的 4 文件 47 项、T4 的 2 文件 24 项，均 `OK`）：日志中逐个 `... ok` 的行即可对号。整模块运行中多出的用例（Stage 4 选择、旧状态迁移、其他教授结果保留、写入失败恢复、refined 模式状态语义、跨方向任务生成与缓存、Stage 5 生成器/校验器/技能文档合同等）是本批的清单外检查，**不构成本批的通过条件**，也不要求删除对应测试文件。仓库 CI 的全量结果按测试计划第 4 版单独引用，不计入本批业务必测项。
+测试计划第 5 版把本批的本地通过条件收窄为清单引用的 7 个 T3 方法与 2 个 T4 方法。它们都包含在前面记录的整模块运行里（T3 的 4 文件 47 项、T4 的 2 文件 24 项，均 `OK`）：日志中逐个 `... ok` 的行即可对号。整模块运行中多出的用例（Stage 4 选择、旧状态迁移、其他教授结果保留、写入失败恢复、refined 模式状态语义、跨方向任务生成与缓存、Stage 5 生成器/校验器/技能文档合同等）是本批的清单外检查，**不构成本批的通过条件**，也不要求删除对应测试文件。仓库 CI 的全量结果按测试计划第 4 版单独引用，不计入本批业务必测项。
 
 ## 搬移范围核对
 
