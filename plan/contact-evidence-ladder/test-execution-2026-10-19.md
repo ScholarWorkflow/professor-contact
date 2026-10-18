@@ -11,12 +11,12 @@
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
-| T1 | 通过 | `base3.json` 与 `head3.json` 在排除 `injection_sites` 后逐字段相同：五种 artifact 与“无 artifact + 错误码”的返回字典相同；runner 侧 `contact_evidence_snapshot` 签名两侧都是 `(artifact, artifact_error, professor) -> dict | None` |
+| T1 | 通过 | `base4.json` 与 `head4.json` 在排除 `injection_sites` 后逐字段相同：五种 artifact 与“无 artifact + 错误码”的返回字典相同；runner 侧 `contact_evidence_snapshot` 签名两侧都是 `(artifact, artifact_error, professor) -> dict | None`（`base3.json`／`head3.json` 是补 verdict 分支前的历史对照，只有 27 组） |
 | T2 | 通过 | 同一对比，共 32 组：24 组状态矩阵（4 `state` × 3 `checker_error` × 2 `rebuild_ran`）、2 种 `artifact_error`、1 组 artifact 级 `degraded` 标志（结果 accept），以及 5 条 verdict 分支——`insufficient` → `contact_evidence_insufficient`、`current_email=None` → `contact_evidence_ambiguous`、`bogus` → `contact_evidence_invalid_record`、`paper_only` → `contact_evidence_paper_only`、`conflict` → `contact_evidence_conflict`；每组的完整决策对象逐字段相同 |
 | T3 | 通过 | 同一对比：三条 email（含重复教授与无证据教授）的决策字典键集合与每个值相同 |
 | T4 | 通过 | 同一对比：8 种时间输入（当天／29／30／31 天前／未来／`None`／非时间字符串／数字）的返回值逐项相同 |
 | T5 | 通过 | `ladder3.log`：`Ran 42 tests in 55.801s`，`OK`，退出码 0（`test_contact_evidence_ladder` 40 项 + `test_stage5_fixture_isolation` 2 项） |
-| 既有仓库检查 | 待补 | 推送到 PR 后引用仓库 CI 运行编号、所跑 head 与 `test` 检查状态（不属于本批必测项） |
+| 既有仓库检查 | 通过 | 仓库 CI 在 head `f65dd7c` 上跑全量 `unittest discover`：运行 `39163647723`，5m38s，检查项 `test` pass。按测试计划第 22 行这项不属于本批业务必测项，只作既有检查结果引用；该 head 相对被测提交只多文档提交，`.apm/` 字节未变 |
 
 ## 执行方法与命令
 
@@ -24,8 +24,8 @@
 2. T1–T4：
    ```sh
    set -e
-   uv run --no-project "$RUN/ladder_probe.py" "$RUN/base/contact_state.py" "$RUN/base-work3" > "$RUN/base3.json"
-   uv run --no-project "$RUN/ladder_probe.py" "$RUN/head/contact_state.py" "$RUN/head-work3" > "$RUN/head3.json"
+   uv run --no-project "$RUN/ladder_probe.py" "$RUN/base/contact_state.py" "$RUN/base-work4" > "$RUN/base4.json"
+   uv run --no-project "$RUN/ladder_probe.py" "$RUN/head/contact_state.py" "$RUN/head-work4" > "$RUN/head4.json"
    jq 'del(.injection_sites)' "$RUN/base4.json" > "$RUN/base4.filtered.json"
    jq 'del(.injection_sites)' "$RUN/head4.json" > "$RUN/head4.filtered.json"
    diff -u "$RUN/base4.filtered.json" "$RUN/head4.filtered.json" && echo "T1-T4 IDENTICAL"
@@ -33,7 +33,7 @@
    ```
    输出：`T1-T4 IDENTICAL (incl. verdict branches)`（最终一次运行用 `base4.json`／`head4.json`，含 5 条 verdict 分支）；注入点实测 `contact_evidence_record=["compact_name"]`、`contact_evidence_freshness_reason=["verify_ttl_days"]`、`_evaluate_record_ladder=["compact_name","sha256_obj","verify_ttl_days"]`，其余五个（含三个包装）为空数组，与执行计划一致。
 3. T5：`python3 -m unittest test_contact_evidence_ladder test_stage5_fixture_isolation -v` → `Ran 42 tests`、`OK`。
-4. 搬移核对：基准的 `197-199` 与 `8411-8675` 两段反向套用 12 处文档化改动（6 处签名、5 处内部调用、1 处 TTL 体引用 `VERIFY_TTL_DAYS` → `verify_ttl_days`）后，与新模块正文逐字节相同。
+4. 搬移核对：基准的 `197-199` 与 `8411-8675` 两段反向套用全部文档化改动后，与新模块正文逐字节相同。改动点共 **14 处**：6 处签名（`contact_evidence_record`／`contact_evidence_snapshot`／`contact_evidence_freshness_reason`／`evaluate_contact_evidence`／`_evaluate_record_ladder`／`contact_evidence_decisions`）、7 处内部调用（`contact_evidence_record` ×2、`contact_evidence_freshness_reason` ×1、`evaluate_contact_evidence` 内的 `_evaluate_record_ladder` ×2、`contact_evidence_decisions` 内的 `evaluate_contact_evidence` ×1 与 `professor_source_state` ×1）、1 处 TTL 体引用（`VERIFY_TTL_DAYS` → `verify_ttl_days`）。
 
 ## 执行中修正的问题（保留记录）
 
