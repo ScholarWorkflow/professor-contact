@@ -1,6 +1,6 @@
 # 边界三：联系证据上游层搬移 测试执行记录（2026-10-19）
 
-- 测试计划：[test-plan.md](test-plan.md)，第 1 版。
+- 测试计划：[test-plan.md](test-plan.md)，第 2 版。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 3 版（`Plan conclusion: APPROVED`）。
 - 对照基准：`2117fc6a1607a22aa9e723002b4a78625733b7b1`。
 - 被测提交：`c8c7208`（实现提交；其后如仅改文档，产品与测试字节不变）。
@@ -12,7 +12,7 @@
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
 | T1 | 通过 | `base2.json` 与 `head2.json` 逐字段相同：显式注入存在文件返回该路径、注入缺失文件返回 `None`（失败关闭）、注入空白串与不注入都退回环境解析且两侧结果相同（同构目录下均为 `None`） |
-| T2 | 通过 | 同一对比：fresh 场景不调用 rebuild、stale 场景 `check → rebuild → check`、unavailable 场景不重建；三种场景返回字典的 5 个键与内容相同，stub 调用日志序列一致 |
+| T2 | 通过 | 同一对比（八种场景）：fresh → `check`；stale → `check, rebuild, check`；per-professor unavailable → `check`（不重建）；无条目 unavailable → `check, rebuild, check`；重建失败 → `check, rebuild` 且 `rebuild_ran: False`；check 非零退出／非 JSON／`result` 非法值 → `check` 且 `checker_error: script_failed`、不重建。八种场景返回字典的 5 个键与内容相同，stub 调用日志序列一致 |
 | T3 | 通过 | 同一对比：合法 artifact、kind 不符、schema 不符、非对象、坏 JSON、缺失六种输入的 `(artifact, error)` 相同；runner 侧 `load_contact_evidence` 签名仍是 `(program_root)` |
 | T4 | 通过 | 同一对比：六种教授名形态（全角空格、首尾空格、stale/legacy/invalid/不存在）与七种状态（None/fresh/stale/legacy/invalid/unavailable/空对象）结果相同；runner 侧 `professor_source_state` 签名仍是 `(report, professor)` |
 | T5 | 通过 | `Ran 5 tests in 9.758s`，`OK`，退出码 0 |

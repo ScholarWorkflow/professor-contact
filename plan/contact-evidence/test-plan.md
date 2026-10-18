@@ -6,7 +6,7 @@
 - 需求来源：负责人 2026-10-18 授权的“其余边界”中“Stage4/5 证据处理”的上游定位/检查/重建部分；原文见执行计划。
 - 对照基准：`2117fc6a1607a22aa9e723002b4a78625733b7b1`。
 - Target repository revision: 工作分支 `refactor-contact-evidence` 实施后的提交。
-- Test plan revision: 第 1 版。
+- Test plan revision: 第 2 版。
 - 测试范围依据：`Test Engineer Rule.md`，提交前按 `plan/test-plan-checklist.md` 自检（该文件随 PR #98 引入；本计划的自检小节已逐条写明，不依赖它已在本分支存在）。
 - Proposed review status: pending。
 
@@ -15,7 +15,7 @@
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
 | T1 | `upstream_check_script` 的三级解析与失败关闭不变 | 同一驱动分别加载基准与改动后的 runner：显式注入指向存在的文件、指向不存在的文件、注入空白串、不注入（无 sibling/兄弟 checkout 的等价目录布局） | 四种情况下返回的路径或 `None` 逐项相同；注入空白串与不注入都退回环境解析 | 仓库外驱动脚本（`evidence_probe.py`）在**同构目录**里跑两侧后逐字段 `diff`；安装布局解析另由 T5 的既有用例覆盖 |
-| T2 | `resolve_contact_evidence` 的检查/重建顺序与返回值不变 | 用仓库外的 stub `contact_evidence.py`（每次调用把 `check`/`rebuild` 写进日志）分别制造 fresh、stale、unavailable 三种报告，调用 `resolve_contact_evidence(program_root, ["試験 教授"])` | 三种情况返回字典的 5 个键与内容相同；调用日志序列相同（fresh 不重建、stale 重建一次后重读、unavailable 不重建） | 同 T1；stub 与日志放在各自工作目录，输出归一化后比较 |
+| T2 | `resolve_contact_evidence` 的检查/重建顺序、失败返回与返回值不变 | 用仓库外的 stub `contact_evidence.py`（每次调用把 `check`/`rebuild` 写进日志）制造八种场景：fresh；stale（重建成功）；**per-professor unavailable**；无 per-professor 条目的顶层 unavailable；重建失败（非零退出）；check 非零退出；check 输出非 JSON；check 的 `result` 非法值。每次都调用 `resolve_contact_evidence(program_root, ["試験 教授"])` | 八种场景返回字典的 5 个键与内容相同；调用日志序列相同：fresh → `check`；stale → `check, rebuild, check`；per-professor unavailable → `check`（**不重建**）；无条目 unavailable → `check, rebuild, check`；重建失败 → `check, rebuild` 且 `rebuild_ran: False`；三种 check 失败 → `check` 且 `checker_error: script_failed`、不重建 | 同 T1；stub 与日志放在各自工作目录，输出归一化后比较 |
 | T3 | `load_contact_evidence` 的校验与单参数可用性不变 | 合法 artifact、kind 不符、schema 不符、非对象、坏 JSON、文件缺失六种输入；并检查 runner 侧 `load_contact_evidence` 的签名 | 六种输入返回的 `(artifact, error)` 逐项相同；runner 侧签名仍是 `(program_root)` 单参数 | 同 T1；签名用 `inspect.signature` 比较 |
 | T4 | `professor_source_state` 与 `source_state_needs_rebuild` 不变 | 六种教授名形态（全角空格、首尾空格、stale/legacy/invalid/不存在）；七种状态（None/fresh/stale/legacy/invalid/unavailable/空对象）；并检查 runner 侧 `professor_source_state` 的两个位置参数签名 | 归一化匹配结果与 `source_state_needs_rebuild` 判定逐项相同；runner 侧签名仍是 `(report, professor)` | 同 T1；测试里已有的两位置参数直调由 T5 覆盖 |
 | T5 | 既有上游证据入口不受影响（只选以本批行为为主要目的的入口） | 安装布局解析、wrapper finalize 的 checker 定位、显式注入隔离、真实脚本 argv 路径 | 全部通过 | `test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling`、`test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker`、`test_stage5_fixture_isolation`（模块 2 项，均以显式注入与隔离为主要目的）、`test_contact_state.TestStage5TargetedEmailScope.test_issue59_t59_3_unrelated_stale_source_state_cannot_rebuild_for_a` |
@@ -69,7 +69,7 @@
 - 用 `importlib.util.spec_from_file_location` 按路径加载传入的 runner，模块名带唯一后缀。
 - **签名适配**：基准修订里 `load_contact_evidence`／`professor_source_state`／`resolve_contact_evidence` 不需要注入参数，改动修订的模块版需要；驱动用 `inspect.signature` 判断后按需传 `read_json_file`／`compact_name`，两侧同一逻辑，且不吞异常。
 - T1 的四种注入场景用 `PROFESSOR_CONTACT_EVIDENCE_SCRIPT` 控制，结束后恢复原值。
-- T2 的 stub 脚本按 `STUB_MODE`（fresh/stale/unavailable）输出报告，并把 `check`/`rebuild` 追加到 `STUB_LOG`；每个场景开始前清空日志。
+- T2 的 stub 脚本按 `STUB_MODE` 输出报告并把 `check`/`rebuild` 追加到 `STUB_LOG`（每个场景开始前清空）：`fresh`／`stale`／`unavailable_record`（带 per-professor 条目）／`empty_report`（无条目）／`rebuild_fails`（重建非零退出）／`exit_nonzero`／`bad_json`／`bad_result`。**per-professor unavailable 必须带条目**，否则 `professor_source_state` 返回 None 会触发重建，验证的就不再是“unavailable 不重建”这条分支。
 - T3/T4 的输入构造与 runner 侧签名（`load_contact_evidence(program_root)`、`professor_source_state(report, professor)`）一并比较，用来钉住“三个同签名包装”这一契约。
 
 ## 环境与预检
@@ -93,7 +93,8 @@
 ## 修订记录
 
 - 第 1 版：首次提交测试计划审核。
+- 第 2 版：按第一关口的两个 blocker 修正——B1 在 T2 里补 check 的三种失败返回（非零退出／非 JSON／`result` 非法值）与重建失败（`False`）场景，覆盖契约里明写的 `script_failed`／`False`；B2 把 `unavailable` 场景改成带 per-professor 条目的报告（此时日志为 `check`，不再重建），并另加“无条目报告”场景写明它仍会重建一次。
 
 ## 审核状态
 
-测试计划第 1 版为当前唯一版本，状态为待审核。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 2 版为当前唯一版本。第 1 版第二关口 PASS、第一关口有两项 blocker，已按上节修正。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
