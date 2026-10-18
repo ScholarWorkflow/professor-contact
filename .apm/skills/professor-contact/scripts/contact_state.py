@@ -288,6 +288,11 @@ STAGE2_DISPLAY_REFRESH_VERSION = 1
 # model-written evidence of the fixed freshness card and the anchor-banned
 # blacklist; every one of them is rendered as its trusted title plus link.
 ITEM_KEY_RE = re.compile(r"(?<![A-Za-z0-9])[A-Z0-9]{8}(?![A-Za-z0-9])")
+# An already-rendered paper citation inside a machine text: its printed title
+# and its Zotero target. The fixed-evidence display protects such a link when it
+# matches the trusted metadata instead of re-converting (or nesting) it.
+DISPLAY_LINK_RE = re.compile(
+    r"\[([^\]\n]*)\]\((zotero://select/library/items/([A-Za-z0-9]{8}))\)")
 FIXED_EVIDENCE_SLOT_PREFIXES = ("- 后续论文依据：", "- 已做部分：", "- 剩余缺口：")
 FIXED_EVIDENCE_HANDOFF_REASON = "fixed_evidence_not_model_repairable"
 FIXED_EVIDENCE_HANDOFF_MESSAGE = (
@@ -557,6 +562,56 @@ def _merge_canonical_paper(papers: dict, owners: dict, entry: dict, owner: str) 
     if owner not in owners.setdefault(key, []):
         owners[key].append(owner)
     return existing
+
+
+def stage2_paper_record_from_facts(paper: dict, facts_record: dict | None = None,
+                                   facts_state: str | None = None,
+                                   facts_error: str | None = None) -> dict:
+    """The canonical paper record of one paper, built from the CURRENT sources.
+
+    Single construction entry for a current-facts paper record: the freshly
+    built member branch, the reference-scope (`relevant_keys`) branch, the
+    resolved-addition lookup and the ordinary reuse path all go through it, so a
+    record can never be assembled without the recorded analysis level. The level
+    comes from the paper's own facts record via `stage2_analysis_level`, where
+    an explicit `None` is a value: a missing / failed / legacy level overwrites
+    an older fulltext / abstract instead of inheriting it.
+    """
+    paper = paper if isinstance(paper, dict) else {}
+    return {
+        "item_key": paper.get("item_key"),
+        "title": paper.get("title"),
+        "year": paper.get("year"),
+        "authorship": paper.get("authorship"),
+        "analysis_file": paper.get("analysis_file"),
+        "pdf_available": bool(paper.get("has_pdf")),
+        "facts_state": facts_state,
+        "facts_error": facts_error,
+        "paper_facts": facts_record,
+        "analysis_level": stage2_analysis_level(paper),
+    }
+
+
+def stage2_update_paper_record(record: dict, paper: dict) -> dict:
+    """Update one existing canonical record from the current facts, in place.
+
+    Used when a record may still come from an older pack: every field the
+    current facts state wins and only values they do not state stay from the old
+    record. The recorded analysis level ALWAYS comes from the current facts, so
+    an explicit `None` clears an older fulltext / abstract (`_CANONICAL_DISPLAY_FIELDS`
+    merge semantics apply to pack normalization only, never to a rewrite).
+    """
+    paper = paper if isinstance(paper, dict) else {}
+    if isinstance(paper.get("item_key"), str) and paper["item_key"]:
+        record["item_key"] = paper["item_key"]
+    for field, value in (("title", paper.get("title")), ("year", paper.get("year")),
+                         ("authorship", paper.get("authorship")),
+                         ("analysis_file", paper.get("analysis_file"))):
+        if value is not None:
+            record[field] = value
+    record["pdf_available"] = bool(paper.get("has_pdf"))
+    record["analysis_level"] = stage2_analysis_level(paper)
+    return record
 
 
 def normalize_input_pack(raw: Any) -> dict | None:
@@ -3664,15 +3719,32 @@ def stage2_analysis_projection(professor_dir: Path, keys,
     appears, disappears or moves next to an unchanged analysis is visible even
     when the index never recorded it. Nothing else from the index is read, no
     directory is scanned and no file body is hashed.
+
+    This is the ONE source-resolution entry: the declaration layer is resolved
+    here and nowhere else. A missing record (or a record that does not declare
+    `file`) may use the confirmed historical path; an explicit `"file": null` is
+    a current statement and is never backfilled from an old pack path; a record
+    that is not an object proves neither, so its carriers stay unstated instead
+    of degrading to "no record".
     """
     state, records = stage2_analysis_index(professor_dir)
     analysis_paths = analysis_paths if isinstance(analysis_paths, dict) else {}
     entries = {}
     for key in sorted({str(key) for key in keys if isinstance(key, str) and key}):
-        record = records.get(key) if state == "ok" else None
-        if not isinstance(record, dict):
-            record = {}
-        analysis_value = record.get("file") or analysis_paths.get(key)
+        raw = records.get(key) if state == "ok" else None
+        if isinstance(raw, dict):
+            record_state = "declared"
+        elif raw is None:
+            record_state = "missing"
+        else:
+            record_state = "unreadable"
+        record = raw if record_state == "declared" else {}
+        if record_state == "declared":
+            analysis_value = record["file"] if "file" in record else analysis_paths.get(key)
+        elif record_state == "missing":
+            analysis_value = analysis_paths.get(key)
+        else:
+            analysis_value = None
         analysis = stage2_projection_artifact(analysis_value)
         ocr = stage2_projection_artifact(record.get("ocr_file"))
         future_work_value = record.get("future_work_sidecar")
@@ -3686,7 +3758,8 @@ def stage2_analysis_projection(professor_dir: Path, keys,
         future_work = stage2_projection_artifact(future_work_value)
         facts = stage2_projection_artifact(facts_value)
         entries[key] = {
-            "indexed": bool(record),
+            "indexed": record_state == "declared",
+            "record_state": record_state,
             "level": record.get("level"),
             "analysis_file": analysis["path"], "analysis_exists": analysis["exists"],
             "ocr_file": ocr["path"], "ocr_exists": ocr["exists"],
@@ -4770,13 +4843,56 @@ def stage2_display_references(pack: dict, ctx=None) -> dict:
     return references
 
 
-def stage2_referenced_item_keys(direction: dict) -> list[str]:
-    """Item keys the human-facing fixed-evidence slots of one direction print."""
+def stage2_direction_reference_keys(direction: dict, known_keys=None) -> set:
+    """The formal reference keys of one direction's fixed-evidence slots.
+
+    Union of every key whose trusted metadata is available (the canonical paper
+    map and the persisted display references — ``known_keys``) and the
+    direction's own explicit machine references: its gap papers, the candidate
+    references of those gaps and the completed paper of the anchor-banned card.
+    Only these keys may be recognised inside a machine text; an arbitrary
+    eight-digit token (a date, a sample count) stays ordinary text instead of
+    being read as a citation.
+    """
+    keys: set = set()
+    if isinstance(known_keys, dict):
+        keys.update(key for key in known_keys if isinstance(key, str) and key)
+    elif isinstance(known_keys, (set, frozenset, list, tuple)):
+        keys.update(key for key in known_keys if isinstance(key, str) and key)
+    for gap in direction.get("gap_shortlist") or []:
+        if not isinstance(gap, dict):
+            continue
+        if isinstance(gap.get("item_key"), str) and gap["item_key"]:
+            keys.add(gap["item_key"])
+        keys.update(key for key in (gap.get("candidate_paper_ids") or [])
+                    if isinstance(key, str) and key)
+    for item in direction.get("completed_gap_blacklist") or []:
+        if not isinstance(item, dict):
+            continue
+        if isinstance(item.get("item_key"), str) and item["item_key"]:
+            keys.add(item["item_key"])
+        completed = item.get("completed_by_item_key")
+        if isinstance(completed, str) and completed:
+            keys.add(completed)
+    return keys
+
+
+def stage2_referenced_item_keys(direction: dict, known_keys=None) -> list[str]:
+    """Item keys the human-facing fixed-evidence slots of one direction print.
+
+    A bare token only counts once `stage2_direction_reference_keys` confirms it,
+    so the persisted display references never pick up an ordinary number. The
+    direction's explicit machine references are always collected, even when
+    their metadata is still missing: that is what keeps a truly referenced key
+    failing closed later instead of silently degrading to plain text.
+    """
+    confirmed = stage2_direction_reference_keys(direction, known_keys)
     keys: list = []
 
     def collect(value) -> None:
         if isinstance(value, str):
-            keys.extend(ITEM_KEY_RE.findall(value))
+            keys.extend(key for key in ITEM_KEY_RE.findall(value)
+                        if key in confirmed)
 
     for gap in direction.get("gap_shortlist") or []:
         if not isinstance(gap, dict):
@@ -4805,7 +4921,10 @@ def stage2_collect_display_references(direction_rows: list, sources: list) -> di
 
     Best effort per key: a key whose trusted title is unavailable at this point
     is simply not persisted, and rendering it later fails explicitly instead of
-    printing a guessed or silently dropped citation.
+    printing a guessed or silently dropped citation. A bare token is only
+    collected when the available machine records confirm it as a reference, so
+    an ordinary number that merely looks like an item key never enters the
+    persisted map.
     """
     available: dict = {}
     for source in sources:
@@ -4818,7 +4937,7 @@ def stage2_collect_display_references(direction_rows: list, sources: list) -> di
     for direction in direction_rows:
         if not isinstance(direction, dict):
             continue
-        for key in stage2_referenced_item_keys(direction):
+        for key in stage2_referenced_item_keys(direction, available):
             record = available.get(key)
             title = stage2_trusted_paper_title(record, key)
             if title is None:
@@ -4837,19 +4956,30 @@ def stage2_display_link(item_key, references: dict) -> str | None:
     return f"[{title}](zotero://select/library/items/{item_key})"
 
 
-def stage2_display_text(value, references: dict, where: str):
-    """Rewrite every known item key inside one fixed-card slot as title+link.
+def stage2_display_text(value, references: dict, where: str, confirmed_keys=None):
+    """Rewrite every CONFIRMED item key inside one fixed-card slot as title+link.
 
     The machine value itself is never touched; only this human-facing copy is
-    converted, and only equivalently. A referenced key without a trusted title
-    stops the affected render with the missing metadata named, so no fabricated
-    or silently deleted citation can reach the managed Markdown.
+    converted, and only equivalently. Two rules keep the conversion honest:
+
+    - only a key the formal reference information confirms (see
+      `stage2_direction_reference_keys`) is a citation; an ordinary date or
+      sample count that merely looks like an item key stays ordinary text;
+    - an already-rendered paper link whose printed title matches the trusted
+      metadata is protected first, so it is neither re-pointed nor nested inside
+      a second link.
+
+    A confirmed reference without a trusted title stops the affected render with
+    the missing metadata named, so no fabricated or silently deleted citation
+    can reach the managed Markdown.
     """
     if not isinstance(value, str) or not value:
         return value
+    confirmed = (set(confirmed_keys)
+                 if isinstance(confirmed_keys, (set, frozenset, dict, list, tuple))
+                 else None)
 
-    def replace(match: "re.Match") -> str:
-        key = match.group(0)
+    def link_for(key: str) -> str:
         link = stage2_display_link(key, references)
         if link is None:
             fail("missing_fixed_evidence_title",
@@ -4861,7 +4991,32 @@ def stage2_display_text(value, references: dict, where: str):
                  item_key=key, where=where)
         return link
 
-    return ITEM_KEY_RE.sub(replace, value)
+    protected: list = []
+
+    def protect(match: "re.Match") -> str:
+        key = match.group(3)
+        if confirmed is not None and key not in confirmed:
+            return match.group(0)
+        link = link_for(key)
+        if match.group(1) != stage2_trusted_paper_title(references.get(key), key):
+            # A confirmed reference printed under an unverified title becomes
+            # the same trusted link instead of keeping a wrong citation.
+            return link
+        token = "\x00display-reference-{}\x00".format(len(protected))
+        protected.append((token, match.group(0)))
+        return token
+
+    def replace(match: "re.Match") -> str:
+        key = match.group(0)
+        if confirmed is not None and key not in confirmed:
+            return key
+        return link_for(key)
+
+    rendered = DISPLAY_LINK_RE.sub(protect, value)
+    rendered = ITEM_KEY_RE.sub(replace, rendered)
+    for token, original in protected:
+        rendered = rendered.replace(token, original)
+    return rendered
 
 
 def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
@@ -4961,23 +5116,17 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
         if not paper:
             continue
         facts_record, facts_state, facts_error = ctx.facts_for(key)
-        papers[key] = {
-            "item_key": key, "title": paper.get("title"), "year": paper.get("year"),
-            "authorship": paper.get("authorship"),
-            "analysis_file": paper.get("analysis_file"),
-            "pdf_available": bool(paper.get("has_pdf")),
-            "facts_state": facts_state,
-            "facts_error": facts_error,
-            "paper_facts": facts_record,
-            # U5: the level recorded by the successful analysis itself; None
-            # (missing / failed / legacy /未完成) means "未确认" and is never
-            # derived from the analysis file, the PDF or facts availability.
-            "analysis_level": stage2_analysis_level(paper),
-        }
+        # U5: the level recorded by the successful analysis itself; None
+        # (missing / failed / legacy /未完成) means "未确认" and is never
+        # derived from the analysis file, the PDF or facts availability.
+        papers[key] = stage2_paper_record_from_facts(
+            paper, facts_record, facts_state, facts_error)
         supporting_keys.append(key)
     # Reference-scope papers live in the SAME professor-level canonical map so
     # a P citation keeps one trusted record (title/year/authorship/analysis
-    # path) after the temporary facts expire. They never enter members.
+    # path) after the temporary facts expire. They never enter members, but
+    # they are built through the same current-facts entry as the members: a
+    # paper that a resolution later admits keeps its recorded level.
     for key in sorted(relevant_keys):
         if key in papers:
             continue
@@ -4985,15 +5134,8 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
         if not paper:
             continue
         facts_record, facts_state, facts_error = ctx.facts_for(key)
-        papers[key] = {
-            "item_key": key, "title": paper.get("title"), "year": paper.get("year"),
-            "authorship": paper.get("authorship"),
-            "analysis_file": paper.get("analysis_file"),
-            "pdf_available": bool(paper.get("has_pdf")),
-            "facts_state": facts_state,
-            "facts_error": facts_error,
-            "paper_facts": facts_record,
-        }
+        papers[key] = stage2_paper_record_from_facts(
+            paper, facts_record, facts_state, facts_error)
     note = direction.get("user_note") or ""
     narrative_later_papers = {}
     narrative_data = narrative if isinstance(narrative, dict) else {}
@@ -5037,6 +5179,31 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
     return pack_direction, papers
 
 
+def stage2_display_counts(pack: dict) -> dict:
+    """The three aggregate classes the managed analysis header prints.
+
+    The renderer's own definition of the displayed counts: they follow the
+    RECORDED analysis level of each direction's FORMAL members (the same
+    `direction_papers` projection the paper list uses), never the whole
+    canonical `papers` map and never every per-paper level. A missing level
+    stays "未确认" even when an analysis file or a PDF exists, and an OCR-only
+    successful full text keeps counting as 全文级. The ordinary finalize and the
+    display refresh share this function to decide whether the visible content
+    actually changed.
+    """
+    full = abstracted = total = 0
+    for direction in pack.get("directions") or []:
+        for paper in direction_papers(pack, direction):
+            total += 1
+            level = paper.get("analysis_level")
+            if level == "fulltext":
+                full += 1
+            elif level == "abstract":
+                abstracted += 1
+    return {"fulltext": full, "abstract": abstracted,
+            "unconfirmed": total - full - abstracted, "total": total}
+
+
 def render_analysis_md(ctx: Stage2Context, pack: dict,
                        state_fingerprint: str) -> str:
     professor = ctx.professor
@@ -5048,12 +5215,11 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
     # U5: the three classes follow the RECORDED analysis level of the canonical
     # paper records. A missing level stays "未确认" even when an analysis file
     # or a PDF exists, and OCR-only full text keeps counting as 全文级.
-    full = sum(1 for papers in projected.values() for p in papers
-               if p.get("analysis_level") == "fulltext")
-    abstracted = sum(1 for papers in projected.values() for p in papers
-                     if p.get("analysis_level") == "abstract")
-    total = sum(len(papers) for papers in projected.values())
-    unconfirmed = total - full - abstracted
+    counts = stage2_display_counts(pack)
+    full = counts["fulltext"]
+    abstracted = counts["abstract"]
+    unconfirmed = counts["unconfirmed"]
+    total = counts["total"]
     references = stage2_display_references(pack, ctx)
     lines = [
         f"# 套磁候选分析 — {professor}",
@@ -5116,6 +5282,10 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
         # map; they may be cited through {{P:key}} without being members.
         reference_lookup = pack_paper_index(pack)
         gap_no = {g["gap_id"]: g["no"] for g in d.get("gap_shortlist", [])}
+        # Which eight-character tokens inside this direction's machine texts are
+        # really citations: the trusted reference records plus the direction's own
+        # machine references. Everything else stays ordinary text.
+        confirmed_references = stage2_direction_reference_keys(d, references)
         for block in narrative.get("positioning", []):
             lines.append(render_positioning_block(
                 block, paper_lookup, gap_no, ctx.professor_dir, seen,
@@ -5162,16 +5332,19 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
                 # U1: the human-facing fixed card prints trusted titles/links;
                 # the machine `evidence` value itself is never rewritten.
                 "- 后续论文依据：{}".format(
-                    stage2_display_text(gap.get("evidence"), references, "后续论文依据")
+                    stage2_display_text(gap.get("evidence"), references, "后续论文依据",
+                                        confirmed_references)
                     or "—"),
                 f"- 评估时间：{gap.get('evaluated_at') or '—'}",
             ]
             if gap.get("status") == "partial":
                 details.append("- 已做部分：{}".format(
-                    stage2_display_text(gap.get("completed_part"), references, "已做部分")
+                    stage2_display_text(gap.get("completed_part"), references, "已做部分",
+                                        confirmed_references)
                     or "—"))
                 details.append("- 剩余缺口：{}".format(
-                    stage2_display_text(gap.get("remaining_gap"), references, "剩余缺口")
+                    stage2_display_text(gap.get("remaining_gap"), references, "剩余缺口",
+                                        confirmed_references)
                     or "—"))
             if gap.get("status") == "unknown":
                 details.append("- ⚠ 未查证是否已被后续工作实现（unknown 原因见后续论文依据）")
@@ -5211,7 +5384,7 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
                              item_key=completed, where="禁锚区完成论文")
                     completed_render = "（完成论文见证据）"
                 evidence_render = stage2_display_text(
-                    item.get("evidence"), references, "禁锚区依据")
+                    item.get("evidence"), references, "禁锚区依据", confirmed_references)
                 lines.append(f"- {item['quote_trunc']}——《{item['paper_title']}》（{item.get('paper_year')}）→ 已被 {completed_render} 接住（依据：{evidence_render}）。")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
@@ -5356,7 +5529,11 @@ def stage2_render_state(pack: dict) -> dict:
     Used to decide whether a finalized pack must re-render: a membership,
     reference-licence, narrative, gap, name or trusted-title change is visible
     even when no new model job was needed, while a metadata-only rewrite stays
-    unchanged.
+    unchanged. The displayed full-text/abstract/unconfirmed aggregate is part of
+    the state through the renderer's own `stage2_display_counts`, so a recorded
+    level change that really moves the visible counts re-renders while a
+    reference-only paper's level (or a member-level swap that leaves the
+    aggregate identical) does not.
     """
     directions_state = []
     referenced: set = set()
@@ -5406,7 +5583,8 @@ def stage2_render_state(pack: dict) -> dict:
                             "pdf_available")}
         for key in sorted(referenced)
     }
-    return {"directions": directions_state, "papers": papers_state}
+    return {"directions": directions_state, "papers": papers_state,
+            "display_counts": stage2_display_counts(pack)}
 
 
 def stage2_require_paper_reference_titles(fallback_papers: dict, pack: dict,
@@ -5574,21 +5752,23 @@ def cmd_stage2_finalize(args) -> None:
         fabricates evidence.
         """
         record = fresh_papers.get(key) or pack_paper_index(ctx.pack or {}).get(key)
-        if isinstance(record, dict):
-            return dict(record)
         paper = ctx.papers.get(key)
+        if isinstance(record, dict):
+            # A record may still come from the accepted pack; the current facts
+            # stay authoritative for every field they state, including a level
+            # of `None` that clears an older fulltext / abstract.
+            updated = dict(record)
+            if paper is not None:
+                stage2_update_paper_record(updated, paper)
+                updated["item_key"] = key
+            return updated
         if not paper:
             return None
         facts_record, facts_state, facts_error = ctx.facts_for(key)
-        return {
-            "item_key": key, "title": paper.get("title"), "year": paper.get("year"),
-            "authorship": paper.get("authorship"),
-            "analysis_file": paper.get("analysis_file"),
-            "pdf_available": bool(paper.get("has_pdf")),
-            "facts_state": facts_state, "facts_error": facts_error,
-            "paper_facts": facts_record,
-            "analysis_level": stage2_analysis_level(paper),
-        }
+        canonical = stage2_paper_record_from_facts(
+            paper, facts_record, facts_state, facts_error)
+        canonical["item_key"] = key
+        return canonical
 
     # Apply resolved directions to pack_directions. Every direction (including
     # unchanged) gets an explicit resolved_direction subfield so downstream
@@ -5888,12 +6068,8 @@ def cmd_stage2_finalize(args) -> None:
         previous = old_papers.get(key)
         record = dict(previous) if isinstance(previous, dict) else {}
         record["item_key"] = key
-        for field, value in (("title", paper.get("title")), ("year", paper.get("year")),
-                             ("authorship", paper.get("authorship")),
-                             ("analysis_file", paper.get("analysis_file"))):
-            if value is not None:
-                record[field] = value
-        record["pdf_available"] = bool(paper.get("has_pdf"))
+        stage2_update_paper_record(record, paper)
+        record["item_key"] = key
         facts_record, facts_state, facts_error = ctx.facts_for(key)
         record["facts_state"] = facts_state
         record["facts_error"] = facts_error
@@ -6174,6 +6350,17 @@ def cmd_stage2_refresh_display(args) -> None:
     if not isinstance(params, dict) or isinstance(current_year, bool) \
             or not isinstance(current_year, int):
         fail("invalid_params", "preflight payload has no usable params/current_year")
+    # Entry-point year recheck: the business year is read from the clock NOW
+    # instead of trusting the payload, so a preflight that crossed the year
+    # boundary is refused before anything else runs and without entering the
+    # writer lease.
+    entry_year = datetime.now().year
+    if entry_year != current_year:
+        soft_exit("needs_refresh", "display_refresh_stale",
+                  drift=["current_year_changed"], reason_codes=["current_year_changed"],
+                  accepted_year=current_year, current_year=entry_year,
+                  message="刷新入口的当前业务年份与预检绑定的年份不同；跨年后必须重新预检"
+                          "再决定是否只刷新展示。未修改任何文件。")
     program_root = stage2_program_root_for_professor_dir(professor_dir)
     if program_root is None:
         soft_exit("needs_refresh", "invalid_professor_dir",
@@ -6252,6 +6439,17 @@ def cmd_stage2_refresh_display(args) -> None:
             decision = decision_data.get("decision")
 
     with stage2_local_writer_scope(professor_dir):
+        # Inside the lease, re-read the business year from the clock BEFORE any
+        # write: a transaction that waited across the year boundary must not
+        # write a decision that belongs to the previous year, and the payload
+        # year is never reused as the current one.
+        lease_year = datetime.now().year
+        if lease_year != current_year:
+            soft_exit("needs_refresh", "display_refresh_stale",
+                      drift=["current_year_changed"], reason_codes=["current_year_changed"],
+                      accepted_year=current_year, current_year=lease_year,
+                      message="取得教授写入保护后当前业务年份已变化；跨年后必须重新预检"
+                              "再决定是否只刷新展示。未修改任何文件。")
         # Inside the lease, re-prove the WHOLE decision on the bytes this write
         # is based on: the same business inputs (target/Stage-1 binding, papers
         # catalog, authorship view, direction mapping, freshness cache, source
@@ -6291,16 +6489,18 @@ def cmd_stage2_refresh_display(args) -> None:
                               "未修改任何文件。")
 
         papers, levels = stage2_refresh_levels(pack_now, current_now)
-        accepted_levels = {key: (record or {}).get("analysis_level")
-                           for key, record in pack_paper_index(pack_now).items()}
-        display_changed = any(accepted_levels.get(key) != level
-                              for key, level in levels.items())
         updated = dict(pack_now)
         updated["papers"] = papers
         updated["cache"] = dict(pack_now.get("cache") or {})
         updated["cache"]["preflight"] = {
             **meta, "analysis_projection": current_now,
             "display_refresh_version": STAGE2_DISPLAY_REFRESH_VERSION}
+        # The renderer owns the comparison: only a change of what the managed
+        # Markdown really shows (the formal members' aggregate counts and the
+        # cited references) repaints the body. A reference-only paper's level,
+        # or a member-level swap that leaves the aggregate identical, advances
+        # the display projection while the certified body and its rounds stay.
+        display_changed = stage2_render_state(updated) != stage2_render_state(pack_now)
         if display_changed:
             ctx = Stage2PackRefineContext(professor_dir)
             if stage2_pack_content_fingerprint(ctx.pack)                     != stage2_pack_content_fingerprint(pack_now):

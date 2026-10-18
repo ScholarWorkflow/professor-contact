@@ -376,6 +376,11 @@ For each flagged direction:
     - **有 facts sidecar 的 fulltext 论文**：记录 `facts_file` 绝对路径与该论文当前 `pdf_path`（记入 Step 6.1 facts JSON 的 `pdf_file`）。runner 在 stage2-plan 会做权威校验：`schema/kind/generator_version/status`、`analysis` 名、`evidence_level=fulltext`、`input_fingerprint == sha256(当前 PDF)`、`future_work_ids` 与当前有效 future-work sidecar 的精确 join。**校验失败时 runner 只是不暴露 facts（fail closed），你绝不为通过校验而重读 PDF/Markdown 或再跑一次全文分析。**
     - **无 facts sidecar 的论文（legacy 分析、摘要级、OCR-only、handoff 无 PDF 路径）**：`facts_file=null`，如实落 `facts_state=unavailable`（legacy/摘要级论文）或沿用 index 已记录的 `facts_unavailable_*_handoff`。**绝不为「补 facts」触发第二次全文模型 pass**——这是 facts 契约的硬边界；等该论文未来自然重跑 `paper-analysis full` 时三件套会一起产出。
     - `facts.future_work_ids` 只是精确 join 键；引用原文/翻译/出处仍一律走 `<analysis>.future_work.json`。绝不用 facts 里的任何字段替代 future-work 证据或 Zotero item 身份。
+    - **来源解析只有一个 owner（声明层 / 候选位置层 / 观测层 / 可选用与接受层）**：这四类规则由 runner 的 `contact_state.py` 统一定义，正常成功接受基线、preflight、展示刷新入口与取得写入保护后的写前复核共用同一入口；本步的来源发现只对齐这一份契约，不自己另立缺省规则：
+      - 声明层：该教授 `论文分析/_index.json` 里这篇论文的记录就是当前声明。没有该 key 的记录、或该记录没有声明某个字段时，才允许按既有兼容规则使用已确认的历史路径（来自已接受 pack 的规范 `papers` 或已接受来源投影）；记录存在但不是对象（坏记录）不可比较，不能当作「没有记录」，预检走正常 process；字段明确为空（`"file": null`）是当前声明，绝不用旧 pack 或旧来源投影里的旧路径把它补成当前声明，该论文因此走正常 process；明确路径以声明为准。
+      - 候选位置层：`facts_sidecar` 为 null 或未声明时，只要该论文当前有有效分析路径，`<analysis_file>.facts.json` 仍是必须保留并观测的固定候选位置（本步的固定探测照做）；分析文件声明为明确空（`"file": null`）时不产生该候选；显式空不得取消这些既有固定候选。
+      - 观测层：每个相关载体（analysis / ocr / future_work / facts / pdf）记录 present 或 missing 及路径；候选从 missing 变为 present、路径删除换址、成功资格变化都是来源变化，必须走正常 process，不能当作「未变」；观测到文件不代表来源可用，更不代表已接受。
+      - 可选用与接受层：正常成功处理把本次实际消费的声明、候选与观测状态随已接受 pack 同次保存为来源基线；展示刷新只核对并保留已验证相等的业务部分，自己绝不接受后来出现的文件。
 
 7. **登记 `_index.json`**（合并式写入，保留已存在项；**Stage 2 是唯一 writer，写入时 local-writer lease 必须仍持有**）：每篇成功分析后，用 `read` 确认落盘文件存在，写入 `<教授文件夹>/论文分析/_index.json`。根对象必须写 `"schema": 2` 与 `"future_work_schema": 1`：
    ```json
