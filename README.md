@@ -44,6 +44,42 @@ nix build "$CONTACT_REF#professor-contact-environment" --out-link "$RUN/environm
 | `packages.aarch64-darwin.professor-contact-runtime` | 固定解释器的完整自有资源（`scripts/`、`docs/`、`tests/`、隐藏辅助文件），普通 derivation，不冒充 agent 安装 |
 | `packages.aarch64-darwin.professor-contact` | `id = "professor-contact"` 的 agent 包，默认 `enableHarnesses = [ "codex" ]`；`professor-contact.override { enableHarnesses = []; }` 可按包关闭投影 |
 | `packages.aarch64-darwin.professor-contact-environment` | `mkProject` 环境，`roots = [ professor-contact ]`，提供 `bin/agent-env`，下游可与其他顶层包组合 |
+| `packages.aarch64-darwin.professor-contact-activate` | 固定 `bin/professor-contact-activate` 入口，按 environment store 路径与项目物理路径缓存成功安装 |
+
+#### direnv / devShell 自动激活
+
+已有 direnv 的消费者可以把下面的 `flake.nix` 放在自己的项目根目录，`.envrc` 使用 `use flake`。脚本源码在本仓库的 [`nix/activate.sh`](nix/activate.sh)，由 Nix 打包；消费者只调用固定 store 入口，不需要复制脚本。
+
+```nix
+{
+  inputs = {
+    contact.url = "github:ScholarWorkflow/professor-contact/main";
+    nixpkgs.follows = "contact/nixpkgs";
+  };
+
+  outputs = { contact, nixpkgs, ... }:
+    let
+      system = "aarch64-darwin";
+      pkgs = nixpkgs.legacyPackages.${system};
+      activate = contact.packages.${system}.professor-contact-activate;
+    in {
+      devShells.${system}.default = pkgs.mkShell {
+        packages = [ activate ];
+        shellHook = ''
+          "${activate}/bin/professor-contact-activate" --project "$PWD" || exit $?
+        '';
+      };
+    };
+}
+```
+
+`main` 由消费者的 `flake.lock` 锁定，更新 input 后才会取新版本。入口默认使用当前目录，也接受 `--project DIRECTORY`。它用 environment 的 store 输出路径和项目的物理路径（`pwd -P`）记录成功：首次、environment 变化或项目移动后调用原有 `agent-env apply --project`；同版本同路径只检查成功标记，不扫描/复制技能。该缓存不验证安装文件是否仍然完整；手动删除或修改安装产物后，在 devShell 中运行 `professor-contact-activate --force` 重新 apply（仍遵守共享安装器的保护规则）。
+
+项目根目录的 `.professor-contact-applied` 是本入口的成功标记，只有 apply 成功才原子写入；再次 apply 前删除旧标记，所以失败后下次会重试。标记若是符号链接或非普通文件会报错。请在消费者的 `.gitignore` 加入 `/.professor-contact-applied` 和 `/.professor-contact-apply.lock/`，不要提交或手动伪造标记。
+
+同一项目通过 `.professor-contact-apply.lock` 串行激活；并发调用会立即报错，请待前一次结束后重试。正常退出会清锁；若进程被强杀或机器崩溃，确认没有激活进程后才手动删除遗留锁目录。直接调用原有 `agent-env` 不参与这个锁，也不会更新成功标记；不要与本入口并发运行。路径含换行符不支持。以上仅新增缓存包装层，不改变原有 environment 接口或 APM 安装。
+
+离线包装层检查：在 `bash` 与 GNU coreutils 已位于 PATH 的环境运行 `python3 nix/test-activate.py -v`（目前在 Linux 验证；macOS 默认 BSD 工具不适用）。测试使用 stub 安装器，不构建 Nix、不触发真实安装或业务服务；正式入口使用 Nix 固定的 Bash 与 GNU coreutils。
 
 依赖按上游实际发布提交固定：`agent-env-nix` 固定共享安装器，`paper-analysis`、`zotero-tools`、`base-skills`（`humanizer-ja`、`vision-tools`）、`pdf-processing-core`（`pdfx-agent` 与固定 Python）、`knowledge-tools` 的 `extraction-to-knowledge` 递归闭包，以及 `professor-research` 的 `professor-collector`（Stage 1 缺 PDF 补齐与 Stage 5 contact-evidence freshness 的上游 owner）。`vision-tools` 与 paper-analysis 复用同一次求值；collector 保留其生产者自己的真实递归依赖（其 browser 输入的 base/source skill 实例与 Zotero owner lock），contact 不重写这些实例。
 
@@ -92,3 +128,4 @@ Stage 0 不再使用 Zotero 固定标题 `套磁候选` note；Stage 0 与 Stage
 `stage5-legacy-contract.md` 是冻结的历史参考，不是当前 Stage 5 contract。涉及 preview 边界时，同时参照 `professor-research/.apm/skills/professor-topic-clustering/references/preview-downstream-contract.md`；涉及 Stage 4→5 联系方式冻结与 freshness 时，以 owner repo 的 contact-evidence consumer contract 为跨仓边界。
 
 如果修改状态机、stable ID、fingerprint、唯一事实源、跨仓库 owner 或 runtime 适配边界，应同步更新当前工作流参考；修改 package/runtime 依赖时同步更新依赖边界文档；涉及测试与 merge gate 时以 Project Consensus 为准。
+

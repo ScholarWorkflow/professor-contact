@@ -89,6 +89,11 @@
         professor-contact-runtime = products.runtime;
         professor-contact = products.package;
         professor-contact-environment = products.project;
+        professor-contact-activate = import ./nix/activate.nix {
+          inherit pkgs;
+          environment = products.project;
+        };
       };
     };
 }
+
