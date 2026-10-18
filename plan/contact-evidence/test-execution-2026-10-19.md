@@ -17,7 +17,7 @@
 | T3 | 通过 | `base6.json`／`head6.json` 对比：合法 artifact、kind 不符、schema 不符、非对象、坏 JSON、缺失六种输入的 `(artifact, error)` 相同；runner 侧 `load_contact_evidence` 签名仍是 `(program_root)` |
 | T4 | 通过 | `base6.json`／`head6.json` 对比：六种教授名形态（全角空格、首尾空格、stale/legacy/invalid/不存在）与七种状态（None/fresh/stale/legacy/invalid/unavailable/空对象）结果相同；runner 侧 `professor_source_state` 签名仍是 `(report, professor)` |
 | T5 | 通过 | 改基后 `t5-rebased.log`：`Ran 5 tests in 5.026s`，`OK`，退出码 0（改基前的同字节运行 `t5.log`：`Ran 5 tests in 9.758s`，`OK`，保留作旁证） |
-| 既有仓库检查 | 待补 | 推送到 PR 后引用仓库 CI 运行编号、所跑 head 与 `test` 检查状态（不属于本批必测项） |
+| 既有仓库检查 | 通过 | 仓库 CI 在 head `063966c` 上跑全量 `unittest discover`：运行 `39160263227`，7m43s，检查项 `test` pass。按测试计划第 23 行这项不属于本批业务必测项，只作既有检查结果引用；该 head 相对被测提交只多文档提交，`.apm/` 字节未变 |
 
 ## 执行方法与命令
 
