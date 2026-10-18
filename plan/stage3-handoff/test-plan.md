@@ -6,7 +6,7 @@
 - 需求来源：负责人 2026-10-18 授权的“其余边界”中“Stage3 提交与校验交接”的校验交接部分；原文见执行计划。
 - 对照基准：`779fb692ed5ded163ab0eb5b415aef698135f54e`。
 - Target repository revision: 工作分支 `refactor/stage3-handoff` 实施后的提交。
-- Test plan revision: 第 2 版。
+- Test plan revision: 第 3 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限。
 - Proposed review status: pending。
 
@@ -19,14 +19,16 @@
 | T3 | invocation 参数映射不变 | 给定 invocation 字典与调用参数：含来源参数、含被忽略参数、缺来源字段 | 返回对象的字段名与取值逐项相同；只覆盖 invocation 记录的来源参数 | 同 T1 |
 | T4 | 作用域解析、路径归一化与轮次守卫不变 | ① `stage3_render_line_scopes` 对五份代表性渲染文本（direction/group 标记、标题后四行内/外、无标记、**同一标记重复出现**）；② `_stage3_normalized_absolute_path` 对合法、相对、空、非字符串四类输入；③ `_require_stage3_handoff_round` 对 7 组状态（round 1 未记录/已记录、round 2 无前轮/耗尽/有待修正/渲染变化/正常） | ① 五份文档返回的作用域列表逐项相同（内容与顺序）；② 非法路径给出相同的错误 JSON 与退出码，合法路径返回相同的绝对路径字符串；③ 6 个失败原因码与正常路径判定全部相同 | 同 T1；失败调用捕获 `SystemExit` 与 stdout。`_stage3_validation_files`／`_stage3_complete_write_result`／`_stage3_issue_scopes` 的归一化不在驱动里单独构造，由 T5 的真实交接流程覆盖 |
 | T5 | 既有 Stage 3 校验交接路径不受影响 | 真实 CLI 流程：`stage3-prepare-validation` → 写入校验结果 → `stage3-save-validation` → `stage3-record-validation`；以及 scope 归属、修正轮与批量写入失败清理 | 全部通过 | 引用既有用例：`test_stage3_validation_refine`（18）、`test_issue66_validation_handoff`（12）、`test_stage3_direction_groups`（19）、`test_issue66_stage3_local_state`（6）。前三个共 49 项直接落在被移动原语及其路径上；第四个 6 项属相邻的本地提交/回滚面（本批非目标），因共用夹具且覆盖 record 路径写入的状态而保留，可按验收决定人要求裁掉 |
-| T6 | 未改动区域的既有门禁 | 仓库 CI 对 PR 提交跑全量 `unittest discover` | 全量通过 | 直接引用 PR 的 CI 结果 |
+
+**既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的全量 `unittest discover` 由仓库工作流照常执行，其结果单独引用，不作为本批业务必测项，也不因本批而扩张或缩减；合并要求继续按仓库规则执行。
 
 ## 执行步骤
 
 准备与执行都在工作树 `/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-handoff` 内进行；驱动脚本与运行产物放仓库外 `/tmp`（本次用 `mktemp -d /tmp/pc-bnd2-XXXXXX`）。
 
-1. 准备：确认工作树只有本批改动、Python 可用，并取出基准修订的 runner **及其依赖的兄弟模块**。
+1. 准备：确认工作树只有本批改动、Python 可用，取出基准修订的 runner **及其依赖的兄弟模块**，并把上一轮实际使用的驱动脚本复制进本轮目录。
    ```sh
+   set -e
    cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-handoff
    git status --porcelain
    python3 --version
@@ -37,23 +39,26 @@
    mv "$RUN/base_contact_state.py" "$RUN/contact_state.py"
    mv "$RUN/base__stage3_render.py" "$RUN/_stage3_render.py"
    mv "$RUN/base__contact_io.py" "$RUN/_contact_io.py"
+   cp /tmp/pc-bnd2-check/handoff_probe.py "$RUN/handoff_probe.py"
    ```
-   基准修订已含批次二/三与边界一，runner 在导入期按 `Path(__file__).with_name(...)` 加载 `_stage3_render.py` 与 `_contact_io.py`，因此三个文件必须放在同一目录。
-2. T1–T4：同一驱动脚本分别以基准目录副本与工作树 runner 为参数运行，各产出一份规范化 JSON，再比较。
+   基准修订已含批次二/三与边界一，runner 在导入期按 `Path(__file__).with_name(...)` 加载 `_stage3_render.py` 与 `_contact_io.py`，因此三个文件必须放在同一目录。最后一条是必须的：驱动自带输入构造与断言；来源缺失时按执行记录里记录的该轮目录找回同一脚本，仍找不到就停止并交计划所有人，不得凭提纲重写比较方法。
+2. T1–T4：同一驱动脚本分别以基准目录副本与工作树 runner 为参数运行，各产出一份规范化 JSON，再比较。`set -e` 保证任一侧运行失败立即中止，不会出现“两侧都失败、输出都为空、`diff` 仍然成功”的假结论。
    ```sh
+   set -e
    uv run --no-project "$RUN/handoff_probe.py" "$RUN/contact_state.py" "$RUN/base-work" > "$RUN/base.json"
    uv run --no-project "$RUN/handoff_probe.py" .apm/skills/professor-contact/scripts/contact_state.py "$RUN/head-work" > "$RUN/head.json"
    diff -u "$RUN/base.json" "$RUN/head.json" && echo "T1-T4 IDENTICAL"
    ```
-   预期：`diff` 无输出并打印 `T1-T4 IDENTICAL`。
+   预期：两条驱动命令都退出 0（否则 `set -e` 立即中止），`diff` 无输出并打印 `T1-T4 IDENTICAL`。
 3. T5：既有 Stage 3 校验交接用例。
    ```sh
-   cd .apm/skills/professor-contact/tests
+   set -e
+   cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-handoff/.apm/skills/professor-contact/tests
    python3 -m unittest test_stage3_validation_refine test_issue66_validation_handoff \
      test_issue66_stage3_local_state test_stage3_direction_groups -v
    ```
    预期：全部 `ok`，无 `FAIL`/`ERROR`。
-4. T6：推送到 PR 后引用仓库 CI 的全量结果；CI 未通过时按第 6 步处理。
+4. 既有仓库检查：推送到 PR 后引用仓库 CI 的全量结果（不属于本批必测项）；CI 未通过时按第 6 步处理。
 5. 记录：保存命令、实际提交 SHA、逐项结果与必要输出片段到 `/tmp` 运行目录，并写入 `test-execution-<日期>.md`。
 6. 失败处理：出现差异按函数定位，判定为产品缺陷交实现负责人修正后重跑受影响编号；既有用例失败区分“本次引入／既有失败／环境问题”；既有跳过项按未执行记录。
 
@@ -82,11 +87,16 @@
 | Stage4/5 证据处理 | 另立 PR |
 | 全仓本地回归 | 仓库 CI 已在 PR 上执行全量 discover，按 `Test Engineer Rule.md` 第 6 节直接引用 |
 
+## 自检
+
+提交审核前逐条核对（与仓库 `plan/test-plan-checklist.md` 同一口径）：必测项只引用能证明本批行为的方法；CI 不在必测清单；每个临时脚本都有确切来源与复制命令；命令块启用 `set -e`；失败注入到达目标分支；计划文字与执行记录用同一套标签。
+
 ## 修订记录
 
 - 第 1 版：首次提交测试计划审核。
+- 第 3 版：按与批次三/边界一相同的口径整理——仓库 CI 从业务必测清单移出（T6 撤销，改为“既有仓库检查”单独引用）；第 1、2、3 步的命令块启用 `set -e` 并写明“两条驱动命令都须退出 0 才比较”；第 1 步补 `cp` 复制驱动脚本的明确命令与缺失时的处理；新增“自检”小节。必测编号由 T1–T6 收为 T1–T5。
 - 第 2 版：按第一、二关口的非阻断意见修正——T1 的注入描述改成执行版的三分支清理验证；T2 更正“非对象抛 `ValueError`”的说法（数组正常解析，非对象拒绝在下游归一化、由 T5 覆盖）；T4 标题改为“作用域解析、路径归一化与轮次守卫”并注明归一化由 T5 覆盖，驱动补“同一标记重复出现”用例；执行计划版本指针更新为第 3 版。T5 的四个模块保留（前三个共 49 项直接落在被移动原语上，第四个 6 项属相邻面、可按验收决定人要求裁掉）。
 
 ## 审核状态
 
-测试计划第 2 版为当前唯一版本；第 1 版已取得第一、二关口 PASS（无 blocker），本版只落实该轮的非阻断意见，未增删必测编号。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 3 版为当前唯一版本；第 1 版已取得第一、二关口 PASS（无 blocker），第 2 版只落实该轮的非阻断意见；第 3 版按统一自检口径把 CI 移出必测清单、补齐脚本复制步骤并启用 `set -e`（T6 撤销，编号收为 T1–T5）。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
