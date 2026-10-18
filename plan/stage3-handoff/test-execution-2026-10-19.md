@@ -3,8 +3,9 @@
 - 测试计划：[test-plan.md](test-plan.md)，第 2 版（第 1 版取得第一、二关口 PASS）。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 3 版（`Plan conclusion: APPROVED`）。
 - 对照基准：`779fb692ed5ded163ab0eb5b415aef698135f54e`。
-- 被测提交：`fab297d46e07d664450be798f77d2344b88fda5d`；执行时 `git status --porcelain` 为空。
+- 被测提交：`fab297d46e07d664450be798f77d2344b88fda5d`；执行期间产品与测试代码处于该提交、未改动（其后的提交只改 `plan/` 下文档，`.apm/` 下字节未变）。
 - 环境：本地 macOS，Python 3.14.7；只使用标准库与既有夹具。仓库 CI 使用工作流固定的 Python 3.12。
+- 说明：`/tmp/pc-bnd2-check/status.txt` 是空文件（执行期工作树状态改由本文件文字记录），每个编号的退出码记录在对应日志与 `diff` 结果里。
 - 原始输出（仓库外）：`/tmp/pc-bnd2-check/`；本文件只记录命令、方法与结果。
 
 ## 逐项结果
@@ -16,7 +17,7 @@
 | T3 | 通过 | 同一对比：生成态与修正态两种 invocation 参数映射逐字段相同，且 invocation 字典未被改动 |
 | T4 | 通过 | 同一对比：五份渲染文档（含同一标记重复出现）的作用域列表逐项相同；`scope_key` 四例相同；路径归一化四类输入结果/错误 JSON/退出码相同；轮次守卫 7 组状态（覆盖 6 个失败原因码与正常 round 2）判定相同；runner 侧 `stage3_render_line_scopes` 的签名两侧都不含 `fail` |
 | T5 | 通过 | `Ran 55 tests in 206.556s`，`OK`，退出码 0（`test_stage3_validation_refine`、`test_issue66_validation_handoff`、`test_issue66_stage3_local_state`、`test_stage3_direction_groups`） |
-| T6 | 通过 | 仓库 CI 在 PR 提交上跑全量 `unittest discover`，检查项 `test` 通过（见 PR 检查项） |
+| T6 | 通过 | 仓库 CI 在最终 head `62faf7c` 上跑全量 `unittest discover`：运行 `39151049255`，7m44s，检查项 `test` pass，结论 success。该 head 相对被测提交只多两个文档提交，产品与测试字节未变（`git diff fab297d HEAD -- .apm/` 为空）。按测试计划第 2 版，这项属既有仓库检查、不计入本批业务必测项，此处只作结果引用 |
 
 ## 执行方法与命令
 
@@ -62,7 +63,7 @@
 
 ## 结论与交接
 
-- T1–T5 对被测提交 `fab297d` 全部取得有效通过结果；T6 以 PR CI 结果为准。
+- T1–T5 对被测提交 `fab297d` 全部取得有效通过结果；T6 的仓库 CI 结果已在上一行给出运行编号、所跑 head 与检查状态，产品字节与该提交相同。
 - 本记录之后如只改文档，未改产品与测试代码时，上述逐项结果继续有效并沿用。
 - 依赖顺序：本批堆叠在边界一分支 `refactor/shared-error-and-commit`（PR #99）之上，合并顺序 #97 → #98 → #99 → 本批。
 - 下一负责人：测试计划审核结论的第三关口核对与合并审核；本记录不代替任何关口结论。
