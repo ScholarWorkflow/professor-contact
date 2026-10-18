@@ -17,14 +17,14 @@
 | T1 | 缓冲式持久写入与失败清理不变 | 同一驱动分别加载基准与改动后的 runner：小块写入、76800 B（跨多个 64 KiB 回读分块）写入、对已存在路径写入（`O_EXCL` 失败）；再直接验证 `_stage3_created_file_identity` 与 `_stage3_cleanup_incomplete_write`（身份一致／不一致／None）三个分支 | 成功时文件字节、权限模式（`st_mode & 0o777`）、无残留临时文件；已存在路径写入抛 `FileExistsError` 且原文件不变；身份一致时删除、不一致或 None 时保留 | 仓库外驱动脚本，两侧输出规范化 JSON 后 `diff`；集成侧“写入期失败后清理、只删本次文件、抛 `OSError`”由 T5 的批量写/回读失败用例端到端覆盖 |
 | T2 | 严格 JSON 对象解析不变 | 合法对象、重复键对象、含 `NaN`/`Infinity` 的文本、数组、坏 UTF-8 字节 | 合法输入解析结果相同；重复键与 `NaN`/`Infinity` 抛 `ValueError`；数组两侧同样返回列表（“必须是非对象”的拒绝发生在下游归一化，由 T5 的真实写校验路径覆盖）；坏字节抛相同异常 | 同 T1 |
 | T3 | invocation 参数映射不变 | 给定 invocation 字典与调用参数：含来源参数、含被忽略参数、缺来源字段 | 返回对象的字段名与取值逐项相同；只覆盖 invocation 记录的来源参数 | 同 T1 |
-| T4 | 作用域解析、路径归一化与轮次守卫不变 | ① `stage3_render_line_scopes` 对五份代表性渲染文本（direction/group 标记、标题后四行内/外、无标记、**同一标记重复出现**）；② `_stage3_normalized_absolute_path` 对合法、相对、空、非字符串四类输入；③ `_require_stage3_handoff_round` 对 7 组状态（round 1 未记录/已记录、round 2 无前轮/耗尽/有待修正/渲染变化/正常） | ① 五份文档返回的作用域列表逐项相同（内容与顺序）；② 非法路径给出相同的错误 JSON 与退出码，合法路径返回相同的绝对路径字符串；③ 6 个失败原因码与正常路径判定全部相同 | 同 T1；失败调用捕获 `SystemExit` 与 stdout。`_stage3_validation_files`／`_stage3_complete_write_result`／`_stage3_issue_scopes` 的归一化不在驱动里单独构造，由 T5 的真实交接流程覆盖 |
+| T4 | 作用域解析、路径归一化与轮次守卫不变 | ① `stage3_render_line_scopes` 对五份代表性渲染文本（direction/group 标记、标题后四行内/外、无标记、**同一标记重复出现**）；② `_stage3_normalized_absolute_path` 对合法、相对、空、非字符串四类输入；③ `_require_stage3_handoff_round` 对 7 组状态（round 1 未记录/已记录、round 2 无前轮/耗尽/有待修正/渲染变化/正常） | ① 五份文档返回的作用域列表逐项相同（内容与顺序）；② 非法路径给出相同的错误 JSON 与退出码，合法路径返回相同的绝对路径字符串；③ 5 个失败分支（4 个不同原因码）与 2 条正常路径判定全部相同 | 同 T1；失败调用捕获 `SystemExit` 与 stdout。`_stage3_validation_files`／`_stage3_complete_write_result`／`_stage3_issue_scopes` 的归一化不在驱动里单独构造，由 T5 的真实交接流程覆盖 |
 | T5 | 既有 Stage 3 校验交接路径不受影响（只选以本批原语为主要目的的入口） | 真实 CLI 流程：`stage3-prepare-validation` → 写入校验结果 → `stage3-save-validation` → `stage3-record-validation`；以及作用域归属、严格 JSON 拒绝、轮次守卫 | 全部通过 | ① `test_issue66_validation_handoff`（整模块 12 项：该文件每个用例都驱动被移动的交接原语——写缓冲、严格 JSON、参数映射、作用域与轮次）；② `test_stage3_validation_refine.Stage3ValidationIngestTests` 的 6 个方法：`test_issue_in_second_direction_repairs_only_that_scope`、`test_cross_direction_issue_routes_to_the_exact_group_id`、`test_raw_validator_handoff_fail_closed`、`test_correction_cannot_skip_or_add_scopes`、`test_second_validator_round_requires_completed_correction`、`test_round_and_terminal_result_are_derived_not_supplied` |
 
 **既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的全量 `unittest discover` 由仓库工作流照常执行，其结果单独引用，不作为本批业务必测项，也不因本批而扩张或缩减；合并要求继续按仓库规则执行。
 
 ## 执行步骤
 
-准备与执行都在工作树 `/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-handoff` 内进行；驱动脚本与运行产物放仓库外 `/tmp`（本次用 `mktemp -d /tmp/pc-bnd2-XXXXXX`）。
+准备与执行都在工作树 `/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-handoff` 内进行；驱动脚本与运行产物放仓库外 `/tmp`（复跑时用 `mktemp -d /tmp/pc-bnd2-XXXXXX` 新建；本批执行记录沿用 `/tmp/pc-bnd2-check/` 并已点名，见执行记录第 1 步）。
 
 1. 准备：确认工作树只有本批改动、Python 可用，取出基准修订的 runner **及其依赖的兄弟模块**，并把上一轮实际使用的驱动脚本复制进本轮目录。
    ```sh
@@ -33,19 +33,17 @@
    git status --porcelain
    python3 --version
    RUN=$(mktemp -d /tmp/pc-bnd2-XXXXXX)
+   mkdir -p "$RUN/base"
    for name in contact_state _stage3_render _contact_io; do
-     git show 779fb692ed5ded163ab0eb5b415aef698135f54e:.apm/skills/professor-contact/scripts/$name.py > "$RUN/base_$name.py"
+     git show 779fb692ed5ded163ab0eb5b415aef698135f54e:.apm/skills/professor-contact/scripts/$name.py > "$RUN/base/$name.py"
    done
-   mv "$RUN/base_contact_state.py" "$RUN/contact_state.py"
-   mv "$RUN/base__stage3_render.py" "$RUN/_stage3_render.py"
-   mv "$RUN/base__contact_io.py" "$RUN/_contact_io.py"
    cp /tmp/pc-bnd2-check/handoff_probe.py "$RUN/handoff_probe.py"
    ```
-   基准修订已含批次二/三与边界一，runner 在导入期按 `Path(__file__).with_name(...)` 加载 `_stage3_render.py` 与 `_contact_io.py`，因此三个文件必须放在同一目录。最后一条是必须的：驱动自带输入构造与断言；来源缺失时按执行记录里记录的该轮目录找回同一脚本，仍找不到就停止并交计划所有人，不得凭提纲重写比较方法。
+   基准修订已含批次二/三与边界一，runner 在导入期按 `Path(__file__).with_name(...)` 加载 `_stage3_render.py` 与 `_contact_io.py`，因此三个文件必须放在同一目录（`$RUN/base/`）；改动侧直接跑工作树里的 runner，不需要另建副本。最后一条是必须的：驱动自带输入构造与断言；来源缺失时按执行记录里记录的该轮目录找回同一脚本，仍找不到就停止并交计划所有人，不得凭提纲重写比较方法。
 2. T1–T4：同一驱动脚本分别以基准目录副本与工作树 runner 为参数运行，各产出一份规范化 JSON，再比较。`set -e` 保证任一侧运行失败立即中止，不会出现“两侧都失败、输出都为空、`diff` 仍然成功”的假结论。
    ```sh
    set -e
-   uv run --no-project "$RUN/handoff_probe.py" "$RUN/contact_state.py" "$RUN/base-work" > "$RUN/base.json"
+   uv run --no-project "$RUN/handoff_probe.py" "$RUN/base/contact_state.py" "$RUN/base-work" > "$RUN/base.json"
    uv run --no-project "$RUN/handoff_probe.py" .apm/skills/professor-contact/scripts/contact_state.py "$RUN/head-work" > "$RUN/head.json"
    diff -u "$RUN/base.json" "$RUN/head.json" && echo "T1-T4 IDENTICAL"
    ```
