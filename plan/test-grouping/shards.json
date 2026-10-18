@@ -1,0 +1,107 @@
+{
+ "generated_from": "416.2s total on 2026-10-19 (macOS, Python 3.14.7); balanced by measured module seconds",
+ "shards": [
+  {
+   "name": "shard1",
+   "seconds": 104.0,
+   "modules": [
+    "test_contact_state",
+    "test_resolved_direction_preflight_integration",
+    "test_stage2_chatgpt_handoff",
+    "test_issue81_verify_cache_contract",
+    "test_stage2_resolve_fingerprint_scope_regression",
+    "test_stage2_narrative_example_contract",
+    "test_opencode_depth_install",
+    "test_issue74_cli_compat",
+    "test_issue32_eval_request",
+    "test_issue40_r2_verifier",
+    "test_apm_deployment_metadata",
+    "test_codex_native_delegation_contract",
+    "test_contact_targets_gate2_oracle",
+    "test_fixture_support",
+    "test_gate2_evidence",
+    "test_issue39_eval_request",
+    "test_issue51_delegation_verifier",
+    "test_issue51_standalone_runtime_recipe",
+    "test_issue53_stage4_runtime_assets",
+    "test_issue65_gate2_r24_regressions",
+    "test_issue66_validator_report_contract",
+    "test_issue67_riso_case_prep",
+    "test_issue67_runtime_config",
+    "test_issue67_runtime_evidence",
+    "test_issue68_eval_request",
+    "test_issue74_static_acceptance",
+    "test_p47_target_isolation",
+    "test_seed_issue39_zotero",
+    "test_stage01_caller_contract",
+    "test_stage1_stage2_contract",
+    "test_stage1_stage2_contract_gate2_oracle",
+    "test_stage2_chatgpt_handoff_review",
+    "test_stage2_reference_id_repair_contract",
+    "test_stage2_zotero_endpoint_contract",
+    "test_stage3_stage4_caller_contract",
+    "test_stage4_selection_agent_contract",
+    "test_stage5_template_body",
+    "test_verify_issue39_endpoint_runtime"
+   ]
+  },
+  {
+   "name": "shard2",
+   "seconds": 104.0,
+   "modules": [
+    "test_contact_evidence_ladder",
+    "test_stage2_style_validation_handoff",
+    "test_stage3_direction_identity",
+    "test_issue61_direction_credibility_warning",
+    "test_stage2_zotero_rpc_transport",
+    "test_issue32_e2e_verifier",
+    "test_stage5_fixture_isolation",
+    "test_stage2_resolved_direction_acceptance_boundary",
+    "test_stage2_chatgpt_handoff_review3",
+    "test_issue57_runtime_assets",
+    "test_stage2_resolved_direction_merge_fulltext_regression",
+    "test_stage1_candidates",
+    "test_prepare_issue40_runtime_fixture"
+   ]
+  },
+  {
+   "name": "shard3",
+   "seconds": 104.0,
+   "modules": [
+    "test_stage3_validation_refine",
+    "test_stage2_resolved_direction",
+    "test_stage2_preflight",
+    "test_stage5_immutable",
+    "test_build_issue29_stage2_fixture",
+    "test_issue67_gate2_r3",
+    "test_stage2_resolved_direction_fresh_review_regressions",
+    "test_stage2_resolved_direction_regressions",
+    "test_stage3_direction_identity_contract",
+    "test_issue55_stage3_runtime_assets",
+    "test_stage2_chatgpt_handoff_review5",
+    "test_contact_targets",
+    "test_build_issue32_e2e_fixture",
+    "test_issue57_routing_stability"
+   ]
+  },
+  {
+   "name": "shard4",
+   "seconds": 104.0,
+   "modules": [
+    "test_issue66_validation_handoff",
+    "test_stage3_direction_groups",
+    "test_stage2_resolved_direction_downstream_regressions",
+    "test_issue66_stage3_local_state",
+    "test_stage2_facts_sidecar",
+    "test_stage2_preflight_malformed",
+    "test_issue66_r12_validation_input_sha",
+    "test_stage2_preflight_binding",
+    "test_stage2_input_router",
+    "test_stage2_chatgpt_handoff_review4",
+    "test_stage5_dualtarget_contract",
+    "test_prepare_issue39_stage2_fixture",
+    "test_stage1_handoff_identity"
+   ]
+  }
+ ]
+}

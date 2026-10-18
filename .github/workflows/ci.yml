@@ -6,12 +6,34 @@ on:
   pull_request:
 
 jobs:
-  test:
+  shards:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [shard1, shard2, shard3, shard4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Run professor-contact regression suite
-        run: python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_*.py' -v
+      - name: Verify every test module belongs to exactly one shard
+        run: python scripts/check_test_shards.py
+      - name: Run professor-contact regression suite (${{ matrix.shard }})
+        run: |
+          cd .apm/skills/professor-contact/tests
+          python -m unittest $(python "$GITHUB_WORKSPACE/scripts/check_test_shards.py" --print "${{ matrix.shard }}") -v
+
+  # Single required check: branch protection asks for "test", and a matrix job
+  # alone would only produce "shards (shardN)" checks.
+  test:
+    needs: [shards]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every shard to succeed
+        run: |
+          if [ "${{ needs.shards.result }}" != "success" ]; then
+            echo "shard result: ${{ needs.shards.result }}"
+            exit 1
+          fi
