@@ -1,6 +1,6 @@
 # 测试分组与 CI 分片 测试执行记录（2026-10-19）
 
-- 测试计划：[test-plan.md](test-plan.md)，第 2 版。
+- 测试计划：[test-plan.md](test-plan.md)，第 3 版。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 2 版（`Plan conclusion: APPROVED`）。
 - 对照基准：`6e624e0`（`origin/main`）。
 - 被测提交：`fd3ea8d`（实现提交；其后如仅改文档，产品与测试字节不变）。
@@ -14,7 +14,7 @@
 | T2 | 通过 | 四片各自 `OK`（其中一片 `OK (skipped=1)`）；四片 `Ran` 之和 = **1025**，与 `countTestCases()` 的 1025 一致；无重复执行 |
 | T3 | 通过 | 工作流含 `fail-fast: false`、`matrix.shard: [shard1..shard4]`、每片先 `python scripts/check_test_shards.py` 再从 `tests/` 跑本片；聚合任务 `needs: [shards]`、`if: always()`、`needs.shards.result != "success"` 即失败 |
 | T4 | 通过 | 四片命令都在本地独立跑通，互不依赖；墙钟 shard1 121s、shard2 129s、shard3 122s、shard4 124s |
-| T5 | 待补 | 推送到 PR 后引用 CI 运行编号、所跑 head 与各检查状态（4 个 `shards (shardN)` + 聚合 `test`），不作为本批业务必测项 |
+| T5 | 通过 | PR #103 的 CI（运行 `39168161446`）：`shards (shard1)` pass 1m27s、`shards (shard2)` pass 2m5s、`shards (shard3)` pass 2m12s、`shards (shard4)` pass 1m27s、聚合 `test` pass 4s。分片在 ubuntu／Python 3.12 下并行生效，聚合任务提供了名为 `test` 的检查；按测试计划这不属本批业务必测项，只作既有检查结果引用 |
 
 ## 执行方法与命令
 
@@ -52,7 +52,8 @@
 
 ## 结论与交接
 
-- T1–T4 对被测提交取得有效通过结果；T5（既有仓库检查）待 PR 打开后补运行来源。
+- T1–T4 对被测提交取得有效通过结果；T5 的 CI 运行来源已补（见上表）。
 - 本记录之后如只改文档，未改工作流、脚本与测试代码时，上述逐项结果继续有效并沿用。
 - 依赖顺序：本批从 `main` 拉出，与批次二/三、边界一至四的在途 PR 无依赖关系，可独立合并。
+- CI 实测（ubuntu／3.12）：四片作业 1m27s–2m12s（含 checkout 与 setup-python），聚合任务 4s；首次跑完的实测已记入本表，`shards.json` 的模块耗时仍按本地测量，待下次调整分片时一并更新。
 - 下一负责人：测试计划审核（第一、二关口）、第三关口与合并审核；本记录不代替任何关口结论。

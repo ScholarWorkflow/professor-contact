@@ -5,7 +5,7 @@
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 2 版（`Plan conclusion: APPROVED`）。
 - 需求来源：负责人 2026-10-18“其余边界”中的“测试分组／CI：可以另评估快审，但不能只按 test_stageN 文件名筛选”。
 - 对照基准与目标修订：`6e624e0`（`origin/main`）；本批工作分支 `refactor-test-grouping`。
-- Test plan revision: 第 2 版。
+- Test plan revision: 第 3 版。
 - 测试范围依据：`Test Engineer Rule.md`；提交前按共用清单 `plan/test-plan-checklist.md` 自检（该清单随 PR #98 引入，本分支从 `main` 拉出、不把它当作已存在的文件；自检小节已逐条写明）。
 - Proposed review status: pending。
 
@@ -114,7 +114,8 @@
 
 - 第 1 版：首次提交测试计划审核。
 - 第 2 版：按第一关口的 B1 把 T1 从“只比退出码”改为**逐例断言对应错误子串**（`not covered by any shard`／`listed in both`／`no such test module`），并补第四个注入“某片模块列表置空”（`lists no modules`）；片段加 `try/finally` 保证断言失败也会恢复清单；正确清单那次同时断言 stdout 的 `OK: 78 test modules across 4 shards`。
+- 第 3 版：把三处仍写“三种坏清单”的摘要改为“四种”，与 T1 行、注入片段和实测结果一致；T5 补上 PR #103 的 CI 运行编号与各检查状态。
 
 ## 审核状态
 
-测试计划第 2 版为当前唯一版本。第 1 版第二关口 PASS、第一关口有 1 项 blocker（B1），已按上节修正。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 3 版为当前唯一版本。第 1 版第二关口 PASS、第一关口有 1 项 blocker（B1），第 2 版修正后第一、二关口 PASS；第 3 版只改摘要口径与补 T5 的 CI 来源。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
