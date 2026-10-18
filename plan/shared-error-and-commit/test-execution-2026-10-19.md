@@ -30,10 +30,12 @@
 2. T1–T3：同一驱动脚本分别以基准 runner 与工作树 runner 为参数运行，各产出一份规范化 JSON：
 
    ```sh
-   uv run --no-project "$RUN/contract_probe.py" "$RUN/base_contact_state.py" "$RUN/base-work2" > "$RUN/base2.json"
-   uv run --no-project "$RUN/contract_probe.py" .apm/skills/professor-contact/scripts/contact_state.py "$RUN/head-work2" > "$RUN/head2.json"
-   diff -u "$RUN/base2.json" "$RUN/head2.json"
+   uv run --no-project "$RUN/contract_probe.py" "$RUN/base_contact_state.py" "$RUN/base-work4" > "$RUN/base4.json"
+   uv run --no-project "$RUN/contract_probe.py" .apm/skills/professor-contact/scripts/contact_state.py "$RUN/head-work4" > "$RUN/head4.json"
+   diff -u "$RUN/base4.json" "$RUN/head4.json"
    ```
+
+   **最终证据是 `base4.json`／`head4.json`（各 12 个键，含 `business_soft_exit` 与 `atomic_json_many_success`），上面 T1–T3 三行都以它为准。** 更早的 `base2.json`／`head2.json`（10 个键，驱动扩展前）只作历史尝试保留，不作为结论依据。
 
    驱动脚本用 `contextlib.redirect_stdout` 捕获输出、`try/except SystemExit` 记录退出码；业务通道用 `with runner.professor_business_channel()` 包裹；事务失败通过临时替换 `os.replace`（只在第二次调用时抛 `OSError`）制造，并在 `finally` 恢复；所有路径都相对各自工作目录输出。
 
@@ -53,6 +55,7 @@
 - 首次运行基准侧失败：基准 runner 的 `_stage3_render.py` 没有一并放到 `/tmp`，驱动脚本在导入期报 `FileNotFoundError`。补上该相邻模块后重跑通过；属准备步骤缺项，不是产品问题。
 - `atomic_json_many` 的中途失败最初用“第二个目标父路径是普通文件”制造，失败发生在暂存阶段（`replace` 调用 0 次），没有覆盖安装期回滚。改为“第二次 `os.replace` 抛错”后，两个事务函数都覆盖到“首个文件已建立备份／已安装后失败并回滚”的路径；测试计划第 2 版已把注入方式与判据改写成与该执行一致。
 - 一次驱动脚本改动（补通道内 `soft_exit` 与 `atomic_json_many` 成功用例）曾把成功用例插在 `handle` 定义之前，两次运行都以 `NameError` 退出；修正位置后重跑，两侧仍逐字段相同。该失败尝试保留在 `/tmp/pc-bnd1-*/base3.json`、`head3.json` 与对应 `.err` 中。
+- 更早两次失败尝试只有文字描述（首次因基准缺 `_stage3_render.py` 导入失败；第二次用“父路径是普通文件”注入、只走到暂存期），其原始 JSON 未单独归档；第三次（`NameError`）留有产物。按 `Test Engineer Rule.md` 第 6 节，属已有记录与路径范畴，不重跑。
 - T4 的命令最初只跑四个文件，未包含承载 issue67 故障注入与 `stage4-migrate-local` 的运行时类；测试计划第 2 版把命令与检查入口对齐后重跑，95 个用例通过。
 
 ## 兼容性门禁
