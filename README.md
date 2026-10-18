@@ -48,9 +48,9 @@ nix build "$CONTACT_REF#professor-contact-environment" --out-link "$RUN/environm
 
 #### direnv / devShell 自动激活
 
-此入口正在等待 [agent-env-nix #4](https://github.com/RekiDunois/agent-env-nix/pull/4) 合并。当前保留已发布的 `agent-env-nix` pin；它尚不导出 `lib.mkCachedActivation`，因此求值/构建 `professor-contact-activate` 会明确报等待错误，不应把本 PR 当成已可消费版本。上游合并后再固定包含该接口的真实合并后提交并更新对应 lock；不临时锁定未合并分支。现有 environment/runtime/package 输出不受此等待影响。
+共享依赖 [agent-env-nix #4](https://github.com/RekiDunois/agent-env-nix/pull/4) 已合并，本仓库固定到真实合并提交 `91861b4f028eda1dbeb41481dcc48cd7c4a60874`。入口直接调用 `lib.mkCachedActivation { inherit pkgs; environment = products.project; name = "professor-contact-activate"; }`，本仓库不再维护重复包装脚本与行为测试。
 
-接线直接调用上游 `lib.mkCachedActivation { pkgs; environment = products.project; name = "professor-contact-activate"; }`；本仓库不再维护重复的包装脚本与行为测试。完成上述 pin 后，已有 direnv 的消费者可以把下面的 `flake.nix` 放在自己的项目根目录，`.envrc` 使用 `use flake`。消费者只调用固定 store 入口，不需要复制脚本。示例中的 contact main 也须已包含本功能。
+已有 direnv 的消费者可以把下面的 `flake.nix` 放在自己的项目根目录，`.envrc` 使用 `use flake`。消费者只调用固定 store 入口，不需要复制脚本。示例中的 contact main 须已包含本功能；本 PR 合并前应将 input 指向本 PR 的实际完整提交 SHA。新共享接线的验证边界见下方测试计划，不把旧产品的 Darwin 结果作为本次实测。
 
 ```nix
 {

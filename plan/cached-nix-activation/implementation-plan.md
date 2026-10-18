@@ -1,31 +1,32 @@
-# Cached Nix activation — implementation plan r2
+# Cached Nix activation — implementation plan r3
 
-Status: pending independent review and upstream merge. This revision supersedes r1 for current product work; it does not grant plan approval or merge readiness.
+Status: candidate for independent review. Upstream merge dependency is resolved; formal plan and merge conclusions are not asserted here. Supersedes r2's temporary waiting state.
 
 ## Requirement and baseline
 
-- 2026-10-18: refactor professor-contact #96 to use agent-env-nix #4's shared `mkCachedActivation`. Preparing the dependency as waiting for #4 is explicitly allowed; fill in the merged revision later.
-- Contact baseline: `47a7fe0831418178871d29218e2dc26be9c6119a`, branch `feat/cached-nix-activation`; original product `4d59c0556de113cee554e8879236c9cc378ec826`.
-- Upstream candidate: [agent-env-nix #4](https://github.com/RekiDunois/agent-env-nix/pull/4), inspected head `472fdee073f0b899d4f47737a6471766fbe9f725`, product `c20fd73562e24ef288aa222a9e2e56e961f1894b`. It is unmerged; the current released pin `2158e933aab6c845ae1ceb1228458d624f8777d5` does not export the factory.
+- 2026-10-18: refactor contact #96 to shared `mkCachedActivation`; initially wait for agent-env-nix #4, then complete the real merged pin and wiring when it lands.
+- Contact baseline: `20e044fb52f71d98d894775147242d51c9a07dfe`, branch `feat/cached-nix-activation`. Original local-wrapper product: `4d59c0556de113cee554e8879236c9cc378ec826`.
+- [agent-env-nix #4](https://github.com/RekiDunois/agent-env-nix/pull/4) is actually merged. Merge and main verified as `91861b4f028eda1dbeb41481dcc48cd7c4a60874`; public interface remains `mkCachedActivation { pkgs, environment, name ? "agent-env-activate" }`.
 - Rules: [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d), [Plan Reviewer Rule](https://app.notion.com/p/3e80101a85f3817a94cbc6eca1a76a5c), [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253).
 
-## Ownership, implementation and invariants
+## Implementation and ownership
 
-1. Replace the local import with `agent-env-nix.lib.mkCachedActivation { inherit pkgs; environment = products.project; name = "professor-contact-activate"; }`. Keep `packages.aarch64-darwin.professor-contact-activate`, its executable name, `--project` (default caller directory), `--force`, and the existing environment output.
-2. Delete `nix/activate.nix`, `nix/activate.sh`, and `nix/test-activate.py`. Shared factory/runtime/tests own successful-cache identity, CDPATH-safe physical paths, failure invalidation, locking and atomic publication. Contact owns only the environment and named export; do not copy shared behavior or tests back here.
-3. Preserve the current released input pin and lock. While its lib lacks the factory, the new output throws an explicit pending-upstream diagnostic. Nix's lazy attribute evaluation leaves existing package/runtime/environment outputs unchanged; broad evaluation that forces the new output is blocked. No placeholder SHA, unmerged-branch pin, vendored fallback or temporary lock churn.
-4. Use the shared `.agent-env-applied` and `.agent-env-apply.lock`. Do not migrate the old marker as success: first shared activation reapplies. Old and new commands must not run concurrently. Multiple roots must be composed into one `mkProject` environment before wrapping; independently activated environments replace each other.
-5. Update README for pending consumption, shared ownership, marker/lock migration, direct apply/remove and manual-edit cache boundaries. Keep APM, business behavior, platform support and all existing dependencies unchanged in this candidate. Do not modify upstream #4 or Study.
+1. Pin `agent-env-nix` to the actual merge above in `flake.nix` and only the top-level `agent-env-nix` node of `flake.lock`. Preserve all other nodes, follows edges and owner-controlled nested agent-env pins. The merged upstream input graph is unchanged.
+2. Remove the lazy pending throw. Call `agent-env-nix.lib.mkCachedActivation { inherit pkgs; environment = products.project; name = "professor-contact-activate"; }` directly. Preserve the exported package/executable, `--project`, `--force`, and old environment/runtime/package bindings.
+3. Continue the r2 deletion of local `nix/activate.nix`, `nix/activate.sh`, `nix/test-activate.py`. The shared owner supplies cache semantics, physical path/CDPATH safety, failure invalidation, lock and atomic marker publication. Contact only supplies its environment and command name.
+4. Preserve shared `.agent-env-applied` / `.agent-env-apply.lock` and documented migration: old contact marker cannot certify shared success; first shared activation reapplies; old/new commands must not run concurrently. Multiple roots must be composed into one environment before wrapping.
+5. Update README and plans to resolved upstream state, without claiming actual new Darwin execution. Do not modify APM/business sources, other products, shared repository, Study, platform support or CI.
 
-## Alternatives and risk
+## Metadata and risk
 
-Keeping the local wrapper would retain duplicated ownership; pinning #4's branch would make an unmerged candidate look like a released dependency and create avoidable lock churn. Deferring all code would leave the requested refactor unprepared. The explicit lazy failure is the smallest candidate wiring: intentionally unavailable new output, no behavior fallback and no claim of build success. The factory interface can still change before merge, so its final name/arguments/semantics must be rechecked.
+The merged Git tree `06f46141427da736ff366a86082b50c9d3d77996` was verified against the exact local Git index tree and archived without checkout artifacts. Nix recursive hash of that archive is `sha256-/VgkCnSU4Giw+7P68NMgMnYQ+SHJY45Q8YYxETKqA+w=`; merge committer time supplies `lastModified = 1792341743`. This is actual merged-source metadata, not a branch pin or guessed hash. A direct Nix GitHub prefetch returned HTTP 404; no credentials or access settings were changed.
 
-The common marker is not an installation integrity scan. Manual changes and direct `agent-env apply/remove` require forced guarded reapplication before trusting the cache again. Existing installer configuration protection still applies, including under `--force`.
+A direct contact drvPath evaluation reached the shared factory but was blocked by the existing pdf-processing-core input not being available in the cloud cache. This is not a full evaluation pass. The old input pin blocked activation by design; that specific blocker is now removed, while new integration remains unproven.
 
-## Completion and handoff
+The common marker is not an integrity scan. Manual changes and direct `agent-env apply/remove` require forced guarded reapplication; installer protection still applies. Updating the shared source pin can change derivation identities even with unchanged installer code; old Darwin store paths must not be presented as new-output evidence.
 
-- Now: independent candidate review, necessary static wiring/parse checks only, then normal expected-head publication to the same draft PR; no merge or formal approval asserted.
-- Waiting: #4 must actually merge. Verify its merged commit and public factory interface; update contact's input to a real merged revision containing the interface, refresh only the affected lock graph, and review that diff. Do not use the current candidate SHA as a fictional future merge SHA.
-- Then: reassess only affected integration evidence under [test plan t2](test-plan.md). No automatic Mac activation, broad rerun, business execution, or CI expansion is authorized by this document.
-- Historical r1 and original results remain available at [baseline plans](https://github.com/ScholarWorkflow/professor-contact/tree/47a7fe0831418178871d29218e2dc26be9c6119a/plan/cached-nix-activation); retain the original execution record unchanged.
+## Handoff
+
+Independent review covers the exact five-file pin/wiring/docs diff, including the narrow lock change and unchanged factory API. After review publish normally to the same draft PR using the expected head; do not merge. [Test plan t3](test-plan.md) distinguishes current static/source checks, blocked evaluation and historical reuse. No automatic Mac activation, business rerun or additional test machinery.
+
+Historical [r2/t2](https://github.com/ScholarWorkflow/professor-contact/tree/20e044fb52f71d98d894775147242d51c9a07dfe/plan/cached-nix-activation) and the original execution record remain available; do not overwrite their product-specific results.
