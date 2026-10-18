@@ -1,6 +1,6 @@
 # 边界一：共享错误通道与原子写／事务搬移 测试执行记录（2026-10-19）
 
-- 测试计划：[test-plan.md](test-plan.md)，第 1 版。
+- 测试计划：[test-plan.md](test-plan.md)，第 2 版。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 2 版（`Plan conclusion: APPROVED`，P1–P4 全 PASS）。
 - 对照基准：`b3972a2cdf5cd60a5bc6dea006c10cfb6516a3d6`（本批从它拉出）。
 - 被测提交：`98f429c4dd41c89d1fdfcd14024cf8313c37d7bd`；执行时 `git status --porcelain` 为空。
@@ -12,9 +12,9 @@
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
 | T1 | 通过 | 基准与改动后的 runner 各跑一次驱动脚本，`diff -u` 无输出（`T1-T3 IDENTICAL`）；`emit` 文本、`fail` 的 stdout JSON 与退出码 1、`soft_exit` 的 stdout JSON 与退出码 2 逐字段相同 |
-| T2 | 通过 | 同一对比：业务通道内 `fail` 不打印、不退出，异常类型名、`payload`、`args` 相同，`type(exc) is runner.ProfessorBusinessFailure` 为真；退出通道后 `fail` 回到“打印 + 退出 1” |
-| T3 | 通过 | 同一对比：`atomic_write`／`atomic_json` 的文件字节与无临时残留相同；`atomic_json_many` 与 `staged_pair_commit` 在注入的第二次 `os.replace` 失败后，文件恢复旧字节、无 `.name.*` 残留、`replace` 调用次数与异常类型相同 |
-| T4 | 通过 | `Ran 56 tests in 51.848s`，`OK`，退出码 0 |
+| T2 | 通过 | 同一对比：业务通道内 `fail` 与 `soft_exit` 都不打印、不退出，异常类型名、`payload`、`args` 相同，`type(exc) is runner.ProfessorBusinessFailure` 为真；退出通道后 `fail` 回到“打印 + 退出 1” |
+| T3 | 通过 | 同一对比：`atomic_write`／`atomic_json` 的文件字节与无临时残留相同；`atomic_json_many` 成功写入两个文件；`atomic_json_many` 与 `staged_pair_commit` 在**安装期**注入的第二次 `os.replace` 失败后，已安装文件恢复旧字节、未安装文件保持原样、无残留、`replace` 调用次数（各 3 次）与异常类型（`OSError`）相同 |
+| T4 | 通过 | `Ran 95 tests in 122.572s`，`OK`，退出码 0（按测试计划第 2 版修订后的命令，含 issue67 故障注入与 `stage4-migrate-local` 运行时类） |
 | T5 | 通过 | 仓库 CI 在 PR 提交上跑全量 `unittest discover`，检查项 `test` 通过（见 PR 检查项） |
 
 ## 执行方法与命令
@@ -42,7 +42,8 @@
    ```sh
    cd .apm/skills/professor-contact/tests
    python3 -m unittest test_stage4_selection_agent_contract test_stage3_stage4_caller_contract \
-     test_issue66_stage3_local_state test_issue67_gate2_r3 -v
+     test_issue66_stage3_local_state test_issue67_gate2_r3 test_stage3_direction_groups \
+     test_contact_state.Issue67ProfessorLocalStage4Tests test_contact_state.Issue67AdjacentStateTests -v
    ```
 
 4. 搬移核对：`git show` 取基准修订的 209-377 与 400-406 行，与新模块正文 `diff -u` 无输出（178 行逐字一致）。
@@ -50,7 +51,9 @@
 ## 执行中修正的两处测试资产问题（保留记录）
 
 - 首次运行基准侧失败：基准 runner 的 `_stage3_render.py` 没有一并放到 `/tmp`，驱动脚本在导入期报 `FileNotFoundError`。补上该相邻模块后重跑通过；属准备步骤缺项，不是产品问题。
-- `atomic_json_many` 的中途失败最初用“第二个目标父路径是普通文件”制造，失败发生在暂存阶段（`replace` 调用 0 次），没有覆盖安装期回滚。改为“第二次 `os.replace` 抛错”后，两个事务函数都覆盖到“已安装一项后失败并回滚”的路径。
+- `atomic_json_many` 的中途失败最初用“第二个目标父路径是普通文件”制造，失败发生在暂存阶段（`replace` 调用 0 次），没有覆盖安装期回滚。改为“第二次 `os.replace` 抛错”后，两个事务函数都覆盖到“首个文件已建立备份／已安装后失败并回滚”的路径；测试计划第 2 版已把注入方式与判据改写成与该执行一致。
+- 一次驱动脚本改动（补通道内 `soft_exit` 与 `atomic_json_many` 成功用例）曾把成功用例插在 `handle` 定义之前，两次运行都以 `NameError` 退出；修正位置后重跑，两侧仍逐字段相同。该失败尝试保留在 `/tmp/pc-bnd1-*/base3.json`、`head3.json` 与对应 `.err` 中。
+- T4 的命令最初只跑四个文件，未包含承载 issue67 故障注入与 `stage4-migrate-local` 的运行时类；测试计划第 2 版把命令与检查入口对齐后重跑，95 个用例通过。
 
 ## 兼容性门禁
 
