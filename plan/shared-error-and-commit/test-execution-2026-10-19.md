@@ -42,7 +42,7 @@
 
 
 
-   **最终证据是注入修正后重跑的 `base5.json`／`head5.json`（`atomic_json_many` 在第四次 `os.replace` 注入，`replace_calls: 6`），T1–T3 三行以它为准；同一命令的换名重跑即上块（首次产出的 `base.json`／`head.json`），`base4.json`／`head4.json` 是第二次注入版本的历史尝试（`replace_calls: 3`）。** 更早的 `base2.json`／`head2.json`（10 个键，驱动扩展前）只作历史尝试保留，不作为结论依据。
+   **最终证据是注入修正后重跑的 `base5.json`／`head5.json`（`atomic_json_many` 在第四次 `os.replace` 注入，`replace_calls: 6`），T1–T3 三行以它为准；上块即该命令的输出名写法；`base.json`／`head.json` 是驱动扩展前的首次对照（10 个键），结论以 `base5`／`head5` 为准，`base4.json`／`head4.json` 是第二次注入版本的历史尝试（`replace_calls: 3`）。** 更早的 `base2.json`／`head2.json`（10 个键，驱动扩展前）只作历史尝试保留，不作为结论依据。
 
    驱动脚本用 `contextlib.redirect_stdout` 捕获输出、`try/except SystemExit` 记录退出码；业务通道用 `with runner.professor_business_channel()` 包裹；事务失败通过临时替换 `os.replace` 制造（`atomic_json_many` 注入第四次、`staged_pair_commit` 注入第二次），并在 `finally` 恢复；所有路径都相对各自工作目录输出。
 
