@@ -6,7 +6,7 @@
 - 需求来源：负责人 2026-10-18 授权的“其余边界”中“Stage3 提交与校验交接”的校验交接部分；原文见执行计划。
 - 对照基准：`779fb692ed5ded163ab0eb5b415aef698135f54e`。
 - Target repository revision: 工作分支 `refactor/stage3-handoff` 实施后的提交。
-- Test plan revision: 第 3 版。
+- Test plan revision: 第 4 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限。
 - Proposed review status: pending。
 
@@ -18,7 +18,7 @@
 | T2 | 严格 JSON 对象解析不变 | 合法对象、重复键对象、含 `NaN`/`Infinity` 的文本、数组、坏 UTF-8 字节 | 合法输入解析结果相同；重复键与 `NaN`/`Infinity` 抛 `ValueError`；数组两侧同样返回列表（“必须是非对象”的拒绝发生在下游归一化，由 T5 的真实写校验路径覆盖）；坏字节抛相同异常 | 同 T1 |
 | T3 | invocation 参数映射不变 | 给定 invocation 字典与调用参数：含来源参数、含被忽略参数、缺来源字段 | 返回对象的字段名与取值逐项相同；只覆盖 invocation 记录的来源参数 | 同 T1 |
 | T4 | 作用域解析、路径归一化与轮次守卫不变 | ① `stage3_render_line_scopes` 对五份代表性渲染文本（direction/group 标记、标题后四行内/外、无标记、**同一标记重复出现**）；② `_stage3_normalized_absolute_path` 对合法、相对、空、非字符串四类输入；③ `_require_stage3_handoff_round` 对 7 组状态（round 1 未记录/已记录、round 2 无前轮/耗尽/有待修正/渲染变化/正常） | ① 五份文档返回的作用域列表逐项相同（内容与顺序）；② 非法路径给出相同的错误 JSON 与退出码，合法路径返回相同的绝对路径字符串；③ 6 个失败原因码与正常路径判定全部相同 | 同 T1；失败调用捕获 `SystemExit` 与 stdout。`_stage3_validation_files`／`_stage3_complete_write_result`／`_stage3_issue_scopes` 的归一化不在驱动里单独构造，由 T5 的真实交接流程覆盖 |
-| T5 | 既有 Stage 3 校验交接路径不受影响 | 真实 CLI 流程：`stage3-prepare-validation` → 写入校验结果 → `stage3-save-validation` → `stage3-record-validation`；以及 scope 归属、修正轮与批量写入失败清理 | 全部通过 | 引用既有用例：`test_stage3_validation_refine`（18）、`test_issue66_validation_handoff`（12）、`test_stage3_direction_groups`（19）、`test_issue66_stage3_local_state`（6）。前三个共 49 项直接落在被移动原语及其路径上；第四个 6 项属相邻的本地提交/回滚面（本批非目标），因共用夹具且覆盖 record 路径写入的状态而保留，可按验收决定人要求裁掉 |
+| T5 | 既有 Stage 3 校验交接路径不受影响（只选以本批原语为主要目的的入口） | 真实 CLI 流程：`stage3-prepare-validation` → 写入校验结果 → `stage3-save-validation` → `stage3-record-validation`；以及作用域归属、严格 JSON 拒绝、轮次守卫 | 全部通过 | ① `test_issue66_validation_handoff`（整模块 12 项：该文件每个用例都驱动被移动的交接原语——写缓冲、严格 JSON、参数映射、作用域与轮次）；② `test_stage3_validation_refine.Stage3ValidationIngestTests` 的 6 个方法：`test_issue_in_second_direction_repairs_only_that_scope`、`test_cross_direction_issue_routes_to_the_exact_group_id`、`test_raw_validator_handoff_fail_closed`、`test_correction_cannot_skip_or_add_scopes`、`test_second_validator_round_requires_completed_correction`、`test_round_and_terminal_result_are_derived_not_supplied` |
 
 **既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的全量 `unittest discover` 由仓库工作流照常执行，其结果单独引用，不作为本批业务必测项，也不因本批而扩张或缩减；合并要求继续按仓库规则执行。
 
@@ -50,14 +50,20 @@
    diff -u "$RUN/base.json" "$RUN/head.json" && echo "T1-T4 IDENTICAL"
    ```
    预期：两条驱动命令都退出 0（否则 `set -e` 立即中止），`diff` 无输出并打印 `T1-T4 IDENTICAL`。
-3. T5：既有 Stage 3 校验交接用例。
+3. T5：只跑清单列出的入口——`test_issue66_validation_handoff` 整模块（12 项，全部驱动被移动的交接原语）与 `test_stage3_validation_refine` 的 6 个方法。
    ```sh
    set -e
    cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-handoff/.apm/skills/professor-contact/tests
-   python3 -m unittest test_stage3_validation_refine test_issue66_validation_handoff \
-     test_issue66_stage3_local_state test_stage3_direction_groups -v
+   python3 -m unittest test_issue66_validation_handoff \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_issue_in_second_direction_repairs_only_that_scope \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_cross_direction_issue_routes_to_the_exact_group_id \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_raw_validator_handoff_fail_closed \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_correction_cannot_skip_or_add_scopes \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_second_validator_round_requires_completed_correction \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_round_and_terminal_result_are_derived_not_supplied \
+     -v
    ```
-   预期：全部 `ok`，无 `FAIL`/`ERROR`。
+   预期：`Ran 18 tests`、全部 `ok`（12 + 6）。此前记录的 55 项运行（四个整模块）是本次命令的超集：`test_stage3_direction_groups` 与 `test_issue66_stage3_local_state` 的用例不以本批原语为主要目的（前者是方向分组与渲染、后者是本地提交与受管文件），不再作为本批通过条件。
 4. 既有仓库检查：推送到 PR 后引用仓库 CI 的全量结果（不属于本批必测项）；CI 未通过时按第 6 步处理。
 5. 记录：保存命令、实际提交 SHA、逐项结果与必要输出片段到 `/tmp` 运行目录，并写入 `test-execution-<日期>.md`。
 6. 失败处理：出现差异按函数定位，判定为产品缺陷交实现负责人修正后重跑受影响编号；既有用例失败区分“本次引入／既有失败／环境问题”；既有跳过项按未执行记录。
@@ -94,9 +100,10 @@
 ## 修订记录
 
 - 第 1 版：首次提交测试计划审核。
+- 第 4 版：按负责人“同一类问题要一次清干净”的要求再收窄 T5——从四个整模块改为 `test_issue66_validation_handoff`（每个用例都以被移动的交接原语为主要目的）+ `test_stage3_validation_refine` 的 6 个方法，并写明被排除模块的理由。
 - 第 3 版：按与批次三/边界一相同的口径整理——仓库 CI 从业务必测清单移出（T6 撤销，改为“既有仓库检查”单独引用）；第 1、2、3 步的命令块启用 `set -e` 并写明“两条驱动命令都须退出 0 才比较”；第 1 步补 `cp` 复制驱动脚本的明确命令与缺失时的处理；新增“自检”小节。必测编号由 T1–T6 收为 T1–T5。
 - 第 2 版：按第一、二关口的非阻断意见修正——T1 的注入描述改成执行版的三分支清理验证；T2 更正“非对象抛 `ValueError`”的说法（数组正常解析，非对象拒绝在下游归一化、由 T5 覆盖）；T4 标题改为“作用域解析、路径归一化与轮次守卫”并注明归一化由 T5 覆盖，驱动补“同一标记重复出现”用例；执行计划版本指针更新为第 3 版。T5 的四个模块保留（前三个共 49 项直接落在被移动原语上，第四个 6 项属相邻面、可按验收决定人要求裁掉）。
 
 ## 审核状态
 
-测试计划第 3 版为当前唯一版本；第 1 版已取得第一、二关口 PASS（无 blocker），第 2 版只落实该轮的非阻断意见；第 3 版按统一自检口径把 CI 移出必测清单、补齐脚本复制步骤并启用 `set -e`（T6 撤销，编号收为 T1–T5）。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 4 版为当前唯一版本；第 1 版已取得第一、二关口 PASS（无 blocker），第 2 版只落实该轮的非阻断意见；第 3 版按统一自检口径把 CI 移出必测清单、补齐脚本复制步骤并启用 `set -e`（T6 撤销，编号收为 T1–T5）；第 4 版把 T5 收窄为 1 个整模块（其全部用例都在范围内）加 6 个方法。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
