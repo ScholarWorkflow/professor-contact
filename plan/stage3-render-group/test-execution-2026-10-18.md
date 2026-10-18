@@ -19,6 +19,8 @@
 
 ## 执行方法与命令
 
+以下命令都在工作树根目录 `/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-render-group` 执行（第 1、2 步里的相对路径依赖该工作目录），第 3、4 步的块自带 `cd`。
+
 1. 准备本轮运行目录（本轮沿用 `/tmp/pc-batch3-IZjWB0`，对比脚本 `compare_stage3_render.py` 已在其中，不需要再复制；换新目录时按测试计划第 1 步 `cp /tmp/pc-batch3-IZjWB0/compare_stage3_render.py "$RUN/compare_stage3_render.py"`），并取出基准修订的 runner：
 
    ```sh

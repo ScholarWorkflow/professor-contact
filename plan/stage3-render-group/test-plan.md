@@ -22,7 +22,7 @@
 
 ## 执行步骤
 
-准备与执行都在工作树 `/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-render-group` 内进行；临时脚本与运行产物放仓库外 `/tmp` 目录（本次用 `mktemp -d /tmp/pc-batch3-XXXXXX`）。
+准备与执行都在工作树 `/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-render-group` 内进行；临时脚本与运行产物放仓库外 `/tmp` 目录（复跑时用 `mktemp -d /tmp/pc-batch3-XXXXXX` 新建；本批执行记录沿用 `/tmp/pc-batch3-IZjWB0/` 并已点名，见执行记录第 1 步）。
 
 1. 准备：确认工作树只有本批改动、Python 可用，取出基准修订的 runner 副本，并把上一轮实际使用的对比脚本复制进本轮目录。
    ```sh
