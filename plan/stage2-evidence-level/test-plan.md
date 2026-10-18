@@ -444,3 +444,26 @@ t35 第三关正式执行记录（2026-10-18，本地执行工程师）：产品
 复验：受影响的既有模块（`test_stage2_evidence_level`、`test_stage2_preflight`、`test_stage2_preflight_binding`、`test_resolved_direction_preflight_integration`、`test_build_issue29_stage2_fixture` 等 69 项）通过；§3 的 17 个选择器完整复跑 `Ran 17 tests`、`OK`（`/tmp/contact-evidence-level.ojprDR8c/recipe.txt`）；全仓 `python3 -m unittest discover -p "test_*.py"` 为 `Ran 1028 tests`、`OK`（`/tmp/contact-evidence-level.UiagMtvI/full-suite-mergefix.txt`）。
 
 第 3 项"索引不存在是否等同不可比较"的边界依据（实测）：把索引不存在也当作不可比较后，`test_resolved_direction_preflight_integration` 与 `test_build_issue29_stage2_fixture` 出现 5 failures + 3 errors——这两组既有测试的教授本来就没有 `_index.json`，其被认可的预期是 `reuse_all`。因此保留划分：**索引存在但不可读或结构错误 → 不可比较 → 原 process**；**索引两侧都不存在 → 可比，载体由 pack 派生路径与已投影记录路径证明**，从而"文件后来出现"仍能被发现，同时不回归既有 index-less 行为。
+
+## 10. r5 §3.4 入口对齐的整合与复验（2026-10-18，本地执行工程师）
+
+执行计划 r5 §3.4 已获[正式批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6248571193)（`contact-evidence-level-r5`，P1—P4 全 PASS），下一负责人为产品实现者。本轮按该节执行：**先把 PR #93 已合并的同目录入口整合进本分支，再只改三个新增调用点**，并按 r4 §4.1 核对已落地的 PR #91。
+
+### 整合
+
+- `git merge origin/main`（当时 main tip `74bd29b`）把已合并的 PR #91（stage-2 三处修复，含 finalize 的 validator 生命周期与 `Stage2PackRefineContext` 规范化 papers 取值）与 PR #93（七个同目录入口、`_stage2_chatgpt_handoff_impl.py`、文档调用转换、nix/flake）并入本分支。冲突只有 3 处，处置如下：
+  1. `SKILL.md` 白话校验段落：保留上游新增的报告位置唯一性规则（`validation_location_ambiguous`、逐处实际行号）**并**保留本 PR 的固定证据卡交源规则，两者不互相替代。
+  2. `contact_state.py` `Stage2PackRefineContext.__init__`：采用上游从 pack 规范 `papers` 映射取值的写法（该记录已带 `analysis_level`），删掉本分支同义的按方向补记循环。
+  3. `contact_state.py` `cmd_stage2_finalize`：保留上游的 validator 生命周期块，并在 `stage2_preflight_metadata(...)` 调用上保留本 PR 的 `papers_map=papers_map` 参数。
+- 合并后 `git diff origin/main..HEAD` 只列本 PR 的 7 个文件；`contact_state.py` 可编译；本 PR 的 U1/U5 符号（`stage2_preflight_assess`、`stage2_local_writer_scope`、`stage2_analysis_projection`、`stage2_projection_recorded_paths`、`stage2_display_text`、`stage2-refresh-display` 等）全部保留。
+
+### §3.4 三个调用点对齐
+
+- codex analyzer Step 2.6、opencode analyzer Step 2.6、SKILL.md 阶段 2 early preflight gate 的刷新入口示例，统一改为 `<professor-contact-skill-dir>/scripts/contact_state stage2-refresh-display --professor-dir <教授目录> --preflight-file <该次 payload>`；参数、事务 payload、成功/错误分支与返回消费一律不变，未加 shell wrapper 或 fallback，未改 runner 实现、业务 schema、lease、managed-write 或两轮限制。已确认三处不再出现 `python3 <…>/scripts/contact_state.py stage2-refresh-display`。
+- 入口契约静态核对：PR #93 的 `scripts/contact_state` 用 `os.execv` 把 argv 原样转交相邻 `contact_state.py`，未改写 stdout/stderr/退出码；直接调用该入口执行 `stage2-refresh-display --help` 正常打印该子命令用法（退出码 0），证明新子命令经固定入口可达。
+
+### 复验（合并与对齐后的当前版本）
+
+- 上游产品改动已进入本分支，故按 Test Engineer Rule 对必测项重新取证：§3 的 17 个选择器完整执行 `/tmp/contact-evidence-level.sn3UGj6n/recipe.txt`，`Ran 17 tests`、`OK`、退出码 0。
+- 全仓 `python3 -m unittest discover -p "test_*.py"`：`Ran 1035 tests`、`OK (skipped=1)`、退出码 0（`/tmp/contact-evidence-level.UiagMtvI/full-suite-merged.txt`；项数较合并前的 1028 增加，是上游 main 带入的新测试模块）。
+- 此前 t35／t36 记录仍按其版本引用；本节是当前版本（合并提交 `3f4d275` 及其后的记录提交）的第三关结果，不代表合并批准。
