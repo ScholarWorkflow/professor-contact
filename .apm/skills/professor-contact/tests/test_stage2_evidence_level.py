@@ -1,7 +1,6 @@
 """Stage-2 fixed-evidence display, failure registration and analysis-level tests.
 
-Covers the test plan `plan/stage2-evidence-level/test-plan.md` (T1—T4) for the
-approved implementation plan r4:
+Covers the unique test plan `plan/stage2-evidence-level/test-plan.md` (T1—T4):
 
 * T1 — human-facing fixed-card slots (evidence / completed_part / remaining_gap)
   and the anchor-banned blacklist render trusted titles and Zotero links while
@@ -17,11 +16,17 @@ approved implementation plan r4:
 Every fixture is synthetic and professor-local; no real user directory, model,
 PDF or network call is involved.
 """
+import contextlib
 import copy
 import hashlib
+import io
 import json
+import unittest
+from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
+import test_stage2_resolved_direction as resolved_pipeline_tests
 from test_contact_state import (
     BaseEnv,
     contact_state,
@@ -47,6 +52,13 @@ REPAIRABLE_QUOTE = "起研究合成输入比较"
 # link, so the T2/T3 report quotes must not contain the key itself.
 FIXED_EVIDENCE_QUOTE = "无更晚论文实现该点"
 COMPLETED_PART_QUOTE = "只做了第一组"
+# Structured signals the product may report when the current business year no
+# longer matches the year one preflight was decided for. The year is part of the
+# cheap preflight inputs, so the existing generic drift code is accepted next to
+# the formal reason code and any dedicated year code; the human-readable message
+# is never matched.
+YEAR_MISMATCH_SIGNALS = ("params_changed", "preflight_inputs_changed",
+                         "current_year_changed", "year_changed")
 
 
 def managed_body(rendered: str) -> str:
@@ -85,16 +97,19 @@ class EvidenceLevelEnv(BaseEnv):
 
         return super().write_facts(add_level)
 
-    def render_fixture(self, facts, snapshot=None):
+    def render_fixture(self, facts, snapshot=None, evidence=FIXED_EVIDENCE):
         """One accepted pack whose fixed cards carry machine item keys.
 
         ``snapshot`` is an optional dict (or factory) filled with the machine
         state captured BEFORE the render, so a test can prove the display step
-        did not rewrite facts, translation, quotes or the user note.
+        did not rewrite facts, translation, quotes or the user note. ``evidence``
+        is the machine evidence text of the fixed card under test: the default
+        keeps the shared constant, and one call may pass a mixed key/link/number
+        input without changing the constant T2/T3 quote from.
         """
         results = self.root / "results"
         self.write_stage2_results(results, gap_overrides={
-            "AAAA1111": {"status": "partial", "evidence": FIXED_EVIDENCE,
+            "AAAA1111": {"status": "partial", "evidence": evidence,
                          "completed_part": COMPLETED_PART,
                          "remaining_gap": REMAINING_GAP,
                          "candidate_paper_ids": list(FIXED_CANDIDATES)},
@@ -106,13 +121,13 @@ class EvidenceLevelEnv(BaseEnv):
         statuses = json.loads((results / "freshness-DIR00001.json").read_text(
             encoding="utf-8"))["results"]
         gap_id = next(row["gap_id"] for row in statuses
-                      if row.get("evidence") == FIXED_EVIDENCE)
+                      if row.get("evidence") == evidence)
         candidate_row = next(row for row in statuses
                              if row["gap_id"] == gap_id)
         self.assertEqual(candidate_row["candidate_paper_ids"],
                          list(FIXED_CANDIDATES),
                          "the pre-render fixture really carries candidate references")
-        self.assertEqual(candidate_row["evidence"], FIXED_EVIDENCE,
+        self.assertEqual(candidate_row["evidence"], evidence,
                          "the pre-render fixture really carries the fixed evidence text")
         self.assertEqual(candidate_row["completed_part"], COMPLETED_PART)
         self.assertEqual(candidate_row["remaining_gap"], REMAINING_GAP)
@@ -222,8 +237,15 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
     def test_fixed_evidence_renders_trusted_references_without_touching_machine_fields(self):
         facts = self.write_facts()
         narrative_prose = "研究计划比较另一种合成场景"
+        # One representative mixed input: a bare key, an ALREADY correct link
+        # and two ordinary eight-digit numbers in the same machine evidence.
+        title = next(paper["title"] for paper in self.papers
+                     if paper["item_key"] == "AAAA1111")
+        link_text = f"[{title}](zotero://select/library/items/AAAA1111)"
+        mixed_evidence = ("无更晚论文实现该点（AAAA1111）；已有引用：" + link_text
+                          + "；日期 20261018；样本数 12345678")
         baseline = {}
-        self.render_fixture(facts, snapshot=baseline)
+        self.render_fixture(facts, snapshot=baseline, evidence=mixed_evidence)
         analysis = self.analysis_text()
 
         titles = {paper["item_key"]: paper["title"] for paper in self.papers}
@@ -239,6 +261,21 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
             visible = line.replace(link, "")
             self.assertNotIn("AAAA1111", visible, slot)
             self.assertNotIn("CCCC3333", visible, slot)
+
+        # The mixed evidence line converts exactly the bare key: the correct
+        # link that was already there survives unchanged, and the two ordinary
+        # eight-digit numbers stay ordinary text instead of becoming citations.
+        evidence_line = next(line for line in analysis.splitlines()
+                             if line.startswith("- 后续论文依据："))
+        self.assertEqual(evidence_line.count(link_text), 2, evidence_line)
+        self.assertEqual(evidence_line.count(link), 2, evidence_line)
+        self.assertIn("20261018", evidence_line)
+        self.assertIn("12345678", evidence_line)
+        remainder = evidence_line.replace(link_text, "")
+        self.assertNotIn("AAAA1111", remainder)
+        self.assertNotIn("zotero://", remainder)
+        for fragment in ("[", "]", "(", ")"):
+            self.assertNotIn(fragment, remainder, (fragment, remainder))
 
         blacklist = self.direction()["completed_gap_blacklist"]
         self.assertEqual(len(blacklist), 1, blacklist)
@@ -300,11 +337,40 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
             "AAAA1111": {"status": "partial", "evidence": FIXED_EVIDENCE,
                          "completed_part": COMPLETED_PART,
                          "remaining_gap": REMAINING_GAP}})
+        # Only the fixed card may still name the untitled AAAA1111: the narrative
+        # reference moves to the paper that keeps a trusted title, with its refs
+        # kept consistent, so a failure here proves the fixed-slot protection
+        # instead of an unrelated narrative reference.
+        narrative_path = results / "narrative.json"
+        narrative = json.loads(narrative_path.read_text(encoding="utf-8"))
+        for block in narrative["directions"][0]["positioning"]:
+            block["text"] = block["text"].replace("{{P:AAAA1111}}", "{{P:BBBB2222}}")
+            block["refs"] = [ref.replace("paper:AAAA1111", "paper:BBBB2222")
+                             for ref in block["refs"]]
+        narrative_path.write_text(json.dumps(narrative, ensure_ascii=False),
+                                  encoding="utf-8")
+        # Preconditions of the scenario, read from the very inputs that run:
+        # AAAA1111 has no trusted title anywhere, BBBB2222 has one and is the
+        # paper the narrative cites, and this fresh professor directory has no
+        # accepted pack or persisted display reference that could backfill it.
+        recorded = {paper["item_key"]: paper.get("title") for paper in json.loads(
+            facts.read_text(encoding="utf-8"))["papers"]}
+        self.assertIsNone(recorded["AAAA1111"])
+        self.assertEqual(recorded["BBBB2222"], next(
+            paper["title"] for paper in self.papers
+            if paper["item_key"] == "BBBB2222"))
+        block = narrative["directions"][0]["positioning"][0]
+        self.assertIn("{{P:BBBB2222}}", block["text"])
+        self.assertIn("paper:BBBB2222", block["refs"])
+        self.assertNotIn("paper:AAAA1111", block["refs"])
+        self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
         plan = parse(run_bound_stage2_plan(run_cli, facts))
         self.assertEqual(plan["status"], "ok", plan)
         finalized = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
         self.assertNotEqual(finalized.get("status"), "ok", finalized)
-        self.assertTrue(finalized.get("reason_code") or finalized.get("message"), finalized)
+        self.assertEqual(finalized.get("reason_code"),
+                         "missing_fixed_evidence_title", finalized)
+        self.assertEqual(finalized.get("item_key"), "AAAA1111", finalized)
         self.assertFalse((self.prof_dir / "套磁候选分析.md").exists())
 
         # The blacklist's completion-paper link is a separate render branch.
@@ -685,6 +751,46 @@ class AnalysisLevelTests(EvidenceLevelEnv):
             direction["relevant_keys"] = list(keys)
         return narrow
 
+    def direction_scope(self, member_keys, relevant_keys):
+        """Keep the formal members and the wider P-citation scope separate."""
+        def narrow(facts):
+            direction = facts["directions"][0]
+            direction["member_keys"] = list(member_keys)
+            direction["relevant_keys"] = list(relevant_keys)
+        return narrow
+
+    def eligible_refresh_preflight(self):
+        """A saved display-only preflight the formal entry may still run."""
+        preflight = self.stage2_preflight()
+        self.assertEqual(preflight["action"], "refresh_display", preflight)
+        return preflight, self.write_preflight_file(preflight)
+
+    def validator_business_fields(self, pack):
+        """The certification fields a display-only step must not rewrite."""
+        validator = pack.get("validator") or {}
+        return {field: validator.get(field) for field in (
+            "round", "phase", "results", "validation_sha256", "render_sha256")}
+
+    def run_refresh_entry(self, preflight_file):
+        """The formal refresh entry called in-process, so a clock patch applies.
+
+        ``run_cli`` starts a subprocess, where an outer ``patch.object`` never
+        reaches the product; only the two clock points of this test call the
+        parsed CLI function directly. It changes no business function, fakes no
+        return value and adds no runner framework.
+        """
+        arguments = contact_state.build_parser().parse_args([
+            "stage2-refresh-display", "--professor-dir", str(self.prof_dir),
+            "--preflight-file", str(preflight_file)])
+        stdout = io.StringIO()
+        code = 0
+        with contextlib.redirect_stdout(stdout):
+            try:
+                arguments.func(arguments)
+            except SystemExit as exited:
+                code = exited.code
+        return json.loads(stdout.getvalue()), code
+
     def test_counts_follow_the_recorded_analysis_level(self):
         ccc = self.prof_dir / "论文分析" / "CCCC3333.md"
 
@@ -853,6 +959,286 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertEqual(rerecorded["status"], "ok", rerecorded)
         self.assertEqual(rerecorded["round"], 1, rerecorded)
 
+    def test_ordinary_reuse_replaces_known_level_with_null(self):
+        # A legal accepted baseline whose counted set is AAAA1111 + BBBB2222.
+        self.accepted_run(facts_extra=self.direction_papers_only(
+            "AAAA1111", "BBBB2222"))
+        pack_before = self.pack()
+        body_before = managed_body(self.analysis_text())
+        self.assertEqual(pack_before["papers"]["AAAA1111"]["analysis_level"],
+                         "fulltext", pack_before["papers"]["AAAA1111"])
+        # Only the CURRENT level statement changes: the same files, the same
+        # index paths and states, and both other papers stay fulltext.
+        self.update_sources({"AAAA1111": None, "BBBB2222": "fulltext",
+                             "CCCC3333": "fulltext"},
+                            {"AAAA1111": {"level": None},
+                             "BBBB2222": {"level": "fulltext"},
+                             "CCCC3333": {"level": "fulltext"}})
+        facts_path = self.root / "facts.json"
+        plan = parse(run_bound_stage2_plan(run_cli, facts_path))
+        self.assertEqual(plan["status"], "ok", plan)
+        row = next(item for item in plan["directions"]
+                   if item["direction_id"] == "DIR00001")
+        self.assertEqual(row["action"], "reuse", plan)
+        self.assertEqual(plan["jobs"], [], plan)
+        finalized = parse(run_bound_stage2_finalize(
+            run_cli, facts_path, "--results", self.root / "results"))
+        self.assertEqual(finalized["status"], "ok", finalized)
+        # The current null is a real value: the ordinary reuse path must state
+        # it and clear the old fulltext instead of carrying the old pack level.
+        pack_after = self.pack()
+        self.assertIsNone(pack_after["papers"]["AAAA1111"].get("analysis_level"),
+                          pack_after["papers"]["AAAA1111"])
+        self.assertEqual(pack_after["papers"]["BBBB2222"].get("analysis_level"),
+                         "fulltext", pack_after["papers"]["BBBB2222"])
+        summary = self.summary_line()
+        self.assertIn("全文级 1 篇", summary)
+        self.assertIn("摘要级 0 篇", summary)
+        self.assertIn("未确认 1 篇", summary)
+        self.assertNotEqual(managed_body(self.analysis_text()), body_before)
+        # The rebuilt body is a new validation version: the old certification
+        # no longer proves it and the new body registers again from round 1.
+        _preflight, row_after = self.direction_action()
+        self.assertIn("validator_not_accepted", row_after["reason_codes"], row_after)
+        rerecorded = self.record(self.write_report("pass-after-null-level.json", [],
+                                                   verdict="pass"))
+        self.assertEqual(rerecorded["status"], "ok", rerecorded)
+        self.assertEqual(rerecorded["round"], 1, rerecorded)
+
+    def test_nonmember_level_refresh_keeps_visible_body_and_round(self):
+        # CCCC3333 is inside the P-citation scope but NOT a formal member, so
+        # its level never enters the aggregate the managed body shows.
+        self.accepted_run(facts_extra=self.direction_scope(
+            ("AAAA1111", "BBBB2222"),
+            ("AAAA1111", "BBBB2222", "CCCC3333")))
+        pack_before = self.pack()
+        reference_scope = pack_before["directions"][0]
+        self.assertIn("CCCC3333", pack_before["papers"])
+        self.assertIn("CCCC3333", reference_scope["relevant_keys"])
+        self.assertNotIn("CCCC3333", reference_scope["supporting_item_keys"])
+        body_before = self.analysis_text()
+        summary_before = self.summary_line()
+        certification_before = self.validator_business_fields(pack_before)
+        self.update_sources({"AAAA1111": "fulltext", "BBBB2222": "fulltext",
+                             "CCCC3333": "abstract"},
+                            {"AAAA1111": {"level": "fulltext"},
+                             "BBBB2222": {"level": "fulltext"},
+                             "CCCC3333": {"level": "abstract"}})
+        _preflight, preflight_path = self.eligible_refresh_preflight()
+        refreshed = self.refresh_display(preflight_path)
+        self.assertEqual(refreshed["status"], "ok", refreshed)
+        self.assertTrue(refreshed.get("display_refreshed"), refreshed)
+        pack_after = self.pack()
+        self.assertEqual(pack_after["papers"]["CCCC3333"].get("analysis_level"),
+                         "abstract", pack_after["papers"]["CCCC3333"])
+        # Nothing the body shows moved: the same bytes and the same counts.
+        self.assertEqual(self.analysis_text(), body_before)
+        self.assertEqual(self.summary_line(), summary_before)
+        # The certification stays because it still binds the same body; only the
+        # pack digest stored next to it may move with the pack content.
+        self.assertEqual(self.validator_business_fields(pack_after),
+                         certification_before)
+        self.assertEqual(pack_after["validator"]["pack_sha256"],
+                         contact_state.stage2_pack_content_fingerprint(pack_after))
+        accepted = self.stage2_preflight()
+        self.assertEqual(accepted["action"], "reuse_all", accepted)
+
+    def test_ordinary_member_level_swap_keeps_visible_body_and_round(self):
+        # No accepted_run shortcut: the two formal members must start on
+        # DIFFERENT levels, so the first accepted baseline is built explicitly
+        # from the real index, facts, render and record steps.
+        for key in ("AAAA1111", "BBBB2222", "CCCC3333"):
+            self.write_analysis(key)
+            self.write_future_work_sidecar(key)
+        self.write_index({"AAAA1111": {"level": "fulltext"},
+                          "BBBB2222": {"level": "abstract"},
+                          "CCCC3333": {"level": "fulltext"}})
+
+        def levels(facts):
+            recorded = {"AAAA1111": "fulltext", "BBBB2222": "abstract",
+                        "CCCC3333": "fulltext"}
+            for paper in facts["papers"]:
+                paper["analysis_level"] = recorded[paper["item_key"]]
+
+        facts = self.write_facts(levels, self.direction_scope(
+            ("AAAA1111", "BBBB2222"),
+            ("AAAA1111", "BBBB2222", "CCCC3333")))
+        self.render_fixture(facts)
+        passed = self.record(self.write_report("swap-baseline-pass.json", [],
+                                               verdict="pass"))
+        self.assertEqual(passed["status"], "ok", passed)
+        pack_before = self.pack()
+        self.assertEqual(pack_before["papers"]["AAAA1111"]["analysis_level"],
+                         "fulltext", pack_before["papers"]["AAAA1111"])
+        self.assertEqual(pack_before["papers"]["BBBB2222"]["analysis_level"],
+                         "abstract", pack_before["papers"]["BBBB2222"])
+        summary_before = self.summary_line()
+        self.assertIn("全文级 1 篇", summary_before)
+        self.assertIn("摘要级 1 篇", summary_before)
+        self.assertIn("未确认 0 篇", summary_before)
+        body_before = self.analysis_text()
+        certification_before = self.validator_business_fields(pack_before)
+        # Only the two members exchange their levels, so the aggregate the body
+        # shows stays identical and the ordinary path must not repaint or reset.
+        self.update_sources({"AAAA1111": "abstract", "BBBB2222": "fulltext",
+                             "CCCC3333": "fulltext"},
+                            {"AAAA1111": {"level": "abstract"},
+                             "BBBB2222": {"level": "fulltext"},
+                             "CCCC3333": {"level": "fulltext"}})
+        facts_path = self.root / "facts.json"
+        plan = parse(run_bound_stage2_plan(run_cli, facts_path))
+        self.assertEqual(plan["status"], "ok", plan)
+        self.assertEqual(plan["jobs"], [], plan)
+        row = next(item for item in plan["directions"]
+                   if item["direction_id"] == "DIR00001")
+        self.assertEqual(row["action"], "reuse", plan)
+        finalized = parse(run_bound_stage2_finalize(
+            run_cli, facts_path, "--results", self.root / "results"))
+        self.assertEqual(finalized["status"], "ok", finalized)
+        pack_after = self.pack()
+        self.assertEqual(pack_after["papers"]["AAAA1111"].get("analysis_level"),
+                         "abstract", pack_after["papers"]["AAAA1111"])
+        self.assertEqual(pack_after["papers"]["BBBB2222"].get("analysis_level"),
+                         "fulltext", pack_after["papers"]["BBBB2222"])
+        self.assertEqual(self.summary_line(), summary_before)
+        self.assertEqual(self.analysis_text(), body_before)
+        self.assertEqual(self.validator_business_fields(pack_after),
+                         certification_before)
+        accepted = self.stage2_preflight()
+        self.assertEqual(accepted["action"], "reuse_all", accepted)
+
+    def test_null_facts_candidate_appearance_rejects_stale_refresh(self):
+        # The baseline declares NO facts sidecar for AAAA1111 while its analysis
+        # file exists, so the fixed candidate `<analysis>.facts.json` must be
+        # kept and observed as missing rather than read as "no candidate".
+        analysis = self.write_analysis("AAAA1111")
+        facts_candidate = Path(str(analysis) + ".facts.json")
+        self.assertTrue(analysis.exists())
+        self.assertFalse(facts_candidate.exists())
+        self.accepted_run()
+        index = json.loads((self.prof_dir / "论文分析" / "_index.json").read_text(
+            encoding="utf-8"))
+        self.assertIsNone(index["papers"]["AAAA1111"]["facts_sidecar"])
+        self.assertEqual(index["papers"]["AAAA1111"]["facts_state"], "unavailable")
+        recorded = self.pack()["cache"]["preflight"]["analysis_projection"]["keys"]
+        self.assertEqual(recorded["AAAA1111"]["facts_sidecar"], str(facts_candidate),
+                         recorded["AAAA1111"])
+        self.assertFalse(recorded["AAAA1111"]["facts_exists"], recorded["AAAA1111"])
+        # A legal display-only level change makes the refresh eligible...
+        self.update_sources({"AAAA1111": "abstract", "BBBB2222": "fulltext",
+                             "CCCC3333": "fulltext"},
+                            {"AAAA1111": {"level": "abstract"},
+                             "BBBB2222": {"level": "fulltext"},
+                             "CCCC3333": {"level": "fulltext"}})
+        _preflight, preflight_path = self.eligible_refresh_preflight()
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        pack_before = pack_path.read_bytes()
+        analysis_before = self.analysis_text()
+        # ...and then only the recorded fixed candidate itself appears, at the
+        # position the accepted projection recorded, with content that is not
+        # valid facts: the appearing file is a source change, not a level.
+        facts_candidate.write_text("{}\n", encoding="utf-8")
+        refused = self.refresh_display(preflight_path)
+        self.assertNotEqual(refused.get("status"), "ok", refused)
+        self.assertEqual(refused.get("reason_code"), "display_refresh_stale", refused)
+        self.assertEqual(pack_path.read_bytes(), pack_before)
+        self.assertEqual(self.analysis_text(), analysis_before)
+        self.assert_routes_back_to_process(self.stage2_preflight())
+
+    def test_bad_candidate_record_is_not_missing_record(self):
+        # An unreadable per-key record is NOT the absence of a record: it cannot
+        # prove the sources unchanged, so the ordinary process path decides.
+        self.accepted_run()
+        index_path = self.prof_dir / "论文分析" / "_index.json"
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        self.assertIsInstance(index["papers"]["AAAA1111"], dict)
+        index["papers"]["AAAA1111"] = "broken"
+        index_path.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
+        # The index as a whole is still a legal JSON object with a papers map.
+        self.assertEqual(json.loads(index_path.read_text(encoding="utf-8"))["schema"], 2)
+        preflight = self.stage2_preflight()
+        # "process" is the only remaining action: the bad record can prove
+        # neither "nothing changed" (reuse_all) nor a display-only level change.
+        self.assertEqual(preflight["action"], "process", preflight)
+        # The structured reasons must name the unusable analysis source instead
+        # of degrading to "nothing changed"; the human-readable message is never
+        # matched and no new string is frozen.
+        signals = set(preflight["reason_codes"])
+        for row in preflight["directions"]:
+            signals.update(row["reason_codes"])
+        self.assertTrue(signals & {"analysis_source_changed", "analysis_index_unreadable",
+                                   "analysis_projection_unavailable"}, preflight)
+
+    def test_refresh_rechecks_year_at_entry_and_inside_lease(self):
+        for entering_lease in (False, True):
+            environment = self.__class__(self._testMethodName)
+            environment.setUp()
+            try:
+                environment.accepted_run()
+                environment.update_sources(
+                    {"AAAA1111": "abstract", "BBBB2222": "fulltext",
+                     "CCCC3333": "fulltext"},
+                    {"AAAA1111": {"level": "abstract"},
+                     "BBBB2222": {"level": "fulltext"},
+                     "CCCC3333": {"level": "fulltext"}})
+                preflight, preflight_path = environment.eligible_refresh_preflight()
+                year = preflight["preflight_inputs"]["current_year"]
+                self.assertEqual(
+                    environment.pack()["cache"]["preflight"]["current_year"], year,
+                    "the eligible preflight must carry the accepted business year")
+                pack_path = environment.prof_dir / "套磁候选输入.json"
+                pack_before = pack_path.read_bytes()
+                analysis_before = environment.analysis_text()
+                entered = []
+                real_scope = contact_state.stage2_local_writer_scope
+                with mock.patch.object(contact_state, "datetime",
+                                       wraps=datetime) as clock:
+                    clock.now.return_value = datetime(year, 12, 31, 23, 59, 59)
+                    if entering_lease:
+                        # The entry still sees the accepted year; only the real
+                        # lease is entered before the clock crosses it.
+                        outside_year_clock = datetime(year + 1, 1, 1, 0, 0, 1)
+
+                        @contextlib.contextmanager
+                        def scope_that_crosses_the_year(professor_dir):
+                            with real_scope(professor_dir):
+                                clock.now.return_value = outside_year_clock
+                                entered.append(True)
+                                yield
+
+                        lease_patch = mock.patch.object(
+                            contact_state, "stage2_local_writer_scope",
+                            scope_that_crosses_the_year)
+                    else:
+                        clock.now.return_value = datetime(year + 1, 1, 1, 0, 0, 1)
+
+                        def spy_scope(professor_dir):
+                            entered.append(True)
+                            return real_scope(professor_dir)
+
+                        lease_patch = mock.patch.object(
+                            contact_state, "stage2_local_writer_scope", spy_scope)
+                    with lease_patch:
+                        payload, code = environment.run_refresh_entry(preflight_path)
+                self.assertEqual(code, 2, payload)
+                self.assertEqual(payload.get("status"), "needs_refresh", payload)
+                self.assertEqual(payload.get("reason_code"),
+                                 "display_refresh_stale", payload)
+                signals = set(payload.get("reason_codes") or []) \
+                    | set(payload.get("drift") or [])
+                self.assertTrue(signals & set(YEAR_MISMATCH_SIGNALS),
+                                (entering_lease, payload))
+                if entering_lease:
+                    self.assertEqual(entered, [True],
+                                     "the in-lease branch must enter the real lease")
+                else:
+                    self.assertEqual(entered, [],
+                                     "a cross-year entry must not enter the lease")
+                self.assertEqual(pack_path.read_bytes(), pack_before)
+                self.assertEqual(environment.analysis_text(), analysis_before)
+            finally:
+                environment.tearDown()
+
     def assert_routes_back_to_process(self, preflight):
         self.assertEqual(preflight["action"], "process", preflight)
         self.assertTrue(preflight["reason_codes"], preflight)
@@ -941,6 +1327,38 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         finally:
             manual_env.tearDown()
 
+        # A third, independent baseline keeps the old analysis file and the old
+        # pack path but states an EXPLICIT empty analysis path in the index.
+        # The explicit empty is a current statement: it must not be backfilled
+        # from the old pack path (or the file on disk) and must take the
+        # ordinary process path instead of a display refresh.
+        empty_env = self.__class__(self._testMethodName)
+        empty_env.setUp()
+        try:
+            empty_env.accepted_run()
+            index_path = empty_env.prof_dir / "论文分析" / "_index.json"
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            old_analysis = empty_env.prof_dir / "论文分析" / "AAAA1111.md"
+            self.assertEqual(index["papers"]["AAAA1111"]["file"], str(old_analysis))
+            index["papers"]["AAAA1111"]["file"] = None
+            index_path.write_text(json.dumps(index, ensure_ascii=False),
+                                  encoding="utf-8")
+            self.assertTrue(old_analysis.exists(),
+                            "the explicit empty must be the only change")
+            self.assertEqual(empty_env.pack()["papers"]["AAAA1111"]["analysis_file"],
+                             str(old_analysis))
+            empty_env.assert_routes_back_to_process(empty_env.stage2_preflight())
+            # Direct observation of the source projection the preflight reads:
+            # the current explicit empty is neither re-declared nor selected.
+            paths = contact_state.stage2_projection_analysis_paths(
+                contact_state.pack_paper_index(empty_env.pack()))
+            entry = contact_state.stage2_analysis_projection(
+                empty_env.prof_dir, ["AAAA1111"], paths)["keys"]["AAAA1111"]
+            empty_env.assertIsNone(entry["analysis_file"], entry)
+            empty_env.assertFalse(entry["analysis_exists"], entry)
+        finally:
+            empty_env.tearDown()
+
     def test_replaced_analysis_source_routes_back_to_process(self):
         self.accepted_run()
         # Same key, moved analysis file: the index path changes and the old file
@@ -981,3 +1399,112 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assertIn("legacy_pack_no_preflight", preflight["reason_codes"], preflight)
         for row in preflight["directions"]:
             self.assertNotIn("validator_not_accepted", row["reason_codes"], row)
+
+        # A second, independent accepted pack keeps its whole cache.preflight but
+        # loses the fixed facts-candidate observation of AAAA1111: an accepted
+        # source baseline that lacks a state this comparison needs may not be
+        # read as "unchanged" either. Only the existing content fingerprint is
+        # recomputed, so the refusal cannot come from a stale validator digest.
+        baseline_env = self.__class__(self._testMethodName)
+        baseline_env.setUp()
+        try:
+            baseline_env.accepted_run()
+            baseline_pack_path = baseline_env.prof_dir / "套磁候选输入.json"
+            baseline_pack = json.loads(baseline_pack_path.read_text(encoding="utf-8"))
+            projection_keys = baseline_pack["cache"]["preflight"]["analysis_projection"]["keys"]
+            self.assertIn("AAAA1111", projection_keys)
+            candidate = projection_keys["AAAA1111"]
+            for field in ("facts_sidecar", "facts_exists"):
+                self.assertIn(field, candidate, candidate)
+                del candidate[field]
+            baseline_pack["validator"]["pack_sha256"] = \
+                contact_state.stage2_pack_content_fingerprint(baseline_pack)
+            baseline_pack_path.write_text(json.dumps(baseline_pack, ensure_ascii=False),
+                                          encoding="utf-8")
+            stale = baseline_env.stage2_preflight()
+            baseline_env.assertEqual(stale["action"], "process", stale)
+            for row in stale["directions"]:
+                baseline_env.assertNotIn("validator_not_accepted", row["reason_codes"], row)
+        finally:
+            baseline_env.tearDown()
+
+
+class ResolvedAnalysisLevelTests(resolved_pipeline_tests.ResolvedPipelineMixin,
+                                 unittest.TestCase):
+    """T4 — a resolution that admits a new member keeps that member's level.
+
+    Reuses the resolved-pipeline helpers and the exact temporary professor
+    directory setUp/tearDown of `Stage2FinalizeWithResolvedTests`; no second
+    resolve harness and no copied fixture. The fixture class is reached through
+    its module and only its setUp/tearDown are bound here, so `unittest
+    discover` neither collects that class twice nor inherits its test methods
+    into this module under a second name.
+    """
+
+    setUp = resolved_pipeline_tests.Stage2FinalizeWithResolvedTests.setUp
+    tearDown = resolved_pipeline_tests.Stage2FinalizeWithResolvedTests.tearDown
+
+    def analysis_text(self):
+        return (self.prof_dir / "套磁候选分析.md").read_text(encoding="utf-8")
+
+    def summary_line(self):
+        return next(line for line in self.analysis_text().splitlines()
+                    if "数据来源" in line)
+
+    def test_added_relevant_member_keeps_current_level(self):
+        first = self.make_paper("AAAA1111", "Synthetic comparison of input patterns",
+                                ["合成", "比较"],
+                                ["Future work will extend the comparison."])
+        first["analysis_level"] = "abstract"
+        second = self.make_paper("BBBB2222", "Synthetic processing path evaluation",
+                                 ["合成", "处理"],
+                                 ["We plan to test a second synthetic path."])
+        second["analysis_level"] = "fulltext"
+        facts_path = self.write_facts([first, second], [
+            self.make_direction("DIR00001", ["AAAA1111", "BBBB2222"],
+                                provisional_keys=["AAAA1111"]),
+        ])
+        # BBBB2222 is inside the candidate / relevant set but is NOT an original
+        # formal member: only the resolution below may admit it.
+        self.assertEqual(
+            json.loads(facts_path.read_text(encoding="utf-8"))["directions"][0][
+                "provisional_member_keys"],
+            ["AAAA1111"])
+        _, resolve_payload = self.run_resolve(facts_path, {
+            "DIR00001": {
+                "resolved_direction_id": "DIR00001",
+                "provisional_direction_id": "DIR00001",
+                "name_ja": "方向",
+                "name_zh": "方向",
+                "resolution_type": "refined",
+                "papers_to_add": ["BBBB2222"],
+                "papers_to_remove": [],
+                "paper_justifications": {"BBBB2222": "合成全文证据支持该方向"},
+                "split_target": None,
+                "merge_target": None,
+                "user_note": "",
+            },
+        })
+        self.assertTrue(resolve_payload["needs_user_choice"], resolve_payload)
+        accepted = self.accept_resolved(facts_path, ["DIR00001"])
+        self.assertEqual(accepted["status"], "ok",
+                         msg=json.dumps(accepted, ensure_ascii=False))
+        payload = self.run_stage2_finalize(facts_path)
+        self.assertEqual(payload["status"], "ok",
+                         msg=json.dumps(payload, ensure_ascii=False))
+        pack = self.load_pack()
+        direction = next(entry for entry in pack["directions"]
+                         if entry["direction_id"] == "DIR00001")
+        # The added paper became a real formal member through the canonical
+        # membership path, never by hand-writing supporting_item_keys.
+        self.assertEqual(sorted(direction["supporting_item_keys"]),
+                         ["AAAA1111", "BBBB2222"])
+        self.assertEqual(pack["papers"]["BBBB2222"].get("analysis_level"), "fulltext",
+                         pack["papers"]["BBBB2222"])
+        self.assertEqual(pack["papers"]["AAAA1111"].get("analysis_level"), "abstract",
+                         pack["papers"]["AAAA1111"])
+        summary = self.summary_line()
+        self.assertIn("全文级 1 篇", summary)
+        self.assertIn("摘要级 1 篇", summary)
+        self.assertIn("未确认 0 篇", summary)
+        self.assertIn("共 2 篇", summary)
