@@ -2,11 +2,11 @@
 
 ## 版本、来源与状态
 
-- 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 1 版。
+- 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 3 版。
 - 需求来源：负责人 2026-10-18 授权的“其余边界”中“Stage3 提交与校验交接”的校验交接部分；原文见执行计划。
 - 对照基准：`779fb692ed5ded163ab0eb5b415aef698135f54e`。
 - Target repository revision: 工作分支 `refactor/stage3-handoff` 实施后的提交。
-- Test plan revision: 第 1 版。
+- Test plan revision: 第 2 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限。
 - Proposed review status: pending。
 
@@ -14,11 +14,11 @@
 
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
-| T1 | 缓冲式持久写入与失败清理不变 | 同一驱动分别加载基准与改动后的 runner：写入一段含非 ASCII 的字节；再用“写入中途目标身份被替换”制造失败 | 成功时文件字节、权限模式、无残留临时文件；失败时按身份删除本次写入的文件、抛出 `OSError`、不误删他人文件 | 仓库外驱动脚本，两侧输出规范化 JSON 后 `diff` |
-| T2 | 严格 JSON 对象解析不变 | 合法对象、重复键对象、含 `NaN`/`Infinity` 的文本、数组、坏 UTF-8 字节 | 合法输入解析结果相同；`NaN`/`Infinity` 抛 `ValueError`；非对象输入抛 `ValueError`；坏字节抛 `UnicodeDecodeError`／`ValueError` | 同 T1 |
+| T1 | 缓冲式持久写入与失败清理不变 | 同一驱动分别加载基准与改动后的 runner：小块写入、76800 B（跨多个 64 KiB 回读分块）写入、对已存在路径写入（`O_EXCL` 失败）；再直接验证 `_stage3_created_file_identity` 与 `_stage3_cleanup_incomplete_write`（身份一致／不一致／None）三个分支 | 成功时文件字节、权限模式（`st_mode & 0o777`）、无残留临时文件；已存在路径写入抛 `FileExistsError` 且原文件不变；身份一致时删除、不一致或 None 时保留 | 仓库外驱动脚本，两侧输出规范化 JSON 后 `diff`；集成侧“写入期失败后清理、只删本次文件、抛 `OSError`”由 T5 的批量写/回读失败用例端到端覆盖 |
+| T2 | 严格 JSON 对象解析不变 | 合法对象、重复键对象、含 `NaN`/`Infinity` 的文本、数组、坏 UTF-8 字节 | 合法输入解析结果相同；重复键与 `NaN`/`Infinity` 抛 `ValueError`；数组两侧同样返回列表（“必须是非对象”的拒绝发生在下游归一化，由 T5 的真实写校验路径覆盖）；坏字节抛相同异常 | 同 T1 |
 | T3 | invocation 参数映射不变 | 给定 invocation 字典与调用参数：含来源参数、含被忽略参数、缺来源字段 | 返回对象的字段名与取值逐项相同；只覆盖 invocation 记录的来源参数 | 同 T1 |
-| T4 | 校验结果归一化与作用域解析不变 | ① `stage3_render_line_scopes` 对同一份代表性渲染文本（含 direction/group 标记、标题后四行内/外的标记、重复标记）；② `_stage3_normalized_absolute_path` 对合法与非法路径；③ `_require_stage3_handoff_round` 对轮次 1／2／超限 | ① 返回的作用域列表逐项相同（内容与顺序）；② 非法路径给出相同的错误 JSON 与退出码，合法路径返回相同的绝对路径字符串；③ 轮次判定与失败原因码相同 | 同 T1；失败调用捕获 `SystemExit` 与 stdout |
-| T5 | 既有 Stage 3 校验交接路径不受影响 | 真实 CLI 流程：`stage3-prepare-validation` → 写入校验结果 → `stage3-save-validation` → `stage3-record-validation`；以及 scope 归属与修正轮 | 全部通过 | 引用既有用例：`test_stage3_validation_refine`、`test_issue66_validation_handoff`、`test_issue66_stage3_local_state`、`test_stage3_direction_groups` |
+| T4 | 作用域解析、路径归一化与轮次守卫不变 | ① `stage3_render_line_scopes` 对五份代表性渲染文本（direction/group 标记、标题后四行内/外、无标记、**同一标记重复出现**）；② `_stage3_normalized_absolute_path` 对合法、相对、空、非字符串四类输入；③ `_require_stage3_handoff_round` 对 7 组状态（round 1 未记录/已记录、round 2 无前轮/耗尽/有待修正/渲染变化/正常） | ① 五份文档返回的作用域列表逐项相同（内容与顺序）；② 非法路径给出相同的错误 JSON 与退出码，合法路径返回相同的绝对路径字符串；③ 6 个失败原因码与正常路径判定全部相同 | 同 T1；失败调用捕获 `SystemExit` 与 stdout。`_stage3_validation_files`／`_stage3_complete_write_result`／`_stage3_issue_scopes` 的归一化不在驱动里单独构造，由 T5 的真实交接流程覆盖 |
+| T5 | 既有 Stage 3 校验交接路径不受影响 | 真实 CLI 流程：`stage3-prepare-validation` → 写入校验结果 → `stage3-save-validation` → `stage3-record-validation`；以及 scope 归属、修正轮与批量写入失败清理 | 全部通过 | 引用既有用例：`test_stage3_validation_refine`（18）、`test_issue66_validation_handoff`（12）、`test_stage3_direction_groups`（19）、`test_issue66_stage3_local_state`（6）。前三个共 49 项直接落在被移动原语及其路径上；第四个 6 项属相邻的本地提交/回滚面（本批非目标），因共用夹具且覆盖 record 路径写入的状态而保留，可按验收决定人要求裁掉 |
 | T6 | 未改动区域的既有门禁 | 仓库 CI 对 PR 提交跑全量 `unittest discover` | 全量通过 | 直接引用 PR 的 CI 结果 |
 
 ## 执行步骤
@@ -63,7 +63,8 @@
 - **签名适配**：基准修订里这六个函数不需要 `fail`，改动修订把它们改成关键字参数。驱动用一个适配函数判断签名（`inspect.signature` 是否含 `fail` 参数），需要时传 `fail=runner.fail`，并对两侧使用同一适配逻辑；这份适配只存在于仓库外驱动里，不进产品。
 - 失败调用：用 `contextlib.redirect_stdout` 捕获输出、`try/except SystemExit` 记录退出码；业务通道内的失败用 `with runner.professor_business_channel()` 包裹并捕获 `runner.ProfessorBusinessFailure`。
 - 输出只含相对路径、文件内容、权限模式（`stat` 的 `st_mode & 0o777`）、异常类型名与错误 JSON 文本，便于两侧直接 `diff`。
-- T1 的“中途身份被替换”注入：写入过程中把目标路径替换为另一个文件（或在写入函数内部记录目标身份后替换），用于验证“只删除本次写入且身份未变的文件”；若该注入在基准与改动侧都不可行，退化为“写入失败后无残留 + 原文件不变”，并在记录里注明。
+- T1 的身份/清理验证采用执行版写法：直接调用 `_stage3_created_file_identity` 与 `_stage3_cleanup_incomplete_write` 覆盖“身份一致删除／不一致保留／None 保留”三个分支（比“写入中途替换身份”的注入更清晰且不依赖时序）；集成侧的失败清理由 T5 的批量写/回读失败用例承担。
+- 输出规范化：两侧各自使用独立工作目录，脚本在打印前把工作目录前缀替换为 `<WORK>`，避免绝对路径与异常消息里的目录名造成假差异。
 - T4 的作用域输入要覆盖：标题后四行内的 `<!-- stage3_scope: {...} -->`、四行外（应被忽略）、`<!-- candidate_meta: ... -->`、重复标记、非 JSON 标记（应触发失败）。
 
 ## 环境与预检
@@ -84,7 +85,8 @@
 ## 修订记录
 
 - 第 1 版：首次提交测试计划审核。
+- 第 2 版：按第一、二关口的非阻断意见修正——T1 的注入描述改成执行版的三分支清理验证；T2 更正“非对象抛 `ValueError`”的说法（数组正常解析，非对象拒绝在下游归一化、由 T5 覆盖）；T4 标题改为“作用域解析、路径归一化与轮次守卫”并注明归一化由 T5 覆盖，驱动补“同一标记重复出现”用例；执行计划版本指针更新为第 3 版。T5 的四个模块保留（前三个共 49 项直接落在被移动原语上，第四个 6 项属相邻面、可按验收决定人要求裁掉）。
 
 ## 审核状态
 
-测试计划第 1 版为当前唯一版本，状态为待审核。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 2 版为当前唯一版本；第 1 版已取得第一、二关口 PASS（无 blocker），本版只落实该轮的非阻断意见，未增删必测编号。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
