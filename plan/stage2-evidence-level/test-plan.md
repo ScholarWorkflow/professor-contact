@@ -1,6 +1,6 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- Test revision：contact-evidence-level-t32；对应 [执行计划 r4](implementation-plan.md)。
+- Test revision：contact-evidence-level-t33；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
 - 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变）；t32 按用户授权删除错误提示字符串限制和重复的禁止区域用例（当前 13 个新增用例、17 个执行选择器；此前运行结果只对应旧版本）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八、九轮复核（IR-37 残留、IR-38 残留、IR-40(a)(b)、IR-41）再改准运行的版本指向，把固定卡比较改为「夹具守卫 + 与渲染前快照比较」、恢复 refine-finalize 的 pack 字节守卫，并删除与辅助函数重复的断言（见修订记录）。第二关待复核，第三关未执行。最新准备期复核为 7 通过 / 11 业务失败（§5，测试提交 `36c630a`），此前记录只按其实际版本引用；审核处置仅适用于各自记录版本（§6、§7）。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
@@ -39,7 +39,7 @@ T1—T4 是上限。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_source_change_routes_back_to_the_process_path` | 在仅既有论文 AAAA1111 的级别变化使预检允许刷新后，只新增 CCCC3333 的索引/分析文件/关联输入（facts sidecar 仍缺失），AAAA1111、BBBB2222 的级别和来源保持不变；旧预检执行刷新必须拒绝写入，输入包与正文原字节不变；重新预检走原 process |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_deleted_analysis_source_also_routes_back_to_process` | 独立接受基线只删除 CCCC3333 的分析文件与索引记录，不删论文事实目录项，不改其他论文级别，预检应走 process；另用独立临时教授目录在仅 level 变化预检通过后人工修改受管正文，旧预检刷新须拒绝写入，输入包与人工正文原字节不变 |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_replaced_analysis_source_routes_back_to_process` | 分析文件换址（索引路径与旧文件同时变化）时走原 process |
-| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_pack_without_a_comparable_baseline_is_not_refreshed_as_display_only` | 旧包缺可比较业务基线走原 process |
+| T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_pack_without_a_comparable_baseline_is_not_refreshed_as_display_only` | 旧包缺可比较业务基线走原 process：顶层 `action=process` 且 `reason_codes` 含 `legacy_pack_no_preflight`，各方向 `reason_codes` 不含 `validator_not_accepted`（夹具只用 `stage2_pack_content_fingerprint` 消除删字段造成的摘要失配，不改产品逻辑与其他通过记录） |
 
 ### §1 预期与选择的覆盖关系
 
@@ -114,9 +114,13 @@ exit "$status"
 
 记录格式保持简单：实际提交、T1—T4逐项通过/业务失败/无法判断/未执行、实际命令与输出位置、复用结果来源、剩余问题及负责人。原始日志和临时数据在仓库外，公开提交仅必要脱敏摘要。
 
-准备期复核（非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），测试提交为 `36c630a`（`0d5606b` 加 t27 两处修正），命令为当时 §3 的 18 个选择器（当前 §3 已精简为 17 项），结果目录 `/tmp/contact-evidence-level.kj3p7J2l`（`recipe.txt`），退出码 1，`Ran 18 tests`、`FAILED (failures=11)`。
+准备期复核（非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），命令为 §3 当前的 17 个选择器，结果目录 `/tmp/contact-evidence-level.NASm842C`（`recipe.txt`），退出码 1，`Ran 17 tests`、`FAILED (failures=11)`。
 
-- 通过 7 项：T3 四项（`NarrativeRoundBoundTests` 一项与三个既有保护选择器）、T2 两项（既有禁止区域选择器与 `test_forbidden_user_note_and_paper_table_keep_their_rejection`）、T4 一项（缺基线走 process）。
+- 通过 6 项：`NarrativeRoundBoundTests` 一项、三个既有保护选择器、既有禁止区域选择器、以及 `test_pack_without_a_comparable_baseline_is_not_refreshed_as_display_only`（该用例在本轮改为断言顶层 `legacy_pack_no_preflight` 与方向级无 `validator_not_accepted` 后，在未实现的产品上即已成立）。
+- 业务失败 11 项：T1 两项、T2 三项、T4 六项，原因与下一段的历史分组相同。
+- 历史记录（18 个选择器版本，只按其版本引用）：测试提交 `36c630a`（`0d5606b` 加 t27 两处修正），结果目录 `/tmp/contact-evidence-level.kj3p7J2l`（`recipe.txt`），`Ran 18 tests`、`FAILED (failures=11)`、7 通过 / 11 失败。
+
+- 历史分组（18 项版本）：通过 7 项为 T3 四项（`NarrativeRoundBoundTests` 一项与三个既有保护选择器）、T2 两项、T4 一项。
 - 业务失败 11 项，按实际失败原因分组：
   - T1 两项：展示用例首个断言失败在固定卡「后续论文依据」行仍含 `AAAA1111`（未做题名/链接替换），禁锚区与候选引用断言在该次运行中未执行，不据此判断；缺可信题名用例仍返回 `status=ok` 并生成分析文件（未拒绝）。
   - T2 三项：三项 `record` 均返回 `status=error`（产品尚未允许登记），其中 `test_repeating_...` 的日志给出 `reason_code=validation_issue_not_repairable`；因此 refine 分流与修复后重新校验无法进行。
@@ -358,3 +362,13 @@ exit "$status"
 1. T1 缺可信题名用例只检查明确失败、有原因且不生成受管分析文档；删除扫描整个错误提示是否含 `zotero://` 及占位文字的断言，允许错误消息引用已有的真实链接。
 2. 删除与既有 `test_stage2_nonrepairable_user_note_does_not_create_a_correction_job` 重复的新增 T2 用例，保留既有禁止区域检查。移除对应的 §2 行与 §3 选择器。
 3. 当前 13 个新增用例、4 个既有选择器，§3 共 17 项；T1—T4 业务目标未变。§5、§6、§7 的 14／18 项与 7 通过／11 失败是旧提交的历史记录，未改写。此次未运行正式测试，第二关复核待完成、第三关未执行；产品与既有测试未改。
+
+### t33 定向修订记录（第二关：旧包缺可比较基线的最小修订）
+
+按第二关复核意见（PR 评论 comment-6245959908），只修订既有 T4 用例 `test_pack_without_a_comparable_baseline_is_not_refreshed_as_display_only` 与其在唯一测试计划中的描述：
+
+1. 先用 `accepted_run()` 构造完整且已记录通过的包（该辅助已断言原样预检为 `reuse_all`）。
+2. 删除 `pack["cache"]["preflight"]` 模拟旧包；只用现有 `contact_state.stage2_pack_content_fingerprint(pack)` 重算并写回 `pack["validator"]["pack_sha256"]`，消除删字段造成的校验摘要失配——不改产品逻辑、原始正文或其他通过记录。
+3. 再调正式 `stage2_preflight()`，断言顶层 `action=process`、顶层 `reason_codes` 含 `legacy_pack_no_preflight`、各方向 `reason_codes` 不含 `validator_not_accepted`，从而证明走的是「旧包缺可比较业务来源基线 → 原 process」，而不是靠失效摘要碰巧触发。
+
+保留原选择器，不新增用例、运行链、证明设施或业务验收要求。修订后用例在未实现的产品基线 `305bc08f8b186672108cffbba0293d249bc8b4b2` 上即通过（新实现须保持该行为）；本轮 17 项运行见 §5。该结论不代表第二关、第三关或合并批准。

@@ -915,11 +915,19 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         self.assert_routes_back_to_process(self.stage2_preflight())
 
     def test_pack_without_a_comparable_baseline_is_not_refreshed_as_display_only(self):
+        # accepted_run() already builds the pack, records the terminal PASS and
+        # proves the untouched pack reuses (`reuse_all`).
         self.accepted_run()
         pack_path = self.prof_dir / "套磁候选输入.json"
         pack = json.loads(pack_path.read_text(encoding="utf-8"))
         del pack["cache"]["preflight"]
+        # Removing the accepted baseline also invalidates the recorded pack
+        # digest; recompute only that digest so this case proves the missing
+        # baseline is detected instead of a stale validation digest.
+        pack["validator"]["pack_sha256"] = contact_state.stage2_pack_content_fingerprint(pack)
         pack_path.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
         preflight = self.stage2_preflight()
         self.assertEqual(preflight["action"], "process", preflight)
-        self.assertTrue(preflight["reason_codes"], preflight)
+        self.assertIn("legacy_pack_no_preflight", preflight["reason_codes"], preflight)
+        for row in preflight["directions"]:
+            self.assertNotIn("validator_not_accepted", row["reason_codes"], row)
