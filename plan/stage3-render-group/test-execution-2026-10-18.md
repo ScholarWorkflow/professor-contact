@@ -13,9 +13,9 @@
 | --- | --- | --- |
 | T1 | 通过 | 对比脚本输出 `T1 render_candidates_md byte-identical -> base=3465B head=3465B`、`T1 render_candidates_md without profile byte-identical -> base=2370B head=2370B`、`T1 render_candidates_overview byte-identical -> base=346B head=346B`，退出码 0 |
 | T2 | 通过 | 同一脚本输出两个公开函数的签名一致与四个私有 helper 仍可按原名取到；退出码 0 |
-| T3 | 通过 | `Ran 47 tests in 172.558s`，`OK`，退出码 0 |
-| T4 | 通过 | `Ran 24 tests in 27.150s`，`OK`，退出码 0 |
-| T5 | 通过 | 仓库 CI 在最终 head `cab7dd2f35f6e4ce75b8fcb6c065a47ba93e6665` 上跑全量 `unittest discover`：运行 `39141520964`，5m46s，检查项 `test` pass。该 head 相对被测提交只多两个文档提交，`.apm/` 下产品与测试字节未变（`git diff 68647a5 HEAD -- .apm/` 为空） |
+| T3 | 通过 | 按第 5 版清单只跑 7 个方法：`Ran 7 tests in 26.222s`，`OK`，退出码 0（head `00f307e`）。更早的整模块运行 `Ran 47 tests in 172.558s` 是这 7 项的超集，保留作历史证据；多出的 40 项属清单外，不作为本批通过条件 |
+| T4 | 通过 | 按第 5 版清单只跑 2 个方法：`Ran 2 tests in 2.754s`，`OK`，退出码 0（head `00f307e`）。更早的整模块运行 `Ran 24 tests in 27.150s` 是这 2 项的超集，保留作历史证据 |
+| 既有仓库检查 | 通过 | 仓库 CI 在 head `00f307e43ec72e12a8a13080323e43b69630178a` 上跑全量 `unittest discover`：运行 `39152603658`，8m3s，检查项 `test` pass。按第 5 版计划这项不属于本批业务必测项，只作既有检查结果引用；该 head 相对被测提交只多文档提交（`git diff 68647a5 00f307e -- .apm/` 为空） |
 
 ## 执行方法与命令
 
@@ -36,7 +36,7 @@
 
    输入覆盖：两个方向条目（一个 `verdict: 勉强`）＋方向级红线去重＋`refined` 变体＋`priority`；一个含两名参与者的跨方向组；候选级红线（含空串与重复）＋`gap_refs`（含 `done_by_self`）＋`_pack_papers`（含 `_analysis_rel` 与缺失两种情况）；总览的方向行与跨方向行；另一次 `profile_fp=None` 且空跨方向组的降级调用。两个渲染函数各比较一次完整输出字符串，降级调用再比较一次。
 
-3. T3：Stage 3 渲染与校验定位回归。
+3. T3：按第 5 版清单跑 7 个方法；在 head `00f307e` 上重跑得到 `Ran 7 tests in 26.222s`、`OK`，此前的四模块运行（47 项）作为超集证据保留。
 
    ```sh
    cd .apm/skills/professor-contact/tests
@@ -44,7 +44,7 @@
      test_issue66_stage3_local_state test_issue61_direction_credibility_warning -v
    ```
 
-4. T4：两条加载路径与复制夹具。
+4. T4：按第 5 版清单跑 2 个方法；在 head `00f307e` 上重跑得到 `Ran 2 tests in 2.754s`、`OK`。
 
    ```sh
    python3 -m unittest test_stage5_immutable test_stage5_dualtarget_contract -v
@@ -63,12 +63,12 @@
 
 ## 兼容性门禁
 
-- 仓库 CI（`.github/workflows/ci.yml`）在本 PR 提交上运行全量 `python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_*.py' -v`；结果见 PR 检查项。
+- 仓库 CI（`.github/workflows/ci.yml`）在 head `00f307e` 上运行全量 `python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_*.py' -v`：运行 `39152603658`，8m3s，检查项 `test` pass。按第 5 版计划这属既有仓库检查、不属于本批业务必测项。
 - 按 `Test Engineer Rule.md` 第 6 节，本批不在本地重复全仓回归。
 
 ## 结论与交接
 
-- T1–T5 对被测提交全部取得通过结果；无未完成项、无需要复验的项。
+- T1–T4 对被测提交 `68647a5`（当前 head `00f307e` 产品字节相同）取得有效通过结果：T1/T2 用基准对照脚本，T3/T4 按第 5 版清单在 head `00f307e` 上定向重跑；仓库 CI 作为既有检查单独引用。无未完成项、无需要复验的项。
 - 本记录之后如只改动文档（计划、记录、说明），未改产品代码与测试代码时，上述逐项结果继续有效并沿用。
 - 依赖顺序：本批基于批次二分支 `refactor/stage5-runner-invocation`（PR #97）；#97 改写时按受影响范围重放并重跑受影响编号。
 - 下一负责人：测试计划审核（第一、二关口）与合并审核（按 `Merge Reviewer Rule.md`）；本记录不代替任何关口结论。
