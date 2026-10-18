@@ -307,6 +307,38 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         self.assertTrue(finalized.get("reason_code") or finalized.get("message"), finalized)
         self.assertFalse((self.prof_dir / "套磁候选分析.md").exists())
 
+        # The blacklist's completion-paper link is a separate render branch.
+        # Use a separate professor fixture: the fixed card keeps valid titles,
+        # while only the completed paper referenced by the blacklist lacks one.
+        completion_env = self.__class__(self._testMethodName)
+        completion_env.setUp()
+        try:
+            def drop_completion_title(facts):
+                next(paper for paper in facts["papers"]
+                     if paper["item_key"] == BLACKLIST_COMPLETION)["title"] = None
+
+            completion_facts = completion_env.write_facts(drop_completion_title)
+            completion_results = completion_env.root / "completion-results"
+            completion_env.write_stage2_results(completion_results, gap_overrides={
+                "AAAA1111": {"status": "partial", "evidence": FIXED_EVIDENCE,
+                             "completed_part": COMPLETED_PART,
+                             "remaining_gap": REMAINING_GAP},
+                "BBBB2222": {"status": "done_by_self",
+                             "evidence": "该延伸点已经由另一篇论文完成",
+                             "candidate_paper_ids": [BLACKLIST_COMPLETION]},
+            })
+            completion_plan = parse(run_bound_stage2_plan(run_cli, completion_facts))
+            self.assertEqual(completion_plan["status"], "ok", completion_plan)
+            completion_finalized = parse(run_bound_stage2_finalize(
+                run_cli, completion_facts, "--results", completion_results))
+            self.assertEqual(completion_finalized.get("reason_code"),
+                             "missing_fixed_evidence_title", completion_finalized)
+            self.assertEqual(completion_finalized.get("item_key"),
+                             BLACKLIST_COMPLETION, completion_finalized)
+            self.assertFalse((completion_env.prof_dir / "套磁候选分析.md").exists())
+        finally:
+            completion_env.tearDown()
+
 
 class FixedEvidenceFailureTests(EvidenceLevelEnv):
     """T2 — a real fixed-card blocking is registered for the source owner."""
