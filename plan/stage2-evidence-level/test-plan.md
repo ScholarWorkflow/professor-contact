@@ -2,7 +2,7 @@
 
 - Test revision：contact-evidence-level-t36；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
-- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变），第二关 PASS，第三关已有 17/17 有效通过记录（含 t36 变更项 1/1、其余复用 t35）；合并审核未进行；t32 按用户授权删除错误提示字符串限制和重复的禁止区域用例（当前 13 个新增用例、17 个执行选择器；此前运行结果只对应旧版本）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八、九轮复核（IR-37 残留、IR-38 残留、IR-40(a)(b)、IR-41）再改准运行的版本指向，把固定卡比较改为「夹具守卫 + 与渲染前快照比较」、恢复 refine-finalize 的 pack 字节守卫，并删除与辅助函数重复的断言；t33 按第二关意见把「旧包缺可比较基线」用例改为断言顶层 `legacy_pack_no_preflight` 与方向级无 `validator_not_accepted`；t34 把状态行与 §5 的「最新记录」绑定到测试提交 `0fe84ab` 并在该提交上重跑同一组 17 个选择器；t35 在第三关正式执行中修订 T1 译文断言、T1 `gap_notes` 比较形状与 T2 freshness 夹具（见修订记录）。t35 第三关已于产品与测试版本 `8f31296` 正式执行：§3 的 17 个选择器全部通过（`Ran 17 tests`、`OK`，结果目录 `/tmp/contact-evidence-level.OnXaAyhx/recipe.txt`，逐项结论见 §5）；执行中 T1、T2 曾因测试步骤本身不成立被本地执行工程师按 Test Engineer Rule §5 停止并交接，t35 修订后完整复跑通过。§5 的 6 通过 / 11 业务失败只对应测试提交 `0fe84ab`（实现前），不代表当前版本；审核处置仅适用于各自记录版本（§6、§7）。t36 只补充 T1 禁锚区完成论文引用缺可信题名的独立夹具，不新增选择器；该新分支已由本地执行工程师按第 36 版定向审核指定的最小范围执行并通过（`Ran 1 test`、`OK`，退出码 0，日志 `/tmp/contact-evidence-level.Gic8ynUG/recipe-t36.txt`，见 §5），其余 16 个未受影响选择器直接复用 t35 的通过结果。
+- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变），第二关 PASS，第三关已有 17/17 有效通过记录（含 t36 变更项 1/1、其余复用 t35）；合并审核（2026-10-18 09:17 UTC，受审 `ac301e1`）结论 NOT_READY，提出 5 项实现缺陷，已按 r4 原文在产品正式路径修正并完整复跑，处置与复验见 §9；t32 按用户授权删除错误提示字符串限制和重复的禁止区域用例（当前 13 个新增用例、17 个执行选择器；此前运行结果只对应旧版本）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八、九轮复核（IR-37 残留、IR-38 残留、IR-40(a)(b)、IR-41）再改准运行的版本指向，把固定卡比较改为「夹具守卫 + 与渲染前快照比较」、恢复 refine-finalize 的 pack 字节守卫，并删除与辅助函数重复的断言；t33 按第二关意见把「旧包缺可比较基线」用例改为断言顶层 `legacy_pack_no_preflight` 与方向级无 `validator_not_accepted`；t34 把状态行与 §5 的「最新记录」绑定到测试提交 `0fe84ab` 并在该提交上重跑同一组 17 个选择器；t35 在第三关正式执行中修订 T1 译文断言、T1 `gap_notes` 比较形状与 T2 freshness 夹具（见修订记录）。t35 第三关已于产品与测试版本 `8f31296` 正式执行：§3 的 17 个选择器全部通过（`Ran 17 tests`、`OK`，结果目录 `/tmp/contact-evidence-level.OnXaAyhx/recipe.txt`，逐项结论见 §5）；执行中 T1、T2 曾因测试步骤本身不成立被本地执行工程师按 Test Engineer Rule §5 停止并交接，t35 修订后完整复跑通过。§5 的 6 通过 / 11 业务失败只对应测试提交 `0fe84ab`（实现前），不代表当前版本；审核处置仅适用于各自记录版本（§6、§7）。t36 只补充 T1 禁锚区完成论文引用缺可信题名的独立夹具，不新增选择器；该新分支已由本地执行工程师按第 36 版定向审核指定的最小范围执行并通过（`Ran 1 test`、`OK`，退出码 0，日志 `/tmp/contact-evidence-level.Gic8ynUG/recipe-t36.txt`，见 §5），其余 16 个未受影响选择器直接复用 t35 的通过结果。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
 ## 最新测试计划审核记录（2026-10-18）
@@ -131,6 +131,7 @@ t35 第三关正式执行记录（2026-10-18，本地执行工程师）：产品
 - 范围外回归（执行工程师自选的完整性检查，不是必测项）：在产品实现完成、t35 测试修订之前的版本上运行 `python3 -m unittest discover -p "test_*.py"`，`Ran 1028 tests`、`FAILED (failures=2)`，两项正是上面 T1/T2 的测试步骤缺陷，没有其他产品回归；t35 只改测试模块与本节，未再全量复跑。
 - 复用来源：无，本轮是对当前产品版本首次执行必测项。
 - 实现符合性审核处置后的复验：`implementation_reviewer` 首次审核（受审版本 `165906a`）结论为**完整**，其中 IR-02 按 §3.1 收紧禁锚区完成论文引用（产品改动提交 `cd39c70`；两次复验都在该提交的同一工作树内容上执行，其后 `git status` 无产品差异）后，按同一 §3 命令再跑一次 17 个选择器，结果目录 `/tmp/contact-evidence-level.kB35xlUV/recipe.txt`，`Ran 17 tests`、`OK`；同时运行 `python3 -m unittest discover -p "test_*.py"`，`Ran 1028 tests`、`OK`。上面第一次记录（`OnXaAyhx`）仍是同一必测清单的有效结果，两次结果一致。处置明细见 §8。
+- 合并审核处置后的复验（2026-10-18）：5 项实现缺陷修正后，按 §3 的 17 个选择器完整复跑 `/tmp/contact-evidence-level.ojprDR8c/recipe.txt`（`Ran 17 tests`、`OK`），并运行 `python3 -m unittest discover -p "test_*.py"`（`Ran 1028 tests`、`OK`，`/tmp/contact-evidence-level.UiagMtvI/full-suite-mergefix.txt`）；处置明细见 §9。
 - t35 未完成项：无。这是 t35 第三关结果，不代表 t36 新场景已经通过或可合并；合并审核按 `Merge Reviewer Rule.md` 由下一负责人执行。
 
 - **t36 变更及第三关执行结果（2026-10-18，本地执行工程师）**：仅原 T1 选择器 `test_fixed_evidence_without_trusted_title_fails_instead_of_inventing_one` 新增独立临时教授输入——固定证据卡所用题名全部保留，只删除禁锚区 `completed_by_item_key` 所指论文的可信题名，正文中的固定证据与禁锚区 evidence 本身均不包含该缺题名编号；检查生成因该完成论文引用缺题名而明确失败、不写受管分析文档。按第 36 版定向审核指定的最小范围只执行该选择器：
@@ -427,3 +428,19 @@ t35 第三关正式执行记录（2026-10-18，本地执行工程师）：产品
 | IR-02（轻）禁锚区「完成论文」引用缺可信题名时仍是软降级 | **已按 §3.1 收紧并复验。** 渲染禁锚区行时，`completed_by_item_key` 存在真实 item key 而 pack／论文事实／`display_references` 都取不到可信题名时，与三个固定槽位一样 `fail("missing_fixed_evidence_title")` 停止生成；只有该 key 本身缺省（既有夹具形态）才保留原「（完成论文见证据）」兜底。复验：`test_stage2_evidence_level` 13 项通过，随后按 §3 完整复跑 17 个选择器（`/tmp/contact-evidence-level.kB35xlUV/recipe.txt`，`Ran 17 tests`、`OK`）并运行全仓 `python3 -m unittest discover -p "test_*.py"`（`Ran 1028 tests`、`OK`）。 |
 
 处理 IR-02 的产品修改后，必测项已按 §3 重新执行并取得当前版本的通过结果（§5 的两份记录结果一致）；未受影响的选择器结果直接复用。本审核结论不代表第二关、第三关最终批准或合并批准；下一步由合并审核负责人按 `Merge Reviewer Rule.md` 执行。
+
+## 9. 合并审核处置（2026-10-18，本地执行工程师）
+
+[合并审核](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6248142152)（受审版本 `ac301e1`）结论 NOT_READY，提出 5 项实现缺陷，均按执行计划 r4 原文在正式路径修正；没有新增锁、认证框架、通用扫描、清单外用例或强制全仓回归。
+
+| 项 | 处置 |
+|---|---|
+| 1 展示刷新写前缺完整业务输入复核 | 把 preflight 的全部业务判定抽成 `stage2_preflight_assess()`（pack/版本/语义、`accepted_directions_sha256`、参数与年份、Stage-1 输入指纹、论文目录视图、署名视图、resolution evidence guards、方向映射与 accepted/freshness 指纹、artifact guards、validator 验收、分析来源投影），`stage2-preflight` 与 `stage2-refresh-display` 共用同一函数；刷新入口另加与 finalize 同款的 `stage2_preflight_cheap_inputs` 比对。任一不成立 → `needs_refresh/display_refresh_stale` 且零写入；写前在 lease 内再核 pack 指纹与分析来源投影。 |
+| 2 展示刷新未进入教授级单写入保护 | `stage2-refresh-display` 的检查—渲染—写入整体放进既有 `stage2_chatgpt_handoff` 教授 writer lease（`stage2_local_writer_scope`，同一 lease 文件与 token 语义）；另一条 Stage-2 写入仍持有时 → `needs_refresh/stage2_writer_busy` 零写入。不新增锁或事务框架。 |
+| 3 分析来源投影漏检 | 索引未声明载体时按既有规定从分析文件路径派生 `<analysis>.future_work.json` / `<analysis>.facts.json` 的缺失占位；pack 未收录的候选 key 用已接受投影记录的路径回填，使出现/删除/换址在前后可比；`papers` 非对象不再当空表（判 `invalid`）；索引结构错误或可读性变化一律不可比较 → 原 process。索引两侧都"不存在"时仍可比（载体由 pack 派生路径与已记录路径证明）。 |
+| 4 旧版校验记录无法继续第一轮文字修订 | `fixed_evidence_direction_ids` 缺失（修复前的合法 schema 2 记录）按空列表处理；字段存在但类型或方向非法时继续拒绝。 |
+| 5 指定单方向可绕过同一轮固定证据阻挡 | refine-plan／refine-finalize 先按**整轮**未解决的合法固定区阻挡判定：存在即整轮零 jobs、零写入并交源/生成器；完全没有时才按 `--direction-id` 选择文字修订。 |
+
+复验：受影响的既有模块（`test_stage2_evidence_level`、`test_stage2_preflight`、`test_stage2_preflight_binding`、`test_resolved_direction_preflight_integration`、`test_build_issue29_stage2_fixture` 等 69 项）通过；§3 的 17 个选择器完整复跑 `Ran 17 tests`、`OK`（`/tmp/contact-evidence-level.ojprDR8c/recipe.txt`）；全仓 `python3 -m unittest discover -p "test_*.py"` 为 `Ran 1028 tests`、`OK`（`/tmp/contact-evidence-level.UiagMtvI/full-suite-mergefix.txt`）。
+
+第 3 项"索引不存在是否等同不可比较"的边界依据（实测）：把索引不存在也当作不可比较后，`test_resolved_direction_preflight_integration` 与 `test_build_issue29_stage2_fixture` 出现 5 failures + 3 errors——这两组既有测试的教授本来就没有 `_index.json`，其被认可的预期是 `reuse_all`。因此保留划分：**索引存在但不可读或结构错误 → 不可比较 → 原 process**；**索引两侧都不存在 → 可比，载体由 pack 派生路径与已投影记录路径证明**，从而"文件后来出现"仍能被发现，同时不回归既有 index-less 行为。

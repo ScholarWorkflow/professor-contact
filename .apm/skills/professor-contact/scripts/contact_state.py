@@ -357,6 +357,10 @@ def read_json_file(path: Path) -> tuple[Any, str | None]:
         return None, f"invalid: {exc}"
 
 
+# Lazily loaded Stage-2 handoff module (it owns the professor writer lease).
+_HANDOFF_LEASE_MODULE: list = []
+
+
 def professor_dir_containment_error(professor_dir: Path, program_root: Path) -> str | None:
     """Return `invalid_professor_dir` when a professor dir leaves the program."""
     try:
@@ -3597,49 +3601,93 @@ def stage2_projection_artifact(value) -> dict:
     return {"path": str(path), "exists": exists}
 
 
-def stage2_analysis_index(professor_dir: Path) -> tuple[bool, dict]:
+def stage2_analysis_index(professor_dir: Path) -> tuple[str, dict]:
     """Read the Stage-2 analysis index as an opaque per-key record map.
 
-    Only the fields Stage 2 actually consumes are read; an unreadable or
-    malformed index is reported as such instead of being treated as "no
-    analyses", because the two cannot prove the same thing.
+    Returns ("ok"|"missing"|"invalid", records). Only the fields Stage 2
+    actually consumes are read. A structurally broken index is reported as
+    invalid instead of degrading to "no analyses": the two cannot prove the
+    same thing, so a caller must never treat a broken index as unchanged.
     """
-    data, error = read_json_file(Path(professor_dir) / "论文分析" / "_index.json")
+    path = Path(professor_dir) / "论文分析" / "_index.json"
+    if not path.is_file():
+        return "missing", {}
+    data, error = read_json_file(path)
     if error or not isinstance(data, dict):
-        return False, {}
+        return "invalid", {}
     papers = data.get("papers")
-    return True, papers if isinstance(papers, dict) else {}
+    if not isinstance(papers, dict):
+        return "invalid", {}
+    return "ok", papers
 
 
-def stage2_analysis_projection(professor_dir: Path, keys) -> dict:
+def stage2_projection_analysis_paths(*sources) -> dict:
+    """{item_key: analysis_file} from the freshest available machine records."""
+    paths: dict = {}
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key, record in source.items():
+            if not isinstance(key, str) or not isinstance(record, dict):
+                continue
+            value = record.get("analysis_file")
+            if isinstance(value, str) and value.strip() and key not in paths:
+                paths[key] = value
+    return paths
+
+
+def stage2_projection_recorded_paths(projection: dict | None) -> dict:
+    """{item_key: analysis_file} as recorded by an accepted projection.
+
+    Used as the preflight-side fallback for candidate keys the accepted pack
+    does not carry as supporting papers: the recorded path is re-stated (and
+    re-stated for its derived siblings), so a carrier that later appears,
+    disappears or moves is still visible without re-reading any facts file.
+    """
+    keys = (projection or {}).get("keys")
+    if not isinstance(keys, dict):
+        return {}
+    return {key: entry["analysis_file"] for key, entry in keys.items()
+            if isinstance(entry, dict) and isinstance(entry.get("analysis_file"), str)
+            and entry["analysis_file"]}
+
+
+def stage2_analysis_projection(professor_dir: Path, keys,
+                               analysis_paths: dict | None = None) -> dict:
     """The limited index selection state of the analysis sources Stage 2 uses.
 
     Per candidate key: the recorded level and the real analysis / OCR /
-    future-work / facts carriers the index declares, with their current
-    existence. Nothing else from the index is read (management fields such as
-    `generated_at` or `kb_entry_id` are not business changes), and no path is
-    resolved or scanned beyond the declared files themselves.
+    future-work / facts carriers, with their current existence. Carriers the
+    index does not declare are still projected through the fixed sibling rules
+    the analyzer itself uses (`<analysis>.future_work.json`,
+    `<analysis>.facts.json` derived from the analysis path), so a sidecar that
+    appears, disappears or moves next to an unchanged analysis is visible even
+    when the index never recorded it. Nothing else from the index is read, no
+    directory is scanned and no file body is hashed.
     """
-    readable, records = stage2_analysis_index(professor_dir)
+    state, records = stage2_analysis_index(professor_dir)
+    analysis_paths = analysis_paths if isinstance(analysis_paths, dict) else {}
     entries = {}
     for key in sorted({str(key) for key in keys if isinstance(key, str) and key}):
-        record = records.get(key) if readable else None
+        record = records.get(key) if state == "ok" else None
         if not isinstance(record, dict):
-            entries[key] = {
-                "indexed": False, "level": None,
-                "analysis_file": None, "analysis_exists": False,
-                "ocr_file": None, "ocr_exists": False,
-                "future_work_sidecar": None, "future_work_exists": False,
-                "future_work_state": None,
-                "facts_sidecar": None, "facts_exists": False, "facts_state": None,
-            }
-            continue
-        analysis = stage2_projection_artifact(record.get("file"))
+            record = {}
+        analysis_value = record.get("file") or analysis_paths.get(key)
+        analysis = stage2_projection_artifact(analysis_value)
         ocr = stage2_projection_artifact(record.get("ocr_file"))
-        future_work = stage2_projection_artifact(record.get("future_work_sidecar"))
-        facts = stage2_projection_artifact(record.get("facts_sidecar"))
+        future_work_value = record.get("future_work_sidecar")
+        if not isinstance(future_work_value, str) or not future_work_value.strip():
+            future_work_value = (str(analysis["path"]) + ".future_work.json"
+                                 if analysis["path"] else None)
+        facts_value = record.get("facts_sidecar")
+        if not isinstance(facts_value, str) or not facts_value.strip():
+            facts_value = (str(analysis["path"]) + ".facts.json"
+                           if analysis["path"] else None)
+        future_work = stage2_projection_artifact(future_work_value)
+        facts = stage2_projection_artifact(facts_value)
         entries[key] = {
-            "indexed": True, "level": record.get("level"),
+            "indexed": bool(record),
+            "level": record.get("level"),
             "analysis_file": analysis["path"], "analysis_exists": analysis["exists"],
             "ocr_file": ocr["path"], "ocr_exists": ocr["exists"],
             "future_work_sidecar": future_work["path"],
@@ -3649,7 +3697,7 @@ def stage2_analysis_projection(professor_dir: Path, keys) -> dict:
             "facts_state": record.get("facts_state"),
         }
     return {"version": STAGE2_ANALYSIS_PROJECTION_VERSION,
-            "index_readable": readable, "keys": entries}
+            "index_state": state, "keys": entries}
 
 
 def stage2_projection_keys(ctx: "Stage2Context", pack_directions: list | None = None) -> list[str]:
@@ -3696,15 +3744,20 @@ def stage2_projection_diff(accepted: dict | None, current: dict | None) -> tuple
 
     A source change is any indexed/unindexed flip or any declared path /
     existence / state movement; only a bare `level` difference is display-only.
-    An index that changed readability, or is unreadable on both sides, is
-    handled without inventing source changes that were never declared.
+    An index that cannot be parsed on either side is never a comparable basis,
+    and a broken index always takes the ordinary process path. An index that is
+    simply absent on both sides stays comparable: the carriers are then proven
+    through the pack-derived sibling paths, so an appearing or vanishing sidecar
+    is still a source change instead of a silent "unchanged".
     """
     if not isinstance(accepted, dict) or not isinstance(current, dict):
         return ["analysis_projection_unavailable"], []
-    if bool(accepted.get("index_readable")) != bool(current.get("index_readable")):
+    accepted_state = accepted.get("index_state")
+    current_state = current.get("index_state")
+    if accepted_state not in ("ok", "missing") or current_state not in ("ok", "missing"):
+        return ["analysis_index_unreadable"], []
+    if accepted_state != current_state:
         return ["analysis_index_changed"], []
-    if not accepted.get("index_readable"):
-        return [], []
     accepted_keys = accepted.get("keys")
     current_keys = current.get("keys")
     if not isinstance(accepted_keys, dict) or not isinstance(current_keys, dict):
@@ -3841,7 +3894,7 @@ def stage2_freshness_view_fingerprint(pack_direction: dict, cache_entries: dict)
 def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: dict,
                               snapshot_entry: dict | None, pack_directions: list,
                               params: dict, current_year: int, ctx: Stage2Context,
-                              cache_entries: dict) -> dict:
+                              cache_entries: dict, papers_map: dict | None = None) -> dict:
     """Build the cache.preflight block seeded into an accepted input pack.
 
     Written only by stage2-finalize; consumers (stage3+) must keep treating it
@@ -3918,7 +3971,8 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
         # tell an ordinary level-only change from an added / deleted / moved
         # analysis source; display refresh only advances after that proof.
         "analysis_projection": stage2_analysis_projection(
-            professor_dir, stage2_projection_keys(ctx, pack_directions)),
+            professor_dir, stage2_projection_keys(ctx, pack_directions),
+            stage2_projection_analysis_paths(papers_map or {}, ctx.papers)),
         "directions": directions,
     }
 
@@ -3981,38 +4035,21 @@ def stage2_validator_accepts(pack: dict | None, direction_ids: list,
     return None
 
 
-def cmd_stage2_preflight(args) -> None:
-    professor = args.professor
-    if args.paper_analysis not in PAPER_ANALYSIS_SCOPES:
-        fail("invalid_params", f"paper_analysis must be one of {PAPER_ANALYSIS_SCOPES}")
-    if args.gap_scope not in GAP_SCOPES:
-        fail("invalid_params", f"gap_scope must be one of {GAP_SCOPES}")
-    if args.freshness_scope not in FRESHNESS_SCOPES:
-        fail("invalid_params", f"freshness_scope must be one of {FRESHNESS_SCOPES}")
-    if args.max_relevant_papers is not None and (isinstance(args.max_relevant_papers, bool)
-                                                 or args.max_relevant_papers < 1):
-        fail("invalid_params", "max_relevant_papers must be a positive integer when given")
-    program_root = Path(args.program_root)
-    params = stage2_preflight_params(args.paper_analysis, args.gap_scope,
-                                     args.freshness_scope, args.max_relevant_papers)
-    current_year = datetime.now().year
-    target = read_stage2_target(Path(args.target_file), program_root, professor)
-    if target is None:
-        fail("invalid_params",
-             f"professor has no selected target state; run contact_targets.py resolve first: {professor}")
-    professor_dir = program_root / str(target.get("professor_dir") or "")
-    snapshot_entry = read_stage1_professor_entry(program_root, professor_dir, professor, target)
-    if snapshot_entry is None:
-        # The professor-local Stage-1 state is a required preflight proof input
-        # (R64-20 exact-entry binding): missing, malformed or misowned state has
-        # no candidate universe to bind, so fail closed to the refresh lifecycle
-        # instead of the slow path, and never fall back to another professor's
-        # state or the retired program aggregate.
-        state_path = stage1_state_path(professor_dir)
-        soft_exit("needs_refresh",
-                  "missing_stage1_snapshot" if not state_path.is_file()
-                  else "invalid_stage1_snapshot",
-                  snapshot_path=str(state_path), professor=professor)
+def stage2_preflight_assess(program_root: Path, professor_dir: Path, professor: str,
+                            target: dict | None, snapshot_entry: dict | None,
+                            params: dict, current_year: int) -> dict:
+    """Recompute every accepted-pack reuse gate for one professor.
+
+    Single source of truth shared by the read-only preflight and the formal
+    display-refresh entry: the refresh may only write while this same
+    assessment still reports a clean display-only decision, so a decision made
+    by an earlier preflight can never be applied after another transaction moved
+    the bound business inputs (target / Stage-1 snapshot, papers catalog,
+    authorship ledger, direction mapping, freshness cache, source guards).
+
+    Returns the loaded pack, professor-level and per-direction reason codes, the
+    current analysis projection and the display-only level changes.
+    """
     pack_path = professor_dir / INPUT_PACK
     pack, _error = load_input_pack(professor_dir)
     cache_block = (pack or {}).get("cache")
@@ -4020,6 +4057,8 @@ def cmd_stage2_preflight(args) -> None:
 
     professor_reasons: list = []
     projection: dict | None = None
+    projection_keys: list = []
+    analysis_paths: dict = {}
     level_changes: list = []
     if pack is None:
         professor_reasons.append("missing_input_pack")
@@ -4089,7 +4128,12 @@ def cmd_stage2_preflight(args) -> None:
         else:
             projection_keys = stage2_preflight_projection_keys(
                 pack, accepted_projection, target, snapshot_entry)
-            projection = stage2_analysis_projection(professor_dir, projection_keys)
+            projection_keys = sorted(projection_keys)
+            analysis_paths = stage2_projection_analysis_paths(pack_paper_index(pack or {}))
+            for key, value in stage2_projection_recorded_paths(accepted_projection).items():
+                analysis_paths.setdefault(key, value)
+            projection = stage2_analysis_projection(
+                professor_dir, projection_keys, analysis_paths)
             source_changes, level_changes = stage2_projection_diff(
                 accepted_projection, projection)
             if source_changes:
@@ -4108,7 +4152,7 @@ def cmd_stage2_preflight(args) -> None:
                            for entry in (snapshot_entry or {}).get("directions") or []
                            if isinstance(entry, dict)}
     pack_grouping = _pack_resolved_grouping(list(pack_directions.values()))
-    target_directions = [entry for entry in target.get("directions") or []
+    target_directions = [entry for entry in (target or {}).get("directions") or []
                          if isinstance(entry, dict)]
     direction_results = []
     all_reuse = bool(target_directions) and not professor_reasons
@@ -4195,6 +4239,71 @@ def cmd_stage2_preflight(args) -> None:
             "reason_codes": reasons})
         if reasons:
             all_reuse = False
+    return {
+        "pack": pack, "pack_path": pack_path,
+        "reason_codes": sorted(set(professor_reasons)),
+        "directions": direction_results,
+        "analysis_projection": projection,
+        "projection_keys": projection_keys,
+        "projection_analysis_paths": analysis_paths if isinstance(analysis_paths, dict) else {},
+        "level_changes": sorted(level_changes),
+        "all_reuse": all_reuse,
+    }
+
+
+def stage2_program_root_for_professor_dir(professor_dir: Path) -> Path | None:
+    """The program root that owns this professor dir (its 教授研究 parent).
+
+    Bounded upward walk over the path's own components; it never scans or
+    lists a directory. Callers that cannot resolve it must fail closed.
+    """
+    try:
+        candidates = list(Path(professor_dir).resolve().parents)
+    except OSError:
+        return None
+    for candidate in candidates:
+        if candidate.name == "教授研究":
+            return candidate.parent
+    return None
+
+
+def cmd_stage2_preflight(args) -> None:
+    professor = args.professor
+    if args.paper_analysis not in PAPER_ANALYSIS_SCOPES:
+        fail("invalid_params", f"paper_analysis must be one of {PAPER_ANALYSIS_SCOPES}")
+    if args.gap_scope not in GAP_SCOPES:
+        fail("invalid_params", f"gap_scope must be one of {GAP_SCOPES}")
+    if args.freshness_scope not in FRESHNESS_SCOPES:
+        fail("invalid_params", f"freshness_scope must be one of {FRESHNESS_SCOPES}")
+    if args.max_relevant_papers is not None and (isinstance(args.max_relevant_papers, bool)
+                                                 or args.max_relevant_papers < 1):
+        fail("invalid_params", "max_relevant_papers must be a positive integer when given")
+    program_root = Path(args.program_root)
+    params = stage2_preflight_params(args.paper_analysis, args.gap_scope,
+                                     args.freshness_scope, args.max_relevant_papers)
+    current_year = datetime.now().year
+    target = read_stage2_target(Path(args.target_file), program_root, professor)
+    if target is None:
+        fail("invalid_params",
+             f"professor has no selected target state; run contact_targets.py resolve first: {professor}")
+    professor_dir = program_root / str(target.get("professor_dir") or "")
+    snapshot_entry = read_stage1_professor_entry(program_root, professor_dir, professor, target)
+    if snapshot_entry is None:
+        # The professor-local Stage-1 state is a required preflight proof input
+        # (R64-20 exact-entry binding): missing, malformed or misowned state has
+        # no candidate universe to bind, so fail closed to the refresh lifecycle
+        # instead of the slow path, and never fall back to another professor's
+        # state or the retired program aggregate.
+        state_path = stage1_state_path(professor_dir)
+        soft_exit("needs_refresh",
+                  "missing_stage1_snapshot" if not state_path.is_file()
+                  else "invalid_stage1_snapshot",
+                  snapshot_path=str(state_path), professor=professor)
+    pack_path = professor_dir / INPUT_PACK
+    assessment = stage2_preflight_assess(program_root, professor_dir, professor, target,
+                                         snapshot_entry, params, current_year)
+    all_reuse = assessment["all_reuse"]
+    level_changes = assessment["level_changes"]
     preflight_inputs = stage2_preflight_cheap_inputs(
         program_root, professor_dir, professor, target, snapshot_entry, params, current_year)
     if all_reuse and level_changes:
@@ -4213,14 +4322,14 @@ def cmd_stage2_preflight(args) -> None:
         "preflight_id": sha256_obj({"professor": professor,
                                     "preflight_inputs": preflight_inputs}),
         "action": action,
-        "reason_codes": sorted(set(professor_reasons)),
-        "level_changes": sorted(level_changes),
-        "analysis_projection": projection,
-        "accepted_pack_sha256": (stage2_pack_content_fingerprint(pack)
-                                 if isinstance(pack, dict) else None),
+        "reason_codes": assessment["reason_codes"],
+        "level_changes": level_changes,
+        "analysis_projection": assessment["analysis_projection"],
+        "accepted_pack_sha256": (stage2_pack_content_fingerprint(assessment["pack"])
+                                 if isinstance(assessment["pack"], dict) else None),
         "pack_path": str(pack_path),
         "preflight_inputs": preflight_inputs,
-        "directions": direction_results,
+        "directions": assessment["directions"],
     })
 
 
@@ -5880,7 +5989,8 @@ def cmd_stage2_finalize(args) -> None:
             target=preflight_target, snapshot_entry=preflight_snapshot,
             pack_directions=pack_directions,
             params=preflight_plan["preflight_inputs"]["params"],
-            current_year=ctx.current_year, ctx=ctx, cache_entries=cache_entries)
+            current_year=ctx.current_year, ctx=ctx, cache_entries=cache_entries,
+            papers_map=papers_map)
     # Validator lifecycle (plan 3.4.1): the old record is carried over only
     # when NOTHING the validator certified changed — no new model work, no
     # membership/reference/narrative re-render and no old-semantics rebuild —
@@ -5942,20 +6052,62 @@ def cmd_stage2_finalize(args) -> None:
     })
 
 
+def stage2_handoff_module():
+    """Load the module that owns the professor-local Stage-2 writer lease."""
+    if _HANDOFF_LEASE_MODULE:
+        return _HANDOFF_LEASE_MODULE[0]
+    import importlib.util as _importlib_util
+
+    path = Path(__file__).with_name("stage2_chatgpt_handoff.py")
+    spec = _importlib_util.spec_from_file_location("_stage2_handoff_lease", path)
+    if spec is None or spec.loader is None:
+        fail("stage2_writer_lease_unavailable", f"cannot load the lease module: {path}")
+    module = _importlib_util.module_from_spec(spec)
+    sys.modules["_stage2_handoff_lease"] = module
+    spec.loader.exec_module(module)
+    _HANDOFF_LEASE_MODULE.append(module)
+    return module
+
+
+@contextlib.contextmanager
+def stage2_local_writer_scope(professor_dir: Path):
+    """Hold the existing professor-local Stage-2 writer lease for one write.
+
+    Reuses `stage2_chatgpt_handoff`'s lease — same file, same token semantics,
+    no new lock or transaction framework. While another Stage-2 writer holds
+    it, this entry refuses to write instead of interleaving.
+    """
+    handoff = stage2_handoff_module()
+    token = f"stage2-refresh-display:{os.getpid()}:{now_utc()}"
+    try:
+        handoff.acquire_local_lease(professor_dir, token)
+    except ValueError as error:
+        soft_exit("needs_refresh", "stage2_writer_busy",
+                  message=f"另一条 Stage-2 本地写入仍持有该教授的 writer lease（{error}）；"
+                          "本轮不写入任何文件，稍后重新运行。")
+    try:
+        yield
+    finally:
+        try:
+            handoff.release_local_lease(professor_dir, token)
+        except (ValueError, OSError):
+            pass
+
+
 def cmd_stage2_refresh_display(args) -> None:
     """Refresh only the display projection of one accepted pack.
 
-    This is the formal entry for an analysis-level-only change: it reuses the
-    accepted pack, the renderer, the professor-local atomic write and
-    `managed_write`, and it re-reads the same index projection preflight saw
-    before writing. It never calls the facts-dependent preflight metadata
-    builder, never re-signs a resolved proof, never rewrites business state and
-    never queues analysis / assignment / freshness work.
+    The formal entry for an analysis-level-only change: it reuses the accepted
+    pack, the renderer, the professor-local atomic write and `managed_write`,
+    re-proves the SAME business gates the earlier preflight proved (target and
+    Stage-1 snapshot, papers catalog, authorship ledger, direction mapping,
+    freshness cache, source guards, validator acceptance) plus the analysis
+    projection, and runs its check-render-write inside the existing professor
+    writer lease. It never calls the facts-dependent preflight metadata builder,
+    never re-signs a resolved proof, never rewrites business state and never
+    queues analysis / assignment / freshness work.
     """
     professor_dir = Path(args.professor_dir)
-    pack, error = load_input_pack(professor_dir)
-    if error or pack is None:
-        fail("missing_input_pack", f"input pack unreadable: {professor_dir / INPUT_PACK}")
     preflight, error = read_json_file(Path(args.preflight_file))
     if error or not isinstance(preflight, dict) or preflight.get("status") != "ok" \
             or not isinstance(preflight.get("preflight_inputs"), dict):
@@ -5965,42 +6117,82 @@ def cmd_stage2_refresh_display(args) -> None:
         fail("invalid_params",
              "the display-only entry requires a preflight that decided refresh_display: "
              f"{preflight.get('action')!r}")
-    if preflight.get("professor") != pack.get("professor"):
-        fail("invalid_params", "preflight file professor mismatch: "
-                               f"{preflight.get('professor')!r} != {pack.get('professor')!r}")
-    cache = pack.get("cache") if isinstance(pack.get("cache"), dict) else {}
-    meta = cache.get("preflight") if isinstance(cache, dict) else None
-    accepted = meta.get("analysis_projection") if isinstance(meta, dict) else None
-    if not isinstance(accepted, dict):
-        soft_exit("needs_refresh", "legacy_pack_no_preflight",
-                  message="已接受输入包没有可比较的分析来源基线；按正常 Stage 2 流程重新处理。"
-                          "未修改任何文件。")
-    # The preflight decision bound this exact accepted pack; a pack written in
-    # between makes the decision stale.
+    professor = preflight.get("professor")
+    if not isinstance(professor, str) or not professor:
+        fail("invalid_params", "preflight payload has no professor")
+    payload_inputs = preflight["preflight_inputs"]
+    params = payload_inputs.get("params")
+    current_year = payload_inputs.get("current_year")
+    if not isinstance(params, dict) or isinstance(current_year, bool) \
+            or not isinstance(current_year, int):
+        fail("invalid_params", "preflight payload has no usable params/current_year")
+    program_root = stage2_program_root_for_professor_dir(professor_dir)
+    if program_root is None:
+        soft_exit("needs_refresh", "invalid_professor_dir",
+                  professor_dir=str(professor_dir),
+                  message="无法从教授目录定位程序根，不能重核预检绑定的业务输入；"
+                          "按正常 Stage 2 流程重新处理。未修改任何文件。")
+    target = read_stage2_target(stage2_target_path(professor_dir), program_root, professor)
+    if target is None:
+        soft_exit("needs_refresh", "preflight_inputs_changed", drift=["target_unreadable"],
+                  message="教授本地 target 状态不可读或不属于该教授；"
+                          "按正常 Stage 2 流程重新处理。未修改任何文件。")
+    snapshot_entry = read_stage1_professor_entry(program_root, professor_dir, professor, target)
+    if snapshot_entry is None:
+        state_path = stage1_state_path(professor_dir)
+        soft_exit("needs_refresh",
+                  "missing_stage1_snapshot" if not state_path.is_file()
+                  else "invalid_stage1_snapshot",
+                  snapshot_path=str(state_path), professor=professor)
+    # Re-prove every gate the earlier preflight proved, with the same checks.
+    assessment = stage2_preflight_assess(program_root, professor_dir, professor, target,
+                                         snapshot_entry, params, current_year)
+    pack = assessment["pack"]
+    if not isinstance(pack, dict):
+        fail("missing_input_pack", f"input pack unreadable: {professor_dir / INPUT_PACK}")
+    if pack.get("professor") != professor:
+        fail("invalid_params", "input pack belongs to another professor: "
+                               f"{pack.get('professor')!r} != {professor!r}")
     if preflight.get("accepted_pack_sha256") != stage2_pack_content_fingerprint(pack):
         soft_exit("needs_refresh", "display_refresh_stale",
                   drift=["accepted_pack_changed"],
                   message="预检之后已接受输入包发生变化；重新预检后再决定是否只刷新展示。"
                           "未修改任何文件。")
-    recorded = preflight.get("analysis_projection")
-    if not isinstance(recorded, dict):
-        fail("invalid_params", "preflight payload has no analysis projection to re-verify")
-    keys = sorted(set(recorded.get("keys") or {}) | set(accepted.get("keys") or {})
-                  | {key for key in pack_paper_index(pack) if isinstance(key, str)})
-    current = stage2_analysis_projection(professor_dir, keys)
-    if current != recorded:
+    current_inputs = stage2_preflight_cheap_inputs(
+        program_root, professor_dir, professor, target, snapshot_entry, params, current_year)
+    if current_inputs != payload_inputs:
+        soft_exit("needs_refresh", "display_refresh_stale",
+                  drift=["preflight_inputs_changed"],
+                  message="预检绑定的目标/Stage 1 候选/参数已经变化；"
+                          "按正常 Stage 2 流程重新处理。未修改任何文件。")
+    if assessment["reason_codes"] or any(row["reason_codes"] for row in assessment["directions"]):
+        soft_exit("needs_refresh", "display_refresh_stale",
+                  drift=["business_inputs_changed"],
+                  reason_codes=assessment["reason_codes"],
+                  directions=assessment["directions"],
+                  message="预检之后业务依据（论文目录/署名视图/方向映射/时效缓存/来源守卫/"
+                          "validator 验收）已经变化；按正常 Stage 2 流程重新处理。"
+                          "未修改任何文件。")
+    recorded_projection = preflight.get("analysis_projection")
+    current = assessment["analysis_projection"]
+    if not isinstance(recorded_projection, dict) or not isinstance(current, dict) \
+            or current != recorded_projection:
         soft_exit("needs_refresh", "display_refresh_stale",
                   drift=["analysis_sources_changed"],
                   message="预检之后分析来源（新增/删除/换址/级别声明）发生变化；"
                           "按正常 Stage 2 流程重新处理。未修改任何文件。")
-    source_changes, level_changes = stage2_projection_diff(accepted, current)
-    if source_changes or not level_changes:
+    level_changes = assessment["level_changes"]
+    if not level_changes:
         soft_exit("needs_refresh", "display_refresh_stale",
-                  drift=["analysis_sources_changed"],
-                  changed_keys=sorted(source_changes),
-                  message="当前来源无法证明与已接受基线只在级别上不同；"
-                          "按正常 Stage 2 流程重新处理。未修改任何文件。")
+                  drift=["no_display_change"],
+                  message="当前来源与已接受基线没有展示级别差异，无需刷新。未修改任何文件。")
 
+    cache = pack.get("cache") if isinstance(pack.get("cache"), dict) else {}
+    meta = cache.get("preflight") if isinstance(cache, dict) else None
+    if not isinstance(meta, dict):
+        soft_exit("needs_refresh", "legacy_pack_no_preflight",
+                  message="已接受输入包没有可比较的分析来源基线；按正常 Stage 2 流程重新处理。"
+                          "未修改任何文件。")
     updated = dict(pack)
     papers = {}
     levels = {}
@@ -6023,10 +6215,8 @@ def cmd_stage2_refresh_display(args) -> None:
         **meta, "analysis_projection": current,
         "display_refresh_version": STAGE2_DISPLAY_REFRESH_VERSION}
 
-    ctx = Stage2PackRefineContext(professor_dir)
-    ctx.pack = updated
-    state_fingerprint = stage2_pack_state_fingerprint(updated)
-    body = render_analysis_md(ctx, updated, state_fingerprint)
+    projection_keys = assessment["projection_keys"]
+    analysis_paths = assessment["projection_analysis_paths"]
     md_path = professor_dir / ANALYSIS_MD
     old_render = cache.get("render") if isinstance(cache.get("render"), dict) else {}
     decision = None
@@ -6034,16 +6224,36 @@ def cmd_stage2_refresh_display(args) -> None:
         decision_data, decision_error = read_json_file(Path(args.decision_file))
         if decision_error is None and isinstance(decision_data, dict):
             decision = decision_data.get("decision")
-    md_result = managed_write(md_path, body, state_fingerprint,
-                              (old_render.get(ANALYSIS_MD) or {}).get("sha256"), decision)
-    if md_result.get("needs_decision"):
-        soft_exit("needs_decision", md_result["reason_code"],
-                  target=md_result.get("target"),
-                  existing_sha256=md_result.get("existing_sha256"),
-                  new_sha256=md_result.get("new_sha256"),
-                  options=["overwrite（覆盖为状态版本）", "keep_manual（保留手改，不作为流程输入）"])
-    updated["cache"]["render"] = {ANALYSIS_MD: {"sha256": md_result["sha256"]}}
-    atomic_json(professor_dir / INPUT_PACK, updated)
+
+    with stage2_local_writer_scope(professor_dir):
+        # Inside the lease, re-prove the exact state this write relies on: the
+        # accepted pack and the analysis sources must still be the ones the
+        # checks above proved.
+        ctx = Stage2PackRefineContext(professor_dir)
+        if stage2_pack_content_fingerprint(ctx.pack) != stage2_pack_content_fingerprint(pack):
+            soft_exit("needs_refresh", "display_refresh_stale",
+                      drift=["accepted_pack_changed"],
+                      message="写入前已接受输入包再次变化；按正常 Stage 2 流程重新处理。"
+                              "未修改任何文件。")
+        if stage2_analysis_projection(professor_dir, projection_keys,
+                                      analysis_paths) != current:
+            soft_exit("needs_refresh", "display_refresh_stale",
+                      drift=["analysis_sources_changed"],
+                      message="写入前分析来源再次变化；按正常 Stage 2 流程重新处理。"
+                              "未修改任何文件。")
+        ctx.pack = updated
+        state_fingerprint = stage2_pack_state_fingerprint(updated)
+        body = render_analysis_md(ctx, updated, state_fingerprint)
+        md_result = managed_write(md_path, body, state_fingerprint,
+                                  (old_render.get(ANALYSIS_MD) or {}).get("sha256"), decision)
+        if md_result.get("needs_decision"):
+            soft_exit("needs_decision", md_result["reason_code"],
+                      target=md_result.get("target"),
+                      existing_sha256=md_result.get("existing_sha256"),
+                      new_sha256=md_result.get("new_sha256"),
+                      options=["overwrite（覆盖为状态版本）", "keep_manual（保留手改，不作为流程输入）"])
+        updated["cache"]["render"] = {ANALYSIS_MD: {"sha256": md_result["sha256"]}}
+        atomic_json(professor_dir / INPUT_PACK, updated)
     emit({"status": "ok", "professor": pack.get("professor"),
           "display_refreshed": True, "pack_path": str(professor_dir / INPUT_PACK),
           "analysis_md": str(md_path), "md_sha256": md_result["sha256"],
@@ -11147,6 +11357,11 @@ def stage2_require_recorded_validation(ctx, validation_path: Path) -> tuple[dict
     if phase == "terminal":
         unresolved = []
     fixed_recorded = validator.get("fixed_evidence_direction_ids")
+    if fixed_recorded is None:
+        # Records written before this field existed stay legal: nothing was
+        # classified then, so the round carries no recorded fixed-evidence
+        # blocker. A present but malformed value still fails closed below.
+        fixed_recorded = []
     if not isinstance(fixed_recorded, list) \
             or any(not isinstance(did, str) or did not in allowed for did in fixed_recorded):
         fail("validation_evidence_not_recorded",
@@ -11316,16 +11531,15 @@ def cmd_stage2_refine_plan(args) -> None:
             fail("invalid_params",
                  f"collection_key not found (or ambiguous) in input pack: {args.collection_key}")
         scope_did = direction_machine_id(matches[0])
-    if scope_did:
-        if scope_did not in allowed:
-            fail("invalid_params", f"direction_id not found in input pack: {scope_did}")
-        failed = {key: value for key, value in failed.items() if key == scope_did}
-        fixed_ids = [did for did in fixed_ids if did == scope_did]
+    if scope_did and scope_did not in allowed:
+        fail("invalid_params", f"direction_id not found in input pack: {scope_did}")
 
     if fixed_ids:
         # Any open fixed-evidence blocker in the round stops the automatic
-        # correction loop: those fields carry facts only the source owner or
-        # the generator may change, so no rewrite job is emitted for the round.
+        # correction loop — including when the caller scoped the request to a
+        # different single direction: those fields carry facts only the source
+        # owner or the generator may change, so no rewrite job is emitted for
+        # the round.
         emit({"status": "ok", "professor": ctx.professor,
               "validation_file": str(Path(args.validation_file)),
               "directions": sorted(fixed_ids), "jobs": [], "write_needed": False,
@@ -11336,6 +11550,9 @@ def cmd_stage2_refine_plan(args) -> None:
                          "next": "修正源数据/题名后按正常 stage2-plan → stage2-finalize 重新生成受管正文，"
                                  "再对新正文重新登记校验"}})
         return
+
+    if scope_did:
+        failed = {key: value for key, value in failed.items() if key == scope_did}
 
     old_directions = {direction_machine_id(d): d for d in ctx.pack.get("directions", [])}
     jobs = []
@@ -11395,15 +11612,13 @@ def cmd_stage2_refine_finalize(args) -> None:
             fail("invalid_params",
                  f"collection_key not found (or ambiguous) in input pack: {args.collection_key}")
         scope_did = direction_machine_id(matches[0])
-    if scope_did:
-        if scope_did not in allowed:
-            fail("invalid_params", f"direction_id not found in input pack: {scope_did}")
-        failed &= {scope_did}
-        fixed_ids = [did for did in fixed_ids if did == scope_did]
+    if scope_did and scope_did not in allowed:
+        fail("invalid_params", f"direction_id not found in input pack: {scope_did}")
     if fixed_ids:
         # The same round holds an open fixed-evidence blocker: refuse to write,
         # keep pack and managed Markdown byte-identical, and hand the finding to
-        # its source/generator owner.
+        # its source/generator owner. Scoping to another direction must not
+        # bypass the round-level refusal.
         emit({"status": "ok", "rewritten": [], "write_needed": False,
               "directions": sorted(fixed_ids),
               "reason_code": FIXED_EVIDENCE_HANDOFF_REASON,
@@ -11411,6 +11626,8 @@ def cmd_stage2_refine_finalize(args) -> None:
               "detail": {"owner": "source_or_generator",
                          "action": "repair_source_then_regenerate"}})
         return
+    if scope_did:
+        failed &= {scope_did}
     if not failed:
         emit({"status": "ok", "rewritten": [], "write_needed": False,
               "reason_code": "no_failed_directions"})
