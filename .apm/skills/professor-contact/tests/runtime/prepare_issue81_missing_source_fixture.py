@@ -12,7 +12,8 @@ from pathlib import Path
 TESTS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS_DIR))
 spec = importlib.util.spec_from_file_location(
-    "issue81_fixture_helpers", TESTS_DIR / "test_contact_state.py")
+    "issue81_stage5_issue59_test_support",
+    TESTS_DIR / "_stage5_issue59_test_support.py")
 helpers = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = helpers
 spec.loader.exec_module(helpers)

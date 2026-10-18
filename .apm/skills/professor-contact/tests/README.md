@@ -10,6 +10,7 @@
 | 问题专属准备入口 | `tests/runtime/prepare_issue*_fixture.py` | 生成该议题的业务样例和清单；业务数据由入口自己定义 |
 | 既有请求构造与验证入口 | `tests/runtime/build_issue*_eval_request.py`、`tests/runtime/verify_issue*.py` | 各自议题的命令构造与运行后判定，不在本次共用范围内 |
 | 结构化执行与判定 | `tests/gate2_evidence.py` | 运行 unittest 并按执行阶段分类结果，产出 JSON 证据 |
+| 测试公共夹具支持 | `tests/_*_test_support.py` | 跨测试与 runtime 夹具复用的合成数据和写入器；不含 TestCase，文件名不以 `test_` 开头，`unittest discover -p 'test_*.py'` 不会收集 |
 | 问题专属业务样例和断言 | `tests/test_*.py` | 每个议题的业务验收断言由对应测试负责 |
 
 ## 共用准备工具：fixture_support.py
