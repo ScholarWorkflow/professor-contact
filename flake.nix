@@ -51,7 +51,7 @@
     # input supplies the base/source skill packages, and zotero-tools keeps its
     # owner lock.  Only the two inputs this repository already pins are aligned.
     professor-research = {
-      url = "github:ScholarWorkflow/professor-research/6e46f2961ba213c896b536bbbaa7de838b1070d4";
+      url = "github:ScholarWorkflow/professor-research/bb27533540715c44039c108302f11d3e00d6b62e";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.agent-env-nix.follows = "agent-env-nix";
     };
