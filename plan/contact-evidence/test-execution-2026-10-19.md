@@ -24,6 +24,7 @@
 1. 取基准副本，并把改动版复制到**同构目录**：
 
    ```sh
+   set -e
    RUN=$(mktemp -d /tmp/pc-bnd3-XXXXXX)
    mkdir -p "$RUN/base" "$RUN/head"
    for name in contact_state _stage3_render _contact_io _stage3_handoff; do
