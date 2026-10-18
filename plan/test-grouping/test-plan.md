@@ -31,11 +31,11 @@
    python3 --version
    git rev-parse --short HEAD
    ```
-2. T1：正确清单 + 三种坏清单。注入用一次性 Python 片段改写 `shards.json`，每次注入后**必须恢复**并用 `git diff --exit-code` 确认清单与提交一致。
+2. T1：正确清单 + 四种坏清单。注入用一次性 Python 片段改写 `shards.json`，每次注入后**必须恢复**并用 `git diff --exit-code` 确认清单与提交一致。
    ```sh
    set -e
    python3 scripts/check_test_shards.py
-   # 注入与恢复（三种坏清单各一次）
+   # 注入与恢复（四种坏清单各一次）
    python3 - <<'PY'
    import json, subprocess, sys
    from pathlib import Path
@@ -108,7 +108,7 @@
 
 ## 自检
 
-按 `plan/test-plan-checklist.md` 逐条核对：① 必测项只覆盖本批行为（校验脚本、分片并集、工作流结构）；② CI 作为既有仓库检查单独引用、不占必测编号；③ 本批没有仓库外临时脚本，注入片段就地给出且必须恢复；④ 命令块全部 `set -e`；⑤ 失败注入到达目标分支（三种坏清单各自触发对应 `ERROR:`）；⑥ 计划与记录同一套标签；⑦ 编号 T1–T5、版本指针与执行计划第 2 版一致。
+按 `plan/test-plan-checklist.md` 逐条核对：① 必测项只覆盖本批行为（校验脚本、分片并集、工作流结构）；② CI 作为既有仓库检查单独引用、不占必测编号；③ 本批没有仓库外临时脚本，注入片段就地给出且必须恢复；④ 命令块全部 `set -e`；⑤ 失败注入到达目标分支（四种坏清单各自触发对应 `ERROR:`）；⑥ 计划与记录同一套标签；⑦ 编号 T1–T5、版本指针与执行计划第 2 版一致。
 
 ## 修订记录
 
