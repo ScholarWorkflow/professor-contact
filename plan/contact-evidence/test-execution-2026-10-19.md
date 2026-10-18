@@ -3,20 +3,20 @@
 - 测试计划：[test-plan.md](test-plan.md)，第 2 版。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 3 版（`Plan conclusion: APPROVED`）。
 - 对照基准：`2117fc6a1607a22aa9e723002b4a78625733b7b1`。
-- 被测提交：`c8c7208`（实现提交；其后如仅改文档，产品与测试字节不变）。
+- 被测提交：`1fffa95`（改基到边界二 head `7f72f0c` 之后的实现提交；与改基前的 `c8c7208` 在 `.apm/` 下逐字节相同，`git diff c8c7208 1fffa95 -- .apm/` 为空）。其后为三个文档提交。
 - 环境：本地 macOS，Python 3.14.7；只使用标准库与既有夹具。仓库 CI 使用工作流固定的 Python 3.12。
-- 改基记录：本分支改基到边界二最新 head `7f72f0c` 后复跑 T1–T4（`base6.json`／`head6.json` 逐字段相同）与 T5（`Ran 5 tests in 6.547s`、`OK`）；产品与测试代码未变，结论沿用。
-- 原始输出（仓库外）：`/tmp/pc-bnd3-check/`。
+- 改基记录：本分支改基到边界二最新 head `7f72f0c` 后复跑 T1–T4（`base6.json`／`head6.json` 逐字段相同）与 T5（`t5-rebased.log`：`Ran 5 tests in 5.026s`、`OK`）；产品与测试代码未变，结论沿用。
+- 原始输出（仓库外）：`/tmp/pc-bnd3-check/`；证据文件 `base6.json`／`head6.json`（最终）、`t5-rebased.log`（改基后 T5）、历史尝试 `base.json`／`head.json`（扩展前）、`base3.json`／`head3.json`（八场景扩展）、`t5.log`（改基前 T5）。
 
 ## 逐项结果
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
-| T1 | 通过 | `base2.json` 与 `head2.json` 逐字段相同：显式注入存在文件返回该路径、注入缺失文件返回 `None`（失败关闭）、注入空白串与不注入都退回环境解析且两侧结果相同（同构目录下均为 `None`） |
-| T2 | 通过 | 同一对比（八种场景）：fresh → `check`；stale → `check, rebuild, check`；per-professor unavailable → `check`（不重建）；无条目 unavailable → `check, rebuild, check`；重建失败 → `check, rebuild` 且 `rebuild_ran: False`；check 非零退出／非 JSON／`result` 非法值 → `check` 且 `checker_error: script_failed`、不重建。八种场景返回字典的 5 个键与内容相同，stub 调用日志序列一致 |
-| T3 | 通过 | 同一对比：合法 artifact、kind 不符、schema 不符、非对象、坏 JSON、缺失六种输入的 `(artifact, error)` 相同；runner 侧 `load_contact_evidence` 签名仍是 `(program_root)` |
-| T4 | 通过 | 同一对比：六种教授名形态（全角空格、首尾空格、stale/legacy/invalid/不存在）与七种状态（None/fresh/stale/legacy/invalid/unavailable/空对象）结果相同；runner 侧 `professor_source_state` 签名仍是 `(report, professor)` |
-| T5 | 通过 | `Ran 5 tests in 9.758s`，`OK`，退出码 0 |
+| T1 | 通过 | `base6.json` 与 `head6.json` 逐字段相同（改基后；扩展后的 `base3.json`／`head3.json` 与扩展前的 `base.json`／`head.json` 保留作历史尝试）：显式注入存在文件返回该路径、注入缺失文件返回 `None`（失败关闭）、注入空白串与不注入都退回环境解析且两侧结果相同（同构目录下均为 `None`） |
+| T2 | 通过 | `base6.json`／`head6.json` 对比（八种场景）：fresh → `check`；stale → `check, rebuild, check`；per-professor unavailable → `check`（不重建）；无条目 unavailable → `check, rebuild, check`；重建失败 → `check, rebuild` 且 `rebuild_ran: False`；check 非零退出／非 JSON／`result` 非法值 → `check` 且 `checker_error: script_failed`、不重建。八种场景返回字典的 5 个键与内容相同，stub 调用日志序列一致 |
+| T3 | 通过 | `base6.json`／`head6.json` 对比：合法 artifact、kind 不符、schema 不符、非对象、坏 JSON、缺失六种输入的 `(artifact, error)` 相同；runner 侧 `load_contact_evidence` 签名仍是 `(program_root)` |
+| T4 | 通过 | `base6.json`／`head6.json` 对比：六种教授名形态（全角空格、首尾空格、stale/legacy/invalid/不存在）与七种状态（None/fresh/stale/legacy/invalid/unavailable/空对象）结果相同；runner 侧 `professor_source_state` 签名仍是 `(report, professor)` |
+| T5 | 通过 | 改基后 `t5-rebased.log`：`Ran 5 tests in 5.026s`，`OK`，退出码 0（改基前的同字节运行 `t5.log`：`Ran 5 tests in 9.758s`，`OK`，保留作旁证） |
 | 既有仓库检查 | 待补 | 推送到 PR 后引用仓库 CI 运行编号、所跑 head 与 `test` 检查状态（不属于本批必测项） |
 
 ## 执行方法与命令
@@ -38,9 +38,9 @@
 
    ```sh
    set -e
-   uv run --no-project "$RUN/evidence_probe.py" "$RUN/base/contact_state.py" "$RUN/base-work2" > "$RUN/base2.json"
-   uv run --no-project "$RUN/evidence_probe.py" "$RUN/head/contact_state.py" "$RUN/head-work2" > "$RUN/head2.json"
-   diff -u "$RUN/base2.json" "$RUN/head2.json"
+   uv run --no-project "$RUN/evidence_probe.py" "$RUN/base/contact_state.py" "$RUN/base-work6" > "$RUN/base6.json"
+   uv run --no-project "$RUN/evidence_probe.py" "$RUN/head/contact_state.py" "$RUN/head-work6" > "$RUN/head6.json"
+   diff -u "$RUN/base6.json" "$RUN/head6.json"
    ```
 
 3. T5：清单列出的 5 个入口（见测试计划第 3 步），`Ran 5 tests`、`OK`。

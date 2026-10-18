@@ -88,7 +88,7 @@
 
 ## 自检
 
-按 `plan/test-plan-checklist.md` 逐条核对：必测项只引用能证明本批行为的方法（T5 的 5 个入口）；CI 不在必测清单；驱动脚本有确切来源与 `cp` 命令；命令块全部 `set -e`；失败/差异走“同构目录对照 + 逐字段比较”，注入场景覆盖 fresh/stale/unavailable 与四种解析路径；计划与执行记录使用同一套标签；编号为 T1–T5、版本指针与执行计划第 3 版一致。
+按 `plan/test-plan-checklist.md` 逐条核对：必测项只引用能证明本批行为的方法（T5 的 5 个入口）；CI 不在必测清单；驱动脚本有确切来源与 `cp` 命令；命令块全部 `set -e`；失败/差异走“同构目录对照 + 逐字段比较”，T2 覆盖 fresh／stale／per-professor unavailable／无条目 unavailable／重建失败／check 三种失败（非零退出、非 JSON、`result` 非法值）共八种场景，T1 覆盖四种解析路径；计划与执行记录使用同一套标签；编号为 T1–T5、版本指针与执行计划第 3 版一致。
 
 ## 修订记录
 
