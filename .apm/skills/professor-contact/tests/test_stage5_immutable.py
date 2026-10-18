@@ -217,9 +217,9 @@ class TestWrapperKeepsInstalledLayoutLocator(unittest.TestCase):
         scripts.mkdir(parents=True)
         (scripts / "contact_state.py").write_text(
             RUNNER.read_text(encoding="utf-8"), encoding="utf-8")
-        (scripts / "_stage3_render.py").write_text(
-            RUNNER.with_name("_stage3_render.py").read_text(encoding="utf-8"),
-            encoding="utf-8")
+        for helper in sorted(RUNNER.parent.glob("_*.py")):
+            (scripts / helper.name).write_text(
+                helper.read_text(encoding="utf-8"), encoding="utf-8")
         wrapper = scripts / "stage5_immutable.py"
         wrapper.write_text(WRAPPER.read_text(encoding="utf-8"), encoding="utf-8")
         self.wrapper = wrapper

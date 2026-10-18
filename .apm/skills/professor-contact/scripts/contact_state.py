@@ -40,6 +40,31 @@ if _STAGE3_RENDER_SPEC is None or _STAGE3_RENDER_SPEC.loader is None:
 _stage3_render = importlib.util.module_from_spec(_STAGE3_RENDER_SPEC)
 _STAGE3_RENDER_SPEC.loader.exec_module(_stage3_render)
 
+# Shared error-channel and atomic-write helpers live in a sibling module
+# (loaded by path for the same reason as the renderer above). Every name keeps
+# its pre-split identity in this namespace: `fail`/`soft_exit`/`emit` have
+# hundreds of call sites, and the business-failure class must stay the same
+# object a caller catches.
+_CONTACT_IO_PATH = Path(__file__).with_name("_contact_io.py")
+_CONTACT_IO_SPEC = importlib.util.spec_from_file_location(
+    "_contact_io", _CONTACT_IO_PATH)
+if _CONTACT_IO_SPEC is None or _CONTACT_IO_SPEC.loader is None:
+    raise RuntimeError(f"cannot load contact I/O helpers: {_CONTACT_IO_PATH}")
+_contact_io = importlib.util.module_from_spec(_CONTACT_IO_SPEC)
+_CONTACT_IO_SPEC.loader.exec_module(_contact_io)
+
+atomic_write = _contact_io.atomic_write
+atomic_json = _contact_io.atomic_json
+atomic_json_many = _contact_io.atomic_json_many
+staged_pair_commit = _contact_io.staged_pair_commit
+emit = _contact_io.emit
+ProfessorBusinessFailure = _contact_io.ProfessorBusinessFailure
+_BUSINESS_CHANNEL = _contact_io._BUSINESS_CHANNEL
+professor_business_channel = _contact_io.professor_business_channel
+_business_channel_open = _contact_io._business_channel_open
+fail = _contact_io.fail
+soft_exit = _contact_io.soft_exit
+
 SCHEMA = 1
 MANAGED_BY = "contact_state"
 # Issue #8 identity contract (direction-id-v1): the machine identity of a
@@ -206,177 +231,6 @@ def read_json_file(path: Path) -> tuple[Any, str | None]:
         return None, f"invalid: {exc}"
 
 
-def atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-        raise
-
-
-def atomic_json(path: Path, payload: Any) -> None:
-    atomic_write(path, json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1) + "\n")
-
-
-def atomic_json_many(items: list[tuple[Path, Any]]) -> None:
-    """Replace a small set of JSON files together, restoring old files on error."""
-    staged = []
-    records = []
-    try:
-        for path, payload in items:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-                handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1) + "\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            staged.append((path, Path(temporary)))
-        for path, temporary in staged:
-            backup = None
-            record = {"path": path, "temporary": temporary, "backup": backup,
-                      "installed": False}
-            records.append(record)
-            if path.exists():
-                fd, backup_name = tempfile.mkstemp(prefix=f".{path.name}.backup.", dir=path.parent)
-                os.close(fd)
-                backup = Path(backup_name)
-                backup.unlink()
-                record["backup"] = backup
-                os.replace(path, backup)
-            os.replace(temporary, path)
-            record["installed"] = True
-    except BaseException:
-        for record in reversed(records):
-            path = record["path"]
-            try:
-                if record["installed"] and path.exists():
-                    path.unlink()
-                backup = record["backup"]
-                if backup and backup.exists():
-                    os.replace(backup, path)
-            except OSError:
-                pass
-        for path, temporary in staged:
-            temporary.unlink(missing_ok=True)
-        raise
-    else:
-        for record in records:
-            backup = record["backup"]
-            if backup and backup.exists():
-                backup.unlink()
-        for path, temporary in staged:
-            temporary.unlink(missing_ok=True)
-
-
-def staged_pair_commit(items: list[tuple[Path, str]]) -> None:
-    """Replace a small set of text files as one local transaction (issue #66).
-
-    All files are staged first, then installed in list order with one atomic
-    replace each — the LAST install is the business commit point. An ordinary
-    exception before the final install restores every previous file's old
-    bytes (absence included), so no reader ever observes a state that the
-    transaction later rolls back. Once the final install returned, the
-    transaction is committed: remaining cleanup is best-effort and a cleanup
-    error never rolls business files back or re-frames the result as
-    uncommitted. Hard-crash durability between two replaces is out of scope.
-    """
-    staged: list[tuple[Path, Path]] = []
-    installed: list[Path] = []
-    backups: dict[Path, bytes | None] = {}
-    try:
-        for path, text in items:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-                handle.write(text)
-                handle.flush()
-                os.fsync(handle.fileno())
-            staged.append((path, Path(temporary)))
-        for path, temporary in staged:
-            backups[path] = path.read_bytes() if path.exists() else None
-            os.replace(temporary, path)
-            installed.append(path)
-    except BaseException:
-        for path in reversed(installed):
-            old = backups.get(path)
-            try:
-                if old is None:
-                    path.unlink(missing_ok=True)
-                else:
-                    fd, temporary = tempfile.mkstemp(
-                        prefix=f".{path.name}.restore.", dir=path.parent)
-                    with os.fdopen(fd, "wb") as handle:
-                        handle.write(old)
-                        handle.flush()
-                        os.fsync(handle.fileno())
-                    os.replace(temporary, path)
-            except OSError:
-                pass
-        for _, temporary in staged:
-            temporary.unlink(missing_ok=True)
-        raise
-    else:
-        for _, temporary in staged:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
-
-
-def emit(payload: dict) -> None:
-    print(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1))
-
-
-class ProfessorBusinessFailure(Exception):
-    """Expected professor-scoped business failure inside a Stage-4 transaction.
-
-    It carries the machine payload a top-level `fail()`/`soft_exit()` would have
-    printed, so the caller can turn it into that professor's result row while
-    the single aggregate JSON stays the only output of the command."""
-
-    def __init__(self, payload: dict) -> None:
-        super().__init__(payload.get("reason_code") or "")
-        self.payload = payload
-
-
-_BUSINESS_CHANNEL: list = []
-
-
-@contextlib.contextmanager
-def professor_business_channel():
-    """Route expected business exits into ProfessorBusinessFailure.
-
-    A one-professor Stage-4 transaction must never print or end the process:
-    only the outer command emits the single machine result."""
-    _BUSINESS_CHANNEL.append(True)
-    try:
-        yield
-    finally:
-        _BUSINESS_CHANNEL.pop()
-
-
-def _business_channel_open() -> bool:
-    return bool(_BUSINESS_CHANNEL)
-
-
-def fail(reason_code: str, message: str = "", **extra) -> None:
-    payload = {"status": "error", "reason_code": reason_code, "message": message}
-    payload.update(extra)
-    if _business_channel_open():
-        raise ProfessorBusinessFailure(payload)
-    emit(payload)
-    sys.exit(1)
-
-
 def professor_dir_containment_error(professor_dir: Path, program_root: Path) -> str | None:
     """Return `invalid_professor_dir` when a professor dir leaves the program."""
     try:
@@ -395,15 +249,6 @@ def require_professor_dir_under_program(professor_dir: Path, program_root: Path)
     fail("invalid_professor_dir", "professor_dir must be inside program_root/教授研究",
          professor_dir=str(Path(professor_dir).resolve()),
          allowed_root=str((program_root / "教授研究").resolve()))
-
-
-def soft_exit(status: str, reason_code: str, **extra) -> None:
-    payload = {"status": status, "reason_code": reason_code}
-    payload.update(extra)
-    if _business_channel_open():
-        raise ProfessorBusinessFailure(payload)
-    emit(payload)
-    sys.exit(2)
 
 
 def truncate(text: str | None, limit: int) -> str:
