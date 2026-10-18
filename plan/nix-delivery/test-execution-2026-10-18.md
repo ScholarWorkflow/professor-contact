@@ -4,7 +4,7 @@
 - 早前被验提交：`af6bf55c4e3afd456832be0289338c454ec37cc2`（N1–N4 首轮全绿）与 `48172e4fee7b273febdda81c152b0a8ce2773932`（审核跟随修改后全绿）；见第 5、6 节
 - 依据：[执行计划 R3](implementation-plan.md)、[测试计划 TP5.1](test-plan.md)、Test Engineer Rule、Project Consensus
 - 运行目录（仓库外）：collector 接线后 `/tmp/contact-nix.F9MLsw`（consumer=`$RUN/consumer`，样本=`$RUN/data`，输出=`$RUN/output`，夹具=`$RUN/evidence`）；合并后 `/tmp/contact-nix.Zc1wnW`；`48172e4` 用 `/tmp/contact-nix.1ilKkF`；首轮 `af6bf55` 用 `/tmp/contact-nix.27Uu6n`
-- 本轮执行：N1、N2 在补入 collector 后重跑（完整依赖闭包）；N3、N4.1、N4.2 的入口、业务输入与配置未受该接线影响，按测试计划沿用有效记录（见第 9 节）
+- 本轮执行：N1、N2 在补入 collector 后重跑（完整依赖闭包）；N3、N4.1、N4.2 的入口与 payload 未受该接线影响（consumer 侧 MCP 表随传递闭包扩展，见第 9 节），按测试计划沿用有效记录
 - 证据位置：`$RUN/output/`（`n1-*`、`n2-*`、`n3-*`、`routes.json`、`abstract-export/`）、`$RUN/evidence/`（fixture、item key、endpoint）
 
 ## 1. 依赖与固定版本
