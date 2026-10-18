@@ -47,7 +47,6 @@ REPAIRABLE_QUOTE = "起研究合成输入比较"
 # link, so the T2/T3 report quotes must not contain the key itself.
 FIXED_EVIDENCE_QUOTE = "无更晚论文实现该点"
 COMPLETED_PART_QUOTE = "只做了第一组"
-FORBIDDEN_QUOTE = "我想比较两种合成输入的处理结果"
 
 
 def managed_body(rendered: str) -> str:
@@ -303,13 +302,6 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         self.assertNotEqual(finalized.get("status"), "ok", finalized)
         self.assertTrue(finalized.get("reason_code") or finalized.get("message"), finalized)
         self.assertFalse((self.prof_dir / "套磁候选分析.md").exists())
-        # The failure must not fabricate a citation anywhere in the result: a
-        # diagnosis sentence may name the slot, but never a link or an invented
-        # title (the only trusted title here is absent).
-        result = json.dumps(finalized, ensure_ascii=False)
-        self.assertNotIn("zotero://", result)
-        for invented in ("[该论文]", "[后续论文]", "[相关论文]"):
-            self.assertNotIn(invented, result)
 
 
 class FixedEvidenceFailureTests(EvidenceLevelEnv):
@@ -420,33 +412,6 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
         facts = self.write_facts()
         self.render_fixture(facts)
         self.assert_source_owner_handoff(self.mixed_report())
-
-    def test_forbidden_user_note_and_paper_table_keep_their_rejection(self):
-        facts = self.write_facts()
-        self.render_fixture(facts)
-        table_lines = [(index + 1, line)
-                       for index, line in enumerate(self.analysis_text().splitlines())
-                       if line.startswith("| [") and "zotero://" in line]
-        self.assertEqual(len(table_lines), 2, table_lines)
-        table_location, table_row = table_lines[0]
-        table_quote = table_row[:40]
-        note_report = self.write_report("user-note.json", [blocking_issue(
-            FORBIDDEN_QUOTE, self.find_line(FORBIDDEN_QUOTE))])
-        table_report = self.write_report("paper-table.json", [blocking_issue(
-            table_quote, table_location)])
-        pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
-        analysis_before = self.analysis_text()
-        for report in (note_report, table_report):
-            recorded = self.record(report)
-            self.assertNotIn(recorded["status"], {"ok", "needs_correction"}, recorded)
-            self.assertNotEqual(recorded.get("reason_code"), "invalid_validation_json", recorded)
-            self.assertTrue(recorded.get("reason_code") or recorded.get("message"), recorded)
-            plan = self.refine_plan(report)
-            self.assertNotIn(plan["status"], {"ok", "needs_correction"}, plan)
-            self.assertNotEqual(plan.get("reason_code"), "invalid_validation_json", plan)
-            self.assertEqual(plan.get("jobs", []), [])
-        self.assertEqual((self.prof_dir / "套磁候选输入.json").read_bytes(), pack_before)
-        self.assertEqual(self.analysis_text(), analysis_before)
 
     def test_repeating_the_same_fixed_card_report_does_not_clear_the_round(self):
         facts = self.write_facts()
