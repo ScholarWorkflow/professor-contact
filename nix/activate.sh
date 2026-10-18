@@ -24,8 +24,9 @@ while (( $# )); do
   esac
 done
 
-# Keep relative paths relative to the caller, and resolve directory symlinks.
-cd -- "$project" || fail "cannot enter project directory: $project"
+# Resolve relative paths against the caller, never against inherited CDPATH.
+[[ $project == /* ]] || project="$PWD/$project"
+cd -P -- "$project" || fail "cannot enter project directory: $project"
 project=$(pwd -P; printf '.')
 project=${project%$'\n.'}
 [[ $project != *$'\n'* ]] || fail 'project paths containing newlines are unsupported'

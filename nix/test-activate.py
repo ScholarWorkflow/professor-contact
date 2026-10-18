@@ -84,6 +84,18 @@ class ActivationTest(unittest.TestCase):
         self.run_activation()
         self.assertEqual(self.calls(), [str(self.root / "project with spaces"), str(moved)])
 
+    def test_relative_project_ignores_cdpath(self):
+        intended = self.project / "demo"
+        intended.mkdir()
+        other = self.root / "other"
+        wrong = other / "demo"
+        wrong.mkdir(parents=True)
+        self.env["CDPATH"] = str(other)
+        self.run_activation(self.a, "--project", "demo")
+        self.assertEqual(self.calls(), [str(intended)])
+        self.assertTrue((intended / ".professor-contact-applied").is_file())
+        self.assertEqual(list(wrong.iterdir()), [])
+
     def test_reject_unsafe_marker_lock_and_bad_args(self):
         target = self.root / "untouched"
         target.write_text("keep")
