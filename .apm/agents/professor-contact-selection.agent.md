@@ -50,7 +50,7 @@ If `folder_path` missing → return the error JSON.
 ## Tools
 1. `read` — `教授研究/<分类>/<教授名>/套磁候选状态.json`（schema 2，逐 `direction_id` 键控：每方向候选 id/title/one_liner/research_question/fit/fit_note/gap_refs（精确三元组）/papers；顶层 `cross_direction_groups[]` 显式跨方向组：`group_id`/排序 `direction_ids`/`direction_fingerprints`/candidates（id/title/one_liner/fit/gap_refs/papers））。旧 `教授研究/套磁候选总览.md` 已随 Stage 0 改版退役，Stage 0 不再产出：属历史遗留文件，缺失是预期状态，跳过即可，绝不作为输入或展示索引。
 2. `question` — **OpenCode-only** 交互挑选（未给 `selection` 时的 OpenCode 路径）；`question` 不是跨 runtime 通用 API，Codex 缺 `selection` 时走 Step 2 路径 C（`needs_input`，不提问、不 finalize）。
-3. bash — 只调用当前 consumer 精确提交安装副本中的 `contact_state.py` runner（`python3 .agents/skills/professor-contact/scripts/contact_state.py`）；禁止通过登记仓库解析 runner，以免执行到别的 checkout；`python3` 也用于写 JSON（`ensure_ascii=False, indent=1`）。
+3. bash — 只调用当前 consumer 精确提交安装副本中的 `contact_state.py` runner（`.agents/skills/professor-contact/scripts/contact_state`）；禁止通过登记仓库解析 runner，以免执行到别的 checkout；`python3` 也用于写 JSON（`ensure_ascii=False, indent=1`）。
 4. `write` — 仅写 `/tmp` selection-input JSON。
 
 ## Execution flow
@@ -104,7 +104,7 @@ If `folder_path` missing → return the error JSON.
 
 对每位已绑定目录、拿到真实选择的教授，在进入 Step 4 的 `stage4-finalize` 之前先完成迁移判定（判定只看该教授自己）。仅当该教授目录内 `套磁选择.json` 与 `邮件输入.json` **均不存在**、且历史程序级 `教授研究/套磁选择.json` 可读并存在规范 `professor_dir` 精确等于该目录的行时才需要迁移——用确定性迁移命令按**一位教授一次**建立 local 权威：
 ```bash
-python3 .agents/skills/professor-contact/scripts/contact_state.py stage4-migrate-local \
+.agents/skills/professor-contact/scripts/contact_state stage4-migrate-local \
   --program-root <program_root abs> --professor-dir <该教授目录 abs> --profile <该状态顶层 profile_path 的绝对路径>
 ```
 - 它只把该教授的 legacy 选择行当作**行来源**，邮件事实一律按该教授当前的 `套磁候选状态.json` + `套磁候选输入.json` 重编译；历史 `教授研究/邮件输入.json` 里的 email 记录**从不**被复制成新的 local truth。
@@ -124,7 +124,7 @@ python3 .agents/skills/professor-contact/scripts/contact_state.py stage4-migrate
 ```
 然后：
 ```bash
-python3 .agents/skills/professor-contact/scripts/contact_state.py stage4-finalize \
+.agents/skills/professor-contact/scripts/contact_state stage4-finalize \
   --program-root <program_root abs> --selection-input /tmp/套磁选择输入.json --profile <该状态顶层 profile_path 的绝对路径>
 ```
 `--profile` **必传**，取值就是本 Step 所读状态顶层的 `profile_path`（caller 显式给出同一文件的绝对路径时以 caller 为准，二者必须指向同一文件）：runner 用它重算 profile 指纹并与状态中记录的指纹比对；省略 `--profile` 时 runner 的 current 指纹为 `None`，与任何已记录指纹必然失配 → `profile_changed` fail-closed 零写入。

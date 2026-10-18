@@ -64,7 +64,7 @@ Your job is to turn an upstream normalized `方向预筛.json` into the canonica
 Use:
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_targets.py ...
+<professor-contact-skill-dir>/scripts/contact_targets ...
 ```
 
 The helper owns preview validation, stable IDs, per-professor target-state persistence, history, preview-fingerprint checks, and atomic writes. Do not hand-edit `套磁目标.json`.
@@ -80,7 +80,7 @@ Resolve the program root by `info.json`. Under `<program_root>/教授研究/`, l
 For each chosen professor, run:
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
+<professor-contact-skill-dir>/scripts/contact_targets \
   preview --preview "<教授目录>/方向预筛.json"
 ```
 
@@ -135,7 +135,7 @@ Whether the answers came from the interactive `question` round or from an explic
 Then run one helper invocation per transaction record, against that record's own preview (`--preview` is the record's `preview_path`, and the temporary selection file is that record's `direction_ids` + `notes`):
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
+<professor-contact-skill-dir>/scripts/contact_targets \
   bootstrap \
   --program-root "<program_root>" \
   --preview "<教授目录>/方向预筛.json" \
@@ -145,7 +145,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
 `bootstrap` is the only Stage-0 entry that establishes a professor's first `<教授目录>/套磁目标.json`; it is also the only path that reads the retired program-level `教授研究/套磁目标.json` for that professor (reliable legacy history is carried over, an unparseable legacy document is left untouched and recorded as `legacy_recovery` unavailability, and no other professor's legacy entry is ever pulled into this record). Once that file exists, a revision uses the same command with `select`:
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
+<professor-contact-skill-dir>/scripts/contact_targets \
   select \
   --program-root "<program_root>" \
   --preview "<教授目录>/方向预筛.json" \

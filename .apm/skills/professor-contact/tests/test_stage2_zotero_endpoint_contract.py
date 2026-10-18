@@ -99,7 +99,7 @@ class Stage2ZoteroEndpointContractTests(unittest.TestCase):
                           if "Probe Zotero" in line)
         # The probe is deterministic: the helper resolves both endpoints from
         # the environment internally; the model never hand-writes a URL.
-        self.assertIn("stage2_zotero_rpc.py probe", probe_line)
+        self.assertIn("scripts/stage2_zotero_rpc probe", probe_line)
         self.assertIn("$ZOTERO_HTTP_URL", probe_line)
         self.assertIn("ZOTERO_MCP_URL", probe_line)
         self.assertIn("online", probe_line)
@@ -115,7 +115,7 @@ class Stage2ZoteroEndpointContractTests(unittest.TestCase):
             self.step27,
             r"zotero-mcp-session[\s\S]{0,400}继承 resolved `ZOTERO_MCP_URL`",
         )
-        self.assertIn("zotero-read/scripts/new-session.sh", self.step27)
+        self.assertIn('bash "<zotero-read-skill-dir>/scripts/new-session.sh"', self.step27)
 
     def test_authorship_line_pagination_uses_resolved_http_url(self):
         section = _section(self.body, "1.7 **署名线判定", "2. **判定相关论文")

@@ -458,10 +458,10 @@ class TransportBoundaryProjectionTests(unittest.TestCase):
         hard_rules = body[body.index("## Hard rules"):]
         for label, section in (("step27", step27), ("hard_rules", hard_rules)):
             with self.subTest(section=label):
-                self.assertIn("stage2_zotero_rpc.py", section)
+                self.assertIn("stage2_zotero_rpc", section)
         self.assertIn("Transport boundary（从第 3 步 probe 起生效）", step27)
         self.assertIn("禁止再用 `curl`、Python requests 或手写 URL/port 直连 Zotero", step27)
-        self.assertIn("stage2_zotero_rpc.py probe", step27)
+        self.assertIn("scripts/stage2_zotero_rpc probe", step27)
         self.assertIn('"$ZOTERO_HTTP_URL/connector/ping"', step27)
         self.assertIn("--session-id", step27)
         self.assertIn("--arguments-json", step27)
@@ -498,8 +498,8 @@ class TransportBoundaryProjectionTests(unittest.TestCase):
         body = _frontmatter_and_body(OPENCODE_ANALYZER_PATH)
         step27 = _section(body, "### Step 2.7", "### Step 3")
         self.assertIn("Transport boundary（从第 3 步 probe 起生效）", step27)
-        self.assertIn("stage2_zotero_rpc.py probe", step27)
-        self.assertIn("stage2_zotero_rpc.py", step27)
+        self.assertIn("scripts/stage2_zotero_rpc probe", step27)
+        self.assertIn("scripts/stage2_zotero_rpc", step27)
 
     def test_helper_ships_inside_the_installed_skill_scripts(self):
         self.assertTrue(

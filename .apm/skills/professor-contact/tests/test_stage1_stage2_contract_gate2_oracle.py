@@ -22,9 +22,9 @@ class Issue64Gate2T7OracleTests(unittest.TestCase):
                 )
                 commands = bash_commands(path.read_text(encoding="utf-8"))
                 plan = [command for command in commands
-                        if "contact_state.py stage2-plan" in command]
+                        if "scripts/contact_state stage2-plan" in command]
                 finalize = [command for command in commands
-                            if "contact_state.py stage2-finalize" in command]
+                            if "scripts/contact_state stage2-finalize" in command]
 
                 self.assertEqual(len(plan), 1, msg=plan)
                 self.assertEqual(len(finalize), 1, msg=finalize)

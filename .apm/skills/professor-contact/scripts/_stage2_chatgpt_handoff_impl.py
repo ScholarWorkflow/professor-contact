@@ -668,8 +668,22 @@ def _install_job(
     return analysis_target, sidecar_target if staged_sidecar else None
 
 
+FIXED_PYTHON_ENV = "CONTACT_PAPER_PYTHON"
+
+
 def _run_future_work(script: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
-    """Run the installed PEP-723 helper through the paper-analysis uv contract."""
+    """Run the installed PEP-723 helper through the paper-analysis contract.
+
+    An install that owns the helper interpreter exports it as
+    ``CONTACT_PAPER_PYTHON`` (the installed same-directory entry does); the
+    helpers then start with ``[fixed python, script, *arguments]``. An install
+    without that binding keeps the original ``uv run`` backend for the 0644
+    PEP-723 scripts, so the helper and its sibling ``facts.py`` still come from
+    one paper-analysis install in both shapes.
+    """
+    fixed_python = os.environ.get(FIXED_PYTHON_ENV, "").strip()
+    if fixed_python:
+        return subprocess.run([fixed_python, str(script), *arguments], text=True, capture_output=True, check=False)
     return subprocess.run(["uv", "run", str(script), *arguments], text=True, capture_output=True, check=False)
 
 

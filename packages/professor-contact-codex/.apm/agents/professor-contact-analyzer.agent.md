@@ -23,7 +23,7 @@ You are **professor-contact-analyzer**, the stage-2 subagent that produces per-d
 
 被选方向仍是 provisional preview directions：即使两个方向共享论文，也保持各自 `direction_id` 独立；同一 `item_key` 可以支撑多个被选方向，但昂贵的论文获取/OCR/paper-analysis 工作必须**按教授、按 `item_key` 去重**，其结果复用到所有包含它的被选方向。
 
-**Runner 分工（先读，违反即返工）**：本阶段所有「可确定性完成」的工作——gap 候选池与 shortlist 稳定排序、freshness 缓存命中判断、版本关系启发、模型结果 JSON 校验、`套磁候选输入.json` 状态写入、`套磁候选分析.md` 渲染——全部由本地确定性 runner `contact_state.py` 完成（`python3 <professor-contact-skill-dir>/scripts/contact_state.py <子命令> ...`，stdout 返回稳定 JSON）。你的循环是：**采集 facts → `stage2-plan` → 执行 plan 给出的模型 job（把结果写成 result JSON 文件）→ `stage2-finalize`**。你**绝不手写/手改** `套磁候选分析.md`；runner 校验失败或 model result 非法时保留上一份已验收产物，直接返回 `error/partial` + `reason_code`，不降级手写兜底（唯一例外：`unknown_reference_id` 转录错误按 Step 6.3 失败处理的修复轮执行一次修复后重跑 finalize）。`套磁候选输入.json` 是阶段 3 唯一事实源；阶段 3–5 不读本阶段 Markdown。
+**Runner 分工（先读，违反即返工）**：本阶段所有「可确定性完成」的工作——gap 候选池与 shortlist 稳定排序、freshness 缓存命中判断、版本关系启发、模型结果 JSON 校验、`套磁候选输入.json` 状态写入、`套磁候选分析.md` 渲染——全部由本地确定性 runner `contact_state.py` 完成（`<professor-contact-skill-dir>/scripts/contact_state <子命令> ...`，stdout 返回稳定 JSON）。你的循环是：**采集 facts → `stage2-plan` → 执行 plan 给出的模型 job（把结果写成 result JSON 文件）→ `stage2-finalize`**。你**绝不手写/手改** `套磁候选分析.md`；runner 校验失败或 model result 非法时保留上一份已验收产物，直接返回 `error/partial` + `reason_code`，不降级手写兜底（唯一例外：`unknown_reference_id` 转录错误按 Step 6.3 失败处理的修复轮执行一次修复后重跑 finalize）。`套磁候选输入.json` 是阶段 3 唯一事实源；阶段 3–5 不读本阶段 Markdown。
 
 ## 套磁方向方法论（静态指南，判断"哪个方向值得说"）
 
@@ -83,9 +83,9 @@ If `folder_path` missing → return the error JSON.
 
 ## Tools
 1. `skill` — load **`zotero-read` FIRST**（`skill(name: "zotero-read")`）for `get_item_details` / `get_item_abstract` / `get_content`（Zotero 只是论文元数据/摘要/PDF 附件的数据源，不做方向成员扫描）。OCR 用到 `skill(name: "vision-tools")`（glance --ocr，含 VISION_CHAIN 兜底 + [?] 规则）与 `skill(name: "llm-ocr-refresh")`（复用判据/图描述约定；**只借机制，不写回教科书 text.md、不同步知识库**）。`kb_import=true` 时加载 `skill(name: "kb-importer")`（拿 v2 描述文件契约和 `kb_import.mjs` 调用约定）。
-   - 从本次实际加载的 `zotero-read/SKILL.md` 的父目录取得绝对 `<zotero-read-skill-dir>`（不从 cwd、业务目录或开发 checkout 推算，不写死 `.apm`）；所有 router 调用传 `--zotero-read-skill-dir "<zotero-read-skill-dir>"`，由 router 以 argv 数组执行公开入口 `uv run "<zotero-read-skill-dir>/scripts/zotero_item_export.py"`，不依赖 PATH 上的 `zotero-item-export`，也不把整串 `uv run …` 塞入只接受单 executable 的 `--exporter`。
+   - 从本次实际加载的 `zotero-read/SKILL.md` 的父目录取得绝对 `<zotero-read-skill-dir>`（不从 cwd、业务目录或开发 checkout 推算，不写死 `.apm`）；所有 router 调用只传 `--zotero-read-skill-dir "<zotero-read-skill-dir>"`：普通安装由 router 以 argv 数组执行公开入口 `uv run "<zotero-read-skill-dir>/scripts/zotero_item_export.py"`，不依赖 PATH 上的 `zotero-item-export`；Nix 安装的同目录 router 入口已把该 locator 绑定为锁定 zotero-tools 的 `bin/zotero-item-export` 并改用既有 `--exporter`，调用方仍只传 locator，绝不与 `--zotero-read-skill-dir` 同传，也不把整串 `uv run …` 塞入只接受单 executable 的 `--exporter`。
 2. Delegation — delegate only to the installed named agents described below and wait for their results.
-3. bash — **`<professor-contact-skill-dir>` = 本 skill 在当前 workspace 中的安装目录（即安装投影里本 skill 的 `SKILL.md` 与其 `scripts/` 所在目录；consumer 安装投影为 `.agents/skills/professor-contact/`）。下列确定性 runner 一律 `python3 <professor-contact-skill-dir>/scripts/…` 在该目录内执行，绝不经 user-global registry wrapper（`skillrepo exec`）、开发 checkout 或 workspace 外路径执行**：`python3 <professor-contact-skill-dir>/scripts/contact_targets.py resolve ...`（deterministic target resolver；stdout 只消费 compact JSON）；`python3 <professor-contact-skill-dir>/scripts/contact_state.py <子命令>`（runner）；`python3 <professor-contact-skill-dir>/scripts/stage2_input_router.py ...`（normalized abstract fallback）；`python3 <professor-contact-skill-dir>/scripts/stage2_chatgpt_handoff.py build|import|local-lease-acquire|local-lease-release ...`（纯确定性 ZIP transport + Stage-2 单 writer 协调；stdout 只消费 compact JSON）；已安装 `paper-analysis` 的绝对 `future_work.py` 仅运行 `prepare/merge-ocr/validate/finalize` 确定性 helper，且**一律按 `uv run "<absolute future_work.py>" ...` 调用，绝不把脚本本身当可执行文件**；handoff import 的 facts finalize 自动使用与该 `future_work.py` 同目录安装的 `facts.py`（两者必须来自同一 paper-analysis 安装，不得混用版本）；一切真实 Zotero HTTP/MCP 访问（含 Step 2.7 的 connectivity probe）一律经 `python3 <professor-contact-skill-dir>/scripts/stage2_zotero_rpc.py` 的 `probe`/`mcp`/`http` 子命令（Step 2.7 Transport boundary），绝不用 curl 直连 Zotero；PDF 质量判定/首页提取；`python3` JSON；`shasum -a 256`（仅用于 facts 指纹核对）；`date`。**handoff build/import/lease 自身绝不 spawn 模型、vision、OCR 或网络。**
+3. bash — **`<professor-contact-skill-dir>` = 本 skill 在当前 workspace 中的安装目录（即安装投影里本 skill 的 `SKILL.md` 与其 `scripts/` 所在目录；consumer 安装投影为 `.agents/skills/professor-contact/`）。下列确定性 runner 一律经 `<professor-contact-skill-dir>/scripts/…` 的同目录薄入口在该目录内执行（薄入口自行固定解释器并原样转发 argv），绝不经 user-global registry wrapper（`skillrepo exec`）、开发 checkout 或 workspace 外路径执行**：`<professor-contact-skill-dir>/scripts/contact_targets resolve ...`（deterministic target resolver；stdout 只消费 compact JSON）；`<professor-contact-skill-dir>/scripts/contact_state <子命令>`（runner）；`<professor-contact-skill-dir>/scripts/stage2_input_router ...`（normalized abstract fallback）；`<professor-contact-skill-dir>/scripts/stage2_chatgpt_handoff build|import|local-lease-acquire|local-lease-release ...`（纯确定性 ZIP transport + Stage-2 单 writer 协调；stdout 只消费 compact JSON）；已安装 `paper-analysis` 的绝对 `future_work.py` 仅运行 `prepare/merge-ocr/validate/finalize` 确定性 helper；**按已加载 paper-analysis 安装形态选择该 owner 的现有固定入口**：安装根提供 `bin/future-work` 时用 `<paper-analysis-skill-dir>/bin/future-work`，否则一律按 `uv run "<absolute future_work.py>" ...` 调用；两种形态都绝不把 0644 脚本本身当可执行文件**；handoff import 的 facts finalize 自动使用与该 `future_work.py` 同目录安装的 `facts.py`（Nix 安装为同一安装根的 `bin/facts`；两者必须来自同一 paper-analysis 安装，不得混用版本）；一切真实 Zotero HTTP/MCP 访问（含 Step 2.7 的 connectivity probe）一律经 `<professor-contact-skill-dir>/scripts/stage2_zotero_rpc` 的 `probe`/`mcp`/`http` 子命令（Step 2.7 Transport boundary），绝不用 curl 直连 Zotero；PDF 质量判定/首页提取（安装根提供 `<paper-analysis-skill-dir>/bin/pdfx` 时用该固定入口，其它安装沿用原 pdfx 调用方式）；`python3` JSON；`shasum -a 256`（仅用于 facts 指纹核对）；`date`。**handoff build/import/lease 自身绝不 spawn 模型、vision、OCR 或网络。**
 4. `question` — prompt the user to open Zotero when offline；cost gate（Step 5.4）。
 5. `write` — save facts JSON（给 runner 的输入）+ 各模型 job 的 result JSON + `<论文分析>/_index.json` + `<论文分析>/_ocr/<标题>.txt`（OCR 产物）。**不用 write 产 `套磁候选分析.md`**——它由 runner 渲染。
 
@@ -99,7 +99,7 @@ If `folder_path` missing → return the error JSON.
 读任何论文数据之前，先枚举本次范围内的教授目录（`教授研究/<分野>/<教授>/套磁目标.json`，每位教授一份），**对每份 local target 各运行一次**：
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
+<professor-contact-skill-dir>/scripts/contact_targets \
   resolve --program-root "<program_root>" \
   --target-file "<program_root>/<教授目录>/套磁目标.json" \
   --professors "<optional single name>"
@@ -122,7 +122,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_targets.py \
 Stage 1 已为每个被选方向构建保守扩召的候选集，并写进该教授自己那份 `<教授目录>/套磁阶段1候选.json`（`membership_claim: non_final_candidates_only`；每位教授一份正式状态，程序级 `教授研究/套磁阶段1候选.json` 已失去 authority，Stage 2 不读它）。读任何论文数据之前，先验证它对当前输入仍然新鲜：
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_stage1.py \
+<professor-contact-skill-dir>/scripts/contact_stage1 \
   verify --program-root "<program_root>" --target-file "<program_root>/<教授目录>/套磁目标.json"
 ```
 
@@ -142,7 +142,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_stage1.py \
 Stage 1 verify 通过后、任何昂贵 Stage 2 evidence 准备之前，对每个被选教授运行只读 preflight。它是本地确定性命令：只消费 persisted state/fingerprints（`套磁目标.json`、`套磁阶段1候选.json`、`套磁候选输入.json` 的 `cache.preflight`、candidate 视图指纹——`papers.json` 只投影该教授 candidate_keys 并集的记录、`_署名对照.json` 只取该教授切片、`_freshness_cache.json` 视图、已接受 artifact 的 stat guards）；不碰 Zotero、不联网、不跑模型、不读 PDF 内容、不构造 `Stage2Context`、不写任何 workflow state。
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_state.py \
+<professor-contact-skill-dir>/scripts/contact_state \
   stage2-preflight --program-root "<program_root>" --professor "<教授名>" \
   --target-file "<program_root>/<教授目录>/套磁目标.json" \
   --paper-analysis "<paper_analysis>" --gap-scope "<gap_scope>" --freshness-scope "<freshness_scope>" \
@@ -173,12 +173,12 @@ ZOTERO_MCP_URL="${ZOTERO_MCP_URL%/}"
    - `ZOTERO_HTTP_URL` 是 **base URL**：未设置或为空时回退生产默认值；已设置则使用传入值；解析后去掉末尾 `/`；后续再拼 `/connector/ping`、`/api/users/0/...` 等路径。
    - `ZOTERO_MCP_URL` 是**完整 MCP endpoint，已经包含 `/mcp`**：未设置或为空时回退生产默认值；已设置则使用传入值；解析后去掉末尾 `/`；**不得对 resolved `ZOTERO_MCP_URL` 再追加 `/mcp`**（否则形成 `.../mcp/mcp`）。
    - 生产默认值只作统一 fallback；runtime override 一旦存在，本轮所有 Stage 2 Zotero 访问绝不混回生产默认端口。**该解析由 helper 在内部执行**：上方 fence 是 endpoint 语义契约的说明，不是要你在 shell 里展开执行的命令；字面生产端口**绝不写进任何你执行的命令或 URL**。
-3. Probe Zotero（确定性，一律经 helper，绝不手写 curl/URL/端口）：`python3 <professor-contact-skill-dir>/scripts/stage2_zotero_rpc.py probe`。helper 内部按第 2 条同一契约解析 `ZOTERO_HTTP_URL`/`ZOTERO_MCP_URL`，对 `"$ZOTERO_HTTP_URL/connector/ping"` 与 resolved `ZOTERO_MCP_URL` 各发一次探测，stdout 返回 `{"online": true|false, "http": {...}, "mcp": {...}}`（含实际使用的 resolved endpoints 与探测状态）。`online=true` → 继续第 4 步；`online=false` → `question`（已打开，重试 / 中止）；中止 → error JSON；重试 = 重新运行同一条 probe 命令。
-4. Session: `SID=$(zotero-mcp-session)`；该调用沿用 `zotero-read/scripts/new-session.sh` 的既有 owner surface，只要求其子进程环境继承 resolved `ZOTERO_MCP_URL`，不在本仓重新实现 MCP session helper。
-5. **Transport boundary（从第 3 步 probe 起生效）**：本轮一切真实 Zotero HTTP/MCP 访问——connectivity probe、`get_item_details`/`get_item_abstract` 等直接 MCP `tools/call`、署名线 REST 分页等直接 REST GET——一律经 `python3 <professor-contact-skill-dir>/scripts/stage2_zotero_rpc.py` 的 `probe`/`mcp`/`http` 子命令执行，**禁止再用 `curl`、Python requests 或手写 URL/port 直连 Zotero**：
+3. Probe Zotero（确定性，一律经 helper，绝不手写 curl/URL/端口）：`<professor-contact-skill-dir>/scripts/stage2_zotero_rpc probe`。helper 内部按第 2 条同一契约解析 `ZOTERO_HTTP_URL`/`ZOTERO_MCP_URL`，对 `"$ZOTERO_HTTP_URL/connector/ping"` 与 resolved `ZOTERO_MCP_URL` 各发一次探测，stdout 返回 `{"online": true|false, "http": {...}, "mcp": {...}}`（含实际使用的 resolved endpoints 与探测状态）。`online=true` → 继续第 4 步；`online=false` → `question`（已打开，重试 / 中止）；中止 → error JSON；重试 = 重新运行同一条 probe 命令。
+4. Session: `SID=$(bash "<zotero-read-skill-dir>/scripts/new-session.sh")`；该调用沿用 zotero-read 已安装 skill 根的 `scripts/new-session.sh` owner surface（上游包已固定其 bash/curl/coreutils），不从 PATH 取 `zotero-mcp-session`，只要求其子进程环境继承 resolved `ZOTERO_MCP_URL`，不在本仓重新实现 MCP session helper。
+5. **Transport boundary（从第 3 步 probe 起生效）**：本轮一切真实 Zotero HTTP/MCP 访问——connectivity probe、`get_item_details`/`get_item_abstract` 等直接 MCP `tools/call`、署名线 REST 分页等直接 REST GET——一律经 `<professor-contact-skill-dir>/scripts/stage2_zotero_rpc` 的 `probe`/`mcp`/`http` 子命令执行，**禁止再用 `curl`、Python requests 或手写 URL/port 直连 Zotero**：
    - `mcp` 子命令只接 `--session-id <SID>`、`--tool <tool 名>`、`--arguments-json '<JSON 对象>'`；helper 不提供任何 URL/port/endpoint 覆盖参数，只在内部从 `ZOTERO_MCP_URL` 解析完整 MCP endpoint（unset/empty 才回退生产默认，统一去尾 `/`）。
    - `http` 子命令只接 `--path '<以 / 开头的相对路径，可含 query>'`（GET）；helper 不提供任何 base URL/port 覆盖参数，只在内部从 `ZOTERO_HTTP_URL` 解析 base（unset/empty 才回退生产默认，统一去尾 `/`）。
-   - helper 不建 session、不做业务判断：SID 仍来自本步的 `zotero-read/scripts/new-session.sh`；非 2xx、连接失败或 `--arguments-json` 非法时 helper 以非零码退出并把机器错误（含实际使用的 resolved endpoint）写 stderr——原样记为 Zotero 访问失败（fail-closed），**不得自行换端口重试、不得把 transport failure 改写成业务结果**。
+   - helper 不建 session、不做业务判断：SID 仍来自本步已安装 zotero-read skill 根的 `scripts/new-session.sh`；非 2xx、连接失败或 `--arguments-json` 非法时 helper 以非零码退出并把机器错误（含实际使用的 resolved endpoint）写 stderr——原样记为 Zotero 访问失败（fail-closed），**不得自行换端口重试、不得把 transport failure 改写成业务结果**。
 
 ### Step 3 — Read candidate-set direction papers（仅 process professors）
 **只对 `process_professors` 中的教授执行本步及之后的一切读取/准备/分析**；`reusable_professors` 的论文、文件、Zotero 条目一律不读、不请求。
@@ -265,7 +265,7 @@ For each flagged direction:
      3. 两者都无 → 仅对这些 keys 调一次 `stage2_input_router.py --zotero-read-skill-dir "<zotero-read-skill-dir>"` 的 normalized abstract exporter 分支，得到 `carrier=abstract_json, level=abstract`；不读取/回显 JSON 正文。
    - `analysis_relpath` 必须是普通 paper-analysis 本来会写入的教授目录相对路径：upgrade job 复用 index 现有 `file` 的相对路径；新 job 按 paper-analysis 当前保存规则 `<论文分析>/<第一作者>/<净化标题>.md` 计算。绝不把 handoff 结果放到第二套专用分析目录。
    - `research_direction` 只含 `{collection_key,name_ja,name_zh,user_note}`；**绝不 profile**。
-   - **PDF fulltext 的 future-work 契约是强制项**：对 `carrier=pdf` 必须先运行 `uv run "<paper-analysis future_work.py absolute path>" prepare "<pdf>" --debug-dir "<tmp>"`。这是确定性 helper，不做 OCR/模型；必须把该 debug 目录里的 `prepare.json` + `candidates.json` 绝对路径写入 job。builder 会拒绝缺 prepare/candidates 的 PDF fulltext job，避免 wait 导入后再落回 legacy/gap-only。
+   - **PDF fulltext 的 future-work 契约是强制项**：对 `carrier=pdf` 必须先运行 `<paper-analysis-skill-dir>/bin/future-work prepare "<pdf>" --debug-dir "<tmp>"`（安装根没有 `bin/future-work` 时用 `uv run "<paper-analysis future_work.py absolute path>" prepare "<pdf>" --debug-dir "<tmp>"`）。这是确定性 helper，不做 OCR/模型；必须把该 debug 目录里的 `prepare.json` + `candidates.json` 绝对路径写入 job。builder 会拒绝缺 prepare/candidates 的 PDF fulltext job，避免 wait 导入后再落回 legacy/gap-only。
    - **future-work portable selection contract 必须按 manifest 执行，ChatGPT 不得猜 candidate id**：
      - `ocr_required_pages` 为空时，manifest 写 `future_work.selection_contract=exact-items-v1`；外部只从 bundled exact candidates 选择，返回 `future_work_items.json`。`id` 可以省略，由本地 `future_work.py` 推导并校验。
      - `ocr_required_pages` 非空时，manifest 写 `future_work.selection_contract=ocr-excerpt-v1`；此时**绝不本地 vision OCR**，外部必须返回 `future_work_ocr.json`（恰好覆盖所有 required pages）以及 `future_work_selections.json`。后者只允许 `{page,quote_excerpt,translation_zh,source}`；`quote_excerpt` 必须是所选 OCR 句子的逐字、足够区分的片段。外部**不得为 OCR-required page 在 merge 前预造 candidate id/quote**；但若 bundled exact candidates 中另有 page **不在** `ocr_required_pages` 的可读候选，可额外用普通 exact-item 字段放进 `future_work_items.json`。
@@ -278,7 +278,7 @@ For each flagged direction:
 
    **B. build current bundle（无论 continue/wait 都做）**
    ```bash
-   python3 <professor-contact-skill-dir>/scripts/stage2_chatgpt_handoff.py build \
+   <professor-contact-skill-dir>/scripts/stage2_chatgpt_handoff build \
      --professor-dir "<教授目录>" --jobs "/tmp/<教授名>_stage2_handoff_jobs.json" --professor "<教授名>"
    ```
    只解析 compact JSON 的 `handoff_id/source_fingerprint/bundle_path/jobs`。把**本轮这次 build 返回的** `handoff_id` 与 `source_fingerprint` 保存为该 local continue plan 的精确绑定，后面的 `local-lease-acquire` 必须原样传回；**禁止在 acquire 时用当时的 `_latest` 代替本轮 build 结果**。bundle 固定落在 `<教授目录>/论文分析/_chatgpt_handoff/`；同输入得到同 logical id，changed PDF/abstract/note/scope/local baseline 得到新 id。**bundle build 不得把 PDF/abstract 正文读入本 agent context。**
@@ -286,7 +286,7 @@ For each flagged direction:
    **C. resume import（仅 `chatgpt_result` 提供时）**
    - 必须使用**本轮刚 build 的 current `bundle_path`**去验 result，而不是盲信用户上次给出的旧 bundle；这一步让当前 PDF/abstract/note/scope 的改变先体现在 handoff id/source fingerprint 中。
    ```bash
-   python3 <professor-contact-skill-dir>/scripts/stage2_chatgpt_handoff.py import \
+   <professor-contact-skill-dir>/scripts/stage2_chatgpt_handoff import \
      --professor-dir "<教授目录>" --bundle "<current bundle_path>" \
      --result "<chatgpt_result>" --future-work-script "<paper-analysis future_work.py absolute path>"
    ```
@@ -308,7 +308,7 @@ For each flagged direction:
    - 只有本轮将继续执行任何会写教授目录的步骤时才 acquire：包括新 OCR、`paper-analysis full|gap-only`、migrate/finalize sidecar、直接 `_index.json` 更新、KB 写回、`contact_state.py stage2-finalize/refine-finalize/record-validation` 等。纯 `wait` 软停止不 acquire。
    - 每位教授生成本轮唯一 token，例如 `STAGE2_WRITER_TOKEN="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"`，然后把 **B 步本轮 build 返回的 exact IDs** 原样传回：
      ```bash
-     python3 <professor-contact-skill-dir>/scripts/stage2_chatgpt_handoff.py local-lease-acquire \
+     <professor-contact-skill-dir>/scripts/stage2_chatgpt_handoff local-lease-acquire \
        --professor-dir "<教授目录>" --token "$STAGE2_WRITER_TOKEN" \
        --handoff-id "<本轮 build handoff_id>" --source-fingerprint "<本轮 build source_fingerprint>"
      ```
@@ -317,7 +317,7 @@ For each flagged direction:
    - `stage2_writer_busy` → **禁止任何本地 artifact/index write**，该教授返回 `partial, reason_code=stage2_writer_busy`；不要“等一下再覆盖”，让 caller 后续重跑。
    - acquire 成功后，stdout 返回的 `handoff_id/source_fingerprint` 必须与 B 步保存的 exact IDs 完全一致；否则按 `stage2_plan_stale` 处理，不进入任何本地写步骤。把该教授后续所有本地写步骤视为一个 `try/finally` writer scope。无论成功、partial、runner error、用户决策提前结束还是异常，**finally** 都必须执行：
      ```bash
-     python3 <professor-contact-skill-dir>/scripts/stage2_chatgpt_handoff.py local-lease-release \
+     <professor-contact-skill-dir>/scripts/stage2_chatgpt_handoff local-lease-release \
        --professor-dir "<教授目录>" --token "$STAGE2_WRITER_TOKEN"
      ```
    - lease 存在期间 importer 会返回 `stage2_writer_busy`，所以 legacy `paper-analysis`/agent 即使仍直接写文件、自己不拿 OS lock，也不会与 importer transaction 并发覆盖。**不得绕过 acquire 直接进入 Step 5/6/6.5/7 的写操作。**
@@ -325,13 +325,13 @@ For each flagged direction:
 5. **本地 OCR execution pass（只在 continue 且仍缺 job、并且 local-writer lease 已 acquired 时）**：
    - **判定**沿用原规则：PyMuPDF/质量分数判断扫描版；这是本地执行路径的一部分，handoff barrier 之前只允许质量判定，不允许新 vision OCR。
    - **复用** `<论文分析>/_ocr/<标题>.txt`；已有即直接用。
-   - **执行**仍按原 llm-ocr-refresh + vision-tools 机制逐页渲染/`glance --ocr`，写同一 `_ocr/<标题>.txt` 元数据头与逐页文本；失败页记录；整篇 OCR 全失败则后续 router 走 normalized abstract JSON。
+   - **执行**仍按原 llm-ocr-refresh + vision-tools 机制逐页渲染/`glance --ocr`（安装根提供 `<paper-analysis-skill-dir>/bin/vision-glance` 时用该固定入口转发到同一 `vision-tools` app，其它安装沿用原 `vision-tools` skill 入口），写同一 `_ocr/<标题>.txt` 元数据头与逐页文本；失败页记录；整篇 OCR 全失败则后续 router 走 normalized abstract JSON。
    - `wait` 路径永远不能到这里，除非 caller 后来明确改为 `continue`。
 
 6. **本地 route → `paper-analysis full`（只处理 execution pass 剩余 jobs，批量并发 ≤3；local-writer lease 必须仍持有）**：
    - 使用已加载的 `zotero-read` 实际安装目录，继续一次批量调用：
      ```bash
-     python3 <professor-contact-skill-dir>/scripts/stage2_input_router.py \
+     <professor-contact-skill-dir>/scripts/stage2_input_router \
        --zotero-read-skill-dir "<zotero-read-skill-dir>" \
        --papers /tmp/<教授名>_<collection_key>_paper_routes.json \
        --output-dir /tmp/professor-contact-paper-inputs/<教授名>/<collection_key>
@@ -387,7 +387,7 @@ For each flagged direction:
     ```
     - **合并语义**：`gaps[]` 只保存 `gap_id`、`status`、`evidence`，不得复制 quote/translation/source；原文一律回到 `future_work_sidecar`。保留 `gap`/`gap_zh`/`gap_source`/`gap_status`/`gap_status_evidence` 仅供旧消费者，取第一条 gap 的投影。每次运行都对全部方向重算 gaps 的 status/evidence 与 authorship 并覆盖写回；老 index 自然升级到 schema 2。
 
-8. **`kb_import=true` 时入库**（加载 `kb-importer` skill，按其约定）——每篇相关论文 1 个 KB 条目：
+8. **`kb_import=true` 时入库**（加载 `kb-importer` skill，按其约定；Nix 安装使用知识库 owner 包提供的已安装固定 launcher，contact 不自建 KB server 或审批配置）——每篇相关论文 1 个 KB 条目：
    - **content** = 元数据头（标题/作者/年份/期刊/DOI/zotero 链接/论文分析文件路径）+ 该篇 `论文分析.md` 的「总结」「贡献」「局限性与批判性评价」「作者明说的未来工作」「对自身研究的帮助评估」摘录（非整篇全文，避免稀释向量；全文留在 source 字段）。
    - **tags** = `["论文", "<教授名>", "<方向 name_ja>", "套磁候选", "zotero://select/library/items/<item_key>"]`（item key 稳定不变，作 tag 安全）。
    - **source** = 该篇 `论文分析.md` 绝对路径。
@@ -441,7 +441,7 @@ For each flagged direction:
 **A. 跑 `stage2-resolve-plan`**（纯确定性，零模型）：
 ```bash
 run_dir=$(mktemp -d "<本教授事务目录>/resolve-run.XXXXXXXX")
-python3 <professor-contact-skill-dir>/scripts/contact_state.py \
+<professor-contact-skill-dir>/scripts/contact_state \
   stage2-resolve-plan --facts /tmp/<教授名>_套磁_facts.json \
   --results-dir "$run_dir"
 ```
@@ -485,7 +485,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py \
 
 **C. 跑 `stage2-resolve-finalize`**（纯确定性，校验结果并写 `<教授目录>/论文分析/_resolved_directions.json`）：
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_state.py \
+<professor-contact-skill-dir>/scripts/contact_state \
   stage2-resolve-finalize --facts /tmp/<教授名>_套磁_facts.json \
   --results "$run_dir"
 ```
@@ -514,7 +514,7 @@ runner 校验：result schema/kind 正确、**`collection_key`/`provisional_dire
 
 **F. 跑 `stage2-plan`**（纯确定性）：
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-plan \
+<professor-contact-skill-dir>/scripts/contact_state stage2-plan \
   --facts /tmp/<教授名>_套磁_facts.json \
   --preflight-file <本教授事务临时目录>/stage2_preflight.json
 ```
@@ -546,7 +546,7 @@ python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-plan \
 **6.3 跑 `stage2-finalize`**：
 
 ```bash
-python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-finalize --facts <facts> --results <results 目录> --preflight-file <本教授事务临时目录>/stage2_preflight.json --resolved-directions <教授目录>/论文分析/_resolved_directions.json
+<professor-contact-skill-dir>/scripts/contact_state stage2-finalize --facts <facts> --results <results 目录> --preflight-file <本教授事务临时目录>/stage2_preflight.json --resolved-directions <教授目录>/论文分析/_resolved_directions.json
 ```
 
 `--preflight-file` 是 Step 2.6 保存的同一份 preflight stdout，必须原样传回。finalize 在**任何写盘之前**重算 cheap structural inputs 并与 preflight 时比对：不一致 → `needs_refresh/preflight_inputs_changed`（不写 pack/freshness cache/Markdown；本轮按可恢复 partial 返回，稍后从 Step 2 重新开始）。finalize 还会重算 payload 的 `preflight_id`，并要求与 facts 的 `stage2_preflight.preflight_id`（Step 6.1 写入）一致：payload 被同一教授的另一次调用覆盖、facts 缺失绑定或 id 不一致 → 同样 `needs_refresh/preflight_inputs_changed`（drift 记 `preflight_proof_id`/`preflight_proof_binding`），不写任何文件。比对全部通过时，finalize 把本轮 accepted state 的 preflight metadata 种进 `套磁候选输入.json` 的 `cache.preflight`（含 pack integrity sha、逐 provisional 方向的 target/candidate 指纹、provisional→resolved 映射、逐 resolved 方向 accepted/freshness 指纹与 artifact stat guards），供下一次 Stage 2 的 Step 2.6 early reuse 判定。`stage2-refine-finalize` 会清除 `cache.preflight` 与 validator（保守失效：修订后的 pack 下次必须重新证明，重跑通过后再次 seed）。
@@ -571,16 +571,16 @@ runner 校验全部 result JSON（gap ID ∈ 待判集、candidate_paper_ids ⊆
 - 普通 `stage2-finalize` 重建了成员/引用或重新渲染正文时，旧 validator 认证不会带入新业务版本：新版本从第 1 轮重新记录，旧原始报告文件保留不动；同一业务版本内仍受第 1 轮 → 修订 → 第 2 轮上限约束。
 - 每次校验返回后，先且只先运行记录入口：
   ```bash
-  python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-record-validation \
+  <professor-contact-skill-dir>/scripts/contact_state stage2-record-validation \
     --professor-dir <教授目录> --validation-file <validation-round-1.json>
   ```
   runner 从原始报告、当前受管正文及已接受输入包推导规范方向和校验轮次。记录失败、报告陈旧或返回值不是可继续状态时，停止当前校验循环并如实报告；不得自行修补报告或继续修订。
 - **只有第 1 轮记录结果明确为 `needs_correction` 时**，才把同一份已记录的 `validation-round-1.json` 交给修订入口，为 runner 指定的失败方向生成局部结构化修订：
   ```bash
-  python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-refine-plan \
+  <professor-contact-skill-dir>/scripts/contact_state stage2-refine-plan \
     --professor-dir <教授目录> --validation-file <validation-round-1.json>
   # 模型只读取每个 job 的 model_input，并写 narrative-rewrite-<方向>.json
-  python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-refine-finalize \
+  <professor-contact-skill-dir>/scripts/contact_state stage2-refine-finalize \
     --professor-dir <教授目录> --results <rewrite results 目录> \
     --validation-file <validation-round-1.json>
   ```
@@ -636,12 +636,12 @@ when: no `folder_path`; program root unresolvable; user aborted at the Zotero pr
 - **每位教授自己那份 `<教授目录>/套磁目标.json` 是唯一选择来源**：绝不扫描 Zotero `套磁候选` note、绝不要求 `套磁候选总览.md`、绝不读已退役的程序级 `教授研究/套磁目标.json`（它只是 `contact_targets.py migrate` 的一次性输入，不是 Stage 2 的 fallback）、绝不从 Zotero collection key 推导 target 身份；`collection_key` 只是 `direction_id` 的兼容 join 键。被选方向成员身份变化（成员 `item_key` 集合变化或方向消失，`preview_changed`，stale 条目精确到 `direction_id`）阻断 Stage 2，直到 Stage 0 修订选择；未选方向、display 或置信度变化不阻断。
 - **Stage 1 候选快照必须先 verify 再消费**：分析/相关性范围 = `contact_stage1.py verify` 通过后的逐方向 `candidate_keys`；快照缺失/过期 → `needs_input`（重跑 Stage 1），绝不手改快照、绝不回退到「只读 provisional members」的旧范围（那会让 Stage 1 扩召白下 PDF）。扩召候选永远以候选身份参与（`non_final_candidates_only`）：可信度闸门只用 provisional members，`relevance_reason` 附扩召理由，绝不把扩召写成「该方向成员」。
 - **Stage 2 初始化顺序固定且 preflight gate 不可绕过**：resolve → 逐教授 `contact_targets.py resolve --target-file <该教授目录>/套磁目标.json` → 同一份 target 的 `contact_stage1.py verify --target-file` → 逐教授 `contact_state.py stage2-preflight --target-file`（三处 `--target-file` 必须是同一位教授那一份）→ 分区 → **仅当存在 process professor**才 Zotero probe/session → 候选论文读取。`reuse_all` 教授必须在任何 Zotero connectivity 检查/PDF 读取/模型 job 之前以 no-op 复用结束；`chatgpt_result` 显式提供或 `kb_import=true` 时禁止 early hard exit。preflight 是 correctness-preserving 优化，不是弱化缓存：任何无法证明安全的状态（legacy pack、malformed cache 容器、版本/参数变化、指纹或 artifact guard 不一致、validator 未验收）一律 fallback 到原 Stage 2 correctness path；preflight 绝不生成新的科学事实，`cache.preflight` 只是 cache metadata。保存的 preflight payload 与 facts 的绑定同样不可绕过：Step 6.1 必须把 payload 的 `preflight_id` 写进 facts，finalize 只承认由准备该 facts 的同一次调用保存的 proof。
-- **Stage 2 Zotero 访问统一消费 resolved endpoint**：connectivity probe、`zotero-mcp-session`、署名线 REST 分页与其它 Stage 2 直接 Zotero HTTP/MCP 访问都只使用 Step 2.7 解析出的 `ZOTERO_HTTP_URL` / `ZOTERO_MCP_URL`；同一轮内不得出现两组不同的 resolved endpoint，literal 生产端口只允许出现在 Step 2.7 第 2 条语义契约 fence 的 fallback 文本里，**绝不写进任何执行的命令、URL 或探测**——fixture/runtime 端点由环境注入，命令里手写字面生产端口即违反 endpoint contract。一切真实 Zotero HTTP/MCP 访问（含 connectivity probe）必须经 `scripts/stage2_zotero_rpc.py` 的 `probe`/`mcp`/`http` 子命令（其 CLI 不提供 URL/port 覆盖参数，endpoint 只由 helper 从环境变量解析）；唯一例外是 `new-session.sh` session 建立。helper 失败按 transport failure fail-closed 处理。
+- **Stage 2 Zotero 访问统一消费 resolved endpoint**：connectivity probe、`<zotero-read-skill-dir>/scripts/new-session.sh`、署名线 REST 分页与其它 Stage 2 直接 Zotero HTTP/MCP 访问都只使用 Step 2.7 解析出的 `ZOTERO_HTTP_URL` / `ZOTERO_MCP_URL`；同一轮内不得出现两组不同的 resolved endpoint，literal 生产端口只允许出现在 Step 2.7 第 2 条语义契约 fence 的 fallback 文本里，**绝不写进任何执行的命令、URL 或探测**——fixture/runtime 端点由环境注入，命令里手写字面生产端口即违反 endpoint contract。一切真实 Zotero HTTP/MCP 访问（含 connectivity probe）必须经 `scripts/stage2_zotero_rpc.py` 的 `probe`/`mcp`/`http` 子命令（其 CLI 不提供 URL/port 覆盖参数，endpoint 只由 helper 从环境变量解析）；唯一例外是 `new-session.sh` session 建立。helper 失败按 transport failure fail-closed 处理。
 - **跨方向按 item_key 去重**：同一教授同一 `item_key` 的准备/OCR/paper-analysis 每轮至多执行一次，结果复用到所有包含它的被选方向；**绝不仅因成员重叠就合并两个被选方向**的 narrative、user_note、gap pool 或 direction fingerprint。
 - **handoff barrier 不可绕过**：post-cost-gate/post-idempotency jobs 必须先 build ZIP；`wait` 在任何新 vision OCR/`paper-analysis full|gap-only` 前停止。resume 必须先按当前输入 rebuild current bundle，再 import external result；不匹配即 stale/mismatch，绝不‘尽量用’。
 - **Stage-2 single-writer lease 不可绕过**：handoff `import` 必须发生在 local lease acquire **之前**；一旦本轮要进入任何教授目录本地写路径，就必须先 `local-lease-acquire`，并把**本轮 build 返回的 exact `handoff_id/source_fingerprint`**原样传入，覆盖 legacy `paper-analysis`、OCR、sidecar、`_index.json` 与 runner 写入的整个教授 scope，并在 **finally** 中 `local-lease-release`。`stage2_plan_stale` 或 `stage2_writer_busy` 时禁止写。这个 lease 是 importer 与“不主动拿 OS lock 的旧 writer”之间的共同协调边界，也是 build→acquire 间 stale-plan 的最终闸门。
 - **PDF / OCR-only 的证据边界不可混淆**：PDF handoff 必须先通过 `uv run future_work.py prepare` 生成 prepare+candidates；无 OCR-required page 时走 `exact-items-v1`；有 OCR-required page 时走 hybrid `ocr-excerpt-v1`：外部必须返回 OCR-required 页的 `future_work_ocr.json` + `future_work_selections.json`（`page/quote_excerpt/translation_zh/source`），并可为非-required 可读页额外返回 exact `future_work_items.json`。本地 `merge-ocr` 后保留可读页 candidates、唯一绑定 OCR exact candidate，再合并后 `validate/finalize`。**ChatGPT 永不猜 OCR candidate id。**无原 PDF 的 OCR-only handoff 不得伪造 prepare/page/hash/sidecar，必须清洗外部 Future Work 并以 `future_work_unavailable_without_pdf_handoff` 明确标记，6.5 不得 migrate/gap-only 偷偷补成本。
-- **PEP-723 helper 只能经 uv 执行**：`future_work.py` 视为 0644 普通脚本；无论 agent 直接 prepare 还是 handoff importer 的 merge/validate/finalize，都固定 `uv run "<absolute script>" ...`，禁止依赖 executable bit 或宿主已装 `pdf-processing-core`。
+- **PEP-723 helper 只能经 owner 固定入口执行**（Nix 安装用同一 paper-analysis 安装根的 `bin/*`；其它安装经 uv）：`future_work.py` 视为 0644 普通脚本；无论 agent 直接 prepare 还是 handoff importer 的 merge/validate/finalize，都固定 `uv run "<absolute script>" ...`，禁止依赖 executable bit 或宿主已装 `pdf-processing-core`。
 - **handoff 不是事实源**：外部只能执行 manifest 给定 job；不能提供权威 `_index.json`、`.future_work.json`、`套磁候选输入.json`、gap_id/direction ID。import 后仍只走普通 sidecar/facts/contact_state 路径，Stage 3 仍只读 `套磁候选输入.json`。
 - **只 spawn 两类 subagent**：`paper-analysis`（每篇一个；批量并发 ≤3）与 `professor-contact-style-validator`（Step 6.5，白话校验）；**NEVER write to Zotero**（只读）；**NEVER download PDFs**（分析用已有附件）；**runner 不胜任时不兜底**——contact_state 失败按 reason_code 返回，不手写产物、不调模型补写 Markdown。
 - **Stage 2 → paper-analysis 只传文件**：输入优先级固定 `OCR absolute path > usable PDF absolute path > normalized abstract JSON absolute path`；raw Zotero item key 永远不得作为 `paper` 参数或 prompt 正文。exporter/router 失败时显式 partial/error，不走 legacy raw-key 兜底，不伪造摘要级分析。
