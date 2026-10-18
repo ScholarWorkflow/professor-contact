@@ -1,8 +1,8 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- Test revision：contact-evidence-level-t34；对应 [执行计划 r4](implementation-plan.md)。
+- Test revision：contact-evidence-level-t35；对应 [执行计划 r4](implementation-plan.md)。
 - Requirement revision：2026-10-17 用户授权的 U1/U5 修复；测试资产准备基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`。
-- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变）；t32 按用户授权删除错误提示字符串限制和重复的禁止区域用例（当前 13 个新增用例、17 个执行选择器；此前运行结果只对应旧版本）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八、九轮复核（IR-37 残留、IR-38 残留、IR-40(a)(b)、IR-41）再改准运行的版本指向，把固定卡比较改为「夹具守卫 + 与渲染前快照比较」、恢复 refine-finalize 的 pack 字节守卫，并删除与辅助函数重复的断言；t33 按第二关意见把「旧包缺可比较基线」用例改为断言顶层 `legacy_pack_no_preflight` 与方向级无 `validator_not_accepted`；t34 把状态行与 §5 的「最新记录」绑定到测试提交 `0fe84ab` 并在该提交上重跑同一组 17 个选择器（见修订记录）。第二关待复核，第三关未执行。最新准备期复核为 6 通过 / 11 业务失败（§5 的 17 项记录，测试提交 `0fe84ab`，结果目录 `/tmp/contact-evidence-level.p49ZBXq2`）；审核处置仅适用于各自记录版本（§6、§7）。
+- 状态：第一关 PASS（t6 复核记录，T1—T4 范围不变）；t32 按用户授权删除错误提示字符串限制和重复的禁止区域用例（当前 13 个新增用例、17 个执行选择器；此前运行结果只对应旧版本）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八、九轮复核（IR-37 残留、IR-38 残留、IR-40(a)(b)、IR-41）再改准运行的版本指向，把固定卡比较改为「夹具守卫 + 与渲染前快照比较」、恢复 refine-finalize 的 pack 字节守卫，并删除与辅助函数重复的断言；t33 按第二关意见把「旧包缺可比较基线」用例改为断言顶层 `legacy_pack_no_preflight` 与方向级无 `validator_not_accepted`；t34 把状态行与 §5 的「最新记录」绑定到测试提交 `0fe84ab` 并在该提交上重跑同一组 17 个选择器；t35 在第三关正式执行中修订 T1 译文断言、T1 `gap_notes` 比较形状与 T2 freshness 夹具（见修订记录）。第三关正式执行中：T1、T2 曾因测试步骤本身不成立被本地执行工程师按 Test Engineer Rule §5 停止并交接，t35 修订后两个受影响选择器定向验证通过（`Ran 2 tests`、`OK`，结果目录 `/tmp/contact-evidence-level.UyFv3Iyi`，`recipe-t35-run2.txt`），该定向运行不是第三关完整结果；第三关 17 个选择器的正式运行记录与逐项结论待本地执行工程师补记（§5）。§5 的 6 通过 / 11 业务失败只对应测试提交 `0fe84ab`（实现前），不代表当前版本；审核处置仅适用于各自记录版本（§6、§7）。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
 ## 1. 唯一必测清单
@@ -113,6 +113,8 @@ exit "$status"
 本次确定性测试无自动重试。产品断言失败原样保留；先修产品再复验受影响项。命令/环境错误记无法判断，修正错误后只重试受影响命令，保留此前记录。未执行不得填 PASS；后续清理错误不得覆盖已确认失败。
 
 记录格式保持简单：实际提交、T1—T4逐项通过/业务失败/无法判断/未执行、实际命令与输出位置、复用结果来源、剩余问题及负责人。原始日志和临时数据在仓库外，公开提交仅必要脱敏摘要。
+
+第三关正式执行记录（待补）：t35 修订后由本地执行工程师按 §3 的 17 个选择器运行，补记实际产品与测试版本、命令、退出码、结果目录及 T1—T4 逐项结论。t35 修订记录中的两个受影响选择器定向验证只证明修订后可执行，不替代本记录，也不作为第三关或合并结论。
 
 准备期复核（非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），测试提交 `0fe84ab`，命令为 §3 的 17 个选择器，结果目录 `/tmp/contact-evidence-level.p49ZBXq2`（`recipe.txt`），退出码 1，`Ran 17 tests`、`FAILED (failures=11)`。
 
@@ -379,3 +381,17 @@ exit "$status"
 2. **IR-43**：§5 的 17 项记录写明测试代码版本 `0fe84ab`，并去掉「§3 当前的」这类会随时态漂移的措辞；为消除「日志无法区分修订前后」的歧义，本轮在提交 `0fe84ab` 的代码上重新执行了同一组 17 个选择器（结果目录即上条，`Ran 17 tests`、6 通过 / 11 业务失败，通过项与失败分组与上一份记录相同），上一份 `/tmp/contact-evidence-level.NASm842C` 作为同版本的另一份记录保留。
 
 本轮只改测试计划文档与运行记录指向，测试代码未改，产品与既有测试未改。该结论不代表第二关、第三关或合并批准。
+
+### t35 定向修订记录（第三关执行中的测试步骤修订）
+
+第三关正式执行时，唯一测试计划中的 T1、T2 两个必测项各存在测试步骤本身不成立的断言/夹具（T1 两条断言、T2 一处夹具），无法得到有效结果。本地执行工程师按 Test Engineer Rule §5 停止这两项后交接；本轮由本地测试工程师只修订测试步骤，未改产品文件、未改其他测试模块、未新增或删除用例与选择器。
+
+1. **T1 译文断言**（`FixedEvidenceDisplayTests.test_fixed_evidence_renders_trusted_references_without_touching_machine_fields`）：原断言 `assertIn("中译：" + quote[:24], analysis)` 期望的末尾带空格（第 24 个字符是空格），而侧车 `translation_zh`、paper-analysis 与 runner 的 `load_sidecar` 都对其做 `.strip()`，pack 机器值与正文实际是去空格的 `中译：Future work will extend`，任何忠实实现都不可能满足。改为断言正文出现 `- 中译：` 加上该 gap 的机器值 `gap["translation_zh"]`（与 `self.shortlist_gap("AAAA1111")["translation_zh"]` 相同），期望仍是「存储的译文被原样显示」，未删除或弱化。
+2. **T1 `gap_notes` 比较形状**（同一选择器）：修好上一条后首次执行到 `assertEqual(baseline[...]["gap_notes"], accepted["narrative"]["gap_notes"])`，发现前者是 `narrative.json` 的原始列表、后者是 runner 规范后的按 `gap_id` 索引的字典，直接比较恒不成立；首次只改第 1 条后的定向运行仍在该比较处失败（`/tmp/contact-evidence-level.UyFv3Iyi/recipe-t35.txt`），据此确认它是另一处测试步骤缺陷，不是产品缺陷。按既有 `validate_narrative` 的规范形状，把渲染前快照按 `gap_id` 归一为 `{summary, explanation}` 后比较，期望内容（summary、explanation 不被展示步骤改写）不变，未放宽。
+3. **T2 freshness 夹具**（`FixedEvidenceFailureTests.test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job`）：原夹具只改 facts 题名并把修正后的来源证据写入 `corrected_results/`，但 `gap_fingerprint`（quote/translation/source/page/侧车摘要）与 `candidate_fingerprint`（候选论文 digest）均未变，runner 的 `<教授目录>/论文分析/_freshness_cache.json` 仍命中；`Stage2Context.freshness_entry` 标记 `cache_hit`，`validate_freshness_results` 只对未命中的 gap 读取 results 文件，重绘仍是旧证据。改为在重新生成前删除该 gap 在 `_freshness_cache.json` 中的记录（按该 gap 的 `gap_id`），模拟来源证据被重新判定；仍走普通 `stage2-plan`/`stage2-finalize`。
+
+受影响选择器：T1 的 `test_fixed_evidence_renders_trusted_references_without_touching_machine_fields`、T2 的 `test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job`。范围未变：仍是既有的 13 个新增用例、17 个执行选择器，T1—T4 业务目标、预期结果与 §3 命令不变。
+
+验证：按上述两个选择器运行 `python3 -m unittest -v test_stage2_evidence_level.FixedEvidenceDisplayTests.test_fixed_evidence_renders_trusted_references_without_touching_machine_fields test_stage2_evidence_level.FixedEvidenceFailureTests.test_fixed_card_blocking_is_recorded_for_the_source_owner_without_a_model_job`，`Ran 2 tests`、`OK`，退出码 0；结果目录 `/tmp/contact-evidence-level.UyFv3Iyi`（`recipe-t35-run2.txt`）。该运行只验证修订后的两条用例可执行且通过，不是第三关完整运行，也不替代 §5 的正式执行记录。第三关正式执行记录（§3 的 17 个选择器、实际产品与测试版本、逐项结论）由本地执行工程师补记，见 §5。
+
+本轮只改测试代码与测试计划；`scripts/contact_state.py`、`SKILL.md` 与两个 analyzer 投影等产品文件及其他测试模块本轮未改；未提交、未推送。

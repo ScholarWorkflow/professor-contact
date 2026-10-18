@@ -275,6 +275,26 @@ AUTHORSHIP_LEDGER_FILE = Path("教授研究") / "_署名对照.json"
 PAPER_ANALYSIS_SCOPES = ("relevant", "all")
 STAGE2_GUARD_KINDS = (("analysis", "analysis_file"), ("future_work", "sidecar_file"),
                       ("facts", "facts_file"), ("pdf", "pdf_file"))
+# Analysis level (U5): only the level the successful analysis actually recorded
+# in `论文分析/_index.json` counts. File existence, PDF availability and
+# `facts_state` never establish it, and a missing/legacy record stays unknown.
+ANALYSIS_LEVELS = ("fulltext", "abstract")
+# Display-only refresh baseline (U5): the accepted pack records the limited
+# index selection state per candidate key, so an added / deleted / moved
+# analysis source is distinguishable from a level-only display change.
+STAGE2_ANALYSIS_PROJECTION_VERSION = 1
+STAGE2_DISPLAY_REFRESH_VERSION = 1
+# Fixed-evidence display (U1): internal Zotero item keys may appear inside the
+# model-written evidence of the fixed freshness card and the anchor-banned
+# blacklist; every one of them is rendered as its trusted title plus link.
+ITEM_KEY_RE = re.compile(r"(?<![A-Za-z0-9])[A-Z0-9]{8}(?![A-Za-z0-9])")
+FIXED_EVIDENCE_SLOT_PREFIXES = ("- 后续论文依据：", "- 已做部分：", "- 剩余缺口：")
+FIXED_EVIDENCE_HANDOFF_REASON = "fixed_evidence_not_model_repairable"
+FIXED_EVIDENCE_HANDOFF_MESSAGE = (
+    "本轮阻挡命中固定证据卡（后续论文依据／已做部分／剩余缺口／禁锚区依据）："
+    "这些字段由源数据与生成器决定，模型无权改写事实。请源数据或生成器负责人"
+    "修复题名与来源证据后，按正常 Stage 2 重新生成受管正文；本轮不生成模型"
+    "修订任务，也不写入任何通过结果。")
 FACTS_TEXT_FIELDS = ("research_problem", "research_object", "approach")
 FACTS_LIST_FIELDS = ("findings", "contributions", "topic_terms", "limitations")
 SHORTLIST_MAX = 10
@@ -469,6 +489,28 @@ def direction_papers(pack: dict, direction: dict) -> list[dict]:
 _CANONICAL_PAPER_FIELDS = ("title", "year", "authorship", "analysis_file",
                            "pdf_available", "facts_state", "facts_error",
                            "paper_facts")
+# Display-only paper fields ride along in the same canonical record but merge as
+# "a known value wins": a snapshot that carries the level must not conflict with
+# an older snapshot that predates it, and neither may overwrite a known level
+# with an unknown one.
+_CANONICAL_DISPLAY_FIELDS = ("analysis_level",)
+
+
+def stage2_analysis_level(entry: dict) -> str | None:
+    """The recorded analysis level of one paper, or None when unknown.
+
+    The value comes from the analyzer's `_index.json` record; it is never
+    inferred from an analysis file, a PDF or `facts_state`. Any other value is a
+    malformed input instead of a silently accepted level.
+    """
+    if entry.get("analysis_level") is None:
+        return None
+    value = entry.get("analysis_level")
+    if not isinstance(value, str) or value not in ANALYSIS_LEVELS:
+        fail("invalid_facts",
+             f"analysis_level must be one of {ANALYSIS_LEVELS} or null: {value!r}",
+             item_key=entry.get("item_key"))
+    return value
 
 
 def _canonical_paper_record(entry: dict) -> dict:
@@ -476,6 +518,8 @@ def _canonical_paper_record(entry: dict) -> dict:
     for field in _CANONICAL_PAPER_FIELDS:
         record[field] = entry.get(field)
     record["pdf_available"] = bool(record["pdf_available"])
+    for field in _CANONICAL_DISPLAY_FIELDS:
+        record[field] = stage2_analysis_level(entry)
     return record
 
 
@@ -484,7 +528,7 @@ def _merge_canonical_paper(papers: dict, owners: dict, entry: dict, owner: str) 
 
     Same item_key from two directions must be the SAME machine paper: records
     agree exactly, or the pack fails closed (shared_paper_conflict) instead of
-    silently picking one copy.
+    silently picking one copy. Display-only fields merge as "known value wins".
     """
     record = _canonical_paper_record(entry)
     key = record["item_key"]
@@ -503,6 +547,9 @@ def _merge_canonical_paper(papers: dict, owners: dict, entry: dict, owner: str) 
                   directions=sorted(set(owners.get(key) or []) | {owner}),
                   message="同一 item_key 在多个方向里带有冲突的权威字段：输入包不可信，"
                           "重跑阶段 2 重建规范 papers 后再继续。未修改任何文件。")
+    for field in _CANONICAL_DISPLAY_FIELDS:
+        if existing.get(field) is None and record.get(field) is not None:
+            existing[field] = record[field]
     if owner not in owners.setdefault(key, []):
         owners[key].append(owner)
     return existing
@@ -3518,8 +3565,12 @@ def stage2_artifact_guard_reason(recorded: dict) -> str | None:
 
     Cryptographic source identity stays with the normal Stage 2 facts
     validation; this only detects that the recorded file itself changed since
-    the accepted run.
+    the accepted run. Baseline entries that recorded "no path" or "path not yet
+    present" are not stat-able here; their appearance, removal or move is
+    decided by the analysis projection comparison instead.
     """
+    if recorded.get("state", "present") != "present":
+        return None
     path = Path(str(recorded.get("path") or ""))
     try:
         if not path.is_file():
@@ -3534,11 +3585,155 @@ def stage2_artifact_guard_reason(recorded: dict) -> str | None:
     return None
 
 
+def stage2_projection_artifact(value) -> dict:
+    """One declared analysis-source path plus its current existence state."""
+    if not isinstance(value, str) or not value.strip():
+        return {"path": None, "exists": False}
+    path = Path(value)
+    try:
+        exists = path.is_file()
+    except OSError:
+        exists = False
+    return {"path": str(path), "exists": exists}
+
+
+def stage2_analysis_index(professor_dir: Path) -> tuple[bool, dict]:
+    """Read the Stage-2 analysis index as an opaque per-key record map.
+
+    Only the fields Stage 2 actually consumes are read; an unreadable or
+    malformed index is reported as such instead of being treated as "no
+    analyses", because the two cannot prove the same thing.
+    """
+    data, error = read_json_file(Path(professor_dir) / "论文分析" / "_index.json")
+    if error or not isinstance(data, dict):
+        return False, {}
+    papers = data.get("papers")
+    return True, papers if isinstance(papers, dict) else {}
+
+
+def stage2_analysis_projection(professor_dir: Path, keys) -> dict:
+    """The limited index selection state of the analysis sources Stage 2 uses.
+
+    Per candidate key: the recorded level and the real analysis / OCR /
+    future-work / facts carriers the index declares, with their current
+    existence. Nothing else from the index is read (management fields such as
+    `generated_at` or `kb_entry_id` are not business changes), and no path is
+    resolved or scanned beyond the declared files themselves.
+    """
+    readable, records = stage2_analysis_index(professor_dir)
+    entries = {}
+    for key in sorted({str(key) for key in keys if isinstance(key, str) and key}):
+        record = records.get(key) if readable else None
+        if not isinstance(record, dict):
+            entries[key] = {
+                "indexed": False, "level": None,
+                "analysis_file": None, "analysis_exists": False,
+                "ocr_file": None, "ocr_exists": False,
+                "future_work_sidecar": None, "future_work_exists": False,
+                "future_work_state": None,
+                "facts_sidecar": None, "facts_exists": False, "facts_state": None,
+            }
+            continue
+        analysis = stage2_projection_artifact(record.get("file"))
+        ocr = stage2_projection_artifact(record.get("ocr_file"))
+        future_work = stage2_projection_artifact(record.get("future_work_sidecar"))
+        facts = stage2_projection_artifact(record.get("facts_sidecar"))
+        entries[key] = {
+            "indexed": True, "level": record.get("level"),
+            "analysis_file": analysis["path"], "analysis_exists": analysis["exists"],
+            "ocr_file": ocr["path"], "ocr_exists": ocr["exists"],
+            "future_work_sidecar": future_work["path"],
+            "future_work_exists": future_work["exists"],
+            "future_work_state": record.get("future_work_state"),
+            "facts_sidecar": facts["path"], "facts_exists": facts["exists"],
+            "facts_state": record.get("facts_state"),
+        }
+    return {"version": STAGE2_ANALYSIS_PROJECTION_VERSION,
+            "index_readable": readable, "keys": entries}
+
+
+def stage2_projection_keys(ctx: "Stage2Context", pack_directions: list | None = None) -> list[str]:
+    """Every candidate key whose analysis source can feed this professor's output.
+
+    Union of the selected directions' candidate / relevant / named keys and the
+    `gap_scope` slice, plus the accepted pack's supporting keys: wider than the
+    final supporting set so a source that only *appears* later is still visible.
+    """
+    keys: set = set()
+    for plan in getattr(ctx, "direction_plans", None) or []:
+        direction = plan.get("direction") or {}
+        keys.update(key for key in direction_candidate_keys(direction) if key)
+        keys.update(key for key in direction_relevant_keys(direction) if key)
+        keys.update(key for key in (direction.get("named_keys") or []) if key)
+        facts = getattr(ctx, "facts", None)
+        if isinstance(facts, dict):
+            try:
+                keys.update(key for key in gap_scope_keys(facts, direction) if key)
+            except (KeyError, TypeError):
+                pass
+    for direction in pack_directions or []:
+        keys.update(key for key in (direction.get("supporting_item_keys") or []) if key)
+    return sorted(key for key in keys if isinstance(key, str))
+
+
+def stage2_preflight_projection_keys(pack: dict | None, recorded: dict | None,
+                                     target: dict | None, snapshot_entry: dict | None) -> list[str]:
+    """The projection key set a read-only preflight can prove from local state."""
+    keys: set = set()
+    if isinstance(recorded, dict) and isinstance(recorded.get("keys"), dict):
+        keys.update(key for key in recorded["keys"] if isinstance(key, str))
+    for direction in (pack or {}).get("directions") or []:
+        if not isinstance(direction, dict):
+            continue
+        keys.update(key for key in (direction.get("supporting_item_keys") or [])
+                    if isinstance(key, str))
+    keys.update(stage2_candidate_universe(target, snapshot_entry))
+    return sorted(keys)
+
+
+def stage2_projection_diff(accepted: dict | None, current: dict | None) -> tuple[list, list]:
+    """Split the difference between two projections into (source, level) changes.
+
+    A source change is any indexed/unindexed flip or any declared path /
+    existence / state movement; only a bare `level` difference is display-only.
+    An index that changed readability, or is unreadable on both sides, is
+    handled without inventing source changes that were never declared.
+    """
+    if not isinstance(accepted, dict) or not isinstance(current, dict):
+        return ["analysis_projection_unavailable"], []
+    if bool(accepted.get("index_readable")) != bool(current.get("index_readable")):
+        return ["analysis_index_changed"], []
+    if not accepted.get("index_readable"):
+        return [], []
+    accepted_keys = accepted.get("keys")
+    current_keys = current.get("keys")
+    if not isinstance(accepted_keys, dict) or not isinstance(current_keys, dict):
+        return ["analysis_projection_unavailable"], []
+    source_changes, level_changes = [], []
+    for key in sorted(set(accepted_keys) | set(current_keys)):
+        before, after = accepted_keys.get(key), current_keys.get(key)
+        if before == after:
+            continue
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            source_changes.append(key)
+            continue
+        before_rest = {name: value for name, value in before.items() if name != "level"}
+        after_rest = {name: value for name, value in after.items() if name != "level"}
+        if before_rest != after_rest:
+            source_changes.append(key)
+        elif before.get("level") != after.get("level"):
+            level_changes.append(key)
+    return source_changes, level_changes
+
+
 def _artifact_guards_for_keys(ctx: Stage2Context, guard_keys: set) -> dict:
     """Record accepted stat guards for a set of papers.
 
     Digests reuse SHAs already computed by Stage2Context; PDF bytes are never
-    re-read just for metadata.
+    re-read just for metadata. Every guarded kind is recorded explicitly,
+    including "no path configured" and "path declared but not on disk", so the
+    accepted baseline states what it really consumed; only a present entry is
+    re-stat-able later.
     """
     guards = {}
     for key in sorted(guard_keys):
@@ -3549,9 +3744,11 @@ def _artifact_guards_for_keys(ctx: Stage2Context, guard_keys: set) -> dict:
         for kind, field in STAGE2_GUARD_KINDS:
             value = paper.get(field)
             if not value:
+                entries[kind] = {"state": "no_path", "path": None}
                 continue
             path = Path(value)
             if not path.is_file():
+                entries[kind] = {"state": "missing", "path": str(path)}
                 continue
             digest = None
             if kind == "future_work":
@@ -3564,7 +3761,7 @@ def _artifact_guards_for_keys(ctx: Stage2Context, guard_keys: set) -> dict:
                     digest = record[0].get("input_fingerprint")
             else:
                 digest = sha256_bytes(path.read_bytes())
-            entries[kind] = stage2_artifact_guard(path, digest)
+            entries[kind] = {**stage2_artifact_guard(path, digest), "state": "present"}
         if entries:
             guards[key] = entries
     return guards
@@ -3715,6 +3912,13 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
         # is the professor-level candidate union, wider than any single
         # direction's relevant/gap scope — guard it as one block.
         "resolution_evidence_guards": stage2_resolution_evidence_guards(ctx),
+        # Analysis-source projection (U5): the limited index selection state of
+        # every candidate key this run consumed, collected from the current
+        # formal sources in the same successful write. A later preflight can
+        # tell an ordinary level-only change from an added / deleted / moved
+        # analysis source; display refresh only advances after that proof.
+        "analysis_projection": stage2_analysis_projection(
+            professor_dir, stage2_projection_keys(ctx, pack_directions)),
         "directions": directions,
     }
 
@@ -3815,6 +4019,8 @@ def cmd_stage2_preflight(args) -> None:
     meta = cache_block.get("preflight") if isinstance(cache_block, dict) else None
 
     professor_reasons: list = []
+    projection: dict | None = None
+    level_changes: list = []
     if pack is None:
         professor_reasons.append("missing_input_pack")
     elif cache_block is not None and not isinstance(cache_block, dict):
@@ -3871,6 +4077,23 @@ def cmd_stage2_preflight(args) -> None:
                     reason = stage2_artifact_guard_reason(guard if isinstance(guard, dict) else {})
                     if reason:
                         professor_reasons.append(reason)
+        # Analysis-source projection (U5): re-read the current limited index
+        # selection state and compare it with the accepted baseline. A moved /
+        # appearing / disappearing analysis source cannot prove the business
+        # inputs unchanged, so it takes the ordinary process path; a bare level
+        # difference is display-only and is only honoured when EVERY other gate
+        # is clean.
+        accepted_projection = meta.get("analysis_projection")
+        if not isinstance(accepted_projection, dict):
+            professor_reasons.append("analysis_projection_missing")
+        else:
+            projection_keys = stage2_preflight_projection_keys(
+                pack, accepted_projection, target, snapshot_entry)
+            projection = stage2_analysis_projection(professor_dir, projection_keys)
+            source_changes, level_changes = stage2_projection_diff(
+                accepted_projection, projection)
+            if source_changes:
+                professor_reasons.append("analysis_source_changed")
 
     cache_entries = load_freshness_cache(professor_dir) if pack else {}
     pack_directions = {direction_machine_id(entry): entry
@@ -3974,13 +4197,27 @@ def cmd_stage2_preflight(args) -> None:
             all_reuse = False
     preflight_inputs = stage2_preflight_cheap_inputs(
         program_root, professor_dir, professor, target, snapshot_entry, params, current_year)
+    if all_reuse and level_changes:
+        # Every business gate is clean and the ONLY difference is the recorded
+        # display level: the accepted facts stay valid and only the projection
+        # is stale. The formal display-refresh entry still has to re-prove this
+        # before writing.
+        action = "refresh_display"
+    elif all_reuse:
+        action = "reuse_all"
+    else:
+        action = "process"
     emit({
         "status": "ok",
         "professor": professor,
         "preflight_id": sha256_obj({"professor": professor,
                                     "preflight_inputs": preflight_inputs}),
-        "action": "reuse_all" if all_reuse else "process",
+        "action": action,
         "reason_codes": sorted(set(professor_reasons)),
+        "level_changes": sorted(level_changes),
+        "analysis_projection": projection,
+        "accepted_pack_sha256": (stage2_pack_content_fingerprint(pack)
+                                 if isinstance(pack, dict) else None),
         "pack_path": str(pack_path),
         "preflight_inputs": preflight_inputs,
         "directions": direction_results,
@@ -4398,7 +4635,124 @@ def redact_item_keys(text: str, papers: dict) -> str:
     for key in sorted((key for key in papers if key), key=len, reverse=True):
         if key in rendered:
             rendered = rendered.replace(key, papers[key].get("title") or "该论文")
-    return re.sub(r"(?<![A-Za-z0-9])[A-Z0-9]{8}(?![A-Za-z0-9])", "相关论文", rendered)
+    return ITEM_KEY_RE.sub("相关论文", rendered)
+
+
+def stage2_display_references(pack: dict, ctx=None) -> dict:
+    """Trusted title/year per reference the fixed-card display may print.
+
+    Display metadata is persisted in the accepted pack (written once by the
+    ordinary Stage 2 finalize) so a pack-only re-render never has to re-read
+    `/tmp` facts or parse the previously rendered Markdown. Current trusted
+    paper metadata is preferred; the accepted pack's own records come next.
+    """
+    references: dict = {}
+    persisted = pack.get("display_references")
+    if isinstance(persisted, dict):
+        for key, record in persisted.items():
+            if isinstance(key, str) and isinstance(record, dict):
+                references[key] = record
+    for key, record in pack_paper_index(pack).items():
+        if isinstance(key, str) and isinstance(record, dict):
+            references[key] = record
+    for key, record in (getattr(ctx, "papers", None) or {}).items():
+        if isinstance(key, str) and isinstance(record, dict):
+            references[key] = record
+    return references
+
+
+def stage2_referenced_item_keys(direction: dict) -> list[str]:
+    """Item keys the human-facing fixed-evidence slots of one direction print."""
+    keys: list = []
+
+    def collect(value) -> None:
+        if isinstance(value, str):
+            keys.extend(ITEM_KEY_RE.findall(value))
+
+    for gap in direction.get("gap_shortlist") or []:
+        if not isinstance(gap, dict):
+            continue
+        for field in ("evidence", "completed_part", "remaining_gap"):
+            collect(gap.get(field))
+        keys.extend(key for key in (gap.get("candidate_paper_ids") or [])
+                    if isinstance(key, str))
+    for item in direction.get("completed_gap_blacklist") or []:
+        if not isinstance(item, dict):
+            continue
+        collect(item.get("evidence"))
+        completed = item.get("completed_by_item_key")
+        if isinstance(completed, str) and completed:
+            keys.append(completed)
+    seen, ordered = set(), []
+    for key in keys:
+        if key and key not in seen:
+            seen.add(key)
+            ordered.append(key)
+    return ordered
+
+
+def stage2_collect_display_references(direction_rows: list, sources: list) -> dict:
+    """Persist the trusted title/year of every key the display slots reference.
+
+    Best effort per key: a key whose trusted title is unavailable at this point
+    is simply not persisted, and rendering it later fails explicitly instead of
+    printing a guessed or silently dropped citation.
+    """
+    available: dict = {}
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key, record in source.items():
+            if isinstance(key, str) and isinstance(record, dict):
+                available.setdefault(key, record)
+    references: dict = {}
+    for direction in direction_rows:
+        if not isinstance(direction, dict):
+            continue
+        for key in stage2_referenced_item_keys(direction):
+            record = available.get(key)
+            title = stage2_trusted_paper_title(record, key)
+            if title is None:
+                continue
+            references[key] = {"title": title, "year": (record or {}).get("year")}
+    return references
+
+
+def stage2_display_link(item_key, references: dict) -> str | None:
+    """Markdown title+Zotero link for one trusted reference, or None."""
+    if not isinstance(item_key, str) or not item_key:
+        return None
+    title = stage2_trusted_paper_title(references.get(item_key), item_key)
+    if title is None:
+        return None
+    return f"[{title}](zotero://select/library/items/{item_key})"
+
+
+def stage2_display_text(value, references: dict, where: str):
+    """Rewrite every known item key inside one fixed-card slot as title+link.
+
+    The machine value itself is never touched; only this human-facing copy is
+    converted, and only equivalently. A referenced key without a trusted title
+    stops the affected render with the missing metadata named, so no fabricated
+    or silently deleted citation can reach the managed Markdown.
+    """
+    if not isinstance(value, str) or not value:
+        return value
+
+    def replace(match: "re.Match") -> str:
+        key = match.group(0)
+        link = stage2_display_link(key, references)
+        if link is None:
+            fail("missing_fixed_evidence_title",
+                 f"cannot render the fixed-evidence reference {key} in {where}: "
+                 "no trusted title exists in the input pack, the paper facts or "
+                 "the persisted display references. The Stage-2 data owner must "
+                 "refresh that reference metadata before this output is built; "
+                 "the citation is neither guessed nor dropped.",
+                 item_key=key, where=where)
+        return link
+
+    return ITEM_KEY_RE.sub(replace, value)
 
 
 def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
@@ -4506,6 +4860,10 @@ def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
             "facts_state": facts_state,
             "facts_error": facts_error,
             "paper_facts": facts_record,
+            # U5: the level recorded by the successful analysis itself; None
+            # (missing / failed / legacy /未完成) means "未确认" and is never
+            # derived from the analysis file, the PDF or facts availability.
+            "analysis_level": stage2_analysis_level(paper),
         }
         supporting_keys.append(key)
     # Reference-scope papers live in the SAME professor-level canonical map so
@@ -4578,15 +4936,22 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
         stage2_require_later_paper_titles(ctx, direction, pack)
     projected = {direction_machine_id(d): direction_papers(pack, d)
                  for d in pack_directions}
+    # U5: the three classes follow the RECORDED analysis level of the canonical
+    # paper records. A missing level stays "未确认" even when an analysis file
+    # or a PDF exists, and OCR-only full text keeps counting as 全文级.
     full = sum(1 for papers in projected.values() for p in papers
-               if p.get("analysis_file") or p.get("pdf_available"))
-    abstracted = sum(len(papers) for papers in projected.values()) - full
+               if p.get("analysis_level") == "fulltext")
+    abstracted = sum(1 for papers in projected.values() for p in papers
+                     if p.get("analysis_level") == "abstract")
+    total = sum(len(papers) for papers in projected.values())
+    unconfirmed = total - full - abstracted
+    references = stage2_display_references(pack, ctx)
     lines = [
         f"# 套磁候选分析 — {professor}",
         "",
         "$$\\newcommand{\\dif}{\\mathop{}\\!\\mathrm{d}}$$",
         "",
-        f"> {now_utc()} ｜ 数据来源：全文级 {full} 篇 · 摘要级 {abstracted} 篇（共 {full + abstracted} 篇）｜ 由 contact_state 确定性渲染（重跑=全量重写）",
+        f"> {now_utc()} ｜ 数据来源：全文级 {full} 篇 · 摘要级 {abstracted} 篇 · 未确认 {unconfirmed} 篇（共 {total} 篇）｜ 由 contact_state 确定性渲染（重跑=全量重写）",
         "",
     ]
     global_lines = []
@@ -4685,12 +5050,20 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
                 f"- 中译：{gap['translation_zh']}",
                 f"- 页码：p.{gap.get('page')}（{gap.get('source')}）",
                 f"- 当前状态：{gap.get('status')}（置信度 {gap.get('confidence')}）",
-                f"- 后续论文依据：{gap.get('evidence') or '—'}",
+                # U1: the human-facing fixed card prints trusted titles/links;
+                # the machine `evidence` value itself is never rewritten.
+                "- 后续论文依据：{}".format(
+                    stage2_display_text(gap.get("evidence"), references, "后续论文依据")
+                    or "—"),
                 f"- 评估时间：{gap.get('evaluated_at') or '—'}",
             ]
             if gap.get("status") == "partial":
-                details.append(f"- 已做部分：{gap.get('completed_part') or '—'}")
-                details.append(f"- 剩余缺口：{gap.get('remaining_gap') or '—'}")
+                details.append("- 已做部分：{}".format(
+                    stage2_display_text(gap.get("completed_part"), references, "已做部分")
+                    or "—"))
+                details.append("- 剩余缺口：{}".format(
+                    stage2_display_text(gap.get("remaining_gap"), references, "剩余缺口")
+                    or "—"))
             if gap.get("status") == "unknown":
                 details.append("- ⚠ 未查证是否已被后续工作实现（unknown 原因见后续论文依据）")
             if explanation:
@@ -4714,9 +5087,11 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
             lines.append("")
             for item in d["completed_gap_blacklist"]:
                 completed = item.get("completed_by_item_key")
-                completed_render = (f"[{ctx.papers[completed].get('title')}](zotero://select/library/items/{completed})"
-                                    if completed and completed in ctx.papers else "（完成论文见证据）")
-                lines.append(f"- {item['quote_trunc']}——《{item['paper_title']}》（{item.get('paper_year')}）→ 已被 {completed_render} 接住（依据：{item.get('evidence')}）。")
+                completed_render = stage2_display_link(completed, references) \
+                    or "（完成论文见证据）"
+                evidence_render = stage2_display_text(
+                    item.get("evidence"), references, "禁锚区依据")
+                lines.append(f"- {item['quote_trunc']}——《{item['paper_title']}》（{item.get('paper_year')}）→ 已被 {completed_render} 接住（依据：{evidence_render}）。")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -5091,6 +5466,7 @@ def cmd_stage2_finalize(args) -> None:
             "pdf_available": bool(paper.get("has_pdf")),
             "facts_state": facts_state, "facts_error": facts_error,
             "paper_facts": facts_record,
+            "analysis_level": stage2_analysis_level(paper),
         }
 
     # Apply resolved directions to pack_directions. Every direction (including
@@ -5422,6 +5798,13 @@ def cmd_stage2_finalize(args) -> None:
             if isinstance(record, dict) and not record.get("cache_hit"):
                 cache_entries[gap_id] = {k: v for k, v in record.items() if k != "cache_hit"}
     render_pack = {"papers": papers_map, "directions": pack_directions}
+    # U1: persist the trusted title/year each fixed-evidence slot references, so
+    # a later pack-only re-render prints the same references without /tmp facts
+    # and without re-parsing the previous Markdown.
+    display_references = stage2_collect_display_references(
+        pack_directions,
+        [ctx.papers, papers_map, (ctx.pack or {}).get("display_references")])
+    render_pack["display_references"] = display_references
     for direction in pack_directions:
         stage2_require_later_paper_titles(ctx, direction, render_pack)
         stage2_require_paper_reference_titles(ctx.papers, render_pack, direction)
@@ -5451,6 +5834,7 @@ def cmd_stage2_finalize(args) -> None:
         "professor": ctx.professor, "professor_dir": str(ctx.professor_dir),
         "papers": papers_map,
         "directions": pack_directions,
+        "display_references": display_references,
         "cache": {"render": {ANALYSIS_MD: {"sha256": (md_result or {}).get("sha256") or old_render.get(ANALYSIS_MD, {}).get("sha256")}}},
     }
     if resolved_directions:
@@ -5544,6 +5928,115 @@ def cmd_stage2_finalize(args) -> None:
         "md_sha256": (md_result or {}).get("sha256"),
         "resolved_directions_applied": bool(resolved_directions),
     })
+
+
+def cmd_stage2_refresh_display(args) -> None:
+    """Refresh only the display projection of one accepted pack.
+
+    This is the formal entry for an analysis-level-only change: it reuses the
+    accepted pack, the renderer, the professor-local atomic write and
+    `managed_write`, and it re-reads the same index projection preflight saw
+    before writing. It never calls the facts-dependent preflight metadata
+    builder, never re-signs a resolved proof, never rewrites business state and
+    never queues analysis / assignment / freshness work.
+    """
+    professor_dir = Path(args.professor_dir)
+    pack, error = load_input_pack(professor_dir)
+    if error or pack is None:
+        fail("missing_input_pack", f"input pack unreadable: {professor_dir / INPUT_PACK}")
+    preflight, error = read_json_file(Path(args.preflight_file))
+    if error or not isinstance(preflight, dict) or preflight.get("status") != "ok" \
+            or not isinstance(preflight.get("preflight_inputs"), dict):
+        fail("invalid_params",
+             f"preflight file unreadable or not a preflight payload: {args.preflight_file}")
+    if preflight.get("action") != "refresh_display":
+        fail("invalid_params",
+             "the display-only entry requires a preflight that decided refresh_display: "
+             f"{preflight.get('action')!r}")
+    if preflight.get("professor") != pack.get("professor"):
+        fail("invalid_params", "preflight file professor mismatch: "
+                               f"{preflight.get('professor')!r} != {pack.get('professor')!r}")
+    cache = pack.get("cache") if isinstance(pack.get("cache"), dict) else {}
+    meta = cache.get("preflight") if isinstance(cache, dict) else None
+    accepted = meta.get("analysis_projection") if isinstance(meta, dict) else None
+    if not isinstance(accepted, dict):
+        soft_exit("needs_refresh", "legacy_pack_no_preflight",
+                  message="已接受输入包没有可比较的分析来源基线；按正常 Stage 2 流程重新处理。"
+                          "未修改任何文件。")
+    # The preflight decision bound this exact accepted pack; a pack written in
+    # between makes the decision stale.
+    if preflight.get("accepted_pack_sha256") != stage2_pack_content_fingerprint(pack):
+        soft_exit("needs_refresh", "display_refresh_stale",
+                  drift=["accepted_pack_changed"],
+                  message="预检之后已接受输入包发生变化；重新预检后再决定是否只刷新展示。"
+                          "未修改任何文件。")
+    recorded = preflight.get("analysis_projection")
+    if not isinstance(recorded, dict):
+        fail("invalid_params", "preflight payload has no analysis projection to re-verify")
+    keys = sorted(set(recorded.get("keys") or {}) | set(accepted.get("keys") or {})
+                  | {key for key in pack_paper_index(pack) if isinstance(key, str)})
+    current = stage2_analysis_projection(professor_dir, keys)
+    if current != recorded:
+        soft_exit("needs_refresh", "display_refresh_stale",
+                  drift=["analysis_sources_changed"],
+                  message="预检之后分析来源（新增/删除/换址/级别声明）发生变化；"
+                          "按正常 Stage 2 流程重新处理。未修改任何文件。")
+    source_changes, level_changes = stage2_projection_diff(accepted, current)
+    if source_changes or not level_changes:
+        soft_exit("needs_refresh", "display_refresh_stale",
+                  drift=["analysis_sources_changed"],
+                  changed_keys=sorted(source_changes),
+                  message="当前来源无法证明与已接受基线只在级别上不同；"
+                          "按正常 Stage 2 流程重新处理。未修改任何文件。")
+
+    updated = dict(pack)
+    papers = {}
+    levels = {}
+    current_keys = current.get("keys") if isinstance(current.get("keys"), dict) else {}
+    for key, record in pack_paper_index(pack).items():
+        record = dict(record)
+        entry = current_keys.get(key)
+        level = entry.get("level") if isinstance(entry, dict) else None
+        if level is not None and level not in ANALYSIS_LEVELS:
+            fail("invalid_analysis_index",
+                 f"the analysis index records an invalid level for {key}: {level!r}; "
+                 "expected one of fulltext|abstract or null",
+                 item_key=key)
+        record["analysis_level"] = level
+        papers[key] = record
+        levels[key] = record["analysis_level"]
+    updated["papers"] = papers
+    updated["cache"] = dict(cache)
+    updated["cache"]["preflight"] = {
+        **meta, "analysis_projection": current,
+        "display_refresh_version": STAGE2_DISPLAY_REFRESH_VERSION}
+
+    ctx = Stage2PackRefineContext(professor_dir)
+    ctx.pack = updated
+    state_fingerprint = stage2_pack_state_fingerprint(updated)
+    body = render_analysis_md(ctx, updated, state_fingerprint)
+    md_path = professor_dir / ANALYSIS_MD
+    old_render = cache.get("render") if isinstance(cache.get("render"), dict) else {}
+    decision = None
+    if getattr(args, "decision_file", None):
+        decision_data, decision_error = read_json_file(Path(args.decision_file))
+        if decision_error is None and isinstance(decision_data, dict):
+            decision = decision_data.get("decision")
+    md_result = managed_write(md_path, body, state_fingerprint,
+                              (old_render.get(ANALYSIS_MD) or {}).get("sha256"), decision)
+    if md_result.get("needs_decision"):
+        soft_exit("needs_decision", md_result["reason_code"],
+                  target=md_result.get("target"),
+                  existing_sha256=md_result.get("existing_sha256"),
+                  new_sha256=md_result.get("new_sha256"),
+                  options=["overwrite（覆盖为状态版本）", "keep_manual（保留手改，不作为流程输入）"])
+    updated["cache"]["render"] = {ANALYSIS_MD: {"sha256": md_result["sha256"]}}
+    atomic_json(professor_dir / INPUT_PACK, updated)
+    emit({"status": "ok", "professor": pack.get("professor"),
+          "display_refreshed": True, "pack_path": str(professor_dir / INPUT_PACK),
+          "analysis_md": str(md_path), "md_sha256": md_result["sha256"],
+          "level_changes": sorted(level_changes), "levels": levels,
+          "reason_codes": []})
 
 
 def profile_fingerprint(profile_path: str | None) -> str | None:
@@ -10427,6 +10920,7 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
 
     blocking_by_direction: dict[str, list] = {}
     issues_by_direction: dict[str, list] = {}
+    fixed_evidence_by_direction: dict[str, list] = {}
     for issue in entry["issues"]:
         quote = issue["quote"]
         hits = [i for i, line in enumerate(lines) if quote in line]
@@ -10519,6 +11013,20 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
                 for key in later_keys)
 
         gap_heading_lines = [i for i in section_lines if lines[i] == "### 可延伸方向"]
+        # A blocking finding on the fixed evidence card's model-written slots
+        # (evidence / completed_part / remaining_gap) or on the anchor-banned
+        # blacklist's evidence is a LEGAL report target, but it is never given
+        # to the model: those fields carry facts only their source owner may
+        # change. Only a narrative-prose hit is model-repairable.
+        fixed_evidence = False
+        if len(gap_heading_lines) == 1 and hit > gap_heading_lines[0]:
+            rendered_line = lines[hit]
+            fixed_evidence = (
+                any(rendered_line.startswith(prefix)
+                    for prefix in FIXED_EVIDENCE_SLOT_PREFIXES)
+                or ("→ 已被 " in rendered_line and "接住（依据：" in rendered_line))
+        if fixed_evidence:
+            fixed_evidence_by_direction.setdefault(did, []).append(issue)
         if len(gap_heading_lines) == 1 and hit > gap_heading_lines[0]:
             gap_notes = narrative.get("gap_notes") if isinstance(narrative.get("gap_notes"), dict) else {}
             gap_rows = [i for i in section_lines
@@ -10562,7 +11070,7 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
                             explanation_lines[0] + explanation[:position].count("\n") == hit
                             for position in quote_positions):
                         repairable = True
-        if not repairable and require_repairable:
+        if not repairable and not fixed_evidence and require_repairable:
             fail("validation_issue_not_repairable",
                  f"blocking quote is outside repairable positioning or gap_notes prose: {quote!r}")
         blocking_by_direction.setdefault(did, []).append(issue)
@@ -10570,11 +11078,17 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
     return {"validation_sha256": sha256_bytes(raw), "render_sha256": render_sha,
             "verdict": entry["verdict"], "notes": data["notes"],
             "issues": entry["issues"], "issues_by_direction": issues_by_direction,
-            "blocking_by_direction": blocking_by_direction}
+            "blocking_by_direction": blocking_by_direction,
+            "fixed_evidence_by_direction": fixed_evidence_by_direction}
 
 
-def stage2_require_recorded_validation(ctx, validation_path: Path) -> tuple[dict, dict, list[str]]:
-    """Authorize refinement only from the exact raw report and open recorded findings."""
+def stage2_require_recorded_validation(ctx, validation_path: Path) -> tuple[dict, dict, list[str], list[str]]:
+    """Authorize refinement only from the exact raw report and open recorded findings.
+
+    Returns (validator, pending, unresolved, fixed_evidence_ids): the last is the
+    recorded set of directions whose open first-round blocking sits in the fixed
+    evidence card, i.e. findings no model rewrite may touch.
+    """
     pack = ctx.pack if isinstance(ctx.pack, dict) else {}
     validator = pack.get("validator") if isinstance(pack.get("validator"), dict) else {}
     if validator.get("schema") != 2:
@@ -10620,7 +11134,13 @@ def stage2_require_recorded_validation(ctx, validation_path: Path) -> tuple[dict
         fail("validation_evidence_not_recorded", "recorded correction is not complete")
     if phase == "terminal":
         unresolved = []
-    return validator, pending, unresolved
+    fixed_recorded = validator.get("fixed_evidence_direction_ids")
+    if not isinstance(fixed_recorded, list) \
+            or any(not isinstance(did, str) or did not in allowed for did in fixed_recorded):
+        fail("validation_evidence_not_recorded",
+             "recorded fixed-evidence direction set is malformed")
+    fixed_evidence_ids = sorted(did for did in fixed_recorded if did in set(unresolved))
+    return validator, pending, unresolved, fixed_evidence_ids
 
 
 def stage2_pack_matches_facts(ctx: Stage2Context) -> None:
@@ -10773,7 +11293,7 @@ def cmd_stage2_refine_plan(args) -> None:
     ctx = stage2_refine_context(args)
     dids = [direction_machine_id(d) for d in ctx.pack.get("directions", [])]
     allowed = set(dids)
-    validator, pending, failed_ids = stage2_require_recorded_validation(
+    validator, pending, failed_ids, fixed_ids = stage2_require_recorded_validation(
         ctx, Path(args.validation_file))
     failed = {did: pending[did] for did in failed_ids}
     scope_did = getattr(args, "direction_id", None)
@@ -10788,6 +11308,22 @@ def cmd_stage2_refine_plan(args) -> None:
         if scope_did not in allowed:
             fail("invalid_params", f"direction_id not found in input pack: {scope_did}")
         failed = {key: value for key, value in failed.items() if key == scope_did}
+        fixed_ids = [did for did in fixed_ids if did == scope_did]
+
+    if fixed_ids:
+        # Any open fixed-evidence blocker in the round stops the automatic
+        # correction loop: those fields carry facts only the source owner or
+        # the generator may change, so no rewrite job is emitted for the round.
+        emit({"status": "ok", "professor": ctx.professor,
+              "validation_file": str(Path(args.validation_file)),
+              "directions": sorted(fixed_ids), "jobs": [], "write_needed": False,
+              "reason_code": FIXED_EVIDENCE_HANDOFF_REASON,
+              "message": FIXED_EVIDENCE_HANDOFF_MESSAGE,
+              "detail": {"owner": "source_or_generator",
+                         "action": "repair_source_then_regenerate",
+                         "next": "修正源数据/题名后按正常 stage2-plan → stage2-finalize 重新生成受管正文，"
+                                 "再对新正文重新登记校验"}})
+        return
 
     old_directions = {direction_machine_id(d): d for d in ctx.pack.get("directions", [])}
     jobs = []
@@ -10836,7 +11372,7 @@ def cmd_stage2_refine_finalize(args) -> None:
     ctx = stage2_refine_context(args)
     dids = [direction_machine_id(d) for d in ctx.pack.get("directions", [])]
     allowed = set(dids)
-    validator, pending, failed_ids = stage2_require_recorded_validation(
+    validator, pending, failed_ids, fixed_ids = stage2_require_recorded_validation(
         ctx, Path(args.validation_file))
     failed = set(failed_ids)
     scope_did = getattr(args, "direction_id", None)
@@ -10851,6 +11387,18 @@ def cmd_stage2_refine_finalize(args) -> None:
         if scope_did not in allowed:
             fail("invalid_params", f"direction_id not found in input pack: {scope_did}")
         failed &= {scope_did}
+        fixed_ids = [did for did in fixed_ids if did == scope_did]
+    if fixed_ids:
+        # The same round holds an open fixed-evidence blocker: refuse to write,
+        # keep pack and managed Markdown byte-identical, and hand the finding to
+        # its source/generator owner.
+        emit({"status": "ok", "rewritten": [], "write_needed": False,
+              "directions": sorted(fixed_ids),
+              "reason_code": FIXED_EVIDENCE_HANDOFF_REASON,
+              "message": FIXED_EVIDENCE_HANDOFF_MESSAGE,
+              "detail": {"owner": "source_or_generator",
+                         "action": "repair_source_then_regenerate"}})
+        return
     if not failed:
         emit({"status": "ok", "rewritten": [], "write_needed": False,
               "reason_code": "no_failed_directions"})
@@ -10989,6 +11537,12 @@ def cmd_stage2_record_validation(args) -> None:
     phase = "needs_correction" if round_no == 1 and pending else "terminal"
     if round_no == 2:
         phase = "terminal"
+    # Fixed-evidence blockers are recorded as real first-round failures but are
+    # routed to the source/generator owner by stage2-refine-plan/-finalize
+    # instead of a model rewrite job.
+    fixed_evidence_ids = sorted(
+        did for did in evidence["fixed_evidence_by_direction"] if did in pending
+    ) if round_no == 1 else []
     updated = dict(pack)
     validator = {
         "schema": 2,
@@ -11003,6 +11557,7 @@ def cmd_stage2_record_validation(args) -> None:
         "issues": evidence["issues"],
         "results": results,
         "pending": pending,
+        "fixed_evidence_direction_ids": fixed_evidence_ids,
         "correction_applied_direction_ids": sorted(
             previous.get("correction_applied_direction_ids") or []) if round_no == 2 else [],
         "updated_at": at,
@@ -11015,6 +11570,7 @@ def cmd_stage2_record_validation(args) -> None:
           "updated": sorted(results), "round": round_no,
           "raw_verdict": evidence["verdict"], "render_sha256": evidence["render_sha256"],
           "needs_correction": bool(pending and round_no == 1),
+          "fixed_evidence_direction_ids": fixed_evidence_ids,
           "terminal": phase == "terminal"})
 
 
@@ -11634,6 +12190,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="saved stage2-preflight stdout; re-verifies cheap inputs "
                         "before any write and seeds cache.preflight")
     p.set_defaults(func=cmd_stage2_finalize)
+
+    p = sub.add_parser("stage2-refresh-display",
+                       help="只刷新已接受输入包的展示投影（分析级别、渲染绑定）："
+                            "复用 pack/renderer/managed_write，写前重核预检时的来源投影；"
+                            "不重建 facts、不重签 resolved proof、不生成模型任务")
+    p.add_argument("--professor-dir", required=True)
+    p.add_argument("--preflight-file", required=True,
+                   help="decided refresh_display 的那份 stage2-preflight stdout")
+    p.add_argument("--decision-file")
+    p.set_defaults(func=cmd_stage2_refresh_display)
 
     p = sub.add_parser("stage2-refine-plan")
     group = p.add_mutually_exclusive_group(required=True)

@@ -268,7 +268,8 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
                          "中译：We plan to test a second")
         self.assertEqual(gap["quote"], self.gap_quotes["AAAA1111"])
         self.assertIn(f"「{self.gap_quotes['AAAA1111']}」", analysis)
-        self.assertIn(f"中译：{self.gap_quotes['AAAA1111'][:24]}", analysis)
+        self.assertIn(f"- 中译：{gap['translation_zh']}", analysis,
+                      "the stored translation must be displayed verbatim")
         self.assertIn(narrative_prose, analysis)
         self.assertEqual(self.direction()["user_note"], baseline["user_note"])
 
@@ -279,8 +280,11 @@ class FixedEvidenceDisplayTests(EvidenceLevelEnv):
         source_positioning = baseline["narrative"]["directions"][0]["positioning"]
         self.assertEqual([row["text"] for row in source_positioning],
                          [row["text"] for row in accepted["narrative"]["positioning"]])
-        self.assertEqual(baseline["narrative"]["directions"][0]["gap_notes"],
-                         accepted["narrative"]["gap_notes"])
+        baseline_notes = {row["gap_id"]: {"summary": row["summary"],
+                                          "explanation": row["explanation"]}
+                          for row in baseline["narrative"]["directions"][0]["gap_notes"]}
+        self.assertEqual(baseline_notes, accepted["narrative"]["gap_notes"],
+                         "the display step must not rewrite the narrative gap notes")
         self.assertEqual(baseline["user_note"], accepted["user_note"])
         self.assertEqual(baseline["narrative"]["directions"][0]["collection_key"],
                          accepted["collection_key"])
@@ -378,6 +382,14 @@ class FixedEvidenceFailureTests(EvidenceLevelEnv):
             "BBBB2222": {"status": "done_by_self", "evidence": BLACKLIST_EVIDENCE,
                          "candidate_paper_ids": [BLACKLIST_COMPLETION]},
         })
+        # The source owner re-judged this gap's evidence: drop the cached
+        # freshness decision so the ordinary Stage-2 run must consume the
+        # corrected results file instead of reusing the old status.
+        freshness_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
+        freshness = json.loads(freshness_path.read_text(encoding="utf-8"))
+        del freshness["entries"][self.shortlist_gap("AAAA1111")["gap_id"]]
+        freshness_path.write_text(json.dumps(freshness, ensure_ascii=False),
+                                  encoding="utf-8")
         new_plan = parse(run_bound_stage2_plan(run_cli, facts))
         self.assertEqual(new_plan["status"], "ok", new_plan)
         rebuilt = parse(run_bound_stage2_finalize(
