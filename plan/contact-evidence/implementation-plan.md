@@ -7,7 +7,7 @@
   > 共享错误通道、事务／回滚、Stage3 提交与校验交接、Stage4/5 证据处理：先按常规审核。移动时可能改变共享状态、异常类型或路径定位，不能仅保留旧函数名就认定等价。
 
 - Requirement revision: 第 1 版（边界三：Stage4/5 证据处理，本批只做“上游证据定位、检查与重建”这一半）。
-- Canonical Plan revision: 第 2 版。
+- Canonical Plan revision: 第 3 版。
 - Target repository revision: `2117fc6a1607a22aa9e723002b4a78625733b7b1`（分支 `refactor/stage3-handoff`，已含批次二/三与边界一/二）。
 - Implementation sequencing prerequisite: PR #97 已合并；#98、#99、#100 尚未合并，本批堆叠在 #100 之上，合并顺序 #97（已合并）→ #98 → #99 → #100 → 本批。
 - Relevant upstream/runtime revision: `professor-research` 的 `professor-collector/scripts/contact_evidence.py` 不在本仓；本批只移动**调用侧**代码，调用方式（传 `program_root`、`--check` 与否、超时）保持不变。
@@ -19,7 +19,7 @@
 - **R1 抽上游证据层**：把联系证据的**上游定位、检查与重建**移入一个内部模块：`load_contact_evidence`、`upstream_check_script`、`run_contact_evidence_check`、`run_contact_evidence_rebuild`、`run_upstream_check_argv`、`professor_source_state`、`source_state_needs_rebuild`、`resolve_contact_evidence` 共 8 个函数，连同它们拥有的常量。
 - **R2 路径定位不变**：`upstream_check_script` 从**自身文件位置**解析同级 skill 与兄弟 checkout；新模块与 runner 位于同一 `scripts/` 目录，因此解析结果逐条不变；显式注入的环境变量仍然优先、缺失时仍然失败关闭。
 - **R3 调用语义不变**：`--check` 与重建的调用形状（`[sys.executable, <script>, <program_root>]`）、超时、失败返回（`False`/`(None, error)`）、`result` 字段判定与“重建一次后重读”的顺序都不变。
-- **R4 旧名字仍可用**：runner 保留全部被移动名字与常量的模块级入口；`load_contact_evidence` 因测试以单参数直调，保留同签名薄包装。
+- **R4 旧名字仍可用**：runner 保留全部被移动名字与常量的模块级入口；其中三个需要注入的名字（`load_contact_evidence`、`professor_source_state`、`resolve_contact_evidence`）保留同签名薄包装（见“方案”）。
 - **R5 命名与语义不变**：`professor_source_state` 的姓名归一化仍用 runner 的 `compact_name`（显式注入，不复制第二份实现）。
 
 **非目标（本批不动）**：证据快照与决策阶梯（`contact_evidence_record`、`contact_evidence_record_degraded`、`contact_evidence_snapshot`——它被 3 个测试文件直接引用、`contact_evidence_freshness_reason`、`evaluate_contact_evidence`、`_evaluate_record_ladder`、`evidence_provenance`、`contact_evidence_decisions`）——它们依赖阶梯内部函数与 `sha256_obj`、`VERIFY_TTL_DAYS`，属下一批；Stage3 校验交接（已在边界二完成）、Stage2 划分（等 #92）、测试分组／CI 评估（另评估）。
@@ -44,7 +44,7 @@
 
 ### 因果链
 
-需求（上游联系证据的定位/检查/重建仍散在巨型 runner 中）→ 现行机制（8 个函数在 8373-8529 成块，耦合只有 8 个常量与 `read_json_file`／`compact_name` 两个辅助函数；`upstream_check_script` 依赖自身文件位置解析同级 skill）→ 变更点（函数与常量按行区间原样搬入同目录的 `_contact_evidence.py`；两个辅助函数以显式关键字参数注入；runner 保留别名与一个同签名包装）→ 行为变化（解析路径、调用形状、超时与返回值全部不变；`contact_state.<name>` 仍可用）→ 满足需求。
+需求（上游联系证据的定位/检查/重建仍散在巨型 runner 中）→ 现行机制（8 个函数在 8373-8529 成块，耦合只有 8 个常量与 `read_json_file`／`compact_name` 两个辅助函数；`upstream_check_script` 依赖自身文件位置解析同级 skill）→ 变更点（函数与常量按行区间原样搬入同目录的 `_contact_evidence.py`；两个辅助函数以显式关键字参数注入；runner 保留别名与三个同签名包装）→ 行为变化（解析路径、调用形状、超时与返回值全部不变；`contact_state.<name>` 仍可用）→ 满足需求。
 
 ### 选定设计
 
@@ -83,11 +83,11 @@
 
 ## 影响
 
-- **intended_change**：上游证据定位/检查/重建的 8 个函数与 8 个常量移入同目录的 `_contact_evidence.py`；`read_json_file`/`compact_name` 改为显式注入；runner 保留别名与 `load_contact_evidence` 的同签名包装。
+- **intended_change**：上游证据定位/检查/重建的 8 个函数与 8 个常量移入同目录的 `_contact_evidence.py`；`read_json_file`/`compact_name` 改为显式注入；runner 保留别名与 `load_contact_evidence`／`professor_source_state`／`resolve_contact_evidence` 三个同签名包装。
 - **preserved_behavior**：`upstream_check_script` 的三级解析与失败关闭；`--check`/重建调用形状、超时与返回值；`resolve_contact_evidence` 的顺序与返回键；`load_contact_evidence` 的校验；`professor_source_state` 的归一化；Stage5 plan/finalize 触发重建的既有行为；`contact_state.<name>` 可用性；CLI 与安装布局。
 - **approved_behavior_change**：无。签名变化只发生在 runner 内部私有函数上；对测试暴露的 `upstream_check_script`／`load_contact_evidence`／`run_upstream_check_argv`／`run_contact_evidence_check`／`professor_source_state` 全部保持原签名，5 处保留调用点一个都不改。
 - **prohibited_side_effect**：改变解析顺序或失败关闭；改变调用形状、超时或返回值；复制第二份 `compact_name`/`read_json_file`；把新模块放到别的目录；顺带搬快照/决策阶梯或其它边界；改测试断言。
-- **unresolved impact**：无影响方案成立的项目。仓库外若反射这些下划线私有函数会看到新增关键字参数；`load_contact_evidence` 保持原签名。
+- **unresolved impact**：无影响方案成立的项目。按三个同签名包装的方案，**runner 侧 8 个名字的签名全部保持原样**；新增的关键字参数只出现在 `_contact_evidence.py` 的内部函数上，仓库外反射 runner 名字不会看到签名变化。
 
 ## 关键安全条件与反例
 
@@ -121,6 +121,7 @@
 ## 修订记录
 
 - 第 1 版：首次提交计划审核。
+- 第 3 版：按修订复核的三条非阻断措辞统一——因果链、intended_change、R4 与 unresolved impact 都改为“三个同签名包装”，并说明 runner 侧 8 个名字签名全部不变、新增关键字参数只在模块内部函数上。
 - 第 2 版：按第 1 轮审核的五条 blocker 修正——B1 组外调用点补齐为 5 处（8221／8305／8794／9407／10045），逐处标注“靠包装、不改调用点”；B2 测试引用行按实际清单重写（`upstream_check_script` 3 个文件、`run_upstream_check_argv`、`run_contact_evidence_check`、`professor_source_state` 两位置参数直调），并把下一批的 `contact_evidence_snapshot` 移入非目标；B3／B4 方案改为**三个同签名薄包装**（`load_contact_evidence`／`professor_source_state`／`resolve_contact_evidence`），其余 5 个函数与 8 个常量用别名，解决 `resolve_contact_evidence` 的传递性注入与测试可见签名；B5 实施步骤与引用同步（合并顺序补 #97、checklist 引用改为“随 #98 引入”）。非阻断项一并处理：去掉 `Any`、精简模块头部导入。
 
 ## 审核状态
