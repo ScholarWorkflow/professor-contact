@@ -5,7 +5,7 @@
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 1 版。
 - 需求来源：负责人 2026-10-18 授权的三批要求第 3 批；原文见执行计划。
 - Target repository revision: 工作分支 `refactor/stage3-render-group`（从 `ffa91aedf94aaf146f9cf1899f3fe4395cfaddad` 拉出）实施后的提交；对照基准同为 `ffa91aedf94aaf146f9cf1899f3fe4395cfaddad`。
-- Test plan revision: 第 2 版。
+- Test plan revision: 第 3 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
 - Proposed review status: pending。
 
@@ -15,8 +15,8 @@
 | --- | --- | --- | --- | --- |
 | T1 | 六个函数搬进新模块后渲染逐字节一致 | 同一组代表性输入：多方向条目（含 credibility 勉强/疑似幻觉、方向级红线、refined 变体、priority）、跨方向候选组（含参与者与 group_id）、候选级红线与去重、gap_refs；分别调用基准修订与改动修订的 `contact_state.render_candidates_md` 与 `contact_state.render_candidates_overview`，两侧都把 `now_utc` 冻结成同一常量；另跑一次 `profile_fp=None` 且无跨方向组的降级调用 | 各次调用的输出字符串**逐字节相同** | 仓库外脚本：从 `git show ffa91ae:...contact_state.py` 取基准 runner 到 `/tmp`，与工作树 runner 在同一进程里各按文件路径加载并比较；判据是每项 `OK`/`FAIL` 行与脚本退出码（全通过时打印 `ALL CHECKS PASS`） |
 | T2 | 旧调用接口不变 | 基准修订与改动修订的 `contact_state.render_candidates_md` / `render_candidates_overview` 的签名，以及四个私有 helper 是否仍可按原名取到 | 参数名、顺序、默认值完全一致；两个公开函数与四个私有 helper 都能从 runner 命名空间按原名取到 | 同 T1 脚本内断言（`inspect.signature` 字符串相等 + `callable` 检查） |
-| T3 | Stage 3 渲染与校验定位的业务行为不变 | 既有 Stage 3 相关用例：方向分组渲染、校验范围定位与修正轮、教授本地状态与总览重建、可信度警告 | 全部通过，无 `FAIL`/`ERROR` | `python3 -m unittest test_stage3_direction_groups test_stage3_validation_refine test_issue66_stage3_local_state test_issue61_direction_credibility_warning -v` |
-| T4 | runner 的两条加载路径与复制夹具都仍可用 | （a）测试按文件路径加载 runner（`spec_from_file_location`）；（b）把 runner 复制进假安装布局的夹具 | （a）加载成功，模块能按路径找到新模块；（b）夹具复制新模块后，涉及 wrapper 与 locator 的用例通过 | `python3 -m unittest test_stage5_immutable test_stage5_dualtarget_contract -v`（两者都会按路径加载或复制 runner） |
+| T3 | Stage 3 渲染与校验定位的业务行为不变（只取渲染落盘、渲染绑定与作用域定位相关方法，不含 Stage 4 选择、旧状态迁移、其它教授结果保留与写入失败恢复） | 既有方法：`test_stage3_direction_groups.Stage3DirectionGroupTests.test_ideas_grouped_per_direction_share_paper_identity`、`test_explicit_cross_group_generates_separate_job_and_section`、`test_refined_mode_requires_3_5_selectable_with_user_refined`；`test_stage3_validation_refine.Stage3ValidationIngestTests.test_issue_in_second_direction_repairs_only_that_scope`、`test_cross_direction_issue_routes_to_the_exact_group_id`、`test_evidence_must_bind_the_current_render`、`test_replay_after_a_replaced_render_fails_closed`；`test_issue66_stage3_local_state.Issue66LocalStateTests.test_rebuild_overview_uses_professor_local_states_and_rebuilds_deleted_projection`；`test_issue61_direction_credibility_warning.DirectionCredibilityWarningTests.test_warning_is_part_of_the_sha_bound_render` | 9 个方法全部通过，无 `FAIL`/`ERROR` | 只运行上述 9 个方法（见第 3 步命令）；红线去重与可信度警告的普通渲染输出已由 T1 的逐字节对照覆盖，不在此重复 |
+| T4 | runner 的两条加载路径与复制夹具都仍可用 | （a）把 runner 复制进假安装布局后执行 wrapper；（b）把 runner 复制进安装布局后按文件路径导入 | 两个方法都通过：复制件连同兄弟模块一起被加载，runner 能按路径找到新模块 | 只运行 `test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker` 与 `test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling`（见第 4 步命令） |
 | T5 | 未改动区域的既有门禁 | 仓库 CI 对 PR 提交跑全量 `unittest discover` | 全量通过 | 直接引用 PR 的 CI 运行结果，不在本地重复全仓回归 |
 
 ## 执行步骤
@@ -31,24 +31,37 @@
    RUN=$(mktemp -d /tmp/pc-batch3-XXXXXX)
    git show ffa91aedf94aaf146f9cf1899f3fe4395cfaddad:.apm/skills/professor-contact/scripts/contact_state.py > "$RUN/base_contact_state.py"
    ```
-2. T1、T2：运行仓库外对比脚本（脚本写在 `$RUN/compare_stage3_render.py`，内容见下节），两个参数依次是基准 runner 文件与工作树 runner：
+2. T1、T2：运行仓库外对比脚本。脚本沿用上一轮实际使用的 `/tmp/pc-batch3-IZjWB0/compare_stage3_render.py`（若该目录已清理，按本节末的要点重建同形脚本），先放入本轮临时目录再运行；两个参数依次是基准 runner 文件与工作树 runner。
    ```sh
    uv run --no-project "$RUN/compare_stage3_render.py" "$RUN/base_contact_state.py" \
      .apm/skills/professor-contact/scripts/contact_state.py
    ```
    预期：每一项打印 `OK  <标签>`，共 11 行（2 行前置检查 `runner exposes render_candidates_md` / `render_candidates_overview`、T1 三行、T2 六行），末尾 `ALL CHECKS PASS`，退出码 0；任何 `FAIL` 都会让脚本非 0 退出。
-3. T3：在校验范围相关用例上执行。
+3. T3：只跑清单列出的 9 个方法。
    ```sh
    cd .apm/skills/professor-contact/tests
-   python3 -m unittest test_stage3_direction_groups test_stage3_validation_refine test_issue66_stage3_local_state test_issue61_direction_credibility_warning -v
+   python3 -m unittest \
+     test_stage3_direction_groups.Stage3DirectionGroupTests.test_ideas_grouped_per_direction_share_paper_identity \
+     test_stage3_direction_groups.Stage3DirectionGroupTests.test_explicit_cross_group_generates_separate_job_and_section \
+     test_stage3_direction_groups.Stage3DirectionGroupTests.test_refined_mode_requires_3_5_selectable_with_user_refined \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_issue_in_second_direction_repairs_only_that_scope \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_cross_direction_issue_routes_to_the_exact_group_id \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_evidence_must_bind_the_current_render \
+     test_stage3_validation_refine.Stage3ValidationIngestTests.test_replay_after_a_replaced_render_fails_closed \
+     test_issue66_stage3_local_state.Issue66LocalStateTests.test_rebuild_overview_uses_professor_local_states_and_rebuilds_deleted_projection \
+     test_issue61_direction_credibility_warning.DirectionCredibilityWarningTests.test_warning_is_part_of_the_sha_bound_render \
+     -v
    ```
-   预期：全部 `ok`，无 `FAIL`/`ERROR`。
-4. T4：加载路径与复制夹具。
+   预期：`Ran 9 tests`、全部 `ok`。此前记录的整模块运行（47 项）是这 9 项的超集，多出的用例属清单外（Stage 4 选择、旧状态迁移、写入失败恢复、Stage 5 合同等），不构成本批通过条件，也不要求删除测试文件。
+4. T4：只跑清单列出的 2 个方法。
    ```sh
    cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-render-group/.apm/skills/professor-contact/tests
-   python3 -m unittest test_stage5_immutable test_stage5_dualtarget_contract -v
+   python3 -m unittest \
+     test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker \
+     test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling \
+     -v
    ```
-   预期：全部 `ok`；若夹具漏复制新模块，这两个文件会在导入或运行阶段直接失败。
+   预期：`Ran 2 tests`、全部 `ok`。此前记录的整模块运行（24 项）是这 2 项的超集，多出的 22 项属清单外，不计入本批结果。
 5. T5：把改动推送到 PR 后引用仓库 CI 的全量结果；CI 未通过时按第 7 步处理。
 6. 记录：保存上述命令、实际提交 SHA、逐项结果与必要输出片段到 `/tmp` 运行目录，并把方法与结果写入 `test-execution-<日期>.md`。
 7. 失败处理：
@@ -82,7 +95,8 @@
 
 - 第 1 版：首次提交测试计划审核。
 - 第 2 版：第 1 版取得第一、二关口 PASS（无 blocker）；本版只落实该轮的非阻断观察，不改变业务目标：T1 增加一次 `profile_fp=None` 且空跨方向组的降级对比、T2 的私有 helper 检查补齐 `_render_idea_block`、第 2 步写出确切调用命令与脚本实际输出标签、第 4 步补全 `cd`。
+- 第 3 版：按正常审核的两项意见修正——① T3、T4 从“4 个文件 47 项 / 2 个文件 24 项全部通过”收窄为清单列出的 9 个与 2 个方法，移除整模块带入的 Stage 4 选择、旧状态迁移、写入失败恢复与 Stage 5 合同等清单外条件，并去掉与 T1 重复的红线去重/可信度警告渲染检查；② 补上 T1、T2 对比脚本的取得位置（上一轮实际使用的 `/tmp/pc-batch3-IZjWB0/compare_stage3_render.py`）与放入本轮临时目录的步骤。收窄后保留的方法都包含在此前 47/24 项通过记录中，不触发重跑；产品与测试代码未变。
 
 ## 审核状态
 
-测试计划第 2 版为当前唯一版本；第 1 版已取得第一、二关口 PASS（无 blocker），本版仅按审核意见细化检查方式与命令表述，未增删必测项、未改变预期结果。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 3 版为当前唯一版本；第 1 版已取得第一、二关口 PASS（无 blocker），第 2 版只做检查方式细化，第 3 版按正常审核收窄 T3/T4 的检查入口与通过条件并补齐对比脚本准备说明，必测编号与预期结果未变，本版仅按审核意见细化检查方式与命令表述，未增删必测项、未改变预期结果。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
