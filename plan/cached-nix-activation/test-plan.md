@@ -1,83 +1,32 @@
-# Cached Nix activation — test plan t1
+# Cached Nix activation — test plan t2
 
-Target: PR #96 baseline `ae890491e4bdd7e95ec4ffee5a48cbf28af14ec3` plus the CDPATH correction and this plan. Requirement/ownership: [implementation plan r1](implementation-plan.md). Proposed review status: pending; first/second/third gate conclusions belong to the reviewer. This is the single complete test plan and execution recipe for this bounded feature.
+Scope: [implementation plan r2](implementation-plan.md), contact #96 at baseline `47a7fe0831418178871d29218e2dc26be9c6119a` plus shared-factory refactor. Status: pending review and upstream #4 merge. This plan records affected evidence boundaries; it does not authorize a new formal test run or assign any test gate PASS.
 
-## Required goals and one sufficient check per goal
+## Goals and sufficient checks
 
-| Goal | Input/scenario | Expected result and check |
+| Goal | Check and expected outcome | Current status |
 | --- | --- | --- |
-| Cache, repair and failure semantics | First apply, same environment/project, changed environment, force, failed upgrade then rollback | Existing offline `test_first_skip_upgrade_force` and `test_failure_invalidates_old_marker_and_retries` assert calls, successful marker and failure invalidation. Reuse these checks; do not repeat every branch on Darwin. |
-| Correct project identity and safe wrapper boundary | Physical alias/move, invalid marker, occupied lock, invalid args | Existing `test_physical_path_and_move` and `test_reject_unsafe_marker_lock_and_bad_args` assert correct paths, refusal and no unintended installer call. |
-| Relative project is independent of CDPATH | Calling directory contains `demo`, CDPATH points to another directory also containing `demo` | New `test_relative_project_ignores_cdpath` asserts exactly the caller's `demo` reaches the stub, only that target gets a marker, and the competing target remains empty. |
-| New Darwin export is usable through documented consumer path | Exact PR SHA; build new export, then one fresh isolated consumer using README mkShell/direnv | Build succeeds and exported executable exists; one direnv invocation succeeds and creates the intended project's success marker and installed contact SKILL.md. This checks real packaging/wiring, not another cache/failure matrix or business workflow. |
+| Shared ownership and preserved consumer entrypoint | Inspect flake diff: factory receives `pkgs`, `products.project`, `name = "professor-contact-activate"`; local wrapper/package/tests removed; old environment export and pins unchanged. Parse changed Nix; compare factory interface with upstream #4. | Static candidate inspection only. |
+| Honest pending dependency | Current released input lacks factory; missing-attribute fallback explicitly throws only when new output is forced. No fabricated merged SHA or branch pin; existing outputs retain lazy independence. | Deliberately pending; new export cannot build with current pin. |
+| Shared cache/lock behavior | Reuse upstream's bounded factory/runtime tests rather than cloning them. Review shared `.agent-env-applied` / `.agent-env-apply.lock`, one-environment composition, direct apply/remove and old-marker migration guidance. | Upstream candidate evidence is available; final merged interface/revision still to verify. |
+| Real contact packaging and README-style consumption after final pin | Reassess the changed factory boundary against old contact and shared results. If a new integration run is required and authorized, build the exact reviewed final contact export and use one fresh isolated README consumer; observe executable, shared marker and installed contact SKILL.md. | New shared contact wiring has not been built or activated. Current pin blocks it. No run starts in this revision. |
 
-No model, email, browser, Zotero, knowledge-store or full Stage 0–5 run is required. No new generic evidence tooling or CI expansion. Existing GitHub regression CI does not execute `nix/test-activate.py`; do not substitute it for the offline wrapper checks.
+## Existing results and reuse
 
-## Completed checks and reuse
+- Original contact product `4d59c0556de113cee554e8879236c9cc378ec826`: five offline wrapper methods and syntax/parse records; real aarch64-darwin build and isolated README-style direnv activation were completed on 2026-10-18. See the unchanged [execution record](test-execution-2026-10-18.md) and [original t1](https://github.com/ScholarWorkflow/professor-contact/blob/47a7fe0831418178871d29218e2dc26be9c6119a/plan/cached-nix-activation/test-plan.md). Those results remain valid for that product and unaffected behavior. They are not new shared-factory integration results.
+- Shared product `c20fd73562e24ef288aa222a9e2e56e961f1894b`, documented by [upstream TP1](https://github.com/RekiDunois/agent-env-nix/blob/472fdee073f0b899d4f47737a6471766fbe9f725/plan/cached-activation/test-plan.md): seven offline methods and Linux actual-factory stub check passed; Darwin drvPath evaluation passed. These cover the common algorithm and default/custom names. Evaluation is not Darwin execution or real contact installation.
+- No business owner, `nix/contact.nix`, installer implementation or other product dependency changes in this candidate. Reuse unaffected original results; do not rerun a full business chain, model, email, Zotero, browser, knowledge-store workflow, or introduce test infrastructure.
+- The historical record's t1 line references and overall per-item completion statements describe t1 at its recorded commit, not t2. The old `.professor-contact-applied` must never be copied/renamed to fabricate new shared success.
 
-- Baseline ae890491: four offline unittest methods, `bash -n`, and Nix parsing succeeded. GitHub [test job 117697931665](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39135110431/job/117697931665) completed **success**, not running; this is the existing regression suite, not the new wrapper suite.
-- CDPATH candidate: `python3 nix/test-activate.py -v` completed five methods successfully on Linux with host Bash/GNU coreutils; includes the original four methods unchanged plus the targeted counterexample. Bash syntax and both Nix parse checks passed. The local execution record is `/tmp/contact96-cdpath-tests.log`; temporary raw records are not committed.
-- Darwin export build and real direnv activation: **executed 2026-10-18** on aarch64-darwin for commit `4d59c05` by the local execution engineer; build log, activation exit results, run paths and observed outputs are in the [execution record](test-execution-2026-10-18.md). Fact sync only; the third-gate conclusion stays with the reviewer.
-- Subsequent unrelated SHA/docs changes do not invalidate unaffected results. CDPATH changes directly affect project resolution; cache/failure implementations remain unchanged. No automatic full-chain rerun.
+## Current permitted static checks
 
-## Offline recipe
+Use the existing cloud Nix parser for `flake.nix` and `git diff --check`. Inspect exact source against the stated factory interface and old output bindings; no Nix build, real apply, Mac access, software install or mutable consumer test is part of this revision. Record parse/whitespace results as static evidence, never as a test gate or integration pass.
 
-From the producer checkout, use Python 3 with Bash/GNU coreutils in PATH (macOS default BSD utilities do not satisfy this test harness):
+## Deferred integration procedure and stop conditions
 
-```sh
-python3 nix/test-activate.py -v
-bash -n nix/activate.sh
-nix-instantiate --parse nix/activate.nix >/dev/null
-nix-instantiate --parse flake.nix >/dev/null
-git diff --check
-```
+1. Wait for #4 to merge; verify merged public interface, update the actual contact dependency pin and affected lock entries, and freeze the exact final reviewed contact SHA. A changed upstream interface requires revisiting the wiring before execution.
+2. Review affected goals and existing evidence first. If an integration run is still needed, obtain the required environment/execution authorization and applicable plan/step review. Reuse existing immutable caches and tools; do not install software or touch a user's working project.
+3. Adapt the original t1 isolated recipe only at the changed boundary: set `CONTACT_SHA` to the real final reviewed commit, build `professor-contact-activate`, retain the same README consumer/shellHook, and check `.agent-env-applied` plus `.agents/skills/professor-contact/SKILL.md` in a fresh isolated project. Preserve the executable name and `--project "$PWD"`; never use the old marker as proof. Record SHA, commands, exit results and observed outputs.
+4. Stop on missing dependency, permission/tool access or failed step; preserve logs and distinguish dependency inability from product failure. No automatic retry or switch to a different computer; decide any needed correction/retry against the specific failure before running it. No other platforms, roots matrix or business-chain run is implied.
 
-The five-method result above is already recorded; these commands describe reproduction, not an instruction to rerun unaffected checks at every revision. No real installer is called by the offline suite.
-
-## Darwin build and isolated direnv recipe (executed 2026-10-18, see the [execution record](test-execution-2026-10-18.md))
-
-Owner: the assigned execution engineer, after a suitable aarch64-darwin environment is authorized and the plan/steps are reviewed. This document does not authorize connecting a computer, installing dependencies or using a real user project. Use the existing Nix and direnv setup; record their actual versions and exact producer SHA. If missing or unavailable, report the affected item as unexecuted rather than install or change the host automatically. Execution status: completed on 2026-10-18 with the existing setup and an isolated `/tmp` consumer, without touching a user project; actual versions, commands, exit results and observed outputs are in the [execution record](test-execution-2026-10-18.md).
-
-Preparation: set `CONTACT_SHA` to the exact reviewed 40-character PR head for this run. Create a fresh `/tmp` run directory outside producer/worktrees. Reuse immutable Nix caches. Use the README's consumer flake exactly, with its `contact` input locked to this SHA by the override below; `.envrc` contains `use flake`. No copied installer, local-path producer input, patched consumer artifact or business services.
-
-```sh
-set -eu
-: "${CONTACT_SHA:?Set the exact reviewed PR head SHA first}"
-CONTACT_REF="github:ScholarWorkflow/professor-contact/$CONTACT_SHA"
-RUN=$(mktemp -d /tmp/contact96.XXXXXX)
-mkdir -p "$RUN/consumer"
-nix build "$CONTACT_REF#professor-contact-activate" --out-link "$RUN/activate" >"$RUN/build.log" 2>&1
-test -x "$RUN/activate/bin/professor-contact-activate"
-cd "$RUN/consumer"
-cat > flake.nix <<'NIX'
-{
-  inputs = {
-    contact.url = "github:ScholarWorkflow/professor-contact/main";
-    nixpkgs.follows = "contact/nixpkgs";
-  };
-  outputs = { contact, nixpkgs, ... }:
-    let
-      system = "aarch64-darwin";
-      pkgs = nixpkgs.legacyPackages.${system};
-      activate = contact.packages.${system}.professor-contact-activate;
-    in {
-      devShells.${system}.default = pkgs.mkShell {
-        packages = [ activate ];
-        shellHook = ''
-          "${activate}/bin/professor-contact-activate" --project "$PWD" || exit $?
-        '';
-      };
-    };
-}
-NIX
-nix flake lock --override-input contact "$CONTACT_REF" >"$RUN/lock.log" 2>&1
-printf '%s\n' 'use flake' > .envrc
-# Scope direnv trust/state to this disposable run; retain existing Nix/direnv config.
-export XDG_DATA_HOME="$RUN/direnv-data"
-direnv allow .
-direnv exec . sh -c 'test -f .professor-contact-applied && test -f .agents/skills/professor-contact/SKILL.md' >"$RUN/activation.log" 2>&1
-```
-
-Record the exact SHA, run path, commands and build/activation exit results. The marker and installed SKILL.md are the sufficient observed outputs; do not trigger skill business operations. Retain the isolated consumer and logs for review; do not remove user GC roots or unrelated state as cleanup.
-
-Failure handling: stop the affected step at its first failure and preserve its log. Dependency/access failure is unable to judge, not product pass/fail. Permit at most one retry only after a transient external access failure has demonstrably cleared, retaining the same SHA/config and both logs; reuse existing build cache and consumer if still clean. Product/recipe failure requires correction and impact review, not repeated sampling. If a failed real install left partial mutable state, use a new isolated consumer for that corrected install, never patch it in place. No additional project, platform or business-chain coverage is implied.
+The final pin/lock and new integration evidence are pending, not silently waived. Independent reviewers own implementation/test-plan conclusions and all formal gates; this author supplies no APPROVED or G3 PASS.

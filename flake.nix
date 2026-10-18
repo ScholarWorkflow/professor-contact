@@ -89,11 +89,15 @@
         professor-contact-runtime = products.runtime;
         professor-contact = products.package;
         professor-contact-environment = products.project;
-        professor-contact-activate = import ./nix/activate.nix {
-          inherit pkgs;
-          environment = products.project;
-        };
+        # Pending agent-env-nix #4: keep the released pin until it merges.
+        # Only this new output is blocked; existing package outputs are unchanged.
+        professor-contact-activate =
+          (agent-env-nix.lib.mkCachedActivation or
+            (throw "professor-contact-activate: waiting for agent-env-nix PR #4 to merge; then pin a merged revision exporting lib.mkCachedActivation")) {
+            inherit pkgs;
+            environment = products.project;
+            name = "professor-contact-activate";
+          };
       };
     };
 }
-

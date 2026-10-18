@@ -48,7 +48,9 @@ nix build "$CONTACT_REF#professor-contact-environment" --out-link "$RUN/environm
 
 #### direnv / devShell 自动激活
 
-已有 direnv 的消费者可以把下面的 `flake.nix` 放在自己的项目根目录，`.envrc` 使用 `use flake`。脚本源码在本仓库的 [`nix/activate.sh`](nix/activate.sh)，由 Nix 打包；消费者只调用固定 store 入口，不需要复制脚本。
+此入口正在等待 [agent-env-nix #4](https://github.com/RekiDunois/agent-env-nix/pull/4) 合并。当前保留已发布的 `agent-env-nix` pin；它尚不导出 `lib.mkCachedActivation`，因此求值/构建 `professor-contact-activate` 会明确报等待错误，不应把本 PR 当成已可消费版本。上游合并后再固定包含该接口的真实合并后提交并更新对应 lock；不临时锁定未合并分支。现有 environment/runtime/package 输出不受此等待影响。
+
+接线直接调用上游 `lib.mkCachedActivation { pkgs; environment = products.project; name = "professor-contact-activate"; }`；本仓库不再维护重复的包装脚本与行为测试。完成上述 pin 后，已有 direnv 的消费者可以把下面的 `flake.nix` 放在自己的项目根目录，`.envrc` 使用 `use flake`。消费者只调用固定 store 入口，不需要复制脚本。示例中的 contact main 也须已包含本功能。
 
 ```nix
 {
@@ -75,11 +77,13 @@ nix build "$CONTACT_REF#professor-contact-environment" --out-link "$RUN/environm
 
 `main` 由消费者的 `flake.lock` 锁定，更新 input 后才会取新版本。入口默认使用当前目录，也接受 `--project DIRECTORY`。它用 environment 的 store 输出路径和项目的物理路径（`pwd -P`）记录成功：首次、environment 变化或项目移动后调用原有 `agent-env apply --project`；同版本同路径只检查成功标记，不扫描/复制技能。该缓存不验证安装文件是否仍然完整；手动删除或修改安装产物后，在 devShell 中运行 `professor-contact-activate --force` 重新 apply（仍遵守共享安装器的保护规则）。
 
-项目根目录的 `.professor-contact-applied` 是本入口的成功标记，只有 apply 成功才原子写入；再次 apply 前删除旧标记，所以失败后下次会重试。标记若是符号链接或非普通文件会报错。请在消费者的 `.gitignore` 加入 `/.professor-contact-applied` 和 `/.professor-contact-apply.lock/`，不要提交或手动伪造标记。
+项目根目录的 `.agent-env-applied` 是本入口的成功标记，只有 apply 成功才原子写入；再次 apply 前删除旧标记，所以失败后下次会重试。标记若是符号链接或非普通文件会报错。请在消费者的 `.gitignore` 加入 `/.agent-env-applied` 和 `/.agent-env-apply.lock/`，不要提交或手动伪造标记。
 
-同一项目通过 `.professor-contact-apply.lock` 串行激活；并发调用会立即报错，请待前一次结束后重试。正常退出会清锁；若进程被强杀或机器崩溃，确认没有激活进程后才手动删除遗留锁目录。直接调用原有 `agent-env` 不参与这个锁，也不会更新成功标记；不要与本入口并发运行。路径含换行符不支持。以上仅新增缓存包装层，不改变原有 environment 接口或 APM 安装。
+同一项目通过 `.agent-env-apply.lock` 串行激活；并发调用会立即报错，请待前一次结束后重试。正常退出会清锁；若进程被强杀或机器崩溃，确认没有激活进程后才手动删除遗留锁目录。直接调用原有 `agent-env apply/remove` 不参与这个锁，也不会更新成功标记；不要与本入口并发运行，之后再次使用缓存入口前应使用 `--force` 重建成功状态。路径含换行符不支持。以上仅新增缓存包装层，不改变原有 environment 接口或 APM 安装。
 
-离线包装层检查：在 `bash` 与 GNU coreutils 已位于 PATH 的环境运行 `python3 nix/test-activate.py -v`（目前在 Linux 验证；macOS 默认 BSD 工具不适用）。测试使用 stub 安装器，不构建 Nix、不触发真实安装或业务服务；正式入口使用 Nix 固定的 Bash 与 GNU coreutils。
+共享 marker/锁按项目而非命令名区分；同一项目需要多个 root 时，应先组合为一个 `mkProject` environment，再包装一次。不要逐个激活独立 environment 来累加技能，它们会相互替换。旧 contact 专用 `.professor-contact-applied` 不作为共享缓存成功证据；升级后第一次重新 apply 是预期行为，不复制或改名旧 marker 来跳过安装。旧入口与新入口的锁名不同，也不得并发运行。
+
+通用缓存行为由 agent-env-nix 的共享测试负责；本仓库只核对接线与消费边界。当前实施及验证范围见 [执行计划](plan/cached-nix-activation/implementation-plan.md) 和 [测试计划](plan/cached-nix-activation/test-plan.md)。旧产品的 Darwin/direnv 已执行记录保留，不能作为本次新共享接线通过的证明。
 
 依赖按上游实际发布提交固定：`agent-env-nix` 固定共享安装器，`paper-analysis`、`zotero-tools`、`base-skills`（`humanizer-ja`、`vision-tools`）、`pdf-processing-core`（`pdfx-agent` 与固定 Python）、`knowledge-tools` 的 `extraction-to-knowledge` 递归闭包，以及 `professor-research` 的 `professor-collector`（Stage 1 缺 PDF 补齐与 Stage 5 contact-evidence freshness 的上游 owner）。`vision-tools` 与 paper-analysis 复用同一次求值；collector 保留其生产者自己的真实递归依赖（其 browser 输入的 base/source skill 实例与 Zotero owner lock），contact 不重写这些实例。
 
@@ -128,4 +132,3 @@ Stage 0 不再使用 Zotero 固定标题 `套磁候选` note；Stage 0 与 Stage
 `stage5-legacy-contract.md` 是冻结的历史参考，不是当前 Stage 5 contract。涉及 preview 边界时，同时参照 `professor-research/.apm/skills/professor-topic-clustering/references/preview-downstream-contract.md`；涉及 Stage 4→5 联系方式冻结与 freshness 时，以 owner repo 的 contact-evidence consumer contract 为跨仓边界。
 
 如果修改状态机、stable ID、fingerprint、唯一事实源、跨仓库 owner 或 runtime 适配边界，应同步更新当前工作流参考；修改 package/runtime 依赖时同步更新依赖边界文档；涉及测试与 merge gate 时以 Project Consensus 为准。
-

@@ -1,38 +1,31 @@
-# Cached Nix activation — implementation plan r1
+# Cached Nix activation — implementation plan r2
 
-- Requirement revision: 2026-10-18 request to keep the activation script in this repo's `nix/` and call the Nix-built entrypoint from the consumer shellHook; subsequent review identifies relative `--project` being redirected by inherited `CDPATH`.
-- Target: ScholarWorkflow/professor-contact PR #96; baseline `ae890491e4bdd7e95ec4ffee5a48cbf28af14ec3`, based on main `74bd29b572c1b3f68f230a554f57d0202e54cde8`.
-- Proposed review status: pending. This is the single complete implementation plan for this feature, including the CDPATH correction; it does not retroactively claim plan approval or merge readiness.
+Status: pending independent review and upstream merge. This revision supersedes r1 for current product work; it does not grant plan approval or merge readiness.
+
+## Requirement and baseline
+
+- 2026-10-18: refactor professor-contact #96 to use agent-env-nix #4's shared `mkCachedActivation`. Preparing the dependency as waiting for #4 is explicitly allowed; fill in the merged revision later.
+- Contact baseline: `47a7fe0831418178871d29218e2dc26be9c6119a`, branch `feat/cached-nix-activation`; original product `4d59c0556de113cee554e8879236c9cc378ec826`.
+- Upstream candidate: [agent-env-nix #4](https://github.com/RekiDunois/agent-env-nix/pull/4), inspected head `472fdee073f0b899d4f47737a6471766fbe9f725`, product `c20fd73562e24ef288aa222a9e2e56e961f1894b`. It is unmerged; the current released pin `2158e933aab6c845ae1ceb1228458d624f8777d5` does not export the factory.
 - Rules: [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d), [Plan Reviewer Rule](https://app.notion.com/p/3e80101a85f3817a94cbc6eca1a76a5c), [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253).
 
-## Scope and ownership
+## Ownership, implementation and invariants
 
-Add `professor-contact-activate` only for aarch64-darwin/Codex. Its optional `--project` defaults to the calling directory; relative values must refer to that directory. It applies on first use, environment output change, project move or `--force`, and skips repeated successful installation of the same environment into the same physical project. Unknown arguments and invalid marker types fail clearly. Failed apply must not leave valid cached success.
+1. Replace the local import with `agent-env-nix.lib.mkCachedActivation { inherit pkgs; environment = products.project; name = "professor-contact-activate"; }`. Keep `packages.aarch64-darwin.professor-contact-activate`, its executable name, `--project` (default caller directory), `--force`, and the existing environment output.
+2. Delete `nix/activate.nix`, `nix/activate.sh`, and `nix/test-activate.py`. Shared factory/runtime/tests own successful-cache identity, CDPATH-safe physical paths, failure invalidation, locking and atomic publication. Contact owns only the environment and named export; do not copy shared behavior or tests back here.
+3. Preserve the current released input pin and lock. While its lib lacks the factory, the new output throws an explicit pending-upstream diagnostic. Nix's lazy attribute evaluation leaves existing package/runtime/environment outputs unchanged; broad evaluation that forces the new output is blocked. No placeholder SHA, unmerged-branch pin, vendored fallback or temporary lock churn.
+4. Use the shared `.agent-env-applied` and `.agent-env-apply.lock`. Do not migrate the old marker as success: first shared activation reapplies. Old and new commands must not run concurrently. Multiple roots must be composed into one `mkProject` environment before wrapping; independently activated environments replace each other.
+5. Update README for pending consumption, shared ownership, marker/lock migration, direct apply/remove and manual-edit cache boundaries. Keep APM, business behavior, platform support and all existing dependencies unchanged in this candidate. Do not modify upstream #4 or Study.
 
-The contact repository owns this wrapper, its marker and its lock. The existing shared installer owns installation, conflict protection, MCP merging and GC roots. Preserve the existing `professor-contact-environment` export and its `agent-env apply --project` interface, dependency pins, APM sources and all business behavior. Do not modify agent-env-nix, copy its installer, add Linux/Intel support, scan/hash installed trees, silently repair user projects, or expand CI/business tests.
+## Alternatives and risk
 
-## Decisions and grounding
+Keeping the local wrapper would retain duplicated ownership; pinning #4's branch would make an unmerged candidate look like a released dependency and create avoidable lock churn. Deferring all code would leave the requested refactor unprepared. The explicit lazy failure is the smallest candidate wiring: intentionally unavailable new output, no behavior fallback and no claim of build success. The factory interface can still change before merge, so its final name/arguments/semantics must be rechecked.
 
-1. **Wrap the existing environment:** `flake.nix` at the baseline exports `products.project`; `nix/contact.nix` constructs it with `mkProject`. The pinned [installer at 2158e933](https://github.com/RekiDunois/agent-env-nix/blob/2158e933aab6c845ae1ceb1228458d624f8777d5/runtime/activate.sh) supplies the existing apply behavior. Therefore `nix/activate.nix` packages the source shell script with fixed Bash, GNU coreutils and environment paths; `flake.nix` adds an export without changing the old export.
-2. **Own successful completion:** the shared installer records schema/roots before all installation work completes; those artifacts do not certify success. The wrapper records environment store path plus physical project path only after apply returns success. Its marker is independent of shared-installer state.
-3. **Resolve caller intent before changing directories:** baseline `nix/activate.sh` executes `cd -- "$project"`; for a relative value Bash may search inherited `CDPATH`. This can install into another same-named directory. Prefix relative inputs with caller `$PWD`, then use `cd -P` and `pwd -P`; the absolute argument cannot be redirected through CDPATH. Newline-containing project paths remain explicitly unsupported.
-4. **Serialize marker and apply:** an exclusive project-local directory lock covers both cache checking and application. Competing calls fail promptly. Successful publication uses same-filesystem rename; old success is removed before reapplication. Normal exit/signals clean the lock. Uncatchable interruption may leave a stale lock, requiring manual removal only after confirming no activation is running.
+The common marker is not an installation integrity scan. Manual changes and direct `agent-env apply/remove` require forced guarded reapplication before trusting the cache again. Existing installer configuration protection still applies, including under `--force`.
 
-## Alternatives, invariants and impacts
+## Completion and handoff
 
-Always calling apply preserves the old interface but repeats expensive copying. Pasting cache logic into every consumer duplicates maintenance. Reusing shared roots/state is unsafe after partial failure. A small producer-owned wrapper gives a fixed entrypoint without changing the installer.
-
-- Intended change: cheap successful-version skip and explicit repair command; relative inputs reliably target the caller's project.
-- Preserved behavior: when needed, invoke the unchanged installer and propagate failure; preserve its protection rules even under `--force`.
-- Invariants: marker means this environment last completed in this physical project; failed upgrade/repair cannot leave old success; cooperating wrappers cannot simultaneously install; inherited CDPATH cannot change the target.
-- Representative counterexamples: failed upgrade then rollback must reapply; moving the project changes cache identity; marker symlink/directory fails; concurrent invocation cannot race the cache; `work/demo` versus `other/demo` with `CDPATH=other` must choose `work/demo`.
-- Limits: direct agent-env calls do not share this lock/cache. Manual installed-file edits are not detected; `--force` invokes guarded reapply. External hostile filesystem mutation is not a security boundary supplied by this wrapper. No critical unresolved design assumption; packaged Darwin integration remains unexecuted validation, not a claim of success.
-
-## Implementation and handoff
-
-1. Keep `nix/activate.sh`, `nix/activate.nix`, flake export and README consumer usage as the feature implementation. Correct relative path resolution in the wrapper; do not compensate in consumers.
-2. Add one focused CDPATH case to the existing offline test file. Keep prior cache/failure tests; use the separate [test plan](test-plan.md) for validation and reuse.
-3. Freeze this candidate for independent review, then publish a normal commit to PR #96 using the expected current head. Do not merge, force-push, or create another PR.
-4. Darwin build and one isolated README-style direnv activation are pending work under the test plan. Do not start the user's Mac or install to any user project in this change.
-
-The marker name, private format and lock implementation are internal design choices, not new public business contracts. Review status remains pending until a reviewer records the applicable conclusions; prior code checks and CI do not confer plan approval.
+- Now: independent candidate review, necessary static wiring/parse checks only, then normal expected-head publication to the same draft PR; no merge or formal approval asserted.
+- Waiting: #4 must actually merge. Verify its merged commit and public factory interface; update contact's input to a real merged revision containing the interface, refresh only the affected lock graph, and review that diff. Do not use the current candidate SHA as a fictional future merge SHA.
+- Then: reassess only affected integration evidence under [test plan t2](test-plan.md). No automatic Mac activation, broad rerun, business execution, or CI expansion is authorized by this document.
+- Historical r1 and original results remain available at [baseline plans](https://github.com/ScholarWorkflow/professor-contact/tree/47a7fe0831418178871d29218e2dc26be9c6119a/plan/cached-nix-activation); retain the original execution record unchanged.
