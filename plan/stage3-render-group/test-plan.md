@@ -34,7 +34,7 @@
    git show ffa91aedf94aaf146f9cf1899f3fe4395cfaddad:.apm/skills/professor-contact/scripts/contact_state.py > "$RUN/base_contact_state.py"
    cp /tmp/pc-batch3-IZjWB0/compare_stage3_render.py "$RUN/compare_stage3_render.py"
    ```
-   最后一条是必须的：脚本自带输入构造与断言，不能在临时目录里凭提纲重写。若 `/tmp/pc-batch3-IZjWB0/compare_stage3_render.py` 已被清理，先按执行记录里记录的该轮运行目录找回同一脚本（记录中给出 `/tmp/pc-batch3-*/` 与产出文件名），仍找不到时停止并交计划所有人，不得临时改写比较方法。
+   最后一条是必须的：脚本自带输入构造与断言，不能在临时目录里凭提纲重写。若 `/tmp/pc-batch3-IZjWB0/compare_stage3_render.py` 已被清理，先按执行记录点名的运行目录 `/tmp/pc-batch3-IZjWB0/` 找回同一脚本（记录里同时点名了 `t1t2-refined.log`、`t3-narrowed.log`、`t4-narrowed.log` 三个证据文件），仍找不到时停止并交计划所有人，不得临时改写比较方法。
 2. T1、T2：运行仓库外对比脚本。第 1 步已把上一轮实际使用的 `/tmp/pc-batch3-IZjWB0/compare_stage3_render.py` 复制进本轮目录；两个参数依次是基准 runner 文件与工作树 runner。脚本自身在任一检查失败时以非 0 退出，`set -e` 同时保证准备步骤失败不会带着空目录继续。
    ```sh
    set -e

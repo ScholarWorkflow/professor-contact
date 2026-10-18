@@ -5,7 +5,7 @@
 - 对照基准：`ffa91aedf94aaf146f9cf1899f3fe4395cfaddad`（本批从它拉出，含批次二改动）。
 - 被测提交：`68647a56eb54d245bc68012d07eb233e1023e411`；执行时 `git status --porcelain` 为空。
 - 环境：本地 macOS，Python 3.14.7；只使用标准库与既有夹具，未新增依赖。仓库 CI 使用工作流固定的 Python 3.12。
-- 原始输出（仓库外）：`/tmp/pc-batch3-IZjWB0/`（本轮实际目录，点名到目录而非通配）；本文件只记录命令、方法与结果。
+- 原始输出（仓库外）：`/tmp/pc-batch3-IZjWB0/`（本轮实际目录）；证据文件：对比脚本 `compare_stage3_render.py` 与 `t1t2-refined.log`（T1/T2）、`t3-narrowed.log`（T3）、`t4-narrowed.log`（T4），历史整模块日志 `t3-final.log`、`t4-final.log`。
 
 ## 逐项结果
 
@@ -19,18 +19,19 @@
 
 ## 执行方法与命令
 
-1. 取出基准修订的 runner 到仓库外目录，并把对比脚本复制进本轮目录：
+1. 准备本轮运行目录（本轮沿用 `/tmp/pc-batch3-IZjWB0`，对比脚本 `compare_stage3_render.py` 已在其中，不需要再复制；换新目录时按测试计划第 1 步 `cp /tmp/pc-batch3-IZjWB0/compare_stage3_render.py "$RUN/compare_stage3_render.py"`），并取出基准修订的 runner：
 
    ```sh
    set -e
    RUN=/tmp/pc-batch3-IZjWB0
-   cp /tmp/pc-batch3-IZjWB0/compare_stage3_render.py "$RUN/compare_stage3_render.py"
+   test -f "$RUN/compare_stage3_render.py"
    git show ffa91aedf94aaf146f9cf1899f3fe4395cfaddad:.apm/skills/professor-contact/scripts/contact_state.py > "$RUN/base_contact_state.py"
    ```
 
 2. T1/T2：把基准 runner 与改动后的 runner 在同一进程里各按文件路径加载（`importlib.util.spec_from_file_location`，两个不同的模块名，互不共享 `sys.modules` 条目），两侧都把各自的 `now_utc` 换成同一个固定返回值，再用同一组代表性输入调用两个公开渲染器：
 
    ```sh
+   set -e
    uv run --no-project "$RUN/compare_stage3_render.py" \
      "$RUN/base_contact_state.py" \
      .apm/skills/professor-contact/scripts/contact_state.py
@@ -69,7 +70,7 @@
 
 ## 清单入口与执行日志的对应
 
-测试计划第 5 版把本批的本地通过条件收窄为清单引用的 7 个 T3 方法与 2 个 T4 方法。它们都包含在前面记录的整模块运行里（T3 的 4 文件 47 项、T4 的 2 文件 24 项，均 `OK`）：日志中逐个 `... ok` 的行即可对号。整模块运行中多出的用例（Stage 4 选择、旧状态迁移、其他教授结果保留、写入失败恢复、refined 模式状态语义、跨方向任务生成与缓存、Stage 5 生成器/校验器/技能文档合同等）是本批的清单外检查，**不构成本批的通过条件**，也不要求删除对应测试文件。仓库 CI 的全量结果按测试计划第 4 版单独引用，不计入本批业务必测项。
+测试计划第 5 版把本批的本地通过条件收窄为清单引用的 7 个 T3 方法与 2 个 T4 方法。它们都包含在前面记录的整模块运行里（T3 的 4 文件 47 项、T4 的 2 文件 24 项，均 `OK`）：日志中逐个 `... ok` 的行即可对号。整模块运行中多出的用例（Stage 4 选择、旧状态迁移、其他教授结果保留、写入失败恢复、refined 模式状态语义、跨方向任务生成与缓存、Stage 5 生成器/校验器/技能文档合同等）是本批的清单外检查，**不构成本批的通过条件**，也不要求删除对应测试文件。仓库 CI 的全量结果按测试计划第 5 版单独引用，不计入本批业务必测项。
 
 ## 搬移范围核对
 
@@ -83,7 +84,7 @@
 
 ## 结论与交接
 
-- T1–T4 对被测提交 `68647a5`（当前 head `00f307e` 产品字节相同）取得有效通过结果：T1/T2 用基准对照脚本，T3/T4 按第 5 版清单在 head `00f307e` 上定向重跑；仓库 CI 作为既有检查单独引用。无未完成项、无需要复验的项。
+- T1–T4 对被测提交 `68647a5` 取得有效通过结果（定向重跑时的 head 为 `00f307e`，此后只有文档提交）：T1/T2 用基准对照脚本，T3/T4 按第 5 版清单在 head `00f307e` 上定向重跑；仓库 CI 作为既有检查单独引用。无未完成项、无需要复验的项。
 - 本记录之后如只改动文档（计划、记录、说明），未改产品代码与测试代码时，上述逐项结果继续有效并沿用。
 - 依赖顺序：本批基于批次二分支 `refactor/stage5-runner-invocation`（PR #97）；#97 改写时按受影响范围重放并重跑受影响编号。
 - 下一负责人：测试计划审核（第一、二关口）与合并审核（按 `Merge Reviewer Rule.md`）；本记录不代替任何关口结论。
