@@ -1193,6 +1193,11 @@ class AnalysisLevelTests(EvidenceLevelEnv):
                 real_scope = contact_state.stage2_local_writer_scope
                 with mock.patch.object(contact_state, "datetime",
                                        wraps=datetime) as clock:
+                    # Only `.now` is pinned to the test clock; the class itself
+                    # stays usable, so nothing but the current business year is
+                    # replaced near the two clock points under test.
+                    clock.fromisoformat = datetime.fromisoformat
+                    clock.strptime = datetime.strptime
                     clock.now.return_value = datetime(year, 12, 31, 23, 59, 59)
                     if entering_lease:
                         # The entry still sees the accepted year; only the real
