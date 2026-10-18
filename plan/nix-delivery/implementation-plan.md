@@ -1,9 +1,9 @@
 # professor-contact Nix 交付执行计划
 
 - Plan revision: R3（2026-10-17；在 R2 同目录薄入口方案中补齐 Stage 5 immutable finalize 入口）
-- Proposed review status: pending
+- Review status: R3 已有正式审核记录（[6235025671](https://github.com/ScholarWorkflow/professor-contact/pull/93#issuecomment-6235025671)）；本次仅同步事实，不自授新批准。
 - Requirement revision: 用户本轮授权的五项 Nix 计划交付；[Nix skill 交付规则](https://app.notion.com/p/3fb0101a85f38185b17adb417590e50e)，2026-10-16 12:19 UTC 版本。
-- Target repository revision: `305bc08f8b186672108cffbba0293d249bc8b4b2`（main）。此 PR 只有执行/测试计划，没有实现或测试结果。
+- Target repository revision: `305bc08f8b186672108cffbba0293d249bc8b4b2`（main）。这是原设计基线；当前已有产品 `a999928430b22aefd4eb5520e10abceaa451e14f` 与 [执行记录](test-execution-2026-10-18.md)。2026-10-18 本次只同步实际交付与接线交接，不改变 R3 设计或自授审核结论。
 - 本文是唯一执行计划；测试范围与步骤见同目录 [test-plan.md](test-plan.md)。[项目共识](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)、[计划审核规则](https://app.notion.com/p/3e80101a85f3817a94cbc6eca1a76a5c)、[测试规则](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 分别约束操作、方案审核、测试。
 
 ## 1. 目标与边界
@@ -23,7 +23,7 @@
 
 ## 3. 公开输出与闭包
 
-未来新增 `flake.nix`、`flake.lock`、薄 `nix/contact.nix` 和 README 安装说明；不在 nix/ 保存第二份业务正文。输出：
+已新增 `flake.nix`、`flake.lock`、薄 `nix/contact.nix` 和 README 安装说明；不在 nix/ 保存第二份业务正文。输出：
 
 - `packages.aarch64-darwin.professor-contact-runtime`：固定 Python runner 与完整自有资源的普通 derivation；可先构建，不冒充完整 agent 安装。
 - `packages.aarch64-darwin.professor-contact`：mkAgentPackage，id `professor-contact`，默认 `enableHarnesses = [ "codex" ]`，通过真实 override 可关闭本包投影。
@@ -33,16 +33,16 @@
 
 | 对象 | 原因与 owner | 接入状态 |
 |---|---|---|
-| professor-research 的 professor-collector | Stage1 missing item-key PDF fill；Stage5 contact-evidence checker/资源 | 同批计划拟公开 `packages.aarch64-darwin.professor-collector`（id professor-research-collector），尚待实现。最终 pin 实际输出提交；不得拿 explainer 包冒充 |
+| professor-research 的 professor-collector | Stage1 missing item-key PDF fill；Stage5 contact-evidence checker/资源 | 已在 research PR35 产品 `6e46f2961ba213c896b536bbbaa7de838b1070d4` 公开 `packages.aarch64-darwin.professor-collector`（id professor-research-collector），含 collector/contact-evidence 两个 skill 与三个原生角色；T1 安装及 T2 本地 helper 已有结果。由 contact 产品负责人固定该实际输出并补入直接依赖，不能拿 explainer 冒充；collector T4 业务失败仍保留，不宣称全链通过 |
 | paper-analysis | Stage2 named paper-analysis、future_work/facts helpers | `packages.aarch64-darwin.paper-analysis`，已合入 PR20；固定实际 merge `eceade6b6d22a6114ecdd99b5a0c358869dfc798` |
 | zotero-tools | 元数据/摘要导出、session | `packages.aarch64-darwin.zotero-tools`，`24eb6cf596c082ac005ccdd800b962fbb6a8e2c8` |
 | base humanizer-ja / vision-tools | Stage5 动态字段润色 / Stage2 OCR机制 | `3ab2ac188e625b8a8ae37b5fa318c579787c3d1e` 对应同名 packages；vision 同时也是 paper 依赖，必须复用同一个对象，避免不同 payload 同名冲突 |
 | pdf-processing-core pdfx-agent | analyzer 明确加载 llm-ocr-refresh | `3444dca0e0b84f46d1839ab5c707afa78e23d3a7` 的 `packages.aarch64-darwin.pdfx-agent` 确实导出该 skill；其已定义包粒度含 formula-repair，不另拆或复制上游资源 |
-| knowledge extraction-to-knowledge | 原 `kb_import=true` 路径，递归 kb-importer / runtime | 同批 knowledge owner 拟公开 `lib.mkKnowledgePackages { pkgs; enableHarnesses = [ "codex" ]; }` 返回的 `extraction-to-knowledge`，递归使用同工厂的 kb-importer / personal-knowledge-runtime；接口待实现，当前 knowledge-importer 是 mkProject，不能当 agentDependencies |
+| knowledge extraction-to-knowledge | 原 `kb_import=true` 路径，递归 kb-importer / runtime | 已由合并提交 `bdb0db128b7cfccc6a3b20a8d0acee8695d0e211` 的 `lib.mkKnowledgePackages { pkgs; enableHarnesses = [ "codex" ]; }` 返回 `extraction-to-knowledge`，递归使用同工厂的 kb-importer / personal-knowledge-runtime；contact 当前产品已接入并有安装记录。knowledge-importer 的 mkProject 不作为 agentDependencies |
 
 professor-topic-clustering 的 preview 是既有输入边界，contact 不负责从零生成 preview，不因接收其文件而强加该 agent 依赖；用户可选择该包作独立顶层。browser/search 由 collector 的真实递归边带入，contact 不自建另一份同名配置。pdfx 普通库/CLI 为 runtime 依赖，不为它新注册 MCP。
 
-上游 pin 统一按实际包身份：共享 agent-env 使用已支持所需字段的固定提交，base/vision 在 paper、collector、contact 中复用同一求值对象；仅在依赖 owner 已支持时使用 follows 或参数注入，不把不同构建上下文强行重写后假称原证据仍适用。同名不等价立即报冲突，不按安装顺序覆盖。collector、knowledge 的尚未存在 revision 是实施顺序前置，禁止填虚假 SHA 或手拷贝上游到 consumer；自有 runtime 可独立推进，完整 environment 待实际输出。
+上游 pin 统一按实际包身份：共享 agent-env 使用已支持所需字段的固定提交，base/vision 在 paper、collector、contact 中复用同一求值对象；仅在依赖 owner 已支持时使用 follows 或参数注入，不把不同构建上下文强行重写后假称原证据仍适用。同名不等价立即报冲突，不按安装顺序覆盖。collector、knowledge 的真实输出现已存在，不再等待 producer 发布。contact 当前仍漏 collector 直接边；产品负责人按上述固定输出完成接线，保留其真实递归依赖，禁止填占位 SHA 或手拷上游到 consumer。research 的 base/source 依赖取其 browser input 的既有实例，Zotero 保留 owner lock；按实际求值身份处理同名冲突，不强改上游 lock 来冒充已验结果。
 
 ## 4. 资源、角色与固定入口
 
@@ -77,13 +77,14 @@ Zotero/Chrome/登录态/模型服务与 KB_SERVER_PATH 等真实服务仍由宿�
 ## 5. 实施顺序、影响与交接
 
 1. 核 main 变化对本计划入口的影响，完成自有资源/runner固定层与 package定义；保留待交依赖接口，不伪造通过。
-2. collector、knowledge producer给出上述实际可组合输出后固定提交，统一共享包身份，完成完整环境及 README。
+2. contact 产品负责人补接已交付的 collector 输出与 lock，保留已接知识库工厂与真实递归边，更新完整环境及 README；这是现有依赖要求的剩余实现，不等待新 producer 接口。
 3. 独立按P1–P4核此计划；执行实现及测试须取得对应批准。测试只按同目录测试计划 N1–N4 的安装/必要最小动作，不跑套磁全流程、共享安装器全回归或整仓旧测试。
 4. README 分别标明固定输出、aarch64-darwin build证据、实际安装、角色最小调用、外部服务及未验证路径。只有完成的具体包/路径可称就绪。
 
-R3 只补齐 Stage 5 `stage5_immutable.py` 的第七个固定入口及 email-generator 源调用前缀；沿用 R2 的同目录方案。N2 原有完整资源/角色安装核对涵盖此入口及其调用文本；N1–N4 目标、共享安装、其余资源/角色和业务边界不变，不新增完整邮件业务测试。R3 仍待独立计划复审，不因修订自授批准。
+R3 只补齐 Stage 5 `stage5_immutable.py` 的第七个固定入口及 email-generator 源调用前缀；沿用 R2 的同目录方案。N2 原有完整资源/角色安装核对涵盖此入口及其调用文本；N1–N4 目标、共享安装、其余资源/角色和业务边界不变，不新增完整邮件业务测试。R3 提交设计时曾待独立复审，现已有上述正式审核记录；本次事实同步不重开无变化关口、不自授批准。
 
 关键不变量：安装不改用户业务状态；原角色仅入口和载体变；资源从安装目录解析；Stage 5 始终经 immutable wrapper 进入原有同教授最终提交与模板保护路径；多根依赖不按顺序覆盖；helper与对应事实文件来自同一安装。代表性风险分别用固定wrapper、同版本对象、共享冲突处理、保留原同目录facts推导解决。源变动造成绑定失配就阻该构建，不能默认删掉安全/业务段落。
 
-实施负责人为 contact producer；collector/knowledge缺的公开输出由各producer负责；MCP和配置保护由共享层负责。PR91/92合并后只分析受影响文件并更新pin，不因SHA变动自动重跑已成立的安装证据。此计划不授权合并、不声明方案已获审核通过。
+实施负责人为 contact producer，当前下一步是补 collector 依赖边；research 产品负责人负责其 T4 collector 业务失败的定向归因，不能据此声称 contact 全链通过；MCP和配置保护由共享层负责。PR91/92合并后只分析受影响文件并更新pin，不因SHA变动自动重跑已成立的安装证据。此计划不授权合并、不声明方案已获审核通过。
+
 

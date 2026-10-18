@@ -87,6 +87,10 @@ CONTACT_PAPER_PYTHON="$FIXED_PYTHON" "$FIXED_PYTHON" -B -m unittest -v \
 
 ## 4. 未执行与受限项
 
+2026-10-18 当前状态更正：下述“PR35 仍是计划/等生产者发布”是当次执行采用旧 revision 的判断，现已失效。research 产品 `6e46f2961ba213c896b536bbbaa7de838b1070d4` 已公开 `packages.aarch64-darwin.professor-collector`，T1 安装和 T2 本地 helper 已有记录；contact 产品仍未接该直接边。上文 N1/N2 的 PASS 仅描述当次列出的 9 包/12 skill 局部闭包，不覆盖 R3 要求的完整 collector/contact-evidence 依赖，完整 N2 与 Gate3 仍待接线后复核。既有构建、N3、N4 记录保留；仅按测试计划复核受影响部分，不重跑未变项目。research T4 collector 仍是业务失败/正式委派关系无法判断，不能将包与 helper 结果外推为完整业务通过。
+
+以下保留原执行时限制记录，不作为当前等待 producer 的交接：
+
 - **professor-collector 依赖边未交付**：professor-research 在 `24769bba…` 没有 `professor-collector` 的 Nix 包（该仓库 PR #35 仍是计划）。因此本环境不含 contact 的 Stage 1 缺 PDF 补齐边与 Stage 5 contact-evidence freshness 上游边，也不含 `professor-collector` skill。计划明确禁止填占位 SHA 或手拷上游，故按「实施顺序前置」记未执行，等该生产者发布实际包后按其提交补入；受影响的只有这两条业务路径，N1–N4 其余检查独立成立。
 - 未验证：Zotero/浏览器/知识库服务自身的完整业务链、OCR 与真实论文分析、KB 写入、邮件生成与发送；这些不在 N1–N4 范围。
 - 本记录不声明 Gate3 通过或可合并；第三关口由测试计划负责人按 TP5.1 审核。
@@ -122,3 +126,4 @@ CONTACT_PAPER_PYTHON="$FIXED_PYTHON" "$FIXED_PYTHON" -B -m unittest -v \
 - Nix 2.34.8（`aarch64-darwin`）、python3 3.14.7、jq 1.8.2、yq 4.54.1、uv 0.12.22；既有 eval 服务监听 `127.0.0.1:17902`（未启动/停止）；`/Applications/Zotero.app` 存在。
 - N1–N4 命令按 TP5.1 原样执行；只在会话文件沙箱仍生效的早期本地迭代中使用过独立 `XDG_CACHE_HOME`，正式运行使用默认 Nix 缓存与默认 `HOME`，未改认证或全局安全设置。
 - 未修改产品以迎合测试；未因提交编号变化重跑未受影响项（N4.1 复用并给出逐字节依据）。
+

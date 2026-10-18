@@ -1,9 +1,9 @@
 # professor-contact Nix 测试计划
 
 - Test plan revision: TP5.1（恢复已确认的 `--sandbox workspace-write --cd` 调用并删除预先信任门槛；仅此变更待定向复核，N1–N4 不变；TP5 原修订：2026-10-18；按 PR #93 第二关口审核意见补齐 N3 的 PDF 样本准备步骤，N1–N4 目标、预期与检查方式不变，沿用 TP4 的安装态命令、N4.1 selection 准备与判定链、N4.2 PR90 复用命令与本机有限预检），关联 [执行计划 R3](implementation-plan.md)。
-- Proposed review status: pending；Gate1 必测清单已由第二关口审核判 PASS，Gate2 步骤、Gate3 结果均待审核。当前没有实现，N1–N4 全部未执行，不声明 PASS。
+- Proposed review status: pending；Gate1 必测清单已由第二关口审核判 PASS，Gate2 步骤、Gate3 结果均待审核。当前产品 `a999928430b22aefd4eb5520e10abceaa451e14f` 已有 aarch64-darwin 构建、局部安装、N3 与 N4 结果，见 [执行记录](test-execution-2026-10-18.md)。collector 直接依赖仍缺，因此完整 N2 与 Gate3 不能判通过；本次仅同步状态，未新增执行或审核结论。
 - 产品基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`；执行时记录真正待验实现SHA与锁定依赖。只验本次 aarch64-darwin / Codex 安装和必要入口，不扩 Stage0–5 业务回归。
-- 本轮（本地测试工程师）交付：N3 的 PDF 样本生成与 papers.json 命令（第二关口唯一待修项）、TP4 已有的 N3 命令与新增断言、N4.1 与 N4.2 的可直接执行准备及判定命令、仓库外预检记录。未修改产品代码，未构建、未安装、未运行任何正式用例。
+- 历史 TP5 测试准备时点（本地测试工程师）交付：N3 的 PDF 样本生成与 papers.json 命令（第二关口唯一待修项）、TP4 已有的 N3 命令与新增断言、N4.1 与 N4.2 的可直接执行准备及判定命令、仓库外预检记录。未修改产品代码，未构建、未安装、未运行任何正式用例。
 
 ## 1. 必测清单（上限）
 
@@ -18,7 +18,7 @@
 
 ## 2. 环境、准备与复用
 
-由本地执行者使用 aarch64-darwin Nix+既有Codex eval服务。此文不授权现在安装/运行。执行者从获审实现提交确定 `CONTACT_REF=github:ScholarWorkflow/professor-contact/<实际40位SHA>`，把它记入结果；不能拿此纯计划SHA构建，不能使用path input、手拷贝技能或开发checkout修补consumer。
+由本地执行者使用 aarch64-darwin Nix+既有Codex eval服务。此文不授权现在安装/运行。执行者从获审实现提交确定 `CONTACT_REF=github:ScholarWorkflow/professor-contact/<实际40位SHA>`，把它记入结果；不能拿无产品实现的纯计划SHA构建，不能使用path input、手拷贝技能或开发checkout修补consumer。
 
 准备单个仓库外临时目录，例如 `RUN=$(mktemp -d /tmp/contact-nix.XXXXXX)`；consumer=`$RUN/consumer`，业务样本=`$RUN/data`，输出=`$RUN/output`；分别mkdir。保持现有HOME，不抹掉Nix认证；必要时独立CODEX_HOME，使用既有eval配置/账号，不读eval自身配置查信任列表。测试服务如需Zotero必须使用已授权的独立测试库和loopback端点，不能读取生产库。缺平台、collector/knowledge实际包、服务/模型配置就标对应项未执行/无法判断，其余独立项继续。
 
@@ -30,7 +30,8 @@
 - 消费者 Codex 配置只有一个来源：把该 pin 的 `configs/codex-nested-delegation-consumer.toml` 合并进 `$RUN/consumer/.codex/config.toml`（保留其中的 `model="gpt-6-luna"`、`model_reasoning_effort="low"`、`sandbox_mode="workspace-write"` 与 `[features.multi_agent_v2] enabled=true`，并保留安装生成的其它设置）。eval 请求按用户已确认的方法显式传入 `--sandbox workspace-write --cd <consumer>`；模型、推理及委派开关继续复用上述项目配置，不追加模型、trust 或 MCP 环境覆盖，也不使用 `--ephemeral`。不将夹具说明中的 CLI 限制恢复为本轮新增门槛。
 - 不要求 consumer 预先登记信任或提供信任证明，不读取 eval 自身配置查询信任名单，不修改服务、HOME/CODEX_HOME、认证或全局安全设置。`--cd` 使用下文 resolve 得到的规范化 consumer 路径。按上述已确认请求执行后，若项目配置或已安装角色实际未加载，依据原始响应记录具体事实与阻塞/无法判断；不预先以信任状态阻止 N4.1。
 - 2026-10-17 本机有限预检（只确认命令与输入可用，未调用任何被测入口、产品入口或业务请求）：`nix (Nix) 2.34.8`；`nix eval --impure --raw --expr builtins.currentSystem` = `aarch64-darwin`；`python3 3.14.7`；`jq 1.8.2`；`yq v4.54.1`；`uv 0.12.22`；`git 2.55.0`；在既有 eval-server 检出目录内执行 `direnv exec . printenv EVAL_PORT` 返回 `17902`（该目录自身没有 `.envrc`，`EVAL_PORT` 由其上级 `.envrc` 提供，`HARNESS_WORKSPACE` 取该检出目录）；`/Applications/Zotero.app` 存在；夹具 pin 在本地仓库可解析。记录保存在仓库外 `/tmp/pr93-te-precheck/`（`tools.txt`、`eval-port.txt`、`zotero-app.txt`、`fixtures.txt`）。
-- 本轮无 Nix 包可构建：执行计划 R3 的实现尚未交付，N1–N4 均不能开始。
+- 当前接线基准：research `6e46f2961ba213c896b536bbbaa7de838b1070d4` 的 `packages.aarch64-darwin.professor-collector` 已存在并有 T1/T2 结果；knowledge `bdb0db128b7cfccc6a3b20a8d0acee8695d0e211` 工厂已接入。由 contact 产品负责人补 collector 直接边，不再等待 producer 发布。
+- 已有 N1 构建、N3、N4 证据按未受影响部分复用；完整 N2 仍缺 collector/contact-evidence 及其递归闭包。补边后只按原 N1/N2 范围核受影响的构建/安装与包身份、资源和 MCP 归属，不增加用例、不重跑共享安装器矩阵或 collector 完整业务；N3/N4 仅在实际入口、payload 或配置受影响时定向复核，不因文档 SHA 变化重跑。
 
 ## 3. Recipe
 
@@ -64,7 +65,7 @@ test -x "$FIXED_PYTHON"
 printf '%s\n' "$FIXED_PYTHON" > "$RUN/output/n3-fixed-python.txt"
 ```
 
-`n2-handoff-binding.txt` 必须显示该入口把 `CONTACT_PAPER_PYTHON` 绑定到运行时包的固定解释器，并与 `n3-fixed-python.txt` 为同一路径。现阶段只有计划、没有实现，入口第一行是否就是所需 Python 在安装后核对：实现若用 shebang 以外的方式绑定，则记录实际绑定路径与它使用的解释器，并在结果中注明实际值，不猜默认值，也不预先断言该绑定形式必然失败。
+`n2-handoff-binding.txt` 必须显示该入口把 `CONTACT_PAPER_PYTHON` 绑定到运行时包的固定解释器，并与 `n3-fixed-python.txt` 为同一路径。原准备时点尚无实现，故保留以下绑定判据；当前实际绑定见执行记录 N2/N3：实现若用 shebang 以外的方式绑定，则记录实际绑定路径与它使用的解释器，并在结果中注明实际值，不猜默认值，也不预先断言该绑定形式必然失败。
 
 ### N3：实际本地入口
 
@@ -293,13 +294,14 @@ papers.json 只有该 key、不含 `pdf_path`/`ocr_path`。预期 router 行 `ca
 
 ## 4. 结果、重试和关闭
 
-当前N1–N4全部未执行；Gate1 沿用正式审核通过结论，Gate2 待本次受影响步骤的定向复核，Gate3 未执行。TP3 明确标出的两处 recipe 空缺已在本版补入：N3 的安装态执行命令与固定解释器断言、N4.1 的 selection fixture／请求／判定链；审核只补核这两处与连带影响，不增加测试目标。执行计划可以先进入draft评审，不谎称这些未来操作已经完成。
+当前产品 `a999928430b22aefd4eb5520e10abceaa451e14f` 已有 aarch64-darwin 构建、局部安装、N3 与 N4 结果，见 [执行记录](test-execution-2026-10-18.md)。collector 直接依赖仍缺，因此完整 N2 与 Gate3 不能判通过；本次仅同步状态，未新增执行或审核结论。 Gate1 沿用正式审核通过结论，Gate2 待本次受影响步骤的定向复核，Gate3 未执行。TP3 明确标出的两处 recipe 空缺已在本版补入：N3 的安装态执行命令与固定解释器断言、N4.1 的 selection fixture／请求／判定链；审核只补核这两处与连带影响，不增加测试目标。执行计划可以先进入draft评审，不谎称这些未来操作已经完成。
 
 记录每项产品SHA、依赖pin、实际命令、结果、必要输出位置以及复用证据即可。引用共享agent-env TP1.1/Gate1/Gate2和上游已验结果，不自授PASS。未运行的OCR/真实论文分析/KB写入/下载/全套磁流程不能宣称通过。
 
-本轮为 N3 增加了一条安装态断言（`.apm/skills/professor-contact/tests/test_stage2_chatgpt_handoff.py::HandoffTests.test_future_work_selection_is_finalized_locally_via_configured_python_backend`）：它以 `CONTACT_PAPER_PYTHON` 是否存在为前置——未绑定时该项不适用（普通检出与 CI 显示 skipped），只有安装薄入口绑定固定解释器后才执行，保证本纯计划 PR 的 CI 不被尚未实现的适配点染红。因此 N3 记录必须显示该条实际执行（`... ok`）；只出现 `skipped` 时记未执行。
+本轮为 N3 增加了一条安装态断言（`.apm/skills/professor-contact/tests/test_stage2_chatgpt_handoff.py::HandoffTests.test_future_work_selection_is_finalized_locally_via_configured_python_backend`）：它以 `CONTACT_PAPER_PYTHON` 是否存在为前置——未绑定时该项不适用（普通检出与 CI 显示 skipped），只有安装薄入口绑定固定解释器后才执行，此处保留最初测试准备时的适用性设计；当前安装态执行结果见上述记录。因此 N3 记录必须显示该条实际执行（`... ok`）；只出现 `skipped` 时记未执行。
 
 评估与夹具记录：保存 `/eval` 请求 JSON、事后响应、生效的 `consumer-codex-config.toml`、适配器输出与 `selection-verdict.json`；Zotero 子项保存 `routes.json`、导出文件与夹具 `fixture.env` 位置。敏感原始材料只留受控访问位置。预检记录在仓库外 `/tmp/pr93-te-precheck/`。
 
 网络拉取或外部服务短暂故障恢复后允许同参数重试一次；业务断言失败先修复，不重复采样。Zotero只读导出，确认本次输出目录隔离后再重试，保留旧失败记录；不修改全局安全设置。没有新信息的持续外部故障停止受影响项。运行完成且无子线程使用后，只删除本次临时可变fixture，结果保留给审核；不终止用户进程、不清生产库。
+
 
