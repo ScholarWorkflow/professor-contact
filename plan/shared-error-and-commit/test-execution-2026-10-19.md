@@ -1,6 +1,6 @@
 # 边界一：共享错误通道与原子写／事务搬移 测试执行记录（2026-10-19）
 
-- 测试计划：[test-plan.md](test-plan.md)，第 4 版。
+- 测试计划：[test-plan.md](test-plan.md)，第 5 版。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 2 版（`Plan conclusion: APPROVED`，P1–P4 全 PASS）。
 - 对照基准：`b3972a2cdf5cd60a5bc6dea006c10cfb6516a3d6`（本批从它拉出）。
 - 被测提交：`98f429c4dd41c89d1fdfcd14024cf8313c37d7bd`；执行时 `git status --porcelain` 为空。
@@ -14,7 +14,7 @@
 | T1 | 通过 | 基准与改动后的 runner 各跑一次驱动脚本，`diff -u` 无输出（`T1-T3 IDENTICAL`）；`emit` 文本、`fail` 的 stdout JSON 与退出码 1、`soft_exit` 的 stdout JSON 与退出码 2 逐字段相同 |
 | T2 | 通过 | 同一对比：业务通道内 `fail` 与 `soft_exit` 都不打印、不退出，异常类型名、`payload`、`args` 相同，`type(exc) is runner.ProfessorBusinessFailure` 为真；退出通道后 `fail` 回到“打印 + 退出 1” |
 | T3 | 通过 | 同一对比：`atomic_write`／`atomic_json` 的文件字节与无临时残留相同；`atomic_json_many` 成功写入两个文件；失败注入按第 3 版计划改到**第四次** `os.replace`（两个目标都预先存在：备份一 → 安装一 → 备份二 → 安装二），两侧均为 `OSError`、`replace` 调用 6 次、文件一从已安装的新内容回滚为旧字节、文件二保持旧内容、无残留；`staged_pair_commit` 仍在第二次替换（文件一已安装）注入，两侧均为 `OSError`、3 次调用、`t1` 回 `OLD-A`、`t2` 保持 `OLD-B` |
-| T4 | 通过 | 按第 4/5 版清单只跑 5 个方法：`Ran 5 tests in 7.842s`，`OK`，退出码 0。更早的 `Ran 95 tests in 122.572s` 是这 5 项的超集，保留作历史证据；其中多出的部分（两个只断言文档文本的合同文件、三个模块的其余用例、issue #67 归属类用例）不作为本批通过条件 |
+| T4 | 通过 | 按第 5 版清单只跑 5 个方法：`Ran 5 tests in 7.842s`，`OK`，退出码 0。更早的 `Ran 95 tests in 122.572s` 是这 5 项的超集，保留作历史证据；其中多出的部分（两个只断言文档文本的合同文件、三个模块的其余用例、issue #67 归属类用例）不作为本批通过条件 |
 | 既有仓库检查 | 通过 | 仓库 CI 在 head `1a62d0d` 上跑全量 `unittest discover`：运行 `39147234123`，8m7s，检查项 `test` pass。按测试计划第 4 版，这项不属于本批业务必测项，只作既有检查结果引用；该 head 相对被测提交只多文档提交，`.apm/` 字节未变 |
 
 ## 执行方法与命令
@@ -23,21 +23,22 @@
 
    ```sh
    set -e
-   RUN=/tmp/pc-bnd1-DyNATS            # 本轮实际使用的运行目录（点名，不用通配）
-   mkdir -p "$RUN"
+   RUN=/tmp/pc-bnd1-DyNATS           # 本轮实际运行目录；驱动已在该目录，换新目录时按计划第 1 步 cp 过去
+   test -f "$RUN/contract_probe.py"
    git show b3972a2cdf5cd60a5bc6dea006c10cfb6516a3d6:.apm/skills/professor-contact/scripts/contact_state.py > "$RUN/base_contact_state.py"
    git show b3972a2cdf5cd60a5bc6dea006c10cfb6516a3d6:.apm/skills/professor-contact/scripts/_stage3_render.py > "$RUN/_stage3_render.py"
-   cp /tmp/pc-bnd1-DyNATS/contract_probe.py "$RUN/contract_probe.py"
    ```
 
 2. T1–T3：同一驱动脚本分别以基准 runner 与工作树 runner 为参数运行，各产出一份规范化 JSON：
 
    ```sh
    set -e
-   uv run --no-project "$RUN/contract_probe.py" "$RUN/base_contact_state.py" "$RUN/base-work4" > "$RUN/base4.json"
-   uv run --no-project "$RUN/contract_probe.py" .apm/skills/professor-contact/scripts/contact_state.py "$RUN/head-work4" > "$RUN/head4.json"
-   diff -u "$RUN/base4.json" "$RUN/head4.json"
+   uv run --no-project "$RUN/contract_probe.py" "$RUN/base_contact_state.py" "$RUN/base-work" > "$RUN/base.json"
+   uv run --no-project "$RUN/contract_probe.py" .apm/skills/professor-contact/scripts/contact_state.py "$RUN/head-work" > "$RUN/head.json"
+   diff -u "$RUN/base.json" "$RUN/head.json" && echo "T1-T3 IDENTICAL"
    ```
+
+   注入修正（`atomic_json_many` 改注入第四次替换）后，用同一条命令换输出名重跑一次，最终证据是 `base5.json`／`head5.json`（`replace_calls: 6`）；更早的 `base4.json`／`head4.json`（第二次注入，`replace_calls: 3`）只作历史尝试保留。
 
    **最终证据是注入修正后重跑的 `base5.json`／`head5.json`（`atomic_json_many` 在第四次 `os.replace` 注入），T1–T3 三行以它为准；`base4.json`／`head4.json` 是第二次注入版本的运行，保留作历史尝试（`replace_calls: 3`）。** 更早的 `base2.json`／`head2.json`（10 个键，驱动扩展前）只作历史尝试保留，不作为结论依据。
 
@@ -74,7 +75,7 @@
 
 ## 结论与交接
 
-- T1–T4 对被测提交 `98f429c`（当前 head 产品字节相同）全部取得有效通过结果；仓库 CI 作为既有检查单独引用。
+- T1–T4 对被测提交 `98f429c` 取得有效通过结果（定向重跑时的 head 为 `1a62d0d`，此后只有文档提交）；仓库 CI 作为既有检查单独引用。
 - 本记录之后如只改文档，未改产品与测试代码时，上述逐项结果继续有效并沿用。
 - 依赖顺序：本批堆叠在批次三分支 `refactor/stage3-render-group`（PR #98）之上，合并顺序 #97 → #98 → 本批。
 - 下一负责人：测试计划审核（第一、二关口）、第三关口与合并审核；本记录不代替任何关口结论。
