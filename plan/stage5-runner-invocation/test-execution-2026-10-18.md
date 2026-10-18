@@ -27,6 +27,10 @@ python3 -m unittest test_stage5_immutable test_stage5_fixture_isolation test_sta
 | T5 | 通过 | `TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker` |
 | T6 | 通过 | `TestStage5ImmutableTargetedScope.test_issue59_t59_6_wrapper_finalize_keeps_selected_email_scope`、`test_stage5_fixture_isolation` 的两个用例、`TestStage5DualTargetContractTests.test_generator_wrapper_instructions_reject_full_body_inputs`、`test_issue59_t59_7_targeted_scope_documents_hold_selected_output_scope` |
 
+## 清单入口与执行日志的对应
+
+测试计划第 5 版把本批的本地通过条件收窄为清单已引用的 11 个入口（T1 三项、T2–T5 各一项、T6 四项）。这 11 项都包含在上面记录的模块级运行（26 项、`OK`）里：日志中逐个 `... ok` 的行即可对号。多出的 15 项来自三个模块的其余用例（生成器运行环境分支、`choices` 公开字段、校验器名称与网络权限等旧合同检查），它们是本批的清单外检查，**不构成本批的通过条件**，也不要求删除对应测试文件。
+
 ## 首次尝试记录（保留，不覆盖）
 
 - 首次执行同一命令：26 项中 1 项失败，退出码 1。失败项为 T2 的新用例 `test_direct_runner_keeps_the_legacy_business_audit_label`，runner 返回 `result_missing`（`humanized body file required (--humanized)`）。

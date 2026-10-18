@@ -3,7 +3,7 @@
 ## 版本、来源与状态
 
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 4 版。
-- Test plan revision: 第 4 版。
+- Test plan revision: 第 5 版。
 - 需求来源：负责人 2026-10-18 授权的三批 Stage 重构要求第 2 批；原文见执行计划。
 - Target repository revision: 工作分支 `refactor/stage5-runner-invocation`（从 `74bd29b572c1b3f68f230a554f57d0202e54cde8` 拉出）实施后的提交。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本次修改明确要达到的目标与本次直接改变的成功、失败、兼容行为。
@@ -31,15 +31,26 @@
    git status --porcelain
    python3 --version
    ```
-2. T1、T3、T4、T5、T6 的目标测试文件（第二批改动集中在 wrapper、它的标签契约与被改的生成器正文）：
+2. 只运行清单已引用的 11 个检查入口（T1 3 项、T2–T5 各 1 项、T6 4 项）；不整模块运行，避免把清单外旧合同检查变成本批通过条件：
    ```sh
    cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage5-runner-invocation/.apm/skills/professor-contact/tests
-   python3 -m unittest test_stage5_immutable test_stage5_fixture_isolation test_stage5_dualtarget_contract -v
+   python3 -m unittest \
+     test_stage5_immutable.TestStage5ImmutableTemplates.test_finalize_without_full_body_humanizer_preserves_fixed_segments \
+     test_stage5_immutable.TestStage5ImmutableTemplates.test_dynamic_field_polish_provenance_is_explicit \
+     test_stage5_immutable.TestStage5ImmutableTemplates.test_first_and_followup_are_both_rendered_from_stable_templates \
+     test_stage5_immutable.TestStage5AuditProvenanceInput.test_direct_runner_keeps_the_legacy_business_audit_label \
+     test_stage5_immutable.TestStage5AuditProvenanceInput.test_caller_supplied_internal_audit_option_never_decides_the_label \
+     test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_changed_audit_marker_fails_closed_before_writing_user_files \
+     test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker \
+     test_stage5_immutable.TestStage5ImmutableTargetedScope.test_issue59_t59_6_wrapper_finalize_keeps_selected_email_scope \
+     test_stage5_fixture_isolation \
+     test_stage5_dualtarget_contract.Stage5DualTargetContractTests.test_generator_wrapper_instructions_reject_full_body_inputs \
+     -v
    ```
-   预期：全部 `ok`，无 `FAIL`/`ERROR`。T2 的断言就在 `test_stage5_immutable` 内，随同一次运行覆盖；T6 引用的生成器正文合同断言在 `test_stage5_dualtarget_contract`。
+   预期：`Ran 11 tests`、全部 `ok`，无 `FAIL`/`ERROR`。`test_stage5_fixture_isolation` 模块本身只有 T6 引用的 2 个用例，因此按模块运行不引入清单外检查；其余目标按方法选择。已记录的模块级运行（26 项）是这 11 项的超集，其中多出的 15 项属清单外旧合同检查，不构成本批的通过条件。
 3. T2 直调默认路径：由第 2 步的新用例覆盖；该用例必须实际以 `sys.executable <runner> stage5-finalize ...` 运行真实脚本，而不是调用 wrapper。
 4. 兼容性与既有门禁：把改动推送到 PR 后，仓库 CI（`.github/workflows/ci.yml`）会对该提交跑全量 `unittest discover`；直接引用该运行结果，不在本地重复跑整套。CI 未通过时按第 6 步处理。
-5. 记录：保存上述命令、实际提交 SHA、每个编号的通过/失败与必要输出片段到 `/tmp` 运行目录；交付时只列逐项结果与复用来源。
+5. 记录：保存上述命令、实际提交 SHA、每个编号的通过/失败与必要输出片段到 `/tmp` 运行目录；交付时只列逐项结果与复用来源。记录里要能把 11 个入口映射到已执行日志中的具体用例行（例如 26 项日志中的对应 11 行），清单外的 15 项只作诊断信息，不计入本批结果。
 6. 失败处理：
    - 定向用例失败：区分“本次改动引入的回归”“既有失败”“环境问题”；本次改动引入的回归交产品实现负责人修复后重跑受影响编号。
    - 已知与本批无关的既有跳过项（Nix 安装态专用）按未执行记录，不算失败。
@@ -67,7 +78,8 @@
 - 第 2 版：随执行计划第 2 版调整 T4——执行计划取消了“wrapper 拒绝调用方内部参数”的新行为，改为按既有 `--humanized` 方式丢弃；T4 相应改为“调用方取值不生效、wrapper 声明生效”。其余编号未变。
 - 第 3 版：按测试计划审核（第一、二关口 PASS）的三项意见修正：T6 的检查方式补上生成器正文合同断言所在的 `test_stage5_dualtarget_contract`（不新增测试）；T4 用例补 `returncode == 0` 断言（计划原本已写明）；修正审核状态版本号。同时接受可选记录精度意见：T1 注明“不传”与“传 none”同一路径、把解释器与写入顺序为何不单设观察点补进不纳入表、第 1 步写明先提交再记录 SHA。
 - 第 4 版：随执行计划第 3 版修正 T3 的预期表述——“不写任何用户文件”限定为“除 plan 阶段既有的上游证据重建外不写用户文件（教授目录无 md/txt/state）”，并注明断言不把“整个程序根零写入”当预期。用例本身的断言未改，仍只看教授目录的产物文件。
+- 第 5 版：按正常审核意见收窄第 2 步——从“运行三个完整模块、26 项全过”改为只运行清单已引用的 11 个入口，并同步收窄通过条件；明确 26 项日志是这 11 项的超集，多出的 15 项旧合同检查不计入本批结果（不要求删除测试文件，也不新增断言或重跑）。第 4 步对仓库 CI 的引用保持不变。
 
 ## 审核状态
 
-测试计划第 4 版为当前唯一版本；第 2 版已取得第一关口与第二关口 PASS（无 blocker），第 3 版只落实该轮意见中的表述与断言归属；第 4 版随执行计划第 3 版收紧 T3 的预期范围，未增删必测项。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 5 版为当前唯一版本；第 2 版已取得第一关口与第二关口 PASS（无 blocker），第 3、4 版只落实审核意见中的表述与断言归属；第 5 版按正常审核意见收窄第 2 步的检查入口与通过条件，必测编号与预期结果未变，结果仍复用被测提交 `ad674f2c` 的记录（11 项是 26 项日志的子集）。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
