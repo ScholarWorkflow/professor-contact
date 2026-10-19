@@ -161,7 +161,7 @@ Stage 1 verify 通过后、任何昂贵 Stage 2 evidence 准备之前，对每�
 
 - 为本教授事务建立**独立临时目录**（例如 `mktemp -d`），stdout **原样保存**到 `<本教授事务临时目录>/stage2_preflight.json`；payload 内含本次输入的稳定证明 `preflight_id`。不同教授事务（**含同名不同目录的教授**）各用各的临时目录，绝不共用、覆盖或删除他人仍需消费的证明；实际保存路径记入本教授的事务记录（与该教授 canonical `professor_dir` / `preview_path` / local target 关联），后续步骤一律从该记录取实际路径，**不再根据教授展示名重新拼接或查找证明路径**。本教授后续 `stage2-finalize` 必须以 `--preflight-file` 传回同一文件（TOCTOU 防护：finalize 在任何写盘前重算 cheap inputs，与 preflight 时不一致 → `needs_refresh/preflight_inputs_changed`，不写 pack/freshness/Markdown）。finalize 还会校验 **facts 绑定**：Step 6.1 写入 facts 的 `stage2_preflight.preflight_id` 必须与该 payload 的 `preflight_id` 一致，否则同样 `needs_refresh`——同一教授并发/重入的另一次调用可能覆盖同一保存位置，绝不允许用它给早先准备的 facts 盖章。该证明至少保留到本事务的 plan/finalize（及 resolve 流水线）消费完毕；清理只删除本教授事务自己的临时目录。
 - 按 payload `action` 分区：`reuse_all` → `reusable_professors`；`process` → `process_professors`。所有 `reason_codes`（教授级与逐方向）如实记入返回 notes，绝不静默丢弃。
-- **`action=refresh_display`（U5 展示刷新）**：业务依据全部未变，只有已接受包记录的分析级别这一展示投影过期。走正式展示刷新入口，成功后按 `reuse_all` 处理（同样在任何 Zotero 检查、PDF 读取或模型 job 之前结束）：
+- **`action=refresh_display`（U1/U5 展示刷新）**：业务依据全部未变，只有已接受包记录的分析级别或私有展示版本（`cache.preflight.display_refresh_version` 缺失/旧于当前值）这一展示投影过期。走正式展示刷新入口，成功后按 `reuse_all` 处理（同样在任何 Zotero 检查、PDF 读取或模型 job 之前结束）：
   ```bash
   python3 <professor-contact-skill-dir>/scripts/contact_state.py stage2-refresh-display \
     --professor-dir <教授目录> --preflight-file <本教授事务临时目录>/stage2_preflight.json

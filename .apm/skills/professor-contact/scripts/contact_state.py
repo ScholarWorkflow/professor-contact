@@ -283,7 +283,14 @@ ANALYSIS_LEVELS = ("fulltext", "abstract")
 # index selection state per candidate key, so an added / deleted / moved
 # analysis source is distinguishable from a level-only display change.
 STAGE2_ANALYSIS_PROJECTION_VERSION = 1
-STAGE2_DISPLAY_REFRESH_VERSION = 1
+# Display-rule version (U1): the accepted baseline records which fixed-evidence
+# display rules rendered its managed body. v2 adds trusted-reference
+# recognition, existing-link protection and the visible-content comparison, so a
+# body accepted under v1 — or with no recorded version at all — must be
+# re-rendered by the current renderer before its body may be reused. This is
+# private display cache: it never enters the facts, the model input, a business
+# fingerprint, `paper_digest`, a resolved proof or any public schema.
+STAGE2_DISPLAY_REFRESH_VERSION = 2
 # Fixed-evidence display (U1): internal Zotero item keys may appear inside the
 # model-written evidence of the fixed freshness card and the anchor-banned
 # blacklist; every one of them is rendered as its trusted title plus link.
@@ -3314,6 +3321,31 @@ def stage2_preflight_versions() -> dict:
     }
 
 
+def stage2_display_version_state(accepted) -> str:
+    """Classify one accepted pack's private display-rule version.
+
+    Returns one of:
+
+    - ``current``: the accepted body was rendered by the current display rules;
+    - ``stale``: no version recorded, or a valid older one — the managed body
+      must be re-rendered by the current renderer before it may be reused;
+    - ``unusable``: malformed, negative or newer than this build — the baseline
+      cannot be compared at all, so the ordinary process path decides.
+
+    The version is private display cache and never a business fact: it only says
+    which renderer rules produced an accepted body.
+    """
+    if accepted is None:
+        return "stale"
+    if isinstance(accepted, bool) or not isinstance(accepted, int) or accepted < 0:
+        return "unusable"
+    if accepted == STAGE2_DISPLAY_REFRESH_VERSION:
+        return "current"
+    if accepted > STAGE2_DISPLAY_REFRESH_VERSION:
+        return "unusable"
+    return "stale"
+
+
 def stage2_preflight_params(paper_analysis: str, gap_scope: str, freshness_scope: str,
                             max_relevant_papers: int | None) -> dict:
     return {"paper_analysis": paper_analysis, "gap_scope": gap_scope,
@@ -4075,6 +4107,12 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
         "analysis_projection": stage2_analysis_projection(
             professor_dir, stage2_projection_keys(ctx, pack_directions),
             stage2_projection_analysis_paths(papers_map or {}, ctx.papers)),
+        # Display-rule version (U1): a successful acceptance always renders its
+        # managed body with the current renderer, so the baseline states which
+        # display rules that body came from. A pack recorded under an older (or
+        # absent) value must be re-rendered by the display-only refresh before
+        # its body may be reused.
+        "display_refresh_version": STAGE2_DISPLAY_REFRESH_VERSION,
         "directions": directions,
     }
 
@@ -4150,7 +4188,8 @@ def stage2_preflight_assess(program_root: Path, professor_dir: Path, professor: 
     authorship ledger, direction mapping, freshness cache, source guards).
 
     Returns the loaded pack, professor-level and per-direction reason codes, the
-    current analysis projection and the display-only level changes.
+    current analysis projection, the display-only level changes and the accepted
+    pack's private display-version state.
     """
     pack_path = professor_dir / INPUT_PACK
     pack, _error = load_input_pack(professor_dir)
@@ -4162,6 +4201,7 @@ def stage2_preflight_assess(program_root: Path, professor_dir: Path, professor: 
     projection_keys: list = []
     analysis_paths: dict = {}
     level_changes: list = []
+    display_version_state = "unusable"
     if pack is None:
         professor_reasons.append("missing_input_pack")
     elif cache_block is not None and not isinstance(cache_block, dict):
@@ -4179,6 +4219,14 @@ def stage2_preflight_assess(program_root: Path, professor_dir: Path, professor: 
                 or meta.get("sidecar_extractor_versions") != list(SIDECAR_EXTRACTOR_VERSIONS)
                 or meta.get("facts_generator_versions") != list(FACTS_GENERATOR_VERSIONS)):
             professor_reasons.append("resolution_semantics_changed")
+        # Display-rule version (U1): a missing or valid older value only means
+        # the accepted body must be re-rendered by the current renderer; a
+        # malformed / negative / future value cannot be compared at all, so the
+        # ordinary process path decides (never a display-only acceptance).
+        display_version_state = stage2_display_version_state(
+            meta.get("display_refresh_version"))
+        if display_version_state == "unusable":
+            professor_reasons.append("display_version_unusable")
         if meta.get("accepted_directions_sha256") != sha256_obj(pack.get("directions") or []):
             professor_reasons.append("pack_integrity_mismatch")
         if meta.get("params") != params or meta.get("current_year") != current_year:
@@ -4349,6 +4397,7 @@ def stage2_preflight_assess(program_root: Path, professor_dir: Path, professor: 
         "projection_keys": projection_keys,
         "projection_analysis_paths": analysis_paths if isinstance(analysis_paths, dict) else {},
         "level_changes": sorted(level_changes),
+        "display_version_state": display_version_state,
         "all_reuse": all_reuse,
     }
 
@@ -4406,13 +4455,16 @@ def cmd_stage2_preflight(args) -> None:
                                          snapshot_entry, params, current_year)
     all_reuse = assessment["all_reuse"]
     level_changes = assessment["level_changes"]
+    display_version_state = assessment["display_version_state"]
     preflight_inputs = stage2_preflight_cheap_inputs(
         program_root, professor_dir, professor, target, snapshot_entry, params, current_year)
-    if all_reuse and level_changes:
-        # Every business gate is clean and the ONLY difference is the recorded
-        # display level: the accepted facts stay valid and only the projection
-        # is stale. The formal display-refresh entry still has to re-prove this
-        # before writing.
+    if all_reuse and (level_changes or display_version_state == "stale"):
+        # Every business gate is clean and the only difference is the recorded
+        # display level and/or the private display-rule version: the accepted
+        # facts stay valid and only the display projection is stale. The formal
+        # display-refresh entry still has to re-prove this, render the candidate
+        # body with the current renderer and compare the visible content before
+        # writing.
         action = "refresh_display"
     elif all_reuse:
         action = "reuse_all"
@@ -4426,6 +4478,7 @@ def cmd_stage2_preflight(args) -> None:
         "action": action,
         "reason_codes": assessment["reason_codes"],
         "level_changes": level_changes,
+        "display_version_state": display_version_state,
         "analysis_projection": assessment["analysis_projection"],
         "accepted_pack_sha256": (stage2_pack_content_fingerprint(assessment["pack"])
                                  if isinstance(assessment["pack"], dict) else None),
@@ -6398,8 +6451,12 @@ def stage2_refresh_business_reasons(assessment: dict) -> list[str]:
     return sorted(set(reasons))
 
 
-def stage2_managed_body_sha(professor_dir: Path) -> str | None:
-    """SHA-256 of the managed analysis body currently on disk, or None."""
+def stage2_managed_body_text(professor_dir: Path) -> str | None:
+    """The managed analysis body currently on disk, or None when unreadable.
+
+    A symlink or a document that is not the managed projection is never treated
+    as the certified body: callers compare against what the writer owns.
+    """
     path = Path(professor_dir) / ANALYSIS_MD
     if path.is_symlink():
         return None
@@ -6407,8 +6464,31 @@ def stage2_managed_body_sha(professor_dir: Path) -> str | None:
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
-    _header, body = split_frontmatter(content)
-    return sha256_text(body)
+    header, body = split_frontmatter(content)
+    if not isinstance(header, dict) or header.get("managed_by") != MANAGED_BY:
+        return None
+    return body
+
+
+def stage2_managed_body_sha(professor_dir: Path) -> str | None:
+    """SHA-256 of the managed analysis body currently on disk, or None."""
+    body = stage2_managed_body_text(professor_dir)
+    return sha256_text(body) if body is not None else None
+
+
+def stage2_visible_body(body: str) -> str:
+    """One managed body with its volatile generation stamp removed.
+
+    The renderer stamps the data-source header line with the wall clock; every
+    other byte of the body is deterministic from the pack, so two bodies that
+    differ only in that stamp carry the same visible content.
+    """
+    lines = []
+    for line in body.splitlines():
+        if " ｜ 数据来源：" in line:
+            line = "数据来源：" + line.split(" ｜ 数据来源：", 1)[1]
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def cmd_stage2_refresh_display(args) -> None:
@@ -6510,16 +6590,27 @@ def cmd_stage2_refresh_display(args) -> None:
                   message="预检之后分析来源（新增/删除/换址/级别声明）发生变化；"
                           "按正常 Stage 2 流程重新处理。未修改任何文件。")
     level_changes = assessment["level_changes"]
-    if not level_changes:
-        soft_exit("needs_refresh", "display_refresh_stale",
-                  drift=["no_display_change"],
-                  message="当前来源与已接受基线没有展示级别差异，无需刷新。未修改任何文件。")
-
     cache = pack.get("cache") if isinstance(pack.get("cache"), dict) else {}
     meta = cache.get("preflight") if isinstance(cache, dict) else None
     if not isinstance(meta, dict):
         soft_exit("needs_refresh", "legacy_pack_no_preflight",
                   message="已接受输入包没有可比较的分析来源基线；按正常 Stage 2 流程重新处理。"
+                          "未修改任何文件。")
+    # The preflight decided this refresh on a recorded level difference and/or a
+    # stale private display version; the accepted baseline must still state
+    # exactly that. An unusable version never reaches here (it is a business
+    # reason in the assessment above).
+    accepted_version_state = stage2_display_version_state(
+        meta.get("display_refresh_version"))
+    if accepted_version_state == "unusable":
+        soft_exit("needs_refresh", "display_refresh_stale",
+                  drift=["display_version_unusable"],
+                  message="已接受基线的展示版本无法比较；按正常 Stage 2 流程重新处理。"
+                          "未修改任何文件。")
+    if not level_changes and accepted_version_state != "stale":
+        soft_exit("needs_refresh", "display_refresh_stale",
+                  drift=["no_display_change"],
+                  message="当前来源与已接受基线没有展示级别或展示版本差异，无需刷新。"
                           "未修改任何文件。")
     projection_keys = assessment["projection_keys"]
     analysis_paths = assessment["projection_analysis_paths"]
@@ -6580,31 +6671,56 @@ def cmd_stage2_refresh_display(args) -> None:
                       drift=["analysis_sources_changed"],
                       message="写入前分析来源再次变化；按正常 Stage 2 流程重新处理。"
                               "未修改任何文件。")
+        meta_now = ((pack_now.get("cache") or {}).get("preflight")
+                    if isinstance(pack_now.get("cache"), dict) else None)
+        if not isinstance(meta_now, dict):
+            soft_exit("needs_refresh", "legacy_pack_no_preflight",
+                      message="写入前已接受输入包缺少可比较的分析来源基线；"
+                              "按正常 Stage 2 流程重新处理。未修改任何文件。")
+        if stage2_display_version_state(
+                meta_now.get("display_refresh_version")) == "unusable":
+            soft_exit("needs_refresh", "display_refresh_stale",
+                      drift=["display_version_unusable"],
+                      message="写入前已接受基线的展示版本无法比较；"
+                              "按正常 Stage 2 流程重新处理。未修改任何文件。")
 
         papers, levels = stage2_refresh_levels(pack_now, current_now)
         updated = dict(pack_now)
         updated["papers"] = papers
         updated["cache"] = dict(pack_now.get("cache") or {})
         updated["cache"]["preflight"] = {
-            **meta, "analysis_projection": current_now,
+            **meta_now, "analysis_projection": current_now,
             "display_refresh_version": STAGE2_DISPLAY_REFRESH_VERSION}
-        # The renderer owns the comparison: only a change of what the managed
-        # Markdown really shows (the formal members' aggregate counts and the
-        # cited references) repaints the body. A reference-only paper's level,
-        # or a member-level swap that leaves the aggregate identical, advances
-        # the display projection while the certified body and its rounds stay.
-        display_changed = stage2_render_state(updated) != stage2_render_state(pack_now)
-        if display_changed:
-            ctx = Stage2PackRefineContext(professor_dir)
-            if stage2_pack_content_fingerprint(ctx.pack)                     != stage2_pack_content_fingerprint(pack_now):
-                soft_exit("needs_refresh", "display_refresh_stale",
-                          drift=["accepted_pack_changed"],
-                          message="写入前已接受输入包再次变化；按正常 Stage 2 流程重新处理。"
-                                  "未修改任何文件。")
-            ctx.pack = updated
-            state_fingerprint = stage2_pack_state_fingerprint(updated)
-            body = render_analysis_md(ctx, updated, state_fingerprint)
-            md_result = managed_write(md_path, body, state_fingerprint,
+        ctx = Stage2PackRefineContext(professor_dir)
+        if stage2_pack_content_fingerprint(ctx.pack) \
+                != stage2_pack_content_fingerprint(pack_now):
+            soft_exit("needs_refresh", "display_refresh_stale",
+                      drift=["accepted_pack_changed"],
+                      message="写入前已接受输入包再次变化；按正常 Stage 2 流程重新处理。"
+                              "未修改任何文件。")
+        ctx.pack = updated
+        state_fingerprint = stage2_pack_state_fingerprint(updated)
+        # The renderer owns the comparison: the CANDIDATE body is really
+        # generated from the persisted trusted metadata and compared with the
+        # managed body on disk, ignoring only the generation stamp. A stale
+        # display version must never skip this comparison, and a candidate whose
+        # references lack trusted metadata refuses the display-only write
+        # instead of guessing a title or re-parsing the old Markdown.
+        try:
+            with professor_business_channel():
+                candidate_body = render_analysis_md(ctx, updated, state_fingerprint)
+        except ProfessorBusinessFailure as failure:
+            soft_exit("needs_refresh", "display_refresh_stale",
+                      drift=["display_refresh_candidate_invalid"],
+                      reason_codes=[failure.payload.get("reason_code")
+                                    or "display_refresh_candidate_invalid"],
+                      message="当前渲染器无法用已持久化的可信元数据生成候选正文；"
+                              "按正常 Stage 2 流程重新处理。未修改任何文件。")
+        current_body = stage2_managed_body_text(professor_dir)
+        body_changed = current_body is None or \
+            stage2_visible_body(candidate_body) != stage2_visible_body(current_body)
+        if body_changed:
+            md_result = managed_write(md_path, candidate_body, state_fingerprint,
                                       (old_render.get(ANALYSIS_MD) or {}).get("sha256"),
                                       decision)
             if md_result.get("needs_decision"):
@@ -6622,9 +6738,12 @@ def cmd_stage2_refresh_display(args) -> None:
             updated.pop("validator", None)
             md_sha256 = md_result["sha256"]
         else:
-            # Nothing the managed Markdown shows changed: keep the certified body
-            # byte-identical, refuse a hand-edited one, and only advance the
-            # display projection, keeping the recorded rounds intact.
+            # The candidate is equivalent to the managed body (only the
+            # generation stamp differs): keep the certified body byte-identical,
+            # refuse a hand-edited one, and only advance the display projection
+            # and its version, keeping the recorded rounds intact. A validator
+            # that does not already bind this accepted pack and body cannot be
+            # revived by the version update.
             certified = (old_render.get(ANALYSIS_MD) or {}).get("sha256")
             if stage2_managed_body_sha(professor_dir) != certified:
                 soft_exit("needs_decision", "manual_markdown_changed",
@@ -6632,7 +6751,10 @@ def cmd_stage2_refresh_display(args) -> None:
                           options=["overwrite（覆盖为状态版本）",
                                    "keep_manual（保留手改，不作为流程输入）"])
             validator = updated.get("validator")
-            if isinstance(validator, dict):
+            if isinstance(validator, dict) \
+                    and validator.get("pack_sha256") \
+                    == stage2_pack_content_fingerprint(pack_now) \
+                    and validator.get("render_sha256") == certified:
                 carried = dict(validator)
                 carried["pack_sha256"] = stage2_pack_content_fingerprint(updated)
                 updated["validator"] = carried
@@ -6641,7 +6763,8 @@ def cmd_stage2_refresh_display(args) -> None:
     emit({"status": "ok", "professor": pack.get("professor"),
           "display_refreshed": True, "pack_path": str(professor_dir / INPUT_PACK),
           "analysis_md": str(md_path), "md_sha256": md_sha256,
-          "display_changed": display_changed,
+          "display_changed": body_changed,
+          "display_version_state": accepted_version_state,
           "level_changes": sorted(level_changes), "levels": levels,
           "reason_codes": []})
 
