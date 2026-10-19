@@ -11,7 +11,7 @@
 - Target repository revision: `779fb692ed5ded163ab0eb5b415aef698135f54e`（分支 `refactor/shared-error-and-commit`，已含批次二、批次三与边界一）。
 - Implementation sequencing prerequisite: PR #97、#98、#99 尚未合并；本批堆叠在 #99 之上，合并顺序 #97 → #98 → #99 → 本批。上游 PR 改写时按受影响范围重放。
 - Relevant upstream/runtime revision: N/A；不涉及外部仓库、CLI、安装布局或代理入口。
-- Proposed review status: pending。
+- Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`，P1–P4 全 PASS；独立计划审核于 2026-10-18/19 给出）。
 - 唯一规范来源：本文件。本文件只定义实施方案，不声明计划审核、测试审核或合并关口已经通过。
 
 ## 正式需求与范围
@@ -128,4 +128,4 @@
 
 ## 审核状态
 
-计划第 3 版为当前唯一计划。第 1 版结论 `NEEDS_MODIFICATION`（P1 两条、P2 一条、P4 一条）已按第 2 版修正并取得 `APPROVED`；第 3 版只按该轮的两条非阻断措辞把“六个函数”改为“七个”、“别名”改为“13 个别名 + 1 个同签名包装”，未改设计。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
+计划第 3 版为当前唯一计划，结论 **`Plan conclusion: APPROVED`**（P1–P4 全 PASS；独立计划审核于 2026-10-19 给出）。第 1 版结论 `NEEDS_MODIFICATION`（P1 两条、P2 一条、P4 一条）已按第 2 版修正并取得 `APPROVED`；第 3 版只按该轮的两条非阻断措辞把“六个函数”改为“七个”、“别名”改为“13 个别名 + 1 个同签名包装”，未改设计。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
