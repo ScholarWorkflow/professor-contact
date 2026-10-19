@@ -8,8 +8,8 @@
 
   即：不再等待 PR #92，以当前 `main` 为基线拆分 Stage 2；每个批次独立提交 PR，按执行计划、测试计划与正式审核推进；运行行为不变。
 - Requirement revision: 第 1 版（2026-10-20 的 Stage 2 划分指示；延续 2026-10-18 三批 Stage 重构要求中的“抽组不改行为、保留旧接口、不顺便改格式”原则）。
-- Canonical Plan revision: 第 2 版（第 1 版经 2026-10-20 计划审核批准；第 2 版只并入该轮非阻断建议，语义未变）。
-- Target repository revision: `b5621db5cb136de11d64296fb9a4d0b43e2ed9a6`（`main`，PR #102 合并后；runner 11894 行）。本批工作分支 `refactor-stage2-split` 从该提交拉出。
+- Canonical Plan revision: 第 3 版（第 1 版经 2026-10-20 计划审核批准；第 2 版并入该轮非阻断建议，语义未变；第 3 版只更新基线指针并补记独立实现审核发现的兼容面限制，不改方案）。
+- Target repository revision: `d5a4f751fb80de4819d4a1de3ee829db52cea6fc`（当前 `main`）。本批实施基于 `b5621db`（PR #102 合并后，runner 11894 行）拉出的 `refactor-stage2-split`；合并前 main 前进到 `d5a4f75`（#103 测试分组、#104 Stage-2 范围契约），`git diff b5621db..d5a4f75` 未改动 `contact_state.py` 与本批任何代码，故实现按同一内容重放到新基线，行为等价证据不变。
 - Relevant upstream/runtime revision: N/A；不涉及外部仓库、代理入口、安装布局或 CLI 变化。
 - Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`；独立计划审核于 2026-10-20 给出，P1–P4 全 PASS，无 blocker，五条非阻断建议已并入第 2 版；Review record 见本文件末节）。
 - 唯一规范来源：本文件。本文件只定义实施方案，不声明计划审核、测试审核或合并关口已经通过。
@@ -164,6 +164,8 @@ Stage 2 是 runner 里剩余最大的一块：52 个名字含 `stage2` 的函数
   1. 仓库外若有人按“scripts 目录文件清单”做打包或审计，会多看到一个内部模块；这与已合并的 `_stage3_render.py` 等五个内部模块同一性质，不改变入口契约，不阻塞本批。
   2. 27 个函数对象的 `__module__` 变为 `_stage2_preflight`、`__qualname__` 变为 `build.<locals>.<name>`；仓内没有消费者依赖这两个属性（无 `inspect`／`__qualname__` 检索命中），调用、签名与行为不受影响。
   3. 第 6 批搬 `Stage2Context` 时必须同步更新本批工厂的注入点（否则闭包仍持有旧的类对象）；这是排序依赖，写入第 6 批计划即可，不影响本批。
+  4. 27 个函数现在是 `build()` 的嵌套函数：`pickle` 按引用序列化会失败（仓内无消费者）；`typing.get_type_hints` / `inspect.signature(eval_str=True)` 无法在模块全局解析字符串注解 `Stage2Context`（仓内无消费者；本批不采用“加载后给模块属性赋值”的补丁，因为那正是本计划拒绝的隐式全局状态）。若后续需要这两类内省，应在第 6 批把 `Stage2Context` 移出 runner 时一并设计，而不是回填模块属性。
+  5. 27 个函数之间的互调走闭包单元，不是 runner 全局查找，因此 `mock.patch` 这 27 个 runner 别名不会影响它们内部互调；仓内测试没有这种 patch。后续批次若需要替换行为，应通过工厂注入点或重建绑定，不要 patch 别名。
 
 ## 关键安全条件与反例
 
@@ -198,11 +200,12 @@ Stage 2 是 runner 里剩余最大的一块：52 个名字含 `stage2` 的函数
 4. **本地测试工程师**：执行测试计划，结果写入 `plan/stage2-split/test-execution-<date>.md`。
 5. **实现符合性审核**（M2）与 **合并审核**（M3）按 `Merge Reviewer Rule.md` 另做。
 
-## 记录（待补）
+## 记录
 
-- 计划审核意见与结论：待补。
-- 测试记录：`plan/stage2-split/test-execution-<date>.md`。
-- AST／常量／调用点对比的临时证据：放仓库外 `/tmp`，记录里写明路径与摘要。
+- 计划审核：`Plan conclusion: APPROVED`（2026-10-20，P1–P4 全 PASS，无 blocker；五条非阻断建议已并入第 2 版）。
+- 测试计划：`plan/stage2-split/test-plan.md` 第 3 版（第一关 PASS、第二关 PASS）。
+- 测试执行：`plan/stage2-split/test-execution-2026-10-20.md`。
+- AST／常量／调用点对比的临时证据：`/tmp/pc-stage2-p1/`（对比脚本、A/B 输出、套件日志），执行记录里写明路径与摘要。
 
 ## 修订记录
 
@@ -212,5 +215,6 @@ Stage 2 是 runner 里剩余最大的一块：52 个名字含 `stage2` 的函数
 ## 审核状态
 
 - 计划审核：`Plan conclusion: APPROVED`（2026-10-20，独立计划审核代理；P1–P4 全 PASS，`Gate review completeness: COMPLETE`，`Required modifications: N/A`，五条非阻断建议已并入第 2 版）。
-- 审核结论覆盖：requirement 第 1 版、Plan 第 1 版、目标 revision `b5621db`。第 2 版只并入非阻断措辞与影响补记，未改变 owner、机制、change point、契约或范围，按 `Plan Reviewer Rule.md` 6.3/6.4 复用同一 PASS。
-- 测试计划与执行：见 `plan/stage2-split/test-plan.md` 与 `test-execution-<日期>.md`（待写）。
+- 审核结论覆盖：requirement 第 1 版、Plan 第 1 版、目标 revision `b5621db`。第 2 版只并入非阻断措辞与影响补记，第 3 版只更新基线指针并补记独立实现审核的兼容面限制（`pickle`、`get_type_hints`、`mock.patch` 别名），均未改变 owner、机制、change point、契约或范围，按 `Plan Reviewer Rule.md` 6.3/6.4 复用同一 PASS。
+- 测试计划与执行：见 `plan/stage2-split/test-plan.md` 与 `plan/stage2-split/test-execution-2026-10-20.md`。
+- 第 3 版：基线从 `b5621db` 更新到当前 `main` `d5a4f75`（`contact_state.py` 未变，按同一内容重放）；补记独立实现审核确认的兼容面限制（`pickle` 按引用失败、`typing.get_type_hints` 无法解析 `Stage2Context` 字符串注解、`mock.patch` runner 别名不影响闭包互调），并清理“记录（待补）”。不改方案与范围。
