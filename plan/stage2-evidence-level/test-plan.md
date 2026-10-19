@@ -1,18 +1,18 @@
 # Stage 2 固定证据与分析级别测试计划
 
-- 测试计划版本：`contact-evidence-level-t45`；对应当前唯一执行计划 `contact-evidence-level-r10`（两份候选均待正式审核）。本次仅对齐 t44 已列的两条 T4 正式路径：把旧正文夹具明确设为先前误标的私有展示版本 `2`，修复后的当前目标为 `3`；分别检查来源未变时的懒刷新及来源保护变化后的普通 `process → stage2-finalize`，均须实际确认正文后才能登记新版本。计划修订初核基线为 `967d80fb267abc38f3bc4093309aa72075ac3d2b`；发布前复核最新 head `7f69a9635ed4e840dcba4ce767723fde5a3dd002`，产品及测试代码未变，并保留新增的第二次变基历史记录；当前产品目标仍为 `2`，本轮没有产品或测试代码修改、没有运行测试，两条选择器仍待准备。既有产品 `675f020`／测试 `d0e847b`（变基前产品 `5582dfa`／测试 `2420643`）的 25 个不同选择器通过记录，按原受测版本与实际影响复用，不自动作废，也不外推为 r10 已通过。
+- 测试计划版本：`contact-evidence-level-t46`；对应当前唯一执行计划 `contact-evidence-level-r11`（候选待正式审核）。基线 `85064cf1214dc0582ede3cabf9c339c6a3062a1a`。本版纠正 r10/t45 的整文件冻结表述：等价时保留 body 原字节和真实 SHA，必要时同步现有机器头；业务依据变化仍使旧认证失效。保留 t45 两条误标版本 `2` 的恢复路径、修复目标 `3`，并在已有生命周期选择器内补一个“新业务依据、等价正文”的独立输入，以检查新报告能针对新包/机器头正式登记。当前产品目标仍为 `2`；这是待实施方案缺陷的防回归计划，不宣称当前产品已发生该失败。本轮仅改两份计划，没有产品/测试代码修改或测试执行。既有产品 `675f020`／测试 `d0e847b`（变基前产品 `5582dfa`／测试 `2420643`）的 25 个不同选择器通过记录，按原受测版本与实际影响复用，不自动作废，也不外推为 r11 通过。
 - 需求版本：2026-10-17 确认的 U1/U5，2026-10-18 用户授权更新两份计划；原产品基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`，七项源码基线 `e1e8e48a0f4bee8e5d22acd61813dccd53ac9632`（r5 / t37），历史 r7 / t39 计划修订基线 `71b2e909392c3f9ed55f9f332e9df0b54c6a476c`（该轮产品未变）。
 - t43 已完成状态（历史记录）：t41 的 4 处既有方法修订与 7 个新增方法已写入[测试代码](https://github.com/ScholarWorkflow/professor-contact/blob/dfaf49b/.apm/skills/professor-contact/tests/test_stage2_evidence_level.py)（提交 `499d192`、`7bffe9f`），t42 澄清两处来源检查并补齐跨年分支的时点断言消息（本地测试工程师提交 `dfaf49b`，只改该方法的 `point` 标记与断言消息，未改判断条件）；产品随后按 r7 七项落地（`d4074da`，实现符合性审核处置 `e5bd16d`、`c026e04`、`e7d9358`，合并审核三处修正 `773ed41`）。第二关已核对 t42 时点消息与 t43 新选择器的直接受影响接线；第三关已在 `e7d9358` 执行，并按合并审核三处修正、执行计划第 8 版展示版本分流与 t43 新增选择器的影响，分别在 `773ed41`、`5582dfa`（同配方）与 `2420643`（§3.2 单选择器）上执行，逐项结果与日志见 §5 的 t42 第三关记录、合并审核处置记录、第 8 版实施记录与 t43 执行记录。T1—T4 已确认清单不因文档版本变化失效；受影响步骤及修复后结果已有定向复核；未受影响的旧 PASS 按原适用范围复用。t37 的 17/17 及全仓记录只适用于其记载版本。最新[正式合并复审](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6250097095)针对 `e1e8e48` 为 NOT_READY，公开列三项；本轮七项来自用户材料，未宣称七项均来自该审核。入口对齐已完成（§10），七项产品修复已实施；PR 保持草稿，本计划不是合并批准。测试准备不能代替执行结果，不能预先把未执行方法记为通过或业务失败。
 - 历史修订记录：t32 按用户授权删除错误提示字符串限制和重复的禁止区域用例（当前 13 个新增用例、17 个执行选择器；此前运行结果只对应旧版本）；t26 定向修正 T2 的修复后重新校验，以及 T4 写前来源变动与人工改动互相干扰的问题；t27 按第二关复核（对照 `0d5606b`）修正 t26 引入的 T4 展示刷新计数断言与 T1 候选引用断言；t28 按其后定向复核（IR-32—IR-34）把前置候选证明绑定到被测缺口、去掉被蕴含的重复断言、并把运行记录改为只声明实际执行到的范围；t29 修正 t28 引入的 `gap_id` 未绑定读取与两处记录指向；t30 按其后定向复核（IR-37—IR-39）改准运行记录的版本指向、删掉被守卫蕴含的重复断言；t31 按第八、九轮复核（IR-37 残留、IR-38 残留、IR-40(a)(b)、IR-41）再改准运行的版本指向，把固定卡比较改为「夹具守卫 + 与渲染前快照比较」、恢复 refine-finalize 的 pack 字节守卫，并删除与辅助函数重复的断言；t33 按第二关意见把「旧包缺可比较基线」用例改为断言顶层 `legacy_pack_no_preflight` 与方向级无 `validator_not_accepted`；t34 把状态行与 §5 的「最新记录」绑定到测试提交 `0fe84ab` 并在该提交上重跑同一组 17 个选择器；t35 在第三关正式执行中修订 T1 译文断言、T1 `gap_notes` 比较形状与 T2 freshness 夹具（见修订记录）。t35 第三关已于产品与测试版本 `8f31296` 正式执行：§3 的 17 个选择器全部通过（`Ran 17 tests`、`OK`，结果目录 `/tmp/contact-evidence-level.OnXaAyhx/recipe.txt`，逐项结论见 §5）；执行中 T1、T2 曾因测试步骤本身不成立被本地执行工程师按 Test Engineer Rule §5 停止并交接，t35 修订后完整复跑通过。§5 的 6 通过 / 11 业务失败只对应测试提交 `0fe84ab`（实现前），不代表当前版本；审核处置仅适用于各自记录版本（§6、§7）。t36 只补充 T1 禁锚区完成论文引用缺可信题名的独立夹具，不新增选择器；该新分支已由本地执行工程师按第 36 版定向审核指定的最小范围执行并通过（`Ran 1 test`、`OK`，退出码 0，日志 `/tmp/contact-evidence-level.Gic8ynUG/recipe-t36.txt`，见 §5），其余 16 个未受影响选择器直接复用 t35 的通过结果。；t37 按合并复审阻断项 1 与执行计划 r5 §3.2／§3.3.5 修订 T4 展示刷新用例的旧认证断言（改为断言旧认证正式失效、新正文可重新登记第一轮），范围与选择器数量不变。
 - [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；附录/步骤不追加清单外检查。
 
-## t45 当前修订及交接（2026-10-19，候选待受影响关口审核）
+## t46 当前修订及交接（2026-10-19，候选待受影响关口审核）
 
-- **来源与目的**：依据用户本轮授权同步测试计划，按[执行计划 r10](implementation-plan.md) §3.3.3—7／§4.9 对齐当前目标 `3` 与已误标 `2` 的旧包恢复。U1/U5 和第一关 T1—T4 不增加业务目标；t44 已列的两个方法名和正式入口保留，仅调整旧包输入与预期，不新增版本×入口×状态矩阵。
-- **两条路径**：第一份旧包含固定证据分隔符 ` ｜ 数据来源：`、正文仍为裸论文编号而版本已记 `2`；来源与 level 均未变，预检必须因展示过时进入刷新，实际正文变化不能被截前缀掩盖。第二份独立旧包同样误标 `2`，仅分析文件修改时间变化使预检进入 `process`；无新模型任务的普通 finalize 仍须生成当前候选、升级真实正文后才登记 `3`。两条路径不与来源删除、跨年、手改或模型运行作组合。
-- **共享接受与兼容**：两入口均按 r10 实际渲染确定性候选并比较正文，只有 renderer 固定顶部生成标题的时间戳可忽略，其余正文保留。下文等价场景的“不重绘”指不重写在盘正文，不是跳过确定性候选生成。等价正文保持原字节及合法校验轮次，无效旧绑定不得靠重绑恢复通过；正常 narrative refine 仍为第一轮修订后进入第二轮。已有等价／绑定／生命周期覆盖按 §2.1 与 §3.3 的实际影响复用，不新增 helper 名称或内部框架断言。
-- **当前关口**：第一关 T1—T4 已确认范围继续有效；本版设计与第二关受影响步骤、实际接线待审核。两条选择器在当前测试代码中尚不存在，第三关均未执行；不能把计划候选或 t43 旧 PASS 写成 r10/t45 新结果。
-- **准备与执行负责人**：测试计划审核者先审本候选；本地测试工程师在既有 `test_stage2_evidence_level.py` 中复用隔离夹具与正式入口落实两方法，不新增采集器、模拟业务返回或判定框架。产品 owner 按 r10 修复；第二关核实际接线及直接受影响的旧结果适用性后，执行工程师按 §3.3 定向执行并在 §5 记录，未受影响结果直接复用。
+- **来源与目的**：依据用户“修改这两个计划”的授权，对齐[执行计划 r11](implementation-plan.md) §3.3.7。U1/U5 和第一关 T1—T4 不增加业务目标；原 t45 两条 T4 正式恢复路径与旧 `2` → 当前目标 `3` 保留。
+- **原两条路径**：固定证据含 ` ｜ 数据来源：`、正文仍为裸编号且误标 `2`，来源/level 未变时由懒刷新更新；独立旧包仅分析文件修改时间变化进入 `process`、无新模型任务，由普通 finalize 实际更新正文后才登记 `3`。两者都改变 body，无法发现 r10 新引入的“body 等价却冻结旧机器头”方案错误。
+- **最小补充输入**：在既有 `test_business_rerender_and_bounded_correction_lifecycle` 内复用隔离夹具，只改论文摘要文本、提供相同语义的合成业务输出，使方向输入/包状态变而确定性正文等价。正式 finalize 后保留 body/真实 SHA、同步当前机器头、失效旧认证，新报告能够正式登记并随后复用。无新增选择器或入口×版本矩阵；此输入在 §1、§2.1、§3.3 明列，不作为附录加测。
+- **共享接受与兼容**：两入口仍实际渲染候选。body 比较只忽略固定顶部生成时间；等价接受保留旧 body 原字节（含旧时间）及真实 SHA。机器头已匹配当前包则文件不写，确需变化时只在旧状态/归属/正文保护通过后同步既有头。业务依据是否变化、旧认证是否合法分别判断；仅元数据变化且业务依据未变时保留合法 round/phase/pending 及必要包绑定，无效旧记录不得重绑洗白。正常 narrative refine 仍为一次修订后第二轮。
+- **当前关口与负责人**：第一关 T1—T4 已确认范围继续有效；本版设计、第二关受影响步骤/接线待审核。两条原新方法尚未实现，现有生命周期方法的新独立输入及等价观察调整也未准备，第三关未执行。计划审核后，由本地测试工程师复用既有两模块落实，产品 owner 按 r11 修复，执行工程师按 §3.3 定向执行；未受影响旧结果直接引用，不以候选自授 PASS。
 
 ## t43 既有审核与结果（2026-10-19，历史有效范围）
 
@@ -68,13 +68,13 @@ t39 已明确来源声明、固定候选位置、观测状态和实际可用/接
 | T1 | 同一既有夹具覆盖固定卡 evidence/completed_part/remaining_gap 及禁锚区 evidence 中已知编号，其中待查证缺口带非空 `candidate_paper_ids`，可信标题/链接已在当前材料（含已有正确链接、正式引用裸 key 与普通日期/数字的兼容边界，按本轮证据适用性段处理）；在固定卡引用和禁锚区完成论文引用中分别构造缺可信题名的独立场景 | 正式 finalize 输出可信题名/链接，已有正确链接不重复转换、普通非引用文字保留；上述机器字段/候选编号与事实不变，其他说明原意、作者 quote/translation、用户笔记不变；缺题名明确失败且不生成伪引用 | 既有 runner CLI 测试夹具，检查 Markdown 与 pack 必要字段 |
 | T2 | 当前受管正文上的固定区 blocking 与混合固定/叙事 blocking 原始报告；复用现有用户笔记/论文一览禁止区域报告 | 合法固定区第一轮失败确实登记；禁止区域报告继续拒绝且无 correction jobs；原始报告不改、非通过；refine-plan 无 jobs、明确交源/生成器处理，refine-finalize 不写；同内容重试不能清轮数。源/生成器修正后普通 finalize 产生新正文，旧失败不可直接放行；新正文重新提交校验且记录 PASS 后才能获得新的通过状态，旧原始报告不变 | 既有 Stage2ValidationHandoffTests 的报告/正文夹具和 record/refine/finalize CLI |
 | T3 | 纯 narrative 第一次失败→现有合法修订→第二次仍失败（可用第二轮新固定卡阻挡覆盖其归属）；及已绑定报告对应的正文/pack被改 | 纯文字修订仍可完成且第二次终态不继续第三轮；不允许用过期报告改事实或覆盖手改文件 | 复用该模块已有 second_blocking_round_is_terminal、stale_render、changed_input_pack 对应测试；只调整受新登记分类影响的断言 |
-| T4 | 复用同一方向的 fulltext、abstract（有分析文件）、未确认（存在旧分析文件，但没有成功分析索引记录，也没有有效级别）及 OCR-only fulltext/facts unavailable 夹具，并将 §2 已有缺 analysis_level 兼容样例归入本项（有分析文件/PDF 仍为未确认，不复制样例）；有完整接受基线且 /tmp facts 已不存在，原正文已有有效绑定 validator PASS，仅 level/render 变更由正式 preflight→展示刷新，同一场景复用 T1 已知引用及正式 pack 中可信题名/链接；另以两份独立的旧接受包检查分析级别、业务来源不变但展示版本缺失或过时：一份旧正文仍含待替换的内部论文编号，一份正文已经符合现行展示；复用现有隔离夹具分别检查分析来源新增、删除、换址（含原缺分析路径出现、facts sidecar 保持缺失）及人工修改正文；来源新增只修改新论文的记录/文件，已有论文的分析级别与来源保持预检时状态；删除与人工修改使用互不影响的独立临时目录，并保留旧缺基线情形；t45 沿用 t44 两条路径，把固定证据含 ` ｜ 数据来源：` 的旧包及独立普通处理旧包均设为已误标的版本 `2`：前者来源未变进入懒刷新，后者分析载体仅修改时间后进入正常 `process`、没有新模型任务 | 三类计数/规范包一致，无成功分析索引记录即使残留分析文件、旧记录缺 analysis_level 即使有分析文件/PDF，均归未确认；同一 pack-only 刷新输出的固定卡 evidence/completed_part/remaining_gap 与禁锚区 evidence 均显示可信题名/链接，原始机器字段及候选编号不变；纯展示刷新使正文实质变化后，旧 validator PASS 不再被接受，不运行模型校验；等价重写仍不清轮数。对于旧展示版本，即使分析级别未变也不能直接 reuse_all：正文变化时替换为可信题名/链接并使旧 PASS 失效；正文等价时不改写受管正文，保留原本有效的校验及轮次；刷新后同一输入不能再次因旧展示版本进入刷新。预检后来源变动或受管正文被人工修改时，展示刷新必须分别拒绝写入、保持输入包和正文原样；纯展示后再预检不因过期包完整性摘要误 process，保留 assignment/模型指纹、不重签 proof、不额外生成分析/归属/时效任务；新增/删除/替换、无法比较的旧基线走原 process，不能误当 display-only；复用已有写前漂移/手改保护检查，不写不确定结果；正文比较不得截去固定证据同名分隔符前的内容；普通 finalize 与展示刷新均须实际渲染候选、确认真实正文后才登记当前目标 `3`；展示状态相等、无新模型任务或旧包已记 `2` 都不能替代正文接受。有真实正文变化时旧校验失效，完成新校验后才能复用；正文等价且校验依据未变时保留原字节及原本合法的轮次，不能用重绑挽救无效旧认证，正常 narrative refine 不重开第一轮 | 既有 BaseEnv/preflight/pack-only 渲染及 guard 夹具，检查分流原因、pack/Markdown及任务记录；只覆盖这些直接反例，不交叉穷举，不跑真实模型 |
+| T4 | 复用同一方向的 fulltext、abstract（有分析文件）、未确认（存在旧分析文件，但没有成功分析索引记录，也没有有效级别）及 OCR-only fulltext/facts unavailable 夹具，并将 §2 已有缺 analysis_level 兼容样例归入本项（有分析文件/PDF 仍为未确认，不复制样例）；有完整接受基线且 /tmp facts 已不存在，原正文已有有效绑定 validator PASS，仅 level/render 变更由正式 preflight→展示刷新，同一场景复用 T1 已知引用及正式 pack 中可信题名/链接；另以两份独立的旧接受包检查分析级别、业务来源不变但展示版本缺失或过时：一份旧正文仍含待替换的内部论文编号，一份正文已经符合现行展示；复用现有隔离夹具分别检查分析来源新增、删除、换址（含原缺分析路径出现、facts sidecar 保持缺失）及人工修改正文；来源新增只修改新论文的记录/文件，已有论文的分析级别与来源保持预检时状态；删除与人工修改使用互不影响的独立临时目录，并保留旧缺基线情形；t46 保留 t45/t44 两条路径，把固定证据含 ` ｜ 数据来源：` 的旧包及独立普通处理旧包均设为已误标的版本 `2`：前者来源未变进入懒刷新，后者分析载体仅修改时间后进入正常 `process`、没有新模型任务；另在既有生命周期选择器内，用一份独立输入只改论文摘要文本且保留相同合成输出，形成新业务依据但等价 body | 三类计数/规范包一致，无成功分析索引记录即使残留分析文件、旧记录缺 analysis_level 即使有分析文件/PDF，均归未确认；同一 pack-only 刷新输出的固定卡 evidence/completed_part/remaining_gap 与禁锚区 evidence 均显示可信题名/链接，原始机器字段及候选编号不变；纯展示刷新使正文实质变化后，旧 validator PASS 不再被接受，不运行模型校验；等价重写仍不清轮数。对于旧展示版本，即使分析级别未变也不能直接 reuse_all：正文变化时替换为可信题名/链接并使旧 PASS 失效；正文等价且业务依据未变时保留 body 原字节/真实 SHA 及合法校验轮次，机器头必要时受保护同步；刷新后同一输入不能再次因旧展示版本进入刷新。预检后来源变动或受管正文被人工修改时，展示刷新必须分别拒绝写入、保持输入包和正文原样；纯展示后再预检不因过期包完整性摘要误 process，保留 assignment/模型指纹、不重签 proof、不额外生成分析/归属/时效任务；新增/删除/替换、无法比较的旧基线走原 process，不能误当 display-only；复用已有写前漂移/手改保护检查，不写不确定结果；正文比较不得截去固定证据同名分隔符前的内容；普通 finalize 与展示刷新均须实际渲染候选、确认真实正文后才登记当前目标 `3`；展示状态相等、无新模型任务或旧包已记 `2` 都不能替代正文接受。有真实正文变化时旧校验失效，完成新校验后才能复用；正文等价时保留 body 原字节（含旧生成时间）及真实 SHA，按需同步当前包机器头；业务依据未变才可保留原本合法的轮次，新业务依据即使 body 相同也须失效旧认证，新报告须可正式登记，随后同输入可 reuse_all；不能用重绑挽救无效旧认证，正常 narrative refine 不重开第一轮 | 既有 BaseEnv/preflight/pack-only 渲染及 guard 夹具，检查分流原因、pack/Markdown及任务记录；只覆盖这些直接反例，不交叉穷举，不跑真实模型 |
 
 T1—T4 是上限；本轮七项的直接行为边界及已有证据适用性（含 t39 来源解释纠正及 t40 具体步骤）按上文归并，不增加业务目标。无需真实 Zotero、下载/PDF分析重跑、Nix/APM重装、全教授流程或完整测试模块回归；本次未改安装和模型业务。报告中“四位教授”与“10+1”是缺陷背景，不能强制采集私人材料或追加四次模型验收。
 
 ## 2. 测试资产与选择器对照
 
-测试代码全部放在 `.apm/skills/professor-contact/tests/test_stage2_evidence_level.py`，只复用 `test_contact_state.py` 的 `BaseEnv`、`run_cli`、`run_bound_stage2_plan`、`run_bound_stage2_finalize`、`stage2_style_validation_report` 和既有合成夹具，不新建判定框架、不改产品代码；t40 的指定修订与新方法已于 t41 写入测试代码（提交 `499d192`、`7bffe9f`），t42 的时点断言消息已写入测试提交 `dfaf49b`。新用例类另复用 `test_stage2_resolved_direction.py` 的 `Stage2FinalizeWithResolvedTests` 临时教授目录 setUp/tearDown，不复制夹具、不继承其用例。
+原新增用例放在 `.apm/skills/professor-contact/tests/test_stage2_evidence_level.py`；t46 的单一新业务/等价 body 输入复用已有 `test_stage2_style_validation_handoff.py` 的生命周期方法，不新建模块。原资产只复用 `test_contact_state.py` 的 `BaseEnv`、`run_cli`、`run_bound_stage2_plan`、`run_bound_stage2_finalize`、`stage2_style_validation_report` 和既有合成夹具，不新建判定框架、不改产品代码；t40 的指定修订与新方法已于 t41 写入测试代码（提交 `499d192`、`7bffe9f`），t42 的时点断言消息已写入测试提交 `dfaf49b`。新用例类另复用 `test_stage2_resolved_direction.py` 的 `Stage2FinalizeWithResolvedTests` 临时教授目录 setUp/tearDown，不复制夹具、不继承其用例。
 
 | 项 | 选择器 | 该用例断言的计划行为 |
 |---|---|---|
@@ -105,8 +105,9 @@ T1—T4 是上限；本轮七项的直接行为边界及已有证据适用性（
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_bad_candidate_record_is_not_missing_record` | 索引记录非对象按不可比较处理走原 process，不当作无记录复用（t41 落实） |
 | T4 | `test_stage2_evidence_level.AnalysisLevelTests.test_refresh_rechecks_year_at_entry_and_inside_lease` | 刷新入口与取得写入租约后分别按当前业务年份复核；跨年零写入（t41 落实） |
 
-| T4（t45 待接线） | `test_stage2_evidence_level.AnalysisLevelTests.test_legacy_refresh_preserves_fixed_evidence_prefix_with_source_marker` | 已误标版本 `2` 的固定证据 `无更晚论文实现该点（AAAA1111） ｜ 数据来源：作者论文` 与现行可信链接仅在分隔符之前不同；来源与 level 未变时预检仍须刷新，更新真实正文、保留后缀并使旧 PASS 失效，接受正文后才登记当前目标 `3`。 |
-| T4（t45 待接线） | `test_stage2_evidence_level.AnalysisLevelTests.test_ordinary_process_upgrades_legacy_display_before_marking_current` | 已认证且误标版本 `2` 的旧正文仍含裸论文编号，仅分析文件修改时间变化使预检走正常 `process`；模型结果和级别不变、无新模型任务时，普通 finalize 必须实际生成当前候选、重绘旧正文并失效旧 PASS，之后才登记目标 `3`，不能留下旧正文且预检直接复用。 |
+| T4（t46 待接线） | `test_stage2_evidence_level.AnalysisLevelTests.test_legacy_refresh_preserves_fixed_evidence_prefix_with_source_marker` | 已误标版本 `2` 的固定证据 `无更晚论文实现该点（AAAA1111） ｜ 数据来源：作者论文` 与现行可信链接仅在分隔符之前不同；来源与 level 未变时预检仍须刷新，更新真实正文、保留后缀并使旧 PASS 失效，接受正文后才登记当前目标 `3`。 |
+| T4（t46 待接线） | `test_stage2_evidence_level.AnalysisLevelTests.test_ordinary_process_upgrades_legacy_display_before_marking_current` | 已认证且误标版本 `2` 的旧正文仍含裸论文编号，仅分析文件修改时间变化使预检走正常 `process`；模型结果和级别不变、无新模型任务时，普通 finalize 必须实际生成当前候选、重绘旧正文并失效旧 PASS，之后才登记目标 `3`，不能留下旧正文且预检直接复用。 |
+| T4（t46 既有方法内输入待准备） | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` | 只改论文摘要文本，方向业务指纹/包状态变化而合成正文等价；正式 finalize 保留 body 原字节/真实 SHA、同步当前机器头并失效旧认证，新报告正式登记第一轮后同输入可 reuse_all。原合法未完成轮次及坏绑定拒绝分支继续保留；无新选择器。 |
 
 ### §1 预期与选择的覆盖关系
 
@@ -148,14 +149,14 @@ T1—T4 是上限；本轮七项的直接行为边界及已有证据适用性（
 - 拟新增 `test_stage2_evidence_level.ResolvedAnalysisLevelTests.test_added_relevant_member_keeps_current_level`。该类复用 `test_stage2_resolved_direction.ResolvedPipelineMixin` 和 `Stage2FinalizeWithResolvedTests` 的临时目录 setUp/tearDown，不再建立 resolve harness。用 `make_paper` 建两个带合法 facts sidecar 的合成论文 AAAA1111、BBBB2222，分别设 analysis_level 为 abstract、fulltext；`make_direction("DIR00001", ["AAAA1111", "BBBB2222"], provisional_keys=["AAAA1111"])` 使候选/相关集合含 BBBB2222，但原正式成员只有 AAAA1111。`write_facts` 建合法上游状态。复用 `run_resolve` 提交 refined 结果（同方向 ID，`papers_to_add=["BBBB2222"]`、`papers_to_remove=[]`、`paper_justifications={"BBBB2222":"合成全文证据支持该方向"}`，其余 name/split_target/merge_target/user_note 与既有 refined 示例一致），`accept_resolved(...,["DIR00001"])` 后 `run_stage2_finalize`。检查 BBBB2222 从非原成员成为 supporting_item_keys 的正式成员、canonical papers 的 BBBB2222.analysis_level 为 fulltext，正文统计全文 1、摘要 1、未确认 0。输入的 relevant_keys 包含 BBBB2222，故真实经过 `build_direction_pack` 的 reference-scope 分支及接受新增成员的 canonical 路径，不能手写 supporting_item_keys 代替。
 - 拟新增 `AnalysisLevelTests.test_ordinary_reuse_replaces_known_level_with_null`。`accepted_run(facts_extra=direction_papers_only("AAAA1111","BBBB2222"))` 得到合法旧包并检查 AAAA1111 为 fulltext；保存正文与旧认证。用 `update_sources` 保留全部原文件、索引路径和状态，仅将 AAAA1111 的 facts.analysis_level 与索引 level 改为 null，其他两篇仍 fulltext。直接走 `run_bound_stage2_plan`，检查该方向为 reuse、无新 narrative/freshness jobs，再用 `run_bound_stage2_finalize(...,"--results",self.root/"results")` 普通处理，不能调用 refresh_display 代替。期望 canonical AAAA1111.analysis_level 为 null、正文全文 1、摘要 0、未确认 1且与旧正文不同，旧认证失效；复用现有 write_report/record 检查新正文可从第一轮登记。此输入保持其他内容不变，能单独发现 `_current_paper_record` 沿用旧值及普通 finalize 漏掉统计变化。若 plan 未走 reuse，先修正测试准备并定向复核，不能把重建路径结果充作复用路径通过。
 
-#### T4：仅两个展示等价输入，复用原轮次与绑定观察
+#### T4：既有两个展示等价输入，按 body 与机器头分别观察
 
-源码已有 `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` L1213—1291：普通 finalize 等价重写保留 round/phase/pending、更新合法包绑定；手改正文后旧绑定拒绝且包/正文零写入。这些观察与对应历史结果按原范围复用，不要求重跑整个长方法，也不重建两轮检查。t37 展示刷新方法已覆盖聚合统计实际变化、旧认证失效及新第一轮；上面的 known→null 补普通 finalize 的实际统计变化。本轮只补以下两个等价输入，不做两个入口乘全部组合：
+源码已有 `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` L1213—1291：普通 finalize 等价重写保留 round/phase/pending、更新合法包绑定；手改正文后旧绑定拒绝且包/正文零写入。这些观察与对应历史结果按实际影响复用；t46 下述新业务/等价 body 输入复用同一方法，不拆分或重建两轮检查。t37 展示刷新方法已覆盖聚合统计实际变化、旧认证失效及新第一轮；上面的 known→null 补普通 finalize 的实际统计变化。以下两输入已于 t41 准备并有 §5 原版本结果；t46 只将等价观察明确为 body/真实 SHA 与必要机器头分别判断，不做两个入口乘全部组合：
 
-1. 拟新增 `AnalysisLevelTests.test_nonmember_level_refresh_keeps_visible_body_and_round`：用 facts_extra 明确 member_keys 为 AAAA1111/BBBB2222，relevant_keys 为 AAAA1111/BBBB2222/CCCC3333（不要用同时缩窄 relevant 的 direction_papers_only），`accepted_run` 后确认 CCCC3333 在 pack.papers/relevant_keys，且不在 supporting_item_keys。仅将 CCCC3333 fulltext→abstract（facts/索引同步，全部载体不改）；保存正文原字节、validator round/phase/results/validation_sha256/render_sha256。preflight→refresh_display 正式入口应成功更新 canonical CCCC3333 级别，正文及统计原字节不变；上述 validator 业务字段不变，pack_sha256 等于新包内容摘要，后续预检仍接受该认证。不要把整个 validator 字节相等作为要求，因为包绑定可合法变化。
-2. 拟新增 `AnalysisLevelTests.test_ordinary_member_level_swap_keeps_visible_body_and_round`：初次通过原 plan/finalize 建立仅 AAAA1111/BBBB2222 为正式成员的包，facts 和索引级别分别 fulltext/abstract，CCC 保持原状态，登记 PASS。保存正文与上一条相同的 validator 业务字段；仅交换 AAAA1111/BBBB2222 级别为 abstract/fulltext。用普通 `run_bound_stage2_plan`→`run_bound_stage2_finalize`，检查无新 narrative/freshness jobs、canonical 两个级别已交换、统计仍全文 1/摘要 1/未确认 0、正文原字节不变、认证业务字段和轮次保留且绑定合法。初次构造用 `write_analysis`/`write_future_work_sidecar`/`write_index`→`write_facts` 设置两种级别→`render_fixture`→`record`；不能先用全 fulltext 的 accepted_run 再改输入却未建立相应接受基线。
+1. 既有 `AnalysisLevelTests.test_nonmember_level_refresh_keeps_visible_body_and_round`：用 facts_extra 明确 member_keys 为 AAAA1111/BBBB2222，relevant_keys 为 AAAA1111/BBBB2222/CCCC3333（不要用同时缩窄 relevant 的 direction_papers_only），`accepted_run` 后确认 CCCC3333 在 pack.papers/relevant_keys，且不在 supporting_item_keys。仅将 CCCC3333 fulltext→abstract（facts/索引同步，全部载体不改）；保存 frontmatter 之外的 body 原字节及真实 SHA、validator round/phase/results/validation_sha256/render_sha256。preflight→refresh_display 正式入口应成功更新 canonical CCCC3333 级别，body（含原生成时间）及统计原字节、真实 SHA 不变；现有机器头与当前包状态和实际 body 绑定一致，头已正确则整个文件不写，必要时仅同步机器头；上述 validator 业务字段不变，pack_sha256 等于新包内容摘要，后续预检仍接受该认证。不要把整个 validator 字节相等作为要求，因为包绑定可合法变化。
+2. 既有 `AnalysisLevelTests.test_ordinary_member_level_swap_keeps_visible_body_and_round`：初次通过原 plan/finalize 建立仅 AAAA1111/BBBB2222 为正式成员的包，facts 和索引级别分别 fulltext/abstract，CCC 保持原状态，登记 PASS。保存 body 原字节/真实 SHA 与上一条相同的 validator 业务字段；仅交换 AAAA1111/BBBB2222 级别为 abstract/fulltext。用普通 `run_bound_stage2_plan`→`run_bound_stage2_finalize`，检查无新 narrative/freshness jobs、canonical 两个级别已交换、统计仍全文 1/摘要 1/未确认 0、body 原字节/真实 SHA 不变、机器头依上一条条件处理、认证业务字段和轮次保留且绑定合法。初次构造用 `write_analysis`/`write_future_work_sidecar`/`write_index`→`write_facts` 设置两种级别→`render_fixture`→`record`；不能先用全 fulltext 的 accepted_run 再改输入却未建立相应接受基线。
 
-现有绑定保护引用的是合法旧绑定与手改拒绝，不为每个等价输入再造手改变体。上述新输入未执行；旧生命周期记录不证明它们已通过。
+现有绑定保护引用的是合法旧绑定与手改拒绝，不为每个等价输入再造手改变体。原输入结果见 §5；t46 的 body/机器头观察调整待准备与受影响关口审核，历史 whole-file 相等只适用于当时头也未变化的输入，不外推到新业务依据。
 
 #### T4：旧展示版本、分析级别不变时的正文比较（t43 已执行）
 
@@ -166,9 +167,9 @@ T1—T4 是上限；本轮七项的直接行为边界及已有证据适用性（
 3. **正文已等价**：第二份旧包把 `display_refresh_version` 设为有效旧值 `1`，初始受管正文已经显示现行可信题名／链接，且校验合法。保持业务来源与 `analysis_level` 不变；预检仍须 `refresh_display`，正式刷新成功后受管正文原字节不变、原校验的业务字段与轮次保留且仍有效。不得因为旧版本号自动重新登记第一轮、清掉 `PASS` 或重签失效校验。
 4. **刷新后分流**：各分支完成合法刷新与必要校验后，在同一未变化输入下再做一次正式预检，确认返回 `reuse_all`，不因旧展示版本反复刷新；不以缓存里某个私有版本数字作为独立业务通过条件。若旧包绑定无法按现有合法入口准备，记测试准备未完成，不把人为夹具失配判为产品失败。只检查这两个直接受 r8 影响的结果，既有来源变化、跨年、手改和两轮上限结论按 §5 复用，不增加组合用例。
 
-#### T4：已误标版本 2 的两条既有生产路径（t45 待准备）
+#### T4：已误标版本 2 的两条既有生产路径（t46 保留，待准备）
 
-以下两方法沿用 t44 落点，对齐执行计划 r10 §3.3.3—7 的直接变化。当前测试代码尚未实现这两方法；下面是候选步骤，不是准备或执行结果。复用现有 `AnalysisLevelTests`、`EvidenceLevelEnv` 和已有 `render_fixture`、`accepted_run`、`stage2_preflight`、`write_preflight_file`、`refresh_display`、`run_bound_stage2_plan/finalize`、`write_report/record`；每方法使用独立合成教授临时目录、原受管正文与验证绑定，不用真实模型。准备旧版本时可沿用 t43 已确认的“旧正文 + 完整合法 pack/validator 绑定”构造步骤，只调整独立夹具的合法输入，不替换产品返回值或绕过任何写入保护。测试成功判据直接取正式生成的 Markdown、规范输入包、既有验证入口与预检结果；不得仅调用 `stage2_visible_body()` 比较两份加工后的字符串。
+以下两方法沿用 t44 落点，对齐执行计划 r11 §3.3.3—7 的直接变化。当前测试代码尚未实现这两方法；下面是候选步骤，不是准备或执行结果。复用现有 `AnalysisLevelTests`、`EvidenceLevelEnv` 和已有 `render_fixture`、`accepted_run`、`stage2_preflight`、`write_preflight_file`、`refresh_display`、`run_bound_stage2_plan/finalize`、`write_report/record`；每方法使用独立合成教授临时目录、原受管正文与验证绑定，不用真实模型。准备旧版本时可沿用 t43 已确认的“旧正文 + 完整合法 pack/validator 绑定”构造步骤，只调整独立夹具的合法输入，不替换产品返回值或绕过任何写入保护。测试成功判据直接取正式生成的 Markdown、规范输入包、既有验证入口与预检结果；不得仅调用 `stage2_visible_body()` 比较两份加工后的字符串。
 
 1. **已有分隔符出现在固定证据中（仅展示刷新）**。新增 `AnalysisLevelTests.test_legacy_refresh_preserves_fixed_evidence_prefix_with_source_marker`。
    - 用 `render_fixture` 的既有 evidence 参数构造机器 evidence：`无更晚论文实现该点（AAAA1111） ｜ 数据来源：作者论文`；`AAAA1111` 在可信论文映射中有题名，其他已知引用、事实、候选编号、级别和方向保持不变。通过正常入口生成并登记第一轮合法 `PASS`，先确认原机器 evidence 和当前显示的可信链接及后缀均确实存在。
@@ -182,7 +183,17 @@ T1—T4 是上限；本轮七项的直接行为边界及已有证据适用性（
 
 **结果边界与旧覆盖复用**：两方法仍是 t44 的两个 T4 正式入口输入，已误标 `2` 直接放入既有夹具，不追加缺失／1／2 × 两入口 × 各状态矩阵。测试只断言真实正文、包及验证入口的业务结果，不检查共享 helper 的名称、调用次数或内部返回表示，也不新增哈希证明。
 
-r10 的共享接受改变两入口的正文与 validator 处理，不能预先宣称相关旧 PASS 已证明新实现。正文等价及合法轮次保留使用已有 `test_legacy_display_version_refresh_compares_visible_body` 的等价分支、`test_nonmember_level_refresh_keeps_visible_body_and_round`、`test_ordinary_member_level_swap_keeps_visible_body_and_round`；未完成轮次及无效绑定不能洗成通过，沿用 `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` 的对应段落；正常 narrative refine 的一次修订→第二轮继续引用 §2 的 `NarrativeRoundBoundTests` 及既有 T3 选择器。第二关据实际产品 diff 核这些既有观察与记录是否仍适用：仍有效则直接引用；适用条件确实改变、旧记录不足以判断时，说明具体影响并只定向复验相应既有选择器，不重写长方法、不新增等价／轮次变体，不整组重跑原 25 项。两条新选择器尚未写入代码时记准备未完成，不以加载错误宣称产品失败。
+r11 的共享接受改变两入口的 body、机器头与 validator 处理，不能预先宣称相关旧 PASS 已证明新实现。正文等价及合法轮次保留使用已有 `test_legacy_display_version_refresh_compares_visible_body` 的等价分支、`test_nonmember_level_refresh_keeps_visible_body_and_round`、`test_ordinary_member_level_swap_keeps_visible_body_and_round`；未完成轮次及无效绑定不能洗成通过，沿用 `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` 的对应段落；正常 narrative refine 的一次修订→第二轮继续引用 §2 的 `NarrativeRoundBoundTests` 及既有 T3 选择器。第二关据实际产品 diff 核这些既有观察与记录是否仍适用：仍有效则直接引用；适用条件确实改变、旧记录不足以判断时，说明具体影响并只定向复验相应既有选择器，除下述明列的单一新业务/等价 body 输入外，不另造等价／轮次变体或重写长方法，不整组重跑原 25 项。两条新选择器尚未写入代码时记准备未完成，不以加载错误宣称产品失败。
+
+#### T4：新业务依据、等价 body 的单一直接输入（t46，既有生命周期选择器内待准备）
+
+**必要性及落点**：上面两条恢复输入都会改变 body；既有 level 互换/非成员 level 与元数据轮次分支又不改变业务输入指纹，均不能暴露 r10 冻结旧 state_fingerprint 的方案错误。复用 `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` 的 `_fresh_stage2_env`、`_t5_generate_pack`、`_t5_preflight`、报告登记及现有正文/绑定观察，增加这一份独立输入，不新增方法名、框架或矩阵；当前方法已有合法未完成轮次保持与手改/坏绑定拒绝，保留这些检查及原两轮流程。
+
+1. 在新的独立临时教授目录，经 `_t5_generate_pack` 形成当前合法接受包；用现有 `write_validation_issues` 和 `record_validation` 正式登记第一轮 PASS。保存旧 body 原字节、真实 SHA、机器头、方向 input_fingerprint 及原报告字节，确认旧绑定本来合法。使用 `_t5_document` 现有 body/sha 读取即可，不建立摘要证明设施。
+2. 只将既有论文 `BBBB2222` 的 **abstract 文本**改为另一段合成摘要，在当前 facts.papers 与教授 `papers.json` 同一论文记录同步这一个字段；不是改 analysis_level。保持题名、年份、成员、来源路径/文件/sidecar、级别、原始固定证据及 narrative 语义不变，不再次调用会重写 sidecar 的 `_t5_write_facts`。通过 `_t5_preflight` 取得并保存新正式预检、绑定当前 facts，确认业务输入变化进入 `process`。再用该预检正式 `stage2-plan`，允许这份新业务依据要求的正常任务；用既有 `write_stage2_results`（同方向）及 `_t5_write_narrative` 生成与原版相同语义的合成结果，经正式 `stage2-finalize --facts … --preflight-file … --results …` 接受。此处不要求零任务，不调用真实模型、不改产品返回值，也不手改候选文件头或重绑旧 validator 来取得成功。
+3. 确认方向 input_fingerprint 和包所需 state_fingerprint 确实变化；最终 body 必须与旧 body 逐字相同（包括旧生成时间），实际 body SHA 不变。现有文件头 state_fingerprint 与新包匹配，render_sha256/包缓存对应实际 body；复用 `_assert_t5_render_binding` 的既有观察即可，业务判断不取决于 helper 名称。本输入必须同步机器头，故不能要求整文件原字节相等；只有头本来正确的等价输入才应零文件写入。成功展示版本仍按 r11 在 body/机器头接受后登记目标 `3`。
+4. 旧认证必须因新业务依据失效，不能因 body 相同保留旧 PASS；原报告文件字节不改。针对当前已接受文件另生成新原始报告，经正式 `stage2-record-validation` 成功登记第一轮 PASS，不能出现旧机器头导致的 `validation_render_stale`。登记后在同一输入做正式预检应 `reuse_all`。该观察同时要求新包/机器头可被真实消费者接受，不能只比较字段后自行宣布绑定有效。
+5. 此新增输入尚未准备/执行。若准备阶段不能同时得到“业务指纹变化”与“候选正文等价”，先按测试步骤问题修订并复核，不能放宽正文比较、在 finalize 后手工补头或把未到达登记步骤算通过。现有元数据等价分支继续检查合法 round/phase/pending 与包绑定保留；现有坏绑定分支继续拒绝写入，不为本输入再造手改变体。
 
 #### T4：来源细分的最少输入与入口
 
@@ -330,9 +341,9 @@ exit "$status"
 
 同一选择器内依次记录「旧正文需改」「正文已等价」两份独立输入的实际结果；若第一份失败致第二份未运行，第二份记未执行。按已有日志报告退出码、产品及测试提交、受影响 T4 结果和输出路径；未改变的既有结果直接引用 §5 中 `773ed41` 的正式记录。正式执行结果：产品 `5582dfa`、测试 `2420643`，退出码 0、`Ran 1 test`、`OK`，日志 `/tmp/contact-evidence-level.ReYStvf4/recipe-t43.txt`；「旧正文需改／正文已等价」两份输入均通过，详见 §5。
 
-### 3.3 r10 两条既有生产路径的定向命令（t45 候选，待接线／待执行）
+### 3.3 r11 直接受影响路径的定向命令（t46 候选，待准备／待执行）
 
-本节仅在测试工程师落实 §2.1 两个方法、第二关确认可执行，并且产品修正版本明确后运行。沿用 §3 的测试目录、`python3 -m unittest -v` 与独占仓库外目录；不因文档更新重跑 §3／§3.1／§3.2 整组或全仓；§2.1 已点明的等价／绑定／轮次旧覆盖按实际产品影响复用，确需复验时从原命令中仅取对应既有选择器并说明原因。两个方法属于同一 T4 目标，预计标准测试报告 `Ran 2 tests`；执行失败须如实保留并区分测试准备问题与产品业务失败。
+本节仅在测试工程师落实 §2.1 两个新方法及既有生命周期方法内单一新输入、第二关确认可执行，并且产品修正版本明确后运行。沿用 §3 的测试目录、`python3 -m unittest -v` 与独占仓库外目录；不因文档更新重跑 §3／§3.1／§3.2 整组或全仓；§2.1 已点明的等价／绑定／轮次旧覆盖按实际产品影响复用，确需复验时从原命令中仅取对应既有选择器并说明原因。两个方法属于同一 T4 目标，预计标准测试报告 `Ran 2 tests`；执行失败须如实保留并区分测试准备问题与产品业务失败。
 
 ```bash
 CHECKOUT=/path/to/producer-checkout
@@ -341,13 +352,26 @@ cd "$CHECKOUT/.apm/skills/professor-contact/tests" || exit 2
 python3 -m unittest -v \
   test_stage2_evidence_level.AnalysisLevelTests.test_legacy_refresh_preserves_fixed_evidence_prefix_with_source_marker \
   test_stage2_evidence_level.AnalysisLevelTests.test_ordinary_process_upgrades_legacy_display_before_marking_current \
-  > "$RUN_ROOT/recipe-t45.txt" 2>&1
+  > "$RUN_ROOT/recipe-t46.txt" 2>&1
 status=$?
 echo "exit=$status run_root=$RUN_ROOT"
 exit "$status"
 ```
 
-交付时记录两条选择器的实际产品提交、测试提交、逐项通过/业务失败/无法判断/未执行、退出码与日志路径。原 25 项按 §2.1 的实际影响复用 t43 §5 原受测版本；必要的定向复验沿用既有选择器和标准报告，不增加结果文件格式或过程证明。不把 r10/t45 文档提交记成产品实施或正式复验。
+交付时记录两条选择器的实际产品提交、测试提交、逐项通过/业务失败/无法判断/未执行、退出码与日志路径。原 25 项按 §2.1 的实际影响复用 t43 §5 原受测版本；必要的定向复验沿用既有选择器和标准报告，不增加结果文件格式或过程证明。不把 r11/t46 文档提交记成产品实施或正式复验。
+
+新业务/等价 body 输入复用下面**已经存在的选择器**，待该输入准备、第二关确认后定向执行。仍在同一 tests 目录，使用独立日志文件；这是补新直接输入所需的一次既有选择器执行，不是要求复跑其他生命周期/全模块。方法前段若失败使新分支未到达，明确记录新分支未执行，不以方法存在或旧结果代替。
+
+```bash
+python3 -m unittest -v \
+  test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle \
+  > "$RUN_ROOT/recipe-t46-binding.txt" 2>&1
+status=$?
+echo "exit=$status run_root=$RUN_ROOT"
+exit "$status"
+```
+
+记录该既有选择器的实际执行版本、退出码及新输入是否到达正式报告登记/后续复用；沿用标准报告和已有结果格式，不增加采集器。其他等价观察的定向复验仍只按实际产品 diff 和第二关适用性判断。
 
 ## 4. 既有准备记录与接口交接（按本轮影响复核适用性）
 
@@ -363,7 +387,7 @@ exit "$status"
 
 ## 5. 复核与结果
 
-**t45 当前记录（2026-10-19，候选编写阶段）**：已核 PR head `967d80fb267abc38f3bc4093309aa72075ac3d2b` 的 r10、t44 全文及相关测试代码；当前产品私有展示目标仍为 `2`，两条 t44 选择器尚未实现。本版只对齐计划中的目标 `3`、同两条正式路径的误标 `2` 旧包输入及共享接受的旧覆盖适用性，并在执行计划 r10 同步测试计划交接状态；未改产品或测试代码、未运行测试。T1—T4 清单继续有效；本版设计及第二关受影响步骤/接线待审核，第三关两条选择器未执行。原 t43 的 25 个不同选择器 PASS 与变基后复验仍按原受测版本、输入及实际影响使用，不能外推到新输入或 r10 实现，也不自动全部作废。下一负责人：测试计划审核者审候选 → 本地测试工程师落实两个方法 → 第二关核接线及直接受影响的旧结果适用性 → 产品 owner 按 r10 修复后执行工程师定向执行 → 第三关判断新结果与复用。未新增必测目标、测试矩阵或证明设施；本候选不自授 PASS 或合并批准。
+**t46 当前记录（2026-10-19，候选编写阶段）**：已核基线 `85064cf1214dc0582ede3cabf9c339c6a3062a1a` 的 r10/t45 全文、runner 和相关测试代码。当前产品目标仍为 `2`；r10 整文件冻结是待实施方案缺陷，当前产品在新任务非空时会正常更新机器头，本版未声称执行得到产品失败。r11/t46 明确 body 保留、必要机器头同步、业务依据与旧认证独立；原两条误标 `2` 恢复输入保留，另在已有生命周期选择器内明列单一“新业务依据、等价 body”输入和新报告正式登记。两新方法、新独立输入及等价观察调整均待准备，设计与第二关待审核，第三关未执行。未改产品/测试代码或运行测试；t43 的 25 个不同选择器 PASS 与变基后记录按原版本、输入及实际影响复用，不外推新输入/r11，也不自动作废。下一负责人：计划审核者 → 本地测试工程师准备 → 第二关核接线/适用性 → 产品 owner 按 r11 修复后执行工程师定向执行 → 第三关判断结果。T1—T4 上限不变，不新增矩阵或证明设施，不自授 PASS/合并批准。t45 发布于 `85064cf` 的目标 3/误标 2 文档对齐保留为历史交接。
 
 t43 历史结论（仅原有 25 个选择器）：第一关 PASS（沿用 T1—T4），第二关 PASS（§3.2 选择器已接线、IR-54 夹具自检问题已修正），第三关 PASS（产品 `5582dfa`／测试 `2420643` 的新增方法 1/1 通过，加上适用的原有 24 个不同选择器）。t42 及更早记录仅适用于各自产品/测试版本与场景，未受影响结果按规则复用；本轮文档审核没有重新执行测试。
 
