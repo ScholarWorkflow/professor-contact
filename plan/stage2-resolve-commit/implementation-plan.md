@@ -4,7 +4,7 @@
 
 - 需求来源：负责人 2026-10-20 的指示（Stage 2 划分；“contact_state.py 应收敛为 CLI 分发与确有调用方依赖的兼容入口，每个 stage 主体逻辑拆为单独模块”）。
 - Requirement revision: 第 1 版。Canonical Plan revision: 第 2 版（第 1 版审核意见已并入，见修订记录）。
-- Target repository revision: 引用基线 `d5a4f751fb80de4819d4a1de3ee829db52cea6fc`；当前 `main` 已前进到 `0f89ebd`（#105，只改 Stage 5 的 `cmd_stage5_list_inputs` 与帮助文本，与本批区域不重叠），合并前按新基线重放。本批**堆叠**在 `refactor-stage2-resolve`（第 2 批，PR #109）之上：实现时把 `refactor-stage2-resolve-commit` 变基到第 2 批的最新提交，形成 stacked PR；合并顺序为先第 2 批、后本批。
+- Target repository revision: 引用基线 `d5a4f751fb80de4819d4a1de3ee829db52cea6fc`；当前 `main` 已前进到 `e973ffb`（#108 合入第 1 批；#105 的 Stage 5 改动与本批区域不重叠），合并前按新基线重放。本批**堆叠**在 `refactor-stage2-resolve`（第 2 批，PR #109）之上：实现时把 `refactor-stage2-resolve-commit` 变基到第 2 批的最新提交，形成 stacked PR；合并顺序为先第 2 批、后本批。
 - Relevant upstream/runtime revision: N/A。
 - Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`；2026-10-20 计划审核，P1–P4 全 PASS，无 blocker；第 2 版修正见修订记录）。
 - 唯一规范来源：本文件。
@@ -37,7 +37,7 @@ Stage 2 分 6 批；本批是第 3 批，与第 2 批共用模块 `_stage2_resol
 | 组外调用点（参考坐标 `d5a4f75`） | `stage2_resolve_run_id` 2309 用 `_facts_preflight_proof`、`cmd_stage2_resolve_plan` 2360 用 `_load_existing_resolved`、2445 用 `_facts_preflight_proof`（这些在第 2 批模块内）；`cmd_stage2_finalize` 5019/5020/5023 用 `_facts_preflight_proof`／`_sidecar_preflight_proof`；`build_parser` 11601/11608 用两个命令 | AST 统计；均运行期解析 |
 | 没有 import 期引用 | 7 个函数与相关常量没有出现在模块级语句、默认参数、装饰器或类体 | AST 检索 |
 | 绑定位置不变 | 第 2 批的 `build()` 调用在堆叠文件的 2211 行；本批把 `_facts_preflight_proof`／`_load_existing_resolved` 搬进模块后，新增参数的最晚定义是 `direction_provisional_member_keys`（参考 991／堆叠 1005），早于 2211；因此**不移动**绑定位置，只扩展实参 | 第 2 批实现提交实测 |
-| 堆叠重放 | 第 2 批分支未合并；本批实现时以其实现提交 `2ecdc9c` 为基线：在现有 `_stage2_resolve.py` 的 16 个函数之后**追加** 7 个函数（不重建第 2 批的常量与注释），文件头补 `import json`；runner 仍只有 2211 行处一次 `build()` 调用，扩展实参并新增 7 个别名；PR 说明依赖第 2 批 | 第 2 批 PR #109 |
+| 堆叠重放 | 第 2 批分支未合并；本批实现时以其当前分支 tip `3233810`（实现提交 `f07abb0`）为基线：在现有 `_stage2_resolve.py` 的 16 个函数之后**追加** 7 个函数（不重建第 2 批的常量与注释），文件头补 `import json`；runner 仍只有 2211 行处一次 `build()` 调用，扩展实参并新增 7 个别名；PR 说明依赖第 2 批 | 第 2 批 PR #109 |
 | 加载与复制 | 第 2 批已加入 `_stage2_resolve.py`；两个夹具 `glob("_*.py")` 自动带上；Nix 整树复制不变 | 第 2 批计划、仓库文件 |
 
 ## 方案
@@ -84,7 +84,7 @@ Stage 2 分 6 批；本批是第 3 批，与第 2 批共用模块 `_stage2_resol
 ## 实施位置与顺序
 
 1. 计划审核取得 `Plan conclusion: APPROVED`。
-2. 等第 2 批实现提交（PR #109 的 `2ecdc9c`；分支 tip `630aec3` 只有文档提交）可用；把本工作树变基到 `2ecdc9c`。
+2. 等第 2 批分支 tip（PR #109 的 `3233810`，实现提交 `f07abb0`）可用；把本工作树变基到该 tip。
 3. 在堆叠基线上按函数名定位：删除 runner 里 7 个定义、扩展 2211 行处的 `build()` 实参、加 7 个别名；在模块尾部追加 7 个函数并在文件头补 `import json`；AST/常量/调用点对比。
 4. 测试计划（`plan/stage2-resolve-commit/test-plan.md`）与执行记录。
 5. M2 与合并审核另做；PR 基于 `refactor-stage2-resolve` 分支。
@@ -92,12 +92,13 @@ Stage 2 分 6 批；本批是第 3 批，与第 2 批共用模块 `_stage2_resol
 ## 修订记录
 
 - 第 1 版：首次提交计划审核。
-- 第 2 版：按计划审核修正——① 补 `import json`（B1）；② 区分参考坐标与堆叠坐标，明确按函数名/AST 定位、绑定在堆叠文件 2211（B2）；③ 非目标改为 `stage2-finalize`；④ 反例改为漏移除 build 参数与漏加 `import json`；⑤ 追加而非重建模块；⑥ 基线指针注明当前 main `0f89ebd`。
+- 第 2 版：按计划审核修正——① 补 `import json`（B1）；② 区分参考坐标与堆叠坐标，明确按函数名/AST 定位、绑定在堆叠文件 2211（B2）；③ 非目标改为 `stage2-finalize`；④ 反例改为漏移除 build 参数与漏加 `import json`；⑤ 追加而非重建模块；⑥ 基线指针注明当前 main `e973ffb`（#108 后）。
 
 ## 审核状态
 
 - 计划审核：`Plan conclusion: APPROVED`（2026-10-20；P1–P4 全 PASS，`Required modifications: N/A`）。第 1 版 B1（缺 `import json`）与 B2（堆叠坐标）已在第 2 版关闭；P2/P3/P4 复用第 1 版 PASS。
-- 测试计划与执行：待补。
+- 测试计划：`plan/stage2-resolve-commit/test-plan.md` 第 2 版（第一/二关复核中）。
+- 测试执行：`plan/stage2-resolve-commit/test-execution-2026-10-20.md`（被测代码 `c080be0`；A/B 43 条 OK、T4 7 项 OK、T5 2 项 OK）。
 
 ## 记录
 

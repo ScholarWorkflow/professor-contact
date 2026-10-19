@@ -11,11 +11,11 @@
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
-| T0 | 通过 | 3 条 `T0 ... OK` 与 `T0 CHECKS PASS`；`py_compile` 与 `--help` 退出码 0 |
+| T0 | 通过 | 4 条 `T0 ... OK`（14 参数、23 成员、23 同名别名、import json）与 `T0 CHECKS PASS`；`py_compile` 与 `--help` 退出码 0 |
 | T1–T3 | 通过 | 43 条 `OK`；末尾 `ALL CHECKS PASS`；退出码 0 |
-| T4 | 通过 | `Ran 9 tests`、`OK`；无 skip／`FAIL`／`ERROR` |
+| T4 | 通过 | `Ran 7 tests in 4.313s`、`OK`；无 skip／`FAIL`／`ERROR`；7 个方法的断言均落在本批 7 个函数上 |
 | T5 | 通过 | `Ran 2 tests`、`OK`；无 skip／`FAIL`／`ERROR` |
-| 既有仓库 CI | 未在本地执行 | 本批不把全量套件列为必测；推送后引用 PR 的 4 个 `shards (shardN)` 与聚合 job `test` |
+| 既有仓库 CI | 通过 | PR #112 head `1b08b36` 上 run `39315290639` 的 4 个 `shards (shardN)` 与聚合 job `test` 全部 SUCCESS；`89b4879` 之后只改 docs，run `39318656969` 也全 pass |
 
 ## 逐项结果
 
@@ -25,17 +25,18 @@
 
 ```text
 Python 3.14.6
-T0 build has 14 keyword-only parameters OK
+T0 build has exactly the 14 keyword-only parameters OK
 T0 build returns 23 members OK
-T0 runner has 23 module aliases and module imports json OK
+T0 runner has 23 same-name module aliases OK
+T0 module imports json OK
 T0 CHECKS PASS
 ```
 
 `uv run --no-project python -m py_compile ...` 无输出、退出码 0；`contact_state.py --help` 无 stderr、退出码 0。检查脚本确认：
 
-- 模块 `build()` 的 keyword-only 参数为 14 个，已移除 `_facts_preflight_proof`、`_load_existing_resolved`，新增 `atomic_json`、`RESOLVED_DIRECTION_SCHEMA`、`now_utc`、`read_json_file`、`direction_provisional_member_keys`；
+- 模块 `build()` 的 keyword-only 参数**精确等于** 14 个名字集合：已移除 `_facts_preflight_proof`、`_load_existing_resolved`，新增 `atomic_json`、`RESOLVED_DIRECTION_SCHEMA`、`now_utc`、`read_json_file`、`direction_provisional_member_keys`；
 - `build()` 返回的命名空间有 23 个成员；
-- runner 有 23 个 `X = _stage2_resolve.X` 别名（第 2 批 16 个 + 本批 7 个）；
+- runner 有 23 个 `X = _stage2_resolve.X` 别名（第 2 批 16 个 + 本批 7 个），逐个满足“目标名 == `_stage2_resolve.<同名>`”；
 - 模块头有 `import json`。
 
 ### T1–T3：结构、AST 等价与接口
@@ -57,27 +58,27 @@ T0 CHECKS PASS
 | `T2` | 10 | 7 个函数代码 AST 不变 + 非搬移顶层定义不变 + 定义集合差 + 每个函数有别名 |
 | `T3` | 15 | 7 个函数可调用与签名不变（14）+ runner 直接执行 `--help`（1） |
 
-末尾输出 `ALL CHECKS PASS`，退出码 0。7 个函数的 AST 对比只忽略 docstring 文本；实际搬运只增加 4 个空格缩进，函数体未改。
+末尾输出 `ALL CHECKS PASS`，退出码 0。7 个函数的 AST 对比只忽略 docstring 文本；单独核对：7 个函数都有 docstring（其中 6 个多行），`inspect.cleandoc` 后与基准同文，实际搬运只增加 4 个空格缩进，函数体未改。
 
 ### T4：resolve 提交层既有测试
 
 命令：测试计划第 3 步。结果：
 
 ```text
-Ran 9 tests in 11.544s
+Ran 7 tests in 4.313s
 
 OK
 ```
 
-9 个方法：
+7 个方法（`Stage2FinalizeWithResolvedTests` 的 3 个主断言在第 4 批，已按第 2 版测试计划移出 T4）：
 
 1. `ResolvedDirectionFinalizeTests.test_resolve_finalize_rejects_missing_new_result`
 2. `ResolvedDirectionFinalizeTests.test_resolve_finalize_applies_removal`
 3. `ResolvedDirectionFinalizeTests.test_resolve_finalize_rejects_invalid_removal`
-4. `Stage2FinalizeWithResolvedTests.test_finalize_applies_resolved_directions_to_pack`
-5. `Stage2FinalizeWithResolvedTests.test_finalize_fails_closed_on_stale_resolved_file`
-6. `Stage2FinalizeWithResolvedTests.test_finalize_fails_closed_on_cross_professor_resolved_file`
-7. `ResolvedDirectionRegressionTests.test_resolve_run_isolation_and_missing_results`
+4. `ResolvedDirectionRegressionTests.test_resolve_run_isolation_and_missing_results`
+5. `ResolvedDirectionRegressionTests.test_reused_direction_ignores_stale_result_file`（直接调用 `validate_resolve_results`）
+6. `ResolveAcceptanceBoundaryTests.test_resolve_accept_command_validates_keys_and_staleness`
+7. `UserKeptProvisionalTests.test_user_kept_provisional_still_writes_explicit_resolved_direction`
 8. `ResolveAcceptanceBoundaryTests.test_resolve_accept_command_validates_keys_and_staleness`
 9. `UserKeptProvisionalTests.test_user_kept_provisional_still_writes_explicit_resolved_direction`
 
