@@ -3,7 +3,7 @@
 - 测试计划：[test-plan.md](test-plan.md)，第 2 版。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 2 版（`Plan conclusion: APPROVED`）。
 - 对照基准：`cdd01f7f2c03be822adbb5a4117c7e65a89d6c82`。
-- 被测提交：`f527698`（实现提交；其后如仅改文档，产品与测试字节不变）。
+- 被测提交：`8f6cc86`（改基到 `main` 之后的同一实现提交；改基前为 `f527698`，两者引入的 `.apm/` 补丁逐字节相同——已用补丁哈希核对）；docstring 修复提交改基后为 `30dbca6`（改基前 `e655ddb`）。
 - 环境：本地 macOS，Python 3.14.7；驱动只用标准库，比较用 `jq` 按键过滤。仓库 CI 使用工作流固定的 Python 3.12。
 - 实现符合性审核（M2）指出计划步骤“更新模块 docstring”未落实（D1，非阻断）：已在实现提交后补上该 docstring 两处（标题句与注入面说明），并复跑验证——T1–T4 在 `base7.json`／`head7.json` 上仍逐字段相同（排除 `injection_sites`）、T5 `Ran 42 tests in 66.808s`、`OK`；docstring 不参与执行，产品行为未变。
 - 原始输出（仓库外）：`/tmp/pc-bnd4-check/`；证据文件 `base4.json`／`head4.json`（最终对照，含 verdict 分支）与 `base3.json`／`head3.json`（补分支前的对照）、`ladder3.log`（T5 最终运行）、历史尝试 `base.json`／`head.json`（兄弟模块命名不对，基准侧导入失败）、`base2.json`／`head2.json`（artifact 取当前时间，`generated_at` 有假差异）、`ladder.log`／`ladder2.log`（缺 `datetime` 导入与 TTL 体引用的两次失败）。
