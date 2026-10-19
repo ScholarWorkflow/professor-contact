@@ -79,7 +79,7 @@ Stage 2 分 6 批。第 1 批（`_stage2_preflight.py`，PR #108）与第 2 批�
 - **prohibited_side_effect**：改逻辑/常量/输出/顺序；改测试；复制 helper 实现；新建第二错误通道；搬类、resolve、校验/refine、facts/pack 渲染闭包；改 CLI/入口/Nix。
 - **unresolved impact**：
   1. 函数元数据变化（`__module__`／`__qualname__`、`pickle`、`get_type_hints`）；仓内无消费者。
-  2. 第 6 批搬两个类与 `build_direction_pack`／`render_analysis_md` 时必须同步更新本批 build 实参，并处理 4578 的反向调用。特别注意绑定顺序是环：`render_analysis_md`（Runner 3786）运行期调本批的 `stage2_require_later_paper_titles`，而本批 build（3934）又注入 `render_analysis_md`（实参 3964），本批别名 `stage2_require_later_paper_titles` 在 3983；第 6 批若把 `render_analysis_md` 移入模块，必须用两阶段绑定或晚绑定 provider（先建最终 module 函数、再建依赖它的 factory），不能简单把 alias 放在本批 build 之前或之后。
+  2. 第 6 批搬两个类与 `build_direction_pack`／`render_analysis_md` 时必须同步更新本批 build 实参。第二次 rebase 后（`7a59006` + 本批，runner 9578 行）的实测坐标：`render_analysis_md` 定义在 `3067`，运行期在 `3072` 调本批的 `stage2_require_later_paper_titles`；本批 build 在 `3220-3259`，其中 `render_analysis_md=render_analysis_md` 实参在 `3250`；本批别名 `stage2_require_later_paper_titles` 在 `3269`；从本批之外调用这三个名字的位置有 `7893`（`stage2_trusted_paper_title`）、`8485`、`8549`（`stage2_require_later_paper_titles`）、`8584`（`render_analysis_md`）。因此顺序仍是环：`render_analysis_md` 必须在 `3220` 之前已经存在，而它依赖的别名到 `3269` 才出现；第 6 批若把 `render_analysis_md` 移入模块，必须用两阶段绑定或晚绑定 provider（先建不依赖该别名的部分，再在 `3269` 之后绑定），不能简单把 alias 放在本批 build 之前或之后。
   3. 第 4/5 批在 10266/10267 相邻删除/插入，合并时可能需要 rebase/冲突处理；不是语义前置。
   4. scripts 目录多一个内部模块。
 
@@ -109,11 +109,11 @@ Stage 2 分 6 批。第 1 批（`_stage2_preflight.py`，PR #108）与第 2 批�
 
 ## 审核状态
 
-- 计划审核：`Plan conclusion: APPROVED`（2026-10-20，P1–P4 全 PASS）。第 1 版的 6 条修改与第 2 版的 2 条 P1 修正均已关闭；P2–P4 复用前轮 PASS。
-- 测试计划：`plan/stage2-finalize/test-plan.md` 第 2 版（第一关 PASS、第二关 PASS）。
-- 测试执行：`plan/stage2-finalize/test-execution-2026-10-20.md`（被测实现提交 `47f609d`，交付基线 `e973ffb`；A/B 53 条 OK、T4 10 项 OK、T5 2 项 OK）。
+- 计划审核：`Plan conclusion: APPROVED`（2026-10-20，P1–P4 全 PASS）。第 1 版的 6 条修改与第 2 版的 2 条 P1 修正均已关闭；P2–P4 复用前轮 PASS。第 3 版只同步 `#109` 合并后的基线 `7a59006` 与行号，无范围与判据变化。
+- 测试计划：`plan/stage2-finalize/test-plan.md` 第 3 版（第一关 PASS、第二关 PASS，沿用第 2 版结论）。
+- 测试执行：`plan/stage2-finalize/test-execution-2026-10-20.md`（被测实现提交 `f2fe493`，交付基线 `7a59006`；A/B 53 条 OK、T4 10 项 OK、T5 2 项 OK）。
 
 ## 记录
 
-- 交付基线：PR #108（第 1 批）合并后 rebase 到 `e973ffb4571344157b3c43a151906a24f48c7e4e`；本批加载块保持 `load_anchor=188`，9 个函数 AST 与 `d5a4f75` 相同。
+- 交付基线：PR #108（第 1 批）合并后 rebase 到 `e973ffb4571344157b3c43a151906a24f48c7e4e`；PR #109（第 2 批）合并后再次 rebase 到 `7a59006c551dc863045fb5221143927357429c83`，实现提交为 `f2fe493`。本批加载块保持 `load_anchor=188`，落点顺次后移到 `_STAGE2_RESOLVE_*` 之后、`SCHEMA` 之前；9 个函数 AST 与 `d5a4f75` 相同。
 - 测试计划与执行记录在 `plan/stage2-finalize/` 下；对比证据放仓库外 `/tmp/pc-stage4/`。

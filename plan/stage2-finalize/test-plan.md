@@ -4,8 +4,8 @@
 
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 2 版（`Plan conclusion: APPROVED`）。
 - 需求来源：负责人 2026-10-20 的 Stage 2 划分指示（“contact_state.py 应收敛为 CLI 分发与确有调用方依赖的兼容入口，每个 stage 主体逻辑拆为单独模块”）；原文与范围见执行计划。
-- Target repository revision: 工作分支 `refactor-stage2-finalize` 实施后的提交；对照基准为 `origin/main` `e973ffb4571344157b3c43a151906a24f48c7e4e`（PR #108 合并后的 main）。分支最初从 `0f89ebd370a96cb1e138c6920d1300ed83fd23a3` 切出，PR #108 合并后 rebase 到 `e973ffb`；9 个函数的 AST 与 `d5a4f751fb80de4819d4a1de3ee829db52cea6fc` 相同，只有 Stage 5 与第 1 批改动造成的行号偏移。
-- Test plan revision: 第 2 版。
+- Target repository revision: 工作分支 `refactor-stage2-finalize` 实施后的提交；对照基准为 `origin/main` `7a59006c551dc863045fb5221143927357429c83`（含 PR #108 第 1 批、#109 第 2 批）。分支最初从 `0f89ebd370a96cb1e138c6920d1300ed83fd23a3` 切出，先后 rebase 到 `e973ffb4571344157b3c43a151906a24f48c7e4e`（#108 合并后）与 `7a59006c551dc863045fb5221143927357429c83`（#109 合并后）；9 个函数的 AST 与 `d5a4f751fb80de4819d4a1de3ee829db52cea6fc` 相同，只有 Stage 5、第 1 批与第 2 批改动造成的行号偏移。
+- Test plan revision: 第 3 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
 - Proposed review status: **APPROVED**（第一关 PASS、第二关 PASS；记录见文末审核状态）。
 
@@ -13,7 +13,7 @@
 
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
-| T0 | 对照基线有效（R1 的前提） | 用 `git archive e973ffb4571344157b3c43a151906a24f48c7e4e` 取出 `origin/main` 的 scripts 目录作为 base；工作树 scripts 目录作为 head | base 与 head 是两个不同目录；base 仍定义 9 个函数；head 一个都不再在顶层定义 | `/tmp` 对比脚本的 `T0 ...` 行，共 3 条；全部 `OK` |
+| T0 | 对照基线有效（R1 的前提） | 用 `git archive 7a59006c551dc863045fb5221143927357429c83` 取出 `origin/main` 的 scripts 目录作为 base；工作树 scripts 目录作为 head | base 与 head 是两个不同目录；base 仍定义 9 个函数；head 一个都不再在顶层定义 | `/tmp` 对比脚本的 `T0 ...` 行，共 3 条；全部 `OK` |
 | T1 | 9 个函数确实完成划分（R1） | base 与 head 的 `contact_state.py`、新模块 `_stage2_finalize.py` | 模块文件在与 runner 同目录；9 个函数离开 runner 顶层、进入模块 `build()` | 同一对比脚本的 `T1 ...` 行，共 19 条（模块存在 1 + 9 函数×2）；全部 `OK` |
 | T2 | 搬移没有改变任何函数逻辑（R2） | 两侧源码与模块 `build()` 内的 9 个嵌套函数 | 9 个函数的代码 AST 与基准相同（docstring 不参与比较；多行 docstring 续行只允许增加缩进）；runner 其余顶层定义不变；离开 runner 的定义正好是这 9 个、没有新增；9 个别名都在 | 同一对比脚本的 `T2 ...` 行，共 12 条（9 函数 AST + 非搬移定义 + 定义集合差 + 别名）；全部 `OK` |
 | T3 | 旧接口与加载方式不变（R3、R4、R5） | 分别按文件路径加载两侧 runner；再以子进程直接执行改动后的 runner | 9 个名字在两侧都可调用；`inspect.signature` 字符串两侧相同；直接执行 `contact_state.py --help` 退出码 0 | 同一对比脚本的 `T3 ...` 行，共 19 条（9 名字×2 + 直接执行 1）；全部 `OK`，末尾 `ALL CHECKS PASS` |
@@ -34,7 +34,7 @@
    python3 --version
    RUN=$(mktemp -d /tmp/pc-stage2-finalize-XXXXXX)
    mkdir -p "$RUN/base"
-   git archive e973ffb4571344157b3c43a151906a24f48c7e4e \
+   git archive 7a59006c551dc863045fb5221143927357429c83 \
      .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
    cp /tmp/pc-stage2-tools/compare_stage2_batch.py "$RUN/compare_stage2_batch.py"
    shasum -a 256 "$RUN/compare_stage2_batch.py"
@@ -98,7 +98,7 @@
 - 使用仓库现有本地 Python（第 1 步记录 `python3 --version`）与既有测试夹具，不新增依赖、不新增判定器或采集器；对比脚本只用标准库。
 - 测试只使用合成数据与临时目录；不接触用户业务资料。
 - 预检只确认命令可用、工作树状态、基准 scripts 目录能取出；不预先执行业务目标命令求结果。
-- 基准对照的两侧分别从 `e973ffb4571344157b3c43a151906a24f48c7e4e` 与工作树 HEAD 取出，避免用不同版本的兄弟模块比较。
+- 基准对照的两侧分别从 `7a59006c551dc863045fb5221143927357429c83` 与工作树 HEAD 取出，避免用不同版本的兄弟模块比较。
 - 第 1 步的 `shasum -a 256` 是 macOS 写法；若在 Linux 复跑，改用 `sha256sum`，判据不变（脚本 91 行、哈希 `75c151c3ad3f9fd71c031d72b85a820a2b29b45229658f50212534c0798adff7`）。
 
 ## 不纳入本清单的范围
@@ -117,9 +117,11 @@
 ## 修订记录
 
 - 第 1 版：首次提交测试计划（对照基线 `0f89ebd`）。
-- 第 2 版：PR #108（第 1 批）合并后 rebase 到 `origin/main` `e973ffb`，对照基准、命令与目标 revision 同步；T4/T5 按 rebase 后重跑，判据不变。
+- 第 2 版：PR #108（第 1 批）合并后 rebase 到 `origin/main` `e973ffb4571344157b3c43a151906a24f48c7e4e`，对照基准、命令与目标 revision 同步；T4/T5 按 rebase 后重跑，判据不变。
+- 第 3 版：PR #109（第 2 批）合并后 main 前进到 `7a59006c551dc863045fb5221143927357429c83`，本分支再次 rebase；对照基准、`git archive` 命令与环境节的 revision 同步，判据与步骤不变（T0–T5 已按新基线重跑，53 条 OK／10 项／2 项）。
 
 ## 审核状态
 
 - 第 1 版：首次提交；执行记录按该版在 `0f89ebd` 基线上跑过 T4/T5。
 - 第 2 版：第一关 PASS、第二关 PASS（独立测试计划审核）；rebase 到 `e973ffb` 后按本版重跑 T0–T5。
+- 第 3 版：第一关 PASS、第二关 PASS（沿用第 2 版审核结论；本版只同步 rebase 后的基线 `7a59006` 与行号，无判据变化）。
