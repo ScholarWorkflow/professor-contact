@@ -13,11 +13,11 @@
 
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
-| T0 | 模块可编译、可加载，工厂契约完整（R1、R3） | 工作树 `scripts/contact_state.py`、`scripts/_stage2_resolve.py` | 两个文件 `py_compile` 成功；直接执行 runner 的 `--help` 退出码 0；模块 `build()` 的 keyword-only 参数**精确等于** 14 个名字集合（不含 `_facts_preflight_proof`、`_load_existing_resolved`，含 5 个新增名字）；返回 23 个成员；runner 的 23 个别名逐个满足 `目标名 == _stage2_resolve.<同名>`；模块头有 `import json` | 第 1 步命令；4 条 `T0 ... OK`（14 参数、23 成员、23 同名别名、import json）与 `T0 CHECKS PASS` |
+| T0 | 模块可编译、可加载，工厂契约完整（R1、R3） | 工作树 `scripts/contact_state.py`、`scripts/_stage2_resolve.py` | 两个文件 `py_compile` 成功；直接执行 runner 的 `--help` 退出码 0；模块 `build()` 的 keyword-only 参数**精确等于** 14 个名字集合（不含 `_facts_preflight_proof`、`_load_existing_resolved`，含 5 个新增名字）；返回 23 个成员；runner 的 23 个别名逐个满足 `目标名 == _stage2_resolve.<同名>` 且去重后仍是 23 个；模块头有 `import json` | 第 1 步命令；4 条 `T0 ... OK`（14 参数、23 成员、23 同名别名、import json）与 `T0 CHECKS PASS` |
 | T1 | 7 个函数确实离开 runner 顶层、进入模块 `build()`（R1） | 对照基准（`git archive f07abb0` 取出的 `scripts`）与工作树 `scripts` | `T0`：base 与 head 是两个不同目录、base 仍定义 7 个函数、head 一个都不定义；`T1`：模块存在；7 个函数逐个“runner 顶层已无 / 模块 `build()` 内有” | 第 2 步对比脚本的 `T0 ...` 与 `T1 ...` 行；共 18 条 `OK` |
-| T2 | 搬移没有改变任何函数逻辑（R2） | 同上两侧源码 | 7 个函数的代码 AST 与基准完全相同（对比脚本忽略 docstring 内容）；docstring 单独核对：7 个函数都有 docstring（其中 6 个多行），`inspect.cleandoc` 后与基准同文；runner 其余顶层定义 AST 不变；离开 runner 的定义正好是这 7 个、没有新增；7 个函数在 runner 都有别名 | 同一对比脚本的 `T2 ...` 行；共 10 条 `OK`；docstring 核对用一次性只读脚本（7/7 同文、6 个多行） |
+| T2 | 搬移没有改变任何函数逻辑（R2） | 同上两侧源码 | 7 个函数的代码 AST 与基准完全相同（对比脚本忽略 docstring 内容）；docstring 单独核对：7 个函数都有 docstring（其中 6 个多行），`inspect.cleandoc` 后与基准同文；runner 其余顶层定义 AST 不变；离开 runner 的定义正好是这 7 个、没有新增；7 个函数在 runner 都有别名 | 同一对比脚本的 `T2 ...` 行；共 10 条 `OK`；docstring 核对用 `/tmp/pc-stage2-tools/check_docstrings.py`（sha256 `941b2220…`），末行 `total=7 with_doc=7 multi=6 clean_equal=7 without_doc=0 missing=0 mismatched=0` 与 `DOCSTRING CHECKS PASS` |
 | T3 | 旧接口与加载方式不变（R4、R5） | 同一进程内分别按文件路径加载两侧 runner；再以子进程直接执行改动后的 runner | 7 个名字在两侧都可调用；`inspect.signature` 字符串两侧相同；直接执行 `contact_state.py --help` 退出码 0 | 同一对比脚本的 `T3 ...` 行；共 15 条 `OK`，末尾 `ALL CHECKS PASS` |
-| T4 | resolve 提交层的校验、写入与用户选择边界不变（R2） | 既有测试方法 7 个（见第 3 步）：`ResolvedDirectionFinalizeTests` 3 个、`ResolvedDirectionRegressionTests` 2 个（运行隔离、旧 result 文件被忽略的直接调用）、`ResolveAcceptanceBoundaryTests` 1 个、`UserKeptProvisionalTests` 1 个 | 7 个方法执行；**通过条件只限落在本批 7 个函数上的断言**（结果文件必需性与本轮身份、移除校验、运行隔离、旧 result 文件被忽略、accept 的 key/陈旧校验、keep-provisional 写入）。若方法内还有第 2 批 plan 或第 4 批 finalize 的跨批断言，失败时记“无法判断／既有依赖失败”，不判本批失败；`Stage2FinalizeWithResolvedTests` 的 3 个方法主断言在第 4 批，已从本批 T4 移出 | 第 3 步命令；`Ran 7 tests`、`OK`，无 skip／`FAIL`／`ERROR`；有失败时按断言级归因 |
+| T4 | resolve 提交层的校验、写入与用户选择边界不变（R2） | 既有测试方法 7 个（见第 3 步）：`ResolvedDirectionFinalizeTests` 3 个、`ResolvedDirectionRegressionTests` 2 个（运行隔离、旧 result 文件被忽略的直接调用）、`ResolveAcceptanceBoundaryTests` 1 个、`UserKeptProvisionalTests` 1 个 | 7 个方法执行；**通过条件只限落在本批 7 个函数上的断言**（结果文件必需性与本轮身份、移除校验、运行隔离、旧 result 文件被忽略、accept 的 key/陈旧校验、keep-provisional 写入）。方法内的跨批断言（第 1/2 批 plan 注入、第 4 批 finalize）若失败，**先按本批回归排查**：在基线 `f07abb0` 上跑同一方法，基线上也失败才记“既有依赖失败”；基线上通过而 HEAD 失败即为本批引入，须修正后重跑。`Stage2FinalizeWithResolvedTests` 的 3 个方法主断言在第 4 批，已从本批 T4 移出 | 第 3 步命令；`Ran 7 tests`、`OK`，无 skip／`FAIL`／`ERROR`；有失败时按上述基线对照归因 |
 | T5 | 复制 runner 的既有夹具仍能加载新模块（R4） | `test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker`、`test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling` | 两个方法通过；复制布局包含 `_stage2_resolve.py`，复制后的 runner 能按路径加载它 | 第 4 步命令；`Ran 2 tests`、`OK`，无 skip |
 
 **既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的 `shards` 4 个分片与聚合 job `test` 由仓库工作流照常执行，其结果单独引用；本批不因此扩张或缩减必测清单，也不在本地重跑全量套件。
@@ -59,6 +59,7 @@
               and isinstance(n.targets[0], ast.Name)
               and ast.unparse(n.value).startswith('_stage2_resolve.')]
    assert len(aliases) == 23
+   assert len({n.targets[0].id for n in aliases}) == 23
    assert all(ast.unparse(n.value) == '_stage2_resolve.' + n.targets[0].id for n in aliases)
    print('T0 runner has 23 same-name module aliases OK')
    assert any(isinstance(n, ast.Import) and any(a.name == 'json' for a in n.names)
@@ -87,10 +88,21 @@
      validate_resolve_results _load_existing_resolved _facts_preflight_proof \
      _sidecar_preflight_proof _check_resolved_proof_binding \
      cmd_stage2_resolve_finalize cmd_stage2_resolve_accept
+   shasum -a 256 /tmp/pc-stage2-tools/check_docstrings.py
+   uv run --no-project /tmp/pc-stage2-tools/check_docstrings.py \
+     "$RUN/base/.apm/skills/professor-contact/scripts" \
+     .apm/skills/professor-contact/scripts \
+     contact_state.py _stage2_resolve.py \
+     validate_resolve_results _load_existing_resolved _facts_preflight_proof \
+     _sidecar_preflight_proof _check_resolved_proof_binding \
+     cmd_stage2_resolve_finalize cmd_stage2_resolve_accept
    ```
 
-   脚本来源为既有的 `/tmp/pc-stage2-tools/compare_stage2_batch.py`（91 行），本批只调用、不改写；参考 sha256 为 `75c151c3ad3f9fd71c031d72b85a820a2b29b45229658f50212534c0798adff7`。脚本缺失或哈希不同时停止并交计划所有人，不凭提纲重写脚本。
+   对比脚本来源为既有的 `/tmp/pc-stage2-tools/compare_stage2_batch.py`（91 行），本批只调用、不改写；参考 sha256 为 `75c151c3ad3f9fd71c031d72b85a820a2b29b45229658f50212534c0798adff7`。脚本缺失或哈希不同时停止并交计划所有人，不凭提纲重写脚本。
    预期：43 条 `OK`（`T0` 3 条、`T1` 15 条、`T2` 10 条、`T3` 15 条），末尾 `ALL CHECKS PASS`，退出码 0。
+
+   docstring 单独核对由 `/tmp/pc-stage2-tools/check_docstrings.py`（107 行，sha256 `941b2220a583bd849330f863a8ccc9de744d9d158fefb849d228e99be66e9bc3`）执行；本批新增该一次性脚本，只读两侧源码，不参与 T1–T3 判据。脚本缺失或哈希不同时停止并交计划所有人。
+   预期：`total=7 with_doc=7 multi=6 clean_equal=7 without_doc=0 missing=0 mismatched=0`、`DOCSTRING CHECKS PASS`，退出码 0。
 
 3. T4：只跑清单列出的 7 个方法。
 
@@ -108,7 +120,7 @@
      -v
    ```
 
-   预期：`Ran 7 tests`，全部 `ok`；无 `skipped`、`FAIL`、`ERROR`；若失败，按 T4 的断言级归因处理。
+   预期：`Ran 7 tests`，全部 `ok`；无 `skipped`、`FAIL`、`ERROR`；若失败，按 T4 的基线对照归因处理（先怀疑本批回归，基线上同样失败才算既有失败）。
 
 4. T5：只跑清单列出的 2 个夹具方法。
 
@@ -132,7 +144,7 @@
 8. 失败处理：
    - T0 失败：按报错定位到编译、加载或 `build()` 契约；属于本批改动缺陷时交实现负责人修正后重跑第 1 步。
    - T1–T3 任一 `FAIL`：按标签定位到具体函数或检查项，判定为搬移缺陷，交实现负责人修正后重跑第 2 步；不得改脚本放宽判据。
-   - T4／T5 方法失败：区分“本次改动引入的回归”“既有失败”“环境问题”；本次回归修正后重跑受影响编号。
+   - T4／T5 方法失败：区分“本次改动引入的回归”“既有失败”“环境问题”。断言落在跨批代码（第 1/2 批 plan、第 4 批 finalize）时也先按本批回归排查：在基线 `f07abb0` 上跑同一方法，基线上同样失败才记既有失败，否则修正后重跑受影响编号。
    - 既有跳过项按未执行记录，不算失败；不做无新信息的重复运行。
    - 仓库 CI 失败时按合并规则处理，不并入本批必测结论。
 
@@ -142,7 +154,7 @@
 - 测试只使用合成数据与临时目录；不接触用户业务资料。
 - 预检只确认命令可用、工作树状态、对照基准能取出；不预先执行业务目标命令求结果。
 - 对照的两侧都从同一 `f07abb0` 与工作树 HEAD 的 `scripts` 目录取出，避免用不同版本的兄弟模块比较。
-- 第 2 步的 `shasum -a 256` 是 macOS 写法；若在 Linux 复跑，改用 `sha256sum`，判据不变（脚本 91 行、哈希 `75c151c3ad3f9fd71c031d72b85a820a2b29b45229658f50212534c0798adff7`）。
+- 第 2 步的 `shasum -a 256` 是 macOS 写法；若在 Linux 复跑，改用 `sha256sum`，判据不变：`compare_stage2_batch.py` 91 行、哈希 `75c151c3ad3f9fd71c031d72b85a820a2b29b45229658f50212534c0798adff7`；`check_docstrings.py` 107 行、哈希 `941b2220a583bd849330f863a8ccc9de744d9d158fefb849d228e99be66e9bc3`。
 
 ## 不纳入本清单的范围
 
@@ -156,14 +168,17 @@
 
 ## 自检
 
-提交审核前逐条核对：① 必测项只引用能证明本批目标的方法，T4 只限本批 7 个函数的断言（跨批断言按归因）、T5 只限复制/加载；② CI 不在必测清单；③ 对比脚本有确切来源、调用命令与 sha256；④ 命令块启用 `set -e` 且 `RUN` 在同一 shell 进程内使用；⑤ 失败注入标为“本批不适用”并说明原因；⑥ 计划文字与执行记录使用同一套编号；⑦ 编号与版本一致。
+提交审核前逐条核对：① 必测项只引用能证明本批目标的方法，T4 只限本批 7 个函数的断言（跨批断言按基线对照归因）、T5 只限复制/加载；② CI 不在必测清单；③ 两个脚本都有确切来源、调用命令与 sha256；④ 命令块启用 `set -e` 且 `RUN` 在同一 shell 进程内使用；⑤ 失败注入标为“本批不适用”并说明原因；⑥ 计划文字与执行记录使用同一套编号；⑦ 编号与版本一致。
 
 ## 修订记录
 
 - 第 1 版：首次提交。按本批范围设 T0（编译／加载／工厂契约）、T1–T3（既有对比脚本的结构、AST、接口检查）、T4（9 个既有测试方法）、T5（2 个复制夹具方法）。实施期间第 2 批分支变基，对照基准由 `2ecdc9c` 更新为 `f07abb0`（同一批代码内容），判据与步骤不变。
 - 第 2 版：按第一/二关审核修正——① T4 移出 3 个主断言在第 4 批的 `Stage2FinalizeWithResolvedTests` 方法，加入直接调用 `validate_resolve_results` 的 `test_reused_direction_ignores_stale_result_file`，T4 变 7 个并写明断言级归因；② T0 的内联脚本改为精确 14 参数集合、23 个同名别名（`目标名 == _stage2_resolve.<同名>`）、import json；③ T2 改为“脚本忽略 docstring + 单独核对 7/7 同文（6 个多行）”；④ 执行记录补 CI run `39315290639`（head `1b08b36`）与 7 个方法结果。
 
+- 第 3 版：按第二关复核修正（R1–R5）——① T0 增补“23 个别名去重后仍 23”（`assert len({n.targets[0].id for n in aliases}) == 23`）；② 第 2 步补 docstring 核对命令与脚本 sha256，T2 与环境节写明脚本路径、行数与哈希；③ T4 归因改为基线对照——跨批断言失败先在 `f07abb0` 上跑同一方法，基线上也失败才算既有失败，否则按本批回归修正；④ 自检项 ③ 改为“两个脚本都有来源与 sha256”。
+
 ## 审核状态
 
 - 第 1 版：第一关/第二关 NEEDS_MODIFICATION（B1 T4 含第 4 批方法；B2 别名/kwargs 未验证；B3 docstring 判据；B4 CI 记录）。
-- 第 2 版：待第一关/第二关复核。
+- 第 2 版：第一关 PASS；第二关 NEEDS_MODIFICATION（R1–R6）。
+- 第 3 版：第一关 PASS；第二关待复核。
