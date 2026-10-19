@@ -284,13 +284,15 @@ ANALYSIS_LEVELS = ("fulltext", "abstract")
 # analysis source is distinguishable from a level-only display change.
 STAGE2_ANALYSIS_PROJECTION_VERSION = 1
 # Display-rule version (U1): the accepted baseline records which fixed-evidence
-# display rules rendered its managed body. v2 adds trusted-reference
-# recognition, existing-link protection and the visible-content comparison, so a
-# body accepted under v1 — or with no recorded version at all — must be
-# re-rendered by the current renderer before its body may be reused. This is
-# private display cache: it never enters the facts, the model input, a business
-# fingerprint, `paper_digest`, a resolved proof or any public schema.
-STAGE2_DISPLAY_REFRESH_VERSION = 2
+# display rules actually rendered its managed body. v3 is the shared body
+# acceptance step (plan r11 §3.3.7): a candidate body is really rendered and
+# compared against the managed body, only the generated title stamp is ignored,
+# and the version is stamped only after that acceptance. v1/v2 bodies — including
+# the mislabelled `2` written before this step existed — are re-rendered by the
+# current renderer on their next call. This is private display cache: it never
+# enters the facts, the model input, a business fingerprint, `paper_digest`, a
+# resolved proof or any public schema.
+STAGE2_DISPLAY_REFRESH_VERSION = 3
 # Fixed-evidence display (U1): internal Zotero item keys may appear inside the
 # model-written evidence of the fixed freshness card and the anchor-banned
 # blacklist; every one of them is rendered as its trusted title plus link.
@@ -300,6 +302,11 @@ ITEM_KEY_RE = re.compile(r"(?<![A-Za-z0-9])[A-Z0-9]{8}(?![A-Za-z0-9])")
 # matches the trusted metadata instead of re-converting (or nesting) it.
 DISPLAY_LINK_RE = re.compile(
     r"\[([^\]\n]*)\]\((zotero://select/library/items/([A-Za-z0-9]{8}))\)")
+# The renderer's unique data-source title line in the managed preamble:
+# ``> <generated time> ｜ 数据来源：...``. Only this line's generation time is
+# volatile; the rest of the line and every other body line are compared verbatim.
+DISPLAY_SOURCE_HEADER_RE = re.compile(
+    r"^> \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z ｜ 数据来源：")
 FIXED_EVIDENCE_SLOT_PREFIXES = ("- 后续论文依据：", "- 已做部分：", "- 剩余缺口：")
 FIXED_EVIDENCE_HANDOFF_REASON = "fixed_evidence_not_model_repairable"
 FIXED_EVIDENCE_HANDOFF_MESSAGE = (
@@ -4107,12 +4114,6 @@ def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: d
         "analysis_projection": stage2_analysis_projection(
             professor_dir, stage2_projection_keys(ctx, pack_directions),
             stage2_projection_analysis_paths(papers_map or {}, ctx.papers)),
-        # Display-rule version (U1): a successful acceptance always renders its
-        # managed body with the current renderer, so the baseline states which
-        # display rules that body came from. A pack recorded under an older (or
-        # absent) value must be re-rendered by the display-only refresh before
-        # its body may be reused.
-        "display_refresh_version": STAGE2_DISPLAY_REFRESH_VERSION,
         "directions": directions,
     }
 
@@ -5856,7 +5857,6 @@ def cmd_stage2_finalize(args) -> None:
     narratives = validate_narrative(ctx, results_dir, needed_keys) if needed_keys else {}
     old_directions = {direction_machine_id(e): e
                       for e in (ctx.pack or {}).get("directions", [])}
-    old_render = ((ctx.pack or {}).get("cache") or {}).get("render", {})
     # A pack accepted under older membership semantics must rebuild its
     # authoritative membership from the current facts: only the narrative /
     # freshness work may be reused, never the old `supporting_item_keys`.
@@ -6251,25 +6251,7 @@ def cmd_stage2_finalize(args) -> None:
     for direction in pack_directions:
         stage2_require_later_paper_titles(ctx, direction, render_pack)
         stage2_require_paper_reference_titles(ctx.papers, render_pack, direction)
-    # A display-only rename, a membership/reference correction or a changed
-    # narrative/gap display must re-render the analysis Markdown WITHOUT
-    # requiring new model work. Compare the exact displayed content so a
-    # metadata-only rewrite (timestamp/cache) stays a no-render no-op.
-    render_changed = ctx.pack is None or stage2_render_state(
-        render_pack) != stage2_render_state(ctx.pack)
     md_path = ctx.professor_dir / ANALYSIS_MD
-    md_result = None
-    if needed_keys or not ctx.pack or render_changed:
-        body = render_analysis_md(ctx, render_pack, state_fingerprint)
-        md_result = managed_write(md_path, body, state_fingerprint,
-                                  old_render.get(ANALYSIS_MD, {}).get("sha256"), decision)
-        if md_result.get("needs_decision"):
-            soft_exit("needs_decision", md_result["reason_code"],
-                      target=md_result.get("target"),
-                      existing_sha256=md_result.get("existing_sha256"),
-                      new_sha256=md_result.get("new_sha256"),
-                      options=["overwrite（覆盖为状态版本）", "keep_manual（保留手改，不作为流程输入）",
-                               "promote（把要保留的内容经 selection.note 或 profile 写进状态后再渲染）"])
     pack = {
         "schema": INPUT_PACK_SCHEMA, "kind": INPUT_PACK_KIND,
         "identity_version": DIRECTION_IDENTITY_VERSION,
@@ -6278,7 +6260,7 @@ def cmd_stage2_finalize(args) -> None:
         "papers": papers_map,
         "directions": pack_directions,
         "display_references": display_references,
-        "cache": {"render": {ANALYSIS_MD: {"sha256": (md_result or {}).get("sha256") or old_render.get(ANALYSIS_MD, {}).get("sha256")}}},
+        "cache": {},
     }
     if resolved_directions:
         # Each raw source→target row stores the ORIGINAL facts fingerprint of
@@ -6313,39 +6295,17 @@ def cmd_stage2_finalize(args) -> None:
             params=preflight_plan["preflight_inputs"]["params"],
             current_year=ctx.current_year, ctx=ctx, cache_entries=cache_entries,
             papers_map=papers_map)
-    # Validator lifecycle (plan 3.4.1): the old record is carried over only
-    # when NOTHING the validator certified changed — no new model work, no
-    # membership/reference/narrative re-render and no old-semantics rebuild —
-    # and its recorded pack/render binding still describes the actual files.
-    # A changed business version silently expires the old certification (the
-    # new version starts at round 1, raw old reports stay untouched); with NO
-    # business change an invalid old binding is an evidence error and must be
-    # rejected before writing, never "restored" by re-binding the hashes.
-    old_validator = (ctx.pack or {}).get("validator")
-    if isinstance(old_validator, dict) and old_validator.get("schema") == 2:
-        current_document = None
-        try:
-            document_text = md_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            document_text = ""
-        header, document_body = split_frontmatter(document_text)
-        if isinstance(header, dict) and header.get("managed_by") == MANAGED_BY:
-            current_document = sha256_text(document_body)
-        business_changed = bool(needed_keys) or pack_needs_rebuild or render_changed
-        binding_valid = (
-            current_document == old_validator.get("render_sha256")
-            and old_validator.get("pack_sha256")
-            == stage2_pack_content_fingerprint(ctx.pack or {}))
-        if not business_changed:
-            if not binding_valid:
-                fail("validation_render_stale",
-                     "the recorded Stage-2 validation no longer binds the current managed "
-                     "render/input pack and no business change explains it; re-record a "
-                     "raw validator report too against the current files",
-                     target=str(md_path))
-            carried = dict(old_validator)
-            carried["pack_sha256"] = stage2_pack_content_fingerprint(pack)
-            pack["validator"] = carried
+    # The ordinary entry keeps its facts / membership / source / preflight
+    # binding, and then hands the body, the machine header and the old
+    # certification to the one shared display acceptance step (plan r11
+    # §3.3.7): whatever the old display version was, and whether or not new
+    # model work was needed, the current candidate body is really rendered and
+    # compared. `stage2_render_state` stays available as internal information
+    # but can no longer replace that acceptance.
+    business_changed = bool(needed_keys) or pack_needs_rebuild
+    acceptance = stage2_display_acceptance(
+        pack, render_pack, ctx, ctx.professor_dir, decision,
+        old_pack=ctx.pack, business_changed=business_changed, mode="finalize")
     atomic_json(ctx.pack_path, pack)
     save_freshness_cache(ctx.professor_dir, cache_entries)
     # NOTE: stage2-finalize deliberately does NOT touch the sidecar's
@@ -6369,7 +6329,8 @@ def cmd_stage2_finalize(args) -> None:
                                          and resolved_directions[direction_machine_id(d)].get("resolution_type") != "unchanged")}
                        for d in pack_directions],
         "freshness_judged": judged, "freshness_cache_total": len(cache_entries),
-        "md_sha256": (md_result or {}).get("sha256"),
+        "md_sha256": acceptance["md_sha256"],
+        "display_changed": acceptance["body_changed"],
         "resolved_directions_applied": bool(resolved_directions),
     })
 
@@ -6451,44 +6412,228 @@ def stage2_refresh_business_reasons(assessment: dict) -> list[str]:
     return sorted(set(reasons))
 
 
-def stage2_managed_body_text(professor_dir: Path) -> str | None:
-    """The managed analysis body currently on disk, or None when unreadable.
+def stage2_managed_document(md_path: Path) -> dict:
+    """The managed analysis document read BEFORE any write (r11 §3.3.7 step 1).
 
-    A symlink or a document that is not the managed projection is never treated
-    as the certified body: callers compare against what the writer owns.
+    Returns ``{"header", "body", "body_sha256", "error"}`` where ``error`` is
+    ``None`` for a readable managed document, ``"missing"`` when the file does
+    not exist yet (a first build), ``"unreadable"`` for a symlink or an I/O /
+    decode failure, and ``"not_managed"`` when the frontmatter is not ours.
+    Nothing here writes, and an unreadable or foreign document is never treated
+    as an equivalent body.
     """
-    path = Path(professor_dir) / ANALYSIS_MD
-    if path.is_symlink():
-        return None
+    md_path = Path(md_path)
+    empty = {"header": None, "body": None, "body_sha256": None}
+    if md_path.is_symlink():
+        return {**empty, "error": "unreadable"}
     try:
-        content = path.read_text(encoding="utf-8")
+        content = md_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {**empty, "error": "missing"}
     except (OSError, UnicodeDecodeError):
-        return None
+        return {**empty, "error": "unreadable"}
     header, body = split_frontmatter(content)
+    body_sha = sha256_text(body)
     if not isinstance(header, dict) or header.get("managed_by") != MANAGED_BY:
-        return None
-    return body
-
-
-def stage2_managed_body_sha(professor_dir: Path) -> str | None:
-    """SHA-256 of the managed analysis body currently on disk, or None."""
-    body = stage2_managed_body_text(professor_dir)
-    return sha256_text(body) if body is not None else None
+        return {"header": header, "body": body, "body_sha256": body_sha,
+                "error": "not_managed"}
+    return {"header": header, "body": body, "body_sha256": body_sha, "error": None}
 
 
 def stage2_visible_body(body: str) -> str:
-    """One managed body with its volatile generation stamp removed.
+    """One managed body with only the renderer's generated stamp ignored.
 
-    The renderer stamps the data-source header line with the wall clock; every
-    other byte of the body is deterministic from the pack, so two bodies that
-    differ only in that stamp carry the same visible content.
+    The renderer prints exactly one data-source title line in the managed
+    preamble (``> <generated time> ｜ 数据来源：...``). Only that line's
+    generation time is dropped; its complete ``数据来源：`` tail still takes part
+    in the comparison, and every other line — fixed-evidence text, author
+    quotes, user notes and any other line that happens to contain the same
+    marker — is compared verbatim (r11 §3.3.7 step 3). When the generated title
+    cannot be identified the difference is kept.
     """
-    lines = []
-    for line in body.splitlines():
-        if " ｜ 数据来源：" in line:
-            line = "数据来源：" + line.split(" ｜ 数据来源：", 1)[1]
-        lines.append(line)
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("## "):
+            break                      # the preamble is over: body text is literal
+        match = DISPLAY_SOURCE_HEADER_RE.match(line)
+        if match:
+            lines[index] = "数据来源：" + line[match.end():]
+            break
     return "\n".join(lines)
+
+
+DISPLAY_DECISION_OPTIONS = ["overwrite（覆盖为状态版本）",
+                            "keep_manual（保留手改，不作为流程输入）"]
+# The ordinary finalize keeps its original extra option; the display-only
+# refresh never offered it.
+FINALIZE_DECISION_OPTIONS = DISPLAY_DECISION_OPTIONS + [
+    "promote（把要保留的内容经 selection.note 或 profile 写进状态后再渲染）"]
+
+
+def stage2_display_acceptance(candidate: dict, render_pack: dict, render_ctx,
+                              professor_dir: Path, decision, *,
+                              old_pack: dict | None, business_changed: bool,
+                              mode: str) -> dict:
+    """The one internal display acceptance step (plan r11 §3.3.7).
+
+    Shared by the ordinary ``stage2-finalize`` and the display-only refresh, so
+    neither entry keeps a second "compare → write → validator → version"
+    algorithm. The step keeps four concerns apart: the business basis
+    (``business_changed``), the actual body content, the machine header binding
+    and the old validator's legitimacy.
+
+    Order: read the old managed document first, render the candidate body with
+    the current renderer, compare the two actual bodies (ignoring only the
+    generated title stamp), write or keep the body under the existing
+    ``managed_write`` protection, decide the validator, and only then stamp the
+    current private display version into the candidate pack.
+
+    ``mode`` keeps each entry's original surface: ``"finalize"`` reports the
+    data/evidence failures, ``"refresh"`` maps an unusable old binding to the
+    existing manual decision and a missing trusted reference to
+    ``needs_refresh``.
+    """
+    md_path = Path(professor_dir) / ANALYSIS_MD
+    decision_options = (FINALIZE_DECISION_OPTIONS if mode == "finalize"
+                        else DISPLAY_DECISION_OPTIONS)
+    state_fingerprint = stage2_pack_state_fingerprint(candidate)
+    old_document = stage2_managed_document(md_path)
+    old_cache = (old_pack or {}).get("cache") if isinstance(old_pack, dict) else None
+    old_render = old_cache.get("render") if isinstance(old_cache, dict) else None
+    certified = ((old_render.get(ANALYSIS_MD) or {}).get("sha256")
+                 if isinstance(old_render, dict) else None)
+    old_body = old_document["body"]
+    old_body_sha = old_document["body_sha256"]
+    comparable_old_body = old_body if old_document["error"] is None else None
+    body_is_certified = bool(comparable_old_body is not None and certified
+                             and old_body_sha == certified)
+    declared_validator = ((old_pack or {}).get("validator")
+                          if isinstance(old_pack, dict) else None)
+    declared_schema2 = (declared_validator
+                        if isinstance(declared_validator, dict)
+                        and declared_validator.get("schema") == 2 else None)
+
+    # Step 1 outcome: an unusable old document / binding is never "equivalent".
+    # Each entry keeps its original surface, and nothing is written first.
+    if old_document["error"] in ("unreadable", "not_managed") and mode == "refresh":
+        soft_exit("needs_decision", "manual_markdown_changed",
+                  target=str(md_path), options=decision_options)
+    if declared_schema2 is not None and not business_changed and mode == "finalize":
+        binding_valid = (
+            body_is_certified
+            and declared_schema2.get("render_sha256") == old_body_sha
+            and declared_schema2.get("pack_sha256")
+            == stage2_pack_content_fingerprint(old_pack or {}))
+        if not binding_valid:
+            fail("validation_render_stale",
+                 "the recorded Stage-2 validation no longer binds the current managed "
+                 "render/input pack and no business change explains it; re-record a "
+                 "raw validator report too against the current files",
+                 target=str(md_path))
+    if mode == "refresh" and old_pack is not None \
+            and comparable_old_body is not None and not body_is_certified:
+        soft_exit("needs_decision", "manual_markdown_changed",
+                  target=str(md_path), options=decision_options)
+
+    # Step 2: the candidate body always comes from the current renderer, for a
+    # first build as well as for every reuse path.
+    if mode == "refresh":
+        try:
+            with professor_business_channel():
+                candidate_body = render_analysis_md(render_ctx, render_pack,
+                                                    state_fingerprint)
+        except ProfessorBusinessFailure as failure:
+            soft_exit("needs_refresh", "display_refresh_stale",
+                      drift=["display_refresh_candidate_invalid"],
+                      reason_codes=[failure.payload.get("reason_code")
+                                    or "display_refresh_candidate_invalid"],
+                      message="当前渲染器无法用已持久化的可信元数据生成候选正文；"
+                              "按正常 Stage 2 流程重新处理。未修改任何文件。")
+    else:
+        candidate_body = render_analysis_md(render_ctx, render_pack, state_fingerprint)
+
+    # Step 3: compare the two actual managed bodies.
+    body_changed = (comparable_old_body is None
+                    or stage2_visible_body(candidate_body)
+                    != stage2_visible_body(comparable_old_body))
+
+    # Step 4: write the candidate, or keep the old body bytes (generation stamp
+    # included) and sync only the machine header when the pack state moved.
+    wrote_body = False
+    synced_header = False
+    md_sha256 = old_body_sha
+    if body_changed:
+        md_result = managed_write(md_path, candidate_body, state_fingerprint,
+                                  certified, decision)
+        if md_result.get("needs_decision"):
+            soft_exit("needs_decision", md_result["reason_code"],
+                      target=md_result.get("target"),
+                      existing_sha256=md_result.get("existing_sha256"),
+                      new_sha256=md_result.get("new_sha256"),
+                      options=decision_options)
+        wrote_body = True
+        md_sha256 = md_result["sha256"]
+    else:
+        if old_pack is not None and not body_is_certified:
+            # The accepted pack carries no comparable render binding for this
+            # body, so it is not an accepted equivalent body either.
+            if mode == "refresh":
+                soft_exit("needs_decision", "manual_markdown_changed",
+                          target=str(md_path), options=decision_options)
+            fail("validation_render_stale",
+                 "the recorded Stage-2 validation no longer binds the current managed "
+                 "render/input pack and no business change explains it; re-record a "
+                 "raw validator report too against the current files",
+                 target=str(md_path))
+        header = old_document["header"] or {}
+        if header.get("state_fingerprint") != state_fingerprint \
+                or header.get("render_sha256") != old_body_sha:
+            md_result = managed_write(md_path, comparable_old_body, state_fingerprint,
+                                      certified, decision)
+            if md_result.get("needs_decision"):
+                soft_exit("needs_decision", md_result["reason_code"],
+                          target=md_result.get("target"),
+                          existing_sha256=md_result.get("existing_sha256"),
+                          new_sha256=md_result.get("new_sha256"),
+                          options=decision_options)
+            synced_header = True
+        md_sha256 = old_body_sha
+
+    # Step 5: the validator follows the old legitimacy, the real body change and
+    # the caller's business change. A new business version expires the old
+    # certification even when the deterministic body stayed equal; a kept record
+    # is only re-bound, never revived.
+    candidate.pop("validator", None)
+    if not body_changed and not business_changed:
+        if declared_schema2 is not None:
+            binding_valid = (body_is_certified
+                             and declared_schema2.get("render_sha256") == old_body_sha
+                             and declared_schema2.get("pack_sha256")
+                             == stage2_pack_content_fingerprint(old_pack or {}))
+            if binding_valid:
+                candidate["validator"] = dict(declared_schema2)
+            elif mode == "finalize":
+                fail("validation_render_stale",
+                     "the recorded Stage-2 validation no longer binds the current managed "
+                     "render/input pack and no business change explains it; re-record a "
+                     "raw validator report too against the current files",
+                     target=str(md_path))
+            # refresh: an already-expired record stays as it came in; the
+            # display-only step must not revive it.
+
+    # Step 6: only after the body and the certification are settled may the
+    # candidate pack record the render binding and the current display version.
+    cache = candidate.setdefault("cache", {})
+    cache["render"] = {ANALYSIS_MD: {"sha256": md_sha256}}
+    meta = cache.get("preflight")
+    if isinstance(meta, dict):
+        meta["display_refresh_version"] = STAGE2_DISPLAY_REFRESH_VERSION
+    validator = candidate.get("validator")
+    if isinstance(validator, dict):
+        validator["pack_sha256"] = stage2_pack_content_fingerprint(candidate)
+    return {"body_changed": body_changed, "wrote_body": wrote_body,
+            "synced_header": synced_header, "md_sha256": md_sha256,
+            "validator_kept": isinstance(validator, dict)}
 
 
 def cmd_stage2_refresh_display(args) -> None:
@@ -6689,8 +6834,7 @@ def cmd_stage2_refresh_display(args) -> None:
         updated["papers"] = papers
         updated["cache"] = dict(pack_now.get("cache") or {})
         updated["cache"]["preflight"] = {
-            **meta_now, "analysis_projection": current_now,
-            "display_refresh_version": STAGE2_DISPLAY_REFRESH_VERSION}
+            **meta_now, "analysis_projection": current_now}
         ctx = Stage2PackRefineContext(professor_dir)
         if stage2_pack_content_fingerprint(ctx.pack) \
                 != stage2_pack_content_fingerprint(pack_now):
@@ -6699,71 +6843,21 @@ def cmd_stage2_refresh_display(args) -> None:
                       message="写入前已接受输入包再次变化；按正常 Stage 2 流程重新处理。"
                               "未修改任何文件。")
         ctx.pack = updated
-        state_fingerprint = stage2_pack_state_fingerprint(updated)
-        # The renderer owns the comparison: the CANDIDATE body is really
-        # generated from the persisted trusted metadata and compared with the
-        # managed body on disk, ignoring only the generation stamp. A stale
-        # display version must never skip this comparison, and a candidate whose
-        # references lack trusted metadata refuses the display-only write
-        # instead of guessing a title or re-parsing the old Markdown.
-        try:
-            with professor_business_channel():
-                candidate_body = render_analysis_md(ctx, updated, state_fingerprint)
-        except ProfessorBusinessFailure as failure:
-            soft_exit("needs_refresh", "display_refresh_stale",
-                      drift=["display_refresh_candidate_invalid"],
-                      reason_codes=[failure.payload.get("reason_code")
-                                    or "display_refresh_candidate_invalid"],
-                      message="当前渲染器无法用已持久化的可信元数据生成候选正文；"
-                              "按正常 Stage 2 流程重新处理。未修改任何文件。")
-        current_body = stage2_managed_body_text(professor_dir)
-        body_changed = current_body is None or \
-            stage2_visible_body(candidate_body) != stage2_visible_body(current_body)
-        if body_changed:
-            md_result = managed_write(md_path, candidate_body, state_fingerprint,
-                                      (old_render.get(ANALYSIS_MD) or {}).get("sha256"),
-                                      decision)
-            if md_result.get("needs_decision"):
-                soft_exit("needs_decision", md_result["reason_code"],
-                          target=md_result.get("target"),
-                          existing_sha256=md_result.get("existing_sha256"),
-                          new_sha256=md_result.get("new_sha256"),
-                          options=["overwrite（覆盖为状态版本）",
-                                   "keep_manual（保留手改，不作为流程输入）"])
-            updated["cache"]["render"] = {ANALYSIS_MD: {"sha256": md_result["sha256"]}}
-            # The managed body materially changed, so the recorded certification
-            # no longer proves it: the old validator is formally expired here
-            # instead of being carried or re-bound, which lets the new body be
-            # recorded again from round 1 (the raw report files stay untouched).
-            updated.pop("validator", None)
-            md_sha256 = md_result["sha256"]
-        else:
-            # The candidate is equivalent to the managed body (only the
-            # generation stamp differs): keep the certified body byte-identical,
-            # refuse a hand-edited one, and only advance the display projection
-            # and its version, keeping the recorded rounds intact. A validator
-            # that does not already bind this accepted pack and body cannot be
-            # revived by the version update.
-            certified = (old_render.get(ANALYSIS_MD) or {}).get("sha256")
-            if stage2_managed_body_sha(professor_dir) != certified:
-                soft_exit("needs_decision", "manual_markdown_changed",
-                          target=str(md_path),
-                          options=["overwrite（覆盖为状态版本）",
-                                   "keep_manual（保留手改，不作为流程输入）"])
-            validator = updated.get("validator")
-            if isinstance(validator, dict) \
-                    and validator.get("pack_sha256") \
-                    == stage2_pack_content_fingerprint(pack_now) \
-                    and validator.get("render_sha256") == certified:
-                carried = dict(validator)
-                carried["pack_sha256"] = stage2_pack_content_fingerprint(updated)
-                updated["validator"] = carried
-            md_sha256 = certified
+        # The display-only entry keeps its preflight / lease / source checks and
+        # then calls the SAME display acceptance step as the ordinary finalize:
+        # the current candidate body is really rendered from the persisted
+        # trusted metadata, compared with the managed body, and the display
+        # version is stamped only after that acceptance.
+        acceptance = stage2_display_acceptance(
+            updated, updated, ctx, professor_dir, decision,
+            old_pack=pack_now, business_changed=False, mode="refresh")
+        md_sha256 = acceptance["md_sha256"]
+        display_changed = acceptance["body_changed"]
         atomic_json(professor_dir / INPUT_PACK, updated)
     emit({"status": "ok", "professor": pack.get("professor"),
           "display_refreshed": True, "pack_path": str(professor_dir / INPUT_PACK),
           "analysis_md": str(md_path), "md_sha256": md_sha256,
-          "display_changed": body_changed,
+          "display_changed": display_changed,
           "display_version_state": accepted_version_state,
           "level_changes": sorted(level_changes), "levels": levels,
           "reason_codes": []})
