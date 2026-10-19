@@ -314,6 +314,10 @@ class PreflightBase(unittest.TestCase):
             pack_directions=pack["directions"], params=params,
             current_year=current_year if current_year is not None else YEAR,
             ctx=ctx, cache_entries=contact_state.load_freshness_cache(self.prof_dir))
+        # The current product stamps this in the shared display acceptance step
+        # (plan r11 §3.3.7); this helper models an accepted pack, so it records
+        # the current version after the previous meta was replaced.
+        meta["display_refresh_version"] = contact_state.STAGE2_DISPLAY_REFRESH_VERSION
         pack.setdefault("cache", {})["preflight"] = meta
         self._write_pack(pack)
         return meta
