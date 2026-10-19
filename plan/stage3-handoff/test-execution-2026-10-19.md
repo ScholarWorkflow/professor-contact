@@ -3,7 +3,7 @@
 - 测试计划：[test-plan.md](test-plan.md)，第 4 版（第 1 版取得第一、二关口 PASS；第 3 版把仓库 CI 移出业务必测清单、补齐驱动脚本复制步骤并启用 `set -e`）。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 3 版（`Plan conclusion: APPROVED`）。
 - 对照基准：`779fb692ed5ded163ab0eb5b415aef698135f54e`。
-- 被测提交：`fab297d46e07d664450be798f77d2344b88fda5d`；执行期间产品与测试代码处于该提交、未改动（其后的提交只改 `plan/` 下文档，`.apm/` 下字节未变）。
+- 被测提交：`8c3186d`（改基到 `main` 之后的同一实现提交；改基前为 `fab297d`，两者引入的 `.apm/` 补丁逐字节相同——已用补丁哈希核对）。执行期间产品与测试代码处于该提交、未改动（其后的提交只改 `plan/` 下文档，`.apm/` 下字节未变）。
 - 环境：本地 macOS，Python 3.14.7；只使用标准库与既有夹具。仓库 CI 使用工作流固定的 Python 3.12。
 - 说明：执行时工作树 `git status --porcelain` 为空；`/tmp/pc-bnd2-check/status.txt` 是空文件（状态改由本文件文字记录），每个编号的退出码记录在对应日志与 `diff` 结果里。
 - 原始输出（仓库外）：`/tmp/pc-bnd2-check/`（本轮实际目录）；证据文件 `base5.json`／`head5.json`（最终）、`base.json`／`head.json`（第 2 步命令的输出名，首次对照，17 个键，不作结论依据）、`base2.json`／`head2.json`（同构目录复跑；与 `base.json`／`head.json` 逐字节相同，均 17 个键——与最终的 `base5.json`／`head5.json` 差 `render_line_scopes_runner_signature` 一个键）、历史尝试 `base3.json`／`head3.json`、`base4.json`／`head4.json`，日志 `t5-final.log`、`t5-18tests.log`；本文件只记录命令、方法与结果。
