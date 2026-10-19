@@ -3624,13 +3624,26 @@ def stage2_artifact_guard_reason(recorded: dict) -> str | None:
 
     Cryptographic source identity stays with the normal Stage 2 facts
     validation; this only detects that the recorded file itself changed since
-    the accepted run. Baseline entries that recorded "no path" or "path not yet
-    present" are not stat-able here; their appearance, removal or move is
-    decided by the analysis projection comparison instead.
+    the accepted run. A recorded "path declared but not present" baseline is
+    re-checked here: that exact file APPEARING is a source change like any other
+    and must leave the reuse path, while a "no path configured" baseline stays a
+    real statement of the accepted run whose appearance is decided by the
+    analysis projection comparison instead.
     """
-    if recorded.get("state", "present") != "present":
+    state = recorded.get("state", "present")
+    if state == "no_path":
         return None
-    path = Path(str(recorded.get("path") or ""))
+    path_value = recorded.get("path")
+    if not isinstance(path_value, str) or not path_value:
+        return None
+    path = Path(path_value)
+    if state == "missing":
+        try:
+            return "artifact_appeared" if path.is_file() else None
+        except OSError:
+            return None
+    if state != "present":
+        return None
     try:
         if not path.is_file():
             return "artifact_missing"
@@ -3731,13 +3744,18 @@ def stage2_analysis_projection(professor_dir: Path, keys,
     analysis_paths = analysis_paths if isinstance(analysis_paths, dict) else {}
     entries = {}
     for key in sorted({str(key) for key in keys if isinstance(key, str) and key}):
-        raw = records.get(key) if state == "ok" else None
+        # The KEY's presence and its RECORD's shape are two different facts: an
+        # explicit null (or any non-object value) under an existing key is a
+        # broken current record, not the absence of a record, so it may never be
+        # backfilled from an older pack path.
+        present = state == "ok" and key in records
+        raw = records.get(key) if present else None
         if isinstance(raw, dict):
             record_state = "declared"
-        elif raw is None:
-            record_state = "missing"
-        else:
+        elif present:
             record_state = "unreadable"
+        else:
+            record_state = "missing"
         record = raw if record_state == "declared" else {}
         if record_state == "declared":
             analysis_value = record["file"] if "file" in record else analysis_paths.get(key)
@@ -5047,12 +5065,15 @@ def stage2_display_text(value, references: dict, where: str, confirmed_keys=None
         if confirmed is not None and key not in confirmed:
             return match.group(0)
         link = link_for(key)
-        if match.group(1) != stage2_trusted_paper_title(references.get(key), key):
-            # A confirmed reference printed under an unverified title becomes
-            # the same trusted link instead of keeping a wrong citation.
-            return link
+        # Both branches hand a COMPLETE link to the protection list: the printed
+        # title is trusted and kept verbatim, or an unverified title is replaced
+        # by the trusted link. The replacement must be protected as well, because
+        # its target still carries the item key and the bare-key pass below would
+        # otherwise rewrite that target into a nested link.
+        verified = match.group(1) == stage2_trusted_paper_title(
+            references.get(key), key)
         token = "\x00display-reference-{}\x00".format(len(protected))
-        protected.append((token, match.group(0)))
+        protected.append((token, match.group(0) if verified else link))
         return token
 
     def replace(match: "re.Match") -> str:
