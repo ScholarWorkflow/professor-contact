@@ -13,8 +13,8 @@
 | --- | --- | --- |
 | T1 | 通过 | 对比脚本输出 `T1 render_candidates_md byte-identical -> base=3465B head=3465B`、`T1 render_candidates_md without profile byte-identical -> base=2370B head=2370B`、`T1 render_candidates_overview byte-identical -> base=346B head=346B`，退出码 0 |
 | T2 | 通过 | 同一脚本输出两个公开函数的签名一致与四个私有 helper 仍可按原名取到；退出码 0 |
-| T3 | 通过 | 按第 5 版清单只跑 7 个方法：`Ran 7 tests in 26.222s`，`OK`，退出码 0（head `00f307e`）。更早的整模块运行 `Ran 47 tests in 172.558s` 是这 7 项的超集，保留作历史证据；多出的 40 项属清单外，不作为本批通过条件 |
-| T4 | 通过 | 按第 5 版清单只跑 2 个方法：`Ran 2 tests in 2.754s`，`OK`，退出码 0（head `00f307e`）。更早的整模块运行 `Ran 24 tests in 27.150s` 是这 2 项的超集，保留作历史证据 |
+| T3 | 通过 | 按第 5/6 版清单只跑 7 个方法（第 6 版只收窄通过条件，未改方法）：`Ran 7 tests in 26.222s`，`OK`，退出码 0（head `00f307e`）。更早的整模块运行 `Ran 47 tests in 172.558s` 是这 7 项的超集，保留作历史证据；多出的 40 项属清单外，不作为本批通过条件 |
+| T4 | 通过 | 按第 5/6 版清单只跑 2 个方法（同上）：`Ran 2 tests in 2.754s`，`OK`，退出码 0（head `00f307e`）。更早的整模块运行 `Ran 24 tests in 27.150s` 是这 2 项的超集，保留作历史证据 |
 | 既有仓库检查 | 通过 | 仓库 CI 在 head `00f307e43ec72e12a8a13080323e43b69630178a` 上跑全量 `unittest discover`：运行 `39152603658`，8m3s，检查项 `test` pass。按第 5 版计划这项不属于本批业务必测项，只作既有检查结果引用；该 head 相对被测提交只多文档提交（`git diff 68647a5 00f307e -- .apm/` 为空） |
 
 ## 执行方法与命令
