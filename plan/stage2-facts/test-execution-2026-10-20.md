@@ -13,7 +13,7 @@
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
-| T0 编译与工厂契约 | 通过 | 6 条 `T0 ... OK`：36 个 keyword-only 参数、18 个成员、18 个同名别名、两条常量别名在 `build()` 之前、模块不导入 runner／不做动态加载／不碰 `sys.path`／`sys.modules`、36 个实参与参数同名同集合且 18 个别名都在调用之后；`T0 CHECKS PASS`；`py_compile` 与 `--help` 退出码 0（`/tmp/pc-stage6/blk0.sh` 输出） |
+| T0 编译与工厂契约 | 通过 | 6 条 `T0 ... OK`：36 个 keyword-only 参数、18 个成员、18 个同名别名、两条常量别名在 `build()` 之前、模块不导入 runner／不做动态加载／不碰 `sys.path`／`sys.modules`、36 个实参与参数同名同集合且 18 个别名都在调用之后；`T0 CHECKS PASS`；`py_compile` 与 `--help` 退出码 0（`/tmp/pc-blocks/blk0.sh` 输出） |
 | T1–T3 结构／AST／接口 | 通过 | 98 条 `OK`（T0 3、T1 37、T2 21、T3 37）、`ALL CHECKS PASS`、退出码 0；`--help` 与 `b862dfa` 逐字节相同（`diff -u` 无输出） |
 | T2 的 docstring 核对 | 通过 | `total=18 with_doc=7 multi=5 clean_equal=7 without_doc=11 missing=0 mismatched=0`、`DOCSTRING CHECKS PASS`、退出码 0 |
 | T4 facts／sidecar／gap 行为 | 通过 | 13 个方法：`Ran 13 tests in 5.432s`、`OK`，无失败、无跳过 |
@@ -40,9 +40,9 @@
 
 ## 复核入口
 
-- T0：`/tmp/pc-stage6/blk0.sh`（6 条 `T0 ... OK`）。
-- T1–T3：`/tmp/pc-stage6/blk1.sh`（`diff` 无输出 + 98 条 `OK`）。
-- docstring：`/tmp/pc-stage6/blk2.sh`（`DOCSTRING CHECKS PASS`）。
-- T4：`/tmp/pc-stage6/blk3.sh`（`Ran 13 tests`、`OK`）。
-- T5：`/tmp/pc-stage6/blk4.sh`（`Ran 2 tests`、`OK`）。
+- T0：`/tmp/pc-blocks/blk0.sh`（6 条 `T0 ... OK`）。
+- T1–T3：`/tmp/pc-blocks/blk1.sh`（`diff` 无输出 + 98 条 `OK`）。
+- docstring：`/tmp/pc-blocks/blk2.sh`（`DOCSTRING CHECKS PASS`）。
+- T4：`/tmp/pc-blocks/blk3.sh`（`Ran 13 tests`、`OK`）。
+- T5：`/tmp/pc-blocks/blk4.sh`（`Ran 2 tests`、`OK`）。
 - 基线对照（失败时才用）：`/tmp/pc-blocks/blk5.sh`（按第 4 版第 7 步抽出，含 `|| true`；已实跑一次，13 个方法 `OK`、退出码 0，日志 `official/baseline.log`）。

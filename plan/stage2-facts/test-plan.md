@@ -2,7 +2,7 @@
 
 ## 版本、来源与状态
 
-- 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 1 版（待审核）。
+- 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 2 版（`Plan conclusion: APPROVED`）。
 - Requirement revision: 第 1 版（2026-10-20 负责人要求）。
 - Target repository revision: 工作分支 `refactor-stage2-context`；对照基准为集成提交 `b862dfa`（`7a59006` 上并入 #112／#110／#111 后的树）。
 - Test plan revision: 第 4 版。
@@ -218,12 +218,12 @@ cat /tmp/pc-stage6/t4-baseline.log
 
 - 第 1 版：首次提交：T0（编译／工厂契约）、T1–T3（A/B 脚本，98 条 OK）、T2 的 docstring 核对、T4（13 个方法）、T5（2 个夹具方法）。
 - 第 2 版：按第一关意见修正 4 点——F1 第 7 步的基线对照改为原样跑完 13 个方法；F2 第 2 步补基线的 `--help` 与 `diff -u`（逐字节比较），T0 预期同步写明；F3 新增第 5 步“失败注入：本批不适用”及理由，后续步骤顺延；F4 第 1 步补动态加载断言与“36 个实参同名同集合、18 个别名在调用之后”的断言，T0 输出由 5 条变 6 条。同时把对比脚本与 docstring 脚本换成支持类的 v2／v3 版本，并写明哈希。
-- 第 4 版：按第二关复核修正 H1：第 1 步在 `cd` 之后加 `RUN=/tmp/pc-stage6` 与 `mkdir -p "$RUN"`，`--help` 的输出改写 `"$RUN/help-head.txt"`，这样干净机器上也能直接执行。
 - 第 3 版：按第一关复核修正——G1 T4 行的归因说明改为“第 7 步”；G2 第 7 步的 unittest 命令末尾加 `|| true`，让基线失败时仍能打印日志并应用判据；T0 行的检查方式补“`--help` 的逐字节比较用第 2 步的 `diff -u`”。
+- 第 4 版：按第二关复核修正 H1：第 1 步在 `cd` 之后加 `RUN=/tmp/pc-stage6` 与 `mkdir -p "$RUN"`，`--help` 的输出改写 `"$RUN/help-head.txt"`，这样干净机器上也能直接执行。
 
 ## 审核状态
 
 - 第 1 版：第一关 NEEDS_MODIFICATION（F1 基线对照只覆盖 2/13；F2 `--help` 逐字节相同缺命令；F3 未标失败注入；F4 T3 的源码承诺未落地）。
 - 第 2 版：第一关 NEEDS_MODIFICATION（G1 T4 行仍写“第 6 步”；G2 第 7 步在 `set -e` 下基线失败会提前退出）。
 - 第 3 版：第一关 PASS；第二关 NEEDS_MODIFICATION（H1 第 1 步在干净 `/tmp` 下不可执行；H2 执行记录引用的 `blk5.sh` 是旧副本）。
-- 第 4 版：待第一关沿用、第二关复核（第 1 步加 `RUN=/tmp/pc-stage6; mkdir -p "$RUN"` 并把 `help-head.txt` 写到 `$RUN` 下；执行记录改为引用按第 3 版第 7 步重新抽出的命令块）。
+- 第 4 版：待第二关复核（已按 H1／H2 修正：第 1 步加 `RUN=/tmp/pc-stage6; mkdir -p "$RUN"` 并把 `help-head.txt` 写到 `$RUN` 下；执行记录改为引用按第 4 版第 7 步重新抽出的 `/tmp/pc-blocks/blk5.sh`）。
