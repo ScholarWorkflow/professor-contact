@@ -3,11 +3,11 @@
 ## 版本与对象
 
 - 执行计划：`plan/stage2-facts/implementation-plan.md` 第 2 版。
-- 测试计划：`plan/stage2-facts/test-plan.md` 第 3 版。
+- 测试计划：`plan/stage2-facts/test-plan.md` 第 4 版。
 - 被测提交：`1747c40`（`refactor(stage2): move the facts and context layer into a helper module`，父提交 `c557802` 为计划文档提交，其父为集成提交 `b862dfa`）。
 - 对照基准：集成提交 `b862dfa`（`7a59006` 上依次并入 PR #112、#110、#111 后的树），runner 8191 行。
 - 环境：macOS；`uv run --no-project python` 3.14.6；仓库既有测试夹具；未新增依赖。
-- 运行目录：`/tmp/pc-stage6/`（`probe/` 是实施前演练，`base/` 是 `b862dfa` 的 scripts，`blk0.sh`–`blk5.sh` 是从测试计划原文抽出的命令块，正式执行日志在 `official/`）。
+- 运行目录：`/tmp/pc-stage6/`（`base/` 是 `b862dfa` 的 scripts，`official/` 是正式执行日志）；命令块从测试计划第 4 版原文抽出，放在 `/tmp/pc-blocks/blk0.sh`–`blk5.sh`。第 1 步已在干净的 `/tmp`（先 `rm -rf /tmp/pc-stage6`）上跑过，退出码 0，确认它自己会建目录。
 
 ## 结果
 
@@ -16,8 +16,8 @@
 | T0 编译与工厂契约 | 通过 | 6 条 `T0 ... OK`：36 个 keyword-only 参数、18 个成员、18 个同名别名、两条常量别名在 `build()` 之前、模块不导入 runner／不做动态加载／不碰 `sys.path`／`sys.modules`、36 个实参与参数同名同集合且 18 个别名都在调用之后；`T0 CHECKS PASS`；`py_compile` 与 `--help` 退出码 0（`/tmp/pc-stage6/blk0.sh` 输出） |
 | T1–T3 结构／AST／接口 | 通过 | 98 条 `OK`（T0 3、T1 37、T2 21、T3 37）、`ALL CHECKS PASS`、退出码 0；`--help` 与 `b862dfa` 逐字节相同（`diff -u` 无输出） |
 | T2 的 docstring 核对 | 通过 | `total=18 with_doc=7 multi=5 clean_equal=7 without_doc=11 missing=0 mismatched=0`、`DOCSTRING CHECKS PASS`、退出码 0 |
-| T4 facts／sidecar／gap 行为 | 通过 | 13 个方法：`Ran 13 tests in 5.141s`、`OK`，无失败、无跳过 |
-| T5 复制夹具加载 | 通过 | 2 个方法：`Ran 2 tests in 1.000s`、`OK` |
+| T4 facts／sidecar／gap 行为 | 通过 | 13 个方法：`Ran 13 tests in 5.432s`、`OK`，无失败、无跳过 |
+| T5 复制夹具加载 | 通过 | 2 个方法：`Ran 2 tests in 1.143s`、`OK` |
 | 失败注入 | 不适用 | 本批只搬移定义并把两条常量别名上移，不改事务／回滚／写入顺序／错误通道（见测试计划第 5 步） |
 | 既有仓库检查（非必测） | 待跑 | 推 PR 后引用 4 个 `shards` 与聚合 `test` 的运行编号；不作为通过条件 |
 
@@ -45,4 +45,4 @@
 - docstring：`/tmp/pc-stage6/blk2.sh`（`DOCSTRING CHECKS PASS`）。
 - T4：`/tmp/pc-stage6/blk3.sh`（`Ran 13 tests`、`OK`）。
 - T5：`/tmp/pc-stage6/blk4.sh`（`Ran 2 tests`、`OK`）。
-- 基线对照（失败时才用）：`/tmp/pc-stage6/blk5.sh`。
+- 基线对照（失败时才用）：`/tmp/pc-blocks/blk5.sh`（按第 4 版第 7 步抽出，含 `|| true`；已实跑一次，13 个方法 `OK`、退出码 0，日志 `official/baseline.log`）。
