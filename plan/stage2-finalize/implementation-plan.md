@@ -79,7 +79,7 @@ Stage 2 分 6 批。第 1 批（`_stage2_preflight.py`，PR #108）与第 2 批�
 - **prohibited_side_effect**：改逻辑/常量/输出/顺序；改测试；复制 helper 实现；新建第二错误通道；搬类、resolve、校验/refine、facts/pack 渲染闭包；改 CLI/入口/Nix。
 - **unresolved impact**：
   1. 函数元数据变化（`__module__`／`__qualname__`、`pickle`、`get_type_hints`）；仓内无消费者。
-  2. 第 6 批搬两个类与 `build_direction_pack`／`render_analysis_md` 时必须同步更新本批 build 实参，并处理 4578 的反向调用。
+  2. 第 6 批搬两个类与 `build_direction_pack`／`render_analysis_md` 时必须同步更新本批 build 实参，并处理 4578 的反向调用。特别注意绑定顺序是环：`render_analysis_md`（Runner 3786）运行期调本批的 `stage2_require_later_paper_titles`，而本批 build（3934）又注入 `render_analysis_md`（实参 3964），本批别名 `stage2_require_later_paper_titles` 在 3983；第 6 批若把 `render_analysis_md` 移入模块，必须用两阶段绑定或晚绑定 provider（先建最终 module 函数、再建依赖它的 factory），不能简单把 alias 放在本批 build 之前或之后。
   3. 第 4/5 批在 10266/10267 相邻删除/插入，合并时可能需要 rebase/冲突处理；不是语义前置。
   4. scripts 目录多一个内部模块。
 
