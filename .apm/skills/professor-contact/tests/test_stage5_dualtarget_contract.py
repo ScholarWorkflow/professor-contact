@@ -328,9 +328,9 @@ class InstalledSharedSkillsLocatorTests(unittest.TestCase):
                   "scripts" / "contact_state.py")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(RUNNER.read_text(encoding="utf-8"), encoding="utf-8")
-        target.with_name("_stage3_render.py").write_text(
-            RUNNER.with_name("_stage3_render.py").read_text(encoding="utf-8"),
-            encoding="utf-8")
+        for helper in sorted(RUNNER.parent.glob("_*.py")):
+            target.with_name(helper.name).write_text(
+                helper.read_text(encoding="utf-8"), encoding="utf-8")
         spec = importlib.util.spec_from_file_location(
             f"contact_state_installed_{self._module_counter}", target)
         module = importlib.util.module_from_spec(spec)
