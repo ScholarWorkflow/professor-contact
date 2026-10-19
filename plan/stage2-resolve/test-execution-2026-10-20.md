@@ -20,6 +20,12 @@
 | T5 复制夹具加载 | 通过 | 测试计划列出的 2 个方法：`Ran 2 tests in 1.356s`、`OK`，无失败、无跳过。 |
 | 既有仓库检查（非必测） | 通过 | PR #109 在 head `e5b8d4e` 上 run `39311872947`：`shards (shard1..4)` 全部 pass，聚合 job `test` pass；本地不把全量套件列为必测项。 |
 
+## 重放说明
+
+- 本批最初基于 `d5a4f75`；合并前 main 先合入第 1 批（`e973ffb`，PR #108），本批已重放到 `e973ffb`。
+- 重放后重跑：A/B 对比以 `e973ffb` 为基准，131 条 `OK`、`ALL CHECKS PASS`；T4 `Ran 9 tests in 4.925s OK`、T5 `Ran 2 tests in 1.808s OK`。
+- 跨批顺序：本批 build 调用在新树 2211 行，第 1 批 build 在 2542 行，本批别名早于第 1 批 build；第 1 批注入的 `_resolve_evidence` 指向本批同一函数对象。
+
 ## 说明
 
 - 实现提交的代码内容：runner 11181 行（sha256 `d331b7d6…`）、模块 806 行（sha256 `5384dfb2…`）。

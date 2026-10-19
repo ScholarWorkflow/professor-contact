@@ -4,7 +4,7 @@
 
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 2 版（`Plan conclusion: APPROVED`）。
 - 需求来源：负责人 2026-10-20 的两条指示（Stage 2 划分；“contact_state.py 收敛为 CLI 分发与兼容入口”）；原文与范围见执行计划。
-- Target repository revision: 工作分支 `refactor-stage2-resolve`（从当前 `main` `d5a4f751fb80de4819d4a1de3ee829db52cea6fc` 拉出）实施后的提交；对照基准同为 `d5a4f75`。
+- Target repository revision: 工作分支 `refactor-stage2-resolve` 实施后的提交。实施基线为 `d5a4f75`；合并前 main 先合入第 1 批（`e973ffb`，PR #108），本批已重放到 `e973ffb`，对照基准改为 `e973ffb`（16 个函数在两次提交间 AST 相同），A/B 与定向测试在重放后重跑。
 - Test plan revision: 第 3 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
 - Proposed review status: **APPROVED**（第一关 PASS、第二关 PASS；第 3 版只改对比脚本标签与哈希，判据不变）。
@@ -33,7 +33,7 @@
    python3 --version
    RUN=$(mktemp -d /tmp/pc-stage2-resolve-XXXXXX)
    mkdir -p "$RUN/base"
-   git archive d5a4f751fb80de4819d4a1de3ee829db52cea6fc \
+   git archive e973ffb \
      .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
    cp /tmp/pc-stage2-r2/compare_stage2_resolve.py "$RUN/compare_stage2_resolve.py"
    shasum -a 256 "$RUN/compare_stage2_resolve.py"
