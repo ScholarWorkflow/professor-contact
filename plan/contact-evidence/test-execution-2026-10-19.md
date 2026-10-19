@@ -3,7 +3,7 @@
 - 测试计划：[test-plan.md](test-plan.md)，第 2 版。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 3 版（`Plan conclusion: APPROVED`）。
 - 对照基准：`2117fc6a1607a22aa9e723002b4a78625733b7b1`。
-- 被测提交：`1fffa95`（改基到边界二 head `7f72f0c` 之后的实现提交；与改基前的 `c8c7208` 在 `.apm/` 下逐字节相同，`git diff c8c7208 1fffa95 -- .apm/` 为空）。其后为文档提交（计划戳、记录更正等，`.apm/` 字节未变）。
+- 被测提交：`d9d32ca`（改基到 `main` 之后的同一实现提交；改基前依次为 `1fffa95`、`c8c7208`，三者引入的 `.apm/` 补丁逐字节相同——已用补丁哈希核对）。其后为文档提交（计划戳、记录更正等，`.apm/` 字节未变）。
 - 环境：本地 macOS，Python 3.14.7；只使用标准库与既有夹具。仓库 CI 使用工作流固定的 Python 3.12。
 - 改基记录：本分支改基到边界二最新 head `7f72f0c` 后复跑 T1–T4（`base6.json`／`head6.json` 逐字段相同）与 T5（`t5-rebased.log`：`Ran 5 tests in 5.026s`、`OK`）；产品与测试代码未变，结论沿用。
 - 原始输出（仓库外）：`/tmp/pc-bnd3-check/`；证据文件 `base6.json`／`head6.json`（最终）、`t5-rebased.log`（改基后 T5）、历史尝试 `base.json`／`head.json`（扩展前）、`base3.json`／`head3.json`（八场景扩展）、`t5.log`（改基前 T5）。
