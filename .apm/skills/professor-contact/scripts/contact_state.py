@@ -5348,9 +5348,12 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
 
         A single element may contain newlines (positioning blocks, author
         quotes, gap summaries, fixed-evidence values), so counting elements
-        would shift every later line number.
+        would shift every later line number. The count is taken on the element
+        joined with the ``\n`` that separates it from the next one, so a bare
+        ``\r`` at the end of an element (which the join turns into ``\r\n``)
+        counts exactly once.
         """
-        return 1 + sum(len(rendered_markdown_block_lines(text)) for text in lines)
+        return 1 + sum(len((text + "\n").splitlines()) for text in lines)
 
     for direction in pack_directions:
         stage2_require_later_paper_titles(ctx, direction, pack)
