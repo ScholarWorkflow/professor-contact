@@ -4,7 +4,7 @@
 
 - 需求来源：负责人 2026-10-20 的指示（Stage 2 划分；“contact_state.py 应收敛为 CLI 分发与确有调用方依赖的兼容入口，每个 stage 主体逻辑拆为单独模块”）。
 - Requirement revision: 第 1 版。Canonical Plan revision: 第 2 版（第 1 版审核意见已并入，见修订记录）。
-- Target repository revision: 引用基线 `d5a4f751fb80de4819d4a1de3ee829db52cea6fc`；当前 `main` 已前进到 `0f89ebd`（#105，只改 Stage 5 的 `cmd_stage5_list_inputs` 与帮助文本；9 个函数 AST 与 `d5a4f75` 相同，4724-5546 与 4722 锚点不变，仅 8821 之后的参考行号整体 -2；`test_contact_state.py` 的直接调用在 `0f89ebd` 为 3109。实现按函数名/AST 定位）。工作分支 `refactor-stage2-finalize` 从该提交拉出；与第 1–3、5 批的行区间不重叠，可独立交付。
+- Target repository revision: 交付基线 `e973ffb4571344157b3c43a151906a24f48c7e4e`（含第 1 批 #108）；引用基线 `d5a4f75`，中间 `main` 前进到 `0f89ebd`（#105，只改 Stage 5 的 `cmd_stage5_list_inputs` 与帮助文本；9 个函数 AST 与 `d5a4f75` 相同，4724-5546 与 4722 锚点不变，仅 8821 之后的参考行号整体 -2；`test_contact_state.py` 的直接调用在 `0f89ebd` 为 3109。实现按函数名/AST 定位）。工作分支 `refactor-stage2-finalize` 从该提交拉出；与第 1–3、5 批的行区间不重叠，可独立交付。
 - Relevant upstream/runtime revision: N/A。
 - Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`；2026-10-20 计划审核，P1–P4 全 PASS，无 blocker）。
 - 唯一规范来源：本文件。

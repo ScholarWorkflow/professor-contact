@@ -7,7 +7,7 @@
 - Target repository revision: 工作分支 `refactor-stage2-finalize` 实施后的提交；对照基准为 `origin/main` `e973ffb4571344157b3c43a151906a24f48c7e4e`（PR #108 合并后的 main）。分支最初从 `0f89ebd370a96cb1e138c6920d1300ed83fd23a3` 切出，PR #108 合并后 rebase 到 `e973ffb`；9 个函数的 AST 与 `d5a4f751fb80de4819d4a1de3ee829db52cea6fc` 相同，只有 Stage 5 与第 1 批改动造成的行号偏移。
 - Test plan revision: 第 2 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
-- Proposed review status: 待审核（第 2 版；执行记录按本版命令产生，审核状态不代填）。
+- Proposed review status: **APPROVED**（第一关 PASS、第二关 PASS；记录见文末审核状态）。
 
 ## 必测清单
 
