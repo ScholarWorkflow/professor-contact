@@ -372,7 +372,13 @@ exit "$status"
 
 新业务/等价 body 输入复用下面**已经存在的选择器**，该输入已在 `50320ec` 接线，待第二关确认且产品修复后定向执行。仍在同一 tests 目录，使用独立日志文件；这是补新直接输入所需的一次既有选择器执行，不是要求复跑其他生命周期/全模块。方法前段若失败使新分支未到达，明确记录新分支未执行，不以方法存在或旧结果代替。
 
+下面这段命令自带独立的 `CHECKOUT`／`RUN_ROOT` 初始化与工作目录切换，不依赖上一段命令的变量或目录，可单独执行；两段各自以 `exit "$status"` 结束，是两次独立运行，不要拼进同一脚本。本次按第二关 [comment-6265815180](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6265815180) 只补准备步骤，选择器、断言、输入与结果记录要求不变。
+
 ```bash
+# 本段独立于上一段：CHECKOUT 赋实际 producer checkout；RUN_ROOT 由 mktemp 新建。
+CHECKOUT=/path/to/producer-checkout
+RUN_ROOT=$(mktemp -d /tmp/contact-evidence-level.XXXXXXXX)
+cd "$CHECKOUT/.apm/skills/professor-contact/tests" || exit 2
 python3 -m unittest -v \
   test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle \
   > "$RUN_ROOT/recipe-t46-binding.txt" 2>&1
