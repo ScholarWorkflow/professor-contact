@@ -11,7 +11,7 @@
 - Target repository revision: `ffa91aedf94aaf146f9cf1899f3fe4395cfaddad`（分支 `refactor/stage5-runner-invocation`，含第二批改动）；本批工作分支 `refactor/stage3-render-group` 从该提交拉出。
 - Implementation sequencing prerequisite: 第二批 PR #97 尚未合并。本批按堆叠分支交付，合并顺序 #97 → 本批；#97 一旦改写，本批按受影响范围重放并重跑受影响检查。
 - Relevant upstream/runtime revision: N/A；不涉及外部仓库、代理入口、安装布局或 CLI 变化。
-- Proposed review status: pending。
+- Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`，P1–P4 全 PASS；独立计划审核于 2026-10-18/19 给出）。
 - 唯一规范来源：本文件。本文件只定义实施方案，不声明计划审核、测试审核或合并关口已经通过。
 
 ## 正式需求与范围
@@ -130,4 +130,4 @@
 
 ## 审核状态
 
-计划第 1 版为当前唯一计划，状态为待审核。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
+计划第 1 版为当前唯一计划，结论 **`Plan conclusion: APPROVED`**（P1–P4 全 PASS；独立计划审核于 2026-10-18 给出）。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
