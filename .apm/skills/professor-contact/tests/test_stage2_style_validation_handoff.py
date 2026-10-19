@@ -1297,6 +1297,16 @@ class Stage2ValidationHandoffTests(BaseEnv):
         #    old PASS; the re-recorded first round must be accepted again.
         binding_env = self._fresh_stage2_env()
         binding_facts, _binding_results = binding_env._t5_generate_pack()
+        # The accepted freshness record is part of the input the equivalent body
+        # rests on: the only volatile body line is the gap card's 评估时间, which
+        # the renderer takes from that record. Only the direction fingerprint
+        # moves with the abstract below (neither gap's candidate fingerprint
+        # does), so the re-plan must be served by this accepted record instead of
+        # judging the same two gaps again. Keep it, re-install it for the second
+        # run, and prove the reuse below rather than leaving the byte identity to
+        # whichever second the two runs happen to land in.
+        freshness_cache_path = binding_env.prof_dir / contact_state.FRESHNESS_CACHE
+        accepted_freshness_cache = freshness_cache_path.read_bytes()
         binding_report = binding_env.write_validation_issues(
             "t46-equivalent-body-pass.json", [])
         recorded = binding_env.record_validation(binding_report)
@@ -1339,6 +1349,9 @@ class Stage2ValidationHandoffTests(BaseEnv):
                 row["abstract"] = revised_abstract
         catalog_path.write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + "\n",
                                 encoding="utf-8")
+        # Re-install the accepted freshness record so both the preflight and the
+        # re-plan read the record the accepted body was rendered from.
+        freshness_cache_path.write_bytes(accepted_freshness_cache)
 
         binding_proof, binding_preflight = binding_env._t5_preflight(
             binding_facts, "t46-equivalent-body-preflight.json")
@@ -1366,6 +1379,20 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assertNotEqual(
             binding_env._pack_direction(binding_pack_after, "DIR00001")["input_fingerprint"],
             fingerprint_before, binding_pack_after)
+        # Precondition of the equivalence below: the re-planned rows are the
+        # ACCEPTED records, recognised as cache hits, so no gap was judged again
+        # and no 评估时间 moved. Without this the byte identity would silently
+        # degrade into a same-second accident of a fresh judgment.
+        accepted_rows = {gap["gap_id"]: gap["evaluated_at"]
+                         for direction in binding_pack_before["directions"]
+                         for gap in direction["gap_shortlist"]}
+        reused_rows = {gap["gap_id"]: (gap["evaluated_at"], gap["cache_hit"])
+                       for direction in binding_pack_after["directions"]
+                       for gap in direction["gap_shortlist"]}
+        self.assertEqual(sorted(reused_rows), sorted(accepted_rows), binding_pack_after)
+        for gap_id, evaluated_at in accepted_rows.items():
+            self.assertEqual(reused_rows[gap_id], (evaluated_at, True),
+                             (gap_id, binding_pack_after))
         # Byte identity, old generation stamp included: an equivalent body is kept
         # as it is, only the existing machine header follows the current pack.
         self.assertEqual(document_after["body"], document_before["body"], document_after)
