@@ -1829,6 +1829,8 @@ class Stage2PackRefineContext:
         return self.narrative_later_keys_for(direction)
 
 
+
+
 def validate_resolve_results(ctx: Stage2Context, results_dir: Path,
                              reused: dict[str, dict] | None = None,
                              pending: dict[str, dict] | None = None,
@@ -4147,6 +4149,10 @@ STAGE3_VALIDATOR_OUTPUT_FILE = "validator-output.json"
 STAGE3_VALIDATION_TARGET_FILE = "validation-result.json"
 
 
+
+
+
+
 def _stage3_bound_render(professor_dir: Path, state: dict) -> tuple[str, str]:
     """Current rendered candidate text, bound to the revision the state records."""
     cache = (state or {}).get("cache")
@@ -4163,6 +4169,8 @@ def _stage3_bound_render(professor_dir: Path, state: dict) -> tuple[str, str]:
              f"{path}: validator evidence must bind the candidate revision recorded in "
              f"{professor_dir / CANDIDATE_STATE}; re-run the style validator on the current render")
     return current, body
+
+
 
 
 def _stage3_candidates_entry(data: Any, path: Path, professor_dir: Path) -> tuple[dict, str, list]:
@@ -4202,6 +4210,8 @@ def _stage3_candidates_entry(data: Any, path: Path, professor_dir: Path) -> tupl
     if verdict != "fail" and blocking:
         fail("invalid_validation_json", "blocking issues require verdict=fail")
     return entry, verdict, issues
+
+
 
 
 def stage3_validation_evidence(path: Path, professor_dir: Path, state: dict, *,
@@ -4740,6 +4750,14 @@ def cmd_stage3_prepare_validation(args) -> None:
         "output_file": str(output_file),
         "validation_file": str(validation_file),
     })
+
+
+
+
+
+
+
+
 
 
 def cmd_stage3_write_validation(args) -> None:
@@ -5610,6 +5628,7 @@ def render_candidates_overview(entries: list, program_root: Path,
     return _stage3_render.render_candidates_overview(
         entries, program_root, cross_groups,
         now_utc=now_utc, candidates_md=CANDIDATES_MD)
+
 
 
 def cmd_stage3_finalize(args) -> None:
