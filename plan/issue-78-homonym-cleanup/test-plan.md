@@ -1,9 +1,9 @@
 # Issue #78：同名支持清理的测试计划与执行步骤
 
-- Test plan revision：contact78-t2（2026-10-19）
+- Test plan revision：contact78-t3（2026-10-19）
 - Proposed review status: pending
-- Requirement：[#78](https://github.com/ScholarWorkflow/professor-contact/issues/78)，当前唯一执行计划 [contact78-r1](implementation-plan.md)。
-- 产品基线：`d5a4f751fb80de4819d4a1de3ee829db52cea6fc`；未来受测产品/测试 SHA 在执行时记录，本轮只有文档，全部执行项未执行。
+- Requirement：[#78](https://github.com/ScholarWorkflow/professor-contact/issues/78)，当前唯一执行计划 [contact78-r1](implementation-plan.md)（2026-10-19 已获执行计划审核批准）。
+- 产品基线：`d5a4f751fb80de4819d4a1de3ee829db52cea6fc`；测试准备提交 `45c30fa8d405d1ef949cdaa308ef39355e420dc0`（本 PR 分支，只改测试与夹具）。产品修改尚未实施，全部必测项未执行；未来受测产品/测试 SHA 在执行时记录。
 - [测试规则](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 决定范围；[项目共识](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d) 决定环境与隔离。
 
 ## 1. 必测清单
@@ -20,32 +20,41 @@
 
 不同姓名相同 `direction_id` / cross-group ID 的 Stage 3 fixture 已采用正确范围，Stage 5 partition 与 `choice_owner_ambiguous` 代码本轮不改。T5 核对其保留即可，不恢复已删除的 Stage 5 attribution 套件、不重复执行未受影响测试。若实际 diff 扩及这些行为，先说明具体影响并修订受影响清单，不能直接扩大执行。
 
-## 2. 测试代码接线（尚未实施）
+## 2. 测试代码接线（已接线，待产品实现与第二关）
 
 路径均相对 `.apm/skills/professor-contact/tests/`。沿用 `unittest` 和现有临时目录/断言，不新建测试平台或结果转换器。
 
-- T1：保留 `ContactTargetsTests.test_issue64_t3_unattributable_legacy_entries_are_never_imported` 和 `test_issue64_t4_transaction_records_carry_canonical_identity`；把原 `test_issue64_t4_same_display_name_professors_keep_separate_local_targets` 改名为 `test_issue64_t4_professors_keep_separate_local_targets`，使用不同名字/合法目录。混合负例只去掉纯同名条目，不去掉 path-conflicting 与零误导入断言。
-- T2：`Stage1CandidateTests` 的两个 `test_issue64_t5_same_display_name_*` 分别改名为 `test_issue64_t5_professors_keep_separate_snapshot_entries`、`test_issue64_t5_missing_entry_names_its_own_professor_dir`。保留 `test_issue65_stage1_professor_local_authority_and_isolation`，同步 helper 显式名字与 `test_stage1_handoff_identity.Issue65Gate2Stage1Tests` 的调用。
-- T2：`test_contact_state.Issue65Stage2BindingTests`（1 方法）与 `TestIssue64Stage2PlanBinding`（4 方法）使用不同姓名的默认 fixture。sibling-proof 方法以 B 名字/B target 生成成功 proof，再检验 A plan 拒绝；不得把 fixture 初始化失败当负例成功。`test_stage1_handoff_identity` 和 `test_issue65_gate2_r24_regressions` 的已有甲/乙 override 保持，静态核对其字段与 helper 兼容，不增加重复生命周期运行。
-- T3：Stage 4 的原 `test_06_same_display_name_two_directories_keep_two_local_states` 改名为 `test_06_two_professors_keep_two_local_states`；`test_06_email_id_stays_the_three_part_identity_regardless_of_directory` 按每行教授原公式检查对应 ID，不能伪造相同 ID。改变共享 runtime fixture 的消费点时，使用每教授 spec/manifest 中的姓名。
-- T3：运行既有 `Issue67Stage4IsolationHarnessTests` 的四个相关方法：prompt、frozen fixture、真实本地 producer 隔离正例、display-name 目录误绑定负例。它们是确定性本地测试，复用既有判定器；不增加 adapter、来源认证、历史重放或新判定逻辑。
-- T3/T5：两个现有 Stage 4 文案契约方法只将同名正则替换为 canonical 事务边界、精确绑定和每请求失败隔离断言。analyzer preflight 证明路径方法保留断言，只去掉过时注释。
-- T4：复用 `test_contact_state.TestStage5ListInputDiscovery.test_valid_and_escaped_packs_produce_one_json_document` 的合法包/带姓名越界包准备逻辑。新增 `test_exact_professor_filter_preserves_matching_row_and_read_only_state` 与 `test_missing_professor_returns_needs_input_without_writes`。合法过滤与带姓名越界包的精确过滤在首个新方法中以 subTest 检查；缺失检查依据已有正式缺失契约。测试只观察退出/结构化返回与文件不变。
+- T1：保留 `ContactTargetsTests.test_issue64_t3_unattributable_legacy_entries_are_never_imported` 和 `test_issue64_t4_transaction_records_carry_canonical_identity`；原同名双教授用例改名为 `test_issue64_t4_professors_keep_separate_local_targets`，使用 `教授A` 与 `教授研究/other-lab/教授C` 两个不同姓名、不同合法目录。混合负例只去掉纯同名条目，保留 other-professor、path-conflicting、no-dir、absolute-preview 与零误导入断言；可解析但不匹配的条目按通用 `other_professor` 期望（该期望以 §3.1 产品修改为前提）。
+- T2：`Stage1CandidateTests` 的两个 `test_issue64_t5_same_display_name_*` 已分别改名为 `test_issue64_t5_professors_keep_separate_snapshot_entries`、`test_issue64_t5_missing_entry_names_its_own_professor_dir`，第三位教授为 `教授C`；原 `same_name_professor` helper 改为姓名必填的 `professor_fixture`。保留 `test_issue65_stage1_professor_local_authority_and_isolation`，改用 `教授甲`/`教授乙`；`test_stage1_handoff_identity.Issue65Gate2Stage1Tests` 的两个 helper 调用同步新名，甲/乙不变。
+- T2：`test_contact_state.Issue65Stage2BindingEnv` 默认 `DISPLAY=教授甲`、`B_DISPLAY=教授乙`，署名对照写入两位教授各自的条目；`Issue65Stage2BindingTests`（1 方法）与 `TestIssue64Stage2PlanBinding`（4 方法）落在不同姓名夹具上。sibling-proof 用例先以 B 的名字、B 的 target 生成合法 proof，再断言 A 的 plan 以 `invalid_params`（professor mismatch）拒绝且零写入；原同名下的 `preflight_inputs_changed` 终态不再适用。`test_stage1_handoff_identity` 与 `test_issue65_gate2_r24_regressions` 的既有甲/乙 override 未改。
+- T3：`Issue67ProfessorLocalStage4Tests.test_06_two_professors_keep_two_local_states` 的第二位教授改为 `対照 教授`；`Issue67AdjacentStateTests.test_06_email_id_stays_the_three_part_identity_regardless_of_directory` 按每行教授自己的三段公式检查对应 `email_id`，不再假定两名教授同名同编号。
+- T3：`tests/runtime/prepare_issue67_stage4_isolation_fixture.py` 为两位教授分别声明 `Alpha Professor` / `Beta Professor`，输入包与 manifest 逐教授写入姓名，顶层共享 `display_name` 字段删除并同步 `verify_issue32_e2e.py` 的只读回显；prompt 删除“显示名相同”指令，保留两个 canonical 目录与显式选择。`Issue67Stage4IsolationHarnessTests` 的四个相关方法改取所属 manifest/spec 的姓名，display-name 目录误绑定负例改用有效教授自己的显示名建立同名目录。
+- T3/T5：`Issue67Stage4SelectionContractTests.test_canonical_professor_dir_is_the_per_professor_read_and_map_unit` 与 `Issue67Gate2R3SelectionContractTests.test_no_dir_structured_and_natural_language_inputs_remain_supported_per_request` 的同名正则替换为 canonical 事务边界、`精确(匹配|映射|绑定)` 与 `只结束对应请求` 断言；`Stage2PreflightContractTests.test_issue64_t7_preflight_proof_save_is_per_professor_transaction` 只去掉同名措辞，断言未变。
+- T4：复用 `TestStage5ListInputDiscovery` 的合法包/带姓名越界包准备逻辑（提取为 `write_discovery_packs`），新增 `test_exact_professor_filter_preserves_matching_row_and_read_only_state` 与 `test_missing_professor_returns_needs_input_without_writes`；精确过滤与缺失返回都以退出码、结构化返回和文件不变为判据。
 
-新增/改名的方法名是本候选的接线目标，目前并不存在。实现后由独立审核者只读核对产品路径、fixture、自变量和断言，确认所有选择器可执行；若名称等价变更，更新本文件命令，不运行碰巧存在的替代套件。
+上列方法名与 §3.2 命令一致，静态解析核对见 §2.1；涉及新产品行为的期望（T1 通用分类、T2 sibling 拒绝、T3 文档正则）以 §3.1/§3.2 产品修改为前提，当前产品尚未修改。
 
-## 3. 有界执行步骤（待接线与第二关确认后使用）
+### 2.1 准备与静态预检记录（本地测试工程师，2026-10-19）
+
+- 准备提交 `45c30fa8d405d1ef949cdaa308ef39355e420dc0`：只含 `.apm/skills/professor-contact/tests/` 下的测试代码、runtime 夹具、prompt 与只读 verifier 回显；未改产品脚本、agent/SKILL 说明或 `nix/`、`apm.yml`。
+- 静态预检（未运行任何必测命令，未调用产品入口）：`python3 -m py_compile` 对全部 11 个改动文件通过；`unittest.TestLoader.loadTestsFromName` 解析 §3.2 的 21 个选择器全部命中，共 26 个用例（含 `TestIssue64Stage2PlanBinding` 的 4 个与 `TestStage5ListInputDiscovery` 的 3 个），无 `_FailedTest` 伪用例。
+- 夹具自检（仓库外 `/tmp/contact78-tests.LftVeG/fixture-check`）：隔离夹具可生成；两位教授姓名互异且都不等于 canonical 目录 basename；逐教授输入包的 `professor`/`professor_dir` 与 manifest 记录一致；恰好一个坏 candidate-state，legacy 程序级包使用有效教授姓名；prompt 含两个 canonical 目录与两个 idea，不含“显示名相同/同名”。同一检查确认两个 Stage 4 文案选择器的新正则仍匹配当前 `professor-contact-selection.agent.md`，即选择器在产品说明修改前也可执行。
+- 环境：`/run/current-system/sw/bin/python3` 3.14.7（CI 为 Python 3.12）；用例只用标准库与既有本地夹具，不需要 Nix、APM、Skills 安装、eval、模型、网络、Zotero 或用户资料。
+- 运行目录 `/tmp/contact78-tests.LftVeG`（`tmp/`、`preflight.log`、`selectors.log`、`fixture_check.log`），按共识放在仓库外，不入库、不推送。
+- 缺项：产品修改未实施，第二关未通过，因此 §3.2 的定向命令未执行（本角色不运行正式用例）；首次断言的产品侧预期（T1 通用分类、T2 sibling 拒绝、T3 文档正则）尚待实现后验证。
+
+## 3. 有界执行步骤（接线已完成，待第二关确认后使用）
 
 ### 3.1 准备与隔离
 
 1. 进入实际 `ScholarWorkflow/professor-contact` checkout，确认目标提交和 diff，只读记录 `git rev-parse HEAD` 与工作树状态。实现版本、测试版本不同则分别记录。不使用别人的未确认修改。
 2. 使用仓库现有 Python 环境（CI 为 Python 3.12）；这些用例基于标准库/已有本地 fixture，不需要 Nix、APM、Skills 安装、eval、模型、网络、Zotero 或用户资料。只确认 Python 命令与已有依赖能运行，不做通用环境认证。
 3. 创建仓库外唯一目录，例如 `RUN_ROOT=$(mktemp -d /tmp/contact78-tests.XXXXXX)`，`mkdir "$RUN_ROOT/tmp"`，设 `TMPDIR="$RUN_ROOT/tmp"`、`PYTHONDONTWRITEBYTECODE=1`。现有测试自行创建/清理其隔离临时状态；保留下面的日志。记录 checkout、Python 版本、实际 RUN_ROOT 和受测 SHA 即可。
-4. 未通过步骤审核、选择器未接线或 fixture 不自洽时，该项记未执行并交测试工程师；不运行正式命令来猜测接线是否正确。本计划阶段不执行本节。
+4. 未通过步骤审核、选择器不可解析或 fixture 不自洽时，该项记未执行并交测试工程师；不运行正式命令来猜测接线是否正确。本计划阶段不执行本节。
 
 ### 3.2 定向命令
 
-从 `.apm/skills/professor-contact/tests` 运行。每组一次，stdout/stderr 保存到 `$RUN_ROOT/Tn.log`，记录原始退出码；不以 `tee` 的退出码代替测试返回。下列方法已在 §2 明确现有/待接线状态。
+从 `.apm/skills/professor-contact/tests` 运行。每组一次，stdout/stderr 保存到 `$RUN_ROOT/Tn.log`，记录原始退出码；不以 `tee` 的退出码代替测试返回。下列选择器的接线状态见 §2。
 
 ```sh
 python -m unittest -v \
@@ -94,8 +103,8 @@ T5 其余是一次有界人工静态核对：对照执行计划 §3 检查完整
 
 ## 4. 当前状态与交接
 
-- 计划设计、第一关必测清单、第二关步骤：pending，等待独立审核；本候选不自授 PASS。
-- 产品/测试代码：本轮未修改。T1–T5：未执行，无第三关结果。
-- 下一步：审核者检查完整候选；实施者完成获批变更后，测试工程师补齐 §2 的明确接线，独立只读核对代码及步骤，执行者再按 §3 运行。第三关只审核当前有效结果，不要求重新证明未受影响的安装或历史过程。
+- 测试准备（本地测试工程师，2026-10-19）：§2 的选择器与夹具已在 `45c30fa` 完成接线，静态预检与夹具自检记录见 §2.1。第一关必测清单与第二关步骤仍待独立审核；本计划不自授 PASS。
+- 产品/测试代码：产品脚本与说明未修改（待实施者按 contact78-r1 §3.1/§3.2 落地）；T1–T5 未执行，无第三关结果；§3.2 的定向命令尚未运行。
+- 下一步：第二关按实际接线复核选择器、fixture 与步骤；产品实现后由本地执行工程师按 §3 定向执行。第三关只审核当前有效结果，未受影响的历史结果按版本复用。
 
-修订说明：t2 按独立审核只修正 T4 错误行过滤输入（使用现有带姓名越界包，不能按姓名过滤解析失败且没有教授名的坏 JSON）与 T5 方法所属类；目标和其他步骤不变。
+修订说明：t2 按独立审核只修正 T4 错误行过滤输入（使用现有带姓名越界包，不能按姓名过滤解析失败且没有教授名的坏 JSON）与 T5 方法所属类；目标和其他步骤不变。t3 在已批准执行计划下完成 §2 测试代码接线与静态预检，记录实际提交与自检结果，并把 T2 sibling-proof 的终态改准为产品既有的 professor mismatch 拒绝；T1–T5 目标、输入与检查方式不变。
