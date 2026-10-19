@@ -1,6 +1,6 @@
 # 边界一：共享错误通道与原子写／事务搬移 测试执行记录（2026-10-19）
 
-- 测试计划：[test-plan.md](test-plan.md)，第 5 版。
+- 测试计划：[test-plan.md](test-plan.md)，第 6 版。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 2 版（`Plan conclusion: APPROVED`，P1–P4 全 PASS）。
 - 对照基准：`b3972a2cdf5cd60a5bc6dea006c10cfb6516a3d6`（本批从它拉出）。
 - 被测提交：`98f429c4dd41c89d1fdfcd14024cf8313c37d7bd`；执行时 `git status --porcelain` 为空。
@@ -14,7 +14,7 @@
 | T1 | 通过 | 基准与改动后的 runner 各跑一次驱动脚本，`diff -u` 无输出（`T1-T3 IDENTICAL`）；`emit` 文本、`fail` 的 stdout JSON 与退出码 1、`soft_exit` 的 stdout JSON 与退出码 2 逐字段相同 |
 | T2 | 通过 | 同一对比：业务通道内 `fail` 与 `soft_exit` 都不打印、不退出，异常类型名、`payload`、`args` 相同，`type(exc) is runner.ProfessorBusinessFailure` 为真；退出通道后 `fail` 回到“打印 + 退出 1” |
 | T3 | 通过 | 同一对比：`atomic_write`／`atomic_json` 的文件字节与无临时残留相同；`atomic_json_many` 成功写入两个文件；失败注入按第 3 版计划改到**第四次** `os.replace`（两个目标都预先存在：备份一 → 安装一 → 备份二 → 安装二），两侧均为 `OSError`、`replace` 调用 6 次、文件一从已安装的新内容回滚为旧字节、文件二保持旧内容、无残留；`staged_pair_commit` 仍在第二次替换（文件一已安装）注入，两侧均为 `OSError`、3 次调用、`t1` 回 `OLD-A`、`t2` 保持 `OLD-B` |
-| T4 | 通过 | 按第 5 版清单只跑 5 个方法：`Ran 5 tests in 7.842s`，`OK`，退出码 0。更早的 `Ran 95 tests in 122.572s` 是这 5 项的超集，保留作历史证据；其中多出的部分（两个只断言文档文本的合同文件、`test_contact_state` 两个类的其余 17 项、三个模块的其余用例）不作为本批通过条件 |
+| T4 | 通过 | 按第 6 版清单只跑 3 个方法：`Ran 3 tests in 3.500s`，`OK`，退出码 0。此前按第 5 版跑的 5 项（`Ran 5 tests in 7.842s`）与更早的 `Ran 95 tests in 122.572s` 都是这 3 项的超集，保留作历史事实；按第 5 版审核的 B1 移出的两个方法（`test_12_fatal_after_a_commit_keeps_a_and_fresh_retry_uses_current_facts`、`test_05_fatal_run_without_aggregate_success_gives_the_caller_nothing`）不再作为本批通过条件 |
 | 既有仓库检查 | 通过 | 仓库 CI 在 head `1a62d0d` 上跑全量 `unittest discover`：运行 `39147234123`，8m7s，检查项 `test` pass。按测试计划第 5 版，这项不属于本批业务必测项，只作既有检查结果引用；该 head 相对被测提交只多文档提交，`.apm/` 字节未变 |
 
 ## 执行方法与命令
@@ -46,7 +46,7 @@
 
    驱动脚本用 `contextlib.redirect_stdout` 捕获输出、`try/except SystemExit` 记录退出码；业务通道用 `with runner.professor_business_channel()` 包裹；事务失败通过临时替换 `os.replace` 制造（`atomic_json_many` 注入第四次、`staged_pair_commit` 注入第二次），并在 `finally` 恢复；所有路径都相对各自工作目录输出。
 
-3. T4：只跑清单列出的 5 个方法（第 5 版收窄后的命令）。
+3. T4：只跑清单列出的 3 个方法（第 6 版收窄后的命令）。
 
    ```sh
    set -e
@@ -55,8 +55,6 @@
      test_issue66_stage3_local_state.Issue66LocalStateTests.test_local_finalize_restores_both_files_when_state_install_fails \
      test_issue66_stage3_local_state.Issue66LocalStateTests.test_staged_pair_keeps_committed_files_when_cleanup_fails \
      test_contact_state.Issue67ProfessorLocalStage4Tests.test_03_second_file_install_failure_rolls_the_pair_back \
-     test_contact_state.Issue67ProfessorLocalStage4Tests.test_12_fatal_after_a_commit_keeps_a_and_fresh_retry_uses_current_facts \
-     test_contact_state.Issue67AdjacentStateTests.test_05_fatal_run_without_aggregate_success_gives_the_caller_nothing \
      -v
    ```
 
