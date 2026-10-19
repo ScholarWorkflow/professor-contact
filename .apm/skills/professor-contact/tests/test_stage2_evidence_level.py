@@ -1439,6 +1439,168 @@ class AnalysisLevelTests(EvidenceLevelEnv):
         finally:
             baseline_env.tearDown()
 
+    def test_legacy_display_version_refresh_compares_visible_body(self):
+        # T4 (r8): an accepted pack whose private display-rule version is missing
+        # or older must be re-rendered by the formal refresh entry. The visible
+        # body decides what happens: a legacy fixed-evidence line still printing
+        # the bare item key is really rewritten and expires the old PASS, while
+        # an already equivalent body keeps its bytes and its recorded round.
+        title = next(paper["title"] for paper in self.papers
+                     if paper["item_key"] == "AAAA1111")
+        link = f"[{title}](zotero://select/library/items/AAAA1111)"
+
+        # Branch 1: the legacy body still shows the raw item key and the accepted
+        # baseline records no display version at all.
+        legacy_env = self.__class__(self._testMethodName)
+        legacy_env.setUp()
+        try:
+            legacy_env.accepted_run()
+            legacy_pack = legacy_env.pack()
+            self.assertEqual(legacy_pack["cache"]["preflight"].get(
+                "display_refresh_version"), contact_state.STAGE2_DISPLAY_REFRESH_VERSION,
+                legacy_pack["cache"]["preflight"])
+            # The trusted title already exists in the accepted pack; only the
+            # historical display text is behind.
+            self.assertEqual(legacy_pack["display_references"]["AAAA1111"]["title"],
+                             title, legacy_pack["display_references"])
+            gap_before = next(row for row in legacy_pack["directions"][0]["gap_shortlist"]
+                              if row["item_key"] == "AAAA1111")
+            self.assertEqual(gap_before["evidence"], FIXED_EVIDENCE, gap_before)
+            levels_before = {key: paper.get("analysis_level")
+                             for key, paper in legacy_pack["papers"].items()}
+            self.assertEqual(levels_before, {"AAAA1111": "fulltext",
+                                             "BBBB2222": "fulltext",
+                                             "CCCC3333": "fulltext"}, levels_before)
+            certification_before = legacy_env.validator_business_fields(legacy_pack)
+            earlier_report = legacy_env.root / "pass.json"
+            earlier_report_bytes = earlier_report.read_bytes()
+            # Only the historical DISPLAY is changed: the fixed-evidence line is
+            # converted back to the bare key, and the accepted bindings are
+            # recomputed so the old pack still formally certifies this exact body
+            # instead of a fabricated `validator_not_accepted` state.
+            analysis_path = legacy_env.prof_dir / "套磁候选分析.md"
+            header, accepted_body = contact_state.split_frontmatter(
+                analysis_path.read_text(encoding="utf-8"))
+            self.assertEqual(certification_before["render_sha256"],
+                             hashlib.sha256(accepted_body.encode("utf-8")).hexdigest())
+            evidence_line = next(line for line in accepted_body.splitlines()
+                                 if line.startswith("- 后续论文依据："))
+            self.assertIn(link, evidence_line, evidence_line)
+            legacy_line = evidence_line.replace(link, "AAAA1111")
+            self.assertEqual(legacy_line, f"- 后续论文依据：{FIXED_EVIDENCE}", legacy_line)
+            legacy_body = accepted_body.replace(evidence_line, legacy_line)
+            self.assertNotEqual(legacy_body, accepted_body)
+            legacy_sha = hashlib.sha256(legacy_body.encode("utf-8")).hexdigest()
+            analysis_path.write_text(contact_state.render_frontmatter(
+                header["state_fingerprint"], legacy_sha) + legacy_body, encoding="utf-8")
+            legacy_pack["cache"]["render"]["套磁候选分析.md"]["sha256"] = legacy_sha
+            legacy_pack["validator"]["render_sha256"] = legacy_sha
+            del legacy_pack["cache"]["preflight"]["display_refresh_version"]
+            legacy_pack["validator"]["pack_sha256"] = \
+                contact_state.stage2_pack_content_fingerprint(legacy_pack)
+            self.assertEqual({**legacy_env.validator_business_fields(legacy_pack),
+                              "render_sha256": legacy_sha}, certification_before,
+                             legacy_pack["validator"])
+            (legacy_env.prof_dir / "套磁候选输入.json").write_text(
+                json.dumps(legacy_pack, ensure_ascii=False), encoding="utf-8")
+            # (1) A missing display version is a display-only difference even
+            # though the recorded levels did not change at all.
+            preflight = legacy_env.stage2_preflight()
+            self.assertEqual(preflight["action"], "refresh_display",
+                             {"输入": "旧正文需改", "预检": preflight})
+            self.assertEqual(preflight["level_changes"], [], preflight)
+            # (2) The formal refresh really re-renders the visible body.
+            refreshed = legacy_env.refresh_display(
+                legacy_env.write_preflight_file(preflight))
+            self.assertEqual(refreshed["status"], "ok", refreshed)
+            self.assertTrue(refreshed.get("display_refreshed"), refreshed)
+            refreshed_body = managed_body(legacy_env.analysis_text())
+            refreshed_line = next(line for line in refreshed_body.splitlines()
+                                  if line.startswith("- 后续论文依据："))
+            self.assertIn(link, refreshed_line, refreshed_line)
+            self.assertNotIn("AAAA1111", refreshed_line.replace(link, ""),
+                             refreshed_line)
+            self.assertNotEqual(contact_state.stage2_visible_body(refreshed_body),
+                                contact_state.stage2_visible_body(legacy_body))
+            pack_after = legacy_env.pack()
+            gap_after = next(row for row in pack_after["directions"][0]["gap_shortlist"]
+                             if row["item_key"] == "AAAA1111")
+            machine_fields = ("status", "evidence", "completed_part", "remaining_gap",
+                              "candidate_paper_ids", "quote", "translation_zh", "gap_id")
+            self.assertEqual({field: gap_after.get(field) for field in machine_fields},
+                             {field: gap_before.get(field) for field in machine_fields},
+                             gap_after)
+            self.assertEqual({key: paper.get("analysis_level")
+                              for key, paper in pack_after["papers"].items()},
+                             levels_before)
+            # (3) The old PASS bound the previous bytes, so it does not authorize
+            # the rewritten body: that body must be recorded again from round 1.
+            self.assertFalse(pack_after.get("validator"), pack_after.get("validator"))
+            _preflight, row = legacy_env.direction_action()
+            self.assertIn("validator_not_accepted", row["reason_codes"], row)
+            # (4) The normal recording entry registers the new body at round 1
+            # and leaves the earlier raw report untouched.
+            rerecorded = legacy_env.record(legacy_env.write_report(
+                "pass-after-legacy-refresh.json", [], verdict="pass"))
+            self.assertEqual(rerecorded["status"], "ok", rerecorded)
+            self.assertEqual(rerecorded["round"], 1, rerecorded)
+            self.assertEqual(earlier_report.read_bytes(), earlier_report_bytes)
+            # (5) With the current display version recorded, the same unchanged
+            # inputs reuse instead of refreshing again.
+            reused = legacy_env.stage2_preflight()
+            self.assertEqual(reused["action"], "reuse_all", reused)
+        finally:
+            legacy_env.tearDown()
+
+        # Branch 2: a valid older display version whose managed body already
+        # shows the current trusted title/link keeps bytes and rounds.
+        equal_env = self.__class__(self._testMethodName)
+        equal_env.setUp()
+        try:
+            equal_env.accepted_run()
+            equal_pack = equal_env.pack()
+            analysis_path = equal_env.prof_dir / "套磁候选分析.md"
+            body_before = analysis_path.read_bytes()
+            certification_before = equal_env.validator_business_fields(equal_pack)
+            accepted_line = next(line for line in managed_body(
+                equal_env.analysis_text()).splitlines()
+                if line.startswith("- 后续论文依据："))
+            self.assertIn(link, accepted_line, accepted_line)
+            equal_pack["cache"]["preflight"]["display_refresh_version"] = 1
+            equal_pack["validator"]["pack_sha256"] = \
+                contact_state.stage2_pack_content_fingerprint(equal_pack)
+            (equal_env.prof_dir / "套磁候选输入.json").write_text(
+                json.dumps(equal_pack, ensure_ascii=False), encoding="utf-8")
+            # (1) A valid older version is still a display-only difference.
+            preflight = equal_env.stage2_preflight()
+            self.assertEqual(preflight["action"], "refresh_display",
+                             {"输入": "正文已等价", "预检": preflight})
+            self.assertEqual(preflight["level_changes"], [], preflight)
+            refreshed = equal_env.refresh_display(
+                equal_env.write_preflight_file(preflight))
+            # (2) The candidate body is equivalent: the managed bytes, the
+            # certification business fields and the recorded round are preserved.
+            self.assertEqual(refreshed["status"], "ok", refreshed)
+            self.assertTrue(refreshed.get("display_refreshed"), refreshed)
+            self.assertEqual(analysis_path.read_bytes(), body_before)
+            pack_after = equal_env.pack()
+            self.assertEqual(equal_env.validator_business_fields(pack_after),
+                             certification_before)
+            self.assertEqual(pack_after["validator"]["round"], 1,
+                             pack_after["validator"])
+            self.assertEqual(pack_after["validator"]["results"]["DIR00001"]["result"],
+                             "pass", pack_after["validator"])
+            self.assertEqual(pack_after["validator"]["pack_sha256"],
+                             contact_state.stage2_pack_content_fingerprint(pack_after))
+            self.assertEqual(pack_after["cache"]["preflight"]["display_refresh_version"],
+                             contact_state.STAGE2_DISPLAY_REFRESH_VERSION,
+                             pack_after["cache"]["preflight"])
+            # (3) The recorded current version stops the refresh from repeating.
+            reused = equal_env.stage2_preflight()
+            self.assertEqual(reused["action"], "reuse_all", reused)
+        finally:
+            equal_env.tearDown()
+
 
 class ResolvedAnalysisLevelTests(resolved_pipeline_tests.ResolvedPipelineMixin,
                                  unittest.TestCase):
