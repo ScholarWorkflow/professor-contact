@@ -234,8 +234,8 @@ class Issue65Gate2Stage1Tests(unittest.TestCase):
         root = self.env.root
         legacy_stage1 = root / "教授研究" / STAGE1_NAME
         legacy_target = root / "教授研究" / TARGET_NAME
-        a_dir = stage1_fixture.same_name_professor(root, "labA", "fp-a", professor="教授甲")
-        b_dir = stage1_fixture.same_name_professor(root, "labB", "fp-b", professor="教授乙")
+        a_dir = stage1_fixture.professor_fixture(root, "labA", "fp-a", professor="教授甲")
+        b_dir = stage1_fixture.professor_fixture(root, "labB", "fp-b", professor="教授乙")
         a_target = a_dir / TARGET_NAME
         b_target = b_dir / TARGET_NAME
         a_state = stage1_fixture.professor_local_state(a_dir)

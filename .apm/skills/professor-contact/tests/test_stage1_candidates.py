@@ -269,17 +269,13 @@ def professor_local_state(professor_dir: Path) -> Path:
     return Path(professor_dir) / "套磁阶段1候选.json"
 
 
-def same_name_professor(
-    root: Path, group: str, fingerprint: str, *, professor: str | None = None
-) -> Path:
-    """Build one professor; preserve the same-name fixture when no name is supplied."""
-    display = professor if professor is not None else "教授同名"
-    professor_dir = root / "教授研究" / group / display
+def professor_fixture(root: Path, group: str, fingerprint: str, *, professor: str) -> Path:
+    """Build one professor-local input set under its own name and directory."""
+    professor_dir = root / "教授研究" / group / professor
     preview = professor_dir / "方向预筛.json"
-    write_json(preview, preview_payload(professor=display, fp=fingerprint))
+    write_json(preview, preview_payload(professor=professor, fp=fingerprint))
     catalog = papers_payload()
-    if professor is not None:
-        catalog["professor"]["name"] = display
+    catalog["professor"]["name"] = professor
     write_json(professor_dir / "papers.json", catalog)
     targets.bootstrap_target(
         root, preview, {"direction_ids": ["dir_A"], "notes": {}},
@@ -514,41 +510,43 @@ class Stage1CandidateTests(unittest.TestCase):
         self.assertEqual(snapshot_path(self.root, "教授B").read_bytes(), b_before)
         self.assertEqual(read_json(snapshot_path(self.root))["professor"], "教授A")
 
-    def test_issue64_t5_same_display_name_professors_keep_separate_snapshot_entries(self):
+    def test_issue64_t5_professors_keep_separate_snapshot_entries(self):
         """G64-T5: Stage 1 keys formal state by canonical professor-local identity."""
-        a2_dir = self.root / "教授研究" / "other-lab" / "教授A"
-        a2_preview = a2_dir / "方向预筛.json"
-        write_json(a2_preview, preview_payload(fp="fp-a2"))
-        a2_papers = a2_dir / "papers.json"
-        write_json(a2_papers, papers_payload())
-        a2_target = a2_dir / "套磁目标.json"
+        other_dir = self.root / "教授研究" / "other-lab" / "教授C"
+        other_preview = other_dir / "方向预筛.json"
+        write_json(other_preview, preview_payload(professor="教授C", fp="fp-c"))
+        other_papers = other_dir / "papers.json"
+        other_catalog = papers_payload()
+        other_catalog["professor"]["name"] = "教授C"
+        write_json(other_papers, other_catalog)
+        other_target = other_dir / "套磁目标.json"
         targets.bootstrap_target(
-            self.root, a2_preview, {"direction_ids": ["dir_C"], "notes": {}},
+            self.root, other_preview, {"direction_ids": ["dir_C"], "notes": {}},
             selected_at="2026-09-04T00:00:05Z")
 
         first, _ = build(self.root)
         self.assertEqual(first["professors"], ["教授A"])
         a_state = professor_local_state(self.target_file.parent)
-        b_state = professor_local_state(a2_target.parent)
-        self.assertFalse(b_state.exists())
-        build(self.root, a2_target)
-        self.assertTrue(b_state.is_file())
-        self.assertEqual(read_json(b_state)["professor_dir"],
-                         "教授研究/other-lab/教授A")
+        c_state = professor_local_state(other_target.parent)
+        self.assertFalse(c_state.exists())
+        build(self.root, other_target)
+        self.assertTrue(c_state.is_file())
+        self.assertEqual(read_json(c_state)["professor_dir"],
+                         "教授研究/other-lab/教授C")
         self.assertNotEqual(read_json(a_state)["input_fingerprint"],
-                            read_json(b_state)["input_fingerprint"])
+                            read_json(c_state)["input_fingerprint"])
 
         rebuilt, _ = build(self.root)
         self.assertEqual(rebuilt["professors"], ["教授A"])
-        b_before = b_state.read_bytes()
-        self.assertEqual(b_state.read_bytes(), b_before)
+        c_before = c_state.read_bytes()
+        self.assertEqual(c_state.read_bytes(), c_before)
 
         # Only the sibling's own inputs drift: verifying A must still be ok,
-        # while verifying B names B's own professor-local state.
-        data = read_json(a2_papers)
+        # while verifying C names C's own professor-local state.
+        data = read_json(other_papers)
         for item in data["papers"]:
             item["pdf_status"] = "downloaded"
-        write_json(a2_papers, data)
+        write_json(other_papers, data)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(stage1.verify_command(self.root, self.target_file)["status"], "ok")
@@ -556,37 +554,39 @@ class Stage1CandidateTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             with self.assertRaises(SystemExit) as ctx:
-                stage1.verify_command(self.root, a2_target)
+                stage1.verify_command(self.root, other_target)
         self.assertEqual(ctx.exception.code, 2)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["reason_code"], "stale_stage1_snapshot")
         self.assertEqual(
             payload["stale_professors"],
-            [{"professor": "教授A", "professor_dir": "教授研究/other-lab/教授A",
-              "preview_path": "教授研究/other-lab/教授A/方向预筛.json",
+            [{"professor": "教授C", "professor_dir": "教授研究/other-lab/教授C",
+              "preview_path": "教授研究/other-lab/教授C/方向预筛.json",
               "problems": ["input_fingerprint_mismatch"]}])
 
-    def test_issue64_t5_same_display_name_missing_entry_names_its_own_professor_dir(self):
-        a2_dir = self.root / "教授研究" / "other-lab" / "教授A"
-        a2_preview = a2_dir / "方向预筛.json"
-        write_json(a2_preview, preview_payload(fp="fp-a2"))
-        write_json(a2_dir / "papers.json", papers_payload())
-        a2_target = a2_dir / "套磁目标.json"
+    def test_issue64_t5_missing_entry_names_its_own_professor_dir(self):
+        other_dir = self.root / "教授研究" / "other-lab" / "教授C"
+        other_preview = other_dir / "方向预筛.json"
+        write_json(other_preview, preview_payload(professor="教授C", fp="fp-c"))
+        other_catalog = papers_payload()
+        other_catalog["professor"]["name"] = "教授C"
+        write_json(other_dir / "papers.json", other_catalog)
+        other_target = other_dir / "套磁目标.json"
         targets.bootstrap_target(
-            self.root, a2_preview, {"direction_ids": ["dir_C"], "notes": {}},
+            self.root, other_preview, {"direction_ids": ["dir_C"], "notes": {}},
             selected_at="2026-09-04T00:00:06Z")
         build(self.root)
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             with self.assertRaises(SystemExit) as ctx:
-                stage1.verify_command(self.root, a2_target)
+                stage1.verify_command(self.root, other_target)
         self.assertEqual(ctx.exception.code, 2)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["reason_code"], "missing_stage1_snapshot")
         self.assertEqual(
             Path(payload["snapshot_path"]).resolve(),
-            professor_local_state(a2_dir).resolve())
+            professor_local_state(other_dir).resolve())
 
     def test_cli_build_writes_snapshot_and_exits_zero(self):
         proc = subprocess.run(
@@ -1004,17 +1004,17 @@ class Stage1CandidateTests(unittest.TestCase):
 
     def test_issue65_stage1_professor_local_authority_and_isolation(self):
         # C65-01: A's four formal Stage-1 operations never observe B's authority.
-        # A and B share one display ``professor`` value on purpose: only the
-        # canonical professor-local identity may separate their formal state.
+        # Each professor carries its own display name; only the canonical
+        # professor-local identity may decide whose formal state is read.
         legacy_snapshot = self.root / "教授研究" / "套磁阶段1候选.json"
-        a_dir = same_name_professor(self.root, "labA", "fp-a")
-        b_dir = same_name_professor(self.root, "labB", "fp-b")
+        a_dir = professor_fixture(self.root, "labA", "fp-a", professor="教授甲")
+        b_dir = professor_fixture(self.root, "labB", "fp-b", professor="教授乙")
         a_state = professor_local_state(a_dir)
         b_state = professor_local_state(b_dir)
         a_target = a_dir / "套磁目标.json"
         b_target = b_dir / "套磁目标.json"
         self.assertNotEqual(a_target.resolve(), b_target.resolve())
-        self.assertEqual(read_json(a_target)["professor"], read_json(b_target)["professor"])
+        self.assertNotEqual(read_json(a_target)["professor"], read_json(b_target)["professor"])
         self.assertFalse(a_state.exists())
 
         build(self.root, b_target)
@@ -1043,7 +1043,7 @@ class Stage1CandidateTests(unittest.TestCase):
             first, first_payload = build(self.root, a_target)
             self.assertEqual(first_payload["status"], "ok")
             self.assertEqual(first["action"], "pdf_fill_needed")
-            self.assertEqual(first["professors"], ["教授同名"])
+            self.assertEqual(first["professors"], ["教授甲"])
             self.assertTrue(a_state.is_file())
             a_reference = Path(first_payload["snapshot_path"])
             self.assertEqual(a_reference.parent, a_directory)
@@ -1055,8 +1055,8 @@ class Stage1CandidateTests(unittest.TestCase):
             self.assertEqual(state["schema_version"], 2)
             self.assertEqual(state["kind"], "professor-contact-stage1")
             self.assertNotIn("professors", state)
-            self.assertEqual(state["professor"], "教授同名")
-            self.assertEqual(state["professor_dir"], str(Path("教授研究") / "labA" / "教授同名"))
+            self.assertEqual(state["professor"], "教授甲")
+            self.assertEqual(state["professor_dir"], str(Path("教授研究") / "labA" / "教授甲"))
             self.assertEqual(str(Path(state["preview_path"]).parent), state["professor_dir"])
             self.assertEqual(state["membership_claim"], "non_final_candidates_only")
 

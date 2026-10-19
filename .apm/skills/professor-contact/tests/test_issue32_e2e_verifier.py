@@ -1644,8 +1644,10 @@ class Issue67Stage4IsolationHarnessTests(unittest.TestCase):
         for spec in issue67_fixture.PROFESSORS:
             self.assertIn(f"教授研究/{spec['field']}/{spec['directory']}", text)
             self.assertIn(spec["idea_id"], text)
-        # The display name is shared, so it cannot be the transaction identity.
-        self.assertNotIn(issue67_fixture.DISPLAY_NAME, text)
+        # The prompt binds each selection to its canonical directory; the old
+        # shared-display-name instruction must not come back.
+        self.assertNotIn("显示名相同", text)
+        self.assertNotIn("同名", text)
 
     def test_frozen_fixture_freezes_one_candidate_state_fault_and_history_only_pair(self):
         manifest_path = self.out / "fixture-manifest.json"
@@ -1655,7 +1657,8 @@ class Issue67Stage4IsolationHarnessTests(unittest.TestCase):
         self.assertEqual(manifest["manual_patch"], "no")
         self.assertEqual(manifest["builder_sha256"], self._sha(ISSUE67_PREPARER_PATH))
         self.assertEqual([row["professor"] for row in manifest["professors"]],
-                         [issue67_fixture.DISPLAY_NAME] * 2)
+                         [spec["professor"] for spec in issue67_fixture.PROFESSORS])
+        self.assertEqual(len({row["professor"] for row in manifest["professors"]}), 2)
         self.assertEqual(len({row["canonical_professor_dir"]
                               for row in manifest["professors"]}), 2)
         faults = [row for row in manifest["professors"]
@@ -1758,11 +1761,13 @@ class Issue67Stage4IsolationHarnessTests(unittest.TestCase):
         self.assertEqual(pack["schema"], verifier.STAGE4_LOCAL_SCHEMA)
         self.assertEqual(selection["profile_fingerprint"], self.manifest["profile_sha256"])
         self.assertEqual(len(pack["emails"]), 1)
+        valid_entry = next(row for row in self.manifest["professors"]
+                           if row["role"] == "valid")
         self.assertEqual(
             pack["emails"][0]["email_id"],
-            f"{issue67_fixture.DISPLAY_NAME}::"
-            f"{self.manifest['professors'][0]['direction_id']}::"
-            f"{self.manifest['professors'][0]['idea_id']}")
+            f"{valid_entry['professor']}::"
+            f"{valid_entry['direction_id']}::"
+            f"{valid_entry['idea_id']}")
 
     def test_model_prose_never_grades_the_isolation_verdict(self):
         self._build()
@@ -1820,7 +1825,11 @@ class Issue67Stage4IsolationHarnessTests(unittest.TestCase):
     def test_pair_bound_to_the_display_name_instead_of_the_directory_is_a_failure(self):
         self._build()
         alpha, _ = self._professor_dirs()
-        lookalike = alpha.parent / issue67_fixture.DISPLAY_NAME
+        # A directory named after the professor's display name is still not the
+        # canonical directory the transaction is bound to.
+        display_name = next(row["professor"] for row in self.manifest["professors"]
+                            if row["role"] == "valid")
+        lookalike = alpha.parent / display_name
         lookalike.mkdir()
         for name in (verifier.LOCAL_SELECTION_FILE, verifier.LOCAL_EMAIL_PACK_FILE):
             shutil.copy(alpha / name, lookalike / name)
@@ -1833,7 +1842,7 @@ class Issue67Stage4IsolationHarnessTests(unittest.TestCase):
         # the canonical one, must fail the identity gate.
         selection_path = alpha / verifier.LOCAL_SELECTION_FILE
         selection = json.loads(selection_path.read_text(encoding="utf-8"))
-        moved = str(alpha.parent / issue67_fixture.DISPLAY_NAME)
+        moved = str(alpha.parent / display_name)
         selection["professor_dir"] = moved
         for row in selection["selections"]:
             row["professor_dir"] = moved

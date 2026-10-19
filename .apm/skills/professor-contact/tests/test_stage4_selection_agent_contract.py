@@ -122,8 +122,13 @@ class Issue67Stage4SelectionContractTests(unittest.TestCase):
                 self.assertIn(required, self.text)
         self.assertRegex(
             self.text,
-            r"(?:显示名|同名|display).{0,40}(?:不|never)\S{0,20}(?:合并|merge|同一)",
-            "the same display name must not merge two canonical directories")
+            r"canonical\s*`professor_dir`.{0,80}事务",
+            "the canonical professor_dir, not the display name, is the Stage-4 "
+            "transaction unit")
+        self.assertRegex(
+            self.text,
+            r"(?:只结束|仅结束)(?:它)?对应(?:的)?请求",
+            "one request's binding failure must end only its own request")
 
     def test_pending_selection_row_carries_the_professor_directory(self):
         self.assertIn("pending_selection", self.text)

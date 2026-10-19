@@ -18,8 +18,9 @@ PREVIEW_NAME = "方向预筛.json"
 TARGET_NAME = "套磁目标.json"
 PROFESSOR_A_DIR = RESEARCH_DIR / "lab" / "教授A"
 PROFESSOR_B_DIR = RESEARCH_DIR / "lab" / "教授B"
-# Same display name as professor A, different canonical directory: R64-17 identity.
-PROFESSOR_A2_DIR = RESEARCH_DIR / "other-lab" / "教授A"
+# A second professor with its own display name in another field: the canonical
+# directory, not the display name, is the transaction boundary.
+PROFESSOR_C_DIR = RESEARCH_DIR / "other-lab" / "教授C"
 LEGACY_TABLE = RESEARCH_DIR / TARGET_NAME
 BOOTSTRAP_AT = "2026-09-03T12:00:00Z"
 REVISION_AT = "2026-09-03T12:01:00Z"
@@ -594,9 +595,6 @@ class ContactTargetsTests(unittest.TestCase):
             "other_professor": {**identity_only,
                                 "professor_dir": str(PROFESSOR_B_DIR),
                                 "preview_path": str(PROFESSOR_B_DIR / PREVIEW_NAME)},
-            "same_name_other_dir": {**identity_only, "professor": "教授A",
-                                    "professor_dir": str(PROFESSOR_A2_DIR),
-                                    "preview_path": str(PROFESSOR_A2_DIR / PREVIEW_NAME)},
             "path_conflicting": {**identity_only, "professor": "教授A",
                                  "professor_dir": str(PROFESSOR_A_DIR),
                                  "preview_path": str(PROFESSOR_B_DIR / PREVIEW_NAME)},
@@ -617,13 +615,11 @@ class ContactTargetsTests(unittest.TestCase):
         self.assertEqual(result["legacy_recovery"], "legacy_recovery_ambiguous")
         self.assertEqual(sorted(item["reason"] for item in result["legacy_skipped"]),
                          ["identity_unreliable", "identity_unreliable", "other_professor",
-                          "same_name_other_dir", "same_name_other_dir"])
+                          "other_professor"])
         target = self.read_target()
         self.assertEqual(target["selection_history"], [])
         self.assertEqual(target["directions"][0]["user_note"], "note A")
         self.assertFalse(self.b_target_path().exists())
-        self.assertFalse((self.root / PROFESSOR_A2_DIR / TARGET_NAME).exists())
-        self.assertFalse((self.root / PROFESSOR_A2_DIR / PREVIEW_NAME).exists())
         self.assertTrue(b_preview.is_file())
         self.assertEqual(self.legacy_path.read_bytes(), legacy_before)
 
@@ -952,52 +948,53 @@ class ContactTargetsTests(unittest.TestCase):
         self.assertEqual(result["reason_code"], "no_legacy_state")
         self.assertEqual(self.target_path.read_bytes(), before)
 
-    # --- G64-T4: same display name, different canonical identity -----------
+    # --- G64-T4: different professors in different canonical directories ----
 
-    def test_issue64_t4_same_display_name_professors_keep_separate_local_targets(self):
+    def test_issue64_t4_professors_keep_separate_local_targets(self):
         first = self.bootstrap(["dir_A"], {"dir_A": "note A"})
-        a2_preview = self.root / PROFESSOR_A2_DIR / PREVIEW_NAME
-        write_json(a2_preview, preview(professor="教授A", fp="fp-a2"))
-        second = mod.bootstrap_target(self.root, a2_preview,
-                                      {"direction_ids": ["dir_B"], "notes": {"dir_B": "note A2"}},
+        other_preview = self.root / PROFESSOR_C_DIR / PREVIEW_NAME
+        write_json(other_preview, preview(professor="教授C", fp="fp-c"))
+        second = mod.bootstrap_target(self.root, other_preview,
+                                      {"direction_ids": ["dir_B"], "notes": {"dir_B": "note C"}},
                                       selected_at=REVISION_AT)
 
         self.assertEqual(second["status"], "ok")
         self.assertEqual(first["professor"], "教授A")
-        self.assertEqual(second["professor"], "教授A")
+        self.assertEqual(second["professor"], "教授C")
         self.assertNotEqual(Path(first["state_path"]).resolve(),
                             Path(second["state_path"]).resolve())
-        other_path = a2_preview.parent / TARGET_NAME
+        other_path = other_preview.parent / TARGET_NAME
         other = self.read_target(other_path)
         self.assertEqual(self.read_target()["selected_direction_ids"], ["dir_A"])
         self.assertEqual(other["selected_direction_ids"], ["dir_B"])
         self.assertEqual(self.read_target()["professor_dir"], str(PROFESSOR_A_DIR))
-        self.assertEqual(other["professor_dir"], str(PROFESSOR_A2_DIR))
+        self.assertEqual(other["professor_dir"], str(PROFESSOR_C_DIR))
         self.assertEqual(self.read_target()["directions"][0]["user_note"], "note A")
-        self.assertEqual(other["directions"][0]["user_note"], "note A2")
+        self.assertEqual(other["directions"][0]["user_note"], "note C")
 
         self.assertEqual([t["professor_dir"] for t in self.resolve()["targets"]],
                          [str(PROFESSOR_A_DIR)])
         self.assertEqual([t["professor_dir"] for t in self.resolve(other_path)["targets"]],
-                         [str(PROFESSOR_A2_DIR)])
+                         [str(PROFESSOR_C_DIR)])
 
     def test_issue64_t4_transaction_records_carry_canonical_identity(self):
         first = self.bootstrap(["dir_A"], {"dir_A": "note A"})
-        a2_preview = self.root / PROFESSOR_A2_DIR / PREVIEW_NAME
-        write_json(a2_preview, preview(professor="教授A", fp="fp-a2"))
-        second = mod.bootstrap_target(self.root, a2_preview, {"direction_ids": ["dir_B"]},
+        other_preview = self.root / PROFESSOR_C_DIR / PREVIEW_NAME
+        write_json(other_preview, preview(professor="教授C", fp="fp-c"))
+        second = mod.bootstrap_target(self.root, other_preview, {"direction_ids": ["dir_B"]},
                                       selected_at=REVISION_AT)
 
         for record in (first["transaction"], second["transaction"]):
             self.assertEqual(sorted(record), ["preview_path", "professor", "professor_dir",
                                               "target_state"])
         transaction_a = self.resolve()["transaction"]
-        transaction_other = self.resolve(a2_preview.parent / TARGET_NAME)["transaction"]
+        transaction_other = self.resolve(other_preview.parent / TARGET_NAME)["transaction"]
         self.assertEqual(len({first["transaction"]["target_state"],
                               second["transaction"]["target_state"]}), 2)
         self.assertEqual(transaction_a, first["transaction"])
         self.assertEqual(transaction_other["target_state"], second["transaction"]["target_state"])
-        self.assertEqual({transaction_a["professor"], transaction_other["professor"]}, {"教授A"})
+        self.assertEqual({transaction_a["professor"], transaction_other["professor"]},
+                         {"教授A", "教授C"})
         self.assertNotEqual(transaction_a["professor_dir"], transaction_other["professor_dir"])
         self.assertNotEqual(transaction_a["preview_path"], transaction_other["preview_path"])
 

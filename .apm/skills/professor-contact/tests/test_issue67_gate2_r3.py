@@ -210,8 +210,13 @@ class Issue67Gate2R3SelectionContractTests(unittest.TestCase):
         self.assertIn("逐请求", no_dir)
         self.assertRegex(
             no_dir,
-            r"同名.{0,40}(?:歧义|无法唯一).{0,80}(?:只|对应请求)",
-        )
+            r"(?:只结束|仅结束)(?:它)?对应(?:的)?请求",
+            "one request's binding failure must end only its own request")
+        self.assertRegex(
+            no_dir,
+            r"精确(?:匹配|映射|绑定)",
+            "an explicit name may only bind the current candidate whose canonical "
+            "facts match it exactly")
 
 
 if __name__ == "__main__":
