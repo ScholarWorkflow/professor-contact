@@ -14,6 +14,16 @@
 - **共享接受与兼容**：两入口仍实际渲染候选。body 比较只忽略固定顶部生成时间；等价接受保留旧 body 原字节（含旧时间）及真实 SHA。机器头已匹配当前包则文件不写，确需变化时只在旧状态/归属/正文保护通过后同步既有头。业务依据是否变化、旧认证是否合法分别判断；仅元数据变化且业务依据未变时保留合法 round/phase/pending 及必要包绑定，无效旧记录不得重绑洗白。正常 narrative refine 仍为一次修订后第二轮。
 - **当前关口与负责人**：第一关 T1—T4 已确认范围继续有效；本版设计、第二关受影响步骤/接线待审核。两条原新方法尚未实现，现有生命周期方法的新独立输入及等价观察调整也未准备，第三关未执行。计划审核后，由本地测试工程师复用既有两模块落实，产品 owner 按 r11 修复，执行工程师按 §3.3 定向执行；未受影响旧结果直接引用，不以候选自授 PASS。
 
+## t46 测试准备记录（本地测试工程师，2026-10-19）
+
+- **范围与产物**：按 t46 §2.1 与 §3.3 接线，只改测试模块，不实现产品、不运行正式用例、不调用产品入口。测试提交 `50320ec`（`test_stage2_evidence_level.py`、`test_stage2_style_validation_handoff.py`；未改产品、其他测试模块或既有断言）：
+  - `test_stage2_evidence_level.AnalysisLevelTests.test_legacy_refresh_preserves_fixed_evidence_prefix_with_source_marker`：机器固定证据取 `无更晚论文实现该点（AAAA1111） ｜ 数据来源：作者论文`，经 `accepted_run(evidence=…)` 的既有正常入口形成合法接受包；再按 t43 已确认的构造把受管正文里的可信链接回退为裸编号、把 `cache.preflight.display_refresh_version` 明确写成误标值 `2`、并同步受管与校验绑定。检查正式预检仍为 `refresh_display`（`level_changes` 为空）、正式刷新后受管固定卡行逐字等于 `- 后续论文依据：无更晚论文实现该点（[可信题名](zotero://select/library/items/AAAA1111)） ｜ 数据来源：作者论文`、旧正文与旧 PASS 都不再成立、原报告字节不变、重新登记第一轮后同一输入 `reuse_all`。
+  - `test_stage2_evidence_level.AnalysisLevelTests.test_ordinary_process_upgrades_legacy_display_before_marking_current`：同一份误标 `2` 的旧正文，只改 `论文分析/AAAA1111.md` 的修改时间（不改字节、索引、级别、sidecar 或其他内容）。正式预检须 `action=process`，方向原因含 `artifact_changed` 且整体原因不含 `analysis_source_changed`；用绑定当前 facts 的该预检跑正式 `stage2-plan` 时方向结果仍可复用、`jobs` 为空；正式 `stage2-finalize` 必须真的重绘固定证据并失效旧 PASS，之后才登记当前目标版本，重新登记第一轮后 `reuse_all`。
+  - 既有选择器 `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` 内新增 §2.1「新业务依据、等价 body」的单一输入：独立临时教授目录经 `_t5_generate_pack` 与正式 `stage2-record-validation` 取得第一轮 PASS 后，只改一份既有论文的 abstract 文本（facts 与教授 `papers.json` 同一记录同步，题名/年份/成员/来源/级别/固定证据与叙事语义不变，也不再调用 `_t5_write_facts`）；预检须 `process`，用同语义合成结果经正式 `stage2-plan`/`stage2-finalize` 接受。检查旧 body 原字节（含原生成时间）与真实 SHA 不变、机器头同步到新包、旧认证因新业务依据失效、原报告字节不改，新报告可正式登记第一轮，随后 `reuse_all`。
+- **夹具更正（测试步骤问题，非产品行为改动）**：该新增输入按计划“只改论文摘要文本”落实，但把被改摘要的论文由计划书写的 `BBBB2222` 改为 `AAAA1111`。只有 `AAAA1111` 的摘要值进入方向 `input_fingerprint` 而不进入任何 freshness 候选指纹：`BBBB2222` 是缺口 `AAAA1111` 的候选论文，改它的摘要会使该缺口的 `candidate_fingerprint` 失配、缓存不命中并重新写入新的 `evaluated_at`，确定性正文因此不再等价，计划要求的“body 逐字相同”按构造无法成立。只读夹具核对（`/tmp/pr92-t46-prep.UdItx99e/fixture_check.log`，只调用确定性纯函数计算摘要与指纹，未跑正式用例或产品入口）显示：改 `AAAA1111` 时方向指纹变化、两个缺口的候选指纹都不变；改 `BBBB2222` 时缺口 `AAAA1111` 的候选指纹变化。此更正只改测试步骤的输入对象，不改变 T4 业务目标、预期结果、方法或检查方式。计划文本与 §2.1 仍写 `BBBB2222`，请测试计划负责人在受影响关口审核时确认或改准。
+- **静态预检**（未运行任何正式用例、未调用产品入口）：`python3 -m py_compile` 两个测试模块通过；`unittest.TestLoader` 解析 §3.3 的两个新选择器与既有生命周期选择器为 3 项，`test_stage2_evidence_level` 由 21 项增至 23 项、`test_stage2_style_validation_handoff` 仍 7 项；`git diff --check` 干净。沿用既有 tests 目录与 `BaseEnv` 临时目录，无安装、外部服务、模型或 Zotero 需求；仓库外运行目录按 §3 由执行者新建。
+- **交接**：第二关按本次实际接线复核两个新方法与既有方法内的新输入（含上述夹具更正）；第三关待产品按执行计划 r11 §3.3.3—7 修复后，由本地执行工程师按 §3.3 定向执行，未受影响旧结果直接引用。本记录不代表第二关通过、产品缺陷或任何测试结果。
+
 ## t43 既有审核与结果（2026-10-19，历史有效范围）
 
 - **依据与范围**：执行计划 r8 §3.3.3—5 已批准：当业务来源、成功资格、输入、载体保护和已接受基线均可比较且未变时，即使论文分析级别未变，旧正文缺展示版本或版本过时，也要先按现行渲染规则比较可见正文，不能直接 `reuse_all`。正文实质变化时更新受管正文并使旧校验失效；正文等价时保持受管正文及原本合法的校验轮次。这是 U1 固定证据展示的旧包兼容检查，归入原 T4，不增加独立业务目标。
