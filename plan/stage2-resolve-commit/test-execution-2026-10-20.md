@@ -121,7 +121,7 @@ OK
 2. 删除 runner 中两段函数时，除了 585 行函数代码，还收敛了定义交界处共 16 个空行（每处保留 2 个空行）：第一段 12 个、第二段 4 个。原因是按 AST 行区间删除后交界处会留下 14 个和 6 个连续空行；收敛后 runner 为 9784 行（`10375 − 585 − 16 + 10`，10 为 7 个别名与 3 行新增 `build()` 实参的净增）。这只是空行整理，不改变任何语句。
 3. runner 绑定点注释仍保留第 2 批的文字（“The submit-side helpers just above stay in the runner for the next batch…”）。执行计划写明追加时不重建第 2 批的常量与注释，且本批只允许删除定义、扩展实参、增加别名，因此未改该注释；它不影响行为，建议由后续文档或清理批次统一处理。
 4. 本次按测试计划第 3 版的判据重跑，除新增的别名去重断言和 docstring 脚本外，判据与第 2 版一致；日志按版本另存（`*-plan-v3.log`），旧版 `*-newbase.log` 保留但不再作为本记录证据。第 4、5 版只改第 8 条的基线对照命令块、版本号与 CI 记录，没有改动任何已执行步骤，因此沿用 `*-plan-v3.log`。
-5. 第 8 条的基线对照块已实际执行一次，确认可直接运行：在 `f07abb0` 上跑同一组 7 个方法得到 `Ran 7 tests in 4.663s`、`OK`、7 条 `... ok`（日志 `/tmp/pc-stage3/t4-baseline.log`）。基线与工作树都通过，说明本批没有引入回归；日后若工作树失败而基线通过，按本批回归处理。第 5 版把该块改成 `if … then … else … exit 1` 后重跑：通过路径末行 `BASELINE PASSED`、退出码 0；另用一份把其中一个方法名改成不存在的副本验证失败路径（`block5-baseline-failcase.sh`），末行 `BASELINE FAILED`、退出码 1、`FAILED (errors=1)`，说明失败不会被 `tee` 吞掉。
+5. 第 8 条的基线对照块已实际执行一次，确认可直接运行：在 `f07abb0` 上跑同一组 7 个方法得到 `Ran 7 tests in 4.302s`、`OK`、7 条 `... ok`（通过路径日志 `/tmp/pc-stage3/baseline-pass-run.out`；`t4-baseline.log` 是块内最近一次通过运行，`Ran 7 tests in 4.398s`）。基线与工作树都通过，说明本批没有引入回归；日后若工作树失败而基线通过，按本批回归处理。第 5 版把该块改成 `if … then … else … exit 1` 后重跑：通过路径末行 `BASELINE PASSED`、退出码 0；另用一份把其中一个方法名改成不存在的副本验证失败路径（`block5-baseline-failcase.sh`），末行 `BASELINE FAILED`、退出码 1、`FAILED (errors=1)`，输出单独保留在 `/tmp/pc-stage3/baseline-fail-run.out`，不会被通过路径覆盖。
 6. 既有仓库检查未在本地运行；合并前以 PR 上 `shards (shard1..4)` 与聚合 job `test` 的结果为准。
 
 ## 未完成项

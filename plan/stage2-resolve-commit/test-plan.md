@@ -203,8 +203,8 @@
 - 第 2 版：按第一/二关审核修正——① T4 移出 3 个主断言在第 4 批的 `Stage2FinalizeWithResolvedTests` 方法，加入直接调用 `validate_resolve_results` 的 `test_reused_direction_ignores_stale_result_file`，T4 变 7 个并写明断言级归因；② T0 的内联脚本改为精确 14 参数集合、23 个同名别名（`目标名 == _stage2_resolve.<同名>`）、import json；③ T2 改为“脚本忽略 docstring + 单独核对 7/7 同文（6 个多行）”；④ 执行记录补 CI run `39315290639`（head `1b08b36`）与 7 个方法结果。
 
 - 第 3 版：按第二关复核修正（R1–R5）——① T0 增补“23 个别名去重后仍 23”（`assert len({n.targets[0].id for n in aliases}) == 23`）；② 第 2 步补 docstring 核对命令与脚本 sha256，T2 与环境节写明脚本路径、行数与哈希；③ T4 归因改为基线对照——跨批断言失败先在 `f07abb0` 上跑同一方法，基线上也失败才算既有失败，否则按本批回归修正；④ 自检项 ③ 改为“两个脚本都有来源与 sha256”。
-- 第 5 版：按第二关复核的剩余三点修正——① 计划头 `Test plan revision` 与 `Proposed review status` 同步到第 4/5 版；② 基线对照块改为 `if … then … else … exit 1`，用退出码区分 `BASELINE PASSED` 与 `BASELINE FAILED`，不再用 `| tee`；③ CI 记录补 `e56bfd8`／`39323797206`，并写明纯文档提交的结果只在 PR 页面查看。
 - 第 4 版：按第二关复核的剩余点修正（R1r、R5b、R6）——① 跨批断言改按实测写明：方法 1–4 的 plan 断言来自第 2 批 `cmd_stage2_resolve_plan`，方法 7 尾段经 `stage2-finalize` 断言 pack 的 `resolved_direction`，不再笼统写“第 1/2 批 plan、第 4 批 finalize”；② 第 8 条补可执行的基线对照命令块（`/tmp/pc-stage3/base-f07abb0`、7 个方法、`tee /tmp/pc-stage3/t4-baseline.log`）与两条判据；③ 第 5 条的 CI 记录统一到实际 head：`1b08b36`／`39315290639`、`21e1af0`／`39319465479`、`88eba77`／`39323008051`。
+- 第 5 版：按第二关复核的剩余三点修正——① 计划头 `Test plan revision` 与 `Proposed review status` 同步到第 4/5 版；② 基线对照块改为 `if … then … else … exit 1`，用退出码区分 `BASELINE PASSED` 与 `BASELINE FAILED`，不再用 `| tee`；③ CI 记录补 `e56bfd8`／`39323797206`，并写明纯文档提交的结果只在 PR 页面查看。
 
 ## 审核状态
 
