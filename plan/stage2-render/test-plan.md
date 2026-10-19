@@ -2,11 +2,11 @@
 
 ## 版本、来源与状态
 
-- 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 1 版（待审核）。
+- 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 3 版。
 - Requirement revision: 第 1 版（2026-10-20 负责人要求）。
 - Target repository revision: 工作分支 `refactor-stage2-render`；对照基准为分支链上一位 `refactor-stage2-context`（#113）的 head `5972905b1aa420f5aebdbd9a06221958fe64a726`。
 - Test plan revision: 第 3 版。
-- Proposed review status: 待审核。
+- Proposed review status: 第一关 PASS；第二关待审核。
 - 测试范围依据：`Test Engineer Rule.md`。
 
 ## 必测清单
