@@ -414,6 +414,9 @@ t35 第三关正式执行记录（2026-10-18，本地执行工程师）：产品
   - 版本映射（变基前 → 变基后）：`5582dfa`→`5b5831e`（r8 展示版本分流）、`6f0b026`→`7d55467`（r8 记录）、`33f66b1`→`2b225a5`（t43 接线）、`2420643`→`d0e847b`（t43 夹具自检修正）、`2e2e3df`→`0c7dc4e`（t43 执行记录）、`aae1d54`→`675f020`（计划状态同步）；更早的 r7 与合并审核提交同样整体重放，记录按本表对应。
   - 变基后受影响项复验（产品与测试版本 `675f020`）：§3 的 17 个选择器退出码 0、`Ran 17 tests`、`OK`；§3.1 的 11 个定向选择器退出码 0、`Ran 11 tests`、`OK`；t43 单选择器退出码 0、`Ran 1 test`、`OK`；日志目录 `/tmp/contact-evidence-level.Lkcjspfz/`（`recipe.txt`、`recipe-t40.txt`、`recipe-t43.txt`）。逐项结论与变基前一致，未新增必测编号或选择器，未改测试代码与断言。
   - 范围外回归（非必测项）：整仓 `python3 -m unittest discover -p "test_*.py"` 退出码 0、`Ran 1046 tests`、`OK (skipped=1)`，日志 `/tmp/contact-evidence-level.0Chv8BaN/full-suite.txt`；项数由 1042 增至 1046 是上游 main 带入的新测试，不是本 PR 新增用例。
+  - **第二次变基（同日，main 再次前进）**：`origin/main` 随后到 `d5a4f75`（Merge PR #104，阶段 2 分析范围契约），故把本 PR 的提交重放到新 main（`git rebase --onto d5a4f75 2ed9544`），分支 tip 现为 `a128a47`。冲突仅 `SKILL.md` 一处：上游 #104 重写了阶段 2 的 `paper_analysis`/candidate-union 范围契约，而本 PR 在该段的唯一意图是在 Zotero 在线要求中保留 `refresh_display`，故解析为「采用上游范围契约 + 保留 `refresh_display` 措辞」；两份 analyzer 自动合并。
+  - 第二次变基后复验（同产品与测试内容，仅基线变化）：上游新增的 `test_stage1_stage2_contract`（17 项）通过；§3 的 17 个选择器、§3.1 的 11 个定向选择器与 t43 单选择器全部退出码 0 且 `OK`，日志 `/tmp/contact-evidence-level.iTpDn749/`（`recipe.txt`、`recipe-t40.txt`、`recipe-t43.txt`）；整仓 `Ran 1049 tests`、`OK (skipped=1)`，日志 `/tmp/contact-evidence-level.IG8mukmb/full-suite.txt`。
+  - r9 与 t44 状态：r9 仍为 pending（按用户决定待计划审核通过后实施 §4.2 E）；t44 的两个新选择器 `test_legacy_refresh_preserves_fixed_evidence_prefix_with_source_marker`、`test_ordinary_process_upgrades_legacy_display_before_marking_current` 仍待本地测试工程师接线，本记录不声称其通过，也不提前实施 r9。
 
 准备期复核（非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），测试提交 `0fe84ab`，命令为 §3 的 17 个选择器，结果目录 `/tmp/contact-evidence-level.p49ZBXq2`（`recipe.txt`），退出码 1，`Ran 17 tests`、`FAILED (failures=11)`。
 
