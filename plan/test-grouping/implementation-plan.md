@@ -7,7 +7,7 @@
 - Canonical Plan revision: 第 2 版。
 - Target repository revision: `6e624e0`（`origin/main`）。本批是独立工作，不改产品代码，也不依赖在途 PR 的合并顺序，因此从 `main` 另拉分支 `refactor-test-grouping`。
 - Relevant upstream/runtime revision: CI 工作流 `.github/workflows/ci.yml`（当前单任务，Python 3.12）。
-- Proposed review status: pending。
+- Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`，P1–P4 全 PASS；独立计划审核于 2026-10-18/19 给出）。
 - 唯一规范来源：本文件。
 
 ## 正式需求与范围
@@ -127,4 +127,4 @@
 
 ## 审核状态
 
-计划第 2 版为当前唯一计划。第 1 版结论 `NEEDS_MODIFICATION`（B1、B2），已按上节修正。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
+计划第 2 版为当前唯一计划，结论 **`Plan conclusion: APPROVED`**（P1–P4 全 PASS；独立计划审核于 2026-10-19 给出）。第 1 版结论 `NEEDS_MODIFICATION`（B1、B2），已按上节修正。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。

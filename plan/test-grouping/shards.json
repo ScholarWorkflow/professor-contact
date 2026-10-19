@@ -1,5 +1,5 @@
 {
- "generated_from": "416.2s total on 2026-10-19 (macOS, Python 3.14.7); balanced by measured module seconds",
+ "generated_from": "416.2s total on 2026-10-19 (macOS, Python 3.14.7); balanced by measured module seconds; greedy packing: modules sorted by measured seconds descending, each placed into the currently smallest bin (lowest index on ties), so the split depends on that tie-break rule",
  "shards": [
   {
    "name": "shard1",
