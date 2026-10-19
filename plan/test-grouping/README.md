@@ -16,7 +16,9 @@
 
 阶段含义：`stage1` = 候选采集（contact_stage1 / stage1-* 入口）；`stage2` = Stage 2 解析、preflight 与 handoff；`stage3` = Stage 3 渲染、校验与修正；`stage4` = Stage 4 选择与本地迁移；`stage5` = Stage 5 计划、finalize 与不可变包装；`non-stage` = 文档/工具/夹具类测试，不驱动某个阶段的运行时入口。
 
-## 测量结果（`6e624e0` 上的分组与计时；模块集合在后续 main 上未变）
+## 测量结果（`6e624e0` 上的分组与计时；此后 main 未增删模块）
+
+PR #92 新增 `test_stage2_evidence_level`（stage2，20 项，约 32.9s）后，清单与总量随之更新为 79 个模块 / 1045 项 / 448.9s；下表与分片分配按 `shards.json` 当前内容为准。
 
 - 全套：`Ran 1025 tests`，模块耗时合计 416.0s；
 - 收集口径：`countTestCases()` = 1025；定义口径：156 个测试类 / 1033 个方法（脚本只数“带 ≥1 个 test 方法的类”且只数类体内定义的方法）；

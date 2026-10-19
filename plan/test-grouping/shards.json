@@ -9,9 +9,9 @@
   "non-stage": "文档/工具/夹具类测试，不驱动某个阶段的运行时入口"
  },
  "totals": {
-  "modules": 78,
-  "seconds": 416.0,
-  "tests": 1025
+  "modules": 79,
+  "seconds": 448.9,
+  "tests": 1045
  },
  "shards": [
   {
@@ -549,12 +549,18 @@
   },
   {
    "name": "shard4",
-   "seconds": 104.0,
+   "seconds": 136.9,
    "stages": {
-    "stage2": 22,
+    "stage2": 23,
     "stage3": 2
    },
    "modules": [
+    {
+     "name": "test_stage2_evidence_level",
+     "stage": "stage2",
+     "seconds": 32.9,
+     "tests": 20
+    },
     {
      "name": "test_stage2_style_validation_handoff",
      "stage": "stage2",
