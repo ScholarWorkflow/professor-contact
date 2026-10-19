@@ -11,7 +11,7 @@
 - Target repository revision: `2117fc6a1607a22aa9e723002b4a78625733b7b1`（分支 `refactor/stage3-handoff`，已含批次二/三与边界一/二）。
 - Implementation sequencing prerequisite: PR #97 已合并；#98、#99、#100 尚未合并，本批堆叠在 #100 之上，合并顺序 #97（已合并）→ #98 → #99 → #100 → 本批。
 - Relevant upstream/runtime revision: `professor-research` 的 `professor-collector/scripts/contact_evidence.py` 不在本仓；本批只移动**调用侧**代码，调用方式（传 `program_root`、`--check` 与否、超时）保持不变。
-- Proposed review status: pending。
+- Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`，P1–P4 全 PASS；独立计划审核于 2026-10-18/19 给出）。
 - 唯一规范来源：本文件。
 
 ## 正式需求与范围
@@ -126,4 +126,4 @@
 
 ## 审核状态
 
-计划第 2 版为当前唯一计划。第 1 版结论 `NEEDS_MODIFICATION`（B1–B5），已按上节修正。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
+计划第 3 版为当前唯一计划，结论 **`Plan conclusion: APPROVED`**（P1–P4 全 PASS；独立计划审核于 2026-10-19 给出）。第 1 版结论 `NEEDS_MODIFICATION`（B1–B5）、第 2 版按 B1 修正后获批，均已按上节记录。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
