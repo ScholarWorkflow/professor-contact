@@ -1,0 +1,800 @@
+{
+ "generated_from": "behaviour-based stage map (CLI subcommand weight 3 + runner entry point weight 1, base-class signals merged) plus per-module measured seconds; stage groups are placed whole when they fit within 1.15x of the even share, otherwise split greedily by seconds (lowest load first, lowest index on ties)",
+ "stage_definitions": {
+  "stage1": "候选采集（contact_stage1 / stage1-* 入口）",
+  "stage2": "Stage 2 解析、preflight 与 handoff",
+  "stage3": "Stage 3 渲染、校验与修正",
+  "stage4": "Stage 4 选择与本地迁移",
+  "stage5": "Stage 5 计划、finalize 与不可变包装",
+  "non-stage": "文档/工具/夹具类测试，不驱动某个阶段的运行时入口"
+ },
+ "totals": {
+  "modules": 78,
+  "seconds": 416.0,
+  "tests": 1025
+ },
+ "shards": [
+  {
+   "name": "shard1",
+   "seconds": 104.1,
+   "stages": {
+    "mixed:stage2+stage3": 1,
+    "non-stage": 18,
+    "stage1": 5,
+    "stage3": 4
+   },
+   "modules": [
+    {
+     "name": "test_contact_state",
+     "stage": "stage3",
+     "seconds": 82.8,
+     "tests": 88,
+     "signals": {
+      "stage1": 475,
+      "stage2": 1575,
+      "stage3": 3550,
+      "stage4": 2200,
+      "stage5": 3175
+     }
+    },
+    {
+     "name": "test_issue66_stage3_local_state",
+     "stage": "stage3",
+     "seconds": 11.0,
+     "tests": 6,
+     "signals": {
+      "stage2": 24,
+      "stage3": 110,
+      "stage4": 25
+     }
+    },
+    {
+     "name": "test_issue67_gate2_r3",
+     "stage": "stage3",
+     "seconds": 3.8,
+     "tests": 6,
+     "signals": {
+      "stage1": 76,
+      "stage2": 252,
+      "stage3": 586,
+      "stage4": 367,
+      "stage5": 508
+     }
+    },
+    {
+     "name": "test_stage2_resolve_fingerprint_scope_regression",
+     "stage": "stage3",
+     "seconds": 2.4,
+     "tests": 3,
+     "signals": {
+      "stage2": 24,
+      "stage3": 27
+     }
+    },
+    {
+     "name": "test_stage2_resolved_direction_acceptance_boundary",
+     "stage": "mixed:stage2+stage3",
+     "seconds": 2.2,
+     "tests": 2,
+     "signals": {
+      "stage2": 27,
+      "stage3": 27
+     }
+    },
+    {
+     "name": "test_opencode_depth_install",
+     "stage": "non-stage",
+     "seconds": 0.6,
+     "tests": 11,
+     "signals": {}
+    },
+    {
+     "name": "test_stage1_candidates",
+     "stage": "stage1",
+     "seconds": 0.3,
+     "tests": 36,
+     "signals": {
+      "stage1": 38
+     }
+    },
+    {
+     "name": "test_contact_targets",
+     "stage": "non-stage",
+     "seconds": 0.2,
+     "tests": 45,
+     "signals": {}
+    },
+    {
+     "name": "test_issue32_eval_request",
+     "stage": "stage1",
+     "seconds": 0.2,
+     "tests": 21,
+     "signals": {
+      "stage1": 3
+     }
+    },
+    {
+     "name": "test_prepare_issue39_stage2_fixture",
+     "stage": "stage1",
+     "seconds": 0.2,
+     "tests": 6,
+     "signals": {
+      "stage1": 3
+     }
+    },
+    {
+     "name": "test_prepare_issue40_runtime_fixture",
+     "stage": "non-stage",
+     "seconds": 0.2,
+     "tests": 10,
+     "signals": {}
+    },
+    {
+     "name": "test_build_issue32_e2e_fixture",
+     "stage": "non-stage",
+     "seconds": 0.1,
+     "tests": 7,
+     "signals": {}
+    },
+    {
+     "name": "test_stage1_handoff_identity",
+     "stage": "stage1",
+     "seconds": 0.1,
+     "tests": 3,
+     "signals": {
+      "stage1": 115,
+      "stage2": 87,
+      "stage3": 142,
+      "stage4": 88,
+      "stage5": 127
+     }
+    },
+    {
+     "name": "test_contact_targets_gate2_oracle",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 1,
+     "signals": {}
+    },
+    {
+     "name": "test_issue39_eval_request",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 7,
+     "signals": {}
+    },
+    {
+     "name": "test_issue51_delegation_verifier",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 26,
+     "signals": {}
+    },
+    {
+     "name": "test_issue51_standalone_runtime_recipe",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 16,
+     "signals": {}
+    },
+    {
+     "name": "test_issue66_validator_report_contract",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 3,
+     "signals": {}
+    },
+    {
+     "name": "test_issue67_riso_case_prep",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 2,
+     "signals": {}
+    },
+    {
+     "name": "test_issue67_runtime_evidence",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 4,
+     "signals": {}
+    },
+    {
+     "name": "test_issue68_eval_request",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 6,
+     "signals": {}
+    },
+    {
+     "name": "test_issue74_static_acceptance",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 4,
+     "signals": {}
+    },
+    {
+     "name": "test_p47_target_isolation",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 3,
+     "signals": {}
+    },
+    {
+     "name": "test_seed_issue39_zotero",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 8,
+     "signals": {}
+    },
+    {
+     "name": "test_stage01_caller_contract",
+     "stage": "stage1",
+     "seconds": 0.0,
+     "tests": 20,
+     "signals": {
+      "stage1": 48,
+      "stage2": 11
+     }
+    },
+    {
+     "name": "test_stage2_reference_id_repair_contract",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 4,
+     "signals": {}
+    },
+    {
+     "name": "test_stage5_template_body",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 9,
+     "signals": {}
+    },
+    {
+     "name": "test_verify_issue39_endpoint_runtime",
+     "stage": "non-stage",
+     "seconds": 0.0,
+     "tests": 21,
+     "signals": {}
+    }
+   ]
+  },
+  {
+   "name": "shard2",
+   "seconds": 104.1,
+   "stages": {
+    "stage3": 7,
+    "stage4": 7
+   },
+   "modules": [
+    {
+     "name": "test_contact_evidence_ladder",
+     "stage": "stage3",
+     "seconds": 45.2,
+     "tests": 40,
+     "signals": {
+      "stage1": 19,
+      "stage2": 63,
+      "stage3": 142,
+      "stage4": 100,
+      "stage5": 139
+     }
+    },
+    {
+     "name": "test_stage3_direction_groups",
+     "stage": "stage3",
+     "seconds": 28.4,
+     "tests": 19,
+     "signals": {
+      "stage2": 24,
+      "stage3": 123,
+      "stage4": 50
+     }
+    },
+    {
+     "name": "test_stage3_direction_identity",
+     "stage": "stage3",
+     "seconds": 13.1,
+     "tests": 9,
+     "signals": {
+      "stage2": 72,
+      "stage3": 228,
+      "stage4": 50
+     }
+    },
+    {
+     "name": "test_issue61_direction_credibility_warning",
+     "stage": "stage3",
+     "seconds": 8.8,
+     "tests": 4,
+     "signals": {
+      "stage2": 24,
+      "stage3": 31
+     }
+    },
+    {
+     "name": "test_issue32_e2e_verifier",
+     "stage": "stage4",
+     "seconds": 3.7,
+     "tests": 52,
+     "signals": {
+      "stage1": 3,
+      "stage2": 18,
+      "stage3": 9,
+      "stage4": 108
+     }
+    },
+    {
+     "name": "test_issue66_r12_validation_input_sha",
+     "stage": "stage3",
+     "seconds": 2.7,
+     "tests": 2,
+     "signals": {
+      "stage2": 24,
+      "stage3": 87,
+      "stage4": 25
+     }
+    },
+    {
+     "name": "test_stage3_direction_identity_contract",
+     "stage": "stage3",
+     "seconds": 1.3,
+     "tests": 1,
+     "signals": {
+      "stage2": 24,
+      "stage3": 77,
+      "stage4": 25
+     }
+    },
+    {
+     "name": "test_stage2_resolved_direction_merge_fulltext_regression",
+     "stage": "stage3",
+     "seconds": 0.5,
+     "tests": 1,
+     "signals": {
+      "stage2": 24,
+      "stage3": 27
+     }
+    },
+    {
+     "name": "test_issue74_cli_compat",
+     "stage": "stage4",
+     "seconds": 0.3,
+     "tests": 3,
+     "signals": {
+      "stage1": 1,
+      "stage4": 3
+     }
+    },
+    {
+     "name": "test_issue57_routing_stability",
+     "stage": "stage4",
+     "seconds": 0.1,
+     "tests": 43,
+     "signals": {
+      "stage4": 15
+     }
+    },
+    {
+     "name": "test_fixture_support",
+     "stage": "stage4",
+     "seconds": 0.0,
+     "tests": 16,
+     "signals": {
+      "stage4": 18
+     }
+    },
+    {
+     "name": "test_issue53_stage4_runtime_assets",
+     "stage": "stage4",
+     "seconds": 0.0,
+     "tests": 8,
+     "signals": {
+      "stage4": 3
+     }
+    },
+    {
+     "name": "test_issue67_runtime_config",
+     "stage": "stage4",
+     "seconds": 0.0,
+     "tests": 4,
+     "signals": {
+      "stage4": 9
+     }
+    },
+    {
+     "name": "test_stage4_selection_agent_contract",
+     "stage": "stage4",
+     "seconds": 0.0,
+     "tests": 17,
+     "signals": {
+      "stage4": 12
+     }
+    }
+   ]
+  },
+  {
+   "name": "shard3",
+   "seconds": 103.8,
+   "stages": {
+    "stage3": 8,
+    "stage5": 4
+   },
+   "modules": [
+    {
+     "name": "test_stage3_validation_refine",
+     "stage": "stage3",
+     "seconds": 30.1,
+     "tests": 18,
+     "signals": {
+      "stage2": 24,
+      "stage3": 92,
+      "stage4": 25
+     }
+    },
+    {
+     "name": "test_issue66_validation_handoff",
+     "stage": "stage3",
+     "seconds": 28.9,
+     "tests": 12,
+     "signals": {
+      "stage2": 24,
+      "stage3": 94,
+      "stage4": 25
+     }
+    },
+    {
+     "name": "test_stage2_resolved_direction",
+     "stage": "stage3",
+     "seconds": 26.0,
+     "tests": 27,
+     "signals": {
+      "stage2": 456,
+      "stage3": 513
+     }
+    },
+    {
+     "name": "test_stage5_immutable",
+     "stage": "stage5",
+     "seconds": 11.7,
+     "tests": 10,
+     "signals": {
+      "stage1": 57,
+      "stage2": 189,
+      "stage3": 430,
+      "stage4": 276,
+      "stage5": 565
+     }
+    },
+    {
+     "name": "test_issue81_verify_cache_contract",
+     "stage": "stage5",
+     "seconds": 3.1,
+     "tests": 3,
+     "signals": {
+      "stage5": 4
+     }
+    },
+    {
+     "name": "test_stage5_fixture_isolation",
+     "stage": "stage5",
+     "seconds": 2.7,
+     "tests": 2,
+     "signals": {
+      "stage5": 9
+     }
+    },
+    {
+     "name": "test_issue55_stage3_runtime_assets",
+     "stage": "stage3",
+     "seconds": 0.8,
+     "tests": 16,
+     "signals": {
+      "stage3": 18,
+      "stage4": 2
+     }
+    },
+    {
+     "name": "test_stage5_dualtarget_contract",
+     "stage": "stage5",
+     "seconds": 0.4,
+     "tests": 14,
+     "signals": {
+      "stage5": 93
+     }
+    },
+    {
+     "name": "test_issue40_r2_verifier",
+     "stage": "stage3",
+     "seconds": 0.1,
+     "tests": 5,
+     "signals": {
+      "stage3": 4
+     }
+    },
+    {
+     "name": "test_codex_native_delegation_contract",
+     "stage": "stage3",
+     "seconds": 0.0,
+     "tests": 52,
+     "signals": {
+      "stage3": 99
+     }
+    },
+    {
+     "name": "test_issue65_gate2_r24_regressions",
+     "stage": "stage3",
+     "seconds": 0.0,
+     "tests": 2,
+     "signals": {
+      "stage1": 50,
+      "stage2": 146,
+      "stage3": 284,
+      "stage4": 176,
+      "stage5": 254
+     }
+    },
+    {
+     "name": "test_stage3_stage4_caller_contract",
+     "stage": "stage3",
+     "seconds": 0.0,
+     "tests": 27,
+     "signals": {
+      "stage3": 38,
+      "stage4": 6,
+      "stage5": 6
+     }
+    }
+   ]
+  },
+  {
+   "name": "shard4",
+   "seconds": 104.0,
+   "stages": {
+    "stage2": 22,
+    "stage3": 2
+   },
+   "modules": [
+    {
+     "name": "test_stage2_style_validation_handoff",
+     "stage": "stage2",
+     "seconds": 19.3,
+     "tests": 7,
+     "signals": {
+      "stage1": 19,
+      "stage2": 156,
+      "stage3": 142,
+      "stage4": 88,
+      "stage5": 127
+     }
+    },
+    {
+     "name": "test_stage2_preflight",
+     "stage": "stage2",
+     "seconds": 17.5,
+     "tests": 34,
+     "signals": {
+      "stage1": 108,
+      "stage2": 276,
+      "stage3": 18
+     }
+    },
+    {
+     "name": "test_stage2_resolved_direction_downstream_regressions",
+     "stage": "stage2",
+     "seconds": 16.6,
+     "tests": 7,
+     "signals": {
+      "stage2": 36,
+      "stage3": 30
+     }
+    },
+    {
+     "name": "test_resolved_direction_preflight_integration",
+     "stage": "stage2",
+     "seconds": 8.2,
+     "tests": 9,
+     "signals": {
+      "stage1": 72,
+      "stage2": 312,
+      "stage3": 124
+     }
+    },
+    {
+     "name": "test_stage2_facts_sidecar",
+     "stage": "stage2",
+     "seconds": 6.5,
+     "tests": 12,
+     "signals": {
+      "stage2": 12
+     }
+    },
+    {
+     "name": "test_build_issue29_stage2_fixture",
+     "stage": "stage2",
+     "seconds": 6.3,
+     "tests": 9,
+     "signals": {
+      "stage1": 6,
+      "stage2": 9
+     }
+    },
+    {
+     "name": "test_stage2_zotero_rpc_transport",
+     "stage": "stage2",
+     "seconds": 6.2,
+     "tests": 22,
+     "signals": {
+      "stage2": 40
+     }
+    },
+    {
+     "name": "test_stage2_chatgpt_handoff",
+     "stage": "stage2",
+     "seconds": 4.5,
+     "tests": 22,
+     "signals": {
+      "stage2": 4
+     }
+    },
+    {
+     "name": "test_stage2_preflight_malformed",
+     "stage": "stage2",
+     "seconds": 4.2,
+     "tests": 6,
+     "signals": {
+      "stage1": 19,
+      "stage2": 46,
+      "stage3": 3
+     }
+    },
+    {
+     "name": "test_stage2_resolved_direction_fresh_review_regressions",
+     "stage": "stage3",
+     "seconds": 3.3,
+     "tests": 5,
+     "signals": {
+      "stage2": 24,
+      "stage3": 27
+     }
+    },
+    {
+     "name": "test_stage2_preflight_binding",
+     "stage": "stage2",
+     "seconds": 2.6,
+     "tests": 4,
+     "signals": {
+      "stage1": 18,
+      "stage2": 59,
+      "stage3": 3
+     }
+    },
+    {
+     "name": "test_stage2_resolved_direction_regressions",
+     "stage": "stage2",
+     "seconds": 2.4,
+     "tests": 5,
+     "signals": {
+      "stage2": 30,
+      "stage3": 27
+     }
+    },
+    {
+     "name": "test_stage2_input_router",
+     "stage": "stage2",
+     "seconds": 1.9,
+     "tests": 11,
+     "signals": {
+      "stage2": 4
+     }
+    },
+    {
+     "name": "test_stage2_narrative_example_contract",
+     "stage": "stage3",
+     "seconds": 1.8,
+     "tests": 4,
+     "signals": {
+      "stage1": 19,
+      "stage2": 68,
+      "stage3": 142,
+      "stage4": 88,
+      "stage5": 127
+     }
+    },
+    {
+     "name": "test_stage2_chatgpt_handoff_review3",
+     "stage": "stage2",
+     "seconds": 1.2,
+     "tests": 6,
+     "signals": {
+      "stage2": 4
+     }
+    },
+    {
+     "name": "test_issue57_runtime_assets",
+     "stage": "stage2",
+     "seconds": 0.6,
+     "tests": 14,
+     "signals": {
+      "stage1": 12,
+      "stage2": 136,
+      "stage4": 28
+     }
+    },
+    {
+     "name": "test_stage2_chatgpt_handoff_review4",
+     "stage": "stage2",
+     "seconds": 0.5,
+     "tests": 2,
+     "signals": {
+      "stage2": 2
+     }
+    },
+    {
+     "name": "test_stage2_chatgpt_handoff_review5",
+     "stage": "stage2",
+     "seconds": 0.4,
+     "tests": 3,
+     "signals": {
+      "stage2": 4
+     }
+    },
+    {
+     "name": "test_apm_deployment_metadata",
+     "stage": "stage2",
+     "seconds": 0.0,
+     "tests": 28,
+     "signals": {
+      "stage2": 8
+     }
+    },
+    {
+     "name": "test_gate2_evidence",
+     "stage": "stage2",
+     "seconds": 0.0,
+     "tests": 4,
+     "signals": {
+      "stage2": 24
+     }
+    },
+    {
+     "name": "test_stage1_stage2_contract",
+     "stage": "stage2",
+     "seconds": 0.0,
+     "tests": 14,
+     "signals": {
+      "stage1": 28,
+      "stage2": 54
+     }
+    },
+    {
+     "name": "test_stage1_stage2_contract_gate2_oracle",
+     "stage": "stage2",
+     "seconds": 0.0,
+     "tests": 1,
+     "signals": {
+      "stage2": 1
+     }
+    },
+    {
+     "name": "test_stage2_chatgpt_handoff_review",
+     "stage": "stage2",
+     "seconds": 0.0,
+     "tests": 2,
+     "signals": {
+      "stage2": 2
+     }
+    },
+    {
+     "name": "test_stage2_zotero_endpoint_contract",
+     "stage": "stage2",
+     "seconds": 0.0,
+     "tests": 9,
+     "signals": {
+      "stage2": 3
+     }
+    }
+   ]
+  }
+ ]
+}
