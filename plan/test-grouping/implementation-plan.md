@@ -4,7 +4,7 @@
 
 - 需求来源：负责人 2026-10-18“其余边界”原文中的“测试分组／CI：可以另评估快审，但不能只按 test_stageN 文件名筛选”。
 - Requirement revision: 第 1 版。
-- Canonical Plan revision: 第 2 版。
+- Canonical Plan revision: 第 3 版。
 - Target repository revision: `6e624e0`（`origin/main`）。本批是独立工作，不改产品代码，也不依赖在途 PR 的合并顺序，因此从 `main` 另拉分支 `refactor-test-grouping`。
 - Relevant upstream/runtime revision: CI 工作流 `.github/workflows/ci.yml`（当前单任务，Python 3.12）。
 - Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`，P1–P4 全 PASS；独立计划审核于 2026-10-18/19 给出）。
@@ -12,10 +12,10 @@
 
 ## 正式需求与范围
 
-- **R1 按实际行为分组**：分组依据必须是“测试实际驱动了哪个阶段的入口”（CLI 子命令、runner 入口点、基类继承），不得只按 `test_stageN` 文件名。
+- **R1 按实际行为分组**：分组依据必须是“测试实际驱动了哪个阶段的入口”（CLI 子命令、runner 入口点、基类继承），不得只按 `test_stageN` 文件名。**归类结果必须落到每个模块**（多数加权信号决定主导阶段，并列记 `mixed:*`，无信号记 `non-stage`），并**用于分片分配**，而不是只算一份统计。
 - **R2 覆盖不丢**：任何分片方案都必须保证全部 `test_*.py` 模块被且仅被一个分片覆盖；新增测试模块若未归类，CI 必须失败而不是静默漏跑。
 - **R3 CI 语义不变**：任一分片失败 → 聚合任务 `test` 失败；不跳过、不弱化任何断言；分支保护里的必需检查名仍是 `test`（`strategy.matrix` 会为每个组合生成独立检查，因此必须另加聚合任务，见方案第 3 条）。
-- **R4 可读的分组证据**：映射表与分片清单进仓库，附测量依据（模块耗时），便于复核与后续调整。
+- **R4 可读的分组证据**：映射表与分片清单进仓库——`shards.json` 的每个模块带 `stage` 与原始加权 `signals`，每个分片带阶段构成；README 给出逐模块的阶段与耗时，便于复核与后续调整。
 
 **非目标**：不改任何测试代码或产品代码；不引入第三方测试框架；不做“按改动路径跳过测试”（runner 为共享核心，跳过风险高于收益）；不按阶段拆成多个 GitHub 检查项（保持单一 `test` 门禁，分片是它的内部并行）。
 
@@ -45,7 +45,7 @@
 
 ### 选定设计
 
-1. **分片清单**：4 个分片，按“行为信号为主、实测耗时为辅”均衡。清单**固定放在 `plan/test-grouping/shards.json`**（覆盖脚本与工作流都读它，避免两处维护）：
+1. **分片清单**：4 个分片。分配规则是**阶段分组驱动 + 耗时均衡**：先按阶段分组，整组能放进某片的余量（均分份额 ×1.15）就整组放进去（同阶段用例尽量同片），放不下的大组（`stage3` 21 个模块）再按实测耗时贪心拆到负载最小的片。清单**固定放在 `plan/test-grouping/shards.json`**（覆盖脚本与工作流都读它），每个模块带 `stage` 与 `signals`，每个分片带 `stages` 构成：
 
 | 分片 | 规模 | 模块耗时合计 |
 | --- | --- | --- |
@@ -59,7 +59,7 @@
 | | `test_issue66_validation_handoff` `test_stage3_direction_groups` `test_stage2_resolved_direction_downstream_regressions` `test_issue66_stage3_local_state` `test_stage2_facts_sidecar` `test_stage2_preflight_malformed` `test_issue66_r12_validation_input_sha` `test_stage2_preflight_binding` `test_stage2_input_router` `test_stage2_chatgpt_handoff_review4` `test_stage5_dualtarget_contract` `test_prepare_issue39_stage2_fixture` `test_stage1_handoff_identity` | |
 
    均衡依据：按模块耗时降序做贪心装箱，四片各 104.0s（串行合计 416.2s）。首次 CI 跑完后按 ubuntu／3.12 的实测更新本表与 `shards.json`。
-2. **覆盖校验**：CI 第一步跑一个仓库内小脚本（`scripts/check_test_shards.py`）：枚举 `tests/test_*.py`，断言与分片清单的并集完全一致、无重复、无遗漏；不一致直接失败。这样新增测试模块若忘了归类，CI 会红，而不是静默漏跑。
+2. **覆盖校验**：CI 第一步跑一个仓库内小脚本（`scripts/check_test_shards.py`）：枚举 `tests/test_*.py`，断言与分片清单的并集完全一致、无重复、无遗漏，**并断言每个模块都带阶段、阶段值属于文档化集合**（`stage1`…`stage5`／`non-stage`／`mixed:*`）。这样新增测试模块若忘了归类或阶段写错，CI 会红，而不是静默漏跑或丢掉对应关系。
 3. **CI 变更（保持单一 `test` 门禁）**：
    - 新增 `shards` 任务：`strategy: matrix: shard: [shard1, shard2, shard3, shard4]`，每片先跑覆盖校验再跑自己的模块列表；
    - 新增聚合任务 `test`：`needs: [shards]`、`if: always()`，读 `needs.shards.result`，任一分片失败即失败，全绿则成功。
@@ -123,8 +123,9 @@
 ## 修订记录
 
 - 第 1 版：首次提交计划审核。
+- 第 3 版：按审核的唯一阻塞项修正——把行为分组的**归类结果真正落实**：`shards.json` 的每个模块带 `stage` 与原始加权 `signals`、每个分片带阶段构成；分片分配改为阶段分组驱动（整组能放下就整组放，大组按耗时拆）；覆盖校验增加“每个模块都带阶段、阶段值属于文档化集合”两条断言；README 的逐模块阶段列改用真实归类结果（此前因键名带 `.py` 与不带 `.py` 不匹配而全为空）。
 - 第 2 版：按第 1 轮审核的两条 blocker 修正——B1 全部测量改在目标修订（worktree）上重跑并写清命令、修订号、Python 版本与两个计数口径（收集 1025／定义 1033、类名做键会合并重名类）；B2 CI 改为 `shards` matrix + 名为 `test` 的聚合任务，保住单一门禁检查；另按 P4 精度项写明分片命令的工作目录、覆盖脚本放仓库根、分片清单固定在 `plan/test-grouping/shards.json`、CI 与本地环境差异的更新约定。
 
 ## 审核状态
 
-计划第 2 版为当前唯一计划，结论 **`Plan conclusion: APPROVED`**（P1–P4 全 PASS；独立计划审核于 2026-10-19 给出）。第 1 版结论 `NEEDS_MODIFICATION`（B1、B2），已按上节修正。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
+计划第 3 版为当前唯一计划。第 1 版结论 `NEEDS_MODIFICATION`（B1、B2）已修正并取得 `Plan conclusion: APPROVED`；第 3 版按测试计划审核的唯一阻塞项（行为分组未落实）修正归类与分配，方案目标与范围未变。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。

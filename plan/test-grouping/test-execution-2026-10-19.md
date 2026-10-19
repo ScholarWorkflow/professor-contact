@@ -1,6 +1,6 @@
 # 测试分组与 CI 分片 测试执行记录（2026-10-19）
 
-- 测试计划：[test-plan.md](test-plan.md)，第 3 版。
+- 测试计划：[test-plan.md](test-plan.md)，第 4 版。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 2 版（`Plan conclusion: APPROVED`）。
 - 对照基准：`6e624e0`（`origin/main`）。
 - 被测提交：`fd3ea8d`（实现提交；其后如仅改文档，产品与测试字节不变）。
@@ -10,16 +10,16 @@
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
-| T1 | 通过 | 正确清单：退出码 0 且 stdout 为 `OK: 78 test modules across 4 shards`；四种坏清单逐例断言错误子串——`missing` → 1／`ERROR: not covered by any shard: test_contact_state`、`duplicate` → 1／`ERROR: test_contact_state listed in both shard1 and shard2`、`nonexistent` → 1／`ERROR: shard3: no such test module: test_does_not_exist.py`、`empty_shard` → 1／`ERROR: shard4 lists no modules`；恢复后再次退出 0，`git diff --exit-code -- plan/test-grouping/shards.json` 无输出（日志 `/tmp/pc-tg-check/t1-injections.log`） |
-| T2 | 通过 | 四片各自 `OK`（其中一片 `OK (skipped=1)`）；四片 `Ran` 之和 = **1025**，与 `countTestCases()` 的 1025 一致；无重复执行 |
+| T1 | 通过 | 正确清单：退出码 0 且 stdout 为 `OK: 78 test modules across 4 shards, each with a stage`；六种坏清单逐例断言错误子串——`missing` → 1／`ERROR: not covered by any shard: test_contact_state`、`duplicate` → 1／`ERROR: test_contact_state listed in both shard1 and shard2`、`nonexistent` → 1／`ERROR: shard3: no such test module: test_does_not_exist.py`、`empty_shard` → 1／`ERROR: shard4 lists no modules`；`no_stage`（去掉 `stage` 字段）→ 1／`carries no stage`；`bad_stage`（改成 `stage9`）→ 1／`unknown stage`；恢复后再次退出 0，`git diff --exit-code -- plan/test-grouping/shards.json` 无输出（日志 `/tmp/pc-tg-check/t1-injections.log`） |
+| T2 | 通过 | 按阶段分组驱动的新分配：shard1 28 模块／104.1s、shard2 14／104.1s、shard3 12／103.8s、shard4 24／104.0s；四片都 `OK`，`Ran` 378+219+188+240 = **1025** = `countTestCases()`，无重复执行；78 个模块**全部**带 `stage`（`non-stage` 显式记录），`signals` 与标签多数一致（例：`test_contact_state` signals `stage3 3550／stage5 3175／stage4 2200／stage2 1575／stage1 25` → `stage3`） |
 | T3 | 通过 | 工作流含 `fail-fast: false`、`matrix.shard: [shard1..shard4]`、每片先 `python scripts/check_test_shards.py` 再从 `tests/` 跑本片；聚合任务 `needs: [shards]`、`if: always()`、`needs.shards.result != "success"` 即失败 |
-| T4 | 通过 | 四片命令都在本地独立跑通，互不依赖；墙钟 shard1 121s、shard2 129s、shard3 122s、shard4 124s |
+| T4 | 通过 | 四片命令都在本地独立跑通，互不依赖；本轮（机器负载较高）墙钟 shard1 232s、shard2 234s、shard3 220s、shard4 212s，与模块耗时之和的比值一致 |
 | T5 | 通过 | PR #103 的 CI（运行 `39168161446`）：`shards (shard1)` pass 1m27s、`shards (shard2)` pass 2m5s、`shards (shard3)` pass 2m12s、`shards (shard4)` pass 1m27s、聚合 `test` pass 4s。分片在 ubuntu／Python 3.12 下并行生效，聚合任务提供了名为 `test` 的检查；按测试计划这不属本批业务必测项，只作既有检查结果引用 |
 
 ## 执行方法与命令
 
-1. 覆盖校验与四种坏清单注入（片段见测试计划第 2 步，含 `try/finally` 与逐例错误子串断言）：正确 → 0（stdout 含 `OK: 78 test modules across 4 shards`）；漏归类 → 1（`not covered by any shard`）；重复 → 1（`listed in both`）；不存在 → 1（`no such test module`）；空分片 → 1（`lists no modules`）；恢复 → 0。
-2. 逐片运行（从 `tests/` 目录，模块列表由 `--print` 提供）：
+1. 覆盖校验与六种坏清单注入（片段见测试计划第 2 步，含 `try/finally` 与逐例错误子串断言）：正确 → 0（stdout 含 `OK: 78 test modules across 4 shards, each with a stage`）；漏归类 → 1（`not covered by any shard`）；重复 → 1（`listed in both`）；不存在 → 1（`no such test module`）；空分片 → 1（`lists no modules`）；丢 stage → 1（`carries no stage`）；阶段值非法 → 1（`unknown stage`）；恢复 → 0。
+2. 逐片运行（从 `tests/` 目录，模块列表由 `--print` 提供；本轮四片并行执行，故墙钟受机器负载影响）：
 
    ```sh
    set -e
@@ -44,6 +44,7 @@
 - 计时脚本的 stdout 混入了某个用例打印的 JSON，直接 `json.loads` 会失败：改为从最后一个 `{"total_seconds"` 起解析（`/tmp/pc-tg-timing.clean.json`）。
 - 测试计划第 1 版审核指出 T1 只比退出码、验不到自己声明的 `ERROR:` 行（任何其它失败也会非零退出）：改为逐例断言错误子串，并补“某片置空”这一注入；重跑后四种注入都命中各自消息。
 - 计时口径差异：`shards.json` 的 104.0s 是各模块测试耗时之和，本地分片墙钟 121–129s 还包含 discover/导入开销（最大/最小 ≈ 1.06），两个数字不矛盾。
+- 审核的唯一阻塞项（行为分组未落实）：`shards.json` 原先只按耗时分配、README 的“主导阶段”列因键名带 `.py` 与不带 `.py` 不匹配而全为空。已重做——归类结果落进 `shards.json`（每模块 `stage` + 原始 `signals`、每分片 `stages` 构成），分配改为阶段分组驱动，校验脚本增加两条阶段断言，README 逐模块列出真实阶段。
 - 以上属测量与测试资产问题，产品与测试代码未改。
 
 ## 兼容性门禁

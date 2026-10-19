@@ -2,10 +2,12 @@
 """Verify that the CI shard lists cover every test module exactly once.
 
 ``plan/test-grouping/shards.json`` is the single source of truth for the
-shards; this script fails when a module is missing from every shard, listed
-twice, listed with a name that has no file, or listed without being
-discoverable. ``--print <shard>`` emits that shard's module list for the CI
-step that runs it.
+shards and for the behaviour-based stage of each module. This script fails
+when a module is missing from every shard, listed twice, listed with a name
+that has no file, listed without being discoverable, listed without a stage,
+or carrying a stage outside the documented vocabulary.
+``--print <shard>`` emits that shard's module names for the CI step that runs
+it.
 """
 import argparse
 import json
@@ -15,43 +17,56 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / ".apm/skills/professor-contact/tests"
 MANIFEST = ROOT / "plan/test-grouping/shards.json"
+STAGES = {"stage1", "stage2", "stage3", "stage4", "stage5", "non-stage"}
 
 
-def load_shards() -> dict[str, list[str]]:
+def load_shards() -> list[dict]:
     data = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    return {shard["name"]: list(shard["modules"]) for shard in data["shards"]}
+    return list(data["shards"])
 
 
 def discovered() -> list[str]:
     return sorted(path.stem for path in TESTS.glob("test_*.py"))
 
 
+def stage_of(module: dict) -> str:
+    return str(module.get("stage", ""))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--print", dest="print_shard", metavar="SHARD",
-                        help="print this shard's module list and exit")
+                        help="print this shard's module names and exit")
     args = parser.parse_args()
 
     shards = load_shards()
     if args.print_shard:
-        if args.print_shard not in shards:
-            print(f"unknown shard: {args.print_shard}", file=sys.stderr)
-            return 2
-        print(" ".join(shards[args.print_shard]))
-        return 0
+        for shard in shards:
+            if shard["name"] == args.print_shard:
+                print(" ".join(module["name"] for module in shard["modules"]))
+                return 0
+        print(f"unknown shard: {args.print_shard}", file=sys.stderr)
+        return 2
 
     found = set(discovered())
     problems: list[str] = []
     owner: dict[str, str] = {}
-    for name, modules in shards.items():
+    for shard in shards:
+        modules = shard.get("modules", [])
         if not modules:
-            problems.append(f"{name} lists no modules")
+            problems.append(f"{shard.get('name')} lists no modules")
         for module in modules:
-            if not (TESTS / f"{module}.py").is_file():
-                problems.append(f"{name}: no such test module: {module}.py")
-            if module in owner:
-                problems.append(f"{module} listed in both {owner[module]} and {name}")
-            owner[module] = name
+            name = module.get("name", "")
+            if not (TESTS / f"{name}.py").is_file():
+                problems.append(f"{shard['name']}: no such test module: {name}.py")
+            if name in owner:
+                problems.append(f"{name} listed in both {owner[name]} and {shard['name']}")
+            owner[name] = shard["name"]
+            stage = stage_of(module)
+            if not stage:
+                problems.append(f"{name} carries no stage")
+            elif stage not in STAGES and not stage.startswith("mixed:"):
+                problems.append(f"{name} carries an unknown stage: {stage}")
     for module in sorted(found - set(owner)):
         problems.append(f"not covered by any shard: {module}")
     for module in sorted(set(owner) - found):
@@ -61,7 +76,8 @@ def main() -> int:
         for problem in problems:
             print(f"ERROR: {problem}", file=sys.stderr)
         return 1
-    print(f"OK: {len(owner)} test modules across {len(shards)} shards")
+    print(f"OK: {len(owner)} test modules across {len(shards)} shards, "
+          f"each with a stage")
     return 0
 
 
