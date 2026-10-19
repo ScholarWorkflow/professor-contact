@@ -4,7 +4,7 @@
 
 - 执行计划：`plan/stage2-render/implementation-plan.md` 第 3 版。
 - 测试计划：`plan/stage2-render/test-plan.md` 第 3 版。
-- 被测提交：`ebf2763`（`refactor(stage2): move the render layer into a helper module`，父提交 `980aa18` 为计划文档提交，其父为分支链上一位 `5972905`）。
+- 被测提交：`ebf2763`（`refactor(stage2): move the render layer into a helper module`，父提交 `980aa18` 为计划文档提交，其父为分支链上一位 `5972905`）；当前分支 head `800e297`，它只把 `_stage2_finalize.build(...)` 调用里一行孤立 `,` 折进上一行，runner 的 AST 与 `ebf2763` 相同。
 - 对照基准：分支链上一位 `refactor-stage2-context`（#113）的 head `5972905b1aa420f5aebdbd9a06221958fe64a726`，runner 7630 行。
 - 环境：macOS；`uv run --no-project python` 3.14.6；仓库既有测试夹具；未新增依赖。
 - 运行目录：`/tmp/pc-stage7/`（`base/` 是父提交导出的 scripts，`blocks/blk0.sh`–`blk5.sh` 是从测试计划第 3 版原文抽出的命令块）。
@@ -42,7 +42,7 @@
 
 ## 复核入口
 
-- T0：`/tmp/pc-stage7/blocks/blk0.sh`（7 条 `T0 ... OK`）。
+- T0：`/tmp/pc-stage7/blocks/blk0.sh`（7 条 `T0 ... OK`）；更早一次同类成功运行留在 `/tmp/pc-stage7/ab.log`（58 条 `OK`）。
 - T1–T3：`/tmp/pc-stage7/blocks/blk1.sh`（`diff` 无输出 + 58 条 `OK`）。
 - 标题 helper 跨模块：`/tmp/pc-stage7/blocks/blk2.sh`（2 条 `T0 ... OK`）。
 - T4：`/tmp/pc-stage7/blocks/blk3.sh`（`Ran 7 tests`、`OK`）。
