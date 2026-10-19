@@ -25,7 +25,7 @@ Stage 2 分 6 批；本批是第 3 批，与第 2 批共用模块 `_stage2_resol
 
 ## 依据与关键事实
 
-行号分两套：**参考坐标**指 `d5a4f75`；**堆叠坐标**指第 2 批实现提交（`refactor-stage2-resolve` 的 `2ecdc9c`）。实现必须按函数名/AST 定位，不得套用参考行号去删改堆叠文件——第 2 批把 16 个函数移走后，本批 7 个函数在堆叠文件里位于 1840-2480（`validate_resolve_results` 1840-2126、`_load_existing_resolved` 2129-2157、`_facts_preflight_proof` 2160-2176、`_sidecar_preflight_proof` 2179-2186、`_check_resolved_proof_binding` 2189-2209、`cmd_stage2_resolve_finalize` 2256-2408、`cmd_stage2_resolve_accept` 2411-2480），并且被 2212-2253 的 build/别名/常量块分成两段。
+行号分两套：**参考坐标**指 `d5a4f75`；**堆叠坐标**指第 2 批当前分支 tip（`refactor-stage2-resolve` 的 `3233810`，其中实现提交为 `f07abb0`）。实现必须按函数名/AST 定位，不得套用参考行号去删改堆叠文件——第 2 批把 16 个函数移走后，本批 7 个函数在堆叠文件里位于 1834-2474（`validate_resolve_results` 1834-2120、`_load_existing_resolved` 2123-2151、`_facts_preflight_proof` 2154-2170、`_sidecar_preflight_proof` 2173-2180、`_check_resolved_proof_binding` 2183-2203、`cmd_stage2_resolve_finalize` 2250-2402、`cmd_stage2_resolve_accept` 2405-2474），并且被 2206-2247 的 build/别名/常量块分成两段。
 
 | 决定 | 关键事实 | 来源 |
 | --- | --- | --- |
@@ -36,8 +36,8 @@ Stage 2 分 6 批；本批是第 3 批，与第 2 批共用模块 `_stage2_resol
 | 内部互调 6 处 | 7 个函数之间 6 处调用；另有对第 2 批函数（`_authoritative_merge_basis`、`_direction_has_valid_fulltext`、`_resolve_evidence`、`_current_resolve_fingerprint`、`stage2_resolve_run_id`）的调用，全部是同作用域兄弟 | AST 统计 |
 | 组外调用点（参考坐标 `d5a4f75`） | `stage2_resolve_run_id` 2309 用 `_facts_preflight_proof`、`cmd_stage2_resolve_plan` 2360 用 `_load_existing_resolved`、2445 用 `_facts_preflight_proof`（这些在第 2 批模块内）；`cmd_stage2_finalize` 5019/5020/5023 用 `_facts_preflight_proof`／`_sidecar_preflight_proof`；`build_parser` 11601/11608 用两个命令 | AST 统计；均运行期解析 |
 | 没有 import 期引用 | 7 个函数与相关常量没有出现在模块级语句、默认参数、装饰器或类体 | AST 检索 |
-| 绑定位置不变 | 第 2 批的 `build()` 调用在堆叠文件的 2217 行；本批把 `_facts_preflight_proof`／`_load_existing_resolved` 搬进模块后，新增参数的最晚定义是 `direction_provisional_member_keys`（参考 991／堆叠 1005），早于 2217；因此**不移动**绑定位置，只扩展实参 | 第 2 批实现提交实测 |
-| 堆叠重放 | 第 2 批分支未合并；本批实现时以其实现提交 `2ecdc9c` 为基线：在现有 `_stage2_resolve.py` 的 16 个函数之后**追加** 7 个函数（不重建第 2 批的常量与注释），文件头补 `import json`；runner 仍只有 2217 行处一次 `build()` 调用，扩展实参并新增 7 个别名；PR 说明依赖第 2 批 | 第 2 批 PR #109 |
+| 绑定位置不变 | 第 2 批的 `build()` 调用在堆叠文件的 2211 行；本批把 `_facts_preflight_proof`／`_load_existing_resolved` 搬进模块后，新增参数的最晚定义是 `direction_provisional_member_keys`（参考 991／堆叠 1005），早于 2211；因此**不移动**绑定位置，只扩展实参 | 第 2 批实现提交实测 |
+| 堆叠重放 | 第 2 批分支未合并；本批实现时以其实现提交 `2ecdc9c` 为基线：在现有 `_stage2_resolve.py` 的 16 个函数之后**追加** 7 个函数（不重建第 2 批的常量与注释），文件头补 `import json`；runner 仍只有 2211 行处一次 `build()` 调用，扩展实参并新增 7 个别名；PR 说明依赖第 2 批 | 第 2 批 PR #109 |
 | 加载与复制 | 第 2 批已加入 `_stage2_resolve.py`；两个夹具 `glob("_*.py")` 自动带上；Nix 整树复制不变 | 第 2 批计划、仓库文件 |
 
 ## 方案
@@ -85,14 +85,14 @@ Stage 2 分 6 批；本批是第 3 批，与第 2 批共用模块 `_stage2_resol
 
 1. 计划审核取得 `Plan conclusion: APPROVED`。
 2. 等第 2 批实现提交（PR #109 的 `2ecdc9c`；分支 tip `630aec3` 只有文档提交）可用；把本工作树变基到 `2ecdc9c`。
-3. 在堆叠基线上按函数名定位：删除 runner 里 7 个定义、扩展 2217 行处的 `build()` 实参、加 7 个别名；在模块尾部追加 7 个函数并在文件头补 `import json`；AST/常量/调用点对比。
+3. 在堆叠基线上按函数名定位：删除 runner 里 7 个定义、扩展 2211 行处的 `build()` 实参、加 7 个别名；在模块尾部追加 7 个函数并在文件头补 `import json`；AST/常量/调用点对比。
 4. 测试计划（`plan/stage2-resolve-commit/test-plan.md`）与执行记录。
 5. M2 与合并审核另做；PR 基于 `refactor-stage2-resolve` 分支。
 
 ## 修订记录
 
 - 第 1 版：首次提交计划审核。
-- 第 2 版：按计划审核修正——① 补 `import json`（B1）；② 区分参考坐标与堆叠坐标，明确按函数名/AST 定位、绑定在堆叠文件 2217（B2）；③ 非目标改为 `stage2-finalize`；④ 反例改为漏移除 build 参数与漏加 `import json`；⑤ 追加而非重建模块；⑥ 基线指针注明当前 main `0f89ebd`。
+- 第 2 版：按计划审核修正——① 补 `import json`（B1）；② 区分参考坐标与堆叠坐标，明确按函数名/AST 定位、绑定在堆叠文件 2211（B2）；③ 非目标改为 `stage2-finalize`；④ 反例改为漏移除 build 参数与漏加 `import json`；⑤ 追加而非重建模块；⑥ 基线指针注明当前 main `0f89ebd`。
 
 ## 审核状态
 
