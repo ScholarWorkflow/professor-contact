@@ -1,8 +1,8 @@
 # Stage 2 固定证据展示、失败登记与分析级别修复
 
 - Requirement revision：2026-10-17 用户要求为此前 U1、U5 两项修复建立独立计划 PR（北京时间）；依据用户提供的《PR91未覆盖问题报告_20261016.md》。报告中的私人实际数据与失败次数不是本计划已复验结果。
-- Plan revision：contact-evidence-level-r8；Proposed review status: pending（2026-10-19 补齐展示版本驱动的刷新、旧包重绘与来源无路径边界，待正式计划审核）。
-- 目标：ScholarWorkflow/professor-contact。原 U1/U5 源码基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`；七项修复设计基线 `e1e8e48a0f4bee8e5d22acd61813dccd53ac9632`（r5/t37）；上一版计划基线 `1422fa3224bf7f01dda20f5c91f202568504c3a1`（r6/t38）。r5 §3.4 已获[批准](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6248571193)并完成入口对齐，见测试计划 §10。截至本次计划修订前，PR head 为 `9505081d14a0e4a02627fed0a530b0e7c4c4db64`，产品修复最近提交为 `773ed41`；r7 的 A—D 修复和随后三处源码缺陷已有[实施与测试记录](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6253635688)及[后续处置记录](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6260319513)，其既有通过结果仅在记录的产品与测试版本上有效。本次用户授权直接修订计划，新增的展示版本分流尚未按本版实施或执行；不得据既有结果自行宣称 r8 通过计划审核、测试通过或可合并。r6/r7 的来源解析与七项修复保持为此处完整候选的一部分，本轮不新增 U1/U5 以外的产品要求。
+- Plan revision：contact-evidence-level-r9；Proposed review status: pending（2026-10-19，补齐两条已有 U1 展示规则的关键实现步骤：时间戳比较范围和普通 finalize 的旧版本重绘顺序）。r8 已在[正式计划审核](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6260927099)获批；r9 为当前唯一待审完整候选，不能继承 r8 的批准状态。
+- 目标：ScholarWorkflow/professor-contact。U1/U5 原产品基线 `305bc08f8b186672108cffbba0293d249bc8b4b2`；第 7 版修复及既有三处源码修正见[交付记录](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6260319513)。第 8 版展示分流已在产品提交 `5582dfa` 实施，测试计划 t43 的现有 25 个选择器在其记录版本上通过。本版依据 PR #92 受审提交 `aae1d54ca5065b907c794557c772d2753695de6d` 的生产源码及 2026-10-19 用户要求，只补正文比较与正常处理的两项关键决定；其他已批准 U1/U5 目标、成员归属、写入边界及 PR91/PR93 集成不变。代码与测试未因本次计划编写而修复或执行；r9 与配套 t44 均待受影响关口复核。
 - 唯一测试计划：[test-plan.md](test-plan.md)。按 [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)执行。
 
 ## 1. 范围与验收目标
@@ -29,6 +29,9 @@ U5：全文/摘要统计取实际成功分析的级别，不能用分析文件�
 8. preflight cheap inputs L3352–3381 不读取分析索引，`_artifact_guards_for_keys` L3411–3444 只登记已有路径且已存在的文件；现状不能仅凭“旧 guards 未变”排除新增分析/sidecar 或索引换址，不能直接据此批准仅展示刷新。
 9. 普通 finalize L5020–5080 可能不重绘、继承旧 validator；升级展示和级别后必须只使受影响生成物失效，不能重新绑定旧 PASS。PR91 §3.4.1 已设计实质变化/等价重写区分，可复用同一实现，不另建历史系统。
 10. 展示版本比较缺口（当前代码事实）：`STAGE2_DISPLAY_REFRESH_VERSION` 当前为 `1`，成功刷新才写入 `cache.preflight.display_refresh_version`；正常成功接受基线的 `stage2_preflight_metadata` 未持久保存它，预检只在 `level_changes` 非空时选择 `refresh_display`，而刷新入口对空 `level_changes` 直接拒绝。因此已接受包即使业务来源与级别都未变，仍可能因旧展示规则留下原始论文编号而被 `reuse_all` 沿用。对应[版本常量](https://github.com/ScholarWorkflow/professor-contact/blob/9505081d14a0e4a02627fed0a530b0e7c4c4db64/.apm/skills/professor-contact/scripts/contact_state.py#L127-L140)、[基线生成](https://github.com/ScholarWorkflow/professor-contact/blob/9505081d14a0e4a02627fed0a530b0e7c4c4db64/.apm/skills/professor-contact/scripts/contact_state.py#L4019-L4099)、[预检分流](https://github.com/ScholarWorkflow/professor-contact/blob/9505081d14a0e4a02627fed0a530b0e7c4c4db64/.apm/skills/professor-contact/scripts/contact_state.py#L4428-L4445)、[刷新入口](https://github.com/ScholarWorkflow/professor-contact/blob/9505081d14a0e4a02627fed0a530b0e7c4c4db64/.apm/skills/professor-contact/scripts/contact_state.py#L6529-L6543)。本项为已确认 U1 的旧包适配事实，不把私有版本号升级成产品契约。
+
+11. **r9 新确认的正文比较事实（描述证据）**：[`contact_state.py@aae1d54` L6502—6514](https://github.com/ScholarWorkflow/professor-contact/blob/aae1d54ca5065b907c794557c772d2753695de6d/.apm/skills/professor-contact/scripts/contact_state.py#L6502-L6514) 的 `stage2_visible_body()` 对正文每一行查找 ` ｜ 数据来源：`，并舍弃此前全部文字；而同一 runner 的 `render_analysis_md()` 既生成唯一的报告顶部数据来源行，也会打印来源数据中的固定卡 evidence 文本。旧行 `- 后续论文依据：AAAA1111 ｜ 数据来源：作者论文` 与新行 `- 后续论文依据：[可信题名](zotero://select/library/items/AAAA1111) ｜ 数据来源：作者论文` 会被该比较错误视为相等，实际 U1 转换得不到写入，旧校验可能被保留。正式要求依据为 §1 的 U1 和 §3.3.5 的正文实质变化判断。
+12. **r9 新确认的普通路径事实（描述证据）**：[`contact_state.py@aae1d54` L6281—6288](https://github.com/ScholarWorkflow/professor-contact/blob/aae1d54ca5065b907c794557c772d2753695de6d/.apm/skills/professor-contact/scripts/contact_state.py#L6281-L6288) 仅按模型任务、新包或 `stage2_render_state` 差异选择正常 finalize 的重绘；[`L6331—6338`](https://github.com/ScholarWorkflow/professor-contact/blob/aae1d54ca5065b907c794557c772d2753695de6d/.apm/skills/professor-contact/scripts/contact_state.py#L6331-L6338) 调用的 [`stage2_preflight_metadata` L4133—4138](https://github.com/ScholarWorkflow/professor-contact/blob/aae1d54ca5065b907c794557c772d2753695de6d/.apm/skills/professor-contact/scripts/contact_state.py#L4133-L4138) 直接登记新展示版本。旧包即使因文件保护变化走正常 `process`，只要模型及展示状态可复用，就可能保留含原始编号的旧 Markdown，却登记版本 `2` 并沿用旧校验。正式要求依据为 §1 的 U1、§3.2 和 §3.3.3—5；需要冻结成功登记版本前的正文校验顺序。
 
 ## 3. 实施方案
 
@@ -64,6 +67,14 @@ U5：全文/摘要统计取实际成功分析的级别，不能用分析文件�
 6. **字段与旧数据。** `_CANONICAL_PAPER_FIELDS`、build_direction_pack、_canonical_record、fresh/reused/resolved records 与 pack-only context 保存级别，同 key 一致合并，当前正式来源不得被旧记录覆盖。在 runner 内集中当前 paper 的构造/更新入口，供 `build_direction_pack` 的正式成员与 relevant 两分支、`_canonical_record` 及 `_current_paper_record` 共用；从旧包取记录也必须经过当前字段更新。当前 `stage2_analysis_level(paper)` 的 null 是有效覆盖值，必须清除旧 fulltext/abstract，不能用 truthy fallback 保留旧级别。仍保持 schema 2、成员资格及引用许可，不新增另一套 paper 模型。`paper_digest` 及 resolve/freshness 模型摘要不加入 level、render version 或展示投影。旧包缺 level 可显示未确认；旧包若缺展示版本且业务基线完整可比较，按 §3.3.3 进入展示刷新核验，不因缺版本直接放行 reuse_all；旧包缺可比较业务基线走原 process，不从历史 Markdown/临时 facts 猜造基线。资料不足导致正常流程不能完成时真实报告停止，保留原数据，不强制所有坏旧包成功。只在受影响的下一次调用按上述分流更新，不批量迁移或为文档 SHA 重跑。
 
 
+7. **r9：统一实际正文比较与展示版本接受顺序（补足 §3.3.3—5 的实现决定）。** 由现有 `contact_state.py` 的 renderer、普通 `cmd_stage2_finalize` 和 `cmd_stage2_refresh_display` 负责；不改 Stage 2 以外的 owner，不新增第二种展示实现。
+   - **可见正文比较的精确定义**：仅在报告顶部 renderer 固定生成的**唯一数据来源标题行**，确认位置和 `> <生成时间> ｜ 数据来源：` 格式后，忽略其中的生成时间，保留该行 `数据来源：` 起的完整统计内容。其余行保持原文参加比较；正文中的 ` ｜ 数据来源：`、已知论文编号、可信题名/链接、作者原句和用户笔记都不能被统一截断或删除。无法识别为该唯一生成标题的行不得消除差异。正式接受条件是两份实际受管正文在只忽略这一个生成时间后内容相同；只比较包摘要、方向统计或局部片段不足以判等。
+   - **两条正式入口复用同一个比较规则**：展示刷新仍通过当前 renderer 生成候选正文，与在盘旧受管正文比较；当固定证据前缀从裸 `AAAA1111` 变为可信论文链接，即使后缀恰为 ` ｜ 数据来源：作者论文`，也必须认定有实质变化。正文未变时既有合法校验轮次保留；正文变更时使用原 `managed_write` 写入并失效旧 `validator`，原始报告文件不改。禁止通过弱化校验或只改包内展示版本来掩盖差异。
+   - **普通 finalize 先判旧展示版本，再决定是否可跳过重绘**：读取原已接受包的 `cache.preflight.display_refresh_version` 与对应在盘受管正文/旧绑定，判定其为当前、有效旧版/缺失、或不可比较。完成正常 Stage 2 原有 facts、方向、缓存和模型结果复用后，构造当前候选包。若原展示版本为旧版、缺失或不可比较，即使 `needed_keys` 为空、旧新 `stage2_render_state` 相等，仍必须从**当前可信引用与当前 renderer**生成完整候选正文并与旧受管正文比较；不能只凭业务重处理完成就认为旧展示已升级。原展示版本有效且当前、且无现有重绘触发条件时，才允许沿用当前已认证正文，不重复生成模型任务。因业务来源变化而进入原 `process` 的路径同样执行此判定，不强制改走仅展示刷新。
+   - **比较结果决定提交和旧校验**：候选正文缺可信引用、旧正文/绑定不可核实或 `managed_write` 发现手改时，沿用原失败/人工决定规则，受影响状态不得被标为已成功升级。候选正文与旧正文有实质差异时，先按原写入保护生成新受管正文并使旧 `validator` 失效，重新校验从第一轮开始；候选正文等价时不重写受管 Markdown，只按既有绑定规则保留原本合法的校验与轮次，不能用新摘要重新激活失效的旧记录。普通业务流程仍保留自身既有的输入、成员与失败要求，不能为了保持旧校验而忽略真实业务变更。
+   - **新版本只在接受成功后记录**：正常 finalize 和受保护的展示刷新，仅在上述候选正文生成/比较、写入保护及校验处理完成后，才可把 `cache.preflight.display_refresh_version` 登记为 `STAGE2_DISPLAY_REFRESH_VERSION`（当前值 `2`）。写入新版本后必须真实对应磁盘上已按当前规则确认的正文；不能出现“正文未重绘、版本却升级”的状态。展示版本仍不进入业务事实、模型输入、`paper_digest`、resolved proof 或对外 schema；不回读历史 `/tmp` facts，不增加新的锁或文件。
+   - **直接反例及影响**：① 旧版正文的固定证据恰含 ` ｜ 数据来源：`，换成可信链接后前缀变化须被发现；② 已接受旧版本在分析载体仅修改时间、内容和 level 未变时被来源 guard 判为 `process`，模型/方向结果可复用，普通 finalize 仍必须更新旧展示、失效旧校验后才记新版本。未受影响的既有 t43 等价展示刷新、成员交换后统计等价、旧报告留存与两轮上限行为继续保留。这两个反例属于已确认 U1 的直接生产路径，所需测试只由配套测试计划 T4 制定。
+
 ### 3.4 已完成的 PR93 固定入口兼容
 
 r5 的入口对齐已在本轮基线中完成，历史[批准记录](https://github.com/ScholarWorkflow/professor-contact/pull/92#issuecomment-6248571193)及测试计划 §10 的整合/执行记录保留。Codex/OpenCode analyzer Step 2.6 与主 SKILL 的 `refresh_display` 分支均使用同目录 `scripts/contact_state`，原 `--professor-dir`、`--preflight-file`、payload 与返回消费保持不变。本轮七项不要求再次对齐、重装或重跑入口测试。
@@ -73,11 +84,12 @@ r5 的入口对齐已在本轮基线中完成，历史[批准记录](https://git
 ## 4. 顺序、安全和替代方案
 
 1. 实现者先核最新基线及 PR91 是否已落地，保留其位置解析/摘要/轮次/成员保护；只整合本计划涉及的交接。
-2. 本轮由 runner 产品实现者按四个逻辑步骤修复，不要求拆文件或四个提交：
+2. 已实施的 r7/r8 A—D 保留原语义；本轮只修订 `contact_state.py` 中 r9 两处实现，不要求把 A—D 重新实施或拆成独立提交：
    - A（问题 1/2）：按 §3.3.6 合并当前 paper 构造/更新职责，贯通新增正式成员及复用记录的当前级别，含 null 覆盖。
    - B（问题 3，依赖 A）：按 §3.3.3—5 由 runner 在正常 finalize 与刷新中保存目标私有展示版本，并由 renderer 给出共享展示比较语义；同级别旧包可因版本差异走刷新，按实际可见正文变化判定是否失效旧 validator，不以版本变化自动清轮次。
    - C（问题 4/5/7，依赖 B 的版本定义）：按 §3.3.2—5 建立统一来源解析入口，preflight 在已确认业务来源未变后才比较 level 与展示版本；修正 missing/no_path/显式空/坏记录与两处当前年份复核，保留旧无索引兼容和既有 lease。
    - D（问题 6）：按 §3.1 在固定 evidence 引用收集与展示出口完成兼容修复，保留可信已有链接及非引用文本。
+   - E（本轮 r9，依赖既有 B 的展示版本）：按 §3.3.7 在 `stage2_visible_body` 限定只忽略真实生成标题时间，并在 `cmd_stage2_finalize` 以旧展示版本为条件强制当前 renderer 的候选正文比较；在确认写入、旧认证处理完成后才登记新版本。展示刷新调用同一比较规则，原模型任务、人工写入保护和两轮限制不变。
 3. 替代方案“开放所有固定区给模型改写”会改事实，排除；“只屏蔽校验或直接删除依据”掩盖缺陷，排除；选定方案在 runner 确定性展示、记录器保留失败，原 owner 处理问题。
 4. 不新增并发锁或跨文件 journal，沿用已有教授写入 lease、原子 JSON 和 managed_write 保护；不自动覆盖人工文档、不重置用户选择、不改变成员归属。
 5. 关键反例：abstract 有分析文件仍不能计 fulltext；OCR fulltext facts unavailable 仍可计全文输入级；旧包无级别应显式未知；固定+叙事混合阻挡不允许模型越权；同一未修复报告不能清轮数；正常 narrative 修订不应重开第一轮。
@@ -85,5 +97,6 @@ r5 的入口对齐已在本轮基线中完成，历史[批准记录](https://git
 7. 版本化依据：本轮 [contact_state.py](https://github.com/ScholarWorkflow/professor-contact/blob/e1e8e48a0f4bee8e5d22acd61813dccd53ac9632/.apm/skills/professor-contact/scripts/contact_state.py) 的 L4982—5019、L5588—5614、L5901—5924 对应 A；L5067—5079、L5376—5436、L5959—5960、L6314—6353 对应 B；L3590—3612、L3627—3723、L6194—6200、L6291—6297 对应 C；L4796—4887 对应 D。上述为实现现状证据，正式目标仍为 §1 U1/U5；内部 helper 名称、状态布局与比较表示不升级为新 contract。
 来源发现依据：[Codex analyzer Step 6.5—7](https://github.com/ScholarWorkflow/professor-contact/blob/1422fa3224bf7f01dda20f5c91f202568504c3a1/packages/professor-contact-codex/.apm/agents/professor-contact-analyzer.agent.md#L359-L410) 明确固定候选探测与 index 空值可并存；该事实纠正 r6 的缺省解释，不赋予新来源或跳过验证的权限。
 8. r8 本轮请求复核两组仍待审的直接影响：① r6/r7 的七项 A—D 修复方案及统一来源 owner（P1 的版本化源码事实、P2 的 paper 构造/renderer/来源归属、P3 的固定候选/旧基线和失败保护、P4 的单一来源入口及顺序）；② 本次补充的 U1 旧正文展示版本分流（P1 的当前只写未读事实、P2 的 runner/renderer owner、P3 的旧包与 validator 安全条件、P4 的正常成功写版本→预检分流→取得 lease 后重核→候选正文比较）。`no_path` 说明只澄清正式有限来源的观测边界，不扩大 PDF 搜索或测试范围。r4/r5 未受影响的固定区交源、成员归属、入口兼容结论按影响分析复用；r6/r7 的 pending 不由本计划作者升格为 PASS。下一负责人为计划审核者；批准后由产品实现者仅落实尚未实施的展示版本处理，测试负责人依据已批准 U1/U5 与 Test Engineer Rule 判断现有 T1/T4 记录的适用性，不由本计划新增 Case ID、断言或测试设施。本轮只改唯一执行计划，不执行产品和测试，也不授予合并批准。
+9. **r9 修订影响与交接**：本轮用户要求补足执行细节和漏测输入，属于已确认 U1 的两项实现决定收紧，不增加业务需求。规范依据仍为 §1、§3.2、§3.3.3—5；新增描述事实见 §2 第 11／12 项；具体责任和实施顺序见 §3.3.7 与本节 E。P1 仅核新增源码事实与版本，P2 核 runner/renderer owner 及正常入口实际生效，P3 核前缀差异、旧校验/受管保护与等价保留，P4 核正常 finalize 与 refresh_display 的先后条件；r8 其他已通过决定可按无影响记录沿用，不从 `APPROVED` 推定 r9 获批。配套测试计划仅修 T4 的两项直接受影响输入，现有成功记录继续按各自版本使用。实施负责人修正产品，测试工程师按 t44 受影响步骤准备与执行，审核者复核修订后的必要关口。
 
 
