@@ -5,9 +5,9 @@
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 2 版（`Plan conclusion: APPROVED`）。
 - 需求来源：负责人 2026-10-20 的指示（Stage 2 划分；“contact_state.py 收敛为 CLI 分发与确有调用方依赖的兼容入口”）；范围与约束见执行计划。
 - Target repository revision: 工作分支 `refactor-stage2-resolve-commit`，基线为 `origin/refactor-stage2-resolve` 的 `3233810`（其中实现提交为 `f07abb0`）；对照基准同为 `f07abb0` 的 `scripts` 目录。第 2 批分支在实施期间变基到已合并的 `main`，原任务给出的 `2ecdc9c` 已被替换；本计划按变基后的最新基线与同一批代码内容执行。
-- Test plan revision: 第 2 版。
+- Test plan revision: 第 5 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
-- Proposed review status: 待复核（第 1 版第一/二关意见已按 B1–B4 处理）。
+- Proposed review status: 待复核（第 2–5 版意见已按 B1–B4、R1r/R5b/R6 与版本号、批次归属、退出码三项处理）。
 
 ## 必测清单
 
@@ -135,7 +135,7 @@
 
    预期：`Ran 2 tests`，全部 `ok`；无 `skipped`、`FAIL`、`ERROR`。
 
-5. 既有仓库检查（不属于本批必测项，也不作为通过条件）：本批不在本地把全量套件列为必测步骤；PR #112 的 CI 在 head `1b08b36`（run `39315290639`）、`21e1af0`（run `39319465479`）、`88eba77`（run `39323008051`）上均为 4 个 `shards (shardN)` 与聚合 job `test` 全部 SUCCESS；后两个提交只改 `plan/` 文档。
+5. 既有仓库检查（不属于本批必测项，也不作为通过条件）：本批不在本地把全量套件列为必测步骤；PR #112 的 CI 在 head `1b08b36`（run `39315290639`）、`21e1af0`（run `39319465479`）、`88eba77`（run `39323008051`）、`e56bfd8`（run `39323797206`）上均为 4 个 `shards (shardN)` 与聚合 job `test` 全部 SUCCESS；后三个提交只改 `plan/` 文档，之后纯文档提交的 CI 结果只在 PR 页面查看，不再逐条写入本计划。
 
 6. 失败注入：本批不适用。本批只把 7 个函数原样搬入模块并调整 `build()` 依赖，不修改写入顺序、错误通道或回滚逻辑；业务必测清单里也没有失败注入项。
 
@@ -153,7 +153,7 @@
      mkdir -p "$BASELINE"
      git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-resolve-commit archive f07abb0 | tar -x -C "$BASELINE"
      cd "$BASELINE/.apm/skills/professor-contact/tests"
-     uv run --no-project python -m unittest \
+     if uv run --no-project python -m unittest \
        test_stage2_resolved_direction.ResolvedDirectionFinalizeTests.test_resolve_finalize_rejects_missing_new_result \
        test_stage2_resolved_direction.ResolvedDirectionFinalizeTests.test_resolve_finalize_applies_removal \
        test_stage2_resolved_direction.ResolvedDirectionFinalizeTests.test_resolve_finalize_rejects_invalid_removal \
@@ -161,10 +161,17 @@
        test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_reused_direction_ignores_stale_result_file \
        test_stage2_resolved_direction.ResolveAcceptanceBoundaryTests.test_resolve_accept_command_validates_keys_and_staleness \
        test_stage2_resolved_direction.UserKeptProvisionalTests.test_user_kept_provisional_still_writes_explicit_resolved_direction \
-       -v 2>&1 | tee /tmp/pc-stage3/t4-baseline.log
+       -v > /tmp/pc-stage3/t4-baseline.log 2>&1; then
+       cat /tmp/pc-stage3/t4-baseline.log
+       echo "BASELINE PASSED: 基线同样通过，工作树失败即本批回归"
+     else
+       cat /tmp/pc-stage3/t4-baseline.log
+       echo "BASELINE FAILED: 基线同样失败，记既有失败"
+       exit 1
+     fi
      ```
 
-     判据：基线上同样失败＝既有失败，记入记录并保留 `t4-baseline.log`；基线通过而工作树失败＝本批引入的回归，修正后重跑第 3 步。当前 7 个方法全部通过，未触发该路径。
+     判据由块自身的退出码与末行给出：末行 `BASELINE PASSED` 且退出码 0＝基线通过，此时工作树失败就是本批引入的回归，修正后重跑第 3 步；末行 `BASELINE FAILED` 且退出码 1＝基线同样失败，记既有失败并保留 `t4-baseline.log`。块内的测试输出用重定向而不是 `| tee`，避免 `tee` 的退出码把测试失败吞掉。当前 7 个方法在基线与工作树上都通过，未触发该路径。
    - 既有跳过项按未执行记录，不算失败；不做无新信息的重复运行。
    - 仓库 CI 失败时按合并规则处理，不并入本批必测结论。
 
@@ -188,7 +195,7 @@
 
 ## 自检
 
-提交审核前逐条核对：① 必测项只引用能证明本批目标的方法，T4 只限本批 7 个函数的断言（跨批断言按第 8 条的基线对照归因）、T5 只限复制/加载；② CI 不在必测清单；③ 两个脚本都有确切来源、调用命令与 sha256；④ 命令块启用 `set -e` 且 `RUN` 在同一 shell 进程内使用；⑤ 失败注入标为“本批不适用”并说明原因；⑥ 计划文字与执行记录使用同一套编号；⑦ 编号与版本一致；⑧ 失败处理里的基线对照块能直接执行。
+提交审核前逐条核对：① 必测项只引用能证明本批目标的方法，T4 只限本批 7 个函数的断言（跨批断言按第 8 条的基线对照归因）、T5 只限复制/加载；② CI 不在必测清单；③ 两个脚本都有确切来源、调用命令与 sha256；④ 命令块启用 `set -e` 且 `RUN` 在同一 shell 进程内使用；⑤ 失败注入标为“本批不适用”并说明原因；⑥ 计划文字与执行记录使用同一套编号；⑦ 编号与版本一致；⑧ 失败处理里的基线对照块能直接执行，且失败与通过由退出码区分（不把测试输出管道给 `tee`）。
 
 ## 修订记录
 
@@ -196,6 +203,7 @@
 - 第 2 版：按第一/二关审核修正——① T4 移出 3 个主断言在第 4 批的 `Stage2FinalizeWithResolvedTests` 方法，加入直接调用 `validate_resolve_results` 的 `test_reused_direction_ignores_stale_result_file`，T4 变 7 个并写明断言级归因；② T0 的内联脚本改为精确 14 参数集合、23 个同名别名（`目标名 == _stage2_resolve.<同名>`）、import json；③ T2 改为“脚本忽略 docstring + 单独核对 7/7 同文（6 个多行）”；④ 执行记录补 CI run `39315290639`（head `1b08b36`）与 7 个方法结果。
 
 - 第 3 版：按第二关复核修正（R1–R5）——① T0 增补“23 个别名去重后仍 23”（`assert len({n.targets[0].id for n in aliases}) == 23`）；② 第 2 步补 docstring 核对命令与脚本 sha256，T2 与环境节写明脚本路径、行数与哈希；③ T4 归因改为基线对照——跨批断言失败先在 `f07abb0` 上跑同一方法，基线上也失败才算既有失败，否则按本批回归修正；④ 自检项 ③ 改为“两个脚本都有来源与 sha256”。
+- 第 5 版：按第二关复核的剩余三点修正——① 计划头 `Test plan revision` 与 `Proposed review status` 同步到第 4/5 版；② 基线对照块改为 `if … then … else … exit 1`，用退出码区分 `BASELINE PASSED` 与 `BASELINE FAILED`，不再用 `| tee`；③ CI 记录补 `e56bfd8`／`39323797206`，并写明纯文档提交的结果只在 PR 页面查看。
 - 第 4 版：按第二关复核的剩余点修正（R1r、R5b、R6）——① 跨批断言改按实测写明：方法 1–4 的 plan 断言来自第 2 批 `cmd_stage2_resolve_plan`，方法 7 尾段经 `stage2-finalize` 断言 pack 的 `resolved_direction`，不再笼统写“第 1/2 批 plan、第 4 批 finalize”；② 第 8 条补可执行的基线对照命令块（`/tmp/pc-stage3/base-f07abb0`、7 个方法、`tee /tmp/pc-stage3/t4-baseline.log`）与两条判据；③ 第 5 条的 CI 记录统一到实际 head：`1b08b36`／`39315290639`、`21e1af0`／`39319465479`、`88eba77`／`39323008051`。
 
 ## 审核状态
@@ -203,4 +211,5 @@
 - 第 1 版：第一关/第二关 NEEDS_MODIFICATION（B1 T4 含第 4 批方法；B2 别名/kwargs 未验证；B3 docstring 判据；B4 CI 记录）。
 - 第 2 版：第一关 PASS；第二关 NEEDS_MODIFICATION（R1–R6）。
 - 第 3 版：第一关 PASS；第二关 NEEDS_MODIFICATION（R1r 执行记录残留、R5b 基线对照无命令、R6 CI 记录待统一）。
-- 第 4 版：第一关 PASS；第二关待复核。
+- 第 4 版：第一关 PASS；第二关 NEEDS_MODIFICATION（版本号不一致、批次归属写错、基线块退出码被 `tee` 吞掉）。
+- 第 5 版：第一关 PASS；第二关待复核。

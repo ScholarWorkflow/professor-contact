@@ -1,7 +1,7 @@
 # Stage 2 划分第三批：resolve 提交层（测试执行记录）
 
 - 执行日期：2026-10-20
-- 测试计划：[test-plan.md](test-plan.md)，第 4 版（第一关 PASS、第二关待复核）。
+- 测试计划：[test-plan.md](test-plan.md)，第 5 版（第一关 PASS、第二关待复核）。
 - 工作分支：`refactor-stage2-resolve-commit`；基线 `3233810`（`origin/refactor-stage2-resolve`，第 2 批分支在实施期间变基到已合并的 `main`，实现提交为 `f07abb0`；任务开始时的旧基线 `2ecdc9c`／`e5b8d4e` 已被替换）。
 - 被测代码提交：`c080be04ff7eb831be26077082b34849d6624664`（`refactor(stage2): move the resolve submit layer into the resolve helper`）；测试计划文档提交 `21e1af0`、`88eba77`，本记录提交见 PR 最新 head。被测 `scripts/` 目录在两处之间没有变化（`git diff --stat c080be0 88eba77 -- .apm/skills/professor-contact/scripts` 为空）。
 - 环境：Darwin 25.6.0 arm64；`uv run --no-project python` 为 Python 3.14.6（仓库 CI 用 3.12，本记录为本地执行结果）。
@@ -16,7 +16,7 @@
 | T2 的 docstring 核对 | 通过 | `total=7 with_doc=7 multi=6 clean_equal=7 without_doc=0 missing=0 mismatched=0`、`DOCSTRING CHECKS PASS`、退出码 0 |
 | T4 | 通过 | `Ran 7 tests in 4.167s`、`OK`；7 条 `... ok`；无 skip／`FAIL`／`ERROR`；未触发基线对照归因 |
 | T5 | 通过 | `Ran 2 tests in 1.209s`、`OK`；无 skip／`FAIL`／`ERROR` |
-| 既有仓库 CI | 通过 | PR #112 head `1b08b36` 上 run `39315290639`、head `21e1af0` 上 run `39319465479`、head `88eba77` 上 run `39323008051`，三次的 4 个 `shards (shardN)` 与聚合 job `test` 全部 SUCCESS |
+| 既有仓库 CI | 通过 | PR #112 head `1b08b36` 上 run `39315290639`、head `21e1af0` 上 run `39319465479`、head `88eba77` 上 run `39323008051`、head `e56bfd8` 上 run `39323797206`，四次的 4 个 `shards (shardN)` 与聚合 job `test` 全部 SUCCESS |
 
 ## 逐项结果
 
@@ -91,7 +91,7 @@ OK
 6. `ResolveAcceptanceBoundaryTests.test_resolve_accept_command_validates_keys_and_staleness`
 7. `UserKeptProvisionalTests.test_user_kept_provisional_still_writes_explicit_resolved_direction`
 
-逐条均为 `ok`，没有 `skipped`。本批通过判据只取落在 7 个函数上的断言：结果文件必需性与本轮身份、移除校验、运行隔离、旧 result 文件被忽略、accept 的 key/陈旧校验、keep-provisional 的显式写入。方法里另有跨批断言：方法 1–4 的 plan 断言来自第 2 批 `cmd_stage2_resolve_plan`；方法 7 尾段经 `stage2-finalize` 断言 pack 里的 `resolved_direction`（该命令尚未搬移，属第 6 批之后）。本次全部通过，未触发起测试计划第 8 条的基线对照；若某次失败，按该条命令在 `f07abb0` 上跑同一组方法，基线上也失败才算既有失败。
+逐条均为 `ok`，没有 `skipped`。本批通过判据只取落在 7 个函数上的断言：结果文件必需性与本轮身份、移除校验、运行隔离、旧 result 文件被忽略、accept 的 key/陈旧校验、keep-provisional 的显式写入。方法里另有跨批断言：方法 1–4 的 plan 断言来自第 2 批 `cmd_stage2_resolve_plan`；方法 7 尾段经 `stage2-finalize` 断言 pack 里的 `resolved_direction`（该命令尚未搬移）。本次全部通过，未触发起测试计划第 8 条的基线对照；若某次失败，按该条命令在 `f07abb0` 上跑同一组方法，基线上也失败才算既有失败。
 
 ### T5：复制夹具
 
@@ -120,11 +120,11 @@ OK
 1. **基线变基**：实施期间 `origin/refactor-stage2-resolve` 被变基到已合并的 `main` 并重写历史，任务给出的 `2ecdc9c`／`e5b8d4e` 被 `f07abb0`／`3233810` 替换（`git merge-base --is-ancestor 2ecdc9c HEAD` 已不再成立）。第一次实现提交 `38c1555` 按旧基线生成；发现变更后用 `--onto` 重放仍因上游历史重写而冲突，于是以 `3233810` 为新基线重新生成本批同一变换，得到 `c080be0`。T0、T1–T3、T4、T5 均在新基线上重跑。
 2. 删除 runner 中两段函数时，除了 585 行函数代码，还收敛了定义交界处共 16 个空行（每处保留 2 个空行）：第一段 12 个、第二段 4 个。原因是按 AST 行区间删除后交界处会留下 14 个和 6 个连续空行；收敛后 runner 为 9784 行（`10375 − 585 − 16 + 10`，10 为 7 个别名与 3 行新增 `build()` 实参的净增）。这只是空行整理，不改变任何语句。
 3. runner 绑定点注释仍保留第 2 批的文字（“The submit-side helpers just above stay in the runner for the next batch…”）。执行计划写明追加时不重建第 2 批的常量与注释，且本批只允许删除定义、扩展实参、增加别名，因此未改该注释；它不影响行为，建议由后续文档或清理批次统一处理。
-4. 本次按测试计划第 3 版的判据重跑，除新增的别名去重断言和 docstring 脚本外，判据与第 2 版一致；日志按版本另存（`*-plan-v3.log`），旧版 `*-newbase.log` 保留但不再作为本记录证据。第 4 版只补了第 8 条的基线对照命令块与 CI 记录，没有改动任何已执行步骤，因此沿用 `*-plan-v3.log`。
-5. 第 8 条的基线对照块已实际执行一次，确认可直接运行：在 `f07abb0` 上跑同一组 7 个方法得到 `Ran 7 tests in 4.663s`、`OK`、7 条 `... ok`（日志 `/tmp/pc-stage3/t4-baseline.log`）。基线与工作树都通过，说明本批没有引入回归；日后若工作树失败而基线通过，按本批回归处理。
+4. 本次按测试计划第 3 版的判据重跑，除新增的别名去重断言和 docstring 脚本外，判据与第 2 版一致；日志按版本另存（`*-plan-v3.log`），旧版 `*-newbase.log` 保留但不再作为本记录证据。第 4、5 版只改第 8 条的基线对照命令块、版本号与 CI 记录，没有改动任何已执行步骤，因此沿用 `*-plan-v3.log`。
+5. 第 8 条的基线对照块已实际执行一次，确认可直接运行：在 `f07abb0` 上跑同一组 7 个方法得到 `Ran 7 tests in 4.663s`、`OK`、7 条 `... ok`（日志 `/tmp/pc-stage3/t4-baseline.log`）。基线与工作树都通过，说明本批没有引入回归；日后若工作树失败而基线通过，按本批回归处理。第 5 版把该块改成 `if … then … else … exit 1` 后重跑：通过路径末行 `BASELINE PASSED`、退出码 0；另用一份把其中一个方法名改成不存在的副本验证失败路径（`block5-baseline-failcase.sh`），末行 `BASELINE FAILED`、退出码 1、`FAILED (errors=1)`，说明失败不会被 `tee` 吞掉。
 6. 既有仓库检查未在本地运行；合并前以 PR 上 `shards (shard1..4)` 与聚合 job `test` 的结果为准。
 
 ## 未完成项
 
-- 测试计划第 4 版已提交第二关复核（第一关 PASS）。
-- PR 的 CI：head `1b08b36` 上 run `39315290639`、head `21e1af0` 上 run `39319465479`、head `88eba77` 上 run `39323008051`，4 个 `shards (shard1..4)` 与聚合 job `test` 全部 SUCCESS；CI 不作为本批必测结论。
+- 测试计划第 5 版已提交第二关复核（第一关 PASS）。
+- PR 的 CI：head `1b08b36` 上 run `39315290639`、head `21e1af0` 上 run `39319465479`、head `88eba77` 上 run `39323008051`、head `e56bfd8` 上 run `39323797206`，4 个 `shards (shard1..4)` 与聚合 job `test` 全部 SUCCESS；CI 不作为本批必测结论。
