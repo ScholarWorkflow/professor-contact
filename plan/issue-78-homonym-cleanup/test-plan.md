@@ -32,16 +32,16 @@
 - T3/T5：`Issue67Stage4SelectionContractTests.test_canonical_professor_dir_is_the_per_professor_read_and_map_unit` 与 `Issue67Gate2R3SelectionContractTests.test_no_dir_structured_and_natural_language_inputs_remain_supported_per_request` 的同名正则替换为 canonical 事务边界、`精确(匹配|映射|绑定)` 与 `只结束对应请求` 断言；`Stage2PreflightContractTests.test_issue64_t7_preflight_proof_save_is_per_professor_transaction` 只去掉同名措辞，断言未变。
 - T4：复用 `TestStage5ListInputDiscovery` 的合法包/带姓名越界包准备逻辑（提取为 `write_discovery_packs`），新增 `test_exact_professor_filter_preserves_matching_row_and_read_only_state` 与 `test_missing_professor_returns_needs_input_without_writes`；精确过滤与缺失返回都以退出码、结构化返回和文件不变为判据。
 
-上列方法名与 §3.2 命令一致，静态解析核对见 §2.1；涉及新产品行为的期望（T1 通用分类、T2 sibling 拒绝、T3 文档正则）以 §3.1/§3.2 产品修改为前提，当前产品尚未修改。
+上列方法名与 §3.2 命令一致，静态解析核对见 §2.1；只有 T1 的通用分类期望以 §3.1 产品修改为前提，T2 的 sibling 拒绝（现有 `invalid_params`/professor mismatch 分支）与 T3 的文案正则在当前树上即成立，§3.2 修改后须保持匹配。
 
 ### 2.1 准备与静态预检记录（本地测试工程师，2026-10-19）
 
 - 准备提交 `45c30fa8d405d1ef949cdaa308ef39355e420dc0`：只含 `.apm/skills/professor-contact/tests/` 下的测试代码、runtime 夹具、prompt 与只读 verifier 回显；未改产品脚本、agent/SKILL 说明或 `nix/`、`apm.yml`。
-- 静态预检（未运行任何必测命令，未调用产品入口）：`python3 -m py_compile` 对全部 11 个改动文件通过；`unittest.TestLoader.loadTestsFromName` 解析 §3.2 的 21 个选择器全部命中，共 26 个用例（含 `TestIssue64Stage2PlanBinding` 的 4 个与 `TestStage5ListInputDiscovery` 的 3 个），无 `_FailedTest` 伪用例。
+- 静态预检（未运行任何必测命令，未调用产品入口）：`python3 -m py_compile` 对 10 个 Python 改动文件通过（第 11 个改动文件是 prompt 文本，不属于 Python 源）；`unittest.TestLoader.loadTestsFromName` 解析 §3.2 的 19 个选择器全部命中，另单独解析 T4 的两个新方法，21 条选择器共 26 次加载，去重后 24 个用例（含 `TestIssue64Stage2PlanBinding` 的 4 个与 `TestStage5ListInputDiscovery` 的 3 个），无 `_FailedTest` 伪用例。
 - 夹具自检（仓库外 `/tmp/contact78-tests.LftVeG/fixture-check`）：隔离夹具可生成；两位教授姓名互异且都不等于 canonical 目录 basename；逐教授输入包的 `professor`/`professor_dir` 与 manifest 记录一致；恰好一个坏 candidate-state，legacy 程序级包使用有效教授姓名；prompt 含两个 canonical 目录与两个 idea，不含“显示名相同/同名”。同一检查确认两个 Stage 4 文案选择器的新正则仍匹配当前 `professor-contact-selection.agent.md`，即选择器在产品说明修改前也可执行。
 - 环境：`/run/current-system/sw/bin/python3` 3.14.7（CI 为 Python 3.12）；用例只用标准库与既有本地夹具，不需要 Nix、APM、Skills 安装、eval、模型、网络、Zotero 或用户资料。
 - 运行目录 `/tmp/contact78-tests.LftVeG`（`tmp/`、`preflight.log`、`selectors.log`、`fixture_check.log`），按共识放在仓库外，不入库、不推送。
-- 缺项：产品修改未实施，第二关未通过，因此 §3.2 的定向命令未执行（本角色不运行正式用例）；首次断言的产品侧预期（T1 通用分类、T2 sibling 拒绝、T3 文档正则）尚待实现后验证。
+- 缺项：产品修改未实施，第二关未通过，因此 §3.2 的定向命令未执行（本角色不运行正式用例）；只有 T1 的通用分类期望尚待 §3.1 产品修改后验证，T2 的 sibling 拒绝与 T3 的文案正则在当前树上即成立（产品说明修改后须保持匹配）。
 
 ## 3. 有界执行步骤（接线已完成，待第二关确认后使用）
 
