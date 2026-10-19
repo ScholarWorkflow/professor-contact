@@ -8,7 +8,7 @@
 - Target repository revision: `cdd01f7f2c03be822adbb5a4117c7e65a89d6c82`（分支 `refactor-contact-evidence`，已含批次二/三与边界一/二/三）。
 - Implementation sequencing prerequisite: PR #98、#99、#100、#101 均未合并；本批堆叠在 #101 之上，合并顺序 #98 → #99 → #100 → #101 → 本批。
 - Relevant upstream/runtime revision: 上游 `professor-research` 的 `contact_evidence.py` 不在本仓；本批只动调用侧，不改它的接口。
-- Proposed review status: pending。
+- Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`，P1–P4 全 PASS；独立计划审核于 2026-10-18/19 给出）。
 - 唯一规范来源：本文件。
 
 ## 正式需求与范围
@@ -123,4 +123,4 @@
 
 ## 审核状态
 
-计划第 2 版为当前唯一计划。第 1 版结论 `NEEDS_MODIFICATION`（B1），已按上节修正。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
+计划第 2 版为当前唯一计划，结论 **`Plan conclusion: APPROVED`**（P1–P4 全 PASS；独立计划审核于 2026-10-19 给出）。第 1 版结论 `NEEDS_MODIFICATION`（B1），已按上节修正。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
