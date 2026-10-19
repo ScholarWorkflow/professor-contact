@@ -5,9 +5,9 @@
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 3 版（`Plan conclusion: APPROVED`）。
 - 需求来源：负责人 2026-10-20 的 Stage 2 划分指示；原文与范围见执行计划。
 - Target repository revision: 工作分支 `refactor-stage2-validation` 实施后的提交（代码提交 `76f107a17a6e343a0e6aa28b504024d596639647`）；对照基准为 `e973ffb4571344157b3c43a151906a24f48c7e4e`（当前 `main`，PR #108 合入第 1 批后）。实施开始时 `origin/main` 为 `0f89ebd`，实施中 main 前进到 `e973ffb`，本批已重放到新基准；本批 14 个函数在 `0f89ebd..e973ffb` 之间 AST 相同，A/B 与定向测试在重放后重跑。
-- Test plan revision: 第 1 版。
+- Test plan revision: 第 2 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
-- Proposed review status: 待审核（随本批 PR 提交；执行记录见 [test-execution-2026-10-20.md](test-execution-2026-10-20.md)）。
+- Proposed review status: 待复核（第一轮审核 B1–B7 已按下列修订处理；执行记录见 [test-execution-2026-10-20.md](test-execution-2026-10-20.md)）。
 
 ## 必测清单
 
@@ -15,10 +15,10 @@
 | --- | --- | --- | --- | --- |
 | T0 | 对照基准与工作树身份有效，防止 A/B 空转 | 工作树 `scripts/contact_state.py` 与 `_stage2_validation.py`；对照基准为 `git archive e973ffb` 取出的 scripts 目录 | base 与 head 是两个不同文件；base 仍定义 14 个函数；head 一个都不定义 | `/tmp` 对比脚本的 `T0 ...` 行；3 条 `OK` |
 | T1 | 14 个函数确实完成划分（R1） | 同上两侧源码与模块文件 | 新模块与 runner 同目录；14 个函数都不再出现在 runner 顶层，都出现在模块 `build()` 内 | 同一对比脚本的 `T1 ...` 行；29 条 `OK`（模块存在 1 + 14 函数×2） |
-| T2 | 搬移没有改变任何函数逻辑（R2） | 同上两侧源码 | 14 个函数的代码 AST 与基准完全相同（多行 docstring 续行允许且只允许增加 4 个空格缩进）；runner 其余顶层定义（函数与类）AST 不变；离开 runner 的定义正好是这 14 个、没有新增；14 个函数都有 runner 别名 | 同一对比脚本的 `T2 ...` 行；17 条 `OK`（14 函数 AST + 非搬移定义不变 + 定义集合差 + 别名齐全） |
+| T2 | 搬移没有改变任何函数逻辑（R2） | 同上两侧源码 | 14 个函数的代码 AST 与基准完全相同（对比脚本忽略 docstring 内容；另核对 14 个多行 docstring 经搬移后为同文，只差缩进）；runner 其余顶层定义（函数与类）AST 不变；离开 runner 的定义正好是这 14 个、没有新增；14 个函数都有 runner 别名 | 同一对比脚本的 `T2 ...` 行；17 条 `OK`（14 函数 AST + 非搬移定义不变 + 定义集合差 + 别名齐全） |
 | T3 | 旧接口与加载方式不变（R3、R4、R5） | 同一进程内分别按文件路径加载两侧 runner；再以子进程直接执行改动后的 runner | 14 个名字在两侧都可调用；`inspect.signature` 字符串两侧相同；直接执行 `contact_state.py --help` 退出码 0 | 同一对比脚本的 `T3 ...` 行；29 条 `OK`（14 函数×2 + 1 直接执行）；合计 78 条 `OK`、末尾 `ALL CHECKS PASS` |
-| T4 | 校验报告解析/渲染、record-validation、refine-plan/finalize 与 later-paper 渲染/恢复的行为不变（R2） | 既有测试方法：`test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_second_blocking_round_is_terminal`（两轮终止、refine-plan/finalize、later-paper 标题保留）；`...test_stage2_report_for_stale_render_is_rejected_without_pack_write`（旧渲染报告被拒且不写 pack）；`...test_stage2_nonrepairable_user_note_does_not_create_a_correction_job`（不可修问题不生成修正 job）；`...test_stage2_refinement_rejects_changed_input_pack`（pack 变化拒绝 refine）；`...test_repeated_quote_locations_and_ambiguous_report`（三种行号写法解析、歧义报告拒绝、逐行 issue 进入 refine）；`...test_business_rerender_and_bounded_correction_lifecycle`（两轮上限、`validation_correction_required`/`validation_rounds_exhausted` 原因码、refine-plan/finalize、later reference）；`test_contact_state.TestRunnerBasics.test_11_stage2_validator_is_persisted_separately`（record-validation 写入、非法报告拒绝、refine 无 job）；`...test_11a_stage2_validator_pass_with_minor_is_accepted`（minor issue 原样保存）；`...test_13_stage2_validator_rewrite_round_trips_structured_narrative`（record→refine-plan→refine-finalize→第二轮 record 的完整往返）；`test_stage2_resolved_direction_downstream_regressions.ResolvedDirectionDownstreamRegressionTests.test_member_reference_persistence_and_refine_sources`（facts 与 pack 两个 refine 入口、P 引用可信标题、later-paper 状态保留、事实变化拒绝） | 这 10 个方法全部通过；本批的通过条件只限这些方法自身的既有断言（报告行号解析、报告渲染与落盘、round/terminal/原因码、refine job 生成、later-paper 标题与状态、pack 指纹拒绝）。这些方法的 setup 会调用未搬移的 stage2 plan/finalize 与夹具，属既有测试依赖，不作为本批通过条件 | 第 2 步命令；`Ran 10 tests`、`OK`，无 `FAIL`／`ERROR` |
-| T5 | 复制 runner 的既有夹具仍能加载新模块（R4） | `test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker`、`test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling` | 两个方法通过；复制布局包含 `_stage2_validation.py`，复制后的 runner 能按路径加载它 | 第 3 步命令；`Ran 2 tests`、`OK`，无 `FAIL`／`ERROR` |
+| T4 | 校验报告解析/渲染、record-validation、refine-plan/finalize 与 later-paper 渲染/恢复的行为不变（R2） | 既有测试方法：`test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_stage2_second_blocking_round_is_terminal`（两轮终止、refine-plan/finalize、later-paper 标题保留）；`...test_stage2_report_for_stale_render_is_rejected_without_pack_write`（旧渲染报告被拒且不写 pack）；`...test_stage2_nonrepairable_user_note_does_not_create_a_correction_job`（不可修问题不生成修正 job）；`...test_stage2_refinement_rejects_changed_input_pack`（pack 变化拒绝 refine）；`...test_repeated_quote_locations_and_ambiguous_report`（三种行号写法解析、歧义报告拒绝、逐行 issue 进入 refine）；`...test_business_rerender_and_bounded_correction_lifecycle`（两轮上限、`validation_correction_required`/`validation_rounds_exhausted` 原因码、refine-plan/finalize、later reference）；`test_contact_state.TestRunnerBasics.test_11_stage2_validator_is_persisted_separately`（record-validation 写入、非法报告拒绝、refine 无 job）；`...test_11a_stage2_validator_pass_with_minor_is_accepted`（minor issue 原样保存）；`...test_13_stage2_validator_rewrite_round_trips_structured_narrative`（record→refine-plan→refine-finalize→第二轮 record 的完整往返）；`test_stage2_resolved_direction_downstream_regressions.ResolvedDirectionDownstreamRegressionTests.test_member_reference_persistence_and_refine_sources`（facts 与 pack 两个 refine 入口、P 引用可信标题、later-paper 状态保留、事实变化拒绝） | 这 10 个方法全部通过；本批的通过条件只限**落在本批 14 个函数上的断言**（校验报告解析/渲染、record-validation、refine-plan/finalize、later-paper 渲染/恢复、pack 指纹拒绝）。方法内若还有跨批断言（第 4 批标题 helper、第 2 批 plan/finalize、Stage 3 job），它们只作既有依赖检查：失败时记为“无法判断／既有依赖失败”，不判本批搬移失败；只有本批 14 个函数相关断言失败才判 T4 失败（报告行号解析、报告渲染与落盘、round/terminal/原因码、refine job 生成、later-paper 标题与状态、pack 指纹拒绝）。这些方法的 setup 会调用未搬移的 stage2 plan/finalize 与夹具，属既有测试依赖，不作为本批通过条件 | 第 2 步命令；`Ran 10 tests`、`OK`，无 `FAIL`／`ERROR` |
+| T5 | 复制 runner 的既有夹具仍能加载新模块（R4） | `test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker`、`test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling` | 两个方法通过；通过条件是“复制布局包含 `_stage2_validation.py`、复制后的 runner 能按路径加载并执行”。若失败发生在 Stage 5 业务断言而非导入/加载，记为既有失败或无法判断，不判本批搬移缺陷 | 第 3 步命令；`Ran 2 tests`、`OK`，无 `FAIL`／`ERROR` |
 
 **既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的分片套件（`shards` 的 4 个分片）与聚合 job `test` 由仓库工作流照常执行，其结果单独引用；本批不因此扩张或缩减必测清单，也不在本地重跑全量套件。
 
@@ -49,8 +49,8 @@
      stage2_validation_material stage2_refine_context cmd_stage2_refine_plan \
      cmd_stage2_refine_finalize cmd_stage2_record_validation
    ```
-   `cp` 是必须的：脚本自带全部检查，不能在临时目录里凭提纲重写；来源缺失时停止并交计划所有人，不重建。脚本参考 sha256 为 `75c151c3ad3f9fd71c031d72b85a820a2b29b45229658f50212534c0798adff7`（91 行），复制后核对同一哈希。**`RUN` 不导出，后续步骤必须在同一 shell 进程内继续执行**。
-   预期：每条检查打印一行 `OK  <标签>`，共 78 行——T0 3 行、T1 29 行、T2 17 行、T3 29 行；末尾 `ALL CHECKS PASS`，退出码 0。
+   `cp` 是必须的：脚本自带全部检查，不能在临时目录里凭提纲重写；来源缺失时先从执行记录点名的回退路径 `/tmp/pc-stage2-validation-TTc7wR/compare_stage2_batch.py`（同哈希 `75c151c3…`）取回，两处都缺失或哈希不一致时停止并交计划所有人，不重建。脚本参考 sha256 为 `75c151c3ad3f9fd71c031d72b85a820a2b29b45229658f50212534c0798adff7`（91 行），复制后核对同一哈希。**`RUN` 不导出；它只在第 1 步内使用，第 2、3 步可独立执行**。
+   预期：每条检查打印一行 `OK  <标签>`，共 78 行——T0 3 行、T1 29 行、T2 17 行、T3 29 行；末尾 `ALL CHECKS PASS`，退出码 0；`git archive`、`cp`、`shasum`、脚本均须退出 0。
 
 2. T4：只跑清单列出的 10 个方法。
    ```sh
@@ -124,3 +124,8 @@
 
 - 测试计划：待审核（第 1 版）。
 - 测试执行：已按本计划完成，结果见 [test-execution-2026-10-20.md](test-execution-2026-10-20.md)。
+
+## 修订记录
+
+- 第 1 版：首次提交测试计划审核。
+- 第 2 版：按第一轮第一/二关审核修正——B1 T4 改为断言级归因（只把落在 14 个函数上的断言作为本批通过条件，跨批断言失败记无法判断/既有依赖失败）；B2 执行记录补 CI run `39314679290`/head `e42bff1`；B3 记录两个 Python 版本；B4 T2 判据改为“忽略 docstring 内容，另核对 docstring 同文”；B5 补脚本回退路径与哈希；B6 补前置命令退出 0、限定 `RUN` 只用于第 1 步；B7 T5 通过条件限定为“复制后的 runner 能加载并执行”。

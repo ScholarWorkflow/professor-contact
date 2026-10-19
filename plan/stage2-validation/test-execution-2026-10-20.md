@@ -19,7 +19,7 @@
 | T3 旧接口与加载不变 | 通过 | 同一脚本 `T3` 29 条 `OK`：14 个名字在两侧可调用且 `inspect.signature` 相同、直接执行 `contact_state.py --help` 退出码 0。合计 78 条 `OK`、末尾 `ALL CHECKS PASS`、退出码 0（输出 `/tmp/pc-stage2-validation-TTc7wR/compare.log`）。 |
 | T4 校验与 refine 行为不变 | 通过 | 计划列出的 10 个方法：`Ran 10 tests in 34.270s`、`OK`，无失败、无跳过（输出 `/tmp/pc-stage5/t4.log`）。 |
 | T5 复制夹具加载 | 通过 | 计划列出的 2 个方法：`Ran 2 tests in 2.962s`、`OK`，无失败、无跳过（输出 `/tmp/pc-stage5/t5.log`）。 |
-| 既有仓库检查（非必测） | 推送后引用 PR CI | 本批不在本地重跑全量套件；PR 上的 4 个 `shards (shardN)` 与聚合 job `test` 单独引用，不作为本批必测结论。 |
+| 既有仓库检查（非必测） | 通过 | PR #111 在 head `e42bff1` 上 run `39314679290`：`shards (shard1..4)` 与聚合 job `test` 全部 SUCCESS；被测代码是 `76f107a`，`e42bff1` 只加 plan/test 文档。 |
 
 ## 文件与接缝
 
