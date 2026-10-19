@@ -14,7 +14,7 @@
 | T2 | 通过 | 按阶段分组驱动的新分配：shard1 28 模块／104.1s、shard2 14／104.1s、shard3 12／103.8s、shard4 24／104.0s；四片都 `OK`，`Ran` 378+219+188+240 = **1025** = `countTestCases()`，无重复执行；78 个模块**全部**带 `stage`（`non-stage` 显式记录），`signals` 与标签多数一致（例：`test_contact_state` signals `stage3 3550／stage5 3175／stage4 2200／stage2 1575／stage1 25` → `stage3`） |
 | T3 | 通过 | 工作流含 `fail-fast: false`、`matrix.shard: [shard1..shard4]`、每片先 `python scripts/check_test_shards.py` 再从 `tests/` 跑本片；聚合任务 `needs: [shards]`、`if: always()`、`needs.shards.result != "success"` 即失败 |
 | T4 | 通过 | 四片命令都在本地独立跑通，互不依赖；本轮（机器负载较高）墙钟 shard1 232s、shard2 234s、shard3 220s、shard4 212s，与模块耗时之和的比值一致 |
-| T5 | 通过 | PR #103 的 CI（运行 `39168161446`）：`shards (shard1)` pass 1m27s、`shards (shard2)` pass 2m5s、`shards (shard3)` pass 2m12s、`shards (shard4)` pass 1m27s、聚合 `test` pass 4s。分片在 ubuntu／Python 3.12 下并行生效，聚合任务提供了名为 `test` 的检查；按测试计划这不属本批业务必测项，只作既有检查结果引用 |
+| T5 | 通过 | 按阶段分组的新清单：CI 运行 `39209594905` —— `shards (shard1)` pass 1m27s、`shards (shard2)` pass 2m10s、`shards (shard3)` pass 2m0s、`shards (shard4)` pass 1m33s、聚合 `test` pass 4s。此前的按耗时分配：CI 运行 `39168161446`：`shards (shard1)` pass 1m27s、`shards (shard2)` pass 2m5s、`shards (shard3)` pass 2m12s、`shards (shard4)` pass 1m27s、聚合 `test` pass 4s。分片在 ubuntu／Python 3.12 下并行生效，聚合任务提供了名为 `test` 的检查；按测试计划这不属本批业务必测项，只作既有检查结果引用 |
 
 ## 执行方法与命令
 
