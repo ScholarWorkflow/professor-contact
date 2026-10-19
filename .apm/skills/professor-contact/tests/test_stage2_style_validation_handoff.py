@@ -1290,6 +1290,114 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assertEqual(refused.get("jobs", []), [])
         self.assertEqual(stale_pack_path.read_bytes(), protected)
 
+        # -- 5.1 T5.3d (t46): a real business-input change whose deterministic body
+        #    stays byte-identical. The old body bytes (including their original
+        #    generation stamp) and their SHA must survive, the machine header must
+        #    move to the new pack, and the new business version may not carry the
+        #    old PASS; the re-recorded first round must be accepted again.
+        binding_env = self._fresh_stage2_env()
+        binding_facts, _binding_results = binding_env._t5_generate_pack()
+        binding_report = binding_env.write_validation_issues(
+            "t46-equivalent-body-pass.json", [])
+        recorded = binding_env.record_validation(binding_report)
+        self.assertEqual(recorded["status"], "ok", recorded)
+        self.assertEqual(recorded["round"], 1, recorded)
+        binding_pack_before = binding_env._t5_pack()
+        validator_before = binding_pack_before["validator"]
+        self.assertEqual(validator_before["results"]["DIR00001"]["result"], "pass",
+                         validator_before)
+        document_before = binding_env._t5_document()
+        self.assertEqual(validator_before["render_sha256"], document_before["sha256"],
+                         validator_before)
+        self.assertEqual(validator_before["pack_sha256"],
+                         contact_state.stage2_pack_content_fingerprint(binding_pack_before),
+                         validator_before)
+        state_before = contact_state.stage2_pack_state_fingerprint(binding_pack_before)
+        fingerprint_before = binding_env._pack_direction(
+            binding_pack_before, "DIR00001")["input_fingerprint"]
+        report_before = binding_report.read_bytes()
+
+        # Only the abstract TEXT of one existing paper changes, in the facts and
+        # in the professor catalog: no level, title, membership, source path,
+        # file, sidecar or fixed evidence moves. The chosen paper's digest enters
+        # the direction fingerprint but no freshness candidate fingerprint (its
+        # abstract is never candidate evidence for the two gap sources), so the
+        # business basis really changes while the deterministic body stays equal.
+        revised_abstract = "We study a synthetic comparison of input patterns, revised."
+        facts_payload = json.loads(Path(binding_facts).read_text(encoding="utf-8"))
+        for row in facts_payload["papers"]:
+            if row["item_key"] == "AAAA1111":
+                self.assertTrue(row.get("abstract"), row)
+                row["abstract"] = revised_abstract
+        Path(binding_facts).write_text(json.dumps(facts_payload, ensure_ascii=False, indent=1),
+                                       encoding="utf-8")
+        catalog_path = binding_env.prof_dir / "papers.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        for row in catalog["papers"]:
+            if row["item_key"] == "AAAA1111":
+                self.assertTrue(row.get("abstract"), row)
+                row["abstract"] = revised_abstract
+        catalog_path.write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + "\n",
+                                encoding="utf-8")
+
+        binding_proof, binding_preflight = binding_env._t5_preflight(
+            binding_facts, "t46-equivalent-body-preflight.json")
+        self.assertEqual(binding_preflight["action"], "process", binding_preflight)
+        plan = parse(run_cli("stage2-plan", "--facts", binding_facts,
+                             "--preflight-file", binding_proof))
+        self.assertEqual(plan["status"], "ok", plan)
+        self.assertEqual({row["direction_id"]: row["action"] for row in plan["directions"]},
+                         {"DIR00001": "process", "DIR00002": "process"}, plan)
+        # The same-semantics synthetic results are supplied again: the new
+        # business basis is allowed to ask for its normal work, so this input
+        # only checks the body/header/certification handling below.
+        binding_results = binding_env.root / "t46-equivalent-body-results"
+        binding_env.write_stage2_results(binding_results,
+                                         directions=facts_payload["directions"])
+        binding_env._t5_write_narrative(binding_results)
+        finalized = parse(run_cli("stage2-finalize", "--facts", binding_facts,
+                                  "--preflight-file", binding_proof,
+                                  "--results", binding_results))
+        self.assertEqual(finalized["status"], "ok", finalized)
+        binding_pack_after = binding_env._t5_pack()
+        document_after = binding_env._t5_document()
+        self.assertNotEqual(contact_state.stage2_pack_state_fingerprint(binding_pack_after),
+                            state_before, binding_pack_after)
+        self.assertNotEqual(
+            binding_env._pack_direction(binding_pack_after, "DIR00001")["input_fingerprint"],
+            fingerprint_before, binding_pack_after)
+        # Byte identity, old generation stamp included: an equivalent body is kept
+        # as it is, only the existing machine header follows the current pack.
+        self.assertEqual(document_after["body"], document_before["body"], document_after)
+        self.assertEqual(document_after["sha256"], document_before["sha256"], document_after)
+        binding_env._assert_t5_render_binding()
+        self.assertEqual(binding_pack_after["cache"]["preflight"]["display_refresh_version"],
+                         contact_state.STAGE2_DISPLAY_REFRESH_VERSION,
+                         binding_pack_after["cache"]["preflight"])
+        # A new business version expires the old certification even though the
+        # body did not change; the earlier raw report keeps its bytes.
+        carried = binding_pack_after.get("validator") or {}
+        self.assertNotEqual(carried.get("validation_sha256"),
+                            validator_before["validation_sha256"], carried)
+        self.assertNotIn(carried.get("results", {}).get("DIR00001", {}).get("result"),
+                         {"pass", "skipped"}, carried)
+        self.assertEqual(binding_report.read_bytes(), report_before, binding_report)
+        _proof_after, preflight_after = binding_env._t5_preflight(
+            binding_facts, "t46-equivalent-body-preflight-after.json")
+        self.assertIn("validator_not_accepted",
+                      binding_env._pack_direction(preflight_after, "DIR00001")["reason_codes"],
+                      preflight_after)
+        # A report generated against the currently accepted file registers as the
+        # new first round without a stale-header refusal, and the same input then
+        # reuses.
+        rerecorded = binding_env.record_validation(binding_env.write_validation_issues(
+            "t46-equivalent-body-pass-2.json", []))
+        self.assertEqual(rerecorded["status"], "ok", rerecorded)
+        self.assertEqual(rerecorded["round"], 1, rerecorded)
+        _proof_reuse, reused = binding_env._t5_preflight(
+            binding_facts, "t46-equivalent-body-preflight-reuse.json")
+        self.assertEqual(reused["action"], "reuse_all", reused)
+
 
 if __name__ == "__main__":
     import unittest
