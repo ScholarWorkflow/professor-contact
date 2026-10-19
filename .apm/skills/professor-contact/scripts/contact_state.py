@@ -6330,7 +6330,6 @@ def cmd_stage2_finalize(args) -> None:
                        for d in pack_directions],
         "freshness_judged": judged, "freshness_cache_total": len(cache_entries),
         "md_sha256": acceptance["md_sha256"],
-        "display_changed": acceptance["body_changed"],
         "resolved_directions_applied": bool(resolved_directions),
     })
 
@@ -6760,7 +6759,6 @@ def cmd_stage2_refresh_display(args) -> None:
     projection_keys = assessment["projection_keys"]
     analysis_paths = assessment["projection_analysis_paths"]
     md_path = professor_dir / ANALYSIS_MD
-    old_render = cache.get("render") if isinstance(cache.get("render"), dict) else {}
     decision = None
     if getattr(args, "decision_file", None):
         decision_data, decision_error = read_json_file(Path(args.decision_file))
