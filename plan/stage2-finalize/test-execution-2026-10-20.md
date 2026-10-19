@@ -5,7 +5,7 @@
 - 执行计划：`plan/stage2-finalize/implementation-plan.md` 第 2 版（`Plan conclusion: APPROVED`）。
 - 测试计划：`plan/stage2-finalize/test-plan.md` 第 2 版（待测试计划审核；本记录按该版命令产生）。
 - 被测提交：`47f609dc66d1781cbf67d6bfd885cd80cb8d174e`（实现提交；父提交 `e973ffb4571344157b3c43a151906a24f48c7e4e`，即 PR #108 合并后的 `origin/main`）。
-- 环境：macOS，Python 3.14.7；仓库既有测试夹具；未新增依赖。
+- 环境：macOS；`python3 --version` 为 3.14.7（T4/T5），`uv run --no-project` 为 3.14.6（A/B 脚本）；仓库既有测试夹具；未新增依赖。
 - 运行目录：`/tmp/pc-stage4/`。
 
 ## 结果
@@ -18,7 +18,7 @@
 | T3 旧接口与加载不变 | 通过 | 同一脚本 T3 19 条 OK：9 个名字可调用且签名相同；直接执行 `contact_state.py --help` 退出码 0。合计 **53 条 OK**、`ALL CHECKS PASS`、exit 0（`/tmp/pc-stage4/compare-rebased.log`）。 |
 | T4 finalize 行为不变 | 通过 | 测试计划列出的 10 个方法：`Ran 10 tests in 12.345s`、`OK`，无失败、无跳过（`/tmp/pc-stage4/t4-rebased.log`）。 |
 | T5 复制夹具加载 | 通过 | 测试计划列出的 2 个方法：`Ran 2 tests in 2.073s`、`OK`，无失败、无跳过（`/tmp/pc-stage4/t5-rebased.log`）。 |
-| 既有仓库检查（非必测） | 待 CI | 推送后引用 PR 上 4 个 `shards (shardN)` 与聚合 job `test` 的运行编号与结论；本地不把全量套件列为必测项。 |
+| 既有仓库检查（非必测） | 通过 | PR #110 在 head `99af1e1` 上 run `39314435704`：`shards (shard1..4)` 与聚合 job `test` 全部 pass；`99af1e1` 只新增 plan/test 文档，产品代码同 `47f609d`。 |
 
 T4 实际方法（与测试计划第 2 步逐字对应）：`TestFinalizePreflightWiring` 的 6 个 finalize 预检/漂移方法；`Stage2FinalizeWithResolvedTests` 的 `test_finalize_applies_resolved_directions_to_pack`、`test_finalize_stamps_resolved_subfield_on_unchanged_directions`、`test_finalize_fails_closed_on_stale_resolved_file`；`ResolvedDirectionDownstreamRegressionTests.test_stage2_reuse_keeps_provisional_fingerprint_across_repeated_finalize`。未选主要断言落在第 5 批 validation report/refine 上的方法。
 
@@ -52,4 +52,4 @@ T4 实际方法（与测试计划第 2 步逐字对应）：`TestFinalizePreflig
 - `git diff --stat e973ffb 47f609d`：新模块 918 行新增；runner 63 行新增、859 行删除（844 行函数体 + 搬移区内 15 个遗留空行）。
 - 生成与整理：提取器 `/tmp/pc-stage2-tools/extract_batch.py`（sha256 `e820a3343ca8729720284c0845b52a10222c4b454c87ab36f862b6346209ada9`）按 `/tmp/pc-stage2-tools/spec-b4.json`（sha256 `2fe42f4ee3722cb0c776c35b19616c535189aec95fae64a5039c2ec5f1d40e47`）生成 922 行模块与 11113 行 runner（旧基线）。整理只改格式：删除 spec 带入但 9 个函数未使用的 `import re`（执行计划也写明本批不需要 `re`），模块头空行收敛为 2 个，`SimpleNamespace` 成员缩进改为 8 个空格；随后按接缝检查收敛 runner 的遗留空行。函数体、常量注入和调用关系未改。
 - rebase 影响：`#108` 合入后，本批加载块按原 spec 的 `load_anchor=188` 落在 `SCHEMA` 之前，`#108` 的预检加载块保留在 `SCHEMA` 之后；两个模块都只定义函数，没有 import 期依赖，绑定点仍在全部依赖定义之后，无行为变化。T0–T5 已按 rebase 后的树重跑。
-- 测试计划第 2 版为待审核状态；本记录不代填审核结论。CI 结果待 PR 推送后补记。
+- 测试计划第 2 版为待审核状态；本记录不代填审核结论。CI 已在 head `99af1e1` 上通过（run `39314435704`，4 个 shards + 聚合 test）。
