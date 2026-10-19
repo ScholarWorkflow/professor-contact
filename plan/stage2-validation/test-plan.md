@@ -5,7 +5,7 @@
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 3 版（`Plan conclusion: APPROVED`）。
 - 需求来源：负责人 2026-10-20 的 Stage 2 划分指示；原文与范围见执行计划。
 - Target repository revision: 工作分支 `refactor-stage2-validation` 实施后的提交（代码提交 `76f107a`）；对照基准为 `e973ffb4571344157b3c43a151906a24f48c7e4e`（当前 `main`，已含第 1 批 #108）。实施开始时 `origin/main` 为 `0f89ebd`，实施中前进到 `e973ffb` 并重放；14 个函数在两次提交间 AST 相同。
-- Test plan revision: 第 4 版。
+- Test plan revision: 第 5 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
 - Proposed review status: **APPROVED**（第一关 PASS、第二关 PASS；第 3 版复核记录见文末）。
 - 执行记录：[test-execution-2026-10-20.md](test-execution-2026-10-20.md)。
@@ -36,7 +36,7 @@
    uv run --no-project python3 --version
    RUN=$(mktemp -d /tmp/pc-stage2-validation-XXXXXX)
    mkdir -p "$RUN/base"
-   git archive 7a59006c551dc863045fb5221143927357429c83 \
+   git archive a1c018f7e533fd09f07c4cd12f7df4fcf06c14a3 \
      .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
    cp /tmp/pc-stage2-tools/compare_stage2_batch.py "$RUN/compare_stage2_batch.py"
    shasum -a 256 "$RUN/compare_stage2_batch.py"
