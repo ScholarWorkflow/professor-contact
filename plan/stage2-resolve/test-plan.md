@@ -5,7 +5,7 @@
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 2 版（`Plan conclusion: APPROVED`）。
 - 需求来源：负责人 2026-10-20 的两条指示（Stage 2 划分；“contact_state.py 收敛为 CLI 分发与兼容入口”）；原文与范围见执行计划。
 - Target repository revision: 工作分支 `refactor-stage2-resolve`（从当前 `main` `d5a4f751fb80de4819d4a1de3ee829db52cea6fc` 拉出）实施后的提交；对照基准同为 `d5a4f75`。
-- Test plan revision: 第 1 版。
+- Test plan revision: 第 2 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
 - Proposed review status: pending。
 
@@ -16,7 +16,7 @@
 | T1 | 16 个函数与 7 个常量确实完成划分（R1） | 工作树 `scripts/contact_state.py`、新模块 `scripts/_stage2_resolve.py`；对照基准为当前 `main`（`git archive` 取出的 scripts 目录） | `T0`：base 与 head 是两个不同目录、base 仍定义 16 个函数、head 一个都不定义；16 个函数离开 runner 顶层、进入模块 `build()`；7 个常量改由模块定义、runner 只别名 | `/tmp` 对比脚本的 `T0 ...` 与 `T1 ...` 行；全部 `OK`，末尾 `ALL CHECKS PASS` |
 | T2 | 搬移没有改变任何函数逻辑或常量（R2） | 同上两侧源码 | 16 个函数的代码 AST 与基准完全相同（多行 docstring 续行允许且只允许增加 4 个空格缩进）；7 个常量的源代码与基准相同（忽略行尾空白）；runner 其余顶层定义 AST 不变，且离开 runner 的定义正好是这 16 个、没有新增 | 同一对比脚本的 `T2 ...` 行；全部 `OK` |
 | T3 | 旧接口与加载方式不变（R3、R4、R5） | 同一进程内分别按文件路径加载两侧 runner；再以子进程直接执行改动后的 runner | 16 个名字在两侧都可调用；`inspect.signature` 字符串两侧相同；7 个常量值两侧相同；直接执行 `contact_state.py --help` 退出码 0 | 同一对比脚本的 `T3 ...` 行；全部 `OK` |
-| T4 | 候选识别、resolve 证据与 `stage2-resolve-plan` 行为不变（R2） | 既有测试方法：`test_stage2_resolved_direction.ResolvedDirectionPlanTests.test_resolve_plan_emits_jobs_for_each_direction`、`...test_resolve_plan_detects_removal_candidates`、`...test_resolve_plan_no_changes_when_all_match`；`test_stage2_resolved_direction.MergeCandidateDetectionTests.test_detect_merge_candidates`；`test_stage2_resolved_direction.CandidateUnionEvidenceTests.test_fingerprint_sensitive_to_candidate_outside_relevant_set`；`test_stage2_resolved_direction.ResolvedReuseTests.test_resolve_plan_reuses_unchanged_directions`、`...test_resolve_plan_reprocesses_when_facts_change`；`test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_addition_candidate_targets_strongest_non_provisional_direction`、`...test_merge_candidate_requires_at_least_two_shared_papers`、`...test_reused_direction_ignores_stale_result_file` | 这 10 个方法全部通过；本批的通过条件只限这些方法自身的既有断言（job 生成与字段、增/删/拆/并候选识别、merge 阈值、证据并集与指纹、复用与 facts 变化后的重算、运行隔离） | 第 2 步命令；`Ran 10 tests`、`OK` |
+| T4 | 候选识别、resolve 证据与 `stage2-resolve-plan` 行为不变（R2） | 既有测试方法：`test_stage2_resolved_direction.ResolvedDirectionPlanTests.test_resolve_plan_emits_jobs_for_each_direction`、`...test_resolve_plan_detects_removal_candidates`、`...test_resolve_plan_no_changes_when_all_match`；`test_stage2_resolved_direction.MergeCandidateDetectionTests.test_detect_merge_candidates`；`test_stage2_resolved_direction.CandidateUnionEvidenceTests.test_fingerprint_sensitive_to_candidate_outside_relevant_set`；`test_stage2_resolved_direction.ResolvedReuseTests.test_resolve_plan_reuses_unchanged_directions`、`...test_resolve_plan_reprocesses_when_facts_change`；`test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_addition_candidate_targets_strongest_non_provisional_direction`、`...test_merge_candidate_requires_at_least_two_shared_papers` | 这 9 个方法全部通过；本批的通过条件只限这些方法自身的既有断言（job 生成与字段、增/删/拆/并候选识别、merge 阈值、证据并集与指纹、复用与 facts 变化后的重算、运行隔离） | 第 2 步命令；`Ran 10 tests`、`OK` |
 | T5 | 复制 runner 的既有夹具仍能加载新模块（R4） | `test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker`、`test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling` | 两个方法通过；复制布局包含 `_stage2_resolve.py`，复制后的 runner 能按路径加载它 | 第 3 步命令；`Ran 2 tests`、`OK` |
 
 **既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的分片套件（`shards` 的 4 个分片）与聚合 job `test` 由仓库工作流照常执行，其结果单独引用；本批不因此扩张或缩减必测清单，也不在本地重跑全量套件。
@@ -44,7 +44,7 @@
    `cp` 是必须的：脚本自带全部检查，不能在临时目录里凭提纲重写；来源缺失时停止并交计划所有人，不重建。脚本参考 sha256 为 `52a7c4be7aa005593e9db122e47a5477e70759ea963691930da8b2933302c80f`（196 行），复制后核对同一哈希。**`RUN` 不导出，后续步骤必须在同一 shell 进程内继续执行**。
    预期：每条检查打印一行 `OK  <标签>`，共 131 行——T0 3 行、T1 47 行（模块存在 1 + 16 函数×2 + 7 常量×2）、T2 41 行（16 函数×2 + 7 常量 + 非搬移定义不变 + 定义集合差）、T3 40 行（16 函数×2 + 7 常量 + 1 直接执行）；末尾 `ALL CHECKS PASS`，退出码 0。
 
-2. T4：只跑清单列出的 10 个方法。
+2. T4：只跑清单列出的 9 个方法。
    ```sh
    set -e
    cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-resolve/.apm/skills/professor-contact/tests
@@ -58,10 +58,9 @@
      test_stage2_resolved_direction.ResolvedReuseTests.test_resolve_plan_reprocesses_when_facts_change \
      test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_addition_candidate_targets_strongest_non_provisional_direction \
      test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_merge_candidate_requires_at_least_two_shared_papers \
-     test_stage2_resolved_direction_regressions.ResolvedDirectionRegressionTests.test_reused_direction_ignores_stale_result_file \
      -v
    ```
-   预期：`Ran 10 tests`、全部 `ok`，无 `FAIL`／`ERROR`；若出现跳过项，按未执行记录，不算通过。
+   预期：`Ran 9 tests`、全部 `ok`，无 `FAIL`／`ERROR`；若出现跳过项，按未执行记录，不算通过。
 
 3. T5：只跑清单列出的 2 个夹具方法。
    ```sh
@@ -110,3 +109,9 @@
 ## 修订记录
 
 - 第 1 版：首次提交测试计划审核。
+- 第 2 版：按第一关 blocker B1 把 `test_reused_direction_ignores_stale_result_file` 移出 T4（它的断言落在第 3 批的 `validate_resolve_results` 上），T4 收窄为 9 个计划侧方法、命令与预期同步；按 B2 把执行计划指针更新为第 2 版（APPROVED）。
+
+## 审核状态
+
+- 第 1 版：第一关 NEEDS_MODIFICATION（B1：T4 含第 3 批的校验方法；B2：执行计划版本指针悬空）；第二关 PASS。
+- 第 2 版：T4 收窄为 9 个方法；执行计划更新为第 2 版并记录 APPROVED。待第一关复核这两条。

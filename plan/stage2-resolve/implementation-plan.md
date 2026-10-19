@@ -8,10 +8,10 @@
 
   以及同日的 Stage 2 划分指示（“基于当前主分支对 stage2 进行划分”）。本批是该划分的第 2 批。
 - Requirement revision: 第 1 版（2026-10-20）。
-- Canonical Plan revision: 第 1 版。
+- Canonical Plan revision: 第 2 版（第 1 版经 2026-10-20 计划审核批准；第 2 版只并入该轮三条非阻断建议，方案与范围未变）。
 - Target repository revision: `d5a4f751fb80de4819d4a1de3ee829db52cea6fc`（当前 `main`）。本批工作分支 `refactor-stage2-resolve` 从该提交拉出。第 1 批（`refactor-stage2-split`，PR #108）尚未合并；两批改动的行区间不重叠，本批按独立分支交付，合并顺序不构成前置。
 - Relevant upstream/runtime revision: N/A；不涉及外部仓库、代理入口、安装布局或 CLI 变化。
-- Proposed review status: pending（P1–P4 结论只由正式 Review record 给出）。
+- Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`；独立计划审核于 2026-10-20 给出，P1–P4 全 PASS，无 blocker，三条非阻断建议已并入第 2 版；Review record 见本文件末节）。
 - 唯一规范来源：本文件。本文件只定义实施方案，不声明计划审核、测试审核或合并关口已经通过。
 
 ## 所属划分（第 2 / 6 批）
@@ -171,3 +171,14 @@ Stage 2 按 6 批交付，第 1 批（预检、身份与 `stage2-preflight`／`s
 - 计划审核：待补。
 - 测试计划与执行：待补。
 - AST／常量／调用点对比证据：放仓库外 `/tmp`，记录里写明路径与摘要。
+
+## 修订记录
+
+- 第 1 版：首次提交计划审核。
+- 第 2 版：并入 2026-10-20 计划审核的三条非阻断建议，不改变语义或范围：① 绑定位置的理由改为“最晚依赖是 `_facts_preflight_proof`（2917），为保持提交侧 helper 连续取 2966 之后”；② unresolved impact 补记“第 6 批搬 `Stage2Context` 时必须同步更新本批注入点”；③ 模块头删除未使用的 `json`／`re`，只保留 `Path`／`types`。
+
+## 审核状态
+
+- 计划审核：`Plan conclusion: APPROVED`（2026-10-20，独立计划审核；P1–P4 全 PASS，`Gate review completeness: COMPLETE`，`Required modifications: N/A`，三条非阻断建议已并入第 2 版）。
+- 审核覆盖：requirement 第 1 版、Plan 第 1 版、目标 revision `d5a4f75`。第 2 版只并入非阻断措辞与注释，未改变 owner、机制、change point、契约或范围，按 `Plan Reviewer Rule.md` 6.3/6.4 复用同一 PASS。
+- 测试计划与执行：见 `plan/stage2-resolve/test-plan.md` 与 `test-execution-<日期>.md`（待写）。
