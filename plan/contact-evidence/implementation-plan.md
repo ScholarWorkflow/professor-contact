@@ -121,8 +121,8 @@
 ## 修订记录
 
 - 第 1 版：首次提交计划审核。
-- 第 3 版：按修订复核的三条非阻断措辞统一——因果链、intended_change、R4 与 unresolved impact 都改为“三个同签名包装”，并说明 runner 侧 8 个名字签名全部不变、新增关键字参数只在模块内部函数上。
 - 第 2 版：按第 1 轮审核的五条 blocker 修正——B1 组外调用点补齐为 5 处（8221／8305／8794／9407／10045），逐处标注“靠包装、不改调用点”；B2 测试引用行按实际清单重写（`upstream_check_script` 3 个文件、`run_upstream_check_argv`、`run_contact_evidence_check`、`professor_source_state` 两位置参数直调），并把下一批的 `contact_evidence_snapshot` 移入非目标；B3／B4 方案改为**三个同签名薄包装**（`load_contact_evidence`／`professor_source_state`／`resolve_contact_evidence`），其余 5 个函数与 8 个常量用别名，解决 `resolve_contact_evidence` 的传递性注入与测试可见签名；B5 实施步骤与引用同步（合并顺序补 #97、checklist 引用改为“随 #98 引入”）。非阻断项一并处理：去掉 `Any`、精简模块头部导入。
+- 第 3 版：按修订复核的三条非阻断措辞统一——因果链、intended_change、R4 与 unresolved impact 都改为“三个同签名包装”，并说明 runner 侧 8 个名字签名全部不变、新增关键字参数只在模块内部函数上。
 
 ## 审核状态
 
