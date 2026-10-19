@@ -7,7 +7,7 @@
 - Target repository revision: 工作分支 `refactor-stage2-validation` 实施后的提交（代码提交 `76f107a`）；对照基准为 `e973ffb4571344157b3c43a151906a24f48c7e4e`（当前 `main`，已含第 1 批 #108）。实施开始时 `origin/main` 为 `0f89ebd`，实施中前进到 `e973ffb` 并重放；14 个函数在两次提交间 AST 相同。
 - Test plan revision: 第 3 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
-- Proposed review status: 待复核（第 2 版第一/二关意见已处理，见修订记录）。
+- Proposed review status: **APPROVED**（第一关 PASS、第二关 PASS；第 3 版复核记录见文末）。
 - 执行记录：[test-execution-2026-10-20.md](test-execution-2026-10-20.md)。
 
 ## 必测清单
@@ -16,10 +16,10 @@
 | --- | --- | --- | --- | --- |
 | T0 | 对照基准与工作树身份有效，防止 A/B 空转 | 工作树 `scripts/contact_state.py` 与 `_stage2_validation.py`；基准为 `git archive e973ffb` 的 scripts 目录 | base 与 head 是两个不同文件；base 仍定义 14 个函数；head 一个都不定义 | 对比脚本的 `T0 ...` 行；3 条 `OK` |
 | T1 | 14 个函数确实完成划分（R1） | 同上两侧源码与模块文件 | 新模块与 runner 同目录；14 个函数都不再出现在 runner 顶层，都出现在模块 `build()` 内 | 同一脚本的 `T1 ...` 行；29 条 `OK`（模块存在 1 + 14 函数×2） |
-| T2 | 搬移没有改变任何函数逻辑（R2） | 同上两侧源码 | 14 个函数的代码 AST 与基准完全相同（脚本忽略 docstring 内容）；docstring 单独核对：9 个函数有 docstring（其中 4 个多行），清洗后与基准同文，5 个函数没有 docstring；runner 其余顶层定义（函数与类）AST 不变；离开 runner 的定义正好是这 14 个、没有新增；14 个函数都有 runner 别名（同一对象） | 同一脚本的 `T2 ...` 行（别名存在）17 条 `OK`；docstring 与别名身份用一次性只读脚本核对：9/9 docstring 同文（4 个多行、5 个无 docstring）、14/14 别名 `is` 模块函数 |
+| T2 | 搬移没有改变任何函数逻辑（R2） | 同上两侧源码 | 14 个函数的代码 AST 与基准完全相同（脚本忽略 docstring 内容）；docstring 单独核对：9 个函数有 docstring（其中 4 个多行），清洗后与基准同文，5 个函数没有 docstring；runner 其余顶层定义（函数与类）AST 不变；离开 runner 的定义正好是这 14 个、没有新增；14 个函数都有 runner 别名（同一对象） | 同一脚本的 `T2 ...` 行（别名存在）17 条 `OK`；docstring 与别名身份用一次性只读脚本核对（`/tmp/pc-stage2-r2/docstring_check.py`，`python3` 运行，输出 9/9 同文、4 个多行、5 个无 docstring、14/14 别名 `is`）：9/9 docstring 同文、14/14 别名 `is` 模块函数 |
 | T3 | 旧接口与加载方式不变（R3、R4、R5） | 同一进程内分别按文件路径加载两侧 runner；再以子进程直接执行改动后的 runner | 14 个名字在两侧都可调用；`inspect.signature` 字符串两侧相同；直接执行 `contact_state.py --help` 退出码 0 | 同一脚本的 `T3 ...` 行；29 条 `OK`（14 函数×2 + 1 直接执行）；合计 78 条 `OK`、末尾 `ALL CHECKS PASS` |
 | T4 | 校验报告解析/渲染、record-validation、refine-plan/finalize 与 later-paper 状态保存/恢复的行为不变（R2） | 10 个既有方法：`test_stage2_style_validation_handoff.Stage2ValidationHandoffTests` 的 `test_stage2_second_blocking_round_is_terminal`、`test_stage2_report_for_stale_render_is_rejected_without_pack_write`、`test_stage2_nonrepairable_user_note_does_not_create_a_correction_job`、`test_stage2_refinement_rejects_changed_input_pack`、`test_repeated_quote_locations_and_ambiguous_report`、`test_business_rerender_and_bounded_correction_lifecycle`；`test_contact_state.TestRunnerBasics` 的 `test_11_stage2_validator_is_persisted_separately`、`test_11a_stage2_validator_pass_with_minor_is_accepted`、`test_13_stage2_validator_rewrite_round_trips_structured_narrative`；`test_stage2_resolved_direction_downstream_regressions.ResolvedDirectionDownstreamRegressionTests.test_member_reference_persistence_and_refine_sources` | **条件式通过条件**：10 个方法执行后，若落在本批 14 个函数上的断言全部通过，则 T4 通过；若某方法失败，按 traceback 归因——失败在本批 14 个函数相关断言（报告行号解析、报告渲染与落盘、round/terminal/原因码、record-validation 写入、refine job 生成、later-paper 状态保存/恢复、pack 指纹拒绝）则 T4 失败；失败在跨批断言（第 1 批 preflight/plan、第 2/3 批 resolve、第 4 批 finalize/标题 helper、Stage 3 job）则记“无法判断／既有依赖失败”，不判本批失败（这些是测试体内或 setup 的跨批断言，不是本批目标） | 第 2 步命令；读取 10 个方法的执行结果与失败 traceback 并按上述归因 |
-| T5 | 复制 runner 的既有夹具仍能加载新模块（R4） | `test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker`、`test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling` | **条件式通过条件**：复制布局包含 `_stage2_validation.py`，复制后的 runner 无导入/加载错误；两方法整体 `OK` 则 T5 通过。若失败，先看 traceback：导入/加载错误判本批失败；Stage 5 业务断言失败记既有失败或无法判断 | 第 3 步命令；查看复制目录与 traceback |
+| T5 | 复制 runner 的既有夹具仍能加载新模块（R4） | `test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker`、`test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling` | **条件式通过条件**：复制布局包含 `_stage2_validation.py`，复制后的 runner 无导入/加载错误；两方法整体 `OK` 则 T5 通过。若失败，先看 traceback：导入/加载错误判本批失败；Stage 5 业务断言失败记既有失败或无法判断 | 第 3 步命令；复制逻辑见 `test_stage5_immutable.py:220`/`test_stage5_dualtarget_contract.py:331`，失败时看 traceback |
 
 **既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的分片套件（`shards` 4 片）与聚合 job `test` 由仓库工作流照常执行，结果按运行编号与 head 单独引用；本批不因此扩张或缩减必测清单，也不在本地重跑全量套件。
 
@@ -127,4 +127,4 @@
 
 - 第 1 版：第一关 NEEDS_MODIFICATION（B1 T4 范围、B2 CI 记录、B3 版本、B4 docstring 判据、B5 脚本回退、B6 前置退出、B7 T5 范围）。
 - 第 2 版：第一关/第二关 NEEDS_MODIFICATION（B2/B5/B6 闭合；B1/B3/B4/B7 与版本同步未闭合）。
-- 第 3 版：待第二关复核。
+- 第 3 版：第一关 PASS、第二关 PASS（无剩余 blocker）。
