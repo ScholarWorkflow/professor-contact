@@ -2,8 +2,8 @@
 
 - 测试计划：[test-plan.md](test-plan.md)，第 5 版。
 - 执行计划：[implementation-plan.md](implementation-plan.md)，第 4 版（第 2 版取得 `Plan conclusion: APPROVED`；第 3、4 版按审核意见修正归类与分配）。
-- 对照基准：`6e624e0`（`origin/main`）。
-- 被测提交：`fd3ea8d`（实现提交；其后如仅改文档，产品与测试字节不变）。
+- 对照基准：`696733f`（`origin/main`，已含批次三与边界一/二/三的合并）；最初的分组与计时测量在 `6e624e0` 上完成，改基后模块集合未变（仍 78 个 `test_*.py`）。
+- 被测提交：`fd3ea8d`（最初的实现提交）；改基到 `696733f` 后的实现提交为 `3954cbd`（含第二轮审核的四项修正）。改基后复跑：覆盖校验 `OK: 78 test modules across 4 shards, each with a stage`，四片 `Ran` 378+219+188+240 = **1025** 全部 `OK`（墙钟 218／220／207／202s，机器负载较高）。
 - 环境：本地 macOS／Python 3.14.7；CI 为 ubuntu-latest／Python 3.12。原始输出（仓库外）：`/tmp/pc-tg-check/`（四片日志 `shard1.log`…`shard4.log`、墙钟 `shards.txt`）；分组测量产物 `/tmp/pc-tg-map.json`、`/tmp/pc-tg-timing.clean.json`。
 
 ## 逐项结果
