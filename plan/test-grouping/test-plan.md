@@ -5,7 +5,7 @@
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 4 版（第 1 版结论 NEEDS_MODIFICATION、第 2 版取得 `Plan conclusion: APPROVED`；第 3、4 版按审核意见修正归类与分配，方案目标未变）。
 - 需求来源：负责人 2026-10-18“其余边界”中的“测试分组／CI：可以另评估快审，但不能只按 test_stageN 文件名筛选”。
 - 对照基准与目标修订：`6e624e0`（`origin/main`）；本批工作分支 `refactor-test-grouping`。
-- Test plan revision: 第 5 版。
+- Test plan revision: 第 6 版。
 - 测试范围依据：`Test Engineer Rule.md`；提交前按共用清单 `plan/test-plan-checklist.md` 自检（该清单随 PR #98 引入，本分支从 `main` 拉出、不把它当作已存在的文件；自检小节已逐条写明）。
 - Proposed review status: pending。
 
@@ -13,7 +13,7 @@
 
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
-| T1 | 覆盖校验能挡住“漏归类／重复／不存在／空分片／丢阶段／阶段值非法／清单多分片／工作流多分片”，并接受正确清单 | 正确清单；八种坏清单：① 从某片删掉一个模块；② 把某模块同时放进两片；③ 某片加一个不存在的模块名；④ 把某片的模块列表置空；⑤ 去掉某模块的 `stage` 字段；⑥ 把某模块的 `stage` 改成 `stage9`；⑦ 清单增加一个带真实模块的第五分片（工作流只跑四片）；⑧ 把工作流 `matrix.shard` 改成含 `shard5`（清单无该片） | 正确清单退出码 0 且 stdout 含 `OK: 78 test modules across 4 shards, each with a stage`；八种坏清单都非零退出，且 stderr **分别**含 `not covered by any shard`／`listed in both`／`no such test module`／`lists no modules`／`carries no stage`／`unknown stage`／`is not run by the workflow`／`has no manifest entry`；每次注入后恢复清单与工作流并复跑通过 | 仓库根 `python scripts/check_test_shards.py`；注入用带 `try/finally` 的片段临时改写 `plan/test-grouping/shards.json` 并在结束时恢复，最后用 `git diff --exit-code` 确认清单回到原样；**逐例断言对应错误子串**，不只比退出码 |
+| T1 | 覆盖校验能挡住“漏归类／重复／不存在／空分片／丢阶段／阶段值非法／清单多分片／分片名重复／工作流多分片”，并接受正确清单 | 正确清单；九种坏清单（**模块项按对象形状构造**：`name`／`stage`／`seconds`／`tests`／`signals`）：① 从某片删掉一个模块；② 把某模块对象同时放进两片；③ 某片加一个只有 `name`／`stage` 的不存在模块对象；④ 把某片的模块列表置空；⑤ 去掉某模块对象的 `stage` 字段；⑥ 把 `stage` 改成 `stage9`；⑦ 清单增加一个带真实模块对象的第五分片（工作流只跑四片）；⑧ 把第二片改名为 `shard1`（清单内重名）；⑨ 把工作流 `matrix.shard` 改成含 `shard5`（清单无该片） | 正确清单退出码 0 且 stdout 含 `OK: 78 test modules across 4 shards, each with a stage`；九种坏清单都非零退出，且 stderr **分别**含 `not covered by any shard`／`listed in both`／`no such test module`／`lists no modules`／`carries no stage`／`unknown stage`／`is not run by the workflow`／`repeats shard name`／`has no manifest entry`；每次注入后恢复清单与工作流并复跑通过 | 仓库根 `python scripts/check_test_shards.py`；注入用带 `try/finally` 的片段临时改写 `plan/test-grouping/shards.json` 并在结束时恢复，最后用 `git diff --exit-code` 确认清单回到原样；**逐例断言对应错误子串**，不只比退出码 |
 | T2 | 四个分片的并集等于全套、且各自通过；**每个模块都带阶段** | 四片各自的模块列表；`shards.json` 的 `stage`／`signals` 字段 | 四片都 `OK`；四片 `Ran N tests` 之和 = `unittest` 收集数（1025）；无重复执行；78 个模块**全部**有 `stage`（`non-stage` 也显式记录），`signals` 非空的模块其标签与信号多数一致 | `python scripts/check_test_shards.py --print <shard>` 取列表，在 `tests/` 目录逐片 `python -m unittest <列表>`；映射用 `jq` 逐模块核对 |
 | T3 | 工作流结构保持单一 `test` 门禁，且分片列表取不到时立即失败 | `.github/workflows/ci.yml` | `shards` 任务为 4 组合 matrix、`fail-fast: false`、每片先跑覆盖校验再跑本片；分片命令把 `--print` 结果存进变量、**为空则 `exit 1`**（不让空列表退化成全量 discovery）；`test` 聚合任务 `needs: [shards]`、`if: always()`、`needs.shards.result != success` 即失败 | 读取工作流文本逐条核对；CI 跑起来后核对检查项名（`shards (shardN)` 与 `test`） |
 | T4 | 每个分片命令可独立在本地执行 | 四片的命令（从 `tests/` 目录） | 都能独立跑通，不依赖其它分片产生的文件 | 同 T2 |
@@ -40,32 +40,61 @@
    import json, subprocess, sys
    from pathlib import Path
    manifest = Path("plan/test-grouping/shards.json")
-   backup = manifest.read_text(encoding="utf-8")
+   workflow = Path(".github/workflows/ci.yml")
+   backup_m, backup_w = manifest.read_text(encoding="utf-8"), workflow.read_text(encoding="utf-8")
    def check():
        proc = subprocess.run([sys.executable, "scripts/check_test_shards.py"],
                              capture_output=True, text=True)
        return proc.returncode, proc.stdout, proc.stderr
+   def write_manifest(mutate):
+       broken = json.loads(backup_m)
+       mutate(broken)
+       manifest.write_text(json.dumps(broken, ensure_ascii=False), encoding="utf-8")
+   def add_fifth_shard(d):
+       moved = d["shards"][3]["modules"].pop()
+       d["shards"].append({"name": "shard5", "seconds": moved["seconds"],
+                           "stages": {moved["stage"]: 1}, "modules": [moved]})
+   def duplicate_shard_name(d):
+       d["shards"][1]["name"] = "shard1"
    code, out, _ = check()
-   assert code == 0 and "OK: 78 test modules across 4 shards" in out
+   assert code == 0 and "OK: 78 test modules across 4 shards, each with a stage" in out
+   # 模块项是对象（name/stage/seconds/tests/signals），注入也要按对象形状构造，
+   # 否则会在校验脚本里触发属性访问异常而不是预期的分类失败。
    cases = {
-       "missing": ("not covered by any shard", lambda d: d["shards"][0]["modules"].pop(0)),
+       "missing": ("not covered by any shard",
+                   lambda: write_manifest(lambda d: d["shards"][0]["modules"].pop(0))),
        "duplicate": ("listed in both",
-                     lambda d: d["shards"][1]["modules"].append(d["shards"][0]["modules"][0])),
+                     lambda: write_manifest(lambda d: d["shards"][1]["modules"].append(
+                         dict(d["shards"][0]["modules"][0])))),
        "nonexistent": ("no such test module",
-                       lambda d: d["shards"][2]["modules"].append("test_does_not_exist")),
+                       lambda: write_manifest(lambda d: d["shards"][2]["modules"].append(
+                           {"name": "test_does_not_exist", "stage": "stage3"}))),
        "empty_shard": ("lists no modules",
-                       lambda d: d["shards"][3].__setitem__("modules", [])),
+                       lambda: write_manifest(lambda d: d["shards"][3].__setitem__("modules", []))),
+       "no_stage": ("carries no stage",
+                    lambda: write_manifest(lambda d: d["shards"][0]["modules"][0].pop("stage"))),
+       "bad_stage": ("unknown stage",
+                     lambda: write_manifest(lambda d: d["shards"][0]["modules"][0].__setitem__("stage", "stage9"))),
+       "manifest_extra_shard": ("is not run by the workflow",
+                                lambda: write_manifest(add_fifth_shard)),
+       "duplicate_shard_name": ("repeats shard name",
+                                lambda: write_manifest(duplicate_shard_name)),
+       "workflow_extra_shard": ("has no manifest entry",
+                                lambda: workflow.write_text(backup_w.replace(
+                                    "[shard1, shard2, shard3, shard4]",
+                                    "[shard1, shard2, shard3, shard5]"), encoding="utf-8")),
    }
    try:
        for name, (needle, mutate) in cases.items():
-           broken = json.loads(backup)
-           mutate(broken)
-           manifest.write_text(json.dumps(broken, ensure_ascii=False), encoding="utf-8")
+           mutate()
            code, _, err = check()
            print(name, "->", code, "|", needle in err)
            assert code != 0 and needle in err, name
+           manifest.write_text(backup_m, encoding="utf-8")
+           workflow.write_text(backup_w, encoding="utf-8")
    finally:
-       manifest.write_text(backup, encoding="utf-8")
+       manifest.write_text(backup_m, encoding="utf-8")
+       workflow.write_text(backup_w, encoding="utf-8")
    assert check()[0] == 0
    PY
    git diff --exit-code -- plan/test-grouping/shards.json
@@ -117,7 +146,8 @@
 - 第 3 版：把三处仍写“三种坏清单”的摘要改为“四种”，与 T1 行、注入片段和实测结果一致；T5 补上 PR #103 的 CI 运行编号与各检查状态。
 - 第 4 版：按审核的唯一阻塞项（行为分组未落实）把 T1 扩到六种坏清单（新增“丢 stage”“阶段值非法”）、T2 增加“每个模块都带阶段、标签与信号多数一致”的判据，并把正确清单的预期输出改为带 `each with a stage` 的新格式。
 - 第 5 版：按第二轮审核把 T1 再扩到八种坏清单（新增“清单多分片”“工作流多分片”），T3 增加“分片列表为空即失败”，并把执行计划指针更新到第 4 版。
+- 第 6 版：按第三轮审核把 T1 扩到九种坏清单（新增“清单内分片名重复”，这是会让第二个同名分片静默不跑的漏洞），并把第 2 步的注入片段改成与实际执行一致的对象形状与九例（此前片段只示范四例、且向模块列表塞字符串，会在校验脚本里触发属性访问异常而不是预期的分类失败）。
 
 ## 审核状态
 
-测试计划第 5 版为当前唯一版本。第 1 版第二关口 PASS、第一关口有 1 项 blocker（B1），第 2 版修正后第一、二关口 PASS；第 3 版只改摘要口径与补 T5 的 CI 来源。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 6 版为当前唯一版本。第 1 版第二关口 PASS、第一关口有 1 项 blocker（B1），第 2 版修正后第一、二关口 PASS；第 3 版只改摘要口径与补 T5 的 CI 来源。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。

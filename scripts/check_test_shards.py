@@ -88,6 +88,13 @@ def main() -> int:
     # shard missing from the manifest would run nothing.
     manifest_names = [shard.get("name") for shard in shards]
     workflow_names = workflow_shards()
+    # Duplicate names would silently drop tests: two shards called shard1 both
+    # count towards coverage, but ``--print shard1`` only emits the first one,
+    # so the second shard's modules never run.
+    for label, names in (("manifest", manifest_names), ("workflow", workflow_names)):
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            problems.append(f"{label} repeats shard name(s): {', '.join(duplicates)}")
     if not workflow_names:
         problems.append("cannot read the shard list from .github/workflows/ci.yml")
     else:

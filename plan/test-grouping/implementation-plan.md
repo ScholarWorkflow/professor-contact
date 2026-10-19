@@ -4,7 +4,7 @@
 
 - 需求来源：负责人 2026-10-18“其余边界”原文中的“测试分组／CI：可以另评估快审，但不能只按 test_stageN 文件名筛选”。
 - Requirement revision: 第 1 版。
-- Canonical Plan revision: 第 4 版。
+- Canonical Plan revision: 第 5 版。
 - Target repository revision: `6e624e0`（`origin/main`）。本批是独立工作，不改产品代码，也不依赖在途 PR 的合并顺序，因此从 `main` 另拉分支 `refactor-test-grouping`。
 - Relevant upstream/runtime revision: CI 工作流 `.github/workflows/ci.yml`（当前单任务，Python 3.12）。
 - Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`，P1–P4 全 PASS；独立计划审核于 2026-10-18/19 给出）。
@@ -55,7 +55,7 @@
 | shard4 | 24 个模块 | 104.0s | stage2 22、stage3 2 |
 
    均衡依据：阶段分组 + 组内按模块耗时降序，四片各约 104s（串行合计 416.0s）。首次 CI 跑完后按 ubuntu／3.12 的实测更新本表与 `shards.json`。
-2. **覆盖校验**：CI 第一步跑一个仓库内小脚本（`scripts/check_test_shards.py`）：枚举 `tests/test_*.py`，断言与分片清单的并集完全一致、无重复、无遗漏；断言每个模块都带阶段、阶段值属于文档化集合（`stage1`…`stage5`／`non-stage`／`mixed:*`）；**并断言分片名集合与 `.github/workflows/ci.yml` 的 `matrix.shard` 完全一致**——清单里多一个分片（工作流不会执行）或工作流多一个分片（清单没有对应模块）都会失败，避免“清单加了第五片、实际只跑四片”这种静默漏跑。
+2. **覆盖校验**：CI 第一步跑一个仓库内小脚本（`scripts/check_test_shards.py`）：枚举 `tests/test_*.py`，断言与分片清单的并集完全一致、无重复、无遗漏；断言每个模块都带阶段、阶段值属于文档化集合（`stage1`…`stage5`／`non-stage`／`mixed:*`）；**并断言分片名集合与 `.github/workflows/ci.yml` 的 `matrix.shard` 完全一致、且两侧都不出现重名分片**——清单里多一个分片（工作流不会执行）、工作流多一个分片（清单没有对应模块）、或两个分片同名（`--print` 只输出第一个，第二个静默不跑）都会失败，避免这类静默漏跑。
 3. **CI 变更（保持单一 `test` 门禁）**：
    - 新增 `shards` 任务：`strategy: matrix: shard: [shard1, shard2, shard3, shard4]`，每片先跑覆盖校验再跑自己的模块列表；
    - 新增聚合任务 `test`：`needs: [shards]`、`if: always()`，读 `needs.shards.result`，任一分片失败即失败，全绿则成功。
@@ -122,7 +122,8 @@
 - 第 2 版：按第 1 轮审核的两条 blocker 修正——B1 全部测量改在目标修订（worktree）上重跑并写清命令、修订号、Python 版本与两个计数口径（收集 1025／定义 1033、类名做键会合并重名类）；B2 CI 改为 `shards` matrix + 名为 `test` 的聚合任务，保住单一门禁检查；另按 P4 精度项写明分片命令的工作目录、覆盖脚本放仓库根、分片清单固定在 `plan/test-grouping/shards.json`、CI 与本地环境差异的更新约定。
 - 第 3 版：按审核的唯一阻塞项修正——把行为分组的**归类结果真正落实**：`shards.json` 的每个模块带 `stage` 与原始加权 `signals`、每个分片带阶段构成；分片分配改为阶段分组驱动（整组能放下就整组放，大组按耗时拆）；覆盖校验增加“每个模块都带阶段、阶段值属于文档化集合”两条断言；README 的逐模块阶段列改用真实归类结果（此前因键名带 `.py` 与不带 `.py` 不匹配而全为空）。
 - 第 4 版：按审核意见修正——① 阶段信号补上“按路径加载的兄弟阶段脚本”与“对加载模块的调用”，`test_stage1_candidates`（36 项直接驱动第一阶段）从 `non-stage` 更正为 `stage1`，stage1 方法数 23→86、无信号 250→187；② 覆盖校验增加“分片名集合必须与工作流 `matrix.shard` 一致”，工作流在 `--print` 为空时立即失败；③ 计划正文的分配数字由旧的 38／13／14／13 更新为当前的 28／14／12／24（各约 104s）与阶段构成，测试计划/执行记录的版本指针统一到本版。
+- 第 5 版：按第三轮审核把“分片名唯一性”写进覆盖校验（清单与工作流两侧都不得重名——两个同名分片会让 `--print` 只输出第一个、第二个静默不跑），并把 README 改为**由 `shards.json` 直接生成**以免再次与清单漂移。
 
 ## 审核状态
 
-计划第 4 版为当前唯一计划。第 1 版结论 `NEEDS_MODIFICATION`（B1、B2）已修正并取得 `Plan conclusion: APPROVED`；第 3 版按测试计划审核的唯一阻塞项（行为分组未落实）修正归类与分配，方案目标与范围未变。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
+计划第 5 版为当前唯一计划。第 1 版结论 `NEEDS_MODIFICATION`（B1、B2）已修正并取得 `Plan conclusion: APPROVED`；第 3 版按测试计划审核的唯一阻塞项（行为分组未落实）修正归类与分配，方案目标与范围未变。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。

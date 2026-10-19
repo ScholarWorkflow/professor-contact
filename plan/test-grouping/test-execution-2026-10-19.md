@@ -1,16 +1,16 @@
 # 测试分组与 CI 分片 测试执行记录（2026-10-19）
 
-- 测试计划：[test-plan.md](test-plan.md)，第 5 版。
-- 执行计划：[implementation-plan.md](implementation-plan.md)，第 4 版（第 2 版取得 `Plan conclusion: APPROVED`；第 3、4 版按审核意见修正归类与分配）。
+- 测试计划：[test-plan.md](test-plan.md)，第 6 版。
+- 执行计划：[implementation-plan.md](implementation-plan.md)，第 5 版（第 2 版取得 `Plan conclusion: APPROVED`；第 3–5 版按审核意见修正归类、分配与分片名唯一性校验）。
 - 对照基准：`b5621db`（`origin/main`，已含批次三、边界一/二/三与边界四的合并；本批再次改基到此）；最初的分组与计时测量在 `6e624e0` 上完成，改基后模块集合未变（仍 78 个 `test_*.py`）。
-- 被测提交：`fd3ea8d`（最初的实现提交）；改基到 `696733f` 后的实现提交为 `3954cbd`（含第二轮审核的四项修正）。改基后复跑：覆盖校验 `OK: 78 test modules across 4 shards, each with a stage`，四片 `Ran` 378+219+188+240 = **1025** 全部 `OK`（`/tmp/pc-tg-final/`，墙钟 218／220／207／202s；更早一次 `/tmp/pc-tg-new/` 为 232／234／220／212s，机器负载较高）。
+- 被测提交：`fd3ea8d`（最初的实现提交）；改基到 `696733f` 后的实现提交为 `3954cbd`（含第二轮四项修正）；第三轮修正（分片名唯一性 + README 由清单生成 + 测试计划片段）改基到 `b5621db`（已含边界四）之后的实现提交为 `dc2a7e2` 系列中的 CI 提交。新基准复跑：覆盖校验 `OK: 78 test modules across 4 shards, each with a stage`，四片 `Ran` 378+219+188+240 = **1025** 全部 `OK`（`/tmp/pc-tg-final2/`，墙钟 182／184／172／166s；更早 `/tmp/pc-tg-final/` 218／220／207／202s、`/tmp/pc-tg-new/` 232／234／220／212s，机器负载不同）。
 - 环境：本地 macOS／Python 3.14.7；CI 为 ubuntu-latest／Python 3.12。原始输出（仓库外）：`/tmp/pc-tg-check/`（四片日志 `shard1.log`…`shard4.log`、墙钟 `shards.txt`）；分组测量产物 `/tmp/pc-tg-map.json`、`/tmp/pc-tg-timing.clean.json`。
 
 ## 逐项结果
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
-| T1 | 通过 | 在新基准上复跑八例，日志 `/tmp/pc-tg-final/t1-injections.log`。正确清单：退出码 0 且 stdout 为 `OK: 78 test modules across 4 shards, each with a stage`；八种坏清单逐例断言错误子串——`missing` → 1／`ERROR: not covered by any shard: test_contact_state`、`duplicate` → 1／`ERROR: test_contact_state listed in both shard1 and shard2`、`nonexistent` → 1／`ERROR: shard3: no such test module: test_does_not_exist.py`、`empty_shard` → 1／`ERROR: shard4 lists no modules`；`no_stage`（去掉 `stage` 字段）→ 1／`carries no stage`；`bad_stage`（改成 `stage9`）→ 1／`unknown stage`；`manifest_extra_shard`（清单加带真实模块的第五片）→ 1／`is not run by the workflow`；`workflow_extra_shard`（工作流把 shard4 换成 shard5）→ 1／`is not run by the workflow` 与 `has no manifest entry` 同时命中；恢复后再次退出 0，`git diff --exit-code -- plan/test-grouping/shards.json .github/workflows/ci.yml` 无输出，`git diff --exit-code -- plan/test-grouping/shards.json` 无输出（日志 `/tmp/pc-tg-final/t1-injections.log`） |
+| T1 | 通过 | 按第 6 版片段复跑**九例**，日志 `/tmp/pc-tg-final2/t1-injections.log`。正确清单：退出码 0 且 stdout 为 `OK: 78 test modules across 4 shards, each with a stage`；九种坏清单逐例断言错误子串——`missing` → 1／`ERROR: not covered by any shard: test_contact_state`、`duplicate` → 1／`ERROR: test_contact_state listed in both shard1 and shard2`、`nonexistent` → 1／`ERROR: shard3: no such test module: test_does_not_exist.py`、`empty_shard` → 1／`ERROR: shard4 lists no modules`；`no_stage`（去掉 `stage` 字段）→ 1／`carries no stage`；`bad_stage`（改成 `stage9`）→ 1／`unknown stage`；`manifest_extra_shard`（清单加带真实模块对象的第五片）→ 1／`is not run by the workflow`；`duplicate_shard_name`（把第二片改名为 `shard1`）→ 1／`manifest repeats shard name(s): shard1`；`workflow_extra_shard`（工作流把 shard4 换成 shard5）→ 1／`is not run by the workflow` 与 `has no manifest entry` 同时命中；恢复后再次退出 0，`git diff --exit-code -- plan/test-grouping/shards.json .github/workflows/ci.yml` 无输出，`git diff --exit-code -- plan/test-grouping/shards.json` 无输出（日志 `/tmp/pc-tg-final/t1-injections.log`） |
 | T2 | 通过 | 按阶段分组驱动的新分配（阶段信号已含兄弟阶段脚本与模块调用，`test_stage1_candidates` 归 `stage1`）：shard1 28 模块／104.1s（non-stage 18、stage1 5、stage3 4、mixed 1）、shard2 14／104.1s、shard3 12／103.8s、shard4 24／104.0s；四片都 `OK`，`Ran` 378+219+188+240 = **1025** = `countTestCases()`，无重复执行；78 个模块**全部**带 `stage`（`non-stage` 显式记录），`signals` 与标签多数一致（例：`test_contact_state` signals `stage3 3550／stage5 3175／stage4 2200／stage2 1575／stage1 25` → `stage3`） |
 | T3 | 通过 | 工作流含 `fail-fast: false`、`matrix.shard: [shard1..shard4]`、每片先 `python scripts/check_test_shards.py` 再从 `tests/` 跑本片；分片命令把 `--print` 结果存进 `modules` 变量、**为空即 `exit 1`**（不让空列表退化成无参数 `unittest` 全量 discovery）；聚合任务 `needs: [shards]`、`if: always()`、`needs.shards.result != "success"` 即失败 |
 | T4 | 通过 | 四片命令都在本地独立跑通，互不依赖；本轮（机器负载较高，产物 `/tmp/pc-tg-new/`）墙钟 shard1 232s、shard2 234s、shard3 220s、shard4 212s；改基后复跑（`/tmp/pc-tg-final/`）为 218／220／207／202s，与模块耗时之和的比值一致 |
@@ -45,6 +45,7 @@
 - 测试计划第 1 版审核指出 T1 只比退出码、验不到自己声明的 `ERROR:` 行（任何其它失败也会非零退出）：改为逐例断言错误子串，并补“某片置空”这一注入；重跑后四种注入都命中各自消息。
 - 计时口径差异：`shards.json` 的 104.0s 是各模块测试耗时之和，本地分片墙钟 121–129s 还包含 discover/导入开销（最大/最小 ≈ 1.06），两个数字不矛盾。
 - 审核的唯一阻塞项（行为分组未落实）：`shards.json` 原先只按耗时分配、README 的“主导阶段”列因键名带 `.py` 与不带 `.py` 不匹配而全为空。已重做——归类结果落进 `shards.json`（每模块 `stage` + 原始 `signals`、每分片 `stages` 构成），分配改为阶段分组驱动，校验脚本增加两条阶段断言，README 逐模块列出真实阶段。
+- 第三轮审核三项：① 校验脚本未查分片名重复（两个同名分片会让 `--print` 只输出第一个、第二个静默不跑）→ 增加“清单与工作流两侧都不得重名”断言，实测两种注入分别报 `manifest repeats shard name(s): shard1` 与 `workflow repeats shard name(s): shard1`；② README 有三个模块仍标 `non-stage` 而清单已是 `stage1`（README 由旧映射生成导致漂移）→ README 改为**由 `shards.json` 直接生成**，逐模块阶段与分片阶段统计都取自清单；③ 测试计划的注入片段只示范四例、且向模块列表塞字符串（会在校验脚本里触发属性访问异常）→ 改成与实际执行一致的**九例对象形状**片段，并按新片段复跑留存日志。
 - 第二轮审核四项：① `test_stage1_candidates` 被误标 `non-stage`（该模块按路径加载 `contact_stage1.py` 并调用其函数，我的信号正则只认 runner 的 `stageN_*` 入口）→ 补上“兄弟阶段脚本”与“模块调用”两类信号后归 `stage1`，stage1 方法数 23→86、无信号 250→187，分片统计与 README 同步；② 校验脚本未核对分片名与工作流 → 增加“分片名集合必须与 `matrix.shard` 一致”，工作流在 `--print` 为空时立即失败；③ 计划正文仍是旧分配数字、测试计划/记录指针落后 → 计划升到第 4 版（28／14／12／24 与阶段构成）、测试计划升到第 5 版；④ 合并基准已变 → 本批改基到当前 main 并重跑校验与分片（见下）。
 - 以上属测量与测试资产问题，产品与测试代码未改。
 
