@@ -168,9 +168,11 @@ Stage 2 按 6 批交付，第 1 批（预检、身份与 `stage2-preflight`／`s
 
 ## 记录
 
-- 计划审核：待补。
-- 测试计划与执行：待补。
-- AST／常量／调用点对比证据：放仓库外 `/tmp`，记录里写明路径与摘要。
+- 计划审核：`Plan conclusion: APPROVED`（2026-10-20；P1–P4 全 PASS，三条非阻断建议已并入第 2 版）。
+- 测试计划：`plan/stage2-resolve/test-plan.md` 第 3 版（第一关 PASS、第二关 PASS）。
+- 测试执行：`plan/stage2-resolve/test-execution-2026-10-20.md`（被测实现提交 `2ecdc9c`；A/B 131 条 OK、T4 9 项 OK、T5 2 项 OK）。
+- 实现修正：M2 复核发现搬移时误删 19 个无关空行，已按基准恢复（runner 11181 行），无行为变化。
+- 对比证据：`/tmp/pc-stage2-r2/`（脚本、A/B 输出、套件日志）。
 
 ## 修订记录
 

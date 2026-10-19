@@ -7,7 +7,7 @@
 - Target repository revision: 工作分支 `refactor-stage2-resolve`（从当前 `main` `d5a4f751fb80de4819d4a1de3ee829db52cea6fc` 拉出）实施后的提交；对照基准同为 `d5a4f75`。
 - Test plan revision: 第 3 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
-- Proposed review status: pending。
+- Proposed review status: **APPROVED**（第一关 PASS、第二关 PASS；第 3 版只改对比脚本标签与哈希，判据不变）。
 
 ## 必测清单
 
