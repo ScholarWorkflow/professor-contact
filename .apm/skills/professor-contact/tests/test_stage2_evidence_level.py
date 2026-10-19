@@ -1472,6 +1472,10 @@ class AnalysisLevelTests(EvidenceLevelEnv):
                                              "BBBB2222": "fulltext",
                                              "CCCC3333": "fulltext"}, levels_before)
             certification_before = legacy_env.validator_business_fields(legacy_pack)
+            # The render binding is deliberately rebound below, so the unchanged
+            # part of the certification is the four business fields only.
+            business_before = {field: value for field, value in certification_before.items()
+                               if field != "render_sha256"}
             earlier_report = legacy_env.root / "pass.json"
             earlier_report_bytes = earlier_report.read_bytes()
             # Only the historical DISPLAY is changed: the fixed-evidence line is
@@ -1498,8 +1502,15 @@ class AnalysisLevelTests(EvidenceLevelEnv):
             del legacy_pack["cache"]["preflight"]["display_refresh_version"]
             legacy_pack["validator"]["pack_sha256"] = \
                 contact_state.stage2_pack_content_fingerprint(legacy_pack)
-            self.assertEqual({**legacy_env.validator_business_fields(legacy_pack),
-                              "render_sha256": legacy_sha}, certification_before,
+            self.assertEqual({field: legacy_pack["validator"].get(field)
+                              for field in business_before}, business_before,
+                             legacy_pack["validator"])
+            # The rebind itself is explicit: the legacy body digest and the
+            # recomputed pack digest must both match this old pack.
+            self.assertEqual(legacy_pack["validator"]["render_sha256"], legacy_sha,
+                             legacy_pack["validator"])
+            self.assertEqual(legacy_pack["validator"]["pack_sha256"],
+                             contact_state.stage2_pack_content_fingerprint(legacy_pack),
                              legacy_pack["validator"])
             (legacy_env.prof_dir / "套磁候选输入.json").write_text(
                 json.dumps(legacy_pack, ensure_ascii=False), encoding="utf-8")
