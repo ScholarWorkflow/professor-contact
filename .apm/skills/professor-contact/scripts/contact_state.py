@@ -11923,11 +11923,22 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
         # test on the reported line alone can both miss a real fixed-slot line
         # and misread a narrative continuation line. Packs accepted before the
         # map existed keep the original single-line check.
+        # Ownership is decided from the REPORT's own rendered line number and the
+        # render-time map: the line number is the structured position; the quote
+        # text stays the report's own evidence and is never the ownership key.
+        # A report without a physical line number has no structural position, so
+        # it is not promoted to a fixed-evidence handoff (it still reaches the
+        # original error surface below when nothing else explains it).
+        body_line = (line_location - line_offset) if line_location is not None else None
         fixed_evidence = False
-        if fixed_evidence_lines is not None:
-            fixed_evidence = hit + 1 in fixed_evidence_lines
-        elif len(gap_heading_lines) == 1 and hit > gap_heading_lines[0]:
-            rendered_line = lines[hit]
+        if body_line is not None and fixed_evidence_lines is not None:
+            fixed_evidence = body_line in fixed_evidence_lines
+        elif body_line is not None and len(gap_heading_lines) == 1 \
+                and body_line > gap_heading_lines[0] + 1 \
+                and 1 <= body_line <= len(lines):
+            # Legacy accepted packs (accepted before the map existed) keep the
+            # original single-line check, still addressed by the reported line.
+            rendered_line = lines[body_line - 1]
             fixed_evidence = (
                 any(rendered_line.startswith(prefix)
                     for prefix in FIXED_EVIDENCE_SLOT_PREFIXES)
