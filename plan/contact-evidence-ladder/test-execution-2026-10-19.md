@@ -5,6 +5,7 @@
 - 对照基准：`cdd01f7f2c03be822adbb5a4117c7e65a89d6c82`。
 - 被测提交：`f527698`（实现提交；其后如仅改文档，产品与测试字节不变）。
 - 环境：本地 macOS，Python 3.14.7；驱动只用标准库，比较用 `jq` 按键过滤。仓库 CI 使用工作流固定的 Python 3.12。
+- 实现符合性审核（M2）指出计划步骤“更新模块 docstring”未落实（D1，非阻断）：已在实现提交后补上该 docstring 两处（标题句与注入面说明），并复跑验证——T1–T4 在 `base7.json`／`head7.json` 上仍逐字段相同（排除 `injection_sites`）、T5 `Ran 42 tests in 66.808s`、`OK`；docstring 不参与执行，产品行为未变。
 - 原始输出（仓库外）：`/tmp/pc-bnd4-check/`；证据文件 `base4.json`／`head4.json`（最终对照，含 verdict 分支）与 `base3.json`／`head3.json`（补分支前的对照）、`ladder3.log`（T5 最终运行）、历史尝试 `base.json`／`head.json`（兄弟模块命名不对，基准侧导入失败）、`base2.json`／`head2.json`（artifact 取当前时间，`generated_at` 有假差异）、`ladder.log`／`ladder2.log`（缺 `datetime` 导入与 TTL 体引用的两次失败）。
 
 ## 逐项结果
@@ -38,7 +39,7 @@
 ## 执行中修正的问题（保留记录）
 
 - 首次运行 32 项失败：模块缺 `from datetime import datetime, timedelta, timezone`（执行计划 P4 已提醒，实施脚本漏了）。补导入后仍失败 31 项。
-- 第二次失败：`contact_evidence_freshness_reason` 的函数体仍引用全局 `VERIFY_TTL_DAYS`，注入参数没被真正使用（`NameError`）。把函数体改为 `timedelta(days=verify_ttl_days)`，即第 12 处文档化改动，之后 42 项全过。
+- 第二次失败：`contact_evidence_freshness_reason` 的函数体仍引用全局 `VERIFY_TTL_DAYS`，注入参数没被真正使用（`NameError`）。把函数体改为 `timedelta(days=verify_ttl_days)`，即第 14 处文档化改动（6 处签名 + 7 处内部调用 + 1 处 TTL 体引用），之后 42 项全过。
 - 探针自身的两次修正：① 基准副本与兄弟模块命名不匹配导致基准侧导入失败；② artifact 用当前时间生成，两侧 `generated_at` 相差数毫秒产生假差异，改为固定时间戳。
 - 测试计划第 1 版审核指出阶梯的三条回落分支（`contact_evidence_insufficient`／`ambiguous`／`invalid_record`）在既有用例与矩阵里都没有被执行；驱动补了 5 条 verdict 分支案例（含 `paper_only` 与 `conflict`），两侧仍逐字段相同。
 - 以上均为实施/测试资产问题，产品行为未变；失败运行与日志保留在 `/tmp/pc-bnd4-check/`。

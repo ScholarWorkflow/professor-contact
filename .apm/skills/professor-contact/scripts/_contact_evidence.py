@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Upstream contact-evidence location, check and rebuild for ``contact_state.py``.
+"""Contact-evidence location, check, rebuild, snapshot and decision ladder
+for ``contact_state.py``.
 
 The runner loads this helper by path **from the same directory**, which keeps
 ``upstream_check_script``'s ``Path(__file__).resolve().parents`` resolution
 chain byte-for-byte identical to the pre-split runner. Moving this file to
 another directory would silently change that chain.
 
-Two runner helpers are injected explicitly instead of being copied here:
-``read_json_file`` and ``compact_name``.
+Four runner helpers are injected explicitly instead of being copied here:
+``read_json_file``, ``compact_name``, ``sha256_obj`` and ``verify_ttl_days``.
 """
 from __future__ import annotations
 
