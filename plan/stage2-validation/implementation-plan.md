@@ -112,5 +112,5 @@ Stage 2 分 6 批。第 1 批（`_stage2_preflight.py`，PR #108）、第 2 批�
 ## 记录
 
 - 对比证据放 `/tmp`；测试计划与执行记录在 `plan/stage2-validation/` 下。
-- 2026-10-20 执行记录：被测代码提交 `76f107a`（父提交 `e973ffb`）；runner 10293 行 sha256 `e75593eb092d79e36dd68d18e849eac60c920caf0fcbd744a402ef7e3e8da9a3`，模块 924 行 sha256 `6e6e8c51857390f396f3fdbb850d10a674334e17b2c84e5da179ef26a89ac347`。
-- 实施中 `origin/main` 从 `0f89ebd` 前进到 `e973ffb`（PR #108 合入第 1 批）；本批重放到新基准，14 个函数在两次提交间 AST 相同。
+- 2026-10-20 执行记录：被测代码提交 `736af4a`（父提交 `7a59006`）；runner 9579 行 sha256 `c95b1fe56620dabfc94dc4eb22f2132d12a5df14abb7cf426c163406caed246f`，模块 924 行 sha256 `6e6e8c51857390f396f3fdbb850d10a674334e17b2c84e5da179ef26a89ac347`。
+- 实施中 `origin/main` 从 `0f89ebd` 前进到 `e973ffb`（PR #108 合入第 1 批），提交前又前进到 `7a59006`（PR #109 合入第 2 批）；本批两次重放，14 个函数在 `0f89ebd..7a59006` 之间 AST 相同。
