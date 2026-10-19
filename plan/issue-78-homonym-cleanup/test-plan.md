@@ -42,6 +42,7 @@
 - 环境：`/run/current-system/sw/bin/python3` 3.14.7（CI 为 Python 3.12）；用例只用标准库与既有本地夹具，不需要 Nix、APM、Skills 安装、eval、模型、网络、Zotero 或用户资料。
 - 运行目录 `/tmp/contact78-tests.LftVeG`（`tmp/`、`preflight.log`、`selectors.log`、`fixture_check.log`），按共识放在仓库外，不入库、不推送。
 - 缺项：产品修改未实施，第二关未通过，因此 §3.2 的定向命令未执行（本角色不运行正式用例）；只有 T1 的通用分类期望尚待 §3.1 产品修改后验证，T2 的 sibling 拒绝与 T3 的文案正则在当前树上即成立（产品说明修改后须保持匹配）。
+- 仓库 CI 自动运行（推送 `c2476d1` 触发，非本角色发起的正式执行）：shard2、shard3、shard4 通过；shard1 共 `Ran 380 tests`、`FAILED (failures=1, skipped=1)`，唯一失败为 `test_contact_targets.ContactTargetsTests.test_issue64_t3_unattributable_legacy_entries_are_never_imported`，差异是现产品仍输出 `same_name_other_dir`、选择器按 §3.1 期望通用 `other_professor`。该失败对应计划内尚未实施的产品修改，不是测试准备缺陷；产品实现后由执行者按 §3 定向复验。
 
 ### 2.2 实现符合性审核记录（专用 implementation_reviewer，2026-10-19）
 
