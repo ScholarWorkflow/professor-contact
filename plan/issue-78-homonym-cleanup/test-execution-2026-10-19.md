@@ -36,6 +36,7 @@
 
 - 运行 [39258957355](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39258957355)，head `3024d460699a188242787a493311800e8a990c4e`：`shards (shard1)` pass 1m57s、`shards (shard2)` pass 2m8s、`shards (shard3)` pass 1m18s、`shards (shard4)` pass 1m57s、聚合 `test` pass 4s，整体 `success`。
 - 该运行由推送自动触发，不是本角色发起的正式执行；本地 T1–T5 结果与上表一致（CI 为 Python 3.12 / ubuntu-latest，本地为 Python 3.14.7 / macOS）。
+- 之后的提交只改计划与说明文字（产品与测试内容未变）：`69f92e8` 上运行 [39262572442](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39262572442) 同样四片 pass、聚合 `test` pass，整体 `success`。按 test-plan §3.3，文档/SHA 变化不要求重跑未受影响项；本条记录所在的后续文档提交不改变这一结论。
 
 ## 实现符合性审核记录（implementation_reviewer，2026-10-19）
 
