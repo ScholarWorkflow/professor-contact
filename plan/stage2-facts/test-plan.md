@@ -4,9 +4,9 @@
 
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 2 版（`Plan conclusion: APPROVED`）。
 - Requirement revision: 第 1 版（2026-10-20 负责人要求）。
-- Target repository revision: 工作分支 `refactor-stage2-context`；对照基准为集成提交 `b862dfa`（`7a59006` 上并入 #112／#110／#111 后的树）。
-- Test plan revision: 第 4 版。
-- Proposed review status: **第一关 PASS、第二关 PASS**（2026-10-20；第二关经 H1–H3 三轮修正后通过）。
+- Target repository revision: 工作分支 `refactor-stage2-context`；对照基准为父分支 `refactor-stage2-resolve-commit` 的 head `3da3d4a6257f86f08426776a77246e9c687443d2`（分支链 #108 → #109 → #110 → #111 → #112 → 本批）。
+- Test plan revision: 第 5 版。
+- Proposed review status: **第一关 PASS、第二关 PASS**（2026-10-20）；第 5 版只把对照基准换成分支链上的父提交，判据与步骤不变。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
 
 ## 必测清单
@@ -107,7 +107,7 @@ set -e
 cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-context
 RUN=/tmp/pc-stage6
 mkdir -p "$RUN/base"
-git archive b862dfa .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
+git archive 3da3d4a6257f86f08426776a77246e9c687443d2 .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
 uv run --no-project python "$RUN/base/.apm/skills/professor-contact/scripts/contact_state.py" --help > /tmp/pc-stage6/help-base.txt
 diff -u /tmp/pc-stage6/help-base.txt /tmp/pc-stage6/help-head.txt
 shasum -a 256 /tmp/pc-stage2-tools/compare_stage2_batch_v2.py
@@ -178,13 +178,13 @@ uv run --no-project python -m unittest \
 
 6. 既有仓库检查（不属于本批必测项）：PR 推送后引用 4 个 `shards` 与聚合 job `test` 的运行编号与结论；不作为通过条件。
 
-7. 失败处理：T4／T5 有失败时，先按本批回归排查，在基线 `b862dfa` 上跑同一组方法：
+7. 失败处理：T4／T5 有失败时，先按本批回归排查，在父分支 head `3da3d4a` 上跑同一组方法：
 ```sh
 set -e
 BASELINE=/tmp/pc-stage6/base-b862dfa
 rm -rf "$BASELINE"
 mkdir -p "$BASELINE"
-git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-context archive b862dfa | tar -x -C "$BASELINE"
+git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-context archive 3da3d4a6257f86f08426776a77246e9c687443d2 | tar -x -C "$BASELINE"
 cd "$BASELINE/.apm/skills/professor-contact/tests"
 uv run --no-project python -m unittest \
   test_stage2_facts_sidecar.FactsSidecarTests.test_valid_facts_sidecar_is_normalized_into_the_pack \
@@ -226,4 +226,5 @@ cat /tmp/pc-stage6/t4-baseline.log
 - 第 1 版：第一关 NEEDS_MODIFICATION（F1 基线对照只覆盖 2/13；F2 `--help` 逐字节相同缺命令；F3 未标失败注入；F4 T3 的源码承诺未落地）。
 - 第 2 版：第一关 NEEDS_MODIFICATION（G1 T4 行仍写“第 6 步”；G2 第 7 步在 `set -e` 下基线失败会提前退出）。
 - 第 3 版：第一关 PASS；第二关 NEEDS_MODIFICATION（H1 第 1 步在干净 `/tmp` 下不可执行；H2 执行记录引用的 `blk5.sh` 是旧副本）。
+- 第 5 版：把本批挂到 PR 分支链上——对照基准由集成提交 `b862dfa` 改为父分支 head `3da3d4a`，`git archive` 与失败处理命令同步；A/B、T4、T5、docstring 在新基准上重跑。
 - 第 4 版：第二关 PASS（已按 H1／H2／H3 修正：第 1 步加 `RUN=/tmp/pc-stage6; mkdir -p "$RUN"` 并把 `help-head.txt` 写到 `$RUN` 下；执行记录改为引用按第 4 版第 7 步重新抽出的 `/tmp/pc-blocks/blk5.sh`）。

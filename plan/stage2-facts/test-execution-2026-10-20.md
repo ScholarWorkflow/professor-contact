@@ -3,11 +3,11 @@
 ## 版本与对象
 
 - 执行计划：`plan/stage2-facts/implementation-plan.md` 第 2 版。
-- 测试计划：`plan/stage2-facts/test-plan.md` 第 4 版。
-- 被测提交：`1747c40`（`refactor(stage2): move the facts and context layer into a helper module`，父提交 `c557802` 为计划文档提交，其父为集成提交 `b862dfa`）。
-- 对照基准：集成提交 `b862dfa`（`7a59006` 上依次并入 PR #112、#110、#111 后的树），runner 8191 行。
+- 测试计划：`plan/stage2-facts/test-plan.md` 第 5 版（第一关 PASS、第二关 PASS）。
+- 被测提交：`7e04e58`（`refactor(stage2): move the facts and context layer into a helper module`，父提交 `85a6f20` 为计划文档提交，其父为分支链上一位 `3da3d4a6257f86f08426776a77246e9c687443d2`）。
+- 对照基准：父分支 `refactor-stage2-resolve-commit` 的 head `3da3d4a6257f86f08426776a77246e9c687443d2`（分支链 #108 → #109 → #110 → #111 → #112 → 本批），runner 8191 行。
 - 环境：macOS；`uv run --no-project python` 3.14.6；仓库既有测试夹具；未新增依赖。
-- 运行目录：`/tmp/pc-stage6/`（`base/` 是 `b862dfa` 的 scripts，`official/` 是正式执行日志）；命令块从测试计划第 4 版原文抽出，放在 `/tmp/pc-blocks/blk0.sh`–`blk5.sh`。第 1 步已在干净的 `/tmp`（先 `rm -rf /tmp/pc-stage6`）上跑过，退出码 0，确认它自己会建目录。
+- 运行目录：`/tmp/pc-stage6/`（`base/` 是 `b862dfa` 的 scripts，`official/` 是正式执行日志）；命令块从测试计划第 5 版原文抽出，放在 `/tmp/pc-blocks/blk0.sh`–`blk5.sh`。第 1 步已在干净的 `/tmp`（先 `rm -rf /tmp/pc-stage6`）上跑过，退出码 0，确认它自己会建目录。
 
 ## 结果
 
@@ -16,8 +16,8 @@
 | T0 编译与工厂契约 | 通过 | 6 条 `T0 ... OK`：36 个 keyword-only 参数、18 个成员、18 个同名别名、两条常量别名在 `build()` 之前、模块不导入 runner／不做动态加载／不碰 `sys.path`／`sys.modules`、36 个实参与参数同名同集合且 18 个别名都在调用之后；`T0 CHECKS PASS`；`py_compile` 与 `--help` 退出码 0（`/tmp/pc-blocks/blk0.sh` 输出） |
 | T1–T3 结构／AST／接口 | 通过 | 98 条 `OK`（T0 3、T1 37、T2 21、T3 37）、`ALL CHECKS PASS`、退出码 0；`--help` 与 `b862dfa` 逐字节相同（`diff -u` 无输出） |
 | T2 的 docstring 核对 | 通过 | `total=18 with_doc=7 multi=5 clean_equal=7 without_doc=11 missing=0 mismatched=0`、`DOCSTRING CHECKS PASS`、退出码 0 |
-| T4 facts／sidecar／gap 行为 | 通过 | 13 个方法：`Ran 13 tests in 5.432s`、`OK`，无失败、无跳过 |
-| T5 复制夹具加载 | 通过 | 2 个方法：`Ran 2 tests in 1.143s`、`OK` |
+| T4 facts／sidecar／gap 行为 | 通过 | 13 个方法：`Ran 13 tests in 5.155s`、`OK`，无失败、无跳过 |
+| T5 复制夹具加载 | 通过 | 2 个方法：`Ran 2 tests in 1.001s`、`OK` |
 | 失败注入 | 不适用 | 本批只搬移定义并把两条常量别名上移，不改事务／回滚／写入顺序／错误通道（见测试计划第 5 步） |
 | 既有仓库检查（非必测） | 待跑 | 推 PR 后引用 4 个 `shards` 与聚合 `test` 的运行编号；不作为通过条件 |
 
@@ -25,7 +25,7 @@
 
 - 被测 runner：`.apm/skills/professor-contact/scripts/contact_state.py`，7630 行，sha256 `b2cbc73605957f2530801f837cc63ade7226f066cde94a801568ce4f5d6969e2`。
 - 新模块：`.apm/skills/professor-contact/scripts/_stage2_facts.py`，694 行，sha256 `ac84c80c2e47a894bd9e8604d653ce5611ed6e7f9f88c898b9932709a4cd9437`。
-- 代码 diff（`b862dfa` → 工作树）：runner `+72 −633`，新模块 `+694 −0`。新增侧是 `_stage2_facts` 加载块 12 行、两条常量别名 2 行、绑定块 59 行（与相邻空行合并后计 72 行）；删除侧是 18 个定义 598 行、旧位置两条别名 2 行，其余为删除后收敛掉的遗留空行。
+- 代码 diff（`3da3d4a` → `7e04e58`）：runner `+72 −633`，新模块 `+694 −0`。新增侧是 `_stage2_facts` 加载块 12 行、两条常量别名 2 行、绑定块 59 行（与相邻空行合并后计 72 行）；删除侧是 18 个定义 598 行、旧位置两条别名 2 行，其余为删除后收敛掉的遗留空行。
 - `git diff --ignore-blank-lines -U0` 的 hunk 正好 4 个：`@@ -219,0 +220,12 @@`（加载块）、`@@ -234,0 +247,2 @@`（两条常量别名上移）、`@@ -1216,632 +1230,59 @@`（18 个定义删除与绑定块新增）、`@@ -2012,2 +1452,0 @@`（旧位置的两条别名删除）；没有常量值、import、CLI、入口清单或其它顶层定义的改动。
 - 空行处理：按 AST 行区间删除 18 个定义后留下 37 个连续空行，收敛为 2 个；runner 因此从 8191 行变为 7630 行。
 - 18 个定义在模块内的 AST（忽略 docstring）与基线相同；7 个有 docstring 的定义清洗后同文（5 个多行），11 个原本没有 docstring。
