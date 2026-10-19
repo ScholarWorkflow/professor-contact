@@ -5329,7 +5329,17 @@ def stage2_display_counts(pack: dict) -> dict:
 
 
 def render_analysis_md(ctx: Stage2Context, pack: dict,
-                       state_fingerprint: str) -> str:
+                       state_fingerprint: str,
+                       line_owners: dict | None = None) -> str:
+    """Render the managed analysis body.
+
+    ``line_owners`` is an optional collector filled with the owner of every
+    physical body line (1-based) that carries a fixed-evidence slot of this
+    direction set: the machine ``evidence`` / ``completed_part`` /
+    ``remaining_gap`` slots and the anchor-banned blacklist evidence. Those
+    structured values may span several output lines, so ownership cannot be
+    re-derived from a single line prefix later.
+    """
     professor = ctx.professor
     pack_directions = pack.get("directions") or []
     for direction in pack_directions:
@@ -5449,34 +5459,42 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
             number = gap["no"]
             lines.append(f"1. 【作者 future work】{summary}（源自 [{gap['paper_title']}](zotero://select/library/items/{gap['item_key']})，{gap.get('paper_year') or '年份不明'}）")
             details = [
-                f"- 作者原话：「{gap['quote']}」",
-                f"- 中译：{gap['translation_zh']}",
-                f"- 页码：p.{gap.get('page')}（{gap.get('source')}）",
-                f"- 当前状态：{gap.get('status')}（置信度 {gap.get('confidence')}）",
+                (f"- 作者原话：「{gap['quote']}」", None),
+                (f"- 中译：{gap['translation_zh']}", None),
+                (f"- 页码：p.{gap.get('page')}（{gap.get('source')}）", None),
+                (f"- 当前状态：{gap.get('status')}（置信度 {gap.get('confidence')}）", None),
                 # U1: the human-facing fixed card prints trusted titles/links;
                 # the machine `evidence` value itself is never rewritten.
-                "- 后续论文依据：{}".format(
+                ("- 后续论文依据：{}".format(
                     stage2_display_text(gap.get("evidence"), references, "后续论文依据",
                                         confirmed_references)
-                    or "—"),
-                f"- 评估时间：{gap.get('evaluated_at') or '—'}",
+                    or "—"), "evidence"),
+                (f"- 评估时间：{gap.get('evaluated_at') or '—'}", None),
             ]
             if gap.get("status") == "partial":
-                details.append("- 已做部分：{}".format(
+                details.append(("- 已做部分：{}".format(
                     stage2_display_text(gap.get("completed_part"), references, "已做部分",
                                         confirmed_references)
-                    or "—"))
-                details.append("- 剩余缺口：{}".format(
+                    or "—"), "completed_part"))
+                details.append(("- 剩余缺口：{}".format(
                     stage2_display_text(gap.get("remaining_gap"), references, "剩余缺口",
                                         confirmed_references)
-                    or "—"))
+                    or "—"), "remaining_gap"))
             if gap.get("status") == "unknown":
-                details.append("- ⚠ 未查证是否已被后续工作实现（unknown 原因见后续论文依据）")
+                details.append(
+                    ("- ⚠ 未查证是否已被后续工作实现（unknown 原因见后续论文依据）", None))
             if explanation:
-                details.append(f"- 大白话：{explanation}")
+                details.append((f"- 大白话：{explanation}", None))
             lines.append(f"   <details><summary>freshness 卡 — future work #{number}</summary>")
             lines.append("")
-            lines.extend(details)
+            for text, fixed_field in details:
+                if line_owners is not None and fixed_field is not None:
+                    owner = {"kind": "fixed_evidence",
+                             "direction_id": direction_machine_id(d),
+                             "gap_id": gap.get("gap_id"), "field": fixed_field}
+                    for offset in range(len(rendered_markdown_block_lines(text))):
+                        line_owners[len(lines) + 1 + offset] = dict(owner)
+                lines.append(text)
             lines.append("")
             lines.append("   </details>")
         if not d.get("gap_shortlist"):
@@ -5509,7 +5527,17 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
                     completed_render = "（完成论文见证据）"
                 evidence_render = stage2_display_text(
                     item.get("evidence"), references, "禁锚区依据", confirmed_references)
-                lines.append(f"- {item['quote_trunc']}——《{item['paper_title']}》（{item.get('paper_year')}）→ 已被 {completed_render} 接住（依据：{evidence_render}）。")
+                blacklist_line = (f"- {item['quote_trunc']}——《{item['paper_title']}》"
+                                  f"（{item.get('paper_year')}）→ 已被 {completed_render} "
+                                  f"接住（依据：{evidence_render}）。")
+                if line_owners is not None:
+                    owner = {"kind": "fixed_evidence",
+                             "direction_id": direction_machine_id(d),
+                             "completed_by_item_key": completed or None,
+                             "field": "blacklist_evidence"}
+                    for offset in range(len(rendered_markdown_block_lines(blacklist_line))):
+                        line_owners[len(lines) + 1 + offset] = dict(owner)
+                lines.append(blacklist_line)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -6411,6 +6439,32 @@ def stage2_refresh_business_reasons(assessment: dict) -> list[str]:
     return sorted(set(reasons))
 
 
+def stage2_fixed_evidence_lines(pack: dict) -> dict[int, dict] | None:
+    """The recorded fixed-evidence line ownership of this pack's render.
+
+    Returns ``{1-based body line number: owner}`` recorded by the deterministic
+    render that produced the managed body, or ``None`` for a pack accepted
+    before that map existed (the caller then keeps its original single-line
+    check). An empty dict means the recorded render really has no fixed-evidence
+    line.
+    """
+    cache = pack.get("cache") if isinstance(pack, dict) else None
+    render = cache.get("render") if isinstance(cache, dict) else None
+    entry = render.get(ANALYSIS_MD) if isinstance(render, dict) else None
+    recorded = entry.get("fixed_evidence_lines") if isinstance(entry, dict) else None
+    if not isinstance(recorded, dict):
+        return None
+    owners: dict[int, dict] = {}
+    for number, owner in recorded.items():
+        try:
+            index = int(number)
+        except (TypeError, ValueError):
+            continue
+        if index > 0 and isinstance(owner, dict):
+            owners[index] = owner
+    return owners
+
+
 def stage2_managed_document(md_path: Path) -> dict:
     """The managed analysis document read BEFORE any write (r11 §3.3.7 step 1).
 
@@ -6536,11 +6590,12 @@ def stage2_display_acceptance(candidate: dict, render_pack: dict, render_ctx,
 
     # Step 2: the candidate body always comes from the current renderer, for a
     # first build as well as for every reuse path.
+    line_owners: dict = {}
     if mode == "refresh":
         try:
             with professor_business_channel():
                 candidate_body = render_analysis_md(render_ctx, render_pack,
-                                                    state_fingerprint)
+                                                    state_fingerprint, line_owners)
         except ProfessorBusinessFailure as failure:
             soft_exit("needs_refresh", "display_refresh_stale",
                       drift=["display_refresh_candidate_invalid"],
@@ -6549,7 +6604,8 @@ def stage2_display_acceptance(candidate: dict, render_pack: dict, render_ctx,
                       message="当前渲染器无法用已持久化的可信元数据生成候选正文；"
                               "按正常 Stage 2 流程重新处理。未修改任何文件。")
     else:
-        candidate_body = render_analysis_md(render_ctx, render_pack, state_fingerprint)
+        candidate_body = render_analysis_md(render_ctx, render_pack, state_fingerprint,
+                                            line_owners)
 
     # Step 3: compare the two actual managed bodies.
     body_changed = (comparable_old_body is None
@@ -6623,7 +6679,13 @@ def stage2_display_acceptance(candidate: dict, render_pack: dict, render_ctx,
     # Step 6: only after the body and the certification are settled may the
     # candidate pack record the render binding and the current display version.
     cache = candidate.setdefault("cache", {})
-    cache["render"] = {ANALYSIS_MD: {"sha256": md_sha256}}
+    # The render-time line ownership travels with the body and its digest, so a
+    # later report can attribute an exact physical line to its structured field
+    # instead of guessing from a single-line prefix.
+    cache["render"] = {ANALYSIS_MD: {
+        "sha256": md_sha256,
+        "fixed_evidence_lines": {str(number): owner
+                                 for number, owner in sorted(line_owners.items())}}}
     meta = cache.get("preflight")
     if isinstance(meta, dict):
         meta["display_refresh_version"] = STAGE2_DISPLAY_REFRESH_VERSION
@@ -11743,6 +11805,7 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
     blocking_by_direction: dict[str, list] = {}
     issues_by_direction: dict[str, list] = {}
     fixed_evidence_by_direction: dict[str, list] = {}
+    fixed_evidence_lines = stage2_fixed_evidence_lines(pack)
     for issue in entry["issues"]:
         quote = issue["quote"]
         hits = [i for i, line in enumerate(lines) if quote in line]
@@ -11840,8 +11903,15 @@ def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
         # blacklist's evidence is a LEGAL report target, but it is never given
         # to the model: those fields carry facts only their source owner may
         # change. Only a narrative-prose hit is model-repairable.
+        # Ownership comes from the deterministic render that produced this body:
+        # a fixed-evidence value may span several physical lines, so a prefix
+        # test on the reported line alone can both miss a real fixed-slot line
+        # and misread a narrative continuation line. Packs accepted before the
+        # map existed keep the original single-line check.
         fixed_evidence = False
-        if len(gap_heading_lines) == 1 and hit > gap_heading_lines[0]:
+        if fixed_evidence_lines is not None:
+            fixed_evidence = hit + 1 in fixed_evidence_lines
+        elif len(gap_heading_lines) == 1 and hit > gap_heading_lines[0]:
             rendered_line = lines[hit]
             fixed_evidence = (
                 any(rendered_line.startswith(prefix)
