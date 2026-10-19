@@ -3,7 +3,7 @@
 ## 版本与对象
 
 - 执行计划：`plan/stage2-finalize/implementation-plan.md` 第 2 版（`Plan conclusion: APPROVED`）。
-- 测试计划：`plan/stage2-finalize/test-plan.md` 第 2 版（待测试计划审核；本记录按该版命令产生）。
+- 测试计划：`plan/stage2-finalize/test-plan.md` 第 2 版（第一关 PASS、第二关 PASS；本记录按该版命令产生）。
 - 被测提交：`47f609dc66d1781cbf67d6bfd885cd80cb8d174e`（实现提交；父提交 `e973ffb4571344157b3c43a151906a24f48c7e4e`，即 PR #108 合并后的 `origin/main`）。
 - 环境：macOS；`python3 --version` 为 3.14.7（T4/T5），`uv run --no-project` 为 3.14.6（A/B 脚本）；仓库既有测试夹具；未新增依赖。
 - 运行目录：`/tmp/pc-stage4/`。
@@ -52,4 +52,4 @@ T4 实际方法（与测试计划第 2 步逐字对应）：`TestFinalizePreflig
 - `git diff --stat e973ffb 47f609d`：新模块 918 行新增；runner 63 行新增、859 行删除（844 行函数体 + 搬移区内 15 个遗留空行）。
 - 生成与整理：提取器 `/tmp/pc-stage2-tools/extract_batch.py`（sha256 `e820a3343ca8729720284c0845b52a10222c4b454c87ab36f862b6346209ada9`）按 `/tmp/pc-stage2-tools/spec-b4.json`（sha256 `2fe42f4ee3722cb0c776c35b19616c535189aec95fae64a5039c2ec5f1d40e47`）生成 922 行模块与 11113 行 runner（旧基线）。整理只改格式：删除 spec 带入但 9 个函数未使用的 `import re`（执行计划也写明本批不需要 `re`），模块头空行收敛为 2 个，`SimpleNamespace` 成员缩进改为 8 个空格；随后按接缝检查收敛 runner 的遗留空行。函数体、常量注入和调用关系未改。
 - rebase 影响：`#108` 合入后，本批加载块按原 spec 的 `load_anchor=188` 落在 `SCHEMA` 之前，`#108` 的预检加载块保留在 `SCHEMA` 之后；两个模块都只定义函数，没有 import 期依赖，绑定点仍在全部依赖定义之后，无行为变化。T0–T5 已按 rebase 后的树重跑。
-- 测试计划第 2 版为待审核状态；本记录不代填审核结论。CI 已在 head `99af1e1` 上通过（run `39314435704`，4 个 shards + 聚合 test）。
+- 测试计划第 2 版已通过第一关/第二关审核；CI 已在 head `99af1e1` 上通过（run `39314435704`，4 个 shards + 聚合 test）。

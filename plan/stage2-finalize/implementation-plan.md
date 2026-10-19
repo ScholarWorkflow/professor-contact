@@ -110,7 +110,7 @@ Stage 2 分 6 批。第 1 批（`_stage2_preflight.py`，PR #108）与第 2 批�
 ## 审核状态
 
 - 计划审核：`Plan conclusion: APPROVED`（2026-10-20，P1–P4 全 PASS）。第 1 版的 6 条修改与第 2 版的 2 条 P1 修正均已关闭；P2–P4 复用前轮 PASS。
-- 测试计划：`plan/stage2-finalize/test-plan.md` 第 2 版（待测试计划审核）。
+- 测试计划：`plan/stage2-finalize/test-plan.md` 第 2 版（第一关 PASS、第二关 PASS）。
 - 测试执行：`plan/stage2-finalize/test-execution-2026-10-20.md`（被测实现提交 `47f609d`，交付基线 `e973ffb`；A/B 53 条 OK、T4 10 项 OK、T5 2 项 OK）。
 
 ## 记录
