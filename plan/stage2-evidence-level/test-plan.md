@@ -475,6 +475,12 @@ t35 第三关正式执行记录（2026-10-18，本地执行工程师）：产品
   - 仓库外只读探针（不是必测项）：`/tmp/pr92-review-probes/probe_fixed_evidence_line_ownership.py` 在修正前后对照——固定卡 `evidence` 含换行且校验器精确报告其续行时，修正前 `record status=error`、`reason_code=validation_issue_not_repairable`（真实阻挡无法登记），修正后同一输入 `status=needs_correction`、`refine jobs=0`、`plan reason_code=fixed_evidence_not_model_repairable`（登记成功并交源数据/生成器）；叙事续行以 `- 后续论文依据：` 开头时仍判为模型可修订。该探针不是必测项，不新增选择器或采集器。
   - 受影响项复验（产品 `7032b64`）：§3 的 17 个选择器 `Ran 17 tests`／`OK`、§3.3 两条新选择器 `Ran 2 tests`／`OK`、§3.3 生命周期绑定选择器 `Ran 1 test`／`OK`，日志 `/tmp/contact-evidence-level.5VIxdEHs/`（`recipe.txt`、`recipe-t46.txt`、`recipe-t46-binding.txt`）；T1/T2/T3 三个类 6 项亦通过；整仓 `Ran 1051 tests`、`OK (skipped=1)`，日志 `/tmp/contact-evidence-level.qXBtIvys/full-suite.txt`。
   - 实现符合性定向审核与合并复审结论见随后记录与 PR 评论；本轮只修该阻断项及其直接连带影响，未改测试断言、选择器与测试范围。
+  - 实现符合性定向审核（`implementation_reviewer`，只读，受审 `7032b64`）：结论**部分完成**并判阻断项未完全关闭、提出三项问题，均由 `09b5f9d` 处置：
+    - **IR-51（阻断，已处置）**：映射用 `len(lines)`（列表元素数）而非物理行数计行；positioning、作者原话、中译、`gap_notes` summary／explanation 等合法元素都可含换行，任一此类元素位于固定槽位之前，其后映射整体前移，跨行固定证据的续行漏标并重新触发 `validation_issue_not_repairable`。修正为在 `render_analysis_md` 内用 `rendered_markdown_block_lines` 累加真实物理行号后再登记固定槽位行。
+    - **IR-52（低，已处置）**：`stage2-refine-finalize` 的确定性重绘丢弃映射，第二轮报告落到旧包前缀回退路径；现同样收集并写入 `fixed_evidence_lines`。
+    - **IR-53（低，验证覆盖，已补）**：原探针的叙事用例位于 `### 可延伸方向` 之前，不能证明阻断项第二半；探针已重写为「多行叙事 + 多行固定证据（报告续行）」与「`gap_notes` summary 续行冒充固定前缀」两条输入，并对 `d4f34aa`（前缀判定）、`7032b64`（首版映射）、`09b5f9d`（本修正）三版对照。
+  - 探针对照结果（仓库外只读，只写夹具临时目录 `/tmp/pr92-review-probes/probe_fixed_evidence_line_ownership.py`）：多行叙事 + 多行固定证据报告续行时，`d4f34aa` 与 `7032b64` 均为 `record=error`／`validation_issue_not_repairable`（阻断项复现），`09b5f9d` 为 `record=needs_correction`、`refine jobs=0`、`plan reason=fixed_evidence_not_model_repairable`（登记并交源数据/生成器）；summary 续行以固定前缀开头时，`d4f34aa` 误归源数据负责人（`fixed_evidence_not_model_repairable`），`7032b64` 与 `09b5f9d` 均为模型可修订（`jobs=1`）。
+  - IR-51／IR-52 处置后复验（产品 `09b5f9d`）：§3 的 17 个选择器 `Ran 17 tests`／`OK`、§3.3 两条新选择器 `Ran 2 tests`／`OK`、§3.3 生命周期绑定选择器 `Ran 1 test`／`OK`、t43 单选择器 `Ran 1 test`／`OK`，日志 `/tmp/contact-evidence-level.HEIFLyMA/`（`recipe.txt`、`recipe-t46.txt`、`recipe-t46-binding.txt`、`recipe-t43.txt`）；整仓 `Ran 1051 tests`、`OK (skipped=1)`，日志 `/tmp/contact-evidence-level.fg5Bvpt0/full-suite.txt`。定向复核结论见随后记录与 PR 评论。
 
 准备期复核（非第三关正式执行）：产品提交 `305bc08f8b186672108cffbba0293d249bc8b4b2`（未实现状态），测试提交 `0fe84ab`，命令为 §3 的 17 个选择器，结果目录 `/tmp/contact-evidence-level.p49ZBXq2`（`recipe.txt`），退出码 1，`Ran 17 tests`、`FAILED (failures=11)`。
 
