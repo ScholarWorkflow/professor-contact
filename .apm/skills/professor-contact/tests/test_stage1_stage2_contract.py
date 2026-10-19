@@ -312,7 +312,7 @@ class Stage2PreflightContractTests(unittest.TestCase):
     def test_issue64_t7_preflight_proof_save_is_per_professor_transaction(self):
         """R64-17/R64-20 supplement (§6/§8.2): each professor transaction saves the
         preflight proof at its own transient location and carries the actual path
-        in its transaction record, so two same-name professors in different
+        in its transaction record, so two professors in different canonical
         directories can never share, overwrite or delete one another's proof."""
         for target in ("professor-contact-codex", "professor-contact-opencode"):
             with self.subTest(target=target):

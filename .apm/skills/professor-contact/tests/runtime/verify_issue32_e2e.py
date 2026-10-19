@@ -2001,7 +2001,10 @@ def _checkpoint_stage4_professor_isolation(args: argparse.Namespace) -> dict[str
     manifest = _issue67_manifest(Path(supplied["fixture_manifest"]), root, checks)
     if manifest is None:
         return machine("invalid", "INVALID_TEST_EXECUTION")
-    observed["display_name"] = manifest.get("display_name")
+    observed["professors"] = [
+        {"professor": row.get("professor"),
+         "professor_dir": row.get("canonical_professor_dir")}
+        for row in manifest.get("professors") or [] if isinstance(row, dict)]
 
     # Phase C: the pre snapshot was taken from this manifest, before any write.
     try:

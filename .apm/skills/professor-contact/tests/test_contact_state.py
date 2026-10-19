@@ -1396,7 +1396,8 @@ class Issue66RecordedValidationScopeTests(BaseEnv):
 
 
 class TestStage5ListInputDiscovery(BaseEnv):
-    def test_valid_and_escaped_packs_produce_one_json_document(self):
+    def write_discovery_packs(self):
+        """One legal pack plus one pack whose directory escapes the program root."""
         research = self.root / "教授研究"
         valid_dir = research / "X分野" / "有効 教授"
         invalid_pack_dir = research / "Y分野" / "越界 教授"
@@ -1414,10 +1415,17 @@ class TestStage5ListInputDiscovery(BaseEnv):
 
         write_pack(valid_dir, "有効 教授", valid_dir)
         write_pack(invalid_pack_dir, "越界 教授", outside_dir)
-        before = {
+        return valid_dir, invalid_pack_dir
+
+    def discovery_state(self):
+        return {
             path.relative_to(self.root): path.read_bytes()
             for path in self.root.rglob("*") if path.is_file()
         }
+
+    def test_valid_and_escaped_packs_produce_one_json_document(self):
+        self.write_discovery_packs()
+        before = self.discovery_state()
 
         result = raw_cli("stage5-list-inputs", "--program-root", self.root)
 
@@ -1430,11 +1438,43 @@ class TestStage5ListInputDiscovery(BaseEnv):
         self.assertEqual(rows["越界 教授"]["status"], "error", payload)
         self.assertEqual(rows["越界 教授"]["reason_code"],
                          "invalid_professor_dir", payload)
-        after = {
-            path.relative_to(self.root): path.read_bytes()
-            for path in self.root.rglob("*") if path.is_file()
-        }
-        self.assertEqual(after, before, "discovery must remain read-only")
+        self.assertEqual(self.discovery_state(), before, "discovery must remain read-only")
+
+    def test_exact_professor_filter_preserves_matching_row_and_read_only_state(self):
+        # No ambiguity logic: an exact name filter either hands over the one
+        # matching row (legal or bad) or reports the name as missing.
+        self.write_discovery_packs()
+        before = self.discovery_state()
+
+        for wanted, expected_status, expected_reason in (
+                ("有効 教授", "ok", None),
+                ("越界 教授", "error", "invalid_professor_dir")):
+            with self.subTest(professor=wanted):
+                result = raw_cli("stage5-list-inputs", "--program-root", self.root,
+                                 "--professor", wanted)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                payload = json.loads(result.stdout)
+                self.assertEqual(payload["status"], "ok", payload)
+                self.assertEqual(len(payload["inputs"]), 1, payload)
+                row = payload["inputs"][0]
+                self.assertEqual(row["professor"], wanted, payload)
+                self.assertEqual(row["status"], expected_status, payload)
+                self.assertEqual(row["reason_code"], expected_reason, payload)
+        self.assertEqual(self.discovery_state(), before, "filtered discovery must stay read-only")
+
+    def test_missing_professor_returns_needs_input_without_writes(self):
+        self.write_discovery_packs()
+        before = self.discovery_state()
+
+        result = raw_cli("stage5-list-inputs", "--program-root", self.root,
+                         "--professor", "不存在 教授")
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "needs_input", payload)
+        self.assertEqual(payload["reason_code"], "professor_not_found", payload)
+        self.assertEqual(self.discovery_state(), before,
+                         "missing professor must not change any file")
 
 
 class TestStage5(BaseEnv):
@@ -2839,10 +2879,10 @@ class _ForeignAuthorityGuard:
 
 
 class Issue65Stage2BindingEnv(unittest.TestCase):
-    """A/B share one display professor name; only canonical identity separates them."""
+    """Two professors with distinct display names; only canonical identity binds them."""
 
-    DISPLAY = "教授同名"
-    B_DISPLAY = None
+    DISPLAY = "教授甲"
+    B_DISPLAY = "教授乙"
     PACK = "套磁候选输入.json"
     ANALYSIS_MD = "套磁候选分析.md"
     FRESHNESS_CACHE = Path("论文分析") / "_freshness_cache.json"
@@ -2870,10 +2910,11 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
         ledger = self.root / "教授研究" / "_署名对照.json"
         ledger.write_text(json.dumps({
             "updated_at": "2026-09-29T00:00:00Z", "overrides": {},
-            "professors": {self.DISPLAY: {
-                "books": [{"prof_name_tokens": ["教授", self.DISPLAY.removeprefix("教授")], "seed_count": 2, "auto": [],
+            "professors": {name: {
+                "books": [{"prof_name_tokens": ["教授", name.removeprefix("教授")], "seed_count": 2, "auto": [],
                            "conflicted": [], "offenders": [], "typos": [], "mashes": []}],
-                "seed_count": 2}}}, ensure_ascii=False), encoding="utf-8")
+                "seed_count": 2} for name in (self.DISPLAY, self.B_DISPLAY)}},
+            ensure_ascii=False), encoding="utf-8")
         self.legacy_snapshot.write_text(json.dumps({
             "schema_version": 1, "kind": "professor-contact-stage1", "updated_at": None,
             "professors": [], "sentinel": "issue-65-legacy-aggregate-sentinel"},
@@ -3210,13 +3251,18 @@ class TestIssue64Stage2PlanBinding(Issue65Stage2BindingEnv):
                          snapshot["input_fingerprint"])
 
     def test_issue64_t6_plan_refuses_a_sibling_preflight_proof(self):
-        sibling_proof = self._save_proof(self._preflight_for(self.DISPLAY, self.b_target))
+        # The sibling proof is a legal proof for B's own name and target; binding
+        # it to A's facts must still be refused as a professor mismatch.
+        outputs_before = self.outputs_state()
+        sibling_proof = self._save_proof(self._preflight_for(self.B_DISPLAY, self.b_target))
         self._bind_facts(sibling_proof)
         text, code = self.plan_raw(self.preflight_file)
         payload = json.loads(text)
-        self.assertEqual(payload["status"], "needs_refresh", payload)
-        self.assertEqual(payload["reason_code"], "preflight_inputs_changed", payload)
-        self.assertEqual(code, 2)
+        self.assertEqual(payload["status"], "error", payload)
+        self.assertEqual(payload["reason_code"], "invalid_params", payload)
+        self.assertIn("professor mismatch", payload.get("message", ""), payload)
+        self.assertEqual(code, 1)
+        self.assertEqual(self.outputs_state(), outputs_before)
 
     def test_issue64_t6_plan_refuses_a_missing_preflight_file(self):
         text, code = self.plan_raw(self.root / "不存在的证明.json")
@@ -3529,19 +3575,19 @@ class Issue67ProfessorLocalStage4Tests(_Issue67Stage4Fixture):
 
     # ---- R67-G1-9: canonical professor_dir, not the display name ----------
 
-    def test_06_same_display_name_two_directories_keep_two_local_states(self):
-        """Two canonical directories that display the same professor name own two
-        independent pairs; neither row is the other's prerequisite."""
-        twin = self.clone_professor("試験 教授", field="Z分野")
-        out = self.stage4([self.row(self.prof_dir), self.row(twin)], name="b6.json")
+    def test_06_two_professors_keep_two_local_states(self):
+        """Two canonical professor directories own two independent pairs; neither
+        row is the other's prerequisite and neither name stands in for a directory."""
+        second = self.clone_professor("対照 教授", field="Z分野")
+        out = self.stage4([self.row(self.prof_dir), self.row(second)], name="b6.json")
         self.assertEqual(out["status"], "ok", out)
         rows = {row["professor_dir"]: row for row in stage4_rows(out)}
         self.assertEqual(sorted(Path(key).name for key in rows),
-                         ["試験 教授", "試験 教授"], out)
-        for directory in (self.prof_dir, twin):
+                         ["対照 教授", "試験 教授"], out)
+        for directory in (self.prof_dir, second):
             row = rows[str(directory)]
             self.assertEqual(row["status"], "ok", out)
-            self.assertEqual(row["professor"], "試験 教授")
+            self.assertEqual(row["professor"], directory.name)
             pack = json.loads(Path(row["email_pack"]).read_text(encoding="utf-8"))
             self.assertEqual(len(pack["emails"]), 1, pack)
             self.assertEqual(pack["professor_dir"], str(directory))
@@ -3925,21 +3971,24 @@ class Issue67AdjacentStateTests(_Issue67Stage4Fixture):
     # ---- R67-G1-8: #59 email identity is untouched by professor_dir --------
 
     def test_06_email_id_stays_the_three_part_identity_regardless_of_directory(self):
-        twin = self.clone_professor("試験 教授", field="Z分野")
-        out = self.stage4([self.row(self.prof_dir), self.row(twin)], name="adj6.json")
+        second = self.clone_professor("対照 教授", field="Z分野")
+        out = self.stage4([self.row(self.prof_dir), self.row(second)], name="adj6.json")
         self.assertEqual(out["status"], "ok", out)
         rows = stage4_rows(out)
         self.assertEqual(len(rows), 2, out)
-        expected = "試験 教授::DIR00001::DIR00001_1"
         for row in rows:
+            # Each professor keeps its own three-part identity: professor name,
+            # collection key, original idea id.
+            expected = f"{row['professor']}::DIR00001::DIR00001_1"
             pack = json.loads(Path(row["email_pack"]).read_text(encoding="utf-8"))
             self.assertEqual([entry["email_id"] for entry in pack["emails"]], [expected])
             self.assertEqual(Path(row["email_pack"]).parent.name, row["professor"])
         self.assertEqual({Path(row["email_pack"]) for row in rows},
-                         {self.prof_dir / self.PACK, twin / self.PACK})
+                         {self.prof_dir / self.PACK, second / self.PACK})
 
         # --email-id resolves inside the pack the caller handed over, not globally.
         for row in rows:
+            expected = f"{row['professor']}::DIR00001::DIR00001_1"
             planned = self.stage5("--email-pack", row["email_pack"],
                                   "--email-id", expected)
             self.assertEqual(planned["status"], "ok", planned)

@@ -38,7 +38,7 @@ You are **professor-contact-selection**, the stage-4 subagent that records the u
    {"professor": "Professor Example", "direction_ids": ["<DIR_A>", "<DIR_B>"],
     "ideas": [{"id": "跨方向想法 id", "note": "可选补充"}]}]
   ```
-  每条**可选**带该条目的 canonical `professor_dir`（可靠目录来源，如同显示名的两位教授必须用它区分；不带时由本 agent 按 Step 1 逐请求确定性解析后补入，`professor_dir` 绝不因此变成用户新增必填项）。也可给自然语言（如 "选 Professor Example 的候选1，论文只用指定的近年论文"），本 agent 解析成上面的结构。selection-input 的 `professor_dir` 由本 agent 解析后填进（runner 必需）。`papers_override` 固定为可选的 item key 字符串列表；标题、年份和署名不能由用户传入。
+  每条**可选**带该条目的 canonical `professor_dir`（可靠目录来源，用来精确区分每一位教授的目录；不带时由本 agent 按 Step 1 逐请求确定性解析后补入，`professor_dir` 绝不因此变成用户新增必填项）。也可给自然语言（如 "选 Professor Example 的候选1，论文只用指定的近年论文"），本 agent 解析成上面的结构。selection-input 的 `professor_dir` 由本 agent 解析后填进（runner 必需）。`papers_override` 固定为可选的 item key 字符串列表；标题、年份和署名不能由用户传入。
 
 If `folder_path` missing → return the error JSON.
 
@@ -57,9 +57,9 @@ If `folder_path` missing → return the error JSON.
 
 ### Step 1 — Resolve program root, bind each requested professor BEFORE any whole-project read
 1. Resolve `program_root`.
-2. **先按原请求逐教授分流，再读任何教授正式文件**。把显式 `selection` 的条目解析到教授：规范化到同一 canonical `professor_dir` 的条目共同构成**一个教授事务**（同目录的路径别名是同一位教授）；两个不同目录即使显示名同名也绝不按名字合并选择或共享状态，`professor_dir` 就是 Stage-4 事务边界（issue #67）。
+2. **先按原请求逐教授分流，再读任何教授正式文件**。把显式 `selection` 的条目解析到教授：规范化到同一 canonical `professor_dir` 的条目共同构成**一个教授事务**（同目录的路径别名是同一位教授），`professor_dir` 就是 Stage-4 事务边界（issue #67）。
    - **条目已带可靠 `professor_dir`（路径 A 机器输入）**：直接采用该 canonical 身份。在读取该教授任何正式文件（`套磁候选状态.json`、`套磁候选输入.json`、local `套磁选择.json`）之前，先验证该目录属于当前 `<program_root>/教授研究/`；越界 → 该教授一行 error（`invalid_professor_dir`，零读取、零写入），其他教授照常。此后**只读取请求所涉及教授**的候选状态与输入包——不得先执行全项目扫描，任何无关教授的候选状态/输入包/身份/迁移状态都不是本教授的前置读取条件；机器输入已带目录与想法编号时，也不以想法预校验作为进入 Step 3 执行程序的条件（想法/方向最终有效性由 runner fail closed）。
-   - **条目没有目录来源（结构化只报名字 / 自然语言）**：保留这两类既有入口，`professor_dir` 绝不变成用户新增必填项。允许为确定目录做候选文件位置发现（如 `find 教授研究 -name "套磁候选状态.json"`），并**逐请求**做确定性解析：某个候选文件的读取/解析失败只结束它对应的请求，绝不妨碍其他请求继续解析；只有当前机器资料能唯一证明的匹配（该教授输入包/状态顶层 `professor` 与请求显示名完全一致，且全程序只有一个这样的目录）才可绑定目录；同名多个目录是歧义 → 只给该请求返回待补输入行，绝不靠显示名猜测绑定，也不把其他请求并进这一行。绑定成功后，自然语言的想法选择也只在**已绑定教授**的当前候选中精确映射，不得就近匹配。
+   - **条目没有目录来源（结构化只报名字 / 自然语言）**：保留这两类既有入口，`professor_dir` 绝不变成用户新增必填项。允许为确定目录做候选文件位置发现（如 `find 教授研究 -name "套磁候选状态.json"`），并**逐请求**做确定性解析：某个候选文件的读取/解析失败只结束它对应的请求，绝不妨碍其他请求继续解析；只有当前机器资料能证明的匹配（该教授输入包/状态顶层 `professor` 与请求显示名完全一致，且该文件就位于它自己声明的 canonical 目录）才可绑定目录，绑定依据是机器事实与目录本身而不是请求里的称呼；无法确定归属时只给该请求返回待补输入行，绝不靠显示名猜测绑定，也不把其他请求并进这一行。绑定成功后，自然语言的想法选择也只在**已绑定教授**的当前候选中精确映射，不得就近匹配。
    - **路径 C（缺 `selection`）**：仍可为展示候选做发现与读取；该路径零正式写入，不属于「保存 A 被 B 阻断」的修复边界（见 Step 2 路径 C）。
 3. 对每位已绑定目录的教授：读该教授自己的 `套磁候选状态.json`（每轮以磁盘为准）供挑选/展示（候选摘要字段够用：id/title/one_liner/research_question/fit；不给 gap 原文全文），并**记录状态顶层 `profile_path` 的绝对路径**——Step 3 的迁移命令与 Step 4 的 `stage4-finalize` 必须把它原样传给 `--profile`。local `套磁选择.json` 只在准备该教授事务/迁移（Step 3）时读取。路径 A/B 拿到真实选择、准备进入 Step 4 时才要求读取 `套磁候选输入.json`：selection-input 的 `professor` 必须从该输入包顶层同名字段原样复制，绝不能从目录 basename、用户称呼或模型记忆猜测。路径 C 不要求 `套磁候选输入.json` 存在，展示用 `professor` 取 canonical `professor_dir` 的 basename，其余字段逐项抄自候选状态。
 4. 某教授的身份/读取/映射/迁移预期失败只结束**该教授**：失败结果保留原因，`selection_file` 与 `email_pack` 为 `null`，其他已解析教授照常进入 Step 3；无法唯一绑定目录的请求保留与原请求的对应关系并报待补输入，不伪造目录。任何请求条目都无法建立教授边界（如 `selection` 整体不可解析）→ 走 Errors 的调用级错误出口。
@@ -69,7 +69,7 @@ If `folder_path` missing → return the error JSON.
 无论哪个分支，每一轮调用都先**重新读取**当前 `套磁候选状态.json`——机器状态每轮以磁盘为准，绝不依赖上一轮调用的模型记忆。
 
 **路径 A（两个 runtime 通用）——`selection` 显式给定**：
-- 每条选择先按 Step 1 绑定到 canonical `professor_dir`（条目自带可靠目录的直接采用；只报名字/自然语言的由本 agent 逐请求确定性解析补入——同显示名的两位教授是两个目录，必须是两个教授事务）。带目录的机器输入不以全项目读取或想法预校验作为进入执行程序的前置；选中的 `id` 最终必须存在于该教授状态（该方向 `candidates[]` 或其名下 `cross_direction[]`），找不到 → **该教授整批 fail closed**（runner 该教授行返回 `unknown_idea_id`，该教授不写任何文件；同批其它教授照常成功），绝不静默跳过后照写该教授其余选择；`ideas[].note` 记录用户补充。自然语言形式的选择**必须能无歧义映射到已绑定教授当前候选中的真实 idea id**，不得猜测、不得就近匹配，映射不清 → 只给该请求返回 `needs_input` 并列出真实候选（同路径 C 的 `pending_selection`）。
+- 每条选择先按 Step 1 绑定到 canonical `professor_dir`（条目自带可靠目录的直接采用；只报名字/自然语言的由本 agent 逐请求确定性解析补入）。带目录的机器输入不以全项目读取或想法预校验作为进入执行程序的前置；选中的 `id` 最终必须存在于该教授状态（该方向 `candidates[]` 或其名下 `cross_direction[]`），找不到 → **该教授整批 fail closed**（runner 该教授行返回 `unknown_idea_id`，该教授不写任何文件；同批其它教授照常成功），绝不静默跳过后照写该教授其余选择；`ideas[].note` 记录用户补充。自然语言形式的选择**必须能无歧义映射到已绑定教授当前候选中的真实 idea id**，不得猜测、不得就近匹配，映射不清 → 只给该请求返回 `needs_input` 并列出真实候选（同路径 C 的 `pending_selection`）。
 - 该教授解析/绑定成功 → 按顺序进入 Step 3（迁移判定：需要时 `stage4-migrate-local`）与 Step 4（`stage4-finalize`）；expected migration failure 只形成该教授结果，其他教授的解析或读取失败也不牵连它。
 
 **路径 B（OpenCode-only）——交互 `question`**（`question` 是 OpenCode 官方交互工具，不得当作 Codex 或跨 runtime API）：

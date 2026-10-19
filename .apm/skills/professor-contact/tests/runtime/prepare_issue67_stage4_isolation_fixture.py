@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Prepare the producer-owned, Stage-4-only fixture for issue #67 (PC67-RISO).
 
-The fixture carries two professors whose display name is identical and whose
-only difference is the canonical professor directory: one carries a canonical
-Stage-3 state, the other carries a single fixed malformed canonical
+The fixture carries two professors with different display names whose
+transaction boundary is the canonical professor directory: one carries a
+canonical Stage-3 state, the other carries a single fixed malformed canonical
 candidate-state file.  A legacy program-level Stage-4 pair is present as
 history only, so the run must show that an unrelated professor never blocks a
 valid one and that the legacy container never regains authority.
@@ -21,7 +21,6 @@ from typing import Any
 MANIFEST_ID = "tests/runtime/prepare_issue67_stage4_isolation_fixture.py"
 DIRECTION_ID = "DIR00001"
 COLLECTION_KEY = "DIR00001"
-DISPLAY_NAME = "Isolation Professor"
 ITEM_KEY = "ISSUE67AAA1"
 GAP_ID = "GAP0001"
 INPUT_FINGERPRINT = "issue67-fixture-input-fingerprint"
@@ -29,17 +28,19 @@ LEGACY_DIRECTION_ID = "DIR99999"
 LEGACY_IDEA_ID = "legacy-idea-not-current"
 PROFILE_RELATIVE = Path("套磁邮件/套磁信息.md")
 
-# Both professors share this display name on purpose: the transaction boundary
-# under test is the canonical professor directory, not the name.
+# Each professor owns a display name that differs from its canonical directory
+# basename: a name is never a substitute for the directory.
 PROFESSORS = (
     {
         "role": "valid",
+        "professor": "Alpha Professor",
         "field": "AL分野",
         "directory": "isolation-alpha",
         "idea_id": "issue67-alpha-1",
     },
     {
         "role": "malformed_candidate_state",
+        "professor": "Beta Professor",
         "field": "BE分野",
         "directory": "isolation-beta",
         "idea_id": "issue67-beta-1",
@@ -97,12 +98,12 @@ def _prepare_root(root: Path) -> None:
     root.mkdir()
 
 
-def _input_pack(professor_dir: Path) -> dict[str, Any]:
+def _input_pack(professor_dir: Path, professor: str) -> dict[str, Any]:
     return {
         "schema": 2,
         "kind": "professor-contact-stage2-input",
         "identity_version": "direction-id-v1",
-        "professor": DISPLAY_NAME,
+        "professor": professor,
         "professor_dir": str(professor_dir),
         "papers": {
             ITEM_KEY: {
@@ -183,16 +184,16 @@ def _candidate_state(professor_dir: Path, profile_path: Path, profile_sha: str,
     }
 
 
-def _legacy_program_pair(program_root: Path) -> dict[str, dict[str, Any]]:
+def _legacy_program_pair(program_root: Path, professor: str) -> dict[str, dict[str, Any]]:
     """History-only schema-2 container that contradicts the current facts."""
     selection = {
         "schema": 2,
         "kind": "professor-contact-selection",
         "identity_version": "direction-id-v1",
         "managed_by": "contact_state.py",
-        "professor": DISPLAY_NAME,
+        "professor": professor,
         "selections": [{
-            "professor": DISPLAY_NAME,
+            "professor": professor,
             "professor_dir": str(program_root / "教授研究" / "AL分野" / "isolation-alpha"),
             "direction_ids": [LEGACY_DIRECTION_ID],
             "collection_key": LEGACY_DIRECTION_ID,
@@ -204,10 +205,10 @@ def _legacy_program_pair(program_root: Path) -> dict[str, dict[str, Any]]:
         "kind": "professor-contact-email-input",
         "identity_version": "direction-id-v1",
         "managed_by": "contact_state.py",
-        "professor": DISPLAY_NAME,
+        "professor": professor,
         "emails": [{
-            "email_id": f"{DISPLAY_NAME}::{LEGACY_DIRECTION_ID}::{LEGACY_IDEA_ID}",
-            "professor": DISPLAY_NAME,
+            "email_id": f"{professor}::{LEGACY_DIRECTION_ID}::{LEGACY_IDEA_ID}",
+            "professor": professor,
             "direction_ids": [LEGACY_DIRECTION_ID],
             "idea": {"id": LEGACY_IDEA_ID, "title": "Legacy idea, not in current state"},
             "papers": [],
@@ -254,7 +255,7 @@ def build_fixture(program_root: Path, profile_root: Path, *, output: Path) -> di
         professor_dir.mkdir(parents=True, exist_ok=True)
         pack_path = professor_dir / "套磁候选输入.json"
         state_path = professor_dir / "套磁候选状态.json"
-        _write_json(pack_path, _input_pack(professor_dir))
+        _write_json(pack_path, _input_pack(professor_dir, spec["professor"]))
         if spec["role"] == "malformed_candidate_state":
             state_path.write_bytes(MALFORMED_CANDIDATE_STATE_BYTES)
         else:
@@ -264,7 +265,7 @@ def build_fixture(program_root: Path, profile_root: Path, *, output: Path) -> di
         relative_dir = Path("教授研究") / spec["field"] / spec["directory"]
         professors.append({
             "role": spec["role"],
-            "professor": DISPLAY_NAME,
+            "professor": spec["professor"],
             "field": spec["field"],
             "relative_path": relative_dir.as_posix(),
             "professor_dir": str(professor_dir),
@@ -297,7 +298,9 @@ def build_fixture(program_root: Path, profile_root: Path, *, output: Path) -> di
     if fault is None or len(professors) != 2:
         raise FixtureBuildError("fixture must declare exactly two professors and one fault")
 
-    legacy = _legacy_program_pair(program_root)
+    valid_professor = next(spec["professor"] for spec in PROFESSORS
+                           if spec["role"] == "valid")
+    legacy = _legacy_program_pair(program_root, valid_professor)
     legacy_hashes: dict[str, str] = {}
     for relative, document in legacy.items():
         path = program_root / relative
@@ -318,7 +321,6 @@ def build_fixture(program_root: Path, profile_root: Path, *, output: Path) -> di
         "item_key": ITEM_KEY,
         "gap_id": GAP_ID,
         "input_fingerprint": INPUT_FINGERPRINT,
-        "display_name": DISPLAY_NAME,
         "professors": professors,
         "fault": fault,
         "legacy_program_pair": legacy_hashes,

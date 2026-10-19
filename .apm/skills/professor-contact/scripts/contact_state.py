@@ -8821,19 +8821,17 @@ def cmd_stage5_list_inputs(args) -> None:
     Returns one row per professor-local pack with ``professor``,
     ``professor_dir``, ``email_pack``, ``status`` and ``reason_code``. No
     managed state is consulted; a bad container only fails its own row.
-    ``--professor`` selects the unique exact name match, and a missing or
-    ambiguous name returns ``needs_input`` instead of guessing. Discovery
-    only finds packs: it never writes a file and never produces data one
-    owner would share with another (plan r12 §3.7).
+    ``--professor`` keeps only the rows whose top-level name matches it
+    exactly, and a name with no such row returns ``needs_input`` instead of
+    guessing. Discovery only finds packs: it never writes a file and never
+    produces data one owner would share with another (plan r12 §3.7).
     """
     inputs = stage5_list_input_rows(Path(args.program_root))
     wanted = getattr(args, "professor", None)
     if wanted:
         named = [row for row in inputs if row["professor"] == wanted]
-        if len(named) != 1:
-            soft_exit("needs_input",
-                      "professor_ambiguous" if len(named) > 1 else "professor_not_found",
-                      professor=wanted)
+        if not named:
+            soft_exit("needs_input", "professor_not_found", professor=wanted)
         inputs = named
     emit({"status": "ok", "inputs": inputs})
 
@@ -11834,7 +11832,7 @@ def build_parser() -> argparse.ArgumentParser:
                             "email_pack、status、reason_code；坏包只形成自己的失败行，不写任何文件")
     p.add_argument("--program-root", required=True)
     p.add_argument("--professor",
-                   help="只返回唯一精确匹配该教授名的行；缺失或同名歧义返回 needs_input")
+                   help="只返回顶层姓名精确匹配该教授名的行；没有匹配返回 needs_input")
     p.set_defaults(func=cmd_stage5_list_inputs)
 
     p = sub.add_parser("stage5-rebuild-overview",
