@@ -696,7 +696,7 @@ def _reliable_candidates(entries: list[Any], program_root: Path, professor_dir_r
             skipped.append({"reason": "identity_unreliable"})
             continue
         if canonical != (professor, professor_dir_rel, preview_rel):
-            skipped.append({"reason": "same_name_other_dir" if canonical[0] == professor else "other_professor"})
+            skipped.append({"reason": "other_professor"})
             continue
         try:
             target = _legacy_entry_to_target(entry)

@@ -86,7 +86,7 @@ Stage 0 does not require Zotero to be open. Later stages may still use Zotero as
 - **机器 ID**：交互界面里的 A/B/C 展示标签不是身份；机器身份是稳定 `direction_id`。
 - **多方向独立**：两个被选方向即使共享论文也保持独立（各自 `direction_id`/`members[]`/`member_fingerprint`/names/summary/user_note）；Stage 2 会按教授、按 `item_key` 去重昂贵工作并复用结果，但**绝不因此合并方向**。
 - **修订**：对同一教授重跑 Stage 0 = 修订该教授的选择，不影响其他教授；仍被选方向的 note 保留，除非该方向的 key 出现在 selection `notes` 里——省略 key = 保留旧 note，key 出现即替换（显式传空串 = 清空）；先前的选择快照存 `selection_history`。
-- **事务身份**：Stage 0 的一位教授 = 一笔教授级事务，由该教授的 canonical `professor_dir` + `preview_path` 标识；展示名只作显示字段，不同目录的同名教授是两位教授，各自一笔、互不覆盖，交接结果用 `transactions` 记录数组表示。`bootstrap` 只建立该教授第一份 local v2，`select` 只修订已存在的那一份（文件缺失 → `bootstrap_required` 且零写入）；一笔失败绝不回滚或重写已提交的其他笔。
+- **事务身份**：Stage 0 的一位教授 = 一笔教授级事务，由该教授的 canonical `professor_dir` + `preview_path` 标识；展示名只作显示字段，`professor_dir` 就是事务边界，交接结果用 `transactions` 记录数组表示。`bootstrap` 只建立该教授第一份 local v2，`select` 只修订已存在的那一份（文件缺失 → `bootstrap_required` 且零写入）；一笔失败绝不回滚或重写已提交的其他笔。
 - **preview 变更**：target 新鲜度按**被选方向逐个判定**，整体 `preview_fingerprint` 只作 provenance/audit 元数据，不作为唯一有效性闸门：未选方向的新增/删除/改名/重聚类不影响已选 target；被选方向成员集合（`item_key`，即上游 `direction_id` 的推导依据）变化或方向消失 → Stage 1/2 以 `needs_refresh`（reason_code `preview_changed`，stale 条目精确到 `direction_id`）停止，须回 Stage 0 修订选择；成员集合不变时，`member_fingerprint` 变化（如 `preview_confidence` 升降）与 display 元数据（name/summary/representatives 等）变化一样只触发投影刷新——`resolve` 就地刷新该方向投影元数据并返回 `ok`（`user_note`、`selection_history`、选择本身不动），payload 以 `projection_refreshed` 标注。
 
 ## 阶段总览（每阶段 = 一个 subagent，可独立调用）
@@ -195,7 +195,7 @@ Stage 0 交给下游的是**教授级事务记录数组**（`transactions`），
 }
 ```
 
-教授展示名只是显示字段：两位不同目录的教授可以同名，因此**禁止**用 `{"target_states": {"<教授名>": ...}}` 这种以展示名为唯一 key 的映射作 handoff——那会挤掉同名另一位教授的事务。也不新增任何程序级持久索引。
+Stage 0 的 handoff 形状固定为上面的教授级事务记录数组：下游只按每条记录的 canonical `professor_dir` / `preview_path` / `target_state` 取该教授自己那份 local，绝不改写成以展示名为唯一 key 的映射（如 `{"target_states": {"<教授名>": ...}}`）——那会丢掉 canonical 路径与事务边界；也不新增任何程序级持久索引。阶段 1 及其后的返回继续按各家既有形状使用 `target_states` / `stage1_snapshots` 这类教授名 key 映射。
 
 ## 确定性 runner 与状态文件
 
@@ -430,7 +430,7 @@ Issue #59：`--email-id` 是**硬执行范围**，不是过滤提示。同一次
 - **一次 owner 调用 = 一个教授事务**：A、B 两位教授 = 两次 exact named `professor-contact-email-generator` owner 调用，各自携带自己的 pack 路径、result JSON、choices、`_contact_verify.json` 与 `套磁邮件状态.json`。一次 child payload 绝不夹带另一位教授的 pack 或行。
 - **互不为前置**：B 的 pack/状态/核验缓存缺失或损坏既不阻断 A，也不被 A 读写；B 失败不回滚 A 已提交的渲染。批量模式（不带 `--email-id`）= 该教授包内全部邮件，仍只覆盖一位教授。
 - **并发不是产品契约**：多次 owner 调用的顺序、是否并行由调用方编排决定，runner 不提供并发保证，也不依赖并发才成立。
-- **两条入口**：紧接阶段 4 时，root 直接消费阶段 4 成功结果交付的确切 `email_pack` 路径。独立阶段 5 用只读命令 `<professor-contact-skill-dir>/scripts/contact_state stage5-list-inputs --program-root <业务资料目录绝对路径>` 逐个发现教授本地包，逐行返回 `professor`、`professor_dir`、`email_pack`、`status`、`reason_code`：单个坏包只形成自己的失败行（不可读 `missing_email_pack`、无法证明单一归属 `invalid_email_pack`、目录越界或不对应容器 `invalid_professor_dir`），不阻止其它有效教授；它不读核验、状态、渲染、总览或程序级旧包，不写任何文件。`--professor` 只做唯一精确匹配，缺失或同名歧义返回 `needs_input`（`professor_not_found` / `professor_ambiguous`），不任选。
+- **两条入口**：紧接阶段 4 时，root 直接消费阶段 4 成功结果交付的确切 `email_pack` 路径。独立阶段 5 用只读命令 `<professor-contact-skill-dir>/scripts/contact_state stage5-list-inputs --program-root <业务资料目录绝对路径>` 逐个发现教授本地包，逐行返回 `professor`、`professor_dir`、`email_pack`、`status`、`reason_code`：单个坏包只形成自己的失败行（不可读 `missing_email_pack`、无法证明单一归属 `invalid_email_pack`、目录越界或不对应容器 `invalid_professor_dir`），不阻止其它有效教授；它不读核验、状态、渲染、总览或程序级旧包，不写任何文件。`--professor` 只保留顶层姓名精确匹配的行，没有匹配返回 `needs_input`（`professor_not_found`），不任选。
 - **根代理有序流程（第十三版计划第 3.3—3.7 节）**：依次完成以下步骤；运行时入口只决定正式委派的调用写法。
   1. **先处理用户选择（仅有选择时）**：用户给的是含 `choices` 字段的业务对象时，用 JSON 解析器从实际对象读取 `.choices`，只把该值本身序列化到本请求独占目录中的原始选择文件；用户直接给列表或单行对象时，保存该值本身。不补字段、不翻译、不切片。调用前用窄形状保护确认文件顶层是数组，或是**不含 `choices` 字段**的对象，例如 `jq -e 'type == "array" or (type == "object" and (has("choices") | not))' <原始选择文件>`。保护失败时回到原始输入正确提取并保留原值；错误文件不得交给分配器。该保护只排除误存的外层包装，行字段仍由教授业务程序校验。原始选择不可读或非法 JSON 时保留实际 `invalid_result_json`；写入失败保留实际错误，不用旧文件或内嵌 JSON 重试。用户未提供 `choices` 时跳过此步，不制造空选择。
   2. **确定本次完整 owner 集**：完成步骤 1 后，紧接阶段 4 时使用其成功结果给出的确切 `email_pack`；独立进入时运行只读 `stage5-list-inputs`，再按本次请求选定全部教授。`email_pack` 与 `professor_dir` 原样沿用结果字段。没有 `choices` 时从本步开始，仍须确定完整集合并为每位教授准备单教授交接。
@@ -572,7 +572,7 @@ Codex 的 non-interactive 执行（`codex exec`）没有「暂停一个嵌套子
 
 1. 调用方**没有**显式给 `selection` 时，委派 `professor-contact` 会返回 `needs_input` + `selection_request`（逐教授列出每个方向的 `direction_id`/日中名/`summary_zh`/representatives/论文数/evidence warnings），**不写、不改 `套磁目标.json`**，绝不自动替用户选（不选第一项、不按方向名或 A/B/C 标签猜）；
 2. 顶层调用者把 `selection_request` 展示给真实用户；
-3. 用户回答后，顶层调用者在后续顶层 turn **重新委派** installed named custom agent `professor-contact`，把用户答案作为显式结构化 `selection` 传入——事务记录以 canonical `professor_dir` + `preview_path` 精确标识该教授那份 local（展示名只作显示，同名不同目录各一条、绝不互相覆盖）；`direction_id` 必须来自该条当前 `contact_targets.py preview`（机器身份，方向名/A-B-C 标签无效）；多方向逐 `direction_id` 独立保存；`notes` 省略 key=保留旧备注、非空=替换、`""`=显式清空；invalid/stale `direction_id` 一律 fail closed、零写入该教授的 local 并要求重新取得用户选择；
+3. 用户回答后，顶层调用者在后续顶层 turn **重新委派** installed named custom agent `professor-contact`，把用户答案作为显式结构化 `selection` 传入——事务记录以 canonical `professor_dir` + `preview_path` 精确标识该教授那份 local（展示名只作显示字段，路径是唯一身份）；`direction_id` 必须来自该条当前 `contact_targets.py preview`（机器身份，方向名/A-B-C 标签无效）；多方向逐 `direction_id` 独立保存；`notes` 省略 key=保留旧备注、非空=替换、`""`=显式清空；invalid/stale `direction_id` 一律 fail closed、零写入该教授的 local 并要求重新取得用户选择；
 4. 新 invocation 延续的是同一 Stage 0 **业务语义**——它是一次新的委派，不是对原 nested child/thread 的 resume；也不把 App Server 实验性 user-input 接口混进 eval 调用链。
 
 `selection` 只是调用输入，不是第二份长期状态；长期机器状态仍然只有各教授自己的 `<教授目录>/套磁目标.json`（一次 `bootstrap` 或 `select` 只写一位教授那一份，返回的 `transactions` 记录以该教授的 canonical 路径标识那份 local target）。
@@ -646,7 +646,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 | `skip_direction_ids` | no | 仅阶段 3：逗号分隔的显式跳过方向；持久化 `stage3_status:"skipped"`，取消跳过后正常处理。 |
 | `cross_direction_groups` | no | 仅阶段 3：JSON 方向 ID 组列表（每组 ≥2 个既有 direction ID）；显式 opt-in，缺省零跨方向 job/模型调用/Markdown 节。 |
 | `kb_import` | no | 仅阶段 2：`true` 时把每篇相关论文的分析做成 KB 条目入库（tag 含 `zotero://…/<item_key>`，source=分析文件，重跑走 `updateKnowledge` 原地更新）；缺省 `false`。相关论文全量入库为后续项。 |
-| `selection` | no | 阶段 0 与阶段 4：显式结构化选择，跳过交互提问。阶段 0 形状是教授级事务记录数组 `{"transactions": [{"professor_dir": "教授研究/<分野>/教授A", "preview_path": "教授研究/<分野>/教授A/方向预筛.json", "direction_ids": [...], "notes": {"dir_...": "..."}, "professor": "教授A"}]}`——事务由 canonical `professor_dir` + `preview_path` 标识（教授展示名只作显示，同名不同目录是两位教授，各自一条、互不覆盖）、`direction_id` 必须来自该条 preview、多方向逐 ID 独立保存、`notes` 省略 key=保留旧备注/非空=替换/`""`=显式清空、invalid/stale ID 只失败该条并零写入该教授的 local；缺省（未传）时 Stage 0 在 OpenCode 用 `question` 交互、在 Codex 返回 `needs_input`+`selection_request`（同样按事务记录数组逐教授一条）。阶段 4 形状见该 agent 说明。 |
+| `selection` | no | 阶段 0 与阶段 4：显式结构化选择，跳过交互提问。阶段 0 形状是教授级事务记录数组 `{"transactions": [{"professor_dir": "教授研究/<分野>/教授A", "preview_path": "教授研究/<分野>/教授A/方向预筛.json", "direction_ids": [...], "notes": {"dir_...": "..."}, "professor": "教授A"}]}`——事务由 canonical `professor_dir` + `preview_path` 标识（教授展示名只作显示字段，`professor_dir` 是事务边界）、`direction_id` 必须来自该条 preview、多方向逐 ID 独立保存、`notes` 省略 key=保留旧备注/非空=替换/`""`=显式清空、invalid/stale ID 只失败该条并零写入该教授的 local；缺省（未传）时 Stage 0 在 OpenCode 用 `question` 交互、在 Codex 返回 `needs_input`+`selection_request`（同样按事务记录数组逐教授一条）。阶段 4 形状见该 agent 说明。 |
 | `mode` | no | 仅阶段 5：`first`、`both`、`followup`；generator 缺省按 `both` 调用，runner CLI 为兼容旧脚本缺省 `first`。 |
 | `followup_template` | no | 仅阶段 5：跟进模板绝对路径；缺省查找 `套磁邮件/套磁跟进模板.md`。 |
 | `skip_validation` | no | 仅阶段 5：true 时跳过 validator 循环（调试用）。 |

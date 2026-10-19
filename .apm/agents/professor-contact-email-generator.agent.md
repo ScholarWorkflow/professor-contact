@@ -122,9 +122,9 @@ Stage 4's success result hands over **one professor-local email pack**: `<profes
   (`missing_email_pack` / `invalid_email_pack` / `invalid_professor_dir`) and
   never blocks another valid professor; the command reads no verify, state,
   render or legacy program-level pack file and writes nothing.
-  `--professor` selects the unique exact name match; a missing or ambiguous
-  name returns `needs_input` (`professor_not_found` / `professor_ambiguous`)
-  instead of a guess.
+  `--professor` keeps only the rows whose top-level name matches exactly; a
+  name with no such row returns `needs_input` (`professor_not_found`) instead
+  of a guess.
 - **One owner invocation = one professor transaction.** Running professors A and B means two exact-named `professor-contact-email-generator` invocations, each with its own pack path, result JSON, choices, `_contact_verify.json` and `套磁邮件状态.json`. B's missing, stale or malformed pack, cache or state is never a precondition of A, and B's failure never rolls back A's committed render. Each invocation consumes only that professor's Stage-5 business inputs.
 - **Root deterministic partition, then one-professor bundles (plan r17
   §3.3–3.6).** The formal choice identity is `(canonical professor_dir, email_id)`;
