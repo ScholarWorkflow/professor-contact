@@ -11,12 +11,14 @@ it.
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / ".apm/skills/professor-contact/tests"
 MANIFEST = ROOT / "plan/test-grouping/shards.json"
+WORKFLOW = ROOT / ".github/workflows/ci.yml"
 STAGES = {"stage1", "stage2", "stage3", "stage4", "stage5", "non-stage"}
 
 
@@ -27,6 +29,15 @@ def load_shards() -> list[dict]:
 
 def discovered() -> list[str]:
     return sorted(path.stem for path in TESTS.glob("test_*.py"))
+
+
+def workflow_shards() -> list[str]:
+    """Shard names the CI workflow actually runs (matrix.shard list)."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    match = re.search(r"matrix:\s*\n\s*shard:\s*\[([^\]]*)\]", text)
+    if not match:
+        return []
+    return [name.strip().strip("'\"") for name in match.group(1).split(",") if name.strip()]
 
 
 def stage_of(module: dict) -> str:
@@ -71,6 +82,21 @@ def main() -> int:
         problems.append(f"not covered by any shard: {module}")
     for module in sorted(set(owner) - found):
         problems.append(f"listed but not discoverable: {module}")
+
+    # The manifest must describe exactly the shards the workflow runs: a shard
+    # that exists only in the manifest would never execute, and a workflow
+    # shard missing from the manifest would run nothing.
+    manifest_names = [shard.get("name") for shard in shards]
+    workflow_names = workflow_shards()
+    if not workflow_names:
+        problems.append("cannot read the shard list from .github/workflows/ci.yml")
+    else:
+        for name in manifest_names:
+            if name not in workflow_names:
+                problems.append(f"shard {name} is not run by the workflow")
+        for name in workflow_names:
+            if name not in manifest_names:
+                problems.append(f"workflow shard {name} has no manifest entry")
 
     if problems:
         for problem in problems:

@@ -19,8 +19,8 @@
    "seconds": 104.1,
    "stages": {
     "mixed:stage2+stage3": 1,
-    "non-stage": 21,
-    "stage1": 2,
+    "non-stage": 18,
+    "stage1": 5,
     "stage3": 4
    },
    "modules": [
@@ -30,7 +30,7 @@
      "seconds": 82.8,
      "tests": 88,
      "signals": {
-      "stage1": 25,
+      "stage1": 475,
       "stage2": 1575,
       "stage3": 3550,
       "stage4": 2200,
@@ -54,7 +54,7 @@
      "seconds": 3.8,
      "tests": 6,
      "signals": {
-      "stage1": 4,
+      "stage1": 76,
       "stage2": 252,
       "stage3": 586,
       "stage4": 367,
@@ -90,10 +90,12 @@
     },
     {
      "name": "test_stage1_candidates",
-     "stage": "non-stage",
+     "stage": "stage1",
      "seconds": 0.3,
      "tests": 36,
-     "signals": {}
+     "signals": {
+      "stage1": 38
+     }
     },
     {
      "name": "test_contact_targets",
@@ -104,17 +106,21 @@
     },
     {
      "name": "test_issue32_eval_request",
-     "stage": "non-stage",
+     "stage": "stage1",
      "seconds": 0.2,
      "tests": 21,
-     "signals": {}
+     "signals": {
+      "stage1": 3
+     }
     },
     {
      "name": "test_prepare_issue39_stage2_fixture",
-     "stage": "non-stage",
+     "stage": "stage1",
      "seconds": 0.2,
      "tests": 6,
-     "signals": {}
+     "signals": {
+      "stage1": 3
+     }
     },
     {
      "name": "test_prepare_issue40_runtime_fixture",
@@ -136,7 +142,7 @@
      "seconds": 0.1,
      "tests": 3,
      "signals": {
-      "stage1": 58,
+      "stage1": 115,
       "stage2": 87,
       "stage3": 142,
       "stage4": 88,
@@ -226,7 +232,7 @@
      "seconds": 0.0,
      "tests": 20,
      "signals": {
-      "stage1": 18,
+      "stage1": 48,
       "stage2": 11
      }
     },
@@ -267,7 +273,7 @@
      "seconds": 45.2,
      "tests": 40,
      "signals": {
-      "stage1": 1,
+      "stage1": 19,
       "stage2": 63,
       "stage3": 142,
       "stage4": 100,
@@ -315,7 +321,7 @@
       "stage1": 3,
       "stage2": 18,
       "stage3": 9,
-      "stage4": 102
+      "stage4": 108
      }
     },
     {
@@ -325,7 +331,7 @@
      "tests": 2,
      "signals": {
       "stage2": 24,
-      "stage3": 86,
+      "stage3": 87,
       "stage4": 25
      }
     },
@@ -453,7 +459,7 @@
      "seconds": 11.7,
      "tests": 10,
      "signals": {
-      "stage1": 3,
+      "stage1": 57,
       "stage2": 189,
       "stage3": 430,
       "stage4": 276,
@@ -484,7 +490,8 @@
      "seconds": 0.8,
      "tests": 16,
      "signals": {
-      "stage3": 18
+      "stage3": 18,
+      "stage4": 2
      }
     },
     {
@@ -520,7 +527,7 @@
      "seconds": 0.0,
      "tests": 2,
      "signals": {
-      "stage1": 2,
+      "stage1": 50,
       "stage2": 146,
       "stage3": 284,
       "stage4": 176,
@@ -533,7 +540,7 @@
      "seconds": 0.0,
      "tests": 27,
      "signals": {
-      "stage3": 30,
+      "stage3": 38,
       "stage4": 6,
       "stage5": 6
      }
@@ -554,7 +561,7 @@
      "seconds": 19.3,
      "tests": 7,
      "signals": {
-      "stage1": 1,
+      "stage1": 19,
       "stage2": 156,
       "stage3": 142,
       "stage4": 88,
@@ -608,6 +615,7 @@
      "seconds": 6.3,
      "tests": 9,
      "signals": {
+      "stage1": 6,
       "stage2": 9
      }
     },
@@ -686,7 +694,7 @@
      "seconds": 1.8,
      "tests": 4,
      "signals": {
-      "stage1": 1,
+      "stage1": 19,
       "stage2": 68,
       "stage3": 142,
       "stage4": 88,
@@ -708,6 +716,7 @@
      "seconds": 0.6,
      "tests": 14,
      "signals": {
+      "stage1": 12,
       "stage2": 136,
       "stage4": 28
      }
@@ -754,7 +763,7 @@
      "seconds": 0.0,
      "tests": 14,
      "signals": {
-      "stage1": 4,
+      "stage1": 28,
       "stage2": 54
      }
     },

@@ -4,7 +4,7 @@
 
 - 需求来源：负责人 2026-10-18“其余边界”原文中的“测试分组／CI：可以另评估快审，但不能只按 test_stageN 文件名筛选”。
 - Requirement revision: 第 1 版。
-- Canonical Plan revision: 第 3 版。
+- Canonical Plan revision: 第 4 版。
 - Target repository revision: `6e624e0`（`origin/main`）。本批是独立工作，不改产品代码，也不依赖在途 PR 的合并顺序，因此从 `main` 另拉分支 `refactor-test-grouping`。
 - Relevant upstream/runtime revision: CI 工作流 `.github/workflows/ci.yml`（当前单任务，Python 3.12）。
 - Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`，P1–P4 全 PASS；独立计划审核于 2026-10-18/19 给出）。
@@ -45,21 +45,17 @@
 
 ### 选定设计
 
-1. **分片清单**：4 个分片。分配规则是**阶段分组驱动 + 耗时均衡**：先按阶段分组，整组能放进某片的余量（均分份额 ×1.15）就整组放进去（同阶段用例尽量同片），放不下的大组（`stage3` 21 个模块）再按实测耗时贪心拆到负载最小的片。清单**固定放在 `plan/test-grouping/shards.json`**（覆盖脚本与工作流都读它），每个模块带 `stage` 与 `signals`，每个分片带 `stages` 构成：
+1. **分片清单**：4 个分片。分配规则是**阶段分组驱动 + 耗时均衡**：先按阶段分组，整组能放进某片的余量（均分份额 ×1.15）就整组放进去（同阶段用例尽量同片），放不下的大组（`stage3` 21 个模块）再按实测耗时贪心拆到负载最小的片。阶段信号包含：CLI 子命令（权重 3）、runner 入口点（权重 1）、**按路径加载的兄弟阶段脚本**（`contact_stage1.py` 等，权重 3）与**对加载模块的调用**（`stage1.build_…`，权重 1）——`test_stage1_candidates` 正是靠后两类信号归到 `stage1`。清单**固定放在 `plan/test-grouping/shards.json`**（覆盖脚本与工作流都读它），每个模块带 `stage` 与 `signals`，每个分片带 `stages` 构成：
 
-| 分片 | 规模 | 模块耗时合计 |
-| --- | --- | --- |
-| 分片 1 | 38 个模块 | 104.0s |
-| | `test_contact_state` `test_resolved_direction_preflight_integration` `test_stage2_chatgpt_handoff` `test_issue81_verify_cache_contract` `test_stage2_resolve_fingerprint_scope_regression` `test_stage2_narrative_example_contract` `test_opencode_depth_install` `test_issue74_cli_compat` `test_issue32_eval_request` `test_issue40_r2_verifier` `test_apm_deployment_metadata` `test_codex_native_delegation_contract` `test_contact_targets_gate2_oracle` `test_fixture_support` `test_gate2_evidence` `test_issue39_eval_request` `test_issue51_delegation_verifier` `test_issue51_standalone_runtime_recipe` `test_issue53_stage4_runtime_assets` `test_issue65_gate2_r24_regressions` `test_issue66_validator_report_contract` `test_issue67_riso_case_prep` `test_issue67_runtime_config` `test_issue67_runtime_evidence` `test_issue68_eval_request` `test_issue74_static_acceptance` `test_p47_target_isolation` `test_seed_issue39_zotero` `test_stage01_caller_contract` `test_stage1_stage2_contract` `test_stage1_stage2_contract_gate2_oracle` `test_stage2_chatgpt_handoff_review` `test_stage2_reference_id_repair_contract` `test_stage2_zotero_endpoint_contract` `test_stage3_stage4_caller_contract` `test_stage4_selection_agent_contract` `test_stage5_template_body` `test_verify_issue39_endpoint_runtime` | |
-| 分片 2 | 13 个模块 | 104.0s |
-| | `test_contact_evidence_ladder` `test_stage2_style_validation_handoff` `test_stage3_direction_identity` `test_issue61_direction_credibility_warning` `test_stage2_zotero_rpc_transport` `test_issue32_e2e_verifier` `test_stage5_fixture_isolation` `test_stage2_resolved_direction_acceptance_boundary` `test_stage2_chatgpt_handoff_review3` `test_issue57_runtime_assets` `test_stage2_resolved_direction_merge_fulltext_regression` `test_stage1_candidates` `test_prepare_issue40_runtime_fixture` | |
-| 分片 3 | 14 个模块 | 104.0s |
-| | `test_stage3_validation_refine` `test_stage2_resolved_direction` `test_stage2_preflight` `test_stage5_immutable` `test_build_issue29_stage2_fixture` `test_issue67_gate2_r3` `test_stage2_resolved_direction_fresh_review_regressions` `test_stage2_resolved_direction_regressions` `test_stage3_direction_identity_contract` `test_issue55_stage3_runtime_assets` `test_stage2_chatgpt_handoff_review5` `test_contact_targets` `test_build_issue32_e2e_fixture` `test_issue57_routing_stability` | |
-| 分片 4 | 13 个模块 | 104.0s |
-| | `test_issue66_validation_handoff` `test_stage3_direction_groups` `test_stage2_resolved_direction_downstream_regressions` `test_issue66_stage3_local_state` `test_stage2_facts_sidecar` `test_stage2_preflight_malformed` `test_issue66_r12_validation_input_sha` `test_stage2_preflight_binding` `test_stage2_input_router` `test_stage2_chatgpt_handoff_review4` `test_stage5_dualtarget_contract` `test_prepare_issue39_stage2_fixture` `test_stage1_handoff_identity` | |
+| 分片 | 规模 | 模块耗时合计 | 阶段构成 |
+| --- | --- | --- | --- |
+| shard1 | 28 个模块 | 104.1s | non-stage 18、stage1 5、stage3 4、mixed 1 |
+| shard2 | 14 个模块 | 104.1s | stage3 7、stage4 7 |
+| shard3 | 12 个模块 | 103.8s | stage3 8、stage5 4 |
+| shard4 | 24 个模块 | 104.0s | stage2 22、stage3 2 |
 
-   均衡依据：按模块耗时降序做贪心装箱，四片各 104.0s（串行合计 416.2s）。首次 CI 跑完后按 ubuntu／3.12 的实测更新本表与 `shards.json`。
-2. **覆盖校验**：CI 第一步跑一个仓库内小脚本（`scripts/check_test_shards.py`）：枚举 `tests/test_*.py`，断言与分片清单的并集完全一致、无重复、无遗漏，**并断言每个模块都带阶段、阶段值属于文档化集合**（`stage1`…`stage5`／`non-stage`／`mixed:*`）。这样新增测试模块若忘了归类或阶段写错，CI 会红，而不是静默漏跑或丢掉对应关系。
+   均衡依据：阶段分组 + 组内按模块耗时降序，四片各约 104s（串行合计 416.0s）。首次 CI 跑完后按 ubuntu／3.12 的实测更新本表与 `shards.json`。
+2. **覆盖校验**：CI 第一步跑一个仓库内小脚本（`scripts/check_test_shards.py`）：枚举 `tests/test_*.py`，断言与分片清单的并集完全一致、无重复、无遗漏；断言每个模块都带阶段、阶段值属于文档化集合（`stage1`…`stage5`／`non-stage`／`mixed:*`）；**并断言分片名集合与 `.github/workflows/ci.yml` 的 `matrix.shard` 完全一致**——清单里多一个分片（工作流不会执行）或工作流多一个分片（清单没有对应模块）都会失败，避免“清单加了第五片、实际只跑四片”这种静默漏跑。
 3. **CI 变更（保持单一 `test` 门禁）**：
    - 新增 `shards` 任务：`strategy: matrix: shard: [shard1, shard2, shard3, shard4]`，每片先跑覆盖校验再跑自己的模块列表；
    - 新增聚合任务 `test`：`needs: [shards]`、`if: always()`，读 `needs.shards.result`，任一分片失败即失败，全绿则成功。
@@ -114,7 +110,7 @@
    - 新增 `plan/test-grouping/shards.json`（4 个分片与各自的模块列表）。
    - 新增 `scripts/check_test_shards.py`（**仓库根**的新目录；枚举 `tests/test_*.py` 并与 `shards.json` 比并集/重复/存在性，非零退出）。**不得放进 `.apm/skills/professor-contact/scripts/`**——那是随技能打包的产品目录，放进去会污染安装包。
    - 新增 `plan/test-grouping/README.md`（映射方法、测量命令与修订、两个计数口径、分片清单与依据、CI 环境差异）。
-   - 修改 `.github/workflows/ci.yml`：新增 `shards` matrix 任务（先校验、再跑本片模块）与名为 `test` 的聚合任务。
+   - 修改 `.github/workflows/ci.yml`：新增 `shards` matrix 任务（先校验、再跑本片模块）与名为 `test` 的聚合任务；分片命令先把 `--print` 的输出存进变量，**为空则立即 `exit 1`**，不让空列表退化成无参数的 `unittest`（那会跑成全量 discovery）。
    - 分片命令从 tests 目录执行（或设置 `PYTHONPATH`），否则 `python -m unittest <模块名>` 会导入失败；工作流里写明 `cd .apm/skills/professor-contact/tests`。
    - 不改测试与产品代码。
 3. **测试准备与审核**：测试工程师按 `Test Engineer Rule.md` 准备（见同目录 `test-plan.md`）。
@@ -123,9 +119,10 @@
 ## 修订记录
 
 - 第 1 版：首次提交计划审核。
-- 第 3 版：按审核的唯一阻塞项修正——把行为分组的**归类结果真正落实**：`shards.json` 的每个模块带 `stage` 与原始加权 `signals`、每个分片带阶段构成；分片分配改为阶段分组驱动（整组能放下就整组放，大组按耗时拆）；覆盖校验增加“每个模块都带阶段、阶段值属于文档化集合”两条断言；README 的逐模块阶段列改用真实归类结果（此前因键名带 `.py` 与不带 `.py` 不匹配而全为空）。
 - 第 2 版：按第 1 轮审核的两条 blocker 修正——B1 全部测量改在目标修订（worktree）上重跑并写清命令、修订号、Python 版本与两个计数口径（收集 1025／定义 1033、类名做键会合并重名类）；B2 CI 改为 `shards` matrix + 名为 `test` 的聚合任务，保住单一门禁检查；另按 P4 精度项写明分片命令的工作目录、覆盖脚本放仓库根、分片清单固定在 `plan/test-grouping/shards.json`、CI 与本地环境差异的更新约定。
+- 第 3 版：按审核的唯一阻塞项修正——把行为分组的**归类结果真正落实**：`shards.json` 的每个模块带 `stage` 与原始加权 `signals`、每个分片带阶段构成；分片分配改为阶段分组驱动（整组能放下就整组放，大组按耗时拆）；覆盖校验增加“每个模块都带阶段、阶段值属于文档化集合”两条断言；README 的逐模块阶段列改用真实归类结果（此前因键名带 `.py` 与不带 `.py` 不匹配而全为空）。
+- 第 4 版：按审核意见修正——① 阶段信号补上“按路径加载的兄弟阶段脚本”与“对加载模块的调用”，`test_stage1_candidates`（36 项直接驱动第一阶段）从 `non-stage` 更正为 `stage1`，stage1 方法数 23→86、无信号 250→187；② 覆盖校验增加“分片名集合必须与工作流 `matrix.shard` 一致”，工作流在 `--print` 为空时立即失败；③ 计划正文的分配数字由旧的 38／13／14／13 更新为当前的 28／14／12／24（各约 104s）与阶段构成，测试计划/执行记录的版本指针统一到本版。
 
 ## 审核状态
 
-计划第 3 版为当前唯一计划。第 1 版结论 `NEEDS_MODIFICATION`（B1、B2）已修正并取得 `Plan conclusion: APPROVED`；第 3 版按测试计划审核的唯一阻塞项（行为分组未落实）修正归类与分配，方案目标与范围未变。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
+计划第 4 版为当前唯一计划。第 1 版结论 `NEEDS_MODIFICATION`（B1、B2）已修正并取得 `Plan conclusion: APPROVED`；第 3 版按测试计划审核的唯一阻塞项（行为分组未落实）修正归类与分配，方案目标与范围未变。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。

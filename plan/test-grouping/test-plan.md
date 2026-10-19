@@ -2,10 +2,10 @@
 
 ## 版本、来源与状态
 
-- 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 2 版（`Plan conclusion: APPROVED`）。
+- 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 4 版（第 1 版结论 NEEDS_MODIFICATION、第 2 版取得 `Plan conclusion: APPROVED`；第 3、4 版按审核意见修正归类与分配，方案目标未变）。
 - 需求来源：负责人 2026-10-18“其余边界”中的“测试分组／CI：可以另评估快审，但不能只按 test_stageN 文件名筛选”。
 - 对照基准与目标修订：`6e624e0`（`origin/main`）；本批工作分支 `refactor-test-grouping`。
-- Test plan revision: 第 4 版。
+- Test plan revision: 第 5 版。
 - 测试范围依据：`Test Engineer Rule.md`；提交前按共用清单 `plan/test-plan-checklist.md` 自检（该清单随 PR #98 引入，本分支从 `main` 拉出、不把它当作已存在的文件；自检小节已逐条写明）。
 - Proposed review status: pending。
 
@@ -13,9 +13,9 @@
 
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
-| T1 | 覆盖校验能挡住“漏归类／重复／不存在／空分片／丢阶段／阶段值非法”，并接受正确清单 | 正确清单；六种坏清单：① 从某片删掉一个模块；② 把某模块同时放进两片；③ 某片加一个不存在的模块名；④ 把某片的模块列表置空；⑤ 去掉某模块的 `stage` 字段；⑥ 把某模块的 `stage` 改成 `stage9` | 正确清单退出码 0 且 stdout 含 `OK: 78 test modules across 4 shards, each with a stage`；六种坏清单都非零退出，且 stderr **分别**含 `not covered by any shard`／`listed in both`／`no such test module`／`lists no modules`／`carries no stage`／`unknown stage`；每次注入后恢复清单并复跑通过 | 仓库根 `python scripts/check_test_shards.py`；注入用带 `try/finally` 的片段临时改写 `plan/test-grouping/shards.json` 并在结束时恢复，最后用 `git diff --exit-code` 确认清单回到原样；**逐例断言对应错误子串**，不只比退出码 |
+| T1 | 覆盖校验能挡住“漏归类／重复／不存在／空分片／丢阶段／阶段值非法／清单多分片／工作流多分片”，并接受正确清单 | 正确清单；八种坏清单：① 从某片删掉一个模块；② 把某模块同时放进两片；③ 某片加一个不存在的模块名；④ 把某片的模块列表置空；⑤ 去掉某模块的 `stage` 字段；⑥ 把某模块的 `stage` 改成 `stage9`；⑦ 清单增加一个带真实模块的第五分片（工作流只跑四片）；⑧ 把工作流 `matrix.shard` 改成含 `shard5`（清单无该片） | 正确清单退出码 0 且 stdout 含 `OK: 78 test modules across 4 shards, each with a stage`；八种坏清单都非零退出，且 stderr **分别**含 `not covered by any shard`／`listed in both`／`no such test module`／`lists no modules`／`carries no stage`／`unknown stage`／`is not run by the workflow`／`has no manifest entry`；每次注入后恢复清单与工作流并复跑通过 | 仓库根 `python scripts/check_test_shards.py`；注入用带 `try/finally` 的片段临时改写 `plan/test-grouping/shards.json` 并在结束时恢复，最后用 `git diff --exit-code` 确认清单回到原样；**逐例断言对应错误子串**，不只比退出码 |
 | T2 | 四个分片的并集等于全套、且各自通过；**每个模块都带阶段** | 四片各自的模块列表；`shards.json` 的 `stage`／`signals` 字段 | 四片都 `OK`；四片 `Ran N tests` 之和 = `unittest` 收集数（1025）；无重复执行；78 个模块**全部**有 `stage`（`non-stage` 也显式记录），`signals` 非空的模块其标签与信号多数一致 | `python scripts/check_test_shards.py --print <shard>` 取列表，在 `tests/` 目录逐片 `python -m unittest <列表>`；映射用 `jq` 逐模块核对 |
-| T3 | 工作流结构保持单一 `test` 门禁 | `.github/workflows/ci.yml` | `shards` 任务为 4 组合 matrix、`fail-fast: false`、每片先跑覆盖校验再跑本片；`test` 聚合任务 `needs: [shards]`、`if: always()`、`needs.shards.result != success` 即失败 | 读取工作流文本逐条核对；CI 跑起来后核对检查项名（`shards (shardN)` 与 `test`） |
+| T3 | 工作流结构保持单一 `test` 门禁，且分片列表取不到时立即失败 | `.github/workflows/ci.yml` | `shards` 任务为 4 组合 matrix、`fail-fast: false`、每片先跑覆盖校验再跑本片；分片命令把 `--print` 结果存进变量、**为空则 `exit 1`**（不让空列表退化成全量 discovery）；`test` 聚合任务 `needs: [shards]`、`if: always()`、`needs.shards.result != success` 即失败 | 读取工作流文本逐条核对；CI 跑起来后核对检查项名（`shards (shardN)` 与 `test`） |
 | T4 | 每个分片命令可独立在本地执行 | 四片的命令（从 `tests/` 目录） | 都能独立跑通，不依赖其它分片产生的文件 | 同 T2 |
 | T5 | 既有仓库检查 | 仓库 CI 在本 PR 上的运行 | 4 个 `shards (shardN)` 与聚合 `test` 全部成功 | 引用 PR 检查项（运行编号、所跑 head、各检查状态），不作为本批业务必测项 |
 
@@ -116,7 +116,8 @@
 - 第 2 版：按第一关口的 B1 把 T1 从“只比退出码”改为**逐例断言对应错误子串**（`not covered by any shard`／`listed in both`／`no such test module`），并补第四个注入“某片模块列表置空”（`lists no modules`）；片段加 `try/finally` 保证断言失败也会恢复清单；正确清单那次同时断言 stdout 的 `OK: 78 test modules across 4 shards`。
 - 第 3 版：把三处仍写“三种坏清单”的摘要改为“四种”，与 T1 行、注入片段和实测结果一致；T5 补上 PR #103 的 CI 运行编号与各检查状态。
 - 第 4 版：按审核的唯一阻塞项（行为分组未落实）把 T1 扩到六种坏清单（新增“丢 stage”“阶段值非法”）、T2 增加“每个模块都带阶段、标签与信号多数一致”的判据，并把正确清单的预期输出改为带 `each with a stage` 的新格式。
+- 第 5 版：按第二轮审核把 T1 再扩到八种坏清单（新增“清单多分片”“工作流多分片”），T3 增加“分片列表为空即失败”，并把执行计划指针更新到第 4 版。
 
 ## 审核状态
 
-测试计划第 4 版为当前唯一版本。第 1 版第二关口 PASS、第一关口有 1 项 blocker（B1），第 2 版修正后第一、二关口 PASS；第 3 版只改摘要口径与补 T5 的 CI 来源。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
+测试计划第 5 版为当前唯一版本。第 1 版第二关口 PASS、第一关口有 1 项 blocker（B1），第 2 版修正后第一、二关口 PASS；第 3 版只改摘要口径与补 T5 的 CI 来源。后续审核以本文件、执行计划与 `Test Engineer Rule.md` 为输入。
