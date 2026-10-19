@@ -32,6 +32,11 @@
 - 结果：shard1 `Ran 380 tests ... OK`（111.1s）、shard2 `Ran 219 tests ... OK`（110.3s）、shard3 `Ran 188 tests ... OK`（103.9s）、shard4 `Ran 243 tests ... OK (skipped=1)`（100.8s），合计 1030 项；日志 `$RUN_ROOT/shard1.log`…`shard4.log`。
 - 额外核对：受影响的说明契约模块合并运行退出码 0、`Ran 172 tests`、`OK`（`$RUN_ROOT/T5-doc-contracts.log`）。
 
+## 仓库 CI（推送 `3024d46` 自动触发）
+
+- 运行 [39258957355](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39258957355)，head `3024d460699a188242787a493311800e8a990c4e`：`shards (shard1)` pass 1m57s、`shards (shard2)` pass 2m8s、`shards (shard3)` pass 1m18s、`shards (shard4)` pass 1m57s、聚合 `test` pass 4s，整体 `success`。
+- 该运行由推送自动触发，不是本角色发起的正式执行；本地 T1–T5 结果与上表一致（CI 为 Python 3.12 / ubuntu-latest，本地为 Python 3.14.7 / macOS）。
+
 ## 未完成与说明
 
 - test-plan §2.1 记录的“选择器静态预检”与本记录的执行使用同一套 `45c30fa` 测试代码；产品修改落地后选择器无需改动。
