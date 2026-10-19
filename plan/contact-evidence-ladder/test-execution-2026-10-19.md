@@ -17,7 +17,7 @@
 | T3 | 通过 | 同一对比：三条 email（含重复教授与无证据教授）的决策字典键集合与每个值相同 |
 | T4 | 通过 | 同一对比：8 种时间输入（当天／29／30／31 天前／未来／`None`／非时间字符串／数字）的返回值逐项相同 |
 | T5 | 通过 | `ladder3.log`：`Ran 42 tests in 55.801s`，`OK`，退出码 0（`test_contact_evidence_ladder` 40 项 + `test_stage5_fixture_isolation` 2 项） |
-| 既有仓库检查 | 通过 | 仓库 CI 在 head `f65dd7c` 上跑全量 `unittest discover`：运行 `39163647723`，5m38s，检查项 `test` pass。按测试计划第 22 行这项不属于本批业务必测项，只作既有检查结果引用；该 head 相对被测提交只多文档提交，`.apm/` 字节未变 |
+| 既有仓库检查 | 通过 | 补 docstring 后的重跑：运行 `39205685832`，6m30s，检查项 `test` pass（head `e655ddb`）。此前的运行：CI 在 head `f65dd7c` 上跑全量 `unittest discover`：运行 `39163647723`，5m38s，检查项 `test` pass。按测试计划第 22 行这项不属于本批业务必测项，只作既有检查结果引用；该 head 相对被测提交只多文档提交，`.apm/` 字节未变 |
 
 ## 执行方法与命令
 
