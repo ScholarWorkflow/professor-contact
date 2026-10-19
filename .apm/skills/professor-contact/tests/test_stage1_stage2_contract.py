@@ -115,6 +115,74 @@ class Stage1Stage2ContractTests(unittest.TestCase):
         self.assertIn("candidate union", skill)
 
 
+class Stage2ScopeContractTests(unittest.TestCase):
+    """PC-S2-SCOPE-1: relevance/top-N never truncates candidate full analysis."""
+
+    def _analyzers(self):
+        for target in ("professor-contact-codex", "professor-contact-opencode"):
+            path = (ROOT.parents[2] / "packages" / target / ".apm" / "agents"
+                    / "professor-contact-analyzer.agent.md")
+            yield target, path.read_text(encoding="utf-8")
+
+    def test_analyzer_input_separates_post_scope_from_full_analysis(self):
+        for target, agent in self._analyzers():
+            with self.subTest(target=target):
+                inputs = agent.split("## Input\n", 1)[1].split("\n## ", 1)[0]
+                paper = next(line for line in inputs.splitlines()
+                             if line.startswith("- `paper_analysis` "))
+                cap = next(line for line in inputs.splitlines()
+                           if line.startswith("- `max_relevant_papers` "))
+                for token in ("历史保留名称", "`relevant`", "缺省", "`all`",
+                              "全部候选视作相关", "gap / future-work 补齐与叙事后处理",
+                              "两种模式下 full `paper-analysis` 都固定覆盖",
+                              "selected directions", "`candidate_keys` 去重并集",
+                              "不得被本参数截断", "复用有效 full analysis",
+                              "否则恰好补一次 full pass"):
+                    self.assertIn(token, paper)
+                for token in ("只限制", "gap / future-work 补齐与叙事后处理",
+                              "非点名相关论文数", "不限制 candidate union 的 full-analysis job 数",
+                              "user_note", "`user_named`", "永不因该值被截断"):
+                    self.assertIn(token, cap)
+                for stale in ("只跑**相关论文**", "方向全部成员论文，强制全量",
+                              "补哪些论文的分析"):
+                    self.assertNotIn(stale, paper)
+
+    def test_analyzer_cost_gate_discloses_untruncated_full_analysis_cost(self):
+        for target, agent in self._analyzers():
+            with self.subTest(target=target):
+                gate = agent.split("4. **成本门", 1)[1].split("\n4.5 ", 1)[0]
+                for token in ("max_relevant_papers=N", "前 N 篇非点名相关论文",
+                              "相关证据集共有 N 篇", "全部纳入 gap/叙事后处理",
+                              "仅排序前 10 进入 gap/叙事后处理", "无论选择哪项",
+                              "candidate union 内缺失/stale 的 full `paper-analysis` 仍照常补齐",
+                              "去重后实际需补 M 篇", "约 4M 次代理调用", "OCR 耗时另计",
+                              "user_note 点名与 Stage 1 `user_named` 论文仍豁免截断"):
+                    self.assertIn(token, gate)
+                for stale in ("全量跑 N 篇", "只跑前 10", "约 4N 次代理"):
+                    self.assertNotIn(stale, gate)
+
+    def test_caller_contract_keeps_full_analysis_independent_of_post_scope(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        inputs = skill.split("### Input contract（公共字段）\n", 1)[1].split("\n##", 1)[0]
+        paper = next(line for line in inputs.splitlines()
+                     if line.startswith("| `paper_analysis` |"))
+        behavior = skill.split("## Behavior notes for callers\n", 1)[1].split("\n## ", 1)[0]
+        independent = next(line for line in behavior.splitlines()
+                           if line.startswith("- **每阶段独立跑、可中断**"))
+        for token in ("历史保留名称", "`relevant`", "缺省", "`all`", "全部候选视作相关",
+                      "不受 `paper_analysis` 或 `max_relevant_papers` / relevant top-N 截断",
+                      "user_note 点名与 Stage 1 `user_named` 仍豁免截断"):
+            self.assertIn(token, paper)
+        for section in (paper, independent):
+            for token in ("full `paper-analysis`", "固定覆盖", "selected directions",
+                          "`candidate_keys` 去重并集", "gap / future-work 补齐与叙事后处理",
+                          "相关集 >10 篇且未显式限额"):
+                self.assertIn(token, section)
+            for stale in ("只跑相关论文", "只跑**相关论文**", "方向全部成员论文，强制全量"):
+                self.assertNotIn(stale, section)
+        self.assertIn("不减少 full-analysis 范围或 job 数", independent)
+
+
 class Stage2PreflightContractTests(unittest.TestCase):
     """Issue #11 contracts: the early preflight gate sits between Stage 1
     verify and every expensive Stage 2 step, and reuse_all is a true no-op.

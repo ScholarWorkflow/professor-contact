@@ -70,9 +70,9 @@ OpenCode 深度预算的精确边界：**「不得继续加深」从 `paper-anal
 - `professors` (optional) — 逗号分隔 kanji 名，限定只分析这些；缺省=遍历 `教授研究/` 下**自己目录里带有 `套磁目标.json`** 的全部教授（每位教授一份 local target，不存在程序级总表）。
   若给定：Step 2 对名单内每位教授各解析一次其 `<教授目录>/套磁目标.json`；名单中某教授没有 local target（未被 Stage 0 选入）→ resolver 返回 `professor_not_selected`/`missing_target_state`（needs_input）；名单外教授的文件与 Zotero 分类一律不读。
 - `gap_scope` (optional) — gap 候选池范围：`relevant`（仅当前相关论文集中已有有效 sidecar 的）/ `selected_direction`（当前标记方向成员中已有有效 sidecar 的，缺省）/ `all`（教授全库中已有有效 sidecar 的）。**只决定从哪些已有 sidecar 的论文里选 gap，绝不触发额外 gap 提取**（sidecar 补齐仍只按 6.5 的 sidecar-first 链走）。
-- `paper_analysis` (optional) — 完整分析/sidecar 补齐范围：`relevant`（只跑**相关论文**，缺省）/ `all`（方向全部成员论文，强制全量）。相关论文判定见 Step 5.2。与 `gap_scope` 正交：本参数控制「补哪些论文的分析」，`gap_scope` 控制「从哪些已有 sidecar 的论文选 gap」。
+- `paper_analysis` (optional) — 历史保留名称的 relevance / post-analysis scope selector：`relevant`（按 Step 5.2 的现有规则生成相关集，缺省）/ `all`（全部候选视作相关）。只定义 gap / future-work 补齐与叙事后处理范围；两种模式下 full `paper-analysis` 都固定覆盖当前教授所有 selected directions 的 `candidate_keys` 去重并集（candidate union），不得被本参数截断。每个 unique candidate 复用有效 full analysis，否则恰好补一次 full pass。与 `gap_scope` 正交：相关集控制后处理补齐范围，`gap_scope` 控制「从哪些已有 sidecar 的论文选 gap」。
 - `freshness_scope` (optional) — 时效判断范围：`shortlist`（只判断 runner 稳定排序后的 5–10 条，缺省）/ `full`（候选池全部 gap）。两项可单独显式扩大。
-- `max_relevant_papers` (optional) — 对每个被标记方向最多处理多少篇非点名相关论文。仅用于显式小批、benchmark 或用户主动限额；缺省保留原成本门行为。用户在 note 中点名的论文永不因该值被截断。
+- `max_relevant_papers` (optional) — 对每个被标记方向，只限制进入 gap / future-work 补齐与叙事后处理的非点名相关论文数，不限制 candidate union 的 full-analysis job 数。仅用于显式小批、benchmark 或用户主动限额；缺省保留原成本门行为。user_note 点名与 Stage 1 `user_named` 论文永不因该值被截断。
 - `chatgpt_handoff` (optional) — `continue|wait`。完整交互式 workflow 的 caller 必须在进入本 agent 前问一次并显式传入；本 agent **绝不在 handoff 点二次询问**。字段缺失按非交互/向后兼容语义固定为 `continue`。
 - `chatgpt_result` (optional) — resume 时外部 result ZIP 绝对路径。不要接受外部 `_index.json`/`.future_work.json`/`套磁候选输入.json`。本轮会先按**当前** scope/carrier/source 重新 build current bundle，再把此 result 对 current bundle 做严格 import；旧输入自动 stale。
 - `kb_import` (optional) — `true` 时把每篇相关论文的分析做成 KB 条目入库（via `extraction-to-knowledge`）；缺省 `false`。相关论文全量入库为后续项（可后续扩为默认开）。
@@ -261,7 +261,7 @@ For each flagged direction:
 
 3. **幂等检查（范围 = 全教授被选方向 candidate_keys 的去重并集，不是相关集）**：读 `<教授文件夹>/论文分析/_index.json`。`papers[item_key]` 已存在且其分析文件仍在 → 跳过（不重跑）。**例外（重跑全文级）**：index 记录的 `level: abstract`（当时无 PDF）而本次 `pdf_available` → 重跑为全文级。`paper_analysis=all` 只影响新判定阶段，不强制重跑已完成的。
 
-4. **成本门（只截断相关集，绝不截断 candidate union 的 full analysis）**：若显式 `max_relevant_papers=N`，按 5.2 ①″ 的排序仅保留前 N 篇非点名相关论文，并保留全部 user_note 点名与 Stage 1 `user_named` 论文；记录 `scope_limited:true` 与被截断标题，不问用户。否则本方向相关集 >10 篇 → `question` 确认「全量跑 N 篇（约 4N 次代理，含 OCR 会更久）/ 只跑前 10」；点名论文仍豁免截断。被成本门截掉的论文**仍然**进入 Step 5 的 full-analysis scope（issue #7 要求每个 unique candidate 一次 full analysis）；截断只影响 6.5 的 future-work 补齐与 Step 6 的 gap/narrative 范围。**成本门完成后 scope 才能进入 handoff fingerprint。**
+4. **成本门（只截断相关集，绝不截断 candidate union 的 full analysis）**：若显式 `max_relevant_papers=N`，按 5.2 ①″ 的排序仅保留前 N 篇非点名相关论文，并保留全部 user_note 点名与 Stage 1 `user_named` 论文；记录 `scope_limited:true` 与被截断标题，不问用户。否则本方向相关集 >10 篇 → `question` 确认「相关证据集共有 N 篇：全部纳入 gap/叙事后处理 / 仅排序前 10 进入 gap/叙事后处理；无论选择哪项，candidate union 内缺失/stale 的 full `paper-analysis` 仍照常补齐（按去重后实际需补 M 篇估算，约 4M 次代理调用，扫描 PDF 的 OCR 耗时另计）」；user_note 点名与 Stage 1 `user_named` 论文仍豁免截断。被成本门截掉的论文**仍然**进入 Step 5 的 full-analysis scope（issue #7 要求每个 unique candidate 一次 full analysis）；截断只影响 6.5 的 future-work 补齐与 Step 6 的 gap/narrative 范围。**成本门完成后 scope 才能进入 handoff fingerprint。**
 
 4.5 **Stage-2 ChatGPT handoff barrier（每教授一次；纯确定性）**：完成该教授所有方向的 1–4 后再执行本节。
 
