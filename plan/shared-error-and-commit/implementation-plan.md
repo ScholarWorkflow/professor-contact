@@ -11,7 +11,7 @@
 - Target repository revision: `b3972a2cdf5cd60a5bc6dea006c10cfb6516a3d6`（分支 `refactor/stage3-render-group`，已含批次二与批次三）。本批工作分支 `refactor/shared-error-and-commit` 从该提交拉出。
 - Implementation sequencing prerequisite: PR #97（批次二）与 PR #98（批次三）尚未合并；本批堆叠在批次三之上，合并顺序 #97 → #98 → 本批。上游 PR 改写时，本批按受影响范围重放并重跑受影响检查。
 - Relevant upstream/runtime revision: N/A；不涉及外部仓库、CLI、安装布局或代理入口。
-- Proposed review status: pending。
+- Proposed review status: **APPROVED**（`Plan conclusion: APPROVED`，P1–P4 全 PASS；独立计划审核于 2026-10-18/19 给出）。
 - 唯一规范来源：本文件。本文件只定义实施方案，不声明计划审核、测试审核或合并关口已经通过。
 
 ## 正式需求与范围
@@ -126,4 +126,4 @@
 
 ## 审核状态
 
-计划第 2 版为当前唯一计划。第 1 版已取得 `Plan conclusion: APPROVED`（P1–P4 全 PASS）；第 2 版只落实该轮的非阻断措辞，未改方案、owner 与契约。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
+计划第 2 版为当前唯一计划，结论 **`Plan conclusion: APPROVED`**（P1–P4 全 PASS；独立计划审核于 2026-10-19 给出）。第 1 版已取得 `Plan conclusion: APPROVED`（P1–P4 全 PASS）；第 2 版只落实该轮的非阻断措辞，未改方案、owner 与契约。后续审核以本文件、需求原文、`PROJECT_CONSENSUS.md` 与 `Plan Reviewer Rule.md` 为输入。
