@@ -5342,6 +5342,16 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
     """
     professor = ctx.professor
     pack_directions = pack.get("directions") or []
+
+    def next_body_line() -> int:
+        """1-based physical line the next appended element starts at.
+
+        A single element may contain newlines (positioning blocks, author
+        quotes, gap summaries, fixed-evidence values), so counting elements
+        would shift every later line number.
+        """
+        return 1 + sum(len(rendered_markdown_block_lines(text)) for text in lines)
+
     for direction in pack_directions:
         stage2_require_later_paper_titles(ctx, direction, pack)
     projected = {direction_machine_id(d): direction_papers(pack, d)
@@ -5492,8 +5502,9 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
                     owner = {"kind": "fixed_evidence",
                              "direction_id": direction_machine_id(d),
                              "gap_id": gap.get("gap_id"), "field": fixed_field}
+                    start = next_body_line()
                     for offset in range(len(rendered_markdown_block_lines(text))):
-                        line_owners[len(lines) + 1 + offset] = dict(owner)
+                        line_owners[start + offset] = dict(owner)
                 lines.append(text)
             lines.append("")
             lines.append("   </details>")
@@ -5535,8 +5546,9 @@ def render_analysis_md(ctx: Stage2Context, pack: dict,
                              "direction_id": direction_machine_id(d),
                              "completed_by_item_key": completed or None,
                              "field": "blacklist_evidence"}
+                    start = next_body_line()
                     for offset in range(len(rendered_markdown_block_lines(blacklist_line))):
-                        line_owners[len(lines) + 1 + offset] = dict(owner)
+                        line_owners[start + offset] = dict(owner)
                 lines.append(blacklist_line)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
@@ -12344,7 +12356,8 @@ def cmd_stage2_refine_finalize(args) -> None:
     # item_key fallback in the managed Markdown.
     for direction in pack_directions:
         stage2_require_paper_reference_titles(ctx.papers, render_pack, direction)
-    body = render_analysis_md(ctx, render_pack, state_fingerprint)
+    line_owners: dict = {}
+    body = render_analysis_md(ctx, render_pack, state_fingerprint, line_owners)
     old_render = ((ctx.pack or {}).get("cache") or {}).get("render", {})
     decision = None
     if getattr(args, "decision_file", None):
@@ -12364,7 +12377,10 @@ def cmd_stage2_refine_finalize(args) -> None:
     updated_pack = dict(ctx.pack)
     updated_pack["generated_at"] = now_utc()
     updated_pack["directions"] = pack_directions
-    updated_pack["cache"] = {"render": {ANALYSIS_MD: {"sha256": md_result["sha256"]}}}
+    updated_pack["cache"] = {"render": {ANALYSIS_MD: {
+        "sha256": md_result["sha256"],
+        "fixed_evidence_lines": {str(number): owner
+                                 for number, owner in sorted(line_owners.items())}}}}
     updated_validator = dict(validator)
     applied = set(updated_validator.get("correction_applied_direction_ids") or [])
     applied.update(rewrites)
