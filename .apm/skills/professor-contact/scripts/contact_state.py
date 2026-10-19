@@ -1545,8 +1545,7 @@ _stage2_finalize = _stage2_finalize_module.build(
     RESOLVED_DIRECTION_SCHEMA=RESOLVED_DIRECTION_SCHEMA,
     ANALYSIS_MD=ANALYSIS_MD,
     STAGE2_RESOLUTION_SEMANTICS_VERSION=STAGE2_RESOLUTION_SEMANTICS_VERSION,
-    PLACEHOLDER_RE=PLACEHOLDER_RE
-,
+    PLACEHOLDER_RE=PLACEHOLDER_RE,
     stage2_trusted_paper_title=stage2_trusted_paper_title,
     stage2_require_later_paper_titles=stage2_require_later_paper_titles)
 

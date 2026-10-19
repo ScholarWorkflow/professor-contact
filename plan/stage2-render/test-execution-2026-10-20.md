@@ -24,11 +24,11 @@
 
 ## 文件与接缝
 
-- 被测 runner：`.apm/skills/professor-contact/scripts/contact_state.py`，7086 行，sha256 `cec3ce5189e138a600f603e1a94c95bfb973ef25fa41b350324efc9ad8a4e85a`。
+- 被测 runner：`.apm/skills/professor-contact/scripts/contact_state.py`，7085 行，sha256 `4c0ff3f910d8605dfd264ab7e7506483e25de3df45d32de6776e77f5cbe59974`（实现提交后清掉了 finalize 调用里一行孤立 `,`，语法与行为不变，A/B 仍为 58 条 OK、`--help` 仍逐字节相同）。
 - 新模块：`.apm/skills/professor-contact/scripts/_stage2_render.py`，667 行，sha256 `c96217c55ea897bf24068f263dd34eb41085f762546190aef72efb9196ca52be`（10 个搬移定义 + 两个移入的标题 helper，`build()` 16 参数、12 成员）。
 - 改动的已合并模块：`.apm/skills/professor-contact/scripts/_stage2_finalize.py`，885 行，sha256 `243d71638a36985df4f7a232b470e23446a6d51697d4fac1b6563872661f4ddc`；相对父提交 `+4 −37`（删 33 行 helper + 2 行成员表，加 2 个参数与 2 行签名）。
-- 代码 diff（`5972905` → 工作树）：runner `+47 −591`（`git diff --numstat`），其中删除侧是 10 个定义 571 行加删除后收敛掉的空行，新增侧是加载块 12 行、绑定块与 12 个别名、finalize 调用新增 3 行。
-- `git diff --ignore-blank-lines -U0` 的 runner hunk 正好 4 个：`@@ -231,0 +232,12 @@`（渲染加载块）、`@@ -1461,589 +1473,33 @@`（10 个定义删除与绑定块）、`@@ -2093 +1549,3 @@`（finalize 调用补 2 个实参）、`@@ -2102,2 +1559,0 @@`（旧的两行标题别名删除）；`_stage2_finalize.py` 另有 3 个 hunk（33 行删除、签名加 2 个参数、成员表删 2 行）。
+- 代码 diff（`5972905` → 工作树）：runner `+46 −591`（`git diff --numstat`），其中删除侧是 10 个定义 571 行加删除后收敛掉的空行，新增侧是加载块 12 行、绑定块与 12 个别名、finalize 调用新增 3 行。
+- `git diff --ignore-blank-lines -U0` 的 runner hunk 正好 4 个：`@@ -231,0 +232,12 @@`（渲染加载块）、`@@ -1461,589 +1473,33 @@`（10 个定义删除与绑定块）、`@@ -2093 +1549,2 @@`（finalize 调用补 2 个实参）、`@@ -2102,2 +1559,0 @@`（旧的两行标题别名删除）；`_stage2_finalize.py` 另有 3 个 hunk（33 行删除、签名加 2 个参数、成员表删 2 行）。
 - 无关空行保持原样：基线里 5 处“≥4 个连续空行”在改动后仍是 5 处、长度相同（只随删除整体前移）。
 
 ## 说明与偏差

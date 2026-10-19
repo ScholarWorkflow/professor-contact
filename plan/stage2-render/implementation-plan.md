@@ -69,7 +69,7 @@ validate_freshness_results = _stage2_render.validate_freshness_results
 
 ## 实施步骤
 
-0. **当前工作树状态**：probe 产物已经落到工作树（`M contact_state.py` 7086 行、`M _stage2_finalize.py` 885 行、`?? _stage2_render.py` 667 行）。实施按“把现有产物当作实现、逐项对照 `5972905` 的 blob 复验 R1–R6”执行；若要从零重放，先用 `git checkout -- .apm/skills/professor-contact/scripts` 恢复两个已跟踪文件并删掉新模块，再执行下面 1–5 步。
+0. **当前状态**：probe 产物已由实现提交 `ebf2763` 落库（runner 7085 行、`_stage2_finalize.py` 885 行、`_stage2_render.py` 667 行），工作树干净。实施按“把现有产物当作实现、逐项对照 `5972905` 的 blob 复验 R1–R6”执行；若要从零重放，先 `git reset --hard 5972905`（丢弃本批提交），再执行下面 1–5 步。
 
 1. 用 `/tmp/pc-stage2-tools/extract_batch_v2.py`（134 行，sha256 `336c58e1937e7e735b1d1678a39630618ae5c6917ecc6be29b93a4b4e6f14b5b`）加新 spec `/tmp/pc-stage7/spec-b7.json` 生成模块骨架与 probe runner：模块名 `_stage2_render`、10 个函数名、`constants: []`、`load_anchor` = `SCHEMA = 1` 所在行、`bind_before` = `validate_freshness_results`、16 个参数名、模块 import（`datetime`、`Path`、`Any`、`re`、`types`）。
 2. 把 `_stage2_finalize.py` 里的两个标题 helper 原样（去掉 4 空格缩进）追加进渲染模块的 `build()`，成员表加两项；再用脚本从 `_stage2_finalize.py` 删除这两个嵌套定义、给 `build` 加两个参数、从 `SimpleNamespace` 去掉两项。
@@ -96,7 +96,7 @@ validate_freshness_results = _stage2_render.validate_freshness_results
 ## 风险与反例
 
 1. **标题 helper 搬走后 `_stage2_finalize.py` 内部还有引用**：实测 Load 点共 5 处——`stage2_trusted_paper_title` 在 267（`stage2_require_paper_reference_titles`）、897（同批搬走的 `stage2_require_later_paper_titles`）、916（成员表）；`stage2_require_later_paper_titles` 在 751（`cmd_stage2_finalize`）、917（成员表）。除同批搬走的那处外，其余都要靠新参数提供；漏一个就会在 `stage2-finalize` 上报 `NameError`。
-2. **runner 里还有别处直接用这两个名字**：反例——除 `_stage2_finalize.build`／`_stage2_validation.build` 的实参外，若还有顶层函数直接调用，别名必须早于它们的运行期调用；绑定块在 1455，所有调用点都在其后。
+2. **runner 里还有别处直接用这两个名字**：反例——除 `_stage2_finalize.build`／`_stage2_validation.build` 的实参外，若还有顶层函数直接调用，别名必须早于它们的运行期调用；绑定块插在 1461，所有调用点都在其后。
 3. **`_stage2_finalize.py` 的签名变化漏改调用方**：反例——runner 只在一处调用 `_stage2_finalize.build`，漏传新参数会在导入期 `TypeError`；T0 的 `--help` 与工厂契约检查会直接暴露。
 4. **delete/插入行区间不连续**：反例——1461–2049 之间若夹着不属于本批的定义，整段删除会误删；实施前用 AST 确认区间内恰好 10 个定义。
 5. **docstring 缩进**：搬入 `build()` 后 docstring 续行加 4 空格，否则 `inspect.cleandoc` 不同；用只读脚本核对。
@@ -108,7 +108,7 @@ validate_freshness_results = _stage2_render.validate_freshness_results
 ## 修订记录
 
 - 第 1 版：首次提交。
-- 第 2 版：按实施前演练修正——注入名由 15 个改为 16 个（补 `Stage2PackRefineContext`，`stage2_require_later_paper_titles` 需要它），并把接缝判据写成实测的 4 个 hunk；对照基准改为分支链上一位 `refactor-stage2-resolve-commit` 的 head `5972905`。
+- 第 2 版：按实施前演练修正——注入名由 15 个改为 16 个（补 `Stage2PackRefineContext`，`stage2_require_later_paper_titles` 需要它），并把接缝判据写成实测的 4 个 hunk；对照基准改为分支链上一位 `refactor-stage2-context`（#113）的 head `5972905`。
 
 ## 审核状态
 
