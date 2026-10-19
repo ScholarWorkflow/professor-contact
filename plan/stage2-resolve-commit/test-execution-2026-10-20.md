@@ -1,9 +1,9 @@
 # Stage 2 划分第三批：resolve 提交层（测试执行记录）
 
 - 执行日期：2026-10-20
-- 测试计划：[test-plan.md](test-plan.md)，第 5 版（第一关 PASS、第二关待复核）。
-- 工作分支：`refactor-stage2-resolve-commit`；基线 `3233810`（`origin/refactor-stage2-resolve`，第 2 批分支在实施期间变基到已合并的 `main`，实现提交为 `f07abb0`；任务开始时的旧基线 `2ecdc9c`／`e5b8d4e` 已被替换）。
-- 被测代码提交：`c080be04ff7eb831be26077082b34849d6624664`（`refactor(stage2): move the resolve submit layer into the resolve helper`）；测试计划文档提交 `21e1af0`、`88eba77`，本记录提交见 PR 最新 head。被测 `scripts/` 目录在两处之间没有变化（`git diff --stat c080be0 88eba77 -- .apm/skills/professor-contact/scripts` 为空）。
+- 测试计划：[test-plan.md](test-plan.md)，第 6 版（第一关 PASS、第二关 PASS）。
+- 工作分支：`refactor-stage2-resolve-commit`；父分支 head `dcccf16914a9ec755419d6765bbc970e4061e798`（分支链 #108 → #109 → #110 → #111 → 本批）。
+- 被测代码提交：`a2a140e`（`refactor(stage2): move the resolve submit layer into the resolve helper`，父提交 `dcccf16914a9ec755419d6765bbc970e4061e798`）；测试计划文档提交见分支链上的 `ff73c8d` 起的文档提交，本记录提交见 PR 最新 head。本次是分支链重排后的重跑：`scripts/` 内容相对重排前不变，只换了父提交。
 - 环境：Darwin 25.6.0 arm64；`uv run --no-project python` 为 Python 3.14.6（仓库 CI 用 3.12，本记录为本地执行结果）。
 - 运行目录：`/tmp/pc-stage3/`；命令块由测试计划原文抽出后逐块执行（抽出脚本与四个 `blockN.sh` 在 `/tmp/pc-stage3/plan-blocks/`），日志 `t0-plan-v3.log`、`plan-block2-raw.log`（第 2 步整块，另按段拆成 `compare-plan-v3.log`、`docstring-plan-v3.log`）、`t4-plan-v3.log`、`t5-plan-v3.log`，脚本哈希 `script-sha.txt`；仓库外临时产物不入库。
 
@@ -14,9 +14,9 @@
 | T0 | 通过 | 4 条 `T0 ... OK`（14 参数、23 成员、23 同名别名且去重后仍 23、import json）与 `T0 CHECKS PASS`；`py_compile` 与 `--help` 退出码 0 |
 | T1–T3 | 通过 | 43 条 `OK`（`T0` 3、`T1` 15、`T2` 10、`T3` 15）；末尾 `ALL CHECKS PASS`；退出码 0 |
 | T2 的 docstring 核对 | 通过 | `total=7 with_doc=7 multi=6 clean_equal=7 without_doc=0 missing=0 mismatched=0`、`DOCSTRING CHECKS PASS`、退出码 0 |
-| T4 | 通过 | `Ran 7 tests in 4.167s`、`OK`；7 条 `... ok`；无 skip／`FAIL`／`ERROR`；未触发基线对照归因 |
-| T5 | 通过 | `Ran 2 tests in 1.209s`、`OK`；无 skip／`FAIL`／`ERROR` |
-| 既有仓库 CI | 通过 | PR #112 head `1b08b36` 上 run `39315290639`、head `21e1af0` 上 run `39319465479`、head `88eba77` 上 run `39323008051`、head `e56bfd8` 上 run `39323797206`，四次的 4 个 `shards (shardN)` 与聚合 job `test` 全部 SUCCESS |
+| T4 | 通过 | `Ran 7 tests in 3.834s`、`OK`；7 条 `... ok`；无 skip／`FAIL`／`ERROR`；未触发基线对照归因 |
+| T5 | 通过 | `Ran 2 tests in 1.038s`、`OK`；无 skip／`FAIL`／`ERROR` |
+| 既有仓库 CI | 通过 | 分支链重排前四个 head 上的 run 全部 SUCCESS；重排后的 run 由 PR 页面查看（不作为本批必测结论） |
 
 ## 逐项结果
 
@@ -111,9 +111,9 @@ OK
 ## 版本与产物
 
 - 被测代码提交：`c080be04ff7eb831be26077082b34849d6624664`。
-- runner：`.apm/skills/professor-contact/scripts/contact_state.py`，9784 行，sha256 `e0f519313b588f42a1ac4cc38e3cc593cfec1a3327871653aa65c27a06178d5f`。
+- runner：`.apm/skills/professor-contact/scripts/contact_state.py`，8191 行，sha256 `b71be0b3e383c2421e7de58e51f089d7426b65dfa7d8bb9b6530c88ee5334216`。
 - 模块：`.apm/skills/professor-contact/scripts/_stage2_resolve.py`，1409 行，sha256 `fa4cb976dfe5a5160b75380739ec30eb57fd5c715894529d100045a5532fe5c6`；`build()` 内 23 个函数、模块级 7 个常量。
-- 代码 diff（`3233810..c080be0`）：runner `+13 −604`，模块 `+606 −3`（`git diff --numstat`）。
+- 代码 diff（`dcccf16..a2a140e`）：runner `+13 −604`，模块 `+606 −3`（`git diff --numstat`）。
 
 ## 偏差与观察
 
@@ -126,5 +126,5 @@ OK
 
 ## 未完成项
 
-- 测试计划第 5 版已提交第二关复核（第一关 PASS）。
-- PR 的 CI：head `1b08b36` 上 run `39315290639`、head `21e1af0` 上 run `39319465479`、head `88eba77` 上 run `39323008051`、head `e56bfd8` 上 run `39323797206`，4 个 `shards (shard1..4)` 与聚合 job `test` 全部 SUCCESS；CI 不作为本批必测结论。
+- 测试计划第 6 版：第一关 PASS、第二关 PASS；本版只把对照基准换成分支链上的父提交。
+- PR 的 CI：此前四个 head 上的 run 全部 SUCCESS；分支链重排后由 PR 页面查看最新 run，CI 不作为本批必测结论。

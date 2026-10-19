@@ -4,20 +4,20 @@
 
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 2 版（`Plan conclusion: APPROVED`）。
 - 需求来源：负责人 2026-10-20 的指示（Stage 2 划分；“contact_state.py 收敛为 CLI 分发与确有调用方依赖的兼容入口”）；范围与约束见执行计划。
-- Target repository revision: 工作分支 `refactor-stage2-resolve-commit`，基线为 `origin/refactor-stage2-resolve` 的 `3233810`（其中实现提交为 `f07abb0`）；对照基准同为 `f07abb0` 的 `scripts` 目录。第 2 批分支在实施期间变基到已合并的 `main`，原任务给出的 `2ecdc9c` 已被替换；本计划按变基后的最新基线与同一批代码内容执行。
-- Test plan revision: 第 5 版。
+- Target repository revision: 工作分支 `refactor-stage2-resolve-commit`，基线为父分支 `refactor-stage2-validation` 的 head `dcccf16914a9ec755419d6765bbc970e4061e798`（分支链：#108 → #109 → #110 → #111 → 本批）；对照基准同为 `dcccf16914a9ec755419d6765bbc970e4061e798` 的 `scripts` 目录。第 2 批分支在实施期间变基到已合并的 `main`，原任务给出的 `2ecdc9c` 已被替换；本计划按变基后的最新基线与同一批代码内容执行。
+- Test plan revision: 第 6 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
-- Proposed review status: 待复核（第 2–5 版意见已按 B1–B4、R1r/R5b/R6 与版本号、批次归属、退出码三项处理）。
+- Proposed review status: **第一关 PASS、第二关 PASS**（2026-10-20）；第 6 版把对照基准换成分支链上的父提交，判据与步骤不变。
 
 ## 必测清单
 
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
 | T0 | 模块可编译、可加载，工厂契约完整（R1、R3） | 工作树 `scripts/contact_state.py`、`scripts/_stage2_resolve.py` | 两个文件 `py_compile` 成功；直接执行 runner 的 `--help` 退出码 0；模块 `build()` 的 keyword-only 参数**精确等于** 14 个名字集合（不含 `_facts_preflight_proof`、`_load_existing_resolved`，含 5 个新增名字）；返回 23 个成员；runner 的 23 个别名逐个满足 `目标名 == _stage2_resolve.<同名>` 且去重后仍是 23 个；模块头有 `import json` | 第 1 步命令；4 条 `T0 ... OK`（14 参数、23 成员、23 同名别名、import json）与 `T0 CHECKS PASS` |
-| T1 | 7 个函数确实离开 runner 顶层、进入模块 `build()`（R1） | 对照基准（`git archive f07abb0` 取出的 `scripts`）与工作树 `scripts` | `T0`：base 与 head 是两个不同目录、base 仍定义 7 个函数、head 一个都不定义；`T1`：模块存在；7 个函数逐个“runner 顶层已无 / 模块 `build()` 内有” | 第 2 步对比脚本的 `T0 ...` 与 `T1 ...` 行；共 18 条 `OK` |
+| T1 | 7 个函数确实离开 runner 顶层、进入模块 `build()`（R1） | 对照基准（`git archive dcccf16` 取出的 `scripts`）与工作树 `scripts` | `T0`：base 与 head 是两个不同目录、base 仍定义 7 个函数、head 一个都不定义；`T1`：模块存在；7 个函数逐个“runner 顶层已无 / 模块 `build()` 内有” | 第 2 步对比脚本的 `T0 ...` 与 `T1 ...` 行；共 18 条 `OK` |
 | T2 | 搬移没有改变任何函数逻辑（R2） | 同上两侧源码 | 7 个函数的代码 AST 与基准完全相同（对比脚本忽略 docstring 内容）；docstring 单独核对：7 个函数都有 docstring（其中 6 个多行），`inspect.cleandoc` 后与基准同文；runner 其余顶层定义 AST 不变；离开 runner 的定义正好是这 7 个、没有新增；7 个函数在 runner 都有别名 | 同一对比脚本的 `T2 ...` 行；共 10 条 `OK`；docstring 核对用 `/tmp/pc-stage2-tools/check_docstrings.py`（sha256 `941b2220…`），末行 `total=7 with_doc=7 multi=6 clean_equal=7 without_doc=0 missing=0 mismatched=0` 与 `DOCSTRING CHECKS PASS` |
 | T3 | 旧接口与加载方式不变（R4、R5） | 同一进程内分别按文件路径加载两侧 runner；再以子进程直接执行改动后的 runner | 7 个名字在两侧都可调用；`inspect.signature` 字符串两侧相同；直接执行 `contact_state.py --help` 退出码 0 | 同一对比脚本的 `T3 ...` 行；共 15 条 `OK`，末尾 `ALL CHECKS PASS` |
-| T4 | resolve 提交层的校验、写入与用户选择边界不变（R2） | 既有测试方法 7 个（见第 3 步）：`ResolvedDirectionFinalizeTests` 3 个、`ResolvedDirectionRegressionTests` 2 个（运行隔离、旧 result 文件被忽略的直接调用）、`ResolveAcceptanceBoundaryTests` 1 个、`UserKeptProvisionalTests` 1 个 | 7 个方法执行；**通过条件只限落在本批 7 个函数上的断言**（结果文件必需性与本轮身份、移除校验、运行隔离、旧 result 文件被忽略、accept 的 key/陈旧校验、keep-provisional 写入）。方法内另有跨批断言：方法 1–4 的 plan 断言来自第 2 批 `cmd_stage2_resolve_plan`，方法 7 尾段经 `stage2-finalize` 断言 pack 的 `resolved_direction`（该命令尚未搬移）。这些断言失败时先按本批回归排查，按第 8 条命令在 `f07abb0` 上跑同一组方法，基线上也失败才记既有失败。`Stage2FinalizeWithResolvedTests` 的 3 个方法主断言在第 4 批，已从本批 T4 移出 | 第 3 步命令；`Ran 7 tests`、`OK`，无 skip／`FAIL`／`ERROR`；有失败时按第 8 条基线对照归因 |
+| T4 | resolve 提交层的校验、写入与用户选择边界不变（R2） | 既有测试方法 7 个（见第 3 步）：`ResolvedDirectionFinalizeTests` 3 个、`ResolvedDirectionRegressionTests` 2 个（运行隔离、旧 result 文件被忽略的直接调用）、`ResolveAcceptanceBoundaryTests` 1 个、`UserKeptProvisionalTests` 1 个 | 7 个方法执行；**通过条件只限落在本批 7 个函数上的断言**（结果文件必需性与本轮身份、移除校验、运行隔离、旧 result 文件被忽略、accept 的 key/陈旧校验、keep-provisional 写入）。方法内另有跨批断言：方法 1–4 的 plan 断言来自第 2 批 `cmd_stage2_resolve_plan`，方法 7 尾段经 `stage2-finalize` 断言 pack 的 `resolved_direction`（该命令尚未搬移）。这些断言失败时先按本批回归排查，按第 8 条命令在父分支 head `dcccf16` 上跑同一组方法，基线上也失败才记既有失败。`Stage2FinalizeWithResolvedTests` 的 3 个方法主断言在第 4 批，已从本批 T4 移出 | 第 3 步命令；`Ran 7 tests`、`OK`，无 skip／`FAIL`／`ERROR`；有失败时按第 8 条基线对照归因 |
 | T5 | 复制 runner 的既有夹具仍能加载新模块（R4） | `test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker`、`test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling` | 两个方法通过；复制布局包含 `_stage2_resolve.py`，复制后的 runner 能按路径加载它 | 第 4 步命令；`Ran 2 tests`、`OK`，无 skip |
 
 **既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的 `shards` 4 个分片与聚合 job `test` 由仓库工作流照常执行，其结果单独引用；本批不因此扩张或缩减必测清单，也不在本地重跑全量套件。
@@ -79,7 +79,7 @@
    RUN=/tmp/pc-stage3
    rm -rf "$RUN/base"
    mkdir -p "$RUN/base"
-   git archive f07abb0 .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
+   git archive dcccf16914a9ec755419d6765bbc970e4061e798 .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
    shasum -a 256 /tmp/pc-stage2-tools/compare_stage2_batch.py
    uv run --no-project /tmp/pc-stage2-tools/compare_stage2_batch.py \
      "$RUN/base/.apm/skills/professor-contact/scripts" \
@@ -144,14 +144,14 @@
 8. 失败处理：
    - T0 失败：按报错定位到编译、加载或 `build()` 契约；属于本批改动缺陷时交实现负责人修正后重跑第 1 步。
    - T1–T3 任一 `FAIL`：按标签定位到具体函数或检查项，判定为搬移缺陷，交实现负责人修正后重跑第 2 步；不得改脚本放宽判据。
-   - T4／T5 方法失败：区分“本次改动引入的回归”“既有失败”“环境问题”。断言落在跨批代码（本批方法 1–4 经 `stage2-resolve-plan` 得出的 plan 断言属第 2 批；方法 7 尾段经 `stage2-finalize` 对 pack 的断言属尚未搬移的部分）时，也先按本批回归排查，用下面的命令在基线 `f07abb0` 上跑同一组方法：
+   - T4／T5 方法失败：区分“本次改动引入的回归”“既有失败”“环境问题”。断言落在跨批代码（本批方法 1–4 经 `stage2-resolve-plan` 得出的 plan 断言属第 2 批；方法 7 尾段经 `stage2-finalize` 对 pack 的断言属尚未搬移的部分）时，也先按本批回归排查，用下面的命令在父分支 head `dcccf16` 上跑同一组方法：
 
      ```sh
      set -e
-     BASELINE=/tmp/pc-stage3/base-f07abb0
+     BASELINE=/tmp/pc-stage3/base-parent
      rm -rf "$BASELINE"
      mkdir -p "$BASELINE"
-     git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-resolve-commit archive f07abb0 | tar -x -C "$BASELINE"
+     git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-resolve-commit archive dcccf16914a9ec755419d6765bbc970e4061e798 | tar -x -C "$BASELINE"
      cd "$BASELINE/.apm/skills/professor-contact/tests"
      if uv run --no-project python -m unittest \
        test_stage2_resolved_direction.ResolvedDirectionFinalizeTests.test_resolve_finalize_rejects_missing_new_result \
@@ -204,6 +204,7 @@
 
 - 第 3 版：按第二关复核修正（R1–R5）——① T0 增补“23 个别名去重后仍 23”（`assert len({n.targets[0].id for n in aliases}) == 23`）；② 第 2 步补 docstring 核对命令与脚本 sha256，T2 与环境节写明脚本路径、行数与哈希；③ T4 归因改为基线对照——跨批断言失败先在 `f07abb0` 上跑同一方法，基线上也失败才算既有失败，否则按本批回归修正；④ 自检项 ③ 改为“两个脚本都有来源与 sha256”。
 - 第 4 版：按第二关复核的剩余点修正（R1r、R5b、R6）——① 跨批断言改按实测写明：方法 1–4 的 plan 断言来自第 2 批 `cmd_stage2_resolve_plan`，方法 7 尾段经 `stage2-finalize` 断言 pack 的 `resolved_direction`，不再笼统写“第 1/2 批 plan、第 4 批 finalize”；② 第 8 条补可执行的基线对照命令块（`/tmp/pc-stage3/base-f07abb0`、7 个方法、`tee /tmp/pc-stage3/t4-baseline.log`）与两条判据；③ 第 5 条的 CI 记录统一到实际 head：`1b08b36`／`39315290639`、`21e1af0`／`39319465479`、`88eba77`／`39323008051`。
+- 第 6 版：把本批挂到 PR 分支链上——对照基准由 `3233810` 改为父分支 head `dcccf16`（#110/#111 已并入），`git archive`、第 8 条基线命令与环境节同步；A/B、T4、T5、docstring 在新基准上重跑（43 条 OK、7 项、2 项、7/7 同文）。
 - 第 5 版：按第二关复核的剩余三点修正——① 计划头 `Test plan revision` 与 `Proposed review status` 同步到第 4/5 版；② 基线对照块改为 `if … then … else … exit 1`，用退出码区分 `BASELINE PASSED` 与 `BASELINE FAILED`，不再用 `| tee`；③ CI 记录补 `e56bfd8`／`39323797206`，并写明纯文档提交的结果只在 PR 页面查看。
 
 ## 审核状态
