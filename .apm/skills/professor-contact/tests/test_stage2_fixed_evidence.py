@@ -1,4 +1,4 @@
-"""U1 fixed-evidence display and real blocker ownership (test plan t1).
+"""U1 fixed-evidence display and real blocker ownership (test plan t2).
 
 Covers the six must-test targets of ``plan/stage2-fixed-evidence/test-plan.md``:
 trusted citation display (U1-A), missing-metadata handoff (U1-B), real fragment
@@ -199,36 +199,78 @@ class FixedEvidenceBase(BaseEnv):
         direction = pack["directions"][0]
         gap = direction["gap_shortlist"][0]
         self.assertEqual(gap["candidate_paper_ids"], [CITATION_KEY])
+        # Raw structured facts must survive the display conversion untouched.
+        self.assertEqual(gap["quote"], self.gap_quotes["AAAA1111"])
+        self.assertEqual(gap["translation_zh"],
+                         f"中译：{self.gap_quotes['AAAA1111'][:24]}".strip())
+        self.assertEqual((gap["source"], gap["page"]), ("Conclusion", 8))
+        self.assertEqual((gap["status"], gap["confidence"]), ("partial", "high"))
         self.assertEqual(
             gap["evidence"],
             f"后续由 {CITATION_KEY} 完成，日期 {ORDINARY_DATE}，"
             f"未知 {ORDINARY_EIGHT} 与 12345678 保留。")
-        self.assertIn(CITATION_TITLE, pack["papers"][CITATION_KEY]["title"])
+        self.assertEqual(pack["papers"][CITATION_KEY]["title"], CITATION_TITLE)
 
-        card = "\n".join(self.card_lines())
+        lines = self.card_lines()
+        card = "\n".join(lines)
+        gap_evidence_line = (
+            f"- 后续论文依据：后续由 {CITATION_LINK} 完成，日期 {ORDINARY_DATE}，"
+            f"未知 {ORDINARY_EIGHT} 与 12345678 保留。")
+        completed_line = f"- 已做部分：{CITATION_LINK} 已完成一部分；"
+        completed_continuation = f"续行仍由 {CITATION_LINK} 负责。"
+        remaining_line = (
+            f"- 剩余缺口：仍缺 {CITATION_LINK} 的对比，见 {CITATION_LINK}。")
+        blacklist_line = (
+            "- We plan to test a second synthetic processing path."
+            "——《Synthetic processing path evaluation》（2024）→ "
+            f"已被 {CITATION_LINK} 接住（依据：{CITATION_LINK} 已接住该点。）。")
+        # One exact line per actual exit: link position, surrounding evidence
+        # text and link count are checked in place instead of by a whole-card sum.
+        for line in (gap_evidence_line, completed_line, completed_continuation,
+                     remaining_line, blacklist_line):
+            self.assertIn(line, lines)
+        self.assertEqual(gap_evidence_line.count(CITATION_LINK), 1)
+        self.assertEqual(completed_line.count(CITATION_LINK), 1)
+        self.assertEqual(completed_continuation.count(CITATION_LINK), 1)
+        self.assertEqual(remaining_line.count(CITATION_LINK), 2)
+        self.assertEqual(blacklist_line.count(CITATION_LINK), 2)
+        self.assertLess(lines.index(gap_evidence_line), lines.index(completed_line))
+        self.assertLess(lines.index(completed_line),
+                        lines.index(completed_continuation))
+        self.assertLess(lines.index(completed_continuation),
+                        lines.index(remaining_line))
+        self.assertLess(lines.index(remaining_line), lines.index(blacklist_line))
+        # The card still carries the raw quote/translation/source and freshness
+        # conclusion next to the converted citations.
+        self.assertIn(f"- 作者原话：「{self.gap_quotes['AAAA1111']}」", card)
+        self.assertIn(
+            f"- 中译：中译：{self.gap_quotes['AAAA1111'][:24]}".strip(), card)
+        self.assertIn("- 页码：p.8（Conclusion）", card)
+        self.assertIn("- 当前状态：partial（置信度 high）", card)
         self.assertNotIn(CITATION_KEY, self.without_links(card),
                          "the four exits must not leak the bare key outside a link target")
-        self.assertEqual(card.count(f"[{CITATION_TITLE}](zotero://select/library/items/"
-                                    f"{CITATION_KEY})"), 7, card)
         self.assertNotIn("[[", card)
+        self.assertEqual(card.count(CITATION_LINK), 7, card)
         self.assertIn(ORDINARY_EIGHT, card)
         self.assertIn("12345678", card)
         self.assertIn(ORDINARY_DATE, card)
-        # The already-correct link keeps its target and is not nested.
-        self.assertIn(f"{CITATION_LINK} 已完成一部分；", card)
+        # Ordinary eight-digit prose is not a citation and gets no link target.
+        self.assertNotIn(f"items/{ORDINARY_EIGHT}", card)
         # Machine evidence stays byte-identical; only the human-facing copy changes.
         blacklist = direction["completed_gap_blacklist"][0]
         self.assertEqual(blacklist["evidence"], f"{CITATION_KEY} 已接住该点。")
         self.assertEqual(blacklist["completed_by_item_key"], CITATION_KEY)
-        # Display-only derived metadata never widens membership or P licence sets.
+        # Display-only derived metadata never widens membership or P/L licence sets.
         self.assertEqual(sorted(direction["supporting_item_keys"]),
                          ["AAAA1111", "BBBB2222", "CCCC3333"])
         self.assertEqual(direction["relevant_keys"], ["AAAA1111", "BBBB2222"])
+        self.assertEqual(direction["narrative_later_papers"], {})
 
     # -- U1-B ----------------------------------------------------------------
 
     def test_u1_b_missing_trusted_metadata_fails_before_write(self):
         env = self._fresh_env()
+        expected_gap_id = contact_state.quote_id(self.gap_quotes["AAAA1111"])
         facts_path, results, proof = env.generate_pack(env.gap_override())
         facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
         next(paper for paper in facts["papers"]
@@ -243,7 +285,23 @@ class FixedEvidenceBase(BaseEnv):
         out = env.finalize(facts_path, proof, results)
         self.assertNotEqual(out["status"], "ok", out)
         self.assertEqual(out.get("reason_code"), "missing_paper_reference_title", out)
-        self.assertIn(CITATION_KEY, json.dumps(out, ensure_ascii=False))
+        # The failure names the pre-determined gap, field, paper key and direction
+        # so the data owner can act without parsing prose.
+        self.assertEqual(out.get("gap_id"), expected_gap_id, out)
+        self.assertEqual(out.get("field"), "evidence", out)
+        self.assertEqual(out.get("item_key"), CITATION_KEY, out)
+        self.assertEqual(out.get("direction"), "DIR00001", out)
+        self.assertIn("no trusted title", out.get("message") or "", out)
+        self.assertNotIn(CITATION_TITLE, json.dumps(out, ensure_ascii=False), out)
+        # The old managed files still hold the old title and raw evidence, and
+        # their bytes are untouched by the failed render.
+        before_pack = json.loads(pack_before.decode("utf-8"))
+        before_gap = before_pack["directions"][0]["gap_shortlist"][0]
+        self.assertEqual(
+            before_gap["evidence"],
+            f"后续由 {CITATION_KEY} 完成，日期 {ORDINARY_DATE}，"
+            f"未知 {ORDINARY_EIGHT} 与 12345678 保留。")
+        self.assertIn(CITATION_TITLE, analysis_before.decode("utf-8"))
         self.assertEqual(analysis_path.read_bytes(), analysis_before)
         self.assertEqual(pack_path.read_bytes(), pack_before)
 
@@ -266,6 +324,10 @@ class FixedEvidenceBase(BaseEnv):
             self.assertNotEqual(out["status"], "ok", (form, out))
             self.assertEqual(out.get("reason_code"),
                              "missing_paper_reference_title", (form, out))
+            self.assertEqual(out.get("gap_id"), expected_gap_id, (form, out))
+            self.assertEqual(out.get("field"), "evidence", (form, out))
+            self.assertEqual(out.get("item_key"), "ZZZZ9999", (form, out))
+            self.assertEqual(out.get("direction"), "DIR00001", (form, out))
             self.assertIn("ZZZZ9999", json.dumps(out, ensure_ascii=False), form)
             self.assertFalse(analysis_path.exists(), form)
             self.assertFalse(pack_path.exists(), form)
@@ -319,17 +381,20 @@ class FixedEvidenceBase(BaseEnv):
         fixed = recorded["fixed_blocking"]
         self.assertEqual(sorted(fixed), ["DIR00001"], fixed)
         rows = fixed["DIR00001"]
-        self.assertIn({"direction_id": "DIR00001",
-                       "gap_id": rows[0]["gap_id"], "field": "evidence",
-                       "owner": "source"}, rows)
-        self.assertTrue(any(row["owner"] == "generator" and row["field"] == "label"
-                            for row in rows), rows)
-        self.assertTrue(any(row["field"] == "completed_part" and row["owner"] == "source"
-                            for row in rows), rows)
-        self.assertTrue(any(row["field"] == "summary" and row["owner"] == "source"
-                            for row in rows), rows)
-        self.assertEqual(sorted(set(row["field"] for row in rows)),
-                         ["completed_part", "evidence", "label", "summary"], rows)
+        # Expected direction, gap and fields come from the fixture inputs and the
+        # quote id, not from whatever the report happened to return.
+        expected_direction = "DIR00001"
+        expected_gap_id = contact_state.quote_id(self.gap_quotes["AAAA1111"])
+        self.assertCountEqual(rows, [
+            {"direction_id": expected_direction, "gap_id": expected_gap_id,
+             "field": "evidence", "owner": "source"},
+            {"direction_id": expected_direction, "gap_id": expected_gap_id,
+             "field": "label", "owner": "generator"},
+            {"direction_id": expected_direction, "gap_id": expected_gap_id,
+             "field": "completed_part", "owner": "source"},
+            {"direction_id": expected_direction, "gap_id": expected_gap_id,
+             "field": "summary", "owner": "source"},
+        ], rows)
         span_owners = {(row["owner"], row["field"]) for row in rows
                        if row["field"] in ("label", "evidence")}
         self.assertEqual(span_owners, {("generator", "label"), ("source", "evidence")},
