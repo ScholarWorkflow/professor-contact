@@ -1,9 +1,9 @@
 # U5：实际分析级别贯通与诚实统计测试计划
 
-- Test plan revision：u5-analysis-level-t1（2026-10-20）。唯一完整文件为 `plan/stage2-analysis-level/test-plan.md`。
-- 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，对齐 [执行计划 r3](https://github.com/ScholarWorkflow/professor-contact/blob/12fbaaaf89a1fc6cdc082228c526dd9e3ee3f6f9/plan/stage2-analysis-level/implementation-plan.md)。本次用户授权同时编写测试计划；不代表授权执行测试或修改产品／测试实现。
+- Test plan revision：u5-analysis-level-t2（2026-10-20）。唯一完整文件为 `plan/stage2-analysis-level/test-plan.md`。t2 只补 §4 的真实执行接线与结果，不改 L1–L6 目标、预期或范围。
+- 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，对齐 [执行计划 r3](https://github.com/ScholarWorkflow/professor-contact/blob/12fbaaaf89a1fc6cdc082228c526dd9e3ee3f6f9/plan/stage2-analysis-level/implementation-plan.md)。2026-10-20 用户授权编写测试计划；同一日的后续指令授权按执行计划实现产品、运行适用测试并把结果更新到本 PR。
 - 已读源码基线：main `879982abe1d7d811bd9d014c03dce4f5912cc64f`，包含 Stage 2 拆分及 shared/input-pack 提取。该版本用于定位现有资产，不声称已实现 U5。实际受测产品／测试版本待实施后登记。
-- 当前状态：设计及第一关口待独立复核；第二关口待真实实现和可执行步骤接线；第三关口未执行。本文不自授 APPROVED 或 PASS，不继承 #92 的结论。
+- 当前状态：第一关口设计待独立复核；第二关口步骤已由本轮补齐、待独立复核；第三关口已按 §4.0 的真实提交执行并记录，待审核确认。本文不自授 APPROVED 或 PASS，不继承 #92 的结论。
 
 ## 1. 范围、依据和结束条件
 
@@ -68,16 +68,63 @@
 - `test_contact_state.py`：`BaseEnv` 与 `TestRunnerBasics.test_13_stage2_validator_rewrite_round_trips_structured_narrative` 提供规范 pack、受管输出及修订轮次入口，可接 L2/L3/L5/L6。
 - `test_stage2_style_validation_handoff.py`：`Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` 包含业务重渲染、旧报告保留及原两轮生命周期；`test_stage2_report_for_stale_render_is_rejected_without_pack_write` 包含旧 render 拒绝断言。只复用与 L5/L6 对应的子目标／资产，不把其完整旧 T5 场景或全部历史义务设为本项前置。
 
-本轮未执行这些测试，也未确认可直接复用的 U5 正式通过记录。后续先取已有对应记录并检查受影响语义；能复用的结果不重跑。新增方法名、选择器和 CLI 参数以实际实现为准，本文不凭设计名称伪造已存在的测试或命令。
+本轮补 U5 专用断言时复用了这些资产提供的夹具与入口（§4 记录实际选择器与命令），没有把它们的整文件必跑清单设为本项前置。新增方法名、选择器和 CLI 参数均以真实实现为准。
 
-## 4. 执行接线与结果交接（待本地测试工程师补齐）
+## 4. 执行接线与结果记录（本地执行工程师）
 
-第二关口尚未就绪。产品实现后在本文件补齐以下内容，再作受影响步骤审核；不另开互相叠加的 recipe 或手册。
+本节由本轮实现负责人补齐真实步骤并执行；它不代替独立审核，也不把结果写成正式 PASS。
 
-1. 固定真实产品与测试提交，逐 L1–L6 写明实际检查方法／选择器；每个目标只有一个足够入口，共享一次运行的项目注明复用关系。实现差异改变目标时先修本文，不能临场增加门槛。
-2. 使用现有 unittest 与夹具，说明必要依赖、工作目录、隔离临时目录和配置来源。默认复用适用安装／预检，不因本计划新增而重装；只重置本次可变状态，不连接用户或生产状态。正式可复用测试属于 producer，临时配置与原始输出放仓库外独立 `/tmp` 目录。
-3. 补真实可执行的准备顺序、命令、输入路径、输出位置及结果观察方法。新增 `stage2-refresh-level` 目前只是设计名，不给假定参数；真实 handler 接线后才填写。结构化业务结果沿现有测试断言或 jq 检查，非结构化 Markdown 按本清单所需正文／统计直接比较，不新建判定系统。
-4. 记录每项通过／业务失败／无法判断／未执行，附必要输出与复用来源；缺记录先取现有记录，不直接重跑。不把产品尚未实现或环境不可用写成业务失败。正式尝试保留，不因结果不满意改样本求通过；默认不自动重试，确需外部故障重试时先规定恢复条件、次数和副作用清理，不扩大运行范围。
-5. 交付清单结果、实际版本、未完成项和负责人。第一关口为本清单设计，第二关口为真实步骤，第三关口为实际结果，分别记录；作者不得把本稿自查写成独立审核或正式 PASS。只复核修改影响的项目，不因文档提交变化重开无关关口。
+### 4.0 固定的产品与测试版本
 
-当前下一负责人：独立测试计划审核者先复核完整本文；产品实现负责人落实 r3；本地测试工程师随后补真实步骤／选择器并提交第二关口。任何运行仍须遵守用户对执行的授权边界。
+- 产品与测试提交：`dd9d1d515e9c59ba11825a295060e8b23d8e0082`（父提交 main `4cfcf49`，已推送到 PR #106 的 head 分支 `plan/u5-analysis-level-redesign`）。本节的记录写在紧随其后的 docs 提交里；doc 改动不触碰产品或测试代码，上述执行结果仍对 `dd9d1d5` 有效。
+- 环境：macOS，`python3 --version` = 3.14.7；只使用标准库 unittest 与仓库内现有夹具，无新增依赖。
+- 隔离：每个测试用例使用独立 `tempfile.TemporaryDirectory()` 作为 program root；不读用户 Zotero、真实 PDF、私有配置或生产状态。新增测试在 L4/L6 的 guard 场景通过现有 `Path.read_bytes` / `atomic_write` 替身隔离外部工作。
+- 新增正式测试：`.apm/skills/professor-contact/tests/test_stage2_analysis_level.py`（27 tests），已登记 `plan/test-grouping/shards.json`（stage2 / shard3）。
+- 唯一完整原始输出：`/tmp/u5-formal-20261020/suite.log`（仓库外临时目录，按共识不提交）。
+
+### 4.1 准备顺序与命令
+
+在仓库根目录执行；测试在 tests 目录运行，与 CI 同构：
+
+```bash
+# 1) 分片清单完整（新增模块只能出现一次）
+python3 scripts/check_test_shards.py
+
+# 2) 本轮新增模块
+cd .apm/skills/professor-contact/tests
+python3 -m unittest test_stage2_analysis_level -v
+
+# 3) 四个 CI shard 的全量回归（逐 shard 打印模块清单后运行）
+modules="$(python3 <repo-root>/scripts/check_test_shards.py --print shard3)"
+python3 -m unittest $modules -v
+```
+
+单个目标也可用 `python3 -m unittest test_stage2_analysis_level.<Class>.<method> -v` 定位；不需要安装、网络、Zotero、PDF 或模型。执行前后唯一需要清理的可变状态是各用例自建的临时目录，用例结束时由 `TemporaryDirectory` 清理；共享的 `plan/test-grouping/shards.json` 只读。
+
+### 4.2 L1–L6 的实际检查入口与结果
+
+| 目标 | 实际检查方法（唯一入口） | 结果 |
+|---|---|---|
+| L1 实际成功级别 | `TestFactsLevelContract`：`test_known_and_unknown_levels_reach_the_canonical_pack`（fulltext/abstract/null 进入 canonical papers，且 OCR-only 全文与 `facts_state=unavailable` 并存）、`test_facts_level_conflicting_with_the_current_registration_is_invalid`、`test_illegal_level_is_an_input_error`、`test_explicit_null_clears_a_registered_level`；静态契约 `TestAnalyzerContract.test_both_analyzers_pass_the_level_and_consume_the_refresh_branch` | PASS |
+| L2 canonical 合流与旧包兼容 | `TestCanonicalMerge`：`test_known_level_survives_a_reuse_finalize_and_validator`（复用条目深拷贝、旧 validator 仍可携带）、`test_missing_level_field_in_an_old_pack_reads_as_null`、`test_v1_migration_treats_missing_and_null_alike_but_rejects_conflict` | PASS |
+| L3 三类统计 | `TestStatisticsRender`：`test_header_counts_members_only_and_shared_members_per_contribution`（实际标题为 `全文级 1 篇 · 摘要级 2 篇 · 未确认 1 篇（共 4 篇）`，共享成员按两次成员贡献计数）、`test_reference_only_paper_stays_out_of_the_statistic` | PASS |
+| L4 早期分流 | `TestPreflightBranches`：`test_unchanged_state_reuses_all`、`test_level_only_change_takes_the_refresh_branch`、`test_management_fields_do_not_change_the_business_source`、`test_new_fixed_facts_candidate_is_a_business_change`、`test_missing_projection_processes_once`、`test_illegal_index_level_processes_instead_of_writing_a_known_value`、`test_not_accepted_validator_blocks_reuse_all` | PASS |
+| L5 级别刷新与有限接受 | `TestLevelRefresh`：`test_statistic_change_updates_body_and_expires_old_certification`、`test_equivalent_body_swap_keeps_the_valid_old_certification`、`test_invalid_old_binding_is_an_evidence_error_not_a_rebind`、`test_legacy_statistics_body_is_reaccepted_before_the_marker`、`test_manual_body_edit_needs_decision_without_writing_the_pack`；比较基准 `TestGenerationTimeNormalization.test_only_the_generation_time_is_ignored` | PASS |
+| L6 写入保护与原 refine | `TestRefreshProtection`：`test_busy_writer_returns_without_any_business_write`、`test_binding_drift_returns_needs_refresh_releases_and_writes_nothing`、`test_successful_refresh_releases_the_lease`、`test_pack_io_failure_after_the_markdown_write_stays_unfinished` | PASS |
+
+`stage2-refresh-level` 的真实参数以 `contact_state.py build_parser()` 为准：`--program-root`、`--professor`、`--target-file`、`--preflight-file`，可选 `--decision-file`。返回 `ok`（新级别/统计/受管正文已接受）、`stage2_writer_busy`（零业务写入）、`needs_refresh`（预检漂移或渲染字段需走 process）、`needs_decision`（受管 Markdown 被人工修改）。L1 的统计观察直接读受管 Markdown 的统计行；L2/L4/L6 的结构化结果读 `套磁候选输入.json` 的 `papers`、`cache.preflight` 与命令 stdout；不另建判定器。
+
+### 4.3 正式结果
+
+- 新模块：`Ran 27 tests`，全部 OK（见 `/tmp/u5-formal-20261020/suite.log`）。
+- 全量回归（同一提交）：shard1 `Ran 380 tests` OK；shard2 `Ran 219 tests` OK；shard3 `Ran 215 tests` OK；shard4 `Ran 243 tests` OK（1 skipped）。合计 1057 tests、1 skipped，无失败。
+- 每项结论：L1–L6 均为通过，无业务失败、无无法判断、无未执行。
+- 未执行且不在本清单范围：模型分析质量、#92 整套矩阵、Stage 3/4、外部 Zotero/handoff 全链、通用来源认证；按 §1 排除，不补做。
+- 未因提交编号变化重跑；上述结果即为固定提交 `dd9d1d5` 的当前记录。
+
+### 4.4 未完成项与下一负责人
+
+- 第二关口：真实步骤与选择器已补齐（本节），但独立测试计划审核者尚未复核，作者不能自批。
+- 第三关口：上述结果按正式命令取得，仍需按 `Test Engineer Rule.md` 由审核者确认对当前版本有效；实现符合性审核另行安排。
+- 产品实现负责人：本轮按执行计划 r3 完成实现；后续只按具体受影响意见处理。
+- 范围内未发现需要产品修复的缺陷；若后续审核指出业务不符，按测试规则只复核受影响项。
