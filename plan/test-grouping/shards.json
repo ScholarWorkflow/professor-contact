@@ -10,8 +10,8 @@
  },
  "totals": {
   "modules": 80,
-  "seconds": 428.0,
-  "tests": 1085
+  "seconds": 429.0,
+  "tests": 1086
  },
  "shards": [
   {
@@ -548,8 +548,8 @@
     {
      "name": "test_stage2_analysis_level",
      "stage": "stage2",
-     "seconds": 11.0,
-     "tests": 29,
+     "seconds": 13.0,
+     "tests": 30,
      "signals": {
       "stage2": 96
      }

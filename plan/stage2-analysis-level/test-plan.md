@@ -76,11 +76,11 @@
 
 ### 4.0 固定的产品与测试版本
 
-- 产品与测试提交：`dd9d1d515e9c59ba11825a295060e8b23d8e0082`（父提交 main `4cfcf49`，已推送到 PR #106 的 head 分支 `plan/u5-analysis-level-redesign`）。本节的记录写在紧随其后的 docs 提交里；doc 改动不触碰产品或测试代码，上述执行结果仍对 `dd9d1d5` 有效。
+- 产品与测试提交：`87984db61f6d3de22f2cbbcb7b41669d27cb95ad`（其中产品代码为 `dd9d1d5`，`87984db` 追加 L1/L5 的三条必测覆盖；父提交 main `4cfcf49`，已推送到 PR #106 的 head 分支 `plan/u5-analysis-level-redesign`）。本节的记录写在紧随其后的 docs 提交里；doc 改动不触碰产品或测试代码，上述执行结果仍对 `87984db` 有效。
 - 环境：macOS，`python3 --version` = 3.14.7；只使用标准库 unittest 与仓库内现有夹具，无新增依赖。
 - 隔离：每个测试用例使用独立 `tempfile.TemporaryDirectory()` 作为 program root；不读用户 Zotero、真实 PDF、私有配置或生产状态。新增测试在 L4/L6 的 guard 场景通过现有 `Path.read_bytes` / `atomic_write` 替身隔离外部工作。
-- 新增正式测试：`.apm/skills/professor-contact/tests/test_stage2_analysis_level.py`（27 tests），已登记 `plan/test-grouping/shards.json`（stage2 / shard3）。
-- 唯一完整原始输出：`/tmp/u5-formal-20261020/suite.log`（仓库外临时目录，按共识不提交）。
+- 新增正式测试：`.apm/skills/professor-contact/tests/test_stage2_analysis_level.py`（30 tests），已登记 `plan/test-grouping/shards.json`（stage2 / shard3）。
+- 唯一完整原始输出：`/tmp/u5-formal2-20261020/suite.log`（仓库外临时目录，按共识不提交）。
 
 ### 4.1 准备顺序与命令
 
@@ -105,22 +105,22 @@ python3 -m unittest $modules -v
 
 | 目标 | 实际检查方法（唯一入口） | 结果 |
 |---|---|---|
-| L1 实际成功级别 | `TestFactsLevelContract`：`test_known_and_unknown_levels_reach_the_canonical_pack`（fulltext/abstract/null 进入 canonical papers，且 OCR-only 全文与 `facts_state=unavailable` 并存）、`test_facts_level_conflicting_with_the_current_registration_is_invalid`、`test_illegal_level_is_an_input_error`、`test_explicit_null_clears_a_registered_level`；静态契约 `TestAnalyzerContract.test_both_analyzers_pass_the_level_and_consume_the_refresh_branch` | PASS |
+| L1 实际成功级别 | `TestFactsLevelContract`：`test_known_and_unknown_levels_reach_the_canonical_pack`（fulltext/abstract/null 进入 canonical papers，且 OCR-only 全文与 `facts_state=unavailable` 并存）、`test_facts_level_conflicting_with_the_current_registration_is_invalid`、`test_illegal_level_is_an_input_error`、`test_explicit_null_clears_a_registered_level`、`test_analysis_file_and_pdf_without_a_success_registration_are_unknown`（有分析文件+PDF 但无成功登记 → null）、`test_ocr_only_fulltext_without_facts_can_still_be_fulltext`（OCR-only 全文 + facts unavailable → fulltext）；静态契约 `TestAnalyzerContract.test_both_analyzers_pass_the_level_and_consume_the_refresh_branch` | PASS |
 | L2 canonical 合流与旧包兼容 | `TestCanonicalMerge`：`test_known_level_survives_a_reuse_finalize_and_validator`（复用条目深拷贝、旧 validator 仍可携带）、`test_missing_level_field_in_an_old_pack_reads_as_null`、`test_v1_migration_treats_missing_and_null_alike_but_rejects_conflict` | PASS |
 | L3 三类统计 | `TestStatisticsRender`：`test_header_counts_members_only_and_shared_members_per_contribution`（实际标题为 `全文级 1 篇 · 摘要级 2 篇 · 未确认 1 篇（共 4 篇）`，共享成员按两次成员贡献计数）、`test_reference_only_paper_stays_out_of_the_statistic` | PASS |
 | L4 早期分流 | `TestPreflightBranches`：`test_unchanged_state_reuses_all`、`test_level_only_change_takes_the_refresh_branch`、`test_management_fields_do_not_change_the_business_source`、`test_new_fixed_facts_candidate_is_a_business_change`、`test_missing_projection_processes_once`、`test_illegal_index_level_processes_instead_of_writing_a_known_value`、`test_not_accepted_validator_blocks_reuse_all` | PASS |
-| L5 级别刷新与有限接受 | `TestLevelRefresh`：`test_statistic_change_updates_body_and_expires_old_certification`、`test_equivalent_body_swap_keeps_the_valid_old_certification`、`test_invalid_old_binding_is_an_evidence_error_not_a_rebind`、`test_legacy_statistics_body_is_reaccepted_before_the_marker`、`test_manual_body_edit_needs_decision_without_writing_the_pack`；比较基准 `TestGenerationTimeNormalization.test_only_the_generation_time_is_ignored` | PASS |
+| L5 级别刷新与有限接受 | `TestLevelRefresh`：`test_statistic_change_updates_body_and_expires_old_certification`、`test_equivalent_body_swap_keeps_the_valid_old_certification`、`test_invalid_old_binding_is_an_evidence_error_not_a_rebind`、`test_legacy_statistics_body_is_reaccepted_before_the_marker`、`test_business_change_with_equivalent_body_keeps_body_but_expires_certification`（业务依据变化但真实正文相同 → 保 body、旧认证失效）、`test_manual_body_edit_needs_decision_without_writing_the_pack`；比较基准 `TestGenerationTimeNormalization.test_only_the_generation_time_is_ignored` | PASS |
 | L6 写入保护与原 refine | `TestRefreshProtection`：`test_busy_writer_returns_without_any_business_write`、`test_binding_drift_returns_needs_refresh_releases_and_writes_nothing`、`test_successful_refresh_releases_the_lease`、`test_pack_io_failure_after_the_markdown_write_stays_unfinished` | PASS |
 
 `stage2-refresh-level` 的真实参数以 `contact_state.py build_parser()` 为准：`--program-root`、`--professor`、`--target-file`、`--preflight-file`，可选 `--decision-file`。返回 `ok`（新级别/统计/受管正文已接受）、`stage2_writer_busy`（零业务写入）、`needs_refresh`（预检漂移或渲染字段需走 process）、`needs_decision`（受管 Markdown 被人工修改）。L1 的统计观察直接读受管 Markdown 的统计行；L2/L4/L6 的结构化结果读 `套磁候选输入.json` 的 `papers`、`cache.preflight` 与命令 stdout；不另建判定器。
 
 ### 4.3 正式结果
 
-- 新模块：`Ran 27 tests`，全部 OK（见 `/tmp/u5-formal-20261020/suite.log`）。
-- 全量回归（同一提交）：shard1 `Ran 380 tests` OK；shard2 `Ran 219 tests` OK；shard3 `Ran 215 tests` OK；shard4 `Ran 243 tests` OK（1 skipped）。合计 1057 tests、1 skipped，无失败。
+- 新模块：`Ran 30 tests`，全部 OK（见 `/tmp/u5-formal2-20261020/suite.log`）。
+- 全量回归（同一提交）：shard1 `Ran 380 tests` OK；shard2 `Ran 219 tests` OK；shard3 `Ran 218 tests` OK；shard4 `Ran 243 tests` OK（1 skipped）。合计 1060 tests、1 skipped，无失败。
 - 每项结论：L1–L6 均为通过，无业务失败、无无法判断、无未执行。
 - 未执行且不在本清单范围：模型分析质量、#92 整套矩阵、Stage 3/4、外部 Zotero/handoff 全链、通用来源认证；按 §1 排除，不补做。
-- 未因提交编号变化重跑；上述结果即为固定提交 `dd9d1d5` 的当前记录。
+- 未因提交编号变化重跑；上述结果即为固定提交 `87984db` 的当前记录。
 
 ### 4.4 未完成项与下一负责人
 
