@@ -316,8 +316,10 @@ def build(*, fail,
         return re.sub(r"(?<![A-Za-z0-9])[A-Z0-9]{8}(?![A-Za-z0-9])", "相关论文", rendered)
 
     STAGE2_ZOTERO_PREFIX = "zotero://select/library/items/"
+    STAGE2_ZOTERO_ITEM_RE = re.compile(
+        r"zotero://select/library/items/([A-Za-z0-9]+)")
     STAGE2_MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)\n]*)\)")
-    STAGE2_BARE_URL_RE = re.compile(r"https?://[^\s<>()]+")
+    STAGE2_ANY_URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s<>()]+")
 
     def stage2_trusted_citation_title(title_for, key: str, *, direction,
                                       gap_id, field) -> str:
@@ -357,18 +359,11 @@ def build(*, fail,
         rendered = STAGE2_MARKDOWN_LINK_RE.sub(link_replace, text)
         keys = sorted({key for key in declared_keys if isinstance(key, str) and key},
                       key=len, reverse=True)
-        if not keys:
-            return rendered
-        protected = [(match.start(), match.end())
-                     for match in STAGE2_MARKDOWN_LINK_RE.finditer(rendered)]
-        for match in STAGE2_BARE_URL_RE.finditer(rendered):
-            if any(start <= match.start() < end for start, end in protected):
-                continue
-            protected.append((match.start(), match.end()))
-        protected.sort()
-        key_pattern = re.compile(
-            r"(?<![A-Za-z0-9])(?:" + "|".join(re.escape(key) for key in keys)
-            + r")(?![A-Za-z0-9])")
+        key_pattern = None
+        if keys:
+            key_pattern = re.compile(
+                r"(?<![A-Za-z0-9])(?:" + "|".join(re.escape(key) for key in keys)
+                + r")(?![A-Za-z0-9])")
 
         def bare_replace(match):
             key = match.group(0)
@@ -376,12 +371,40 @@ def build(*, fail,
                 title_for, key, direction=direction, gap_id=gap_id, field=field)
             return f"[{title}]({STAGE2_ZOTERO_PREFIX}{key})"
 
+        def convert_segment(segment: str) -> str:
+            """Convert bare declared keys and bare Zotero item URIs in one span."""
+            output, cursor = [], 0
+            for zotero in STAGE2_ZOTERO_ITEM_RE.finditer(segment):
+                before = segment[cursor:zotero.start()]
+                output.append(key_pattern.sub(bare_replace, before)
+                              if key_pattern is not None else before)
+                key = zotero.group(1)
+                title = stage2_trusted_citation_title(
+                    title_for, key, direction=direction, gap_id=gap_id, field=field)
+                output.append(f"[{title}]({zotero.group(0)})")
+                cursor = zotero.end()
+            tail = segment[cursor:]
+            output.append(key_pattern.sub(bare_replace, tail)
+                          if key_pattern is not None else tail)
+            return "".join(output)
+
+        protected = [(match.start(), match.end())
+                     for match in STAGE2_MARKDOWN_LINK_RE.finditer(rendered)]
+        for match in STAGE2_ANY_URL_RE.finditer(rendered):
+            if any(start <= match.start() < end for start, end in protected):
+                continue
+            # Bare Zotero item URIs are explicit references and are converted
+            # below, not protected as opaque addresses.
+            if match.group(0).startswith(STAGE2_ZOTERO_PREFIX):
+                continue
+            protected.append((match.start(), match.end()))
+        protected.sort()
         pieces, cursor = [], 0
         for start, end in protected:
-            pieces.append(key_pattern.sub(bare_replace, rendered[cursor:start]))
+            pieces.append(convert_segment(rendered[cursor:start]))
             pieces.append(rendered[start:end])
             cursor = end
-        pieces.append(key_pattern.sub(bare_replace, rendered[cursor:]))
+        pieces.append(convert_segment(rendered[cursor:]))
         return "".join(pieces)
 
     class Stage2RenderDocument:

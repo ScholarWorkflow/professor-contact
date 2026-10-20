@@ -46,7 +46,8 @@ class FixedEvidenceBase(BaseEnv):
                              f"未知 {ORDINARY_EIGHT} 与 12345678 保留。"),
                 "completed_part": (f"{CITATION_LINK} 已完成一部分；\n"
                                    f"续行仍由 {CITATION_KEY} 负责。"),
-                "remaining_gap": f"仍缺 {CITATION_KEY} 的对比。",
+                "remaining_gap": (f"仍缺 {CITATION_KEY} 的对比，"
+                                  f"见 zotero://select/library/items/{CITATION_KEY}。"),
             },
             "BBBB2222": {
                 "status": "done_by_self",
@@ -208,7 +209,7 @@ class FixedEvidenceBase(BaseEnv):
         self.assertNotIn(CITATION_KEY, self.without_links(card),
                          "the four exits must not leak the bare key outside a link target")
         self.assertEqual(card.count(f"[{CITATION_TITLE}](zotero://select/library/items/"
-                                    f"{CITATION_KEY})"), 6, card)
+                                    f"{CITATION_KEY})"), 7, card)
         self.assertNotIn("[[", card)
         self.assertIn(ORDINARY_EIGHT, card)
         self.assertIn("12345678", card)
@@ -246,26 +247,28 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(analysis_path.read_bytes(), analysis_before)
         self.assertEqual(pack_path.read_bytes(), pack_before)
 
-        bad = self._fresh_env()
-        facts_path = bad.write_facts()
-        results = bad.root / "results"
-        bad.write_stage2_results(results, {
-            "AAAA1111": {
-                "evidence": ("[未知论文](zotero://select/library/items/ZZZZ9999) "
-                             "没有可信记录。")}})
-        plan = parse(bad.run_bound_stage2_plan(facts_path))
-        self.assertEqual(plan["status"], "ok", plan)
-        proof = facts_path.with_name(facts_path.stem + "-preflight.json")
-        analysis_path = bad.prof_dir / contact_state.ANALYSIS_MD
-        pack_path = bad.prof_dir / contact_state.INPUT_PACK
-        self.assertFalse(analysis_path.exists())
-        self.assertFalse(pack_path.exists())
-        out = bad.finalize(facts_path, proof, results)
-        self.assertNotEqual(out["status"], "ok", out)
-        self.assertEqual(out.get("reason_code"), "missing_paper_reference_title", out)
-        self.assertIn("ZZZZ9999", json.dumps(out, ensure_ascii=False))
-        self.assertFalse(analysis_path.exists())
-        self.assertFalse(pack_path.exists())
+        for form, reference in (
+                ("markdown-link", "[未知论文](zotero://select/library/items/ZZZZ9999)"),
+                ("bare-uri", "zotero://select/library/items/ZZZZ9999")):
+            bad = self._fresh_env()
+            facts_path = bad.write_facts()
+            results = bad.root / "results"
+            bad.write_stage2_results(results, {
+                "AAAA1111": {"evidence": f"{reference} 没有可信记录。"}})
+            plan = parse(bad.run_bound_stage2_plan(facts_path))
+            self.assertEqual(plan["status"], "ok", plan)
+            proof = facts_path.with_name(facts_path.stem + "-preflight.json")
+            analysis_path = bad.prof_dir / contact_state.ANALYSIS_MD
+            pack_path = bad.prof_dir / contact_state.INPUT_PACK
+            self.assertFalse(analysis_path.exists(), form)
+            self.assertFalse(pack_path.exists(), form)
+            out = bad.finalize(facts_path, proof, results)
+            self.assertNotEqual(out["status"], "ok", (form, out))
+            self.assertEqual(out.get("reason_code"),
+                             "missing_paper_reference_title", (form, out))
+            self.assertIn("ZZZZ9999", json.dumps(out, ensure_ascii=False), form)
+            self.assertFalse(analysis_path.exists(), form)
+            self.assertFalse(pack_path.exists(), form)
 
     # -- U1-C ----------------------------------------------------------------
 
@@ -620,19 +623,32 @@ class FixedEvidenceBase(BaseEnv):
 
         # The source line only ignores its generated timestamp: another text
         # change on the same line is a real body change, not an equivalent render.
+        # Remove the old validator and re-bind the header/cache to the edited body
+        # so the only possible explanation for a write is the line comparison.
         line_env = self._fresh_env()
         line_facts, line_results, line_proof = line_env.generate_pack()
-        line_env.record(line_env.write_report("u1f-line-pass.json", []))
+        line_pack = line_env.pack()
+        line_pack.pop("validator", None)
+        line_env.write_pack(line_pack)
         analysis_path = line_env.prof_dir / contact_state.ANALYSIS_MD
         raw = analysis_path.read_text(encoding="utf-8")
         changed = raw.replace("全文级 2 篇", "全文级 9 篇", 1)
         self.assertNotEqual(changed, raw)
-        analysis_path.write_text(changed, encoding="utf-8")
-        protected = analysis_path.read_bytes()
+        header, edited_body = contact_state.split_frontmatter(changed)
+        edited_sha = contact_state.sha256_text(edited_body)
+        analysis_path.write_text(
+            contact_state.render_frontmatter(header["state_fingerprint"], edited_sha)
+            + edited_body, encoding="utf-8")
+        line_pack = line_env.pack()
+        render_entry = line_pack["cache"]["render"][contact_state.ANALYSIS_MD]
+        render_entry["sha256"] = edited_sha
+        render_entry["ownership"]["body_sha256"] = edited_sha
+        line_env.write_pack(line_pack)
         out = line_env.finalize(line_facts, line_proof, line_results)
-        self.assertEqual(out["status"], "error", out)
-        self.assertEqual(out.get("reason_code"), "validation_render_stale", out)
-        self.assertEqual(analysis_path.read_bytes(), protected)
+        self.assertEqual(out["status"], "ok", out)
+        repaired = line_env.document()["body"]
+        self.assertIn("全文级 2 篇", repaired)
+        self.assertNotIn("全文级 9 篇", repaired)
 
         # With no old validator, a manual body edit still requires a decision.
         manual_env = self._fresh_env()
