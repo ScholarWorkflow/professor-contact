@@ -204,10 +204,10 @@ uv run --no-project python -m unittest \
 ```
 预期：`Ran 2 tests`、全部 `ok`。
 
-5. 失败处理：T4／T5 有方法失败时，只在父提交上对照**同一个方法**（不重跑整组），每次对照写独立日志、不覆盖既有记录：
+5. 失败处理：T4／T5 有方法失败时，只在父提交上对照**同一个方法**（不重跑整组），每次对照写独立日志、不覆盖既有记录。下面的块用 `METHOD` 环境变量指定方法，未指定时跑示例里那一个，因此可以原样执行：
 ```sh
 set -e
-METHOD=<失败的那个方法，例如 test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle>
+METHOD="${METHOD:-test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle}"
 LOG=/tmp/pc-stage7/baseline-$(date +%Y%m%d-%H%M%S).log
 BASELINE=/tmp/pc-stage7/base-parent
 if [ ! -d "$BASELINE/.apm" ]; then
