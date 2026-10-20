@@ -2,7 +2,7 @@
 
 ## 版本、来源与状态
 
-- 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 1 版（待审核）。
+- 对应执行计划：[implementation-plan.md](implementation-plan.md)，第 3 版（已审核批准）。
 - Requirement revision: 第 1 版（2026-10-20 负责人要求）。
 - Target repository revision: 工作分支 `refactor-shared-base`；对照基准为分支链末位 `refactor-stage2-render`（#114）的 head `13efd40441a2bf8683c9da630bdc747248fc8c29`（GitHub 自动 rebase 前的同一提交是 `cf979ab`，两者 `scripts` 子树字节相同）。
 - Test plan revision: 第 5 版。
