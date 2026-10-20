@@ -1,7 +1,7 @@
 # Stage 2 U1：固定证据展示与真实阻挡归属
 
 - Plan revision：`stage2-u1-r3`（2026-10-20）；Proposed review status: pending。
-- 唯一目标路径：`plan/stage2-fixed-evidence/implementation-plan.md`。本轮只交执行计划，未实施、未运行测试，不沿用 #92 的批准或测试状态作为本计划通过结论。
+- 唯一目标路径：`plan/stage2-fixed-evidence/implementation-plan.md`。本轮交执行计划与同目录 [测试计划](test-plan.md)，未实施、未运行测试，不沿用 #92 的批准或测试状态作为本计划通过结论。
 - Requirement revision：2026-10-17 已确认 U1，2026-10-19 用户明确要求总结 #92 至今经验，将 U1/U5 分成两个 PR 从头设计；保持 main 行为先完成 Stage 2 模块拆分，再分别修复。2026-10-20 用户授权开始 U1/U5 两个计划；本轮完成拆分后设计落点更新，仍仅计划，不实施。
 - Repository baseline：`ScholarWorkflow/professor-contact@879982abe1d7d811bd9d014c03dce4f5912cc64f`，2026-10-20 13:09 UTC 读取最新 main（#117）。PR107 原计划 head 为 `86da1d4b59ea4b59a95b0b5449b4531d192ccfd3`、版本 r2；本 r3 是其完整替代候选，不继承旧计划审核结论作为本轮自授状态。#92 `10324b8f10ff84080e9f7132bef807926de23279` 的 r11/t47 仅作历史教训，不移植补丁或扩张旧测试矩阵。
 - Stage 2 行为保持拆分已落地，原“等待拆分并再找模块”前提已解除。下面直接冻结当前实际模块、入口和共享接点；Stage 3 后续拆分不属于 U1 前置。
@@ -125,7 +125,7 @@ U5 独立修改同一 finalize 接点。有限共享步骤输入为隔离的旧�
 6. **所有生成入口保映射**：第一轮 narrative 修订后第二轮发现固定卡问题仍可定位登记；refine 的 cache 重建不能抹掉 owner map。旧无 map 包不反解析 Markdown，先按受保护 process 更新。
 7. **正常失败可停**：第一轮固定失败不虚报“两轮已尽”，第二轮固定失败不重开；源/模板实际修复后才接受新版本；无变化反复运行不清次数。
 
-这些是方案完整性检查，非新增测试矩阵、Case ID、采集器或过程认证要求。具体必测目标/步骤由后续测试计划按当前规则处理，本轮未授权也未编写完整测试计划。
+这些是方案完整性检查，非新增测试矩阵、Case ID、采集器或过程认证要求。具体必测目标和检查方式见同目录 [测试计划](test-plan.md)。2026-10-20 用户已授权补齐测试计划；实际 recipe 待产品实现后接线，本轮不运行测试。
 
 ## 6. 从 #92 至今吸取的设计教训
 
@@ -150,6 +150,6 @@ r2 已合入的三项设计仍保留：明确业务依据，区分合法区域/�
 3. 同一 U1 实现完成 finalize 组装前旧快照隔离、实际候选接受及 `_stage2_preflight.py` 的 U1 懒更新判定；`contact_state.py` 仅显式接线所需依赖，保持现有 CLI 签名。完成标记只随成功接受落盘，不能只改 renderer 而让旧包永久 reuse_all。
 4. `_stage2_validation.py` 消费 map，完成固定失败登记、两 refine 入口的全报告阻挡和 refine 后 map/cache 保留。保留现有 narrative 第一轮→第二轮流转，不调用普通新版本清轮次分支。同步 SKILL 与现有 Codex/OpenCode analyzer 的登记后停止/修订说明，不改委派结构或 style-validator 格式。
 5. U1/U5 先落地者建立所需的有限普通接受步骤，后落地者复用而非另写一套；两者在普通接受中对 cache.render 与既有 preflight 元数据按 owned fields 更新，保留另一者仍有效字段。narrative refine 保留原有 preflight 失效/重建语义，不因保留 U1 map 而复制旧 preflight 为有效；只合并同一接受版本仍适用的 render 元数据。无 U5 时 U1 能独立完成；无 U1 时 U5 不需要 owner map 或 U1 完成标记。若 U5 后续已存在，所有重绘须保持 U1 map 与真实 body 一致，不能以空 map 冒充成功。
-6. 产品观察入口只为 Markdown 四出口、record-validation 返回/持久 validator、refine jobs/写入结果、preflight/finalize 旧包更新与人工冲突。测试 owner 后续按独立 U1 范围确定必要检查；本轮不新增 case/recipe，不要求 U5 通过、整仓回归、真实模型全流程或 #92 历史矩阵。
+6. 产品观察入口只为 Markdown 四出口、record-validation 返回/持久 validator、refine jobs/写入结果、preflight/finalize 旧包更新与人工冲突。测试 owner 后续按独立 U1 范围确定必要检查；具体清单见同目录测试计划，实际 recipe 待实现后接线；不要求 U5 通过、整仓回归、真实模型全流程或 #92 历史矩阵。
 
-当前状态：r3 独立候选审核待完成；产品实施、测试计划/执行、合并审核均未完成。计划入库不关闭 #92、不授权合并任何 PR，也不表示 U1 已修复。若后续 main 有语义变化，只分析受影响 owner/接受/兼容决定；仅 SHA 或模块路径变化不重开全部设计。
+当前交付：执行计划 r3 与测试计划 t1 文本已提交，公开正式审核状态保留 pending，以正式审核记录为准。产品实施、可执行测试 recipe、实际测试和合并审核均未完成。计划入库不关闭 #92、不授权合并任何 PR，也不表示 U1 已修复。若后续 main 有语义变化，只分析受影响 owner/接受/兼容决定；仅 SHA 或模块路径变化不重开全部设计。
