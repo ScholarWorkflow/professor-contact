@@ -4,9 +4,9 @@
 
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 3 版。
 - Requirement revision: 第 1 版（2026-10-20 负责人要求）。
-- Target repository revision: 工作分支 `refactor-stage2-render`；对照基准为当前父分支 `refactor-stage2-context`（#113）的 head `c303242c79fd860302fcd95ac8f460a8e532bee2`。此前基准为 `2a2ffabe7a19e29be17b035a5c8a2e175fb6f81b`、`5972905`；已核对父分支更新前后相关 5 个程序文件 Git blob 相同，既有有效测试结果可复用。
-- Test plan revision: 第 8 版（2026-10-20）。
-- Review status: **第一关 PASS（沿用）；第二关第 8 版修订待复核；第三关未审核**（2026-10-20）。
+- Target repository revision: 工作分支 `refactor-stage2-render`；对照基准为当前 PR 基准分支 `main` 的提交 `6593beb0b8492d572fea6e707c29b039fdd1d7ef`（#113 已合并）。此前基准为 `c303242c79fd860302fcd95ac8f460a8e532bee2`、`2a2ffabe7a19e29be17b035a5c8a2e175fb6f81b`、`5972905`；已核对新旧基准相关 5 个程序文件 Git blob 相同，既有 T0–T5 通过结果继续有效。
+- Test plan revision: 第 9 版（2026-10-20）。
+- Review status: **第一关 PASS（沿用）；第二关第 9 版修订待复核；第三关既有 PASS 继续有效**（2026-10-20）。
 - 测试范围依据：`Test Engineer Rule.md`。
 
 ## 必测清单
@@ -14,10 +14,10 @@
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
 | T0 | 模块可编译、可加载，两个工厂的契约与别名顺序正确（R1、R3、R4） | 工作树 `scripts/contact_state.py`、`scripts/_stage2_render.py`、`scripts/_stage2_finalize.py` | 三个文件 `py_compile` 成功；`--help` 退出码 0 且与父提交逐字节相同；`_stage2_render.build` 恰 16 个 keyword-only 参数、返回 12 个成员；`_stage2_finalize.build` 恰 40 个参数、返回 7 个成员；runner 有 12 个 `X = _stage2_render.X` 别名（去重后仍 12），其中包含两个标题 helper，且不再有指向 `_stage2_finalize` 的同名别名；模块不导入 runner、不做动态加载、不碰 `sys.path`／`sys.modules` | 第 1 步命令（7 条 `T0 ... OK` 与 `T0 CHECKS PASS`）；`--help` 的逐字节比较用第 2 步的 `diff -u` |
-| T1 | 10 个定义确实离开 runner 顶层、进入模块 `build()`（R1） | 对照基准（`git archive c303242c` 取出的 `scripts`）与工作树 `scripts` | `T0`：base 与 head 是两个不同目录、base 仍定义 10 个定义、head 一个都不定义；`T1`：模块存在；10 个定义逐个“runner 顶层已无 / 模块 `build()` 内有” | 第 2 步对比脚本的 `T0 ...`／`T1 ...` 行，共 24 条 `OK` |
+| T1 | 10 个定义确实离开 runner 顶层、进入模块 `build()`（R1） | 对照基准（`git archive 6593beb0` 取出的 `scripts`）与工作树 `scripts` | `T0`：base 与 head 是两个不同目录、base 仍定义 10 个定义、head 一个都不定义；`T1`：模块存在；10 个定义逐个“runner 顶层已无 / 模块 `build()` 内有” | 第 2 步对比脚本的 `T0 ...`／`T1 ...` 行，共 24 条 `OK` |
 | T2 | 搬移没有改变任何逻辑（R2、R4） | 同上两侧源码，加基线 `_stage2_finalize.py` 与工作树 `_stage2_render.py` | 10 个定义的代码 AST 与基准相同（脚本忽略 docstring）；两个标题 helper 在 `_stage2_finalize.py` 中消失、在 `_stage2_render.py` 中出现且 AST 与基线版本相同；`_stage2_finalize.py` 其余 13 个函数 AST 不变；runner 其余顶层定义不变；离开 runner 的定义正好是这 10 个、没有新增；10 个名字都有 runner 别名 | 同一脚本的 `T2 ...` 行（13 条 `OK`）；标题 helper 用第 2 步第二段的只读 AST 核对 |
 | T3 | 旧接口与加载方式不变（R3、R4、R5） | 同一进程内分别按文件路径加载两侧 runner；再以子进程直接执行改动后的 runner | 10 个名字在两侧都可调用、`inspect.signature` 相同；`--help` 退出码 0；runner 里两个加载块都用 `Path(__file__).with_name(...)` 指向模块文件（第 1 步断言）；`_stage2_render` 的 16 个实参与参数同名同集合、12 个别名都在调用之后 | 同一脚本的 `T3 ...` 行（21 条 `OK`）与第 1 步的源码约束核对；合计 58 条 `OK`、末尾 `ALL CHECKS PASS` |
-| T4 | 渲染／校验层经命令的行为不变（R2、R4） | 7 个既有方法：`test_stage2_narrative_example_contract.NarrativeExampleContractTests` 的 3 个 `*_passes_finalize`；`test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests` 的 3 个方法；`test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` | **条件式通过条件**：7 个方法全部 `ok` 则 T4 通过；有失败时按第 5 步仅对照当前父提交 `c303242c` 上同一个实际失败的方法；父提交发生相同业务失败记既有失败（不计为 T4 通过），父提交通过而工作树发生业务失败记本批回归；环境或测试运行故障记无法判断 | 第 3 步命令；`Ran 7 tests`、`OK`，无 skip／`FAIL`／`ERROR` |
+| T4 | 渲染／校验层经命令的行为不变（R2、R4） | 7 个既有方法：`test_stage2_narrative_example_contract.NarrativeExampleContractTests` 的 3 个 `*_passes_finalize`；`test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests` 的 3 个方法；`test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` | **条件式通过条件**：7 个方法全部 `ok` 则 T4 通过；有失败时按第 5 步仅对照当前基准提交 `6593beb0` 上同一个实际失败的方法；父提交发生相同业务失败记既有失败（不计为 T4 通过），父提交通过而工作树发生业务失败记本批回归；环境或测试运行故障记无法判断 | 第 3 步命令；`Ran 7 tests`、`OK`，无 skip／`FAIL`／`ERROR` |
 | T5 | 复制 runner 的既有夹具仍能加载新模块 | `test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker`、`test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling` | 复制布局包含 `_stage2_render.py`，复制后的 runner 能按路径加载它；两方法 `OK` | 第 4 步命令；`Ran 2 tests`、`OK` |
 
 **既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的 4 个 `shards` 与聚合 job `test` 照常执行，结果按运行编号与 head 单独引用；本批不在本地重跑全量套件。
@@ -117,7 +117,7 @@ set -e
 cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-render
 RUN=/tmp/pc-stage7
 mkdir -p "$RUN/base"
-git archive c303242c79fd860302fcd95ac8f460a8e532bee2 .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
+git archive 6593beb0b8492d572fea6e707c29b039fdd1d7ef .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
 uv run --no-project python "$RUN/base/.apm/skills/professor-contact/scripts/contact_state.py" --help >"$RUN/help-base.txt"
 diff -u "$RUN/help-base.txt" "$RUN/help-head.txt"
 shasum -a 256 /tmp/pc-stage2-tools/compare_stage2_batch_v2.py
@@ -211,10 +211,10 @@ set -e
 RUN=/tmp/pc-stage7
 mkdir -p "$RUN"
 LOG="$(mktemp "$RUN/baseline-XXXXXXXX")"
-BASELINE="$RUN/base-c303242c"
+BASELINE="$RUN/base-6593beb0"
 if [ ! -d "$BASELINE/.apm" ]; then
   mkdir -p "$BASELINE"
-  git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-render archive c303242c79fd860302fcd95ac8f460a8e532bee2 | tar -x -C "$BASELINE"
+  git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-render archive 6593beb0b8492d572fea6e707c29b039fdd1d7ef | tar -x -C "$BASELINE"
 fi
 cd "$BASELINE/.apm/skills/professor-contact/tests"
 if uv run --no-project python -m unittest "$METHOD" -v >"$LOG" 2>&1; then
@@ -248,9 +248,10 @@ printf '对照退出码：%s；日志路径：%s\n' "$BASELINE_EXIT" "$LOG"
 - 第 6 版：对照基准改为 `2a2ffabe`；失败对照改为只运行失败的单个方法，日志独立保存；既有 T0–T5 结果复用。
 - 第 7 版：修复第 5 步方法占位符导致的 shell 语法错误，补实测记录。
 - 第 8 版：T4 与第 5 步统一为相同方法对照；要求 `METHOD` 指明实际失败方法、保留退出码，并区分业务失败和环境／测试错误；对照基准更新为 `c303242c`，同步版本记录。必测清单和原始 T0–T5 执行结果不变。
+- 第 9 版：#113 合并后 PR 基准更新为 `6593beb0`；同步修订版本说明、T1／T4 的基准引用及第 2／5 步的 `git archive` 命令和第 5 步目录名。新旧基准的 5 个相关程序文件 Git blob 一致；本批的程序和测试文件均未改变，复用 T0–T5 既有结果。
 
 ## 审核状态
 
 - 第一关：**PASS**（复用既有结论）。
-- 第二关：**第 8 版修订待复核**；只复核上述受影响的判据与步骤。
-- 第三关：**本轮未审核**。已有 T0–T5 执行记录，按规则第 6 节保留，不因本次文档修订重跑。
+- 第二关：**第 9 版修订待复核**；只复核基准引用、第 2／5 步及其直接影响的版本说明。
+- 第三关：**既有 PASS 继续有效**。此前 T0–T5 已审核通过；本轮只修订基准引用和说明，相关程序与测试文件 Git blob 未变，按规则第 6 节复用，不重跑。
