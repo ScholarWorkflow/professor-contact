@@ -291,17 +291,31 @@ def build(*, Stage2Context,
         return line[match.end():] if match else line
 
     def stage2_equivalent_managed_body(old_body: str, new_body: str) -> bool:
-        """Compare body bytes, ignoring only the top source line's generation time."""
+        """Compare body bytes, ignoring only the top source line's generation time.
+
+        The exemption is limited to the generated source line before the first
+        section heading.  A user-note line can have the same ``> timestamp ｜
+        数据来源：`` shape; it is still compared verbatim.
+        """
         old_lines = old_body.splitlines()
         new_lines = new_body.splitlines()
         if len(old_lines) != len(new_lines):
             return False
-        for old_line, new_line in zip(old_lines, new_lines):
+        first_section = next(
+            (index for index, line in enumerate(old_lines)
+             if line.startswith("## ")), len(old_lines))
+        source_index = next(
+            (index for index in range(first_section)
+             if STAGE2_GENERATED_TIMESTAMP_RE.match(old_lines[index])), None)
+        for index, (old_line, new_line) in enumerate(zip(old_lines, new_lines)):
             if old_line == new_line:
                 continue
-            if stage2_strip_generated_timestamp(old_line) != \
-                    stage2_strip_generated_timestamp(new_line):
-                return False
+            if (index == source_index
+                    and STAGE2_GENERATED_TIMESTAMP_RE.match(new_line)
+                    and stage2_strip_generated_timestamp(old_line)
+                    == stage2_strip_generated_timestamp(new_line)):
+                continue
+            return False
         return True
 
     def stage2_business_basis(pack: dict | None) -> dict:

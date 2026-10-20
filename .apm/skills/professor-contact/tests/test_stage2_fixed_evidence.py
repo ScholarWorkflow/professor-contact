@@ -768,6 +768,34 @@ class FixedEvidenceBase(BaseEnv):
         self.assertIn("全文级 2 篇", repaired)
         self.assertNotIn("全文级 9 篇", repaired)
 
+        # A user-note line with the generated source-line prefix is not the top
+        # source line: its timestamp change is a real body change.
+        note_old = "2026-10-20T10:00:00Z ｜ 数据来源：个人记录"
+        note_new = "2026-10-21T10:00:00Z ｜ 数据来源：个人记录"
+
+        def add_note(facts):
+            facts["directions"][0]["user_note"] = note_old
+
+        note_env = self._fresh_env()
+        note_facts, note_results, _ = note_env.generate_pack(mutate_facts=add_note)
+        old_note_body = note_env.document()["body"]
+        self.assertIn(f"> {note_old}", old_note_body)
+        facts = json.loads(Path(note_facts).read_text(encoding="utf-8"))
+        facts["directions"][0]["user_note"] = note_new
+        Path(note_facts).write_text(json.dumps(facts, ensure_ascii=False, indent=1),
+                                    encoding="utf-8")
+        proof_path, payload = note_env.save_preflight("u1f-note-preflight.json")
+        note_env.bind_facts_to_preflight(note_facts, payload)
+        plan = parse(run_cli("stage2-plan", "--facts", note_facts,
+                             "--preflight-file", proof_path))
+        self.assertEqual(plan["status"], "ok", plan)
+        out = note_env.finalize(note_facts, proof_path, note_results)
+        self.assertEqual(out["status"], "ok", out)
+        new_note_body = note_env.document()["body"]
+        self.assertIn(f"> {note_new}", new_note_body)
+        self.assertNotIn(f"> {note_old}", new_note_body)
+        self.assertNotEqual(new_note_body, old_note_body)
+
         # With no old validator, a manual body edit still requires a decision.
         manual_env = self._fresh_env()
         manual_facts, manual_results, manual_proof = manual_env.generate_pack()
