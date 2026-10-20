@@ -4,7 +4,7 @@
 
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 3 版。
 - Requirement revision: 第 1 版（2026-10-20 负责人要求）。
-- Target repository revision: 工作分支 `refactor-stage2-render`；对照基准为分支链上一位 `refactor-stage2-context`（#113）的 head `5972905b1aa420f5aebdbd9a06221958fe64a726`。
+- Target repository revision: 工作分支 `refactor-stage2-render`；对照基准为分支链上一位 `refactor-stage2-context`（#113）的 head `2a2ffabe7a19e29be17b035a5c8a2e175fb6f81b`（GitHub 原生堆栈自动 rebase 前是 `5972905`，两者 `scripts` 子树字节相同）。
 - Test plan revision: 第 3 版。
 - Proposed review status: **第一关 PASS、第二关 PASS**（2026-10-20）。
 - 测试范围依据：`Test Engineer Rule.md`。
@@ -14,7 +14,7 @@
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
 | T0 | 模块可编译、可加载，两个工厂的契约与别名顺序正确（R1、R3、R4） | 工作树 `scripts/contact_state.py`、`scripts/_stage2_render.py`、`scripts/_stage2_finalize.py` | 三个文件 `py_compile` 成功；`--help` 退出码 0 且与父提交逐字节相同；`_stage2_render.build` 恰 16 个 keyword-only 参数、返回 12 个成员；`_stage2_finalize.build` 恰 40 个参数、返回 7 个成员；runner 有 12 个 `X = _stage2_render.X` 别名（去重后仍 12），其中包含两个标题 helper，且不再有指向 `_stage2_finalize` 的同名别名；模块不导入 runner、不做动态加载、不碰 `sys.path`／`sys.modules` | 第 1 步命令（7 条 `T0 ... OK` 与 `T0 CHECKS PASS`）；`--help` 的逐字节比较用第 2 步的 `diff -u` |
-| T1 | 10 个定义确实离开 runner 顶层、进入模块 `build()`（R1） | 对照基准（`git archive 5972905` 取出的 `scripts`）与工作树 `scripts` | `T0`：base 与 head 是两个不同目录、base 仍定义 10 个定义、head 一个都不定义；`T1`：模块存在；10 个定义逐个“runner 顶层已无 / 模块 `build()` 内有” | 第 2 步对比脚本的 `T0 ...`／`T1 ...` 行，共 24 条 `OK` |
+| T1 | 10 个定义确实离开 runner 顶层、进入模块 `build()`（R1） | 对照基准（`git archive 2a2ffab` 取出的 `scripts`）与工作树 `scripts` | `T0`：base 与 head 是两个不同目录、base 仍定义 10 个定义、head 一个都不定义；`T1`：模块存在；10 个定义逐个“runner 顶层已无 / 模块 `build()` 内有” | 第 2 步对比脚本的 `T0 ...`／`T1 ...` 行，共 24 条 `OK` |
 | T2 | 搬移没有改变任何逻辑（R2、R4） | 同上两侧源码，加基线 `_stage2_finalize.py` 与工作树 `_stage2_render.py` | 10 个定义的代码 AST 与基准相同（脚本忽略 docstring）；两个标题 helper 在 `_stage2_finalize.py` 中消失、在 `_stage2_render.py` 中出现且 AST 与基线版本相同；`_stage2_finalize.py` 其余 13 个函数 AST 不变；runner 其余顶层定义不变；离开 runner 的定义正好是这 10 个、没有新增；10 个名字都有 runner 别名 | 同一脚本的 `T2 ...` 行（13 条 `OK`）；标题 helper 用第 2 步第二段的只读 AST 核对 |
 | T3 | 旧接口与加载方式不变（R3、R4、R5） | 同一进程内分别按文件路径加载两侧 runner；再以子进程直接执行改动后的 runner | 10 个名字在两侧都可调用、`inspect.signature` 相同；`--help` 退出码 0；runner 里两个加载块都用 `Path(__file__).with_name(...)` 指向模块文件（第 1 步断言）；`_stage2_render` 的 16 个实参与参数同名同集合、12 个别名都在调用之后 | 同一脚本的 `T3 ...` 行（21 条 `OK`）与第 1 步的源码约束核对；合计 58 条 `OK`、末尾 `ALL CHECKS PASS` |
 | T4 | 渲染／校验层经命令的行为不变（R2、R4） | 7 个既有方法：`test_stage2_narrative_example_contract.NarrativeExampleContractTests` 的 3 个 `*_passes_finalize`；`test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests` 的 3 个方法；`test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` | **条件式通过条件**：7 个方法全部 `ok` 则 T4 通过；有失败时按第 5 步在父提交 `5972905` 上跑同一组方法，基线同样失败记既有失败，基线通过而工作树失败记本批回归 | 第 3 步命令；`Ran 7 tests`、`OK`，无 skip／`FAIL`／`ERROR` |
@@ -117,7 +117,7 @@ set -e
 cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-render
 RUN=/tmp/pc-stage7
 mkdir -p "$RUN/base"
-git archive 5972905b1aa420f5aebdbd9a06221958fe64a726 .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
+git archive 2a2ffabe7a19e29be17b035a5c8a2e175fb6f81b .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
 uv run --no-project python "$RUN/base/.apm/skills/professor-contact/scripts/contact_state.py" --help >"$RUN/help-base.txt"
 diff -u "$RUN/help-base.txt" "$RUN/help-head.txt"
 shasum -a 256 /tmp/pc-stage2-tools/compare_stage2_batch_v2.py
@@ -204,28 +204,21 @@ uv run --no-project python -m unittest \
 ```
 预期：`Ran 2 tests`、全部 `ok`。
 
-5. 失败处理：T4／T5 有失败时（9 个方法一起跑），先按本批回归排查，在父提交 `5972905` 上跑同一组方法：
+5. 失败处理：T4／T5 有方法失败时，只在父提交上对照**同一个方法**（不重跑整组），每次对照写独立日志、不覆盖既有记录：
 ```sh
 set -e
+METHOD=<失败的那个方法，例如 test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle>
+LOG=/tmp/pc-stage7/baseline-$(date +%Y%m%d-%H%M%S).log
 BASELINE=/tmp/pc-stage7/base-parent
-rm -rf "$BASELINE"
-mkdir -p "$BASELINE"
-git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-render archive 5972905b1aa420f5aebdbd9a06221958fe64a726 | tar -x -C "$BASELINE"
+if [ ! -d "$BASELINE/.apm" ]; then
+  mkdir -p "$BASELINE"
+  git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-render archive 2a2ffabe7a19e29be17b035a5c8a2e175fb6f81b | tar -x -C "$BASELINE"
+fi
 cd "$BASELINE/.apm/skills/professor-contact/tests"
-uv run --no-project python -m unittest \
-  test_stage2_narrative_example_contract.NarrativeExampleContractTests.test_codex_example_passes_finalize \
-  test_stage2_narrative_example_contract.NarrativeExampleContractTests.test_opencode_example_passes_finalize \
-  test_stage2_narrative_example_contract.NarrativeExampleContractTests.test_plan_example_passes_finalize \
-  test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests.test_finalize_applies_resolved_directions_to_pack \
-  test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests.test_finalize_stamps_resolved_subfield_on_unchanged_directions \
-  test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests.test_finalize_fails_closed_on_stale_resolved_file \
-  test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle \
-  test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker \
-  test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling \
-  -v > /tmp/pc-stage7/baseline.log 2>&1 || true
-cat /tmp/pc-stage7/baseline.log
+uv run --no-project python -m unittest "$METHOD" -v >"$LOG" 2>&1 || true
+cat "$LOG"
 ```
-判据：基线同样失败＝既有失败；基线通过而工作树失败＝本批回归。
+判据：父提交上同一个方法也失败＝既有失败；父提交通过而工作树失败＝本批回归。日志名带时间戳，同一方法反复对照也不覆盖；没有失败时不执行本步，也不新增用例。
 
 6. 失败注入：本批不适用。本批只搬移定义并把两个标题 helper 换到渲染模块，不修改事务、回滚、写入顺序或错误通道实现；必测清单里没有失败注入项。
 
