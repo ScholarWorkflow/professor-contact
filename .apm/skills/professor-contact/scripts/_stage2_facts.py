@@ -570,10 +570,29 @@ def build(*, atomic_json,
                          "analysis_level cannot be verified", item_key=key)
                 level = None
             else:
+                entry = index_papers.get(key)
                 level, error = resolve_declared_level(
-                    index_papers.get(key), record.get("analysis_file"), declared)
+                    entry, record.get("analysis_file"), declared)
                 if error:
                     fail("invalid_facts", f"paper {key}: {error}", item_key=key)
+                # Acceptance check of the actual consumed sources against the
+                # current registration. A contradiction between two DECLARED
+                # paths (facts consumed vs index observation) is input error; a
+                # source only one side declares stays legal, so an old
+                # unregistered analysis is still honestly consumed as unknown.
+                if isinstance(entry, dict):
+                    for facts_field, index_field in (
+                            ("analysis_file", "file"),
+                            ("sidecar_file", "future_work_sidecar"),
+                            ("facts_file", "facts_sidecar")):
+                        consumed = canonical_index_path(record.get(facts_field))
+                        registered = canonical_index_path(entry.get(index_field))
+                        if consumed is not None and registered is not None \
+                                and consumed != registered:
+                            fail("invalid_facts",
+                                 f"paper {key}: {facts_field} {consumed!r} contradicts the "
+                                 f"current analysis index {index_field} {registered!r}",
+                                 item_key=key)
             record["analysis_level"] = level
             record["_digest"] = paper_digest(record)
             papers[key] = record

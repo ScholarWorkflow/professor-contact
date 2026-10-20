@@ -489,22 +489,19 @@ def build(*, Stage2Context,
         return owner
 
 
-    _GENERATED_LINE_RE = re.compile(r"^> \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+    _GENERATED_LINE_RE = re.compile(
+        r"(?m)^> \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z(?=[^\n]*｜ 数据来源：)")
 
 
     def stage2_body_without_generation_time(body: str) -> str:
         """The accepted-body comparison basis: only the fixed top timestamp drops.
 
         The renderer's statistics header is the first `> <generation time> ｜
-        数据来源：…` line (below the fixed title/macro block); the statistics text
-        on that same line and every other byte stay significant.
+        数据来源：…` line (below the fixed title/macro block). The substitution
+        touches only that timestamp token: line endings, trailing bytes and the
+        statistics text on the same line stay exactly as they are.
         """
-        lines = body.splitlines()
-        for index, line in enumerate(lines):
-            if _GENERATED_LINE_RE.match(line) and "｜ 数据来源：" in line:
-                lines[index] = _GENERATED_LINE_RE.sub("> <generated>", line, count=1)
-                break
-        return "\n".join(lines)
+        return _GENERATED_LINE_RE.sub("> <generated>", body, count=1)
 
 
     def stage2_old_managed_render(md_path: Path) -> dict:
@@ -1593,15 +1590,16 @@ def build(*, Stage2Context,
                 released = True
             except (ValueError, OSError) as error:
                 release_error = f"{type(error).__name__}: {error}"
+                # Report on every exit path (including soft_exit/fail) here:
+                # after those exits the code below is never reached.
+                print(f"stage2-refresh-level: lease release failed: {release_error}",
+                      file=sys.stderr)
         if result is not None:
             result["lease_released"] = released
             if release_error:
                 # Never claim a release that did not happen.
                 result["lease_release_error"] = release_error
             emit(result)
-        if release_error:
-            print(f"stage2-refresh-level: lease release failed: {release_error}",
-                  file=sys.stderr)
 
 
     return types.SimpleNamespace(

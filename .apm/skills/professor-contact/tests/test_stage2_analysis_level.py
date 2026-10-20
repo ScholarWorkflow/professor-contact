@@ -199,6 +199,24 @@ class TestFactsLevelContract(AnalysisLevelBase):
         self.assertTrue(papers["CCCC3333"]["pdf_available"])
         self.assertEqual(papers["CCCC3333"]["analysis_file"], str(analysis))
 
+    def test_consumed_analysis_path_contradicting_the_index_is_invalid(self):
+        alternative = self.prof_dir / "论文分析" / "AAAA1111-alt.md"
+        alternative.write_text("# alternative analysis\n", encoding="utf-8")
+
+        def mutate(facts):
+            for paper in facts["papers"]:
+                if paper["item_key"] == "AAAA1111":
+                    paper["analysis_file"] = str(alternative)
+                    paper["analysis_level"] = None
+        self.patch_facts(mutate)
+        result = run_cli("stage2-finalize", "--facts", self.facts_path,
+                         "--results", self.root / "results",
+                         "--preflight-file", self.save_preflight())
+        payload = parse(result)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["reason_code"], "invalid_facts")
+        self.assertIn("analysis_file", payload["message"])
+
     def test_ocr_only_fulltext_without_facts_can_still_be_fulltext(self):
         analysis = self.prof_dir / "论文分析" / "EEEE5555.md"
         analysis.write_text("# OCR-only full text\n", encoding="utf-8")
@@ -560,6 +578,33 @@ class TestRefreshProtection(AnalysisLevelBase):
         self.assertEqual(pack_path.read_bytes(), before)
         self.assertFalse((self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
 
+    def test_refresh_keeps_the_accepted_sources_and_foreign_cache(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        recorded = {direction_id: record.get("consumed_sources")
+                    for direction_id, record in pack["cache"]["preflight"]["directions"].items()}
+        recorded_pdf = {direction_id: record.get("pdf_sources")
+                        for direction_id, record in pack["cache"]["preflight"]["directions"].items()}
+        recorded_sources = {direction_id: record.get("source_projection")
+                            for direction_id, record in pack["cache"]["preflight"]["directions"].items()}
+        pack["cache"]["u1_render"] = {"future": "kept"}
+        pack["resolved_directions"] = {"schema": 2, "applied_at": "fixed",
+                                       "directions": []}
+        self._write_pack(pack)
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        plan = self.save_preflight("refresh-audit.json")
+        out = parse(self.refresh(plan))
+        self.assertEqual(out["status"], "ok", out)
+        updated = self._read_pack()
+        self.assertEqual(updated["cache"]["u1_render"], {"future": "kept"})
+        self.assertEqual(updated["resolved_directions"], pack["resolved_directions"])
+        directions = updated["cache"]["preflight"]["directions"]
+        for direction_id, record in directions.items():
+            self.assertEqual(record.get("consumed_sources"), recorded[direction_id])
+            self.assertEqual(record.get("pdf_sources"), recorded_pdf[direction_id])
+            self.assertEqual(record.get("source_projection"), recorded_sources[direction_id])
+
     def test_successful_refresh_releases_the_lease(self):
         self.build_accepted_state()
         self.levels = {"AAAA1111": "abstract", "BBBB2222": "fulltext"}
@@ -569,6 +614,67 @@ class TestRefreshProtection(AnalysisLevelBase):
         self.assertEqual(out["status"], "ok", out)
         self.assertTrue(out["lease_released"])
         self.assertFalse((self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+
+    def _fail_lease_unlink(self):
+        lease = (self.prof_dir / "论文分析" / ".stage2-local-writer.json").resolve()
+        original = Path.unlink
+
+        def failing_unlink(path, *args, **kwargs):
+            if Path(path).resolve() == lease:
+                raise OSError("synthetic lease unlink failure")
+            return original(path, *args, **kwargs)
+
+        Path.unlink = failing_unlink
+        self.addCleanup(setattr, Path, "unlink", original)
+        return lease
+
+    def test_release_failure_is_reported_on_the_success_path(self):
+        self.build_accepted_state()
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        plan = self.save_preflight("release-failure.json")
+        lease = self._fail_lease_unlink()
+        arguments = type("Args", (), {
+            "program_root": str(self.root), "professor": PROFESSOR,
+            "target_file": str(self.target_file), "preflight_file": str(plan),
+            "decision_file": None})()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            contact_state.cmd_stage2_refresh_level(arguments)
+        out = json.loads(stdout.getvalue())
+        self.assertEqual(out["status"], "ok", out)
+        self.assertFalse(out["lease_released"])
+        self.assertIn("synthetic lease unlink failure", out["lease_release_error"])
+        self.assertIn("lease release failed", stderr.getvalue())
+        self.assertTrue(lease.exists())
+
+    def test_release_failure_on_a_soft_exit_is_also_reported(self):
+        self.build_accepted_state()
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        plan = self.save_preflight("soft-release-failure.json")
+        # Make the post-lease gate find nothing left to refresh: the command
+        # soft-exits after acquiring the lease, so the finally must report.
+        pack = self._read_pack()
+        record = pack["cache"]["preflight"]["directions"]["DIR00001"]
+        record["level_projection"] = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        record["level_projection"]["CCCC3333"] = None
+        pack["cache"]["preflight"]["directions"]["DIR00002"]["level_projection"] = {
+            "BBBB2222": "abstract"}
+        self._write_pack(pack)
+        lease = self._fail_lease_unlink()
+        arguments = type("Args", (), {
+            "program_root": str(self.root), "professor": PROFESSOR,
+            "target_file": str(self.target_file), "preflight_file": str(plan),
+            "decision_file": None})()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                contact_state.cmd_stage2_refresh_level(arguments)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertIn("lease release failed", stderr.getvalue())
+        self.assertTrue(lease.exists())
 
     def test_pack_io_failure_after_the_markdown_write_stays_unfinished(self):
         self.build_accepted_state()
@@ -616,9 +722,15 @@ class TestGenerationTimeNormalization(unittest.TestCase):
                 "未确认 1 篇（共 4 篇）｜ 由 contact_state 确定性渲染（重跑=全量重写）\n")
         later = body.replace("2026-01-01T00:00:00Z", "2026-02-02T03:04:05Z")
         statistics_changed = body.replace("全文级 1", "全文级 2")
+        crlf = body.replace("\n", "\r\n")
+        without_trailing = body.rstrip("\n")
         normalize = contact_state.stage2_body_without_generation_time
         self.assertEqual(normalize(body), normalize(later))
         self.assertNotEqual(normalize(body), normalize(statistics_changed))
+        # Only the timestamp token may be ignored; line endings and other bytes
+        # stay significant.
+        self.assertNotEqual(normalize(body), normalize(crlf))
+        self.assertNotEqual(normalize(body), normalize(without_trailing))
 
 
 class TestAnalyzerContract(unittest.TestCase):
@@ -634,6 +746,11 @@ class TestAnalyzerContract(unittest.TestCase):
             self.assertIn("stage2-refresh-level", document)
             self.assertIn("refresh_level", document)
             self.assertIn("全文级", document)
+            # The explicit external-result/KB exception must still route to the
+            # original process path instead of being swallowed by the refresh.
+            self.assertIn("chatgpt_result", document)
+            self.assertIn("kb_import", document)
+            self.assertIn("禁止 early hard exit", document)
 
 
 if __name__ == "__main__":
