@@ -112,4 +112,4 @@ _canonical_paper_record = _contact_pack._canonical_paper_record
 ## 审核状态
 
 - 第 1 版：P1 NEEDS_MODIFICATION（绑定点 886 与实际 884 不一致）。
-- 第 2 版：P1–P4 全 PASS，`Plan conclusion: APPROVED`。
+- 第 2 版：P1–P4 全 PASS，`Plan conclusion: APPROVED`（复核确认绑定点 884、产物 441／6367、注释与空行核对方法成立）。

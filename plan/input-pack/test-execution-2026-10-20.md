@@ -3,7 +3,7 @@
 ## 版本与对象
 
 - 执行计划：`plan/input-pack/implementation-plan.md` 第 1 版。
-- 测试计划：`plan/input-pack/test-plan.md` 第 3 版。
+- 测试计划：`plan/input-pack/test-plan.md` 第 3 版（第一关 PASS、第二关 PASS）。
 - 被测提交：`e9a30ba`（`refactor(shared): move the input pack and candidate state into a module`，父提交 `c9b1f6a` 为计划文档提交，其父为链尾 `3f590e8`）。
 - 对照基准：父分支 `refactor-shared-base`（#116）的 head `3f590e8`（#111 合并后 GitHub 自动 rebase 的链尾；原 `4ff8ff6` 的 `scripts` 子树与之字节相同），runner 6730 行。
 - 环境：macOS；`uv run --no-project python` 3.14.6；仓库既有测试夹具；未新增依赖。
@@ -19,7 +19,7 @@
 | T4 输入包规范化／候选状态／迁移 | 通过 | 10 个方法：`Ran 10 tests in 7.092s`、`OK`，无失败、无跳过（`/tmp/pc-stage9/t4.log`） |
 | T5 复制夹具加载 | 通过 | 2 个方法：`Ran 2 tests in 0.953s`、`OK`（`/tmp/pc-stage9/t5.log`） |
 | 失败注入 | 不适用 | 本批只搬移定义，不改事务、回滚、写入顺序或错误通道 |
-| 失败对照（未触发） | 通过 | 第 5 步单方法实跑示例：`Ran 1 test`、`OK`，日志 `baseline-<方法短名>-<时间戳>.log`；基准目录按父分支 SHA 建立，不复用过期缓存 |
+| 失败对照（未触发） | 通过（仅块预检） | 本轮没有失败方法，第 5 步按示例方法实跑了一次作为块预检：`Ran 1 test`、`OK`，日志 `baseline-<方法短名>-<时间戳>.log`；这只是脚本可执行性的证据，不代表“既有失败”结论。基准目录按父分支 SHA 建立，不复用过期缓存 |
 | 既有仓库检查（非必测） | 待跑 | 推 PR 后引用 4 个 `shards` 与聚合 `test` 的运行编号；不作为通过条件 |
 
 ## 文件与接缝

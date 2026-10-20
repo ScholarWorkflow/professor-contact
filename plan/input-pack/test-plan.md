@@ -129,7 +129,7 @@ uv run --no-project /tmp/pc-stage2-tools/compare_stage2_batch_v2.py \
   _migrate_v1_candidate _slice_gap_directions _migrate_v1_cross_group normalize_candidate_state \
   load_candidate_state _strict_candidate_shape strict_candidate_state
 ```
-> 第 2、5 步都从 `git rev-parse origin/refactor-shared-base` 取基准提交，堆栈自动 rebase 后无需改计划。当前值是 `4ff8ff6`。
+> 第 2、5 步都从 `git rev-parse origin/refactor-shared-base` 取基准提交，堆栈自动 rebase 后无需改计划。当前值是 `3f590e8`（以 `git rev-parse origin/refactor-shared-base` 的输出为准）。
 
 脚本来源 `/tmp/pc-stage2-tools/compare_stage2_batch_v2.py`，94 行，sha256 `1ba8c0f49346b1fa78c34fbeec4d82cdab206ebef6cbf1b629769f9e5e4346b6`。
 预期：`diff` 无输出；63 条 `OK`（`T0` 3、`T1` 23、`T2` 14、`T3` 23），末尾 `ALL CHECKS PASS`，退出码 0。
@@ -220,4 +220,4 @@ cat "$LOG"
 
 - 第 1 版：第一关 NEEDS_MODIFICATION（T4 有 4 个方法不执行本批定义、目标措辞不实）。
 - 第 2 版：第一关 NEEDS_MODIFICATION（第 3 步命令未随表更新、T4 括号措辞）。
-- 第 3 版：第一关 PASS；第二关待审核。
+- 第 3 版：第一关 PASS；第二关 PASS（命令块与原文逐字一致、脚本哈希正确、期望与实际一致、失败处理只跑同一方法且日志独立）。
