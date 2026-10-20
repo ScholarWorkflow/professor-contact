@@ -1,136 +1,125 @@
 # U5：实际分析级别贯通与诚实统计测试计划
 
-- Test plan revision：u5-analysis-level-t3（2026-10-21）。唯一完整文件为 `plan/stage2-analysis-level/test-plan.md`。t3 按测试计划审核意见修正执行步骤和分片记录，补齐 L6 已在执行计划 r3 规定的修订缓存行为检查；L1–L6 业务目标与验收范围不变。尚未执行的新断言不得记为通过。
-- 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，对齐 [执行计划 r3](https://github.com/ScholarWorkflow/professor-contact/blob/12fbaaaf89a1fc6cdc082228c526dd9e3ee3f6f9/plan/stage2-analysis-level/implementation-plan.md)。2026-10-20 用户授权编写测试计划；同一日的后续指令授权按执行计划实现产品、运行适用测试并把结果更新到本 PR。
-- 已读源码基线：main `879982abe1d7d811bd9d014c03dce4f5912cc64f`，包含 Stage 2 拆分及 shared/input-pack 提取。该版本用于定位现有资产，不声称已实现 U5。实际受测产品／测试版本已在 §4.0 固定。
-- 当前状态：第一关口 L1–L6 清单已获本轮审核通过，目标不变；第二关口依据审核意见修订步骤，待复核；第三关口已有执行结果保留，L6 修订缓存行为的断言已补入既有生命周期方法，并在测试提交 `231ba03` 定向复验通过；L6 的检查已完成，但第三关口结论仍待独立测试审核。本文不把作者记录当作独立测试批准，也不继承 #92 的结论。
+- Test plan revision：`u5-analysis-level-t4`，2026-10-21（UTC+08:00）。本正文整体取代 t3；唯一完整文件为 `plan/stage2-analysis-level/test-plan.md`，不并行执行历史正文或评论中的相反要求。
+- 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，分支 `plan/u5-analysis-level-redesign`；对齐[执行计划 r4](https://github.com/ScholarWorkflow/professor-contact/blob/3bfe8df6313b2047dad564163e07b30b36c7fd20/plan/stage2-analysis-level/implementation-plan.md)。修订读取基线 head `3bfe8df6313b2047dad564163e07b30b36c7fd20`、原测试计划 blob `033523a43b2b1ac8f7b1527db73afa4307224a54`。
+- 用户已明确要求修改执行计划的三个机制，并随后要求“你改测试计划”。本轮只修计划，不修改产品／测试实现，不运行测试。r4 设计已经入库，不代表其产品改动或新检查已实现。
+- 当前设计状态：pending 独立复核，作者不自授 APPROVED/PASS。L1–L6 的业务范围保持；仅修正与 r4 直接相关的来源资格、完整守卫／旧绑定和磁盘字节检查。三个测试关口与历史结果分别见 §4、§5，不继承旧版“全部通过”为当前结论。
 
-## 1. 范围、依据和结束条件
+## 1. 范围、依据与复用原则
 
-仅检查已确认的实际全文／摘要／未确认级别贯通、现有成员统计，以及本修复直接改变的 canonical 合流、缓存分流和受管接受生命周期。依据执行计划 r3 §1、§4、§6，以及 [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 和 [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)。以下清单是本项验收上限；引用既有文件仅用于复用对应资产，不引入其全部用例或前置。
+依据执行计划 r4 §1、§3–7、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 和 [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)。测试规则于本轮重新读取，页面最后编辑于 2026-10-09；沿用其范围、证据及三个关口规则。执行计划确定预期，不能从当前存在缺陷的实现反推预期。
 
-不要求 #92 整套矩阵、旧关口补审、全教授流程、Stage 3/4、全文分析质量、引用/归属/时效重新验收、通用来源认证、组合穷举、重复安装或两 harness 完整业务回归。不为该确定性状态修复新增模型 eval、专用采集器、判定器或测试框架。Codex/OpenCode 的本次 analyzer 文档差异作一次静态契约核对；级别与分流的业务结果由下面同一 runner 入口检查，不在两边重复证明。
+清单 L1–L6 是验收上限。不引入 #92 整套矩阵、全教授流程、Stage 3/4、模型分析质量、引用／归属／时效重新验收、来源认证、边界笛卡尔组合、重复安装、全仓回归或两 harness 完整业务回归。不新增采集器、oracle、测试框架、全局锁或跨文件事务测试义务。两 analyzer 的来源 owner 和事实组装契约只作静态核对，不重新执行分析或外部 import 证明登记历史。
 
-每个目标只选一个足够的入口，可以让同一夹具运行同时检查多个目标。共享接受逻辑已有当前有效结果时直接复用；引用并说明适用性即可，不因计划／文档 SHA 或后续 U1 合入而重跑。U5 可独立验收，无需 U1 标记或 owner map；U1 先合入时复用同一接受实现和有效断言，U5 仅补级别／统计的差异，不再复制第二套接受回归。全部清单取得当前有效结果且范围内已知缺陷处理后结束，不另加最终全仓回归。
+一个足够的真实业务入口可同时检查多个目标。优先最小修正现有方法，删除相反预期，不默认新增测试模块或固定测试数量。共同机制可由一个入口的业务结果加实际接线核对复用；不同输入读取／接受分支没有真正共用实现时，不能只凭同名 helper 或一个样例宣布全部覆盖。只补实际独有接线，不在单元、集成和全流程重复证明。
+
+U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，不要求 U1 标记、owner map 或第二套接受机制。未受影响结果直接复用，不因文档 SHA、提交编号或完整性审核重跑。以下“待修正”是现有清单对应方法尚未落实 r4，不是本轮运行授权。
 
 ## 2. 最小充分必测清单
 
-### L1 实际成功级别，不以载体或 facts 状态猜测
+### L1 当前成功资格一致贯通，不再接受矛盾 null
 
-- 目标／依据：r3 §4.1。facts 只传播当前成功登记的实际级别，未知诚实保留；本项不重新测试分析器生成质量。
-- 输入／场景：复用已有成功登记样本，包含 fulltext（OCR-only、facts unavailable）与 abstract；另以存在 PDF/分析 Markdown 但没有可确认成功级别登记的样本检查 unknown。沿同一读取入口对原摘要有效但全文升级失败的状态、原来源已失效的状态作直接对照；不枚举所有失败原因。静态核对两 analyzer 都传相同字段、成功登记后才使用，并消费第三分支。
-- 预期：分别为 fulltext、abstract、null；升级未成功不得虚报全文，原摘要仍有效则仍为 abstract，原来源确已失效则 null，下一次读取不得由残留旧包复活已知值。非法 level／事实与当前已知登记冲突按既有输入错误处理，不任选一个已知值；缺失或显式 null 不算非法输入。仅选一个非法值代表该拒绝分支。
-- 检查入口：实现后的 facts／级别读取正式入口，观察返回的 facts paper 字段或原错误结果；直接使用已认可 index 和文件样本，不重新证明其生成历史。已有外部 import 成功登记断言作为上游资产复用，不重复跑导入再证明下游传播。
+- 目标／依据：r4 §3、§4.1、§5.1。正常 facts 接受、下一轮 preflight 与锁内 refresh 使用同一 known／unknown／invalid 语义，分析 producer／成功 import 仍拥有登记。
+- 输入／场景：沿既有 facts→finalize 的真实接受夹具保留 fulltext（含 OCR-only 与 facts unavailable）、abstract 和无登记但有文件的 null 正常输入。把当前“合法 known 登记仍在而 facts=null 可接受”的旧预期替换为拒绝；新 facts 缺字段使用同一未确认声明分支。用一个合法摘要源保留的失败升级状态、一个原 owner 已使正式状态变为 unknown 的状态及其后真实成功登记对照，覆盖资格转移，不枚举失败原因。无效 level 保留现有代表，坏／不可读记录与合法 unknown 的区分共用 L4。
+- 预期：known 与声明必须匹配；known 遇新 facts null／缺字段，或 known 值／消费路径矛盾，按原输入错误零接受写入拒绝。有效 abstract 的失败升级仍为 abstract，不能制造 fulltext 或 null。正式来源已 unknown 且其余事实资格仍合法时，正常接受 null；下次预检与允许的刷新不能由旧 canonical 恢复 known。随后原 owner 提供新有效成功登记时可以转 known，旧 null 不永久压制它。Stage 2 不清 index、不制造失效证明；只有失败描述而正式登记仍 known 的矛盾必须报错等待原 owner。
+- 检查方式：对上述正常接受后的持久 pack 继续调用既有 preflight；确属 level-only 的合法后续变化再调用实际 refresh，观察 canonical、分流和最终持久值。复用已有合法 validator 夹具，使分流的前提真实成立；无 terminal 记录时 process 不误写为级别不一致。拒绝时比较 pack、Markdown 接受状态未变。静态核对两 analyzer 均按当前登记组装新 facts、旧 facts 缺字段需重新组装而非回填 canonical，不强制重跑模型；不做生成来源认证。
 
-### L2 canonical 合流和旧包兼容，当前 null 必须覆盖
+### L2 canonical 各实际合流与旧 accepted 包兼容
 
-- 目标／依据：r3 §4.2、§4.4.1。fresh/reused/resolved/old fallback 均携带同一当前值，旧原始包不被兼容化或候选回填改变。
-- 输入／场景：同一现有 pack/finalize 夹具，最小选取实际不同合流入口，原值 fulltext、当前值 null；已知值正常传播沿 L1 的样本复用。读取旧 schema 2 缺字段包并构造 candidate；如实际修改触及 v1 canonical 迁移，则在已有迁移入口仅检查缺字段与显式 null 等价及已知值冲突仍拒绝，不展开历史迁移矩阵。
-- 预期：最终 canonical papers 全部采用当前核实值，null 不被旧值补回；成员/reference 均保持同一规范记录。schema 2 不升级，旧缺字段在兼容视图视为 null，但原始旧文件及用于旧完整性／validator 核验的深快照保持原内容；reused/resolved 嵌套修改不得污染旧侧。
-- 检查入口：现有 finalize/normalize 资产中的结构化 pack 断言和旧快照前后比较；只覆盖实际不同合流代码，不把四分支与全部 level/来源/validator 状态做笛卡尔组合。旧包绑定保护的最终接受结果归 L5，同一运行可一并观察。
+- 目标／依据：r4 §4.1、§4.3、§5.1。fresh/reused/resolved/old 的 canonical 都显式采用当前核实值；旧 raw、兼容视图、candidate 三者不混淆。
+- 输入／场景：复用现有 pack/finalize 夹具，仅覆盖实际不同合流代码；当前合法 unknown 覆盖旧 known（先按 L1 准备真实 unknown，而非让矛盾 facts 绕过登记）。旧 accepted schema 2 缺字段单独读取；随后给合法当前 known 的 facts 进入正常处理。v1 缺字段与 null 等价／known 冲突的现有迁移断言继续复用，不展开迁移矩阵。
+- 预期：所有实际合流结果采用当前值，null 不被 truthy fallback 补回。旧 accepted 缺字段在兼容视图为 null，原 schema 2 与旧 raw／深快照未被候选修改；它不是新 facts 声明，不能阻止后来真实成功。原成员／reference 指向同一 canonical 记录；旧嵌套状态不被 reused/resolved 候选污染。
+- 检查方式：结构化 pack、原始旧包字节和既有深快照断言。若各分支确实调用同一最终赋值，可复用共同结果并核对接线；独立分支才保留对应最小输入，不做四分支×三级别×validator 组合。L1 的接受序列可同时给出本项目标，L5 使用其未污染旧快照检查绑定，不重复执行。
 
-### L3 仅统计既有方向成员，三类互斥且总数正确
+### L3 只统计既有方向成员
 
-- 目标／依据：r3 §1、§4.2。改正统计而不改变成员或引文资格。
-- 输入／场景：一个确定性 pack 含三种级别的 supporting 成员、一个 reference/relevant-only 论文，以及跨方向共享的成员；复用已有有效方向拆分／合并产物作为输入，不重新运行决定成员的业务。
-- 预期：现有统计位置输出“全文级 X 篇 · 摘要级 Y 篇 · 未确认 Z 篇（共 N 篇）”，三类总和等于原 supporting 成员投影；reference/relevant-only 不计入，跨方向共享成员按原成员贡献计数，不额外去重。成员 key、顺序、身份和引用许可不因级别变化改变。
-- 检查入口：现有 renderer 接受 canonical pack 后的实际 Markdown 标题及 pack 的 supporting_item_keys；在同一断言检查统计关系，不另造统计 oracle 或再跑全流程。
+- 目标／依据：r4 §1、§6.5。三类互斥、总数等于原 supporting 成员投影，不改成员或引用资格。
+- 输入／场景：现有确定性 pack 包含三类 supporting 成员、reference/relevant-only 论文及跨方向共享成员。
+- 预期：标题为“全文级 X 篇 · 摘要级 Y 篇 · 未确认 Z 篇（共 N 篇）”；reference/relevant-only 排除，共享成员按原贡献计数，不额外去重；成员 key、顺序、身份、引用许可不变。
+- 检查方式：复用 `TestStatisticsRender` 两个现有方法的实际 Markdown 和 supporting_item_keys 断言。r4 未改变统计算法，本项现有结果继续适用；后续若实现实际改动该路径，再仅核对直接影响，不因修订计划重跑。
 
-### L4 早期分流：纯 level 刷新不能吞业务变化
+### L4 完整业务来源守卫与早期分流
 
-- 目标／依据：r3 §4.3–4.4。有限来源与 level 分开比较，正常复用不扩大离线承诺。
-- 输入／场景：同一有真实接受投影和合法旧校验的基线依次作独立变体：完全不变；只改合法 level／本版统计格式尚未接受；业务来源变化（用原 missing 固定 facts 候选出现代表此前漏守卫的路径）；旧包缺新投影。另以已接受 PDF guard 及不变正式本地输入检查原离线复用，不另读 Zotero 或扫描 PDF。不可读／坏来源记录只选一个代表，区别于 L1 的明确未知。
-- 预期：分别 reuse_all、refresh_level、process、process；级别本身及 index generated_at 等管理字段不造成业务变化。无法比较资格或来源转 process，不把坏记录当已知值。旧包 process 一次后只在真实成功接受时建立投影／统计标识，原有效模型缓存仍可复用。保留既有 validator 门槛；显式 chatgpt_result 或 kb_import=true 的路由仍优先 process，静态核对两 caller 的此分支即可，不运行外部导入全链。
-- 检查入口：现有 preflight 返回 action 和持久 pack 的本次投影／格式标识；基线必须实际满足其声称的复用前提。使用现有 no-PDF-read 断言检查离线用法，不新增全调用 trace。若方法在同一 runner 测试内已覆盖，L5 的 refresh 不再次证明这些分流变体。
+- 目标／依据：r4 §4.2、§5.2。完整已接受来源与当前业务比较决定 process／refresh_level／reuse_all；有限路径投影不能代替 artifact guards。
+- 输入／场景：保留已接受合法基线的完全不变、仅合法 level／统计格式变化、固定 missing facts 候选出现、旧投影缺失／旧不一致私有版本、坏来源记录的现有独立变体。对已存在合法分析来源加入路径、存在、level 不变而文件 stat 已变的实际磁盘变体；与 L6 锁内漂移共用夹具，不重复跑全部业务变化。既有已接受 PDF 的离线 no-PDF-read 检查复用。
+- 预期：业务相同且 terminal 校验有效才 reuse_all；业务相同仅级别／格式变化才 refresh_level；业务变化、不可比较、旧不一致基线或坏输入先 process，不将 invalid 折叠为 unknown。index generated_at／KB id 等管理字段不影响业务判等。缺基线 process 不等于强制重跑有效模型，只有正常成功接受可建立新消费基线，refresh 不能补造历史来源。显式 chatgpt_result／kb_import 继续 process 优先。
+- 检查方式：实际 preflight action、pack 的真实接受基线及现有 jobs 结果。针对完整守卫的源码核对只确认正常接受、preflight、锁内刷新确实共用包含原 stat／已得摘要的相同谓词，以及 analysis／facts／future-work／已接受 PDF 的实际接线；若某载体或时点仍独立走弱化分支，需在该独有入口最小补相应输入，不能把“一个 analysis 文件变了”称为未经接线验证的全来源覆盖。不要重做归属／时效算法、全 PDF hash、Zotero 查询或环境 trace。两 caller 的外部结果优先级只核对实际文本／分支语义，不把关键词出现当优先级证明。
 
-### L5 级别刷新及普通 finalize 共用有限接受，不救活无效认证
+### L5 完整旧绑定、合法生命周期及真实磁盘字节
 
-- 目标／依据：r3 §4.4。实际 body、业务依据和原绑定分别决定是否接受及保留校验，避免仅看统计或完整包 hash。
-- 输入／场景：在同一现有受管文件夹具检查三个必要结果：①级别使实际统计正文变化；②两篇互换 level、聚合不变且实际 body 等价、业务未变；③业务依据变化但实际正文碰巧相同（普通 process/finalize）。②再用一个原绑定无效样本检查不能重绑救 PASS。兼容旧包样本复用 L2；首建正常成功结果可与 L2/L3 合并观察。
-- 预期：①受保护接受新 body，旧认证失效且原报告保留；②只忽略 renderer 固定顶部生成时间，保留统计文字与其他正文的实际比较，等价时保留旧 body 原字节／真实 SHA，原合法 round/phase/pending 不清零，必要头和完整包绑定可更新；③保 body 但旧业务认证失效。无效旧绑定且 body、业务均未变必须按原证据错误返回，不能由 candidate 反填旧侧或重绑成 PASS。完整包摘要因字段／缓存改变本身不等同业务变更。
-- 同一接受观察还须确认：刷新只改 level、统计接受缓存与必要绑定，不动成员、assignment、模型结果、业务指纹或 resolved proof；cache 按所有权合并而不清除其他仍有效 render 字段；成功接受后才登记本版标识。refresh 仅使用持久 pack，不要求临时 facts 或模型工作。普通 finalize 和新增 handler 实际共享的检查复用一次，只有二者独有接线分别检查，不复制完整场景。
-- 检查入口：runner 的实际受管输出、canonical pack、原 validator/report 和现有 jobs／依赖替身断言。正式测试中的替身只隔离无须执行的外部工作，不替产品传值或替换业务输出。没有重新设计来源证明、header 认证或额外渲染协议。
+- 目标／依据：r4 §4.3–4.4、§5.1–5.2。先验证旧 raw 绑定，再决定继承；正文比较只能忽略固定顶部时间 token，不能由读写归一化隐藏差异。
+- 输入／场景：保留三个真实接受结果：统计正文变化；两个成员 level 换位且业务／正文等价；业务变化但正文等价。对等价场景使用独立旧绑定缺陷：旧 header.state_fingerprint 错配，以及现有 validator.render_sha256 错配；其他旧身份／body-header-cache／validator-pack 层按已有断言和实际共同谓词核对，缺少独立层检查时最小补该层，不把一个错误 render SHA 当作完整绑定。使用既有真实非终态 round1/pending 普通 finalize 和 refine 生命周期，不新增校验轮次矩阵。
+- 预期：正文或业务变化使旧认证失效、原报告保留；两者等价且完整旧绑定有效才能保留合法 validator 并按原规则更新必要 pack 绑定。旧 header 或任何旧绑定无效不能由先修头／回填 candidate／重算 hash 恢复 PASS；refresh 拒绝且不写接受状态。普通 genuinely 新业务／正文仅能按原冲突与显式覆盖政策接受为未校验，内容不变不能重新签旧证据。首建不伪造旧绑定，无 validator 不伪造 PASS；合法 pending 不被 terminal gate 拒绝，terminal pass/skipped 只约束 reuse_all。旧 raw 不被 compatibility/candidate 污染。
+- 磁盘字节场景与预期：将现有时间比较检查接到真实受管文件读取和正式接受入口。合法 LF 基线只改顶部生成时间候选时保留旧 body bytes 与真实 SHA；另将实际磁盘正文 LF 改为 CRLF 而不重签旧 header/cache/validator，必须被旧绑定／人工保护拒绝，不能因 universal-newline 转换仍继承。对合法 CRLF 文件用原始字节和标准 SHA-256 构造自洽的既有受管格式夹具，走同一无损读取/hash/冲突/写回路径；需要仅更新必要机器头时正文 bytes 不变，header/cache/validator 使用真实 body SHA。CRLF 旧正文与实际 LF 候选的差异仍属变化，不得强求等价或为 PASS 改 renderer 输出。尾换行差异与非顶部叙事时间的现有比较断言仅作为该同一语义的最小补充，不扩编码／所有空白组合。
+- 检查方式：实际 runner 接受／拒绝、受管文件 `read_bytes()`、现有标准 `hashlib.sha256` 和 pack/header/cache/validator/report 断言，不调用被测归一化函数计算预期。不得在写文件前用 `read_text()` 抹掉换行再声称测磁盘；不得替换正式渲染输出或替身返回“守卫通过”。合法 CRLF 夹具只建立预先指定的已接受输入，不在被测调用后修补绑定求通过。正式路径未具备合法仅更新头的触发条件时，接到它真实调用的既有受管写入口检查保存 bytes，另核对调用接线，不发明产品 API。
+- 复用边界：正常 finalize、refresh、preflight、validation、managed conflict/write 的共同无损原语与分层谓词须实际接线后才能共享结果；不同独有 I/O 路径最小补检查，不复制整套接受场景。刷新仍只改 level、统计接受元数据及必要包绑定，保留成员、assignment、模型结果、resolved proof 与无关有效缓存，不消费临时 facts 或执行模型。
 
-### L6 刷新写入保护及原 refine 轮次的直接影响
+### L6 锁内完整复核、写前漂移与原 refine 保护
 
-- 目标／依据：r3 §4.4、§6.3。新增 writer 不绕过已有保护；原 refine 不清轮次、不误删仍有效的缓存。缓存检查属于本次修改直接改变的现有行为，不增加独立测试目标。
-- 输入／场景：沿 L5 夹具，只检查新增刷新入口直接触及的拒绝点：已有 writer busy；取得 lease 后、写入前输入漂移；受管 body 已人工修改。用现有 unittest 替身在实际 pack 持久调用处模拟一次写 Markdown 后的 I/O 失败，不新增故障框架。复用原 round1 修订→round2 测试，并在合法的原校验绑定下为修订前的 pack 预置一项其他仍有效的 `cache` 子项和一项无关的 `cache.render` 记录；调用原 `stage2-refine-finalize` 后比较前后持久状态，不另建修订流程。
-- 预期：busy 零业务写入；漂移零业务写入返回 needs_refresh；人工修改沿既有 needs_decision 不覆盖。自持 lease 在成功／拒绝／异常后走现有 finally release，不借别人的 token，也不在普通路径重复拿锁；release 故障不得报告已解除。部分 I/O 失败如实未完成、不伪造跨文件回滚或成功标识，下一次既有绑定守卫不得直接 reuse。refine 保持原轮次转换和清除 `cache.preflight` 的规则，不重置为 round1；当前 `cache.render[套磁候选分析.md].sha256` 更新为实际接受的正文摘要，其他仍有效的 `cache` 子项和 `cache.render` 记录保持原值。
-- 检查入口：原 lease／managed write／refine 测试入口的返回结果、目标文件、锁及 pack 状态；在 `Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` 的既有修订入口补充一次缓存前后断言。该方法既有轮次断言继续复用；补充的缓存断言通过前，L6 不得整体记为通过。不穷举失败阶段，不重做校验业务，也不新增判定器。
+- 目标／依据：r4 §5–6。刷新使用已有 lease，获锁后和写前都核对完整业务／来源及接受文件；原 refine 保留合法轮次、清 preflight、不清无关有效缓存。
+- 输入／场景：保留 busy、人工 body、一次 Markdown 已写而 pack 持久失败、release 成功／失败的已有结果和断言。将原仅“预检后 target 改变”的漂移检查最小修正为真实刷新入口中：在获锁后的重新观察之前改变已存在分析文件，路径／存在／level 保持；另在该观察之后、正式写入之前改变已有 guard 可见的来源或接受文件，以区分第二个检查时点。沿既有 lease／写入替身在准确边界改变真实临时文件，不替换比较结果，不建竞态框架。L4 的源类型接线核对决定是否有独立弱分支，避免无依据地穷举所有载体×时点。
+- 预期：busy 零业务写入；任一可观测漂移返回原 needs_refresh、零接受写入、不补造新来源基线，finally 释放自持 lease，随后 process 而非继续纯级别刷新。人工 body 不覆盖。release 失败如实报告；部分 I/O 失败未完成且不承诺回滚，下一次完整旧绑定不允许直接 reuse，不补打成功标记或自动救旧 PASS。
+- 检查方式：真实 pack、Markdown、锁与原返回状态，复用现有 unittest mock。原 `test_business_rerender_and_bounded_correction_lifecycle` 中合法 pending→refine→第二轮及缓存断言继续使用：当前 render SHA 对实际 body、无关 cache 与 cache.render 不变、cache.preflight 清除、不重置 round1。仅因 r4 共用绑定／I/O 接线受影响时定向复核该方法；不重做其全部历史 T5 业务或扩大轮次测试。
+- 边界：lease 只锁合作 writer，stat 只提供原合同可观察的一致性。这里不要求不可观察外部修改的绝对原子快照，不增加全局锁、外部文件锁或跨文件回滚承诺。
 
-## 3. 已有资产及复用边界
+## 3. 当前资产、最小修正与历史适用性
 
-以下路径均位于 `.apm/skills/professor-contact/tests/`，已按上述 main SHA 阅读；它们是接线候选，不是 U5 已通过的结果，也不是整文件必跑清单。
+以下现有方法在基线 head 已读取，位于 `.apm/skills/professor-contact/tests/`。名称表示已有资产，不表示 r4 检查已实现。历史固定版本与结果见 §5。未来只修这些方法中实际受影响断言，不能保留相反旧预期再新增一个“新规则”平行测试。
 
-- `test_stage2_chatgpt_handoff.py`：`HandoffTests.test_valid_result_installs_analysis_sidecar_and_index` 已断言成功 import 登记 fulltext；`test_ocr_only_fulltext_build_and_import_without_pdf` 已断言 fulltext 与 facts unavailable 共存。用于 L1 上游事实资产，不要求重做导入或运行模型。
-- `test_stage2_facts_sidecar.py`：`FactsSidecarTests.test_valid_facts_sidecar_is_normalized_into_the_pack` 提供 facts→pack 的现有夹具；`test_facts_sidecar_change_invalidates_direction_reuse` 已检查事实副车变化后 process，可复用该断言方式接 L1/L2/L4，不将 sidecar 所有安全分支搬入 U5。
-- `test_stage2_preflight.py`：`PreflightBase.build_accepted_state`、`TestPreflightDecision.test_b_perfect_no_change_reuses_without_pdf_reads` 提供真实接受基线及不读 PDF 入口；`test_c_target_note_change_invalidates_only_that_direction`、`TestFinalizePreflightWiring.test_finalize_race_on_target_change_writes_nothing` 提供业务变化／写前漂移的现有断言。接 L4/L6 时补真实 U5 接受投影，不能手填成功标记制造通过前提。
-- `test_contact_state.py`：`BaseEnv` 与 `TestRunnerBasics.test_13_stage2_validator_rewrite_round_trips_structured_narrative` 提供规范 pack、受管输出及修订轮次入口，可接 L2/L3/L5/L6。
-- `test_stage2_style_validation_handoff.py`：`Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` 包含业务重渲染、旧报告保留及原两轮生命周期；`test_stage2_report_for_stale_render_is_rejected_without_pack_write` 包含旧 render 拒绝断言。只复用与 L5/L6 对应的子目标／资产，不把其完整旧 T5 场景或全部历史义务设为本项前置。
-
-本轮补 U5 专用断言时复用了这些资产提供的夹具与入口（§4 记录实际选择器与命令），没有把它们的整文件必跑清单设为本项前置。新增方法名、选择器和 CLI 参数均以真实实现为准。
-
-## 4. 执行接线与结果记录（本地执行工程师）
-
-本节记录已经执行的步骤与结果，并指定尚未执行的定向补测；执行记录本身不代替独立审核。
-
-### 4.0 固定的产品与测试版本
-
-- 产品与测试提交（历史全量记录）：`0b9a585bc3d43d7d42a7fa341c89cf161fbda7a3`（含 `dd9d1d5` 产品或测试主线、`87984db` 的 L1/L5 补充和 `62ca3fd`/`0b9a585` 对首次实现符合性审核 IR-1…IR-5 的修复；父提交 main `4cfcf49`，已推送到 PR #106 的 head 分支 `plan/u5-analysis-level-redesign`）。本节的记录写在紧随其后的 docs 提交里；doc 改动不触碰产品或测试代码，上述执行结果仍对 `0b9a585` 有效。
-- L6 定向复验的测试提交：`231ba03bdeeb2da71aa7fa01334f346e1b7f27b4`（`bff99aa` 补入 §2 L6 缓存断言，`231ba03` 只修正该处注释；产品代码自 `0b9a585` 起未再变化）。命令、`run_dir` 与结果见 §4.3；该记录写在其后的 docs 提交里，不改变已运行的测试代码。
-- 环境：macOS，`python3 --version` = 3.14.7；只使用标准库 unittest 与仓库内现有夹具，无新增依赖。
-- 隔离：每个测试用例使用独立 `tempfile.TemporaryDirectory()` 作为 program root；不读用户 Zotero、真实 PDF、私有配置或生产状态。新增测试在 L4/L6 的 guard 场景通过现有 `Path.read_bytes` / `atomic_write` 替身隔离外部工作。
-- 新增正式测试：`.apm/skills/professor-contact/tests/test_stage2_analysis_level.py`（34 tests），已登记 `plan/test-grouping/shards.json`（stage2 / shard3）。
-- L6 的缓存断言位于既有 `.apm/skills/professor-contact/tests/test_stage2_style_validation_handoff.py` 的 `Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle`（shard4），不新增测试方法，也不改变 34 tests 的新模块。
-- 唯一完整原始输出：`/tmp/u5-formal4-20261020/module.log`（新模块单独运行）与 `/tmp/u5-formal4-20261020/suite.log`（四 shard 全量）；均在仓库外临时目录，按共识不提交。
-- L6 定向复验原始输出：`/tmp/u5-l6-cache-555AG2/refine.log`（单个受影响方法）；同样在仓库外，不提交。
-
-### 4.1 准备顺序与命令
-
-原正式执行已完成新模块与四个分片，输出见 §4.3；这些执行结果作为历史记录保留，不要求因文档修订重跑全仓。现有新模块及分片登记可通过下列命令复现（当前没有重复执行义务）：
-
-- 在仓库根目录执行 `python3 scripts/check_test_shards.py`，检查分片登记；仅在分片文件变更影响登记时补跑。
-- 进入 `.apm/skills/professor-contact/tests`，执行 `python3 -m unittest test_stage2_analysis_level -v`。既有 34 项结果见 §4.3。
-
-§2 L6 的缓存前后断言已补入既有修订方法；已在测试提交 `231ba03` 按以下完整命令执行一次定向复验，结果见 §4.3。从仓库根目录开始，复现命令为：
-
-```bash
-cd .apm/skills/professor-contact/tests
-run_dir="$(mktemp -d /tmp/u5-l6-cache-XXXXXX)"
-python3 -m unittest test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle -v > "$run_dir/refine.log" 2>&1
-```
-
-检查测试退出状态和 `refine.log` 中该方法的业务断言；记录实际测试提交、命令、`run_dir` 路径及结果。失败时保留输出并交对应负责人处理，不把失败改记为未执行；若测试步骤有误，先修订并复核受影响部分。使用现有 Python 标准库和测试夹具；用例以 `TemporaryDirectory` 隔离程序目录，不需要模型、网络、真实 Zotero/PDF 或重新安装。其他有效检查不重跑。
-
-### 4.2 L1–L6 的实际检查入口与结果
-
-| 目标 | 实际检查方法（唯一入口） | 结果 |
+| 目标 | 当前真实资产与局限 | 本轮接线决定／结果适用性 |
 |---|---|---|
-| L1 实际成功级别 | `TestFactsLevelContract`：`test_known_and_unknown_levels_reach_the_canonical_pack`（fulltext/abstract/null 进入 canonical papers，且 OCR-only 全文与 `facts_state=unavailable` 并存）、`test_facts_level_conflicting_with_the_current_registration_is_invalid`、`test_illegal_level_is_an_input_error`、`test_explicit_null_clears_a_registered_level`、`test_analysis_file_and_pdf_without_a_success_registration_are_unknown`（有分析文件+PDF 但无成功登记 → null）、`test_ocr_only_fulltext_without_facts_can_still_be_fulltext`（OCR-only 全文 + facts unavailable → fulltext）、`test_consumed_analysis_path_contradicting_the_index_is_invalid`（facts 实际消费路径与 index 登记矛盾 → `invalid_facts`）；静态契约 `TestAnalyzerContract.test_both_analyzers_pass_the_level_and_consume_the_refresh_branch` | PASS |
-| L2 canonical 合流与旧包兼容 | `TestCanonicalMerge`：`test_known_level_survives_a_reuse_finalize_and_validator`（复用条目深拷贝、旧 validator 仍可携带）、`test_missing_level_field_in_an_old_pack_reads_as_null`、`test_v1_migration_treats_missing_and_null_alike_but_rejects_conflict` | PASS |
-| L3 三类统计 | `TestStatisticsRender`：`test_header_counts_members_only_and_shared_members_per_contribution`（实际标题为 `全文级 1 篇 · 摘要级 2 篇 · 未确认 1 篇（共 4 篇）`，共享成员按两次成员贡献计数）、`test_reference_only_paper_stays_out_of_the_statistic` | PASS |
-| L4 早期分流 | `TestPreflightBranches`：`test_unchanged_state_reuses_all`、`test_level_only_change_takes_the_refresh_branch`、`test_management_fields_do_not_change_the_business_source`、`test_new_fixed_facts_candidate_is_a_business_change`、`test_missing_projection_processes_once`、`test_illegal_index_level_processes_instead_of_writing_a_known_value`、`test_not_accepted_validator_blocks_reuse_all`；`TestAnalyzerContract` 对两份 analyzer 文档核对 `chatgpt_result`、`kb_import` 与 `禁止 early hard exit` 关键字（只断言关键字存在，不解析优先级的精确语法） | PASS |
-| L5 级别刷新与有限接受 | `TestLevelRefresh`：`test_statistic_change_updates_body_and_expires_old_certification`、`test_equivalent_body_swap_keeps_the_valid_old_certification`、`test_invalid_old_binding_is_an_evidence_error_not_a_rebind`、`test_legacy_statistics_body_is_reaccepted_before_the_marker`、`test_business_change_with_equivalent_body_keeps_body_but_expires_certification`（业务依据变化但真实正文相同 → 保 body、旧认证失效）、`test_manual_body_edit_needs_decision_without_writing_the_pack`；比较基准 `TestGenerationTimeNormalization.test_only_the_generation_time_is_ignored`（含行尾/尾部字节不被规范化）；缓存与 resolved 保持 `TestRefreshProtection.test_refresh_keeps_the_accepted_sources_and_foreign_cache` | PASS |
-| L6 写入保护与原 refine | `TestRefreshProtection`：`test_busy_writer_returns_without_any_business_write`、`test_binding_drift_returns_needs_refresh_releases_and_writes_nothing`、`test_successful_refresh_releases_the_lease`、`test_release_failure_is_reported_on_the_success_path`、`test_release_failure_on_a_soft_exit_is_also_reported`、`test_pack_io_failure_after_the_markdown_write_stays_unfinished`；原两轮生命周期复用 `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` 在 `shard4` 的已有结果。该旧方法已按 §2 L6 补入 refine 前后缓存断言：预置其他有效 cache 子项与无关 cache.render 记录，核对 refine 后 `cache.preflight` 清除、当前 render SHA 与实际接受正文一致、其余缓存保持；既有 `_assert_t5_render_binding` 仍核对 render 缓存与正文一致。补断言后已在测试提交 `231ba03` 定向复验通过（§4.3）。 | 原有检查 PASS；修订缓存检查 PASS（`231ba03` 定向复验） |
+| L1 | `test_stage2_analysis_level.TestFactsLevelContract` 的 known/unknown、冲突、非法值、无登记、OCR-only、消费路径方法；`test_explicit_null_clears_a_registered_level` 在合法 known index 不变时断言 null 接受 | 旧 null 方法预期与 r4 相反，不可复用为通过；最小替换为冲突零写入并接合法 unknown→下一轮→新成功序列。其他已知正常事实结果保留，不重复外部导入。失败升级摘要有效分支不能由 null 样例替代 |
+| L2 | `TestCanonicalMerge.test_known_level_survives_a_reuse_finalize_and_validator`、`test_missing_level_field_in_an_old_pack_reads_as_null`、`test_v1_migration_treats_missing_and_null_alike_but_rejects_conflict` | 旧缺字段方法同时传与 known index 矛盾的新 null facts，故旧通过不能证明 r4 兼容；分离旧 accepted 兼容视图与新 facts，最小修正。v1 等价现有结果复用；合流接线随实际改动检查 |
+| L3 | `TestStatisticsRender.test_header_counts_members_only_and_shared_members_per_contribution`、`test_reference_only_paper_stays_out_of_the_statistic` | 现有统计／身份结果有效复用，不要求重新执行 |
+| L4 | `TestPreflightBranches` 中 unchanged、level-only、management fields、fixed facts、missing projection、illegal index、not accepted validator | 保留仍适用的预期／历史结果；missing projection 修正覆盖现有私有版本保守失效，补现有 artifact stat 与 L6 的共同守卫接线。旧关键词静态断言不是优先级完整证明 |
+| L5 | `TestLevelRefresh` 中统计变化、等价换位、业务变正文等价、人工 body、legacy stats；`test_invalid_old_binding_is_an_evidence_error_not_a_rebind` 只改 validator.render_sha256 | 旧 render 错配仅证明这一层，不覆盖 header.state_fingerprint 或完整层次；按 L5 最小扩展。legacy stats 旧夹具只改正文/cache 且未保持完整旧头绑定，须按 r4 修正为合法旧格式输入或预期拒绝，不能用破损旧态证明格式升级成功 |
+| L5 字节 | `TestGenerationTimeNormalization.test_only_the_generation_time_is_ignored` 直接向 helper 传字符串 | 历史 helper 通过保留，但不证明磁盘 CRLF 无损；转接真实磁盘读/hash/比较/写，保留时间、统计、尾换行的有限语义，不为这些再建平行框架 |
+| L6 | `TestRefreshProtection.test_binding_drift_returns_needs_refresh_releases_and_writes_nothing` 在调用前改 target | 只证明旧 target 漂移；不证明锁内 artifact 重验和最终写前检查。按 L6 修正准确时点和文件。其他 busy/release/I/O 方法保留，I/O 旧方法未观察失败后的下一次 preflight，最小接后续拒绝复用 |
+| L5/L6 共享生命周期 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` 有普通 pending finalize、refine、两轮及缓存断言 | 历史 `231ba03` 结果不撤销。r4 如修改它所经共同绑定/I/O，定向复核这些直接行为，不能误用 terminal 复用条件拒绝合法 pending；不扩完整旧 T5 清单 |
+| 来源与缓存保护 | `TestRefreshProtection.test_refresh_keeps_the_accepted_sources_and_foreign_cache` | 旧结果证明既有来源/cache 不被刷新替换，不证明来源最新有效。复用其保持断言；若增强绑定使原夹具新增元数据后旧 validator 不再合法，应在被测调用前建立合法夹具，不绕过新保护 |
 
-`stage2-refresh-level` 的真实参数以 `contact_state.py build_parser()` 为准：`--program-root`、`--professor`、`--target-file`、`--preflight-file`，可选 `--decision-file`。返回 `ok`（新级别/统计/受管正文已接受）、`stage2_writer_busy`（零业务写入）、`needs_refresh`（预检漂移或渲染字段需走 process）、`needs_decision`（受管 Markdown 被人工修改）。L1 的统计观察直接读受管 Markdown 的统计行；L2/L4/L6 的结构化结果读 `套磁候选输入.json` 的 `papers`、`cache.preflight` 与命令 stdout；不另建判定器。
+上游已有 `test_stage2_chatgpt_handoff.HandoffTests.test_valid_result_installs_analysis_sidecar_and_index`、`test_ocr_only_fulltext_build_and_import_without_pdf` 只作成功登记资产；`test_stage2_facts_sidecar` 的 facts→pack／副车变更、`test_stage2_preflight.PreflightBase.build_accepted_state` 与 no-PDF-read／正常 finalize 竞态入口继续复用。没有因此把整文件或全仓登记为本轮必跑。
 
-### 4.3 正式结果
+## 4. r4 的接线与三个关口状态
 
-- 新模块单独运行：`Ran 34 tests`，全部 OK（`/tmp/u5-formal4-20261020/module.log`）。
-- 全量回归（同一提交）：shard1 `Ran 380 tests` OK；shard2 `Ran 219 tests` OK；shard3 `Ran 222 tests` OK；shard4 `Ran 243 tests` OK（1 skipped）。合计 1064 tests、1 skipped，无失败。
-- `plan/test-grouping/shards.json` 的 `totals` 是分片规划的声明性估值（不是实测条数）；实测条数以上两行为准。
-- L6 定向复验（测试提交 `231ba03`，执行者 local-execution-engineer，2026-10-21）：在 `.apm/skills/professor-contact/tests` 执行 `python3 -m unittest test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle -v`；`run_dir=/tmp/u5-l6-cache-555AG2`；退出码 0；`Ran 1 test in 7.785s`，`OK`。日志见 `/tmp/u5-l6-cache-555AG2/refine.log`。
-- 当前结果：L1–L6 全部检查通过；L6 的 writer／异常／原校验轮次检查沿用 `0b9a585` 的通过结果，修订后的 refine 缓存保留断言在 `231ba03` 定向复验通过。现有记录无业务失败；L6 不再保留未执行项。
-- 未执行且不在本清单范围：模型分析质量、#92 整套矩阵、Stage 3/4、外部 Zotero/handoff 全链、通用来源认证；按 §1 排除，不补做。
-- 新模块与四分片结果固定为 `0b9a585`；本次只按 §4.1 在测试提交 `231ba03` 对 L6 受影响方法执行一次定向复验，未重跑其他检查。
+### 4.1 当前事实
 
-### 4.4 未完成项与下一负责人
+- 第一关口：L1–L6 原范围已确认；t4 按用户已批准 r4 修正相反预期与不足方法，完整候选待独立设计复核，作者不宣布新批准。
+- 第二关口：t3 已有公开审核结论，不再标成“t3 待审”。本次受影响的方法／夹具尚未改到 r4，故 r4 可执行 recipe 尚未就绪；仅待产品与测试实现完成后核对受影响接线、选择器和具体命令，不重开未受影响范围。
+- 第三关口：§5 是真实历史结果；r4 受影响机制未执行，不能以 34 tests 或 1064 tests 旧绿代替。L3 及实际未变子目标复用旧结果，L1/L2 的矛盾预期、L4/L6 完整守卫、L5 旧绑定／实际字节和共享生命周期接线待新的适用结果。
+- 当前产品仍有已定位问题；测试准备缺口与产品失败分开记录，不声称当前 L1–L6 全通过。本轮未发生任何新的正式测试尝试。
 
-- 第二关口：§4.1 已删除四分片作为本轮必跑步骤的要求，改为仅复验 L6 受影响方法；步骤修订待独立复核。
-- 第三关口：§4.3 已有正式记录保留；L6 的 refine 缓存保留断言已按 §2 补入既有 `test_business_rerender_and_bounded_correction_lifecycle`，并已在测试提交 `231ba03` 定向复验通过，L6 的检查已完成。执行与结果登记由本地执行工程师按 §4.1 完成；测试审核者仍只复核该受影响项，L6 结果不代替第三关口的独立结论。
-- 产品实现负责人：本轮按执行计划 r3 完成实现，并按首次实现符合性审核处理 IR-1…IR-5；后续只按具体受影响意见处理。
-- 首次实现符合性审核（所审版本 `8568a3b`，产品 `dd9d1d5`）提出 IR-1…IR-5：IR-1 刷新覆盖已接受消费来源（由 `62ca3fd` 修复并补 `test_refresh_keeps_the_accepted_sources_and_foreign_cache`）、IR-2 接受时未核对实际消费来源（`0b9a585` 增加声明矛盾的 fail-closed 核对与对应测试）、IR-3 软退出路径不报告 lease 释放失败（`0b9a585` 在 `finally` 内统一报告并补两条替身测试）、IR-4 body 比较经 `splitlines` 规范化行尾（`0b9a585` 改为只替换时间戳 token）、IR-5 两个 analyzer 的 hard rule 与第三分支冲突（`0b9a585` 同步两个 harness）。上述修复后按当时确认的步骤运行新模块与四个分片，结果见 §4.3；IR-1…IR-5 的实现符合性定向复核已完成，记录见本节末条。
-- 记录层面的修正（t3）：保留 §4.3 的既有运行记录和分片估值说明；更正原 refine 测试所属 `shard4`；撤销 §4.1 的四分片必跑命令及路径占位符；当时将 L6 尚缺的缓存行为检查列为未执行（已在 `231ba03` 定向复验完成），不要求重跑未受影响的测试。
-- 定向复核结论（所审版本 `ce9e370`，产品与测试 `0b9a585`）：IR-1…IR-5 均按原编号关闭，结论由“部分完成”更新为“完整”；仅保留一条记录强度备注——L4 的静态断言只核对关键字出现，已在 §4.2 如实写明，不构成产品待办，也不扩大本轮测试义务。
-- 测试准备实现审核（所审版本 `bff99aa`，R1 修正后 `231ba03`）：结论「完整（仅限测试准备阶段）」；R1 的预置注释已按审核意见修正并关闭。该结论不是第二关口、第三关口或合并批准。
+### 4.2 本地测试工程师补齐的最小 recipe
+
+1. 在实际产品实现 r4 后固定产品／测试提交，按 §2–3 修正既有夹具和方法。先建立真实正常接受基线，原始 pack／文件／validator 在操作前保持自洽；仅指定的缺陷变体故意破坏相应一层。不能在被测调用后重签旧态、替换输出或放宽断言。
+2. 复用 Python 标准库 unittest、现有 runner 及 `TemporaryDirectory`，不重装、不读生产 Zotero/真实用户 PDF/私有配置，不需要模型、网络或外部服务。原获认可安装／构建仍适用；只有实际不可运行才补最小环境准备。
+3. 将真实存在的完整限定方法名、各方法覆盖的 L 项、准确准备顺序／命令／实际输出目录写回本节。共享机制仅需说明实际调用位置与哪些既有断言复用，不另做逐调用 trace 或逐项证据账本。当前不能预造尚不存在的新 selector，亦不能将历史整模块命令称作 r4 已就绪 recipe。
+4. 原工作目录仍为仓库根目录下 `.apm/skills/professor-contact/tests`。输出放仓库外独立 `/tmp` 临时目录，使用现有 unittest 报告与简短记录；实际执行时记录具体目录、产品／测试版本、命令、退出状态和业务结果。确有分片登记变化才检查登记，不因文档变更执行分片校验或全量回归。
+5. 受影响具体 recipe 经第二关口确认后，由获执行授权的本地执行工程师执行；本次修改计划不是运行授权。业务失败保留原失败，交产品 owner；方法错误先停受影响项、修正并复核，不能换输入求绿。缺日志先请求已有记录，不默认重跑；无法运行与未执行如实区别，未受影响结果继续复用。
+
+### 4.3 完成条件与责任
+
+测试计划工程师负责本正文和预期；产品 owner 落实三个机制；本地测试工程师落实已有测试的最小修正与可执行接线；独立 reviewer 分别核对设计、受影响第二关口与第三关口；执行工程师只按确认方法及执行授权运行。所有 L1–L6 已知范围内缺陷处理、当前有效必测结果齐备才结束。没有“补一次全仓”或“所有平台再跑”的隐藏收尾门槛。
+
+## 5. 历史执行与公开审核记录（不是 r4 的通过结果）
+
+以下原正式记录按固定版本保留，不追改既有执行事实。原始日志为执行者提供的位置，本轮未重新读取或筛选日志，也未重跑。日期按记录原文，2026-10-21 为 UTC+08:00 当地日期。
+
+### 5.1 版本、环境、命令与结果
+
+- 历史产品／测试版本：`0b9a585bc3d43d7d42a7fa341c89cf161fbda7a3`（含 `dd9d1d5` 主线、`87984db` 补充、`62ca3fd`／`0b9a585` 的 IR 修复，父 main `4cfcf49`）。
+- L6 定向测试版本：`231ba03bdeeb2da71aa7fa01334f346e1b7f27b4`（`bff99aa` 补缓存断言，`231ba03` 修注释；产品仍为 `0b9a585`）。
+- 环境：macOS、Python 3.14.7、标准库 unittest／仓库夹具、每例独立临时 program root。正式新增模块 `test_stage2_analysis_level.py` 34 tests 归 stage2/shard3；既有 refine 方法属 shard4。
+- 历史新模块命令：在 tests 目录执行 `python3 -m unittest test_stage2_analysis_level -v`，`Ran 34 tests`、OK。原输出 `/tmp/u5-formal4-20261020/module.log`。
+- 历史四分片结果：shard1 380、shard2 219、shard3 222、shard4 243，共 1064 tests、1 skipped、无失败；原输出 `/tmp/u5-formal4-20261020/suite.log`。分片 totals 是规划估值，不是实测数量。本计划不恢复四分片命令为当前必跑义务。
+- 历史 L6 定向命令：在 tests 目录执行 `python3 -m unittest test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle -v`，输出 `/tmp/u5-l6-cache-555AG2/refine.log`；local-execution-engineer 记录退出码 0，`Ran 1 test in 7.785s`、OK。临时目录当时通过 `mktemp -d /tmp/u5-l6-cache-XXXXXX` 建立，未提交原始产物。
+- t3 对上述旧版本登记“L1–L6 全部检查通过；无业务失败，L6 无未执行项”。这是真实旧记录的结论，不是当前 r4 结论。方法原映射可在[固定 t3](https://github.com/ScholarWorkflow/professor-contact/blob/3bfe8df6313b2047dad564163e07b30b36c7fd20/plan/stage2-analysis-level/test-plan.md) §4.2 查阅；本正文 §3 已给当前适用性，执行者无需从旧正文拼接新要求。
+
+### 5.2 审核事实及取代关系
+
+- [r3 执行计划审核](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6293315482) 存在，不改写成 r4 通过。
+- [t3 第二／第三关口审核](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6297322139) 于 2026-10-20 17:45:18 UTC 发布，对当时 L1–L6 和正式记录给出通过；明确不是合并批准。本轮保留该事实，因具体预期／覆盖条件变化按 §3–4 重审受影响部分，不重复全部历史审核。
+- 首次实现符合性审核（所审 `8568a3b`、产品 `dd9d1d5`）的 IR-1 来源保留、IR-2 消费声明核对、IR-3 release 错误、IR-4 比较 helper 行尾、IR-5 analyzer hard rule，曾分别在 `62ca3fd`／`0b9a585` 修复，定向复核 `ce9e370` 将 IR-1…IR-5 按当时对象关闭。该历史关闭不证明后来定位的锁内 stat、null 分叉、旧 header 绑定或磁盘 newline 缺陷不存在。
+- 测试准备审核 `bff99aa`／`231ba03` 对缓存断言及注释 R1 给出“完整（仅限测试准备阶段）”；保留该结论及随后 t3 的公开关口审核，不将它提升为 r4 当前批准。
+- t4 取代 t3 的“缺失／null 总可接受”、helper 字符串等于真实磁盘覆盖、单个 validator hash 等于完整旧绑定、target 漂移等于锁内全来源保护等不充分口径；保留已确认统计、隔离、原生命周期与历史产物。没有新增模型 eval、框架、外部来源认证或全回归。
+
