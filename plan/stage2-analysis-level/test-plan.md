@@ -76,11 +76,11 @@
 
 ### 4.0 固定的产品与测试版本
 
-- 产品与测试提交：`87984db61f6d3de22f2cbbcb7b41669d27cb95ad`（其中产品代码为 `dd9d1d5`，`87984db` 追加 L1/L5 的三条必测覆盖；父提交 main `4cfcf49`，已推送到 PR #106 的 head 分支 `plan/u5-analysis-level-redesign`）。本节的记录写在紧随其后的 docs 提交里；doc 改动不触碰产品或测试代码，上述执行结果仍对 `87984db` 有效。
+- 产品与测试提交：`0b9a585bc3d43d7d42a7fa341c89cf161fbda7a3`（含 `dd9d1d5` 产品或测试主线、`87984db` 的 L1/L5 补充和 `62ca3fd`/`0b9a585` 对首次实现符合性审核 IR-1…IR-5 的修复；父提交 main `4cfcf49`，已推送到 PR #106 的 head 分支 `plan/u5-analysis-level-redesign`）。本节的记录写在紧随其后的 docs 提交里；doc 改动不触碰产品或测试代码，上述执行结果仍对 `0b9a585` 有效。
 - 环境：macOS，`python3 --version` = 3.14.7；只使用标准库 unittest 与仓库内现有夹具，无新增依赖。
 - 隔离：每个测试用例使用独立 `tempfile.TemporaryDirectory()` 作为 program root；不读用户 Zotero、真实 PDF、私有配置或生产状态。新增测试在 L4/L6 的 guard 场景通过现有 `Path.read_bytes` / `atomic_write` 替身隔离外部工作。
-- 新增正式测试：`.apm/skills/professor-contact/tests/test_stage2_analysis_level.py`（30 tests），已登记 `plan/test-grouping/shards.json`（stage2 / shard3）。
-- 唯一完整原始输出：`/tmp/u5-formal2-20261020/suite.log`（仓库外临时目录，按共识不提交）。
+- 新增正式测试：`.apm/skills/professor-contact/tests/test_stage2_analysis_level.py`（34 tests），已登记 `plan/test-grouping/shards.json`（stage2 / shard3）。
+- 唯一完整原始输出：`/tmp/u5-formal4-20261020/module.log`（新模块单独运行）与 `/tmp/u5-formal4-20261020/suite.log`（四 shard 全量）；均在仓库外临时目录，按共识不提交。
 
 ### 4.1 准备顺序与命令
 
@@ -105,26 +105,28 @@ python3 -m unittest $modules -v
 
 | 目标 | 实际检查方法（唯一入口） | 结果 |
 |---|---|---|
-| L1 实际成功级别 | `TestFactsLevelContract`：`test_known_and_unknown_levels_reach_the_canonical_pack`（fulltext/abstract/null 进入 canonical papers，且 OCR-only 全文与 `facts_state=unavailable` 并存）、`test_facts_level_conflicting_with_the_current_registration_is_invalid`、`test_illegal_level_is_an_input_error`、`test_explicit_null_clears_a_registered_level`、`test_analysis_file_and_pdf_without_a_success_registration_are_unknown`（有分析文件+PDF 但无成功登记 → null）、`test_ocr_only_fulltext_without_facts_can_still_be_fulltext`（OCR-only 全文 + facts unavailable → fulltext）；静态契约 `TestAnalyzerContract.test_both_analyzers_pass_the_level_and_consume_the_refresh_branch` | PASS |
+| L1 实际成功级别 | `TestFactsLevelContract`：`test_known_and_unknown_levels_reach_the_canonical_pack`（fulltext/abstract/null 进入 canonical papers，且 OCR-only 全文与 `facts_state=unavailable` 并存）、`test_facts_level_conflicting_with_the_current_registration_is_invalid`、`test_illegal_level_is_an_input_error`、`test_explicit_null_clears_a_registered_level`、`test_analysis_file_and_pdf_without_a_success_registration_are_unknown`（有分析文件+PDF 但无成功登记 → null）、`test_ocr_only_fulltext_without_facts_can_still_be_fulltext`（OCR-only 全文 + facts unavailable → fulltext）、`test_consumed_analysis_path_contradicting_the_index_is_invalid`（facts 实际消费路径与 index 登记矛盾 → `invalid_facts`）；静态契约 `TestAnalyzerContract.test_both_analyzers_pass_the_level_and_consume_the_refresh_branch` | PASS |
 | L2 canonical 合流与旧包兼容 | `TestCanonicalMerge`：`test_known_level_survives_a_reuse_finalize_and_validator`（复用条目深拷贝、旧 validator 仍可携带）、`test_missing_level_field_in_an_old_pack_reads_as_null`、`test_v1_migration_treats_missing_and_null_alike_but_rejects_conflict` | PASS |
 | L3 三类统计 | `TestStatisticsRender`：`test_header_counts_members_only_and_shared_members_per_contribution`（实际标题为 `全文级 1 篇 · 摘要级 2 篇 · 未确认 1 篇（共 4 篇）`，共享成员按两次成员贡献计数）、`test_reference_only_paper_stays_out_of_the_statistic` | PASS |
-| L4 早期分流 | `TestPreflightBranches`：`test_unchanged_state_reuses_all`、`test_level_only_change_takes_the_refresh_branch`、`test_management_fields_do_not_change_the_business_source`、`test_new_fixed_facts_candidate_is_a_business_change`、`test_missing_projection_processes_once`、`test_illegal_index_level_processes_instead_of_writing_a_known_value`、`test_not_accepted_validator_blocks_reuse_all` | PASS |
-| L5 级别刷新与有限接受 | `TestLevelRefresh`：`test_statistic_change_updates_body_and_expires_old_certification`、`test_equivalent_body_swap_keeps_the_valid_old_certification`、`test_invalid_old_binding_is_an_evidence_error_not_a_rebind`、`test_legacy_statistics_body_is_reaccepted_before_the_marker`、`test_business_change_with_equivalent_body_keeps_body_but_expires_certification`（业务依据变化但真实正文相同 → 保 body、旧认证失效）、`test_manual_body_edit_needs_decision_without_writing_the_pack`；比较基准 `TestGenerationTimeNormalization.test_only_the_generation_time_is_ignored` | PASS |
-| L6 写入保护与原 refine | `TestRefreshProtection`：`test_busy_writer_returns_without_any_business_write`、`test_binding_drift_returns_needs_refresh_releases_and_writes_nothing`、`test_successful_refresh_releases_the_lease`、`test_pack_io_failure_after_the_markdown_write_stays_unfinished` | PASS |
+| L4 早期分流 | `TestPreflightBranches`：`test_unchanged_state_reuses_all`、`test_level_only_change_takes_the_refresh_branch`、`test_management_fields_do_not_change_the_business_source`、`test_new_fixed_facts_candidate_is_a_business_change`、`test_missing_projection_processes_once`、`test_illegal_index_level_processes_instead_of_writing_a_known_value`、`test_not_accepted_validator_blocks_reuse_all`；静态核对两 caller 的 `chatgpt_result`/`kb_import` 优先级在 `TestAnalyzerContract` 的文档断言内 | PASS |
+| L5 级别刷新与有限接受 | `TestLevelRefresh`：`test_statistic_change_updates_body_and_expires_old_certification`、`test_equivalent_body_swap_keeps_the_valid_old_certification`、`test_invalid_old_binding_is_an_evidence_error_not_a_rebind`、`test_legacy_statistics_body_is_reaccepted_before_the_marker`、`test_business_change_with_equivalent_body_keeps_body_but_expires_certification`（业务依据变化但真实正文相同 → 保 body、旧认证失效）、`test_manual_body_edit_needs_decision_without_writing_the_pack`；比较基准 `TestGenerationTimeNormalization.test_only_the_generation_time_is_ignored`（含行尾/尾部字节不被规范化）；缓存与 resolved 保持 `TestRefreshProtection.test_refresh_keeps_the_accepted_sources_and_foreign_cache` | PASS |
+| L6 写入保护与原 refine | `TestRefreshProtection`：`test_busy_writer_returns_without_any_business_write`、`test_binding_drift_returns_needs_refresh_releases_and_writes_nothing`、`test_successful_refresh_releases_the_lease`、`test_release_failure_is_reported_on_the_success_path`、`test_release_failure_on_a_soft_exit_is_also_reported`、`test_pack_io_failure_after_the_markdown_write_stays_unfinished`；原 refine 两轮生命周期直接复用 `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` 的本轮 shard3 通过结果（含新增 level/render 元数据的 pack 输入），不重跑旧 T5 全场景 | PASS |
 
 `stage2-refresh-level` 的真实参数以 `contact_state.py build_parser()` 为准：`--program-root`、`--professor`、`--target-file`、`--preflight-file`，可选 `--decision-file`。返回 `ok`（新级别/统计/受管正文已接受）、`stage2_writer_busy`（零业务写入）、`needs_refresh`（预检漂移或渲染字段需走 process）、`needs_decision`（受管 Markdown 被人工修改）。L1 的统计观察直接读受管 Markdown 的统计行；L2/L4/L6 的结构化结果读 `套磁候选输入.json` 的 `papers`、`cache.preflight` 与命令 stdout；不另建判定器。
 
 ### 4.3 正式结果
 
-- 新模块：`Ran 30 tests`，全部 OK（见 `/tmp/u5-formal2-20261020/suite.log`）。
-- 全量回归（同一提交）：shard1 `Ran 380 tests` OK；shard2 `Ran 219 tests` OK；shard3 `Ran 218 tests` OK；shard4 `Ran 243 tests` OK（1 skipped）。合计 1060 tests、1 skipped，无失败。
+- 新模块单独运行：`Ran 34 tests`，全部 OK（`/tmp/u5-formal4-20261020/module.log`）。
+- 全量回归（同一提交）：shard1 `Ran 380 tests` OK；shard2 `Ran 219 tests` OK；shard3 `Ran 222 tests` OK；shard4 `Ran 243 tests` OK（1 skipped）。合计 1064 tests、1 skipped，无失败。
+- `plan/test-grouping/shards.json` 的 `totals` 是分片规划的声明性估值（不是实测条数）；实测条数以上两行为准。
 - 每项结论：L1–L6 均为通过，无业务失败、无无法判断、无未执行。
 - 未执行且不在本清单范围：模型分析质量、#92 整套矩阵、Stage 3/4、外部 Zotero/handoff 全链、通用来源认证；按 §1 排除，不补做。
-- 未因提交编号变化重跑；上述结果即为固定提交 `87984db` 的当前记录。
+- 未因提交编号变化重跑；上述结果即为固定提交 `0b9a585` 的当前记录。
 
 ### 4.4 未完成项与下一负责人
 
 - 第二关口：真实步骤与选择器已补齐（本节），但独立测试计划审核者尚未复核，作者不能自批。
-- 第三关口：上述结果按正式命令取得，仍需按 `Test Engineer Rule.md` 由审核者确认对当前版本有效；实现符合性审核另行安排。
-- 产品实现负责人：本轮按执行计划 r3 完成实现；后续只按具体受影响意见处理。
-- 范围内未发现需要产品修复的缺陷；若后续审核指出业务不符，按测试规则只复核受影响项。
+- 第三关口：上述结果按正式命令取得，仍需按 `Test Engineer Rule.md` 由审核者确认对当前版本有效；实现符合性审核的首轮问题与修复见本节 IR 记录，定向复核待办。
+- 产品实现负责人：本轮按执行计划 r3 完成实现，并按首次实现符合性审核处理 IR-1…IR-5；后续只按具体受影响意见处理。
+- 首次实现符合性审核（所审版本 `8568a3b`，产品 `dd9d1d5`）提出 IR-1…IR-5：IR-1 刷新覆盖已接受消费来源（由 `62ca3fd` 修复并补 `test_refresh_keeps_the_accepted_sources_and_foreign_cache`）、IR-2 接受时未核对实际消费来源（`0b9a585` 增加声明矛盾的 fail-closed 核对与对应测试）、IR-3 软退出路径不报告 lease 释放失败（`0b9a585` 在 `finally` 内统一报告并补两条替身测试）、IR-4 body 比较经 `splitlines` 规范化行尾（`0b9a585` 改为只替换时间戳 token）、IR-5 两个 analyzer 的 hard rule 与第三分支冲突（`0b9a585` 同步两个 harness）。上述修复后按受影响范围运行新模块与全量 shard，结果见 §4.3；定向复核仍待实现符合性审核者按原编号确认。
+- 记录层面的修正：新模块单独运行记录已入 §4.3；L4/L6 的静态与复用入口已补进 §4.2；shards totals 的估值性质已注明。
