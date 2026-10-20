@@ -1,16 +1,24 @@
-"""U5 actual analysis-level propagation and honest statistics (plan r3).
+"""U5 actual analysis-level propagation and honest statistics (plan r4).
 
 The tests exercise the plan's L1-L6 targets through the same formal entries the
 analyzer uses: facts acceptance, canonical pack merge, the managed renderer, the
 early preflight branch and the level-refresh/managed-write lifecycle. They reuse
 the accepted-state fixture of ``test_stage2_preflight`` instead of rebuilding a
 second Stage-2 universe.
+
+r4 adds three checks that the earlier round did not have: a facts null cannot
+override a known index registration, the lock-internal refresh must re-read the
+same complete business guards, and the managed body is read, hashed and written
+as raw bytes (CRLF is not hidden by universal-newline decoding).
 """
 
 import contextlib
+import copy
+import hashlib
 import io
 import json
 import re
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -29,6 +37,33 @@ def read_json(path: Path) -> dict:
 
 def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def managed_bytes(body: bytes, state_fingerprint: str, *, newline: bytes = b"\n",
+                  render_sha256: str | None = None) -> bytes:
+    """Build a self-consistent managed file with the requested raw line endings."""
+    body_sha = render_sha256 if render_sha256 is not None else sha256_bytes(body)
+    lines = [b"---", b"managed_by: contact_state",
+             b"state_fingerprint: " + state_fingerprint.encode("utf-8"),
+             b"render_sha256: " + body_sha.encode("ascii"),
+             b"---", b"", b""]
+    return newline.join(lines) + body
+
+
+def split_managed_bytes(data: bytes, *, newline: bytes = b"\n") -> tuple[bytes, bytes]:
+    """Split the stored managed bytes without decoding or newline conversion."""
+    marker = newline + b"---" + newline
+    if not data.startswith(b"---" + newline) or marker not in data:
+        raise AssertionError(f"not a managed file: {data[:80]!r}")
+    end = data.index(marker)
+    body_start = end + len(marker)
+    if data[body_start:body_start + len(newline)] == newline:
+        body_start += len(newline)
+    return data[:body_start], data[body_start:]
 
 
 class AnalysisLevelBase(PreflightBase):
@@ -165,20 +200,91 @@ class TestFactsLevelContract(AnalysisLevelBase):
         self.assertEqual(payload["status"], "error")
         self.assertEqual(payload["reason_code"], "invalid_facts")
 
-    def test_explicit_null_clears_a_registered_level(self):
+    def test_null_facts_against_a_known_registration_are_rejected_without_writes(self):
         self.stage2_finalize()
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        analysis_path = self.analysis_md()
+        before_pack = pack_path.read_bytes()
+        before_md = analysis_path.read_bytes()
+
         def clear(facts):
             for paper in facts["papers"]:
                 if paper["item_key"] in ("AAAA1111", "BBBB2222"):
                     paper["analysis_level"] = None
         self.patch_facts(clear)
         out = parse(self.finalize_with_current_proof())
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "invalid_facts", out)
+        self.assertIn("analysis_level_conflict", out["message"])
+        self.assertEqual(pack_path.read_bytes(), before_pack)
+        self.assertEqual(analysis_path.read_bytes(), before_md)
+
+    def test_missing_level_field_against_a_known_registration_is_rejected(self):
+        self.stage2_finalize()
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        analysis_path = self.analysis_md()
+        before_pack = pack_path.read_bytes()
+        before_md = analysis_path.read_bytes()
+
+        def drop(facts):
+            for paper in facts["papers"]:
+                if paper["item_key"] == "AAAA1111":
+                    paper.pop("analysis_level", None)
+        self.patch_facts(drop)
+        out = parse(self.finalize_with_current_proof())
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "invalid_facts", out)
+        self.assertIn("analysis_level_conflict", out["message"])
+        self.assertEqual(pack_path.read_bytes(), before_pack)
+        self.assertEqual(analysis_path.read_bytes(), before_md)
+
+    def test_unknown_level_accepts_null_then_a_new_registration_turns_known(self):
+        self.levels = {"AAAA1111": None, "BBBB2222": "abstract"}
+        self.write_index()
+        self.bind_levels()
+        index_path = self.prof_dir / "论文分析" / "_index.json"
+        index_before = index_path.read_bytes()
+        self.build_accepted_state()
+        self.assertEqual(index_path.read_bytes(), index_before)
+        pack = self._read_pack()
+        self.assertIsNone(pack["papers"]["AAAA1111"]["analysis_level"])
+
+        # The next preflight does not revive a known level from the accepted
+        # canonical pack while the producer still registers no level.
+        payload = self.preflight()
+        self.assertEqual(payload["action"], "reuse_all", payload)
+        self.assertIsNone(self._read_pack()["papers"]["AAAA1111"]["analysis_level"])
+
+        # The producer's next real success updates the same registration; the
+        # earlier null must not keep suppressing it.
+        self.levels["AAAA1111"] = "fulltext"
+        self.write_index()
+        plan = self.save_preflight("new-known.json")
+        self.assertEqual(read_json(plan)["action"], "refresh_level")
+        out = parse(self.refresh(plan))
         self.assertEqual(out["status"], "ok", out)
+        self.assertEqual(out["changed_levels"], {"AAAA1111": "fulltext"})
+        pack = self._read_pack()
+        self.assertEqual(pack["papers"]["AAAA1111"]["analysis_level"], "fulltext")
+        self.assertNotIn("validator", pack)
+
+    def test_abstract_registration_survives_a_failed_fulltext_upgrade(self):
+        # The PDF exists, but the current successful registration is abstract.
+        # A failed full-text upgrade must not turn that valid abstract source
+        # into fulltext or null.
+        pdf = self.prof_dir / "论文分析" / "BBBB2222.pdf"
+        pdf.write_bytes(b"%PDF-1.4 synthetic test document\n")
+
+        def add_pdf(facts):
+            for paper in facts["papers"]:
+                if paper["item_key"] == "BBBB2222":
+                    paper["pdf_file"] = str(pdf)
+                    paper["has_pdf"] = True
+        self.patch_facts(add_pdf)
+        self.stage2_finalize()
         papers = self._read_pack()["papers"]
-        self.assertIsNone(papers["AAAA1111"]["analysis_level"])
-        self.assertIsNone(papers["BBBB2222"]["analysis_level"])
-
-
+        self.assertEqual(papers["BBBB2222"]["analysis_level"], "abstract")
+        self.assertTrue(papers["BBBB2222"]["pdf_available"])
 
     def test_analysis_file_and_pdf_without_a_success_registration_are_unknown(self):
         analysis = self.prof_dir / "论文分析" / "CCCC3333.md"
@@ -258,24 +364,63 @@ class TestCanonicalMerge(AnalysisLevelBase):
         self.assertEqual(pack["papers"]["AAAA1111"]["analysis_level"], "fulltext")
         self.assertEqual(pack["directions"][0]["collection_key"], "DIR00001-renamed")
 
+    def test_current_legal_unknown_overrides_an_old_known_canonical(self):
+        self.build_accepted_state()
+        self.assertEqual(self._read_pack()["papers"]["AAAA1111"]["analysis_level"],
+                         "fulltext")
+        # The producer replaces the successful registration with a legal
+        # unknown: the index entry still selects the same existing file but no
+        # level remains. This is not a contradictory facts null.
+        self.levels["AAAA1111"] = None
+        self.write_index()
+        self.bind_levels()
+        plan = self.save_preflight("unknown-over-known.json")
+        self.assertEqual(read_json(plan)["action"], "refresh_level")
+        out = parse(self.refresh(plan))
+        self.assertEqual(out["status"], "ok", out)
+        pack = self._read_pack()
+        self.assertIsNone(pack["papers"]["AAAA1111"]["analysis_level"])
+        # The old known canonical must not be restored on the next preflight.
+        payload = self.preflight()
+        self.assertEqual(payload["action"], "process", payload)
+        self.assertIsNone(self._read_pack()["papers"]["AAAA1111"]["analysis_level"])
+
     def test_missing_level_field_in_an_old_pack_reads_as_null(self):
         self.build_accepted_state()
+        pack_path = self.prof_dir / "套磁候选输入.json"
         pack = self._read_pack()
         for record in pack["papers"].values():
             record.pop("analysis_level", None)
-        pack.pop("cache", None)
-        pack.pop("validator", None)
+        # Keep the accepted cache/validator containers and rebind the validator
+        # to this fixture before the tested call. The fixture is a self-consistent
+        # old accepted schema-2 pack whose paper records predate the field.
+        validator = pack.get("validator")
+        if isinstance(validator, dict):
+            validator["pack_sha256"] = contact_state.stage2_pack_content_fingerprint(pack)
         self._write_pack(pack)
-        def clear(facts):
-            for paper in facts["papers"]:
-                if paper["item_key"] in ("AAAA1111", "BBBB2222"):
-                    paper["analysis_level"] = None
-        self.patch_facts(clear)
+        raw_before = pack_path.read_bytes()
+        raw = read_json(pack_path)
+        deep_before = copy.deepcopy(raw)
+
+        # The compatibility record view shows the old missing field as null and
+        # does not mutate the raw pack or its nested paper records.
+        compatibility = contact_state._canonical_paper_record(raw["papers"]["AAAA1111"])
+        self.assertEqual(pack_path.read_bytes(), raw_before)
+        self.assertEqual(raw, deep_before)
+        self.assertNotIn("analysis_level", raw["papers"]["AAAA1111"])
+        self.assertIsNone(compatibility["analysis_level"])
+        self.assertIsNone(
+            contact_state._canonical_paper_record(
+                raw["papers"]["BBBB2222"])["analysis_level"])
+
+        # It is not a new facts declaration and must not block the current known
+        # registration on the next normal acceptance.
         out = parse(self.finalize_with_current_proof())
         self.assertEqual(out["status"], "ok", out)
+        self.assertIsNone(deep_before["papers"]["AAAA1111"].get("analysis_level"))
         papers = self._read_pack()["papers"]
-        self.assertIsNone(papers["AAAA1111"]["analysis_level"])
-        self.assertIsNone(papers["BBBB2222"]["analysis_level"])
+        self.assertEqual(papers["AAAA1111"]["analysis_level"], "fulltext")
+        self.assertEqual(papers["BBBB2222"]["analysis_level"], "abstract")
 
     def test_v1_migration_treats_missing_and_null_alike_but_rejects_conflict(self):
         base = {
@@ -461,27 +606,71 @@ class TestLevelRefresh(AnalysisLevelBase):
         pack = self._read_pack()
         pack["validator"]["render_sha256"] = "0" * 64
         self._write_pack(pack)
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        md_path = self.analysis_md()
+        pack_before, md_before = pack_path.read_bytes(), md_path.read_bytes()
         plan = self.save_preflight("refresh-bad-binding.json")
         result = self.refresh(plan)
         payload = parse(result)
         self.assertEqual(payload["status"], "error", (result.stdout, result.stderr))
         self.assertEqual(payload["reason_code"], "validation_render_stale", payload)
+        self.assertEqual(pack_path.read_bytes(), pack_before)
+        self.assertEqual(md_path.read_bytes(), md_before)
+        self.assertFalse(
+            (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+
+    def test_invalid_old_header_binding_is_an_evidence_error_not_a_rebind(self):
+        self.make_shared_level_pair()
+        self.build_accepted_state()
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "fulltext"}
+        self.write_index()
+        md = self.analysis_md()
+        header, body = split_managed_bytes(md.read_bytes())
+        broken_header = re.sub(rb"(?m)^state_fingerprint: .*$",
+                               b"state_fingerprint: " + b"0" * 64, header)
+        md.write_bytes(broken_header + body)
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        pack_before = pack_path.read_bytes()
+        plan = self.save_preflight("refresh-bad-header.json")
+        payload = parse(self.refresh(plan))
+        self.assertEqual(payload["status"], "error", payload)
+        self.assertTrue(payload.get("reason_code"), payload)
+        self.assertNotIn(payload.get("reason_code"),
+                         {"invalid_params", "invalid_facts",
+                          "preflight_inputs_changed", "refresh_requires_process",
+                          "stage2_writer_busy", "stage2_managed_write_failed",
+                          "stage2_pack_write_failed"},
+                         payload)
+        self.assertEqual(pack_path.read_bytes(), pack_before)
+        self.assertEqual(md.read_bytes(), broken_header + body)
+        self.assertFalse(
+            (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
 
     def test_legacy_statistics_body_is_reaccepted_before_the_marker(self):
         self.build_accepted_state()
         md = self.analysis_md()
-        text = md.read_text(encoding="utf-8")
+        text = md.read_bytes().decode("utf-8")
         legacy = re.sub(
             r"数据来源：全文级 \d+ 篇 · 摘要级 \d+ 篇 · 未确认 \d+ 篇（共 \d+ 篇）",
             "数据来源：全文级 3 篇 · 摘要级 1 篇（共 4 篇）", text)
         self.assertNotEqual(legacy, text)
         header, body = contact_state.split_frontmatter(legacy)
         self.assertEqual(header["managed_by"], "contact_state")
-        md.write_text(legacy, encoding="utf-8")
+        body_sha = sha256_bytes(body.encode("utf-8"))
+        # The legacy body is a legal old state: its actual header, cache and
+        # validator all bind the bytes that are really on disk. The fixture must
+        # not rely on a stale header to reach the old-format branch.
+        legacy = re.sub(r"(?m)^render_sha256: .*$",
+                        f"render_sha256: {body_sha}", legacy, count=1)
+        md.write_bytes(legacy.encode("utf-8"))
         pack = self._read_pack()
         pack["cache"]["preflight"]["statistics_version"] = None
-        pack["cache"]["render"]["套磁候选分析.md"]["sha256"] = \
-            contact_state.sha256_text(body)
+        pack["cache"]["render"]["套磁候选分析.md"]["sha256"] = body_sha
+        validator = pack.get("validator")
+        if isinstance(validator, dict):
+            validator["render_sha256"] = body_sha
+            validator["validation_render_sha256"] = body_sha
+            validator["pack_sha256"] = contact_state.stage2_pack_content_fingerprint(pack)
         self._write_pack(pack)
         plan = self.save_preflight("legacy-stats.json")
         self.assertEqual(read_json(plan)["action"], "refresh_level")
@@ -492,6 +681,115 @@ class TestLevelRefresh(AnalysisLevelBase):
         updated = self._read_pack()
         self.assertEqual(
             updated["cache"]["preflight"]["statistics_version"], 1)
+
+    def test_statistics_marker_only_refresh_keeps_the_old_body_bytes(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        pack["cache"]["preflight"]["statistics_version"] = None
+        validator = pack.get("validator")
+        if isinstance(validator, dict):
+            validator["pack_sha256"] = contact_state.stage2_pack_content_fingerprint(pack)
+        self._write_pack(pack)
+        before = self.analysis_md().read_bytes()
+        _, body = split_managed_bytes(before)
+        before_sha = sha256_bytes(body)
+        plan = self.save_preflight("marker-only.json")
+        self.assertEqual(read_json(plan)["action"], "refresh_level")
+        out = parse(self.refresh(plan))
+        self.assertEqual(out["status"], "ok", out)
+        self.assertFalse(out["md_written"], out)
+        self.assertTrue(out["validator_preserved"], out)
+        self.assertEqual(self.analysis_md().read_bytes(), before)
+        self.assertEqual(out["md_sha256"], before_sha)
+        updated = self._read_pack()
+        self.assertEqual(updated["cache"]["render"][contact_state.ANALYSIS_MD]["sha256"],
+                         before_sha)
+        self.assertEqual(updated["validator"]["render_sha256"], before_sha)
+        self.assertEqual(
+            updated["cache"]["preflight"]["statistics_version"], 1)
+
+    def test_refresh_with_an_illegal_index_level_returns_needs_refresh(self):
+        self.build_accepted_state()
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        plan = self.save_preflight("invalid-level-refresh.json")
+        self.assertEqual(read_json(plan)["action"], "refresh_level")
+        index_path = self.prof_dir / "论文分析" / "_index.json"
+        index = read_json(index_path)
+        index["papers"]["AAAA1111"]["level"] = "partial"
+        write_json(index_path, index)
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        before = pack_path.read_bytes()
+        payload = parse(self.refresh(plan))
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertIn(payload.get("reason_code"),
+                      {"refresh_requires_process", "preflight_inputs_changed"}, payload)
+        self.assertEqual(pack_path.read_bytes(), before)
+
+    def _rewrite_managed_crlf(self):
+        md = self.analysis_md()
+        header, body = split_managed_bytes(md.read_bytes())
+        match = re.search(rb"(?m)^state_fingerprint: (.*)$", header)
+        self.assertIsNotNone(match)
+        state_fingerprint = match.group(1).decode("utf-8")
+        crlf_body = body.replace(b"\n", b"\r\n")
+        md.write_bytes(managed_bytes(crlf_body, state_fingerprint, newline=b"\r\n"))
+        body_sha = sha256_bytes(crlf_body)
+        pack = self._read_pack()
+        pack["cache"]["render"]["套磁候选分析.md"]["sha256"] = body_sha
+        validator = pack.get("validator")
+        if isinstance(validator, dict):
+            validator["render_sha256"] = body_sha
+            validator["validation_render_sha256"] = body_sha
+            validator["pack_sha256"] = contact_state.stage2_pack_content_fingerprint(pack)
+        self._write_pack(pack)
+        return crlf_body, body_sha
+
+    def test_legal_crlf_managed_file_is_read_as_real_bytes(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        pack["cache"]["preflight"]["statistics_version"] = None
+        self._write_pack(pack)
+        crlf_body, body_sha = self._rewrite_managed_crlf()
+        plan = self.save_preflight("crlf.json")
+        self.assertEqual(read_json(plan)["action"], "refresh_level")
+        out = parse(self.refresh(plan))
+        self.assertEqual(out["status"], "ok", out)
+        # The renderer emits LF. A CRLF body is a real byte change, not an
+        # equivalent body obtained from a universal-newline read.
+        self.assertTrue(out["md_written"], out)
+        written = self.analysis_md().read_bytes()
+        _, written_body = split_managed_bytes(written)
+        self.assertNotIn(b"\r\n", written_body)
+        self.assertNotEqual(sha256_bytes(written_body), body_sha)
+        updated = self._read_pack()
+        self.assertEqual(updated["cache"]["render"][contact_state.ANALYSIS_MD]["sha256"],
+                         sha256_bytes(written_body))
+        self.assertNotIn("validator", updated)
+
+    def test_crlf_body_without_a_matching_binding_is_not_accepted(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        pack["cache"]["preflight"]["statistics_version"] = None
+        self._write_pack(pack)
+        md = self.analysis_md()
+        header, body = split_managed_bytes(md.read_bytes())
+        match = re.search(rb"(?m)^state_fingerprint: (.*)$", header)
+        self.assertIsNotNone(match)
+        state_fingerprint = match.group(1).decode("utf-8")
+        crlf_body = body.replace(b"\n", b"\r\n")
+        # The header still claims the LF body SHA: the old read_text path hid
+        # exactly this difference before comparing and writing.
+        broken = managed_bytes(crlf_body, state_fingerprint, newline=b"\r\n",
+                               render_sha256=sha256_bytes(body))
+        md.write_bytes(broken)
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        pack_before = pack_path.read_bytes()
+        plan = self.save_preflight("crlf-stale.json")
+        payload = parse(self.refresh(plan))
+        self.assertIn(payload["status"], ("needs_decision", "error"), payload)
+        self.assertEqual(pack_path.read_bytes(), pack_before)
+        self.assertEqual(md.read_bytes(), broken)
 
     def test_business_change_with_equivalent_body_keeps_body_but_expires_certification(self):
         self.build_accepted_state()
@@ -511,18 +809,19 @@ class TestLevelRefresh(AnalysisLevelBase):
         out = parse(self.finalize_with_current_proof())
         self.assertEqual(out["status"], "ok", out)
         # The real body survives byte-for-byte; only the machine header may move
-        # to bind the new business basis.
-        _, body_before = contact_state.split_frontmatter(before.decode("utf-8"))
-        header_after, body_after = contact_state.split_frontmatter(
-            self.analysis_md().read_text(encoding="utf-8"))
+        # to bind the new business basis. Expected SHAs come from the actual
+        # stored bytes, not from a decoding helper.
+        _, body_before = split_managed_bytes(before)
+        header_after, body_after = split_managed_bytes(self.analysis_md().read_bytes())
         self.assertEqual(body_after, body_before)
-        self.assertEqual(header_after["render_sha256"],
-                         contact_state.sha256_text(body_after))
+        match = re.search(rb"(?m)^render_sha256: (.*)$", header_after)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1).decode("ascii"), sha256_bytes(body_after))
         pack = self._read_pack()
         self.assertNotIn("validator", pack)
         self.assertEqual(pack["cache"]["render"]["套磁候选分析.md"]["sha256"],
-                         contact_state.sha256_text(body_after))
-        self.assertEqual(out["md_sha256"], contact_state.sha256_text(body_after))
+                         sha256_bytes(body_after))
+        self.assertEqual(out["md_sha256"], sha256_bytes(body_after))
         self.assertEqual(pack["papers"]["AAAA1111"]["analysis_level"], "fulltext")
 
     def test_manual_body_edit_needs_decision_without_writing_the_pack(self):
@@ -563,20 +862,101 @@ class TestRefreshProtection(AnalysisLevelBase):
         self.assertEqual(pack_path.read_bytes(), before_pack)
         self.assertEqual(md_path.read_bytes(), before_md)
 
-    def test_binding_drift_returns_needs_refresh_releases_and_writes_nothing(self):
+    def _analysis_path(self) -> Path:
+        return self.prof_dir / "论文分析" / "AAAA1111.md"
+
+    def _drift_after_lease(self):
+        """Change an existing consumed analysis after the lease, before re-read."""
+        analysis = self._analysis_path()
+        state = {"mutated": False}
+        original_init = contact_state.Stage2PackRefineContext.__init__
+
+        def init_then_drift(instance, *arguments, **keywords):
+            original_init(instance, *arguments, **keywords)
+            if not state["mutated"]:
+                state["mutated"] = True
+                analysis.write_text("# drift after the lease\n", encoding="utf-8")
+
+        contact_state.Stage2PackRefineContext.__init__ = init_then_drift
+        self.addCleanup(setattr, contact_state.Stage2PackRefineContext,
+                        "__init__", original_init)
+
+    def _drift_after_observation(self):
+        """Change the same source after the refresh gate, before the write.
+
+        The managed file is read only after the refresh gate created the
+        candidate. Mutating the consumed analysis on that read places the change
+        at the documented second boundary without replacing any comparison.
+        """
+        analysis = self._analysis_path()
+        managed = self.analysis_md().resolve()
+        state = {"mutated": False}
+        original_text = Path.read_text
+        original_bytes = Path.read_bytes
+        original_open = Path.open
+
+        def mutate_once():
+            if not state["mutated"]:
+                state["mutated"] = True
+                analysis.write_text("# drift after the observation\n", encoding="utf-8")
+
+        def read_text(path, *arguments, **keywords):
+            if Path(path).resolve() == managed:
+                mutate_once()
+            return original_text(path, *arguments, **keywords)
+
+        def read_bytes(path, *arguments, **keywords):
+            if Path(path).resolve() == managed:
+                mutate_once()
+            return original_bytes(path, *arguments, **keywords)
+
+        def open_managed(path, *arguments, **keywords):
+            if Path(path).resolve() == managed:
+                mutate_once()
+            return original_open(path, *arguments, **keywords)
+
+        Path.read_text = read_text
+        Path.read_bytes = read_bytes
+        Path.open = open_managed
+        self.addCleanup(setattr, Path, "read_text", original_text)
+        self.addCleanup(setattr, Path, "read_bytes", original_bytes)
+        self.addCleanup(setattr, Path, "open", original_open)
+
+    def _assert_zero_write_needs_refresh(self, plan):
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        md_path = self.analysis_md()
+        before_pack, before_md = pack_path.read_bytes(), md_path.read_bytes()
+        payload = parse(self.refresh(plan))
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertIn(payload.get("reason_code"),
+                      {"preflight_inputs_changed", "refresh_requires_process"}, payload)
+        self.assertEqual(pack_path.read_bytes(), before_pack)
+        self.assertEqual(md_path.read_bytes(), before_md)
+        self.assertFalse((self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+        # After the drift the next preflight must go back to process instead of
+        # continuing with a level-only refresh or claiming reuse.
+        next_payload = self.preflight()
+        self.assertEqual(next_payload["action"], "process", next_payload)
+        self.assertIn("artifact_changed",
+                      self.direction(next_payload, "DIR00001")["reason_codes"],
+                      next_payload)
+        return payload
+
+    def test_source_drift_after_lease_returns_needs_refresh(self):
         self.build_accepted_state()
         self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
         self.write_index()
-        plan = self.save_preflight("drift.json")
-        self.target["directions"][0]["user_note"] = "预检之后才改的笔记。"
-        self._write_target()
-        pack_path = self.prof_dir / "套磁候选输入.json"
-        before = pack_path.read_bytes()
-        payload = parse(self.refresh(plan))
-        self.assertEqual(payload["status"], "needs_refresh")
-        self.assertIn("preflight_inputs_changed", payload["reason_code"])
-        self.assertEqual(pack_path.read_bytes(), before)
-        self.assertFalse((self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+        plan = self.save_preflight("lease-drift.json")
+        self._drift_after_lease()
+        self._assert_zero_write_needs_refresh(plan)
+
+    def test_source_drift_after_observation_returns_needs_refresh(self):
+        self.build_accepted_state()
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        plan = self.save_preflight("observation-drift.json")
+        self._drift_after_observation()
+        self._assert_zero_write_needs_refresh(plan)
 
     def test_refresh_keeps_the_accepted_sources_and_foreign_cache(self):
         self.build_accepted_state()
@@ -710,27 +1090,126 @@ class TestRefreshProtection(AnalysisLevelBase):
             self._read_pack()["cache"]["preflight"]["statistics_version"], 1)
         self.assertFalse(
             (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+        # The half-written state must not be reused. The next preflight cannot
+        # inherit the old certification; it either processes or re-enters the
+        # bounded refresh, but never reuse_all.
+        next_payload = self.preflight()
+        self.assertNotEqual(next_payload["action"], "reuse_all", next_payload)
+        self.assertIn("validator_not_accepted",
+                      self.direction(next_payload, "DIR00001")["reason_codes"],
+                      next_payload)
 
 
-class TestGenerationTimeNormalization(unittest.TestCase):
-    """Only the fixed renderer generation timestamp may be ignored."""
+class TestManagedBodyBytes(unittest.TestCase):
+    """Only the fixed renderer generation timestamp may be ignored, on disk bytes."""
 
-    def test_only_the_generation_time_is_ignored(self):
-        body = ("# 套磁候选分析 — P\n\n"
-                "$$\\newcommand{\\dif}{\\mathop{}\\!\\mathrm{d}}$$\n\n"
-                "> 2026-01-01T00:00:00Z ｜ 数据来源：全文级 1 篇 · 摘要级 2 篇 · "
-                "未确认 1 篇（共 4 篇）｜ 由 contact_state 确定性渲染（重跑=全量重写）\n")
-        later = body.replace("2026-01-01T00:00:00Z", "2026-02-02T03:04:05Z")
-        statistics_changed = body.replace("全文级 1", "全文级 2")
-        crlf = body.replace("\n", "\r\n")
-        without_trailing = body.rstrip("\n")
-        normalize = contact_state.stage2_body_without_generation_time
-        self.assertEqual(normalize(body), normalize(later))
-        self.assertNotEqual(normalize(body), normalize(statistics_changed))
-        # Only the timestamp token may be ignored; line endings and other bytes
-        # stay significant.
-        self.assertNotEqual(normalize(body), normalize(crlf))
-        self.assertNotEqual(normalize(body), normalize(without_trailing))
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / "套磁候选分析.md"
+        self.state_fingerprint = "sf-1"
+        self.body = (
+            "# 套磁候选分析 — P\n\n"
+            "$$\\newcommand{\\dif}{\\mathop{}\\!\\mathrm{d}}$$\n\n"
+            "> 2026-01-01T00:00:00Z ｜ 数据来源：全文级 1 篇 · 摘要级 2 篇 · "
+            "未确认 1 篇（共 4 篇）｜ 由 contact_state 确定性渲染（重跑=全量重写）\n"
+            "计划于 2026-01-01T00:00:00Z 推进后续工作。\n"
+        ).encode("utf-8")
+
+    def _write_managed(self, body, *, newline=b"\n", render_sha256=None):
+        data = managed_bytes(body, self.state_fingerprint, newline=newline,
+                             render_sha256=render_sha256)
+        self.path.write_bytes(data)
+        return data
+
+    def _accept(self, candidate):
+        return contact_state.stage2_accept_managed_body(
+            self.path, candidate.decode("utf-8"), sha256_bytes(self.body), None,
+            self.state_fingerprint,
+            contact_state.stage2_old_managed_render(self.path))
+
+    def test_only_the_fixed_generation_time_is_ignored(self):
+        body_sha = self._write_managed(self.body)
+        old = contact_state.stage2_old_managed_render(self.path)
+        self.assertTrue(old["readable"], old)
+        self.assertTrue(old["binding_valid"], old)
+        self.assertEqual(old["body"].encode("utf-8"), self.body)
+        self.assertEqual(old["body_sha256"], body_sha)
+        later = self.body.replace(b"2026-01-01T00:00:00Z", b"2026-02-02T03:04:05Z", 1)
+        result = self._accept(later)
+        self.assertFalse(result["written"], result)
+        self.assertEqual(result["sha256"], body_sha)
+        self.assertEqual(self.path.read_bytes(),
+                         managed_bytes(self.body, self.state_fingerprint))
+
+    def test_statistics_and_narrative_time_stay_significant(self):
+        self._write_managed(self.body)
+        statistics_changed = self.body.replace("全文级 1".encode(), "全文级 2".encode())
+        result = self._accept(statistics_changed)
+        self.assertFalse(result["equivalent"], result)
+        self.assertTrue(result["written"], result)
+        self.assertNotEqual(result["sha256"], sha256_bytes(self.body))
+
+        self._write_managed(self.body)
+        narrative_changed = self.body.replace(
+            b"2026-01-01T00:00:00Z", b"2026-03-03T00:00:00Z", 2)
+        result = self._accept(narrative_changed)
+        self.assertFalse(result["equivalent"], result)
+        self.assertTrue(result["written"], result)
+
+        self._write_managed(self.body)
+        result = self._accept(self.body.rstrip(b"\n"))
+        self.assertFalse(result["equivalent"], result)
+        self.assertTrue(result["written"], result)
+
+    def test_crlf_bytes_are_read_and_hashed_without_normalization(self):
+        crlf = self.body.replace(b"\n", b"\r\n")
+        body_sha = self._write_managed(crlf, newline=b"\r\n")
+        old = contact_state.stage2_old_managed_render(self.path)
+        self.assertTrue(old["readable"], old)
+        self.assertTrue(old["binding_valid"], old)
+        self.assertEqual(old["body"].encode("utf-8"), crlf)
+        self.assertEqual(old["body_sha256"], body_sha)
+
+    def test_legal_crlf_body_keeps_its_bytes_when_only_the_header_changes(self):
+        crlf = self.body.replace(b"\n", b"\r\n")
+        body_sha = self._write_managed(crlf, newline=b"\r\n")
+        old = contact_state.stage2_old_managed_render(self.path)
+        self.assertTrue(old["binding_valid"], old)
+        later = crlf.replace(b"2026-01-01T00:00:00Z", b"2026-02-02T03:04:05Z", 1)
+        result = contact_state.stage2_accept_managed_body(
+            self.path, later.decode("utf-8"), body_sha, None, "sf-2", old)
+        self.assertTrue(result["written"], result)
+        self.assertEqual(result["sha256"], body_sha)
+        header, body = split_managed_bytes(self.path.read_bytes())
+        self.assertEqual(body, crlf)
+        self.assertIn(b"state_fingerprint: sf-2", header)
+        match = re.search(rb"(?m)^render_sha256: (.*)$", header)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1).decode("ascii"), sha256_bytes(body))
+
+    def test_crlf_body_without_a_matching_binding_is_not_accepted(self):
+        crlf = self.body.replace(b"\n", b"\r\n")
+        lf_sha = sha256_bytes(self.body)
+        self._write_managed(crlf, newline=b"\r\n", render_sha256=lf_sha)
+        old = contact_state.stage2_old_managed_render(self.path)
+        self.assertFalse(old["binding_valid"], old)
+        result = self._accept(self.body)
+        self.assertTrue(result["needs_decision"], result)
+        self.assertFalse(result["written"], result)
+
+    def test_a_crlf_old_body_and_an_lf_candidate_are_a_change(self):
+        crlf = self.body.replace(b"\n", b"\r\n")
+        body_sha = self._write_managed(crlf, newline=b"\r\n")
+        old = contact_state.stage2_old_managed_render(self.path)
+        result = contact_state.stage2_accept_managed_body(
+            self.path, self.body.decode("utf-8"), body_sha, None,
+            self.state_fingerprint, old)
+        self.assertFalse(result["equivalent"], result)
+        self.assertTrue(result["written"], result)
+        self.assertNotEqual(result["sha256"], body_sha)
+        _, body = split_managed_bytes(self.path.read_bytes())
+        self.assertEqual(body, self.body)
 
 
 class TestAnalyzerContract(unittest.TestCase):
