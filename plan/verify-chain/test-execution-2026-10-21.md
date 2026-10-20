@@ -6,6 +6,7 @@
 - 执行命令来源：把 test-plan.md 的 8 个 `sh` 代码块按顺序抽成脚本 `/tmp/pc-stage21/run-test-plan-v5.sh`（`sha256 a0437ef6737660ae4acdf098fcaa66a07a8da7d7e016ea2cd09402aefeccd031`），逐字执行；执行结束再抽一次，与执行用的脚本逐字节相同（`identical: True`）。
 - 解释器：`uv run --no-project python`，Python 3.14.6（CI 为 3.12）。
 - 基线：工作树 `HEAD` = `58c71c02cd0b6d66aae4cda5b7cc815431a461e6`（第 20 批 head），与测试计划写死的 `EXPECTED_BASE` 相同。
+- 分支基点：执行时分支父提交是 `58c71c02…`；PR #126／#127 合并后本分支 rebase 到 `origin/main` 的 `fec405b`，`fec405b` 的 `contact_state.py` 与 `58c71c02…` 逐字节相同，本记录的全部测量与 hunk 仍对应同一份代码。
 - 工作树：`/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-verify-chain`；执行时改动尚未提交，`git status --porcelain` 恰好 3 条。
 - 整份脚本退出码：`0`。
 - 缓存：第 1 步先 `rm -rf scripts/__pycache__ tests/__pycache__` 清掉旧缓存，之后各步设 `PYTHONPYCACHEPREFIX=/tmp/pc-stage21/pycache`；执行后 `scripts/` 与 `tests/` 下没有 `__pycache__`。

@@ -6,6 +6,7 @@
 - Test plan revision: 第 3 版。
 - Proposed review status: pending。
 - Target repository revision: 工作分支 `refactor-verify-chain`，父提交 `58c71c02cd0b6d66aae4cda5b7cc815431a461e6`；工作树 `/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-verify-chain`。
+- 分支基点：本分支已 rebase 到 `origin/main` 的 `fec405b`；它的 `contact_state.py` 与 `58c71c02…` 逐字节相同，所以第 2、7 步按 `58c71c02…` 取父提交仍然成立，测量值不变。
 - 测试范围依据：`Test Engineer Rule.md`；只验证本批搬移没有改变行为，不重新设计业务规则。
 
 ## 必测清单

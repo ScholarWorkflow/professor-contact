@@ -6,6 +6,7 @@
 - Plan revision: 第 4 版。
 - Proposed review status: pending。
 - Target repository revision: 工作分支 `refactor-verify-chain`，父提交 `58c71c02cd0b6d66aae4cda5b7cc815431a461e6`（第 20 批 head，基于 `972d4fd4…`；`origin/main` 的 PR #126 合并提交 `fb1e31d` 与 `972d4fd` 同树，HEAD 就是 `58c71c0`）；工作树 `/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-verify-chain`。
+- 分支基点：PR #126 与 #127 合并后，本分支已 rebase 到 `origin/main` 的 `fec405b`；`fec405b` 的 `contact_state.py` 与 `58c71c02…` 逐字节相同，所以本计划的 hunk、行数与帮助哈希测量继续有效。测试记录里的 `EXPECTED_BASE=58c71c02…` 是执行当时的基线。
 - 参考做法：`_stage4_commands.py`、`_candidate_validate.py`、`_email_core.py`、`_direction_inputs.py` 的“按路径加载 + 工厂闭包 + runner 同名别名”。
 
 ## 目标与验收条件
