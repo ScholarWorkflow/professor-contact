@@ -2,7 +2,7 @@
 
 ## 版本、来源与状态
 
-- 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 1 版（待审核）。
+- 对应执行计划：[implementation-plan.md](implementation-plan.md)，第 2 版（2026-10-20 执行计划审核已批准）。
 - Target repository revision: 工作分支 `refactor-stage5-helpers`；对照基准为父分支 `refactor-migrate`（#123）的 head，命令里用 `git rev-parse` 动态取（当前 `4a1138a`）。
 - Test plan revision: 第 2 版。
 - 测试范围依据：`Test Engineer Rule.md`。
@@ -226,4 +226,6 @@ cat "$LOG"
 ## 审核状态
 
 - 第 1 版：第一关 NEEDS_MODIFICATION（T4 有 4 个方法提前结束、未到组装渲染）。
-- 第 2 版：待第一关复核。
+- 第 2 版：第一关 PASS（必测清单）；第二关 PASS（执行步骤可执行，未发现超范围测试义务）；第三关未审核。
+
+- 2026-10-20 审核记录：依据 `Test Engineer Rule.md` 与 `Project Consensus`，核对第 2 版 T0–T5 的目标覆盖、测试步骤、范围和失败处理；目标产品代码为 `64dcf022c02de2a776f74cab0ef15982ff5c6863`，父分支基准为 `776fbc0203328336e0fe479b1ac45d1a3592e2b5`。本次只更正执行计划版本引用并登记第一、第二关结论；未修改测试目标、测试步骤、预期结果或检查方式；未运行测试，未审核第三关。
