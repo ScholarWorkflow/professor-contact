@@ -1,11 +1,11 @@
 # Stage 2 U1 测试计划：固定证据展示与真实阻挡归属
 
-- Test plan revision：`stage2-u1-t2`，2026-10-21；本版替代 t1 的执行安排，§7 原样保留 t1 的实际执行记录。
+- Test plan revision：`stage2-u1-t3`，2026-10-21；沿用 t2 的六项必测目标，仅明确 U1-F 两个既定场景的字段、输入与步骤；§7 原样保留 2026-10-20 的实际执行记录。
 - 唯一正式路径：`plan/stage2-fixed-evidence/test-plan.md`；执行步骤补在本文件，不另建相互补充的测试手册。
 - 范围依据：用户 2026-10-20 明确授权 U1/U5 计划及“测试计划也改”；U1 正式目标与保留行为见 [execution plan r3](https://github.com/ScholarWorkflow/professor-contact/blob/9874d8344d55d37b61d12acb0f356c3f4fae6d00/plan/stage2-fixed-evidence/implementation-plan.md) §§1、3。本文不继承 #92 的 t47、审核或测试通过状态。
 - 静态核对基线：`ScholarWorkflow/professor-contact@879982abe1d7d811bd9d014c03dce4f5912cc64f`。这是现有模块/测试资产基线，不是已实现 U1 的产品版本。
 - 规则：[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)（2026-10-09 20:37 UTC），[Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)（2026-10-19 14:02 UTC）。2026-10-20 已重新读取。
-- 当前交付（2026-10-21）：按已有审核问题修订六项既定目标的检查方式、执行命令及重试约定，并补齐 U1-A/B/C 三个既有测试方法的断言；上述三个方法尚未执行。§7 记录的 2026-10-20 执行事实继续有效，但不自动证明 t2 的三项补强检查已完成。正式测试关口由对应负责人审核。
+- 当前交付（2026-10-21）：U1-A/B/C 的 t2 补充断言已在当前代码提交 `1fe59bce` 的 CI 中逐项通过；U1-D/E 的既有通过结果有效。U1-F 的“固定证据正文实际改变”和“仅旧校验绑定失效”仍缺与目标相符的测试输入，本版明确其具体修改字段、流程和判定，测试代码与补测尚未完成。§7 历史执行记录不改写；正式测试关口仍待独立审核。
 
 ## 1. 范围与检查方式
 
@@ -50,12 +50,15 @@
 - 预期：现有 preflight→process→plan→finalize 通路完成更新；仅缺 U1 展示完成信息不产生额外模型 jobs，不改变有效来源判定。有效 cache 可以补实际需要的引用；缺无用候选列表不新增阻挡，无效 cache 不被当来源猜题名。实际引用无法解析只按 U1-B 交源。接受前或冲突/失败时不能标成功；接受后的四出口正确，后续不再仅因缺 U1 信息反复 process。另一有效功能的 render 元数据不被整块抹掉。
 - 检查方式：现有 preflight/plan/finalize 返回（含 jobs）、最终正文/包；复用 U1-A 与 U1-F 的观察，不另做历史版本批量迁移测试。不要求 U5 已实现或通过。
 
+
 ### U1-F：普通接受区分正文、业务、绑定和旧校验，保护人工正文
 
 - 业务目标：展示/时间更新不能洗掉两轮限制或救活失效校验；真实改动不能沿用旧通过，人工正文始终受保护。
-- 输入/场景：从有效旧 validator 的包出发，最少覆盖三种真实差异：仅固定顶部生成时间/派生展示元数据或 collection key 更新；真正固定证据正文变更；业务输入指纹变化但输出正文等价。前者需要必要机器头更新时仍观察头更新。另在未改业务/正文的旧绑定失效状态与人工改正文状态检查拒绝。用一处正文含来源分隔字样的实际修改确认并非整行或泛分隔符忽略，不扩大文本边界矩阵。
-- 预期：仅非业务差异时保留旧 body 字节、合法 round/phase/pending/results，必要头更新与新包绑定一致；候选组装不得先改旧比较基线再错误保留旧状态。实质正文或真实业务变化使旧 validator 不再作为当前通过，历史报告保留。无变化的坏旧绑定不能被重绑洗成有效；人工改正文返回 `needs_decision`、不记展示成功。现有写入/保存若失败不得返回成功或伪造 PASS，不为此新增跨文件事务框架。
-- 检查方式：正常 finalize 的返回与受管正文/头、包及 validator 的必要字段。绑定失效用既有 validator/render 状态机制的隔离输入，不恢复已撤回的“任意手改机器 header 防伪”测试。共享接受可复用先落地 U1/U5 已有效的同目标结果；未有结果时由先实现者接线，不要求两个 PR 各执行整组。同入口复用时只补本轮实际改变的 U1 接线/行为，U5 level-only 入口及统计不纳入。
+- 输入/场景：从有效旧 validator 的包出发，保留已定义的非业务展示/时间差异、业务指纹变但正文等价、顶部来源行非时间文字改变及人工正文冲突检查。以下两个原本已列入 U1-F、但旧测试输入没有真正落实的场景固定为：
+  1. **固定证据正文实际改变**：用现有 `generate_pack(gap_override())` 建立已校验通过的报告；只修改模型结果文件 `results/freshness-DIR00001.json` 的 `results[]` 中 `gap_id == contact_state.quote_id(gap_quotes["AAAA1111"])` 那一条的 `evidence`。旧值为“后续由 CCCC3333 完成，日期 2024-05-01，未知 DDDD8888 与 12345678 保留。”；新值为“后续由 CCCC3333 完成，日期 2024-05-01，未知 DDDD8888 与 12345678 保留；新增固定证据对照。”。其他模型结果字段保持不变；从隔离 `_freshness_cache.json` 的 `entries` 中仅删除该 `gap_id` 对应缓存，保证正式通路确实消费新结果。禁止用修改 `facts.directions[].user_note`、已生成的 `套磁候选分析.md` 或已接受包来代替本场景。
+  2. **旧校验绑定单独失效**：另起隔离环境用 `generate_pack()` 建立报告，登记空问题报告并确认旧 `validator` 原本有效；保持 `facts.json`、模型结果、包内 `directions/papers/cache`、`套磁候选分析.md`（包括机器头与正文）及原始校验报告不变，只将 `套磁候选输入.json` 中 `validator.pack_sha256` 改为 64 个 `0`，其余 validator 字段不变。此时只存在旧校验对当前包的绑定失效；禁止追加“人工改动”或修改机器头制造失败。
+- 预期：仅非业务差异时保留旧 body 字节、合法 round/phase/pending/results，必要头更新与新包绑定一致；候选组装不得先改旧比较基线再错误保留旧状态。场景 1 正式 finalize 必须将新 `evidence` 写入目标 gap 和 Markdown 固定证据字段，正文实际改变、旧 `validator` 不再作为通过结果，原校验报告文件保留。场景 2 在业务与正文未变时必须返回拒绝（现有 `validation_render_stale`），输入包与 Markdown 不被写回或自动重绑，旧通过结果不得被救活。业务指纹真实改变即使正文等价仍使旧校验失效；人工正文冲突返回 `needs_decision`、不记展示成功。现有写入/保存若失败不得返回成功或伪造通过，不新增跨文件事务框架。
+- 检查方式：使用既有 `test_u1_f_acceptance_separates_body_business_binding_and_validator` 方法和合成 Stage 2 夹具，只替换原来 `user_note` 变化与追加人工文字充当旧绑定失效的两段输入。两场景的准备、缓存处理、正常 `preflight → stage2-plan → stage2-finalize` 入口与逐项断言在 §6.3、§6.4 固定；对照事先给定的字段值及输出，不以单独观察 `validator` 被删除代替正文更新。其余 U1-F 已有效场景和人工正文保护断言保留。共享接受可复用 U1/U5 已有效的同目标结果，不要求双 PR 重跑或扩大到 U5 范围。
 
 ## 3. 已核对的现有资产与缺口
 
@@ -78,61 +81,82 @@
 - U1-C：现有 `test_u1_c_report_ownership_uses_real_fragments` 对 gap 的断言曾使用返回值 `rows[0]["gap_id"]` 自身；现已改为预先确定的输入 gap 预期，其余责任分类沿用既有断言。
 - U1-D/E/F：若产品及相关测试行为未变，直接复用 §7 的有效结果；上述 A/B/C 的断言补齐不构成重跑 D/E/F 的理由。
 
+
 ## 4. 执行与结果复用约定
 
-1. 六项 U1-A 至 U1-F 是必测上限。使用既有 `test_stage2_fixed_evidence.py`、合成 Stage 2 输入、正式 `contact_state` 命令入口和 `unittest` 断言；无须新增真实模型、Zotero、PDF、安装或双运行环境测试。
-2. 2026-10-20 已在产品/测试实现 `3d6c2bc` 执行六项，记录见 §7。与此版本相比，修订前 PR head `087df10` 只改变三份计划/审核文档，相关代码未变；因此原执行记录可依适用性继续使用。
-3. t2 仅补足 U1-A/B/C 现有方法对既定目标的判断能力。这些断言已由本地测试工程师在测试实现准备阶段补齐（提交 `95f309f`，尚未执行）；第二关确认后由本地执行工程师按 §6 **只运行受影响的三个方法**，U1-D/E/F 使用原有效结果。新增测试代码若直接影响其他已确认目标，再逐项判断是否需要复验。
-4. §7 中 185 项既有测试、1036 项全仓回归及静态编译都是已经发生的补充检查，保留其结果，不再作为 t2 的执行义务或第三关通过条件。现有测试资产按 §3 复用，不要求因测试计划改版而重跑完整测试组。
-5. 执行者记录实际提交、测试命令、退出码、逐项结果和运行日志位置；已有有效记录直接引用。正式测试仅在仓库外隔离目录写临时产物；如执行中发现产品业务失败，保留原记录并交产品 owner，不为了得到成功结果修改断言或重复采样。
+1. 六项 U1-A 至 U1-F 是必测上限。使用既有 `test_stage2_fixed_evidence.py`、合成 Stage 2 输入、正式 `contact_state` 命令入口和 `unittest` 断言；无须真实模型、Zotero、PDF、安装或双运行环境测试。
+2. 2026-10-20 `3d6c2bc` 的本地六项执行、185 项既有检查及 1036 项补充全仓回归记录见 §7，保留原始事实，不作为 t3 的重复执行义务。
+3. t2 补齐的 U1-A/B/C 三项断言已在当前产品/测试代码 `1fe59bce356a8c75fe45fe2367cb55690c276081` 的 [CI 第 39466214174 次运行](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39466214174)（第四测试组）逐项通过；U1-D/E 亦通过且本轮输入、断言和产品行为未变。直接复用这些结果，不因测试计划更新或提交编号变化重复运行。
+4. U1-F 旧测试方法在同一 CI 中显示通过，但 §6.3、§6.4 的两项固定输入尚未写入该方法，不能将原通过外推到这两个场景。本地测试工程师仅修订同一个 U1-F 方法中的两段输入及对应断言；修订后只需按 §6.5 运行该方法一次。其余 U1-F 既有有效检查继续沿用。
+5. 执行者记录实际提交、测试命令、退出码、逐项结果和运行日志位置；已有有效记录直接引用。正式测试仅在仓库外隔离目录写临时产物；发现范围内业务失败时保留当次记录并交产品负责人，不修改预期或重复采样求通过。
+
 
 ## 5. 当前状态与下一负责人
 
-- 第一关：必测清单仍为 U1-A 至 U1-F，没有新增范围；是否正式通过以独立关口审核为准。
-- 第二关：本版已经明确限定正式执行范围、失败处理、精确命令和结果来源，等待独立审核；文件修订不代表自动批准。
-- 第三关：§7 原记录中六个方法均曾成功执行。U1-A/B/C 的断言已按 t2 补齐（2026-10-21，未执行）；补强后的三项结果暂记**待补**；U1-D/E/F 在相关实现未变化时复用 `3d6c2bc` 的有效结果。不得把六项旧测试全绿写成三项补强已经完成。
-- 下一负责人：第二关确认后，由本地执行工程师按 §6.2 只运行补强后的三个方法并保留结果；断言补齐已完成（`95f309f`），不再要求本地测试工程师重复修改。测试计划审核者只复核 t2 的改动、实际影响和待补项；合并审核独立进行。
+- 第一关：必测清单仍为 U1-A 至 U1-F；本版没有新增目标、边界组合或测试设施，原范围结论不因场景细化重开。
+- 第二关：t3 已具体写出两个既定场景的输入、检查和运行步骤，等待独立审核；计划入库不自动视为批准。
+- 第三关：U1-A/B/C 在 `1fe59bce` 的 CI 已逐项通过，U1-D/E 的适用结果有效。U1-F 既有方法在该 CI 通过，但“固定证据实际改变”和“旧绑定单独失效”尚未得到符合本计划输入的结果，记为**待补**；其余已有效的 U1-F 检查继续复用。§7 是 2026-10-20 的历史记录，不能冒充 t3 补测。
+- 下一负责人：本地测试工程师只在既有 U1-F 方法中落实 §6.3、§6.4 两个场景；第二关确认后由本地执行工程师按 §6.5 执行该方法，记录版本和结果；审核者只复核受影响项。合并审核独立进行。
 
-## 6. 可执行步骤（t2，2026-10-21 修订；本版尚未运行）
 
-### 6.1 准备与检查入口
+## 6. 可执行步骤（t3，2026-10-21；两个 U1-F 场景尚未补入测试代码、未执行）
 
-- 从第 107 号 PR 的**目标仓库工作树**执行。先确认工作树提交；本计划修订前的有效 U1 产品基线是 `3d6c2bc`，当前已核实 PR head `087df10` 对此只有文档变更。补断言后以实际新提交为运行版本，并按变更内容核对结果适用性。
-- 沿用已具备的 `uv run --no-project python`、`unittest`、`test_contact_state.BaseEnv` 和 `stage2_upstream_fixture`；各测试方法创建、清理自身隔离的合成输入。无需重新安装、配置模型、启动服务或接入个人 Zotero。
-- 本轮只补 U1-A、U1-B、U1-C 三个已存在方法的断言。U1-D/E/F 使用 §7 的结果；若未发现直接影响，不为提交编号变化重复执行。
-- 将每次尝试的日志放在用 `mktemp -d` 新建的独立 `/tmp` 目录；不可共享同一个可写目录并发执行，不复制或手动修补生产文件。
+### 6.1 准备与已有结果
 
-### 6.2 唯一待补的三个方法
+- 从第 107 号 PR 的目标仓库工作树执行，先确认实际提交。t3 修订前的产品/测试代码为 `1fe59bce356a8c75fe45fe2367cb55690c276081`；本次仅修改测试计划，不改产品代码或现有测试方法。
+- 使用现有 `FixedEvidenceBase`、`generate_pack`、`gap_override`、`write_report`、`record`、`preflight`、`bind_facts_to_preflight`、`finalize`；每个场景通过 `_fresh_env()` 得到独立合成目录，不访问用户 Zotero/真实论文或生产配置。
+- [CI 第 39466214174 次运行](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39466214174)在 `1fe59bce` 的第四测试组逐项执行 U1-A/B/C/D/E/F，六个方法均显示通过，组结果为 249 项（跳过 1 项）且成功。A/B/C 的 t2 补充断言确已执行；本轮不重复这些方法。该记录对 U1-F 下述缺口不构成通过证明。
+- 每次新运行的输出放进单独 `mktemp -d` 创建的仓库外 `/tmp` 目录，不共享可写临时目录并发执行，不复制或修改生产数据。
 
-在完成 §3 的三个断言修订、第二关确认后，从目标仓库工作树运行以下命令。命令不使用会遮蔽测试退出码的管道：
+### 6.2 U1-F 原有可复用检查
+
+原有生成时间/展示变化、必要机器头更新、业务指纹改变但正文等价、顶部来源行非时间文字改变及人工正文冲突检查保留在同一测试方法中；不因以下两处场景输入修订另造新方法或重复其他 U1 必测项。历史通过记录仍可作为对应未受影响行为的依据。
+
+### 6.3 场景一：修改正式固定证据输入并重新接受
+
+1. 在独立环境调用 `generate_pack(gap_override())`，保持既有合成论文 `CCCC3333` 的题名、引用和许可不变。登记 `write_report("u1f-fixed-pass.json", [])` 生成的报告，确认 `record()` 返回 `status=ok`，旧 `validator` 的 `schema=2`、`round=1`、`phase=terminal`，并保存旧正文与原始校验报告内容。
+2. 固定目标 `gap_id = contact_state.quote_id(env.gap_quotes["AAAA1111"])`。读取 `results/freshness-DIR00001.json`，找 `results[]` 中恰好一条 `gap_id` 等于该值的记录；先断言旧 `evidence` 完全等于“后续由 CCCC3333 完成，日期 2024-05-01，未知 DDDD8888 与 12345678 保留。”，然后只把该字段写成“后续由 CCCC3333 完成，日期 2024-05-01，未知 DDDD8888 与 12345678 保留；新增固定证据对照。”。`status`、`candidate_paper_ids`、`completed_part`、`remaining_gap`、其他 gap 结果和 `facts.json` 的业务字段均不修改。
+3. 读取同一教授隔离目录的 `_freshness_cache.json`，仅从 `entries` 删除上述 `gap_id` 的记录并保存，强制正式处理路径重新消费被修改的 freshness 结果；其余缓存记录保持不变。这是清除受测输入对应的旧缓存，不改变产品算法或业务预期。
+4. 运行现有 `stage2-preflight`，确认进入 `process`；将本次返回值写为新预检文件，并用 `bind_facts_to_preflight(facts_path, payload)` 将当前 `preflight_id` 绑定到同一 `facts.json`。调用 `stage2-plan --facts ... --preflight-file ...`，确认正常返回且当前方向确实需要 freshness 结果；沿用已存放在 `results` 的合成结果，不启动模型。
+5. 调用正式 `stage2-finalize --facts ... --preflight-file ... --results ...`，确认 `status=ok`。读取新 `套磁候选输入.json`，按事先计算的 `gap_id` 找到对应 `directions[0].gap_shortlist[]`，断言 `evidence` 与步骤 2 新值一致；读取 `套磁候选分析.md`，断言固定卡“后续论文依据”出现“新增固定证据对照”，旧正文与新正文确实不同，可信 `CCCC3333` 链接仍正确。
+6. 断言旧 `validator` 不再作为当前包的通过状态（本实现中为不再存在 `validator`），原始 `u1f-fixed-pass.json` 文件字节不变。不能只见 `validator` 被清除就宣布通过：步骤 5 的固定证据新值和正文真实改变都必须成立。失败保留原样并按 §6.6 处理。
+
+### 6.4 场景二：只使旧校验绑定失效
+
+1. 另起 `_fresh_env()`，调用 `generate_pack()`、`write_report("u1f-stale-pass.json", [])` 和 `record()`。确认 `record()` 为 `status=ok`，原包 `validator.schema=2`、`round=1`、`phase=terminal`，且修改前 `validator.pack_sha256 == contact_state.stage2_pack_content_fingerprint(pack)`。
+2. 只将此隔离目录中 `套磁候选输入.json` 的 `validator.pack_sha256` 设置成 `"0" * 64`。修改后确认它不等于当前 `stage2_pack_content_fingerprint(pack)`；`validator` 的其他字段、`directions`、`papers`、`cache`、`facts.json`、`results`、完整 `套磁候选分析.md`（包括机器头）及原始校验报告全部不变。**不得**追加人工文字或手改机器头；那会变成不同的手改保护场景。
+3. 在调用前保存已修改输入包、完整 Markdown、事实输入文件和原始校验报告的各自字节。沿用 `generate_pack()` 已合法绑定的 `facts_path`、`proof` 和 `results`，直接调用正常 `stage2-finalize`，不重建初始包、不给修复决定文件、不通过额外测试入口。
+4. 预期返回 `status=error`，现有原因码为 `validation_render_stale`；调用前后上述四个文件的字节逐一相同，`validator.pack_sha256` 仍是 64 个 `0`，不被自动改为有效值，旧校验不能重新成为通过。只核对这个具体失效和拒绝行为，不另建防篡改或绑定认证测试。
+5. 保留现有测试方法末尾的独立人工正文冲突分支：无旧 validator 时人工追加正文，应返回 `needs_decision`。不得用这个分支替代步骤 1—4 的“业务和正文不变、仅旧绑定失效”。
+
+### 6.5 本版唯一待补执行：修订后的 U1-F 方法
+
+由本地测试工程师在现有 `test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_f_acceptance_separates_body_business_binding_and_validator` 中替换两段旧输入与对应断言，保持同一方法名与其他已有效分支不变。第二关确认后，由本地执行工程师从第 107 号 PR 当前工作树运行：
 
 ```sh
 set -eu
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-RUN_DIR="$(mktemp -d /tmp/pr107-u1-t2.XXXXXX)"
-printf 'HEAD=%s\nLOG=%s\n' "$(git -C "$REPO_ROOT" rev-parse HEAD)" "$RUN_DIR/u1-abc.log"
+RUN_DIR="$(mktemp -d /tmp/pr107-u1-t3.XXXXXX)"
+printf 'HEAD=%s\nLOG=%s\n' "$(git -C "$REPO_ROOT" rev-parse HEAD)" "$RUN_DIR/u1-f.log"
 cd "$REPO_ROOT/.apm/skills/professor-contact/tests"
 if uv run --no-project python -m unittest -v \
-  test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_a_trusted_citation_display_keeps_facts_and_licences \
-  test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_b_missing_trusted_metadata_fails_before_write \
-  test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_c_report_ownership_uses_real_fragments \
-  > "$RUN_DIR/u1-abc.log" 2>&1; then
-  cat "$RUN_DIR/u1-abc.log"
+  test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_f_acceptance_separates_body_business_binding_and_validator \
+  > "$RUN_DIR/u1-f.log" 2>&1; then
+  cat "$RUN_DIR/u1-f.log"
 else
   result=$?
-  cat "$RUN_DIR/u1-abc.log"
+  cat "$RUN_DIR/u1-f.log"
   exit "$result"
 fi
 ```
 
-预期：`Ran 3 tests`，三项均为 `ok`，退出码 0，没有 `FAIL`、`ERROR`、`skipped`。检查 U1-A 四个出口、U1-B 定位和写入保护、U1-C 固定输入对应归属的断言实际存在并通过。仅运行旧断言，即使命令成功，也不足以关闭这三项待补。
+预期 `Ran 1 test`、该方法显示 `ok`、退出码 0、无 `FAIL/ERROR/skipped`，且测试方法内 §6.3、§6.4 的输入与断言均已实际落地。若测试代码未按上述输入修改，原方法继续通过也不能关闭 U1-F 待补项。U1-A/B/C/D/E 不因本方法补齐而重跑。
 
-### 6.3 失败、重试和停止
+### 6.6 失败、重试和停止
 
-- 业务断言失败：标记对应必测项失败，保留日志及当次实际版本，停止该项；由产品 owner 处理确认的产品问题。不得因不满意业务结果重复采样、改变预期或换输入求通过。
-- 可重试外部故障仅限已确认可恢复的测试启动/依赖中断或临时目录占用冲突，且此前没有已确认的业务失败；原故障原因须已消除、同一代码版本/输入/断言及实际入口保持不变、测试没有非幂等业务副作用，才允许**最多补试一次（总计两次）**。重新创建独立临时目录，复用仍有效的安装与配置；保留两次日志、失败原因及结果，不覆盖首轮。
-- 外部故障仍未恢复或第二次仍不能观察到业务结果：停止该项并标记无法判断，不持续完整重试。若修改了测试断言、输入、产品提交或执行入口，应视为修订后针对受影响项的新测试，不得记作同条件重试。
-- 发生范围外测试失败时保留事实和影响，不自动扩大 U1 必测清单。已有效通过且未受变化影响的 U1-D/E/F 不重跑。
+- 业务断言失败：记录对应 U1-F 场景失败，保留日志及当次实际版本，停止该项；由产品负责人处理已确认的产品问题，不修改断言或输入求通过。
+- 可重试外部故障仅限已确认可恢复的启动/依赖中断或临时目录占用冲突，且此前没有确认的业务失败；在原因消除、产品/测试版本及输入和入口不变、没有非幂等业务副作用时，最多补试一次（总计两次），重新创建独立临时目录并保留每次日志。
+- 故障未恢复或第二次仍不能判断业务结果：停止并记无法判断。若改变产品提交、测试断言、输入、入口或配置，视为正式修订后复核受影响项，不记作同条件重试。范围外失败只报告事实及影响，不扩 U1 必测清单。
 
 ## 7. 执行结果（2026-10-20）
 
@@ -157,7 +181,14 @@ fi
 - 复用说明：本次没有可沿用的 U1 产品结果；既有 T4/T5、preflight、resolved-direction 结果只按本候选直接相关的测试方法重跑，不把历史结果外推到新实现。
 - 范围说明：本记录只报告测试执行事实，不批准计划或测试关口；计划审核、测试计划审核与合并审核仍由各自负责人给结论。本地执行工程师已同步 `SKILL.md` 与两个 analyzer 的“登记→交 owner→停止/修订”说明，未改委派结构或 style-validator 格式。
 
-## 8. t2 修订后的证明状态（2026-10-21）
+
+## 8. t3 修订后的证明状态（2026-10-21）
+
+- t2 已在原 U1-A/B/C 方法内补齐四出口逐项对照、失败返回的固定 gap/字段定位及不从返回值自造期望归属；实际代码已提交。`1fe59bce356a8c75fe45fe2367cb55690c276081` 的 [CI 第 39466214174 次运行](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39466214174)在第四测试组执行 A/B/C，三项均为 `ok`；同组 D/E/F 旧方法亦 `ok`，组总计 249 项、跳过 1 项，整体成功。这是当前已发生的结果，可以直接复用，不再要求 §6 原 t2 三项单跑。
+- 本版确认 U1-F 旧代码中修改 `facts.directions[].user_note` 的分支不能证明固定证据正文变化；把人工文字追加到 Markdown 的分支不能证明业务与正文不变时的旧绑定独立失效。因此 U1-F 的上述两个既定场景仍**待测试代码修正和一次定向执行**；其余 U1-F 有效结果保留。U1-F 当前整体不作完整通过结论。
+- t3 只修改唯一正式测试计划，没有修改产品、测试代码或配置，没有运行测试。§7 的 2026-10-20 原始尝试、并发临时目录错误、复验与全仓回归记录保持原样，不用后续结论覆盖历史记录；正式第二、第三关及合并仍独立审核。
+
+
 
 - 本轮先只改正式测试计划，随后补齐 U1-A/B/C 三个既有测试方法的断言；没有修改产品实现、配置、环境或 §7 的历史执行记录，也未执行新测试。§7 所列六项通过、185 项复验、1036 项补充回归及首次临时目录冲突均保留原始事实。
 - 修订前核实的 PR head 是 `087df10ea0853b58168076789c8180848d80f63b`；与 `3d6c2bc` 相比只有三份计划/审核文档改动，当前提交的持续集成 `39455636835` 五个作业均成功。文档修订提交本身不改变上述代码适用性。
