@@ -26,13 +26,13 @@
 
 ## 执行步骤
 
-准备与执行都在工作树 `/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-commands` 内进行；临时脚本与运行产物放仓库外 `/tmp/pc-stage11`。
+准备与执行都在工作树 `/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-commands` 内进行；第 3 版若确需执行，输出放仓库外独立 `/tmp/pc-stage11-v3`，不覆盖第 2 版 `/tmp/pc-stage11` 的既有正式记录。
 
 1. T0：只检查可编译、可启动、必填参数形态及模块的反向依赖限制；定义搬移与同名别名交给 T1／T3 一次核对。
 ```sh
 set -e
 cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-commands
-RUN=/tmp/pc-stage11
+RUN=/tmp/pc-stage11-v3
 mkdir -p "$RUN"
 uv run --no-project python --version
 uv run --no-project python -m py_compile \
@@ -70,13 +70,13 @@ print("T0 module has no runner import, dynamic loading or sys.path/sys.modules c
 print("T0 CHECKS PASS")
 PY
 ```
-预期：编译和帮助命令退出码为 0；内嵌脚本打印两条 `T0 ... OK` 与 `T0 CHECKS PASS`。首次执行时保存输出到 `/tmp/pc-stage11/t0.log`，如 `bash blk0.sh > /tmp/pc-stage11/t0.log 2>&1`；已有效的第 2 版 T0 结果可直接沿用，不要求为缩减后的断言重新执行。
+预期：编译和帮助命令退出码为 0；内嵌脚本打印两条 `T0 ... OK` 与 `T0 CHECKS PASS`。首次执行时保存输出到 `/tmp/pc-stage11-v3/t0.log`，如 `bash blk0.sh > /tmp/pc-stage11-v3/t0.log 2>&1`；已有效的第 2 版 T0 结果可直接沿用，不要求为缩减后的断言重新执行。
 
 2. T1–T3：取出对照基准、比对 `--help`、运行对比脚本与 docstring 核对：
 ```sh
 set -e
 cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-commands
-RUN=/tmp/pc-stage11
+RUN=/tmp/pc-stage11-v3
 rm -rf "$RUN/base"
 mkdir -p "$RUN/base"
 BASE_SHA=e303a1c99e44d4171bd0089901f67e67b506fbc1
@@ -97,7 +97,7 @@ uv run --no-project /tmp/pc-stage2-tools/compare_stage2_batch_v2.py \
 ```sh
 set -e
 cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-commands
-RUN=/tmp/pc-stage11
+RUN=/tmp/pc-stage11-v3
 shasum -a 256 /tmp/pc-stage2-tools/check_docstrings_v3.py
 uv run --no-project /tmp/pc-stage2-tools/check_docstrings_v3.py \
   "$RUN/base/.apm/skills/professor-contact/scripts" \
@@ -112,7 +112,7 @@ uv run --no-project /tmp/pc-stage2-tools/check_docstrings_v3.py \
 ```sh
 set -e
 cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-commands/.apm/skills/professor-contact/tests
-T4_LOG="${T4_LOG:-/tmp/pc-stage11/t4.log}"
+T4_LOG="${T4_LOG:-/tmp/pc-stage11-v3/t4.log}"
 uv run --no-project python -m unittest \
   test_contact_state.TestRunnerBasics.test_04_profile_change_invalidates_stage3_not_stage2 \
   test_contact_state.TestRunnerBasics.test_05_missing_packs_need_refresh \
@@ -133,7 +133,7 @@ cat "$T4_LOG"
 ```sh
 set -e
 ROOT=/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-commands
-RUN=/tmp/pc-stage11
+RUN=/tmp/pc-stage11-v3
 mkdir -p "$RUN"
 COPYDIR=$(mktemp -d "$RUN/copy-XXXXXXXX")
 trap 'rm -rf "$COPYDIR"' EXIT
@@ -142,7 +142,7 @@ T5_LOG="${T5_LOG:-$RUN/t5.log}"
   cp -R "$ROOT/.apm/skills/professor-contact/scripts" "$COPYDIR/scripts"
   test -f "$COPYDIR/scripts/_stage3_commands.py"
   uv run --no-project python "$COPYDIR/scripts/contact_state.py" --help >"$RUN/t5-help.txt"
-  printf 'T5 COPIED LAYOUT PASS\\n'
+  printf 'T5 COPIED LAYOUT PASS\n'
 } >"$T5_LOG" 2>&1
 cat "$T5_LOG"
 ```
@@ -160,7 +160,7 @@ set -eu
 : "${METHOD:?必须显式设置本轮 T4 实际失败的完整 unittest 方法名}"
 ROOT=/Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage3-commands
 BASE_SHA=e303a1c99e44d4171bd0089901f67e67b506fbc1
-BASELINE=/tmp/pc-stage11/base-${BASE_SHA:0:12}
+BASELINE=/tmp/pc-stage11-v3/base-${BASE_SHA:0:12}
 if [ ! -d "$BASELINE/.apm/skills/professor-contact/tests" ]; then
   mkdir -p "$BASELINE"
   git -C "$ROOT" archive "$BASE_SHA" | tar -x -C "$BASELINE"
@@ -172,7 +172,7 @@ uv run --no-project python -m unittest "$METHOD" -v >"$LOG" 2>&1
 STATUS=$?
 set -e
 cat "$LOG"
-printf 'baseline_exit_code=%s; log=%s\\n' "$STATUS" "$LOG"
+printf 'baseline_exit_code=%s; log=%s\n' "$STATUS" "$LOG"
 ```
 对照只用于解释实际失败，不替代当前版本的业务结果。没有失败或已有结果足够判断时不执行本步。
 
