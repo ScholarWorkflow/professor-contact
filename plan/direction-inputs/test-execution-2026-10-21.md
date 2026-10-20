@@ -2,7 +2,7 @@
 
 ## 环境与来源
 
-- Test plan: [test-plan.md](test-plan.md)，第 3 版（`sha256 74ee168b1f180112dd1148457ab8242119a3ef14da26f2ad907b3730ae36d10b`）；复核后第 7 步新增常量对照命令时命令块有改动，本记录对应那次完整重跑；其后版本字段与文字说明又改过两轮（`0a666af3…` → `83e88348…` → `41cf8843…`），命令块逐字节未变，未重跑；最后一轮去掉第 91 行块内行尾空格（`git diff --check` 报错），命令语义未变但字节变了，故按当前文件整套重跑一次，本记录对应这次重跑。
+- Test plan: [test-plan.md](test-plan.md)，第 3 版（`sha256 3385a531b07a1790b0cf68ada952126c68f904fde3bc80b4563ff9eb4a8b6d8a`）；复核后第 7 步新增常量对照命令时命令块有改动，本记录对应那次完整重跑；其后版本字段与文字说明又改过两轮（`0a666af3…` → `83e88348…` → `41cf8843…`），命令块逐字节未变，未重跑；最后一轮去掉第 91 行块内行尾空格（`git diff --check` 报错），命令语义未变但字节变了，故按当前文件整套重跑一次，本记录对应这次重跑；随后只改了本文件与执行计划的审核状态行（`Proposed review status: pending`），重新抽块与执行用脚本逐字节相同（`identical: True`、`d3c47af7…`），故未再跑。
 - 执行命令来源：把 test-plan.md 的 8 个 `sh` 代码块按顺序抽成脚本 `/tmp/pc-stage20/run-test-plan-v3e.sh`（`sha256 d3c47af73596a1fd12a0ec31616a800ddb231890180ddf68e7ac52d36074c0f1`），逐字执行；执行结束再抽一次，与执行用的脚本逐字节相同（`identical: True`）。
 - 解释器：`uv run --no-project python`，Python 3.14.6（CI 为 3.12）。
 - 基线：`git rev-parse origin/refactor-email-core` = `972d4fd4b7f827fcac7b7305257f761e09ccc01b`（PR #126 的 head），与计划写死的 `EXPECTED_BASE` 相同。

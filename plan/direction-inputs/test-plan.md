@@ -244,4 +244,4 @@ shasum -a 256 .apm/skills/professor-contact/scripts/contact_state.py \
 
 ## 审核状态
 
-- 第 3 版：APPROVED（第 2 版意见 B4、B5、B6、B7、B8、B12、B17、B18 已修订；复核指出的 R1、R2、R3、R4 与 R6 的常量值观察点已在本版补齐，命令块有改动故整套重跑；复核后同版补齐 R1 的版本字段与 P3-a、P3-b、P3-c 三处文字，命令块逐字节未变，故未重跑）。Gate 1：PASS；Gate 2：PASS。
+- 第 3 版：Proposed review status: pending（reviewer 已于 2026-10-21 给出 `Test plan conclusion: APPROVED`、Gate 1：PASS、Gate 2：PASS，正式结论见其 Review record；第 2 版意见 B4、B5、B6、B7、B8、B12、B17、B18 已修订，复核指出的 R1、R2、R3、R4 与 R6 的常量值观察点已在本版补齐，命令块有改动故整套重跑；复核后同版补齐 R1 的版本字段与 P3-a、P3-b、P3-c 三处文字，命令块逐字节未变，故未重跑；最后一次去掉块内一处行尾空格，整套重跑，结果逐项相同）。

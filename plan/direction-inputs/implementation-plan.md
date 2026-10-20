@@ -4,7 +4,7 @@
 
 - Requirement revision: 第 1 版（2026-10-20 负责人要求；同一系列见 PR #95–#126）。
 - Plan revision: 第 2 版。
-- Proposed review status: 待复核。
+- Proposed review status: pending。
 - Target repository revision: 工作分支 `refactor-email-core` 之后的新分支 `refactor-direction-inputs`，父提交为 `972d4fd`（PR #126 的 head）。基准用 `git rev-parse origin/refactor-email-core` 动态取。
 - 参考做法：`_stage4_commands.py`、`_candidate_validate.py`、`_email_core.py` 的“按路径加载 + 工厂闭包 + runner 同名别名”。
 
@@ -107,4 +107,4 @@
 
 ## 审核状态
 
-- 第 2 版：APPROVED（第 1 版意见 B1、B2、B3、B9、B10、B13、B14、B15、B16、B19 已修订；复核意见 N1（删除构成明细）与 N2（同批理由的推导）已同版改正）。基线 sha 随 PR #126 rebase 由 `5489057` 更新为 `972d4fd`，rebase 前后 `git diff` 为空，代码与测量值不变。
+- 第 2 版：Proposed review status: pending（reviewer 已于 2026-10-21 给出 `Plan conclusion: APPROVED`，正式结论见其 Review record；第 1 版意见 B1、B2、B3、B9、B10、B13、B14、B15、B16、B19 已修订，复核意见 N1（删除构成明细）与 N2（同批理由的推导）已同版改正）。基线 sha 随 PR #126 rebase 由 `5489057` 更新为 `972d4fd`，rebase 前后 `git diff` 为空，代码与测量值不变。
