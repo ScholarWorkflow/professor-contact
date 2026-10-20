@@ -86,3 +86,68 @@
 - 第二关：未完成。缺实际 U1 产品实现、最终测试接线和可直接执行 recipe；负责人为产品实现 owner 与本地测试工程师。这不表示计划设计失败，也不以未来产品测试阻断计划文档交付。
 - 第三关：未执行。没有新 PASS；不得沿用 #92 或 Stage 2 机械拆分测试声称 U1 已修复。
 - 下一步：独立测试计划 reviewer 检查本清单完整性与范围；作者按获支持意见作最小修订。此后只在授权范围补 recipe/执行；不自动创建新 PR，不合并，不扩大至 U5 业务或 Stage 3—5。
+
+## 6. 执行步骤（2026-10-20 接线）
+
+本节的接线与执行由本地执行工程师完成；正式结果只覆盖第 2 节六个必测项及其直接复用。工作树为 `/Users/rekidunois/code/skill-repos-dev/worktree/pr107-u1-local-execution-20261020`，临时输出统一放仓库外 `/tmp/u1-fixed-evidence`（本次实际使用 `/tmp/u1-full-suite*.log` 保存全量日志）。复用仓库现有 `unittest`、`test_contact_state.BaseEnv`、`stage2_upstream_fixture` 与正常 Stage-2 命令入口；不新增模型调用、Zotero/PDF 下载、安装步骤、双 harness 运行或专用判定器。
+
+1. 静态编译五个 Stage-2 程序文件（不证明业务行为，仅排除语法/接线错误）：
+
+```sh
+set -e
+cd /Users/rekidunois/code/skill-repos-dev/worktree/pr107-u1-local-execution-20261020
+mkdir -p /tmp/u1-fixed-evidence
+uv run --no-project python -m py_compile \
+  .apm/skills/professor-contact/scripts/contact_state.py \
+  .apm/skills/professor-contact/scripts/_stage2_render.py \
+  .apm/skills/professor-contact/scripts/_stage2_finalize.py \
+  .apm/skills/professor-contact/scripts/_stage2_preflight.py \
+  .apm/skills/professor-contact/scripts/_stage2_validation.py
+```
+预期：退出码 0，无输出。
+
+2. U1-A 至 U1-F 六项必测（`test_stage2_fixed_evidence` 的六个方法分别对应 A–F，使用正常 `contact_state` 命令入口与合成夹具）：
+
+```sh
+set -e
+cd /Users/rekidunois/code/skill-repos-dev/worktree/pr107-u1-local-execution-20261020/.apm/skills/professor-contact/tests
+uv run --no-project python -m unittest test_stage2_fixed_evidence -v 2>&1 | tee /tmp/u1-fixed-evidence/u1-af.log
+```
+预期：`Ran 6 tests`，六个方法 `ok`，无 `FAIL`/`ERROR`/`skipped`。对应关系：`test_u1_a_*`、`test_u1_b_*`、`test_u1_c_*`、`test_u1_d_*`、`test_u1_e_*`、`test_u1_f_*`。
+
+3. 复用既有 Stage-2 检查，只覆盖受本次改动直接影响的目标（不整组照搬历史矩阵）：
+
+```sh
+set -e
+cd /Users/rekidunois/code/skill-repos-dev/worktree/pr107-u1-local-execution-20261020/.apm/skills/professor-contact/tests
+uv run --no-project python -m unittest \
+  test_stage2_style_validation_handoff \
+  test_stage2_preflight \
+  test_stage2_narrative_example_contract \
+  test_stage2_resolved_direction \
+  test_stage2_resolved_direction_acceptance_boundary \
+  test_stage2_resolved_direction_downstream_regressions \
+  test_stage2_resolved_direction_regressions \
+  test_stage2_resolved_direction_fresh_review_regressions \
+  test_stage2_resolved_direction_merge_fulltext_regression \
+  test_stage2_resolve_fingerprint_scope_regression \
+  test_contact_state -v 2>&1 | tee /tmp/u1-fixed-evidence/u1-existing.log
+```
+预期：全部 `ok`，无 `FAIL`/`ERROR`；`test_stage2_style_validation_handoff` 的 T4/T5、`test_stage2_preflight` 的旧包/复用判定、`test_contact_state` 的 Stage-2 端到端与两轮修订必须通过。旧 T5 夹具中 `_t5_inject_legacy_member` 只增加与自身正文一致的 ownership map，仍保留“旧语义 pack 必须 process”的原场景；不改其断言。
+
+4. 补充的全仓回归（不作为六个必测项的通过条件，只用于发现本次改动对既有命令的连带回归）：
+
+```sh
+set -e
+cd /Users/rekidunois/code/skill-repos-dev/worktree/pr107-u1-local-execution-20261020/.apm/skills/professor-contact/tests
+uv run --no-project python -m unittest discover -s . -p 'test_*.py' > /tmp/u1-fixed-evidence/full-suite.log 2>&1
+```
+预期：`OK`（允许仓库原有的 `skipped`）；有失败时按第 5 步区分并只复跑受影响方法。
+
+5. 失败处理：保留每次正式尝试的日志与退出码；确定性业务失败不重试，不修改预期、输入或方法求通过；依赖缺失、测试启动失败或环境中断记为无法判断并停止受影响项；产品缺陷按计划修复后只复验受影响目标。`SKILL.md` 与两个 analyzer 的说明只做静态核对，不转成运行时或委派认证。
+
+## 7. 执行结果（2026-10-20）
+
+- 产品与测试版本：待候选提交后按实际 `HEAD` 回填；测试代码与本候选同提交。
+- 环境：仓库现有 `uv run --no-project python`（CPython 3.14.6），沿用既有合成夹具，无新增安装。
+- 逐项结果：见提交后的执行记录；未执行、无法判断项会在此明确列出，不用总数代替六项覆盖。

@@ -23,6 +23,12 @@ FACTS_GENERATOR_VERSIONS = ("facts-v1",)
 
 STAGE2_PREFLIGHT_VERSION = "stage2-preflight-v1"
 
+# Stage-2 U1 fixed-evidence display contract. A pack whose managed analysis
+# predates this marker (or a later version) must take the ordinary slow path
+# once so the display and its ownership map are accepted by the normal
+# finalize. The marker lives beside the body hash under cache.render.
+STAGE2_U1_DISPLAY_VERSION = 1
+
 # v2: issue #7 resolved directions become part of the Stage-2 contract the
 # preflight must prove — provisional→resolved set mapping in cache.preflight,
 # resolution-evidence (candidate-union) artifact guards, and the
@@ -613,8 +619,16 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
         pack, _error = load_input_pack(professor_dir)
         cache_block = (pack or {}).get("cache")
         meta = cache_block.get("preflight") if isinstance(cache_block, dict) else None
+        render_block = cache_block.get("render") if isinstance(cache_block, dict) else None
+        render_entry = render_block.get(ANALYSIS_MD) if isinstance(render_block, dict) else None
+        u1_marker = render_entry.get("u1") if isinstance(render_entry, dict) else None
+        u1_update_needed = pack is not None and (
+            not isinstance(u1_marker, dict)
+            or u1_marker.get("display_version") != STAGE2_U1_DISPLAY_VERSION)
 
         professor_reasons: list = []
+        if u1_update_needed:
+            professor_reasons.append("fixed_evidence_display_update")
         if pack is None:
             professor_reasons.append("missing_input_pack")
         elif cache_block is not None and not isinstance(cache_block, dict):
@@ -766,6 +780,8 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
             if meta is not None and meta.get("resolution_semantics_version") != \
                     STAGE2_RESOLUTION_SEMANTICS_VERSION:
                 reasons.append("validator_not_accepted")
+            if u1_update_needed:
+                reasons.append("fixed_evidence_display_update")
             reasons = sorted(set(reasons))
             direction_results.append({
                 "direction_id": direction_id, "action": "reuse" if not reasons else "process",

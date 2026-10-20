@@ -10,6 +10,9 @@ never builds a second failure channel.
 """
 from __future__ import annotations
 
+import copy
+import json
+import re
 import types
 from pathlib import Path
 
@@ -28,7 +31,10 @@ def build(*, Stage2Context,
           pack_paper_index,
           pack_direction_relevant_keys,
           split_frontmatter,
+          managed_conflict,
           managed_write,
+          atomic_write,
+          render_frontmatter,
           save_freshness_cache,
           _resolve_evidence,
           _current_resolve_fingerprint,
@@ -39,10 +45,12 @@ def build(*, Stage2Context,
           read_stage1_professor_entry,
           stage2_preflight_cheap_inputs,
           stage2_preflight_metadata,
+          stage2_pack_state_fingerprint,
           stage2_pack_content_fingerprint,
           validate_freshness_results,
           validate_narrative,
           build_direction_pack,
+          render_analysis_document,
           render_analysis_md,
           MANAGED_BY,
           INPUT_PACK_SCHEMA,
@@ -52,6 +60,7 @@ def build(*, Stage2Context,
           ANALYSIS_MD,
           STAGE2_RESOLUTION_SEMANTICS_VERSION,
           PLACEHOLDER_RE,
+          STAGE2_U1_DISPLAY_VERSION,
           stage2_trusted_paper_title,
           stage2_require_later_paper_titles):
     def stage2_preflight_plan_drift(plan_inputs: dict, current: dict) -> list:
@@ -272,10 +281,151 @@ def build(*, Stage2Context,
                      "trusted title is available in the input pack or supported paper facts",
                      item_key=key, direction=direction_machine_id(direction))
 
+    STAGE2_ZOTERO_LINK_RE = re.compile(
+        r"zotero://select/library/items/([A-Za-z0-9]+)")
+    STAGE2_GENERATED_TIMESTAMP_RE = re.compile(
+        r"^> \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z ｜ 数据来源：")
+
+    def stage2_strip_generated_timestamp(line: str) -> str:
+        match = STAGE2_GENERATED_TIMESTAMP_RE.match(line)
+        return line[match.end():] if match else line
+
+    def stage2_equivalent_managed_body(old_body: str, new_body: str) -> bool:
+        """Compare body bytes, ignoring only the top source line's generation time."""
+        old_lines = old_body.splitlines()
+        new_lines = new_body.splitlines()
+        if len(old_lines) != len(new_lines):
+            return False
+        for old_line, new_line in zip(old_lines, new_lines):
+            if old_line == new_line:
+                continue
+            if stage2_strip_generated_timestamp(old_line) != \
+                    stage2_strip_generated_timestamp(new_line):
+                return False
+        return True
+
+    def stage2_business_basis(pack: dict | None) -> dict:
+        """Identity and licence sets that make the accepted Stage-2 result business state.
+
+        Display metadata (collection_key, names, generated time, U1 marker/map or
+        derived candidate lists) is deliberately absent: a pure display update
+        never counts as a new business version.
+        """
+        directions = {}
+        for direction in (pack or {}).get("directions") or []:
+            if not isinstance(direction, dict):
+                continue
+            did = direction_machine_id(direction)
+            resolved = direction.get("resolved_direction")
+            if not isinstance(resolved, dict):
+                resolved = {}
+            directions[did] = {
+                "input_fingerprint": direction.get("input_fingerprint"),
+                "provisional_input_fingerprint": (
+                    direction.get("provisional_input_fingerprint")
+                    or direction.get("input_fingerprint")),
+                "supporting_item_keys": sorted(set(
+                    direction.get("supporting_item_keys") or [])),
+                "relevant_keys": sorted(set(pack_direction_relevant_keys(direction))),
+                "named_keys": sorted(set(direction.get("named_keys") or [])),
+                "resolved_identity": {
+                    "resolved_direction_id": resolved.get("resolved_direction_id"),
+                    "provisional_direction_id": resolved.get("provisional_direction_id"),
+                    "resolution_type": resolved.get("resolution_type"),
+                    "split_target": resolved.get("split_target"),
+                    "merge_target": resolved.get("merge_target"),
+                    "merged_from": sorted(resolved.get("merged_from") or []),
+                },
+            }
+        rows = []
+        block = (pack or {}).get("resolved_directions")
+        if isinstance(block, dict):
+            for row in block.get("directions") or []:
+                if not isinstance(row, dict):
+                    continue
+                rows.append({key: row.get(key) for key in (
+                    "provisional_direction_id", "resolved_direction_id",
+                    "resolution_type", "split_target", "merge_target",
+                    "input_fingerprint", "provisional_input_fingerprint")})
+        rows.sort(key=lambda row: json.dumps(row, ensure_ascii=False, sort_keys=True))
+        return {"directions": directions, "resolved_rows": rows}
+
+    def stage2_checked_gap_statuses(ctx) -> dict:
+        """Freshness cache records that still prove their gap and candidates."""
+        checked = {}
+        for plan in ctx.direction_plans:
+            for gap in plan["ranked"]:
+                item, _hit = ctx.freshness_entry(plan, gap)
+                status = item.get("status")
+                if item.get("cached") and isinstance(status, dict):
+                    checked[gap["gap_id"]] = status
+        return checked
+
+    def stage2_fill_blacklist_candidates(entry: dict, checked: dict) -> None:
+        """Derive missing blacklist candidate ids from a still-valid cache record.
+
+        Older packs did not persist the structured candidate list; the displayed
+        evidence may name them, but natural language is never parsed into a list.
+        A genuinely missing or invalid cache record leaves the field absent.
+        """
+        for item in entry.get("completed_gap_blacklist") or []:
+            if not isinstance(item, dict):
+                continue
+            if isinstance(item.get("candidate_paper_ids"), list):
+                continue
+            status = checked.get(item.get("gap_id"))
+            if isinstance(status, dict) and status.get("status") == "done_by_self":
+                item["candidate_paper_ids"] = list(
+                    status.get("candidate_paper_ids") or [])
+
+    def stage2_display_reference_keys(direction: dict) -> set:
+        """Structured paper keys the four fixed-evidence exits actually display."""
+        keys = set()
+
+        def add_links(text):
+            if isinstance(text, str):
+                keys.update(STAGE2_ZOTERO_LINK_RE.findall(text))
+
+        for gap in direction.get("gap_shortlist") or []:
+            if not isinstance(gap, dict):
+                continue
+            declared = [key for key in gap.get("candidate_paper_ids") or []
+                        if isinstance(key, str) and key]
+            for field in ("evidence", "completed_part", "remaining_gap"):
+                text = gap.get(field)
+                if not isinstance(text, str):
+                    continue
+                for key in declared:
+                    if re.search(r"(?<![A-Za-z0-9])" + re.escape(key)
+                                 + r"(?![A-Za-z0-9])", text):
+                        keys.add(key)
+                add_links(text)
+        for item in direction.get("completed_gap_blacklist") or []:
+            if not isinstance(item, dict):
+                continue
+            completed = item.get("completed_by_item_key")
+            if isinstance(completed, str) and completed:
+                keys.add(completed)
+            declared = [key for key in item.get("candidate_paper_ids") or []
+                        if isinstance(key, str) and key]
+            text = item.get("evidence")
+            if isinstance(text, str):
+                for key in declared:
+                    if re.search(r"(?<![A-Za-z0-9])" + re.escape(key)
+                                 + r"(?![A-Za-z0-9])", text):
+                        keys.add(key)
+                add_links(text)
+        return keys
+
     def cmd_stage2_finalize(args) -> None:
         ctx = Stage2Context(Path(args.facts))
         preflight_plan, preflight_target, preflight_snapshot = \
             stage2_finalize_preflight_plan(args, ctx)
+        # Isolate the accepted old snapshot before ANY candidate is assembled:
+        # normalize_input_pack only shallow-copies, so reusing/mutating one of its
+        # nested dicts would silently rewrite the comparison baseline too.
+        old_pack = copy.deepcopy(ctx.pack) if isinstance(ctx.pack, dict) else None
+        old_render = ((old_pack or {}).get("cache") or {}).get("render", {})
         results_dir = Path(args.results)
         decision = None
         if getattr(args, "decision_file", None):
@@ -362,18 +512,19 @@ def build(*, Stage2Context,
         statuses_by_direction = validate_freshness_results(ctx, results_dir, required_freshness)
         narratives = validate_narrative(ctx, results_dir, needed_keys) if needed_keys else {}
         old_directions = {direction_machine_id(e): e
-                          for e in (ctx.pack or {}).get("directions", [])}
-        old_render = ((ctx.pack or {}).get("cache") or {}).get("render", {})
+                          for e in (old_pack or {}).get("directions", [])}
         # A pack accepted under older membership semantics must rebuild its
         # authoritative membership from the current facts: only the narrative /
         # freshness work may be reused, never the old `supporting_item_keys`.
-        pack_needs_rebuild = stage2_pack_requires_membership_rebuild(ctx.pack)
+        pack_needs_rebuild = stage2_pack_requires_membership_rebuild(old_pack)
+        checked_gap_statuses = stage2_checked_gap_statuses(ctx)
         pack_directions = []
         fresh_papers: dict = {}
         for plan in ctx.direction_plans:
             old_entry = old_directions.get(plan["did"])
             if plan["reuse"] and not pack_needs_rebuild:
-                reused_entry = old_entry
+                reused_entry = copy.deepcopy(old_entry) if isinstance(old_entry, dict) \
+                    else old_entry
                 # collection_key is projection metadata: refresh it from the facts
                 # so a projection-only rename carries without touching fingerprints.
                 reused_entry["collection_key"] = plan["direction"].get("collection_key")
@@ -404,7 +555,7 @@ def build(*, Stage2Context,
             facts_state == valid for every membership-changing key, so this never
             fabricates evidence.
             """
-            record = fresh_papers.get(key) or pack_paper_index(ctx.pack or {}).get(key)
+            record = fresh_papers.get(key) or pack_paper_index(old_pack or {}).get(key)
             if isinstance(record, dict):
                 return dict(record)
             paper = ctx.papers.get(key)
@@ -452,7 +603,7 @@ def build(*, Stage2Context,
             # same split; otherwise the new resolution is authoritative and the
             # stale child disappears.
             plan_ckeys = {p["did"] for p in ctx.direction_plans}
-            for old_entry in (ctx.pack or {}).get("directions", []):
+            for old_entry in (old_pack or {}).get("directions", []):
                 child_id = direction_machine_id(old_entry)
                 if child_id in plan_ckeys:
                     continue
@@ -463,7 +614,7 @@ def build(*, Stage2Context,
                 if source_rd.get("resolution_type") != "split_from" \
                         or source_rd.get("split_target") != child_id:
                     continue
-                pack_directions.append(old_entry)
+                pack_directions.append(copy.deepcopy(old_entry))
                 provisional_fingerprints[child_id] = (
                     old_entry.get("provisional_input_fingerprint")
                     or old_entry.get("input_fingerprint"))
@@ -703,7 +854,7 @@ def build(*, Stage2Context,
         # resolved from fresh builds > resolution-admitted records > old snapshots.
         # Reference-scope papers (P citations) join the same map so a later render
         # or refine keeps one trusted title record even without the temp facts.
-        old_papers = pack_paper_index(ctx.pack or {})
+        old_papers = pack_paper_index(old_pack or {})
 
         def _current_paper_record(key: str) -> dict | None:
             """Current-facts record, filled from the old pack only where facts lack it.
@@ -743,51 +894,59 @@ def build(*, Stage2Context,
                     record = _canonical_record(key)
                 if isinstance(record, dict):
                     papers_map[key] = record
+        for direction in pack_directions:
+            stage2_fill_blacklist_candidates(direction, checked_gap_statuses)
         cache_entries = dict(ctx.cache)
         for ckey, statuses in statuses_by_direction.items():
             for gap_id, record in statuses.items():
                 if isinstance(record, dict) and not record.get("cache_hit"):
                     cache_entries[gap_id] = {k: v for k, v in record.items() if k != "cache_hit"}
+        # Structured metadata referenced by the four fixed-evidence exits joins the
+        # same canonical paper map; it never changes members or licence sets.
+        display_keys = set()
+        for direction in pack_directions:
+            display_keys.update(stage2_display_reference_keys(direction))
+        for key in sorted(display_keys):
+            if key in papers_map:
+                continue
+            record = _current_paper_record(key) or resolved_papers.get(key) \
+                or old_papers.get(key) or _canonical_record(key)
+            if isinstance(record, dict):
+                papers_map[key] = record
         render_pack = {"papers": papers_map, "directions": pack_directions}
         for direction in pack_directions:
             stage2_require_later_paper_titles(ctx, direction, render_pack)
             stage2_require_paper_reference_titles(ctx.papers, render_pack, direction)
-        # A display-only rename, a membership/reference correction or a changed
-        # narrative/gap display must re-render the analysis Markdown WITHOUT
-        # requiring new model work. Compare the exact displayed content so a
-        # metadata-only rewrite (timestamp/cache) stays a no-render no-op.
-        render_changed = ctx.pack is None or stage2_render_state(
-            render_pack) != stage2_render_state(ctx.pack)
+
+        # Always generate the actual candidate body and its ownership map: an
+        # equal render-state projection is not proof that the bytes match.
         md_path = ctx.professor_dir / ANALYSIS_MD
-        md_result = None
-        if needed_keys or not ctx.pack or render_changed:
-            body = render_analysis_md(ctx, render_pack, state_fingerprint)
-            md_result = managed_write(md_path, body, state_fingerprint,
-                                      old_render.get(ANALYSIS_MD, {}).get("sha256"), decision)
-            if md_result.get("needs_decision"):
-                soft_exit("needs_decision", md_result["reason_code"],
-                          target=md_result.get("target"),
-                          existing_sha256=md_result.get("existing_sha256"),
-                          new_sha256=md_result.get("new_sha256"),
-                          options=["overwrite（覆盖为状态版本）", "keep_manual（保留手改，不作为流程输入）",
-                                   "promote（把要保留的内容经 selection.note 或 profile 写进状态后再渲染）"])
-        pack = {
-            "schema": INPUT_PACK_SCHEMA, "kind": INPUT_PACK_KIND,
-            "identity_version": DIRECTION_IDENTITY_VERSION,
-            "managed_by": MANAGED_BY, "generated_at": now_utc(),
-            "professor": ctx.professor, "professor_dir": str(ctx.professor_dir),
-            "papers": papers_map,
-            "directions": pack_directions,
-            "cache": {"render": {ANALYSIS_MD: {"sha256": (md_result or {}).get("sha256") or old_render.get(ANALYSIS_MD, {}).get("sha256")}}},
-        }
+        old_body = None
+        old_header = None
+        if md_path.is_file() and not md_path.is_symlink():
+            try:
+                document_text = md_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                document_text = ""
+            header, document_body = split_frontmatter(document_text)
+            if isinstance(header, dict) and header.get("managed_by") == MANAGED_BY:
+                old_header, old_body = header, document_body
+        old_body_sha = sha256_text(old_body) if old_body is not None else None
+        candidate_body, ownership = render_analysis_document(
+            ctx, render_pack, state_fingerprint)
+        body_equivalent = (old_body is not None
+                           and stage2_equivalent_managed_body(old_body, candidate_body)
+                           and ownership.get("line_count") == len(old_body.splitlines()))
+        final_body = old_body if body_equivalent else candidate_body
+        final_sha = sha256_text(final_body)
+
+        # Preserve accepted resolution provenance when this run applies no new
+        # sidecar; dropping the rows would look like a business change and break
+        # the validation binding for an otherwise unchanged pack.
         if resolved_directions:
-            # Each raw source→target row stores the ORIGINAL facts fingerprint of
-            # its provisional direction, so the facts-bound refine entry can prove
-            # this accepted pack (including an already-merged source, which owns no
-            # final direction entry) still matches the current facts.
             raw_provisional_fingerprints = {
                 plan["did"]: plan["fingerprint"] for plan in ctx.direction_plans}
-            pack["resolved_directions"] = {
+            new_resolved_block = {
                 "schema": RESOLVED_DIRECTION_SCHEMA,
                 "applied_at": now_utc(),
                 "directions": [
@@ -805,6 +964,100 @@ def build(*, Stage2Context,
                     for ckey, rd in resolved_directions.items()
                 ],
             }
+        elif isinstance((old_pack or {}).get("resolved_directions"), dict):
+            new_resolved_block = copy.deepcopy(old_pack["resolved_directions"])
+        else:
+            new_resolved_block = None
+        candidate_basis = stage2_business_basis({
+            "directions": pack_directions,
+            "resolved_directions": new_resolved_block})
+        business_changed = (bool(needed_keys) or pack_needs_rebuild
+                            or stage2_business_basis(old_pack) != candidate_basis)
+
+        # Old validator lifecycle: a real business or substantive body change
+        # starts a new validation round (old raw report files stay untouched).
+        # With neither change, an invalid old binding is an evidence error and is
+        # rejected before writing, never silently re-bound.
+        old_validator = (old_pack or {}).get("validator")
+        carried_validator = None
+        if isinstance(old_validator, dict) and old_validator.get("schema") == 2:
+            old_round = old_validator.get("round")
+            old_phase = old_validator.get("phase")
+            shape_valid = (
+                not isinstance(old_round, bool) and old_round in (1, 2)
+                and old_phase in ("needs_correction", "awaiting_second_validation",
+                                  "terminal")
+                and isinstance(old_validator.get("pending"), dict)
+                and isinstance(old_validator.get("results"), dict))
+            if not shape_valid and not business_changed:
+                fail("validation_render_stale",
+                     "the recorded Stage-2 validation has a malformed round/phase state",
+                     target=str(md_path))
+            binding_valid = (
+                old_header is not None and old_body_sha is not None
+                and old_header.get("render_sha256") == old_body_sha
+                and old_header.get("state_fingerprint")
+                == stage2_pack_state_fingerprint(old_pack)
+                and old_validator.get("render_sha256") == old_body_sha
+                and old_validator.get("pack_sha256")
+                == stage2_pack_content_fingerprint(old_pack))
+            if not business_changed:
+                if not shape_valid or not binding_valid:
+                    fail("validation_render_stale",
+                         "the recorded Stage-2 validation no longer binds the current managed "
+                         "render/input pack and no business change explains it; re-record a "
+                         "raw validator report too against the current files",
+                         target=str(md_path))
+                if body_equivalent:
+                    carried_validator = dict(old_validator)
+
+        md_result = {"written": False, "needs_decision": False, "sha256": final_sha}
+        if not body_equivalent:
+            conflict = managed_conflict(
+                md_path, candidate_body,
+                old_render.get(ANALYSIS_MD, {}).get("sha256"), decision)
+            if conflict:
+                soft_exit("needs_decision", conflict["reason_code"],
+                          target=str(md_path),
+                          existing_sha256=conflict.get("existing_sha256"),
+                          new_sha256=conflict.get("new_sha256"),
+                          options=["overwrite（覆盖为状态版本）", "keep_manual（保留手改，不作为流程输入）",
+                                   "promote（把要保留的内容经 selection.note 或 profile 写进状态后再渲染）"])
+            md_result = managed_write(
+                md_path, candidate_body, state_fingerprint,
+                old_render.get(ANALYSIS_MD, {}).get("sha256"), decision)
+            if md_result.get("needs_decision"):
+                soft_exit("needs_decision", md_result["reason_code"],
+                          target=md_result.get("target"),
+                          existing_sha256=md_result.get("existing_sha256"),
+                          new_sha256=md_result.get("new_sha256"),
+                          options=["overwrite（覆盖为状态版本）", "keep_manual（保留手改，不作为流程输入）",
+                                   "promote（把要保留的内容经 selection.note 或 profile 写进状态后再渲染）"])
+            final_body, final_sha = candidate_body, md_result["sha256"]
+        elif (old_header is None or old_header.get("state_fingerprint") != state_fingerprint
+              or old_header.get("render_sha256") != final_sha):
+            # Equivalent body: keep its bytes, but the machine header still has to
+            # describe the current pack.
+            atomic_write(md_path, render_frontmatter(state_fingerprint, final_sha) + final_body)
+            md_result = {"written": True, "needs_decision": False, "sha256": final_sha}
+        ownership["body_sha256"] = final_sha
+        render_entry = {
+            "sha256": final_sha,
+            "ownership": ownership,
+            "u1": {"display_version": STAGE2_U1_DISPLAY_VERSION,
+                   "completed_at": now_utc()},
+        }
+        pack = {
+            "schema": INPUT_PACK_SCHEMA, "kind": INPUT_PACK_KIND,
+            "identity_version": DIRECTION_IDENTITY_VERSION,
+            "managed_by": MANAGED_BY, "generated_at": now_utc(),
+            "professor": ctx.professor, "professor_dir": str(ctx.professor_dir),
+            "papers": papers_map,
+            "directions": pack_directions,
+            "cache": {"render": {ANALYSIS_MD: render_entry}},
+        }
+        if new_resolved_block is not None:
+            pack["resolved_directions"] = new_resolved_block
         if preflight_plan is not None:
             pack["cache"]["preflight"] = stage2_preflight_metadata(
                 program_root=ctx.program_root, professor_dir=ctx.professor_dir,
@@ -812,39 +1065,10 @@ def build(*, Stage2Context,
                 pack_directions=pack_directions,
                 params=preflight_plan["preflight_inputs"]["params"],
                 current_year=ctx.current_year, ctx=ctx, cache_entries=cache_entries)
-        # Validator lifecycle (plan 3.4.1): the old record is carried over only
-        # when NOTHING the validator certified changed — no new model work, no
-        # membership/reference/narrative re-render and no old-semantics rebuild —
-        # and its recorded pack/render binding still describes the actual files.
-        # A changed business version silently expires the old certification (the
-        # new version starts at round 1, raw old reports stay untouched); with NO
-        # business change an invalid old binding is an evidence error and must be
-        # rejected before writing, never "restored" by re-binding the hashes.
-        old_validator = (ctx.pack or {}).get("validator")
-        if isinstance(old_validator, dict) and old_validator.get("schema") == 2:
-            current_document = None
-            try:
-                document_text = md_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                document_text = ""
-            header, document_body = split_frontmatter(document_text)
-            if isinstance(header, dict) and header.get("managed_by") == MANAGED_BY:
-                current_document = sha256_text(document_body)
-            business_changed = bool(needed_keys) or pack_needs_rebuild or render_changed
-            binding_valid = (
-                current_document == old_validator.get("render_sha256")
-                and old_validator.get("pack_sha256")
-                == stage2_pack_content_fingerprint(ctx.pack or {}))
-            if not business_changed:
-                if not binding_valid:
-                    fail("validation_render_stale",
-                         "the recorded Stage-2 validation no longer binds the current managed "
-                         "render/input pack and no business change explains it; re-record a "
-                         "raw validator report too against the current files",
-                         target=str(md_path))
-                carried = dict(old_validator)
-                carried["pack_sha256"] = stage2_pack_content_fingerprint(pack)
-                pack["validator"] = carried
+        if carried_validator is not None:
+            carried_validator["pack_sha256"] = stage2_pack_content_fingerprint(pack)
+            pack["validator"] = carried_validator
+
         atomic_json(ctx.pack_path, pack)
         save_freshness_cache(ctx.professor_dir, cache_entries)
         # NOTE: stage2-finalize deliberately does NOT touch the sidecar's

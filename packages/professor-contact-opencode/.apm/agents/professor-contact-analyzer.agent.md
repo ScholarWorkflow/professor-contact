@@ -595,6 +595,8 @@ task(subagent_type: "professor-contact-style-validator",
   若原 facts 文件仍在，也可把两条命令的 `--professor-dir` 换成同一份 `--facts <原 facts.json>`，runner 会先核对 input fingerprint；原 facts 不在时必须使用 `--professor-dir` 的 pack-only 路径。`stage2-refine-finalize` 只替换结构化 `narrative.positioning/gap_notes`，保留 freshness、gap、用户笔记和论文事实。
 - 修订成功后，重新用 OpenCode 原生 Task 委派同一校验器并等待；将新报告原样保存为 `validation-round-2.json`，再运行 `stage2-record-validation --professor-dir <教授目录> --validation-file <validation-round-2.json>`。第 1 轮 `pass` 或 `pass_with_minor` 记录后结束；第 2 轮记录后无论结论如何都停止，若为 `fail_after_2_rounds` 则保留失败并在返回 `notes` 说明。不得产生第 3 轮修订。
 - 记录入口负责校验报告格式、方向归属和轮次；它不会覆盖阶段 2 的 `partial`、论文失败或 freshness 状态。任何记录失败均不得继续修订。
+- 固定证据卡（`evidence`/`completed_part`/`remaining_gap` 与禁锚 `evidence`）的阻挡由 runner 按生成时片段归属判定：记录结果可能带 `fixed_blocking` 与 `needs_owner_fix=true`，表示事实归源数据 owner、标签/模板/链接排版归 renderer（generator）owner。此时必须停止修订循环，把具体 gap/字段/owner 交对应 owner；`stage2-refine-plan`/`stage2-refine-finalize` 会返回 `needs_owner_fix`、零 job 和零正文写入，传 `--direction-id` 也不能绕过。固定失败不得登记为 pass/skipped，也不得重复提交同一份失败报告。第 2 轮首次出现固定阻挡时记为 `fail_after_2_rounds` 并同样交 owner，不再产生修订或第 3 轮。
+- 只有源数据或生成逻辑真正修复后，由普通 `stage2-finalize` 接受新的业务版本或实质新正文，旧 validator 才失效、下一轮从第 1 轮开始；仅生成时间、U1 展示标记或归属 map 更新时保留既有 round/phase/pending/results，人工改正文仍走原保护。旧包缺 U1 展示完成信息时 `stage2-preflight` 返回 `process` 和 `fixed_evidence_display_update`，按正常 `preflight → process → plan → finalize` 更新，不新增刷新命令、不强迫重跑仍有效资产，也不得手工改受管 Markdown；缺归属 map 的旧包不能直接记录校验。
 - 校验依据见 `professor-contact-style-validator` 的规则节（AGENTS.md 输出文风规定 + 术语首现解释 + 黑话禁用词 + 形容词结论禁令）。
 
 **教授 writer scope 收尾（强制 finally）**：完成该教授全部写入/runner/validator 路径后，或任一 acquire 后的 early return/error 前，进入 `finally`，调用 4.5.E 的 `local-lease-release`。release 失败要记进 notes/reason，不得假装无 lease；正常情况下下一位教授再独立 acquire 自己的 token。
