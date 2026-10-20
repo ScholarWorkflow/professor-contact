@@ -4,17 +4,17 @@
 
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 3 版（`Plan conclusion: APPROVED`）。
 - 需求来源：负责人 2026-10-20 的 Stage 2 划分指示；原文与范围见执行计划。
-- Target repository revision: 工作分支 `refactor-stage2-validation` 实施后的提交（代码提交 `76f107a`）；对照基准为 `e973ffb4571344157b3c43a151906a24f48c7e4e`（当前 `main`，已含第 1 批 #108）。实施开始时 `origin/main` 为 `0f89ebd`，实施中前进到 `e973ffb` 并重放；14 个函数在两次提交间 AST 相同。
-- Test plan revision: 第 5 版。
+- Target repository revision: 本批被测代码提交 `b2005f722d9156b213e9c10f29b5816e40164844`；对照基准为其父提交 `a1c018f7e533fd09f07c4cd12f7df4fcf06c14a3`（第 4 批 #110 分支的最终提交，已含 #108、#109、#110）。第 4 批已合入 `main`，合并提交 `7e492190c918fba5f0e3803509858fbba6813d6f` 与该基准的文件内容一致。本批后续提交只更新计划和执行记录，被测代码未变。
+- Test plan revision: 第 6 版。
 - 测试范围依据：`Test Engineer Rule.md`。本清单是验收上限，只覆盖本批明确要达到的目标与本次直接改变的行为。
-- Proposed review status: **APPROVED**（第一关 PASS、第二关 PASS；第 3 版复核记录见文末）。
+- 审核状态：第 6 版已修正第 5 版第一关指出的基准冲突，待复核；第二关此前通过的步骤与检查方式未变。
 - 执行记录：[test-execution-2026-10-20.md](test-execution-2026-10-20.md)。
 
 ## 必测清单
 
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
-| T0 | 对照基准与工作树身份有效，防止 A/B 空转 | 工作树 `scripts/contact_state.py` 与 `_stage2_validation.py`；基准为 `git archive 7a59006c551dc863045fb5221143927357429c83` 的 scripts 目录（含 #108、#109） | base 与 head 是两个不同文件；base 仍定义 14 个函数；head 一个都不定义 | 对比脚本的 `T0 ...` 行；3 条 `OK` |
+| T0 | 对照基准与工作树身份有效，防止 A/B 空转 | 工作树 `scripts/contact_state.py` 与 `_stage2_validation.py`；基准为 `git archive a1c018f7e533fd09f07c4cd12f7df4fcf06c14a3` 的 scripts 目录（含 #108、#109、#110） | base 与 head 是两个不同文件；base 仍定义 14 个函数；head 一个都不定义 | 对比脚本的 `T0 ...` 行；3 条 `OK` |
 | T1 | 14 个函数确实完成划分（R1、R3） | 同上两侧源码与模块文件 | 新模块与 runner 同目录；14 个函数都不再出现在 runner 顶层，都出现在模块 `build()` 内；模块不导入 runner、不按路径加载它、不碰 `sys.path`／`sys.modules`；`build()` 恰好 38 个 keyword-only 参数、返回 14 个成员；runner 按 `Path(__file__).with_name("_stage2_validation.py")` 加载，并以同名实参注入这 38 项 | 同一脚本的 `T1 ...` 行 29 条 `OK`（模块存在 1 + 14 函数×2）；第 1b 步的源码核对 4 条 `SOURCE ... OK` 与 `SOURCE CHECKS PASS` |
 | T2 | 搬移没有改变任何函数逻辑（R2） | 同上两侧源码 | 14 个函数的代码 AST 与基准完全相同（脚本忽略 docstring 内容）；docstring 单独核对：9 个函数有 docstring（其中 4 个多行），清洗后与基准同文，5 个函数没有 docstring；runner 其余顶层定义（函数与类）AST 不变；离开 runner 的定义正好是这 14 个、没有新增；14 个函数都有 runner 别名（同一对象） | 同一脚本的 `T2 ...` 行（别名存在）17 条 `OK`；docstring 与别名身份用一次性只读脚本核对（`/tmp/pc-stage2-r2/docstring_check.py`，`python3` 运行，输出 9/9 同文、4 个多行、5 个无 docstring、14/14 别名 `is`）：9/9 docstring 同文、14/14 别名 `is` 模块函数 |
 | T3 | 旧接口与加载方式不变（R3、R4、R5） | 同一进程内分别按文件路径加载两侧 runner；再以子进程直接执行改动后的 runner | 14 个名字在两侧都可调用；`inspect.signature` 字符串两侧相同；直接执行 `contact_state.py --help` 退出码 0；绑定调用在 14 个别名之前，别名逐个指向 `_stage2_validation.<同名>` | 同一脚本的 `T3 ...` 行 29 条 `OK`（14 函数×2 + 1 直接执行）；第 1b 步的源码核对覆盖加载方式与注入契约；合计 78 条 `OK`、末尾 `ALL CHECKS PASS` |
@@ -151,8 +151,8 @@ PY
 - 使用仓库既有测试夹具，不新增依赖、不新增判定器或采集器；对比脚本只用标准库。
 - `shasum -a 256` 是 macOS 写法；Linux 复跑改用 `sha256sum`，判据不变（脚本 91 行、哈希 `75c151c3ad3f9fd71c031d72b85a820a2b29b45229658f50212534c0798adff7`）。
 - 测试只使用合成数据与临时目录；不接触用户业务资料。
-- 对照两侧都从 `e973ffb` 与工作树 HEAD 取出；`e973ffb` 已含第 1 批的 `_stage2_preflight.py` 与 pack 指纹别名。
-- 第 4 批尚未合并时，`stage2_require_paper_reference_titles`、`stage2_trusted_paper_title`、`stage2_require_later_paper_titles` 仍在 runner 顶层，绑定点在其定义结束之后；两种合并顺序均成立。
+- 对照基准从 `a1c018f7e533fd09f07c4cd12f7df4fcf06c14a3` 导出，被测侧使用当前工作树的 runner 与新模块。基准已包含第 1、2、4 批（#108、#109、#110），因此本次只对照第 5 批搬移的 14 个函数。
+- 第 4 批（#110）已合入；`stage2_require_paper_reference_titles`、`stage2_trusted_paper_title`、`stage2_require_later_paper_titles` 由 runner 的同名别名提供，本批绑定点在这些别名建立之后。
 
 ## 不纳入本清单的范围
 
@@ -165,7 +165,7 @@ PY
 
 ## 自检
 
-① 必测项只引用能证明本批目标的方法：T4 只限落在本批 14 个函数上的断言（跨批断言按归因记录），T5 只限复制/加载；② CI 不在必测清单；③ 对比脚本有来源、回退路径、复制命令与哈希；④ 命令块启用 `set -e`；`RUN` 只在第 1 步内使用；⑤ 失败注入标为“本批不适用”；⑥ 计划文字与执行记录使用同一套编号；⑦ 编号与版本一致（本文件第 4 版，执行记录引用第 4 版）；⑧ 第 1b 步的源码核对块放在 0 缩进，能按原样执行。
+① 必测项只引用能证明本批目标的方法：T4 只限落在本批 14 个函数上的断言（跨批断言按归因记录），T5 只限复制/加载；② CI 不在必测清单；③ 对比脚本有来源、回退路径、复制命令与哈希；④ 命令块启用 `set -e`；`RUN` 只在第 1 步内使用；⑤ 失败注入标为“本批不适用”；⑥ 计划文字与执行记录使用同一套编号；⑦ 编号与版本一致（本文件第 6 版，执行记录引用第 6 版）；⑧ 第 1b 步的源码核对块放在 0 缩进，能按原样执行。
 
 ## 修订记录
 
@@ -173,6 +173,8 @@ PY
 - 第 2 版：按第一轮审核修正 B1–B7 的判据文字。
 - 第 3 版：按第二轮复核彻底重写判据与记录：T4/T5 改为条件式通过条件并写明失败归因与 traceback 区分；跨批批次归属改为“第 1 批 preflight/plan、第 2/3 批 resolve、第 4 批 finalize/标题 helper、Stage 3 job”；本批通过条件移出“later-paper 标题”，只保留状态保存/恢复；T2 的 docstring 判据改为“脚本忽略内容 + 单独核对 9 个 docstring（4 个多行）同文、5 个无 docstring”；环境记录两个 Python 版本；删除重复的修订记录/审核状态段；执行记录同步第 3 版。
 - 第 4 版：按第二关复核的唯一待修改项补 R3 的源码核对——新增第 1b 步（只读，复用第 1 步源码）：模块不导入 runner、不做动态加载、不碰 `sys.path`／`sys.modules`；`build()` 38 个 keyword-only 参数、14 个成员；runner 按路径加载并以同名实参注入同一组 38 项、别名在绑定调用之后。T1／T3 行同步写明该检查；同时把对照基准与 `git archive` 更新到 `#109` 合并后的 `7a59006`（rebase 后重跑，78 条 OK／10 项／2 项不变）。
+- 第 5 版：本批改为以第 4 批 #110 的分支提交 `a1c018f` 为基准，重新执行 A/B 对照与定向测试；执行命令已改为 `a1c018f`，但版本说明、T0 与环境段仍保留旧基准。
+- 第 6 版：按审核意见统一被测代码提交 `b2005f7`、对照基准 `a1c018f`、T0 与环境说明，并同步执行记录的版本及历史基准说明；未改变 T0—T5 的判据、执行命令或测试结果。
 
 ## 审核状态
 
@@ -180,4 +182,5 @@ PY
 - 第 2 版：第一关/第二关 NEEDS_MODIFICATION（B2/B5/B6 闭合；B1/B3/B4/B7 与版本同步未闭合）。
 - 第 3 版：第一关 PASS、第二关 PASS；复核保留一项待修改（R3 的源码核对未写全）。
 - 第 4 版：第一关 PASS；第二关待复核（已按 R3 待修改项补第 1b 步）。
-- 第 3 版：第一关 PASS、第二关 PASS（无剩余 blocker）。
+- 第 5 版：第一关 NEEDS_MODIFICATION（版本说明、T0 与环境段的对照基准不一致）；第二关 PASS。
+- 第 6 版：已修正第一关的基准冲突，待复核；第二关步骤未变，复用先前 PASS。
