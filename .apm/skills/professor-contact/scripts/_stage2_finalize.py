@@ -51,7 +51,9 @@ def build(*, Stage2Context,
           RESOLVED_DIRECTION_SCHEMA,
           ANALYSIS_MD,
           STAGE2_RESOLUTION_SEMANTICS_VERSION,
-          PLACEHOLDER_RE):
+          PLACEHOLDER_RE,
+          stage2_trusted_paper_title,
+          stage2_require_later_paper_titles):
     def stage2_preflight_plan_drift(plan_inputs: dict, current: dict) -> list:
         """Field-level drift between the saved preflight plan and current inputs."""
         drift = []
@@ -870,40 +872,7 @@ def build(*, Stage2Context,
             "resolved_directions_applied": bool(resolved_directions),
         })
 
-    def stage2_trusted_paper_title(paper: dict | None, item_key: str) -> str | None:
-        """Return a usable title only when a structured source contains one."""
-        if not isinstance(paper, dict):
-            return None
-        title = paper.get("title")
-        if not isinstance(title, str):
-            return None
-        title = title.strip()
-        if not title or title in ("后续论文", item_key):
-            return None
-        return title
 
-    def stage2_require_later_paper_titles(ctx, direction: dict,
-                                         pack: dict | None = None) -> None:
-        """Resolve each L reference from structured sources or fail before writing."""
-        sources_pack = pack if isinstance(pack, dict) else ctx.pack
-        canonical_papers = pack_paper_index(sources_pack or {})
-        saved = direction.get("narrative_later_papers")
-        for key in Stage2PackRefineContext.narrative_later_keys_for(direction):
-            existing = ctx.papers.get(key)
-            candidates = [existing,
-                          saved.get(key) if isinstance(saved, dict) else None,
-                          canonical_papers.get(key)]
-            title = next((value for candidate in candidates
-                          if (value := stage2_trusted_paper_title(candidate, key)) is not None),
-                         None)
-            if title is None:
-                fail("missing_later_paper_title",
-                     f"cannot render or refine later-paper reference {key}: "
-                     "no trusted title is available "
-                     "in the input pack or supported paper facts", item_key=key)
-            paper = dict(existing) if isinstance(existing, dict) else {"item_key": key}
-            paper["title"] = title
-            ctx.papers[key] = paper
 
     return types.SimpleNamespace(
         stage2_preflight_plan_drift=stage2_preflight_plan_drift,
@@ -913,6 +882,4 @@ def build(*, Stage2Context,
         stage2_render_state=stage2_render_state,
         stage2_require_paper_reference_titles=stage2_require_paper_reference_titles,
         cmd_stage2_finalize=cmd_stage2_finalize,
-        stage2_trusted_paper_title=stage2_trusted_paper_title,
-        stage2_require_later_paper_titles=stage2_require_later_paper_titles,
     )
