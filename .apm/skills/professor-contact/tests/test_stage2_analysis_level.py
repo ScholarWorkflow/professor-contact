@@ -180,6 +180,46 @@ class TestFactsLevelContract(AnalysisLevelBase):
 
 
 
+    def test_analysis_file_and_pdf_without_a_success_registration_are_unknown(self):
+        analysis = self.prof_dir / "论文分析" / "CCCC3333.md"
+        analysis.write_text("# unregistered analysis\n", encoding="utf-8")
+
+        def mutate(facts):
+            for paper in facts["papers"]:
+                if paper["item_key"] == "CCCC3333":
+                    paper["analysis_file"] = str(analysis)
+                    paper["has_pdf"] = True
+                    paper["analysis_level"] = None
+        self.patch_facts(mutate)
+        self.write_stage2_results()
+        out = parse(self.finalize_with_current_proof())
+        self.assertEqual(out["status"], "ok", out)
+        papers = self._read_pack()["papers"]
+        self.assertIsNone(papers["CCCC3333"]["analysis_level"])
+        self.assertTrue(papers["CCCC3333"]["pdf_available"])
+        self.assertEqual(papers["CCCC3333"]["analysis_file"], str(analysis))
+
+    def test_ocr_only_fulltext_without_facts_can_still_be_fulltext(self):
+        analysis = self.prof_dir / "论文分析" / "EEEE5555.md"
+        analysis.write_text("# OCR-only full text\n", encoding="utf-8")
+        self.facts["papers"].append({
+            "item_key": "EEEE5555", "title": "EEEE5555 title", "year": 2025,
+            "month": 2, "authorship": "middle", "abstract": "ocr only sample",
+            "authors": ["Example Professor"], "has_pdf": False,
+            "analysis_file": str(analysis), "analysis_level": "fulltext"})
+        self.facts["directions"][0]["member_keys"].append("EEEE5555")
+        index = read_json(self.prof_dir / "论文分析" / "_index.json")
+        index["papers"]["EEEE5555"] = {"file": str(analysis), "level": "fulltext"}
+        write_json(self.prof_dir / "论文分析" / "_index.json", index)
+        write_json(self.facts_path, self.facts)
+        self.write_stage2_results()
+        out = parse(self.finalize_with_current_proof())
+        self.assertEqual(out["status"], "ok", out)
+        papers = self._read_pack()["papers"]
+        self.assertEqual(papers["EEEE5555"]["analysis_level"], "fulltext")
+        self.assertEqual(papers["EEEE5555"]["facts_state"], "unavailable")
+        self.assertFalse(papers["EEEE5555"]["pdf_available"])
+
 class TestCanonicalMerge(AnalysisLevelBase):
     """L2: one explicit assignment covers fresh/reused/resolved/old merges."""
 
@@ -434,6 +474,38 @@ class TestLevelRefresh(AnalysisLevelBase):
         updated = self._read_pack()
         self.assertEqual(
             updated["cache"]["preflight"]["statistics_version"], 1)
+
+    def test_business_change_with_equivalent_body_keeps_body_but_expires_certification(self):
+        self.build_accepted_state()
+        before = self.analysis_md().read_bytes()
+
+        def mutate(facts):
+            # `credibility.note` is model-relevant but never rendered, so the real
+            # body stays byte-equivalent while the business basis changes.
+            facts["directions"][0]["credibility"]["note"] = "business-only change"
+        self.patch_facts(mutate)
+        results = self.write_stage2_results()
+        narrative = read_json(results / "narrative.json")
+        narrative["directions"] = [
+            entry for entry in narrative["directions"]
+            if entry.get("collection_key") == "DIR00001"]
+        write_json(results / "narrative.json", narrative)
+        out = parse(self.finalize_with_current_proof())
+        self.assertEqual(out["status"], "ok", out)
+        # The real body survives byte-for-byte; only the machine header may move
+        # to bind the new business basis.
+        _, body_before = contact_state.split_frontmatter(before.decode("utf-8"))
+        header_after, body_after = contact_state.split_frontmatter(
+            self.analysis_md().read_text(encoding="utf-8"))
+        self.assertEqual(body_after, body_before)
+        self.assertEqual(header_after["render_sha256"],
+                         contact_state.sha256_text(body_after))
+        pack = self._read_pack()
+        self.assertNotIn("validator", pack)
+        self.assertEqual(pack["cache"]["render"]["套磁候选分析.md"]["sha256"],
+                         contact_state.sha256_text(body_after))
+        self.assertEqual(out["md_sha256"], contact_state.sha256_text(body_after))
+        self.assertEqual(pack["papers"]["AAAA1111"]["analysis_level"], "fulltext")
 
     def test_manual_body_edit_needs_decision_without_writing_the_pack(self):
         self.build_accepted_state()
