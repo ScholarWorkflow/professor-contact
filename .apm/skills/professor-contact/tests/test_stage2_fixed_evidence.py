@@ -1,4 +1,4 @@
-"""U1 fixed-evidence display and real blocker ownership (test plan t2).
+"""U1 fixed-evidence display and real blocker ownership (test plan t3).
 
 Covers the six must-test targets of ``plan/stage2-fixed-evidence/test-plan.md``:
 trusted citation display (U1-A), missing-metadata handoff (U1-B), real fragment
@@ -633,22 +633,63 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(document["header"]["state_fingerprint"],
                          contact_state.stage2_pack_state_fingerprint(env.pack()))
 
-        # A real body/business change starts a fresh validation version.
-        env.record(env.write_report("u1f-pass-2.json", []))
-        facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
-        facts["directions"][0]["user_note"] = "新的用户笔记会改变正文与指纹。"
-        Path(facts_path).write_text(json.dumps(facts, ensure_ascii=False, indent=1),
-                                    encoding="utf-8")
-        env.save_preflight("u1f-preflight.json")
-        plan = parse(run_cli("stage2-plan", "--facts", facts_path,
-                             "--preflight-file", env.root / "u1f-preflight.json"))
+        # A real fixed-evidence change is accepted as new structured input: the
+        # managed body changes, the old validator retires, and its raw report
+        # file stays untouched.
+        fixed_env = self._fresh_env()
+        fixed_facts, fixed_results, fixed_proof = fixed_env.generate_pack(
+            fixed_env.gap_override())
+        old_report = fixed_env.write_report("u1f-fixed-pass.json", [])
+        self.assertEqual(fixed_env.record(old_report)["status"], "ok")
+        old_pack = fixed_env.pack()
+        self.assertEqual(old_pack["validator"]["phase"], "terminal")
+        old_body = fixed_env.document()["body"]
+        old_report_bytes = Path(old_report).read_bytes()
+        fixed_gap_id = contact_state.quote_id(fixed_env.gap_quotes["AAAA1111"])
+        old_evidence = (f"后续由 {CITATION_KEY} 完成，日期 {ORDINARY_DATE}，"
+                        f"未知 {ORDINARY_EIGHT} 与 12345678 保留。")
+        new_evidence = old_evidence[:-1] + "；新增固定证据对照。"
+        freshness_path = fixed_results / "freshness-DIR00001.json"
+        freshness = json.loads(freshness_path.read_text(encoding="utf-8"))
+        fixed_rows = [row for row in freshness["results"]
+                      if row["gap_id"] == fixed_gap_id]
+        self.assertEqual(len(fixed_rows), 1, fixed_rows)
+        self.assertEqual(fixed_rows[0]["evidence"], old_evidence)
+        fixed_rows[0]["evidence"] = new_evidence
+        freshness_path.write_text(json.dumps(freshness, ensure_ascii=False),
+                                  encoding="utf-8")
+        cache_path = fixed_env.prof_dir / contact_state.FRESHNESS_CACHE
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        self.assertIn(fixed_gap_id, cache["entries"])
+        del cache["entries"][fixed_gap_id]
+        cache_path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+
+        payload = fixed_env.preflight()
+        self.assertEqual(payload["action"], "process", payload)
+        fixed_direction = next(row for row in payload["directions"]
+                               if row["direction_id"] == "DIR00001")
+        self.assertIn("freshness_cache_changed",
+                      fixed_direction["reason_codes"], fixed_direction)
+        fixed_preflight = fixed_env.root / "u1f-fixed-preflight.json"
+        fixed_preflight.write_text(json.dumps(payload, ensure_ascii=False),
+                                   encoding="utf-8")
+        fixed_env.bind_facts_to_preflight(fixed_facts, payload)
+        plan = parse(run_cli("stage2-plan", "--facts", fixed_facts,
+                             "--preflight-file", fixed_preflight))
         self.assertEqual(plan["status"], "ok", plan)
-        out = parse(run_cli("stage2-finalize", "--facts", facts_path,
-                            "--preflight-file", env.root / "u1f-preflight.json",
-                            "--results", results))
+        self.assertTrue(any(job["kind"] == "freshness" for job in plan["jobs"]), plan)
+        out = fixed_env.finalize(fixed_facts, fixed_preflight, fixed_results)
         self.assertEqual(out["status"], "ok", out)
-        self.assertIsNone(env.pack().get("validator"))
-        self.assertIn("新的用户笔记", env.document()["body"])
+        pack = fixed_env.pack()
+        fixed_gap = next(row for row in pack["directions"][0]["gap_shortlist"]
+                         if row["gap_id"] == fixed_gap_id)
+        self.assertEqual(fixed_gap["evidence"], new_evidence)
+        new_body = fixed_env.document()["body"]
+        self.assertNotEqual(new_body, old_body)
+        self.assertIn("新增固定证据对照", new_body)
+        self.assertIn(CITATION_LINK, new_body)
+        self.assertIsNone(pack.get("validator"))
+        self.assertEqual(Path(old_report).read_bytes(), old_report_bytes)
 
         # A business-fingerprint change whose visible body is equivalent still
         # expires the old certification and refreshes only the header.
@@ -672,19 +713,31 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(env.document()["body"], body_before)
         self.assertIsNone(env.pack().get("validator"))
 
-        # An invalid old binding with no business change is rejected, untouched.
+        # With business and body unchanged, only an invalid old binding is
+        # rejected before any write and must not be silently re-bound.
         stale_env = self._fresh_env()
         stale_facts, stale_results, stale_proof = stale_env.generate_pack()
-        stale_env.record(stale_env.write_report("u1f-stale-pass.json", []))
+        stale_report = stale_env.write_report("u1f-stale-pass.json", [])
+        self.assertEqual(stale_env.record(stale_report)["status"], "ok")
+        stale_pack = stale_env.pack()
+        self.assertEqual(stale_pack["validator"]["pack_sha256"],
+                         contact_state.stage2_pack_content_fingerprint(stale_pack))
+        stale_pack["validator"]["pack_sha256"] = "0" * 64
+        stale_env.write_pack(stale_pack)
+        stale_pack_bytes = (stale_env.prof_dir / contact_state.INPUT_PACK).read_bytes()
         analysis_path = stale_env.prof_dir / contact_state.ANALYSIS_MD
-        analysis_path.write_text(
-            analysis_path.read_text(encoding="utf-8") + "\n人工改动。\n",
-            encoding="utf-8")
-        protected = analysis_path.read_bytes()
+        analysis_bytes = analysis_path.read_bytes()
+        stale_facts_bytes = Path(stale_facts).read_bytes()
+        stale_report_bytes = Path(stale_report).read_bytes()
         out = stale_env.finalize(stale_facts, stale_proof, stale_results)
         self.assertEqual(out["status"], "error", out)
         self.assertEqual(out.get("reason_code"), "validation_render_stale", out)
-        self.assertEqual(analysis_path.read_bytes(), protected)
+        self.assertEqual((stale_env.prof_dir / contact_state.INPUT_PACK).read_bytes(),
+                         stale_pack_bytes)
+        self.assertEqual(analysis_path.read_bytes(), analysis_bytes)
+        self.assertEqual(Path(stale_facts).read_bytes(), stale_facts_bytes)
+        self.assertEqual(Path(stale_report).read_bytes(), stale_report_bytes)
+        self.assertEqual(stale_env.pack()["validator"]["pack_sha256"], "0" * 64)
 
         # The source line only ignores its generated timestamp: another text
         # change on the same line is a real body change, not an equivalent render.
