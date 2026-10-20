@@ -69,17 +69,17 @@
 - `TestRunnerBasics.test_11a_stage2_validator_pass_with_minor_is_accepted` 已检查 minor 持久状态与零修订；`test_13_stage2_validator_rewrite_round_trips_structured_narrative` 已有 narrative refine 观察，可按实际影响复用 U1-D。
 - `test_stage2_style_validation_handoff.py` 的 `Stage2ValidationHandoffTests` 有 `write_validation_issues`、`record_validation`、`rewrite_direction`；`test_repeated_quote_locations_and_ambiguous_report` 已有物理行号/短文本/歧义，`test_stage2_nonrepairable_user_note_does_not_create_a_correction_job` 已有排除区域，`test_stage2_second_blocking_round_is_terminal` 已包含 narrative later-title 和两轮流转。U1-C/D 复用这些资产并仅接线新增固定行为，不把旧方法中所有历史要求带入清单。
 - 同文件 `test_business_rerender_and_bounded_correction_lifecycle` 已有旧包、preflight/plan/finalize、保留旧报告与生命周期观察；它含历史成员迁移等非本轮目的，不能整组照搬为 U1 义务。仅复用适合 U1-E/F 的夹具/观察或有效结果。
-- `test_stage2_preflight.py` 中 `TestPreflightDecision.test_a_legacy_pack_falls_back_to_process`、`TestFinalizePreflightWiring.test_legacy_slow_path_seeds_metadata_for_next_run` 提供旧包通路的既有检查思路；U1 的独立完成信息、四出口、固定报告归属及保护行为仍需产品实现后接线。
+- `test_stage2_preflight.py` 中 `TestPreflightDecision.test_a_legacy_pack_falls_back_to_process`、`TestFinalizePreflightWiring.test_legacy_slow_path_seeds_metadata_for_next_run` 提供旧包通路的既有检查思路；U1 的独立完成信息、四出口、固定报告归属及保护行为已有本轮专用测试，当前待补仅限 U1-F 的两个输入场景。
 - `test_contact_state.py::test_08_manual_markdown_edit_needs_decision` 实际检查 Stage 3，不能冒充 U1-F 的 Stage 2 人工保护结果。U1-F 应在现有 Stage 2 夹具里观察本次正常 finalize，而非扩跑 Stage 3。
 
 不要求新增通用 fixture、专用判定器、逐调用记录或来源认证。U1 的六个专用测试方法已入库，保持现有方法与合成夹具；新增检查只填补原定目标的实际断言，不增加业务场景数量或运行时前置。
 
-### t2 对现有测试代码的最小补齐（断言已补齐，尚未执行）
+### t2 对现有测试代码的最小补齐（已在当前持续集成执行）
 
 - U1-A：现有 `test_u1_a_trusted_citation_display_keeps_facts_and_licences` 已检查可信链接的总次数、部分原文及许可集合；已在该方法内按四个实际出口分别比较引用及证据文字，避免某个出口遗漏或改写却因总数正确而通过。
 - U1-B：现有 `test_u1_b_missing_trusted_metadata_fails_before_write` 已检查失败、论文 key 和文件未写入；已补固定输入对应的 gap、字段定位，确认返回的错误可交数据 owner。无需新设固定错误码。
 - U1-C：现有 `test_u1_c_report_ownership_uses_real_fragments` 对 gap 的断言曾使用返回值 `rows[0]["gap_id"]` 自身；现已改为预先确定的输入 gap 预期，其余责任分类沿用既有断言。
-- U1-D/E/F：若产品及相关测试行为未变，直接复用 §7 的有效结果；上述 A/B/C 的断言补齐不构成重跑 D/E/F 的理由。
+- U1-D/E：当前代码未改变这些业务目标的检查，已有执行结果继续有效。U1-F 原方法的其他检查可复用，但本版 §6.3、§6.4 的两个既定场景需要落实后定向补测；A/B/C 的断言补齐不构成重跑 D/E 的理由。
 
 
 ## 4. 执行与结果复用约定
