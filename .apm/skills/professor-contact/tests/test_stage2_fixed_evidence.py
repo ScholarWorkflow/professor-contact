@@ -16,7 +16,6 @@ from test_contact_state import (
     BaseEnv,
     contact_state,
     parse,
-    quote_id,
     run_cli,
     stage2_style_validation_report,
 )
