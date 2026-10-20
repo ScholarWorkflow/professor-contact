@@ -4,8 +4,9 @@
 
 - 执行计划：`plan/email-core/implementation-plan.md`（第 2 版，`Plan conclusion: APPROVED`）。
 - 测试计划：`plan/email-core/test-plan.md`（第 3 版，第一关 PASS、第二关 PASS）。
-- 被测提交：实现提交 `refactor(email): move the email entry compilation into a module`。
-- 对照基准：父提交 `3ffdab0`（PR #125 的 head）；命令按 `git rev-parse origin/refactor-shared-helpers` 动态取值。
+- 被测提交：实现提交 `b00ac45f7e0c50151bca4ffc07397d3e78c2c638`（`refactor(email): move the email entry compilation into a module`）。
+- 对照基准：父提交 `3ffdab0352fcc72a64c24dc5ec5c114d7de47179`（PR #125 的 head）；命令按 `git rev-parse origin/refactor-shared-helpers` 动态取值。
+- 记录提交：`e66425293671513ac10de90442d42c624d9cc581` 只新增本文件，不改产品代码；本文的被测对象一律指 `b00ac45`。
 - 运行目录：仓库外的临时目录（下称 `$RUN`），其中 `base/` 为父提交导出的 `scripts`，`head/` 为工作树的 `scripts` 副本。
 
 ## 结果
@@ -26,7 +27,7 @@
 - runner：2154 行（父提交 2334 行），sha256 `aeb3ed6c75fdd468b95147e8c4df81e615d2a353d6b06df9cd73b13e36028d79`。
 - 新模块：`_email_core.py`，234 行，sha256 `285bd19333bdaf5be3198decb47a4a06561fa53f22eb332862b55019a942e638`。
 - `_stage5_email.py`：499 行，sha256 `db15c7bfc973d26cd15667c84ab32cb80332c3c62cc6f8182aa9f3dee7ca9b70`。
-- diff：`+26 −213`（普通 `git diff --stat`，只含 2 个已跟踪文件）；`git diff --ignore-blank-lines -U0` 共 7 个 hunk：runner 4 个（加载块、定义删除含绑定块、`_stage5_email` 关键字删除、旧别名删除），`_stage5_email.py` 3 个（签名、定义删除、返回命名空间项删除）。
+- diff：`+26 −213`（普通 `git diff --stat`，只含 2 个已跟踪文件）；`git diff --ignore-blank-lines -U0 3ffdab0..HEAD -- .apm/skills/professor-contact/scripts/contact_state.py .apm/skills/professor-contact/scripts/_stage5_email.py` 共 7 个 hunk：runner 4 个（加载块、定义删除含绑定块、`_stage5_email` 关键字删除、旧别名删除），`_stage5_email.py` 3 个（签名、定义删除、返回命名空间项删除）。该命令必须限定这两个路径：不限路径会把 3 个计划文档和新模块 `_email_core.py` 也算进去，提交后是 11 个 hunk。
 - 空行：删除后合并出的 6 行与 3 行两处空行块收敛为 2；父提交自带的 6 行块（当前 1584–1589）保持 6 行。
 
 ## 说明与偏差
@@ -38,4 +39,4 @@
 
 ## 复核入口
 
-测试计划第 1–7 步的命令可直接重跑；日志落在 `$RUN` 下的 `help-base.txt`、`help-head.txt`、`t1-t3.log`、`t4.log`、`t5.log`，插桩证据在副本 `$RUN/wt3` 的 `calls7.log`（工作树源码不含插桩）。
+测试计划第 1–6 步的命令可直接重跑；日志落在 `$RUN` 下的 `help-base.txt`、`help-head.txt`、`t1-t3.log`、`t4.log`、`t5.log`，插桩证据在副本 `$RUN/wt3` 的 `calls7.log`（工作树源码不含插桩）。第 7 步在提交后的干净 HEAD 上不能原样重跑（`git diff` 为空，`grep -c '^@@'` 输出 0 并以 1 退出），要改用 `git diff --ignore-blank-lines -U0 3ffdab0..HEAD -- <两个被改文件>` 复核那 7 个 hunk。
