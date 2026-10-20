@@ -148,7 +148,7 @@ uv run --no-project python -m unittest discover -s . -p 'test_*.py' > /tmp/u1-fi
 
 ## 7. 执行结果（2026-10-20）
 
-- 产品与测试版本：`2b813fc`（`feat: render trusted fixed evidence and record real blocker owners`；测试代码与该候选同提交）。本文档结果记录提交只改本文件。
+- 产品与测试版本：初始实现 `2b813fc`；IR-U1-1/IR-U1-2 修复后为 `3d6c2bc`（产品代码只改 `_stage2_render.py`，测试只改 `test_stage2_fixed_evidence.py`）。以下按轮次标注；最终六项、既有 185 项与全仓回归均在 `3d6c2bc` 上重跑，日志在 `/tmp/u1-fixed-evidence/`。
 - 环境：仓库现有 `uv run --no-project python`（CPython 3.14.6），沿用既有合成夹具；无新增安装、模型调用、Zotero/PDF 下载或双 harness 运行。
 - 第 1 步静态编译：退出码 0，无输出（`/tmp/u1-fixed-evidence/u1-af.log` 同轮执行）。
 - 第 2 步 U1-A 至 U1-F：`Ran 6 tests in 7.977s`、`OK`；六个方法逐项通过：
@@ -161,7 +161,9 @@ uv run --no-project python -m unittest discover -s . -p 'test_*.py' > /tmp/u1-fi
 - 第 3 步既有适用检查：第一次正式尝试 `Ran 185 tests` 出现 1 个执行错误 `test_contact_state.Issue67ProfessorLocalStage4Tests.test_07_professor_dir_outside_the_program_writes_nothing_anywhere`；该用例使用固定的 `/tmp/issue67-outside` 路径，与同时运行的全仓回归共享目录，错误是 `FileNotFoundError`，不是业务断言失败。保留该次尝试，待全仓回归结束后单独重跑：`Ran 185 tests in 157.472s`、`OK`。受影响范围仅此环境冲突，不改变六项结论。
 - 第 4 步全仓回归（补充）：`Ran 1036 tests in 339.171s`、`OK (skipped=1)`，退出码 0；日志 `/tmp/u1-fixed-evidence/full-suite.log`。既有 `test_stage01_caller_contract` 也通过，SKILL/analyzer 文本与调用方约定一致。
 - 未执行项：无（六个必测项均已执行）。无法判断项：无；第 3 步首次并发冲突已由同条件单独重跑排除。
-- 记录后追加：U1-F 增加一条来源行逐字比较断言（确认只有顶部生成时间可忽略），同方法随六项重跑 `Ran 6 tests in 11.915s`、`OK`（日志 `/tmp/u1-fixed-evidence/u1-af-rerun.log`）；产品实现提交 `2b813fc` 未变。
+- 记录后追加（修复前轮次）：U1-F 增加一条来源行逐字比较断言，同方法随六项重跑 `Ran 6 tests in 11.915s`、`OK`（日志 `/tmp/u1-fixed-evidence/u1-af-rerun.log`）；该轮早于裸 Zotero URI 修复，仅作历史保留。
 - CI 合同：新测试模块 `test_stage2_fixed_evidence` 已登记到 `plan/test-grouping/shards.json` 的 shard4（stage2）；`uv run --no-project python scripts/check_test_shards.py` 输出 `OK: 79 test modules across 4 shards`。
+- 修复后复验（`3d6c2bc`）：U1-A 至 U1-F `Ran 6 tests in 19.545s`、`OK`（日志 `/tmp/u1-fixed-evidence/u1-af-3d6c2bc.log`），六个方法逐项仍 PASS；相关既有检查 `Ran 185 tests in 125.995s`、`OK`（日志 `/tmp/u1-fixed-evidence/u1-existing-rerun-2.log`）；全仓回归 `Ran 1036 tests in 514.323s`、`OK (skipped=1)`、退出码 0（日志 `/tmp/u1-fixed-evidence/full-suite-2.log`）。
+- 实现符合性审核：首次审核 `2b813fc` 结论为部分完成（IR-U1-1 裸 Zotero URI、IR-U1-2 来源行测试证据区分力）；`3d6c2bc` 修复后同一专用代理复核，两项均关闭、未发现新问题，就这两项及直接影响判完整。记录见 [implementation-review-2026-10-20.md](implementation-review-2026-10-20.md)；不代表计划、测试或合并关口批准。
 - 复用说明：本次没有可沿用的 U1 产品结果；既有 T4/T5、preflight、resolved-direction 结果只按本候选直接相关的测试方法重跑，不把历史结果外推到新实现。
 - 范围说明：本记录只报告测试执行事实，不批准计划或测试关口；计划审核、测试计划审核与合并审核仍由各自负责人给结论。本地执行工程师已同步 `SKILL.md` 与两个 analyzer 的“登记→交 owner→停止/修订”说明，未改委派结构或 style-validator 格式。
