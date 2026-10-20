@@ -1,6 +1,6 @@
 # Stage 2 U1：固定证据展示与真实阻挡归属
 
-- Plan revision：`stage2-u1-r3`（2026-10-20）；Proposed review status: pending。
+- Plan revision：`stage2-u1-r3`（2026-10-20）；Plan review status：APPROVED（2026-10-20，[计划审核评论](https://github.com/ScholarWorkflow/professor-contact/pull/107#issuecomment-6293465316)）。
 - 唯一目标路径：`plan/stage2-fixed-evidence/implementation-plan.md`。本轮交执行计划与同目录 [测试计划](test-plan.md)；计划编写时未实施、未运行测试，不沿用 #92 的批准或测试状态作为本计划通过结论。产品实施与执行记录见文末交付状态。
 - Requirement revision：2026-10-17 已确认 U1，2026-10-19 用户明确要求总结 #92 至今经验，将 U1/U5 分成两个 PR 从头设计；保持 main 行为先完成 Stage 2 模块拆分，再分别修复。2026-10-20 用户授权开始 U1/U5 两个计划；本轮完成拆分后设计落点更新，仍仅计划，不实施。
 - Repository baseline：`ScholarWorkflow/professor-contact@879982abe1d7d811bd9d014c03dce4f5912cc64f`，2026-10-20 13:09 UTC 读取最新 main（#117）。PR107 原计划 head 为 `86da1d4b59ea4b59a95b0b5449b4531d192ccfd3`、版本 r2；本 r3 是其完整替代候选，不继承旧计划审核结论作为本轮自授状态。#92 `10324b8f10ff84080e9f7132bef807926de23279` 的 r11/t47 仅作历史教训，不移植补丁或扩张旧测试矩阵。
