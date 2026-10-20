@@ -148,6 +148,18 @@ uv run --no-project python -m unittest discover -s . -p 'test_*.py' > /tmp/u1-fi
 
 ## 7. 执行结果（2026-10-20）
 
-- 产品与测试版本：待候选提交后按实际 `HEAD` 回填；测试代码与本候选同提交。
-- 环境：仓库现有 `uv run --no-project python`（CPython 3.14.6），沿用既有合成夹具，无新增安装。
-- 逐项结果：见提交后的执行记录；未执行、无法判断项会在此明确列出，不用总数代替六项覆盖。
+- 产品与测试版本：`2b813fc`（`feat: render trusted fixed evidence and record real blocker owners`；测试代码与该候选同提交）。本文档结果记录提交只改本文件。
+- 环境：仓库现有 `uv run --no-project python`（CPython 3.14.6），沿用既有合成夹具；无新增安装、模型调用、Zotero/PDF 下载或双 harness 运行。
+- 第 1 步静态编译：退出码 0，无输出（`/tmp/u1-fixed-evidence/u1-af.log` 同轮执行）。
+- 第 2 步 U1-A 至 U1-F：`Ran 6 tests in 7.977s`、`OK`；六个方法逐项通过：
+  - U1-A `test_u1_a_trusted_citation_display_keeps_facts_and_licences` PASS。
+  - U1-B `test_u1_b_missing_trusted_metadata_fails_before_write` PASS。
+  - U1-C `test_u1_c_report_ownership_uses_real_fragments` PASS。
+  - U1-D `test_u1_d_narrative_two_rounds_and_fixed_stop` PASS。
+  - U1-E `test_u1_e_old_pack_updates_through_process_to_finalize` PASS。
+  - U1-F `test_u1_f_acceptance_separates_body_business_binding_and_validator` PASS。
+- 第 3 步既有适用检查：第一次正式尝试 `Ran 185 tests` 出现 1 个执行错误 `test_contact_state.Issue67ProfessorLocalStage4Tests.test_07_professor_dir_outside_the_program_writes_nothing_anywhere`；该用例使用固定的 `/tmp/issue67-outside` 路径，与同时运行的全仓回归共享目录，错误是 `FileNotFoundError`，不是业务断言失败。保留该次尝试，待全仓回归结束后单独重跑：`Ran 185 tests in 157.472s`、`OK`。受影响范围仅此环境冲突，不改变六项结论。
+- 第 4 步全仓回归（补充）：`Ran 1036 tests in 339.171s`、`OK (skipped=1)`，退出码 0；日志 `/tmp/u1-fixed-evidence/full-suite.log`。既有 `test_stage01_caller_contract` 也通过，SKILL/analyzer 文本与调用方约定一致。
+- 未执行项：无（六个必测项均已执行）。无法判断项：无；第 3 步首次并发冲突已由同条件单独重跑排除。
+- 复用说明：本次没有可沿用的 U1 产品结果；既有 T4/T5、preflight、resolved-direction 结果只按本候选直接相关的测试方法重跑，不把历史结果外推到新实现。
+- 范围说明：本记录只报告测试执行事实，不批准计划或测试关口；计划审核、测试计划审核与合并审核仍由各自负责人给结论。本地执行工程师已同步 `SKILL.md` 与两个 analyzer 的“登记→交 owner→停止/修订”说明，未改委派结构或 style-validator 格式。
