@@ -4,9 +4,9 @@
 
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 3 版。
 - Requirement revision: 第 1 版（2026-10-20 负责人要求）。
-- Target repository revision: 工作分支 `refactor-stage2-render`；对照基准为分支链上一位 `refactor-stage2-context`（#113）的 head `2a2ffabe7a19e29be17b035a5c8a2e175fb6f81b`（GitHub 原生堆栈自动 rebase 前是 `5972905`，两者 `scripts` 子树字节相同）。
-- Test plan revision: 第 3 版。
-- Proposed review status: **第一关 PASS、第二关 PASS**（2026-10-20）。
+- Target repository revision: 工作分支 `refactor-stage2-render`；对照基准为当前父分支 `refactor-stage2-context`（#113）的 head `c303242c79fd860302fcd95ac8f460a8e532bee2`。此前基准为 `2a2ffabe7a19e29be17b035a5c8a2e175fb6f81b`、`5972905`；已核对父分支更新前后相关 5 个程序文件 Git blob 相同，既有有效测试结果可复用。
+- Test plan revision: 第 8 版（2026-10-20）。
+- Review status: **第一关 PASS（沿用）；第二关第 8 版修订待复核；第三关未审核**（2026-10-20）。
 - 测试范围依据：`Test Engineer Rule.md`。
 
 ## 必测清单
@@ -14,10 +14,10 @@
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
 | T0 | 模块可编译、可加载，两个工厂的契约与别名顺序正确（R1、R3、R4） | 工作树 `scripts/contact_state.py`、`scripts/_stage2_render.py`、`scripts/_stage2_finalize.py` | 三个文件 `py_compile` 成功；`--help` 退出码 0 且与父提交逐字节相同；`_stage2_render.build` 恰 16 个 keyword-only 参数、返回 12 个成员；`_stage2_finalize.build` 恰 40 个参数、返回 7 个成员；runner 有 12 个 `X = _stage2_render.X` 别名（去重后仍 12），其中包含两个标题 helper，且不再有指向 `_stage2_finalize` 的同名别名；模块不导入 runner、不做动态加载、不碰 `sys.path`／`sys.modules` | 第 1 步命令（7 条 `T0 ... OK` 与 `T0 CHECKS PASS`）；`--help` 的逐字节比较用第 2 步的 `diff -u` |
-| T1 | 10 个定义确实离开 runner 顶层、进入模块 `build()`（R1） | 对照基准（`git archive 2a2ffab` 取出的 `scripts`）与工作树 `scripts` | `T0`：base 与 head 是两个不同目录、base 仍定义 10 个定义、head 一个都不定义；`T1`：模块存在；10 个定义逐个“runner 顶层已无 / 模块 `build()` 内有” | 第 2 步对比脚本的 `T0 ...`／`T1 ...` 行，共 24 条 `OK` |
+| T1 | 10 个定义确实离开 runner 顶层、进入模块 `build()`（R1） | 对照基准（`git archive c303242c` 取出的 `scripts`）与工作树 `scripts` | `T0`：base 与 head 是两个不同目录、base 仍定义 10 个定义、head 一个都不定义；`T1`：模块存在；10 个定义逐个“runner 顶层已无 / 模块 `build()` 内有” | 第 2 步对比脚本的 `T0 ...`／`T1 ...` 行，共 24 条 `OK` |
 | T2 | 搬移没有改变任何逻辑（R2、R4） | 同上两侧源码，加基线 `_stage2_finalize.py` 与工作树 `_stage2_render.py` | 10 个定义的代码 AST 与基准相同（脚本忽略 docstring）；两个标题 helper 在 `_stage2_finalize.py` 中消失、在 `_stage2_render.py` 中出现且 AST 与基线版本相同；`_stage2_finalize.py` 其余 13 个函数 AST 不变；runner 其余顶层定义不变；离开 runner 的定义正好是这 10 个、没有新增；10 个名字都有 runner 别名 | 同一脚本的 `T2 ...` 行（13 条 `OK`）；标题 helper 用第 2 步第二段的只读 AST 核对 |
 | T3 | 旧接口与加载方式不变（R3、R4、R5） | 同一进程内分别按文件路径加载两侧 runner；再以子进程直接执行改动后的 runner | 10 个名字在两侧都可调用、`inspect.signature` 相同；`--help` 退出码 0；runner 里两个加载块都用 `Path(__file__).with_name(...)` 指向模块文件（第 1 步断言）；`_stage2_render` 的 16 个实参与参数同名同集合、12 个别名都在调用之后 | 同一脚本的 `T3 ...` 行（21 条 `OK`）与第 1 步的源码约束核对；合计 58 条 `OK`、末尾 `ALL CHECKS PASS` |
-| T4 | 渲染／校验层经命令的行为不变（R2、R4） | 7 个既有方法：`test_stage2_narrative_example_contract.NarrativeExampleContractTests` 的 3 个 `*_passes_finalize`；`test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests` 的 3 个方法；`test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` | **条件式通过条件**：7 个方法全部 `ok` 则 T4 通过；有失败时按第 5 步在父提交 `5972905` 上跑同一组方法，基线同样失败记既有失败，基线通过而工作树失败记本批回归 | 第 3 步命令；`Ran 7 tests`、`OK`，无 skip／`FAIL`／`ERROR` |
+| T4 | 渲染／校验层经命令的行为不变（R2、R4） | 7 个既有方法：`test_stage2_narrative_example_contract.NarrativeExampleContractTests` 的 3 个 `*_passes_finalize`；`test_stage2_resolved_direction.Stage2FinalizeWithResolvedTests` 的 3 个方法；`test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` | **条件式通过条件**：7 个方法全部 `ok` 则 T4 通过；有失败时按第 5 步仅对照当前父提交 `c303242c` 上同一个实际失败的方法；父提交发生相同业务失败记既有失败（不计为 T4 通过），父提交通过而工作树发生业务失败记本批回归；环境或测试运行故障记无法判断 | 第 3 步命令；`Ran 7 tests`、`OK`，无 skip／`FAIL`／`ERROR` |
 | T5 | 复制 runner 的既有夹具仍能加载新模块 | `test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker`、`test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling` | 复制布局包含 `_stage2_render.py`，复制后的 runner 能按路径加载它；两方法 `OK` | 第 4 步命令；`Ran 2 tests`、`OK` |
 
 **既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的 4 个 `shards` 与聚合 job `test` 照常执行，结果按运行编号与 head 单独引用；本批不在本地重跑全量套件。
@@ -117,7 +117,7 @@ set -e
 cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-render
 RUN=/tmp/pc-stage7
 mkdir -p "$RUN/base"
-git archive 2a2ffabe7a19e29be17b035a5c8a2e175fb6f81b .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
+git archive c303242c79fd860302fcd95ac8f460a8e532bee2 .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
 uv run --no-project python "$RUN/base/.apm/skills/professor-contact/scripts/contact_state.py" --help >"$RUN/help-base.txt"
 diff -u "$RUN/help-base.txt" "$RUN/help-head.txt"
 shasum -a 256 /tmp/pc-stage2-tools/compare_stage2_batch_v2.py
@@ -204,21 +204,28 @@ uv run --no-project python -m unittest \
 ```
 预期：`Ran 2 tests`、全部 `ok`。
 
-5. 失败处理：T4／T5 有方法失败时，只在父提交上对照**同一个方法**（不重跑整组），每次对照写独立日志、不覆盖既有记录。下面的块用 `METHOD` 环境变量指定方法，未指定时跑示例里那一个，因此可以原样执行：
+5. 失败处理：仅在 T4／T5 有方法失败时执行。先把第 3／4 步中**实际失败的完整测试方法名**设为环境变量 `METHOD`，然后执行本命令块；未设置则立即报错停止，不默认选择其他方法。每次只在父提交上运行该方法，不重跑整组；保存独立日志和退出码。
 ```sh
 set -e
-METHOD="${METHOD:-test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle}"
-LOG=/tmp/pc-stage7/baseline-$(date +%Y%m%d-%H%M%S).log
-BASELINE=/tmp/pc-stage7/base-parent
+: "${METHOD:?须传入 T4/T5 实际失败的完整测试方法名}"
+RUN=/tmp/pc-stage7
+mkdir -p "$RUN"
+LOG="$(mktemp "$RUN/baseline-XXXXXXXX")"
+BASELINE="$RUN/base-c303242c"
 if [ ! -d "$BASELINE/.apm" ]; then
   mkdir -p "$BASELINE"
-  git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-render archive 2a2ffabe7a19e29be17b035a5c8a2e175fb6f81b | tar -x -C "$BASELINE"
+  git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-stage2-render archive c303242c79fd860302fcd95ac8f460a8e532bee2 | tar -x -C "$BASELINE"
 fi
 cd "$BASELINE/.apm/skills/professor-contact/tests"
-uv run --no-project python -m unittest "$METHOD" -v >"$LOG" 2>&1 || true
+if uv run --no-project python -m unittest "$METHOD" -v >"$LOG" 2>&1; then
+  BASELINE_EXIT=0
+else
+  BASELINE_EXIT=$?
+fi
 cat "$LOG"
+printf '对照退出码：%s；日志路径：%s\n' "$BASELINE_EXIT" "$LOG"
 ```
-判据：父提交上同一个方法也失败＝既有失败；父提交通过而工作树失败＝本批回归。日志名带时间戳，同一方法反复对照也不覆盖；没有失败时不执行本步，也不新增用例。
+判据：只对比同一方法的实际业务结果。父提交与工作树出现相同业务失败，记既有失败（不得算通过）；父提交通过而工作树出现业务失败，记本批回归；若观察到依赖缺失、测试启动失败或环境故障，记无法判断，不以退出码非零直接认定既有业务失败。`mktemp` 为每次尝试生成不同日志路径，保留所有正式尝试；没有失败时不执行本步，不新增用例。
 
 6. 失败注入：本批不适用。本批只搬移定义并把两个标题 helper 换到渲染模块，不修改事务、回滚、写入顺序或错误通道实现；必测清单里没有失败注入项。
 
@@ -235,10 +242,15 @@ cat "$LOG"
 ## 修订记录
 
 - 第 1 版：首次提交。
-- 第 2 版：按实施前演练修正——`_stage2_render.build` 的参数由 15 个改为 16 个（补 `Stage2PackRefineContext`，T0 脚本的期望集合同步），对照基准改为分支链上一位的 head `5972905`；A/B 条数（58）与 T4／T5 方法不变。
+- 第 2 版：按实施前演练补齐 `Stage2PackRefineContext`，修正为 16 个注入参数，更新对照基准与期望输出。
+- 第 3 版：处理第一关原有 K1–K5：核对加载方式、检查条数、失败处理覆盖与工具哈希；T0–T5 必测项不变。
+- 第 4—5 版：分别记录第一关、原第二关审核意见；未增加必测项。第二关后续复核提出的 K1、K2 按第 6 版处理。
+- 第 6 版：对照基准改为 `2a2ffabe`；失败对照改为只运行失败的单个方法，日志独立保存；既有 T0–T5 结果复用。
+- 第 7 版：修复第 5 步方法占位符导致的 shell 语法错误，补实测记录。
+- 第 8 版：T4 与第 5 步统一为相同方法对照；要求 `METHOD` 指明实际失败方法、保留退出码，并区分业务失败和环境／测试错误；对照基准更新为 `c303242c`，同步版本记录。必测清单和原始 T0–T5 执行结果不变。
 
 ## 审核状态
 
-- 第 1 版：待审核。
-- 第 2 版：第一关 NEEDS_MODIFICATION（K1 对照基准自相矛盾；K2 T3 的加载方式断言缺失；K3 T0 条数写错；K4 失败处理缺 T5；K5 脚本哈希写错）。
-- 第 3 版：待复核——K1 T1 行改 `5972905`；K2 第 1 步补 `Path(__file__).with_name(...)` 断言、T0 行注明逐字节比较在第 2 步；K3 因新增断言，T0 实际输出 7 条；K4 第 5 步基线命令补上 T5 的两个方法（共 9 个）；K5 哈希补全为 64 位。另按非阻断建议补 `set(base)-set(head)==set(targets)` 与“无位置参数”断言。
+- 第一关：**PASS**（复用既有结论）。
+- 第二关：**第 8 版修订待复核**；只复核上述受影响的判据与步骤。
+- 第三关：**本轮未审核**。已有 T0–T5 执行记录，按规则第 6 节保留，不因本次文档修订重跑。
