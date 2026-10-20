@@ -3,8 +3,8 @@
 ## 版本、来源与状态
 
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 2 版。
-- Target repository revision: 工作分支 `refactor-shared-helpers`；对照基准为父分支 `refactor-stage5-helpers`（#124）的 head，命令里用 `git rev-parse` 动态取（当前 `8e47d10`）。
-- Test plan revision: 第 2 版。
+- Target repository revision: 工作分支 `refactor-shared-helpers`；对照基准为父分支 `refactor-stage5-helpers`（#124）的 head，命令里用 `git rev-parse` 动态取（本次审核时 `64dcf022c02de2a776f74cab0ef15982ff5c6863`）。
+- Test plan revision: 第 3 版。
 - 测试范围依据：`Test Engineer Rule.md`。
 
 ## 必测清单
@@ -13,10 +13,12 @@
 | --- | --- | --- | --- | --- |
 | T0 | 模块可编译、可加载，工厂契约与别名顺序正确（R1、R3、R4） | 工作树 `scripts/contact_state.py`、`scripts/_candidate_validate.py` | `py_compile` 成功；`--help` 退出码 0；`build()` 参数精确等于 7 个名字、无位置参数无默认值；返回 5 个成员；5 个同名别名；绑定调用晚于 `_direction_slices`、且 5 个别名都晚于该调用并早于 `_stage3_commands` 的 build；模块不导入 runner、无动态加载、不碰 `sys.path`／`sys.modules`；5 个名字不再在 runner 顶层定义 | 第 1 步命令；5 条 `T0 ... OK` + 1 条 `T0 CHECKS PASS` |
 | T1 | 5 个定义确实离开 runner 顶层（R1） | 对照基准与工作树 | base 仍定义 5 个、head 一个都不定义；模块存在；逐个“runner 已无 / 模块 `build()` 内有” | 第 2 步脚本的 `T0`／`T1` 行，共 14 条 `OK` |
-| T2 | 搬移没有改变逻辑（R2） | 两侧源码 | 5 个定义的 AST 相同（比较时忽略 docstring）；docstring 3 个有（全多行）清洗后同文、2 个原本没有；runner 其余函数/类定义不变；离开的是这 5 个；5 个都有别名 | 同一脚本的 `T2` 行（8 条 `OK`）+ docstring 段 |
+| T2 | 搬移没有改变逻辑（R2） | 两侧源码 | 5 个定义的 AST 相同（比较时忽略 docstring）；docstring 3 个有（全多行）清洗后同文、2 个原本没有；runner 其余函数/类定义不变；离开的是这 5 个；5 个都有别名；5 个函数体去除新模块的统一缩进后逐字相同（已有审核确认） | 同一脚本的 `T2` 行（8 条 `OK`）+ docstring 段；逐字一致结论复用表后记录 |
 | T3 | 旧接口与加载方式不变（R3、R4、R5） | 两侧 runner | 5 个名字都可调用、签名相同；`--help` 逐字节相同；7 个实参与 `Path(__file__).with_name` 加载由第 1 步 T0 脚本核对；合计 **33 条 `OK`** | 同一脚本的 `T3` 行（11 条 `OK`：10 条 callable／签名 + 1 条 `--help`）+ 第 2 步 `diff -u` |
 | T4 | 候选与跨方向校验的行为不变（R2） | 10 个既有方法（均经真实 CLI 子进程）：`test_contact_state.TestRunnerBasics` 的 6 个（`test_03_done_by_self_rejected_as_candidate_anchor`、`test_05b_collection_key_limits_stage3`、`test_05c_scoped_stage3_refresh_preserves_other_state`、`test_05d_scoped_stage3_rejects_six_generated_candidates`、`test_05e_overview_manual_edit_does_not_block_local_finalize`、`test_08_manual_markdown_edit_needs_decision`）；`test_contact_state.Issue67AdjacentStateTests.test_08_cross_selection_scope_refreshes_every_participating_direction`；`test_stage3_validation_refine.Stage3ValidationIngestTests.test_cross_direction_issue_routes_to_the_exact_group_id`；`test_issue66_stage3_local_state.Issue66LocalStateTests` 的 2 个（`test_rebuild_overview_uses_professor_local_states_and_rebuilds_deleted_projection`、`test_rebuild_overview_only_migrates_a_unique_legacy_identity`） | **条件式通过条件**：10 个方法全部 `ok` 则通过；有失败时按第 5 步只对照**同一个失败方法**。实际调用链：候选校验只发生在 `cmd_stage3_finalize`（8 个方法走它，其中 2 个覆盖跨方向组），`render_candidates_overview` 只由 `cmd_stage3_rebuild_overview` 调用（2 个 rebuild 方法覆盖）；`stage3-plan` 与 `migrate-v3` 本身不调用本批函数，因此不再列为本批覆盖 | 第 3 步命令；`Ran 10 tests`、`OK`。输出落 `/tmp/pc-stage17/t4.log` |
 | T5 | 复制 runner 的既有夹具仍能加载新模块（R1、R5） | `test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker`、`test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling` | 两方法 `OK` 只证明复制布局含 `_candidate_validate.py` 并成功加载；方法内业务断言属 Stage 5，失败时按第 5 步单方法对照 | 第 4 步命令；`Ran 2 tests`、`OK`。输出落 `/tmp/pc-stage17/t5.log` |
+
+**T2 既有结果复用**：[执行计划第 2 版审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/125#issuecomment-6293209098) 已针对目标提交 `3703991e3e21838bd7bc95246da72bc0aff5de92`、基准提交 `64dcf022c02de2a776f74cab0ef15982ff5c6863` 逐个核对本批 5 个函数、共 286 行定义体，确认去除统一缩进后逐字一致。本次修订只改测试计划，产品源码未变，直接复用该结论；不新增逐字比较程序或重复运行。此后若本批函数的定义体发生变化，仅复核受影响内容。
 
 **既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的 4 个 `shards` 与聚合 job `test` 照常执行，不作为通过条件。
 
@@ -25,9 +27,10 @@
 1. T0（编译、工厂契约、别名顺序、模块源码约束）：
 ```sh
 set -e
-cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-shared-helpers
 RUN=/tmp/pc-stage17
 mkdir -p "$RUN"
+(
+cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-shared-helpers
 uv run --no-project python --version
 uv run --no-project python -m py_compile \
   .apm/skills/professor-contact/scripts/contact_state.py \
@@ -96,8 +99,10 @@ assert [n for n in runner.body if isinstance(n, ast.FunctionDef) and n.name in N
 print("T0 none of the 5 names is defined at runner top level OK")
 print("T0 CHECKS PASS")
 PY
+) >"$RUN/t0.log" 2>&1
+cat "$RUN/t0.log"
 ```
-运行该块时重定向到 `bash blk0.sh > /tmp/pc-stage17/t0.log 2>&1`。
+上述命令块直接在终端执行，输出自动保存在 `/tmp/pc-stage17/t0.log`；执行失败时读取该日志，不依赖额外脚本。
 预期：脚本 5 条 `T0 ... OK` + 1 条 `T0 CHECKS PASS`。
 
 2. T1–T3（对照基准、`--help`、A/B；随后 docstring）：
@@ -208,8 +213,10 @@ cat "$LOG"
 
 - 第 1 版：首次提交（含演练实测的 33 条 OK、10＋2 个方法与 docstring 期望值）。
 - 第 2 版：按第一关意见修正 T4——换掉 5 个不执行本批代码的方法（list-inputs、migrate-v3、进程内 normalize、issue59 夹具），改为 8 个走 `cmd_stage3_finalize` 的方法（其中 2 个覆盖跨方向组）与 2 个 `stage3-rebuild-overview` 方法，让 `render_candidates_overview` 也有行为覆盖；覆盖声明按实际调用链改写，删掉 stage3-plan／migrate-v3 的候选校验说法。
+- 第 3 版：按第二关意见补入 T2 已有逐字核对结果的准确来源；将 T0 改为完整命令块直接运行并生成日志，删除不存在的 `blk0.sh` 入口；更新当前父提交号。不增加必测项或测试程序。
 
 ## 审核状态
 
 - 第 1 版：第一关 NEEDS_MODIFICATION（5 个方法未到达本批代码、overview 无覆盖）。
-- 第 2 版：待第一关复核。
+- 第 2 版：第一关 PASS（PR 正文已有记录）。
+- 第 3 版：第二关修订待复核；第一关已确认的必测范围未变。
