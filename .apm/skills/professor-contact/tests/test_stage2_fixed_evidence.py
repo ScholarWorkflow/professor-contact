@@ -619,6 +619,22 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(out.get("reason_code"), "validation_render_stale", out)
         self.assertEqual(analysis_path.read_bytes(), protected)
 
+        # The source line only ignores its generated timestamp: another text
+        # change on the same line is a real body change, not an equivalent render.
+        line_env = self._fresh_env()
+        line_facts, line_results, line_proof = line_env.generate_pack()
+        line_env.record(line_env.write_report("u1f-line-pass.json", []))
+        analysis_path = line_env.prof_dir / contact_state.ANALYSIS_MD
+        raw = analysis_path.read_text(encoding="utf-8")
+        changed = raw.replace("全文级 2 篇", "全文级 9 篇", 1)
+        self.assertNotEqual(changed, raw)
+        analysis_path.write_text(changed, encoding="utf-8")
+        protected = analysis_path.read_bytes()
+        out = line_env.finalize(line_facts, line_proof, line_results)
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out.get("reason_code"), "validation_render_stale", out)
+        self.assertEqual(analysis_path.read_bytes(), protected)
+
         # With no old validator, a manual body edit still requires a decision.
         manual_env = self._fresh_env()
         manual_facts, manual_results, manual_proof = manual_env.generate_pack()
