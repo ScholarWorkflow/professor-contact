@@ -4,7 +4,7 @@
 
 - 对应执行计划：[implementation-plan.md](implementation-plan.md)，计划第 1 版（待审核）。
 - Requirement revision: 第 1 版（2026-10-20 负责人要求）。
-- Target repository revision: 工作分支 `refactor-shared-base`；对照基准为分支链末位 `refactor-stage2-render`（#114）的 head `cf979ab`。
+- Target repository revision: 工作分支 `refactor-shared-base`；对照基准为分支链末位 `refactor-stage2-render`（#114）的 head `13efd40441a2bf8683c9da630bdc747248fc8c29`（GitHub 自动 rebase 前的同一提交是 `cf979ab`，两者 `scripts` 子树字节相同）。
 - Test plan revision: 第 5 版。
 - Proposed review status: 待审核。
 - 测试范围依据：`Test Engineer Rule.md`。
@@ -14,10 +14,10 @@
 | 编号 | 业务目标 | 输入 / 场景 | 预期结果 | 检查方式 |
 | --- | --- | --- | --- | --- |
 | T0 | 模块可编译、可加载，工厂契约与别名顺序正确（R1、R3、R4） | 工作树 `scripts/contact_state.py`、`scripts/_contact_base.py` | 两个文件 `py_compile` 成功；`--help` 退出码 0；`build()` 的 keyword-only 参数**精确等于** 7 个名字集合、无位置参数；返回 40 个成员且去重后仍 40；runner 有 40 个 `X = _contact_base.X` 别名、无重名；绑定调用与 40 个别名都在 `_stage2_facts_module.build` 调用之前（`save_projections` 本身已搬走，无法再用它做锚点）；模块不导入 runner、不做动态加载、不碰 `sys.path`／`sys.modules` | 第 1 步命令；5 条 `T0 ... OK` 与 1 条 `T0 CHECKS PASS`（共 6 行） |
-| T1 | 40 个定义确实离开 runner 顶层、进入模块 `build()`（R1） | 对照基准（`git archive cf979ab` 取出的 `scripts`）与工作树 `scripts` | `T0`：base 与 head 是两个不同目录、base 仍定义 40 个定义、head 一个都不定义；`T1`：模块存在；40 个定义逐个“runner 顶层已无 / 模块 `build()` 内有” | 第 2 步对比脚本的 `T0 ...`／`T1 ...` 行，共 84 条 `OK` |
+| T1 | 40 个定义确实离开 runner 顶层、进入模块 `build()`（R1） | 对照基准（`git archive 13efd40` 取出的 `scripts`）与工作树 `scripts` | `T0`：base 与 head 是两个不同目录、base 仍定义 40 个定义、head 一个都不定义；`T1`：模块存在；40 个定义逐个“runner 顶层已无 / 模块 `build()` 内有” | 第 2 步对比脚本的 `T0 ...`／`T1 ...` 行，共 84 条 `OK` |
 | T2 | 搬移没有改变任何逻辑（R2） | 同上两侧源码 | 40 个定义的代码 AST 与基准完全相同（脚本忽略 docstring）；docstring 单独核对：清洗后与基准同文；runner 其余顶层定义 AST 不变；离开 runner 的定义正好是这 40 个、没有新增；40 个定义在 runner 都有别名 | 同一脚本的 `T2 ...` 行（43 条 `OK`）；docstring 用第 2 步的只读核对块 |
 | T3 | 旧接口与加载方式不变（R3、R4、R5） | 同一进程内分别按文件路径加载两侧 runner；再以子进程直接执行改动后的 runner | 40 个名字在两侧都可调用、`inspect.signature` 字符串相同；`--help` 退出码 0 且与父提交逐字节相同；runner 用 `Path(__file__).with_name("_contact_base.py")` 加载；40 个实参与参数同名同集合、40 个别名都在调用之后 | 同一脚本的 `T3 ...` 行（81 条 `OK`）、第 1 步的源码约束核对、第 2 步的 `diff -u`；合计 208 条 `OK`、末尾 `ALL CHECKS PASS` |
-| T4 | 哈希／文本／方向身份／托管写入的行为不变（R2） | 10 个既有方法（均为经真实 CLI 子进程或类内助手执行本批函数的路径；其中 6 个方法体内直接出现本批名字，4 个经助手间接引用 `cross_group_id`／`safe_result_file`／`quote_id` 或只做端到端断言；托管写入组经 `managed_write` 注入的 stage2 finalize 路径覆盖）：`test_contact_state.TestRunnerBasics.test_05e_overview_manual_edit_does_not_block_local_finalize`、`test_contact_state.Issue66RecordedValidationScopeTests.test_handoff_record_expands_global_blocker_to_rendered_objects`、`test_stage2_preflight.TestFinalizePreflightWiring.test_legacy_slow_path_seeds_metadata_for_next_run`、`test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_repeated_quote_locations_and_ambiguous_report`、`test_stage3_direction_groups.Stage3DirectionGroupTests.test_explicit_cross_group_generates_separate_job_and_section`、`test_stage3_direction_groups.Stage3DirectionGroupTests.test_participant_change_invalidates_only_cross_group`、`test_stage3_direction_identity.TestV2PackShape.test_facts_direction_id_survives_into_pack`、`test_stage3_direction_identity.TestV2PackShape.test_v1_pack_shared_paper_normalizes_to_one_record`、`test_stage2_facts_sidecar.FactsSidecarTests.test_invalid_facts_sidecar_shape_fails_closed`、`test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_changed_audit_marker_fails_closed_before_writing_user_files` | **条件式通过条件**：10 个方法全部 `ok` 则 T4 通过；有失败时按第 5 步在父提交 `cf979ab` 上跑同一组方法，基线同样失败记既有失败，基线通过而工作树失败记本批回归 | 第 3 步命令；`Ran 10 tests`、`OK`，无 skip／`FAIL`／`ERROR` |
+| T4 | 哈希／文本／方向身份／托管写入的行为不变（R2） | 10 个既有方法（均为经真实 CLI 子进程或类内助手执行本批函数的路径；其中 6 个方法体内直接出现本批名字，4 个经助手间接引用 `cross_group_id`／`safe_result_file`／`quote_id` 或只做端到端断言；托管写入组经 `managed_write` 注入的 stage2 finalize 路径覆盖）：`test_contact_state.TestRunnerBasics.test_05e_overview_manual_edit_does_not_block_local_finalize`、`test_contact_state.Issue66RecordedValidationScopeTests.test_handoff_record_expands_global_blocker_to_rendered_objects`、`test_stage2_preflight.TestFinalizePreflightWiring.test_legacy_slow_path_seeds_metadata_for_next_run`、`test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_repeated_quote_locations_and_ambiguous_report`、`test_stage3_direction_groups.Stage3DirectionGroupTests.test_explicit_cross_group_generates_separate_job_and_section`、`test_stage3_direction_groups.Stage3DirectionGroupTests.test_participant_change_invalidates_only_cross_group`、`test_stage3_direction_identity.TestV2PackShape.test_facts_direction_id_survives_into_pack`、`test_stage3_direction_identity.TestV2PackShape.test_v1_pack_shared_paper_normalizes_to_one_record`、`test_stage2_facts_sidecar.FactsSidecarTests.test_invalid_facts_sidecar_shape_fails_closed`、`test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_changed_audit_marker_fails_closed_before_writing_user_files` | **条件式通过条件**：10 个方法全部 `ok` 则 T4 通过；有失败时按第 5 步在父提交 `13efd40` 上跑同一组方法，基线同样失败记既有失败，基线通过而工作树失败记本批回归 | 第 3 步命令；`Ran 10 tests`、`OK`，无 skip／`FAIL`／`ERROR` |
 | T5 | 复制 runner 的既有夹具仍能加载新模块（R1、R5） | `test_stage5_immutable.TestWrapperKeepsInstalledLayoutLocator.test_finalize_through_wrapper_certifies_installed_layout_checker`、`test_stage5_dualtarget_contract.InstalledSharedSkillsLocatorTests.test_installed_shared_skills_layout_locator_finds_sibling` | 复制布局包含 `_contact_base.py`，复制后的 runner 能按路径加载它；两方法 `OK` | 第 4 步命令；`Ran 2 tests`、`OK` |
 
 **既有仓库检查（不属于本批业务必测清单）**：仓库 CI 的 4 个 `shards` 与聚合 job `test` 照常执行，结果按运行编号与 head 单独引用；本批不在本地重跑全量套件。
@@ -122,7 +122,7 @@ set -e
 cd /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-shared-base
 RUN=/tmp/pc-stage8
 mkdir -p "$RUN/base"
-git archive cf979ab .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
+git archive 13efd40441a2bf8683c9da630bdc747248fc8c29 .apm/skills/professor-contact/scripts | tar -x -C "$RUN/base"
 uv run --no-project python "$RUN/base/.apm/skills/professor-contact/scripts/contact_state.py" --help >"$RUN/help-base.txt"
 diff -u "$RUN/help-base.txt" "$RUN/help-head.txt"
 shasum -a 256 /tmp/pc-stage2-tools/compare_stage2_batch_v2.py
@@ -193,13 +193,13 @@ uv run --no-project python -m unittest \
 ```
 预期：`Ran 2 tests`、全部 `ok`。
 
-5. 失败处理：T4／T5 有失败时（12 个方法一起跑），先按本批回归排查，在父提交 `cf979ab` 上跑同一组方法：
+5. 失败处理：T4／T5 有失败时（12 个方法一起跑），先按本批回归排查，在父提交 `13efd40` 上跑同一组方法：
 ```sh
 set -e
 BASELINE=/tmp/pc-stage8/base-parent
 rm -rf "$BASELINE"
 mkdir -p "$BASELINE"
-git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-shared-base archive cf979ab | tar -x -C "$BASELINE"
+git -C /Users/rekidunois/code/skill-repos-dev/worktrees/refactor-shared-base archive 13efd40441a2bf8683c9da630bdc747248fc8c29 | tar -x -C "$BASELINE"
 cd "$BASELINE/.apm/skills/professor-contact/tests"
 uv run --no-project python -m unittest \
   test_contact_state.TestRunnerBasics.test_05e_overview_manual_edit_does_not_block_local_finalize \
@@ -237,8 +237,8 @@ cat /tmp/pc-stage8/baseline.log
 - 第 1 版：首次提交。
 - 第 2 版：按演练实测写明 docstring 期望值（13 个有 docstring、其中 9 个多行、27 个原本没有）；其余判据与步骤不变。
 - 第 3 版：按第一关意见改 T4 筛选依据的表述（6 个直接引用、4 个经助手间接引用，托管写入经 finalize 路径覆盖）与 T0 条数写法（5 条 OK + 1 条 PASS），并补 `__import__`／`exec`／`eval` 黑名单、别名早于首个消费方两条断言、T5 标注与 R6 归属说明。
-- 第 5 版：按第一关复核补版本记录并确认内容——T4 行去掉 `／render`（托管写入经 stage2 finalize 路径覆盖）、T0 的 print 与断言一一对应（`__import__`／`exec`／`eval` 黑名单归到模块源码那条）、T0 重跑为 5 条 OK + 1 条 PASS。
 - 第 4 版：修 T0 锚点——`save_projections` 已搬走，不再用它做位置判据，改为断言绑定调用与 40 个别名都早于 `_stage2_facts.build(...)`；print 文案同步。
+- 第 5 版：按第一关复核补版本记录并确认内容——T4 行去掉 `／render`（托管写入经 stage2 finalize 路径覆盖）、T0 的 print 与断言一一对应（`__import__`／`exec`／`eval` 黑名单归到模块源码那条）、T0 重跑为 5 条 OK + 1 条 PASS。
 
 ## 审核状态
 
