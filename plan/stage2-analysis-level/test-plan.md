@@ -2,7 +2,7 @@
 
 - Test plan revision：`u5-analysis-level-t4`，2026-10-21（UTC+08:00）。本正文整体取代 t3；唯一完整文件为 `plan/stage2-analysis-level/test-plan.md`，不并行执行历史正文或评论中的相反要求。
 - 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，分支 `plan/u5-analysis-level-redesign`；对齐[执行计划 r4](https://github.com/ScholarWorkflow/professor-contact/blob/3bfe8df6313b2047dad564163e07b30b36c7fd20/plan/stage2-analysis-level/implementation-plan.md)。修订读取基线 head `3bfe8df6313b2047dad564163e07b30b36c7fd20`、原测试计划 blob `033523a43b2b1ac8f7b1527db73afa4307224a54`。
-- 用户已明确要求修改执行计划的三个机制，并随后要求“你改测试计划”。本轮只修计划，不修改产品／测试实现，不运行测试。r4 设计已经入库，不代表其产品改动或新检查已实现。
+- 用户已明确要求修改执行计划的三个机制，并随后要求“你改测试计划”。计划修订轮只修计划；随后测试准备轮按 §2–3 修改既有测试方法并补齐 §4.2 recipe，未修改产品代码、未运行正式用例。
 - 当前设计状态：pending 独立复核，作者不自授 APPROVED/PASS。L1–L6 的业务范围保持；仅修正与 r4 直接相关的来源资格、完整守卫／旧绑定和磁盘字节检查。三个测试关口与历史结果分别见 §4、§5，不继承旧版“全部通过”为当前结论。
 
 ## 1. 范围、依据与复用原则
@@ -85,17 +85,36 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 ### 4.1 当前事实
 
 - 第一关口：L1–L6 原范围已确认；t4 按用户已批准 r4 修正相反预期与不足方法，完整候选待独立设计复核，作者不宣布新批准。
-- 第二关口：t3 已有公开审核结论，不再标成“t3 待审”。本次受影响的方法／夹具尚未改到 r4，故 r4 可执行 recipe 尚未就绪；仅待产品与测试实现完成后核对受影响接线、选择器和具体命令，不重开未受影响范围。
+- 第二关口：t3 已有公开审核结论，不再标成“t3 待审”。测试资产已按 §2–3 改到 r4，recipe 见 §4.2；产品 r4 实现尚未入库，第二关口仍待独立审核在实际产品提交上核对受影响接线、选择器和具体命令，不重开未受影响范围。
 - 第三关口：§5 是真实历史结果；r4 受影响机制未执行，不能以 34 tests 或 1064 tests 旧绿代替。L3 及实际未变子目标复用旧结果，L1/L2 的矛盾预期、L4/L6 完整守卫、L5 旧绑定／实际字节和共享生命周期接线待新的适用结果。
 - 当前产品仍有已定位问题；测试准备缺口与产品失败分开记录，不声称当前 L1–L6 全通过。本轮未发生任何新的正式测试尝试。
 
-### 4.2 本地测试工程师补齐的最小 recipe
+### 4.2 本地测试工程师补齐的 recipe（r4）
 
-1. 在实际产品实现 r4 后固定产品／测试提交，按 §2–3 修正既有夹具和方法。先建立真实正常接受基线，原始 pack／文件／validator 在操作前保持自洽；仅指定的缺陷变体故意破坏相应一层。不能在被测调用后重签旧态、替换输出或放宽断言。
-2. 复用 Python 标准库 unittest、现有 runner 及 `TemporaryDirectory`，不重装、不读生产 Zotero/真实用户 PDF/私有配置，不需要模型、网络或外部服务。原获认可安装／构建仍适用；只有实际不可运行才补最小环境准备。
-3. 将真实存在的完整限定方法名、各方法覆盖的 L 项、准确准备顺序／命令／实际输出目录写回本节。共享机制仅需说明实际调用位置与哪些既有断言复用，不另做逐调用 trace 或逐项证据账本。当前不能预造尚不存在的新 selector，亦不能将历史整模块命令称作 r4 已就绪 recipe。
-4. 原工作目录仍为仓库根目录下 `.apm/skills/professor-contact/tests`。输出放仓库外独立 `/tmp` 临时目录，使用现有 unittest 报告与简短记录；实际执行时记录具体目录、产品／测试版本、命令、退出状态和业务结果。确有分片登记变化才检查登记，不因文档变更执行分片校验或全量回归。
-5. 受影响具体 recipe 经第二关口确认后，由获执行授权的本地执行工程师执行；本次修改计划不是运行授权。业务失败保留原失败，交产品 owner；方法错误先停受影响项、修正并复核，不能换输入求绿。缺日志先请求已有记录，不默认重跑；无法运行与未执行如实区别，未受影响结果继续复用。
+- **准备状态**：测试资产已按 §2–3 改到 r4；产品 r4 三个机制尚未入库（基线 `7c42a40`）。因此下列选择器在当前产品上运行时，L1/L2 的矛盾 null、L4/L6 的锁内完整守卫、L5 的旧 header 绑定与 CRLF 字节检查预期失败；这是待产品修复项，不是测试方法错误，也不得为求绿改断言。产品实际提交由执行工程师在运行前记录。
+- **本阶段预检**：Python 3.14.7 下 `py_compile` 通过；测试模块可导入，`unittest.TestLoader` 统计 49 个测试；本 recipe 的类选择器与逐项方法选择器均可解析；`git diff --check` 通过。未运行任何目标测试方法、产品入口或正式业务请求。
+- **环境与工作目录**：仓库根目录下 `.apm/skills/professor-contact/tests`；Python 标准库 `unittest`；不加载模型、Zotero、网络或生产 PDF；每例沿用既有 `TemporaryDirectory`。本机 Python 3.14.7，CI 为 Python 3.12（`.github/workflows/ci.yml`）。
+- **准备顺序**：1）固定产品 r4 提交与测试提交，工作树干净；2）按 §3 建立合法正常接受基线，只有指定缺陷变体在调用前故意破坏对应层，header/cache/validator 初始自洽；3）运行下列选择器；4）只记录退出状态和业务结果，原始输出放仓库外。
+- **L1 选择器**（`test_stage2_analysis_level.TestFactsLevelContract`）：
+  `test_known_and_unknown_levels_reach_the_canonical_pack`、`test_facts_level_conflicting_with_the_current_registration_is_invalid`、`test_illegal_level_is_an_input_error`、`test_null_facts_against_a_known_registration_are_rejected_without_writes`、`test_missing_level_field_against_a_known_registration_is_rejected`、`test_unknown_level_accepts_null_then_a_new_registration_turns_known`、`test_abstract_registration_survives_a_failed_fulltext_upgrade`、`test_analysis_file_and_pdf_without_a_success_registration_are_unknown`、`test_consumed_analysis_path_contradicting_the_index_is_invalid`、`test_ocr_only_fulltext_without_facts_can_still_be_fulltext`。
+- **L2 选择器**（`test_stage2_analysis_level.TestCanonicalMerge`）：
+  `test_known_level_survives_a_reuse_finalize_and_validator`、`test_current_legal_unknown_overrides_an_old_known_canonical`、`test_missing_level_field_in_an_old_pack_reads_as_null`、`test_v1_migration_treats_missing_and_null_alike_but_rejects_conflict`。
+- **L3 选择器**（`test_stage2_analysis_level.TestStatisticsRender`）：
+  `test_header_counts_members_only_and_shared_members_per_contribution`、`test_reference_only_paper_stays_out_of_the_statistic`。r4 未改统计路径，按 §3 复用 `0b9a585` 的历史通过结果；只有产品实际改统计路径时才定向重跑。
+- **L4 选择器**（`test_stage2_analysis_level.TestPreflightBranches` 全部）：
+  `test_unchanged_state_reuses_all`、`test_level_only_change_takes_the_refresh_branch`、`test_management_fields_do_not_change_the_business_source`、`test_new_fixed_facts_candidate_is_a_business_change`、`test_missing_projection_processes_once`、`test_illegal_index_level_processes_instead_of_writing_a_known_value`、`test_not_accepted_validator_blocks_reuse_all`；并复用 `test_stage2_preflight.TestPreflightDecision.test_b_perfect_no_change_reuses_without_pdf_reads`、`test_j_deleted_artifact_prevents_reuse`、`test_k_artifact_stat_change_prevents_reuse_without_pdf_reads`、`test_p_validator_gate`。
+- **L5 选择器**（`test_stage2_analysis_level.TestLevelRefresh`）：
+  `test_statistic_change_updates_body_and_expires_old_certification`、`test_equivalent_body_swap_keeps_the_valid_old_certification`、`test_invalid_old_binding_is_an_evidence_error_not_a_rebind`、`test_invalid_old_header_binding_is_an_evidence_error_not_a_rebind`、`test_legacy_statistics_body_is_reaccepted_before_the_marker`、`test_statistics_marker_only_refresh_keeps_the_old_body_bytes`、`test_refresh_with_an_illegal_index_level_returns_needs_refresh`（同时覆盖 L1 的 invalid refresh 语义）、`test_legal_crlf_managed_file_is_read_as_real_bytes`、`test_crlf_body_without_a_matching_binding_is_not_accepted`、`test_business_change_with_equivalent_body_keeps_body_but_expires_certification`、`test_manual_body_edit_needs_decision_without_writing_the_pack`。
+  以及 `test_stage2_analysis_level.TestManagedBodyBytes` 全部：`test_only_the_fixed_generation_time_is_ignored`、`test_statistics_and_narrative_time_stay_significant`、`test_crlf_bytes_are_read_and_hashed_without_normalization`、`test_legal_crlf_body_keeps_its_bytes_when_only_the_header_changes`、`test_crlf_body_without_a_matching_binding_is_not_accepted`、`test_a_crlf_old_body_and_an_lf_candidate_are_a_change`。
+- **L6 选择器**（`test_stage2_analysis_level.TestRefreshProtection`）：
+  `test_busy_writer_returns_without_any_business_write`、`test_source_drift_after_lease_returns_needs_refresh`、`test_source_drift_after_observation_returns_needs_refresh`、`test_refresh_keeps_the_accepted_sources_and_foreign_cache`、`test_successful_refresh_releases_the_lease`、`test_release_failure_is_reported_on_the_success_path`、`test_release_failure_on_a_soft_exit_is_also_reported`、`test_pack_io_failure_after_the_markdown_write_stays_unfinished`；并定向复核 `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle`，只核对 r4 影响的绑定／I/O 行为，不重做其全部历史 T5 业务。
+- **命令**：
+  - `python3 -m unittest test_stage2_analysis_level -v`
+  - `python3 -m unittest test_stage2_preflight.TestPreflightDecision.test_b_perfect_no_change_reuses_without_pdf_reads test_stage2_preflight.TestPreflightDecision.test_j_deleted_artifact_prevents_reuse test_stage2_preflight.TestPreflightDecision.test_k_artifact_stat_change_prevents_reuse_without_pdf_reads test_stage2_preflight.TestPreflightDecision.test_p_validator_gate -v`
+  - `python3 -m unittest test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle -v`
+  - 本轮没有新增测试文件，`plan/test-grouping/shards.json` 不需要变更；不把四分片或全仓回归作为 r4 的必跑义务。
+- **输出位置**：执行工程师用 `mktemp -d /tmp/u5-r4-XXXXXX` 建立仓库外目录，把上述三条命令的 stdout/stderr 分别保存为 `module.log`、`preflight.log`、`lifecycle.log`；记录产品 SHA、测试 SHA、Python 版本、退出码、`Ran N tests` 和 OK/FAILED。原始日志不提交、不推送。
+- **失败处理**：L1/L2 矛盾 null 或 L4/L6 锁内守卫失败，保留原结果并交产品 owner；L5 旧绑定／CRLF 失败先确认测试夹具在调用前自洽，再交产品 owner；方法自身错误先停止受影响项、修正并复核；不得换输入或放宽断言求绿。缺日志先请求已有记录，不默认重跑；无法运行与未执行如实区分。
 
 ### 4.3 完成条件与责任
 
