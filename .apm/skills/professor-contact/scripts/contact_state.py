@@ -893,47 +893,38 @@ stage2_require_paper_reference_titles = _stage2_finalize.stage2_require_paper_re
 cmd_stage2_finalize = _stage2_finalize.cmd_stage2_finalize
 
 
-def profile_fingerprint(profile_path: str | None) -> str | None:
-    if not profile_path:
-        return None
-    path = Path(profile_path)
-    if not path.is_file():
-        return None
-    return sha256_bytes(path.read_bytes())
+# Stage-2 helper module: loaded by path next to this runner (the runner may be
+# executed directly or imported by path, so the scripts directory is not
+# guaranteed to be on sys.path). The factory call further down binds it to this
+# runner's own helpers; the aliases below the call keep every pre-split entry.
+_DIRECTION_INPUTS_PATH = Path(__file__).with_name("_direction_inputs.py")
+_DIRECTION_INPUTS_SPEC = importlib.util.spec_from_file_location(
+    "_direction_inputs", _DIRECTION_INPUTS_PATH)
+if _DIRECTION_INPUTS_SPEC is None or _DIRECTION_INPUTS_SPEC.loader is None:
+    raise RuntimeError(f"cannot load _direction_inputs: {_DIRECTION_INPUTS_PATH}")
+_direction_inputs_module = importlib.util.module_from_spec(_DIRECTION_INPUTS_SPEC)
+_DIRECTION_INPUTS_SPEC.loader.exec_module(_direction_inputs_module)
+
+# Binding point: every helper the module needs is defined by now; the factory
+# receives this runner's own function objects and constants (no second channel).
+_direction_inputs = _direction_inputs_module.build(
+    fail=fail,
+    sha256_bytes=sha256_bytes,
+    truncate=truncate,
+    PROFILE_INPUT_CHARS=PROFILE_INPUT_CHARS,
+    direction_machine_id=direction_machine_id,
+    direction_papers=direction_papers,
+    cross_group_id=cross_group_id
+)
+
+profile_fingerprint = _direction_inputs.profile_fingerprint
+load_profile_text = _direction_inputs.load_profile_text
+_direction_slices = _direction_inputs._direction_slices
+_cross_group_fresh = _direction_inputs._cross_group_fresh
+_parse_direction_id_list = _direction_inputs._parse_direction_id_list
+_parse_cross_groups = _direction_inputs._parse_cross_groups
 
 
-def load_profile_text(profile_path: str | None, limit: int = PROFILE_INPUT_CHARS) -> str | None:
-    if not profile_path:
-        return None
-    path = Path(profile_path)
-    if not path.is_file():
-        return None
-    return truncate(path.read_text(encoding="utf-8"), limit)
-
-
-def _direction_slices(pack: dict, direction: dict) -> tuple[dict, dict, dict]:
-    """Exact-join indexes for one pack direction slice (issue #8 §5).
-
-    gap/blacklist indexes are keyed by the exact provenance triple
-    (direction_id, item_key, gap_id): a valid (item_key, gap_id) that exists in
-    ANOTHER direction can never join through the wrong direction_id. The paper
-    index is keyed by item_key over the direction's canonical universe
-    (supporting_item_keys ∪ gap item keys) resolved from the professor-level
-    papers map.
-    """
-    did = direction_machine_id(direction)
-    gap_index = {}
-    for gap in direction.get("gap_shortlist", []) + [
-            dict(g, status=g.get("status")) for g in direction.get("gaps_excluded", [])]:
-        gap_index[(did, gap["item_key"], gap["gap_id"])] = gap
-    blacklist = {(did, b["item_key"], b["gap_id"]): b
-                 for b in direction.get("completed_gap_blacklist", [])}
-    paper_index = {p["item_key"]: p for p in direction_papers(pack, direction)}
-    for gap in direction.get("gap_shortlist", []) + direction.get("gaps_excluded", []):
-        paper_index.setdefault(gap["item_key"], {
-            "item_key": gap["item_key"], "title": gap.get("paper_title"),
-            "year": gap.get("paper_year"), "authorship": gap.get("authorship")})
-    return gap_index, blacklist, paper_index
 # Binding point: every helper the module needs is defined by now; the factory
 # receives this runner's own function objects and constants (no second channel).
 _candidate_validate = _candidate_validate_module.build(
@@ -951,66 +942,6 @@ validate_candidate_result = _candidate_validate.validate_candidate_result
 validate_cross_result = _candidate_validate.validate_cross_result
 render_candidates_md = _candidate_validate.render_candidates_md
 render_candidates_overview = _candidate_validate.render_candidates_overview
-
-
-def _cross_group_fresh(group: dict, pack_fps: dict,
-                       current_profile_fp: str | None) -> bool:
-    """A cross-direction group survives only while EVERY participant's pack
-    fingerprint and the profile are unchanged; unknown participants never
-    count as fresh."""
-    recorded = group.get("direction_fingerprints")
-    if not isinstance(recorded, dict) or not recorded:
-        return False
-    if group.get("profile_fingerprint") != current_profile_fp:
-        return False
-    return all(pack_fps.get(pid) == fingerprint
-               for pid, fingerprint in recorded.items())
-
-
-def _parse_direction_id_list(raw: str | None, param: str) -> list[str]:
-    values = [v.strip() for v in (raw or "").split(",") if v.strip()]
-    seen, out = set(), []
-    for value in values:
-        if value not in seen:
-            seen.add(value)
-            out.append(value)
-    return out
-
-
-def _parse_cross_groups(raw: Any, pack_directions: list) -> list[dict]:
-    """Validate + normalize explicit cross_direction_groups input.
-
-    Default (absent/empty) means NO cross work at all. Each group needs >=2
-    distinct existing direction IDs; IDs are sorted/deduped for stable
-    identity and duplicate groups are collapsed deterministically.
-    """
-    if raw is None or raw == "":
-        return []
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            fail("invalid_params", f"cross_direction_groups must be JSON: {exc}")
-    if not isinstance(raw, list):
-        fail("invalid_params", "cross_direction_groups must be a list of ID lists")
-    known = {direction_machine_id(d) for d in pack_directions}
-    groups: dict[tuple, list[str]] = {}
-    for index, group in enumerate(raw):
-        if not isinstance(group, list) or any(not isinstance(x, str) or not x.strip()
-                                              for x in group):
-            fail("invalid_params",
-                 f"cross_direction_groups[{index}] must be a list of direction ID strings")
-        ids = sorted({x.strip() for x in group})
-        if len(ids) < 2:
-            fail("invalid_params",
-                 f"cross_direction_groups[{index}] needs >=2 distinct direction IDs")
-        unknown = [x for x in ids if x not in known]
-        if unknown:
-            fail("invalid_params",
-                 f"cross_direction_groups[{index}] cites unknown direction IDs: {unknown}")
-        groups[tuple(ids)] = ids
-    return [{"group_id": cross_group_id(ids), "direction_ids": list(ids)}
-            for ids in groups.values()]
 
 
 # Issue #66 r13 §5.1: the runner-generated per-invocation credential. It
