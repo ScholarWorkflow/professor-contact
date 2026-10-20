@@ -1085,6 +1085,19 @@ class Stage2ValidationHandoffTests(BaseEnv):
         # -- the new business version starts again at round 1 (not exhausted).
         first_line = legacy_env._physical_line_of(_T5_LEGACY_REVISED)
         second_line = legacy_env._physical_line_of(_T5_SECOND_QUOTE)
+        # Plan §2 L6: with the old round-1 binding still legal, seed one other
+        # still-valid cache child and one unrelated render record. The new round
+        # is recorded only after this write, so its `pack_sha256` covers them
+        # and the refine is authorised against the seeded pack.
+        lifecycle_pack_path = legacy_env.prof_dir / "套磁候选输入.json"
+        lifecycle_pack = legacy_env._t5_pack()
+        lifecycle_pack["cache"]["u1_render"] = {"future": "kept"}
+        lifecycle_pack["cache"]["render"]["其他方向.md"] = {"sha256": "0" * 64}
+        lifecycle_pack_path.write_text(
+            json.dumps(lifecycle_pack, ensure_ascii=False, indent=1), encoding="utf-8")
+        lifecycle_pack = legacy_env._t5_pack()
+        self.assertIsInstance(lifecycle_pack["cache"]["preflight"], dict)
+        before_sha = lifecycle_pack["cache"]["render"][contact_state.ANALYSIS_MD]["sha256"]
         new_round1 = legacy_env.write_validation_issues("t5-new-round1.json", [
             legacy_env._blocking_issue(_T5_LEGACY_REVISED, first_line),
             legacy_env._blocking_issue(_T5_SECOND_QUOTE, second_line)])
@@ -1136,6 +1149,19 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assertNotIn(_T5_SECOND_QUOTE, body)
         self.assertIn(_T5_LEGACY_REVISED, body)
         legacy_env._assert_t5_render_binding()
+        # Plan §2 L6: the refine updates only this render binding, keeps every
+        # other still-valid cache child and conservatively drops the preflight
+        # proof; compare against the seeded value so the body change is proven.
+        cache = legacy_env._t5_pack()["cache"]
+        self.assertNotIn("preflight", cache)
+        self.assertEqual(cache["render"][contact_state.ANALYSIS_MD]["sha256"],
+                         legacy_env._t5_document()["sha256"], cache["render"])
+        self.assertNotEqual(cache["render"][contact_state.ANALYSIS_MD]["sha256"], before_sha,
+                            "the accepted rewrite must really change the body")
+        self.assertEqual(cache["u1_render"], {"future": "kept"})
+        self.assertEqual(cache["render"]["其他方向.md"], {"sha256": "0" * 64})
+        self.assertEqual(sorted(cache["render"]),
+                         sorted([contact_state.ANALYSIS_MD, "其他方向.md"]), cache["render"])
 
         # -- the second round cannot be recorded while a correction is open.
         premature = legacy_env.write_validation_issues(
