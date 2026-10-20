@@ -3,11 +3,11 @@
 ## 版本与对象
 
 - 执行计划：`plan/stage2-render/implementation-plan.md` 第 3 版。
-- 测试计划：`plan/stage2-render/test-plan.md` 第 6 版（第一关 PASS、第二关 PASS）。
+- 测试计划：T0–T5 原始执行采用 `plan/stage2-render/test-plan.md` 第 3 版；当前正式版本为第 8 版（第一关既有 PASS，第二关修订待复核）。第 6—8 版只修订基准、失败对照与记录，不改 T0–T5 必测项，既有结果复用。
 - 被测提交：`ebf2763`（`refactor(stage2): move the render layer into a helper module`，父提交 `980aa18` 为计划文档提交，其父为分支链上一位 `5972905`）；当前分支 head `800e297`，它只把 `_stage2_finalize.build(...)` 调用里一行孤立 `,` 折进上一行，runner 的 AST 与 `ebf2763` 相同。
-- 对照基准：分支链上一位 `refactor-stage2-context`（#113）的 head `2a2ffabe7a19e29be17b035a5c8a2e175fb6f81b`（GitHub 原生堆栈自动 rebase 前是 `5972905`，两者 `scripts` 子树字节相同），runner 7630 行。
+- 对照基准：原始执行对应 `5972905`（runner 7630 行）；修订后第 2 步曾用 `2a2ffabe7a19e29be17b035a5c8a2e175fb6f81b` 复核。当前父分支为 `c303242c79fd860302fcd95ac8f460a8e532bee2`（#113）；已核对三者相关 5 个程序文件的 Git blob 相同，本次未按新 SHA 重跑。
 - 环境：macOS；`uv run --no-project python` 3.14.6；仓库既有测试夹具；未新增依赖。
-- 基准指针：`5972905` 在自动 rebase 后已不在 origin 上，计划与记录统一改用 `2a2ffabe`；两者相关程序文件 Git blob 相同，故既有 T0–T5 结果按 Test Engineer Rule 第 6 节复用，第 2 步在新基准上重跑仍为 58 条 `OK`。
+- 基准指针：`5972905` 在自动 rebase 后已不在 origin 上；第 6 版修订时已用 `2a2ffabe` 重跑第 2 步，仍为 58 条 `OK`。当前计划改用 `c303242c`，上述 5 个相关程序文件内容不变，按 Test Engineer Rule 第 6 节复用 T0–T5 有效结果；本次仅改文档。
 - 运行目录：`/tmp/pc-stage7/`（`base/` 是父提交导出的 scripts，`blocks/blk0.sh`–`blk5.sh` 是从测试计划第 3 版原文抽出的命令块）。
 
 ## 结果
