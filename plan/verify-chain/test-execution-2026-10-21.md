@@ -2,7 +2,7 @@
 
 ## 环境与来源
 
-- Test plan: [test-plan.md](test-plan.md)，第 3 版（`sha256 fe9eadf5ef575383b03a30aadbfed5bb39daaf6d57b15524bc2419b66146fe9d`）。第 2 版按第 1 版审核意见修订后跑过一次；第 3 版又按第 2 版复核意见 N1–N3 把行数改成观察值、补了执行前缓存清理、收紧了源码核对口径，命令块有改动，整套重跑；本记录对应这次第 3 版重跑。此后测试计划只改了重试措辞与版本指针（`e704ea69…` → `fe9eadf5…`），8 个命令块逐字节未变，抽块与执行脚本相同，结果复用。
+- Test plan: [test-plan.md](test-plan.md)，第 3 版（`sha256 b96123995a68ba27a467ff763892d601bc4db2792d39df8150a003ffbf6c8941`）。第 2 版按第 1 版审核意见修订后跑过一次；第 3 版又按第 2 版复核意见 N1–N3 把行数改成观察值、补了执行前缓存清理、收紧了源码核对口径，命令块有改动，整套重跑；本记录对应这次第 3 版重跑。此后测试计划只改了重试措辞与版本指针（`e704ea69…` → `fe9eadf5…`），8 个命令块逐字节未变，抽块与执行脚本相同，结果复用。
 - 执行命令来源：把 test-plan.md 的 8 个 `sh` 代码块按顺序抽成脚本 `/tmp/pc-stage21/run-test-plan-v5.sh`（`sha256 a0437ef6737660ae4acdf098fcaa66a07a8da7d7e016ea2cd09402aefeccd031`），逐字执行；执行结束再抽一次，与执行用的脚本逐字节相同（`identical: True`）。
 - 解释器：`uv run --no-project python`，Python 3.14.6（CI 为 3.12）。
 - 基线：工作树 `HEAD` = `58c71c02cd0b6d66aae4cda5b7cc815431a461e6`（第 20 批 head），与测试计划写死的 `EXPECTED_BASE` 相同。
