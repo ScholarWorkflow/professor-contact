@@ -487,7 +487,11 @@ DEFAULT_FOLLOWUP_TEMPLATE = None
 # must agree exactly on these during v1 normalization or the pack is ambiguous.
 _CANONICAL_PAPER_FIELDS = ("title", "year", "authorship", "analysis_file",
                            "pdf_available", "facts_state", "facts_error",
-                           "paper_facts")
+                           "paper_facts", "analysis_level")
+# The canonical level value domain is owned by `_contact_pack.py` (the module
+# that normalizes canonical paper records); every Stage-2 reader shares this
+# exact tuple instead of defining a second vocabulary.
+ANALYSIS_LEVELS = _contact_pack_module.ANALYSIS_LEVELS
 
 
 # Binding point: every helper the module needs is defined by now; the factory
@@ -580,6 +584,7 @@ strict_candidate_state = _contact_pack.strict_candidate_state
 _stage2_facts = _stage2_facts_module.build(
     atomic_json=atomic_json,
     fail=fail,
+    ANALYSIS_LEVELS=ANALYSIS_LEVELS,
     SCHEMA=SCHEMA,
     MANAGED_BY=MANAGED_BY,
     INPUT_PACK=INPUT_PACK,
@@ -630,6 +635,14 @@ freshness_candidates = _stage2_facts.freshness_candidates
 load_freshness_cache = _stage2_facts.load_freshness_cache
 save_freshness_cache = _stage2_facts.save_freshness_cache
 gap_scope_keys = _stage2_facts.gap_scope_keys
+canonical_index_path = _stage2_facts.canonical_index_path
+read_analysis_index = _stage2_facts.read_analysis_index
+index_entry_level = _stage2_facts.index_entry_level
+index_entry_analysis_path = _stage2_facts.index_entry_analysis_path
+resolve_declared_level = _stage2_facts.resolve_declared_level
+observed_source_projection = _stage2_facts.observed_source_projection
+observed_level_projection = _stage2_facts.observed_level_projection
+consumed_sources = _stage2_facts.consumed_sources
 load_papers_with_digests = _stage2_facts.load_papers_with_digests
 build_gap_pool = _stage2_facts.build_gap_pool
 Stage2Context = _stage2_facts.Stage2Context
@@ -758,6 +771,7 @@ def _canonical_under(program_root: Path, value) -> str | None:
 _stage2_preflight = _stage2_preflight_module.build(
     fail=fail, soft_exit=soft_exit, emit=emit, read_json_file=read_json_file,
     sha256_obj=sha256_obj, sha256_bytes=sha256_bytes,
+    sha256_text=sha256_text, split_frontmatter=split_frontmatter,
     managed_snapshot=managed_snapshot,
     direction_machine_id=direction_machine_id,
     facts_direction_id=facts_direction_id, direction_relevant_keys=direction_relevant_keys,
@@ -766,6 +780,11 @@ _stage2_preflight = _stage2_preflight_module.build(
     load_input_pack=load_input_pack, load_freshness_cache=load_freshness_cache,
     _resolve_evidence=_resolve_evidence, Stage2Context=Stage2Context,
     filename_component=filename_component, truncate=truncate,
+    pack_direction_relevant_keys=pack_direction_relevant_keys,
+    observed_source_projection=observed_source_projection,
+    observed_level_projection=observed_level_projection,
+    consumed_sources=consumed_sources,
+    canonical_index_path=canonical_index_path,
     INPUT_PACK=INPUT_PACK, GAP_SCOPES=GAP_SCOPES, FRESHNESS_SCOPES=FRESHNESS_SCOPES,
     ANALYSIS_MD=ANALYSIS_MD, MANAGED_BY=MANAGED_BY, SHORTLIST_MAX=SHORTLIST_MAX,
     ABSTRACT_INPUT_CHARS=ABSTRACT_INPUT_CHARS, QUOTE_INPUT_CHARS=QUOTE_INPUT_CHARS,
@@ -790,6 +809,11 @@ _artifact_guards_for_keys = _stage2_preflight._artifact_guards_for_keys
 stage2_direction_artifact_guards = _stage2_preflight.stage2_direction_artifact_guards
 stage2_resolution_evidence_guards = _stage2_preflight.stage2_resolution_evidence_guards
 _pack_resolved_grouping = _stage2_preflight._pack_resolved_grouping
+stage2_consumed_source_keys = _stage2_preflight.stage2_consumed_source_keys
+stage2_group_consumed_keys = _stage2_preflight.stage2_group_consumed_keys
+stage2_level_projection = _stage2_preflight.stage2_level_projection
+stage2_pdf_source_projection = _stage2_preflight.stage2_pdf_source_projection
+stage2_refresh_preflight_metadata = _stage2_preflight.stage2_refresh_preflight_metadata
 stage2_freshness_view_fingerprint = _stage2_preflight.stage2_freshness_view_fingerprint
 stage2_preflight_metadata = _stage2_preflight.stage2_preflight_metadata
 stage2_pack_state_fingerprint = _stage2_preflight.stage2_pack_state_fingerprint
@@ -800,6 +824,7 @@ stage2_plan_bind_preflight = _stage2_preflight.stage2_plan_bind_preflight
 cmd_stage2_plan = _stage2_preflight.cmd_stage2_plan
 
 STAGE2_PREFLIGHT_VERSION = _stage2_preflight_module.STAGE2_PREFLIGHT_VERSION
+STAGE2_LEVEL_STATISTICS_VERSION = _stage2_preflight_module.STAGE2_LEVEL_STATISTICS_VERSION
 STAGE2_RESOLUTION_SEMANTICS_VERSION = _stage2_preflight_module.STAGE2_RESOLUTION_SEMANTICS_VERSION
 STAGE2_U1_DISPLAY_VERSION = _stage2_preflight_module.STAGE2_U1_DISPLAY_VERSION
 STAGE2_TARGET_FILE_NAME = _stage2_preflight_module.STAGE2_TARGET_FILE_NAME
@@ -879,6 +904,11 @@ _stage2_finalize = _stage2_finalize_module.build(
     stage2_preflight_metadata=stage2_preflight_metadata,
     stage2_pack_state_fingerprint=stage2_pack_state_fingerprint,
     stage2_pack_content_fingerprint=stage2_pack_content_fingerprint,
+    stage2_group_consumed_keys=stage2_group_consumed_keys,
+    stage2_refresh_preflight_metadata=stage2_refresh_preflight_metadata,
+    observed_source_projection=observed_source_projection,
+    observed_level_projection=observed_level_projection,
+    _pack_resolved_grouping=_pack_resolved_grouping,
     validate_freshness_results=validate_freshness_results,
     validate_narrative=validate_narrative,
     build_direction_pack=build_direction_pack,
@@ -891,6 +921,8 @@ _stage2_finalize = _stage2_finalize_module.build(
     RESOLVED_DIRECTION_SCHEMA=RESOLVED_DIRECTION_SCHEMA,
     ANALYSIS_MD=ANALYSIS_MD,
     STAGE2_RESOLUTION_SEMANTICS_VERSION=STAGE2_RESOLUTION_SEMANTICS_VERSION,
+    STAGE2_LEVEL_STATISTICS_VERSION=STAGE2_LEVEL_STATISTICS_VERSION,
+    STAGE2_PREFLIGHT_VERSION=STAGE2_PREFLIGHT_VERSION,
     PLACEHOLDER_RE=PLACEHOLDER_RE,
     STAGE2_U1_DISPLAY_VERSION=STAGE2_U1_DISPLAY_VERSION,
     stage2_trusted_paper_title=stage2_trusted_paper_title,
@@ -902,7 +934,11 @@ stage2_pack_requires_membership_rebuild = _stage2_finalize.stage2_pack_requires_
 stage2_old_pack_gap_statuses = _stage2_finalize.stage2_old_pack_gap_statuses
 stage2_render_state = _stage2_finalize.stage2_render_state
 stage2_require_paper_reference_titles = _stage2_finalize.stage2_require_paper_reference_titles
+stage2_body_without_generation_time = _stage2_finalize.stage2_body_without_generation_time
+stage2_old_managed_render = _stage2_finalize.stage2_old_managed_render
+stage2_accept_managed_body = _stage2_finalize.stage2_accept_managed_body
 cmd_stage2_finalize = _stage2_finalize.cmd_stage2_finalize
+cmd_stage2_refresh_level = _stage2_finalize.cmd_stage2_refresh_level
 
 
 # Stage-2 helper module: loaded by path next to this runner (the runner may be
@@ -1762,6 +1798,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="saved stage2-preflight stdout; re-verifies cheap inputs "
                         "before any write and seeds cache.preflight")
     p.set_defaults(func=cmd_stage2_finalize)
+
+    p = sub.add_parser("stage2-refresh-level")
+    p.add_argument("--program-root", required=True)
+    p.add_argument("--professor", required=True)
+    p.add_argument("--target-file", required=True,
+                   help="authoritative professor-local Stage-0 target file")
+    p.add_argument("--preflight-file", required=True,
+                   help="saved stage2-preflight stdout whose action is refresh_level; "
+                        "re-verified under the professor writer lease")
+    p.add_argument("--decision-file")
+    p.set_defaults(func=cmd_stage2_refresh_level)
 
     p = sub.add_parser("stage2-refine-plan")
     group = p.add_mutually_exclusive_group(required=True)

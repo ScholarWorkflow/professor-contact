@@ -21,7 +21,13 @@ SIDECAR_EXTRACTOR_VERSIONS = ("future-work-v1", "legacy-markdown-v0")
 
 FACTS_GENERATOR_VERSIONS = ("facts-v1",)
 
-STAGE2_PREFLIGHT_VERSION = "stage2-preflight-v1"
+STAGE2_PREFLIGHT_VERSION = "stage2-preflight-v2"
+
+# Private cache.format of the managed analysis statistics. A pack only records
+# this after the current three-class statistics were actually accepted with the
+# rendered body; a preflight that finds the marker absent or stale takes the
+# level-refresh branch instead of declaring a no-op reuse.
+STAGE2_LEVEL_STATISTICS_VERSION = 1
 
 # Stage-2 U1 fixed-evidence display contract. A pack whose managed analysis
 # predates this marker (or a later version) must take the ordinary slow path
@@ -56,13 +62,16 @@ STAGE2_GUARD_KINDS = (("analysis", "analysis_file"), ("future_work", "sidecar_fi
                       ("facts", "facts_file"), ("pdf", "pdf_file"))
 
 def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
-          managed_snapshot, direction_machine_id,
-          facts_direction_id, direction_relevant_keys, gap_scope_keys,
-          read_stage1_professor_entry, stage1_state_path, _canonical_under,
-          load_input_pack, load_freshness_cache, _resolve_evidence, Stage2Context,
-          filename_component, truncate, INPUT_PACK, GAP_SCOPES, FRESHNESS_SCOPES,
-          ANALYSIS_MD, MANAGED_BY, SHORTLIST_MAX, ABSTRACT_INPUT_CHARS,
-          QUOTE_INPUT_CHARS, TRANSLATION_INPUT_CHARS):
+          sha256_text, split_frontmatter,
+          managed_snapshot, direction_machine_id, facts_direction_id,
+          direction_relevant_keys, gap_scope_keys, read_stage1_professor_entry,
+          stage1_state_path, _canonical_under, load_input_pack, load_freshness_cache,
+          _resolve_evidence, Stage2Context, filename_component, truncate,
+          pack_direction_relevant_keys, observed_source_projection,
+          observed_level_projection, consumed_sources, canonical_index_path,
+          INPUT_PACK, GAP_SCOPES, FRESHNESS_SCOPES, ANALYSIS_MD, MANAGED_BY,
+          SHORTLIST_MAX, ABSTRACT_INPUT_CHARS, QUOTE_INPUT_CHARS,
+          TRANSLATION_INPUT_CHARS):
     def stage2_preflight_versions() -> dict:
         """Semantic identity of the Stage 2 resolution implementation.
 
@@ -450,10 +459,93 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
         return sha256_obj(view)
 
 
+    def stage2_consumed_source_keys(entry: dict) -> list:
+        """Papers whose sources this accepted direction actually consumed.
+
+        Members, the persisted analysis reference scope and every surfaced gap's
+        paper: that is the limited union a later level/source refresh may inspect.
+        It never scans the professor library or other directions.
+        """
+        keys = set()
+        for key in entry.get("supporting_item_keys") or []:
+            keys.add(key)
+        for key in pack_direction_relevant_keys(entry):
+            keys.add(key)
+        for section in ("gap_shortlist", "gaps_excluded", "completed_gap_blacklist"):
+            for gap in entry.get(section) or []:
+                if isinstance(gap, dict):
+                    keys.add(gap.get("item_key"))
+        return sorted(key for key in keys if isinstance(key, str) and key)
+
+
+    def stage2_group_consumed_keys(accepted_by_key: dict, grouping: dict,
+                                   direction_id: str) -> list:
+        """Union of consumed source keys over one provisional direction's outputs.
+
+        A split child contributes its own keys next to its source; a merged-away
+        source has no entry of its own and contributes the surviving target's.
+        """
+        slot = grouping.get(direction_id) or {"resolved": [], "merged_into": None}
+        ids = list(slot["resolved"])
+        if slot["merged_into"]:
+            ids.append(slot["merged_into"])
+        keys = set()
+        for resolved_id in ids:
+            entry = accepted_by_key.get(resolved_id)
+            if isinstance(entry, dict):
+                keys.update(stage2_consumed_source_keys(entry))
+        return sorted(keys)
+
+
+    def stage2_level_projection(papers: dict, keys: list) -> dict:
+        """The canonical level this run writes for every consumed paper."""
+        return {key: (papers.get(key) or {}).get("analysis_level") for key in keys}
+
+
+    def stage2_pdf_source_projection(papers: dict, keys: list) -> dict:
+        """The explicit PDF source each accepted paper named, or an explicit none."""
+        return {key: canonical_index_path((papers.get(key) or {}).get("pdf_file"))
+                for key in keys}
+
+
+    def stage2_refresh_preflight_metadata(meta: dict, pack: dict, papers: dict,
+                                          professor_dir: Path) -> dict:
+        """Update only the level/source projections and the statistics marker.
+
+        A level-only refresh must not re-prove or rewrite any business binding:
+        artifact guards, target/candidate fingerprints, resolved grouping and
+        freshness views stay byte-identical. The projections are rewritten from
+        the current index/pack so the next preflight compares against what this
+        actually accepted.
+        """
+        accepted_by_key = {direction_machine_id(entry): entry
+                           for entry in pack.get("directions") or []
+                           if isinstance(entry, dict)}
+        grouping = _pack_resolved_grouping(list(accepted_by_key.values()))
+        updated = dict(meta)
+        directions = {}
+        for direction_id, record in (meta.get("directions") or {}).items():
+            if not isinstance(record, dict):
+                directions[direction_id] = record
+                continue
+            keys = stage2_group_consumed_keys(accepted_by_key, grouping, direction_id)
+            new_record = dict(record)
+            new_record["source_projection"] = observed_source_projection(
+                professor_dir, keys)
+            new_record["level_projection"] = stage2_level_projection(papers, keys)
+            new_record["consumed_sources"] = consumed_sources(papers, keys)
+            new_record["pdf_sources"] = stage2_pdf_source_projection(papers, keys)
+            directions[direction_id] = new_record
+        updated["directions"] = directions
+        updated["statistics_version"] = STAGE2_LEVEL_STATISTICS_VERSION
+        return updated
+
+
     def stage2_preflight_metadata(program_root: Path, professor_dir: Path, target: dict,
                                   snapshot_entry: dict | None, pack_directions: list,
                                   params: dict, current_year: int, ctx: Stage2Context,
-                                  cache_entries: dict) -> dict:
+                                  cache_entries: dict,
+                                  statistics_version: int | None = None) -> dict:
         """Build the cache.preflight block seeded into an accepted input pack.
 
         Written only by stage2-finalize; consumers (stage3+) must keep treating it
@@ -466,6 +558,12 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
         `resolved_entries` carries per-entry accepted/freshness fingerprints.
         Early reuse must prove the whole resolved set, not just that the old
         provisional collection_key still exists.
+
+        The level/source projections split the two change classes the third
+        preflight branch needs: `source_projection` is the business identity and
+        `level_projection` the display value. `statistics_version` is stamped
+        only after the current statistics were actually accepted with the
+        rendered body, so metadata construction alone can never claim success.
         """
         snapshot_directions = {entry.get("direction_id"): entry
                                for entry in (snapshot_entry or {}).get("directions") or []
@@ -497,6 +595,7 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
                     "freshness_view_fingerprint": stage2_freshness_view_fingerprint(
                         entry, cache_entries),
                 }
+            consumed_keys = stage2_group_consumed_keys(accepted_by_key, grouping, direction_id)
             directions[direction_id] = {
                 "target_fingerprint": stage2_target_fingerprint(direction),
                 "candidate_fingerprint": stage2_candidate_fingerprint(
@@ -508,6 +607,12 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
                 "resolved_direction_ids": sorted(slot["resolved"]),
                 "merged_into": slot["merged_into"],
                 "resolved_entries": resolved_entries,
+                # Limited source identity (business) and the separate level value.
+                "source_projection": observed_source_projection(
+                    professor_dir, consumed_keys),
+                "level_projection": stage2_level_projection(ctx.papers, consumed_keys),
+                "consumed_sources": consumed_sources(ctx.papers, consumed_keys),
+                "pdf_sources": stage2_pdf_source_projection(ctx.papers, consumed_keys),
             }
         return {
             "schema": 1,
@@ -515,6 +620,7 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
             "resolution_semantics_version": STAGE2_RESOLUTION_SEMANTICS_VERSION,
             "sidecar_extractor_versions": list(SIDECAR_EXTRACTOR_VERSIONS),
             "facts_generator_versions": list(FACTS_GENERATOR_VERSIONS),
+            "statistics_version": statistics_version,
             "accepted_directions_sha256": sha256_obj(pack_directions),
             "current_year": current_year,
             "params": params,
@@ -708,10 +814,15 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
         target_directions = [entry for entry in target.get("directions") or []
                              if isinstance(entry, dict)]
         direction_results = []
-        all_reuse = bool(target_directions) and not professor_reasons
+        structural_flags = []
+        statistics_stale = (meta is not None
+                            and meta.get("statistics_version")
+                            != STAGE2_LEVEL_STATISTICS_VERSION)
+        level_refresh_needed = statistics_stale
         for direction in target_directions:
             direction_id = str(direction.get("direction_id"))
             reasons = []
+            level_changed = False
             validator_ids = [direction_id]
             recorded = recorded_directions.get(direction_id)
             if recorded is None or not isinstance(recorded, dict):
@@ -776,9 +887,25 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
                         reason = stage2_artifact_guard_reason(guard if isinstance(guard, dict) else {})
                         if reason:
                             reasons.append(reason)
+                # Business sources compared apart from the level value: an
+                # unreadable/broken record cannot prove nothing changed, while a
+                # pure legal level change must stay a level-only refresh.
+                recorded_sources = recorded.get("source_projection")
+                recorded_levels = recorded.get("level_projection")
+                consumed_keys = stage2_group_consumed_keys(
+                    pack_directions, pack_grouping, direction_id)
+                if not isinstance(recorded_sources, dict) or not isinstance(recorded_levels, dict):
+                    reasons.append("source_projection_missing")
+                else:
+                    if recorded_sources != observed_source_projection(
+                            professor_dir, consumed_keys):
+                        reasons.append("source_changed")
+                    current_levels = observed_level_projection(professor_dir, consumed_keys)
+                    if not current_levels.get("valid"):
+                        reasons.append("analysis_level_unreadable")
+                    elif current_levels.get("values") != recorded_levels:
+                        level_changed = True
             validator_reason = stage2_validator_accepts(pack, validator_ids, professor_dir)
-            if validator_reason:
-                reasons.append(validator_reason)
             # A pack produced under older membership semantics was certified by
             # that old body: its validator record can neither prove the rebuilt
             # document nor re-arm the early gate, so the direction takes the slow
@@ -789,11 +916,39 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
             if u1_update_needed:
                 reasons.append("fixed_evidence_display_update")
             reasons = sorted(set(reasons))
+            structural = bool(reasons)
+            if structural:
+                action = "process"
+            elif level_changed or statistics_stale:
+                # A validator that is no longer accepted is not a source change:
+                # the level-refresh acceptance decides separately whether the old
+                # certification can be preserved (equivalent body + valid binding)
+                # or must expire, and it never fakes reuse_all.
+                action = "refresh_level"
+                level_refresh_needed = True
+            elif validator_reason:
+                action = "process"
+            else:
+                action = "reuse"
+            reason_codes = sorted(set(reasons + ([validator_reason] if validator_reason else [])))
             direction_results.append({
-                "direction_id": direction_id, "action": "reuse" if not reasons else "process",
-                "reason_codes": reasons})
-            if reasons:
-                all_reuse = False
+                "direction_id": direction_id, "action": action,
+                "reason_codes": reason_codes})
+            structural_flags.append(structural)
+        professor_action = "process" if (professor_reasons or not target_directions) else None
+        if professor_action is None:
+            if any(structural_flags):
+                professor_action = "process"
+            elif level_refresh_needed or any(row["action"] == "refresh_level"
+                                             for row in direction_results):
+                # Some directions may still only report a validator reason; a
+                # level-refresh acceptance covers the whole pack's certification
+                # and must not be turned into a slow-path process by them.
+                professor_action = "refresh_level"
+            elif any(row["action"] == "process" for row in direction_results):
+                professor_action = "process"
+            else:
+                professor_action = "reuse_all"
         preflight_inputs = stage2_preflight_cheap_inputs(
             program_root, professor_dir, professor, target, snapshot_entry, params, current_year)
         # The top-level receipt reports the union of the professor-wide and
@@ -808,7 +963,7 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
             "professor": professor,
             "preflight_id": sha256_obj({"professor": professor,
                                         "preflight_inputs": preflight_inputs}),
-            "action": "reuse_all" if all_reuse else "process",
+            "action": professor_action,
             "reason_codes": reason_codes,
             "pack_path": str(pack_path),
             "preflight_inputs": preflight_inputs,
@@ -957,6 +1112,11 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
         stage2_direction_artifact_guards=stage2_direction_artifact_guards,
         stage2_resolution_evidence_guards=stage2_resolution_evidence_guards,
         _pack_resolved_grouping=_pack_resolved_grouping,
+        stage2_consumed_source_keys=stage2_consumed_source_keys,
+        stage2_group_consumed_keys=stage2_group_consumed_keys,
+        stage2_level_projection=stage2_level_projection,
+        stage2_pdf_source_projection=stage2_pdf_source_projection,
+        stage2_refresh_preflight_metadata=stage2_refresh_preflight_metadata,
         stage2_freshness_view_fingerprint=stage2_freshness_view_fingerprint,
         stage2_preflight_metadata=stage2_preflight_metadata,
         stage2_pack_state_fingerprint=stage2_pack_state_fingerprint,

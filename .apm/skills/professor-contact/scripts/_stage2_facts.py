@@ -22,6 +22,7 @@ import types
 
 def build(*, atomic_json,
           fail,
+          ANALYSIS_LEVELS,
           SCHEMA,
           MANAGED_BY,
           INPUT_PACK,
@@ -362,13 +363,218 @@ def build(*, atomic_json,
             return direction_relevant_keys(direction)
         return list(direction.get("member_keys") or [])
 
-    def load_papers_with_digests(facts: dict) -> dict:
+    def canonical_index_path(value: Any) -> str | None:
+        """Absolute, comparable form of an index/paper path (never a guess)."""
+        if not isinstance(value, str) or not value.strip():
+            return None
+        path = Path(value.strip())
+        try:
+            return str(path.expanduser().resolve())
+        except OSError:
+            return str(path.expanduser())
+
+    def read_analysis_index(professor_dir: Path) -> tuple[dict | None, str]:
+        """Read `<professor_dir>/论文分析/_index.json` and classify its state.
+
+        Returns ``(papers, state)`` where state is ``"ok"`` (a papers map),
+        ``"missing"`` (no index file: an explicit unknown registration state) or
+        ``"malformed"`` (unreadable/broken record: business equality cannot be
+        proven). The resolver never rewrites the index and never invents fields.
+        """
+        data, error = read_json_file(Path(professor_dir) / "论文分析" / "_index.json")
+        if error == "not_found":
+            return {}, "missing"
+        if error or not isinstance(data, dict):
+            return None, "malformed"
+        papers = data.get("papers")
+        if not isinstance(papers, dict):
+            return None, "malformed"
+        return papers, "ok"
+
+    def index_entry_level(entry: dict) -> tuple[str | None, bool]:
+        """(level, legal) for one index entry; missing/null means unconfirmed."""
+        level = entry.get("level")
+        if level is None:
+            return None, True
+        if isinstance(level, str) and level in ANALYSIS_LEVELS:
+            return level, True
+        return None, False
+
+    def index_entry_analysis_path(entry: dict) -> str | None:
+        """The analysis path a successful index registration selects, if usable."""
+        if not isinstance(entry, dict):
+            return None
+        path = canonical_index_path(entry.get("file"))
+        if path is None:
+            return None
+        try:
+            exists = Path(path).is_file()
+        except OSError:
+            exists = False
+        return path if exists else None
+
+    def resolve_declared_level(entry: Any, analysis_file: Any,
+                               declared: Any) -> tuple[str | None, str | None]:
+        """Shared eligibility rule for the current paper's actual analysis level.
+
+        A level is only known on the current professor, current item and the
+        selected analysis source: the index must carry an object record, its
+        `file` must be an existing analysis, and the facts' selected
+        `analysis_file` must be the same canonical path. A declared known level
+        that contradicts that registration is invalid input; no declared value
+        is the honest unconfirmed state and is never revived from the index.
+        """
+        if declared is not None and declared not in ANALYSIS_LEVELS:
+            return None, "invalid_analysis_level"
+        if entry is None:
+            # No success-only registration: no known level can be confirmed.
+            return (None, "analysis_level_conflict") if declared is not None else (None, None)
+        if not isinstance(entry, dict):
+            return None, "invalid_analysis_index_record"
+        recorded, legal = index_entry_level(entry)
+        if not legal:
+            return None, "invalid_analysis_index_level"
+        current_path = index_entry_analysis_path(entry)
+        selected = canonical_index_path(analysis_file)
+        eligible = bool(current_path) and selected is not None and current_path == selected
+        if declared is None:
+            return None, None
+        if not eligible or recorded != declared:
+            return None, "analysis_level_conflict"
+        return declared, None
+
+    def _path_state(value: Any) -> dict:
+        path = canonical_index_path(value)
+        if path is None:
+            return {"path": None, "state": "undeclared"}
+        try:
+            exists = Path(path).is_file()
+        except OSError:
+            exists = False
+        return {"path": path, "state": "present" if exists else "missing"}
+
+    def _fixed_candidate_state(analysis_path: str | None, suffix: str) -> str:
+        if not analysis_path:
+            return "unknown"
+        try:
+            return "present" if Path(analysis_path + suffix).is_file() else "missing"
+        except OSError:
+            return "missing"
+
+    def observed_source_projection(professor_dir: Path, keys) -> dict:
+        """Limited business-source view over the accepted package's own papers.
+
+        Only the current analysis index record shape, its declared analysis /
+        future-work / facts sources and the fixed `.facts.json` /
+        `.future_work.json` candidates (derived from the current valid analysis
+        path) are recorded. Administrative fields (generated_at, KB ids, level)
+        never enter this business identity; a missing index is an explicit
+        unknown state while an unreadable one cannot prove business equality.
+        """
+        index_papers, state = read_analysis_index(professor_dir)
+        if state == "malformed":
+            return {"index": "malformed"}
+        papers = {}
+        for key in sorted({key for key in keys if isinstance(key, str)}):
+            entry = index_papers.get(key)
+            if entry is None:
+                record = {"index": "missing",
+                          "analysis": {"path": None, "state": "undeclared"},
+                          "future_work": {"path": None, "state": "undeclared"},
+                          "facts": {"path": None, "state": "undeclared"},
+                          "fixed": {"future_work": "unknown", "facts": "unknown"}}
+            elif not isinstance(entry, dict):
+                record = {"index": "malformed"}
+            else:
+                analysis_path = index_entry_analysis_path(entry)
+                record = {
+                    "index": "object",
+                    "analysis": _path_state(entry.get("file")),
+                    "future_work": _path_state(entry.get("future_work_sidecar")),
+                    "facts": _path_state(entry.get("facts_sidecar")),
+                    "fixed": {
+                        "future_work": _fixed_candidate_state(analysis_path, ".future_work.json"),
+                        "facts": _fixed_candidate_state(analysis_path, ".facts.json"),
+                    },
+                }
+            papers[key] = record
+        return {"index": state, "papers": papers}
+
+    def observed_level_projection(professor_dir: Path, keys) -> dict:
+        """Current observable level per consumed paper (index-only, no facts).
+
+        The value is a known level only when the index record selects an existing
+        analysis file; otherwise it is null (unconfirmed). An illegal enum/type is
+        reported as invalid so preflight can take the slow path instead of
+        writing a known value. The level stays OUT of the business projection.
+        """
+        index_papers, state = read_analysis_index(professor_dir)
+        if state == "malformed":
+            return {"index": state, "valid": False, "values": {}}
+        values, valid = {}, True
+        for key in sorted({key for key in keys if isinstance(key, str)}):
+            entry = index_papers.get(key)
+            if entry is None:
+                values[key] = None
+                continue
+            if not isinstance(entry, dict):
+                values[key] = None
+                valid = False
+                continue
+            level, legal = index_entry_level(entry)
+            if not legal:
+                values[key] = None
+                valid = False
+                continue
+            values[key] = level if index_entry_analysis_path(entry) else None
+        return {"index": state, "valid": valid, "values": values}
+
+    def consumed_sources(facts_papers: dict, keys) -> dict:
+        """Record the source declarations this run actually consumed (audit only).
+
+        Preflight only sees candidates; this records what the accepted facts named
+        for each consumed paper so a later run can tell an observed candidate from
+        the actual accepted source. It never participates in change equality.
+        """
+        out = {}
+        for key in sorted({key for key in keys if isinstance(key, str)}):
+            paper = facts_papers.get(key)
+            if not isinstance(paper, dict):
+                continue
+            out[key] = {
+                "analysis_file": canonical_index_path(paper.get("analysis_file")),
+                "sidecar_file": canonical_index_path(paper.get("sidecar_file")),
+                "facts_file": canonical_index_path(paper.get("facts_file")),
+                "pdf_file": canonical_index_path(paper.get("pdf_file")),
+            }
+        return out
+
+    def load_papers_with_digests(facts: dict, professor_dir: Path) -> dict:
+        index_papers, index_state = read_analysis_index(professor_dir)
         papers = {}
         for paper in facts.get("papers", []):
             key = paper.get("item_key")
             if not key:
                 continue
             record = dict(paper)
+            declared = record.get("analysis_level")
+            if declared is not None and declared not in ANALYSIS_LEVELS:
+                fail("invalid_facts",
+                     f"paper {key}: analysis_level must be one of {ANALYSIS_LEVELS} or null",
+                     item_key=key)
+            if index_state == "malformed":
+                # A broken registration record cannot prove the declared value.
+                if declared is not None:
+                    fail("invalid_facts",
+                         f"paper {key}: 论文分析/_index.json is unreadable; "
+                         "analysis_level cannot be verified", item_key=key)
+                level = None
+            else:
+                level, error = resolve_declared_level(
+                    index_papers.get(key), record.get("analysis_file"), declared)
+                if error:
+                    fail("invalid_facts", f"paper {key}: {error}", item_key=key)
+            record["analysis_level"] = level
             record["_digest"] = paper_digest(record)
             papers[key] = record
         return papers
@@ -444,7 +650,7 @@ def build(*, atomic_json,
                 fail("invalid_params", f"gap_scope must be one of {GAP_SCOPES}")
             if self.freshness_scope not in FRESHNESS_SCOPES:
                 fail("invalid_params", f"freshness_scope must be one of {FRESHNESS_SCOPES}")
-            self.papers = load_papers_with_digests(self.facts)
+            self.papers = load_papers_with_digests(self.facts, self.professor_dir)
             self.sidecar_cache = {}
             self.facts_cache = {}
             self.families = compute_version_families(self.papers)
@@ -687,6 +893,14 @@ def build(*, atomic_json,
                 load_freshness_cache=load_freshness_cache,
                 save_freshness_cache=save_freshness_cache,
                 gap_scope_keys=gap_scope_keys,
+                canonical_index_path=canonical_index_path,
+                read_analysis_index=read_analysis_index,
+                index_entry_level=index_entry_level,
+                index_entry_analysis_path=index_entry_analysis_path,
+                resolve_declared_level=resolve_declared_level,
+                observed_source_projection=observed_source_projection,
+                observed_level_projection=observed_level_projection,
+                consumed_sources=consumed_sources,
                 load_papers_with_digests=load_papers_with_digests,
                 build_gap_pool=build_gap_pool,
                 Stage2Context=Stage2Context,

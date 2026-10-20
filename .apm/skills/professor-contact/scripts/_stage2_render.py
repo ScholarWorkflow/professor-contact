@@ -614,6 +614,7 @@ def build(*, fail,
                 "item_key": key, "title": paper.get("title"), "year": paper.get("year"),
                 "authorship": paper.get("authorship"),
                 "analysis_file": paper.get("analysis_file"),
+                "analysis_level": paper.get("analysis_level"),
                 "pdf_available": bool(paper.get("has_pdf")),
                 "facts_state": facts_state,
                 "facts_error": facts_error,
@@ -634,6 +635,7 @@ def build(*, fail,
                 "item_key": key, "title": paper.get("title"), "year": paper.get("year"),
                 "authorship": paper.get("authorship"),
                 "analysis_file": paper.get("analysis_file"),
+                "analysis_level": paper.get("analysis_level"),
                 "pdf_available": bool(paper.get("has_pdf")),
                 "facts_state": facts_state,
                 "facts_error": facts_error,
@@ -690,9 +692,12 @@ def build(*, fail,
             stage2_require_later_paper_titles(ctx, direction, pack)
         projected = {direction_machine_id(d): direction_papers(pack, d)
                      for d in pack_directions}
-        full = sum(1 for papers in projected.values() for p in papers
-                   if p.get("analysis_file") or p.get("pdf_available"))
-        abstracted = sum(len(papers) for papers in projected.values()) - full
+        member_papers = [p for papers in projected.values() for p in papers]
+        fulltext = sum(1 for p in member_papers
+                       if p.get("analysis_level") == "fulltext")
+        abstracted = sum(1 for p in member_papers
+                         if p.get("analysis_level") == "abstract")
+        unknown = len(member_papers) - fulltext - abstracted
         papers_lookup = pack_paper_index(pack)
 
         def paper_record(key: str) -> dict | None:
@@ -735,8 +740,8 @@ def build(*, fail,
         doc.add_line("$$\\newcommand{\\dif}{\\mathop{}\\!\\mathrm{d}}$$", excluded())
         doc.blank()
         doc.add_line(
-            f"> {now_utc()} ｜ 数据来源：全文级 {full} 篇 · 摘要级 {abstracted} 篇"
-            f"（共 {full + abstracted} 篇）｜ 由 contact_state 确定性渲染（重跑=全量重写）",
+            f"> {now_utc()} ｜ 数据来源：全文级 {fulltext} 篇 · 摘要级 {abstracted} 篇 · 未确认 {unknown} 篇"
+            f"（共 {len(member_papers)} 篇）｜ 由 contact_state 确定性渲染（重跑=全量重写）",
             excluded())
         doc.blank()
         global_lines = []

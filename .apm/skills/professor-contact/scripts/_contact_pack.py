@@ -15,6 +15,10 @@ from typing import Any
 import types
 
 
+# The only levels a successful paper analysis may report. `None` (a missing
+# field or an explicit JSON null) is the honest "unconfirmed" state; any other
+# value is invalid input, never a third analysis level.
+ANALYSIS_LEVELS = ("fulltext", "abstract")
 
 
 
@@ -37,6 +41,11 @@ def build(*, fail,
         for field in _CANONICAL_PAPER_FIELDS:
             record[field] = entry.get(field)
         record["pdf_available"] = bool(record["pdf_available"])
+        # One value domain for every canonical record, including v1 migration
+        # snapshots: a missing field and an explicit null are the same honest
+        # "unconfirmed" state, and an illegal value is never treated as known.
+        level = record.get("analysis_level")
+        record["analysis_level"] = level if level in ANALYSIS_LEVELS else None
         return record
 
     def _merge_canonical_paper(papers: dict, owners: dict, entry: dict, owner: str) -> dict:

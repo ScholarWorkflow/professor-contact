@@ -857,12 +857,12 @@ def build(*, Stage2Context,
         updated_pack = dict(ctx.pack)
         updated_pack["generated_at"] = now_utc()
         updated_pack["directions"] = pack_directions
-        # A refinement owns only cache.render; replacing the whole cache block
-        # would drop the recorded preflight proof (and force the next ordinary
-        # finalize into a membership rebuild) even though that proof is still
-        # the accepted one for this pack.
+        # A refinement owns only cache.render; keep the U1 ownership/marker
+        # metadata on that render entry. The preflight proof still expires: the
+        # rewritten body must re-prove through the slow path (U5 L6).
         cache_block = copy.deepcopy(ctx.pack.get("cache")) \
             if isinstance(ctx.pack.get("cache"), dict) else {}
+        cache_block.pop("preflight", None)
         render_block = dict(cache_block.get("render")) \
             if isinstance(cache_block.get("render"), dict) else {}
         render_entry = {"sha256": md_result["sha256"], "ownership": ownership}

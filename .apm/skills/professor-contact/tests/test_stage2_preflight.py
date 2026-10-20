@@ -313,7 +313,8 @@ class PreflightBase(unittest.TestCase):
                 self.root, self.prof_dir, PROFESSOR, target),
             pack_directions=pack["directions"], params=params,
             current_year=current_year if current_year is not None else YEAR,
-            ctx=ctx, cache_entries=contact_state.load_freshness_cache(self.prof_dir))
+            ctx=ctx, cache_entries=contact_state.load_freshness_cache(self.prof_dir),
+            statistics_version=contact_state.STAGE2_LEVEL_STATISTICS_VERSION)
         pack.setdefault("cache", {})["preflight"] = meta
         self._write_pack(pack)
         return meta

@@ -9,9 +9,9 @@
   "non-stage": "文档/工具/夹具类测试，不驱动某个阶段的运行时入口"
  },
  "totals": {
-  "modules": 79,
+  "modules": 80,
   "seconds": 428.0,
-  "tests": 1031
+  "tests": 1085
  },
  "shards": [
   {
@@ -543,6 +543,15 @@
       "stage3": 38,
       "stage4": 6,
       "stage5": 6
+     }
+    },
+    {
+     "name": "test_stage2_analysis_level",
+     "stage": "stage2",
+     "seconds": 11.0,
+     "tests": 29,
+     "signals": {
+      "stage2": 96
      }
     }
    ]
