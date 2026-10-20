@@ -1492,7 +1492,7 @@ def build(*, Stage2Context,
                 if key not in projection_papers:
                     projection_papers[key] = {"analysis_level": level}
             updated_meta = stage2_refresh_preflight_metadata(
-                gate["meta"], pack, projection_papers, professor_dir)
+                gate["meta"], pack, projection_papers)
             directions = [copy.deepcopy(entry) for entry in pack.get("directions") or []]
             render_pack = {"papers": updated_papers, "directions": directions}
             problems = stage2_render_precheck(render_pack)

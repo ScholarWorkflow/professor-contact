@@ -508,15 +508,15 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
                 for key in keys}
 
 
-    def stage2_refresh_preflight_metadata(meta: dict, pack: dict, papers: dict,
-                                          professor_dir: Path) -> dict:
-        """Update only the level/source projections and the statistics marker.
+    def stage2_refresh_preflight_metadata(meta: dict, pack: dict, papers: dict) -> dict:
+        """Update only the level projection and the statistics marker.
 
-        A level-only refresh must not re-prove or rewrite any business binding:
-        artifact guards, target/candidate fingerprints, resolved grouping and
-        freshness views stay byte-identical. The projections are rewritten from
-        the current index/pack so the next preflight compares against what this
-        actually accepted.
+        A level-only refresh does not re-prove or rewrite any business binding:
+        the source projection, artifact guards, target/candidate fingerprints,
+        resolved grouping and freshness views stay byte-identical (the refresh
+        gate already proved the current observation equals the accepted source
+        projection). `consumed_sources`/`pdf_sources` keep describing the last
+        facts acceptance, because a refresh consumes neither facts nor PDFs.
         """
         accepted_by_key = {direction_machine_id(entry): entry
                            for entry in pack.get("directions") or []
@@ -530,11 +530,7 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
                 continue
             keys = stage2_group_consumed_keys(accepted_by_key, grouping, direction_id)
             new_record = dict(record)
-            new_record["source_projection"] = observed_source_projection(
-                professor_dir, keys)
             new_record["level_projection"] = stage2_level_projection(papers, keys)
-            new_record["consumed_sources"] = consumed_sources(papers, keys)
-            new_record["pdf_sources"] = stage2_pdf_source_projection(papers, keys)
             directions[direction_id] = new_record
         updated["directions"] = directions
         updated["statistics_version"] = STAGE2_LEVEL_STATISTICS_VERSION
