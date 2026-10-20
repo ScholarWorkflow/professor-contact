@@ -1,9 +1,9 @@
 # U5：实际分析级别贯通与诚实统计执行计划
 
-- Requirement revision：2026-10-19 用户确认，先保持 main 行为完成 Stage 2 拆分，再把 U1、U5 分别设计为独立修复 PR；本轮仅提交执行计划。U5 继承已确认的实际全文／摘要／未确认统计目标，不扩展论文分析范围。
-- Plan revision：u5-analysis-level-r2。r1 完整独立审核仅要求冻结来源资格与早期 lease 接线，本版合并两项修正；其余设计不扩展。
+- Requirement revision：2026-10-19 用户确认 U1、U5 分别独立设计；2026-10-20 用户确认开始两个计划。保持行为的 Stage 2 拆分已合并；本轮更新已有 PR #106 的唯一执行计划。U5 继承已确认的实际全文／摘要／未确认统计目标，不扩展论文分析范围。
+- Plan revision：u5-analysis-level-r3。以拆分后 main 重新核对真实模块、canonical 兼容与写入生命周期；替代 r2 全文，不与历史补丁叠用。来源资格、有限投影及早期 lease 的既定边界保持，不新增测试义务。
 - Proposed review status: pending。本文是待审完整候选，不继承 PR #92 的执行、测试或合并结论。
-- Target repository revision：ScholarWorkflow/professor-contact，main `d5a4f751fb80de4819d4a1de3ee829db52cea6fc`（2026-10-19 核实）。最终实施基线为保持行为的 Stage 2 拆分合并后的 main；尚无已确认拆分 PR。拆分完成是实施顺序前提，不是假设已有新模块。
+- Target repository revision：ScholarWorkflow/professor-contact，main `879982abe1d7d811bd9d014c03dce4f5912cc64f`（2026-10-20 核实，含 Stage 2 拆分及 #116/#117 shared/input-pack 提取）。PR #106 原 head 为 `1d6d6d80481081636c27227a6261062030a79872`。不再等待拆分，也不等待 Stage 3 重构；实施前仅核对新的语义变化。
 - 唯一目标路径：`plan/stage2-analysis-level/implementation-plan.md`。本 PR 只写该计划及必要范围说明；不修改产品、测试资产或测试计划，不执行测试、不评论或关闭 #92、不合并。
 
 ## 1. 需求与边界
@@ -16,19 +16,18 @@
 
 ## 2. 决策依据：现实与要求分开
 
-以下代码事实全部指向上述 main；行号仅便于定位，冻结的是符号职责。
+以下均为目标 main 的描述性事实，不能自行升级为需求。源码链接固定同一 SHA；函数职责而非行号是实施边界。
 
-1. 两种 analyzer 的 Step 5.6/5.7 已按实际 route 登记 `_index.json.papers[key].level`：OCR/PDF 为 fulltext、normalized abstract JSON 为 abstract；成功分析后确认文件落盘再写入。Step 6.1 facts 样例未带 level。决策：沿用这个结构化权威，补传 `analysis_level`，不从 Markdown 反解析。
-2. analyzer Step 5.6.7 明确 OCR-only、摘要、legacy、无 PDF handoff 可能 facts unavailable；facts 由 runner 校验且不得为补 facts 重跑全文。决策：分析成功资格和 facts 资格分开，绝不拿 `facts_state` 反推级别。
-3. `build_direction_pack`（4404 起）在成员和 reference 两条路径都未保存级别；`cmd_stage2_finalize` 内 `_canonical_record`（5069 起）、`_current_paper_record`（5381 起）与 fresh/resolved/old 优先关系可能直接沿用旧记录。决策：所有当前记录合流后执行一次同规则的级别赋值，null 也覆盖，不能只修 fresh 分支。
-4. `render_analysis_md`（4581 起）以 analysis_file 或 pdf_available 算全文，其余一律摘要。决策：renderer 仅按规范级别三分类，不再猜测。
-5. `cmd_stage2_preflight`、`stage2_preflight_metadata`、`_artifact_guards_for_keys` 目前有业务输入、已存在载体 guard 和 accepted pack 检查，但没有独立 level 来源投影；未记录缺失候选，故新文件出现不能由旧 present-only guards 完整判断。决策：在 reuse_all 前增一个有限的当前来源/级别投影；只有业务部分完全可比较且不变，才允许零模型级别刷新。
-6. `stage2_chatgpt_handoff.py` 已有内部 `acquire_local_lease`（默认 `verify_plan=False`）和 `release_local_lease`，共用教授 lock/lease；只有普通 CLI acquire 强制 exact handoff plan。本次确定性刷新复用内部 API，以自己的当前 preflight/pack/source 检查作为业务绑定，不改 handoff CLI。
-7. `cmd_stage2_finalize`（5424–5521）以 render_state 决定渲染，且旧 validator 检查在可能写正文之后；`Stage2PackRefineContext`（1744 起）已有只用持久包的可信渲染上下文。决策：复用现有持久包和受管写入，先隔离并检查旧快照，再接受当前正文；不另造 facts、不恢复已失效认证。
+1. [Codex analyzer](https://github.com/ScholarWorkflow/professor-contact/blob/879982abe1d7d811bd9d014c03dce4f5912cc64f/packages/professor-contact-codex/.apm/agents/professor-contact-analyzer.agent.md) 与 [OpenCode analyzer](https://github.com/ScholarWorkflow/professor-contact/blob/879982abe1d7d811bd9d014c03dce4f5912cc64f/packages/professor-contact-opencode/.apm/agents/professor-contact-analyzer.agent.md) 的 Step 5.3、5.6/5.7 以 index entry/file 判复用并按成功 route 登记 level；Step 6.1 facts 未传 level。OCR-only 全文成功与 facts unavailable 可并存。决定：补传结构化实际级别，不从 PDF、Markdown 或 facts_state 推断。
+2. [_stage2_facts.py](https://github.com/ScholarWorkflow/professor-contact/blob/879982abe1d7d811bd9d014c03dce4f5912cc64f/.apm/skills/professor-contact/scripts/_stage2_facts.py) 的 load_papers_with_digests 拷贝 facts paper，Stage2Context 载入旧规范包，Stage2PackRefineContext 只依赖持久包。[_contact_base.py](https://github.com/ScholarWorkflow/professor-contact/blob/879982abe1d7d811bd9d014c03dce4f5912cc64f/.apm/skills/professor-contact/scripts/_contact_base.py) 的 paper_digest 显式列业务字段，不含 level；direction_papers 只投影 supporting_item_keys。决定：level 是展示状态，不混入分析/归属/时效指纹；刷新复用持久上下文，统计集不变。
+3. [_contact_pack.py](https://github.com/ScholarWorkflow/professor-contact/blob/879982abe1d7d811bd9d014c03dce4f5912cc64f/.apm/skills/professor-contact/scripts/_contact_pack.py) 由 runner build 注入 _CANONICAL_PAPER_FIELDS；_canonical_paper_record/_merge_canonical_paper 为 v1 迁移作精确字段冲突检查，v2 normalize_input_pack 仅浅拷贝 pack、不规范每条 paper。决定：新增字段须同时覆盖迁移和 v2 读取；缺字段只在兼容视图解释为 null，不能改变校验旧包所依据的原内容，也不能把浅拷贝当独立旧快照。
+4. [_stage2_render.py](https://github.com/ScholarWorkflow/professor-contact/blob/879982abe1d7d811bd9d014c03dce4f5912cc64f/.apm/skills/professor-contact/scripts/_stage2_render.py) 的 build_direction_pack 在成员/reference 两处创建规范 paper，render_analysis_md 用 analysis_file/pdf_available 错算全文。[_stage2_finalize.py](https://github.com/ScholarWorkflow/professor-contact/blob/879982abe1d7d811bd9d014c03dce4f5912cc64f/.apm/skills/professor-contact/scripts/_stage2_finalize.py) 的 _canonical_record/_current_paper_record 与 papers_map 合流覆盖 fresh/reused/resolved/old，但 reused_entry 直接引用旧方向。决定：当前级别在最终 canonical 合流显式赋值，null 不走旧值 fallback；任何修改前隔离旧侧，renderer 仅按 canonical 三分类。
+5. [_stage2_preflight.py](https://github.com/ScholarWorkflow/professor-contact/blob/879982abe1d7d811bd9d014c03dce4f5912cc64f/.apm/skills/professor-contact/scripts/_stage2_preflight.py) 的 cmd_stage2_preflight/stage2_preflight_metadata 已守卫 target、Stage 1、catalog、业务指纹和 validator；_artifact_guards_for_keys 只收有路径且存在文件，缺少 index/level 投影和 missing 候选。决定：增加受限来源投影，不能用旧 present-only guards 证明新来源未出现。stage2_pack_content_fingerprint 包括除 validator 之外的完整包，故它是完整性绑定，不等同业务依据。
+6. [stage2_chatgpt_handoff.py](https://github.com/ScholarWorkflow/professor-contact/blob/879982abe1d7d811bd9d014c03dce4f5912cc64f/.apm/skills/professor-contact/scripts/stage2_chatgpt_handoff.py) 保留 acquire_local_lease(... verify_plan=False)/release_local_lease；同教授 lock 下协调 importer/local writer，CLI acquire 才固定 verify_plan=True。决定：专用刷新调用内部 API，并做自己当前 preflight/pack/source 核验，不伪造 handoff bundle 或借用旧 ID。
+7. [_stage2_finalize.py](https://github.com/ScholarWorkflow/professor-contact/blob/879982abe1d7d811bd9d014c03dce4f5912cc64f/.apm/skills/professor-contact/scripts/_stage2_finalize.py) 仍以 stage2_render_state 决定是否 render，validator 检查在可能写 Markdown 之后；[_stage2_validation.py](https://github.com/ScholarWorkflow/professor-contact/blob/879982abe1d7d811bd9d014c03dce4f5912cc64f/.apm/skills/professor-contact/scripts/_stage2_validation.py) 的 refine-finalize 保持 round/phase，但重建 cache.render 并清 preflight。决定：有限接受步骤留在 finalize owner，先验原状态再接受完整 candidate；refine 保持原校验生命周期与 preflight 保守失效，只保留/更新仍有效的本次 render 元数据。
+8. [contact_state.py](https://github.com/ScholarWorkflow/professor-contact/blob/879982abe1d7d811bd9d014c03dce4f5912cc64f/.apm/skills/professor-contact/scripts/contact_state.py) 是 factory 接线和 CLI owner：按路径载入模块、显式注入函数/常量并重导出。决定：新增职责仍遵循此边界，不让提取模块反向 import runner、不再造第二份 renderer/error channel。
 
-源码入口：[runner](https://github.com/ScholarWorkflow/professor-contact/blob/d5a4f751fb80de4819d4a1de3ee829db52cea6fc/.apm/skills/professor-contact/scripts/contact_state.py)、[Codex analyzer](https://github.com/ScholarWorkflow/professor-contact/blob/d5a4f751fb80de4819d4a1de3ee829db52cea6fc/packages/professor-contact-codex/.apm/agents/professor-contact-analyzer.agent.md)、[OpenCode analyzer](https://github.com/ScholarWorkflow/professor-contact/blob/d5a4f751fb80de4819d4a1de3ee829db52cea6fc/packages/professor-contact-opencode/.apm/agents/professor-contact-analyzer.agent.md)。
-
-lease 接入事实：[现有 handoff/lease owner](https://github.com/ScholarWorkflow/professor-contact/blob/d5a4f751fb80de4819d4a1de3ee829db52cea6fc/.apm/skills/professor-contact/scripts/stage2_chatgpt_handoff.py)，`acquire_local_lease`、`release_local_lease`、`_lease_cli`。
+规则依据：[Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)、[Plan Reviewer Rule](https://app.notion.com/p/3e80101a85f3817a94cbc6eca1a76a5c)、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)。本计划只冻结设计及观察入口，不规定测试 recipe。
 
 历史教训来源：[92 r11](https://github.com/ScholarWorkflow/professor-contact/blob/10324b8f10ff84080e9f7132bef807926de23279/plan/stage2-evidence-level/implementation-plan.md)、[92 t47](https://github.com/ScholarWorkflow/professor-contact/blob/10324b8f10ff84080e9f7132bef807926de23279/plan/stage2-evidence-level/test-plan.md)。只吸收已暴露的因果问题，不移植其补丁链、私有版本 2→3 恢复或混合 U1 的整体刷新机制：字段遗漏会使分支不一致；null 被 truthy fallback 吞掉；先写后验会丢旧认证依据；新候选回填旧侧会制造假等价；body 等价不等于业务依据相同，机器头也不是 body；测试输入未满足所声称的复用前提不能证明产品结论。旧测试记录不作为本新实现通过证明，本计划不规定新测试配方。
 
@@ -51,15 +50,15 @@ lease 接入事实：[现有 handoff/lease owner](https://github.com/ScholarWork
 
 ### 4.2 一个赋值规则覆盖全部 pack 构造
 
-在现有规范论文构造职责内集中级别规范化与当前覆盖，供 `build_direction_pack` 的成员/reference 路径及 finalize 的 fresh/reused/resolved/old fallback 合流使用。`_CANONICAL_PAPER_FIELDS` 和规范化保留字段，旧包缺字段转 null；同 key 采用当前已核实来源，不能让旧来源覆盖。
+在 `_stage2_facts.py` 的 facts 读取职责验证当前来源/级别，在 `_contact_pack.py` 的规范记录职责统一级别值域；两者通过 runner 显式接线供 `build_direction_pack` 的成员/reference 路径及 finalize 的 fresh/reused/resolved/old fallback 合流使用。runner 的 `_CANONICAL_PAPER_FIELDS` 增加 analysis_level，v1 迁移沿用同 key 精确冲突语义（缺字段与显式 null 等价）；v2 兼容读取对缺字段解释为 null，不原地改写原始 papers，非法枚举不当作已知值或替旧包补值。旧已接受文件的原内容单独保留给旧完整性/validator 绑定；兼容视图与当前 candidate 不能覆盖它。同 key 采用当前已核实来源，不能让旧来源覆盖。
 
-先保存旧 accepted pack 的独立深快照及其原字段，之后才组装 candidate。当前 canonical record 无论主体来自 fresh、old 或 resolved，都在最终加入 map 前明确赋当前 level；不使用 `new_level or old_level`，不以“字段已有”跳过 null。已接受旧包只能补其原有其他允许字段，不能充当当前级别来源。某 key 当前资格无法确认即 null，不从新候选反填旧包用于比较。
+先读取并隔离旧 accepted pack 的原始内容（在任何新增缺字段规范化之前）及其独立兼容视图，之后才组装 candidate；不仅复制外层 dict，还须隔离会修改的 directions、papers 与嵌套 resolved 数据。当前 main 的 normalize_input_pack 浅拷贝和 reused_entry=old_entry 均不提供这种隔离。当前 canonical record 无论主体来自 fresh、old 或 resolved，都在最终加入 map 前明确赋当前 level；不使用 `new_level or old_level`，不以“字段已有”跳过 null。已接受旧包只能补其原有其他允许字段，不能充当当前级别来源。某 key 当前资格无法确认即 null，不从新候选反填旧包用于比较。
 
 renderer 遍历原成员投影：fulltext/abstract 分别累加，缺失/null 为未确认；输出“全文级 X 篇 · 摘要级 Y 篇 · 未确认 Z 篇（共 N 篇）”。引用许可、论文身份和成员顺序全部保持。
 
 ### 4.3 只在 reuse_all 前增加必要的来源判断
 
-建立一个 runner 内部读取职责，被正常成功接受、preflight 和级别刷新写前复核共用。范围为现有 selected candidate union 及已被该包合法消费的来源；不扫描全教授库、无关方向或目录。投影分为业务来源部分和级别值部分：
+有限的 index/来源读取与资格解析放在 `_stage2_facts.py`，不依赖 Stage2Context 实例；由 runner 按现有先 facts、后 preflight/finalize 的 build 顺序显式注入。`_stage2_preflight.py` 承担投影比较和分流，`_stage2_finalize.py` 使用同一读取规则核对实际消费与写前状态；不形成 factories 的循环依赖。正常成功接受、preflight 和级别刷新写前复核共用同一规则。范围为现有 selected candidate union 及已被该包合法消费的来源；不扫描全教授库、无关方向或目录。投影分为业务来源部分和级别值部分：
 
 - 业务部分沿用现有业务输入/guard，记录当前 index key/对象形状、`file` 路径及上述资格。analysis 来自 index.file；future-work 声明来自 index.future_work_sidecar，facts 声明来自 index.facts_sidecar；固定候选由当前有效 analysis 路径派生。正常成功接受时同当前事实输入的 analysis_file/sidecar_file/facts_file 核对，保存实际消费的声明与观测状态，不能把 preflight 看到候选当成已消费。
 - PDF 不在 index 中发明路径字段。正常接受时来源是 analyzer Step 6.1 的 facts.pdf_file，已有 `_artifact_guards_for_keys` 已保存该路径与 stat；本次随有限基线记录其明确路径或明确无源。早期只沿用现有离线复用契约：当前 target、Stage 1 fingerprint、candidate catalog 视图与既有业务输入均相同，且此前实际接受的 PDF 路径 guard 完整可比较时，检查该接受路径的当前 stat；这不是宣称已重新读取 Zotero 当前附件。已有本地正式输入若声明新路径/删除或对应 fingerprint 变化，优先 process；无完整历史接受声明、仅有旧 pack 的 has_pdf 布尔或散落文件时不能定位 PDF，不补造来源而走 process。原无 PDF 的接受状态只在相同本地输入且无新正式声明时维持无源，不搜索孤立 PDF。因而不扩大 main 本来就允许的离线复用保证，也不把未知当前来源写成确认已知。
@@ -75,12 +74,12 @@ renderer 遍历原成员投影：fulltext/abstract 分别累加，缺失/null �
 
 refresh_level 只用已接受持久包、当前来源投影及 `Stage2PackRefineContext`；无需临时 facts、Zotero、分析／归属／时效／叙事模型任务，不重签 resolved proof。业务变化一律退出交原 process。analyzer Step 2.6 在 preflight 后消费此第三分支；显式 chatgpt_result 或 kb_import=true 仍优先走原 process，不能被刷新吞掉。刷新由专用 runner 自行调用现有 lease owner 的内部 `acquire_local_lease(professor_dir, token, verify_plan=False)`，token 为本调用新生成且不借用他人；不调用需要 handoff ID 的 acquire CLI，不伪造/复用 `_latest`，不构建空 bundle。这个内部 API 已经使用相同教授 lock 检查 busy 并写同一 lease，本次只是新使用者，不新增锁、lease 格式或证明文件。成功取得后按下述自己的 preflight/pack/source 绑定重读比较，所有退出均 finally 调 `release_local_lease`；busy 保持既有 stage2_writer_busy，零业务写入返回，不循环覆盖；比较漂移释放后返回 needs_refresh，调用方重新预检，不拿旧 payload 继续。释放失败如实报告，不谎报已解除 lease。普通 process 的 build→import→exact acquire→finally release 顺序和 CLI verify_plan=True 完全不变。它与普通 finalize 复用现有 renderer、managed write、包/validator 摘要逻辑，仅将下面必要的接受顺序收敛在原写入 owner，不另建可插拔框架或第二份 renderer。
 
-1. 在任何 candidate 组装、ctx.pack 覆盖和文件写入之前，保存原包深快照、受管文件 body/机器头、原实际 body 摘要、原 render binding 和 validator 记录。以原包核验旧绑定、归属与人工保护。无旧包为首建；读不到旧状态不得借新题名/候选记录补成可比较旧侧。
+1. 在任何缺字段补齐、candidate 组装、reused_entry 修改、ctx.pack 覆盖和文件写入之前，保存旧文件原始包深快照及独立兼容视图、受管文件 body/机器头、原实际 body 摘要、原 render binding 和 validator 记录。以原包核验旧绑定、归属与人工保护。无旧包为首建；读不到旧状态不得借新题名/候选记录补成可比较旧侧。
 2. 普通 finalize 先完成原业务与 preflight 核验；刷新按上述内部 API 取得现有教授 writer lease 后重读同一 pack/target/Stage 1/当前业务年份/来源和级别，与预检绑定核对。输入漂移零写入返回原 needs_refresh；人工修改沿用原 needs_decision。不新增锁或 journal。
 3. 由当前完整 candidate 实际渲染 body。不用 level 相等、统计相等、render_state 相等或任务数为零代替实际正文。缺可信渲染字段时刷新退回正常准备，普通处理沿用数据错误；不解析旧 Markdown 补字段。
 4. 比较实际旧 body 和 candidate body，仅忽略 renderer 固定顶部生成标题的生成时间，保留同一行统计全文；其他字节原样比较。正文变化则受保护写入；等价则保留旧 body 原字节及真实 SHA，仅在既有机器头绑定当前候选所需时同步头。机器头同步不是新增认证项目，不重新引入已撤销的独立 header 认证要求。
-5. validator 按三个独立事实处理：原绑定是否合法、body 是否实变、业务认证依据是否实变。body 或业务依据变化则旧认证失效，保留原报告；body 等价且业务未变才允许保留原本合法的 round/phase/pending 并同步必要包绑定。原绑定无效且无真实业务变化按既有证据错误处理，不用重绑救回 PASS。正常 narrative refine 保持原第一轮→第二轮生命周期，本修复不提供清轮次入口。
-6. 文件接受完成后才在 candidate 登记本版私有统计标识、实际 render SHA、新 level 投影及必要的既有完整性摘要，沿用 atomic_json 等现有持久路径。刷新只更新 level、统计接受缓存及必要绑定；不改成员、模型结果、业务指纹、assignment、源接受资格或原报告。普通成功处理才可建立新业务来源基线。
+5. validator 按三个独立事实处理：原绑定是否合法、body 是否实变、业务认证依据是否实变。body 或业务依据变化则旧认证失效，保留原报告；body 等价且业务未变才允许保留原本合法的 round/phase/pending 并同步必要包绑定。原绑定无效，且 body 等价、业务依据未变时，按既有证据错误处理，不用重绑救回 PASS。正常 narrative refine 保持原第一轮→第二轮生命周期，本修复不提供清轮次入口。
+6. 普通 finalize 与刷新均按字段所有权合并现有 cache，不用单一子对象清空其他仍有效缓存或 U1 的 render 元数据；只失效被本次行为改变的项。文件接受完成后才在 candidate 登记本版私有统计标识、实际 render SHA、新 level 投影及必要的既有完整性摘要，沿用 atomic_json 等现有持久路径。`stage2_pack_content_fingerprint` 仍覆盖完整当前包（含新增字段/缓存）；校验保留决策不能仅看这个摘要是否变化，必须先按旧原始包核验，再以真实 body 和业务依据分别判定。刷新只更新 level、统计接受缓存及必要绑定；不改成员、模型结果、业务指纹、assignment、源接受资格或原报告。普通成功处理才可建立新业务来源基线。
 
 已可预判的错误先于写入；若 Markdown/机器头写入后持久包 I/O 失败，明确未完成，不冒充跨文件原子回滚，不补打成功标识。下次仍由既有摘要、绑定及来源守卫拒绝直接 reuse。刷新后若统计确变而旧校验失效，按既有校验入口处理，刷新本身不自动启动模型校验。
 
@@ -98,9 +97,9 @@ refresh_level 只用已接受持久包、当前来源投影及 `Stage2PackRefine
 
 ## 6. 实施落点、顺序与独立性
 
-1. Stage 2 保持行为的拆分完成后，实施者对上述 main 符号做机械映射，记录实际模块路径和基线。若仅移文件/导入则沿用本设计；若来源契约或生命周期变了，只复核受影响决定，不借机重开整个需求。不得猜造拆分模块名。
-2. analyzer 两个安装投影及主 SKILL 的 facts 说明补 level 契约；runner 规范化和当前覆盖先落地，renderer 三类统计随后消费；公开 schema 仍 2。
-3. 在现有 preflight/metadata 职责加入有限来源与级别投影，明确旧缓存一次 process；再接专用 refresh_level 分支及两种 analyzer 的调用（明确上述内部 lease API 与 finally 生命周期），更新现有 finalize 接受顺序。
+1. 基线固定为上述拆分后 main；先在 `_stage2_facts.py`、`_contact_pack.py` 与 runner 常量/注入处接通资格和 canonical level，再改 `_stage2_render.py` 的成员/reference 输出与统计。analyzer 两个投影同步 facts、preflight 第三分支和返回语义；如主 SKILL 有同契约说明则同步，禁止只改一个 harness。
+2. `_stage2_preflight.py` 保存正常处理实际消费后的有限业务/级别基线，先判业务再判 level，旧缓存 process 一次。`_stage2_finalize.py` 先隔离旧原始包，再处理所有 canonical 合流和有限接受顺序；明确 old snapshot、candidate 与事实来源三者不同。
+3. 在 `_stage2_finalize.py` 接专用 level-only handler，由 runner CLI 接入，以同一 preflight payload/当前目标参数定位教授，并调用现有 lease 内部 API。仅该 handler 自持内部 lease；普通路径保留 analyzer 的 build/import/acquire/finally release，不双重拿锁。`_stage2_validation.py` 仅适配新增 canonical 字段与 render 元数据在 refine 的保存：继续清除 preflight 并保持第一轮修订到第二轮的原有状态转换，不由 U5 延长失效基线或增加重新校验次数。
 4. 保持 U1 与 U5 独立：U1 所有固定证据转换和失败归属仍由其 own renderer/validation 修改承担。U5 不等待 U1 helper，不复制其字段映射。U1 与 U5 的私有接受标记各自表达本项完成，不互相替代；合并后沿用同一接受步骤一次渲染并按各自完成条件登记。两个 PR 可触及同一 renderer/finalize 文件，但只使用同一现有写入 owner、不可变旧快照、真实 body/业务变化和合法旧认证约定；后合并者仅适配已合并符号，不再追加第二套接受逻辑。
 5. 本计划审定后才另行安排产品实现；测试负责人按用户授权与当前测试规则处理受影响行为和观察入口。本次不写测试计划、不跑测试；计划批准不代表实现或测试通过。
 
@@ -113,7 +112,15 @@ refresh_level 只用已接受持久包、当前来源投影及 `Stage2PackRefine
 - approved_behavior_change：统计由错误二分类变为真实三分类；级别/统计更新在 reuse_all 前处理；授权为本次 U5 修复。内部字段和 helper 不是新增产品要求。
 - prohibited_side_effect：以路径或 facts 猜级别、null 复活旧值、把未知变成功、把业务变化当展示刷新、为级别重跑模型、重签 proof、重绑无效 PASS、覆盖人工正文、批量迁移、把 U1 纳入本 PR。
 - 风险及控制：缓存兼容通过一次正常 process；来源并发通过既有 lease 内复核；多文件失败保留未完成并拒绝 reuse；旧包信息不足不伪造恢复。无需新增全局事务或独立认证体系。
-- Critical assumptions：无以未有行为为依据的方案假设；拆分最终路径仅为实施顺序前提。若拆分实际改变上述行为，先作语义影响分析。
-- Unresolved impacts：无已知关键未决项；精确拆分后路径待机械映射，不影响 owner 或核心机制。
+- Critical assumptions：无未验证核心假设；实际模块及内部 lease 已由上述 main 源码核实。后续 main 变化先作受影响决定的语义分析，不因 SHA 变化重开无关设计。
+- Unresolved impacts：无已知关键未决项；U1 后合入时只协调共享接受步骤和各自有效元数据，不改变独立交付边界。
 
-下一负责人：独立计划审核者，对完整候选一次审查 P1–P4；作者只按具体受影响决定修订。root 再按用户授权创建 U5 独立 plan-only PR。后续实现与测试须另行安排，不把 #92 历史关口当新实现批准。
+下一负责人：独立计划审核者，对完整候选一次审查 P1–P4；作者只按具体受影响决定修订。审核后仅更新现有 U5 plan-only PR #106，不创建重复计划 PR。后续实现与测试须另行安排，不把 #92 历史关口当新实现批准。
+
+
+## 8. r2 → r3 影响记录
+
+- 已完成的拆分取代“等待拆分/未来映射”：以当前真实 owner 和 factory 接线冻结实施落点，移除 stale prerequisite。
+- #117 现实要求明确 v2 浅读视图、原始旧包、candidate 的隔离；补齐缺字段兼容与旧完整性摘要的不同用途，防止规范化本身破坏或伪造旧绑定。
+- 以现有 finalize/refine cache 重建点明确元数据所有权和保留/失效边界；普通/刷新复用有限接受逻辑，不造通用框架。单纯 level/canonical 完整性变化不冒充业务依据变化。
+- r2 的来源资格、PDF 离线复用限制、有限来源状态、lease 生命周期、成员统计和 U1 独立范围均保留；旧独立审核只作已审依据，不由作者重授 PASS。此次事实映射及上述兼容/生命周期变化交独立 reviewer 定向核对 P1–P4。没有实施产品、正式测试或新增测试义务。
