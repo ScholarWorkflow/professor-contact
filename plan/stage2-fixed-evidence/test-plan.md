@@ -103,7 +103,7 @@
 
 ### 6.1 准备与已有结果
 
-- 从第 107 号 PR 的目标仓库工作树执行，先确认实际提交。t3 修订前的产品/测试代码为 `1fe59bce356a8c75fe45fe2367cb55690c276081`；后续只在同一 U1-F 方法内落实 §6.3、§6.4 的输入，未改产品代码；定向执行记录见 §8。
+- 从第 107 号 PR 的目标仓库工作树执行，先确认实际提交。t3 修订前的产品/测试代码为 `1fe59bce356a8c75fe45fe2367cb55690c276081`；t3 本身只在同一 U1-F 方法内落实 §6.3、§6.4 的输入，未改产品代码；后续实现缺陷修复见 §8。
 - 使用现有 `FixedEvidenceBase`、`generate_pack`、`gap_override`、`write_report`、`record`、`preflight`、`bind_facts_to_preflight`、`finalize`；每个场景通过 `_fresh_env()` 得到独立合成目录，不访问用户 Zotero/真实论文或生产配置。
 - [CI 第 39466214174 次运行](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39466214174)在 `1fe59bce` 的第四测试组逐项执行 U1-A/B/C/D/E/F，六个方法均显示通过，组结果为 249 项（跳过 1 项）且成功。A/B/C 的 t2 补充断言确已执行；本轮不重复这些方法。该记录不覆盖 t3 新增的两个 U1-F 场景。
 - 每次新运行的输出放进单独 `mktemp -d` 创建的仓库外 `/tmp` 目录，不共享可写临时目录并发执行，不复制或修改生产数据。
@@ -187,4 +187,5 @@ fi
 - t2 已在原 U1-A/B/C 方法内补齐四出口逐项对照、失败返回的固定 gap/字段定位及不从返回值自造期望归属；实际代码已提交。`1fe59bce356a8c75fe45fe2367cb55690c276081` 的 [CI 第 39466214174 次运行](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39466214174)在第四测试组执行 A/B/C，三项均为 `ok`；同组 D/E/F 旧方法亦 `ok`，组总计 249 项、跳过 1 项，整体成功。这是当前已发生的结果，可以直接复用，不再要求 §6 原 t2 三项单跑。
 - 本版确认 U1-F 旧代码中修改 `facts.directions[].user_note` 的分支不能证明固定证据正文变化；把人工文字追加到 Markdown 的分支不能证明业务与正文不变时的旧绑定独立失效。两个既定场景已按 §6.3、§6.4 落入同一方法（`9b8162a`），未改产品代码；A/B/C 不重跑，D/E 复用。U1-F 当前不再记为“待补”，但第三关整体是否通过仍由独立审核确认。
 - U1-F 定向执行（2026-10-21，提交 `9b8162a4f78b1f899bec6adf3b2365b232fb5cce`）：在工作树 `.apm/skills/professor-contact/tests` 运行 `uv run --no-project python -m unittest -v test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_f_acceptance_separates_body_business_binding_and_validator`；结果 `Ran 1 test in 3.366s`、`OK`、退出码 0，无 `FAIL/ERROR/skipped`；日志 `/tmp/pr107-u1-t3.BMScab/u1-f.log`。场景一的新固定证据写入受管 Markdown 与包、旧报告字节不变、旧 validator 不再作为当前通过；场景二仅坏旧绑定被 `validation_render_stale` 拒绝且包、Markdown、事实和旧报告字节未变。
-- t3 修改唯一正式测试计划及同一 U1-F 方法的两个场景输入，未改产品、配置或环境。§7 的 2026-10-20 原始尝试、并发临时目录错误、复验与全仓回归记录保持原样，不用后续结论覆盖历史记录；正式第二、第三关及合并仍独立审核。
+- 实现缺陷修复（2026-10-21，`eebbb87`）：用户笔记可渲染出与顶部来源行同形的 `> timestamp ｜ 数据来源：...`；原比较对每行删除日期，导致笔记日期改变被误判正文等价。现将豁免限定在首个 `##` 之前的顶部来源行，其他行逐字比较；同一 U1-F 方法新增该回归场景。`eebbb87` 上 U1-F `Ran 1 test in 8.281s`、`OK`，U1-A 至 U1-F `Ran 6 tests in 22.865s`、`OK`，均退出码 0；日志 `/tmp/pr107-u1-defect.4wUS95/u1-f.log`、`/tmp/pr107-u1-defect.MNtpfD/u1-af.log`。产品代码在 `3d6c2bc` 后新增该修复，最终 head 的实现审核需覆盖 `_stage2_finalize.py` 该分支。
+- t3 修改唯一正式测试计划及同一 U1-F 方法的两个场景输入，未改产品、配置或环境；后续 `eebbb87` 只修 `_stage2_finalize.py` 与 U1-F 回归场景。§7 的 2026-10-20 原始尝试、并发临时目录错误、复验与全仓回归记录保持原样，不用后续结论覆盖历史记录；正式第二、第三关及合并仍独立审核。
