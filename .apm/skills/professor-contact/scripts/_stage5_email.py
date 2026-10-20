@@ -20,9 +20,7 @@ import types
 
 
 
-def build(*, EMAIL_SOURCE_HASH_FIELDS,
-          sha256_obj,
-          read_json_file,
+def build(*, read_json_file,
           BATCH_RE,
           CLOSING_RE,
           INTEREST_HARD_CAP,
@@ -34,10 +32,6 @@ def build(*, EMAIL_SOURCE_HASH_FIELDS,
           EMAIL_PACK,
           now_utc,
           rel_path):
-    def email_source_hash(entry: dict) -> str:
-        """Return the canonical Stage-4 → Stage-5 fact hash for one email row."""
-        return sha256_obj({key: entry[key] for key in EMAIL_SOURCE_HASH_FIELDS})
-
     def find_boshu_analysis(program_root: Path) -> Path | None:
         candidates = ([program_root / "boshu_analysis.json"] if
                       (program_root / "boshu_analysis.json").is_file() else []) + \
@@ -481,7 +475,6 @@ def build(*, EMAIL_SOURCE_HASH_FIELDS,
         return lines
 
     return types.SimpleNamespace(
-                email_source_hash=email_source_hash,
                 find_boshu_analysis=find_boshu_analysis,
                 load_header_sources=load_header_sources,
                 header_values=header_values,
