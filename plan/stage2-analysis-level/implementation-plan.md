@@ -4,7 +4,7 @@
 - Plan revision：u5-analysis-level-r3。以拆分后 main 重新核对真实模块、canonical 兼容与写入生命周期；替代 r2 全文，不与历史补丁叠用。来源资格、有限投影及早期 lease 的既定边界保持，不新增测试义务。
 - Proposed review status: pending。本文是待审完整候选，不继承 PR #92 的执行、测试或合并结论。
 - Target repository revision：ScholarWorkflow/professor-contact，main `879982abe1d7d811bd9d014c03dce4f5912cc64f`（2026-10-20 核实，含 Stage 2 拆分及 #116/#117 shared/input-pack 提取）。PR #106 原 head 为 `1d6d6d80481081636c27227a6261062030a79872`。不再等待拆分，也不等待 Stage 3 重构；实施前仅核对新的语义变化。
-- 唯一目标路径：`plan/stage2-analysis-level/implementation-plan.md`。本 PR 只写该计划及必要范围说明；不修改产品、测试资产或测试计划，不执行测试、不评论或关闭 #92、不合并。
+- 唯一目标路径：`plan/stage2-analysis-level/implementation-plan.md`。本 PR 维护该执行计划及同目录 [测试计划](test-plan.md)，后者由用户于 2026-10-20 新增授权；不修改产品或测试实现，不执行测试、不评论或关闭 #92、不合并。
 
 ## 1. 需求与边界
 
@@ -101,7 +101,7 @@ refresh_level 只用已接受持久包、当前来源投影及 `Stage2PackRefine
 2. `_stage2_preflight.py` 保存正常处理实际消费后的有限业务/级别基线，先判业务再判 level，旧缓存 process 一次。`_stage2_finalize.py` 先隔离旧原始包，再处理所有 canonical 合流和有限接受顺序；明确 old snapshot、candidate 与事实来源三者不同。
 3. 在 `_stage2_finalize.py` 接专用 level-only handler，由 runner CLI 接入，以同一 preflight payload/当前目标参数定位教授，并调用现有 lease 内部 API。仅该 handler 自持内部 lease；普通路径保留 analyzer 的 build/import/acquire/finally release，不双重拿锁。`_stage2_validation.py` 仅适配新增 canonical 字段与 render 元数据在 refine 的保存：继续清除 preflight 并保持第一轮修订到第二轮的原有状态转换，不由 U5 延长失效基线或增加重新校验次数。
 4. 保持 U1 与 U5 独立：U1 所有固定证据转换和失败归属仍由其 own renderer/validation 修改承担。U5 不等待 U1 helper，不复制其字段映射。U1 与 U5 的私有接受标记各自表达本项完成，不互相替代；合并后沿用同一接受步骤一次渲染并按各自完成条件登记。两个 PR 可触及同一 renderer/finalize 文件，但只使用同一现有写入 owner、不可变旧快照、真实 body/业务变化和合法旧认证约定；后合并者仅适配已合并符号，不再追加第二套接受逻辑。
-5. 本计划审定后才另行安排产品实现；测试负责人按用户授权与当前测试规则处理受影响行为和观察入口。本次不写测试计划、不跑测试；计划批准不代表实现或测试通过。
+5. 本计划审定后才另行安排产品实现；测试负责人按用户授权与当前测试规则处理受影响行为和观察入口。同目录测试计划已补齐设计清单，实际 recipe 待产品实现后接线；本次不跑测试；计划批准不代表实现或测试通过。
 
 正式观察入口为 facts 中的级别、规范包 canonical papers、原统计标题、preflight 分流及原受管/校验结果。无需新增日志账本或认证 API。
 
@@ -115,7 +115,7 @@ refresh_level 只用已接受持久包、当前来源投影及 `Stage2PackRefine
 - Critical assumptions：无未验证核心假设；实际模块及内部 lease 已由上述 main 源码核实。后续 main 变化先作受影响决定的语义分析，不因 SHA 变化重开无关设计。
 - Unresolved impacts：无已知关键未决项；U1 后合入时只协调共享接受步骤和各自有效元数据，不改变独立交付边界。
 
-下一负责人：独立计划审核者，对完整候选一次审查 P1–P4；作者只按具体受影响决定修订。审核后仅更新现有 U5 plan-only PR #106，不创建重复计划 PR。后续实现与测试须另行安排，不把 #92 历史关口当新实现批准。
+下一负责人：独立计划审核者，对完整候选一次审查 P1–P4；作者只按具体受影响决定修订。审核后仅更新现有 U5 plan-only PR #106，不创建重复计划 PR。测试设计按新增授权同步维护；后续产品实施、实际 recipe 和正式测试执行仍须另行安排，不把 #92 历史关口当新实现批准。
 
 
 ## 8. r2 → r3 影响记录
