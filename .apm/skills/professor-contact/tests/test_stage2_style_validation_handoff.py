@@ -1085,10 +1085,11 @@ class Stage2ValidationHandoffTests(BaseEnv):
         # -- the new business version starts again at round 1 (not exhausted).
         first_line = legacy_env._physical_line_of(_T5_LEGACY_REVISED)
         second_line = legacy_env._physical_line_of(_T5_SECOND_QUOTE)
-        # Plan §2 L6: with the old round-1 binding still legal, seed one other
-        # still-valid cache child and one unrelated render record. The new round
-        # is recorded only after this write, so its `pack_sha256` covers them
-        # and the refine is authorised against the seeded pack.
+        # Plan §2 L6: seed one foreign cache child and one unrelated synthetic
+        # render record before the new round-1 validation is recorded. That
+        # record is created only after this write, so its `pack_sha256` covers
+        # both entries and the refine is authorised against the seeded pack;
+        # the managed render binding itself is unchanged.
         lifecycle_pack_path = legacy_env.prof_dir / "套磁候选输入.json"
         lifecycle_pack = legacy_env._t5_pack()
         lifecycle_pack["cache"]["u1_render"] = {"future": "kept"}
