@@ -151,6 +151,12 @@ class AnalysisLevelBase(PreflightBase):
         write_json(path, payload)
         return path
 
+    def assert_validation_report_bound(self, pack=None):
+        """The validator must bind the exact report bytes it was recorded from."""
+        pack = self._read_pack() if pack is None else pack
+        self.assertEqual(pack["validator"]["validation_sha256"],
+                         sha256_bytes((self.root / "validation.json").read_bytes()))
+
     def refresh(self, preflight_file, *extra):
         out = run_cli("stage2-refresh-level", "--program-root", self.root,
                       "--professor", PROFESSOR, "--target-file", self.target_file,
@@ -562,6 +568,8 @@ class TestPreflightBranches(AnalysisLevelBase):
         self.assertEqual({entry["action"] for entry in plan_out["directions"]},
                          {"reuse"}, plan_out)
 
+        pack = self._read_pack()
+        self.assert_validation_report_bound(pack)
         pack_path = self.prof_dir / "套磁候选输入.json"
         md_path = self.analysis_md()
         cache_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
@@ -570,16 +578,31 @@ class TestPreflightBranches(AnalysisLevelBase):
         md_before = md_path.read_bytes()
         cache_before = cache_path.read_bytes()
         validation_before = validation_path.read_bytes()
+        facts_before = self.facts_path.read_bytes()
+        target_before = self.target_file.read_bytes()
+        snapshot_path = self.prof_dir / "套磁阶段1候选.json"
+        snapshot_before = snapshot_path.read_bytes()
+        index_path = self.prof_dir / "论文分析" / "_index.json"
+        index_before = index_path.read_bytes()
+        plan_before = plan.read_bytes()
+        sidecars = {}
+        for paper in self.facts["papers"]:
+            sidecar = paper.get("sidecar_file")
+            if sidecar:
+                sidecars[sidecar] = Path(sidecar).read_bytes()
+        results_before = {path.name: path.read_bytes()
+                          for path in sorted((self.root / "results").iterdir())
+                          if path.is_file()}
+        guards_before = copy.deepcopy(pack["cache"]["preflight"]["directions"])
         analysis = self.prof_dir / "论文分析" / "AAAA1111.md"
         source_before = analysis.read_bytes()
-        index = read_json(self.prof_dir / "论文分析" / "_index.json")
+        index = read_json(index_path)
         self.assertEqual(index["papers"]["AAAA1111"]["level"], "fulltext")
 
         changed = source_before + b"\n<!-- source changed after consumption -->\n"
         analysis.write_bytes(changed)
         self.assertGreater(len(changed), len(source_before))
-        self.assertEqual(read_json(self.prof_dir / "论文分析" / "_index.json"),
-                         index)
+        self.assertEqual(read_json(index_path), index)
 
         payload = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
                                 "--results", self.root / "results",
@@ -590,6 +613,17 @@ class TestPreflightBranches(AnalysisLevelBase):
         self.assertEqual(md_path.read_bytes(), md_before)
         self.assertEqual(cache_path.read_bytes(), cache_before)
         self.assertEqual(validation_path.read_bytes(), validation_before)
+        self.assertEqual(self.facts_path.read_bytes(), facts_before)
+        self.assertEqual(self.target_file.read_bytes(), target_before)
+        self.assertEqual(snapshot_path.read_bytes(), snapshot_before)
+        self.assertEqual(index_path.read_bytes(), index_before)
+        self.assertEqual(plan.read_bytes(), plan_before)
+        self.assertEqual({key: Path(key).read_bytes() for key in sidecars}, sidecars)
+        self.assertEqual({path.name: path.read_bytes()
+                          for path in sorted((self.root / "results").iterdir())
+                          if path.is_file()}, results_before)
+        pack_after = self._read_pack()
+        self.assertEqual(pack_after["cache"]["preflight"]["directions"], guards_before)
         self.assertEqual(analysis.read_bytes(), changed)
 
         next_payload = self.preflight()
@@ -874,9 +908,17 @@ class TestLevelRefresh(AnalysisLevelBase):
         self.assertEqual(read_json(plan)["action"], "refresh_level")
 
         pack = self._read_pack()
+        self.assert_validation_report_bound(pack)
+        schema_before = pack.get("schema")
+        phase_before = pack["validator"].get("phase")
+        round_before = pack["validator"].get("round")
+        results_before = copy.deepcopy(pack["validator"]["results"])
         md = self.analysis_md()
         data = md.read_bytes()
         header, body = split_managed_bytes(data)
+        self.assertTrue(body)
+        self.assertIn(b"\n", body)
+        self.assertTrue(data.endswith(body))
         self.assertNotIn(b"\r\n", body)
         state_match = re.search(rb"(?m)^state_fingerprint: (.*)$", header)
         render_match = re.search(rb"(?m)^render_sha256: (.*)$", header)
@@ -902,6 +944,7 @@ class TestLevelRefresh(AnalysisLevelBase):
                          pack_sha_without_validator(pack))
         crlf_body = body.replace(b"\n", b"\r\n")
         self.assertNotEqual(crlf_body, body)
+        self.assertNotEqual(sha256_bytes(crlf_body), sha256_bytes(body))
         broken = data[:len(data) - len(body)] + crlf_body
         md.write_bytes(broken)
 
@@ -923,6 +966,11 @@ class TestLevelRefresh(AnalysisLevelBase):
         self.assertFalse(
             (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
         pack_after = self._read_pack()
+        self.assert_validation_report_bound(pack_after)
+        self.assertEqual(pack_after.get("schema"), schema_before)
+        self.assertEqual(pack_after["validator"].get("phase"), phase_before)
+        self.assertEqual(pack_after["validator"].get("round"), round_before)
+        self.assertEqual(pack_after["validator"]["results"], results_before)
         self.assertEqual(pack_after["validator"]["pack_sha256"],
                          pack_sha_without_validator(pack_after))
 
@@ -1169,9 +1217,11 @@ class TestRefreshProtection(AnalysisLevelBase):
         cache_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
         validation_path = self.root / "validation.json"
         before_pack = pack_path.read_bytes()
+        before_pack_obj = json.loads(before_pack)
+        self.assert_validation_report_bound(before_pack_obj)
         before_md, before_cache = md_path.read_bytes(), cache_path.read_bytes()
         before_validation = validation_path.read_bytes()
-        self.assertEqual(json.loads(before_pack)["validator"]["pack_sha256"],
+        self.assertEqual(before_pack_obj["validator"]["pack_sha256"],
                          pack_sha_without_validator(before_pack))
 
         arm, state = self._drift_accepted_pack_after_observation()
@@ -1188,6 +1238,17 @@ class TestRefreshProtection(AnalysisLevelBase):
                          {"kept": True, "revision": 2})
         self.assertEqual(external["validator"]["pack_sha256"],
                          pack_sha_without_validator(state["external_bytes"]))
+        self.assertEqual(external["validator"]["validation_sha256"],
+                         sha256_bytes(before_validation))
+        # The external update may only add cache.foreign_cache and rebind the
+        # validator pack hash; levels, directions, state/render bindings and
+        # validator results must remain the accepted snapshot.
+        normalized_external = copy.deepcopy(external)
+        normalized_before = copy.deepcopy(before_pack_obj)
+        for payload_obj in (normalized_external, normalized_before):
+            payload_obj["cache"].pop("foreign_cache", None)
+            payload_obj["validator"].pop("pack_sha256", None)
+        self.assertEqual(normalized_external, normalized_before)
         self.assertEqual(pack_path.read_bytes(), state["external_bytes"])
         self.assertEqual(md_path.read_bytes(), before_md)
         self.assertEqual(cache_path.read_bytes(), before_cache)
