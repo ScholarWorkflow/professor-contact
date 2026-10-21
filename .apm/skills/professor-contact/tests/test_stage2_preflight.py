@@ -782,6 +782,24 @@ class TestFinalizePreflightWiring(PreflightBase):
         self.assertEqual((self.prof_dir / "论文分析" / "_freshness_cache.json").read_bytes(),
                          cache_before)
 
+    def test_finalize_race_on_analysis_artifact_stat_change_writes_nothing(self):
+        self.build_accepted_state()
+        plan = self.save_preflight_file()
+        pack_before = (self.prof_dir / "套磁候选输入.json").read_bytes()
+        md_before = (self.prof_dir / "套磁候选分析.md").read_bytes()
+        cache_before = (self.prof_dir / "论文分析" / "_freshness_cache.json").read_bytes()
+        analysis = Path(self.facts["papers"][0]["analysis_file"])
+        analysis.write_text("# late analysis edit\n", encoding="utf-8")
+        out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
+                            "--results", self.root / "results",
+                            "--preflight-file", plan))
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertEqual(out["reason_code"], "preflight_inputs_changed")
+        self.assertEqual((self.prof_dir / "套磁候选输入.json").read_bytes(), pack_before)
+        self.assertEqual((self.prof_dir / "套磁候选分析.md").read_bytes(), md_before)
+        self.assertEqual((self.prof_dir / "论文分析" / "_freshness_cache.json").read_bytes(),
+                         cache_before)
+
     def test_finalize_race_on_stage1_and_papers_changes_writes_nothing(self):
         self.build_accepted_state()
         changed_catalog = json.loads(

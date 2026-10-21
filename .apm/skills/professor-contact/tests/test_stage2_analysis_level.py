@@ -414,10 +414,11 @@ class TestCanonicalMerge(AnalysisLevelBase):
                 raw["papers"]["BBBB2222"])["analysis_level"])
 
         # It is not a new facts declaration and must not block the current known
-        # registration on the next normal acceptance.
+        # registration on the next normal acceptance. The compatibility-view
+        # check above only observes the raw pack; the product-internal old
+        # snapshot is covered by the shared finalize binding review.
         out = parse(self.finalize_with_current_proof())
         self.assertEqual(out["status"], "ok", out)
-        self.assertIsNone(deep_before["papers"]["AAAA1111"].get("analysis_level"))
         papers = self._read_pack()["papers"]
         self.assertEqual(papers["AAAA1111"]["analysis_level"], "fulltext")
         self.assertEqual(papers["BBBB2222"]["analysis_level"], "abstract")
@@ -619,16 +620,21 @@ class TestLevelRefresh(AnalysisLevelBase):
         self.assertFalse(
             (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
 
+    def _break_managed_state_fingerprint(self):
+        md = self.analysis_md()
+        header, body = split_managed_bytes(md.read_bytes())
+        broken = re.sub(rb"(?m)^state_fingerprint: .*$",
+                        b"state_fingerprint: " + b"0" * 64, header) + body
+        md.write_bytes(broken)
+        return broken
+
     def test_invalid_old_header_binding_is_an_evidence_error_not_a_rebind(self):
         self.make_shared_level_pair()
         self.build_accepted_state()
         self.levels = {"AAAA1111": "abstract", "BBBB2222": "fulltext"}
         self.write_index()
         md = self.analysis_md()
-        header, body = split_managed_bytes(md.read_bytes())
-        broken_header = re.sub(rb"(?m)^state_fingerprint: .*$",
-                               b"state_fingerprint: " + b"0" * 64, header)
-        md.write_bytes(broken_header + body)
+        broken = self._break_managed_state_fingerprint()
         pack_path = self.prof_dir / "套磁候选输入.json"
         pack_before = pack_path.read_bytes()
         plan = self.save_preflight("refresh-bad-header.json")
@@ -642,9 +648,50 @@ class TestLevelRefresh(AnalysisLevelBase):
                           "stage2_pack_write_failed"},
                          payload)
         self.assertEqual(pack_path.read_bytes(), pack_before)
-        self.assertEqual(md.read_bytes(), broken_header + body)
+        self.assertEqual(md.read_bytes(), broken)
         self.assertFalse(
             (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+
+    def test_normal_acceptance_rejects_an_invalid_old_header_binding(self):
+        self.build_accepted_state()
+        broken = self._break_managed_state_fingerprint()
+
+        def rename(facts):
+            # Projection-only change: the body and business basis stay equal, so
+            # the normal finalize reaches the old-certification branch.
+            facts["directions"][0]["collection_key"] = "DIR00001-renamed"
+        self.patch_facts(rename)
+        plan = self.save_preflight("finalize-bad-header.json")
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        pack_before = pack_path.read_bytes()
+        payload = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
+                                "--results", self.root / "results",
+                                "--preflight-file", plan))
+        self.assertEqual(payload["status"], "error", payload)
+        self.assertIn("validation", payload.get("reason_code", ""), payload)
+        self.assertEqual(pack_path.read_bytes(), pack_before)
+        self.assertEqual(self.analysis_md().read_bytes(), broken)
+
+    def test_normal_acceptance_rejects_an_invalid_old_validator_binding(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        pack["validator"]["render_sha256"] = "0" * 64
+        self._write_pack(pack)
+
+        def rename(facts):
+            facts["directions"][0]["collection_key"] = "DIR00001-renamed"
+        self.patch_facts(rename)
+        plan = self.save_preflight("finalize-bad-validator.json")
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        md_path = self.analysis_md()
+        pack_before, md_before = pack_path.read_bytes(), md_path.read_bytes()
+        payload = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
+                                "--results", self.root / "results",
+                                "--preflight-file", plan))
+        self.assertEqual(payload["status"], "error", payload)
+        self.assertIn("validation", payload.get("reason_code", ""), payload)
+        self.assertEqual(pack_path.read_bytes(), pack_before)
+        self.assertEqual(md_path.read_bytes(), md_before)
 
     def test_legacy_statistics_body_is_reaccepted_before_the_marker(self):
         self.build_accepted_state()
@@ -790,6 +837,23 @@ class TestLevelRefresh(AnalysisLevelBase):
         self.assertIn(payload["status"], ("needs_decision", "error"), payload)
         self.assertEqual(pack_path.read_bytes(), pack_before)
         self.assertEqual(md.read_bytes(), broken)
+
+    def test_preflight_reuses_a_legal_crlf_managed_file(self):
+        self.build_accepted_state()
+        self._rewrite_managed_crlf()
+        payload = self.preflight()
+        self.assertEqual(payload["action"], "reuse_all", payload)
+        self.assertNotIn("validator_not_accepted",
+                         self.direction(payload, "DIR00001")["reason_codes"], payload)
+
+    def test_validation_recording_accepts_a_legal_crlf_managed_file(self):
+        self.stage2_finalize()
+        _crlf_body, body_sha = self._rewrite_managed_crlf()
+        self.record_validation()
+        pack = self._read_pack()
+        self.assertEqual(pack["cache"]["render"][contact_state.ANALYSIS_MD]["sha256"],
+                         body_sha)
+        self.assertEqual(pack["validator"]["render_sha256"], body_sha)
 
     def test_business_change_with_equivalent_body_keeps_body_but_expires_certification(self):
         self.build_accepted_state()
@@ -1238,6 +1302,14 @@ class TestAnalyzerContract(unittest.TestCase):
             self.assertIn("chatgpt_result", document)
             self.assertIn("kb_import", document)
             self.assertIn("禁止 early hard exit", document)
+            # L1's static facts contract: new facts must follow the current
+            # registration, and a conflicting known value must be rejected
+            # instead of silently rewritten.
+            self.assertIn("按与 runner 相同的资格规则", document)
+            self.assertIn("没有成功登记、文件缺失、路径不符或无法确认时一律传",
+                          document)
+            self.assertIn("已知值与当前登记冲突会被 runner 按输入错误拒绝", document)
+            self.assertIn("不得静默改传另一个已知值", document)
 
 
 if __name__ == "__main__":
