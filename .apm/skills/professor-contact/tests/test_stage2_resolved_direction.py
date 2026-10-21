@@ -564,14 +564,14 @@ class ResolvedPipelineMixin:
             "red_lines": [],
         }
 
-    def write_facts(self, papers, directions, name="facts.json"):
+    def write_facts(self, papers, directions, name="facts.json", *, gap_scope="selected_direction"):
         facts_path = self.root / name
         write_json(facts_path, {
             "program_root": str(self.root),
             "professor_dir": str(self.prof_dir),
             "professor": self.professor,
             "current_year": 2026,
-            "params": {"gap_scope": "selected_direction", "freshness_scope": "shortlist"},
+            "params": {"gap_scope": gap_scope, "freshness_scope": "shortlist"},
             "papers": papers,
             "directions": directions,
         })

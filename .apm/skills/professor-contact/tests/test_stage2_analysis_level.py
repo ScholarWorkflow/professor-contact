@@ -16,12 +16,14 @@ import contextlib
 import copy
 import hashlib
 import io
+import inspect
 import json
 import re
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from test_stage2_preflight import (  # noqa: E402
     PROFESSOR, PreflightBase, parse, quote_id, run_cli,
@@ -91,6 +93,9 @@ class AnalysisLevelBase(PreflightBase):
                 "future_work_sidecar": str(analysis) + ".future_work.json",
                 "facts_sidecar": None,
             }
+        if getattr(self, "outer_candidate", False):
+            papers["CCCC3333"] = read_json(
+                self.prof_dir / "论文分析" / "_index.json")["papers"]["CCCC3333"]
         write_json(self.prof_dir / "论文分析" / "_index.json", {
             "schema": 2, "future_work_schema": 1, "professor": PROFESSOR,
             "generated_at": "2026-01-01T00:00:00Z", "papers": papers})
@@ -124,6 +129,32 @@ class AnalysisLevelBase(PreflightBase):
             (results / "freshness-DIR00002.json").write_text(json.dumps({
                 "schema": 1, "kind": "freshness", "direction_id": "DIR00002",
                 "results": rows}, ensure_ascii=False), encoding="utf-8")
+        plan = getattr(self, "consumption_plan", None)
+        if plan is not None:
+            # Keep the existing legal model answers, but emit exactly the
+            # current plan's jobs instead of adding reused directions.
+            jobs = plan["jobs"]
+            requested = {job["result_file"] for job in jobs}
+            for filename in ("freshness-DIR00001.json", "freshness-DIR00002.json",
+                             "narrative.json"):
+                path = results / filename
+                if filename not in requested:
+                    path.unlink(missing_ok=True)
+                    continue
+                payload = read_json(path)
+                if filename == "narrative.json":
+                    direction_ids = {job["direction_id"] for job in jobs
+                                     if job["kind"] == "narrative"}
+                    payload["directions"] = [row for row in payload["directions"]
+                                             if (row.get("direction_id") or
+                                                 row.get("collection_key")) in direction_ids]
+                else:
+                    gap_ids = {gap["gap_id"] for job in jobs
+                               if job["result_file"] == filename
+                               for gap in job["model_input"]["gaps"]}
+                    payload["results"] = [row for row in payload["results"]
+                                          if row["gap_id"] in gap_ids]
+                write_json(path, payload)
         return results
 
     def make_shared_level_pair(self):
@@ -147,7 +178,7 @@ class AnalysisLevelBase(PreflightBase):
         write_json(self.facts_path, self.facts)
 
     def save_preflight(self, name="preflight.json"):
-        payload = self.preflight()
+        payload = self.preflight(gap_scope=self.facts["params"]["gap_scope"])
         path = self.root / name
         write_json(path, payload)
         return path
@@ -177,10 +208,10 @@ class AnalysisLevelBase(PreflightBase):
 
     def prepare_consumption(self):
         """Freeze the current sources and bind the companion into facts."""
-        preflight_path = self.save_preflight("consumption-preflight.json")
+        self.consumption_plan = None
+        run_dir = Path(tempfile.mkdtemp(prefix="consumption-", dir=self.root))
+        preflight_path = self.save_preflight(run_dir / "preflight.json")
         preflight = read_json(preflight_path)
-        run_dir = self.root / "run"
-        run_dir.mkdir()
         out = parse(run_cli(
             "stage2-consumption-prepare",
             "--program-root", self.root, "--professor", PROFESSOR,
@@ -198,11 +229,26 @@ class AnalysisLevelBase(PreflightBase):
         self.facts = facts
         return preflight_path, run_dir, read_json(companion_path)
 
+    def stage2_finalize(self):
+        proof, run_dir, _companion = self.prepare_consumption()
+        self.plan_consumption(proof, run_dir)
+        self.write_stage2_results()
+        self.seal_consumption(run_dir)
+        out = self.finalize_consumption(proof)
+        self.assertEqual(out["status"], "ok", out)
+        return out
+
+    def build_accepted_state(self):
+        self.stage2_finalize()
+        self.record_validation()
+        self.assert_validation_report_bound()
+
     def plan_consumption(self, preflight_path, run_dir):
         out = parse(run_cli(
             "stage2-plan", "--facts", self.facts_path,
             "--preflight-file", preflight_path, "--run-dir", run_dir))
         self.assertEqual(out["status"], "ok", out)
+        self.consumption_plan = out
         return out
 
     def seal_consumption(self, run_dir):
@@ -212,11 +258,106 @@ class AnalysisLevelBase(PreflightBase):
         self.assertEqual(out["status"], "ok", out)
         return out
 
-    def finalize_consumption(self, preflight_path):
+    def finalize_consumption(self, preflight_path, *extra):
         return parse(run_cli(
             "stage2-finalize", "--facts", self.facts_path,
             "--results", self.root / "results",
-            "--preflight-file", preflight_path))
+            "--preflight-file", preflight_path, *extra))
+
+    def business_snapshot(self):
+        paths = [self.prof_dir / "套磁候选输入.json", self.analysis_md(),
+                 self.prof_dir / "论文分析" / "_freshness_cache.json",
+                 self.root / "validation.json",
+                 self.prof_dir / "论文分析" / "_resolved_directions.json"]
+        return {path: path.read_bytes() if path.exists() else None for path in paths}
+
+    def assert_business_unchanged(self, before):
+        for path, raw in before.items():
+            self.assertEqual(path.read_bytes() if path.exists() else None, raw, str(path))
+
+    def call_handler(self, name, *, handler=None, **arguments):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                (handler or getattr(contact_state, name))(type("Args", (), arguments)())
+            except SystemExit:
+                pass
+        return json.loads(stdout.getvalue())
+
+    def finalize_in_process(self, preflight_path, *, factory_overrides=None, **overrides):
+        arguments = dict(facts=str(self.facts_path), results=str(self.root / "results"),
+                         preflight_file=str(preflight_path), resolved_directions=None,
+                         decision_file=None)
+        arguments.update(overrides)
+        handler = None
+        if factory_overrides:
+            # Use the existing factory seam: patching a public alias would not
+            # replace the function already captured by the production closure.
+            factory = contact_state._stage2_finalize_module.build
+            dependencies = {name: getattr(contact_state, name)
+                            for name in inspect.signature(factory).parameters
+                            if name != "stage2_validation_legality"}
+            dependencies["stage2_validation_legality"] = \
+                contact_state._stage2_validation.stage2_validation_legality
+            dependencies.update(factory_overrides)
+            handler = factory(**dependencies).cmd_stage2_finalize
+        return self.call_handler("cmd_stage2_finalize", handler=handler, **arguments)
+
+    def prepare_outer_candidate(self):
+        """Create E-only C before any proof; C is outside all direction inputs."""
+        from test_stage2_resolved_direction import make_sidecar
+        self.facts["params"]["gap_scope"] = "relevant"
+        self.target["directions"][0]["members"] = [
+            row for row in self.target["directions"][0]["members"]
+            if row["item_key"] != "CCCC3333"]
+        self.snapshot_entry["directions"][0]["provisional_member_keys"] = [
+            "AAAA1111", "BBBB2222"]
+        self.snapshot_entry["directions"][0]["expansion_reasons"]["CCCC3333"] = [
+            "topic_expansion"]
+        self.facts["directions"][0]["provisional_member_keys"] = [
+            "AAAA1111", "BBBB2222"]
+        paper = self.facts["papers"][2]
+        paper["year"] = 2020
+        analysis = self.prof_dir / "论文分析" / "CCCC3333.md"
+        analysis.write_bytes(b"# Synthetic outer candidate\n")
+        sidecar = make_sidecar(analysis, ["Future work will test an outer candidate."])
+        paper.update(analysis_file=str(analysis), sidecar_file=str(sidecar),
+                     analysis_level="abstract")
+        self.catalog_papers[2]["year"] = 2020
+        write_json(self.prof_dir / "papers.json", {"papers": self.catalog_papers})
+        index_path = self.prof_dir / "论文分析" / "_index.json"
+        index = read_json(index_path)
+        index["papers"]["CCCC3333"] = dict(
+            file=str(analysis), level="abstract", future_work_sidecar=str(sidecar),
+            facts_sidecar=None)
+        write_json(index_path, index)
+        self.outer_candidate = True
+        self._write_target()
+        self._write_snapshot()
+        write_json(self.facts_path, self.facts)
+
+    def assert_outer_candidate(self, plan=None):
+        pack = self._read_pack()
+        meta = pack["cache"]["preflight"]
+        self.assertIn("CCCC3333", meta["resolution_evidence_guards"])
+        self.assertIn("CCCC3333", self.snapshot_entry["directions"][0]["candidate_keys"])
+        ctx = contact_state.Stage2Context(self.facts_path)
+        for direction in pack["directions"]:
+            self.assertNotIn("CCCC3333", direction["supporting_item_keys"])
+            for section in ("gap_shortlist", "gaps_excluded", "completed_gap_blacklist"):
+                self.assertNotIn("CCCC3333", [gap["item_key"]
+                                            for gap in direction.get(section, [])])
+        for direction in self.facts["directions"]:
+            self.assertNotIn("CCCC3333", direction["relevant_keys"])
+            self.assertNotIn("CCCC3333", contact_state.gap_scope_keys(self.facts, direction))
+        for record in meta["directions"].values():
+            self.assertNotIn("CCCC3333", record["artifact_guards"])
+        for entry in ctx.direction_plans:
+            self.assertNotIn("CCCC3333", ctx.narrative_later_keys(entry))
+        for job in (plan or {}).get("jobs", []):
+            if job["kind"] == "narrative":
+                self.assertNotIn("CCCC3333", [paper["item_key"] for paper in
+                                             job["model_input"]["later_papers"]])
 
 
 class TestFactsLevelContract(AnalysisLevelBase):
@@ -457,6 +598,13 @@ class TestConsumptionFreeze(AnalysisLevelBase):
         analysis_hashes = {
             key: sha256_bytes((self.prof_dir / "论文分析" / f"{key}.md").read_bytes())
             for key in ("AAAA1111", "BBBB2222")}
+        frozen_guards = {}
+        for key in analysis_hashes:
+            source = self.prof_dir / "论文分析" / f"{key}.md"
+            stat = source.stat()
+            frozen_guards[key] = dict(
+                path=str(source), size=stat.st_size, mtime_ns=stat.st_mtime_ns,
+                ctime_ns=stat.st_ctime_ns, accepted_digest=analysis_hashes[key])
         preflight_path, run_dir, companion = self.prepare_consumption()
         plan = self.plan_consumption(preflight_path, run_dir)
         self.assertTrue(plan["jobs"], plan)
@@ -470,6 +618,8 @@ class TestConsumptionFreeze(AnalysisLevelBase):
         meta = pack["cache"]["preflight"]
         self.assertEqual(meta["resolution_evidence_projection"],
                          companion["sources_projection"])
+        for key, guard in frozen_guards.items():
+            self.assertEqual(meta["resolution_evidence_guards"][key]["analysis"], guard)
         self.assertEqual(set(meta["directions"]), {"DIR00001", "DIR00002"})
         expected_keys = {"DIR00001": {"AAAA1111", "BBBB2222", "CCCC3333"},
                          "DIR00002": {"BBBB2222"}}
@@ -490,9 +640,8 @@ class TestConsumptionFreeze(AnalysisLevelBase):
         self.assertIn("全文级 1 篇", header)
         self.assertIn("摘要级 2 篇", header)
         self.assertIn("未确认 1 篇", header)
-        # The current companion records path/state only; content SHA/stat
-        # freezing remains a separate product requirement and is not claimed
-        # by this path/state binding check.
+        # Companion content supply is checked separately at the actual prepare
+        # read boundary; these guards must still equal the independent F0.
 
     def test_plan_rejects_a_source_change_after_prepare(self):
         preflight_path, run_dir, _companion = self.prepare_consumption()
@@ -554,6 +703,8 @@ class TestConsumptionFreeze(AnalysisLevelBase):
         self.assertEqual(failed["status"], "error", failed)
         self.assertEqual(failed["reason_code"], "unknown_reference_id", failed)
         self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
+        original_files = {path.name: path.read_bytes() for path in results.iterdir()}
+        frozen = read_json(run_dir / "stage2-consumption.json")
         repair = self.root / "repair-1"
         shutil.copytree(results, repair)
         repaired = read_json(repair / "narrative.json")
@@ -564,10 +715,22 @@ class TestConsumptionFreeze(AnalysisLevelBase):
             "--results-dir", repair))
         self.assertEqual(second["status"], "ok", second)
         self.assertEqual(second["revision"], 1, second)
+        repaired_out = parse(run_cli(
+            "stage2-finalize", "--facts", self.facts_path, "--results", repair,
+            "--preflight-file", preflight_path))
+        self.assertEqual(repaired_out["status"], "ok", repaired_out)
+        accepted = self.business_snapshot()
+        current = read_json(run_dir / "stage2-consumption.json")
+        for field in ("sources_sha256", "sources_projection", "stage2_plan"):
+            self.assertEqual(current[field], frozen[field])
+        self.assertEqual({path.name: path.read_bytes() for path in results.iterdir()},
+                         original_files)
         third = parse(run_cli(
             "stage2-consumption-seal-results", "--run-dir", run_dir,
             "--results-dir", repair))
         self.assertEqual(third["status"], "error", third)
+        self.assertEqual(third["reason_code"], "invalid_params", third)
+        self.assert_business_unchanged(accepted)
 
     def test_finalize_rejects_sealed_results_from_another_run(self):
         preflight_path, run1, _companion = self.prepare_consumption()
@@ -624,6 +787,218 @@ class TestConsumptionFreeze(AnalysisLevelBase):
         self.assertIn(out["reason_code"], {"preflight_inputs_changed"}, out)
         self.assertEqual(pack_path.read_bytes(), before_pack)
         self.assertEqual(md_path.read_bytes(), before_md)
+
+class TestConsumptionBoundaries(AnalysisLevelBase):
+    """The remaining t6 A-D boundaries; preparation never runs these cases."""
+
+    def ready_run(self):
+        proof, run_dir, companion = self.prepare_consumption()
+        plan = self.plan_consumption(proof, run_dir)
+        self.assertTrue(plan["jobs"], plan)
+        self.write_stage2_results()
+        self.seal_consumption(run_dir)
+        return proof, run_dir, companion
+
+    def test_finalize_rejects_bad_index_with_an_existing_freeze(self):
+        for raw, declaration in ((b"{broken", None), (b'{"papers":{}}', "missing")):
+            with self.subTest(raw=raw, declaration=declaration):
+                # Each round seals legal unknown declarations first. Only the
+                # index changes afterwards, so a facts-digest mismatch cannot
+                # masquerade as rejection of the bad registration.
+                case = AnalysisLevelBase()
+                case.setUp()
+                try:
+                    case.levels = {"AAAA1111": None, "BBBB2222": None}
+                    case.write_index()
+                    case.bind_levels()
+                    if declaration == "missing":
+                        for paper in case.facts["papers"]:
+                            paper.pop("analysis_level", None)
+                        write_json(case.facts_path, case.facts)
+                    proof, _run_dir, _companion = TestConsumptionBoundaries.ready_run(case)
+                    frozen_facts = case.facts_path.read_bytes()
+                    (case.prof_dir / "论文分析" / "_index.json").write_bytes(raw)
+                    before = case.business_snapshot()
+                    out = case.finalize_consumption(proof)
+                    self.assertEqual(out["status"], "error", out)
+                    self.assertEqual(out["reason_code"], "invalid_facts", out)
+                    case.assert_business_unchanged(before)
+                    self.assertEqual(case.facts_path.read_bytes(), frozen_facts)
+                finally:
+                    case.tearDown()
+                    case.doCleanups()
+
+    def test_prepare_rejects_drift_after_the_actual_source_read(self):
+        proof = self.save_preflight()
+        run_dir = self.root / "early-run"
+        run_dir.mkdir()
+        analysis = self.prof_dir / "论文分析" / "AAAA1111.md"
+        original_read = Path.read_bytes
+        state = {"read": False}
+
+        def read_then_drift(path):
+            raw = original_read(path)
+            if path == analysis and not state["read"]:
+                state["read"] = True
+                path.write_bytes(raw + b"\n<!-- after actual read -->\n")
+            return raw
+
+        before = self.business_snapshot()
+        with patch.object(Path, "read_bytes", read_then_drift):
+            out = self.call_handler(
+                "cmd_stage2_consumption_prepare", program_root=str(self.root),
+                professor=PROFESSOR, target_file=str(self.target_file),
+                preflight_file=str(proof), run_dir=str(run_dir))
+        self.assertTrue(state["read"], "prepare did not read the analysis material")
+        self.assertIn(out.get("reason_code"),
+                      {"invalid_facts", "preflight_inputs_changed"}, out)
+        self.assertIn(out["status"], {"error", "needs_refresh"}, out)
+        self.assert_business_unchanged(before)
+
+    def test_finalize_does_not_sample_sources_after_the_managed_write(self):
+        analysis = self.prof_dir / "论文分析" / "AAAA1111.md"
+        raw = analysis.read_bytes()
+        stat = analysis.stat()
+        frozen_guard = dict(path=str(analysis), size=stat.st_size,
+                            mtime_ns=stat.st_mtime_ns, ctime_ns=stat.st_ctime_ns,
+                            accepted_digest=sha256_bytes(raw))
+        proof, _run_dir, _companion = self.ready_run()
+        original_write = contact_state.managed_write
+        state = {"written": False}
+
+        def write_then_drift(*arguments, **keywords):
+            result = original_write(*arguments, **keywords)
+            if result.get("written") and not state["written"]:
+                state["written"] = True
+                analysis.write_bytes(raw + b"\n<!-- after managed write -->\n")
+            return result
+
+        out = self.finalize_in_process(
+            proof, factory_overrides={"managed_write": write_then_drift})
+        self.assertTrue(state["written"], out)
+        if out["status"] == "ok":
+            meta = self._read_meta()
+            self.assertEqual(meta["resolution_evidence_guards"]["AAAA1111"]["analysis"],
+                             frozen_guard)
+            for record in meta["directions"].values():
+                if "AAAA1111" in record["artifact_guards"]:
+                    self.assertEqual(record["artifact_guards"]["AAAA1111"]["analysis"],
+                                     frozen_guard)
+            self.assertEqual(self.preflight()["action"], "process")
+        else:
+            self.assertIn(out["status"], {"error", "needs_refresh"}, out)
+            self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
+
+    def test_finalize_rejects_a_missing_companion(self):
+        proof, run_dir, _companion = self.ready_run()
+        (run_dir / "stage2-consumption.json").unlink()
+        before = self.business_snapshot()
+        out = self.finalize_consumption(proof)
+        self.assertEqual((out["status"], out["reason_code"]),
+                         ("error", "invalid_facts"), out)
+        self.assert_business_unchanged(before)
+
+    def test_finalize_rejects_a_missing_source_section(self):
+        proof, run_dir, _companion = self.ready_run()
+        companion = read_json(run_dir / "stage2-consumption.json")
+        companion.pop("sources_projection")
+        write_json(run_dir / "stage2-consumption.json", companion)
+        before = self.business_snapshot()
+        out = self.finalize_consumption(proof)
+        self.assertEqual((out["status"], out["reason_code"]),
+                         ("error", "invalid_facts"), out)
+        self.assert_business_unchanged(before)
+
+    def test_finalize_rejects_a_changed_sealed_job_input(self):
+        proof, run_dir, _companion = self.ready_run()
+        companion_path = run_dir / "stage2-consumption.json"
+        companion = read_json(companion_path)
+        companion["stage2_plan"]["jobs"][0]["model_input_sha256"] = "0" * 64
+        write_json(companion_path, companion)
+        before = self.business_snapshot()
+        out = self.finalize_consumption(proof)
+        self.assertEqual((out["status"], out["reason_code"]),
+                         ("error", "invalid_result_json"), out)
+        self.assert_business_unchanged(before)
+
+    def test_process_rejects_source_drift_after_render(self):
+        proof, _run_dir, _companion = self.ready_run()
+        before = self.business_snapshot()
+        original = contact_state.render_analysis_document
+        analysis = self.prof_dir / "论文分析" / "BBBB2222.md"
+        state = {"rendered": False}
+
+        def render_then_drift(*arguments, **keywords):
+            result = original(*arguments, **keywords)
+            state["rendered"] = True
+            analysis.write_bytes(analysis.read_bytes() + b"\n<!-- after render -->\n")
+            return result
+
+        out = self.finalize_in_process(
+            proof, factory_overrides={"render_analysis_document": render_then_drift})
+        self.assertTrue(state["rendered"], out)
+        self.assertEqual((out["status"], out["reason_code"]),
+                         ("needs_refresh", "preflight_inputs_changed"), out)
+        self.assert_business_unchanged(before)
+
+
+class TestResolvedConsumptionBoundary(AnalysisLevelBase):
+    def test_resolved_process_rejects_an_outer_candidate_drift(self):
+        from test_stage2_resolved_direction import (
+            ResolvedPipelineMixin, make_facts_sidecar, unchanged_resolved,
+        )
+        self.prepare_outer_candidate()
+        self.professor = PROFESSOR
+        index_path = self.prof_dir / "论文分析" / "_index.json"
+        index = read_json(index_path)
+        for paper in self.facts["papers"]:
+            key = paper["item_key"]
+            analysis = Path(paper["analysis_file"])
+            sidecar = read_json(Path(paper["sidecar_file"]))
+            quotes = [row["quote"] for row in sidecar["items"]]
+            pdf = self.prof_dir / "论文分析" / f"{key}.pdf"
+            if not pdf.exists():
+                pdf.write_bytes(b"%PDF-1.4 synthetic resolved input\n")
+            facts_file = make_facts_sidecar(analysis, pdf, quotes)
+            paper.update(pdf_file=str(pdf), facts_file=str(facts_file), has_pdf=True)
+            index["papers"][key]["facts_sidecar"] = str(facts_file)
+        write_json(index_path, index)
+        self.facts_path = ResolvedPipelineMixin.write_facts(
+            self, self.facts["papers"], self.facts["directions"], gap_scope="relevant")
+        self.facts = read_json(self.facts_path)
+        proof, run_dir, _companion = self.prepare_consumption()
+        proposals = {row["direction_id"]: unchanged_resolved(row)
+                     for row in self.facts["directions"]}
+        ResolvedPipelineMixin.run_resolve(self, self.facts_path, proposals)
+        accepted = ResolvedPipelineMixin.accept_resolved(
+            self, self.facts_path, ["DIR00001", "DIR00002"])
+        self.assertEqual(accepted["status"], "ok", accepted)
+        plan = self.plan_consumption(proof, run_dir)
+        self.assertTrue(plan["write_needed"], plan)
+        self.assertTrue(any(job["kind"] == "narrative" for job in plan["jobs"]))
+        ctx = contact_state.Stage2Context(self.facts_path)
+        self.assertIn("CCCC3333", contact_state.stage2_resolution_evidence_guards(ctx))
+        for entry in ctx.direction_plans:
+            self.assertNotIn("CCCC3333", contact_state.gap_scope_keys(ctx.facts, entry["direction"]))
+            self.assertNotIn("CCCC3333", entry["direction"]["relevant_keys"])
+            self.assertNotIn("CCCC3333", ctx.narrative_later_keys(entry))
+            self.assertNotIn("CCCC3333", contact_state.stage2_direction_artifact_guards(
+                ctx, entry["direction"]))
+        for job in plan["jobs"]:
+            if job["kind"] == "narrative":
+                self.assertNotIn("CCCC3333", [row["item_key"]
+                                             for row in job["model_input"]["later_papers"]])
+        self.write_stage2_results()
+        self.seal_consumption(run_dir)
+        before = self.business_snapshot()
+        source = self.prof_dir / "论文分析" / "CCCC3333.md"
+        source.write_bytes(source.read_bytes() + b"\n<!-- resolved outer drift -->\n")
+        sidecar_path = self.prof_dir / "论文分析" / "_resolved_directions.json"
+        out = self.finalize_consumption(proof, "--resolved-directions", sidecar_path)
+        self.assertEqual((out["status"], out["reason_code"]),
+                         ("needs_refresh", "preflight_inputs_changed"), out)
+        self.assert_business_unchanged(before)
+
 
 class TestCanonicalMerge(AnalysisLevelBase):
     """L2: one explicit assignment covers fresh/reused/resolved/old merges."""
@@ -1102,8 +1477,9 @@ class TestLevelRefresh(AnalysisLevelBase):
                 before_pack, before_md = pack_path.read_bytes(), md_path.read_bytes()
                 payload = parse(self.refresh(plan))
                 self.assertEqual(payload["status"], "error", payload)
-                self.assertTrue(str(payload.get("reason_code", "")).startswith("validation_"),
-                                payload)
+                self.assertIn(payload.get("reason_code"),
+                              {"validation_render_stale", "validation_evidence_not_recorded"},
+                              payload)
                 self.assertEqual(pack_path.read_bytes(), before_pack)
                 self.assertEqual(md_path.read_bytes(), before_md)
                 self.assertFalse(
@@ -1543,13 +1919,15 @@ class TestRefreshProtection(AnalysisLevelBase):
             state["armed"] = True
 
         def record_then_create(direction):
+            result = original(direction)
             if state["armed"] and not state["created"]:
+                from test_stage2_resolved_direction import make_facts_sidecar
                 state["created"] = True
-                facts_path.write_text(json.dumps({
-                    "schema": 1, "status": "ok", "analysis": "AAAA1111.md",
-                    "items": []}, ensure_ascii=False), encoding="utf-8")
+                make_facts_sidecar(
+                    self.prof_dir / "论文分析" / "AAAA1111.md", self.pdf_path,
+                    [self.gap_quotes["AAAA1111"]])
                 state["bytes"] = facts_path.read_bytes()
-            return original(direction)
+            return result
 
         context_class.narrative_later_keys_for = staticmethod(record_then_create)
         self.addCleanup(setattr, context_class, "narrative_later_keys_for",
@@ -1631,6 +2009,11 @@ class TestRefreshProtection(AnalysisLevelBase):
     def _drift_freshness_after_lease(self):
         cache_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
         original_init = contact_state.Stage2PackRefineContext.__init__
+        gap_ids = {gap["gap_id"] for row in self._read_pack()["directions"]
+                   for section in ("gap_shortlist", "gaps_excluded", "completed_gap_blacklist")
+                   for gap in row.get(section, [])}
+        cache = read_json(cache_path)
+        gap_id = next(key for key in cache["entries"] if key in gap_ids)
         state = {"mutated": False, "bytes": None}
 
         def init_then_drift(instance, *arguments, **keywords):
@@ -1638,7 +2021,8 @@ class TestRefreshProtection(AnalysisLevelBase):
             if not state["mutated"]:
                 state["mutated"] = True
                 data = read_json(cache_path)
-                entry = next(iter(data["entries"].values()))
+                entry = data["entries"][gap_id]
+                self.assertEqual(entry["status"], "open")
                 entry["status"] = "unknown"
                 write_json(cache_path, data)
                 state["bytes"] = cache_path.read_bytes()
@@ -1663,12 +2047,19 @@ class TestRefreshProtection(AnalysisLevelBase):
         state = self._drift_freshness_after_lease()
         payload = self._refresh_in_process(plan)
         self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed", payload)
+        self.assertTrue(state["mutated"], payload)
         self.assertEqual(cache_path.read_bytes(), state["bytes"])
         self.assertEqual(pack_path.read_bytes(), before_pack)
         self.assertEqual(md_path.read_bytes(), before_md)
         self.assertEqual(report_path.read_bytes(), before_report)
         self.assertFalse(
             (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+        next_payload = self.preflight()
+        self.assertEqual(next_payload["action"], "process", next_payload)
+        self.assertIn("freshness_cache_changed",
+                      self.direction(next_payload, "DIR00001")["reason_codes"],
+                      next_payload)
 
     def test_refresh_rechecks_missing_facts_before_write(self):
         self.build_accepted_state()
@@ -1769,12 +2160,7 @@ class TestRefreshProtection(AnalysisLevelBase):
     def test_refresh_keeps_the_accepted_sources_and_foreign_cache(self):
         self.build_accepted_state()
         pack = self._read_pack()
-        recorded = {direction_id: record.get("consumed_sources")
-                    for direction_id, record in pack["cache"]["preflight"]["directions"].items()}
-        recorded_pdf = {direction_id: record.get("pdf_sources")
-                        for direction_id, record in pack["cache"]["preflight"]["directions"].items()}
-        recorded_sources = {direction_id: record.get("source_projection")
-                            for direction_id, record in pack["cache"]["preflight"]["directions"].items()}
+        recorded = copy.deepcopy(pack["cache"]["preflight"])
         pack["cache"]["u1_render"] = {"future": "kept"}
         pack["resolved_directions"] = {"schema": 2, "applied_at": "fixed",
                                        "directions": []}
@@ -1792,11 +2178,15 @@ class TestRefreshProtection(AnalysisLevelBase):
         updated = self._read_pack()
         self.assertEqual(updated["cache"]["u1_render"], {"future": "kept"})
         self.assertEqual(updated["resolved_directions"], pack["resolved_directions"])
-        directions = updated["cache"]["preflight"]["directions"]
-        for direction_id, record in directions.items():
-            self.assertEqual(record.get("consumed_sources"), recorded[direction_id])
-            self.assertEqual(record.get("pdf_sources"), recorded_pdf[direction_id])
-            self.assertEqual(record.get("source_projection"), recorded_sources[direction_id])
+        refreshed = copy.deepcopy(updated["cache"]["preflight"])
+        # Only these approved display fields may move. Comparing the rest of
+        # the whole block also retains E/D guards, freshness, and resolved
+        # group identities instead of sampling a few convenient source fields.
+        for metadata in (recorded, refreshed):
+            metadata.pop("statistics_version", None)
+            for record in metadata["directions"].values():
+                record.pop("level_projection", None)
+        self.assertEqual(refreshed, recorded)
 
     def test_successful_refresh_releases_the_lease(self):
         self.build_accepted_state()
@@ -1911,6 +2301,176 @@ class TestRefreshProtection(AnalysisLevelBase):
         self.assertIn("validator_not_accepted",
                       self.direction(next_payload, "DIR00001")["reason_codes"],
                       next_payload)
+
+
+class TestRefreshRemainingBoundaries(AnalysisLevelBase):
+    _refresh_in_process = TestRefreshProtection._refresh_in_process
+
+    def refresh_plan(self):
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        proof = self.save_preflight()
+        self.assertEqual(read_json(proof)["action"], "refresh_level")
+        return proof
+
+    def assert_refresh_rejected(self, proof, before):
+        out = self._refresh_in_process(proof)
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertIn(out["reason_code"],
+                      {"preflight_inputs_changed", "refresh_requires_process"}, out)
+        self.assert_business_unchanged(before)
+        self.assertFalse(
+            (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+
+    def test_refresh_rechecks_an_outer_candidate_after_lease(self):
+        self.prepare_outer_candidate()
+        self.stage2_finalize()
+        self.record_validation()
+        self.assert_outer_candidate()
+        proof = self.refresh_plan()
+        before = self.business_snapshot()
+        original = contact_state.Stage2PackRefineContext.__init__
+        source = self.prof_dir / "论文分析" / "CCCC3333.md"
+        state = {"mutated": False}
+
+        def init_then_drift(instance, *arguments, **keywords):
+            original(instance, *arguments, **keywords)
+            if not state["mutated"]:
+                state["mutated"] = True
+                source.write_bytes(source.read_bytes() + b"\n<!-- outer drift -->\n")
+
+        with patch.object(contact_state.Stage2PackRefineContext, "__init__", init_then_drift):
+            self.assert_refresh_rejected(proof, before)
+        self.assertTrue(state["mutated"])
+        next_plan = self.preflight(gap_scope="relevant")
+        self.assertEqual(next_plan["action"], "process", next_plan)
+        self.assertIn("artifact_changed", self.direction(next_plan, "DIR00001")["reason_codes"])
+
+    def test_refresh_rechecks_freshness_before_the_first_write(self):
+        self.build_accepted_state()
+        proof = self.refresh_plan()
+        before = self.business_snapshot()
+        cache_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
+        old_cache = read_json(cache_path)
+        gap_ids = {gap["gap_id"] for row in self._read_pack()["directions"]
+                   for section in ("gap_shortlist", "gaps_excluded", "completed_gap_blacklist")
+                   for gap in row.get(section, [])}
+        gap_id = next(key for key in old_cache["entries"] if key in gap_ids)
+        original = contact_state.Stage2PackRefineContext.narrative_later_keys_for
+        state = {"mutated": False}
+
+        def observe_then_drift(direction):
+            result = original(direction)
+            if not state["mutated"]:
+                state["mutated"] = True
+                changed = copy.deepcopy(old_cache)
+                self.assertEqual(changed["entries"][gap_id]["status"], "open")
+                changed["entries"][gap_id]["status"] = "unknown"
+                write_json(cache_path, changed)
+                before[cache_path] = cache_path.read_bytes()
+            return result
+
+        with patch.object(contact_state.Stage2PackRefineContext, "narrative_later_keys_for",
+                          staticmethod(observe_then_drift)):
+            self.assert_refresh_rejected(proof, before)
+        self.assertTrue(state["mutated"])
+        next_plan = self.preflight()
+        self.assertEqual(next_plan["action"], "process", next_plan)
+        self.assertIn("freshness_cache_changed",
+                      self.direction(next_plan, "DIR00001")["reason_codes"])
+
+    def test_refresh_rejects_the_remaining_illegal_lifecycle_states(self):
+        self.build_accepted_state()
+        proof = self.refresh_plan()
+        base = self._read_pack()
+        cases = {
+            "round2_needs_correction": dict(round=2, phase="needs_correction"),
+            "needs_correction_without_pending": dict(phase="needs_correction", pending={}),
+            "unknown_pending_direction": dict(pending={"DIR99999": [{}]}),
+            "unknown_result_direction": dict(results={
+                **base["validator"]["results"],
+                "DIR99999": dict(result="pass", rounds=1, issues=[])}),
+        }
+        for name, changes in cases.items():
+            with self.subTest(name=name):
+                pack = copy.deepcopy(base)
+                pack["validator"].update(changes)
+                self._write_pack(pack)
+                before = self.business_snapshot()
+                out = parse(self.refresh(proof))
+                self.assertEqual(out["status"], "error", out)
+                self.assertIn(out["reason_code"],
+                              {"validation_render_stale", "validation_evidence_not_recorded"}, out)
+                self.assert_business_unchanged(before)
+                self.assertFalse(
+                    (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+
+
+class TestOrdinaryOldStateBoundaries(AnalysisLevelBase):
+    _break_managed_render_sha = TestLevelRefresh._break_managed_render_sha
+
+    def test_ordinary_equivalent_finalize_rejects_header_render_damage(self):
+        self.build_accepted_state()
+        self._break_managed_render_sha()
+        proof, run_dir, _companion = self.prepare_consumption()
+        plan = self.plan_consumption(proof, run_dir)
+        self.assertEqual(plan["jobs"], [], plan)
+        self.seal_consumption(run_dir)
+        before = self.business_snapshot()
+        out = self.finalize_consumption(proof)
+        self.assertEqual((out["status"], out["reason_code"]),
+                         ("error", "validation_render_stale"), out)
+        self.assert_business_unchanged(before)
+
+    def test_ordinary_equivalent_finalize_rejects_validator_pack_damage(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        pack["validator"]["pack_sha256"] = "0" * 64
+        self._write_pack(pack)
+        proof, run_dir, _companion = self.prepare_consumption()
+        plan = self.plan_consumption(proof, run_dir)
+        self.assertEqual(plan["jobs"], [], plan)
+        self.seal_consumption(run_dir)
+        before = self.business_snapshot()
+        out = self.finalize_consumption(proof)
+        self.assertEqual((out["status"], out["reason_code"]),
+                         ("error", "validation_render_stale"), out)
+        self.assert_business_unchanged(before)
+
+    def test_new_business_needs_explicit_overwrite_and_loses_old_validation(self):
+        self.build_accepted_state()
+        self._break_managed_render_sha()
+        report = (self.root / "validation.json").read_bytes()
+        decision = self.root / "overwrite.json"
+        write_json(decision, {"decision": "overwrite"})
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        refresh_proof = self.save_preflight("damaged-refresh.json")
+        before = self.business_snapshot()
+        refused = parse(self.refresh(refresh_proof, "--decision-file", decision))
+        self.assertEqual((refused["status"], refused["reason_code"]),
+                         ("error", "validation_render_stale"), refused)
+        self.assert_business_unchanged(before)
+        self.bind_levels()
+        self.facts["directions"][0]["user_note"] = "比较新的合成输入。"
+        self.target["directions"][0]["user_note"] = "比较新的合成输入。"
+        self._write_target()
+        write_json(self.facts_path, self.facts)
+        proof, run_dir, _companion = self.prepare_consumption()
+        plan = self.plan_consumption(proof, run_dir)
+        self.assertTrue(plan["jobs"], plan)
+        self.assertTrue(plan["write_needed"], plan)
+        self.write_stage2_results()
+        self.seal_consumption(run_dir)
+        before = self.business_snapshot()
+        refused = self.finalize_consumption(proof)
+        self.assertEqual((refused["status"], refused["reason_code"]),
+                         ("needs_decision", "manual_markdown_changed"), refused)
+        self.assert_business_unchanged(before)
+        out = self.finalize_consumption(proof, "--decision-file", decision)
+        self.assertEqual(out["status"], "ok", out)
+        self.assertNotIn("validator", self._read_pack())
+        self.assertEqual((self.root / "validation.json").read_bytes(), report)
 
 
 class TestManagedBodyBytes(unittest.TestCase):

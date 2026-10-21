@@ -8,7 +8,10 @@ re-render with a bounded correction lifecycle.
 import copy
 import json
 import shutil
+import tempfile
 from pathlib import Path
+
+from stage2_upstream_fixture import prepare_stage2_proof
 
 from test_contact_state import (
     BaseEnv,
@@ -236,6 +239,37 @@ class Stage2ValidationHandoffTests(BaseEnv):
 
     # -- T5 fixtures: old-semantics pack and the re-rendered version --------
 
+    def _t6_prepare(self, facts_path, proof_path=None):
+        """Bind this lifecycle round to a real, exclusive consumption run."""
+        if proof_path is None:
+            proof_path = prepare_stage2_proof(run_cli, facts_path)
+        run_dir = Path(tempfile.mkdtemp(prefix="t6-consumption-", dir=self.root))
+        prepared = parse(run_cli(
+            "stage2-consumption-prepare", "--program-root", self.root,
+            "--professor", "試験 教授", "--target-file", self.prof_dir / "套磁目标.json",
+            "--preflight-file", proof_path, "--run-dir", run_dir))
+        self.assertEqual(prepared["status"], "ok", prepared)
+        facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+        facts["stage2_preflight"]["consumption"] = {
+            "file": prepared["consumption_file"], "run_id": prepared["run_id"],
+            "sources_sha256": prepared["sources_sha256"]}
+        Path(facts_path).write_text(json.dumps(facts, ensure_ascii=False, indent=1),
+                                    encoding="utf-8")
+        return proof_path
+
+    def _t6_plan(self, facts_path, proof_path):
+        facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+        run_dir = Path(facts["stage2_preflight"]["consumption"]["file"]).parent
+        return parse(run_cli("stage2-plan", "--facts", facts_path,
+                             "--preflight-file", proof_path, "--run-dir", run_dir))
+
+    def _t6_seal(self, facts_path, results):
+        facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+        run_dir = Path(facts["stage2_preflight"]["consumption"]["file"]).parent
+        sealed = parse(run_cli("stage2-consumption-seal-results", "--run-dir", run_dir,
+                               "--results-dir", results))
+        self.assertEqual(sealed["status"], "ok", sealed)
+
     def _t5_write_facts(self):
         """Facts whose ORIGINAL members exclude the relevant-only paper."""
         def customise(facts):
@@ -280,6 +314,9 @@ class Stage2ValidationHandoffTests(BaseEnv):
         directory, a complete ``refined`` result file, ``stage2-resolve-finalize``
         and ``stage2-resolve-accept`` — never by editing state directly.
         """
+        # The initial pack is already committed; the accepted resolve belongs
+        # to a new consumption round rather than that completed plan.
+        self._t6_prepare(facts_path)
         facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
         direction = next(row for row in facts["directions"]
                          if row["collection_key"] == direction_id)
@@ -357,9 +394,12 @@ class Stage2ValidationHandoffTests(BaseEnv):
         results = self.root / "t5-results"
         self.write_stage2_results(results, directions=facts["directions"])
         self._t5_write_narrative(results)
-        plan = parse(self.run_bound_stage2_plan(facts_path))
+        proof_path = self._t6_prepare(facts_path)
+        plan = self._t6_plan(facts_path, proof_path)
         self.assertEqual(plan["status"], "ok", plan)
-        finalized = parse(run_bound_stage2_finalize(run_cli, facts_path, "--results", results))
+        self._t6_seal(facts_path, results)
+        finalized = parse(run_cli("stage2-finalize", "--facts", facts_path,
+                                  "--preflight-file", proof_path, "--results", results))
         self.assertEqual(finalized["status"], "ok", finalized)
         return facts_path, results
 
@@ -377,6 +417,7 @@ class Stage2ValidationHandoffTests(BaseEnv):
         facts["stage2_preflight"] = {"preflight_id": payload["preflight_id"]}
         Path(facts_path).write_text(json.dumps(facts, ensure_ascii=False, indent=1),
                                     encoding="utf-8")
+        self._t6_prepare(facts_path, proof_path)
         return proof_path, payload
 
     def _t5_pack(self):
@@ -574,8 +615,7 @@ class Stage2ValidationHandoffTests(BaseEnv):
         results.mkdir()
         for existing in sorted(generated_results.glob("*.json")):
             shutil.copyfile(existing, results / existing.name)
-        plan = parse(run_cli("stage2-plan", "--facts", facts_path,
-                             "--preflight-file", proof_path))
+        plan = env._t6_plan(facts_path, proof_path)
         self.assertEqual(plan["status"], "ok", plan)
         for job in plan["jobs"]:
             if (results / job["result_file"]).exists():
@@ -586,6 +626,7 @@ class Stage2ValidationHandoffTests(BaseEnv):
                 env.write_stage2_results(results, directions=facts["directions"])
             else:
                 self.fail(f"unexpected stage2 job kind in the T5 fixture: {job}")
+        env._t6_seal(facts_path, results)
         return env, facts_path, proof_path, results
 
     def _t5_assert_missing_member_source_rejected(self):
@@ -1040,13 +1081,13 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assertIn("validator_not_accepted", preflight_direction["reason_codes"],
                       preflight_direction)
 
-        plan = parse(run_cli("stage2-plan", "--facts", facts_path,
-                             "--preflight-file", proof_path))
+        plan = legacy_env._t6_plan(facts_path, proof_path)
         self.assertEqual(plan["status"], "ok", plan)
         self.assertEqual({row["direction_id"]: row["action"] for row in plan["directions"]},
                          {"DIR00001": "reuse", "DIR00002": "reuse"}, plan)
         self.assertEqual(plan["jobs"], [], plan)
         self.assertFalse(plan["write_needed"], plan)
+        legacy_env._t6_seal(facts_path, results)
 
         # -- ordinary finalize rebuilds the authoritative members from the current
         #    facts, keeps applying this round's accepted decision, re-renders the
@@ -1260,6 +1301,10 @@ class Stage2ValidationHandoffTests(BaseEnv):
         self.assertEqual(before["round"], 1, before)
         self.assertEqual(before["phase"], "needs_correction", before)
         self.assertEqual(sorted(before["pending"]), ["DIR00001"], before)
+        meta_plan = meta_env._t6_plan(meta_facts, meta_proof)
+        self.assertEqual(meta_plan["status"], "ok", meta_plan)
+        self.assertEqual(meta_plan["jobs"], [], meta_plan)
+        meta_env._t6_seal(meta_facts, meta_results)
         out = parse(run_cli("stage2-finalize", "--facts", meta_facts,
                             "--preflight-file", meta_proof, "--results", meta_results))
         self.assertEqual(out["status"], "ok", out)
@@ -1303,6 +1348,10 @@ class Stage2ValidationHandoffTests(BaseEnv):
                                        stale_env._physical_line_of(_T5_LEGACY_QUOTE))])
         recorded = stale_env.record_validation(stale_report)
         self.assertEqual(recorded["status"], "needs_correction", recorded)
+        stale_plan = stale_env._t6_plan(stale_facts, stale_proof)
+        self.assertEqual(stale_plan["status"], "ok", stale_plan)
+        self.assertEqual(stale_plan["jobs"], [], stale_plan)
+        stale_env._t6_seal(stale_facts, stale_results)
         stale_pack_path = stale_env.prof_dir / "套磁候选输入.json"
         stale_pack_before = stale_pack_path.read_bytes()
         analysis_path = stale_env.prof_dir / contact_state.ANALYSIS_MD

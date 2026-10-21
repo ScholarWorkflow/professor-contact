@@ -1,14 +1,14 @@
 # U5：实际分析级别贯通与诚实统计测试计划
 
-- Test plan revision：`u5-analysis-level-t6`，2026-10-21。本正文 §1–4.3 整体取代 t5 的当前指令；§4.4–5（含 §4.6）保留历史原文，不并行执行历史 recipe。
-- 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，分支 `plan/u5-analysis-level-redesign`；对齐同目录[执行计划 r6](implementation-plan.md)（本地当前测试提交 `76cba4d`；远端 `05bdbe1`；r6 正文基线 `8fa52a4`）。读取基线 head `d4e096f105805dfefbf2f4d883fc4919d49fce76`，r4 blob `38c71e8d4ec3105b639738086daccfdd360d9d6c`、t5 blob `6243873fb70d3c64e9db4773f04128f6878020be`。
-- 本轮已落地 18 个方法，A–H 每个字母至少一条真实入口：A 的 prepare 坏 index 与 context-null、B 的成功冻结/冻结后变更、C 的缺失/未封存/错轮/一次修复、D 的 fresh 漂移、E 的 freshness、F 的 missing facts、G 的 cache/header/validator/lifecycle、H 的无 validator。模块 74 methods。B 的 path/state、C 的缺失/未封存/错轮、E 的 freshness、H、G 的 validator/lifecycle 预检通过；A 的 prepare/context、B 的 post-freeze、C 的 revision 1、D 的 fresh、F 的 missing、G 的 cache/header 共 10 个是待产品修复的预期红；B 的内容字段契约、B 的早期读/写后反采样、D 的 resolved、E 的候选全集仍 pending；I 已于产品 `4d90c89`／测试 `223f5b4` 执行通过，见 §4.7。作者不自授 APPROVED/PASS。
+- Test plan revision：`u5-analysis-level-t6`，2026-10-22 测试准备补充。业务目标、预期及范围沿用 t6；§4.3.1 是当前可执行步骤和交接。§4.4–5 保留历史记录，不并行执行历史 Recipe。
+- 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，分支 `plan/u5-analysis-level-redesign`；对齐同目录[执行计划 r6](implementation-plan.md)。本轮产品与已有测试基线为 `4a6cec8a4335eecb720511e683fbdb075d9fcfa8`，仅修改测试资产和本文。r6 正文基线为 `8fa52a4`；历史读取基线为 `d4e096f105805dfefbf2f4d883fc4919d49fce76`。
+- 当前模块 88 个方法：沿用 74 个，新增 14 个；A–I 的选择器及复用方式见 §4.3.1。本轮只做语法、运行时与临时目录检查，没有调用测试方法、产品入口或业务请求。`76cba4d` 的 18 个方法执行观察及其中 10 个产品失败仅为历史记录，不能表述成本轮预检或当前通过结果。I 已有执行结果见 §4.7。完整冻结材料及 analyzer 接线仍存在源码已确认的产品缺项，见 §4.3.1；本角色不修改产品，不授予测试关口或合并批准。
 - 历史正式状态：[2026-10-21 10:58:32Z 的 t5 G2/G3 审核](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6314274110) 已明确第二、第三关口通过，适用产品/测试 `96a1b113722aaba3863b75fcf3b84c31a625639d`、文档 `d4e096f`、执行计划 r4；原始结果见 §4.5。这一历史事实保留。早期 `3c4cda1` 阶段及 CI 失败已由后续修复/复验取代，不是当前仍失败清单；t6 依据新发现的独立错误路径重开直接受影响检查，不能把旧绿扩大为新机制通过。
-- **Rebase note（2026-10-21）**：分支已 rebase 到 main `1d8f138`（含 U1 r5）。t5 历史产品/文档提交等价为 `33e49dc`（r4）、`4140b77`（t5）＋`10430f5`（U1/U5 接受边界）、`78acaaf`（t5 记录）；t5 定向复验见 §4.6。t6 的新消费快照、完整比较及写前旧态机制仍未实现，本文的 pending 状态不因 rebase 改变。
+- **Rebase note（2026-10-21）**：分支已 rebase 到 main `1d8f138`（含 U1 r5）。t5 历史产品/文档提交等价为 `33e49dc`（r4）、`4140b77`（t5）＋`10430f5`（U1/U5 接受边界）、`78acaaf`（t5 记录）；t5 定向复验见 §4.6。当前产品已有部分消费准备实现，完整冻结内容及接线缺项以 §4.3.1 的实际源码核对为准，历史 pending 不因 rebase 自动变为完成。
 
 ## 1. 范围、依据与复用原则
 
-规范依据为用户本轮授权、r6 §1/4–6（含 §4.5 刷新字段写入范围）、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 与 [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)，本轮已读原文。执行计划 r6 已由[2026-10-21 正式审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6317865160)批准，所审计划内容与当前版本一致；I 项测试已准备、未执行，测试关口状态见 §4.3。采用可用个人执行/测试计划审核技能，不从当前有缺陷实现反推验收预期。L1–L6 业务边界保持；新增具体检查只针对本轮授权的消费边界、完整来源、写前合法性及刷新字段写入范围缺口。
+规范依据为用户本轮授权、r6 §1/4–6（含 §4.5 刷新字段写入范围）、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 与 [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)，本轮已读原文。执行计划 r6 已由[正式审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6317865160)批准；I 的既有执行结果见 §4.7。L1–L6 业务边界保持，当前角色只准备测试资产，不重新设计或批准计划。
 
 不要求全 OCR/模型/导入业务回归、Stage3/4、全仓四分片、所有来源×时点×validator 状态、来源认证平台或新测试框架。用既有 unittest、临时 program root、真实 runner 及确定性合法结果夹具；不调用真实模型。准确消费边界只读两个 analyzer/SKILL 的实际完整读计划→自身判断→聚合写结果流程与 runner 封存接线，不新建 harness/模型调用证明系统。模型内部是否认真阅读不在可验证范围。
 
@@ -25,9 +25,9 @@
 | L5 旧态与无损字节 | 首建、合法无 validator、合法 round1 pending/awaiting_second_validation、合法终态、失效旧态分类；header/body/cache/pack、validator schema/round/phase/pending/results/方向范围独立检查；所有判定在写前 | G/H 及原真实 CRLF、时间 token、manual-body 方法。refresh 失效旧态即使新正文不同也零写入；普通真正新业务只能按显式政策成为未校验，不继承旧认证 |
 | L6 持锁及正式写前 | refresh 锁后与渲染后的完整复核覆盖 E、D、freshness、missing→exists；接受 pack 外部更新不被旧 candidate 覆盖；只更新 level/display、不替换 B，保留 `cache.render[ANALYSIS_MD]` 的 `u1` 和与新正文绑定的 `ownership`/`body_sha256`，busy/释放/I/O 边界保持 | E/F 采用既有同进程 refresh hooks 与实际处理函数；I 用真实 refresh 断言字段保留；保留外部 pack、lease、失败中断及 refine 生命周期资产，不增加事务/回滚框架 |
 
-## 3. 当前资产及有效结果边界
+## 3. 继承资产及历史结果边界
 
-已在 `d4e096f` 读取 `.apm/skills/professor-contact/tests/test_stage2_analysis_level.py`（t5 55 methods）；r6 字段测试在 `db63276`/`6022e98` 增补，本轮在 `76cba4d` 增补 A–H 的 9 个方法，A–H 共 18 个方法，当前为 74 methods。`test_stage2_preflight.py`、`stage2_upstream_fixture.py` 和相应产品源码继续沿用；现有资产不因更换文档 SHA 自动失效。
+以下表格记录 `76cba4d` 阶段的资产和观察，表中 pending 指该阶段，不是当前交付清单。当前补齐和产品缺项以 §4.3.1 为准。此前 A–H 共 18 个方法、模块 74 个；本轮新增 14 个、模块 88 个。`test_stage2_preflight.py`、`stage2_upstream_fixture.py` 继续复用。
 
 | 实际资产 | 保留/修订及明确局限 |
 |---|---|
@@ -60,18 +60,18 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 
 独立预期：来源/错轮拒绝沿既有 `needs_refresh/preflight_inputs_changed`、`refresh_requires_process` 或精确既有输入错误；旧态错误沿 validation_render_stale/validation_evidence_not_recorded/manual_markdown_changed 的既有类别。不得只 assert 非 ok/任意 error；每例明确所破坏层，并用标准 hashlib/JSON/原 bytes 检查其他层原本合法。仅 header 等已给精确类别的例子不得由无关 result 错误计通过。Python 摘要序列化沿现有 ensure_ascii=False、sort_keys=True、默认空格，不自改 separators；正文 SHA 使用 read_bytes 原切片，不调用被测归一化函数算预期。
 
-测试工程师在产品实现后填写最小实际接线表，提交精确函数/caller 及测试 selector：
+当前实际接线和对应方法如下；源码缺项的具体说明以 §4.3.1 为准，产品补齐后只更新受影响行：
 
-| 需核对的接线 | 允许复用的条件 / 尚待准备 |
+| 需核对的接线 | 当前核对结果及测试落点 |
 |---|---|
-| prepare 读源→封存 payload→Stage2Context | 对 analysis/facts/future-work 解析使用同一已读 bytes、PDF 只用现有验证读摘要；缺失探测与 E key 覆盖未被跳过。B 的业务结果覆盖首次冻结与写后采样，源码补核对实际读取 owner；当前 pending |
-| resolve-plan 与 stage2-plan→analyzer 完整读取→结果集合封存→finalize | resolve 继续使用 `_build_resolve_model_input`/resolve_run_id；ordinary job 使用该 plan model_input，analyzer 自身读取相关完整 model_input 后判断，不再重构输入/新增 pass；共享 narrative 在全部方向齐备后封存，结果段核对完整 job/文件/方向集与摘要。B/C/D 的入口分别支持复用；当前 pending |
-| preflight、普通 process、refresh 锁后/写前 | 实际调用同一 observe/compare，传 E/D/存在/源/guard/resolved/freshness/资格完整对象；普通比较 F→O、refresh B→O，元数据纯投影。D/E/F 业务结果加接线记录，不凭“其余共用”覆盖；当前 pending |
-| old-state 基础层→finalize/refresh/refine/preflight | 全部绑定和原 validator schema/lifecycle 检查早于首个 managed write；terminal 接受层只用于 reuse_all。G/H 支撑各层/独有入口；当前 pending |
+| prepare 读源→封存 payload→Stage2Context | `cmd_stage2_consumption_prepare` 仅封存 `observed_source_projection`；`Stage2Context.__init__` 仍读当前文件。B 的 F0 guard 与写后注入已准备，完整材料字段及实际读取落点受产品缺项阻塞。 |
+| resolve-plan 与 stage2-plan→analyzer 完整读取→结果集合封存→finalize | 原 resolve writer/resolve_run_id 被 D-resolved 复用；`_seal_consumption_plan` 仅存摘要，两个 analyzer 未接消费准备和结果封存。C 的摘要关联例已写，完整输入字段篡改仍待产品保存完整计划。 |
+| preflight、普通 process、refresh 锁后/写前 | 普通 finalize 在写后调用 `stage2_preflight_metadata`；refresh 经 `stage2_refresh_evaluate`。D 使用真实 finalize 工厂注入，E/F 使用原 context 观察点；当前不能声称完整 observe/compare 已共用。 |
+| old-state 基础层→finalize/refresh/refine/preflight | 现有 `stage2_validation_legality` 为共同基础层。G/H 已准备独有入口的旧绑定和生命周期状态，原生命周期资产补消费准备与封存前置；正式结果仍待执行。 |
 
-### 4.2 由最终机制推导的最小判别 recipe（A–H 每条至少一个真实入口已准备；10 个产品缺口红；B 内容字段/早期/写后、D resolved、E 候选全集 pending；I 已执行通过）
+### 4.2 已确认的最小判别 Recipe
 
-以下 A–H 是同一 L1–L6 内直接缺口。方法名为拟定落点，可等价合并现有方法但须保持每条独立错误路径的判别；不强求固定方法数。
+以下 A–H 是同一 L1–L6 内直接缺口。原拟定方法与本轮实际选择器的对应见 §4.3.1，不强求固定方法数。各小节末的“本轮准备状态”均为 `76cba4d` 时的历史状态；当前状态统一由 §4.3.1 取代。
 
 #### A. 坏登记不是 unknown，不能被 null 绕过（L1）
 
@@ -147,14 +147,96 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 
 ### 4.3 执行准备、历史复用与责任
 
-- 当前 t6 设计/步骤候选 pending 独立复核；第一关 L1–L6 业务范围沿用，本轮授权的直接缺口并入；t5 G2/G3 已通过的事实不撤销。I 字段测试已执行通过（§4.7）；A–H 的 G2（资产/步骤接线）、G3（执行结果）pending。
-- 执行计划 r6 已获批准；产品 `05bdbe1` 已加入 consumption prepare/plan/seal 和写前复核。本轮测试 `76cba4d` 已准备 A–H 的 18 个方法，模块 74 methods；B 的路径/状态绑定、C 的缺失/未封存/错轮、E 的 freshness、H、G 的 validator/lifecycle 分支预检通过；A 的 prepare/context、B 的 post-freeze、C 的 revision 1、D 的 fresh、F 的 missing-facts、G 的 cache/header 共 10 个是待产品修复的预期红。B 的内容字段契约、早期读/写后反采样、D 的 resolved、E 的候选全集仍 pending；其余 A–H 字母均已有至少一条真实入口的测试，红的是产品缺口。既有命令环境为 repo 的 `.apm/skills/professor-contact/tests`、Python 标准库 unittest、隔离 TemporaryDirectory；无需安装模型/服务。不得为通过断言修补产品返回或以自填关联冒充模型读取证明。
-- 未来执行在步骤准备确认且另有运行授权后，仅用 `python3 -m unittest <实际填入的受影响完整选择器> -v` 定向运行。I 已执行；A–H 已实现的实际选择器共 18 个：`TestFactsLevelContract.test_malformed_index_cannot_be_accepted_as_null`、`TestFactsLevelContract.test_empty_papers_index_cannot_be_accepted_as_null`、`TestFactsLevelContract.test_context_rejects_malformed_index_with_null_levels`、`TestFactsLevelContract.test_context_rejects_empty_papers_with_null_levels`、`TestConsumptionFreeze.test_process_commits_the_frozen_sources`、`TestConsumptionFreeze.test_plan_rejects_a_source_change_after_prepare`、`TestConsumptionFreeze.test_finalize_rejects_a_missing_sealed_result`、`TestConsumptionFreeze.test_finalize_rejects_an_unsealed_companion`、`TestConsumptionFreeze.test_finalize_rejects_sealed_results_from_another_run`、`TestConsumptionFreeze.test_seal_results_supports_a_single_repair_revision`、`TestConsumptionFreeze.test_process_finalize_rejects_frozen_source_drift`、`TestRefreshProtection.test_refresh_rechecks_freshness_after_lease`、`TestRefreshProtection.test_refresh_rechecks_missing_facts_before_write`、`TestLevelRefresh.test_refresh_rejects_an_invalid_old_cache_render_binding`、`TestLevelRefresh.test_refresh_rejects_an_invalid_old_validator_pack_binding`、`TestLevelRefresh.test_refresh_rejects_an_invalid_old_header_render_binding`、`TestLevelRefresh.test_refresh_rejects_an_invalid_old_validator_lifecycle`、`TestLevelRefresh.test_refresh_without_a_validator_stays_unvalidated`。B 内容字段、B 早期/写后、D resolved、E 候选全集等未实现项仍不能把占位字符串当可执行命令。不恢复全模块/四分片/模型回归为门槛；如产品 diff 确实触及原 CRLF/refine 入口，只附相应现有方法选择器。
-- 临时目录沿 `mktemp -d /tmp/u5-t6-XXXXXX`，日志只记实际命令/产品与测试 SHA/Python 版本/退出码/必要业务输出，仓库外保存。原始历史日志直接引用 §4.4–4.6，不重新筛选。文档静态 diff/读回不是产品测试。
-- 失败按夹具准备、业务失败、环境无法判断、未执行区分；不因返回任意错误计通过，不放宽预期或重建 proof 求绿。业务失败即停止受影响项交产品 owner；fixture/步骤错误交测试工程师修正并复核，保留原尝试。无新信息的 provider/network 故障不重复采样；此确定性定向测试不需要外部调用或模型重试。
-- 完成条件：本轮独立计划设计意见已处理；后续实际接线/步骤经 G2 确认，受影响目标取得适用 G3 结果。I 已于 `223f5b4` 执行通过；本轮 18 个方法在 `76cba4d` 有预检结果，10 个红为产品缺口，B 内容字段/早期/写后、D resolved、E 候选全集仍 pending；不声称 A–H 全部执行通过，更不授予合并批准。
+第一关口沿用 L1–L6；r6 已有执行计划批准。t5 的第二、第三关口结论只适用于其历史版本；t6 的步骤和执行结果仍待正式审核。本轮角色为本地测试工程师，只交付测试准备，没有运行正式用例，也不把历史“预检通过／预期红”当成本轮结果。
 
-下列 §4.4–4.6 原文按历史版本保留；其中“当前”“本轮”“待审核/失败”等均是记录当时口吻，t5 最终正式 G2/G3 状态以本文件顶部所引 10:58 审核为准，不能用这些历史句子推翻该结论或要求重做旧轮。它们也不代表 r5/t6 已实现。
+#### 4.3.1 2026-10-22 当前测试准备与 Recipe
+
+**版本与资产**：产品及已有测试基线 `4a6cec8a4335eecb720511e683fbdb075d9fcfa8`；本轮交付版本以包含本节的提交为准，产品代码不变。测试文件为 `.apm/skills/professor-contact/tests/test_stage2_analysis_level.py`；另给 `test_stage2_resolved_direction.py` 的 `ResolvedPipelineMixin.write_facts` 增加可选 `gap_scope`，默认值保持原样，并补 `test_stage2_style_validation_handoff.py` 中原生命周期的消费前置。模块现有 88 个方法，下面只选择本轮直接涉及的方法，不运行整个模块或四分片。`AnalysisLevelBase.stage2_finalize/build_accepted_state` 已走真实 prepare→plan→结果→seal→finalize→record-validation，不再事后 seed 接受元数据；每轮使用独立 run 目录，便于同例进行第二轮准备。原合法结果 writer 按实际 plan 的 jobs 选择 narrative 方向和 freshness gap，移除没有任务的已知结果文件；单方向处理不混入复用方向。
+
+| 目标 | 本轮准备及实际入口 |
+|---|---|
+| A | 保留 4 个 prepare/context 方法；新增 `TestConsumptionBoundaries.test_finalize_rejects_bad_index_with_an_existing_freeze`，使用真实已有冻结，在坏登记下分别检验 null／缺字段的 finalize 拒绝与零写入。 |
+| B | 加强 `TestConsumptionFreeze.test_process_commits_the_frozen_sources`，在 prepare 前用标准 SHA 与 stat 固定 F0，并比对已接受 analysis guard；新增 `test_prepare_rejects_drift_after_the_actual_source_read` 与 `test_finalize_does_not_sample_sources_after_the_managed_write`。前者在实际读取后改源且必须观察到读取，后者在真实受管写入成功后改源，成功包只能保留 F0，中断不能产生接受标记。完整冻结内容字段仍需产品提供，见下方缺项，不自造私有格式。 |
+| C | 保留丢失结果、未封存和错轮；新增丢失 companion、缺源段、已封存任务输入摘要被改三例。一次机械修复补上 revision=1 的真实 finalize 成功、原结果不变、原来源及计划不变、revision=2 拒绝且不写入的断言。摘要篡改只检查已有摘要关联，不代替完整计划内实际 model_input 字段篡改；后者受产品未保存完整计划阻塞。 |
+| D | 保留非空任务普通 process 漂移；新增渲染后源变化。新增 `TestResolvedConsumptionBoundary`，用原 facts-sidecar、resolve-plan/finalize/accept 资产形成合法 accepted unchanged 方向，再生成非空叙事任务并封存；只改 E 内、D 外的 C analysis，直接带原 resolved sidecar 调用 finalize，不自动重建证明。 |
+| E | 新增 `TestRefreshRemainingBoundaries.test_refresh_rechecks_an_outer_candidate_after_lease`，接受前固定 C 为扩召候选、年份 2020、相关范围外；先检查成员、相关、gap、后续论文和逐方向 guard 均不含 C，候选全集 guard 包含 C，再在锁后改 C；检查刷新拒绝及后续 preflight 的 artifact_changed。时效缓存锁后例沿用并补具体原因与后续分流检查。 |
+| F | 既有 missing→exists 注入改用原合法 facts-sidecar writer，包含真实 PDF 摘要和 future-work ID，避免缩水 JSON；新增写前已接受 gap 的 freshness 行变化，并检查注入后的缓存字节保留、原接受文件不变及后续 freshness_cache_changed。 |
+| G | 新增普通等价 finalize 的 header.render／validator.pack 独立损坏；补齐 round2+needs_correction、无待修问题、pending 未知方向和 results 未知方向。拒绝原因限定为原证据错误，不能以任意 validation 前缀计通过。原 cache-only、header、validator 与生命周期方法保留。 |
+| H | 保留真实无 validator 对照；新增真实新业务在坏 header.render 下的默认保护、显式 overwrite 后未校验，以及 refresh 即使 overwrite 也拒绝。`test_refresh_keeps_the_accepted_sources_and_foreign_cache` 比较完整原 cache.preflight，仅排除批准更新的级别投影和统计版本，保留原 resolved 和外来缓存。合法 pending→修订→第二轮用原生命周期方法，已为其中实际生成 pack、普通 finalize 和缺成员来源构造补消费准备、计划与结果封存，不复制状态矩阵。 |
+| I | 方法和产品未变，沿用 §4.7 的字段保留结果；当前不重复运行。 |
+
+**实际接线核对及产品缺项**（只读源码，不是运行结果）：
+
+- `_stage2_preflight.py:cmd_stage2_consumption_prepare` 目前只调用 `_stage2_facts.py:observed_source_projection`，后者只记录路径、存在性和声明状态，没有先读 analysis/facts/future-work 材料及其结束复核；`Stage2Context.__init__` 仍从当前磁盘加载材料，再比较路径投影。早期实际读取测试会明确区分“根本没读取”和“读后漂移被拒绝”。本角色不猜测完整冻结材料的字段名，也不把 guard 摘要检查冒称材料已从 F0 供应。
+- `_seal_consumption_plan` 保存任务输入摘要，却没有保存完整任务输入给 analyzer；`cmd_stage2_consumption_seal_results` 当前拒绝再次封存，不支持原政策的一次修复。`stage2_validate_consumption_results` 检查结果文件，不完整核对任务输入摘要。对应 C 资产已准备，产品负责人修复这些入口后由本地执行工程师执行。
+- 两个正式 analyzer 的第 6.1.5／6.2／6.3 段仍是原 resolve、plan、写聚合结果、finalize 流程，没有 `stage2-consumption-prepare`、`--run-dir` 保存完整普通计划、从该计划完整读取输入和 `stage2-consumption-seal-results` 接线；主 `SKILL.md` 也没有这条消费准备接线。该静态核对已完成，不能用原 `TestAnalyzerContract` 的关键词断言代替，也不能在测试提示词里补产品职责。下一负责人为产品实现负责人。
+- 普通 finalize 仍在 managed 写入后调用 `stage2_preflight_metadata`，其 `_artifact_guards_for_keys` 会读当前 stat；B 写后注入通过既有 `_stage2_finalize_module.build` 注入原 managed writer 包装，不改判定。D 渲染后注入也使用同一原工厂接线，避免只替换已被闭包捕获的外部别名而使注入不生效。
+- refresh 的 `cmd_stage2_refresh_level` 首次调用 `stage2_refresh_evaluate`；后续写前读取及 E/D/缓存覆盖仍须由 E/F 的真实例核对。旧态合法性函数为 `_stage2_validation.py:stage2_validation_legality`，finalize、preflight、refine 使用该层；是否在每条路径首次写入前完成、是否遗漏绑定，由 G/H 判断。没有用“同名函数”声称完整共用已成立。
+
+上述产品缺项不由测试准备修复。输入、方法和预期已经明确，无须为产品未实现而删测或放宽断言。完整内容字段落定后，由本地测试工程师接入 B 的原冻结材料字段、实际读取落点及 C 的保存计划输入字段，不新增检查目标；不能把路径投影当作完整内容供应。B 当前 `Path.read_bytes` 注入只在产品采用该读取落点时适用，未命中表示落点待绑定，不能排除其他合法原字节读取方式。其余已写资产可交执行者，不因产品缺项而重新安装或扩大回归。
+
+**有限预检**：本轮实际运行 `uv --version`（0.12.22）、标准库导入、三个修改文件的 `ast.parse`、隔离临时目录写入和 `jq` 字段读取。Python 为 3.14.6，标准库 unittest 可用；分析级别模块 88 个方法通过语法解析，每例仍使用独立 `TemporaryDirectory`。没有导入产品或测试模块，没有运行 setUp、测试、产品入口、模型或业务请求。初次 `uv run` 因默认缓存目录不可写失败，改为明确的仓库外 `UV_CACHE_DIR` 后环境命令成功；这不是重跑测试。原始记录为准备者独立 `/tmp` 目录内的 `precheck.json`，不入库。未使用共享 fixtures 仓库，不需要更新或安装它。无额外模型、服务、凭据、配置或用户数据输入。
+
+**准备顺序与隔离**：
+
+1. 本地执行工程师先核对实际产品修复版本与本轮测试提交，完成适用的步骤关口；本角色不代替第二或第三关口。
+2. 在包含这些测试的工作树根目录运行下方命令。`checkout` 来自当前 Git 工作树；`run_dir` 是独立 `/tmp` 目录，存输出、uv 缓存及所有 TemporaryDirectory。测试只在各自临时 program root 内生成 target、snapshot、facts、PDF、结果、正文及校验报告；不连接用户教授目录、生产库、浏览器或模型。不需要支持路径之外的安装或消费者。
+3. Python 标准库已具备，不安装依赖。未变的旧有效结果按 §3、§4.4–5 复用；只有下面的直接受影响方法进入正式执行。
+4. 每条命令完成后保存退出码和完整日志，引用同一产品／测试提交；测试框架的失败、错误或前置失败都保留。前置构造失败不能算作产品按预期拒绝。
+
+以下命令仅供下一负责人正式执行，**本轮没有运行**：
+
+```bash
+checkout=$(git rev-parse --show-toplevel)
+run_dir=$(mktemp -d /tmp/u5-t6-XXXXXX)
+export UV_CACHE_DIR="$run_dir/uv-cache"
+export TMPDIR="$run_dir"
+cd "$checkout/.apm/skills/professor-contact/tests"
+git rev-parse HEAD > "$run_dir/target-version.txt"
+uv run --no-project python --version > "$run_dir/python-version.txt" 2>&1
+uv run --no-project python -m unittest \
+  test_stage2_analysis_level.TestFactsLevelContract.test_malformed_index_cannot_be_accepted_as_null \
+  test_stage2_analysis_level.TestFactsLevelContract.test_empty_papers_index_cannot_be_accepted_as_null \
+  test_stage2_analysis_level.TestFactsLevelContract.test_context_rejects_malformed_index_with_null_levels \
+  test_stage2_analysis_level.TestFactsLevelContract.test_context_rejects_empty_papers_with_null_levels \
+  test_stage2_analysis_level.TestConsumptionFreeze.test_process_commits_the_frozen_sources \
+  test_stage2_analysis_level.TestConsumptionFreeze.test_plan_rejects_a_source_change_after_prepare \
+  test_stage2_analysis_level.TestConsumptionFreeze.test_finalize_rejects_a_missing_sealed_result \
+  test_stage2_analysis_level.TestConsumptionFreeze.test_finalize_rejects_an_unsealed_companion \
+  test_stage2_analysis_level.TestConsumptionFreeze.test_finalize_rejects_sealed_results_from_another_run \
+  test_stage2_analysis_level.TestConsumptionFreeze.test_seal_results_supports_a_single_repair_revision \
+  test_stage2_analysis_level.TestConsumptionFreeze.test_process_finalize_rejects_frozen_source_drift \
+  test_stage2_analysis_level.TestConsumptionBoundaries \
+  test_stage2_analysis_level.TestResolvedConsumptionBoundary \
+  test_stage2_analysis_level.TestRefreshProtection.test_refresh_rechecks_freshness_after_lease \
+  test_stage2_analysis_level.TestRefreshProtection.test_refresh_rechecks_missing_facts_before_write \
+  test_stage2_analysis_level.TestRefreshProtection.test_refresh_keeps_the_accepted_sources_and_foreign_cache \
+  test_stage2_analysis_level.TestLevelRefresh.test_refresh_rejects_an_invalid_old_cache_render_binding \
+  test_stage2_analysis_level.TestLevelRefresh.test_refresh_rejects_an_invalid_old_validator_pack_binding \
+  test_stage2_analysis_level.TestLevelRefresh.test_refresh_rejects_an_invalid_old_header_render_binding \
+  test_stage2_analysis_level.TestLevelRefresh.test_refresh_rejects_an_invalid_old_validator_lifecycle \
+  test_stage2_analysis_level.TestLevelRefresh.test_refresh_without_a_validator_stays_unvalidated \
+  test_stage2_analysis_level.TestRefreshRemainingBoundaries \
+  test_stage2_analysis_level.TestOrdinaryOldStateBoundaries \
+  -v > "$run_dir/t6-direct.log" 2>&1
+result=$?
+printf '%s\n' "$result" > "$run_dir/t6-direct.exit"
+uv run --no-project python -m unittest \
+  test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle \
+  -v > "$run_dir/lifecycle.log" 2>&1
+result=$?
+printf '%s\n' "$result" > "$run_dir/lifecycle.exit"
+```
+
+第一条选择 33 个方法（原 18 个、新增 14 个，以及本轮加强的原业务基线保留方法），预计 20–60 秒；生命周期沿用已有方法并补消费前置，预计 5–10 秒。耗时超过 60 秒时按 `temp-script` 使用执行工具的原生会话等待，保护窗口 300 秒，不启动自制后台管理器。若第一条出现待修产品问题，保留结果后只继续不依赖该问题的独立项；生命周期的步骤或产品前提不成立时先记未执行，不用其失败覆盖已观察的业务问题。B/C 完整内容与输入字段检查须先补齐上述产品契约和落点，再运行相应方法。
+
+**失败处理与重试**：本组没有外部请求，默认每个方法正式尝试一次，不因断言失败重新采样。产品失败交产品实现负责人；夹具、选择器或步骤错误交本地测试工程师，修正后只复核影响项；命令／运行时／临时目录故障记无法判断。恢复前先确认具体故障已消除，仅追加一次同参数尝试到新日志文件，不覆盖原日志；仍失败停止该项。产品修复后的定向复验不作为同条件重试，记录新版本和影响。没有额外取证脚本或结果判定器。
+
+**准备符合性审核（2026-10-22）**：专用 `implementation_reviewer` 首次覆盖 r6/t6 的 A–I 全部准备资产、已有未修改测试及必要接线、Recipe、隔离和有限预检，再由同一代理定向复核修正。R1 已改用实际 gap 区域定位时效缓存；R2 已在封存前构造合法 unknown/null 或缺字段事实，封存后只损坏登记；R3 已改真实消费准备与接受顺序，补原生命周期前置，并按真实计划筛选聚合结果；R4 已比较完整原业务基线。四项均关闭。提交前另修正缺来源段例：从当前 companion 仅删来源段，保留已封存计划和结果；同一代理已确认该最小修正有效。
+
+审核结论为**部分完成，仅限测试准备**：B 的完整冻结材料和实际读取落点、C 的保存计划内实际输入字段仍受产品契约缺项阻塞；产品实现负责人先补齐，随后本地测试工程师补接既定字段和注入位置。analyzer 接线及一次机械修复同交产品实现负责人，其余资产交本地执行工程师按适用关口执行。本轮 33 个方法及生命周期均未执行，I 仅引用历史结果。本审核不代替测试关口或合并批准，不能登记为全部准备完成。
+
+下列 §4.4–5 原文按历史版本保留；其中“当前”“本轮”“待审核／失败”均为当时口吻。t5 最终正式状态以文件顶部所引审核为准，不因本轮测试准备要求重做历史轮次。
 
 ### 4.4 r4 执行结果（2026-10-21）
 
