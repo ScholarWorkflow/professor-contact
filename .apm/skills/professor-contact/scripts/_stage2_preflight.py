@@ -1224,6 +1224,27 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
         results = resolution.get("results")
         if not isinstance(results, dict) or not isinstance(resolution.get("sidecar"), dict):
             fail("invalid_result_json", "resolve stage is not complete")
+        if results.get("run_id") != data.get("run_id") \
+                or results.get("plan_sha256") != plan.get("plan_sha256") \
+                or results.get("results_dir") != plan.get("results_dir"):
+            fail("invalid_result_json", "resolve results have a different round")
+        files, omitted = results.get("files"), results.get("omitted", {})
+        if not isinstance(files, dict) or not isinstance(omitted, dict):
+            fail("invalid_result_json", "resolve result mapping is malformed")
+        expected_files = set()
+        for job in plan.get("jobs", []):
+            filename, key = job["result_file"], job["direction_id"]
+            if key in omitted:
+                if omitted[key] not in ("user_kept_provisional", "accepted_reuse", "pending_reuse"):
+                    fail("invalid_result_json", "resolve omitted job has no valid disposition")
+                continue
+            expected_files.add(filename)
+            record = files.get(filename)
+            if not isinstance(record, dict) or record.get("job_id") != job["job_id"] \
+                    or record.get("direction_id") != key:
+                fail("invalid_result_json", "resolve results do not match the saved jobs")
+        if set(files) != expected_files or set(omitted) - {job["direction_id"] for job in plan.get("jobs", [])}:
+            fail("invalid_result_json", "resolve result collection changed")
         for filename, entry in results.get("files", {}).items():
             try:
                 raw = (Path(results["results_dir"]) / filename).read_bytes()

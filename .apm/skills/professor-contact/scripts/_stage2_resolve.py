@@ -83,12 +83,10 @@ def build(*, AUTHORSHIP_RANK,
         atomic_json(ctx.consumption_file, data)
         return plan
 
-    def _validate_resolve_plan(ctx, results_dir):
+    def _validate_resolve_plan(ctx, results_dir, keep_provisional=None):
         data = _resolve_consumption(ctx)
         if data is None:
             return None
-        if isinstance(data.get("resolve"), dict) and data["resolve"].get("results") is not None:
-            fail("invalid_params", "resolve results already sealed")
         plan = (data.get("resolve") or {}).get("plan")
         if not isinstance(plan, dict):
             fail("invalid_result_json", "resolve has no sealed plan")
@@ -102,28 +100,75 @@ def build(*, AUTHORSHIP_RANK,
         for job in plan.get("jobs", []):
             if job.get("model_input_sha256") != sha256_obj(job.get("model_input")):
                 fail("invalid_result_json", "saved resolve model input changed")
+        sealed = data["resolve"].get("results")
+        if sealed is not None:
+            if not keep_provisional or data.get("stage2_plan") is not None:
+                fail("invalid_params", "resolve results already sealed")
+            if not isinstance(sealed, dict) or sealed.get("run_id") != data["run_id"] \
+                    or sealed.get("plan_sha256") != plan["plan_sha256"] \
+                    or sealed.get("results_dir") != str(results_dir.resolve()):
+                fail("invalid_result_json", "sealed resolve results have a different round")
+            for filename, record in sealed.get("files", {}).items():
+                try:
+                    raw = (results_dir / filename).read_bytes()
+                except OSError:
+                    fail("invalid_result_json", "sealed resolve result is missing")
+                if hashlib.sha256(raw).hexdigest() != record.get("sha256") \
+                        or raw.decode("utf-8") != record.get("text"):
+                    fail("invalid_result_json", "sealed resolve result changed")
         return data
 
-    def _bind_resolve_sidecar(ctx, resolved_path, results_dir=None):
+    def _resolve_result_materials(ctx, data, results_dir, keep_provisional, reused, pending):
+        """Read only results this call will consume, before any sidecar write."""
+        if data is not None and data["resolve"].get("results") is not None:
+            return copy.deepcopy(data["resolve"]["results"])
+        files, omitted = {}, {}
+        jobs = data["resolve"]["plan"]["jobs"] if data is not None else [
+            {"job_id": f"resolve:{ctx.professor}:{plan['did']}", "direction_id": plan["did"],
+             "result_file": f"resolve-{filename_component(plan['did'])}.json"}
+            for plan in ctx.direction_plans if plan["did"] not in reused]
+        for job in jobs:
+            key, filename = job["direction_id"], job["result_file"]
+            if key in keep_provisional:
+                omitted[key] = "user_kept_provisional"
+                continue
+            if key in reused:
+                omitted[key] = "accepted_reuse"
+                continue
+            path = results_dir / filename
+            try:
+                raw = path.read_bytes()
+            except FileNotFoundError:
+                if key in pending:
+                    omitted[key] = "pending_reuse"
+                    continue
+                fail("result_missing", f"no resolve result for direction {key!r}: {path}",
+                     path=str(path), direction=key)
+            except OSError as error:
+                fail("invalid_result_json", f"resolve result cannot be read: {path}: {error}")
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                fail("invalid_result_json", f"resolve result is not UTF-8: {path}")
+            files[filename] = {"sha256": hashlib.sha256(raw).hexdigest(), "text": text,
+                               "job_id": job["job_id"], "direction_id": key}
+        return {"run_id": data["run_id"] if data else None,
+                "plan_sha256": data["resolve"]["plan"]["plan_sha256"] if data else None,
+                "results_dir": str(results_dir.resolve()), "files": files, "omitted": omitted}
+
+    def _bind_resolve_sidecar(ctx, resolved_path, results=None, keep_provisional=None,
+                              decision="user_kept_provisional"):
         data = _resolve_consumption(ctx)
         if data is None:
             return
         resolve = data.get("resolve")
         if not isinstance(resolve, dict):
             fail("invalid_result_json", "resolved output has no sealed resolve plan")
-        if results_dir is not None:
-            files = {}
-            for job in resolve["plan"]["jobs"]:
-                path = results_dir / job["result_file"]
-                raw = path.read_bytes()
-                files[job["result_file"]] = {"sha256": hashlib.sha256(raw).hexdigest(),
-                    "text": raw.decode("utf-8"), "job_id": job["job_id"],
-                    "direction_id": job["direction_id"]}
-            if resolve.get("results") is not None:
-                fail("invalid_params", "resolve results already sealed")
-            resolve["results"] = {"run_id": data["run_id"],
-                "plan_sha256": resolve["plan"]["plan_sha256"], "files": files,
-                "results_dir": str(results_dir.resolve())}
+        if results is not None and resolve.get("results") is None:
+            resolve["results"] = copy.deepcopy(results)
+        if keep_provisional:
+            resolve.setdefault("choices", []).append({"decision": decision,
+                                                       "direction_ids": sorted(keep_provisional)})
         resolve["sidecar"] = {"path": str(resolved_path.resolve()),
                               "sha256": hashlib.sha256(resolved_path.read_bytes()).hexdigest()}
         if isinstance(data.get("observation"), dict):
@@ -881,7 +926,8 @@ def build(*, AUTHORSHIP_RANK,
                                  reused: dict[str, dict] | None = None,
                                  pending: dict[str, dict] | None = None,
                                  expected_run_id: str | None = None,
-                                 keep_provisional: list[str] | None = None) -> dict[str, dict]:
+                                 keep_provisional: list[str] | None = None,
+                                 result_materials: dict | None = None) -> dict[str, dict]:
         """Validate resolve result JSON files. Returns ckey -> resolved direction.
 
         One round = one results directory + one `resolve_run_id`. A direction that
@@ -979,7 +1025,9 @@ def build(*, AUTHORSHIP_RANK,
                 resolved[ckey] = entry
                 continue
             result_path = results_dir / f"resolve-{filename_component(ckey)}.json"
-            if not result_path.is_file():
+            frozen = (result_materials or {}).get(result_path.name) if result_materials is not None else None
+            present = frozen is not None if result_materials is not None else result_path.is_file()
+            if not present:
                 # Only a fingerprint-matching pending proposal may pass without a
                 # new file (it keeps waiting for the user's Stage-2 choice). A
                 # direction that still needs this round's model output fails as a
@@ -990,7 +1038,13 @@ def build(*, AUTHORSHIP_RANK,
                 fail("result_missing",
                      f"no resolve result for direction {ckey!r} in this round: {result_path}",
                      path=str(result_path), direction=ckey)
-            data, error = read_json_file(result_path)
+            if result_materials is not None:
+                try:
+                    data, error = json.loads(frozen["text"]), None
+                except (ValueError, TypeError, KeyError) as exception:
+                    data, error = None, str(exception)
+            else:
+                data, error = read_json_file(result_path)
             if error:
                 fail("invalid_result_json", f"{result_path}: {error}")
             if not isinstance(data, dict) or data.get("schema") != 1 or data.get("kind") != "resolve":
@@ -1266,7 +1320,8 @@ def build(*, AUTHORSHIP_RANK,
         ctx = Stage2Context(Path(args.facts))
         ctx.validate_consumption_current()
         results_dir = Path(args.results)
-        _validate_resolve_plan(ctx, results_dir)
+        keep_provisional = [k.strip() for k in (args.keep_provisional or "").split(",") if k.strip()]
+        consumption = _validate_resolve_plan(ctx, results_dir, keep_provisional)
         # The sidecar is stamped with the facts run's preflight proof (issue #7 ×
         # #11): stage2-finalize / stage2-resolve-accept later refuse sidecars from
         # another generation, so the write must carry the CURRENT proof id.
@@ -1274,7 +1329,6 @@ def build(*, AUTHORSHIP_RANK,
         if facts_proof_error:
             fail("resolved_directions_proof_mismatch",
                  f"facts carry an unusable stage2_preflight binding: {facts_proof_error}")
-        keep_provisional = [k.strip() for k in (args.keep_provisional or "").split(",") if k.strip()]
         plans_by_ckey = {plan["did"]: plan for plan in ctx.direction_plans}
         unknown = [k for k in keep_provisional if k not in plans_by_ckey]
         if unknown:
@@ -1289,6 +1343,13 @@ def build(*, AUTHORSHIP_RANK,
             for entry in existing.get("directions") or []:
                 if isinstance(entry, dict) and isinstance(entry.get("provisional_direction_id"), str):
                     existing_by_ckey[entry["provisional_direction_id"]] = entry
+        choosing_sealed = consumption is not None and consumption["resolve"].get("results") is not None
+        if choosing_sealed:
+            invalid = [key for key in keep_provisional
+                       if (existing_by_ckey.get(key) or {}).get("acceptance") != "proposed"]
+            if invalid:
+                fail("invalid_params", "only pending proposals may be kept after results are sealed",
+                     directions=invalid)
         # Reuse = fresh AND accepted. A fingerprint-matching entry that is still
         # "proposed" stays pending: it keeps waiting for the user's Stage-2 choice
         # (or for a fresh resolve result to supersede it) and must never be
@@ -1302,9 +1363,15 @@ def build(*, AUTHORSHIP_RANK,
         # The round identity must be the one this plan's jobs carried: same
         # professor directory, same facts/preflight proof, same results directory.
         expected_run_id = stage2_resolve_run_id(ctx.professor_dir, ctx.facts, results_dir)
+        result_materials = _resolve_result_materials(ctx, consumption, results_dir,
+                                                    keep_provisional, reused, pending)
         resolved = validate_resolve_results(ctx, results_dir, reused, pending,
                                             expected_run_id=expected_run_id,
-                                            keep_provisional=keep_provisional)
+                                            keep_provisional=keep_provisional,
+                                            result_materials=result_materials["files"])
+        if choosing_sealed:
+            for key in set(resolved) - set(keep_provisional):
+                resolved[key] = copy.deepcopy(existing_by_ckey[key])
 
         # Check for material changes that require user confirmation. Already-applied
         # (reused) resolutions must NOT re-prompt the user on every re-run.
@@ -1350,7 +1417,7 @@ def build(*, AUTHORSHIP_RANK,
         }
         ctx.validate_consumption_current()
         atomic_json(resolved_path, resolved_payload)
-        _bind_resolve_sidecar(ctx, resolved_path, results_dir)
+        _bind_resolve_sidecar(ctx, resolved_path, result_materials, keep_provisional)
 
         # Collect new split directions (targets that don't match any provisional ckey).
         # These are the "new authoritative direction entries" the split resolved.
@@ -1421,6 +1488,13 @@ def build(*, AUTHORSHIP_RANK,
         if not ckeys:
             fail("invalid_accept_keys",
                  "--ckeys must name at least one direction to accept (comma-separated collection keys)")
+        consumption = _resolve_consumption(ctx)
+        if consumption is not None:
+            resolve_plan = (consumption.get("resolve") or {}).get("plan")
+            if not isinstance(resolve_plan, dict) \
+                    or not isinstance(consumption["resolve"].get("results"), dict):
+                fail("invalid_result_json", "resolved choice has no sealed resolve plan")
+            _validate_resolve_plan(ctx, Path(resolve_plan["results_dir"]), ckeys)
         resolved_path = ctx.professor_dir / "论文分析" / "_resolved_directions.json"
         data, error = read_json_file(resolved_path)
         if error is not None or not isinstance(data, dict):
@@ -1465,7 +1539,7 @@ def build(*, AUTHORSHIP_RANK,
                 accepted.append(k)
         ctx.validate_consumption_current()
         atomic_json(resolved_path, data)
-        _bind_resolve_sidecar(ctx, resolved_path)
+        _bind_resolve_sidecar(ctx, resolved_path, keep_provisional=accepted, decision="adopt")
         emit({
             "status": "ok",
             "professor": ctx.professor,

@@ -360,28 +360,28 @@ def build(*, atomic_write,
             raw = Path(path).read_bytes()
         except OSError as exc:
             return {"error": f"unreadable: {exc}"}
-        if not raw.startswith(b"---\n"):
+        if raw.startswith(b"---\r\n"):
+            separator = b"\r\n"
+        elif raw.startswith(b"---\n"):
+            separator = b"\n"
+        else:
             return {"error": "missing_frontmatter"}
-        end = raw.find(b"\n---\n", 4)
-        if end < 0:
+        if raw.find(separator + b"---" + separator, 3 + len(separator)) < 0:
             return {"error": "unterminated_frontmatter"}
-        header_text_bytes = raw[4:end]
-        body_start = end + 5
-        if raw[body_start:body_start + 1] == b"\n":
-            body_start += 1
+        header, body_bytes = split_frontmatter_bytes(raw)
+        if header is None:
+            return {"error": "invalid_utf8"}
+        # The splitter returns an exact suffix of raw, including its original
+        # line endings and trailing bytes. Its length therefore locates the
+        # actual boundary even for a CRLF machine header and an empty body.
+        body_start = len(raw) - len(body_bytes)
         if body_start > len(raw):
             return {"error": "invalid_body_boundary"}
-        body_bytes = raw[body_start:]
         try:
-            header_text = header_text_bytes.decode("utf-8")
+            raw[:body_start].decode("utf-8")
             body_text = body_bytes.decode("utf-8")
         except UnicodeDecodeError:
             return {"error": "invalid_utf8"}
-        header = {}
-        for line in header_text.splitlines():
-            if ":" in line:
-                key, _, value = line.partition(":")
-                header[key.strip()] = value.strip()
         header_bytes = raw[:body_start]
         return {
             "raw": raw,

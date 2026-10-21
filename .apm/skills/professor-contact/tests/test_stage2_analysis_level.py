@@ -1844,6 +1844,12 @@ class TestLevelRefresh(AnalysisLevelBase):
         self.assertEqual(payload["action"], "reuse_all", payload)
         self.assertNotIn("validator_not_accepted",
                          self.direction(payload, "DIR00001")["reason_codes"], payload)
+        proof, run_dir, _companion = self.prepare_consumption()
+        plan = self.plan_consumption(proof, run_dir)
+        self.assertEqual(plan["jobs"], [], plan)
+        self.seal_consumption(run_dir)
+        finalized = self.finalize_consumption(proof)
+        self.assertEqual(finalized["status"], "ok", finalized)
 
     def test_validation_recording_accepts_a_legal_crlf_managed_file(self):
         self.stage2_finalize()
