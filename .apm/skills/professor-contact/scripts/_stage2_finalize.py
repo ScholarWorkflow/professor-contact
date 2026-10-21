@@ -50,6 +50,12 @@ def build(*, Stage2Context,
           read_stage1_professor_entry,
           stage2_preflight_cheap_inputs,
           stage2_preflight_metadata,
+          stage2_complete_observation,
+          stage2_compare_observation,
+          stage2_validate_consumption_plan,
+          mark_consumption_repair,
+          professor_business_channel,
+          ProfessorBusinessFailure,
           stage2_pack_state_fingerprint,
           stage2_pack_content_fingerprint,
           stage2_group_consumed_keys,
@@ -73,6 +79,7 @@ def build(*, Stage2Context,
           INPUT_PACK_KIND,
           RESOLVED_DIRECTION_SCHEMA,
           ANALYSIS_MD,
+          FRESHNESS_CACHE,
           STAGE2_RESOLUTION_SEMANTICS_VERSION,
           STAGE2_LEVEL_STATISTICS_VERSION,
           STAGE2_PREFLIGHT_VERSION,
@@ -562,6 +569,63 @@ def build(*, Stage2Context,
         return {"readable": True, "header": header, "body": body,
                 "body_sha256": body_sha, "binding_valid": binding_valid}
 
+    def stage2_acceptance_snapshot(pack_path: Path, professor_dir: Path) -> dict:
+        """Raw accepted files, before candidate normalization or rendering."""
+        snapshot = {}
+        for path in (pack_path, professor_dir / ANALYSIS_MD, professor_dir / FRESHNESS_CACHE):
+            try:
+                if path.is_symlink():
+                    fail("validation_render_stale", f"accepted file must not be a symlink: {path}")
+                stat = path.lstat()
+                snapshot[str(path)] = {
+                    "sha256": sha256_bytes(path.read_bytes()),
+                    "stat": (stat.st_mode, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns),
+                }
+            except FileNotFoundError:
+                snapshot[str(path)] = None
+            except OSError as error:
+                fail("validation_render_stale", f"accepted file is unreadable: {path}: {error}")
+        return snapshot
+
+    def stage2_old_state(pack: dict | None, old: dict, md_path: Path) -> tuple:
+        """Classify original bindings without changing any accepted evidence."""
+        if pack is None and not md_path.exists() and not md_path.is_symlink():
+            return None, None
+        if not isinstance(pack, dict) or not old.get("readable") or md_path.is_symlink():
+            return None, "accepted_files"
+        header = old.get("header")
+        cache = pack.get("cache")
+        render_cache = cache.get("render") if isinstance(cache, dict) else None
+        render = render_cache.get(ANALYSIS_MD) if isinstance(render_cache, dict) else None
+        actual_sha = old.get("body_sha256")
+        if (not isinstance(header, dict) or header.get("managed_by") != MANAGED_BY
+                or not isinstance(render, dict)):
+            return None, "render_binding"
+        # An edited body needs the existing manual-file decision. A corrupt
+        # header with an otherwise accepted actual body is an evidence error.
+        manual = actual_sha != header.get("render_sha256") and actual_sha != render.get("sha256")
+        if manual:
+            return None, "manual_markdown_changed"
+        if (not old.get("binding_valid") or render.get("sha256") != actual_sha
+                or header.get("state_fingerprint") != stage2_pack_state_fingerprint(pack)):
+            return None, "render_binding"
+        expected_title = f"# 套磁候选分析 — {pack.get('professor')}"
+        if not old.get("body", "").splitlines() or old["body"].splitlines()[0] != expected_title:
+            return None, "render_identity"
+        validator, error = stage2_validation_legality(pack)
+        if error:
+            return None, error
+        if validator is not None and validator.get("schema") == 2:
+            if (validator.get("render_sha256") != actual_sha
+                    or validator.get("pack_sha256") != stage2_pack_content_fingerprint(pack)):
+                return None, "validator_binding"
+        return validator, None
+
+    def stage2_current_observation(ctx, target, snapshot, params, pack):
+        return stage2_complete_observation(
+            ctx.program_root, ctx.professor_dir, ctx.professor, target, snapshot,
+            params, ctx.current_year, pack, baseline=ctx.consumption.get("observation"))
+
 
     def stage2_accept_managed_body(md_path: Path, body: str, previous_sha: str | None,
                                    decision: str | None, state_fingerprint: str,
@@ -577,9 +641,8 @@ def build(*, Stage2Context,
         """
         old = old if old is not None else stage2_old_managed_render(md_path)
         candidate_sha = sha256_text(body)
-        equivalent = bool(old.get("binding_valid")) and (
-            stage2_body_without_generation_time(old["body"])
-            == stage2_body_without_generation_time(body))
+        equivalent = bool(old.get("binding_valid")) and stage2_equivalent_managed_body(
+            old["body"].encode("utf-8"), body.encode("utf-8"))
         if equivalent:
             actual_sha = old["body_sha256"]
             header = old.get("header") or {}
@@ -606,26 +669,32 @@ def build(*, Stage2Context,
 
     def stage2_validate_consumption_results(ctx, results_dir: Path) -> None:
         """Require finalize to consume the exact result files sealed for this run."""
-        companion = getattr(ctx, "consumption", None)
+        companion = stage2_validate_consumption_plan(ctx)
         if not companion:
-            return
+            fail("invalid_facts", "the facts have no frozen consumption companion")
         plan = companion.get("stage2_plan")
         if not isinstance(plan, dict):
             fail("invalid_result_json",
                  "the facts reference a consumption companion without a sealed stage2 plan")
         sealed = companion.get("results")
         if not isinstance(sealed, dict):
-            if plan.get("jobs"):
-                fail("invalid_result_json",
-                     "the consumption companion has jobs but no sealed result set")
-            return
-        if sealed.get("revision") not in (0, 1):
+            fail("invalid_result_json", "the consumption companion has no sealed result set")
+        if isinstance(sealed.get("revision"), bool) or sealed.get("revision") not in (0, 1):
             fail("invalid_result_json", "sealed result revision is not supported")
         files = sealed.get("files")
         if not isinstance(files, dict):
             fail("invalid_result_json", "sealed result file map is malformed")
+        expected = {job.get("result_file") for job in plan["jobs"]}
+        if (set(files) != expected or sealed.get("run_id") != companion.get("run_id")
+                or sealed.get("plan_sha256") != plan.get("plan_sha256")
+                or sealed.get("results_dir") != str(results_dir.resolve())):
+            fail("invalid_result_json", "sealed result set belongs to different inputs or directory")
+        actual = {path.name for path in results_dir.glob("*.json")}
+        if actual != expected:
+            fail("invalid_result_json", "actual result file set differs from the sealed jobs")
         for filename, entry in files.items():
-            if not isinstance(filename, str) or not isinstance(entry, dict):
+            if (not isinstance(filename, str) or Path(filename).name != filename
+                    or not isinstance(entry, dict)):
                 fail("invalid_result_json", "sealed result entry is malformed")
             path = results_dir / filename
             try:
@@ -636,11 +705,33 @@ def build(*, Stage2Context,
             if sha256_bytes(raw) != entry.get("sha256"):
                 fail("invalid_result_json",
                      f"sealed result file changed after sealing: {path}")
+            jobs = [job for job in plan["jobs"] if job.get("result_file") == filename]
+            expected_jobs = [job.get("job_id") for job in jobs]
+            expected_directions = list(dict.fromkeys(job.get("direction_id") for job in jobs))
+            if (entry.get("bytes") != len(raw)
+                    or not isinstance(entry.get("text"), str)
+                    or entry["text"].encode("utf-8") != raw
+                    or entry.get("jobs") != expected_jobs
+                    or entry.get("directions") != expected_directions):
+                fail("invalid_result_json", f"sealed result bindings changed: {path}")
 
     def cmd_stage2_finalize(args) -> None:
         ctx = Stage2Context(Path(args.facts))
+        if not isinstance(ctx.consumption, dict):
+            fail("invalid_facts", "finalize requires this run's frozen consumption companion")
+        acceptance_snapshot = stage2_acceptance_snapshot(ctx.pack_path, ctx.professor_dir)
+        raw_old_pack, raw_pack_error = read_json_file(ctx.pack_path)
+        if ctx.pack_path.exists() and (raw_pack_error or not isinstance(raw_old_pack, dict)):
+            fail("validation_render_stale", "the original accepted pack is unreadable")
         preflight_plan, preflight_target, preflight_snapshot = \
             stage2_finalize_preflight_plan(args, ctx)
+        current_observation = stage2_current_observation(
+            ctx, preflight_target, preflight_snapshot,
+            preflight_plan["preflight_inputs"]["params"], ctx.pack)
+        drift = stage2_compare_observation(
+            ctx.consumption.get("observation"), current_observation, include_level=True)
+        if drift:
+            soft_exit("needs_refresh", "preflight_inputs_changed", drift=drift)
         # Isolate the accepted old snapshot before ANY candidate is assembled:
         # normalize_input_pack only shallow-copies, so reusing/mutating one of its
         # nested dicts would silently rewrite the comparison baseline too.
@@ -730,8 +821,18 @@ def build(*, Stage2Context,
             needed_keys.append(plan["did"])
             judge, hits = ctx.freshness_job_items(plan)
             required_freshness[plan["did"]] = judge
-        statuses_by_direction = validate_freshness_results(ctx, results_dir, required_freshness)
-        narratives = validate_narrative(ctx, results_dir, needed_keys) if needed_keys else {}
+        try:
+            with professor_business_channel():
+                statuses_by_direction = validate_freshness_results(ctx, results_dir, required_freshness)
+                narratives = validate_narrative(ctx, results_dir, needed_keys) if needed_keys else {}
+        except ProfessorBusinessFailure as error:
+            reason = error.payload.get("reason_code")
+            if reason == "unknown_reference_id":
+                mark_consumption_repair(ctx, reason, error.payload)
+            payload = dict(error.payload)
+            payload.pop("status", None)
+            payload.pop("reason_code", None)
+            fail(reason, **payload)
         # A deep snapshot of the accepted pack is the ONLY old side this command
         # may compare against or report to the validator. It is taken before any
         # new-field normalization, candidate assembly or reused-entry edit, so
@@ -1196,13 +1297,8 @@ def build(*, Stage2Context,
             "professor": (old_pack or {}).get("professor"),
             "directions": {direction_machine_id(d): d.get("input_fingerprint")
                            for d in (old_pack or {}).get("directions") or []}})
-        if old_header is not None \
-                and isinstance((old_pack or {}).get("validator"), dict) \
-                and old_header.get("state_fingerprint") != old_state_fingerprint:
-            fail("validation_render_stale",
-                 "the managed Markdown header state fingerprint does not bind "
-                 "the accepted pack; re-record the old evidence instead of rebinding it",
-                 target=str(md_path))
+        old_file = stage2_old_managed_render(md_path)
+        old_validator, old_error = stage2_old_state(raw_old_pack, old_file, md_path)
         candidate_body, ownership = render_analysis_document(
             ctx, render_pack, state_fingerprint)
         candidate_body_bytes = candidate_body.encode("utf-8")
@@ -1252,44 +1348,25 @@ def build(*, Stage2Context,
         # starts a new validation round (old raw report files stay untouched).
         # With neither change, an invalid old binding is an evidence error and is
         # rejected before writing, never silently re-bound.
-        old_validator, legality_error = stage2_validation_legality(old_pack)
         carried_validator = None
-        if legality_error:
-            if not business_changed:
-                fail("validation_render_stale",
-                     f"the recorded Stage-2 validation state is malformed: {legality_error}",
+        if old_error:
+            if old_error == "manual_markdown_changed" or business_changed or not body_equivalent:
+                if decision != "overwrite":
+                    soft_exit("needs_decision", "manual_markdown_changed", target=str(md_path),
+                              options=["overwrite", "keep_manual", "promote"])
+                # An explicit new acceptance never retains invalid old evidence.
+                body_equivalent = False
+                final_body, final_sha = candidate_body, sha256_bytes(candidate_body_bytes)
+            else:
+                fail("validation_render_stale", f"accepted Stage-2 state is invalid: {old_error}",
                      target=str(md_path))
-        elif isinstance(old_validator, dict) and old_validator.get("schema") == 2:
-            binding_valid = (
-                old_header is not None and old_body_sha is not None
-                and old_header.get("render_sha256") == old_body_sha
-                and old_header.get("state_fingerprint")
-                == stage2_pack_state_fingerprint(old_pack)
-                and old_validator.get("render_sha256") == old_body_sha
-                and old_validator.get("pack_sha256")
-                == stage2_pack_content_fingerprint(old_pack))
-            if not business_changed:
-                if not binding_valid:
-                    fail("validation_render_stale",
-                         "the recorded Stage-2 validation no longer binds the current managed "
-                         "render/input pack and no business change explains it; re-record a "
-                         "raw validator report too against the current files",
-                         target=str(md_path))
-                if body_equivalent:
-                    carried_validator = dict(old_validator)
+        elif not business_changed and body_equivalent and old_validator is not None:
+            carried_validator = copy.deepcopy(old_validator)
 
         # The candidate is still in memory. Re-observe the same declared source
         # set before the first managed write; a source change during assembly or
         # rendering must return to a fresh preflight, never be accepted on the
         # strength of the previously read facts.
-        current_source = ctx.source_snapshot()
-        if current_source["projection"] != ctx.source_projection:
-            soft_exit("needs_refresh", "preflight_inputs_changed",
-                      drift=["source_projection_changed_after_render"])
-        if current_source["stats"] != ctx.source_stats:
-            soft_exit("needs_refresh", "preflight_inputs_changed",
-                      drift=["source_stat_changed_after_render"])
-
         md_result = {"written": False, "needs_decision": False, "sha256": final_sha}
         if not body_equivalent:
             conflict = managed_conflict(
@@ -1302,31 +1379,17 @@ def build(*, Stage2Context,
                           new_sha256=conflict.get("new_sha256"),
                           options=["overwrite（覆盖为状态版本）", "keep_manual（保留手改，不作为流程输入）",
                                    "promote（把要保留的内容经 selection.note 或 profile 写进状态后再渲染）"])
-            md_result = managed_write(
-                md_path, candidate_body, state_fingerprint,
-                old_render.get(ANALYSIS_MD, {}).get("sha256"), decision)
-            if md_result.get("needs_decision"):
-                soft_exit("needs_decision", md_result["reason_code"],
-                          target=md_result.get("target"),
-                          existing_sha256=md_result.get("existing_sha256"),
-                          new_sha256=md_result.get("new_sha256"),
-                          options=["overwrite（覆盖为状态版本）", "keep_manual（保留手改，不作为流程输入）",
-                                   "promote（把要保留的内容经 selection.note 或 profile 写进状态后再渲染）"])
-            final_body, final_sha = candidate_body, md_result["sha256"]
-        elif (old_header is None or old_header.get("state_fingerprint") != state_fingerprint
-              or old_header.get("render_sha256") != final_sha):
-            # Equivalent body: keep its bytes, but the machine header still has to
-            # describe the current pack.
-            atomic_write(md_path,
-                         render_frontmatter(state_fingerprint, final_sha) + final_body)
-            md_result = {"written": True, "needs_decision": False, "sha256": final_sha}
         ownership["body_sha256"] = final_sha
-        render_entry = {
-            "sha256": final_sha,
-            "ownership": ownership,
-            "u1": {"display_version": STAGE2_U1_DISPLAY_VERSION,
-                   "completed_at": now_utc()},
-        }
+        previous_entry = old_render.get(ANALYSIS_MD) if isinstance(old_render, dict) else None
+        render_entry = copy.deepcopy(previous_entry) if isinstance(previous_entry, dict) else {}
+        render_entry.update({"sha256": final_sha, "ownership": ownership,
+                             "u1": {"display_version": STAGE2_U1_DISPLAY_VERSION,
+                                    "completed_at": now_utc()}})
+        if body_equivalent and not old_error and isinstance(previous_entry, dict):
+            previous_ownership = previous_entry.get("ownership")
+            if isinstance(previous_ownership, dict) \
+                    and previous_ownership.get("body_sha256") == final_sha:
+                render_entry["ownership"] = copy.deepcopy(previous_ownership)
         pack = {
             "schema": INPUT_PACK_SCHEMA, "kind": INPUT_PACK_KIND,
             "identity_version": DIRECTION_IDENTITY_VERSION,
@@ -1334,14 +1397,17 @@ def build(*, Stage2Context,
             "professor": ctx.professor, "professor_dir": str(ctx.professor_dir),
             "papers": papers_map,
             "directions": pack_directions,
-            "cache": {"render": {ANALYSIS_MD: render_entry}},
+            "cache": copy.deepcopy((old_pack or {}).get("cache") or {}),
         }
+        render_cache = pack["cache"].get("render")
+        render_cache = dict(render_cache) if isinstance(render_cache, dict) else {}
+        render_cache[ANALYSIS_MD] = render_entry
+        pack["cache"]["render"] = render_cache
         if new_resolved_block is not None:
             pack["resolved_directions"] = new_resolved_block
         if preflight_plan is not None:
-            # The statistics marker is stamped only now: the candidate body was
-            # actually accepted (written, or proven byte-equivalent) above, so
-            # metadata construction can never claim a success the files lack.
+            # Pure projection of F and the validated candidate. It becomes an
+            # acceptance record only with the subsequent successful pack write.
             pack["cache"]["preflight"] = stage2_preflight_metadata(
                 program_root=ctx.program_root, professor_dir=ctx.professor_dir,
                 target=preflight_target, snapshot_entry=preflight_snapshot,
@@ -1353,6 +1419,32 @@ def build(*, Stage2Context,
             carried_validator["pack_sha256"] = stage2_pack_content_fingerprint(pack)
             pack["validator"] = carried_validator
 
+        drift = ctx.consumption_drift()
+        current_target = read_stage2_target(stage2_target_path(ctx.professor_dir),
+                                            ctx.program_root, ctx.professor)
+        current_snapshot = read_stage1_professor_entry(
+            ctx.program_root, ctx.professor_dir, ctx.professor, current_target)
+        frozen = ctx.consumption.get("observation")
+        current = stage2_current_observation(
+            ctx, current_target, current_snapshot,
+            preflight_plan["preflight_inputs"]["params"], ctx.pack)
+        drift.extend(stage2_compare_observation(frozen, current, include_level=True))
+        if stage2_acceptance_snapshot(ctx.pack_path, ctx.professor_dir) != acceptance_snapshot:
+            drift.append("accepted_files_changed")
+        if drift:
+            soft_exit("needs_refresh", "preflight_inputs_changed", drift=sorted(set(drift)))
+        # Everything above is a read or an in-memory candidate. Commit in the
+        # existing finite order only after all logical decisions have completed.
+        if not body_equivalent:
+            md_result = managed_write(
+                md_path, candidate_body, state_fingerprint,
+                old_render.get(ANALYSIS_MD, {}).get("sha256"), decision)
+            if md_result.get("needs_decision"):
+                soft_exit("needs_decision", md_result["reason_code"], target=str(md_path))
+        elif (old_header is None or old_header.get("state_fingerprint") != state_fingerprint
+              or old_header.get("render_sha256") != final_sha):
+            atomic_write(md_path, render_frontmatter(state_fingerprint, final_sha) + final_body)
+            md_result = {"written": True, "needs_decision": False, "sha256": final_sha}
         atomic_json(ctx.pack_path, pack)
         save_freshness_cache(ctx.professor_dir, cache_entries)
         # NOTE: stage2-finalize deliberately does NOT touch the sidecar's
@@ -1520,6 +1612,12 @@ def build(*, Stage2Context,
             soft_exit("needs_refresh", "preflight_inputs_changed",
                       drift=["target_or_snapshot_missing"])
         candidate_keys = stage2_candidate_universe(target, snapshot)
+        current_observation = stage2_complete_observation(
+            program_root, professor_dir, ctx.professor, target, snapshot,
+            plan_inputs.get("params"), plan_inputs.get("current_year"), pack)
+        drift = stage2_compare_observation(meta.get("observation"), current_observation)
+        if drift:
+            soft_exit("needs_refresh", "preflight_inputs_changed", drift=drift)
         recorded_projection = meta.get("resolution_evidence_projection")
         if not isinstance(recorded_projection, dict):
             soft_exit("needs_refresh", "refresh_requires_process",
@@ -1595,7 +1693,7 @@ def build(*, Stage2Context,
         if not level_changed and not statistics_stale:
             soft_exit("needs_refresh", "preflight_inputs_changed",
                       drift=["levels_already_current"])
-        return {"meta": meta, "levels": observed_levels,
+        return {"meta": meta, "levels": observed_levels, "observation": current_observation,
                 "changed_levels": changed_levels}
 
 
@@ -1634,14 +1732,27 @@ def build(*, Stage2Context,
             if ctx.professor != professor:
                 soft_exit("needs_refresh", "preflight_inputs_changed",
                           drift=["professor_mismatch"])
+            acceptance_snapshot = stage2_acceptance_snapshot(ctx.pack_path, professor_dir)
+            raw_old_pack, raw_pack_error = read_json_file(ctx.pack_path)
+            if raw_pack_error or not isinstance(raw_old_pack, dict):
+                fail("validation_render_stale", "the original accepted pack is unreadable")
+            md_path = professor_dir / ANALYSIS_MD
+            old_render_file = stage2_old_managed_render(md_path)
+            old_validator, old_error = stage2_old_state(raw_old_pack, old_render_file, md_path)
+            if old_error == "manual_markdown_changed":
+                soft_exit("needs_decision", "manual_markdown_changed", target=str(md_path),
+                          options=["overwrite", "keep_manual", "promote"])
+            if old_error:
+                fail("validation_render_stale", f"accepted Stage-2 state is invalid: {old_error}",
+                     target=str(md_path))
             gate = stage2_refresh_evaluate(ctx, professor_dir, plan, program_root)
             pack = copy.deepcopy(ctx.pack)
             papers = pack_paper_index(pack)
             updated_papers = {}
             for key, record in papers.items():
                 canonical = dict(record) if isinstance(record, dict) else record
-                if isinstance(canonical, dict):
-                    canonical["analysis_level"] = gate["levels"].get(key)
+                if isinstance(canonical, dict) and key in gate["levels"]:
+                    canonical["analysis_level"] = gate["levels"][key]
                 updated_papers[key] = canonical
             projection_papers = dict(updated_papers)
             for key, level in gate["levels"].items():
@@ -1661,6 +1772,15 @@ def build(*, Stage2Context,
                                for d in directions}})
             body, ownership = render_analysis_document(
                 ctx, render_pack, state_fingerprint)
+            after_gate = stage2_refresh_evaluate(ctx, professor_dir, plan, program_root)
+            drift = stage2_compare_observation(
+                gate["observation"], after_gate["observation"], include_level=True)
+            if after_gate["levels"] != gate["levels"]:
+                drift.append("levels_changed_after_render")
+            if stage2_acceptance_snapshot(ctx.pack_path, professor_dir) != acceptance_snapshot:
+                drift.append("accepted_files_changed")
+            if drift:
+                soft_exit("needs_refresh", "preflight_inputs_changed", drift=sorted(set(drift)))
             current_pack, pack_error = read_json_file(ctx.pack_path)
             if pack_error or not isinstance(current_pack, dict):
                 soft_exit("needs_refresh", "preflight_inputs_changed",
@@ -1701,6 +1821,12 @@ def build(*, Stage2Context,
             if old_u1.get("display_version") != STAGE2_U1_DISPLAY_VERSION:
                 soft_exit("needs_refresh", "refresh_requires_process",
                           drift=["fixed_evidence_display_update"])
+            if (old_ownership.get("version") != 1
+                    or old_ownership.get("body_sha256") != old_render_file.get("body_sha256")
+                    or old_ownership.get("line_count") != len(old_render_file.get("body", "").splitlines())
+                    or not isinstance(old_ownership.get("fragments"), list)):
+                fail("validation_render_stale", "the accepted ownership map does not bind the current body",
+                     analysis_md=str(md_path))
             old_header = old_render_file.get("header")
             manual_edit = (
                 old_render_file.get("readable")
@@ -1734,25 +1860,18 @@ def build(*, Stage2Context,
                 decision_data, error = read_json_file(Path(args.decision_file))
                 if error is None and isinstance(decision_data, dict):
                     decision = decision_data.get("decision")
-            try:
-                md_result = stage2_accept_managed_body(
-                    md_path, body, previous_sha, decision, state_fingerprint,
-                    old_render_file)
-            except OSError as error:
-                fail("stage2_managed_write_failed",
-                     f"受管分析 Markdown 写入失败，本轮未接受任何级别或统计：{error}",
-                     analysis_md=str(md_path))
-            if md_result.get("needs_decision"):
-                soft_exit("needs_decision", md_result.get("reason_code") or "manual_markdown_changed",
-                          target=md_result.get("target"),
-                          existing_sha256=md_result.get("existing_sha256"),
-                          new_sha256=md_result.get("new_sha256"),
-                          options=["overwrite", "keep_manual", "promote"])
-            body_changed = not md_result.get("equivalent")
+            equivalent = stage2_equivalent_managed_body(
+                old_render_file["body"].encode("utf-8"), body.encode("utf-8"))
+            body_changed = not equivalent
+            accepted_sha = sha256_text(body) if body_changed else old_render_file["body_sha256"]
+            if body_changed:
+                conflict = managed_conflict(md_path, body, previous_sha, decision)
+                if conflict:
+                    soft_exit("needs_decision", conflict.get("reason_code") or "manual_markdown_changed",
+                              target=str(md_path), options=["overwrite", "keep_manual", "promote"])
             cache_block = copy.deepcopy(pack.get("cache") or {})
             render_block = cache_block.get("render")
             render_block = dict(render_block) if isinstance(render_block, dict) else {}
-            accepted_sha = md_result.get("sha256") or previous_sha
             if not body_changed \
                     and old_ownership.get("body_sha256") != accepted_sha:
                 fail("validation_render_stale",
@@ -1801,6 +1920,18 @@ def build(*, Stage2Context,
             # new level projections only become durable with this write, and a
             # failed write leaves the command explicitly unfinished (never a
             # fabricated cross-file rollback or success marker).
+            if stage2_acceptance_snapshot(ctx.pack_path, professor_dir) != acceptance_snapshot:
+                soft_exit("needs_refresh", "preflight_inputs_changed", drift=["accepted_files_changed"])
+            try:
+                md_result = stage2_accept_managed_body(
+                    md_path, body, previous_sha, decision, state_fingerprint, old_render_file)
+            except OSError as error:
+                fail("stage2_managed_write_failed",
+                     f"受管分析 Markdown 写入失败，本轮未接受任何级别或统计：{error}",
+                     analysis_md=str(md_path))
+            if md_result.get("needs_decision"):
+                soft_exit("needs_decision", md_result.get("reason_code") or "manual_markdown_changed",
+                          target=str(md_path), options=["overwrite", "keep_manual", "promote"])
             try:
                 atomic_json(ctx.pack_path, updated_pack)
             except OSError as error:

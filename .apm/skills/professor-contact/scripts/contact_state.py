@@ -585,11 +585,13 @@ strict_candidate_state = _contact_pack.strict_candidate_state
 _stage2_facts = _stage2_facts_module.build(
     atomic_json=atomic_json,
     fail=fail,
+    soft_exit=soft_exit,
     ANALYSIS_LEVELS=ANALYSIS_LEVELS,
     SCHEMA=SCHEMA,
     MANAGED_BY=MANAGED_BY,
     INPUT_PACK=INPUT_PACK,
     FRESHNESS_CACHE=FRESHNESS_CACHE,
+    observe_consumption=lambda ctx: stage2_consumption_drift(ctx),
     GAP_SCOPES=GAP_SCOPES,
     FRESHNESS_SCOPES=FRESHNESS_SCOPES,
     GAP_STATUSES=GAP_STATUSES,
@@ -648,6 +650,8 @@ load_papers_with_digests = _stage2_facts.load_papers_with_digests
 build_gap_pool = _stage2_facts.build_gap_pool
 Stage2Context = _stage2_facts.Stage2Context
 Stage2PackRefineContext = _stage2_facts.Stage2PackRefineContext
+freeze_stage2_sources = _stage2_facts.freeze_stage2_sources
+observe_stage2_sources = _stage2_facts.observe_stage2_sources
 
 
 # Stage-2 resolve module binding point. Every helper it needs is defined by
@@ -772,6 +776,8 @@ def _canonical_under(program_root: Path, value) -> str | None:
 _stage2_preflight = _stage2_preflight_module.build(
     fail=fail, soft_exit=soft_exit, emit=emit, read_json_file=read_json_file,
     atomic_json=atomic_json,
+    freeze_stage2_sources=freeze_stage2_sources,
+    observe_stage2_sources=observe_stage2_sources,
     sha256_obj=sha256_obj, sha256_bytes=sha256_bytes,
     sha256_text=sha256_text, split_frontmatter=split_frontmatter,
     split_frontmatter_bytes=split_frontmatter_bytes,
@@ -791,6 +797,7 @@ _stage2_preflight = _stage2_preflight_module.build(
     canonical_index_path=canonical_index_path,
     INPUT_PACK=INPUT_PACK, GAP_SCOPES=GAP_SCOPES, FRESHNESS_SCOPES=FRESHNESS_SCOPES,
     ANALYSIS_MD=ANALYSIS_MD, MANAGED_BY=MANAGED_BY, SHORTLIST_MAX=SHORTLIST_MAX,
+    FRESHNESS_CACHE=FRESHNESS_CACHE,
     ABSTRACT_INPUT_CHARS=ABSTRACT_INPUT_CHARS, QUOTE_INPUT_CHARS=QUOTE_INPUT_CHARS,
     TRANSLATION_INPUT_CHARS=TRANSLATION_INPUT_CHARS)
 
@@ -828,6 +835,11 @@ cmd_stage2_consumption_prepare = _stage2_preflight.cmd_stage2_consumption_prepar
 cmd_stage2_consumption_seal_results = _stage2_preflight.cmd_stage2_consumption_seal_results
 stage2_plan_bind_preflight = _stage2_preflight.stage2_plan_bind_preflight
 cmd_stage2_plan = _stage2_preflight.cmd_stage2_plan
+stage2_complete_observation = _stage2_preflight.stage2_complete_observation
+stage2_consumption_drift = _stage2_preflight.stage2_consumption_drift
+stage2_compare_observation = _stage2_preflight.stage2_compare_observation
+stage2_validate_consumption_plan = _stage2_preflight.stage2_validate_consumption_plan
+mark_consumption_repair = _stage2_preflight.mark_consumption_repair
 
 STAGE2_PREFLIGHT_VERSION = _stage2_preflight_module.STAGE2_PREFLIGHT_VERSION
 STAGE2_LEVEL_STATISTICS_VERSION = _stage2_preflight_module.STAGE2_LEVEL_STATISTICS_VERSION
@@ -880,6 +892,9 @@ stage2_require_later_paper_titles = _stage2_render.stage2_require_later_paper_ti
 # Binding point: every helper the module needs is defined by now; the factory
 # receives this runner's own function objects and constants (no second channel).
 _stage2_finalize = _stage2_finalize_module.build(
+    ProfessorBusinessFailure=ProfessorBusinessFailure,
+    professor_business_channel=professor_business_channel,
+    mark_consumption_repair=mark_consumption_repair,
     Stage2Context=Stage2Context,
     Stage2PackRefineContext=Stage2PackRefineContext,
     atomic_json=atomic_json,
@@ -911,6 +926,9 @@ _stage2_finalize = _stage2_finalize_module.build(
     read_stage1_professor_entry=read_stage1_professor_entry,
     stage2_preflight_cheap_inputs=stage2_preflight_cheap_inputs,
     stage2_preflight_metadata=stage2_preflight_metadata,
+    stage2_complete_observation=stage2_complete_observation,
+    stage2_compare_observation=stage2_compare_observation,
+    stage2_validate_consumption_plan=stage2_validate_consumption_plan,
     stage2_pack_state_fingerprint=stage2_pack_state_fingerprint,
     stage2_pack_content_fingerprint=stage2_pack_content_fingerprint,
     stage2_group_consumed_keys=stage2_group_consumed_keys,
@@ -934,6 +952,7 @@ _stage2_finalize = _stage2_finalize_module.build(
     INPUT_PACK_KIND=INPUT_PACK_KIND,
     RESOLVED_DIRECTION_SCHEMA=RESOLVED_DIRECTION_SCHEMA,
     ANALYSIS_MD=ANALYSIS_MD,
+    FRESHNESS_CACHE=FRESHNESS_CACHE,
     STAGE2_RESOLUTION_SEMANTICS_VERSION=STAGE2_RESOLUTION_SEMANTICS_VERSION,
     STAGE2_LEVEL_STATISTICS_VERSION=STAGE2_LEVEL_STATISTICS_VERSION,
     STAGE2_PREFLIGHT_VERSION=STAGE2_PREFLIGHT_VERSION,
@@ -1801,6 +1820,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("stage2-consumption-seal-results")
     p.add_argument("--run-dir", required=True)
     p.add_argument("--results-dir", required=True)
+    p.add_argument("--repair-revision", type=int, choices=(1,),
+                   help="append the single authorized reference transcription repair")
     p.set_defaults(func=cmd_stage2_consumption_seal_results)
 
     p = sub.add_parser("stage2-consumption-prepare")
@@ -1808,6 +1829,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--professor", required=True)
     p.add_argument("--target-file", required=True,
                    help="authoritative professor-local Stage-0 target file")
+    p.add_argument("--sources-file",
+                   help="current local paper source declarations, before facts assembly")
     p.add_argument("--preflight-file", required=True,
                    help="saved stage2-preflight stdout for this transaction")
     p.add_argument("--run-dir", required=True,

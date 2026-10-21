@@ -213,11 +213,13 @@ class AnalysisLevelBase(PreflightBase):
         run_dir = Path(tempfile.mkdtemp(prefix="consumption-", dir=self.root))
         preflight_path = self.save_preflight(run_dir / "preflight.json")
         preflight = read_json(preflight_path)
+        sources_path = run_dir / "sources.json"
+        write_json(sources_path, {"papers": read_json(self.facts_path)["papers"]})
         out = parse(run_cli(
             "stage2-consumption-prepare",
             "--program-root", self.root, "--professor", PROFESSOR,
             "--target-file", self.target_file, "--preflight-file", preflight_path,
-            "--run-dir", run_dir))
+            "--run-dir", run_dir, "--sources-file", sources_path))
         self.assertEqual(out["status"], "ok", out)
         companion_path = Path(out["consumption_file"])
         facts = read_json(self.facts_path)
@@ -562,10 +564,10 @@ class TestFactsLevelContract(AnalysisLevelBase):
     def test_malformed_index_cannot_be_accepted_as_null(self):
         self._assert_malformed_index_rejected(b"{broken")
 
-    def test_empty_papers_index_cannot_be_accepted_as_null(self):
+    def test_malformed_papers_index_cannot_be_accepted_as_null(self):
         self._assert_malformed_index_rejected(json.dumps({
             "schema": 2, "future_work_schema": 1, "professor": PROFESSOR,
-            "generated_at": "2026-01-01T00:00:00Z", "papers": {}},
+            "generated_at": "2026-01-01T00:00:00Z", "papers": []},
             ensure_ascii=False).encode("utf-8"))
 
     def _assert_context_rejects_malformed_index(self, raw: bytes):
@@ -586,10 +588,10 @@ class TestFactsLevelContract(AnalysisLevelBase):
     def test_context_rejects_malformed_index_with_null_levels(self):
         self._assert_context_rejects_malformed_index(b"{broken")
 
-    def test_context_rejects_empty_papers_with_null_levels(self):
+    def test_context_rejects_malformed_papers_with_null_levels(self):
         self._assert_context_rejects_malformed_index(json.dumps({
             "schema": 2, "future_work_schema": 1, "professor": PROFESSOR,
-            "generated_at": "2026-01-01T00:00:00Z", "papers": {}},
+            "generated_at": "2026-01-01T00:00:00Z", "papers": []},
             ensure_ascii=False).encode("utf-8"))
 
 class TestConsumptionFreeze(AnalysisLevelBase):
@@ -801,7 +803,7 @@ class TestConsumptionBoundaries(AnalysisLevelBase):
         return proof, run_dir, companion
 
     def test_finalize_rejects_bad_index_with_an_existing_freeze(self):
-        for raw, declaration in ((b"{broken", None), (b'{"papers":{}}', "missing")):
+        for raw, declaration in ((b"{broken", None), (b'{"papers":[]}', "missing")):
             with self.subTest(raw=raw, declaration=declaration):
                 # Each round seals legal unknown declarations first. Only the
                 # index changes afterwards, so a facts-digest mismatch cannot

@@ -75,7 +75,9 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 
 #### A. 坏登记不是 unknown，不能被 null 绕过（L1）
 
-- 在合法源/结果 fixture 上，准备两个最小输入：`_index.json` 原始 bytes 为 `b'{broken'`；合法 JSON 但 `papers={}`。两个已知声明都置 null；先在合法 index 上保存合法 preflight，再破坏 index，直接调用 `stage2-consumption-prepare`。prepare 不读 facts，因此本测试只验坏 index 被 prepare 接受的产品缺口；null 声明的已有 F finalize 路径仍 pending，不能由本测试冒称覆盖。
+**2026-10-22 方法修正**：原 prepare/context 两个 `empty_papers` 方法及已有冻结后的坏登记方法，把 `papers={}` 当成坏结构；r6 §4.1 明确无登记属于合法 unknown，空对象本身不构成坏结构。三处输入统一改为 `papers=[]`，仍检查原定的坏容器与 null／缺字段不能绕过拒绝，不改变预期、检查方式或范围。当前两个选择器重命名为 `test_malformed_papers_index_cannot_be_accepted_as_null` 和 `test_context_rejects_malformed_papers_with_null_levels`。§4.3.2 保留原名字、输入和观察；其中空对象两项的“业务失败”是当时错误预期下的历史判断，不作为当前产品缺陷或通过结果，须以修正后的正式执行为准。
+
+- 在合法源/结果 fixture 上，准备两个最小输入：`_index.json` 原始 bytes 为 `b'{broken'`；合法 JSON 但 `papers=[]`（应为对象，却给了列表）。两个已知声明都置 null；先在合法 index 上保存合法 preflight，再破坏 index，直接调用 `stage2-consumption-prepare`。prepare 不读 facts，因此本测试只验坏 index 被 prepare 接受的产品缺口；null 声明的已有 F finalize 路径仍 pending，不能由本测试冒称覆盖。
 - 真实入口：`stage2-consumption-prepare` 在初次读坏 index 应按 invalid_facts 或既有来源输入错误拒绝；对已有 F 的 `stage2-plan`/`stage2-finalize --facts … --results … --preflight-file …` 应在源复核拒绝，不接受 null。若 plan/finalize 真正共用同一无条件 index 解析，只保留一个正常接受代表并核对另一路接线；不要把非法 level=partial 当本例。
 - 预期：零业务写入，不写新消费/统计基线，坏 index 保留；缺少坏 JSON/结构与 nullable 声明交叉的实际拒绝不能登记覆盖。拟定 `TestFactsLevelContract.test_malformed_index_cannot_be_accepted_as_null`。
 - **本轮准备状态**：prepare 坏 index 两例与 `Stage2Context` null 两例均已落地；`76cba4d` 预检中 prepare 与 context 都接受坏 index/null，未按 `invalid_facts` 拒绝，登记为产品缺口红；已有 F 的 finalize 路径仍 pending。
@@ -196,9 +198,9 @@ git rev-parse HEAD > "$run_dir/target-version.txt"
 uv run --no-project python --version > "$run_dir/python-version.txt" 2>&1
 uv run --no-project python -m unittest \
   test_stage2_analysis_level.TestFactsLevelContract.test_malformed_index_cannot_be_accepted_as_null \
-  test_stage2_analysis_level.TestFactsLevelContract.test_empty_papers_index_cannot_be_accepted_as_null \
+  test_stage2_analysis_level.TestFactsLevelContract.test_malformed_papers_index_cannot_be_accepted_as_null \
   test_stage2_analysis_level.TestFactsLevelContract.test_context_rejects_malformed_index_with_null_levels \
-  test_stage2_analysis_level.TestFactsLevelContract.test_context_rejects_empty_papers_with_null_levels \
+  test_stage2_analysis_level.TestFactsLevelContract.test_context_rejects_malformed_papers_with_null_levels \
   test_stage2_analysis_level.TestConsumptionFreeze.test_process_commits_the_frozen_sources \
   test_stage2_analysis_level.TestConsumptionFreeze.test_plan_rejects_a_source_change_after_prepare \
   test_stage2_analysis_level.TestConsumptionFreeze.test_finalize_rejects_a_missing_sealed_result \

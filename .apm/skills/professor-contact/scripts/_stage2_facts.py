@@ -13,6 +13,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+import copy
+import json
 import re
 import types
 
@@ -56,7 +58,227 @@ def build(*, atomic_json,
           candidate_fingerprint,
           direction_relevant_keys,
           pack_direction_relevant_keys,
-          direction_fingerprint):
+          direction_fingerprint,
+          soft_exit=None,
+          observe_consumption=None):
+    def _object_sha(value: Any) -> str:
+        return sha256_bytes(json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+
+    def _material_json(path: Path, materials: dict | None):
+        if materials is None:
+            return read_json_file(path)
+        record = materials.get(canonical_index_path(str(path)))
+        if not isinstance(record, dict) or record.get("state") != "present":
+            return None, "not_found"
+        if "data" not in record:
+            return None, "invalid_json"
+        return copy.deepcopy(record["data"]), None
+
+    def _material_present(path: Path, materials: dict | None) -> bool:
+        if materials is None:
+            return path.is_file()
+        return (materials.get(canonical_index_path(str(path))) or {}).get("state") == "present"
+
+    def _source_stat(path: Path) -> dict | None:
+        try:
+            stat = path.stat()
+            if not path.is_file():
+                return None
+            return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+                    "ctime_ns": stat.st_ctime_ns}
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            fail("invalid_facts", f"source cannot be inspected: {path}: {error}")
+
+    def _freeze_material(path: Path, *, pdf=False, read_content=True) -> dict:
+        """Read once; the digest and supplied text describe those exact bytes."""
+        path = path.resolve()
+        before = _source_stat(path)
+        record = {"path": str(path), "state": "present" if before else "missing"}
+        if before is None:
+            return record
+        if not read_content:
+            record["stat"] = before
+            return record
+        try:
+            raw = path.read_bytes()
+        except OSError as error:
+            fail("invalid_facts", f"source cannot be read: {path}: {error}")
+        if before != _source_stat(path):
+            fail("invalid_facts", f"source changed while being read: {path}")
+        record.update(stat=before, sha256=sha256_bytes(raw))
+        if not pdf:
+            try:
+                record["text"] = raw.decode("utf-8")
+            except UnicodeDecodeError as error:
+                fail("invalid_facts", f"source is not UTF-8: {path}: {error}")
+            if path.suffix == ".json":
+                try:
+                    record["data"] = json.loads(record["text"])
+                except (ValueError, TypeError):
+                    pass
+        return record
+
+    def stage2_sources_drift(professor_dir: Path, sources: dict) -> list:
+        """Compare current observations without replacing any frozen material."""
+        keys = sources.get("candidate_keys") or []
+        _papers, state = read_analysis_index(professor_dir)
+        if state == "malformed":
+            fail("invalid_facts", "论文分析/_index.json is unreadable or malformed")
+        for key in keys:
+            if key in _papers and (not isinstance(_papers[key], dict)
+                                   or not index_entry_level(_papers[key])[1]):
+                fail("invalid_facts", f"paper {key}: invalid analysis registration")
+        drift = []
+        if observed_source_projection(professor_dir, keys) != sources.get("projection"):
+            drift.append("sources_projection")
+        if observed_level_projection(professor_dir, keys) != sources.get("levels"):
+            drift.append("analysis_levels")
+        for name, record in (sources.get("materials") or {}).items():
+            # Administrative index fields do not affect the business identity.
+            # The level and path projections above already compare its inputs.
+            if name in {str((professor_dir / "论文分析" / "_index.json").resolve()),
+                        str((professor_dir / FRESHNESS_CACHE).resolve())}:
+                continue
+            if record.get("state") == "present":
+                if _source_stat(Path(name)) != record.get("stat"):
+                    drift.append(name)
+            elif _source_stat(Path(name)) is not None:
+                drift.append(name)
+        return drift
+
+    def observe_stage2_sources(professor_dir: Path, sources: dict, *,
+                               business_inputs=None, candidate_keys=None) -> dict:
+        """Observe the frozen finite set using its existing stat contract.
+
+        An unchanged stat keeps the previously read digest. A changed stat loses
+        that digest and therefore cannot compare equal. No current source bytes
+        are supplied as a replacement for the frozen consumption material.
+        """
+        professor_dir = Path(professor_dir)
+        current = copy.deepcopy(sources)
+        keys = sources.get("candidate_keys") if candidate_keys is None else candidate_keys
+        current["candidate_keys"] = sorted(set(keys or []))
+        index, state = read_analysis_index(professor_dir)
+        if state == "malformed":
+            fail("invalid_facts", "论文分析/_index.json is unreadable or malformed")
+        current["index_papers"], current["index_state"] = index, state
+        current["projection"] = observed_source_projection(professor_dir, keys)
+        current["levels"] = observed_level_projection(professor_dir, keys)
+        for name, frozen in sources.get("materials", {}).items():
+            stat = _source_stat(Path(name))
+            record = {"path": name, "state": "present" if stat else "missing"}
+            if stat is not None:
+                record["stat"] = stat
+                if frozen.get("state") == "present" and stat == frozen.get("stat") \
+                        and "sha256" in frozen:
+                    record["sha256"] = frozen["sha256"]
+            current["materials"][name] = record
+        current["guards"] = {}
+        for key, guards in sources.get("guards", {}).items():
+            for role, frozen in guards.items():
+                name = frozen.get("path")
+                record = current["materials"].get(name) or {}
+                if record.get("state") == "present":
+                    current["guards"].setdefault(key, {})[role] = {
+                        "path": name, **record["stat"],
+                        "accepted_digest": record.get("sha256")}
+        current["freshness_cache"] = load_freshness_cache(professor_dir)
+        if business_inputs is not None:
+            current["business_inputs"] = copy.deepcopy(business_inputs)
+        return current
+
+    def freeze_stage2_sources(professor_dir: Path, candidate_keys, *,
+                              business_inputs=None, declared_sources=None) -> dict:
+        """Supply the complete finite source view before facts are assembled.
+
+        PDF bytes are never retained. Only an explicitly declared PDF needed by
+        the existing facts verifier is read, and its validation digest is kept.
+        """
+        professor_dir = Path(professor_dir)
+        keys = sorted(set(candidate_keys))
+        materials = {}
+        index_path = professor_dir / "论文分析" / "_index.json"
+        index_record = _freeze_material(index_path)
+        materials[str(index_path.resolve())] = index_record
+        if index_record["state"] == "missing":
+            index_papers, index_state = {}, "missing"
+        else:
+            index = index_record.get("data")
+            if not isinstance(index, dict) or not isinstance(index.get("papers"), dict):
+                fail("invalid_facts", "论文分析/_index.json is unreadable or malformed")
+            index_papers, index_state = index["papers"], "ok"
+        declarations = declared_sources or {}
+        if isinstance(declarations, list):
+            declarations = {paper.get("item_key"): paper for paper in declarations
+                            if isinstance(paper, dict)}
+        elif isinstance(declarations, dict) and isinstance(declarations.get("papers"), list):
+            declarations = {paper.get("item_key"): paper for paper in declarations["papers"]
+                            if isinstance(paper, dict)}
+        guards = {}
+        for key in keys:
+            entry = index_papers.get(key)
+            if key in index_papers and (not isinstance(entry, dict) or not index_entry_level(entry)[1]):
+                fail("invalid_facts", f"paper {key}: invalid analysis registration")
+            entry = entry or {}
+            declared = declarations.get(key) or {}
+            paths = {"analysis": entry.get("file") or declared.get("analysis_file"),
+                     "future_work": entry.get("future_work_sidecar") or declared.get("sidecar_file"),
+                     "facts": entry.get("facts_sidecar") or declared.get("facts_file"),
+                     "pdf": declared.get("pdf_file") or entry.get("pdf_file")}
+            analysis = canonical_index_path(paths["analysis"])
+            candidates = []
+            if analysis:
+                candidates.extend((analysis + ".future_work.json", analysis + ".facts.json"))
+            for role, value in paths.items():
+                name = canonical_index_path(value)
+                if name is None:
+                    continue
+                candidates.append(name)
+                if name not in materials:
+                    needs_pdf = False
+                    if role == "pdf" and paths.get("facts"):
+                        # Preserve the existing verifier's read boundary: a bad
+                        # facts schema/path is rejected before it reads the PDF.
+                        _facts, _state, error = load_facts_sidecar(
+                            paths["facts"], analysis, name, set(), materials=materials)
+                        needs_pdf = error == "facts_source_fingerprint_mismatch"
+                    materials[name] = _freeze_material(
+                        Path(name), pdf=role == "pdf",
+                        read_content=role != "pdf" or needs_pdf)
+                record = materials[name]
+                if record["state"] == "present":
+                    guard = {"path": name, **record["stat"]}
+                    guard["accepted_digest"] = record.get("sha256")
+                    guards.setdefault(key, {})[role] = guard
+            for name in candidates:
+                if name not in materials:
+                    materials[name] = _freeze_material(Path(name))
+        freshness_path = professor_dir / FRESHNESS_CACHE
+        freshness_record = _freeze_material(freshness_path)
+        materials[str(freshness_path.resolve())] = freshness_record
+        freshness_data = freshness_record.get("data")
+        cache = freshness_data.get("entries") if isinstance(freshness_data, dict) else {}
+        if not isinstance(cache, dict):
+            cache = {}
+        sources = {
+            "version": 1, "candidate_keys": keys,
+            "projection": observed_source_projection(professor_dir, keys),
+            "levels": observed_level_projection(professor_dir, keys),
+            "materials": materials, "guards": guards,
+            "index_papers": copy.deepcopy(index_papers), "index_state": index_state,
+            "declared_papers": copy.deepcopy(declarations),
+            "freshness_cache": copy.deepcopy(cache),
+            "business_inputs": copy.deepcopy(business_inputs or {}),
+        }
+        # Bind the source selection as well as every read and missing candidate.
+        current_index, current_state = read_analysis_index(professor_dir)
+        if current_state != index_state or current_index != index_papers \
+                or stage2_sources_drift(professor_dir, sources):
+            fail("invalid_facts", "sources changed while preparing frozen material")
+        return sources
+
     def sidecar_analysis_matches(recorded: Any, expected_analysis: str) -> bool:
         """Bind a sidecar's `analysis` field to the analysis it belongs to.
 
@@ -90,7 +312,8 @@ def build(*, atomic_json,
         except OSError:
             return False
 
-    def load_sidecar(path: str | None, expected_analysis: str | None = None) -> tuple[list, list, str | None]:
+    def load_sidecar(path: str | None, expected_analysis: str | None = None,
+                     *, materials: dict | None = None) -> tuple[list, list, str | None]:
         """Return (anchorable_items, legacy_items, error).
 
         With `expected_analysis`, the sidecar must be that analysis's exact
@@ -100,9 +323,9 @@ def build(*, atomic_json,
         if not path:
             return [], [], None
         sidecar_path = Path(path)
-        if not sidecar_path.is_file():
+        if not _material_present(sidecar_path, materials):
             return [], [], "missing"
-        data, error = read_json_file(sidecar_path)
+        data, error = _material_json(sidecar_path, materials)
         if error:
             return [], [], "invalid"
         if not isinstance(data, dict) or data.get("schema") != 1 or data.get("status") != "ok":
@@ -161,6 +384,7 @@ def build(*, atomic_json,
         expected_analysis: str | None,
         pdf_file: str | None,
         valid_gap_ids: set | None,
+        *, materials: dict | None = None,
     ) -> tuple[dict | None, str, str | None]:
         """Validate a paper-analysis `<analysis>.facts.json` sidecar for reuse.
 
@@ -176,9 +400,9 @@ def build(*, atomic_json,
         if not facts_file:
             return None, "unavailable", "missing_facts_sidecar"
         path = Path(facts_file)
-        if not path.is_file():
+        if not _material_present(path, materials):
             return None, "unavailable", "missing_facts_sidecar"
-        data, error = read_json_file(path)
+        data, error = _material_json(path, materials)
         if error or not isinstance(data, dict):
             return None, "failed", "invalid_facts_sidecar"
         if (data.get("schema") != FACTS_SCHEMA or data.get("kind") != FACTS_KIND
@@ -211,9 +435,11 @@ def build(*, atomic_json,
         fingerprint = data.get("input_fingerprint")
         if not isinstance(fingerprint, str) or not fingerprint.startswith("sha256:"):
             return None, "failed", "invalid_facts_sidecar"
-        if not pdf_file or not Path(pdf_file).is_file():
+        if not pdf_file or not _material_present(Path(pdf_file), materials):
             return None, "failed", "facts_source_fingerprint_mismatch"
-        current = "sha256:" + sha256_bytes(Path(pdf_file).read_bytes())
+        pdf_sha = (materials.get(canonical_index_path(pdf_file)) or {}).get("sha256") \
+            if materials is not None else sha256_bytes(Path(pdf_file).read_bytes())
+        current = "sha256:" + str(pdf_sha)
         if fingerprint != current:
             return None, "failed", "facts_source_fingerprint_mismatch"
         joined_ids = data.get("future_work_ids")
@@ -400,7 +626,7 @@ def build(*, atomic_json,
             return level, True
         return None, False
 
-    def index_entry_analysis_path(entry: dict) -> str | None:
+    def index_entry_analysis_path(entry: dict, *, materials=None) -> str | None:
         """The analysis path a successful index registration selects, if usable."""
         if not isinstance(entry, dict):
             return None
@@ -408,13 +634,13 @@ def build(*, atomic_json,
         if path is None:
             return None
         try:
-            exists = Path(path).is_file()
+            exists = _material_present(Path(path), materials)
         except OSError:
             exists = False
         return path if exists else None
 
     def resolve_declared_level(entry: Any, analysis_file: Any,
-                               declared: Any) -> tuple[str | None, str | None]:
+                               declared: Any, *, materials=None) -> tuple[str | None, str | None]:
         """Shared eligibility rule for the current paper's actual analysis level.
 
         A level is only known on the current professor, current item and the
@@ -434,7 +660,7 @@ def build(*, atomic_json,
         recorded, legal = index_entry_level(entry)
         if not legal:
             return None, "invalid_analysis_index_level"
-        current_path = index_entry_analysis_path(entry)
+        current_path = index_entry_analysis_path(entry, materials=materials)
         selected = canonical_index_path(analysis_file)
         eligible = bool(current_path) and selected is not None and current_path == selected
         if declared is None:
@@ -515,7 +741,7 @@ def build(*, atomic_json,
         papers = {}
         for key in sorted({key for key in keys if isinstance(key, str)}):
             entry = index_papers.get(key)
-            if entry is None:
+            if key not in index_papers:
                 record = {"index": "missing",
                           "analysis": {"path": None, "state": "undeclared"},
                           "future_work": {"path": None, "state": "undeclared"},
@@ -552,7 +778,7 @@ def build(*, atomic_json,
         values, valid = {}, True
         for key in sorted({key for key in keys if isinstance(key, str)}):
             entry = index_papers.get(key)
-            if entry is None:
+            if key not in index_papers:
                 values[key] = None
                 continue
             if not isinstance(entry, dict):
@@ -587,8 +813,13 @@ def build(*, atomic_json,
             }
         return out
 
-    def load_papers_with_digests(facts: dict, professor_dir: Path) -> dict:
-        index_papers, index_state = read_analysis_index(professor_dir)
+    def load_papers_with_digests(facts: dict, professor_dir: Path, *, sources=None) -> dict:
+        if sources is None:
+            index_papers, index_state = read_analysis_index(professor_dir)
+        else:
+            index_papers, index_state = sources["index_papers"], sources["index_state"]
+        if index_state == "malformed":
+            fail("invalid_facts", "论文分析/_index.json is unreadable or malformed")
         papers = {}
         for paper in facts.get("papers", []):
             key = paper.get("item_key")
@@ -600,17 +831,13 @@ def build(*, atomic_json,
                 fail("invalid_facts",
                      f"paper {key}: analysis_level must be one of {ANALYSIS_LEVELS} or null",
                      item_key=key)
-            if index_state == "malformed":
-                # A broken registration record cannot prove the declared value.
-                if declared is not None:
-                    fail("invalid_facts",
-                         f"paper {key}: 论文分析/_index.json is unreadable; "
-                         "analysis_level cannot be verified", item_key=key)
-                level = None
-            else:
+            if index_state != "malformed":
                 entry = index_papers.get(key)
+                if key in index_papers and not isinstance(entry, dict):
+                    fail("invalid_facts", f"paper {key}: invalid analysis index record", item_key=key)
                 level, error = resolve_declared_level(
-                    entry, record.get("analysis_file"), declared)
+                    entry, record.get("analysis_file"), declared,
+                    materials=sources["materials"] if sources else None)
                 if error:
                     fail("invalid_facts", f"paper {key}: {error}", item_key=key)
                 # Acceptance check of the actual consumed sources against the
@@ -637,7 +864,7 @@ def build(*, atomic_json,
         return papers
 
     def build_gap_pool(facts: dict, papers: dict, families: dict,
-                       sidecar_cache: dict) -> tuple[dict, dict]:
+                       sidecar_cache: dict, *, materials=None) -> tuple[dict, dict]:
         """Build per-direction anchorable gap pools from valid sidecars."""
         confirmed_members = {}
         for family in families.get("confirmed", []):
@@ -655,8 +882,10 @@ def build(*, atomic_json,
                 if not sidecar_file:
                     continue
                 if sidecar_file not in sidecar_cache:
-                    sha = sidecar_sha(sidecar_file)
-                    items, legacy_items, error = load_sidecar(sidecar_file, paper.get("analysis_file"))
+                    sha = (materials.get(canonical_index_path(sidecar_file)) or {}).get("sha256") \
+                        if materials is not None else sidecar_sha(sidecar_file)
+                    items, legacy_items, error = load_sidecar(
+                        sidecar_file, paper.get("analysis_file"), materials=materials)
                     sidecar_cache[sidecar_file] = (items, legacy_items, error, sha)
                 items, legacy_items, error, sha = sidecar_cache[sidecar_file]
                 if error:
@@ -692,10 +921,12 @@ def build(*, atomic_json,
 
         def __init__(self, facts_path: Path):
             self.facts_path = facts_path
-            data, error = read_json_file(facts_path)
-            if error:
-                fail("invalid_facts", f"facts file unreadable: {error}")
-            self.facts = data
+            facts_material = _freeze_material(facts_path)
+            if facts_material.get("state") != "present" \
+                    or not isinstance(facts_material.get("data"), dict):
+                fail("invalid_facts", "facts file unreadable or malformed")
+            self.facts = copy.deepcopy(facts_material["data"])
+            self.facts_sha256 = facts_material["sha256"]
             self.professor = self.facts.get("professor") or fail("invalid_facts", "facts.professor missing")
             self.professor_dir = Path(self.facts.get("professor_dir") or fail("invalid_facts", "facts.professor_dir missing"))
             self.program_root = Path(self.facts.get("program_root") or (self.professor_dir.parent.parent))
@@ -707,12 +938,14 @@ def build(*, atomic_json,
                 fail("invalid_params", f"gap_scope must be one of {GAP_SCOPES}")
             if self.freshness_scope not in FRESHNESS_SCOPES:
                 fail("invalid_params", f"freshness_scope must be one of {FRESHNESS_SCOPES}")
-            self.papers = load_papers_with_digests(self.facts, self.professor_dir)
-            self.source_projection = observed_source_projection(
-                self.professor_dir, self.papers.keys())
-            self.source_stats = _paper_source_stats(self.papers)
             self.consumption = None
             self.consumption_file = None
+            self.sources = None
+            # A broken index is an input error even when the facts declare null
+            # levels or omit the new private consumption reference.
+            _index_papers, index_state = read_analysis_index(self.professor_dir)
+            if index_state == "malformed":
+                fail("invalid_facts", "论文分析/_index.json is unreadable or malformed")
             preflight_block = self.facts.get("stage2_preflight")
             if isinstance(preflight_block, dict):
                 reference = preflight_block.get("consumption")
@@ -726,7 +959,9 @@ def build(*, atomic_json,
                     if companion.get("schema") != 1 \
                             or companion.get("professor") != self.professor \
                             or companion.get("professor_dir") \
-                            != str(self.professor_dir.resolve()):
+                            != str(self.professor_dir.resolve()) \
+                            or companion.get("program_root") != str(self.program_root.resolve()) \
+                            or companion.get("preflight_id") != preflight_block.get("preflight_id"):
                         fail("invalid_facts",
                              "consumption companion identity does not match this facts file")
                     if reference.get("run_id") != companion.get("run_id") \
@@ -734,21 +969,97 @@ def build(*, atomic_json,
                             != companion.get("sources_sha256"):
                         fail("invalid_facts",
                              "facts consumption reference does not bind the companion")
-                    if companion.get("sources_projection") != self.source_projection:
+                    sources = companion.get("sources")
+                    if not isinstance(sources, dict) or sources.get("version") != 1 \
+                            or not isinstance(sources.get("materials"), dict) \
+                            or not isinstance(sources.get("index_papers"), dict) \
+                            or _object_sha(sources) != companion.get("sources_sha256"):
                         fail("invalid_facts",
-                             "consumption companion no longer matches the current sources")
+                             "consumption companion has no valid frozen source material")
                     self.consumption = companion
                     self.consumption_file = companion_path
-                    self.source_projection = companion["sources_projection"]
+                    self.sources = copy.deepcopy(sources)
+                    self.validate_consumption_current()
+                    candidate_keys = set(sources.get("candidate_keys") or [])
+                    facts_papers = self.facts.get("papers", [])
+                    facts_keys = {paper.get("item_key") for paper in facts_papers}
+                    if facts_keys != candidate_keys or len(facts_keys) != len(facts_papers):
+                        fail("invalid_facts", "facts papers do not cover the frozen candidate set exactly")
+                    business = sources.get("business_inputs") or {}
+                    if business.get("current_year") is not None \
+                            and self.current_year != business["current_year"]:
+                        fail("invalid_facts", "facts changed the frozen current_year")
+                    frozen_params = business.get("params") or {}
+                    if frozen_params.get("gap_scope", "selected_direction") != self.gap_scope \
+                            or frozen_params.get("freshness_scope", "shortlist") != self.freshness_scope:
+                        fail("invalid_facts", "facts changed frozen Stage-2 parameters")
+                    for paper in self.facts.get("papers", []):
+                        declared_paper = (sources.get("declared_papers") or {}).get(
+                            paper.get("item_key")) or {}
+                        for field in ("title", "year", "month", "authorship", "authors", "abstract",
+                                      "analysis_file", "sidecar_file", "facts_file", "pdf_file"):
+                            if field in declared_paper and paper.get(field) != declared_paper[field]:
+                                fail("invalid_facts", f"facts changed a frozen paper input: {field}")
+                        for field in ("analysis_file", "sidecar_file", "facts_file", "pdf_file"):
+                            path = canonical_index_path(paper.get(field))
+                            if path is not None and path not in sources["materials"]:
+                                fail("invalid_facts", f"facts source was not frozen: {field}={path}")
+                    recorded = companion.get("facts_sha256")
+                    if recorded is not None and recorded != self.facts_sha256:
+                        fail("invalid_facts", "facts bytes changed after being sealed")
+            if self.sources is None:
+                fail("invalid_facts", "facts require a prepared consumption companion")
+            self.papers = load_papers_with_digests(
+                self.facts, self.professor_dir, sources=self.sources)
+            self.materials = self.sources["materials"] if self.sources else None
+            if self.sources:
+                self.source_projection = copy.deepcopy(self.sources["projection"])
+                self.source_stats = {}
+                for key, paper in self.papers.items():
+                    paths = [paper.get(field) for field in
+                             ("analysis_file", "sidecar_file", "facts_file", "pdf_file")]
+                    analysis = paper.get("analysis_file")
+                    if analysis:
+                        paths.extend([analysis + ".facts.json", analysis + ".future_work.json"])
+                    stats = {}
+                    for value in paths:
+                        name = canonical_index_path(value)
+                        record = (self.materials.get(name) or {}) if name else {}
+                        if record.get("state") == "present":
+                            stats[name] = copy.deepcopy(record["stat"])
+                    if stats:
+                        self.source_stats[key] = stats
+            else:
+                self.source_projection = observed_source_projection(
+                    self.professor_dir, self.papers.keys())
+                self.source_stats = _paper_source_stats(self.papers)
             self.sidecar_cache = {}
             self.facts_cache = {}
             self.families = compute_version_families(self.papers)
-            self.pools, self.family_members = build_gap_pool(self.facts, self.papers, self.families, self.sidecar_cache)
+            self.pools, self.family_members = build_gap_pool(
+                self.facts, self.papers, self.families, self.sidecar_cache,
+                materials=self.materials)
             self.pack_path = self.professor_dir / INPUT_PACK
             self.pack, _ = load_input_pack(self.professor_dir)
-            self.cache = load_freshness_cache(self.professor_dir)
+            self.cache = copy.deepcopy(self.sources["freshness_cache"]) if self.sources \
+                else load_freshness_cache(self.professor_dir)
             self.direction_plans = []
             self._prepare_directions()
+
+        def consumption_drift(self) -> list:
+            if not self.sources:
+                return []
+            drift = stage2_sources_drift(self.professor_dir, self.sources)
+            if observe_consumption is not None:
+                drift.extend(observe_consumption(self))
+            return sorted(set(drift))
+
+        def validate_consumption_current(self) -> None:
+            drift = self.consumption_drift()
+            if drift:
+                if soft_exit is not None:
+                    soft_exit("needs_refresh", "preflight_inputs_changed", drift=drift)
+                fail("invalid_facts", "sources changed after consumption prepare", drift=drift)
 
         def _prepare_directions(self) -> None:
             old_directions = {}
@@ -823,8 +1134,10 @@ def build(*, atomic_json,
                 valid_ids: set | None = None
                 if sidecar_file:
                     if sidecar_file not in self.sidecar_cache:
-                        sha = sidecar_sha(sidecar_file)
-                        items, legacy_items, error = load_sidecar(sidecar_file, paper.get("analysis_file"))
+                        sha = (self.materials.get(canonical_index_path(sidecar_file)) or {}).get("sha256") \
+                            if self.materials is not None else sidecar_sha(sidecar_file)
+                        items, legacy_items, error = load_sidecar(
+                            sidecar_file, paper.get("analysis_file"), materials=self.materials)
                         self.sidecar_cache[sidecar_file] = (items, legacy_items, error, sha)
                     items, legacy_items, error, _sha = self.sidecar_cache[sidecar_file]
                     if not error:
@@ -834,7 +1147,7 @@ def build(*, atomic_json,
                 else:
                     record = load_facts_sidecar(
                         paper.get("facts_file"), paper.get("analysis_file"),
-                        paper.get("pdf_file"), valid_ids)
+                        paper.get("pdf_file"), valid_ids, materials=self.materials)
             self.facts_cache[key] = record
             return record
 
@@ -998,6 +1311,9 @@ def build(*, atomic_json,
                 observed_source_projection=observed_source_projection,
                 observed_level_projection=observed_level_projection,
                 consumed_sources=consumed_sources,
+                freeze_stage2_sources=freeze_stage2_sources,
+                stage2_sources_drift=stage2_sources_drift,
+                observe_stage2_sources=observe_stage2_sources,
                 load_papers_with_digests=load_papers_with_digests,
                 build_gap_pool=build_gap_pool,
                 Stage2Context=Stage2Context,

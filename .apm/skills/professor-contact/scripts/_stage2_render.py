@@ -70,7 +70,8 @@ def build(*, fail,
                     fail("unknown_reference_id",
                          f"{result_path}: gap outside package: {gap_id!r} "
                          f"(likely mistyped; copy one of the job model_input gap ids verbatim: "
-                         f"{sorted(judge_ids)})")
+                         f"{sorted(judge_ids)})", direction_id=ckey,
+                         result_file=str(result_path))
                 if gap_id in by_gap:
                     fail("invalid_result_json", f"{result_path}: duplicate result for gap {gap_id}")
                 by_gap[gap_id] = row
@@ -98,7 +99,8 @@ def build(*, fail,
                 unknown_ids = [c for c in cand_ids if c not in allowed_ids]
                 if unknown_ids:
                     fail("unknown_reference_id",
-                         f"{result_path}: candidate_paper_ids outside package for {gap_id[:12]}…: {unknown_ids}")
+                         f"{result_path}: candidate_paper_ids outside package for {gap_id[:12]}…: {unknown_ids}",
+                         direction_id=ckey, result_file=str(result_path))
                 evidence_value = row.get("evidence")
                 if not isinstance(evidence_value, str):
                     fail("invalid_result_json", f"{result_path}: evidence must be a string for {gap_id[:12]}…")
@@ -192,7 +194,8 @@ def build(*, fail,
                 if ref_kind not in ("paper", "later", "gap") or ref_id not in pool:
                     fail("unknown_reference_id",
                          f"{path}: ref {ref!r} outside package (likely mistyped; legal "
-                         f"{ref_kind} ids: {sorted(pool)})")
+                         f"{ref_kind} ids: {sorted(pool)})", direction_id=did,
+                         result_file=str(path))
             if placeholders != refs:
                 fail("invalid_result_json",
                      f"{path}: {did} placeholders {sorted(placeholders)} != refs {sorted(refs)}")
@@ -213,7 +216,8 @@ def build(*, fail,
             if gap_id not in scope["gaps"]:
                 fail("unknown_reference_id",
                      f"{path}: gap note outside package: {gap_id!r} (likely mistyped; "
-                     f"copy one of the job model_input gap ids verbatim: {sorted(scope['gaps'])})")
+                     f"copy one of the job model_input gap ids verbatim: {sorted(scope['gaps'])})",
+                     direction_id=did, result_file=str(path))
             if gap_id in gap_notes:
                 fail("invalid_result_json", f"{path}: duplicate gap note {gap_id}")
             if not isinstance(note.get("summary"), str) or not isinstance(note.get("explanation"), str):

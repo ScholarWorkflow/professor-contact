@@ -13,6 +13,8 @@ from __future__ import annotations
 import types
 from pathlib import Path
 import json
+import copy
+import hashlib
 
 
 MERGE_MIN_SHARED = 2
@@ -48,6 +50,86 @@ def build(*, AUTHORSHIP_RANK,
           now_utc,
           read_json_file,
           direction_provisional_member_keys):
+    def _resolve_consumption(ctx):
+        if not getattr(ctx, "consumption_file", None):
+            return None
+        data, error = read_json_file(ctx.consumption_file)
+        if error or not isinstance(data, dict) or data.get("run_id") != ctx.consumption.get("run_id"):
+            fail("invalid_result_json", "resolve consumption companion changed")
+        return data
+
+    def _seal_resolve_plan(ctx, jobs, reused, results_dir, run_id):
+        data = _resolve_consumption(ctx)
+        if data is None:
+            return None
+        if data.get("resolve") is not None or data.get("stage2_plan") is not None:
+            fail("invalid_params", "resolve stage is already sealed for this run")
+        raw = ctx.facts_path.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        if data.get("facts_sha256") not in (None, digest):
+            fail("invalid_facts", "facts changed before resolve planning")
+        data["facts_sha256"] = digest
+        data.setdefault("facts", {"path": str(ctx.facts_path.resolve()), "sha256": digest,
+                                  "text": raw.decode("utf-8")})
+        saved_jobs = copy.deepcopy(jobs)
+        for job in saved_jobs:
+            job["model_input_sha256"] = sha256_obj(job["model_input"])
+        plan = {"run_id": data["run_id"], "sources_sha256": data["sources_sha256"],
+                "facts_sha256": digest, "resolve_run_id": run_id,
+                "results_dir": str(results_dir.resolve()), "jobs": saved_jobs,
+                "reuse": sorted(reused)}
+        plan["plan_sha256"] = sha256_obj(plan)
+        data["resolve"] = {"plan": plan}
+        atomic_json(ctx.consumption_file, data)
+        return plan
+
+    def _validate_resolve_plan(ctx, results_dir):
+        data = _resolve_consumption(ctx)
+        if data is None:
+            return None
+        if isinstance(data.get("resolve"), dict) and data["resolve"].get("results") is not None:
+            fail("invalid_params", "resolve results already sealed")
+        plan = (data.get("resolve") or {}).get("plan")
+        if not isinstance(plan, dict):
+            fail("invalid_result_json", "resolve has no sealed plan")
+        unsigned = {key: value for key, value in plan.items() if key != "plan_sha256"}
+        if plan.get("plan_sha256") != sha256_obj(unsigned) \
+                or plan.get("run_id") != data.get("run_id") \
+                or plan.get("sources_sha256") != data.get("sources_sha256") \
+                or plan.get("facts_sha256") != hashlib.sha256(ctx.facts_path.read_bytes()).hexdigest() \
+                or plan.get("results_dir") != str(results_dir.resolve()):
+            fail("invalid_result_json", "resolve input or round differs from its sealed plan")
+        for job in plan.get("jobs", []):
+            if job.get("model_input_sha256") != sha256_obj(job.get("model_input")):
+                fail("invalid_result_json", "saved resolve model input changed")
+        return data
+
+    def _bind_resolve_sidecar(ctx, resolved_path, results_dir=None):
+        data = _resolve_consumption(ctx)
+        if data is None:
+            return
+        resolve = data.get("resolve")
+        if not isinstance(resolve, dict):
+            fail("invalid_result_json", "resolved output has no sealed resolve plan")
+        if results_dir is not None:
+            files = {}
+            for job in resolve["plan"]["jobs"]:
+                path = results_dir / job["result_file"]
+                raw = path.read_bytes()
+                files[job["result_file"]] = {"sha256": hashlib.sha256(raw).hexdigest(),
+                    "text": raw.decode("utf-8"), "job_id": job["job_id"],
+                    "direction_id": job["direction_id"]}
+            if resolve.get("results") is not None:
+                fail("invalid_params", "resolve results already sealed")
+            resolve["results"] = {"run_id": data["run_id"],
+                "plan_sha256": resolve["plan"]["plan_sha256"], "files": files,
+                "results_dir": str(results_dir.resolve())}
+        resolve["sidecar"] = {"path": str(resolved_path.resolve()),
+                              "sha256": hashlib.sha256(resolved_path.read_bytes()).hexdigest()}
+        if isinstance(data.get("observation"), dict):
+            data["observation"]["resolved_source"] = copy.deepcopy(resolve["sidecar"])
+        atomic_json(ctx.consumption_file, data)
+
     def _compute_paper_direction_affinity(ctx: Stage2Context) -> dict[str, dict[str, dict]]:
         """Compute per-paper affinity scores to each provisional direction using full-text facts.
 
@@ -635,6 +717,7 @@ def build(*, AUTHORSHIP_RANK,
         resolve_run_id = stage2_resolve_run_id(ctx.professor_dir, ctx.facts, results_dir)
         for job in resolve_jobs:
             job["result_schema"]["resolve_run_id"] = resolve_run_id
+        saved_plan = _seal_resolve_plan(ctx, resolve_jobs, reuse_list, results_dir, resolve_run_id)
 
         emit({
             "status": "ok",
@@ -666,6 +749,9 @@ def build(*, AUTHORSHIP_RANK,
                 "merges": merges,
             },
             "jobs": resolve_jobs,
+            "plan_file": str(ctx.consumption_file) if saved_plan else None,
+            "plan_path": ["resolve", "plan"] if saved_plan else None,
+            "plan_sha256": saved_plan.get("plan_sha256") if saved_plan else None,
             "write_needed": bool(resolve_jobs),
         })
 
@@ -1178,6 +1264,7 @@ def build(*, AUTHORSHIP_RANK,
         """
         ctx = Stage2Context(Path(args.facts))
         results_dir = Path(args.results)
+        _validate_resolve_plan(ctx, results_dir)
         # The sidecar is stamped with the facts run's preflight proof (issue #7 ×
         # #11): stage2-finalize / stage2-resolve-accept later refuse sidecars from
         # another generation, so the write must carry the CURRENT proof id.
@@ -1259,7 +1346,9 @@ def build(*, AUTHORSHIP_RANK,
             "directions": list(resolved.values()),
             "has_material_changes": bool(material_changes),
         }
+        ctx.validate_consumption_current()
         atomic_json(resolved_path, resolved_payload)
+        _bind_resolve_sidecar(ctx, resolved_path, results_dir)
 
         # Collect new split directions (targets that don't match any provisional ckey).
         # These are the "new authoritative direction entries" the split resolved.
@@ -1371,7 +1460,9 @@ def build(*, AUTHORSHIP_RANK,
             if entries[k].get("acceptance") != "accepted":
                 entries[k]["acceptance"] = "accepted"
                 accepted.append(k)
+        ctx.validate_consumption_current()
         atomic_json(resolved_path, data)
+        _bind_resolve_sidecar(ctx, resolved_path)
         emit({
             "status": "ok",
             "professor": ctx.professor,

@@ -513,14 +513,12 @@ def build(*, Stage2Context,
         if validator is None:
             validator = pack.get("validator") if isinstance(pack, dict) else None
         if validator is None:
+            if isinstance(pack, dict) and "validator" in pack:
+                return None, "validator_container"
             return None, None
         if not isinstance(validator, dict):
             return None, "validator_container"
         if validator.get("schema") != 2:
-            # Legacy accepted records kept only the per-direction results and
-            # are still honoured by preflight's terminal pass/skipped policy.
-            if isinstance(validator.get("results"), dict) and set(validator) <= {"results"}:
-                return validator, None
             return None, "validator_schema"
         recorded_round = validator.get("round")
         if isinstance(recorded_round, bool) or recorded_round not in (1, 2):
@@ -535,6 +533,8 @@ def build(*, Stage2Context,
         allowed = {direction_machine_id(direction)
                    for direction in (pack or {}).get("directions") or []
                    if isinstance(direction, dict)}
+        if set(results) != allowed:
+            return None, "validator_results_scope"
         for did, issues in pending.items():
             if did not in allowed or not isinstance(issues, list) or not issues:
                 return None, "validator_pending"
@@ -547,11 +547,15 @@ def build(*, Stage2Context,
             row_round = row.get("rounds")
             if isinstance(row_round, bool) or row_round not in (1, 2):
                 return None, "validator_result_rounds"
+            if row_round > recorded_round or (row.get("result") == "fail_after_2_rounds"
+                                               and (recorded_round != 2 or row_round != 2)):
+                return None, "validator_result_rounds"
             if not isinstance(row.get("issues"), list):
                 return None, "validator_result_issues"
         corrected = validator.get("correction_applied_direction_ids")
         if not isinstance(corrected, list) \
-                or any(not isinstance(did, str) or did not in allowed for did in corrected):
+                or any(not isinstance(did, str) or did not in allowed for did in corrected) \
+                or len(set(corrected)) != len(corrected):
             return None, "validator_corrections"
         unresolved = [did for did in pending if did not in set(corrected)]
         if phase == "needs_correction":
@@ -568,7 +572,7 @@ def build(*, Stage2Context,
         fixed = validator.get("fixed_blocking")
         if fixed is not None:
             if not isinstance(fixed, dict) or any(
-                    not isinstance(did, str) or not isinstance(rows, list)
+                    not isinstance(did, str) or did not in allowed or not isinstance(rows, list)
                     for did, rows in fixed.items()):
                 return None, "validator_fixed"
         return validator, None

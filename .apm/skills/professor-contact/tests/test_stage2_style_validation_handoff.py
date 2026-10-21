@@ -245,10 +245,16 @@ class Stage2ValidationHandoffTests(BaseEnv):
         if proof_path is None:
             proof_path = prepare_stage2_proof(run_cli, facts_path)
         run_dir = Path(tempfile.mkdtemp(prefix="t6-consumption-", dir=self.root))
+        sources_path = run_dir / "sources.json"
+        source_facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+        sources_path.write_text(
+            json.dumps({"papers": source_facts["papers"]}, ensure_ascii=False, indent=1),
+            encoding="utf-8")
         prepared = parse(run_cli(
             "stage2-consumption-prepare", "--program-root", self.root,
             "--professor", "試験 教授", "--target-file", self.prof_dir / "套磁目标.json",
-            "--preflight-file", proof_path, "--run-dir", run_dir))
+            "--preflight-file", proof_path, "--run-dir", run_dir,
+            "--sources-file", sources_path))
         self.assertEqual(prepared["status"], "ok", prepared)
         facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
         facts["stage2_preflight"]["consumption"] = {
