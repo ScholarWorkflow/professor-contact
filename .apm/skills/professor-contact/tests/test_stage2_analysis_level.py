@@ -425,6 +425,30 @@ class TestFactsLevelContract(AnalysisLevelBase):
             "generated_at": "2026-01-01T00:00:00Z", "papers": {}},
             ensure_ascii=False).encode("utf-8"))
 
+    def _assert_context_rejects_malformed_index(self, raw: bytes):
+        for paper in self.facts["papers"]:
+            if paper["item_key"] in ("AAAA1111", "BBBB2222"):
+                paper["analysis_level"] = None
+        write_json(self.facts_path, self.facts)
+        index_path = self.prof_dir / "论文分析" / "_index.json"
+        index_path.write_bytes(raw)
+        buffer = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stdout(buffer):
+            contact_state.Stage2Context(self.facts_path)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["status"], "error", payload)
+        self.assertEqual(payload["reason_code"], "invalid_facts", payload)
+        self.assertEqual(index_path.read_bytes(), raw)
+
+    def test_context_rejects_malformed_index_with_null_levels(self):
+        self._assert_context_rejects_malformed_index(b"{broken")
+
+    def test_context_rejects_empty_papers_with_null_levels(self):
+        self._assert_context_rejects_malformed_index(json.dumps({
+            "schema": 2, "future_work_schema": 1, "professor": PROFESSOR,
+            "generated_at": "2026-01-01T00:00:00Z", "papers": {}},
+            ensure_ascii=False).encode("utf-8"))
+
 class TestConsumptionFreeze(AnalysisLevelBase):
     """L2/L4: a consumed run commits the sources frozen before facts."""
 
@@ -469,6 +493,25 @@ class TestConsumptionFreeze(AnalysisLevelBase):
         # freezing remains a separate product requirement and is not claimed
         # by this path/state binding check.
 
+    def test_plan_rejects_a_source_change_after_prepare(self):
+        preflight_path, run_dir, _companion = self.prepare_consumption()
+        a_analysis = self.prof_dir / "论文分析" / "AAAA1111.md"
+        a_analysis.write_bytes(a_analysis.read_bytes() + b"\n<!-- after freeze -->\n")
+        out = parse(run_cli(
+            "stage2-plan", "--facts", self.facts_path,
+            "--preflight-file", preflight_path, "--run-dir", run_dir))
+        self.assertIn(out["status"], {"error", "needs_refresh"}, out)
+        self.assertIn(out.get("reason_code"),
+                      {"invalid_facts", "preflight_inputs_changed"}, out)
+        self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
+
+    def test_companion_freezes_content_sha_and_stat(self):
+        _preflight, _run_dir, companion = self.prepare_consumption()
+        for key in ("AAAA1111", "BBBB2222"):
+            analysis = companion["sources_projection"]["papers"][key]["analysis"]
+            self.assertIn("sha256", analysis, analysis)
+            self.assertIn("stat", analysis, analysis)
+
     def test_finalize_rejects_a_missing_sealed_result(self):
         preflight_path, run_dir, _companion = self.prepare_consumption()
         self.plan_consumption(preflight_path, run_dir)
@@ -498,6 +541,49 @@ class TestConsumptionFreeze(AnalysisLevelBase):
             "file": second["consumption_file"], "run_id": second["run_id"],
             "sources_sha256": second["sources_sha256"]}
         write_json(self.facts_path, facts)
+        out = self.finalize_consumption(preflight_path)
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "invalid_result_json", out)
+        self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
+
+    def test_seal_results_supports_a_single_repair_revision(self):
+        preflight_path, run_dir, _companion = self.prepare_consumption()
+        self.plan_consumption(preflight_path, run_dir)
+        self.write_stage2_results()
+        first = self.seal_consumption(run_dir)
+        self.assertEqual(first["revision"], 0)
+        second = parse(run_cli(
+            "stage2-consumption-seal-results", "--run-dir", run_dir,
+            "--results-dir", self.root / "results"))
+        self.assertEqual(second["status"], "ok", second)
+        self.assertEqual(second["revision"], 1, second)
+
+    def test_finalize_rejects_sealed_results_from_another_run(self):
+        preflight_path, run1, _companion = self.prepare_consumption()
+        self.plan_consumption(preflight_path, run1)
+        results = self.write_stage2_results()
+        narrative = read_json(results / "narrative.json")
+        narrative["directions"][0]["positioning"][0]["text"] = "R1 sealed body"
+        write_json(results / "narrative.json", narrative)
+        self.seal_consumption(run1)
+        r1_narrative = (results / "narrative.json").read_bytes()
+        run2 = self.root / "run2"
+        run2.mkdir()
+        second = parse(run_cli(
+            "stage2-consumption-prepare",
+            "--program-root", self.root, "--professor", PROFESSOR,
+            "--target-file", self.target_file, "--preflight-file", preflight_path,
+            "--run-dir", run2))
+        self.assertEqual(second["status"], "ok", second)
+        facts = read_json(self.facts_path)
+        facts["stage2_preflight"]["consumption"] = {
+            "file": second["consumption_file"], "run_id": second["run_id"],
+            "sources_sha256": second["sources_sha256"]}
+        write_json(self.facts_path, facts)
+        self.plan_consumption(preflight_path, run2)
+        self.write_stage2_results()
+        self.seal_consumption(run2)
+        (self.root / "results" / "narrative.json").write_bytes(r1_narrative)
         out = self.finalize_consumption(preflight_path)
         self.assertEqual(out["status"], "error", out)
         self.assertEqual(out["reason_code"], "invalid_result_json", out)
@@ -957,6 +1043,64 @@ class TestLevelRefresh(AnalysisLevelBase):
         self.assertEqual(pack_path.read_bytes(), pack_before)
         self.assertEqual(md_path.read_bytes(), md_before)
 
+    def _break_managed_render_sha(self):
+        md = self.analysis_md()
+        header, body = split_managed_bytes(md.read_bytes())
+        broken = re.sub(rb"(?m)^render_sha256: .*$",
+                        b"render_sha256: " + b"0" * 64, header) + body
+        md.write_bytes(broken)
+        return broken
+
+    def test_refresh_rejects_an_invalid_old_header_render_binding(self):
+        self.build_accepted_state()
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        broken = self._break_managed_render_sha()
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        before_pack = pack_path.read_bytes()
+        plan = self.save_preflight("refresh-bad-header-render.json")
+        payload = parse(self.refresh(plan))
+        self.assertIn(payload["status"], {"error", "needs_decision"}, payload)
+        self.assertTrue(payload.get("reason_code"), payload)
+        self.assertNotIn(payload.get("reason_code"),
+                         {"stage2_writer_busy", "stage2_managed_write_failed",
+                          "stage2_pack_write_failed"}, payload)
+        self.assertEqual(pack_path.read_bytes(), before_pack)
+        self.assertEqual(self.analysis_md().read_bytes(), broken)
+        self.assertFalse(
+            (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+
+    def test_refresh_rejects_an_invalid_old_validator_lifecycle(self):
+        self.build_accepted_state()
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        plan = self.save_preflight("refresh-invalid-lifecycle.json")
+        self.assertEqual(read_json(plan)["action"], "refresh_level")
+        base = self._read_pack()
+        cases = [
+            ("schema", 3),
+            ("round", True),
+            ("phase", "unknown"),
+            ("pending", ["DIR00001"]),
+            ("results", {"DIR00001": {"result": "bogus", "rounds": 1, "issues": []}}),
+        ]
+        for field, value in cases:
+            with self.subTest(field=field):
+                pack = copy.deepcopy(base)
+                pack["validator"][field] = value
+                self._write_pack(pack)
+                pack_path = self.prof_dir / "套磁候选输入.json"
+                md_path = self.analysis_md()
+                before_pack, before_md = pack_path.read_bytes(), md_path.read_bytes()
+                payload = parse(self.refresh(plan))
+                self.assertEqual(payload["status"], "error", payload)
+                self.assertTrue(str(payload.get("reason_code", "")).startswith("validation_"),
+                                payload)
+                self.assertEqual(pack_path.read_bytes(), before_pack)
+                self.assertEqual(md_path.read_bytes(), before_md)
+                self.assertFalse(
+                    (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+
     def test_refresh_rejects_an_invalid_old_cache_render_binding(self):
         self.build_accepted_state()
         pack = self._read_pack()
@@ -1380,6 +1524,30 @@ class TestRefreshProtection(AnalysisLevelBase):
                         original_descriptor)
         return arm
 
+    def _create_missing_facts_after_observation(self):
+        facts_path = self.prof_dir / "论文分析" / "AAAA1111.md.facts.json"
+        context_class = contact_state.Stage2PackRefineContext
+        original_descriptor = context_class.__dict__["narrative_later_keys_for"]
+        original = original_descriptor.__func__
+        state = {"armed": False, "created": False, "bytes": None}
+
+        def arm():
+            state["armed"] = True
+
+        def record_then_create(direction):
+            if state["armed"] and not state["created"]:
+                state["created"] = True
+                facts_path.write_text(json.dumps({
+                    "schema": 1, "status": "ok", "analysis": "AAAA1111.md",
+                    "items": []}, ensure_ascii=False), encoding="utf-8")
+                state["bytes"] = facts_path.read_bytes()
+            return original(direction)
+
+        context_class.narrative_later_keys_for = staticmethod(record_then_create)
+        self.addCleanup(setattr, context_class, "narrative_later_keys_for",
+                        original_descriptor)
+        return arm, state
+
     def _drift_accepted_pack_after_observation(self):
         """Externally update the accepted pack after the gate, before the write.
 
@@ -1451,6 +1619,72 @@ class TestRefreshProtection(AnalysisLevelBase):
                       self.direction(next_payload, "DIR00001")["reason_codes"],
                       next_payload)
         return payload
+
+    def _drift_freshness_after_lease(self):
+        cache_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
+        original_init = contact_state.Stage2PackRefineContext.__init__
+        state = {"mutated": False, "bytes": None}
+
+        def init_then_drift(instance, *arguments, **keywords):
+            original_init(instance, *arguments, **keywords)
+            if not state["mutated"]:
+                state["mutated"] = True
+                data = read_json(cache_path)
+                entry = next(iter(data["entries"].values()))
+                entry["status"] = "unknown"
+                write_json(cache_path, data)
+                state["bytes"] = cache_path.read_bytes()
+
+        contact_state.Stage2PackRefineContext.__init__ = init_then_drift
+        self.addCleanup(setattr, contact_state.Stage2PackRefineContext,
+                        "__init__", original_init)
+        return state
+
+    def test_refresh_rechecks_freshness_after_lease(self):
+        self.build_accepted_state()
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        plan = self.save_preflight("refresh-freshness.json")
+        self.assertEqual(read_json(plan)["action"], "refresh_level")
+        cache_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        md_path = self.analysis_md()
+        report_path = self.root / "validation.json"
+        before_pack, before_md, before_report = (
+            pack_path.read_bytes(), md_path.read_bytes(), report_path.read_bytes())
+        state = self._drift_freshness_after_lease()
+        payload = self._refresh_in_process(plan)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(cache_path.read_bytes(), state["bytes"])
+        self.assertEqual(pack_path.read_bytes(), before_pack)
+        self.assertEqual(md_path.read_bytes(), before_md)
+        self.assertEqual(report_path.read_bytes(), before_report)
+        self.assertFalse(
+            (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+
+    def test_refresh_rechecks_missing_facts_before_write(self):
+        self.build_accepted_state()
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        plan = self.save_preflight("refresh-missing-facts.json")
+        self.assertEqual(read_json(plan)["action"], "refresh_level")
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        md_path = self.analysis_md()
+        report_path = self.root / "validation.json"
+        before_pack, before_md, before_report = (
+            pack_path.read_bytes(), md_path.read_bytes(), report_path.read_bytes())
+        arm, state = self._create_missing_facts_after_observation()
+        arm()
+        payload = self._refresh_in_process(plan)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(
+            (self.prof_dir / "论文分析" / "AAAA1111.md.facts.json").read_bytes(),
+            state["bytes"])
+        self.assertEqual(pack_path.read_bytes(), before_pack)
+        self.assertEqual(md_path.read_bytes(), before_md)
+        self.assertEqual(report_path.read_bytes(), before_report)
+        self.assertFalse(
+            (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
 
     def test_source_drift_after_lease_returns_needs_refresh(self):
         self.build_accepted_state()
