@@ -1,10 +1,10 @@
 # U5：实际分析级别贯通与诚实统计执行计划
 
-- Requirement revision：2026-10-19、2026-10-20 用户确认 U1/U5 独立设计与计划维护；2026-10-21 用户在只读复核后授权修订执行与测试计划，明确冻结消费边界、完整共同观察比较、写前旧态合法性三个机制。范围仍为 U5，不增加业务功能。
-- Plan revision：`u5-analysis-level-r5`。本正文整体取代 r4；历史正文、评论中的矛盾选择不并行生效。
-- Proposed review status：pending。作者未授予 APPROVED/PASS；r4 的计划审核及 t5/更早测试记录仅说明各自所审版本，不证明本修订或当前实现满足以下决定。
-- 核对基线：PR #106 分支 `plan/u5-analysis-level-redesign`，head `d4e096f105805dfefbf2f4d883fc4919d49fce76`；r4 blob `38c71e8d4ec3105b639738086daccfdd360d9d6c`、t5 blob `6243873fb70d3c64e9db4773f04128f6878020be`。2026-10-21 重新读取；该分支已含产品/测试实现，本轮只改两份计划，不改实现、安装、运行测试、评论或合并。
-- 唯一执行计划为本文；配套唯一[测试计划 t6](test-plan.md)由本轮同步修订。本文冻结实现机制与正式观察入口，具体 fixture/recipe 属于测试计划。私有载体/字段为本方案内部实现决定，不升级为公开业务 contract。
+- Requirement revision：2026-10-19、2026-10-20 用户确认 U1/U5 独立设计与计划维护；2026-10-21 用户在只读复核后授权修订执行与测试计划，明确冻结消费边界、完整共同观察比较、写前旧态合法性三个机制；本轮进一步要求执行计划明确级别刷新允许修改、必须保留及可以清除的字段。范围仍为 U5，不增加业务功能或测试义务。
+- Plan revision：`u5-analysis-level-r6`。本正文整体取代 r5；历史正文、评论中的矛盾选择不并行生效。
+- Proposed review status：pending。作者未授予 APPROVED/PASS；[r5 的历史计划审核](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6315550073)、r4 的计划审核及 t5/更早测试记录仅说明各自所审版本，不证明本修订或当前实现满足以下决定。
+- 核对基线：PR #106 分支 `plan/u5-analysis-level-redesign`，当前 head `8fa52a408bd951312d707c2df9a108501b702cde`，基于 main `1d8f138dbde071e9e4bc17be08467541b99f9a6e`，已包含 U1 正文归属记录；本次修订前 r5 blob 为 `5a6180b1332f2fba01bdd286fb9a52b3bfb361d3`。r5 原始事实基线 `d4e096f105805dfefbf2f4d883fc4919d49fce76` 保留用于未变决定的历史定位。2026-10-21 重新读取；本轮只改本文，不修改产品、测试计划或测试代码，不安装、运行测试、评论或合并。
+- 唯一执行计划为本文；配套唯一[测试计划 t6](test-plan.md)保留其当前版本及待准备状态，本轮未改写测试义务。本文冻结实现决定与正式观察入口，具体测试准备及步骤属于测试计划。私有载体/字段为本方案内部实现决定，不升级为公开业务 contract。
 
 ## 1. 目标、非目标及完成含义
 
@@ -16,7 +16,7 @@
 
 ## 2. 已核实现实及依据
 
-以下描述性事实均指上述 `d4e096f`，路径相对仓库；规范要求来自本轮授权、既有正式契约与本节末规则，不能以当前缺陷改写要求。
+下表原有事实指 r5 基线 `d4e096f`，新增的刷新字段事实明确使用当前基线 `8fa52a4`，路径相对仓库。规范要求来自本轮授权、既有正式契约与本节末规则，不能以当前缺陷改写要求。
 
 | 决定 | 已读事实 → 修改 owner/落点 |
 |---|---|
@@ -26,8 +26,11 @@
 | 已接受业务基线必须来自原冻结值 | `_stage2_finalize.cmd_stage2_finalize` 在 `stage2_accept_managed_body` 之后调用 `stage2_preflight_metadata`；后者调用 observed_source_projection 与 stat/hash。该现实不能证明本轮消费。改为写前组装候选元数据，源字段只投影已核验的冻结记录，成功提交时不再读源。 |
 | 旧态合法性先于所有受管写入 | finalize/refresh 在 managed write 后才检查部分 validator；`stage2_old_managed_render` 不覆盖完整 cache/validator 生命周期。`_stage2_validation.stage2_require_recorded_validation` 已检查 schema、round、phase、pending、correction 范围；`stage2_validator_accepts` 是 terminal 快速复用政策。抽出合法性基础层给接受/校验使用，terminal 限制另留。 |
 | 字节/统计/规范化的正确部分保留 | `_contact_base.py`、`_stage2_render.py`、`_contact_pack.py` 与 runner `contact_state.py` 已有无损 I/O、成员投影和 factory 注入落点；不改统计范围。两个 package analyzer 及主 `.apm/skills/professor-contact/SKILL.md` 必须同步新消费顺序。lease 仍归 `stage2_chatgpt_handoff.py`。 |
+| 刷新明确按字段更新，正文与归属记录由同一渲染器生成 | 当前 `8fa52a4` 的普通接受已保存 `cache.render[ANALYSIS_MD].sha256/ownership/u1`；刷新仍将该记录替换为仅含 `sha256` 的对象。`render_analysis_md` 丢弃渲染器返回的归属记录，校验入口则无条件要求归属记录与实际正文相符。§4.5 明确刷新写入范围，由原渲染器提供正文与归属记录，接受入口负责合并保存，校验入口继续检查；不能在校验器中补造丢失记录。 |
 
-以上源码的固定版本入口：[scripts](https://github.com/ScholarWorkflow/professor-contact/tree/d4e096f105805dfefbf2f4d883fc4919d49fce76/.apm/skills/professor-contact/scripts)、[Codex analyzer](https://github.com/ScholarWorkflow/professor-contact/blob/d4e096f105805dfefbf2f4d883fc4919d49fce76/packages/professor-contact-codex/.apm/agents/professor-contact-analyzer.agent.md)、[OpenCode analyzer](https://github.com/ScholarWorkflow/professor-contact/blob/d4e096f105805dfefbf2f4d883fc4919d49fce76/packages/professor-contact-opencode/.apm/agents/professor-contact-analyzer.agent.md)。
+r5 原始源码的固定版本入口：[scripts](https://github.com/ScholarWorkflow/professor-contact/tree/d4e096f105805dfefbf2f4d883fc4919d49fce76/.apm/skills/professor-contact/scripts)、[Codex analyzer](https://github.com/ScholarWorkflow/professor-contact/blob/d4e096f105805dfefbf2f4d883fc4919d49fce76/packages/professor-contact-codex/.apm/agents/professor-contact-analyzer.agent.md)、[OpenCode analyzer](https://github.com/ScholarWorkflow/professor-contact/blob/d4e096f105805dfefbf2f4d883fc4919d49fce76/packages/professor-contact-opencode/.apm/agents/professor-contact-analyzer.agent.md)。
+
+当前刷新字段决定的固定来源（均为 `8fa52a4`）：[普通接受保存正文摘要、归属和展示标记](https://github.com/ScholarWorkflow/professor-contact/blob/8fa52a408bd951312d707c2df9a108501b702cde/.apm/skills/professor-contact/scripts/_stage2_finalize.py#L1280-L1285)、[刷新整项替换导致字段丢失](https://github.com/ScholarWorkflow/professor-contact/blob/8fa52a408bd951312d707c2df9a108501b702cde/.apm/skills/professor-contact/scripts/_stage2_finalize.py#L1626-L1668)、[正文包装入口丢弃归属返回值](https://github.com/ScholarWorkflow/professor-contact/blob/8fa52a408bd951312d707c2df9a108501b702cde/.apm/skills/professor-contact/scripts/_stage2_render.py#L982-L985)、[校验强制要求归属记录](https://github.com/ScholarWorkflow/professor-contact/blob/8fa52a408bd951312d707c2df9a108501b702cde/.apm/skills/professor-contact/scripts/_stage2_validation.py#L215-L238)、[U1 展示标记缺失或旧版转普通处理](https://github.com/ScholarWorkflow/professor-contact/blob/8fa52a408bd951312d707c2df9a108501b702cde/.apm/skills/professor-contact/scripts/_stage2_preflight.py#L726-L739)、[级别刷新元数据只更新级别投影和统计版本](https://github.com/ScholarWorkflow/professor-contact/blob/8fa52a408bd951312d707c2df9a108501b702cde/.apm/skills/professor-contact/scripts/_stage2_preflight.py#L511-L537)。
 
 历史 t5 [G2/G3 正式通过记录](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6314274110)适用产品 `96a1b11`、文档 `d4e096f`，不由本轮抹除，也不证明新增机制。
 
@@ -138,6 +141,33 @@ hash 对实际 body bytes 计算。算法仍为现有 SHA-256；LF 原文件无�
 
 若比较等价且旧绑定合法，保留旧实际 body bytes 和真实 SHA；无需变头则不写文件，需要绑定候选时只替换必要机器头并拼接原 body bytes，写入不得再做 text-mode 换行转换。若正文变化则按既有人工保护写候选字节。用同一 Stage 2 专用无损 primitive/显式选项贯穿各消费者，不顺带重构所有 stage 的 I/O，也不引入第二 renderer。
 
+### 4.5 级别刷新允许修改、保留和清除的字段
+
+本节限定 `stage2-refresh-level` 的写入范围。刷新读取已接受的业务数据，只接受当前合法分析级别和统计展示；从原始旧包、缓存及正文记录的隔离副本按下表修改。未列为可更新或可清除的字段必须保留，不能用一个字段不齐的新对象替换整条记录。
+
+其中 `ANALYSIS_MD` 指 `套磁候选分析.md`；`ownership` 是既有渲染器生成的正文归属记录，保存文字片段所属方向及可修订范围；`u1` 是原证据展示版本及完成时间记录。
+
+| 字段或文件 | 刷新成功时的处理 | 不允许的副作用 |
+|---|---|---|
+| `papers[item_key].analysis_level` | 仅对已存在论文写入本次共同资格判断确认的 `fulltext/abstract/null`。 | 不新增或删除论文，不改变标题、来源、引用资格及其他论文字段；没有取得对应当前判定的论文不能因 `get` 缺省而被改成 null。 |
+| `cache.preflight.directions[direction_id].level_projection` | 在原方向、原消费集合上同步本次确认的级别。 | 不扩大方向或论文集合，不用当前来源重新生成业务基线。 |
+| `cache.preflight.statistics_version` | 当前统计正文已实际接受后，记录本版统计格式。 | 不借此升级缺失或过期的业务来源版本；需要重建业务基线时退普通处理。 |
+| `generated_at` | 随本次成功接受的数据包更新为本次时间。 | 不据此宣布重新分析、重新归属或重新校验。 |
+| 受管正文及文件头 | 用既有渲染器产生候选，正文只接受级别统计带来的展示变化；按 §4.4 决定保留旧原始字节或写入候选。文件头只同步所采用正文的摘要及合法状态绑定。 | 不修改已接受的叙事、成员、引用内容，不借修头恢复失效旧态，不归一化保留的旧正文。 |
+| `cache.render[ANALYSIS_MD].sha256` | 保存最终采用的实际正文摘要。 | 不采用未写入候选的摘要。 |
+| `cache.render[ANALYSIS_MD].ownership` | 保留旧正文时保留与之绑定的合法旧归属记录；接受新正文时采用同一次既有渲染器返回的归属记录，保存其 `version/line_count/fragments`，并将 `body_sha256` 绑定最终正文。 | 不删除记录，不把旧片段坐标直接套到新正文，不从 Markdown 标题或文字反推归属，不在校验入口补造。 |
+| `cache.render[ANALYSIS_MD].u1` | 原样保留整个既有对象，包括 `display_version` 和 `completed_at`。 | 不删除、不重置完成时间、不借纯级别刷新创建或升级展示标记。标记缺失或版本需升级时走既有普通处理。 |
+| `validator` | 原来没有记录时继续没有。正文未变且完整旧绑定合法时，保留原 `schema/round/phase/pending/results/correction_applied_direction_ids/validation_sha256/render_sha256` 等内容，只更新 `pack_sha256` 以绑定最终包。正文实变时按 §4.3 清除旧校验结论，保留原报告，等待原校验流程记录新结论。 | 不凭刷新生成通过结论，不重置或伪造轮次；失效旧态先拒绝，不能清除错误记录后继续刷新。 |
+| `directions`、`resolved_directions`、其余论文字段及 `cache.preflight` 业务字段 | 逐字段保留原已接受值，包括成员、引用范围、叙事、方向指纹、候选全集守卫、`source_projection/consumed_sources/pdf_sources/artifact_guards`、方向解析、时效读视图及原消费关联。 | 不替换原业务基线，不清空来源或修改模型结果。 |
+| 其他 `cache` 项、其他正文缓存项及本条正文记录中未列出的字段 | 保留原值，按字段负责组件合并。 | 不把 `cache.render[ANALYSIS_MD]` 整项替换为仅有 `sha256` 的对象；单独保留别处的 `cache.u1_render` 不能代替实际正文记录。 |
+| 分析源、`_index.json`、`_resolved_directions.json`、`_freshness_cache.json`、原校验报告 | 刷新只读；保持文件原始内容和存在性。 | 不为完成刷新重写来源、方向解析、时效缓存或历史报告。 |
+
+职责和顺序：正文与归属记录仍由 `_stage2_render.py` 的既有 `render_analysis_document` 一起产生；`_stage2_finalize.py` 选择最终正文、按表合并记录并接受；`_stage2_validation.py` 继续检查记录与正文的绑定，不替上游修复产物。所有旧态判断、候选正文、对应归属记录、缓存合并及旧校验是否保留的决定必须在首个受管写入前完成。
+
+合法刷新要求旧正文归属记录可用且绑定当前实际正文；缺失、结构错误或绑定失效时沿既有错误/退普通处理路径零业务写入退出。正文实变也不能用新归属记录掩盖失效旧态。采用旧正文时不使用仅与未接受候选绑定的新记录；采用新正文时使用该次渲染产生的记录，不由接受入口自行重算片段归属。
+
+采用“旧记录按字段合并＋原渲染器同时返回正文和归属”的方案。只改摘要会留下旧正文的归属，整项重建为少量字段会丢失其他负责组件的数据；让校验器从正文补造记录会改变其职责。完整归属已由现有渲染器提供，无需另建恢复程序。正式观察入口保持为受管文件、已接受数据包及既有 `stage2-record-validation`；字段细则不自动转化为额外测试清单。
+
 ## 5. 完整执行顺序与并发边界
 
 ### 5.1 preflight 与普通 process 接受
@@ -151,11 +181,13 @@ hash 对实际 body bytes 计算。算法仍为现有 SHA-256；LF 原文件无�
 
 ### 5.2 专用级别刷新
 
+本节的所有字段写入以 §4.5 为准；“更新展示”不允许整项替换正文缓存或丢失其他负责组件保存的字段。
+
 1. 使用持久包及当前有限观察，不读取临时 facts/companion、不运行模型/Zotero、不重签 resolved proof。预检 payload 仍只代表分流决定，不能当作锁内通过。
 2. 沿现有 acquire_local_lease(professor_dir, 唯一 token, verify_plan=False)；busy 零业务写入。finally 在所有退出路径释放，释放失败如实报告；不伪造 handoff/_latest、另建锁/journal。
 3. 获锁后重读 A/B、目标/Stage1 与完整 O，验证 payload 目标/事务身份和 B 版本/覆盖。先完成 §4.3 全部旧态分类，失效旧态无论正文是否变化均零写入退出；合法 pending 可以刷新，不能要求 terminal。随后按同一完整契约 B→O 核对 E、D、resolved/freshness 与全部既有业务条件。变/不可比较退 needs_refresh 并重预检 process；不通过修头/清认证补造 B。
-4. 隔离候选仅改当前 level、统计接受元数据及必要 pack/render 绑定；真实渲染并在内存中比较正文、决定保留或过期 validator。保留成员/assignment/原模型结果/resolved proof/无关缓存；缺可信渲染字段退 process。refresh 不写 freshness cache，不更新其业务基线。
-5. 渲染后且首次正式写前，再跑完整 O 与 B 比较（包含候选全集 evidence_guards、missing→exists、freshness）；另外比较锁内已见的 level，若再次变化也退回重预检。再核对 A 的原始接受文件与缓存快照、旧态合法性。不能只重查逐方向 analysis stat。所有检查完成后按普通有限提交顺序写 Markdown/pack，复用 B 原业务字段，只更新 level/statistics/render 与合法 validator 的必要绑定；任何逻辑拒绝零业务写入。
+4. 从旧包、旧缓存和该正文记录的隔离副本按 §4.5 逐字段生成候选。调用既有 `render_analysis_document` 同时取得正文与归属记录；先决定采用旧原始正文还是新正文，再准备与所采用正文对应的归属记录、摘要及 validator 处理。完整旧态、候选数据和全部写前检查通过后才写入；不得调用只返回正文、丢弃归属记录的包装入口来完成接受。成员、原模型结果、方向解析、来源和无关缓存保持；缺少合法归属记录或需要 U1 展示升级时退 process，零业务写入。refresh 不写 freshness cache，不更新其业务基线。
+5. 渲染后且首次正式写前，再跑完整 O 与 B 比较（包含候选全集 evidence_guards、missing→exists、freshness）；同时比较锁内已见的 level，若再次变化也退回重预检。再核对 A 的原始接受文件与缓存快照、旧态合法性。不能只重查逐方向 analysis stat。所有检查完成后按普通有限提交顺序写 Markdown/pack，使用 §4.5 已在内存中确定的完整正文记录及字段变化，复用 B 原业务字段；任何逻辑拒绝零业务写入。
 
 教授 lease 只序列化遵守该 lease 的本地 writer/importer，不能冻结外部 PDF、编辑器或远程 Zotero。上述重读和写前检查保证既有 stat/摘要契约下可观察的输入一致，不承诺任意外部并发修改的文件系统快照，也不以此增设全局锁。检查后发生的外部变动由下次既有 guard 拒绝复用；不把“当前已验证”写成永久来源认证。
 
@@ -167,8 +199,8 @@ Markdown 与 pack 是多文件写入，不宣称一次事务原子性。写入�
 2. preflight owner 抽取完整 observe/compare，明确 E/D/存在标记与 freshness 读视图；新私有消费版本使缺冻结关联的旧 B 保守 process。保留公开 schema 2、v1 迁移及统计语义，不批量重写旧包。
 3. resolve/plan owner 封存准确输入/复用身份；analyzer 准确读取计划、自身判断并产生聚合结果，runner 按最终文件集合关联封存；保留一次 unknown_reference_id 受限修复版本；finalize 接受缺段/错轮/输入摘要不匹配时 fail closed。现有 resolve_run_id、用户 accepted policy 不被 companion 取代。测试 fixture 也须经实际 prepare/plan 接线，不手造接受证明。
 4. validation owner 抽出原 schema/round/phase/pending/results/范围合法性层，finalize/preflight/refresh/refine 共用；terminal 快速复用层保留在 preflight。无损 I/O 原语继续贯通 managed/validation/preflight，不顺带重构其他 stage。
-5. finalize owner 拆开 candidate generation、全部 validation、commit：旧快照→旧态分类→本轮关联及完整 F→O→隔离候选/渲染→完整写前复查→有限提交。元数据构造改为冻结值纯投影，移除写后采样。refresh 走 B→O、同一合法性及写前复核，只更新 level/display。
-6. 产品 owner 完成以上依赖后，独立实现审核检查实际调用接线与已批准行为；测试 owner 按 [t6](test-plan.md)准备受影响步骤。本文与 t6 的新机制/recipe 尚未实现或执行，旧绿结果不得覆盖；不因文档变更重跑 OCR/模型或完整业务回归。
+5. finalize owner 拆开 candidate generation、全部 validation、commit：旧快照→旧态分类→本轮关联及完整 F→O→隔离候选/渲染→完整写前复查→有限提交。元数据构造改为冻结值纯投影，移除写后采样。refresh 走 B→O、同一合法性及写前复核，按 §4.5 更新字段；接收既有渲染器的正文与归属记录，保留展示标记及非本次负责字段。
+6. 产品 owner 完成以上依赖后，独立实现审核检查实际调用接线与已批准行为；测试 owner 按 [t6](test-plan.md)及实际受影响行为准备步骤。本轮的字段说明不自动增加测试用例或执行要求。本文新增决定及 t6 的新入口尚未实现或执行，旧通过结果不得扩大覆盖；不因文档变更重跑 OCR/模型或完整业务回归。
 
 公开 pack schema、facts 业务字段、模型结果 schema 均不改；私有 companion version 与 cache.preflight version 仅限内部。旧/中断/丢失事务材料不能被当前磁盘补造，重新准备本轮，保留历史产物与报告。正常有效分析与可复用模型结果按其原输入身份校验后使用，不能无依据把旧结果绑定到新输入；这不要求一律重跑。
 
@@ -177,11 +209,20 @@ Markdown 与 pack 是多文件写入，不宣称一次事务原子性。写入�
 - 保持：scope、成员/引用身份、resolved 接受政策、facts/future-work 资格、模型复用、人工保护、lease、校验轮次和既有错误通道。
 - 纠正：矛盾 null 不再被接受；合法新成功不被旧包压制；完整守卫覆盖普通 process、锁内刷新及正式写前；旧态全检查前置、不能自动续认；真实换行/正文差异不能被吞掉。
 - 明确限制：离线源观测不是远程附件查询；stat 不是无限强内容认证；协作 writer lease 不是外部文件锁；单文件原子写不是跨文件事务。来源 owner 未反映失效时拒绝冲突，不擅建状态认证机制。实现必须暴露这些真实限制而非承诺绝对不存在并发窗口。
-- 待核实项：r5 是设计候选，当前产品仍存在已定位分叉。共用谓词接线、字节边界和所有入口行为须由后续实现/独立审核核实；本文不声明无风险或全部通过。
+- 待核实项：r6 是待审候选，当前产品仍存在已定位分叉，包括刷新丢失正文归属记录。共用判断接线、字节边界和受影响入口行为须由后续实现审核核实；本文不声明实现或测试通过。
 - 不扩大：不做完整业务回归/边界矩阵、来源过程认证、全教授扫描或新框架。是否复用既有测试结果由测试 owner 根据行为变化判断，不因文档 SHA 重跑无关项目。
 
-## 8. r4 → r5 取代记录、审核与下一负责人
+## 8. r4 → r5 取代记录与历史交接
 
-本轮将“消费后完整比较”从抽象要求改为首次 freeze owner/时点、准确材料供应、facts/resolve/plan/jobs/results companion 关联及成功提交原冻结值的单一机制；将候选证据全集 E 与方向实际消费集 D、freshness/resolved 及 missing 标记纳入同一个 observe/compare；旧态全部合法性及继承决定前置于任何受管写入。取代 r4 模糊的“成功后记录实际消费基线”顺序，不能保留写后重新采样。§4.1 资格与 null 转移、§4.4 真实字节、成员统计、U1 独立与失败/I/O 边界保持。
+r5 将“消费后完整比较”从抽象要求改为首次 freeze owner/时点、准确材料供应、facts/resolve/plan/jobs/results companion 关联及成功提交原冻结值的单一机制；将候选证据全集 E 与方向实际消费集 D、freshness/resolved 及 missing 标记纳入同一个 observe/compare；旧态全部合法性及继承决定前置于任何受管写入。取代 r4 模糊的“成功后记录实际消费基线”顺序，不能保留写后重新采样。§4.1 资格与 null 转移、§4.4 真实字节、成员统计、U1 独立与失败/I/O 边界保持。
 
-重新打开受影响 P1–P4 的事实/机制/并发/生命周期/可执行性判断，旧 r4 独立 APPROVED 只属于旧版本；t5 的 55/1085 绿只属于当时样例。独立 reviewer 审核本完整 r5 与 t6，作者状态仍 pending；不授予自己 PASS/APPROVED。审核后产品 owner 按依赖实施，测试工程师准备受影响 recipe，再由执行工程师在另有执行授权时运行。当前仅文档修订，不代表产品修复、测试关口或合并批准。
+r5 当时重新打开受影响 P1–P4 的事实、并发、生命周期和可执行性判断；旧 r4 独立 APPROVED 只属于旧版本，t5 的 55/1085 通过只属于当时样例。[r5 后续正式审核](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6315550073)的对象和源码基线按该记录保留。本轮 r6 的变化及下一负责人见 §9，不将历史批准扩大到新决定。
+
+## 9. r5 → r6 修订范围与交接
+
+- 授权及触发事实：2026-10-21 用户要求明确刷新具体修改哪些属性。当前分支已加入正文归属记录及其校验要求，r5 仅写“更新展示、保留无关缓存”，没有明确正文记录内部各字段的处理；现有刷新整项替换确实会删去后续校验所需字段。属于刷新方案说明不足及现有实现问题，不能仅交由测试增加反例处理。
+- 最小修改：§2 补当前源码事实；§4.5 给出更新、保留、清除及只读范围；§5.2、§6 同步正文和归属记录的生成、合并、写前判断顺序。只清除按原规则失效的校验结论，原报告保留；原字段归属及校验职责保持。
+- 受影响决定和关口：P1 核对加入 U1 后的字段事实；P2 明确原渲染器与接受入口分工；P3 检查合法刷新后的正文归属、旧校验继承及缓存保留；P4 补具体字段和写入顺序。复核限定于这些变化和直接影响。
+- 未变内容：来源资格、首次冻结、输入结果关联、候选全集与实际消费范围、写锁、原两轮校验和原始字节要求沿用 r5。r5 历史审核及 t5 有效结果按各自版本保留；本次不据文档变更重开无关检查，也不自行增加“首次修复夹带业务改写”等测试要求。
+- 状态及下一负责人：本文件为 `u5-analysis-level-r6` 待审候选。计划审核者核对以上受影响决定；产品负责人按获批决定修改刷新字段处理，测试负责人依据现有必测范围和实际影响落实步骤。本轮只提交执行计划文字，不代表产品已修复、测试已执行或合并已获批准。
+
