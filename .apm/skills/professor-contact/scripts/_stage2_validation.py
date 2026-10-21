@@ -501,6 +501,72 @@ def build(*, Stage2Context,
                 "blocking_by_direction": blocking_by_direction,
                 "fixed_blocking_by_direction": fixed_blocking_by_direction}
 
+    def stage2_validation_legality(pack: dict | None,
+                                   validator: dict | None = None) -> tuple[dict | None, str | None]:
+        """The schema/round/phase shape shared by every Stage-2 old-state check.
+
+        This is the base legality layer only; render/pack binding and the
+        terminal fast-path policy stay with their callers. ``None`` means a
+        legal absence of a validator. A non-``None`` error means the recorded
+        container is malformed and must not be treated as "no validator".
+        """
+        if validator is None:
+            validator = pack.get("validator") if isinstance(pack, dict) else None
+        if validator is None:
+            return None, None
+        if not isinstance(validator, dict) or validator.get("schema") != 2:
+            return None, "validator_schema"
+        recorded_round = validator.get("round")
+        if isinstance(recorded_round, bool) or recorded_round not in (1, 2):
+            return None, "validator_round"
+        phase = validator.get("phase")
+        if phase not in ("needs_correction", "awaiting_second_validation", "terminal"):
+            return None, "validator_phase"
+        pending = validator.get("pending")
+        results = validator.get("results")
+        if not isinstance(pending, dict) or not isinstance(results, dict):
+            return None, "validator_state"
+        allowed = {direction_machine_id(direction)
+                   for direction in (pack or {}).get("directions") or []
+                   if isinstance(direction, dict)}
+        for did, issues in pending.items():
+            if did not in allowed or not isinstance(issues, list) or not issues:
+                return None, "validator_pending"
+        for did, row in results.items():
+            if did not in allowed or not isinstance(row, dict):
+                return None, "validator_results"
+            if row.get("result") not in ("pass", "skipped", "needs_correction",
+                                         "fail_after_2_rounds"):
+                return None, "validator_result_value"
+            row_round = row.get("rounds")
+            if isinstance(row_round, bool) or row_round not in (1, 2):
+                return None, "validator_result_rounds"
+            if not isinstance(row.get("issues"), list):
+                return None, "validator_result_issues"
+        corrected = validator.get("correction_applied_direction_ids")
+        if not isinstance(corrected, list) \
+                or any(not isinstance(did, str) or did not in allowed for did in corrected):
+            return None, "validator_corrections"
+        unresolved = [did for did in pending if did not in set(corrected)]
+        if phase == "needs_correction":
+            if recorded_round != 1 or not pending or not unresolved:
+                return None, "validator_phase_state"
+        elif phase == "awaiting_second_validation":
+            if recorded_round != 1 or not pending or unresolved:
+                return None, "validator_phase_state"
+        else:
+            if recorded_round == 1 and pending:
+                return None, "validator_terminal_pending"
+            if any(row.get("result") == "needs_correction" for row in results.values()):
+                return None, "validator_terminal_result"
+        fixed = validator.get("fixed_blocking")
+        if fixed is not None:
+            if not isinstance(fixed, dict) or any(
+                    not isinstance(did, str) or not isinstance(rows, list)
+                    for did, rows in fixed.items()):
+                return None, "validator_fixed"
+        return validator, None
+
     def stage2_require_recorded_validation(ctx, validation_path: Path) -> tuple[dict, dict, list[str]]:
         """Authorize refinement only from the exact raw report and open recorded findings."""
         pack = ctx.pack if isinstance(ctx.pack, dict) else {}
@@ -1017,6 +1083,7 @@ def build(*, Stage2Context,
         stage2_restore_pack_later_papers=stage2_restore_pack_later_papers,
         stage2_parse_report_location=stage2_parse_report_location,
         stage2_validation_report=stage2_validation_report,
+        stage2_validation_legality=stage2_validation_legality,
         stage2_require_recorded_validation=stage2_require_recorded_validation,
         stage2_pack_matches_facts=stage2_pack_matches_facts,
         stage2_validation_material=stage2_validation_material,
