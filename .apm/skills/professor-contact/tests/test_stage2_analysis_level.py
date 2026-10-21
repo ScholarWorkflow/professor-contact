@@ -1,4 +1,4 @@
-"""U5 actual analysis-level propagation and honest statistics (plan r4).
+"""U5 actual analysis-level propagation and honest statistics (plan r6/t6).
 
 The tests exercise the plan's L1-L6 targets through the same formal entries the
 analyzer uses: facts acceptance, canonical pack merge, the managed renderer, the
@@ -6,10 +6,10 @@ early preflight branch and the level-refresh/managed-write lifecycle. They reuse
 the accepted-state fixture of ``test_stage2_preflight`` instead of rebuilding a
 second Stage-2 universe.
 
-r4 adds three checks that the earlier round did not have: a facts null cannot
-override a known index registration, the lock-internal refresh must re-read the
-same complete business guards, and the managed body is read, hashed and written
-as raw bytes (CRLF is not hidden by universal-newline decoding).
+The r4/t5 rounds added three checks: a facts null cannot override a known index
+registration, the lock-internal refresh must re-read the same complete business
+guards, and the managed body is read, hashed and written as raw bytes. The
+r6/t6 round adds the refresh ownership/u1 field-preservation check.
 """
 
 import contextlib
@@ -853,7 +853,9 @@ class TestLevelRefresh(AnalysisLevelBase):
         self.assertEqual(read_json(plan)["action"], "refresh_level")
         out = parse(self.refresh(plan))
         self.assertEqual(out["status"], "ok", out)
+        self.assertTrue(out["md_written"], out)
         after = self._read_pack()["cache"]["render"][contact_state.ANALYSIS_MD]
+        self.assertNotEqual(after["sha256"], before["sha256"])
         self.assertEqual(after.get("u1"), before["u1"])
         ownership = after.get("ownership")
         self.assertIsInstance(ownership, dict, after)
