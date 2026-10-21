@@ -711,6 +711,33 @@ def build(*, atomic_json,
             self.source_projection = observed_source_projection(
                 self.professor_dir, self.papers.keys())
             self.source_stats = _paper_source_stats(self.papers)
+            self.consumption = None
+            preflight_block = self.facts.get("stage2_preflight")
+            if isinstance(preflight_block, dict):
+                reference = preflight_block.get("consumption")
+                if isinstance(reference, dict):
+                    companion_path = Path(str(reference.get("file") or ""))
+                    companion, companion_error = read_json_file(companion_path)
+                    if companion_error or not isinstance(companion, dict):
+                        fail("invalid_facts",
+                             f"consumption companion unreadable: {companion_path}: "
+                             f"{companion_error}")
+                    if companion.get("schema") != 1 \
+                            or companion.get("professor") != self.professor \
+                            or companion.get("professor_dir") \
+                            != str(self.professor_dir.resolve()):
+                        fail("invalid_facts",
+                             "consumption companion identity does not match this facts file")
+                    if reference.get("run_id") != companion.get("run_id") \
+                            or reference.get("sources_sha256") \
+                            != companion.get("sources_sha256"):
+                        fail("invalid_facts",
+                             "facts consumption reference does not bind the companion")
+                    if companion.get("sources_projection") != self.source_projection:
+                        fail("invalid_facts",
+                             "consumption companion no longer matches the current sources")
+                    self.consumption = companion
+                    self.source_projection = companion["sources_projection"]
             self.sidecar_cache = {}
             self.facts_cache = {}
             self.families = compute_version_families(self.papers)

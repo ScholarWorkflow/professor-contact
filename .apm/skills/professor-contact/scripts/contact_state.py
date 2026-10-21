@@ -771,6 +771,7 @@ def _canonical_under(program_root: Path, value) -> str | None:
 # never builds a second channel or a second copy of any helper.
 _stage2_preflight = _stage2_preflight_module.build(
     fail=fail, soft_exit=soft_exit, emit=emit, read_json_file=read_json_file,
+    atomic_json=atomic_json,
     sha256_obj=sha256_obj, sha256_bytes=sha256_bytes,
     sha256_text=sha256_text, split_frontmatter=split_frontmatter,
     split_frontmatter_bytes=split_frontmatter_bytes,
@@ -823,6 +824,7 @@ stage2_pack_state_fingerprint = _stage2_preflight.stage2_pack_state_fingerprint
 stage2_pack_content_fingerprint = _stage2_preflight.stage2_pack_content_fingerprint
 stage2_validator_accepts = _stage2_preflight.stage2_validator_accepts
 cmd_stage2_preflight = _stage2_preflight.cmd_stage2_preflight
+cmd_stage2_consumption_prepare = _stage2_preflight.cmd_stage2_consumption_prepare
 stage2_plan_bind_preflight = _stage2_preflight.stage2_plan_bind_preflight
 cmd_stage2_plan = _stage2_preflight.cmd_stage2_plan
 
@@ -1791,6 +1793,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="saved stage2-preflight stdout; the plan is bound to the same "
                         "professor-local transaction identity before it emits jobs")
     p.set_defaults(func=lambda a: cmd_stage2_plan(a))
+
+    p = sub.add_parser("stage2-consumption-prepare")
+    p.add_argument("--program-root", required=True)
+    p.add_argument("--professor", required=True)
+    p.add_argument("--target-file", required=True,
+                   help="authoritative professor-local Stage-0 target file")
+    p.add_argument("--preflight-file", required=True,
+                   help="saved stage2-preflight stdout for this transaction")
+    p.add_argument("--run-dir", required=True,
+                   help="temporary transaction directory for stage2-consumption.json")
+    p.set_defaults(func=cmd_stage2_consumption_prepare)
 
     p = sub.add_parser("stage2-preflight")
     p.add_argument("--program-root", required=True)

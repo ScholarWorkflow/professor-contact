@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import types
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -61,7 +62,7 @@ PAPER_ANALYSIS_SCOPES = ("relevant", "all")
 STAGE2_GUARD_KINDS = (("analysis", "analysis_file"), ("future_work", "sidecar_file"),
                       ("facts", "facts_file"), ("pdf", "pdf_file"))
 
-def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
+def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha256_bytes,
           sha256_text, split_frontmatter, split_frontmatter_bytes,
           stage2_validation_legality,
           managed_snapshot, direction_machine_id, facts_direction_id,
@@ -1094,6 +1095,62 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
             "write_needed": bool(jobs),
         })
 
+    def cmd_stage2_consumption_prepare(args) -> None:
+        """Freeze the sources this run will consume before facts are assembled.
+
+        The companion is private to the current temporary transaction; it never
+        becomes a professor-level authority. The facts block may point at it and
+        later finalize can prove its source projection is still the same.
+        """
+        plan, error = read_json_file(Path(args.preflight_file))
+        if error or not isinstance(plan, dict) or plan.get("status") != "ok" \
+                or not isinstance(plan.get("preflight_inputs"), dict):
+            fail("invalid_params",
+                 f"preflight file unreadable or not a preflight payload: {args.preflight_file}")
+        if plan.get("professor") != args.professor:
+            fail("invalid_params", "preflight file professor mismatch")
+        program_root = Path(args.program_root)
+        target = read_stage2_target(Path(args.target_file), program_root, args.professor)
+        if target is None:
+            fail("invalid_params",
+                 "professor has no selected target state; run contact_targets.py resolve first")
+        professor_dir = program_root / str(target.get("professor_dir") or "")
+        snapshot = read_stage1_professor_entry(
+            program_root, professor_dir, args.professor, target)
+        if snapshot is None:
+            fail("invalid_params", "Stage-1 professor snapshot is missing or unreadable")
+        candidate_keys = sorted(stage2_candidate_universe(target, snapshot))
+        projection = observed_source_projection(professor_dir, candidate_keys)
+        sources_sha256 = sha256_obj({
+            "professor": args.professor,
+            "professor_dir": str(professor_dir.resolve()),
+            "preflight_id": plan.get("preflight_id"),
+            "candidate_keys": candidate_keys,
+            "sources_projection": projection,
+        })
+        run_dir = Path(args.run_dir)
+        if not run_dir.is_dir():
+            fail("invalid_params", f"run directory does not exist: {run_dir}")
+        companion = run_dir / "stage2-consumption.json"
+        if companion.exists():
+            fail("invalid_params", f"consumption companion already exists: {companion}")
+        data = {
+            "schema": 1, "version": 1, "run_id": uuid.uuid4().hex,
+            "preflight_id": plan.get("preflight_id"),
+            "professor": args.professor,
+            "professor_dir": str(professor_dir.resolve()),
+            "program_root": str(program_root.resolve()),
+            "candidate_keys": candidate_keys,
+            "sources_projection": projection,
+            "sources_sha256": sources_sha256,
+        }
+        atomic_json(companion, data)
+        emit({"status": "ok", "consumption_file": str(companion),
+              "run_id": data["run_id"], "sources_sha256": sources_sha256,
+              "professor": args.professor,
+              "professor_dir": data["professor_dir"]})
+
+
     return types.SimpleNamespace(
         stage2_preflight_versions=stage2_preflight_versions,
         stage2_preflight_params=stage2_preflight_params,
@@ -1125,6 +1182,7 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
         stage2_pack_content_fingerprint=stage2_pack_content_fingerprint,
         stage2_validator_accepts=stage2_validator_accepts,
         cmd_stage2_preflight=cmd_stage2_preflight,
+        cmd_stage2_consumption_prepare=cmd_stage2_consumption_prepare,
         stage2_plan_bind_preflight=stage2_plan_bind_preflight,
         cmd_stage2_plan=cmd_stage2_plan,
     )
