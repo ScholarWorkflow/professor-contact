@@ -11,7 +11,7 @@
  "totals": {
   "modules": 80,
   "seconds": 430.0,
-  "tests": 1111
+  "tests": 1110
  },
  "shards": [
   {
@@ -549,7 +549,7 @@
      "name": "test_stage2_analysis_level",
      "stage": "stage2",
      "seconds": 18.0,
-     "tests": 75,
+     "tests": 74,
      "signals": {
       "stage2": 96
      }
