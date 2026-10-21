@@ -594,10 +594,13 @@ class TestPreflightBranches(AnalysisLevelBase):
                           for path in sorted((self.root / "results").iterdir())
                           if path.is_file()}
         guards_before = copy.deepcopy(pack["cache"]["preflight"]["directions"])
-        analysis = self.prof_dir / "论文分析" / "AAAA1111.md"
+        # BBBB2222 is shared by both directions, so the accepted narrative covers
+        # every direction this finalize may need; an unrelated "unexpected
+        # direction" result error cannot replace the consumed-source guard.
+        analysis = self.prof_dir / "论文分析" / "BBBB2222.md"
         source_before = analysis.read_bytes()
         index = read_json(index_path)
-        self.assertEqual(index["papers"]["AAAA1111"]["level"], "fulltext")
+        self.assertEqual(index["papers"]["BBBB2222"]["level"], "abstract")
 
         changed = source_before + b"\n<!-- source changed after consumption -->\n"
         analysis.write_bytes(changed)
