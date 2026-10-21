@@ -172,6 +172,51 @@ class AnalysisLevelBase(PreflightBase):
                 return line
         raise AssertionError("statistics header missing")
 
+    # -- consumption transaction helpers -----------------------------------
+
+    def prepare_consumption(self):
+        """Freeze the current sources and bind the companion into facts."""
+        preflight_path = self.save_preflight("consumption-preflight.json")
+        preflight = read_json(preflight_path)
+        run_dir = self.root / "run"
+        run_dir.mkdir()
+        out = parse(run_cli(
+            "stage2-consumption-prepare",
+            "--program-root", self.root, "--professor", PROFESSOR,
+            "--target-file", self.target_file, "--preflight-file", preflight_path,
+            "--run-dir", run_dir))
+        self.assertEqual(out["status"], "ok", out)
+        companion_path = Path(out["consumption_file"])
+        facts = read_json(self.facts_path)
+        block = facts.setdefault("stage2_preflight", {})
+        block["preflight_id"] = preflight["preflight_id"]
+        block["consumption"] = {
+            "file": str(companion_path), "run_id": out["run_id"],
+            "sources_sha256": out["sources_sha256"]}
+        write_json(self.facts_path, facts)
+        self.facts = facts
+        return preflight_path, run_dir, read_json(companion_path)
+
+    def plan_consumption(self, preflight_path, run_dir):
+        out = parse(run_cli(
+            "stage2-plan", "--facts", self.facts_path,
+            "--preflight-file", preflight_path, "--run-dir", run_dir))
+        self.assertEqual(out["status"], "ok", out)
+        return out
+
+    def seal_consumption(self, run_dir):
+        out = parse(run_cli(
+            "stage2-consumption-seal-results", "--run-dir", run_dir,
+            "--results-dir", self.root / "results"))
+        self.assertEqual(out["status"], "ok", out)
+        return out
+
+    def finalize_consumption(self, preflight_path):
+        return parse(run_cli(
+            "stage2-finalize", "--facts", self.facts_path,
+            "--results", self.root / "results",
+            "--preflight-file", preflight_path))
+
 
 class TestFactsLevelContract(AnalysisLevelBase):
     """L1: the facts entry carries the current success-only level, never a guess."""
@@ -349,6 +394,115 @@ class TestFactsLevelContract(AnalysisLevelBase):
         self.assertEqual(papers["EEEE5555"]["analysis_level"], "fulltext")
         self.assertEqual(papers["EEEE5555"]["facts_state"], "unavailable")
         self.assertFalse(papers["EEEE5555"]["pdf_available"])
+
+    def _assert_malformed_index_rejected(self, raw: bytes):
+        preflight_path, _run_dir, _companion = self.prepare_consumption()
+        self.facts["papers"][0]["analysis_level"] = None
+        write_json(self.facts_path, self.facts)
+        index_path = self.prof_dir / "论文分析" / "_index.json"
+        index_path.write_bytes(raw)
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        before_pack = pack_path.read_bytes() if pack_path.exists() else None
+        analysis_path = self.analysis_md()
+        before_md = analysis_path.read_bytes() if analysis_path.exists() else None
+        out = parse(run_cli(
+            "stage2-finalize", "--facts", self.facts_path,
+            "--results", self.root / "results",
+            "--preflight-file", preflight_path))
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "invalid_facts", out)
+        self.assertEqual(pack_path.read_bytes() if pack_path.exists() else None, before_pack)
+        self.assertEqual(analysis_path.read_bytes() if analysis_path.exists() else None,
+                         before_md)
+
+    def test_malformed_index_cannot_be_accepted_as_null(self):
+        self._assert_malformed_index_rejected(b"{broken")
+
+    def test_empty_papers_index_cannot_be_accepted_as_null(self):
+        self._assert_malformed_index_rejected(
+            b'{"schema": 2, "papers": {}, "professor": "x"}')
+
+class TestConsumptionFreeze(AnalysisLevelBase):
+    """L2/L4: a consumed run commits the sources frozen before facts."""
+
+    def test_process_commits_the_frozen_sources(self):
+        preflight_path, run_dir, companion = self.prepare_consumption()
+        plan = self.plan_consumption(preflight_path, run_dir)
+        self.assertTrue(plan["jobs"], plan)
+        self.write_stage2_results()
+        self.seal_consumption(run_dir)
+        out = self.finalize_consumption(preflight_path)
+        self.assertEqual(out["status"], "ok", out)
+        pack = self._read_pack()
+        meta = pack["cache"]["preflight"]
+        self.assertEqual(meta["resolution_evidence_projection"],
+                         companion["sources_projection"])
+        for record in meta["directions"].values():
+            self.assertEqual(record["source_projection"]["index"],
+                             companion["sources_projection"]["index"])
+            for key, value in record["source_projection"]["papers"].items():
+                self.assertEqual(companion["sources_projection"]["papers"][key], value)
+        self.assertEqual(pack["papers"]["AAAA1111"]["analysis_level"], "fulltext")
+        self.assertEqual(pack["papers"]["BBBB2222"]["analysis_level"], "abstract")
+
+    def test_finalize_rejects_a_missing_sealed_result(self):
+        preflight_path, run_dir, _companion = self.prepare_consumption()
+        self.plan_consumption(preflight_path, run_dir)
+        self.write_stage2_results()
+        self.seal_consumption(run_dir)
+        (self.root / "results" / "freshness-DIR00001.json").unlink()
+        out = self.finalize_consumption(preflight_path)
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "invalid_result_json", out)
+        self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
+
+    def test_finalize_rejects_a_companion_from_another_run(self):
+        preflight_path, run_dir, _companion = self.prepare_consumption()
+        self.plan_consumption(preflight_path, run_dir)
+        self.write_stage2_results()
+        self.seal_consumption(run_dir)
+        run2 = self.root / "run2"
+        run2.mkdir()
+        second = parse(run_cli(
+            "stage2-consumption-prepare",
+            "--program-root", self.root, "--professor", PROFESSOR,
+            "--target-file", self.target_file, "--preflight-file", preflight_path,
+            "--run-dir", run2))
+        self.assertEqual(second["status"], "ok", second)
+        facts = read_json(self.facts_path)
+        facts["stage2_preflight"]["consumption"] = {
+            "file": second["consumption_file"], "run_id": second["run_id"],
+            "sources_sha256": second["sources_sha256"]}
+        write_json(self.facts_path, facts)
+        out = self.finalize_consumption(preflight_path)
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "invalid_result_json", out)
+        self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
+
+    def test_process_finalize_rejects_frozen_source_drift(self):
+        self.build_accepted_state()
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        md_path = self.analysis_md()
+        before_pack = pack_path.read_bytes()
+        before_md = md_path.read_bytes()
+        self.facts["directions"][0]["user_note"] = "改成新的合成输入比较目标。"
+        self.target["directions"][0]["user_note"] = "改成新的合成输入比较目标。"
+        self._write_target()
+        write_json(self.facts_path, self.facts)
+        preflight_path, run_dir, _companion = self.prepare_consumption()
+        self.assertEqual(read_json(preflight_path)["action"], "process")
+        plan = self.plan_consumption(preflight_path, run_dir)
+        self.assertTrue(plan["jobs"], plan)
+        self.assertTrue(plan["write_needed"], plan)
+        self.write_stage2_results()
+        self.seal_consumption(run_dir)
+        b_analysis = self.prof_dir / "论文分析" / "BBBB2222.md"
+        b_analysis.write_bytes(b_analysis.read_bytes() + b"\n<!-- frozen source drift -->\n")
+        out = self.finalize_consumption(preflight_path)
+        self.assertEqual(out["status"], "needs_refresh", out)
+        self.assertIn(out["reason_code"], {"preflight_inputs_changed"}, out)
+        self.assertEqual(pack_path.read_bytes(), before_pack)
+        self.assertEqual(md_path.read_bytes(), before_md)
 
 class TestCanonicalMerge(AnalysisLevelBase):
     """L2: one explicit assignment covers fresh/reused/resolved/old merges."""
@@ -779,6 +933,56 @@ class TestLevelRefresh(AnalysisLevelBase):
         self.assertEqual(pack_path.read_bytes(), pack_before)
         self.assertEqual(md_path.read_bytes(), md_before)
 
+    def test_refresh_rejects_an_invalid_old_cache_render_binding(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        pack["cache"]["render"][contact_state.ANALYSIS_MD]["sha256"] = "0" * 64
+        pack["validator"]["pack_sha256"] = \
+            contact_state.stage2_pack_content_fingerprint(pack)
+        self._write_pack(pack)
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        md_path = self.analysis_md()
+        before_pack, before_md = pack_path.read_bytes(), md_path.read_bytes()
+        plan = self.save_preflight("refresh-bad-cache.json")
+        payload = parse(self.refresh(plan))
+        self.assertEqual(payload["status"], "error", payload)
+        self.assertTrue(payload.get("reason_code"), payload)
+        self.assertNotIn(payload.get("reason_code"),
+                         {"invalid_params", "invalid_facts",
+                          "preflight_inputs_changed", "refresh_requires_process",
+                          "stage2_writer_busy", "stage2_managed_write_failed",
+                          "stage2_pack_write_failed"}, payload)
+        self.assertEqual(pack_path.read_bytes(), before_pack)
+        self.assertEqual(md_path.read_bytes(), before_md)
+        self.assertFalse(
+            (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+
+    def test_refresh_rejects_an_invalid_old_validator_pack_binding(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        pack["validator"]["pack_sha256"] = "0" * 64
+        self._write_pack(pack)
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        md_path = self.analysis_md()
+        before_pack, before_md = pack_path.read_bytes(), md_path.read_bytes()
+        plan = self.save_preflight("refresh-bad-pack-binding.json")
+        payload = parse(self.refresh(plan))
+        self.assertEqual(payload["status"], "error", payload)
+        self.assertTrue(payload.get("reason_code"), payload)
+        self.assertNotIn(payload.get("reason_code"),
+                         {"invalid_params", "invalid_facts",
+                          "preflight_inputs_changed", "refresh_requires_process",
+                          "stage2_writer_busy", "stage2_managed_write_failed",
+                          "stage2_pack_write_failed"}, payload)
+        self.assertEqual(pack_path.read_bytes(), before_pack)
+        self.assertEqual(md_path.read_bytes(), before_md)
+        self.assertFalse(
+            (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+
     def test_legacy_statistics_body_is_reaccepted_before_the_marker(self):
         self.build_accepted_state()
         md = self.analysis_md()
@@ -865,6 +1069,21 @@ class TestLevelRefresh(AnalysisLevelBase):
         self.assertEqual(ownership.get("body_sha256"), after["sha256"])
         _, body = split_managed_bytes(self.analysis_md().read_bytes())
         self.assertEqual(after["sha256"], sha256_bytes(body))
+
+    def test_refresh_without_a_validator_stays_unvalidated(self):
+        self.stage2_finalize()
+        self.assertNotIn("validator", self._read_pack())
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        plan = self.save_preflight("refresh-no-validator.json")
+        self.assertEqual(read_json(plan)["action"], "refresh_level")
+        out = parse(self.refresh(plan))
+        self.assertEqual(out["status"], "ok", out)
+        pack = self._read_pack()
+        self.assertNotIn("validator", pack)
+        _, body = split_managed_bytes(self.analysis_md().read_bytes())
+        self.assertEqual(pack["cache"]["render"][contact_state.ANALYSIS_MD]["sha256"],
+                         sha256_bytes(body))
 
     def test_refresh_with_an_illegal_index_level_returns_needs_refresh(self):
         self.build_accepted_state()
