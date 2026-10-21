@@ -712,6 +712,7 @@ def build(*, atomic_json,
                 self.professor_dir, self.papers.keys())
             self.source_stats = _paper_source_stats(self.papers)
             self.consumption = None
+            self.consumption_file = None
             preflight_block = self.facts.get("stage2_preflight")
             if isinstance(preflight_block, dict):
                 reference = preflight_block.get("consumption")
@@ -737,6 +738,7 @@ def build(*, atomic_json,
                         fail("invalid_facts",
                              "consumption companion no longer matches the current sources")
                     self.consumption = companion
+                    self.consumption_file = companion_path
                     self.source_projection = companion["sources_projection"]
             self.sidecar_cache = {}
             self.facts_cache = {}

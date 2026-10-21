@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import types
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -1002,6 +1002,39 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
         return identity, proof_id
 
 
+    def _seal_consumption_plan(ctx, run_dir: Path, proof_id: str,
+                               jobs: list, reuse_list: list) -> dict:
+        """Bind this run's emitted jobs to the frozen consumption companion."""
+        companion_path = getattr(ctx, "consumption_file", None)
+        if not ctx.consumption or not isinstance(companion_path, Path):
+            fail("invalid_params", "facts has no sealed consumption companion")
+        if Path(run_dir).resolve() != companion_path.parent.resolve():
+            fail("invalid_params", "run directory does not own the consumption companion")
+        data, error = read_json_file(companion_path)
+        if error or not isinstance(data, dict):
+            fail("invalid_params", f"consumption companion unreadable: {error}")
+        if data.get("run_id") != ctx.consumption.get("run_id") \
+                or data.get("sources_sha256") != ctx.consumption.get("sources_sha256"):
+            fail("invalid_facts", "consumption companion changed before the plan was sealed")
+        if isinstance(data.get("stage2_plan"), dict):
+            fail("invalid_params", "stage2 plan already sealed for this run")
+        plan_jobs = [{
+            "job_id": job["job_id"], "kind": job["kind"],
+            "direction_id": job["direction_id"],
+            "result_file": job["result_file"],
+            "model_input_sha256": sha256_obj(job.get("model_input")),
+        } for job in jobs]
+        plan = {
+            "preflight_id": proof_id,
+            "jobs": plan_jobs,
+            "reuse": sorted(reuse_list),
+            "sealed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        plan["plan_sha256"] = sha256_obj(plan)
+        data["stage2_plan"] = plan
+        atomic_json(companion_path, data)
+        return plan
+
     def cmd_stage2_plan(args) -> None:
         ctx = Stage2Context(Path(args.facts))
         identity, proof_id = stage2_plan_bind_preflight(ctx, getattr(args, "preflight_file", None))
@@ -1076,6 +1109,8 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
                                "translation_zh": truncate(g.get("translation_zh"), 200)}
                               for g in plan["ranked"]],
                      "rules": "text 里用 {{P:KEY}} 引方向论文、{{L:KEY}} 引后续论文、{{G:GAPID}} 引 future work；refs 必须与占位符一一对应（集合相等）；叙事不得断言 gap_status（状态由 runner 渲染的 freshness 卡承载）；不得把未在 papers/later_papers/gaps 清单里的 ID 写进 refs；每个 positioning block 必须提供 concrete_object、input_example、output_example 三个具体例子字段，且只能依据对应 papers/gaps"}})
+        if getattr(args, "run_dir", None):
+            _seal_consumption_plan(ctx, Path(args.run_dir), proof_id, jobs, reuse_list)
         emit({
             "status": "ok",
             "professor": ctx.professor,
@@ -1094,6 +1129,45 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
             "jobs": jobs,
             "write_needed": bool(jobs),
         })
+
+    def cmd_stage2_consumption_seal_results(args) -> None:
+        """Seal the complete aggregated result files for the sealed stage2 plan."""
+        run_dir = Path(args.run_dir)
+        companion_path = run_dir / "stage2-consumption.json"
+        data, error = read_json_file(companion_path)
+        if error or not isinstance(data, dict):
+            fail("invalid_params", f"consumption companion unreadable: {error}")
+        plan = data.get("stage2_plan")
+        if not isinstance(plan, dict) or not isinstance(plan.get("jobs"), list):
+            fail("invalid_params", "stage2 plan is not sealed for this run")
+        results_dir = Path(args.results_dir)
+        if not results_dir.is_dir():
+            fail("invalid_result_json", f"results directory does not exist: {results_dir}")
+        if isinstance(data.get("results"), dict):
+            fail("invalid_params", "results already sealed for this run")
+        files = {}
+        for job in plan["jobs"]:
+            filename = job.get("result_file")
+            if not isinstance(filename, str) or not filename:
+                fail("invalid_params", "sealed job has no result_file")
+            path = results_dir / filename
+            try:
+                raw = path.read_bytes()
+            except OSError as exc:
+                fail("invalid_result_json", f"sealed result file missing: {path}: {exc}")
+            digest = sha256_bytes(raw)
+            entry = files.setdefault(filename, {"sha256": digest, "bytes": len(raw),
+                                                "jobs": [], "directions": []})
+            if entry["sha256"] != digest:
+                fail("invalid_result_json", f"result file changed while sealing: {path}")
+            entry["jobs"].append(job["job_id"])
+            if job.get("direction_id") not in entry["directions"]:
+                entry["directions"].append(job["direction_id"])
+        data["results"] = {"revision": 0, "files": files,
+                           "sealed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        atomic_json(companion_path, data)
+        emit({"status": "ok", "consumption_file": str(companion_path),
+              "revision": 0, "files": sorted(files)})
 
     def cmd_stage2_consumption_prepare(args) -> None:
         """Freeze the sources this run will consume before facts are assembled.
@@ -1183,6 +1257,7 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
         stage2_validator_accepts=stage2_validator_accepts,
         cmd_stage2_preflight=cmd_stage2_preflight,
         cmd_stage2_consumption_prepare=cmd_stage2_consumption_prepare,
+        cmd_stage2_consumption_seal_results=cmd_stage2_consumption_seal_results,
         stage2_plan_bind_preflight=stage2_plan_bind_preflight,
         cmd_stage2_plan=cmd_stage2_plan,
     )

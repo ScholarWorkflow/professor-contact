@@ -604,6 +604,39 @@ def build(*, Stage2Context,
                 "new_sha256": md_result.get("new_sha256")}
 
 
+    def stage2_validate_consumption_results(ctx, results_dir: Path) -> None:
+        """Require finalize to consume the exact result files sealed for this run."""
+        companion = getattr(ctx, "consumption", None)
+        if not companion:
+            return
+        plan = companion.get("stage2_plan")
+        if not isinstance(plan, dict):
+            fail("invalid_result_json",
+                 "the facts reference a consumption companion without a sealed stage2 plan")
+        sealed = companion.get("results")
+        if not isinstance(sealed, dict):
+            if plan.get("jobs"):
+                fail("invalid_result_json",
+                     "the consumption companion has jobs but no sealed result set")
+            return
+        if sealed.get("revision") not in (0, 1):
+            fail("invalid_result_json", "sealed result revision is not supported")
+        files = sealed.get("files")
+        if not isinstance(files, dict):
+            fail("invalid_result_json", "sealed result file map is malformed")
+        for filename, entry in files.items():
+            if not isinstance(filename, str) or not isinstance(entry, dict):
+                fail("invalid_result_json", "sealed result entry is malformed")
+            path = results_dir / filename
+            try:
+                raw = path.read_bytes()
+            except OSError as exc:
+                fail("invalid_result_json",
+                     f"sealed result file is missing from the results directory: {path}: {exc}")
+            if sha256_bytes(raw) != entry.get("sha256"):
+                fail("invalid_result_json",
+                     f"sealed result file changed after sealing: {path}")
+
     def cmd_stage2_finalize(args) -> None:
         ctx = Stage2Context(Path(args.facts))
         preflight_plan, preflight_target, preflight_snapshot = \
@@ -614,6 +647,7 @@ def build(*, Stage2Context,
         old_pack = copy.deepcopy(ctx.pack) if isinstance(ctx.pack, dict) else None
         old_render = ((old_pack or {}).get("cache") or {}).get("render", {})
         results_dir = Path(args.results)
+        stage2_validate_consumption_results(ctx, results_dir)
         decision = None
         if getattr(args, "decision_file", None):
             decision_data, error = read_json_file(Path(args.decision_file))

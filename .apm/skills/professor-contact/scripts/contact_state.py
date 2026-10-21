@@ -825,6 +825,7 @@ stage2_pack_content_fingerprint = _stage2_preflight.stage2_pack_content_fingerpr
 stage2_validator_accepts = _stage2_preflight.stage2_validator_accepts
 cmd_stage2_preflight = _stage2_preflight.cmd_stage2_preflight
 cmd_stage2_consumption_prepare = _stage2_preflight.cmd_stage2_consumption_prepare
+cmd_stage2_consumption_seal_results = _stage2_preflight.cmd_stage2_consumption_seal_results
 stage2_plan_bind_preflight = _stage2_preflight.stage2_plan_bind_preflight
 cmd_stage2_plan = _stage2_preflight.cmd_stage2_plan
 
@@ -1792,7 +1793,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--preflight-file", required=True,
                    help="saved stage2-preflight stdout; the plan is bound to the same "
                         "professor-local transaction identity before it emits jobs")
+    p.add_argument("--run-dir",
+                   help="optional temporary transaction directory; seals the emitted "
+                        "jobs into the consumption companion when facts reference it")
     p.set_defaults(func=lambda a: cmd_stage2_plan(a))
+
+    p = sub.add_parser("stage2-consumption-seal-results")
+    p.add_argument("--run-dir", required=True)
+    p.add_argument("--results-dir", required=True)
+    p.set_defaults(func=cmd_stage2_consumption_seal_results)
 
     p = sub.add_parser("stage2-consumption-prepare")
     p.add_argument("--program-root", required=True)
