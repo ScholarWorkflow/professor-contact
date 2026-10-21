@@ -2,7 +2,7 @@
 
 - Test plan revision：`u5-analysis-level-t6`，2026-10-21。本正文 §1–4.3 整体取代 t5 的当前指令；§4.4–5（含 §4.6）保留历史原文，不并行执行历史 recipe。
 - 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，分支 `plan/u5-analysis-level-redesign`；对齐同目录[执行计划 r6](implementation-plan.md)（本地当前测试提交 `6022e98`，r6 字段测试新增于 `db63276`；远端 `8ec2aa4`；r6 正文基线 `8fa52a4`）。读取基线 head `d4e096f105805dfefbf2f4d883fc4919d49fce76`，r4 blob `38c71e8d4ec3105b639738086daccfdd360d9d6c`、t5 blob `6243873fb70d3c64e9db4773f04128f6878020be`。
-- 本轮以计划为主。新消费快照、完整比较及写前旧态机制和 A–H recipe **尚未实现、未执行，pending**；本地测试工程师先补 r6 §4.5 直接影响的 `test_refresh_preserves_rendered_ownership_and_u1`，当前模块 56 methods，未运行；其余拟定选择器仍是交接目标，不冒称已存在可运行代码。作者不自授 APPROVED/PASS。
+- 本轮以计划为主。新消费快照、完整比较及写前旧态机制和 A–H recipe **尚未实现、未执行，pending**；本地测试工程师补 r6 §4.5 直接影响的 `test_refresh_preserves_rendered_ownership_and_u1`，模块 56 methods；I 已于产品 `4d90c89`／测试 `223f5b4` 执行通过，见 §4.7；其余拟定选择器仍是交接目标，不冒称已存在可运行代码。作者不自授 APPROVED/PASS。
 - 历史正式状态：[2026-10-21 10:58:32Z 的 t5 G2/G3 审核](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6314274110) 已明确第二、第三关口通过，适用产品/测试 `96a1b113722aaba3863b75fcf3b84c31a625639d`、文档 `d4e096f`、执行计划 r4；原始结果见 §4.5。这一历史事实保留。早期 `3c4cda1` 阶段及 CI 失败已由后续修复/复验取代，不是当前仍失败清单；t6 依据新发现的独立错误路径重开直接受影响检查，不能把旧绿扩大为新机制通过。
 - **Rebase note（2026-10-21）**：分支已 rebase 到 main `1d8f138`（含 U1 r5）。t5 历史产品/文档提交等价为 `33e49dc`（r4）、`4140b77`（t5）＋`10430f5`（U1/U5 接受边界）、`78acaaf`（t5 记录）；t5 定向复验见 §4.6。t6 的新消费快照、完整比较及写前旧态机制仍未实现，本文的 pending 状态不因 rebase 改变。
 
@@ -37,7 +37,7 @@
 | TestPreflightBranches 其他分流 / TestAnalyzerContract | unchanged、level-only、管理字段、固定 missing facts 出现、旧投影、illegal index 与 validator 复用仍有效；静态关键词不足以验证 freeze/准确读计划顺序，改读完整实际段落及 runner 注入接线 |
 | TestLevelRefresh 的 state/render 反例 | 现有 header 反例改 state_fingerprint，validator 反例改 validator.render_sha256；保留其独立层。它们不能替代仅 header.render 损坏、cache、pack 摘要及合法 hash 下非法生命周期，G 补这些分支 |
 | TestManagedBodyBytes / TestLevelRefresh 的 CRLF、顶部时间、统计等价/业务变化 | 保留真实磁盘 read_bytes、标准 SHA 预期与普通/preflight/record-validation 入口；原 t5 CRLF 仅破坏 body 的 recipe 有效。新共同 I/O/旧态检查若触及入口，只重验直接影响方法 |
-| r6 刷新字段 | `TestLevelRefresh.test_refresh_preserves_rendered_ownership_and_u1`：合法 level-only refresh 后保留 `cache.render[ANALYSIS_MD].u1`，并保留与新正文绑定的 `ownership`（version/line_count/fragments/body_sha256），不能整项替换为仅 `sha256`。当前产品会丢字段，预期红，属产品缺口 |
+| r6 刷新字段 | `TestLevelRefresh.test_refresh_preserves_rendered_ownership_and_u1`：合法 level-only refresh 后保留 `cache.render[ANALYSIS_MD].u1`，并保留与新正文绑定的 `ownership`（version/line_count/fragments/body_sha256），不能整项替换为仅 `sha256`。产品 `4d90c89` 已改为保留该字段；I 于 `223f5b4` 通过，见 §4.7 |
 | TestRefreshProtection 两个 source drift hooks | 现在都只改一个 analysis 文件 stat；保留其 D 两时点证明，不能代表 E 外围候选、freshness 或 missing→exists。E/F 补独立语义；外部自洽 pack drift 与 foreign_cache 保留断言继续复用 |
 | test_stage2_style_validation_handoff…test_business_rerender_and_bounded_correction_lifecycle | 已有真实 ordinary pending finalize、refine round1→2 与 cache 检查；原通过保留，新合法性层若经过该路径才定向复验，不能改成 terminal-only |
 | busy/release_failure（成功与软退）/pack_io_failure_after_markdown | 保留原边界：拒绝零业务写入，释放失败如实报告；I/O 中断可有已发生 Markdown，pack 不伪造接受，不承诺跨文件回滚。它们不是本轮新增矩阵 |
@@ -68,7 +68,7 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 | preflight、普通 process、refresh 锁后/写前 | 实际调用同一 observe/compare，传 E/D/存在/源/guard/resolved/freshness/资格完整对象；普通比较 F→O、refresh B→O，元数据纯投影。D/E/F 业务结果加接线记录，不凭“其余共用”覆盖；当前 pending |
 | old-state 基础层→finalize/refresh/refine/preflight | 全部绑定和原 validator schema/lifecycle 检查早于首个 managed write；terminal 接受层只用于 reuse_all。G/H 支撑各层/独有入口；当前 pending |
 
-### 4.2 由最终机制推导的最小判别 recipe（A–H 准备及执行均 pending；I 已准备、未运行）
+### 4.2 由最终机制推导的最小判别 recipe（A–H 准备及执行均 pending；I 已执行通过）
 
 以下 A–H 是同一 L1–L6 内直接缺口。方法名为拟定落点，可等价合并现有方法但须保持每条独立错误路径的判别；不强求固定方法数。
 
@@ -138,12 +138,12 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 
 ### 4.3 执行准备、历史复用与责任
 
-- 当前 t6 设计/步骤候选 pending 独立复核；第一关 L1–L6 业务范围沿用，本轮授权的直接缺口并入；t5 G2/G3 已通过的事实不撤销。新机制的 G2（资产/步骤接线）、G3（执行结果）pending，尚无新运行结果。
-- 执行计划 r6 已获批准，产品负责人继续完成其尚未实现的修改；测试工程师准备上述受影响方法、适配共用 fixture 的真实 prepare/plan/结果集合封存入口，并填写 §4.1 实际函数/selector/产品与测试 SHA。当前已补 I 的字段测试，测试提交为 `6022e98`（r6 字段测试新增于 `db63276`）；A–H 等待 r6 产品入口。既有命令环境为 repo 的 `.apm/skills/professor-contact/tests`、Python 标准库 unittest、隔离 TemporaryDirectory；无需安装模型/服务。不得为通过断言修补产品返回或以自填关联冒充模型读取证明。
-- 未来执行在步骤准备确认且另有运行授权后，仅用 `python3 -m unittest <实际填入的受影响完整选择器> -v` 定向运行。I 的选择器已存在，完整命令为 `python3 -m unittest test_stage2_analysis_level.TestLevelRefresh.test_refresh_preserves_rendered_ownership_and_u1 -v`；A–H 拟定名字尚未实现，不能把占位字符串当可执行命令。不恢复全模块/四分片/模型回归为门槛；如产品 diff 确实触及原 CRLF/refine 入口，只附相应现有方法选择器。
+- 当前 t6 设计/步骤候选 pending 独立复核；第一关 L1–L6 业务范围沿用，本轮授权的直接缺口并入；t5 G2/G3 已通过的事实不撤销。I 字段测试已执行通过（§4.7）；A–H 的 G2（资产/步骤接线）、G3（执行结果）pending。
+- 执行计划 r6 已获批准；I 的字段修复为产品 `4d90c89`、测试与夹具 `223f5b4`（r6 字段测试新增于 `db63276`、`6022e98`）。A–H 仍等待 r6 产品入口；测试工程师继续准备上述受影响方法、真实 prepare/plan/结果集合封存入口及 §4.1 实际函数/selector/产品与测试 SHA。既有命令环境为 repo 的 `.apm/skills/professor-contact/tests`、Python 标准库 unittest、隔离 TemporaryDirectory；无需安装模型/服务。不得为通过断言修补产品返回或以自填关联冒充模型读取证明。
+- 未来执行在步骤准备确认且另有运行授权后，仅用 `python3 -m unittest <实际填入的受影响完整选择器> -v` 定向运行。I 已执行，命令为 `python3 -m unittest test_stage2_analysis_level.TestLevelRefresh.test_refresh_preserves_rendered_ownership_and_u1 -v`；A–H 拟定名字尚未实现，不能把占位字符串当可执行命令。不恢复全模块/四分片/模型回归为门槛；如产品 diff 确实触及原 CRLF/refine 入口，只附相应现有方法选择器。
 - 临时目录沿 `mktemp -d /tmp/u5-t6-XXXXXX`，日志只记实际命令/产品与测试 SHA/Python 版本/退出码/必要业务输出，仓库外保存。原始历史日志直接引用 §4.4–4.6，不重新筛选。文档静态 diff/读回不是产品测试。
 - 失败按夹具准备、业务失败、环境无法判断、未执行区分；不因返回任意错误计通过，不放宽预期或重建 proof 求绿。业务失败即停止受影响项交产品 owner；fixture/步骤错误交测试工程师修正并复核，保留原尝试。无新信息的 provider/network 故障不重复采样；此确定性定向测试不需要外部调用或模型重试。
-- 完成条件：本轮独立计划设计意见已处理；后续实际接线/步骤经 G2 确认，受影响目标取得适用 G3 结果。当前已准备 I 的字段测试但未运行；A–H 仅计划，不声称准备/执行已完成，更不授予合并批准。
+- 完成条件：本轮独立计划设计意见已处理；后续实际接线/步骤经 G2 确认，受影响目标取得适用 G3 结果。I 已于 `223f5b4` 执行通过；A–H 仅计划，不声称准备/执行已完成，更不授予合并批准。
 
 下列 §4.4–4.6 原文按历史版本保留；其中“当前”“本轮”“待审核/失败”等均是记录当时口吻，t5 最终正式 G2/G3 状态以本文件顶部所引 10:58 审核为准，不能用这些历史句子推翻该结论或要求重做旧轮。它们也不代表 r5/t6 已实现。
 
@@ -175,6 +175,13 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 - **命令与结果**：t5 三条定向 `Ran 3 tests in 1.274s`、`OK`；四个入口 `Ran 4 tests in 1.256s`、`OK`；模块 `Ran 55 tests in 14.333s`、`OK`；preflight 四条 `Ran 4 tests in 1.052s`、`OK`；L6 生命周期 `Ran 1 test in 4.728s`、`OK`。四分片 shard1 380、shard2 219、shard3 243、shard4 249（1 skipped），合计 1091 tests、无失败。
 - **环境与输出**：macOS、Python 3.14.7、标准库 unittest；`run_dir=/tmp/u5-rebase-final-IklslU`，原始日志不提交。
 - **结论**：rebase 未引入 t5 业务回归；该结果不是 t6 新机制通过，也不改写 §4.5 的历史 t5 G2/G3 审核。
+
+### 4.7 r6 刷新字段执行结果（2026-10-21）
+
+- **产品／测试提交**：产品 `4d90c89`（刷新改用 `render_analysis_document`，保留旧 `u1`，新正文写入同次渲染的 `ownership`，旧正文保留旧归属；旧绑定与 manual 编辑在写前分流）＋测试／夹具 `223f5b4`（`test_refresh_keeps_the_accepted_sources_and_foreign_cache` 在加入 cache/resolved 字段后同步合法 validator 包摘要）。执行提交 `223f5b4`，基于 `a828b94`。
+- **命令与结果**：`test_refresh_preserves_rendered_ownership_and_u1` 为 `Ran 1 test in 0.359s`、`OK`；模块 `test_stage2_analysis_level` 为 `Ran 56 tests in 13.593s`、`OK`；U1/preflight/生命周期三模块 `Ran 47 tests in 35.365s`、`OK`。四分片 shard1 380、shard2 219、shard3 244、shard4 249（1 skipped），合计 1092 tests、无失败。
+- **环境与输出**：macOS、Python 3.14.7、标准库 unittest；`run_dir=/tmp/u5-r6-final-8ki7Wr`，日志为 `target.log`、`module.log`、`adjacent.log`、`shard1.log` 至 `shard4.log`；原始日志不提交。
+- **结论**：I（r6 §4.5 刷新字段）已通过，旧 manual/CRLF/validator 保护未回归。A–H 的消费快照与完整观察入口仍未实现，t6 的第二／第三关口结论仍待独立审核；本记录不把 I 的通过扩大为 t6 全部通过或合并批准。
 
 ## 5. 历史执行与公开审核记录（不是 r4 的通过结果）
 
