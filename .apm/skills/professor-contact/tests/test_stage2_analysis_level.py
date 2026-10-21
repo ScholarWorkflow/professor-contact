@@ -869,7 +869,13 @@ class TestLevelRefresh(AnalysisLevelBase):
         md.write_bytes(managed_bytes(crlf_body, state_fingerprint, newline=b"\r\n"))
         body_sha = sha256_bytes(crlf_body)
         pack = self._read_pack()
-        pack["cache"]["render"]["套磁候选分析.md"]["sha256"] = body_sha
+        render_entry = pack["cache"]["render"]["套磁候选分析.md"]
+        render_entry["sha256"] = body_sha
+        ownership = render_entry.get("ownership")
+        if isinstance(ownership, dict):
+            # Rewriting the body line endings changes its byte hash; the
+            # ownership map must still describe the bytes on disk.
+            ownership["body_sha256"] = body_sha
         validator = pack.get("validator")
         if isinstance(validator, dict):
             validator["render_sha256"] = body_sha

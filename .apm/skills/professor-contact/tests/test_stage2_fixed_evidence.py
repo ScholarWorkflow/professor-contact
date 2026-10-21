@@ -1257,7 +1257,10 @@ class FixedEvidenceBase(BaseEnv):
         line_env.write_pack(line_pack)
         analysis_path = line_env.prof_dir / contact_state.ANALYSIS_MD
         raw = analysis_path.read_text(encoding="utf-8")
-        changed = raw.replace("全文级 2 篇", "全文级 9 篇", 1)
+        match = re.search(r"全文级 \d+ 篇", raw)
+        self.assertIsNotNone(match)
+        original_source_text = match.group(0)
+        changed = raw.replace(original_source_text, "全文级 9 篇", 1)
         self.assertNotEqual(changed, raw)
         header, edited_body = contact_state.split_frontmatter(changed)
         edited_sha = contact_state.sha256_text(edited_body)
@@ -1272,7 +1275,7 @@ class FixedEvidenceBase(BaseEnv):
         out = line_env.finalize(line_facts, line_proof, line_results)
         self.assertEqual(out["status"], "ok", out)
         repaired = line_env.document()["body"]
-        self.assertIn("全文级 2 篇", repaired)
+        self.assertIn(original_source_text, repaired)
         self.assertNotIn("全文级 9 篇", repaired)
 
         # A user-note line with the generated source-line prefix is not the top
