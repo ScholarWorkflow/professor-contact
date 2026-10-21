@@ -15,6 +15,7 @@ from stage2_upstream_fixture import prepare_stage2_proof
 
 from test_contact_state import (
     BaseEnv,
+    contact_stage1,
     contact_state,
     parse,
     quote_id,
@@ -287,7 +288,18 @@ class Stage2ValidationHandoffTests(BaseEnv):
             second["name_zh"] = "第二合成方向"
             second["user_note"] = "第二方向的合成输入笔记。"
             facts["directions"].append(second)
-        return self.write_facts(customise)
+        facts_path = self.write_facts(customise)
+        prepare_stage2_proof(run_cli, facts_path)
+        # C is relevant-only in this established lifecycle fixture. Include it
+        # through the supported Stage-1 named-paper input before freezing E;
+        # its original-member status and facts evidence remain unchanged.
+        named_path = self.root / "t5-named-papers.json"
+        named_path.write_text(json.dumps({"directions": {
+            "DIR00001": [_T5_LEGACY_KEY], "DIR00002": [_T5_LEGACY_KEY]}},
+            ensure_ascii=False), encoding="utf-8")
+        contact_stage1.build_command(
+            self.root, self.prof_dir / "套磁目标.json", named_path)
+        return facts_path
 
     def _t5_add_fulltext_evidence(self, facts, item_key):
         """Give one original member a currently valid ``.facts.json`` sidecar.

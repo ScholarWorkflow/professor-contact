@@ -1,14 +1,14 @@
 # U5：实际分析级别贯通与诚实统计测试计划
 
-- Test plan revision：`u5-analysis-level-t6`，2026-10-22 测试准备补充。业务目标、预期及范围沿用 t6；§4.3.1 是当前可执行步骤和交接。§4.4–5 保留历史记录，不并行执行历史 Recipe。
+- Test plan revision：`u5-analysis-level-t6`，2026-10-22 测试准备及执行记录。业务目标、预期及范围沿用 t6；§4.3.1 是当前可执行步骤，§4.3.2 记录本次实际执行。§4.4–5 保留历史记录，不并行执行历史 Recipe。
 - 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，分支 `plan/u5-analysis-level-redesign`；对齐同目录[执行计划 r6](implementation-plan.md)。本轮产品与已有测试基线为 `4a6cec8a4335eecb720511e683fbdb075d9fcfa8`，仅修改测试资产和本文。r6 正文基线为 `8fa52a4`；历史读取基线为 `d4e096f105805dfefbf2f4d883fc4919d49fce76`。
-- 当前模块 88 个方法：沿用 74 个，新增 14 个；A–I 的选择器及复用方式见 §4.3.1。本轮只做语法、运行时与临时目录检查，没有调用测试方法、产品入口或业务请求。`76cba4d` 的 18 个方法执行观察及其中 10 个产品失败仅为历史记录，不能表述成本轮预检或当前通过结果。I 已有执行结果见 §4.7。完整冻结材料及 analyzer 接线仍存在源码已确认的产品缺项，见 §4.3.1；本角色不修改产品，不授予测试关口或合并批准。
+- 当前模块 88 个方法：沿用 74 个，新增 14 个；A–I 的选择器及复用方式见 §4.3.1。用户随后明确要求“不用等实现，测试不能通过也没关系”，已执行当前两条 Recipe，实际结果及测试修正见 §4.3.2。`76cba4d` 的 18 个方法执行观察及其中 10 个产品失败仅为历史记录，不能表述成本轮结果。I 已有执行结果见 §4.7。完整冻结材料及 analyzer 接线仍存在源码已确认的产品缺项；本次不修改产品，不授予测试关口或合并批准。
 - 历史正式状态：[2026-10-21 10:58:32Z 的 t5 G2/G3 审核](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6314274110) 已明确第二、第三关口通过，适用产品/测试 `96a1b113722aaba3863b75fcf3b84c31a625639d`、文档 `d4e096f`、执行计划 r4；原始结果见 §4.5。这一历史事实保留。早期 `3c4cda1` 阶段及 CI 失败已由后续修复/复验取代，不是当前仍失败清单；t6 依据新发现的独立错误路径重开直接受影响检查，不能把旧绿扩大为新机制通过。
 - **Rebase note（2026-10-21）**：分支已 rebase 到 main `1d8f138`（含 U1 r5）。t5 历史产品/文档提交等价为 `33e49dc`（r4）、`4140b77`（t5）＋`10430f5`（U1/U5 接受边界）、`78acaaf`（t5 记录）；t5 定向复验见 §4.6。当前产品已有部分消费准备实现，完整冻结内容及接线缺项以 §4.3.1 的实际源码核对为准，历史 pending 不因 rebase 自动变为完成。
 
 ## 1. 范围、依据与复用原则
 
-规范依据为用户本轮授权、r6 §1/4–6（含 §4.5 刷新字段写入范围）、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 与 [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)，本轮已读原文。执行计划 r6 已由[正式审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6317865160)批准；I 的既有执行结果见 §4.7。L1–L6 业务边界保持，当前角色只准备测试资产，不重新设计或批准计划。
+规范依据为用户本轮授权、r6 §1/4–6（含 §4.5 刷新字段写入范围）、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 与 [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)，本轮已读原文。执行计划 r6 已由[正式审核记录](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6317865160)批准；I 的既有执行结果见 §4.7。L1–L6 业务边界保持，最初阶段只准备测试资产，随后按用户授权执行，见 §4.3.2；不重新设计或批准计划。
 
 不要求全 OCR/模型/导入业务回归、Stage3/4、全仓四分片、所有来源×时点×validator 状态、来源认证平台或新测试框架。用既有 unittest、临时 program root、真实 runner 及确定性合法结果夹具；不调用真实模型。准确消费边界只读两个 analyzer/SKILL 的实际完整读计划→自身判断→聚合写结果流程与 runner 封存接线，不新建 harness/模型调用证明系统。模型内部是否认真阅读不在可验证范围。
 
@@ -67,7 +67,7 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 | prepare 读源→封存 payload→Stage2Context | `cmd_stage2_consumption_prepare` 仅封存 `observed_source_projection`；`Stage2Context.__init__` 仍读当前文件。B 的 F0 guard 与写后注入已准备，完整材料字段及实际读取落点受产品缺项阻塞。 |
 | resolve-plan 与 stage2-plan→analyzer 完整读取→结果集合封存→finalize | 原 resolve writer/resolve_run_id 被 D-resolved 复用；`_seal_consumption_plan` 仅存摘要，两个 analyzer 未接消费准备和结果封存。C 的摘要关联例已写，完整输入字段篡改仍待产品保存完整计划。 |
 | preflight、普通 process、refresh 锁后/写前 | 普通 finalize 在写后调用 `stage2_preflight_metadata`；refresh 经 `stage2_refresh_evaluate`。D 使用真实 finalize 工厂注入，E/F 使用原 context 观察点；当前不能声称完整 observe/compare 已共用。 |
-| old-state 基础层→finalize/refresh/refine/preflight | 现有 `stage2_validation_legality` 为共同基础层。G/H 已准备独有入口的旧绑定和生命周期状态，原生命周期资产补消费准备与封存前置；正式结果仍待执行。 |
+| old-state 基础层→finalize/refresh/refine/preflight | 现有 `stage2_validation_legality` 为共同基础层。G/H 已准备独有入口的旧绑定和生命周期状态，原生命周期资产补消费准备与封存前置；实际执行结果见 §4.3.2。 |
 
 ### 4.2 已确认的最小判别 Recipe
 
@@ -147,7 +147,7 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 
 ### 4.3 执行准备、历史复用与责任
 
-第一关口沿用 L1–L6；r6 已有执行计划批准。t5 的第二、第三关口结论只适用于其历史版本；t6 的步骤和执行结果仍待正式审核。本轮角色为本地测试工程师，只交付测试准备，没有运行正式用例，也不把历史“预检通过／预期红”当成本轮结果。
+第一关口沿用 L1–L6；r6 已有执行计划批准。t5 的第二、第三关口结论只适用于其历史版本；t6 的步骤和执行结果仍待正式审核。最初测试准备阶段只交付资产；用户随后授权立即执行，现由本地执行工程师运行当前 Recipe，记录见 §4.3.2，不把历史“预检通过／预期红”当成本轮结果。
 
 #### 4.3.1 2026-10-22 当前测试准备与 Recipe
 
@@ -175,7 +175,7 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 
 上述产品缺项不由测试准备修复。输入、方法和预期已经明确，无须为产品未实现而删测或放宽断言。完整内容字段落定后，由本地测试工程师接入 B 的原冻结材料字段、实际读取落点及 C 的保存计划输入字段，不新增检查目标；不能把路径投影当作完整内容供应。B 当前 `Path.read_bytes` 注入只在产品采用该读取落点时适用，未命中表示落点待绑定，不能排除其他合法原字节读取方式。其余已写资产可交执行者，不因产品缺项而重新安装或扩大回归。
 
-**有限预检**：本轮实际运行 `uv --version`（0.12.22）、标准库导入、三个修改文件的 `ast.parse`、隔离临时目录写入和 `jq` 字段读取。Python 为 3.14.6，标准库 unittest 可用；分析级别模块 88 个方法通过语法解析，每例仍使用独立 `TemporaryDirectory`。没有导入产品或测试模块，没有运行 setUp、测试、产品入口、模型或业务请求。初次 `uv run` 因默认缓存目录不可写失败，改为明确的仓库外 `UV_CACHE_DIR` 后环境命令成功；这不是重跑测试。原始记录为准备者独立 `/tmp` 目录内的 `precheck.json`，不入库。未使用共享 fixtures 仓库，不需要更新或安装它。无额外模型、服务、凭据、配置或用户数据输入。
+**准备阶段有限预检**：准备阶段实际运行 `uv --version`（0.12.22）、标准库导入、三个修改文件的 `ast.parse`、隔离临时目录写入和 `jq` 字段读取。Python 为 3.14.6，标准库 unittest 可用；分析级别模块 88 个方法通过语法解析，每例仍使用独立 `TemporaryDirectory`。该有限预检没有导入产品或测试模块，没有运行 setUp、测试、产品入口、模型或业务请求，后续正式执行见 §4.3.2。初次 `uv run` 因默认缓存目录不可写失败，改为明确的仓库外 `UV_CACHE_DIR` 后环境命令成功；这不是重跑测试。原始记录为准备者独立 `/tmp` 目录内的 `precheck.json`，不入库。未使用共享 fixtures 仓库，不需要更新或安装它。无额外模型、服务、凭据、配置或用户数据输入。
 
 **准备顺序与隔离**：
 
@@ -184,7 +184,7 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 3. Python 标准库已具备，不安装依赖。未变的旧有效结果按 §3、§4.4–5 复用；只有下面的直接受影响方法进入正式执行。
 4. 每条命令完成后保存退出码和完整日志，引用同一产品／测试提交；测试框架的失败、错误或前置失败都保留。前置构造失败不能算作产品按预期拒绝。
 
-以下命令仅供下一负责人正式执行，**本轮没有运行**：
+以下为当前两条正式命令；本次已按原选择器执行，结果见 §4.3.2：
 
 ```bash
 checkout=$(git rev-parse --show-toplevel)
@@ -228,13 +228,80 @@ result=$?
 printf '%s\n' "$result" > "$run_dir/lifecycle.exit"
 ```
 
-第一条选择 33 个方法（原 18 个、新增 14 个，以及本轮加强的原业务基线保留方法），预计 20–60 秒；生命周期沿用已有方法并补消费前置，预计 5–10 秒。耗时超过 60 秒时按 `temp-script` 使用执行工具的原生会话等待，保护窗口 300 秒，不启动自制后台管理器。若第一条出现待修产品问题，保留结果后只继续不依赖该问题的独立项；生命周期的步骤或产品前提不成立时先记未执行，不用其失败覆盖已观察的业务问题。B/C 完整内容与输入字段检查须先补齐上述产品契约和落点，再运行相应方法。
+第一条选择 33 个方法（原 18 个、新增 14 个，以及本轮加强的原业务基线保留方法），预计 20–60 秒；生命周期沿用已有方法并补消费前置，预计 5–10 秒。耗时超过 60 秒时按 `temp-script` 使用执行工具的原生会话等待，保护窗口 300 秒，不启动自制后台管理器。按用户本次授权，两条命令都执行，不因产品缺项或前一条失败跳过后续独立用例。失败方法在首个断言处停止，后续尚未到达的检查单独注明；不能把前置失败算作目标通过。B/C 尚不存在的完整内容与输入字段不能凭空补造，现有方法仍执行并保留观察，缺项继续交产品负责人。
 
 **失败处理与重试**：本组没有外部请求，默认每个方法正式尝试一次，不因断言失败重新采样。产品失败交产品实现负责人；夹具、选择器或步骤错误交本地测试工程师，修正后只复核影响项；命令／运行时／临时目录故障记无法判断。恢复前先确认具体故障已消除，仅追加一次同参数尝试到新日志文件，不覆盖原日志；仍失败停止该项。产品修复后的定向复验不作为同条件重试，记录新版本和影响。没有额外取证脚本或结果判定器。
 
 **准备符合性审核（2026-10-22）**：专用 `implementation_reviewer` 首次覆盖 r6/t6 的 A–I 全部准备资产、已有未修改测试及必要接线、Recipe、隔离和有限预检，再由同一代理定向复核修正。R1 已改用实际 gap 区域定位时效缓存；R2 已在封存前构造合法 unknown/null 或缺字段事实，封存后只损坏登记；R3 已改真实消费准备与接受顺序，补原生命周期前置，并按真实计划筛选聚合结果；R4 已比较完整原业务基线。四项均关闭。提交前另修正缺来源段例：从当前 companion 仅删来源段，保留已封存计划和结果；同一代理已确认该最小修正有效。
 
-审核结论为**部分完成，仅限测试准备**：B 的完整冻结材料和实际读取落点、C 的保存计划内实际输入字段仍受产品契约缺项阻塞；产品实现负责人先补齐，随后本地测试工程师补接既定字段和注入位置。analyzer 接线及一次机械修复同交产品实现负责人，其余资产交本地执行工程师按适用关口执行。本轮 33 个方法及生命周期均未执行，I 仅引用历史结果。本审核不代替测试关口或合并批准，不能登记为全部准备完成。
+准备阶段审核结论为**部分完成，仅限测试准备**：B 的完整冻结材料和实际读取落点、C 的保存计划内实际输入字段仍受产品契约缺项阻塞；产品实现负责人先补齐，随后本地测试工程师补接既定字段和注入位置。analyzer 接线及一次机械修复同交产品实现负责人。该审核时 33 个方法及生命周期均未执行，后续实际执行以 §4.3.2 为准，I 仍引用历史结果。本审核不代替测试关口或合并批准，不能登记为全部准备完成。
+
+#### 4.3.2 2026-10-22 当前 Recipe 实际执行
+
+**授权、版本与环境**：用户明确要求“所有 recipe 都做完，不用等实现，测试不能通过也没关系”，取代 §4.3.1 原先等产品补齐后再执行的顺序。执行者为本地执行工程师；只执行既定测试并修正实际发现的测试问题，没有修改产品、业务目标或预期。首次执行产品／测试提交为 `c095b23d990172f0c240c66c266551b1b21f1aa4`，产品内容仍为 `4a6cec8`。定向复验基于同一提交加本节所在提交中的测试差异；未受影响结果直接复用。运行环境为 macOS、uv 0.12.22、Python 3.14.6、标准库 unittest，沿用已有预检，不安装依赖或调用模型。两条 Recipe 均执行，不重新执行 §4.4–5 的历史命令或四分片；I 按既定方式复用 §4.7。
+
+**实际命令与原始输出**：首次逐字执行 §4.3.1 的命令块，全部 stdout/stderr、退出码、目标提交和 Python 版本保存在 `/tmp/u5-t6-DER2pR`，不提交原始日志。第一条日志 `t6-direct.log`：33 个方法、26.279 秒、退出码 1，16 通过、14 个断言失败、3 个错误；第二条 `lifecycle.log`：1 个方法、0.569 秒、退出码 1，在构造初始接受包时得到 `invalid_facts`，后续生命周期步骤未到达。没有超时、取消或跳过方法。
+
+**测试问题、修正与全部复验**：
+
+1. 三个新方法用 `out["reason_code"]` 访问没有该字段的返回值，先触发 `KeyError`。仅改为 `out.get("reason_code")`，保留原预期元组及完整返回值，防止诊断错误掩盖产品结果。三个方法在 `t6-direct-recheck.log` 定向复验，共 2.906 秒、退出码 1，均实际返回 `ok`，现为 3 个明确的断言失败，未重跑原 30 个未改方法。
+2. 生命周期原夹具把 C 列为相关论文，却没有经正式 Stage-1 生成步骤纳入候选全集；消费 companion 与 facts 来源集合因此不一致。第一次调整合成论文标题和摘要未解决，`lifecycle-recheck.log` 为 0.564 秒、退出码 1，仍停在同一前置断言。该调整已撤回。最终复用原 `contact_stage1.build_command`，在消费准备前用正式 `--named-file` 对应输入把 C 加入两个方向的候选集合，原成员集合、相关身份、事实证据和后续断言不变。`lifecycle-recheck2.log` 为 12.198 秒、退出码 0，完整方法通过。
+3. 上述复验是测试错误修正后的定向检查；原失败、无效修正和最终差异都保留在同一运行目录（`test-fixes.patch`、`test-fixes-final.patch`）。没有因产品返回值不满意而重复执行或放宽断言。
+
+三个方法的实际定向命令如下；两次生命周期复验均使用 §4.3.1 第二条原选择器，分别输出到上述新文件，未覆盖旧日志。所有复验继续使用同一 `UV_CACHE_DIR` 和 `TMPDIR`，每例自身的临时根目录互相隔离。
+
+```bash
+uv run --no-project python -m unittest \
+  test_stage2_analysis_level.TestConsumptionBoundaries.test_finalize_rejects_a_changed_sealed_job_input \
+  test_stage2_analysis_level.TestResolvedConsumptionBoundary.test_resolved_process_rejects_an_outer_candidate_drift \
+  test_stage2_analysis_level.TestOrdinaryOldStateBoundaries.test_new_business_needs_explicit_overwrite_and_loses_old_validation \
+  -v
+```
+
+**逐项有效结果**：以下方法均在 `test_stage2_analysis_level` 模块；类名和方法名可直接与 §4.3.1 选择器对应。通过结果均来自首次执行，未受三处诊断修正或生命周期夹具修正影响。
+
+| 类 | 通过的方法 |
+|---|---|
+| `TestConsumptionFreeze` | `test_process_commits_the_frozen_sources` |
+| `TestConsumptionFreeze` | `test_finalize_rejects_a_missing_sealed_result` |
+| `TestConsumptionFreeze` | `test_finalize_rejects_an_unsealed_companion` |
+| `TestConsumptionFreeze` | `test_finalize_rejects_sealed_results_from_another_run` |
+| `TestConsumptionBoundaries` | `test_finalize_rejects_a_missing_companion` |
+| `TestConsumptionBoundaries` | `test_finalize_rejects_a_missing_source_section` |
+| `TestConsumptionBoundaries` | `test_finalize_rejects_bad_index_with_an_existing_freeze` |
+| `TestConsumptionBoundaries` | `test_process_rejects_source_drift_after_render` |
+| `TestRefreshProtection` | `test_refresh_rechecks_freshness_after_lease` |
+| `TestRefreshProtection` | `test_refresh_keeps_the_accepted_sources_and_foreign_cache` |
+| `TestLevelRefresh` | `test_refresh_rejects_an_invalid_old_validator_pack_binding` |
+| `TestLevelRefresh` | `test_refresh_rejects_an_invalid_old_validator_lifecycle` |
+| `TestLevelRefresh` | `test_refresh_without_a_validator_stays_unvalidated` |
+| `TestRefreshRemainingBoundaries` | `test_refresh_rejects_the_remaining_illegal_lifecycle_states` |
+| `TestOrdinaryOldStateBoundaries` | `test_ordinary_equivalent_finalize_rejects_header_render_damage` |
+| `TestOrdinaryOldStateBoundaries` | `test_ordinary_equivalent_finalize_rejects_validator_pack_damage` |
+
+| 类 | 未通过的方法 | 实际观察与结论 |
+|---|---|---|
+| `TestFactsLevelContract` | `test_malformed_index_cannot_be_accepted_as_null` | prepare 返回 `ok`，应拒绝坏登记；业务失败。 |
+| `TestFactsLevelContract` | `test_empty_papers_index_cannot_be_accepted_as_null` | prepare 返回 `ok`，应拒绝空登记；业务失败。 |
+| `TestFactsLevelContract` | `test_context_rejects_malformed_index_with_null_levels` | context 未抛出既定拒绝；业务失败。 |
+| `TestFactsLevelContract` | `test_context_rejects_empty_papers_with_null_levels` | context 未抛出既定拒绝；业务失败。 |
+| `TestConsumptionFreeze` | `test_plan_rejects_a_source_change_after_prepare` | 源变化后 plan 仍返回 `ok`；业务失败。 |
+| `TestConsumptionFreeze` | `test_seal_results_supports_a_single_repair_revision` | 修复后再次 seal 返回 `invalid_params/results already sealed`；业务失败。revision 1 接受及 revision 2 拒绝检查未到达。 |
+| `TestConsumptionFreeze` | `test_process_finalize_rejects_frozen_source_drift` | 漂移后返回 `error/result_missing`，缺 `freshness-DIR00001.json`，没有先按预期返回 `needs_refresh/preflight_inputs_changed`；业务失败。结果夹具仅供应原已封存计划所需任务，不临时为漂移后的重新计算补结果。 |
+| `TestConsumptionBoundaries` | `test_finalize_does_not_sample_sources_after_the_managed_write` | finalize 成功，但接受 guard 记录写后 F1 的摘要、stat 和 50 字节，而非原 F0 的 20 字节；业务失败。 |
+| `TestConsumptionBoundaries` | `test_finalize_rejects_a_changed_sealed_job_input` | 定向复验返回 `ok`，未拒绝被改的已封存任务输入摘要；业务失败。 |
+| `TestConsumptionBoundaries` | `test_prepare_rejects_drift_after_the_actual_source_read` | `Path.read_bytes` 注入未命中，首个读取断言失败；本项无法判断。与 §4.3.1 已知落点缺项一致，不能只凭此断言排除其他合法读取方式，更不能登记为已验证读后漂移拒绝。 |
+| `TestResolvedConsumptionBoundary` | `test_resolved_process_rejects_an_outer_candidate_drift` | 定向复验返回 `ok` 且 `resolved_directions_applied=true`，接受了候选全集中、实际方向输入外的 C 漂移；业务失败。 |
+| `TestRefreshProtection` | `test_refresh_rechecks_missing_facts_before_write` | missing→exists 后刷新仍 `ok` 且已写正文；业务失败。 |
+| `TestLevelRefresh` | `test_refresh_rejects_an_invalid_old_cache_render_binding` | cache-only 损坏被分类为 `needs_decision/manual_markdown_changed`；业务失败。 |
+| `TestLevelRefresh` | `test_refresh_rejects_an_invalid_old_header_render_binding` | 损坏 header.render 后刷新仍 `ok` 且已写正文；业务失败。 |
+| `TestRefreshRemainingBoundaries` | `test_refresh_rechecks_an_outer_candidate_after_lease` | 锁后拒绝及零业务写入检查通过，但后续 preflight 的方向原因没有 `artifact_changed`；业务失败。 |
+| `TestRefreshRemainingBoundaries` | `test_refresh_rechecks_freshness_before_the_first_write` | 正式写前时效缓存变化后刷新仍 `ok` 且已写正文；业务失败。 |
+| `TestOrdinaryOldStateBoundaries` | `test_new_business_needs_explicit_overwrite_and_loses_old_validation` | 定向复验在首个 refresh+overwrite 检查返回 `ok`，应为 `error/validation_render_stale`；业务失败。其后普通新业务的默认保护、显式覆盖与失去旧认证检查未到达。 |
+
+生命周期方法 `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` 以最终夹具通过，覆盖既有方法内的旧包重建、接受成员移除、两轮修订、外来缓存保留及不变版本复用。
+
+**结果汇总与交接**：当前两条 Recipe 的 34 个方法全部实际尝试；有效结果为 17 个通过、17 个未通过。按业务分类为 16 个业务失败、1 个读取落点未命中的无法判断；框架初次 3 个错误已有定向诊断结果，生命周期初次前置失败已有最终通过结果，均保留原记录。失败方法首个断言之后的检查未执行，不能据方法已尝试声称所有分支已验证。B 的完整冻结内容、实际读取落点和 C 的完整计划输入字段仍缺产品支持；analyzer 接线仍沿用 §4.3.1 静态核对，不冒称动态通过。产品负责人修复业务失败及缺项；测试工程师随后补接既定字段和读取落点，由执行工程师只复验受影响项目。本次用户要求的运行和记录已完成，产品验收仍未通过。
 
 下列 §4.4–5 原文按历史版本保留；其中“当前”“本轮”“待审核／失败”均为当时口吻。t5 最终正式状态以文件顶部所引审核为准，不因本轮测试准备要求重做历史轮次。
 

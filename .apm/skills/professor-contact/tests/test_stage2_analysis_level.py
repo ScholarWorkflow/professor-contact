@@ -917,7 +917,7 @@ class TestConsumptionBoundaries(AnalysisLevelBase):
         write_json(companion_path, companion)
         before = self.business_snapshot()
         out = self.finalize_consumption(proof)
-        self.assertEqual((out["status"], out["reason_code"]),
+        self.assertEqual((out["status"], out.get("reason_code")),
                          ("error", "invalid_result_json"), out)
         self.assert_business_unchanged(before)
 
@@ -995,7 +995,7 @@ class TestResolvedConsumptionBoundary(AnalysisLevelBase):
         source.write_bytes(source.read_bytes() + b"\n<!-- resolved outer drift -->\n")
         sidecar_path = self.prof_dir / "论文分析" / "_resolved_directions.json"
         out = self.finalize_consumption(proof, "--resolved-directions", sidecar_path)
-        self.assertEqual((out["status"], out["reason_code"]),
+        self.assertEqual((out["status"], out.get("reason_code")),
                          ("needs_refresh", "preflight_inputs_changed"), out)
         self.assert_business_unchanged(before)
 
@@ -2448,7 +2448,7 @@ class TestOrdinaryOldStateBoundaries(AnalysisLevelBase):
         refresh_proof = self.save_preflight("damaged-refresh.json")
         before = self.business_snapshot()
         refused = parse(self.refresh(refresh_proof, "--decision-file", decision))
-        self.assertEqual((refused["status"], refused["reason_code"]),
+        self.assertEqual((refused["status"], refused.get("reason_code")),
                          ("error", "validation_render_stale"), refused)
         self.assert_business_unchanged(before)
         self.bind_levels()
