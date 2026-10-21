@@ -1575,7 +1575,8 @@ def build(*, Stage2Context,
                 "professor": pack.get("professor"),
                 "directions": {direction_machine_id(d): d.get("input_fingerprint")
                                for d in directions}})
-            body = render_analysis_md(ctx, render_pack, state_fingerprint)
+            body, ownership = render_analysis_document(
+                ctx, render_pack, state_fingerprint)
             current_pack, pack_error = read_json_file(ctx.pack_path)
             if pack_error or not isinstance(current_pack, dict):
                 soft_exit("needs_refresh", "preflight_inputs_changed",
@@ -1604,6 +1605,41 @@ def build(*, Stage2Context,
                          "the managed Markdown header state fingerprint does not bind "
                          "the current pack; re-record the old evidence instead of rebinding it",
                          analysis_md=str(md_path))
+            old_entry = old_render.get(ANALYSIS_MD) if isinstance(old_render, dict) else None
+            if not isinstance(old_entry, dict):
+                soft_exit("needs_refresh", "refresh_requires_process",
+                          drift=["render_entry_missing"])
+            old_ownership = old_entry.get("ownership")
+            old_u1 = old_entry.get("u1")
+            if not isinstance(old_ownership, dict) or not isinstance(old_u1, dict):
+                soft_exit("needs_refresh", "refresh_requires_process",
+                          drift=["render_metadata_missing"])
+            if old_u1.get("display_version") != STAGE2_U1_DISPLAY_VERSION:
+                soft_exit("needs_refresh", "refresh_requires_process",
+                          drift=["fixed_evidence_display_update"])
+            old_header = old_render_file.get("header")
+            manual_edit = (
+                old_render_file.get("readable")
+                and isinstance(old_header, dict)
+                and old_header.get("managed_by") == MANAGED_BY
+                and old_render_file.get("body_sha256")
+                != old_header.get("render_sha256"))
+            if not manual_edit:
+                if not old_render_file.get("binding_valid"):
+                    fail("validation_render_stale",
+                         "the managed analysis cannot prove its old render binding; "
+                         "re-record the old evidence instead of refreshing it",
+                         analysis_md=str(md_path))
+                old_validator = pack.get("validator")
+                if isinstance(old_validator, dict) and old_validator.get("schema") == 2:
+                    if old_render_file.get("body_sha256") != old_validator.get("render_sha256") \
+                            or old_validator.get("pack_sha256") \
+                            != stage2_pack_content_fingerprint(pack):
+                        fail("validation_render_stale",
+                             "the recorded Stage-2 validation no longer binds the current "
+                             "managed render/input pack; re-record a raw validator report too "
+                             "against the current files",
+                             target=str(md_path))
             decision = None
             if getattr(args, "decision_file", None):
                 decision_data, error = read_json_file(Path(args.decision_file))
@@ -1628,8 +1664,20 @@ def build(*, Stage2Context,
             render_block = cache_block.get("render")
             render_block = dict(render_block) if isinstance(render_block, dict) else {}
             accepted_sha = md_result.get("sha256") or previous_sha
+            if not body_changed \
+                    and old_ownership.get("body_sha256") != accepted_sha:
+                fail("validation_render_stale",
+                     "the accepted ownership map does not bind the retained managed body",
+                     analysis_md=str(md_path))
+            render_entry = dict(old_entry)
+            if body_changed:
+                # A new body must carry the ownership map rendered with the same
+                # candidate. A retained body keeps its existing ownership map.
+                ownership["body_sha256"] = accepted_sha
+                render_entry["ownership"] = ownership
             if accepted_sha:
-                render_block[ANALYSIS_MD] = {"sha256": accepted_sha}
+                render_entry["sha256"] = accepted_sha
+            render_block[ANALYSIS_MD] = render_entry
             cache_block["render"] = render_block
             cache_block["preflight"] = updated_meta
             updated_pack = dict(pack)
