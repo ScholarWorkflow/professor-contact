@@ -1,11 +1,11 @@
 # Stage 2 U1 测试计划：固定证据展示与真实阻挡归属
 
-- Test plan revision：`stage2-u1-t4`，2026-10-21；唯一正式路径 `plan/stage2-fixed-evidence/test-plan.md`。本版完整取代 t3 的当前设计与 recipe；§7–8 保留旧实际记录，不再作为相互矛盾的现行执行指令。
-- 范围依据：用户 2026-10-21 授权“然后按照这个执行计划，再写完备的测试计划”；对应 [execution r4](https://github.com/ScholarWorkflow/professor-contact/blob/a2de7777786acd23aec98eaf770a04548638ff9c/plan/stage2-fixed-evidence/implementation-plan.md) §§1、3、7。保持 U1-A–F，不引入 U5/#92、安装或真实模型回归。
-- 核对版本：PR107 分支 `plan/stage2-fixed-evidence-20261019`，head `a2de7777786acd23aec98eaf770a04548638ff9c`（2026-10-21 06:12 UTC）；本 head 仅发布 r4，产品/测试仍为 `cd6387759157c505acb96ed8459e0cc2fbd7f6ba` 的实现。被取代 test-plan blob `56bf20153eb4fd838552031a3914784988058bd4`。
+- Test plan revision：`stage2-u1-t5`，2026-10-21；唯一正式路径 `plan/stage2-fixed-evidence/test-plan.md`。本版完整取代 t4 与 t3 的当前设计与 recipe；§7–8 保留旧实际记录，不再作为相互矛盾的现行执行指令。
+- 范围依据：用户 2026-10-21 授权“然后按照这个执行计划，再写完备的测试计划”；对应 [execution r5](https://github.com/ScholarWorkflow/professor-contact/blob/7c759ac9ea26508d1f130ddd482e55f9694e9957/plan/stage2-fixed-evidence/implementation-plan.md) §§1、3、7。保持 U1-A–F，不引入 U5/#92、安装或真实模型回归。
+- 核对版本：PR107 分支 `plan/stage2-fixed-evidence-20261019`，head `7c759ac9ea26508d1f130ddd482e55f9694e9957`（2026-10-21 07:25 UTC）；本 head 已发布 r5，产品/测试仍为 `cd6387759157c505acb96ed8459e0cc2fbd7f6ba` 的实现。被取代 test-plan blob `656463c8568650e45d35c1f35366cb285f5c7d0f`。
 - 规则：[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)（2026-10-09 20:37 UTC）、[Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)（2026-10-19 14:02 UTC）。
-- 作者状态：设计待独立审核，未自授 APPROVED/PASS。本次只修文档，未修改测试实现或执行测试。r4 三项机制尚未由本版核实实施，新增/修订断言尚未落入代码，不能拿同名旧 selector 的通过当新覆盖。
-- 历史正式结论：t3 在 `cd638775` 的 [2026-10-21 04:58 UTC 独立审核](https://github.com/ScholarWorkflow/professor-contact/pull/107#issuecomment-6308427553) 已确认 G1/G2/G3 通过。该结论按原语义保留，不外推 r4；§8 中当时“待审”的记载是历史状态，已由该正式审核完成，不恢复旧阻塞。
+- 作者状态：设计待独立审核，未自授 APPROVED/PASS。本次只修文档，未修改测试实现或执行测试。r5 四项机制尚未由本版核实实施，新增/修订断言尚未落入代码，不能拿同名旧 selector 的通过当新覆盖。
+- 历史正式结论：t3 在 `cd638775` 的 [2026-10-21 04:58 UTC 独立审核](https://github.com/ScholarWorkflow/professor-contact/pull/107#issuecomment-6308427553) 已确认 G1/G2/G3 通过。该结论按原语义保留，不外推 r5；§8 中当时“待审”的记载是历史状态，已由该正式审核完成，不恢复旧阻塞。
 
 ## 1. 范围与检查方式
 
@@ -54,99 +54,156 @@
 ### U1-F：普通接受区分正文、业务、绑定和旧校验，保护人工正文
 
 - 业务目标：展示/时间更新不能洗掉两轮限制或救活失效校验；真实改动不能沿用旧通过，人工正文始终受保护。
-- 输入/场景：从有效旧 validator 的真实磁盘文件出发，覆盖仅固定顶部时间值变化、真实固定 evidence 变化、业务指纹变但正文等价、旧绑定单独失效、真实行尾字节变化和人工正文保护；同时利用 U1-D 已有第一轮 narrative 状态检查普通接受保留 pending，利用 U1-E 检查旧版更新不洗白状态。各场景单一变化，不组合成排列矩阵。
+- 输入/场景：从有效旧 validator 的真实磁盘文件出发，覆盖仅固定顶部时间值变化、真实固定 evidence 变化、业务指纹变但正文等价、旧绑定单独失效、真实行尾字节变化、最新标记下预检拒绝错误复用和人工正文保护；同时利用 U1-D 已有第一轮 narrative 状态检查普通接受保留 pending，利用 U1-E 检查旧版更新不洗白状态。各场景单一变化，不组合成排列矩阵。
 - 预期：body/业务都未变且旧绑定合法才保留 round/phase/pending/results；仅时间值可忽略，时间以外每个字节都参与比较。必要头更新保留实际旧 body bytes，其 hash/map 对应实际保留内容；旧绑定无效不靠重写头/hash 复活 PASS 或 pending。业务或正文实质变化使旧 validator 失效，报告文件保留。人工修改未授权覆盖时返回 needs_decision，不记录展示成功。正常 narrative refine 保留第一轮并进入第二轮，不走普通接受清轮次分支。
-- 检查方式：§6.4 从磁盘 read_bytes 取证，标准 hashlib SHA256 与既有 unittest 断言足够；不以 read_text/splitlines 的规范化字符串比较作为原文件证据。检查正式 finalize、record-validation、两 refine 入口所见的相同文件及状态。只验证本次改变的无损接受链，不造全仓 I/O、来源认证或事务故障矩阵；现有写入失败记录不能误报成功。
+- 检查方式：§6.5 从磁盘 read_bytes 取证，标准 hashlib SHA256 与既有 unittest 断言足够；不以 read_text/splitlines 的规范化字符串比较作为原文件证据。检查真实 preflight（最新标记下的快速复用）、正式 finalize、record-validation、两 refine 入口所见的相同文件及状态。只验证本次改变的无损接受链，不造全仓 I/O、来源认证或事务故障矩阵；现有写入失败记录不能误报成功。
 
 ## 3. 现有资产、实际缺口和最小映射
 
 [当前测试文件](https://github.com/ScholarWorkflow/professor-contact/blob/a2de7777786acd23aec98eaf770a04548638ff9c/.apm/skills/professor-contact/tests/test_stage2_fixed_evidence.py) 的 `FixedEvidenceBase` 六个方法真实存在：
 
 - A：`test_u1_a_trusted_citation_display_keeps_facts_and_licences`，四出口、相邻文字及许可已逐项检查。原结果复用；统一 resolver 若改变其实际输出，仅该受影响正常入口复核。
-- B：`test_u1_b_missing_trusted_metadata_fails_before_write`，现有 title="" 和未知显式 Zotero 引用；缺当前 title=null 与真实 display-only 分支的反例、当前记录真正缺席的合法旧 fallback。按 §6.2 补同一方法，不新增通用 resolver 判定器。
+- B：`test_u1_b_missing_trusted_metadata_fails_before_write`，现有 title="" 和未知显式 Zotero 引用；缺当前 title=null 与真实 display-only 分支的反例、当前记录真正缺席的合法旧 fallback。按 §6.2 以不参与成员和模型输入的 EEEE4444 显式引用补当前 null；合法 absent 回退与 D 生命周期合并，不依赖跨方法状态，不新增通用 resolver 判定器。
 - C：`test_u1_c_report_ownership_uses_real_fragments`，现有续行只是“续行仍由”，并未有真正 `## 方向 ` 源续行；已有生成链接/source 归属、混合片段及短 location 可复用。按 §6.3 替换代表性续行并检查实际字符坐标；不新增上游 schema。
-- D：`test_u1_d_narrative_two_rounds_and_fixed_stop`，已覆盖两个 refine 入口固定阻挡、narrative 一次修订及第二轮固定终态、minor。保留有效证据；其正常 narrative 生命周期也是 §6.4 pending/无损读链的共用入口，不另做一套模型测试。
+- D：`test_u1_d_narrative_two_rounds_and_fixed_stop`，已覆盖两个 refine 入口固定阻挡、narrative 一次修订及第二轮固定终态、minor。保留有效证据；其正常 narrative 生命周期也是 §6.4 pending/无损读链的共用入口，新增合法 absent 回退在该方法内独立准备，不另做一套模型测试。
 - E：`test_u1_e_old_pack_updates_through_process_to_finalize`，现有缺 map/标记路径，缺已有 map 的 version=1→2 与合法旧状态保留。当前测试中故意删 freshness cache 的分支验证真实缓存失效，不可据此要求所有旧禁锚必须补全候选列表或重跑模型。
-- F：`test_u1_f_acceptance_separates_body_business_binding_and_validator`，t3 两个真实输入已落实；但 `document()` 使用 read_text 和 split_frontmatter，既有等价断言不能证明原始换行不被折叠。新覆盖按 §6.4 在同一现有框架用磁盘 bytes，禁止仅测 helper 字符串就关闭该目标。
+- F：`test_u1_f_acceptance_separates_body_business_binding_and_validator`，t3 两个真实输入已落实；但 `document()` 使用 read_text 和 split_frontmatter，既有等价断言不能证明原始换行不被折叠。新覆盖按 §6.5 在同一现有框架用磁盘 bytes，禁止仅测 helper 字符串就关闭该目标。
 
 既有 `test_stage2_style_validation_handoff.py` 的重复 quote/合法短 location/用户笔记排除/narrative later-title 及两轮记录，按未变化部分复用，不要求整文件重跑；`test_contact_state.py` 的 Stage 3 人工编辑用例不冒充 Stage 2 证据。BaseEnv、generate_pack、gap_override、write_report、record、preflight、bind_facts_to_preflight、finalize 和结构化 narrative rewrite 均已有；无须安装新框架。
 
-§6 描述的是目标完整 recipe，尚有待实现的分支断言。上述名字是已有 selector，不声明它们目前已覆盖 r4；本地测试工程师落实后记录实际测试提交与对应方法/分支，独立 G2 检查前不能执行本版正式补测。若需要调整私有 fixture，限已有合成数据准备与标准断言，不创建判定服务、采集器或新矩阵。
+§6 描述的是目标完整 recipe，尚有待实现的分支断言。上述名字是已有 selector，不声明它们目前已覆盖 r5；本地测试工程师落实后记录实际测试提交与对应方法/分支，独立 G2 检查前不能执行本版正式补测。若需要调整私有 fixture，限已有合成数据准备与标准断言，不创建判定服务、采集器或新矩阵。
 
 ## 4. 结果复用与影响边界
 
 - 历史 t3 三关及 §7–8 真实执行保留。A 四出口正常目标、D 原停止/两轮目标、C 已有链接 owner、F 真实 evidence 更新/旧 validator.pack_sha 独立失效等结果，可用于未变行为；它们不证明新增 null、仿方向标题、raw bytes 或 version=1 更新。
-- 本轮必需处理 B/C/E/F 中上述 r4 直接影响。D 的实际读写/绑定链改变时仅复核相关生命周期，A 的 resolver/renderer 输出改变时仅复核该正常入口；不因文档 head、helper 名称或评论变化跑全部六项、整个文件、185 项或全仓。
+- 本轮必需处理 B/C/E/F 中上述 r5 直接影响，并将合法 absent 回退与 D 的 pending/refine 生命周期合并落实；A 的 resolver/renderer 输出改变时仅复核该正常入口；不因文档 head、helper 名称或评论变化跑全部六项、整个文件、185 项或全仓。
 - 同一测试运行可证明多个目标，如 version=1 无业务变化升级保留 pending 同时支撑 E/F，refine 后固定定位同时支撑 C/D；禁止按目标逐层重复安装/运行。已有记录能证明的部分直接引用。
 - 结果只标通过、业务失败、无法判断、未执行。保留所有正式尝试；不伪造新测试 PASS，不改输入求通过。临时数据/日志仅在仓库外独立 /tmp，正式可复用代码以后正常入库，本文不授权实施或运行。
 
 ## 5. 三关与下一负责人
 
-- G1（完整设计/范围）：t4 作者 PENDING independent review。A–F 目标保持，§6 是 r4 机制的必要落点而非额外验收目标。
-- G2（实际可执行 recipe）：t4 PENDING。以下完整步骤须由本地测试工程师落实到既有方法，确认真实 CLI、fixture 和断言映射。既有 selector 存在不等于新分支已实施；没有测试代码提交与映射，不宣布 G2 通过。
-- G3（实际结果）：r4 受影响行为未执行/待验证；t3 原正式通过有效但适用边界见 §4。产品机制未实现或出现范围内业务失败均不能以计划完成关闭。
-- 下一负责人：产品 owner 按 r4 实施；本地测试工程师仅落实 §6，独立 reviewer 评估 G1/G2；有执行授权后执行工程师按受影响 selector 定向运行，G3 reviewer 采用现有记录及新结果。作者不替审核者授予通过，不自动合并或评论。
+- G1（完整设计/范围）：t5 作者 PENDING independent review。A–F 目标保持，§6 是 r5 机制的必要落点而非额外验收目标。
+- G2（实际可执行 recipe）：t5 PENDING。以下完整步骤须由本地测试工程师落实到既有方法，确认真实 CLI、fixture 和断言映射。既有 selector 存在不等于新分支已实施；没有测试代码提交与映射，不宣布 G2 通过。
+- G3（实际结果）：r5 受影响行为未执行/待验证；t3 原正式通过有效但适用边界见 §4。产品机制未实现或出现范围内业务失败均不能以计划完成关闭。
+- 下一负责人：产品 owner 按 r5 实施；本地测试工程师仅落实 §6，独立 reviewer 评估 G1/G2；有执行授权后执行工程师按受影响 selector 定向运行，G3 reviewer 采用现有记录及新结果。作者不替审核者授予通过，不自动合并或评论。
 
-## 6. 唯一执行说明（t4 待落实，不是已运行记录）
+- t5 修订说明：承认 t4 中 B 的 display-only 夹具、F 的时钟/合法旧绑定准备仍是要求而非完整步骤；首轮 record 负例原写法会混入终态拒绝，r5 的最新标记预检快路径尚未覆盖。本版只将这些既定目标补成具体 recipe，取代相应模糊指令，不增加业务范围。r5 正式设计批准见 [2026-10-21 审核](https://github.com/ScholarWorkflow/professor-contact/pull/107#issuecomment-6310235505)，不等于实现或测试通过。
 
-### 6.1 公共准备与输入边界
+## 6. 唯一执行说明（t5；以下新增分支尚未实施或运行）
 
-1. 在 PR107 实际工作树记录产品与测试提交；确认 r4 对应代码和以下断言已实现、G2 已确认、另有执行授权。沿用现有 uv/Python，不从零安装。读实际分支/工作区，保留他人并发改动。
-2. 每个独立场景用现有 `_fresh_env()` 创建合成目录。沿用 `generate_pack(gap_override())`、`facts.json`、`results/freshness-DIR00001.json`、`narrative.json`、合法 preflight proof 和正常 CLI；不使用真实 Zotero、模型、PDF、全局安全配置。
-3. 固定预期来源于输入：direction `DIR00001`；gap=`contact_state.quote_id(env.gap_quotes["AAAA1111"])`；实际论文 `CCCC3333`，可信题名 `Unrelated synthetic example`。观察 `套磁候选分析.md`、`套磁候选输入.json`、原始 validation JSON 和方法返回；不从返回 owner/gap 倒推期望。
-4. 每次正式调用前保存相关受管文件 read_bytes；只有明确要求正常接受成功的分支才允许写入。JSON 字段断言可解析 JSON；正文完整性使用实际 body bytes。测试可按既有 frontmatter 格式拆出确切 body 边界，以 hashlib.sha256 直接核对；不调用被测等价 helper 来生成期望，不新建解析/认证框架。
-5. 旧版合成包的初始化必须在调用前建立内部一致的既有 pack/render/header/map/validator 绑定，使用既有序列化与 fingerprint 工具；这是有限 fixture 准备，不允许在受测调用后补写 hash/头让坏绑定通过。只有 §6.4 的明确坏绑定场景故意不一致。实际历史失败/报告不删。
+本节把每个受影响目标展开为可落实的夹具、调用和断言，不把“测试工程师自行补一个能命中的场景”当作完成。沿用 `test_stage2_fixed_evidence.FixedEvidenceBase` 六个方法和现有辅助函数；本节括号中的 B-null、F-preflight 等只是文档分支名，不是声称已经存在的 unittest selector。测试工程师把步骤放入对应既有方法的隔离 `_fresh_env()` 分支；不新建框架、采集器或产品判定器。
 
-### 6.2 B：当前存在性裁决，不以新建路径替代展示路径
+### 6.1 公共准备、实际接口与字节观察
 
-1. 复用已有新建四出口正常输入与未知显式引用失败检查。保留 title="" 分支。新建正常输出由 A 证明，不新增重复正常生成。
-2. 在独立旧包保存合法旧 `CCCC3333` 题名、有效 freshness/narrative；使旧 U1 marker 为 version=1（保留 map），从真实 preflight 得到 process，按其 proof 绑定当前 facts。当前 facts 仍含 `CCCC3333` 记录，只把 title 设为 null，不删除 key、不用空字符串代替。实际引用仍在 evidence/旧禁锚；保持 relevant 成员/方向及有效模型输入，使调用走真实复用方向/display-only 候选，而不是人为调用 resolver 或强迫方向重建。
-3. stage2-plan → stage2-finalize 使用同一 proof/results；若实际数据准备导致非展示路径，停止并由测试工程师修正该 fixture/映射后再审 G2，不能拿另一分支的失败冒充覆盖。检查现有 plan/jobs/被引用对象足以确认输入适用，不要求逐调用 trace。
-4. finalize 应在任何受管写入前拒绝，错误定位 DIR00001、预定 gap、evidence（或该明确受测固定字段）、CCCC3333 并交元数据 owner；旧题名不能救回 null，不能删证据或记展示完成。MD、pack 与原报告 read_bytes 不变。具体机器错误码沿现有接口，不另造规范。
-5. 在同一类但独立合法输入中，当前 papers 集合真正删去 `CCCC3333` 记录，保留已接受有效 canonical、实际显式/完成引用以及有效缓存。这才是合法旧 fallback；正常 process/finalize 成功显示原可信题名，不增 supporting/relevant/P/L，不要求补无用完整候选表。若当前 key 存在但记录无效，设计上同 null 失败，不追加所有格式枚举。纯包 refine 只消费接受的 canonical，由 D 的正常 refine 使用它，不增加 facts 获取。
+1. 当前读取基线为 `7c759ac9ea26508d1f130ddd482e55f9694e9957`，产品/测试仍是 `cd638775` 实现；执行计划已是 r5。开始正式补测前，产品负责人须完成 r5 的受影响实现，测试负责人须把本节分支落入测试代码并给出实际提交，独立 G2 核对该实现后的方法映射。本文未实施、未执行，也不授予执行权限。沿用现有 uv/Python/unittest、仓库外 `TemporaryDirectory`；无安装、模型、Zotero 或 PDF 请求。
+2. 每个标明“独立环境”的分支从 `env = self._fresh_env()` 开始，使用 `env.generate_pack(env.gap_override(), ...)` 返回 `facts_path, results, proof`。目录均由现有 BaseEnv 创建：`env.prof_dir / contact_state.ANALYSIS_MD` 是受管 Markdown，`env.prof_dir / contact_state.INPUT_PACK` 是 JSON 包，`env.prof_dir / contact_state.FRESHNESS_CACHE` 是 freshness cache；`results / 'freshness-DIR00001.json'`、`results / 'narrative.json'` 是合成结果。不得引用真实教授目录。
+3. 固定业务预期为 direction `DIR00001`；gap A = `contact_state.quote_id(env.gap_quotes['AAAA1111'])`，gap B 同理取 BBBB2222。正常引用 CCCC3333 的可信题名为 `Unrelated synthetic example`，链接为 `[Unrelated synthetic example](zotero://select/library/items/CCCC3333)`。这些预期来自夹具输入，不从被测返回的 owner/map/gap 反推。
+4. 真实入口统一用现有 `run_cli`（它启动子进程）和 `parse`。不在父进程 patch 时钟后假定 CLI 子进程会继承 mock。使用以下已有调用，不私调 resolver 代替用户路径：
+   - preflight：`env.preflight()`，其实际参数为 `stage2-preflight --program-root <env.root> --professor '試験 教授' --target-file <prof_dir/套磁目标.json> --paper-analysis relevant --gap-scope selected_direction --freshness-scope shortlist`。
+   - 需要新 proof 时：`proof, payload = env.save_preflight('<场景名>-preflight.json')`，随后 `env.bind_facts_to_preflight(facts_path, payload)`；再 `parse(run_cli('stage2-plan', '--facts', facts_path, '--preflight-file', proof))`。
+   - 普通接受：`env.finalize(facts_path, proof, results)`，不省略真实 proof、不手写 preflight_id。
+   - 报告：`report = env.write_report('<场景名>.json', issues)`；`env.record(report)` 实际调用 `stage2-record-validation --professor-dir ... --validation-file ...`。
+   - 纯包修订：`env.refine_plan(report, ...)`、`env.refine_finalize(rewrite_dir, report, ...)`，均用 `--professor-dir`，不需要新 facts。`env.write_narrative_rewrite('纯叙事待改文字', '纯叙事已改文字')` 生成已有合法结构化结果。
+5. 本节涉及正文完整性的断言一律直接读取磁盘 bytes，不用现有 `env.document()` 的 read_text 结果。夹具初始文件是现有 renderer 生成的 LF frontmatter：确认 bytes 以 `b'---\n'` 开头；找到其第一个关闭分隔 `b'\n---\n'`（从第 4 字节开始），加上该分隔长度并跳过其后 renderer 固定的一个 `b'\n'`，所得偏移为本夹具 body 起点。保存 `header_bytes` 与 `body_bytes`。后续本节的 CRLF/末尾变动只改这个 body，不改 frontmatter。此有限夹具切片不是另造生产解析器，严禁全文搜索 body 文本推偏移。`hashlib.sha256(body_bytes).hexdigest()` 是独立摘要预期；字符/物理行定位另用 `body_bytes.decode('utf-8').splitlines(keepends=True)`。
+6. 每次被测调用前保存 MD、pack、facts、freshness cache 和本分支原始报告（存在者）的 bytes。明确要求零写入时逐个比较，不只比较 body。未创建的目标记录为不存在，调用后仍不得出现。报告的 `issues/notes/verdict` 用原报告 bytes 保留证明，不重建报告使之匹配结果。正常成功只允许既定受管接受写入；模型结果文件、原始报告不得变化。
+7. 仅在构造“内部一致历史输入”的明确步骤中，允许准备旧 body/marker 和对应已有 hash。除下面 E-v1 明确保留真实校验的特例外，顺序固定为：先 `generate_pack`（初次生成本来没有 validator，不从已登记包随意删除校验）→ 改指定旧 body 或 marker → 计算实际 body bytes hash → 更新 `cache.render[ANALYSIS_MD].sha256` 和已有 `ownership.body_sha256`（map 的行/字符片段保留，下面变动不改变其正文行/字符坐标）→ 用 `contact_state.render_frontmatter(contact_state.stage2_pack_state_fingerprint(pack), raw_hash).encode('utf-8') + body_bytes` 写盘 → `env.write_pack(pack)` → 如需有效校验，必须通过真实 `env.record(...)` 登记。E-v1 的 marker 历史构造另按 §6.4 的明确顺序，必须保留由真实 record 得到的校验而非重新提交旧版报告。不能直接填一个 PASS validator，不能在受测调用后修 hash，不改 direction fingerprint、freshness fingerprint 或权限集合凑通过。记录完成后的负例只改明确指定对象，其余绑定保持原样。
 
-### 6.3 C：真实仿标题源续行与字符定位
+### 6.2 A/B：四出口及当前记录存在性，明确走到复用分支
 
-1. 在既有 `_attribution_env` 所用 gap override 中，把 `completed_part` 续行改为精确文本 `## 方向 假方向：中文🙂固定续行`，前一行仍有可信引用。该文本作为 freshness 源值经正常 renderer 写到真实 MD，不直接手改受管 Markdown；expected direction 仍 DIR00001，field=completed_part，owner=source。保留既有模板/源值同行、fallback summary、真实 narrative 对照，不扩大字段排列。
-2. 从实际文件共同分行视图取得此唯一续行的物理行（含真实 frontmatter 偏移）；报告用短 location=`固定续行`、quote=`中文🙂固定续行`。record 应登记 needs_correction/round1，对应上述预定归属，不出现 heading 导致的 identity_mismatch，也不新建“假方向”。原报告 issues/notes/verdict 及文件字节保持；实际 pending 与固定责任一致。
-3. 中文/emoji 让 UTF-8 字节偏移与字符偏移不同：用实际解码行的标准字符切片直接检查 quote 区间及对应 map 覆盖；禁止以字节下标作字符坐标。期待所有 quote 字符均属同一当前方向；不因首个 fragment 命中就忽略其余字符。此为同一反例的断言，不另做字符编码矩阵。
-4. 保留现有合法短 location、重复 quote 指定实际行/歧义拒绝、excluded、生成链接/source 的适用结果。核对新 map-only 路径仍执行整个 quote 覆盖、当前 direction membership 与 excluded/repairable 守卫；现有静态实现检查足够，不为每种 map 损坏加测试。
-5. 共享 D 已有正常 narrative refine 后第二轮固定命中检查，确认重绘后 map 仍可定位且不会因 owner=source 把既有 narrative later-title 误当固定区域。两 refine 入口对含固定 blocking 的整个报告保持零 rewrite（含既有方向过滤），不再复制运行。
+**A 正常出口**：保留既有 A 方法完整输入和逐行断言，不再列链接总数替代覆盖。实际期望包含：evidence 的“后续由 [可信链接] 完成，日期 2024-05-01，未知 DDDD8888 与 12345678 保留。”；completed_part 第一行已有正确链接与第二行裸引用各正确显示；remaining_gap 中裸 key 和裸 Zotero URI 各显示一次；BBB 禁锚的 completed_by 与 evidence 各正确显示。前后源文字、作者 quote/translation/source/page/status/confidence、`supporting_item_keys=['AAAA1111','BBBB2222','CCCC3333']`、`relevant_keys=['AAAA1111','BBBB2222']`、空 `narrative_later_papers` 保持。保留现有对机器 evidence 原文的精确比较。新 resolver/renderer 改到这些出口时运行 A；否则引用既有 t3 结果而不额外重跑。
 
-### 6.4 F：真实 bytes、精确时间豁免、合法生命周期
+**B-new 已有失败**：保留 B 原 title="" 及未知 Zotero 链接/URI ZZZZ9999 三段真实准备和断言，分别已有受管文件不变/新建目标仍不存在；错误定位 gap A、evidence、实际 key、DIR00001。它们证明普通失败，不冒充下面的 display-only 反例。
 
-以下分支在既有 F 方法/现有 D 生命周期内落实，各取一份隔离输入；不与每种状态、入口、换行交叉相乘。
+**B-null 与 B-absent 使用一个不参与模型输入的实际显示引用**：不能直接删 CCCC3333 再声称 freshness/成员没变。为避免 title 变化造成不同业务分支，B-null 放在既有 B 方法；B-absent 与 D-pending 合并放在既有 D 方法，只运行一次且不依赖 B 方法的执行顺序。两者各自建立隔离环境，按以下确定输入准备：
 
-1. 真实固定 evidence 改变：沿 t3 已实现步骤，generate_pack(gap_override()) 后登记空问题 pass，保存原报告 bytes；只将 freshness-DIR00001.json 目标 gap 的 evidence 从“后续由 CCCC3333 完成，日期 2024-05-01，未知 DDDD8888 与 12345678 保留。”改为同句末尾“；新增固定证据对照。”，仅删除该 gap 的隔离 freshness cache。preflight→绑定 facts→plan→finalize 应消费新结果，pack 与固定 MD 字段实际更新、可信链接仍在、旧 validator 失效、原报告 bytes 不变。不能用 user_note 改变替代。既有正式结果适用时复用。
-2. 旧绑定独立失效：保留 t3 原分支，合法 pass 包仅 validator.pack_sha256 改为64个0，其余 body/header/facts/results/validator 不动。正常 finalize 拒绝（现有 validation_render_stale），调用前后 MD/pack/facts/原报告 bytes 不变，不能自动重绑。原有效结果复用，不追加独立篡改 header 的认证矩阵。
-3. 真正时间差：既有标准 mock/固定时钟让两次正常 renderer 顶部生成时间值确实不同，其他输入不变；不要靠快速连续运行“可能秒数不同”。正常 finalize 成功，旧 body bytes 完全保留、SHA 与实际 body 相等；合法 validator 的 round/phase/pending/results/verdict 保留，必要新 pack binding 正确。若需要头更新，沿既有非业务 metadata 的合法候选变化准备，实际 body 必须仍相同；不能通过把坏旧 validator 头伪造正确证明保留。用 C 的一个固定 quote 在实际保留正文中定位，证明 map 不是只匹配候选时间文本。
-4. 精确豁免的反面直接沿用已有顶部非时间来源文字、用户笔记仿生成行变化分支；改后不是等价时间，不得保留旧通过。检查实现只豁免固定顶部时间值而非“首个 ## 前任意来源行”，缺失/格式不符不从别处找替代；无需补所有畸形布局组合。
-5. 原始磁盘差异：先 generate_pack 并登记合法 pass，再用 read_bytes/write_bytes 只将 body 的 LF 换为 CRLF，保留 frontmatter 原字节和原 pack/hash/报告，不主动重签。标准 bytes 断言确认确有差异，按相同 UTF-8 文本规范化会相同但这不能成为期望。正常 finalize 必须拒绝沿用旧校验，不能把 header/hash 修复后返回成功；record-validation 对该文件同样不能接受新成功。保存调用前后文件字节，未获人工覆盖时不得写 body 或 v2 成功标记。已有手改保护仍可报告 needs_decision，旧校验绑定失败可报告原绑定错误，均不得冒充 PASS。
-6. 不丢末尾字节：另取同类有效包，仅移除最后一个真实 body 换行字节，其余字节不动；通过现有 refine-plan 与 refine-finalize（配合法 narrative 第一轮报告/结构化 rewrite 输入）观察旧绑定被拒绝、零重写、不得转 awaiting_second_validation。此单一代表覆盖另一对实际读取入口及 splitlines 丢末尾问题，不再与 CRLF×所有入口组合。错误输出应区分绑定不一致，不能用根本未登记报告或无结果文件产生的早期错误充当证据。
-7. 合法 pending：沿 D 第一轮纯 narrative 报告得到合法 round1/pending，先作无业务/非时间正文变化的普通 finalize，pending/results/phase 原样保留；正常 refine 后仍 round1、awaiting_second_validation，原报告保留；再作等价普通 finalize 不清第二轮等待，不把 pending 移植到新版本。复用同一流程完成 D 的第二轮固定 fail_after_2_rounds。若业务/body 实质变化则按既有接受使旧 validator 失效，不强求其 pending 保留。
-8. 对原本内部一致、原始 body 为 CRLF 的兼容 fixture，与新 renderer 的 LF 候选相比较时必须认定非时间正文变化，不能假称 body 相同保旧 PASS；依原有人工冲突/决定处理，未获覆盖不写，获准正常接受也不得继承旧通过。此兼容观察可与 E 的旧版 raw-hash 分支共用，不新增通用换行格式保证或产品输出格式要求。历史规范化 hash 与实际 raw body 不匹配的旧包不得自动更新 hash 留住 PASS/pending，保留旧文件/报告。
+1. 在 `mutate_facts` 中往 `facts['papers']` 增加 `{'item_key':'EEEE4444','title':'Obsidian atlas archival reference','year':1900,'authors':[],'authorship':'unknown','has_pdf':False}`；不放入任何 direction 的 member/relevant/named 集合，不给 analysis/sidecar/facts 路径。年份早于两条源论文，题名与现有题名不重叠，因此既不是后续 freshness candidate，也不形成版本家族。
+2. 只把 `gap_override()['AAAA1111']['evidence']` 设为精确文本 `显示参考 zotero://select/library/items/EEEE4444，证据原句保留。`；`candidate_paper_ids` 仍为 CCCC3333，其他字段和 BBB 结果不变。正常 `generate_pack(overrides, mutate_facts=...)` 成功后断言 pack.papers 含 EEEE4444、四出口实际 evidence 为 `- 后续论文依据：显示参考 [Obsidian atlas archival reference](zotero://select/library/items/EEEE4444)，证据原句保留。`，成员/许可仍与 A 一致。这样 EEEE4444 是显式显示引用，不是假造新业务成员。
+3. 把已有 `cache.render[ANALYSIS_MD].u1.display_version` 改为1，保留 ownership 和全部实际正文；尚无 validator，按 §6.1(7) 保存一致旧输入。保存原 direction 的 `input_fingerprint/provisional_input_fingerprint`、narrative、gap_shortlist、completed_gap_blacklist 和 freshness cache bytes。
+4. B-null：当前 facts 中 EEEE4444 记录仍存在，只把其 `title` 设 null。B-absent：另一独立环境从 facts.papers 列表删除 EEEE4444 整条记录；保留已接受 canonical。两者都不改 `_index.json`、源论文、候选列表、cache/fingerprint/旧标题。调用真实 save_preflight → bind facts → stage2-plan；断言 preflight 为 process 且含 fixed_evidence_display_update，plan status=ok、jobs=[]、write_needed=false。为明确命中旧方向 reuse，在测试准备中读取已有 `contact_state.Stage2Context(facts_path).direction_plans`，只断言 DIR00001 的 `reuse is True`，其真实 fingerprint 等于旧 provisional（或没有 provisional 时的 input）fingerprint；不改这个值、不收集完整调用轨迹。这是待测复用分支的局部前置断言，不是以实现产生业务预期。
+5. B-null 正常 finalize 预期 `missing_paper_reference_title`，direction=DIR00001、gap_id=gap A、field=evidence、item_key=EEEE4444；status不能ok，输出指出无可信题名；pack/MD/facts/cache bytes 不变，旧 marker仍1，旧题名不能成为成功结果。若失败是 preflight drift、fixture/schema错误或缺模型结果，不算本目标通过。
+6. B-absent 正常 finalize 预期ok，evidence仍为第2步固定字符串；marker=2，实际 body hash/map 匹配；上述成员/许可、narrative、原始 gap/evidence/完成结论与缓存业务内容不因 canonical 回退扩大或重算。不得因为当前列表缺记录就要求补无用候选列表。记录此 accepted pack 后，D 的纯包 refine 共用本环境（见 §6.4），证明 refine 只消费接受的 canonical，不重新读 /tmp facts；不再另造缺事实错误的失败场景。
 
-### 6.5 E：旧版入口、实际接受与标记
+### 6.3 C：真实仿标题、Unicode 与现有边界
 
-1. 复用既有缺 map/marker 的懒更新，输入保留合法分析/freshness/narrative/resolved；没有来源失效时 plan 无新增模型 jobs。保留有效缓存补实际引用与“缺无用候选表但实际引用合法”的观察，不把模型全跑作为升级步骤。
-2. 新的必要兼容输入是已有 map 且 U1 display_version=1 的内部一致旧包；真实 preflight 应 process，理由包含展示更新；真实业务失效理由不得被展示理由覆盖。正常 plan/finalize 接受后才记2，实际 body/hash/map 与文件相符，其他 render 元数据保留。后续 preflight 不再仅因标记落后重复 process。
-3. 若正文/业务未变、旧绑定合法，原 validator round/phase/pending/results 保留，直接共用 F 的生命周期结果；若只升级版本但原始绑定无效，拒绝自动重签，旧包/MD/历史报告保留，不记2。F 的 CRLF/末尾变化已足够证明原始绑定失败，不再新造所有旧状态组合。
-4. B 元数据拒绝或已有人工冲突时不得提前写完成标记；只在真正 accepted pack 中完成。成功升级不等于校验 PASS。此目标无 U5、Stage3 或其他 PR 前置。
+1. 在现有 `_attribution_env` 准备中，把 AAA 的 `completed_part` 精确改为 `[Unrelated synthetic example](zotero://select/library/items/CCCC3333) 已完成一部分；\n## 方向 假方向：中文🙂固定续行`。保留已有 `drop_summary`：各 narrative direction 的 gap_notes=[]，并加入 `这里讨论后续论文依据：但仍是叙事。` 合法 para。由 freshness JSON→正常 generate_pack 写出 Markdown，不直接编辑受管正文。
+2. 原 C 报告的续行 issue 改为 quote=`中文🙂固定续行`、短 location=`固定续行`。报告仍同时含原可信题名、评估时间模板、summary回退、真实 narrative 和“依据：后续由”同行混合命中。先在磁盘字符视图中断言该完整仿标题行恰好一次；quote 起点为该行 `index('中文🙂固定续行')`、终点为起点加 Python `len(quote)`，切片必须恰等quote，UTF-8前缀字节长度与字符起点不同。无需手写字节坐标到map。
+3. record 预期needs_correction、round1、needs_owner_fix=true，fixed_blocking 的唯一 direction 为DIR00001，不出现假方向；`completed_part/source/gap A` 必须存在。其余原C固定rows分别是 evidence/source、label/generator、summary/source，均gap A；真实narrative不加入fixed_blocking。比较完整预先列出的集合，不用返回首row造expected。原MD、报告bytes不变；pack.validator中的fixed_blocking、pending与原issues一致（原6个issues仍6个），原notes/raw verdict保留。
+4. 继续用现有C生成链接与禁锚链接分支，分别确认链接语法/URL为generator、题名/旧Markdown链接为source；已有排除区分支必须仍返回validation_issue_not_repairable且pack不变。短location用本步骤已覆盖，重复quote准确行号/歧义拒绝、narrative later-title沿现有 `test_stage2_style_validation_handoff` 已适用结果复用；不追加全套故障map矩阵。
+5. 同一报告调用两个refine入口，各传 `--direction-id DIR00001`；预期needs_owner_fix/fixed_evidence_blocking，refine-plan jobs=[]、write_needed=false，refine-finalize rewritten=[]；MD、pack、报告不变。不能因过滤了方向而只看过滤后报告。未过滤分支已有结果可复用，不重复排列。
+6. 代码符合性只静态核对 r5 要求的整quote覆盖、方向membership、excluded守卫以及map之外无heading authority；不要求测试重新实现一个owner判定器。§6.4正常refine后第二轮固定命中同时证明新body/map仍相配。
 
-### 6.6 定向运行、证据、失败与停止
+### 6.4 D/E：一条真实生命周期完成兼容与状态保留
 
-本版未运行。落实并经 G2 后，从既有六个真实 selector 中选择实际受影响且无可复用证据者；不发明尚不存在的新 selector。当前预期需要补的 B/C/E/F 对应 §3 的原方法，D/A 只按 §4 连带影响决定；映射未落实先记未执行。每次运行只需标准 unittest 日志、实际产品/测试提交、退出码、所覆盖的上述场景与关键失败/成功断言，不要求逐调用账本。
+**D/E-pending** 使用 §6.2 在 D 方法内依 §6.2 独立准备并完成 B-absent 的 accepted pack 合并验证，避免每条目标重复生成：在该夹具最初 narrative_mutate 中加入现有D的合法para `纯叙事待改文字。`（refs=[]，concrete_object/input_example/output_example均沿现有D）。B-absent的接受成功后进行下列步骤：
+
+1. 用实际物理行号报告quote=`纯叙事待改文字`，record→needs_correction、round1、needs_owner_fix=false、fixed_blocking={}。保存原validator的round、phase、pending、results、issues、notes、raw_verdict、validation_sha256和报告bytes；这是合法pending，不手工填状态。
+2. 普通 finalize 使用同一未改业务facts/proof/results成功，body bytes完全相同；上述校验字段逐个相等（pack_sha256只允许随accepted pack更新并须等于现有content fingerprint），不能清掉pending。接着删除本隔离目录的facts文件，证明下面真是pack-only；不是生产数据删除。refine-plan仍ok且只为DIR00001生成job；用已有write_narrative_rewrite生成“纯叙事已改文字”结果，refine-finalize→ok、round_retained=true、phase=awaiting_second_validation。canonical EEEE4444题名、可信evidence、原事实/许可不变，文件中待改文字替为已改文字，bodyhash/map正确，第一轮仍1。
+3. 要检查awaiting状态的普通接受，仅恢复删除前保存的同一facts bytes，重新save_preflight/bind proof，stage2-plan确认jobs=[]，普通finalize成功且body、round1/phase/pending/results保持；不把refine后的旧preflight跨调用复用。随后第二轮报告命中该实际新文件中第一个`评估时间：`固定模板，record→round2、terminal=true、needs_owner_fix=true，DIR00001 result=fail_after_2_rounds、owner=generator；refine-plan不再产生job。两份原报告bytes保留。此流程同时覆盖“有旧canonical无当前记录的合法refine”“重绘后fixed定位”和“普通接受不洗掉两轮”。
+4. 原minor分支及固定+narrative混合停止沿现有D/C有效证据复用；它们不由源owner一词变为固定范围。原模型例子/结果不要另生成。
+
+**E-v1 合法旧标记升级** 用独立普通generate_pack(gap_override())，先确认当前marker=2、ownership完整，通过真实record空issues取得terminal PASS并保存原始报告bytes与validator。随后只在测试准备阶段把display_version设1，构造一个历史已接受旧包：保留整个真实validator的round/phase/pending/results/issues/notes/raw_verdict/validation_sha256/render_sha256/validation_render_sha256，不改body/header/map；仅将validator.pack_sha256设为`contact_state.stage2_pack_content_fingerprint(pack)`（该既有函数排除validator自身），再write_pack。断言state_fingerprint、实际rawbodyhash、header.render_sha、render.sha、ownership.body_sha、validator.render_sha相互匹配，report的实际SHA仍等validator.validation_sha。此为已取得真实PASS的历史版本setup，不是在受测失败后重签，也不在marker1时调用新record绕过“先更新再记录新报告”的r5要求。保存最终一致旧输入的body bytes与validator字段，此后禁止再改任何绑定。preflight应process且全局/方向reason含fixed_evidence_display_update；保存proof/bind facts→stage2-plan jobs=[]、write_needed=false→finalize ok。断言marker2、body原字节相同、旧validator round/phase/pending/results/raw_verdict及报告hash相同，新pack_sha256合法；render已有其他字段除该轮正式owned字段均不被整块删除，ownership.body_sha256等于实际rawbodyhash。再次preflight应reuse_all且无display_update。用该正例证明不是所有v1都被拒绝，不为source失效造新模型工作。
+
+**E-no-map 既有兼容**：保留原E把可信链接恢复为裸key、删除ownership/u1、以现有hash保存旧包的实际步骤；preflight→process→plan jobs=[]→finalize恢复链接及map。保留原E删除freshness cache时真实失效→freshness job的已有检查，但不能将其解释成所有旧禁锚必须补全候选列表。缺完整candidate列表而已有completed_by/显式引用足够解析的兼容由B-absent与此原E共同证明。成功marker只随accepted pack写入，B-null与下述F人工冲突都断言未提前升级。
+
+### 6.5 F：字节、绑定、人工保护及预检快路径
+
+以下各是既定E/F同一目标的不同实际入口，不是所有状态×所有行尾×所有命令矩阵。每个负例限定明确错误，不能用“不是ok”把错误的前置失败算覆盖。
+
+**F-time：确定有时间差且真实CLI可见**
+
+1. 独立generate_pack(gap_override())后，在尚无validator时，把renderer固定顶部来源行的唯一生成时间字段改成等长字面量`2000-01-01T00:00:00Z`；只改该20字节，不能改源统计或后面仿来源行。按§6.1(7)更新该合成旧输入raw hash/cache/map；使用真实record空issues登记PASS，确认terminal、round1、preflight可接受（marker保持当前2）。不使用父进程时钟mock。
+2. 保存旧body bytes及上述validator字段；普通finalize真实调用。候选renderer按现行now_utc生成当前时间，不可能是固定2000年；静态确认该接口没有重用旧生成时间，且旧body固定字段确为2000年。这给出确定不同的时间输入，不靠睡眠、秒数竞态或伪造结果。预期ok，实际body bytes仍逐字节等于旧body、时间仍2000；pack.render.sha/ownership.body_sha/header.render_sha均等于hashlib计算实际body；validator round/phase/pending/results/raw_verdict/validation_sha保持，pack_sha正确。通过固定quote的已有map坐标对实际保留body字符切片核对，不能只检查候选hash。
+3. 机器头需要更新的成功入口沿下述F-business：业务指纹真正改变但body不变时，实际body仍原bytes而头state更新；该情形旧validator应失效，不把“头改变”本身作为保留PASS证明。
+
+**F-preflight/finalize：最新标记不能掩盖磁盘LF→CRLF**
+
+1. 独立正常包marker=2、ownership存在，通过真实record空issues取得terminal PASS。先调用preflight断言reuse_all；保存真实proof并绑定facts，确认源/方向/cache未变化。此正向断言排除本来就不能复用的夹具。
+2. 在preflight之后、下一个调用之前，仅把磁盘body的每个`b'\n'`换为`b'\r\n'`（初始body断言没有`b'\r'`且至少一个换行），frontmatter bytes、pack、hash、validator、facts/cache不改。断言newbody!=oldbody且newbody.replace(b'\r\n',b'\n')==oldbody，header/pack记录仍是oldrawhash，marker仍2；不要重签。
+3. 再调用真实preflight，预期status=ok、action=process，reason_codes含validator_not_accepted，DIR00001不能reuse_all；不能只靠fixed_evidence_display_update触发process（marker已2）。受管MD/pack/报告不变。
+4. 用第1步仍然匹配源输入的真实proof/facts/results普通finalize，预期明确validation_render_stale或manual_markdown_changed/needs_decision，拒绝接受；禁止ok、validator重签或canonical/marker提前更新。若返回preflight_inputs_changed/invalid_params/模型结果缺失，则本分支未命中，作为步骤问题不得算通过。比较全部§6.1(6)文件bytes。预检和finalize两次调用之间的新磁盘改动因此都不能靠旧快照绕过。
+
+**F-record：首轮合法报告隔离绑定检查，不让轮次错误假通过**
+
+1. 另一独立generate_pack(gap_override())，断言pack没有validator；预先创建空issues pass报告但尚不record，保存报告bytes。MD/map/pack在变动前完全合法。
+2. 按上一个分支只改body LF→CRLF，不改任何hash/pack。调用env.record(report)，必须reason_code=validation_render_stale，pack/MD/报告bytes不变且仍无validator。`validation_correction_required`、重复轮次/已终态、缺报告/错误路径都不算通过；这里本来不存在旧validator，不能被终态规则挡住而伪装绑定保护。
+
+**F-refine：已登记合法pending后丢最后一个换行**
+
+1. 独立生成含“纯叙事待改文字。”的D夹具；record该唯一narrative blocking，确认needs_correction、round1、needs_owner_fix=false；先refine-plan确认DIR00001真实job，并生成现有合法rewrite目录，保存report/rewrite文件bytes。
+2. 只去掉实际body末尾一个`b'\n'`，断言原body.endswith(b'\n')、新旧长度相差1、其余所有字节相同；不改frontmatter/pack/hash。依次refine-plan(report)、refine-finalize(rewrite,report)，各必须validation_render_stale，不能产生/消费修订、不能进入awaiting_second_validation。两次调用间不得恢复或修复文件；逐次断言MD/pack/report/rewrite bytes不变。fixture已有有效报告和有效结果，故缺输入/固定阻挡/顺序错误均不算本目标覆盖。
+
+**F-manual：无旧validator也不能吞掉行尾手改**
+
+独立正常包尚无validator，将marker设1以同时观察失败不升级，按§6.1(7)保存原合法输入；保存新proof/bind facts后，仅将body LF→CRLF，不更新hash。普通finalize必须needs_decision且reason_code=manual_markdown_changed，MD/pack/cache/报告不变，marker仍1。这个单一场景替代原“追加人工改动”中对本次无损入口的补证，不再穷举手改类型；原追加文字历史结果保留。
+
+**F-valid-CRLF：合法旧字节不同不等于旧绑定损坏**
+
+独立正常包，在没有validator时将body换成CRLF，并按§6.1(7)以真实rawhash建立内部一致旧输入（行号/字符区间不变）；真实record空issues须成功才能开始受测接受，不能手填PASS。保存该合法旧validator。普通finalize生成LF候选，与CRLF旧body不是仅时间差：这里磁盘rawhash与previous_sha一致，没有未登记手改，因此沿现有冲突规则应正常接受（status=ok），写入实际新LF body、hash/map对应且validator=None。不得借decision_file绕过意外冲突，不允许“成功或needs_decision都算通过”；若被判stale/needs_decision，先核实合法fixture绑定与目标实现，不能改回规范化hash求通过。实际新body与旧body必须不同，且其换行差异正是预设CRLF→LF；报告bytes仍保留。
+
+**F-business/real-evidence/stale-binding：复用既有可区分输入，收窄旧证据宣称**
+
+- 真实evidence：原F已把freshness-DIR00001.json中gap A的evidence末尾改为`；新增固定证据对照。`，只移除该gap缓存后正常preflight→plan→finalize；预期pack和MD实际固定字段改变、旧validator=None、原报告不变。直接保留此已实现分支，不拿user_note替代。
+- 正文等价业务改变：原F把facts.directions[0].credibility.note改成`只影响指纹不进入正文的说明`，保存新proof并bind后plan/finalize；现在把body等价断言升级为rawbytes完全相等、header.state等于新pack state、原合法validator=None、原报告不变。准备时先真实record pass并保存报告，不依赖前面分支残留状态。
+- 旧绑定独立无效：原F合法PASS后只把validator.pack_sha256置64个0；不改body/header/facts，finalize明确validation_render_stale且零文件变动。沿用已有结果，不新增篡改头认证矩阵。
+- 顶部非时间来源文字：既有分支先去validator、把统计“全文级2篇”改成9并重绑fixture，随后恢复2，仅证明非时间文字不是等价豁免；不得再声称该旧分支证明PASS失效。用户笔记仿来源行旧分支同样只证明非顶部时间不被忽略。旧validator失效由上述真实evidence、business、valid-CRLF三种已有目标入口证明，不为同一结论另造无关场景。
+
+### 6.6 最小运行、结果和停止
+
+新增分支只改既有 B/C/D/E/F 方法（A仅在共享输出受影响时复核）；测试工程师交接时列实际提交与每个方法中实现的本节分支，明确未落地者，不能只报“六项存在”。独立G2检查准备、真实分支、错误原因及断言全部对应后，另获执行授权再运行。当前没有t5测试代码，下面是实施后的确定命令，不是现在已可证明t5的命令；不再留“执行者自行猜selector”的占位。
 
 ```sh
 set -eu
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-RUN_DIR="$(mktemp -d /tmp/pr107-u1-t4.XXXXXX)"
-printf 'HEAD=%s
-' "$(git rev-parse HEAD)" > "$RUN_DIR/version.txt"
+RUN_DIR="$(mktemp -d /tmp/pr107-u1-t5.XXXXXX)"
+printf 'HEAD=%s\n' "$(git rev-parse HEAD)" > "$RUN_DIR/version.txt"
 cd "$REPO_ROOT/.apm/skills/professor-contact/tests"
-# 仅示例已有 B selector；执行者依 G2 的真实映射替换为受影响 selector，
-# 一次命令可列多个需测方法，不重复运行同一覆盖。
-if uv run --no-project python -m unittest -v   test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_b_missing_trusted_metadata_fails_before_write   > "$RUN_DIR/results.log" 2>&1; then
+if uv run --no-project python -m unittest -v \
+  test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_b_missing_trusted_metadata_fails_before_write \
+  test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_c_report_ownership_uses_real_fragments \
+  test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_d_narrative_two_rounds_and_fixed_stop \
+  test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_e_old_pack_updates_through_process_to_finalize \
+  test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_f_acceptance_separates_body_business_binding_and_validator \
+  > "$RUN_DIR/results.log" 2>&1; then
   cat "$RUN_DIR/results.log"
 else
   result=$?
@@ -155,11 +212,13 @@ else
 fi
 ```
 
-预期所选方法逐项 ok、退出0且所要求分支断言确已执行；skip/旧方法缺断言不能算通过。不要求固定测试数量。代码尚未实现、fixture 不能到达目标路径、环境问题分别记未执行或无法判断，不以旧 CI 绿替代。业务断言失败保留证据交产品 owner，不改预期重采样；已确认外部启动/依赖/临时目录故障、无业务失败和副作用且条件未变时最多补试一次并保留两次记录。修订输入/代码/配置需重审受影响步骤，不属同条件重试。全部清单取得当前有效结果后结束，不增加合并前全仓回归。
+如新resolver/renderer实际改变A四出口，共同命令加现有 `test_stage2_fixed_evidence.FixedEvidenceBase.test_u1_a_trusted_citation_display_keeps_facts_and_licences` 一次即可；不另跑完整文件/185项/全仓/真实模型。若现有CI已在相同产品与测试语义版本执行这些方法且能确认新分支断言已落地，直接采用该结果，不再定向重跑。
+
+通过需所选方法ok、退出0、无skip且新增分支确已在实际方法执行；旧同名selector绿不能当新覆盖。步骤前置不成立列未执行/无法判断，指出具体不符；业务断言不符交产品负责人，禁止改预期、重签被测坏绑定或改fingerprint求通过。保留全部正式尝试、实际产品/测试版本、命令、退出码及标准日志。仅已确认无业务失败/副作用的外部启动或临时目录故障，在条件不变时至多补试一次并保留两次记录；修代码/输入属修订不是重试，先重审受影响步骤。全部目标取得适用证据后结束，不追加矩阵或合并门槛。
 
 ## 7. 执行结果（2026-10-20）
 
-> 历史原文边界：以下 §7–8 保留当时记录；其中“本版”“当前”“§6.3/§6.4/§6.5”等指 [t3 当时版本](https://github.com/ScholarWorkflow/professor-contact/blob/cd6387759157c505acb96ed8459e0cc2fbd7f6ba/plan/stage2-fixed-evidence/test-plan.md)，不是 t4 的执行指令或新结果。当前状态唯一以本版 §4–5 为准；t3 待审已由页首链接正式三关记录完成。
+> 历史原文边界：以下 §7–8 保留当时记录；其中“本版”“当前”“§6.3/§6.4/§6.5”等指 [t3 当时版本](https://github.com/ScholarWorkflow/professor-contact/blob/cd6387759157c505acb96ed8459e0cc2fbd7f6ba/plan/stage2-fixed-evidence/test-plan.md)，不是 t5 的执行指令或新结果。当前状态唯一以本版 §4–5 为准；t3 待审已由页首链接正式三关记录完成。
 
 - 产品与测试版本：初始实现 `2b813fc`；IR-U1-1/IR-U1-2 修复后为 `3d6c2bc`（产品代码只改 `_stage2_render.py`，测试只改 `test_stage2_fixed_evidence.py`）。以下按轮次标注；最终六项、既有 185 项与全仓回归均在 `3d6c2bc` 上重跑，日志在 `/tmp/u1-fixed-evidence/`。
 - 环境：仓库现有 `uv run --no-project python`（CPython 3.14.6），沿用既有合成夹具；无新增安装、模型调用、Zotero/PDF 下载或双 harness 运行。
@@ -191,4 +250,5 @@ fi
 - 实现缺陷修复（2026-10-21，`eebbb87`）：用户笔记可渲染出与顶部来源行同形的 `> timestamp ｜ 数据来源：...`；原比较对每行删除日期，导致笔记日期改变被误判正文等价。现将豁免限定在首个 `##` 之前的顶部来源行，其他行逐字比较；同一 U1-F 方法新增该回归场景。`eebbb87` 上 U1-F `Ran 1 test in 8.281s`、`OK`，U1-A 至 U1-F `Ran 6 tests in 22.865s`、`OK`，均退出码 0；日志 `/tmp/pr107-u1-defect.4wUS95/u1-f.log`、`/tmp/pr107-u1-defect.MNtpfD/u1-af.log`。产品代码在 `3d6c2bc` 后新增该修复，最终 head 的实现审核需覆盖 `_stage2_finalize.py` 该分支。
 - 实现缺陷修复（2026-10-21，`56486a8`）：固定证据转换原先把题名和自动生成链接整段标为 source。现按片段输出：可信题名保留 source，`[`、`](...)` 及 Zotero 地址为 generator；已有 Markdown 链接保持 source。U1-C 新增缺口证据链接和禁锚证据链接两个回归。`56486a8` 上 U1-C `Ran 1 test in 2.517s`、`OK`，U1-A 至 U1-F `Ran 6 tests in 10.449s`、`OK`，均退出码 0；日志 `/tmp/pr107-u1-owner.ykK9dW/u1-c.log`、`/tmp/pr107-u1-owner.fpMshq/u1-af.log`。
 - t3 修改唯一正式测试计划及同一 U1-F 方法的两个场景输入，未改产品、配置或环境；后续 `eebbb87` 只修 `_stage2_finalize.py` 与 U1-F 回归场景，`56486a8` 只修 `_stage2_render.py` 与 U1-C 回归场景。§7 的 2026-10-20 原始尝试、并发临时目录错误、复验与全仓回归记录保持原样，不用后续结论覆盖历史记录；正式第二、第三关及合并仍独立审核。
+
 
