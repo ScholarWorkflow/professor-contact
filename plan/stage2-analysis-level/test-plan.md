@@ -1,8 +1,8 @@
 # U5：实际分析级别贯通与诚实统计测试计划
 
-- Test plan revision：`u5-analysis-level-t4`，2026-10-21（UTC+08:00）。本正文整体取代 t3；唯一完整文件为 `plan/stage2-analysis-level/test-plan.md`，不并行执行历史正文或评论中的相反要求。
-- 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，分支 `plan/u5-analysis-level-redesign`；对齐[执行计划 r4](https://github.com/ScholarWorkflow/professor-contact/blob/3bfe8df6313b2047dad564163e07b30b36c7fd20/plan/stage2-analysis-level/implementation-plan.md)。修订读取基线 head `3bfe8df6313b2047dad564163e07b30b36c7fd20`、原测试计划 blob `033523a43b2b1ac8f7b1527db73afa4307224a54`。
-- 用户已明确要求修改执行计划的三个机制，并随后要求“你改测试计划”。计划修订轮只修计划；随后测试准备轮按 §2–3 修改既有测试方法并补齐 §4.2 recipe，未修改产品代码、未运行正式用例。
+- Test plan revision：`u5-analysis-level-t5`，2026-10-21（UTC+08:00）。本正文整体取代 t4；唯一完整文件为 `plan/stage2-analysis-level/test-plan.md`，不并行执行历史正文或评论中的相反要求。
+- 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，分支 `plan/u5-analysis-level-redesign`；对齐[执行计划 r4](https://github.com/ScholarWorkflow/professor-contact/blob/3bfe8df6313b2047dad564163e07b30b36c7fd20/plan/stage2-analysis-level/implementation-plan.md)。本次修订读取基线 head `61bfbfce82d3688668df4efaa0a60ab597e9797a`、原测试计划 blob `eeed0b57e03bd59431a4af7b828eacb8ce9ff927`；执行计划仍为 r4，blob `38c71e8d4ec3105b639738086daccfdd360d9d6c`。
+- 用户再次明确要求修改测试计划。t5 只修正文中三处 recipe 缺口和过时资产映射；不修改执行计划、产品或测试实现，不运行测试。现有 53 个方法和历史结果保留；§4.2.1–4.2.4 是待落实、待独立复核的具体步骤，不是已经执行的测试证据。
 - 当前设计状态：pending 独立复核，作者不自授 APPROVED/PASS。L1–L6 的业务范围保持；仅修正与 r4 直接相关的来源资格、完整守卫／旧绑定和磁盘字节检查。三个测试关口与历史结果分别见 §4、§5，不继承旧版“全部通过”为当前结论。
 
 ## 1. 范围、依据与复用原则
@@ -58,7 +58,7 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 - 目标／依据：r4 §5–6。刷新使用已有 lease，获锁后和写前都核对完整业务／来源及接受文件；原 refine 保留合法轮次、清 preflight、不清无关有效缓存。
 - 输入／场景：保留 busy、人工 body、一次 Markdown 已写而 pack 持久失败、release 成功／失败的已有结果和断言。将原仅“预检后 target 改变”的漂移检查最小修正为真实刷新入口中：在获锁后的重新观察之前改变已存在分析文件，路径／存在／level 保持；另在该观察之后、正式写入之前改变已有 guard 可见的来源或接受文件，以区分第二个检查时点。沿既有 lease／写入替身在准确边界改变真实临时文件，不替换比较结果，不建竞态框架。L4 的源类型接线核对决定是否有独立弱分支，避免无依据地穷举所有载体×时点。
-- 预期：busy 零业务写入；任一可观测漂移返回原 needs_refresh、零接受写入、不补造新来源基线，finally 释放自持 lease，随后 process 而非继续纯级别刷新。人工 body 不覆盖。release 失败如实报告；部分 I/O 失败未完成且不承诺回滚，下一次完整旧绑定不允许直接 reuse，不补打成功标记或自动救旧 PASS。
+- 预期：busy 零业务写入；任一可观测漂移返回原 needs_refresh、零接受写入、不补造新来源基线，finally 释放自持 lease。业务来源漂移后下一次 preflight 必须 process；若仅接受 pack 被合法外部更新，本次必须退出并重新观察快照，下次依实际业务来源决定 action，不强制 process 或沿旧 ctx 继续刷新。人工 body 不覆盖。release 失败如实报告；部分 I/O 失败未完成且不承诺回滚，下一次完整旧绑定不允许直接 reuse，不补打成功标记或自动救旧 PASS。
 - 检查方式：真实 pack、Markdown、锁与原返回状态，复用现有 unittest mock。原 `test_business_rerender_and_bounded_correction_lifecycle` 中合法 pending→refine→第二轮及缓存断言继续使用：当前 render SHA 对实际 body、无关 cache 与 cache.render 不变、cache.preflight 清除、不重置 round1。仅因 r4 共用绑定／I/O 接线受影响时定向复核该方法；不重做其全部历史 T5 业务或扩大轮次测试。
 - 边界：lease 只锁合作 writer，stat 只提供原合同可观察的一致性。这里不要求不可观察外部修改的绝对原子快照，不增加全局锁、外部文件锁或跨文件回滚承诺。
 
@@ -68,13 +68,13 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 | 目标 | 当前真实资产与局限 | 本轮接线决定／结果适用性 |
 |---|---|---|
-| L1 | `test_stage2_analysis_level.TestFactsLevelContract` 的 known/unknown、冲突、非法值、无登记、OCR-only、消费路径方法；`test_null_facts_against_a_known_registration_are_rejected_without_writes`、`test_missing_level_field_against_a_known_registration_is_rejected`、`test_unknown_level_accepts_null_then_a_new_registration_turns_known` 覆盖旧 null 方法留下的 r4 语义；`TestAnalyzerContract.test_both_analyzers_pass_the_level_and_consume_the_refresh_branch` 静态核对当前登记与 refresh 分支文本 | 旧 null 方法预期与 r4 相反，不可复用为通过；最小替换为冲突零写入并接合法 unknown→下一轮→新成功序列。其他已知正常事实结果保留，不重复外部导入。失败升级摘要有效分支不能由 null 样例替代。analyzer 文档未写明“旧 facts 缺字段重新组装”这条边缘规则，作为产品文档缺口记录，不据此改产品代码 |
-| L2 | `TestCanonicalMerge.test_known_level_survives_a_reuse_finalize_and_validator`、`test_missing_level_field_in_an_old_pack_reads_as_null`、`test_v1_migration_treats_missing_and_null_alike_but_rejects_conflict` | 旧缺字段方法同时传与 known index 矛盾的新 null facts，故旧通过不能证明 r4 兼容；分离旧 accepted 兼容视图与新 facts，最小修正。v1 等价现有结果复用；合流接线随实际改动检查 |
+| L1 | `test_stage2_analysis_level.TestFactsLevelContract` 的 known/unknown、冲突、非法值、无登记、OCR-only、消费路径方法；`test_null_facts_against_a_known_registration_are_rejected_without_writes`、`test_missing_level_field_against_a_known_registration_is_rejected`、`test_unknown_level_accepts_null_then_a_new_registration_turns_known` 覆盖旧 null 方法留下的 r4 语义；`TestAnalyzerContract.test_both_analyzers_pass_the_level_and_consume_the_refresh_branch` 静态核对当前登记与 refresh 分支文本 | 历史旧 null 方法预期与 r4 相反，不可复用为通过；当前所列冲突零写入与合法 unknown→下一轮→新成功序列方法已替换旧预期，不再下发重复替换。其他已知正常事实结果保留，不重复外部导入。失败升级摘要有效分支不能由 null 样例替代。analyzer 文档未写明“旧 facts 缺字段重新组装”这条边缘规则，作为产品文档缺口记录，不据此改产品代码 |
+| L2 | `TestCanonicalMerge.test_known_level_survives_a_reuse_finalize_and_validator`、`test_missing_level_field_in_an_old_pack_reads_as_null`、`test_v1_migration_treats_missing_and_null_alike_but_rejects_conflict` | 当前旧缺字段方法已准备自洽的旧 accepted pack、检查 raw/兼容视图区分，并保留合法 known facts 进入普通处理，不再登记成“仍传矛盾 null、待分离”；较早旧通过不能代替当前检查。v1 等价现有结果复用；合流接线随实际改动检查 |
 | L3 | `TestStatisticsRender.test_header_counts_members_only_and_shared_members_per_contribution`、`test_reference_only_paper_stays_out_of_the_statistic` | 现有统计／身份结果有效复用，不要求重新执行 |
-| L4 | `TestPreflightBranches` 中 unchanged、level-only、management fields、fixed facts、missing projection、illegal index、not accepted validator | 保留仍适用的预期／历史结果；missing projection 修正覆盖现有私有版本保守失效，补现有 artifact stat 与 L6 的共同守卫接线。普通 finalize 的 artifact stat 独立用例未形成：本轮尝试后下游结果夹具先报 `invalid_result_json`，已撤回，避免用无关错误冒充守卫失败；该入口的源码核对与最小补法交测试计划工程师和实现审核。旧关键词静态断言不是优先级完整证明 |
-| L5 | `TestLevelRefresh` 中统计变化、等价换位、业务变正文等价、人工 body、legacy stats；`test_invalid_old_binding_is_an_evidence_error_not_a_rebind` 只改 validator.render_sha256（refresh）；`test_normal_acceptance_rejects_an_invalid_old_header_binding` 与 `test_normal_acceptance_rejects_an_invalid_old_validator_binding` 覆盖普通 finalize；`test_preflight_reuses_a_legal_crlf_managed_file` 与 `test_validation_recording_accepts_a_legal_crlf_managed_file` 覆盖两个 CRLF 入口 | 旧 render 错配在 refresh 与普通 finalize 各有独立输入；header.state_fingerprint 在 refresh 与普通 finalize 复用同一错误头夹具。legacy stats 旧夹具只改正文/cache 且未保持完整旧头绑定，须按 r4 修正为合法旧格式输入或预期拒绝，不能用破损旧态证明格式升级成功 |
-| L5 字节 | `TestManagedBodyBytes.test_only_the_fixed_generation_time_is_ignored` 直接向 helper 传字符串；`test_crlf_bytes_are_read_and_hashed_without_normalization` 是原始字节读取的直接判别 | 历史 helper 通过保留，但不证明磁盘 CRLF 无损；转接真实磁盘读/hash/比较/写，保留时间、统计、尾换行的有限语义，不为这些再建平行框架。CLI 入口 CRLF 用例只证明写入路径入口，不作为原始读取的唯一证据 |
-| L6 | `TestRefreshProtection.test_source_drift_after_lease_returns_needs_refresh` 与 `test_source_drift_after_observation_returns_needs_refresh` 在同一进程内调用真实 refresh 处理函数，分别在获锁后和 gate 后 render-precheck 修改真实分析文件 | 只证明锁内 analysis 来源漂移；受管接受 Markdown 的同类漂移仍未单独输入，按“来源或接受文件”保留为残余核对项。其他 busy/release/I/O 方法保留，I/O 旧方法未观察失败后的下一次 preflight，最小接后续拒绝复用 |
+| L4 | `TestPreflightBranches` 中 unchanged、level-only、management fields、fixed facts、missing projection、illegal index、not accepted validator | 保留仍适用的预期／历史结果；missing projection 修正覆盖现有私有版本保守失效，补现有 artifact stat 与 L6 的共同守卫接线。普通 finalize 的 artifact stat 方法尚未实现；此前因 `invalid_result_json` 撤回的尝试保留为无效覆盖，t5 §4.2.2 用已真实接受的两方向结果与 reuse 输入给出合法 recipe，不恢复该失败夹具。旧关键词静态断言不是优先级完整证明 |
+| L5 | `TestLevelRefresh` 中统计变化、等价换位、业务变正文等价、人工 body、legacy stats；`test_invalid_old_binding_is_an_evidence_error_not_a_rebind` 只改 validator.render_sha256（refresh）；`test_normal_acceptance_rejects_an_invalid_old_header_binding` 与 `test_normal_acceptance_rejects_an_invalid_old_validator_binding` 覆盖普通 finalize；`test_preflight_reuses_a_legal_crlf_managed_file` 与 `test_validation_recording_accepts_a_legal_crlf_managed_file` 覆盖两个 CRLF 入口 | 旧 render 错配在 refresh 与普通 finalize 各有独立输入；header.state_fingerprint 在 refresh 与普通 finalize 复用同一错误头夹具。当前 legacy stats 方法已同步真实旧 header/body/cache/validator，构成合法旧格式输入；该项已落实，不再要求重复修正。不得恢复较早只改正文/cache 的破损夹具 |
+| L5 字节 | 当前 `TestManagedBodyBytes.test_only_the_fixed_generation_time_is_ignored` 已读取真实磁盘并调用实际接受原语；`test_crlf_bytes_are_read_and_hashed_without_normalization` 是原始字节读取的直接判别 | 当前原语的真实磁盘步骤已存在，不再登记为待补或新建重复方法。`TestLevelRefresh.test_crlf_body_without_a_matching_binding_is_not_accepted` 仍有 marker 改动后未同步 pack 绑定的双坏层，按 §4.2.4 就地修正；不能以其泛化 error 断言证明正文换行保护 |
+| L6 | `TestRefreshProtection.test_source_drift_after_lease_returns_needs_refresh` 与 `test_source_drift_after_observation_returns_needs_refresh` 在同一进程内调用真实 refresh 处理函数，分别在获锁后和 gate 后 render-precheck 修改真实分析文件 | 两个方法保留，证明 analysis 来源的两个时点；接受 pack 已在 gate 前读入，具有独立写前覆盖风险，§4.2.3 给出同一既有 hook 的合法 pack 漂移输入。现有 I/O 失败方法已检查下一次 preflight 不为 reuse_all 且含 validator_not_accepted，不再重复补测 |
 | L5/L6 共享生命周期 | `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle` 有普通 pending finalize、refine、两轮及缓存断言 | 历史 `231ba03` 结果不撤销。r4 如修改它所经共同绑定/I/O，定向复核这些直接行为，不能误用 terminal 复用条件拒绝合法 pending；不扩完整旧 T5 清单 |
 | 来源与缓存保护 | `TestRefreshProtection.test_refresh_keeps_the_accepted_sources_and_foreign_cache` | 旧结果证明既有来源/cache 不被刷新替换，不证明来源最新有效。复用其保持断言；若增强绑定使原夹具新增元数据后旧 validator 不再合法，应在被测调用前建立合法夹具，不绕过新保护 |
 
@@ -84,15 +84,15 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 ### 4.1 当前事实
 
-- 第一关口：L1–L6 原范围已确认；t4 按用户已批准 r4 修正相反预期与不足方法，完整候选待独立设计复核，作者不宣布新批准。
-- 第二关口：t3 已有公开审核结论，不再标成“t3 待审”。测试资产已按 §2–3 改到 r4，recipe 见 §4.2；产品修复已由 `81c38d4` 提交，第二关口仍待独立审核在实际产品提交上核对受影响接线、选择器和具体命令，不重开未受影响范围。
+- 第一关口：L1–L6 原范围已确认；t4 已按 r4 修正预期；t5 仅补当前三处 recipe，完整候选待独立设计复核，作者不宣布新批准。
+- 第二关口：t3 已有公开审核结论，不再标成“t3 待审”。现有 53 个测试资产及历史 recipe 见 §4.2，t5 的两处新增独有入口方法和一处就地修正尚未落实；产品修复已由 `81c38d4` 提交，第二关口仍待独立审核在实际产品提交上核对受影响接线、选择器和具体命令，不重开未受影响范围。
 - 第三关口：§5 是真实历史结果；r4 受影响机制已在 `81c38d4` 上执行，结果见 §4.4。不能以 34 tests 或 1064 tests 旧绿代替；L3 及实际未变子目标复用旧结果，L1/L2 的矛盾预期、L4/L6 完整守卫、L5 旧绑定／实际字节和共享生命周期接线以 §4.4 的新结果为准。§4.4 的 49 tests 早于本轮新增的 preflight/validation CRLF 入口测试；`81c38d4` 未改 `_stage2_preflight.py` 665–673 与 `_stage2_validation.py` 87–100/289–296 的 `read_text`，新增这两个入口用例仍预期红，待产品修复。关口结论仍待独立审核。
 - 当前产品 r4 修复已提交；测试准备缺口与产品失败分开记录，不声称第二/第三关口已通过。§4.4 记录本轮新的正式执行，独立关口审核仍待完成。
 
-### 4.2 本地测试工程师补齐的 recipe（r4）
+### 4.2 现有 r4 测试资产、历史准备与执行 recipe
 
 - **准备状态**：测试资产已按 §2–3 改到 r4；准备时产品 r4 三个机制尚未入库（产品基线 `7c42a40`），当时预期 L1/L2 的矛盾 null、L4/L6 的锁内完整守卫、L5 的旧 header 绑定与 CRLF 字节检查失败。产品修复提交 `81c38d4` 已入库，执行结果见 §4.4；但 §4.4 的 49 tests 早于本轮新增的入口测试，且 `81c38d4` 未修改 `_stage2_preflight.py` 665–673 与 `_stage2_validation.py` 87–100/289–296 的 `read_text` 路径，新增的 preflight/validation CRLF 用例仍预期红。不得为求绿改断言或预期；产品实际提交与测试提交由执行工程师按运行前状态记录。
-- **本阶段预检**：Python 3.14.7 下 `py_compile` 通过；测试模块可导入，`unittest.TestLoader` 统计 53 个测试；本 recipe 的类选择器与逐项方法选择器均可解析；`git diff --check` 通过。未运行任何目标测试方法、产品入口或正式业务请求。
+- **t4 历史准备预检（不是 t5 新执行）**：Python 3.14.7 下 `py_compile` 通过；测试模块可导入，`unittest.TestLoader` 统计 53 个测试；本 recipe 的类选择器与逐项方法选择器均可解析；`git diff --check` 通过。未运行任何目标测试方法、产品入口或正式业务请求。
 - **环境与工作目录**：仓库根目录下 `.apm/skills/professor-contact/tests`；Python 标准库 `unittest`；不加载模型、Zotero、网络或生产 PDF；每例沿用既有 `TemporaryDirectory`。本机 Python 3.14.7，CI 为 Python 3.12（`.github/workflows/ci.yml`）。
 - **准备顺序**：1）固定产品 r4 提交与测试提交，工作树干净；2）按 §3 建立合法正常接受基线，只有指定缺陷变体在调用前故意破坏对应层，header/cache/validator 初始自洽；3）运行下列选择器；4）只记录退出状态和业务结果，原始输出放仓库外。
 - **L1 选择器**（`test_stage2_analysis_level.TestFactsLevelContract` 与 `TestAnalyzerContract`）：
@@ -102,19 +102,63 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 - **L3 选择器**（`test_stage2_analysis_level.TestStatisticsRender`）：
   `test_header_counts_members_only_and_shared_members_per_contribution`、`test_reference_only_paper_stays_out_of_the_statistic`。r4 未改统计路径，按 §3 复用 `0b9a585` 的历史通过结果；只有产品实际改统计路径时才定向重跑。
 - **L4 选择器**（`test_stage2_analysis_level.TestPreflightBranches` 全部）：
-  `test_unchanged_state_reuses_all`、`test_level_only_change_takes_the_refresh_branch`、`test_management_fields_do_not_change_the_business_source`、`test_new_fixed_facts_candidate_is_a_business_change`、`test_missing_projection_processes_once`、`test_illegal_index_level_processes_instead_of_writing_a_known_value`、`test_not_accepted_validator_blocks_reuse_all`；并复用 `test_stage2_preflight.TestPreflightDecision.test_b_perfect_no_change_reuses_without_pdf_reads`、`test_j_deleted_artifact_prevents_reuse`、`test_k_artifact_stat_change_prevents_reuse_without_pdf_reads`、`test_p_validator_gate`。普通 finalize 的 artifact stat 独立输入尚未形成（尝试用例因下游 `invalid_result_json` 撤回）；正常接受／preflight／refresh 共用谓词的其余源码核对由实现审核记录具体函数与行。
+  `test_unchanged_state_reuses_all`、`test_level_only_change_takes_the_refresh_branch`、`test_management_fields_do_not_change_the_business_source`、`test_new_fixed_facts_candidate_is_a_business_change`、`test_missing_projection_processes_once`、`test_illegal_index_level_processes_instead_of_writing_a_known_value`、`test_not_accepted_validator_blocks_reuse_all`；并复用 `test_stage2_preflight.TestPreflightDecision.test_b_perfect_no_change_reuses_without_pdf_reads`、`test_j_deleted_artifact_prevents_reuse`、`test_k_artifact_stat_change_prevents_reuse_without_pdf_reads`、`test_p_validator_gate`。普通 finalize 独有输入按 §4.2.2 落实；旧 `invalid_result_json` 尝试不计覆盖。正常接受／preflight／refresh 的其余接线仍由实现审核记录具体函数与行。
 - **L5 选择器**（`test_stage2_analysis_level.TestLevelRefresh`）：
   `test_statistic_change_updates_body_and_expires_old_certification`、`test_equivalent_body_swap_keeps_the_valid_old_certification`、`test_invalid_old_binding_is_an_evidence_error_not_a_rebind`、`test_invalid_old_header_binding_is_an_evidence_error_not_a_rebind`、`test_normal_acceptance_rejects_an_invalid_old_header_binding`、`test_normal_acceptance_rejects_an_invalid_old_validator_binding`、`test_legacy_statistics_body_is_reaccepted_before_the_marker`、`test_statistics_marker_only_refresh_keeps_the_old_body_bytes`、`test_refresh_with_an_illegal_index_level_returns_needs_refresh`（同时覆盖 L1 的 invalid refresh 语义）、`test_legal_crlf_managed_file_is_read_as_real_bytes`、`test_crlf_body_without_a_matching_binding_is_not_accepted`、`test_preflight_reuses_a_legal_crlf_managed_file`、`test_validation_recording_accepts_a_legal_crlf_managed_file`、`test_business_change_with_equivalent_body_keeps_body_but_expires_certification`、`test_manual_body_edit_needs_decision_without_writing_the_pack`。
   以及 `test_stage2_analysis_level.TestManagedBodyBytes` 全部：`test_only_the_fixed_generation_time_is_ignored`、`test_statistics_and_narrative_time_stay_significant`、`test_crlf_bytes_are_read_and_hashed_without_normalization`、`test_legal_crlf_body_keeps_its_bytes_when_only_the_header_changes`、`test_crlf_body_without_a_matching_binding_is_not_accepted`、`test_a_crlf_old_body_and_an_lf_candidate_are_a_change`。`test_legal_crlf_managed_file_is_read_as_real_bytes` 是写入路径入口；原始字节读取的直接判别是 `TestManagedBodyBytes.test_crlf_bytes_are_read_and_hashed_without_normalization`，不要用前者单独宣称 CRLF 原始读取已证实。
 - **L6 选择器**（`test_stage2_analysis_level.TestRefreshProtection`）：
   `test_busy_writer_returns_without_any_business_write`、`test_source_drift_after_lease_returns_needs_refresh`、`test_source_drift_after_observation_returns_needs_refresh`、`test_refresh_keeps_the_accepted_sources_and_foreign_cache`、`test_successful_refresh_releases_the_lease`、`test_release_failure_is_reported_on_the_success_path`、`test_release_failure_on_a_soft_exit_is_also_reported`、`test_pack_io_failure_after_the_markdown_write_stays_unfinished`；并定向复核 `test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle`，只核对 r4 影响的绑定／I/O 行为，不重做其全部历史 T5 业务。两个漂移用例在测试进程内直接调用 `contact_state.cmd_stage2_refresh_level`；观察后漂移用例先捕获 pack/Markdown 快照，再 arm gate 后的 render-precheck 入口（`Stage2PackRefineContext` 的既有静态方法），使修改落在观察之后、写入之前；其余用例仍可走 CLI。
-- **命令**：
+- **t4 的历史／完整资产命令（保留作结果定位，不是 t5 全量重跑要求）**：
   - `python3 -m unittest test_stage2_analysis_level -v`
   - `python3 -m unittest test_stage2_preflight.TestPreflightDecision.test_b_perfect_no_change_reuses_without_pdf_reads test_stage2_preflight.TestPreflightDecision.test_j_deleted_artifact_prevents_reuse test_stage2_preflight.TestPreflightDecision.test_k_artifact_stat_change_prevents_reuse_without_pdf_reads test_stage2_preflight.TestPreflightDecision.test_p_validator_gate -v`
   - `python3 -m unittest test_stage2_style_validation_handoff.Stage2ValidationHandoffTests.test_business_rerender_and_bounded_correction_lifecycle -v`
   - 本轮没有新增测试文件，`plan/test-grouping/shards.json` 不需要变更；不把四分片或全仓回归作为 r4 的必跑义务。
-- **输出位置**：执行工程师用 `mktemp -d /tmp/u5-r4-XXXXXX` 建立仓库外目录，把上述三条命令的 stdout/stderr 分别保存为 `module.log`、`preflight.log`、`lifecycle.log`；记录产品 SHA、测试 SHA、Python 版本、退出码、`Ran N tests` 和 OK/FAILED。原始日志不提交、不推送。
+- **t4 输出约定（t5 定向选择见 §4.2.5）**：执行工程师用 `mktemp -d /tmp/u5-r4-XXXXXX` 建立仓库外目录，把上述三条命令的 stdout/stderr 分别保存为 `module.log`、`preflight.log`、`lifecycle.log`；记录产品 SHA、测试 SHA、Python 版本、退出码、`Ran N tests` 和 OK/FAILED。原始日志不提交、不推送。
 - **失败处理**：L1/L2 矛盾 null 或 L4/L6 锁内守卫失败，保留原结果并交产品 owner；L5 旧绑定／CRLF 失败先确认测试夹具在调用前自洽，再交产品 owner；方法自身错误先停止受影响项、修正并复核；不得换输入或放宽断言求绿。缺日志先请求已有记录，不默认重跑；无法运行与未执行如实区分。
+
+### 4.2.1 t5 共用合法输入和零写入判据
+
+以下是测试工程师待实现的 recipe，执行工程师取得既有流程要求的执行授权后才运行；本次只修改计划。沿 `test_stage2_analysis_level.AnalysisLevelBase` 及其 `PreflightBase`，每例新建现有临时目录，不引入新 runner 或模型结果判定器。
+
+1. 保持既有 setUp 的 professor、target、Stage 1 snapshot、papers.json 和两个方向：DIR00001 supporting 候选 AAAA1111/BBBB2222/CCCC3333，DIR00002 为 BBBB2222；AAAA1111=fulltext、BBBB2222=abstract。原 analysis 文件分别为 `论文分析/AAAA1111.md`、`BBBB2222.md`，对应真实 future-work sidecar 和 `_index.json` 路径保持，facts 由 `bind_levels()` 写入当前级别。不要改 collection_key、user_note、gap quote 或成员来制造本次漂移。
+2. 调用已有 `build_accepted_state()`，它依次真实 finalize、建立 preflight 元数据、真实 record-validation。使用已有 `write_stage2_results()` 的完整合法结果：`freshness-DIR00001.json` 为 schema=1/kind=freshness/collection_key=DIR00001，两行 gap_id 分别由原 AAAA1111/BBBB2222 gap quote 的 `quote_id` 生成；每行 status=open、candidate_paper_ids=[]、confidence=high、evidence 为原非空说明。DIR00002 文件 collection_key=DIR00002 且只含 BBBB2222 那一行。`narrative.json` 为 schema=1/kind=narrative，分别两方向；每个 positioning 包含 kind=para、现有 `{{P:KEY}}` 与 `{{G:GAPID}}` 文本及完全相同 refs 集合、非空 concrete_object/input_example/output_example，gap_notes 的 gap_id/summary/explanation 沿现有 fixture。直接调用既有 writer，不手抄缺字段的缩水 JSON；其实际首轮 finalize 必须 status=ok。
+3. 上述真实 validation 报告为文件级 result=ok、files 中该 analysis 文件 artifact=analysis、verdict=pass、blocking=0、minor=0、issues=[]，仍调用现有 `record_validation()`，不直接填一个虚构 PASS。各例只在后述指定边界修改合法基线；所有前置失败均记“夹具准备失败”，不能计本目标通过。
+4. 在待测调用前保存 pack、analysis Markdown、已存在 freshness 缓存及原 validator 报告的原始 bytes 和存在性。确切路径为 `self.prof_dir / "套磁候选输入.json"`、`self.prof_dir / "套磁候选分析.md"`、`self.prof_dir / "论文分析" / "_freshness_cache.json"` 和 `self.root / "validation.json"`；最后一项由 record_validation() 写入并作为 --validation-file 输入，pack.validator.validation_sha256 绑定其原始 bytes（pack 不存报告路径），用标准 hashlib.sha256 独立核对。无新产物时仍断言未新建。比较仅这些已有接受产物与该例指定输入，不增加目录全树扫描／新快照框架。已注入的外部修改以注入后 bytes 为“不得覆盖”基线，不误要求回滚外部输入。lease 使用既有 `论文分析/.stage2-local-writer.json`。
+
+### 4.2.2 L4 普通 finalize 的消费后 artifact stat 漂移
+
+- **落点**：在已有 `TestPreflightBranches` 类补一个独有入口方法，建议名 `test_normal_finalize_rejects_consumed_artifact_stat_drift`；目前该方法不存在，不能将选择器或本 recipe 记作已覆盖。它不重复 preflight/refresh 的漂移方法，补的是普通接受独有弱分支。
+- **准备顺序**：按 §4.2.1 建立 accepted 状态；`save_preflight("finalize-artifact-drift.json")` 必须 action=reuse_all，再 `bind_facts_to_plan(plan_path)`。调用真实 `run_cli("stage2-plan", "--facts", self.facts_path, "--preflight-file", plan_path)`，要求 status=ok、jobs=[]、write_needed=false，两个 direction action 均 reuse。保存此时事实、proof、results 文件及 accepted 的 consumed_sources/artifact_guards 原值；这是真实已消费且已接受的旧来源，不在漂移后调用 seed_preflight_meta、重建结果或重建 proof。
+- **唯一变化与时点**：plan 完成后、普通 finalize 前，读取 AAAA1111.md 原 bytes，追加 `b"\n<!-- source changed after consumption -->\n"` 并写回同一文件。断言文件仍存在、路径和 index.level/fulltext 未变、文件 size 确实增大，old guard 中的原 stat 没有被测试同步修改。无需 sleep 或 PDF read；size 变化足以避免 mtime 分辨率偶然相同。facts、target、snapshot、index、sidecar、结果 JSON 全部保持既有 bytes。
+- **真实入口**：直接 `run_cli("stage2-finalize", "--facts", self.facts_path, "--results", self.root / "results", "--preflight-file", plan_path)`。不调用自动重新准备 proof 的便利包装，不 mock ctx、守卫返回值、结果解析或来源读取。原 results 已在首轮成功接受，方向/quote 未变且该轮 jobs=[]，不能以缺 narrative/freshness 字段产生的 invalid_result_json 替代 stat 检查。
+- **独立预期**：JSON status=needs_refresh、reason_code=preflight_inputs_changed；若现有 drift 输出能定位 AAAA1111 的 analysis artifact，记录该证据，不要求新增字段或输出协议。唯一输入改动、此前合法消费基线和零写入共同隔离目标失败层。pack、Markdown、freshness 缓存、原报告均保持调用前 bytes，不更新 accepted consumed_sources/artifact_guards。源文件必须保留追加后的 bytes，不回滚外部修改。随后实际 preflight 的 DIR00001 应 process 且 reason_codes 含 artifact_changed。
+- **失败排除**：invalid_result_json、invalid_params、preflight_proof_binding、坏旧 header/validator、缺文件或任何通用 error 均不是本项通过；先检查 §4.2.1 的成功基线与 jobs=[]。若实际返回 ok 或重建 guard 后接受，记录普通接受遗漏消费来源守卫的产品失败，不改预期。源码核对重点为 `_stage2_finalize.stage2_finalize_preflight_plan` 的 cheap_inputs 和 `cmd_stage2_finalize` 的最终接受：cheap_inputs 不含此 source stat，不能替代 r4 §5.1 的消费基线比较。本例只覆盖已接受来源复用路径，fresh/resolved 如走独立采样路径仍由同谓词接线核对，不据此宣称所有分支自动覆盖。
+
+### 4.2.3 L6 gate 后接受 pack 被外部更新，不允许候选覆盖
+
+- **落点**：保留现有两个 analysis 漂移方法，补 `TestRefreshProtection.test_accepted_pack_drift_after_observation_returns_needs_refresh`（待实现）。这是不同于来源文件的接受记录读取分支，不扩成所有文件×时点矩阵。Markdown 的人工内容保护已有方法复用。
+- **准备**：§4.2.1 合法 accepted 基线；将 self.levels 改为 AAAA1111=abstract、BBBB2222=abstract，调用 write_index；save_preflight 后必须 refresh_level。缓存外部更新不得改变 level、direction、state fingerprint、render SHA 或真实 validator 报告。
+- **注入边界**：复用现有 `_drift_after_observation` 的同进程结构：保存 `Stage2PackRefineContext.__dict__["narrative_later_keys_for"]` 描述符和 `.__func__`，安装 staticmethod 包装并 addCleanup 恢复。先保存接受文件快照，才 arm；调用 `_refresh_in_process(plan)`，即真实 `contact_state.cmd_stage2_refresh_level`，不使用子进程。wrapper 首次被调用时 ctx.pack 已读取、`stage2_refresh_evaluate` 已完成，正式 managed/pack 写入未开始。设置触发计数=1，只此一次读取磁盘 pack 副本并令 `cache.foreign_cache={"kept": true, "revision": 2}`；由已有 `stage2_pack_content_fingerprint(pack)` 更新该副本 validator.pack_sha256 后写磁盘。它只准备一个自洽的外部接受快照，不修改 ctx.pack、gate/proof、render 或比较函数。随后保存外部新 pack bytes，返回原 original(direction) 的真实结果；不强造通过 gate 的值。
+- **合法性和独立预期**：注入前后分别用 JSON 排除 validator 后的 `json.dumps(..., ensure_ascii=False, sort_keys=True).encode("utf-8")` 的标准 hashlib.sha256 核对 validator.pack_sha256；保留当前 JSON 序列化默认空格，不改 separators。报告/render/state 绑定未变。这里 helper 仅生成夹具的合法 pack 绑定，不能充当漂移预期。待测调用必须 status=needs_refresh、reason_code 为现有 preflight_inputs_changed 或 refresh_requires_process；注入计数恰一次，pack 必须逐字节等于**注入后**快照，不能等于旧 candidate 输出；Markdown、freshness 缓存和原报告等于注入前快照，lease 不存在。
+- **失败排除**：不能复用 `_assert_zero_write_needs_refresh` 中“pack 等于注入前／下一轮一定 artifact_changed”的断言，它针对 analysis 来源。外部合法 cache 更新不构成业务变化，下一轮重新 preflight 按当前有效来源判定，不强求 process；本次旧 ctx 必须先停止再重新观察。未触发 wrapper、validation_render_stale/坏 pack SHA、manual_markdown_changed、lease busy、返回 ok 或覆盖 foreign_cache 均不能计通过。单纯改 pack 不重绑 validator 会退化为坏旧证据，禁止该双坏层夹具。
+
+### 4.2.4 L5 CRLF 反例只坏正文一层
+
+- **落点**：就地修正现有 `TestLevelRefresh.test_crlf_body_without_a_matching_binding_is_not_accepted`；不新建相同的负例，也不重复 `TestManagedBodyBytes` 的真实磁盘原语检查。
+- **建立合法 marker-only 基线**：§4.2.1 完成后，唯一准备改动为 pack.cache.preflight.statistics_version=None；同步用已有 stage2_pack_content_fingerprint 更新 validator.pack_sha256，再写 pack。保持 schema/phase/round、validator.results、state fingerprint、cache.render、报告及 Markdown 不变。参照既有 marker-only 正例准备，不把统计正文或旧头改坏。此时保存 proof `save_preflight("crlf-stale.json")`，断言 action=refresh_level。使用原始 read_bytes 和现有受管格式分隔出 header/body；确认 body 没有 CRLF，标准 hashlib.sha256(body) 等于 header.render_sha256、cache.render[ANALYSIS_MD].sha256 与 validator.render_sha256，header.state_fingerprint 独立等于 `hashlib.sha256(json.dumps({"professor": pack["professor"], "directions": {d["direction_id"]: d.get("input_fingerprint") for d in pack["directions"]}}, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()`；当前 schema 2 两条 direction_id 为 DIR00001/DIR00002，不用名称或数组序号替代身份；validator.pack_sha256 与 §4.2.3 的独立 JSON 摘要一致。
+- **唯一待测破坏**：只把已保存 body 的 `b"\n"` 替换为 `b"\r\n"`，保留原 header 和原分隔前缀 bytes，写回 `原文件去掉末尾原 body 的前缀 + crlf_body`。先断言 body 非空且含 LF、crlf_body != body，原文件确实以 body 结尾；不得重排 YAML、改变 header 行尾或同时改 state/hash。写完后只观察，不重签 header/cache/validator，也不重新运行 record-validation 或生成新 proof。
+- **真实入口与预期**：保存坏正文文件 bytes、合法 pack bytes及其他接受产物，调用已有 `refresh(plan)` CLI。期望原人工保护 `needs_decision/manual_markdown_changed`；若完整旧绑定前置检查先返回 `error/validation_render_stale`，仅在证据明确为 header/body SHA 不匹配且独立 pack/state/report 检查均仍合法时计为同一拒绝目标。不能仅 assert status in (error, needs_decision)。pack、坏 Markdown、缓存、原报告均不变，lease 释放；再次独立校验 validator.pack_sha256 仍等于当前 pack 排除 validator 的摘要，证明不是 stale pack 导致拒绝。
+- **失败排除**：字节归一化后接受／修头／保留 PASS 属失败；旧 pack hash 失配、proof 错误、未进入刷新、格式解析无关错误或只检查通用 error 都属夹具或覆盖失败。独立原始 body SHA 必须与旧 render SHA 不等，其余旧绑定保持合法，确保返回拒绝不能由第二个坏层冒充。现有合法 CRLF preflight/record-validation 的 CI 红结果仍保留为不同 I/O 入口问题，不用本负例抵消。
+
+### 4.2.5 t5 的执行边界和记录
+
+目前基线仍为现有 53 方法；上述两个新名称尚不存在，一个旧方法尚待修正。本文未运行语法检查、测试发现或任何方法，不宣布将来总数，不把“步骤完整”当作 G2 已落地或 G3 PASS。
+
+测试工程师落实后，独立 G2 核对三个方法的 fixture、真实调用和上述错误排除。执行获授权后，只定向运行：
+
+`python3 -m unittest test_stage2_analysis_level.TestPreflightBranches.test_normal_finalize_rejects_consumed_artifact_stat_drift test_stage2_analysis_level.TestRefreshProtection.test_accepted_pack_drift_after_observation_returns_needs_refresh test_stage2_analysis_level.TestLevelRefresh.test_crlf_body_without_a_matching_binding_is_not_accepted -v`
+
+工作目录仍为 `.apm/skills/professor-contact/tests`。若选择器尚不存在，记准备未完成而非产品失败，不退回跑全模块。记录产品 SHA、测试 SHA、Python 版本、每例结果与失败层、退出码和仓库外原始 stdout/stderr；原始日志不提交。已有 53 方法不因 t5 文档修改全跑，现有 I/O 后 preflight 与磁盘原语方法直接复用。§4.4 的三个已知 CI 失败只有其产品路径实际修复后才单独复核，不夹带进本次文档修订的执行义务；同样不扩全仓／平台／业务回归。作者状态 pending，独立审核与实际执行各自记录，任何未运行项不得标 PASS。
 
 ### 4.3 完成条件与责任
 
@@ -154,4 +198,5 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 - 首次实现符合性审核（所审 `8568a3b`、产品 `dd9d1d5`）的 IR-1 来源保留、IR-2 消费声明核对、IR-3 release 错误、IR-4 比较 helper 行尾、IR-5 analyzer hard rule，曾分别在 `62ca3fd`／`0b9a585` 修复，定向复核 `ce9e370` 将 IR-1…IR-5 按当时对象关闭。该历史关闭不证明后来定位的锁内 stat、null 分叉、旧 header 绑定或磁盘 newline 缺陷不存在。
 - 测试准备审核 `bff99aa`／`231ba03` 对缓存断言及注释 R1 给出“完整（仅限测试准备阶段）”；保留该结论及随后 t3 的公开关口审核，不将它提升为 r4 当前批准。
 - t4 取代 t3 的“缺失／null 总可接受”、helper 字符串等于真实磁盘覆盖、单个 validator hash 等于完整旧绑定、target 漂移等于锁内全来源保护等不充分口径；保留已确认统计、隔离、原生命周期与历史产物。没有新增模型 eval、框架、外部来源认证或全回归。
+
 
