@@ -1244,6 +1244,18 @@ def build(*, Stage2Context,
                 if body_equivalent:
                     carried_validator = dict(old_validator)
 
+        # The candidate is still in memory. Re-observe the same declared source
+        # set before the first managed write; a source change during assembly or
+        # rendering must return to a fresh preflight, never be accepted on the
+        # strength of the previously read facts.
+        current_source = ctx.source_snapshot()
+        if current_source["projection"] != ctx.source_projection:
+            soft_exit("needs_refresh", "preflight_inputs_changed",
+                      drift=["source_projection_changed_after_render"])
+        if current_source["stats"] != ctx.source_stats:
+            soft_exit("needs_refresh", "preflight_inputs_changed",
+                      drift=["source_stat_changed_after_render"])
+
         md_result = {"written": False, "needs_decision": False, "sha256": final_sha}
         if not body_equivalent:
             conflict = managed_conflict(

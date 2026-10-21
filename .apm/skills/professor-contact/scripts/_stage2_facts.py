@@ -467,6 +467,38 @@ def build(*, atomic_json,
         except OSError:
             return "missing"
 
+    def _paper_source_stats(papers: dict) -> dict:
+        """Filesystem stats of the declared sources of the facts papers.
+
+        This is the write-before-accept comparison basis; it never reads PDF or
+        analysis bytes and never follows a path the facts did not declare.
+        """
+        stats = {}
+        for key, paper in papers.items():
+            if not isinstance(paper, dict):
+                continue
+            entry = {}
+            paths = [paper.get(field) for field in
+                     ("analysis_file", "sidecar_file", "facts_file", "pdf_file")]
+            analysis_path = paper.get("analysis_file")
+            if isinstance(analysis_path, str) and analysis_path:
+                paths.extend([analysis_path + ".facts.json",
+                              analysis_path + ".future_work.json"])
+            for value in paths:
+                if not isinstance(value, str) or not value:
+                    continue
+                path = Path(value)
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                entry[str(path)] = {"size": stat.st_size,
+                                    "mtime_ns": stat.st_mtime_ns,
+                                    "ctime_ns": stat.st_ctime_ns}
+            if entry:
+                stats[key] = entry
+        return stats
+
     def observed_source_projection(professor_dir: Path, keys) -> dict:
         """Limited business-source view over the accepted package's own papers.
 
@@ -676,6 +708,9 @@ def build(*, atomic_json,
             if self.freshness_scope not in FRESHNESS_SCOPES:
                 fail("invalid_params", f"freshness_scope must be one of {FRESHNESS_SCOPES}")
             self.papers = load_papers_with_digests(self.facts, self.professor_dir)
+            self.source_projection = observed_source_projection(
+                self.professor_dir, self.papers.keys())
+            self.source_stats = _paper_source_stats(self.papers)
             self.sidecar_cache = {}
             self.facts_cache = {}
             self.families = compute_version_families(self.papers)
@@ -721,6 +756,14 @@ def build(*, atomic_json,
                 if reuse and self.freshness_stale(plan_entry):
                     plan_entry["reuse"] = False
                 self.direction_plans.append(plan_entry)
+
+        def source_snapshot(self) -> dict:
+            """Current observation of the same declared source set."""
+            return {
+                "projection": observed_source_projection(
+                    self.professor_dir, self.papers.keys()),
+                "stats": _paper_source_stats(self.papers),
+            }
 
         def freshness_stale(self, plan: dict) -> bool:
             for gap in self.judge_set(plan):
