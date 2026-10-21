@@ -50,8 +50,7 @@ def build(*, Stage2Context,
           ANALYSIS_MD,
           QUOTE_INPUT_CHARS,
           TRANSLATION_INPUT_CHARS,
-          PLACEHOLDER_RE,
-          STAGE2_U1_DISPLAY_VERSION):
+          PLACEHOLDER_RE):
     def stage2_pack_scope(ctx, did: str) -> dict:
         """Reference/gap scope of one FINAL pack direction.
 
@@ -849,10 +848,12 @@ def build(*, Stage2Context,
         if not isinstance(old_render_entry, dict):
             old_render_entry = {}
         old_u1 = old_render_entry.get("u1")
-        u1_marker = (dict(old_u1) if isinstance(old_u1, dict)
-                     and old_u1.get("display_version") == STAGE2_U1_DISPLAY_VERSION
-                     else {"display_version": STAGE2_U1_DISPLAY_VERSION,
-                           "completed_at": now_utc()})
+        # A narrative refine re-renders the body, but it is not the normal
+        # acceptance entry: it may not create or upgrade the U1 display marker
+        # for an old pack (plan stage2-u1-r5 §3.4). Keep an existing marker
+        # verbatim; a missing or older one stays missing/older so the next
+        # preflight still forces the ordinary process update.
+        u1_marker = dict(old_u1) if isinstance(old_u1, dict) else None
         updated_pack = dict(ctx.pack)
         updated_pack["generated_at"] = now_utc()
         updated_pack["directions"] = pack_directions
@@ -864,9 +865,10 @@ def build(*, Stage2Context,
             if isinstance(ctx.pack.get("cache"), dict) else {}
         render_block = dict(cache_block.get("render")) \
             if isinstance(cache_block.get("render"), dict) else {}
-        render_block[ANALYSIS_MD] = {
-            "sha256": md_result["sha256"], "ownership": ownership,
-            "u1": u1_marker}
+        render_entry = {"sha256": md_result["sha256"], "ownership": ownership}
+        if u1_marker is not None:
+            render_entry["u1"] = u1_marker
+        render_block[ANALYSIS_MD] = render_entry
         cache_block["render"] = render_block
         updated_pack["cache"] = cache_block
         updated_validator = dict(validator)
