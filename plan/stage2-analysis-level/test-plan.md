@@ -85,7 +85,7 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 - 从无 pack/Markdown 的合法 A/B 输入进入 prepare，记下返回源材料和 guard F0（标准 SHA/stat 独立留值）。analyzer fixture 从这份材料组装 facts，真实 resolve/plan 生成非空 narrative/freshness jobs；生成上述完整结果（两方向聚合 narrative）并经 seal-results 按该 plan 绑定。未变对照普通 finalize 必须 ok，读回 cache.preflight 源字段逐项等于 F0，canonical level/统计正确；原始临时材料不被复制为长期平台记录。
 - 早期读边界反例：在 prepare 的真实读取 helper 完成读 bytes 后、其结束复核前只追加 A analysis 内容，使用已有同进程 wrapper/addCleanup 结构，在原读取后修改真实磁盘并返回原值。prepare 必须拒绝、不产出可用封存成功；不能把“读取前采样后返回新材料”当冻结。再一例在 prepare 已封存 F0 后、facts/plan 前修改 A，同轮不得重新读取并把 F1 当消费：plan 应拒绝；若先从 F0 组装 plan，则 finalize 必须拒绝且零接受写入。
 - 元数据反采样对照：合法未变例在首个正式 managed 写成功后的现有 wrapper 中才追加 A，返回原真实写结果，不 mock 比较/渲染。本次允许沿既有检查窗口完成或如实未完成；**无论成功或中断都不能持久化 F1 为本轮消费**。成功 pack 必须仍存 F0，下一次真实 preflight=process；若未完成，禁止成功标记、保留已发生真实写入，不能要求此 I/O 窗口零写入。此例独立区分写后 stat/source_projection 重采样，不能仅看无漂移成功。
-- 拟定 `TestPreflightBranches.test_process_commits_the_frozen_sources` 与同组边界 subTests；hook 精确落点由测试工程师在实现后记录，未具备入口时是准备 pending，不能伪称执行。
+- 拟定 `TestConsumptionFreeze.test_process_commits_the_frozen_sources` 与同组边界 subTests；hook 精确落点由测试工程师在实现后记录，未具备入口时是准备 pending，不能伪称执行。
 - **本轮准备状态**：成功冻结提交已落在 `TestConsumptionFreeze.test_process_commits_the_frozen_sources`，`8e8bbe5` 预检通过，并逐项比对 companion 与 `cache.preflight` 的源投影；早期读边界、写后反采样两个反例仍 pending。
 
 #### C. facts/plan/model/result 错轮和丢失（L4）
