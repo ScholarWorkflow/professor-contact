@@ -1301,6 +1301,11 @@ class TestRefreshProtection(AnalysisLevelBase):
         pack["cache"]["u1_render"] = {"future": "kept"}
         pack["resolved_directions"] = {"schema": 2, "applied_at": "fixed",
                                        "directions": []}
+        validator = pack.get("validator")
+        if isinstance(validator, dict):
+            # The added cache/resolved fields are part of the accepted pack;
+            # keep the old validation binding legal before exercising refresh.
+            validator["pack_sha256"] = contact_state.stage2_pack_content_fingerprint(pack)
         self._write_pack(pack)
         self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
         self.write_index()
