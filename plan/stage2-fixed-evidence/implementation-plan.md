@@ -1,12 +1,13 @@
 # Stage 2 U1：固定证据展示与真实阻挡归属
 
-- Plan revision：`stage2-u1-r4`（2026-10-21）；Plan review status：PENDING independent review。作者未授予 APPROVED/PASS；r3 的既有批准保留为历史记录，不自动覆盖本轮机制修订。
-- 唯一执行计划：`plan/stage2-fixed-evidence/implementation-plan.md`。本 r4 完整取代 r3 的执行决定，不另附并行旧方案；同目录 [测试计划](test-plan.md) 的既有记录保留，本次仅修改执行计划，不修改测试计划、产品代码或执行测试。
+- Plan revision：`stage2-u1-r5`（2026-10-21）；Proposed review status: pending。r5 合并 r4 全部有效设计，并修复预检复用遗漏；r3 的既有批准保留为历史记录，不自动覆盖 r5。计划作者不自行授予 PASS/APPROVED。
+- 唯一执行计划：`plan/stage2-fixed-evidence/implementation-plan.md`。本 r5 完整取代 r4 与 r3 的执行决定，不另附并行旧方案；同目录 [测试计划](test-plan.md) 的 t4 候选和 t3 历史执行记录按各自版本保留。本次仅修改执行计划，不修改测试计划、产品代码或执行测试。
 - Requirement revision：2026-10-17 已确认 U1；2026-10-19 用户要求总结 #92 至今经验，先保持行为拆分 Stage 2，再分别设计 U1/U5；2026-10-20 授权两份计划；2026-10-21 用户要求先看 PR107 与 exam-question-pipeline PR32 的机制如何修复，并授权“分别修改这两个的执行计划”。本轮修复既有 U1 要求的实现机制，不新增业务目标。
-- 实施核对基线：`ScholarWorkflow/professor-contact@cd6387759157c505acb96ed8459e0cc2fbd7f6ba`，PR107 分支 `plan/stage2-fixed-evidence-20261019`，2026-10-21 06:00 UTC 读取。被替代计划 blob：`fd85dbdbd0f4d697e5a02c317f895899b3192a88`。该基线只指本轮读取的产品版本，不宣称本次文档修改已修复产品。
-- 历史基线：r3 基于 main `879982abe1d7d811bd9d014c03dce4f5912cc64f`（#117）设计；r3 [批准记录](https://github.com/ScholarWorkflow/professor-contact/pull/107#issuecomment-6293465316) 与当前 t3 [正式测试记录](https://github.com/ScholarWorkflow/professor-contact/pull/107#issuecomment-6308427553) 各按原版本保留，不外推为 r4 或产品合并批准。#92 `10324b8f10ff84080e9f7132bef807926de23279` 的 r11/t47 仅作教训，不移植其矩阵。
+- 实施核对基线：`ScholarWorkflow/professor-contact@cd6387759157c505acb96ed8459e0cc2fbd7f6ba`；PR107 分支 `plan/stage2-fixed-evidence-20261019`，r5 写入前文档 head `e2845b13e11dd5907a96c9189a0e07ba258ccf63`（其后仅有计划和测试计划文档更新）。被替代计划 r4 blob：`b6322756030a9579c580ee73b4c5dc60d1b618d6`；r3 的原 blob `fd85dbdbd0f4d697e5a02c317f895899b3192a88` 仅供追溯。该基线只指核对过的产品版本，不宣称修改计划已修复产品。
+- r5 修正触发：2026-10-21 第 107 号计划审核指出，`stage2_validator_accepts` 的文本读取可能在 `reuse_all` 预检中掩盖真实换行字节变化，绕过 r4 仅在 finalize/validation/refine 冻结的无损检查；用户随后授权直接修改正式执行计划。此为既有 U1 人工正文保护与旧校验绑定目标的设计缺陷修正，不是新增业务要求。
+- 历史基线：r3 基于 main `879982abe1d7d811bd9d014c03dce4f5912cc64f`（#117）设计；r3 [批准记录](https://github.com/ScholarWorkflow/professor-contact/pull/107#issuecomment-6293465316) 与 t3 [正式测试记录](https://github.com/ScholarWorkflow/professor-contact/pull/107#issuecomment-6308427553) 各按原版本保留；现行 t4 测试计划仍待独立审核，不能把 t3 的结果外推为 r5 或产品合并批准。#92 `10324b8f10ff84080e9f7132bef807926de23279` 的 r11/t47 仅作教训，不移植其矩阵。
 - Stage 2 拆分已完成；Stage 3 拆分、U5 交付不属于 U1 前置。
-- 规则：[Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)（2026-10-19 14:02 UTC）、[Plan Reviewer Rule](https://app.notion.com/p/3e80101a85f3817a94cbc6eca1a76a5c)（2026-10-09 20:13 UTC）、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)（2026-10-09 20:37 UTC），2026-10-21 06:00 UTC 重新读取。
+- 规则：[Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)（2026-10-19 14:02 UTC）、[Plan Reviewer Rule](https://app.notion.com/p/3e80101a85f3817a94cbc6eca1a76a5c)（2026-10-09 20:13 UTC）、[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253)（2026-10-09 20:37 UTC），2026-10-21 再次读取。
 
 ## 1. 正式目标、保留行为与非目标
 
@@ -32,8 +33,9 @@
 - **引用来源分叉**：[\_stage2_finalize.py](https://github.com/ScholarWorkflow/professor-contact/blob/cd6387759157c505acb96ed8459e0cc2fbd7f6ba/.apm/skills/professor-contact/scripts/_stage2_finalize.py#L873-L929) 的 `_current_paper_record` 先复制旧 canonical，再只用当前非 None 字段覆盖；展示更新分支会走该逻辑，而新建分支直接消费当前记录。故“当前记录存在但 title=null”会在分支间得到不同结果。根因是来源裁决与字段补全混为一体。§3.1 冻结唯一存在性优先裁决，不靠每个 caller 补空值检查。
 - **方向权威分叉**：[\_stage2_validation.py](https://github.com/ScholarWorkflow/professor-contact/blob/cd6387759157c505acb96ed8459e0cc2fbd7f6ba/.apm/skills/professor-contact/scripts/_stage2_validation.py#L340-L418) 在消费 ownership map 前仍从 `## 方向 ` 建立 Markdown sections 并确定 direction。源字段中的仿标题可能先被误归或拒绝。根因是 renderer map 与标题扫描同时拥有方向裁决权。§3.2 移除该前置方向裁决，保留 quote/location 位置查找。
 - **字节与坐标混用**：[\_stage2_finalize.py](https://github.com/ScholarWorkflow/professor-contact/blob/cd6387759157c505acb96ed8459e0cc2fbd7f6ba/.apm/skills/professor-contact/scripts/_stage2_finalize.py#L293-L315) 的 body 比较使用丢失行尾的 splitlines，旧文读取处使用 read_text；[\_contact_base.py](https://github.com/ScholarWorkflow/professor-contact/blob/cd6387759157c505acb96ed8459e0cc2fbd7f6ba/.apm/skills/professor-contact/scripts/_contact_base.py) 的受管冲突读取与 validation 绑定读取也需沿同一 U1 接受链核对。根因不是少加一个换行 case，而是文件完整性比较、body hash 与报告字符坐标没有共享无损输入。§3.5–3.6 将二者分开并明确所有消费者。
+- **预检复用遗漏**：[`_stage2_preflight.py`](https://github.com/ScholarWorkflow/professor-contact/blob/cd6387759157c505acb96ed8459e0cc2fbd7f6ba/.apm/skills/professor-contact/scripts/_stage2_preflight.py#L540-L584) 的 `stage2_validator_accepts` 在已有 terminal PASS 的快速复用判断中使用 `read_text`、`split_frontmatter` 和规范化字符串摘要；[`cmd_stage2_preflight`](https://github.com/ScholarWorkflow/professor-contact/blob/cd6387759157c505acb96ed8459e0cc2fbd7f6ba/.apm/skills/professor-contact/scripts/_stage2_preflight.py#L769-L805) 只根据其返回原因决定 `reuse_all/process`。即使 U1 标记已是最新，单纯 LF→CRLF 的磁盘改动也可能被文本换行规范化掩盖，从而绕过 finalize 的无损判断。§3.4、§3.6 将预检纳入同一原始字节绑定判定；不新建独立认证器。
 - **已有正确部分**：当前 finalize 已有旧快照深复制及旧 header.state 绑定检查，不再要求“从无到有”补这两项，也不恢复额外头部来源认证。renderer 已区分可信题名/源文字与自动生成链接语法/目标的 owner；既有 Markdown 链接仍保持源片段语义。cache 已参与现有 pack hash，不把它描述为独立未绑定漏洞。
-- **模块职责不变**：`_stage2_render.py` 生成四出口正文及 map；`_stage2_facts.py` 的 Stage2Context/freshness_entry 决定当前事实及缓存适用性，Stage2PackRefineContext 消费持久包；`_contact_pack.py` 规范既有 canonical papers 与冲突守卫；`_stage2_preflight.py` 只决定 reuse_all/process；`_stage2_finalize.py` 拥有普通候选接受；`_stage2_validation.py` 拥有报告、refine 与两轮状态；`_contact_base.py` 保留受管文件保护基础。`contact_state.py` 工厂显式注入所需局部 helper，不反向导入 runner，不建立隐式全局或第二份状态。
+- **模块职责不变**：`_stage2_render.py` 生成四出口正文及 map；`_stage2_facts.py` 的 Stage2Context/freshness_entry 决定当前事实及缓存适用性，Stage2PackRefineContext 消费持久包；`_contact_pack.py` 规范既有 canonical papers 与冲突守卫；`_stage2_preflight.py` 负责原始字节绑定检查与 reuse_all/process 决定；`_stage2_finalize.py` 拥有普通候选接受；`_stage2_validation.py` 拥有报告、refine 与两轮状态；`_contact_base.py` 保留受管文件保护基础。`contact_state.py` 工厂显式注入所需局部 helper，不反向导入 runner，不建立隐式全局或第二份状态。
 
 历史 #92 的 [r11](https://github.com/ScholarWorkflow/professor-contact/blob/10324b8f10ff84080e9f7132bef807926de23279/plan/stage2-evidence-level/implementation-plan.md) 与 [t47](https://github.com/ScholarWorkflow/professor-contact/blob/10324b8f10ff84080e9f7132bef807926de23279/plan/stage2-evidence-level/test-plan.md) 展示了上述交叉风险及其版本适用性；本计划不复制历史测试矩阵，也不把旧分支通过记录外推到 main 上的新实现。
 
@@ -89,9 +91,11 @@ renderer 输出内部结果 `body + ownership`，外部 Markdown 格式不因映
 
 本计划不引入 `stage2-refresh-display`。在现有 `cache.render[ANALYSIS_MD]` 中保存独立 U1 完成标记，preflight 读取该标记；缺失/落后时，即使原判断可 reuse_all，也改走现有 process，并说明需更新固定证据展示。已有业务来源失效原因仍优先保留，不用展示理由覆盖它们。
 
+即使 U1 标记已是最新版本，`stage2_validator_accepts` 仍须先按 §3.6 的无损读取约定检验实际受管 body bytes，并沿用现有 header/render cache、validator、pack 及 terminal 结果绑定条件；不能凭标记或规范化文本决定可复用。原始 body hash 与旧绑定不符、文件无法合法解码或受管格式失效时，返回现有 `validator_not_accepted`，由 `cmd_stage2_preflight` 改走 `process`，不得输出 `reuse_all`。这只修复已有复用门槛，不新增 reason、独立刷新入口、模型失效理由或额外校验状态。已有有效正文与绑定仍可正常复用。
+
 process 继续走正式 analyzer 数据准备与 stage2-plan。原分析、freshness、narrative、resolved 缓存按现有合法条件复用；U1 标记本身不改变模型输入指纹、不强迫全量模型重跑，不靠旧 /tmp facts。正常业务确已改变时仍按现有规则处理。来源/元数据不够则明确交数据准备，不能把持久包伪造成完整 facts。
 
-只在正常 finalize 已实际确认并接受当前 body 与 map 后记录 U1 标记；metadata 构造函数不能提前声明展示完成。本次实现将既有独立 `u1.display_version` 从 1 提升为 2，表示已按 r4 的统一引用裁决、map 单一方向权威与无损接受生成并接受；不另建版本框架。现有 version=1 包也按上面的 process 通路更新，不因已有 map 就豁免。当前目标标记仍采用独立 U1 命名空间；#92 的 display_refresh_version=2/3 不构成 U1 已完成，防止错误继承其旧报告行为。未升级包保留原文件和历史校验；新报告需要先完成该受保护更新。更新后 body 未变且业务未变时保留合法原校验状态，因此不会因为加 map 就清轮数。
+只在正常 finalize 已实际确认并接受当前 body 与 map 后记录 U1 标记；metadata 构造函数不能提前声明展示完成。本次实现将既有独立 `u1.display_version` 从 1 提升为 2，表示已按本版统一引用裁决、map 单一方向权威、无损接受及预检复用检查生成并接受；不另建版本框架。现有 version=1 包也按上面的 process 通路更新，不因已有 map 就豁免。当前目标标记仍采用独立 U1 命名空间；#92 的 display_refresh_version=2/3 不构成 U1 已完成，防止错误继承其旧报告行为。未升级包保留原文件和历史校验；新报告需要先完成该受保护更新。更新后 body 未变且业务未变时保留合法原校验状态，因此不会因为加 map 就清轮数。
 
 ### 3.5 finalize 的有限接受与旧快照隔离
 
@@ -114,17 +118,18 @@ U5 独立修改同一 finalize 接点。有限共享步骤输入为隔离的旧�
 
 ### 3.6 无损受管快照：字节完整性与报告字符坐标分离
 
-这是 U1 正常接受与校验链的局部读取契约，不是全仓 I/O 重构，也不新增文件格式/来源认证框架。
+这是 U1 预检复用、正常接受与校验链的局部读取契约，不是全仓 I/O 重构，也不新增文件格式/来源认证框架。
 
 1. 从磁盘以 bytes 读取一次旧受管文件，严格按已有 UTF-8 格式解码，保留原始 file bytes、完整 frontmatter 范围/实际结束偏移、原始 body bytes 与必要已解析机器头。无效编码或不能按既有格式拆分时明确失败，不替换坏字符、不猜首个标题、不 strip body。frontmatter/body 边界按真实文件分隔行确定，保留精确行结束符；不得通过在全文 find 重复正文来反推偏移。
 2. body hash、人工正文冲突判断、旧 render/validator 绑定和最终写回均使用这份原始 body bytes。字符文本只作为显示和 quote/map 定位视图；需要物理行列表时采用共同的保留行尾分行结果，行号语义沿用既有规则。LF、CRLF、裸 CR 及其他既有支持的分隔符不在完整性比较中折叠。不能使用默认 read_text 的 universal-newline 结果或丢行尾 splitlines 结果作为“原文件”。
 3. 时间豁免只作用于 renderer 固定顶部生成信息行中生成时间字段的值区间。由该固定布局识别唯一位置，并要求前后固定字段合法；该值外的所有 bytes，包括前缀、分隔符和行尾，都必须相同。缺失/格式不符时不豁免，不从其他行寻找替代。来源文字中的时间、仿生成行、首个方向标题以及其他 `数据来源` 字样不参与豁免。可用同一渲染布局提供的边界逐段比较，不新增通用 Markdown 解析器或文本归一化层。
 4. 仅头部需更新时，使用原始保留 body bytes 写回，不能经过文本读取再重新规范换行。实际 body 的 hash、owner map 与保存到 pack 的 render 记录必须一致。候选改写 LF 而旧 body 是 CRLF 时，非时间字节已变，不能保留旧 PASS；先按原受管人工冲突/决定规则处理，未获准覆盖不写入。
-5. 普通 finalize、record-validation 的 bound-render 读取、refine-plan 的绑定读取、refine-finalize 的旧绑定/受管写入，以及这些路径调用的 managed_conflict，共享该有限读取/拆分约定，不各自重开文件取得规范化的第二份“原文”。写入前继续执行既有并发/冲突保护；本决定不建立新的锁/事务系统。Stage 2 工厂显式接线，其他 stage 不被强制迁移。
+5. `_stage2_preflight.py` 的 `stage2_validator_accepts` 及 `cmd_stage2_preflight` 的 `reuse_all` 判定、普通 finalize、record-validation 的 bound-render 读取、refine-plan 的绑定读取、refine-finalize 的旧绑定/受管写入，以及这些路径调用的 managed_conflict，都使用本节同一无损读取/拆分和原始字节摘要约定。每个入口在本次调用内以磁盘 bytes 建立唯一快照，不各自从 `read_text`/`splitlines` 构造另一份被规范化的“原文”；预检与 finalize 是先后不同调用，各自重新读取当前文件，不能跨调用复用可能过期的快照。预检只沿用已有 `validator_not_accepted → process` 失败分流，不增加结果认证或额外模型调用。写入前继续执行既有并发/冲突保护；不建立新锁/事务系统。Stage 2 工厂显式接线，其他 stage 不被强制迁移。
 6. 旧包若只按历史规范化文本留下 hash，且该 hash 不能证明当前原始 body 的既有绑定，就如实判为不匹配。禁止因“看起来一样”自动改 header/hash 并保留旧 PASS 或 pending。依据 §3.5：无实质改变却旧绑定无效则拒绝接受；需按既有恢复/人工决定及正常接受处理，不能凭升级标记重签。原始文件、校验报告与历史记录不删除。
 
 #### 生命周期交接（穷尽本 U1 涉及的入口，不新增产品分支）
 
+- 预检快速复用：即使 U1 标记为最新版本、validator 为已通过终态，`stage2_validator_accepts` 仍先确认当前磁盘原始 body bytes 与现有 pack/render/header/validator 绑定一致；单纯换行字节变化造成不匹配时返回 `validator_not_accepted`、转 `process`，不得绕过后续人工正文冲突或正常接受保护。
 - 普通新建/复用/展示更新：统一引用裁决 → 完整 renderer body/map → 无损旧快照接受；业务和 body 均未变且旧 validator 合法，才保留所有 round/phase/results/pending。若当前记录显式无效，停在候选阶段，不覆盖现状。
 - narrative refine：只消费已接受 canonical，先验证旧快照与 map、检查全报告固定阻挡，再生成准许的 narrative 改动；更新实际 body/map/绑定而保留第一轮结果，转 awaiting_second_validation，不调用普通接受的清轮次规则。
 - pending/awaiting_second_validation 包的普通 finalize：无实质变化时 pending 原样保留；实质正文或业务变化时按既有普通接受使旧 validator 失效，不能把 pending 移植到新版本，也不能凭缓存/时间/标记变化重开第一轮。
@@ -144,11 +149,11 @@ U5 独立修改同一 finalize 接点。有限共享步骤输入为隔离的旧�
 2. **hit 决定位置、renderer 决定 owner**：短 location=“后续论文依据”且 quote 唯一仍合法；重复 quote 配准确行号可定位；“多处”不猜。多行固定值续行仍 source，narrative 中出现“后续论文依据”前缀仍由实际字段归属决定；源字段含 `## 方向` 不建立第二套方向边界，不因字样误分类。
 3. **同句混合不授予事实改写权**：禁锚卡把 quote、题名、模板、evidence 拼成同一行，命中证据或模板交对应 owner；summary 回退原文不是 narrative；混合固定/narrative blocking 零模型修订。
 4. **旧基线不可被候选污染**：仅 collection_key 更新、复用 split child 或嵌套 resolved 写入都不能先改旧 pack，再借“比较没变”保留不合法绑定。
-5. **四项独立**：顶部时间变化保 body/轮次；证据行包含来源分隔符但引用变化仍写新 body；摘要输入变而 body 等价时更新必要头并失效旧校验；仅加 map/U1 标记时保留合法轮次，坏旧绑定不洗白；CRLF/LF 变化、顶部生成时间以外的空白或仿来源行变化都不是时间豁免。
+5. **四项独立**：顶部时间变化保 body/轮次；证据行包含来源分隔符但引用变化仍写新 body；摘要输入变而 body 等价时更新必要头并失效旧校验；仅加 map/U1 标记时保留合法轮次，坏旧绑定不洗白；CRLF/LF 变化、顶部生成时间以外的空白或仿来源行变化都不是时间豁免；已有 U1 最新标记和 terminal PASS 时仅将磁盘 LF 换成 CRLF，预检也必须拒绝 `reuse_all`、进入现有 `process`，不能在进入 finalize 前就沿用旧通过。
 6. **所有生成入口保映射**：第一轮 narrative 修订后第二轮发现固定卡问题仍可定位登记；refine 的 cache 重建不能抹掉 owner map。旧无 map 包不反解析 Markdown，先按受保护 process 更新。
 7. **正常失败可停**：第一轮固定失败不虚报“两轮已尽”，第二轮固定失败不重开；源/模板实际修复后才接受新版本；无变化反复运行不清次数。
 
-这些是方案完整性检查，非新增测试矩阵、Case ID、采集器或过程认证要求。具体必测目标和检查方式见同目录 [测试计划](test-plan.md)。现有 t3 recipe 与结果保留其原适用版本；本次不修改测试计划或运行测试。后续只需由测试 owner 对受影响目标/断言的覆盖作对应修订与独立审核，不因文档 SHA 全量重跑。
+这些是方案完整性检查，非新增测试矩阵、Case ID、采集器或过程认证要求。具体必测目标和检查方式见同目录 [测试计划](test-plan.md)。现有 t4 测试计划候选与 t3 真实执行记录按各自版本保留；本次不修改测试计划或运行测试。测试 owner 按测试规则评估 r5 新补的预检复用入口是否已由现有 U1-E/F 范围证明，以及是否需要修订对应步骤与断言；不另增产品验收目标或因文档 SHA 全量重跑。
 
 ## 6. 从 #92 至今吸取的设计教训
 
@@ -160,28 +165,29 @@ U5 独立修改同一 finalize 接点。有限共享步骤输入为隔离的旧�
 - 已撤回的“独立篡改 header”历史反例不恢复为本计划要求；继续依赖已有正式绑定，拒绝增加防伪矩阵或重复认证设施。
 - 不承诺绝对无 bug；通过先冻结真实输入、owner、兼容、失败路径和代表性反例，降低补丁链式返工。审核一次覆盖可判断的完整范围，后续仅处理语义变化及连带影响。
 
-## 7. r4 修订影响与实施交接
+## 7. r5 修订影响与实施交接
 
 ### 本次取代决定与不受影响范围
 
-r3 的业务目标、四出口范围、合法短 location、两轮上限、成员/引用许可、人工保护、正常 process 懒更新及 U1/U5 独立交付继续有效。r4 将三项曾写成原则却容许 caller 分叉的决定写成封闭机制：
+r3 的业务目标、四出口范围、合法短 location、两轮上限、成员/引用许可、人工保护、正常 process 懒更新及 U1/U5 独立交付继续有效。r5 完整保留 r4 的三项机制修订，补上同一原始字节约定在预检快路径的调用入口：
 
 1. 当前记录存在性先于字段补全，所有普通生成分支调用同一引用裁决，refine 只消费已接受记录；废止“先旧后非 None 覆盖”作为当前引用来源选择。
 2. 唯一 quote hit 直接查 renderer map，map 唯一决定方向/区域/owner；废止标题 sections 作为前置方向裁决，并保留 quote/location 原契约。
 3. 原始受管 bytes 决定完整性，字符视图仅决定报告坐标；统一 finalize/绑定/refine/冲突消费者，时间只豁免固定字段值，旧版本不以规范化字符串重签。
+4. `stage2_validator_accepts` 的复用判定也必须按原始 bytes 验证，纠正 r4 遗漏的预检入口；磁盘正文改变不能因 `read_text` 换行规范化或最新 U1 标记而直接 `reuse_all`。r4 的其余 owner、引用、状态和正常接受决定不变。
 
-需独立审核 P1 当前事实、P2 三个权威接点与工厂接线、P3 普通/refine/pending/旧包兼容及失败影响、P4 以下实施顺序。作者状态 PENDING，不继承 r3/t3 的通过结论。未受影响证据可以由独立 reviewer 判定复用；不因纯文档 SHA 要求重跑。
+需独立审核 P1 当前事实、P2 四个关键接点与工厂接线、P3 普通/refine/pending/旧包兼容及失败影响、P4 以下实施顺序。作者状态 PENDING，不继承 r3/t3 的通过结论。未受影响证据可以由独立 reviewer 判定复用；不因纯文档 SHA 要求重跑。
 
 ### 实施顺序及责任边界
 
-1. 计划 reviewer 独立复核本完整 r4，作者按问题直接维护唯一正文。产品仍停留在本文固定 head 的实现，不能把计划入库写成缺陷已修复。
+1. 计划 reviewer 独立复核本完整 r5，作者按问题直接维护唯一正文。产品仍停留在本文固定 head 的实现，不能把计划入库写成缺陷已修复。
 2. 产品 owner 在 `_stage2_finalize.py` 收敛 §3.1 当前/旧记录裁决，贯通新建、reuse、展示更新及持久 canonical；render/facts/pack 保留其既有角色。先判断记录存在再验证，而不是只修一个 null 分支。纯包 refine 不新增事实读取。
-3. 同一产品 owner 在既有 Stage 2 写入/读取边界建立 §3.6 无损快照，显式接入普通 finalize、validation bound-render、两个 refine 与其 managed_conflict。保留旧深复制/header-state 检查；不全仓改 I/O，不增事务/来源证明。头更新、实际 body hash/map、人工冲突与 validator 继承必须使用同一实际接受内容。
+3. 同一产品 owner 在既有 Stage 2 写入/读取边界建立 §3.6 无损快照，显式接入 preflight 的 `stage2_validator_accepts`、普通 finalize、validation bound-render、两个 refine 与其 managed_conflict。保留旧深复制/header-state 检查；不全仓改 I/O，不增事务/来源证明。头更新、实际 body hash/map、人工冲突与 validator 继承必须使用同一实际接受内容。
 4. `_stage2_validation.py` 删除与 map 竞争的方向 sections 裁决，仅保留现有位置查找后查询 map；完整 quote 覆盖和现有方向 membership 必须检查。renderer 保持同句混合、fallback、多行及既有链接 owner 语义，不因移除 headings 而放松 excluded/卡外权限。
-5. `_stage2_preflight.py` 将现有 U1 display_version 1 升为 2；只有成功普通接受保存新标记。旧业务指纹/缓存可复用，不新增模型强制失效理由。所有 cache.render 更新按 owned fields 保留同一接受版本仍有效的元数据；refine 不为保 map 恢复已失效 preflight。U5 若已有共享接受 helper 则消费同一实现，不复制两套无损比较/失效逻辑，也不把 U5 变为前置。
-6. 测试 owner 后续将现有 t3 的受影响引用、定位和接受/旧包目标对应到 r4 三项机制与 §3.6 生命周期，写明尚未执行及既有结果的适用边界；不增加整仓回归、真实模型全流程、来源认证或历史 #92 矩阵。本次交付只含执行计划，不能据此声称测试计划已更新或新测试已通过。
+5. `_stage2_preflight.py` 将现有 U1 display_version 1 升为 2；并在 `stage2_validator_accepts` 中使用 §3.6 的原始 body bytes 与 header/render cache/validator/pack 绑定判定。即使标记为 2，只要正文原始字节和旧绑定不一致，仍返回既有 `validator_not_accepted`，由 `cmd_stage2_preflight` 走 `process`，不能直接 `reuse_all`。只有成功普通接受才保存新标记。旧业务指纹/缓存可复用，不新增模型强制失效理由。所有 cache.render 更新按 owned fields 保留同一接受版本仍有效的元数据；refine 不为保 map 恢复已失效 preflight。U5 若已有共享接受 helper 则消费同一实现，不复制两套无损比较/失效逻辑，也不把 U5 变为前置。
+6. 测试 owner 后续将现有 t4 的受影响引用、定位、预检复用和接受/旧包目标对应到 r5 的四项决策与 §3.6 生命周期，写明尚未执行及 t3 既有结果的适用边界；不增加整仓回归、真实模型全流程、来源认证或历史 #92 矩阵。本次交付只含执行计划，不能据此声称测试计划已更新或新测试已通过。
 7. 实现后由非作者核对完整变更与上述入口，不只看新增 helper；复用仍适用的旧证据，仅受影响关口重审。产品/测试实际执行需按各自授权推进，本文不自动授权运行、评论、合并或关闭 issue。
 
 ### 历史结果与当前状态
 
-r3 批准、既有实现/修复与 t3 三关口记录保留为历史事实，链接见页首；它们不能证明本 r4 的引用 authority、方向 authority 和原始字节契约已经实施。当前 r4 是待独立复核的执行计划，本次未改产品、测试计划、测试结果或审核评论。未变需求不重新发明验证标准；后续只处理机制语义及连带影响，不承诺绝对无 bug，不以不断追加边界矩阵替代统一机制。
+r3 批准、既有实现/修复与 t3 三关口记录保留为历史事实，链接见页首；t4 测试计划候选与本 r5 同属待审核材料，均不能证明 r5 的引用来源、方向归属、原始字节和预检复用契约已经实施。当前 r5 是待独立复核的执行计划，本次未改产品、测试计划、测试结果或审核评论。未变需求不重新发明验证标准；后续只处理机制语义及连带影响，不承诺绝对无 bug，不以不断追加边界矩阵替代统一机制。
