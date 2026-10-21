@@ -86,12 +86,12 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 - 第一关口：L1–L6 原范围已确认；t4 已按 r4 修正预期；t5 补当前三处 recipe，本地测试工程师已按 recipe 落地测试实现；完整候选待独立设计复核，作者不宣布新批准。
 - 第二关口：t3 已有公开审核结论，不再标成“t3 待审”。现有 55 个测试资产及历史 recipe 见 §4.2；t5 的两处新增独有入口方法和一处就地修正已由本地测试工程师落实，待独立审核在实际产品提交上核对受影响接线、选择器和具体命令，不重开未受影响范围。
-- 第三关口：§5 是真实历史结果；r4 受影响机制已在 `81c38d4` 上执行，结果见 §4.4。不能以 34 tests 或 1064 tests 旧绿代替；L3 及实际未变子目标复用旧结果，L1/L2 的矛盾预期、L4/L6 完整守卫、L5 旧绑定／实际字节和共享生命周期接线以 §4.4 的新结果为准。§4.4 的 49 tests 早于本轮新增的四个入口测试（preflight CRLF、validation CRLF、普通 finalize header、普通 finalize validator）；`81c38d4` 未改 `_stage2_preflight.py` 665–673 与 `_stage2_validation.py` 87–100/289–296 的 `read_text`，也未让普通 finalize 拒绝错误 header；前三个新增用例仍预期红，validator 用例按实际执行记录，待产品修复。关口结论仍待独立审核。
-- 当前产品 r4 修复已提交；测试准备缺口与产品失败分开记录，不声称第二/第三关口已通过。§4.4 记录本轮新的正式执行，独立关口审核仍待完成。
+- 第三关口：§5 是真实历史结果；r4 受影响机制见 §4.4，t5 新增入口的当前执行见 §4.5。不能以 34 tests 或 1064 tests 旧绿代替；L3 及实际未变子目标复用旧结果，L1/L2 限制、L4/L6 守卫和 L5 旧绑定／实际字节以 §4.4／§4.5 为准。§4.5 覆盖 55 methods、preflight／validation CRLF、普通 finalize header／validator 和 t5 L4/L6；关口结论仍待独立审核。
+- 当前产品 r4／t5 修复已提交；测试准备缺口与产品失败分开记录，不声称第二／第三关口已通过。§4.4／§4.5 记录新的正式执行，独立关口审核仍待完成。
 
 ### 4.2 现有 r4 测试资产、历史准备与执行 recipe
 
-- **准备状态**：测试资产已按 §2–3 改到 r4；准备时产品 r4 三个机制尚未入库（产品基线 `7c42a40`），当时预期 L1/L2 的矛盾 null、L4/L6 的锁内完整守卫、L5 的旧 header 绑定与 CRLF 字节检查失败。产品修复提交 `81c38d4` 已入库，执行结果见 §4.4；但 §4.4 的 49 tests 早于本轮新增的入口测试，且 `81c38d4` 未修改 `_stage2_preflight.py` 665–673 与 `_stage2_validation.py` 87–100/289–296 的 `read_text` 路径，新增的 preflight/validation CRLF 用例仍预期红。不得为求绿改断言或预期；产品实际提交与测试提交由执行工程师按运行前状态记录。
+- **准备状态**：测试资产已按 §2–3 改到 r4；准备时产品 r4 三个机制尚未入库（产品基线 `7c42a40`），当时预期 L1/L2 的矛盾 null、L4/L6 的锁内完整守卫、L5 的旧 header 绑定与 CRLF 字节检查失败。产品修复提交 `81c38d4`、`96a1b11` 已入库，r4／t5 结果见 §4.4／§4.5；不得为求绿改断言或预期。
 - **t4 历史准备预检（不是 t5 新执行）**：Python 3.14.7 下 `py_compile` 通过；测试模块可导入，`unittest.TestLoader` 统计 53 个测试；本 recipe 的类选择器与逐项方法选择器均可解析；`git diff --check` 通过。未运行任何目标测试方法、产品入口或正式业务请求。
 - **环境与工作目录**：仓库根目录下 `.apm/skills/professor-contact/tests`；Python 标准库 `unittest`；不加载模型、Zotero、网络或生产 PDF；每例沿用既有 `TemporaryDirectory`。本机 Python 3.14.7，CI 为 Python 3.12（`.github/workflows/ci.yml`）。
 - **准备顺序**：1）固定产品 r4 提交与测试提交，工作树干净；2）按 §3 建立合法正常接受基线，只有指定缺陷变体在调用前故意破坏对应层，header/cache/validator 初始自洽；3）运行下列选择器；4）只记录退出状态和业务结果，原始输出放仓库外。
@@ -176,6 +176,15 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 - **额外全量回归**：在提交前的同一代码内容上运行四分片，shard1 380、shard2 219、shard3 237、shard4 243（1 skipped），合计 1079 tests、无失败；日志 `/tmp/u5-r4-shard1.log` 至 `/tmp/u5-r4-shard4.log`。该全量结果不是 t4 的必跑门槛，推送后 CI 会在提交上复验四片。
 - **本轮新增入口不在上述 49 tests 中**：49 tests 之后有四个入口测试：`test_preflight_reuses_a_legal_crlf_managed_file`、`test_validation_recording_accepts_a_legal_crlf_managed_file`、`test_normal_acceptance_rejects_an_invalid_old_header_binding`、`test_normal_acceptance_rejects_an_invalid_old_validator_binding`；49+4=53，t5 再新增两个（L4/L6）为 55。`81c38d4` 只改 managed write/conflict 的原始字节路径，未改 `_stage2_preflight.py` 665–673 与 `_stage2_validation.py` 87–100/289–296 的 `read_text`；推送后的 CI 显示前三个入口分别得到 `process/validator_not_accepted`、`validation_render_stale`、`ok`，validator 入口按实际执行记录。这些是产品缺口，不是测试方法错误；49 tests 的通过不得扩大为全绿。
 - **结论**：上述 49 tests 结果只覆盖 `81c38d4` 执行时的测试集；本轮新增的 preflight/validation CRLF、普通 finalize header/validator 以及 t5 L4/L6 用例未包含在该次执行中，CI 已暴露前三个入口仍失败，待产品修复后由执行工程师按 §4.2 正式运行。该结果不是第二／第三关口或合并批准；独立审核者仍需在实际提交上给出关口结论。
+
+### 4.5 t5 执行结果（2026-10-21）
+
+- **产品／测试提交**：`96a1b113722aaba3863b75fcf3b84c31a625639d`（在 t5 测试 `3c4cda1` 之上；修复普通 finalize 的消费后 artifact stat 守卫与旧 header 绑定、preflight／validation 的 CRLF 原始字节读取、refresh 的外部 pack 漂移拒绝）。执行前工作树干净。
+- **计划要求的定向选择器**：`test_normal_finalize_rejects_consumed_artifact_stat_drift`、`test_accepted_pack_drift_after_observation_returns_needs_refresh`、`test_crlf_body_without_a_matching_binding_is_not_accepted`；`Ran 3 tests in 1.365s`，`OK`。
+- **先前 CI 转红的入口额外复验**（不是新增测试义务）：`test_normal_acceptance_rejects_an_invalid_old_header_binding`、`test_preflight_reuses_a_legal_crlf_managed_file`、`test_validation_recording_accepts_a_legal_crlf_managed_file`、`test_normal_acceptance_rejects_an_invalid_old_validator_binding`；`Ran 4 tests in 1.569s`，`OK`。
+- **同提交的宽范围复验**：模块 `test_stage2_analysis_level` 为 `Ran 55 tests in 17.577s`、`OK`；§4.2 四个 preflight 选择器 `Ran 4 tests in 1.429s`、`OK`；L6 生命周期 `Ran 1 test in 5.985s`、`OK`。四分片 shard1 380、shard2 219、shard3 243、shard4 243（1 skipped），合计 1085 tests、无失败。
+- **环境与输出**：macOS、Python 3.14.7、标准库 unittest；`run_dir=/tmp/u5-t5-9qmYmP`，日志为 `t5.log`、`entries.log`、`module.log`、`preflight.log`、`lifecycle.log`、`shard1.log` 至 `shard4.log`；原始日志不提交。
+- **结论**：t5 定向三条及先前 CI 红入口在当前提交上均通过，未发现新增业务失败。宽范围复验只用于确认同提交回归；不把 55／1085 结果扩大为第二／第三关口或合并批准，独立审核者仍需在实际提交上给出关口结论。
 
 ## 5. 历史执行与公开审核记录（不是 r4 的通过结果）
 
