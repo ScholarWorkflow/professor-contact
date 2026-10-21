@@ -233,7 +233,7 @@ fi
   1. U1-B 与 U1-D：`display_version` 仍为 1，preflight 全局 `reason_codes` 为空，方向只有 `validator_not_accepted`（第 499、802 行）。
   2. U1-C：`validation_render_identity_mismatch`，记录器仍用 `## 方向 ` 标题扫描，把源字段的续行当成第二个方向（第 592 行）。
   3. U1-E 与 U1-F：`display_version` 仍为 1，`1 != 2`（第 1013、1188 行）。
-- `9735d42` 只增加/收紧断言，不改变上述前置失败点；其推送后的 head CI 运行记录补在本节末尾。
+- 推送后的 head `9aec535`（测试代码同 `9735d42`）的 [CI 运行 39571768807](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39571768807)：shard1–shard3 success，shard4 `Ran 249 tests`、`FAILED (failures=5, skipped=1)`；失败行为第 501（U1-B）、594（U1-C）、814（U1-D）、1027（U1-E）、1202（U1-F）行，原因与初版相同。该次运行确认修正没有改变前置产品缺口，也没有引入新的失败项。
 - CI 未到达的分支：B-null 后半段零写入、C 的 map 归属、D 的 B-absent/pending 生命周期、E-v1 的保留断言、F 的六条字节入口，都因上述前置门槛先失败而没有执行，不能记为通过。产品按 r5 实现后，由执行工程师按 §6.6 命令定向运行；本次交接不构成 G2 或 G3 通过。
 - 下一负责人：产品 owner 完成 r5 的 §3.1/§3.2/§3.4/§3.6 实现；独立 reviewer 依据 `9735d42` 与上述 CI 证据评估 G2；有执行授权后执行工程师运行受影响 selector，G3 审核采用其记录。
 
