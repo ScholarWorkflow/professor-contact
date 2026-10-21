@@ -1,4 +1,4 @@
-"""U1 fixed-evidence display and real blocker ownership (test plan t3).
+"""U1 fixed-evidence display and real blocker ownership (test plan t5).
 
 Covers the six must-test targets of ``plan/stage2-fixed-evidence/test-plan.md``:
 trusted citation display (U1-A), missing-metadata handoff (U1-B), real fragment
@@ -7,9 +7,18 @@ rewrite while narrative keeps two rounds (U1-D), old-pack update through the
 ordinary preflight -> process -> finalize path (U1-E), and the ordinary
 acceptance split between body, business state, binding and old validation
 (U1-F).
+
+The branches added for stage2-u1-t5 encode the r5 contracts that the current
+product does not implement yet: a display-only reference whose current record
+has no title, the renderer map as the only direction authority, raw managed
+body bytes for the preflight/record/refine/acceptance bindings, and the
+``display_version`` 2 marker.  They therefore fail on the pre-r5 product until
+the product owner lands the r5 implementation.
 """
 import copy
+import hashlib
 import json
+import re
 from pathlib import Path
 
 from test_contact_state import (
@@ -26,6 +35,19 @@ CITATION_TITLE = "Unrelated synthetic example"
 CITATION_LINK = f"[{CITATION_TITLE}](zotero://select/library/items/{CITATION_KEY})"
 ORDINARY_EIGHT = "DDDD8888"
 ORDINARY_DATE = "2024-05-01"
+DISPLAY_ONLY_KEY = "EEEE4444"
+DISPLAY_ONLY_TITLE = "Obsidian atlas archival reference"
+DISPLAY_ONLY_LINK = (
+    f"[{DISPLAY_ONLY_TITLE}](zotero://select/library/items/{DISPLAY_ONLY_KEY})")
+DISPLAY_ONLY_EVIDENCE = (
+    f"显示参考 zotero://select/library/items/{DISPLAY_ONLY_KEY}，证据原句保留。")
+DISPLAY_ONLY_RENDERED = f"- 后续论文依据：显示参考 {DISPLAY_ONLY_LINK}，证据原句保留。"
+U1_TARGET_DISPLAY_VERSION = 2
+GENERATED_STAMP_RE = re.compile(
+    (r"(?m)^> (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) ｜ 数据来源：")
+    .encode("utf-8"))
+FAKE_HEADING_QUOTE = "中文🙂固定续行"
+FAKE_HEADING_LINE = f"## 方向 假方向：{FAKE_HEADING_QUOTE}"
 
 
 class FixedEvidenceBase(BaseEnv):
@@ -191,6 +213,118 @@ class FixedEvidenceBase(BaseEnv):
     def without_links(self, text):
         return contact_state.re.sub(r"\[[^\]\n]*\]\([^)\n]*\)", "", text)
 
+    # -- t5 byte-level observation helpers (test plan §6.1) -------------------
+
+    def managed_path(self):
+        return self.prof_dir / contact_state.ANALYSIS_MD
+
+    def managed_parts(self):
+        """The real header bytes and body bytes, read straight from disk."""
+        raw = self.managed_path().read_bytes()
+        self.assertTrue(raw.startswith(b"---\n"), raw[:40])
+        end = raw.find(b"\n---\n", 4)
+        self.assertGreaterEqual(end, 0, raw[:200])
+        start = end + len(b"\n---\n") + 1
+        self.assertEqual(raw[start - 1:start], b"\n", raw[end:start + 2])
+        return raw[:start], raw[start:]
+
+    def write_managed_parts(self, header, body):
+        self.managed_path().write_bytes(header + body)
+
+    def body_digest(self, body):
+        return hashlib.sha256(body).hexdigest()
+
+    def display_version(self):
+        return self.pack()["cache"]["render"][contact_state.ANALYSIS_MD][
+            "u1"]["display_version"]
+
+    def set_display_version(self, version):
+        pack = self.pack()
+        pack["cache"]["render"][contact_state.ANALYSIS_MD][
+            "u1"]["display_version"] = version
+        self.write_pack(pack)
+
+    def rewrite_consistent_input(self, body):
+        """§6.1(7): keep the old hash/map/header consistent with actual bytes."""
+        pack = self.pack()
+        digest = self.body_digest(body)
+        entry = pack["cache"]["render"][contact_state.ANALYSIS_MD]
+        ownership = entry.get("ownership")
+        self.assertIsInstance(ownership, dict)
+        entry["sha256"] = digest
+        ownership["body_sha256"] = digest
+        header = contact_state.render_frontmatter(
+            contact_state.stage2_pack_state_fingerprint(pack), digest)
+        self.write_managed_parts(header.encode("utf-8"), body)
+        self.write_pack(pack)
+
+    def assert_ownership_matches_body(self, body):
+        pack = self.pack()
+        entry = pack["cache"]["render"][contact_state.ANALYSIS_MD]
+        ownership = entry["ownership"]
+        digest = self.body_digest(body)
+        lines = body.decode("utf-8").splitlines()
+        self.assertEqual(entry["sha256"], digest)
+        self.assertEqual(ownership["body_sha256"], digest)
+        self.assertEqual(ownership["line_count"], len(lines))
+        for fragment in ownership["fragments"]:
+            for line_no, start, end in fragment["ranges"]:
+                self.assertGreaterEqual(line_no, 0)
+                self.assertLess(line_no, len(lines))
+                self.assertGreaterEqual(start, 0)
+                self.assertLessEqual(start, end)
+                self.assertLessEqual(end, len(lines[line_no]))
+        return ownership
+
+    def record_pass(self, name):
+        report = self.write_report(name, [])
+        recorded = self.record(report)
+        self.assertEqual(recorded["status"], "ok", recorded)
+        self.assertEqual(recorded["round"], 1, recorded)
+        self.assertTrue(recorded["terminal"], recorded)
+        return report
+
+    def bind_proof(self, facts_path, payload, name):
+        proof = self.root / name
+        proof.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        self.bind_facts_to_preflight(facts_path, payload)
+        return proof
+
+    def stage2_plan(self, facts_path, proof):
+        return parse(run_cli("stage2-plan", "--facts", facts_path,
+                             "--preflight-file", proof))
+
+    def add_display_reference_paper(self, facts):
+        facts["papers"].append({
+            "item_key": DISPLAY_ONLY_KEY, "title": DISPLAY_ONLY_TITLE,
+            "year": 1900, "authors": [], "authorship": "unknown",
+            "has_pdf": False})
+
+    def display_reference_overrides(self):
+        overrides = self.gap_override()
+        overrides["AAAA1111"]["evidence"] = DISPLAY_ONLY_EVIDENCE
+        return overrides
+
+    def display_reference_line(self):
+        return next(line for line in self.body_lines()
+                    if line.startswith("- 后续论文依据：显示参考"))
+
+    def direction_snapshot(self):
+        direction = self.pack()["directions"][0]
+        return {
+            "supporting": sorted(direction.get("supporting_item_keys") or []),
+            "relevant": list(direction.get("relevant_keys") or []),
+            "named": sorted(direction.get("named_keys") or []),
+            "narrative": copy.deepcopy(direction.get("narrative")),
+            "gaps": copy.deepcopy(direction.get("gap_shortlist")),
+            "blacklist": copy.deepcopy(direction.get("completed_gap_blacklist")),
+        }
+
+    def cache_entries(self):
+        cache = json.loads(
+            (self.prof_dir / contact_state.FRESHNESS_CACHE).read_text(encoding="utf-8"))
+        return copy.deepcopy(cache.get("entries") or {})
+
     # -- U1-A ----------------------------------------------------------------
 
     def test_u1_a_trusted_citation_display_keeps_facts_and_licences(self):
@@ -332,6 +466,75 @@ class FixedEvidenceBase(BaseEnv):
             self.assertFalse(analysis_path.exists(), form)
             self.assertFalse(pack_path.exists(), form)
 
+        # A display-only reference whose current record exists but has no trusted
+        # title must fail before writing instead of borrowing the old canonical
+        # title (r5 §3.1.4). EEEE4444 is not a member/named/relevant key, so the
+        # direction fingerprint and the accepted membership stay unchanged.
+        null_env = self._fresh_env()
+        null_facts, null_results, _null_proof = null_env.generate_pack(
+            null_env.display_reference_overrides(),
+            mutate_facts=null_env.add_display_reference_paper)
+        self.assertIn(DISPLAY_ONLY_KEY, null_env.pack()["papers"])
+        self.assertEqual(null_env.display_reference_line(), DISPLAY_ONLY_RENDERED)
+        null_env.set_display_version(1)
+        null_snapshot = null_env.direction_snapshot()
+        self.assertEqual(null_snapshot["supporting"],
+                         ["AAAA1111", "BBBB2222", "CCCC3333"])
+        self.assertEqual(null_snapshot["relevant"], ["AAAA1111", "BBBB2222"])
+        null_gap_id = contact_state.quote_id(self.gap_quotes["AAAA1111"])
+        self.assertEqual(
+            [row["evidence"] for row in null_env.pack()["directions"][0]["gap_shortlist"]
+             if row["gap_id"] == null_gap_id], [DISPLAY_ONLY_EVIDENCE])
+        facts = json.loads(Path(null_facts).read_text(encoding="utf-8"))
+        next(paper for paper in facts["papers"]
+             if paper["item_key"] == DISPLAY_ONLY_KEY)["title"] = None
+        Path(null_facts).write_text(json.dumps(facts, ensure_ascii=False, indent=1),
+                                    encoding="utf-8")
+        analysis_path = null_env.prof_dir / contact_state.ANALYSIS_MD
+        pack_path = null_env.prof_dir / contact_state.INPUT_PACK
+        freshness_path = null_env.prof_dir / contact_state.FRESHNESS_CACHE
+
+        proof_path, payload = null_env.save_preflight("u1b-null-preflight.json")
+        self.assertEqual(payload["action"], "process", payload)
+        self.assertIn("fixed_evidence_display_update", payload["reason_codes"], payload)
+        null_direction = next(row for row in payload["directions"]
+                              if row["direction_id"] == "DIR00001")
+        self.assertIn("fixed_evidence_display_update",
+                      null_direction["reason_codes"], null_direction)
+        null_env.bind_facts_to_preflight(null_facts, payload)
+        plan = null_env.stage2_plan(null_facts, proof_path)
+        self.assertEqual(plan["status"], "ok", plan)
+        self.assertEqual(plan["jobs"], [], plan)
+        self.assertFalse(plan["write_needed"], plan)
+        ctx = contact_state.Stage2Context(Path(null_facts))
+        plan_entry = next(entry for entry in ctx.direction_plans
+                          if entry["did"] == "DIR00001")
+        self.assertTrue(plan_entry["reuse"], plan_entry)
+        old_entry = plan_entry["old"]
+        old_fingerprint = old_entry.get("provisional_input_fingerprint") \
+            or old_entry["input_fingerprint"]
+        self.assertEqual(plan_entry["fingerprint"], old_fingerprint)
+
+        analysis_before = analysis_path.read_bytes()
+        pack_before = pack_path.read_bytes()
+        facts_before = Path(null_facts).read_bytes()
+        freshness_before = freshness_path.read_bytes()
+        out = null_env.finalize(null_facts, proof_path, null_results)
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "missing_paper_reference_title", out)
+        self.assertEqual(out.get("direction"), "DIR00001", out)
+        self.assertEqual(out.get("gap_id"), expected_gap_id, out)
+        self.assertEqual(out.get("field"), "evidence", out)
+        self.assertEqual(out.get("item_key"), DISPLAY_ONLY_KEY, out)
+        self.assertIn("no trusted title", out.get("message") or "", out)
+        self.assertNotIn(DISPLAY_ONLY_TITLE, json.dumps(out, ensure_ascii=False), out)
+        self.assertEqual(analysis_path.read_bytes(), analysis_before)
+        self.assertEqual(pack_path.read_bytes(), pack_before)
+        self.assertEqual(Path(null_facts).read_bytes(), facts_before)
+        self.assertEqual(freshness_path.read_bytes(), freshness_before)
+        self.assertEqual(null_env.display_version(), 1)
+        self.assertEqual(null_env.direction_snapshot(), null_snapshot)
+
     # -- U1-C ----------------------------------------------------------------
 
     def _attribution_env(self):
@@ -346,8 +549,11 @@ class FixedEvidenceBase(BaseEnv):
                 "input_example": "输入一份叙事样本",
                 "output_example": "得到一段叙事结论"})
 
+        overrides = env.gap_override()
+        overrides["AAAA1111"]["completed_part"] = (
+            f"{CITATION_LINK} 已完成一部分；\n## 方向 假方向：{FAKE_HEADING_QUOTE}")
         facts_path, results, proof = env.generate_pack(
-            env.gap_override(), narrative_mutate=drop_summary)
+            overrides, narrative_mutate=drop_summary)
         return env, facts_path, results, proof
 
     def test_u1_c_report_ownership_uses_real_fragments(self):
@@ -356,28 +562,39 @@ class FixedEvidenceBase(BaseEnv):
         evidence_title_line = next(
             index + 1 for index, line in enumerate(lines)
             if "后续论文依据：" in line and CITATION_TITLE in line)
-        label_line = env.physical_line("评估时间：")
-        continuation_line = env.physical_line("续行仍由")
         summary_line = next(
             index + 1 for index, line in enumerate(lines)
             if line.startswith("1. 【作者 future work】"))
         narrative_line = env.physical_line("这里讨论后续论文依据")
 
+        # The source value itself contains a real `## 方向 ` continuation line.
+        # The character view locates it exactly; the UTF-8 prefix length differs
+        # from the character start, so a byte/character mix-up cannot pass.
+        body_view = env.document()["body"]
+        self.assertEqual(body_view.splitlines().count(FAKE_HEADING_LINE), 1)
+        quote_start = FAKE_HEADING_LINE.index(FAKE_HEADING_QUOTE)
+        quote_end = quote_start + len(FAKE_HEADING_QUOTE)
+        self.assertEqual(FAKE_HEADING_LINE[quote_start:quote_end], FAKE_HEADING_QUOTE)
+        self.assertNotEqual(len(FAKE_HEADING_LINE[:quote_start].encode("utf-8")),
+                            quote_start)
+
         report = env.write_report("u1c-report.json", [
             env.blocking_issue(CITATION_TITLE, evidence_title_line),
             env.blocking_issue("评估时间", "评估时间"),
-            env.blocking_issue("续行仍由", continuation_line),
+            env.blocking_issue(FAKE_HEADING_QUOTE, "固定续行"),
             env.blocking_issue("中译：Future", summary_line),
             env.blocking_issue("这里讨论后续论文依据", narrative_line),
             env.blocking_issue("依据：后续由", evidence_title_line),
         ])
         analysis_before = (env.prof_dir / contact_state.ANALYSIS_MD).read_bytes()
+        report_bytes = Path(report).read_bytes()
         recorded = env.record(report)
         self.assertEqual(recorded["status"], "needs_correction", recorded)
         self.assertEqual(recorded["round"], 1, recorded)
         self.assertTrue(recorded["needs_owner_fix"], recorded)
         self.assertEqual((env.prof_dir / contact_state.ANALYSIS_MD).read_bytes(),
                          analysis_before)
+        self.assertEqual(Path(report).read_bytes(), report_bytes)
         fixed = recorded["fixed_blocking"]
         self.assertEqual(sorted(fixed), ["DIR00001"], fixed)
         rows = fixed["DIR00001"]
@@ -400,9 +617,17 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(span_owners, {("generator", "label"), ("source", "evidence")},
                          rows)
         pack = env.pack()
-        self.assertEqual(pack["validator"]["fixed_blocking"], fixed)
-        pending = pack["validator"]["pending"]["DIR00001"]
+        validator = pack["validator"]
+        self.assertEqual(validator["fixed_blocking"], fixed)
+        pending = validator["pending"]["DIR00001"]
         self.assertEqual(len(pending), 6, pending)
+        # The raw report stays intact: original issues/notes/verdict are kept.
+        raw_report = json.loads(Path(report).read_text(encoding="utf-8"))
+        original_issues = raw_report["files"][0]["issues"]
+        self.assertEqual(len(original_issues), 6, original_issues)
+        self.assertEqual(validator["issues"], original_issues)
+        self.assertEqual(validator["notes"], raw_report["notes"])
+        self.assertEqual(validator["raw_verdict"], "fail")
 
         # Both refine entries stop before any job/body write, even when filtered.
         for extra in ((), ("--direction-id", "DIR00001")):
@@ -547,6 +772,148 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(minor_env.pack()["validator"]["results"]["DIR00001"]["result"],
                          "pass")
 
+        # One real lifecycle proves the B-absent fallback, the pack-only refine
+        # and the pending preservation on ordinary acceptance (t5 §6.4).
+        pending_env = self._fresh_env()
+
+        def add_pending_block(narrative):
+            narrative["directions"][0]["positioning"].append({
+                "kind": "para", "text": "纯叙事待改文字。", "refs": [],
+                "concrete_object": "合成叙事对象",
+                "input_example": "输入一份叙事样本",
+                "output_example": "得到一段叙事结论"})
+
+        pending_facts, pending_results, _pending_proof = pending_env.generate_pack(
+            pending_env.display_reference_overrides(),
+            mutate_facts=pending_env.add_display_reference_paper,
+            narrative_mutate=add_pending_block)
+        pending_env.set_display_version(1)
+        pending_snapshot = pending_env.direction_snapshot()
+        pending_cache = pending_env.cache_entries()
+        # B-absent: the current facts no longer carry the display-only record; the
+        # accepted canonical record is the only remaining source.
+        facts = json.loads(Path(pending_facts).read_text(encoding="utf-8"))
+        facts["papers"] = [paper for paper in facts["papers"]
+                           if paper["item_key"] != DISPLAY_ONLY_KEY]
+        Path(pending_facts).write_text(json.dumps(facts, ensure_ascii=False, indent=1),
+                                       encoding="utf-8")
+        proof_path, payload = pending_env.save_preflight("u1d-preflight.json")
+        self.assertEqual(payload["action"], "process", payload)
+        self.assertIn("fixed_evidence_display_update", payload["reason_codes"], payload)
+        pending_env.bind_facts_to_preflight(pending_facts, payload)
+        plan = pending_env.stage2_plan(pending_facts, proof_path)
+        self.assertEqual(plan["status"], "ok", plan)
+        self.assertEqual(plan["jobs"], [], plan)
+        accepted = pending_env.finalize(pending_facts, proof_path, pending_results)
+        self.assertEqual(accepted["status"], "ok", accepted)
+        self.assertEqual(pending_env.display_reference_line(), DISPLAY_ONLY_RENDERED)
+        self.assertEqual(pending_env.display_version(), U1_TARGET_DISPLAY_VERSION)
+        accepted_body = pending_env.managed_parts()[1]
+        accepted_ownership = pending_env.assert_ownership_matches_body(accepted_body)
+        self.assertEqual(accepted_ownership["body_sha256"],
+                         pending_env.body_digest(accepted_body))
+        self.assertEqual(pending_env.document()["header"]["render_sha256"],
+                         pending_env.body_digest(accepted_body))
+        pack = pending_env.pack()
+        self.assertEqual(pack["papers"][DISPLAY_ONLY_KEY]["title"], DISPLAY_ONLY_TITLE)
+        gap_id = contact_state.quote_id(pending_env.gap_quotes["AAAA1111"])
+        self.assertEqual(
+            [row["evidence"] for row in pack["directions"][0]["gap_shortlist"]
+             if row["gap_id"] == gap_id], [DISPLAY_ONLY_EVIDENCE])
+        after_absent = pending_env.direction_snapshot()
+        self.assertEqual(after_absent["supporting"], pending_snapshot["supporting"])
+        self.assertEqual(after_absent["relevant"], pending_snapshot["relevant"])
+        self.assertEqual(after_absent["narrative"], pending_snapshot["narrative"])
+        self.assertEqual(after_absent["blacklist"], pending_snapshot["blacklist"])
+        self.assertEqual(pending_env.cache_entries(), pending_cache)
+
+        # Round 1: a pure narrative blocking is a legal pending state.
+        pending_line = pending_env.physical_line("纯叙事待改文字")
+        report = pending_env.write_report("u1d-pending.json", [
+            pending_env.blocking_issue("纯叙事待改文字", pending_line)])
+        recorded = pending_env.record(report)
+        self.assertEqual(recorded["status"], "needs_correction", recorded)
+        self.assertEqual(recorded["round"], 1, recorded)
+        self.assertFalse(recorded["needs_owner_fix"], recorded)
+        self.assertEqual(recorded["fixed_blocking"], {}, recorded)
+        validator_before = copy.deepcopy(pending_env.pack()["validator"])
+        report_bytes = Path(report).read_bytes()
+        body_before = pending_env.managed_parts()[1]
+
+        out = pending_env.finalize(pending_facts, proof_path, pending_results)
+        self.assertEqual(out["status"], "ok", out)
+        self.assertEqual(pending_env.managed_parts()[1], body_before)
+        validator_after = pending_env.pack()["validator"]
+        for field in ("round", "phase", "pending", "results", "issues", "notes",
+                      "raw_verdict", "validation_sha256", "render_sha256"):
+            self.assertEqual(validator_after[field], validator_before[field], field)
+        self.assertEqual(validator_after["pack_sha256"],
+                         contact_state.stage2_pack_content_fingerprint(pending_env.pack()))
+        self.assertEqual(Path(report).read_bytes(), report_bytes)
+
+        # Pack-only refinement: delete the /tmp facts file first to prove the
+        # refinement consumes only the accepted canonical pack.
+        facts_bytes = Path(pending_facts).read_bytes()
+        Path(pending_facts).unlink()
+        plan = pending_env.refine_plan(report)
+        self.assertEqual(plan["status"], "ok", plan)
+        self.assertEqual([job["direction_id"] for job in plan["jobs"]], ["DIR00001"], plan)
+        rewrite = pending_env.write_narrative_rewrite("纯叙事待改文字", "纯叙事已改文字")
+        refined = pending_env.refine_finalize(rewrite, report)
+        self.assertEqual(refined["status"], "ok", refined)
+        self.assertEqual(refined["phase"], "awaiting_second_validation", refined)
+        self.assertTrue(refined["round_retained"], refined)
+        pack = pending_env.pack()
+        self.assertEqual(pack["validator"]["round"], 1, pack["validator"])
+        body_refined = pending_env.managed_parts()[1]
+        self.assertIn("纯叙事已改文字".encode("utf-8"), body_refined)
+        self.assertNotIn("纯叙事待改文字".encode("utf-8"), body_refined)
+        self.assert_ownership_matches_body(body_refined)
+        self.assertEqual(pack["papers"][DISPLAY_ONLY_KEY]["title"], DISPLAY_ONLY_TITLE)
+        self.assertEqual(pending_env.display_reference_line(), DISPLAY_ONLY_RENDERED)
+        after_refine = pending_env.direction_snapshot()
+        self.assertEqual(after_refine["supporting"], pending_snapshot["supporting"])
+        self.assertEqual(after_refine["relevant"], pending_snapshot["relevant"])
+        self.assertEqual(after_refine["blacklist"], pending_snapshot["blacklist"])
+
+        # Restore the same facts bytes; ordinary acceptance must keep the pending
+        # first round and the refined body, then the second round records the
+        # fixed terminal finding.
+        Path(pending_facts).write_bytes(facts_bytes)
+        proof_path, payload = pending_env.save_preflight("u1d-restored-preflight.json")
+        pending_env.bind_facts_to_preflight(pending_facts, payload)
+        plan = pending_env.stage2_plan(pending_facts, proof_path)
+        self.assertEqual(plan["status"], "ok", plan)
+        self.assertEqual(plan["jobs"], [], plan)
+        out = pending_env.finalize(pending_facts, proof_path, pending_results)
+        self.assertEqual(out["status"], "ok", out)
+        self.assertEqual(pending_env.managed_parts()[1], body_refined)
+        validator = pending_env.pack()["validator"]
+        self.assertEqual(validator["round"], 1, validator)
+        self.assertEqual(validator["phase"], "awaiting_second_validation", validator)
+        self.assertEqual(validator["pending"], validator_before["pending"])
+        self.assertEqual(validator["results"], validator_before["results"])
+
+        round2_line = pending_env.physical_line("评估时间：", expected=1)
+        round2 = pending_env.write_report("u1d-pending-round2.json", [
+            pending_env.blocking_issue("评估时间：", round2_line)])
+        round2_bytes = Path(round2).read_bytes()
+        terminal = pending_env.record(round2)
+        self.assertEqual(terminal["status"], "ok", terminal)
+        self.assertEqual(terminal["round"], 2, terminal)
+        self.assertTrue(terminal["terminal"], terminal)
+        self.assertTrue(terminal["needs_owner_fix"], terminal)
+        pack = pending_env.pack()
+        self.assertEqual(pack["validator"]["results"]["DIR00001"]["result"],
+                         "fail_after_2_rounds")
+        self.assertEqual(pack["validator"]["fixed_blocking"]["DIR00001"][0]["owner"],
+                         "generator")
+        stopped = pending_env.refine_plan(round2)
+        self.assertEqual(stopped["status"], "needs_owner_fix", stopped)
+        self.assertEqual(stopped["jobs"], [], stopped)
+        self.assertEqual(Path(report).read_bytes(), report_bytes)
+        self.assertEqual(Path(round2).read_bytes(), round2_bytes)
+
     # -- U1-E ----------------------------------------------------------------
 
     def test_u1_e_old_pack_updates_through_process_to_finalize(self):
@@ -636,6 +1003,80 @@ class FixedEvidenceBase(BaseEnv):
         card = "\n".join(env.card_lines())
         self.assertIn(CITATION_LINK, card)
         self.assertNotIn(CITATION_KEY, env.without_links(card))
+
+        # E-v1: an accepted old pack with display_version=1 but a fully valid raw
+        # byte binding upgrades through the normal process path without losing the
+        # recorded terminal state, and a second preflight reuses it (t5 §6.4).
+        upgrade_env = self._fresh_env()
+        upgrade_facts, upgrade_results, _upgrade_proof = upgrade_env.generate_pack(
+            upgrade_env.gap_override())
+        self.assertEqual(upgrade_env.display_version(), U1_TARGET_DISPLAY_VERSION)
+        upgrade_report = upgrade_env.record_pass("u1e-v1-pass.json")
+        upgrade_report_bytes = Path(upgrade_report).read_bytes()
+        upgrade_pack = upgrade_env.pack()
+        validator_before = copy.deepcopy(upgrade_pack["validator"])
+        self.assertEqual(validator_before["phase"], "terminal")
+        entry_before = copy.deepcopy(
+            upgrade_pack["cache"]["render"][contact_state.ANALYSIS_MD])
+        body_bytes = upgrade_env.managed_parts()[1]
+        body_sha = upgrade_env.body_digest(body_bytes)
+        # Historical v1 marker only: the real validator, body bytes and map stay.
+        upgrade_env.set_display_version(1)
+        upgrade_pack = upgrade_env.pack()
+        upgrade_pack["validator"]["pack_sha256"] = \
+            contact_state.stage2_pack_content_fingerprint(upgrade_pack)
+        upgrade_env.write_pack(upgrade_pack)
+
+        upgrade_pack = upgrade_env.pack()
+        body = upgrade_env.managed_parts()[1]
+        entry = upgrade_pack["cache"]["render"][contact_state.ANALYSIS_MD]
+        self.assertEqual(upgrade_env.body_digest(body), body_sha)
+        self.assertEqual(entry["sha256"], body_sha)
+        self.assertEqual(entry["ownership"]["body_sha256"], body_sha)
+        self.assertEqual(upgrade_pack["validator"]["render_sha256"], body_sha)
+        self.assertEqual(upgrade_env.document()["header"]["render_sha256"], body_sha)
+        self.assertEqual(upgrade_pack["validator"]["pack_sha256"],
+                         contact_state.stage2_pack_content_fingerprint(upgrade_pack))
+        self.assertEqual(upgrade_pack["validator"]["validation_sha256"],
+                         hashlib.sha256(upgrade_report_bytes).hexdigest())
+        self.assertEqual(upgrade_env.document()["header"]["state_fingerprint"],
+                         contact_state.stage2_pack_state_fingerprint(upgrade_pack))
+
+        proof_path, payload = upgrade_env.save_preflight("u1e-v1-preflight.json")
+        self.assertEqual(payload["action"], "process", payload)
+        self.assertIn("fixed_evidence_display_update", payload["reason_codes"], payload)
+        upgrade_direction = next(row for row in payload["directions"]
+                                 if row["direction_id"] == "DIR00001")
+        self.assertIn("fixed_evidence_display_update",
+                      upgrade_direction["reason_codes"], upgrade_direction)
+        upgrade_env.bind_facts_to_preflight(upgrade_facts, payload)
+        plan = upgrade_env.stage2_plan(upgrade_facts, proof_path)
+        self.assertEqual(plan["status"], "ok", plan)
+        self.assertEqual(plan["jobs"], [], plan)
+        self.assertFalse(plan["write_needed"], plan)
+        out = upgrade_env.finalize(upgrade_facts, proof_path, upgrade_results)
+        self.assertEqual(out["status"], "ok", out)
+        body_after = upgrade_env.managed_parts()[1]
+        self.assertEqual(body_after, body_bytes)
+        pack = upgrade_env.pack()
+        self.assertEqual(upgrade_env.display_version(), U1_TARGET_DISPLAY_VERSION)
+        validator = pack["validator"]
+        for field in ("round", "phase", "pending", "results", "issues", "notes",
+                      "raw_verdict", "validation_sha256", "render_sha256",
+                      "validation_render_sha256"):
+            self.assertEqual(validator[field], validator_before[field], field)
+        self.assertEqual(validator["pack_sha256"],
+                         contact_state.stage2_pack_content_fingerprint(pack))
+        entry = pack["cache"]["render"][contact_state.ANALYSIS_MD]
+        self.assertEqual(entry["ownership"]["body_sha256"],
+                         upgrade_env.body_digest(body_after))
+        for key in entry_before:
+            if key != "u1":
+                self.assertIn(key, entry)
+        self.assertEqual(Path(upgrade_report).read_bytes(), upgrade_report_bytes)
+        again = upgrade_env.preflight()
+        self.assertEqual(again["action"], "reuse_all", again)
+        self.assertNotIn("fixed_evidence_display_update", again["reason_codes"], again)
 
     # -- U1-F ----------------------------------------------------------------
 
@@ -739,26 +1180,31 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(Path(old_report).read_bytes(), old_report_bytes)
 
         # A business-fingerprint change whose visible body is equivalent still
-        # expires the old certification and refreshes only the header.
-        env.record(env.write_report("u1f-pass-3.json", []))
-        body_before = env.document()["body"]
-        facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+        # expires the old certification and refreshes only the header; the raw
+        # body bytes stay identical.
+        business_env = self._fresh_env()
+        business_facts, business_results, _business_proof = business_env.generate_pack(
+            business_env.gap_override())
+        self.assertEqual(business_env.display_version(), U1_TARGET_DISPLAY_VERSION)
+        business_report = business_env.record_pass("u1f-business-pass.json")
+        business_report_bytes = Path(business_report).read_bytes()
+        body_before = business_env.managed_parts()[1]
+        facts = json.loads(Path(business_facts).read_text(encoding="utf-8"))
         facts["directions"][0]["credibility"]["note"] = "只影响指纹不进入正文的说明"
-        Path(facts_path).write_text(json.dumps(facts, ensure_ascii=False, indent=1),
-                                    encoding="utf-8")
-        preflight_payload = env.preflight()
-        proof_path = env.root / "u1f-preflight-2.json"
-        proof_path.write_text(json.dumps(preflight_payload, ensure_ascii=False),
-                              encoding="utf-8")
-        env.bind_facts_to_preflight(facts_path, preflight_payload)
-        plan = parse(run_cli("stage2-plan", "--facts", facts_path,
-                             "--preflight-file", proof_path))
+        Path(business_facts).write_text(json.dumps(facts, ensure_ascii=False, indent=1),
+                                        encoding="utf-8")
+        proof_path, payload = business_env.save_preflight("u1f-business-preflight.json")
+        business_env.bind_facts_to_preflight(business_facts, payload)
+        plan = business_env.stage2_plan(business_facts, proof_path)
         self.assertEqual(plan["status"], "ok", plan)
-        out = parse(run_cli("stage2-finalize", "--facts", facts_path,
-                            "--preflight-file", proof_path, "--results", results))
+        out = business_env.finalize(business_facts, proof_path, business_results)
         self.assertEqual(out["status"], "ok", out)
-        self.assertEqual(env.document()["body"], body_before)
-        self.assertIsNone(env.pack().get("validator"))
+        self.assertEqual(business_env.managed_parts()[1], body_before)
+        pack = business_env.pack()
+        self.assertIsNone(pack.get("validator"))
+        self.assertEqual(business_env.document()["header"]["state_fingerprint"],
+                         contact_state.stage2_pack_state_fingerprint(pack))
+        self.assertEqual(Path(business_report).read_bytes(), business_report_bytes)
 
         # With business and body unchanged, only an invalid old binding is
         # rejected before any write and must not be silently re-bound.
@@ -843,20 +1289,246 @@ class FixedEvidenceBase(BaseEnv):
         self.assertNotIn(f"> {note_old}", new_note_body)
         self.assertNotEqual(new_note_body, old_note_body)
 
-        # With no old validator, a manual body edit still requires a decision.
-        manual_env = self._fresh_env()
-        manual_facts, manual_results, manual_proof = manual_env.generate_pack()
-        pack = manual_env.pack()
-        pack.pop("validator", None)
-        manual_env.write_pack(pack)
-        analysis_path = manual_env.prof_dir / contact_state.ANALYSIS_MD
-        analysis_path.write_text(
-            analysis_path.read_text(encoding="utf-8") + "\n人工改动。\n",
-            encoding="utf-8")
-        protected = analysis_path.read_bytes()
-        out = manual_env.finalize(manual_facts, manual_proof, manual_results)
+        # F-time: a determinate generation-time difference is ignored while every
+        # other body byte is preserved; no parent-process clock mock is used.
+        time_env = self._fresh_env()
+        time_facts, time_results, _time_proof = time_env.generate_pack(
+            time_env.gap_override())
+        self.assertEqual(time_env.display_version(), U1_TARGET_DISPLAY_VERSION)
+        _header, body = time_env.managed_parts()
+        self.assertNotIn(b"\r", body)
+        stamps = list(GENERATED_STAMP_RE.finditer(body))
+        self.assertEqual(len(stamps), 1, stamps)
+        old_stamp = stamps[0].group(1)
+        self.assertEqual(len(old_stamp), 20)
+        new_body = body.replace(old_stamp, b"2000-01-01T00:00:00Z", 1)
+        self.assertEqual(len(new_body), len(body))
+        self.assertNotEqual(new_body, body)
+        time_env.rewrite_consistent_input(new_body)
+        time_report = time_env.record_pass("u1f-time-pass.json")
+        time_report_bytes = Path(time_report).read_bytes()
+        validator_before = copy.deepcopy(time_env.pack()["validator"])
+        payload = time_env.preflight()
+        self.assertEqual(payload["action"], "reuse_all", payload)
+        proof_path = time_env.bind_proof(time_facts, payload, "u1f-time-preflight.json")
+        body_before = time_env.managed_parts()[1]
+        self.assertIn(b"2000-01-01T00:00:00Z", body_before)
+        out = time_env.finalize(time_facts, proof_path, time_results)
+        self.assertEqual(out["status"], "ok", out)
+        body_after = time_env.managed_parts()[1]
+        self.assertEqual(body_after, body_before)
+        self.assertIn(b"2000-01-01T00:00:00Z", body_after)
+        pack = time_env.pack()
+        entry = pack["cache"]["render"][contact_state.ANALYSIS_MD]
+        digest = time_env.body_digest(body_after)
+        self.assertEqual(entry["sha256"], digest)
+        self.assertEqual(entry["ownership"]["body_sha256"], digest)
+        self.assertEqual(time_env.document()["header"]["render_sha256"], digest)
+        validator = pack["validator"]
+        for field in ("round", "phase", "pending", "results", "raw_verdict",
+                      "validation_sha256", "render_sha256", "validation_render_sha256"):
+            self.assertEqual(validator[field], validator_before[field], field)
+        self.assertEqual(validator["pack_sha256"],
+                         contact_state.stage2_pack_content_fingerprint(pack))
+        ownership = time_env.assert_ownership_matches_body(body_after)
+        lines = body_after.decode("utf-8").splitlines()
+        evidence_line = next(index for index, line in enumerate(lines)
+                             if line.startswith("- 后续论文依据："))
+        needle_start = lines[evidence_line].index("后续由")
+        needle_end = needle_start + len("后续由")
+        self.assertTrue(any(
+            fragment.get("field") == "evidence"
+            and any(row[0] == evidence_line and row[1] < needle_end
+                    and row[2] > needle_start for row in fragment["ranges"])
+            for fragment in ownership["fragments"]))
+        self.assertEqual(Path(time_report).read_bytes(), time_report_bytes)
+
+        # F-preflight/finalize: the newest marker cannot hide an LF -> CRLF disk
+        # change from the preflight reuse gate (r5 §3.4/§3.6).
+        crlf_env = self._fresh_env()
+        crlf_facts, crlf_results, _crlf_proof = crlf_env.generate_pack(
+            crlf_env.gap_override())
+        self.assertEqual(crlf_env.display_version(), U1_TARGET_DISPLAY_VERSION)
+        crlf_report = crlf_env.record_pass("u1f-crlf-pass.json")
+        crlf_report_bytes = Path(crlf_report).read_bytes()
+        payload = crlf_env.preflight()
+        self.assertEqual(payload["action"], "reuse_all", payload)
+        proof_path = crlf_env.bind_proof(crlf_facts, payload, "u1f-crlf-reuse.json")
+        facts_before = Path(crlf_facts).read_bytes()
+        cache_before = (crlf_env.prof_dir / contact_state.FRESHNESS_CACHE).read_bytes()
+        old_digest = crlf_env.pack()["cache"]["render"][contact_state.ANALYSIS_MD]["sha256"]
+        header, body = crlf_env.managed_parts()
+        self.assertNotIn(b"\r", body)
+        self.assertIn(b"\n", body)
+        crlf_body = body.replace(b"\n", b"\r\n")
+        self.assertNotEqual(crlf_body, body)
+        self.assertEqual(crlf_body.replace(b"\r\n", b"\n"), body)
+        crlf_env.write_managed_parts(header, crlf_body)
+        self.assertEqual(crlf_env.document()["header"]["render_sha256"], old_digest)
+        markdown_before = crlf_env.managed_path().read_bytes()
+        pack_before = (crlf_env.prof_dir / contact_state.INPUT_PACK).read_bytes()
+
+        again = crlf_env.preflight()
+        self.assertEqual(again["action"], "process", again)
+        self.assertIn("validator_not_accepted", again["reason_codes"], again)
+        direction_row = next(row for row in again["directions"]
+                             if row["direction_id"] == "DIR00001")
+        self.assertEqual(direction_row["action"], "process", direction_row)
+        self.assertIn("validator_not_accepted", direction_row["reason_codes"],
+                      direction_row)
+        self.assertEqual(crlf_env.managed_path().read_bytes(), markdown_before)
+        self.assertEqual((crlf_env.prof_dir / contact_state.INPUT_PACK).read_bytes(),
+                         pack_before)
+
+        out = crlf_env.finalize(crlf_facts, proof_path, crlf_results)
+        self.assertIn(out["status"], {"error", "needs_decision"}, out)
+        self.assertIn(out.get("reason_code"),
+                      {"validation_render_stale", "manual_markdown_changed"}, out)
+        self.assertNotIn(out.get("reason_code"),
+                         {"preflight_inputs_changed", "invalid_params",
+                          "invalid_result_json"}, out)
+        self.assertEqual(crlf_env.managed_path().read_bytes(), markdown_before)
+        self.assertEqual((crlf_env.prof_dir / contact_state.INPUT_PACK).read_bytes(),
+                         pack_before)
+        self.assertEqual(Path(crlf_facts).read_bytes(), facts_before)
+        self.assertEqual((crlf_env.prof_dir / contact_state.FRESHNESS_CACHE).read_bytes(),
+                         cache_before)
+        self.assertEqual(Path(crlf_report).read_bytes(), crlf_report_bytes)
+        self.assertEqual(crlf_env.display_version(), U1_TARGET_DISPLAY_VERSION)
+
+        # F-record: an unregistered first-round pass report is isolated from a
+        # body whose bytes changed, not rejected by round/terminal rules.
+        record_env = self._fresh_env()
+        record_facts, record_results, _record_proof = record_env.generate_pack(
+            record_env.gap_override())
+        self.assertNotIn("validator", record_env.pack())
+        record_report = record_env.write_report("u1f-record-pass.json", [])
+        record_report_bytes = Path(record_report).read_bytes()
+        record_header, record_body = record_env.managed_parts()
+        record_env.write_managed_parts(record_header, record_body.replace(b"\n", b"\r\n"))
+        markdown_before = record_env.managed_path().read_bytes()
+        pack_before = (record_env.prof_dir / contact_state.INPUT_PACK).read_bytes()
+        out = record_env.record(record_report)
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out.get("reason_code"), "validation_render_stale", out)
+        self.assertEqual(record_env.managed_path().read_bytes(), markdown_before)
+        self.assertEqual((record_env.prof_dir / contact_state.INPUT_PACK).read_bytes(),
+                         pack_before)
+        self.assertEqual(Path(record_report).read_bytes(), record_report_bytes)
+        self.assertNotIn("validator", record_env.pack())
+
+        # F-refine: a registered legal pending report with a body that lost its
+        # final newline byte is stale for both refine entries.
+        refine_env = self._fresh_env()
+
+        def add_refine_block(narrative):
+            narrative["directions"][0]["positioning"].append({
+                "kind": "para", "text": "纯叙事待改文字。", "refs": [],
+                "concrete_object": "合成叙事对象",
+                "input_example": "输入一份叙事样本",
+                "output_example": "得到一段叙事结论"})
+
+        refine_facts, refine_results, _refine_proof = refine_env.generate_pack(
+            narrative_mutate=add_refine_block)
+        refine_line = refine_env.physical_line("纯叙事待改文字")
+        refine_report = refine_env.write_report("u1f-refine.json", [
+            refine_env.blocking_issue("纯叙事待改文字", refine_line)])
+        recorded = refine_env.record(refine_report)
+        self.assertEqual(recorded["status"], "needs_correction", recorded)
+        self.assertEqual(recorded["round"], 1, recorded)
+        self.assertFalse(recorded["needs_owner_fix"], recorded)
+        plan = refine_env.refine_plan(refine_report)
+        self.assertEqual(plan["status"], "ok", plan)
+        self.assertEqual([job["direction_id"] for job in plan["jobs"]], ["DIR00001"],
+                         plan)
+        rewrite = refine_env.write_narrative_rewrite("纯叙事待改文字", "纯叙事已改文字")
+        report_bytes = Path(refine_report).read_bytes()
+        rewrite_bytes = {path.name: path.read_bytes() for path in rewrite.iterdir()}
+        header, body = refine_env.managed_parts()
+        self.assertTrue(body.endswith(b"\n"))
+        trimmed = body[:-1]
+        self.assertEqual(len(trimmed), len(body) - 1)
+        refine_env.write_managed_parts(header, trimmed)
+        markdown_before = refine_env.managed_path().read_bytes()
+        pack_before = (refine_env.prof_dir / contact_state.INPUT_PACK).read_bytes()
+        bad_plan = refine_env.refine_plan(refine_report)
+        self.assertEqual(bad_plan["status"], "error", bad_plan)
+        self.assertEqual(bad_plan.get("reason_code"), "validation_render_stale",
+                         bad_plan)
+        self.assertEqual(refine_env.managed_path().read_bytes(), markdown_before)
+        self.assertEqual((refine_env.prof_dir / contact_state.INPUT_PACK).read_bytes(),
+                         pack_before)
+        self.assertEqual(Path(refine_report).read_bytes(), report_bytes)
+        bad_final = refine_env.refine_finalize(rewrite, refine_report)
+        self.assertEqual(bad_final["status"], "error", bad_final)
+        self.assertEqual(bad_final.get("reason_code"), "validation_render_stale",
+                         bad_final)
+        self.assertEqual(refine_env.managed_path().read_bytes(), markdown_before)
+        self.assertEqual((refine_env.prof_dir / contact_state.INPUT_PACK).read_bytes(),
+                         pack_before)
+        self.assertEqual(Path(refine_report).read_bytes(), report_bytes)
+        pending_state = refine_env.pack()["validator"]
+        self.assertEqual(pending_state["phase"], "needs_correction", pending_state)
+        self.assertEqual(pending_state["round"], 1, pending_state)
+        for name, content in rewrite_bytes.items():
+            self.assertEqual((rewrite / name).read_bytes(), content, name)
+
+        # F-manual: without any old validator, an unannounced CRLF edit still
+        # needs a decision and must not upgrade the display marker.
+        spec_env = self._fresh_env()
+        spec_facts, spec_results, _spec_proof = spec_env.generate_pack(
+            spec_env.gap_override())
+        self.assertNotIn("validator", spec_env.pack())
+        spec_env.set_display_version(1)
+        proof_path, payload = spec_env.save_preflight("u1f-manual-preflight.json")
+        spec_env.bind_facts_to_preflight(spec_facts, payload)
+        header, body = spec_env.managed_parts()
+        spec_env.write_managed_parts(header, body.replace(b"\n", b"\r\n"))
+        markdown_before = spec_env.managed_path().read_bytes()
+        pack_before = (spec_env.prof_dir / contact_state.INPUT_PACK).read_bytes()
+        cache_before = (spec_env.prof_dir / contact_state.FRESHNESS_CACHE).read_bytes()
+        facts_before = Path(spec_facts).read_bytes()
+        out = spec_env.finalize(spec_facts, proof_path, spec_results)
         self.assertEqual(out["status"], "needs_decision", out)
-        self.assertEqual(analysis_path.read_bytes(), protected)
+        self.assertEqual(out.get("reason_code"), "manual_markdown_changed", out)
+        self.assertEqual(spec_env.managed_path().read_bytes(), markdown_before)
+        self.assertEqual((spec_env.prof_dir / contact_state.INPUT_PACK).read_bytes(),
+                         pack_before)
+        self.assertEqual((spec_env.prof_dir / contact_state.FRESHNESS_CACHE).read_bytes(),
+                         cache_before)
+        self.assertEqual(Path(spec_facts).read_bytes(), facts_before)
+        self.assertEqual(spec_env.display_version(), 1)
+
+        # F-valid-CRLF: a legal old CRLF body with a consistent raw binding is not
+        # a broken binding; the ordinary acceptance writes the LF candidate.
+        valid_env = self._fresh_env()
+        valid_facts, valid_results, valid_proof = valid_env.generate_pack(
+            valid_env.gap_override())
+        self.assertNotIn("validator", valid_env.pack())
+        _header, body = valid_env.managed_parts()
+        crlf_body = body.replace(b"\n", b"\r\n")
+        self.assertEqual(crlf_body.replace(b"\r\n", b"\n"), body)
+        valid_env.rewrite_consistent_input(crlf_body)
+        valid_report = valid_env.record_pass("u1f-valid-crlf-pass.json")
+        valid_report_bytes = Path(valid_report).read_bytes()
+        out = valid_env.finalize(valid_facts, valid_proof, valid_results)
+        self.assertEqual(out["status"], "ok", out)
+        body_after = valid_env.managed_parts()[1]
+        self.assertNotIn(b"\r", body_after)
+        self.assertNotEqual(body_after, crlf_body)
+        # The only non-time difference from the old CRLF body is the line ending.
+        stamp_placeholder = "> <stamp> ｜ 数据来源：".encode("utf-8")
+        normalized_new = GENERATED_STAMP_RE.sub(stamp_placeholder, body_after)
+        normalized_old = GENERATED_STAMP_RE.sub(stamp_placeholder, crlf_body)
+        self.assertEqual(normalized_new.splitlines(), normalized_old.splitlines())
+        pack = valid_env.pack()
+        self.assertIsNone(pack.get("validator"))
+        digest = valid_env.body_digest(body_after)
+        entry = pack["cache"]["render"][contact_state.ANALYSIS_MD]
+        self.assertEqual(entry["sha256"], digest)
+        self.assertEqual(entry["ownership"]["body_sha256"], digest)
+        self.assertEqual(valid_env.document()["header"]["render_sha256"], digest)
+        self.assertEqual(Path(valid_report).read_bytes(), valid_report_bytes)
 
 
 if __name__ == "__main__":
