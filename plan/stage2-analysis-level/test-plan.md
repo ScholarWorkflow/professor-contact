@@ -84,9 +84,9 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 ### 4.1 当前事实
 
-- 第一关口：L1–L6 原范围已确认；t4 已按 r4 修正预期；t5 仅补当前三处 recipe，完整候选待独立设计复核，作者不宣布新批准。
-- 第二关口：t3 已有公开审核结论，不再标成“t3 待审”。现有 53 个测试资产及历史 recipe 见 §4.2，t5 的两处新增独有入口方法和一处就地修正尚未落实；产品修复已由 `81c38d4` 提交，第二关口仍待独立审核在实际产品提交上核对受影响接线、选择器和具体命令，不重开未受影响范围。
-- 第三关口：§5 是真实历史结果；r4 受影响机制已在 `81c38d4` 上执行，结果见 §4.4。不能以 34 tests 或 1064 tests 旧绿代替；L3 及实际未变子目标复用旧结果，L1/L2 的矛盾预期、L4/L6 完整守卫、L5 旧绑定／实际字节和共享生命周期接线以 §4.4 的新结果为准。§4.4 的 49 tests 早于本轮新增的 preflight/validation CRLF 入口测试；`81c38d4` 未改 `_stage2_preflight.py` 665–673 与 `_stage2_validation.py` 87–100/289–296 的 `read_text`，新增这两个入口用例仍预期红，待产品修复。关口结论仍待独立审核。
+- 第一关口：L1–L6 原范围已确认；t4 已按 r4 修正预期；t5 补当前三处 recipe，本地测试工程师已按 recipe 落地测试实现；完整候选待独立设计复核，作者不宣布新批准。
+- 第二关口：t3 已有公开审核结论，不再标成“t3 待审”。现有 55 个测试资产及历史 recipe 见 §4.2；t5 的两处新增独有入口方法和一处就地修正已由本地测试工程师落实，待独立审核在实际产品提交上核对受影响接线、选择器和具体命令，不重开未受影响范围。
+- 第三关口：§5 是真实历史结果；r4 受影响机制已在 `81c38d4` 上执行，结果见 §4.4。不能以 34 tests 或 1064 tests 旧绿代替；L3 及实际未变子目标复用旧结果，L1/L2 的矛盾预期、L4/L6 完整守卫、L5 旧绑定／实际字节和共享生命周期接线以 §4.4 的新结果为准。§4.4 的 49 tests 早于本轮新增的 preflight/validation CRLF 与普通 finalize header 入口测试；`81c38d4` 未改 `_stage2_preflight.py` 665–673 与 `_stage2_validation.py` 87–100/289–296 的 `read_text`，也未让普通 finalize 拒绝错误 header；这些新增用例仍预期红，待产品修复。关口结论仍待独立审核。
 - 当前产品 r4 修复已提交；测试准备缺口与产品失败分开记录，不声称第二/第三关口已通过。§4.4 记录本轮新的正式执行，独立关口审核仍待完成。
 
 ### 4.2 现有 r4 测试资产、历史准备与执行 recipe
@@ -118,7 +118,7 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 ### 4.2.1 t5 共用合法输入和零写入判据
 
-以下是测试工程师待实现的 recipe，执行工程师取得既有流程要求的执行授权后才运行；本次只修改计划。沿 `test_stage2_analysis_level.AnalysisLevelBase` 及其 `PreflightBase`，每例新建现有临时目录，不引入新 runner 或模型结果判定器。
+以下是本地测试工程师已按 §4.2.5 落实的 recipe，执行工程师取得既有流程要求的执行授权后才运行；实现轮只改测试，不改产品或执行计划。沿 `test_stage2_analysis_level.AnalysisLevelBase` 及其 `PreflightBase`，每例新建现有临时目录，不引入新 runner 或模型结果判定器。
 
 1. 保持既有 setUp 的 professor、target、Stage 1 snapshot、papers.json 和两个方向：DIR00001 supporting 候选 AAAA1111/BBBB2222/CCCC3333，DIR00002 为 BBBB2222；AAAA1111=fulltext、BBBB2222=abstract。原 analysis 文件分别为 `论文分析/AAAA1111.md`、`BBBB2222.md`，对应真实 future-work sidecar 和 `_index.json` 路径保持，facts 由 `bind_levels()` 写入当前级别。不要改 collection_key、user_note、gap quote 或成员来制造本次漂移。
 2. 调用已有 `build_accepted_state()`，它依次真实 finalize、建立 preflight 元数据、真实 record-validation。使用已有 `write_stage2_results()` 的完整合法结果：`freshness-DIR00001.json` 为 schema=1/kind=freshness/collection_key=DIR00001，两行 gap_id 分别由原 AAAA1111/BBBB2222 gap quote 的 `quote_id` 生成；每行 status=open、candidate_paper_ids=[]、confidence=high、evidence 为原非空说明。DIR00002 文件 collection_key=DIR00002 且只含 BBBB2222 那一行。`narrative.json` 为 schema=1/kind=narrative，分别两方向；每个 positioning 包含 kind=para、现有 `{{P:KEY}}` 与 `{{G:GAPID}}` 文本及完全相同 refs 集合、非空 concrete_object/input_example/output_example，gap_notes 的 gap_id/summary/explanation 沿现有 fixture。直接调用既有 writer，不手抄缺字段的缩水 JSON；其实际首轮 finalize 必须 status=ok。
@@ -127,7 +127,7 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 ### 4.2.2 L4 普通 finalize 的消费后 artifact stat 漂移
 
-- **落点**：在已有 `TestPreflightBranches` 类补一个独有入口方法，建议名 `test_normal_finalize_rejects_consumed_artifact_stat_drift`；目前该方法不存在，不能将选择器或本 recipe 记作已覆盖。它不重复 preflight/refresh 的漂移方法，补的是普通接受独有弱分支。
+- **落点**：已在 `TestPreflightBranches` 落地独有入口方法 `test_normal_finalize_rejects_consumed_artifact_stat_drift`；它不重复 preflight/refresh 的漂移方法，补的是普通接受独有弱分支。
 - **准备顺序**：按 §4.2.1 建立 accepted 状态；`save_preflight("finalize-artifact-drift.json")` 必须 action=reuse_all，再 `bind_facts_to_plan(plan_path)`。调用真实 `run_cli("stage2-plan", "--facts", self.facts_path, "--preflight-file", plan_path)`，要求 status=ok、jobs=[]、write_needed=false，两个 direction action 均 reuse。保存此时事实、proof、results 文件及 accepted 的 consumed_sources/artifact_guards 原值；这是真实已消费且已接受的旧来源，不在漂移后调用 seed_preflight_meta、重建结果或重建 proof。
 - **唯一变化与时点**：plan 完成后、普通 finalize 前，读取 AAAA1111.md 原 bytes，追加 `b"\n<!-- source changed after consumption -->\n"` 并写回同一文件。断言文件仍存在、路径和 index.level/fulltext 未变、文件 size 确实增大，old guard 中的原 stat 没有被测试同步修改。无需 sleep 或 PDF read；size 变化足以避免 mtime 分辨率偶然相同。facts、target、snapshot、index、sidecar、结果 JSON 全部保持既有 bytes。
 - **真实入口**：直接 `run_cli("stage2-finalize", "--facts", self.facts_path, "--results", self.root / "results", "--preflight-file", plan_path)`。不调用自动重新准备 proof 的便利包装，不 mock ctx、守卫返回值、结果解析或来源读取。原 results 已在首轮成功接受，方向/quote 未变且该轮 jobs=[]，不能以缺 narrative/freshness 字段产生的 invalid_result_json 替代 stat 检查。
@@ -136,7 +136,7 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 ### 4.2.3 L6 gate 后接受 pack 被外部更新，不允许候选覆盖
 
-- **落点**：保留现有两个 analysis 漂移方法，补 `TestRefreshProtection.test_accepted_pack_drift_after_observation_returns_needs_refresh`（待实现）。这是不同于来源文件的接受记录读取分支，不扩成所有文件×时点矩阵。Markdown 的人工内容保护已有方法复用。
+- **落点**：保留现有两个 analysis 漂移方法，已落地 `TestRefreshProtection.test_accepted_pack_drift_after_observation_returns_needs_refresh`。这是不同于来源文件的接受记录读取分支，不扩成所有文件×时点矩阵。Markdown 的人工内容保护已有方法复用。
 - **准备**：§4.2.1 合法 accepted 基线；将 self.levels 改为 AAAA1111=abstract、BBBB2222=abstract，调用 write_index；save_preflight 后必须 refresh_level。缓存外部更新不得改变 level、direction、state fingerprint、render SHA 或真实 validator 报告。
 - **注入边界**：复用现有 `_drift_after_observation` 的同进程结构：保存 `Stage2PackRefineContext.__dict__["narrative_later_keys_for"]` 描述符和 `.__func__`，安装 staticmethod 包装并 addCleanup 恢复。先保存接受文件快照，才 arm；调用 `_refresh_in_process(plan)`，即真实 `contact_state.cmd_stage2_refresh_level`，不使用子进程。wrapper 首次被调用时 ctx.pack 已读取、`stage2_refresh_evaluate` 已完成，正式 managed/pack 写入未开始。设置触发计数=1，只此一次读取磁盘 pack 副本并令 `cache.foreign_cache={"kept": true, "revision": 2}`；由已有 `stage2_pack_content_fingerprint(pack)` 更新该副本 validator.pack_sha256 后写磁盘。它只准备一个自洽的外部接受快照，不修改 ctx.pack、gate/proof、render 或比较函数。随后保存外部新 pack bytes，返回原 original(direction) 的真实结果；不强造通过 gate 的值。
 - **合法性和独立预期**：注入前后分别用 JSON 排除 validator 后的 `json.dumps(..., ensure_ascii=False, sort_keys=True).encode("utf-8")` 的标准 hashlib.sha256 核对 validator.pack_sha256；保留当前 JSON 序列化默认空格，不改 separators。报告/render/state 绑定未变。这里 helper 仅生成夹具的合法 pack 绑定，不能充当漂移预期。待测调用必须 status=needs_refresh、reason_code 为现有 preflight_inputs_changed 或 refresh_requires_process；注入计数恰一次，pack 必须逐字节等于**注入后**快照，不能等于旧 candidate 输出；Markdown、freshness 缓存和原报告等于注入前快照，lease 不存在。
@@ -144,7 +144,7 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 ### 4.2.4 L5 CRLF 反例只坏正文一层
 
-- **落点**：就地修正现有 `TestLevelRefresh.test_crlf_body_without_a_matching_binding_is_not_accepted`；不新建相同的负例，也不重复 `TestManagedBodyBytes` 的真实磁盘原语检查。
+- **落点**：已按本 recipe 就地修正 `TestLevelRefresh.test_crlf_body_without_a_matching_binding_is_not_accepted`；不新建相同的负例，也不重复 `TestManagedBodyBytes` 的真实磁盘原语检查。
 - **建立合法 marker-only 基线**：§4.2.1 完成后，唯一准备改动为 pack.cache.preflight.statistics_version=None；同步用已有 stage2_pack_content_fingerprint 更新 validator.pack_sha256，再写 pack。保持 schema/phase/round、validator.results、state fingerprint、cache.render、报告及 Markdown 不变。参照既有 marker-only 正例准备，不把统计正文或旧头改坏。此时保存 proof `save_preflight("crlf-stale.json")`，断言 action=refresh_level。使用原始 read_bytes 和现有受管格式分隔出 header/body；确认 body 没有 CRLF，标准 hashlib.sha256(body) 等于 header.render_sha256、cache.render[ANALYSIS_MD].sha256 与 validator.render_sha256，header.state_fingerprint 独立等于 `hashlib.sha256(json.dumps({"professor": pack["professor"], "directions": {d["direction_id"]: d.get("input_fingerprint") for d in pack["directions"]}}, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()`；当前 schema 2 两条 direction_id 为 DIR00001/DIR00002，不用名称或数组序号替代身份；validator.pack_sha256 与 §4.2.3 的独立 JSON 摘要一致。
 - **唯一待测破坏**：只把已保存 body 的 `b"\n"` 替换为 `b"\r\n"`，保留原 header 和原分隔前缀 bytes，写回 `原文件去掉末尾原 body 的前缀 + crlf_body`。先断言 body 非空且含 LF、crlf_body != body，原文件确实以 body 结尾；不得重排 YAML、改变 header 行尾或同时改 state/hash。写完后只观察，不重签 header/cache/validator，也不重新运行 record-validation 或生成新 proof。
 - **真实入口与预期**：保存坏正文文件 bytes、合法 pack bytes及其他接受产物，调用已有 `refresh(plan)` CLI。期望原人工保护 `needs_decision/manual_markdown_changed`；若完整旧绑定前置检查先返回 `error/validation_render_stale`，仅在证据明确为 header/body SHA 不匹配且独立 pack/state/report 检查均仍合法时计为同一拒绝目标。不能仅 assert status in (error, needs_decision)。pack、坏 Markdown、缓存、原报告均不变，lease 释放；再次独立校验 validator.pack_sha256 仍等于当前 pack 排除 validator 的摘要，证明不是 stale pack 导致拒绝。
@@ -152,13 +152,13 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 ### 4.2.5 t5 的执行边界和记录
 
-目前基线仍为现有 53 方法；上述两个新名称尚不存在，一个旧方法尚待修正。本文未运行语法检查、测试发现或任何方法，不宣布将来总数，不把“步骤完整”当作 G2 已落地或 G3 PASS。
+**落实状态（本地测试工程师，2026-10-21）**：三个方法已按 §4.2.1–4.2.4 落地；基线由 53 增至 55 方法，新增 `test_normal_finalize_rejects_consumed_artifact_stat_drift`、`test_accepted_pack_drift_after_observation_returns_needs_refresh`，并就地修正 `test_crlf_body_without_a_matching_binding_is_not_accepted`。预检：Python 3.14.7 下 `py_compile` 通过；`unittest.TestLoader` 统计 55 个测试；三个选择器均可解析；`git diff --check` 通过。未运行三个目标用例、产品入口或正式业务请求。待独立 G2 核对三个方法的 fixture、真实调用和上述错误排除；不把“步骤完整”当作 G2 已落地或 G3 PASS。
 
-测试工程师落实后，独立 G2 核对三个方法的 fixture、真实调用和上述错误排除。执行获授权后，只定向运行：
+执行获授权后，只定向运行：
 
 `python3 -m unittest test_stage2_analysis_level.TestPreflightBranches.test_normal_finalize_rejects_consumed_artifact_stat_drift test_stage2_analysis_level.TestRefreshProtection.test_accepted_pack_drift_after_observation_returns_needs_refresh test_stage2_analysis_level.TestLevelRefresh.test_crlf_body_without_a_matching_binding_is_not_accepted -v`
 
-工作目录仍为 `.apm/skills/professor-contact/tests`。若选择器尚不存在，记准备未完成而非产品失败，不退回跑全模块。记录产品 SHA、测试 SHA、Python 版本、每例结果与失败层、退出码和仓库外原始 stdout/stderr；原始日志不提交。已有 53 方法不因 t5 文档修改全跑，现有 I/O 后 preflight 与磁盘原语方法直接复用。§4.4 的三个已知 CI 失败只有其产品路径实际修复后才单独复核，不夹带进本次文档修订的执行义务；同样不扩全仓／平台／业务回归。作者状态 pending，独立审核与实际执行各自记录，任何未运行项不得标 PASS。
+工作目录仍为 `.apm/skills/professor-contact/tests`。三个选择器现已存在；若执行时再次不存在，记准备未完成而非产品失败，不退回跑全模块。记录产品 SHA、测试 SHA、Python 版本、每例结果与失败层、退出码和仓库外原始 stdout/stderr；原始日志不提交。已有 55 方法不因 t5 文档修改全跑，现有 I/O 后 preflight 与磁盘原语方法直接复用。§4.4 的三个已知 CI 失败只有其产品路径实际修复后才单独复核，不夹带进本次文档修订的执行义务；同样不扩全仓／平台／业务回归。作者状态 pending，独立审核与实际执行各自记录，任何未运行项不得标 PASS。
 
 ### 4.3 完成条件与责任
 

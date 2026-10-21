@@ -549,6 +549,55 @@ class TestPreflightBranches(AnalysisLevelBase):
         self.assertIn("validator_not_accepted",
                       self.direction(payload, "DIR00001")["reason_codes"])
 
+    def test_normal_finalize_rejects_consumed_artifact_stat_drift(self):
+        self.build_accepted_state()
+        plan = self.save_preflight("finalize-artifact-drift.json")
+        self.assertEqual(read_json(plan)["action"], "reuse_all")
+        self.bind_facts_to_plan(plan)
+        plan_out = parse(run_cli("stage2-plan", "--facts", self.facts_path,
+                                 "--preflight-file", plan))
+        self.assertEqual(plan_out["status"], "ok", plan_out)
+        self.assertEqual(plan_out["jobs"], [], plan_out)
+        self.assertFalse(plan_out["write_needed"], plan_out)
+        self.assertEqual({entry["action"] for entry in plan_out["directions"]},
+                         {"reuse"}, plan_out)
+
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        md_path = self.analysis_md()
+        cache_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
+        validation_path = self.root / "validation.json"
+        pack_before = pack_path.read_bytes()
+        md_before = md_path.read_bytes()
+        cache_before = cache_path.read_bytes()
+        validation_before = validation_path.read_bytes()
+        analysis = self.prof_dir / "论文分析" / "AAAA1111.md"
+        source_before = analysis.read_bytes()
+        index = read_json(self.prof_dir / "论文分析" / "_index.json")
+        self.assertEqual(index["papers"]["AAAA1111"]["level"], "fulltext")
+
+        changed = source_before + b"\n<!-- source changed after consumption -->\n"
+        analysis.write_bytes(changed)
+        self.assertGreater(len(changed), len(source_before))
+        self.assertEqual(read_json(self.prof_dir / "论文分析" / "_index.json"),
+                         index)
+
+        payload = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
+                                "--results", self.root / "results",
+                                "--preflight-file", plan))
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertEqual(payload["reason_code"], "preflight_inputs_changed", payload)
+        self.assertEqual(pack_path.read_bytes(), pack_before)
+        self.assertEqual(md_path.read_bytes(), md_before)
+        self.assertEqual(cache_path.read_bytes(), cache_before)
+        self.assertEqual(validation_path.read_bytes(), validation_before)
+        self.assertEqual(analysis.read_bytes(), changed)
+
+        next_payload = self.preflight()
+        self.assertEqual(next_payload["action"], "process", next_payload)
+        self.assertIn("artifact_changed",
+                      self.direction(next_payload, "DIR00001")["reason_codes"],
+                      next_payload)
+
     def direction_action(self, payload, direction_id):
         return self.direction(payload, direction_id)["action"]
 
@@ -818,25 +867,64 @@ class TestLevelRefresh(AnalysisLevelBase):
         self.build_accepted_state()
         pack = self._read_pack()
         pack["cache"]["preflight"]["statistics_version"] = None
+        pack["validator"]["pack_sha256"] = \
+            contact_state.stage2_pack_content_fingerprint(pack)
         self._write_pack(pack)
-        md = self.analysis_md()
-        header, body = split_managed_bytes(md.read_bytes())
-        match = re.search(rb"(?m)^state_fingerprint: (.*)$", header)
-        self.assertIsNotNone(match)
-        state_fingerprint = match.group(1).decode("utf-8")
-        crlf_body = body.replace(b"\n", b"\r\n")
-        # The header still claims the LF body SHA: the old read_text path hid
-        # exactly this difference before comparing and writing.
-        broken = managed_bytes(crlf_body, state_fingerprint, newline=b"\r\n",
-                               render_sha256=sha256_bytes(body))
-        md.write_bytes(broken)
-        pack_path = self.prof_dir / "套磁候选输入.json"
-        pack_before = pack_path.read_bytes()
         plan = self.save_preflight("crlf-stale.json")
+        self.assertEqual(read_json(plan)["action"], "refresh_level")
+
+        pack = self._read_pack()
+        md = self.analysis_md()
+        data = md.read_bytes()
+        header, body = split_managed_bytes(data)
+        self.assertNotIn(b"\r\n", body)
+        state_match = re.search(rb"(?m)^state_fingerprint: (.*)$", header)
+        render_match = re.search(rb"(?m)^render_sha256: (.*)$", header)
+        self.assertIsNotNone(state_match)
+        self.assertIsNotNone(render_match)
+        self.assertEqual(render_match.group(1).decode("ascii"), sha256_bytes(body))
+        self.assertEqual(pack["cache"]["render"][contact_state.ANALYSIS_MD]["sha256"],
+                         sha256_bytes(body))
+        self.assertEqual(pack["validator"]["render_sha256"], sha256_bytes(body))
+        expected_state = sha256_bytes(json.dumps({
+            "professor": pack["professor"],
+            "directions": {d["direction_id"]: d.get("input_fingerprint")
+                           for d in pack["directions"]},
+        }, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+        self.assertEqual(state_match.group(1).decode("utf-8"), expected_state)
+
+        def pack_sha_without_validator(payload):
+            without_validator = {k: v for k, v in payload.items() if k != "validator"}
+            return sha256_bytes(json.dumps(without_validator, ensure_ascii=False,
+                                           sort_keys=True).encode("utf-8"))
+
+        self.assertEqual(pack["validator"]["pack_sha256"],
+                         pack_sha_without_validator(pack))
+        crlf_body = body.replace(b"\n", b"\r\n")
+        self.assertNotEqual(crlf_body, body)
+        broken = data[:len(data) - len(body)] + crlf_body
+        md.write_bytes(broken)
+
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        cache_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
+        validation_path = self.root / "validation.json"
+        pack_before = pack_path.read_bytes()
+        cache_before = cache_path.read_bytes()
+        validation_before = validation_path.read_bytes()
         payload = parse(self.refresh(plan))
         self.assertIn(payload["status"], ("needs_decision", "error"), payload)
+        self.assertEqual(payload.get("reason_code"),
+                         "manual_markdown_changed" if payload["status"] == "needs_decision"
+                         else "validation_render_stale", payload)
         self.assertEqual(pack_path.read_bytes(), pack_before)
         self.assertEqual(md.read_bytes(), broken)
+        self.assertEqual(cache_path.read_bytes(), cache_before)
+        self.assertEqual(validation_path.read_bytes(), validation_before)
+        self.assertFalse(
+            (self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
+        pack_after = self._read_pack()
+        self.assertEqual(pack_after["validator"]["pack_sha256"],
+                         pack_sha_without_validator(pack_after))
 
     def test_preflight_reuses_a_legal_crlf_managed_file(self):
         self.build_accepted_state()
@@ -975,6 +1063,40 @@ class TestRefreshProtection(AnalysisLevelBase):
                         original_descriptor)
         return arm
 
+    def _drift_accepted_pack_after_observation(self):
+        """Externally update the accepted pack after the gate, before the write.
+
+        The same post-gate render-precheck hook is used, but it changes the
+        accepted pack (a new cache entry plus a self-consistent validator pack
+        fingerprint) instead of the analysis source. The pack has already been
+        read by the refresh context, so the old context must stop rather than
+        overwrite the externally updated snapshot.
+        """
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        context_class = contact_state.Stage2PackRefineContext
+        original_descriptor = context_class.__dict__["narrative_later_keys_for"]
+        original = original_descriptor.__func__
+        state = {"armed": False, "triggered": 0, "external_bytes": None}
+
+        def arm():
+            state["armed"] = True
+
+        def record_then_drift(direction):
+            if state["armed"] and state["triggered"] == 0:
+                state["triggered"] += 1
+                pack = read_json(pack_path)
+                pack["cache"]["foreign_cache"] = {"kept": True, "revision": 2}
+                pack["validator"]["pack_sha256"] = \
+                    contact_state.stage2_pack_content_fingerprint(pack)
+                write_json(pack_path, pack)
+                state["external_bytes"] = pack_path.read_bytes()
+            return original(direction)
+
+        context_class.narrative_later_keys_for = staticmethod(record_then_drift)
+        self.addCleanup(setattr, context_class, "narrative_later_keys_for",
+                        original_descriptor)
+        return arm, state
+
     def _refresh_in_process(self, plan):
         """Run the real refresh handler in this process so the drift doubles apply."""
         arguments = type("Args", (), {
@@ -1028,6 +1150,49 @@ class TestRefreshProtection(AnalysisLevelBase):
         plan = self.save_preflight("observation-drift.json")
         arm = self._drift_after_observation()
         self._assert_zero_write_needs_refresh(plan, arm)
+
+    def test_accepted_pack_drift_after_observation_returns_needs_refresh(self):
+        self.build_accepted_state()
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        plan = self.save_preflight("accepted-pack-drift.json")
+        self.assertEqual(read_json(plan)["action"], "refresh_level")
+
+        def pack_sha_without_validator(data):
+            payload = json.loads(data)
+            payload.pop("validator", None)
+            return sha256_bytes(json.dumps(payload, ensure_ascii=False,
+                                           sort_keys=True).encode("utf-8"))
+
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        md_path = self.analysis_md()
+        cache_path = self.prof_dir / "论文分析" / "_freshness_cache.json"
+        validation_path = self.root / "validation.json"
+        before_pack = pack_path.read_bytes()
+        before_md, before_cache = md_path.read_bytes(), cache_path.read_bytes()
+        before_validation = validation_path.read_bytes()
+        self.assertEqual(json.loads(before_pack)["validator"]["pack_sha256"],
+                         pack_sha_without_validator(before_pack))
+
+        arm, state = self._drift_accepted_pack_after_observation()
+        arm()
+        payload = self._refresh_in_process(plan)
+        self.assertEqual(payload["status"], "needs_refresh", payload)
+        self.assertIn(payload.get("reason_code"),
+                      {"preflight_inputs_changed", "refresh_requires_process"}, payload)
+        self.assertEqual(state["triggered"], 1)
+        self.assertIsNotNone(state["external_bytes"])
+        self.assertNotEqual(state["external_bytes"], before_pack)
+        external = json.loads(state["external_bytes"])
+        self.assertEqual(external["cache"]["foreign_cache"],
+                         {"kept": True, "revision": 2})
+        self.assertEqual(external["validator"]["pack_sha256"],
+                         pack_sha_without_validator(state["external_bytes"]))
+        self.assertEqual(pack_path.read_bytes(), state["external_bytes"])
+        self.assertEqual(md_path.read_bytes(), before_md)
+        self.assertEqual(cache_path.read_bytes(), before_cache)
+        self.assertEqual(validation_path.read_bytes(), before_validation)
+        self.assertFalse((self.prof_dir / "论文分析" / ".stage2-local-writer.json").exists())
 
     def test_refresh_keeps_the_accepted_sources_and_foreign_cache(self):
         self.build_accepted_state()
