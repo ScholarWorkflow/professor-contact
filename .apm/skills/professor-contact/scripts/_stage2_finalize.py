@@ -1351,6 +1351,13 @@ def build(*, Stage2Context,
         # rejected before writing, never silently re-bound.
         carried_validator = None
         if old_error:
+            if (old_error == "manual_markdown_changed" and not business_changed
+                    and isinstance((raw_old_pack or {}).get("validator"), dict)
+                    and decision != "overwrite"):
+                fail("validation_render_stale",
+                     "the recorded validation no longer binds the actual managed body; "
+                     "an unchanged-business finalize cannot restore that evidence",
+                     target=str(md_path))
             if old_error == "manual_markdown_changed" or business_changed or not body_equivalent:
                 if decision != "overwrite":
                     soft_exit("needs_decision", "manual_markdown_changed", target=str(md_path),

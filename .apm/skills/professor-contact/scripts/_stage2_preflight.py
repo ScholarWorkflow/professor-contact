@@ -937,6 +937,7 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
                             professor_reasons.append(reason)
 
         cache_entries = load_freshness_cache(professor_dir) if pack else {}
+        observation_reasons = []
         if isinstance(meta, dict):
             baseline = meta.get("observation")
             if not isinstance(baseline, dict) or not isinstance(meta.get("consumption"), dict):
@@ -946,8 +947,20 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
                 current = stage2_complete_observation(program_root, professor_dir, professor,
                     target, snapshot_entry, params, current_year, pack,
                     cache_entries=cache_entries)
-                if stage2_compare_observation(baseline, current):
+                observation_drift = stage2_compare_observation(baseline, current)
+                if observation_drift:
                     professor_reasons.append("business_observation_changed")
+                if set(observation_drift) & {"materials", "artifact_guards"}:
+                    old_materials = baseline.get("materials") or {}
+                    new_materials = current.get("materials") or {}
+                    changed_paths = {name for name in set(old_materials) | set(new_materials)
+                                     if old_materials.get(name) != new_materials.get(name)}
+                    for name in changed_paths:
+                        missing = (old_materials.get(name) or {}).get("state") == "present" \
+                            and (new_materials.get(name) or {}).get("state") == "missing"
+                        observation_reasons.append("artifact_missing" if missing else "artifact_changed")
+                    if not changed_paths:
+                        observation_reasons.append("artifact_changed")
         pack_directions = {direction_machine_id(entry): entry
                            for entry in (pack or {}).get("directions") or []
                            if isinstance(entry, dict)}
@@ -970,7 +983,9 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
         level_refresh_needed = statistics_stale
         for direction in target_directions:
             direction_id = str(direction.get("direction_id"))
-            reasons = []
+            # Resolution consumes the selected candidate union. An artifact in
+            # that union can affect every direction even outside its own D set.
+            reasons = list(observation_reasons)
             level_changed = False
             validator_ids = [direction_id]
             recorded = recorded_directions.get(direction_id)
