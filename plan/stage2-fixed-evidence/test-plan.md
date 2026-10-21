@@ -83,19 +83,19 @@
 ## 5. 三关与下一负责人
 
 - G1（完整设计/范围）：t5 作者 PENDING independent review。A–F 目标保持，§6 是 r5 机制的必要落点而非额外验收目标。
-- G2（实际可执行 recipe）：t5 PENDING。以下完整步骤须由本地测试工程师落实到既有方法，确认真实 CLI、fixture 和断言映射。既有 selector 存在不等于新分支已实施；没有测试代码提交与映射，不宣布 G2 通过。
+- G2（实际可执行 recipe）：t5 步骤已由本地测试工程师落入既有方法并提交 `3766eb2`，方法映射和 CI 证据见 §6.7；独立 reviewer 尚未核对，本计划不自行宣布 G2 通过。
 - G3（实际结果）：r5 受影响行为未执行/待验证；t3 原正式通过有效但适用边界见 §4。产品机制未实现或出现范围内业务失败均不能以计划完成关闭。
-- 下一负责人：产品 owner 按 r5 实施；本地测试工程师仅落实 §6，独立 reviewer 评估 G1/G2；有执行授权后执行工程师按受影响 selector 定向运行，G3 reviewer 采用现有记录及新结果。作者不替审核者授予通过，不自动合并或评论。
+- 下一负责人：产品 owner 按 r5 实施；本地测试工程师已完成 §6 落实（§6.7），独立 reviewer 评估 G1/G2；有执行授权后执行工程师按受影响 selector 定向运行，G3 reviewer 采用现有记录及新结果。作者不替审核者授予通过，不自动合并或评论。
 
 - t5 修订说明：承认 t4 中 B 的 display-only 夹具、F 的时钟/合法旧绑定准备仍是要求而非完整步骤；首轮 record 负例原写法会混入终态拒绝，r5 的最新标记预检快路径尚未覆盖。本版只将这些既定目标补成具体 recipe，取代相应模糊指令，不增加业务范围。r5 正式设计批准见 [2026-10-21 审核](https://github.com/ScholarWorkflow/professor-contact/pull/107#issuecomment-6310235505)，不等于实现或测试通过。
 
-## 6. 唯一执行说明（t5；以下新增分支尚未实施或运行）
+## 6. 唯一执行说明（t5；分支已落入测试代码，尚未正式执行）
 
-本节把每个受影响目标展开为可落实的夹具、调用和断言，不把“测试工程师自行补一个能命中的场景”当作完成。沿用 `test_stage2_fixed_evidence.FixedEvidenceBase` 六个方法和现有辅助函数；本节括号中的 B-null、F-preflight 等只是文档分支名，不是声称已经存在的 unittest selector。测试工程师把步骤放入对应既有方法的隔离 `_fresh_env()` 分支；不新建框架、采集器或产品判定器。
+本节把每个受影响目标展开为可落实的夹具、调用和断言，不把“测试工程师自行补一个能命中的场景”当作完成。沿用 `test_stage2_fixed_evidence.FixedEvidenceBase` 六个方法和现有辅助函数；本节括号中的 B-null、F-preflight 等只是文档分支名，不是声称已经存在的 unittest selector。测试工程师把步骤放入对应既有方法的隔离 `_fresh_env()` 分支；不新建框架、采集器或产品判定器。实际提交、方法映射与 CI 观察见 §6.7；正式执行仍需执行授权。
 
 ### 6.1 公共准备、实际接口与字节观察
 
-1. 当前读取基线为 `7c759ac9ea26508d1f130ddd482e55f9694e9957`，产品/测试仍是 `cd638775` 实现；执行计划已是 r5。开始正式补测前，产品负责人须完成 r5 的受影响实现，测试负责人须把本节分支落入测试代码并给出实际提交，独立 G2 核对该实现后的方法映射。本文未实施、未执行，也不授予执行权限。沿用现有 uv/Python/unittest、仓库外 `TemporaryDirectory`；无安装、模型、Zotero 或 PDF 请求。
+1. 当前读取基线为 `7c759ac9ea26508d1f130ddd482e55f9694e9957`，产品仍是 `cd638775` 实现；执行计划已是 r5。本节分支已落入测试代码并提交 `3766eb2`（§6.7），独立 G2 仍需核对；产品负责人完成 r5 的受影响实现后，执行工程师才进入正式补测。本文步骤未正式执行，也不授予执行权限。沿用现有 uv/Python/unittest、仓库外 `TemporaryDirectory`；无安装、模型、Zotero 或 PDF 请求。
 2. 每个标明“独立环境”的分支从 `env = self._fresh_env()` 开始，使用 `env.generate_pack(env.gap_override(), ...)` 返回 `facts_path, results, proof`。目录均由现有 BaseEnv 创建：`env.prof_dir / contact_state.ANALYSIS_MD` 是受管 Markdown，`env.prof_dir / contact_state.INPUT_PACK` 是 JSON 包，`env.prof_dir / contact_state.FRESHNESS_CACHE` 是 freshness cache；`results / 'freshness-DIR00001.json'`、`results / 'narrative.json'` 是合成结果。不得引用真实教授目录。
 3. 固定业务预期为 direction `DIR00001`；gap A = `contact_state.quote_id(env.gap_quotes['AAAA1111'])`，gap B 同理取 BBBB2222。正常引用 CCCC3333 的可信题名为 `Unrelated synthetic example`，链接为 `[Unrelated synthetic example](zotero://select/library/items/CCCC3333)`。这些预期来自夹具输入，不从被测返回的 owner/map/gap 反推。
 4. 真实入口统一用现有 `run_cli`（它启动子进程）和 `parse`。不在父进程 patch 时钟后假定 CLI 子进程会继承 mock。使用以下已有调用，不私调 resolver 代替用户路径：
@@ -216,9 +216,28 @@ fi
 
 通过需所选方法ok、退出0、无skip且新增分支确已在实际方法执行；旧同名selector绿不能当新覆盖。步骤前置不成立列未执行/无法判断，指出具体不符；业务断言不符交产品负责人，禁止改预期、重签被测坏绑定或改fingerprint求通过。保留全部正式尝试、实际产品/测试版本、命令、退出码及标准日志。仅已确认无业务失败/副作用的外部启动或临时目录故障，在条件不变时至多补试一次并保留两次记录；修代码/输入属修订不是重试，先重审受影响步骤。全部目标取得适用证据后结束，不追加矩阵或合并门槛。
 
+### 6.7 t5 测试实现交接（本地测试工程师，2026-10-21）
+
+- 实现提交：`3766eb281ff7a46e230dcb5ee6c00af8e5b36079`，只改 `.apm/skills/professor-contact/tests/test_stage2_fixed_evidence.py`；未改产品代码、配置或计划外测试目标。测试计划基线为 `dca25dd`，PR 分支 `plan/stage2-fixed-evidence-20261019`。
+- 预检：沿用仓库现有 `uv run --no-project python`（CPython 3.14.6）；`python -m py_compile test_stage2_fixed_evidence.py` 和模块导入均成功。未运行任何 unittest 正式用例；运行产物不提交。
+- 方法映射（以下行号指提交 `3766eb2` 的测试文件）：
+  - A（第 330 行 `test_u1_a_trusted_citation_display_keeps_facts_and_licences`）：未改，原四出口断言保留；统一 resolver 若改变正常输出，按 §4 只复核该入口。
+  - B（第 405 行 `test_u1_b_missing_trusted_metadata_fails_before_write`）：保留 title="" 与未知 Zotero 链接/URI 两段；第 469 行起新增 B-null：EEEE4444 为不参与成员和模型输入的实际显示引用，`display_version=1`、当前 facts 题名 null，真实 preflight 期望 process 与 `fixed_evidence_display_update`，`Stage2Context.direction_plans` 断言 DIR00001 复用且 fingerprint 等于旧 provisional/input，finalize 期望 `missing_paper_reference_title` 且 MD/pack/facts/cache 零写入、旧 marker 仍为 1。
+  - C（第 559 行 `test_u1_c_report_ownership_uses_real_fragments`）：第 570 行起把 completed_part 续行改为真实 `## 方向 假方向：中文🙂固定续行`；报告用短 location 加唯一 quote，并在磁盘字符视图断言整行唯一、quote 字符区间与 UTF-8 前缀长度不同；四类固定命中、`fixed_blocking` 四行、raw issues/notes/verdict、两个 refine 入口、生成链接/禁锚链接与 excluded 分支保留。
+  - D（第 710 行 `test_u1_d_narrative_two_rounds_and_fixed_stop`）：原纯 narrative 两轮、固定停止与 minor 保留；第 775 行起新增一条真实生命周期，含 B-absent（facts 删除 EEEE4444、接受 canonical 回退）、普通接受保留 pending、删除 facts 后的纯包 refine、恢复同一 facts 后的普通接受、第二轮固定命中转 `fail_after_2_rounds`，逐项比较 marker、body hash/map 与两份报告 bytes。
+  - E（第 919 行 `test_u1_e_old_pack_updates_through_process_to_finalize`）：原 no-map 与 freshness 失效分支保留；第 1007 行起新增 E-v1：真实 record 取得 terminal 后只把 marker 设为 1，按 §6.1(7) 保持 raw body/hash/map/validator 绑定，preflight 期望 process 与 `fixed_evidence_display_update`，finalize 后 marker=2、body bytes 与旧 round/phase/pending/results 保留，再次 preflight 为 `reuse_all`。
+  - F（第 1083 行 `test_u1_f_acceptance_separates_body_business_binding_and_validator`）：第 1292 行起按 §6.5 增加 F-time（2000 年等长字面量，不 mock 父进程时钟）、F-preflight/finalize（reuse_all 后 LF→CRLF，第二次 preflight 必须 process 且含 `validator_not_accepted`，finalize 拒绝）、F-record（未登记报告遇 CRLF 必须 `validation_render_stale`）、F-refine（去掉末尾一个换行后两个 refine 入口拒绝）、F-manual（无旧 validator 的 CRLF 手改必须 `manual_markdown_changed` 且不升级 marker）、F-valid-CRLF（合法 CRLF 旧绑定正常接受并写回 LF 候选）；正文等价业务变化分支改为 raw bytes 相等、header.state 更新、旧 validator 失效与原报告 bytes 不变。
+- 未落实项：本节新增分支未发现遗漏；A 未新增。`test_stage2_style_validation_handoff.py` 的重复 quote、短 location、用户笔记排除与 later-title 场景仍按原文复用，未改。
+- CI 证据（不是本轮正式执行记录）：提交 `3766eb2` 的 [CI 运行 39568964919](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39568964919) 中 shard1–shard3 success；shard4 `Ran 249 tests`、`FAILED (failures=5, skipped=1)`；U1-A 为 `ok`。五个失败都可归到 r5 产品缺口，不是测试方法错误：
+  1. U1-B 与 U1-D：`display_version` 仍为 1，preflight 全局 `reason_codes` 为空，方向只有 `validator_not_accepted`（测试文件第 499、802 行）。
+  2. U1-C：`validation_render_identity_mismatch`，记录器仍用 `## 方向 ` 标题扫描，把源字段的续行当成第二个方向（第 592 行）。
+  3. U1-E 与 U1-F：`display_version` 仍为 1，`1 != 2`（第 1013、1188 行）。
+- CI 未到达的分支：B-null 后半段零写入、C 的 map 归属、D 的 B-absent/pending 生命周期、E-v1 的保留断言、F 的六条字节入口，都因上述前置门槛先失败而没有执行，不能记为通过。产品按 r5 实现后，由执行工程师按 §6.6 命令定向运行；本次交接不构成 G2 或 G3 通过。
+- 下一负责人：产品 owner 完成 r5 的 §3.1/§3.2/§3.4/§3.6 实现；独立 reviewer 依据 `3766eb2` 与上述 CI 证据评估 G2；有执行授权后执行工程师运行受影响 selector，G3 审核采用其记录。
+
 ## 7. 执行结果（2026-10-20）
 
-> 历史原文边界：以下 §7–8 保留当时记录；其中“本版”“当前”“§6.3/§6.4/§6.5”等指 [t3 当时版本](https://github.com/ScholarWorkflow/professor-contact/blob/cd6387759157c505acb96ed8459e0cc2fbd7f6ba/plan/stage2-fixed-evidence/test-plan.md)，不是 t5 的执行指令或新结果。当前状态唯一以本版 §4–5 为准；t3 待审已由页首链接正式三关记录完成。
+> 历史原文边界：以下 §7–8 保留当时记录；其中“本版”“当前”“§6.3/§6.4/§6.5”等指 [t3 当时版本](https://github.com/ScholarWorkflow/professor-contact/blob/cd6387759157c505acb96ed8459e0cc2fbd7f6ba/plan/stage2-fixed-evidence/test-plan.md)，不是 t5 的执行指令或新结果。当前状态唯一以本版 §4–5 与 §6.7 为准；t3 待审已由页首链接正式三关记录完成。
 
 - 产品与测试版本：初始实现 `2b813fc`；IR-U1-1/IR-U1-2 修复后为 `3d6c2bc`（产品代码只改 `_stage2_render.py`，测试只改 `test_stage2_fixed_evidence.py`）。以下按轮次标注；最终六项、既有 185 项与全仓回归均在 `3d6c2bc` 上重跑，日志在 `/tmp/u1-fixed-evidence/`。
 - 环境：仓库现有 `uv run --no-project python`（CPython 3.14.6），沿用既有合成夹具；无新增安装、模型调用、Zotero/PDF 下载或双 harness 运行。
