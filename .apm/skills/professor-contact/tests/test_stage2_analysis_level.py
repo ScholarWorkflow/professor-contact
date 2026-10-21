@@ -882,51 +882,58 @@ class TestRefreshProtection(AnalysisLevelBase):
                         "__init__", original_init)
 
     def _drift_after_observation(self):
-        """Change the same source after the refresh gate, before the write.
+        """Change the same source at the post-gate render stage, before the write.
 
-        The managed file is read only after the refresh gate created the
-        candidate. Mutating the consumed analysis on that read places the change
-        at the documented second boundary without replacing any comparison.
+        The refresh gate runs before ``stage2_render_precheck``; that check is
+        the first existing post-gate consumer of ``Stage2PackRefineContext``.
+        Hooking its static helper places the change after the gate observation
+        and before the managed write, independent of when the old Markdown is
+        read. The hook is installed disarmed and armed only after the zero-write
+        snapshots, so setup reads cannot trigger it.
         """
         analysis = self._analysis_path()
-        managed = self.analysis_md().resolve()
-        state = {"mutated": False}
-        original_text = Path.read_text
-        original_bytes = Path.read_bytes
-        original_open = Path.open
+        context_class = contact_state.Stage2PackRefineContext
+        original_descriptor = context_class.__dict__["narrative_later_keys_for"]
+        original = original_descriptor.__func__
+        state = {"armed": False, "mutated": False}
 
-        def mutate_once():
-            if not state["mutated"]:
+        def arm():
+            state["armed"] = True
+
+        def record_then_drift(direction):
+            if state["armed"] and not state["mutated"]:
                 state["mutated"] = True
                 analysis.write_text("# drift after the observation\n", encoding="utf-8")
+            return original(direction)
 
-        def read_text(path, *arguments, **keywords):
-            if Path(path).resolve() == managed:
-                mutate_once()
-            return original_text(path, *arguments, **keywords)
+        context_class.narrative_later_keys_for = staticmethod(record_then_drift)
+        self.addCleanup(setattr, context_class, "narrative_later_keys_for",
+                        original_descriptor)
+        return arm
 
-        def read_bytes(path, *arguments, **keywords):
-            if Path(path).resolve() == managed:
-                mutate_once()
-            return original_bytes(path, *arguments, **keywords)
+    def _refresh_in_process(self, plan):
+        """Run the real refresh handler in this process so the drift doubles apply."""
+        arguments = type("Args", (), {
+            "program_root": str(self.root), "professor": PROFESSOR,
+            "target_file": str(self.target_file), "preflight_file": str(plan),
+            "decision_file": None})()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                contact_state.cmd_stage2_refresh_level(arguments)
+            except SystemExit:
+                pass
+        return json.loads(stdout.getvalue())
 
-        def open_managed(path, *arguments, **keywords):
-            if Path(path).resolve() == managed:
-                mutate_once()
-            return original_open(path, *arguments, **keywords)
-
-        Path.read_text = read_text
-        Path.read_bytes = read_bytes
-        Path.open = open_managed
-        self.addCleanup(setattr, Path, "read_text", original_text)
-        self.addCleanup(setattr, Path, "read_bytes", original_bytes)
-        self.addCleanup(setattr, Path, "open", original_open)
-
-    def _assert_zero_write_needs_refresh(self, plan):
+    def _assert_zero_write_needs_refresh(self, plan, arm=None):
         pack_path = self.prof_dir / "套磁候选输入.json"
         md_path = self.analysis_md()
         before_pack, before_md = pack_path.read_bytes(), md_path.read_bytes()
-        payload = parse(self.refresh(plan))
+        if arm is not None:
+            # Arm only after the zero-write snapshots: the observation-point
+            # drift must happen inside the refresh handler, not during setup.
+            arm()
+        payload = self._refresh_in_process(plan)
         self.assertEqual(payload["status"], "needs_refresh", payload)
         self.assertIn(payload.get("reason_code"),
                       {"preflight_inputs_changed", "refresh_requires_process"}, payload)
@@ -955,8 +962,8 @@ class TestRefreshProtection(AnalysisLevelBase):
         self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
         self.write_index()
         plan = self.save_preflight("observation-drift.json")
-        self._drift_after_observation()
-        self._assert_zero_write_needs_refresh(plan)
+        arm = self._drift_after_observation()
+        self._assert_zero_write_needs_refresh(plan, arm)
 
     def test_refresh_keeps_the_accepted_sources_and_foreign_cache(self):
         self.build_accepted_state()
