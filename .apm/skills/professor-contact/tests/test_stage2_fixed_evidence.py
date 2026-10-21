@@ -417,6 +417,53 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual((env.prof_dir / contact_state.ANALYSIS_MD).read_bytes(),
                          analysis_before)
 
+        # The generated link punctuation and Zotero destination belong to the
+        # generator, not to the source that supplied the paper facts.
+        link_env = self._fresh_env()
+        link_facts, link_results, link_proof = link_env.generate_pack(
+            link_env.gap_override())
+        link_url = f"zotero://select/library/items/{CITATION_KEY}"
+        link_line = next(
+            index + 1 for index, line in enumerate(link_env.body_lines())
+            if "后续论文依据：" in line and link_url in line)
+        link_report = link_env.write_report("u1c-link.json", [
+            link_env.blocking_issue(link_url, link_line)])
+        link_recorded = link_env.record(link_report)
+        self.assertEqual(link_recorded["status"], "needs_correction", link_recorded)
+        link_gap_id = contact_state.quote_id(link_env.gap_quotes["AAAA1111"])
+        link_rows = link_recorded["fixed_blocking"]["DIR00001"]
+        self.assertIn({"direction_id": "DIR00001", "gap_id": link_gap_id,
+                       "field": "evidence", "owner": "generator"}, link_rows)
+        self.assertNotIn({"direction_id": "DIR00001", "gap_id": link_gap_id,
+                          "field": "evidence", "owner": "source"}, link_rows)
+
+        # The blacklist evidence uses the same split: its generated link is a
+        # generator problem, while the completed-paper title remains source.
+        blacklist_env = self._fresh_env()
+        blacklist_overrides = blacklist_env.gap_override()
+        blacklist_overrides["BBBB2222"] = {
+            "status": "done_by_self",
+            "candidate_paper_ids": [CITATION_KEY],
+            "evidence": "zotero://select/library/items/AAAA1111 已接住该点。",
+        }
+        blacklist_facts, blacklist_results, blacklist_proof = blacklist_env.generate_pack(
+            blacklist_overrides)
+        blacklist_url = "zotero://select/library/items/AAAA1111"
+        blacklist_line = next(
+            index + 1 for index, line in enumerate(blacklist_env.body_lines())
+            if blacklist_url in line and "依据：" in line)
+        blacklist_report = blacklist_env.write_report("u1c-blacklist-link.json", [
+            blacklist_env.blocking_issue(blacklist_url, blacklist_line)])
+        blacklist_recorded = blacklist_env.record(blacklist_report)
+        self.assertEqual(blacklist_recorded["status"], "needs_correction",
+                         blacklist_recorded)
+        blacklist_gap_id = contact_state.quote_id(
+            blacklist_env.gap_quotes["BBBB2222"])
+        blacklist_rows = blacklist_recorded["fixed_blocking"]["DIR00001"]
+        self.assertIn({"direction_id": "DIR00001", "gap_id": blacklist_gap_id,
+                       "field": "blacklist_evidence", "owner": "generator"},
+                      blacklist_rows)
+
         # An existing excluded region is not promoted into a legal fixed finding.
         excluded_env = self._fresh_env()
         excluded_facts, excluded_results, excluded_proof = excluded_env.generate_pack(

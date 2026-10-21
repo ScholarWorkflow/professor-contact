@@ -332,6 +332,90 @@ def build(*, fail,
                  item_key=key, direction=direction, gap_id=gap_id, field=field)
         return title
 
+    def stage2_replace_declared_citations_parts(text: str, declared_keys, title_for, *,
+                                                direction, gap_id, field):
+        """Return ``(text, owner)`` spans for declared paper references.
+
+        The source owns the paper facts (including a trusted title); the renderer
+        owns the link punctuation and Zotero destination it generates.  Existing
+        Markdown links keep their source owner, including an existing Zotero link
+        whose label is redrawn to the trusted title.
+        """
+        if not isinstance(text, str) or not text:
+            return []
+
+        keys = sorted({key for key in declared_keys if isinstance(key, str) and key},
+                      key=len, reverse=True)
+        key_pattern = None
+        if keys:
+            key_pattern = re.compile(
+                r"(?<![A-Za-z0-9])(?:" + "|".join(re.escape(key) for key in keys)
+                + r")(?![A-Za-z0-9])")
+
+        def trusted_title(key):
+            return stage2_trusted_citation_title(
+                title_for, key, direction=direction, gap_id=gap_id, field=field)
+
+        def generated_link(title, destination):
+            return [("[", "generator"), (title, "source"),
+                    (f"]({destination})", "generator")]
+
+        def replace_bare_keys(segment):
+            if not segment or key_pattern is None:
+                return [(segment, "source")] if segment else []
+            output, cursor = [], 0
+            for match in key_pattern.finditer(segment):
+                if match.start() > cursor:
+                    output.append((segment[cursor:match.start()], "source"))
+                key = match.group(0)
+                output.extend(generated_link(
+                    trusted_title(key), f"{STAGE2_ZOTERO_PREFIX}{key}"))
+                cursor = match.end()
+            if cursor < len(segment):
+                output.append((segment[cursor:], "source"))
+            return output
+
+        def convert_segment(segment):
+            """Convert bare declared keys and bare Zotero item URIs in one span."""
+            if not segment:
+                return []
+            output, cursor = [], 0
+            for zotero in STAGE2_ZOTERO_ITEM_RE.finditer(segment):
+                output.extend(replace_bare_keys(segment[cursor:zotero.start()]))
+                output.extend(generated_link(
+                    trusted_title(zotero.group(1)), zotero.group(0)))
+                cursor = zotero.end()
+            output.extend(replace_bare_keys(segment[cursor:]))
+            return output
+
+        protected = [(match.start(), match.end(), "link", match)
+                     for match in STAGE2_MARKDOWN_LINK_RE.finditer(text)]
+        for match in STAGE2_ANY_URL_RE.finditer(text):
+            if any(start <= match.start() < end
+                   for start, end, _kind, _match in protected):
+                continue
+            # Bare Zotero item URIs are explicit references and are converted
+            # below, not protected as opaque addresses.
+            if match.group(0).startswith(STAGE2_ZOTERO_PREFIX):
+                continue
+            protected.append((match.start(), match.end(), "external", match))
+        protected.sort(key=lambda entry: entry[0])
+
+        parts, cursor = [], 0
+        for start, end, kind, match in protected:
+            parts.extend(convert_segment(text[cursor:start]))
+            if kind == "link" and match.group(2).startswith(STAGE2_ZOTERO_PREFIX):
+                label, destination = match.group(1), match.group(2)
+                key = destination[len(STAGE2_ZOTERO_PREFIX):].strip()
+                title = trusted_title(key)
+                parts.append((match.group(0) if label == title
+                              else f"[{title}]({destination})", "source"))
+            else:
+                parts.append((match.group(0), "source"))
+            cursor = end
+        parts.extend(convert_segment(text[cursor:]))
+        return [(part, owner) for part, owner in parts if part]
+
     def stage2_replace_declared_citations(text: str, declared_keys, title_for, *,
                                           direction, gap_id, field) -> str:
         """Display declared paper references as trusted titles plus Zotero links.
@@ -344,68 +428,9 @@ def build(*, fail,
         """
         if not isinstance(text, str) or not text:
             return text
-
-        def link_replace(match):
-            label, destination = match.group(1), match.group(2)
-            if not destination.startswith(STAGE2_ZOTERO_PREFIX):
-                return match.group(0)
-            key = destination[len(STAGE2_ZOTERO_PREFIX):].strip()
-            title = stage2_trusted_citation_title(
-                title_for, key, direction=direction, gap_id=gap_id, field=field)
-            if label == title:
-                return match.group(0)
-            return f"[{title}]({destination})"
-
-        rendered = STAGE2_MARKDOWN_LINK_RE.sub(link_replace, text)
-        keys = sorted({key for key in declared_keys if isinstance(key, str) and key},
-                      key=len, reverse=True)
-        key_pattern = None
-        if keys:
-            key_pattern = re.compile(
-                r"(?<![A-Za-z0-9])(?:" + "|".join(re.escape(key) for key in keys)
-                + r")(?![A-Za-z0-9])")
-
-        def bare_replace(match):
-            key = match.group(0)
-            title = stage2_trusted_citation_title(
-                title_for, key, direction=direction, gap_id=gap_id, field=field)
-            return f"[{title}]({STAGE2_ZOTERO_PREFIX}{key})"
-
-        def convert_segment(segment: str) -> str:
-            """Convert bare declared keys and bare Zotero item URIs in one span."""
-            output, cursor = [], 0
-            for zotero in STAGE2_ZOTERO_ITEM_RE.finditer(segment):
-                before = segment[cursor:zotero.start()]
-                output.append(key_pattern.sub(bare_replace, before)
-                              if key_pattern is not None else before)
-                key = zotero.group(1)
-                title = stage2_trusted_citation_title(
-                    title_for, key, direction=direction, gap_id=gap_id, field=field)
-                output.append(f"[{title}]({zotero.group(0)})")
-                cursor = zotero.end()
-            tail = segment[cursor:]
-            output.append(key_pattern.sub(bare_replace, tail)
-                          if key_pattern is not None else tail)
-            return "".join(output)
-
-        protected = [(match.start(), match.end())
-                     for match in STAGE2_MARKDOWN_LINK_RE.finditer(rendered)]
-        for match in STAGE2_ANY_URL_RE.finditer(rendered):
-            if any(start <= match.start() < end for start, end in protected):
-                continue
-            # Bare Zotero item URIs are explicit references and are converted
-            # below, not protected as opaque addresses.
-            if match.group(0).startswith(STAGE2_ZOTERO_PREFIX):
-                continue
-            protected.append((match.start(), match.end()))
-        protected.sort()
-        pieces, cursor = [], 0
-        for start, end in protected:
-            pieces.append(convert_segment(rendered[cursor:start]))
-            pieces.append(rendered[start:end])
-            cursor = end
-        pieces.append(convert_segment(rendered[cursor:]))
-        return "".join(pieces)
+        return "".join(part for part, _owner in stage2_replace_declared_citations_parts(
+            text, declared_keys, title_for, direction=direction, gap_id=gap_id,
+            field=field))
 
     class Stage2RenderDocument:
         """Accumulate the exact managed Markdown body plus its ownership map.
@@ -680,6 +705,14 @@ def build(*, fail,
         def narrative(direction, gap_id, field) -> dict:
             return meta("narrative", "narrative", direction, gap_id, field, True)
 
+        def citation_segments(text, declared, direction, gap_id, field):
+            return [
+                (part, source(direction, gap_id, field) if owner == "source"
+                 else generator(direction, gap_id, field))
+                for part, owner in stage2_replace_declared_citations_parts(
+                    text, declared, title_for, direction=direction,
+                    gap_id=gap_id, field=field)]
+
         doc = Stage2RenderDocument()
         doc.add_line(f"# 套磁候选分析 — {professor}", excluded())
         doc.blank()
@@ -826,25 +859,24 @@ def build(*, fail,
                         (str(gap.get("confidence")), source(did, card_id, "confidence")),
                         ("）", generator(did, card_id, "label")))
                 declared = list(gap.get("candidate_paper_ids") or [])
-                evidence = stage2_replace_declared_citations(
-                    gap.get("evidence") or "—", declared, title_for,
-                    direction=did, gap_id=card_id, field="evidence")
+                evidence = citation_segments(
+                    gap.get("evidence") or "—", declared, did, card_id, "evidence")
                 doc.add(("- 后续论文依据：", generator(did, card_id, "label")),
-                        (evidence, source(did, card_id, "evidence")))
+                        *evidence)
                 doc.add(("- 评估时间：", generator(did, card_id, "label")),
                         (str(gap.get("evaluated_at") or "—"),
                          source(did, card_id, "evaluated_at")))
                 if gap.get("status") == "partial":
-                    completed_part = stage2_replace_declared_citations(
-                        gap.get("completed_part") or "—", declared, title_for,
-                        direction=did, gap_id=card_id, field="completed_part")
-                    remaining_gap = stage2_replace_declared_citations(
-                        gap.get("remaining_gap") or "—", declared, title_for,
-                        direction=did, gap_id=card_id, field="remaining_gap")
+                    completed_part = citation_segments(
+                        gap.get("completed_part") or "—", declared, did, card_id,
+                        "completed_part")
+                    remaining_gap = citation_segments(
+                        gap.get("remaining_gap") or "—", declared, did, card_id,
+                        "remaining_gap")
                     doc.add(("- 已做部分：", generator(did, card_id, "label")),
-                            (completed_part, source(did, card_id, "completed_part")))
+                            *completed_part)
                     doc.add(("- 剩余缺口：", generator(did, card_id, "label")),
-                            (remaining_gap, source(did, card_id, "remaining_gap")))
+                            *remaining_gap)
                 if gap.get("status") == "unknown":
                     doc.add_line(
                         "- ⚠ 未查证是否已被后续工作实现（unknown 原因见后续论文依据）",
@@ -876,9 +908,9 @@ def build(*, fail,
                     declared = list(item.get("candidate_paper_ids") or [])
                     if isinstance(completed, str) and completed:
                         declared.append(completed)
-                    evidence = stage2_replace_declared_citations(
-                        item.get("evidence") or "—", declared, title_for,
-                        direction=did, gap_id=blacklist_id, field="blacklist_evidence")
+                    evidence = citation_segments(
+                        item.get("evidence") or "—", declared, did, blacklist_id,
+                        "blacklist_evidence")
                     parts = [
                         ("- ", generator(did, blacklist_id, "item")),
                         (str(item.get("quote_trunc")),
@@ -907,7 +939,9 @@ def build(*, fail,
                                       generator(did, blacklist_id, "completed_paper")))
                     parts.extend([
                         (" 接住（依据：", generator(did, blacklist_id, "item")),
-                        (evidence, source(did, blacklist_id, "blacklist_evidence")),
+                    ])
+                    parts.extend(evidence)
+                    parts.extend([
                         ("）。", generator(did, blacklist_id, "item")),
                     ])
                     doc.add(*parts)
